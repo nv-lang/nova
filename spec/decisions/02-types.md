@@ -6973,9 +6973,10 @@ Box.SIZE                                    // ✗ E_GENERIC_CONST_REQUIRES_INST
 >
 > **Pointer types after Plan 134:**
 > - `*()` — opaque pointer (pointer to unit type = `void*` in C)
-> - `*T` — typed pointer to T (read-only by default, D216)
-> - `*mut T` — mutable typed pointer
-> - `*unsafe T` — possibly-null/dangling pointer
+> - `*T` — typed pointer to T (read-only pointee by default, D216)
+> - `*mut T` — typed pointer to mutable T (writable pointee)
+> - `*unsafe T` — pointer to possibly-uninit T (pointee contracts off; pointer
+>   itself non-null — nullable = `Option[*unsafe T]`, Plan 138.5 §1/§V2.4)
 >
 > ⚠️ **AMENDED by Plan 118 (D216)** — `ptr` redefined as
 > `type ptr Option[*unsafe ()]` newtype над nullable unsafe void pointer
@@ -7424,19 +7425,59 @@ Plan 118 family scope:
 
 ### §1. `*T` family типов
 
-- `*T` (≡ `*ro T`) — readonly typed pointer (default)
-- `*ro T` / `*mut T` — explicit mutability
-- `*unsafe T` — pointer после арифметики (alignment/bounds gone)
+> **FINAL pointer model (Plan 138.5, 2026-06-11):** указательный ТИП несёт
+> **только pointee-мутабельность** — модификатор пишется **постфиксом**, сразу
+> после `*` (`*mut T` / `*ro T` / `*unsafe T`). **Перепривязываемость самого
+> указателя** (`p = other_ptr`) — это **binding** (`let` = фиксирован, `mut` =
+> переприсваиваемый, D36), **НЕ часть типа**. В `mut p *mut T`: ведущий `mut` =
+> binding (p reassignable), `*mut T` = pointee (writable). Две роли, чисто
+> разделены (прецедент Rust: `*mut T`/`*const T` = pointee; `let mut p` =
+> reassign). **Запрещены ВСЕ prefix-модификаторы перед `*`** (`mut * T` / `ro * T`
+> / `unsafe * T`) — `E_POINTER_PREFIX_MODIFIER` (§1 ниже). Nullable = `Option[*T]`
+> только (NPO §7). Это **ретрактит** D216 V2 «outer pointer-mut как type-wrapper»
+> (`mut * T = Mut(Pointer(T))`) и V3 propagation/safe-stopper машинерию — см.
+> §V2.2/§V2.6/§V3.2/§V3.3/§V3.4 ниже.
+
+- `*T` (≡ `*ro T`) — readonly typed pointer (default) — **pointee** ro
+- `*ro T` / `*mut T` — explicit **pointee** mutability (postfix only)
+- `*unsafe T` — pointer к possibly-uninit T (pointee init/layout contracts off);
+  также degraded-форма после арифметики (alignment/bounds gone)
 - **Size:** pointer-width (8 bytes на 64-bit; bootstrap = 64-bit only)
 - **ABI:** `T*` в C (compiler emits соответствующий C-type для FFI)
 - **Validity:** **always non-null** (compile-time invariant); nullable
   variant — `Option[*T]` (NPO §7)
 
+**Pointee vs binding (две роли, не путать):**
+
+| Запись | `mut`-роль | Значение |
+|--------|-----------|----------|
+| `let p *mut T`  | — (binding ro) | p нельзя переприсвоить; `*p = ...` можно (pointee mut) |
+| `mut p *mut T`  | binding mut    | p можно переприсвоить; `*p = ...` можно |
+| `mut p *ro T`   | binding mut    | p можно переприсвоить; `*p = ...` нельзя (pointee ro) |
+| `let p *ro T` ≡ `let p *T` | — | p фиксирован; pointee ro |
+
+**`*T ≡ *ro T`** — это про **pointee** (read-only target). Reassignability
+указательной переменной — **binding** (`let`/`mut`, D36), не тип.
+
+**Запрет prefix-модификаторов (`E_POINTER_PREFIX_MODIFIER`):** токены
+`ro`/`mut`/`unsafe` непосредственно **перед** `*` в type-position запрещены.
+Расширяет `E_INVALID_POINTER_MODIFIER` (D216 §1, commit 6d6a18a2ab7).
+
 ```nova
-*T              // ro pointer (default)
-*ro T           // explicit readonly
-*mut T          // mutable (can *p = ...)
-*unsafe T       // unsafe (после арифметики; deref требует ещё unsafe layer)
+mut * T             // ❌ E_POINTER_PREFIX_MODIFIER — prefix перед *
+ro * T              // ❌ E_POINTER_PREFIX_MODIFIER
+unsafe * T          // ❌ E_POINTER_PREFIX_MODIFIER
+```
+
+Сообщение: «модификаторы указателя — на pointee (после `*`: `*mut T`/`*ro T`/
+`*unsafe T`) или на binding (`mut x *T`); перед `*` не допускаются». Валидно:
+`*mut T`/`*ro T`/`*unsafe T`/`*T` (pointee, postfix), `mut name *T` (binding).
+
+```nova
+*T              // ro pointer (default) — pointee ro
+*ro T           // explicit readonly pointee
+*mut T          // mutable pointee (can *p = ...)
+*unsafe T       // pointer к possibly-uninit T; deref требует unsafe layer
 ```
 
 ### §2. Binding mut rule
@@ -7455,12 +7496,15 @@ Consistency с Plan 114 binding semantics; reduces noise в hot-path FFI.
 
 ### §3. Chain order (multi-level pointers)
 
-Modifier перед `*` относится к этому pointer'у; read left-to-right.
+Pointee-модификатор пишется **постфиксом**, сразу после каждого `*`, и относится
+к **target** этого `*`-уровня; читается left-to-right.
 
 ```nova
 *mut *ro Acc        // mut pointer НА (ro pointer на Acc)
 *ro *mut Acc        // ro pointer НА (mut pointer на Acc)
 ```
+
+Prefix-форма (`mut * ro * Acc`) **запрещена** — `E_POINTER_PREFIX_MODIFIER` (§1).
 
 Canonical Rust grammar.
 
@@ -7737,7 +7781,8 @@ field read `acc.next` (where `next *T`), pattern match `Option[*T]`,
 
 Function pointer тип encodes unsafe fn keyword:
 - `*fn(...)` — safe function pointer
-- `*unsafe fn(...)` — unsafe function pointer (или equivalently `unsafe * fn(...)` per V3.2 ordering)
+- `*unsafe fn(...)` — unsafe function pointer (postfix pointee; prefix
+  `unsafe * fn(...)` retired — `E_POINTER_PREFIX_MODIFIER`, Plan 138.5)
 
 Coercion rules:
 - `*fn → *unsafe fn`: ✅ allowed (covariant — safe это «подмножество» unsafe)
@@ -7998,6 +8043,9 @@ Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova
 - `E_POINTER_RO_MUT_METHOD` — `p.mut_method()` где p ro
 - `E_PTR_CAST_INVALID_TARGET` — `p as bool / f64 / ...`
 - `E_INVALID_POINTER_MODIFIER` — `*const T` и др.
+- `E_POINTER_PREFIX_MODIFIER` — `ro`/`mut`/`unsafe` перед `*` в type-position
+  (`mut * T` / `ro * T` / `unsafe * T`); use postfix `*mut T`/`*ro T`/`*unsafe T`
+  или binding `mut x *T`. Extends `E_INVALID_POINTER_MODIFIER` (Plan 138.5 §1).
 - `E_DUPLICATE_POINTER_MODIFIER` — `*ro mut T`
 - `E_PARSE_POINTER_TYPE_INCOMPLETE` — `*` без type
 - `E_REALTIME_POINTER_OP` — pointer op в `#realtime fn` body. Active
@@ -8066,75 +8114,118 @@ Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova
 
 ## D216 V2 amend (2026-06-04) — universal right-binding rule для type-level modifiers + `unsafe T` first-class
 
+> **⚠️ PARTIALLY SUPERSEDED — Plan 138.5 (2026-06-11):** часть V2, касающаяся
+> **указателей** (outer pointer-mut как type-wrapper: `mut * T = Mut(Pointer(T))`,
+> `unsafe * T = Unsafe(Pointer(T))`, NPO-таблица §V2.4 по outer-wrapper),
+> **РЕТРАКТИРОВАНА**. FINAL pointer model = pointee-mut **постфикс** только
+> (`*mut T`/`*ro T`/`*unsafe T`), reassignability = binding (`let`/`mut`, D36),
+> nullable = `Option[*T]` только. Все prefix-формы перед `*` запрещены
+> (`E_POINTER_PREFIX_MODIFIER`, §1). **СОХРАНЯЕТСЯ:** §V2.3 `unsafe T`
+> value-wrapper (MaybeUninit-style) — про значение, ортогонально указателям; и
+> универсальное right-binding для **value-T** модификаторов (`ro T`/`mut T`/
+> `unsafe T` wrappers, codegen-transparent). См. retract-пометки в §V2.1/§V2.2/
+> §V2.4/§V2.6 и §V3.2/§V3.3/§V3.4 ниже.
+
 > **Status:** 🆕 SPEC LANDED 2026-06-04 (parser/codegen migration — Plan 118.5
-> NEW sub-plan, см. follow-up markers ниже). Этот amend **breaking change**
-> для existing `*ro T` / `*mut T` / `*unsafe T` syntax.
+> NEW sub-plan, см. follow-up markers ниже). Этот amend был **breaking change**
+> для existing `*ro T` / `*mut T` / `*unsafe T` syntax — pointer-часть позже
+> ретрактирована (Plan 138.5, см. banner выше).
 
 ### Motivation
 
 Inconsistency discovered 2026-06-04: parser применяет «right-binding rule»
 для `ro T` (`TokenKind::KwRo` → recursive `parse_type()` → `Readonly(inner)`),
 но pointer-modifier syntax `*ro T` / `*mut T` / `*unsafe T` использует
-**inline modifier-after-star** form. Это создаёт два правила в одной грамматике:
+**inline modifier-after-star** form. V2 попытался унифицировать через
+prefix-wrappers; Plan 138.5 (2026-06-11) выбрал обратное — **postfix pointee
+canonical, prefix запрещён** (один указатель-модификатор = pointee, постфикс).
 
-| Token | До amend (current) | После amend (V2) |
-|-------|--------------------|------------------|
-| `ro T` | `Readonly(T)` ✅ right-binds | без изменений |
-| `mut T` | parse error в type-position | `Mut(T)` — new wrapper |
-| `unsafe T` | parse error | `Unsafe(T)` — new wrapper |
-| `consume T` | partial (только receiver/field/decl) | generalized к type wrapper |
-| `*T` | `Pointer(Ro, T)` (inline default) | `Pointer(T)` — no inline modifier |
-| `*ro T` | `Pointer(Ro, T)` | **deprecated** — мигрируется на `*T` или `ro * T` |
-| `*mut T` | `Pointer(Mut, T)` | **deprecated** — мигрируется на `mut * T` |
-| `*unsafe T` | `Pointer(Unsafe, T)` (unsafe pointer) | **значение меняется** — теперь `Pointer(Unsafe(T))` = pointer to uninit T |
-| `mut * T` | parse error | `Mut(Pointer(T))` ✅ |
-| `unsafe * T` | parse error | `Unsafe(Pointer(T))` — unsafe pointer (старый смысл `*unsafe T`) |
+| Token | Семантика (FINAL, Plan 138.5) |
+|-------|-------------------------------|
+| `ro T` | `Readonly(T)` — value-T wrapper, codegen-transparent (KEPT) |
+| `mut T` | `Mut(T)` — value-T wrapper, codegen-transparent (KEPT, §V2.2b) |
+| `unsafe T` | `Unsafe(T)` — value-T wrapper, MaybeUninit (KEPT, §V2.3) |
+| `consume T` | consume wrapper (receiver/field/decl, см. D162) |
+| `*T` | `Pointer(T)` — pointee ro (≡ `*ro T`) |
+| `*ro T` | `Pointer(Readonly(T))` — **CANONICAL** pointee ro |
+| `*mut T` | `Pointer(Mut(T))` — **CANONICAL** pointee mut |
+| `*unsafe T` | `Pointer(Unsafe(T))` — **CANONICAL** pointer к possibly-uninit T |
+| `mut * T` | ❌ `E_POINTER_PREFIX_MODIFIER` (prefix перед `*` запрещён; use `mut x *T` binding) |
+| `ro * T` | ❌ `E_POINTER_PREFIX_MODIFIER` |
+| `unsafe * T` | ❌ `E_POINTER_PREFIX_MODIFIER` (RETIRED `Unsafe(Pointer)`; nullable = `Option[*T]`, FFI nullable-uninit = `Option[*unsafe T]`) |
 
-### §V2.1 — universal right-binding rule
+### §V2.1 — universal right-binding rule (value-T modifiers)
 
-**Правило:** type-level modifier применяется к ВСЕМУ что справа от него до
-конца type-expression, либо до следующего modifier.
+**Правило (KEPT для value-T):** type-level modifier применяется к ВСЕМУ что
+справа от него до конца type-expression, либо до следующего modifier. Это про
+**value-T wrappers** (`ro`/`mut`/`unsafe`/`consume`), codegen-transparent.
 
-Modifiers (выровненная иерархия):
+> **⚠️ Pointer-часть RETRACTED (Plan 138.5):** `*` НЕ «pure constructor с
+> prefix-модификатором снаружи». Указатель несёт **postfix pointee**-модификатор,
+> сразу после `*` (`*mut T`/`*ro T`/`*unsafe T`). Prefix перед `*`
+> (`mut * T`/`ro * T`/`unsafe * T`) — `E_POINTER_PREFIX_MODIFIER` (§1).
+
+Modifiers (выровненная иерархия) — применимы к value-T и как postfix pointee:
 - `ro` — readonly (compile-time immutability)
 - `mut` — mutable (compile-time mutability marker)
 - `unsafe` — unsafe (init/layout/aliasing contracts off)
 - `consume` — consume (unique ownership, D162 follow rules)
 
-Parser pattern (uniform):
+Parser pattern (FINAL):
 ```
-TYPE := MODIFIER TYPE | BASE_TYPE | '*' TYPE | '[' ']' TYPE | ...
+TYPE     := MODIFIER TYPE | BASE_TYPE | '*' POINTEE | '[' ']' TYPE | ...
+POINTEE  := POINTEE_MOD POINTEE | TYPE        // постфикс после '*'
 MODIFIER := 'ro' | 'mut' | 'unsafe' | 'consume'
+POINTEE_MOD := 'ro' | 'mut' | 'unsafe'
 ```
 
-Каждый modifier — `TypeRef::<Modifier>(Box<TypeRef>)` wrapper. Recursion
-автоматическая через `parse_type()`. `*` остаётся pure constructor —
-**без inline modifier**.
+Каждый value-modifier — `TypeRef::<Modifier>(Box<TypeRef>)` wrapper. `*` —
+конструктор `Pointer(Box<TypeRef>)`, чей pointee может нести `ro`/`mut`/`unsafe`
+**постфиксом**. Prefix-модификатор перед `*` запрещён (см. banner выше).
 
 ### §V2.2 — chain semantic (multi-modifier / multi-pointer)
 
-Под V2 rule типы читаются строго left-to-right:
+> **⚠️ RETRACTED (Plan 138.5):** трактовка «`mut * T` = `Mut(Pointer(T))`
+> (outer pointer-mut как type-wrapper)» **отозвана**. Outer-pointer-mut в типе
+> больше не существует — reassignability указателя выражается **binding'ом**
+> (`let`/`mut`, D36), а pointee-мутабельность — **postfix** после `*`.
+
+FINAL chains читаются с postfix-pointee; reassignability — отдельно через binding:
 
 ```nova
-ro * T              // Readonly(Pointer(T))     — ro-binding ptr к T
-mut * T             // Mut(Pointer(T))          — mut-binding ptr к T
-unsafe * T          // Unsafe(Pointer(T))       — unsafe ptr (may null/dangle) к T
-* unsafe T          // Pointer(Unsafe(T))       — valid ptr к possibly-uninit T
-unsafe * unsafe T   // Unsafe(Pointer(Unsafe(T))) — unsafe ptr к uninit T (worst case)
-mut * ro * T        // Mut(Pointer(Readonly(Pointer(T))))
-                    // mut-binding ptr к ro-ptr к T
-ro p mut * unsafe T // binding `p`: ro; type: Mut(Pointer(Unsafe(T)))
-                    // = ro-binding к mut-ptr к possibly-uninit T
+*ro T               // Pointer(Readonly(T))  — ptr к ro T (≡ *T)
+*mut T              // Pointer(Mut(T))       — ptr к mut T (writable target)
+*unsafe T           // Pointer(Unsafe(T))    — valid (non-null) ptr к possibly-uninit T
+*mut *ro T          // Pointer(Mut(Pointer(Readonly(T)))) — ptr к (mut ptr к ro T)
+                    // читается left→right: внешний * с pointee `mut *ro T`
+let  p *ro T        // binding ro:  p фиксирован; pointee ro
+mut  p *mut T       // binding mut: p переприсваиваем; pointee writable
+mut  p *unsafe u8   // binding mut: p переприсваиваем; pointee possibly-uninit byte
 ```
 
-Канонический пример FFI out-param:
+RETRACTED (теперь parse error `E_POINTER_PREFIX_MODIFIER`):
 ```nova
-external fn os_read(fd int, buf mut * unsafe u8, n int) -> int
-//                     binding mut  ptr (uninit) byte
-// buf: mut-pointer; pointee initially uninit; OS fills, returns count.
+mut * T             // ❌ — вместо: binding `mut p *T`
+ro  * T             // ❌ — вместо: binding `let p *T` (или `ro p *T`)
+unsafe * T          // ❌ — RETIRED Unsafe(Pointer); вместо: Option[*T] / *unsafe T (pointee)
+mut * ro * T        // ❌ — вместо: `mut p *ro *... ` postfix-chain
+ro p mut * unsafe T // ❌ — вместо: `mut p *unsafe T` (binding mut + pointee unsafe)
+```
+
+Канонический пример FFI out-param (FINAL):
+```nova
+external fn os_read(fd int, buf *unsafe u8, n int) -> int
+//                              pointee uninit byte; buf non-null *; OS fills, returns count.
+// Если sam buf переприсваивается в теле — `mut buf` на стороне caller's binding.
 ```
 
 ### §V2.3 — `unsafe T` semantic (MaybeUninit-style)
+
+> **✅ KEPT (Plan 138.5):** `unsafe T` value-wrapper **сохраняется без изменений**
+> — он про **значение** (maybe-uninit T-typed память), ортогонален указателям и
+> prefix-запрету. `mut x unsafe T` = mut-binding к maybe-uninit value. Указательная
+> форма «ptr к uninit T» = `*unsafe T` (postfix pointee, §1), а НЕ `* unsafe T` с
+> пробелом и НЕ `unsafe *` (последнее retired).
 
 `unsafe T` означает «T-typed memory с снятыми init/layout/aliasing contracts».
 Caller asserts validity at use sites. Concretely:
@@ -8157,67 +8248,72 @@ generic wrapper.
 но не initialized. Compiler-emitted runtime check НЕ выполняется (это и
 есть escape hatch).
 
-### §V2.4 — Option B / niche optimization под V2
+### §V2.4 — Option B / niche optimization (FINAL, Plan 138.5)
 
-NPO (Plan 118 D216 §7) применяется к pointer-typed Option **в зависимости
-от outermost pointer modifier**:
+> **⚠️ RETRACTED-and-simplified (Plan 138.5):** старая таблица зависела от
+> «outermost pointer modifier» с `Unsafe(Pointer)` (16-байтные строки). После
+> retire `unsafe *` (Unsafe(Pointer)) — указатель **ВСЕГДА** non-null, поэтому
+> NPO применяется **универсально** (8 байт), без зависимости от модификатора.
+
+Все указатели (`*T`/`*ro T`/`*mut T`/`*unsafe T`) — **guaranteed non-null**
+(§1). Поэтому `Option[*…]` всегда NPO-eligible (8 байт, null = None):
 
 | Тип | Может содержать null? | NPO размер |
 |-----|----------------------|------------|
-| `Option[* T]` (≡ `Option[ro * T]`) | ❌ | 8 байт ✅ |
-| `Option[mut * T]` | ❌ | 8 байт ✅ |
-| `Option[unsafe * T]` | ✅ да (unsafe-pointer допускает null) | 16 байт ❌ |
-| `Option[* unsafe T]` | ❌ pointer non-null; pointee uninit OK | 8 байт ✅ |
-| `Option[unsafe * unsafe T]` | ✅ | 16 байт ❌ |
+| `Option[*T]` (≡ `Option[*ro T]`) | ❌ | 8 байт ✅ |
+| `Option[*mut T]` | ❌ | 8 байт ✅ |
+| `Option[*unsafe T]` | ❌ pointer non-null; pointee uninit OK | 8 байт ✅ |
+| `Option[*mut *ro T]` (chain) | ❌ | 8 байт ✅ |
 
-NPO triggers iff outermost wrapper guarantees pointer-non-null. `unsafe * T`
-исключается — null может быть legitimate value. `* unsafe T` включён —
-pointer всё ещё guaranteed non-null, только pointee suspect.
+**Nullable raw-uninit (FFI, C `T*` может быть NULL):** `Option[*unsafe T]` —
+None = NULL, Some = non-null ptr к possibly-uninit T (validity асертится на
+deref в `unsafe {}`). Это единственная nullable-форма; отдельного raw-nullable
+`unsafe * T` больше нет. Nested `Option[Option[*T]]` — fallback к tagged repr +
+`W_OPTION_DOUBLE_NESTED` (без изменений, см. §7 V4).
 
 ### §V2.5 — migration path
 
-**Plan 118.5 NEW sub-plan** ([M-118.5-right-binding-migration]) — отдельный
-implementation effort, ~1-2 dev-day:
+> **⚠️ REVISED (Plan 138.5):** шаги про prefix-pointer-форму отозваны. FINAL =
+> postfix pointee canonical; prefix перед `*` — hard error
+> `E_POINTER_PREFIX_MODIFIER`. Value-T wrappers (`Mut`/`Unsafe`/`Readonly`,
+> codegen-transparent) сохраняются (AST/codegen/checker шаги ниже про них KEPT).
 
-1. **AST changes:**
-   - Добавить `TypeRef::Mut(Box<TypeRef>)`
-   - Добавить `TypeRef::Unsafe(Box<TypeRef>)`
-   - Generalize `TypeRef::Readonly` → unified `TypeRef::Modifier(Mod, Box<TypeRef>)`
-     OR оставить три separate (cleaner pattern matching)
-   - Remove `PointerModifier` enum from `TypeRef::Pointer`; pointer becomes
-     `Pointer(Box<TypeRef>)`
+1. **AST changes (KEPT для value-T):**
+   - `TypeRef::Mut(Box<TypeRef>)` / `TypeRef::Unsafe(Box<TypeRef>)` — value-T
+     wrappers (codegen-transparent / MaybeUninit). Также используются как
+     **pointee** содержимое внутри `Pointer(...)` (`*mut T` = `Pointer(Mut(T))`).
+   - `TypeRef::Pointer(Box<TypeRef>)` — конструктор; pointee несёт `ro`/`mut`/
+     `unsafe` **постфиксом**. Outer-pointer-mut wrapper (`Mut(Pointer)`) больше
+     не строится из синтаксиса (prefix запрещён).
 
-2. **Parser changes:**
-   - Добавить `mut T` / `unsafe T` parse arms в `parse_type()`, recursive
-   - Remove inline modifier parsing в `Star` branch
-   - Emit `W_DEPRECATED_POINTER_INLINE_MODIFIER` для legacy `*ro T` / `*mut T` /
-     `*unsafe T` syntax (one-release grace period)
+2. **Parser changes (FINAL):**
+   - `mut T` / `unsafe T` parse arms (value-T) — recursive. KEPT.
+   - `*` Star branch парсит postfix pointee modifier (`*mut`/`*ro`/`*unsafe`).
+   - **Reject** `ro`/`mut`/`unsafe` token непосредственно перед `*` →
+     `E_POINTER_PREFIX_MODIFIER` (НЕ warning — hard error в Plan 138.5 enforce-фазе).
 
-3. **Codegen changes:**
-   - `Mut(T)` / `Unsafe(T)` — C-level **no-op** для primitive T (Just inner_c)
-   - `Unsafe(T)` runtime semantics: MaybeUninit storage — no zeroing on init
-   - `Unsafe(Pointer(T))` legitimate pointer; `Pointer(Unsafe(T))` legitimate
-     pointee — оба emit same C `T*` ABI
+3. **Codegen changes (KEPT):**
+   - `Mut(T)` / `Unsafe(T)` value-wrapper — C-level **no-op** для primitive T.
+   - `Pointer(Mut(T))` / `Pointer(Readonly(T))` / `Pointer(Unsafe(T))` — pointee
+     модификаторы; все emit `T*` ABI (mut/ro различаются на assignment-check).
 
-4. **Type-checker changes:**
-   - `Unsafe(T)` value read → require `unsafe { }` context — emit
-     `E_UNSAFE_T_READ_REQUIRES_WRAP`
-   - `Unsafe(T)` value write — safe (transition)
-   - `T → Unsafe(T)` implicit (widening — safety contract relaxes)
-   - `Unsafe(T) → T` explicit — requires `unsafe { }` + cast (narrowing)
-   - NPO calculation under §V2.4 table
+4. **Type-checker changes (KEPT):**
+   - `Unsafe(T)` value read → `E_UNSAFE_T_READ_REQUIRES_WRAP` (§V2.3 value-wrapper).
+   - `Unsafe(T)` value write — safe; `T → Unsafe(T)` implicit; `Unsafe(T) → T`
+     explicit (unsafe cast).
+   - NPO — универсальный (§V2.4, все `*…` non-null → 8 байт).
 
-5. **Migration sweep:**
-   - ~30-50 nova_tests fixtures с `*ro T` / `*mut T` / `*unsafe T`
-   - ~5-10 stdlib references (`std/runtime/raw_mem.nv` пр.)
-   - Examples/cookbook updates
-   - Plan 118.1 / 118.2 / 118.3 / 118.4 syntax updates
+5. **Migration sweep (Plan 138.5 Ф.2 enforce):**
+   - prefix usages `mut */ro */unsafe *` → postfix `*mut T`/`*ro T`/`*unsafe T`
+     (или binding `mut x *T` / nullable `Option[*T]`). Основной call-site:
+     `std/runtime/raw_mem.nv` (`dst mut * u8` → `dst *mut u8`).
+   - Retire `Unsafe(Pointer)` (`unsafe * T`): → `Option[*T]` / `Option[*unsafe T]`.
 
 6. **Spec amends downstream:**
-   - D33 (binding propagation) — extend для `mut` / `unsafe` / `consume`
-   - D216 §1-3 (pointer family + chain order) — replace inline-modifier examples
-   - D217 (FFI intrinsics) — RawMem signatures под new syntax
-   - D218 (slice + MaybeUninit) — рассмотреть, не дублирует ли `unsafe T` MaybeUninit
+   - D36 (binding readonly default) — reassignability указателя = binding cross-ref.
+   - D184 (return mut default) — pointer-return = **pointee**-mut.
+   - D216 §1-3 — postfix pointee canonical (выполнено).
+   - D217 (FFI intrinsics) — RawMem signatures postfix (Plan 138.5 Ф.2).
 
 ### §V2.6 — backward compatibility
 
@@ -8231,41 +8327,53 @@ implementation effort, ~1-2 dev-day:
 > writable. Закрыт `[M-138.2-v2-propagation-impl-gap]`. Полная parser-level prefix-migration
 > (`[M-118.5-right-binding-migration]`) остаётся отдельным effort'ом.
 
-В V2 grace period:
-- `*ro T` / `*mut T` parsed как legacy syntax — emit `W_DEPRECATED_POINTER_INLINE_MODIFIER`,
-  internally rewritten к `Readonly(Pointer(T))` / `Mut(Pointer(T))`
-- `*unsafe T` — **breaking semantic change** — emit `W_BREAKING_UNSAFE_PTR_MEANING`,
-  treat as `Unsafe(Pointer(T))` (старый смысл — unsafe pointer). New code должен
-  использовать `unsafe * T` для unsafe pointer и `* unsafe T` для pointee uninit
-- After V2.1 release (one cycle): warnings становятся errors
+**FINAL (Plan 138.5) — НЕТ grace-period для prefix:**
+- `*ro T` / `*mut T` / `*unsafe T` (postfix) — **canonical**, не deprecated.
+  `Pointer(Readonly(T))` / `Pointer(Mut(T))` / `Pointer(Unsafe(T))`.
+- `mut * T` / `ro * T` / `unsafe * T` (prefix перед `*`) — **hard error**
+  `E_POINTER_PREFIX_MODIFIER` (НЕ warning). Migrate → postfix или binding-`mut`.
+- `unsafe * T` (`Unsafe(Pointer)`, старый raw-nullable) — **RETIRED**. Nullable =
+  `Option[*T]` (NPO); FFI nullable-uninit = `Option[*unsafe T]`.
+- `*unsafe T` (postfix) сохраняет смысл «ptr к possibly-uninit T» (pointee unsafe).
+
+> **Historical (V2 grace-period draft, отозвано Plan 138.5):** ранее
+> планировался `W_DEPRECATED_POINTER_INLINE_MODIFIER` для postfix-формы и
+> миграция на prefix `mut * T`. Это направление **обратно** финальной модели и
+> не реализуется.
 
 ### §V2.7 — follow-up markers
 
-- `[M-118.5-right-binding-migration]` — implementation (parser + codegen + tests)
-- `[M-118.5-unsafe-t-readwrite-semantics]` — type-checker E_UNSAFE_T_READ_REQUIRES_WRAP
-- `[M-118.5-mut-t-vs-binding-distinction]` — clarify когда `mut T` тип-level vs
-  binding-level (`mut x T` vs `x mut T`)
+- `[M-118.5-right-binding-migration]` — **SUPERSEDED by Plan 138.5** (prefix
+  pointer-form retired; postfix pointee canonical + `E_POINTER_PREFIX_MODIFIER`
+  enforce — Plan 138.5 Ф.2). Value-T wrapper parsing остаётся.
+- `[M-118.5-unsafe-t-readwrite-semantics]` — type-checker E_UNSAFE_T_READ_REQUIRES_WRAP (KEPT, §V2.3)
+- `[M-118.5-mut-t-vs-binding-distinction]` — ✅ CLOSED (§V2.2b: `mut T` value-wrapper
+  transparent; pointer-mut = pointee postfix / binding, Plan 138.5)
 - `[M-118.5-consume-as-type-modifier]` — generalize `consume` (currently
   receiver/field/decl) к универсальный type wrapper
-- `[M-118.5-d218-maybeuninit-duplication]` — review whether Plan 118.2 D218
-  MaybeUninit[T] остаётся отдельным wrapper или заменяется `unsafe T` syntax
-- `[M-118.5-npo-recalculation]` — extend NPO codegen support под §V2.4 table
+- `[M-118.5-d218-maybeuninit-duplication]` — ✅ CLOSED (D218 RETRACTED — MaybeUninit
+  subsumed `unsafe T`)
+- `[M-118.5-npo-recalculation]` — NPO теперь универсальный (§V2.4 FINAL — все `*…`
+  non-null → 8 байт); recalculation сводится к «всегда NPO для pointer-inner»
 
 ### Cross-amend impact
 
-- **D33** (binding propagation) — extend rule к `mut` / `unsafe` / `consume`
-- **D216 §1-3** — pointer modifier syntax migrated к prefix form
-- **D217** (FFI intrinsics) — RawMem signatures rewritten
-- **D218** (slice + MaybeUninit) — possible redundancy review
+- **D33** (binding propagation) — extend rule к value-T `mut` / `unsafe` / `consume`
+- **D216 §1-3** — pointer modifier syntax = **postfix pointee canonical**
+  (Plan 138.5; prefix перед `*` запрещён)
+- **D36** (binding readonly default) — reassignability указателя = binding (не тип)
+- **D184** (return mut default) — pointer-return ставит **pointee**-mut
+- **D217** (FFI intrinsics) — RawMem signatures postfix pointee
+- **D218** (slice + MaybeUninit) — MaybeUninit subsumed `unsafe T` (см. D218 RETRACTED)
 - **D162** (consume types) — extend для `consume T` type wrapper position
 
 ### Why now
 
-Right-binding rule **уже** работает для `ro` (parser-verified). `mut` /
-`unsafe` / `consume` остаются ad-hoc. Без формализации — будущие user
-attempts писать `mut * T` или `unsafe T` встретят неинтуитивные parse errors.
-Formalize ДО того как FFI surface разрастётся; migration cost растёт линейно
-с количеством fixtures.
+Right-binding rule **уже** работает для `ro` (parser-verified) — для **value-T**
+модификаторов это правило сохраняется. Для **указателей** Plan 138.5 выбрал
+postfix-pointee canonical: один модификатор = pointee, постфикс после `*`;
+reassignability = binding (`let`/`mut`). Это убирает путаницу «двух mut» (outer
+pointer-mut в типе vs pointee-mut), особенно в return-позиции (D184×D216).
 
 `unsafe T` first-class также unlock'ает MaybeUninit semantic без duplication
 с Plan 118.2 D218 — это **simplification**, не addition.
@@ -9407,12 +9515,14 @@ grammar regular and predictable. The wrapper has zero semantic at runtime.
 
 **Practical implications:**
 
-- `mut * T` parses as `Mut(Pointer(T))` — Mut wraps Pointer; semantic
-  meaning «mut pointer» entirely encoded by the OUTER wrapper. Pointer +
-  Mut wrappers are distinct AST constructs.
 - `mut int` parses as `Mut(Named("int"))` — wrapper transparent for codegen
   (emits just `nova_int`). Type-checker doesn't validate Mut(non-Pointer)
   as anything special.
+- `*mut T` parses as `Pointer(Mut(T))` — `Mut` is the **pointee** modifier
+  (postfix, INNER of Pointer), означает writable target. **`mut * T` (Mut
+  снаружи Pointer) НЕ строится из синтаксиса** — prefix перед `*` запрещён
+  (`E_POINTER_PREFIX_MODIFIER`, §1, Plan 138.5). «Mut pointer» (reassignable
+  binding) выражается binding'ом `mut p *T`, не type-wrapper'ом.
 - `let mut x int = ...` — the **binding** mut (Plan 108) provides mutation
   rights. `let x mut int = ...` would parse but the `mut` wrapper on `int`
   doesn't grant mutation (binding `x` is implicit ro per Plan 108).
@@ -9453,7 +9563,8 @@ Plan 118.5 V2 §V2.3 promoted `unsafe T` to first-class type wrapper with
   (E_UNSAFE_T_NARROW_REQUIRES_UNSAFE)
 
 This first-class wrapper:
-- Composes orthogonally с pointer modifier («ptr к uninit T» = `* unsafe T`)
+- Composes orthogonally с pointer modifier («ptr к uninit T» = `*unsafe T`,
+  postfix pointee — Plan 138.5)
 - Doesn't require generic instantiation
 - Uses universal right-binding rule for grammar uniformity
 - Provides finer-grained codegen control (NPO recalc per §V2.4)
@@ -9470,7 +9581,7 @@ The «slice fat-pointer» portion of D218 remains a valid sub-plan
 | `MaybeUninit[i32]`     | `unsafe i32`       |
 | `MaybeUninit<T>::uninit()` | `mut x unsafe T = uninit_value` (write-safe init) |
 | `m.assume_init()`      | `unsafe { m as T }` (narrow cast) |
-| `*mut MaybeUninit<T>`  | `* unsafe T`       |
+| `*mut MaybeUninit<T>`  | `*unsafe T` (postfix pointee к uninit T) |
 
 `MaybeUninit[T]` type itself **not added** в std. D218 spec section marked
 RETRACTED для MaybeUninit subset; slice + ManuallyDrop subsets remain
@@ -9499,13 +9610,20 @@ Both errors are suppressible by:
 
 ## D216 V3 amend (Plan 118.5 V3, 2026-06-04) — 4 modifier composition rules
 
-> **Status:** 🆕 SPEC LANDED 2026-06-04. Implementation work tracked in
-> Plan 118.5 V3 phases Ф.1-Ф.5 (parser + checker + 12+ new fixtures).
->
-> **Builds on:** D216 V1 + V2 (right-binding rule + first-class unsafe T).
->
-> **Adds:** 4 design rules for modifier composition with `safe` keyword
-> as explicit propagation stopper.
+> **⚠️ LARGELY SUPERSEDED — Plan 138.5 (2026-06-11):** V3 строился вокруг
+> **prefix-модификаторной пропагации** (outer modifier перед `*` распространяется
+> через Pointer на pointee) + `safe`-стоппера. После запрета prefix перед `*`
+> (`E_POINTER_PREFIX_MODIFIER`, §1) **пропагировать нечего**:
+> - **§V3.3** (right-binding propagation через Pointer) — **SUPERSEDED** (нет
+>   outer-модификатора над Pointer → ничего не пропагируется).
+> - **§V3.4** `safe` стоппер + `Unsafe(Pointer)` пропагация — **RETIRED** (`safe`
+>   останавливал outer-unsafe-пропагацию, которой больше нет). Type-level
+>   E_REDUNDANT для `ro * ro T` / `unsafe * unsafe T` — moot (prefix запрещён).
+> - **§V3.2** ordering — **flip на `ro unsafe T`** (safety-INNER, вплотную к базе,
+>   как `external unsafe fn`); касается только value-T / pointee, редкий случай.
+> - **§V3.1** (ro+mut adjacency на value-T) — **KEPT** (про value-T mutability
+>   class, не про указатели); pointer-примеры в нём заменены на postfix/binding.
+> **Builds on (residual):** D216 V1 (postfix pointee) + V2 §V2.3 (`unsafe T` value).
 
 ### §V3.1 — Storage-class-aware ban на `ro+mut` adjacency
 
@@ -9530,12 +9648,14 @@ allowed regardless of T's storage class. Closes
   
   Type-position conflicting combinations → **`E_MUTABILITY_CONFLICT_VALUE_TYPE`**:
     ```nova
-    fn f(p * ro mut int)             // ❌ — pure type-level ro+mut on value T
-    fn f(p * mut ro Point)           // ❌ — same
+    fn f(p *ro mut int)              // ❌ — pointee ro+mut on value T (postfix chain)
+    fn f(p *mut ro Point)            // ❌ — same (postfix)
     fn f(p ro mut int)               // ❌ — type-form (name absent before modifiers)
     fn f() -> mut ro str             // ❌ — return type-form
     type X { field ro mut Acc }      // ❌ if Acc is value record
     ```
+    (Note Plan 138.5: prefix `* ro mut int` сам по себе — `E_POINTER_PREFIX_MODIFIER`;
+    pointee-adjacency `*ro mut int` postfix — это §V3.1 value-T conflict.)
   
   Binding-form ALLOWED для value-T:
     ```nova
@@ -9646,117 +9766,94 @@ fn check_v3_ro_mut_conflict(
 **Retracts D33 amend rows:** the previous unconditional «`ro x mut T` ✅»
 and «`mut x ro T` ✅» entries get storage-class qualification per §V3.1.
 
-### §V3.2 — Modifier ordering (safety-outer / mutability-inner)
+### §V3.2 — Modifier ordering (FLIPPED to safety-inner: `ro unsafe T`)
 
-**Rule:** `unsafe` (safety class) outer, `ro`/`mut` (mutability class)
-inner. Reverse ordering → **`E_MODIFIER_ORDER`**.
+> **⚠️ FLIPPED (Plan 138.5):** прежнее правило «safety-outer / mutability-inner»
+> (`unsafe ro T`) **перевёрнуто** на **safety-inner / mutability-outer**
+> (`ro unsafe T`) — `unsafe` вплотную к базе T, как `external unsafe fn` ставит
+> `unsafe` вплотную к `fn`. Семантически свободно: оси ортогональны
+> (`Readonly(Unsafe(T))` ≡ `Unsafe(Readonly(T))`). Касается только **value-T**
+> и **pointee** (после forbid-prefix `*ro unsafe T` — редкий случай); для
+> указателя-binding ordering не возникает.
 
-**Rationale:** safety wraps mutability conceptually — «this T's mutability
-contract is uncertain» is meaningful; «this T's safety contract is
-read-only» is not (safety is a property of access patterns, not
-mutability). Matches Rust precedent `*const T` (safety wrapper outer).
+**Rule (FINAL):** `ro`/`mut` (mutability class) — **outer**; `unsafe` (safety
+class) — **inner** (вплотную к базе). Reverse → **`E_MODIFIER_ORDER`**.
+
+**Rationale:** консистентность с keyword-формой `external unsafe fn` (unsafe
+непосредственно перед тем, что оно квалифицирует). Оси независимы, выбор —
+вопрос единообразия записи.
 
 | Form | AST | Status |
 |------|-----|--------|
 | `unsafe T` | `Unsafe(T)` | ✅ |
-| `unsafe ro T` | `Unsafe(Readonly(T))` | ✅ |
-| `unsafe mut T` | `Unsafe(Mut(T))` | ✅ |
-| `ro unsafe T` | `Readonly(Unsafe(T))` | ❌ E_MODIFIER_ORDER |
-| `mut unsafe T` | `Mut(Unsafe(T))` | ❌ E_MODIFIER_ORDER |
-| `ro * unsafe T` | `Readonly(Pointer(Unsafe(T)))` | ❌ E_MODIFIER_ORDER (transitive through Pointer) |
-| `unsafe * ro T` | `Unsafe(Pointer(Readonly(T)))` | ✅ |
+| `ro unsafe T` | `Readonly(Unsafe(T))` | ✅ (safety-inner) |
+| `mut unsafe T` | `Mut(Unsafe(T))` | ✅ |
+| `unsafe ro T` | `Unsafe(Readonly(T))` | ❌ E_MODIFIER_ORDER |
+| `unsafe mut T` | `Unsafe(Mut(T))` | ❌ E_MODIFIER_ORDER |
+| `*ro unsafe T` | `Pointer(Readonly(Unsafe(T)))` | ✅ (pointee: ro outer, unsafe inner) |
+| `*unsafe ro T` | `Pointer(Unsafe(Readonly(T)))` | ❌ E_MODIFIER_ORDER (pointee) |
+
+> Note (Plan 138.5): prefix-формы (`ro * unsafe T` / `unsafe * ro T`) сами по себе
+> теперь `E_POINTER_PREFIX_MODIFIER` (§1) — ordering-проверка применяется только к
+> value-T и к **pointee** содержимому (постфикс после `*`).
 
 **Detection:** parser KwRo/KwMut arms check `inner.contains_unsafe_in_chain()`
-helper — recursive walk через Readonly/Mut/Pointer wrappers (stopping at
+helper — recursive walk через Readonly/Mut wrappers (stopping at Pointer /
 Named/Array/Tuple/Func boundaries). If found, emit E_MODIFIER_ORDER.
 
-**§V3.2 EXCEPTION:** `safe T` keyword (V3.4) breaks the chain — safe
-explicitly opts out of outer modifier propagation, so `ro * safe unsafe T`
-is **valid** (safe stopper at boundary; inner unsafe is independent).
+### §V3.3 — Right-binding propagation semantics (SUPERSEDED, Plan 138.5)
 
-### §V3.3 — Right-binding propagation semantics (extended)
+> **⚠️ SUPERSEDED (Plan 138.5):** §V3.3 описывал, как **outer** модификатор
+> (перед `*`) семантически распространяется через Pointer на pointee. После
+> запрета prefix перед `*` (`E_POINTER_PREFIX_MODIFIER`, §1) **outer-модификатора
+> над Pointer не существует** → пропагировать нечего → правило **отозвано**.
 
-V2 §V2.1 introduced universal right-binding rule. V3 §V3.3 makes the
-semantic implication explicit:
-
-**Rule:** outer modifier semantically applies к ALL nested types of the
-same class, up к the next same-class modifier OR `safe` stopper OR explicit
-different-class modifier boundary.
-
-Worked examples:
+В FINAL-модели pointee-модификатор пишется **явно постфиксом** — никакого
+наследования/пропагации нет:
 
 ```nova
-ro * T                  // Readonly(Pointer(T))
-                        // semantic: ro applies к Pointer AND inherited
-                        // к T (т.к. T at pointee level, no inner modifier
-                        // stops propagation)
-                        // Practical: same as `ro * ro T` but inner ro is
-                        // E_REDUNDANT (V3.4 — see below)
-
-ro * mut T              // Readonly(Pointer(Mut(T))) — V3.1 forbids
-                        // (mut is different mutability class и conflicts
-                        // c outer ro в propagation chain)
-
-unsafe * T              // Unsafe(Pointer(T))
-                        // semantic: outer unsafe propagates через Pointer
-                        // к T's pointee value level — `.read()` returns
-                        // `unsafe T` (not bare T)
-
-unsafe * safe T         // Unsafe(Pointer(T)) с safe-stopper marker
-                        // semantic: outer unsafe applies к Pointer ops
-                        // (deref check), but T at pointee level is
-                        // explicitly safe (no inherited unsafe wrapper).
-                        // `.read()` returns bare T (safe value).
+*T          // Pointer(Readonly(T)) — pointee ro явно (≡ *ro T)
+*ro T       // Pointer(Readonly(T)) — то же, явная форма
+*mut T      // Pointer(Mut(T))      — pointee writable
+*unsafe T   // Pointer(Unsafe(T))   — pointee possibly-uninit
 ```
 
-### §V3.4 — `safe` keyword + E_REDUNDANT_TYPE_MODIFIER extension
+Реассайнабельность указателя — binding (`let`/`mut`, D36), не пропагация типа.
+Старые prefix-примеры (`ro * T`, `unsafe * T`, `unsafe * safe T`) — теперь
+parse error (`E_POINTER_PREFIX_MODIFIER`). Helpers `contains_unsafe_in_chain` /
+`contains_same_class_in_chain` остаются нужны лишь для **value-T** ordering
+(§V3.2), не для pointer-пропагации.
 
-**`safe` keyword** — explicit propagation stopper. Marks subsequent T as
-not inheriting outer modifier. Behavior-only marker (no AST variant; no
-codegen impact; parser tracks via `safe_stoppers: Vec<Span>` field в
-Parser struct).
+### §V3.4 — `safe` keyword RETIRED + E_REDUNDANT_TYPE_MODIFIER (binding-level only)
 
-**Syntax:** `safe T` after an outer modifier breaks the propagation chain.
-Standalone `safe T` at top level equivalent к bare `T` (no-op).
+> **⚠️ RETIRED (Plan 138.5):** `safe` модификатор был **propagation-stopper**
+> для outer-`unsafe`, существовавшей только в prefix-форме `unsafe * safe T`.
+> После запрета `unsafe *` (prefix, §1) outer-unsafe-пропагации нет → стопить
+> нечего → `safe` **бесполезен** → **RETIRED**. usage в std = 0. Standalone
+> `safe T` ≡ `T` и так был no-op. Lexer-токен `safe` в type-position — теперь
+> ошибка (E_POINTER_PREFIX_MODIFIER family / E_SAFE_RETIRED, см. §V3.5);
+> `safe_stoppers` / `is_safe_stopped_between` parser-машинерия — dead.
 
-**Use cases:**
-
-```nova
-unsafe * safe T         // pointer unsafe (caller-asserted),
-                        // T pointee SAFE (deref яields safe T)
-                        // ≈ Rust `*const T` semantic
-
-ro * safe mut T         // ro pointer (cannot rebind binding),
-                        // T pointee mutability INDEPENDENT (mut OK,
-                        // ro propagation stopped by safe)
-
-unsafe * safe unsafe T  // outer unsafe propagation stopped at safe,
-                        // inner unsafe is independent fresh wrapper
-                        // (NOT V3.1 redundancy)
-```
-
-**E_REDUNDANT_TYPE_MODIFIER extension** — V2 covered only binding-level
-(`ro x ro T`). V3 extends к type-level chains:
+**E_REDUNDANT_TYPE_MODIFIER (FINAL scope):** V2 covered binding-level
+(`ro x ro T`) — **KEPT**. V3 type-level prefix-chain extension
+(`ro * ro T` / `unsafe * unsafe T`) опиралась на prefix-пропагацию — **moot**,
+т.к. prefix перед `*` сам по себе `E_POINTER_PREFIX_MODIFIER` (§1).
 
 | Form | Status |
 |------|--------|
+| `ro x ro T` — binding ro + duplicate type-level ro | ❌ E_REDUNDANT_TYPE_MODIFIER (binding-level, KEPT) |
 | `ro T ro` — duplicate ro at same level | ❌ E_REDUNDANT_TYPE_MODIFIER |
-| `ro * ro T` (Readonly(Pointer(Readonly(T)))) | ❌ E_REDUNDANT (outer ro propagates; inner redundant) |
-| `mut * mut T` | ❌ E_REDUNDANT |
-| `unsafe * unsafe T` | ❌ E_REDUNDANT |
-| `ro * safe ro T` | ✅ (safe broke propagation; inner ro is fresh) |
-| `unsafe * safe unsafe T` | ✅ (same) |
+| `*ro ro T` — duplicate pointee ro (postfix) | ❌ E_REDUNDANT_TYPE_MODIFIER (pointee chain) |
+| `ro * ro T` (prefix) | ❌ E_POINTER_PREFIX_MODIFIER (prefix перед `*` — §1; не доходит до redundancy) |
+| `unsafe * unsafe T` (prefix) | ❌ E_POINTER_PREFIX_MODIFIER (§1) |
+| ~~`ro * safe ro T`~~ / ~~`unsafe * safe unsafe T`~~ | RETIRED — `safe` отозван |
 
-**Escape hatch:** inner redundant-looking modifier valid only when `safe`
-appears between outer and inner same-class modifier. Provides intentional
-re-application syntax.
-
-**Detection** (parser/mod.rs):
+**Detection** (parser/mod.rs, FINAL):
 ```rust
+// Value-T / pointee chains only (no prefix-before-* allowed):
 // In KwRo/KwMut/KwUnsafe arm after recursive parse_type:
-// if inner.contains_same_modifier_in_chain(class) AND
-//    !parser.is_safe_stopped_between(outer_span, inner_span)
-// → E_REDUNDANT_TYPE_MODIFIER
+//   if inner immediately repeats same modifier class → E_REDUNDANT_TYPE_MODIFIER
+// `safe` stopper machinery removed (no propagation to stop).
 ```
 
 ### §V3.5 — New error codes registered
@@ -9764,8 +9861,14 @@ re-application syntax.
 | Code | Description | Spec section |
 |------|-------------|--------------|
 | `E_MUTABILITY_CONFLICT_VALUE_TYPE` | ro+mut adjacency on value-type T | §V3.1 |
-| `E_MODIFIER_ORDER` | mut/ro wrapping unsafe (safety-outer rule) | §V3.2 |
-| `E_REDUNDANT_TYPE_MODIFIER` (extended) | same-class modifier repetition (was: binding-level only; V3 extends к type-level chains) | §V3.4 |
+| `E_MODIFIER_ORDER` | `unsafe` wrapping `ro`/`mut` (safety-INNER rule, flipped Plan 138.5) | §V3.2 |
+| `E_REDUNDANT_TYPE_MODIFIER` | same-class modifier repetition (binding-level + value-T/pointee chains) | §V3.4 |
+| `E_POINTER_PREFIX_MODIFIER` | `ro`/`mut`/`unsafe` token перед `*` в type-position (Plan 138.5; extends `E_INVALID_POINTER_MODIFIER`) | §1 |
+
+> **`safe` модификатор RETIRED (Plan 138.5):** `safe T` в type-position больше не
+> валиден (был V3.4 propagation-stopper; пропагации нет). Parser трактует `safe`
+> перед `*`/типом как `E_POINTER_PREFIX_MODIFIER` family (или dedicated
+> `E_SAFE_RETIRED` — выбор enforce-фазы Ф.2). `safe_stoppers` machinery dead.
 
 E_PARAM_MOD_CONFLICT preserved для дисциплинирующих случаев:
 - `mut consume name T` / `consume mut name T` (D131 conflict)
@@ -9785,29 +9888,33 @@ per binding-context relaxation. Symmetric `mut x ro T` уже работал
   `E_MUTABILITY_CONFLICT_VALUE_TYPE` (binding-level distinction preserved
   per §V3.5)
 - `nova_tests/plan118/t1_9_chain_modifiers_ok.nv:15` — `*ro mut Acc`
-  becomes `Pointer(Readonly(Mut(Acc)))` — Acc is value-vs-reference
-  context-dependent (declared `type Acc {}` → reference record). Rewrite
-  к use safe stopper OR change Acc к value-record для NEG demonstration.
-- `nova_tests/plan118_5/t2_chain_canonical_ok.nv:14` — `ro * mut * Node`
-  — Node is reference; outer ro propagates через Pointer к inner mut
-  Pointer — V3.4 redundancy applies. Rewrite к `ro * ro * Node` (let
-  V3.4 propagate uniformly) OR use safe stopper.
-- stdlib `std/runtime/raw_mem.nv` — uses bare `*u8` and `mut * u8` —
-  V3-compliant без changes.
+  (postfix pointee chain) — Acc context-dependent. Plan 138.5 Ф.2: rewrite
+  к value-record для NEG demonstration, OR drop the redundant modifier.
+- `nova_tests/plan118_5/*` + `plan118_5_v3/*` — **built on prefix forms +
+  `safe`-stopper** (retired). Plan 138.5 Ф.2: convert к NEG fixtures
+  (`mut * T` / `safe T` → `E_POINTER_PREFIX_MODIFIER` / `E_SAFE_RETIRED`)
+  OR delete/rewrite к postfix-pointee equivalents.
+- stdlib `std/runtime/raw_mem.nv` — uses `*u8` and prefix `mut * u8` →
+  migrate prefix к postfix `*mut u8` (Plan 138.5 Ф.2). bare `*u8` unchanged.
 
 ### §V3.7 — Followup markers opened
 
-- `[M-118.5-V3-safe-keyword-impl]` — Ф.1 lexer + parser implementation
+- `[M-118.5-V3-safe-keyword-impl]` — **RETIRED by Plan 138.5** (`safe`
+  модификатор отозван; пропагации нет — стоппер бесполезен).
 - `[M-118.5-V3-ro-mut-storage-class]` — Ф.2 type-checker storage-class
-  detection + check
-- `[M-118.5-V3-modifier-order]` — Ф.3 parser + .read() return-type
-  propagation
-- `[M-118.5-V3-redundant-extension]` — Ф.4 parser ban + safe escape
+  detection + check (§V3.1 value-T — KEPT)
+- `[M-118.5-V3-modifier-order]` — §V3.2 ordering (FLIPPED к safety-inner,
+  Plan 138.5) — value-T / pointee only
+- `[M-118.5-V3-redundant-extension]` — E_REDUNDANT binding-level + pointee
+  chains (prefix-chain part moot — `safe` escape retired)
 - ✅ `[M-118.5-V3-binding-context-relaxation]` — **CLOSED 2026-06-05** —
   binding-form `ro x mut T` (и симметричное `mut x ro T`) allowed
   regardless of T storage class. Parser E_PARAM_MOD_CONFLICT lifted для
   pre-name ro + post-name mut combo. Type-form §V3.1 storage-class check
   unchanged.
+- `[M-138.5-pointer-prefix-enforce]` — Ф.2 parser/checker enforce
+  `E_POINTER_PREFIX_MODIFIER` + retire `safe`/`Unsafe(Pointer)` + migrate
+  prefix usages (Plan 138.5).
 
 ### D52 amend (Plan 124.8 Ф.2)
 
