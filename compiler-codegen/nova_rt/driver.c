@@ -347,7 +347,6 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
     NovaFiberQueue* sc = st->scope;
     int sl = st->slot;
     mco_coro* actual_co = (sc && sl >= 0 && sl < sc->count) ? sc->fibers[sl] : NULL;
-    NovaSchedState* sst = sc ? nova_sched_find_state(sc) : NULL;
 
     if (actual_co != st->expected_co) {
         /* WRONG-FIBER: scope->fibers[slot] does not match expected_co.
@@ -358,24 +357,19 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
          *   B) actual_co!=NULL — slot was reused by a different fiber after expected_co
          *      completed and freed the slot. expected_co is already dead.
          *
-         * Plan 83.11 fix (Fix B): check if expected_co is still MCO_SUSPENDED.
-         * If yes → alive, dispatch it directly instead of leaving it stuck forever.
-         * If no  → dead, just mark stage CLOSED (slot was legitimately reused). */
+         * Plan 83-go-cmn Ф.2 (correction #1, driver Fix-B rewrite): the driver
+         * holds expected_co directly, so the wake is BY-CO via nova_goready —
+         * the same single-winner path the cancel/primitive use. This is strictly
+         * cleaner than re-deriving identity from the slot: goready's WAIT->
+         * DISPATCHED CAS only fires if expected_co is genuinely parked (sub-case A);
+         * a dead/reused expected_co (sub-case B) has park_state==NIL/DEAD so goready
+         * is a no-op latch we simply skip. */
         mco_coro* expected_co = st->expected_co;
 
         if (expected_co && mco_status(expected_co) == MCO_SUSPENDED) {
             /* Sub-case A: expected_co is alive, stuck in mco_yield due to STALE race.
-             * Wake it directly. */
+             * Publish CLOSED so the park_until predicate is satisfied on resume. */
             __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
-            /* Clear parked[slot] so the slot is no longer marked as occupied.
-             * After this, alloc_slot can reuse the slot for a new fiber safely. */
-            if (sst && sl >= 0 && sl < nova_sched_cap_acq(sst)) {
-                bool exp_t = true;
-                __atomic_compare_exchange_n((volatile bool*)nova_sched_parked_at(sst, sl),
-                    &exp_t, false, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
-                if (sl < nova_sched_cap_acq(sst))
-                    __atomic_store_n(nova_sched_pending_wake_at(sst, sl), 0, __ATOMIC_RELEASE);
-            }
             /* Invalidate expected_co's slot record so its epilogue does NOT call
              * nova_scope_free_slot (the slot is unowned now — no new fiber took it
              * thanks to Fix A in alloc_slot). Use -2 sentinel (< 0, not -1). */
@@ -384,12 +378,10 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
             if (displaced_ctx) {
                 displaced_ctx->_nova_worker_slot = -2;  /* DISPLACED: epilogue skips free_slot */
             }
-            /* Transition PARKED→IDLE so the worker's CAS(IDLE→RUNNING) succeeds. */
-            nova_fiber_state_store(expected_co, NOVA_FIBER_STATE_IDLE);
-            /* Dispatch expected_co to its home worker via dispatch_ready. */
-            if (sc && sc->dispatch_ready) {
-                sc->dispatch_ready(sc->dispatch_ctx, expected_co);
-            }
+            /* By-co wake: goready wins WAIT->DISPATCHED, transitions fiber_state
+             * PARKED->IDLE, clears parked[slot]/parked_co[slot], and dispatches
+             * expected_co to its home worker. */
+            nova_goready(expected_co);
         } else {
             /* Sub-case B: expected_co is dead — slot was legitimately reused. */
             __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
@@ -397,10 +389,11 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
         return;
     }
 
-    /* Normal path: stage CLOSED + wake. */
+    /* Normal path: publish CLOSED, then wake by-co. */
     __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
 
-    /* Generic wake — pending_wake counter handles wake-before-park race. */
+    /* Generic wake — resolves parked_co[slot] and funnels through nova_goready;
+     * the WAIT->DISPATCHED latch handles the wake-before-park race. */
     nova_sched_wake(st->scope, st->slot);
 }
 
