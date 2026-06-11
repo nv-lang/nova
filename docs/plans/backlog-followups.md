@@ -27,6 +27,7 @@
 | `[M-83.11-grow-vs-wake-race]` | Grow-vs-wake torn pointer-read race (grow_state swap несинхр. с driver wake); тесты gated AUTOARM=0; 3 попытки фикса провалены — НЕ повторять. **Структурный фикс запланирован: Plan 83-go-cmn Ф.1+Ф.2+Ф.3** (fixed runq[256] never-realloc + gopark + nspinning/note); GitHub issue #2. Ф.1 ring-примитив ported+unit-tested. | Plan 83-go-cmn Ф.1-3 | P1 |
 | `[M-debug-line-directives]` | Нет `#line N "file.nv"` → дебаггер показывает C, не Nova. Только comment-only `/* SRC */`. | Plan 25 G9 → dedicated план | P1 |
 | `[M-83-study-go-c-mn]` | Изучить рабочий M:N из C-исходников Go (≤1.4 `runtime/proc.c`, work-stealing, sysmon-preempt) + подтянуть Nova-M:N. **✅ research+декомпозиция (2026-06-11): [Plan 83-study-go-c-mn](83-study-go-c-mn.md), 8 фаз; Ф.1 ring-примитив ported+unit-tested 10/10.** OPEN до завершения impl-фаз. | Plan 83-study-go-c-mn | P1 |
+| `[M-msvc-bounds-check-stmt-expr]` | Codegen эмитит GNU statement-expression `(*({ __typeof__(arr)... &_a->data[_i]; }))` для bounds-checked индексации (emit_c.rs ~9700/9720/15783/18571) → cl.exe C2059, **MSVC сломан широко** (регрессия после Plan 82 1049/16; bounds-check добавлен Plan 90/131/138). Fix: per-type inline helper `nova_idx_<T>`. Обнаружено в Plan 83-go-cmn (MSVC baseline). | Plan 145 | P1 |
 
 ## P2 — Correctness / Completeness
 

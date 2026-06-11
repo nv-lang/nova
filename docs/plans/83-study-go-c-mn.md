@@ -352,19 +352,26 @@ Pre-existing FAIL (НЕ от этой работы — runq dormant):
 - codegen/CC (от других планов на main, не рантайм): `detach_test` (E_READONLY_FIELD),
   `fn_array_collect_test` (undefined `copy`), `sleep_real_clock` (SLACK_MS undeclared).
 
-**Baseline MSVC — ⚠ ЗАБЛОКИРОВАН worktree-env (НЕ код):** harness MSVC-путь падает на
-сборке libuv/net.c (`C1083`), т.к. в copied-libuv нет собранного `libuv.lib` и сборка
-libuv под MSVC в worktree не проходит. В main MSVC работает (Plan 82: 1049/16) → это
-worktree setup-issue. **Next-session prerequisite:** собрать/скопировать `libuv.lib` под
-MSVC в worktree ИЛИ выполнять MSVC-валидацию интеграции в main-репо.
+**Baseline MSVC — ⚠ ЗАБЛОКИРОВАН двумя pre-existing проблемами main (НЕ моя работа):**
+1. ~~sqlite C1083~~ — **ПОЧИНЕНО** 2026-06-11: package-wide `[ffi]` sqlite-shim в
+   `nova_tests/nova.toml` force-include'ился во все ~1000 TU → cl.exe C1083 на shim-пути.
+   Заскоуплен в `nova_tests/plan115/nova.toml` (commit `fix(ffi): scope sqlite shim`).
+   clang plan115 11/0; sqlite ушёл из MSVC-компайла.
+2. **GNU statement-expression C2059** (вскрылось после фикса #1, было замаскировано):
+   codegen эмитит `(*({ __typeof__... &_a->data[_i]; }))` для bounds-checked индексации →
+   cl.exe C2059, MSVC сломан широко. **Регрессия после Plan 82** (был 1049/16). Заведено
+   **отдельной задачей [Plan 145](145-msvc-codegen-portability.md)** (`[M-msvc-bounds-check-stmt-expr]`).
+
+**Решение (user 2026-06-11): Go-M:N порт валидируется на CLANG** (baseline 102/6 рабочий);
+MSVC-валидация gated на Plan 145 (отдельный codegen-portability фикс, не смешивать с портом).
 
 **Не сделано осознанно (per «потом стоп»):** полный `nova test` baseline (concurrency
 достаточно как relevant-срез; full baseline снимать в начале integration-сессии — иначе
 устареет от merge'ей main); struct-scaffold за флагом (NovaRunq в NovaWorker, schedlink в
 SpawnCtxBase) — делать в начале cut-over, когда flag-ON сборка верифицируема на двух toolchain.
 
-**Первые шаги integration-сессии:** (1) починить worktree MSVC libuv; (2) снять свежий full
-baseline clang+MSVC; (3) struct-scaffold за `NOVA_RUNQ_FIXED` (OFF→зелёная сборка обоих,
+**Первые шаги integration-сессии:** (1) снять свежий full baseline **clang** (MSVC gated на
+Plan 145 — порт валидируется на clang); (2) ~~MSVC~~; (3) struct-scaffold за `NOVA_RUNQ_FIXED` (OFF→зелёная сборка clang,
 ON→компилируется); (4) cut-over park-state→SpawnCtxBase + deque→runq; (5) stress 66/66.
 
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).

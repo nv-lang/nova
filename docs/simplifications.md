@@ -34714,3 +34714,24 @@ vec_owned.nv `check` ok.
   spill-half exact, steal conservation. 10/10 PASS. ⚠ Это валидация ПРИМИТИВА; полная Ф.1
   acceptance (runtime-интеграция + build clang+MSVC + stress 66/66) — следующий шаг (atomic cut-over).
 - **GC вынесен в Plan 144** (precise GC impl из 83.13 research) — НЕ scope M:N-порта.
+
+### MSVC baseline (Plan 83-go-cmn) — два pre-existing бага main, 2026-06-11
+
+При попытке снять MSVC-baseline для порта вскрылись две **pre-existing** проблемы main
+(не связаны с портом):
+
+- **sqlite C1083 — ПОЧИНЕНО** (`fix(ffi): scope sqlite shim`). Package-wide
+  `[ffi] c_shims=[sqlite_mini_ffi.h]` в `nova_tests/nova.toml` force-include'ил sqlite-shim
+  во ВСЕ ~1000 тестовых TU → cl.exe C1083 на shim-пути → все net-зависимые тесты CC-FAIL под
+  MSVC. Архитектурно хрупко (один shim ронял весь suite). **Fix:** заскоуплен в
+  `nova_tests/plan115/nova.toml` (`name="plan115"` сохраняет D78 module-identity:
+  `module plan115.X` == package+src; как mathlib→`mathlib.calc`). Реальный потребитель —
+  только `plan115/t4_sqlite_e2e_ok`. clang plan115 11/0 PASS, sqlite ушёл из MSVC-компайла.
+- **GNU stmt-expr C2059 — заведено [Plan 145](plans/145-msvc-codegen-portability.md)**
+  (`[M-msvc-bounds-check-stmt-expr]`). Вскрылось после sqlite-фикса. Codegen эмитит
+  `(*({ __typeof__(arr) _a=arr; ... &_a->data[_i]; }))` (GNU statement-expression + `__typeof__`)
+  для bounds-checked индексации (emit_c.rs ~9700/9720/15783/18571) → cl.exe C2059 (не
+  поддерживает `({...})`). MSVC сломан широко — **регрессия после Plan 82** (был 1049/16;
+  bounds-check добавлен Plan 90/131/138). Fix Вариант A: per-type inline helper `nova_idx_<T>`
+  (portable C, lvalue+single-eval цел). **Решение user: Go-M:N порт валидируется на clang;
+  MSVC gated на Plan 145** (не смешивать codegen-rewrite с портом).

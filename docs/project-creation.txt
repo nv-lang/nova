@@ -35738,3 +35738,27 @@ NovaRunq, rewire _worker_main/spawn paths) — это ATOMIC CUT-OVER (gap-ан�
 n≥66 для валидации. Ф.2-Ф.8 PLANNED. GitHub issue #2 для grow-vs-wake.
 
 КОММИТЫ: a4783cafdfe (Plan 144), 40d916532a3 (план 8-фаз), <feat Ф.1 ring primitive>.
+
+--------------------------------------------------------------------------------
+2026-06-11 (доп) — build env + baseline + два pre-existing MSVC-бага main
+--------------------------------------------------------------------------------
+Решение user: «сборка + baseline на двух toolchain, потом стоп» (cut-over НЕ
+активировать); runq CAP 256→4096 (под 10k-fiber/MAXPROCS=1 workload, spill на
+200k тесте 166→1).
+
+- nova-cli собран release (1m33s); libuv скопирован в worktree.
+- clang concurrency baseline: PASS 102 / FAIL 6 (все pre-existing, runq dormant).
+- runq.h: header-compat guard (minicoro.h coexist, C11+C99-pedantic 0 warn).
+
+MSVC baseline вскрыл ДВА pre-existing бага main (НЕ порт, НЕ worktree):
+1. sqlite C1083 — ПОЧИНЕНО. Package-wide [ffi] sqlite-shim в nova_tests/nova.toml
+   force-include'ился во все ~1000 TU → cl.exe C1083. Заскоуплен в
+   nova_tests/plan115/nova.toml (name="plan115" сохраняет D78). clang plan115 11/0.
+2. GNU stmt-expr C2059 — заведено Plan 145 ([M-msvc-bounds-check-stmt-expr]).
+   Codegen эмитит (*({ __typeof__... &_a->data[_i]; })) для bounds-check индексации
+   → cl.exe C2059. MSVC сломан широко, регрессия после Plan 82 (1049/16). Fix:
+   per-type inline helper nova_idx_<T>. Решение user: порт на clang, MSVC отдельно.
+
+Plan 145 создан (MSVC codegen portability, P1, ~1-2 dev-day).
+КОММИТЫ: tune(CAP), fix(mco_coro guard), log(baseline), fix(ffi scope sqlite),
+plan(145).
