@@ -35512,3 +35512,65 @@ C8 [M-138.2-vec-type-priv] part-b — VERIFIED + SUPERSEDED (этот комми
   plan126_2 9/1 (pre-existing p5_printable), inline std/collections/vec_owned.nv 1/0.
   Коммиты: 60030e09106 (C1), 4a187b966fa (C2), 3434c58d868 (C3), 6a7965806b7 (C4),
   8a95a23f59e (C5), 229047a854f (C6), 98c57e3a9ac (C7), C8 docs (этот коммит).
+
+================================================================================
+Plan 138.5 — Pointer model FINAL (pointee-mut postfix only) — 2026-06-11, branch plan-138.1
+================================================================================
+
+ЦЕЛЬ: упростить D216 V2/V3 — устранить путаницу «двух mut» у указателей (type-level
+outer pointer-mut vs pointee-mut, особенно в return-позиции D184×D216). Финальная модель:
+
+  Указательный ТИП несёт ТОЛЬКО pointee-мутабельность, ПОСТФИКСОМ (после `*`):
+    *T        — pointer к read-only T (default, ≡ *ro T)
+    *ro T     — explicit read-only pointee
+    *mut T    — writable pointee (`*p = v` OK)
+    *unsafe T — possibly-uninit pointee (MaybeUninit)
+  Перепривязываемость указателя (`p = other`) — это BINDING (`let`/`mut`, D36),
+  как у любой переменной. НЕ часть типа. В `mut p *mut T`: ведущий mut = binding
+  (p reassignable), *mut T = pointee (writable). Прецедент Rust.
+
+  Nullable = Option[*T] ТОЛЬКО (NPO, 8B). FFI nullable-uninit = Option[*unsafe T].
+
+РЕТРАКТИРОВАНО / УПРОЩЕНО:
+  - Все prefix-модификаторы перед `*` (mut */ro */unsafe *) → hard error
+    E_POINTER_PREFIX_MODIFIER (no grace-period). Сообщение направляет на postfix
+    pointee (*mut T) или binding (mut x *T).
+  - Unsafe(Pointer) (форма unsafe * T = nullable-raw) — RETIRED. usage std=0; коллизия
+    с Option[*T]; Option[unsafe*T] терял NPO (16B footgun). Все указатели non-null.
+  - safe модификатор (§V3.4 propagation-stopper) — RETIRED (E_SAFE_RETIRED): без prefix-
+    пропагации стопить нечего.
+  - §V3.3 right-binding propagation — SUPERSEDED. §V3.2 ordering FLIP на safety-inner
+    (ro unsafe T ✅, как external unsafe fn). Dead parser-машинерия удалена.
+
+СОХРАНЕНО: unsafe T value-wrapper (§V2.3, ортогонально указателям); §V3.1 ro+mut
+  adjacency на value-T (E_MUTABILITY_CONFLICT_VALUE_TYPE); binding-level
+  E_REDUNDANT_TYPE_MODIFIER; postfix chains (*mut *ro T); unsafe{}/#unsafe fn/*unsafe fn.
+
+D184 amend (указатели): return-mut-default = pointee (-> *mut T writable, -> *T ro);
+  reassignability результата — bind-site. Снимает «два mut в возврате».
+
+ФАЗЫ И КОММИТЫ:
+  Ф.1 (7e2d8bcbf73) — spec D216 §1/§V2/§V3 amend (02-types.md). Spec-only.
+  Ф.2 (46ff4941863) — миграция prefix→postfix (raw_mem.nv 7 externs + 2 returns,
+       fixtures, examples/typed_pointers/basic_pointer.nv) ПЕРЕД enforcement (keep GREEN).
+       Bonus .rs fix: external_registry.rs::type_ref_to_c Pointer-arm снимает inner
+       Mut/Unsafe pointee-wrapper (latent const/non-const link bug Nova_RawMem_*, вскрыт
+       флипом; зеркалит emit_c.rs:5156-5170). Rebuild.
+  Ф.3 (f880dff5941) — parser ENFORCE: E_POINTER_PREFIX_MODIFIER + E_SAFE_RETIRED;
+       новый флаг pointee_ctx (отличает postfix pointee от forbidden prefix);
+       helper TypeRef::is_pointer_or_wraps_pointer; dead-code removal (safe_stoppers,
+       ModifierClass, contains_*_in_chain). 15 fixtures plan138_5/ (7 neg + 8 pos) +
+       миграция retired-behavior fixtures (plan118_5/t3,t9 + весь plan118_5_v3). Rebuild.
+  Ф.4 (ab7c9d40468) — spec D184 (03-syntax.md master + 02-types.md D176 block) pointer-
+       return=pointee-mut + D36 cross-ref + D32/D2 align banners + open-questions Q28/Q29.
+       Spec-only.
+  Ф.5 (этот коммит) — docs/typed-pointers.md rewrite (arrow→box model, retired-forms table,
+       error codes synced) + plan P1-P7/Ф-status + simplifications.md + project-creation.txt
+       + nova-private/discussion-log.md (отд. commit) + memory. Final coherence grep + regression.
+
+РЕЗУЛЬТАТ (final broad regression, worktree binary + env, branch plan-138.1, 0 новых FAIL):
+  plan138_5 15/0 (NEW), plan138_1 10/0, plan138_2 5/0, plan138_3 2/0, plan131 27/1
+  (pre-existing vec_debug_pos), plan90_1 20/0, plan118_1 11/0, plan118_2 2/0, plan118_4 4/0,
+  plan115 11/0, plan135 11/0, plan126_2 9/1 (pre-existing p5_printable), plan101_1, plan137
+  clean. plan118 37/3 — все 3 pre-existing (NPO Option[*()] t5_5/t5_6 + null*() literal t5_neg).
+  raw_mem.nv + vec_owned.nv inline check ok.

@@ -34573,3 +34573,51 @@ recv_mutable к CALLER mutability, поэтому на `mut` receiver plain read
 p5_printable) + generic-method-heavy dirs (plan101_*, plan135, plan99, plan137, plan56,
 plan90, plan77, sort) clean. R2 (mangling) verify через stash+rebuild подтвердил все non-baseline
 fails (plan62 prelude, plan59 tuple-mangle) pre-existing.
+
+## Plan 138.5 — Pointer model FINAL: pointee-mut postfix only; retire prefix/safe/Unsafe(Pointer) (2026-06-11)
+
+**Упрощение D216 V2/V3.** Сессии 138.x вскрыли путаницу «двух mut» у указателей:
+type-level outer pointer-mut (`mut * T` = `Mut(Pointer(T))`, V2 right-binding) vs pointee-mut,
+особенно в return-позиции (D184×D216). Решение — **один способ**: указательный ТИП несёт ТОЛЬКО
+pointee-мутабельность, **постфиксом** (`*mut T`/`*ro T`/`*unsafe T`); перепривязываемость указателя
+(`p = other`) — это **binding** (`let`/`mut`, D36), как у любой переменной, **НЕ часть типа**.
+Прецедент Rust (`*mut T`/`*const T` = pointee; `let mut p` = reassign).
+
+**Что ретрактировано/упрощено:**
+- **Prefix-модификаторы перед `*`** (`mut * T`/`ro * T`/`unsafe * T`) → hard error
+  `E_POINTER_PREFIX_MODIFIER` (extends `E_INVALID_POINTER_MODIFIER`). Никакого grace-period.
+- **`Unsafe(Pointer)`** (`unsafe * T` = nullable-raw указатель) — RETIRED. usage в std = 0;
+  коллизия с `Option[*T]`; `Option[unsafe * T]` терял NPO (16B footgun). Nullable теперь = `Option[*T]`
+  ТОЛЬКО (NPO, 8B, все `*…` non-null). FFI nullable-uninit = `Option[*unsafe T]`.
+- **`safe` модификатор (§V3.4 stopper)** — RETIRED (`E_SAFE_RETIRED`). Был propagation-stopper для
+  outer-`unsafe`, существовавшего только в prefix-форме; без prefix-пропагации стопить нечего.
+- **§V3.3 (right-binding propagation)** — SUPERSEDED (нет outer-модификатора над Pointer → нечего
+  пропагировать). **§V3.2 ordering** FLIP на safety-inner (`ro unsafe T` ✅, как `external unsafe fn`).
+- Dead parser-машинерия удалена: `safe_stoppers`/`is_safe_stopped_between`, `ModifierClass`,
+  `contains_unsafe_in_chain`/`contains_same_class_in_chain` (для pointer-пропагации).
+
+**Что СОХРАНЕНО:** `unsafe T` value-wrapper (§V2.3, MaybeUninit-значение, ортогонально указателям);
+§V3.1 (ro+mut adjacency на value-T → `E_MUTABILITY_CONFLICT_VALUE_TYPE`); binding-level
+`E_REDUNDANT_TYPE_MODIFIER`; postfix pointee chains (`*mut *ro T`); `unsafe {}`/`#unsafe fn`/`*unsafe fn`.
+
+**D184 amend (указатели):** return-mut-default = **pointee** (`-> *mut T` writable target, `-> *T` ro);
+reassignability результата — bind-site (`let`/`mut`). Снимает «два mut в возврате».
+
+**Bonus .rs fix (Ф.2, latent):** `external_registry.rs::type_ref_to_c` Pointer-arm не снимал inner
+Mut/Unsafe pointee-wrapper → `*mut u8` мангли́лся в `const nova_byte*` в registry, но `nova_byte*` на
+call-site → undefined-symbol link error (`Nova_RawMem_*`). Fix зеркалит `emit_c.rs:5156-5170`.
+
+### Коммиты
+
+| SHA | Фаза | Что |
+|---|---|---|
+| `7e2d8bcbf73` | Ф.1 | spec D216 §1/§V2/§V3 — pointee-mut postfix only; retire prefix/safe/Unsafe(Pointer); §V3.2 flip |
+| `46ff4941863` | Ф.2 | migrate prefix→postfix (raw_mem 7 externs + fixtures + examples) + external_registry pointee-wrapper fix |
+| `f880dff5941` | Ф.3 | parser ENFORCE `E_POINTER_PREFIX_MODIFIER` + `E_SAFE_RETIRED`; `pointee_ctx` flag; 15 fixtures + dead-code removal |
+| `ab7c9d40468` | Ф.4 | D184 pointer-return=pointee-mut + D36 cross-ref + D32/D2 align + open-questions Q28/Q29 |
+
+**Регрессии: 0.** plan138_5 15/0 (NEW), plan138_1 10/0, plan138_2 5/0, plan138_3 2/0, plan131 27/1
+(pre-existing vec_debug_pos), plan90_1 20/0, plan118_1 11/0, plan118_2 2/0, plan118_4 4/0, plan115 11/0,
+plan135 11/0, plan126_2 9/1 (pre-existing p5_printable), plan101_1, plan137 clean. plan118 37/3 —
+все 3 pre-existing (NPO `Option[*()]` runtime t5_5/t5_6 + `null *()` literal t5_neg). raw_mem.nv +
+vec_owned.nv `check` ok.

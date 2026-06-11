@@ -24,19 +24,21 @@ introduced in Plan 115.
 | External fn declaration | `external fn name(args) -> ret` | [D82](../spec/decisions/03-syntax.md#d82) |
 | Resource cleanup | `consume close()` method + `defer` | [D90 / D131](../spec/decisions/03-syntax.md#d90) |
 
-## Pointer modifier rules (V2/V3)
+## Pointer modifier rules (FINAL — Plan 138.5)
 
-При записи FFI-сигнатур с pointer/typed wrappers (`*T` / `ro * T` / `mut * T` / `unsafe * T`) используй V2/V3 canonical right-binding syntax (modifier ПЕРЕД `*`).
+При записи FFI-сигнатур с pointer/typed wrappers модификатор pointee пишется **постфиксом**, сразу после `*` (`*mut T` / `*ro T` / `*unsafe T`). **Prefix перед `*` запрещён** (`mut * T` / `ro * T` / `unsafe * T` → `E_POINTER_PREFIX_MODIFIER`). Перепривязываемость указателя — это **binding** (`let` / `mut`), не тип.
 
 Краткая шпаргалка:
 
-- `*T` — default ro pointer
-- `mut * T` — mutable pointer (caller может изменить pointee)
-- `unsafe * T` — possibly-null/dangling pointer (Rust `*const T` analog)
-- `* unsafe T` — valid pointer к possibly-uninit T (MaybeUninit analog)
-- `mut * ro * Acc` — chain (mut pointer к ro pointer к Acc)
+- `*T` ≡ `*ro T` — pointer к read-only T (default)
+- `*mut T` — pointer к writable T (caller может изменить pointee)
+- `*unsafe T` — pointer к possibly-uninit T (MaybeUninit analog); сам указатель non-null
+- `Option[*T]` — **nullable** pointer (NPO, 8 байт); это замена старому `unsafe * T`
+- `Option[*unsafe T]` — FFI nullable-uninit pointer (None = null, Some = non-null ptr к uninit)
+- `*mut *ro Acc` — postfix chain (writable-target ptr к read-only-target ptr к Acc)
+- `mut p *mut T` — binding mut (p re-pointable) + pointee mut; `let q *ro T` — fixed binding + ro pointee
 
-Полные правила (V3.1 storage-class, V3.2 modifier ordering, V3.4 safe keyword + redundancy) — см. [`docs/typed-pointers.md`](typed-pointers.md). Migration guide для V2→V3 — см. [`docs/migration/d216-v3-modifier-rules.md`](migration/d216-v3-modifier-rules.md).
+Полные правила (arrow→box model, value-T composition §V3.1/§V3.2) — см. [`docs/typed-pointers.md`](typed-pointers.md). Spec — [D216 §1 FINAL](../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) + [Plan 138.5](plans/138.5-d216-v2-v3-simplification.md).
 
 ## Layered FFI pattern
 
@@ -480,8 +482,9 @@ export unsafe fn str @as_cstr_unchecked() -> CStr {
 
 ```nova
 // external unsafe fn — requires unsafe {} at call site
-external unsafe fn RawMem.copy(src *u8, dst mut *u8, n usize) -> ()
-external unsafe fn RawMem.fill(dst mut *u8, byte_value u8, n usize) -> ()
+// pointee-mut written postfix: `*mut u8` = writable target (FINAL, Plan 138.5)
+external unsafe fn RawMem.copy(src *u8, dst *mut u8, n int) -> ()
+external unsafe fn RawMem.fill(dst *mut u8, byte_value u8, n int) -> ()
 ```
 
 ### Calling an unsafe function
