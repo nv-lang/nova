@@ -62,8 +62,18 @@ typedef struct mco_coro mco_coro;
 
 /* ── Tuning ───────────────────────────────────────────────────────────── */
 
+/* Go P.runq is [256]. Nova diverges here (deliberate, plan §8 risk 2): our
+ * concurrency tests spawn up to 10k fibers per supervised scope, and the
+ * `nova test` default is NOVA_MAXPROCS=1 — i.e. ALL of them land on a single
+ * worker's ring. A 256-slot ring would spill ~9.7k to the global queue (under
+ * a lock) on every such test; 4096 cuts spill frequency ~4x vs 1024 while
+ * costing only sizeof(ptr)*4096 = 32 KiB per worker (~0.5 MiB across NumCPU).
+ * The steal/spill scratch arrays [CAP/2] live on the worker's OS stack (16 KiB),
+ * not on fiber stacks, so the larger CAP is safe there. Override with
+ * -DNOVA_RUNQ_CAP=N (power-of-two); Ф.4/Ф.8 benches validate/tune this.
+ * Followup: [M-83-go-cmn-runq-cap-tune]. */
 #ifndef NOVA_RUNQ_CAP
-#define NOVA_RUNQ_CAP 256u            /* Go P.runq is [256]; power-of-two. */
+#define NOVA_RUNQ_CAP 4096u           /* power-of-two; see note above */
 #endif
 #define NOVA_RUNQ_MASK (NOVA_RUNQ_CAP - 1u)
 
