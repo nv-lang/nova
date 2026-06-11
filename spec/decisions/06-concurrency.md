@@ -5917,5 +5917,136 @@ test-runner pop'нул main's stack frame, и `_nova_scope_q_0.armed_sleeps_head
 - Должен ли `pending_driver_jobs` counter экспонироваться через
   `nova runtime introspect` / sysmon для observability long-running
   cancel storms? — **Q27**.
+- ~~(Plan 83-go-cmn Ф.1b / D243) Должен ли guard читать capacity ACQUIRE?~~ —
+  **Q28 ✅ ЗАКРЫТО 2026-06-11**: да, ACQUIRE (`nova_sched_cap_acq`), commit
+  `98b4b05c6ae`. Закрывает `[M-83.11-f1b-acquire-capacity]`. См. D243 §Followup.
+- (Plan 83-go-cmn Ф.4) Должен ли `runnext` (LIFO fast-slot) быть stealable под
+  устойчивым дисбалансом (Go делает stealable после grace-tick) или остаться
+  non-stealable (Tokio-parity, текущий выбор Nova)? — **Q29**.
 
 ---
+
+## D243 — M:N run/park storage: fixed-size ring + chunked stable-address park-state (Plan 83-go-cmn Ф.1)
+
+> **Создан:** 2026-06-11 (Plan 83-go-cmn Ф.1a+Ф.1b). Закрывает `[M-83.11-grow-vs-wake-race]`.
+> Порт принципа Go 1.4 (fixed `P.runq[256]` never-realloc). D-нумерация: D241/D242 заняты
+> Plan 138 (Iterable/Next/Iter) — семейство 83-go-cmn перенумеровано на D243+.
+
+### Контракт
+
+Любое хранилище, к которому конкурентно обращаются worker-owner и driver/peer-потоки на
+hot-path планировщика (run queue + park/wake state), **ОБЯЗАНО иметь стабильные адреса
+элементов** — никаких realloc-с-перестановкой-указателя под конкурентным доступом.
+Перестановка базового указателя массива (realloc) гонится с читателем другого потока →
+torn/orphaned base → потерянный wake → вечный hang. Это был root cause grow-vs-wake.
+
+**1. Per-worker run queue — fixed-size inline ring (`runq.h`).**
+- `mco_coro* runq[NOVA_RUNQ_CAP]` инлайн в `NovaWorker`; `CAP` = степень двойки (4096 в
+  Nova; Go = 256 — Nova больше, т.к. `nova test` ставит MAXPROCS=1 → все fiber'ы на одном
+  worker). Базовый адрес стабилен всю жизнь worker'а.
+- monotonic `uint32` head/tail (маска только при доступе; len=tail-head; full=tail-head>=CAP).
+- **single-producer tail** (owner: store-release, без CAS); **multi-consumer head** (owner
+  `runq_get` + воры `runq_grab`/`runq_steal`: каждый advance — CAS).
+- Overflow → spill HALF (`runq_put_slow`) в ОДНУ глобальную overflow-очередь
+  (`NovaGlobalRunq`, intrusive singly-linked через `SpawnCtxBase.schedlink`, под spinlock).
+- Consumer overflow ОБЯЗАН быть в find-work loop (`globrunq_get_one` после local+yielded,
+  до steal) + shutdown drain + pump_scope — иначе spilled fiber'ы strand → hang.
+- Memory-ordering как PPoPP-2013 deque: значение слота, прочитанное до head-CAS, стабильно
+  до reuse (reuse требует CAP put'ов) → pre-CAS read race-free.
+- Заменяет растущий Chase-Lev deque (`deque.h`, ретайрнут).
+
+**2. Park/wake state — chunked stable-address (`NovaSchedState`, `nova_sched.h`).**
+- 4 параллельных массива (`parked[]`, `pending_handle[]`, `pending_stop_cb[]`,
+  `pending_wake[]`), индексируемые (scope,slot), **бэкаются директориями фиксированных
+  chunk'ов** (`X_chunks[MAX_CHUNKS]`, chunk = `NOVA_SCHED_CHUNK`=64 элементов).
+- **Chunk'и аллоцируются РАЗ и НИКОГДА не двигаются/освобождаются/realloc'атся** →
+  `&parked[slot]` стабилен навсегда → torn-pointer структурно невозможен.
+- `nova_sched_grow_state` больше НЕ realloc'ит — **CAS-публикует** chunk'и
+  (`X_chunks[c]` NULL→chunk, RELEASE/ACQUIRE; проигравший CAS отбрасывает свой chunk, GC
+  соберёт). grow НЕ single-writer (spawn_into/get_state/register_pending растят без
+  slot_lock) → CAS-публикация обязательна. `capacity` публикуется RELEASE'ом ПОСЛЕДНИМ,
+  после всех chunk-публикаций.
+- Доступ: `*accessor(st,slot)` = `&X_chunks[slot>>6][slot&63]` (accessor ACQUIRE-загружает
+  chunk-ptr). Все атомарные операции (SEQ_CST parked store, t1-t4 pending_wake CAS,
+  register_pending SEQ_CST piggy-back, wake deliver-then-CAS) — **байт-идентичны** (меняется
+  только lvalue, не `__ATOMIC_*` аргумент).
+- `pending_handle`/`pending_stop_cb` в РАЗНЫХ директориях — register_pending SEQ_CST всё
+  равно глобально упорядочивает их (store-buffer drain, не per-array). НЕ колоцировать.
+- Потолок: `MAX_CHUNKS`=1024 ⇒ 65536 slots/scope (abort при превышении). На практике
+  раньше упирается в Plan 82 fiber-arena (~16384 одновр. fiber'ов/worker).
+
+### Альтернатива отклонена
+Перенос park-state на `SpawnCtxBase` (per-fiber, Option A) — ставил бы slot_lock + 
+mco_get_user_data в lock-free wake-путь И переоткрывал lost-wake при slot-reuse (wake
+резолвит NEW ctx переиспользованного слота). Chunked (Option C) сохраняет slot-индексацию
+→ fences не пере-доказываются. См. plan 83-study-go-c-mn §9.4.
+
+### Followup
+`[M-83.11-f1b-acquire-capacity]` — ✅ **RESOLVED 2026-06-11** (commit `98b4b05c6ae`). Добавлен
+`nova_sched_cap_acq(st)` = ACQUIRE-load capacity; применён на всех ~14 accessor-guard сайтах
+(nova_sched.h ×10, driver.c ×2, runtime.c ×2). Теперь guard `slot < cap_acq(st)` парится с
+RELEASE-store capacity → на ARM accessor chunk-ptr не спекулируется вперёд guard'а → NULL-окно
+закрыто. Диагностические dump-чтения + register_pending grow-trigger оставлены plain.
+Verified x86: smoke + grow_vs_wake 40/40 (race stays closed). **Q28 ✅ закрыт.**
+
+### Validation
+grow_vs_wake_explicit 100/100 (MP=1) + 66/66 (MP=16); stress_iso_3e 66/66; semaphore_batch_n
+30/30 armed; ring_overflow_drain 10/10 (5000 fibers overflow, exact-count); 1k 30/30, 10k 10/10;
+concurrency suite 105/4. adversarial diff-review: fence_hazards VERIFIED CLEAN, verdict safe-to-commit.
+
+## D244 — gopark/goready park/wake ordering (Plan 83-go-cmn Ф.2)
+
+> **Создан:** 2026-06-11 (Plan 83-go-cmn Ф.2). Порт принципа Go runtime·gopark/goready.
+> Заменяет pending_wake-счётчик + t1-t4 dance + TLS-deferred-unlock (D228-эры) единым
+> lost-wakeup-free протоколом. Хранилище — D243 (chunked stable-address).
+
+### Контракт
+
+Любая блокирующая операция паркуется через `nova_gopark`, будится через `nova_goready`.
+Состояние ожидания — **per-fiber 4-state latch `_nova_park_state`** на `NovaSpawnCtxBase`
+(NIL=0/WAIT/READY/DISPATCHED; zero-init=NIL; адресуется **by-co** через
+`mco_get_user_data(co)`, НЕ по (scope,slot)). Ортогонален `_nova_fiber_state`
+(IDLE/RUNNING/PARKED/DEAD = resume-ownership): park_state = wait/ready handshake.
+
+**`nova_gopark(unlock_fn, unlock_arg)` — строгий порядок (lost-wakeup-free):**
+- **G0** `_nova_fiber_state` → PARKED (RELEASE; до G1, чтобы SEQ_CST G1 опубликовал и PARKED).
+- **G1** `_nova_park_state` → WAIT (**SEQ_CST** = XCHG на x86, full fence). Несущая публикация:
+  глобально видима до того, как любой waker возьмёт lock ресурса (который отпускает unlock_fn).
+- **G2** stash unlock_fn/arg в TLS — scheduler сливает ПОСЛЕ yield'а (unlock, а значит
+  reachability для peer-waker'а, строго после видимости WAIT).
+- **G3** commit-recheck: CAS READY→DISPATCHED. Успех = ready-before-park (goready латчнул
+  NIL→READY до G1 или в гонке) → **НЕ yield**: unlock_fn вызывается **inline** (через local
+  copies) + TLS self-drain (scheduler не сливает на этом пути) + fiber_state IDLE + return.
+- **G4** иначе `mco_yield`. После resume: TLS clear + reset park_state→NIL (end-of-wait;
+  иначе поздний cross-thread NIL→READY заставил бы СЛЕДУЮЩИЙ gopark пропустить yield).
+
+**`nova_goready(co)` — single-winner CAS-ladder (by-pointer):**
+- CAS WAIT→DISPATCHED → **единственный** диспетчер: `dispatch_ready(co)` + fiber_state
+  PARKED→IDLE + clear `parked[slot]`/`parked_co[slot]`.
+- иначе CAS NIL→READY → латч (ready-before-park).
+- иначе (READY/DISPATCHED/dead) → идемпотентный no-op. `mco_status != MCO_DEAD` гардит
+  каждую мутацию/dispatch.
+
+**Сосуществование cancel (by-slot) + примитив (by-pointer):** оба воронкуют re-queue через
+ОДИН `nova_goready(co)` → single-winner (WAIT→DISPATCHED CAS) элек­тит ровно одного диспетчера
+для любой пары wakers {sender,cancel}/{timer,cancel}/{cancel,cancel} → double-push невозможен
+by construction. Cancel-walk резолвит `co = parked_co[slot]` (chunked, set@gopark/clear@goready),
+**НИКОГДА `scope->fibers[slot]`** (мог быть NULL'нут/reused). `parked[]` демотирован до
+cancel-reachability бита; alloc_slot skip-stale = `parked[i]` один (пинит slot пока parked).
+
+### Удалено
+pending_wake counter directory + accessor + t1-t4 barrier-dance + `_nova_park_unlock_fn`
+как deferred-hack (TLS переиспользован как gopark unlock-carrier) + `nova_sched_is_parked`
+gate в deferred-unlock. SEQ_CST на `pending_stop_cb` (register_pending, Plan 83.10.2 guard) —
+СОХРАНЁН.
+
+### Followup
+`[M-83.11-f2-arm-tsan]` (P2): G0(RELEASE)/G1(SEQ_CST) x86-корректны (XCHG дренит store-buffer);
+для ARM/weak-memory — валидировать под TSAN на Linux (gated на `[M-nova-linux-build]`).
+Не регрессия (x86 — целевая платформа).
+
+### Validation
+adversarial diff-review (3 линзы + synth) verdict **safe-to-commit** (все fatal/high
+опровергнуты построчно; fence не ослаблен; codegen ABI верифицирован). Independent stress:
+grow_vs_wake 40/40, cross_channel 40/40, condvar_no_lost_wakeup 40/40, nested_cancel 30/30,
+mutex_cancel 30/30; concurrency 105/4, plan103_4 25/25. grow-vs-wake остаётся CLOSED.

@@ -1,6 +1,11 @@
 // Plan 83.4.5.6 Ф.5 (2026-05-24): park/wake stress harness.
 //
-// ENV NOVA_AUTOARM=0  — armed M:N gated на open race [M-83.11-grow-vs-wake-race] (§13.6.1)
+// ENV NOVA_AUTOARM=0  — REQUIRED by THIS test's own non-atomic shared mutation
+// (`completed += 1` / `sum += cur` from parallel fibers); armed M:N would expose a
+// test-level lost-update data race (RUN-FAIL: sum != 1275), NOT grow-vs-wake.
+// Plan 83-go-cmn Ф.1b verified: grow-vs-wake HANG is closed (66 armed runs, 0 TIMEOUT);
+// the remaining armed failures here are the `+=` race, so the gate stays.
+// Followup [M-park-wake-stress-atomic-counters]: convert += → AtomicInt to run armed.
 //
 // Acceptance per Plan 83.4.5.7 §6.4: 10⁵ park/wake без leak/crash/
 // deadlock. Реализация V1: 1000 (= 10³) fibers × 1 sleep — балансирует

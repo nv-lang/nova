@@ -35330,3 +35330,109 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
 | `<final-close>` | docs(plan138.2 FINAL CLOSE): correct b8ff722 «flip reverted» → flip LANDED GREEN (re-attempt #2); plan-doc header/Ф.5-ИСХОД/DoD-regression + project-creation + memory |
 
 | `D241` | spec(D241): canonical type-modifier order = **scope-adjacency** (канон `value priv`, не `priv value`); order-independence запрещён («one canonical syntax»). Обоснование: `value` type-level левее, `priv` field-default вплотную к `{…}`. Enforcement → `[M-138-canonical-modifier-order]` (флип plan124_8 order-independence-теста в negative). + 5 session design-review маркеров в backlog (unsafe-block-postfix, double-pointer-test, binding-type-mut-conflict, ptr-cast-reinterpret-unsafe, canonical-modifier-order). |
+### Plan 83-study-go-c-mn Ф.1 — fixed-ring runq примитив (порт go1.4), 2026-06-11
+
+- **`[M-83-study-go-c-mn]` research+декомпозиция выполнены.** workflow (11 агентов) →
+  gap-анализ (9 gaps) + 8-фазный план. Главная находка: **grow-vs-wake — баг РЕАЛЛОКАЦИИ**
+  (`nova_sched_grow_state` plain pointer-swap конкурентно с driver `nova_sched_wake`), НЕ
+  memory ordering (fences в deque.h корректны). Go fixed `runq[256]` (never realloc) исключает
+  torn-base-pointer структурно.
+- **V1 policy (user): дословный порт Go-кода**, не ре-имплементация — наследуем проверенную
+  корректность. «Структурно идентично» (byte-identical невозможно — Go-код ссылается на
+  G/M/P/mcall/note/runtime·cas). BSD-3-Clause → `THIRD_PARTY/go-LICENSE` + per-function атрибуция.
+- **`runq.h`** — порт go1.4 `proc.c`: `runqput`/`runqget`/`runqgrab`/`runqsteal`/`runqputslow`
+  + global overflow (`globrunqputbatch`/`globrunqget`). Go-комментарии сохранены verbatim;
+  замена G*→mco_coro*, runtime·cas→__atomic, sched.lock→спинлок, runtime·throw→defensive return.
+- **Верификация изолированная** (clang -O2 -Wall -Wextra, 0 warn): `test_runq.c` — conservation
+  под concurrent producer+4 thieves/200k fibers (каждый fiber ровно 1 раз, 0 потерь), overflow
+  spill-half exact, steal conservation. 10/10 PASS. ⚠ Это валидация ПРИМИТИВА; полная Ф.1
+  acceptance (runtime-интеграция + build clang+MSVC + stress 66/66) — следующий шаг (atomic cut-over).
+- **GC вынесен в Plan 144** (precise GC impl из 83.13 research) — НЕ scope M:N-порта.
+
+### MSVC baseline (Plan 83-go-cmn) — два pre-existing бага main, 2026-06-11
+
+При попытке снять MSVC-baseline для порта вскрылись две **pre-existing** проблемы main
+(не связаны с портом):
+
+- **sqlite C1083 — ПОЧИНЕНО** (`fix(ffi): scope sqlite shim`). Package-wide
+  `[ffi] c_shims=[sqlite_mini_ffi.h]` в `nova_tests/nova.toml` force-include'ил sqlite-shim
+  во ВСЕ ~1000 тестовых TU → cl.exe C1083 на shim-пути → все net-зависимые тесты CC-FAIL под
+  MSVC. Архитектурно хрупко (один shim ронял весь suite). **Fix:** заскоуплен в
+  `nova_tests/plan115/nova.toml` (`name="plan115"` сохраняет D78 module-identity:
+  `module plan115.X` == package+src; как mathlib→`mathlib.calc`). Реальный потребитель —
+  только `plan115/t4_sqlite_e2e_ok`. clang plan115 11/0 PASS, sqlite ушёл из MSVC-компайла.
+- **GNU stmt-expr C2059 — заведено [Plan 145](plans/145-msvc-codegen-portability.md)**
+  (`[M-msvc-bounds-check-stmt-expr]`). Вскрылось после sqlite-фикса. Codegen эмитит
+  `(*({ __typeof__(arr) _a=arr; ... &_a->data[_i]; }))` (GNU statement-expression + `__typeof__`)
+  для bounds-checked индексации (emit_c.rs ~9700/9720/15783/18571) → cl.exe C2059 (не
+  поддерживает `({...})`). MSVC сломан широко — **регрессия после Plan 82** (был 1049/16;
+  bounds-check добавлен Plan 90/131/138). Fix Вариант A: per-type inline helper `nova_idx_<T>`
+  (portable C, lvalue+single-eval цел). **Решение user: Go-M:N порт валидируется на clang;
+  MSVC gated на Plan 145** (не смешивать codegen-rewrite с портом).
+
+### Plan 83-go-cmn Ф.1a — ring-port cut-over (deque→runq), 2026-06-11
+
+- **Adversarial design-review окупился: поймал 2 FATAL ДО кода.** (#1) дизайн spill'ил в
+  global overflow без consumer → overflow-fiber'ы застряли бы → детерминированный hang;
+  (#2) `schedlink` лишь в fibers.h, но SpawnCtx руками реплицируется в `emit_c.rs` → запись
+  overflow-ссылки на первое user-capture поле → corruption. Оба исправлены до реализации.
+- **Ф.1 разбит на Ф.1a (ring-port, безопасный queue-swap) + Ф.1b (park-state relocation =
+  СОБСТВЕННО фикс grow-vs-wake).** Монолит был переусложнён (смешивал две вещи).
+- **Реализовано Ф.1a:** `NovaWorker.deque`→`NovaRunq runq`; 11 deque-сайтов→runq; глобал
+  `_nova_global_runq` + drain в 3 pop-путях; `schedlink` в fibers.h + оба codegen-layout.
+  Scope strict: `nova_sched.h` park-state + все fence НЕ тронуты.
+- **GC (verified):** fiber'ы рутятся scope'ом (ctx_pins/fiber_ctx) независимо от очереди →
+  raw `mco_coro*` в ring/overflow безопасны.
+- **Валидация clang:** build + smoke + concurrency **103/5 vs 102/6** (deep_spawn+time_handler
+  PASS; sleep_precision_bench load-флаки 3/3-isolated; 0 регрессий корректности). Commit `4ce88b65c2d`.
+- **⚠ grow-vs-wake НЕ закрыт** этим шагом (realloc `NovaSchedState` остаётся → Ф.1b).
+
+### Plan 83-go-cmn Ф.1b — grow-vs-wake ЗАКРЫТ (chunked stable-address), 2026-06-11
+
+- **`[M-83.11-grow-vs-wake-race]` ✅ CLOSED структурно** (Option C chunked). 4 массива
+  `NovaSchedState` → директории фиксированных chunk'ов (chunk'и аллоцируются раз, никогда
+  не двигаются → `&parked[slot]` стабилен навсегда → torn-pointer невозможен). `grow_state`
+  → **CAS-publish** (не realloc; grow НЕ single-writer). Все `__ATOMIC_*` fence байт-идентичны.
+- **Option A (park-state на SpawnCtxBase) ОТКЛОНЁН** adversarial-review'ом: ставил бы
+  slot_lock + mco_get_user_data в lock-free wake-путь И переоткрывал lost-wake при slot-reuse.
+- **Реализация:** design-workflow → фоновый агент → adversarial diff-review (3 линзы, verdict
+  `safe-to-commit`, fence_hazards **VERIFIED CLEAN**; 2 «fatal» CAS-находки опровергнуты кодом).
+- **Валидация (independent, clang, stress_bisect compile-once armed):** grow_vs_wake_explicit
+  100/100@MP=1 + 66/66@MP=16; stress_iso_3e 66/66; semaphore_batch_n 30/30 armed;
+  ring_overflow_drain 10/10 (5000 fibers overflow, exact-count); 1k 30/30, 10k 10/10;
+  concurrency 105/4. harness-контроль (park_wake_stress 13/7) подтвердил, что зелёные настоящие.
+- **Спека D243** + Q28/Q29. **D-коллизия:** D241/D242 заняты Plan 138 → 83-go-cmn на D243+.
+- **Потолок масштаба ~16k** — Plan 82 fiber-arena (8MB-стеки), не grow-vs-wake → Plan 146
+  (growable stacks). **Followup [M-83.11-f1b-acquire-capacity]** (ARM acquire-capacity guard).
+- **Урок (debugging-races §3.3):** для стресса — `stress_bisect.sh` (compile-once), НЕ цикл
+  `nova test` (перекомпилит весь runtime → выглядит как hang). Раннее `[M-tsan-race-detector]`
+  (clang TSAN) ловил бы такие гонки авто.
+
+### Plan 83-go-cmn Ф.2 — gopark/goready ЗАКРЫТ (удалён pending_wake), 2026-06-11
+
+- **Go-style park/wake** заменил pending_wake-счётчик + t1-t4 barrier-dance + TLS-deferred-hack
+  единым lost-wakeup-free протоколом. `_nova_park_state` (4-state NIL/WAIT/READY/DISPATCHED) на
+  SpawnCtxBase, by-co. `nova_gopark` (G0-G4) + `nova_goready` (single-winner CAS-ladder). Spec D244.
+- **Сосуществование cancel(by-slot)+примитив(by-pointer):** `parked_co[]` (chunked stable-address,
+  заменил pending_wake-директорию) — оба будильника воронкуют re-queue через ОДИН `nova_goready(co)`,
+  single-winner переезжает с `parked[slot]` CAS на `park_state WAIT→DISPATCHED` CAS → double-push
+  невозможен by construction. Cancel резолвит `parked_co[slot]`, НЕ `fibers[slot]`.
+- **Реализация:** design-workflow (verdict needs-fixes + 7 corrections) → фоновый агент → adversarial
+  diff-review (3 линзы, verdict `safe-to-commit`, все fatal/high опровергнуты построчно) → independent
+  stress. Агент умно отклонился: `parked_co[]` единообразно вместо co-полей в 6 waiter-структурах →
+  call-surface цел (только wake-lvalue). emit_c.rs оба SpawnCtx-layout'а += park_state.
+- **Validation (independent, clang):** grow_vs_wake 40/40, cross_channel 40/40, condvar_no_lost_wakeup
+  40/40, nested_cancel 30/30, mutex_cancel 30/30; concurrency 105/4, plan103_4 25/25. grow-vs-wake CLOSED.
+- **NEG:** дедик-фикстуры (gopark_ready_before_park/goready_double_assert) НЕ созданы — внутренний
+  тайминг плохо выразим детерминированно на Nova-уровне; покрыто property (condvar_no_lost_wakeup) +
+  cancel-фикстурами. **Followup [M-83.11-f2-arm-tsan]** (ARM под TSAN/Linux). Коммит d2830c73d7d.
+
+### Plan 83-go-cmn Ф.5 — iso-cancel startup race [M-83.10.4] ЗАКРЫТ (verify-only), 2026-06-11
+
+- **`[M-83.10.4-iso-cancel-startup-race]` ЗАКРЫТ структурно Ф.2** (gopark) — production-кода НЕ
+  потребовалось. Timer-backed park (Time.sleep) вето́ит на cancel перед arming + driver async-close
+  wake. Доказано 700 armed-прогонами (380 workflow + 320 мои @MP=1/4) = 0 hang.
+- **Review-урок:** 3 disabled-теста re-enabled НЕ verbatim — исходные latency-бюджеты (250ms) были
+  jitter-флаки (~0.8%, false-BAD не hang). Ослаблены до wake-not-hang инварианта; цель теста =
+  «cancel будит всех, scope не виснет», а не латентность. Verify ≥150 iters (не 50: P(false-good)=0.67).
+- **НЕ применён** gopark cancel-veto (scope-creep против несуществующего failure-mode) → P3 marker.

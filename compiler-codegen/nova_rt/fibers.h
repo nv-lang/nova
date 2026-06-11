@@ -385,16 +385,102 @@ typedef enum {
 } NovaStopMode;
 
 typedef NovaStopMode (*NovaSchedStopCb)(void* handle);
+
+/* ─── Plan 83-go-cmn Ф.1b: chunked, STABLE-ADDRESS park/wake storage ──
+ *
+ * Closes [M-83.11-grow-vs-wake-race]. The old NovaSchedState held 4 raw
+ * pointers (parked/pending_handle/pending_stop_cb/pending_wake) that
+ * nova_sched_grow_state REALLOCATED with plain non-atomic pointer-swaps.
+ * A peer/driver thread in nova_sched_wake reading the old base between the
+ * swap and the capacity update dereferenced a torn/orphaned base → CAS into
+ * a dead array → lost wake → hang.
+ *
+ * Fix (Option C — chunked block-list): each of the 4 arrays is now backed by
+ * a DIRECTORY of fixed-size CHUNKS that are allocated EXACTLY ONCE and never
+ * moved/realloc'd/freed during the scope's life. Therefore the element
+ * address &parked_chunks[c][o] is constant for the whole life of slot's data
+ * → the torn base pointer is structurally impossible (same guarantee as the
+ * Ф.1a run-queue fixed ring). Indexing stays (scope,slot): every atomic
+ * access keeps its exact __ATOMIC_* ordering — only the lvalue changes
+ * (st->X[slot] → *accessor(st,slot), pure address math, no fence/lock).
+ *
+ * Geometry: CHUNK = 64 elements (power of two) ⇒ c = slot>>6, o = slot&63
+ * (shift+mask, no division). MAX_CHUNKS = 1024 ⇒ hard ceiling 65536 slots
+ * per scope (>> the ~2k observed; grow aborts with a clear message if
+ * exceeded, mirroring the existing nova_alloc-fail abort). The 4 directories
+ * are INLINE in NovaSchedState so the struct itself is one stable heap
+ * object reached via scope->sched_state. */
+#define NOVA_SCHED_CHUNK        64
+#define NOVA_SCHED_CHUNK_SHIFT  6
+#define NOVA_SCHED_CHUNK_MASK   63
+#define NOVA_SCHED_MAX_CHUNKS   1024   /* 1024*64 = 65536 slots/scope ceiling */
+
 typedef struct NovaSchedState {
-    nova_bool*       parked;              /* dynamic [capacity] */
-    void**           pending_handle;      /* dynamic [capacity] */
-    NovaSchedStopCb* pending_stop_cb;     /* dynamic [capacity] */
-    /* Plan 83.11 Ф.3.A v3 (Option A): per-slot wake-pending counter (atomic int).
-     * Wake side: CAS 0→1 (deliver event). Park side: try CAS 1→0 (consume) before
-     * yielding. Closes wake-before-park race by serializing through this atomic. */
-    nova_atomic_int* pending_wake;        /* dynamic [capacity] */
-    int              capacity;            /* alloc'нутая длина */
+    /* Each directory holds chunk pointers; a chunk is allocated once and its
+     * pointer is __ATOMIC_RELEASE-published into the directory slot, then
+     * read with __ATOMIC_ACQUIRE in the accessors. Chunks are never freed/
+     * moved/realloc'd ⇒ &X_chunks[c][o] is immutable for slot's lifetime. */
+    nova_bool*       parked_chunks[NOVA_SCHED_MAX_CHUNKS];         /* [c][o] */
+    void**           pending_handle_chunks[NOVA_SCHED_MAX_CHUNKS]; /* [c][o] */
+    NovaSchedStopCb* pending_stop_cb_chunks[NOVA_SCHED_MAX_CHUNKS];/* [c][o] */
+    /* Plan 83-go-cmn Ф.2: per-slot parked co-pointer directory. REPLACES the
+     * deleted pending_wake counter directory (same chunk geometry / never-realloc
+     * stable-address). Set at gopark (BY co = mco_running()), cleared at goready/
+     * cancel. This is the cancel-by-co carrier (review correction #1): the cancel
+     * walk resolves the GENUINELY-parked fiber via parked_co[slot] — NOT via
+     * scope->fibers[slot], which may be NULL'd-but-alive (alloc_slot skip-stale)
+     * or reused by a different fiber. Plain pointer store/load (RELEASE/ACQUIRE);
+     * the single-winner election is on _nova_park_state, not here. */
+    mco_coro**       parked_co_chunks[NOVA_SCHED_MAX_CHUNKS];      /* [c][o] */
+    int              capacity;            /* published slots = chunks_pub<<SHIFT */
 } NovaSchedState;
+
+/* ─── Hot-path element accessors (Ф.1b) ───────────────────────────────
+ *
+ * Each returns the ELEMENT ADDRESS only — pure address computation. The
+ * ONLY synchronization is an ACQUIRE-load of the chunk pointer, which pairs
+ * with grow's RELEASE-publish (so a reader that observed slot<capacity is
+ * guaranteed to see the published chunk + its zero-inited elements). NO
+ * fence and NO lock is applied to the element itself — the caller's atomic
+ * op (SEQ_CST store, ACQ_REL CAS, ACQUIRE load, RELEASE store) is applied
+ * to the returned lvalue BYTE-IDENTICALLY to the pre-Ф.1b code.
+ *
+ * Returns NULL if the chunk has not been published yet; callers keep their
+ * existing slot<capacity guard, which (paired with grow's publish-before-
+ * capacity RELEASE) makes a non-NULL return guaranteed when slot<capacity. */
+static inline nova_bool* nova_sched_parked_at(NovaSchedState* st, int slot) {
+    int c = slot >> NOVA_SCHED_CHUNK_SHIFT, o = slot & NOVA_SCHED_CHUNK_MASK;
+    nova_bool* ch = __atomic_load_n(&st->parked_chunks[c], __ATOMIC_ACQUIRE);
+    return ch ? &ch[o] : NULL;
+}
+static inline void** nova_sched_pending_handle_at(NovaSchedState* st, int slot) {
+    int c = slot >> NOVA_SCHED_CHUNK_SHIFT, o = slot & NOVA_SCHED_CHUNK_MASK;
+    void** ch = __atomic_load_n(&st->pending_handle_chunks[c], __ATOMIC_ACQUIRE);
+    return ch ? &ch[o] : NULL;
+}
+static inline NovaSchedStopCb* nova_sched_pending_stop_cb_at(NovaSchedState* st, int slot) {
+    int c = slot >> NOVA_SCHED_CHUNK_SHIFT, o = slot & NOVA_SCHED_CHUNK_MASK;
+    NovaSchedStopCb* ch = __atomic_load_n(&st->pending_stop_cb_chunks[c], __ATOMIC_ACQUIRE);
+    return ch ? &ch[o] : NULL;
+}
+/* Plan 83-go-cmn Ф.2: element address of the per-slot parked co-pointer. */
+static inline mco_coro** nova_sched_parked_co_at(NovaSchedState* st, int slot) {
+    int c = slot >> NOVA_SCHED_CHUNK_SHIFT, o = slot & NOVA_SCHED_CHUNK_MASK;
+    mco_coro** ch = __atomic_load_n(&st->parked_co_chunks[c], __ATOMIC_ACQUIRE);
+    return ch ? &ch[o] : NULL;
+}
+
+/* Plan 83-go-cmn Ф.1b followup [M-83.11-f1b-acquire-capacity]: ACQUIRE-read of
+ * capacity for the `slot < capacity` accessor-guards. capacity is RELEASE-stored
+ * LAST in nova_sched_grow_state (after every chunk publish), so an ACQUIRE-load
+ * here establishes happens-before: a reader observing slot<capacity is
+ * guaranteed the chunk for that slot is published → the accessor returns
+ * non-NULL. On x86 TSO a plain read sufficed; on weak memory (ARM) the ACQUIRE
+ * stops the accessor's chunk-ptr load being speculated ahead of the guard →
+ * closes the theoretical NULL-deref window (clean crash, never torn-pointer). */
+static inline int nova_sched_cap_acq(NovaSchedState* st) {
+    return __atomic_load_n(&st->capacity, __ATOMIC_ACQUIRE);
+}
 
 /* O(1) lookup: pointer-deref. NULL = state ещё не allocated
  * (никто не park'ился в этом scope). */
@@ -562,12 +648,24 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
             {
                 NovaSchedState* _das = nova_sched_find_state(scope);
                 if (_das && i < _das->capacity) {
-                    bool _das_pk = __atomic_load_n((volatile bool*)&_das->parked[i], __ATOMIC_SEQ_CST);
-                    int32_t _das_pw = _das->pending_wake ? __atomic_load_n(&_das->pending_wake[i], __ATOMIC_ACQUIRE) : 0;
-                    if (_das_pk || _das_pw) {
-                        /* Skip: do NOT reset parked/pending_wake, do NOT assign co here.
-                         * close_cb (Fix B in driver.c) will clear parked[i] and dispatch
-                         * the original fiber directly when its timer fires. */
+                    /* Plan 83-go-cmn Ф.2 (correction #5): the new skip-stale
+                     * predicate is parked[i] ALONE (the pending_wake signal is
+                     * deleted). parked[i] is set at gopark and cleared only by the
+                     * goready winner / cancel / driver close_cb, so while it is
+                     * true the original fiber is still parked (alive in mco_yield)
+                     * and its parked_co[i] carrier still points to it. Reusing the
+                     * slot now would let a wake/cancel resolve the WRONG identity.
+                     * Skipping keeps the slot pinned until the genuine wake clears
+                     * parked[i] — at which point parked_co[i] is also NULL'd, so the
+                     * NULL'd-but-alive window is handled by the by-co wake (driver
+                     * Fix-B dispatches expected_co directly; cancel/primitive wake
+                     * uses parked_co[i], never fibers[i]). */
+                    bool _das_pk = __atomic_load_n((volatile bool*)nova_sched_parked_at(_das, i), __ATOMIC_SEQ_CST);
+                    if (_das_pk) {
+                        /* Skip: do NOT reset parked, do NOT assign co here. The
+                         * genuine wake (close_cb Fix-B / goready) clears parked[i]
+                         * and dispatches the original fiber; after that the slot
+                         * becomes eligible for reuse. */
                         continue;
                     }
                 }
@@ -1201,6 +1299,28 @@ static inline NovaCancelToken* nova_cancel_token_merge2(
 #define NOVA_FIBER_STATE_PARKED  2  /* park called; waiting for wake */
 #define NOVA_FIBER_STATE_DEAD    3  /* mco_status==DEAD; never resume */
 
+/* ─── Plan 83-go-cmn Ф.2: gopark/goready 4-state park-latch ───────────
+ *
+ * Go runtime gopark/goready handshake. Lives in NovaSpawnCtxBase as
+ * `_nova_park_state` (by-pointer via mco_get_user_data, zero-init = NIL).
+ * Orthogonal to _nova_fiber_state (resume-ownership): this is the
+ * wait/ready handshake — who gets to re-queue + the ready-before-park latch.
+ *
+ *   NIL=0        — not in a gopark transaction (resting; zero-init value).
+ *   WAIT=1       — gopark committed; fiber about to / has yielded; awaiting goready.
+ *   READY=2      — goready fired BEFORE gopark committed WAIT (the latch sentinel);
+ *                  gopark's commit-recheck consumes it (READY->DISPATCHED) and
+ *                  returns WITHOUT yielding (ready-before-park, no hang).
+ *   DISPATCHED=3 — goready won WAIT->DISPATCHED: it (and only it) dispatch_ready's
+ *                  the fiber. Also: the transient "alive, requeue-in-flight" state
+ *                  that parked[]-reading liveness gates must NOT treat as 'gone'.
+ *
+ * Single-winner moves from parked[slot] CAS to _nova_park_state WAIT->DISPATCHED. */
+#define NOVA_PARK_NIL        0
+#define NOVA_PARK_WAIT       1
+#define NOVA_PARK_READY      2
+#define NOVA_PARK_DISPATCHED 3
+
 typedef struct {
     NovaFiberQueue*      _nova_parent_scope;
     int                  _nova_worker_slot;
@@ -1236,6 +1356,20 @@ typedef struct {
      * while mask > 0, throw CleanupTimeoutError instead of suspending.
      * 0 = no active deadline. */
     int64_t              _nova_cancel_deadline_ns;
+    /* Plan 83-go-cmn Ф.2: gopark/goready 4-state park-latch (NIL/WAIT/READY/
+     * DISPATCHED). By-pointer via mco_get_user_data; zero-init = NOVA_PARK_NIL.
+     * Inserted BEFORE schedlink so schedlink stays the LAST base field (Ф.1
+     * invariant). MUST be mirrored in BOTH codegen SpawnCtx_N layouts
+     * (emit_c.rs emit_spawn + emit_detach), before schedlink — same FATAL as
+     * Ф.1a if forgotten. Accessed via nova_park_state_* helpers below. */
+    nova_atomic_int      _nova_park_state;
+    /* Plan 83-go-cmn Ф.1: intrusive overflow link. Used ONLY while this fiber
+     * lives on the global overflow queue (NovaGlobalRunq) after a
+     * nova_runq_put_slow spill; NULL otherwise. Accessed via nova_co_schedlink.
+     * MUST be mirrored as the LAST base field in the codegen SpawnCtx_N layouts
+     * (emit_c.rs emit_spawn + emit_detach) — else the overflow write lands on a
+     * user-capture field. Zero-init by nova_alloc / pool memset. */
+    mco_coro*            schedlink;
 } NovaSpawnCtxBase;
 
 /* Plan 83.4.5.7: helper — CAS fiber state. Returns true if CAS succeeded.
@@ -1262,6 +1396,37 @@ static inline int32_t nova_fiber_state_load(mco_coro* co) {
     NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
     if (!base) return NOVA_FIBER_STATE_IDLE;
     return nova_aint_load(&base->_nova_fiber_state);
+}
+
+/* ─── Plan 83-go-cmn Ф.2: by-co park_state accessors ─────────────────
+ *
+ * The gopark/goready latch is addressed BY co-pointer (mco_get_user_data),
+ * never by (scope,slot) — so the slot-reuse lost-wake that rejected Option A
+ * in Ф.1b structurally cannot occur on this path (no slot→ctx resolution).
+ * NULL-safe for legacy fibers without a base (treated as a no-op latch:
+ * load→NIL, store→noop, CAS→false). Such fibers never park via gopark. */
+static inline nova_bool nova_park_state_cas(mco_coro* co, int32_t from, int32_t to,
+                                            int success_mo, int failure_mo) {
+    if (!co) return false;
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (!base) return false;
+    int32_t expected = from;
+    return __atomic_compare_exchange_n(&base->_nova_park_state, &expected, to,
+                                       false, success_mo, failure_mo);
+}
+
+static inline void nova_park_state_store(mco_coro* co, int32_t state, int mo) {
+    if (!co) return;
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (!base) return;
+    __atomic_store_n(&base->_nova_park_state, state, mo);
+}
+
+static inline int32_t nova_park_state_load(mco_coro* co) {
+    if (!co) return NOVA_PARK_NIL;
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (!base) return NOVA_PARK_NIL;
+    return __atomic_load_n(&base->_nova_park_state, __ATOMIC_ACQUIRE);
 }
 
 /* ===== Plan 110.2.1.a (D188 R3): cancel-shield primitives =====
@@ -1678,8 +1843,17 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
          * когда wake'нутся (callback timer'а либо cancel). Count alive++,
          * чтобы supervised_run не выходил оставив parked permanently.
          * Ф.7: bounds check на sched_st->capacity (может быть меньше
-         * scope.count если sched_state alloc'нулся раньше grow'а). */
-        if (sched_st && i < sched_st->capacity && sched_st->parked[i]) {
+         * scope.count если sched_state alloc'нулся раньше grow'а).
+         *
+         * Plan 83-go-cmn Ф.2 (correction #4): parked[] is the cheap filter, but
+         * the authority for "still waiting" is park_state==WAIT. A goready winner
+         * clears parked[i] + sets fiber_state IDLE before dispatch; if we observe
+         * the transient where parked[i] is still true but park_state==DISPATCHED,
+         * the fiber is 'alive, requeue-in-flight' — count it alive but DO resume
+         * it (fall through), since in bootstrap supervised_step IS the dispatcher.
+         * Only park_state==WAIT means genuinely-parked → skip+count. */
+        if (sched_st && i < sched_st->capacity && *nova_sched_parked_at(sched_st, i)
+            && nova_park_state_load(co) == NOVA_PARK_WAIT) {
             alive++;
             continue;
         }
@@ -1711,9 +1885,11 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
          * на следующий wake/resume. */
         if (mco_status(co) == MCO_DEAD) {
             nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
-        } else if (sched_st && i < sched_st->capacity && sched_st->parked[i]) {
-            /* Fiber запарковался во время resume'а. nova_sched_park уже
-             * store'ил PARKED — НЕ overwrite'ить здесь. */
+        } else if (sched_st && i < sched_st->capacity && *nova_sched_parked_at(sched_st, i)
+                   && nova_park_state_load(co) == NOVA_PARK_WAIT) {
+            /* Fiber запарковался во время resume'а (park_state==WAIT). gopark уже
+             * store'ил PARKED — НЕ overwrite'ить здесь (correction #4: only WAIT
+             * means genuinely-parked; DISPATCHED/NIL = ready → fall to IDLE). */
         } else {
             nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
         }

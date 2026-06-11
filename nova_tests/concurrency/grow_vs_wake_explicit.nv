@@ -1,0 +1,66 @@
+// grow_vs_wake_explicit.nv — regression guard for grow-vs-wake
+// (Plan 83-go-cmn Ф.1b, [M-83.11-grow-vs-wake-race]).
+//
+// Reproduces the §13.6.1 "sleep_analog" hang profile: 5 SEQUENTIAL supervised
+// blocks whose fiber counts (3, 1, 5, 4, 5) force the per-worker NovaSchedState
+// arrays to grow repeatedly while peer/driver threads are concurrently waking
+// parked fibers (each fiber parks in Time.sleep, the driver close_cb wakes it).
+//
+// Pre-Ф.1b: nova_sched_grow_state realloc'd the parked[]/pending_wake[] arrays
+// with a plain non-atomic pointer-swap; a wake reading the old base between the
+// swap and the capacity update saw a torn pointer → lost wake → permanent hang
+// (the whole supervised block never completed → test TIMEOUT).
+//
+// Post-Ф.1b: the 4 arrays are backed by chunked, STABLE-ADDRESS storage
+// (chunks allocated once, never moved/freed/realloc'd), so &parked[slot] is
+// stable forever and the torn pointer is structurally impossible. Each block
+// must complete and the total elapsed time stays small.
+//
+// NO `// ENV NOVA_AUTOARM=0` gate — this runs in armed M:N mode by default
+// (that is the whole point of the regression guard).
+
+module concurrency.grow_vs_wake_explicit
+
+test "grow-vs-wake: 5 sequential supervised blocks (3/1/5/4/5) complete" {
+    ro t0 = Time.now()
+
+    // Block 1: 3 fibers — initial sched-state allocation + first grow.
+    supervised {
+        for _ in 0..3 {
+            spawn { Time.sleep(5) }
+        }
+    }
+
+    // Block 2: 1 fiber — small scope after a larger one (slot reuse path).
+    supervised {
+        for _ in 0..1 {
+            spawn { Time.sleep(5) }
+        }
+    }
+
+    // Block 3: 5 fibers — grows past block 1's high-water mark.
+    supervised {
+        for _ in 0..5 {
+            spawn { Time.sleep(5) }
+        }
+    }
+
+    // Block 4: 4 fibers.
+    supervised {
+        for _ in 0..4 {
+            spawn { Time.sleep(5) }
+        }
+    }
+
+    // Block 5: 5 fibers — repeats the grow-vs-wake contention one more time.
+    supervised {
+        for _ in 0..5 {
+            spawn { Time.sleep(5) }
+        }
+    }
+
+    ro elapsed = Time.now() - t0
+    // 5 blocks × ~5ms sleeps run concurrently within each block; generous
+    // slack for CI. A hang (the bug) would blow far past this.
+    assert(elapsed < 5000)
+}

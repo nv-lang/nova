@@ -36279,3 +36279,169 @@ producer-audit; aa6bfd3ef5f docs Ф.3-Ф.5 close; 1b3b018f3eb fix protocols.nv m
 docs-commit.
 
 D241 (2026-06-11): canonical type-modifier order — scope-adjacency (value priv канон, не priv value); order-independence (plan124_8) пересмотрено как противоречие «one canonical syntax»; enforcement отложен [M-138-canonical-modifier-order]. spec 03-syntax.md §D241 + TOC + 124.8 Followup. Также: std mojibake sweep (protocols.nv 1b3b018 + vec_owned.nv db9807e — double-encoded UTF-8 reversed) + 5 design-review маркеров сессии (@append=copy уже landed Ф.0d).
+================================================================================
+2026-06-11 — Plan 83-study-go-c-mn: порт рабочего M:N из Go 1.4 C-рантайма
+================================================================================
+worktree D:\Sources\nv-lang\nova-p83-gomn, ветка plan-83-go-cmn.
+
+ЗАДАЧА (`[M-83-study-go-c-mn]`): взять рабочий M:N из последней C-версии Go-рантайма
+(go1.4, перед go1.5 C→Go) и подтянуть Nova-M:N — закрыть два открытых race-маркера.
+
+RESEARCH (workflow wf_97ade807, 11 агентов, 848k токенов): 4 агента смапили Nova M:N
+(scheduler/scope/driver/cancel), 5 зафетчили Go 1.4 C-рантайм (proc.c G-P-M, netpoll,
+timers, sysmon, park/note), 2 синтезировали gap-анализ (9 gaps) + 8-фазную декомпозицию.
+ГЛАВНАЯ НАХОДКА: grow-vs-wake — баг РЕАЛЛОКАЦИИ (nova_sched_grow_state plain pointer-swap
+конкурентно с driver wake), не memory ordering. Go fixed runq[256] (стабильный адрес,
+never realloc) структурно его исключает = load-bearing фикс.
+
+Что Go использовал ВМЕСТО libuv (для справки): netpoll (epoll/kqueue/IOCP) прямо в
+scheduler loop, собственный 4-ary timer min-heap + timerproc, M/P-handoff для блокирующих
+сисколов (без threadpool), note (futex/sema) для парковки потоков.
+
+РЕШЕНИЕ V1 (user): максимально ДОСЛОВНЫЙ порт Go-кода, не ре-имплементация — наследуем
+проверенную корректность, минимизируем риск своего бага. «Структурно идентично» (byte-
+identical невозможно: Go-код ссылается на G/M/P/mcall/note/runtime·cas, которых в Nova нет).
+GC-вопрос вынесен в отдельный Plan 144 (precise GC, из research 83.13) — НЕ scope M:N.
+
+СДЕЛАНО:
+- docs/plans/83-study-go-c-mn.md — план (8 фаз, gap-анализ, тест-план, spec D241-D245,
+  global acceptance, риски, V1 verbatim-policy).
+- docs/plans/144-precise-gc-implementation.md — extracted GC impl из 83.13 research.
+- THIRD_PARTY/go-LICENSE — BSD-3-Clause + Go Authors copyright + ported-file list.
+- compiler-codegen/nova_rt/runq.h — Ф.1 ring-примитив: дословный порт go1.4 proc.c
+  runqput/runqget/runqgrab/runqsteal/runqputslow + globrunqputbatch/globrunqget. Fixed
+  mco_coro* runq[256], monotonic uint32 head/tail, single-producer store-release tail,
+  multi-consumer CAS head, overflow → spill-half в global intrusive-list (schedlink).
+- compiler-codegen/nova_rt/test_runq.c — изолированный unit-тест (clang -O2 -Wall -Wextra,
+  0 warnings): T1 FIFO, T2/T3 overflow spill-half exact + drain, T5 steal conservation,
+  T4 concurrent 1 producer + 4 thieves / 200k fibers → conservation (каждый ровно 1 раз,
+  0 потерь, queues пусты). 10/10 прогонов PASS; grab_retries>0 = inconsistent-snapshot
+  path сработал и обработан.
+
+СТАТУС: план + Ф.1 ПРИМИТИВ verbatim-ported и unit-tested в изоляции (без полной сборки).
+ОСТАЛОСЬ Ф.1: интеграция в runtime.c (park-state→SpawnCtxBase, замена NovaWorker.deque→
+NovaRunq, rewire _worker_main/spawn paths) — это ATOMIC CUT-OVER (gap-анализ risk 1: нельзя
+инкрементально без racy промежуточных состояний), требует полной сборки clang+MSVC + stress
+n≥66 для валидации. Ф.2-Ф.8 PLANNED. GitHub issue #2 для grow-vs-wake.
+
+КОММИТЫ: a4783cafdfe (Plan 144), 40d916532a3 (план 8-фаз), <feat Ф.1 ring primitive>.
+
+--------------------------------------------------------------------------------
+2026-06-11 (доп) — build env + baseline + два pre-existing MSVC-бага main
+--------------------------------------------------------------------------------
+Решение user: «сборка + baseline на двух toolchain, потом стоп» (cut-over НЕ
+активировать); runq CAP 256→4096 (под 10k-fiber/MAXPROCS=1 workload, spill на
+200k тесте 166→1).
+
+- nova-cli собран release (1m33s); libuv скопирован в worktree.
+- clang concurrency baseline: PASS 102 / FAIL 6 (все pre-existing, runq dormant).
+- runq.h: header-compat guard (minicoro.h coexist, C11+C99-pedantic 0 warn).
+
+MSVC baseline вскрыл ДВА pre-existing бага main (НЕ порт, НЕ worktree):
+1. sqlite C1083 — ПОЧИНЕНО. Package-wide [ffi] sqlite-shim в nova_tests/nova.toml
+   force-include'ился во все ~1000 TU → cl.exe C1083. Заскоуплен в
+   nova_tests/plan115/nova.toml (name="plan115" сохраняет D78). clang plan115 11/0.
+2. GNU stmt-expr C2059 — заведено Plan 145 ([M-msvc-bounds-check-stmt-expr]).
+   Codegen эмитит (*({ __typeof__... &_a->data[_i]; })) для bounds-check индексации
+   → cl.exe C2059. MSVC сломан широко, регрессия после Plan 82 (1049/16). Fix:
+   per-type inline helper nova_idx_<T>. Решение user: порт на clang, MSVC отдельно.
+
+Plan 145 создан (MSVC codegen portability, P1, ~1-2 dev-day).
+КОММИТЫ: tune(CAP), fix(mco_coro guard), log(baseline), fix(ffi scope sqlite),
+plan(145).
+
+--------------------------------------------------------------------------------
+2026-06-11 (доп) — Ф.1a ring-port cut-over (deque→runq) DONE, clang
+--------------------------------------------------------------------------------
+Design-workflow (4 map + synth + adversarial review) → 16-шаговый чеклист.
+Review verdict unsafe ДО кода поймал 2 FATAL: (#1) overflow-очередь без consumer
+→ hang — фикс nova_globrunq_get_one в 3 pop-путях; (#2) schedlink лишь в fibers.h
+(SpawnCtx руками реплицируется в emit_c.rs) → corruption — фикс schedlink в оба
+codegen-layout. Также разбил Ф.1 на Ф.1a (ring-port, безопасно) + Ф.1b (park-state
+relocation = СОБСТВЕННО фикс гонки, следующий шаг).
+
+Реализовано: runtime.h/runtime.c/fibers.h/runq.h/emit_c.rs. deque→runq (11 сайтов)
++ глобал overflow queue + drain + schedlink. nova_sched.h park-state НЕ тронут.
+Валидация clang: build✅ + smoke✅ + concurrency 103/5 vs 102/6 (deep_spawn +
+time_handler теперь PASS; 0 регрессий корректности). grow-vs-wake ещё НЕ закрыт
+(realloc NovaSchedState → Ф.1b). Commit 4ce88b65c2d.
+
+--------------------------------------------------------------------------------
+2026-06-11 — Ф.1b: chunked park-state → grow-vs-wake ЗАКРЫТ (структурно)
+--------------------------------------------------------------------------------
+Design-workflow (Option C chunked vs A SpawnCtxBase; выбран C) + фоновый агент +
+adversarial diff-review (3 линзы, verdict safe-to-commit, fence_hazards CLEAN).
+NovaSchedState 4 массива → chunk-директории (chunk'и never-realloc → torn-pointer
+структурно невозможен); grow_state → CAS-publish. Все fence байт-идентичны.
+Option A отклонён (переоткрывал slot-reuse lost-wake + lock в wake-путь).
+
+Валидация (clang, независимо подтверждена; stress_bisect compile-once, armed exe):
+grow_vs_wake_explicit 100/100@MP=1 + 66/66@MP=16; stress_iso_3e 66/66; semaphore_batch_n
+30/30 armed; ring_overflow_drain 10/10 (5000 fibers overflow→global, exact-count);
+scale 1k 30/30, 10k 10/10; concurrency 105/4. 100k/200k недостижимы — Plan 82
+fiber-arena ~16k (8MB-стеки), не grow-vs-wake. harness-контроль park_wake_stress 13/7
+(детектит фейлы → зелёные настоящие). exe реально исполняется (213ms, не no-op).
+
+Spec D243 (fixed-ring + chunked storage contract) + Q28 (ARM acquire-capacity) +
+Q29 (runnext stealability). D-перенумерация: D241/D242 заняты Plan 138 → семейство
+83-go-cmn на D243+. AC1-AC12 все ✅ (plan §9.6).
+
+Новые планы/маркеры из работы: Plan 144 (precise GC), 145 (MSVC codegen), 146
+(growable stacks — потолок 16k), [M-tsan-race-detector] (Go -race → clang TSAN),
+[M-83.11-f1b-acquire-capacity], [M-park-wake-stress-atomic-counters]. Umbrella Plan 83
+§«Порядок исполнения» — карта зависимостей семейства.
+
+Tests: ring_overflow_drain.nv (NEW pos), grow_vs_wake_explicit.nv, test_runq.c (unit).
+Коммиты: e1525d90671 (feat Ф.1b), f922c3d5b30 (docs closure), <plan 146/roadmap>,
+7cec21653a1 (spec D243), <test ring_overflow>. Ветка plan-83-go-cmn.
+grow-vs-wake (GitHub issue #2) — закрыт; Ф.2-Ф.8 PLANNED.
+
+--------------------------------------------------------------------------------
+2026-06-11 (доп) — TSAN-блокер + ARM acquire-capacity hardening
+--------------------------------------------------------------------------------
+User выбрал next = TSAN race-detector. Feasibility: Windows clang НЕ поддерживает
+-fsanitize=thread (unsupported for x86_64-pc-windows-msvc — LLVM limit, TSAN=Linux/
+macOS). WSL Ubuntu есть, но без clang/Linux-сборки. ⇒ TSAN gated на Linux-build Nova
+(новый prereq-маркер [M-nova-linux-build]); [M-tsan-race-detector] задокументирован
+с дизайном (--tsan flag + Boehm-suppressions + Linux-CI).
+
+Пивот на Windows-doable loose-end: [M-83.11-f1b-acquire-capacity] ✅ CLOSED
+(commit 98b4b05c6ae). nova_sched_cap_acq() = ACQUIRE-load capacity на ~14
+accessor-guard сайтах (nova_sched.h×10, driver.c×2, runtime.c×2) → guard парится
+с RELEASE-store capacity → ARM NULL-окно закрыто. Q28 закрыт. Verified x86: smoke +
+grow_vs_wake 40/40 (race stays closed). Коммиты 98b4b05c6ae (fix), 39764e18c52 (docs).
+
+--------------------------------------------------------------------------------
+2026-06-11 — Ф.2 gopark/goready ЗАКРЫТ (удалён pending_wake)
+--------------------------------------------------------------------------------
+Design-workflow (4 map + synth + adversarial review, verdict needs-fixes + 7 corrections) →
+фоновый агент по спеке → мой adversarial diff-review (3 линзы, verdict safe-to-commit, все
+fatal/high опровергнуты построчно) → independent stress. Паттерн Ф.1b.
+
+Go-style park/wake: _nova_park_state (4-state NIL/WAIT/READY/DISPATCHED) на SpawnCtxBase
+by-co. nova_gopark (G0-G4 lost-wakeup-free) + nova_goready (single-winner CAS-ladder). Удалён
+pending_wake counter + t1-t4 dance + TLS-deferred-hack. 396-строчный rewrite nova_sched.h. Spec D244.
+
+Сосуществование cancel(by-slot)+примитив(by-pointer): parked_co[] (chunked, заменил pending_wake)
+— оба через ОДИН nova_goready(co), single-winner на WAIT->DISPATCHED CAS -> double-push невозможен.
+Агент умно отклонился: parked_co[] единообразно для всех park-сайтов вместо co-полей в 6 waiter-
+структурах. emit_c.rs оба layout'а += park_state. count_parked hardening.
+
+Validation (clang, independent): grow_vs_wake 40/40, cross_channel 40/40, condvar_no_lost_wakeup
+40/40, nested_cancel 30/30, mutex_cancel 30/30; concurrency 105/4, plan103_4 25/25. grow-vs-wake
+CLOSED. Followup [M-83.11-f2-arm-tsan]. Коммиты d2830c73d7d (feat), 8e32ab3de46 (spec D244 + план).
+Дальше Ф.3 (nspinning) / Ф.5 (iso-cancel -> [M-83.10.4]).
+
+--------------------------------------------------------------------------------
+2026-06-11 — Ф.5: iso-cancel startup race [M-83.10.4] ЗАКРЫТ (verify-only)
+--------------------------------------------------------------------------------
+Design-workflow (map-first: reproduce→flow→Ф.2-gap→83.10.5) + adversarial review.
+Verdict: already-closed-by-f2 — Ф.2 (gopark timer-backed park вето́ит на cancel перед
+arming + READY-latch + driver async-close) закрыл race СТРУКТУРНО, production-кода НЕ надо.
+Доказательство: workflow 380 armed + мои 320 (160@MP=1 + 160@MP=4) = 700 прогонов, 0 hang.
+
+Review-нюанс: 3 disabled-теста НЕ uncomment verbatim — исходные бюджеты (<50+SLACK=250ms)
+были latency-SLA, флакавшие ~0.8% под jitter (fiber'ы просыпались, wall-clock иногда >250ms).
+Ослаблены до wake-not-hang (<1000/<1000/<2000). НЕ применён условный gopark cancel-veto
+(лечил бы несуществующий тут failure-mode) → P3 [M-83-gopark-bare-park-cancel-veto].
+Файлы: только supervised_cancel_stress_test.nv (re-enable + let->ro + бюджеты), 0 runtime-изм.
