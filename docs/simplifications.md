@@ -34792,3 +34792,13 @@ vec_owned.nv `check` ok.
 - **NEG:** дедик-фикстуры (gopark_ready_before_park/goready_double_assert) НЕ созданы — внутренний
   тайминг плохо выразим детерминированно на Nova-уровне; покрыто property (condvar_no_lost_wakeup) +
   cancel-фикстурами. **Followup [M-83.11-f2-arm-tsan]** (ARM под TSAN/Linux). Коммит d2830c73d7d.
+
+### Plan 83-go-cmn Ф.5 — iso-cancel startup race [M-83.10.4] ЗАКРЫТ (verify-only), 2026-06-11
+
+- **`[M-83.10.4-iso-cancel-startup-race]` ЗАКРЫТ структурно Ф.2** (gopark) — production-кода НЕ
+  потребовалось. Timer-backed park (Time.sleep) вето́ит на cancel перед arming + driver async-close
+  wake. Доказано 700 armed-прогонами (380 workflow + 320 мои @MP=1/4) = 0 hang.
+- **Review-урок:** 3 disabled-теста re-enabled НЕ verbatim — исходные latency-бюджеты (250ms) были
+  jitter-флаки (~0.8%, false-BAD не hang). Ослаблены до wake-not-hang инварианта; цель теста =
+  «cancel будит всех, scope не виснет», а не латентность. Verify ≥150 iters (не 50: P(false-good)=0.67).
+- **НЕ применён** gopark cancel-veto (scope-creep против несуществующего failure-mode) → P3 marker.
