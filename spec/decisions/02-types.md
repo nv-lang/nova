@@ -11200,16 +11200,50 @@ v[1] = 99  // → v.@index(1, 99)   write-overload через MutIndex (D240)
 > единицы без `Vec`-импорта продолжают временно использовать `NovaArray_T`
 > C-backing с идентичным layout.
 >
-> **Plan 138.2 [M-138.1-vec-in-prelude]:** добавить `Vec` в prelude →
-> flip включится для всех единиц → `NovaArray` (NOVA_ARRAY_DECL/IMPL) удаляется.
+> **Plan 138.2 Ф.0-final (2026-06-11):** `Vec`/`VecIter` вошли в prelude
+> (`PRELUDE_VERSION` 13→14) → flip **УНИВЕРСАЛЕН**: `[]T` лоуэрится в
+> `Nova_Vec____<T>*` в **КАЖДОМ** prelude-юните (Vec-free юнит `[]int` →
+> `Nova_Vec____nova_int*`, typed storage). Юниты с `#no_prelude` **graceful-degrade**
+> на legacy `NovaArray_T`-путь (4 gate-сайта `generic_type_templates.contains_key("Vec")`
+> в `emit_c.rs` остаются — проходят для prelude-юнитов, fallback для `#no_prelude`).
 
-### NovaArray retirement
+### NovaArray retirement — частичный (BLOCKED на Plan 139 Ф.2)
 
-После того как `Vec` войдёт в prelude (Plan 138.2):
+> **Status (Plan 138.2 Ф.2-Ф.5, 2026-06-11): ЧАСТИЧНО — полный retire BLOCKED.**
+> Универсальный flip (Ф.0-final) приземлён, но физическое удаление
+> `NOVA_ARRAY_DECL/IMPL` из `array.h` **заблокировано** пятью load-bearing
+> NovaArray-потребителями, которые переживают flip:
+
+1. **Строковый/byte слой (главный блокер — Plan 139 Ф.2 scope-out).**
+   `nova_str_as_bytes` → `NovaArray_nova_byte*`, `nova_str_split` →
+   `NovaArray_nova_str*`, `from_bytes_lossy`/`from_bytes_unchecked`/`steal`
+   остаются C-примитивами (требуют str `@ptr` field-access value-record'а —
+   gated на `[M-139-f0-lang-item-decl]`). Эмпирически: `nova_byte`-NovaArray =
+   ~35 700 вхождений по корпусу, `nova_str` = ~2 100, `nova_char` = ~1 200
+   (`to_chars`). WriteBuffer/StringBuilder bulk-ops (`nova_array_append_nova_byte`
+   ~3 300, `compare`/`append_zero`/`truncate`/`reserve` на `nova_byte`)
+   маршрутят через C-builtin bridge. Удалить `NOVA_ARRAY_DECL(nova_byte/nova_str)`
+   = сломать base64/json/encoding/text. **Risk RG.** → `[M-139-f2-ptr-field-producers]`.
+2. **`#no_prelude` graceful-degrade.** `#no_prelude`-юниты (tested feature:
+   plan107/plan62/plan110_9_np) лоуэрят `[]T` в `NovaArray_T` (Vec-template
+   отсутствует). 4 gate-сайта `contains_key("Vec")` это и обеспечивают. **Risk RE.**
+3. **Closure-array `[]fn`** → `NovaArray_void_p*` (намеренное исключение,
+   `[M-138.1-closure-array]` / `[M-138.2-closure-array-vec]`).
+4. **parfor (D71)** — internal result-collection буферы (`NovaArray_{nova_int,
+   nova_bool,nova_f64,nova_str}`), layout-identical с Vec, никогда не escape'ят
+   как user `[]T`; миграция = риск без семантического выигрыша → `[M-138.2-parfor-vec]`.
+5. **Literal-bridge `Vec[T].from(items []T)`** — static-method param `[]T` всё
+   ещё лоуэрится в `NovaArray_nova_int* items` (dead stub в каждом flipped-юните,
+   класс `[M-138.2-self-in-param]` — generic-static-method param-type substitution).
+
+После того как Plan 139 Ф.2 мигрирует string/byte слой на `Nova_Vec____nova_byte*`
+(закрытие `[M-139-f2-ptr-field-producers]`), retirement можно завершить:
 
 - `NovaArray_T` C-макрос и `array.h` NOVA_ARRAY_DECL/IMPL — удаляются
 - `nova_array_*` runtime helpers для примитивов — заменяются `Vec`-методами
-- Строковый слой (`nova_str_to_bytes`, `nova_str_to_chars`, `split`, `string_builder.h`) — мигрирует на `Nova_Vec____nova_byte*`
+  (уже сделано для generic-Vec пути; остаётся `nova_byte` string-layer bridge)
+- Строковый слой (`nova_str_to_bytes`, `nova_str_to_chars`, `split`,
+  `string_builder.h`) — мигрирует на `Nova_Vec____nova_byte*`
 
 ### Связь
 
