@@ -10184,6 +10184,22 @@ semantics. Symmetric extension D52 §«record form» через `value` keyword.
   без temp hoist (mutation flows к original slot).
 - **Reference fields:** handles inline (ptr+len+cap для `[]T`,
   ptr+len для `str`); data on heap (GC-tracked).
+- **Equality of reference-field value-records (Plan 139 Ф.3, content-eq
+  override).** Default value-record `==` is **field-by-field** (Plan 141:
+  `emit_field_eq` recurses each field). For a reference field whose pointee
+  is **shared + immutable** (the `str.ptr *ro u8` buffer), naive field-by-field
+  would compare **pointer identity** — WRONG: two distinct buffers with equal
+  bytes must be equal. Therefore `str` **opts out** of field-by-field and uses
+  **content-eq**: `emit_field_eq` special-cases `cty == "nova_str"` →
+  `nova_str_eq` (`len && memcmp`) **before** any field-by-field path
+  (emit_c.rs:11161), and direct `==`/`<`/… on `str` lower in BinOp codegen to
+  `nova_str_eq`/`nova_str_lt`/… (emit_c.rs:16985). Consequence: str-in-tuple,
+  str-in-record, str-in-sum eq, and str-keyed `HashMap` (hash via
+  `nova_str_hash` SipHash-over-bytes) are **all content-keyed automatically**.
+  `str.@clone` = 16-byte handle copy over the immutable shared buffer (no deep
+  copy; `*ro u8` makes sharing safe). General rule: a value-record carrying a
+  shared-immutable pointer field must register content-eq for that field rather
+  than inherit pointer-identity from the field-by-field default.
 - **Fixed array fields:** fully inline (`[32]u8` = 32 bytes inline).
 - **Forward decls:** `typedef struct NovaValue_X NovaValue_X;` (no
   pointer alias unlike heap records).

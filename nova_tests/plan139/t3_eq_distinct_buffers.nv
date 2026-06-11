@@ -1,0 +1,31 @@
+// Plan 139 Ф.3 — str equality is BYTE-CONTENT, not pointer identity.
+// REGRESSION GUARD (R10): Plan 141 made composite `==` field-by-field; a naive
+// field-by-field eq on str{ptr,len} would compare pointer identity, which is
+// WRONG. str MUST override with content-eq (nova_str_eq = len && memcmp).
+// This fixture builds strings whose bytes are equal but whose backing buffers
+// are distinct allocations, and asserts they compare equal.
+module plan139.t3_eq_distinct_buffers
+
+test "built string equals literal with same bytes (distinct buffers)" {
+    // "ab" + "" allocates a fresh concat buffer; the literal "ab" is rodata.
+    // Distinct pointers, identical bytes -> must be equal by content.
+    ro built = "ab" + ""
+    assert(built == "ab", "concat-with-empty == literal")
+}
+
+test "two independently built strings with same bytes are equal" {
+    ro x = "ab" + "c"
+    ro y = "a" + "bc"
+    // x and y are two separate concat allocations -> different ptr, same bytes.
+    assert(x == y, "ab+c == a+bc")
+}
+
+test "empty strings equal regardless of origin" {
+    ro a = ""
+    ro b = "x"
+    ro c = b.trim()        // build an empty result (no trailing space here -> "x", use slice)
+    ro e2 = "ab"[0..0]     // empty slice view, different buffer than literal ""
+    assert(a == "", "literal empty == empty")
+    assert(e2 == "", "empty slice == literal empty")
+    assert(c == "x", "trim no-op")
+}
