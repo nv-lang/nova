@@ -3625,7 +3625,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let escaped = Self::escape_c_str(s);
                 let len = s.len();
                 self.line(&format!(
-                    "static const nova_str {} = {{(const char*)\"{}\" , {}}};",
+                    "static const nova_str {} = {{(const uint8_t*)\"{}\" , {}}};",
                     c_name, escaped, len
                 ));
                 self.var_types.insert(c.name.clone(), ty_c.clone());
@@ -16666,7 +16666,11 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
             ExprKind::NullPtrLit  => Ok("((void*)0)".into()),
             ExprKind::StrLit(s)   => {
                 let escaped = Self::escape_c_str(s);
-                Ok(format!("(nova_str){{.ptr=\"{}\", .len={}}}", escaped, s.len()))
+                // Plan 139 Ф.0: str is the value-record `{ ptr *ro u8, len int }`;
+                // its C ABI image `nova_str` now has a `const uint8_t* ptr` field.
+                // Cast the `const char*` string literal → `const uint8_t*` so the
+                // compound-literal init is warning-free (-Wpointer-sign clean).
+                Ok(format!("(nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}}", escaped, s.len()))
             }
             ExprKind::InterpolatedStr { parts } => {
                 self.emit_interpolated_str(parts)
@@ -17915,7 +17919,7 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                                     ty = err_c, tmp = try_tmp)
                             };
                             self.line(&format!(
-                                "nova_throw_typed((nova_str){{.ptr=\"<typed err>\", .len=11}}, {p}, {tid});",
+                                "nova_throw_typed((nova_str){{.ptr=(const uint8_t*)\"<typed err>\", .len=11}}, {p}, {tid});",
                                 p = payload_expr, tid = tid));
                         }
                         self.indent -= 1;
@@ -18027,7 +18031,7 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                                 ty = err_c, tmp = bang_tmp)
                         };
                         self.line(&format!(
-                            "nova_throw_typed((nova_str){{.ptr=\"<typed err>\", .len=11}}, {p}, {tid});",
+                            "nova_throw_typed((nova_str){{.ptr=(const uint8_t*)\"<typed err>\", .len=11}}, {p}, {tid});",
                             p = payload_expr, tid = tid));
                     }
                     self.indent -= 1;
@@ -18381,13 +18385,13 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                 // Bootstrap: tag function ignored, parts concatenated with args as strings.
                 // Build a single nova_str by concatenating all parts and arg string reprs.
                 if parts.is_empty() {
-                    return Ok("(nova_str){.ptr=\"\", .len=0}".into());
+                    return Ok("(nova_str){.ptr=(const uint8_t*)\"\", .len=0}".into());
                 }
                 if args.is_empty() {
                     // Simple string literal: all content is in parts[0]
                     let combined = parts.join("");
                     let escaped = Self::escape_c_str(&combined);
-                    return Ok(format!("(nova_str){{.ptr=\"{}\", .len={}}}", escaped, combined.len()));
+                    return Ok(format!("(nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}}", escaped, combined.len()));
                 }
                 // With interpolations: concatenate parts[0] + str.from(args[0]) + parts[1] + ...
                 // (D73: string interpolation uses From[X]/str. In bootstrap codegen we call
@@ -18396,7 +18400,7 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                 for (i, part) in parts.iter().enumerate() {
                     if !part.is_empty() {
                         let escaped = Self::escape_c_str(part);
-                        result_exprs.push(format!("(nova_str){{.ptr=\"{}\", .len={}}}", escaped, part.len()));
+                        result_exprs.push(format!("(nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}}", escaped, part.len()));
                     }
                     if let Some(arg) = args.get(i) {
                         let v = self.emit_expr(arg)?;
@@ -18410,7 +18414,7 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                     }
                 }
                 if result_exprs.is_empty() {
-                    return Ok("(nova_str){.ptr=\"\", .len=0}".into());
+                    return Ok("(nova_str){.ptr=(const uint8_t*)\"\", .len=0}".into());
                 }
                 let mut acc = result_exprs[0].clone();
                 for expr in &result_exprs[1..] {
@@ -18461,7 +18465,7 @@ if (_sf < 0 || _st < _sf || _st > _sv->len) {{ char _sbuf[96]; \
 int _sn = snprintf(_sbuf, 96, \"Vec: slice [%lld..%lld] out of bounds for length %lld\", \
 (long long)_sf, (long long)_st, (long long)_sv->len); \
 if (_sn < 0) _sn = 0; if (_sn > 95) _sn = 95; \
-nv_panic((nova_str){{.ptr=_sbuf,.len=(size_t)_sn}}); }} \
+nv_panic((nova_str){{.ptr=(const uint8_t*)_sbuf,.len=(nova_int)_sn}}); }} \
 nova_int _sl = _st - _sf; \
 {vty}* _sr = ({vty}*)nova_alloc(sizeof({vty})); \
 _sr->data = ({ety}*)(_sv->data + _sf); _sr->len = _sl; _sr->cap = _sl; \
@@ -19927,7 +19931,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                     ));
                                 }
                                 return Ok(format!(
-                                    "(nova_cancel_token_cancel_reason({}, nova_cancel_box_str((nova_str){{.ptr=\"cancelled\",.len=9}})), NOVA_UNIT)",
+                                    "(nova_cancel_token_cancel_reason({}, nova_cancel_box_str((nova_str){{.ptr=(const uint8_t*)\"cancelled\",.len=9}})), NOVA_UNIT)",
                                     obj_c));
                             }
                             "is_cancelled" => {
@@ -20310,7 +20314,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                 let none_check = self.option_is_none_check(&tmp, &elem_ty);
                                 self.line(&format!("if ({}) {{", none_check));
                                 self.indent += 1;
-                                self.line("Nova_Fail_fail((nova_str){.ptr=\"called unwrap on None\", .len=21});");
+                                self.line("Nova_Fail_fail((nova_str){.ptr=(const uint8_t*)\"called unwrap on None\", .len=21});");
                                 self.indent -= 1;
                                 self.line("}");
                                 return Ok(format!("({}.value)", tmp));
@@ -23056,7 +23060,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                 self.indent += 1;
                                 let err_msg = format!("{}.try_from: parse error", target);
                                 self.line(&format!(
-                                    "{} = {}((nova_str){{.ptr=\"{}\", .len={}}});",
+                                    "{} = {}((nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}});",
                                     out, err_ctor, err_msg, err_msg.len()));
                                 self.indent -= 1;
                                 self.line("}");
@@ -23085,7 +23089,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                             self.line("} else {");
                             self.indent += 1;
                             self.line(&format!(
-                                "{} = {}((nova_str){{.ptr=\"char.try_from: invalid codepoint\", .len=37}});",
+                                "{} = {}((nova_str){{.ptr=(const uint8_t*)\"char.try_from: invalid codepoint\", .len=37}});",
                                 out, err_ctor));
                             self.indent -= 1;
                             self.line("}");
@@ -24428,7 +24432,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                     // Plan 109 (D179): StringBuilder is now Nova-defined.
                     // Generated method: Nova_StringBuilder_method_append (str overload).
                     self.line(&format!(
-                        "Nova_StringBuilder_method_append({}, (nova_str){{.ptr=\"{}\", .len={}}});",
+                        "Nova_StringBuilder_method_append({}, (nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}});",
                         sb, escaped, s.len()
                     ));
                 }
@@ -25794,7 +25798,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             };
             // Ключ — str literal из имени поля.
             let key_str = format!(
-                "(nova_str){{.ptr=\"{}\", .len={}}}",
+                "(nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}}",
                 Self::escape_c_str(&f.name),
                 f.name.len()
             );
@@ -29681,7 +29685,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                 "static inline NovaRes_{n}* nova_make_NovaRes_{n}_Err_typed(void* payload, NovaTypeId tid) {{ \
                  NovaRes_{n}* r = (NovaRes_{n}*)nova_alloc(sizeof(NovaRes_{n})); \
                  r->tag = NOVA_TAG_Result_Err; \
-                 r->payload.Err._0 = (nova_str){{.ptr = \"<typed err>\", .len = 11}}; \
+                 r->payload.Err._0 = (nova_str){{.ptr = (const uint8_t*)\"<typed err>\", .len = 11}}; \
                  r->err_typed_payload = payload; r->err_typed_type_id = tid; \
                  return r; }}\n",
                 n = name));

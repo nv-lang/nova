@@ -52,10 +52,16 @@ typedef struct { nova_fn_vii fn; void* env; } NovaClos_vii;
 #define NOVA_CLOS_CALL_vii(f,a,b)   (((NovaClos_vii*)(f))->fn(((NovaClos_vii*)(f))->env, (a), (b)))
 typedef uint8_t  nova_byte;
 
-/* ---- String ---- */
+/* ---- String ----
+ * Plan 139 Ф.0: `str` is now a Nova value-record `{ ptr *ro u8, len int }`.
+ * This C typedef is the ABI image of that value-record. It is layout/ABI-
+ * identical to the previous `{const char* ptr; size_t len;}` on x64
+ * (`const char*` ≡ `const uint8_t*` — same 8-byte pointer; `size_t` ≡
+ * `int64_t` — same 8-byte width), so all ~354 runtime-C sites that consume
+ * the `nova_str` typedef keep working source-compatibly. sizeof == 16. */
 typedef struct {
-    const char* ptr;
-    size_t      len;
+    const uint8_t* ptr;   /* *ro u8 — immutable UTF-8 byte buffer */
+    int64_t        len;   /* length in BYTES (D26: str.len = bytes) */
 } nova_str;
 
 /* Plan 90: forward-декларация nv_panic (определён `static inline` в
@@ -76,7 +82,8 @@ static void nv_panic_insert_oob(nova_int i, nova_int len);
 static void nv_panic_negative_reserve(nova_int extra);
 
 static inline nova_str nova_str_from_cstr(const char* s) {
-    return (nova_str){ s, strlen(s) };
+    /* Plan 139 Ф.0: ptr field is now `const uint8_t*` (str value-record ABI). */
+    return (nova_str){ (const uint8_t*)s, (int64_t)strlen(s) };
 }
 
 /* Plan 90: O(1) доступ к байту строки. bounds-checked → panic.
