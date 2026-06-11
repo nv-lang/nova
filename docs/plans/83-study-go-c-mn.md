@@ -446,4 +446,48 @@ park_wake_stress / semaphore_batch_n / driver_cancel_{sleep_basic,edge} / driver
 MAXPROCS=1 И 16; **NOVA_WATCHDOG_DUMP_SECS=0** (без Heisenbug-маскировки); clang; full
 nova test no-regression; §10/§11.6/§12.31 нетронуты.
 
+### 9.5 Ф.1b ЗАКРЫТА — grow-vs-wake CLOSED (2026-06-11, commit `e1525d90671`)
+
+**`[M-83.11-grow-vs-wake-race]` ✅ CLOSED** структурно. Реализовано Option C (chunked
+stable-address): 4 массива `NovaSchedState` → inline chunk-директории (chunk'и
+аллоцируются раз, `nova_sched_grow_state` теперь CAS-publish'ит chunk'и, не realloc'ит).
+`&parked[slot]` стабилен навсегда → torn-pointer структурно невозможен. slot-индексация
+сохранена → каждый `__ATOMIC_*` fence байт-идентичен (adversarial-review: fence_hazards
+**VERIFIED CLEAN**).
+
+**Файлы:** fibers.h (geometry + 4 директории + 4 accessor + alloc_slot/supervised_step),
+nova_sched.h (CAS-publish grow + ~14 сайтов → accessor), driver.c (Fix-B wake-path),
+runtime.c (cancel_worker_fibers + dump), grow_vs_wake_explicit.nv (NEW), semaphore_batch_n.nv
+(gate снят), park_wake_stress.nv (gate оставлен — его `+=` race, не grow-vs-wake).
+
+**Реализация:** фоновый агент по спеке §9.4; **adversarial diff-review** (3 линзы + synth):
+verdict `safe-to-commit`; 2 «fatal» CAS-находки опровергнуты кодом; 1 валидная — ARM-only
+теоретическое NULL-окно (followup ниже).
+
+**Валидация (clang, x86) — независимо подтверждена:**
+- exe реально исполняется: `grow_vs_wake_explicit.exe` → «1/1 passed», 213ms (не no-op).
+- harness детектит фейлы (контроль): `park_wake_stress` 13/7 (его `+=` race ловится) →
+  значит зелёные ниже — настоящие.
+- **closure-stress (scripts/stress_bisect.sh, compile-once, armed exe):
+  grow_vs_wake_explicit 100/100, stress_iso_3e 66/66, semaphore_batch_n 30/30 armed.**
+- **MAXPROCS=1 (АКУТНЫЙ — §13.6.2: гонка острее на низком worker-count) И 16:**
+  grow_vs_wake_explicit 100/100 @MP=1 + 66/66 @MP=16; stress_iso_3e 66/66 @MP=1.
+- **Scale (MP=1):** 1k fibers 30/30; 10k fibers 10/10. **100k/200k недостижимы — упираются
+  в Plan 82 fiber-arena (`fiber_arena exhausted`, ~16384 слотов/worker, каждый 8MB virtual);
+  это pre-existing capacity-лимит рантайма, НЕ grow-vs-wake и не Ф.1b.** Concurrent-fiber
+  потолок ~16k by design (8MB-стеки); 100k+ требует growable-stacks (Plan 83.13/144).
+- park_wake_stress 66× = 0 TIMEOUT (фейлы = его `+=` race).
+- concurrency suite 105/4 (vs 103/5; 4 — pre-existing, condvar_wait_cancel доказанно).
+
+**Fiber-counts repro:** grow_vs_wake_explicit 3/1/5/4/5 (§13.6.1 sleep_analog профиль —
+grow-переход триггерит гонку, не сырой scale); stress_iso_3e 99+1.
+
+**Followups (заведены):**
+- `[M-83.11-f1b-acquire-capacity]` (P2): `slot < st->capacity` guards читают capacity PLAIN;
+  на ARM не парится с RELEASE-store → теоретическое NULL-окно (clean crash, НЕ
+  torn-pointer; non-regression; x86 TSO не затронут). Hardening: ACQUIRE-load capacity.
+  Отложено per review (ARM-CI нет для валидации).
+- `[M-park-wake-stress-atomic-counters]` (P3): перевести `+=` в park_wake_stress на AtomicInt,
+  чтобы убрать его AUTOARM=0 gate.
+
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).
