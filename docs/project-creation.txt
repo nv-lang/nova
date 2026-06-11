@@ -35808,3 +35808,18 @@ Tests: ring_overflow_drain.nv (NEW pos), grow_vs_wake_explicit.nv, test_runq.c (
 Коммиты: e1525d90671 (feat Ф.1b), f922c3d5b30 (docs closure), <plan 146/roadmap>,
 7cec21653a1 (spec D243), <test ring_overflow>. Ветка plan-83-go-cmn.
 grow-vs-wake (GitHub issue #2) — закрыт; Ф.2-Ф.8 PLANNED.
+
+--------------------------------------------------------------------------------
+2026-06-11 (доп) — TSAN-блокер + ARM acquire-capacity hardening
+--------------------------------------------------------------------------------
+User выбрал next = TSAN race-detector. Feasibility: Windows clang НЕ поддерживает
+-fsanitize=thread (unsupported for x86_64-pc-windows-msvc — LLVM limit, TSAN=Linux/
+macOS). WSL Ubuntu есть, но без clang/Linux-сборки. ⇒ TSAN gated на Linux-build Nova
+(новый prereq-маркер [M-nova-linux-build]); [M-tsan-race-detector] задокументирован
+с дизайном (--tsan flag + Boehm-suppressions + Linux-CI).
+
+Пивот на Windows-doable loose-end: [M-83.11-f1b-acquire-capacity] ✅ CLOSED
+(commit 98b4b05c6ae). nova_sched_cap_acq() = ACQUIRE-load capacity на ~14
+accessor-guard сайтах (nova_sched.h×10, driver.c×2, runtime.c×2) → guard парится
+с RELEASE-store capacity → ARM NULL-окно закрыто. Q28 закрыт. Verified x86: smoke +
+grow_vs_wake 40/40 (race stays closed). Коммиты 98b4b05c6ae (fix), 39764e18c52 (docs).
