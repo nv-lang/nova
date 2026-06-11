@@ -1967,6 +1967,39 @@ impl CEmitter {
             let _ = self.emit_protocol_box_typedef(&proto_name, &[]);
         }
 
+        // Plan 138.2 Ф.0c (D29 method-level shadow): names of generic types
+        // that the user has REDECLARED in entry-peer-files with a DIFFERENT
+        // arity (e.g. user non-generic `type Vec { x, y }` shadowing an
+        // imported generic `type Vec[T]`). The user declaration wins entirely
+        // (D29): we must NOT register the imported generic template / methods
+        // for such a name, otherwise record-literals `Vec{...}` monomorphize
+        // through the import's template (`Nova_Vec____nova_int`) instead of the
+        // user struct, and the import's methods leak onto the user receiver.
+        // Empty in the common (no-shadow) case → zero behavioural change.
+        let user_shadowed_generic_types: HashSet<String> = {
+            let mut merged_arity: HashMap<String, usize> = HashMap::new();
+            for item in &module.items {
+                if let Item::Type(t) = item {
+                    let e = merged_arity.entry(t.name.clone()).or_insert(0);
+                    *e = (*e).max(t.generics.len());
+                }
+            }
+            let mut shadowed = HashSet::new();
+            for pf in &module.peer_files {
+                if !pf.is_entry_module { continue; }
+                for item in &pf.items_here {
+                    if let Item::Type(t) = item {
+                        if let Some(&m) = merged_arity.get(&t.name) {
+                            if m != t.generics.len() {
+                                shadowed.insert(t.name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            shadowed
+        };
+
         // 1a. Pre-populate generic_types + generic_type_templates BEFORE emit_type_decl
         // and method registration, so both know which types are generic templates.
         //
@@ -2017,6 +2050,13 @@ impl CEmitter {
                         );
                         continue;
                     }
+                    // Plan 138.2 Ф.0c: skip the imported generic template when
+                    // the user shadows this name with a different arity — user
+                    // wins (D29). The non-generic user `type Vec` is emitted
+                    // normally below; the generic import must not register.
+                    if user_shadowed_generic_types.contains(&t.name) {
+                        continue;
+                    }
                     self.generic_types.insert(t.name.clone());
                     self.generic_type_templates.insert(t.name.clone(), t.clone());
                 }
@@ -2042,6 +2082,11 @@ impl CEmitter {
                     if matches!(t.kind, crate::ast::TypeDeclKind::Protocol { .. }) {
                         // Protocol registration уже сделана через module.items
                         // pass или через emit_protocol_box_typedef on-demand.
+                        continue;
+                    }
+                    // Plan 138.2 Ф.0c: user-shadowed name — skip the imported
+                    // generic template (user's non-generic decl wins, D29).
+                    if user_shadowed_generic_types.contains(&t.name) {
                         continue;
                     }
                     // entry-only `insert` — module.items wins на коллизии
@@ -2318,6 +2363,22 @@ impl CEmitter {
             !user_type_spans.contains(&(t.name.clone(), t.span))
         };
         let should_skip_fn = |f: &FnDecl| -> bool {
+            // Plan 138.2 Ф.0c (D29 method-level shadow): skip emitting an
+            // imported generic type's method when the user has redeclared that
+            // type name with a different arity (e.g. `type Vec { x, y }` over
+            // imported `Vec[T]`). The method carries the import's carrier arity
+            // (`Vec[T]` receiver → generics.len()==1) which differs from the
+            // user's (0); a method the user wrote on their own redeclared type
+            // would match the user arity and is kept. User wins entirely.
+            if !user_shadowed_generic_types.is_empty() {
+                if let Some(r) = &f.receiver {
+                    if user_shadowed_generic_types.contains(&r.type_name)
+                        && !r.generics.is_empty()
+                    {
+                        return true;
+                    }
+                }
+            }
             let key = match &f.receiver {
                 Some(r) => format!("{}.{}", r.type_name, f.name),
                 None => f.name.clone(),
@@ -2416,6 +2477,23 @@ impl CEmitter {
         // ("", name) — единый mechanism для overload resolution.
         for item in &module.items {
             if let Item::Fn(f) = item {
+                // Plan 138.2 Ф.0c (D29 method-level shadow): skip registering
+                // an imported generic type's method when the user redeclared
+                // that type name with a different arity (`type Vec { x, y }`
+                // over imported `Vec[T]`). Registering it here would attempt to
+                // resolve the import's `Self`/`Option[Self]` return against the
+                // user's now-non-generic `Vec` → E7001 "Self outside receiver".
+                // User wins entirely (D29). Discriminator: the import's method
+                // carries carrier generics (`Vec[T]` → recv.generics non-empty).
+                if !user_shadowed_generic_types.is_empty() {
+                    if let Some(r) = &f.receiver {
+                        if user_shadowed_generic_types.contains(&r.type_name)
+                            && !r.generics.is_empty()
+                        {
+                            continue;
+                        }
+                    }
+                }
                 // === D84: free-function overload registration ===
                 if f.receiver.is_none() {
                     // Plan 70 PhaseA1.3: strict mode — free-fn overload registration
@@ -2795,6 +2873,11 @@ impl CEmitter {
                     // signature `nova_make_Result_Err(nova_str)`. См. также
                     // skip в 1a (line 1207-1213).
                     if t.name == "Option" || t.name == "Result" {
+                        continue;
+                    }
+                    // Plan 138.2 Ф.0c: user-shadowed generic name — skip
+                    // (user's non-generic decl wins, D29).
+                    if user_shadowed_generic_types.contains(&t.name) {
                         continue;
                     }
                     self.generic_types.insert(t.name.clone());

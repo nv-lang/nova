@@ -1909,6 +1909,21 @@ struct TypeCheckCtx<'a> {
     /// Закрывает D175 §«binding dominates» — Rust-style rule.
     /// Tracks через f1_stmt Stmt::Let; cleared on scope exit (block end).
     ro_binding_names: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Plan 138.2 Ф.0c (D29 method-level shadow): names of generic types
+    /// imported into the merged module that the user has REDECLARED in
+    /// entry-peer-files with a DIFFERENT arity (e.g. user `type Vec { x, y }`
+    /// = arity 0 shadowing imported `type Vec[T]` = arity 1). The user
+    /// declaration wins **entirely** (D29 full-shadow): the imported generic
+    /// type's merged methods (`Vec[T] @push`, …) carry `Vec[T]` type-refs that
+    /// would arity-check (E7310) against the user's non-generic `Vec`. We skip
+    /// arity-checking those merged methods so they do not leak onto the
+    /// user-shadowed receiver. Built in `build`. Empty in the common (no-shadow)
+    /// case → zero overhead. Maps the shadowed name → the user's declared
+    /// arity (so a merged method whose receiver carries a DIFFERENT carrier
+    /// arity is recognised as the import's method and skipped, while a method
+    /// the user wrote on their own redeclared type — matching carrier arity —
+    /// is kept).
+    user_shadowed_generic_types: HashMap<String, usize>,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -2145,11 +2160,60 @@ impl<'a> TypeCheckCtx<'a> {
             module, synth_arena, &types, &mut method_table,
         );
 
+        // Plan 138.2 Ф.0c (D29 method-level shadow): detect generic types that
+        // the user redeclared in entry-peer-files with a DIFFERENT arity than a
+        // merged-from-import declaration of the same name. Such a name is a
+        // genuine generic-type shadow (user `type Vec { x, y }` over imported
+        // `type Vec[T]`). The merged generic type's methods reference `Name[T]`
+        // and would arity-check (E7310) against the user's non-generic decl —
+        // we record the name here so `check_module` skips those merged methods
+        // (user wins entirely per D29). Mitigation RC: we record ONLY names the
+        // user declared in entry-peers AND that also exist merged with a
+        // different arity — a legitimate `import …Vec` *without* a user-side
+        // `type Vec` redeclaration leaves this set empty, so dispatch is
+        // untouched.
+        let mut user_shadowed_generic_types: HashMap<String, usize> = HashMap::new();
+        {
+            // Per-name max arity seen across the WHOLE merged module
+            // (`module.items`) — captures the imported generic decl.
+            let mut merged_arity: HashMap<String, usize> = HashMap::new();
+            for item in &module.items {
+                if let Item::Type(td) = item {
+                    let e = merged_arity.entry(td.name.clone()).or_insert(0);
+                    *e = (*e).max(td.generics.len());
+                }
+            }
+            // User-declared types in entry-peer-files only.
+            let user_own: Vec<&Item> = if module.peer_files.is_empty() {
+                module.items.iter().collect()
+            } else {
+                module
+                    .peer_files
+                    .iter()
+                    .filter(|pf| pf.is_entry_module)
+                    .flat_map(|pf| pf.items_here.iter())
+                    .collect()
+            };
+            for item in user_own {
+                if let Item::Type(td) = item {
+                    if let Some(&m) = merged_arity.get(&td.name) {
+                        if m != td.generics.len() {
+                            // Same name, different arity, merged-vs-user →
+                            // genuine generic shadow. User wins entirely.
+                            user_shadowed_generic_types
+                                .insert(td.name.clone(), td.generics.len());
+                        }
+                    }
+                }
+            }
+        }
+
         TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
             in_const_fn: std::cell::Cell::new(false),
             current_recv_type: std::cell::RefCell::new(None),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
-            ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()) }
+            ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
+            user_shadowed_generic_types }
     }
 
     /// Plan 126.2 Ф.1: synthesize + register auto-derive methods into
@@ -2224,6 +2288,23 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// Plan 138.2 Ф.0c (D29 method-level shadow): is `fd` a method that came
+    /// from an imported generic type the user has shadowed with a different
+    /// arity? Such methods carry the import's carrier arity (`Vec[T]` →
+    /// receiver.generics.len() == 1) which differs from the user's redeclared
+    /// arity (`type Vec { x, y }` → 0). A method the user wrote on their own
+    /// redeclared type would carry the matching carrier arity and is kept.
+    fn is_shadowed_import_method(&self, fd: &FnDecl) -> bool {
+        if self.user_shadowed_generic_types.is_empty() {
+            return false;
+        }
+        let Some(recv) = &fd.receiver else { return false; };
+        match self.user_shadowed_generic_types.get(&recv.type_name) {
+            Some(&user_arity) => recv.generics.len() != user_arity,
+            None => false,
+        }
+    }
+
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
         // Plan 91.9 (D186): verify `#impl(P1 + P2 + ...)` annotations.
         // Для каждого type T с impl_protocols, проверяем что:
@@ -2281,7 +2362,18 @@ impl<'a> TypeCheckCtx<'a> {
         }
         for item in &module.items {
             match item {
-                Item::Fn(fd) => self.check_fn(fd, errors),
+                Item::Fn(fd) => {
+                    // Plan 138.2 Ф.0c (D29 method-level shadow): when the user
+                    // redeclared a generic type with a different arity (e.g.
+                    // `type Vec { x, y }` over imported `type Vec[T]`), the
+                    // import's merged methods carry `Vec[T]` type-refs that
+                    // arity-check (E7310) against the user's non-generic decl.
+                    // Skip those merged methods — user wins entirely (D29).
+                    if self.is_shadowed_import_method(fd) {
+                        continue;
+                    }
+                    self.check_fn(fd, errors)
+                }
                 Item::Type(td) => self.check_type_decl(td, errors),
                 Item::Const(cd) => {
                     let empty = HashSet::new();
@@ -2350,7 +2442,15 @@ impl<'a> TypeCheckCtx<'a> {
         // (var-типы локальных переменных нужны только здесь).
         for item in &module.items {
             match item {
-                Item::Fn(fd) => self.f1_check_fn(fd, errors),
+                Item::Fn(fd) => {
+                    // Plan 138.2 Ф.0c: same method-level shadow-skip as the
+                    // arity pass above — merged methods of a user-shadowed
+                    // generic type are not the user's, skip body-checking them.
+                    if self.is_shadowed_import_method(fd) {
+                        continue;
+                    }
+                    self.f1_check_fn(fd, errors)
+                }
                 Item::Test(t) => {
                     let gs: HashSet<String> = HashSet::new();
                     let mut scope: HashMap<String, TypeRef> = HashMap::new();

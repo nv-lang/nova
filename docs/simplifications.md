@@ -35094,3 +35094,51 @@ baseline через `git stash` для не-листовых дир): plan138_1 
 18/0, plan126 21/0, plan137 16/0; pre-existing (НЕ мои): plan59 23/6, plan55 17/2, plan91_13
 2/6 (json incomplete-type), plan91_fe1 8/2 (no member first). Только `.nv` правки → rebuild
 не нужен.
+
+## Plan 138.2 Ф.0c — user-`type Vec` SHADOW под imported `Vec[T]` (класс #5, ДО универсального флипа)
+
+**Где.** `compiler-codegen/src/types/mod.rs` (type-checker shadow-skip),
+`compiler-codegen/src/codegen/emit_c.rs` (codegen generic-registration guards);
+фикстуры `nova_tests/plan138_2/t14_user_vec_shadow_pos.nv`,
+`t15_user_vec_no_push_neg.nv`, `t16_user_vec_shadow_suppress_pos.nv`. `.rs` правка →
+rebuild нужен.
+
+**Что.** Класс #5 (user `type Vec { x, y }` коллизит с prelude/imported `Vec[T]`,
+feared E7310 cascade при флипе) погашен ДО флипа. Воспроизводится через explicit
+`import std.collections.vec_owned.{Vec}` в юните с user-type `Vec` — тот же merge-эффект,
+что prelude-auto-import даст в Ф.0-final. Fix = единый shadow-set «user redeclared
+generic-type с ДРУГОЙ арностью» (entry-peer `items_here` vs merged `module.items`
+max-arity), guard'ит ЧЕТЫРЕ уровня прорыва shadow'а:
+1. **type-checker** (E7310 fix): новое поле `user_shadowed_generic_types: HashMap<name,
+   user_arity>` + helper `is_shadowed_import_method`; skip merged-метода (receiver ∈ set
+   И `recv.generics.len() != user_arity`) в arity-pass `check_fn` И assignability-pass
+   `f1_check_fn`.
+2. **codegen generic-registration** (record-literal mono fix): 4 сайта `generic_types.
+   insert` (module.items, peer_files, 1d-prepop) пропускают user-shadowed имя → `Vec{x,y}`
+   монорфизируется в user `Nova_Vec*`, `infer_expr_c_type` RecordLit больше не → `void*`.
+3. **method-receiver pre-population loop** (1c): skip imported-метода (E7001 `Self outside
+   receiver context` fix).
+4. **`should_skip_fn`** closure: skip imported-метода emit.
+
+**НЕ упрощение, а verified design-deferral: W_PRELUDE_SHADOW.** Lint `lint_prelude_shadow`
+(lints.rs:1459) fires только на prelude-visibility. Pre-flip `Vec` НЕ в prelude → explicit
+`import vec_owned.{Vec}` = ordinary import collision, НЕ prelude-shadow → warning корректно
+НЕ срабатывает. Поэтому t14 переформулирован из EXPECT_COMPILE_WARNING (как в исходном
+plan-spec) в **positive clean-compile** (user wins, no E7310, no method-leak). Warning
+заработает после Ф.0-final (Vec в prelude); t16 (`#allow(shadow)`) пиннит suppress на тот
+момент. Семантически правильно: warning о prelude-shadow не должен fire'иться пока Vec не
+в prelude. Это ВЕРИФИЦИРОВАНО (не предположено), задокументировано в плане Ф.0c CLOSED.
+
+**Per-commit SHA-таблица.**
+
+| Commit | Что |
+|---|---|
+| `<f0c-1>` | types/mod.rs shadow-skip + emit_c.rs 4-site guards + t14/t15/t16 fixtures + D29 amend + plan-doc + project-creation + simplifications + backlog |
+
+**Результат.** plan138_2 12/0 → **15/0** (t14 pos clean-compile, t15 neg CC-FAIL `no member
+named push`, t16 `#allow(shadow)` clean). plan123_3_1 **4/0** (gate, E7310 не возникает).
+**Регрессии: 0 NEW FAIL** vs post-138.4 baseline: plan138_1 10/0, plan138_3 2/0, plan90_1
+20/0, plan131 27/1, plan118_1 11/0, plan126_2 9/1, plan79 **25/0** (E7310 arity tests intact —
+критично), map_literals 28/1, plan101_1 18/0, plan101_2 2/0, plan120 8/0, plan124_8 40/0,
+plan126 21/0, plan137 16/0; pre-existing (НЕ мои, verified via stash-rebuild): plan72 14/2
+(Nova_Iterable/E7202), plan59 23/6 (tuple-mangle), plan91_13 2/6 (json incomplete-type).

@@ -36038,3 +36038,59 @@ plan91_fe1 8/2 (no member first). Hashmap CU .c: _buckets = Nova_Vec____Nova_Slo
 НЕ нужны новые [M-138.2-*] маркеры — value-position []T-NovaArray-erasure это ОЖИДАЕМОЕ
 pre-flip состояние (Ф.0-final его флипает; t3 — его guard), не дефект.
 КОММИТ: refactor(plan138.2 Ф.0b #4): Vec-backed map-literal bucket arrays (isolated to hashmap CU); pre-flip
+
+================================================================================
+2026-06-11 — Plan 138.2 Ф.0c — user-type Vec SHADOW под imported Vec[T] (класс #5, ДО универсального флипа)
+================================================================================
+Класс #5 (последний из трёх OPEN до универсального флипа Ф.0-final). User объявляет
+собственный `type Vec { x, y }` (arity 0), при этом юнит явно импортит generic
+`Vec[T]` (arity 1) через `import std.collections.vec_owned.{Vec}`. Это тот же
+merge-эффект, что prelude-auto-import даст в Ф.0-final — поэтому де-shadow приземляется
+и проверяется ЗАРАНЕЕ.
+ROOT CAUSE (полный, эмпирически — shadow прорывался на ЧЕТЫРЁХ уровнях, не на одном):
+user выигрывает как ТИП (already: should_skip_type по name+span), но imported generic
+Vec[T] всё ещё (a) арити-чекался в type-checker'е → E7310 "type Vec is not generic,
+but 1 argument provided" (merged-Vec method type-refs Vec[T] проверялись против user-Vec
+arity 0); (b) регистрировался в codegen generic_types/generic_type_templates на ЧЕТЫРЁХ
+сайтах → record-литерал Vec{x,y} монорфизировался через import-template
+(Nova_Vec____nova_int), и infer_expr_c_type RecordLit (generic_types.contains("Vec")→true)
+типизировал let-binding в void* → field-read v.x давал NULL (runtime assert FAIL);
+(c) merged-Vec методы эмитились → E7001 "Self outside receiver context" при method-receiver
+pre-population.
+FIX = единый shadow-set "user redeclared generic-type с ДРУГОЙ арностью" (entry-peer
+items_here type-decl vs merged module.items max-arity), вычисляется один раз, guard'ит
+все сайты:
+- types/mod.rs (type-checker): новое поле user_shadowed_generic_types: HashMap<name,
+  user_arity> в TypeCheckCtx; helper is_shadowed_import_method (receiver ∈ set И
+  recv.generics.len() != user_arity); skip merged-метода в arity-pass check_fn И
+  assignability-pass f1_check_fn. Закрывает E7310.
+- emit_c.rs (codegen): локальный user_shadowed_generic_types: HashSet; guard на 4
+  generic-registration сайтах (module.items, peer_files, 1d-prepop — пропуск
+  generic_types.insert) + 1c method-receiver pre-population loop (skip imported-метода
+  по recv.generics non-empty) + should_skip_fn closure (skip imported-метода emit).
+  User-Vec record-literal монорфизируется в user Nova_Vec*, field-access корректен.
+Дискриминатор imported-vs-user метода: merged-метод несёт carrier-арность импорта
+(Vec[T] receiver → generics non-empty / != user-arity); метод, написанный самим user'ом
+на его redeclared-типе, несёт совпадающую арность и сохраняется. Mitigation против
+over-skip: правило fire'ит ТОЛЬКО когда user объявил то же имя в entry-peer-files И
+merged-арность отличается (легитимный import …Vec БЕЗ user-redeclare не затрагивается).
+W_PRELUDE_SHADOW DEFERRAL (verified, не дефект): lint fires только на prelude-visibility;
+pre-flip Vec НЕ в prelude → explicit import = ordinary import collision → warning корректно
+НЕ срабатывает. t14 переформулирован из EXPECT_COMPILE_WARNING (исходный plan-spec) в
+positive clean-compile (user wins, no E7310, no method-leak). Warning заработает после
+Ф.0-final; t16 (#allow(shadow)) пиннит suppress на тот момент.
+D29 amended (07-modules.md): "user-declaration wins" = full-shadow, распространяется на
+МЕТОДЫ prelude/imported-типа, не только на type-item.
+Фикстуры plan138_2: t14_user_vec_shadow_pos (user-Vec literal + field read + mutate +
+two-independent-records, prelude Vec[T] shadowed), t15_user_vec_no_push_neg (.push на
+user-Vec = CC-FAIL "no member named push", не silent-routing), t16_user_vec_shadow_suppress_pos
+(#allow(shadow) clean compile).
+plan138_2 12/0→15/0. plan123_3_1 4/0 (gate, E7310 не возникает). Broad regression 0 NEW
+FAIL vs post-138.4 baseline: plan138_1 10/0, plan138_3 2/0, plan90_1 20/0, plan131 27/1,
+plan118_1 11/0, plan126_2 9/1, plan79 25/0 (E7310 arity tests intact — критично),
+map_literals 28/1, plan101_1 18/0, plan101_2 2/0, plan120 8/0, plan124_8 40/0, plan126
+21/0, plan137 16/0; pre-existing (НЕ мои, verified via stash-rebuild): plan72 14/2
+(Nova_Iterable/E7202), plan59 23/6 (tuple-mangle), plan91_13 2/6 (json incomplete-type).
+НЕ нужны новые [M-138.2-*] маркеры — класс #5 был OPEN, теперь de-risked; никакие
+markers не закрыты этой фазой.
+КОММИТ: fix(plan138.2 Ф.0c #5): skip prelude-Vec methods under user type-Vec shadow (D29 method-level); pre-flip

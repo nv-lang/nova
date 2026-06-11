@@ -1,0 +1,19 @@
+// EXPECT_CC_ERROR no member named
+//
+// Plan 138.2 Ф.0c (class #5, negative): calling `.push(...)` on a user-shadowed
+// non-generic `Vec` is an HONEST no-method error — NOT silently routed onto the
+// imported prelude `Vec[T].push`. If the shadow were partial (methods leaking),
+// `v.push(99)` would corrupt the 2-field user record by treating it as a Vec
+// header; instead the user-Vec has no `push`, so codegen rejects the access
+// (`no member named 'push' in 'struct Nova_Vec'`). User wins entirely (D29).
+
+module plan138_2.t15_user_vec_no_push_neg
+
+import std.collections.vec_owned.{Vec}
+
+type Vec { x int, y int }
+
+test "push on user-Vec is a no-method error" {
+    mut v = Vec { x: 1, y: 2 }
+    v.push(99)
+}
