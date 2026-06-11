@@ -100,6 +100,21 @@ A test file for a new feature `X` goes in `nova_tests/<category>/X.nv`. For a so
 
 Full marker reference: [docs/test-conventions.md](docs/test-conventions.md).
 
+## Followup markers (`[M-…]`)
+
+Deferred work is tracked with `[M-<kebab-name>]` markers in docs and code comments.
+
+- **Plan-bound** markers (followups of a specific plan) live in that plan's **Followups** section in `docs/plans/<plan>.md`.
+- **Floating** markers (cross-cutting, not owned by any plan) — the *open* ones are listed in [docs/plans/backlog-followups.md](docs/plans/backlog-followups.md), the curated **OPEN-view** (what is still live and actionable).
+- [docs/simplifications.md](docs/simplifications.md) is the append-only **history log** of all markers/simplifications — *not* a status view. It records that a marker existed; it does not tell you whether it is still open.
+
+**Lifecycle:**
+
+1. Create a floating marker → add a row to `backlog-followups.md` **and** log the change in `simplifications.md` (house style).
+2. Resolve it → **remove the row** from `backlog-followups.md` (the history stays in `simplifications.md` and the commit). Keep the OPEN-view short — only live items.
+3. When a marker grows into its own plan → move it to that plan's Followups and drop it from the backlog.
+4. Before starting work in a subsystem, scan `backlog-followups.md` for relevant open items.
+
 ## Contribution rules
 
 - **DCO sign-off required** on every commit — CI enforces this:
@@ -117,6 +132,8 @@ Full marker reference: [docs/test-conventions.md](docs/test-conventions.md).
 | File | What it covers |
 |---|---|
 | [spec/decisions/README.md](spec/decisions/README.md) | Index of all D-blocks |
+| [docs/plans/README.md](docs/plans/README.md) | Index of all plans |
+| [docs/plans/backlog-followups.md](docs/plans/backlog-followups.md) | Registry of floating `[M-…]` followup markers **not** tied to a plan (codegen / perf / debug-info backlog). Plan-bound markers live in their plan's Followups section. |
 | [docs/test-conventions.md](docs/test-conventions.md) | EXPECT markers, test runner flags |
 | [docs/simplifications.md](docs/simplifications.md) | History of removed complexity |
 | [compiler-codegen/README.md](compiler-codegen/README.md) | Compiler internals, build options |

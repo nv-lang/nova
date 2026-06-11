@@ -439,6 +439,31 @@ impact'а на realistic workloads).
 
 ---
 
+### G9. Source-level debugging — нет `#line` директив
+
+**Что.** Codegen эмитит только `/* SRC: ... */` комментарии (opt-in, statement-granular,
+comment-only; `emit_source_annotation_for_*` в emit_c.rs). Машинных `#line N "file.nv"`
+директив **НЕТ** → C-дебаггер (gdb/lldb) показывает сгенерированный C, не Nova-исходник.
+Пошаговая отладка по Nova-коду / breakpoints на Nova-строках невозможны.
+
+**Сравнение.**
+- Go/Rust: полный DWARF debug-info, source-level stepping/breakpoints из коробки.
+- Транспайлеры (Nim, Cython → `#line`; TypeScript → source-maps) маппят сгенерированный
+  код обратно в исходник для отладчика.
+
+**Импакт.** Отладка Nova-программ ведётся на уровне C (чужие имена, синтезированные temps
+вроде `_nv_tmp_*`), не Nova. Серьёзный production-DX gap.
+
+**Когда.** После стабилизации языкового ядра — нет смысла маппить debug-info, пока codegen
+активно меняется (138.x / pointer-model / value-types). Отдельный план: `#line` на границах
+statement'ов (есть `emit_source_annotation_for_stmt` — рядом эмитить `#line`); проверка
+gdb/lldb; опц. DWARF-атрибуция Nova-имён.
+
+**Связь:** маркер `[M-debug-line-directives]` (см. [backlog-followups.md](backlog-followups.md));
+emit_c.rs `/* SRC */` механизм.
+
+---
+
 ## Сводная таблица
 
 | # | Gap | Plan / blocker | Приоритет | Impact |
@@ -452,6 +477,7 @@ impact'а на realistic workloads).
 | G6 | Cancel propagation | Связан с G5 | Низкий | Pure-compute cancel UX |
 | G7 | ~~Ф.8 close-cb busy-loop~~ | ✅ ЗАКРЫТО (Plan 22 Ф.8, D93 ASYNC) | — | — |
 | G8 | Open-coded defer (Go 1.14+) | TBD после Plan 18 + benchmarks | Низкий | Hot-loop defer overhead (oценка 2-10%) |
+| G9 | Source-level debugging (нет `#line`) | TBD отдельный план (после стабилизации ядра) | Средний | Production DX — отладка на уровне C, не Nova |
 
 ---
 

@@ -4,6 +4,10 @@
 материалы (таблицы сравнений, research-заметки, бенчмарки) живут в
 [docs/research/](../research/).
 
+> **Открытые followup'ы** (`[M-…]`-маркеры): живой project-wide OPEN-view —
+> [backlog-followups.md](backlog-followups.md) (только актуальное). Plan-bound детали — в Followups
+> своего плана; полная история — в [../simplifications.md](../simplifications.md). Конвенция: [AGENTS.md](../../AGENTS.md).
+
 ## Схема нумерации
 
 - `01-…`, `02-…` — главные планы по порядку создания.
