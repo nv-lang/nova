@@ -663,9 +663,38 @@ adversarial review.
 - **META-сигнал (2 фазы подряд, Ф.3+Ф.4):** Go global-queue/coalescing модель конфликтует с корректным
   home-affinity дизайном Nova + несёт stranding/lost-wakeup риск + не явный perf-выигрыш. **Критичная
   M:N-работа (оба race'а) ЗАКРЫТА; остаток routing-порта — low-ROI/risky без бенчмарков.**
-- **Безопасный subset Ф.4** (если делать): steal-refinements (random-victim + post-steal global poll) +
-  61-tick fairness + spawn_global→global+wake-all (частичный Ф.3-unblock). Минорная ценность.
 - Маркер `[M-83-f4-global-routing-gated-on-bench]` (P3): global-routing только если профайл покажет,
   что home-affinity — боттлнек. Ф.3 coalescing остаётся gated на этом.
+
+#### 9.11.1 Ф.4 БЕЗОПАСНЫЙ SUBSET — РЕАЛИЗОВАН (2026-06-12, user-выбор)
+
+**Реализован безопасный subset БЕЗ global-routing** (home-affinity сохранён → нет stranding-риска).
+Только `runtime.c` find-work loop (3 правки + 2 owner-only поля NovaWorker):
+1. **steal random-victim start** (xorshift32, seed = (id+1)*golden-ratio): idle-воркеры стартуют
+   steal-scan с рандомного соседа, не все с victim 0 → нет thundering-herd; wrap покрывает всех.
+2. **post-steal global re-poll**: 1 `nova_globrunq_get_one` после steal-loop (work мог spill'нуться
+   в global во время скана) — перед park'ом, без spin.
+3. **61-tick global fairness**: каждый 61-й find-work проход дренит 1 global-fiber ДО local-слотов
+   (anti-starve global за busy ring). runnext-guard поправлен на `!co &&`.
+
+**Ключевое — почему безопасно:** subset **только добавляет global-DRAIN точки** (consumers), НЕ
+producers и НЕ меняет wake-routing → stranding/lost-wakeup физически невозможны (в отличие от
+отложенного global-routing'а). Поля owner-only (plain, без атомиков). НЕ задеты grow-vs-wake/Ф.2/
+iso-cancel/GC. **Ф.3 coalescing остаётся заблокирован** (нужен global-routing — отложен).
+
+**Критерии приёмки Ф.4-subset (все ✅):**
+
+| # | Критерий | Статус |
+|---|---|---|
+| AC1 | clang компилируется, find-work loop собирается | ✅ smoke PASS |
+| AC2 | concurrency suite no-regression (≥105/4) | ✅ **106/4** (те же 4 pre-existing) |
+| AC3 | grow-vs-wake остаётся CLOSED | ✅ 25/25 @MP=1 |
+| AC4 | steal random-victim + global multi-worker | ✅ ring_overflow_drain 25/25 @MP=4 |
+| AC5 | cancel не сломан (multi-worker) | ✅ nested_cancel 20/20 @MP=4 |
+| AC6 | НЕТ stranding (subset добавляет drain, не put) | ✅ by construction (нет новых global-put) |
+| AC7 | global-routing НЕ сделан (deferred) → home-affinity цел | ✅ |
+
+**Pos/neg:** позитив — steal/global балансировка работает (ring_overflow @MP=4, suite); негатив-
+свойство — no-regression + grow-vs-wake-closed + no-stranding (subset не добавляет global-producers).
 
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).

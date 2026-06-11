@@ -6089,3 +6089,11 @@ Go-оптимизация «не слать wakep, если есть spinner» (
 (`[M-83-f3-coalesce-gated-on-f4]`). Безопасный subset (nspinning accounting + recheck-after-decr
 без gate) — без value (uv_async уже корректен), поэтому не реализован.
 
+**Ф.4 финальный (2026-06-12):** global-routing (cross-thread → global) ОТЛОЖЕН (review нашёл
+stranding; home-affinity Nova уже корректен; `[M-83-f4-global-routing-gated-on-bench]`).
+Реализован **безопасный subset БЕЗ routing** (только runtime.c find-work loop): steal random-victim
+start (xorshift32, anti-herd) + post-steal global re-poll + 61-tick global fairness (anti-starve).
+Subset **добавляет только global-DRAIN точки (consumers)**, не producers → stranding/lost-wakeup
+невозможны. Suite 106/4 no-regression; grow_vs_wake 25/25; ring_overflow @MP=4 25/25. Ф.3
+coalescing остаётся заблокирован (нужен routing). См. план §9.11.1.
+
