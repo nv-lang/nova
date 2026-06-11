@@ -1,0 +1,20 @@
+// Plan 142 (D227 Rule 1) POS — bare literal in default `int` context (no sized
+// coercion) is NOT range-checked: int = i64 holds 3_000_000_000 fine.
+
+module plan142.pos_wide_int
+
+fn take_int(n int) -> int => n
+
+test "wide literal in default int binding compiles" {
+    ro z = 3_000_000_000
+    assert(z == 3000000000)
+}
+
+test "explicit int annotation holds wide literal" {
+    ro z int = 3_000_000_000
+    assert(z == 3000000000)
+}
+
+test "wide literal passed to int parameter (no coercion-check)" {
+    assert(take_int(3_000_000_000) == 3000000000)
+}

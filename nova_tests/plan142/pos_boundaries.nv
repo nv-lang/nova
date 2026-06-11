@@ -1,0 +1,46 @@
+// Plan 142 (D227 Rule 2/3) POS — boundary values for all 8 sized-int types
+// compile and run. MIN/MAX exactly in range must NOT error.
+
+module plan142.pos_boundaries
+
+test "u8 boundaries 0 and 255" {
+    ro lo u8 = 0
+    ro hi u8 = 255
+    assert(lo == 0)
+    assert(hi == 255)
+}
+
+test "i8 boundaries -128 and 127" {
+    ro lo i8 = -128
+    ro hi i8 = 127
+    assert(lo == -128)
+    assert(hi == 127)
+}
+
+test "u16 / i16 boundaries" {
+    ro u16hi u16 = 65535
+    ro i16lo i16 = -32768
+    ro i16hi i16 = 32767
+    assert(u16hi == 65535)
+    assert(i16lo == -32768)
+    assert(i16hi == 32767)
+}
+
+test "u32 / i32 boundaries" {
+    ro u32hi u32 = 4294967295
+    ro i32lo i32 = -2147483648
+    ro i32hi i32 = 2147483647
+    assert(u32hi == 4294967295)
+    assert(i32lo == -2147483648)
+    assert(i32hi == 2147483647)
+}
+
+test "i64 boundaries" {
+    ro i64hi i64 = 9223372036854775807
+    assert(i64hi == 9223372036854775807)
+}
+
+test "u8 hex boundary 0xFF" {
+    ro hi u8 = 0xFF
+    assert(hi == 255)
+}

@@ -1,0 +1,12 @@
+// Plan 142 (D227 Rule 3) NEG — out-of-range literal in call-argument position
+// (coercion to a sized parameter type, second assignable() call site).
+// EXPECT_COMPILE_ERROR [E_LIT_OUT_OF_RANGE] 400 > u8.MAX (255)
+
+module plan142.neg_arg_u8
+
+fn write(b u8) -> () => assert(b >= 0)
+
+test "write(400) where param is u8" {
+    write(400)
+    assert(true)
+}

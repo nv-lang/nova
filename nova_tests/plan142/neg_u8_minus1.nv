@@ -1,0 +1,9 @@
+// Plan 142 (D227 Rule 6) NEG — negative literal in unsigned context → hard error.
+// EXPECT_COMPILE_ERROR [E_LIT_OUT_OF_RANGE] -1 < u8.MIN (0)
+
+module plan142.neg_u8_minus1
+
+test "u8 = -1 is below minimum" {
+    ro c u8 = -1
+    assert(c == 0)
+}

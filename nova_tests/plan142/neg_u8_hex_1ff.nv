@@ -1,0 +1,10 @@
+// Plan 142 (D227 Rule 3) NEG — hex literal 0x1FF (511) exceeds u8.MAX → hard error.
+// Verifies radix-form value parsing reaches the range-check (not lexer).
+// EXPECT_COMPILE_ERROR [E_LIT_OUT_OF_RANGE] 511 > u8.MAX (255)
+
+module plan142.neg_u8_hex_1ff
+
+test "u8 = 0x1FF is out of range" {
+    ro a u8 = 0x1FF
+    assert(a == 255)
+}

@@ -4505,23 +4505,37 @@ impl<'a> TypeCheckCtx<'a> {
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
-        if let Compat::Bad { found } =
-            self.assignable(value, ann, gs, gs, scope)
-        {
-            errors.push(
-                Diagnostic::new(
-                    format!(
-                        "[E7301] cannot assign value of type `{}` to `{}` \
-                         declared as `{}`",
-                        found, name, typeref_display(ann),
+        match self.assignable(value, ann, gs, gs, scope) {
+            Compat::Bad { found } => {
+                errors.push(
+                    Diagnostic::new(
+                        format!(
+                            "[E7301] cannot assign value of type `{}` to `{}` \
+                             declared as `{}`",
+                            found, name, typeref_display(ann),
+                        ),
+                        value.span,
+                    )
+                    .with_note_at(
+                        "type expected because of this annotation".to_string(),
+                        ann.span(),
                     ),
-                    value.span,
-                )
-                .with_note_at(
-                    "type expected because of this annotation".to_string(),
-                    ann.span(),
-                ),
-            );
+                );
+            }
+            // Plan 142 (D227): целочисленный литерал вне диапазона sized-типа.
+            Compat::OutOfRange { msg } => {
+                errors.push(
+                    Diagnostic::new(
+                        format!("[E_LIT_OUT_OF_RANGE] {msg}"),
+                        value.span,
+                    )
+                    .with_note_at(
+                        "type expected because of this annotation".to_string(),
+                        ann.span(),
+                    ),
+                );
+            }
+            Compat::Ok | Compat::Unknown => {}
         }
         // D176 (Plan 108): `readonly T → T` is forbidden (E_READONLY_COERCE).
         // `T → readonly T` is allowed (auto-coerce, narrowing rights).
@@ -4912,23 +4926,38 @@ impl<'a> TypeCheckCtx<'a> {
                 continue;
             }
             let Some(arg) = args.get(ai) else { continue; };
-            if let Compat::Bad { found } =
-                self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope)
+            match self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope)
             {
-                errors.push(
-                    Diagnostic::new(
-                        format!(
-                            "[E7301] cannot pass `{}` as argument `{}` \
-                             of type `{}`",
-                            found, param.name, typeref_display(&param.ty),
+                Compat::Bad { found } => {
+                    errors.push(
+                        Diagnostic::new(
+                            format!(
+                                "[E7301] cannot pass `{}` as argument `{}` \
+                                 of type `{}`",
+                                found, param.name, typeref_display(&param.ty),
+                            ),
+                            arg.expr().span,
+                        )
+                        .with_note_at(
+                            format!("parameter `{}` declared here", param.name),
+                            param.span,
                         ),
-                        arg.expr().span,
-                    )
-                    .with_note_at(
-                        format!("parameter `{}` declared here", param.name),
-                        param.span,
-                    ),
-                );
+                    );
+                }
+                // Plan 142 (D227): литерал-аргумент вне диапазона sized-param.
+                Compat::OutOfRange { msg } => {
+                    errors.push(
+                        Diagnostic::new(
+                            format!("[E_LIT_OUT_OF_RANGE] {msg}"),
+                            arg.expr().span,
+                        )
+                        .with_note_at(
+                            format!("parameter `{}` declared here", param.name),
+                            param.span,
+                        ),
+                    );
+                }
+                Compat::Ok | Compat::Unknown => {}
             }
         }
     }
@@ -5757,9 +5786,47 @@ impl<'a> TypeCheckCtx<'a> {
         }
         // Литералы: тип адаптируется к контексту (D44).
         match &expr.kind {
-            ExprKind::IntLit(_) => {
+            ExprKind::IntLit(v) => {
                 return match exp_cat {
-                    TyCat::Int | TyCat::Float => Compat::Ok,
+                    TyCat::Int => {
+                        // Plan 142 (D227 Rule 3): context-coercion целого
+                        // литерала к sized-типу — hard range-check. Default
+                        // `int`/`uint` (wide) → sized_int_name = None → Ok.
+                        if let Some(name) = sized_int_name(expected) {
+                            if let Some(msg) =
+                                lit_range_check(*v as i128, &name)
+                            {
+                                return Compat::OutOfRange { msg };
+                            }
+                        }
+                        Compat::Ok
+                    }
+                    TyCat::Float => Compat::Ok,
+                    _ => Compat::Bad { found: "int".to_string() },
+                };
+            }
+            // Plan 142 (D227 Rule 6): unary-minus над целым литералом —
+            // `-1`, `-200` etc. `-1` это Unary{Neg, IntLit(1)}, не часть
+            // литерала, поэтому проверяем здесь (negative-in-unsigned →
+            // hard error; negative вне i-диапазона → тоже range-check).
+            ExprKind::Unary { op: UnOp::Neg, operand }
+                if matches!(operand.kind, ExprKind::IntLit(_)) =>
+            {
+                let ExprKind::IntLit(v) = operand.kind else {
+                    unreachable!()
+                };
+                return match exp_cat {
+                    TyCat::Int => {
+                        if let Some(name) = sized_int_name(expected) {
+                            // i128 negation — без overflow даже для i64::MIN.
+                            let neg = -(v as i128);
+                            if let Some(msg) = lit_range_check(neg, &name) {
+                                return Compat::OutOfRange { msg };
+                            }
+                        }
+                        Compat::Ok
+                    }
+                    TyCat::Float => Compat::Ok,
                     _ => Compat::Bad { found: "int".to_string() },
                 };
             }
@@ -6189,6 +6256,68 @@ enum Compat {
     Unknown,
     /// Несовместимо; `found` — отображение типа выражения.
     Bad { found: String },
+    /// Plan 142 (D227): целочисленный литерал вне диапазона sized-типа.
+    /// `msg` — готовый суффикс диагностики, e.g. «300 > u8.MAX (255)».
+    OutOfRange { msg: String },
+}
+
+/// Plan 142 (D227 Rule 3/6): диапазон `[min, max]` для sized-int типа.
+/// Возвращает `None` для не-sized-типов (`int`/`uint` — wide defaults
+/// per D227 Rule 1, диапазон не проверяется; всё остальное — не int).
+/// Используется `i128`, чтобы корректно сравнить `u64::MAX` и негативные
+/// значения с границами (литерал хранится как `i64`).
+fn sized_int_bounds(name: &str) -> Option<(i128, i128)> {
+    let (min, max): (i128, i128) = match name {
+        "u8" => (0, u8::MAX as i128),
+        "u16" => (0, u16::MAX as i128),
+        "u32" => (0, u32::MAX as i128),
+        "u64" => (0, u64::MAX as i128),
+        "i8" => (i8::MIN as i128, i8::MAX as i128),
+        "i16" => (i16::MIN as i128, i16::MAX as i128),
+        "i32" => (i32::MIN as i128, i32::MAX as i128),
+        "i64" => (i64::MIN as i128, i64::MAX as i128),
+        // `int` (= i64) и `uint` (= u64) — wide defaults (D227 Rule 1):
+        // голый литерал держится без range-check. Не-числовые имена —
+        // тоже None (сюда не дойдём: проверяем только TyCat::Int).
+        _ => return None,
+    };
+    Some((min, max))
+}
+
+/// Plan 142 (D227): извлечь имя sized-int типа из `expected`, развернув
+/// `readonly T` / `mut T`. Возвращает `None`, если это не прямой
+/// именованный sized-int (alias/newtype резолвятся через cat_of, но имя
+/// для range-check недоступно — пропускаем, чтобы не давать ложное имя
+/// в диагностике).
+fn sized_int_name(tr: &TypeRef) -> Option<String> {
+    match tr {
+        TypeRef::Named { path, .. } => {
+            let name = path.last()?;
+            if sized_int_bounds(name).is_some() {
+                Some(name.clone())
+            } else {
+                None
+            }
+        }
+        TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Unsafe(inner, _) => sized_int_name(inner),
+        _ => None,
+    }
+}
+
+/// Plan 142 (D227 Rule 3/6): диапазон-проверка значения `val` (i128)
+/// против sized-типа `name`. `Some(msg)` — литерал вне диапазона,
+/// `msg` — суффикс диагностики; `None` — в пределах (или не sized).
+fn lit_range_check(val: i128, name: &str) -> Option<String> {
+    let (min, max) = sized_int_bounds(name)?;
+    if val > max {
+        Some(format!("{val} > {name}.MAX ({max})"))
+    } else if val < min {
+        Some(format!("{val} < {name}.MIN ({min})"))
+    } else {
+        None
+    }
 }
 
 /// Ф.1: грубая категория типа для assignability.
