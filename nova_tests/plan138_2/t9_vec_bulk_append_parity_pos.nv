@@ -1,23 +1,24 @@
 // Plan 138.2 Ф.0a (class #1) — t9: Vec[T] @append bulk-parity check.
 //
-// `@append(mut other Vec[T])` is ALREADY bulk (moves every element of `other`
-// onto the end of `self`). This fixture only CONFIRMS byte-parity with the
-// retired `nova_array_append_*` C-builtin (Plan 90.1 / D141): self-append
-// safety (src aliases dst), amortised ×2 growth, and empty-source no-op. No
-// code change was needed for @append — this is the parity baseline mirror of
-// plan90_1/append_*.
+// `@append(other Vec[T])` is bulk (COPIES every element of `other` onto the end
+// of `self`, leaving `other` UNCHANGED — D141: copy, not move). This fixture
+// CONFIRMS byte-parity with the retired `nova_array_append_*` C-builtin
+// (Plan 90.1 / D141): bulk-copy correctness, self-append safety (src aliases
+// dst), amortised ×2 growth, empty-source no-op, AND that the source is left
+// intact. Parity baseline mirror of plan90_1/append_*.
 
 module plan138_2.t9_vec_bulk_append_parity_pos
 
 import std.collections.vec_owned.{Vec}
 
-test "append — basic bulk move onto tail" {
+test "append — basic bulk copy onto tail, source intact" {
     mut dst = Vec[int].from([1, 2, 3])
     mut src = Vec[int].from([4, 5, 6])
     dst.append(src)
     assert(dst.equal(Vec[int].from([1, 2, 3, 4, 5, 6])))
-    // `@append` empties `other` (move semantics).
-    assert(src.len() == 0)
+    // `@append` is a COPY (D141): `src` is left UNCHANGED, not emptied.
+    assert(src.len() == 3)
+    assert(src.equal(Vec[int].from([4, 5, 6])))
 }
 
 test "append — empty source is a no-op" {

@@ -35142,3 +35142,43 @@ named push`, t16 `#allow(shadow)` clean). plan123_3_1 **4/0** (gate, E7310 не 
 критично), map_literals 28/1, plan101_1 18/0, plan101_2 2/0, plan120 8/0, plan124_8 40/0,
 plan126 21/0, plan137 16/0; pre-existing (НЕ мои, verified via stash-rebuild): plan72 14/2
 (Nova_Iterable/E7202), plan59 23/6 (tuple-mangle), plan91_13 2/6 (json incomplete-type).
+
+---
+
+## Plan 138.2 Ф.0d — `Vec @append` = COPY, не move (settled design decision, ДО флипа)
+
+**Где.** `std/collections/vec_owned.nv` (`@append`); фикстуры `nova_tests/plan131/vec_bulk_pos.nv`,
+`nova_tests/plan138_2/t9_vec_bulk_append_parity_pos.nv`, `nova_tests/plan90_1/append_copy_source_intact.nv` (NEW).
+
+**Решение (user-mandated, NON-NEGOTIABLE).** `Vec[T] mut @append(other Vec[T]) -> @` **КОПИРУЕТ**
+элементы `other` в хвост `self`, оставляя `other` **НЕТРОНУТЫМ**. НЕ move-merge. Signature: `other`
+без `mut`, `other.clear()` удалён, bulk `RawMem.copy` (memmove) сохранён.
+
+**Rationale.** (1) **StringBuilder-consistency** — `StringBuilder.@append` уже COPY (D181); Vec
+@append=move был бы внутренне несогласован в той же stdlib. (2) **Cross-language convention** —
+Python `extend` / Swift `append(contentsOf:)` / Java `addAll` = COPY; единственный move-аутлайер —
+Rust `Vec::append`. (3) **Footgun** — move-merge, тихо опустошающий аргумент, — классическая ловушка.
+D141 cross-ref.
+
+**Это НЕ упрощение, а пересмотр Ф.0a-формулировки.** Ф.0a описывал `@append` как «уже bulk move».
+Move-семантика была WRONG-by-decision; копия-результат `self` byte-паритетен старому
+`nova_array_append_*` (массив-builtin тоже не опустошал источник). Никакой функциональности не
+потеряно: `@extend` (generic Iter) и `@append` (fast bulk Vec→Vec) ОБА копируют. Move НЕ нужен и НЕ
+предлагается. Новых `[M-138.2-*]` маркеров не открыто.
+
+**Миграция фикстур (move→copy).** `plan131/vec_bulk_pos.nv` — тест переименован, assertions
+`b.is_empty()`/`b.len()==0` → `b.equal(Vec[int].from([4,5]))`+`b.len()==2`. `plan138_2/t9` — header+тест
+переформулированы, `assert(src.len()==0)` → `assert(src.len()==3)`+`src.equal(...)`. NEW
+`plan90_1/append_copy_source_intact.nv` — proof source-intact + re-usable-source (3× append) +
+bulk-copy-correctness-across-growth + empty-noop. Остальные append-фикстуры уже copy-совместимы
+(`ro src` / self-append `dst.append(dst)`).
+
+**Результат.** plan90_1 20/0 → **21/0** (+append_copy_source_intact). plan138_2 16/2 → **17/1** (t9 PASS;
+t17 = pre-existing flip-target, resolves Ф.0-final). plan131 26/2 → **27/1** (vec_bulk_pos PASS;
+vec_debug_pos = pre-existing `${v:?}` interp gap). str **13/0** (StringBuilder @append=copy precedent
+GREEN). **Регрессии: 0 NEW FAIL** vs baseline: plan138_1 10/0, plan138_3 2/0, plan101_1 18/0,
+plan126 21/0, plan137 16/0, map_literals 28/1 (positive_const_map pre-existing), plan126_2 9/1
+(p5_printable pre-existing), plan91_fe1 8/2 (NovaArray-erasure flip-targets pre-existing); pre-existing
+protocol-system (verified via stash-rebuild, идентичны на baseline vec_owned): plan91_8a 0/2
+(`equals` E7320), plan91_14 12/2 (`debug_fmt` E7320), plan91_8a_2 22/5 (Display-synthesis),
+str_builder 0/9 (`E_CONSUME_KEYWORD_MISSING` — unrelated to @append).

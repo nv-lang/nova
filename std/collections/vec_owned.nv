@@ -481,13 +481,17 @@ export fn Vec[T] mut @extend[S Iter[T]](items S) -> @ {
 // — verified empirically, all of plan138_1 CC-FAIL). Param-`Self` stays `Vec[T]`
 // until the generic-method param-type substitution lands in codegen.
 
-/// Move every element of `other` onto the end of `self`, leaving `other`
-/// empty.
-export fn Vec[T] mut @append(mut other Vec[T]) -> @ {
+/// Copy every element of `other` onto the end of `self`; `other` is left
+/// **unchanged**. This is the fast bulk Vec→Vec path (`RawMem.copy`); `@extend`
+/// is the generic `Iter` version. Copy, **not** move — matches
+/// `StringBuilder.@append` and the cross-language `append`/`addAll` convention
+/// (Python/Swift/Java); a move-merge that empties `other` is intentionally not
+/// offered (footgun: silently destroys the argument). (D141.)
+export fn Vec[T] mut @append(other Vec[T]) -> @ {
     ro m = other.len()
     if m > 0 {
         @reserve(m)
-        // Bulk-copy `other`'s elements onto the end of `self` in one move.
+        // Bulk-copy `other`'s elements onto the end of `self` in one shot.
         // `RawMem.copy` (memmove) is used rather than `copy_nonoverlapping` so a
         // self-append (`v.append(v)`) — where `other.data == @data` after the
         // reserve — is still correct (the `[0,m)` and `[len,len+m)` regions are
@@ -497,7 +501,6 @@ export fn Vec[T] mut @append(mut other Vec[T]) -> @ {
         }
         @len = @len + m
     }
-    other.clear()
     @
 }
 
