@@ -28886,15 +28886,24 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
     /// Map a Nova str method name to a nova_rt C function name.
     fn str_method_to_rt(method: &str) -> Option<&'static str> {
         match method {
-            "starts_with" => Some("nova_str_starts_with"),
-            "ends_with"   => Some("nova_str_ends_with"),
-            "contains"    => Some("nova_str_contains"),
-            "to_upper"    => Some("nova_str_to_upper"),
-            "to_lower"    => Some("nova_str_to_lower"),
-            "trim"        => Some("nova_str_trim"),
+            // Plan 139 Ф.1: starts_with/ends_with/contains/to_upper/to_lower/
+            // trim/find/rfind/char_len/char_at MIGRATED to Nova-body
+            // (std/runtime/string.nv) — they read bytes via @as_bytes()/@byte_at
+            // and allocate via []u8/from_bytes_unchecked. Removed from this table
+            // so they fall through to the Nova-body dispatch (Nova_str_method_X).
+            //
             // Plan 96.1: метод @slice удалён в пользу bracket-формы `s[a..b]`
             // (D9 один очевидный путь). Если этот mapping вернёт Some для
             // "slice" — type-checker не найдёт external fn, выдаст error.
+            //
+            // RETAINED C primitives (Plan 139 Ф.1 scope-out, documented):
+            //   - byte_at: irreducible byte-access primitive (#1).
+            //   - eq/lt/le/gt/ge/concat/compare/hash: lowered DIRECTLY by the
+            //     BinOp operator codegen (== / < / + / ...) and HashMap key path,
+            //     not via the method — migrating the method alone keeps the C fn.
+            //     Structural eq/hash is Plan 139 Ф.3 scope.
+            //   - to_bytes/as_bytes/to_chars/split: []T-producers → Vec, Plan 139 Ф.2.
+            //   - len/byte_len: O(1) field read, trivial primitive.
             "concat"      => Some("nova_str_concat"),
             "eq"          => Some("nova_str_eq"),
             "lt"          => Some("nova_str_lt"),
@@ -28902,15 +28911,11 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             "gt"          => Some("nova_str_gt"),
             "ge"          => Some("nova_str_ge"),
             "hash"        => Some("nova_str_hash"),
-            "find"        => Some("nova_str_find"),
-            "rfind"       => Some("nova_str_rfind"),
             "len"         => Some("nova_str_byte_len"),   // Plan 108 D26 rev: len = bytes O(1).
-            "char_len"    => Some("nova_str_char_len"),  // codepoints O(n).
             "byte_len"    => Some("nova_str_byte_len"),  // deprecated alias for len().
             "to_bytes"    => Some("nova_str_to_bytes"),  // D178: renamed from bytes()
             "as_bytes"    => Some("nova_str_as_bytes"),  // D176: zero-copy readonly []u8
             "to_chars"    => Some("nova_str_to_chars"),  // D178: renamed from chars()
-            "char_at"     => Some("nova_str_char_at"),
             "split"       => Some("nova_str_split"),
             "byte_at"     => Some("nova_str_byte_at"),  // Plan 90
             "compare"     => Some("nova_str_compare"),  // D178

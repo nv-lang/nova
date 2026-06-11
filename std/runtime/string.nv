@@ -19,9 +19,26 @@ import std.runtime.string_builder.{StringBuilder}
 export external fn str @len() -> int
 
 // Длина строки в codepoint'ах. O(n). Используй для итерации по символам.
-export external fn str @char_len() -> int
+// Plan 139 Ф.1: Nova-body — считает не-continuation байты (UTF-8 leading +
+// ASCII), читая байты через @as_bytes() (zero-copy view). Семантика идентична
+// бывшему nova_str_char_len: continuation-байт = `(b & 0xC0) == 0x80`.
+export fn str @char_len() -> int {
+    ro bytes = @as_bytes()
+    ro n = @len()
+    mut count = 0
+    mut i = 0
+    while i < n {
+        ro b = bytes[i] as int
+        if (b & 0xC0) != 0x80 { count = count + 1 }
+        i = i + 1
+    }
+    count
+}
 
-// UTF-8 байт по индексу. O(1). Panic при выходе за границы. Plan 90 — неустранимый примитив для byte-алгоритмов (lexer/find/trim) на Nova.
+// UTF-8 байт по индексу. O(1). Panic при выходе за границы. Plan 90 — неустранимый
+// примитив для byte-алгоритмов (lexer/find/trim) на Nova. Plan 139 Ф.1: это
+// один из ≤2 неустранимых C-примитивов (byte-access); все остальные str-методы
+// читают байты через него / @as_bytes().
 export external fn str @byte_at(i int) -> u8
 
 // True если строка пустая. O(1) через @len (байты).
@@ -30,36 +47,225 @@ export fn str @is_empty() -> bool => @len() == 0
 // Plan 91.7 (D180): canonical default. Возвращает пустую строку.
 export fn str.new() -> Self => ""
 
-// True если строка начинается с prefix.
-export external fn str @starts_with(prefix str) -> bool
+// True если строка начинается с prefix. Plan 139 Ф.1: Nova-body, byte-compare
+// через @as_bytes(). Семантика идентична nova_str_starts_with.
+export fn str @starts_with(prefix str) -> bool {
+    ro pn = prefix.len()
+    ro sn = @len()
+    if pn > sn { return false }
+    ro sb = @as_bytes()
+    ro pb = prefix.as_bytes()
+    mut i = 0
+    while i < pn {
+        if sb[i] != pb[i] { return false }
+        i = i + 1
+    }
+    true
+}
 
-// True если строка заканчивается на suffix.
-export external fn str @ends_with(suffix str) -> bool
+// True если строка заканчивается на suffix. Plan 139 Ф.1: Nova-body byte-compare.
+export fn str @ends_with(suffix str) -> bool {
+    ro fn_len = suffix.len()
+    ro sn = @len()
+    if fn_len > sn { return false }
+    ro sb = @as_bytes()
+    ro fb = suffix.as_bytes()
+    ro base = sn - fn_len
+    mut i = 0
+    while i < fn_len {
+        if sb[base + i] != fb[i] { return false }
+        i = i + 1
+    }
+    true
+}
 
-// True если needle встречается в строке.
-export external fn str @contains(needle str) -> bool
+// True если needle встречается в строке. Plan 139 Ф.1: Nova-body byte-scan.
+// Пустой needle → true (как nova_str_contains).
+export fn str @contains(needle str) -> bool {
+    ro nn = needle.len()
+    if nn == 0 { return true }
+    ro sn = @len()
+    if nn > sn { return false }
+    ro sb = @as_bytes()
+    ro nb = needle.as_bytes()
+    mut i = 0
+    while i <= sn - nn {
+        mut j = 0
+        mut matched = true
+        while j < nn {
+            if sb[i + j] != nb[j] { matched = false; break }
+            j = j + 1
+        }
+        if matched { return true }
+        i = i + 1
+    }
+    false
+}
 
-// Codepoint-offset первого вхождения needle. None если нет.
-export external fn str @find(needle str) -> Option[int]
+// Codepoint-offset первого вхождения needle. None если нет. Plan 139 Ф.1:
+// Nova-body. Идёт по UTF-8: i — byte offset, cp — codepoint offset; совпадение
+// допустимо на любой byte-позиции (как nova_str_find), возвращается cp-offset.
+export fn str @find(needle str) -> Option[int] {
+    ro nn = needle.len()
+    if nn == 0 { return Some(0) }
+    ro sn = @len()
+    if nn > sn { return None }
+    ro sb = @as_bytes()
+    ro nb = needle.as_bytes()
+    mut cp = 0
+    mut i = 0
+    while i + nn <= sn {
+        mut j = 0
+        mut matched = true
+        while j < nn {
+            if sb[i + j] != nb[j] { matched = false; break }
+            j = j + 1
+        }
+        if matched { return Some(cp) }
+        ro b = sb[i] as int
+        if b < 0x80 { i = i + 1 }
+        else if (b & 0xE0) == 0xC0 { i = i + 2 }
+        else if (b & 0xF0) == 0xE0 { i = i + 3 }
+        else if (b & 0xF8) == 0xF0 { i = i + 4 }
+        else { i = i + 1 }
+        cp = cp + 1
+    }
+    None
+}
 
-// Codepoint-offset последнего вхождения needle.
-export external fn str @rfind(needle str) -> Option[int]
+// Codepoint-offset последнего вхождения needle. Plan 139 Ф.1: Nova-body.
+// Идём слева направо, запоминаем последний codepoint-индекс match'а.
+export fn str @rfind(needle str) -> Option[int] {
+    ro sn = @len()
+    ro sb = @as_bytes()
+    ro nn = needle.len()
+    if nn == 0 {
+        // Возвращает total codepoint count (как nova_str_rfind).
+        return Some(@char_len())
+    }
+    if nn > sn { return None }
+    ro nb = needle.as_bytes()
+    mut last = -1
+    mut cp = 0
+    mut i = 0
+    while i + nn <= sn {
+        mut j = 0
+        mut matched = true
+        while j < nn {
+            if sb[i + j] != nb[j] { matched = false; break }
+            j = j + 1
+        }
+        if matched { last = cp }
+        ro b = sb[i] as int
+        if b < 0x80 { i = i + 1 }
+        else if (b & 0xE0) == 0xC0 { i = i + 2 }
+        else if (b & 0xF0) == 0xE0 { i = i + 3 }
+        else if (b & 0xF8) == 0xF0 { i = i + 4 }
+        else { i = i + 1 }
+        cp = cp + 1
+    }
+    if last < 0 { None } else { Some(last) }
+}
 
-// Codepoint по индексу (codepoint-indexed). None при OOB.
-export external fn str @char_at(idx int) -> Option[char]
+// Convert a known-valid codepoint int → char. Return type `char` drives the
+// Ok-arm coercion (mirrors std/encoding/base64.nv encode_char). Invalid cp
+// cannot occur here — каждый cp получен из UTF-8 decode валидной строки.
+fn cp_to_char(cp int) -> char {
+    match char.try_from(cp) {
+        Ok(c)  => c,
+        Err(_) => '\u{FFFD}',
+    }
+}
+
+// Codepoint по индексу (codepoint-indexed). None при OOB. Plan 139 Ф.1:
+// Nova-body — UTF-8 decode cursor (один из ≤2 неустранимых алгоритмов, но
+// реализован на Nova, не C). char.try_from валидирует codepoint.
+export fn str @char_at(idx int) -> Option[char] {
+    if idx < 0 { return None }
+    ro bytes = @as_bytes()
+    ro n = @len()
+    mut cp_idx = 0
+    mut i = 0
+    while i < n {
+        ro b = bytes[i] as int
+        mut cp = b
+        mut step = 1
+        if b < 0x80 {
+            cp = b; step = 1
+        } else if (b & 0xE0) == 0xC0 && i + 1 < n {
+            cp = ((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F)
+            step = 2
+        } else if (b & 0xF0) == 0xE0 && i + 2 < n {
+            cp = ((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F)
+            step = 3
+        } else if (b & 0xF8) == 0xF0 && i + 3 < n {
+            cp = ((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F)
+            step = 4
+        } else {
+            cp = b; step = 1
+        }
+        if cp_idx == idx {
+            return Some(cp_to_char(cp))
+        }
+        cp_idx = cp_idx + 1
+        i = i + step
+    }
+    None
+}
 
 // Plan 138 Ф.3 (D238): str.get(i) → Option[char]. Alias для @char_at — safe доступ.
 // Поддерживает Protocol Index[int, char] для str.
 export fn str @get(idx int) -> Option[char] => @char_at(idx)
 
-// Убирает whitespace с начала и конца.
-export external fn str @trim() -> str
+// Убирает whitespace с начала и конца. Plan 139 Ф.1: Nova-body. Whitespace =
+// байт <= ' ' (0x20), как nova_str_trim. Возвращает копию (alloc через
+// StringBuilder); бывшая C-версия возвращала zero-copy view — view-форма
+// требует @ptr field-access ([M-139-f0-lang-item-decl]), отложена.
+export fn str @trim() -> str {
+    ro bytes = @as_bytes()
+    ro n = @len()
+    mut start = 0
+    while start < n && (bytes[start] as int) <= 32 { start = start + 1 }
+    mut end = n
+    while end > start && (bytes[end - 1] as int) <= 32 { end = end - 1 }
+    mut out = []u8.with_capacity(end - start)
+    mut i = start
+    while i < end {
+        out.push(bytes[i])
+        i = i + 1
+    }
+    str.from_bytes_unchecked(out)
+}
 
-// Lowercase копия (ASCII).
-export external fn str @to_lower() -> str
+// Lowercase копия (ASCII). Plan 139 Ф.1: Nova-body, alloc через []u8.
+export fn str @to_lower() -> str {
+    ro bytes = @as_bytes()
+    ro n = @len()
+    mut out = []u8.with_capacity(n)
+    mut i = 0
+    while i < n {
+        mut c = bytes[i] as int
+        if c >= 65 && c <= 90 { c = c + 32 }
+        out.push(c as u8)
+        i = i + 1
+    }
+    str.from_bytes_unchecked(out)
+}
 
-// Uppercase копия (ASCII).
-export external fn str @to_upper() -> str
+// Uppercase копия (ASCII). Plan 139 Ф.1: Nova-body, alloc через []u8.
+export fn str @to_upper() -> str {
+    ro bytes = @as_bytes()
+    ro n = @len()
+    mut out = []u8.with_capacity(n)
+    mut i = 0
+    while i < n {
+        mut c = bytes[i] as int
+        if c >= 97 && c <= 122 { c = c - 32 }
+        out.push(c as u8)
+        i = i + 1
+    }
+    str.from_bytes_unchecked(out)
+}
 
 // Конкатенация двух строк (создаёт новую). O(a+b).
 export external fn str @concat(other str) -> str

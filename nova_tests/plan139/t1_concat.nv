@@ -1,0 +1,23 @@
+// Plan 139 Ф.1 — concat/+ REMAIN C (nova_str_concat): the `+` operator lowers
+// DIRECTLY to nova_str_concat in BinOp codegen, so the method alone cannot
+// retire it. Regression guard: concat + `+` operator stay correct.
+module plan139.t1_concat
+
+test "concat method" {
+    assert("ab".concat("cd") == "abcd")
+    assert("".concat("x") == "x")
+    assert("x".concat("") == "x")
+    assert("".concat("") == "")
+}
+
+test "plus operator" {
+    ro a = "foo"
+    ro b = "bar"
+    assert(a + b == "foobar")
+    assert("a" + "b" + "c" == "abc")
+}
+
+test "concat with migrated methods composes" {
+    ro s = "  Hi  "
+    assert(s.trim().to_lower().concat("!") == "hi!")
+}

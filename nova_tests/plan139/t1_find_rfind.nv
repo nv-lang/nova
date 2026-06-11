@@ -1,0 +1,27 @@
+// Plan 139 Ф.1 — find/rfind migrated to Nova-body. Returns CODEPOINT offsets
+// (UTF-8 boundary-aware), identical to former nova_str_find/nova_str_rfind.
+module plan139.t1_find_rfind
+
+test "find basic" {
+    assert("hello".find("l") == Some(2))
+    assert("hello".find("he") == Some(0))
+    assert("hello".find("lo") == Some(3))
+    assert("hello".find("z") == None)
+    assert("hello".find("") == Some(0))   // empty → 0
+    assert("he".find("hello") == None)    // needle longer than s
+}
+
+test "rfind basic" {
+    assert("hello".rfind("l") == Some(3))
+    assert("hello".rfind("he") == Some(0))
+    assert("hello".rfind("o") == Some(4))
+    assert("hello".rfind("z") == None)
+    assert("hello".rfind("") == Some(5))  // empty → total codepoint count
+}
+
+test "find codepoint offset (utf8)" {
+    ro s = "héllo"            // codepoints: h=0 é=1 l=2 l=3 o=4
+    assert(s.find("l") == Some(2))   // codepoint offset, not byte offset 3
+    assert(s.find("o") == Some(4))
+    assert(s.rfind("l") == Some(3))
+}
