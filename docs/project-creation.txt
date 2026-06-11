@@ -36206,3 +36206,47 @@ plan62 29/7 (verified identical clean-HEAD baseline).
 МАРКЕРЫ: [M-138.2-flip-erased-base-body-mono] / [M-138.2-flip-value-pos-arraylit-vec-gate] /
 [M-138.2-flip-array-ext-vec-recv-routing] — все ✅ CLOSED.
 КОММИТ: feat(plan138.2 Ф.0-final): universal Vec ([]T ≡ Vec[T] via prelude)
+
+=== Plan 138.2 Ф.2-Ф.5 — NovaArray retirement: producer-audit + close-PARTIAL (2026-06-11) ===
+ЗАДАЧА: после universal-flip (Ф.0-final GREEN) выполнить Ф.2 (остальные NovaArray-producers) +
+Ф.3 (удалить NOVA_ARRAY_DECL/IMPL + gates + special-cases) + Ф.4 (регрессия) + Ф.5 (close).
+МАНДАТ: VERIFY-OR-DOCUMENT, production-grade, build всегда GREEN.
+
+ЭМПИРИЧЕСКИЙ АУДИТ (grep nova_array_*_<T> по всему .c-корпусу post-flip — живые NovaArray-потребители
+по element-class): nova_byte≈35700, nova_str≈2100, nova_char≈1200, nova_int≈440, void_p≈29, int32_t≈10.
+
+Ф.2 (producer-audit) ✅ CLOSED:
+- Ф.2.1 parfor — RETAINED internal exception (emit_c.rs:7242/7290; NovaArray_{int,bool,f64,str}
+  result-буфер, layout-identical, не escape'ит, 4 примитива; миграция = риск без выигрыша) →
+  [M-138.2-parfor-vec]. parallel_for 2/0, parallel_for_array 1/0.
+- Ф.2.2 closure-array — RETAINED NovaArray_void_p* exception (emit_c.rs:5106; closures=void*, нет
+  Vec[fn] schema; plan55 closure fixtures PASS) → [M-138.2-closure-array-vec] (= ранее [M-138.1-closure-array]).
+- Ф.2.3 bulk-bridge — VERIFIED уже retired для generic-Vec (emit_c.rs:21458-21465 → RawMem Vec Nova-body,
+  [M-138-vec-bulk-parity] DONE); остаётся as_ptr/as_mut_ptr (нет Vec-метода) + nova_byte string-layer (Plan 139).
+
+Ф.3 (retire NOVA_ARRAY_DECL/IMPL) 🔴 BLOCKED на Plan 139 Ф.2 (VERIFY-OR-DOCUMENT, 0 codegen-change):
+- string/byte слой = главный блокер: nova_str_as_bytes→NovaArray_nova_byte*, nova_str_split→
+  NovaArray_nova_str*, from_bytes_* — RETAINED C-примитивы (gated [M-139-f0-lang-item-decl] /
+  [M-139-f2-ptr-field-producers]); WriteBuffer/StringBuilder bulk на []byte. Удаление = сломать
+  base64/json/encoding/text. Risk RG.
+- 4 gate-сайта contains_key("Vec") (emit_c.rs:2119/5123/26662/32328) = graceful-degrade для
+  #no_prelude (tested feature, 23 fixtures). Удаление гейтов = #no_prelude []T → dangling Vec. Risk RE.
+- literal-bridge Vec[T].from(items []T) static param → NovaArray_nova_int* dead stub ([M-138.2-self-in-param]).
+
+Ф.4 (регрессия) ⏸ MOOT — Ф.3 ничего не удалил, регрессировать нечего; flip-baseline уже GREEN (C7 ✅).
+Ф.5 (close) ✅ CLOSED-AT-FLIP-PARTIAL: D239 spec amended (Статус=universal-ACTIVE; NovaArray-retirement
+секция переписана на «частичный BLOCKED на Plan 139 Ф.2» + 5-producer dependency-chain).
+
+DoD: C1 ✅ (flip), C2/C3/C4 ⏸ N/A (Plan 139), C5/C6 🔴 BLOCKED (Plan 139 Ф.2), C7 ✅ (0 NEW FAIL),
+C8 🟡 (D239 ACTIVE+retire-секция amended, D144 ✅, D26=Plan 139).
+
+РЕГРЕССИЯ: 0 codegen-change → 0 risk. Targeted broad-suites GREEN: plan138_1 10/0, plan138_2 18/0,
+plan138_3 2/0, plan90_1 21/0, plan131 27/1 (pre-existing), plan91_fe1 10/0, str 13/0, map_literals 28/1
+(pre-existing), plan101_1 18/0, plan126 21/0, plan126_2 9/1 (pre-existing), plan137 16/0,
+concurrency parfor 3/0, plan55 16/3 (3 pre-existing). 0 NEW FAIL.
+
+ВЫВОД: Plan 138.2 капстоун ЗАКРЫТ как PARTIAL — universal flip приземлён (hard-часть), физический
+retire NovaArray = отдельный re-attempt после Plan 139 Ф.2.
+МАРКЕРЫ: [M-138.2-parfor-vec] + [M-138.2-closure-array-vec] OPEN (P3 sanctioned exceptions);
+retire-блокер cross-ref на [M-139-f2-ptr-field-producers].
+КОММИТЫ: docs(plan138.2 Ф.2): producer-audit; docs(plan138.2 Ф.3-Ф.5): close-PARTIAL retire-blocked-on-139.

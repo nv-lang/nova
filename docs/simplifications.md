@@ -35272,3 +35272,51 @@ DoD C1 proven: t3.c `Nova_Vec____nova_int* x`; t18.c (#no_prelude) Vec=0/NovaArr
 runtime .c/.h + emit_c.rs). Recovery: `git checkout HEAD -- <conflicted>` сбросил чужой stash, затем
 `git stash apply stash@{N}` восстановил свой. Урок: при множественных worktree использовать
 `git stash apply stash@{N}` с явным индексом, НЕ `pop` (берёт stash@{0} = чужой). Чужой stash НЕ тронут.
+
+## Plan 138.2 Ф.2-Ф.5 — NovaArray retirement: producer-audit + close-PARTIAL (BLOCKED на Plan 139 Ф.2)
+
+**Что упрощено / отложено.** Полный физический retire `NOVA_ARRAY_DECL/IMPL` из `array.h` (DoD C5/C6)
+**НЕ выполнен** — принципиально заблокирован строковым/byte слоем, который остаётся на NovaArray до
+Plan 139 Ф.2. Это **VERIFY-OR-DOCUMENT исход** (не silent-cap): build НЕ трогался (0 codegen-change →
+GREEN), блокирующая цепочка задокументирована эмпирически в D239 spec + плане.
+
+**Почему BLOCKED (эмпирический grep-аудит post-flip .c-корпуса).** Живые NovaArray-потребители по
+element-class: `nova_byte`≈35700, `nova_str`≈2100, `nova_char`≈1200, `nova_int`≈440, `void_p`≈29,
+`int32_t`≈10. Пять producers переживают universal-flip:
+1. **string/byte слой (главный).** `nova_str_as_bytes`→`NovaArray_nova_byte*`, `nova_str_split`→
+   `NovaArray_nova_str*`, `from_bytes_*` = RETAINED C-примитивы (Plan 139 Ф.2 scope-out, gated
+   `[M-139-f0-lang-item-decl]`/`[M-139-f2-ptr-field-producers]`). WriteBuffer/StringBuilder bulk-ops
+   на `[]byte` (`nova_array_append_nova_byte`≈3300, `compare_nova_byte`≈556, append_zero/truncate/
+   reserve≈278). Удаление = unknown-type CC-FAIL по base64/json/encoding/text. **Risk RG.**
+2. **4 gate-сайта `contains_key("Vec")`** (emit_c.rs:2119/5123/26662/32328) = graceful-degrade для
+   `#no_prelude` (tested feature, 23 fixtures: plan107/plan62/plan110_9_np). **Risk RE — гейты ОБЯЗАНЫ остаться.**
+3. **closure-array `[]fn`** → `NovaArray_void_p*` (sanctioned exception, `[M-138.2-closure-array-vec]`).
+4. **parfor (D71)** internal result-буфер (`NovaArray_{int,bool,f64,str}`, layout-identical, не escape'ит)
+   → `[M-138.2-parfor-vec]`.
+5. **literal-bridge `Vec[T].from(items []T)`** static param → `NovaArray_nova_int*` dead stub
+   (`[M-138.2-self-in-param]`).
+
+**Ф.2 producer-audit (что РЕАЛЬНО сделано, 0 риска).** (2.1) parfor + (2.2) closure-array = sanctioned
+documented exceptions (followups заведены). (2.3) generic-Vec bulk-bridge VERIFIED уже retired
+(emit_c.rs:21458-21465 → RawMem Vec Nova-body, `[M-138-vec-bulk-parity]` DONE); остаётся `as_ptr`/
+`as_mut_ptr` (нет Vec-метода) + `nova_byte` string-layer (Plan 139). Фикстуры t19-t25 НЕ создавались
+(под-задачи свелись к verify+document; t25 grep-gate был бы RED by-design — retire не выполнен).
+
+**Семантически невидимо.** Никакое наблюдаемое поведение не изменилось: flip уже был GREEN (Ф.0-final),
+эта фаза = audit + docs. `[]T ≡ Vec[T]` работает универсально; NovaArray существует физически только
+как backing legacy-слоёв (string/byte/closure/parfor/#no_prelude), все layout-identical с Vec.
+
+**Регрессии: 0.** 0 codegen-change. Targeted broad-suites GREEN: plan138_1 10/0, plan138_2 18/0,
+plan138_3 2/0, plan90_1 21/0, plan131 27/1 (pre-existing vec_debug_pos), plan91_fe1 10/0, str 13/0,
+map_literals 28/1 (pre-existing const_map), plan101_1 18/0, plan126 21/0, plan126_2 9/1 (pre-existing
+p5_printable), plan137 16/0, concurrency parfor 3/0, plan55 16/3 (3 pre-existing: gc_stress RUN-FAIL +
+2× f3 nova_unit auto-derive). 0 NEW FAIL.
+
+**SHA-таблица (per-commit-green, docs-only).**
+| Commit | Что |
+|---|---|
+| `<f2-audit>` | docs(plan138.2 Ф.2): producer-audit — bulk-bridge retired, parfor/closure-array sanctioned exceptions; D239 spec amend; backlog markers |
+| `<f3-5-close>` | docs(plan138.2 Ф.3-Ф.5): close-PARTIAL — retire BLOCKED on Plan 139 Ф.2; project-creation + simplifications |
+
+**Вывод.** Plan 138.2 капстоун ЗАКРЫТ как PARTIAL. Universal flip = hard-часть, приземлена GREEN.
+Физический NovaArray retire = отдельный re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG).
