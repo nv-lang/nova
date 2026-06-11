@@ -1,16 +1,16 @@
-// std.collections.vec_owned вЂ” `Vec[T]`, a fully Nova-implemented generic
-// growable array backed by a raw `*mut T` heap buffer (Plan 131 Р¤.3).
+// std.collections.vec_owned — `Vec[T]`, a fully Nova-implemented generic
+// growable array backed by a raw `*mut T` heap buffer (Plan 131 Ф.3).
 //
-// РљРѕРЅС‚РµРєСЃС‚. `[]T` ([D27](../../spec/decisions/03-syntax.md#d27)) is the
+// Контекст. `[]T` ([D27](../../spec/decisions/03-syntax.md#d27)) is the
 // built-in slice/dynamic-array primitive. `Vec[T]` here is a *library* type
-// implemented entirely in Nova on top of `std.runtime.raw_mem.RawMem` вЂ”
+// implemented entirely in Nova on top of `std.runtime.raw_mem.RawMem` —
 // demonstrating that a production growable collection needs no compiler magic
 // beyond typed pointers (D216), `size_of[T]()` (D199) and pointer arithmetic
-// (Plan 131 Р¤.2).
+// (Plan 131 Ф.2).
 //
 // Key property: elements are stored *typed* in a contiguous `*mut T` buffer.
 // `Vec[Option[int]]`, `Vec[MyRecord]`, `Vec[Vec[int]]` all work with their
-// natural per-element C representation вЂ” no int64-slot erasure. Pointer
+// natural per-element C representation — no int64-slot erasure. Pointer
 // arithmetic `data + i` is scaled by `sizeof(T)` automatically by the C
 // backend (the buffer pointer carries the element stride).
 //
@@ -20,12 +20,12 @@
 // themselves heap pointers (records / sum-types / arrays) are kept alive by
 // the conservative scan over the buffer.
 //
-// Unsafe model (D216 В§8). Every raw-pointer operation (alloc, `data + i`,
+// Unsafe model (D216 §8). Every raw-pointer operation (alloc, `data + i`,
 // deref read/write) is wrapped in an `unsafe { }` block. The element-access
-// API is fully safe вЂ” no `unsafe` to *use*; in-place element mutation is the
+// API is fully safe — no `unsafe` to *use*; in-place element mutation is the
 // safe `v[i] = val` (D240 `MutIndex` write). The lone deliberate escape is the
 // FFI accessor `@as_ptr()` (recv-mut overload: `*ro T` on a `ro` receiver,
-// `*mut T` on a `mut` receiver) вЂ” calling it is safe (a pointer-value copy,
+// `*mut T` on a `mut` receiver) — calling it is safe (a pointer-value copy,
 // not a deref), but *dereferencing* the returned pointer is the caller's
 // `unsafe` obligation.
 
@@ -53,7 +53,7 @@ import std.collections.range.{Range}
 // imported by user code cannot rely on the prelude `panic` being visible in
 // the *consuming* module when its bodies are inlined cross-module, and a plain
 // `import std.prelude.*` would trip the R27 auto-import opt-out for every
-// importer (stripping their assert/print/вЂ¦ prelude). A local external-fn decl
+// importer (stripping their assert/print/… prelude). A local external-fn decl
 // perturbs nothing; codegen lowers it to `nv_panic` by name.
 external fn panic(msg str) -> never
 
@@ -63,7 +63,7 @@ external fn panic(msg str) -> never
 
 /// A contiguous growable array of `T`, heap-backed via a raw `*mut T` buffer.
 ///
-/// Amortised O(1) `push`, O(1) indexed `get`, Г—2 growth. Empty `Vec[T].new()`
+/// Amortised O(1) `push`, O(1) indexed `get`, ×2 growth. Empty `Vec[T].new()`
 /// allocates nothing until the first `push` (cap = 0).
 ///
 /// # Examples
@@ -105,7 +105,7 @@ export type Vec[T] priv {
 // Constructors
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Create an empty `Vec[T]` вЂ” no allocation, cap = 0.
+/// Create an empty `Vec[T]` — no allocation, cap = 0.
 export fn Vec[T].new() -> Self =>
     { data: null_buf[T](), len: 0, cap: 0 }
 
@@ -183,7 +183,7 @@ fn Vec[T] mut @realloc_to(new_cap int) -> () {
 }
 
 /// Ensure room for at least `additional` more elements beyond the current
-/// length. Grows the buffer with a Г—2 strategy (initial capacity 8) when the
+/// length. Grows the buffer with a ×2 strategy (initial capacity 8) when the
 /// current capacity does not suffice. No-op when `additional <= 0` or capacity
 /// already covers `len + additional`. This is the sole public growth method.
 export fn Vec[T] mut @reserve(additional int) -> () {
@@ -691,12 +691,12 @@ export fn Vec[T] @compare(other Vec[T]) -> int {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Range views (zero-copy slices) вЂ” `Index[Range]`
+// Range views (zero-copy slices) — `Index[Range]`
 // ──────────────────────────────────────────────────────────────────────────
 //
 // Plan 138.1 Ф.0.1b: `as_slice()` (a copying view whose name lied) is REMOVED.
 // Reading a sub-range is a zero-copy view via `Index[Range]` (`v[a..b]`); an
-// owning copy is `clone()`. `to_array()` is NOT added вЂ” at `[]T` ≡ `Vec[T]` it
+// owning copy is `clone()`. `to_array()` is NOT added — at `[]T` ≡ `Vec[T]` it
 // would be a redundant alias for `clone()`.
 //
 // The view shares the parent's `data` buffer (interior pointer at `data +
@@ -704,7 +704,7 @@ export fn Vec[T] @compare(other Vec[T]) -> int {
 // (`GC_all_interior_pointers`, Plan 138 Ф.2). A subsequent `push` on the view
 // detaches it (realloc into a fresh buffer), so it never mutates the parent.
 
-/// Zero-copy sub-range view вЂ” the slice `[r.start, r.end)` over the same
+/// Zero-copy sub-range view — the slice `[r.start, r.end)` over the same
 /// backing buffer. Powers `v[a..b]` once range-slice dispatch routes here.
 ///
 /// Panics on out-of-bounds (`start < 0`, `end < start`, or `end > len`).
@@ -723,7 +723,7 @@ export fn Vec[T] @index(r Range) -> Self {
     Self { data: unsafe { @data + r.start }, len: n, cap: n }
 }
 
-/// Safe zero-copy sub-range view вЂ” `Some(view)` when `[r.start, r.end)` is in
+/// Safe zero-copy sub-range view — `Some(view)` when `[r.start, r.end)` is in
 /// bounds, `None` otherwise. The non-panicking counterpart of `@index(Range)`.
 export fn Vec[T] @get(r Range) -> Option[Self] {
     if r.start < 0 || r.end < r.start || r.end > @len {
@@ -734,7 +734,7 @@ export fn Vec[T] @get(r Range) -> Option[Self] {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Protocols вЂ” Iterable[T] / Equal / Clone / Display / Debug
+// Protocols — Iterable[T] / Equal / Clone / Display / Debug
 // ──────────────────────────────────────────────────────────────────────────
 
 // ─── Iterable[T] ─────────────────────────────────────────────────────────
@@ -744,7 +744,7 @@ export fn Vec[T] @get(r Range) -> Option[Self] {
 /// Holds a copy of the buffer pointer (`data`) and the element count at the
 /// moment `iter()` was called; the GC sees the data pointer through this
 /// record and keeps the buffer alive. Concurrent mutation of the originating
-/// `Vec` during iteration is *not* checked вЂ” the caller is responsible for
+/// `Vec` during iteration is *not* checked — the caller is responsible for
 /// not pushing/removing while iterating.
 export type VecIter[T] {
     priv data *mut T
@@ -775,13 +775,13 @@ export fn VecIter[T] mut @next() -> Option[T] {
 
 // ─── Equal ───────────────────────────────────────────────────────────
 
-/// Element-wise equality вЂ” `true` iff both vectors have the same length and
+/// Element-wise equality — `true` iff both vectors have the same length and
 /// every pair of corresponding elements compares equal via `==`.
 ///
 /// This works for any element type `T` for which `==` is defined (all
 /// primitives and types that implement `Equal`). For unknown/opaque
 /// element types the comparison degrades to reference identity (same C
-/// pointer), which may give surprising results вЂ” declare `@equal` on the
+/// pointer), which may give surprising results — declare `@equal` on the
 /// element type to override.
 ///
 /// # Examples
@@ -879,7 +879,7 @@ export fn Vec[T Debug] @debug(mut sb StringBuilder) -> () {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Free helpers вЂ” buffer allocation
+// Free helpers — buffer allocation
 // ──────────────────────────────────────────────────────────────────────────
 
 // Allocate a zeroed `*mut T` buffer of `n` element slots. `n > 0`.
@@ -947,7 +947,7 @@ test "insert / remove / swap_remove / reverse" {
     assert(v.equal(Vec[int].from([2, 3, 4])))
     ro sr = v.swap_remove(0)
     assert(sr == 2)
-    // After swap_remove(0): last (4) moved into slot 0 в†’ [4, 3]
+    // After swap_remove(0): last (4) moved into slot 0 → [4, 3]
     assert(v.len() == 2)
     v.reverse()
     assert(v.equal(Vec[int].from([3, 4])))
@@ -978,7 +978,7 @@ test "Vec[Option[int]] stores value-struct elements typed" {
     assert(v.len() == 3)
 }
 
-test "grow вЂ” 1000 pushes preserve order" {
+test "grow — 1000 pushes preserve order" {
     mut v = Vec[int].new()
     for i in 0..1000 { v.push(i) }
     assert(v.len() == 1000)
