@@ -34773,3 +34773,22 @@ vec_owned.nv `check` ok.
 - **Урок (debugging-races §3.3):** для стресса — `stress_bisect.sh` (compile-once), НЕ цикл
   `nova test` (перекомпилит весь runtime → выглядит как hang). Раннее `[M-tsan-race-detector]`
   (clang TSAN) ловил бы такие гонки авто.
+
+### Plan 83-go-cmn Ф.2 — gopark/goready ЗАКРЫТ (удалён pending_wake), 2026-06-11
+
+- **Go-style park/wake** заменил pending_wake-счётчик + t1-t4 barrier-dance + TLS-deferred-hack
+  единым lost-wakeup-free протоколом. `_nova_park_state` (4-state NIL/WAIT/READY/DISPATCHED) на
+  SpawnCtxBase, by-co. `nova_gopark` (G0-G4) + `nova_goready` (single-winner CAS-ladder). Spec D244.
+- **Сосуществование cancel(by-slot)+примитив(by-pointer):** `parked_co[]` (chunked stable-address,
+  заменил pending_wake-директорию) — оба будильника воронкуют re-queue через ОДИН `nova_goready(co)`,
+  single-winner переезжает с `parked[slot]` CAS на `park_state WAIT→DISPATCHED` CAS → double-push
+  невозможен by construction. Cancel резолвит `parked_co[slot]`, НЕ `fibers[slot]`.
+- **Реализация:** design-workflow (verdict needs-fixes + 7 corrections) → фоновый агент → adversarial
+  diff-review (3 линзы, verdict `safe-to-commit`, все fatal/high опровергнуты построчно) → independent
+  stress. Агент умно отклонился: `parked_co[]` единообразно вместо co-полей в 6 waiter-структурах →
+  call-surface цел (только wake-lvalue). emit_c.rs оба SpawnCtx-layout'а += park_state.
+- **Validation (independent, clang):** grow_vs_wake 40/40, cross_channel 40/40, condvar_no_lost_wakeup
+  40/40, nested_cancel 30/30, mutex_cancel 30/30; concurrency 105/4, plan103_4 25/25. grow-vs-wake CLOSED.
+- **NEG:** дедик-фикстуры (gopark_ready_before_park/goready_double_assert) НЕ созданы — внутренний
+  тайминг плохо выразим детерминированно на Nova-уровне; покрыто property (condvar_no_lost_wakeup) +
+  cancel-фикстурами. **Followup [M-83.11-f2-arm-tsan]** (ARM под TSAN/Linux). Коммит d2830c73d7d.

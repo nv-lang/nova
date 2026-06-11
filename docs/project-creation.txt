@@ -35823,3 +35823,24 @@ macOS). WSL Ubuntu есть, но без clang/Linux-сборки. ⇒ TSAN gate
 accessor-guard сайтах (nova_sched.h×10, driver.c×2, runtime.c×2) → guard парится
 с RELEASE-store capacity → ARM NULL-окно закрыто. Q28 закрыт. Verified x86: smoke +
 grow_vs_wake 40/40 (race stays closed). Коммиты 98b4b05c6ae (fix), 39764e18c52 (docs).
+
+--------------------------------------------------------------------------------
+2026-06-11 — Ф.2 gopark/goready ЗАКРЫТ (удалён pending_wake)
+--------------------------------------------------------------------------------
+Design-workflow (4 map + synth + adversarial review, verdict needs-fixes + 7 corrections) →
+фоновый агент по спеке → мой adversarial diff-review (3 линзы, verdict safe-to-commit, все
+fatal/high опровергнуты построчно) → independent stress. Паттерн Ф.1b.
+
+Go-style park/wake: _nova_park_state (4-state NIL/WAIT/READY/DISPATCHED) на SpawnCtxBase
+by-co. nova_gopark (G0-G4 lost-wakeup-free) + nova_goready (single-winner CAS-ladder). Удалён
+pending_wake counter + t1-t4 dance + TLS-deferred-hack. 396-строчный rewrite nova_sched.h. Spec D244.
+
+Сосуществование cancel(by-slot)+примитив(by-pointer): parked_co[] (chunked, заменил pending_wake)
+— оба через ОДИН nova_goready(co), single-winner на WAIT->DISPATCHED CAS -> double-push невозможен.
+Агент умно отклонился: parked_co[] единообразно для всех park-сайтов вместо co-полей в 6 waiter-
+структурах. emit_c.rs оба layout'а += park_state. count_parked hardening.
+
+Validation (clang, independent): grow_vs_wake 40/40, cross_channel 40/40, condvar_no_lost_wakeup
+40/40, nested_cancel 30/30, mutex_cancel 30/30; concurrency 105/4, plan103_4 25/25. grow-vs-wake
+CLOSED. Followup [M-83.11-f2-arm-tsan]. Коммиты d2830c73d7d (feat), 8e32ab3de46 (spec D244 + план).
+Дальше Ф.3 (nspinning) / Ф.5 (iso-cancel -> [M-83.10.4]).
