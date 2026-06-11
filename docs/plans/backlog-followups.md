@@ -113,6 +113,7 @@
 | `[M-140-contract-message]` | Plan 140 (опц. `, "message"` на `requires`/`ensures`/`invariant`) |
 | `[M-139-f0-lang-item-decl]` | Plan 139 Ф.0 followup / Ф.1 — Nova-декл `type str value priv {...}` как lang-item + privacy-enforcement (`s.ptr`→E_PRIV_FIELD, direct-construct forbidden, `*ro u8` write→E_RO_POINTER_WRITE); требует новой lang-item checker-инфры; 3 neg-фикстуры ждут |
 | `[M-139-f0-rt-header-ptr-sign-casts]` | Plan 139 Ф.5 — 59 -Wpointer-sign warnings в рантайм-C-хедерах (array.h/conv.h/effects.h/nova_rt.h) после typedef→`const uint8_t*`; source-compatible, подавлены `-w`; cast string-литералов отложен (часть 354-site работы) |
+| `[M-139-f1-trim-view]` | Plan 139 Ф.1 followup — `str @trim()` Nova-body возвращает аллоцированную копию (byte-loop + from_bytes_unchecked); бывшая C `nova_str_trim` возвращала zero-copy slice-view без alloc. View-форма требует `@ptr` field-access (`*ro u8` slice) → gated на `[M-139-f0-lang-item-decl]`. Контент идентичен, разница только перф (alloc vs view) |
 
 ## Follow-up: stale-tag cleanup
 Триаж (w33ant6rp) нашёл **34 маркера с устаревшим OPEN-тегом** (30 RESOLVED + 4 SUPERSEDED — gap закрыт, текст висит): `[M-115-ptr-arithmetic]`, `[M-83.10.4-residual-flaky]`, `[M-83.10.4-supervised-cancel-armed-race]`, `[M-138-getmut-rename]` (superseded) + 30 resolved (полный список в workflow-output w33ant6rp). **Followup:** поправить их статус в source-планах (отдельный doc-проход), чтобы grep по OPEN был честным.

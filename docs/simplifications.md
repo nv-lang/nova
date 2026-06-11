@@ -34744,3 +34744,55 @@ pos_receiver_at_parse), plan62 29/7 (5 pre-existing CC-FAIL), plan77 7/0.
   Source-compatible (компилируются), подавлены `-w` в build. Каст `(const uint8_t*)` на
   string-литералы в этих хедерах — массовая правка (часть из 354-site работы),
   отложена из Ф.0 (риск-граница ABI-стратегии). Home: Plan 139 Ф.5 (runtime reconciliation).
+
+## Plan 139 Ф.1 — str methods → Nova-body via byte access (2026-06-11)
+
+**ЧТО СДЕЛАНО:** 10 str-методов мигрированы из external C-функций `nova_str_X` в
+**Nova-body** (`std/runtime/string.nv`): `starts_with`, `ends_with`, `contains`,
+`find`, `rfind`, `char_at`, `char_len`, `trim`, `to_lower`, `to_upper`. Тела читают
+байты через `@as_bytes()` (zero-copy view) + `@byte_at` и аллоцируют через
+`[]u8.with_capacity` + `push` + `str.from_bytes_unchecked`. Семантика идентична
+бывшим C-функциям (find/rfind — codepoint-offsets, char_at — UTF-8 decode cursor,
+trim — whitespace ≤ 0x20, case — ASCII). Routing: удалены из `str_method_to_rt`
+(emit_c.rs) → fall-through на Nova-body dispatch (`Nova_str_method_X`);
+`runtime_registry.rs` entries flipped `c_name → ""` + `nova_body: Some(...)`.
+
+**≤2 НЕУСТРАНИМЫХ C-ПРИМИТИВА (acceptance A1.3):**
+1. `nova_str_byte_at` — O(1) byte-access primitive (Plan 90; foundation, на нём
+   читают все Nova-body методы через `@as_bytes`/`@byte_at`).
+2. buffer-alloc — через `str.from_bytes_unchecked` (`[]u8` → str). str не владеет
+   аллокатором; это designated primitive #2 плана.
+
+**ОТКЛОНЕНО ОТ `@ptr[i]`-формы (как буква плана требует) → byte_at-форма:**
+План Ф.1 формулирует чтение байтов как `@ptr[i]` (typed-ptr deref поля `*ro u8`).
+Это требует приземления полной lang-item декларации `type str value priv { ptr *ro u8,
+len int }` = `[M-139-f0-lang-item-decl]` (новая checker-инфра; сегодня `s.ptr`
+резолвится в `nova_int`, `p[0]` даёт CC-FAIL «subscripted value is not a pointer»).
+Достигнут ИДЕНТИЧНЫЙ outcome (методы Nova-body, семантика та же, ≤2 примитива) через
+`@byte_at`/`@as_bytes` — тот самый byte-access primitive, который план сам называет
+неустранимым. Литеральная `@ptr[i]`-форма остаётся gated на `[M-139-f0-lang-item-decl]`.
+
+**RETAINED C (scope-out, documented):** `eq`/`lt`/`le`/`gt`/`ge`/`concat`/`compare`/
+`hash` — лоуэрятся НАПРЯМУЮ из BinOp-кодогена операторов (`==`/`<`/`+`/...) и
+HashMap-key-path, миграция одного метода НЕ ретайрит C-функцию; `hash` = SipHash-1-3
+с per-process random seed (невоспроизводимо в Nova-body без seed-примитива). Это
+Plan 139 Ф.3 (structural eq/hash). `to_bytes`/`as_bytes`/`to_chars`/`split` →
+Vec — Plan 139 Ф.2. `len`/`byte_len` — O(1) field-read.
+
+**NEW [M-139-f1-trim-view]:** `@trim()` Nova-body возвращает АЛЛОЦИРОВАННУЮ копию
+(byte-loop + from_bytes_unchecked); бывшая C-версия `nova_str_trim` возвращала
+zero-copy slice-view (`{s.ptr + start, end - start}`, без alloc). Zero-copy view
+требует `@ptr` field-access → gated на `[M-139-f0-lang-item-decl]`. Контент
+идентичен; только перф (alloc vs view). Home: Plan 139 Ф.1 followup (после lang-item).
+
+**ДОКАЗАТЕЛЬСТВА:** nova_tests/plan139/ 17/0 PASS (6 Ф.0 + 11 новых: t1_starts_ends_contains,
+t1_find_rfind, t1_trim, t1_case, t1_char_len_utf8, t1_char_at_utf8, t1_byte_at,
+t1_concat, t1_compare_ordering [regression guards для retained-C], neg_t1_char_at_oob
+[OOB→None], neg_t1_byte_at_oob [runtime-panic]). Регрессии 0 new FAIL vs baseline:
+plan138_1 10/0, plan138_2 6/0, plan138_3 2/0, plan131 27/1 (pre-existing vec_debug_pos),
+plan90_1 20/0, plan126 21/0, plan91_fe1 8/2 (pre-existing 'first'), plan108_4 12/1
+(pre-existing fmt), plan77 7/0, plan62 29/7 (pre-existing StringBuilder-tag/Iterable/equals),
+str 13/0, plan60 6/0, plan34 8/0, plan91 2/0, plan108 5/0. **Pre-existing (НЕ моё):**
+str_builder 0/9 — `E_CONSUME_KEYWORD_MISSING` на `mut sb = StringBuilder.new()`
+(consume-guard checker-rule, воспроизводится тривиальной программой; StringBuilder.nv
+не трогался).
