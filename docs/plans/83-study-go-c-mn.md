@@ -22,13 +22,42 @@ park/note), 2 агента-синтезатора выдали gap-анализ 
 до C→Go перевода рантайма в go1.5. Источники: `src/pkg/runtime/proc.c`, `runtime.h`,
 `lock_futex.c`/`lock_sema.c`, `netpoll*.c`, `time.goc`.
 
-### 0.1 Лицензия и атрибуция
+### 0.1 Стратегия V1: максимально дословный порт Go-кода
+
+**Решение (user, 2026-06-11): для первой версии — акцент на ИДЕНТИЧНОЕ копирование
+Go-кода**, а не ре-имплементацию. Обоснование: Go-код проверен годами в production;
+дословный перенос наследует эту корректность и минимизирует риск внести свой баг при
+переписывании планировщика (главный риск этой работы).
+
+**Достижимая цель = «структурно идентично», НЕ byte-identical.** Go C-код ссылается на
+сотни Go-runtime символов, которых в Nova нет (структуры `G`/`M`/`P`, stack-switch
+`mcall`/`gogo`/`systemstack`, `note`/futex, `runtime·cas`/`atomicload`, GC write-barriers,
+`runtime·sched`/`allp`) → дословный `proc.c` не компилируется. Поэтому политика порта:
+
+- **Сохраняем 1:1:** control flow, имена переменных (`h`, `t`, `n`, `batch`), инлайн-
+  комментарии оригинала (`// load-acquire, synchronize with consumers` и т.д.), структуру
+  функций. Каждая ported-функция несёт ссылку на go1.4 origin (`port of go1.4 proc.c::X`).
+- **Заменяем только:** типы (`G*`→`mco_coro*`), атомики (`runtime·cas`/`atomicload`/
+  `atomicstore`→C11 `__atomic_*`), глобальный `sched.lock`→Nova-спинлок, `runtime·throw`→
+  defensive return (не abort процесса на stale-snapshot).
+- **Префикс `nova_`** на публичных именах (`nova_runq_put` ↔ `runqput`) — обязателен по
+  Nova-конвенции (избежать symbol-collision), тело идентично.
+- **Где verbatim невозможен в принципе** (фазы со stack-switch — gopark/mcall; note —
+  futex/sema на g0-стеке): переносим ЛОГИКУ, механизм отличается (minicoro вместо
+  Go-assembly). Это явно отмечается в плане по фазам.
+
+**Ring-функции Ф.1 (`runqput/get/grab/steal/putslow`) — самодостаточны** (работают над
+`runq[256]` + 2 uint32 + global-list), поэтому фиделити максимальный — практически
+построчный порт go1.4 `proc.c`.
+
+### 0.1.1 Лицензия и атрибуция
 
 Go распространяется под **BSD-3-Clause** — совместима с Nova (MIT OR Apache-2.0).
-Алгоритмы/идеи (G-P-M, fixed runq, work-stealing, netpoll, gopark) **не охраняются
-copyright** — переносимы свободно. Где порт близок к оригиналу — **сохранять copyright
-Google + текст BSD-лицензии** в шапке файла + `THIRD_PARTY/go-LICENSE` в репо. Стиль:
-реализуем заново под `NovaFiberQueue`/minicoro/Boehm GC, не copy-paste.
+Алгоритмы/идеи **не охраняются copyright** (переносимы свободно), но при дословном
+переносе кода BSD требует сохранить copyright Google + текст лицензии + disclaimer.
+Заведён **[`THIRD_PARTY/go-LICENSE`](../../THIRD_PARTY/go-LICENSE)** (полный BSD-3-Clause +
+copyright The Go Authors + список ported-файлов). Каждый ported-файл несёт in-file ссылку
+на go1.4 origin.
 
 ### 0.2 Model / effort / thinking
 
@@ -276,7 +305,35 @@ validation (no STALE / no lost-cancel impossible-state signatures).
 | Фаза | Статус |
 |---|---|
 | Plan doc + декомпозиция | ✅ 2026-06-11 |
-| Ф.1 fixed runq | 🟡 в работе |
+| V1 verbatim-port policy + `THIRD_PARTY/go-LICENSE` | ✅ 2026-06-11 |
+| Ф.1 `runq.h` примитив (ring put/get/grab/steal/putslow + global overflow) | ✅ ported + unit-tested 2026-06-11 |
+| Ф.1 интеграция (nova_sched.h park-state→SpawnCtxBase, runtime.c rewire, cut-over) | 🟡 в работе |
 | Ф.2-Ф.8 | 📋 PLANNED |
+
+### 9.1 Ф.1 progress — `runq.h` примитив (2026-06-11)
+
+**Сделано:** `compiler-codegen/nova_rt/runq.h` — дословный порт go1.4 `proc.c`
+ring-функций (`runqput`/`runqget`/`runqgrab`/`runqsteal`/`runqputslow` +
+`globrunqputbatch`/`globrunqget`). Fixed `mco_coro* runq[256]`, monotonic uint32
+head/tail (mask только при доступе), single-producer store-release tail, multi-consumer
+CAS head, overflow → spill-half в global intrusive-list (schedlink). Go-комментарии
+сохранены verbatim; атрибуция per-function + `THIRD_PARTY/go-LICENSE`.
+
+**Верификация (изолированная, без полной сборки nova — clang `-O2 -Wall -Wextra`, 0 warnings):**
+`test_runq.c` — T1 FIFO put/get; T2/T3 overflow spill-half exact counts + drain
+no-dup/no-loss; T5 `runq_steal` half victim→self conservation; **T4 concurrent: 1 producer
+(put+get) racing 4 thieves (grab) над 200k fibers → conservation (каждый fiber потреблён
+ровно 1 раз, 0 потерь, ring+global пусты)**. 10/10 прогонов PASS; `grab_retries>0` —
+inconsistent-snapshot path реально сработал и обработан (0 потерь подтверждает корректность).
+
+> ⚠ Это unit-валидация ПРИМИТИВА в изоляции. Полная Ф.1 acceptance (build clang+MSVC,
+> `nova test` no-regression, stress `stress_iso_3e` 66/66, throughput ±10%, GC
+> reachability) требует интеграции в runtime.c + park-state на SpawnCtxBase — следующий шаг.
+
+**Осталось по Ф.1:** перенести park/wake state с растущих `NovaSchedState` массивов на
+`NovaSpawnCtxBase` (4-state latch, индекс по pointer); добавить `schedlink` поле; переписать
+`nova_sched.h` park/wake/register/cancel по pointer; заменить `NovaWorker.deque`→`NovaRunq` +
+rewire `_worker_main`/`_worker_dispatch_ready`/spawn paths; флаг `NOVA_RUNQ_FIXED` →
+валидация под stress → atomic cut-over + удаление `deque.h`/`nova_sched_grow_state`.
 
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).
