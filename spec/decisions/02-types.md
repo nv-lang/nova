@@ -30,6 +30,7 @@
 | [D181](#d181-array-methods----fluent-mut-chain--slice-syntax) | Array methods — `-> @` fluent mut chain + slice syntax | active |
 | [D182](#d182-self-в-return-type-static-methods--required-form-для-parametric-types) | `Self` в return-type static methods — required form для parametric types | active |
 | [D183](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) | Canonical comparison protocols + default method bodies (Plan 91.8a) | active |
+| [D245](#d245-указатели-running-current-flip-scan-модель-mutability-разворот-d216-v2) | Pointer mutability — running-current flip-scan (Plan 147; reverses D216 §V2.6, `*T ≢ *ro T`) | active |
 
 ---
 
@@ -2360,9 +2361,10 @@ Bootstrap-ограничения:
 > [Plan 118](../../docs/plans/118-typed-pointers-and-unsafe.md) §«&value
 > operator + escape analysis с auto-promote» и [D216 §4](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo).
 >
-> ⚠️ **D32 align (Plan 138.5)** — мутируемость в указательном типе — это
-> **pointee** (target): `*mut T` = writable target, `*T` ≡ `*ro T` = ro
-> target (постфикс после `*`). Перепривязываемость самого указателя — это
+> ⚠️ **D32 align (Plan 138.5; amend Plan 147 D245)** — мутируемость в указательном
+> типе — это **pointee** (target): `*mut T` = writable target. `*T` **наследует
+> binding-`current`** (D245 flip-scan; `*T ≢ *ro T` — для `mut`-binding `*T` =
+> writable, для `ro`-binding = ro). Перепривязываемость самого указателя — это
 > **binding** (`ro`/`mut`), как у любого параметра/переменной по D32/D36,
 > **НЕ часть типа**. Prefix-модификатор перед `*` (`mut * T`) запрещён
 > ([D216 §1](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo)
@@ -7493,21 +7495,31 @@ Plan 118 family scope:
 
 ### §1. `*T` family типов
 
-> **FINAL pointer model (Plan 138.5, 2026-06-11):** указательный ТИП несёт
-> **только pointee-мутабельность** — модификатор пишется **постфиксом**, сразу
-> после `*` (`*mut T` / `*ro T` / `*unsafe T`). **Перепривязываемость самого
-> указателя** (`p = other_ptr`) — это **binding** (`let` = фиксирован, `mut` =
-> переприсваиваемый, D36), **НЕ часть типа**. В `mut p *mut T`: ведущий `mut` =
-> binding (p reassignable), `*mut T` = pointee (writable). Две роли, чисто
-> разделены (прецедент Rust: `*mut T`/`*const T` = pointee; `let mut p` =
-> reassign). **Запрещены ВСЕ prefix-модификаторы перед `*`** (`mut * T` / `ro * T`
-> / `unsafe * T`) — `E_POINTER_PREFIX_MODIFIER` (§1 ниже). Nullable = `Option[*T]`
+> **⚠️ SUPERSEDED by FINAL flip-scan model (Plan 147 D245, 2026-06-11):** часть
+> 138.5, утверждавшая `*T ≡ *ro T` (always-ro pointee) и «явный `*mut T`
+> обязателен при mut-binding», **ОТМЕНЕНА**. FINAL = **running-current flip-scan**
+> ([D245](#d245-указатели-running-current-flip-scan-модель-mutability-разворот-d216-v2)
+> ниже): `ro`/`mut` распространяется вправо (`current`), postfix-модификатор
+> только **переворачивает** current; совпадение → `E_REDUNDANT_POINTER_MODIFIER`.
+> `*T` **наследует** current (mut-binding→mut pointee, ro-binding→ro), поэтому
+> `*T ≢ *ro T`. Текст ниже про postfix-canonical / prefix-ban / Option-NPO
+> **сохраняется**; редактирован только `*T ≡ *ro T` и binding-mut rule (§2).
+
+> **138.5 baseline (postfix pointee, prefix-ban) — KEPT под D245:** указательный
+> ТИП несёт **pointee-мутабельность** постфиксом, сразу после `*` (`*mut T` /
+> `*ro T` / `*unsafe T`). **Перепривязываемость самого указателя** (`p =
+> other_ptr`) — это **binding** (`let`/`ro` = фиксирован, `mut` = переприсваиваемый,
+> D36), **НЕ часть типа**; binding задаёт **начальный `current`** (D245 §2).
+> **Запрещены ВСЕ prefix-модификаторы перед `*`** (`mut * T` / `ro * T` /
+> `unsafe * T`) — `E_POINTER_PREFIX_MODIFIER` (§1 ниже). Nullable = `Option[*T]`
 > только (NPO §7). Это **ретрактит** D216 V2 «outer pointer-mut как type-wrapper»
 > (`mut * T = Mut(Pointer(T))`) и V3 propagation/safe-stopper машинерию — см.
 > §V2.2/§V2.6/§V3.2/§V3.3/§V3.4 ниже.
 
-- `*T` (≡ `*ro T`) — readonly typed pointer (default) — **pointee** ro
-- `*ro T` / `*mut T` — explicit **pointee** mutability (postfix only)
+- `*T` — typed pointer; pointee-мутабельность = **наследуемый `current`**
+  (D245: mut-binding → mut pointee, ro-binding → ro pointee). **`*T ≢ *ro T`**.
+- `*ro T` / `*mut T` — explicit **pointee** mutability (postfix only); пишется
+  **только когда переворачивает** `current` (иначе `E_REDUNDANT_POINTER_MODIFIER`)
 
 > **Flagship `*ro u8` use-case (Plan 139, 2026-06-11):** `str` — Nova
 > value-record lang-item `type str value priv { ptr *ro u8, len int }`. Поле
@@ -7526,17 +7538,24 @@ Plan 118 family scope:
 - **Validity:** **always non-null** (compile-time invariant); nullable
   variant — `Option[*T]` (NPO §7)
 
-**Pointee vs binding (две роли, не путать):**
+**Pointee vs binding (две роли, не путать) — FINAL flip-scan ([D245](#d245-указатели-running-current-flip-scan-модель-mutability-разворот-d216-v2)):**
 
-| Запись | `mut`-роль | Значение |
-|--------|-----------|----------|
-| `let p *mut T`  | — (binding ro) | p нельзя переприсвоить; `*p = ...` можно (pointee mut) |
-| `mut p *mut T`  | binding mut    | p можно переприсвоить; `*p = ...` можно |
-| `mut p *ro T`   | binding mut    | p можно переприсвоить; `*p = ...` нельзя (pointee ro) |
-| `let p *ro T` ≡ `let p *T` | — | p фиксирован; pointee ro |
+Binding (`let`/`ro`/`mut` перед именем) задаёт reassignability указателя **и**
+начальный `current` для pointee. `*T` наследует `current`. Postfix `*mut`/`*ro`
+переворачивает `current`; совпадение → `E_REDUNDANT_POINTER_MODIFIER`.
 
-**`*T ≡ *ro T`** — это про **pointee** (read-only target). Reassignability
-указательной переменной — **binding** (`let`/`mut`, D36), не тип.
+| Запись | binding `current` | flip-scan | Вердикт / pointee |
+|--------|------------------|-----------|-------------------|
+| `mut p *T`     | mut | нет flip, наследует mut | ✅ p reassign; `*p = ...` можно (pointee **mut**) |
+| `mut p *mut T` | mut | `*mut` совпал с mut      | ❌ `E_REDUNDANT_POINTER_MODIFIER` (use `mut p *T`) |
+| `mut p *ro T`  | mut | `*ro` flip mut→ro        | ✅ p reassign; `*p = ...` нельзя (pointee **ro**, override) |
+| `let p *T` / `ro p *T` | ro | нет flip, наследует ro | ✅ p фиксирован; pointee **ro** |
+| `ro p *mut T`  | ro  | `*mut` flip ro→mut       | ✅ p фиксирован; `*p = ...` можно (фикс-указатель, writable target) |
+| `let p *ro T`  | ro  | `*ro` совпал с ro        | ❌ `E_REDUNDANT_POINTER_MODIFIER` (use `let p *T`) |
+
+**`*T ≢ *ro T`** (отмена 138.5): `*T` **наследует** binding-`current`; `*ro T`
+форсирует ro и валидно **только** когда current=mut (override). Reassignability
+указательной переменной — **binding** (`let`/`ro`/`mut`, D36).
 
 **Запрет prefix-модификаторов (`E_POINTER_PREFIX_MODIFIER`):** токены
 `ro`/`mut`/`unsafe` непосредственно **перед** `*` в type-position запрещены.
@@ -7553,25 +7572,30 @@ unsafe * T          // ❌ E_POINTER_PREFIX_MODIFIER
 `*mut T`/`*ro T`/`*unsafe T`/`*T` (pointee, postfix), `mut name *T` (binding).
 
 ```nova
-*T              // ro pointer (default) — pointee ro
-*ro T           // explicit readonly pointee
-*mut T          // mutable pointee (can *p = ...)
+*T              // pointee наследует current (D245): mut-binding→mut, ro-binding→ro
+*ro T           // explicit ro pointee (override; валидно только когда current=mut)
+*mut T          // explicit mut pointee (override; валидно только когда current=ro)
 *unsafe T       // pointer к possibly-uninit T; deref требует unsafe layer
 ```
 
-### §2. Binding mut rule
+### §2. Binding mut rule (FINAL — flip-scan, [D245](#d245-указатели-running-current-flip-scan-модель-mutability-разворот-d216-v2))
 
-`mut p *T` ≡ `mut p *mut T` (pointer mut по default при mut binding).
-Explicit `ro p *mut T` valid (edge case: cannot reassign p, BUT can `*p = ...`).
+Binding задаёт начальный `current`: `mut p` → current=mut, `let p`/`ro p` →
+current=ro. `*T` **наследует** current; postfix `*mut`/`*ro` **переворачивает**
+его (совпадение → `E_REDUNDANT_POINTER_MODIFIER`).
 
 ```nova
-ro p *Acc           // binding ro; pointer ro
-mut p *Acc          // binding mut; pointer mut auto
-ro p *mut Acc       // valid edge case
+ro p *Acc           // binding ro → current ro; *T наследует → pointee ro
+mut p *Acc          // binding mut → current mut; *T наследует → pointee mut (writable)
+mut p *mut Acc      // ❌ E_REDUNDANT_POINTER_MODIFIER (*mut совпал с mut-current; use `mut p *Acc`)
+ro p *mut Acc       // ✅ override: фикс-указатель (p не reassign), но *p = ... можно (flip ro→mut)
 mut q = &acc        // pointer mut auto (no &mut acc needed)
 ```
 
-Consistency с Plan 114 binding semantics; reduces noise в hot-path FFI.
+**Отмена 138.5:** старое `mut p *T ≡ mut p *mut T` сохраняет **эффект** (mut
+pointee при mut-binding), но `mut p *mut T` теперь **ошибка** (избыточно) —
+каноническая форма `mut p *T`. Consistency с Plan 114 binding semantics; reduces
+noise в hot-path FFI; «one canonical syntax» per смысл.
 
 ### §3. Chain order (multi-level pointers)
 
@@ -8226,9 +8250,9 @@ canonical, prefix запрещён** (один указатель-модифик
 | `mut T` | `Mut(T)` — value-T wrapper, codegen-transparent (KEPT, §V2.2b) |
 | `unsafe T` | `Unsafe(T)` — value-T wrapper, MaybeUninit (KEPT, §V2.3) |
 | `consume T` | consume wrapper (receiver/field/decl, см. D162) |
-| `*T` | `Pointer(T)` — pointee ro (≡ `*ro T`) |
-| `*ro T` | `Pointer(Readonly(T))` — **CANONICAL** pointee ro |
-| `*mut T` | `Pointer(Mut(T))` — **CANONICAL** pointee mut |
+| `*T` | `Pointer(T)` — pointee **наследует `current`** (D245; `*T ≢ *ro T`) |
+| `*ro T` | `Pointer(Readonly(T))` — explicit ro pointee (override; redundant если current=ro → D245) |
+| `*mut T` | `Pointer(Mut(T))` — explicit mut pointee (override; redundant если current=mut → D245) |
 | `*unsafe T` | `Pointer(Unsafe(T))` — **CANONICAL** pointer к possibly-uninit T |
 | `mut * T` | ❌ `E_POINTER_PREFIX_MODIFIER` (prefix перед `*` запрещён; use `mut x *T` binding) |
 | `ro * T` | ❌ `E_POINTER_PREFIX_MODIFIER` |
@@ -8273,13 +8297,13 @@ POINTEE_MOD := 'ro' | 'mut' | 'unsafe'
 FINAL chains читаются с postfix-pointee; reassignability — отдельно через binding:
 
 ```nova
-*ro T               // Pointer(Readonly(T))  — ptr к ro T (≡ *T)
-*mut T              // Pointer(Mut(T))       — ptr к mut T (writable target)
+*ro T               // Pointer(Readonly(T))  — explicit ro pointee (override; D245: redundant если current=ro)
+*mut T              // Pointer(Mut(T))       — explicit mut pointee (override; D245: redundant если current=mut)
 *unsafe T           // Pointer(Unsafe(T))    — valid (non-null) ptr к possibly-uninit T
-*mut *ro T          // Pointer(Mut(Pointer(Readonly(T)))) — ptr к (mut ptr к ro T)
-                    // читается left→right: внешний * с pointee `mut *ro T`
-let  p *ro T        // binding ro:  p фиксирован; pointee ro
-mut  p *mut T       // binding mut: p переприсваиваем; pointee writable
+ro p *mut *ro T     // flip-scan (D245): binding ro → *mut flip→mut → *ro flip→ro; pointee T=ro
+                    // читается left→right: current переворачивается каждым postfix-модификатором
+let  p *T           // binding ro: p фиксирован; pointee наследует ro (D245)
+mut  p *T           // binding mut: p переприсваиваем; pointee наследует mut, writable (D245)
 mut  p *unsafe u8   // binding mut: p переприсваиваем; pointee possibly-uninit byte
 ```
 
@@ -8397,9 +8421,18 @@ deref в `unsafe {}`). Это единственная nullable-форма; от
 
 ### §V2.6 — backward compatibility
 
+> **⚠️ RETRACTED-and-amended (Plan 147 D245, 2026-06-11):** утверждение
+> «`*T ≡ *ro T`» (always-ro pointee) **отменено** — `*T` наследует binding-`current`
+> (flip-scan, [D245](#d245-указатели-running-current-flip-scan-модель-mutability-разворот-d216-v2)).
+> Поэтому `mut p *mut T` теперь **не «явная форма по-умолчанию»**, а
+> `E_REDUNDANT_POINTER_MODIFIER` (избыточно: `*mut` совпал с mut-`current`);
+> каноническая запись — `mut p *T`. Промоушн codegen-уровня (`promote_pointer_pointee_mut`)
+> KEPT и является **seed-реализацией** flip-scan-наследования для полей. Постфикс-canonical
+> и prefix-ban (ниже) — **сохраняются**.
+
 > **Codegen-status UPDATE (Plan 138.4 Ф.4, 2026-06-11, commit `38360c30d80`):** binding-mut rule
 > для record-полей с pointer-типом реализован в codegen. Для **mutable** поля `mut p *T` codegen
-> применяет `mut p *T ≡ mut p *mut T` (D33 §2 binding propagation): immediate `Pointer(pointee)`
+> применяет inherit-current (D245 §3): immediate `Pointer(pointee)`
 > (non-Mut/non-Unsafe) переписывается в `Pointer(Mut(pointee))` через
 > `field_type_with_binding_mut`/`promote_pointer_pointee_mut` — transparent над Readonly/Mut/Unsafe
 > wrappers, поэтому generic pointee `T` сохраняется через monomorphization (НЕ лоуэрится в `Nova_any`).
@@ -8407,9 +8440,11 @@ deref в `unsafe {}`). Это единственная nullable-форма; от
 > writable. Закрыт `[M-138.2-v2-propagation-impl-gap]`. Полная parser-level prefix-migration
 > (`[M-118.5-right-binding-migration]`) остаётся отдельным effort'ом.
 
-**FINAL (Plan 138.5) — НЕТ grace-period для prefix:**
-- `*ro T` / `*mut T` / `*unsafe T` (postfix) — **canonical**, не deprecated.
-  `Pointer(Readonly(T))` / `Pointer(Mut(T))` / `Pointer(Unsafe(T))`.
+**FINAL (Plan 138.5, amend Plan 147 D245) — НЕТ grace-period для prefix:**
+- `*mut T` / `*ro T` / `*unsafe T` (postfix) — **canonical только когда
+  переворачивают** `current` (D245): иначе `E_REDUNDANT_POINTER_MODIFIER`.
+  `Pointer(Mut(T))` / `Pointer(Readonly(T))` / `Pointer(Unsafe(T))`.
+- `*T` — наследует `current` (D245); `*T ≢ *ro T`.
 - `mut * T` / `ro * T` / `unsafe * T` (prefix перед `*`) — **hard error**
   `E_POINTER_PREFIX_MODIFIER` (НЕ warning). Migrate → postfix или binding-`mut`.
 - `unsafe * T` (`Unsafe(Pointer)`, старый raw-nullable) — **RETIRED**. Nullable =
@@ -8435,6 +8470,9 @@ deref в `unsafe {}`). Это единственная nullable-форма; от
   subsumed `unsafe T`)
 - `[M-118.5-npo-recalculation]` — NPO теперь универсальный (§V2.4 FINAL — все `*…`
   non-null → 8 байт); recalculation сводится к «всегда NPO для pointer-inner»
+- **flip-scan amend (Plan 147 D245):** `*T ≡ *ro T` отменено; `*T` наследует
+  binding-`current`; избыточный postfix → `E_REDUNDANT_POINTER_MODIFIER`. См.
+  [D245](#d245-указатели-running-current-flip-scan-модель-mutability-разворот-d216-v2).
 
 ### Cross-amend impact
 
@@ -8457,6 +8495,152 @@ pointer-mut в типе vs pointee-mut), особенно в return-позици
 
 `unsafe T` first-class также unlock'ает MaybeUninit semantic без duplication
 с Plan 118.2 D218 — это **simplification**, не addition.
+
+---
+
+## D245. Указатели: running-current flip-scan модель mutability (разворот D216 V2)
+
+> **Status:** 🆕 SPEC LANDED 2026-06-11 (Plan 147 Ф.1). Реализация — [Plan
+> 147](../../docs/plans/147-pointer-mut-flip-scan-model.md) (Ф.2 parser / Ф.3
+> checker / Ф.4 migration / Ф.5 tests). **Разворачивает** D216 §V2.6 «`*T ≡ *ro T`»
+> (always-ro pointee) + binding-mut rule §2. **Триггер:** дизайн-ревью пользователя
+> (2026-06-11) — 138.5 §V2 модель («independent axes», `*T ≡ *ro T`, явный `*mut T`
+> обязателен при mut-binding) неверна: даёт **две формы на один смысл** (`mut p *T`
+> и `mut p *mut T` оба valid и эквивалентны). FINAL = одна каноническая форма на
+> смысл. **Гейтит** Plan 139 `[M-139-f0-lang-item-decl]` (str-поля `ptr *ro u8`).
+
+### Что
+
+Мутабельность pointee в цепочке указателей определяется **running-current
+flip-scan**: `ro`/`mut` распространяется слева→направо как `current`;
+postfix-модификатор только **переворачивает** current; `*T` (без модификатора)
+**наследует** current. Совпадение postfix с current → ошибка (избыточно).
+
+**Отмена D216 §V2.6:** `*T ≢ *ro T`. `*T` наследует binding-`current`
+(mut-binding → mut pointee, ro-binding → ro pointee), а НЕ всегда-ro.
+
+### Модель
+
+Объявление: `<binding> name <type>`, где `<type>` — цепочка
+`* [mod] * [mod] … [mod] T`.
+
+**5 правил:**
+
+1. **applies-right.** Модификатор `ro`/`mut` управляет тем, что **непосредственно
+   справа** от него: `*` → мутабельность указателя на этом уровне; тип `T` →
+   мутабельность pointee.
+2. **binding = внешний `*`.** Мутабельность самого внешнего `*` пишется как
+   **binding** (`ro`/`mut` перед именем переменной/поля), из типа убрана; задаёт
+   **начальный `current`**. `mut name` → current=mut; `let name`/`ro name` →
+   current=ro.
+3. **flip-scan.** Сканируя тип слева→направо, поддерживается `current`
+   мутабельность, распространяемая вправо. Каждый **postfix** модификатор (после
+   `*`) **обязан перевернуть** `current` (`ro`↔`mut`); новый `current`
+   распространяется до следующего flip. Финальный pointee `T` берёт текущий
+   `current`. `*T` (без модификатора) наследует current без изменения.
+4. **redundant → ошибка.** Postfix-модификатор, **совпадающий** с `current` (не
+   переворачивает), → **`E_REDUNDANT_POINTER_MODIFIER`** («one canonical
+   syntax»). Fix-it: «убрать избыточный `*mut`/`*ro`».
+5. **prefix → ошибка.** Модификатор **перед** `*` → **`E_POINTER_PREFIX_MODIFIER`**:
+   указатель — простой тип без доступных для записи полей, модификатор к нему
+   неприменим; его мутабельность (reassignability) берётся из **binding**.
+   Связь: `[M-138-binding-type-mut-conflict]` (тот же принцип «модификатор
+   применим только там, где есть что мутировать»).
+
+### Эталонная таблица (тест-оракул)
+
+| Запись | current-сканирование | Вердикт |
+|--------|----------------------|---------|
+| `mut data *T`        | binding mut → T=mut (нет flip, явного нет) | ✅ T мутабельно |
+| `mut data *mut T`    | binding mut; `*mut` совпадает → нет flip   | ❌ `E_REDUNDANT_POINTER_MODIFIER` |
+| `mut data *ro T`     | binding mut; `*ro` flip→ro; T=ro           | ✅ override |
+| `ro data *mut T`     | binding ro; `*mut` flip→mut; T=mut         | ✅ фикс-указатель, writable target |
+| `ro data *mut *ro T` | ro → `*mut` flip→mut → `*ro` flip→ro; T=ro | ✅ double-ptr (внеш ro, внутр mut, T ro) |
+| `ro data mut *T`     | `mut` перед `*` (prefix)                   | ❌ `E_POINTER_PREFIX_MODIFIER` |
+
+**Каноничность:** `*T` = «current без изменения» (наследует). Явный `*mut`/`*ro`
+пишется **только** когда переворачивает. Это убирает дубли (`mut data *mut T`) и
+даёт единственную форму на каждый смысл.
+
+### §1 — Scope flip-scan: positions с binding vs без binding
+
+Flip-scan baseline (`current`) существует **только** там, где есть **binding**,
+задающий начальный current:
+
+- **С binding** (flip-scan активен): `let`/`ro`/`mut` поля (record / named-tuple)
+  и локалы (`let p *T`, `mut p *T`, field `mut data *T`). Binding → current →
+  правила 2-4 применяются полностью, включая redundancy-check.
+
+- **Без binding** (нет running-current; модификатор — единственный источник
+  мутабельности, redundancy-check **НЕ применяется**): тип-аргументы
+  (`size_of[*mut T]`, `Option[*ro T]`), cast-цели (`x as *mut int`), а также
+  **function-параметры** и **return-типы** — где `*ro T` / `*mut T` пишутся
+  явно и оба валидны (никакой flip-baseline нет, поэтому ни одна форма не
+  избыточна). `*T` в таких позициях = pointee ro (нет current → default ro,
+  как и было до 147).
+
+  > **Rationale:** оракул (6 форм) описан для `<binding> name <type>`. Параметр
+  > формально имеет ro-binding по D108.1, но его pointee-мутабельность —
+  > сознательный контракт сигнатуры (`buf *mut u8` = «OS пишет в буфер»), а не
+  > «наследование от mut-binding». Распространять flip-scan-redundancy на
+  > параметры → массовый ложный `E_REDUNDANT` на `*ro T`-параметрах (str-флагман,
+  > RawMem, FFI). Поэтому redundancy-проверка **строго** ограничена
+  > declaration-with-mutable-binding (поля/локалы с явным `mut`/`ro`).
+
+### §2 — `*T` наследование (отмена `*T ≡ *ro T`)
+
+`*T` в binding-позиции наследует `current`:
+- `mut p *T` → pointee **mut** (writable `*p = …` / `@p[i] = …`).
+- `let p *T` / `ro p *T` / параметр `p *T` → pointee **ro**.
+
+`*ro T` валиден только как **override** (когда current=mut); `*mut T` — только
+как override (когда current=ro). Это семантически отличает `*T` от `*ro T`.
+
+### §3 — Codegen (seed уже существует)
+
+`field_type_with_binding_mut` / `promote_pointer_pointee_mut` (codegen) уже
+реализуют наследование current=mut для **mutable полей**: bare `Pointer(T)`
+промоутится в `Pointer(Mut(T))` при `field_mutable` — это **seed-реализация**
+flip-scan §2 для полей (закрытый `[M-138.2-v2-propagation-impl-gap]`, commit
+`38360c30d80`). Plan 147 Ф.2/Ф.3 обобщают наследование на локалы + добавляют
+parser/checker flip-validation и `E_REDUNDANT_POINTER_MODIFIER`.
+
+### Error codes
+
+- **`E_REDUNDANT_POINTER_MODIFIER`** (NEW, Plan 147 Ф.3) — postfix `*mut`/`*ro`
+  совпал с `current` (не перевернул). Fix-it: убрать избыточный модификатор.
+  Применяется **только** в declaration-with-binding позициях (§1).
+- **`E_POINTER_PREFIX_MODIFIER`** (существует, D216 §1) — модификатор перед `*`.
+  Под D245 — то же правило, обновлён rationale (правило 5).
+
+### Cross-amend impact
+
+- **D216 §V2.6** — «`*T ≡ *ro T`» (always-ro pointee) RETRACTED; binding-mut
+  rule §2 «`mut p *T ≡ mut p *mut T`» AMENDED (эффект сохранён, но `mut p *mut T`
+  → `E_REDUNDANT`). Постфикс-canonical + prefix-ban KEPT.
+- **D36** (binding readonly default) — binding задаёт начальный `current` для
+  pointee, не только reassignability.
+- **D184** (return mut default) — return-позиция = без-binding (§1); `*ro`/`*mut`
+  оба явные, redundancy не проверяется.
+- **D26 / Plan 139** — str lang-item `type str value priv { ptr *ro u8, len int }`:
+  `ptr` поле — `ro`-binding (priv, non-reassignable) → current=ro → `*ro` flip
+  нужен? Нет: для **ro-binding** current=ro, `*T` наследует ro; `*ro u8`
+  избыточен → `ptr *u8`. (Migration уточняется в Ф.4/Plan 139.)
+
+### Связь
+
+- `[M-138-binding-type-mut-conflict]` — тот же принцип (модификатор применим где
+  есть mutable-начинка).
+- `[M-138-double-pointer-codegen-test]` — multi-level pointer (flip-scan уточняет
+  модель double-ptr: `ro data *mut *ro T`).
+- Гейтит Plan 139 `[M-139-f0-lang-item-decl]`.
+
+### Acceptance
+
+См. [Plan 147](../../docs/plans/147-pointer-mut-flip-scan-model.md) A1-A5: A1 —
+6 эталонных форм (pos компилируются, neg дают E_REDUNDANT/E_PREFIX); A2 — `*T`
+наследует binding-current; A3 — Vec `mut data *T` push/index-set; A4 — спека
+переписана + D216 §V2.6 retracted; A5 — 0 регрессий broad pointer-dirs.
 
 ---
 
@@ -9888,13 +10072,20 @@ Named/Array/Tuple/Func boundaries). If found, emit E_MODIFIER_ORDER.
 > запрета prefix перед `*` (`E_POINTER_PREFIX_MODIFIER`, §1) **outer-модификатора
 > над Pointer не существует** → пропагировать нечего → правило **отозвано**.
 
-В FINAL-модели pointee-модификатор пишется **явно постфиксом** — никакого
-наследования/пропагации нет:
+> **⚠️ FURTHER amend (Plan 147 D245, 2026-06-11):** «никакого наследования нет» —
+> **отозвано** для bare `*T`. Под flip-scan (D245) bare `*T` **наследует**
+> running-`current` (от binding); только postfix `*ro`/`*mut` пишется явно и
+> обязан переворачивать current (совпадение → `E_REDUNDANT_POINTER_MODIFIER`).
+> Old-outer-prefix-пропагация (§V3.3 оригинал) остаётся отозванной (prefix-ban).
+
+В FINAL-модели (D245) bare `*T` наследует binding-`current`; явный postfix
+`*ro`/`*mut` пишется **только как override** (flip):
 
 ```nova
-*T          // Pointer(Readonly(T)) — pointee ro явно (≡ *ro T)
-*ro T       // Pointer(Readonly(T)) — то же, явная форма
-*mut T      // Pointer(Mut(T))      — pointee writable
+mut p *T    // Pointer(Mut(T))      — pointee наследует current=mut (D245; ≠ *ro T)
+let p *T    // Pointer(Readonly(T)) — pointee наследует current=ro
+*ro T       // explicit ro pointee  — override (redundant если current=ro → E_REDUNDANT)
+*mut T      // explicit mut pointee — override (redundant если current=mut → E_REDUNDANT)
 *unsafe T   // Pointer(Unsafe(T))   — pointee possibly-uninit
 ```
 
@@ -11024,11 +11215,15 @@ magic beyond what Plans 118/114.4 provide.
 
 ```nova
 export type Vec[T] {
-    priv mut data *mut T   // raw element buffer, cap slots wide
+    priv mut data *T       // raw element buffer, cap slots wide (mut-binding → mut pointee, D245)
     priv mut len  int      // number of live (initialised) elements
     priv mut cap  int      // number of allocated element slots
 }
 ```
+
+> **Pointer model note (Plan 147 D245):** `priv mut data *T` — под flip-scan
+> mut-binding задаёт `current`=mut, bare `*T` наследует mut pointee (writable
+> buffer). Прежняя запись `*mut T` теперь **избыточна** (`E_REDUNDANT_POINTER_MODIFIER`).
 
 ### Construction
 

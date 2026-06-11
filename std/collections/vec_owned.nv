@@ -78,18 +78,25 @@ export type Vec[T] priv {
     // Raw element buffer. `cap` elements wide; first `len` are live.
     // Never read/written outside `unsafe` blocks in this module.
     //
+    // ⚠️ MIGRATION PENDING (Plan 147 D245, flip-scan): the line below
+    // `mut data *mut T` is REDUNDANT under the FINAL flip-scan model and will be
+    // migrated to `mut data *T` in Plan 147 Ф.4. Reason: binding-mut (`mut`
+    // before the name) sets the running `current` = mut; a bare `*T` INHERITS
+    // current → mutable pointee. The postfix `*mut` therefore matches `current`
+    // (no flip) → `E_REDUNDANT_POINTER_MODIFIER`. Canonical form = `mut data *T`,
+    // which yields the same writable buffer (codegen `promote_pointer_pointee_mut`
+    // already promotes the pointee to `Nova_T*` for mutable fields).
+    //
+    // OBSOLETE rationale (138.5, reversed by D245): the text below claimed a bare
+    // `*T` is always a read-only (const) pointee so `*mut T` must be explicit.
+    // D245 (flip-scan) RETRACTS `*T ≡ *ro T`: `*T` now inherits the binding
+    // `current`, so for a `mut` field `*T` is already a writable pointee.
+    //
     // Declared `mut data *mut T` under the FINAL 138.5 pointer model:
     // binding-mut (`mut` before the name) makes the *field* reassignable
     // (`@data = dst` in @realloc_to), and the POSTFIX pointee-mut (`*mut T`)
     // makes the *pointee* writable so `@data[i] = val` (push / index-set) is a
     // valid store. Both axes are required: a writable, reassignable buffer.
-    //
-    // SUPERSEDED: the earlier D216 V2 form `mut data *T` ([M-138.2-vec-type-priv]
-    // part-b, Plan 138.4 Ф.4) relied on a binding-mut auto-mutate rule that made
-    // a `mut`-bound pointer field's pointee mutable from `*T` alone. Plan 138.5
-    // RETIRES that auto-mutate coupling: under 138.5 a bare `*T` is a *read-only*
-    // pointee (ro-pointee), so `*T` here would WRONGLY yield a const buffer. The
-    // pointee-mut must now be stated explicitly as the postfix `*mut T`.
     //
     // Codegen lowers the pointee to the live element C type `Nova_T*` (no
     // `const`), preserving the generic `T` through monomorphization (no

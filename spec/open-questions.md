@@ -6984,7 +6984,8 @@ fn check_health() -> RuntimeStats {
 
 ### Vec[T] (Nova-native, std.collections.vec_owned)
 
-- Generic record с `priv mut data *mut T` + `len` + `cap`.
+- Generic record с `priv mut data *T` + `len` + `cap` (mut-binding → mut pointee
+  via flip-scan D245; прежняя запись `*mut T` теперь избыточна).
 - Элементы хранятся по РЕАЛЬНОМУ C-типу T в contiguous buffer.
 - `Vec[Option[int]]` хранит `NovaOpt_nova_int` inline (16 bytes/element).
 - `Vec[MyValueRecord]` хранит `NovaValue_MyValueRecord` inline.
@@ -7128,17 +7129,21 @@ fn mutate(x ref mut BigStruct)       // мутация caller-значения
 
 Не реализовано. Отложено — добавить проще чем убрать. Вернуться после Plan 118 / Plan 127 / Plan 120 stable.
 
-**Update (Plan 138.5, 2026-06-11):** raw-pointer mut-модель **финализирована**
-и больше не двусмысленна — таблица соответствия выше актуальна. В **типе**
-указателя мутируемость относится к **pointee** (target) и пишется постфиксом:
-`*T` ≡ `*ro T` (ro target), `*mut T` (writable target); перепривязываемость
-самого указателя — это **binding** (`ro`/`mut`, D36), не часть типа. Prefix-
+**Update (Plan 138.5 → FINAL flip-scan Plan 147 D245, 2026-06-11):** raw-pointer
+mut-модель **финализирована** как **running-current flip-scan**
+([D245](decisions/02-types.md#d245-указатели-running-current-flip-scan-модель-mutability-разворот-d216-v2)).
+В **типе** указателя мутируемость относится к **pointee** (target) и пишется
+постфиксом: `*mut T` (writable target). **`*T ≢ *ro T`** (отмена 138.5): bare
+`*T` **наследует** binding-`current` (mut-binding → mut pointee, ro-binding →
+ro). Postfix `*ro`/`*mut` пишется только как **override** (flip current);
+совпадение с current → `E_REDUNDANT_POINTER_MODIFIER`. Перепривязываемость
+указателя — **binding** (`ro`/`mut`, D36), задаёт начальный current. Prefix-
 модификаторы перед `*` (`mut * T` / `ro * T` / `unsafe * T`) запрещены
 (`E_POINTER_PREFIX_MODIFIER`), `Unsafe(Pointer)` retired, nullable = `Option[*T]`
 (NPO). Right-binding propagation через Pointer (D216 §V3.3) и `safe`-стоппер
-(§V3.4) **отозваны** — пропагировать нечего. Это снимает мотивацию «`ref T`
-как способ избежать путаницы raw-pointer mut»: путаницы больше нет; остаётся
-лишь чистый эргономический вопрос safe in-place мутации без `unsafe`.
+(§V3.4) **отозваны**. Это снимает мотивацию «`ref T` как способ избежать
+путаницы raw-pointer mut»: путаницы больше нет; остаётся лишь чистый
+эргономический вопрос safe in-place мутации без `unsafe`.
 
 ### Cross-refs
 
