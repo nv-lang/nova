@@ -35873,3 +35873,21 @@ Windows). Замена на ручной lock_sema = lost-wakeup риск рад
 небезопасен в Nova — cross-thread работа идёт в per-worker wake_pending, а spinner его не дренит
 → lost-wakeup (GAP-1/2/3). ⇒ Coalescing gated на Ф.4 (global-queue routing). Порядок флипается
 Ф.4→Ф.3. Q30, [M-83-f3-coalesce-gated-on-f4]. Без runtime-кода.
+
+--------------------------------------------------------------------------------
+2026-06-12 — Ф.4 БЕЗОПАСНЫЙ SUBSET реализован (global-routing отложен)
+--------------------------------------------------------------------------------
+Design-workflow + review → global-routing ОТЛОЖЕН (review нашёл stranding: wake-one неверен,
+home-affinity Nova уже корректен; [M-83-f4-global-routing-gated-on-bench]). User выбрал
+безопасный subset.
+
+Реализован БЕЗ routing (только runtime.c find-work loop, 3 правки + 2 owner-only поля NovaWorker):
+1) steal random-victim start (xorshift32, anti-thundering-herd на victim 0);
+2) post-steal global re-poll (1 get_one перед park, work мог spill во время steal-скана);
+3) 61-tick global fairness (каждый 61-й проход дренит global ДО local, anti-starve).
+Ключевое: subset добавляет ТОЛЬКО global-drain точки (consumers), не producers и не меняет
+wake-routing → stranding/lost-wakeup невозможны. Поля owner-only (plain). Ф.3 coalescing остаётся
+заблокирован (нужен routing). Спека D245 + план §9.11.1.
+
+Validation: smoke PASS; suite 106/4 (no-regression, те же 4 pre-existing); grow_vs_wake 25/25 @MP=1;
+ring_overflow_drain 25/25 @MP=4 (steal+global); nested_cancel 20/20 @MP=4.

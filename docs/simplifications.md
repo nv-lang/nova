@@ -34814,3 +34814,15 @@ vec_owned.nv `check` ok.
   флипается Ф.4→Ф.3. Маркер `[M-83-f3-coalesce-gated-on-f4]`, Q30.
 - **Урок:** «не реализовывать» — валидный исход de-risking workflow; adversarial review поймал
   topology-mismatch lost-wakeup ДО кода (избегнута регрессия того же класса, что grow-vs-wake).
+
+### Plan 83-go-cmn Ф.4 — global-routing ОТЛОЖЕН, безопасный subset реализован, 2026-06-12
+
+- **global-routing ОТЛОЖЕН** (review: naive wake-one странает → supervised hang; home-affinity Nova
+  уже корректен/stranding-proof; Go global-queue = balancing-vs-locality tradeoff, не улучшение).
+  `[M-83-f4-global-routing-gated-on-bench]`. Ф.3 coalescing остаётся gated.
+- **Реализован безопасный subset** (runtime.c find-work loop): steal random-victim (xorshift32) +
+  post-steal global re-poll + 61-tick global fairness. **Добавляет только global-DRAIN (consumers),
+  не producers** → stranding/lost-wakeup невозможны by construction. Suite 106/4 no-regression;
+  ring_overflow @MP=4 25/25. Спека D245 §финальный + план §9.11.1.
+- **META (Ф.3+Ф.4):** de-risking 2 фазы подряд показал Go global-queue/coalescing конфликтует с
+  корректным home-affinity Nova → остаток routing-порта bench-gated. Критичное (оба race'а) закрыто.
