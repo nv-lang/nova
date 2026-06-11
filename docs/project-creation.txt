@@ -36004,3 +36004,37 @@ plan138_3 2/0, plan90_1 20/0, plan131 27/1, plan126_2 9/1 (all pre-existing). М
 [M-138.2-nested-vec-elem-readback] (DISCOVERED pre-existing, orthogonal). Только .nv
 правки → rebuild не нужен; NovaArray-путь активен (флип OFF), Ф.0a зелёный.
 КОММИТ: feat(plan138.2 Ф.0a #1): bulk-insert overload on Vec[T] (D141 extend-family parity); pre-flip
+
+=== Plan 138.2 Ф.0b — Vec-backed map-literal bucket arrays (2026-06-11) ===
+Класс #4 (map_literals []T-bucket cascade, feared 28-to-9 при флипе) погашен ДО
+универсального []T≡Vec[T] флипа, изолированно в HashMap CU. Two-part .nv-only фикс
+(rebuild не нужен): (1) std/collections/hashmap.nv: import std.collections.vec_owned.{Vec}
+— регистрирует generic_type_templates["Vec"] когда hashmap.nv peer, так что поле
+_buckets []Slot[K,V] и return type new_buckets лоуэрятся через type-ref gate
+(emit_c.rs:2074) в ТИПИЗИРОВАННЫЙ Nova_Vec____Nova_Slot____*, НЕ int64-erased
+NovaArray_nova_int*; vec_owned тянет только raw_mem → нет цикла с hashmap. НЕ prelude-
+правка (это Ф.0-final). (2) new_buckets[K,V] переписан на ЯВНЫЙ Vec[Slot[K,V]] API
+(Vec[...].with_capacity + .push) вместо []Slot[K,V]-литерал-формы.
+ROOT-CAUSE: []T в ПОЗИЦИИ-ЗНАЧЕНИЯ ([]T.with_capacity, arr.push) НЕ Vec-gate-aware
+до флипа — D38 array-static-method (emit_c.rs:19863-19925) безусловно роутит в
+nova_array_new_<suffix> (int-erased), тогда как []Slot[K,V] в ТИПОВОЙ позиции уже
+резолвится в типизированный Vec под gate. Рассинхрон → new_buckets строил int-erased
+буфер и возвращал под типизированным Vec-указателем → битый readback после @maybe_grow
+rehash (insert-from-empty за load_factor возвращал мусор / неверный len). Явный Vec[...]
+строит типизированное хранилище согласованно с типом поля/return.
+КЛЮЧЕВОЕ: класс #4 — НЕ map-coercion codegen проблема (record-punning/spread/from_fields
+прошли без правок), а именно эта rehash-path corruption, которую исходный 50-фикстурный
+map_literals gate НЕ ловил (те строят через with_capacity+insert_new, никогда не через
+runtime resize/rehash loop). t12 "growth past load factor (rehash)" — новый guard.
+Фикстуры plan138_2: t12_map_vec_bucket_pos (int→str insert/get/iter; record-value map;
+nested map-in-map; growth-past-load-factor rehash), t13_map_empty_in_map_position_neg
+(empty Vec-backed bucket не падает; empty-then-insert grow; int-key empty).
+plan138_2 10/0→12/0. map_literals 28/1 (= baseline, только pre-existing positive_const_map).
+Broad regression 0 NEW FAIL (verified против clean baseline через git stash для не-листовых
+дир): plan138_1 10/0, plan138_3 2/0, plan90_1 20/0, plan131 27/1, plan126_2 9/1, plan79
+25/0 (HashMap consumer), plan139 37/0, plan101_1 18/0, plan126 21/0, plan137 16/0; pre-
+existing (НЕ мои): plan59 23/6, plan55 17/2, plan91_13 2/6 (json incomplete-type),
+plan91_fe1 8/2 (no member first). Hashmap CU .c: _buckets = Nova_Vec____Nova_Slot____*.
+НЕ нужны новые [M-138.2-*] маркеры — value-position []T-NovaArray-erasure это ОЖИДАЕМОЕ
+pre-flip состояние (Ф.0-final его флипает; t3 — его guard), не дефект.
+КОММИТ: refactor(plan138.2 Ф.0b #4): Vec-backed map-literal bucket arrays (isolated to hashmap CU); pre-flip

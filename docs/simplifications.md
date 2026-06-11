@@ -35048,3 +35048,49 @@ FAIL / `new+push` → CC-FAIL missing `NovaOpt_nova_int_p`).
 plan138_1 10/0, plan138_3 2/0, plan90_1 20/0 (parity-baseline), plan131 27/1 (pre-existing
 vec_debug_pos), plan126_2 9/1 (pre-existing p5_printable). NovaArray-путь активен (флип
 OFF) — Ф.0a приземляется зелёным. Только `.nv` правки → rebuild не нужен.
+
+## Plan 138.2 Ф.0b — Vec-backed map-literal bucket arrays (класс #4, ДО универсального флипа)
+
+**Где.** `std/collections/hashmap.nv` (import + `new_buckets` rewrite); фикстуры
+`nova_tests/plan138_2/t12_map_vec_bucket_pos.nv`, `t13_map_empty_in_map_position_neg.nv`.
+
+**Что.** Класс #4 (map_literals `[]T`-bucket cascade, feared 28-to-9 при универсальном
+`[]T≡Vec[T]` флипе) погашен ДО флипа, изолированно в HashMap CU. Two-part `.nv`-only фикс:
+1. `import std.collections.vec_owned.{Vec}` в hashmap.nv → регистрирует
+   `generic_type_templates["Vec"]` когда hashmap.nv — peer file → поле `_buckets []Slot[K,V]`
+   и return type `new_buckets` лоуэрятся через type-ref gate (`emit_c.rs:2074`) в
+   ТИПИЗИРОВАННЫЙ `Nova_Vec____Nova_Slot____*`, НЕ int64-erased `NovaArray_nova_int*`.
+   `vec_owned` тянет только `raw_mem` → нет цикла с hashmap. НЕ prelude-правка (это Ф.0-final).
+2. `new_buckets[K,V]` переписан на ЯВНЫЙ `Vec[Slot[K,V]]` API (`.with_capacity`+`.push`)
+   вместо `[]Slot[K,V]`-литерал-формы.
+
+**ROOT-CAUSE FINDING (для всех будущих pre-flip фаз).** `[]T` в ПОЗИЦИИ-ЗНАЧЕНИЯ
+(`[]T.with_capacity(n)`, `arr.push(...)`) НЕ Vec-gate-aware до флипа — D38
+array-static-method dispatch (`emit_c.rs:19863-19925`) безусловно роутит `[]T.with_capacity`/
+`.new` в `nova_array_new_<suffix>` (int64-erased NovaArray), БЕЗ `contains_key("Vec")` guard.
+Тогда как `[]T` в ТИПОВОЙ позиции (поле / return type) уже резолвится в типизированный Vec
+под gate. Рассинхрон → `new_buckets` строил int-erased буфер и возвращал под типизированным
+Vec-указателем → битый readback после `@maybe_grow` rehash. Value-position `[]T`→Vec
+lowering остаётся Ф.0-final концерном (guard = t3).
+
+**НЕ упрощение, а уточнение скоупа.** value-position `[]T`-NovaArray-erasure — ОЖИДАЕМОЕ
+pre-flip состояние, НЕ дефект; Ф.0-final его флипает. Новых `[M-138.2-*]` маркеров не
+требуется. Класс #4 оказался НЕ map-coercion codegen проблемой (record-punning/spread/
+from_fields прошли без правок), а rehash-path corruption, которую исходный 50-фикстурный
+map_literals gate НЕ ловил (строят через `with_capacity`+`insert_new`, не через runtime
+resize/rehash). t12 «growth past load factor (rehash)» — новый guard.
+
+**Per-commit SHA-таблица.**
+
+| Commit | Что |
+|---|---|
+| `<f0b-1>` | hashmap.nv `import vec_owned.{Vec}` + `new_buckets`→`Vec[Slot]` + t12/t13 fixtures + plan-doc + project-creation + simplifications + backlog |
+
+**Результат.** plan138_2 10/0 → **12/0** (+t12/t13). map_literals **28/1** (= baseline; только
+pre-existing `positive_const_map` E_CONST_NOT_CONSTEXPR). Hashmap CU `.c`: `_buckets =
+Nova_Vec____Nova_Slot____*`. **Регрессии: 0 NEW FAIL** vs baseline (verified против clean
+baseline через `git stash` для не-листовых дир): plan138_1 10/0, plan138_3 2/0, plan90_1
+20/0, plan131 27/1, plan126_2 9/1, plan79 25/0 (HashMap consumer), plan139 37/0, plan101_1
+18/0, plan126 21/0, plan137 16/0; pre-existing (НЕ мои): plan59 23/6, plan55 17/2, plan91_13
+2/6 (json incomplete-type), plan91_fe1 8/2 (no member first). Только `.nv` правки → rebuild
+не нужен.

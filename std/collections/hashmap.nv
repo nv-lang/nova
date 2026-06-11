@@ -20,6 +20,15 @@
 
 module collections.hashmap
 
+// Plan 138.2 Ф.0b (D239 / D144): de-risk regression class #4 (map-literal
+// bucket arrays) BEFORE the universal `[]T ≡ Vec[T]` flip. Importing the Vec
+// template here registers `generic_type_templates["Vec"]`, so the `[]Slot[K,V]`
+// bucket fields below lower to a TYPED `Nova_Vec____Nova_Slot____*` backing
+// (not int64-erased `NovaArray_nova_int*`) — isolated to the HashMap CU.
+// vec_owned only imports raw_mem (no cycle with hashmap). Until Ф.0-final lands
+// Vec in the prelude, the rest of the `[]T` world keeps NovaArray-backing.
+import std.collections.vec_owned.{Vec}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Типы
 // ──────────────────────────────────────────────────────────────────────────
@@ -565,10 +574,21 @@ fn HashMap[K, V] mut @rehash(new_cap int) {
 //
 // Не метод HashMap, а свободная функция: используется в new() и
 // rehash() до того, как HashMap собран.
-fn new_buckets[K, V](cap int) -> []Slot[K, V] {
-    // Turbofish (D38): явный generic для with_capacity, чтобы
-    // type inference знал тип элементов массива.
-    mut buckets = []Slot[K, V].with_capacity(cap)
+//
+// Plan 138.2 Ф.0b (D239 / D144): построение bucket-массива идёт через
+// ЯВНЫЙ `Vec[Slot[K, V]]` API (`Vec[...]​.with_capacity` + `.push`), а не
+// через `[]Slot[K, V]`-литерал-форму. Причина: до Ф.0-final флипа `[]T` в
+// ПОЗИЦИИ-ЗНАЧЕНИЯ (`[]T.with_capacity`, `arr.push`) ещё лоуэрится по
+// int64-erased NovaArray-пути (emit_c.rs D38 array-static-method, без
+// Vec-gate), тогда как `[]Slot[K,V]` в ТИПОВОЙ позиции (поле `_buckets`,
+// return type) уже резолвится в типизированный `Nova_Vec____Nova_Slot____*`
+// под gate `generic_type_templates["Vec"]`. Эта рассинхронизация давала
+// возврат int-erased буфера под типизированным Vec-указателем → битый rehash
+// (повреждённый readback после @maybe_grow). Явный `Vec[...]` строит
+// типизированное хранилище согласованно с типом поля/return — изолированно в
+// HashMap CU, до универсального флипа.
+fn new_buckets[K, V](cap int) -> Vec[Slot[K, V]] {
+    mut buckets = Vec[Slot[K, V]].with_capacity(cap)
     for _ in 0..cap {
         buckets.push(Slot.Empty)
     }
