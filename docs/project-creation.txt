@@ -35778,3 +35778,33 @@ relocation = СОБСТВЕННО фикс гонки, следующий шаг
 Валидация clang: build✅ + smoke✅ + concurrency 103/5 vs 102/6 (deep_spawn +
 time_handler теперь PASS; 0 регрессий корректности). grow-vs-wake ещё НЕ закрыт
 (realloc NovaSchedState → Ф.1b). Commit 4ce88b65c2d.
+
+--------------------------------------------------------------------------------
+2026-06-11 — Ф.1b: chunked park-state → grow-vs-wake ЗАКРЫТ (структурно)
+--------------------------------------------------------------------------------
+Design-workflow (Option C chunked vs A SpawnCtxBase; выбран C) + фоновый агент +
+adversarial diff-review (3 линзы, verdict safe-to-commit, fence_hazards CLEAN).
+NovaSchedState 4 массива → chunk-директории (chunk'и never-realloc → torn-pointer
+структурно невозможен); grow_state → CAS-publish. Все fence байт-идентичны.
+Option A отклонён (переоткрывал slot-reuse lost-wake + lock в wake-путь).
+
+Валидация (clang, независимо подтверждена; stress_bisect compile-once, armed exe):
+grow_vs_wake_explicit 100/100@MP=1 + 66/66@MP=16; stress_iso_3e 66/66; semaphore_batch_n
+30/30 armed; ring_overflow_drain 10/10 (5000 fibers overflow→global, exact-count);
+scale 1k 30/30, 10k 10/10; concurrency 105/4. 100k/200k недостижимы — Plan 82
+fiber-arena ~16k (8MB-стеки), не grow-vs-wake. harness-контроль park_wake_stress 13/7
+(детектит фейлы → зелёные настоящие). exe реально исполняется (213ms, не no-op).
+
+Spec D243 (fixed-ring + chunked storage contract) + Q28 (ARM acquire-capacity) +
+Q29 (runnext stealability). D-перенумерация: D241/D242 заняты Plan 138 → семейство
+83-go-cmn на D243+. AC1-AC12 все ✅ (plan §9.6).
+
+Новые планы/маркеры из работы: Plan 144 (precise GC), 145 (MSVC codegen), 146
+(growable stacks — потолок 16k), [M-tsan-race-detector] (Go -race → clang TSAN),
+[M-83.11-f1b-acquire-capacity], [M-park-wake-stress-atomic-counters]. Umbrella Plan 83
+§«Порядок исполнения» — карта зависимостей семейства.
+
+Tests: ring_overflow_drain.nv (NEW pos), grow_vs_wake_explicit.nv, test_runq.c (unit).
+Коммиты: e1525d90671 (feat Ф.1b), f922c3d5b30 (docs closure), <plan 146/roadmap>,
+7cec21653a1 (spec D243), <test ring_overflow>. Ветка plan-83-go-cmn.
+grow-vs-wake (GitHub issue #2) — закрыт; Ф.2-Ф.8 PLANNED.

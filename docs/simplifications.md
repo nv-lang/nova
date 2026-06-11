@@ -34752,3 +34752,24 @@ vec_owned.nv `check` ok.
 - **Валидация clang:** build + smoke + concurrency **103/5 vs 102/6** (deep_spawn+time_handler
   PASS; sleep_precision_bench load-флаки 3/3-isolated; 0 регрессий корректности). Commit `4ce88b65c2d`.
 - **⚠ grow-vs-wake НЕ закрыт** этим шагом (realloc `NovaSchedState` остаётся → Ф.1b).
+
+### Plan 83-go-cmn Ф.1b — grow-vs-wake ЗАКРЫТ (chunked stable-address), 2026-06-11
+
+- **`[M-83.11-grow-vs-wake-race]` ✅ CLOSED структурно** (Option C chunked). 4 массива
+  `NovaSchedState` → директории фиксированных chunk'ов (chunk'и аллоцируются раз, никогда
+  не двигаются → `&parked[slot]` стабилен навсегда → torn-pointer невозможен). `grow_state`
+  → **CAS-publish** (не realloc; grow НЕ single-writer). Все `__ATOMIC_*` fence байт-идентичны.
+- **Option A (park-state на SpawnCtxBase) ОТКЛОНЁН** adversarial-review'ом: ставил бы
+  slot_lock + mco_get_user_data в lock-free wake-путь И переоткрывал lost-wake при slot-reuse.
+- **Реализация:** design-workflow → фоновый агент → adversarial diff-review (3 линзы, verdict
+  `safe-to-commit`, fence_hazards **VERIFIED CLEAN**; 2 «fatal» CAS-находки опровергнуты кодом).
+- **Валидация (independent, clang, stress_bisect compile-once armed):** grow_vs_wake_explicit
+  100/100@MP=1 + 66/66@MP=16; stress_iso_3e 66/66; semaphore_batch_n 30/30 armed;
+  ring_overflow_drain 10/10 (5000 fibers overflow, exact-count); 1k 30/30, 10k 10/10;
+  concurrency 105/4. harness-контроль (park_wake_stress 13/7) подтвердил, что зелёные настоящие.
+- **Спека D243** + Q28/Q29. **D-коллизия:** D241/D242 заняты Plan 138 → 83-go-cmn на D243+.
+- **Потолок масштаба ~16k** — Plan 82 fiber-arena (8MB-стеки), не grow-vs-wake → Plan 146
+  (growable stacks). **Followup [M-83.11-f1b-acquire-capacity]** (ARM acquire-capacity guard).
+- **Урок (debugging-races §3.3):** для стресса — `stress_bisect.sh` (compile-once), НЕ цикл
+  `nova test` (перекомпилит весь runtime → выглядит как hang). Раннее `[M-tsan-race-detector]`
+  (clang TSAN) ловил бы такие гонки авто.
