@@ -35762,3 +35762,19 @@ MSVC baseline вскрыл ДВА pre-existing бага main (НЕ порт, Н�
 Plan 145 создан (MSVC codegen portability, P1, ~1-2 dev-day).
 КОММИТЫ: tune(CAP), fix(mco_coro guard), log(baseline), fix(ffi scope sqlite),
 plan(145).
+
+--------------------------------------------------------------------------------
+2026-06-11 (доп) — Ф.1a ring-port cut-over (deque→runq) DONE, clang
+--------------------------------------------------------------------------------
+Design-workflow (4 map + synth + adversarial review) → 16-шаговый чеклист.
+Review verdict unsafe ДО кода поймал 2 FATAL: (#1) overflow-очередь без consumer
+→ hang — фикс nova_globrunq_get_one в 3 pop-путях; (#2) schedlink лишь в fibers.h
+(SpawnCtx руками реплицируется в emit_c.rs) → corruption — фикс schedlink в оба
+codegen-layout. Также разбил Ф.1 на Ф.1a (ring-port, безопасно) + Ф.1b (park-state
+relocation = СОБСТВЕННО фикс гонки, следующий шаг).
+
+Реализовано: runtime.h/runtime.c/fibers.h/runq.h/emit_c.rs. deque→runq (11 сайтов)
++ глобал overflow queue + drain + schedlink. nova_sched.h park-state НЕ тронут.
+Валидация clang: build✅ + smoke✅ + concurrency 103/5 vs 102/6 (deep_spawn +
+time_handler теперь PASS; 0 регрессий корректности). grow-vs-wake ещё НЕ закрыт
+(realloc NovaSchedState → Ф.1b). Commit 4ce88b65c2d.

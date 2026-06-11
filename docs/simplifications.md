@@ -34735,3 +34735,20 @@ vec_owned.nv `check` ok.
   bounds-check добавлен Plan 90/131/138). Fix Вариант A: per-type inline helper `nova_idx_<T>`
   (portable C, lvalue+single-eval цел). **Решение user: Go-M:N порт валидируется на clang;
   MSVC gated на Plan 145** (не смешивать codegen-rewrite с портом).
+
+### Plan 83-go-cmn Ф.1a — ring-port cut-over (deque→runq), 2026-06-11
+
+- **Adversarial design-review окупился: поймал 2 FATAL ДО кода.** (#1) дизайн spill'ил в
+  global overflow без consumer → overflow-fiber'ы застряли бы → детерминированный hang;
+  (#2) `schedlink` лишь в fibers.h, но SpawnCtx руками реплицируется в `emit_c.rs` → запись
+  overflow-ссылки на первое user-capture поле → corruption. Оба исправлены до реализации.
+- **Ф.1 разбит на Ф.1a (ring-port, безопасный queue-swap) + Ф.1b (park-state relocation =
+  СОБСТВЕННО фикс grow-vs-wake).** Монолит был переусложнён (смешивал две вещи).
+- **Реализовано Ф.1a:** `NovaWorker.deque`→`NovaRunq runq`; 11 deque-сайтов→runq; глобал
+  `_nova_global_runq` + drain в 3 pop-путях; `schedlink` в fibers.h + оба codegen-layout.
+  Scope strict: `nova_sched.h` park-state + все fence НЕ тронуты.
+- **GC (verified):** fiber'ы рутятся scope'ом (ctx_pins/fiber_ctx) независимо от очереди →
+  raw `mco_coro*` в ring/overflow безопасны.
+- **Валидация clang:** build + smoke + concurrency **103/5 vs 102/6** (deep_spawn+time_handler
+  PASS; sleep_precision_bench load-флаки 3/3-isolated; 0 регрессий корректности). Commit `4ce88b65c2d`.
+- **⚠ grow-vs-wake НЕ закрыт** этим шагом (realloc `NovaSchedState` остаётся → Ф.1b).

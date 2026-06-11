@@ -307,8 +307,15 @@ validation (no STALE / no lost-cancel impossible-state signatures).
 | Plan doc + декомпозиция | ✅ 2026-06-11 |
 | V1 verbatim-port policy + `THIRD_PARTY/go-LICENSE` | ✅ 2026-06-11 |
 | Ф.1 `runq.h` примитив (ring put/get/grab/steal/putslow + global overflow) | ✅ ported + unit-tested 2026-06-11 |
-| Ф.1 интеграция (nova_sched.h park-state→SpawnCtxBase, runtime.c rewire, cut-over) | 🟡 в работе |
+| **Ф.1a ring-port cut-over** (deque→runq в runtime.c, clang) | ✅ DONE 2026-06-11 (commit `4ce88b65c2d`) |
+| **Ф.1b park-state relocation** (NovaSchedState→stable storage = СОБСТВЕННО фикс grow-vs-wake) | 🔴 NEXT (отдельный design+review) |
 | Ф.2-Ф.8 | 📋 PLANNED |
+
+> **РАЗБИЕНИЕ Ф.1 (по adversarial-review 2026-06-11):** монолитный cut-over был
+> переусложнён (review verdict `unsafe`, поймал 2 FATAL до кода). Разбит на **Ф.1a
+> ring-port** (безопасный queue-swap, сделан) + **Ф.1b park-state relocation**
+> (рискованный, СОБСТВЕННО закрывает grow-vs-wake — следующий шаг). Ф.1a сам по себе
+> гонку НЕ закрывает (realloc `NovaSchedState` остаётся), но это валидированный фундамент.
 
 ### 9.1 Ф.1 progress — `runq.h` примитив (2026-06-11)
 
@@ -373,5 +380,30 @@ SpawnCtxBase) — делать в начале cut-over, когда flag-ON сб
 **Первые шаги integration-сессии:** (1) снять свежий full baseline **clang** (MSVC gated на
 Plan 145 — порт валидируется на clang); (2) ~~MSVC~~; (3) struct-scaffold за `NOVA_RUNQ_FIXED` (OFF→зелёная сборка clang,
 ON→компилируется); (4) cut-over park-state→SpawnCtxBase + deque→runq; (5) stress 66/66.
+
+### 9.3 Ф.1a ring-port cut-over — DONE (2026-06-11, commit `4ce88b65c2d`)
+
+Design-workflow (4 map + synth + adversarial review) → 16-шаговый чеклист. **Review
+verdict `unsafe` поймал 2 FATAL до написания кода** (окупил себя):
+- **FATAL #1:** дизайн spill'ил в global overflow (`nova_runq_put_slow`), но НЕ добавлял
+  consumer → overflow-fiber'ы застряли бы → детерминированный hang. Фикс: `nova_globrunq_get_one`
+  в worker find-work loop (после local get + yielded, до steal) + shutdown drain + pump_scope.
+- **FATAL #2:** SpawnCtx руками реплицируется в `emit_c.rs` (не только fibers.h) → `schedlink`
+  лишь в fibers.h писал бы на первое user-capture поле → corruption. Фикс: `schedlink` в ОБА
+  codegen-layout одним коммитом.
+
+**Реализовано:** runtime.h include; fibers.h+emit_c.rs×2 `schedlink`; runtime.c deque→runq
+(11 сайтов) + глобалы (`_nova_global_runq`/`nova_runq_diag`/`nova_co_schedlink`) + overflow-drain
+в 3 pop-путях; runq.h steal diag-counter. **Scope strict:** nova_sched.h park-state + все
+fence НЕ тронуты; no gopark/nspinning.
+
+**Валидация (clang):** nova-cli rebuild ✅; `mn_runtime_smoke` PASS; concurrency **103/5 vs
+102/6 baseline** (deep_spawn + time_handler теперь PASS; sleep_precision_bench load-флаки —
+3/3 в изоляции; condvar_wait_cancel + 3 codegen/cc — pre-existing). **0 регрессий корректности.**
+
+**GC-вывод (verified):** fiber'ы рутятся scope'ом (ctx_pins armed / fiber_ctx bootstrap)
+независимо от очереди → raw `mco_coro*` в ring+overflow безопасны; `schedlink` на scope-rooted SpawnCtx.
+
+**⚠ grow-vs-wake НЕ закрыт этим шагом** — realloc `NovaSchedState` остаётся (Ф.1b).
 
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).
