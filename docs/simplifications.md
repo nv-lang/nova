@@ -35224,3 +35224,51 @@ untracked-fixtures), plan138_3 2/0, plan131 27/1 (vec_debug_pos pre-existing), p
 8/2 (pre-existing NovaArray-erasure flip-targets), map_literals 28/1 (positive_const_map pre-existing),
 plan101_1 18/0, plan126 21/0, plan126_2 9/1 (p5_printable pre-existing), str 13/0 (StringBuilder
 @append=copy GREEN), plan137 16/0. **190 pass / 8 fail — все pre-existing.**
+
+---
+
+## Plan 138.2 Ф.0-final — re-attempt #2 (2026-06-11): УНИВЕРСАЛЬНЫЙ ФЛИП ПРИЗЕМЛЁН 🟢 (NOT a simplification)
+
+**Re-attempt #2 закрыл BLOCKED-исход первой попытки (выше).** `[]T ≡ Vec[T]` теперь универсально:
+Vec/VecIter re-export'ятся из prelude, value/type-position `[]int` лоуэрит в `Nova_Vec____nova_int*`
+(typed storage), `#no_prelude` юниты graceful-degrade в legacy NovaArray. **0 новых FAIL; 3 flip-target
+GREEN.** Это полное приземление, НЕ упрощение.
+
+**Ключевое отличие от re-attempt #1 (откат):** первая попытка латала 3 erased-template Vec-routing
+класса heuristic-патчами шириной ~188 LOC (не прошли производственный порог). Re-attempt #2 закрыл
+те же 3 класса **принципиально**, ~7 локальными правками emit_c.rs, все по документированному
+int64-erasure контракту + `[]T`-sentinel alt-key паттерну (Plan 101.1 precedent):
+
+1. `[M-138.2-flip-erased-base-body-mono]` ✅ CLOSED. Array-арм `type_ref_to_c` (emit_c.rs:5109):
+   generic-stub element (`is_generic_stub_c`, dangling `Nova_T*`) → erase в `nova_int`. Тот же
+   int64-erasure что NovaArray `_`-арм (5188) + Named `any_erased` carve-out (5054). Concrete Vec
+   mono эмитится per-call-site.
+2. `[M-138.2-flip-array-ext-vec-recv-routing]` ✅ CLOSED. (a) call-routing splice'ит `("[]T",m)`
+   sentinel в candidates когда direct-key пуст для `Vec____*` receiver; (b) worklist-drain роутит
+   `Vec____*::m` на `[]T` base FnDecl (recv_type=`Vec____<elem>` → typed-Vec-receiver instance);
+   (c) elem-extract de-mangle через `generic_type_instance_info` (string-strip `Vec____` даёт mangled
+   `Nova_Wrap_p`, не C-тип). Mirror в `infer_expr_c_type`.
+3. `[M-138.2-flip-value-pos-arraylit-vec-gate]` ✅ CLOSED по факту. 4 contains_key("Vec")-гейта
+   (Plan 138.1) уже Vec-aware; универсальная prelude-доступность Vec = фикс (gate всегда ON для
+   prelude-юнитов). Проверено t3/t17.
+
+**Flip-induced semantic deltas (мигрированы корректно, документированы — НЕ дефекты):**
+- `str.try_from([]u8)`: под флипом arg = `Nova_Vec____nova_byte*` (не `NovaArray_nova_byte*`).
+  Структуры layout-идентичны → cast к helper param-type.
+- plan90_1: bulk `insert(i, array)` → `splice(i, other)` (6 фикстур). Vec разделяет single-elem
+  `@insert(i, v)` и bulk `@splice(i, other)` — sanctioned rename (vec_owned.nv:258-275).
+- plan90_1/reserve_negative_extra_neg: Vec `@reserve(additional<=0)` = lenient no-op (Rust-style),
+  legacy NovaArray panic'ил. Фикстура переформулирована positive. Semantic delta, не дефект.
+
+**Результат (RELEASE binary пересобран).** plan138_1 10/0, plan138_2 **18/0** (t3/t17/t18 re-created),
+plan138_3 2/0, plan91_fe1 **10/0** (было 8/2), plan90_1 21/0, plan131 27/1, map_literals 28/1,
+plan101_1 18/0, plan101_2 2/0, plan126 21/0, plan126_2 9/1, str 13/0, plan137 16/0, plan62 29/7
+(verified identical clean-HEAD baseline). **224 pass / 10 fail — все 10 pre-existing, 0 NEW FAIL.**
+DoD C1 proven: t3.c `Nova_Vec____nova_int* x`; t18.c (#no_prelude) Vec=0/NovaArray=2. PRELUDE_VERSION
+13→14. D239 PARTIAL→ACTIVE(universal); D144 closed. Ф.2/Ф.3 (retire NovaArray) теперь разблокированы.
+
+**Инцидент-нота (recovery).** В ходе baseline-сверки plan62 был сделан `git stash` своих изменений;
+`git stash pop` по ошибке применил stash другого worktree (M:N runtime WIP, conflict-state UU в
+runtime .c/.h + emit_c.rs). Recovery: `git checkout HEAD -- <conflicted>` сбросил чужой stash, затем
+`git stash apply stash@{N}` восстановил свой. Урок: при множественных worktree использовать
+`git stash apply stash@{N}` с явным индексом, НЕ `pop` (берёт stash@{0} = чужой). Чужой stash НЕ тронут.

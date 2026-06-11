@@ -3058,6 +3058,24 @@ impl CEmitter {
                             };
                             let fn_decl_opt = if let Some(fd) = self.mono_method_decls.get(&key).cloned() {
                                 Some(fd)
+                            } else if recv_type.starts_with("Vec____")
+                                && self.mono_method_decls
+                                    .contains_key(&("[]T".to_string(), mname.to_string()))
+                            {
+                                // Plan 138.2 Ф.0-final: an array-extension method
+                                // (`fn[T] []T @map`) monomorphized onto a Vec-mono
+                                // receiver. The base FnDecl is keyed under `"[]T"`
+                                // (recv.type_name), not the mangled Vec receiver,
+                                // and is NOT a `generic_type_methods["Vec"]` entry
+                                // (it never was a Vec method). Route to the `[]T`
+                                // base body; `recv_type` stays `Vec____<elem>` so
+                                // `emit_monomorphized_method` emits the
+                                // `Nova_Vec____<elem>_method_<m>__…` instance with
+                                // the typed Vec receiver — matching the call-site
+                                // symbol emitted by the mono-routing block.
+                                self.mono_method_decls
+                                    .get(&("[]T".to_string(), mname.to_string()))
+                                    .cloned()
                             } else if let Some(ref base) = base_opt {
                                 self.mono_method_decls.get(&(base.clone(), mname.to_string()))
                                     .cloned()
@@ -5106,7 +5124,27 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // Resolve the element C type (recurses: nested `[][]T`
                     // becomes Vec[Vec[T]]; records → Nova_X*; primitives →
                     // nova_*). On error, fall through to the legacy path.
-                    if let Ok(elem_c) = self.type_ref_to_c(inner) {
+                    if let Ok(mut elem_c) = self.type_ref_to_c(inner) {
+                        // Plan 138.2 Ф.0-final: int64-erasure of an UNRESOLVED
+                        // type-param element. When an erased `fn[T] []T @m`
+                        // base body is emitted with `T` NOT in
+                        // `current_type_subst`, `type_ref_to_c(inner)` returns a
+                        // dangling generic stub (`Nova_T*` — not a record/sum/
+                        // generic schema), giving the schema-less Vec mono
+                        // `Vec____Nova_T_p`. The legacy NovaArray path erased
+                        // such an unresolved element to `NovaArray_nova_int*`
+                        // (the `_` arm below, int64-slot bootstrap contract);
+                        // mirror that for the Vec mono so the base body lowers
+                        // to the always-concrete `Nova_Vec____nova_int*`. This
+                        // is the SAME erasure the Named-arm `any_erased`
+                        // carve-out (above) applies — not a heuristic, the
+                        // documented int64-erasure of the partial-mono path.
+                        // The concrete per-element Vec mono is still emitted at
+                        // each monomorphized call-site (where `T` IS in
+                        // `current_type_subst`).
+                        if self.is_generic_stub_c(&elem_c) && !elem_c.contains("____") {
+                            elem_c = "nova_int".to_string();
+                        }
                         let type_args_c = vec![elem_c];
                         let mangled =
                             Self::compute_generic_type_c_name("Vec", &type_args_c);
@@ -21991,7 +22029,32 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                             if self.current_type_subst.contains_key(n)
                                || self.method_overloads.keys().any(|(t, _)| t == n));
                         let key = (rt.clone(), method.clone());
-                        if let Some(overloads) = self.method_overloads.get(&key).cloned() {
+                        // Plan 138.2 Ф.0-final: under the universal `[]T` ≡
+                        // `Vec[T]` flip, an array-extension method call
+                        // (`xs.map(..)` where `xs : Nova_Vec____nova_int*`)
+                        // now arrives with `rt = "Vec____<elem>"` — a receiver
+                        // C-type under which NEITHER the erased base entry
+                        // (registered under `NovaArray_<elem>`) NOR the sentinel
+                        // (registered under `[]T`) is keyed. The direct
+                        // `method_overloads.get(&key)` therefore misses and the
+                        // call previously fell through to a path that emitted
+                        // the raw `__mono_method__[]T__map` sentinel symbol.
+                        // When the direct key is empty for a Vec-mono receiver,
+                        // splice in the `("[]T", method)` sentinel entries so the
+                        // mono-routing block below fires and emits the real
+                        // monomorphized function. (NovaArray receivers already
+                        // have their erased entry keyed directly.)
+                        let overloads_opt = self.method_overloads.get(&key).cloned()
+                            .or_else(|| {
+                                if rt.starts_with("Vec____") {
+                                    self.method_overloads
+                                        .get(&("[]T".to_string(), method.clone()))
+                                        .cloned()
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(overloads) = overloads_opt {
                             let candidates: Vec<MethodSig> = overloads.into_iter()
                                 .filter(|s| s.is_instance == want_instance)
                                 .collect();
@@ -22005,7 +22068,17 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                 // имеет — тоже идём в mono path с alt-key fn_decl.
                                 let has_sentinel_here = candidates.iter()
                                     .any(|c| c.c_name.starts_with("__mono_method__"));
-                                let has_sentinel_alt = rt.starts_with("NovaArray_")
+                                // Plan 138.2 Ф.0-final: under the universal `[]T`
+                                // ≡ `Vec[T]` flip the receiver C-type of an
+                                // array-extension method (`fn[T] []T @map`) is
+                                // now `Vec____<elem>` (from `Nova_Vec____<elem>*`)
+                                // — no longer `NovaArray_<elem>`. The sentinel is
+                                // still registered under the `("[]T", method)`
+                                // alt-key, so recognise BOTH receiver prefixes
+                                // when falling back to the `[]T` sentinel.
+                                let rt_is_array_ext = rt.starts_with("NovaArray_")
+                                    || rt.starts_with("Vec____");
+                                let has_sentinel_alt = rt_is_array_ext
                                     && self.method_overloads
                                         .get(&("[]T".to_string(), method.clone()))
                                         .map(|alts| alts.iter().any(|c|
@@ -22020,7 +22093,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                     // из rt для T-subst.
                                     let fn_decl_opt = self.mono_method_decls.get(&recv_key).cloned()
                                         .or_else(|| {
-                                            if rt.starts_with("NovaArray_") {
+                                            if rt_is_array_ext {
                                                 self.mono_method_decls.get(&("[]T".to_string(), method.clone())).cloned()
                                             } else {
                                                 None
@@ -22032,8 +22105,34 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                         // resolve_mono_type_args (которая ищет T в arg-positions,
                                         // не в receiver-position; для fn[T] []T @m T
                                         // приходит от receiver, не от args).
-                                        let elem_c = rt.strip_prefix("NovaArray_")
-                                            .unwrap_or("").to_string();
+                                        // Plan 138.2 Ф.0-final: extract the receiver
+                                        // element C-type so the first generic `T`
+                                        // of `fn[T] []T @m` pre-binds to the real
+                                        // element type. The legacy `NovaArray_<elem>`
+                                        // suffix is already a valid C type fragment
+                                        // (`nova_int`, `nova_str`, …). The post-flip
+                                        // `Vec____<sani>` suffix is the MANGLED elem
+                                        // (`Nova_Wrap_p` for a `Nova_Wrap*` element)
+                                        // — NOT a C type. Recover the real element
+                                        // C-type from `generic_type_instance_info`
+                                        // (records the un-mangled `type_args_c`), so
+                                        // a composite Vec receiver pre-binds `T` to
+                                        // `Nova_Wrap*` rather than the bogus
+                                        // `Nova_Wrap_p` (which would leak into closure
+                                        // param types as an unknown type name).
+                                        let elem_c = if let Some(na) = rt.strip_prefix("NovaArray_") {
+                                            na.to_string()
+                                        } else if rt.starts_with("Vec____") {
+                                            self.generic_type_instance_info.borrow()
+                                                .get(&format!("Nova_{}", rt))
+                                                .and_then(|(_, args)| args.first().cloned())
+                                                .unwrap_or_else(|| rt
+                                                    .strip_prefix("Vec____")
+                                                    .unwrap_or("")
+                                                    .to_string())
+                                        } else {
+                                            String::new()
+                                        };
                                         // Build initial subst_pending: T = elem_c (если есть),
                                         // остальные None.
                                         let mut subst_pending: Vec<(String, Option<String>)> =
@@ -23115,7 +23214,23 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                         // Plan 04 Этап 6: str.try_from([]byte) → Result[str, _].
                         // Validates UTF-8 + конвертирует в nova_str. Используется
                         // для финализации mixed text+binary в WriteBuffer.
-                        if parts[0] == "str" && arg_ty == "NovaArray_nova_byte*" {
+                        // Plan 138.2 Ф.0-final: under the universal `[]T` ≡
+                        // `Vec[T]` flip, `s.to_bytes()` now yields a
+                        // `Nova_Vec____nova_byte*` rather than the legacy
+                        // `NovaArray_nova_byte*`. The two structs are
+                        // layout-identical (`{ T* data; int64_t len; int64_t
+                        // cap; }`), so the runtime helper reading `arr->data`/
+                        // `arr->len` works on either; cast the Vec pointer to
+                        // the helper's `NovaArray_nova_byte*` param type.
+                        if parts[0] == "str"
+                            && (arg_ty == "NovaArray_nova_byte*"
+                                || arg_ty == "Nova_Vec____nova_byte*")
+                        {
+                            if arg_ty == "Nova_Vec____nova_byte*" {
+                                return Ok(format!(
+                                    "Nova_str_static_try_from_bytes((NovaArray_nova_byte*)({}))",
+                                    v));
+                            }
                             return Ok(format!("Nova_str_static_try_from_bytes({})", v));
                         }
                         // str → numeric / bool: используем парсеры.
@@ -30916,7 +31031,13 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                         // sentinel + соответствующий mono_method_decls entry —
                         // используем mono-inference path для правильного
                         // U-substitution из closure args.
-                        if rt.starts_with("NovaArray_") {
+                        // Plan 138.2 Ф.0-final: under the universal flip the
+                        // receiver C-type of an array-extension method is now
+                        // `Vec____<elem>` (post-flip Vec mono) as well as the
+                        // legacy `NovaArray_<elem>`. Mirror the emit-side
+                        // routing fix so return-type inference for `xs.map(..)`
+                        // recovers the method-level generic `U` (return elem).
+                        if rt.starts_with("NovaArray_") || rt.starts_with("Vec____") {
                             let sentinel_key = ("[]T".to_string(), mn.clone());
                             let has_sentinel = self.method_overloads.get(&sentinel_key)
                                 .map(|alts| alts.iter().any(|s|
@@ -30930,8 +31051,23 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                     // Не используем resolve_mono_type_args (она требует
                                     // ВСЕ generics быть resolvable из args; для fn[T] []T
                                     // T приходит от receiver, не args — resolve вернёт Err).
-                                    let elem_c = rt.strip_prefix("NovaArray_")
-                                        .unwrap_or("").to_string();
+                                    // Plan 138.2 Ф.0-final: mirror the emit-side
+                                    // de-mangling — a `Vec____<sani>` receiver carries
+                                    // the MANGLED element; recover the un-mangled
+                                    // C-type from `generic_type_instance_info`.
+                                    let elem_c = if let Some(na) = rt.strip_prefix("NovaArray_") {
+                                        na.to_string()
+                                    } else if rt.starts_with("Vec____") {
+                                        self.generic_type_instance_info.borrow()
+                                            .get(&format!("Nova_{}", rt))
+                                            .and_then(|(_, args)| args.first().cloned())
+                                            .unwrap_or_else(|| rt
+                                                .strip_prefix("Vec____")
+                                                .unwrap_or("")
+                                                .to_string())
+                                    } else {
+                                        String::new()
+                                    };
                                     let mut subst_pending: Vec<(String, Option<String>)> =
                                         fn_decl.generics.iter().enumerate()
                                         .map(|(i, g)| {

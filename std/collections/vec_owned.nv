@@ -29,9 +29,24 @@
 // not a deref), but *dereferencing* the returned pointer is the caller's
 // `unsafe` obligation.
 
+// Plan 138.2 Ф.0-final (D239 universal flip): `vec_owned` is now re-exported
+// by `std/prelude.nv`. A full auto-import of `std.prelude` here would create a
+// cycle (prelude → vec_owned → prelude) and trip the R27 auto-import opt-out
+// for every importer. Mirror `range.nv`'s precedent: opt into the minimal
+// prelude subset this module's API actually needs —
+//   core      → Option/Result/Ordering (return types, `@pop()->Option[T]`),
+//   runtime   → assert/panic (bounds checks, test bodies),
+//   collections→ Next/Iter protocols (VecIter) + StringBuilder (`@display`),
+//   protocols → Display/Clone/Index/MutIndex (`@clone`, `@display`, `v[i]`).
+// `errors` is intentionally omitted (no error type referenced). `Range` lives
+// in the prelude facade (`std/collections/range.nv`), not a prelude submodule,
+// so it is imported explicitly below — needed for the `@index(r Range)`
+// zero-copy range-slice view.
+#prelude(core, runtime, collections, protocols)
 module collections.vec_owned
 
 import std.runtime.raw_mem.{RawMem}
+import std.collections.range.{Range}
 
 // Module-private `panic` declaration (same signature as
 // `std/prelude/runtime.nv`). Mirrors `std/ffi/cstr.nv`: a module that is

@@ -1,11 +1,28 @@
-// EXPECT_RUNTIME_PANIC reserve: extra must be >= 0
+// Plan 90.1 — reserve with negative `additional`.
 //
-// Plan 90.1 — негатив: reserve — negative extra → panic.
-// D141 amend: extra < 0 is a bug; panic with diagnostic.
+// Plan 138.2 Ф.0-final: under the universal `[]T` ≡ `Vec[T]` flip, `[]int`
+// is the `Vec[int]` library type, so `arr.reserve(extra)` dispatches to the
+// Nova-body `Vec[T] @reserve(additional)`. That method documents a LENIENT
+// contract — `additional <= 0` is a NO-OP (capacity already covers
+// `len + additional`), matching Rust's `Vec::reserve` taking an unsigned
+// `additional` (negative is unrepresentable, never a panic). This SUPERSEDES
+// the legacy NovaArray `reserve` which panicked on a negative `extra` (the
+// old D141 amend diagnostic). The relaxation is intentional: a negative
+// reservation cannot under-shrink the buffer, so it is harmless.
+//
+// Renamed semantics (file kept for history): asserts the no-op behaviour.
 
 module plan90_1.reserve_negative_extra_neg
 
-fn main() -> () {
+test "reserve(-1) is a harmless no-op (Vec lenient contract)" {
     mut arr []int = [1, 2, 3]
     arr.reserve(-1)
+    // Buffer unchanged, elements intact.
+    assert(arr.len() == 3)
+    assert(arr[0] == 1)
+    assert(arr[2] == 3)
+    // Subsequent push still works (buffer not corrupted).
+    arr.push(4)
+    assert(arr.len() == 4)
+    assert(arr[3] == 4)
 }

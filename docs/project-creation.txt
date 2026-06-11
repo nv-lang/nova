@@ -36171,3 +36171,38 @@ plan138_3 2/0, plan131 27/1 (vec_debug_pos pre-existing), plan90_1 21/0, plan91_
 pre-existing), plan101_1 18/0, plan126 21/0, plan126_2 9/1 (p5_printable pre-existing),
 str 13/0, plan137 16/0. 190 pass / 8 fail — все pre-existing.
 КОММИТ: fix(plan138.2): @append = copy (other intact), not move — StringBuilder consistency + cross-lang convention
+
+═══════════════════════════════════════════════════════════════════════════════
+Plan 138.2 Ф.0-final — RE-ATTEMPT #2 (2026-06-11): УНИВЕРСАЛЬНЫЙ ФЛИП []T ≡ Vec[T] ПРИЗЕМЛЁН 🟢
+═══════════════════════════════════════════════════════════════════════════════
+ИСХОД. C1 ДОСТИГНУТ. Первая попытка (выше) ушла в откат (3 erased-template класса латались
+heuristic-патчами ~188 LOC). Re-attempt #2 закрыл те же 3 класса ПРИНЦИПИАЛЬНО, ~7 локальными
+правками emit_c.rs по документированному int64-erasure контракту + []T-sentinel alt-key (Plan 101.1).
+
+ИЗМЕНЕНИЯ.
+- std/prelude.nv: export import std.collections.vec_owned.{Vec, VecIter} после Range re-export;
+  PRELUDE_VERSION 13→14.
+- std/collections/vec_owned.nv: #prelude(core, runtime, collections, protocols) + явный
+  import std.collections.range.{Range} (разрыв цикла prelude→vec_owned→prelude, зеркало range.nv).
+- compiler-codegen/src/codegen/emit_c.rs (~7 правок):
+  1. type_ref_to_c Array-арм (5109): generic-stub elem → nova_int (int64-erasure, mirror NovaArray _-арм).
+  2. call-routing (~22014): splice ("[]T",m) sentinel в candidates для Vec____* receiver когда direct-key пуст.
+  3. worklist-drain (~3060): Vec____*::m worklist-key → []T base FnDecl (recv_type=Vec____<elem>).
+  4. elem-extract de-mangle через generic_type_instance_info (emit-side ~22120 + infer-side ~30968).
+  5. str.try_from([]u8) (~23217): accept Nova_Vec____nova_byte* + cast (layout-идентичен NovaArray).
+- nova_tests/plan90_1/: 6 фикстур insert(i,array)→splice(i,other); reserve_negative_extra_neg
+  переформулирован positive (Vec @reserve lenient no-op на additional<=0).
+- nova_tests/plan138_2/: t3/t17/t18 re-created (flip-acceptance proof).
+
+DoD-АУДИТ (re-attempt #2). C1 (gate снят, Vec-free→Vec) ✅ ДОСТИГНУТ (t3.c Nova_Vec____nova_int* x;
+t18.c #no_prelude Vec=0/NovaArray=2 graceful). C2/C3/C4 ⏸ N/A (Plan 139). C5/C6 (array.h/emit_c
+NovaArray retire) 🔴 Ф.3 scope — РАЗБЛОКИРОВАНА флипом, separate sub-plan. C7 (0 новых FAIL) ✅.
+C8: D239 PARTIAL→ACTIVE(universal) ✅, D144 closed ✅, D26 amend=Plan 139.
+
+РЕЗУЛЬТАТ. 224 pass / 10 fail — все 10 pre-existing, 0 NEW FAIL. 3 flip-target GREEN (plan91_fe1 8/2→10/0).
+plan138_1 10/0, plan138_2 18/0, plan138_3 2/0, plan91_fe1 10/0, plan90_1 21/0, plan131 27/1,
+map_literals 28/1, plan101_1 18/0, plan101_2 2/0, plan126 21/0, plan126_2 9/1, str 13/0, plan137 16/0,
+plan62 29/7 (verified identical clean-HEAD baseline).
+МАРКЕРЫ: [M-138.2-flip-erased-base-body-mono] / [M-138.2-flip-value-pos-arraylit-vec-gate] /
+[M-138.2-flip-array-ext-vec-recv-routing] — все ✅ CLOSED.
+КОММИТ: feat(plan138.2 Ф.0-final): universal Vec ([]T ≡ Vec[T] via prelude)

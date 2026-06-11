@@ -1,12 +1,15 @@
-// EXPECT_RUNTIME_PANIC insert: index
+// EXPECT_RUNTIME_PANIC splice: index
 //
-// Plan 90.1 — негатив: insert — negative index → panic.
-// D141 amend: i < 0 → panic "insert: index N out of bounds".
+// Plan 90.1 — негатив: bulk insert (splice) — negative index → panic.
+// D141 amend: i < 0 → panic "Vec.splice: index out of bounds".
+// Plan 138.2 Ф.0-final: under the universal `[]T` ≡ `Vec[T]` flip the bulk
+// `insert(i, array)` op is the Vec `@splice(i, other)` method; single-element
+// `@insert(i, v)` is a distinct overload. Migrated accordingly.
 
 module plan90_1.insert_oob_negative_i_neg
 
 fn main() -> () {
     mut dst []int = [1, 2, 3]
     ro src []int = [10, 20]
-    dst.insert(-1, src)
+    dst.splice(-1, src)
 }

@@ -1,0 +1,25 @@
+// Plan 138.2 Ф.0-final — t3: universal flip proof, Vec-free unit.
+//
+// NO `import std.collections.vec_owned.{Vec}` anywhere. Under the universal
+// `[]T` ≡ `Vec[T]` flip (Vec/VecIter re-exported from the prelude), value- and
+// type-position `[]int` lowers to the typed `Nova_Vec____nova_int*` storage,
+// NOT the legacy `NovaArray_nova_int*` int64-erasure. This fixture pins that:
+// a plain `[]int` with `.push` / `.len` / index works without any Vec import.
+
+module plan138_2.t3_universal_novec_unit
+
+test "Vec-free []int push + len + index (universal flip)" {
+    mut x []int = [1, 2, 3]
+    x.push(4)
+    assert(x.len() == 4)
+    assert(x[0] == 1)
+    assert(x[3] == 4)
+}
+
+test "Vec-free []int built empty then grown" {
+    mut y []int = []
+    y.push(10)
+    y.push(20)
+    assert(y.len() == 2)
+    assert(y[1] == 20)
+}
