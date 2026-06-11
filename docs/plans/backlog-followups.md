@@ -23,10 +23,10 @@
 
 | Маркер | Суть | Home | Pri |
 |---|---|---|---|
-| `[M-83.10.4-iso-cancel-startup-race]` | Iso-cancel startup race (supervised(cancel:) первый тест TIMEOUT); 83.10.5 tactical fix неадекватен (~55%), арх. Ф.B не сделана; 3 stress-теста disabled. | plan-83.11 Followups | P1 |
-| `[M-83.11-grow-vs-wake-race]` | Grow-vs-wake torn pointer-read race (grow_state swap несинхр. с driver wake); тесты gated AUTOARM=0; 3 попытки фикса провалены — НЕ повторять. | plan-83.11 Followups | P1 |
+| `[M-83.10.4-iso-cancel-startup-race]` | Iso-cancel startup race (supervised(cancel:) первый тест TIMEOUT); 83.10.5 tactical fix неадекватен (~55%), арх. Ф.B не сделана; 3 stress-теста disabled. **Структурный фикс запланирован: Plan 83-go-cmn Ф.5** (gopark unlockf + READY-latch на стабильном SpawnCtxBase). | Plan 83-go-cmn Ф.5 | P1 |
+| `[M-83.11-grow-vs-wake-race]` | Grow-vs-wake torn pointer-read race (grow_state swap несинхр. с driver wake); тесты gated AUTOARM=0; 3 попытки фикса провалены — НЕ повторять. **Структурный фикс запланирован: Plan 83-go-cmn Ф.1+Ф.2+Ф.3** (fixed runq[256] never-realloc + gopark + nspinning/note); GitHub issue #2. Ф.1 ring-примитив ported+unit-tested. | Plan 83-go-cmn Ф.1-3 | P1 |
 | `[M-debug-line-directives]` | Нет `#line N "file.nv"` → дебаггер показывает C, не Nova. Только comment-only `/* SRC */`. | Plan 25 G9 → dedicated план | P1 |
-| `[M-83-study-go-c-mn]` | Изучить рабочий M:N из C-исходников Go (≤1.4 `runtime/proc.c`, work-stealing, sysmon-preempt) + подтянуть Nova-M:N, если уступает (открытые race'ы 83.10.4/83.11). Go доказал M:N в C-рантайме. | Plan 83 (M:N umbrella) | P1 |
+| `[M-83-study-go-c-mn]` | Изучить рабочий M:N из C-исходников Go (≤1.4 `runtime/proc.c`, work-stealing, sysmon-preempt) + подтянуть Nova-M:N. **✅ research+декомпозиция (2026-06-11): [Plan 83-study-go-c-mn](83-study-go-c-mn.md), 8 фаз; Ф.1 ring-примитив ported+unit-tested 10/10.** OPEN до завершения impl-фаз. | Plan 83-study-go-c-mn | P1 |
 
 ## P2 — Correctness / Completeness
 

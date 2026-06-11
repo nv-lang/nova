@@ -34695,3 +34695,22 @@ vec_owned.nv `check` ok.
 - `=> @` вместо `=> self` в @iter() методах: `self` парсится как Ident → C `return self`
   (undeclared); `@` = SelfAccess → `return nova_self` ✓. Тихий баг обнаружен на тестах.
 - 10/10 fixtures PASS. Ф.5 ([]T→Vec[T] alias) deferred → `[M-138-array-sugar-alias]`.
+
+### Plan 83-study-go-c-mn Ф.1 — fixed-ring runq примитив (порт go1.4), 2026-06-11
+
+- **`[M-83-study-go-c-mn]` research+декомпозиция выполнены.** workflow (11 агентов) →
+  gap-анализ (9 gaps) + 8-фазный план. Главная находка: **grow-vs-wake — баг РЕАЛЛОКАЦИИ**
+  (`nova_sched_grow_state` plain pointer-swap конкурентно с driver `nova_sched_wake`), НЕ
+  memory ordering (fences в deque.h корректны). Go fixed `runq[256]` (never realloc) исключает
+  torn-base-pointer структурно.
+- **V1 policy (user): дословный порт Go-кода**, не ре-имплементация — наследуем проверенную
+  корректность. «Структурно идентично» (byte-identical невозможно — Go-код ссылается на
+  G/M/P/mcall/note/runtime·cas). BSD-3-Clause → `THIRD_PARTY/go-LICENSE` + per-function атрибуция.
+- **`runq.h`** — порт go1.4 `proc.c`: `runqput`/`runqget`/`runqgrab`/`runqsteal`/`runqputslow`
+  + global overflow (`globrunqputbatch`/`globrunqget`). Go-комментарии сохранены verbatim;
+  замена G*→mco_coro*, runtime·cas→__atomic, sched.lock→спинлок, runtime·throw→defensive return.
+- **Верификация изолированная** (clang -O2 -Wall -Wextra, 0 warn): `test_runq.c` — conservation
+  под concurrent producer+4 thieves/200k fibers (каждый fiber ровно 1 раз, 0 потерь), overflow
+  spill-half exact, steal conservation. 10/10 PASS. ⚠ Это валидация ПРИМИТИВА; полная Ф.1
+  acceptance (runtime-интеграция + build clang+MSVC + stress 66/66) — следующий шаг (atomic cut-over).
+- **GC вынесен в Plan 144** (precise GC impl из 83.13 research) — НЕ scope M:N-порта.
