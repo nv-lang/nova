@@ -14,10 +14,10 @@ type Value { priv mut data int }
 
 fn Value.new(d int) -> Self => { data: d }
 
-// ro overload — represents ro *u8 (returns marker 0)
+// ro overload — represents *ro u8 (returns marker 0)
 fn Value @as_ptr() -> int => 0
 
-// mut overload — represents mut *u8 (returns marker 1)
+// mut overload — represents *mut u8 (returns marker 1)
 fn Value mut @as_ptr() -> int => 1
 
 test "ro binding a.as_ptr() → ro overload (0)" {

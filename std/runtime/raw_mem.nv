@@ -12,7 +12,7 @@
 // const fn intrinsic propagation.
 //
 // Pointer types: `*u8` (default ro per D216 §1) для src,
-// `mut * u8` (canonical V2 right-binding per D216 V2 §V2.1) для dst.
+// `*mut u8` (pointee-mut postfix per D216 final model, Plan 138.5) для dst.
 // Rust precedents:
 //   - ptr::copy (memmove)              -> RawMem.copy
 //   - ptr::copy_nonoverlapping (memcpy) -> RawMem.copy_nonoverlapping
@@ -40,7 +40,7 @@ export type RawMem
 /// rotation, buffer scrolling).
 ///
 /// Caller wraps in `unsafe { }` block — raw pointer operation.
-export external unsafe fn RawMem.copy(src *u8, dst mut * u8, n int) -> ()
+export external unsafe fn RawMem.copy(src *u8, dst *mut u8, n int) -> ()
 
 /// memcpy — copy `n` bytes from `src` к `dst`. UB при overlap.
 ///
@@ -49,14 +49,14 @@ export external unsafe fn RawMem.copy(src *u8, dst mut * u8, n int) -> ()
 ///
 /// Use cases: known-distinct buffers (e.g., between two arrays,
 /// from FFI buffer к Nova buffer).
-export external unsafe fn RawMem.copy_nonoverlapping(src *u8, dst mut * u8, n int) -> ()
+export external unsafe fn RawMem.copy_nonoverlapping(src *u8, dst *mut u8, n int) -> ()
 
 /// memset — fill `n` bytes at `dst` с byte-pattern `val`.
 ///
 /// Single-byte fill. For typed-element fill (e.g., u32 array filled с
 /// specific i32 value), iterate manually. Mirrors both `@memset` (Zig) and
 /// `ptr::write_bytes` (Rust) — one canonical name (`fill`), no alias.
-export external unsafe fn RawMem.fill(dst mut * u8, val u8, n int) -> ()
+export external unsafe fn RawMem.fill(dst *mut u8, val u8, n int) -> ()
 
 /// memcmp — compare `n` bytes at `a` и `b`. Returns -1/0/+1.
 ///
@@ -68,7 +68,7 @@ export external unsafe fn RawMem.fill(dst mut * u8, val u8, n int) -> ()
 ///   - Returns `+1` если first differing byte в `a` is greater than в `b`
 export external unsafe fn RawMem.compare(a *u8, b *u8, n int) -> int
 
-/// Allocate `n` bytes of GC-tracked zeroed memory. Returns raw `mut * u8`.
+/// Allocate `n` bytes of GC-tracked zeroed memory. Returns raw `*mut u8`.
 ///
 /// Backed by `nova_alloc(n)` from `nova_rt/alloc.h`. Memory is
 /// GC-collectable — do NOT store pointer in static/global without GC-root
@@ -78,7 +78,7 @@ export external unsafe fn RawMem.compare(a *u8, b *u8, n int) -> int
 /// Alignment: 8-byte (nova_alloc guarantee).
 /// Size: `n > 0` recommended; behaviour with `n = 0` is implementation-defined.
 ///
-export external unsafe fn RawMem.alloc(n int) -> mut * u8
+export external unsafe fn RawMem.alloc(n int) -> *mut u8
 
 /// Allocate `n` bytes NOT GC-tracked. Caller must call `RawMem.free_uncollectable`.
 ///
@@ -90,11 +90,11 @@ export external unsafe fn RawMem.alloc(n int) -> mut * u8
 /// CONTRACT: returns zeroed memory (all bytes = 0x00).
 /// Alignment: 8-byte.
 ///
-export external unsafe fn RawMem.alloc_uncollectable(n int) -> mut * u8
+export external unsafe fn RawMem.alloc_uncollectable(n int) -> *mut u8
 
 /// Free a pointer allocated with `RawMem.alloc_uncollectable`.
 ///
 /// Backed by `nova_free_uncollectable(ptr)`. UB if called on a GC-tracked
 /// pointer (from `RawMem.alloc`) — use GC-tracked memory only with GC.
 /// Double-free is UB.
-export external unsafe fn RawMem.free_uncollectable(ptr mut * u8) -> ()
+export external unsafe fn RawMem.free_uncollectable(ptr *mut u8) -> ()

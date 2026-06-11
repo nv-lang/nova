@@ -1,8 +1,8 @@
-// Plan 118.5 Ф.4 T2 — multi-level chain in right-binding form.
+// Plan 118.5 / 138.5 T2 — multi-level chain in postfix form.
 //
-// Tests AST shape for chained modifiers: mut * ro * T builds as
-// Mut(Pointer(Readonly(Pointer(T)))). All wrappers transparent at C
-// codegen level (both Mut and Readonly inner-wrap к Pointer give T*).
+// Tests AST shape for chained pointee-mut modifiers: `*mut *ro T` builds as
+// Pointer(Mut(Pointer(Readonly(T)))). All wrappers transparent at C codegen
+// level (both Mut and Readonly inner-wrap к Pointer give T*).
 
 module plan118_5.t2_chain_canonical_ok
 
@@ -10,9 +10,9 @@ type Node {
     val i64
 }
 
-external fn p118_5_t2_a(p mut * ro * Node) -> ()
-external fn p118_5_t2_b(p ro * mut * Node) -> ()
-external fn p118_5_t2_c(p unsafe * ro * Node) -> ()
+external fn p118_5_t2_a(p *mut *ro Node) -> ()
+external fn p118_5_t2_b(p *ro *mut Node) -> ()
+external fn p118_5_t2_c(p *unsafe *ro Node) -> ()
 
 test "parses multi-level canonical chains" {
     assert(1 == 1)

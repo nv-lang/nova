@@ -1,9 +1,9 @@
-// Plan 118 / 118.5 V3 — chained type-level modifiers under right-binding rule.
+// Plan 118 / 138.5 — chained pointee-mut modifiers (postfix, final model).
 //
-// Per D216 V3 §V3.1: ro+mut adjacency forbidden в nested constructor
-// position (no binding context для disambiguation). V2-era chain forms
-// `*ro mut T` (Pointer(Readonly(Mut(T)))) и `ro * mut T` migrated к
-// alternatives that respect V3 constraints.
+// Final pointer model (Plan 138.5): pointee-mut is POSTFIX (`*ro T`/`*mut T`),
+// reassignability of the pointer is binding (`let`/`mut name`), NOT a type
+// property. Former outer-pointer-mut forms (`mut * ro Acc`) collapse to their
+// pointee form (`*ro Acc`) since the reassignability axis left the type.
 
 module plan118.t1_9_chain_modifiers_ok
 
@@ -11,15 +11,15 @@ type Acc {
     ro id i64
 }
 
-// Single modifier chain — ro pointer к Acc (no nested ro+mut conflict).
-external fn p118_chain_a(p ro * Acc) -> ()
+// Pointer to ro Acc (pointee read-only).
+external fn p118_chain_a(p *ro Acc) -> ()
 
-// Mut pointer outer; inner ro Acc (binding modifier wraps separate from
-// content modifier — both are mut+ro но no nested-constructor conflict).
-external fn p118_chain_b(p mut * ro Acc) -> ()
+// Former `mut * ro Acc` (reassignable pointer to ro Acc). The pointer
+// reassignability is now binding-only, so as a *type* this is `*ro Acc`.
+external fn p118_chain_b(p *ro Acc) -> ()
 
-// Triple chain: mut pointer к ro pointer к Acc.
-external fn p118_chain_c(p mut * ro * Acc) -> ()
+// Two-level chain: pointer-to-mut (pointer-to-ro Acc).
+external fn p118_chain_c(p *mut *ro Acc) -> ()
 
 test "chained right-binding modifiers parse + typecheck" {
     assert(1 == 1)

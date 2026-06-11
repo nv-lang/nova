@@ -507,12 +507,28 @@ impl ExternalRegistry {
             // wrappers; when they wrap a Pointer they strip the `const`
             // (→ `T*`); otherwise they are transparent for codegen.
             // Plan 134: *() = pointer-to-unit = void* (replaces `ptr` builtin).
+            // Plan 138.5 final model: pointee-mut is POSTFIX, so the canonical
+            // form is `Pointer(Mut(T))` / `Pointer(Unsafe(T))` (= `*mut T` /
+            // `*unsafe T`). The pointee-mut wrapper INSIDE the Pointer strips
+            // the `const` (writable pointee → `T*`); a bare `Pointer(T)` (≡
+            // `*ro T`) stays `const T*`. This mirrors emit_c.rs `type_ref_to_c`
+            // so the registry's mangled C-symbol matches the call-site symbol
+            // (otherwise `*mut u8` would mangle to `const nova_byte*` here but
+            // `nova_byte*` at the call site → undefined-symbol link error).
             TypeRef::Pointer(inner, _) => {
-                if matches!(inner.as_ref(), TypeRef::Unit(_)) {
+                let (is_mutable_ptr, base_inner) = match inner.as_ref() {
+                    TypeRef::Mut(ti, _) | TypeRef::Unsafe(ti, _) => (true, ti.as_ref()),
+                    _ => (false, inner.as_ref()),
+                };
+                if matches!(base_inner, TypeRef::Unit(_)) {
                     return Ok("void*".into());
                 }
-                let inner_c = Self::type_ref_to_c(inner, recv)?;
-                Ok(format!("const {}*", inner_c))
+                let inner_c = Self::type_ref_to_c(base_inner, recv)?;
+                if is_mutable_ptr {
+                    Ok(format!("{}*", inner_c))
+                } else {
+                    Ok(format!("const {}*", inner_c))
+                }
             }
             TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
                 if let TypeRef::Pointer(p_inner, _) = inner.as_ref() {
