@@ -18,6 +18,43 @@
 
 ---
 
+### Plan 142 — D227 `E_LIT_OUT_OF_RANGE` compile-time literal range-check (2026-06-11, ✅ CLOSED)
+
+- **Где** — `compiler-codegen/src/types/mod.rs` (`assignable()` IntLit arm + NEW `Unary{Neg,IntLit}` arm
+  ~4500/4929 call-sites; helpers `sized_int_bounds`/`sized_int_name`/`lit_range_check` + `Compat::OutOfRange`),
+  `spec/decisions/03-syntax.md` (D227 acceptance + scoped open-questions), `nova_tests/plan142/` (8 NEG + 2 POS).
+- **Что было упущено (safety-gap)** — D227 spec (написан 2026-06-03) задавал hard compile-time range-check
+  целочисленного литерала при context-coercion к sized-типу, но **enforcement отсутствовал**: `u8 = 300`,
+  `i32 = 3_000_000_000` тихо проходили (потенциально wrap/UB), а `u8 = -1` (`Unary{Neg,IntLit}`) вовсе не
+  доходил до проверки (падал в `Compat::Unknown`).
+- **Решение** — на сайте literal→sized-int coercion в `assignable()`: если значение вне `[T.MIN, T.MAX]` →
+  `Compat::OutOfRange{msg}` → hard `[E_LIT_OUT_OF_RANGE]` с сообщением «<val> > <T>.MAX (<max>)» /
+  «< <T>.MIN (<min>)». Покрыты все 8 sized-int (u8/16/32/64, i8/16/32/64) + знаковость (D227 Rule 6
+  negative-in-unsigned через новый `Unary{Neg,IntLit}` arm). i128 throughout (IntLit i64; нужно для u64.MAX +
+  negated). hex/`_`-формы — lexer уже парсит значение в IntLit до чекера. Оба call-site (binding `ro a u8 = v`
+  + call-arg `write(400)`) переведены на exhaustive match.
+- **Что осознанно НЕ сделано (scoped, документировано в D227 spec + backlog P3)** —
+  (a) **alias/newtype над sized-int** НЕ range-checked: `assignable()` чекает только direct Named sized-int
+  (+ Readonly/Mut/Unsafe wrappers); резолв alias-имени требует `self.types`, недоступного на free-fn
+  coercion-сайте (иначе печатался бы неверный type-name). → `[M-D227-alias-newtype-range]` (P3).
+  (b) **float range-check (D227 Rule 5, f32 exponent overflow)** НЕ реализован — Ф.1 scope был integer-only
+  (plan §43 «all 8 sized-int», floats не перечислены). → `[M-D227-float-range-check]` (P3).
+- **Почему** — закрытие P1 safety-gap (`[M-D227-lit-range-error-code]`) + P2 test corpus
+  (`[M-D227-literal-range-tests]`); оба убраны из backlog OPEN-view. Default `int`/`uint` (D227 Rule 1
+  wide defaults) намеренно НЕ триггерит — `3_000_000_000` в `int`-контексте легитимен.
+- **Доказательства** — `nova_tests/plan142/`: NEG `neg_u8_300`/`neg_u8_minus1`/`neg_i32_3b`/`neg_u16_70000`/
+  `neg_i8_200`/`neg_u8_hex_1ff` (0x1FF=511)/`neg_u32_4b` (4294967296)/`neg_arg_u8` (call-arg path) → каждый
+  `[E_LIT_OUT_OF_RANGE]`; POS `pos_boundaries` (все 8 sized MIN/MAX точно в диапазоне) + `pos_wide_int`
+  (Rule 1). 10/0 PASS релизным nova. **0 регрессий** (plan138_1/2/3, plan131, plan90_1, plan126, plan59,
+  plan101_1, plan137 — baseline-clean; единственные FAIL pre-existing/known: vec_debug_pos, t2_map_set_clone,
+  6 plan59 tuple-mangle).
+- **Коммиты** — `d6b209b8e63` (Ф.1 enforcement + 10 fixtures), `2d85fff2175` (Ф.2 spec acceptance + scoped
+  open-questions), Ф.3 docs (plan-doc CLOSED + backlog + simplifications + project-creation + nova-private).
+  Ветка `plan-138.1`, worktree `nova-p138`.
+- **Приоритет** — L (закрыто; остаются 2 P3 scoped-edge маркера).
+
+---
+
 ### Plan 141 — Structural equality field-by-field; `memcmp` отозван с композитов (2026-06-11, ✅ CLOSED)
 
 - **Где** — `compiler-codegen/src/codegen/emit_c.rs` (helper `emit_field_eq` ~11125 + 4 call-sites:

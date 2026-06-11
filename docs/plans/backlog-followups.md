@@ -25,7 +25,6 @@
 |---|---|---|---|
 | `[M-83.10.4-iso-cancel-startup-race]` | Iso-cancel startup race (supervised(cancel:) первый тест TIMEOUT); 83.10.5 tactical fix неадекватен (~55%), арх. Ф.B не сделана; 3 stress-теста disabled. | plan-83.11 Followups | P1 |
 | `[M-83.11-grow-vs-wake-race]` | Grow-vs-wake torn pointer-read race (grow_state swap несинхр. с driver wake); тесты gated AUTOARM=0; 3 попытки фикса провалены — НЕ повторять. | plan-83.11 Followups | P1 |
-| `[M-D227-lit-range-error-code]` | D227 compile-time `E_LIT_OUT_OF_RANGE` для literal-overflow не реализован; код отсутствует. | spec-decisions/D227 backlog | P1 |
 | `[M-debug-line-directives]` | Нет `#line N "file.nv"` → дебаггер показывает C, не Nova. Только comment-only `/* SRC */`. | Plan 25 G9 → dedicated план | P1 |
 
 ## P2 — Correctness / Completeness
@@ -77,7 +76,6 @@
 | `[M-91.fe5-math-time-conformance]` | math (sqrt/ln) есть; Instant/Duration time-API conformance pending. | plan-91 Followups | P2 |
 | `[M-ide-integration-deferred]` | Production LSP (hover/goto/completion/refs/rename/format) 104.2–104.6 не построены (104.7 tree-sitter закрыт). | plan-104 Followups | P2 |
 | `[M-118.1-ffi-perf-bench]` | memcpy/memmove bench harness для FFI intrinsics не построен (сами intrinsics landed). | plan-118.1 Followups | P2 |
-| `[M-D227-literal-range-tests]` | D227 literal-range test corpus (boundary + overflow) не создан (зависит от E_LIT_OUT_OF_RANGE). | spec-decisions/D227 backlog | P2 |
 
 ## P3 — Codegen cleanliness (генерируемый C полиш; рантайм не затронут)
 
@@ -93,6 +91,8 @@
 |---|---|---|---|
 | `[M-118.1-typed-pointer-cookbook]` | docs/typed-pointers.md cookbook не написан (есть только Plan 115 FFI cookbook). | plan-118.1 Followups | P3 |
 | `[M-118.1.7-extern-block]` | `extern "C" { unsafe fn … }` block-сахар (gated на multi-ABI); сейчас individual `external unsafe fn`. | plan-118.1 Followups | P3 |
+| `[M-D227-alias-newtype-range]` | D227 range-check НЕ покрывает alias/newtype над sized-int (`assignable()` чекает только direct Named + Readonly/Mut/Unsafe; резолв alias-имени требует `self.types`, недоступного на free-fn coercion-сайте). | plan-142 Scoped open-questions | P3 |
+| `[M-D227-float-range-check]` | D227 Rule 5 (f32 exponent overflow) НЕ реализован; Ф.1 scope был integer-only (8 sized-int). | plan-142 Scoped open-questions | P3 |
 
 ## By-design / WON'T-DO (не actionable — кандидаты в dead-markers)
 

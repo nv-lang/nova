@@ -1,10 +1,12 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 142 — D227 literal range enforcement (`E_LIT_OUT_OF_RANGE`)
 
-> **Создан:** 2026-06-11.  **Статус:** 📋 PLANNED.  **Эстимат:** ~0.5 dev-day.
+> **Создан:** 2026-06-11.  **Статус:** ✅ CLOSED (Ф.1–Ф.3, 2026-06-11).  **Эстимат:** ~0.5 dev-day.
 > **Model:** Sonnet/Opus HIGH (type-checker + tests; спека готова).
 > **Триггер:** D227 acceptance не закрыта — `[M-D227-lit-range-error-code]` +
 > `[M-D227-literal-range-tests]` (backlog P1/P2). Gate: после Plan 141 (общий .rs/compiler).
+> **Коммиты:** `d6b209b8e63` (Ф.1 enforcement + fixtures), `2d85fff2175` (Ф.2 spec acceptance),
+> Ф.3 (docs + close). Worktree `nova-p138` @ `plan-138.1`.
 
 ---
 
@@ -12,9 +14,9 @@
 
 **D227** ([03-syntax.md:9153](../../spec/decisions/03-syntax.md), 2026-06-03) — «Numeric literal
 inference — default `int`, context coercion, hard range-check». Spec **написан** (4 правила + D44
-amend), но **enforcement + тесты не сделаны** ([03-syntax.md:9367-9371](../../spec/decisions/03-syntax.md)):
-- [ ] `E_LIT_OUT_OF_RANGE` compiler error code — `[M-D227-lit-range-error-code]` (verify emitted **или** add).
-- [ ] test corpus — `[M-D227-literal-range-tests]`.
+amend); enforcement + тесты **сделаны Plan 142** ([03-syntax.md:9367-9371](../../spec/decisions/03-syntax.md)):
+- [x] `E_LIT_OUT_OF_RANGE` compiler error code — landed Ф.1 (`d6b209b8e63`), emitted at literal→sized-int coercion site (`types/mod.rs` `assignable()`). Closes `[M-D227-lit-range-error-code]`.
+- [x] test corpus — landed Ф.1 в `nova_tests/plan142/` (8 NEG + 2 POS, 10/0). Closes `[M-D227-literal-range-tests]`.
 
 **Ожидаемое поведение (D227):**
 ```nova
@@ -69,13 +71,24 @@ ro d u8  = 255             // ✓ boundary OK
 | R4 | регрессия: существующие фикстуры с «большими» литералами, что раньше тихо проходили | 🟡 MED | broad regression; мигрировать если легитимны |
 
 ## Acceptance
-- **A1** — `u8=300` / `u8=-1` / `i32=3_000_000_000` → `E_LIT_OUT_OF_RANGE` (compile-time).
-- **A2** — boundary POS (`u8=255`, `i8=-128`, `i32=MAX`) компилируются.
-- **A3** — default `int` (без sized-coercion) не триггерит.
-- **A4** — все 8 sized-int + знаковость покрыты; hex/bin/`_` формы.
-- **A5** — D227 spec acceptance ✅; маркеры убраны из backlog.
-- **A6** — 0 регрессий.
+- **A1 ✅** — `u8=300` / `u8=-1` / `i32=3_000_000_000` → `E_LIT_OUT_OF_RANGE` (compile-time). NEG fixtures `neg_u8_300`, `neg_u8_minus1`, `neg_i32_3b` PASS.
+- **A2 ✅** — boundary POS (`u8=255`/`0`, `i8=-128`/`127`, `u16=65535`, `i16` MIN/MAX, `u32=MAX`, `i32` MIN/MAX, `i64.MAX`, `u8=0xFF`) компилируются. `pos_boundaries` compile+run.
+- **A3 ✅** — default `int`/`uint` (без sized-coercion, D227 Rule 1 wide defaults) не триггерит. `pos_wide_int` (3_000_000_000 bare/annotated `int` + int-param) compile+run.
+- **A4 ✅** — все 8 sized-int (u8/16/32/64, i8/16/32/64) + знаковость (`-1` на unsigned, D227 Rule 6 `Unary{Neg,IntLit}` arm); hex (`0x1FF=511`), `_`-разделители покрыты (lexer parses value into IntLit before checker).
+- **A5 ✅** — D227 spec acceptance ✅ (03-syntax.md:9367/9371 + scoped open-questions subsection, Ф.2 `2d85fff2175`); `[M-D227-lit-range-error-code]` + `[M-D227-literal-range-tests]` убраны из backlog-followups.md (Ф.3).
+- **A6 ✅** — 0 регрессий. Baseline-clean: см. Phase outcomes.
+
+## Phase outcomes
+- **Ф.0 (recon)** — verified: `Unary{Neg,IntLit}` (`-1` на unsigned) ранее БЫЛ wholly unchecked (fell to `Compat::Unknown`); sized-int coercion-сайт = `types/mod.rs` `assignable()`.
+- **Ф.1 (enforcement, `d6b209b8e63`)** — `Compat::OutOfRange{msg}` variant + 3 helpers (`sized_int_bounds`, `sized_int_name`, `lit_range_check`) в `types/mod.rs`. `assignable()` IntLit arm + NEW `Unary{Neg,IntLit}` arm (Rule 6). Both call-sites (`f1_check_assign_let` binding + call-arg) exhaustive-match → `[E_LIT_OUT_OF_RANGE]`. i128 throughout (IntLit i64; u64.MAX + negated). plan142 10/0; 0 регрессий.
+- **Ф.2 (spec, `2d85fff2175`)** — 2 D227 acceptance checkboxes → `[x]` + «Открытые вопросы (scoped)» subsection (2 edges). D227/D44/D129 coherence verified. spec-only, no rebuild.
+- **Ф.3 (docs + close)** — этот файл CLOSED; markers убраны из backlog; simplifications + project-creation + nova-private/discussion-log appended. Final regression confirm.
+
+## Scoped open-questions (deferred, документировано в D227 spec)
+- **Alias/newtype над sized-int НЕ range-checked** — `assignable()` проверяет только direct Named sized-int (+ Readonly/Mut/Unsafe wrappers); резолв alias-имени требует `self.types` (недоступно на free-fn coercion-сайте — иначе печатался бы неверный type-name). → `[M-D227-alias-newtype-range]` (P3).
+- **Float range-check (D227 Rule 5, f32 exponent overflow) НЕ реализован** — Ф.1 scope был integer-only (plan §43 «all 8 sized-int», floats не перечислены). → `[M-D227-float-range-check]` (P3).
 
 ## Связь
 - Закрывает `[M-D227-lit-range-error-code]` + `[M-D227-literal-range-tests]`.
+- Открывает (deferred-scope): `[M-D227-alias-newtype-range]` + `[M-D227-float-range-check]` (оба P3).
 - D227 (03-syntax.md) — enforcement + acceptance. D44/D129 cross-ref.

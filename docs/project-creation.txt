@@ -35646,3 +35646,48 @@ composite NaN/-0.0. 8/8 PASS релизным nova. 0 регрессий (plan12
 plan137/131/126 + plan141 t5/t6.
 
 КОММИТЫ: e09c740e92a (Ф.1 codegen+tests), 5dab5b5da5c (Ф.2 spec), Ф.3 docs.
+
+================================================================================
+PLAN 142 — D227 E_LIT_OUT_OF_RANGE COMPILE-TIME LITERAL RANGE-CHECK (2026-06-11)
+✅ CLOSED Ф.1-Ф.3. Ветка plan-138.1, worktree nova-p138. Закрывает backlog-маркеры
+[M-D227-lit-range-error-code] (P1 safety) + [M-D227-literal-range-tests] (P2).
+
+ПРОБЛЕМА (safety-gap): D227 spec (написан 2026-06-03, 03-syntax.md:9153) задавал hard
+compile-time range-check целочисленного литерала при context-coercion к sized-типу, но
+enforcement отсутствовал. u8 = 300 / i32 = 3_000_000_000 тихо проходили (потенциально
+wrap/UB); u8 = -1 (Unary{Neg,IntLit}) вовсе не доходил до проверки (падал в Compat::Unknown).
+
+РЕШЕНИЕ (всё в compiler-codegen/src/types/mod.rs):
+- Новый вариант Compat::OutOfRange{msg} в результате assignable().
+- 3 free-хелпера: sized_int_bounds(name)->Option<(i128,i128)> (u8 0..255, u16 0..65535,
+  u32 0..4294967295, u64 0..u64::MAX, i8/16/32/64 standard; int/uint -> None = wide
+  defaults D227 Rule 1, НЕ чекаются); sized_int_name(tr) (снимает Readonly/Mut/Unsafe,
+  None для alias/newtype — чтобы не печатать неверное имя); lit_range_check(val_i128,name)
+  -> Option<msg> «<val> > <T>.MAX (<max>)» / «<val> < <T>.MIN (<min>)».
+- assignable() IntLit arm: при exp_cat==Int AND sized_int_name(expected).is_some() ->
+  range-check (*v as i128). FloatLit / non-sized -> Ok без изменений.
+- НОВЫЙ assignable() arm Unary{op:Neg, operand:IntLit(n)} (D227 Rule 6 negative-in-
+  unsigned): negate как i128 (нет i64::MIN overflow), затем range-check. Раньше WHOLLY
+  unchecked.
+- Оба call-site (f1_check_assign_let binding ~4508 «ro a u8 = v»; call-arg ~4929
+  «write(200)») переведены с if-let Compat::Bad на exhaustive match, эмитят
+  [E_LIT_OUT_OF_RANGE]. i128 throughout (IntLit i64; нужно для u64.MAX + negated).
+  hex/bin/oct + underscore: lexer уже парсит значение в IntLit i64 до чекера.
+
+SPEC: 2 D227 acceptance checkbox (03-syntax.md:9367 error code, 9369-9371 test corpus)
+-> [x]; добавлена subsection «Открытые вопросы (scoped)» — 2 edge: alias/newtype над
+sized-int НЕ чекается (нужен self.types на free-fn coercion-сайте); float Rule 5 (f32
+exponent overflow) НЕ реализован (Ф.1 integer-only). D227/D44/D129 coherence verified.
+
+SCOPED-EDGE (deferred, P3 backlog): [M-D227-alias-newtype-range] + [M-D227-float-range-check].
+
+ДОКАЗАТЕЛЬСТВА: nova_tests/plan142/ NEG (каждый -> [E_LIT_OUT_OF_RANGE]): neg_u8_300,
+neg_u8_minus1, neg_i32_3b, neg_u16_70000, neg_i8_200, neg_u8_hex_1ff (0x1FF=511),
+neg_u32_4b (4294967296), neg_arg_u8 (call-arg path). POS: pos_boundaries (все 8 sized
+MIN/MAX точно в диапазоне) + pos_wide_int (3_000_000_000 в bare/annotated int + int-param,
+Rule 1). 10/0 PASS релизным nova. 0 регрессий (plan138_1/2/3, plan131, plan90_1, plan126,
+plan59, plan101_1, plan137 — все FAIL pre-existing/known: vec_debug_pos, t2_map_set_clone,
+6 plan59 tuple-mangle).
+
+КОММИТЫ: d6b209b8e63 (Ф.1 enforcement + 10 fixtures), 2d85fff2175 (Ф.2 spec acceptance),
+Ф.3 docs.
