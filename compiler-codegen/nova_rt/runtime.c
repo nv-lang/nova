@@ -45,11 +45,14 @@ struct NovaWorker {
     uv_thread_t       thread;
     uv_loop_t         loop;
     uv_async_t        wake_handle;
-    /* Plan 44.5 Layer 2: Chase-Lev deque вместо mutex+scope push.
-     * Lock-free owner ops, lock-free CAS steals. */
-    NovaDeque         deque;
+    /* Plan 83-go-cmn Ф.1: fixed-size inline ring (go1.4 P.runq port) replaces
+     * the Chase-Lev deque. Base address stable for the worker's whole life →
+     * no realloc/grow race. Owner FIFO get + store-release tail; thieves CAS
+     * head (steal-half); overflow spills to _nova_global_runq via schedlink.
+     * ~32 KiB inline (sizeof(ptr)*NOVA_RUNQ_CAP). */
+    NovaRunq          runq;
     /* scope остаётся для cancellation propagation и fiber bookkeeping —
-     * но fiber dispatch идёт через deque. */
+     * но fiber dispatch идёт через runq. */
     NovaFiberQueue    scope;
     nova_atomic_bool  stop;
     nova_atomic_int   pending_count;
@@ -203,6 +206,26 @@ static NovaWorker*     _workers = NULL;
 static int             _n_workers = 0;          /* materialized worker count */
 static nova_atomic_int _round_robin = 0;
 
+/* Plan 83-go-cmn Ф.1: ONE global overflow run queue per runtime. Workers
+ * spill HALF their ring here (nova_runq_put_slow) when it fills, and pull
+ * from it (nova_globrunq_get_one) in the find-work loop. Initialized once in
+ * the pool-materialize path. */
+static NovaGlobalRunq  _nova_global_runq;
+
+/* runq.h declares `extern NovaRunqDiag nova_runq_diag;` — defined once here
+ * (runtime.c is the sole TU linked with the runtime; the standalone
+ * test_runq.c compiles its OWN copy, never linked together → no ODR clash). */
+NovaRunqDiag nova_runq_diag = {0};
+
+/* runq.h declares `mco_coro** nova_co_schedlink(mco_coro*)` — defined once
+ * here. Returns an lvalue-pointer to the intrusive overflow link on the
+ * fiber's SpawnCtxBase (mco user-data). The schedlink field is mirrored in
+ * the codegen SpawnCtx_N layouts (emit_c.rs) at the same offset. */
+mco_coro** nova_co_schedlink(mco_coro* co) {
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    return base ? &base->schedlink : NULL;
+}
+
 
 /* Plan 83.11 Phase A diagnostics (Variant B): in-process runtime state dump.
  *
@@ -309,7 +332,7 @@ void nova_runtime_dump_state(const char* reason) {
                     wi, alive_non_parked);
             }
             /* Deque + runnext detail — fibers WAITING TO RUN but worker not draining */
-            int dq_size = (int)nova_deque_size_approx(&w->deque);
+            int dq_size = (int)nova_runq_len(&w->runq);
             if (dq_size > 0 || w->runnext) {
                 fprintf(stderr, "[w.%d.deque] size=%d runnext=%p\n",
                         wi, dq_size, (void*)w->runnext);
@@ -685,7 +708,7 @@ static void _worker_dispatch_ready(void* ctx, mco_coro* co) {
         mco_coro* prev = w->runnext;
         w->runnext = co;
         if (prev) {
-            nova_deque_push(&w->deque, prev);
+            nova_runq_put(&w->runq, &_nova_global_runq, prev);
         }
     } else {
         /* Cross-thread: queue under mutex, wake worker's uv loop. */
@@ -791,7 +814,7 @@ static void _worker_main(void* arg) {
          * straight to the deque) and cross-thread ones are both visible. */
         nova_mutex_lock(&w->wake_mu);
         for (int i = 0; i < w->wake_pending_count; i++) {
-            nova_deque_push(&w->deque, w->wake_pending[i]);
+            nova_runq_put(&w->runq, &_nova_global_runq, w->wake_pending[i]);
         }
         w->wake_pending_count = 0;
         nova_mutex_unlock(&w->wake_mu);
@@ -801,31 +824,40 @@ static void _worker_main(void* arg) {
         /* Plan 83.7 (2026-05-25): (1.9) runnext priority slot — woken
          * fiber from same-thread dispatch_ready (channel recv → handler
          * spawn re-wake same-worker chain). Cache-warm vs going through
-         * deque tail. Same-thread access — plain pointer. */
+         * the ring tail. Same-thread access — plain pointer. */
         if (w->runnext) {
             co = w->runnext;
             w->runnext = NULL;
         }
 
-        /* (2) Local deque — owner LIFO pop. Wait-free hot path. Свежие
-         * spawn'ы + разбуженные fiber'ы (приоритет — они progress'ят). */
+        /* (2) Plan 83-go-cmn Ф.1: local fixed ring — owner FIFO get (was
+         * Chase-Lev LIFO pop; FIFO is correctness-preserving, timing only —
+         * runnext remains the LIFO fast slot). Свежие spawn'ы + разбуженные. */
         if (!co) {
-            co = (mco_coro*)nova_deque_pop(&w->deque);
+            co = nova_runq_get(&w->runq);
         }
 
         /* (2.5) Plan 44.7: yielded-FIFO — кооперативно вытесненные fiber'ы.
-         * После deque, до steal: своя preempted-работа продвигается, но
+         * После ring, до steal: своя preempted-работа продвигается, но
          * уступает свежим/разбуженным. FIFO → честный round-robin между
          * несколькими CPU-bound fiber'ами. */
         if (!co) {
             co = _worker_yielded_pop(w);
         }
 
-        /* (3) Idle — try steal у соседей (FIFO from their deque top). */
+        /* (2.7) Plan 83-go-cmn Ф.1: drain the global overflow queue — fibers
+         * spilled by nova_runq_put_slow when some worker's ring filled (>CAP).
+         * MUST run as a consumer here, else overflow fibers strand forever →
+         * pending_remote never reaches 0 → deterministic supervised hang. */
+        if (!co) {
+            co = nova_globrunq_get_one(&_nova_global_runq);
+        }
+
+        /* (3) Idle — try steal у соседей (steal-half from their ring head). */
         if (!co) {
             for (int i = 0; i < _n_workers; i++) {
                 if (i == w->id) continue;
-                co = (mco_coro*)nova_deque_steal(&_workers[i].deque);
+                co = nova_runq_steal(&w->runq, &_workers[i].runq);
                 if (co) break;
             }
         }
@@ -1084,8 +1116,9 @@ static void _worker_main(void* arg) {
             co = w->runnext;
             w->runnext = NULL;
         }
-        if (!co) co = (mco_coro*)nova_deque_pop(&w->deque);
+        if (!co) co = nova_runq_get(&w->runq);
         if (!co) co = _worker_yielded_pop(w);
+        if (!co) co = nova_globrunq_get_one(&_nova_global_runq); /* Ф.1: drain overflow */
         if (!co) break;
         if (mco_status(co) == MCO_SUSPENDED) {
             if (nova_fiber_state_cas(co, NOVA_FIBER_STATE_IDLE,
@@ -1367,6 +1400,7 @@ static void _materialize_pool(void) {
     }
     _n_workers = n_workers;
     nova_aint_init(&_round_robin, 0);
+    nova_globrunq_init(&_nova_global_runq);  /* Plan 83-go-cmn Ф.1: overflow queue */
 
 #ifdef NOVA_GC_BOEHM
     /* Plan 82 Ф.3 (§П3): NovaWorker-массив calloc'нут (C-heap, не GC).
@@ -1389,11 +1423,8 @@ static void _materialize_pool(void) {
         w->preempt_flag = 0;
         w->current_fiber_start = 0;
         nova_scope_init(&w->scope);
-        /* Plan 44.5 Layer 2: per-worker Chase-Lev deque. */
-        if (!nova_deque_init(&w->deque, 64)) {
-            fprintf(stderr, "nova: deque_init failed\n");
-            abort();
-        }
+        /* Plan 83-go-cmn Ф.1: per-worker fixed ring (inline, cannot fail). */
+        nova_runq_init(&w->runq);
         /* Plan 44.5 Layer 5 park/wake: pre-alloc scope arrays on main thread
          * (GC-safe) so worker fibers don't call nova_alloc during slot alloc.
          * Also pre-alloc sched_state so park arrays exist before first park. */
@@ -1520,7 +1551,7 @@ void nova_runtime_shutdown(void) {
         /* Run one more tick to process close. */
         uv_run(&w->loop, UV_RUN_NOWAIT);
         uv_loop_close(&w->loop);
-        nova_deque_destroy(&w->deque);
+        /* Plan 83-go-cmn Ф.1: runq is inline (no heap) → nothing to destroy. */
         free(w->wake_pending);
         w->wake_pending = NULL;
         free(w->yielded);          /* Plan 44.7 yielded-FIFO */
@@ -1880,21 +1911,24 @@ void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope) {
     /* (1) Service UV loop non-blockingly (timers, deferred dispatches). */
     uv_run(&w->loop, UV_RUN_NOWAIT);
 
-    /* (2) Drain cross-thread wake_pending list into deque. */
+    /* (2) Drain cross-thread wake_pending list into the ring. */
     nova_mutex_lock(&w->wake_mu);
     for (int i = 0; i < w->wake_pending_count; i++) {
-        nova_deque_push(&w->deque, w->wake_pending[i]);
+        nova_runq_put(&w->runq, &_nova_global_runq, w->wake_pending[i]);
     }
     w->wake_pending_count = 0;
     nova_mutex_unlock(&w->wake_mu);
 
-    /* (3) Pop candidate: runnext priority, then deque. */
+    /* (3) Pop candidate: runnext priority, then ring, then global overflow. */
     mco_coro* co = NULL;
     if (w->runnext) {
         co = w->runnext;
         w->runnext = NULL;
     }
-    if (!co) co = (mco_coro*)nova_deque_pop(&w->deque);
+    if (!co) co = nova_runq_get(&w->runq);
+    /* Ф.1: also consult the global overflow queue — a nested-supervised pump
+     * must not strand spilled fibers (compounds the overflow black-hole). */
+    if (!co) co = nova_globrunq_get_one(&_nova_global_runq);
 
     if (!co) {
         /* (5) Nothing ready — poll UV loop non-blockingly, then sleep 1ms.
@@ -1915,7 +1949,7 @@ void nova_runtime_worker_pump_scope(struct NovaFiberQueue* scope) {
         /* (4b) Different scope (or orphan) — push back and return promptly
          * so the outer loop re-checks pending_remote. Non-blocking UV tick +
          * 1ms sleep matches the (5) path to avoid storms. */
-        nova_deque_push(&w->deque, co);
+        nova_runq_put(&w->runq, &_nova_global_runq, co);
         uv_run(&w->loop, UV_RUN_NOWAIT);
         uv_sleep(1);
     }

@@ -6607,6 +6607,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             "    nova_atomic_int _nova_cancel_mask_count;");
         let _ = writeln!(self.lambda_forward_decls,
             "    int64_t _nova_cancel_deadline_ns;");
+        // Plan 83-go-cmn Ф.1: intrusive overflow link — MUST be the LAST base
+        // field, mirroring NovaSpawnCtxBase.schedlink in fibers.h. Without it
+        // the overflow path (nova_co_schedlink) would write onto the first user
+        // capture field → silent corruption / heap overflow past the pool class.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    mco_coro* schedlink;");
         // User capture fields follow base fields.
         for (cap, ty, by_value) in &captures {
             if *by_value {
@@ -7287,6 +7293,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             "    nova_atomic_int _nova_cancel_mask_count;");
         let _ = writeln!(self.lambda_forward_decls,
             "    int64_t _nova_cancel_deadline_ns;");
+        // Plan 83-go-cmn Ф.1: intrusive overflow link — LAST base field,
+        // mirrors NovaSpawnCtxBase.schedlink (fibers.h). See emit_spawn note.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    mco_coro* schedlink;");
         for (cap, ty, by_value) in &captures {
             if *by_value {
                 let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);

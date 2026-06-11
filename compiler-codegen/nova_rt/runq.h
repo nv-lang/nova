@@ -115,6 +115,8 @@ typedef struct NovaRunqDiag {
     volatile uint64_t grab_retries;      /* inconsistent-snapshot retries     */
     volatile uint64_t global_puts;       /* batches pushed to global queue    */
     volatile uint64_t global_pulls;      /* fibers pulled from global queue    */
+    volatile uint64_t steal_overflow_drops; /* MUST stay 0: steal into a      */
+                                         /* non-empty self ring (guard fire)  */
 } NovaRunqDiag;
 
 extern NovaRunqDiag nova_runq_diag;
@@ -302,9 +304,14 @@ static inline mco_coro* nova_runq_steal(NovaRunq* self, NovaRunq* victim) {
     if (n == 0) return gp;            /* only one stolen → nothing to enqueue */
     uint32_t h = __atomic_load_n(&self->head, __ATOMIC_ACQUIRE); /* load-acquire, synchronize with consumers */
     uint32_t t = self->tail;
-    /* self is empty/near-empty when stealing, so this never overflows; assert
-     * the Go invariant (go1.4 throws "runqsteal: runq overflow"). */
-    if ((uint32_t)(t - h + n) >= NOVA_RUNQ_CAP) return gp; /* defensive: drop-into-caller instead of abort */
+    /* self is empty/near-empty when stealing (caller only steals after its
+     * own runq_get returned NULL), so this guard NEVER fires in practice. If
+     * it ever does, count it (must stay 0) instead of silently abandoning
+     * batch[0..n-1]; return the one fiber we already hold. go1.4 throws here. */
+    if ((uint32_t)(t - h + n) >= NOVA_RUNQ_CAP) {
+        __atomic_fetch_add(&nova_runq_diag.steal_overflow_drops, 1u, __ATOMIC_RELAXED);
+        return gp;
+    }
     for (uint32_t i = 0; i < n; i++, t++)
         self->slots[t & NOVA_RUNQ_MASK] = batch[i];
     __atomic_store_n(&self->tail, t, __ATOMIC_RELEASE); /* store-release, makes the item available for consumption */

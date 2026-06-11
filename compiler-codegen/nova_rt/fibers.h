@@ -1236,6 +1236,13 @@ typedef struct {
      * while mask > 0, throw CleanupTimeoutError instead of suspending.
      * 0 = no active deadline. */
     int64_t              _nova_cancel_deadline_ns;
+    /* Plan 83-go-cmn Ф.1: intrusive overflow link. Used ONLY while this fiber
+     * lives on the global overflow queue (NovaGlobalRunq) after a
+     * nova_runq_put_slow spill; NULL otherwise. Accessed via nova_co_schedlink.
+     * MUST be mirrored as the LAST base field in the codegen SpawnCtx_N layouts
+     * (emit_c.rs emit_spawn + emit_detach) — else the overflow write lands on a
+     * user-capture field. Zero-init by nova_alloc / pool memset. */
+    mco_coro*            schedlink;
 } NovaSpawnCtxBase;
 
 /* Plan 83.4.5.7: helper — CAS fiber state. Returns true if CAS succeeded.
