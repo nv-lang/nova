@@ -18,6 +18,36 @@
 
 ---
 
+### Plan 141 — Structural equality field-by-field; `memcmp` отозван с композитов (2026-06-11, ✅ CLOSED)
+
+- **Где** — `compiler-codegen/src/codegen/emit_c.rs` (helper `emit_field_eq` ~11125 + 4 call-sites:
+  tuple-eq ~16893, sum-eq ~17243, оба Option-eq генератора ~29243/29346), `spec/decisions/08-runtime.md`
+  (D109 amend Plan 141), `spec/decisions/open-questions.md` (Q32), `nova_tests/plan141/` (t1-t8).
+- **Что было неверно (soundness-баг)** — равенство кортежей/sum-payload/Option-payload
+  генерировалось через `memcmp(&l, &r, sizeof(struct))` по всей struct. Это давало:
+  (1) **float** — `-0.0 != +0.0` (разные биты, а IEEE `==` = равны) и бит-идентичный `NaN == NaN`
+  true (а IEEE = `NaN != NaN`); (2) **padded struct** — indeterminate padding-байты при mixed-size
+  полях → два равных значения ≠; (3) **nested composite** — вложенный record/tuple/sum сравнивался
+  побайтово (pointer-bits / struct-bytes), а sum с tuple-payload вовсе давал **C compile error**.
+- **Что сделано** — извлечён shared `emit_field_eq(&self, c_type, l, r, depth) -> String`, диспатчащий
+  равенство **по C-типу**: scalar/int/float → `(l == r)` (намеренный IEEE — `-0.0==+0.0`, `NaN!=NaN`);
+  `nova_str` → `nova_str_eq`; mono-tuple `_NovaTuple_…` → recursive field-by-field; legacy `_NovaTupleN`
+  → per-slot; `NovaOpt_<inner>` → delegate `nova_opt_eq_<inner>`; single `Nova_X*` record/sum → structural
+  (reuse `@equal`/`@eq`/`@compare==0`, иначе recurse sum-tag+payload по `sum_schemas`; **НИКОГДА** pointer-`==`).
+  Depth-cap 32 — guard от cyclic record-eq.
+- **Что осталось упрощением** — `memcmp` сохранён ТОЛЬКО для: (1) `[]u8` byte-blob `@compare` (Plan 90 D141,
+  где byte-eq = семантика); (2) str-literal / interrupt / bench-name match; (3) **no-schema value-struct
+  fallback** (`NovaRes_`/`NovaArray_` by-value, схемы нет) — сохраняет тотальность codegen, совпадает с
+  прежним поведением, для этих типов polно-байтовое сравнение безопасно (нет float/padding-проблем в их layout).
+- **Cycle-семантика** — record-граф с циклом (структурный `==` бесконечно рекурсивный) — out-of-scope V1
+  (depth-cap), вынесен в **Q32** (bisimulation vs identity-fallback vs `E_EQ_CYCLIC_TYPE` — open).
+- **Приоритет** — был **P1** (correctness/soundness). Закрывает floating-маркер
+  `[M-codegen-memcmp-equality-float-padding]` (удалён из backlog OPEN-view).
+- **Доказательства** — `nova_tests/plan141/` t1 (float -0.0), t2 (NaN), t3 (padding), t4 (nested tuple),
+  t5 (sum record-payload), t6 (sum tuple-payload — был C-error), t7 (str-in-tuple), t8 (Option composite
+  NaN/-0.0). 8/8 PASS через релизный nova. 0 регрессий по eq-heavy (plan126/126_2/131/138_1/138_2/59/137/101_1).
+- **Коммиты** — `e09c740e92a` (Ф.1 codegen+tests), `5dab5b5da5c` (Ф.2 spec D109 amend + Q32), Ф.3 docs (this).
+
 ### Plan 138.3 — `Clone` = deep/recursive; collection-clone УДЕРЖАН shallow (2026-06-10, ✅ CLOSED spec / 🟡 impl-blocked)
 
 - **Где** — `std/collections/vec_owned.nv` (`@clone`), `std/collections/hashmap.nv`

@@ -25,7 +25,6 @@
 |---|---|---|---|
 | `[M-83.10.4-iso-cancel-startup-race]` | Iso-cancel startup race (supervised(cancel:) первый тест TIMEOUT); 83.10.5 tactical fix неадекватен (~55%), арх. Ф.B не сделана; 3 stress-теста disabled. | plan-83.11 Followups | P1 |
 | `[M-83.11-grow-vs-wake-race]` | Grow-vs-wake torn pointer-read race (grow_state swap несинхр. с driver wake); тесты gated AUTOARM=0; 3 попытки фикса провалены — НЕ повторять. | plan-83.11 Followups | P1 |
-| `[M-codegen-memcmp-equality-float-padding]` | Равенство кортежей/sum-payload через `memcmp` всей struct — неверно для float (`-0.0`/`NaN`) и padded-struct. Field-by-field по C-типу. | new codegen-correctness mini-план | P1 |
 | `[M-D227-lit-range-error-code]` | D227 compile-time `E_LIT_OUT_OF_RANGE` для literal-overflow не реализован; код отсутствует. | spec-decisions/D227 backlog | P1 |
 | `[M-debug-line-directives]` | Нет `#line N "file.nv"` → дебаггер показывает C, не Nova. Только comment-only `/* SRC */`. | Plan 25 G9 → dedicated план | P1 |
 

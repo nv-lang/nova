@@ -35596,3 +35596,53 @@ D184 amend (указатели): return-mut-default = pointee (-> *mut T writabl
 - => @ (bare SelfAccess) вместо => self в @iter() методах — "self" — это Ident,
   emits "return self" в C (undeclared), "@" = SelfAccess → "return nova_self" ✓.
 - Vec inline codegen (не Nova-body @index) — проще монофизации, один C statement-expr.
+
+================================================================================
+PLAN 141 — STRUCTURAL EQUALITY FIELD-BY-FIELD (fix memcmp tuple/sum/Option eq) (2026-06-11)
+✅ CLOSED Ф.1-Ф.3. Ветка plan-138.1, worktree nova-p138. Закрывает floating-маркер
+[M-codegen-memcmp-equality-float-padding] (P1 correctness/soundness).
+
+ПРОБЛЕМА (soundness-баг): равенство кортежей / sum-payload / Option-payload
+генерировалось через memcmp(&l,&r,sizeof(struct)) по всей struct. Неверно для:
+- float: -0.0 != +0.0 (разные биты, IEEE == = равны); бит-идентичный NaN == NaN
+  true (IEEE = NaN != NaN). Кортеж/Option с float → неверное равенство.
+- padded struct: indeterminate padding-байты (mixed-size поля) → два равных значения ≠.
+- nested composite: вложенный record/tuple/sum сравнивался побайтово (pointer-bits /
+  struct-bytes); sum с tuple-payload давал C compile error.
+
+РЕШЕНИЕ: shared helper emit_field_eq(&self, c_type, l, r, depth) -> String в
+emit_c.rs (~11125, перед c_type_to_nova_name), диспатч РАВЕНСТВА ПО C-ТИПУ:
+- scalar/int/float -> (l == r)  [намеренный IEEE: -0.0==+0.0, NaN!=NaN]
+- nova_str -> nova_str_eq
+- mono-tuple _NovaTuple_... -> recursive field-by-field по parse_mono_tuple_elements
+- legacy _NovaTupleN -> per-slot .fi==.fi
+- NovaOpt_<inner> -> delegate nova_opt_eq_<inner>  (СТРИПАТЬ NovaOpt_ префикс, НЕ
+  sanitize_for_novaopt всё — иначе self-recursive nova_opt_eq_NovaOpt_... CC-FAIL)
+- single Nova_X* record/sum -> structural: reuse @equal/@eq из method_overloads,
+  иначе @compare==0, иначе recurse sum-tag+payload по sum_schemas. НИКОГДА pointer-==.
+- unknown by-value struct (NovaRes_/NovaArray_, нет схемы) -> memcmp fallback (тотальность).
+Depth-cap 32 — guard от cyclic record-eq (out-of-scope V1).
+
+4 CALL-SITES переключены: tuple-eq (~16893, drop memcmp -> AND по emit_field_eq),
+sum-eq per-field (~17243, str-only loop -> single emit_field_eq(&sty,...)), ОБА
+Option-eq генератора (register_novaopt_decl{,_forced} ~29243/29346, composite payload
+-> emit_field_eq вместо memcmp; sibling-fix: Option[(f64,int)] -0.0/NaN был unsound).
+emit_field_eq — &self (только READ method_overloads/all_methods/sum_schemas) → зовётся
+из &mut (BinOp) и &self (Option-gen) контекстов.
+
+memcmp ТЕПЕРЬ ТОЛЬКО: []u8 @compare (Plan 90 D141), str-literal/bench-name match,
+no-schema value-struct fallback (NovaRes_/NovaArray_).
+
+SPEC: D109 amend (Plan 141) в spec/decisions/08-runtime.md — structural == field-by-field
+по C-типу + float IEEE + soundness-rationale + memcmp-retained-list + record-поля
+structural + depth-cap note. НЕ D183/D237 (02-types.md) — те про именование протокола
+Equal, codegen-семантика == относится к D109 auto-derive family. Новый Q32 в
+open-questions.md (record-cycle eq: bisimulation vs identity vs E_EQ_CYCLIC_TYPE — open).
+
+ДОКАЗАТЕЛЬСТВА: nova_tests/plan141/ t1 float -0.0, t2 NaN, t3 padding, t4 nested tuple,
+t5 sum record-payload, t6 sum tuple-payload (был C-error), t7 str-in-tuple, t8 Option
+composite NaN/-0.0. 8/8 PASS релизным nova. 0 регрессий (plan126/126_2/131/138_1/138_2/
+59/137/101_1). plan105 dir НЕ существует (acceptance ссылался) — sum-coverage через
+plan137/131/126 + plan141 t5/t6.
+
+КОММИТЫ: e09c740e92a (Ф.1 codegen+tests), 5dab5b5da5c (Ф.2 spec), Ф.3 docs.
