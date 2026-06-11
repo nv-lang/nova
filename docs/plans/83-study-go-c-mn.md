@@ -605,4 +605,24 @@ adversarial review.
   + бюджеты). Нет runtime-изменений → нет регрессий. grow_vs_wake/stress_iso_3e остаются зелёными.
 - **Дальше:** Ф.3 (nspinning/note) — остаётся следующей крупной фазой порта.
 
+### 9.10 Ф.3 ОТЛОЖЕН — design-finding: uv_async уже note, coalescing gated на Ф.4 (2026-06-11)
+
+**Design-workflow (map + design + adversarial review) → решение: НЕ реализовывать Ф.3 сейчас.**
+Без кода — правильный исход de-risking (предотвращён lost-wakeup).
+
+- **uv_async УЖЕ корректный note-примитив** (idempotent + before/after ordering + coalescing +
+  IOCP-backed на Windows). Замена на ручной Go lock_sema = чистый lost-wakeup риск ради ~нуля →
+  **Option A/C отклонены.** Re-scan-before-park уже структурно в find-work loop. Маркер
+  `[M-83-gocmn-note-primitive-deferred]` (note.h нужен только если Ф.6/Ф.8 уберут libuv из park).
+- **Option B (nspinning coalescing) — НЕБЕЗОПАСЕН в текущей топологии** (review GAP-1/2/3):
+  cross-thread работа публикуется в **per-worker `wake_pending`** (dispatch_ready / spawn_global
+  round-robin), но spinner сканит только runnext|local|global|steal → НЕ дренит чужой wake_pending
+  → coalescing-skip → lost-wakeup. Go-инвариант «spinner ⇒ вся работа достижима» НЕ держится для
+  per-worker wake_pending топологии Nova.
+- **Безопасный subset** (accounting + recheck) — без value (uv_async уже корректен; recheck уже есть).
+- **Решение:** Ф.3 coalescing **gated на Ф.4** (global-queue routing — spinner сканит global, поэтому
+  cross-thread работа через global станет coalesce-safe). **Порядок ФЛИПается: Ф.4 → Ф.3-coalesce.**
+  Маркер `[M-83-f3-coalesce-gated-on-f4]`. НЕ реопен grow-vs-wake/iso-cancel/Ф.2 (counter аддитивен).
+- **Дальше:** Ф.4 (global queue + steal-half) — разблокирует Ф.3 coalescing + даёт work-stealing value.
+
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).
