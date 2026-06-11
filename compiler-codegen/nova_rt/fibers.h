@@ -464,6 +464,18 @@ static inline nova_atomic_int* nova_sched_pending_wake_at(NovaSchedState* st, in
     return ch ? &ch[o] : NULL;
 }
 
+/* Plan 83-go-cmn Ф.1b followup [M-83.11-f1b-acquire-capacity]: ACQUIRE-read of
+ * capacity for the `slot < capacity` accessor-guards. capacity is RELEASE-stored
+ * LAST in nova_sched_grow_state (after every chunk publish), so an ACQUIRE-load
+ * here establishes happens-before: a reader observing slot<capacity is
+ * guaranteed the chunk for that slot is published → the accessor returns
+ * non-NULL. On x86 TSO a plain read sufficed; on weak memory (ARM) the ACQUIRE
+ * stops the accessor's chunk-ptr load being speculated ahead of the guard →
+ * closes the theoretical NULL-deref window (clean crash, never torn-pointer). */
+static inline int nova_sched_cap_acq(NovaSchedState* st) {
+    return __atomic_load_n(&st->capacity, __ATOMIC_ACQUIRE);
+}
+
 /* O(1) lookup: pointer-deref. NULL = state ещё не allocated
  * (никто не park'ился в этом scope). */
 static inline NovaSchedState* nova_sched_find_state(NovaFiberQueue* scope) {
