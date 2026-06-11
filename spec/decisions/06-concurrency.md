@@ -5917,11 +5917,9 @@ test-runner pop'нул main's stack frame, и `_nova_scope_q_0.armed_sleeps_head
 - Должен ли `pending_driver_jobs` counter экспонироваться через
   `nova runtime introspect` / sysmon для observability long-running
   cancel storms? — **Q27**.
-- (Plan 83-go-cmn Ф.1b / D243) Должен ли guard `slot < st->capacity` читать
-  capacity ACQUIRE-load'ом? На x86 TSO plain-load достаточен; на weak-memory
-  (ARM) — теоретическое NULL-окно (chunk-ptr ACQUIRE спекулируется вперёд
-  plain capacity-read). Hardening дёшев; ARM-CI нет для валидации. —
-  **Q28** (`[M-83.11-f1b-acquire-capacity]`).
+- ~~(Plan 83-go-cmn Ф.1b / D243) Должен ли guard читать capacity ACQUIRE?~~ —
+  **Q28 ✅ ЗАКРЫТО 2026-06-11**: да, ACQUIRE (`nova_sched_cap_acq`), commit
+  `98b4b05c6ae`. Закрывает `[M-83.11-f1b-acquire-capacity]`. См. D243 §Followup.
 - (Plan 83-go-cmn Ф.4) Должен ли `runnext` (LIFO fast-slot) быть stealable под
   устойчивым дисбалансом (Go делает stealable после grace-tick) или остаться
   non-stealable (Tokio-parity, текущий выбор Nova)? — **Q29**.
@@ -5984,9 +5982,12 @@ mco_get_user_data в lock-free wake-путь И переоткрывал lost-wa
 → fences не пере-доказываются. См. plan 83-study-go-c-mn §9.4.
 
 ### Followup
-`[M-83.11-f1b-acquire-capacity]`: `slot < st->capacity` guards читают capacity PLAIN; на
-weak-memory (ARM) не парится с RELEASE-store capacity → теоретическое NULL-окно (clean
-crash, НЕ torn-pointer; non-regression; x86 TSO не затронут). Hardening: ACQUIRE-load capacity.
+`[M-83.11-f1b-acquire-capacity]` — ✅ **RESOLVED 2026-06-11** (commit `98b4b05c6ae`). Добавлен
+`nova_sched_cap_acq(st)` = ACQUIRE-load capacity; применён на всех ~14 accessor-guard сайтах
+(nova_sched.h ×10, driver.c ×2, runtime.c ×2). Теперь guard `slot < cap_acq(st)` парится с
+RELEASE-store capacity → на ARM accessor chunk-ptr не спекулируется вперёд guard'а → NULL-окно
+закрыто. Диагностические dump-чтения + register_pending grow-trigger оставлены plain.
+Verified x86: smoke + grow_vs_wake 40/40 (race stays closed). **Q28 ✅ закрыт.**
 
 ### Validation
 grow_vs_wake_explicit 100/100 (MP=1) + 66/66 (MP=16); stress_iso_3e 66/66; semaphore_batch_n
