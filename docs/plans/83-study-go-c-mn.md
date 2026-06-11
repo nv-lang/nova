@@ -267,13 +267,18 @@ validation (no STALE / no lost-cancel impossible-state signatures).
 
 ## 7. Spec / D / Q обновления
 
-- `spec/decisions/06-concurrency.md`: **D241** (fixed-size inline runq contract + global
-  overflow, supersedes growable deque + nova_sched_grow_state), **D242** (gopark/goready
-  ordering + READY-sentinel latch, retires D228-era pending_wake), **D243** (nspinning +
-  re-scan + Go-note, worker-wakeup decoupled from uv_async), **D244** (per-worker 4-ary timer
-  heap + cancel-during-fire exactly-once, amends D228 sleep-state-machine), **AMEND D103**
-  (sysmon tick-edge + observe/recover), **D245** (conditional Ф.8: netpoll-in-scheduler + IOCP,
-  или deferral decision).
+> ⚠ **D-нумерация перенумерована (2026-06-11):** изначально зарезервированные D241/D242
+> оказались ЗАНЯТЫ Plan 138 (Iterable/Next/Iter протоколы). Семейство 83-go-cmn сдвинуто
+> на D243+ (следующие свободные после project-wide максимума D242).
+
+- `spec/decisions/06-concurrency.md`: **D243 ✅ WRITTEN** (Ф.1a+Ф.1b — fixed-size inline runq
+  contract + global overflow + chunked stable-address park-state, supersedes growable deque +
+  nova_sched_grow_state realloc; закрывает grow-vs-wake). Будущие фазы:
+  **D244** (Ф.2 gopark/goready ordering + READY-sentinel latch, retires D243-era pending_wake),
+  **D245** (Ф.3 nspinning + re-scan + Go-note, worker-wakeup decoupled from uv_async),
+  **D246** (Ф.6 per-worker 4-ary timer heap + cancel-during-fire exactly-once, amends D228),
+  **AMEND D103** (Ф.7 sysmon tick-edge + observe/recover),
+  **D247** (Ф.8 conditional: netpoll-in-scheduler + IOCP, или deferral decision).
 - `docs/debugging-races.md`: §3 Tooling + §4 Lessons — RELAXED-atomic ring-buffer counters;
   lesson о валидации fixed-ring cut-over с WATCHDOG_DUMP UNSET.
 - Q-memory-model: happens-before fixed-ring publish (slot store → store-release tail; consumer
@@ -489,5 +494,29 @@ grow-переход триггерит гонку, не сырой scale); stres
   Отложено per review (ARM-CI нет для валидации).
 - `[M-park-wake-stress-atomic-counters]` (P3): перевести `+=` в park_wake_stress на AtomicInt,
   чтобы убрать его AUTOARM=0 gate.
+
+### 9.6 Критерии приёмки Ф.1a+Ф.1b (все ✅ выполнены)
+
+| # | Критерий | Статус |
+|---|---|---|
+| AC1 | `nova build`/`nova test` собирается на **clang** 0 ошибок; `deque.h` ретайрнут (не в include-set активного пути), `nova_sched_grow_state` больше не realloc'ит | ✅ |
+| AC2 | grep-audit: **0** raw `st->X[slot]` вне accessor/grow-init; **0** изменённых `__ATOMIC_*` аргументов (fence preservation by construction) | ✅ (агент + review) |
+| AC3 | adversarial diff-review (3 линзы + synth): verdict `safe-to-commit`, fence_hazards **VERIFIED CLEAN** | ✅ |
+| AC4 | `grow_vs_wake_explicit` (§13.6.1 sleep_analog профиль) PASS **100/100 @ MAXPROCS=1** (акут) + **66/66 @ MAXPROCS=16** | ✅ |
+| AC5 | `stress_iso_3e` 66/66 @MP=1; `semaphore_batch_n` 30/30 armed (gate снят) | ✅ |
+| AC6 | `ring_overflow_drain` (NEW, 5000 fibers > ring CAP) — overflow→global drain, **exact-count 5000** (no loss/dup) 10/10 armed | ✅ |
+| AC7 | scale: 1k 30/30, 10k 10/10 @MP=1 (до Plan 82 fiber-arena потолка ~16k) | ✅ |
+| AC8 | concurrency suite **105/4** (≥ baseline 103/5); 4 остаточных — pre-existing (condvar_wait_cancel доказанно, 3 codegen/cc) | ✅ |
+| AC9 | NO fprintf/perturbing-mfence в hot-path (park/wake/grow); валидация через stress_bisect (raw exe, WATCHDOG не нужен) | ✅ |
+| AC10 | §10 skip-stale / §11.6 ctx_pins GC / §12.31 pending_driver_jobs — нетронуты (только lvalue substitution) | ✅ |
+| AC11 | unit `test_runq.c` (clang -O2 -Wall -Wextra, 0 warn): conservation под 1 producer + 4 thieves / 200k — no loss/dup 10/10 | ✅ |
+| AC12 | harness детектит фейлы (контроль): park_wake_stress 13/7 via stress_bisect → зелёные выше — настоящие | ✅ |
+
+**Pos/neg покрытие:** позитивные — `grow_vs_wake_explicit` (no-hang), `ring_overflow_drain`
+(completes); негативные-свойства (failure-modes asserted-absent) — `ring_overflow_drain`
+exact-count (НЕ loss, НЕ dup), `grow_vs_wake_explicit` budget (НЕ hang), `test_runq.c`
+conservation + inconsistent-snapshot-retry (НЕ loss/dup под contention). Классический
+expect-error negative к runtime storage-слою неприменим (нет user-facing error-контракта);
+негативное покрытие = отсутствие loss/dup/hang/lost-wake.
 
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).
