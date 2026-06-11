@@ -1917,8 +1917,8 @@ testable за ~30 минут (revert + nova test + cross-platform smoke).
 | A7 | Error codes сохранены как stable API | 🟢 E_READONLY_FIELD/CONTENT/COERCE/PARAM_NOT_MUT |
 | A8 | Bulk-script consistent rewrite | 🟢 ~12K sites, scripts/plan114_rewrite.py R1-R12 |
 | A9 | String literals + comments не тронуты | 🟢 (line comments skipped, in-string false positives — none) |
-| A10 | Tree-sitter grammar | 🔴 deferred → `[M-114-tree-sitter-grammar]` (отдельный репо) |
-| A11 | LSP semantic tokens + quick-fix | 🔴 deferred → `[M-114-lsp-quickfixes]` (отдельный репо) |
+| A10 | Tree-sitter grammar | ✅ RESOLVED 2026-05-31: tree-sitter-nova 0.2.0 (84/84) — `[M-114-tree-sitter-grammar]` закрыт (отдельный репо) |
+| A11 | LSP semantic tokens + quick-fix | ✅ RESOLVED 2026-05-31: code_action_provider + E_KW_REMOVED_LET (91/0) — `[M-114-lsp-quickfixes]` закрыт (отдельный репо) |
 | A12 | Full nova test ≥ baseline 1559/74 | 🟡 sampling 749+ PASS; pre-existing failures verified в main |
 | A13 | Ф.9 const strict constexpr | 🔴 safety hatch → Plan 114.4 |
 | A14 | Return-type defaults + @-inheritance | 🟢 spec D176 amend закрыт |

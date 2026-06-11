@@ -523,7 +523,7 @@ unsafe { fn_ptr(some_ptr) }
 | `[M-115-newtype-constructor]` | tuple newtype `type X(ptr)` constructor + `.0` access | ✅ CLOSED 2026-06-01 (canonical syntax shipped) |
 | `[M-115-ffi-build-pipeline]` | `nova build --c-shim path/to/file.c` user-shim link CLI | 🟡 deferred (V1 shims live в `nova_rt/`) |
 | `[M-115-bindgen-tool]` | `nova bindgen header.h` auto-generated bindings | 🟡 deferred (major tooling, separate plan) |
-| `[M-115-d126-deprecation]` | `external type X` D126 migration audit | 🟡 deferred (sequence: newtype-constructor ✓ → Plan 91.12 Pattern B → D126 retract) |
+| `[M-115-d126-deprecation]` | `external type X` D126 migration audit | ✅ CLOSED: Plan 91.12 V2 hard retract — `external type X` теперь жёсткая ошибка E_EXTERNAL_TYPE_RETRACTED (sequence: newtype-constructor ✓ → Plan 91.12 Pattern B → D126 retract выполнен) |
 | `[M-115-tuple-gc-types]` | tuple elements GC-tracked types в external fn returns | 🟢 CLOSED as by-design (extern "C" boundary correctly excludes Nova-typed containers) |
 | `[M-115-external-fn-method]` | receiver-method external fn | 🟢 CLOSED as not needed (free fn + Nova-side wrapper sufficient) |
 | `[M-115-examples-ffi-real-build]` | real libsqlite3 link через vcpkg | 🟡 deferred (V1 ships embedded mini-sqlite-equivalent в `nova_rt/sqlite_mini_ffi.h` — proves end-to-end FFI mechanism без external dependency; real link → CI step) |

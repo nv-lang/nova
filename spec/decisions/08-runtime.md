@@ -7048,7 +7048,7 @@ ExplainReport `analyze_fn_for_explain` (Plan 123.1.1) already scans
 ALL top-level `_at_*` lets — V1.2 nested lets live deeper, currently
 not surfaced in V5 telemetry. Future enhancement: deep-walk
 `analyze_fn_for_explain` для V1.2 visibility. Marker
-`[M-123.1.2-explain-deep-walk]` open.
+`[M-123.1.2-explain-deep-walk]` ✅ RESOLVED (Plan 123.5.4, 2026-06-04): deep-walk landed в V5.4 amend, см. `**Closes:**` выше.
 
 ### 7. Acceptance
 
@@ -7074,9 +7074,9 @@ not surfaced in V5 telemetry. Future enhancement: deep-walk
 
 ### 8. Followups
 
-- `[M-123.1.2-explain-deep-walk]` — V5 telemetry doesn't surface
+- `[M-123.1.2-explain-deep-walk]` ✅ RESOLVED (Plan 123.5.4, 2026-06-04) — V5 telemetry doesn't surface
   V1.2 nested lets; deep-walk `analyze_fn_for_explain` to count
-  them in `mut_caches`.
+  them in `mut_caches`. Реализовано в V5.4 amend (см. секцию выше, `**Closes:**`).
 - `[M-123.1.2-loop-body-licm-coordination]` — V1.2 can cache the
   pre-write region inside loop body, but loop-iteration weighting
   for read count is still unidirectional (counts each read once).

@@ -3323,8 +3323,8 @@ fn[T Hash] []T @dedup() -> []T              // bound в fn[T] (D72 + Plan 101.2)
 
 **Plan 101.1 status (2026-05-24):** parser + базовый codegen работают
 для `[]int` element type. Codegen mono-per-T для других element-types
-(`[]str`, `[]User`) — известная limitation, marker
-`[M-fn-prefix-int-only-mono]`, deferred ~4-6h follow-up.
+(`[]str`, `[]User`) — marker `[M-fn-prefix-int-only-mono]`
+✅ RESOLVED (Plan 101 Group I, vec_map_int_str fix).
 
 #### Порядок объявления параметров
 
@@ -5976,8 +5976,8 @@ Codepoint-indexed (как существующий `nova_str_slice` метод).
 ## D145. `fn[T]` префикс — receiver-generic decl + bounds (Plan 101)
 
 > **Status:** MOSTLY CLOSED (2026-05-25, ред. 6 — Plan 101.1/2/3/4 ✅,
-> 101.5 partial). Plan 101.1 codegen для non-int mono-dispatch — единственная
-> deferred edge case (marker [M-fn-prefix-int-only-mono] в simplifications.md).
+> 101.5 partial). Plan 101.1 codegen для non-int mono-dispatch —
+> marker [M-fn-prefix-int-only-mono] ✅ RESOLVED (Plan 101 Group I, vec_map_int_str fix).
 >
 > **Реализовано (Plan 101.1–101.4 + 101.2):**
 > - **101.1** ✅ — Parser `fn[T] ReceiverType @method` + 5 disambiguation
@@ -6001,7 +6001,8 @@ Codepoint-indexed (как существующий `nova_str_slice` метод).
 >   carrier-brackets (Plan 15 D72 path, unchanged).
 >
 > **Deferred (followup):**
-> - vec_map_int_str — T=int U=str cross-type case (M-fn-prefix-int-only-mono).
+> - vec_map_int_str — T=int U=str cross-type case
+>   ✅ RESOLVED (Plan 101 Group I, M-fn-prefix-int-only-mono).
 > - LSP quick-fixes (Plan 101.5 V2).
 >
 > **Ред. 3 (2026-05-24):** complete rewrite после critical review.
@@ -7882,8 +7883,9 @@ Detection: `obj_ty` ends в `*` AND not a known Nova typedef
 AND not `void*` / `nova_ptr`. `is_const` derived от `const ` prefix on
 `obj_ty`; controls write availability.
 
-**Safety convention:** caller wraps в `unsafe { ... }` block. Parser does
-not yet enforce (followup `[M-118.1-unsafe-attr-on-external-fn]`).
+**Safety convention:** caller wraps в `unsafe { ... }` block. Enforcement
+`[M-118.1-unsafe-attr-on-external-fn]` ✅ RESOLVED (Plan 118.1.5 — capability
+ships; note: syntax later superseded by 118.1.7).
 
 **Diagnostic:**
 - `(*ro T).write(v)` — currently emits generic "method not found" via

@@ -10875,7 +10875,7 @@ Plan 55/56/59, документация устарела и вводила в з
   MapLit. Array-spread `[...arr1,...arr2]` не затронут (массивы не
   #from_pairs → резолвер возвращает None).
 
-### [M-52-from-pairs-user-types] — остаётся открытым (НЕ блокер)
+### [M-52-from-pairs-user-types] — ✅ ЗАКРЫТО (Plan 52.1 Ф.4, 2026-05-16)
 User-локальный `type X #from_pairs` не используется десугарингом —
 осознанное scope-решение (safety > flexibility), есть workaround и
 negative-тест `negative_user_from_pairs_shadows.nv`. Не блокер, вне
@@ -24389,7 +24389,7 @@ Plan 55/56/59, документация устарела и вводила в з
   MapLit. Array-spread `[...arr1,...arr2]` не затронут (массивы не
   #from_pairs → резолвер возвращает None).
 
-### [M-52-from-pairs-user-types] — остаётся открытым (НЕ блокер)
+### [M-52-from-pairs-user-types] — ✅ ЗАКРЫТО (Plan 52.1 Ф.4, 2026-05-16)
 User-локальный `type X #from_pairs` не используется десугарингом —
 осознанное scope-решение (safety > flexibility), есть workaround и
 negative-тест `negative_user_from_pairs_shadows.nv`. Не блокер, вне
@@ -28226,7 +28226,7 @@ pre-Plan-109 API.  Документированы в их followups.
 - ✅ `[M-115-cookbook-libpng]` — libpng read_image_dimensions sketch §2.
 
 **OPEN markers (post user-review 2026-06-01):**
-- 🟡 `[M-115-ptr-arithmetic]` — `ptr + offset` для array indexing. V1 ban остаётся (user decision: future if real need).
+- ✅ `[M-115-ptr-arithmetic]` → **SUPERSEDED Plan 134** (`ptr` builtin удалён, заменён `*()` — см. §«Plan 134» выше). Residual трекается как `[M-118-ptr-arithmetic]` (`*T + offset` array indexing). Исходно: `ptr + offset` для array indexing, V1 ban остаётся (user decision: future if real need).
 - 🟢 `[M-115-ptr-typed-deref]` → **CLOSED via Plan 118**. `docs/plans/118-typed-pointers-and-unsafe.md` §5 «Auto-deref» (lines 273-286) + `*p` explicit single-level deref для `*T` family покрывает. Confirmed 2026-06-01.
 - 🟡 `[M-115-bindgen-tool]` — `nova bindgen` CLI deferred (major tooling, separate plan; user-accepted).
 - 🟢 `[M-115-ffi-build-pipeline]` → **CLOSED 2026-06-01.** `[ffi]` section в `nova.toml` (user suggestion) — supports `c_shims` (`.h` via `-include` / `.c` as compilation units), `include_dirs` (`-I`), `libs` (`-l<name>`). Cross-toolchain (clang/MSVC/GCC). Paths relative to manifest dir. Test fixture `nova_tests/plan115/t4_sqlite_e2e_ok.nv` proves pipeline via manifest-declared shim `../examples/ffi/sqlite_mini_ffi.h`.

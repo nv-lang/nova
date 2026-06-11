@@ -477,10 +477,10 @@ Plan 115 НЕ retracts D126. Both patterns valid:
 
 | Маркер | Что | Когда |
 |---|---|---|
-| `[M-115-ptr-arithmetic]` | `ptr + offset` для array indexing в unsafe contexts | Future если real need |
+| `[M-115-ptr-arithmetic]` | `ptr + offset` для array indexing в unsafe contexts | ✅ SUPERSEDED: bare `ptr` удалён (Plan 134), `*T p[i]` через Plan 118; residual → `[M-118-ptr-arithmetic]` |
 | `[M-115-ptr-typed-deref]` | `unsafe { *p }` for typed pointer deref (`*mut T`) | Advanced FFI; not needed для opaque handles |
 | `[M-115-bindgen-tool]` | `nova bindgen` CLI для auto-generating FFI bindings из C header | Major tooling effort; separate plan |
-| `[M-115-d126-deprecation]` | Formal deprecation `external type` D126 в favor of `type X(ptr)` | После stdlib migration to Plan 115 pattern |
+| `[M-115-d126-deprecation]` | Formal deprecation `external type` D126 в favor of `type X(ptr)` | ✅ CLOSED: Plan 91.12 V2 — hard retract D126 |
 
 ---
 
@@ -647,13 +647,14 @@ Per safety hatch (Risk Register R-1) — items extracted from V1 scope:
 - `[M-115-bindgen-tool]` — `nova bindgen` auto-generation (major
   tooling, separate plan).
 - `[M-115-d126-deprecation]` — formal D126 deprecation (post stdlib
-  migration audit).
+  migration audit). ✅ CLOSED: Plan 91.12 V2 — hard retract D126.
 - `[M-115-tuple-gc-types]` — tuple elements GC-tracked types в
   external fn returns (V2).
 - `[M-115-examples-ffi-real-build]` — examples/ffi/ build с real
   libsqlite3 link (V2 — separate CI step).
 - `[M-115-ptr-arithmetic]`, `[M-115-ptr-typed-deref]` — Plan 118
-  territory.
+  territory. ✅ SUPERSEDED: bare `ptr` удалён (Plan 134), `*T`-арифметика
+  через Plan 118; residual → `[M-118-ptr-arithmetic]`.
 
 ### Branch + memory + logs
 

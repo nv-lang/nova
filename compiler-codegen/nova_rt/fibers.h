@@ -736,30 +736,33 @@ typedef struct NovaCancelToken {
 
 /* Аллокация GC-managed токена. nova_alloc zero-инициализирует — все поля
  * 0/NULL/false, токен сразу валиден (unbound, не-cancelled, без каскадов). */
-/* Plan 83.11 [M-83.11-cancel-token-bound-race-2k] fix (2026-06-05):
- * uncollectable allocation для NovaCancelToken. Под high fiber count
- * (≥2k spawns в supervised(cancel:) scope) ctx_pins[]-based GC root
- * protection (Plan 83.11 §11.6) becomes insufficient — Boehm GC reclaims
- * token while it's still в use, then memory is reallocated for new
+/* ✅ SUPERSEDED V1 hypothesis (Plan 83.11 [M-83.11-cancel-token-bound-race-2k], 2026-06-05):
+ * V1 пытался делать uncollectable allocation самого NovaCancelToken. Под
+ * high fiber count (≥2k spawns в supervised(cancel:) scope) ctx_pins[]-based
+ * GC root protection (Plan 83.11 §11.6) казалось insufficient — Boehm GC
+ * reclaims token while it's still в use, then memory is reallocated for new
  * SpawnCtx struct whose write at offset 8 (_nova_worker_slot) overlaps
  * с token->bound_scope offset → panic "token already bound to a live
  * scope" on bind.
  *
- * Root cause hypothesis: Plan 83.11 §11.6 ctx_pins[]-pin works in the
- * pin-time window but Boehm conservative scanner может потерять root
- * под heavy GC pressure (frequent collections triggered by 2k+ spawn
- * allocations + ctx GC churn). Same defensive pattern as Plan 83.4.5.8
- * SpawnCtx uncollectable — eliminates entire class of GC-race bugs.
+ * РЕЗОЛЮЦИЯ V2/V3 (2026-06-08): корень был не в токене, а в ctx_pins[]
+ * array, который сам аллоцировался через nova_alloc и терял root coverage
+ * под GC pressure. Fix перенесён туда (nova_scope_pin_ctx →
+ * nova_alloc_uncollectable для ctx_pins[]); токен снова collectable
+ * (nova_alloc). 30/30 @10k. Followup [M-83.11-cancel-token-explicit-cleanup]
+ * для explicit dispose API остаётся отдельным P2-вопросом.
  *
- * Trade-off: leak ~64 bytes per token until process exit. Acceptable:
- * tokens are caller-owned, typically created once per supervised scope
- * (not в tight loops). Followup [M-83.11-cancel-token-explicit-cleanup]
- * для adding explicit dispose API if long-running service patterns
- * need it. */
+ * Root cause hypothesis (исторический V1): Plan 83.11 §11.6 ctx_pins[]-pin
+ * works in the pin-time window but Boehm conservative scanner может потерять
+ * root под heavy GC pressure (frequent collections triggered by 2k+ spawn
+ * allocations + ctx GC churn). Same defensive pattern as Plan 83.4.5.8
+ * SpawnCtx uncollectable. */
 static inline NovaCancelToken* nova_cancel_token_new(void) {
-    /* TEMP REVERT (Plan 83.11 §11.6 fix investigation 2026-06-08):
-     * reverted nova_alloc_uncollectable → nova_alloc to reproduce the
-     * race and find why ctx_pins[] pin doesn't hold under high fiber count. */
+    /* ✅ RESOLVED V2/V3 (Plan 83.11 §11.6, 2026-06-08) [M-83.11-cancel-token-bound-race-2k]:
+     * race устранена переносом GC-root protection на ctx_pins[] array
+     * (nova_alloc_uncollectable, см. nova_scope_pin_ctx выше) — 30/30 @10k.
+     * Токен сам остаётся collectable (nova_alloc): ctx_pins[] держит его
+     * живым, отдельный uncollectable per-token больше не нужен. */
     return (NovaCancelToken*)nova_alloc(sizeof(NovaCancelToken));
 }
 
