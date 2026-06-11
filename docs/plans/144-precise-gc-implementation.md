@@ -78,3 +78,7 @@ Implementation Option B (Hybrid), фазы-кандидаты (черновик,
 - **Plan 83 / `[M-83-study-go-c-mn]`** — Go 1.4 C-runtime precedent (precise GC как
   кандидат, закрывает Windows fiber-stack issue).
 - **Plan 83.5** — Boehm THREAD_LOCAL_ALLOC (interim perf win, не заменяет Boehm).
+- **[Plan 146](146-growable-fiber-stacks.md)** — растущие стеки; **copying-вариант GATED
+  на этот план** (нужны precise stack-maps для релокации указателей при копировании стека —
+  Boehm conservative не может). Точный GC здесь разблокирует и copying-стеки.
+- Порядок исполнения семейства: [83-mn-runtime-roadmap.md](83-mn-runtime-roadmap.md) §«Порядок».

@@ -28,6 +28,8 @@
 | `[M-debug-line-directives]` | Нет `#line N "file.nv"` → дебаггер показывает C, не Nova. Только comment-only `/* SRC */`. | Plan 25 G9 → dedicated план | P1 |
 | `[M-83-study-go-c-mn]` | Порт рабочего M:N из Go ≤1.4 C-рантайма. **✅ research+8-фаз декомпозиция; ✅ Ф.1a ring-port (deque→runq, clang 103/5); ✅ Ф.1b chunked park-state — закрыл grow-vs-wake.** OPEN до Ф.2-Ф.8 (gopark/nspinning/timer-heap/sysmon/netpoll). | Plan 83-study-go-c-mn | P1 |
 | `[M-msvc-bounds-check-stmt-expr]` | Codegen эмитит GNU statement-expression `(*({ __typeof__(arr)... &_a->data[_i]; }))` для bounds-checked индексации (emit_c.rs ~9700/9720/15783/18571) → cl.exe C2059, **MSVC сломан широко** (регрессия после Plan 82 1049/16; bounds-check добавлен Plan 90/131/138). Fix: per-type inline helper `nova_idx_<T>`. Обнаружено в Plan 83-go-cmn (MSVC baseline). | Plan 145 | P1 |
+| `[M-tsan-race-detector]` | Собрать M:N runtime C под `clang -fsanitize=thread` (Go `-race` model) в отдельном test-режиме → **автоматически ловит** M:N-гонки (grow-vs-wake и т.п.). На ручную отладку M:N-гонок ушли недели (6 провалившихся tactical-попыток); TSAN бы их поймал. Дёшево, высокая отдача. **Делать РАНО** — помогает всем фазам Plan 83-go-cmn Ф.2-Ф.8. | floating (→ dedicated план) | P1 |
+| `[M-146-growable-stacks]` | Растущие fiber-стеки — снять потолок ~16k одновременных fiber'ов (Plan 82 fixed-8MB). segmented (Boehm-ok, hot-split) vs copying (gated на Plan 144). Research-first. | Plan 146 | P2 |
 
 ## P2 — Correctness / Completeness
 
