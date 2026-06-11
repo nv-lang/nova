@@ -582,4 +582,27 @@ independent stress, паттерн Ф.1b). Spec **D244**. Удалён pending_w
   (gated на `[M-nova-linux-build]`).
 - **Дальше:** Ф.3 (nspinning + Go-note), Ф.5 (iso-cancel latch — закрывает [M-83.10.4]).
 
+### 9.9 Ф.5 ЗАКРЫТ — iso-cancel startup race закрыт Ф.2 (verify-only, 2026-06-11)
+
+**✅ `[M-83.10.4-iso-cancel-startup-race]` ЗАКРЫТ. Production-кода НЕ потребовалось** — Ф.2
+закрыл race структурно. Design-workflow (map-first: reproduce → flow → Ф.2-gap → 83.10.5) +
+adversarial review.
+
+- **Race закрыт Ф.2:** timer-backed park (Time.sleep — все 3 фикстуры) вето́ит на cancel ПЕРЕД
+  arming (`_nova_sleep_via_driver` Race-2a early-exit + pre-init sched-state + Race-2b post-submit
+  recheck) + driver async-close → goready → cancel-check в yield. Историческая 10s park-forever
+  не воспроизводится.
+- **Доказательство:** workflow 380 armed-прогонов (MP=1+4, 0 hang) + мои 320 (160@MP=1 +
+  160@MP=4 на re-enabled тестах). Итого 700 armed-прогонов = 0 timeout.
+- **Review-нюанс (важный):** НЕ uncomment verbatim — исходные бюджеты (`< 50+SLACK` = 250ms) были
+  latency-SLA, флакавшие ~0.8% под GC/scheduler jitter (fiber'ы ПРОСЫПАЛИСЬ, wall-clock иногда
+  >250ms). Бюджеты ослаблены до **wake-not-hang** инварианта (`< 1000`/`< 1000`/`< 2000` —
+  10×+ ниже sleep'ов), т.к. цель теста = «cancel будит всех, scope не виснет», не 250ms-латентность.
+  План «50 iters» отвергнут (P(false-good)=0.67) → verify ≥150 (сделано 160).
+- **НЕ применён** условный gopark cancel-veto (review): лечил бы несуществующий тут failure-mode +
+  задел бы out-of-scope bare-park (channels/net) → залогирован как P3 `[M-83-gopark-bare-park-cancel-veto]`.
+- **Файлы:** только `nova_tests/concurrency/supervised_cancel_stress_test.nv` (re-enable + `let`→`ro`
+  + бюджеты). Нет runtime-изменений → нет регрессий. grow_vs_wake/stress_iso_3e остаются зелёными.
+- **Дальше:** Ф.3 (nspinning/note) — остаётся следующей крупной фазой порта.
+
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).

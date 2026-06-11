@@ -35844,3 +35844,17 @@ Validation (clang, independent): grow_vs_wake 40/40, cross_channel 40/40, condva
 40/40, nested_cancel 30/30, mutex_cancel 30/30; concurrency 105/4, plan103_4 25/25. grow-vs-wake
 CLOSED. Followup [M-83.11-f2-arm-tsan]. Коммиты d2830c73d7d (feat), 8e32ab3de46 (spec D244 + план).
 Дальше Ф.3 (nspinning) / Ф.5 (iso-cancel -> [M-83.10.4]).
+
+--------------------------------------------------------------------------------
+2026-06-11 — Ф.5: iso-cancel startup race [M-83.10.4] ЗАКРЫТ (verify-only)
+--------------------------------------------------------------------------------
+Design-workflow (map-first: reproduce→flow→Ф.2-gap→83.10.5) + adversarial review.
+Verdict: already-closed-by-f2 — Ф.2 (gopark timer-backed park вето́ит на cancel перед
+arming + READY-latch + driver async-close) закрыл race СТРУКТУРНО, production-кода НЕ надо.
+Доказательство: workflow 380 armed + мои 320 (160@MP=1 + 160@MP=4) = 700 прогонов, 0 hang.
+
+Review-нюанс: 3 disabled-теста НЕ uncomment verbatim — исходные бюджеты (<50+SLACK=250ms)
+были latency-SLA, флакавшие ~0.8% под jitter (fiber'ы просыпались, wall-clock иногда >250ms).
+Ослаблены до wake-not-hang (<1000/<1000/<2000). НЕ применён условный gopark cancel-veto
+(лечил бы несуществующий тут failure-mode) → P3 [M-83-gopark-bare-park-cancel-veto].
+Файлы: только supervised_cancel_stress_test.nv (re-enable + let->ro + бюджеты), 0 runtime-изм.

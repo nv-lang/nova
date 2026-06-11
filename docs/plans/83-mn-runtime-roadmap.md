@@ -19,9 +19,10 @@
 - **[Plan 145](145-msvc-codegen-portability.md)** — MSVC codegen (stmt-expr → portable).
 - **[Plan 146](146-growable-fiber-stacks.md)** — растущие стеки (снять потолок ~16k).
 
-Открытые M:N race'ы (backlog): `[M-83.10.4-iso-cancel-startup-race]` (P1; фикс → Plan 83-go-cmn Ф.5).
-`[M-83.11-grow-vs-wake-race]` — ✅ **CLOSED 2026-06-11** (Plan 83-go-cmn Ф.1b, chunked stable-address).
-**DO NOT repeat tactical attempts** для оставшихся — нужен структурный подход (как Ф.1b).
+M:N race'ы — **ОБА ЗАКРЫТЫ 2026-06-11:** `[M-83.11-grow-vs-wake-race]` ✅ CLOSED (Ф.1b chunked
+stable-address). `[M-83.10.4-iso-cancel-startup-race]` ✅ CLOSED (Ф.5 verify-only — закрыт
+структурно Ф.2 gopark; 700 armed-прогонов 0 hang; 3 теста re-enabled с wake-not-hang бюджетами).
+Урок: структурный подход (Ф.1b/Ф.2), НЕ tactical attempts.
 
 ---
 
