@@ -183,7 +183,7 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
      * No stuck-fiber scenario.
      *
      * pending_wake[] array allocated в NovaSchedState (lazy grow alongside parked[]). */
-    if (slot < st->capacity) {
+    if (slot < nova_sched_cap_acq(st)) {
         int32_t expected = 1;
         if (__atomic_compare_exchange_n(
                 nova_sched_pending_wake_at(st, slot), &expected, 0,
@@ -196,7 +196,7 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
     __atomic_store_n((volatile bool*)nova_sched_parked_at(st, slot), true, __ATOMIC_SEQ_CST);
 
     /* Post-barrier recheck: wake came в barrier window? */
-    if (slot < st->capacity) {
+    if (slot < nova_sched_cap_acq(st)) {
         int32_t expected = 1;
         if (__atomic_compare_exchange_n(
                 nova_sched_pending_wake_at(st, slot), &expected, 0,
@@ -322,7 +322,7 @@ static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
      * If CAS fails (pending_wake already 1), it means previous wake event
      * не consumed by park yet — park will consume both на next iteration
      * (counter saturates at 1 for now; could be N для multi-event later). */
-    if (st && slot < st->capacity) {
+    if (st && slot < nova_sched_cap_acq(st)) {
         int32_t expected = 0;
         __atomic_compare_exchange_n(
             nova_sched_pending_wake_at(st, slot), &expected, 1,
@@ -333,7 +333,7 @@ static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
     /* Plan 83.4.5.7 (2026-05-23): atomic-bool exchange parked flag.
      * Only winner CAS true→false делает dispatch. */
     bool was_parked = false;
-    if (st && slot < st->capacity) {
+    if (st && slot < nova_sched_cap_acq(st)) {
         bool expected = true;
         was_parked = __atomic_compare_exchange_n(
             (volatile bool*)nova_sched_parked_at(st, slot), &expected, false,
@@ -343,7 +343,7 @@ static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
     /* If we won parked CAS — consume the pending_wake we just delivered
      * (we're about to dispatch the fiber; park will not check pending_wake
      * again because fiber resumes via dispatch, not retry-park). */
-    if (was_parked && st && slot < st->capacity) {
+    if (was_parked && st && slot < nova_sched_cap_acq(st)) {
         __atomic_store_n(nova_sched_pending_wake_at(st, slot), 0, __ATOMIC_RELEASE);
     }
     /* M:N dispatch: push woken fiber back to worker deque.
@@ -373,7 +373,7 @@ static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
 static inline nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return false;
     NovaSchedState* st = nova_sched_find_state(scope);
-    return st && slot < st->capacity && *nova_sched_parked_at(st, slot);
+    return st && slot < nova_sched_cap_acq(st) && *nova_sched_parked_at(st, slot);
 }
 
 /* ─── Plan 83.4.1 (2026-05-23): park-with-predicate ──────────────
@@ -474,7 +474,7 @@ static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
 static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0) return;
     NovaSchedState* st = nova_sched_find_state(scope);
-    if (st && slot < st->capacity) {
+    if (st && slot < nova_sched_cap_acq(st)) {
         NovaSchedStopCb _null_cb = NULL;
         __atomic_store(nova_sched_pending_stop_cb_at(st, slot), &_null_cb, __ATOMIC_RELEASE);
         *nova_sched_pending_handle_at(st, slot) = NULL;
@@ -529,7 +529,8 @@ static inline void nova_scope_cancel_wake_all(NovaFiberQueue* scope) {
     if (!scope) return;
     NovaSchedState* st = nova_sched_find_state(scope);
     if (!st) return;
-    int n = scope->count < st->capacity ? scope->count : st->capacity;
+    int _cap = nova_sched_cap_acq(st);
+    int n = scope->count < _cap ? scope->count : _cap;
     for (int i = 0; i < n; i++) {
         /* Idempotent: parked[slot]==false → wake — no-op (clears flag
          * commit, dispatch_ready возможно re-push'ит running fiber'а
@@ -567,7 +568,8 @@ static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope) {
     /* Iterate min(scope->count, st->capacity). Если spawn_into добавил
      * slots но sched-state ещё не grow'нулся — нечего отменять (никто
      * не park'ался). */
-    int n = scope->count < st->capacity ? scope->count : st->capacity;
+    int _cap = nova_sched_cap_acq(st);
+    int n = scope->count < _cap ? scope->count : _cap;
     for (int i = 0; i < n; i++) {
         NovaSchedStopCb _cb;
         __atomic_load(nova_sched_pending_stop_cb_at(st, i), &_cb, __ATOMIC_ACQUIRE);
@@ -610,7 +612,8 @@ static inline int nova_sched_count_parked(NovaFiberQueue* scope) {
     NovaSchedState* st = nova_sched_find_state(scope);
     if (!st) return 0;
     int count = 0;
-    int n = scope->count < st->capacity ? scope->count : st->capacity;
+    int _cap = nova_sched_cap_acq(st);
+    int n = scope->count < _cap ? scope->count : _cap;
     for (int i = 0; i < n; i++) {
         if (scope->fibers[i] != NULL
             && mco_status(scope->fibers[i]) != MCO_DEAD

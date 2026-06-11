@@ -1870,7 +1870,8 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
          * we observe count=slot+1. */
         int wcount = (int)__atomic_load_n(&w->scope.count, __ATOMIC_ACQUIRE);
         if (!st) continue;
-        int n = wcount < st->capacity ? wcount : st->capacity;
+        int _cap = nova_sched_cap_acq(st);
+        int n = wcount < _cap ? wcount : _cap;
         for (int j = 0; j < n; j++) {
             mco_coro* co = (j < wcount) ? w->scope.fibers[j] : NULL;
             NovaSpawnCtxBase* base = co ? (NovaSpawnCtxBase*)mco_get_user_data(co) : NULL;
@@ -1885,7 +1886,7 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
                 /* ASYNC stop_cb: initiates cross-thread safe uv_close via
                  * nova_loop_defer_close; close_cb wakes fiber afterward. */
                 cb(hdl);
-            } else if (j < st->capacity && *nova_sched_parked_at(st, j)) {
+            } else if (j < nova_sched_cap_acq(st) && *nova_sched_parked_at(st, j)) {
                 /* Bare park (no registered stop_cb): direct dispatch_ready. */
                 nova_sched_wake(&w->scope, j);
             }
