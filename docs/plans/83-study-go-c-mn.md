@@ -518,4 +518,68 @@ conservation + inconsistent-snapshot-retry (НЕ loss/dup под contention). К
 expect-error negative к runtime storage-слою неприменим (нет user-facing error-контракта);
 негативное покрытие = отсутствие loss/dup/hang/lost-wake.
 
+### 9.7 Ф.2 декомпозиция — gopark/goready ordering (design-workflow 2026-06-11)
+
+Design-workflow (4 map + synth + adversarial review). **Verdict `needs-fixes`** (дизайн
+здравый; 7 coverage/ordering-правок). Полный design+review: `tmp_f2_design.json`. Реализация —
+фоновый агент по спеке + 7 corrections → мой adversarial diff-review + stress (паттерн Ф.1b).
+
+**Дизайн:**
+- Новое `nova_atomic_int _nova_park_state` на SpawnCtxBase (4-state latch NIL=0/WAIT/READY/
+  DISPATCHED; zero-init=NIL), by-pointer через `mco_get_user_data(co)`. `_nova_fiber_state`
+  СОХРАНЁН (ортогонален: resume-ownership; park_state = wait/ready handshake).
+- `nova_gopark(unlockf,lock,co)`: G0 fiber_state PARKED → G1 park_state WAIT (SEQ_CST) → G2
+  stash unlockf TLS → G3 commit-recheck CAS READY→DISPATCHED (veto: unlockf inline + self-drain
+  TLS + return без yield) → else mco_yield. `nova_goready(co)`: CAS WAIT→DISPATCHED (sole
+  dispatcher) | NIL→READY (ready-before-park latch) | else no-op.
+- **Сосуществование (ключевое):** и cancel (by-slot), и примитив (by-pointer) воронкуют
+  re-queue через ОДИН `nova_goready(co)` → single-winner переезжает с `parked[slot]` CAS на
+  `park_state WAIT→DISPATCHED` CAS → double-push невозможен by construction. Chunked
+  cancel-registry (pending_handle/pending_stop_cb, Ф.1b) СОХРАНЁН; `parked[]` демотирован до
+  cancel-reachability бита. grow-vs-wake closure не нарушен.
+- **Удаляется:** pending_wake counter + accessor + t1-t4 dance + `_nova_park_unlock_fn`
+  TLS-deferred-hack (TLS переиспользуется как gopark unlockf-carrier).
+
+**7 corrections (применяются до/в коде):** (1) cancel-walk НЕ `co=fibers[i]` — waiter-структуры
+несут `co` + `parked_co[]` (chunked) для bare-park → cancel будит правильный fiber; (2) пин
+gopark G0-G3 + self-drain TLS на READY-fast-path; (3) reset park_state→NIL в end-of-wait;
+(4) park_state/parked[] consistency order на goready-winner; (5) re-audit pending_wake-читателей
+(alloc_slot skip-stale + driver Fix-B) до удаления + новый skip-stale predicate; (6) struct-
+reality (waiters: scope/slot→+co; select=nova_select_park; timed-варианты — реальная работа);
+(7) сохранить SEQ_CST на pending_stop_cb (Plan 83.10.2 heisenbug guard).
+
+**Scope strict:** gopark/goready + blocking-site migration + pending_wake deletion. НЕ nspinning/
+note (Ф.3), НЕ timer-heap (Ф.6). emit_c.rs ОБА layout'а += park_state (+ parked_co chunk) — FATAL
+как Ф.1a если забыть.
+
+**Acceptance:** все sync-примитивы (Mutex/RwLock/Condvar/Semaphore/Barrier/CDL/WaitGroup/Once +
+timed) 30/30; channels send/recv/select + mn_runtime_cross_channel 66/66; sleep+blocking 30/30;
+NEG `gopark_ready_before_park` (READY-latch, no hang) 66/66 + `goready_double_assert` (idempotent,
+no double-resume) 30/30; cancel-during-park (channel/sleep/sync) через goready; grow_vs_wake
+CLOSED; symbol-audit (pending_wake removed, no fprintf в wake hot-path); §10/§11.6/§12.31 нетронуты.
+
+### 9.8 Ф.2 ЗАКРЫТ — gopark/goready (2026-06-11, commit d2830c73d7d)
+
+**✅ Реализовано** (фоновый агент по спеке §9.7 + 7 corrections → adversarial diff-review →
+independent stress, паттерн Ф.1b). Spec **D244**. Удалён pending_wake-счётчик + t1-t4 + TLS-hack.
+
+- `_nova_park_state` (4-state) на SpawnCtxBase by-co; `nova_gopark` (G0-G4, lost-wakeup-free) +
+  `nova_goready` (single-winner CAS-ladder). 396-строчный rewrite nova_sched.h.
+- **Сосуществование:** `parked_co[]` (chunked, заменил pending_wake) — cancel и примитив оба
+  через ОДИН `nova_goready(co)`, single-winner на WAIT→DISPATCHED CAS. Call-surface цел (только
+  wake-lvalue). emit_c.rs оба layout'а += `_nova_park_state` (перед schedlink).
+- **Умное отклонение агента:** `parked_co[]` единообразно для ВСЕХ park-сайтов вместо `co`-полей
+  в 6 waiter-структурах → меньше риск, call-surface не тронут (строгий superset correction #1).
+- **Review:** `safe-to-commit` (все fatal/high опровергнуты построчно; codegen ABI верифицирован;
+  fence не ослаблен). + applied hardening count_parked conjoin park_state==WAIT.
+- **Validation:** grow_vs_wake 40/40, cross_channel 40/40, condvar_no_lost_wakeup 40/40,
+  nested_cancel 30/30, mutex_cancel 30/30; concurrency 105/4, plan103_4 25/25. grow-vs-wake CLOSED.
+- **NEG-покрытие:** ready-before-park latch — `condvar_no_lost_wakeup_prop` (property test, 40/40);
+  double-goready — cancel+sender fixtures. Дедик-фикстуры (gopark_ready_before_park/
+  goready_double_assert) НЕ созданы — внутренний тайминг плохо выразим детерминированно на
+  Nova-уровне; покрыто property/cancel-тестами.
+- **Followup `[M-83.11-f2-arm-tsan]`** (P2): G0/G1 ordering x86-корректен; ARM — под TSAN на Linux
+  (gated на `[M-nova-linux-build]`).
+- **Дальше:** Ф.3 (nspinning + Go-note), Ф.5 (iso-cancel latch — закрывает [M-83.10.4]).
+
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).

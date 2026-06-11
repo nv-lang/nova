@@ -294,11 +294,14 @@ void nova_runtime_dump_state(const char* reason) {
             }
             fputc('\n', stderr);
             {
-                fprintf(stderr, "[w.%d.pwake   cap=%d] ", wi, cap);
+                /* Plan 83-go-cmn Ф.2: pending_wake deleted; dump park_state of
+                 * each parked_co instead (0=NIL 1=WAIT 2=READY 3=DISPATCHED). */
+                fprintf(stderr, "[w.%d.pstate  cap=%d] ", wi, cap);
                 for (int i = 0; i < show; i++) {
-                    nova_atomic_int* _pw = nova_sched_pending_wake_at(st, i);
-                    int v = _pw ? (int)__atomic_load_n(_pw, __ATOMIC_RELAXED) : 0;
-                    fputc(v ? '1' : '0', stderr);
+                    mco_coro** _pco = nova_sched_parked_co_at(st, i);
+                    mco_coro* _pc = _pco ? *_pco : NULL;
+                    int v = _pc ? (int)nova_park_state_load(_pc) : 0;
+                    fputc('0' + (v & 7), stderr);
                 }
                 fputc('\n', stderr);
             }
@@ -310,22 +313,22 @@ void nova_runtime_dump_state(const char* reason) {
             for (int i = 0; i < detail_max; i++) {
                 nova_bool* _pk_p = nova_sched_parked_at(st, i);
                 bool pk = _pk_p && *_pk_p;
-                nova_atomic_int* _pw_p = nova_sched_pending_wake_at(st, i);
-                int pw = _pw_p
-                    ? (int)__atomic_load_n(_pw_p, __ATOMIC_RELAXED)
-                    : 0;
+                /* Plan 83-go-cmn Ф.2: park_state of the parked_co replaces pwake. */
+                mco_coro** _pco_p = nova_sched_parked_co_at(st, i);
+                mco_coro* _pco = _pco_p ? *_pco_p : NULL;
+                int ps = _pco ? (int)nova_park_state_load(_pco) : 0;
                 mco_coro* co = (i < count) ? s->fibers[i] : NULL;
-                if (!pk && !pw && !co) continue;
+                if (!pk && !_pco && !co) continue;
                 int mco_st = co ? (int)mco_status(co) : -1;
                 NovaSpawnCtxBase* base = co ? (NovaSpawnCtxBase*)mco_get_user_data(co) : NULL;
                 /* Detect "stuck": fiber alive (SUSPENDED) but not parked */
                 bool stuck_alive = co && mco_st == MCO_SUSPENDED && !pk;
                 if (stuck_alive) alive_non_parked++;
                 fprintf(stderr,
-                    "[w.%d.fiber.s%d] co=%p mco_status=%d parent_scope=%p parked=%d pwake=%d hdl=%p stop_cb=%p%s\n",
+                    "[w.%d.fiber.s%d] co=%p mco_status=%d parent_scope=%p parked=%d pstate=%d hdl=%p stop_cb=%p%s\n",
                     wi, i, (void*)co, mco_st,
                     base ? (void*)base->_nova_parent_scope : NULL,
-                    (int)pk, pw,
+                    (int)pk, ps,
                     nova_sched_pending_handle_at(st, i) ? *nova_sched_pending_handle_at(st, i) : NULL,
                     (void*)(uintptr_t)(nova_sched_pending_stop_cb_at(st, i) ? (void*)*nova_sched_pending_stop_cb_at(st, i) : NULL),
                     stuck_alive ? " ⚠ STUCK_ALIVE_NOT_PARKED" : "");
@@ -371,10 +374,10 @@ void nova_runtime_dump_state(const char* reason) {
             NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
             bool pk = (sst && i < sup_cap && nova_sched_parked_at(sst, i))
                 ? *nova_sched_parked_at(sst, i) : 0;
-            int pw = (sst && i < sup_cap && nova_sched_pending_wake_at(sst, i))
-                ? (int)__atomic_load_n(nova_sched_pending_wake_at(sst, i), __ATOMIC_RELAXED) : 0;
+            /* Plan 83-go-cmn Ф.2: park_state replaces pwake. */
+            int pw = (int)nova_park_state_load(co);
             fprintf(stderr,
-                "[sup.fiber.s%d] co=%p mco=%d parent=%p parked=%d pwake=%d\n",
+                "[sup.fiber.s%d] co=%p mco=%d parent=%p parked=%d pstate=%d\n",
                 i, (void*)co, mc,
                 base ? (void*)base->_nova_parent_scope : NULL,
                 (int)pk, pw);
@@ -1020,22 +1023,19 @@ static void _worker_main(void* arg) {
          * fiber'а или idle worker loop'а). */
         nova_effect_snapshot_restore(&outer_effects);
 
-        /* Plan 44.5 Layer 5 deferred-unlock: check parked state BEFORE releasing
-         * the channel/sleep mutex. This captures parked[slot]=true while no
-         * cross-thread waker can clear it (they are blocked on the mutex).
-         * Only after this check do we release the mutex via the deferred fn.
-         *
-         * Use _nova_fiber_scope (home scope) for is_parked check — must match
-         * the scope used by the fiber in nova_sched_park_with_unlock, which
-         * captures _nova_active_scope (restored to _nova_fiber_scope above). */
+        /* Plan 83-go-cmn Ф.2: determine "is this fiber parked?" by the per-fiber
+         * park_state (by-pointer, no (scope,slot) lookup) instead of the deleted
+         * nova_sched_is_parked gate. gopark committed park_state=WAIT (SEQ_CST)
+         * BEFORE the fiber yielded, so a WAIT/DISPATCHED state here means the
+         * fiber genuinely parked (DISPATCHED = a waker already won the election +
+         * re-queued it — still "parked, requeue-in-flight", NOT a cooperative
+         * yield). The deferred unlock is now run UNCONDITIONALLY after the yield:
+         * the WAIT commit (not parked[]) is what serializes against a racing
+         * goready, so no is_parked probe is needed (design step 6 / correction #5). */
         bool fiber_is_parked = false;
         if (_nova_state_owned && mco_status(co) == MCO_SUSPENDED) {
-            NovaFiberQueue* check_scope = (base && base->_nova_fiber_scope)
-                                          ? base->_nova_fiber_scope : &w->scope;
-            int act_slot = base ? base->_nova_worker_slot : _nova_active_slot;
-            if (act_slot >= 0) {
-                fiber_is_parked = (bool)nova_sched_is_parked(check_scope, act_slot);
-            }
+            int32_t ps = nova_park_state_load(co);
+            fiber_is_parked = (ps == NOVA_PARK_WAIT || ps == NOVA_PARK_DISPATCHED);
         }
         if (_nova_park_unlock_fn) {
             void (*fn)(void*) = _nova_park_unlock_fn;
@@ -1782,15 +1782,13 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
     _nova_interrupt_top = outer_interrupt;
     nova_effect_snapshot_restore(&outer_effects);
 
-    /* Parked check + deferred unlock (mirrors _worker_main). */
+    /* Parked check + deferred unlock (mirrors _worker_main). Plan 83-go-cmn Ф.2:
+     * park_state-by-pointer replaces the deleted nova_sched_is_parked gate; the
+     * unlock runs unconditionally after the yield (WAIT commit serializes). */
     bool fiber_is_parked = false;
     if (_nova_state_owned && mco_status(co) == MCO_SUSPENDED) {
-        NovaFiberQueue* check_scope = (base && base->_nova_fiber_scope)
-                                      ? base->_nova_fiber_scope : &w->scope;
-        int act_slot = base ? base->_nova_worker_slot : _nova_active_slot;
-        if (act_slot >= 0) {
-            fiber_is_parked = (bool)nova_sched_is_parked(check_scope, act_slot);
-        }
+        int32_t ps = nova_park_state_load(co);
+        fiber_is_parked = (ps == NOVA_PARK_WAIT || ps == NOVA_PARK_DISPATCHED);
     }
     if (_nova_park_unlock_fn) {
         void (*fn)(void*) = _nova_park_unlock_fn;
