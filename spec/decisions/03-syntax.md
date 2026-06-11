@@ -40,6 +40,7 @@
 | [D238](#d238-indexk-v-protocol---akey-magic) | `Index[K, V]` protocol: `@index(key K) -> V` — magic для `a[key]`; Range overload = slice mechanism |
 | [D239](#d239-t-сахар-над-vect) | `[]T` как сахар над `Vec[T]` — type alias, literal desugaring, migration |
 | [D240](#d240-mutindexk-v-protocol---akey--val-magic) | `MutIndex[K, V]` protocol: `mut @index(key K, val V)` — magic для `a[key] = val` |
+| [D241](#d241-канонический-порядок-модификаторов-type-декларации-scope-adjacency) | Канонический порядок type-модификаторов (scope-adjacency): `value priv` канон, order-independence запрещён |
 
 ---
 
@@ -9653,6 +9654,70 @@ Nova-реализация с тем же layout (`{ data *T, len int, cap int }`
 - Plan 138 — полный план миграции
 
 Added: 2026-06-10  Status: ACTIVE (partial — gated on Vec-in-prelude)
+
+---
+
+## D241. Канонический порядок модификаторов type-декларации (scope-adjacency)
+
+### Что
+
+Модификаторы в объявлении типа (`export type NAME <mods> { fields }`) имеют
+**единственный канонический порядок** — по **scope** (область действия), от широкой к
+узкой слева направо. Несколько эквивалентных порядков (order-independence) **запрещены**
+(«one canonical syntax» — Nova не допускает разных написаний одного и того же).
+
+```nova
+export type Point value priv { x f64, y f64 }   // ✓ канон
+type Point priv value { ... }                    // ✗ E_MODIFIER_ORDER → fix-it «value priv»
+```
+
+| Позиция | Модификатор | Scope |
+|---|---|---|
+| до `type` | `export` | видимость **типа** в модуле (широчайший) |
+| после имени, левее | `value` | аллокация/представление **всего типа** (stack vs heap) |
+| после имени, вплотную к `{` | `priv` | дефолт видимости **полей** в `{…}` |
+| `{ … }` | — | сами поля |
+
+### Зачем
+
+**Scope-adjacency**: каждый модификатор стоит рядом с тем, что определяет.
+- `priv` задаёт дефолт видимости полей внутри `{…}` → квалифицирует блок `{…}` → вплотную к `{`.
+- `value` — свойство всего типа (представление/копирование) → type-level → левее.
+- `export` — видимость самого типа → широчайший scope → перед `type`.
+
+Чтение монотонно сужает scope: **модуль → тип → поля → сами поля**.
+
+Выбор `value priv` (не `priv value`) обоснован **по существу** (scope-adjacency), а не
+«так уже принято»: `priv` примыкает к полям, которыми управляет; `value` остаётся на уровне
+типа. Контраргумент «видимость первой» (как `pub`/`priv` в member-декларациях) не побеждает:
+видимость **типа** уже выражена `export` слева, а type-level `priv` — это **дефолт полей**,
+иная сущность, принадлежащая блоку `{…}`.
+
+Правило обобщается на **все** будущие type-модификаторы: сортировать по scope (type-level →
+field-default), не вводя произвольных синонимичных порядков.
+
+### Статус
+
+> **РЕШЕНО 2026-06-11; enforcement отложен → `[M-138-canonical-modifier-order]`.**
+> Сейчас модификаторы **order-independent** (намеренно — Plan 124.8,
+> `nova_tests/plan124_8/modifier_order_independence_ok.nv` тестирует `value priv` ≡
+> `priv value`). Enforcement (`E_MODIFIER_ORDER` + fix-it; флип plan124_8-теста в negative;
+> миграция редких `priv value`) — будущая работа маркера.
+
+### Правила
+
+- Канон: `export` (до `type`) → type-level mods (`value`) → field-default mods (`priv`) → `{ fields }`.
+- Out-of-canon → `E_MODIFIER_ORDER` с fix-it (переставить в канон).
+- Правило по scope обобщается на любые новые модификаторы.
+
+### Связь
+
+- type-level `priv {}` flip (02-types.md, Plan 124) — field-default visibility (`priv` модификатор)
+- value-records (Plan 124.8) — `value` модификатор (stack-аллокация)
+- D239 — `[]T ≡ Vec[T]`; Plan 138 family
+- `[M-138-canonical-modifier-order]` — enforcement followup
+
+Added: 2026-06-11  Status: DECIDED (enforcement pending [M-138-canonical-modifier-order])
 
 ---
 

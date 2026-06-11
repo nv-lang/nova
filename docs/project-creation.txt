@@ -36277,3 +36277,5 @@ map_literals 28/1 (pre-existing positive_const_map), plan101_1 18/0, plan126 21/
 COMMIT LIST (b8ff72271c1..HEAD): 09d08107d6d feat Ф.0-final universal flip; f00c4896ed6 docs Ф.2
 producer-audit; aa6bfd3ef5f docs Ф.3-Ф.5 close; 1b3b018f3eb fix protocols.nv mojibake; + этот FINAL-CLOSE
 docs-commit.
+
+D241 (2026-06-11): canonical type-modifier order — scope-adjacency (value priv канон, не priv value); order-independence (plan124_8) пересмотрено как противоречие «one canonical syntax»; enforcement отложен [M-138-canonical-modifier-order]. spec 03-syntax.md §D241 + TOC + 124.8 Followup. Также: std mojibake sweep (protocols.nv 1b3b018 + vec_owned.nv db9807e — double-encoded UTF-8 reversed) + 5 design-review маркеров сессии (@append=copy уже landed Ф.0d).

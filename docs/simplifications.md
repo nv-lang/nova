@@ -35328,3 +35328,5 @@ PRELUDE_VERSION 13→14, D239 ACTIVE-universal, D144 закрыт, 3 flip-бло
 re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; верифицировано grep'ом).
 
 | `<final-close>` | docs(plan138.2 FINAL CLOSE): correct b8ff722 «flip reverted» → flip LANDED GREEN (re-attempt #2); plan-doc header/Ф.5-ИСХОД/DoD-regression + project-creation + memory |
+
+| `D241` | spec(D241): canonical type-modifier order = **scope-adjacency** (канон `value priv`, не `priv value`); order-independence запрещён («one canonical syntax»). Обоснование: `value` type-level левее, `priv` field-default вплотную к `{…}`. Enforcement → `[M-138-canonical-modifier-order]` (флип plan124_8 order-independence-теста в negative). + 5 session design-review маркеров в backlog (unsafe-block-postfix, double-pointer-test, binding-type-mut-conflict, ptr-cast-reinterpret-unsafe, canonical-modifier-order). |
