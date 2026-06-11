@@ -45,6 +45,7 @@
 | `[M-138.2-self-in-param]` | `Self` в param-позиции generic-метода (`@append(mut other Self)`) мис-лоуэрит C-тип без receiver-subst → forward-decl≠def; workaround явный `Vec[T]`. | plan-138 Followups | P2 |
 | `[M-138.5-right-binding-migration]` | prefix→postfix `*T`: codegen pointee (138.4 G-D) сделан, parser-level migration + `E_POINTER_PREFIX_MODIFIER` — landed 138.5 (verify после `wd3vgeu6l`). | plan-138.5 Followups | P2 |
 | `[M-138-range-value]` | Range — reference-record, не value-record; Plan 138 Ф.0.3 migration не сделана. (138.5 трогает range.nv — re-confirm.) | plan-138 Followups | P2 |
+| `[M-codegen-unify-tuple-repr]` | Унифицировать кортежи на **on-demand mono'd typed** структуры (реальные C-типы полей, эмит только использованных типов кортежей). Ретайр blanket all-int `_NovaTuple1..8` pre-decl + int-boxing не-int элементов + `(intptr_t)`-касты. Type-precise → нет лишних аллокаций, лучше eq/debug. Существенный рефактор (~15+ codegen-сайтов: build/field-read/pass/eq). Связь: Plan 131 typed-storage D232, Plan 141 eq, value-types thread. | new codegen-план | P2 |
 
 ## P2 — Perf optimization (escape/Z3-driven; correctness-neutral)
 
