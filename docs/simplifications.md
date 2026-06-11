@@ -35318,5 +35318,13 @@ p5_printable), plan137 16/0, concurrency parfor 3/0, plan55 16/3 (3 pre-existing
 | `<f2-audit>` | docs(plan138.2 Ф.2): producer-audit — bulk-bridge retired, parfor/closure-array sanctioned exceptions; D239 spec amend; backlog markers |
 | `<f3-5-close>` | docs(plan138.2 Ф.3-Ф.5): close-PARTIAL — retire BLOCKED on Plan 139 Ф.2; project-creation + simplifications |
 
-**Вывод.** Plan 138.2 капстоун ЗАКРЫТ как PARTIAL. Universal flip = hard-часть, приземлена GREEN.
-Физический NovaArray retire = отдельный re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG).
+**Вывод (FINAL CLOSE 2026-06-11).** Plan 138.2 ✅ CLOSED — универсальный Vec-флип `[]T ≡ Vec[T]`
+(ядро капстоуна, hard-часть) приземлён GREEN (re-attempt #2, commit `09d08107d6d`; C1 ✅,
+PRELUDE_VERSION 13→14, D239 ACTIVE-universal, D144 закрыт, 3 flip-блокера принципиально закрыты,
+193/3 broad-regression — 0 NEW FAIL). Промежуточный close-commit `b8ff72271c1` зафиксировал флип как
+«REVERTED» — это относилось к re-attempt #1 (откат при API-529), УСТАРЕЛО: re-attempt #2 флип LIVE.
+Физическое удаление макросов NovaArray (`NOVA_ARRAY_DECL/IMPL`, 33 вхождения в array.h + 4
+`contains_key("Vec")` gate-сайта) НЕ выполнено — producer-audit (Ф.2) завершён, физ-retire = отдельный
+re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; верифицировано grep'ом).
+
+| `<final-close>` | docs(plan138.2 FINAL CLOSE): correct b8ff722 «flip reverted» → flip LANDED GREEN (re-attempt #2); plan-doc header/Ф.5-ИСХОД/DoD-regression + project-creation + memory |

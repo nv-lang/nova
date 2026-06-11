@@ -36250,3 +36250,30 @@ retire NovaArray = отдельный re-attempt после Plan 139 Ф.2.
 МАРКЕРЫ: [M-138.2-parfor-vec] + [M-138.2-closure-array-vec] OPEN (P3 sanctioned exceptions);
 retire-блокер cross-ref на [M-139-f2-ptr-field-producers].
 КОММИТЫ: docs(plan138.2 Ф.2): producer-audit; docs(plan138.2 Ф.3-Ф.5): close-PARTIAL retire-blocked-on-139.
+
+=== Plan 138.2 — FINAL CLOSE (2026-06-11) ===
+КОРРЕКЦИЯ СТАТУСА. Промежуточный close-commit b8ff72271c1 («close-at-Ф.0-final PARTIAL/BLOCKED —
+universal flip REVERTED») зафиксировал флип как откаченный — это было верно для re-attempt #1
+(откат по HIGH-RISK протоколу, API-529 в середине spike), но УСТАРЕЛО. Re-attempt #2 (commits
+09d08107d6d..1b3b018f3eb, ПОСЛЕ b8ff722) флип ПРИЗЕМЛИЛ GREEN.
+
+ИТОГОВЫЙ СТАТУС: Plan 138.2 ✅ CLOSED — универсальный Vec-флип [] T ≡ Vec[T] приземлён GREEN.
+- C1 ✅ ДОСТИГНУТ: Vec-free юнит → Nova_Vec____nova_int* (gate ON через prelude); PRELUDE_VERSION 13→14.
+- 3 erased-template блокера [M-138.2-flip-erased-base-body-mono] / [M-138.2-flip-value-pos-arraylit-vec-gate]
+  / [M-138.2-flip-array-ext-vec-recv-routing] закрыты ПРИНЦИПИАЛЬНО (~7 локальных правок emit_c.rs,
+  не heuristic; int64-erasure-контракт + []T-sentinel alt-key паттерн Plan 101.1).
+- D239 PARTIAL → ACTIVE (universal); D144 закрыт; D141 @append=COPY задокументирован (Ф.0d).
+- NovaArray retirement (Ф.3 C5/C6): producer-audit (Ф.2) завершён — generic-Vec bulk-bridge retired,
+  parfor/closure-array = sanctioned exceptions. ФИЗИЧЕСКОЕ удаление макросов NOVA_ARRAY_DECL/IMPL
+  НЕ выполнено: на диске 33 NOVA_ARRAY_* вхождения в array.h + 4 contains_key("Vec") gate-сайта
+  (emit_c.rs:2119/5123/26662/32328) — верифицировано grep'ом. Зависит от Plan 139 Ф.2 (string/byte слой
+  ≈35700 nova_byte refs + #no_prelude graceful-degrade), вынесено в отдельный re-attempt sub-plan (risk RG).
+
+ФИНАЛЬНАЯ broad regression (флип LIVE, post-flip GREEN): plan138_1 10/0, plan138_2 18/0, plan138_3 2/0,
+plan90_1 21/0, plan131 27/1 (pre-existing vec_debug_pos), plan91_fe1 10/0 (3 flip-target'а GREEN),
+map_literals 28/1 (pre-existing positive_const_map), plan101_1 18/0, plan126 21/0, plan126_2 9/1
+(pre-existing p5_printable), str 13/0, plan137 16/0. 193 pass / 3 fail — все 3 FAIL pre-existing. 0 NEW FAIL.
+
+COMMIT LIST (b8ff72271c1..HEAD): 09d08107d6d feat Ф.0-final universal flip; f00c4896ed6 docs Ф.2
+producer-audit; aa6bfd3ef5f docs Ф.3-Ф.5 close; 1b3b018f3eb fix protocols.nv mojibake; + этот FINAL-CLOSE
+docs-commit.
