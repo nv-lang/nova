@@ -9364,11 +9364,33 @@ Rust-style narrow-fallback и **без** Java/C# silent widening / suffix.
 - [x] D227 spec block формализует 4 правила + industry baseline +
   rejected alternatives
 - [x] D44 §«default-типы» amend cross-refs D129 + D227
-- [ ] Compiler error code `E_LIT_OUT_OF_RANGE` — followup
-  `[M-D227-lit-range-error-code]` (verify currently emitted code или add)
-- [ ] Test corpus `nova_tests/types/literal_range_*.nv` — positive
-  (boundary `127` для i8) + negative (`128` для i8 → error) —
-  followup `[M-D227-literal-range-tests]`
+- [x] Compiler error code `E_LIT_OUT_OF_RANGE` — landed Plan 142 Ф.1
+  (commit `d6b209b8e63`). Emitted при context-coercion целочисленного
+  литерала к sized-int в `types/mod.rs` (`assignable()` IntLit-арм +
+  `Unary{Neg, IntLit}`-арм для negative-в-unsigned Rule 6); сообщение
+  `[E_LIT_OUT_OF_RANGE] <val> > <T>.MAX (<max>)` / `< <T>.MIN (<min>)`.
+- [x] Test corpus — landed Plan 142 Ф.1 в **`nova_tests/plan142/`**
+  (не `nova_tests/types/literal_range_*` как изначально именовалось в
+  этом блоке): 8 NEG (`neg_u8_300`, `neg_u8_minus1`, `neg_i32_3b`,
+  `neg_u16_70000`, `neg_i8_200`, `neg_u8_hex_1ff`, `neg_u32_4b`,
+  `neg_arg_u8` — call-arg path) + 2 POS (`pos_boundaries` — все 8 sized
+  MIN/MAX exactly in-range, включая boundary `127`/`-128` для i8;
+  `pos_wide_int` — Rule 1 default `int`). 10/0 PASS на релизном `nova`.
+
+### Открытые вопросы (scoped)
+
+- **Alias / newtype над sized-int.** `assignable()` range-check'ит
+  только **прямой** Named sized-int (+ `Readonly`/`Mut`/`Unsafe`
+  wrappers). Литерал в позиции alias'а / newtype над sized-int
+  (напр. `type Age = u8; ro a Age = 300`) **не** проверяется — чтобы
+  не печатать неверное имя типа в диагностике (требуется резолв через
+  `self.types`, недоступный из free-fn coercion-сайта). Скоуп для
+  будущего sub-plan если alias-coverage понадобится.
+- **Float range-check (Rule 5).** Compile-time overflow дробного
+  литерала при coercion к `f32` (exponent overflow) **не реализован** —
+  Plan 142 Ф.1 scope был integer-only (plan §43 «все 8 sized-int»;
+  floats не перечислены). Rule 5 остаётся spec-only до отдельного
+  enforcement-плана.
 
 ---
 
