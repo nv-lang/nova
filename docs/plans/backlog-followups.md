@@ -55,6 +55,13 @@
 | `[M-opt-value-sum-types]` | Compiler-inferred value(stack)/heap для sum-типов (recursion+size+escape; прозрачно — immutable); payload-less интернирование. | new perf-план (Plan 120/139) | P2 |
 | `[M-opt-elide-proven-overflow-checks]` | Z3/range-элизия доказуемо-безопасных integer-overflow чеков (proven→elide, как Plan 140). | new perf-план / Plan 140 | P2 |
 
+## P2 — Ergonomics / stdlib combinators
+
+| Маркер | Суть | Home | Pri |
+|---|---|---|---|
+| `[M-combinators-completion]` | Добавить `find` (short-circuit→`Option[T]`), `flat_map` (nested comprehensions), `enumerate` (`(i,x)` идиома), `zip` (parallel iter); обобщить `sum`/`min`/`max` с `[]int`-only → generic `[]T` (Num/Comparable bound). НЕ нужны: `collect` (комбинаторы eager), `take`/`skip` (Index[Range] `xs[a..b]` покрывает), `reduce` (fold), `count` (filter+len). | new stdlib-combinators mini-план | P2 |
+| `[M-opt-iter-generic-combinators]` | Комбинаторы (map/filter/fold/any/all/…) generic над `Iter[I]`, не только `[]T`-ресивер → работают на Range/HashMap/custom без материализации в `[]T`. Главный рычаг comprehension-эргономики (Python-comprehension работает над любым iterable). | new stdlib-combinators mini-план | P2 |
+
 ## P2 — Const-fn / Language features
 
 | Маркер | Суть | Home | Pri |
