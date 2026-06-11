@@ -289,13 +289,15 @@ void nova_runtime_dump_state(const char* reason) {
             int show = cap < 128 ? cap : 128;
             fprintf(stderr, "[w.%d.parked  cap=%d] ", wi, cap);
             for (int i = 0; i < show; i++) {
-                fputc(st->parked && st->parked[i] ? '1' : '0', stderr);
+                nova_bool* _pk = nova_sched_parked_at(st, i);
+                fputc(_pk && *_pk ? '1' : '0', stderr);
             }
             fputc('\n', stderr);
-            if (st->pending_wake) {
+            {
                 fprintf(stderr, "[w.%d.pwake   cap=%d] ", wi, cap);
                 for (int i = 0; i < show; i++) {
-                    int v = (int)__atomic_load_n(&st->pending_wake[i], __ATOMIC_RELAXED);
+                    nova_atomic_int* _pw = nova_sched_pending_wake_at(st, i);
+                    int v = _pw ? (int)__atomic_load_n(_pw, __ATOMIC_RELAXED) : 0;
                     fputc(v ? '1' : '0', stderr);
                 }
                 fputc('\n', stderr);
@@ -306,9 +308,11 @@ void nova_runtime_dump_state(const char* reason) {
             int detail_max = count < cap ? count : cap;
             int alive_non_parked = 0;
             for (int i = 0; i < detail_max; i++) {
-                bool pk = st->parked && st->parked[i];
-                int pw = st->pending_wake
-                    ? (int)__atomic_load_n(&st->pending_wake[i], __ATOMIC_RELAXED)
+                nova_bool* _pk_p = nova_sched_parked_at(st, i);
+                bool pk = _pk_p && *_pk_p;
+                nova_atomic_int* _pw_p = nova_sched_pending_wake_at(st, i);
+                int pw = _pw_p
+                    ? (int)__atomic_load_n(_pw_p, __ATOMIC_RELAXED)
                     : 0;
                 mco_coro* co = (i < count) ? s->fibers[i] : NULL;
                 if (!pk && !pw && !co) continue;
@@ -322,8 +326,8 @@ void nova_runtime_dump_state(const char* reason) {
                     wi, i, (void*)co, mco_st,
                     base ? (void*)base->_nova_parent_scope : NULL,
                     (int)pk, pw,
-                    st->pending_handle ? st->pending_handle[i] : NULL,
-                    (void*)(uintptr_t)(st->pending_stop_cb ? (void*)st->pending_stop_cb[i] : NULL),
+                    nova_sched_pending_handle_at(st, i) ? *nova_sched_pending_handle_at(st, i) : NULL,
+                    (void*)(uintptr_t)(nova_sched_pending_stop_cb_at(st, i) ? (void*)*nova_sched_pending_stop_cb_at(st, i) : NULL),
                     stuck_alive ? " ⚠ STUCK_ALIVE_NOT_PARKED" : "");
             }
             if (alive_non_parked > 0) {
@@ -365,9 +369,10 @@ void nova_runtime_dump_state(const char* reason) {
             if (mc == MCO_DEAD) { dead_count++; continue; }
             alive_count++;
             NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
-            bool pk = sst && sst->parked && i < sup_cap ? sst->parked[i] : 0;
-            int pw = (sst && sst->pending_wake && i < sup_cap)
-                ? (int)__atomic_load_n(&sst->pending_wake[i], __ATOMIC_RELAXED) : 0;
+            bool pk = (sst && i < sup_cap && nova_sched_parked_at(sst, i))
+                ? *nova_sched_parked_at(sst, i) : 0;
+            int pw = (sst && i < sup_cap && nova_sched_pending_wake_at(sst, i))
+                ? (int)__atomic_load_n(nova_sched_pending_wake_at(sst, i), __ATOMIC_RELAXED) : 0;
             fprintf(stderr,
                 "[sup.fiber.s%d] co=%p mco=%d parent=%p parked=%d pwake=%d\n",
                 i, (void*)co, mc,
@@ -1874,13 +1879,13 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
             /* ACQUIRE-load: pairs with RELEASE store in register_pending.
              * Guarantees visibility of pending_handle when stop_cb != NULL. */
             NovaSchedStopCb cb;
-            __atomic_load(&st->pending_stop_cb[j], &cb, __ATOMIC_ACQUIRE);
-            void* hdl = st->pending_handle[j];  /* visible after ACQUIRE on cb */
+            __atomic_load(nova_sched_pending_stop_cb_at(st, j), &cb, __ATOMIC_ACQUIRE);
+            void* hdl = *nova_sched_pending_handle_at(st, j);  /* visible after ACQUIRE on cb */
             if (cb && hdl) {
                 /* ASYNC stop_cb: initiates cross-thread safe uv_close via
                  * nova_loop_defer_close; close_cb wakes fiber afterward. */
                 cb(hdl);
-            } else if (j < st->capacity && st->parked[j]) {
+            } else if (j < st->capacity && *nova_sched_parked_at(st, j)) {
                 /* Bare park (no registered stop_cb): direct dispatch_ready. */
                 nova_sched_wake(&w->scope, j);
             }

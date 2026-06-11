@@ -385,16 +385,84 @@ typedef enum {
 } NovaStopMode;
 
 typedef NovaStopMode (*NovaSchedStopCb)(void* handle);
+
+/* ─── Plan 83-go-cmn Ф.1b: chunked, STABLE-ADDRESS park/wake storage ──
+ *
+ * Closes [M-83.11-grow-vs-wake-race]. The old NovaSchedState held 4 raw
+ * pointers (parked/pending_handle/pending_stop_cb/pending_wake) that
+ * nova_sched_grow_state REALLOCATED with plain non-atomic pointer-swaps.
+ * A peer/driver thread in nova_sched_wake reading the old base between the
+ * swap and the capacity update dereferenced a torn/orphaned base → CAS into
+ * a dead array → lost wake → hang.
+ *
+ * Fix (Option C — chunked block-list): each of the 4 arrays is now backed by
+ * a DIRECTORY of fixed-size CHUNKS that are allocated EXACTLY ONCE and never
+ * moved/realloc'd/freed during the scope's life. Therefore the element
+ * address &parked_chunks[c][o] is constant for the whole life of slot's data
+ * → the torn base pointer is structurally impossible (same guarantee as the
+ * Ф.1a run-queue fixed ring). Indexing stays (scope,slot): every atomic
+ * access keeps its exact __ATOMIC_* ordering — only the lvalue changes
+ * (st->X[slot] → *accessor(st,slot), pure address math, no fence/lock).
+ *
+ * Geometry: CHUNK = 64 elements (power of two) ⇒ c = slot>>6, o = slot&63
+ * (shift+mask, no division). MAX_CHUNKS = 1024 ⇒ hard ceiling 65536 slots
+ * per scope (>> the ~2k observed; grow aborts with a clear message if
+ * exceeded, mirroring the existing nova_alloc-fail abort). The 4 directories
+ * are INLINE in NovaSchedState so the struct itself is one stable heap
+ * object reached via scope->sched_state. */
+#define NOVA_SCHED_CHUNK        64
+#define NOVA_SCHED_CHUNK_SHIFT  6
+#define NOVA_SCHED_CHUNK_MASK   63
+#define NOVA_SCHED_MAX_CHUNKS   1024   /* 1024*64 = 65536 slots/scope ceiling */
+
 typedef struct NovaSchedState {
-    nova_bool*       parked;              /* dynamic [capacity] */
-    void**           pending_handle;      /* dynamic [capacity] */
-    NovaSchedStopCb* pending_stop_cb;     /* dynamic [capacity] */
+    /* Each directory holds chunk pointers; a chunk is allocated once and its
+     * pointer is __ATOMIC_RELEASE-published into the directory slot, then
+     * read with __ATOMIC_ACQUIRE in the accessors. Chunks are never freed/
+     * moved/realloc'd ⇒ &X_chunks[c][o] is immutable for slot's lifetime. */
+    nova_bool*       parked_chunks[NOVA_SCHED_MAX_CHUNKS];         /* [c][o] */
+    void**           pending_handle_chunks[NOVA_SCHED_MAX_CHUNKS]; /* [c][o] */
+    NovaSchedStopCb* pending_stop_cb_chunks[NOVA_SCHED_MAX_CHUNKS];/* [c][o] */
     /* Plan 83.11 Ф.3.A v3 (Option A): per-slot wake-pending counter (atomic int).
      * Wake side: CAS 0→1 (deliver event). Park side: try CAS 1→0 (consume) before
      * yielding. Closes wake-before-park race by serializing through this atomic. */
-    nova_atomic_int* pending_wake;        /* dynamic [capacity] */
-    int              capacity;            /* alloc'нутая длина */
+    nova_atomic_int* pending_wake_chunks[NOVA_SCHED_MAX_CHUNKS];   /* [c][o] */
+    int              capacity;            /* published slots = chunks_pub<<SHIFT */
 } NovaSchedState;
+
+/* ─── Hot-path element accessors (Ф.1b) ───────────────────────────────
+ *
+ * Each returns the ELEMENT ADDRESS only — pure address computation. The
+ * ONLY synchronization is an ACQUIRE-load of the chunk pointer, which pairs
+ * with grow's RELEASE-publish (so a reader that observed slot<capacity is
+ * guaranteed to see the published chunk + its zero-inited elements). NO
+ * fence and NO lock is applied to the element itself — the caller's atomic
+ * op (SEQ_CST store, ACQ_REL CAS, ACQUIRE load, RELEASE store) is applied
+ * to the returned lvalue BYTE-IDENTICALLY to the pre-Ф.1b code.
+ *
+ * Returns NULL if the chunk has not been published yet; callers keep their
+ * existing slot<capacity guard, which (paired with grow's publish-before-
+ * capacity RELEASE) makes a non-NULL return guaranteed when slot<capacity. */
+static inline nova_bool* nova_sched_parked_at(NovaSchedState* st, int slot) {
+    int c = slot >> NOVA_SCHED_CHUNK_SHIFT, o = slot & NOVA_SCHED_CHUNK_MASK;
+    nova_bool* ch = __atomic_load_n(&st->parked_chunks[c], __ATOMIC_ACQUIRE);
+    return ch ? &ch[o] : NULL;
+}
+static inline void** nova_sched_pending_handle_at(NovaSchedState* st, int slot) {
+    int c = slot >> NOVA_SCHED_CHUNK_SHIFT, o = slot & NOVA_SCHED_CHUNK_MASK;
+    void** ch = __atomic_load_n(&st->pending_handle_chunks[c], __ATOMIC_ACQUIRE);
+    return ch ? &ch[o] : NULL;
+}
+static inline NovaSchedStopCb* nova_sched_pending_stop_cb_at(NovaSchedState* st, int slot) {
+    int c = slot >> NOVA_SCHED_CHUNK_SHIFT, o = slot & NOVA_SCHED_CHUNK_MASK;
+    NovaSchedStopCb* ch = __atomic_load_n(&st->pending_stop_cb_chunks[c], __ATOMIC_ACQUIRE);
+    return ch ? &ch[o] : NULL;
+}
+static inline nova_atomic_int* nova_sched_pending_wake_at(NovaSchedState* st, int slot) {
+    int c = slot >> NOVA_SCHED_CHUNK_SHIFT, o = slot & NOVA_SCHED_CHUNK_MASK;
+    nova_atomic_int* ch = __atomic_load_n(&st->pending_wake_chunks[c], __ATOMIC_ACQUIRE);
+    return ch ? &ch[o] : NULL;
+}
 
 /* O(1) lookup: pointer-deref. NULL = state ещё не allocated
  * (никто не park'ился в этом scope). */
@@ -562,8 +630,9 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
             {
                 NovaSchedState* _das = nova_sched_find_state(scope);
                 if (_das && i < _das->capacity) {
-                    bool _das_pk = __atomic_load_n((volatile bool*)&_das->parked[i], __ATOMIC_SEQ_CST);
-                    int32_t _das_pw = _das->pending_wake ? __atomic_load_n(&_das->pending_wake[i], __ATOMIC_ACQUIRE) : 0;
+                    bool _das_pk = __atomic_load_n((volatile bool*)nova_sched_parked_at(_das, i), __ATOMIC_SEQ_CST);
+                    nova_atomic_int* _das_pw_p = nova_sched_pending_wake_at(_das, i);
+                    int32_t _das_pw = _das_pw_p ? __atomic_load_n(_das_pw_p, __ATOMIC_ACQUIRE) : 0;
                     if (_das_pk || _das_pw) {
                         /* Skip: do NOT reset parked/pending_wake, do NOT assign co here.
                          * close_cb (Fix B in driver.c) will clear parked[i] and dispatch
@@ -1686,7 +1755,7 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
          * чтобы supervised_run не выходил оставив parked permanently.
          * Ф.7: bounds check на sched_st->capacity (может быть меньше
          * scope.count если sched_state alloc'нулся раньше grow'а). */
-        if (sched_st && i < sched_st->capacity && sched_st->parked[i]) {
+        if (sched_st && i < sched_st->capacity && *nova_sched_parked_at(sched_st, i)) {
             alive++;
             continue;
         }
@@ -1718,7 +1787,7 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
          * на следующий wake/resume. */
         if (mco_status(co) == MCO_DEAD) {
             nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
-        } else if (sched_st && i < sched_st->capacity && sched_st->parked[i]) {
+        } else if (sched_st && i < sched_st->capacity && *nova_sched_parked_at(sched_st, i)) {
             /* Fiber запарковался во время resume'а. nova_sched_park уже
              * store'ил PARKED — НЕ overwrite'ить здесь. */
         } else {

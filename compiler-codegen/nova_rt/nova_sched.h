@@ -36,38 +36,87 @@ extern "C" {
 
 /* ─── Park/wake state allocation ──────────────────────────────── */
 
-/* Plan 22 Ф.7: grow sched_state arrays до new_cap (синхронизируется
- * с scope.capacity). Internal API. */
+/* Plan 22 Ф.7 / Plan 83-go-cmn Ф.1b: grow sched_state до new_cap.
+ *
+ * Ф.1b: NEVER realloc. Growth = ADD MISSING CHUNKS only. Existing chunks and
+ * their elements are NEVER touched, so a concurrent reader holding
+ * &parked[slot] is never invalidated (this is what closes the torn-pointer
+ * grow-vs-wake race — the old realloc + pointer-swap is deleted).
+ *
+ * BLOCKER 3 (concurrency): grow is NOT single-writer. nova_scope_alloc_slot
+ * (fibers.h) holds slot_lock, but nova_fiber_spawn_into, nova_sched_get_state
+ * and nova_sched_register_pending all grow WITHOUT slot_lock — two threads
+ * can attempt to publish the SAME chunk index concurrently. We therefore
+ * publish each chunk with a CAS (directory[c]: NULL → new_chunk). The CAS
+ * winner's chunk becomes canonical; a loser frees its own freshly-allocated
+ * chunk and uses the winner's. This makes chunk publication idempotent and
+ * safe for concurrent growers without any lock. capacity is RELEASE-stored
+ * AFTER all chunk pointers are published, so a reader observing slot<capacity
+ * (with ACQUIRE in the accessor) is guaranteed to see a published, fully
+ * zero-inited chunk. */
 static inline void nova_sched_grow_state(NovaFiberQueue* scope, int new_cap) {
     if (!scope || !scope->sched_state) return;
     NovaSchedState* st = scope->sched_state;
     if (new_cap <= st->capacity) return;
+    /* Round target up to a whole number of chunks (keeps the old capacity-
+     * doubling spirit: capacity is always a multiple of CHUNK). */
     int cap = st->capacity > 0 ? st->capacity : NOVA_SCOPE_INITIAL_CAP;
     while (cap < new_cap) cap *= 2;
-    /* Allocate new arrays. */
-    nova_bool*       new_parked = (nova_bool*)nova_alloc(sizeof(nova_bool) * cap);
-    void**           new_handle = (void**)nova_alloc(sizeof(void*) * cap);
-    NovaSchedStopCb* new_stop_cb = (NovaSchedStopCb*)nova_alloc(sizeof(NovaSchedStopCb) * cap);
-    nova_atomic_int* new_pwake = (nova_atomic_int*)nova_alloc(sizeof(nova_atomic_int) * cap);
-    /* Copy existing + init new. */
-    for (int i = 0; i < cap; i++) {
-        if (i < st->capacity && st->parked) {
-            new_parked[i] = st->parked[i];
-            new_handle[i] = st->pending_handle[i];
-            new_stop_cb[i] = st->pending_stop_cb[i];
-            new_pwake[i] = st->pending_wake ? st->pending_wake[i] : 0;
-        } else {
-            new_parked[i] = false;
-            new_handle[i] = NULL;
-            new_stop_cb[i] = NULL;
-            new_pwake[i] = 0;
-        }
+    int needed_chunks = ((cap - 1) >> NOVA_SCHED_CHUNK_SHIFT) + 1;
+    if (needed_chunks > NOVA_SCHED_MAX_CHUNKS) {
+        fprintf(stderr,
+            "nova: nova_sched_grow_state: scope slot count exceeds ceiling "
+            "(%d chunks > %d max = %d slots)\n",
+            needed_chunks, NOVA_SCHED_MAX_CHUNKS,
+            NOVA_SCHED_MAX_CHUNKS * NOVA_SCHED_CHUNK);
+        abort();
     }
-    st->parked = new_parked;
-    st->pending_handle = new_handle;
-    st->pending_stop_cb = new_stop_cb;
-    st->pending_wake = new_pwake;
-    st->capacity = cap;
+    /* Allocate + zero-init + CAS-publish any chunk index that is not yet
+     * published. We scan the whole [0, needed_chunks) range (not just from the
+     * current chunk count) so concurrent growers converge regardless of who
+     * published which index first. */
+    for (int c = 0; c < needed_chunks; c++) {
+        if (__atomic_load_n(&st->parked_chunks[c], __ATOMIC_ACQUIRE) != NULL) {
+            continue;  /* already published by us or a peer */
+        }
+        nova_bool*       nc_parked  = (nova_bool*)nova_alloc(sizeof(nova_bool) * NOVA_SCHED_CHUNK);
+        void**           nc_handle  = (void**)nova_alloc(sizeof(void*) * NOVA_SCHED_CHUNK);
+        NovaSchedStopCb* nc_stop_cb = (NovaSchedStopCb*)nova_alloc(sizeof(NovaSchedStopCb) * NOVA_SCHED_CHUNK);
+        nova_atomic_int* nc_pwake   = (nova_atomic_int*)nova_alloc(sizeof(nova_atomic_int) * NOVA_SCHED_CHUNK);
+        if (!nc_parked || !nc_handle || !nc_stop_cb || !nc_pwake) {
+            fprintf(stderr, "nova: nova_sched_grow_state: nova_alloc failed\n");
+            abort();
+        }
+        for (int o = 0; o < NOVA_SCHED_CHUNK; o++) {
+            nc_parked[o]  = false;
+            nc_handle[o]  = NULL;
+            nc_stop_cb[o] = NULL;
+            nc_pwake[o]   = 0;
+        }
+        /* CAS-publish parked_chunks[c] first; that single index is the
+         * "ownership token" for this chunk index. Whoever wins it publishes
+         * its sibling chunks (handle/stop_cb/pwake) too. RELEASE on success so
+         * the zero-inited elements are visible to an ACQUIRE reader. */
+        nova_bool* expected_null = NULL;
+        if (__atomic_compare_exchange_n(
+                &st->parked_chunks[c], &expected_null, nc_parked,
+                false, __ATOMIC_RELEASE, __ATOMIC_ACQUIRE)) {
+            /* Won this chunk index: publish the 3 siblings (RELEASE). */
+            __atomic_store_n(&st->pending_handle_chunks[c], nc_handle, __ATOMIC_RELEASE);
+            __atomic_store_n(&st->pending_stop_cb_chunks[c], nc_stop_cb, __ATOMIC_RELEASE);
+            __atomic_store_n(&st->pending_wake_chunks[c], nc_pwake, __ATOMIC_RELEASE);
+        }
+        /* Lost the CAS (peer published first) OR sibling slots may already be
+         * populated by the winner: in either case our 4 freshly-allocated
+         * chunks for this index are now redundant. They are plain nova_alloc
+         * (collectable) blocks with no remaining references → GC reclaims them;
+         * no explicit free needed (and nova_alloc has no matching free in this
+         * GC'd runtime). We simply drop them and let the published chunk win. */
+    }
+    /* Publish capacity LAST (RELEASE) — pairs with the accessor's ACQUIRE +
+     * the caller's slot<capacity guard. capacity = published chunk count<<SHIFT
+     * can never exceed NOVA_SCHED_MAX_CHUNKS<<SHIFT by construction. */
+    __atomic_store_n(&st->capacity, needed_chunks << NOVA_SCHED_CHUNK_SHIFT, __ATOMIC_RELEASE);
 }
 
 /* Lookup-or-create state for given scope. Production-grade Ф.7: lazy
@@ -81,11 +130,9 @@ static inline NovaSchedState* nova_sched_get_state(NovaFiberQueue* scope) {
         fprintf(stderr, "nova: nova_sched_get_state: nova_alloc failed\n");
         abort();
     }
-    st->parked = NULL;
-    st->pending_handle = NULL;
-    st->pending_stop_cb = NULL;
-    st->pending_wake = NULL;
-    st->capacity = 0;
+    /* Ф.1b: NovaSchedState is nova_alloc'd (zeroed per alloc.h contract), so
+     * all 4 chunk directories are already all-NULL and capacity==0. No
+     * explicit field init needed beyond documenting the invariant. */
     scope->sched_state = st;
     /* Grow до текущего scope.capacity (обычно ≥ NOVA_SCOPE_INITIAL_CAP). */
     int target = scope->capacity > 0 ? scope->capacity : NOVA_SCOPE_INITIAL_CAP;
@@ -136,26 +183,26 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
      * No stuck-fiber scenario.
      *
      * pending_wake[] array allocated в NovaSchedState (lazy grow alongside parked[]). */
-    if (st->pending_wake && slot < st->capacity) {
+    if (slot < st->capacity) {
         int32_t expected = 1;
         if (__atomic_compare_exchange_n(
-                &st->pending_wake[slot], &expected, 0,
+                nova_sched_pending_wake_at(st, slot), &expected, 0,
                 false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
             return;
         }
     }
 
     /* SEQ_CST store: on x86 compiles to XCHG (full fence). */
-    __atomic_store_n((volatile bool*)&st->parked[slot], true, __ATOMIC_SEQ_CST);
+    __atomic_store_n((volatile bool*)nova_sched_parked_at(st, slot), true, __ATOMIC_SEQ_CST);
 
     /* Post-barrier recheck: wake came в barrier window? */
-    if (st->pending_wake && slot < st->capacity) {
+    if (slot < st->capacity) {
         int32_t expected = 1;
         if (__atomic_compare_exchange_n(
-                &st->pending_wake[slot], &expected, 0,
+                nova_sched_pending_wake_at(st, slot), &expected, 0,
                 false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
             /* Wake came в barrier window — undo parked, return. */
-            __atomic_store_n((volatile bool*)&st->parked[slot], false, __ATOMIC_SEQ_CST);
+            __atomic_store_n((volatile bool*)nova_sched_parked_at(st, slot), false, __ATOMIC_SEQ_CST);
             return;
         }
     }
@@ -172,7 +219,7 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
      * If false, wake already won → it set IDLE → restore IDLE so CAS succeeds.
      * The runtime.c post-resume check (nova_fiber_state_load == IDLE) then
      * skips the yielded-FIFO push, preventing double-queue. */
-    if (!__atomic_load_n((volatile bool*)&st->parked[slot], __ATOMIC_SEQ_CST)) {
+    if (!__atomic_load_n((volatile bool*)nova_sched_parked_at(st, slot), __ATOMIC_SEQ_CST)) {
         nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
     }
     mco_yield(co);
@@ -213,7 +260,7 @@ static inline void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
      * on x86 and may leave the store in the CPU store buffer, causing a
      * concurrent waker's CAS to see stale false → no dispatch → deadlock.
      * SEQ_CST guarantees the store is globally visible before this returns. */
-    __atomic_store_n((volatile bool*)&st->parked[slot], true, __ATOMIC_SEQ_CST);
+    __atomic_store_n((volatile bool*)nova_sched_parked_at(st, slot), true, __ATOMIC_SEQ_CST);
     mco_coro* co = mco_running();
     if (!co) {
         fprintf(stderr, "nova: nova_sched_park_with_unlock: not in fiber context\n");
@@ -275,10 +322,10 @@ static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
      * If CAS fails (pending_wake already 1), it means previous wake event
      * не consumed by park yet — park will consume both на next iteration
      * (counter saturates at 1 for now; could be N для multi-event later). */
-    if (st && st->pending_wake && slot < st->capacity) {
+    if (st && slot < st->capacity) {
         int32_t expected = 0;
         __atomic_compare_exchange_n(
-            &st->pending_wake[slot], &expected, 1,
+            nova_sched_pending_wake_at(st, slot), &expected, 1,
             false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
         /* Don't care if it failed — wake already pending, idempotent. */
     }
@@ -289,15 +336,15 @@ static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
     if (st && slot < st->capacity) {
         bool expected = true;
         was_parked = __atomic_compare_exchange_n(
-            (volatile bool*)&st->parked[slot], &expected, false,
+            (volatile bool*)nova_sched_parked_at(st, slot), &expected, false,
             false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
     }
 
     /* If we won parked CAS — consume the pending_wake we just delivered
      * (we're about to dispatch the fiber; park will not check pending_wake
      * again because fiber resumes via dispatch, not retry-park). */
-    if (was_parked && st && st->pending_wake && slot < st->capacity) {
-        __atomic_store_n(&st->pending_wake[slot], 0, __ATOMIC_RELEASE);
+    if (was_parked && st && slot < st->capacity) {
+        __atomic_store_n(nova_sched_pending_wake_at(st, slot), 0, __ATOMIC_RELEASE);
     }
     /* M:N dispatch: push woken fiber back to worker deque.
      * Под bootstrap dispatch_ready==NULL — pure parked-flag clear. */
@@ -326,7 +373,7 @@ static inline void nova_sched_wake(NovaFiberQueue* scope, int slot) {
 static inline nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return false;
     NovaSchedState* st = nova_sched_find_state(scope);
-    return st && slot < st->capacity && st->parked[slot];
+    return st && slot < st->capacity && *nova_sched_parked_at(st, slot);
 }
 
 /* ─── Plan 83.4.1 (2026-05-23): park-with-predicate ──────────────
@@ -408,8 +455,14 @@ static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
      * on x86 (compiler-only barrier, no mfence — store stays in store buffer).
      * The ACQUIRE-load in cancel_worker_fibers then correctly sees both fields.
      * Plan 83.10.2 fix iteration 2. */
-    st->pending_handle[slot] = handle;
-    __atomic_store(&st->pending_stop_cb[slot], &stop_cb, __ATOMIC_SEQ_CST);
+    /* Ф.1b: pending_handle and pending_stop_cb now live in SEPARATE chunk
+     * directories (different base arrays / cache lines). The SEQ_CST store on
+     * pending_stop_cb still ORDERS THEM GLOBALLY: on x86 it emits mfence/xchg
+     * which drains the WHOLE store buffer (not just one array), so the
+     * preceding plain pending_handle store is globally visible before
+     * register_pending returns. Do NOT colocate them or weaken the SEQ_CST. */
+    *nova_sched_pending_handle_at(st, slot) = handle;
+    __atomic_store(nova_sched_pending_stop_cb_at(st, slot), &stop_cb, __ATOMIC_SEQ_CST);
 }
 
 /* Снять регистрацию. Должно вызываться ПОСЛЕ wake (любой — normal либо
@@ -423,8 +476,8 @@ static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot
     NovaSchedState* st = nova_sched_find_state(scope);
     if (st && slot < st->capacity) {
         NovaSchedStopCb _null_cb = NULL;
-        __atomic_store(&st->pending_stop_cb[slot], &_null_cb, __ATOMIC_RELEASE);
-        st->pending_handle[slot] = NULL;
+        __atomic_store(nova_sched_pending_stop_cb_at(st, slot), &_null_cb, __ATOMIC_RELEASE);
+        *nova_sched_pending_handle_at(st, slot) = NULL;
         /* Plan 83.11 Ф.4 fix: reset pending_wake at the canonical end-of-wait
          * choke point. A cross-thread wake (driver thread, Ф.3/Ф.4) can set
          * pending_wake[slot]=1 AFTER the worker satisfied the done-predicate and
@@ -437,8 +490,8 @@ static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot
          * (blocking offload + sleep). The fiber is already running past its park
          * by the time unregister runs, so a wake arriving concurrently with this
          * clear is for a wait that already completed — dropping it is correct. */
-        if (st->pending_wake) {
-            __atomic_store_n(&st->pending_wake[slot], 0, __ATOMIC_RELEASE);
+        {
+            __atomic_store_n(nova_sched_pending_wake_at(st, slot), 0, __ATOMIC_RELEASE);
         }
     }
 }
@@ -486,7 +539,7 @@ static inline void nova_scope_cancel_wake_all(NovaFiberQueue* scope) {
          *
          * Под bootstrap (scope->dispatch_ready == NULL) — pure flag-clear.
          * Под M:N (dispatch_ready != NULL) — push в worker deque. */
-        if (st->parked[i]) {
+        if (*nova_sched_parked_at(st, i)) {
             nova_sched_wake(scope, i);
         }
     }
@@ -517,8 +570,8 @@ static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope) {
     int n = scope->count < st->capacity ? scope->count : st->capacity;
     for (int i = 0; i < n; i++) {
         NovaSchedStopCb _cb;
-        __atomic_load(&st->pending_stop_cb[i], &_cb, __ATOMIC_ACQUIRE);
-        void* _hdl = st->pending_handle[i];  /* visible after ACQUIRE on _cb */
+        __atomic_load(nova_sched_pending_stop_cb_at(st, i), &_cb, __ATOMIC_ACQUIRE);
+        void* _hdl = *nova_sched_pending_handle_at(st, i);  /* visible after ACQUIRE on _cb */
         if (_cb && _hdl) {
             NovaStopMode mode = _cb(_hdl);
             if (mode == NOVA_STOP_SYNC) {
@@ -531,7 +584,7 @@ static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope) {
             }
             /* ASYNC: НЕ unpark'аем — backend сделает wake через close_cb
              * (для sleep) либо waitlist-removal callback (для channels). */
-        } else if (st->parked[i]) {
+        } else if (*nova_sched_parked_at(st, i)) {
             /* Park без registered stop_cb (bare park) — unpark
              * unconditional + dispatch_ready. */
             nova_sched_wake(scope, i);
@@ -561,7 +614,7 @@ static inline int nova_sched_count_parked(NovaFiberQueue* scope) {
     for (int i = 0; i < n; i++) {
         if (scope->fibers[i] != NULL
             && mco_status(scope->fibers[i]) != MCO_DEAD
-            && st->parked[i]) {
+            && *nova_sched_parked_at(st, i)) {
             count++;
         }
     }
