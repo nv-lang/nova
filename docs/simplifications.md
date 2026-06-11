@@ -34802,3 +34802,15 @@ vec_owned.nv `check` ok.
   jitter-флаки (~0.8%, false-BAD не hang). Ослаблены до wake-not-hang инварианта; цель теста =
   «cancel будит всех, scope не виснет», а не латентность. Verify ≥150 iters (не 50: P(false-good)=0.67).
 - **НЕ применён** gopark cancel-veto (scope-creep против несуществующего failure-mode) → P3 marker.
+
+### Plan 83-go-cmn Ф.3 — ОТЛОЖЕН (design-finding, без кода), 2026-06-11
+
+- **uv_async УЖЕ корректный note-примитив** (idempotent + before/after ordering + IOCP-backed
+  Windows) → собственный note.h / ручной Go lock_sema НЕ вводится (избегнут lost-wakeup риск ради
+  ~нуля). Спека D245. Маркер `[M-83-gocmn-note-primitive-deferred]`.
+- **nspinning coalescing небезопасен в текущей per-worker `wake_pending` топологии** (spinner не
+  дренит чужой wake_pending → coalesce-skip → lost-wakeup, review GAP-1/2/3). Безопасный subset
+  (accounting+recheck) — без value. **Coalescing gated на Ф.4** (global-queue routing) → порядок
+  флипается Ф.4→Ф.3. Маркер `[M-83-f3-coalesce-gated-on-f4]`, Q30.
+- **Урок:** «не реализовывать» — валидный исход de-risking workflow; adversarial review поймал
+  topology-mismatch lost-wakeup ДО кода (избегнута регрессия того же класса, что grow-vs-wake).
