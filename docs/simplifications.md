@@ -35000,3 +35000,51 @@ heap/by reference» → «value type, несущий heap-backed буфер»).
 **E1/E4 — 🟡 ЧАСТИЧНО** (literal-формы gated на lang-item); E2/E3/E5/E6/E7/E8/E9
 — ✅. Plan CLOSED с честным acceptance audit (см. plan-doc §«Итог»).
 138.2 Ф.1 (string-layer) — SUBSUMED.
+
+---
+
+## Plan 138.2 Ф.0a — bulk-insert/append parity на Vec[T] (класс #1, ДО универсального флипа)
+
+**Где.** `std/collections/vec_owned.nv`; фикстуры `nova_tests/plan138_2/t8..t11`.
+
+**Контекст.** Под D141 `[]T` extend-family имеет bulk-семантику: `dst.insert(i, src)`
+вставляет ВСЕ элементы массива `src` в позицию `i` (C-builtin `nova_array_insert_*`,
+`compiler-codegen/nova_rt/array.h:129-151`). После универсального флипа `[]T ≡ Vec[T]`
+(D239) эти вызовы начнут диспатчить на Vec-методы. `Vec.@append(mut other Vec[T])`
+УЖЕ bulk (совпадает), а `Vec.@insert(i int, v T)` = single-element (несовместимо =
+регрессия-класс #1). Ф.0a гасит класс ДО флипа.
+
+**Что сделано.** Добавлен bulk-insert на Vec, точно зеркалящий `nova_array_insert_*`:
+prefix kept → hole opened (memmove tail вправо на `src_len`) → src copied в hole
+(memmove, overlap-safe). **Self-insert safety:** `src_data`/`src_len` снапшотятся
+ДО `@reserve` (как C-builtin снапшотит `src_data`/`src_len` до realloc), т.к. при
+`v.insert(i, v)` `other.data == @data` и reserve может реаллоцировать буфер.
+`@append` уже bulk — только byte-parity check фикстурой (t9), кода не менял.
+
+**Упрощение (Open-Question fallback, явно санкционирован Ф.0a).** Bulk-insert назван
+`@splice(i, Vec[T])`, а НЕ вторым overload `@insert(i, Vec[T])`. Generic-метод
+overloads **коллапсят** в монорфизации: `mono_method_decls` (emit_c.rs ~8404) keyed
+`(type, method-name)` с одним `FnDecl` на key; mono-sentinel `MethodSig` несёт пустой
+`param_c_types` (~8408) → `resolve_overload` (emit_c.rs:9913) не дизамбигуирует
+single от bulk для concrete `Vec[int]` (verified empirically: оба роутятся на single,
+Vec-arg force-fit'ится в `nova_int v` → garbage; t10 «DISTINCT routing» FAIL до
+rename). Plan 138.2 Ф.0a §scope явно допускает `@splice`/`@insert_all`-rename как
+fallback. Distinct имена → distinct C-символы через single-overload short-circuit
+(`Vec____nova_int_method_insert` + `_method_splice`, оба per-T mono'd).
+
+**Почему так (а не fix mono).** Полноценная поддержка overload'ов generic-методов
+через монорфизацию с per-arg-type routing = глубокий codegen-рефактор (keyed-by-sig
+storage + concrete sentinel-types) — HIGH-risk прямо перед HIGH-risk флипом.
+Production-grade развязка: distinct-name API сегодня + `[M-138.2-generic-method-overload-mono]`
+как home для fold `@splice`→`@insert` overload. Ничего не dropped silently.
+
+**Открытые маркеры.** `[M-138.2-bulk-insert-overload]` (fold splice→insert-overload),
+`[M-138.2-generic-method-overload-mono]` (codegen mono overload-routing),
+`[M-138.2-nested-vec-elem-readback]` (DISCOVERED pre-existing: `Vec[Vec[T]]` второй
+push+get читает повреждённый элемент — orthogonal к Ф.0a, narrowed «two push get1»
+FAIL / `new+push` → CC-FAIL missing `NovaOpt_nova_int_p`).
+
+**Результат.** plan138_2 6/0 → **10/0** (+t8/t9/t10/t11). Broad regression 0 NEW FAIL:
+plan138_1 10/0, plan138_3 2/0, plan90_1 20/0 (parity-baseline), plan131 27/1 (pre-existing
+vec_debug_pos), plan126_2 9/1 (pre-existing p5_printable). NovaArray-путь активен (флип
+OFF) — Ф.0a приземляется зелёным. Только `.nv` правки → rebuild не нужен.

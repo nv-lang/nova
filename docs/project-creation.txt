@@ -35986,3 +35986,21 @@ plan55 ×2). 0 NEW FAIL.
 
 КОММИТ: docs(plan139 Ф.7 D26): str as Nova value type — complete (этот файл +
 plan-doc + spec/decisions/{08-runtime,02-types}.md + simplifications + backlog).
+
+=== Plan 138.2 Ф.0a — bulk-insert/append parity на Vec[T] (2026-06-11) ===
+Класс #1 (insert/append bulk-API divergence) погашен ДО универсального []T≡Vec[T]
+флипа. std/collections/vec_owned.nv: добавлен bulk-insert @splice(i, Vec[T]) —
+точное зеркало C-builtin nova_array_insert_* (array.h:129-151): prefix kept + hole
+opened (memmove tail) + src copied (memmove overlap-safe); self-insert safety через
+снапшот src_data/src_len ДО @reserve. @append уже bulk — только byte-parity check.
+Open-Question fallback (явно санкционирован Ф.0a): bulk = @splice, НЕ второй overload
+@insert — generic-метод overloads коллапсят в монорфизации (mono_method_decls keyed
+(type,name), пустой param_c_types в mono-sentinel → resolve_overload не дизамбигуирует).
+Distinct имена → distinct C-символы. Фикстуры plan138_2 t8(splice middle/front/end/
+empty/u8/self) t9(append parity) t10(single-insert vs bulk-splice DISTINCT routing)
+t11(splice OOB panic). plan138_2 6/0→10/0. Broad regression 0 NEW FAIL: plan138_1 10/0,
+plan138_3 2/0, plan90_1 20/0, plan131 27/1, plan126_2 9/1 (all pre-existing). Маркеры:
+[M-138.2-bulk-insert-overload], [M-138.2-generic-method-overload-mono],
+[M-138.2-nested-vec-elem-readback] (DISCOVERED pre-existing, orthogonal). Только .nv
+правки → rebuild не нужен; NovaArray-путь активен (флип OFF), Ф.0a зелёный.
+КОММИТ: feat(plan138.2 Ф.0a #1): bulk-insert overload on Vec[T] (D141 extend-family parity); pre-flip

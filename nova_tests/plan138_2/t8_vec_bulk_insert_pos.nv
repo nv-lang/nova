@@ -1,0 +1,59 @@
+// Plan 138.2 Ф.0a (class #1) — t8: Vec[T] bulk-insert (@splice).
+//
+// `@splice(i int, other Vec[T])` inserts ALL of `other`'s elements at index
+// `i`, shifting the existing suffix right. Mirrors the retired
+// `nova_array_insert_*` C-builtin (Plan 90.1 / D141): under `[]T ≡ Vec[T]`
+// (D239) the bulk `[]T.insert(i, src)` lowers to `@splice` (the bulk overload
+// could not coexist with single `@insert` under the current mono — see
+// [M-138.2-bulk-insert-overload]). Exercises splice@middle, splice@0,
+// splice@len (== append), u8 stride-1, and self-splice.
+
+module plan138_2.t8_vec_bulk_insert_pos
+
+import std.collections.vec_owned.{Vec}
+
+test "bulk splice — middle (mirror nova_array_insert)" {
+    mut dst = Vec[int].from([1, 2, 5, 6])
+    dst.splice(2, Vec[int].from([3, 4]))
+    assert(dst.equal(Vec[int].from([1, 2, 3, 4, 5, 6])))
+}
+
+test "bulk splice — at front (i == 0)" {
+    mut dst = Vec[int].from([3, 4, 5])
+    dst.splice(0, Vec[int].from([1, 2]))
+    assert(dst.equal(Vec[int].from([1, 2, 3, 4, 5])))
+}
+
+test "bulk splice — at end (i == len, equals append)" {
+    mut dst = Vec[int].from([1, 2, 3])
+    dst.splice(dst.len(), Vec[int].from([4, 5]))
+    assert(dst.equal(Vec[int].from([1, 2, 3, 4, 5])))
+}
+
+test "bulk splice — empty source is a no-op" {
+    mut dst = Vec[int].from([7, 8, 9])
+    dst.splice(1, Vec[int].new())
+    assert(dst.equal(Vec[int].from([7, 8, 9])))
+}
+
+test "bulk splice — u8 stride-1 element type" {
+    mut dst = Vec[u8].new()
+    dst.push(10 as u8); dst.push(40 as u8)
+    mut mid = Vec[u8].new()
+    mid.push(20 as u8); mid.push(30 as u8)
+    dst.splice(1, mid)
+    assert(dst.len() == 4)
+    assert(dst[0] == (10 as u8))
+    assert(dst[1] == (20 as u8))
+    assert(dst[2] == (30 as u8))
+    assert(dst[3] == (40 as u8))
+}
+
+test "bulk splice — self-splice (other.data == @data, overlap-safe)" {
+    // v.splice(i, v): the source aliases the destination buffer. The snapshot
+    // of src_data/src_len before @reserve keeps it correct even across realloc.
+    mut v = Vec[int].from([1, 2, 3])
+    v.splice(1, v)
+    // [1,2,3] with [1,2,3] spliced at index 1 -> [1, 1,2,3, 2,3]
+    assert(v.equal(Vec[int].from([1, 1, 2, 3, 2, 3])))
+}

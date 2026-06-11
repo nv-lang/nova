@@ -233,6 +233,58 @@ export fn Vec[T] mut @insert(i int, v T) -> @ {
     @
 }
 
+/// Bulk-insert (splice) every element of `other` at index `i`, shifting the
+/// existing suffix `[i, len)` right by `other.len()` slots. Panics if `i > len`
+/// (`i == len` is a bulk append). Overlap-safe (memmove) so a self-splice
+/// (`v.splice(i, v)`) is correct.
+///
+/// This is the `[]T` extend-family bulk-insert (Plan 90.1 / D141): under
+/// `[]T ≡ Vec[T]` (D239) the old `nova_array_insert_*` C-builtin
+/// (`compiler-codegen/nova_rt/array.h`) lowers to `@splice`. Semantics mirror
+/// the C builtin exactly (prefix kept, hole opened, tail shifted, src copied —
+/// all overlap-safe). The single-element `@insert(i int, v T)` above is the
+/// complementary Rust-style single-insert.
+///
+/// NAMING (Ф.0a Open-Question resolution, [M-138.2-bulk-insert-overload]): this
+/// is `@splice` rather than a second `@insert` overload because generic-method
+/// overloads currently COLLAPSE in monomorphization — `mono_method_decls`
+/// (emit_c.rs ~8404) is keyed by `(type, method-name)` with one `FnDecl` per
+/// key, and the mono-sentinel `MethodSig`s carry empty `param_c_types`
+/// (emit_c.rs ~8408), so `resolve_overload` cannot disambiguate `insert(i, T)`
+/// from `insert(i, Vec[T])` for a concrete `Vec[int]`. Plan 138.2 Ф.0a
+/// explicitly sanctions the `@splice`/`@insert_all` rename as the fallback when
+/// the resolver cannot disambiguate cleanly. Distinct names route cleanly
+/// (single-overload short-circuit), giving distinct C-symbols today; folding
+/// `@splice` back into an `@insert` overload waits on
+/// [M-138.2-generic-method-overload-mono].
+export fn Vec[T] mut @splice(i int, other Vec[T]) -> @ {
+    if i < 0 || i > @len {
+        panic("Vec.splice: index out of bounds")
+    }
+    // Snapshot `other`'s buffer/length BEFORE `@reserve` may realloc `@data`,
+    // exactly as `nova_array_insert_*` snapshots `src_data`/`src_len`. A
+    // self-insert (`v.insert(i, v)`) has `other.data == @data`; after the
+    // reserve `@data` may point at a fresh buffer, so the snapshot keeps the
+    // source pointer/length valid (the old buffer stays live under Boehm GC).
+    ro src_len = other.len()
+    if src_len > 0 {
+        ro src_data = other.data
+        ro tail = @len - i
+        @reserve(src_len)
+        unsafe {
+            // Open a `src_len`-wide hole at `i`: shift the suffix `[i, len)`
+            // right by `src_len` slots (memmove, overlap-safe), then copy the
+            // source into the hole (memmove, robust to src being a view of self).
+            if tail > 0 {
+                RawMem.copy((@data + i) as *u8, (@data + (i + src_len)) as *mut u8, tail * size_of[T]())
+            }
+            RawMem.copy(src_data as *u8, (@data + i) as *mut u8, src_len * size_of[T]())
+        }
+        @len = @len + src_len
+    }
+    @
+}
+
 /// Remove and return the element at `i`, shifting later elements left.
 /// Panics if `i` is out of bounds.
 export fn Vec[T] mut @remove(i int) -> T {
