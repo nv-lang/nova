@@ -887,13 +887,39 @@ Nova str storage invariant — formal rules:
 См. [Plan 118.1](../../docs/plans/118.1-ffi-intrinsics-and-cstring.md) для
 implementation details + complete CStr/str conversion matrix.
 
-**Дедупликация / interning:** `str` **не интернируется автоматически**.
-Одинаковые runtime-строки — разные инстансы. `==` сравнивает контент
-(memcmp), O(min). Compile-time литералы deduplicate-аются C-компилятором
-через стандартное string-literal pooling в `.rodata`. Для opt-in
-interning — **открытый вопрос (Q-string-interning):** Atom-тип или
-`Sym[T]` (Erlang-style); прецеденты — Rust не интернирует, Java/C#
-имеют пул для литералов + opt-in `intern()`.
+**Дедупликация / interning:** `str` **не интернируется автоматически на
+runtime** — одинаковые runtime-строки (результаты `concat`, `to_upper`,
+`split`, и т.п.) — разные инстансы с разными буферами. `==` сравнивает
+контент (memcmp/byte-loop), O(min) — см. Ф.3 content-eq.
+
+**Compile-time литералы интернируются компилятором (Plan 139 Ф.6,
+`Q139-intern-scope` resolved):** идентичные строковые литералы (одинаковые
+байты) разделяют ОДИН `static const uint8_t[]` буфер в `.rodata` + ОДНО
+`static const nova_str` значение. `"abc"`, встреченный N раз в одной
+compilation unit, ссылается на один буфер вместо N inline
+`(nova_str){.ptr="...",.len=N}` compound-литералов (rodata dedup —
+size/perf win + identity-stable rodata-указатель). Реализация —
+`CEmitter::intern_str_literal` (emit_c.rs): content-keyed dedup-map +
+content-hash символьные имена (`_nova_strlit_<fnv1a-hex>`, стабильные,
+collision-resistant с sequence-suffix guard на astronomically-unlikely
+hash-clash). Splice в `/*__INTERNED_STR_LITERALS__*/` preamble-маркер.
+
+Интернирование **семантически невидимо**: т.к. `str` eq/hash —
+byte-content (Ф.3), совпадение pointer-identity между разделёнными
+литералами не наблюдаемо программой; буфер — `*ro u8` (immutable), поэтому
+sharing безопасен (нет write-path сквозь общий указатель). Пустая строка
+`""` сохраняет inline-форму (буфер не нужен). Top-level `const NAME = "lit"`
+эмитит собственный inline static-инициализатор (не проходит через
+interning) — нет нарушения C constant-expression в nested static-init.
+
+**Scope (`Q139-intern-scope` resolved):** интернирование —
+**per-compilation-unit** (символы `static const` = internal linkage, нет
+cross-TU коллизий; bootstrap-safe). Whole-program-interning не нужен:
+content-eq делает кросс-юнитную идентичность ненаблюдаемой. Для opt-in
+runtime-interning изменяемых строк — по-прежнему **открытый вопрос
+(Q-string-interning):** Atom-тип или `Sym[T]` (Erlang-style); прецеденты —
+Rust не интернирует runtime, Java/C# имеют пул для литералов + opt-in
+`intern()`.
 
 **Конкатенация:** `s1 + s2` — O(a+b), новая аллокация каждый раз.
 В hot loop `s = s + x` × N → O(N²). Для аккумуляции использовать

@@ -35880,3 +35880,60 @@ NB: t3_clone_independent изначально CC-FAIL'ил из-за bare-return
 pre-existing compiler-баг). Fixture исправлен на канонический `-> str`
 (совпадает с t0_str_pass_byvalue). Баг bare-return-type вынесен в
 [M-139-f3-bare-return-type-str] backlog.
+
+
+=== Plan 139 Ф.6 — str literal interning (rodata dedup) — 2026-06-11 ===
+(doc-фаза Ф.6 «Literal interning». Оркестратор пометил задачу «F5».)
+
+ЧТО: NEW additive capability. Идентичные строковые литералы теперь разделяют
+ОДИН `static const uint8_t[]` буфер в .rodata + ОДНО `static const nova_str`
+значение, deduped по контенту. `"abc"`, встреченный N раз, ссылается на один
+буфер вместо N inline `(nova_str){.ptr="...",.len=N}` compound-литералов.
+
+РЕАЛИЗАЦИЯ (emit_c.rs, 1 файл, +113/-6):
+  1. ExprKind::StrLit → CEmitter::intern_str_literal() вместо inline compound.
+     Пустая строка "" сохраняет inline-форму (буфер не нужен).
+  2. Два новых поля: interned_str_literals (HashMap content→symbol, dedup) +
+     interned_str_emit (Vec<(symbol,escaped,len)>, insertion-ordered для
+     детерминированного вывода).
+  3. Символьные имена content-hash-based: FNV-1a над raw-байтами →
+     `_nova_strlit_<16hex>`. Стабильны между компиляциями, collision-resistant.
+     Sequence-suffix guard (`_<seq>`) на astronomically-unlikely hash-clash
+     между РАЗНЫМ контентом (R15).
+  4. Новый preamble-маркер `/*__INTERNED_STR_LITERALS__*/` (после nova_rt.h
+     include — nova_str/uint8_t в scope), splice в finalize через
+     render_interned_str_literals().
+
+КОРРЕКТНОСТЬ: семантически невидимо — str eq/hash byte-content (Ф.3), поэтому
+совпадение pointer-identity между литералами не наблюдаемо; буфер `*ro u8`
+immutable → sharing безопасен (нет write-path, R14). Top-level `const NAME =
+"lit"` НЕ трогается: спец-кейзит StrLit ДО emit_expr и эмитит собственный inline
+static-инициализатор → нет nested static-init constant-expression нарушения;
+interning влияет ТОЛЬКО на function-body expression-позиции, где `static const
+nova_str`-символ — валидный rvalue.
+
+ACCEPTANCE: A6.1 ✓ (идентичные литералы → один rodata-буфер; проверено в
+emitted C: "abc" определён ровно 1× при 4 использованиях; t6_intern_large —
+alpha/epsilon/kappa каждый 1 буфер при 2 использованиях). A6.2 ✓ (content-eq
+Ф.3 держится — interning невидим). A6.3 ✓ (нет symbol-коллизий — t6_intern_large
+10 distinct + 3 repeat собирается). A6.4 ✓ (0 new FAIL; измеримое rodata-
+сокращение на repeat-heavy fixture).
+
+ДОКАЗАТЕЛЬСТВА: nova_tests/plan139/ 37/0 PASS (+4: t6_intern_dedup,
+t6_intern_eq_unaffected, t6_intern_large, neg_t6_intern_no_aliasing_bug).
+Регрессии 0 new FAIL vs baseline: str 13/0, plan138_1/2/3 10/6/2, plan131 27/1,
+plan90_1 20/0, plan126 21/0, plan108 5/0, plan108_4 12/1, plan62 29/7, plan77
+7/0, plan141 8/0, map_literals 28/1, plan126_2 9/1, plan48_1 2/0, plan55 17/2,
+plan91_fe1 8/2, plan91_fe5 5/0, plan91 2/0, plan136_1 7/0. Все FAIL pre-existing.
+
+NB: plan108_2 9/4 (NEG-NO-ERROR let_nomut_{array_push,clear,pop,truncate}_neg —
+E_LOCAL_NOT_MUT не срабатывает на Vec-методах) — PRE-EXISTING на plan-138.1 (gap
+из 138.x Vec-миграции), НЕ относится к interning (мой diff — только literal
+lowering, не checker/mut-enforcement). Не был в recorded baseline, но логически
+pre-existing — вне зоны моего изменения.
+
+D26 (08-runtime.md): «Дедупликация / interning» секция amended — runtime
+строки не интернируются, но compile-time литералы теперь интернируются
+компилятором (per-CU, Q139-intern-scope resolved); семантически невидимо.
+
+КОММИТ: b460273688d (feat: emit_c.rs + 4 fixtures).
