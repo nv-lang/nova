@@ -49,10 +49,16 @@
 extern "C" {
 #endif
 
-/* mco_coro is the fiber handle (minicoro). Forward-declared so this header is
- * standalone-testable (test_runq.c provides its own definition). */
+/* mco_coro is the fiber handle (minicoro). In the runtime, minicoro.h (guard
+ * MINICORO_H) provides the full struct + typedef and MUST be included before
+ * this header (nova_rt.h enforces order). The standalone unit test defines its
+ * own struct + NOVA_MCO_CORO_DEFINED before including this header. The guard
+ * below avoids a duplicate typedef under -pedantic / pre-C11 / MSVC. */
+#if !defined(NOVA_MCO_CORO_DEFINED) && !defined(MINICORO_H)
+#define NOVA_MCO_CORO_DEFINED 1
 struct mco_coro;
 typedef struct mco_coro mco_coro;
+#endif
 
 /* ── Tuning ───────────────────────────────────────────────────────────── */
 
