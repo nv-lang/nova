@@ -7317,3 +7317,51 @@ narrowing-bound как first-class фича) — практический бло
 - `[M-138.3-clone-bound-unsupported]` — ✅ CLOSED (Plan 138.4 Ф.1, `88432dd6f02` + `363f4b53788`)
 - `[M-138.3-autoclone-records]` — auto-derive Clone для records (если bound-audit вскроет gap)
 
+---
+
+## Q32. Семантика structural-`==` для циклических record-графов
+
+**Вопрос:** как должно вести себя структурное равенство (`==`) для типов с
+**циклической** ссылочной структурой — `type A { b B }; type B { a A }`, или
+self-referential `type Node { next Node }`?
+
+### Контекст (Plan 141, 2026-06-11)
+
+Plan 141 заменил побитовый `memcmp` на field-by-field structural-`==`
+([D109 amend](decisions/08-runtime.md#d109-amend-plan-141-2026-06-11--structural-eq-field-by-field-по-типу-float-ieee-no-memcmp-на-композитах)):
+кортежи, sum-payload и record-поля сравниваются рекурсивно по своей структурной
+схеме. Для **не-циклических** типов схема конечна — рекурсия терминируется.
+
+Для циклических record-графов наивная structural-рекурсия **не терминируется**
+(бесконечный обход цикла). V1 ставит depth-cap guard в codegen (предотвращает
+runaway-эмиссию), но это не определяет **семантику** равенства цикла.
+
+### Открытые места
+
+1. **Что значит `a == b` для двух циклических графов?** Варианты:
+   - **Bisimulation / graph-isomorphism** (Python-style `==` с memo-set
+     посещённых пар) — корректно, но O(N²) и требует runtime visited-set.
+   - **Identity-eq fallback** для self-referential полей (сравнить pointer
+     ссылки на цикл) — дёшево, но «структурное» только частично.
+   - **Запрет** structural-`==` на циклических типах (`E_EQ_CYCLIC_TYPE`) —
+     заставить пользователя писать explicit `@equal`.
+2. **Когда обнаруживать цикл?** Type-check (как `E_AUTO_DERIVE_CYCLE` для
+   `Clone`, [D109 amend Plan 126](decisions/08-runtime.md#d109-amend-plan-126-2026-06-05--auto-derive-для-пользовательских-типов))
+   или runtime (visited-set)?
+3. **Совместимость с auto-derive `#impl(Equal)`** — `Clone` уже даёт
+   `E_AUTO_DERIVE_CYCLE` на циклических типах; следует ли `Equal` зеркалить
+   это поведение, или поддержать bisimulation как отличие?
+
+### Статус
+
+**Открыт.** V1 (Plan 141) — depth-cap guard в codegen; циклические record-графы
+**out-of-scope**. Практически тип-граф в текущем коде ацикличен (sum/record
+без self-reference через value-поля). Закрыть при появлении реального
+self-referential value-record use-case.
+
+### Cross-refs
+
+- [D109 amend (Plan 141)](decisions/08-runtime.md#d109-amend-plan-141-2026-06-11--structural-eq-field-by-field-по-типу-float-ieee-no-memcmp-на-композитах) — structural-`==` field-by-field.
+- [D109 amend (Plan 126)](decisions/08-runtime.md#d109-amend-plan-126-2026-06-05--auto-derive-для-пользовательских-типов) — `E_AUTO_DERIVE_CYCLE` для `Clone` (прецедент cycle-detection).
+- Plan 141 — home plan.
+

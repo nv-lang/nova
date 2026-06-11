@@ -3247,6 +3247,65 @@ synthesized методы (`@clone`/`@equal`/`@hash`/`@compare`/`@display`)
 проверяются type-checker'ом. Подробности — [D230 §Runtime
 codegen](02-types.md#d230).
 
+### D109 amend (Plan 141, 2026-06-11) — structural eq field-by-field по типу, float IEEE, no memcmp на композитах
+
+**Status:** ACTIVE. Триггер: `[M-codegen-memcmp-equality-float-padding]` —
+встроенное равенство кортежей и sum-вариантов эмитилось через побитовый
+`memcmp`, что **неверно** для float-полей, padding-байт и вложенных композитов.
+
+**Контракт structural-`==`.** Когда `==` сводится к структурному сравнению —
+анонимный кортеж (`(a, b)`), sum-вариант (tag + payload), или synthesized
+`@equal` (memberwise `&&`-chain выше) — равенство вычисляется **поле-за-полем
+по C-типу поля**, НЕ побитовым blob-сравнением:
+
+| Тип поля | Равенство |
+|---|---|
+| скаляр (`int`/`bool`/`char`/`byte`/`u*`/`i*`) | `(l == r)` |
+| **float** (`f64`/`f32`) | `(l == r)` — IEEE 754: **`-0.0 == +0.0` → true**, **`NaN == NaN` → false** |
+| `str` | `nova_str_eq(l, r)` (по контенту, не по pointer) |
+| кортеж (`_NovaTuple…`) | **рекурсивно** field-by-field по элементной схеме |
+| record (`Nova_X*`) | structural: synthesized/explicit `@equal` (или `@compare == 0`), иначе рекурсивно по полям — **НЕ** pointer-identity |
+| sum (`Nova_Y*`) | рекурсивно tag + payload-поля (тот же контракт) |
+| `Option[T]` (`NovaOpt_…`) | делегирует `nova_opt_eq_<inner>` (composite payload — тоже field-by-field) |
+
+**Почему `memcmp` неверен для композитов** (soundness-баг, теперь исправлен):
+- **float:** `-0.0` и `+0.0` имеют разные биты → `memcmp` давал `false` (а IEEE
+  `==` = равны); бит-идентичный `NaN` → `memcmp` давал `true` (а IEEE `==` =
+  не равны). Любой кортеж/sum с float-полем сравнивался неверно.
+- **padding:** mixed-size поля оставляют indeterminate padding-байты → два
+  семантически равных значения могли дать `memcmp != 0`.
+- **nested composite:** вложенный record/sum сравнивался по pointer-битам
+  (identity), а вложенный кортеж как struct → C-compile-error.
+
+**`memcmp` оставлен ТОЛЬКО** для:
+1. `[]u8` byte-blob (`@compare`, [D141](#d141-примитивы-доступа-к-памяти--byte_at--bulk-slice-операции) — byte-equality =
+   намеренная семантика для байтовых буферов; `a == b ⇔ a.compare(b) == 0`);
+2. сравнение строковых литералов / имён (interrupt / bench-name match);
+3. fallback для by-value struct **без** известной схемы (`NovaRes_…`/`NovaArray_…`
+   — сохраняет прежнее поведение, держит codegen total).
+
+`memcmp` **никогда** не применяется к кортежам / records / sum / `str` / `Option`
+композитам.
+
+**Рекурсия и циклы.** Helper рекурсивен по конечной структурной схеме
+(tuple-элементы, sum-payload, record-поля). Для non-cyclic типов схема конечна.
+Прямая рекурсия record-cycle (`type A { b B }; type B { a A }` с structural eq)
+ограничена depth-cap (V1 guard) — точная семантика equality для циклических
+record-графов вынесена в [Q32](../open-questions.md#q32) (out-of-scope V1).
+
+**Согласованность с D109 примитивами.** `f64.eq` уже определён через `==`
+(IEEE 754, см. §Семантика выше). Plan 141 распространяет ту же IEEE-семантику
+на float-поля **внутри** композитов — раньше она терялась под `memcmp`.
+
+**Реализация:** общий `emit_field_eq(c_type, l, r)` helper в
+`emit_c.rs`, диспетчеризующий по C-типу; вызывается из tuple-eq, sum-eq
+(per-payload-field) и обоих `Option`-eq генераторов. Подробности — Plan 141 Ф.1.
+
+**Cross-refs:** [Plan 141](../../docs/plans/141-structural-equality-field-by-field.md) —
+home plan; [D183](02-types.md#d183) / [D237](02-types.md#d237) — `Equal`/`@equal`
+протокол; [D141](#d141-примитивы-доступа-к-памяти--byte_at--bulk-slice-операции) —
+`[]u8 @compare` byte-blob; [Q32](../open-questions.md#q32) — record-cycle eq.
+
 **Что отвергнуто (Plan 126 design)**:
 - `#derive(P)` keyword sugar — повторяет `#impl(P)` без новой семантики; всё
   работает через единый `#impl(...)` annotation (D186).
