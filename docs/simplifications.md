@@ -34796,3 +34796,47 @@ str 13/0, plan60 6/0, plan34 8/0, plan91 2/0, plan108 5/0. **Pre-existing (НЕ 
 str_builder 0/9 — `E_CONSUME_KEYWORD_MISSING` на `mut sb = StringBuilder.new()`
 (consume-guard checker-rule, воспроизводится тривиальной программой; StringBuilder.nv
 не трогался).
+
+## Plan 139 Ф.2 — str []T-producers → Nova-body (2026-06-11)
+
+**ЧТО СДЕЛАНО:** 2 из 5 `[]T`-producer'ов str мигрированы из external C-функций в
+**Nova-body** (`std/runtime/string.nv`): `@to_bytes() -> []u8` (копия байтов из
+`@as_bytes()` zero-copy view в новый `[]u8` через `with_capacity`+`push`) и
+`@to_chars() -> []char` (UTF-8 decode cursor над `@as_bytes()`, push каждого
+codepoint как `char` через `cp_to_char`). Семантика byte-for-byte идентична
+`nova_str_to_bytes`/`nova_str_to_chars`. Routing: удалены из `str_method_to_rt`
+(emit_c.rs) → fall-through на Nova-body dispatch; `runtime_registry.rs` entries
+flipped → `nova_body: Some(...)`.
+
+**ОТЛОЖЕНО (gated на `[M-139-f0-lang-item-decl]`, НЕ silently dropped):**
+План Ф.2 формулирует `as_bytes`/`split`/`from_bytes_*` как pure-Nova на базе
+**`@ptr` field-access**: `as_bytes` zero-copy = `Vec{ data: @ptr as *mut u8, ... }`,
+`split` = zero-copy view-slices `str{ ptr: s.ptr+start, len: ... }`, `from_bytes_*` =
+`str{ ptr: bytes.data, len: bytes.len }`. Все три требуют доступа к полю `@ptr`
+str value-record'а, которого СЕГОДНЯ НЕТ: `s.ptr` даёт type-check error «cannot
+access `.ptr` on str» (lang-item декларация `type str value priv {ptr *ro u8, len int}`
+не приземлена — это `[M-139-f0-lang-item-decl]`, новая checker-инфра). Поэтому
+`as_bytes`/`split`/`from_bytes_lossy`/`from_bytes_unchecked`/`from_bytes_unchecked_steal`
+ОСТАЮТСЯ тонкими C-примитивами (см. NEW [M-139-f2-ptr-field-producers] ниже).
+`nova_str_as_bytes` (array.h:638) уже zero-copy (алиасит `s.ptr`, cap==len) — C-форма
+сохраняет zero-copy-контракт до приземления lang-item; миграция в pure-Nova не теряет
+перф, только переносит на Nova-сторону.
+
+**RETAINED C (scope-out, documented):** `as_bytes` (zero-copy view — нужен `@ptr`),
+`split` (zero-copy view-slices — нужен `@ptr` + `str{ptr,len}` construct),
+`from_bytes_lossy`/`from_bytes_unchecked`/`from_bytes_unchecked_steal` (construct
+`str{ptr,len}` — нужен `@ptr` field-write/lang-item construction). Все 5 = home для
+[M-139-f2-ptr-field-producers].
+
+**SEQUENCING-NOTE:** план говорит Ф.2 «gated на 138.2 Ф.0 (universal Vec)». 138.2 Ф.0
+НЕ приземлён (Vec не в prelude; `[]T`-флип gated `generic_type_templates.contains_key("Vec")`).
+`@to_bytes`/`@to_chars` используют `[]u8`/`[]char` синтаксис, который в string.nv
+лоуэрится в `NovaArray` (как и Ф.1-методы trim/to_lower) — миграция работает БЕЗ
+universal-Vec. Полная `Vec[T]`-репрезентация (вместо NovaArray) для этих producer'ов
+придёт автоматически после 138.2 Ф.0 (флип `[]T`→`Vec` в type_ref_to_c); никаких
+правок в этих Nova-body не потребуется.
+
+**ДОКАЗАТЕЛЬСТВА:** nova_tests/plan139/ 20/0 PASS (+3 vs Ф.1-baseline 17/0:
+t2_to_bytes_roundtrip [ascii/utf8/empty/round-trip/owned-copy], t2_to_chars
+[ascii/multibyte/emoji/empty/cyrillic], neg_t2_as_bytes_mutate [as_bytes view = ro []u8,
+push→compile-error, доказывает immutability R8]). Регрессии 0 new FAIL vs baseline.

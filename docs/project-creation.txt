@@ -35759,3 +35759,34 @@ str_builder 0/9 (E_CONSUME_KEYWORD_MISSING на StringBuilder.new() — consume-
 
 NEW DEFERRED: [M-139-f1-trim-view] (trim Nova-body аллоцирует копию vs бывший zero-copy
 slice-view; view требует @ptr → gated на [M-139-f0-lang-item-decl]; контент идентичен).
+
+=== Plan 139 Ф.2 — str []T-producers → Nova-body — 2026-06-11 ===
+
+ЧТО: 2 из 5 str []T-producer'ов мигрированы из external C в Nova-body
+(std/runtime/string.nv):
+  - @to_bytes() -> []u8 — копия байтов из @as_bytes() zero-copy view в новый []u8
+    (with_capacity + push). Owned, независим от исходной str.
+  - @to_chars() -> []char — UTF-8 decode cursor над @as_bytes(), push codepoint как
+    char (cp_to_char). Тот же decode-алгоритм, что @char_at.
+Routing: удалены из str_method_to_rt (emit_c.rs) → Nova-body dispatch; registry
+flipped → nova_body:Some(...). REBUILD (.rs).
+
+GATED (extracted, НЕ dropped) → [M-139-f2-ptr-field-producers]:
+as_bytes/split/from_bytes_lossy/from_bytes_unchecked/from_bytes_unchecked_steal
+остаются C-примитивами. Все требуют @ptr field-access str value-record'а
+(as_bytes zero-copy Vec{data:@ptr}; split zero-copy view-slices str{ptr:s.ptr+start};
+from_bytes_* construct str{ptr,len}). Сегодня s.ptr → type-error «cannot access .ptr
+on str» — gated на [M-139-f0-lang-item-decl] (lang-item декл не приземлена). C
+nova_str_as_bytes (array.h:638) уже zero-copy — контракт сохранён.
+
+SEQUENCING: 138.2 Ф.0 (universal Vec) НЕ приземлён, но []u8/[]char в string.nv
+лоуэрятся в NovaArray (как Ф.1 trim/to_lower) — миграция работает без universal-Vec;
+полная Vec[T]-репрезентация придёт автоматически после флипа []T→Vec, без правок тел.
+
+ACCEPTANCE: A2.1 ✓ (to_bytes/to_chars round-trip green). A2.2 частично — as_bytes
+zero-copy через @ptr field gated (C-форма zero-copy сохранена). A2.5 ✓ (0 new FAIL).
+A2.3/A2.4 (split/from_bytes_*) — gated на lang-item.
+
+ДОКАЗАТЕЛЬСТВА: nova_tests/plan139/ 20/0 PASS (+3: t2_to_bytes_roundtrip, t2_to_chars,
+neg_t2_as_bytes_mutate [as_bytes view ro, push→compile-error]). Регрессии 0 new FAIL vs
+baseline (str 13/0, types, protocols/iter, plan60, plan91 — совпали).
