@@ -28902,7 +28902,10 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             //     BinOp operator codegen (== / < / + / ...) and HashMap key path,
             //     not via the method — migrating the method alone keeps the C fn.
             //     Structural eq/hash is Plan 139 Ф.3 scope.
-            //   - to_bytes/as_bytes/to_chars/split: []T-producers → Vec, Plan 139 Ф.2.
+            //   - to_bytes/to_chars: MIGRATED to Nova-body (Plan 139 Ф.2).
+            //   - as_bytes/split/from_bytes_*: RETAINED C primitives — need str
+            //     @ptr field-access (zero-copy view construction / str{ptr,len}),
+            //     blocked on [M-139-f0-lang-item-decl]. Plan 139 Ф.2 scope-out.
             //   - len/byte_len: O(1) field read, trivial primitive.
             "concat"      => Some("nova_str_concat"),
             "eq"          => Some("nova_str_eq"),
@@ -28913,9 +28916,10 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             "hash"        => Some("nova_str_hash"),
             "len"         => Some("nova_str_byte_len"),   // Plan 108 D26 rev: len = bytes O(1).
             "byte_len"    => Some("nova_str_byte_len"),  // deprecated alias for len().
-            "to_bytes"    => Some("nova_str_to_bytes"),  // D178: renamed from bytes()
+            // Plan 139 Ф.2: to_bytes/to_chars MIGRATED to Nova-body (copy from
+            // @as_bytes() zero-copy view + UTF-8 decode cursor). Removed here so
+            // they fall through to Nova-body dispatch (Nova_str_method_X).
             "as_bytes"    => Some("nova_str_as_bytes"),  // D176: zero-copy readonly []u8
-            "to_chars"    => Some("nova_str_to_chars"),  // D178: renamed from chars()
             "split"       => Some("nova_str_split"),
             "byte_at"     => Some("nova_str_byte_at"),  // Plan 90
             "compare"     => Some("nova_str_compare"),  // D178

@@ -411,7 +411,8 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "nova_str_to_bytes",
             doc: "D178: UTF-8 bytes как []u8 (allocating copy). Renamed from bytes().",
-        nova_body: None,
+            // Plan 139 Ф.2: Nova-body — copy bytes from @as_bytes() zero-copy view.
+            nova_body: Some("{\n    ro view = @as_bytes()\n    ro n = @len()\n    mut out = []u8.with_capacity(n)\n    mut i = 0\n    while i < n {\n        out.push(view[i])\n        i = i + 1\n    }\n    out\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",
@@ -435,7 +436,8 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "nova_str_to_chars",
             doc: "D178: Codepoints как []char (allocating). Renamed from chars().",
-        nova_body: None,
+            // Plan 139 Ф.2: Nova-body — UTF-8 decode cursor over @as_bytes() view.
+            nova_body: Some("{\n    ro bytes = @as_bytes()\n    ro n = @len()\n    mut out = []char.with_capacity(@char_len())\n    mut i = 0\n    while i < n {\n        ro b = bytes[i] as int\n        mut cp = b\n        mut step = 1\n        if b < 0x80 {\n            cp = b; step = 1\n        } else if (b & 0xE0) == 0xC0 && i + 1 < n {\n            cp = ((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F)\n            step = 2\n        } else if (b & 0xF0) == 0xE0 && i + 2 < n {\n            cp = ((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F)\n            step = 3\n        } else if (b & 0xF8) == 0xF0 && i + 3 < n {\n            cp = ((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F)\n            step = 4\n        } else {\n            cp = b; step = 1\n        }\n        out.push(cp_to_char(cp))\n        i = i + step\n    }\n    out\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",
