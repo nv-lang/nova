@@ -603,6 +603,24 @@ adversarial review.
   задел бы out-of-scope bare-park (channels/net) → залогирован как P3 `[M-83-gopark-bare-park-cancel-veto]`.
 - **Файлы:** только `nova_tests/concurrency/supervised_cancel_stress_test.nv` (re-enable + `let`→`ro`
   + бюджеты). Нет runtime-изменений → нет регрессий. grow_vs_wake/stress_iso_3e остаются зелёными.
+
+**Критерии приёмки Ф.5 (все ✅):**
+
+| # | Критерий | Статус |
+|---|---|---|
+| AC1 | iso-cancel startup race НЕ воспроизводится armed (0 timeout/hang) | ✅ 700 прогонов (380 workflow + 320 мои) |
+| AC2 | 3 disabled-теста re-enabled, компилируются (release nova, clang) | ✅ `nova test` PASS |
+| AC3 | re-enabled тесты robust ≥150 iters @MP=1 **И** @MP=4 (0 timeout + 0 assert-fail) | ✅ 160/160 @MP=1 + 160/160 @MP=4 |
+| AC4 | бюджеты = wake-not-hang инвариант (доказывают «cancel будит всех», не latency-SLA) | ✅ `<1000`/`<1000`/`<2000` (10×+ ниже sleep) |
+| AC5 | НЕТ нового NOVA_AUTOARM=0 workaround | ✅ тесты armed |
+| AC6 | grow-vs-wake остаётся CLOSED; stress_iso_3e зелёный | ✅ (нет runtime-изменений) |
+| AC7 | НЕ применён рискованный gopark cancel-veto (out-of-scope bare-park) | ✅ → P3 marker |
+| AC8 | маркер `[M-83.10.4]` закрыт; bare-park gap залогирован | ✅ |
+
+**Pos/neg:** позитив — «cancel будит все 99/50/300 fiber'ов, scope завершается» (3 теста);
+негатив-свойство — wake-not-hang assert (FAIL если cancel не разбудил → park-forever). Verify
+через **релизную nova** (`nova test` + `stress_bisect` armed exe).
+
 - **Дальше:** Ф.3 (nspinning/note) — остаётся следующей крупной фазой порта.
 
 ### 9.10 Ф.3 ОТЛОЖЕН — design-finding: uv_async уже note, coalescing gated на Ф.4 (2026-06-11)
