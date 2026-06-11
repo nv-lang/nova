@@ -80,6 +80,14 @@ struct NovaWorker {
      * — torn-read safe через __atomic_* (sysmon читает, worker пишет). */
     uint64_t          current_fiber_start;  /* __atomic_* accessed */
     volatile int      preempt_flag;
+    /* Plan 83-go-cmn Ф.4 (safe subset): per-worker scheduler scratch, owner-only
+     * (read/written ONLY by this worker's own thread in the find-work loop) →
+     * plain, no atomics. steal_rng = xorshift32 state for randomized steal-victim
+     * start (avoids all idle workers hammering victim 0 = thundering herd).
+     * sched_tick = find-work iteration counter for the 61-tick global-poll
+     * fairness (anti-starve global-overflow work behind a busy local ring). */
+    uint32_t          steal_rng;
+    uint32_t          sched_tick;
     /* Plan 44.7: FIFO-очередь кооперативно-yield'нутых fiber'ов. Вытесненный
      * (или вызвавший runtime.yield()) fiber кладётся СЮДА, не обратно в deque.
      * Причина: deque — LIFO для owner'а, re-push вытесненного CPU-fiber'а →
@@ -829,11 +837,20 @@ static void _worker_main(void* arg) {
 
         mco_coro* co = NULL;
 
+        /* Plan 83-go-cmn Ф.4 (safe subset): 61-tick global-poll fairness. Every
+         * 61st find-work pass, drain ONE global-overflow fiber BEFORE the local
+         * slots, so global work is not starved behind a perpetually-busy local
+         * ring. 61 = Go's schedtick prime (coprime to common batch sizes).
+         * Owner-only counter; no routing change (home-affinity preserved). */
+        if (++w->sched_tick % 61 == 0) {
+            co = nova_globrunq_get_one(&_nova_global_runq);
+        }
+
         /* Plan 83.7 (2026-05-25): (1.9) runnext priority slot — woken
          * fiber from same-thread dispatch_ready (channel recv → handler
          * spawn re-wake same-worker chain). Cache-warm vs going through
          * the ring tail. Same-thread access — plain pointer. */
-        if (w->runnext) {
+        if (!co && w->runnext) {
             co = w->runnext;
             w->runnext = NULL;
         }
@@ -861,13 +878,30 @@ static void _worker_main(void* arg) {
             co = nova_globrunq_get_one(&_nova_global_runq);
         }
 
-        /* (3) Idle — try steal у соседей (steal-half from their ring head). */
+        /* (3) Idle — try steal у соседей (steal-half from their ring head).
+         * Plan 83-go-cmn Ф.4: randomized victim START (xorshift32) so all idle
+         * workers don't scan from worker 0 first (thundering herd on one victim);
+         * wrap-around still covers every peer exactly once. Owner-only RNG. */
         if (!co) {
-            for (int i = 0; i < _n_workers; i++) {
+            if (w->steal_rng == 0)
+                w->steal_rng = (uint32_t)(w->id + 1) * 2654435761u;
+            uint32_t r = w->steal_rng;
+            r ^= r << 13; r ^= r >> 17; r ^= r << 5;   /* xorshift32 */
+            w->steal_rng = r;
+            int start = (_n_workers > 0) ? (int)(r % (uint32_t)_n_workers) : 0;
+            for (int k = 0; k < _n_workers; k++) {
+                int i = (start + k) % _n_workers;
                 if (i == w->id) continue;
                 co = nova_runq_steal(&w->runq, &_workers[i].runq);
                 if (co) break;
             }
+        }
+
+        /* (3.5) Plan 83-go-cmn Ф.4: ONE post-steal global re-poll — a fiber may
+         * have spilled into _nova_global_runq DURING the steal scan (which walks
+         * every peer). Cheap single check before parking; no spin. */
+        if (!co) {
+            co = nova_globrunq_get_one(&_nova_global_runq);
         }
 
         /* (4) Still nothing — block в libuv (own loop) до cross-worker wake.
