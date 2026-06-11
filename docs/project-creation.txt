@@ -35790,3 +35790,45 @@ A2.3/A2.4 (split/from_bytes_*) — gated на lang-item.
 ДОКАЗАТЕЛЬСТВА: nova_tests/plan139/ 20/0 PASS (+3: t2_to_bytes_roundtrip, t2_to_chars,
 neg_t2_as_bytes_mutate [as_bytes view ro, push→compile-error]). Регрессии 0 new FAIL vs
 baseline (str 13/0, types, protocols/iter, plan60, plan91 — совпали).
+
+=== Plan 139 Ф.4 — str ↔ cstr FFI interop на value-record ABI — 2026-06-11 ===
+(оркестратор пометил задачу «F3», но prose enumerated FFI/cstr items —
+это doc-фаза Ф.4 «FFI / cstr interop». Ф.3 doc = eq/hash/clone — уже де-факто
+закрыта direct BinOp lowering nova_str_eq/_lt в emit_c.rs:16985, str никогда
+не идёт field-by-field путём Plan 141; см. notes.)
+
+ЧТО: реализован D26 §3 (Nul-termination resolution) для str→C-string. Раньше
+as_cstr() был unconditional zero-copy → C strlen на mid-buffer слайсе
+(`"hello world"[0..5]`) over-read'ил в parent → strlen=11 вместо 5. Теперь:
+  - NEW C-примитив nova_rt.h `nova_fn_nova_str_terminated_ptr(nova_str) -> const uint8_t*`:
+    `s.ptr[s.len]==0`? → zero-copy ptr; иначе nova_alloc(len+1) + memcpy + '\0'
+    (GC-tracked копия). `s.ptr[s.len]` peek всегда safe (D26 §2: parent
+    `parent.len+1`, view.len<=parent.len).
+  - std/ffi/cstr.nv: `external unsafe fn nova_str_terminated_ptr(s str) -> *u8`
+    (free fn → C `nova_fn_nova_str_terminated_ptr`); as_cstr()/as_cstr_unchecked()
+    маршрутятся через него вместо `bytes.as_ptr()`. Embedded-NUL scan остаётся
+    в as_cstr() (panic), as_cstr_unchecked() scan-free но всё равно
+    NUL-terminated (over-read — это баг корректности, не perf-выбор).
+  - plan115_ffi_test.h: 3 тестовых shim'а — p139_str_byte_sum(nova_str)
+    [str→C by-value: читает .ptr/.len], p139_cstr_strlen(const char*)
+    [CStr→C strlen], p139_make_str()->nova_str [C→str via from_cstr].
+
+ABI: str value-record (`{const uint8_t* ptr; int64_t len;}`, Ф.0) проходит
+через `const char*` FFI boundary без правок (`const char*` ≡ `const uint8_t*`).
+from_cstr (nova_rt.h:84) уже uint8_t-ABI с Ф.0. CStr(*u8) newtype + as_cstr/
+as_cstr_unchecked + embedded-NUL scan — landed Plan 118.1, переиспользованы.
+
+ИЗМЕНЕНО только .h + .nv (НЕ .rs) → nova rebuild НЕ нужен.
+
+ACCEPTANCE: A4.1 ✓ (from_cstr/to_cstr round-trip green). A4.2 ✓ (sliced str →
+as_cstr alloc+terminate, strlen=slice-len не parent-len). A4.3 ✓ (plan115 FFI
+sqlite e2e + plan118_* family green via typedef). A4.4 ✓ (0 new FAIL).
+
+ДОКАЗАТЕЛЬСТВА: nova_tests/plan139/ 26/0 PASS (+6: t4_from_cstr, t4_to_cstr_ffi,
+t4_slice_not_nul_terminated, t4_ffi_roundtrip, neg_t4_raw_ptr_to_ffi_unsafe
+[as_cstr_unchecked без unsafe{} → E_UNSAFE_CALL_REQUIRES_WRAP],
+neg_t4_cstr_embedded_nul [interior NUL → panic, defined behavior]). Регрессии
+0 new FAIL vs baseline: plan118_1_cstr_nul 2/0, plan115 11/0, plan118_1 11/0,
+str 13/0, plan138_1/2/3 10/6/2, plan131 27/1, plan90_1 20/0, plan91 2/0,
+plan126 21/0, plan108 5/0, plan108_4 12/1, plan62 29/7, plan77 7/0, plan118
+37/3 (NPO pre-existing, подтверждено git-stash), plan118_4 4/0, plan118_5 14/0.

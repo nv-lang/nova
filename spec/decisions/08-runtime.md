@@ -853,10 +853,21 @@ Nova str storage invariant — formal rules:
    - Memory access at `view.ptr[view.len]` ALWAYS safe (within parent buffer
      которое `parent.len + 1` bytes, и `view.len <= parent.len`).
 
-3. **`str @as_cstr()` resolution** (Q-cstring closed — Plan 118.1):
+3. **`str @as_cstr()` resolution** (Q-cstring closed — Plan 118.1;
+   alloc-fallback IMPLEMENTED — Plan 139 Ф.4 / Q139-cstr-nul-termination):
    - Runtime check: `ptr[len] == 0`?
      - TRUE → zero-copy view (CStr wraps `ptr` directly)
      - FALSE → allocate `len + 1`, copy + NUL (fallback к `@to_cstr` semantics)
+   - Plan 139 Ф.4: реализовано через C-примитив `nova_str_terminated_ptr`
+     (nova_rt.h) — `s.ptr[s.len]` peek (всегда safe per §2: parent buffer
+     `parent.len+1`, `view.len <= parent.len`) + conditional `nova_alloc`
+     (GC-tracked) копия. Both `@as_cstr()` и `@as_cstr_unchecked()` маршрутятся
+     через него: mid-buffer slice (`s[a..b]` ending mid-parent) теперь
+     alloc+terminate'ится, так что C-side strlen НЕ over-read'ит за окно
+     слайса. Раньше (V1) as_cstr был unconditional zero-copy → strlen на
+     mid-buffer слайсе over-read'ил в parent. `str` value-record ABI
+     (`{const uint8_t* ptr; int64_t len;}`, Plan 139 Ф.0) проходит через
+     `const char*` FFI boundary без правок (`const char*` ≡ `const uint8_t*`).
    - SAFE primitive (no `#unsafe` attribute):
      ```nova
      fn str @as_cstr() -> CStr      // zero-copy view + embedded-NUL scan (V1)

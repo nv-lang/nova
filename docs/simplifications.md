@@ -34840,3 +34840,50 @@ universal-Vec. Полная `Vec[T]`-репрезентация (вместо No
 t2_to_bytes_roundtrip [ascii/utf8/empty/round-trip/owned-copy], t2_to_chars
 [ascii/multibyte/emoji/empty/cyrillic], neg_t2_as_bytes_mutate [as_bytes view = ro []u8,
 push→compile-error, доказывает immutability R8]). Регрессии 0 new FAIL vs baseline.
+
+## Plan 139 Ф.4 — str ↔ cstr FFI interop на value-record ABI (2026-06-11)
+
+(Оркестратор пометил задачу «F3», но enumerated FFI/cstr items — это doc-фаза
+**Ф.4** «FFI / cstr interop». Doc-Ф.3 = eq/hash/clone уже де-факто закрыта:
+str `==`/`!=`/`<`/`<=`/`>`/`>=` лоуэрятся DIRECTLY в BinOp codegen
+(emit_c.rs:16985-16996) на `nova_str_eq`/`_lt`/... — content-eq (memcmp/byte),
+str НИКОГДА не идёт field-by-field путём Plan 141. R10 «Plan 141 делает str
+pointer-eq» НЕ live — direct lowering уже content-eq. eq/hash верификация —
+вне scope этой задачи.)
+
+**ЧТО СДЕЛАНО:** реализован **D26 §3** (Nul-termination resolution) для str→C.
+До этого `@as_cstr()` был unconditional zero-copy (`CStr(bytes.as_ptr())`) →
+C-side `strlen` на mid-buffer слайсе over-read'ил в parent buffer:
+`"hello world"[0..5].as_cstr()` → strlen=**11** (нашёл NUL parent'а на байте 11)
+вместо **5**. Это нарушало D26 §3 (должен alloc+terminate когда `ptr[len]!=0`).
+
+- **NEW C-примитив** `nova_rt.h`: `nova_fn_nova_str_terminated_ptr(nova_str s)
+  -> const uint8_t*` — `s.ptr[s.len]==0`? → zero-copy `s.ptr`; иначе
+  `nova_alloc(len+1)` (GC-tracked) + `memcpy` + `'\0'`. Peek `s.ptr[s.len]`
+  ВСЕГДА safe (D26 §2: full str владеет `len+1`; slice's parent владеет
+  `parent.len+1`, `view.len<=parent.len` → байт в окне parent-буфера).
+- **std/ffi/cstr.nv:** `external unsafe fn nova_str_terminated_ptr(s str) -> *u8`
+  (free fn → C-имя `nova_fn_nova_str_terminated_ptr`). `as_cstr()` и
+  `as_cstr_unchecked()` маршрутятся через него вместо `bytes.as_ptr()`.
+- **plan115_ffi_test.h:** 3 тестовых shim'а (str→C by-value byte-sum,
+  CStr→C strlen, C→str via from_cstr).
+
+**RETAINED C (≤2 irreducible, documented):** (1) `nova_fn_nova_str_terminated_ptr`
+— peek одного байта за окном (`s.ptr[s.len]`, не выражается на `ro []u8` view
+с cap==len) + conditional `nova_alloc` (str не владеет аллокатором в Nova).
+Это естественный home для будущей `@to_cstr()` owning-copy (Plan 118.2). C-форма
+`nova_str_from_cstr` (nova_rt.h:84) уже uint8_t-ABI с Ф.0 — переиспользована для
+C→str. CStr(*u8) newtype + embedded-NUL scan — landed Plan 118.1.
+
+**ИЗМЕНЕНО только .h + .nv (НЕ .rs)** → nova rebuild НЕ нужен.
+
+**CLOSED:** as_cstr slice-over-read gap (был implicit в Plan 118.1 V1 zero-copy
+as_cstr; cstr.nv header line 11 «Sub-views могут не иметь terminating NUL —
+fallback alloc» был aspirational, теперь IMPLEMENTED). D26 §3 amend landed.
+
+**ДОКАЗАТЕЛЬСТВА:** nova_tests/plan139/ 26/0 PASS (+6: t4_from_cstr,
+t4_to_cstr_ffi, t4_slice_not_nul_terminated [strlen=5 не 11], t4_ffi_roundtrip,
+neg_t4_raw_ptr_to_ffi_unsafe [as_cstr_unchecked без unsafe{} →
+E_UNSAFE_CALL_REQUIRES_WRAP], neg_t4_cstr_embedded_nul [interior NUL → panic]).
+Регрессии 0 new FAIL vs baseline (plan118_1_cstr_nul 2/0, plan115 11/0,
+plan118_1 11/0, str 13/0, plan118 37/3 NPO pre-existing подтверждено git-stash).
