@@ -643,4 +643,29 @@ adversarial review.
   Маркер `[M-83-f3-coalesce-gated-on-f4]`. НЕ реопен grow-vs-wake/iso-cancel/Ф.2 (counter аддитивен).
 - **Дальше:** Ф.4 (global queue + steal-half) — разблокирует Ф.3 coalescing + даёт work-stealing value.
 
+### 9.11 Ф.4 ОТЛОЖЕН (global-routing) — design-finding: home-affinity Nova уже корректен (2026-06-12)
+
+**Design-workflow + adversarial review → global-routing ОТЛОЖЕН** (review поймал stranding ДО кода).
+Без кода.
+
+- **CORE STRANDING BUG (review):** naive «route cross-thread work → global + wake-one» странает работу.
+  Каждый воркер блокируется на СВОЁМ `uv_run(UV_RUN_ONCE)`; разбудить можно только его собственный
+  `wake_handle`. «wake-one» к занятому воркеру (остальные спят) → async coalesce → работа застревает
+  в global → cancelled-scope fiber не запускается → `pending_remote` не декрементит → **supervised hang**
+  (тот же класс, что Ф.1b/Ф.5 закрывали). Fix = wake-ALL воркеров на каждый global-put (Go-faithful,
+  coalescing дёшев) — но это wake-all cost до Ф.3 coalescing.
+- **Ключевое (review):** «**сильно пересмотри re-routing dispatch_ready в global**» — текущий
+  **home-worker путь** (cross-thread работа → home-worker `wake_pending`, дренится безусловно на верху
+  find-work loop) **уже stranding-proof + lost-wakeup-proof**. **Home-affinity дизайн Nova КОРРЕКТЕН**;
+  Go global-queue — архитектурная альтернатива (balancing vs locality tradeoff), НЕ строгое улучшение.
+- **Подтверждено безопасно:** Ф.2 single-winner (goready выбирает диспетчера до runqput), steal не
+  может double-run (runq_grab CAS-removes из victim), grow-vs-wake/GC-rooting не задеты.
+- **META-сигнал (2 фазы подряд, Ф.3+Ф.4):** Go global-queue/coalescing модель конфликтует с корректным
+  home-affinity дизайном Nova + несёт stranding/lost-wakeup риск + не явный perf-выигрыш. **Критичная
+  M:N-работа (оба race'а) ЗАКРЫТА; остаток routing-порта — low-ROI/risky без бенчмарков.**
+- **Безопасный subset Ф.4** (если делать): steal-refinements (random-victim + post-steal global poll) +
+  61-tick fairness + spawn_global→global+wake-all (частичный Ф.3-unblock). Минорная ценность.
+- Маркер `[M-83-f4-global-routing-gated-on-bench]` (P3): global-routing только если профайл покажет,
+  что home-affinity — боттлнек. Ф.3 coalescing остаётся gated на этом.
+
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).
