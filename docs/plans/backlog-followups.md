@@ -26,6 +26,7 @@
 | `[M-83.10.4-iso-cancel-startup-race]` | Iso-cancel startup race (supervised(cancel:) первый тест TIMEOUT); 83.10.5 tactical fix неадекватен (~55%), арх. Ф.B не сделана; 3 stress-теста disabled. | plan-83.11 Followups | P1 |
 | `[M-83.11-grow-vs-wake-race]` | Grow-vs-wake torn pointer-read race (grow_state swap несинхр. с driver wake); тесты gated AUTOARM=0; 3 попытки фикса провалены — НЕ повторять. | plan-83.11 Followups | P1 |
 | `[M-debug-line-directives]` | Нет `#line N "file.nv"` → дебаггер показывает C, не Nova. Только comment-only `/* SRC */`. | Plan 25 G9 → dedicated план | P1 |
+| `[M-83-study-go-c-mn]` | Изучить рабочий M:N из C-исходников Go (≤1.4 `runtime/proc.c`, work-stealing, sysmon-preempt) + подтянуть Nova-M:N, если уступает (открытые race'ы 83.10.4/83.11). Go доказал M:N в C-рантайме. | Plan 83 (M:N umbrella) | P1 |
 
 ## P2 — Correctness / Completeness
 
