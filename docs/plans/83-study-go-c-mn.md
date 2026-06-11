@@ -406,4 +406,44 @@ fence НЕ тронуты; no gopark/nspinning.
 
 **⚠ grow-vs-wake НЕ закрыт этим шагом** — realloc `NovaSchedState` остаётся (Ф.1b).
 
+### 9.4 Ф.1b декомпозиция — park-state relocation (закрывает grow-vs-wake), design-workflow 2026-06-11
+
+Design-workflow (4 map + synth + adversarial review). **Verdict `needs-fixes`** (дизайн
+здравый; правки — coverage-пробелы). Полный design+review: `tmp_f1b_design.json`.
+
+**ВЫБРАН Option C — chunked / block-list stable-address массивы** (отклонён Option A =
+park-state на SpawnCtxBase). Рационал: Option A ставил бы §10 slot_lock + mco_get_user_data
+в lock-free wake-путь И переоткрывал lost-wake при slot-reuse (wake резолвит NEW ctx
+переиспользованного слота → пишет не тому fiber'у) — ровно тот баг, что чиним. Плюс A
+требует dual codegen-layout правок SpawnCtx (Ф.1a FATAL #2). **Option C** делает адрес
+`&parked[slot]` стабильным навсегда (chunk'и аллоцируются раз, не двигаются) → torn-pointer
+структурно невозможен; slot-индексация та же → **все 13 load-bearing fence сохраняются
+байт-в-байт** (review: fence_hazards **VERIFIED CLEAN**); нет lock'а на hot-path. Тот же
+принцип, что Ф.1a (fixed ring). НЕ повторяет 6 провалившихся tactical-попыток (убирает
+realloc — корень, не патчит протокол).
+
+**Геометрия:** `NOVA_SCHED_CHUNK=64` (pow2, shift=6, mask=63), `NOVA_SCHED_MAX_CHUNKS=1024`
+(потолок 65536 slots/scope, abort при превышении). 4 массива → 4 inline-директории
+`T* X_chunks[MAX_CHUNKS]` в NovaSchedState. Hot-path: `c=slot>>6; o=slot&63;
+&X_chunks[c][o]`, accessor делает `__atomic_load_n(&X_chunks[c],ACQUIRE)` затем индекс.
+
+**10 шагов:** (1) chunk-тип+макросы fibers.h; (2) NovaSchedState 4 поля → директории;
+(3) `nova_sched_grow_state` → **CAS-publish chunk'ов** (не realloc); (4) accessor с
+ACQUIRE-load chunk-ptr; (5) substitute ~26 `st->X[slot]` → accessor (atomic op verbatim);
+(6) breakage point runtime.c:1877 + **driver.c:372-377** + dump-сайты; (7) alloc_slot §10;
+(8) fixture `grow_vs_wake_explicit.nv`; (9) снять AUTOARM=0 с 4+3 fixtures; (10) build+stress.
+
+**Corrections (применить до кода):** BLOCKER 1 — добавить `driver.c:372-377` (wake-path
+close_cb «Fix B») в substitution; BLOCKER 2 — `fibers.h:1689,1721`; BLOCKER 3 — grow идёт
+**без slot_lock** (spawn_into/get_state/register_pending) → **CAS-publish** (directory[c]
+NULL→chunk, проигравший free'ит) обязателен; CORR 5 — grep-audit: 0 raw `st->X[slot]` +
+0 изменённых `__ATOMIC_*`; CORR 4 — pending_handle/pending_stop_cb в РАЗНЫХ директориях,
+SEQ_CST всё равно глобально упорядочивает (store-buffer drain) — не колоцировать.
+
+**Acceptance (закрытие grow-vs-wake):** снять AUTOARM=0 с stress_iso_3e / stress_iso_large /
+park_wake_stress / semaphore_batch_n / driver_cancel_{sleep_basic,edge} / driver_stress_cancel;
+новый `grow_vs_wake_explicit.nv` (5 supervised 3/1/5/4/5) 100/100; stress n≥100 @
+MAXPROCS=1 И 16; **NOVA_WATCHDOG_DUMP_SECS=0** (без Heisenbug-маскировки); clang; full
+nova test no-regression; §10/§11.6/§12.31 нетронуты.
+
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).
