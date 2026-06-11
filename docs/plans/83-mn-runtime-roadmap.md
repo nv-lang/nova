@@ -36,17 +36,19 @@
   метаданные) — **OS-уровневый, язык-агностичный** → реализуем и в C-рантайме Nova. Снимает per-loop
   `nova_preempt_check` (см. `[M-opt-preempt-strided-loop]`).
 
-## ACTION: изучить Go C-era M:N + подтянуть Nova
+## ACTION: изучить Go C-era M:N + подтянуть Nova → **[Plan 83-study-go-c-mn](83-study-go-c-mn.md)**
 
-**`[M-83-study-go-c-mn]`** (P1 research → impl): взять **рабочий M:N из C-исходников Go** (последняя
-C-версия рантайма — Go ≤1.4, перед 1.5-трансляцией: `src/pkg/runtime/proc.c`, `runtime.h`, sched/G-P-M,
-work-stealing, park/ready, sysmon), **сравнить с текущим M:N Nova** (Plan 82 fiber arena + 83.x scheduler),
-и **реализовать улучшения, если наш M:N уступает** (work-stealing balance, sysmon-preemption, P-local
-runqueues, spinning/parking эвристики). Особое внимание: открытые race'ы 83.10.4/83.11 — посмотреть, как
-Go решал аналогичные (grow-vs-wake, slot-reuse) в C-рантайме.
+**`[M-83-study-go-c-mn]`** (P0 research → impl): ✅ **research+декомпозиция выполнены 2026-06-11**
+→ см. **[83-study-go-c-mn.md](83-study-go-c-mn.md)** (8-фазный production-grade план порта).
 
-Источник: github.com/golang/go история (тег go1.4, `src/pkg/runtime/`). Go C-runtime — MIT-совместимая
-лицензия (BSD), идеи/алгоритмы переносимы.
+Research-workflow (11 агентов) зафетчил Go 1.4 C-рантайм (`src/pkg/runtime/proc.c`, `runtime.h`,
+`netpoll*.c`, `time.goc`, `lock_sema.c`), смапил текущий Nova M:N, выдал gap-анализ (9 gaps).
+**Главная находка:** grow-vs-wake — баг **реаллокации**, не memory ordering; Go fixed `runq[256]`
+(стабильный адрес, never realloc) структурно его исключает. **Закрывает оба открытых маркера:**
+`[M-83.11-grow-vs-wake-race]` (Ф.1+Ф.2+Ф.3), `[M-83.10.4-iso-cancel-startup-race]` (Ф.5).
+
+Источник: github.com/golang/go тег go1.4 (последняя C-версия, перед go1.5 C→Go). Go BSD-3-Clause —
+совместима с Nova; алгоритмы переносимы свободно, при близком порте — атрибуция Google + BSD-нотис.
 
 ---
 
