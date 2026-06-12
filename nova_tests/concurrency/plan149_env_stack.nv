@@ -1,0 +1,47 @@
+// plan149_env_stack.nv — Plan 149 D233 AC2: NOVA_FIBER_STACK env takes effect.
+//
+// With the review must_fix #1/#2 fix, the per-fiber minicoro stack_size is
+// derived from the RUNTIME arena slot_size (nova_fiber_arena_slot_size()), so
+// raising NOVA_FIBER_STACK=8MB actually gives a deeper usable stack. This
+// fixture spawns a fiber that runs a moderately deep recursion which fits
+// comfortably in an 8MB slot. It is a positive smoke: env honored + spawn +
+// deep recursion all work together without overflow.
+//
+// NOVA_MAXPROCS=1 keeps it to a single worker arena (deterministic, single
+// arena_init → single config resolution).
+//
+// ENV NOVA_FIBER_STACK=8MB
+// ENV NOVA_MAXPROCS=1
+
+module concurrency.plan149_env_stack
+
+// Recursive sum 1..n — consumes one frame per level. depth=2000 is trivial
+// for an 8MB stack but exercises real recursion inside a fiber.
+fn rec_sum(n int) -> int {
+    if n <= 0 {
+        0
+    } else {
+        n + rec_sum(n - 1)
+    }
+}
+
+test "env NOVA_FIBER_STACK=8MB: deep-recursion fiber completes" {
+    mut r = 0
+    supervised {
+        spawn { r = rec_sum(2000) }
+    }
+    // 2000 * 2001 / 2 = 2001000
+    assert(r == 2001000)
+}
+
+test "env NOVA_FIBER_STACK=8MB: many fibers each recurse" {
+    mut total = 0
+    supervised {
+        mut i = 0
+        while i < 50 {
+            spawn { total += rec_sum(500) }   // 500*501/2 = 125250 each
+            i += 1
+        }
+    }
+    assert(total == 50 * 125250)
+}

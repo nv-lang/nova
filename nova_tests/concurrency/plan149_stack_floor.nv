@@ -1,0 +1,30 @@
+// plan149_stack_floor.nv — Plan 149 D233 AC5: stack below 256KB → floor + warn.
+//
+// NOVA_FIBER_STACK=1KB is below the 256KB floor. The arena rounds up to page
+// alignment then clamps to the 256KB floor, printing one stderr warning
+// ("below floor — using 256KB"). The program runs normally on the floored
+// 256KB slot (usable = 256KB - 16KB guard = 240KB > 0). The recursion depth
+// here is small enough to fit the floor.
+//
+// ENV NOVA_FIBER_STACK=1KB
+// ENV NOVA_MAXPROCS=1
+// EXPECT_STDERR below floor
+
+module concurrency.plan149_stack_floor
+
+fn rec_sum(n int) -> int {
+    if n <= 0 {
+        0
+    } else {
+        n + rec_sum(n - 1)
+    }
+}
+
+test "stack below floor: clamped to 256KB, shallow fiber still runs" {
+    mut r = 0
+    supervised {
+        spawn { r = rec_sum(100) }   // shallow — fits 240KB usable easily
+    }
+    // 100 * 101 / 2 = 5050
+    assert(r == 5050)
+}

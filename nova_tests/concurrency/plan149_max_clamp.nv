@@ -1,0 +1,25 @@
+// plan149_max_clamp.nv — Plan 149 D233 AC5: max above SLOT_COUNT_MAX → clamp + warn.
+//
+// NOVA_MAX_FIBERS=999999999 far exceeds the compile-time SLOT_COUNT_MAX
+// (262144 on 64-bit). The arena rounds up to a multiple of 64 then clamps to
+// MAX, printing one stderr warning ("exceeds max ... clamped"). The program
+// runs normally on the clamped slot count.
+//
+// ENV NOVA_MAX_FIBERS=999999999
+// ENV NOVA_MAXPROCS=1
+// EXPECT_STDERR exceeds max
+
+module concurrency.plan149_max_clamp
+
+test "max above SLOT_COUNT_MAX: clamped, fibers still spawn" {
+    mut total = 0
+    supervised {
+        mut i = 1
+        while i <= 20 {
+            ro cur = i
+            spawn { total += cur }
+            i += 1
+        }
+    }
+    assert(total == 210)
+}
