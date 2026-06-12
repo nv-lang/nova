@@ -35436,3 +35436,42 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   jitter-флаки (~0.8%, false-BAD не hang). Ослаблены до wake-not-hang инварианта; цель теста =
   «cancel будит всех, scope не виснет», а не латентность. Verify ≥150 iters (не 50: P(false-good)=0.67).
 - **НЕ применён** gopark cancel-veto (scope-creep против несуществующего failure-mode) → P3 marker.
+
+### Plan 147 Ф.2-3 — 3-axis mutability parser+checker (L1/L2/L3), 2026-06-12
+
+- **Где:** parser/mod.rs (Star/KwRo arms + binding-stmt mut-preserve), types/mod.rs
+  (check_target_readonly + f1_check_assign_let + infer_expr_type + reassign-gate),
+  emit_c.rs (binding-mut promotion removed). Commit 34c13261913.
+- **Что:** реализована трёхосевая модель D246 (откат flip-scan D245). L1 binding
+  (`ro`/`mut` перед именем = переприсваиваемость), L2 view (`ro`/`mut` перед
+  value/record-типом = транзитивный freeze owned-графа, СТЕНА на `*`), L3 pointee
+  (`*T`=ro / `*mut T`=mut, ИЗ ТИПА, позиционно-независимо). `*T ≡ *ro T`
+  универсально; `*ro T`→E_REDUNDANT_POINTER_RO (hard, fix-it `*T`); `*p=v` через
+  ro-pointee→E_POINTER_RO_ASSIGN; R2-split `ro r mut T` (content✅/reassign❌);
+  голый `ro r`=freeze (P7); rebind `ro`-локала→E_LOCAL_NOT_MUT; content-coercion
+  E_READONLY_COERCE по L2-view (учёт binding для bare-type). plan147 oracle 19/19.
+- **Осознанные ограничения (НЕ упрощения модели — границы реализации checker'а):**
+  - **infer_expr_type для return-coercion / deref-write через call** — пропагирует
+    только `ro`-wrapped и pointer return-типы, и ТОЛЬКО когда ВСЕ overload'ы
+    согласны (call-resolution ещё не выполнена на этом этапе). Это НЕ полноценный
+    return-type inference (нет мономорфизации). Достаточно для oracle row D
+    (`-> ro Value`, `-> *T`/`-> *mut T`); более сложные формы (generic-return,
+    method-call-return `v.f()`) дают `None`→no-gate. Для них L3-нарушение
+    ловится позже C-компилятором (`const T*` write = CC-FAIL), не чистой Nova-
+    диагностикой. **Followup [M-147-infer-call-ret-mut-axis]** (P2).
+  - **L3 deref-write gate (`*p=v`)** срабатывает только когда `p` — простой Ident
+    или As-cast с известным типом в scope. `*(p+i)=v` (Binary operand) и прочие
+    составные lvalue-деривации дают `infer_expr_type=None`→no-gate; ловится C-
+    компилятором через const-pointee (поведение как до Plan 147). **Followup
+    [M-147-deref-write-compound-lvalue]** (P2).
+  - **Generic-element write `*v[i]=x` (oracle row E `Vec[*T]` vs `Vec[*mut T]`)**
+    — НЕ покрыт чистой Nova-диагностикой (element-type inference через `[]`-index
+    на generic-instance требует мономорфизации в checker'е). Ловится C-уровнем
+    (const element pointee). Документирован в oracle, но не enforced на Nova-
+    уровне. **Followup [M-147-generic-element-deref-write]** (P2).
+- **Почему:** ATOMIC parser+checker gate требует FULL oracle A-E green + 0 new FAIL
+  на baseline pointer/value dirs. Реализованы все формы где checker имеет тип; для
+  call/compound/generic-derived типов — graceful fallback на C-уровневый const-
+  enforcement (soundness сохранён: ro-pointee write всё равно отвергается, просто
+  позже и с C-, а не Nova-диагностикой). Production: ни одна форма не «тихо
+  разрешена» — либо Nova-error, либо CC-error.
