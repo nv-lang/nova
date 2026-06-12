@@ -29,6 +29,21 @@ test "str content equality (D228)" {
     assert(a == b)
 }
 
+// D228: str `==` is CONTENT equality (nova_str_eq = len-match + memcmp), NOT
+// pointer identity. Build the two operands from DISTINCT runtime buffers so a
+// pointer-eq lowering would FAIL this assert: `mid` and `end` are produced by
+// separate `+` concatenations (each `nova_str_concat` heap-allocates a fresh
+// buffer), then re-joined. The literal "abcdef" interns to yet another buffer.
+// All three point at different memory yet must compare equal by content.
+test "str content equality across distinct buffers (D228)" {
+    ro mid = "ab" + "cd"
+    ro built = mid + "ef"
+    assert(built == "abcdef")
+    // And distinct-buffer != when content differs.
+    ro other = "ab" + "cX" + "ef"
+    assert(built != other)
+}
+
 test "str interpolation" {
     ro n = 42
     ro s = "n=${n}"

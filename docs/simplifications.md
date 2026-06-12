@@ -35591,3 +35591,34 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   (str «вёл себя» как value-record но не был объявлен). ЗДЕСЬ обратное: НЕ
   объявляем фейковую миграцию ради галочки. 0 методов retired — честный факт;
   настоящий разблокер producer-форм = `[]T`→`Vec` flip (Plan 138.2 Ф.0), не Ф.B.
+
+### Plan 139.1 Ф.C — str content-eq override (D228) + E1 privacy neg fixtures (2026-06-12)
+**FIXTURES ONLY — 0 compiler/std source change, binary unchanged от Ф.A (6670216167a).**
+- **Content-eq (D228) — RE-VERIFY-AND-PIN, без source-изменений.** str's C-тип
+  остаётся hand-written `nova_str` typedef (ABI-alias landed Ф.A). BinOp `==`/`!=`
+  lowering (emit_c.rs ~17137) И `emit_field_eq` (~11310) ОБА key'ят на C-type-строку
+  `"nova_str"` → `nova_str_eq(l,r)` / `!nova_str_eq(l,r)`. `nova_str_eq` (nova_rt.h:238)
+  = `a.len==b.len && memcmp(a.ptr,b.ptr,a.len)==0` = настоящий content-eq. Override
+  УЖЕ был привязан к lang-item через Ф.A ABI-alias — объявление value-record НЕ
+  изменило `type_ref_to_c("str")=>"nova_str"`, поэтому str routes тем же content-eq
+  path'ом. Ф.C закрепляет DISTINCT-BUFFER позитивным тестом: `built = ("ab"+"cd")+"ef"`
+  (два отдельных `nova_str_concat` heap-alloc'а) сравнивается `== "abcdef"` (interned
+  literal = 3-й distinct buffer). Проверено в gen-C (str_lang_item_basic_ok.c:3796-3804):
+  вложенные `nova_str_concat` затем `nova_str_eq(built, _nova_strlit_...)` — НЕ
+  constant-folded, НЕ pointer-eq. Pointer-eq lowering ПРОВАЛИЛ бы этот assert.
+- **E1 negative corpus COMPLETE (3 фикстуры — dual buffer-protection + construction):**
+  - `neg_str_priv_field` (Ф.A): `s.ptr` снаружи → `E_PRIV_FIELD_READ` (binding-level
+    защита буфера — `priv` поле).
+  - `neg_str_ptr_write` (Ф.C NEW): запись через bare `*u8` (тип поля str) →
+    `E_POINTER_RO_ASSIGN` (type-level защита — `*u8 ≡ *ro u8` ro-pointee, D246).
+    Закреплено на bare `*u8`-параметре (НЕ `s.ptr`), т.к. outside-module `s.ptr`
+    фаerr'ит `E_PRIV_FIELD_READ` ПЕРВЫМ — privacy гейтит field-access до того как
+    pointee-write rule применится. Wrapped в `unsafe {}` чтобы фаerr'ил ТОЛЬКО
+    E_POINTER_RO_ASSIGN (bare `*p` добавил бы E_UNSAFE_REQUIRED, D216 §8).
+  - `neg_str_construct_direct` (Ф.C NEW): `str { ptr:p, len:n }` снаружи →
+    `E_PRIV_FIELD_INIT` (оба поля priv, D220 §4). Не даёт user-коду подделать str с
+    произвольной (ptr,len)-парой (нарушило бы D26 §3 NUL-инвариант + content-eq/hash
+    soundness). str-значения производимы только через public-surface lang-item'а.
+- **АНТИ-RELAXED-GATE:** content-eq доказан на distinct runtime-буферах в gen-C, не
+  на interned-литералах (которые прошли бы под pointer-eq). Каждый негатив эмпирически
+  подтверждён (фаerr'ит свой точный код до staging).

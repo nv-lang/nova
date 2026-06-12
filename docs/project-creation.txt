@@ -36728,3 +36728,50 @@ plan139_1 2/0, plan139 37/0, str 13/0, plan91 2/0, plan126 21/0, plan108_4 12/1
 
 Files: docs/{simplifications.md, plans/backlog-followups.md, project-creation.txt}
 (documentation only — no compiler/std source touched).
+
+=== Plan 139.1 F.C - str content-eq override (D228) + E1 privacy neg fixtures (2026-06-12) ===
+SCOPE: bind str content-eq (D228: str = content-eq, not pointer-eq) to the lang-item;
+complete the E1-GATE negative corpus (privacy + ro-pointee + construction). FIXTURES
+ONLY — 0 compiler/std source change, binary unchanged from F.A (6670216167a), build green.
+
+CONTENT-EQ (D228) — RE-VERIFY-AND-PIN, NO source change needed: str's C-type stays the
+hand-written nova_str typedef (ABI-alias landed F.A), and the BinOp `==`/`!=` lowering
+(emit_c.rs ~17137) plus emit_field_eq (~11310) BOTH key on the C-type string "nova_str"
+=> nova_str_eq(l,r) / !nova_str_eq(l,r). nova_str_eq (nova_rt.h:238) is
+`a.len==b.len && memcmp(a.ptr,b.ptr,a.len)==0` = genuine content-eq. The override was
+ALREADY bound to the lang-item via the F.A ABI-alias — declaring the value-record did
+NOT change type_ref_to_c("str")=>"nova_str", so str routes through the same content-eq
+path. F.C pins this with a DISTINCT-BUFFER positive test: `built = ("ab"+"cd")+"ef"`
+(two separate nova_str_concat heap allocs) compared `== "abcdef"` (interned literal =
+3rd distinct buffer). Verified in generated C (str_lang_item_basic_ok.c:3796-3804):
+nova_str_concat(nova_str_concat(...),...) then nova_str_eq(built, _nova_strlit_...) —
+NOT constant-folded, NOT pointer-eq. A pointer-eq lowering would FAIL this assert.
+
+E1 NEGATIVE CORPUS COMPLETE (3 fixtures, all fire the expected compile error):
+- neg_str_priv_field (F.A): `s.ptr` outside str-module -> E_PRIV_FIELD_READ (binding-level
+  buffer protection — the `priv` field).
+- neg_str_ptr_write (F.C NEW): write through a bare `*u8` (str's field type) ->
+  E_POINTER_RO_ASSIGN (type-level buffer protection — `*u8 ≡ *ro u8` ro-pointee, D246).
+  Pinned on a bare `*u8` param (not `s.ptr`) because outside-module `s.ptr` fires
+  E_PRIV_FIELD_READ FIRST — privacy gates field access before the pointee-write rule
+  applies. Wrapped in `unsafe {}` so only E_POINTER_RO_ASSIGN fires (bare `*p` would also
+  raise E_UNSAFE_REQUIRED, Plan 118 D216 §8). These two errors are str's DUAL backing-
+  buffer protection (binding-level priv + type-level ro-pointee).
+- neg_str_construct_direct (F.C NEW): `str { ptr:p, len:n }` outside str-module ->
+  E_PRIV_FIELD_INIT (both fields priv, D220 §4). Prevents user code forging a str with an
+  arbitrary (ptr,len) pair (would break D26 §3 NUL invariant + content-eq/hash soundness).
+  str values producible only via the lang-item public surface (literals/`+`/from_bytes_*).
+
+GATE EVIDENCE (RELEASE binary @ 6670216167a, unchanged): plan139_1 4/0 (basic-ok +
+3 neg), plan139 37/0, str 13/0, plan91 2/0, plan126 21/0, plan124_8 40/0, plan124_1 9/0,
+plan147 30/0, basics 8/0. Pre-existing fails (NOT regressions, identical to F.A/F.B
+documented sets): plan62 ×7, plan108_4/pos_receiver_at_parse (c.fmt), plan131/vec_debug_pos.
+0 source change => 0 regression risk; targeted suites identical to F.A baseline.
+
+ANTI-RELAXED-GATE: content-eq genuinely proven across distinct runtime buffers in the C
+output, not asserted on interned literals that could pass under pointer-eq. Negatives all
+empirically confirmed (each fires its exact error code before staging).
+
+Files: nova_tests/plan139_1/{str_lang_item_basic_ok.nv (enhanced), neg_str_ptr_write.nv
+(new), neg_str_construct_direct.nv (new)}, docs/{project-creation.txt, simplifications.md,
+plans/backlog-followups.md}.
