@@ -1,0 +1,36 @@
+// Plan 139.1 Ф.A — str lang-item GATE (positive).
+// Trivial str program: literal, concat (`+`), len, byte-access via public
+// methods. Exercises the ABI-bridge (nova_str layout) + literal-lowering +
+// Nova-body / external methods on the declared `type str value priv`.
+
+module plan139_1.str_lang_item_basic_ok
+
+test "str literal + len (bytes)" {
+    ro s = "abc"
+    assert(s.len() == 3)
+}
+
+test "str concat via + operator" {
+    ro s = "abc"
+    ro t = s + "d"
+    assert(t.len() == 4)
+    assert(t == "abcd")
+}
+
+test "str byte_at public accessor" {
+    ro s = "abc"
+    assert(s.byte_at(0) == 97 as u8)
+    assert(s.byte_at(2) == 99 as u8)
+}
+
+test "str content equality (D228)" {
+    ro a = "hello"
+    ro b = "hel" + "lo"
+    assert(a == b)
+}
+
+test "str interpolation" {
+    ro n = 42
+    ro s = "n=${n}"
+    assert(s == "n=42")
+}

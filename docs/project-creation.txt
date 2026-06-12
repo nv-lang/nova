@@ -36619,3 +36619,55 @@ pre-existing), plan124_8 40/0, str 13/0, plan135 11/0, plan139 37/0, plan120
   восстановленным `*T≡*ro T` (bare `*u8` = ro-pointee canon; flip-scan не нужен).
 
 Commit 3d5c8cf93b4.
+
+=== Plan 139.1 F.A - str lang-item decl + ABI-alias (E1-GATE, 2026-06-12) ===
+
+Closes the hardest part of [M-139-f0-lang-item-decl] (str = declared Nova
+lang-item, not hardcoded primitive). E1-GATE PASSED.
+
+DECL: `type str value priv { ptr *u8, len int }` added to std/prelude/core.nv.
+Reuses the value-record machinery (Plan 124.8) — NO new checker infra. str now
+lands in TypeCheckCtx.types; privacy fires through the existing record-path in
+f3_check_member.
+
+LANG-ITEM LINKAGE: name-recognition (no new attr). `str` stays the primitive
+canon for type_ref_to_c ("str" => "nova_str", emit_c.rs:4859 — name-keyed before
+TypeDecl lookup). The decl adds field structure + privacy on top.
+
+ABI-BRIDGE: `str` added to RUNTIME_DEFINED_TYPES (emit_type_decl early-return)
++ forward-decl skip in the emit_module pre-pass. Result: NO NovaValue_str struct
+emitted; C-type = hand-written `nova_str` typedef ({const uint8_t* ptr; int64_t
+len;}, nova_rt.h, sizeof 16). Verified: 0 occ NovaValue_str / 345 occ nova_str in
+generated C. ~354 runtime sites + literal-lowering untouched.
+
+SAME-NAME FIELD/METHOD FIX: str has field `len` AND method `@len()`.
+f3_check_member now prefers a same-named method (returns before the priv-field
+check) so `s.len()` (method-call) is not mis-flagged E_PRIV_FIELD_READ. Bare
+`s.ptr` (no method `ptr`) still fires privacy. Matches codegen method-resolution
++ the documented field/method same-name design.
+
+@byte_len ALIAS: 5 string.nv sites called @byte_len() (not a registered method)
+— only worked while str member-access was permissive. Added real method
+`@byte_len() => @len()` (D26: str.len = bytes) in core registry + string.nv.
+
+ORACLE SUPERSESSION: plan147/e5_str_ptr_field_ok migrated (s.ptr read outside
+str module now E_PRIV_FIELD_READ); the s.ptr-outside case moved to new neg
+fixture plan139_1/neg_str_priv_field.nv. Intentional, documented (e5 header
+anticipated it).
+
+GATE EVIDENCE: plan139_1 2/2 (basic-ok + neg-priv), plan139 37/0, str 13/0,
+plan147 30/0, plan124_8 40/0, contracts 250/0, basics/generics/plan95/99/138/
+136_1 clean. 0 new deterministic FAIL vs baseline a340d3bb673 (each suspect
+suite — plan62 29/7, plan108_2 9/4, syntax 49/5, modules 29/2, map_literals
+28/1, protocols 24/2 — verified IDENTICAL on a clean baseline rebuild; protocols
+conversion/* is a pre-existing flaky test). Panic + interp (nova run) RELEASE
+GREEN with str literals/interpolation.
+
+SCOPE: atomic F.A only. F.B (10 C-methods -> Nova-body via @ptr), F.C (content-eq
+override + remaining neg fixtures), F.D (docs + close marker) remain. Marker
+[M-139-f0-lang-item-decl] stays OPEN until F.D, but the lang-item infra +
+privacy enforcement (the risk) is landed.
+
+Files: std/prelude/core.nv, std/runtime/string.nv,
+compiler-codegen/src/{types/mod.rs, codegen/emit_c.rs, codegen/runtime_registry.rs},
+nova_tests/plan147/e5_str_ptr_field_ok.nv, nova_tests/plan139_1/*.

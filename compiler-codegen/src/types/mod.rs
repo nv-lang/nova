@@ -5189,6 +5189,22 @@ impl<'a> TypeCheckCtx<'a> {
                 if fields.iter().any(|f| f.is_embed) {
                     return;
                 }
+                // Plan 139.1 (lang-item str): same-name field/method resolution.
+                // `str` has BOTH a priv field `len` AND a method `@len()`. A
+                // member access `s.len(...)` is a METHOD call, not a priv-field
+                // read — codegen resolves it to the method. If a method with this
+                // name exists on the type, prefer it (return) BEFORE the priv-field
+                // check, so `s.len()` is not mis-flagged E_PRIV_FIELD_READ. A bare
+                // field read like `s.ptr` (no method `ptr`) still falls through to
+                // the field block below and fires privacy correctly. This matches
+                // the documented field/method same-name design (see E_BOUND_METHOD
+                // heuristic above) и поведение codegen method-resolution.
+                let has_same_name_method = self.method_table.get(tname).map_or(false, |m| {
+                    m.keys().any(|k| k.trim_start_matches('@') == name)
+                });
+                if has_same_name_method {
+                    return;
+                }
                 if let Some(field) = fields.iter().find(|f| f.name == name) {
                     // Plan 124 (D220) + 124.6 (D225): priv field READ access check.
                     // Allowed: own type-method, или fn с #test_access(tname),

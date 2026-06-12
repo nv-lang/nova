@@ -35510,3 +35510,37 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   диагностики: D246 P6 split (L1 binding × L2 view) прямо разрешает обе пары
   `ro X mut T`/`mut X ro T` как ортогональные оси. Это закрытие через модель, не
   упрощение.
+
+### Plan 139.1 Ф.A — str lang-item decl + ABI-alias (E1-GATE, 2026-06-12)
+- **БЕЗ упрощений модели.** str объявлен как полноценный Nova value-record
+  `type str value priv { ptr *u8, len int }` в `std/prelude/core.nv`. Lang-item
+  линковка ПЕРЕИСПОЛЬЗУЕТ value-record-машинерию (Plan 124.8) — НИКАКОЙ новой
+  checker-инфры: str просто попадает в `self.types`, privacy fires через
+  существующий record-path `f3_check_member`. ABI-bridge: str ∈
+  `RUNTIME_DEFINED_TYPES` + forward-decl skip (emit_c.rs) — C-тип = hand-written
+  typedef `nova_str` ({const uint8_t* ptr; int64_t len;}), НИКАКОЙ `NovaValue_str`
+  struct (0 occ в gen-C). Все ~354 рантайм-сайта + literal-lowering не тронуты.
+- **Same-name field/method резолюция (НЕ упрощение — соответствует design):**
+  `f3_check_member` теперь предпочитает МЕТОД, если у типа есть одноимённый
+  метод (str: field `len` + method `@len()`). `s.len()` (method-call) больше не
+  мис-флагается `E_PRIV_FIELD_READ`. Bare field-read `s.ptr` (нет метода `ptr`)
+  по-прежнему fires privacy. Это документированный field/method same-name design
+  (см. E_BOUND_METHOD heuristic) — codegen уже резолвит `s.len()` в метод.
+- **`@byte_len` alias = `@len` (latent-bug fix, не упрощение):** 5 сайтов
+  string.nv (parse_int/pad_left/pad_right/repeat) + StringBuilder.with_capacity
+  вызывали `@byte_len()`, которого НЕ было среди registered str-методов —
+  «работало» только пока str member-access был полностью permissive (str НЕ был
+  в self.types). После приземления lang-item method-resolution стал строгим →
+  добавлен реальный метод `@byte_len() => @len()` (D26: str.len = bytes).
+- **e5_str_ptr_field_ok ORACLE-PIN SUPERSEDED (намеренно, не тихая регрессия):**
+  `nova_tests/plan147/e5` читал `s.ptr` снаружи str-модуля и EXPECT'ил ok под
+  pre-lang-item хардкод-примитивом. Теперь `s.ptr` снаружи → E_PRIV_FIELD_READ
+  (= GATE requirement). e5 мигрирован на public `s.len()`; кейс `s.ptr`-снаружи
+  закреплён dedicated neg-фикстурой `plan139_1/neg_str_priv_field.nv`. e5's
+  собственный header это анонсировал.
+- **Ф.B/Ф.C/Ф.D НЕ in scope этой задачи** (атомарный Ф.A = GATE). 10 external
+  C-методов str (`@concat`/`@hash`/`@as_bytes`/`from_bytes_*`/`@split`/`@compare`/
+  `@byte_at`/`@len`) пока C-routed — миграция на Nova-body via `@ptr` byte-access
+  = Ф.B. content-eq override (D228) уже работает через direct BinOp lowering
+  (не Plan 141 field-by-field). marker `[M-139-f0-lang-item-decl]` остаётся OPEN
+  до Ф.D close — НО самая сложная часть (lang-item infra + privacy) ПРИЗЕМЛЕНА.

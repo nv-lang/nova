@@ -18,6 +18,13 @@ import std.runtime.string_builder.{StringBuilder}
 // Длина строки в байтах. O(1). (Plan 108 D26 rev: len = bytes, char_len = codepoints).
 export external fn str @len() -> int
 
+// Plan 139.1: явный байтовый алиас `len` (D26: str.len = bytes). Используется
+// в parse_int / pad_left / pad_right / repeat и StringBuilder.with_capacity
+// call-сайтах для читаемости (vs codepoint-длина @char_len). Nova-body — нет
+// нового C-кода. Должен существовать как реальный метод теперь, когда str —
+// объявленный lang-item с активным method-resolution (Plan 139.1 Ф.A).
+export fn str @byte_len() -> int => @len()
+
 // Длина строки в codepoint'ах. O(n). Используй для итерации по символам.
 // Plan 139 Ф.1: Nova-body — считает не-continuation байты (UTF-8 leading +
 // ASCII), читая байты через @as_bytes() (zero-copy view). Семантика идентична

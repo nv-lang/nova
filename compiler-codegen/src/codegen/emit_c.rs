@@ -1786,6 +1786,16 @@ impl CEmitter {
             if let Item::Type(t) = item {
                 match &t.kind {
                     TypeDeclKind::Record(_) => {
+                        // Plan 139.1 (lang-item str): `str` — value-record, но
+                        // его C-тип — hand-written typedef `nova_str` в
+                        // nova_rt/nova_rt.h (ABI-bridge), НЕ `NovaValue_str`.
+                        // Skip любой forward-decl для str — иначе
+                        // `typedef struct NovaValue_str` конфликтует с
+                        // `nova_str`. Symmetric с RUNTIME_DEFINED_TYPES skip
+                        // в emit_type_decl. См. core.nv `type str value priv`.
+                        if t.name == "str" {
+                            continue;
+                        }
                         // Plan 124.8 V2 (D226): value-records emit own
                         // `typedef struct NovaValue_X NovaValue_X;` в
                         // emit_value_record_type. Skip Nova_X forward decl
@@ -8878,6 +8888,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // duplicate typedef errors. The Nova type declarations (type T consume { ptr int })
             // serve only for type-checking and LinearityRegistry; C structs live in the header.
             "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
+            // Plan 139.1 (lang-item str): `str` declared as value-record
+            // `type str value priv { ptr *u8, len int }` в std/prelude/core.nv.
+            // Skip emission — C-тип str = hand-written typedef `nova_str`
+            // ({const uint8_t* ptr; int64_t len;}, nova_rt/nova_rt.h), ABI-
+            // identical. NOT NovaValue_str. Все ~354 рантайм-сайта + literal-
+            // lowering используют `nova_str` (type_ref_to_c "str" => "nova_str",
+            // emit_c.rs:4859). str — Record (не Sum), поэтому schema-branch
+            // ниже не срабатывает; просто return Ok. Closes [M-139-f0-lang-item-decl].
+            "str",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — C struct + constructors живут в

@@ -136,6 +136,25 @@ fn str_runtime() -> Vec<RuntimeFn> {
             doc: "Длина строки в байтах. O(1). (Plan 108 D26 rev: len = bytes, char_len = codepoints).",
         nova_body: None,
     },
+        // Plan 139.1: `byte_len` — explicit byte-length alias of `len`
+        // (D26 rev: str.len == bytes). Several str Nova-bodies (parse_int,
+        // pad_left/right, repeat) and StringBuilder.with_capacity call sites
+        // call `@byte_len()` for clarity (vs codepoint `char_len`). Previously
+        // resolved only by permissive str member-access; once str is a declared
+        // lang-item with active method-resolution, the alias must exist as a
+        // real method. Nova-body `=> @len()` — zero new C surface.
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "byte_len",
+            params: &[],
+            return_ty: "int",
+            effects: &[],
+            c_name: "",
+            doc: "Длина строки в байтах. O(1). Явный алиас `len` (D26: str.len = bytes).",
+            nova_body: Some("@len()"),
+        },
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),

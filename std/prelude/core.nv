@@ -162,6 +162,41 @@ export type Error {
 
 
 // ──────────────────────────────────────────────────────────────────────────
+// str — lang-item value-record (Plan 139.1, closes [M-139-f0-lang-item-decl])
+// ──────────────────────────────────────────────────────────────────────────
+
+/// UTF-8 string — immutable, value-typed view `{ ptr *u8, len int }`.
+///
+/// **Lang-item (Plan 139.1):** `str` — это полноценный Nova value-record,
+/// а не хардкод-примитив. Объявление здесь делает `str` источником правды
+/// для:
+///   - **privacy** (`priv` поля): `s.ptr` / `s.len` снаружи str-методов →
+///     `E_PRIV_FIELD_READ` (D220). Доступ к байтам — через публичные методы
+///     (`@len`, `@byte_at`, `@as_bytes`), объявленные в `std/runtime/string.nv`.
+///   - **field layout / sizeof** (16 байт на x64): `ptr` — backing UTF-8
+///     buffer, `len` — длина в БАЙТАХ (D26 rev: `str.len = bytes`).
+///
+/// **3-axis model (Plan 147, D246):** поле `ptr *u8` — bare `*u8` —
+/// это ro-pointee canon (`*T ≡ *ro T`): pointee read-only, запись
+/// `s.ptr[i] = …` → `E_POINTER_RO_ASSIGN`. `*ro u8` — HARD ERROR (используй
+/// `*u8`).
+///
+/// **ABI-bridge:** C-тип этого value-record'а — существующий typedef
+/// `nova_str` (`{ const uint8_t* ptr; int64_t len; }`, `nova_rt/nova_rt.h`),
+/// layout-идентичный. ~354 рантайм-сайта + literal-lowering не меняются.
+/// Codegen НЕ эмитит `NovaValue_str` struct — `str` в `RUNTIME_DEFINED_TYPES`
+/// (emit_c.rs) skip-list, как `Option`/`Result`/`Error`. См. D26, 02-types.md.
+///
+/// **Bootstrap (R1/R2):** доступен pre-method (str нужен в panic/interp до
+/// своих методов); literal-lowering зависит только от layout, не от методов.
+#stable(since = "0.1")
+type str value priv {
+    ptr *u8
+    len int
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
 // Option[T] methods (D26 §283-306)
 // ──────────────────────────────────────────────────────────────────────────
 //
