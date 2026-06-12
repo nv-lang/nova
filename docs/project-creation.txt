@@ -36855,3 +36855,67 @@ wake-routing → stranding/lost-wakeup невозможны. Поля owner-only
 
 Validation: smoke PASS; suite 106/4 (no-regression, те же 4 pre-existing); grow_vs_wake 25/25 @MP=1;
 ring_overflow_drain 25/25 @MP=4 (steal+global); nested_cancel 20/20 @MP=4.
+
+--------------------------------------------------------------------------------
+2026-06-12 — Plan 148 — Independent compiler cleanups (Ф.1–Ф.5, branch plan-138.1)
+--------------------------------------------------------------------------------
+Промоут 4 самодостаточных backlog-маркеров (не гейтят другие планы) в реализованные
+production-grade фичи + doc-hygiene. Каждый — pos+neg фикстуры (релизный nova-codegen),
+spec/D-обновление, закрытие маркера. По одному коммиту на задачу. 0 новых регрессий.
+
+Ф.1 (98f0b48050f) — [M-138-canonical-modifier-order]. Канон порядка type-decl
+модификаторов = `value priv` (НЕ `priv value`). parser/mod.rs::parse_type_decl modifier-loop
+присваивает каждому модификатору canonical rank по scope (value=0 representation →
+consume=1 ownership → priv=2 visibility); ранги обязаны строго возрастать в source order,
+иначе E_MODIFIER_ORDER на merged modifier-region span + MachineApplicable fix-it
+(переписывает регион в rank-канон). Обобщено на ВСЕ будущие type-модификаторы. plan124_8/
+modifier_order_independence_ok.nv флипнут positive→negative (был единственной out-of-canon
+type decl в корпусе). D241 (03-syntax.md) DECIDED→IMPLEMENTED + amend D124/D220 (02-types.md):
+stale «order-independent + W_NON_CANONICAL V2 lint» → hard error. Фикстуры mo_* (3 pos + 5 neg).
+plan124_8 40/0, plan148 7/0.
+
+Ф.2 (2d24a38c288) — [M-138-unsafe-block-postfix-stmt]. КЛЮЧЕВАЯ НАХОДКА: парсер УЖЕ
+корректен — нет отдельной leading-`unsafe`/block-statement ветки; parse_stmt_or_expr `_`-arm
+зовёт полную parse_expr→parse_postfix, поэтому block-формы (unsafe {} / if / match / bare {})
+в statement-позиции уже принимают постфикс (.method() / [i] / .field) без (…). Проверено
+value-discarded формой (true Stmt::Expr). Изменения parser-кода НЕ потребовалось. Работа:
+cleanup лишних скобок vec_owned.nv:862/874 ((unsafe { @data[i] }).display/debug → без скобок);
+regression-guard фикстуры up_unsafe_postfix_stmt_ok (8) + up_bare_block_stmt_ok (3, A2 —
+bare {} остаётся statement); D49 (03-syntax.md) amend. plan148 9/0.
+
+Ф.3 (b6d3687108) — [M-114.4-strict-partition]. Forward-направление const/ro partition:
+checker E_RO_FOR_CONSTEXPR_PREFER_CONST в types/mod.rs::check_ro_module_partition (зеркало
+E_CONST_NOT_CONSTEXPR, тот же предикат check_const_constexpr_ex — оси не расходятся на
+«constexpr»), вызывается из TypeCheckCtx::check_module по новому Item::Let-арму. Семантика:
+только module-level single-name ro с полностью constexpr-eligible RHS (UPPER_CASE binder
+парсится как unit Pattern::Variant → имя из обоих Ident И unit-variant); scope-local ro,
+destructuring, ghost, runtime-RHS — не затрагиваются. Фикстуры rc_* (2 neg + 2 pos).
+D199 amend + partition-table «spec-only → implemented» (03-syntax.md). plan148 13/0.
+CAVEAT: module-level RUNTIME `ro X = expr()` codegen — pre-existing unimplemented gap
+(не lowered; checker корректно принимает, verified via check).
+
+Ф.4 (982dfd90153) — [M-codegen-unify-tuple-repr]. Кортежи унифицированы на on-demand mono'd
+typed структуры (D123 amend). (A1) concrete tuples (f64/str/record/bool) — реальные C-типы
+полей, без int-boxing/(intptr_t)-каста. (A2) blanket _NovaTuple1..8 pre-decl РЕТАЙРНУТ →
+on-demand register_legacy_tuple + /*__LEGACY_TUPLE_TYPEDEFS__*/ splice (idempotent #ifndef);
+на практике только arity 2 (erased HashMap/Set (K,V)). (A3) tuple eq/debug по типам корректны
+(per-element compare через emit_field_eq). КЛЮЧЕВОЙ ФИКС: field-read (emit_expr Member-digit) +
+infer_expr_c_type декодируют элемент-тип напрямую из mono'd struct name в obj_ty
+(parse_mono_tuple_elements), не только из per-Ident side-table — чинит field access на
+fn-параметрах, call-result кортежах и вложенных t.0.1; закрыло 5 pre-existing CC-FAIL plan59
+(f2/f10/f13/f15/f16). Новый код E_TUPLE_DESTRUCTURE_ARITY (3 сайта). (A4) полная регрессия
+зелёная — ~30 директорий сверены с baseline-бинарём (temp-worktree, не stash): 0 новых FAIL,
++5 fixed. Фикстуры tr_* (2 pos + 2 neg), plan148 17/0. SCOPE-NOTE: legacy all-int _NovaTuple2
+не удалён полностью (erased HashMap/Set lowers (K,V) через него; полное удаление требует mono'д
+HashMap/Set — отдельный effort).
+
+Ф.5 (этот commit) — docs + close. README plans-index: добавлены строки 139/139.1/147/148
+(отсутствовали — ошибка верификации «Plan 147 NOT main» в README НЕ существует).
+project-creation.txt (эта запись) + simplifications.md + nova-private/discussion-log.md (append,
+отдельный коммит). 4 backlog-маркера подтверждены closed в backlog-followups.md. Финальный
+статус-раздел Plan 148.
+
+ИТОГ: все 4 маркера CLOSED, без упрощений (production-grade, AC met по каждой фазе). Branch
+plan-138.1, НЕ merged в main. Остатки — pre-existing gaps (документированы, не регрессии и не
+в scope этих 4 axes): mono'd-tuple-of-Vec forward-decl ordering, OOB tuple field index не
+reject'ится, module-level runtime-ro codegen, legacy _NovaTuple2 (erased HashMap/Set).
