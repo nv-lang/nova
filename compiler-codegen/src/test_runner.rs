@@ -2324,15 +2324,21 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
             .map_err(|e| format!("import resolution: {}", e))?;
     }
 
-    {
+    // Plan 140 Ф.3 (D24 amend): capture ModuleEnv. `check_module` runs the
+    // VerificationPipeline (types/mod.rs `env.proven_contracts = report.proven`)
+    // on THIS build path — proven contracts must be fed to codegen below for
+    // zero-cost elision. Previously the env was discarded → proven set empty
+    // on the test-build path → proven contracts were NOT elided (R4: pipeline
+    // ran but proven was never wired to the emitter).
+    let module_env = {
         let _t = crate::perf_timer::PerfTimer::new("type-check");
         types::check_module(&module).map_err(|errs| {
             errs.iter()
                 .map(|d| d.render(src, &path.to_string_lossy()))
                 .collect::<Vec<_>>()
                 .join("\n")
-        })?;
-    }
+        })?
+    };
     // Plan 52 Ф.9: lints — ПОСЛЕ check_module (типы validated), ДО
     // desugar (lints видят MapLit-узлы). Возвращаются caller'у для
     // EXPECT_COMPILE_WARNING сверки.
@@ -2344,6 +2350,10 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
             .collect()
     };
     // Ф.7.4 (Plan 33.6): verify-warnings (W2401/W2402) тоже dispatch'им в lint stream.
+    // Plan 140 Ф.3: proven contracts уже получены через `module_env` выше
+    // (check_module → VerificationPipeline). Этот вызов остаётся ТОЛЬКО ради
+    // verify-warnings, которые check_module глушит (types/mod.rs: `report.warnings`
+    // intentionally silent). Proven set здесь намеренно НЕ используется.
     {
         let _t = crate::perf_timer::PerfTimer::new("verify");
         let verify_report = crate::verify::verify_module(&module);
@@ -2424,6 +2434,13 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         // Plan 140 Ф.2 (D24 amend): build-policy `--contracts=off` элидирует
         // все контракт-проверки на codegen (legacy zero-cost). Default enforce.
         emitter.set_contracts_off(contracts_off);
+        // Plan 140 Ф.3 (D24 amend): feed Z3/Trivial-proven contracts from the
+        // VerificationPipeline (run inside check_module above) so proven
+        // requires/ensures are elided at codegen (zero-cost). Without this the
+        // proven set is empty → every contract is runtime-checked even when
+        // statically proven. Безопасный degrade без Z3 (TrivialBackend proves
+        // a smaller class → больше runtime-checked, не unsafe).
+        emitter.set_proven_contracts(&module_env.proven_contracts);
         emitter.emit_module(&module)
             .map_err(|e| format!("codegen error: {}", e))?
     };

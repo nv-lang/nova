@@ -87,7 +87,10 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     // с `let n = <value>;` prepended к setup, так что name-resolution видит
     // `n` как regular let.
     expand_bench_sweeps(&mut module);
-    nova_codegen::types::check_module(&module).map_err(|errs| {
+    // Plan 140 Ф.3 (D24 amend): capture env for proven-contract elision so
+    // bench perf reflects zero-cost proven contracts (Ф.5: proven-elided vs
+    // all-checked vs off).
+    let bench_env = nova_codegen::types::check_module(&module).map_err(|errs| {
         let msgs: Vec<String> = errs.iter()
             .map(|d| d.render(&src, &path_str))
             .collect();
@@ -112,6 +115,8 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     if let Some(n) = opts.mono_depth {
         emitter.set_mono_depth_limit(n);
     }
+    // Plan 140 Ф.3 (D24 amend): elide proven contracts in bench builds.
+    emitter.set_proven_contracts(&bench_env.proven_contracts);
     let (c_code, warnings) = emitter
         .emit_module(&module)
         .map_err(|e| anyhow!("codegen error: {}", e))?;
@@ -354,7 +359,8 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
         &bench_path, &mut module, opts.repo, opts.stdlib_dir,
     )?;
     expand_bench_sweeps(&mut module);
-    nova_codegen::types::check_module(&module).map_err(|errs| {
+    // Plan 140 Ф.3 (D24 amend): capture env for proven-contract elision.
+    let bench_env = nova_codegen::types::check_module(&module).map_err(|errs| {
         let msgs: Vec<String> = errs.iter()
             .map(|d| d.render(&src, &path_str))
             .collect();
@@ -372,6 +378,8 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     if let Some(n) = opts.mono_depth {
         emitter.set_mono_depth_limit(n);
     }
+    // Plan 140 Ф.3 (D24 amend): elide proven contracts in profile builds.
+    emitter.set_proven_contracts(&bench_env.proven_contracts);
     let (c_code, _warnings) = emitter
         .emit_module(&module)
         .map_err(|e| anyhow!("codegen error: {}", e))?;

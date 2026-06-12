@@ -3873,15 +3873,20 @@ fn cmd_build(
         }
         None => {
             // Cache miss — полный Rust-side пайплайн.
-            {
+            // Plan 140 Ф.3 (D24 amend): capture ModuleEnv. check_module runs the
+            // VerificationPipeline (env.proven_contracts = report.proven). On the
+            // `nova build` path the proven set MUST reach codegen below for
+            // zero-cost elision; previously it was discarded → proven empty →
+            // proven contracts were runtime-checked anyway (R4).
+            let build_env = {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("type-check");
                 nova_codegen::types::check_module(&module).map_err(|errs| {
                     let msgs: Vec<String> = errs.iter()
                         .map(|d| d.render(&src, &path_str))
                         .collect();
                     anyhow!("{}", msgs.join("\n"))
-                })?;
-            }
+                })?
+            };
             {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("effects-infer");
                 nova_codegen::types::infer_effects(&mut module);
@@ -3917,6 +3922,10 @@ fn cmd_build(
                 }
                 // Plan 140 Ф.2 (D24 amend): apply build-policy `--contracts=off`.
                 emitter.set_contracts_off(contracts_off);
+                // Plan 140 Ф.3 (D24 amend): feed proven contracts from the
+                // VerificationPipeline (run in check_module above) so Z3/Trivial-
+                // proven requires/ensures are elided at codegen (zero-cost).
+                emitter.set_proven_contracts(&build_env.proven_contracts);
                 emitter.emit_module(&module)
                     .map_err(|e| anyhow!("codegen error: {}", e))?
             };
