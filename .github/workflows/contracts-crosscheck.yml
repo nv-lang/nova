@@ -48,10 +48,10 @@ jobs:
           curl -fL -o cvc5.zip \
             "https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/cvc5-Linux-x86_64-static.zip"
           unzip -q cvc5.zip
-          # `-print -quit` останавливает find на первом совпадении сам —
-          # без `| head -1`, который под `set -o pipefail` даёт SIGPIPE и
-          # роняет шаг (find продолжает писать после закрытия пайпа).
-          CVC5_BIN=$(find /tmp -maxdepth 4 -name cvc5 -type f -print -quit)
+          # `-print -quit` останавливает find на первом совпадении сам.
+          # `2>/dev/null) || true` нужен потому что find возвращает exit 1
+          # при EPERM на /tmp/systemd-private-* даже когда файл найден.
+          CVC5_BIN=$(find /tmp -maxdepth 4 -name cvc5 -type f -print -quit 2>/dev/null) || true
           if [ -z "$CVC5_BIN" ]; then
             echo "ERROR: cvc5 binary not found in release archive"; exit 1
           fi
@@ -112,10 +112,9 @@ jobs:
           curl -fL -o cvc5.zip \
             "https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/cvc5-Linux-x86_64-static.zip"
           unzip -q cvc5.zip
-          # `-print -quit` останавливает find на первом совпадении сам —
-          # без `| head -1`, который под `set -o pipefail` даёт SIGPIPE и
-          # роняет шаг (find продолжает писать после закрытия пайпа).
-          CVC5_BIN=$(find /tmp -maxdepth 4 -name cvc5 -type f -print -quit)
+          # `2>/dev/null) || true` нужен потому что find возвращает exit 1
+          # при EPERM на /tmp/systemd-private-* даже когда файл найден.
+          CVC5_BIN=$(find /tmp -maxdepth 4 -name cvc5 -type f -print -quit 2>/dev/null) || true
           sudo install -m 755 "$CVC5_BIN" /usr/local/bin/cvc5
           cvc5 --version
 

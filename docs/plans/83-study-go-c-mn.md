@@ -603,6 +603,24 @@ adversarial review.
   задел бы out-of-scope bare-park (channels/net) → залогирован как P3 `[M-83-gopark-bare-park-cancel-veto]`.
 - **Файлы:** только `nova_tests/concurrency/supervised_cancel_stress_test.nv` (re-enable + `let`→`ro`
   + бюджеты). Нет runtime-изменений → нет регрессий. grow_vs_wake/stress_iso_3e остаются зелёными.
+
+**Критерии приёмки Ф.5 (все ✅):**
+
+| # | Критерий | Статус |
+|---|---|---|
+| AC1 | iso-cancel startup race НЕ воспроизводится armed (0 timeout/hang) | ✅ 700 прогонов (380 workflow + 320 мои) |
+| AC2 | 3 disabled-теста re-enabled, компилируются (release nova, clang) | ✅ `nova test` PASS |
+| AC3 | re-enabled тесты robust ≥150 iters @MP=1 **И** @MP=4 (0 timeout + 0 assert-fail) | ✅ 160/160 @MP=1 + 160/160 @MP=4 |
+| AC4 | бюджеты = wake-not-hang инвариант (доказывают «cancel будит всех», не latency-SLA) | ✅ `<1000`/`<1000`/`<2000` (10×+ ниже sleep) |
+| AC5 | НЕТ нового NOVA_AUTOARM=0 workaround | ✅ тесты armed |
+| AC6 | grow-vs-wake остаётся CLOSED; stress_iso_3e зелёный | ✅ (нет runtime-изменений) |
+| AC7 | НЕ применён рискованный gopark cancel-veto (out-of-scope bare-park) | ✅ → P3 marker |
+| AC8 | маркер `[M-83.10.4]` закрыт; bare-park gap залогирован | ✅ |
+
+**Pos/neg:** позитив — «cancel будит все 99/50/300 fiber'ов, scope завершается» (3 теста);
+негатив-свойство — wake-not-hang assert (FAIL если cancel не разбудил → park-forever). Verify
+через **релизную nova** (`nova test` + `stress_bisect` armed exe).
+
 - **Дальше:** Ф.3 (nspinning/note) — остаётся следующей крупной фазой порта.
 
 ### 9.10 Ф.3 ОТЛОЖЕН — design-finding: uv_async уже note, coalescing gated на Ф.4 (2026-06-11)
@@ -624,5 +642,59 @@ adversarial review.
   cross-thread работа через global станет coalesce-safe). **Порядок ФЛИПается: Ф.4 → Ф.3-coalesce.**
   Маркер `[M-83-f3-coalesce-gated-on-f4]`. НЕ реопен grow-vs-wake/iso-cancel/Ф.2 (counter аддитивен).
 - **Дальше:** Ф.4 (global queue + steal-half) — разблокирует Ф.3 coalescing + даёт work-stealing value.
+
+### 9.11 Ф.4 ОТЛОЖЕН (global-routing) — design-finding: home-affinity Nova уже корректен (2026-06-12)
+
+**Design-workflow + adversarial review → global-routing ОТЛОЖЕН** (review поймал stranding ДО кода).
+Без кода.
+
+- **CORE STRANDING BUG (review):** naive «route cross-thread work → global + wake-one» странает работу.
+  Каждый воркер блокируется на СВОЁМ `uv_run(UV_RUN_ONCE)`; разбудить можно только его собственный
+  `wake_handle`. «wake-one» к занятому воркеру (остальные спят) → async coalesce → работа застревает
+  в global → cancelled-scope fiber не запускается → `pending_remote` не декрементит → **supervised hang**
+  (тот же класс, что Ф.1b/Ф.5 закрывали). Fix = wake-ALL воркеров на каждый global-put (Go-faithful,
+  coalescing дёшев) — но это wake-all cost до Ф.3 coalescing.
+- **Ключевое (review):** «**сильно пересмотри re-routing dispatch_ready в global**» — текущий
+  **home-worker путь** (cross-thread работа → home-worker `wake_pending`, дренится безусловно на верху
+  find-work loop) **уже stranding-proof + lost-wakeup-proof**. **Home-affinity дизайн Nova КОРРЕКТЕН**;
+  Go global-queue — архитектурная альтернатива (balancing vs locality tradeoff), НЕ строгое улучшение.
+- **Подтверждено безопасно:** Ф.2 single-winner (goready выбирает диспетчера до runqput), steal не
+  может double-run (runq_grab CAS-removes из victim), grow-vs-wake/GC-rooting не задеты.
+- **META-сигнал (2 фазы подряд, Ф.3+Ф.4):** Go global-queue/coalescing модель конфликтует с корректным
+  home-affinity дизайном Nova + несёт stranding/lost-wakeup риск + не явный perf-выигрыш. **Критичная
+  M:N-работа (оба race'а) ЗАКРЫТА; остаток routing-порта — low-ROI/risky без бенчмарков.**
+- Маркер `[M-83-f4-global-routing-gated-on-bench]` (P3): global-routing только если профайл покажет,
+  что home-affinity — боттлнек. Ф.3 coalescing остаётся gated на этом.
+
+#### 9.11.1 Ф.4 БЕЗОПАСНЫЙ SUBSET — РЕАЛИЗОВАН (2026-06-12, user-выбор)
+
+**Реализован безопасный subset БЕЗ global-routing** (home-affinity сохранён → нет stranding-риска).
+Только `runtime.c` find-work loop (3 правки + 2 owner-only поля NovaWorker):
+1. **steal random-victim start** (xorshift32, seed = (id+1)*golden-ratio): idle-воркеры стартуют
+   steal-scan с рандомного соседа, не все с victim 0 → нет thundering-herd; wrap покрывает всех.
+2. **post-steal global re-poll**: 1 `nova_globrunq_get_one` после steal-loop (work мог spill'нуться
+   в global во время скана) — перед park'ом, без spin.
+3. **61-tick global fairness**: каждый 61-й find-work проход дренит 1 global-fiber ДО local-слотов
+   (anti-starve global за busy ring). runnext-guard поправлен на `!co &&`.
+
+**Ключевое — почему безопасно:** subset **только добавляет global-DRAIN точки** (consumers), НЕ
+producers и НЕ меняет wake-routing → stranding/lost-wakeup физически невозможны (в отличие от
+отложенного global-routing'а). Поля owner-only (plain, без атомиков). НЕ задеты grow-vs-wake/Ф.2/
+iso-cancel/GC. **Ф.3 coalescing остаётся заблокирован** (нужен global-routing — отложен).
+
+**Критерии приёмки Ф.4-subset (все ✅):**
+
+| # | Критерий | Статус |
+|---|---|---|
+| AC1 | clang компилируется, find-work loop собирается | ✅ smoke PASS |
+| AC2 | concurrency suite no-regression (≥105/4) | ✅ **106/4** (те же 4 pre-existing) |
+| AC3 | grow-vs-wake остаётся CLOSED | ✅ 25/25 @MP=1 |
+| AC4 | steal random-victim + global multi-worker | ✅ ring_overflow_drain 25/25 @MP=4 |
+| AC5 | cancel не сломан (multi-worker) | ✅ nested_cancel 20/20 @MP=4 |
+| AC6 | НЕТ stranding (subset добавляет drain, не put) | ✅ by construction (нет новых global-put) |
+| AC7 | global-routing НЕ сделан (deferred) → home-affinity цел | ✅ |
+
+**Pos/neg:** позитив — steal/global балансировка работает (ring_overflow @MP=4, suite); негатив-
+свойство — no-regression + grow-vs-wake-closed + no-stranding (subset не добавляет global-producers).
 
 > Per-phase closure-секции добавляются по мере исполнения (формат Plan 83.11 §13).

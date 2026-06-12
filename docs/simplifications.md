@@ -35647,3 +35647,26 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
 - **Docs only в Ф.D:** plan-docs (139.1 + 139 audit), project-creation.txt, simplifications.md,
   backlog-followups.md (root marker removed, f1/f2 regated), memory. 0 source change → binary
   unchanged @ 6670216167a.
+### Plan 83-go-cmn Ф.3 — ОТЛОЖЕН (design-finding, без кода), 2026-06-11
+
+- **uv_async УЖЕ корректный note-примитив** (idempotent + before/after ordering + IOCP-backed
+  Windows) → собственный note.h / ручной Go lock_sema НЕ вводится (избегнут lost-wakeup риск ради
+  ~нуля). Спека D245. Маркер `[M-83-gocmn-note-primitive-deferred]`.
+- **nspinning coalescing небезопасен в текущей per-worker `wake_pending` топологии** (spinner не
+  дренит чужой wake_pending → coalesce-skip → lost-wakeup, review GAP-1/2/3). Безопасный subset
+  (accounting+recheck) — без value. **Coalescing gated на Ф.4** (global-queue routing) → порядок
+  флипается Ф.4→Ф.3. Маркер `[M-83-f3-coalesce-gated-on-f4]`, Q30.
+- **Урок:** «не реализовывать» — валидный исход de-risking workflow; adversarial review поймал
+  topology-mismatch lost-wakeup ДО кода (избегнута регрессия того же класса, что grow-vs-wake).
+
+### Plan 83-go-cmn Ф.4 — global-routing ОТЛОЖЕН, безопасный subset реализован, 2026-06-12
+
+- **global-routing ОТЛОЖЕН** (review: naive wake-one странает → supervised hang; home-affinity Nova
+  уже корректен/stranding-proof; Go global-queue = balancing-vs-locality tradeoff, не улучшение).
+  `[M-83-f4-global-routing-gated-on-bench]`. Ф.3 coalescing остаётся gated.
+- **Реализован безопасный subset** (runtime.c find-work loop): steal random-victim (xorshift32) +
+  post-steal global re-poll + 61-tick global fairness. **Добавляет только global-DRAIN (consumers),
+  не producers** → stranding/lost-wakeup невозможны by construction. Suite 106/4 no-regression;
+  ring_overflow @MP=4 25/25. Спека D245 §финальный + план §9.11.1.
+- **META (Ф.3+Ф.4):** de-risking 2 фазы подряд показал Go global-queue/coalescing конфликтует с
+  корректным home-affinity Nova → остаток routing-порта bench-gated. Критичное (оба race'а) закрыто.
