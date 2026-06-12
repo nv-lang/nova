@@ -1,0 +1,29 @@
+// plan149_garbage_env.nv — Plan 149 D233 AC5: malformed env → warn + default,
+// NEVER crash.
+//
+// NOVA_FIBER_STACK="banana" is unparseable. The arena prints one stderr
+// diagnostic ("invalid NOVA_FIBER_STACK ... using default 4MB") and falls
+// back to the builtin 4MB default — the program runs to completion normally.
+//
+// NOVA_MAXPROCS=1 keeps it to a single worker arena so exactly one warning is
+// emitted (EXPECT_STDERR is a substring match, so even multiple worker prints
+// would pass, but single-arena keeps output clean).
+//
+// ENV NOVA_FIBER_STACK=banana
+// ENV NOVA_MAXPROCS=1
+// EXPECT_STDERR invalid NOVA_FIBER_STACK
+
+module concurrency.plan149_garbage_env
+
+test "garbage NOVA_FIBER_STACK: program still runs with default" {
+    mut total = 0
+    supervised {
+        mut i = 1
+        while i <= 10 {
+            ro cur = i
+            spawn { total += cur }
+            i += 1
+        }
+    }
+    assert(total == 55)
+}

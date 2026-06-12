@@ -1,0 +1,28 @@
+// neg_garbage_max.nv — Plan 149 D233 AC5: garbage NOVA_MAX_FIBERS → warn +
+// default, NEVER crash.
+//
+// NOVA_MAX_FIBERS="abc" is unparseable. The arena prints ONE stderr diagnostic
+// ("invalid NOVA_MAX_FIBERS ... using default 16384") and falls back to the
+// builtin 16384 default — the program runs normally and exits 0. EXPECT_STDERR
+// asserts the warning; the test passing asserts no crash.
+//
+// NOVA_MAXPROCS=1 keeps it to one worker arena.
+//
+// ENV NOVA_MAX_FIBERS=abc
+// ENV NOVA_MAXPROCS=1
+// EXPECT_STDERR invalid NOVA_MAX_FIBERS
+
+module plan149.neg_garbage_max
+
+test "garbage NOVA_MAX_FIBERS: warn + default, program still runs" {
+    mut total = 0
+    supervised {
+        mut i = 1
+        while i <= 20 {
+            ro cur = i
+            spawn { total += cur }
+            i += 1
+        }
+    }
+    assert(total == 210)
+}

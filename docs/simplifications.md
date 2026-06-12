@@ -35863,3 +35863,28 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
 латентная слабость — `var_types` не scoped по функциям (локалы протекают между функциями) —
 НЕ закрыта целиком (потребовала бы broad per-fn-scope рефактор, regression-риск); оформлена
 маркером [M-codegen-var-types-fn-scope]. Block-expr-путь закрыт + regression-guard.
+
+## Plan 149 — Configurable fiber arena (env + nova.toml; D233) — 2026-06-12
+
+### [Plan 149] ✅ CLOSED Ф.0-Ф.6 (production-grade, без relax'а гейтов)
+- **Что сделано:** per-fiber стек + макс-fiber'ов-на-воркер настраиваются через env
+  (`NOVA_FIBER_STACK`/`NOVA_MAX_FIBERS`) + nova.toml `[runtime]`; default стека 8MB→4MB;
+  auto-round-UP + clamp + garbage→warn+default; compile-time bitmap MAX (262144) отделён от
+  runtime default (16384); per-fiber minicoro stack масштабируется с runtime slot_size.
+- **Что НЕ упрощено (но честно отмечено как accepted-for-V1 / followup):**
+  - **Per-worker дубликация warn'а.** Битый env печатает по одной stderr-строке НА КАЖДЫЙ worker
+    (N арен = N init = N warn). Принято для V1 (соответствует per-worker дизайну); EXPECT_STDERR в
+    тестах — substring-match, так что не ломается. Опциональный gate через pthread_once/InitOnce —
+    P3 followup, не блокер. Тест-фикстуры используют `NOVA_MAXPROCS=1` для чистого вывода.
+  - **MSVC arm verified на clang в этом прогоне.** `-D`-инъекция запитана во ВСЕ три тулчейн-arm'а
+    (clang `-D`, MSVC `/D`, gcc `-D`) — код симметричен и проверен на clang (slot_size=2097152 из
+    toml; =8388608 из env). MSVC-прогон — следующий verify при наличии (тот же runtime_define_args,
+    риск низкий).
+  - **Tail-bit partial-loop практически вакуумен.** round-UP-до-×64 гарантирует slot_count кратен
+    64 → помечаются только целые хвостовые слова bitmap'а; partial-tail bit-loop реализован
+    belt-and-suspenders для defensive non-×64 boundary (только на MAX-clamp, а MAX сам кратен 64).
+    D233 §5 переформулирован под реальный случай.
+- **Ловушка (НЕ упрощение, операционная заметка):** `nova test` резолвит `rt_dir` через
+  `find_repo_root()` = `std::env::current_dir()`, НЕ путь тест-файла. Запуск с CWD≠worktree
+  компилирует runtime ИЗ main-репо → worktree-правки .c молча игнорируются. Документировано в
+  плане §7 + project-creation.

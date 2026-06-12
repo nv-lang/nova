@@ -57,7 +57,20 @@
   #define NOVA_FIBER_ARENA_ENABLED 0
 #endif
 
-/* Default config — может быть override'нут через NOVA_FIBER_ARENA_* env.
+/* Plan 149: arena is RUNTIME-configurable (GOMAXPROCS-style knobs of the
+ * finished program, NOT compiler params):
+ *   - NOVA_FIBER_STACK  env / nova.toml [runtime].fiber_stack — per-fiber
+ *     stack slot size (human-friendly "4MB"/"4194304"; [256KB,256MB],
+ *     round-UP to page). Default 4MB.
+ *   - NOVA_MAX_FIBERS   env / nova.toml [runtime].max_fibers — max concurrent
+ *     fibers PER WORKER ([64, SLOT_COUNT_MAX], round-UP to ×64). Default
+ *     16384. Total process capacity = slot_count × NOVA_MAXPROCS.
+ * Precedence: env > nova.toml(-D) > builtin #define. Read fresh in
+ * nova_fiber_arena_init() so every worker arena honors them. Garbage env/toml
+ * → stderr warning + builtin default (never crash on config). See D233.
+ *
+ * The macros below are the BUILTIN compile-time defaults feeding the
+ * #ifndef *_DEFAULT chain.
  *
  * Plan 44.2 audit P41-2: slot_count bumped 256 → 4096 для production.
  * 4096 × 2MB = 8GB virtual per thread. На x86_64 (256TB virtual)
@@ -73,22 +86,60 @@
  * monomorphized nested recursion) сразу overflow'ит на 1MB. Возможно
  * minicoro internal stack overhead + Boehm GC reserves bigger чем
  * expected. V2 followup — выяснить точный stack budget per test и
- * выбрать минимально-достаточный slot size (~2MB?). */
-#define NOVA_FIBER_STACK_SIZE     (8 * 1024 * 1024)  /* 8MB per slot (demand-paged via MAP_NORESERVE) */
-/* Plan 44.2 audit R8 (2026-05-13): 32-bit address space недостаточен для
- * 8 GB virtual. Downsize до 64 slots × 2MB = 128 MB на 32-bit. На 64-bit
- * остаёмся 4096. */
+ * выбрать минимально-достаточный slot size (~2MB?).
+ *
+ * Plan 149 Ф.2 (2026-06-12): default lowered 8MB → 4MB. 4MB по-прежнему
+ * щедро (>2× минимально-достаточного ~2MB из 83.4.5.10), но даёт 2×
+ * плотность fiber'ов из коробки. Per-fiber stack size теперь RUNTIME-
+ * настраиваемый (NOVA_FIBER_STACK env / nova.toml [runtime].fiber_stack /
+ * -DNOVA_FIBER_STACK_DEFAULT). Этот #define — **build-time builtin
+ * default**, кормит NOVA_FIBER_STACK_DEFAULT через #ifndef ниже. */
+#define NOVA_FIBER_STACK_SIZE     (4 * 1024 * 1024)  /* 4MB per slot builtin default (demand-paged via MAP_NORESERVE) */
+/* Plan 149 Ф.1: runtime clamp bounds для NOVA_FIBER_STACK. Любое
+ * пользовательское значение округляется ВВЕРХ до page-align затем
+ * зажимается в [MIN, MAX]. usable = slot_size − guard (16KB); с floor
+ * 256KB usable = 240KB > 0 — гарантия инварианта. */
+#define NOVA_FIBER_STACK_MIN      (256 * 1024)        /* 256KB floor */
+#define NOVA_FIBER_STACK_MAX      (256 * 1024 * 1024) /* 256MB ceil */
+/* Plan 149 Ф.1/Ф.2: split compile-time bitmap MAX from runtime DEFAULT.
+ *
+ *  - NOVA_FIBER_SLOT_COUNT_DEFAULT — runtime builtin default for
+ *    a->slot_count when neither NOVA_MAX_FIBERS env nor
+ *    -DNOVA_MAX_FIBERS_DEFAULT (toml) is present. Per-worker.
+ *  - NOVA_FIBER_SLOT_COUNT_MAX — COMPILE-TIME ceiling. Sizes the
+ *    free_bits/used_bits/dirty_bits bitmaps so env may RAISE slot_count
+ *    above the default. 262144 slots ⇒ ceil(262144/64)=4096 uint64_t =
+ *    32KB bitmap per arena (× workers — копейки). On 32-bit keep tiny
+ *    (address space tight).
+ *  - NOVA_FIBER_SLOT_COUNT_MIN — runtime floor (one bitmap word = 64).
+ *
+ * Plan 149 must_fix #4: the per-platform branch sets BOTH _DEFAULT and
+ * _MAX inside the SAME #if/#elif/#else cascade (как старый
+ * NOVA_FIBER_SLOT_COUNT), BEFORE any generic #ifndef. Иначе 32-bit
+ * target получил бы bitmap на 262144 слов через generic-fallback.
+ *
+ * Runtime DEFAULT unified to 16384 на всех 64-bit/Windows платформах
+ * (раньше POSIX 64-bit был 4096) — реальный потолок «4k-16k concurrent
+ * fibers per process» (план §3); 16384 не раздувает bitmap (его размер
+ * задаёт _MAX, не _DEFAULT). */
 #if defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ < 8
-  #define NOVA_FIBER_SLOT_COUNT   16                 /* 16 × 8MB = 128 MB virtual (32-bit) */
+  /* 32-bit: address space tight — small default + small MAX. */
+  #define NOVA_FIBER_SLOT_COUNT_DEFAULT  16            /* 16 × 4MB = 64 MB virtual (32-bit) */
+  #ifndef NOVA_FIBER_SLOT_COUNT_MAX
+    #define NOVA_FIBER_SLOT_COUNT_MAX    1024          /* ceil(1024/64)=16 words = 128B bitmap */
+  #endif
 #elif defined(_WIN32)
-  /* Plan 82 Ф.1: Windows — 16384 слотов (128 GB virtual reserve, на
-   * 64-bit тривиально). 4096 не вмещал stress-нагрузки (sleep_bench —
-   * 10k одновременных fiber'ов); план §3 называет реальный потолок
-   * «4k-16k concurrent fibers per process». */
-  #define NOVA_FIBER_SLOT_COUNT   16384
+  #define NOVA_FIBER_SLOT_COUNT_DEFAULT  16384         /* per-worker runtime default */
+  #ifndef NOVA_FIBER_SLOT_COUNT_MAX
+    #define NOVA_FIBER_SLOT_COUNT_MAX    262144        /* 4096 words = 32KB bitmap/arena */
+  #endif
 #else
-  #define NOVA_FIBER_SLOT_COUNT   4096               /* 4096 × 8MB = 32GB virtual per thread (64-bit) */
+  #define NOVA_FIBER_SLOT_COUNT_DEFAULT  16384         /* per-worker runtime default (64-bit) */
+  #ifndef NOVA_FIBER_SLOT_COUNT_MAX
+    #define NOVA_FIBER_SLOT_COUNT_MAX    262144        /* 4096 words = 32KB bitmap/arena */
+  #endif
 #endif
+#define NOVA_FIBER_SLOT_COUNT_MIN      64             /* one bitmap word */
 /* Plan 44.2 audit R8 (2026-05-13): 16 KB guard (было 4 KB) для CVE-2017-1000366
  * stack-clash protection. Single 4 KB guard может быть skipped одним
  * SP-subtract если функция аллоцирует >4 KB local array. 16 KB существенно
@@ -96,6 +147,21 @@
  * 12 KB × 4096 = 48 MB extra virtual reservation, zero physical
  * (PROT_NONE never commits). */
 #define NOVA_FIBER_GUARD_SIZE     (16 * 1024)        /* 16 KB PROT_NONE at slot base */
+
+/* Plan 149 Ф.3: defaults-resolution chain (precedence env > toml(-D) >
+ * builtin). nova.toml [runtime] bakes -DNOVA_FIBER_STACK_DEFAULT /
+ * -DNOVA_MAX_FIBERS_DEFAULT (raw integers — bytes / count) at build time;
+ * absent → these #ifndef fallbacks pick the builtin #define. At runtime the
+ * env vars (read in nova_fiber_arena_init) override either of these
+ * compile-time defaults. BOTH the env value AND the -D/builtin default go
+ * through round-UP + clamp, so a garbage toml -D is also clamped, never
+ * trusted blindly. */
+#ifndef NOVA_FIBER_STACK_DEFAULT
+  #define NOVA_FIBER_STACK_DEFAULT   NOVA_FIBER_STACK_SIZE          /* 4MB builtin */
+#endif
+#ifndef NOVA_MAX_FIBERS_DEFAULT
+  #define NOVA_MAX_FIBERS_DEFAULT    NOVA_FIBER_SLOT_COUNT_DEFAULT  /* 16384 builtin */
+#endif
 
 #if NOVA_FIBER_ARENA_ENABLED
 
@@ -133,6 +199,21 @@ void  nova_fiber_dealloc(void* ptr, size_t size, void* allocator_data);
 
 /* Check whether ptr is inside this thread's arena (для assertions). */
 bool nova_fiber_arena_contains(const void* ptr);
+
+/* Plan 149 Ф.1 (review must_fix #1/#2): runtime per-fiber stack slot size.
+ *
+ * Lazily inits this thread's arena (idempotent) and returns the FINAL,
+ * resolved a->slot_size (env ∨ -D ∨ builtin, after round-UP + clamp). The
+ * minicoro desc-init (fibers.h::_nova_mco_desc_init_arena) MUST derive its
+ * stack_size from THIS value, NOT from the compile-time NOVA_FIBER_STACK_SIZE
+ * macro — otherwise minicoro's coro_size stays fixed at the compile-time
+ * default and (a) a LARGER env stack is wasted reservation (fiber still
+ * overflows at compile-time depth) and (b) a SMALLER env stack makes
+ * coro_size > usable → nova_fiber_alloc returns NULL → fiber create fails.
+ * Deriving stack_size from this runtime value scales coro_size with the
+ * arena slot, so AC2 (env stack takes effect) holds and the 256KB floor is
+ * usable. */
+size_t nova_fiber_arena_slot_size(void);
 
 /* Plan 82 Ф.1 (Windows): committed-low начального окна стека слота,
  * содержащего block_ptr (== указатель из nova_fiber_alloc == mco_coro*).

@@ -46,7 +46,8 @@
 #include <intrin.h>     /* _BitScanForward64, _interlocked* */
 #include <stdint.h>
 #include <string.h>
-#include <stdlib.h>     /* malloc/free — heap-аллокация структуры арены */
+#include <stdlib.h>     /* malloc/free — heap-аллокация структуры арены; getenv/strtoll */
+#include <errno.h>      /* Plan 149: strtoll errno check */
 
 /* Plan 82 Ф.2: GC-интеграция. Подключается на Boehm-бэкенде. minicoro.h —
  * ради public mco_coro / mco_status (без MINICORO_IMPL). */
@@ -69,7 +70,10 @@
 #define NOVA_FW_PAGE            ((size_t)4096)
 #define NOVA_FW_HEADER_COMMIT   ((size_t)(8  * 1024))   /* commit под minicoro-header */
 #define NOVA_FW_INITIAL_COMMIT  ((size_t)(16 * 1024))   /* начальное окно стека */
-#define NOVA_FW_BITMAP_WORDS    ((NOVA_FIBER_SLOT_COUNT + 63) / 64)
+/* Plan 149 Ф.1: bitmap sized by COMPILE-TIME MAX (not runtime default) so env
+ * may RAISE slot_count above the default. 262144 slots = 4096 words = 32KB
+ * (used_bits) + 32KB (dirty_bits) per arena. */
+#define NOVA_FW_BITMAP_WORDS    ((NOVA_FIBER_SLOT_COUNT_MAX + 63) / 64)
 
 /* ── Состояние арены — heap-структура, узел append-only списка ──────── */
 
@@ -113,7 +117,7 @@ static void _nova_fw_append_uz(char* buf, size_t cap, size_t* pos, size_t v) {
     while (n > 0 && *pos + 1 < cap) buf[(*pos)++] = tmp[--n];
 }
 static void _nova_fw_report_overflow(size_t slot, DWORD code) {
-    char buf[160];
+    char buf[256];  /* Plan 149: widened for longer NOVA_FIBER_STACK hint */
     size_t pos = 0;
     _nova_fw_append(buf, sizeof(buf), &pos,
                     "\nnova: fiber stack overflow in slot ");
@@ -123,7 +127,8 @@ static void _nova_fw_report_overflow(size_t slot, DWORD code) {
             ? " (STATUS_STACK_OVERFLOW)\n"
             : " (access violation in fiber arena)\n");
     _nova_fw_append(buf, sizeof(buf), &pos,
-        "Hint: increase fiber stack size or reduce recursion depth.\n");
+        "Hint: increase NOVA_FIBER_STACK (env / nova.toml [runtime].fiber_stack) "
+        "or reduce recursion depth.\n");
     HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
     if (h && h != INVALID_HANDLE_VALUE) {
         DWORD written = 0;
@@ -271,6 +276,121 @@ static size_t _nova_fw_find_free(NovaFiberArenaWin* a) {
     return (size_t)-1;
 }
 
+/* ── Plan 149 Ф.1/Ф.4: config parse + round/clamp (WriteFile diagnostics) ──
+ *
+ * File-local statics, duplicated from fiber_arena.c (independent per-OS TU).
+ * stderr via WriteFile (no printf dependency — mirrors overflow reporter). */
+
+/* Emit one stderr line: prefix + optional decimal value + suffix. */
+static void _nova_fw_warn(const char* prefix, int has_val, size_t val,
+                          const char* suffix) {
+    char buf[192];
+    size_t pos = 0;
+    _nova_fw_append(buf, sizeof(buf), &pos, prefix);
+    if (has_val) _nova_fw_append_uz(buf, sizeof(buf), &pos, val);
+    _nova_fw_append(buf, sizeof(buf), &pos, suffix);
+    HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+    if (h && h != INVALID_HANDLE_VALUE) {
+        DWORD wr = 0;
+        WriteFile(h, buf, (DWORD)pos, &wr, NULL);
+    }
+}
+
+/* Parse human-friendly size/count env var (mirror of POSIX
+ * _nova_parse_size_env). Returns value or 0 (unset/invalid); *is_invalid set
+ * for garbage. */
+static size_t _nova_fw_parse_size_env(const char* name, int* is_invalid) {
+    *is_invalid = 0;
+    const char* env = getenv(name);
+    if (!env || env[0] == '\0') return 0;
+
+    errno = 0;
+    char* end = NULL;
+    long long raw = strtoll(env, &end, 10);
+    if (end == env) { *is_invalid = 1; return 0; }
+    while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n') end++;
+    unsigned long long mult = 1ULL;
+    if (*end != '\0') {
+        char c0 = *end, c1 = end[1];
+        char u0 = (c0 >= 'a' && c0 <= 'z') ? (char)(c0 - 32) : c0;
+        char u1 = (c1 >= 'a' && c1 <= 'z') ? (char)(c1 - 32) : c1;
+        if (u0 == 'K') { mult = 1024ULL; end += (u1 == 'B') ? 2 : 1; }
+        else if (u0 == 'M') { mult = 1024ULL * 1024ULL; end += (u1 == 'B') ? 2 : 1; }
+        else if (u0 == 'G') { mult = 1024ULL * 1024ULL * 1024ULL; end += (u1 == 'B') ? 2 : 1; }
+        else { *is_invalid = 1; return 0; }
+        while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n') end++;
+    }
+    if (*end != '\0') { *is_invalid = 1; return 0; }
+    if (errno != 0 || raw <= 0) { *is_invalid = 1; return 0; }
+
+    unsigned long long uval = (unsigned long long)raw;
+    if (mult > 1ULL && uval > (unsigned long long)SIZE_MAX / mult) return (size_t)SIZE_MAX;
+    unsigned long long total = uval * mult;
+    if (total > (unsigned long long)SIZE_MAX) return (size_t)SIZE_MAX;
+    return (size_t)total;
+}
+
+/* Round UP to page (NOVA_FW_PAGE=4096) then clamp to [MIN, MAX]; warn. */
+static size_t _nova_fw_round_clamp_stack(size_t v) {
+    size_t pg = NOVA_FW_PAGE;
+    if (v > SIZE_MAX - (pg - 1)) v = SIZE_MAX;
+    else v = (v + pg - 1) / pg * pg;
+    if (v < (size_t)NOVA_FIBER_STACK_MIN) {
+        _nova_fw_warn("nova: NOVA_FIBER_STACK ", 1, v, " below floor — using 256KB\n");
+        return (size_t)NOVA_FIBER_STACK_MIN;
+    }
+    if (v > (size_t)NOVA_FIBER_STACK_MAX) {
+        _nova_fw_warn("nova: NOVA_FIBER_STACK ", 1, v, " exceeds max — clamped to 256MB\n");
+        return (size_t)NOVA_FIBER_STACK_MAX;
+    }
+    return v;
+}
+
+/* Round UP to ×64 then clamp to [MIN, MAX]; warn. */
+static size_t _nova_fw_round_clamp_slots(size_t v) {
+    if (v > SIZE_MAX - 63) v = SIZE_MAX;
+    else v = (v + 63) / 64 * 64;
+    if (v < (size_t)NOVA_FIBER_SLOT_COUNT_MIN) return (size_t)NOVA_FIBER_SLOT_COUNT_MIN;
+    if (v > (size_t)NOVA_FIBER_SLOT_COUNT_MAX) {
+        _nova_fw_warn("nova: NOVA_MAX_FIBERS ", 1, v, " exceeds max — clamped\n");
+        return (size_t)NOVA_FIBER_SLOT_COUNT_MAX;
+    }
+    return v;
+}
+
+static size_t _nova_fw_resolve_slot_size(void) {
+    int invalid = 0;
+    size_t parsed = _nova_fw_parse_size_env("NOVA_FIBER_STACK", &invalid);
+    if (invalid) {
+        _nova_fw_warn("nova: invalid NOVA_FIBER_STACK — using default 4MB\n", 0, 0, "");
+        parsed = 0;
+    }
+    size_t v = parsed ? parsed : (size_t)NOVA_FIBER_STACK_DEFAULT;
+    return _nova_fw_round_clamp_stack(v);
+}
+
+static size_t _nova_fw_resolve_slot_count(void) {
+    int invalid = 0;
+    size_t parsed = _nova_fw_parse_size_env("NOVA_MAX_FIBERS", &invalid);
+    if (invalid) {
+        _nova_fw_warn("nova: invalid NOVA_MAX_FIBERS — using default 16384\n", 0, 0, "");
+        parsed = 0;
+    }
+    size_t v = parsed ? parsed : (size_t)NOVA_MAX_FIBERS_DEFAULT;
+    return _nova_fw_round_clamp_slots(v);
+}
+
+/* Plan 149 Ф.1: mark trailing used_bits [from, capacity) USED so the
+ * allocator never hands out a phantom slot. used_bits semantics: bit SET =
+ * USED (1 = in-use). Plain stores — single-owner init / post-downsize, arena
+ * not yet linked. `capacity` = NOVA_FW_BITMAP_WORDS*64. */
+static void _nova_fw_mark_tail_used(NovaFiberArenaWin* a, size_t from) {
+    size_t cap = (size_t)NOVA_FW_BITMAP_WORDS * 64;
+    for (size_t i = from; i < cap; i++) {
+        a->used_bits[i >> 6] |= ((LONG64)1 << (i & 63));
+    }
+}
+
 /* ── Init ───────────────────────────────────────────────────────── */
 
 void nova_fiber_arena_init(void) {
@@ -278,8 +398,10 @@ void nova_fiber_arena_init(void) {
 
     InitOnceExecuteOnce(&_nova_fw_once, _nova_fw_global_init, NULL, NULL);
 
-    size_t slot_size  = NOVA_FIBER_STACK_SIZE;
-    size_t slot_count = NOVA_FIBER_SLOT_COUNT;
+    /* Plan 149 Ф.1: resolve runtime config (env ∨ -D/toml ∨ builtin) with
+     * auto-round-UP + clamp. Garbage env → warn + default. */
+    size_t slot_size  = _nova_fw_resolve_slot_size();
+    size_t slot_count = _nova_fw_resolve_slot_count();
     if (slot_count > NOVA_FW_BITMAP_WORDS * 64) {
         slot_count = NOVA_FW_BITMAP_WORDS * 64;
     }
@@ -320,6 +442,12 @@ void nova_fiber_arena_init(void) {
     /* native-стек захватываем СЕЙЧАС: init идёт на потоке-владельце,
      * TIB ещё описывает native-стек (fiber не запущен). */
     a->native_base  = (char*)__readgsqword(0x08);  /* NT_TIB.StackBase */
+
+    /* Plan 149 Ф.1: mark trailing used_bits [slot_count, capacity) USED so the
+     * allocator never hands out a phantom slot. Runs AFTER the final slot_count
+     * is known (post downsize-retry) and BEFORE the arena is linked into the
+     * global list — single-owner, no concurrency yet, plain stores OK. */
+    _nova_fw_mark_tail_used(a, a->slot_count);
 
     /* Линк в голову append-only списка под локом. */
     EnterCriticalSection(&_nova_fw_list_lock);
@@ -449,6 +577,14 @@ void* nova_fiber_committed_low(const void* block_ptr) {
 
 bool nova_fiber_arena_contains(const void* ptr) {
     return _nova_fw_find_arena(ptr) != NULL;
+}
+
+/* Plan 149 Ф.1 (review must_fix #1/#2): runtime per-fiber slot size.
+ * Lazily inits the arena so the minicoro desc-init derives stack_size from the
+ * resolved (env ∨ -D ∨ builtin, round+clamp) slot_size. */
+size_t nova_fiber_arena_slot_size(void) {
+    if (!_t_arena) nova_fiber_arena_init();
+    return _t_arena ? _t_arena->slot_size : (size_t)NOVA_FIBER_STACK_DEFAULT;
 }
 
 /* Plan 83.4.3 (2026-05-23) — B1 fix: GLOBAL aggregation через обход

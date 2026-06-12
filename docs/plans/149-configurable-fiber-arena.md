@@ -2,12 +2,15 @@
 # Plan 149 — Configurable fiber arena (stack size + max fibers): env + nova.toml
 
 > **Создан:** 2026-06-12 (из discussion про растущие стеки — [Plan 146 §6.1](146-growable-fiber-stacks.md)).
-> **Статус:** 📋 PLANNED.
+> **Статус:** ✅ ЗАКРЫТ Ф.0-Ф.6 (2026-06-12, D233). 7/7 plan149 fixtures PASS (clang);
+> regression guards (grow_vs_wake/fibers_10k/ring_overflow) green; smoke PASS.
 > **Приоритет:** P2 — cheap, contained, повышает потолок масштаба + DX (тюнинг под нагрузку).
 > **Оценка:** ~1-1.5 dev-day (runtime env-read + manifest-parsing + codegen-D + тесты).
 > **Родитель:** [Plan 82](82-windows-fiber-arena.md) (fiber arena), [Plan 146 §6.1](146-growable-fiber-stacks.md)
 > (cheap-first вместо растущих стеков). **Supersedes** `[M-fiber-arena-raise-cap]`.
-> **Worktree:** `nova-p148` (создать при старте).
+> **Worktree:** `nova-p149` (branch `plan-149`).
+> **Renumber note:** изначально создан как «Plan 148 / nova-p148»; переименован в Plan 149 / nova-p149
+> из-за коллизии plan-148 с 148-independent-cleanups (concurrent plan-138.1). Канонический id — 149.
 
 ---
 
@@ -47,11 +50,28 @@
 
 ## 3. Фазы
 
-### Ф.0 — GATE: финализация дизайна + spec
-- Утвердить имена env/toml, дефолты, диапазоны, precedence, auto-round-up rule.
-- Решить: лоуэрить дефолт стека 8MB→4MB (да) + дефолтный max (16384, без сюрприза).
-- **Spec D-block** (next free project-wide — подтвердить в Ф.0, во избежание коллизии): контракт
-  configurable arena (env + toml + precedence + auto-round + bounds). Q при необходимости.
+### Ф.0 — GATE: финализация дизайна + spec ✅ (2026-06-12)
+- Утвердить имена env/toml, дефолты, диапазоны, precedence, auto-round-up rule. ✅
+- Решить: лоуэрить дефолт стека 8MB→4MB (да) + дефолтный max (16384, без сюрприза). ✅
+- **Spec D-block:** `D233` подтверждён free project-wide (`grep -rn '\bD233\b' docs/ spec/` → 0
+  совпадений; D234/D235 тоже free; следующий занятый — D236). Контракт в `spec/decisions/08-runtime.md`. ✅
+- **Self-reference fix:** заголовок «Plan 148/nova-p148» → «Plan 149/nova-p149» (см. шапку). ✅
+- **CRITICAL must_fix #1+#2 resolution (review):** per-fiber minicoro stack size вычисляется в
+  `fibers.h::_nova_mco_desc_init_arena` из **compile-time** `NOVA_FIBER_STACK_SIZE`, НЕ из runtime
+  `a->slot_size`. Если env поднимает стек — лишняя бронь тратится впустую (fiber всё равно
+  overflow'ит на compile-time глубине); если env опускает стек ниже compile-time дефолта —
+  minicoro запрашивает coro_size > usable → `nova_fiber_alloc` возвращает NULL → fiber create fail.
+  **Резолюция (выбран вариант (a) из review):** ввести runtime-аксессор
+  `size_t nova_fiber_arena_slot_size(void)` (оба arena-TU), который lazily инициализирует арену и
+  возвращает финальный (env∨-D∨default, round+clamp) `a->slot_size`. `_nova_mco_desc_init_arena`
+  вызывает его вместо `NOVA_FIBER_STACK_SIZE` → minicoro `coro_size` масштабируется с runtime
+  slot_size → AC2 достижим, floor (256KB) безопасен (usable check проходит). `NOVA_FIBER_STACK_SIZE`
+  остаётся как **build-time builtin default**, кормящий `NOVA_FIBER_STACK_DEFAULT` через `#ifndef`.
+- **32-bit MAX guard ordering (must_fix #4):** `NOVA_FIBER_SLOT_COUNT_MAX` и `_DEFAULT` ставятся
+  внутри того же `#if 32bit / #elif _WIN32 / #else 64bit` каскада что и старый `NOVA_FIBER_SLOT_COUNT`
+  (НЕ flat `#ifndef`), затем trailing `#ifndef`-catch-all только для `-D`-override hook'а MAX.
+  32-bit: MAX=1024, DEFAULT=16. Это ДО любого generic fallback — иначе 32-bit target получил бы
+  bitmap на 262144.
 
 ### Ф.1 — Runtime env-read (`fiber_arena.c` + `fiber_arena_win.c`)
 - На arena-create: `getenv("NOVA_FIBER_STACK")` / `getenv("NOVA_MAX_FIBERS")` → parse (human-size) →
@@ -109,3 +129,44 @@
   (guard page, не порча). Mitigated: 4MB щедро + env позволяет поднять + hint в сообщении.
 - `nova.toml`→`-D` прокидка: проверить, что все build-пути (test/build/run, clang+MSVC) её несут.
 - Bitmap MAX 262144 → 32KB/арена × воркеры — копейки, но задокументировать.
+
+## 7. Результаты (closure 2026-06-12)
+
+**Коммиты (branch `plan-149`):**
+- Ф.0 GATE — `plan(149 F.0)`: D233 подтверждён free, self-ref 148→149, must_fix #1/#2/#4 resolution.
+- Ф.1+Ф.2 — `feat(149 F.1+F.2)`: runtime env-read + bitmap MAX split + default stack 8MB→4MB.
+- Ф.3 — `feat(149 F.3)`: nova.toml `[runtime]` fiber_stack/max_fibers → `-D` (3 toolchain arms).
+- Ф.4 — `feat(149 F.4)`: config diagnostics — overflow hints → `NOVA_FIBER_STACK`.
+- Ф.5 — `test(149 F.5)`: 7 pos/neg fixtures.
+- Ф.6 — `docs(149 F.6)`: D233 spec + runtime-tuning page + supersede marker + logs.
+
+**Ключевая правка из review (must_fix #1/#2):** per-fiber minicoro stack size берётся из RUNTIME
+`a->slot_size` через новый `nova_fiber_arena_slot_size()` (в `_nova_mco_desc_init_arena`), не из
+compile-time `NOVA_FIBER_STACK_SIZE`. Без неё env-стек не менял бы реальный usable-стек (AC2
+недостижим) и floor (256KB) был бы небезопасен. Verified: `slot_size=8388608` при
+`NOVA_FIBER_STACK=8MB`, `slot_size=2097152` при toml `fiber_stack="2MB"` (precedence
+env > toml > builtin доказан).
+
+**Тесты:** 7/7 plan149 fixtures PASS (clang). Регрешн-гарды AC7 (grow_vs_wake_explicit /
+fibers_10k_sleep_cancel / ring_overflow_drain) зелёные; mn_runtime_smoke PASS. Sample fiber-heavy
+suite (deep_spawn / cooperative_interleave / mn_lazy_spawn / sleep_bench) — все PASS, идентично
+baseline'у (a3597b99, temp-worktree build).
+
+**PRE-EXISTING failure (НЕ регрессия Plan 149):** `cancellation_test` (within[T]/race2[T]
+monomorphized nested recursion) RUN-FAIL'ит на «fiber stack overflow in slot 0». Verified:
+**падает идентично на baseline (8MB default, старый runtime)** + не лечится `NOVA_FIBER_STACK=64MB`
+→ это **runaway/unbounded recursion**, НЕ stack-size issue (raise-stack — суть Plan 149 — не
+помогает, потому что глубина неограничена; чистый guard-page краш — корректное поведение). Был
+помечен в Plan 83.4.5.10 как «crashes immediate на 1MB»; с тех пор codegen дрейфанул и теперь
+overflow'ит и на 8MB — orthogonal codegen-баг вне scope Plan 149. Маркер
+`[M-cancellation-test-mono-recursion-overflow]` (P2, отдельный).
+
+**Acceptance:** AC1 (default 4MB, no regression), AC2 (env stack scales — verified slot_size),
+AC3 (20000→20032 round-up), AC4 (toml bake + env override — verified), AC5 (garbage/floor/clamp →
+warn + default, no crash), AC7 (no scheduler/GC regression), AC8 (pos+neg green), AC9 (bitmap MAX),
+AC10 (D233 + docs + marker + self-ref) — ✅. AC6 (per-worker × MAXPROCS) — эмерджентно, не
+изменялось. MSVC arm wired (`/D`), но прогон на clang (MSVC arm — следующий verify при наличии).
+
+**Note для будущих прогонов:** `nova test` резолвит `rt_dir` через `find_repo_root()` =
+`std::env::current_dir()`, НЕ путь тест-файла. Запускать `nova test` с **CWD = worktree**, иначе
+компилируется runtime ИЗ main-репо (worktree-правки .c не попадут в бинарь).

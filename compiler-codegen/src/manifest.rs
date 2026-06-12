@@ -120,6 +120,27 @@ pub struct Manifest {
     ///
     /// Пусто (None), если секция отсутствует.
     pub ffi: Option<FfiConfig>,
+    /// Plan 149 D233: `[runtime]` section — fiber arena tuning baked as
+    /// compile-time defaults (-DNOVA_FIBER_STACK_DEFAULT / -DNOVA_MAX_FIBERS_DEFAULT).
+    /// Precedence env > nova.toml(-D) > builtin #define. None если секция
+    /// отсутствует.
+    pub runtime: Option<RuntimeConfig>,
+}
+
+/// Plan 149 D233: `[runtime]` section config — fiber arena tuning.
+///
+/// `fiber_stack` — per-fiber stack slot size (human-friendly `"4MB"` или bare
+/// bytes `"4194304"`). `max_fibers` — max concurrent fibers per worker
+/// (`"16384"`). Both baked as compile-time `-D...DEFAULT` flags; the
+/// corresponding env var (NOVA_FIBER_STACK / NOVA_MAX_FIBERS) overrides at
+/// runtime. Stored as raw strings; `parse_size_to_bytes` converts to the raw
+/// integer the C `#define` consumes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeConfig {
+    /// "4MB" | "4194304" — per-fiber stack slot size.
+    pub fiber_stack: Option<String>,
+    /// "16384" — max concurrent fibers per worker.
+    pub max_fibers: Option<String>,
 }
 
 /// Plan 115 D214 [M-115-ffi-build-pipeline]: `[ffi]` section config.
@@ -326,6 +347,10 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let mut ffi_include_dirs: Vec<String> = Vec::new();
     let mut ffi_libs: Vec<String> = Vec::new();
     let mut ffi_section_seen: bool = false;
+    // Plan 149 D233: [runtime] config.
+    let mut runtime_fiber_stack: Option<String> = None;
+    let mut runtime_max_fibers: Option<String> = None;
+    let mut runtime_section_seen: bool = false;
     // Section tracking: use String to support "exports.consume_types".
     let mut section = String::new();
 
@@ -343,6 +368,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                 "dependencies"         => "dependencies",
                 "exports.consume_types" => "exports.consume_types",
                 "ffi"                  => { ffi_section_seen = true; "ffi" }
+                "runtime"              => { runtime_section_seen = true; "runtime" }
                 _                      => "",  // ignore other sections
             }.to_string();
             continue;
@@ -375,6 +401,15 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                     "c_shims"      => ffi_c_shims = parse_toml_string_array(raw_val),
                     "include_dirs" => ffi_include_dirs = parse_toml_string_array(raw_val),
                     "libs"         => ffi_libs = parse_toml_string_array(raw_val),
+                    _ => {} // ignore unknown keys для forward-compat
+                }
+                continue;
+            }
+            // Plan 149 D233: [runtime] section — fiber arena tuning.
+            if section == "runtime" {
+                match key {
+                    "fiber_stack" => runtime_fiber_stack = Some(str_val),
+                    "max_fibers"  => runtime_max_fibers = Some(str_val),
                     _ => {} // ignore unknown keys для forward-compat
                 }
                 continue;
@@ -419,6 +454,17 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     } else {
         None
     };
+    // Plan 149 D233: assemble RuntimeConfig only если секция [runtime] явно
+    // присутствует. Unknown/garbage values resolved later (build warning +
+    // skip -D → builtin fallback).
+    let runtime = if runtime_section_seen {
+        Some(RuntimeConfig {
+            fiber_stack: runtime_fiber_stack,
+            max_fibers: runtime_max_fibers,
+        })
+    } else {
+        None
+    };
     Some(Manifest {
         package_name: pkg,
         source_root,
@@ -427,7 +473,41 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
         dependencies,
         exports_consume_types,
         ffi,
+        runtime,
     })
+}
+
+/// Plan 149 D233: parse a human-friendly size/count string into a raw integer
+/// (bytes for stack, count for fibers) — the value baked into a C `#define`.
+///
+/// Mirrors the C `_nova_parse_size_env` parser: bare integer, or KB/K/MB/M/GB/G
+/// suffix (case-insensitive, binary: KB=1024, MB=1024², GB=1024³). Returns
+/// `None` on garbage (caller emits a build warning and SKIPS the -D, falling
+/// back to the builtin #define) so the compiler never receives a malformed
+/// `#define X <garbage>`.
+pub fn parse_size_to_bytes(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // Split leading digits from optional suffix.
+    let digit_end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    if digit_end == 0 {
+        return None; // no leading digits
+    }
+    let num: u64 = s[..digit_end].parse().ok()?;
+    let suffix = s[digit_end..].trim();
+    let mult: u64 = match suffix.to_ascii_uppercase().as_str() {
+        "" => 1,
+        "K" | "KB" => 1024,
+        "M" | "MB" => 1024 * 1024,
+        "G" | "GB" => 1024 * 1024 * 1024,
+        _ => return None, // unknown suffix
+    };
+    if num == 0 {
+        return None; // zero is not a valid size/count
+    }
+    num.checked_mul(mult)
 }
 
 /// Plan 62.F.bis Ф.1: sanitize edition string для filesystem path + Nova

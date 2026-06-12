@@ -1,0 +1,35 @@
+// neg_stack_floor.nv — Plan 149 D233 AC5: NOVA_FIBER_STACK below 256KB floor →
+// floor + warn, NEVER crash.
+//
+// NOVA_FIBER_STACK=1KB is below the 256KB floor. The arena rounds up to page
+// alignment then CLAMPS UP to the 256KB floor, printing ONE stderr warning
+// ("below floor — using 256KB"). The program runs on the floored 256KB slot
+// (usable = 256KB - 16KB guard = 240KB > 0), and a shallow recursion fits
+// comfortably. EXPECT_STDERR asserts the floor warning; the test passing
+// asserts no crash. This also exercises the floor-safety invariant: floored
+// slot is large enough that minicoro's coro_size <= usable (must_fix #1/#2).
+//
+// NOVA_MAXPROCS=1 keeps it to one worker arena.
+//
+// ENV NOVA_FIBER_STACK=1KB
+// ENV NOVA_MAXPROCS=1
+// EXPECT_STDERR below floor
+
+module plan149.neg_stack_floor
+
+fn rec_sum(n int) -> int {
+    if n <= 0 {
+        0
+    } else {
+        n + rec_sum(n - 1)
+    }
+}
+
+test "stack below floor: clamped to 256KB, shallow fiber still runs" {
+    mut r = 0
+    supervised {
+        spawn { r = rec_sum(100) }   // shallow — fits 240KB usable easily
+    }
+    // 100 * 101 / 2 = 5050
+    assert(r == 5050)
+}

@@ -733,6 +733,10 @@ pub struct BuildOpts<'a> {
     /// from `[ffi]` section в package nova.toml. None — нет [ffi] config'а
     /// для test_file's package; пустой Some(...) — секция есть но пуста.
     pub ffi: Option<&'a ResolvedFfiConfig>,
+    /// Plan 149 D233: `[runtime]` fiber arena tuning from package nova.toml.
+    /// Baked as -DNOVA_FIBER_STACK_DEFAULT / -DNOVA_MAX_FIBERS_DEFAULT (raw
+    /// integers). None — нет [runtime] секции → builtin #define defaults.
+    pub runtime: Option<&'a crate::manifest::RuntimeConfig>,
 }
 
 /// Windows system libs needed by libuv (linker dependencies).
@@ -749,6 +753,35 @@ const LIBUV_UNIX_SYSLIBS: &[&str] = &["-lpthread", "-ldl", "-lrt", "-lm"];
 
 #[cfg(target_os = "macos")]
 const LIBUV_UNIX_SYSLIBS: &[&str] = &["-lpthread", "-ldl", "-lm"];
+
+/// Plan 149 D233: build the `-D...DEFAULT` flags for the `[runtime]` section.
+/// `prefix` is `-D` (clang/gcc) or `/D` (MSVC). fiber_stack → bytes,
+/// max_fibers → count, via parse_size_to_bytes (mirrors the C parser). The
+/// value MUST be a raw integer (it feeds a C `#define X <int>` consumed by
+/// `#ifndef`). Unparseable toml value → build warning + SKIP the -D (fall back
+/// to builtin #define) — never pass garbage to the compiler.
+fn runtime_define_args(runtime: Option<&crate::manifest::RuntimeConfig>,
+                       prefix: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let Some(rc) = runtime else { return args; };
+    if let Some(fs) = &rc.fiber_stack {
+        match crate::manifest::parse_size_to_bytes(fs) {
+            Some(bytes) => args.push(format!("{}NOVA_FIBER_STACK_DEFAULT={}", prefix, bytes)),
+            None => eprintln!(
+                "nova: warning: [runtime] fiber_stack = \"{}\" unparseable — ignoring (using builtin 4MB default)",
+                fs),
+        }
+    }
+    if let Some(mf) = &rc.max_fibers {
+        match crate::manifest::parse_size_to_bytes(mf) {
+            Some(count) => args.push(format!("{}NOVA_MAX_FIBERS_DEFAULT={}", prefix, count)),
+            None => eprintln!(
+                "nova: warning: [runtime] max_fibers = \"{}\" unparseable — ignoring (using builtin 16384 default)",
+                mf),
+        }
+    }
+    args
+}
 
 /// Возвращает command, готовую к запуску. Для Clang/MSVC на Windows
 /// инкапсулирует cmd /c "vcvars && actual-cmd" — иначе headers/libs
@@ -889,6 +922,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if opts.gc_kind == GcKind::Boehm {
                 flags.push("-DNOVA_GC_BOEHM".to_string());
                 flags.push("-DGC_THREADS".to_string());
+            }
+            // Plan 149 D233: nova.toml [runtime] → -DNOVA_FIBER_STACK_DEFAULT /
+            // -DNOVA_MAX_FIBERS_DEFAULT (raw ints). After GC, before libuv.
+            for da in runtime_define_args(opts.runtime, "-D") {
+                flags.push(da);
             }
 
             // Direct clang invocation with pre-captured vcvars env.
@@ -1061,6 +1099,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg("/DGC_THREADS");
                 c.arg(format!("/I{}", vcpkg_include.display()));
             }
+            // Plan 149 D233: nova.toml [runtime] → /DNOVA_FIBER_STACK_DEFAULT /
+            // /DNOVA_MAX_FIBERS_DEFAULT (raw ints). After GC, before libuv.
+            for da in runtime_define_args(opts.runtime, "/D") {
+                c.arg(da);
+            }
             c.arg(format!("/I{}", opts.cg_include.display()));
             // /Fo с завершающим '\' → cl.exe трактует как директорию
             // (каждый .obj по имени исходника); без '\' — как имя файла,
@@ -1155,6 +1198,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if opts.gc_kind == GcKind::Boehm {
                 c.arg("-DNOVA_GC_BOEHM");
                 c.arg("-DGC_THREADS");
+            }
+            // Plan 149 D233: nova.toml [runtime] → -DNOVA_FIBER_STACK_DEFAULT /
+            // -DNOVA_MAX_FIBERS_DEFAULT (raw ints). After GC, before libuv.
+            for da in runtime_define_args(opts.runtime, "-D") {
+                c.arg(da);
             }
             c.arg("-I").arg(opts.cg_include);
             // Plan 22 libuv (Linux).
@@ -1975,6 +2023,11 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         }))
     };
 
+    // Plan 149 D233: resolve [runtime] section в package nova.toml для
+    // test_file. Plain strings (no path resolution) — baked as -D...DEFAULT.
+    let resolved_runtime: Option<crate::manifest::RuntimeConfig> =
+        crate::manifest::find_manifest(opts.nv_file).and_then(|m| m.runtime);
+
     let build_opts = BuildOpts {
         c_file: &c_file,
         exe_file: &exe_file,
@@ -1985,6 +2038,7 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         libuv: opts.libuv,
         gc_kind: opts.gc_kind,
         ffi: resolved_ffi.as_ref(),
+        runtime: resolved_runtime.as_ref(),
     };
 
     // Windows file-lock retry (lld-link "cannot open output file *.exe").

@@ -1,0 +1,46 @@
+// pos_env_stack_8mb.nv — Plan 149 D233 AC2: NOVA_FIBER_STACK=8MB applied.
+//
+// 8MB is ABOVE the 4MB builtin default. The arena resolves slot_size from the
+// env value (env > toml(-D) > builtin) and minicoro's per-fiber stack scales
+// with it (nova_fiber_arena_slot_size in _nova_mco_desc_init_arena). A fiber
+// runs a deep recursion that comfortably fits 8MB — positive smoke that
+// raising the env stack initializes a larger arena slot and the fiber runs in
+// it. (The exact resolved slot_size=8388608 was verified at the runtime level
+// during Plan 149 closure; here the Nova-level evidence is spawn + deep
+// recursion success under the raised stack.)
+//
+// NOVA_MAXPROCS=1 → single worker arena, deterministic config resolution.
+//
+// ENV NOVA_FIBER_STACK=8MB
+// ENV NOVA_MAXPROCS=1
+
+module plan149.pos_env_stack_8mb
+
+fn rec_sum(n int) -> int {
+    if n <= 0 {
+        0
+    } else {
+        n + rec_sum(n - 1)
+    }
+}
+
+test "NOVA_FIBER_STACK=8MB: deep-recursion fiber completes" {
+    mut r = 0
+    supervised {
+        spawn { r = rec_sum(4000) }
+    }
+    // 4000 * 4001 / 2 = 8002000
+    assert(r == 8002000)
+}
+
+test "NOVA_FIBER_STACK=8MB: many fibers each recurse" {
+    mut total = 0
+    supervised {
+        mut i = 0
+        while i < 40 {
+            spawn { total += rec_sum(600) }   // 600*601/2 = 180300 each
+            i += 1
+        }
+    }
+    assert(total == 40 * 180300)
+}

@@ -1,0 +1,44 @@
+// plan149_max_fibers.nv — Plan 149 D233 AC3: NOVA_MAX_FIBERS env + auto-round-UP.
+//
+// NOVA_MAX_FIBERS=20000 is NOT a multiple of 64; the arena auto-rounds UP to
+// 20032 (next multiple of 64) and clamps into [64, SLOT_COUNT_MAX]. This
+// fixture verifies the arena initializes successfully with a raised,
+// non-multiple-of-64 slot count and that spawning many fibers under it works
+// (the rounded count is well above the spawn count, so no exhaustion).
+//
+// NOVA_MAXPROCS=1: single worker arena, deterministic config resolution.
+//
+// ENV NOVA_MAX_FIBERS=20000
+// ENV NOVA_MAXPROCS=1
+
+module concurrency.plan149_max_fibers
+
+test "NOVA_MAX_FIBERS=20000 (rounds to 20032): 500 fibers spawn + sum" {
+    mut total = 0
+    supervised {
+        mut i = 1
+        while i <= 500 {
+            ro cur = i
+            spawn { total += cur }
+            i += 1
+        }
+    }
+    // 1 + 2 + ... + 500 = 125250
+    assert(total == 125250)
+}
+
+test "NOVA_MAX_FIBERS raised: sequential supervised blocks reuse slots" {
+    mut acc = 0
+    mut blk = 0
+    while blk < 4 {
+        supervised {
+            mut i = 0
+            while i < 100 {
+                spawn { acc += 1 }
+                i += 1
+            }
+        }
+        blk += 1
+    }
+    assert(acc == 400)
+}

@@ -1,0 +1,29 @@
+// neg_negative_max.nv — Plan 149 D233 AC5: negative NOVA_MAX_FIBERS → warn +
+// default, NEVER crash.
+//
+// NOVA_MAX_FIBERS="-5" parses to a non-positive integer (raw <= 0), which the
+// parser flags invalid. The arena prints ONE stderr diagnostic
+// ("invalid NOVA_MAX_FIBERS ... using default 16384") and falls back to the
+// builtin default — the program runs normally. EXPECT_STDERR asserts the
+// warning; the test passing asserts no crash.
+//
+// NOVA_MAXPROCS=1 keeps it to one worker arena.
+//
+// ENV NOVA_MAX_FIBERS=-5
+// ENV NOVA_MAXPROCS=1
+// EXPECT_STDERR invalid NOVA_MAX_FIBERS
+
+module plan149.neg_negative_max
+
+test "negative NOVA_MAX_FIBERS: warn + default, program still runs" {
+    mut total = 0
+    supervised {
+        mut i = 1
+        while i <= 15 {
+            ro cur = i
+            spawn { total += cur }
+            i += 1
+        }
+    }
+    assert(total == 120)
+}

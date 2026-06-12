@@ -1,0 +1,30 @@
+# nova.toml — scoped [runtime] manifest for Plan 149 D233 toml-baking tests.
+#
+# find_manifest (test_runner) walks UP from each test file and finds THIS
+# manifest for plan149_toml/* before the parent nova_tests/nova.toml, so the
+# [runtime] section is scoped to this package only (does not affect the ~1000
+# other tests). The values below are baked into the build as
+# -DNOVA_FIBER_STACK_DEFAULT=<bytes> / -DNOVA_MAX_FIBERS_DEFAULT=<count>
+# (raw ints, human-size parsed in Rust). At runtime the NOVA_FIBER_STACK /
+# NOVA_MAX_FIBERS env vars override these compile-time defaults
+# (precedence env > toml(-D) > builtin #define).
+#
+# package name = "plan149_toml" (tests declare `module plan149_toml.<file>`;
+# package + src="." → module-identity matches, D78 OK).
+
+[package]
+name = "plan149_toml"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "Plan 149 D233 nova.toml [runtime] baking + precedence tests"
+
+[lib]
+src = "."
+
+[dependencies]
+
+# Plan 149 D233: baked fiber-arena defaults. 2MB stack (human-size → 2097152
+# bytes), 8192 max fibers per worker. Both round+clamped at runtime.
+[runtime]
+fiber_stack = "2MB"
+max_fibers  = 8192

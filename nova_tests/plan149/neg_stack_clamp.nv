@@ -1,0 +1,36 @@
+// neg_stack_clamp.nv — Plan 149 D233 AC5: NOVA_FIBER_STACK above 256MB max →
+// clamp + warn, NEVER crash.
+//
+// NOVA_FIBER_STACK=1GB exceeds the 256MB ceiling. The arena rounds up to page
+// alignment then CLAMPS DOWN to the 256MB max, printing ONE stderr warning
+// ("exceeds max ... clamped to 256MB"). The program runs on the clamped
+// 256MB-per-slot arena and exits 0. EXPECT_STDERR asserts the clamp warning;
+// the test passing asserts no crash. (256MB per slot × default slot count is a
+// large virtual reservation but lazily committed — only touched pages back
+// physical memory, so this stays cheap.)
+//
+// NOVA_MAXPROCS=1 keeps it to one worker arena. NOVA_MAX_FIBERS=64 (floor)
+// keeps the virtual reservation bounded (256MB × 64 = 16GB reserved, lazily
+// committed) so the 256MB-per-slot arena reserves quickly without a downsize
+// retry from a huge slot_count.
+//
+// ENV NOVA_FIBER_STACK=1GB
+// ENV NOVA_MAX_FIBERS=64
+// ENV NOVA_MAXPROCS=1
+// EXPECT_STDERR exceeds max
+
+module plan149.neg_stack_clamp
+
+test "stack above max: clamped to 256MB, fiber still runs" {
+    mut total = 0
+    supervised {
+        mut i = 1
+        while i <= 8 {
+            ro cur = i
+            spawn { total += cur }
+            i += 1
+        }
+    }
+    // 1 + 2 + ... + 8 = 36
+    assert(total == 36)
+}

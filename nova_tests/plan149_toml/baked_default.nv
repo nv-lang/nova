@@ -1,0 +1,46 @@
+// baked_default.nv — Plan 149 D233 AC4: nova.toml [runtime] bakes the default.
+//
+// This package's nova.toml has [runtime] fiber_stack = "2MB", max_fibers = 8192.
+// The build injects -DNOVA_FIBER_STACK_DEFAULT=2097152 and
+// -DNOVA_MAX_FIBERS_DEFAULT=8192. With NO env var set, the arena resolves its
+// slot_size/slot_count from these baked compile-time defaults (round+clamp).
+// 2MB stack is enough for a moderate recursion; 8192 slots is enough for the
+// spawn counts here. This is a positive smoke that the baked -D path compiles
+// and runs.
+//
+// NOVA_MAXPROCS=1 for a single deterministic arena.
+//
+// ENV NOVA_MAXPROCS=1
+
+module plan149_toml.baked_default
+
+fn rec_sum(n int) -> int {
+    if n <= 0 {
+        0
+    } else {
+        n + rec_sum(n - 1)
+    }
+}
+
+test "toml-baked 2MB stack default: recursion fiber completes" {
+    mut r = 0
+    supervised {
+        spawn { r = rec_sum(1000) }
+    }
+    // 1000 * 1001 / 2 = 500500
+    assert(r == 500500)
+}
+
+test "toml-baked 8192 max_fibers: 300 fibers spawn + sum" {
+    mut total = 0
+    supervised {
+        mut i = 1
+        while i <= 300 {
+            ro cur = i
+            spawn { total += cur }
+            i += 1
+        }
+    }
+    // 300 * 301 / 2 = 45150
+    assert(total == 45150)
+}
