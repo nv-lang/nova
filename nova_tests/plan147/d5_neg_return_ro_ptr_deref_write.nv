@@ -1,0 +1,21 @@
+// Plan 147 Ф.3 — ORACLE row D NEG: `-> *T` then `*a = v` ❌.
+//
+// A function returning a bare `*T` returns a READONLY pointee (L3 default).
+// Writing through it is forbidden — the return binding (`mut a`) makes the
+// handle reassignable, not the pointee writable.
+//
+// EXPECT_COMPILE_ERROR E_POINTER_RO_ASSIGN
+
+module plan147.d5_neg_return_ro_ptr_deref_write
+
+import std.runtime.raw_mem.{RawMem}
+
+fn alloc_ro() -> *int => unsafe { RawMem.alloc(size_of[int]()) as *int }
+
+fn main() -> () {
+    unsafe {
+        mut a = alloc_ro()
+        *a = 11
+        assert(*a == 11)
+    }
+}

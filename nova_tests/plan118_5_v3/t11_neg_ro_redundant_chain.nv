@@ -1,8 +1,10 @@
-// Plan 118.5 V3 T11 → RECODED by Plan 138.5 (2026-06-11).
+// Plan 118.5 V3 T11 → RECODED by Plan 147 (2026-06-12).
 //
-// The §V3.4 redundancy check (`ro * ro` inner ro redundant) is retired —
-// the leading prefix `ro` before `*` now fails first with
-// E_POINTER_PREFIX_MODIFIER. Migrate → `*ro Acc` (single postfix pointee).
+// The leading prefix `ro` before `*` fails with E_POINTER_PREFIX_MODIFIER
+// (pointer reassignability is a binding concern, not a `*`-prefix). The
+// pointee here is the bare canon `*T` (`*T ≡ *ro T` per Plan 147 / D246;
+// an explicit `*ro` pointee would itself be E_REDUNDANT_POINTER_RO).
+// Migrate → `*Acc` (single canonical pointee), prefix still rejected.
 //
 // EXPECT_COMPILE_ERROR E_POINTER_PREFIX_MODIFIER
 
@@ -12,4 +14,4 @@ type Acc {
     id i64
 }
 
-external fn p(x ro * ro Acc) -> ()
+external fn p(x ro * Acc) -> ()

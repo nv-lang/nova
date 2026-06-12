@@ -2460,8 +2460,9 @@ impl<'a> TypeCheckCtx<'a> {
                     let gs: HashSet<String> = HashSet::new();
                     let mut scope: HashMap<String, TypeRef> = HashMap::new();
                     if let Some(ann) = &cd.ty {
+                        // A `const` binding is immutable (ro content-view).
                         self.f1_check_assign_let(
-                            &cd.value, ann, &cd.name, &gs, &scope, errors,
+                            &cd.value, ann, &cd.name, false, &gs, &scope, errors,
                         );
                     }
                     self.f1_expr(&cd.value, &gs, &mut scope, errors);
@@ -4236,8 +4237,12 @@ impl<'a> TypeCheckCtx<'a> {
                 if let (Some(ann), Some(name)) =
                     (&d.ty, pattern_simple_name(&d.pattern))
                 {
+                    // Plan 147 (D246): pass the binding's L1 mutability so the
+                    // E_READONLY_COERCE content-view check honours P7 (bare
+                    // `ro x` = freeze) — a ro source into `ro a T` is OK, into
+                    // `mut a T` is a coercion error.
                     self.f1_check_assign_let(
-                        &d.value, ann, &name, gs, scope, errors,
+                        &d.value, ann, &name, d.mutable, gs, scope, errors,
                     );
                 }
                 // Регистрируем переменную в scope: тип = аннотация, иначе
@@ -4259,6 +4264,29 @@ impl<'a> TypeCheckCtx<'a> {
                 // D175/D176 (Plan 108): check that we're not assigning to a
                 // readonly field or through a readonly index.
                 self.check_target_readonly(target, scope, errors);
+                // **Plan 147 Ф.3 (D246, L1 binding):** reassigning the NAME
+                // (`x = v` where target is a plain Ident) requires a `mut`
+                // binding. A `ro`-bound local is fixed (L1) — even an explicit
+                // `mut T` content-view does NOT make the name reassignable
+                // (R2-split: `ro r mut Point` → `r.x` ✅ / `r = X` ❌). This
+                // closes the latent reassignment hole in D36 (previously only
+                // mut-method / index-write were enforced, plain rebind slipped
+                // through).
+                if let ExprKind::Ident(name) = &target.kind {
+                    if self.ro_binding_names.borrow().contains(name) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_LOCAL_NOT_MUT] local-binding `{}` не помечен `mut`, \
+                                 но переприсваивается (`{} = ...`). `ro`-binding фиксирует \
+                                 имя (L1 — Plan 147 / D246); для переприсваивания используй \
+                                 `mut {} = ...`. (Явный `mut T` content-view не делает имя \
+                                 переприсваиваемым — это R2-split: `ro r mut T` разрешает \
+                                 `r.field = v`, но не `r = X`.)",
+                                name, name, name),
+                            target.span,
+                        ));
+                    }
+                }
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
@@ -4601,6 +4629,7 @@ impl<'a> TypeCheckCtx<'a> {
         value: &Expr,
         ann: &TypeRef,
         name: &str,
+        binding_mut: bool,
         gs: &HashSet<String>,
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
@@ -4639,7 +4668,27 @@ impl<'a> TypeCheckCtx<'a> {
         }
         // D176 (Plan 108): `readonly T → T` is forbidden (E_READONLY_COERCE).
         // `T → readonly T` is allowed (auto-coerce, narrowing rights).
-        if !ann.is_readonly() {
+        //
+        // **Plan 147 Ф.3 (D246):** coercion is decided by the target's L2
+        // *content-view*, which combines the explicit type modifier (L2) with
+        // the binding (L1, P7 «bare `ro x` = freeze»):
+        //   - explicit `ro T` annotation        → ro content-view (freeze)
+        //   - explicit `mut T` annotation        → mut content-view
+        //   - bare `T` under a `ro` binding      → ro content-view (P7 freeze)
+        //   - bare `T` under a `mut` binding      → mut content-view
+        // A ro source coerced into a mut content-view is `E_READONLY_COERCE`;
+        // into a ro content-view it is OK. This makes the oracle row-D split
+        // work: `-> ro Value` then `ro a Value = f()` ✅ (target frozen by the
+        // `ro` binding) vs `mut a Value = f()` ❌ (mut content-view).
+        let target_content_is_mut = if ann.is_readonly() {
+            false
+        } else if ann.is_mut() {
+            true
+        } else {
+            // bare value/record type — content-view follows the binding (P7).
+            binding_mut
+        };
+        if target_content_is_mut {
             if let Some(value_ty) = self.infer_expr_type(value, scope) {
                 if value_ty.is_readonly() {
                     errors.push(Diagnostic::new(
@@ -6088,6 +6137,47 @@ impl<'a> TypeCheckCtx<'a> {
                         {
                             return Some(prim_ref("never", expr.span));
                         }
+                        // **Plan 147 Ф.3 (D246, oracle row D):** propagate a
+                        // `ro`-wrapped RETURN type (`-> ro Value`) so the
+                        // E_READONLY_COERCE content-view check can reject
+                        // `mut a Value = f()` while accepting `ro a Value =
+                        // f()`. Requires ALL overloads to declare a `Readonly`
+                        // return (call resolution is not yet done here, so a
+                        // mixed set is ambiguous → fall through to None). The
+                        // returned `ro` type drives only the readonly-coerce
+                        // gate; it is intentionally NOT a general return-type
+                        // inference (no monomorphization here).
+                        if !decls.is_empty()
+                            && decls.iter().all(|d| {
+                                d.return_type.as_ref().map_or(false, |tr| tr.is_readonly())
+                            })
+                        {
+                            // Safe: the `all` guard proved the first decl has a
+                            // readonly return_type.
+                            if let Some(rt) = decls[0].return_type.as_ref() {
+                                return Some(rt.clone());
+                            }
+                        }
+                        // **Plan 147 Ф.3 (D246, L3, oracle row D):** propagate a
+                        // POINTER return type (`-> *T` / `-> *mut T`) so the
+                        // E_POINTER_RO_ASSIGN check on `*a = v` (where
+                        // `a = f()`) can read the pointee capability from the
+                        // type. Requires ALL overloads to agree on a pointer
+                        // return shape (else ambiguous → None). Only the FIRST
+                        // matching decl's type is returned — its pointee L3 is
+                        // what the deref-write gate consults; this is not a
+                        // general return-type inference.
+                        if !decls.is_empty()
+                            && decls.iter().all(|d| {
+                                d.return_type
+                                    .as_ref()
+                                    .map_or(false, |tr| tr.is_pointer_or_wraps_pointer())
+                            })
+                        {
+                            if let Some(rt) = decls[0].return_type.as_ref() {
+                                return Some(rt.clone());
+                            }
+                        }
                     }
                 }
                 None
@@ -6117,6 +6207,20 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Member { obj, .. } => self.is_through_ro_binding(obj),
             ExprKind::Index { obj, .. } => self.is_through_ro_binding(obj),
             _ => false,
+        }
+    }
+
+    /// **Plan 147 Ф.3 (D246):** walk a `.field`/`[i]` access path down to its
+    /// root `Ident` name, used to look up the binding's declared L2
+    /// content-view type for the R2-split override (`ro r mut Point` →
+    /// content-writable). Returns `None` for non-Ident roots (deref / self /
+    /// call results), which carry no simple binding to consult.
+    fn assign_root_ident(expr: &Expr) -> Option<&str> {
+        match &expr.kind {
+            ExprKind::Ident(name) => Some(name.as_str()),
+            ExprKind::Member { obj, .. } => Self::assign_root_ident(obj),
+            ExprKind::Index { obj, .. } => Self::assign_root_ident(obj),
+            _ => None,
         }
     }
 
@@ -6155,11 +6259,22 @@ impl<'a> TypeCheckCtx<'a> {
     ) {
         match &target.kind {
             ExprKind::Member { obj, name: field_name } => {
+                // **Plan 147 Ф.3 (D246, R2-split):** an EXPLICIT `mut T`
+                // content-view (L2) on the binding overrides the bare-ro
+                // freeze — `ro r mut Point` permits `r.x = v` (content ✅)
+                // while `r = X` stays forbidden (reassign ❌, handled by D36).
+                // This is the deliberate split of the two axes (L1 binding vs
+                // L2 content-view); the bare-`ro r` freeze (P7) below only
+                // applies when the binding does NOT carry an explicit `mut`
+                // content-view.
+                let root_view_is_mut_type = Self::assign_root_ident(obj)
+                    .and_then(|root| scope.get(root))
+                    .map_or(false, |t| t.is_mut());
                 // Plan 124.8 (D175 amend): binding dominates — если корень
                 // path = Ident бинд'енный через `ro`, любой write блокируется
                 // даже если field имеет `mut` модификатор. Rust-style правило:
                 // `let x = ...; x.field = ...` ❌ vs `let mut x = ...; x.field = ...` ✅.
-                if self.is_through_ro_binding(obj) {
+                if !root_view_is_mut_type && self.is_through_ro_binding(obj) {
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_READONLY_FIELD] cannot mutate `{}` через `ro`-binding \
@@ -6234,6 +6349,33 @@ impl<'a> TypeCheckCtx<'a> {
                             "[E_READONLY_CONTENT] cannot write through index on `ro` array".to_string(),
                             target.span,
                         ));
+                    }
+                }
+            }
+            // **Plan 147 Ф.3 (D246, L3 pointee-capability):** `*p = v` — a
+            // write THROUGH a pointer. The pointee-mutability is read FROM THE
+            // TYPE (L3), position- and binding-independent: `*mut T` (=
+            // `Pointer(Mut(T))`) is writable; a bare `*T ≡ *ro T` (=
+            // `Pointer(T)`) is a readonly pointee → `E_POINTER_RO_ASSIGN`.
+            // The binding (L1: `ro p` / `mut p`) controls reassignment of `p`
+            // itself, NOT the pointee — so even `ro p *mut T` allows `*p = v`
+            // (oracle row C), and `mut p *T` forbids it. We therefore inspect
+            // `p`'s *type* and ignore the binding here.
+            ExprKind::Unary { op: UnOp::Deref, operand } => {
+                if let Some(ty) = self.infer_expr_type(operand, scope) {
+                    if let Some(writable) = pointee_is_writable(&ty) {
+                        if !writable {
+                            errors.push(Diagnostic::new(
+                                "[E_POINTER_RO_ASSIGN] cannot write through a \
+                                 readonly pointer — `*T` is a readonly pointee \
+                                 (the L3 default is `ro`: `*T ≡ *ro T`, Plan \
+                                 147 / D246). A writable pointee requires the \
+                                 `*mut T` opt-in; pointer reassignability \
+                                 (`mut p`) does NOT make the pointee writable."
+                                    .to_string(),
+                                target.span,
+                            ));
+                        }
                     }
                 }
             }
@@ -6517,6 +6659,42 @@ fn prim_ref(name: &str, span: Span) -> TypeRef {
         path: vec![name.to_string()],
         generics: Vec::new(),
         span,
+    }
+}
+
+/// **Plan 147 Ф.3 (D246, L3 pointee-capability):** given the type of a
+/// pointer-valued expression `p`, determine whether writing through it
+/// (`*p = v`) is allowed by the pointee capability (L3) — read FROM THE TYPE,
+/// independent of the binding (L1).
+///
+/// Returns:
+/// - `Some(true)`  — pointee is writable (`*mut T` = `Pointer(Mut(..))`, or
+///   `*unsafe T` = `Pointer(Unsafe(..))` which is a writable raw pointee).
+/// - `Some(false)` — pointee is readonly (a bare `*T ≡ *ro T` = `Pointer(T)`
+///   over a non-Mut/Unsafe pointee).
+/// - `None`        — `p` is not a pointer type (no L3 capability to enforce;
+///   non-pointer deref is handled elsewhere / a no-op here).
+///
+/// Outer binding-level / value-level modifier wrappers (`Readonly` / `Mut` /
+/// `Unsafe`) around the WHOLE type are transparent — they belong to L1/L2 (the
+/// name/value view), not to L3 (the pointee). A `*()` (void pointer, opaque
+/// pointee) carries no writable element, so it is treated as readonly.
+fn pointee_is_writable(ty: &TypeRef) -> Option<bool> {
+    match ty {
+        // Transparent over outer L1/L2 modifier wrappers — the pointee
+        // capability lives on the inner Pointer, not on these wrappers.
+        TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Unsafe(inner, _) => pointee_is_writable(inner),
+        TypeRef::Pointer(pointee, _) => Some(match pointee.as_ref() {
+            // `*mut T` / `*unsafe T` → writable pointee (L3 opt-in).
+            TypeRef::Mut(..) | TypeRef::Unsafe(..) => true,
+            // `*()` = void pointer — opaque, no writable element.
+            TypeRef::Unit(_) => false,
+            // Bare `*T ≡ *ro T` → readonly pointee (L3 default).
+            _ => false,
+        }),
+        _ => None,
     }
 }
 

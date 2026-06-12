@@ -5,9 +5,10 @@
 // pointers are non-null, so Option[*…] is ALWAYS NPO-eligible (8 bytes, None
 // = null). This fixture now confirms all canonical POSTFIX pointer forms
 // compile under Option:
-//   Option[*T] / Option[*mut T] / Option[*ro T] / Option[*unsafe T]
+//   Option[*T] / Option[*mut T] / Option[*unsafe T]
 // (the last is the FFI nullable-uninit form: None = null, Some = non-null
-// ptr to a possibly-uninit pointee).
+// ptr to a possibly-uninit pointee). The ro pointee is the bare canon `*T`
+// (`*T ≡ *ro T` per Plan 147 / D246; explicit `*ro T` migrated here).
 
 module plan118_5.t9_npo_unsafe_outer_disables_ok
 
@@ -17,7 +18,7 @@ type Acc {
 
 external fn p9_a() -> Option[* Acc]
 external fn p9_b() -> Option[*mut Acc]
-external fn p9_c() -> Option[*ro Acc]
+external fn p9_c() -> Option[*Acc]
 external fn p9_d() -> Option[*unsafe Acc]
 
 test "Option[*T] family compiles for all canonical postfix variants" {

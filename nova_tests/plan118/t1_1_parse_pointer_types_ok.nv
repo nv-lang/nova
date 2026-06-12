@@ -1,11 +1,11 @@
-// Plan 118 Ф.1 T1.1 — parse `*T` / `*ro T` / `*mut T` / `*unsafe T` typed
+// Plan 118 Ф.1 T1.1 — parse `*T` / `*mut T` / `*unsafe T` typed
 // pointer family в TYPE positions (declarations).
 //
 // Coverage:
-//   - `*T` (default ro per D216 §1)
-//   - `*ro T` (explicit ro)
-//   - `*mut T` (mutable)
-//   - `*unsafe T` (after arithmetic)
+//   - `*T` (canonical ro pointer; `*T ≡ *ro T` per Plan 147 / D246 — the
+//     explicit `*ro T` form is a hard error E_REDUNDANT_POINTER_RO, migrated)
+//   - `*mut T` (mutable pointee)
+//   - `*unsafe T` (ptr to uninit T)
 //
 // V1 scope: parse + type-check declarations only. Pointer ops (deref,
 // `&value`, auto-deref) — landing в Ф.2-Ф.4 unsafe model.
@@ -17,14 +17,15 @@ type Acc {
     ro balance i64
 }
 
-// All 4 modifier variants в external fn signatures.
+// All modifier variants в external fn signatures (Plan 147: `*T` is the ro
+// canon; no separate `*ro T` form).
 external fn p118_take_ptr_default(p *Acc) -> i64
-external fn p118_take_ptr_ro(p *ro Acc) -> i64
+external fn p118_take_ptr_ro(p *Acc) -> i64
 external fn p118_take_ptr_mut(p *mut Acc) -> i64
 external fn p118_take_ptr_unsafe(p *unsafe Acc) -> i64
 
 external fn p118_return_ptr_default() -> *Acc
-external fn p118_return_ptr_ro() -> *ro Acc
+external fn p118_return_ptr_ro() -> *Acc
 external fn p118_return_ptr_mut() -> *mut Acc
 external fn p118_return_ptr_unsafe() -> *unsafe Acc
 

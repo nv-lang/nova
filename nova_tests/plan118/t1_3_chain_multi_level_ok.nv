@@ -1,8 +1,10 @@
 // Plan 118 Ф.1 T1.3 — chain order для multi-level pointers (D216 §3).
 //
-// Final pointer model (Plan 138.5): pointee-mut is POSTFIX (after each `*`).
-//   `*mut *ro Node`  = pointer-to-mut (pointer-to-ro Node)
-//   `*ro *mut Node`  = pointer-to-ro (pointer-to-mut Node)
+// Pointer model (Plan 147 / D246): pointee-mut is POSTFIX (after each `*`),
+// and the ro pointee is the bare canon (`*T ≡ *ro T`; explicit `*ro` is a
+// hard error, migrated to `*`).
+//   `*mut *Node`     = pointer-to-mut (pointer-to-ro Node)
+//   `* *mut Node`    = ro pointer to a mut-pointer (`**mut Node`)
 
 module plan118.t1_3_chain_multi_level_ok
 
@@ -10,16 +12,16 @@ type Node {
     ro value i64
 }
 
-// Two-level chain — mut/ro mixed (pointee-mut postfix per level).
-external fn p118_chain_mut_ro(pp *mut *ro Node) -> i64
-external fn p118_chain_ro_mut(pp *ro *mut Node) -> i64
+// Two-level chain — mut/ro mixed (pointee-mut postfix per level; ro = bare `*`).
+external fn p118_chain_mut_ro(pp *mut *Node) -> i64
+external fn p118_chain_ro_mut(pp **mut Node) -> i64
 
 // Three-level form collapses to two levels here (outer/inner pointee-mut
 // expressed postfix at each `*`).
-external fn p118_chain_triple(ppp *mut *ro Node) -> i64
+external fn p118_chain_triple(ppp *mut *Node) -> i64
 
 // Chain в return position.
-external fn p118_return_chain() -> *mut *ro Node
+external fn p118_return_chain() -> *mut *Node
 
 test "multi-level pointer chains parse + type-check" {
     assert(1 == 1)

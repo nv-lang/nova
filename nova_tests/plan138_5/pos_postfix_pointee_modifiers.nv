@@ -1,8 +1,9 @@
 // Plan 138.5 POS — canonical postfix pointee modifiers compile.
 //
-// `*T` ≡ `*ro T` (read-only target), `*mut T` (writable target),
-// `*unsafe T` (ptr to possibly-uninit pointee). Final pointer model: the
-// modifier is on the pointee (postfix, after `*`).
+// `*T ≡ *ro T` (read-only target — bare `*T` is the canon, explicit `*ro T`
+// is a hard error per Plan 147 / D246), `*mut T` (writable target),
+// `*unsafe T` (ptr to possibly-uninit pointee). The modifier is on the
+// pointee (postfix, after `*`).
 
 module plan138_5.pos_postfix_pointee_modifiers
 
@@ -11,7 +12,7 @@ type Acc {
 }
 
 external fn p_default(p * Acc) -> ()
-external fn p_ro(p *ro Acc) -> ()
+external fn p_ro(p *Acc) -> ()
 external fn p_mut(p *mut Acc) -> ()
 external fn p_unsafe(p *unsafe Acc) -> ()
 external fn r_default() -> * Acc
@@ -19,7 +20,7 @@ external fn r_mut() -> *mut Acc
 
 test "postfix pointee modifiers parse + typecheck" {
     assert(size_of[*mut Acc]() == 8)
-    assert(size_of[*ro Acc]() == 8)
+    assert(size_of[*Acc]() == 8)
     assert(size_of[*unsafe Acc]() == 8)
     assert(size_of[* Acc]() == 8)
 }

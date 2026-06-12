@@ -1,0 +1,26 @@
+// Plan 147 Ф.3 — ORACLE row D positive: `-> ro Value` coercion OK cases.
+//
+//   `mut a ro Value = f()` ✅ — ro source into ro content-view.
+//   `ro a Value = f()`     ✅ — bare type under `ro` binding is frozen (P7),
+//                               so the target content-view is ro → matches.
+// Reads are always ✅.
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.d1_return_ro_coerce_ok
+
+type Value value { mut n int }
+
+fn make_ro() -> ro Value => Value { n: 5 }
+
+fn main() -> () {
+    // ro source → ro content-view (explicit ro type).
+    mut a ro Value = make_ro()
+    assert(a.n == 5)
+
+    // ro source → bare type under ro binding (frozen, P7) → ok.
+    ro b Value = make_ro()
+    assert(b.n == 5)
+
+    println("ok")
+}

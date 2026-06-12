@@ -24,7 +24,7 @@
 // deref read/write) is wrapped in an `unsafe { }` block. The element-access
 // API is fully safe — no `unsafe` to *use*; in-place element mutation is the
 // safe `v[i] = val` (D240 `MutIndex` write). The lone deliberate escape is the
-// FFI accessor `@as_ptr()` (recv-mut overload: `*ro T` on a `ro` receiver,
+// FFI accessor `@as_ptr()` (recv-mut overload: `*T` on a `ro` receiver,
 // `*mut T` on a `mut` receiver) — calling it is safe (a pointer-value copy,
 // not a deref), but *dereferencing* the returned pointer is the caller's
 // `unsafe` obligation.
@@ -78,27 +78,18 @@ export type Vec[T] priv {
     // Raw element buffer. `cap` elements wide; first `len` are live.
     // Never read/written outside `unsafe` blocks in this module.
     //
-    // ⚠️ MIGRATION PENDING (Plan 147 D245, flip-scan): the line below
-    // `mut data *mut T` is REDUNDANT under the FINAL flip-scan model and will be
-    // migrated to `mut data *T` in Plan 147 Ф.4. Reason: binding-mut (`mut`
-    // before the name) sets the running `current` = mut; a bare `*T` INHERITS
-    // current → mutable pointee. The postfix `*mut` therefore matches `current`
-    // (no flip) → `E_REDUNDANT_POINTER_MODIFIER`. Canonical form = `mut data *T`,
-    // which yields the same writable buffer (codegen `promote_pointer_pointee_mut`
-    // already promotes the pointee to `Nova_T*` for mutable fields).
+    // Declared `mut data *mut T` under the THREE-AXIS pointer model
+    // (Plan 147 / D246; D245 flip-scan RETRACTED):
+    //   - L1 binding-mut (`mut` before the name) makes the *field* reassignable
+    //     (`@data = dst` in @realloc_to);
+    //   - L3 postfix pointee-mut (`*mut T`) makes the *pointee* writable so
+    //     `@data[i] = val` (push / index-set) is a valid store.
+    // Both axes are REQUIRED and INDEPENDENT — pointee-mut is NOT inherited
+    // from the binding (3-axis forbids it; a bare `*T ≡ *ro T` is a ro pointee
+    // regardless of the binding). A writable, reassignable buffer therefore
+    // spells out both `mut` (binding) and `*mut` (pointee) explicitly.
     //
-    // OBSOLETE rationale (138.5, reversed by D245): the text below claimed a bare
-    // `*T` is always a read-only (const) pointee so `*mut T` must be explicit.
-    // D245 (flip-scan) RETRACTS `*T ≡ *ro T`: `*T` now inherits the binding
-    // `current`, so for a `mut` field `*T` is already a writable pointee.
-    //
-    // Declared `mut data *mut T` under the FINAL 138.5 pointer model:
-    // binding-mut (`mut` before the name) makes the *field* reassignable
-    // (`@data = dst` in @realloc_to), and the POSTFIX pointee-mut (`*mut T`)
-    // makes the *pointee* writable so `@data[i] = val` (push / index-set) is a
-    // valid store. Both axes are required: a writable, reassignable buffer.
-    //
-    // Codegen lowers the pointee to the live element C type `Nova_T*` (no
+    // Codegen lowers `*mut T` to the live element C type `Nova_T*` (no
     // `const`), preserving the generic `T` through monomorphization (no
     // `Nova_any*` pointee erasure).
     mut data *mut T
@@ -406,7 +397,8 @@ export fn Vec[T] @last() -> Option[T] {
 }
 
 /// Raw read-only pointer to the element buffer, for FFI / interop with C
-/// `(ptr, len)` APIs. The `ro` receiver yields a `*ro T` (ABI `const T*`).
+/// `(ptr, len)` APIs. The `ro` receiver yields a `*T` (canonical ro pointer,
+/// `*T ≡ *ro T` per Plan 147 / D246; ABI `const T*`).
 ///
 /// SAFE to call — extracting the pointer *value* is not a dereference.
 /// Dereferencing the returned pointer (`*p`, `p.read()`, `p + i`) needs an
@@ -420,7 +412,7 @@ export fn Vec[T] @last() -> Option[T] {
 /// The recv-mut companion `mut @as_ptr() -> *mut T` (below) yields a writable
 /// `*mut T` when called on a `mut`-bound receiver (Plan 138.4 recv-mut
 /// overload dispatch).
-export fn Vec[T] @as_ptr() -> *ro T => @data
+export fn Vec[T] @as_ptr() -> *T => @data
 
 /// Raw mutable pointer to the element buffer — the writable recv-mut overload
 /// of `@as_ptr`. Selected when the receiver is `mut`-bound; yields `*mut T`

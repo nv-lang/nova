@@ -117,6 +117,24 @@ fn pointer_prefix_modifier_error(modifier: &str, span: Span) -> Diagnostic {
     )
 }
 
+/// **Plan 147 Ф.2 (D246, 3-axis L3):** `*ro T` is redundant — a bare `*T`
+/// IS the ro-pointee canon (`*T ≡ *ro T` universally). Emit a hard error with
+/// a fix-it to `*T`. Distinct from `*mut T` (the single mut-pointee opt-in,
+/// still valid) and from the value-level `ro T` content-view (L2, valid before
+/// a value/record type, not in pointee position).
+fn redundant_pointer_ro_error(span: Span) -> Diagnostic {
+    Diagnostic::new(
+        "[E_REDUNDANT_POINTER_RO] `*ro T` is redundant — a bare `*T` is \
+         already a readonly pointer (the L3 pointee default is `ro` per \
+         Plan 147 / D246: `*T ≡ *ro T` universally). \
+         Fix: write `*T` (drop the `ro`). Writable pointee is the single \
+         opt-in `*mut T`; pointer reassignability is a binding concern \
+         (`let p *T` fixed vs `mut p *T` rebindable, D36), not a type modifier."
+            .to_string(),
+        span,
+    )
+}
+
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Self::with_src(tokens, String::new())
@@ -4595,15 +4613,15 @@ impl Parser {
                 self.peek().span,
             ));
         }
-        // Plan 124.8 — `ro x mut T` form: binding ro, type explicit mut
-        // (content mutable through readonly binding-name). Consume `mut`
-        // и игнорируй (mut T ≡ T в Nova default-mut type system).
-        // Это закрывает D176 §«type-modifier в любой позиции» partial
-        // implementation gap (parser ранее не принимал `mut T` в binding
-        // type annotation; теперь принимает).
-        if matches!(self.peek().kind, TokenKind::KwMut) && !is_mut {
-            self.bump(); // consume `mut`, no AST effect (default-mut)
-        }
+        // **Plan 147 Ф.2 (D246, R2-split):** `ro x mut T` form — binding ro
+        // (L1, reassign ❌), type explicit `mut T` (L2 content-view ✅). The
+        // `mut` is NO LONGER dropped: it must be preserved as a `TypeRef::Mut`
+        // wrapper so the checker can honour the R2-split (content-writable
+        // through a ro binding — `ro r mut Point` → `r.x = v` ✅ / `r = X` ❌).
+        // We do NOT bump here; the `mut` is parsed by `parse_type()`'s KwMut
+        // arm below, mirroring how `mut x ro T` preserves `TypeRef::Readonly`.
+        // (Previously, Plan 124.8 consumed+ignored `mut` under the old
+        // «mut T ≡ T» model; that erased the L2 axis and is reversed here.)
         let ty = if !matches!(self.peek().kind, TokenKind::Eq) {
             Some(self.parse_type()?)
         } else {
@@ -5106,17 +5124,30 @@ impl Parser {
             // D176 (Plan 108): compile-time immutability modifier
             // (Plan 114 keyword: `ro`).
             TokenKind::KwRo => {
+                // **Plan 147 Ф.2 (D246, 3-axis):** `*ro T` is a HARD ERROR.
+                // Under the three-axis model `*T ≡ *ro T` UNIVERSALLY — a bare
+                // `*T` is already the ro-pointee canon (L3 default = ro), so an
+                // explicit `*ro T` postfix is redundant. The `is_pointee` flag
+                // (set by the enclosing `*` Star arm just before this
+                // `parse_type()` call) tells us we are in the pointee position;
+                // a leading `ro` there is `*ro T`. Emit E_REDUNDANT_POINTER_RO
+                // with a fix-it to the canonical `*T`. (Choice (a): consumers
+                // few, std still forming; no silent rewrite — author must edit.)
+                if is_pointee {
+                    let span = self.peek().span;
+                    return Err(redundant_pointer_ro_error(span));
+                }
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
                 // **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):**
                 // FORBID prefix pointer modifier `ro *` — pointer modifiers
                 // go on the pointee (postfix `*ro T`) or the binding
-                // (`mut x *T`), never before `*`. Skip when `is_pointee`:
-                // here `ro` is the POSTFIX pointee modifier of an enclosing
-                // `*` (e.g. `*ro *mut T`), which is allowed even if its inner
-                // is itself a pointer.
-                if !is_pointee && inner.is_pointer_or_wraps_pointer() {
+                // (`mut x *T`), never before `*`. With the `is_pointee` guard
+                // above already rejecting the postfix `*ro` form, any `ro`
+                // reaching here is a value-level L2 content-view modifier
+                // (`ro Point`) or a forbidden prefix-pointer (`ro * T`).
+                if inner.is_pointer_or_wraps_pointer() {
                     return Err(pointer_prefix_modifier_error("ro", span));
                 }
                 // **Plan 138.5 §V3.2 flip / §V3.3-§V3.4 retire (2026-06-11):**

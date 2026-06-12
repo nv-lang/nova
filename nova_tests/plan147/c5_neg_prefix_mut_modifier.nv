@@ -1,0 +1,12 @@
+// Plan 147 Ф.2 — ORACLE row C NEG: prefix `mut *` is forbidden.
+//
+// A modifier before `*` (prefix) is not allowed — pointer reassignability is
+// a binding concern (`mut p`), and the pointee modifier is postfix (`*mut T`).
+//
+// EXPECT_COMPILE_ERROR E_POINTER_PREFIX_MODIFIER
+
+module plan147.c5_neg_prefix_mut_modifier
+
+type Box { data mut *int }
+
+test "rejects prefix mut *" { assert(1 == 1) }

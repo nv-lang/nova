@@ -1,5 +1,6 @@
 // Plan 138.post [M-138.2-vec-as-ptr] — t7: Vec @as_ptr buffer accessor with
-// the recv-mut overload (ro receiver -> *ro T, mut receiver -> *mut T).
+// the recv-mut overload (ro receiver -> *T, mut receiver -> *mut T). The ro
+// overload returns the bare canon `*T` (`*T ≡ *ro T` per Plan 147 / D246).
 //
 // `@as_ptr()` returns the raw element-buffer pointer (`@data`) for FFI /
 // (ptr, len) interop. It is SAFE to call — extracting the pointer value is not
@@ -8,7 +9,7 @@
 //
 // The recv-mut overload dispatch (Plan 138.4 G-A mangling + G-B infer
 // tiebreak) selects:
-//   - `@as_ptr() -> *ro T`     on a `ro`-bound receiver  (read-only buffer ptr)
+//   - `@as_ptr() -> *T`        on a `ro`-bound receiver  (read-only buffer ptr)
 //   - `mut @as_ptr() -> *mut T` on a `mut`-bound receiver (writable buffer ptr)
 
 module plan138_2.t7_vec_as_ptr

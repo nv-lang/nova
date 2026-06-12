@@ -1,10 +1,11 @@
 // Plan 118.5 / 138.5 T1 — canonical postfix pointer syntax parses + typechecks.
 //
-// Tests final pointer grammar: *T, *ro T, *mut T, *unsafe T forms in
-// external fn signatures (parser + typecheck only — no runtime ops).
+// Tests pointer grammar: *T, *mut T, *unsafe T forms in external fn
+// signatures (parser + typecheck only — no runtime ops).
 //
-// Per D216 final model, pointee-mut is POSTFIX (after `*`); reassignability
-// of the pointer is binding, not type.
+// Per Plan 147 / D246, pointee-mut is POSTFIX (after `*`); reassignability of
+// the pointer is binding, not type. The ro pointee is the bare canon `*T`
+// (`*T ≡ *ro T`; explicit `*ro T` is a hard error, migrated here).
 
 module plan118_5.t1_canonical_right_binding_ok
 
@@ -13,7 +14,7 @@ type Acc {
 }
 
 external fn p118_5_t1_a(p * Acc) -> ()
-external fn p118_5_t1_b(p *ro Acc) -> ()
+external fn p118_5_t1_b(p *Acc) -> ()
 external fn p118_5_t1_c(p *mut Acc) -> ()
 external fn p118_5_t1_d(p *unsafe Acc) -> ()
 

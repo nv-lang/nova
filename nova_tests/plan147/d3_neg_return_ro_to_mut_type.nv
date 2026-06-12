@@ -1,0 +1,17 @@
+// Plan 147 Ф.3 — ORACLE row D NEG: `ro a mut Value = f()` where `f -> ro Value`.
+//
+// The explicit `mut Value` annotation is a MUT content-view (L2) regardless of
+// the `ro` binding (L1); coercing a `ro Value` source into it → E_READONLY_COERCE.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module plan147.d3_neg_return_ro_to_mut_type
+
+type Value value { mut n int }
+
+fn make_ro() -> ro Value => Value { n: 5 }
+
+fn main() -> () {
+    ro a mut Value = make_ro()
+    assert(a.n == 5)
+}
