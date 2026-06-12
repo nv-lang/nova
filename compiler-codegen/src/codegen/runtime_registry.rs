@@ -481,9 +481,16 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[("sep", "str")],
             return_ty: "ro []str",
             effects: &[],
-            c_name: "nova_str_split",
+            c_name: "",
             doc: "D178 / Plan 114 D184: Split по separator. Returns zero-copy views (ro []str).",
-        nova_body: None,
+            // Plan 139.2 Ф.2: Nova-body — byte-scan over @as_bytes(); each segment
+            // is a zero-copy sub-view `str{ptr: @ptr+off, len}` pushed into a
+            // Vec[str]. Semantics identical to the retired C nova_str_split
+            // (empty sep → single whole-string view; tail always emitted). The
+            // hand-maintained std/runtime/string.nv factors the view construction
+            // into a `@sub_view` helper; the registry body inlines it so a
+            // regenerated stub stays self-contained.
+            nova_body: Some("{\n    mut out = Vec[str].new()\n    ro sep_len = sep.len()\n    ro sn = @len()\n    if sep_len == 0 {\n        out.push(str { ptr: unsafe { @ptr + 0 }, len: sn })\n        return out\n    }\n    ro sb = @as_bytes()\n    ro pb = sep.as_bytes()\n    mut start = 0\n    mut i = 0\n    while i + sep_len <= sn {\n        mut j = 0\n        mut matched = true\n        while j < sep_len {\n            if sb[i + j] != pb[j] { matched = false; break }\n            j = j + 1\n        }\n        if matched {\n            out.push(str { ptr: unsafe { @ptr + start }, len: i - start })\n            i = i + sep_len\n            start = i\n        } else {\n            i = i + 1\n        }\n    }\n    out.push(str { ptr: unsafe { @ptr + start }, len: sn - start })\n    out\n}"),
     },
         // D178: compare — lexicographic, like C strcmp. External (C implementation).
         RuntimeFn {

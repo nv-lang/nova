@@ -15,6 +15,9 @@ import std.runtime.string_builder.{StringBuilder}
 // zero-copy view ([]u8 ≡ Vec[u8] under D239; the `Vec` name is needed because
 // the `[]T.` builtin static-dispatch only handles new/with_capacity).
 import std.collections.vec_owned.{Vec}
+// Plan 139.2 Ф.2: raw alloc + NUL-term + memcpy for from_bytes_* producers
+// (str owns a fresh, NUL-terminated buffer per D26 §3).
+import std.runtime.raw_mem.{RawMem}
 
 // Plan 139.2 Ф.1: module-private OOB-panic for @byte_at bounds-check (mirrors
 // the retired C nova_str_byte_at panic). `#no_prelude` ⇒ panic не виден из
@@ -350,16 +353,158 @@ export fn str @as_bytes() -> ro []u8 {
     Vec[u8].from_raw_parts(@ptr, @len(), @len())
 }
 
+// Module-private: is the byte at `b` a UTF-8 continuation byte (0b10xxxxxx)?
+fn is_cont(b int) -> bool => (b & 0xC0) == 0x80
+
+// Module-private: validate that `bytes[0..n]` is well-formed UTF-8. Mirrors the
+// C `_nova_validate_utf8` used by the retired nova_str_from_bytes_lossy fast
+// path — overlong / surrogate / out-of-range sequences are rejected. Used by
+// @from_bytes_lossy to pick the copy-only fast path vs the FFFD-replace path.
+fn validate_utf8(bytes ro []u8, n int) -> bool {
+    mut i = 0
+    while i < n {
+        ro c = bytes[i] as int
+        mut seq = 0
+        if c < 0x80 { seq = 1 }
+        else if (c & 0xE0) == 0xC0 && c >= 0xC2 { seq = 2 }
+        else if (c & 0xF0) == 0xE0 { seq = 3 }
+        else if (c & 0xF8) == 0xF0 && c <= 0xF4 { seq = 4 }
+        else { return false }
+        // Continuation bytes present + well-formed.
+        mut k = 1
+        while k < seq {
+            if i + k >= n || !is_cont(bytes[i + k] as int) { return false }
+            k = k + 1
+        }
+        // Overlong / surrogate / range guards (mirror C lossy validator).
+        if seq == 3 {
+            if c == 0xE0 && (bytes[i+1] as int) < 0xA0 { return false }
+            if c == 0xED && (bytes[i+1] as int) >= 0xA0 { return false }
+        }
+        if seq == 4 {
+            if c == 0xF0 && (bytes[i+1] as int) < 0x90 { return false }
+            if c == 0xF4 && (bytes[i+1] as int) >= 0x90 { return false }
+        }
+        i = i + seq
+    }
+    true
+}
+
+// Module-private str static method: build a freshly-allocated str by copying
+// `n` bytes from the raw source pointer `src` (`*u8`), NUL-terminating at
+// `data[n]` (D26 §3 — str buffers carry a trailing '\0' for cheap C-interop /
+// `s.ptr[s.len]` peeks). `RawMem.alloc(n+1)` returns GC-tracked ZEROED memory
+// (so the NUL at index n is already 0); the explicit store documents the
+// invariant and matches the retired C `buf[len] = '\0'`. The `*mut u8` buffer
+// is re-labelled to the str field's `*u8` (ro pointee) on construction — L3
+// narrowing, always safe. The returned str OWNS its buffer (no aliasing of the
+// source). Identical bytes to the C nova_str_from_bytes_unchecked.
+//
+// Declared as a `str.` STATIC method (not a free fn) so its receiver type is
+// `str` → `current_recv_type == "str"` → it may construct the `str{...}`
+// value-record (type-based privacy, Plan 139.1/D220). A free fn has no receiver
+// and would trip E_PRIV_FIELD_INIT.
+fn str.alloc_copy(src *u8, n int) -> Self {
+    if n <= 0 {
+        // Empty string — interned literal, no allocation needed.
+        return ""
+    }
+    ro buf = unsafe { RawMem.alloc(n + 1) }
+    unsafe { RawMem.copy_nonoverlapping(src, buf, n) }
+    unsafe { buf[n] = 0 as u8 }
+    str { ptr: buf, len: n }
+}
+
 // D178: []u8 → str. D178: параметр `readonly bytes` (синтаксис D178).
-// Lossy: replaces invalid UTF-8 sequences with U+FFFD. Always succeeds.
-export external fn str.from_bytes_lossy(ro bytes []u8) -> str
 // Unchecked: no validation, O(n) copy. Caller guarantees valid UTF-8.
-export external fn str.from_bytes_unchecked(ro bytes []u8) -> str
+// Plan 139.2 Ф.2: Nova-body — reads the source (ptr,len) via the public Vec
+// getters `@as_ptr()` / `@len()` (cross-type bridge; str cannot see Vec's priv
+// fields, so the public accessor is the sanctioned read) and copies into a
+// fresh owned, NUL-terminated buffer (alloc_str_copy). Identical bytes to the
+// retired C nova_str_from_bytes_unchecked.
+export fn str.from_bytes_unchecked(ro bytes []u8) -> str {
+    str.alloc_copy(bytes.as_ptr(), bytes.len())
+}
+
+// Lossy: replaces invalid UTF-8 sequences with U+FFFD. Always succeeds.
+// Plan 139.2 Ф.2: Nova-body. Fast path — when the whole input is valid UTF-8,
+// just copy (alloc_str_copy). Slow path — emit each valid sequence verbatim and
+// replace each invalid lead byte with the 3-byte U+FFFD (0xEF 0xBF 0xBD),
+// advancing 1 byte. Identical output to the retired C nova_str_from_bytes_lossy.
+export fn str.from_bytes_lossy(ro bytes []u8) -> str {
+    ro n = bytes.len()
+    if validate_utf8(bytes, n) {
+        return str.alloc_copy(bytes.as_ptr(), n)
+    }
+    // Worst case every byte → 3-byte FFFD.
+    mut out = []u8.with_capacity(n * 3)
+    mut i = 0
+    while i < n {
+        ro c = bytes[i] as int
+        mut seq = 0
+        if c < 0x80 { seq = 1 }
+        else if (c & 0xE0) == 0xC0 && c >= 0xC2 { seq = 2 }
+        else if (c & 0xF0) == 0xE0 { seq = 3 }
+        else if (c & 0xF8) == 0xF0 && c <= 0xF4 { seq = 4 }
+        mut valid = seq > 0
+        if valid {
+            mut k = 1
+            while k < seq && valid {
+                if i + k >= n || !is_cont(bytes[i + k] as int) { valid = false }
+                k = k + 1
+            }
+        }
+        if valid && seq == 3 {
+            if c == 0xE0 && (bytes[i+1] as int) < 0xA0 { valid = false }
+            else if c == 0xED && (bytes[i+1] as int) >= 0xA0 { valid = false }
+        }
+        if valid && seq == 4 {
+            if c == 0xF0 && (bytes[i+1] as int) < 0x90 { valid = false }
+            else if c == 0xF4 && (bytes[i+1] as int) >= 0x90 { valid = false }
+        }
+        if valid {
+            mut k = 0
+            while k < seq {
+                out.push(bytes[i + k])
+                k = k + 1
+            }
+            i = i + seq
+        } else {
+            out.push(0xEF as u8)
+            out.push(0xBF as u8)
+            out.push(0xBD as u8)
+            i = i + 1
+        }
+    }
+    str.from_bytes_unchecked(out)
+}
+
 // Steal variant: consume []u8, zero-copy reuse data ptr when cap > len
 // (writes '\0' at data[len] in-place); falls back to alloc+copy if cap == len.
 // Caller must consume the source array — array unusable after call.
 // Plan 91.10: D163 `needs <Cap>` retracted, plain external fn syntax.
-export external fn str.from_bytes_unchecked_steal(consume bytes []u8) -> str
+// Plan 139.2 Ф.2: Nova-body. Zero-copy reuse — when the source has spare
+// capacity (cap > len) the trailing slot can hold the NUL terminator, so the
+// buffer is reused in place (`data[len] = '\0'`) and wrapped as a str view over
+// the consumed buffer; the `consume bytes` ownership is absorbed into the
+// returned str via `bytes.into_raw()` (the consume-receiver companion of
+// Vec.from_raw_parts — it consumes the Vec wrapper and hands back the writable
+// buffer). Otherwise (cap == len, no room for the NUL) fall back to alloc+copy
+// (into_raw still consumes the buffer so the obligation is discharged on every
+// path). Identical bytes to the retired C nova_str_steal_bytes.
+export fn str.from_bytes_unchecked_steal(consume bytes []u8) -> str {
+    ro n = bytes.len()
+    ro has_room = bytes.cap() > n
+    // Consume the Vec wrapper, taking ownership of its raw buffer (writable).
+    mut buf = bytes.into_raw()
+    if has_room {
+        // In-place NUL-term at data[n] (D26 §3) + reuse the stolen buffer.
+        unsafe { buf[n] = 0 as u8 }
+        return str { ptr: buf, len: n }
+    }
+    // No room for the NUL terminator — copy into a fresh owned buffer.
+    str.alloc_copy(buf, n)
+}
 
 // Codepoints как []char (allocating). D178: renamed from @chars().
 // Plan 139 Ф.2: Nova-body — UTF-8 decode cursor над @as_bytes() (zero-copy view),
@@ -395,8 +540,62 @@ export fn str @to_chars() -> []char {
     out
 }
 
+// Build a zero-copy str sub-view `str{ptr: @ptr+off, len}` over THIS string's
+// backing buffer. Module-private helper for @split. `str` is a declared
+// lang-item (Plan 139.1) with priv fields `ptr *u8` / `len int`; this receiver
+// is `str`, so it has type-method priv access (privacy is type-based, not
+// module-based) and can read `@ptr` and construct a `str{...}` value-record in
+// its own module (Plan 139.2 Ф.0 PROOF). `@ptr + off` is raw pointer
+// arithmetic (`@ptr` is `*u8`), so it is wrapped in `unsafe` — the analogue of
+// `Vec[T] @index(r Range)`'s `@data + r.start` (vec_owned.nv:754). The
+// returned view ALIASES this string's bytes (no copy); the originating owner
+// (`@`) must outlive the view, and the view is read-only (str buffer is
+// immutable, R8). `off`/`seg_len` are caller-guaranteed in `[0, @len()]`.
+fn str @sub_view(off int, seg_len int) -> str {
+    str { ptr: unsafe { @ptr + off }, len: seg_len }
+}
+
 // Split по separator. Returns zero-copy views (readonly). D178: readonly return.
-export external fn str @split(sep str) -> ro []str
+// Plan 139.2 Ф.2: Nova-body — byte-scan over @as_bytes(), each segment is a
+// zero-copy sub-view `str{ptr: @ptr+off, len}` (NOT a copy) pushed into a
+// Vec[str], returned as `ro []str`. Semantics identical to the retired C
+// nova_str_split (nova_rt/array.h:650): empty `sep` yields a single-element
+// array holding the whole string; otherwise non-overlapping matches split the
+// string and the trailing tail is always pushed (N matches ⇒ N+1 segments).
+// Spelled `Vec[str].new()` (not the `[]str.` alias) because the cross-type
+// producer is named on `Vec`; the `ro []str` return enforces L2 read-only.
+export fn str @split(sep str) -> ro []str {
+    mut out = Vec[str].new()
+    ro sep_len = sep.len()
+    ro sn = @len()
+    if sep_len == 0 {
+        // Empty separator — whole string as a single view (как C: push s).
+        out.push(@sub_view(0, sn))
+        return out
+    }
+    ro sb = @as_bytes()
+    ro pb = sep.as_bytes()
+    mut start = 0
+    mut i = 0
+    while i + sep_len <= sn {
+        mut j = 0
+        mut matched = true
+        while j < sep_len {
+            if sb[i + j] != pb[j] { matched = false; break }
+            j = j + 1
+        }
+        if matched {
+            out.push(@sub_view(start, i - start))
+            i = i + sep_len
+            start = i
+        } else {
+            i = i + 1
+        }
+    }
+    // Trailing segment [start, sn).
+    out.push(@sub_view(start, sn - start))
+    out
+}
 
 // D178: merge of parse_int() + parse_int_radix(). Default radix=10 → decimal.
 // Digits 0-9, a-z/A-Z (case-insensitive for radix>10). None при error.

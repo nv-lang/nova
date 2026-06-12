@@ -21284,19 +21284,10 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                 //    Auto-derive: if user defined `fn V @into() -> str` for V,
                 //    call that instead of the builtin.
                 if let ExprKind::Ident(prim) = &obj.kind {
-                    // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked.
-                    // Plan 91 followup: str.from_bytes_unchecked_steal — zero-copy для consume []u8.
-                    if prim == "str" && (method == "from_bytes_lossy" || method == "from_bytes_unchecked" || method == "from_bytes_unchecked_steal") {
-                        if let Some(arg) = args.first() {
-                            let v = self.emit_expr(arg.expr())?;
-                            let c_fn = match method.as_str() {
-                                "from_bytes_lossy" => "nova_str_from_bytes_lossy",
-                                "from_bytes_unchecked_steal" => "nova_str_steal_bytes",
-                                _ => "nova_str_from_bytes_unchecked",
-                            };
-                            return Ok(format!("{}({})", c_fn, v));
-                        }
-                    }
+                    // Plan 139.2 Ф.2: str.from_bytes_lossy / from_bytes_unchecked /
+                    // from_bytes_unchecked_steal MIGRATED to Nova-body. The static
+                    // C interception was removed here so the call routes through the
+                    // normal static-method dispatch to Nova_str_static_from_bytes_*.
                     if prim == "str" && method == "from" {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg.expr());
@@ -23345,22 +23336,10 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                         }
                     }
                 }
-                // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked.
-                // Plan 91 followup: str.from_bytes_unchecked_steal — zero-copy для consume []u8.
-                // Все три take single `[]u8` arg (readonly или consume) → same C signature.
-                if parts.len() == 2 && parts[0] == "str"
-                    && (parts[1] == "from_bytes_lossy" || parts[1] == "from_bytes_unchecked" || parts[1] == "from_bytes_unchecked_steal")
-                {
-                    if let Some(arg) = args.first() {
-                        let v = self.emit_expr(arg.expr())?;
-                        let c_fn = match parts[1].as_str() {
-                            "from_bytes_lossy" => "nova_str_from_bytes_lossy",
-                            "from_bytes_unchecked_steal" => "nova_str_steal_bytes",
-                            _ => "nova_str_from_bytes_unchecked",
-                        };
-                        return Ok(format!("{}({})", c_fn, v));
-                    }
-                }
+                // Plan 139.2 Ф.2: str.from_bytes_lossy / from_bytes_unchecked /
+                // from_bytes_unchecked_steal MIGRATED to Nova-body. The static C
+                // interception was removed here so the call routes through the
+                // normal static-method dispatch to Nova_str_static_from_bytes_*.
                 // Plan 74: f64/f32.from_bits(bits uN) — IEEE 754 bit-cast
                 // uN → float через nova_rt/numeric.h. Pair с `f.to_bits()`.
                 // Legacy Plan 04: f64.from_bits также служит распаковке
@@ -26248,6 +26227,40 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                 let call = format!("nova_make_{}_{}({})", ctor_prefix, struct_name, ordered_args.join(", "));
                 self.line(&format!("{}* {} = {};", concrete_sum_c, tmp, call));
                 self.var_types.insert(tmp.clone(), format!("{}*", concrete_sum_c));
+            } else if struct_name == "str" {
+                // Plan 139.2 Ф.2: `str { ptr: …, len: … }` record literal.
+                // `str` is the declared lang-item value-record (D26/D216 §1,
+                // core.nv) whose ABI is the existing `nova_str` typedef
+                // (`{ const uint8_t* ptr; int64_t len; }`); codegen does NOT
+                // emit a `NovaValue_str` struct (str ∈ RUNTIME_DEFINED_TYPES
+                // skip-list, like Option/Result), so a generic record-lit path
+                // has no schema and would fall through to the null stub below.
+                // Lower it directly to the C compound literal. Only str
+                // type-methods (`current_recv_type == "str"`) reach here — the
+                // priv-field-init check (E_PRIV_FIELD_INIT) already gated
+                // outside callers in the type checker. The `ptr` field's `.ptr`
+                // C member is `const uint8_t*`; the source expr (`@ptr + off`,
+                // a raw `*u8`/`*mut u8`) is cast to it so pointer arithmetic
+                // that infers as `void*`/`uint8_t*` still assigns cleanly.
+                let mut ptr_val = String::from("NULL");
+                let mut len_val = String::from("0");
+                for f in fields {
+                    let v = if let Some(e) = &f.value {
+                        self.emit_expr(e)?
+                    } else {
+                        // Shorthand `str { ptr, len }` — field name is the var.
+                        f.name.clone()
+                    };
+                    match f.name.as_str() {
+                        "ptr" => ptr_val = v,
+                        "len" => len_val = v,
+                        _ => { /* str has only ptr/len; ignore unknown defensively */ }
+                    }
+                }
+                self.line(&format!(
+                    "nova_str {} = (nova_str){{.ptr=(const uint8_t*)({}), .len=(int64_t)({})}};",
+                    tmp, ptr_val, len_val));
+                self.var_types.insert(tmp.clone(), "nova_str".into());
             } else if !self.record_schemas.contains_key(&struct_name) {
                 // Unknown struct (e.g. generic type not monomorphized) — emit null stub
                 // Evaluate field expressions for side effects but discard
@@ -29157,9 +29170,16 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             //     (type-based privacy) and builds the zero-copy view via the public
             //     Vec[u8].from_raw_parts(ptr,len,len) cross-type bridge. Removed here
             //     so it falls through to Nova-body dispatch (Nova_str_method_as_bytes).
-            //   - split/from_bytes_*: RETAINED C primitives for now — migrated in
-            //     Plan 139.2 Ф.2 (need str sub-view producers / Vec→str). Scope-out
-            //     of Ф.0.
+            //   - split: MIGRATED to Nova-body (Plan 139.2 Ф.2). The str
+            //     type-method builds each segment as a zero-copy sub-view
+            //     `str{ptr: @ptr+off, len}` (type-based priv access reads @ptr
+            //     and constructs a str value-record in its own module) pushed
+            //     into a Vec[str]. Removed here so it falls through to Nova-body
+            //     dispatch (Nova_str_method_split). C nova_str_split retired from
+            //     this routing.
+            //   - from_bytes_*: MIGRATED to Nova-body (Plan 139.2 Ф.2). The
+            //     static interceptions at the two `str.from_bytes_*` sites above
+            //     were removed so they route to Nova_str_static_from_bytes_*.
             //   - len/byte_len: O(1) field read, trivial primitive.
             "concat"      => Some("nova_str_concat"),
             "eq"          => Some("nova_str_eq"),
@@ -29175,7 +29195,8 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             // they fall through to Nova-body dispatch (Nova_str_method_X).
             // as_bytes: MIGRATED to Nova-body (Plan 139.2 Ф.0) — falls through to
             // Nova_str_method_as_bytes via Vec[u8].from_raw_parts. No entry here.
-            "split"       => Some("nova_str_split"),
+            // split: MIGRATED to Nova-body (Plan 139.2 Ф.2) — falls through to
+            // Nova_str_method_split. No entry here.
             "byte_at"     => Some("nova_str_byte_at"),  // Plan 90
             "compare"     => Some("nova_str_compare"),  // D178
             // D178: parse_int(radix=10) is now a Nova body (Plan 54 Ф.2).

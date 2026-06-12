@@ -148,6 +148,28 @@ export fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self {
     Self { data: unsafe { ptr as *mut T }, len, cap }
 }
 
+/// Consume this `Vec[T]`, surrendering ownership of its raw element buffer and
+/// returning the writable `*mut T` data pointer. The exact inverse of
+/// `from_raw_parts` and the analogue of Rust's `Vec::into_raw_parts` (here just
+/// the pointer; `len`/`cap` must be snapshotted via `@len()`/`@cap()` BEFORE
+/// the call, since the receiver is consumed).
+///
+/// This is the *only* sanctioned way for another module to absorb a `Vec`'s
+/// backing allocation without a copy: the `consume` receiver discharges the
+/// Vec's ownership (D133), and the returned `*mut T` lets the new owner reuse
+/// the buffer in place. Used by `str.from_bytes_unchecked_steal` to steal a
+/// `[]u8`'s buffer into a `str` (zero-copy when spare capacity holds the NUL
+/// terminator).
+///
+/// # Contract / unsafety
+/// The returned pointer aliases the (now-consumed) buffer; the caller becomes
+/// its sole owner and is responsible for its lifetime. For a GC-tracked buffer
+/// the pointer keeps the allocation reachable as long as the new owner holds
+/// it. Dereferencing still needs `unsafe { }` (raw pointer). Yielding the
+/// pointer value is itself safe — it is not a dereference — so no `unsafe`
+/// wraps the `=> @data` body.
+export fn Vec[T] consume @into_raw() -> *mut T => @data
+
 /// Build a `Vec[T]` by copying every element of an iterable source.
 ///
 /// Plan 138.1 Ф.0.1: the source is annotated `[]T` (NOT a distinct built-in

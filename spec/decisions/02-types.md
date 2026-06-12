@@ -7536,6 +7536,32 @@ Plan 118 family scope:
 > (`const uint8_t*`), layout-идентично старому `nova_str`. См.
 > [D26 MAJOR AMEND](08-runtime.md#d26-базовая-stdlib-и-prelude) +
 > [D228](#d228) content-eq override.
+
+> **Amend (Plan 139.2 Ф.0+Ф.2, 2026-06-12): `str { ptr, len }` record-литерал +
+> producer-миграция.** str — declared lang-item, поэтому str **type-методы**
+> (receiver `str` ⇒ `current_recv_type == "str"`, privacy **type-based**, не
+> module-based — D220) **конструируют** `str` value-record литералом `str {
+> ptr: …, len: … }` в своём модуле. Codegen НЕ эмитит `NovaValue_str` (str ∈
+> `RUNTIME_DEFINED_TYPES` skip-list), поэтому `str{…}` лоуэрится спец-кейсом в
+> `emit_record_lit` напрямую в C compound-literal
+> `(nova_str){.ptr=(const uint8_t*)(…), .len=(int64_t)(…)}` (без schema, без
+> NovaValue-структуры). Внешние caller'ы по-прежнему ловят `E_PRIV_FIELD_INIT`
+> (priv-поля). Это разблокировало миграцию **producer-форм** external-C →
+> Nova-body:
+>   - `@split(sep) -> ro []str` — byte-scan, каждый сегмент = zero-copy sub-view
+>     `str{ptr:@ptr+off, len}` (raw-ptr арифметика под `unsafe`), push в `Vec[str]`;
+>   - `from_bytes_unchecked` / `from_bytes_lossy` — читают `(ptr,len)` источника
+>     через публичные Vec-геттеры `@as_ptr()`/`@len()`, alloc(`len+1`)+memcpy+NUL
+>     на `data[len]` (D26 §3); lossy валидирует UTF-8 и заменяет невалид на
+>     U+FFFD;
+>   - `from_bytes_unchecked_steal(consume bytes []u8)` — zero-copy reuse буфера
+>     при `cap>len` (NUL in-place), иначе alloc+copy. consume-обязательство
+>     закрыто новым `Vec[T] consume @into_raw() -> *mut T` (инверс
+>     `Vec.from_raw_parts`: потребляет Vec-обёртку, отдаёт сырой writable-буфер).
+>
+> Остаются C **только** `@hash` (SipHash-1-3 + crypto-seed, DoS-resistance — см.
+> `[M-139.1-hash-irreducible-crypto-seed]`) и operator-lowered `@concat`/`@compare`
+> (Plan 139.2 Ф.3 scope, `[M-139.1-operator-lowered-methods]`).
 - `*unsafe T` — pointer к possibly-uninit T (pointee init/layout contracts off);
   также degraded-форма после арифметики (alignment/bounds gone)
 - **Size:** pointer-width (8 bytes на 64-bit; bootstrap = 64-bit only)

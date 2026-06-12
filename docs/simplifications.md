@@ -35647,6 +35647,43 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
 - **Docs only в Ф.D:** plan-docs (139.1 + 139 audit), project-creation.txt, simplifications.md,
   backlog-followups.md (root marker removed, f1/f2 regated), memory. 0 source change → binary
   unchanged @ 6670216167a.
+
+## Plan 139.2 Ф.2 — producer-формы (split + from_bytes_*) external-C → Nova-body — 2026-06-12
+- **STATUS:** Ф.2 ✅ на ветке `plan-139.2`. Закрыл `[M-139-f2-ptr-field-producers]`. Прошлый
+  root-cause («gated на Plan 138.2 `[]T→Vec` flip») оказался **НЕВЕРЕН** — flip уже состоялся
+  через `Vec.from_raw_parts` (Ф.0). Настоящие два разблокера были точечные (ниже).
+- **Разблокер 1 — `str { ptr, len }` record-литерал codegen.** str ∈ `RUNTIME_DEFINED_TYPES`
+  skip-list (нет `NovaValue_str` schema), поэтому generic record-lit путь падал в emit-null-stub
+  (`void* = NULL; /* unknown type str */` → CC-FAIL `void*`→`nova_str`). Добавлен спец-кейс в
+  `emit_record_lit` (emit_c.rs): `struct_name == "str"` → C compound-literal
+  `(nova_str){.ptr=(const uint8_t*)(…), .len=(int64_t)(…)}`. Только str type-методы достигают
+  ветки (E_PRIV_FIELD_INIT гейтит внешних в checker'е до codegen).
+- **Разблокер 2 — consume `bytes` у steal.** `from_bytes_unchecked_steal(consume bytes []u8)`
+  Nova-body даёт D133-obligation на `bytes` (раньше external → obligation только на call-site).
+  `[]u8`/Vec — не consume-тип, consume-методов нет. Добавлен `Vec[T] consume @into_raw() -> *mut T`
+  (vec_owned.nv) — инверс `from_raw_parts`: consume-receiver потребляет Vec-обёртку (закрывает
+  obligation), отдаёт writable raw-буфер для in-place NUL / reuse.
+- **split:** byte-scan над `@as_bytes()`; каждый сегмент = zero-copy sub-view `str{ptr:@ptr+off, len}`
+  (helper `@sub_view`, raw-ptr арифметика под `unsafe`), push в `Vec[str]`, return `ro []str`.
+  Семантика идентична C `nova_str_split` (empty sep → whole-string; tail всегда; N matches → N+1).
+- **from_bytes_unchecked / lossy:** читают `(ptr,len)` через публичные Vec-геттеры
+  `@as_ptr()`/`@len()` (cross-type — str НЕ видит priv Vec); alloc(`len+1`)+memcpy+NUL на data[len]
+  (D26 §3) через private str-static `str.alloc_copy` (receiver str → privacy для `str{…}`). lossy:
+  UTF-8-валидатор (fast-copy-path) + замена невалид-lead на U+FFFD (0xEF 0xBF 0xBD). steal:
+  zero-copy reuse при `cap>len` (NUL in-place), иначе alloc+copy. Идентичные байты к C.
+- **ПОЧЕМУ `alloc_str_copy` — str-static, не free-fn:** free-fn (receiver None) → `current_recv_type
+  != "str"` → `E_PRIV_FIELD_INIT` на `str{…}`. str-static-метод (`str.alloc_copy`) получает
+  `current_recv_type = "str"` (D220 ставит из receiver и для static-методов) → privacy OK.
+- **Регрессия (RELEASE binary, baseline = Ф.1 temp-worktree, per-test FAIL-set diff):** 0 NEW FAIL.
+  plan139_2 8/0 (+split_ok +from_bytes_ok +2 neg), str 13/0, plan139 37/0, plan139_1 4/0, plan90 9/0,
+  plan90_1 21/0, plan114 10/0 — все ≡ baseline. runtime 12/7, modules 29/2, plan131 27/1,
+  map_literals 28/1, plan96 19/4, str_builder 0/9, plan60 1/5 — FAIL-множества **байт-идентичны**
+  baseline (diff пуст). str_builder 0/9 = pre-existing E_CONSUME_KEYWORD_MISSING (НЕ steal-миграция).
+- **Негативы:** `neg_split_view_construct_outside` (forge `str{ptr,len}` вне модуля → E_PRIV_FIELD_INIT),
+  `neg_steal_use_after_consume` (touch `b` после steal → D131 use-after-consume — гейтит steal-контракт).
+- **Известный pre-existing gap (НЕ Ф.2):** `[]u8.from([…])` не поддержан codegen (`[]T.` static-dispatch
+  только new/with_capacity) — тест-fixture обходит через with_capacity+push.
+
 ### Plan 83-go-cmn Ф.3 — ОТЛОЖЕН (design-finding, без кода), 2026-06-11
 
 - **uv_async УЖЕ корректный note-примитив** (idempotent + before/after ordering + IOCP-backed

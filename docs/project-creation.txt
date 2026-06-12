@@ -36855,3 +36855,63 @@ wake-routing → stranding/lost-wakeup невозможны. Поля owner-only
 
 Validation: smoke PASS; suite 106/4 (no-regression, те же 4 pre-existing); grow_vs_wake 25/25 @MP=1;
 ring_overflow_drain 25/25 @MP=4 (steal+global); nested_cancel 20/20 @MP=4.
+
+================================================================================
+Plan 139.2 F.2 — producer-forms (split + from_bytes_*) external-C -> Nova-body
+(branch plan-139.2, 2026-06-12)
+================================================================================
+Migrated the str []T-producer methods from external-C to Nova-body, closing
+[M-139-f2-ptr-field-producers]. The prior root-cause analysis ("blocked on the
+Plan 138.2 []T->Vec flip") was WRONG: that flip already happened via
+Vec.from_raw_parts (landed in F.0). The real blockers were two narrow gaps.
+
+Blocker 1 (codegen): a `str { ptr, len }` record literal had no lowering. str is
+in RUNTIME_DEFINED_TYPES (no NovaValue_str schema), so the generic record-lit
+path fell into the null-stub branch and emitted `void* = NULL; /* unknown type
+str */`, producing a CC-FAIL `void*` -> `nova_str`. Added a `struct_name == "str"`
+special case in emit_record_lit (emit_c.rs) that lowers it directly to the C
+compound literal `(nova_str){.ptr=(const uint8_t*)(...), .len=(int64_t)(...)}`.
+Only str type-methods reach the branch; outside callers are gated by
+E_PRIV_FIELD_INIT in the type checker before codegen.
+
+Blocker 2 (consume): from_bytes_unchecked_steal(consume bytes []u8) as a Nova
+body imposes a D133 consume-obligation on `bytes` (an external fn imposed it only
+at the call site). []u8/Vec is not a consume type and has no consume methods.
+Added `Vec[T] consume @into_raw() -> *mut T` (vec_owned.nv) — the inverse of
+from_raw_parts: the consume receiver consumes the Vec wrapper (discharging the
+obligation) and yields the writable raw buffer for the in-place NUL / reuse.
+
+Methods migrated (string.nv):
+ - @split(sep) -> ro []str: byte-scan over @as_bytes(); each segment is a
+   zero-copy sub-view str{ptr:@ptr+off, len} (via @sub_view helper, raw-ptr
+   arithmetic under unsafe), pushed into a Vec[str]. Identical to C
+   nova_str_split (empty sep -> whole string; tail always; N matches -> N+1).
+ - str.from_bytes_unchecked / from_bytes_lossy: read source (ptr,len) via the
+   public Vec getters @as_ptr()/@len() (cross-type — str cannot see Vec priv),
+   alloc(len+1)+memcpy+NUL at data[len] (D26 sec3) through a private str-static
+   `str.alloc_copy` (receiver str => privacy for str{...}). lossy validates UTF-8
+   (fast copy path) and replaces invalid lead bytes with U+FFFD (EF BF BD).
+ - str.from_bytes_unchecked_steal(consume): zero-copy reuse when cap>len (NUL
+   in-place), else alloc+copy. Identical bytes to C nova_str_steal_bytes.
+
+Why alloc_copy is a str-static (not a free fn): a free fn has receiver None =>
+current_recv_type != "str" => E_PRIV_FIELD_INIT on str{...}. A str static method
+gets current_recv_type = "str" (D220 sets it from the receiver for static methods
+too), so the construction is permitted.
+
+emit_c.rs: removed the two `str.from_bytes_*` static C interceptions + the
+`"split" => nova_str_split` str_method_to_rt entry so all route to Nova-body
+dispatch. runtime_registry.rs: split entry c_name:"" + nova_body (kept in sync).
+
+Tests (nova_tests/plan139_2/): split_ok (8 cases incl UTF-8 boundary, empty sep,
+adjacent seps), from_bytes_ok (10 cases incl round-trip, lossy FFFD, steal
+reuse/fallback), neg_split_view_construct_outside (E_PRIV_FIELD_INIT),
+neg_steal_use_after_consume (D131). plan139_2 8/0.
+
+Regression (RELEASE binary, baseline = F.1 temp-worktree, per-test FAIL-set
+diff): 0 NEW FAIL. str 13/0, plan139 37/0, plan139_1 4/0, plan90 9/0, plan90_1
+21/0, plan114 10/0 — all identical to baseline. runtime/modules/plan131/
+map_literals/plan96/str_builder/plan60 pre-existing FAIL sets byte-identical
+(diff empty). Known pre-existing gap (not F.2): []u8.from([...]) unsupported by
+codegen ([]T. static-dispatch only new/with_capacity) — fixtures use
+with_capacity+push.
