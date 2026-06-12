@@ -41,6 +41,13 @@ enum Cmd {
         /// Отключить lint-проверки (export-fail-untyped и т.д.).
         #[arg(long = "no-lint")]
         no_lint: bool,
+        /// Plan 140 Ф.2 (D24 amend): contract build-policy.
+        /// `enforce` (default) — недоказанные контракты проверяются в runtime
+        /// (debug И release; fail-fast abort), Z3-proven элидируются.
+        /// `off` — все контракт-проверки элидируются глобально (legacy
+        /// zero-cost; недоказанность под ответственность разработчика).
+        #[arg(long = "contracts", value_parser = ["enforce", "off"], default_value = "enforce")]
+        contracts: String,
     },
     /// Plan 13: auto-gen `std/runtime/string.nv` и `std/runtime/math.nv`
     /// из `runtime_registry.rs`. Файлы перезаписываются.
@@ -97,6 +104,11 @@ enum Cmd {
         /// Plan 27 Ф.4: GC backend. boehm = Boehm GC (default). malloc = plain malloc (bench only).
         #[arg(long, value_parser = ["boehm", "malloc"], default_value = "boehm")]
         gc: String,
+        /// Plan 140 Ф.2 (D24 amend): contract build-policy. `enforce`
+        /// (default) — недоказанные контракты проверяются (debug И release);
+        /// `off` — все контракт-проверки элидируются глобально (legacy).
+        #[arg(long = "contracts", value_parser = ["enforce", "off"], default_value = "enforce")]
+        contracts: String,
     },
     /// Plan 24: рекурсивный прогон всех .nv в `--tests-dir`. Заменяет
     /// run_tests.ps1 целиком; .ps1 / .sh wrapper'ы вызывают эту команду.
@@ -166,6 +178,11 @@ enum Cmd {
         /// Plan 27 Ф.4: GC backend. boehm = Boehm GC (default). malloc = plain malloc (bench only).
         #[arg(long, value_parser = ["boehm", "malloc"], default_value = "boehm")]
         gc: String,
+        /// Plan 140 Ф.2 (D24 amend): contract build-policy. `enforce`
+        /// (default) — недоказанные контракты проверяются (debug И release);
+        /// `off` — все контракт-проверки элидируются глобально (legacy).
+        #[arg(long = "contracts", value_parser = ["enforce", "off"], default_value = "enforce")]
+        contracts: String,
     },
 }
 
@@ -205,15 +222,15 @@ fn run() -> ExitCode {
         Cmd::Check { file, explain_cache } => cmd_check(&file, explain_cache),
         Cmd::Run { file } => cmd_run(&file),
         Cmd::TestInterp { file } => cmd_test(&file),
-        Cmd::Compile { file, output, no_annotate_source, no_lint } =>
-            cmd_compile(&file, output.as_deref(), !no_annotate_source, !no_lint),
+        Cmd::Compile { file, output, no_annotate_source, no_lint, contracts } =>
+            cmd_compile(&file, output.as_deref(), !no_annotate_source, !no_lint, &contracts),
         Cmd::EmitRuntimeStubs { root, check } =>
             cmd_emit_runtime_stubs(&root, check),
         Cmd::DumpRuntime => cmd_dump_runtime(),
-        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts, timeout, gc } =>
-            cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts, timeout, &gc),
-        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed, retries, gc } =>
-            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts, timeout, jobs, &format, verbose, quiet, results_file.as_deref(), rerun_failed, retries, &gc),
+        Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts, timeout, gc, contracts } =>
+            cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts, timeout, &gc, &contracts),
+        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed, retries, gc, contracts } =>
+            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts, timeout, jobs, &format, verbose, quiet, results_file.as_deref(), rerun_failed, retries, &gc, &contracts),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -398,7 +415,7 @@ fn cmd_run(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source: bool, lint: bool) -> Result<()> {
+fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source: bool, lint: bool, contracts: &str) -> Result<()> {
     let src = read_file(path)?;
     let mut module = nova_codegen::parser::parse(&src).map_err(|d| {
         anyhow!("{}", d.render(&src, &path.to_string_lossy()))
@@ -468,6 +485,10 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     // Plan 33.3 Ф.9.9: передаём proven контракты в codegen для
     // selective stripping (true zero-cost даже в debug).
     emitter.set_proven_contracts(&module_env.proven_contracts);
+    // Plan 140 Ф.2 (D24 amend): build-policy `--contracts=off` элидирует ВСЕ
+    // контракт-проверки глобально (legacy zero-cost). Default `enforce` —
+    // недоказанные проверяются (debug И release; Z3-proven уже элидированы).
+    emitter.set_contracts_off(contracts == "off");
     let (c_code, warnings) = emitter
         .emit_module(&module)
         .map_err(|e| anyhow!("codegen error: {}", e))?;
@@ -661,6 +682,7 @@ fn cmd_test_build(
     keep_artifacts: bool,
     timeout_secs: u64,
     gc: &str,
+    contracts: &str,
 ) -> Result<()> {
     let mode = test_runner::Mode::parse(mode)?;
     let pref = test_runner::ToolchainPref::parse(toolchain)?;
@@ -708,6 +730,9 @@ fn cmd_test_build(
         // Plan 83.1 Ф.5: single-file run — один процесс, нет
         // oversubscription, бюджет не нужен.
         maxprocs_budget: None,
+        // Plan 140 Ф.2 (D24 amend): `--contracts=off` → элидировать все
+        // контракт-проверки на codegen (legacy zero-cost). Default enforce.
+        contracts_off: contracts == "off",
     };
     let status = test_runner::run_one(&opts);
     let label = status.label();
@@ -747,6 +772,7 @@ fn cmd_test_all(
     rerun_failed: bool,
     retries: u32,
     gc: &str,
+    contracts: &str,
 ) -> Result<()> {
     let mode = test_runner::Mode::parse(mode)?;
     let pref = test_runner::ToolchainPref::parse(toolchain)?;
@@ -828,6 +854,9 @@ fn cmd_test_all(
         shuffle_seed: None,
         skip: &[],
         mono_depth: None,
+        // Plan 140 Ф.2 (D24 amend): `--contracts=off` → элидировать все
+        // контракт-проверки на codegen для всех тестов прогона (legacy).
+        contracts_off: contracts == "off",
     };
     let summary = test_runner::run_all(opts)?;
     test_runner::print_summary(&summary, format);

@@ -58,6 +58,10 @@ pub fn compute_c_key(
     features: &[String],
     target_os: &str,
     mono_depth: Option<usize>,
+    // Plan 140 Ф.2 (D24 amend): contract build-policy влияет на codegen
+    // (`--contracts=off` элидирует все контракт-проверки) → входит в ключ,
+    // иначе кэш `enforce`-сборки переиспользовался бы для `off` и наоборот.
+    contracts_off: bool,
 ) -> Option<String> {
     let mut h = DefaultHasher::new();
     // Версия схемы ключа — смена формата кэша инвалидирует все записи.
@@ -83,6 +87,8 @@ pub fn compute_c_key(
     }
     target_os.hash(&mut h);
     mono_depth.hash(&mut h);
+    // Plan 140 Ф.2: contract build-policy (enforce vs off) меняет codegen.
+    contracts_off.hash(&mut h);
 
     // Каждый исходный файл сборки: путь + содержимое. Сортировка по
     // пути — детерминированный порядок независимо от обхода резолвера.
@@ -158,13 +164,13 @@ mod tests {
         std::fs::write(&a, "module t\nfn main() -> int => 0\n").unwrap();
         let peers = vec![mk_peer(a.clone())];
 
-        let k1 = compute_c_key(&peers, &[], "windows", None).expect("key");
-        let k2 = compute_c_key(&peers, &[], "windows", None).expect("key");
+        let k1 = compute_c_key(&peers, &[], "windows", None, false).expect("key");
+        let k2 = compute_c_key(&peers, &[], "windows", None, false).expect("key");
         assert_eq!(k1, k2, "identical inputs → identical key");
 
         // Изменение содержимого файла → другой ключ.
         std::fs::write(&a, "module t\nfn main() -> int => 1\n").unwrap();
-        let k3 = compute_c_key(&peers, &[], "windows", None).expect("key");
+        let k3 = compute_c_key(&peers, &[], "windows", None, false).expect("key");
         assert_ne!(k1, k3, "changed source content → different key");
 
         let _ = std::fs::remove_dir_all(&root);
@@ -178,14 +184,17 @@ mod tests {
         std::fs::write(&a, "module t\nfn main() -> int => 0\n").unwrap();
         let peers = vec![mk_peer(a)];
 
-        let base = compute_c_key(&peers, &[], "windows", None).unwrap();
-        let other_target = compute_c_key(&peers, &[], "linux", None).unwrap();
+        let base = compute_c_key(&peers, &[], "windows", None, false).unwrap();
+        let other_target = compute_c_key(&peers, &[], "linux", None, false).unwrap();
         let with_feat =
-            compute_c_key(&peers, &["z3".to_string()], "windows", None).unwrap();
-        let other_depth = compute_c_key(&peers, &[], "windows", Some(900)).unwrap();
+            compute_c_key(&peers, &["z3".to_string()], "windows", None, false).unwrap();
+        let other_depth = compute_c_key(&peers, &[], "windows", Some(900), false).unwrap();
+        // Plan 140 Ф.2: contract build-policy входит в ключ.
+        let contracts_off = compute_c_key(&peers, &[], "windows", None, true).unwrap();
         assert_ne!(base, other_target, "target OS is part of the key");
         assert_ne!(base, with_feat, "active features are part of the key");
         assert_ne!(base, other_depth, "mono-depth is part of the key");
+        assert_ne!(base, contracts_off, "contract build-policy is part of the key");
 
         let _ = std::fs::remove_dir_all(&root);
     }

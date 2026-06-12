@@ -1,0 +1,27 @@
+// CONTRACTS off
+// EXPECT_STDOUT POLICY_OFF_REACHED
+// EXPECT_EXIT_CODE 0
+//
+// Plan 140 Ф.2 (D24 amend), acceptance F4: `--contracts=off` build-policy.
+//
+// `must_be_positive` нарушает `requires x > 0` (вызывается с -7). НЕТ
+// per-fn `#unchecked` — под default `--contracts=enforce` это был бы
+// fail-fast abort (enforce-with-elision). Per-fixture директива
+// `// CONTRACTS off` (выше) переключает codegen-политику для этого
+// фикстура: элидируются ВСЕ контракт-проверки глобально (legacy
+// zero-cost), abort не происходит → exit 0 + POLICY_OFF_REACHED stdout.
+// Тот же эффект даёт CLI `--contracts=off` / `nova build --contracts=off`.
+//
+// ВАЖНО: без `// CONTRACTS off` (т.е. под default enforce) этот контракт
+// ОБЯЗАН abort'ить — это acceptance F1 (см. expected_runtime/contracts_*).
+
+module plan140.t5_build_policy_off
+
+fn must_be_positive(x int) -> int
+    requires x > 0   // нарушается: must_be_positive(-7); снимается --contracts=off
+=> x * 2
+
+fn main() Io -> () {
+    ro _ = must_be_positive(-7)
+    println("POLICY_OFF_REACHED")
+}

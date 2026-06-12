@@ -41,6 +41,10 @@ pub(crate) struct ContractAttrs {
     /// gets priv-field access to listed types (escape hatch для unit
     /// tests). Default empty Vec = no extra access.
     pub test_access_for: Vec<String>,
+    /// Plan 140 Ф.2 (D24 amend): `#unchecked` — per-fn opt-out из
+    /// contract enforcement (элидирует даже недоказанные контракт-проверки).
+    /// Default `false`.
+    pub contracts_unchecked: bool,
 }
 
 impl ContractAttrs {
@@ -56,6 +60,7 @@ impl ContractAttrs {
             && !self.unsafe_attr
             && self.fn_eval_max_depth.is_none()
             && self.test_access_for.is_empty()
+            && !self.contracts_unchecked
     }
 }
 
@@ -2129,6 +2134,22 @@ impl Parser {
                     }
                     attrs.test_access_for.extend(names);
                 }
+                "unchecked" => {
+                    // Plan 140 Ф.2 (D24 amend): `#unchecked` — per-fn opt-out
+                    // из contract enforcement. Codegen элидирует ВСЕ контракт-
+                    // проверки в теле fn (даже недоказанные Z3) — zero-cost для
+                    // проверенного hot-path. Ортогонально #verify/#unverified.
+                    if attrs.contracts_unchecked {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `#unchecked` attribute",
+                            span,
+                        ));
+                    }
+                    self.bump(); // #
+                    self.bump(); // unchecked
+                    attrs.contracts_unchecked = true;
+                }
                 _ => break, // unknown #-name — не contract-attr, выходим
             }
             self.skip_newlines();
@@ -2794,6 +2815,8 @@ impl Parser {
             test_access_for: contract_attrs.test_access_for.clone(),
             // Plan 126.2 Ф.1: user-written fns никогда не compiler-generated.
             compiler_generated: false,
+            // Plan 140 Ф.2 (D24 amend): `#unchecked` per-fn contract opt-out.
+            contracts_unchecked: contract_attrs.contracts_unchecked,
         })
     }
 
