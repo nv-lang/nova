@@ -41,7 +41,6 @@
 
 | Маркер | Суть | Home | Pri |
 |---|---|---|---|
-| `[M-114.4-strict-partition]` | ro-vs-const partition (`E_RO_FOR_CONSTEXPR_PREFER_CONST`) spec-only, нет в checker (обратное `E_CONST_NOT_CONSTEXPR` есть). | plan-114 Followups | P2 |
 | `[M-127-consume-escape-path-sensitive]` | Consume-escape analysis всё ещё V1 syntactic; path-sensitive DFG V2 deferred. | plan-127 Followups | P2 |
 | `[M-73.1-comprehensive-negatives]` | Returned-view + generic-propagation (D156) consume-binding negatives отсутствуют. | plan-73.1 Followups | P2 |
 

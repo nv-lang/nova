@@ -1,0 +1,16 @@
+// Plan 148 Ф.3 ([M-114.4-strict-partition]) NEG: module-level `ro X = …`
+// with a constexpr-eligible initialiser must instead be `const X = …`.
+// Forward direction of the strict module-level partition (D199), the mirror
+// of E_CONST_NOT_CONSTEXPR.
+
+// EXPECT_COMPILE_ERROR E_RO_FOR_CONSTEXPR_PREFER_CONST
+
+module plan148.rc_ro_for_constexpr_neg
+
+// `4096` is a plain literal — fully constexpr-eligible, so this binding
+// must be `const MAX = 4096`, not `ro MAX = 4096`.
+ro MAX int = 4096
+
+test "ro for constexpr literal is rejected" {
+    assert(MAX == 4096)
+}

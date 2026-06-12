@@ -975,6 +975,85 @@ fn check_const_constexpr_ex(
     }
 }
 
+/// Plan 148 Ф.3 ([M-114.4-strict-partition]): forward direction of the
+/// strict module-level `const`/`ro` partition (spec D199 / 03-syntax
+/// «Strict module-level partition»).
+///
+/// `E_CONST_NOT_CONSTEXPR` (reverse direction) already rejects a module-level
+/// `const X = …` whose RHS is *not* constexpr-eligible. This helper is the
+/// forward direction: a module-level `ro X = …` whose RHS *is* fully
+/// constexpr-eligible must instead be declared `const` — the keyword is not
+/// a user choice, it follows the RHS. Such a binding is flagged with
+/// `E_RO_FOR_CONSTEXPR_PREFER_CONST`.
+///
+/// Scope is deliberately narrow — this matches the spec, which restricts the
+/// strict partition to **module-level** bindings only (scope-local `ro x = 5`
+/// and `const x = 5` are both valid, with different guarantees):
+///   - Only module-level `Item::Let` (which, post-D184, can only originate
+///     from the `ro` keyword — `let`/`mut`/`consume` are rejected at module
+///     level by the parser).
+///   - Only a single named binding (`Pattern::Ident`, or — for the usual
+///     UPPER_CASE constant name — a single-segment unit `Pattern::Variant`,
+///     see the NB in the body); `const` has no destructuring form, so
+///     `ro (a, b) = …` is never convertible and is left alone.
+///   - `ghost` bindings are spec-only and never emitted — left alone.
+///   - The RHS must be *fully* constexpr-eligible per the very same
+///     `check_const_constexpr_ex` predicate that drives `E_CONST_NOT_CONSTEXPR`,
+///     so the two directions can never disagree about what «constexpr» means.
+///
+/// Returns `Some(diagnostic)` when the binding should be `const`, else `None`.
+fn check_ro_module_partition(
+    decl: &crate::ast::LetDecl,
+    known_consts: &HashSet<String>,
+    const_fn_names: &HashSet<String>,
+) -> Option<Diagnostic> {
+    // `ghost ro X = …` — spec-only binding, not subject to the partition.
+    if decl.is_ghost {
+        return None;
+    }
+    // `const` only supports a single named binding; non-binding patterns
+    // (tuple / record / wildcard / multi-segment or sub-pattern variant) have
+    // no `const` equivalent → leave alone.
+    //
+    // NB: a module-level constant is conventionally UPPER_CASE / PascalCase, so
+    // `ro MAX = …` parses its binder as `Pattern::Variant { path: ["MAX"],
+    // kind: Unit }` (the parser cannot tell a fresh binder from a unit-variant
+    // match at parse time). A *single-segment unit* variant pattern in binding
+    // position is always a fresh name (there is nothing to match against in a
+    // `ro X = …` declaration), so it is the UPPER_CASE binding form. A
+    // multi-segment path (`Mod.Variant`) or a variant with sub-patterns is a
+    // genuine destructuring pattern, which has no `const` equivalent.
+    let name = match &decl.pattern {
+        crate::ast::Pattern::Ident { name, .. } => name.as_str(),
+        crate::ast::Pattern::Variant {
+            path,
+            kind: crate::ast::VariantPatternKind::Unit,
+            ..
+        } if path.len() == 1 => path[0].as_str(),
+        _ => return None,
+    };
+    // Fire only when the RHS is *fully* constexpr-eligible (same predicate
+    // as `E_CONST_NOT_CONSTEXPR`). A runtime call / effect / allocation /
+    // reference to another `ro` makes the binding genuinely runtime → `ro`
+    // is correct and we stay silent.
+    if check_const_constexpr_ex(&decl.value, known_consts, const_fn_names).is_err() {
+        return None;
+    }
+    Some(Diagnostic::new(
+        format!(
+            "[E_RO_FOR_CONSTEXPR_PREFER_CONST] module-level `ro {name} = …` has a \
+             constexpr-eligible initialiser (literal / arithmetic on literals / \
+             record/tuple/array literal of constexpr fields / reference to another \
+             `const` / `const fn` call). The module-level `const`/`ro` partition is \
+             strict: a constexpr-eligible RHS must be declared `const {name} = …`, \
+             not `ro {name} = …`. Use `const` here, or keep `ro` only for a runtime \
+             value (Plan 114.4 / D199, spec 03-syntax «Strict module-level partition»). \
+             Scope-local `ro`/`const` are both fine — this rule applies at module level."
+        ),
+        decl.span,
+    ))
+}
+
 /// Plan 114.4.2 (D199) Ф.1 body checker: validate const fn body against
 /// V1 whitelist (literals + arithmetic + as-cast + ident refs to const
 /// params/locals + local const + final expr + calls to other const fn).
@@ -2360,6 +2439,50 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 114.4 / D199 + Plan 148 Ф.3: constexpr-eligibility sets, shared
+        // by the `const` enforcement (`E_CONST_NOT_CONSTEXPR`, reverse) and the
+        // `ro` partition enforcement (`E_RO_FOR_CONSTEXPR_PREFER_CONST`, forward).
+        // Both directions MUST use the same predicate so they can never
+        // disagree about what «constexpr» means.
+        let partition_known_consts: HashSet<String> = module
+            .items
+            .iter()
+            .filter_map(|it| match it {
+                Item::Const(c) => Some(c.name.clone()),
+                _ => None,
+            })
+            .collect();
+        // Plan 114.4.2 D199 + 114.4.3 Ф.5 V2: const fn names
+        // (including aliases — `const ALIAS = const_fn`).
+        let partition_const_fn_names: HashSet<String> = {
+            let mut s: HashSet<String> = module
+                .items
+                .iter()
+                .filter_map(|it| match it {
+                    Item::Fn(fd) => {
+                        let is_const = fd.return_is_const
+                            || fd.params.iter().any(|p| p.is_const);
+                        if is_const { Some(fd.name.clone()) } else { None }
+                    }
+                    _ => None,
+                })
+                .collect();
+            for _ in 0..10 {
+                let mut added = false;
+                for it in &module.items {
+                    if let Item::Const(c) = it {
+                        if let crate::ast::ExprKind::Ident(target) = &c.value.kind {
+                            if s.contains(target) && !s.contains(&c.name) {
+                                s.insert(c.name.clone());
+                                added = true;
+                            }
+                        }
+                    }
+                }
+                if !added { break; }
+            }
+            s
+        };
         for item in &module.items {
             match item {
                 Item::Fn(fd) => {
@@ -2387,46 +2510,8 @@ impl<'a> TypeCheckCtx<'a> {
                     // constexpr-fields, references на другие const.
                     // Runtime calls / effects / allocations / non-const
                     // refs → E_CONST_NOT_CONSTEXPR.
-                    let known_consts: HashSet<String> = module
-                        .items
-                        .iter()
-                        .filter_map(|it| match it {
-                            Item::Const(c) => Some(c.name.clone()),
-                            _ => None,
-                        })
-                        .collect();
-                    // Plan 114.4.2 D199 + 114.4.3 Ф.5 V2: const fn names
-                    // (including aliases — `const ALIAS = const_fn`).
-                    let mut const_fn_names: HashSet<String> = module
-                        .items
-                        .iter()
-                        .filter_map(|it| match it {
-                            Item::Fn(fd) => {
-                                let is_const = fd.return_is_const
-                                    || fd.params.iter().any(|p| p.is_const);
-                                if is_const { Some(fd.name.clone()) } else { None }
-                            }
-                            _ => None,
-                        })
-                        .collect();
-                    for _ in 0..10 {
-                        let mut added = false;
-                        for it in &module.items {
-                            if let Item::Const(c) = it {
-                                if let crate::ast::ExprKind::Ident(target) = &c.value.kind {
-                                    if const_fn_names.contains(target)
-                                        && !const_fn_names.contains(&c.name)
-                                    {
-                                        const_fn_names.insert(c.name.clone());
-                                        added = true;
-                                    }
-                                }
-                            }
-                        }
-                        if !added { break; }
-                    }
                     if let Err(d) = check_const_constexpr_ex(
-                        &cd.value, &known_consts, &const_fn_names,
+                        &cd.value, &partition_known_consts, &partition_const_fn_names,
                     ) {
                         errors.push(d);
                     }
@@ -2435,7 +2520,17 @@ impl<'a> TypeCheckCtx<'a> {
                     let empty = HashSet::new();
                     self.walk_block(&t.body, &empty, errors);
                 }
-                Item::Let(_) | Item::Bench(_) | Item::Lemma(_) => {}
+                // Plan 148 Ф.3 ([M-114.4-strict-partition]): module-level `ro`
+                // bindings are subject to the strict partition forward direction.
+                // A constexpr-eligible `ro X = …` must instead be `const X = …`.
+                Item::Let(ld) => {
+                    if let Some(d) = check_ro_module_partition(
+                        ld, &partition_known_consts, &partition_const_fn_names,
+                    ) {
+                        errors.push(d);
+                    }
+                }
+                Item::Bench(_) | Item::Lemma(_) => {}
             }
         }
         // Ф.1: assignability — отдельный scope-aware проход по телам

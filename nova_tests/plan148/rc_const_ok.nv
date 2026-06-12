@@ -1,0 +1,19 @@
+// Plan 148 Ф.3 ([M-114.4-strict-partition]) POS: constexpr-eligible
+// module-level constants correctly declared `const` — no partition error.
+// Covers literal / arithmetic / record-literal / const-ref forms.
+
+module plan148.rc_const_ok
+
+type Point { x f64, y f64 }
+
+const MAX int = 4096
+const TIMEOUT_SEC int = 60 * 5
+const GREETING str = "hello"
+const ORIGIN Point = Point { x: 0.0, y: 0.0 }
+
+test "const constexpr declarations accepted" {
+    assert(MAX == 4096)
+    assert(TIMEOUT_SEC == 300)
+    assert(GREETING == "hello")
+    assert(ORIGIN.x == 0.0)
+}
