@@ -36919,3 +36919,44 @@ project-creation.txt (эта запись) + simplifications.md + nova-private/d
 plan-138.1, НЕ merged в main. Остатки — pre-existing gaps (документированы, не регрессии и не
 в scope этих 4 axes): mono'd-tuple-of-Vec forward-decl ordering, OOB tuple field index не
 reject'ится, module-level runtime-ro codegen, legacy _NovaTuple2 (erased HashMap/Set).
+
+=== Plan 149 Ф.0-Ф.6 — Configurable fiber arena (env + nova.toml; D233) — 2026-06-12 ===
+Branch plan-149 (worktree nova-p149), НЕ merged в main. Renumber: создан как Plan 148, переименован
+в 149 (коллизия plan-148 с 148-independent-cleanups).
+
+ЦЕЛЬ: per-fiber стек и макс-fiber'ов-на-воркер — RUNTIME-настраиваемые (GOMAXPROCS-стиль), не
+параметры компилятора. Дешёвый промежуточный win вместо растущих стеков (Plan 146 отложен).
+
+KNOBS (D233): NOVA_FIBER_STACK env / nova.toml [runtime].fiber_stack (default 8MB→4MB, [256KB,256MB],
+round-UP page) + NOVA_MAX_FIBERS env / max_fibers (default 16384/worker, [64,262144], round-UP ×64).
+Human-size "4MB"/"4194304". Precedence env > nova.toml(-D) > builtin #define. Garbage/floor/clamp →
+stderr warn + default, НИКОГДА не крашит на конфиге.
+
+КЛЮЧЕВАЯ ПРАВКА ИЗ REVIEW (must_fix #1/#2): per-fiber minicoro stack size раньше вычислялся из
+COMPILE-TIME NOVA_FIBER_STACK_SIZE в fibers.h::_nova_mco_desc_init_arena — env-стек НЕ менял
+реальный usable-стек (AC2 недостижим), а floor (256KB) был небезопасен (coro_size > usable → NULL →
+fiber create fail). Fix: новый runtime-аксессор nova_fiber_arena_slot_size() (оба arena-TU); desc-init
+берёт slot_size из него → minicoro coro_size масштабируется с runtime-слотом. ВЕРИФИЦИРОВАНО:
+slot_size=8388608 при NOVA_FIBER_STACK=8MB; slot_size=2097152 при toml fiber_stack="2MB"; env бьёт toml.
+
+ДИЗАЙН bitmap MAX/default split (D233 §5): free_bits/used_bits/dirty_bits размером по compile-time
+NOVA_FIBER_SLOT_COUNT_MAX (262144 = 32KB/арена), отделён от runtime default (16384) — env может
+ПОДНЯТЬ slot_count выше default. Tail-биты [slot_count, capacity) помечаются USED на init (allocator
+не выдаёт фантомы). 32-bit: MAX=1024, default=16 (адресное пространство тесное; must_fix #4 ordering —
+per-platform каскад до generic #ifndef). POSIX abort()-on-exceed заменён defensive clamp-to-MAX.
+
+ФАЙЛЫ: fiber_arena.h (макросы MIN/MAX/DEFAULT + #ifndef chain + slot_size decl), fibers.h (desc-init
+runtime slot_size), fiber_arena.c + fiber_arena_win.c (parse human-size + round/clamp + tail-mark +
+slot_size impl; Windows диагностика через WriteFile), manifest.rs (RuntimeConfig + parse + parse_size_to_bytes),
+test_runner.rs (BuildOpts.runtime + runtime_define_args в clang/MSVC/gcc arms после GC, до libuv).
+
+ТЕСТЫ: 7/7 plan149 fixtures PASS (clang) — 5 concurrency (env_stack/max_fibers/garbage_env/stack_floor/
+max_clamp) + 2 plan149_toml (baked_default/env_overrides_toml). Регрешн-гарды AC7 (grow_vs_wake_explicit/
+fibers_10k_sleep_cancel/ring_overflow_drain) зелёные; smoke PASS. AC1-AC10 met (AC6 эмерджентно).
+
+ВАЖНО для прогона: nova test резолвит rt_dir через find_repo_root()=current_dir() (НЕ путь файла) —
+запускать с CWD=worktree, иначе компилируется runtime из main-репо (worktree .c-правки не попадут).
+Эта ловушка стоила ~часа отладки (DBG-маркеры не появлялись, т.к. main-репо runtime не имел правок).
+
+SPEC: D233 в spec/decisions/08-runtime.md (next-free re-verified). docs/runtime-tuning.md новый.
+Marker [M-fiber-arena-raise-cap] → SUPERSEDED+IMPLEMENTED в backlog-followups.md.

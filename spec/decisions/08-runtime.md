@@ -7524,3 +7524,92 @@ A3.1.1-A3.1.5 met:
 
 `NOVA_FIELD_CACHE_PURE=0` → entire V3 + V3.1 disabled.
 
+## D233 (NEW) — Configurable fiber arena (env + nova.toml runtime tuning) (Plan 149)
+
+**Status:** ACTIVE (Plan 149, 2026-06-12). Supersedes marker `[M-fiber-arena-raise-cap]`.
+
+**Contract.** Per-fiber stack slot size and max-concurrent-fibers-per-worker are
+RUNTIME-tunable properties of the finished program (GOMAXPROCS-style), NOT
+compiler parameters.
+
+### 1. Knobs & defaults
+
+| Knob | Env | nova.toml `[runtime]` | Builtin default | Range | Round |
+|------|-----|-----------------------|-----------------|-------|-------|
+| fiber stack | `NOVA_FIBER_STACK` | `fiber_stack` | 4MB | [256KB, 256MB] | UP to page-align |
+| max fibers/worker | `NOVA_MAX_FIBERS` | `max_fibers` | 16384 | [64, `SLOT_COUNT_MAX`] | UP to ×64 |
+
+Human-friendly sizes accepted (`"4MB"` | `"4194304"`; KB/MB/GB binary — KB=1024,
+MB=1024², GB=1024³). The builtin stack default was lowered 8MB→4MB (2× fiber
+density out of the box).
+
+### 2. Precedence
+
+`env > nova.toml (compile-time -D default) > builtin #define`. nova.toml bakes
+`-DNOVA_FIBER_STACK_DEFAULT=<bytes>` / `-DNOVA_MAX_FIBERS_DEFAULT=<count>` (raw
+integers, human-size parsed in Rust); the env var is read in
+`nova_fiber_arena_init` and overrides the compile-time default at runtime.
+
+### 3. Auto-round-UP + clamp (UX rule)
+
+Any user value is rounded UP to the nearest valid (stack→page, slots→×64) then
+clamped into range. Out-of-range → clamp + stderr warning (stack below floor →
+256KB; max above MAX → MAX). Unparseable/garbage env or toml → stderr warning +
+builtin default (which itself goes through round+clamp). **NEVER crash on
+config.**
+
+### 4. Per-worker semantics
+
+One arena per worker thread; total process fiber capacity = `slot_count ×
+NOVA_MAXPROCS`. `NOVA_MAXPROCS` is unchanged (not a new knob); total is an
+emergent property.
+
+### 5. Compile-time MAX vs runtime active split
+
+The bitmap (`free_bits` POSIX / `used_bits`+`dirty_bits` Windows) is sized by the
+compile-time `NOVA_FIBER_SLOT_COUNT_MAX` (default 262144 ⇒ 4096 uint64_t = 32KB
+per arena, ×workers — копейки) so env may raise `slot_count` above the runtime
+default. Runtime `a->slot_count = clamp(round64(resolved), 64,
+SLOT_COUNT_MAX)`. Because round-UP makes `slot_count` a multiple of 64, the
+common case marks only whole trailing bitmap words USED at init; a partial-tail
+loop is implemented belt-and-suspenders for a defensive non-×64 boundary. The
+allocator never returns a phantom slot beyond `slot_count`.
+
+### 6. Per-fiber stack actually scales (review must_fix #1/#2)
+
+The minicoro stack size is derived from the RUNTIME `a->slot_size` via
+`nova_fiber_arena_slot_size()` in `fibers.h::_nova_mco_desc_init_arena`, NOT the
+compile-time `NOVA_FIBER_STACK_SIZE` macro. This makes `NOVA_FIBER_STACK` env
+actually change the usable per-fiber stack (a larger env stack deepens the
+stack; the 256KB floor stays usable because minicoro's `coro_size` ≤
+`slot_usable`, so `nova_fiber_alloc`'s `size > usable` guard passes).
+`NOVA_FIBER_STACK_SIZE` remains the build-time builtin feeding
+`NOVA_FIBER_STACK_DEFAULT`.
+
+### 7. Guard page preserved
+
+16KB guard (`NOVA_FIBER_GUARD_SIZE`, PROT_NONE POSIX / PAGE_GUARD window
+Windows) at slot base; usable = slot_size − guard; overflow → clean crash with a
+hint referencing `NOVA_FIBER_STACK`. With the 256KB floor, usable = 240KB > 0.
+
+### 8. Non-interference
+
+Arena config (set once at `nova_fiber_arena_init`, before the arena is published)
+touches only `slot_size`/`slot_count`/`virtual_size`/bitmap-size + tail bits — no
+scheduler or GC invariant (grow-vs-wake, iso-cancel, active-range roots remain
+as-is). 32-bit branch kept tiny (`SLOT_COUNT_MAX`=1024, default=16).
+
+### 9. Cross-platform
+
+POSIX (mmap MAP_NORESERVE) + Windows (VirtualAlloc MEM_RESERVE + lazy commit)
+honor an identical contract; Windows VirtualAlloc downsize-retry may yield
+`slot_count ≤ requested` (re-marks tail bits after the final count).
+
+### 10. Virtual-reservation budget note
+
+Worst case `NOVA_MAX_FIBERS=262144 × NOVA_FIBER_STACK=256MB × NOVA_MAXPROCS`
+reserves an absurd virtual range. MAP_NORESERVE / MEM_RESERVE keep physical
+commit lazy, but this can exhaust user VA or hit a commit limit. POSIX aborts on
+mmap failure; Windows downsize-retries. Operators tuning to extremes should size
+the product against available virtual address space.
+
