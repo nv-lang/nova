@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_TUPLE_DESTRUCTURE_ARITY
+//
+// Plan 148 Ф.4 ([M-codegen-unify-tuple-repr]) — negative (A3 guard):
+// destructuring a typed tuple with a pattern of the WRONG arity is rejected
+// at codegen with a clear Nova-level diagnostic — the typed mono'd struct has
+// exactly N fields, so a 2-name pattern over a 3-tuple cannot silently pick
+// up an int slot. Guards that retiring the all-int representation did not make
+// arity errors slip through (the field-by-field copy is type-checked).
+
+module plan148.tr_tuple_destructure_arity_neg
+
+fn make_triple() -> (int, str, f64) {
+    (1, "two", 3.0)
+}
+
+test "destructure 3-tuple as 2-tuple — rejected" {
+    ro (a, b) = make_triple()
+    assert(a == 1)
+    assert(b == "two")
+}

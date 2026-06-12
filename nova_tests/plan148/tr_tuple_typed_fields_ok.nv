@@ -1,0 +1,81 @@
+// Plan 148 Ф.4 ([M-codegen-unify-tuple-repr]) — positive (A1):
+// anonymous tuples store their elements with REAL C types — no int-boxing,
+// no `(intptr_t)` casts. Each used tuple shape is emitted on demand as a
+// typed mono'd struct `_NovaTuple_<arity>_<L>_<T>...` (the blanket all-int
+// `_NovaTuple1..8` pre-declaration is retired).
+//
+// Coverage per acceptance A1: tuple elements of f64, str, record (Nova_X*),
+// and bool — each must round-trip through `.0`/`.1`/... field reads with its
+// own type, including from fn parameters, call results, and NESTED `t.0.1`
+// chains (the field-read path now decodes element types out of the mono'd
+// struct name, not only a per-Ident side-table).
+
+module plan148.tr_tuple_typed_fields_ok
+
+// A record element — stored as the typed `Nova_Point*`, not a boxed int.
+type Point {
+    x int
+    y int
+}
+
+fn Point.new(x int, y int) -> Point => { x, y }
+
+// Tuple as a fn PARAMETER (mono'd struct by value). Field reads must keep the
+// real element types — this is the path that previously needed the side-table.
+fn unpack(p (f64, str, bool)) -> f64 {
+    // `p.0` is f64, `p.1` is str, `p.2` is bool — typed, no cast.
+    if p.2 { p.0 } else { 0.0 }
+}
+
+// Returns a heterogeneous tuple (typed mono'd struct round-trips through ABI).
+fn describe(n int) -> (int, str, f64, bool) {
+    (n, "n", 1.5, n > 0)
+}
+
+// Nested tuple parameter — `deep.0.1` must resolve through TWO field reads
+// (the inner element type is decoded from the mono'd struct name).
+fn nested_second(deep ((int, str), bool)) -> str {
+    deep.0.1
+}
+
+test "tuple of f64/str/bool keeps real types via fn param" {
+    ro got = unpack((3.25, "hi", true))
+    assert(got == 3.25)
+}
+
+test "heterogeneous tuple return — typed field reads" {
+    ro t = describe(7)
+    assert(t.0 == 7)
+    assert(t.1 == "n")
+    assert(t.2 == 1.5)
+    assert(t.3 == true)
+}
+
+test "record element stored as typed pointer, not boxed int" {
+    ro pt = Point.new(4, 9)
+    ro pair = (pt, "label")
+    // `pair.0` is a `Point` (typed), so `.x`/`.y` are real field reads.
+    assert(pair.0.x == 4)
+    assert(pair.0.y == 9)
+    assert(pair.1 == "label")
+}
+
+test "nested tuple field chain t.0.1 (str) via fn param" {
+    ro got = nested_second(((1, "deep"), false))
+    assert(got == "deep")
+}
+
+test "nested tuple field chain on a local binding" {
+    ro deep = ((10, 20), ("a", true))
+    // deep.0.0=10, deep.0.1=20, deep.1.0="a", deep.1.1=true
+    assert(deep.0.0 == 10)
+    assert(deep.0.1 == 20)
+    assert(deep.1.0 == "a")
+    assert(deep.1.1 == true)
+}
+
+test "f64 element preserved (no int truncation from boxing)" {
+    ro t = (2.5, 4.0)
+    // If f64 were boxed into an int slot, this sum would lose the fraction.
+    assert(t.0 + t.1 == 6.5)
+}
