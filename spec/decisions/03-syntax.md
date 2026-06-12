@@ -2859,6 +2859,39 @@ postfix-expr  = primary ( '.' name | '[' expr ']' | '(' args ')' | '?' )*
 primary       = literal | identifier | '(' expr ')' | block | if | match | ...
 ```
 
+#### Block-expressions в statement-позиции (Plan 148 Ф.2 clarification)
+
+`statement = ( decl | expr ) statement-end` — в statement-позиции `expr`
+парсится **полной** `postfix-expr` грамматикой, без отдельной
+«block-statement» ветки. Это значит, что **block-формы выражений**
+(`{ ... }`, `if`, `match`, `unsafe { ... }`) в начале statement'а
+принимают постфикс (`.method()` / `[i]` / `.field`) **напрямую, без
+обёртки в `(…)`**:
+
+```nova
+fn Vec[T Display] @display(mut sb StringBuilder) -> () {
+    sb.append("Vec[")
+    for i in 0..@len {
+        if i > 0 { sb.append(", ") }
+        unsafe { @data[i] }.display(sb)   // ✅ постфикс на unsafe-блоке
+    }                                      //    без `(unsafe { … })`
+    sb.append("]")
+}
+
+ro d = if cond { mk_a() } else { mk_b() }.doubled()  // ✅ постфикс на if
+ro n = match tag { 1 => mk(99), _ => mk(0) }.field    // ✅ постфикс на match
+```
+
+Граница с **bare `{ ... }` блоком**: если блок открывает statement и за
+ним **нет** постфикса, он остаётся обычным side-effecting
+expression-statement (его значение, если не trailing, отбрасывается) —
+никакого специального «block vs expression» форка в парсере нет; разбор
+единообразен. Постфикс привязывается ровно тогда, когда он синтаксически
+присутствует сразу после `}` (с учётом newline-tolerance правила 3 для
+ведущего `.`). Ранее `unsafe { … }`-форма документировалась как
+требующая `(…)` для постфикса — это устранено (закрывает backlog-маркер
+`[M-138-unsafe-block-postfix-stmt]`).
+
 ### Почему
 
 1. **Современный тренд** (Go/Kotlin/Swift/TS): newline-разделитель,

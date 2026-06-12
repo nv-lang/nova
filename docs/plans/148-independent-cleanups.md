@@ -66,4 +66,7 @@
 ---
 
 ## Статус
-🚧 **IN PROGRESS** — запущен фоновым workflow 2026-06-12 (последовательно Ф.1→Ф.5). Заполнится по завершении.
+🚧 **IN PROGRESS** — запущен фоновым workflow 2026-06-12 (последовательно Ф.1→Ф.5).
+
+- **Ф.1** ✅ DONE (commit 98f0b48050f) — D241 canonical modifier order `value priv`, `E_MODIFIER_ORDER` + fix-it; `mo_*` 7/0.
+- **Ф.2** ✅ DONE (2026-06-12) — `[M-138-unsafe-block-postfix-stmt]`. Расследование: парсер уже корректен (нет отдельной leading-`unsafe`/block-statement ветки; `parse_stmt_or_expr` `_`-arm зовёт полную `parse_expr`→`parse_postfix`), block-формы (`unsafe {}`/`if`/`match`/bare `{}`) в statement-позиции уже принимают постфикс без `(…)`. Работа: cleanup лишних скобок `vec_owned.nv:862/874`; regression-guard фикстуры `up_unsafe_postfix_stmt_ok` (8/0) + `up_bare_block_stmt_ok` (A2, 3/0); D49 amend. A1✅ A2✅ A3✅ A4✅. plan148 9/0; 0 новых регрессий (vec_debug_pos — pre-existing). Без изменения parser-кода.

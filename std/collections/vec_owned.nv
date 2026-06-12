@@ -859,7 +859,7 @@ export fn Vec[T Display] @display(mut sb StringBuilder) -> () {
     sb.append("Vec[")
     for i in 0..@len {
         if i > 0 { sb.append(", ") }
-        (unsafe { @data[i] }).display(sb)
+        unsafe { @data[i] }.display(sb)
     }
     sb.append("]")
 }
@@ -871,7 +871,7 @@ export fn Vec[T Debug] @debug(mut sb StringBuilder) -> () {
     sb.append("Vec[")
     for i in 0..@len {
         if i > 0 { sb.append(", ") }
-        (unsafe { @data[i] }).debug(sb)
+        unsafe { @data[i] }.debug(sb)
     }
     sb.append("]")
 }
