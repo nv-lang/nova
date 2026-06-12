@@ -24820,10 +24820,39 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
 
     fn emit_block_expr(&mut self, block: &Block) -> Result<String, String> {
         let tmp = self.fresh_tmp();
+        // Pre-register THIS block's own `let`-bindings so the trailing-type
+        // inference below resolves identifiers to the block's locals — not a
+        // stale same-named `var_types` entry leaked from a prior function
+        // (var_types is not per-fn scoped). Without this, `{ ro a=10; ro b=20;
+        // a+b }` infers `a+b` against a stale `a` (e.g. `Vec____nova_byte*` from
+        // a prelude str-method local) → `lt_is_cptr` true → the BinOp::Add is
+        // mis-read as pointer arithmetic → the whole block-expr is typed as a
+        // Vec view, so `v == 30` dispatches to Vec____nova_byte_method_equal and
+        // SEGVs. (Plan 139.2 regression: prelude str-methods became Nova-body
+        // with Vec[u8] locals, surfacing this latent block-expr inference bug.)
+        let mut saved_block_locals: Vec<(String, Option<String>)> = Vec::new();
+        for stmt in &block.stmts {
+            if let crate::ast::Stmt::Let(d) = stmt {
+                if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                    let ty = d.ty.as_ref()
+                        .and_then(|t| self.type_ref_to_c(t).ok())
+                        .unwrap_or_else(|| self.infer_expr_c_type(&d.value));
+                    saved_block_locals.push((name.clone(), self.var_types.insert(name.clone(), ty)));
+                }
+            }
+        }
         // Infer block type from trailing expression (if any)
         let block_ty = block.trailing.as_ref()
             .map(|e| self.infer_expr_c_type(e))
             .unwrap_or_else(|| "nova_unit".into());
+        // Restore prior var_types view; the real body emit below re-registers
+        // these locals with their authoritative codegen types.
+        for (name, old) in saved_block_locals.into_iter().rev() {
+            match old {
+                Some(t) => { self.var_types.insert(name, t); }
+                None => { self.var_types.remove(&name); }
+            }
+        }
         self.line(&format!("{} {};", block_ty, tmp));
         self.var_types.insert(tmp.clone(), block_ty.clone());
         self.line("{");
@@ -30664,7 +30693,36 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                             }
                         }
                     }
-                    self.infer_expr_c_type(t)
+                    // Non-Ident trailing (e.g. `a + b`) may reference this
+                    // block's own locals. Register their inferred types in the
+                    // pattern-binding override (checked BEFORE var_types in the
+                    // Ident arm) so they shadow a stale same-named var_types
+                    // entry leaked from a prior function (var_types is not
+                    // per-fn scoped). Same root cause as emit_block_expr: without
+                    // this, `{ ro a=10; ro b=20; a+b }` infers `a+b` against a
+                    // stale `a: Vec____nova_byte*` (a Nova-body str-method local,
+                    // Plan 139.2) → block typed as a Vec view → `v == 30`
+                    // dispatches to Vec____nova_byte_method_equal → SEGV.
+                    let mut saved: Vec<(String, Option<String>)> = Vec::new();
+                    for s in &b.stmts {
+                        if let crate::ast::Stmt::Let(d) = s {
+                            if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                                let ty = d.ty.as_ref()
+                                    .and_then(|tr| self.type_ref_to_c(tr).ok())
+                                    .unwrap_or_else(|| self.infer_expr_c_type(&d.value));
+                                let old = self.pattern_binding_overrides.borrow_mut().insert(name.clone(), ty);
+                                saved.push((name.clone(), old));
+                            }
+                        }
+                    }
+                    let result = self.infer_expr_c_type(t);
+                    for (name, old) in saved.into_iter().rev() {
+                        match old {
+                            Some(v) => { self.pattern_binding_overrides.borrow_mut().insert(name, v); }
+                            None => { self.pattern_binding_overrides.borrow_mut().remove(&name); }
+                        }
+                    }
+                    result
                 } else {
                     "nova_unit".into()
                 }
