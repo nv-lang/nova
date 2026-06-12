@@ -36505,3 +36505,53 @@ generic-element `*v[i]=x` → [M-147-generic-element-deref-write]. Все P2, в
 ловятся C-компилятором (const-pointee write = CC-FAIL).
 
 Commit 34c13261913.
+
+────────────────────────────────────────────────────────────────────────────
+Plan 147 Ф.4 — миграция codebase на 3-axis canon (2026-06-12)
+────────────────────────────────────────────────────────────────────────────
+
+CHECKER FIX (Ф.3 добор, commit 5806dc98409): R2-split был реализован
+наполовину — `ro r mut Point` (mut-content override bare-ro) работал, но
+ЗЕРКАЛО `mut r ro Point` (mut-binding + ro-type-view → freeze field-writes,
+reassign ✅/content ❌) НЕ enforced — oracle a4_neg_mut_ro_value_field_write
+был NEG-NO-ERROR (plan147 18/1). Добавлен `root_view_is_ro_type` в Member-арм
+check_target_readonly — симметричный к `root_view_is_mut_type`: если корень-
+binding declared-type = TypeRef::Readonly (`ro T` view), field-write →
+E_READONLY_FIELD независимо от L1 binding. Freeze по owned-графу; `*` deref —
+отдельный арм (L3 pointee_is_writable), стена-на-`*` (P4) сохранена. plan147
+18/1 → 19/19. plan120 (named tuples) 8/0, plan141 (value-eq) 8/0, plan124_8
+40/0 — 0 over-trigger (inferred `[]Vec3` ≠ Readonly).
+
+МИГРАЦИЯ (commit d9b92709ea1):
+(b) str-поле `ptr *ro u8`→`ptr *u8` в двух оставшихся декларациях (02-types.md
+D228 reference-field-vr секция, 08-runtime.md:745 D26 MAJOR AMEND) + prose
+(`*ro u8` makes-sharing-safe / interning / as_bytes → `*u8` ro-pointee).
+Декл на 02-types.md:7529 (flagship) уже мигрирована в Ф.2-3. Canon-equivalence
+упоминания (`≡ *ro u8`, «`*ro u8` избыточен → E_REDUNDANT_POINTER_RO») сохранены
+— описывают ошибку, не поле. plan139 fixture-комментарии (t0/t3/neg_t6).
+СНИМАЕТ ГЕЙТ Plan 139 [M-139-f0-lang-item-decl]: str-поле `*u8` легально под
+3-axis (bare `*u8` = ro-pointee canon, flip-scan не нужен).
+(c) vec_owned.nv `mut data *mut T` — уже на canon с Ф.2-3 (explicit *mut для
+mut-pointee, не наследуется от binding).
+(a/d) examples/typed_pointers header — `*ro T` "valid explicit form" → hard
+error + fix-it. Никаких live `*ro T` деклараций в build path не осталось.
+
+СТАЛЫЕ NEG-фикстуры (старо-модельные коды, маскируются E_REDUNDANT_POINTER_RO
+от Ф.2-3 парсера т.к. внутренний `*ro` срабатывает первым) — переработаны с
+сохранением INTENDED дефекта без `*ro`-коллизии:
+- plan138_5/neg_mut_prefix_ptr_chain: `mut * ro * Node`→`mut * *mut Node`
+  (prefix-`mut` → E_POINTER_PREFIX_MODIFIER; внутр. уровень `*mut`).
+- plan118_5_v3/t5_neg_ro_mut_nested_constructor: `* ro mut Acc`→`[]ro mut Acc`
+  (§V3.1 ro+mut value-T conflict → E_MUTABILITY_CONFLICT_VALUE_TYPE в Array).
+plan138_5 14/1→15/0, plan118_5_v3 16/1→17/0.
+
+PRE-EXISTING fails (НЕ Ф.4, orthogonal — name-res / codegen / numeric):
+plan118 t5_5/t5_6 NPO (RUN-FAIL) + t5_neg_null_ptr_retracted (NEG-WRONG-MSG:
+`null *()` не ловится retraction-guard'ом, только `null <prim-ident>` — стало
+так с Plan 134 commit c41d568ae2c, см. simplifications); plan127 t16/t18
+(addr-of/unsafe-context, name-res `undefined v`); plan128/128_2 t13b/p3
+(named-tuple codegen CC-FAIL, семья plan59 tuple-mangle); plan131 vec_debug_pos;
+plan134 t4 (E_LIT_OUT_OF_RANGE u64); plan123_1 loop_iteration (E_BOUND_NOT_
+PROTOCOL); plan108_2 ×4 Vec-mut-method NEG ([M-139-f6]); plan108_4 pos_receiver.
+
+Commits 5806dc98409 + d9b92709ea1.

@@ -35475,3 +35475,20 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   enforcement (soundness сохранён: ro-pointee write всё равно отвергается, просто
   позже и с C-, а не Nova-диагностикой). Production: ни одна форма не «тихо
   разрешена» — либо Nova-error, либо CC-error.
+
+### Plan 147 Ф.4 — миграция 3-axis canon (2026-06-12)
+- **R2-split зеркало `mut r ro Point`** — реализовано полностью (НЕ упрощение):
+  Ф.2-3 gate реализовал только `ro r mut Point`, зеркало `mut r ro Point`
+  (mut-binding + ro-type-view → field-write freeze) пропускалось. Добавлен
+  `root_view_is_ro_type` в check_target_readonly → E_READONLY_FIELD. Oracle
+  a4 18/1→19/19. Это **закрытие** дыры, а не simplification.
+- **PRE-EXISTING gap (НЕ Plan 147): `null *()` не ловится retraction-guard'ом.**
+  Парсер `parse_primary` emit'ит E_NULL_PTR_RETRACTED_USE_OPTION только когда
+  `null` за которым bare prim-ident (`ptr`/`int`/…/`str`). Форма `null *()`
+  (typed-pointer-literal) не покрыта guard'ом → fall-through → `undefined
+  identifier null`. Фикстура plan118/t5_neg_null_ptr_retracted ожидает
+  E_NULL_PTR_RETRACTED_USE_OPTION → NEG-WRONG-MSG. Регрессия с Plan 134
+  (commit c41d568ae2c мигрировал тело фикстуры `null ptr`→`null *()`, но guard
+  не расширил). Orthogonal к 3-axis модели; не в scope Ф.4. Followup
+  **[M-147-null-star-ptr-retraction-guard]** (P3). Hard-error сохранён (просто
+  другой код).
