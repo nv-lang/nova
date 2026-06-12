@@ -36855,3 +36855,80 @@ wake-routing → stranding/lost-wakeup невозможны. Поля owner-only
 
 Validation: smoke PASS; suite 106/4 (no-regression, те же 4 pre-existing); grow_vs_wake 25/25 @MP=1;
 ring_overflow_drain 25/25 @MP=4 (steal+global); nested_cancel 20/20 @MP=4.
+
+================================================================================
+2026-06-12 — Plan 140 ✅ CLOSED Ф.0-Ф.5 — Contracts enforced in release
+================================================================================
+Закрыта safety-дыра: контракты requires/ensures (D24) СТИРАЛИСЬ в release
+НЕЗАВИСИМО от доказанности (модель C assert/NDEBUG — test_runner.rs Mode::Release
+не передавал -DNOVA_CONTRACTS_RUNTIME=1). Z3-распруфленность учитывалась ОТДЕЛЬНО
+от стирания → страховка молча снималась именно в недоказанных (= рискованных)
+местах → потенциальный silent UB/corruption. Худший выбор.
+
+Новая модель «enforce-with-elision» (Dafny/Verus + Rust bounds-check):
+- Z3-PROVEN контракт → элидируется на codegen (zero-cost);
+- НЕДОКАЗАННЫЙ → runtime-проверка ОСТАЁТСЯ и в release → nova_contract_violation
+  (fail-fast abort на violation);
+- #unchecked (per-fn) / --contracts=off (build) → явный opt-out под ответственность
+  разработчика.
+«Always-on» ≠ «always pay» — платишь только за недоказанное.
+
+Фазы (ветка plan-140, worktree nova-p140, НЕ merged):
+- Ф.0 (b058fb53): D24 amend (release-eval = enforce-with-elision; «стираются в
+  release» RETRACT) + новый Q34 (default build-policy / abort-vs-panic / opt-out
+  granularity). spec-only.
+- Ф.1 (7abfc491): сняты все 6 #ifdef NOVA_CONTRACTS_RUNTIME обёрток в emit_c.rs
+  (requires/ensures/decreases/assert_static/assume/record-invariant) → недоказанные
+  эмитятся и в release; proven по-прежнему continue (zero-cost). Убран dead
+  -DNOVA_CONTRACTS_RUNTIME=1 define из test_runner.rs. nova_contract_violation
+  release-safe (static inline + abort, не зависит от NDEBUG, переживает LTO) — R3.
+- Ф.2 (52b527f2): #unchecked per-fn opt-out (parser parse_contract_attrs →
+  ContractAttrs.contracts_unchecked → FnDecl.contracts_unchecked → codegen elide
+  ВСЕ checks fn) + --contracts=enforce|off build-policy (codegen set_contracts_off,
+  wired через nova-codegen + nova build + build-cache key). // CONTRACTS off|enforce
+  per-fixture directive. 2 POS fixtures (t4/t5).
+- Ф.3 (98add912): захват ModuleEnv + set_proven_contracts на ВСЕХ build/codegen
+  call-sites (test_runner codegen_to_c, nova-cli cmd_build, bench run+compile_for_profile)
+  — раньше proven-set доходил до codegen ТОЛЬКО на nova-codegen compile, не на
+  nova build/test-build/bench → элизии на build-пути не было (R4). 1 POS fixture (t2).
+- Ф.4 (31332a41): 3 should-abort release fixtures (t1 unproven-requires, t3 ensures,
+  t6 no-Z3-degrade). Матрица plan140 = 6 fixtures, все PASS в release под Z3/Trivial/
+  no-z3-binary.
+- Ф.5 (этот коммит): perf-микробенч + docs/close. proven-элидирование zero-cost
+  подтверждено.
+
+Perf (Ф.5) — perf_contract_hot_loop.nv (20M-loop, sq_plus с нелинейным
+ensures result >= x — Z3 доказывает, Trivial нет), release/clang, best-of-N:
+  --contracts=off    0.191s (baseline, всё элидировано)
+  Z3 enforce         0.197s (POST ЭЛИДИРОВАН как proven — ≈baseline = ZERO-COST)
+  Trivial enforce    0.214s (POST ПРОВЕРЯЕТСЯ каждую итерацию — ≈+12% no-Z3 degrade)
+Codegen-доказательство (тот же .c): Z3 = 3 nova_contract_violation (PRE-only),
+Trivial = 4 (+POST result >= x), off = 0. PRE (caller-obligation) никогда не в
+report.proven → всегда эмитится. Overhead скейлится с долей runtime-проверки в
+теле — в реальном коде много меньше микробенч-12%.
+
+Z3-статус: компилятор собран --features z3-backend (vcpkg libz3 скопирован в
+worktree vcpkg_installed, untracked via .git/info/exclude — НЕ committed). Default-
+бэкенд остаётся Trivial даже при скомпилированном Z3 (детерминизм verify-suite
+Plan 33); полный Z3 — только при NOVA_SMT_BACKEND=z3. Safe degrade без Z3
+верифицирован (proven меньше → больше runtime-checks, никогда не unsafe).
+
+Acceptance F1-F7 — все met:
+  F1 release чекает недоказанные requires/ensures (abort) ✅ t1/t3 + 8/8 contracts_*
+  F2 Z3-proven элидируется (zero-cost) ✅ t2 + perf
+  F3 #unchecked снимает проверки ✅ t4
+  F4 --contracts=off legacy zero-cost ✅ t5
+  F5 без Z3 все чекаются, abort ✅ t6 + Trivial-config
+  F6 D24 amended, «стираются» retracted ✅ Ф.0
+  F7 0 регрессий ✅ contracts 295/0/11 release (Z3), 250/0/56 (Trivial) — baseline-clean
+
+Разблокирует [M-140-bounds-as-contract] (READY): Vec @index OOB как
+requires 0 <= i < @len (Rust bounds-check на Vec — Plan 138.x/139).
+Deferred (P3, не блокеры): [M-140-contract-panic-unwind] (release violation как
+panic-unwind вместо abort), [M-140-contract-levels] (per-module + Eiffel-style
+гранулярность), [M-140-contract-message] (опц. message-строка).
+[M-140-invariant-release] — N/A (декларативных type-invariant'ов как языковой
+конструкции пока нет; record-invariant УЖЕ покрыт Ф.1).
+
+D-блоки: D24 AMEND (enforce-with-elision), D106 (verify_status/verify_mode — proven
+feeds release elision). Q34 (open-questions) RESOLVED+CLOSED.
