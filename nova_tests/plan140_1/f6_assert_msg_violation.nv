@@ -1,0 +1,19 @@
+// EXPECT_RUNTIME_PANIC f6_assert_msg_violation.nv:12: assert failed: a must be positive (a > 0)
+//
+// Plan 140.1 Ф.2/Ф.3 (D13/D84 amend), acceptance F2+F3+F7: an `assert` WITH a
+// custom message (D84 2-arg form `assert(cond, "msg")`), when violated, aborts
+// with `<file>:<line>: assert failed: <msg> (<expr>)` — same principle as
+// contracts. The LOC prefix is auto-added by codegen; the user supplies only
+// the message. Combination: assert, with msg.
+
+module plan140_1.f6_assert_msg_violation
+
+fn check(a int) -> int {
+    assert(a > 0, "a must be positive")
+    a
+}
+
+fn main() Io -> () {
+    ro _ = check(-3)
+    println("UNREACHABLE")
+}

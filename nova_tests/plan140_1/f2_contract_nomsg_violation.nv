@@ -1,0 +1,18 @@
+// EXPECT_RUNTIME_PANIC f2_contract_nomsg_violation.nv:12: requires failed: x > 0
+//
+// Plan 140.1 Ф.2/Ф.3 (D24 amend), acceptance F1+F4+F7: a `requires` contract
+// WITHOUT a custom message, when violated at runtime, aborts with the short
+// location-first format `<file>:<line>: <kind> failed: <expr>`. The LOC prefix
+// (`f2_contract_nomsg_violation.nv:12:`) is auto-added by codegen from the
+// span — the user never writes the location. Combination: contract, no msg.
+
+module plan140_1.f2_contract_nomsg_violation
+
+fn must_be_positive(x int) -> int
+    requires x > 0
+=> x * 2
+
+fn main() Io -> () {
+    ro _ = must_be_positive(-5)
+    println("UNREACHABLE")
+}

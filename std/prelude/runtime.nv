@@ -114,22 +114,27 @@ fn unreachable(reason str) -> never => panic("unreachable: ${reason}")
 /// (текст condition'а через display) если `cond == false`. Always-on:
 /// в release-сборке тоже срабатывает (D81).
 ///
-/// **Bootstrap:** реализация в `nova_assert` (nova_rt/effects.h:297).
-/// Codegen special-case (emit_c.rs:11086) эмитит inline comma-operator
-/// `(nova_assert(cond, "<cond_text>"), NOVA_UNIT)` где `<cond_text>` —
-/// auto-generated display rep'а expression'а. D89 expression-context:
-/// assert валиден в match arm / if-expr branch. Plan 11 follow-up
-/// (2026-05-17) обернул в comma-operator чтобы тип был nova_unit
-/// (иначе `void` cast'ить в nova_unit error в C).
+/// **Bootstrap:** реализация в `nova_assert_loc` (nova_rt/effects.h).
+/// Codegen special-case эмитит inline comma-operator
+/// `(nova_assert_loc(cond, "<cond_text>", "<file>", <line>, <msg|NULL>), NOVA_UNIT)`
+/// где `<cond_text>` — auto-generated display rep'а expression'а, а
+/// `<file>:<line>` авто-проставляется из span (Plan 140.1 Ф.2, D13 amend).
+/// D89 expression-context: assert валиден в match arm / if-expr branch.
+/// Plan 11 follow-up (2026-05-17) обернул в comma-operator чтобы тип был
+/// nova_unit (иначе `void` cast'ить в nova_unit error в C).
+///
+/// **Формат violation (Plan 140.1, D13 amend):**
+/// `<file>:<line>: assert failed: <expr>` (без msg) либо
+/// `<file>:<line>: assert failed: <msg> (<expr>)` (с msg). LOC-префикс
+/// добавляется ВСЕГДА автоматически — пользователь его не пишет.
 ///
 /// **Call conventions:** обе формы поддерживаются через arity overload
-/// (D84). `assert(cond)` — auto-derived text. `assert(cond, msg)` —
-/// **`msg` SILENTLY IGNORED в bootstrap'е** (auto-derived text всё равно
-/// используется emit_c.rs:11086). Декларация 2-arg формы существует
-/// чтобы существующие callers (~17 test файлов с `assert(c, "msg")`)
-/// type-check'ались; explicit msg override — отдельная задача (требует
-/// change в emit_c.rs c использованием user-supplied msg вместо
-/// auto-derived).
+/// (D84). `assert(cond)` — auto-derived text, без сообщения. `assert(cond, msg)`
+/// — `msg` ИСПОЛЬЗУЕТСЯ как пользовательское сообщение (Plan 140.1 Ф.2):
+/// печатается перед expression'ом в скобках. `msg` должен быть строковым
+/// литералом (baked в format string); не-литерал → fallback на no-msg форму
+/// (runtime-интерполяция динамического сообщения — followup
+/// `[M-140.1-message-interpolation]`).
 #stable(since = "0.1")
 external fn assert(cond bool) -> ()
 #stable(since = "0.1")
@@ -140,9 +145,11 @@ external fn assert(cond bool, msg str) -> ()
 /// production-runtime добавит conditional compilation (NDEBUG-style
 /// preprocessor / codegen-флаг).
 ///
-/// **Bootstrap:** routes через тот же `nova_assert` C-helper что и
-/// assert (emit_c.rs:11086 принимает обе name'а одинаково). См. assert.
-/// Обе arity-форм (1-arg / 2-arg) — D84 arity overload, см. assert.
+/// **Bootstrap:** routes через тот же `nova_assert_loc` C-helper что и
+/// assert (codegen принимает обе name'а одинаково). См. assert — тот же
+/// location-first формат `<file>:<line>: assert failed: ...` и тот же путь
+/// для опционального msg (Plan 140.1 Ф.2). Обе arity-форм (1-arg / 2-arg)
+/// — D84 arity overload, см. assert.
 #stable(since = "0.1")
 external fn debug_assert(cond bool) -> ()
 #stable(since = "0.1")

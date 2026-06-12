@@ -1,0 +1,19 @@
+// EXPECT_RUNTIME_PANIC f4_assert_nomsg_violation.nv:12: assert failed: a > 0
+//
+// Plan 140.1 Ф.2/Ф.3 (D13 amend), acceptance F2+F7: an `assert` WITHOUT a
+// message, when violated, aborts with `<file>:<line>: assert failed: <expr>`.
+// Before Plan 140.1 assert printed `assertion failed: <expr>` with NO location;
+// now `assertion`->`assert` and the LOC prefix is auto-added by codegen.
+// Combination: assert, no msg.
+
+module plan140_1.f4_assert_nomsg_violation
+
+fn check(a int) -> int {
+    assert(a > 0)
+    a
+}
+
+fn main() Io -> () {
+    ro _ = check(-3)
+    println("UNREACHABLE")
+}
