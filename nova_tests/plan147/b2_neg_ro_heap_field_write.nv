@@ -1,0 +1,21 @@
+// Plan 147 Ф.5 — ORACLE row B NEG: `ro r` (bare) → `r.money = v` ❌.
+//
+// A bare `ro` binding freezes the whole owned-graph (P7 binding-dominates):
+// even a `mut`-declared field of a HEAP record cannot be written through a
+// `ro` binding. Same sign as the value-record row A2 — semantics differ
+// (shared-object), enforcement is identical.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+
+module plan147.b2_neg_ro_heap_field_write
+
+type Acc {
+    mut money f64
+    ro name str
+}
+
+fn main() -> () {
+    ro r = Acc { money: 100.0, name: "t" }
+    r.money = 200.0
+    assert(r.money == 200.0)
+}

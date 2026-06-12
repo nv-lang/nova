@@ -1,0 +1,39 @@
+// Plan 147 Ф.5 — ORACLE row C (multi-level pointer chains): the postfix
+// `mut` modifier is positional and per-level. The canonical chain forms parse
+// and type-check in every position:
+//   `**T`        — pointer to ro-pointer to ro T   (all levels ro)
+//   `**mut T`    — pointer to ro-pointer to MUT T   (deepest level writable)
+//   `*mut *T`    — pointer to MUT-pointer to ro T    (middle level writable)
+//   `*mut *mut T`— pointer to MUT-pointer to MUT T   (both inner levels writable)
+//
+// Reads through any chain are always ✅. The deepest-level deref-WRITE on a
+// chain (`**p = v`) is a compound lvalue: it is NOT gated at the Nova level
+// (documented boundary [M-147-deref-write-compound-lvalue]); the L3
+// const-pointee is enforced at the C level. This fixture exercises the
+// type-acceptance + the L1 reassign-gate is exercised in c8.
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.c7_pointer_chains_ok
+
+import std.runtime.raw_mem.{RawMem}
+
+// chain forms in param + return + field positions.
+type Chains { pp **int }
+
+external fn p147_chain_a(ptr1 **int) -> ()
+external fn p147_chain_b(ptr2 **mut int) -> ()
+external fn p147_chain_c(ptr3 *mut *int) -> ()
+external fn p147_chain_d(ptr4 *mut *mut int) -> ()
+
+fn main() -> () {
+    unsafe {
+        // ro p **mut T: read through both levels ✅.
+        ro pp = RawMem.alloc(size_of[int]()) as **mut int
+        ro inner = *pp
+        ro _ = inner
+        ro h = Chains { pp: RawMem.alloc(size_of[int]()) as **int }
+        ro _h = h.pp
+    }
+    println("ok")
+}

@@ -1,0 +1,19 @@
+// Plan 147 Ф.5 — ORACLE row B NEG: `ro r` (bare) → `r = X` ❌.
+//
+// Reassignment of the name is an L1 binding concern; a `ro` binding is fixed,
+// for a heap record exactly as for a value record (row A3).
+//
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module plan147.b3_neg_ro_heap_reassign
+
+type Acc {
+    mut money f64
+    ro name str
+}
+
+fn main() -> () {
+    ro r = Acc { money: 100.0, name: "t" }
+    r = Acc { money: 200.0, name: "u" }
+    assert(r.money == 200.0)
+}

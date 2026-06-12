@@ -1,0 +1,22 @@
+// Plan 147 Ф.5 — ORACLE row C NEG: `ro p **T` → `p = q` ❌ (L1 reassign-gate).
+//
+// On a multi-level chain handle the L1 binding axis is unchanged: a `ro`
+// binding fixes the NAME, so reassigning the top-level handle `p` is forbidden
+// regardless of the per-level pointee modifiers. (The deepest deref-write
+// `**p = v` is the compound-lvalue boundary [M-147-deref-write-compound-lvalue],
+// caught at the C level; this fixture pins the cleanly-gated L1 half.)
+//
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module plan147.c8_neg_ro_chain_reassign
+
+import std.runtime.raw_mem.{RawMem}
+
+fn main() -> () {
+    unsafe {
+        ro pp = RawMem.alloc(size_of[int]()) as **int
+        ro qq = RawMem.alloc(size_of[int]()) as **int
+        pp = qq
+        ro _ = *pp
+    }
+}

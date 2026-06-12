@@ -1,0 +1,31 @@
+// Plan 147 Ф.5 — ORACLE row E (str lang-item): `str{ptr *u8, len int}`.
+//
+// Under the 3-axis model the str backing-pointer field is declared `ptr *u8`
+// (D26 MAJOR AMEND / D228): a BARE `*u8` is the ro-pointee canon (`*T ≡ *ro T`,
+// D245 flip-scan retracted). The buffer is read-only; reading `s.ptr`/`s.len`
+// is always ✅.
+//
+// ORACLE NEG `s.ptr = q` ❌ (the ptr field is read-only): str is currently a
+// COMPILER BUILT-IN — there is no Nova-source `type str value priv { ptr *u8;
+// len int }` declaration yet, so field-level readonly enforcement on str is
+// gated on [M-139-f0-lang-item-decl] (Plan 139 followup). When the lang-item
+// declaration lands, the `ptr` field being declared (non-`mut`) makes
+// `s.ptr = q` an E_READONLY_FIELD via the same path exercised by b2/e2. The
+// *spec* canon (`ptr *u8` = ro pointee) is already final and unblocks 139.
+//
+// This fixture pins the cleanly-checkable part: the `ptr`/`len` fields read,
+// and the backing pointer is the `*u8` ro-pointee canon.
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.e5_str_ptr_field_ok
+
+fn main() -> () {
+    ro s = "hello"
+    // backing-pointer + length fields read (always ✅).
+    ro p = s.ptr
+    ro n = s.len()
+    ro _ = p
+    assert(n == 5)
+    println("ok")
+}
