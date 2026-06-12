@@ -827,13 +827,16 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 "" // linux: default
             };
             let mut flags: Vec<String> = match opts.mode {
+                // Plan 140 Ф.1 (D24 amend): контракты эмитятся безусловно
+                // (enforce-with-elision), `#ifdef NOVA_CONTRACTS_RUNTIME` снят
+                // на codegen → флаг `-DNOVA_CONTRACTS_RUNTIME=1` больше не нужен
+                // ни в debug, ни в release. Недоказанные контракты проверяются
+                // в обоих режимах; Z3-proven элидируются на codegen (zero-cost).
+                // Build-opt-out (`--contracts=off`) — Ф.2.
                 Mode::Dev => vec![
                     "-O0".to_string(),
                     "-g".to_string(),
                     "-Wno-everything".to_string(),
-                    // Plan 33.1 Ф.4 (D24): runtime contract checks в debug сборке.
-                    // В release контракты стираются (zero-cost).
-                    "-DNOVA_CONTRACTS_RUNTIME=1".to_string(),
                 ],
                 Mode::Release => vec![
                     "-O3".to_string(),
@@ -1021,8 +1024,9 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     // для параллельных билдов: Ninja/MSBuild делают
                     // также для unity-сборок).
                     c.args(["/nologo", "/W0", "/Od", "/Z7"]);
-                    // Plan 33.1 Ф.4: runtime contract checks в debug сборке.
-                    c.arg("/DNOVA_CONTRACTS_RUNTIME=1");
+                    // Plan 140 Ф.1 (D24 amend): `/DNOVA_CONTRACTS_RUNTIME=1`
+                    // снят — контракты эмитятся безусловно (enforce-with-elision),
+                    // `#ifdef` на codegen больше нет. Проверяется в debug И release.
                 }
                 Mode::Release => { c.args(["/nologo", "/W0", "/O2", "/DNDEBUG"]); }
             }
@@ -1131,8 +1135,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             match opts.mode {
                 Mode::Dev => {
                     c.args(["-O0", "-g", "-w"]);
-                    // Plan 33.1 Ф.4: runtime contract checks в debug сборке.
-                    c.arg("-DNOVA_CONTRACTS_RUNTIME=1");
+                    // Plan 140 Ф.1 (D24 amend): `-DNOVA_CONTRACTS_RUNTIME=1`
+                    // снят — контракты эмитятся безусловно (enforce-with-elision).
                 }
                 Mode::Release => {
                     c.arg("-O3");

@@ -1,15 +1,19 @@
 /* Plan 33.1 Ф.4 (D24): contract runtime helper.
  *
  * Реализация runtime fallback'а для contracts:
- * - В debug сборке codegen эмитит проверки requires/ensures.
+ * - codegen эмитит проверки requires/ensures/invariant.
  * - Если проверка не прошла — вызывается nova_contract_violation.
  * - Routing идентичен nova_assert: fiber → fail-frame, test → test-frame,
  *   main → stderr + abort.
  *
- * В release сборке codegen не эмитит check'и для доказанных контрактов
- * (zero-cost). Сейчас (33.1 без SMT) — все контракты в release со
- * статусом default стираются с warning'ом сборки; явный `@unverified`
- * стирается без warning'а.
+ * Plan 140 Ф.1 (D24 amend): «enforce-with-elision». Недоказанные контракты
+ * проверяются в ОБОИХ режимах (debug И release) — fail-fast abort на
+ * нарушение, а не silent UB. Z3-proven контракты codegen НЕ эмитит вообще
+ * (zero-cost элидирование на codegen, не препроцессором). Прежняя модель
+ * «в release стираются (NDEBUG/assert)» — retracted. nova_contract_violation
+ * release-safe: snprintf + fprintf(stderr) + abort() не зависят от NDEBUG,
+ * static inline переживает LTO. Build-opt-out (`--contracts=off`) и per-fn
+ * `#unchecked` — Plan 140 Ф.2.
  */
 #ifndef NOVA_CONTRACTS_H
 #define NOVA_CONTRACTS_H
