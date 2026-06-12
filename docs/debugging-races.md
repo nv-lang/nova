@@ -817,3 +817,28 @@ doc closure → playbook update → logs entries.
   - [scripts/cdb_session.sh](../scripts/cdb_session.sh) — optional cdb wrapper
   - [compiler-codegen/nova_rt/segv_diag.c](../compiler-codegen/nova_rt/segv_diag.c) — VEH crash localizer
   - `nova_runtime_dump_state` in [compiler-codegen/nova_rt/runtime.c](../compiler-codegen/nova_rt/runtime.c) — state-dump
+
+### 6.4 Plan 139.2 — block-expr value-type mis-inference (deterministic SEGV, ~15 min, 2026-06-12)
+
+**Symptom:** deterministic `EXCEPTION_ACCESS_VIOLATION` (READ @0x26) on any bare
+block-expression-as-value (`ro v = { ro a=10; ro b=20; a+b }; assert(v == 30)`).
+Surfaced in `basics/control_flow` only AFTER Plan 139.2's binary; PASS on the prior binary.
+
+**Diagnostic that broke the case:** `NOVA_DIAG_SEGV=1` (§3.1). Frame[1] =
+`Vec____nova_byte_method_equal` in the test body localized it in ~1 minute — the `int` `==`
+was dispatching to `Vec[u8]@equal`, i.e. the block-expr value `v` was mis-typed as a Vec view.
+
+**Root cause:** `var_types` (codegen local-type map) is NOT per-fn scoped. Plan 139.2 made str
+methods Nova-body with `Vec[u8]` locals (`a`/`b`); those leaked into later functions. The
+block-expr inferred its value-type from the trailing expr BEFORE emitting its own body, so an
+identifier in the trailing resolved against the stale leaked entry, and `BinOp::Add` with a
+C-pointer left operand was read as pointer arithmetic → the whole block typed as `Vec____nova_byte*`.
+
+**Fix:** `emit_block_expr` + `infer_expr_c_type` Block arm pre-register the block's own let-binding
+types before inferring the trailing type (shadowing the stale entry).
+
+**Lessons reinforced:** (a) **Lesson #17** — one SEGV-diag run beat an hour of `.c`-diff tooling
+that fought Windows artifact paths; invest in the diagnostic. (b) **NEW: per-plan regression
+sweeps must include `basics`.** Plan 139.2's sweep omitted `basics` and shipped the SEGV; an
+**independent broad verification before merge** caught it. Make `basics` + a wide spread mandatory
+in any codegen-touching plan's regression gate, and re-verify independently before merging to main.

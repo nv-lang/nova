@@ -35787,3 +35787,9 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   ring_overflow @MP=4 25/25. Спека D245 §финальный + план §9.11.1.
 - **META (Ф.3+Ф.4):** de-risking 2 фазы подряд показал Go global-queue/coalescing конфликтует с
   корректным home-affinity Nova → остаток routing-порта bench-gated. Критичное (оба race'а) закрыто.
+
+### Plan 139.2 post-close fix (2026-06-12) — block-expr SEGV, без упрощений
+Точечный фикс инференса block-expr value-type (emit_block_expr + infer Block-арм). Корневая
+латентная слабость — `var_types` не scoped по функциям (локалы протекают между функциями) —
+НЕ закрыта целиком (потребовала бы broad per-fn-scope рефактор, regression-риск); оформлена
+маркером [M-codegen-var-types-fn-scope]. Block-expr-путь закрыт + regression-guard.

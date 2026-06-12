@@ -37015,3 +37015,13 @@ F.4 82b4063452d, F.5 <this commit>.
 REGRESSION (RELEASE binary): 0 NEW FAIL. plan139_2 12/0, plan139 37/0,
 plan139_1 4/0, str 13/0, plan90 9/0, plan90_1 21/0 — all green, identical to
 the F.4 reported state.
+
+[2026-06-12] Plan 139.2 post-close fix — block-expr value-type SEGV.
+  Независимая broad-верификация перед merge в main поймала детерминированный SEGV в
+  basics/control_flow (любой bare block-expr-as-value). Корень: var_types не scoped по
+  функциям; 139.2 сделал str-методы Nova-body с Vec[u8]-локалами (a/b), они протекали;
+  block-expr инферил value-тип из trailing ДО эмита тела → stale `a:Vec____nova_byte*` →
+  pointer-арифметика → block мис-типизирован как Vec-view → `v==30` на Vec[u8]@equal → AV.
+  Локализовано NOVA_DIAG_SEGV (frame[1]) за ~1 мин. Фикс: emit_block_expr + infer Block-арм
+  пред-регистрируют блок-локалы перед инференсом trailing. Guard: plan139_2/
+  block_expr_value_type_ok.nv. Commit 3917d17c. Урок: per-plan sweep обязан включать basics.
