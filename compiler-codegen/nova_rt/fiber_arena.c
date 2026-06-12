@@ -226,7 +226,8 @@ static void _arena_sigsegv_handler(int sig, siginfo_t* info, void* uctx) {
         fprintf(stderr,
                 "\nnova: fiber stack overflow in slot %zu "
                 "(fault @ %p, guard @ [%p, %p))\n"
-                "Hint: increase NOVA_FIBER_STACK_SIZE or reduce recursion depth.\n",
+                "Hint: increase NOVA_FIBER_STACK (env / nova.toml [runtime].fiber_stack) "
+                "or reduce recursion depth.\n",
                 slot_idx, fault_addr,
                 a->base + slot_idx * a->slot_size,
                 a->base + slot_idx * a->slot_size + NOVA_FIBER_GUARD_SIZE);
@@ -548,7 +549,8 @@ void* nova_fiber_alloc(size_t size, void* allocator_data) {
      * фиксирован. Verify что requested ≤ usable region (slot - guard). */
     size_t usable = a->slot_size - NOVA_FIBER_GUARD_SIZE;
     if (size > usable) {
-        fprintf(stderr, "nova: fiber_alloc requested %zu > usable %zu (slot %zu - guard %d)\n",
+        fprintf(stderr, "nova: fiber_alloc requested %zu > usable %zu (slot %zu - guard %d)\n"
+                "Hint: increase NOVA_FIBER_STACK (env / nova.toml [runtime].fiber_stack).\n",
                 size, usable, a->slot_size, NOVA_FIBER_GUARD_SIZE);
         return NULL;  /* minicoro will handle as failure */
     }

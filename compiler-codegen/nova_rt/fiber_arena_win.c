@@ -117,7 +117,7 @@ static void _nova_fw_append_uz(char* buf, size_t cap, size_t* pos, size_t v) {
     while (n > 0 && *pos + 1 < cap) buf[(*pos)++] = tmp[--n];
 }
 static void _nova_fw_report_overflow(size_t slot, DWORD code) {
-    char buf[160];
+    char buf[256];  /* Plan 149: widened for longer NOVA_FIBER_STACK hint */
     size_t pos = 0;
     _nova_fw_append(buf, sizeof(buf), &pos,
                     "\nnova: fiber stack overflow in slot ");
@@ -127,7 +127,8 @@ static void _nova_fw_report_overflow(size_t slot, DWORD code) {
             ? " (STATUS_STACK_OVERFLOW)\n"
             : " (access violation in fiber arena)\n");
     _nova_fw_append(buf, sizeof(buf), &pos,
-        "Hint: increase fiber stack size or reduce recursion depth.\n");
+        "Hint: increase NOVA_FIBER_STACK (env / nova.toml [runtime].fiber_stack) "
+        "or reduce recursion depth.\n");
     HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
     if (h && h != INVALID_HANDLE_VALUE) {
         DWORD written = 0;
