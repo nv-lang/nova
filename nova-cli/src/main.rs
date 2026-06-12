@@ -3987,9 +3987,19 @@ fn cmd_build(
     test_runner::install_cancel_handler();
 
     // compile .c → .exe
-    // Plan 115 D214 [M-115-ffi-build-pipeline]: nova-cli build не подхватывает
-    // [ffi] (это test-runner job; standalone build пока без manifest-driven
-    // FFI). Followup: extend nova-cli build чтобы также резолвить manifest.
+    // Plan 149/115: [runtime]+[ffi] resolved from package nova.toml (find_manifest), mirrors test_runner. env still overrides at runtime.
+    let manifest = nova_codegen::manifest::find_manifest(&path);
+    let resolved_ffi: Option<test_runner::ResolvedFfiConfig> =
+        manifest.as_ref().and_then(|m| m.ffi.as_ref().map(|cfg| {
+            let base = m.source_root.clone();
+            test_runner::ResolvedFfiConfig {
+                c_shims: cfg.c_shims.iter().map(|p| base.join(p)).collect(),
+                include_dirs: cfg.include_dirs.iter().map(|p| base.join(p)).collect(),
+                libs: cfg.libs.clone(),
+            }
+        }));
+    let resolved_runtime: Option<nova_codegen::manifest::RuntimeConfig> =
+        manifest.as_ref().and_then(|m| m.runtime.clone());
     let build_opts = test_runner::BuildOpts {
         c_file: &c_file,
         exe_file: &exe_file,
@@ -3999,9 +4009,8 @@ fn cmd_build(
         mode,
         libuv: libuv.as_ref(),
         gc_kind: test_runner::GcKind::default(),
-        ffi: None,
-        // Plan 149 D233: builtin arena defaults (no [runtime] wiring here).
-        runtime: None,
+        ffi: resolved_ffi.as_ref(),
+        runtime: resolved_runtime.as_ref(),
     };
     {
         let _t = nova_codegen::perf_timer::PerfTimer::new("c-compile");
