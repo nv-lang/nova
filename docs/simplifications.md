@@ -35544,3 +35544,50 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   = Ф.B. content-eq override (D228) уже работает через direct BinOp lowering
   (не Plan 141 field-by-field). marker `[M-139-f0-lang-item-decl]` остаётся OPEN
   до Ф.D close — НО самая сложная часть (lang-item infra + privacy) ПРИЗЕМЛЕНА.
+
+### Plan 139.1 Ф.B — str method C→Nova migration: VERIFY-OR-DOCUMENT, 0 retired (2026-06-12)
+- **РЕЗУЛЬТАТ: НИ ОДИН из 10 external методов не мигрирован — ни один не
+  мигрируем чисто СЕГОДНЯ.** Это VERIFY-OR-DOCUMENT исход (genuine effort →
+  documented), НЕ relaxed-gate. ZERO source changes → build остаётся зелёным
+  (plan139_1 2/0, plan139 37/0, str 13/0, plan91 2/0, plan126 21/0, plan108_4
+  12/1 [pos_receiver_at_parse c.fmt pre-existing] — идентично Ф.A baseline).
+- **КЛЮЧЕВОЙ ВЫВОД:** все pure-Nova-выразимые str-методы УЖЕ мигрированы в
+  Ф.1/Ф.2 (starts_with/ends_with/contains/find/rfind/char_len/char_at/trim/
+  to_lower/to_upper/to_bytes/to_chars/is_empty/parse_int/pad_*/repeat/replace).
+  Оставшиеся 10 — это в точности неустранимый C-bridge + operator-lowered +
+  D117-blocked. Премисса задачи («теперь `@ptr` доступен → мигрируй») верна, но
+  `@ptr`-field-access НЕОБХОДИМ, но НЕ ДОСТАТОЧЕН для producer-форм.
+- **Per-method root cause (verified, не предположение):**
+  - **`@byte_at`** — неустранимый raw-byte-read примитив (#1, давно задокументирован).
+  - **`@as_bytes`** — должен сконструировать `NovaArray_nova_byte*`-header,
+    алиасящий raw `@ptr`. `[]u8` → `NovaArray_*` (compiler primitive,
+    emit_c.rs:5173) — НЕТ Nova-surface конструктора NovaArray из raw-parts.
+    Заблокировано на `[]T`→`Vec` universal flip (Plan 138.2 Ф.0, НЕ приземлён);
+    `@ptr` сам по себе недостаточен. = `[M-139-f2-ptr-field-producers]`.
+  - **`@split`** — zero-copy str-sub-views `str{ptr:@ptr+off,len}` + push в
+    `NovaArray_nova_str*` (тот же NovaArray-from-raw блокер). = `[M-139-f2-*]`.
+  - **`str.from_bytes_unchecked`** — должен `alloc(len+1)` + copy + write `\0`
+    на `buf[len]` (D26 §3 NUL-инвариант) + `str{ptr,len}`. Возможно только через
+    raw `RawMem.alloc` + `*mut u8` index-write + str-literal — high-risk; C-форма
+    уже оптимальна (один memcpy). Aliasing-zero-copy НАРУШИЛ бы copy+NUL контракт
+    (`readonly` arg нельзя удержать). = `[M-139-f2-*]`.
+  - **`str.from_bytes_lossy`** — `_nova_validate_utf8` + U+FFFD substitution +
+    from_bytes_unchecked-конструкция (тот же str-construction блокер). = `[M-139-f2-*]`.
+  - **`str.from_bytes_unchecked_steal`** — consume + in-place `\0` + zero-copy
+    reuse; те же ограничения. = `[M-139-f2-*]`.
+  - **`@hash`** — SipHash-1-3 + скрытый per-process crypto seed
+    (`nova_hash_seed_k0/k1`); DoS-resistance ТРЕБУЕТ чтобы seed НЕ был Nova-видим.
+    Неустранимый. = NEW `[M-139.1-hash-irreducible-crypto-seed]`.
+  - **`@concat`** — лоуэрится НАПРЯМУЮ BinOp-`+`-operator codegen (не через метод).
+    Миграция тела НЕ retire'ит C-fn (`nova_str_concat` остаётся для `+`) и
+    добавляет perf-регрессию (push-loop vs memcpy). = NEW `[M-139.1-operator-lowered-methods]`.
+  - **`@compare`** — лоуэрится comparison-operator synthesis; то же что concat.
+    = `[M-139.1-operator-lowered-methods]`.
+  - **`@len`** — `s.len` field-style access = HARD ERROR `E_SIZE_ACCESSOR_FIELD`
+    (D117, emit_c.rs:17625) → НЕЛЬЗЯ field-read. Метод routes на
+    `nova_str_byte_len` (O(1) field-read в C — уже оптимально). = NEW
+    `[M-139.1-len-d117-method-only]`.
+- **ЧЕСТНОСТЬ vs ОШИБКА ПРОШЛОГО 139:** прошлый 139 закрыл E1/E4 с relaxed-gate
+  (str «вёл себя» как value-record но не был объявлен). ЗДЕСЬ обратное: НЕ
+  объявляем фейковую миграцию ради галочки. 0 методов retired — честный факт;
+  настоящий разблокер producer-форм = `[]T`→`Vec` flip (Plan 138.2 Ф.0), не Ф.B.

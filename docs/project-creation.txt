@@ -36671,3 +36671,60 @@ privacy enforcement (the risk) is landed.
 Files: std/prelude/core.nv, std/runtime/string.nv,
 compiler-codegen/src/{types/mod.rs, codegen/emit_c.rs, codegen/runtime_registry.rs},
 nova_tests/plan147/e5_str_ptr_field_ok.nv, nova_tests/plan139_1/*.
+
+=== Plan 139.1 F.B - str method C->Nova migration: VERIFY-OR-DOCUMENT (2026-06-12) ===
+
+OUTCOME: 0 of the 10 listed external methods migrated. None is cleanly migratable
+TODAY. This is a VERIFY-OR-DOCUMENT result (genuine effort -> documented), NOT a
+relaxed gate. ZERO source changes -> build stays GREEN (binary unchanged from F.A).
+
+KEY FINDING: every pure-Nova-expressible str method was ALREADY migrated in F.1/F.2
+(starts_with/ends_with/contains/find/rfind/char_len/char_at/trim/to_lower/to_upper/
+to_bytes/to_chars/is_empty/parse_int/pad_*/repeat/replace). The remaining 10 are
+exactly the irreducible C-bridge + operator-lowered + D117-blocked. The task premise
+("@ptr now accessible -> migrate") is correct, but @ptr field-access is NECESSARY but
+NOT SUFFICIENT for the producer forms.
+
+PER-METHOD ROOT CAUSE (verified empirically, not assumed):
+- @byte_at: irreducible raw-byte-read primitive (#1, long documented).
+- @as_bytes: must build NovaArray_nova_byte* header aliasing raw @ptr. []u8 ->
+  NovaArray_* (compiler primitive, emit_c.rs:5173) — NO Nova-surface constructor for
+  a NovaArray from raw parts. Blocked on []T->Vec universal flip (Plan 138.2 F.0, NOT
+  landed); @ptr alone insufficient. = [M-139-f2-ptr-field-producers].
+- @split: zero-copy str sub-views str{ptr:@ptr+off,len} + push into NovaArray_nova_str*
+  (same NovaArray-from-raw blocker). = [M-139-f2-ptr-field-producers].
+- str.from_bytes_unchecked: must alloc(len+1)+copy+write \0 at buf[len] (D26 §3 NUL
+  invariant)+str{ptr,len}. Possible only via raw RawMem.alloc + *mut u8 index-write +
+  str-literal — high-risk; C form already optimal (single memcpy). Aliasing-zero-copy
+  would violate the copy+NUL contract (readonly arg can't be retained). = [M-139-f2-*].
+- str.from_bytes_lossy: _nova_validate_utf8 + U+FFFD substitution + from_bytes_unchecked
+  construction (same str-construction blocker). = [M-139-f2-*].
+- str.from_bytes_unchecked_steal: consume + in-place \0 + zero-copy reuse; same. = [M-139-f2-*].
+- @hash: SipHash-1-3 + hidden per-process crypto seed (nova_hash_seed_k0/k1).
+  DoS-resistance requires the seed NOT be Nova-visible. Permanent C boundary. = NEW
+  [M-139.1-hash-irreducible-crypto-seed].
+- @concat: lowered DIRECTLY by BinOp + operator codegen (not via method). Migrating
+  the body retires no C-fn (nova_str_concat stays for +) and adds a push-loop-vs-memcpy
+  perf regression. = NEW [M-139.1-operator-lowered-methods].
+- @compare: lowered by comparison-operator synthesis; same as concat. = [M-139.1-operator-lowered-methods].
+- @len: s.len field-style access = HARD ERROR E_SIZE_ACCESSOR_FIELD (D117,
+  emit_c.rs:17625). The value-record field `len` is shadowed by the D117 method-only
+  ban. Method routes to nova_str_byte_len (O(1) field read in C — already optimal).
+  = NEW [M-139.1-len-d117-method-only].
+
+CORROBORATION (both directions): Plan 138.2 F.3 record (project-creation.txt:36227)
+independently lists nova_str_as_bytes/nova_str_split/from_bytes_* as RETAINED
+C-primitives and states NovaArray-retirement is itself BLOCKED on Plan 139 F.2 — a
+circular dependency. The real unblocker for the producer forms is Plan 138.2 F.0
+([]T->Vec flip giving a Nova-constructible Vec record), NOT F.B's @ptr access.
+
+ANTI-RELAXED-GATE: prior Plan 139 closed E1/E4 with a relaxed gate (str "behaved as"
+a value-record but was not declared). Here the opposite discipline: we do NOT declare
+a fake migration for the checkbox. 0 methods retired is the honest fact.
+
+REGRESSION: 0 source change -> 0 risk. Targeted str-heavy suites GREEN at F.A baseline:
+plan139_1 2/0, plan139 37/0, str 13/0, plan91 2/0, plan126 21/0, plan108_4 12/1
+(pos_receiver_at_parse c.fmt = pre-existing). 0 new FAIL.
+
+Files: docs/{simplifications.md, plans/backlog-followups.md, project-creation.txt}
+(documentation only — no compiler/std source touched).
