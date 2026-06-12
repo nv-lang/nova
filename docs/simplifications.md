@@ -35908,3 +35908,16 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 - **Тесты:** 9/9 plan140_1 в dev И release (все 4 комбинации contract±msg / assert±msg
   + back-compat + ensures/invariant msg + neg E_CONTRACT_MESSAGE_NOT_STRING). Broad
   regression 0 new FAIL (basics/contracts/plan140/plan139/str/plan147/generics).
+
+### Plan 149 followups (3) — закрыты 2026-06-13
+
+- **#2 nova.toml `[runtime]`+`[ffi]` honored by `nova build`/bench** (была дыра: только `nova test` —
+  cmd_build/bench передавали `runtime: None`). find_manifest→BuildOpts в cmd_build + bench/run.rs
+  (mirror test-path). D233 §2 amend. **Валидировано поведенчески** (toml-bake max_fibers=128 →
+  exhausted; env override → ok). Закрывает и pre-existing `[ffi]:None` build-дыру.
+- **#3 32-bit slot DEFAULT 16→64** (мёртвый код: round-up-×64 + MIN=64 → эффективно 64; коммент
+  врал 64MB, реально 256MB). Косметика + _Static_assert.
+- **#1 cancellation_test — UNBOUNDED mono-recursion codegen-баг** (within[T]/race2[T]); pre-existing,
+  out-of-scope, НЕ лечится стеком/split (64MB и single-TU тоже overflow). **Quarantine** (sentinel
+  _fixture.toml → suite skip) + **marker OPEN P2 → codegen**. ⚠ Единственная остаточная недоработка:
+  реальный codegen root-fix отложен (отдельный план), не Plan 149. Тест сохранён verbatim, nova check зелёный.

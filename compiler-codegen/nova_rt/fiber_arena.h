@@ -124,7 +124,7 @@
  * задаёт _MAX, не _DEFAULT). */
 #if defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ < 8
   /* 32-bit: address space tight — small default + small MAX. */
-  #define NOVA_FIBER_SLOT_COUNT_DEFAULT  16            /* 16 × 4MB = 64 MB virtual (32-bit) */
+  #define NOVA_FIBER_SLOT_COUNT_DEFAULT  64            /* 64 × 4MB = 256MB virtual — 32-bit tight VA budget; MUST be >= MIN(64) and a multiple of 64, else _nova_round_clamp_slots() silently bumps it (old value 16 rounded UP to 64). */
   #ifndef NOVA_FIBER_SLOT_COUNT_MAX
     #define NOVA_FIBER_SLOT_COUNT_MAX    1024          /* ceil(1024/64)=16 words = 128B bitmap */
   #endif
@@ -140,6 +140,12 @@
   #endif
 #endif
 #define NOVA_FIBER_SLOT_COUNT_MIN      64             /* one bitmap word */
+/* Plan 149 fu #3: lock the invariant the 32-bit DEFAULT comment now documents
+ * — DEFAULT must be a multiple of 64 and >= MIN, so _nova_round_clamp_slots()
+ * is a no-op on the builtin default (no silent runtime bump). */
+_Static_assert((NOVA_FIBER_SLOT_COUNT_DEFAULT % 64) == 0
+               && NOVA_FIBER_SLOT_COUNT_DEFAULT >= NOVA_FIBER_SLOT_COUNT_MIN,
+               "NOVA_FIBER_SLOT_COUNT_DEFAULT must be a multiple of 64 and >= NOVA_FIBER_SLOT_COUNT_MIN");
 /* Plan 44.2 audit R8 (2026-05-13): 16 KB guard (было 4 KB) для CVE-2017-1000366
  * stack-clash protection. Single 4 KB guard может быть skipped одним
  * SP-subtract если функция аллоцирует >4 KB local array. 16 KB существенно
