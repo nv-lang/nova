@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 147 — Three-axis mutability model (supersede flip-scan / D245)
 
-> **Создан:** 2026-06-11. **Reframed:** 2026-06-12 (flip-scan → 3-axis).
-> **Статус:** 📋 PLANNED (decomposition). **Worktree:** `nova-p138` @ `plan-138.1`.
+> **Создан:** 2026-06-11. **Reframed:** 2026-06-12 (flip-scan → 3-axis). **Закрыт:** 2026-06-12.
+> **Статус:** ✅ **CLOSED** (Ф.1-Ф.6 LANDED; 3-axis модель D246 в spec+parser+checker+codegen; codebase мигрирован; oracle 30/0). **Worktree:** `nova-p138` @ `plan-138.1` (НЕ смёржен в main).
 > **Model:** Opus + Thinking ON. **Production, без упрощений.**
 > **История:** Ф.1-черновик flip-scan (D245, commit `befe92c`) **ОТКЛОНЁН** adversarial-критикой
 > (4 BLOCKER: `*T` контекстно-зависим → тип не самодостаточен). Две design-workflow + ~15 раундов
@@ -111,3 +111,50 @@ binding — пишешь явно `ro`/`mut`; **параметр** ro (D176); **
 - Разрешает `[M-138-binding-type-mut-conflict]` (P6 split на L1×L2).
 - Гейтит **Plan 139 `[M-139-f0-lang-item-decl]`** (str `ptr *u8` под 3-axis).
 - Источник: 2 design-workflow (critique wkx3dytr1, value-side wlqgc2nyk, synthesis w9nktq8x1) + ~15 раундов ревью.
+
+---
+
+## ✅ CLOSE (2026-06-12) — phase outcomes + acceptance audit
+
+**Baseline:** `0fddd8fed25`. **HEAD:** `3d5c8cf93b4`. **Branch:** `plan-138.1` (НЕ смёржен в main; pushed для ревью).
+
+### Commits (`git log --oneline 0fddd8fed25..HEAD`)
+| SHA | Фаза | Суть |
+|---|---|---|
+| `7610d75e91e` | Ф.1 | spec: RETRACT D245 flip-scan, NEW D-block **D246** (3 оси) + нормативный oracle A-E; restore `*T≡*ro T` универсально; D175 §V2 KEPT (=L2) + «стена на `*`» (P4); Vec layout `priv mut data *mut T`; str-поле `*ro u8`→`*u8` в decl-сайтах 02-types.md. README D-index D245→retracted/D246→active. |
+| `34c13261913` | Ф.2-3 | parser+checker 3-axis (L1/L2/L3): `*ro T`→`E_REDUNDANT_POINTER_RO`, deref-write через ro-pointee→`E_POINTER_RO_ASSIGN`, L1 reassign-gate→`E_LOCAL_NOT_MUT`, `E_READONLY_COERCE` по L2-content; codegen: УБРАНА binding-mut промоция (`field_type_with_binding_mut`/`promote_pointer_pointee_mut`) — 3-axis запрещает наследование pointee-mut от binding. |
+| `166b93b7a71` | Ф.2-3 | docs (project-creation + simplifications + backlog). |
+| `5806dc98409` | Ф.3-добор | checker R2-split **зеркало** `mut r ro Point` (mut-binding + ro-type-view → freeze field-writes): `root_view_is_ro_type` в `check_target_readonly` Member-арм → `E_READONLY_FIELD`. Oracle a4 18/1→19/19. |
+| `d9b92709ea1` | Ф.4 | миграция: str-поле `*ro u8`→`*u8` (2 оставшиеся decl-сайта: 02-types D228 + 08-runtime.md D26); стало canon во всех 3 точках. **Снимает гейт** Plan 139 `[M-139-f0-lang-item-decl]`. |
+| `6bb4eff08f6` | Ф.4 | docs + стале-NEG переработаны (`mut * ro * Node`→`mut * *mut Node`; `* ro mut Acc`→`[]ro mut Acc`); `[M-147-null-star-ptr-retraction-guard]` (pre-existing). |
+| `3d5c8cf93b4` | Ф.5 | 3-axis oracle pos/neg corpus A-E (19→30 фикстур; value/heap split, pointer-chains, return-coercion 4 кейса, generic/Option/cast/vr/str). |
+
+nova-private discussion-log: `871119db31` (Ф.2-3), `1feeb569c6` (Ф.4), + close-entry (Ф.5+close).
+
+### Phase outcomes
+- **Ф.1 (spec)** ✅ — D245 RETRACTED, D246 (3 оси) нормативен с oracle A-E. `*T≡*ro T` восстановлен универсально. **STRUCTURAL FINDING:** flip-scan (`befe92c`) был **SPEC-ONLY** — НЕ было кода `current`/`flip`/`inherit` в parser/checker; **НО** в codegen существовал SEED (`field_type_with_binding_mut`) который авто-промоутил `mut data *T`→`Pointer(Mut(T))` (inherit-current от binding) — это УБРАНО в Ф.3.
+- **Ф.2 (parser)** ✅ — `*ro T`→`E_REDUNDANT_POINTER_RO` (fix-it «`*T`», ловит и цепочки `*mut *ro T`); prefix `mut */ro *`→`E_POINTER_PREFIX_MODIFIER`; binding-parser больше НЕ роняет `mut` в `ro x mut T` (R2-split работает).
+- **Ф.3 (checker+codegen)** ✅ — L3 deref-write из ТИПА (binding-independent); L2 freeze owned-граф + стена-на-`*` (P4); L1 reassign-gate; R2-split обе половины (`ro r mut`/`mut r ro`); coercion по L2-content. Codegen binding-mut промоция убрана.
+- **Ф.4 (миграция)** ✅ — все живые `*ro T`-декларации → `*T` (vec_owned, plan118*, examples); str-поле `*u8` во всех 3 spec-точках; стале-NEG переработаны. Build GREEN.
+- **Ф.5 (тесты)** ✅ — plan147 30/0, полный oracle A-E. Все 6 error-кодов проверены (`E_REDUNDANT_POINTER_RO`, `E_POINTER_PREFIX_MODIFIER`, `E_READONLY_COERCE`, `E_POINTER_RO_ASSIGN`, `E_LOCAL_NOT_MUT`, `E_READONLY_FIELD`).
+- **Ф.6 (close)** ✅ — этот раздел + docs + memory + push.
+
+### Acceptance audit (A1-A6)
+- **A1** ✅ — oracle A-E: pos компилируются, neg дают точные коды. plan147 **30/0** GREEN на свежепересобранном release-бинаре.
+- **A2** ✅ — `*T ≡ *ro T` доказано позиционными фикстурами (a6, c7, e3, d4): param/return/generic/cast/field/local — все ro-pointee из bare `*T`.
+- **A3** ✅ — L2 freeze транзитивен + стена-на-`*` (P4): e1/e2 vr с `*mut`-полем (`v.p` frozen → `E_READONLY_FIELD`, `unsafe{*v.p=w}` writable).
+- **A4** ✅ — split `ro r mut Point`/`mut r ro Point` обе половины (a1/a4/b1/b4); голый `ro r`=freeze; return-coercion 4 кейса (d1/d2/d3).
+- **A5** ✅ — D245 retracted; pointer-таблица + str переписаны; D246 «3 оси» + oracle нормативны (02-types.md:8528).
+- **A6** ✅ — 0 регрессий vs baseline; pointer-using dirs (plan115/118/138_*/128/124_8/str) на baseline (pre-existing fails не тронуты, 0 new).
+
+### Документированные границы (НЕ упрощения модели; soundness сохранён через C-уровневый const-pointee — `const T*` write = CC-FAIL, не тихо-разрешено)
+- `[M-147-infer-call-ret-mut-axis]` (P2) — call-return inference только ro/pointer-shaped + all-overloads-agree; method/generic/mixed → no-gate.
+- `[M-147-deref-write-compound-lvalue]` (P2) — `*(p+i)=v` (Binary operand) → no-gate.
+- `[M-147-generic-element-deref-write]` (P2) — `*v[i]=x` на `Vec[*T]` не enforced на Nova-уровне.
+- `[M-147-null-star-ptr-retraction-guard]` (P3, **pre-existing** Plan 134) — `null *()` не ловится retraction-guard'ом (orthogonal к 3-axis).
+
+### Связанные маркеры
+- `[M-138-binding-type-mut-conflict]` — **CLOSED** (разрешён D246 P6 split L1×L2: `ro X mut T`/`mut X ro T` — явные ортогональные оси; контекстно-зависимая visibility-aware диагностика больше не нужна — модель прямо разрешает обе пары).
+- `[M-ptr-cast-reinterpret-unsafe]` — **учтён в coercion** D246: `*mut→*T` авто-сужение, `*T→*mut T` ❌; ОСТАЁТСЯ OPEN (P2) для reinterpret-каста `*T→*U` (смена pointee-типа = align/aliasing UB — требует `unsafe`/`E_PTR_CAST_REINTERPRET`); это отдельная ось от ro-laundering, которую D246 уже закрывает через `E_READONLY_COERCE`-аналог.
+- `[M-139-f0-lang-item-decl]` — **РАЗГЕЙЧЕНО**: str-поле `ptr *u8` легально под восстановленным `*T≡*ro T` (bare `*u8` = ro-pointee canon; `*ro u8` был бы `E_REDUNDANT_POINTER_RO`). Остаётся lang-item checker-инфра (Plan 139 followup).
+- flip-scan-маркеры удалены/переформулированы (`[M-138.5-right-binding-migration]` — postfix-модель landed).

@@ -35492,3 +35492,21 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   не расширил). Orthogonal к 3-axis модели; не в scope Ф.4. Followup
   **[M-147-null-star-ptr-retraction-guard]** (P3). Hard-error сохранён (просто
   другой код).
+
+### Plan 147 Ф.5-Ф.6 — oracle corpus + CLOSE (2026-06-12)
+- **БЕЗ упрощений модели.** Ф.5 = чистый test-корпус (0 компилятор-кода), Ф.6 =
+  close/docs. 3-axis (D246) реализован полностью: parser+checker+codegen, oracle
+  A-E 30/0. Закрыт Ф.1-Ф.6, branch plan-138.1 (НЕ смёржен).
+- **ТРИ oracle-ячейки НЕ оформлены как чистые Nova-negatives** (документированные
+  границы, НЕ упрощения — soundness держится C-уровневым const-pointee, `const T*`
+  write = CC-FAIL; ни одна форма не «тихо разрешена»): **p=v на цепочках
+  [M-147-deref-write-compound-lvalue], `*v[i]=x` на Vec[*T]
+  [M-147-generic-element-deref-write], `s.ptr=q` str-поле write-ban (дополнительно
+  gated на [M-139-f0-lang-item-decl] — str = compiler built-in, нет Nova-source
+  lang-item декл). Каждая покрыта POSITIVE type-acceptance фикстурой (c7/e3/e5) с
+  границей в prose. НЕ конвертировать в EXPECT_COMPILE_ERROR пока соответствующий
+  enforcement не приземлится.
+- **[M-138-binding-type-mut-conflict] CLOSED** — НЕ требует visibility-aware
+  диагностики: D246 P6 split (L1 binding × L2 view) прямо разрешает обе пары
+  `ro X mut T`/`mut X ro T` как ортогональные оси. Это закрытие через модель, не
+  упрощение.

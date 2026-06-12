@@ -36555,3 +36555,67 @@ plan134 t4 (E_LIT_OUT_OF_RANGE u64); plan123_1 loop_iteration (E_BOUND_NOT_
 PROTOCOL); plan108_2 ×4 Vec-mut-method NEG ([M-139-f6]); plan108_4 pos_receiver.
 
 Commits 5806dc98409 + d9b92709ea1.
+
+────────────────────────────────────────────────────────────────────────────
+Plan 147 Ф.5 — 3-axis oracle pos/neg corpus (A-E) + Ф.6 CLOSE (2026-06-12)
+────────────────────────────────────────────────────────────────────────────
+
+Ф.5 (commit 3d5c8cf93b4): финализирован nova_tests/plan147/ — полный нормативный
+oracle D246 (три оси мутабельности) с явным value/heap split. 19→30 фикстур,
+0 изменений компилятор-кода (только test-корпус). plan147 = 30/0 на свеже-
+пересобранном release-бинаре.
+
+Карта покрытия (A-E полная):
+- A value-record Point: a1 pos + a2-a5 neg + a6 *T-universal.
+- B heap-record Acc (NEW): b1 pos (mut + R2-split обе пары + bare-ro) + b2/b4
+  neg (ro field-write E_READONLY_FIELD) + b3/b5 neg (ro reassign E_LOCAL_NOT_MUT).
+  value/heap split теперь явный.
+- C pointer: c1 pos + c2-c6 neg + c7 chains pos (**T/**mut T/*mut *T parse в
+  param/return/field, read OK) + c8 neg (ro p **T → p=q E_LOCAL_NOT_MUT).
+- D return: d1 pos + d2/d3 neg (E_READONLY_COERCE) + d4 ptr+cast pos + d5 neg
+  (E_POINTER_RO_ASSIGN) + d6 pos (plain -> Value caller mut-default).
+- E generic/Option/cast/vr/str: e1/e2 vr (P4 wall-at-*) + e3 pos (Vec[*T]/
+  Vec[*mut T]/Option[*T]/Option[*mut T] type-acceptance + None NPO) + e4 neg
+  (cast x as *mut T; ro a=x → a=y E_LOCAL_NOT_MUT) + e5 pos (str ptr *u8 read).
+
+Все 6 oracle-кодов проверены через `nova check` на каждой neg-фикстуре:
+E_REDUNDANT_POINTER_RO (c4), E_POINTER_PREFIX_MODIFIER (c5/c6),
+E_READONLY_COERCE (d2/d3), E_POINTER_RO_ASSIGN (c2/d5), E_LOCAL_NOT_MUT
+(b3/b5/c8/e4), E_READONLY_FIELD (b2/b4).
+
+ИДИОМ-ГОТЧИ при написании фикстур (избежать пере-открытия): (a) arrow-body
+constructor `fn mk(...) -> Acc => Acc {...}` ОТВЕРГается («redundant type prefix
+on record literal») — bare `=> {...}` когда return-тип аннотирован; (b) `.len`
+на str = method-only (D117 E_SIZE_ACCESSOR_FIELD) → `.len()`; (c) external-fn
+single-letter параметры (a/b/c/d) коллидируют с prelude-идентификаторами в
+name-res внутри std/*.nv → префиксованные имена.
+
+ТРИ oracle-ячейки НАМЕРЕННО не оформлены как чистые Nova-negatives (были бы
+NEG-NO-ERROR — это P2/gated маркеры, ловятся C-уровнем через const-pointee,
+вынесены в prose фикстур с позитивными type-acceptance формами): **p=v на
+цепочках [M-147-deref-write-compound-lvalue], Vec[*T] *v[i]=x
+[M-147-generic-element-deref-write], str ptr-field write-ban s.ptr=q
+(дополнительно gated на [M-139-f0-lang-item-decl] — str = compiler built-in,
+нет Nova-source lang-item декл, field-level readonly не подключён).
+
+Ф.6 CLOSE: Plan 147 ✅ ЗАКРЫТ Ф.1-Ф.6. baseline 0fddd8fed25 → HEAD 3d5c8cf93b4,
+branch plan-138.1 (НЕ смёржен в main; pushed для ревью). Acceptance A1-A6 все
+met. Финальная broad-регрессия: plan147 30/0, plan115 11/0, plan118 37/3
+(NPO×2 + null-ptr-retracted pre-existing), plan118_1 11/0, plan118_4 4/0,
+plan118_5 14/0, plan118_5_v3 17/0, plan138_1 10/0, plan138_2 18/0, plan138_5
+15/0, plan128 17/2 (t13b-CC + gated pre-existing), plan131 27/1 (vec_debug_pos
+pre-existing), plan124_8 40/0, str 13/0, plan135 11/0, plan139 37/0, plan120
+8/0, plan141 8/0 — 0 new FAIL.
+
+ЗАКРЫТЫЕ/УЧТЁННЫЕ МАРКЕРЫ:
+- [M-138-binding-type-mut-conflict] CLOSED — разрешён D246 P6 split L1×L2:
+  `ro X mut T`/`mut X ro T` теперь явные ортогональные оси (binding × view),
+  контекстно-зависимая visibility-aware диагностика не нужна — модель прямо
+  разрешает обе пары.
+- [M-ptr-cast-reinterpret-unsafe] УЧТЁН в coercion D246 (`*mut→*T` авто-сужение
+  ✅, `*T→*mut T` ❌); ОСТАЁТСЯ OPEN P2 для reinterpret-каста `*T→*U` (смена
+  pointee-типа = align/aliasing UB) — отдельная ось от ro-laundering.
+- [M-139-f0-lang-item-decl] РАЗГЕЙЧЕНО — str-поле `ptr *u8` легально под
+  восстановленным `*T≡*ro T` (bare `*u8` = ro-pointee canon; flip-scan не нужен).
+
+Commit 3d5c8cf93b4.
