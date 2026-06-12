@@ -1,0 +1,33 @@
+// EXPECT_STDOUT UNCHECKED_REACHED
+// EXPECT_EXIT_CODE 0
+//
+// Plan 140 Ф.2 (D24 amend), acceptance F3: per-fn `#unchecked` opt-out.
+//
+// `bad` нарушает свой `requires x > 0` (вызывается с -5) И свой
+// `ensures result == x * 2` (тело возвращает x + 1). БЕЗ `#unchecked`
+// это был бы fail-fast abort (enforce-with-elision, Plan 140 Ф.1).
+// С `#unchecked` codegen НЕ эмитит ни одну контракт-проверку для `bad`
+// — программа доходит до println и нормально завершается (exit 0).
+//
+// Это РЕЛИЗНОЕ поведение: гоняется `--mode release`; per-fn opt-out
+// снимает страховку даже у недоказанного контракта (hot-path под
+// ответственность разработчика). Build-аналог — `--contracts=off` (t5).
+
+module plan140.t4_unchecked_optout
+
+#unchecked
+fn bad(x int) -> int
+    requires x > 0          // нарушается: bad(-5)
+    ensures result == x * 2 // нарушается: тело возвращает x + 1
+=> x + 1
+
+fn main() Io -> () {
+    // requires И ensures нарушены, но `#unchecked` элидировал проверки —
+    // никакого contract violation, никакого abort.
+    ro r = bad(-5)
+    println("UNCHECKED_REACHED")
+    // r использован, чтобы не было dead-binding lint'а.
+    if r == -4 {
+        println("body returned x+1")
+    }
+}

@@ -1,0 +1,48 @@
+// EXPECT_STDOUT PERF_DONE
+// EXPECT_EXIT_CODE 0
+//
+// Plan 140 Ф.5 — perf fixture: contract-heavy hot loop.
+//
+// `sq_plus` carries a NONLINEAR postcondition `ensures result >= x` provable
+// only with multiplication reasoning (result = x*x + x; for x >= 0 this is
+// >= x). Z3 (`--features z3-backend`, NOVA_SMT_BACKEND=z3) DISCHARGES this VC
+// → the ensures lands in `proven_contracts` → it is ELIDED at codegen
+// (zero-cost). The TrivialBackend (linear-arith only, no nonlinear) CANNOT
+// discharge it → it stays runtime-checked → the POST check runs on EVERY
+// loop iteration. `--contracts=off` elides it regardless of backend.
+//
+// So this single fixture, built three ways, isolates contract overhead:
+//   (A) Z3 enforce       → ensures elided      → zero-cost   (== off)
+//   (B) Trivial enforce  → ensures checked Nx  → overhead     (no-Z3 degrade)
+//   (C) --contracts=off  → ensures elided      → zero-cost   (legacy)
+//
+// The `requires x >= 0` precondition is a CALLER obligation and is never in
+// `report.proven` — it always stays emitted (PRE check). It is cheap (one
+// compare) and present in all three configs, so it does not distort the
+// PRE-vs-POST elision contrast (the POST is the per-iteration cost).
+//
+// Behaviourally identical in all three configs (no violation occurs) — only
+// throughput differs. Asserts exit 0 + stdout so it doubles as a correctness
+// regression guard.
+
+module plan140.perf_contract_hot_loop
+
+fn sq_plus(x int) -> int
+    requires x >= 0
+    ensures result >= x
+=> x * x + x
+
+fn main() Io -> () {
+    mut acc = 0
+    mut i = 0
+    while i < 20000000 {
+        ro v = sq_plus(i % 1000)
+        acc = (acc + v) % 1000000007
+        i = i + 1
+    }
+    if acc >= 0 {
+        println("PERF_DONE")
+    } else {
+        println("UNEXPECTED")
+    }
+}

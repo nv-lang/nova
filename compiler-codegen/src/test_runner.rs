@@ -827,13 +827,16 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 "" // linux: default
             };
             let mut flags: Vec<String> = match opts.mode {
+                // Plan 140 Ф.1 (D24 amend): контракты эмитятся безусловно
+                // (enforce-with-elision), `#ifdef NOVA_CONTRACTS_RUNTIME` снят
+                // на codegen → флаг `-DNOVA_CONTRACTS_RUNTIME=1` больше не нужен
+                // ни в debug, ни в release. Недоказанные контракты проверяются
+                // в обоих режимах; Z3-proven элидируются на codegen (zero-cost).
+                // Build-opt-out (`--contracts=off`) — Ф.2.
                 Mode::Dev => vec![
                     "-O0".to_string(),
                     "-g".to_string(),
                     "-Wno-everything".to_string(),
-                    // Plan 33.1 Ф.4 (D24): runtime contract checks в debug сборке.
-                    // В release контракты стираются (zero-cost).
-                    "-DNOVA_CONTRACTS_RUNTIME=1".to_string(),
                 ],
                 Mode::Release => vec![
                     "-O3".to_string(),
@@ -1021,8 +1024,9 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     // для параллельных билдов: Ninja/MSBuild делают
                     // также для unity-сборок).
                     c.args(["/nologo", "/W0", "/Od", "/Z7"]);
-                    // Plan 33.1 Ф.4: runtime contract checks в debug сборке.
-                    c.arg("/DNOVA_CONTRACTS_RUNTIME=1");
+                    // Plan 140 Ф.1 (D24 amend): `/DNOVA_CONTRACTS_RUNTIME=1`
+                    // снят — контракты эмитятся безусловно (enforce-with-elision),
+                    // `#ifdef` на codegen больше нет. Проверяется в debug И release.
                 }
                 Mode::Release => { c.args(["/nologo", "/W0", "/O2", "/DNDEBUG"]); }
             }
@@ -1131,8 +1135,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             match opts.mode {
                 Mode::Dev => {
                     c.args(["-O0", "-g", "-w"]);
-                    // Plan 33.1 Ф.4: runtime contract checks в debug сборке.
-                    c.arg("-DNOVA_CONTRACTS_RUNTIME=1");
+                    // Plan 140 Ф.1 (D24 amend): `-DNOVA_CONTRACTS_RUNTIME=1`
+                    // снят — контракты эмитятся безусловно (enforce-with-elision).
                 }
                 Mode::Release => {
                     c.arg("-O3");
@@ -1370,6 +1374,36 @@ pub fn parse_timeout_ms(src: &str) -> Option<Duration> {
                     return Some(Duration::from_millis(ms));
                 }
             }
+        }
+    }
+    None
+}
+
+/// Plan 140 Ф.2 (D24 amend): per-fixture директива `// CONTRACTS off`
+/// (или `// CONTRACTS enforce`) в первых 30 строках. Override codegen-
+/// политики контрактов **для этого фикстура** — позволяет регрессионным
+/// фикстурам Plan 140 (t5_build_policy_off) проверять `--contracts=off`
+/// поведение в обычном `test-all` прогоне без отдельной CLI-команды.
+/// Возвращает `Some(true)` для `off`, `Some(false)` для `enforce`,
+/// `None` если директивы нет (используется build-policy из opts).
+pub fn parse_contracts_policy(src: &str) -> Option<bool> {
+    for line in src.lines().take(30) {
+        let trimmed = line.trim_start();
+        let Some(body) = trimmed.strip_prefix("//") else {
+            continue;
+        };
+        let body = body.trim_start();
+        let Some(rest) = body.strip_prefix("CONTRACTS") else {
+            continue;
+        };
+        // Требуем whitespace-разделитель, чтобы не матчить `CONTRACTSX`.
+        if !rest.starts_with(|c: char| c.is_whitespace()) {
+            continue;
+        }
+        match rest.trim() {
+            "off" => return Some(true),
+            "enforce" => return Some(false),
+            _ => continue,
         }
     }
     None
@@ -1647,6 +1681,10 @@ pub struct TestBuildOpts<'a> {
     /// Explicit `runtime.init(n>0)` тоже бьёт env (D136). `None` — не
     /// выставлять.
     pub maxprocs_budget: Option<u32>,
+    /// Plan 140 Ф.2 (D24 amend): build-policy `--contracts=off`. Когда
+    /// `true` — codegen элидирует ВСЕ контракт-проверки (legacy zero-cost).
+    /// Default `false` (enforce — недоказанные проверяются в debug И release).
+    pub contracts_off: bool,
 }
 
 /// Plan 26 Ф.2: unique tmp subdir per test. Хеш от display даёт
@@ -1790,7 +1828,11 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
     // (Plan 52 Ф.9: NaN-key, duplicate-map-key, и др. для
     // EXPECT_COMPILE_WARNING сверки).
     // Plan 48 Ф.7.6: mono_depth прокинут через opts (None = default 500).
-    let codegen_result = codegen_to_c(opts.nv_file, &src, opts.mono_depth);
+    // Plan 140 Ф.2: contracts_off прокинут через opts (build-policy opt-out).
+    // Per-fixture `// CONTRACTS off|enforce` директива переопределяет
+    // build-policy для этого фикстура (regression-guard t5_build_policy_off).
+    let contracts_off = parse_contracts_policy(&src).unwrap_or(opts.contracts_off);
+    let codegen_result = codegen_to_c(opts.nv_file, &src, opts.mono_depth, contracts_off);
     let codegen_warnings: Vec<String> = match &codegen_result {
         Ok((ws, _)) => ws.clone(),
         Err(_) => vec![],
@@ -2245,7 +2287,7 @@ fn is_folder_module_peer(path: &Path) -> bool {
 ///
 /// Plan 48 Ф.7.6: `mono_depth` — optional CLI override для
 /// CEmitter.mono_depth_limit (None = default из env var или 500).
-fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Vec<String>, Vec<String>), String> {
+fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off: bool) -> Result<(Vec<String>, Vec<String>), String> {
     // Plan 57.D.1: PerfTimer wraps вокруг каждого pass. Markers эмитятся
     // если NOVA_PERF_TIMER=1, accumulated если NOVA_PERF_TIMER_AGGREGATE=1.
     let mut module = {
@@ -2282,15 +2324,21 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Ve
             .map_err(|e| format!("import resolution: {}", e))?;
     }
 
-    {
+    // Plan 140 Ф.3 (D24 amend): capture ModuleEnv. `check_module` runs the
+    // VerificationPipeline (types/mod.rs `env.proven_contracts = report.proven`)
+    // on THIS build path — proven contracts must be fed to codegen below for
+    // zero-cost elision. Previously the env was discarded → proven set empty
+    // on the test-build path → proven contracts were NOT elided (R4: pipeline
+    // ran but proven was never wired to the emitter).
+    let module_env = {
         let _t = crate::perf_timer::PerfTimer::new("type-check");
         types::check_module(&module).map_err(|errs| {
             errs.iter()
                 .map(|d| d.render(src, &path.to_string_lossy()))
                 .collect::<Vec<_>>()
                 .join("\n")
-        })?;
-    }
+        })?
+    };
     // Plan 52 Ф.9: lints — ПОСЛЕ check_module (типы validated), ДО
     // desugar (lints видят MapLit-узлы). Возвращаются caller'у для
     // EXPECT_COMPILE_WARNING сверки.
@@ -2302,6 +2350,10 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Ve
             .collect()
     };
     // Ф.7.4 (Plan 33.6): verify-warnings (W2401/W2402) тоже dispatch'им в lint stream.
+    // Plan 140 Ф.3: proven contracts уже получены через `module_env` выше
+    // (check_module → VerificationPipeline). Этот вызов остаётся ТОЛЬКО ради
+    // verify-warnings, которые check_module глушит (types/mod.rs: `report.warnings`
+    // intentionally silent). Proven set здесь намеренно НЕ используется.
     {
         let _t = crate::perf_timer::PerfTimer::new("verify");
         let verify_report = crate::verify::verify_module(&module);
@@ -2379,6 +2431,16 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>) -> Result<(Ve
         if let Some(n) = mono_depth {
             emitter.set_mono_depth_limit(n);
         }
+        // Plan 140 Ф.2 (D24 amend): build-policy `--contracts=off` элидирует
+        // все контракт-проверки на codegen (legacy zero-cost). Default enforce.
+        emitter.set_contracts_off(contracts_off);
+        // Plan 140 Ф.3 (D24 amend): feed Z3/Trivial-proven contracts from the
+        // VerificationPipeline (run inside check_module above) so proven
+        // requires/ensures are elided at codegen (zero-cost). Without this the
+        // proven set is empty → every contract is runtime-checked even when
+        // statically proven. Безопасный degrade без Z3 (TrivialBackend proves
+        // a smaller class → больше runtime-checked, не unsafe).
+        emitter.set_proven_contracts(&module_env.proven_contracts);
         emitter.emit_module(&module)
             .map_err(|e| format!("codegen error: {}", e))?
     };
@@ -2448,6 +2510,10 @@ pub struct TestAllOpts<'a> {
     /// Propagated to every per-test TestBuildOpts so polymorphic-recursion
     /// guard уходит из hardcoded 500 в configurable CLI knob.
     pub mono_depth: Option<usize>,
+    /// Plan 140 Ф.2 (D24 amend): build-policy `--contracts=off` — элидировать
+    /// все контракт-проверки на codegen для всего прогона (legacy zero-cost).
+    /// Propagated to every per-test TestBuildOpts. Default `false` (enforce).
+    pub contracts_off: bool,
 }
 
 // ---------- Plan 26 Ф.13: graceful Ctrl+C ----------
@@ -3600,6 +3666,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             let retries = opts.retries;
             let gc_kind = opts.gc_kind;
             let mono_depth = opts.mono_depth;
+            let contracts_off = opts.contracts_off;
 
             s.spawn(move || loop {
                 if is_cancelled() { return; }
@@ -3621,6 +3688,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                     verbosity,
                     mono_depth,
                     maxprocs_budget,
+                    contracts_off,
                 };
                 // Plan 26 Ф.12: retry для transient AV/linker race fails.
                 // Exponential backoff: 100ms, 200ms, 400ms.
@@ -4202,7 +4270,7 @@ mod tests {
             return;
         }
         let src = std::fs::read_to_string(&nv_path).expect("read p0 fixture");
-        let result = codegen_to_c(&nv_path, &src, None);
+        let result = codegen_to_c(&nv_path, &src, None, false);
         assert!(result.is_ok(), "P3-B vtable dispatch: codegen должен успешно скомпилировать, но: {:?}", result.err());
     }
 }

@@ -457,6 +457,16 @@ pub struct FnDecl {
     /// которым нужно отличать compiler-generated методы от user-кода.
     /// Default `false` (backward-compat — все распарсенные fns не synthesized).
     pub compiler_generated: bool,
+    /// Plan 140 Ф.2 (D24 amend): `#unchecked` attribute — per-fn opt-out из
+    /// contract enforcement. Codegen НЕ эмитит ни одну контракт-проверку
+    /// (`requires`/`ensures`/`invariant`/`decreases`/`assert_static`/`assume`)
+    /// в теле этой функции — даже недоказанные Z3. Для проверенного hot-path,
+    /// где runtime-стоимость страховки недопустима; разработчик берёт
+    /// недоказанность под свою ответственность. Ортогонально `verify_mode`
+    /// (`#verify`/`#unverified` управляют статическим доказательством;
+    /// `#unchecked` — наличием runtime-страховки). Build-аналог — глобальный
+    /// `--contracts=off`. Default `false` (enforce-with-elision).
+    pub contracts_unchecked: bool,
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.

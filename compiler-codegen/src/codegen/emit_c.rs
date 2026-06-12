@@ -469,6 +469,19 @@ pub struct CEmitter {
     /// Codegen skip emit для runtime check'ов помеченных как proven —
     /// true zero-cost даже в debug.
     proven_contracts: std::collections::HashSet<(String, usize)>,
+    /// Plan 140 Ф.2 (D24 amend): build-level contract opt-out
+    /// (`nova build --contracts=off` / `nova-codegen ... --contracts=off`).
+    /// Когда `true` — codegen НЕ эмитит НИ ОДНУ контракт-проверку
+    /// (`requires`/`ensures`/`invariant`/`decreases`/`assert_static`/`assume`)
+    /// во всём модуле — глобально восстанавливает legacy zero-cost. Default
+    /// `false` (enforce-with-elision: недоказанные проверяются и в release).
+    contracts_off: bool,
+    /// Plan 140 Ф.2: per-fn `#unchecked` opt-out для тела ТЕКУЩЕЙ функции.
+    /// Устанавливается на входе в emit fn-body из `f.contracts_unchecked`,
+    /// восстанавливается на выходе (parallel to `in_realtime`). Используется
+    /// body-уровневыми эмиттерами (`assert_static`/`assume`/record-invariant
+    /// при конструировании), которые не имеют прямого доступа к `&FnDecl`.
+    contracts_unchecked_fn: bool,
     /// Maps array variable name → actual element C type (e.g. "Nova_Box*").
     /// The array always uses nova_int storage but elements may be pointers to records.
     array_element_types: HashMap<String, String>,
@@ -1034,6 +1047,8 @@ impl CEmitter {
             contracts_post_label: None,
             ghost_vars: std::collections::HashSet::new(),
             proven_contracts: std::collections::HashSet::new(),
+            contracts_off: false,
+            contracts_unchecked_fn: false,
             record_invariants: HashMap::new(),
             array_element_types: HashMap::new(),
             option_inner_types: HashMap::new(),
@@ -1348,6 +1363,23 @@ impl CEmitter {
         for (name, span) in proven {
             self.proven_contracts.insert((name.clone(), span.start));
         }
+    }
+
+    /// Plan 140 Ф.2 (D24 amend): build-level contract opt-out
+    /// (`--contracts=off`). Когда `true` — codegen элидирует ВСЕ контракт-
+    /// проверки во всём модуле (глобальный legacy zero-cost). Default `false`
+    /// (`--contracts=enforce`: недоказанные проверяются и в release).
+    pub fn set_contracts_off(&mut self, off: bool) {
+        self.contracts_off = off;
+    }
+
+    /// Plan 140 Ф.2: контракт-проверки элидируются для тела текущей fn?
+    /// `true` если build-policy `--contracts=off` ИЛИ per-fn `#unchecked`
+    /// (через `contracts_unchecked_fn`, выставленный на входе в fn-body).
+    /// Используется body-уровневыми эмиттерами (`assert_static`/`assume`/
+    /// record-invariant), у которых нет прямого `&FnDecl`.
+    fn contracts_elided_here(&self) -> bool {
+        self.contracts_off || self.contracts_unchecked_fn
     }
 
     /// Get the Span of a statement (where in source it came from).
@@ -14081,13 +14113,17 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     /// `result` должна быть зарегистрирована в var_types и быть
     /// доступной как обычная C-переменная `_nova_result`.
     fn emit_ensures_checks(&mut self, f: &FnDecl) -> Result<(), String> {
-        self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
+        // Plan 140 Ф.1 (D24 amend): эмитим безусловно — НЕ под
+        // `#ifdef NOVA_CONTRACTS_RUNTIME`. Недоказанные ensures проверяются
+        // и в release (enforce-with-elision); Z3-proven уже элидируются ниже
+        // через `continue` на codegen (zero-cost). Build-opt-out (`--contracts=off`)
+        // и per-fn `#unchecked` — Ф.2.
         // Подставляем `result` → `_nova_result` при emit'е выражения.
         // emit_expr на Ident("result") вернёт "result" (она в var_types),
         // нам нужно "_nova_result". Используем post-process подмену.
         for c in &f.contracts {
             if matches!(c.kind, ContractKind::Ensures) {
-                // Plan 33.3 Ф.9.9: skip emit для proven контрактов.
+                // Plan 33.3 Ф.9.9: skip emit для proven контрактов (zero-cost).
                 if self.proven_contracts.contains(&(f.name.clone(), c.span.start)) {
                     continue;
                 }
@@ -14107,7 +14143,6 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 ));
             }
         }
-        self.line("#endif");
         Ok(())
     }
 
@@ -14418,19 +14453,28 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         let saved_expected = self.expected_record_type.clone();
         self.expected_record_type = Self::struct_name_from_c_type(&ret);
         // Plan 33.1 Ф.4 (D24): emit contracts.
-        // Только в debug сборке (контролируется через NOVA_CONTRACTS_RUNTIME
-        // macro). В release контракты со статусом @unverified / Default
-        // в 33.1 (без SMT) — стираются. Для @must_verify в 33.1 без SMT
-        // ошибки не выдаём (отложено до Ф.3); поведение runtime-fallback'а
-        // на debug — стандартное.
+        // Plan 140 Ф.1 (D24 amend): «enforce-with-elision» — недоказанные
+        // контракты эмитятся БЕЗУСЛОВНО (debug И release), Z3-proven
+        // элидируются на codegen через `continue` (zero-cost). Прежняя
+        // модель «в release стираются» (NDEBUG/assert) — retracted.
+        // Plan 140 Ф.2 (D24 amend): per-fn `#unchecked` ИЛИ build-policy
+        // `--contracts=off` элидируют ВСЕ контракт-проверки в теле этой fn
+        // (даже недоказанные). `contracts_elided_fn` фолдится в `has_contracts`
+        // (requires/ensures) и в decreases-guard ниже. Также выставляется как
+        // `self.contracts_unchecked_fn` на входе в fn-body для body-уровневых
+        // эмиттеров (assert_static/assume/record-invariant).
+        let contracts_elided_fn = self.contracts_off || f.contracts_unchecked;
         let has_contracts = !f.contracts.is_empty()
-            && !matches!(f.verify_mode, VerifyMode::Unverified);
+            && !matches!(f.verify_mode, VerifyMode::Unverified)
+            && !contracts_elided_fn;
         // Plan 33.3 Ф.9.4 (D24): `decreases <expr>` для fn → recursion-depth
         // guard. Каждый entry в fn инкрементит thread-local counter; если
         // превышает порог (10000) — runtime panic. Это catches infinite
         // recursion в debug. Полный well-founded check (m_new < m_old) —
         // ждёт SMT (Z3 backend).
-        let _depth_var = if f.decreases.is_some() {
+        // Plan 140 Ф.2: `#unchecked` / `--contracts=off` элидируют и
+        // decreases recursion-guard (контракт-проверка как и прочие).
+        let _depth_var = if f.decreases.is_some() && !contracts_elided_fn {
             // Sanitize fn name для C-identifier.
             let san: String = f.name.chars()
                 .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
@@ -14440,25 +14484,27 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             // Делаем через separate preamble line — emit'им сюда не можем,
             // используем static local внутри fn (init=0, sticky между calls).
             self.line(&format!("static int {} = 0;", var));
-            self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
+            // Plan 140 Ф.1 (D24 amend): эмитим безусловно (enforce-in-release).
             // Plan 55 Ф.7: lower limit to 10000 чтобы trigger ДО stack
             // overflow (frame ~1KB debug × 1M limit > stack 1MB — никогда
             // не triggered, был latent bug). 10K — safe (stack ~10MB позволяет).
             self.line(&format!("if ({}++ > 10000) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"decreases recursion depth exceeded 10000\", \"<decreases>\", {});",
                 var, f.name, f.span.start));
-            self.line("#endif");
             Some(var)
         } else {
             None
         };
         // emit requires checks
+        // Plan 140 Ф.1 (D24 amend): эмитим безусловно — НЕ под
+        // `#ifdef NOVA_CONTRACTS_RUNTIME`. Недоказанные requires проверяются
+        // и в release (enforce-with-elision); Z3-proven элидируются ниже через
+        // `continue` (zero-cost). Build-opt-out / per-fn `#unchecked` — Ф.2.
         if has_contracts {
-            self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
             for c in &f.contracts {
                 if matches!(c.kind, ContractKind::Requires) {
                     // Plan 33.3 Ф.9.9: skip emit для proven контрактов
-                    // (true zero-cost даже в debug). proven_contracts —
-                    // set от VerificationPipeline. Key: (fn_name, span.start).
+                    // (true zero-cost). proven_contracts — set от
+                    // VerificationPipeline. Key: (fn_name, span.start).
                     if self.proven_contracts.contains(&(f.name.clone(), c.span.start)) {
                         continue;
                     }
@@ -14475,7 +14521,6 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     ));
                 }
             }
-            self.line("#endif");
         }
         // Plan 113 (D172): set in_realtime / in_blocking for fn bodies so enforcement
         // checks fire correctly inside #realtime fn / #blocking fn bodies.
@@ -14487,6 +14532,12 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         if f.blocking_attr {
             self.in_blocking = true;
         }
+        // Plan 140 Ф.2 (D24 amend): expose per-fn contract opt-out к
+        // body-уровневым эмиттерам (assert_static/assume/record-invariant).
+        // `contracts_elided_fn` = build `--contracts=off` ИЛИ per-fn
+        // `#unchecked`. Restored после fn-body (parallel to in_realtime).
+        let prev_contracts_unchecked_fn = self.contracts_unchecked_fn;
+        self.contracts_unchecked_fn = contracts_elided_fn;
         // Plan 127 Ф.3: track current fn-id for escape-result lookup при
         // emit_let / emit_record_lit. Format must match
         // `escape_analyze::fn_id` (free fn → name; method → `<recv>::<name>`).
@@ -14563,6 +14614,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // Plan 113 (D172): restore in_realtime / in_blocking after fn body.
         self.in_realtime = prev_in_realtime;
         self.in_blocking = prev_in_blocking;
+        // Plan 140 Ф.2: restore per-fn contract opt-out flag after fn body.
+        self.contracts_unchecked_fn = prev_contracts_unchecked_fn;
         // Plan 127 Ф.3: restore prev fn-id + promoted-locals after fn body.
         self.current_fn_id = prev_fn_id;
         self.promoted_value_record_locals = prev_promoted_locals;
@@ -16499,41 +16552,48 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
             }
             // Plan 33.2 Ф.8 (D24): `assert_static <expr>` — intermediate
             // proof obligation. Сейчас (без full SMT body-encoding)
-            // эмитим как runtime check в debug. В release без
-            // NOVA_CONTRACTS_RUNTIME — стирается препроцессором.
+            // эмитим как runtime check. Plan 140 Ф.1 (D24 amend): проверка
+            // остаётся и в release (enforce-with-elision) — НЕ под
+            // `#ifdef NOVA_CONTRACTS_RUNTIME`.
             Stmt::AssertStatic { expr, span } => {
                 // Plan 33.3 Ф.9.1: skip runtime check если expr читает
                 // ghost-var (ghost эрейзится в codegen; SMT-verify в Z3
                 // будет работать). assert_static с ghost — pure spec-level.
-                if Self::expr_uses_ghost(expr, &self.ghost_vars) {
-                    // No-op в codegen — assert_static с ghost — spec-only.
+                // Plan 140 Ф.2: `#unchecked` / `--contracts=off` элидируют
+                // assert_static как и прочие контракт-проверки.
+                if Self::expr_uses_ghost(expr, &self.ghost_vars)
+                    || self.contracts_elided_here()
+                {
+                    // No-op в codegen — assert_static с ghost / под opt-out.
                 } else {
                     let v = self.emit_expr(expr)?;
                     let src = Self::expr_to_display(expr);
-                    self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
                     self.line(&format!(
                         "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assert_static>\", \"{}\", \"<contract>\", {});",
                         v, Self::escape_c_str(&src), span.start
                     ));
-                    self.line("#endif");
                 }
             }
-            // Plan 33.3 (D24): `assume <expr>` — runtime check в debug
+            // Plan 33.3 (D24): `assume <expr>` — runtime check
             // (программист подтверждает что expr истинен; если нет —
-            // это bug в коде, не bug в верификации).
+            // это bug в коде, не bug в верификации). Plan 140 Ф.1
+            // (D24 amend): проверка остаётся и в release — НЕ под
+            // `#ifdef NOVA_CONTRACTS_RUNTIME`.
             Stmt::Assume { expr, span } => {
                 // Plan 33.3 Ф.9.1: skip если expr читает ghost-var.
-                if Self::expr_uses_ghost(expr, &self.ghost_vars) {
-                    // No-op в codegen — assume с ghost — spec-only.
+                // Plan 140 Ф.2: `#unchecked` / `--contracts=off` элидируют
+                // assume-check как и прочие контракт-проверки.
+                if Self::expr_uses_ghost(expr, &self.ghost_vars)
+                    || self.contracts_elided_here()
+                {
+                    // No-op в codegen — assume с ghost / под opt-out.
                 } else {
                     let v = self.emit_expr(expr)?;
                     let src = Self::expr_to_display(expr);
-                    self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
                     self.line(&format!(
                         "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assume>\", \"{}\", \"<contract>\", {});",
                         v, Self::escape_c_str(&src), span.start
                     ));
-                    self.line("#endif");
                 }
             }
             // Plan 33.5 Ф.4.1: `apply lemma_name(args)` — ghost statement,
@@ -17952,8 +18012,16 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                             // В bootstrap делаем макрос через define + undef.
                             let inv_src = Self::expr_to_display(inv_expr);
                             // Получаем поля типа.
+                            // Plan 140 Ф.2 (D24 amend): per-fn `#unchecked` /
+                            // build `--contracts=off` элидируют invariant-check
+                            // при конструировании record'а внутри opt-out fn.
+                            if self.contracts_elided_here() {
+                                continue;
+                            }
                             if let Some(fields_schema) = self.record_schemas.get(&struct_name).cloned() {
-                                self.line("#ifdef NOVA_CONTRACTS_RUNTIME");
+                                // Plan 140 Ф.1 (D24 amend): invariant-check
+                                // остаётся и в release (enforce-with-elision)
+                                // — НЕ под `#ifdef NOVA_CONTRACTS_RUNTIME`.
                                 self.line("{");
                                 // Decl shadow-locals для каждого поля → tmp->field.
                                 for (fname, ftyc) in &fields_schema {
@@ -17965,7 +18033,6 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                                     inv_c, struct_name, Self::escape_c_str(&inv_src), span.start
                                 ));
                                 self.line("}");
-                                self.line("#endif");
                             }
                         }
                     }

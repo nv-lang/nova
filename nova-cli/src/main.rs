@@ -392,6 +392,13 @@ enum Cmd {
         /// via env var NOVA_MONO_DEPTH.
         #[arg(long = "mono-depth", value_name = "N")]
         mono_depth: Option<usize>,
+        /// Plan 140 Ф.2 (D24 amend): contract build-policy. `enforce`
+        /// (default) — недоказанные контракты проверяются в runtime
+        /// (debug И release; fail-fast abort), Z3-proven элидируются.
+        /// `off` — все контракт-проверки элидируются глобально (legacy
+        /// zero-cost; недоказанность под ответственность разработчика).
+        #[arg(long = "contracts", value_parser = ["enforce", "off"], default_value = "enforce")]
+        contracts: String,
     },
     /// Run Nova tests from a directory or single file.
     ///
@@ -3769,10 +3776,15 @@ fn cmd_build(
     timeout_secs: u64,
     keep_artifacts: bool,
     mono_depth: Option<usize>,
+    contracts: &str,
 ) -> Result<()> {
     if timeout_secs == 0 {
         return Err(usage_err("--timeout must be >= 1 second"));
     }
+    // Plan 140 Ф.2 (D24 amend): contract build-policy. `off` → codegen
+    // элидирует ВСЕ контракт-проверки глобально (legacy zero-cost). Default
+    // `enforce` — недоказанные контракты проверяются (debug И release).
+    let contracts_off = contracts == "off";
     // Plan 36 R6: validate path semantics before canonicalize (better errors).
     // `nova build` принимает **только single file** (по дизайну — `-o output`
     // один binary, multi-source builds через imports внутри одного entry-point).
@@ -3843,6 +3855,7 @@ fn cmd_build(
                 &feats,
                 nova_codegen::imports::current_target_os(),
                 mono_depth,
+                contracts_off,
             )
         } else {
             None
@@ -3860,15 +3873,20 @@ fn cmd_build(
         }
         None => {
             // Cache miss — полный Rust-side пайплайн.
-            {
+            // Plan 140 Ф.3 (D24 amend): capture ModuleEnv. check_module runs the
+            // VerificationPipeline (env.proven_contracts = report.proven). On the
+            // `nova build` path the proven set MUST reach codegen below for
+            // zero-cost elision; previously it was discarded → proven empty →
+            // proven contracts were runtime-checked anyway (R4).
+            let build_env = {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("type-check");
                 nova_codegen::types::check_module(&module).map_err(|errs| {
                     let msgs: Vec<String> = errs.iter()
                         .map(|d| d.render(&src, &path_str))
                         .collect();
                     anyhow!("{}", msgs.join("\n"))
-                })?;
-            }
+                })?
+            };
             {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("effects-infer");
                 nova_codegen::types::infer_effects(&mut module);
@@ -3902,6 +3920,12 @@ fn cmd_build(
                 if let Some(n) = mono_depth {
                     emitter.set_mono_depth_limit(n);
                 }
+                // Plan 140 Ф.2 (D24 amend): apply build-policy `--contracts=off`.
+                emitter.set_contracts_off(contracts_off);
+                // Plan 140 Ф.3 (D24 amend): feed proven contracts from the
+                // VerificationPipeline (run in check_module above) so Z3/Trivial-
+                // proven requires/ensures are elided at codegen (zero-cost).
+                emitter.set_proven_contracts(&build_env.proven_contracts);
                 emitter.emit_module(&module)
                     .map_err(|e| anyhow!("codegen error: {}", e))?
             };
@@ -4171,6 +4195,9 @@ fn cmd_test(
         shuffle_seed,
         skip,
         mono_depth,
+        // Plan 140 Ф.2 (D24 amend): `nova test` enforce'ит контракты по
+        // умолчанию (тесты проверяют поведение enforce-with-elision).
+        contracts_off: false,
     };
 
     // Plan 57.D.1: optionally aggregate PerfTimer markers across all
@@ -4256,6 +4283,9 @@ fn cmd_test_build(
         // Plan 83.1 Ф.5: single-file run — один процесс, нет
         // oversubscription, бюджет не нужен.
         maxprocs_budget: None,
+        // Plan 140 Ф.2 (D24 amend): `nova test` enforce'ит контракты по
+        // умолчанию (тесты проверяют поведение enforce-with-elision).
+        contracts_off: false,
     };
 
     test_runner::install_cancel_handler();
@@ -5216,7 +5246,7 @@ fn run() -> ExitCode {
         }
         Cmd::DocQuery { json_file, query } => cmd_doc_query(&json_file, &query),
         Cmd::DocMcp { file, port } => cmd_doc_mcp(&file, port),
-        Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts, mono_depth } => cmd_build(
+        Cmd::Build { file, output, mode, toolchain, vcvars, clang, timeout, keep_artifacts, mono_depth, contracts } => cmd_build(
             &file,
             output.as_deref(),
             &mode,
@@ -5226,6 +5256,7 @@ fn run() -> ExitCode {
             timeout,
             keep_artifacts,
             mono_depth,
+            &contracts,
         ),
         Cmd::Test {
             path, filter, jobs, format, mode, toolchain, vcvars, clang, timeout,

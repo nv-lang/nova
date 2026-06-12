@@ -1,0 +1,39 @@
+// CONTRACTS enforce
+// EXPECT_STDOUT PROVEN_ELIDED_OK
+// EXPECT_EXIT_CODE 0
+//
+// Plan 140 Ф.3 (D24 amend), acceptance F2: Z3/Trivial-PROVEN contracts are
+// elided at codegen (zero-cost), even under default `--contracts=enforce`.
+//
+// `inc_nonneg` carries `requires x >= 0` and `ensures result >= 1`. With the
+// given body (`x + 1`) the postcondition is statically PROVABLE from the
+// precondition: x >= 0 ⟹ x + 1 >= 1. Both the TrivialBackend (linear-arith)
+// and Z3 discharge this VC, so the VerificationPipeline records it in
+// `proven_contracts`.
+//
+// Ф.3 wires that proven set from check_module into the codegen emitter on the
+// BUILD path (test-build / nova build / bench). Therefore the generated `.c`
+// must contain NO `nova_contract_violation` call for `inc_nonneg`'s ensures —
+// it is elided. The companion check `inspect_elision.sh` asserts the `.c` has
+// zero contract-violation calls for the proven ensures.
+//
+// This fixture is called with a value that SATISFIES the precondition (5), so
+// even if the contract were (incorrectly) still checked, it would pass; the
+// behavioural assertion is exit 0 + stdout. The STATIC assertion (proven ⟹
+// elided) is verified by inspecting the emitted `.c`.
+
+module plan140.t2_proven_elided
+
+fn inc_nonneg(x int) -> int
+    requires x >= 0
+    ensures result >= 1
+=> x + 1
+
+fn main() Io -> () {
+    ro y = inc_nonneg(5)
+    if y == 6 {
+        println("PROVEN_ELIDED_OK")
+    } else {
+        println("UNEXPECTED")
+    }
+}

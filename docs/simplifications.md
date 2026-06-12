@@ -39,6 +39,52 @@
   - **Ф.3 module-level RUNTIME `ro X = expr()` codegen** — pre-existing unimplemented gap (binding не
     lowered; checker корректно принимает, verified via `check`; runnable POS невозможен).
 - **Приоритет** — все остатки L/M, не блокируют (документированы в D-блоках + planned-backlog).
+### Plan 140 — Contracts enforced in release (Z3-proven elided, unproven checked) (2026-06-12, ✅ CLOSED Ф.0-Ф.5)
+
+- **Где** — `compiler-codegen/src/codegen/emit_c.rs` (сняты 6 `#ifdef NOVA_CONTRACTS_RUNTIME` обёрток +
+  `#unchecked`/`contracts_off` elision), `src/parser/mod.rs` + `src/ast/mod.rs` (`#unchecked` attr →
+  `FnDecl.contracts_unchecked`), `src/test_runner.rs` (proven-set wiring на build-путь + `// CONTRACTS`
+  directive), `src/main.rs` + `nova-cli/src/{main.rs,build_cache.rs,bench/run.rs}` (`--contracts` policy +
+  proven-set на всех emit-сайтах), `spec/decisions/09-tooling.md` (D24 amend), `spec/open-questions.md` (Q34),
+  `nova_tests/plan140/` (7 fixtures).
+- **Что было упущено (safety-gap)** — контракты `requires`/`ensures` (D24) **стирались в release
+  независимо от доказанности** (`test_runner.rs` `Mode::Release` не передавал `-DNOVA_CONTRACTS_RUNTIME=1`,
+  модель C `assert`/`NDEBUG`). Распруфленность Z3 учитывалась ОТДЕЛЬНО от стирания → страховка молча
+  снималась именно там, где статическая безопасность НЕ подтверждена (недоказанные = рискованные места) →
+  потенциальный silent UB/corruption.
+- **Решение** — «enforce-with-elision» (Dafny/Verus + Rust bounds-check): Z3-**proven** контракт
+  элидируется на codegen (zero-cost), **недоказанный** — runtime-проверка остаётся и в release
+  (`nova_contract_violation` → fail-fast abort), `#unchecked` (per-fn) / `--contracts=off` (build) — явный
+  opt-out. Ф.3 закрыл R4: `set_proven_contracts` доходил до codegen только на `nova-codegen compile`, не на
+  `nova build`/`test-build`/bench → элизии на build-пути не было; теперь захват `ModuleEnv` + вызов на всех
+  emit-сайтах.
+- **Что осознанно НЕ сделано / частичности (документировано)** —
+  (a) **Z3-статус:** компилятор собран `--features z3-backend` (vcpkg `libz3` скопирован в worktree
+  `vcpkg_installed`, untracked via `.git/info/exclude` — НЕ committed). Default-бэкенд остаётся `Trivial`
+  даже при скомпилированном Z3 (сохраняет детерминизм verify-suite Plan 33); полный Z3 — только при
+  `NOVA_SMT_BACKEND=z3`. Safe degrade без Z3 верифицирован (proven меньше → больше runtime-checks, никогда
+  не unsafe). НЕ упрощение — намеренный дизайн (graceful degrade — валидный путь).
+  (b) **violation = abort** (не panic-unwind) — Q34 §2, default fail-fast; recoverable panic-unwind отложен
+  `[M-140-contract-panic-unwind]` (P3).
+  (c) **гранулярность opt-out V1** = per-fn `#unchecked` + build `--contracts=off`; per-module/Eiffel-style
+  раздельная (pre/post/invariant) отложена `[M-140-contract-levels]` (P3).
+  (d) **`[M-140-invariant-release]`** — N/A: декларативных type-invariant'ов как языковой конструкции пока
+  нет; record-invariant (контракт-codegen) УЖЕ покрыт enforce-in-release (Ф.1, `#ifdef` снят наравне).
+- **Perf (Ф.5)** — микробенч `nova_tests/plan140/perf_contract_hot_loop.nv` (20M-loop, `sq_plus` с
+  нелинейным `ensures result >= x` — Z3 доказывает, Trivial нет), release/clang, best-of-N:
+  `--contracts=off` 0.191s (baseline) ≈ Z3-enforce 0.197s (POST **элидирован**, zero-cost) < Trivial-enforce
+  0.214s (POST **проверяется** каждую итерацию, ≈+12% на contract-saturated loop). Codegen-доказательство
+  (тот же `.c`): Z3 = 3 `nova_contract_violation` (PRE-only), Trivial = 4 (+POST `result >= x`), off = 0.
+  PRE (caller-obligation) никогда не в `report.proven` → всегда эмитится. Overhead скейлится с долей
+  runtime-проверки в теле — в реальном коде много меньше микробенч-12%.
+- **Доказательства** — `nova_tests/plan140/` 7/7 PASS release (Z3 и Trivial): t1 (unproven requires abort),
+  t2 (proven ensures elided), t3 (ensures abort), t4 (`#unchecked` no-abort), t5 (`--contracts=off` no-abort),
+  t6 (no-Z3 degrade abort), perf_contract_hot_loop. **0 регрессий** (F7): `nova_tests/contracts` 295/0/11
+  release (Z3), 250/0/56 (Trivial) — идентично baseline. Acceptance F1-F7 все met (см. plan-doc STATUS).
+- **Коммиты** — `b058fb53` (Ф.0 D24 amend + Q34), `7abfc491` (Ф.1 release-emission), `52b527f2` (Ф.2
+  `#unchecked` + policy), `98add912` (Ф.3 proven-set wiring), `31332a41` (Ф.4 release-fixtures), Ф.5
+  (perf + docs/close — этот коммит). Ветка `plan-140`, worktree `nova-p140`, НЕ merged.
+- **Приоритет** — L (закрыто; остаются 3 P3 deferred-маркера + 1 P2-READY ungated bounds-as-contract).
 
 ---
 
