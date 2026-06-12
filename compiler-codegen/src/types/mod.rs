@@ -6270,6 +6270,34 @@ impl<'a> TypeCheckCtx<'a> {
                 let root_view_is_mut_type = Self::assign_root_ident(obj)
                     .and_then(|root| scope.get(root))
                     .map_or(false, |t| t.is_mut());
+                // **Plan 147 Ф.3 (D246, R2-split MIRROR):** an EXPLICIT `ro T`
+                // content-view (L2) on the binding FREEZES the owned-graph even
+                // under a `mut` L1 binding — `mut r ro Point` permits `r = X`
+                // (reassign ✅, L1) but forbids `r.x = v` (content ❌, L2). This
+                // is the symmetric counterpart of `root_view_is_mut_type`:
+                // L2 content-view dominates field-writes independently of L1.
+                // The freeze is along the owned-graph only — a `*` deref is a
+                // separate target arm (L3 `pointee_is_writable`), so the L2
+                // wall-at-`*` (P4) is respected. The bare `ro r` freeze (P7) is
+                // handled by `is_through_ro_binding` below; this catches the
+                // mut-binding-with-ro-type-view case it cannot see.
+                let root_view_is_ro_type = Self::assign_root_ident(obj)
+                    .and_then(|root| scope.get(root))
+                    .map_or(false, |t| t.is_readonly());
+                if root_view_is_ro_type {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_READONLY_FIELD] cannot mutate `{}` through a `ro` \
+                             content-view binding (L2 freeze — `ro T` type-view \
+                             dominates field-writes even under a `mut` binding; \
+                             Plan 147 / D246 R2-split). Hint: drop the `ro` type \
+                             modifier (`mut name Point`) if content-mutation is needed.",
+                            field_name
+                        ),
+                        target.span,
+                    ));
+                    return;
+                }
                 // Plan 124.8 (D175 amend): binding dominates — если корень
                 // path = Ident бинд'енный через `ro`, любой write блокируется
                 // даже если field имеет `mut` модификатор. Rust-style правило:
