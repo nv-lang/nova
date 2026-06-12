@@ -7535,12 +7535,13 @@ footgun, без нового синтаксиса. Прецедент: Rust/C++ 
 **(a) hard error** для V1 (дёшево, закрывает footgun, без нового синтаксиса);
 **(b) chained** — отдельным предложением, если будет спрос (ergonomics). НЕ (c).
 
-### Решение (2026-06-13, design-workflow + adversarial-judge)
-**→ [Plan 150](../docs/plans/150-chained-comparison-relational-safety.md): hard-error-plus-chained,
-фазированно.** Ф.0-Ф.1 = hard-error + Rust-grade диагностика (`E_CMP_CHAIN_UNSUPPORTED` +
-`E_RELATIONAL_OPERAND_NOT_ORDERED`) = peer-parity, shippable сам по себе; Ф.2 = настоящий chaining
-(single-eval temps + short-circuit) = эргономика Python. Итог: безопасность+диагностика Rust ПЛЮС
-эргономика Python. Q35 закроется при landing Plan 150.
+### Решение автора (2026-06-13, после design-workflow + adversarial-judge)
+**→ [Plan 150](../docs/plans/150-chained-comparison-relational-safety.md): вариант (a) hard-error.
+Chained comparison ОТКЛОНЁН** — как Go/Rust/Kotlin/Java/Swift (только Python чейнит; `a <= b && b < c`
+явно, без нового синтаксиса). `a OP1 b OP2 c` → `E_CMP_CHAIN_UNSUPPORTED` + machine-applicable fix-it
+`a OP1 b && b OP2 c` (Rust-grade). `bool`/`unit` как операнд `<`/`<=`/`>`/`>=` → `E_RELATIONAL_OPERAND_NOT_ORDERED`
+(`==`/`!=` на bool — легальны). Канонная форма диапазона = `&&`. Q35 закроется при landing Plan 150.
+Если в будущем будет спрос на chaining — отдельное предложение (не сейчас).
 
 ### Связанное
 - `[M-comparison-bool-operand-or-chaining]` (backlog, home Plan 150) — реализация.
