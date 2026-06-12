@@ -1,10 +1,11 @@
 // Plan 118 / 138.5 D216 — typed pointer family basic example (final model).
 //
 // Pointer TYPE carries pointee-mutability only, written POSTFIX (after `*`):
-//   *T          — pointer to readonly T (default canonical; ≡ `*ro T`)
-//   *ro T       — pointer to readonly T (explicit; identical to `*T`)
-//   *mut T      — pointer to mutable T (deref-store allowed)
+//   *T          — pointer to readonly T (canonical; `*T ≡ *ro T` universally)
+//   *mut T      — pointer to mutable T (deref-store allowed; the only opt-in)
 //   *unsafe T   — pointer к possibly-uninit T (MaybeUninit semantic)
+// An explicit `*ro T` is a HARD ERROR E_REDUNDANT_POINTER_RO (Plan 147 / D246;
+// the bare `*T` already IS the ro-pointee canon — fix-it: drop the `ro`).
 //
 // Reassignability of the pointer variable itself (can you do `p = other`)
 // is BINDING, not type: `let p` = fixed, `mut p` = reassignable (D36) —
@@ -62,7 +63,7 @@ test "typed pointer family — declarations parse + type-check" {
 }
 
 test "FFI / nullable / uninit pointer forms — declarations parse" {
-    // Option[*T] (nullable), *ro T (ro pointee), *unsafe T (uninit pointee)
+    // Option[*T] (nullable), *T (ro pointee canon), *unsafe T (uninit pointee)
     // declarations exercise the parser + type-checker. Runtime semantics
     // covered в Plan 118 Ф.4.
     assert(1 == 1)

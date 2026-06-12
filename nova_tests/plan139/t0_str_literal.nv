@@ -1,5 +1,5 @@
 // Plan 139 Ф.0 — A0.1/A0.4: str literal lowers to the value-record
-// `{ ptr *ro u8, len int }` (C ABI image `nova_str`, sizeof 16, .len = bytes).
+// `{ ptr *u8, len int }` (C ABI image `nova_str`, sizeof 16, .len = bytes).
 module plan139.t0_str_literal
 
 test "str literal len is byte count (D26)" {

@@ -1,7 +1,7 @@
 // Plan 139 Ф.6 NEG (behavioral) — interning must NOT introduce an aliasing
 // bug. When the same literal "shared" is interned to one rodata buffer and
 // used in many bindings, no operation on one binding may corrupt another:
-// str is immutable (*ro u8 buffer), so there is NO write path through the
+// str is immutable (*u8 ro-pointee buffer), so there is NO write path through the
 // shared pointer. This fixture proves the ABSENCE of an aliasing bug under
 // sharing (R14): all occurrences observe identical, unchanging bytes, and
 // derived strings (to_upper etc.) allocate fresh buffers without touching
@@ -13,7 +13,7 @@ test "shared interned buffer is never mutated through any binding" {
     ro b = "shared"
     ro c = "shared"
     // Derive a new string from `a` — must allocate a fresh buffer, never
-    // write through the shared interned `*ro u8`.
+    // write through the shared interned `*u8` ro-pointee.
     ro upper = a.to_upper()
     assert(upper == "SHARED", "to_upper produces new buffer")
     // The interned occurrences are untouched by the derivation above.

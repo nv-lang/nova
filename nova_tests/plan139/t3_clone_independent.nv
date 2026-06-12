@@ -1,4 +1,4 @@
-// Plan 139 Ф.3 — clone = shallow 16-byte handle copy over an immutable (*ro u8)
+// Plan 139 Ф.3 — clone = shallow 16-byte handle copy over an immutable (*u8 ro-pointee)
 // shared buffer. Because the buffer is immutable, the clone stays valid
 // independently of the source binding; no deep copy needed.
 module plan139.t3_clone_independent
