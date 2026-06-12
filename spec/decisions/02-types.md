@@ -30,7 +30,7 @@
 | [D181](#d181-array-methods----fluent-mut-chain--slice-syntax) | Array methods — `-> @` fluent mut chain + slice syntax | active |
 | [D182](#d182-self-в-return-type-static-methods--required-form-для-parametric-types) | `Self` в return-type static methods — required form для parametric types | active |
 | [D183](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) | Canonical comparison protocols + default method bodies (Plan 91.8a) | active |
-| ~~D245~~ | Pointer mutability — running-current flip-scan (Plan 147; **RETRACTED 2026-06-12** → D246) | retracted |
+| ~~flip-scan-draft~~ | Pointer mutability — running-current flip-scan (Plan 147; **RETRACTED 2026-06-12** → D246) | retracted |
 | [D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee) | Три оси мутабельности (L1 binding / L2 view / L3 pointee); restores `*T ≡ *ro T` universally; `E_REDUNDANT_POINTER_RO` (Plan 147) | active |
 
 ---
@@ -2365,7 +2365,7 @@ Bootstrap-ограничения:
 > ⚠️ **D32 align (Plan 138.5; amend Plan 147 D246)** — мутируемость в указательном
 > типе — это **L3 pointee** (target), из ТИПА позиционно-независимо: `*mut T` =
 > writable target, `*T` = ro-pointee (`*T ≡ *ro T` УНИВЕРСАЛЬНО; pointee-mut НЕ
-> наследуется от binding — flip-scan D245 отклонён). Перепривязываемость самого
+> наследуется от binding — flip-scan-draft отклонён). Перепривязываемость самого
 > указателя — это **L1 binding** (`ro`/`mut`), как у любого параметра/переменной
 > по D32/D36, **НЕ часть типа** и НЕ влияет на pointee. Prefix-модификатор перед
 > `*` (`mut * T`) запрещён
@@ -7500,7 +7500,7 @@ Plan 118 family scope:
 ### §1. `*T` family типов
 
 > **✅ FINAL — три оси мутабельности (Plan 147 D246, 2026-06-12):** flip-scan
-> (D245) **ОТКЛОНЁН** adversarial-критикой (`*T` контекстно-зависим → тип не
+> (flip-scan-draft) **ОТКЛОНЁН** adversarial-критикой (`*T` контекстно-зависим → тип не
 > самодостаточен). FINAL = **L3 pointee-capability из ТИПА, позиционно-независимо**
 > ([D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee) ниже).
 > **Восстановлено `*T ≡ *ro T` УНИВЕРСАЛЬНО** (во всех позициях:
@@ -7559,7 +7559,7 @@ other_ptr`) — и больше **ничего** про pointee. L3 pointee-capa
 | `ro p *mut T`  | ❌ фиксирован | ✅ pointee mut | `p = …`❌, `*p = …`✅ |
 | `ro p *ro T`   | — | — | ❌ `E_REDUNDANT_POINTER_RO` (use `ro p *T`) |
 
-**`*T ≡ *ro T`** (восстановлено D216 §V2.6; D245 flip-scan отклонён): pointee-mut
+**`*T ≡ *ro T`** (восстановлено D216 §V2.6; flip-scan-draft отклонён): pointee-mut
 задаётся **только** через `*mut T`; `*ro T` избыточен → `E_REDUNDANT_POINTER_RO`.
 Reassignability указателя — L1 binding (`ro`/`mut`, D36), независима от L3.
 
@@ -8429,7 +8429,7 @@ deref в `unsafe {}`). Это единственная nullable-форма; от
 ### §V2.6 — backward compatibility
 
 > **✅ RESTORED (Plan 147 D246, 2026-06-12):** утверждение «`*T ≡ *ro T`»
-> (always-ro pointee) **восстановлено** — D245 flip-scan (`*T` наследует
+> (always-ro pointee) **восстановлено** — flip-scan-draft (`*T` наследует
 > binding-`current`) **ОТКЛОНЁН** (тип не самодостаточен). Под
 > [D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee) pointee-mut
 > задаётся **только типом** (`*mut T`), позиционно-независимо. Поэтому `mut p *mut T`
@@ -8479,7 +8479,7 @@ deref в `unsafe {}`). Это единственная nullable-форма; от
   subsumed `unsafe T`)
 - `[M-118.5-npo-recalculation]` — NPO теперь универсальный (§V2.4 FINAL — все `*…`
   non-null → 8 байт); recalculation сводится к «всегда NPO для pointer-inner»
-- **three-axis (Plan 147 D246, supersedes D245 flip-scan):** `*T ≡ *ro T`
+- **three-axis (Plan 147 D246, supersedes flip-scan-draft):** `*T ≡ *ro T`
   **восстановлено** УНИВЕРСАЛЬНО; pointee-mut из типа (`*mut T`), не от binding;
   `*ro T` → `E_REDUNDANT_POINTER_RO`. См.
   [D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee).
@@ -8508,7 +8508,7 @@ pointer-mut в типе vs pointee-mut), особенно в return-позици
 
 ---
 
-## ~~D245~~. Указатели: running-current flip-scan модель (**RETRACTED**)
+## ~~flip-scan-draft~~. Указатели: running-current flip-scan модель (**RETRACTED**)
 
 > **Status:** ❌ **RETRACTED 2026-06-12 (Plan 147 Ф.1).** Черновик flip-scan
 > (commit `befe92c`, SPEC-ONLY — кода никогда не было) **ОТКЛОНЁН** adversarial-
@@ -8520,7 +8520,7 @@ pointer-mut в типе vs pointee-mut), особенно в return-позици
 > [**D246 — три оси мутабельности**](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee).
 > `*T ≡ *ro T` восстановлено **универсально**. Ошибка `E_REDUNDANT_POINTER_MODIFIER`
 > (была бы flip-scan-only) **никогда не реализовывалась**; под D246 заменена на
-> `E_REDUNDANT_POINTER_RO` (`*ro T` → fix-it `*T`). Всё содержимое D245 ниже
+> `E_REDUNDANT_POINTER_RO` (`*ro T` → fix-it `*T`). Всё содержимое flip-scan-draft ниже
 > удалено как недействительное; оставлен только этот retract-баннер для якоря ссылок.
 
 ---
@@ -8529,7 +8529,7 @@ pointer-mut в типе vs pointee-mut), особенно в return-позици
 
 > **Status:** 🆕 SPEC LANDED 2026-06-12 (Plan 147 Ф.1). Реализация — [Plan
 > 147](../../docs/plans/147-pointer-mut-flip-scan-model.md) (Ф.2 parser / Ф.3
-> checker / Ф.4 migration / Ф.5 tests). **Supersedes** D245 (flip-scan, отклонён).
+> checker / Ф.4 migration / Ф.5 tests). **Supersedes** flip-scan-draft (, отклонён).
 > **Восстанавливает** D216 §V2.6 «`*T ≡ *ro T`». **Источник:** 2 design-workflow
 > (critique `wkx3dytr1`, value-side `wlqgc2nyk`, synthesis `w9nktq8x1`) + ~15
 > раундов ревью с пользователем. **Гейтит** Plan 139 `[M-139-f0-lang-item-decl]`
@@ -8551,7 +8551,7 @@ pointer-mut в типе vs pointee-mut), особенно в return-позици
 `*`**; за указателем — только L3 из типа. Soundness в GC (нет borrow-checker,
 есть aliasing): `ro` = «**это имя/путь** не пишет», НЕ «объект заморожен».
 
-**Отмена flip-scan (D245):** `*T` **НЕ наследует** binding-`current`. `*T ≡ *ro T`
+**Отмена flip-scan (flip-scan-draft):** `*T` **НЕ наследует** binding-`current`. `*T ≡ *ro T`
 **во всех позициях** (param/return/generic/alias/cast/field/local). Pointee-mut —
 **только** через явный `*mut T`.
 
@@ -8651,7 +8651,7 @@ co-handle'ам; `ro` = это имя не пишет).
 
 ### Cross-amend impact
 
-- **D216 §V2.6** — «`*T ≡ *ro T`» (always-ro pointee) **RESTORED** (D245 retract).
+- **D216 §V2.6** — «`*T ≡ *ro T`» (always-ro pointee) **RESTORED** (flip-scan-draft retract).
 - **D33** (binding propagation) — L1 ось; не propagates в L3 (стоп на `*`, P4).
 - **D36** (binding readonly default) — L1 binding = reassignability, **только**;
   НЕ задаёт pointee-capability (L3 из типа).
@@ -8677,7 +8677,7 @@ co-handle'ам; `ro` = это имя не пишет).
 oracle A-E (~20 форм): pos компилируются, neg дают `E_REDUNDANT_POINTER_RO` /
 `E_POINTER_PREFIX_MODIFIER` / `E_READONLY_COERCE` / `E_POINTER_RO_ASSIGN`; A2 —
 `*T ≡ *ro T` ВЕЗДЕ (позиционные фикстуры); A3 — L2 freeze транзитивен + СТЕНА на
-`*` (vr с `*mut`-полем); A4 — split + return-coercion 4 случая; A5 — D245
+`*` (vr с `*mut`-полем); A4 — split + return-coercion 4 случая; A5 — flip-scan-draft
 retracted, pointer-таблица + str переписаны; A6 — 0 регрессий pointer-dirs.
 
 ---
@@ -10110,7 +10110,7 @@ Named/Array/Tuple/Func boundaries). If found, emit E_MODIFIER_ORDER.
 > запрета prefix перед `*` (`E_POINTER_PREFIX_MODIFIER`, §1) **outer-модификатора
 > над Pointer не существует** → пропагировать нечего → правило **отозвано**.
 
-> **⚠️ FINAL amend (Plan 147 D246, 2026-06-12; supersedes D245 flip-scan):**
+> **⚠️ FINAL amend (Plan 147 D246, 2026-06-12; supersedes flip-scan-draft):**
 > «никакого наследования нет» — **подтверждено**. Под три-осевой моделью (D246)
 > bare `*T` = pointee **ro** (`*T ≡ *ro T`) во ВСЕХ позициях; pointee-mut НЕ
 > наследуется от binding. Только `*mut T` пишется явно для mut-pointee; `*ro T` →
@@ -11301,7 +11301,7 @@ export type Vec[T] {
 }
 ```
 
-> **Pointer model note (Plan 147 D246, 2026-06-12; supersedes D245 flip-scan):**
+> **Pointer model note (Plan 147 D246, 2026-06-12; supersedes flip-scan-draft):**
 > `priv mut data *mut T` — writable buffer требует **явного** `*mut T` (L3
 > pointee-mut из типа). `mut data` (L1) даёт лишь reassignability поля; pointee-mut
 > НЕ наследуется от mut-binding. Прежний flip-scan-вариант `mut data *T` давал бы
