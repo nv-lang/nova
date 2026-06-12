@@ -7532,3 +7532,122 @@ A3.1.1-A3.1.5 met:
 
 `NOVA_FIELD_CACHE_PURE=0` → entire V3 + V3.1 disabled.
 
+---
+
+## D247. str-методы — миграция external-C → Nova-body + `Vec` cross-type мост (Plan 139.2)
+
+**Status:** ACTIVE (Plan 139.2, 2026-06-12). **Зависит от:**
+[D26](#d26-базовая-stdlib-и-prelude) (str lang-item value-record),
+[D232](02-types.md#d232-vect--nova-native-generic-growable-array) (Vec[T]),
+[D216](02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo)
+(typed-pointer арифметика), [D246](02-types.md#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee)
+(3 оси мутабельности, `*T ≡ *ro T`). **Дом:** Plan 139.2 (закрывает E4 PARTIAL из
+Plan 139.1). Этот блок — **umbrella** над per-фазовыми amend'ами в
+[02-types.md (D246, «Amend Plan 139.2 Ф.0+Ф.2/Ф.3»)](02-types.md#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee)
+и [D26 «Методы — Nova-body»](#d26-базовая-stdlib-и-prelude).
+
+### Решение
+
+После того как `str` стал **объявленным value-record lang-item'ом**
+(`type str value priv { ptr *u8, len int }`, Plan 139.1), его методы можно писать
+на **чистой Nova** в `std/runtime/string.nv` — больше нет нужды в external-C
+`nova_str_*` обёртках для логики, оперирующей байтами. Plan 139.2 мигрировал
+**9 из 10** str-методов из external-C в Nova-body; **только `@hash` остаётся C**
+(обоснованное security-исключение, см. ниже).
+
+### Ключевая переоценка privacy (исправляет пессимизм Plan 139.1 Ф.B)
+
+1. **Privacy у Nova — type-based, не module-based.** `priv_access_allowed_base`
+   (mod.rs) проверяет только `current_recv_type == tname`, БЕЗ проверки модуля.
+   `current_recv_type` ставится из receiver для ЛЮБОЙ функции с receiver. Значит
+   `fn str @method` (в `std/runtime/string.nv`, модуль `runtime.string`) имеет
+   receiver `str` ⇒ `current_recv_type == "str"` ⇒ **видит priv-поля** `@ptr`/
+   `@len` и **конструирует** `str { ptr: …, len: … }` в своём модуле. Прошлый
+   вывод «string.nv не может конструировать str» — ошибка.
+2. **View-машинерия уже была** (D144/D238): `Vec[T] @index(r Range) -> Self`
+   строит value-record sub-view через `unsafe`-арифметику над raw-ptr. «Конструкция
+   view из (ptr,len)» — не новый примитив.
+
+### Единственный cross-type мост — `Vec`
+
+str-метод НЕ видит priv-поля **Vec** (другой тип) — поэтому для `@as_bytes`/
+`from_bytes_*`/`@split` (которые передают `(ptr,len,cap)` между str и Vec)
+введены **публичные** Vec-методы (vec_owned.nv, прямой аналог `@index(Range)`):
+
+| Метод | Сигнатура | Роль |
+|-------|-----------|------|
+| `from_raw_parts` | `Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self` | строит `Vec` из сырого `(ptr,len,cap)` триплета; единственный sanctioned вход (priv-поля закрыты для чужих модулей) |
+| `as_ptr` | `Vec[T] @as_ptr() -> *T` / `mut @as_ptr() -> *mut T` | публичный data-ptr геттер (recv-mut overload отдаёт writable `*mut T`) |
+| `into_raw` | `Vec[T] consume @into_raw() -> *mut T` | инверс `from_raw_parts`: потребляет Vec-обёртку (D133), отдаёт writable raw-буфер для zero-copy reuse |
+
+Контракт `from_raw_parts`/`into_raw` — `unsafe`-обязательство **на call-site**:
+caller гарантирует liveness/init буфера. Входной `*T` (canonical ro-pointee,
+`*T ≡ *ro T`, D246) реинтерпретируется в `*mut T` поля через `unsafe { ptr as
+*mut T }` (только re-label L3 pointee-mut, без dereference; writable-ность —
+инвариант caller'а, ro-view биндится `ro` для enforce на L2).
+
+### Что разблокировало producer-формы
+
+- **`str { ptr, len }` record-lit codegen.** str ∈ `RUNTIME_DEFINED_TYPES`
+  skip-list (нет `NovaValue_str` schema) → generic record-lit падал в emit-null-stub
+  (`void*`→`nova_str` CC-FAIL). Спец-кейс `struct_name == "str"` в `emit_record_lit`
+  → C compound-literal `(nova_str){.ptr=(const uint8_t*)(…), .len=(int64_t)(…)}`.
+  Только str type-методы достигают (E_PRIV_FIELD_INIT гейтит внешних в checker'е).
+- **consume-обязательство `@from_bytes_unchecked_steal(consume bytes []u8)`** —
+  закрыто новым `Vec[T] consume @into_raw()` (Vec не consume-тип сам по себе).
+
+### Перечень (9/10 Nova-body)
+
+| Метод | Фаза | C-источник (retired) |
+|-------|------|----------------------|
+| `@as_bytes` | Ф.0 | `nova_str_as_bytes` |
+| `@len` | Ф.1 | `nova_str_byte_len` (теперь bare priv-field read `=> @len`, D117 carve-out) |
+| `@byte_at` | Ф.1 | `nova_str_byte_at` (bounds-check + `unsafe { @ptr[i] }`) |
+| `@split` | Ф.2 | `nova_str_split` (zero-copy sub-views `str{ptr:@ptr+off,len}`) |
+| `from_bytes_unchecked` | Ф.2 | C-перехват (alloc+copy+NUL D26 §3 через priv `str.alloc_copy`) |
+| `from_bytes_lossy` | Ф.2 | C-перехват (UTF-8-валидатор + U+FFFD) |
+| `from_bytes_unchecked_steal` | Ф.2 | C-перехват (zero-copy reuse при cap>len, иначе copy) |
+| `@concat` | Ф.3 | `nova_str_concat` (`[]u8.with_capacity`+push+`from_bytes_unchecked`) |
+| `@compare` | Ф.3 | `nova_str_compare` (byte-loop, length-aware tiebreak) |
+| **`@hash`** | **Ф.4 — остаётся C** | `nova_str_hash` (SipHash-1-3 + per-process random crypto-seed; **DoS-resistance**: перенос в Nova экспонировал бы seed = hash-flooding регрессия HashMap. **Постоянная обоснованная C-граница, security**) |
+
+Помимо Ф.0-Ф.4 в Nova-body уже были (Plan 139 Ф.1/Ф.2):
+`starts_with`/`ends_with`/`contains`/`find`/`rfind`/`char_at`/`char_len`/`trim`/
+`to_lower`/`to_upper`/`to_bytes`/`to_chars`.
+
+### Operator-lowering — option (b) (намеренный design-выбор, НЕ упрощение)
+
+Операторы `+`/`<`/`<=`/`>`/`>=`/`==`/`!=` над `nova_str` лоуэрятся ОТДЕЛЬНО,
+напрямую в C (`nova_str_concat`/`nova_str_lt`/…/`nova_str_eq`, BinOp-arm
+`lty == "nova_str"`), НЕ через method-dispatch. Прямые method-вызовы
+(`s.concat(t)`/`s.compare(t)`, Compare-протокол, `@plus`/`@replace`-body) идут в
+Nova-body. Причины: (1) perf — operator-формы горячие (string building, sort), C =
+один alloc+2×memcpy / один memcmp vs Nova push-loop с per-byte bounds-check;
+(2) ортогональность — BinOp codegen и method-dispatch независимы, чистое
+retirement требовало бы СОВМЕСТНОЙ миграции + perf-харнесс. Дубль (Nova-метод +
+малая inline C-fn оператора) приемлем. См. reframed
+`[M-139.1-operator-lowered-methods]`.
+
+### Acceptance (Plan 139.2 overall)
+
+- ✅ 9/10 str-методов Nova-body; `@hash` — обоснованно C (security).
+- ✅ `Vec[T].from_raw_parts` + data-ptr геттер `@as_ptr()` + `consume @into_raw()`
+  landed (cross-type мост).
+- ✅ pos+neg тесты зелёные через релизный nova: `plan139_2` **12/0**; 0 регрессий
+  (str 13/0, plan139 37/0, plan139_1 4/0, plan90 9/0, plan90_1 21/0; HashMap для
+  @hash зелёный).
+- ✅ spec/D/Q/doc обновлены; маркеры закрыты/reframed (`[M-139-f2-ptr-field-producers]`
+  закрыт; `[M-139.1-operator-lowered-methods]`/`[M-139.1-hash-irreducible-crypto-seed]`/
+  `[M-139.1-len-d117-method-only]` reframed/подтверждены).
+
+### Cross-refs
+
+- [D26](#d26-базовая-stdlib-и-prelude) — str value-record + «Методы — Nova-body».
+- [D232](02-types.md#d232-vect--nova-native-generic-growable-array) — Vec[T] +
+  `from_raw_parts`/`as_ptr`/`into_raw` bridge-методы (в Key methods table).
+- [D246](02-types.md#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee) —
+  3 оси мутабельности + per-фазовые amend'ы Plan 139.2 Ф.0+Ф.2/Ф.3.
+- [D117](03-syntax.md#d117) — size-accessor field-ban + Plan 139.2 Ф.1 self-field carve-out.
+- `std/runtime/string.nv` + `std/collections/vec_owned.nv` — реализация.
+- Plan 139.2 — дом-план.
+

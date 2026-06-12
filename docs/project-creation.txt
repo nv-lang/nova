@@ -36964,3 +36964,54 @@ plan137 16/0, plan91 2/0, protocols/comparison 6/0 — all identical to baseline
 plan60 1/5, plan96 19/4, str_builder 0/9, plan62 29/7, plan126_2 9/1, plan138_2
 15/3, plan91_8a 0/2, plan91_8a_2 (impl_verification RUN-FAIL) — FAIL sets
 byte-identical to baseline (all pre-existing on plan-138.1 base, NOT from F.3).
+
+Plan 139.2 F.4 — @hash justified C-exception (SipHash-1-3 + per-process seed)
+(branch plan-139.2, 2026-06-12)
+STATUS: F.4 done. @hash NOT migrated to Nova — confirmed-by-fact C boundary.
+FACT (nova_rt.h:265-343): str @hash = SipHash-1-3 (nova_siphash13) keyed by a
+per-process random seed (nova_hash_seed_k0/k1, init via getrandom/BCryptGenRandom)
+— NOT FNV-1a (stale comment fixed). Migrating to Nova would expose the seed and
+regress HashMap DoS / hash-flooding resistance. Stays `external fn str @hash()`.
+Fixed stale comment in std/runtime/string.nv ('FNV-1a' -> 'SipHash-1-3 + per-
+process random seed (DoS-resistant); irreducible C boundary — seed not exposed
+to the Nova side'). Reframed [M-139.1-hash-irreducible-crypto-seed] in
+backlog-followups.md -> CONFIRMED-BY-FACT permanent justified C boundary (security),
+not a migration TODO. HashMap/hash tests green: plan139 37/0, str 13/0,
+protocols/comparison 6/0, map_literals 28/1 (positive_const_map pre-existing).
+
+Plan 139.2 F.5 — finalization (docs + spec D247 + close) — 2026-06-12
+STATUS: Plan 139.2 CLOSED. All phases F.0-F.5 done on branch plan-139.2 (NOT
+merged). Umbrella result: 9/10 str methods Nova-body, @hash justified C (security).
+
+WHAT MIGRATED external-C -> Nova-body (per phase):
+- F.0: @as_bytes (PROOF-GATE; validated type-based privacy + Vec.from_raw_parts).
+- F.1: @len (bare priv-field read `=> @len`, D117 carve-out), @byte_at.
+- F.2: @split, from_bytes_unchecked, from_bytes_lossy, from_bytes_unchecked_steal.
+- F.3: @concat, @compare (operator-lowering stays C, option b).
+- F.4: @hash STAYS C (SipHash + per-process crypto-seed, DoS-resistance).
+
+CROSS-TYPE BRIDGE (vec_owned.nv): Vec[T].from_raw_parts(ptr,len,cap) +
+Vec[T] @as_ptr()/mut @as_ptr() (data-ptr getter) + Vec[T] consume @into_raw()
+(inverse of from_raw_parts; powers zero-copy from_bytes_unchecked_steal).
+str { ptr, len } record-lit lowered via emit_record_lit special case ->
+(nova_str){.ptr=...,.len=...} compound literal (str in RUNTIME_DEFINED_TYPES
+skip-list, no NovaValue_str schema).
+
+KEY REASSESSMENT (corrects Plan 139.1 F.B pessimism): privacy in Nova is
+TYPE-based, not module-based — priv_access_allowed_base checks only
+current_recv_type == tname (no module check). So a `fn str @method` in
+string.nv (module runtime.string) has receiver str => current_recv_type=="str"
+=> sees priv @ptr/@len and constructs str{...}. The prior conclusion
+"string.nv cannot construct str" was wrong.
+
+SPEC: new D247 (08-runtime.md) umbrella block — str-method external->Nova
+migration + Vec cross-type bridge; depends on D26/D232/D216/D246; references the
+per-phase amends in D246 (02-types.md) + D26 «Methods — Nova-body». D232 Key
+methods table updated with from_raw_parts/as_ptr/into_raw rows + cross-ref to D247.
+
+COMMITS: F.0 97171b50d20, F.1 118231408a7, F.2 2134a12306e, F.3 94ca26c09e6,
+F.4 82b4063452d, F.5 <this commit>.
+
+REGRESSION (RELEASE binary): 0 NEW FAIL. plan139_2 12/0, plan139 37/0,
+plan139_1 4/0, str 13/0, plan90 9/0, plan90_1 21/0 — all green, identical to
+the F.4 reported state.

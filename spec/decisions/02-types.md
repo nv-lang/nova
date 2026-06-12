@@ -11374,6 +11374,7 @@ export type Vec[T] {
 | `Vec[T].new()` | empty, no allocation (cap = 0) |
 | `Vec[T].with_capacity(n)` | empty, pre-allocated n slots |
 | `Vec[T].from(items []T)` | copy from built-in slice |
+| `Vec[T].from_raw_parts(ptr *T, len, cap)` | build from a raw `(ptr,len,cap)` triple (cross-type bridge, unsafe-obligated; D247) |
 
 ### Key methods
 
@@ -11401,6 +11402,8 @@ export type Vec[T] {
 | `first` | `@first() -> Option[T]` | First element |
 | `last` | `@last() -> Option[T]` | Last element |
 | `as_slice` | `@as_slice() -> []T` | Copy into built-in slice |
+| `as_ptr` | `@as_ptr() -> *T` / `mut @as_ptr() -> *mut T` | Raw data-buffer pointer; recv-mut overload yields writable `*mut T` (cross-type bridge getter, D247) |
+| `into_raw` | `consume @into_raw() -> *mut T` | Consume the Vec, surrender its buffer pointer (inverse of `from_raw_parts`; powers zero-copy `str.from_bytes_unchecked_steal`, D247) |
 | `iter` | `@iter() -> VecIter[T]` | Index-cursor iterator |
 | `clone` | `@clone() -> Vec[T]` | Deep copy (Clone) |
 | `equals` | `@equal(other Vec[T]) -> bool` | Element-wise equality |
@@ -11470,6 +11473,7 @@ int64-erasure.
 - [D216 §6](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — ptr arithmetic (`data + i` C-scaled).
 - [D226](#d226-signed-indexing-convention) — `int` for len/cap/index.
 - [D228](#d228-value-record-allocation-contract) — value-records are valid T (stored by value in buffer).
+- [D247](08-runtime.md#d247-str-методы--миграция-external-c--nova-body--vec-cross-type-мост-plan-1392) — `from_raw_parts`/`as_ptr`/`into_raw` cross-type bridge (Plan 139.2 str-method migration).
 - `std/collections/vec_owned.nv` — implementation.
 - Plan 131 — home plan.
 

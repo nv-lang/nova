@@ -35718,6 +35718,52 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   быстрее скопировать `target/libuv-cache/libuv.lib` + `nova_rt/libuv/*` из активного worktree, чем
   пере-билдить libuv (vcvars). НЕ `git stash` (repo-global, конкурентный nova-p138).
 
+## Plan 139.2 Ф.4 — @hash обоснованное C-исключение (НЕ мигрирован) — 2026-06-12
+- **STATUS:** Ф.4 ✅ documentation/audit-only (ни code, ни fixtures по критериям плана).
+- **ФАКТ (nova_rt.h:265-343):** `str @hash` = **SipHash-1-3** (`nova_siphash13`) с **per-process
+  random seed** (`nova_hash_seed_k0/k1`, init через `getrandom`/`BCryptGenRandom`) — **НЕ FNV-1a**
+  (устаревший комментарий string.nv исправлен). Перенос в Nova = экспонировать seed = **DoS/hash-
+  flooding регрессия HashMap**. Остаётся `external fn str @hash()`. **ПОСТОЯННАЯ обоснованная
+  C-граница (security)**, НЕ TODO/НЕ упрощение.
+- **Сделано:** (1) исправлен stale-комментарий в `std/runtime/string.nv` («FNV-1a» → «SipHash-1-3 +
+  per-process random seed (DoS-resistant); неустранимая C-граница — seed не экспонируется на Nova»);
+  декларация `@hash` нетронута. (2) reframe `[M-139.1-hash-irreducible-crypto-seed]` →
+  «🟢 CONFIRMED-BY-FACT». (3) HashMap/hash-тесты зелёные: plan139 37/0, str 13/0,
+  protocols/comparison 6/0, map_literals 28/1 (positive_const_map pre-existing, orthogonal).
+
+## Plan 139.2 Ф.5 — финализация (docs + spec D247 + close); Plan 139.2 ✅ ЗАКРЫТ — 2026-06-12
+- **STATUS:** Plan 139.2 **ЗАКРЫТ ЦЕЛИКОМ** (Ф.0-Ф.5) на ветке `plan-139.2` (НЕ смёржен в main).
+  **Umbrella-итог: 9/10 str-методов в Nova-body**, `@hash` — обоснованно C (security).
+- **Что мигрировано external-C → Nova-body (по фазам):** `@as_bytes` (Ф.0), `@len`/`@byte_at` (Ф.1),
+  `@split`/`from_bytes_unchecked`/`from_bytes_lossy`/`from_bytes_unchecked_steal` (Ф.2),
+  `@concat`/`@compare` (Ф.3). `@hash` — остаётся C (Ф.4, SipHash+crypto-seed).
+- **Cross-type мост (НЕ упрощение, а минимально-необходимая публичная Vec-поверхность):** str-метод не
+  видит priv-поля Vec (другой тип) → введены `Vec[T].from_raw_parts(ptr,len,cap)` + `Vec[T] @as_ptr()`/
+  `mut @as_ptr()` (data-ptr геттер) + `Vec[T] consume @into_raw()` (инверс from_raw_parts; питает
+  zero-copy `from_bytes_unchecked_steal`). `str{ptr,len}` record-lit лоуэрится спец-кейсом
+  `emit_record_lit` → `(nova_str){.ptr=…,.len=…}` (str ∈ RUNTIME_DEFINED_TYPES skip-list, нет
+  NovaValue_str schema).
+- **КЛЮЧЕВАЯ ПЕРЕОЦЕНКА (исправляет пессимизм Plan 139.1 Ф.B):** privacy у Nova — **type-based**,
+  НЕ module-based: `priv_access_allowed_base` проверяет только `current_recv_type == tname` (без проверки
+  модуля). Поэтому `fn str @method` в `string.nv` (модуль runtime.string) имеет receiver str ⇒
+  `current_recv_type=="str"` ⇒ видит priv `@ptr`/`@len` и конструирует `str{…}`. Прошлый вывод
+  «string.nv не может конструировать str» — ошибка. Это и разблокировало всю миграцию producer-форм
+  БЕЗ новой checker-инфры.
+- **SPEC:** новый **D247** (08-runtime.md) — umbrella-блок (str-method external→Nova migration + Vec
+  cross-type мост; depends D26/D232/D216/D246; ссылается на per-фазовые amend'ы D246/D26). D232 Key
+  methods table дополнен строками from_raw_parts/as_ptr/into_raw + cross-ref на D247.
+- **Маркеры:** `[M-139-f2-ptr-field-producers]` — **ЗАКРЫТ** (история в backlog). Reframed:
+  `[M-139.1-operator-lowered-methods]` (решение option (b) зафиксировано),
+  `[M-139.1-hash-irreducible-crypto-seed]` (CONFIRMED-BY-FACT permanent), `[M-139.1-len-d117-method-only]`
+  (по решению Ф.1 — bare `@len` field-read через D117 self-field carve-out, не C).
+- **PARTIAL/осознанные границы:** (1) operator-lowering `+`/`<`/… остаётся C (option (b), perf hot-path —
+  НЕ упрощение, design-выбор); (2) `@hash` остаётся C (security); (3) `[M-139-f1-trim-view]` —
+  `@trim` Nova-body возвращает alloc-копию, не zero-copy slice-view (perf-only разница, контент идентичен).
+- **КОММИТЫ:** Ф.0 97171b50d20, Ф.1 118231408a7, Ф.2 2134a12306e, Ф.3 94ca26c09e6, Ф.4 82b4063452d,
+  Ф.5 <этот коммит>.
+- **Регрессия (RELEASE binary):** 0 NEW FAIL. plan139_2 12/0, plan139 37/0, plan139_1 4/0, str 13/0,
+  plan90 9/0, plan90_1 21/0 — все зелёные, идентичны reported-state Ф.4.
+
 ### Plan 83-go-cmn Ф.3 — ОТЛОЖЕН (design-finding, без кода), 2026-06-11
 
 - **uv_async УЖЕ корректный note-примитив** (idempotent + before/after ordering + IOCP-backed
