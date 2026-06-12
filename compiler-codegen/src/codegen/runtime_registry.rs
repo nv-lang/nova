@@ -132,9 +132,15 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[],
             return_ty: "int",
             effects: &[],
-            c_name: "nova_str_byte_len",
+            c_name: "",
             doc: "Длина строки в байтах. O(1). (Plan 108 D26 rev: len = bytes, char_len = codepoints).",
-        nova_body: None,
+            // Plan 139.2 Ф.1: Nova-body — reads priv `@len` field directly (str is a
+            // declared lang-item, Plan 139.1; receiver `str` ⇒ type-method privacy).
+            // Identical to retired nova_str_byte_len = `(nova_int)s.len`, O(1). D117
+            // (E_SIZE_ACCESSOR_FIELD) does NOT fire: bare `@len` field-read via
+            // SelfAccess has obj_ty `nova_self` (not `nova_str`) — same path as
+            // Vec[T] @len() => @len; D117 only forbids external callers' `s.len`.
+            nova_body: Some("@len"),
     },
         // Plan 139.1: `byte_len` — explicit byte-length alias of `len`
         // (D26 rev: str.len == bytes). Several str Nova-bodies (parse_int,
@@ -177,9 +183,14 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[("i", "int")],
             return_ty: "u8",
             effects: &[],
-            c_name: "nova_str_byte_at",
+            c_name: "",
             doc: "UTF-8 байт по индексу. O(1). Panic при выходе за границы. Plan 90 — неустранимый примитив для byte-алгоритмов (lexer/find/trim) на Nova.",
-            nova_body: None,
+            // Plan 139.2 Ф.1: Nova-body — bounds-check + raw priv-pointer index
+            // `unsafe { @ptr[i] }` (`@ptr` priv `*u8`, type-method privacy). Raw
+            // pointer index is NOT bounds-checked by the compiler (unsafe), so the
+            // explicit guard reproduces the retired nova_str_byte_at panic
+            // (nova_rt.h:122) with an identical message. Mirrors Vec[T] @index.
+            nova_body: Some("{\n    if i < 0 || i >= @len() {\n        panic(\"str.byte_at: index out of bounds\")\n    }\n    unsafe { @ptr[i] }\n}"),
         },
         // Plan 75: @is_empty — логичный спутник @len; у всех коллекций есть, у str не было.
         RuntimeFn {

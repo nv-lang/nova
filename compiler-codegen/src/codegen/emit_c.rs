@@ -17622,7 +17622,24 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                 // Old paths были `s.len` / `arr.len` / `arr.is_empty` /
                 // `s.is_empty` / `arr.cap` — все теперь method-only.
                 // Diagnostic с fix-it hint (append `()` или rename `.cap`→`.capacity()`).
-                if (obj_ty == "nova_str" || obj_ty.starts_with("NovaArray_"))
+                //
+                // Plan 139.2 Ф.1 carve-out: D117's intent is to stop *external
+                // callers* poking the size field (`s.len`); a type's OWN method
+                // legitimately reads its backing field (cf. Vec[T] @len() => @len,
+                // which works because a generic template's `nova_self` type is not
+                // yet concrete here, so this guard doesn't trip). `str` is a
+                // *concrete* value-record lang-item (Plan 139.1) with a real `len`
+                // field, so `infer_expr_c_type(SelfAccess) == "nova_str"` and the
+                // bare `@len` field-read in str's own `@len`/`@byte_len` Nova-body
+                // would trip here without this exemption. Allow it iff: obj is
+                // `SelfAccess`, the enclosing receiver is `str`, and `name` is the
+                // genuine declared field `len` (NOT is_empty/cap/byte_len, which
+                // are NOT str fields — those stay method-only even on `@`).
+                let str_self_backing_field = matches!(obj.kind, ExprKind::SelfAccess)
+                    && self.current_receiver_type.as_deref() == Some("str")
+                    && name.as_str() == "len";
+                if !str_self_backing_field
+                    && (obj_ty == "nova_str" || obj_ty.starts_with("NovaArray_"))
                     && matches!(name.as_str(), "len" | "is_empty" | "byte_len" | "cap" | "capacity")
                 {
                     let suggested = if name == "cap" { "capacity" } else { name.as_str() };

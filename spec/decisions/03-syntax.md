@@ -5633,6 +5633,33 @@ convention без compiler enforcement).
   bootstrap; method-value form требует явного intent (Plan 11
   syntax).
 
+### Amend (Plan 139.2 Ф.1): self-field carve-out для declaring type-method
+
+`E_SIZE_ACCESSOR_FIELD` нацелен на **внешних caller'ов** (`s.len`,
+`vec.len` без скобок — забытые скобки / попытка обойти O(n)-cost
+сигнал). Метод **самого типа** имеет полное право читать своё backing-
+поле напрямую — это implementation detail (см. «Почему» §4: внутренние
+C-поля сохранены). Для generic-типов (`Vec[T] @len() => @len`) это уже
+работало de-facto: при эмите generic-шаблона `nova_self`-тип ещё не
+concrete, поэтому guard не срабатывал.
+
+Когда `str` стал **concrete** value-record lang-item (Plan 139.1,
+`type str value priv { ptr *u8, len int }`), его собственный
+`@len`/`@byte_len` Nova-body (`=> @len`) начал спотыкаться о D117:
+`infer_expr_c_type(SelfAccess) == "nova_str"` + `name == "len"`. Carve-
+out: bare `@len` field-read разрешён iff **(a)** obj — `SelfAccess`,
+**(b)** enclosing receiver — `str`, **(c)** `name` — реально
+объявленное поле `len` (НЕ `is_empty`/`cap`/`byte_len`/`capacity` —
+они не поля str, остаются method-only даже на `@`). Внешний `s.len`
+(obj — `Ident`, не `SelfAccess`) по-прежнему `E_SIZE_ACCESSOR_FIELD`
+(regression-проверено: `plan60/f3_str_field_rejected`,
+`plan139/neg_t0_str_len_field` — PASS как negatives).
+
+Это разблокировало миграцию `str @len`/`@byte_at` external-C →
+Nova-body (Plan 139.2 Ф.1): `@len() => @len` (O(1) byte-len, бывший
+`nova_str_byte_len`), `@byte_at(i)` = bounds-check + `unsafe { @ptr[i] }`
+(бывший `nova_str_byte_at`, идентичная OOB-паника).
+
 ### Связь
 
 - [D32](02-types.md#d32) — array layout `(ptr, len, cap)`; D117
