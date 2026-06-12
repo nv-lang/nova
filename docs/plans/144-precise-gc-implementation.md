@@ -82,3 +82,20 @@ Implementation Option B (Hybrid), фазы-кандидаты (черновик,
   на этот план** (нужны precise stack-maps для релокации указателей при копировании стека —
   Boehm conservative не может). Точный GC здесь разблокирует и copying-стеки.
 - Порядок исполнения семейства: [83-mn-runtime-roadmap.md](83-mn-runtime-roadmap.md) §«Порядок».
+
+## 6. Реализация-заметки (design-discussion 2026-06-12)
+
+- **Техника root-scan: precise-maps + shadow-stack, НЕ handles.** Nova компилируется в C →
+  clang владеет раскладкой стека → точные stack-карты «из коробки» недоступны. Решение —
+  **shadow-stack** (компилятор сам ведёт точный список адресов GC-указателей: push/pop кадра
+  на границах функций; GC сканит его, не C-стек). Handles (двойная косвенность `*T`→`**T`)
+  отвергнуты — налог на КАЖДЫЙ доступ; неприемлемо для systems-языка. Прецеденты shadow-stack:
+  OCaml C-FFI (`CAMLlocal`/`caml_local_roots`), V8 `HandleScope`, JNI refs (на границе);
+  whole-program — LLVM `ShadowStackGC` + GC-языки на WASM (категория Nova).
+- **Heap-сторона достижима** (Nova знает layout типов → per-type pointer-bitmap); **stack-сторона**
+  — главная трудность compile-to-C, решается shadow-stack'ом.
+- **Оправдание = СВЯЗКА**, не только стеки: movable/compacting + быстрее GC + дорога к concurrent
+  GC + **убирает Windows fiber-stack conservative-scan** (источник M:N-race'ов).
+- **Стратегический корень:** настоящий Go-уровень (миллионы fiber'ов + precise/concurrent GC +
+  async-preempt) в пределе требует **владеть кодогеном** (LLVM IR statepoints / свой backend)
+  вместо emit-в-C. Решение масштаба v2.0. До тех пор precise GC = shadow-stack поверх C.
