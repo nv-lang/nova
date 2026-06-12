@@ -17666,7 +17666,24 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                 // Old paths были `s.len` / `arr.len` / `arr.is_empty` /
                 // `s.is_empty` / `arr.cap` — все теперь method-only.
                 // Diagnostic с fix-it hint (append `()` или rename `.cap`→`.capacity()`).
-                if (obj_ty == "nova_str" || obj_ty.starts_with("NovaArray_"))
+                //
+                // Plan 139.2 Ф.1 carve-out: D117's intent is to stop *external
+                // callers* poking the size field (`s.len`); a type's OWN method
+                // legitimately reads its backing field (cf. Vec[T] @len() => @len,
+                // which works because a generic template's `nova_self` type is not
+                // yet concrete here, so this guard doesn't trip). `str` is a
+                // *concrete* value-record lang-item (Plan 139.1) with a real `len`
+                // field, so `infer_expr_c_type(SelfAccess) == "nova_str"` and the
+                // bare `@len` field-read in str's own `@len`/`@byte_len` Nova-body
+                // would trip here without this exemption. Allow it iff: obj is
+                // `SelfAccess`, the enclosing receiver is `str`, and `name` is the
+                // genuine declared field `len` (NOT is_empty/cap/byte_len, which
+                // are NOT str fields — those stay method-only even on `@`).
+                let str_self_backing_field = matches!(obj.kind, ExprKind::SelfAccess)
+                    && self.current_receiver_type.as_deref() == Some("str")
+                    && name.as_str() == "len";
+                if !str_self_backing_field
+                    && (obj_ty == "nova_str" || obj_ty.starts_with("NovaArray_"))
                     && matches!(name.as_str(), "len" | "is_empty" | "byte_len" | "cap" | "capacity")
                 {
                     let suggested = if name == "cap" { "capacity" } else { name.as_str() };
@@ -21330,19 +21347,10 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                 //    Auto-derive: if user defined `fn V @into() -> str` for V,
                 //    call that instead of the builtin.
                 if let ExprKind::Ident(prim) = &obj.kind {
-                    // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked.
-                    // Plan 91 followup: str.from_bytes_unchecked_steal — zero-copy для consume []u8.
-                    if prim == "str" && (method == "from_bytes_lossy" || method == "from_bytes_unchecked" || method == "from_bytes_unchecked_steal") {
-                        if let Some(arg) = args.first() {
-                            let v = self.emit_expr(arg.expr())?;
-                            let c_fn = match method.as_str() {
-                                "from_bytes_lossy" => "nova_str_from_bytes_lossy",
-                                "from_bytes_unchecked_steal" => "nova_str_steal_bytes",
-                                _ => "nova_str_from_bytes_unchecked",
-                            };
-                            return Ok(format!("{}({})", c_fn, v));
-                        }
-                    }
+                    // Plan 139.2 Ф.2: str.from_bytes_lossy / from_bytes_unchecked /
+                    // from_bytes_unchecked_steal MIGRATED to Nova-body. The static
+                    // C interception was removed here so the call routes through the
+                    // normal static-method dispatch to Nova_str_static_from_bytes_*.
                     if prim == "str" && method == "from" {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg.expr());
@@ -23391,22 +23399,10 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                         }
                     }
                 }
-                // Plan 108 from_utf8 series: str.from_bytes_lossy / str.from_bytes_unchecked.
-                // Plan 91 followup: str.from_bytes_unchecked_steal — zero-copy для consume []u8.
-                // Все три take single `[]u8` arg (readonly или consume) → same C signature.
-                if parts.len() == 2 && parts[0] == "str"
-                    && (parts[1] == "from_bytes_lossy" || parts[1] == "from_bytes_unchecked" || parts[1] == "from_bytes_unchecked_steal")
-                {
-                    if let Some(arg) = args.first() {
-                        let v = self.emit_expr(arg.expr())?;
-                        let c_fn = match parts[1].as_str() {
-                            "from_bytes_lossy" => "nova_str_from_bytes_lossy",
-                            "from_bytes_unchecked_steal" => "nova_str_steal_bytes",
-                            _ => "nova_str_from_bytes_unchecked",
-                        };
-                        return Ok(format!("{}({})", c_fn, v));
-                    }
-                }
+                // Plan 139.2 Ф.2: str.from_bytes_lossy / from_bytes_unchecked /
+                // from_bytes_unchecked_steal MIGRATED to Nova-body. The static C
+                // interception was removed here so the call routes through the
+                // normal static-method dispatch to Nova_str_static_from_bytes_*.
                 // Plan 74: f64/f32.from_bits(bits uN) — IEEE 754 bit-cast
                 // uN → float через nova_rt/numeric.h. Pair с `f.to_bits()`.
                 // Legacy Plan 04: f64.from_bits также служит распаковке
@@ -24887,10 +24883,39 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
 
     fn emit_block_expr(&mut self, block: &Block) -> Result<String, String> {
         let tmp = self.fresh_tmp();
+        // Pre-register THIS block's own `let`-bindings so the trailing-type
+        // inference below resolves identifiers to the block's locals — not a
+        // stale same-named `var_types` entry leaked from a prior function
+        // (var_types is not per-fn scoped). Without this, `{ ro a=10; ro b=20;
+        // a+b }` infers `a+b` against a stale `a` (e.g. `Vec____nova_byte*` from
+        // a prelude str-method local) → `lt_is_cptr` true → the BinOp::Add is
+        // mis-read as pointer arithmetic → the whole block-expr is typed as a
+        // Vec view, so `v == 30` dispatches to Vec____nova_byte_method_equal and
+        // SEGVs. (Plan 139.2 regression: prelude str-methods became Nova-body
+        // with Vec[u8] locals, surfacing this latent block-expr inference bug.)
+        let mut saved_block_locals: Vec<(String, Option<String>)> = Vec::new();
+        for stmt in &block.stmts {
+            if let crate::ast::Stmt::Let(d) = stmt {
+                if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                    let ty = d.ty.as_ref()
+                        .and_then(|t| self.type_ref_to_c(t).ok())
+                        .unwrap_or_else(|| self.infer_expr_c_type(&d.value));
+                    saved_block_locals.push((name.clone(), self.var_types.insert(name.clone(), ty)));
+                }
+            }
+        }
         // Infer block type from trailing expression (if any)
         let block_ty = block.trailing.as_ref()
             .map(|e| self.infer_expr_c_type(e))
             .unwrap_or_else(|| "nova_unit".into());
+        // Restore prior var_types view; the real body emit below re-registers
+        // these locals with their authoritative codegen types.
+        for (name, old) in saved_block_locals.into_iter().rev() {
+            match old {
+                Some(t) => { self.var_types.insert(name, t); }
+                None => { self.var_types.remove(&name); }
+            }
+        }
         self.line(&format!("{} {};", block_ty, tmp));
         self.var_types.insert(tmp.clone(), block_ty.clone());
         self.line("{");
@@ -26301,6 +26326,40 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                 let call = format!("nova_make_{}_{}({})", ctor_prefix, struct_name, ordered_args.join(", "));
                 self.line(&format!("{}* {} = {};", concrete_sum_c, tmp, call));
                 self.var_types.insert(tmp.clone(), format!("{}*", concrete_sum_c));
+            } else if struct_name == "str" {
+                // Plan 139.2 Ф.2: `str { ptr: …, len: … }` record literal.
+                // `str` is the declared lang-item value-record (D26/D216 §1,
+                // core.nv) whose ABI is the existing `nova_str` typedef
+                // (`{ const uint8_t* ptr; int64_t len; }`); codegen does NOT
+                // emit a `NovaValue_str` struct (str ∈ RUNTIME_DEFINED_TYPES
+                // skip-list, like Option/Result), so a generic record-lit path
+                // has no schema and would fall through to the null stub below.
+                // Lower it directly to the C compound literal. Only str
+                // type-methods (`current_recv_type == "str"`) reach here — the
+                // priv-field-init check (E_PRIV_FIELD_INIT) already gated
+                // outside callers in the type checker. The `ptr` field's `.ptr`
+                // C member is `const uint8_t*`; the source expr (`@ptr + off`,
+                // a raw `*u8`/`*mut u8`) is cast to it so pointer arithmetic
+                // that infers as `void*`/`uint8_t*` still assigns cleanly.
+                let mut ptr_val = String::from("NULL");
+                let mut len_val = String::from("0");
+                for f in fields {
+                    let v = if let Some(e) = &f.value {
+                        self.emit_expr(e)?
+                    } else {
+                        // Shorthand `str { ptr, len }` — field name is the var.
+                        f.name.clone()
+                    };
+                    match f.name.as_str() {
+                        "ptr" => ptr_val = v,
+                        "len" => len_val = v,
+                        _ => { /* str has only ptr/len; ignore unknown defensively */ }
+                    }
+                }
+                self.line(&format!(
+                    "nova_str {} = (nova_str){{.ptr=(const uint8_t*)({}), .len=(int64_t)({})}};",
+                    tmp, ptr_val, len_val));
+                self.var_types.insert(tmp.clone(), "nova_str".into());
             } else if !self.record_schemas.contains_key(&struct_name) {
                 // Unknown struct (e.g. generic type not monomorphized) — emit null stub
                 // Evaluate field expressions for side effects but discard
@@ -29200,16 +29259,43 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             //
             // RETAINED C primitives (Plan 139 Ф.1 scope-out, documented):
             //   - byte_at: irreducible byte-access primitive (#1).
-            //   - eq/lt/le/gt/ge/concat/compare/hash: lowered DIRECTLY by the
-            //     BinOp operator codegen (== / < / + / ...) and HashMap key path,
-            //     not via the method — migrating the method alone keeps the C fn.
-            //     Structural eq/hash is Plan 139 Ф.3 scope.
+            //   - eq/lt/le/gt/ge/hash: lowered DIRECTLY by the BinOp operator
+            //     codegen (== / < / ...) and HashMap key path, not via the
+            //     method. eq/lt/le/gt/ge retained here so a direct method-form
+            //     call (`s.eq(t)`) still routes to C (no Nova-body migration);
+            //     hash is irreducible (SipHash + crypto-seed,
+            //     [M-139.1-hash-irreducible-crypto-seed]).
+            //   - concat/compare: MIGRATED to Nova-body (Plan 139.2 Ф.3).
+            //     Removed from this table so a direct method-form call
+            //     (`s.concat(t)` / `s.compare(t)`) falls through to Nova-body
+            //     dispatch (Nova_str_method_concat / Nova_str_method_compare).
+            //     The `+` / comparison OPERATORS still lower DIRECTLY to C
+            //     nova_str_concat / nova_str_lt/… (option (b), BinOp path at the
+            //     `(lty == "nova_str" ...)` arm above) — operator-lowering is
+            //     orthogonal to method-dispatch; retiring the C fn would require
+            //     a joint operator+method migration (future plan,
+            //     [M-139.1-operator-lowered-methods]).
             //   - to_bytes/to_chars: MIGRATED to Nova-body (Plan 139 Ф.2).
-            //   - as_bytes/split/from_bytes_*: RETAINED C primitives — need str
-            //     @ptr field-access (zero-copy view construction / str{ptr,len}),
-            //     blocked on [M-139-f0-lang-item-decl]. Plan 139 Ф.2 scope-out.
+            //   - as_bytes: MIGRATED to Nova-body (Plan 139.2 Ф.0). Now that str
+            //     is a declared lang-item (Plan 139.1, [M-139-f0-lang-item-decl]
+            //     closed), the str type-method `@as_bytes` reads priv `@ptr`/`@len`
+            //     (type-based privacy) and builds the zero-copy view via the public
+            //     Vec[u8].from_raw_parts(ptr,len,len) cross-type bridge. Removed here
+            //     so it falls through to Nova-body dispatch (Nova_str_method_as_bytes).
+            //   - split: MIGRATED to Nova-body (Plan 139.2 Ф.2). The str
+            //     type-method builds each segment as a zero-copy sub-view
+            //     `str{ptr: @ptr+off, len}` (type-based priv access reads @ptr
+            //     and constructs a str value-record in its own module) pushed
+            //     into a Vec[str]. Removed here so it falls through to Nova-body
+            //     dispatch (Nova_str_method_split). C nova_str_split retired from
+            //     this routing.
+            //   - from_bytes_*: MIGRATED to Nova-body (Plan 139.2 Ф.2). The
+            //     static interceptions at the two `str.from_bytes_*` sites above
+            //     were removed so they route to Nova_str_static_from_bytes_*.
             //   - len/byte_len: O(1) field read, trivial primitive.
-            "concat"      => Some("nova_str_concat"),
+            // concat: MIGRATED to Nova-body (Plan 139.2 Ф.3) — falls through to
+            // Nova_str_method_concat. No entry here. (The `+` operator still
+            // lowers directly to C nova_str_concat via the BinOp path.)
             "eq"          => Some("nova_str_eq"),
             "lt"          => Some("nova_str_lt"),
             "le"          => Some("nova_str_le"),
@@ -29221,10 +29307,14 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             // Plan 139 Ф.2: to_bytes/to_chars MIGRATED to Nova-body (copy from
             // @as_bytes() zero-copy view + UTF-8 decode cursor). Removed here so
             // they fall through to Nova-body dispatch (Nova_str_method_X).
-            "as_bytes"    => Some("nova_str_as_bytes"),  // D176: zero-copy readonly []u8
-            "split"       => Some("nova_str_split"),
+            // as_bytes: MIGRATED to Nova-body (Plan 139.2 Ф.0) — falls through to
+            // Nova_str_method_as_bytes via Vec[u8].from_raw_parts. No entry here.
+            // split: MIGRATED to Nova-body (Plan 139.2 Ф.2) — falls through to
+            // Nova_str_method_split. No entry here.
             "byte_at"     => Some("nova_str_byte_at"),  // Plan 90
-            "compare"     => Some("nova_str_compare"),  // D178
+            // compare: MIGRATED to Nova-body (Plan 139.2 Ф.3) — falls through to
+            // Nova_str_method_compare. No entry here. (The comparison operators
+            // still lower directly to C nova_str_lt/… via the BinOp path.)
             // D178: parse_int(radix=10) is now a Nova body (Plan 54 Ф.2).
             // Falls through to Nova_str_method_parse_int — no str_method_to_rt entry needed.
             // D177: pad_left/pad_right/repeat/replace — Nova bodies (same mechanism).
@@ -30676,7 +30766,36 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                             }
                         }
                     }
-                    self.infer_expr_c_type(t)
+                    // Non-Ident trailing (e.g. `a + b`) may reference this
+                    // block's own locals. Register their inferred types in the
+                    // pattern-binding override (checked BEFORE var_types in the
+                    // Ident arm) so they shadow a stale same-named var_types
+                    // entry leaked from a prior function (var_types is not
+                    // per-fn scoped). Same root cause as emit_block_expr: without
+                    // this, `{ ro a=10; ro b=20; a+b }` infers `a+b` against a
+                    // stale `a: Vec____nova_byte*` (a Nova-body str-method local,
+                    // Plan 139.2) → block typed as a Vec view → `v == 30`
+                    // dispatches to Vec____nova_byte_method_equal → SEGV.
+                    let mut saved: Vec<(String, Option<String>)> = Vec::new();
+                    for s in &b.stmts {
+                        if let crate::ast::Stmt::Let(d) = s {
+                            if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                                let ty = d.ty.as_ref()
+                                    .and_then(|tr| self.type_ref_to_c(tr).ok())
+                                    .unwrap_or_else(|| self.infer_expr_c_type(&d.value));
+                                let old = self.pattern_binding_overrides.borrow_mut().insert(name.clone(), ty);
+                                saved.push((name.clone(), old));
+                            }
+                        }
+                    }
+                    let result = self.infer_expr_c_type(t);
+                    for (name, old) in saved.into_iter().rev() {
+                        match old {
+                            Some(v) => { self.pattern_binding_overrides.borrow_mut().insert(name, v); }
+                            None => { self.pattern_binding_overrides.borrow_mut().remove(&name); }
+                        }
+                    }
+                    result
                 } else {
                     "nova_unit".into()
                 }

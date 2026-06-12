@@ -7563,6 +7563,65 @@ Plan 118 family scope:
 > (`const uint8_t*`), layout-идентично старому `nova_str`. См.
 > [D26 MAJOR AMEND](08-runtime.md#d26-базовая-stdlib-и-prelude) +
 > [D228](#d228) content-eq override.
+
+> **Amend (Plan 139.2 Ф.0+Ф.2, 2026-06-12): `str { ptr, len }` record-литерал +
+> producer-миграция.** str — declared lang-item, поэтому str **type-методы**
+> (receiver `str` ⇒ `current_recv_type == "str"`, privacy **type-based**, не
+> module-based — D220) **конструируют** `str` value-record литералом `str {
+> ptr: …, len: … }` в своём модуле. Codegen НЕ эмитит `NovaValue_str` (str ∈
+> `RUNTIME_DEFINED_TYPES` skip-list), поэтому `str{…}` лоуэрится спец-кейсом в
+> `emit_record_lit` напрямую в C compound-literal
+> `(nova_str){.ptr=(const uint8_t*)(…), .len=(int64_t)(…)}` (без schema, без
+> NovaValue-структуры). Внешние caller'ы по-прежнему ловят `E_PRIV_FIELD_INIT`
+> (priv-поля). Это разблокировало миграцию **producer-форм** external-C →
+> Nova-body:
+>   - `@split(sep) -> ro []str` — byte-scan, каждый сегмент = zero-copy sub-view
+>     `str{ptr:@ptr+off, len}` (raw-ptr арифметика под `unsafe`), push в `Vec[str]`;
+>   - `from_bytes_unchecked` / `from_bytes_lossy` — читают `(ptr,len)` источника
+>     через публичные Vec-геттеры `@as_ptr()`/`@len()`, alloc(`len+1`)+memcpy+NUL
+>     на `data[len]` (D26 §3); lossy валидирует UTF-8 и заменяет невалид на
+>     U+FFFD;
+>   - `from_bytes_unchecked_steal(consume bytes []u8)` — zero-copy reuse буфера
+>     при `cap>len` (NUL in-place), иначе alloc+copy. consume-обязательство
+>     закрыто новым `Vec[T] consume @into_raw() -> *mut T` (инверс
+>     `Vec.from_raw_parts`: потребляет Vec-обёртку, отдаёт сырой writable-буфер).
+>
+> **Amend (Plan 139.2 Ф.3, 2026-06-12): `@concat` / `@compare` → Nova-body
+> (operator-lowering ОСТАЁТСЯ на C — option (b)).** `@concat(other) -> str` и
+> `@compare(other) -> int` мигрированы из external-C в Nova-body:
+>   - `@concat`: alloc `[]u8` размера `@len()+other.len()`, копирует байты обоих
+>     операндов через `@as_bytes()` (zero-copy view), затем
+>     `str.from_bytes_unchecked` (owned + NUL-term D26 §3). Байт-в-байт идентично
+>     C `nova_str_concat`.
+>   - `@compare`: byte-loop над `@as_bytes()` обоих операндов (как C strcmp /
+>     memcmp), length-aware tiebreak; возвращает `a_byte - b_byte` на первом
+>     различии (u8 0..255 ⇒ тот же знак, что memcmp), иначе `sign(@len() -
+>     other.len())`. Идентично C `nova_str_compare` (array.h:989).
+> **РЕШЕНИЕ по operator-lowering — option (b) (оставить C-fn для операторов):**
+> операторы `+` / `<` / `<=` / `>` / `>=` / `==` / `!=` над `nova_str`
+> лоуэрятся ОТДЕЛЬНО, НАПРЯМУЮ в C `nova_str_concat` / `nova_str_lt` / … /
+> `nova_str_eq` (emit_c.rs, BinOp-arm `lty == "nova_str"`), НЕ через
+> method-dispatch. ПРЯМЫЕ method-вызовы (`s.concat(t)` / `s.compare(t)`,
+> Compare-протокол `@compare(o)==0`-synthesis, `@plus`-body, `@replace` chained
+> `.concat()`) маршрутизируются в Nova-body (убраны `"concat"`/`"compare"` из
+> `str_method_to_rt`). **Почему option (b), не (a) (роутить операторы через
+> методы + retire C-fn):** (1) **perf** — C `nova_str_concat` = один `nova_alloc`
+> + два `memcpy`; Nova-body = `with_capacity` + два byte-push-loop'а (по байту,
+> с bounds-check на каждом push). C `nova_str_cmp` = один `memcmp`; Nova-body =
+> byte-loop с `as int`-конверсией на байт. Operator-формы — горячий путь (string
+> building, sort-сравнения), C оптимальнее. (2) **ортогональность** — operator-
+> lowering (BinOp codegen) и method-dispatch (`str_method_to_rt` / Nova-body) —
+> независимые механизмы; миграция тела метода НЕ требует трогать operator-arm, и
+> наоборот. Чистое retirement C-fn потребовало бы СОВМЕСТНОЙ миграции обоих +
+> perf-харнесс для подтверждения отсутствия регрессии — orthogonal, низкий
+> приоритет. Дубль (Nova-body метод + C-fn для оператора) — приемлемая цена:
+> C-fn'ы малы (inline), и они единственные горячие; метод-форма редка. См.
+> reframed `[M-139.1-operator-lowered-methods]`.
+>
+> Остаётся C **только** `@hash` (SipHash-1-3 + crypto-seed, DoS-resistance — см.
+> `[M-139.1-hash-irreducible-crypto-seed]`). **9/10 str-методов — Nova-body**
+> (`@concat`/`@compare` закрывают Ф.3); operator-lowering `+`/`<`/… —
+> сознательно C (perf, option (b)).
 - `*unsafe T` — pointer к possibly-uninit T (pointee init/layout contracts off);
   также degraded-форма после арифметики (alignment/bounds gone)
 - **Size:** pointer-width (8 bytes на 64-bit; bootstrap = 64-bit only)
@@ -11349,6 +11408,7 @@ export type Vec[T] {
 | `Vec[T].new()` | empty, no allocation (cap = 0) |
 | `Vec[T].with_capacity(n)` | empty, pre-allocated n slots |
 | `Vec[T].from(items []T)` | copy from built-in slice |
+| `Vec[T].from_raw_parts(ptr *T, len, cap)` | build from a raw `(ptr,len,cap)` triple (cross-type bridge, unsafe-obligated; D247) |
 
 ### Key methods
 
@@ -11376,6 +11436,8 @@ export type Vec[T] {
 | `first` | `@first() -> Option[T]` | First element |
 | `last` | `@last() -> Option[T]` | Last element |
 | `as_slice` | `@as_slice() -> []T` | Copy into built-in slice |
+| `as_ptr` | `@as_ptr() -> *T` / `mut @as_ptr() -> *mut T` | Raw data-buffer pointer; recv-mut overload yields writable `*mut T` (cross-type bridge getter, D247) |
+| `into_raw` | `consume @into_raw() -> *mut T` | Consume the Vec, surrender its buffer pointer (inverse of `from_raw_parts`; powers zero-copy `str.from_bytes_unchecked_steal`, D247) |
 | `iter` | `@iter() -> VecIter[T]` | Index-cursor iterator |
 | `clone` | `@clone() -> Vec[T]` | Deep copy (Clone) |
 | `equals` | `@equal(other Vec[T]) -> bool` | Element-wise equality |
@@ -11445,6 +11507,7 @@ int64-erasure.
 - [D216 §6](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — ptr arithmetic (`data + i` C-scaled).
 - [D226](#d226-signed-indexing-convention) — `int` for len/cap/index.
 - [D228](#d228-value-record-allocation-contract) — value-records are valid T (stored by value in buffer).
+- [D247](08-runtime.md#d247-str-методы--миграция-external-c--nova-body--vec-cross-type-мост-plan-1392) — `from_raw_parts`/`as_ptr`/`into_raw` cross-type bridge (Plan 139.2 str-method migration).
 - `std/collections/vec_owned.nv` — implementation.
 - Plan 131 — home plan.
 

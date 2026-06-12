@@ -35671,6 +35671,123 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
 - **Docs only в Ф.D:** plan-docs (139.1 + 139 audit), project-creation.txt, simplifications.md,
   backlog-followups.md (root marker removed, f1/f2 regated), memory. 0 source change → binary
   unchanged @ 6670216167a.
+
+## Plan 139.2 Ф.2 — producer-формы (split + from_bytes_*) external-C → Nova-body — 2026-06-12
+- **STATUS:** Ф.2 ✅ на ветке `plan-139.2`. Закрыл `[M-139-f2-ptr-field-producers]`. Прошлый
+  root-cause («gated на Plan 138.2 `[]T→Vec` flip») оказался **НЕВЕРЕН** — flip уже состоялся
+  через `Vec.from_raw_parts` (Ф.0). Настоящие два разблокера были точечные (ниже).
+- **Разблокер 1 — `str { ptr, len }` record-литерал codegen.** str ∈ `RUNTIME_DEFINED_TYPES`
+  skip-list (нет `NovaValue_str` schema), поэтому generic record-lit путь падал в emit-null-stub
+  (`void* = NULL; /* unknown type str */` → CC-FAIL `void*`→`nova_str`). Добавлен спец-кейс в
+  `emit_record_lit` (emit_c.rs): `struct_name == "str"` → C compound-literal
+  `(nova_str){.ptr=(const uint8_t*)(…), .len=(int64_t)(…)}`. Только str type-методы достигают
+  ветки (E_PRIV_FIELD_INIT гейтит внешних в checker'е до codegen).
+- **Разблокер 2 — consume `bytes` у steal.** `from_bytes_unchecked_steal(consume bytes []u8)`
+  Nova-body даёт D133-obligation на `bytes` (раньше external → obligation только на call-site).
+  `[]u8`/Vec — не consume-тип, consume-методов нет. Добавлен `Vec[T] consume @into_raw() -> *mut T`
+  (vec_owned.nv) — инверс `from_raw_parts`: consume-receiver потребляет Vec-обёртку (закрывает
+  obligation), отдаёт writable raw-буфер для in-place NUL / reuse.
+- **split:** byte-scan над `@as_bytes()`; каждый сегмент = zero-copy sub-view `str{ptr:@ptr+off, len}`
+  (helper `@sub_view`, raw-ptr арифметика под `unsafe`), push в `Vec[str]`, return `ro []str`.
+  Семантика идентична C `nova_str_split` (empty sep → whole-string; tail всегда; N matches → N+1).
+- **from_bytes_unchecked / lossy:** читают `(ptr,len)` через публичные Vec-геттеры
+  `@as_ptr()`/`@len()` (cross-type — str НЕ видит priv Vec); alloc(`len+1`)+memcpy+NUL на data[len]
+  (D26 §3) через private str-static `str.alloc_copy` (receiver str → privacy для `str{…}`). lossy:
+  UTF-8-валидатор (fast-copy-path) + замена невалид-lead на U+FFFD (0xEF 0xBF 0xBD). steal:
+  zero-copy reuse при `cap>len` (NUL in-place), иначе alloc+copy. Идентичные байты к C.
+- **ПОЧЕМУ `alloc_str_copy` — str-static, не free-fn:** free-fn (receiver None) → `current_recv_type
+  != "str"` → `E_PRIV_FIELD_INIT` на `str{…}`. str-static-метод (`str.alloc_copy`) получает
+  `current_recv_type = "str"` (D220 ставит из receiver и для static-методов) → privacy OK.
+- **Регрессия (RELEASE binary, baseline = Ф.1 temp-worktree, per-test FAIL-set diff):** 0 NEW FAIL.
+  plan139_2 8/0 (+split_ok +from_bytes_ok +2 neg), str 13/0, plan139 37/0, plan139_1 4/0, plan90 9/0,
+  plan90_1 21/0, plan114 10/0 — все ≡ baseline. runtime 12/7, modules 29/2, plan131 27/1,
+  map_literals 28/1, plan96 19/4, str_builder 0/9, plan60 1/5 — FAIL-множества **байт-идентичны**
+  baseline (diff пуст). str_builder 0/9 = pre-existing E_CONSUME_KEYWORD_MISSING (НЕ steal-миграция).
+- **Негативы:** `neg_split_view_construct_outside` (forge `str{ptr,len}` вне модуля → E_PRIV_FIELD_INIT),
+  `neg_steal_use_after_consume` (touch `b` после steal → D131 use-after-consume — гейтит steal-контракт).
+- **Известный pre-existing gap (НЕ Ф.2):** `[]u8.from([…])` не поддержан codegen (`[]T.` static-dispatch
+  только new/with_capacity) — тест-fixture обходит через with_capacity+push.
+
+## Plan 139.2 Ф.3 — @concat / @compare external-C → Nova-body; operator-lowering ОСТАЁТСЯ на C (option b) — 2026-06-12
+- **STATUS:** Ф.3 ✅ на ветке `plan-139.2`. Reframe `[M-139.1-operator-lowered-methods]` (решение
+  зафиксировано). **9/10 str-методов теперь Nova-body** (остаётся C только `@hash` — SipHash+crypto-seed).
+- **РЕШЕНИЕ operator-lowering — option (b) (НЕ упрощение, а обоснованный design-выбор):** операторы
+  `+`/`<`/`<=`/`>`/`>=`/`==`/`!=` над `nova_str` СОЗНАТЕЛЬНО ОСТАВЛЕНЫ на прямом C-lowering
+  (`nova_str_concat`/`nova_str_lt`/…/`nova_str_eq`, BinOp-arm `lty=="nova_str"`, emit_c.rs ~17137),
+  НЕ переведены на method-dispatch. **Почему НЕ (a) (роутить операторы через методы + retire C-fn):**
+  (1) **perf** — operator-формы горячие (string building, sort-сравнения): C `nova_str_concat` = один
+  `nova_alloc`+2×`memcpy`; C `nova_str_cmp` = один `memcmp`; Nova-body = `with_capacity`+2 byte-push-
+  loop'а (bounds-check на push) / byte-loop с per-byte `as int`. (2) **ортогональность** — BinOp codegen
+  и method-dispatch — независимые механизмы; чистое retirement требует СОВМЕСТНОЙ миграции + perf-харнесс.
+  **Дубль приемлем:** C-fn'ы малы (inline), единственный горячий путь; метод-форма редка.
+- **Что МИГРИРОВАНО в Nova-body:** прямые method-вызовы `s.concat(t)`/`s.compare(t)`, Compare-протокол
+  `@compare(o)==0`-synthesis, `@plus`-body (`=> @concat(other)`), `@replace`-chain (`.concat()`). Убраны
+  `"concat"`/`"compare"` из `str_method_to_rt` (emit_c.rs) → fall-through на Nova_str_method_X dispatch.
+  `eq`/`lt`/`le`/`gt`/`ge` ОСТАВЛЕНЫ в `str_method_to_rt` (C) — операторы их единственный горячий путь,
+  миграция тела без profit.
+- **@concat:** `[]u8.with_capacity(@len()+other.len())`, push-копия байтов обоих через `@as_bytes()`,
+  `str.from_bytes_unchecked` (owned + NUL D26 §3). Байт-в-байт = C `nova_str_concat` (nova_rt.h:226).
+- **@compare:** byte-loop над `@as_bytes()` обоих; `return a_byte - b_byte` на первом различии (u8 0..255
+  ⇒ тот же знак, что memcmp), иначе `sign(@len()-other.len())`. Идентично C `nova_str_compare` (array.h:989).
+- **runtime_registry.rs:** `concat`/`compare` → `c_name:""` + `nova_body:Some(...)` (kept in sync с string.nv).
+- **Регрессия (RELEASE binary, baseline = Ф.2 temp-worktree 2134a12306e + libuv-cache copy, per-suite
+  FAIL-set diff):** 0 NEW FAIL. plan139_2 12/0 (+concat_ok +compare_ok +operator_str_ok +neg). str 13/0,
+  plan139 37/0, plan139_1 4/0, plan90 9/0, plan90_1 21/0, plan114 10/0, plan118_1 11/0, plan137 16/0,
+  plan91 2/0, protocols/comparison 6/0 — все ≡ baseline. plan60 1/5, plan96 19/4, str_builder 0/9,
+  plan62 29/7, plan126_2 9/1, plan138_2 15/3, plan91_8a 0/2, plan91_8a_2 (impl_verification RUN-FAIL) —
+  FAIL-множества **байт-идентичны** baseline (все pre-existing на plan-138.1 base, НЕ от Ф.3).
+- **Негатив:** `neg_concat_forge_result_outside` (forge concat-результат `str{ptr,len}` вне модуля →
+  E_PRIV_FIELD_INIT — concat-construction module-private, producer-surface = единственный sanctioned путь).
+- **Baseline-инфра урок:** temp-worktree `git worktree add --detach <Ф.2-sha>` нуждается в libuv —
+  быстрее скопировать `target/libuv-cache/libuv.lib` + `nova_rt/libuv/*` из активного worktree, чем
+  пере-билдить libuv (vcvars). НЕ `git stash` (repo-global, конкурентный nova-p138).
+
+## Plan 139.2 Ф.4 — @hash обоснованное C-исключение (НЕ мигрирован) — 2026-06-12
+- **STATUS:** Ф.4 ✅ documentation/audit-only (ни code, ни fixtures по критериям плана).
+- **ФАКТ (nova_rt.h:265-343):** `str @hash` = **SipHash-1-3** (`nova_siphash13`) с **per-process
+  random seed** (`nova_hash_seed_k0/k1`, init через `getrandom`/`BCryptGenRandom`) — **НЕ FNV-1a**
+  (устаревший комментарий string.nv исправлен). Перенос в Nova = экспонировать seed = **DoS/hash-
+  flooding регрессия HashMap**. Остаётся `external fn str @hash()`. **ПОСТОЯННАЯ обоснованная
+  C-граница (security)**, НЕ TODO/НЕ упрощение.
+- **Сделано:** (1) исправлен stale-комментарий в `std/runtime/string.nv` («FNV-1a» → «SipHash-1-3 +
+  per-process random seed (DoS-resistant); неустранимая C-граница — seed не экспонируется на Nova»);
+  декларация `@hash` нетронута. (2) reframe `[M-139.1-hash-irreducible-crypto-seed]` →
+  «🟢 CONFIRMED-BY-FACT». (3) HashMap/hash-тесты зелёные: plan139 37/0, str 13/0,
+  protocols/comparison 6/0, map_literals 28/1 (positive_const_map pre-existing, orthogonal).
+
+## Plan 139.2 Ф.5 — финализация (docs + spec D247 + close); Plan 139.2 ✅ ЗАКРЫТ — 2026-06-12
+- **STATUS:** Plan 139.2 **ЗАКРЫТ ЦЕЛИКОМ** (Ф.0-Ф.5) на ветке `plan-139.2` (НЕ смёржен в main).
+  **Umbrella-итог: 9/10 str-методов в Nova-body**, `@hash` — обоснованно C (security).
+- **Что мигрировано external-C → Nova-body (по фазам):** `@as_bytes` (Ф.0), `@len`/`@byte_at` (Ф.1),
+  `@split`/`from_bytes_unchecked`/`from_bytes_lossy`/`from_bytes_unchecked_steal` (Ф.2),
+  `@concat`/`@compare` (Ф.3). `@hash` — остаётся C (Ф.4, SipHash+crypto-seed).
+- **Cross-type мост (НЕ упрощение, а минимально-необходимая публичная Vec-поверхность):** str-метод не
+  видит priv-поля Vec (другой тип) → введены `Vec[T].from_raw_parts(ptr,len,cap)` + `Vec[T] @as_ptr()`/
+  `mut @as_ptr()` (data-ptr геттер) + `Vec[T] consume @into_raw()` (инверс from_raw_parts; питает
+  zero-copy `from_bytes_unchecked_steal`). `str{ptr,len}` record-lit лоуэрится спец-кейсом
+  `emit_record_lit` → `(nova_str){.ptr=…,.len=…}` (str ∈ RUNTIME_DEFINED_TYPES skip-list, нет
+  NovaValue_str schema).
+- **КЛЮЧЕВАЯ ПЕРЕОЦЕНКА (исправляет пессимизм Plan 139.1 Ф.B):** privacy у Nova — **type-based**,
+  НЕ module-based: `priv_access_allowed_base` проверяет только `current_recv_type == tname` (без проверки
+  модуля). Поэтому `fn str @method` в `string.nv` (модуль runtime.string) имеет receiver str ⇒
+  `current_recv_type=="str"` ⇒ видит priv `@ptr`/`@len` и конструирует `str{…}`. Прошлый вывод
+  «string.nv не может конструировать str» — ошибка. Это и разблокировало всю миграцию producer-форм
+  БЕЗ новой checker-инфры.
+- **SPEC:** новый **D247** (08-runtime.md) — umbrella-блок (str-method external→Nova migration + Vec
+  cross-type мост; depends D26/D232/D216/D246; ссылается на per-фазовые amend'ы D246/D26). D232 Key
+  methods table дополнен строками from_raw_parts/as_ptr/into_raw + cross-ref на D247.
+- **Маркеры:** `[M-139-f2-ptr-field-producers]` — **ЗАКРЫТ** (история в backlog). Reframed:
+  `[M-139.1-operator-lowered-methods]` (решение option (b) зафиксировано),
+  `[M-139.1-hash-irreducible-crypto-seed]` (CONFIRMED-BY-FACT permanent), `[M-139.1-len-d117-method-only]`
+  (по решению Ф.1 — bare `@len` field-read через D117 self-field carve-out, не C).
+- **PARTIAL/осознанные границы:** (1) operator-lowering `+`/`<`/… остаётся C (option (b), perf hot-path —
+  НЕ упрощение, design-выбор); (2) `@hash` остаётся C (security); (3) `[M-139-f1-trim-view]` —
+  `@trim` Nova-body возвращает alloc-копию, не zero-copy slice-view (perf-only разница, контент идентичен).
+- **КОММИТЫ:** Ф.0 97171b50d20, Ф.1 118231408a7, Ф.2 2134a12306e, Ф.3 94ca26c09e6, Ф.4 82b4063452d,
+  Ф.5 <этот коммит>.
+- **Регрессия (RELEASE binary):** 0 NEW FAIL. plan139_2 12/0, plan139 37/0, plan139_1 4/0, str 13/0,
+  plan90 9/0, plan90_1 21/0 — все зелёные, идентичны reported-state Ф.4.
+
 ### Plan 83-go-cmn Ф.3 — ОТЛОЖЕН (design-finding, без кода), 2026-06-11
 
 - **uv_async УЖЕ корректный note-примитив** (idempotent + before/after ordering + IOCP-backed
@@ -35694,3 +35811,9 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   ring_overflow @MP=4 25/25. Спека D245 §финальный + план §9.11.1.
 - **META (Ф.3+Ф.4):** de-risking 2 фазы подряд показал Go global-queue/coalescing конфликтует с
   корректным home-affinity Nova → остаток routing-порта bench-gated. Критичное (оба race'а) закрыто.
+
+### Plan 139.2 post-close fix (2026-06-12) — block-expr SEGV, без упрощений
+Точечный фикс инференса block-expr value-type (emit_block_expr + infer Block-арм). Корневая
+латентная слабость — `var_types` не scoped по функциям (локалы протекают между функциями) —
+НЕ закрыта целиком (потребовала бы broad per-fn-scope рефактор, regression-риск); оформлена
+маркером [M-codegen-var-types-fn-scope]. Block-expr-путь закрыт + regression-guard.
