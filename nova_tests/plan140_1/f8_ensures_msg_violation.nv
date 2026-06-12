@@ -1,0 +1,18 @@
+// EXPECT_RUNTIME_PANIC f8_ensures_msg_violation.nv:12: ensures failed: result must equal input (result == x)
+//
+// Plan 140.1 Ф.2/Ф.3 (D24 amend), acceptance F3+F7: an `ensures` contract WITH
+// a custom message, when violated on return, aborts with
+// `<file>:<line>: ensures failed: <msg> (<expr>)`. Exercises the message path
+// for the post-condition kind (not just `requires`). The function deliberately
+// returns a value that breaks its own postcondition.
+
+module plan140_1.f8_ensures_msg_violation
+
+fn identity_buggy(x int) -> int
+    ensures result == x, "result must equal input"
+=> x + 1
+
+fn main() Io -> () {
+    ro _ = identity_buggy(5)
+    println("UNREACHABLE")
+}

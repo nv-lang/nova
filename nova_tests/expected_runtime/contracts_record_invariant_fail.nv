@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC contract invariant failed in `Account`
+// EXPECT_RUNTIME_PANIC invariant failed: balance >= 0
 //
 // Plan 33.3 Ф.9.2: record invariant violation на конструкции →
 // runtime contract violation в debug.

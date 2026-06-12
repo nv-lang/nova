@@ -29,8 +29,19 @@ typedef enum {
     NOVA_CONTRACT_INV    /* invariant failed (Plan 33.2) */
 } NovaContractKind;
 
-/* Routing identical to nova_assert (D13). The diagnostic message is
- * structured: "<kind> failed in <fn>: <contract_src> at <file>:<line>".
+/* Routing identical to nova_assert (D13).
+ *
+ * Plan 140.1 Ф.2 (D24 amend): short location-first diagnostic format.
+ *   - without user message: "<file>:<line>: <kind> failed: <expr>"
+ *   - with    user message: "<file>:<line>: <kind> failed: <msg> (<expr>)"
+ * `<kind>` ∈ requires / ensures / invariant (the word "contract" and
+ * "in `<fn>`" are dropped — `<kind>` already implies a contract and
+ * `<file>:<line>` localizes; the leading location lets terminals/IDEs make
+ * it click-to-line). `fn_name` is retained in the signature (callers pass
+ * it) but no longer printed. `user_msg == NULL` → no message (format A);
+ * otherwise the user's message precedes the expression in parentheses
+ * (format B). The user never embeds the location in the message — it is
+ * always auto-prefixed here from the codegen-supplied `file`/`line`.
  *
  * Inline для zero-cost call в hot path'е (debug builds). */
 static inline void nova_contract_violation(
@@ -38,17 +49,25 @@ static inline void nova_contract_violation(
     const char* fn_name,
     const char* contract_src,
     const char* file,
-    int line)
+    int line,
+    const char* user_msg)
 {
+    (void)fn_name; /* retained for ABI/call-site stability; not printed */
     /* Build diagnostic message. Use fixed-size buffer; truncate if needed. */
     char buf[512];
     const char* kind_str =
         (kind == NOVA_CONTRACT_PRE)  ? "requires" :
         (kind == NOVA_CONTRACT_POST) ? "ensures"  :
                                        "invariant";
-    snprintf(buf, sizeof(buf),
-        "contract %s failed in `%s`: %s at %s:%d",
-        kind_str, fn_name, contract_src, file, line);
+    if (user_msg) {
+        snprintf(buf, sizeof(buf),
+            "%s:%d: %s failed: %s (%s)",
+            file, line, kind_str, user_msg, contract_src);
+    } else {
+        snprintf(buf, sizeof(buf),
+            "%s:%d: %s failed: %s",
+            file, line, kind_str, contract_src);
+    }
 
     /* Routing: fiber → fail-frame → test-frame → stderr+abort. */
     if (nova_in_fiber() && _nova_fail_top) {

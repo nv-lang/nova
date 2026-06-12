@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC contract requires failed in `<assert_static>`
+// EXPECT_RUNTIME_PANIC requires failed:
 //
 // Plan 33.3 Ф.9.5: invariant ложен ДО первой итерации (loop никогда не
 // выполняется потому что n=0, но invariant сразу false) → pre-entry

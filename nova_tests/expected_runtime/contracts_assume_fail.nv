@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC contract requires failed in `<assume>`
+// EXPECT_RUNTIME_PANIC requires failed:
 //
 // Plan 33.3: `assume false` в debug-сборке → runtime contract violation.
 // (В release с full SMT это была бы compile error, но в bootstrap-форме —

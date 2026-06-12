@@ -35888,3 +35888,23 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   `find_repo_root()` = `std::env::current_dir()`, НЕ путь тест-файла. Запуск с CWD≠worktree
   компилирует runtime ИЗ main-репо → worktree-правки .c молча игнорируются. Документировано в
   плане §7 + project-creation.
+### Plan 140.1 Ф.0-Ф.3 (2026-06-12) — contract & assert diagnostics, БЕЗ упрощений
+Реализовано по acceptance F1-F7 без срезов. (A) Единый короткий **location-first**
+формат `<file>:<line>: <kind> failed: <expr>` для requires/ensures/invariant И
+assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
+<file>:<line>` + `assertion failed`). (B) Опц. пользовательское сообщение на
+контрактах И assert → `<file>:<line>: <kind> failed: <msg> (<expr>)`. LOC-префикс
+ВСЕГДА авто-проставляется codegen'ом из span (пользователь не пишет локацию).
+- **Не упрощение, а сознательный defer:** интерполяция значений в сообщении
+  (`requires x > 0, "got {x}"`) вынесена в `[M-140.1-message-interpolation]` (P3) —
+  msg остаётся статическим string-literal, baked в C format string. Динамический
+  capture значений переменных на момент нарушения — отдельная задача (runtime snapshot).
+  Это явный scope-границей плана, не срез.
+- **Не упрощение, а граница D84:** `assert(cond, msg)` принимает только string-literal
+  как msg; не-литеральный 2-й аргумент → fallback на no-msg форму (2-arg overload
+  объявлен в prelude, тип-чек проходит). Тот же defer, что выше (динамический msg).
+- **Точность локации:** контракт → span контракт-клаузы (requires/ensures/invariant
+  строка), assert → span вызова assert. Обе точны (не enclosing-fn fallback).
+- **Тесты:** 9/9 plan140_1 в dev И release (все 4 комбинации contract±msg / assert±msg
+  + back-compat + ensures/invariant msg + neg E_CONTRACT_MESSAGE_NOT_STRING). Broad
+  regression 0 new FAIL (basics/contracts/plan140/plan139/str/plan147/generics).

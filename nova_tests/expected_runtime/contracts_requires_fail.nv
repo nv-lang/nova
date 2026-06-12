@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC contract requires failed in `must_be_positive`
+// EXPECT_RUNTIME_PANIC requires failed: x > 0
 //
 // Plan 33.1 Ф.4 (D24): nova_contract_violation срабатывает при
 // нарушении requires в runtime (debug сборка).

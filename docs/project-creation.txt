@@ -37211,3 +37211,48 @@ Plan 149: env поднимает стек (доказано slot_size), а на 
 
 SPEC: D233 в spec/decisions/08-runtime.md (next-free re-verified). docs/runtime-tuning.md новый.
 Marker [M-fiber-arena-raise-cap] → SUPERSEDED+IMPLEMENTED в backlog-followups.md.
+================================================================================
+Plan 140.1 — Contract & assert diagnostics (short location-first format +
+custom message). ✅ CLOSED Ф.0-Ф.3 (2026-06-12). Branch plan-140.1
+(worktree nova-p140-1), от 9b806e88 (main с влитым Plan 140). НЕ merged.
+================================================================================
+
+Проблема: (1) verbose-префикс контрактов `contract requires failed in `fn`:
+expr at file:line`; (2) assert без локации (`assertion failed: expr`); (3) нет
+кастомного сообщения на requires/ensures/invariant.
+
+Решение:
+ A. Единый короткий location-first формат для контрактов И assert:
+    `<file>:<line>: <kind> failed: <expr>` (kind ∈ requires/ensures/invariant/assert).
+    Убраны «contract»/«in `fn`»; `assertion`→`assert`; assert получил file:line.
+ B. Опц. пользовательское сообщение (контракты И assert):
+    `<file>:<line>: <kind> failed: <msg> (<expr>)`. LOC-префикс ВСЕГДА авто (span).
+
+Фазы:
+ Ф.0 spec (cc6c2f58): D24 amend (09-tooling.md) + D13 amend (08-runtime.md) + D81 cross-ref.
+ Ф.1 parser+AST (e6763457): Contract.message: Option<String>; parse_opt_contract_message
+     (грамматика `<expr> ("," <string-lit>)?`); не-литерал → E_CONTRACT_MESSAGE_NOT_STRING.
+ Ф.2 codegen+runtime (2c228470): nova_contract_violation (contracts.h) location-first +
+     user_msg; nova_assert_loc (effects.h) file/line + msg; emit_c.rs source_file_name +
+     loc_for_span + contract_msg_arg; все 6 violation-сайтов + assert-lowering.
+ Ф.3 тесты+docs+close: 7 новых plan140_1 фикстур; broad regression; prelude doc-fix;
+     spec final; backlog [M-140-contract-message] CLOSED; plan-doc статус-раздел.
+
+Acceptance F1-F7 — все met:
+  F1 формат `file:line: kind failed: expr` (req/ens/inv + assert) ✅ f2/f4/f8/f9
+  F2 assert печатает file:line + `assert failed` ✅ f4 (file:12: assert failed: a > 0)
+  F3 `requires expr, "msg"` парсится + violation `kind failed: msg (expr)` ✅ f1/f3/f8/f9
+  F4 сообщение опционально; без него формат A; back-compat ✅ f7 + f2/f4
+  F5 не-строковый msg → E_CONTRACT_MESSAGE_NOT_STRING ✅ f5
+  F6 release И debug; 0 регрессий ✅ plan140_1 9/9 dev+release; broad 0 new FAIL
+  F7 LOC всегда авто; 4 комбинации contract±msg/assert±msg ✅ f2/f3/f4/f6
+
+Регрессии: 0 new FAIL vs baseline. basics 8/0, contracts 250/0 (56 Z3-skip),
+plan140 7/0, plan139 37/0, str 13/0, plan147 30/0, generics 5/0. expected_runtime
+19/3 — 3 FAIL (defer_panic_mainflow/defer_throw_single/multi_expect_stdout) pre-existing
+D158 Fail-message mismatch, не контракты/assert (присутствуют и на baseline).
+
+D-блоки: D24 AMEND (формат + сообщение), D13 AMEND (assert формат + file:line),
+D84 прецедент (assert(cond, msg) arity-overload). Закрыл [M-140-contract-message].
+Followup (P3, deferred): [M-140.1-message-interpolation] — динамическая интерполяция
+значений в сообщении (нужен runtime-capture на момент нарушения).

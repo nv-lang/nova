@@ -2292,22 +2292,25 @@ impl Parser {
                     let start = self.peek().span;
                     self.bump();
                     let expr = self.parse_expr()?;
+                    let message = self.parse_opt_contract_message()?;
                     let span = start.merge(expr.span);
-                    contracts.push(Contract { kind: ContractKind::Requires, expr, span });
+                    contracts.push(Contract { kind: ContractKind::Requires, expr, span, message });
                 }
                 TokenKind::Ident(n) if n == "ensures" => {
                     let start = self.peek().span;
                     self.bump();
                     let expr = self.parse_expr()?;
+                    let message = self.parse_opt_contract_message()?;
                     let span = start.merge(expr.span);
-                    contracts.push(Contract { kind: ContractKind::Ensures, expr, span });
+                    contracts.push(Contract { kind: ContractKind::Ensures, expr, span, message });
                 }
                 TokenKind::Ident(n) if n == "ensures_fail" => {
                     let start = self.peek().span;
                     self.bump();
                     let expr = self.parse_expr()?;
+                    let message = self.parse_opt_contract_message()?;
                     let span = start.merge(expr.span);
-                    contracts.push(Contract { kind: ContractKind::EnsuresFail, expr, span });
+                    contracts.push(Contract { kind: ContractKind::EnsuresFail, expr, span, message });
                 }
                 TokenKind::Ident(n) if n == "reads" => {
                     self.bump();
@@ -2331,6 +2334,41 @@ impl Parser {
             }
         }
         Ok((contracts, reads, modifies, decreases))
+    }
+
+    /// Plan 140.1 Ф.1 (D24 amend): после contract-выражения опционально
+    /// разбирает `, "<message>"` (string-literal). Возвращает `Some(msg)`,
+    /// если запятая присутствует И за ней следует string-literal; `None`,
+    /// если запятой нет (контракт без сообщения).
+    ///
+    /// Грамматика: `requires <expr> ("," <string-lit>)?`. Запятая в этой
+    /// позиции зарезервирована только под сообщение — не-строковый-литерал
+    /// после неё → `E_CONTRACT_MESSAGE_NOT_STRING`. Пользователь НЕ
+    /// включает локацию в сообщение (она авто-проставляется на codegen).
+    fn parse_opt_contract_message(&mut self) -> Result<Option<String>, Diagnostic> {
+        if !matches!(self.peek().kind, TokenKind::Comma) {
+            return Ok(None);
+        }
+        self.bump(); // consume `,`
+        match &self.peek().kind {
+            TokenKind::Str(s) => {
+                let msg = s.clone();
+                self.bump();
+                Ok(Some(msg))
+            }
+            _ => {
+                let span = self.peek().span;
+                let actual = self.peek().kind.name();
+                Err(Diagnostic::new(
+                    format!(
+                        "[E_CONTRACT_MESSAGE_NOT_STRING] contract message must be a \
+                         string literal (e.g. `requires x > 0, \"x must be positive\"`), \
+                         got {actual}"
+                    ),
+                    span,
+                ))
+            }
+        }
     }
 
     /// Plan 33.2: парсит `reads <expr>{, <expr>}*` или `modifies <expr>{, <expr>}*`.
@@ -3510,11 +3548,13 @@ impl Parser {
                     let cstart = self.peek().span;
                     self.bump();
                     let expr = self.parse_expr()?;
+                    let message = self.parse_opt_contract_message()?;
                     let cspan = cstart.merge(expr.span);
                     invariants.push(Contract {
                         kind: ContractKind::Ensures, // invariants are 'ensures'-like
                         expr,
                         span: cspan,
+                        message,
                     });
                 }
                 _ => break,
@@ -4265,15 +4305,17 @@ impl Parser {
                     TokenKind::Ident(ref n) if n == "requires" => {
                         self.bump();
                         let expr = self.parse_expr()?;
+                        let message = self.parse_opt_contract_message()?;
                         let span = cstart.merge(expr.span);
-                        contracts.push(Contract { kind: ContractKind::Requires, expr, span });
+                        contracts.push(Contract { kind: ContractKind::Requires, expr, span, message });
                         self.skip_newlines();
                     }
                     TokenKind::Ident(ref n) if n == "ensures" => {
                         self.bump();
                         let expr = self.parse_expr()?;
+                        let message = self.parse_opt_contract_message()?;
                         let span = cstart.merge(expr.span);
-                        contracts.push(Contract { kind: ContractKind::Ensures, expr, span });
+                        contracts.push(Contract { kind: ContractKind::Ensures, expr, span, message });
                         self.skip_newlines();
                     }
                     _ => break,
@@ -5104,14 +5146,16 @@ impl Parser {
                 TokenKind::Ident(ref n) if n == "requires" => {
                     self.bump();
                     let expr = self.parse_expr()?;
+                    let message = self.parse_opt_contract_message()?;
                     let span = cstart.merge(expr.span);
-                    contracts.push(Contract { kind: ContractKind::Requires, expr, span });
+                    contracts.push(Contract { kind: ContractKind::Requires, expr, span, message });
                 }
                 TokenKind::Ident(ref n) if n == "ensures" => {
                     self.bump();
                     let expr = self.parse_expr()?;
+                    let message = self.parse_opt_contract_message()?;
                     let span = cstart.merge(expr.span);
-                    contracts.push(Contract { kind: ContractKind::Ensures, expr, span });
+                    contracts.push(Contract { kind: ContractKind::Ensures, expr, span, message });
                 }
                 _ => break,
             }

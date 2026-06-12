@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC contract ensures failed in `buggy`
+// EXPECT_RUNTIME_PANIC ensures failed:
 //
 // Plan 33.1 Ф.4 (D24): nova_contract_violation срабатывает при
 // нарушении ensures в runtime (debug сборка).
