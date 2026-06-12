@@ -170,3 +170,26 @@ AC10 (D233 + docs + marker + self-ref) — ✅. AC6 (per-worker × MAXPROCS) —
 **Note для будущих прогонов:** `nova test` резолвит `rt_dir` через `find_repo_root()` =
 `std::env::current_dir()`, НЕ путь тест-файла. Запускать `nova test` с **CWD = worktree**, иначе
 компилируется runtime ИЗ main-репо (worktree-правки .c не попадут в бинарь).
+
+## Followups closed (2026-06-13)
+
+Три post-close followup'а закрыты:
+
+1. **#3 — 32-bit dead DEFAULT/comment.** `NOVA_FIBER_SLOT_COUNT_DEFAULT` исправлен
+   `16`→`64` (round-UP-to-×64 + `MIN`=64 уже форсили 64; старый `16` и его «64MB»
+   comment были мёртвыми) + `_Static_assert` на инвариант ×64 ∧ ≥MIN. Zero
+   runtime-behavior change (64-bit/Windows = 16384). D233 §8 + docs/runtime-tuning.md
+   обновлены.
+2. **#2 — `nova build` / `nova bench` теперь honor `[runtime]`+`[ffi]`.** Manifest
+   резолвится через `find_manifest` на 3 BuildOpts call-site'ах (cmd_build,
+   bench `run`, bench `compile_for_profile`), зеркаля test_runner. Precedence
+   `env > nova.toml(-D) > builtin` НЕ изменён. Verified: `[ffi]` bogus-lib доходит
+   до линкера, `[runtime]` резолвится в обоих front-end'ах. D233 §2 +
+   docs/runtime-tuning.md обновлены.
+3. **#1 — `cancellation_test` suite-green.** Файл перенесён в
+   `nova_tests/concurrency/cancellation_quarantine/` под `_fixture.toml` sentinel
+   (walk_nv skip; module → `cancellation_quarantine.cancellation_test` для D78).
+   Планируемый int/str/bool split **проверен и НЕ помогает** (single within[T] в
+   собственном TU тоже overflow'ит даже на 64MB — unbounded codegen recursion).
+   Все test-кейсы сохранены verbatim. Codegen root-cause НЕ тронут; маркер
+   `[M-cancellation-test-mono-recursion-overflow]` **остаётся OPEN**.

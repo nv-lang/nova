@@ -55,6 +55,12 @@ max_fibers  = 8192
 With the manifest above, the program ships with a 2MB stack default. Setting
 `NOVA_FIBER_STACK=8MB` at launch overrides it to 8MB without recompiling.
 
+`nova build` and `nova bench` (single-file, dir, and `--profile`) resolve the
+`[runtime]` section (and the Plan 115 `[ffi]` section) from the package
+`nova.toml` exactly like `nova test` does, so the baked default applies no matter
+which front-end produced the binary. The precedence above is unchanged — only
+the set of commands that honor the manifest expanded.
+
 ## Auto-correction and safety
 
 You can write **any** value — the runtime fixes it up:
@@ -94,5 +100,11 @@ space; size the product against what the host allows.
   the default does not grow per-platform arrays.
 - The guard page (16KB) and scheduler/GC invariants are unaffected by tuning;
   the arena config is read once at worker init.
+- On 32-bit targets the arena is intentionally tiny: `SLOT_COUNT_MAX` = 1024 and
+  the runtime default is 64 slots (= 256MB virtual). The internal
+  `NOVA_FIBER_SLOT_COUNT_DEFAULT` literal was corrected `16`→`64` — round-UP to a
+  multiple of 64 plus the `MIN`=64 floor already forced 64 at runtime, so the old
+  `16` (and its "64MB" comment) was dead. 64-bit / Windows defaults are
+  unchanged (`16384`).
 
 See spec **D233** (`spec/decisions/08-runtime.md`) for the full contract.

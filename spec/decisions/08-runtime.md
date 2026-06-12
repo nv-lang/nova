@@ -7716,6 +7716,12 @@ density out of the box).
 integers, human-size parsed in Rust); the env var is read in
 `nova_fiber_arena_init` and overrides the compile-time default at runtime.
 
+`nova build` and `nova bench` (single-file, dir, and `--profile` paths) now
+resolve `[runtime]` (and Plan 115 D214 `[ffi]`) from the package `nova.toml` via
+`find_manifest`, identically to the test runner; the precedence chain
+`env > nova.toml(-D) > builtin` is UNCHANGED — only the set of front-ends that
+honor the manifest expanded (Plan 149 followup, 2026-06-13).
+
 ### 3. Auto-round-UP + clamp (UX rule)
 
 Any user value is rounded UP to the nearest valid (stack→page, slots→×64) then
@@ -7763,7 +7769,11 @@ hint referencing `NOVA_FIBER_STACK`. With the 256KB floor, usable = 240KB > 0.
 Arena config (set once at `nova_fiber_arena_init`, before the arena is published)
 touches only `slot_size`/`slot_count`/`virtual_size`/bitmap-size + tail bits — no
 scheduler or GC invariant (grow-vs-wake, iso-cancel, active-range roots remain
-as-is). 32-bit branch kept tiny (`SLOT_COUNT_MAX`=1024, default=16).
+as-is). 32-bit branch kept tiny (`SLOT_COUNT_MAX`=1024, runtime default 64 =
+256MB; the source `NOVA_FIBER_SLOT_COUNT_DEFAULT` literal was corrected 16→64
+since round-UP-to-×64 + `MIN`=64 already forced 64 at runtime — the old 16 was
+dead and its '64MB' comment false; a `_Static_assert` now pins the
+×64 ∧ ≥MIN invariant. Plan 149 followup, 2026-06-13).
 
 ### 9. Cross-platform
 
