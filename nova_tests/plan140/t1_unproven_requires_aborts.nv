@@ -1,0 +1,33 @@
+// EXPECT_RUNTIME_PANIC contract requires failed in `needs_positive`: x > 0
+//
+// Plan 140 Ф.4 (D24 amend), acceptance F1: an UNPROVEN `requires` is checked
+// at runtime in the RELEASE build (`--mode release`) and aborts fail-fast on
+// violation — it is NOT silently erased.
+//
+// Note: this is a should-abort test. The sole assertion is EXPECT_RUNTIME_PANIC
+// (nonzero exit + the structured `nova_contract_violation` message on stderr).
+// We do NOT assert stdout here: `abort()` does not flush libc stdout buffers,
+// so any pre-abort `println` may be lost — the abort itself is the contract.
+//
+// `needs_positive` carries `requires x > 0`. It is called with `-7`, which
+// violates the precondition. The VerificationPipeline cannot discharge this
+// precondition (it is the caller's obligation and the argument is supplied at
+// the call site), so the contract stays OUT of `proven_contracts` → codegen
+// emits the `nova_contract_violation(NOVA_CONTRACT_PRE, ...)` guard at the
+// function-body entry. In release that guard fires → stderr message + abort()
+// → nonzero exit. Before Plan 140 Ф.1 this guard was stripped in release
+// (silent UB); now it stays.
+//
+// `UNREACHABLE` after the call is never printed because the abort terminates
+// the process first.
+
+module plan140.t1_unproven_requires_aborts
+
+fn needs_positive(x int) -> int
+    requires x > 0
+=> x * 2
+
+fn main() Io -> () {
+    ro _ = needs_positive(-7)
+    println("UNREACHABLE")
+}

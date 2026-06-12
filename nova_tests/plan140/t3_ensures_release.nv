@@ -1,0 +1,34 @@
+// EXPECT_RUNTIME_PANIC contract ensures failed in `at_least_ten`: result >= 10
+//
+// Plan 140 Ф.4 (D24 amend), acceptance F1: an UNPROVEN `ensures` is checked at
+// runtime in the RELEASE build (`--mode release`) and aborts fail-fast on
+// violation.
+//
+// Note: should-abort test. Sole assertion is EXPECT_RUNTIME_PANIC (nonzero exit
+// + structured `nova_contract_violation` message on stderr). No stdout assert:
+// `abort()` does not flush libc stdout buffers.
+//
+// `at_least_ten` carries `ensures result >= 10` but its body just returns `x`
+// unchanged, so the postcondition holds only for x >= 10. The contract is NOT
+// statically provable for an arbitrary `x` (and not statically disprovable for
+// every input — only for some), so the VerificationPipeline leaves it OUT of
+// `proven_contracts` → codegen emits the `nova_contract_violation(
+// NOVA_CONTRACT_POST, ...)` guard right before the function returns.
+//
+// `main` calls `at_least_ten(3)`, which returns 3 and violates the ensures. In
+// release the POST guard fires → stderr message + abort() → nonzero exit. The
+// companion positive case is t2 (a PROVABLE ensures is elided, zero-cost).
+//
+// `UNREACHABLE` is never printed because the postcondition abort terminates
+// the process first.
+
+module plan140.t3_ensures_release
+
+fn at_least_ten(x int) -> int
+    ensures result >= 10
+=> x
+
+fn main() Io -> () {
+    ro _ = at_least_ten(3)
+    println("UNREACHABLE")
+}

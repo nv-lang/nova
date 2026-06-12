@@ -1,0 +1,36 @@
+// EXPECT_RUNTIME_PANIC contract requires failed in `requires_even`: x % 2 == 0
+//
+// Plan 140 Ф.4 (D24 amend), acceptance F5: SAFE DEGRADE without Z3. When the
+// compiler is built WITHOUT `--features z3-backend` (or run with the Trivial
+// backend, `NOVA_SMT_BACKEND` unset / =trivial), the `proven_contracts` set is
+// empty/smaller → essentially every contract is treated as unproven and is
+// therefore runtime-checked in release. A violation still aborts fail-fast
+// (safe, just no elision speedup) rather than being silently erased.
+//
+// `requires_even` has `requires x % 2 == 0`. A non-linear/modular predicate
+// like this is NOT discharged by the linear-arithmetic TrivialBackend, so it
+// stays runtime-checked under the no-Z3 degrade path. `main` calls it with `7`
+// (odd), violating the precondition → `nova_contract_violation(
+// NOVA_CONTRACT_PRE, ...)` → stderr + abort() → nonzero exit, in RELEASE.
+//
+// This fixture is run in two configurations to prove the degrade is safe:
+//   * default Trivial backend (NOVA_SMT_BACKEND unset) — simulates no-Z3;
+//   * a compiler binary built WITHOUT `--features z3-backend`.
+// Both must abort identically. (Under a full Z3 build the predicate is still
+// unproven for arbitrary x, so it also aborts — degrade only changes WHICH
+// contracts get elided, never whether a real violation aborts.)
+//
+// Should-abort test: sole assertion is EXPECT_RUNTIME_PANIC (nonzero exit +
+// structured stderr message). No stdout assert (`abort()` skips stdout flush).
+// `UNREACHABLE` after the call never prints.
+
+module plan140.t6_no_z3_degrade
+
+fn requires_even(x int) -> int
+    requires x % 2 == 0
+=> x / 2
+
+fn main() Io -> () {
+    ro _ = requires_even(7)
+    println("UNREACHABLE")
+}
