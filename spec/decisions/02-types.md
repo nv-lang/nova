@@ -10229,15 +10229,22 @@ per binding-context relaxation. Symmetric `mut x ro T` уже работал
 
 7-я форма declaration: **value record** — `type X value { ... }`. 
 Stack-allocated reference type с copy-on-pass semantics (D32 amend). 
-Composable с `consume`/`priv` модификаторами в любом order.
+Composable с `consume`/`priv` модификаторами в каноническом порядке
+`value consume priv` (см. amend ниже — order-independence RETIRED).
 
 `value` — **contextual keyword** (recognized только в `type Name[Generics]
 [modifiers] value [modifiers] {` position; identifier `value` остаётся
 валидным во всех других позициях для backward compat).
 
 Canonical modifier order: `type X value consume priv { ... }` —
-allocation → ownership → visibility (outer → inner). Parser
-order-independent; lint W_NON_CANONICAL_TYPE_MODIFIER_ORDER — V2 followup.
+allocation → ownership → visibility (outer → inner).
+
+> **AMEND 2026-06-12 (Plan 148 Ф.1 / D241, [M-138-canonical-modifier-order]):**
+> Parser больше **НЕ** order-independent — out-of-canon порядок модификаторов
+> теперь hard error `E_MODIFIER_ORDER` (с machine-applicable fix-it),
+> а не отложенный lint `W_NON_CANONICAL_TYPE_MODIFIER_ORDER`. Полное правило
+> (canonical ranks, обобщение на новые модификаторы) — D241 в
+> [03-syntax.md](03-syntax.md#d241-канонический-порядок-модификаторов-type-декларации-scope-adjacency).
 
 ### D175 amend §«binding dominates» (Plan 124.8 Ф.3)
 

@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+//
+// Plan 148 Ф.1 (D241) — negative: triple-modifier `priv value consume` is
+// out of canonical order (worst-case full inversion).
+//
+// Canonical is `value consume priv` (ranks 0,1,2). The given `priv value
+// consume` is non-monotonic (2,0,1) → E_MODIFIER_ORDER, fix-it reorders the
+// whole region to `value consume priv`.
+module plan148.mo_neg_priv_value_consume
+
+type Conn priv value consume {
+    fd int
+}
+
+fn Conn consume @disconnect() -> () { () }

@@ -1,0 +1,20 @@
+// Plan 148 Ф.1 (D241) — positive: canonical `value priv` order accepted.
+//
+// Canonical type-modifier order is by scope, widest→narrowest:
+//   value (type-level representation) → priv (field-default visibility).
+// `value priv` is the one canonical syntax (A2 in the plan).
+module plan148.mo_canonical_value_priv_ok
+
+type Point value priv {
+    pub ro x f64
+    pub ro y f64
+    tag int
+}
+
+fn Point.new(x f64, y f64, tag int) -> Point => { x, y, tag }
+
+test "value priv canonical order parses + works" {
+    ro p = Point.new(1.0, 2.0, 7)
+    assert(p.x == 1.0)
+    assert(p.y == 2.0)
+}

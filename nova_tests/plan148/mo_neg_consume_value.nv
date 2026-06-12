@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+//
+// Plan 148 Ф.1 (D241) — negative: `consume value` is out of canonical order.
+//
+// value (rank 0) must precede consume (rank 1). `consume value` inverts them
+// → E_MODIFIER_ORDER, fix-it "reorder to `value consume`".
+module plan148.mo_neg_consume_value
+
+type Token consume value {
+    id int
+}
+
+fn Token consume @use() -> () { () }

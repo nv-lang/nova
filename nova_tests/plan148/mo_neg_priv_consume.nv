@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+//
+// Plan 148 Ф.1 (D241) — negative: `priv consume` is out of canonical order.
+//
+// Generalization to ALL type-modifiers: consume (rank 1) must precede priv
+// (rank 2). `priv consume` inverts them → E_MODIFIER_ORDER, fix-it
+// "reorder to `consume priv`".
+module plan148.mo_neg_priv_consume
+
+type Resource priv consume {
+    pub ro fd int
+}
+
+fn Resource consume @close() -> () { () }
