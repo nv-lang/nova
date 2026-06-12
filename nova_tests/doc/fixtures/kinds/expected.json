@@ -279,7 +279,7 @@
       ],
       "methods": [
         {
-          "name": "equals",
+          "name": "equal",
           "params": [
             {
               "default": null,

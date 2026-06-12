@@ -1,15 +1,15 @@
-//! Plan 45 / D107: fixture РґР»СЏ Sum / Effect / Protocol / Alias items.
+//! Plan 45 / D107: fixture для Sum / Effect / Protocol / Alias items.
 //!
 //! #stable
 
 module kinds.sample
 
-/// Sum-С‚РёРї СЃ unit-РІР°СЂРёР°РЅС‚Р°РјРё.
+/// Sum-тип с unit-вариантами.
 ///
 /// #stable
 export type Color | Red | Green | Blue
 
-/// Counter вЂ” РїСЂРѕСЃС‚РѕР№ effect СЃ axiom.
+/// Counter — простой effect с axiom.
 ///
 /// #stable
 export type Counter effect {
@@ -17,19 +17,19 @@ export type Counter effect {
     axiom non_negative(x int) => x >= 0
 }
 
-/// Eq вЂ” protocol.
+/// Eq — protocol.
 ///
 /// #stable
 export type Eq protocol {
     @equal(other Eq) -> bool
 }
 
-/// Alias РЅР°Рґ int вЂ” semantic clarity.
+/// Alias над int — semantic clarity.
 ///
 /// #stable
 export type Pixels alias int
 
-/// Newtype РЅР°Рґ int.
+/// Newtype над int.
 ///
 /// #stable
 export type AccountId int
