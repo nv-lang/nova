@@ -84,7 +84,4 @@ export fn f64 @compare(other Self) -> int =>
     if @ < other { -1 } else if @ > other { 1 } else { 0 }
 
 // bool ordering — false < true (canonical Boolean order).
-export fn bool @compare(other Self) -> int =>
-    if @ == other { 0 }
-    else if !@ { -1 }
-    else { 1 }
+export fn bool @compare(other Self) -> int => (@ as int) - (other as int)
