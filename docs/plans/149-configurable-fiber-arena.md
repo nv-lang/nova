@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Plan 148 — Configurable fiber arena (stack size + max fibers): env + nova.toml
+# Plan 149 — Configurable fiber arena (stack size + max fibers): env + nova.toml
 
 > **Создан:** 2026-06-12 (из discussion про растущие стеки — [Plan 146 §6.1](146-growable-fiber-stacks.md)).
 > **Статус:** 📋 PLANNED.
