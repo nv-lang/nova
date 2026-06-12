@@ -36775,3 +36775,51 @@ empirically confirmed (each fires its exact error code before staging).
 Files: nova_tests/plan139_1/{str_lang_item_basic_ok.nv (enhanced), neg_str_ptr_write.nv
 (new), neg_str_construct_direct.nv (new)}, docs/{project-creation.txt, simplifications.md,
 plans/backlog-followups.md}.
+
+=== Plan 139.1 Ф.D — close (E1/E4 audit; str lang-item COMPLETE) — 2026-06-12 ===
+Plan 139.1 CLOSED on plan-138.1 (NOT merged to main). This is the documentation/close
+phase: 0 source changes, binary unchanged from F.A (6670216167a).
+
+OUTCOME: str is now a real Nova value-record lang-item, not a hardcoded primitive.
+  type str value priv { ptr *u8, len int }   (std/prelude/core.nv)
+
+E1 (lang-item decl + privacy + ro-pointee) -> FULL. The declaration puts str into
+TypeCheckCtx.types (Item::Type, unfiltered); privacy fires through the EXISTING
+f3_check_member record-path -- no new lang-item checker infra was needed (the value-record
+machinery from Plan 124.8 was reused wholesale). ABI bridge is a pure codegen skip: str in
+RUNTIME_DEFINED_TYPES + forward-decl skip -> no NovaValue_str struct; C-type stays the
+hand-written nova_str typedef ({const uint8_t* ptr; int64_t len;}, sizeof 16). Privacy
+negatives all fire: s.ptr outside -> E_PRIV_FIELD_READ; str{ptr,len} outside ->
+E_PRIV_FIELD_INIT; write through *u8 -> E_POINTER_RO_ASSIGN (D246 ro-pointee). 3 neg
+fixtures PASS (plan139_1).
+
+E4 (methods -> Nova-body / zero-copy producers) -> PARTIAL (honest, not a relaxed gate).
+All pure-Nova-expressible methods were already migrated in Plan 139 F.1/F.2 (~17). The 10
+remaining external methods are the irreducible C-bridge + operator-lowered + sequencing-gated
+set (F.B VERIFY-OR-DOCUMENT, 0 migrated). The lang-item unblocked in-module @ptr byte-access
+(NECESSARY) but NOT sufficient for producer forms (as_bytes/split/from_bytes_*), which need a
+Nova-constructible Vec/NovaArray from raw parts -- real unblocker is Plan 138.2 F.0 ([]T->Vec
+universal flip), re-homed to [M-139-f2-ptr-field-producers]. @hash stays C (per-process crypto
+seed = permanent boundary), @concat/@compare are operator-lowered (joint migration), @len is
+D117 method-only.
+
+MARKERS: [M-139-f0-lang-item-decl] (root) CLOSED + REMOVED from backlog (scope = decl+privacy
+infra = landed). [M-139-f1-trim-view] + [M-139-f2-ptr-field-producers] regated: no longer gated
+on the (closed) lang-item marker -- now both re-homed under Plan 138.2 F.0. New permanent/sequencing
+markers from F.B retained: [M-139.1-hash-irreducible-crypto-seed], [M-139.1-operator-lowered-methods],
+[M-139.1-len-d117-method-only].
+
+REGRESSION (RELEASE binary, broad): 0 new FAIL. plan139_1 4/0, plan139 37/0, str 13/0, plan147
+30/0, plan124_8 40/0, plan91 2/0, plan126 21/0, basics 8/0, contracts 250/0, plan136_1 7/0,
+plan99 9/0, plan138 10/0, plan95 6/0. Pre-existing fails (per baseline a340d3bb673): plan62 x7,
+plan108_4 pos_receiver_at_parse, plan131 vec_debug_pos, plan108_2 x4 ([M-139-f6]), map_literals
+positive_const_map.
+
+SPEC: D26 / 02-types.md (str lang-item) / 08-runtime.md synced under F.A (ptr *u8 ro-pointee D246).
+
+Commits (plan-138.1): 6670216167a (F.A decl+linkage+ABI), 9102424fef3 (F.B VERIFY-OR-DOCUMENT),
+f8512b1a9ca (F.C content-eq + neg fixtures), + F.D docs commit (this). nova-private discussion-log
+separate.
+
+Files (F.D): docs/plans/139.1-str-lang-item-decl.md, docs/plans/139-str-as-nova-value-type.md,
+docs/plans/backlog-followups.md, docs/project-creation.txt, docs/simplifications.md, memory.

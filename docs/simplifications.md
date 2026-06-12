@@ -35622,3 +35622,28 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
 - **АНТИ-RELAXED-GATE:** content-eq доказан на distinct runtime-буферах в gen-C, не
   на interned-литералах (которые прошли бы под pointer-eq). Каждый негатив эмпирически
   подтверждён (фаerr'ит свой точный код до staging).
+
+## Plan 139.1 Ф.D — close (E1 ✅ FULL / E4 🟡 PARTIAL; root marker removed) — 2026-06-12
+- **STATUS:** Plan 139.1 ✅ CLOSED на `plan-138.1` (НЕ смёржен в main). E1-GATE PASSED
+  (Ф.A), не relaxed. Корневой `[M-139-f0-lang-item-decl]` УДАЛЁН из backlog (scope =
+  Nova-декл + privacy-инфра = приземлён).
+- **E1 → ✅ FULL:** `type str value priv { ptr *u8, len int }` объявлен + распознан как
+  lang-item; privacy fires (`E_PRIV_FIELD_READ` / `E_PRIV_FIELD_INIT` /
+  `E_POINTER_RO_ASSIGN`); ABI = `nova_str` typedef (нет `NovaValue_str`); 3 neg-фикстуры
+  PASS. БЕЗ новой checker-инфры — value-record (Plan 124.8) переиспользован целиком.
+- **E4 → 🟡 PARTIAL (честно, не relaxed):** все pure-Nova-выразимые методы уже мигрированы
+  (Plan 139 Ф.1/Ф.2, ~17). 10 оставшихся external НЕ мигрируемы сегодня (Ф.B
+  VERIFY-OR-DOCUMENT): `@byte_at`/`@hash` C-bridge-irreducible (crypto seed), `@concat`/
+  `@compare` operator-lowered, `as_bytes`/`split`/`from_bytes_*` gated на Plan 138.2 Ф.0
+  (`[]T→Vec` flip — `@ptr` необходим, но недостаточен), `@len` D117-method-only. Re-homed
+  на `[M-139-f2-ptr-field-producers]`.
+- **Регрессия (RELEASE binary, broad):** 0 new FAIL. plan139_1 4/0, plan139 37/0, str 13/0,
+  plan147 30/0, plan124_8 40/0, plan91 2/0, plan126 21/0, basics 8/0, contracts 250/0,
+  plan136_1 7/0, plan99 9/0, plan138 10/0, plan95 6/0. Все FAIL (plan62 ×7, plan108_4 ×1
+  pos_receiver_at_parse, plan131 vec_debug_pos, plan108_2 ×4 [M-139-f6], map_literals
+  positive_const_map ×1) — подтверждённо pre-existing per baseline a340d3bb673.
+- **Spec:** D26 / 02-types.md (str lang-item) / 08-runtime.md синхронизированы под Ф.A
+  (`ptr *u8` ro-pointee per D246); декл-строка `type str value priv {ptr *u8,len int}`.
+- **Docs only в Ф.D:** plan-docs (139.1 + 139 audit), project-creation.txt, simplifications.md,
+  backlog-followups.md (root marker removed, f1/f2 regated), memory. 0 source change → binary
+  unchanged @ 6670216167a.

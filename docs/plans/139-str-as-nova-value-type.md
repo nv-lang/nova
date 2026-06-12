@@ -292,14 +292,25 @@ followups (`docs/plans/backlog-followups.md` + `docs/simplifications.md`),
 
 ### Acceptance audit (overall E1-E9)
 
-- **E1** (lang-item decl + priv + `*ro u8`) — 🟡 ЧАСТИЧНО: layout известен codegen'у,
-  ABI/`*ro u8` контракт активен; полная Nova-декларация + privacy-gate (`s.ptr`→
-  E_PRIV_FIELD) вынесены в `[M-139-f0-lang-item-decl]` (новая checker-инфра).
+- **E1** (lang-item decl + priv + ro-pointee) — ✅ **FULL** (завершено Plan 139.1
+  Ф.A/Ф.C, 2026-06-12): `type str value priv { ptr *u8, len int }` объявлен в
+  `std/prelude/core.nv` и распознан как lang-item; privacy fires (`s.ptr` снаружи →
+  `E_PRIV_FIELD_READ`; `str{ptr,len}` снаружи → `E_PRIV_FIELD_INIT`; write через
+  `*u8` → `E_POINTER_RO_ASSIGN`); ABI-alias = `nova_str` typedef (никакого
+  `NovaValue_str`). 3 neg-фикстуры PASS. **БЕЗ новой checker-инфры** — переиспользован
+  value-record (Plan 124.8). NB: поле `ptr *u8` (bare `*T ≡ *ro T` = ro-pointee
+  canon под 3-axis D246; `*ro u8` был бы `E_REDUNDANT_POINTER_RO`), не `*ro u8`
+  как в исходном E1-тексте. `[M-139-f0-lang-item-decl]` УДАЛЁН.
 - **E2** (литералы/`${}`/`+`, copy-семантика, sizeof 16) — ✅ Ф.0 GATE.
 - **E3** (методы Nova-body, ≤2 irreducible C) — ✅ Ф.1.
 - **E4** (to_bytes/to_chars→Vec; as_bytes zero-copy via `@ptr`; from_bytes_*) —
-  🟡 ЧАСТИЧНО: to_bytes/to_chars в Nova-body; as_bytes/split/from_bytes_* —
-  C-примитивы (C as_bytes уже zero-copy, контракт сохранён), gated на lang-item.
+  🟡 ЧАСТИЧНО (остаётся; root cause уточнён Plan 139.1 Ф.B, 2026-06-12):
+  to_bytes/to_chars в Nova-body; as_bytes/split/from_bytes_* — C-примитивы
+  (C as_bytes уже zero-copy, контракт сохранён). Lang-item (139.1 Ф.A) разгеёчил
+  in-module `@ptr` byte-access — это **необходимо, но НЕ достаточно**: producer-формы
+  требуют Nova-конструируемого `Vec`/`NovaArray` из raw-parts. **Настоящий разблокер =
+  Plan 138.2 Ф.0 (`[]T→Vec` universal flip), не `@ptr`.** Re-homed на
+  `[M-139-f2-ptr-field-producers]` (более НЕ gated на lang-item).
 - **E5** (content-eq override; hash/eq consistency; HashMap; clone) — ✅ Ф.3.
 - **E6** (str↔cstr FFI incl. non-NUL-terminated via as_cstr) — ✅ Ф.4.
 - **E7** (runtime green via ABI-typedef; GC sees stack str) — ✅ Ф.5; residual
@@ -324,12 +335,15 @@ followups (`docs/plans/backlog-followups.md` + `docs/simplifications.md`),
 
 ### Открытые followups (никогда не silently dropped)
 
-- `[M-139-f0-lang-item-decl]` (P-корневой) — полная Nova-декларация `type str
-  value priv {...}` + privacy-enforcement; новая lang-item checker-инфра. Гейтит
-  E1/E4 literal-формы.
-- `[M-139-f1-trim-view]` — zero-copy trim-view (gated на lang-item).
+- `[M-139-f0-lang-item-decl]` (P-корневой) — ✅ **ЗАКРЫТ + УДАЛЁН** (Plan 139.1
+  Ф.A/Ф.C, 2026-06-12): полная Nova-декларация `type str value priv {ptr *u8,len int}`
+  + privacy-enforcement приземлены БЕЗ новой checker-инфры (переиспользован value-record
+  Plan 124.8). E1 → FULL.
+- `[M-139-f1-trim-view]` — zero-copy trim-view (`@ptr` разгеёчен Plan 139.1 Ф.A, но
+  view-форма producer-зависима — re-homed под Plan 138.2 Ф.0, как E4).
 - `[M-139-f2-ptr-field-producers]` — as_bytes/split/from_bytes_* в pure-Nova
-  (gated на lang-item; C-формы корректны, as_bytes уже zero-copy).
+  (root cause уточнён Plan 139.1 Ф.B: разблокер = Plan 138.2 Ф.0 `[]T→Vec` flip,
+  НЕ `@ptr`; C-формы корректны, as_bytes уже zero-copy).
 - `[M-139-f0-rt-header-ptr-sign-casts]` — 59 -Wpointer-sign warnings в
   рантайм-хедерах (source-compatible, suppressed `-w`).
 - `[M-139-f3-bare-return-type-str]` — pre-existing parser-баг `fn f() str` (bare
