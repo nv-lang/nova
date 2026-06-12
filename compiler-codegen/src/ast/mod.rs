@@ -475,6 +475,14 @@ pub struct Contract {
     pub kind: ContractKind,
     pub expr: Expr,
     pub span: Span,
+    /// Plan 140.1 Ф.1 (D24 amend): опциональное пользовательское сообщение
+    /// `requires <expr>, "<msg>"`. `None` — без сообщения (формат A:
+    /// `<file>:<line>: <kind> failed: <expr>`); `Some(msg)` — формат B:
+    /// `<file>:<line>: <kind> failed: <msg> (<expr>)`. Пользователь НЕ
+    /// указывает локацию — она проставляется на codegen-сайте из
+    /// `__FILE__`/`__LINE__`. Только string-literal допустим в этой позиции
+    /// (не-литерал → `E_CONTRACT_MESSAGE_NOT_STRING`).
+    pub message: Option<String>,
 }
 
 /// Plan 33.2 (D24): frame-target — l-value, который функция читает
