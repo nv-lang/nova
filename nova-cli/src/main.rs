@@ -3976,6 +3976,8 @@ fn cmd_build(
         libuv: libuv.as_ref(),
         gc_kind: test_runner::GcKind::default(),
         ffi: None,
+        // Plan 149 D233: builtin arena defaults (no [runtime] wiring here).
+        runtime: None,
     };
     {
         let _t = nova_codegen::perf_timer::PerfTimer::new("c-compile");

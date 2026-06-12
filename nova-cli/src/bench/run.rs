@@ -149,6 +149,8 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
         gc_kind: opts.gc_kind,
         // Plan 115 D214: bench без manifest-driven FFI (followup).
         ffi: None,
+        // Plan 149 D233: bench uses builtin arena defaults (no [runtime] wiring).
+        runtime: None,
     };
     test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(opts.compile_timeout_secs))?;
 
@@ -404,6 +406,8 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
         gc_kind: opts.gc_kind,
         // Plan 115 D214: bench без manifest-driven FFI (followup).
         ffi: None,
+        // Plan 149 D233: bench uses builtin arena defaults (no [runtime] wiring).
+        runtime: None,
     };
     test_runner::compile_c_to_exe(&tc, &build_opts, Duration::from_secs(opts.compile_timeout_secs))?;
     Ok(exe_file)
