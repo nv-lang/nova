@@ -35684,6 +35684,40 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
 - **Известный pre-existing gap (НЕ Ф.2):** `[]u8.from([…])` не поддержан codegen (`[]T.` static-dispatch
   только new/with_capacity) — тест-fixture обходит через with_capacity+push.
 
+## Plan 139.2 Ф.3 — @concat / @compare external-C → Nova-body; operator-lowering ОСТАЁТСЯ на C (option b) — 2026-06-12
+- **STATUS:** Ф.3 ✅ на ветке `plan-139.2`. Reframe `[M-139.1-operator-lowered-methods]` (решение
+  зафиксировано). **9/10 str-методов теперь Nova-body** (остаётся C только `@hash` — SipHash+crypto-seed).
+- **РЕШЕНИЕ operator-lowering — option (b) (НЕ упрощение, а обоснованный design-выбор):** операторы
+  `+`/`<`/`<=`/`>`/`>=`/`==`/`!=` над `nova_str` СОЗНАТЕЛЬНО ОСТАВЛЕНЫ на прямом C-lowering
+  (`nova_str_concat`/`nova_str_lt`/…/`nova_str_eq`, BinOp-arm `lty=="nova_str"`, emit_c.rs ~17137),
+  НЕ переведены на method-dispatch. **Почему НЕ (a) (роутить операторы через методы + retire C-fn):**
+  (1) **perf** — operator-формы горячие (string building, sort-сравнения): C `nova_str_concat` = один
+  `nova_alloc`+2×`memcpy`; C `nova_str_cmp` = один `memcmp`; Nova-body = `with_capacity`+2 byte-push-
+  loop'а (bounds-check на push) / byte-loop с per-byte `as int`. (2) **ортогональность** — BinOp codegen
+  и method-dispatch — независимые механизмы; чистое retirement требует СОВМЕСТНОЙ миграции + perf-харнесс.
+  **Дубль приемлем:** C-fn'ы малы (inline), единственный горячий путь; метод-форма редка.
+- **Что МИГРИРОВАНО в Nova-body:** прямые method-вызовы `s.concat(t)`/`s.compare(t)`, Compare-протокол
+  `@compare(o)==0`-synthesis, `@plus`-body (`=> @concat(other)`), `@replace`-chain (`.concat()`). Убраны
+  `"concat"`/`"compare"` из `str_method_to_rt` (emit_c.rs) → fall-through на Nova_str_method_X dispatch.
+  `eq`/`lt`/`le`/`gt`/`ge` ОСТАВЛЕНЫ в `str_method_to_rt` (C) — операторы их единственный горячий путь,
+  миграция тела без profit.
+- **@concat:** `[]u8.with_capacity(@len()+other.len())`, push-копия байтов обоих через `@as_bytes()`,
+  `str.from_bytes_unchecked` (owned + NUL D26 §3). Байт-в-байт = C `nova_str_concat` (nova_rt.h:226).
+- **@compare:** byte-loop над `@as_bytes()` обоих; `return a_byte - b_byte` на первом различии (u8 0..255
+  ⇒ тот же знак, что memcmp), иначе `sign(@len()-other.len())`. Идентично C `nova_str_compare` (array.h:989).
+- **runtime_registry.rs:** `concat`/`compare` → `c_name:""` + `nova_body:Some(...)` (kept in sync с string.nv).
+- **Регрессия (RELEASE binary, baseline = Ф.2 temp-worktree 2134a12306e + libuv-cache copy, per-suite
+  FAIL-set diff):** 0 NEW FAIL. plan139_2 12/0 (+concat_ok +compare_ok +operator_str_ok +neg). str 13/0,
+  plan139 37/0, plan139_1 4/0, plan90 9/0, plan90_1 21/0, plan114 10/0, plan118_1 11/0, plan137 16/0,
+  plan91 2/0, protocols/comparison 6/0 — все ≡ baseline. plan60 1/5, plan96 19/4, str_builder 0/9,
+  plan62 29/7, plan126_2 9/1, plan138_2 15/3, plan91_8a 0/2, plan91_8a_2 (impl_verification RUN-FAIL) —
+  FAIL-множества **байт-идентичны** baseline (все pre-existing на plan-138.1 base, НЕ от Ф.3).
+- **Негатив:** `neg_concat_forge_result_outside` (forge concat-результат `str{ptr,len}` вне модуля →
+  E_PRIV_FIELD_INIT — concat-construction module-private, producer-surface = единственный sanctioned путь).
+- **Baseline-инфра урок:** temp-worktree `git worktree add --detach <Ф.2-sha>` нуждается в libuv —
+  быстрее скопировать `target/libuv-cache/libuv.lib` + `nova_rt/libuv/*` из активного worktree, чем
+  пере-билдить libuv (vcvars). НЕ `git stash` (repo-global, конкурентный nova-p138).
+
 ### Plan 83-go-cmn Ф.3 — ОТЛОЖЕН (design-finding, без кода), 2026-06-11
 
 - **uv_async УЖЕ корректный note-примитив** (idempotent + before/after ordering + IOCP-backed

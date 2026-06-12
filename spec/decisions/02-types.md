@@ -7559,9 +7559,42 @@ Plan 118 family scope:
 >     закрыто новым `Vec[T] consume @into_raw() -> *mut T` (инверс
 >     `Vec.from_raw_parts`: потребляет Vec-обёртку, отдаёт сырой writable-буфер).
 >
-> Остаются C **только** `@hash` (SipHash-1-3 + crypto-seed, DoS-resistance — см.
-> `[M-139.1-hash-irreducible-crypto-seed]`) и operator-lowered `@concat`/`@compare`
-> (Plan 139.2 Ф.3 scope, `[M-139.1-operator-lowered-methods]`).
+> **Amend (Plan 139.2 Ф.3, 2026-06-12): `@concat` / `@compare` → Nova-body
+> (operator-lowering ОСТАЁТСЯ на C — option (b)).** `@concat(other) -> str` и
+> `@compare(other) -> int` мигрированы из external-C в Nova-body:
+>   - `@concat`: alloc `[]u8` размера `@len()+other.len()`, копирует байты обоих
+>     операндов через `@as_bytes()` (zero-copy view), затем
+>     `str.from_bytes_unchecked` (owned + NUL-term D26 §3). Байт-в-байт идентично
+>     C `nova_str_concat`.
+>   - `@compare`: byte-loop над `@as_bytes()` обоих операндов (как C strcmp /
+>     memcmp), length-aware tiebreak; возвращает `a_byte - b_byte` на первом
+>     различии (u8 0..255 ⇒ тот же знак, что memcmp), иначе `sign(@len() -
+>     other.len())`. Идентично C `nova_str_compare` (array.h:989).
+> **РЕШЕНИЕ по operator-lowering — option (b) (оставить C-fn для операторов):**
+> операторы `+` / `<` / `<=` / `>` / `>=` / `==` / `!=` над `nova_str`
+> лоуэрятся ОТДЕЛЬНО, НАПРЯМУЮ в C `nova_str_concat` / `nova_str_lt` / … /
+> `nova_str_eq` (emit_c.rs, BinOp-arm `lty == "nova_str"`), НЕ через
+> method-dispatch. ПРЯМЫЕ method-вызовы (`s.concat(t)` / `s.compare(t)`,
+> Compare-протокол `@compare(o)==0`-synthesis, `@plus`-body, `@replace` chained
+> `.concat()`) маршрутизируются в Nova-body (убраны `"concat"`/`"compare"` из
+> `str_method_to_rt`). **Почему option (b), не (a) (роутить операторы через
+> методы + retire C-fn):** (1) **perf** — C `nova_str_concat` = один `nova_alloc`
+> + два `memcpy`; Nova-body = `with_capacity` + два byte-push-loop'а (по байту,
+> с bounds-check на каждом push). C `nova_str_cmp` = один `memcmp`; Nova-body =
+> byte-loop с `as int`-конверсией на байт. Operator-формы — горячий путь (string
+> building, sort-сравнения), C оптимальнее. (2) **ортогональность** — operator-
+> lowering (BinOp codegen) и method-dispatch (`str_method_to_rt` / Nova-body) —
+> независимые механизмы; миграция тела метода НЕ требует трогать operator-arm, и
+> наоборот. Чистое retirement C-fn потребовало бы СОВМЕСТНОЙ миграции обоих +
+> perf-харнесс для подтверждения отсутствия регрессии — orthogonal, низкий
+> приоритет. Дубль (Nova-body метод + C-fn для оператора) — приемлемая цена:
+> C-fn'ы малы (inline), и они единственные горячие; метод-форма редка. См.
+> reframed `[M-139.1-operator-lowered-methods]`.
+>
+> Остаётся C **только** `@hash` (SipHash-1-3 + crypto-seed, DoS-resistance — см.
+> `[M-139.1-hash-irreducible-crypto-seed]`). **9/10 str-методов — Nova-body**
+> (`@concat`/`@compare` закрывают Ф.3); operator-lowering `+`/`<`/… —
+> сознательно C (perf, option (b)).
 - `*unsafe T` — pointer к possibly-uninit T (pointee init/layout contracts off);
   также degraded-форма после арифметики (alignment/bounds gone)
 - **Size:** pointer-width (8 bytes на 64-bit; bootstrap = 64-bit only)

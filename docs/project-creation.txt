@@ -36915,3 +36915,52 @@ map_literals/plan96/str_builder/plan60 pre-existing FAIL sets byte-identical
 (diff empty). Known pre-existing gap (not F.2): []u8.from([...]) unsupported by
 codegen ([]T. static-dispatch only new/with_capacity) — fixtures use
 with_capacity+push.
+
+Plan 139.2 F.3 — @concat / @compare external-C -> Nova-body; operator-lowering
+STAYS on C (option b) — 2026-06-12
+STATUS: F.3 done on branch plan-139.2. Reframe [M-139.1-operator-lowered-methods]
+(decision fixed). 9/10 str methods now Nova-body (only @hash stays C: SipHash +
+crypto-seed, DoS-resistance).
+
+DECISION operator-lowering = option (b) (keep C fn for operators). The `+` / `<`
+/ `<=` / `>` / `>=` / `==` / `!=` operators on nova_str DELIBERATELY remain on
+direct C lowering (nova_str_concat / nova_str_lt / ... / nova_str_eq, BinOp arm
+`lty == "nova_str"`, emit_c.rs ~17137), NOT routed through method-dispatch.
+Why NOT (a) (route operators through methods + retire C fn): (1) perf — operator
+forms are hot (string building, sort comparisons): C nova_str_concat = one
+nova_alloc + 2x memcpy; C nova_str_cmp = one memcmp; Nova-body = with_capacity +
+2 byte-push-loops (per-push bounds-check) / byte-loop with per-byte `as int`.
+(2) orthogonality — BinOp codegen and method-dispatch are independent mechanisms;
+a clean retirement would need a JOINT operator+method migration + perf harness.
+The duplication (Nova-body method + small inline C fn for the operator) is an
+acceptable cost: C fns are tiny (inline), the only hot path; method form is rare.
+
+MIGRATED to Nova-body: direct method calls (s.concat(t) / s.compare(t)),
+Compare-protocol @compare(o)==0 synthesis, @plus body (=> @concat(other)),
+@replace chain (.concat()). Removed "concat"/"compare" from str_method_to_rt
+(emit_c.rs) -> fall through to Nova_str_method_X dispatch. eq/lt/le/gt/ge KEPT in
+str_method_to_rt (C) — operators are their only hot path, body migration no profit.
+
+@concat (string.nv): []u8.with_capacity(@len()+other.len()), push-copy both
+operands' bytes via @as_bytes(), str.from_bytes_unchecked (owned + NUL D26 s3).
+Byte-exact with C nova_str_concat (nova_rt.h:226).
+@compare (string.nv): byte-loop over @as_bytes() of both; return a_byte - b_byte
+at first diff (u8 0..255 => same sign as memcmp), else sign(@len()-other.len()).
+Identical to C nova_str_compare (array.h:989).
+runtime_registry.rs: concat/compare -> c_name:"" + nova_body:Some(...) (in sync).
+
+Tests (nova_tests/plan139_2/): concat_ok (8: ASCII/empty-left/empty-right/
+both-empty/UTF-8-byte-exact/method==operator/chained/owned), compare_ok (8:
+eq/lt/gt/prefix-tiebreak/empty/byte-wise-high-byte/agrees-with-operators/
+transitivity), operator_str_ok (9: +/chained/UTF-8/</<=/>/>=/==-!=/mixed-paths —
+guards option (b)), neg_concat_forge_result_outside (EXPECT_COMPILE_ERROR
+E_PRIV_FIELD_INIT — concat-result str construction is module-private). plan139_2
+12/0 (8 baseline + 4 new).
+
+Regression (RELEASE binary, baseline = F.2 temp-worktree 2134a12306e + libuv-cache
+copy, per-suite FAIL-set diff): 0 NEW FAIL. plan139_2 12/0, str 13/0, plan139
+37/0, plan139_1 4/0, plan90 9/0, plan90_1 21/0, plan114 10/0, plan118_1 11/0,
+plan137 16/0, plan91 2/0, protocols/comparison 6/0 — all identical to baseline.
+plan60 1/5, plan96 19/4, str_builder 0/9, plan62 29/7, plan126_2 9/1, plan138_2
+15/3, plan91_8a 0/2, plan91_8a_2 (impl_verification RUN-FAIL) — FAIL sets
+byte-identical to baseline (all pre-existing on plan-138.1 base, NOT from F.3).

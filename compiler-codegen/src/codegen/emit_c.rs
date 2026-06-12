@@ -29159,10 +29159,22 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             //
             // RETAINED C primitives (Plan 139 Ф.1 scope-out, documented):
             //   - byte_at: irreducible byte-access primitive (#1).
-            //   - eq/lt/le/gt/ge/concat/compare/hash: lowered DIRECTLY by the
-            //     BinOp operator codegen (== / < / + / ...) and HashMap key path,
-            //     not via the method — migrating the method alone keeps the C fn.
-            //     Structural eq/hash is Plan 139 Ф.3 scope.
+            //   - eq/lt/le/gt/ge/hash: lowered DIRECTLY by the BinOp operator
+            //     codegen (== / < / ...) and HashMap key path, not via the
+            //     method. eq/lt/le/gt/ge retained here so a direct method-form
+            //     call (`s.eq(t)`) still routes to C (no Nova-body migration);
+            //     hash is irreducible (SipHash + crypto-seed,
+            //     [M-139.1-hash-irreducible-crypto-seed]).
+            //   - concat/compare: MIGRATED to Nova-body (Plan 139.2 Ф.3).
+            //     Removed from this table so a direct method-form call
+            //     (`s.concat(t)` / `s.compare(t)`) falls through to Nova-body
+            //     dispatch (Nova_str_method_concat / Nova_str_method_compare).
+            //     The `+` / comparison OPERATORS still lower DIRECTLY to C
+            //     nova_str_concat / nova_str_lt/… (option (b), BinOp path at the
+            //     `(lty == "nova_str" ...)` arm above) — operator-lowering is
+            //     orthogonal to method-dispatch; retiring the C fn would require
+            //     a joint operator+method migration (future plan,
+            //     [M-139.1-operator-lowered-methods]).
             //   - to_bytes/to_chars: MIGRATED to Nova-body (Plan 139 Ф.2).
             //   - as_bytes: MIGRATED to Nova-body (Plan 139.2 Ф.0). Now that str
             //     is a declared lang-item (Plan 139.1, [M-139-f0-lang-item-decl]
@@ -29181,7 +29193,9 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             //     static interceptions at the two `str.from_bytes_*` sites above
             //     were removed so they route to Nova_str_static_from_bytes_*.
             //   - len/byte_len: O(1) field read, trivial primitive.
-            "concat"      => Some("nova_str_concat"),
+            // concat: MIGRATED to Nova-body (Plan 139.2 Ф.3) — falls through to
+            // Nova_str_method_concat. No entry here. (The `+` operator still
+            // lowers directly to C nova_str_concat via the BinOp path.)
             "eq"          => Some("nova_str_eq"),
             "lt"          => Some("nova_str_lt"),
             "le"          => Some("nova_str_le"),
@@ -29198,7 +29212,9 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             // split: MIGRATED to Nova-body (Plan 139.2 Ф.2) — falls through to
             // Nova_str_method_split. No entry here.
             "byte_at"     => Some("nova_str_byte_at"),  // Plan 90
-            "compare"     => Some("nova_str_compare"),  // D178
+            // compare: MIGRATED to Nova-body (Plan 139.2 Ф.3) — falls through to
+            // Nova_str_method_compare. No entry here. (The comparison operators
+            // still lower directly to C nova_str_lt/… via the BinOp path.)
             // D178: parse_int(radix=10) is now a Nova body (Plan 54 Ф.2).
             // Falls through to Nova_str_method_parse_int — no str_method_to_rt entry needed.
             // D177: pad_left/pad_right/repeat/replace — Nova bodies (same mechanism).

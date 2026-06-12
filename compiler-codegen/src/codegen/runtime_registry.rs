@@ -333,9 +333,13 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[("other", "str")],
             return_ty: "str",
             effects: &[],
-            c_name: "nova_str_concat",
+            // Plan 139.2 Ф.3: Nova-body. Direct method calls (`s.concat(t)`)
+            // route here. The `+` OPERATOR still lowers directly to C
+            // nova_str_concat (option (b), emit_c.rs BinOp::Add) — orthogonal.
+            // `c_name` ignored when nova_body is Some (per RuntimeFn doc).
+            c_name: "",
             doc: "Конкатенация двух строк (создаёт новую). O(a+b).",
-            nova_body: None,
+            nova_body: Some("{\n    ro a = @as_bytes()\n    ro b = other.as_bytes()\n    ro an = @len()\n    ro bn = other.len()\n    mut out = []u8.with_capacity(an + bn)\n    mut i = 0\n    while i < an {\n        out.push(a[i])\n        i = i + 1\n    }\n    mut j = 0\n    while j < bn {\n        out.push(b[j])\n        j = j + 1\n    }\n    str.from_bytes_unchecked(out)\n}"),
         },
         // Plan 13 Ф.9.2: оператор `+` через метод @plus.
         // Body delegates на @concat — общее правило routing'а в codegen
@@ -492,7 +496,12 @@ fn str_runtime() -> Vec<RuntimeFn> {
             // regenerated stub stays self-contained.
             nova_body: Some("{\n    mut out = Vec[str].new()\n    ro sep_len = sep.len()\n    ro sn = @len()\n    if sep_len == 0 {\n        out.push(str { ptr: unsafe { @ptr + 0 }, len: sn })\n        return out\n    }\n    ro sb = @as_bytes()\n    ro pb = sep.as_bytes()\n    mut start = 0\n    mut i = 0\n    while i + sep_len <= sn {\n        mut j = 0\n        mut matched = true\n        while j < sep_len {\n            if sb[i + j] != pb[j] { matched = false; break }\n            j = j + 1\n        }\n        if matched {\n            out.push(str { ptr: unsafe { @ptr + start }, len: i - start })\n            i = i + sep_len\n            start = i\n        } else {\n            i = i + 1\n        }\n    }\n    out.push(str { ptr: unsafe { @ptr + start }, len: sn - start })\n    out\n}"),
     },
-        // D178: compare — lexicographic, like C strcmp. External (C implementation).
+        // D178: compare — lexicographic, like C strcmp.
+        // Plan 139.2 Ф.3: Nova-body (byte-loop over @as_bytes + length tiebreak).
+        // Direct method calls (`s.compare(t)`) and Compare-protocol synthesis
+        // route here. The `<`/`<=`/`>`/`>=`/`==`/`!=` OPERATORS still lower
+        // directly to C nova_str_lt/…/nova_str_eq (option (b),
+        // emit_c.rs BinOp comparison) — orthogonal. c_name ignored (nova_body).
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
@@ -501,9 +510,9 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[("other", "str")],
             return_ty: "int",
             effects: &[],
-            c_name: "nova_str_compare",
+            c_name: "",
             doc: "D178: Lexicographic comparison. Returns negative/0/positive like C strcmp.",
-            nova_body: None,
+            nova_body: Some("{\n    ro a = @as_bytes()\n    ro b = other.as_bytes()\n    ro an = @len()\n    ro bn = other.len()\n    ro min = if an < bn { an } else { bn }\n    mut i = 0\n    while i < min {\n        ro av = a[i] as int\n        ro bv = b[i] as int\n        if av != bv { return av - bv }\n        i = i + 1\n    }\n    if an < bn { return -1 }\n    if an > bn { return 1 }\n    0\n}"),
         },
         // D177/D178: Nova-body methods dispatched via Plan 54 Ф.2 (Nova_str_method_X).
         // c_name = "" (Nova-body dispatch; c_name ignored per RuntimeFn struct doc).

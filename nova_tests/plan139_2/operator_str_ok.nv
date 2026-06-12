@@ -1,0 +1,65 @@
+// operator_str_ok.nv — Plan 139.2 Ф.3
+// Guards the operator-lowering DECISION (option (b)): after migrating the
+// @concat / @compare METHODS to Nova-body, the `+` and comparison OPERATORS
+// must STILL work — they lower DIRECTLY to C nova_str_concat / nova_str_lt/…
+// (emit_c.rs BinOp path), independent of the now-Nova-body methods. This
+// fixture fails if a future change accidentally retires the C operator path
+// without a joint operator+method migration.
+
+module plan139_2.operator_str_ok
+
+test "operator +: basic concatenation" {
+    ro r = "foo" + "bar"
+    assert(r == "foobar")
+    assert(r.len() == 6)
+}
+
+test "operator +: chained and with empty" {
+    ro r = "a" + "" + "b" + "c"
+    assert(r == "abc")
+}
+
+test "operator +: multi-byte UTF-8" {
+    ro r = "café" + " ★"
+    assert(r == "café ★")
+}
+
+test "operator <: lexicographic less-than" {
+    assert("abc" < "abd")
+    assert("ab" < "abc")
+    assert("" < "x")
+    assert(!("abc" < "abc"))
+}
+
+test "operator <=: less-or-equal" {
+    assert("abc" <= "abc")
+    assert("abc" <= "abd")
+    assert(!("abd" <= "abc"))
+}
+
+test "operator >: greater-than" {
+    assert("abd" > "abc")
+    assert("abc" > "ab")
+    assert(!("abc" > "abc"))
+}
+
+test "operator >=: greater-or-equal" {
+    assert("abc" >= "abc")
+    assert("abd" >= "abc")
+    assert(!("abc" >= "abd"))
+}
+
+test "operator == / !=: content equality" {
+    assert("hello" == "hello")
+    assert("héllo" == "héllo")
+    assert("hello" != "world")
+    assert(!("hello" == "world"))
+}
+
+test "operator + then compare via method (mixed paths)" {
+    // Build with the C operator, compare with the Nova-body method: result
+    // must agree (both observe the same content).
+    ro joined = "Nova" + "Lang"
+    assert(joined.compare("NovaLang") == 0)
+    assert(joined == "NovaLang")
+}

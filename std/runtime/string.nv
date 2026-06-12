@@ -304,7 +304,34 @@ export fn str @to_upper() -> str {
 }
 
 // Конкатенация двух строк (создаёт новую). O(a+b).
-export external fn str @concat(other str) -> str
+// Plan 139.2 Ф.3: Nova-body — alloc `[]u8` размера `@len() + other.len()`,
+// копирует байты обоих операндов через @as_bytes() (zero-copy view), затем
+// `str.from_bytes_unchecked` (alloc fresh owned + NUL-term D26 §3). Семантика
+// байт-в-байт идентична бывшему C `nova_str_concat` (nova_rt.h:226: memcpy a,
+// memcpy b, NUL). Метод вызываем напрямую (`s.concat(t)`) и из `@plus` body.
+// ОПЕРАТОР `+` лоуэрится ОТДЕЛЬНО, напрямую в C `nova_str_concat` (option (b),
+// emit_c.rs BinOp::Add для nova_str) — C-форма (один memcpy-проход + один alloc)
+// оптимальнее push-loop, и operator-lowering ортогонален method-dispatch.
+// Декомиссия operator-lowering — отдельный future-план (см.
+// [M-139.1-operator-lowered-methods]).
+export fn str @concat(other str) -> str {
+    ro a = @as_bytes()
+    ro b = other.as_bytes()
+    ro an = @len()
+    ro bn = other.len()
+    mut out = []u8.with_capacity(an + bn)
+    mut i = 0
+    while i < an {
+        out.push(a[i])
+        i = i + 1
+    }
+    mut j = 0
+    while j < bn {
+        out.push(b[j])
+        j = j + 1
+    }
+    str.from_bytes_unchecked(out)
+}
 
 // Оператор `+`: `s1 + s2 == s1.@plus(s2)` → @concat (D46).
 export fn str @plus(other str) -> str => @concat(other)
@@ -665,7 +692,33 @@ export fn str @try_parse_int(radix int = 10) -> Result[int, ParseIntError] {
 }
 
 // D178: lexicographic comparison, like C strcmp. Returns negative/0/positive.
-export external fn str @compare(other str) -> int
+// Plan 139.2 Ф.3: Nova-body — byte-loop над @as_bytes() обоих операндов (как
+// C strcmp / memcmp), length-aware tiebreak. Возвращает (a_byte - b_byte) на
+// первом различии (u8 0..255 ⇒ разность даёт тот же знак, что memcmp), затем
+// при равенстве префикса — знак (@len() - other.len()). Семантика идентична
+// бывшему C `nova_str_compare` (array.h:989: memcmp(min_len) + length tiebreak
+// -1/0/1). Метод вызываем напрямую (`s.compare(t)`) и Compare-протоколом
+// (`@compare(o) == 0` synthesis, D178). ОПЕРАТОРЫ `<`/`<=`/`>`/`>=`/`==`/`!=`
+// лоуэрятся ОТДЕЛЬНО, напрямую в C `nova_str_lt`/…/`nova_str_eq` (option (b),
+// emit_c.rs BinOp comparison/eq для nova_str) — C-форма (memcmp) оптимальнее
+// byte-loop. См. [M-139.1-operator-lowered-methods].
+export fn str @compare(other str) -> int {
+    ro a = @as_bytes()
+    ro b = other.as_bytes()
+    ro an = @len()
+    ro bn = other.len()
+    ro min = if an < bn { an } else { bn }
+    mut i = 0
+    while i < min {
+        ro av = a[i] as int
+        ro bv = b[i] as int
+        if av != bv { return av - bv }
+        i = i + 1
+    }
+    if an < bn { return -1 }
+    if an > bn { return 1 }
+    0
+}
 
 // Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.
 export fn str @pad_left(width int, fill char) -> str {
