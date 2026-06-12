@@ -339,7 +339,11 @@ export fn str @plus(other str) -> str => @concat(other)
 // Plan 91.8a.2 part 3 (D183 amendment): magic methods @eq/@lt/@le/@gt/@ge
 // удалены. str.@compare (D178) даёт все 6 operators через synthesis.
 
-// FNV-1a хеш по байтам строки. Используется в std.collections.HashMap.
+// SipHash-1-3 + per-process random seed (DoS-resistant); используется в
+// std.collections.HashMap. Plan 139.2 Ф.4: НЕустранимая C-граница (security) —
+// seed (nova_hash_seed_k0/k1, getrandom/BCryptGenRandom) НЕ экспонируется на
+// Nova-сторону; перенос в Nova = hash-flooding/DoS-регрессия HashMap. См.
+// nova_rt.h (nova_str_hash/nova_siphash13) + [M-139.1-hash-irreducible-crypto-seed].
 export external fn str @hash() -> u64
 
 // UTF-8 bytes как []u8 (allocating copy). D178: renamed from @bytes().
