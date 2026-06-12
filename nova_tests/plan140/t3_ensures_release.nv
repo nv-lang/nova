@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC contract ensures failed in `at_least_ten`: result >= 10
+// EXPECT_RUNTIME_PANIC ensures failed: result >= 10
 //
 // Plan 140 Ф.4 (D24 amend), acceptance F1: an UNPROVEN `ensures` is checked at
 // runtime in the RELEASE build (`--mode release`) and aborts fail-fast on

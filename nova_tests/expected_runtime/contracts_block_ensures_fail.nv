@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC contract ensures failed in `bad_max`
+// EXPECT_RUNTIME_PANIC ensures failed:
 //
 // Plan 33.1 Ф.4 production-grade: ensures-check срабатывает на early return
 // в block-body когда контракт нарушен.

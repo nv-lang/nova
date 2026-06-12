@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC contract invariant failed in `Counter`
+// EXPECT_RUNTIME_PANIC invariant failed:
 //
 // Plan 33.3 Ф.9.2: record invariant check на конструкции через
 // record-литерал. Constructor с invariant-violation → runtime panic.

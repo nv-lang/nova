@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC contract requires failed in `requires_even`: x % 2 == 0
+// EXPECT_RUNTIME_PANIC requires failed: x % 2 == 0
 //
 // Plan 140 Ф.4 (D24 amend), acceptance F5: SAFE DEGRADE without Z3. When the
 // compiler is built WITHOUT `--features z3-backend` (or run with the Trivial

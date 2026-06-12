@@ -479,6 +479,16 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     // Plan 14 std-fix: source передаётся всегда — для line:col в
     // codegen-ошибках. Активация SRC-комментариев — отдельный флаг.
     emitter.set_source_for_annotations(src.clone());
+    // Plan 140.1 Ф.2 (D24/D13 amend): feed the source file name for the
+    // location-first contract/assert diagnostic prefix (`<file>:<line>: ...`).
+    // Use the file name (basename) to keep the prefix short and clickable.
+    {
+        let fname = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        emitter.set_source_file_name(fname);
+    }
     if !annotate_source {
         emitter.disable_source_annotations();
     }

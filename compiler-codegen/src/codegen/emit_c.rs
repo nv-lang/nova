@@ -451,7 +451,11 @@ pub struct CEmitter {
     /// list of (invariant-expr, span). Используется emit_record_lit'ом для
     /// wrap'а конструкции в runtime-check (`if (!Inv(tmp)) violation; tmp`).
     /// Заполняется в emit_module pre-pass.
-    record_invariants: HashMap<String, Vec<(Expr, Span)>>,
+    /// Plan 33.3 Ф.9.2 (D24): record-type invariant clauses, keyed by struct
+    /// name. Each entry is `(expr, span, message)` — `message` (Plan 140.1
+    /// Ф.2, D24 amend) is the optional user message for the location-first
+    /// violation diagnostic (`<file>:<line>: invariant failed: <msg> (<expr>)`).
+    record_invariants: HashMap<String, Vec<(Expr, Span, Option<String>)>>,
     /// Plan 33.1 Ф.4 (D24): если установлено — функция имеет ensures-контракты,
     /// и все `Stmt::Return X` подменяются на `{ _nova_result = X; goto <label>; }`.
     /// Trailing block-expression также. После label эмитятся ensures-checks
@@ -634,6 +638,13 @@ pub struct CEmitter {
     /// при `annotation_enabled=true`. Set via `--annotate-source` CLI flag
     /// активирует комментарии; источник передаётся всегда.
     annotation_source: Option<String>,
+    /// Plan 140.1 Ф.2 (D24/D13 amend): source file display name used as the
+    /// `<file>` part of the location-first diagnostic prefix
+    /// (`<file>:<line>: <kind> failed: <expr>`) emitted at contract /
+    /// assert / debug_assert violation sites. Set via `set_source_file_name`
+    /// from the build driver (main.rs / test_runner.rs). Defaults to
+    /// `"<unknown>"` when not set (e.g. internal/test emitters).
+    source_file_name: String,
     /// Plan 14 std-fix: контролирует только эмит SRC-комментариев. Source
     /// в `annotation_source` остаётся для line:col в ошибках.
     annotation_enabled: bool,
@@ -1085,6 +1096,7 @@ impl CEmitter {
             type_aliases: HashMap::new(),
             current_parfor_slot: None,
             annotation_source: None,
+            source_file_name: "<unknown>".to_string(),
             annotation_enabled: false,
             // Plan 14 Ф.1: NovaOpt_<T> lazy-decl. Pre-populated с T-ками,
             // которые `nova_rt/array.h` уже декларирует через NOVA_ARRAY_DECL.
@@ -1347,6 +1359,41 @@ impl CEmitter {
         self.annotation_enabled = true;
     }
 
+    /// Plan 140.1 Ф.2 (D24/D13 amend): set the source file display name used
+    /// as the `<file>` part of contract/assert violation diagnostics. The
+    /// build driver passes the originating `.nv` path (file name preferred —
+    /// keeps the prefix short and click-to-line friendly). When not set the
+    /// emitter falls back to `"<unknown>"`.
+    pub fn set_source_file_name(&mut self, name: String) {
+        self.source_file_name = name;
+    }
+
+    /// Plan 140.1 Ф.2: compute the `(file, line)` location for a contract /
+    /// assert violation diagnostic from a byte-offset `span_start`. `file`
+    /// is the configured `source_file_name`; `line` is resolved from the
+    /// annotation source (1-based) or `0` when no source is available. The
+    /// returned `file` is already C-escaped so it can be dropped straight
+    /// into an emitted string literal.
+    fn loc_for_span(&self, span_start: usize) -> (String, usize) {
+        let line = match &self.annotation_source {
+            Some(src) => crate::diag::byte_to_line_col(src, span_start).0,
+            None => 0,
+        };
+        (Self::escape_c_str(&self.source_file_name), line)
+    }
+
+    /// Plan 140.1 Ф.2 (D24 amend): render the optional contract `user_msg`
+    /// argument for `nova_contract_violation`. `None` → `"NULL"` (format A,
+    /// no message); `Some(msg)` → a C-escaped string literal `"<msg>"`
+    /// (format B: `<msg> (<expr>)`). The location is auto-prefixed by the
+    /// runtime — the user message must NOT include it.
+    fn contract_msg_arg(message: &Option<String>) -> String {
+        match message {
+            None => "NULL".to_string(),
+            Some(m) => format!("\"{}\"", Self::escape_c_str(m)),
+        }
+    }
+
     /// Plan 14 std-fix: выключает SRC-комментарии но оставляет source для
     /// line:col в codegen-ошибках. Вызывается main.rs когда `--annotate-source`
     /// не передан.
@@ -1605,8 +1652,8 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Type(td) = item {
                 if !td.invariants.is_empty() {
-                    let invs: Vec<(Expr, Span)> = td.invariants.iter()
-                        .map(|c| (c.expr.clone(), c.span)).collect();
+                    let invs: Vec<(Expr, Span, Option<String>)> = td.invariants.iter()
+                        .map(|c| (c.expr.clone(), c.span, c.message.clone())).collect();
                     self.record_invariants.insert(td.name.clone(), invs);
                 }
             }
@@ -14136,10 +14183,14 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Работает для случаев без collision (что справедливо в 33.1).
                 let expr_c_subst = Self::substitute_result_var(&expr_c);
                 let expr_src = Self::expr_to_display(&c.expr);
+                // Plan 140.1 Ф.2 (D24 amend): location-first format
+                // `<file>:<line>: ensures failed: [<msg> (]<expr>[)]`.
+                let (file_lit, line) = self.loc_for_span(c.span.start);
+                let msg_arg = Self::contract_msg_arg(&c.message);
                 self.line(&format!(
-                    "if (!({})) nova_contract_violation(NOVA_CONTRACT_POST, \"{}\", \"{}\", \"{}\", {});",
+                    "if (!({})) nova_contract_violation(NOVA_CONTRACT_POST, \"{}\", \"{}\", \"{}\", {}, {});",
                     expr_c_subst, f.name, Self::escape_c_str(&expr_src),
-                    "<contract>", c.span.start
+                    file_lit, line, msg_arg
                 ));
             }
         }
@@ -14488,8 +14539,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             // Plan 55 Ф.7: lower limit to 10000 чтобы trigger ДО stack
             // overflow (frame ~1KB debug × 1M limit > stack 1MB — никогда
             // не triggered, был latent bug). 10K — safe (stack ~10MB позволяет).
-            self.line(&format!("if ({}++ > 10000) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"decreases recursion depth exceeded 10000\", \"<decreases>\", {});",
-                var, f.name, f.span.start));
+            // Plan 140.1 Ф.2 (D24 amend): location-first format; no user msg.
+            let (file_lit, line) = self.loc_for_span(f.span.start);
+            self.line(&format!("if ({}++ > 10000) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"decreases recursion depth exceeded 10000\", \"{}\", {}, NULL);",
+                var, f.name, file_lit, line));
             Some(var)
         } else {
             None
@@ -14514,10 +14567,14 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     }
                     let expr_c = self.emit_expr(&c.expr)?;
                     let expr_src = Self::expr_to_display(&c.expr);
+                    // Plan 140.1 Ф.2 (D24 amend): location-first format
+                    // `<file>:<line>: requires failed: [<msg> (]<expr>[)]`.
+                    let (file_lit, line) = self.loc_for_span(c.span.start);
+                    let msg_arg = Self::contract_msg_arg(&c.message);
                     self.line(&format!(
-                        "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"{}\", \"{}\", {});",
+                        "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"{}\", \"{}\", {}, {});",
                         expr_c, f.name, Self::escape_c_str(&expr_src),
-                        "<contract>", c.span.start
+                        file_lit, line, msg_arg
                     ));
                 }
             }
@@ -16568,9 +16625,11 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                 } else {
                     let v = self.emit_expr(expr)?;
                     let src = Self::expr_to_display(expr);
+                    // Plan 140.1 Ф.2 (D24 amend): location-first format; no msg.
+                    let (file_lit, line) = self.loc_for_span(span.start);
                     self.line(&format!(
-                        "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assert_static>\", \"{}\", \"<contract>\", {});",
-                        v, Self::escape_c_str(&src), span.start
+                        "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assert_static>\", \"{}\", \"{}\", {}, NULL);",
+                        v, Self::escape_c_str(&src), file_lit, line
                     ));
                 }
             }
@@ -16590,9 +16649,11 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                 } else {
                     let v = self.emit_expr(expr)?;
                     let src = Self::expr_to_display(expr);
+                    // Plan 140.1 Ф.2 (D24 amend): location-first format; no msg.
+                    let (file_lit, line) = self.loc_for_span(span.start);
                     self.line(&format!(
-                        "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assume>\", \"{}\", \"<contract>\", {});",
-                        v, Self::escape_c_str(&src), span.start
+                        "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"<assume>\", \"{}\", \"{}\", {}, NULL);",
+                        v, Self::escape_c_str(&src), file_lit, line
                     ));
                 }
             }
@@ -18002,7 +18063,7 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                         // отдельный line-emit, а не expr-substitution.
                         // Поскольку lit обычно tmp (см. emit_record_lit), просто
                         // эмитим check после.
-                        for (inv_expr, span) in &invs {
+                        for (inv_expr, span, inv_msg) in &invs {
                             // Bind поля record'а как `tmp->field` для invariant-eval.
                             // В bootstrap — простой text substitution через
                             // emit_expr с self.expected_record_type set.
@@ -18028,9 +18089,14 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                                     self.line(&format!("    {} {} = {}->{};", ftyc, fname, lit, fname));
                                 }
                                 let inv_c = self.emit_expr(inv_expr)?;
+                                // Plan 140.1 Ф.2 (D24 amend): location-first
+                                // format `<file>:<line>: invariant failed:
+                                // [<msg> (]<expr>[)]`.
+                                let (file_lit, line) = self.loc_for_span(span.start);
+                                let msg_arg = Self::contract_msg_arg(inv_msg);
                                 self.line(&format!(
-                                    "    if (!({})) nova_contract_violation(NOVA_CONTRACT_INV, \"{}\", \"{}\", \"<invariant>\", {});",
-                                    inv_c, struct_name, Self::escape_c_str(&inv_src), span.start
+                                    "    if (!({})) nova_contract_violation(NOVA_CONTRACT_INV, \"{}\", \"{}\", \"{}\", {}, {});",
+                                    inv_c, struct_name, Self::escape_c_str(&inv_src), file_lit, line, msg_arg
                                 ));
                                 self.line("}");
                             }
@@ -19575,14 +19641,31 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                     let cond_val = self.emit_expr(cond_expr)?;
                     let cond_text = Self::expr_to_display(cond_expr);
                     let escaped_text = Self::escape_c_str(&cond_text);
+                    // Plan 140.1 Ф.2 (D13 amend): location-first format
+                    // `<file>:<line>: assert failed: [<msg> (]<expr>[)]`.
+                    // LOC auto-prefixed from the assert call's own source
+                    // location (`func.span`) — the user never writes it.
+                    let (file_lit, line) = self.loc_for_span(func.span.start);
+                    // D84 2-arg form `assert(cond, "msg")`: the optional
+                    // user message. Only a string literal is meaningful here
+                    // (it is baked into the format string); a non-literal
+                    // second arg falls back to the no-message format (the
+                    // 2-arg overload is declared in the prelude so the call
+                    // type-checks either way — runtime interpolation of a
+                    // dynamic message is a separate followup).
+                    let msg_arg = match args.get(1).map(|a| &a.expr().kind) {
+                        Some(ExprKind::StrLit(m)) =>
+                            format!("\"{}\"", Self::escape_c_str(m)),
+                        _ => "NULL".to_string(),
+                    };
                     // Plan 11 Follow-up (2026-05-17): wrap в comma operator,
                     // чтобы expression имела тип nova_unit. Иначе вызов assert
                     // в expression position (match arm body, if-expr branch и пр.)
                     // эмитится как `_tmp = nova_assert(...)` — C error "void to
                     // nova_unit". Pattern мирроring `(nv_panic(msg), 0)` ниже.
                     return Ok(format!(
-                        "(nova_assert({}, \"{}\"), NOVA_UNIT)",
-                        cond_val, escaped_text
+                        "(nova_assert_loc({}, \"{}\", \"{}\", {}, {}), NOVA_UNIT)",
+                        cond_val, escaped_text, file_lit, line, msg_arg
                     ));
                 }
             }

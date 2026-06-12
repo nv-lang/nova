@@ -466,24 +466,64 @@ extern __thread NovaTestFrame* _nova_test_frame;
  * We test "are we inside a fiber" to decide where assertion failure lands. */
 int nova_in_fiber(void);
 
-static inline void nova_assert(nova_bool cond, const char* expr_str) {
+/* Plan 140.1 Ф.2 (D13 amend): location-first assert diagnostic.
+ *   - assert(cond):            "<file>:<line>: assert failed: <expr>"
+ *   - assert(cond, "msg"):     "<file>:<line>: assert failed: <msg> (<expr>)"
+ * `file`/`line` are auto-supplied by codegen (`__FILE__`-equivalent Nova
+ * `file:line`); the user never embeds the location. `user_msg == NULL`
+ * → no message. `debug_assert` lowers through the same helper (the
+ * debug-only gate is a codegen concern, not a text difference). The
+ * formatted message is heap-copied before longjmp so it survives the
+ * stack unwind (the previous variant stored the bare `expr_str` pointer,
+ * which was a static string literal; the formatted buffer is on the
+ * stack and must be promoted). */
+static inline void nova_assert_loc(
+    nova_bool cond,
+    const char* expr_str,
+    const char* file,
+    int line,
+    const char* user_msg)
+{
     if (!cond) {
+        char buf[512];
+        if (user_msg) {
+            snprintf(buf, sizeof(buf),
+                "%s:%d: assert failed: %s (%s)",
+                file, line, user_msg, expr_str);
+        } else {
+            snprintf(buf, sizeof(buf),
+                "%s:%d: assert failed: %s",
+                file, line, expr_str);
+        }
         /* Inside a fiber: route through the nearest NovaFailFrame so longjmp
          * stays on the fiber's own stack — never crosses the mco boundary.
          * Spawn-entry pushes a per-fiber fail-frame; supervised_run re-throws
          * on main flow via nova_throw, which the test runner's _tf_fail catches.
          * On main flow (no fiber): route to _nova_test_frame as before. */
         if (nova_in_fiber() && _nova_fail_top) {
-            _nova_fail_top->error_msg = nova_str_from_cstr(expr_str);
+            _nova_fail_top->error_msg = nova_str_from_cstr(buf);
             longjmp(_nova_fail_top->jmp, 1);
         }
         if (_nova_test_frame) {
-            _nova_test_frame->fail_msg = expr_str;
+            /* fail_msg holds const char* — buf is stack-local, so copy via
+             * nova_alloc to survive the longjmp (mirror of contracts.h). */
+            size_t n = 0;
+            while (buf[n]) n++;
+            char* heap = (char*)nova_alloc(n + 1);
+            for (size_t i = 0; i <= n; i++) heap[i] = buf[i];
+            _nova_test_frame->fail_msg = heap;
             longjmp(_nova_test_frame->jmp, 1);
         }
-        fprintf(stderr, "assertion failed: %s\n", expr_str);
+        fprintf(stderr, "%s\n", buf);
         abort();
     }
+}
+
+/* Back-compat 2-arg wrapper (no location, no message). Retained so any
+ * legacy call site that still emits `nova_assert(cond, "expr")` keeps
+ * compiling; codegen now emits `nova_assert_loc(...)` with file/line. */
+static inline void nova_assert(nova_bool cond, const char* expr_str) {
+    nova_assert_loc(cond, expr_str, "<unknown>", 0, NULL);
 }
 
 /* nv_panic(msg) — D13: смерть текущего fiber'а.

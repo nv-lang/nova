@@ -2428,6 +2428,15 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         let _t = crate::perf_timer::PerfTimer::new("codegen");
         let mut emitter = CEmitter::new();
         emitter.set_source_for_annotations(src.to_string());
+        // Plan 140.1 Ф.2 (D24/D13 amend): source file name for the
+        // location-first contract/assert diagnostic prefix.
+        {
+            let fname = path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned());
+            emitter.set_source_file_name(fname);
+        }
         if let Some(n) = mono_depth {
             emitter.set_mono_depth_limit(n);
         }

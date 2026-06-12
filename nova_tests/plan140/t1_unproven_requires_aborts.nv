@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC contract requires failed in `needs_positive`: x > 0
+// EXPECT_RUNTIME_PANIC requires failed: x > 0
 //
 // Plan 140 Ф.4 (D24 amend), acceptance F1: an UNPROVEN `requires` is checked
 // at runtime in the RELEASE build (`--mode release`) and aborts fail-fast on
