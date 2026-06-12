@@ -96,7 +96,16 @@ static inline void _nova_gc_remove_fiber_roots(mco_coro* co) { (void)co; }
   #include "fiber_arena.h"
   #if NOVA_FIBER_ARENA_ENABLED
     static inline mco_desc _nova_mco_desc_init_arena(void (*entry)(mco_coro*)) {
-        size_t slot_usable = NOVA_FIBER_STACK_SIZE - NOVA_FIBER_GUARD_SIZE;
+        /* Plan 149 (review must_fix #1/#2): derive minicoro stack_size from
+         * the RUNTIME arena slot_size (env ∨ -D ∨ builtin, post round+clamp),
+         * NOT the compile-time NOVA_FIBER_STACK_SIZE macro. nova_fiber_arena_slot_size
+         * lazily inits the arena (idempotent) and returns the resolved size, so
+         * minicoro's coro_size (== the `size` later requested from
+         * nova_fiber_alloc) scales with the slot. This makes NOVA_FIBER_STACK
+         * env actually change the usable stack (AC2) and keeps the 256KB floor
+         * usable (coro_size ≤ slot_usable ⇒ nova_fiber_alloc's `size > usable`
+         * guard passes). */
+        size_t slot_usable = nova_fiber_arena_slot_size() - NOVA_FIBER_GUARD_SIZE;
         size_t stack_size  = slot_usable - _NOVA_MCO_HEADER_OVERHEAD;
         mco_desc d = mco_desc_init(entry, stack_size);
         d.alloc_cb       = nova_fiber_alloc;
