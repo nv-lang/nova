@@ -29134,9 +29134,15 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             //     not via the method — migrating the method alone keeps the C fn.
             //     Structural eq/hash is Plan 139 Ф.3 scope.
             //   - to_bytes/to_chars: MIGRATED to Nova-body (Plan 139 Ф.2).
-            //   - as_bytes/split/from_bytes_*: RETAINED C primitives — need str
-            //     @ptr field-access (zero-copy view construction / str{ptr,len}),
-            //     blocked on [M-139-f0-lang-item-decl]. Plan 139 Ф.2 scope-out.
+            //   - as_bytes: MIGRATED to Nova-body (Plan 139.2 Ф.0). Now that str
+            //     is a declared lang-item (Plan 139.1, [M-139-f0-lang-item-decl]
+            //     closed), the str type-method `@as_bytes` reads priv `@ptr`/`@len`
+            //     (type-based privacy) and builds the zero-copy view via the public
+            //     Vec[u8].from_raw_parts(ptr,len,len) cross-type bridge. Removed here
+            //     so it falls through to Nova-body dispatch (Nova_str_method_as_bytes).
+            //   - split/from_bytes_*: RETAINED C primitives for now — migrated in
+            //     Plan 139.2 Ф.2 (need str sub-view producers / Vec→str). Scope-out
+            //     of Ф.0.
             //   - len/byte_len: O(1) field read, trivial primitive.
             "concat"      => Some("nova_str_concat"),
             "eq"          => Some("nova_str_eq"),
@@ -29150,7 +29156,8 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             // Plan 139 Ф.2: to_bytes/to_chars MIGRATED to Nova-body (copy from
             // @as_bytes() zero-copy view + UTF-8 decode cursor). Removed here so
             // they fall through to Nova-body dispatch (Nova_str_method_X).
-            "as_bytes"    => Some("nova_str_as_bytes"),  // D176: zero-copy readonly []u8
+            // as_bytes: MIGRATED to Nova-body (Plan 139.2 Ф.0) — falls through to
+            // Nova_str_method_as_bytes via Vec[u8].from_raw_parts. No entry here.
             "split"       => Some("nova_str_split"),
             "byte_at"     => Some("nova_str_byte_at"),  // Plan 90
             "compare"     => Some("nova_str_compare"),  // D178

@@ -116,6 +116,38 @@ export fn Vec[T].with_capacity(n int) -> Self {
     Self { data: alloc_buf[T](n), len: 0, cap: n }
 }
 
+/// Build a `Vec[T]` directly from its three raw components — the element
+/// buffer pointer, the live-element count, and the allocated capacity.
+///
+/// This is the cross-type bridge that lets *other* modules hand a `(ptr, len,
+/// cap)` triple to a `Vec` without going through `push`/`extend`. The `data`,
+/// `len` and `cap` fields are `priv` (visible only to `Vec` type-methods), so a
+/// caller in another module cannot spell `Self { data: …, … }` itself — this
+/// public constructor is the only sanctioned entry. It is the inverse of the
+/// `@as_ptr()` / `@len()` / `@cap()` accessors and the analogue of Rust's
+/// `Vec::from_raw_parts`.
+///
+/// # Contract / unsafety
+///
+/// Calling this is `unsafe`-obligated at the *call site*: the caller asserts
+///   - `ptr` points at a live allocation of at least `cap` element slots whose
+///     first `len` slots are initialised (`0 <= len <= cap`), and
+///   - the pointed-to memory stays alive for the lifetime of the returned
+///     `Vec` (for GC-tracked buffers the returned `Vec.data` field keeps it
+///     reachable; for a zero-copy *view* over a foreign buffer — e.g.
+///     `str.@as_bytes()` aliasing a string's internal bytes — the originating
+///     owner must outlive the view, and the view must be treated read-only).
+///
+/// The incoming `ptr` is a `*T` (canonical ro pointee, `*T ≡ *ro T`); it is
+/// reinterpreted as the field's `*mut T` inside an `unsafe` block. The cast
+/// only re-labels pointee-mutability (L3) — no address arithmetic — so it is a
+/// pointer-value copy, never a dereference here. Whether the resulting buffer
+/// is *actually* writable is the caller's invariant (a `ro` view must not be
+/// pushed/index-written; binding the result `ro` enforces this at L2).
+export fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self {
+    Self { data: unsafe { ptr as *mut T }, len, cap }
+}
+
 /// Build a `Vec[T]` by copying every element of an iterable source.
 ///
 /// Plan 138.1 Ф.0.1: the source is annotated `[]T` (NOT a distinct built-in

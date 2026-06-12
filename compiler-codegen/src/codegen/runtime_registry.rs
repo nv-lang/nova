@@ -441,9 +441,13 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[],
             return_ty: "ro []u8",
             effects: &[],
-            c_name: "nova_str_as_bytes",
+            c_name: "",
             doc: "Plan 108 D176 / Plan 114 D184: zero-copy view of str UTF-8 bytes as ro []u8 (no memcpy).",
-        nova_body: None,
+            // Plan 139.2 Ф.0: Nova-body — reads priv @ptr/@len (type-based privacy,
+            // str is a declared lang-item) and builds the zero-copy view via the
+            // public Vec[u8].from_raw_parts(ptr,len,len) cross-type bridge. cap == len
+            // signals read-only / no growth (matches retired nova_str_as_bytes).
+            nova_body: Some("{\n    Vec[u8].from_raw_parts(@ptr, @len(), @len())\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",

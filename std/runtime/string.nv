@@ -11,6 +11,10 @@ module runtime.string
 
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 import std.runtime.string_builder.{StringBuilder}
+// Plan 139.2 Ф.0: Vec[u8].from_raw_parts cross-type bridge for @as_bytes
+// zero-copy view ([]u8 ≡ Vec[u8] under D239; the `Vec` name is needed because
+// the `[]T.` builtin static-dispatch only handles new/with_capacity).
+import std.collections.vec_owned.{Vec}
 
 
 // ─── str ───
@@ -302,7 +306,27 @@ export fn str @to_bytes() -> []u8 {
 }
 
 // D176: zero-copy view of str UTF-8 bytes as readonly []u8 (no memcpy).
-export external fn str @as_bytes() -> ro []u8
+// Plan 139.2 Ф.0: Nova-body. `str` is a declared lang-item (Plan 139.1) with
+// priv fields `ptr *u8` / `len int`; this method's receiver is `str`, so it has
+// type-method priv access (privacy is type-based, not module-based) and can read
+// `@ptr` / `@len` (the fields) directly. The zero-copy view is built via the
+// public cross-type bridge `Vec[u8].from_raw_parts(ptr, len, cap)` with
+// `cap == len` (cap == len signals read-only / no growth, matching the retired
+// nova_str_as_bytes). The `ro` binding on the result enforces L2 read-only — a
+// push/index-write on the view is a compile error (E_*), preserving the str
+// buffer immutability contract (R8). `@ptr` is `*u8` (str's ro pointee);
+// from_raw_parts accepts a `*u8` and re-labels it `*mut u8` internally under its
+// own unsafe — but the `ro []u8` return type forbids any write through it.
+// NOTE: spelled `Vec[u8].from_raw_parts` (not the `[]u8.` alias) because the
+// `[]T.` builtin static-dispatch only recognises new/with_capacity; a genuine
+// Vec type-method must be named on the `Vec` type to route to its Nova body.
+// `@len` is spelled `@len()` (the method, = `nova_str_byte_len` = the `len`
+// field, O(1)): the bare field read `@len` trips D117 (E_SIZE_ACCESSOR_FIELD —
+// size-like accessors are method-only). `@ptr` is not a size accessor, so the
+// direct priv-field read is allowed.
+export fn str @as_bytes() -> ro []u8 {
+    Vec[u8].from_raw_parts(@ptr, @len(), @len())
+}
 
 // D178: []u8 → str. D178: параметр `readonly bytes` (синтаксис D178).
 // Lossy: replaces invalid UTF-8 sequences with U+FFFD. Always succeeds.
