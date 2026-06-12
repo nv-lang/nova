@@ -1,0 +1,21 @@
+// Plan 148 Ф.1 (D241) — positive: canonical `consume priv` order accepted.
+//
+// Generalization to ALL modifiers: consume (rank 1) precedes priv (rank 2),
+// so `consume priv` is canonical and must parse + work. This is the positive
+// counterpart to the mo_neg_priv_consume negative.
+module plan148.mo_consume_priv_ok
+
+type Resource consume priv {
+    pub ro fd int
+    state int
+}
+
+fn Resource consume @close() -> () { () }
+
+fn open(fd int) -> Resource => { fd, state: 0 }
+
+test "consume priv canonical order parses + works" {
+    consume r = open(7)
+    assert(r.fd == 7)
+    r.close()
+}

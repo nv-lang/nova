@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+//
+// Plan 148 Ф.1 (D241) — negative: `priv value` is out of canonical order.
+//
+// Canonical order is `value priv` (type-level representation before
+// field-default visibility). `priv value` inverts ranks (priv=2 before
+// value=0) → E_MODIFIER_ORDER with fix-it "reorder to `value priv`".
+// This is the flip of the retired plan124_8 order-independence test (A3).
+module plan148.mo_neg_priv_value
+
+type B priv value {
+    pub ro id u64
+    secret int
+}
+
+fn B.new(i u64, s int) -> B => { id: i, secret: s }

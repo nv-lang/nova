@@ -3714,6 +3714,29 @@ Codegen (Plan 56 Ф.1 + Ф.2):
 > (length-prefixed) теперь применяется не только к Result, но к любому
 > generic anonymous tuple в return position. См.
 > [D216](#d216-generic-anonymous-tuple-monomorphization) для full spec.
+>
+> **Plan 148 Ф.4 amend (2026-06-12, `[M-codegen-unify-tuple-repr]`):**
+> typed representation унифицирован, legacy all-int путь сжат до on-demand.
+> Три изменения:
+> 1. **Blanket pre-decl retired.** Раньше каждый C-файл получал
+>    `typedef … _NovaTuple1; … _NovaTuple8;` (8 all-`nova_int` структур)
+>    в преамбуле — вне зависимости от использования. Теперь legacy
+>    `_NovaTupleN` эмитится **on demand** только для арностей, которые
+>    erased-generic fallback реально запрашивает (на практике — только
+>    arity 2, от erased `HashMap[K,V]`/`Set` `(K, V)` пар). Concrete
+>    tuples всегда используют typed mono'd путь. Регистрируется через
+>    `register_legacy_tuple(n)`, splice в `/*__LEGACY_TUPLE_TYPEDEFS__*/`.
+> 2. **Self-describing field decode.** Field access (`t.0`, `t.0.1`) и
+>    type inference больше не зависят исключительно от per-Ident side-table
+>    `tuple_element_types` — элемент-тип декодируется напрямую из имени
+>    mono'd структуры в `obj_ty` через `parse_mono_tuple_elements`. Это
+>    чинит field-read на fn-параметрах, call-result кортежах и **вложенных**
+>    `t.0.1` цепочках (раньше collapse'или в `nova_int` fallback → дроп
+>    второго `.0` / неверный тип). Закрыло 5 pre-existing CC-FAIL в Plan 59
+>    (f2/f10/f13/f15/f16).
+> 3. **Arity diagnostic code.** Destructure-arity-mismatch diagnostic
+>    (3 codegen-сайта: let / for-pattern / match-variant inner Tuple)
+>    несёт код `[E_TUPLE_DESTRUCTURE_ARITY]` (раньше — bare message).
 
 ### Что
 
@@ -3776,7 +3799,10 @@ zero-cost. C++ `std::tuple<T1, T2>` template — то же. Nova bootstrap
    struct. Zero erasure cost.
 2. **Erased context** (one or more element types unresolved) →
    fallback legacy `_NovaTupleN` (nova_int slot) с runtime cast.
-   Bootstrap-compat для truly generic contexts.
+   Bootstrap-compat для truly generic contexts. **Plan 148 Ф.4:** этот
+   typedef эмитится **on demand** (per requested arity, idempotent-guarded
+   `#ifndef`) — не blanket `_NovaTuple1..8`. На практике достигается только
+   arity 2 (erased `HashMap`/`Set` `(K, V)` пары).
 
 ### Constraints
 
@@ -3794,11 +3820,12 @@ zero-cost. C++ `std::tuple<T1, T2>` template — то же. Nova bootstrap
 
 ### Diagnostics (Plan 59 Phase 7.1)
 
-- **Arity mismatch** — destructure pattern имеющий разное число
-  элементов чем actual tuple, reject'ится **Nova-level** clear
-  error (file:line + hint) до C-emit'а. Покрывает 3 sites:
-  let-destructure, for-pattern, match-variant inner Tuple.
-  Раньше упирался в нечитаемый "no member named 'fN'" C error.
+- **Arity mismatch** (`[E_TUPLE_DESTRUCTURE_ARITY]`, code added Plan 148
+  Ф.4) — destructure pattern имеющий разное число элементов чем actual
+  tuple, reject'ится **Nova-level** clear error (file:line + hint) до
+  C-emit'а. Покрывает 3 sites: let-destructure, for-pattern,
+  match-variant inner Tuple. Раньше упирался в нечитаемый
+  "no member named 'fN'" C error.
 
 ### Lint warnings (Plan 59 Phase 7.3)
 
@@ -10229,15 +10256,22 @@ per binding-context relaxation. Symmetric `mut x ro T` уже работал
 
 7-я форма declaration: **value record** — `type X value { ... }`. 
 Stack-allocated reference type с copy-on-pass semantics (D32 amend). 
-Composable с `consume`/`priv` модификаторами в любом order.
+Composable с `consume`/`priv` модификаторами в каноническом порядке
+`value consume priv` (см. amend ниже — order-independence RETIRED).
 
 `value` — **contextual keyword** (recognized только в `type Name[Generics]
 [modifiers] value [modifiers] {` position; identifier `value` остаётся
 валидным во всех других позициях для backward compat).
 
 Canonical modifier order: `type X value consume priv { ... }` —
-allocation → ownership → visibility (outer → inner). Parser
-order-independent; lint W_NON_CANONICAL_TYPE_MODIFIER_ORDER — V2 followup.
+allocation → ownership → visibility (outer → inner).
+
+> **AMEND 2026-06-12 (Plan 148 Ф.1 / D241, [M-138-canonical-modifier-order]):**
+> Parser больше **НЕ** order-independent — out-of-canon порядок модификаторов
+> теперь hard error `E_MODIFIER_ORDER` (с machine-applicable fix-it),
+> а не отложенный lint `W_NON_CANONICAL_TYPE_MODIFIER_ORDER`. Полное правило
+> (canonical ranks, обобщение на новые модификаторы) — D241 в
+> [03-syntax.md](03-syntax.md#d241-канонический-порядок-модификаторов-type-декларации-scope-adjacency).
 
 ### D175 amend §«binding dominates» (Plan 124.8 Ф.3)
 

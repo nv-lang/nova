@@ -1,0 +1,68 @@
+// Plan 148 Ф.4 ([M-codegen-unify-tuple-repr]) — positive (A3):
+// equality and debug-formatting over the typed tuple representation are
+// correct PER ELEMENT TYPE. With real C-typed fields, `==` dispatches the
+// right per-field comparison (IEEE for f64, `nova_str_eq` for str, recursive
+// for nested tuples) instead of a blanket all-int slot compare.
+//
+// "debug" here = round-tripping each typed tuple field through a `@debug`
+// formatter into a StringBuilder; if any field were int-boxed, the f64 / str
+// fields would format wrongly.
+
+module plan148.tr_tuple_eq_debug_ok
+
+// A record whose `@debug` formats a heterogeneous tuple field-by-field. The
+// tuple's elements (int, str, f64, bool) must each retain their real type for
+// the formatting to be correct.
+type Row {
+    id int
+    data (str, f64, bool)
+}
+
+fn Row @debug(mut sb StringBuilder) -> () {
+    sb.append("Row(")
+    sb.append(str.from(@id))
+    sb.append(", ")
+    sb.append(@data.0)
+    sb.append(", ")
+    sb.append(str.from(@data.1))
+    sb.append(", ")
+    sb.append(if @data.2 { "true" } else { "false" })
+    sb.append(")")
+}
+
+test "heterogeneous tuple eq — per-element typed compare" {
+    ro a = (1, "x", 2.5, true)
+    ro b = (1, "x", 2.5, true)
+    ro c = (1, "x", 2.5, false)
+    assert(a == b)
+    assert(a != c)
+}
+
+test "str element eq dispatches value (content) compare, not pointer" {
+    ro a = ("hello", 1)
+    // build an equal-content distinct str so a pointer compare would fail
+    ro b = ("hel" + "lo", 1)
+    assert(a == b)
+}
+
+test "f64 element eq uses IEEE compare, not int-slot compare" {
+    ro a = (1.5, 2.5)
+    ro b = (1.5, 2.5)
+    ro c = (1.5, 2.6)
+    assert(a == b)
+    assert(a != c)
+}
+
+test "nested tuple eq recurses field-by-field" {
+    ro a = ((1, "a"), (2.0, true))
+    ro b = ((1, "a"), (2.0, true))
+    ro c = ((1, "a"), (2.0, false))
+    assert(a == b)
+    assert(a != c)
+}
+
+test "debug formatting of a record holding a typed tuple field" {
+    ro r = Row { id: 7, data: ("q", 3.5, true) }
+    ro s = "${r:?}"
+    assert(s == "Row(7, q, 3.5, true)")
+}

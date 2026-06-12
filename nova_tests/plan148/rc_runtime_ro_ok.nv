@@ -1,0 +1,23 @@
+// Plan 148 Ф.3 ([M-114.4-strict-partition]) POS: the strict partition is
+// module-level ONLY. Scope-local `ro` bindings — whether their RHS is
+// constexpr-eligible or genuinely runtime — are NEVER flagged with
+// E_RO_FOR_CONSTEXPR_PREFER_CONST (spec 03-syntax: "Scope-level — без
+// strict-правила"). This guards that the module-level rule does not leak
+// into function bodies / blocks.
+
+module plan148.rc_runtime_ro_ok
+
+fn compute() -> int => 21 * 2
+
+fn run() -> int {
+    // Scope-local `ro` with a constexpr-eligible literal RHS — allowed,
+    // NOT redirected to `const` (no partition error).
+    ro local_const_like int = 4096
+    // Scope-local `ro` with a runtime RHS — allowed.
+    ro local_runtime int = compute()
+    return local_const_like + local_runtime
+}
+
+test "scope-local ro never flagged by module partition" {
+    assert(run() == 4138)
+}

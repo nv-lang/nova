@@ -1,0 +1,16 @@
+// Plan 148 Ф.3 ([M-114.4-strict-partition]) NEG: a module-level `ro X = …`
+// whose RHS is arithmetic over literals AND references another `const` is
+// still fully constexpr-eligible → must be `const`, not `ro`.
+
+// EXPECT_COMPILE_ERROR E_RO_FOR_CONSTEXPR_PREFER_CONST
+
+module plan148.rc_ro_const_ref_neg
+
+const BASE int = 100
+
+// `BASE + 24` — `const` ref folded into literal arithmetic; constexpr.
+ro DERIVED int = BASE + 24
+
+test "ro over const arithmetic is rejected" {
+    assert(DERIVED == 124)
+}

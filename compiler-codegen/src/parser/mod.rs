@@ -3125,18 +3125,43 @@ impl Parser {
         // (Ident("value") в этой позиции; backward compat для variables/fields
         // named `value`). Composable с consume/priv в любом порядке.
         //
-        // Canonical order: type X value consume priv { ... } (allocation →
-        // ownership → visibility). Parser order-independent (parse loop).
+        // Plan 148 Ф.1 (D241): canonical type-modifier order — `value priv`
+        // (более общо: `value consume priv`), отсортировано по **scope** от
+        // широкого к узкому (type-level allocation → type-level ownership →
+        // field-default visibility). «One canonical syntax» Nova запрещает
+        // order-independence: out-of-canon порядок → `E_MODIFIER_ORDER` с
+        // машинно-применимым fix-it «переставь в канон».
+        //
+        // Каждому модификатору присвоен canonical rank:
+        //   `value`   → 0  (аллокация/представление всего типа)
+        //   `consume` → 1  (must-consume обязательство всего типа)
+        //   `priv`    → 2  (дефолт видимости полей в `{…}` — вплотную к `{`)
+        // Правило обобщается на любые будущие type-модификаторы: новый
+        // модификатор получает rank по своему scope и автоматически попадает
+        // в проверку монотонности (никаких произвольных синонимичных порядков).
         let mut consume_marker = false;
         let mut default_field_priv = false;
         let mut allocation = crate::ast::AllocKind::Heap;
+        // (rank, lexeme, token-span) для каждого встреченного модификатора,
+        // в порядке появления в исходнике.
+        let mut seen_mods: Vec<(u8, &'static str, Span)> = Vec::new();
         loop {
-            if !consume_marker && self.eat(&TokenKind::KwConsume).is_some() {
+            if !consume_marker
+                && matches!(self.peek().kind, TokenKind::KwConsume)
+            {
+                let sp = self.peek().span;
+                self.bump();
                 consume_marker = true;
+                seen_mods.push((1, "consume", sp));
                 continue;
             }
-            if !default_field_priv && self.eat(&TokenKind::KwPriv).is_some() {
+            if !default_field_priv
+                && matches!(self.peek().kind, TokenKind::KwPriv)
+            {
+                let sp = self.peek().span;
+                self.bump();
                 default_field_priv = true;
+                seen_mods.push((2, "priv", sp));
                 continue;
             }
             // Plan 124.8: `value` — contextual keyword (Ident match,
@@ -3144,11 +3169,62 @@ impl Parser {
             if matches!(allocation, crate::ast::AllocKind::Heap)
                 && matches!(self.peek().kind, TokenKind::Ident(ref s) if s == "value")
             {
+                let sp = self.peek().span;
                 self.bump();
                 allocation = crate::ast::AllocKind::Value;
+                seen_mods.push((0, "value", sp));
                 continue;
             }
             break;
+        }
+
+        // D241 enforcement: ranks должны строго возрастать в порядке появления.
+        // Любая инверсия (`priv value`, `priv consume`, `consume value`, …) →
+        // E_MODIFIER_ORDER. Fix-it переписывает весь modifier-регион в канон
+        // (модификаторы, отсортированные по rank, через пробел).
+        if seen_mods.len() >= 2 {
+            let is_canonical = seen_mods
+                .windows(2)
+                .all(|w| w[0].0 < w[1].0);
+            if !is_canonical {
+                let region = seen_mods
+                    .first()
+                    .unwrap()
+                    .2
+                    .merge(seen_mods.last().unwrap().2);
+                let mut canonical: Vec<(u8, &'static str)> =
+                    seen_mods.iter().map(|(r, l, _)| (*r, *l)).collect();
+                canonical.sort_by_key(|(r, _)| *r);
+                let canon_str = canonical
+                    .iter()
+                    .map(|(_, l)| *l)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let got_str = seen_mods
+                    .iter()
+                    .map(|(_, l, _)| *l)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                return Err(Diagnostic::new(
+                    format!(
+                        "[E_MODIFIER_ORDER] type-declaration modifiers `{}` are \
+                         out of canonical order — Nova has one canonical syntax \
+                         (no order-independence). Canonical order is by scope, \
+                         widest to narrowest: type-level representation (`value`) \
+                         → type-level ownership (`consume`) → field-default \
+                         visibility (`priv`). Reorder to `{}`. See D241 \
+                         (spec/decisions/03-syntax.md).",
+                        got_str, canon_str,
+                    ),
+                    region,
+                )
+                .with_suggestion(crate::diag::Suggestion {
+                    message: format!("reorder modifiers to canonical `{}`", canon_str),
+                    span: region,
+                    replacement: canon_str,
+                    applicability: crate::diag::Applicability::MachineApplicable,
+                }));
+            }
         }
 
         // Plan 62.D.bis (D126): `external type X [Generics]` — opaque type,

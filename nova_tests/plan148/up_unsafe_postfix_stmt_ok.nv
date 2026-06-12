@@ -1,0 +1,112 @@
+// Plan 148 Ф.2 ([M-138-unsafe-block-postfix-stmt]) — positive:
+// postfix (`.method()` / `[i]` / `.field`) chains onto a block-expr
+// (`unsafe { }`, `if`, `match`) in STATEMENT position WITHOUT parentheses.
+//
+// Before this fix a leading `unsafe { }` at the start of a statement was
+// treated as a block-statement; the postfix did not attach, so wrapping
+// parens `(unsafe { ... }).method()` were required (see vec_owned.nv
+// `@display`/`@debug`, lines 862/874 — parens removed by this change). Now
+// `unsafe { @data[i] }.display(sb)` parses without parens in statement
+// position. The `unsafe` block dereferences the raw pointer (yielding a safe
+// value); the postfix `.method()` / `.field` / `[i]` then runs on that safe
+// value OUTSIDE the unsafe scope.
+//
+// A1: statement-position `unsafe { ... }.method()` without parens parses+works.
+// (A2 — bare `{}` remains a statement — lives in up_bare_block_stmt_ok.nv.)
+
+module plan148.up_unsafe_postfix_stmt_ok
+
+import std.runtime.raw_mem.{RawMem}
+
+// `value priv` wrapper so we can exercise a user `.method()` / `.field`
+// postfix on the value yielded by the block-expr.
+type Box value priv {
+    n int
+}
+
+fn Box.new(n int) -> Box => { n }
+
+// Safe method on the (safe) value yielded by the block-expr.
+export fn Box @doubled() -> int => @n * 2
+
+// STATEMENT-position postfix on an `unsafe { }` block — the value is *bound*
+// to demonstrate parse+codegen, but the construct under test is the
+// `unsafe { ... }.method()` / `.field` chain at the head of a statement.
+export fn Box @via_blocks() -> int {
+    ro b = Box.new(@n)
+    ro p = unsafe { &b }
+    // `unsafe { *p }` yields a `Box`; `.doubled()` chains directly (no parens).
+    ro d = unsafe { *p }.doubled()
+    // `unsafe { *p }` yields a `Box`; `.n` field read chains directly.
+    ro f = unsafe { *p }.n
+    d + f
+}
+
+// The strictest form of A1: a `unsafe { ... }.method()` chain whose value is
+// genuinely DISCARDED — a real expression-statement at the head of a block,
+// not a binding RHS and not the trailing tail-expr. This is exactly the
+// vec_owned `@display`/`@debug` `.display(sb)` idiom (side-effecting call,
+// result unit). Followed by an independent statement to prove the block did
+// not swallow it.
+export fn Box @discarded_stmt() -> int {
+    ro b = Box.new(@n)
+    ro p = unsafe { &b }
+    // value-discarded statement-position postfix on an unsafe block:
+    unsafe { *p }.doubled()
+    unsafe { *p }.n
+    // independent following statement / trailing expr:
+    @n + 1
+}
+
+test "postfix .method() chains onto unsafe block-expr in stmt position" {
+    ro b = Box.new(21)
+    ro p = unsafe { &b }
+    ro d = unsafe { *p }.doubled()
+    assert(d == 42)
+}
+
+test "postfix .field chains onto unsafe block-expr in stmt position" {
+    ro b = Box.new(7)
+    ro p = unsafe { &b }
+    ro got = unsafe { *p }.n
+    assert(got == 7)
+}
+
+test "combined unsafe-block postfix method+field in stmt position" {
+    ro b = Box.new(10)
+    // 10*2 + 10 == 30
+    assert(b.via_blocks() == 30)
+}
+
+test "value-discarded unsafe-block postfix at head of statement" {
+    ro b = Box.new(41)
+    // @n + 1 == 42; the discarded postfix statements must not swallow the
+    // trailing expr.
+    assert(b.discarded_stmt() == 42)
+}
+
+test "postfix [i] chains onto unsafe block-expr in stmt position" {
+    // The unsafe block yields a (safe) fixed array; postfix `[1]` indexes it
+    // directly — no wrapping parens. Exercises the `[i]` postfix form.
+    ro elem = unsafe { [11, 22, 33] }[1]
+    assert(elem == 22)
+}
+
+// A1 generalization: the fix also covers `if`/`match` block-exprs in statement
+// position taking a postfix without parens.
+test "postfix .method() chains onto if block-expr in stmt position" {
+    ro cond = true
+    // `if cond { ... } else { ... }` yields a `Box`; `.doubled()` chains.
+    ro d = if cond { Box.new(5) } else { Box.new(0) }.doubled()
+    assert(d == 10)
+}
+
+test "postfix .field chains onto match block-expr in stmt position" {
+    ro tag = 1
+    // `match tag { ... }` yields a `Box`; `.n` field read chains.
+    ro got = match tag {
+        1 => Box.new(99)
+        _ => Box.new(0)
+    }.n
+    assert(got == 99)
+}

@@ -1,0 +1,49 @@
+// Plan 148 Ф.2 ([M-138-unsafe-block-postfix-stmt]) — A2 guard:
+// a bare `{ ... }` block at the head of a statement REMAINS a statement.
+//
+// The Ф.2 fix lets postfix chain onto `unsafe`/`if`/`match` block-exprs in
+// statement position. A bare `{ }` block must NOT be swallowed into a
+// following expression: the block executes for its side effects as its own
+// statement, and the next statement parses independently. This pins the A2
+// invariant so a future change to statement-vs-expression disambiguation
+// cannot silently regress it.
+
+module plan148.up_bare_block_stmt_ok
+
+test "bare block at head of statement runs as its own statement" {
+    mut n = 0
+    // Bare block — side-effecting statement. The following `.len()`-shaped
+    // line below it is a SEPARATE statement, not a postfix on this block.
+    {
+        n = n + 1
+        n = n + 2
+    }
+    // A wholly independent statement follows; if the bare block had been
+    // parsed as an expression with the next line chained, this would not
+    // execute as written.
+    n = n + 100
+    assert(n == 103)
+}
+
+test "two consecutive bare blocks are two statements" {
+    mut acc = 0
+    {
+        acc = acc + 1
+    }
+    {
+        acc = acc + 10
+    }
+    assert(acc == 11)
+}
+
+test "bare block followed by method-call line — independent statements" {
+    mut counter = 0
+    {
+        counter = counter + 1
+    }
+    // This is its own statement (a method call on `counter`), NOT a postfix
+    // chained onto the bare block above. `counter.compare(1)` returns 0; the
+    // result is discarded — the call still type-checks as an independent stmt.
+    counter.compare(1)
+    assert(counter == 1)
+}

@@ -18,6 +18,30 @@
 
 ---
 
+### Plan 148 — Independent compiler cleanups (Ф.1–Ф.5, 2026-06-12, ✅ CLOSED, без новых упрощений)
+
+- **Где** — `compiler-codegen/src/parser/mod.rs` (Ф.1 modifier-order),
+  `compiler-codegen/src/types/mod.rs` (Ф.3 ro-partition checker),
+  `compiler-codegen/src/codegen/emit_c.rs` (Ф.4 tuple-repr),
+  `std/collections/vec_owned.nv` (Ф.2 paren cleanup), `spec/decisions/{02-types,03-syntax}.md`,
+  `nova_tests/plan148/`. Commits `98f0b48050f` / `2d24a38c288` / `b6d3687108` / `982dfd90153` + docs.
+- **Что упрощено** — НИЧЕГО нового. Все 4 фазы доставлены production-grade по AC (Ф.1 `E_MODIFIER_ORDER`
+  + fix-it, обобщён на все type-модификаторы; Ф.2 cleanup + regression-guard, парсер уже корректен;
+  Ф.3 `E_RO_FOR_CONSTEXPR_PREFER_CONST` forward-partition; Ф.4 typed on-demand mono'd tuple-структуры).
+- **Документированные SCOPE-NOTE / pre-existing gaps** (НЕ регрессии, НЕ в scope этих 4 осей):
+  - **Ф.4 legacy `_NovaTuple2`** не удалён полностью — erased-generic HashMap[K,V]/Set lowers `(K,V)`
+    через legacy all-int repr. Полное удаление требует mono'д HashMap/Set (большой отдельный effort,
+    высокий collections-prelude regression-риск). Доставленное: blanket pre-decl ретайрнут, legacy эмит
+    строго on-demand (только запрошенные arity, на практике arity 2), typed путь — default + robust.
+  - **Ф.4 OOB tuple field index** (`t.5` на 2-tuple) не reject'ится — checker-level gap (не codegen-repr ось).
+  - **Ф.4 mono'd-tuple-of-Vec forward-decl ordering** (plan59 f5 / types arrays CC-FAIL) — pre-existing,
+    отдельная ordering-ось (`__MONO_TUPLE_TYPEDEFS__` marker предшествует Vec `__GENERIC_TYPE_DEFS__`).
+  - **Ф.3 module-level RUNTIME `ro X = expr()` codegen** — pre-existing unimplemented gap (binding не
+    lowered; checker корректно принимает, verified via `check`; runnable POS невозможен).
+- **Приоритет** — все остатки L/M, не блокируют (документированы в D-блоках + planned-backlog).
+
+---
+
 ### Plan 142 — D227 `E_LIT_OUT_OF_RANGE` compile-time literal range-check (2026-06-11, ✅ CLOSED)
 
 - **Где** — `compiler-codegen/src/types/mod.rs` (`assignable()` IntLit arm + NEW `Unary{Neg,IntLit}` arm

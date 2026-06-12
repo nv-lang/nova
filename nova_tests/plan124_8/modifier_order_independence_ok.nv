@@ -1,9 +1,15 @@
-// Plan 124.8 — positive: 6 permutations of {value, consume, priv}
-// modifiers все parse + recognize identically (parser order-independent).
+// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
 //
-// Note: simpler test — verifies value+priv composition в 2 orders.
-// Full consume composition tests require consume-method declarations;
-// см. отдельный fixture.
+// Plan 124.8 originally tested that type-decl modifiers were order-INDEPENDENT
+// (`value priv` ≡ `priv value`). Plan 148 Ф.1 (D241) RETIRES that allowance:
+// Nova has one canonical syntax, so out-of-canon order is now a hard error.
+//
+// This fixture is FLIPPED to negative — the second decl `type B priv value`
+// inverts the canonical `value priv` order and must fire E_MODIFIER_ORDER
+// (with a machine-applicable fix-it reordering to `value priv`). The positive
+// canonical form is covered by nova_tests/plan148/mo_canonical_value_priv_ok.nv.
+//
+// See D241 (spec/decisions/03-syntax.md) and [M-138-canonical-modifier-order].
 module plan124_8.modifier_order_independence_ok
 
 type A value priv {
@@ -11,6 +17,7 @@ type A value priv {
     secret int
 }
 
+// Out-of-canon: `priv value` (rank priv=2 before value=0) → E_MODIFIER_ORDER.
 type B priv value {
     pub ro id u64
     secret int
@@ -18,10 +25,3 @@ type B priv value {
 
 fn A.new(i u64, s int) -> A => { id: i, secret: s }
 fn B.new(i u64, s int) -> B => { id: i, secret: s }
-
-test "value priv vs priv value — equivalent" {
-    ro a = A.new(1, 100)
-    ro b = B.new(2, 200)
-    assert(a.id == 1)
-    assert(b.id == 2)
-}
