@@ -36954,6 +36954,12 @@ test_runner.rs (BuildOpts.runtime + runtime_define_args в clang/MSVC/gcc arms �
 max_clamp) + 2 plan149_toml (baked_default/env_overrides_toml). Регрешн-гарды AC7 (grow_vs_wake_explicit/
 fibers_10k_sleep_cancel/ring_overflow_drain) зелёные; smoke PASS. AC1-AC10 met (AC6 эмерджентно).
 
+PRE-EXISTING (НЕ регрессия): cancellation_test (within[T]/race2[T] mono'd recursion) RUN-FAIL'ит на
+fiber-stack-overflow. ПРОВЕРЕНО на baseline (temp-worktree a3597b99, 8MB default, старый runtime) —
+падает идентично; + не лечится NOVA_FIBER_STACK=64MB → unbounded recursion, orthogonal codegen-баг,
+не stack-size. Маркер [M-cancellation-test-mono-recursion-overflow] (P2). Это, наоборот, валидирует
+Plan 149: env поднимает стек (доказано slot_size), а на ИСТИННОМ overflow — чистый guard-page краш.
+
 ВАЖНО для прогона: nova test резолвит rt_dir через find_repo_root()=current_dir() (НЕ путь файла) —
 запускать с CWD=worktree, иначе компилируется runtime из main-репо (worktree .c-правки не попадут).
 Эта ловушка стоила ~часа отладки (DBG-маркеры не появлялись, т.к. main-репо runtime не имел правок).

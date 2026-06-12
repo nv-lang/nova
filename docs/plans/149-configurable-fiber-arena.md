@@ -148,7 +148,18 @@ compile-time `NOVA_FIBER_STACK_SIZE`. Без неё env-стек не менял
 env > toml > builtin доказан).
 
 **Тесты:** 7/7 plan149 fixtures PASS (clang). Регрешн-гарды AC7 (grow_vs_wake_explicit /
-fibers_10k_sleep_cancel / ring_overflow_drain) зелёные; mn_runtime_smoke PASS.
+fibers_10k_sleep_cancel / ring_overflow_drain) зелёные; mn_runtime_smoke PASS. Sample fiber-heavy
+suite (deep_spawn / cooperative_interleave / mn_lazy_spawn / sleep_bench) — все PASS, идентично
+baseline'у (a3597b99, temp-worktree build).
+
+**PRE-EXISTING failure (НЕ регрессия Plan 149):** `cancellation_test` (within[T]/race2[T]
+monomorphized nested recursion) RUN-FAIL'ит на «fiber stack overflow in slot 0». Verified:
+**падает идентично на baseline (8MB default, старый runtime)** + не лечится `NOVA_FIBER_STACK=64MB`
+→ это **runaway/unbounded recursion**, НЕ stack-size issue (raise-stack — суть Plan 149 — не
+помогает, потому что глубина неограничена; чистый guard-page краш — корректное поведение). Был
+помечен в Plan 83.4.5.10 как «crashes immediate на 1MB»; с тех пор codegen дрейфанул и теперь
+overflow'ит и на 8MB — orthogonal codegen-баг вне scope Plan 149. Маркер
+`[M-cancellation-test-mono-recursion-overflow]` (P2, отдельный).
 
 **Acceptance:** AC1 (default 4MB, no regression), AC2 (env stack scales — verified slot_size),
 AC3 (20000→20032 round-up), AC4 (toml bake + env override — verified), AC5 (garbage/floor/clamp →

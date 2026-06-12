@@ -49,6 +49,7 @@
 
 | Маркер | Суть | Home | Pri |
 |---|---|---|---|
+| `[M-cancellation-test-mono-recursion-overflow]` | `nova_tests/concurrency/cancellation_test.nv` (within[T]/race2[T] monomorphized nested recursion) RUN-FAIL'ит на «fiber stack overflow in slot 0» на свежем clang-билде. **Verified pre-existing (НЕ Plan 149):** падает идентично на baseline (8MB default, a3597b99) + не лечится `NOVA_FIBER_STACK=64MB` → unbounded/runaway recursion, не stack-size issue. Помечен в Plan 83.4.5.10 как «crash на 1MB»; codegen с тех пор дрейфанул (теперь overflow и на 8MB). Нужно: дизассемблировать within[T]/race2[T] mono'd recursion — ищем потерянный base-case / бесконечную mono-цепочку. | plan-83.4.5.10 / codegen | P2 |
 | `[M-128.1-array-namedtuple-ro-method]` | `vs[i].ro_method()` на `[]NamedTuple`: pointer-cast в int-слот vs by-value receiver → clang mismatch; gated. | plan-128 Followups | P2 |
 | `[M-128.1-nonpure-index-key]` | Side-effecting `arr[next_idx()]` на pointer-ABI receiver вычисляется дважды; hoist-to-temp V2 не сделан. | plan-128 Followups | P2 |
 | `[M-138.2-self-in-param]` | `Self` в param-позиции generic-метода (`@append(other Self)`, `@copy_from`/`@compare`/`@equal`) мис-лоуэрит C-тип без receiver-subst → forward-decl≠def; workaround явный `Vec[T]`. (NB Ф.0d: `@append` теперь COPY, signature `@append(other Vec[T])` без `mut` — D141.) | plan-138 Followups | P2 |
