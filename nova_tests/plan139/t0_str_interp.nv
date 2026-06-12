@@ -1,0 +1,16 @@
+// Plan 139 Ф.0 — A0.1: interpolation `${...}` keeps working on the
+// value-record str (StringBuilder/concat path, unchanged by Ф.0).
+module plan139.t0_str_interp
+
+test "int interpolation builds expected str" {
+    ro n = 3
+    ro m = "n=${n}"
+    assert(m == "n=3")
+}
+
+test "multi-part interpolation" {
+    ro a = 1
+    ro b = 2
+    ro s = "${a}+${b}"
+    assert(s == "1+2")
+}

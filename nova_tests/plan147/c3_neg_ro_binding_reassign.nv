@@ -1,0 +1,19 @@
+// Plan 147 Ф.2-3 — ORACLE row C NEG: `ro p *mut T` → `p = q` ❌.
+//
+// The pointee is writable (`*mut T`, L3) but the binding is `ro` (L1), so
+// reassigning the handle `p` itself is forbidden. Axes are orthogonal.
+//
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module plan147.c3_neg_ro_binding_reassign
+
+import std.runtime.raw_mem.{RawMem}
+
+fn main() -> () {
+    unsafe {
+        ro p = RawMem.alloc(size_of[int]()) as *mut int
+        ro q = RawMem.alloc(size_of[int]()) as *mut int
+        p = q
+        *p = 1
+    }
+}

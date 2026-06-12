@@ -1,0 +1,35 @@
+// Plan 138.2 Ф.0b (class #4) — t13: boundary `{}`/`[]`-in-map-position with a
+// Vec-backed empty bucket.
+//
+// Mirror of map_literals/positive_empty_in_map_position. The risk this guards:
+// with the bucket array now Vec-backed (Ф.0b), an EMPTY map literal lowers to a
+// zero-capacity `Vec[Slot[K,V]]` bucket — the boundary that historically broke
+// `[]`-as-empty-map codegen. A zero-length Vec-backed bucket must NOT crash:
+// len()/is_empty()/get() on it are well-defined, and subsequent inserts grow it
+// from empty. (Named `_neg` per the plan: it is the empty/edge boundary of the
+// Vec-backed bucket path, asserted to behave rather than fault.)
+module plan138_2.t13_map_empty_in_map_position_neg
+
+import std.collections.hashmap.{HashMap}
+
+test "empty map literal via [] — Vec-backed empty bucket does not fault" {
+    ro m HashMap[str, int] = []
+    assert(m.len() == 0)
+    assert(m.is_empty() == true)
+    assert(m.get("nonexistent") == None)
+}
+
+test "empty map literal then insert — empty Vec bucket grows" {
+    mut m HashMap[str, int] = []
+    ro _ = m.insert("first", 1)
+    ro _ = m.insert("second", 2)
+    assert(m.len() == 2)
+    assert(m.get("first") == Some(1))
+    assert(m.get("second") == Some(2))
+}
+
+test "empty map with int key — Vec-backed empty bucket" {
+    ro m HashMap[int, str] = []
+    assert(m.len() == 0)
+    assert(m.get(42) == None)
+}

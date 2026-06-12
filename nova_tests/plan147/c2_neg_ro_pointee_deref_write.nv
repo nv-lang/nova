@@ -1,0 +1,19 @@
+// Plan 147 Ф.2-3 — ORACLE row C NEG: `mut p *T` → `*p = v` ❌.
+//
+// A bare `*T ≡ *ro T` is a READONLY pointee (L3 default = ro). Writing
+// through it is forbidden regardless of the binding — `mut p` makes the
+// HANDLE reassignable, not the pointee writable.
+//
+// EXPECT_COMPILE_ERROR E_POINTER_RO_ASSIGN
+
+module plan147.c2_neg_ro_pointee_deref_write
+
+import std.runtime.raw_mem.{RawMem}
+
+fn main() -> () {
+    unsafe {
+        mut p = RawMem.alloc(size_of[int]()) as *int
+        *p = 42
+        assert(*p == 42)
+    }
+}

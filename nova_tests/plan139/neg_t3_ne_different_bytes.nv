@@ -1,0 +1,25 @@
+// Plan 139 Ф.3 (neg) — different bytes are NOT equal (content-eq is strict).
+// Behavioral negative: proves str eq never falsely reports equality for
+// distinct content (and never relies on pointer coincidence the other way).
+module plan139.neg_t3_ne_different_bytes
+
+test "single byte difference -> not equal" {
+    assert("ab" != "ac", "ab != ac")
+    assert(!("ab" == "ac"), "ab not == ac")
+}
+
+test "length difference -> not equal" {
+    assert("ab" != "ab ", "trailing space differs")
+    assert("ab" != "a", "shorter differs")
+}
+
+test "different bytes -> different hash (no forced collision)" {
+    // Not strictly guaranteed by hashing in general, but for these distinct
+    // short literals SipHash must differ; this guards an accidental constant.
+    assert("ab".hash() != "ac".hash(), "distinct content distinct hash")
+}
+
+test "empty vs non-empty not equal" {
+    assert("" != "x", "empty != x")
+    assert("x" != "", "x != empty")
+}

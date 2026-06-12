@@ -1,0 +1,61 @@
+// Plan 138.2 Ф.0a (class #1) — t10: single @insert vs bulk @splice — distinct.
+//
+// Two DISTINCT methods on Vec[T] (distinct names -> distinct C-symbols via the
+// single-overload short-circuit; the bulk-overload-of-@insert form could not
+// coexist under the current generic-method mono — see
+// [M-138.2-bulk-insert-overload]):
+//   - single  @insert(i int, v T)          — insert one element of type T
+//   - bulk     @splice(i int, other Vec[T]) — splice every element of a Vec[T]
+//
+// Routing is unambiguous by NAME (D141 / D239): `.insert(i, x)` is always
+// single-element, `.splice(i, src)` is always bulk. The interesting case is
+// `Vec[Vec[int]]`: `.insert(i, inner)` where `inner: Vec[int] == T` inserts the
+// nested vector as ONE element (it is NOT a splice).
+
+module plan138_2.t10_vec_insert_single_vs_bulk_pos
+
+import std.collections.vec_owned.{Vec}
+
+test "single insert — one element of type T (int)" {
+    mut v = Vec[int].from([1, 2, 4])
+    v.insert(2, 3)
+    assert(v.equal(Vec[int].from([1, 2, 3, 4])))
+}
+
+test "bulk splice — a Vec[int] splices its contents (distinct from single)" {
+    mut v = Vec[int].from([1, 2, 4])
+    v.splice(2, Vec[int].from([3]))
+    // Splice of a 1-element Vec gives the SAME result as the single insert
+    // above, but routes through @splice (a Vec[int] arg, not an int).
+    assert(v.equal(Vec[int].from([1, 2, 3, 4])))
+}
+
+test "single insert vs bulk splice on Vec[int] — DISTINCT routing" {
+    // single: insert the int 99 -> [1,99,2]
+    mut a = Vec[int].from([1, 2])
+    a.insert(1, 99)
+    assert(a.equal(Vec[int].from([1, 99, 2])))
+
+    // bulk: splice a 3-element Vec -> [1, 7,8,9, 2]
+    mut b = Vec[int].from([1, 2])
+    b.splice(1, Vec[int].from([7, 8, 9]))
+    assert(b.equal(Vec[int].from([1, 7, 8, 9, 2])))
+}
+
+test "Vec[Vec[int]] — single insert routes element-wise (len +1, not +N)" {
+    // `inner: Vec[int] == T`, so `.insert(1, inner)` binds the SINGLE @insert:
+    // the nested vector goes in as ONE element. Confirmed by length growing by
+    // exactly 1 (a splice would have grown it by inner.len()). The element
+    // *read-back* on Vec[Vec[int]] is NOT asserted here: a pre-existing
+    // nested-`Vec[Vec[T]]` storage/codegen defect ([M-138.2-nested-vec-elem-readback],
+    // orthogonal to Ф.0a) corrupts the second nested element on push/get — out
+    // of scope for the bulk-insert parity work. The routing (single vs splice)
+    // is what Ф.0a fixes, and the C confirms an element-typed `Nova_Vec_int* v`
+    // single-insert was emitted (no splice for this type).
+    mut outer = Vec[Vec[int]].new()
+    outer.push(Vec[int].from([1, 1]))
+    ro before = outer.len()
+    ro inner = Vec[int].from([2, 2, 2])   // 3 elements — a splice would add 3
+    outer.insert(0, inner)
+    assert(outer.len() == before + 1)     // +1 => single-element insert, not splice
+}

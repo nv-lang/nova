@@ -1,0 +1,29 @@
+// Plan 139 Ф.1 — byte_at REMAINS the irreducible C byte-access primitive (#1).
+// Regression guard: O(1) byte read, the foundation other Nova-body str methods
+// read through (@as_bytes is the view sibling). Must stay green.
+module plan139.t1_byte_at
+
+test "byte_at ascii" {
+    ro s = "abc"
+    assert(s.byte_at(0) == 97)
+    assert(s.byte_at(1) == 98)
+    assert(s.byte_at(2) == 99)
+}
+
+test "byte_at multibyte raw bytes" {
+    ro s = "é"                // 0xC3 0xA9
+    assert(s.byte_at(0) == 0xC3)
+    assert(s.byte_at(1) == 0xA9)
+    assert(s.len() == 2)
+}
+
+test "as_bytes view matches byte_at" {
+    ro s = "hello"
+    ro bs = s.as_bytes()
+    assert(bs.len() == 5)
+    mut i = 0
+    while i < s.len() {
+        assert(bs[i] == s.byte_at(i))
+        i = i + 1
+    }
+}

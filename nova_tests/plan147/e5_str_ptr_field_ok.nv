@@ -1,0 +1,32 @@
+// Plan 147 Ф.5 — ORACLE row E (str lang-item): `str{ptr *u8, len int}`.
+//
+// Under the 3-axis model the str backing-pointer field is declared `ptr *u8`
+// (D26 MAJOR AMEND / D228): a BARE `*u8` is the ro-pointee canon (`*T ≡ *ro T`,
+// D245 flip-scan retracted). The buffer is read-only.
+//
+// SUPERSEDED ORACLE-PIN (Plan 139.1 Ф.A, 2026-06-12): the lang-item declaration
+// `type str value priv { ptr *u8, len int }` (std/prelude/core.nv) HAS LANDED.
+// The `ptr` field is now `priv`, so reading `s.ptr` from OUTSIDE the str module
+// fires E_PRIV_FIELD_READ — exactly the privacy GATE that closes
+// [M-139-f0-lang-item-decl]. This fixture's earlier `ro p = s.ptr` read (which
+// EXPECT'd ok under the pre-lang-item hardcoded primitive) is intentionally
+// removed: the `s.ptr`-outside-module case is now pinned by the dedicated
+// negative fixture nova_tests/plan139_1/neg_str_priv_field.nv (EXPECT_COMPILE_ERROR
+// E_PRIV_FIELD_READ). e5's original header anticipated this flip (see git history).
+//
+// This fixture now pins only the cleanly-checkable public surface: `s.len()`
+// (public method, = bytes per D26) on a literal. The `*u8` ro-pointee canon
+// itself is exercised by the b2/e2 rows of Plan 147.
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.e5_str_ptr_field_ok
+
+fn main() -> () {
+    ro s = "hello"
+    // public length accessor (= bytes per D26 rev). The priv `ptr` field is no
+    // longer read here — that case moved to plan139_1/neg_str_priv_field.nv.
+    ro n = s.len()
+    assert(n == 5)
+    println("ok")
+}

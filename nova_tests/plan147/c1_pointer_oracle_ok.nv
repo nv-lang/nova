@@ -1,0 +1,41 @@
+// Plan 147 Ф.2-3 — ORACLE row C (POINTER, unsafe-ops) — positive forms.
+//
+//   `mut p *mut T` : `p = q` ✅ (reassign), `*p = v` ✅ (mut pointee)
+//   `ro p *mut T`  : `*p = v` ✅ (pointee-mut FROM TYPE, binding-independent)
+//   `mut p *T`     : `p = q` ✅ (reassign of ro-pointee handle)
+//
+// Pointee mutability is L3 (from the type `*mut T`), NOT inherited from the
+// binding (L1). So even a `ro` binding to a `*mut T` permits `*p = v`.
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.c1_pointer_oracle_ok
+
+import std.runtime.raw_mem.{RawMem}
+
+fn main() -> () {
+    unsafe {
+        // mut p *mut T: reassign ✅, deref-write ✅.
+        mut p = RawMem.alloc(size_of[int]()) as *mut int
+        ro q = RawMem.alloc(size_of[int]()) as *mut int
+        *p = 1
+        assert(*p == 1)
+        p = q
+        *p = 2
+        assert(*p == 2)
+
+        // ro p *mut T: pointee writable from the type, even under ro binding.
+        ro r = RawMem.alloc(size_of[int]()) as *mut int
+        *r = 42
+        assert(*r == 42)
+
+        // mut p *T: bare *T is a ro pointee; the handle is still reassignable.
+        ro src = RawMem.alloc(size_of[int]()) as *mut int
+        *src = 7
+        mut h = src as *int
+        ro h2 = src as *int
+        h = h2
+        assert(*h == 7)
+    }
+    println("ok")
+}

@@ -1,0 +1,29 @@
+// Plan 147 Ф.3 — ORACLE row D (pointer return) positive:
+//   `-> *mut T` : `*a = v` ✅ — pointee writable from the return TYPE.
+//   `-> *T`     : `*a` read ✅ (write covered in d5_neg).
+//   cast (row E): `x as *mut T; ro a = x` → `*a = v` ✅ — L3 from the type,
+//                 binding-independent.
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.d4_return_ptr_oracle_ok
+
+import std.runtime.raw_mem.{RawMem}
+
+fn alloc_mut() -> *mut int => unsafe { RawMem.alloc(size_of[int]()) as *mut int }
+
+fn main() -> () {
+    unsafe {
+        // -> *mut T : write through the returned pointer.
+        mut a = alloc_mut()
+        *a = 11
+        assert(*a == 11)
+
+        // cast: x as *mut T then ro a = x → *a = v ✅ (pointee-mut from type).
+        ro src = RawMem.alloc(size_of[int]()) as *mut int
+        ro c = src as *mut int
+        *c = 22
+        assert(*c == 22)
+    }
+    println("ok")
+}

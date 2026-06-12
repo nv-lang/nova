@@ -1,0 +1,30 @@
+// Plan 147 Ф.5 — ORACLE row E (generic / Option carrying pointer element types):
+// the per-level pointee modifier survives through generic instantiation.
+//   `Vec[*T]`       — element pointee is ro  (`*v[i] = x` ❌ at the C level)
+//   `Vec[*mut T]`   — element pointee is mut (`*v[i] = x` ✅)
+//   `Option[*T]` / `Option[*mut T]` — NPO-eligible (None = null, 8 bytes)
+//
+// The element-deref-WRITE asymmetry (`*v[i]=x` on `Vec[*T]` vs `Vec[*mut T]`)
+// is NOT Nova-gated — it requires element-type inference through `[]` on a
+// monomorphised generic (documented boundary [M-147-generic-element-deref-write]);
+// the L3 const-element-pointee is enforced at the C level. This fixture pins
+// the cleanly-checkable part: all four canonical generic-pointer type forms
+// type-check in declaration positions.
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.e3_generic_pointer_types_ok
+
+type Acc { id i64 }
+
+external fn e3_vec_ro() -> Vec[*Acc]
+external fn e3_vec_mut() -> Vec[*mut Acc]
+external fn e3_opt_ro() -> Option[*Acc]
+external fn e3_opt_mut() -> Option[*mut Acc]
+
+fn main() -> () {
+    // Option[*T] is NPO-eligible: None type-checks (null sentinel).
+    ro none Option[*mut Acc] = None
+    assert(none == None)
+    println("ok")
+}

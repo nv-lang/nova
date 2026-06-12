@@ -1,0 +1,19 @@
+// Plan 147 Ф.2-3 — ORACLE row A NEG: `ro r` (bare) → `r.x = 5` ❌.
+//
+// A bare `ro` binding freezes the whole owned-graph (P7 binding-dominates):
+// even a `mut`-declared field cannot be written through a `ro` binding.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+
+module plan147.a2_neg_ro_value_field_write
+
+type Point value {
+    mut x int
+    mut y int
+}
+
+fn main() -> () {
+    ro r = Point { x: 1, y: 2 }
+    r.x = 5
+    assert(r.x == 5)
+}

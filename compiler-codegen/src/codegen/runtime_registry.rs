@@ -136,6 +136,25 @@ fn str_runtime() -> Vec<RuntimeFn> {
             doc: "Длина строки в байтах. O(1). (Plan 108 D26 rev: len = bytes, char_len = codepoints).",
         nova_body: None,
     },
+        // Plan 139.1: `byte_len` — explicit byte-length alias of `len`
+        // (D26 rev: str.len == bytes). Several str Nova-bodies (parse_int,
+        // pad_left/right, repeat) and StringBuilder.with_capacity call sites
+        // call `@byte_len()` for clarity (vs codepoint `char_len`). Previously
+        // resolved only by permissive str member-access; once str is a declared
+        // lang-item with active method-resolution, the alias must exist as a
+        // real method. Nova-body `=> @len()` — zero new C surface.
+        RuntimeFn {
+            module: "std.runtime.string",
+            receiver: Some("str"),
+            is_static: false, is_mut: false, is_consume: false,
+            name: "byte_len",
+            params: &[],
+            return_ty: "int",
+            effects: &[],
+            c_name: "",
+            doc: "Длина строки в байтах. O(1). Явный алиас `len` (D26: str.len = bytes).",
+            nova_body: Some("@len()"),
+        },
         RuntimeFn {
             module: "std.runtime.string",
             receiver: Some("str"),
@@ -144,9 +163,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[],
             return_ty: "int",
             effects: &[],
-            c_name: "nova_str_char_len",
+            c_name: "",
             doc: "Длина строки в codepoint'ах. O(n). Используй для итерации по символам.",
-        nova_body: None,
+            // Plan 139 Ф.1: Nova-body (byte-scan via @as_bytes, count non-continuation).
+            nova_body: Some("{\n    ro bytes = @as_bytes()\n    ro n = @len()\n    mut count = 0\n    mut i = 0\n    while i < n {\n        ro b = bytes[i] as int\n        if (b & 0xC0) != 0x80 { count = count + 1 }\n        i = i + 1\n    }\n    count\n}"),
     },
         // Plan 90: O(1) доступ к байту — примитив для str-алгоритмов на Nova.
         RuntimeFn {
@@ -182,9 +202,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[("prefix", "str")],
             return_ty: "bool",
             effects: &[],
-            c_name: "nova_str_starts_with",
+            c_name: "",
             doc: "True если строка начинается с prefix.",
-        nova_body: None,
+            // Plan 139 Ф.1: Nova-body byte-compare via @as_bytes.
+            nova_body: Some("{\n    ro pn = prefix.len()\n    ro sn = @len()\n    if pn > sn { return false }\n    ro sb = @as_bytes()\n    ro pb = prefix.as_bytes()\n    mut i = 0\n    while i < pn {\n        if sb[i] != pb[i] { return false }\n        i = i + 1\n    }\n    true\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",
@@ -194,9 +215,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[("suffix", "str")],
             return_ty: "bool",
             effects: &[],
-            c_name: "nova_str_ends_with",
+            c_name: "",
             doc: "True если строка заканчивается на suffix.",
-        nova_body: None,
+            // Plan 139 Ф.1: Nova-body byte-compare via @as_bytes.
+            nova_body: Some("{\n    ro fn_len = suffix.len()\n    ro sn = @len()\n    if fn_len > sn { return false }\n    ro sb = @as_bytes()\n    ro fb = suffix.as_bytes()\n    ro base = sn - fn_len\n    mut i = 0\n    while i < fn_len {\n        if sb[base + i] != fb[i] { return false }\n        i = i + 1\n    }\n    true\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",
@@ -206,9 +228,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[("needle", "str")],
             return_ty: "bool",
             effects: &[],
-            c_name: "nova_str_contains",
+            c_name: "",
             doc: "True если needle встречается в строке.",
-        nova_body: None,
+            // Plan 139 Ф.1: Nova-body byte-scan via @as_bytes.
+            nova_body: Some("{\n    ro nn = needle.len()\n    if nn == 0 { return true }\n    ro sn = @len()\n    if nn > sn { return false }\n    ro sb = @as_bytes()\n    ro nb = needle.as_bytes()\n    mut i = 0\n    while i <= sn - nn {\n        mut j = 0\n        mut matched = true\n        while j < nn {\n            if sb[i + j] != nb[j] { matched = false; break }\n            j = j + 1\n        }\n        if matched { return true }\n        i = i + 1\n    }\n    false\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",
@@ -218,9 +241,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[("needle", "str")],
             return_ty: "Option[int]",
             effects: &[],
-            c_name: "nova_str_find",
+            c_name: "",
             doc: "Codepoint-offset первого вхождения needle. None если нет.",
-        nova_body: None,
+            // Plan 139 Ф.1: Nova-body UTF-8 codepoint-offset byte-scan.
+            nova_body: Some("{\n    ro nn = needle.len()\n    if nn == 0 { return Some(0) }\n    ro sn = @len()\n    if nn > sn { return None }\n    ro sb = @as_bytes()\n    ro nb = needle.as_bytes()\n    mut cp = 0\n    mut i = 0\n    while i + nn <= sn {\n        mut j = 0\n        mut matched = true\n        while j < nn {\n            if sb[i + j] != nb[j] { matched = false; break }\n            j = j + 1\n        }\n        if matched { return Some(cp) }\n        ro b = sb[i] as int\n        if b < 0x80 { i = i + 1 }\n        else if (b & 0xE0) == 0xC0 { i = i + 2 }\n        else if (b & 0xF0) == 0xE0 { i = i + 3 }\n        else if (b & 0xF8) == 0xF0 { i = i + 4 }\n        else { i = i + 1 }\n        cp = cp + 1\n    }\n    None\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",
@@ -230,9 +254,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[("needle", "str")],
             return_ty: "Option[int]",
             effects: &[],
-            c_name: "nova_str_rfind",
+            c_name: "",
             doc: "Codepoint-offset последнего вхождения needle.",
-        nova_body: None,
+            // Plan 139 Ф.1: Nova-body — last codepoint-offset match.
+            nova_body: Some("{\n    ro sn = @len()\n    ro sb = @as_bytes()\n    ro nn = needle.len()\n    if nn == 0 { return Some(@char_len()) }\n    if nn > sn { return None }\n    ro nb = needle.as_bytes()\n    mut last = -1\n    mut cp = 0\n    mut i = 0\n    while i + nn <= sn {\n        mut j = 0\n        mut matched = true\n        while j < nn {\n            if sb[i + j] != nb[j] { matched = false; break }\n            j = j + 1\n        }\n        if matched { last = cp }\n        ro b = sb[i] as int\n        if b < 0x80 { i = i + 1 }\n        else if (b & 0xE0) == 0xC0 { i = i + 2 }\n        else if (b & 0xF0) == 0xE0 { i = i + 3 }\n        else if (b & 0xF8) == 0xF0 { i = i + 4 }\n        else { i = i + 1 }\n        cp = cp + 1\n    }\n    if last < 0 { None } else { Some(last) }\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",
@@ -242,9 +267,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[("idx", "int")],
             return_ty: "Option[char]",
             effects: &[],
-            c_name: "nova_str_char_at",
+            c_name: "",
             doc: "Codepoint по индексу (codepoint-indexed). None при OOB.",
-        nova_body: None,
+            // Plan 139 Ф.1: Nova-body UTF-8 decode cursor (cp_to_char helper in string.nv).
+            nova_body: Some("{\n    if idx < 0 { return None }\n    ro bytes = @as_bytes()\n    ro n = @len()\n    mut cp_idx = 0\n    mut i = 0\n    while i < n {\n        ro b = bytes[i] as int\n        mut cp = b\n        mut step = 1\n        if b < 0x80 {\n            cp = b; step = 1\n        } else if (b & 0xE0) == 0xC0 && i + 1 < n {\n            cp = ((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F)\n            step = 2\n        } else if (b & 0xF0) == 0xE0 && i + 2 < n {\n            cp = ((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F)\n            step = 3\n        } else if (b & 0xF8) == 0xF0 && i + 3 < n {\n            cp = ((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F)\n            step = 4\n        } else {\n            cp = b; step = 1\n        }\n        if cp_idx == idx {\n            return Some(cp_to_char(cp))\n        }\n        cp_idx = cp_idx + 1\n        i = i + step\n    }\n    None\n}"),
     },
         // Plan 96.1: метод @slice удалён в пользу bracket-формы s[a..b]
         // (Plan 96 D-str-slice, D9 «один очевидный путь»). Bracket-form
@@ -257,9 +283,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[],
             return_ty: "str",
             effects: &[],
-            c_name: "nova_str_trim",
+            c_name: "",
             doc: "Убирает whitespace с начала и конца.",
-        nova_body: None,
+            // Plan 139 Ф.1: Nova-body, whitespace = byte <= 0x20, alloc copy via []u8.
+            nova_body: Some("{\n    ro bytes = @as_bytes()\n    ro n = @len()\n    mut start = 0\n    while start < n && (bytes[start] as int) <= 32 { start = start + 1 }\n    mut end = n\n    while end > start && (bytes[end - 1] as int) <= 32 { end = end - 1 }\n    mut out = []u8.with_capacity(end - start)\n    mut i = start\n    while i < end {\n        out.push(bytes[i])\n        i = i + 1\n    }\n    str.from_bytes_unchecked(out)\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",
@@ -269,9 +296,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[],
             return_ty: "str",
             effects: &[],
-            c_name: "nova_str_to_lower",
+            c_name: "",
             doc: "Lowercase копия (ASCII).",
-        nova_body: None,
+            // Plan 139 Ф.1: Nova-body ASCII lowercase, alloc via []u8.
+            nova_body: Some("{\n    ro bytes = @as_bytes()\n    ro n = @len()\n    mut out = []u8.with_capacity(n)\n    mut i = 0\n    while i < n {\n        mut c = bytes[i] as int\n        if c >= 65 && c <= 90 { c = c + 32 }\n        out.push(c as u8)\n        i = i + 1\n    }\n    str.from_bytes_unchecked(out)\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",
@@ -281,9 +309,10 @@ fn str_runtime() -> Vec<RuntimeFn> {
             params: &[],
             return_ty: "str",
             effects: &[],
-            c_name: "nova_str_to_upper",
+            c_name: "",
             doc: "Uppercase копия (ASCII).",
-        nova_body: None,
+            // Plan 139 Ф.1: Nova-body ASCII uppercase, alloc via []u8.
+            nova_body: Some("{\n    ro bytes = @as_bytes()\n    ro n = @len()\n    mut out = []u8.with_capacity(n)\n    mut i = 0\n    while i < n {\n        mut c = bytes[i] as int\n        if c >= 97 && c <= 122 { c = c - 32 }\n        out.push(c as u8)\n        i = i + 1\n    }\n    str.from_bytes_unchecked(out)\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",
@@ -401,7 +430,8 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "nova_str_to_bytes",
             doc: "D178: UTF-8 bytes как []u8 (allocating copy). Renamed from bytes().",
-        nova_body: None,
+            // Plan 139 Ф.2: Nova-body — copy bytes from @as_bytes() zero-copy view.
+            nova_body: Some("{\n    ro view = @as_bytes()\n    ro n = @len()\n    mut out = []u8.with_capacity(n)\n    mut i = 0\n    while i < n {\n        out.push(view[i])\n        i = i + 1\n    }\n    out\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",
@@ -425,7 +455,8 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "nova_str_to_chars",
             doc: "D178: Codepoints как []char (allocating). Renamed from chars().",
-        nova_body: None,
+            // Plan 139 Ф.2: Nova-body — UTF-8 decode cursor over @as_bytes() view.
+            nova_body: Some("{\n    ro bytes = @as_bytes()\n    ro n = @len()\n    mut out = []char.with_capacity(@char_len())\n    mut i = 0\n    while i < n {\n        ro b = bytes[i] as int\n        mut cp = b\n        mut step = 1\n        if b < 0x80 {\n            cp = b; step = 1\n        } else if (b & 0xE0) == 0xC0 && i + 1 < n {\n            cp = ((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F)\n            step = 2\n        } else if (b & 0xF0) == 0xE0 && i + 2 < n {\n            cp = ((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F)\n            step = 3\n        } else if (b & 0xF8) == 0xF0 && i + 3 < n {\n            cp = ((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F)\n            step = 4\n        } else {\n            cp = b; step = 1\n        }\n        out.push(cp_to_char(cp))\n        i = i + step\n    }\n    out\n}"),
     },
         RuntimeFn {
             module: "std.runtime.string",

@@ -1,0 +1,45 @@
+// Plan 147 Ф.5 — ORACLE row B (HEAP-record `Acc`, by-handle).
+//
+// Heap records (plain `type` — no `value`) carry the SAME write-signs as the
+// value-record row A; only the semantics differ (a write is visible to
+// co-handles aliasing the same object — `ro` = «this name does not write»,
+// not object-freeze). Positive forms (compile + run):
+//   `mut r`          : `r = X` ✅ (reassign), `r.money = v` ✅ (field-write)
+//   `mut r ro Acc`   : `r = X` ✅ (reassign), content frozen (neg: b4)
+//   `ro r mut Acc`   : `r.money = v` ✅ (content), reassign ❌ (neg: b5)
+// Reading is always ✅.
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.b1_heap_record_oracle_ok
+
+type Acc {
+    mut money f64
+    ro name str
+}
+
+fn mk(m f64, n str) -> Acc => { money: m, name: n }
+
+fn main() -> () {
+    // mut binding, bare type: reassign ✅, field-write ✅.
+    mut r = mk(100.0, "a")
+    r = mk(200.0, "b")
+    r.money = 250.0
+    assert(r.money == 250.0)
+
+    // mut r ro Acc: reassign ✅ (binding mut); content frozen (neg in b4).
+    mut a ro Acc = mk(7.0, "c")
+    a = mk(9.0, "d")
+    assert(a.money == 9.0)
+
+    // ro r mut Acc: field-write ✅ (type mut); reassign ❌ (neg in b5).
+    ro b mut Acc = mk(11.0, "e")
+    b.money = 13.0
+    assert(b.money == 13.0)
+
+    // bare ro r: read-only, read ✅.
+    ro c = mk(14.0, "f")
+    assert(c.money == 14.0)
+
+    println("ok")
+}

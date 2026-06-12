@@ -39,7 +39,7 @@ typedef intptr_t nova_int;
 typedef double   nova_f64;
 typedef bool     nova_bool;
 typedef uint8_t  nova_byte;
-typedef struct { const char* ptr; size_t len; } nova_str;
+typedef struct { const uint8_t* ptr; int64_t len; } nova_str; /* Plan 139 Ф.0: str value-record ABI image; layout-identical to old {const char*,size_t} on x64 */
 #endif
 
 /* ============================================================

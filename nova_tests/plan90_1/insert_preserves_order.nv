@@ -6,7 +6,7 @@ module plan90_1.insert_preserves_order
 test "insert order preservation — sequential inserts" {
     mut arr []int = [1, 5]
     // Insert [2, 3, 4] at position 1: [1, 2, 3, 4, 5]
-    arr.insert(1, [2, 3, 4])
+    arr.splice(1, [2, 3, 4])
     assert(arr.len() == 5)
     assert(arr[0] == 1)
     assert(arr[1] == 2)
@@ -15,7 +15,7 @@ test "insert order preservation — sequential inserts" {
     assert(arr[4] == 5)
 
     // Now insert [6, 7] at the end: [1, 2, 3, 4, 5, 6, 7]
-    arr.insert(5, [6, 7])
+    arr.splice(5, [6, 7])
     assert(arr.len() == 7)
     assert(arr[5] == 6)
     assert(arr[6] == 7)
@@ -24,7 +24,7 @@ test "insert order preservation — sequential inserts" {
 test "insert — interleaved inserts build sorted sequence" {
     // Build [10, 20, 30, 40, 50] by inserting pairs
     mut arr []int = [10, 50]
-    arr.insert(1, [20, 30, 40])
+    arr.splice(1, [20, 30, 40])
     assert(arr.len() == 5)
     mut i = 0
     ro expected []int = [10, 20, 30, 40, 50]

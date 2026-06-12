@@ -1,0 +1,69 @@
+// Plan 138.2 Ф.0b (class #4) — t12: Vec-backed map-literal bucket arrays.
+//
+// After hashmap.nv imports `std.collections.vec_owned.{Vec}` the `[]Slot[K,V]`
+// bucket field lowers to a TYPED `Nova_Vec____Nova_Slot____*` backing (not the
+// int64-erased `NovaArray_nova_int*`). This fixture exercises the Vec-backed
+// bucket end-to-end — insert / get / iter — across int→str, record-value, and
+// nested map-in-map shapes, BEFORE the universal `[]T ≡ Vec[T]` flip
+// (Ф.0-final). Verifies the migration is observable-behaviour-preserving.
+module plan138_2.t12_map_vec_bucket_pos
+
+import std.collections.hashmap.{HashMap}
+
+type Point { x int, y int }
+
+test "Vec-backed bucket: int→str insert/get" {
+    ro m HashMap[int, str] = [1: "a", 2: "b"]
+    assert(m.len() == 2)
+    assert(m.get(1) == Some("a"))
+    assert(m.get(2) == Some("b"))
+    assert(m.get(99) == None)
+    assert(m.contains(1))
+    assert(!m.contains(0))
+}
+
+test "Vec-backed bucket: iterate over entries" {
+    ro m HashMap[int, str] = [1: "a", 2: "b", 3: "c"]
+    mut seen = 0
+    for entry in m {
+        seen = seen + 1
+    }
+    assert(seen == 3)
+}
+
+test "Vec-backed bucket: record value map" {
+    ro m HashMap[str, Point] = {
+        origin: Point { x: 0, y: 0 },
+        unit: Point { x: 1, y: 1 },
+    }
+    assert(m.len() == 2)
+    if Some(p) = m.get("unit") {
+        assert(p.x == 1)
+        assert(p.y == 1)
+    } else {
+        assert(false)
+    }
+}
+
+test "Vec-backed bucket: nested map-in-map" {
+    ro inner HashMap[int, str] = [10: "x", 20: "y"]
+    assert(inner.get(10) == Some("x"))
+
+    ro outer HashMap[str, int] = { a: 1, b: 2 }
+    assert(outer.get("a") == Some(1))
+    assert(outer.get("b") == Some(2))
+    assert(outer.len() == 2)
+}
+
+test "Vec-backed bucket: growth past load factor (rehash)" {
+    mut m HashMap[int, int] = []
+    mut i = 0
+    while i < 64 {
+        ro _ = m.insert(i, i * 10)
+        i = i + 1
+    }
+    assert(m.len() == 64)
+    assert(m.get(0) == Some(0))
+    assert(m.get(63) == Some(630))
+    assert(m.get(64) == None)
+}

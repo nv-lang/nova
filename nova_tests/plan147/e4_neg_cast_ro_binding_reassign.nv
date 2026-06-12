@@ -1,0 +1,23 @@
+// Plan 147 Ф.5 — ORACLE row E NEG (cast): `x as *mut T; ro a = x` → `a = y` ❌.
+//
+// A cast carries the L3 pointee capability IN THE TYPE (`*mut T` = writable),
+// so `*a = v` is allowed (positive half in d4_return_ptr_oracle_ok). But the
+// L1 binding axis is orthogonal: binding the cast result to a `ro a` fixes the
+// NAME, so reassigning the handle `a` is forbidden — independent of pointee
+// mutability.
+//
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module plan147.e4_neg_cast_ro_binding_reassign
+
+import std.runtime.raw_mem.{RawMem}
+
+fn main() -> () {
+    unsafe {
+        ro src = RawMem.alloc(size_of[int]()) as *mut int
+        ro other = RawMem.alloc(size_of[int]()) as *mut int
+        ro a = src as *mut int
+        a = other
+        *a = 1
+    }
+}

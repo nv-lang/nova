@@ -1,0 +1,38 @@
+// Plan 139 Ф.2 — str.to_chars() Nova-body (UTF-8 decode cursor over @as_bytes view).
+// to_chars -> []char (one element per codepoint).
+module plan139.t2_to_chars
+
+test "to_chars ascii" {
+    ro cs = "abc".to_chars()
+    assert(cs.len() == 3)
+    assert(cs[0] == 'a')
+    assert(cs[1] == 'b')
+    assert(cs[2] == 'c')
+}
+
+test "to_chars multibyte codepoint count" {
+    // "héllo": 5 codepoints, 6 bytes (é is 2-byte UTF-8).
+    ro cs = "héllo".to_chars()
+    assert(cs.len() == 5)
+    assert(cs[0] == 'h')
+    assert(cs[1] == 'é')
+    assert(cs[4] == 'o')
+}
+
+test "to_chars 4-byte emoji" {
+    // emoji is one codepoint, 4 bytes.
+    ro cs = "a😀b".to_chars()
+    assert(cs.len() == 3)
+    assert(cs[1] == '😀')
+}
+
+test "to_chars empty" {
+    ro cs = "".to_chars()
+    assert(cs.len() == 0)
+}
+
+test "to_chars cyrillic 2-byte" {
+    ro cs = "Юра".to_chars()
+    assert(cs.len() == 3)
+    assert(cs[0] == 'Ю')
+}

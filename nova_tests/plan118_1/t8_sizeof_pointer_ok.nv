@@ -1,10 +1,11 @@
 // Plan 118.1 Ф.2.3 T8 — size_of/align_of for typed pointers.
 //
-// Per D216 §1 + D226: typed pointer family (`*T`, `*mut T`, `*ro T`,
-// `*unsafe T`) has uniform pointer layout — 8 bytes / 8 align on x64 ABI.
-// Regardless of pointee type. Pointee-mut/unsafe wrappers transparent for
-// value layout (zero-cost markers). Pointee-mut is POSTFIX (after `*`) per
-// the final pointer model (Plan 138.5).
+// Per D216 §1 + D226: typed pointer family (`*T`, `*mut T`, `*unsafe T`) has
+// uniform pointer layout — 8 bytes / 8 align on x64 ABI. Regardless of pointee
+// type. Pointee-mut/unsafe wrappers transparent for value layout (zero-cost
+// markers). Pointee-mut is POSTFIX (after `*`); the ro pointee is the bare
+// canon `*T` (`*T ≡ *ro T`; explicit `*ro T` is a hard error per Plan 147 /
+// D246, migrated here).
 
 module plan118_1.t8_sizeof_pointer_ok
 
@@ -16,7 +17,6 @@ test "size_of/align_of for typed pointer family" {
     assert(size_of[* int]() == 8)
     assert(align_of[* int]() == 8)
     assert(size_of[*mut int]() == 8)
-    assert(size_of[*ro int]() == 8)
     assert(size_of[*unsafe int]() == 8)
     assert(size_of[* Acc]() == 8)
     assert(size_of[*mut u8]() == 8)
@@ -35,5 +35,5 @@ test "size_of for pointer-к-unsafe form" {
 
 test "size_of for nested pointer chain" {
     assert(size_of[* * int]() == 8)
-    assert(size_of[*mut *ro int]() == 8)
+    assert(size_of[*mut * int]() == 8)
 }

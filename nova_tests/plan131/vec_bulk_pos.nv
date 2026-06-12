@@ -12,13 +12,14 @@ test "extend appends a slice" {
     assert(v.len() == 6)
 }
 
-test "append consumes other into self" {
+test "append copies other into self, leaving it intact" {
     mut a = Vec[int].from([1, 2, 3])
     mut b = Vec[int].from([4, 5])
     a.append(b)
     assert(a.equal(Vec[int].from([1, 2, 3, 4, 5])))
-    assert(b.is_empty())
-    assert(b.len() == 0)
+    // `@append` is a COPY (D141): `b` is left UNCHANGED (not a move-merge).
+    assert(b.equal(Vec[int].from([4, 5])))
+    assert(b.len() == 2)
 }
 
 test "retain keeps matching elements in order" {

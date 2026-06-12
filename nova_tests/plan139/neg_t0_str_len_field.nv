@@ -1,0 +1,11 @@
+// Plan 139 Ф.0 — A0.3 (enforceable subset): str's `len` is a method-only
+// size-accessor (D117 / Plan 60). Reading it as a bare field is rejected.
+// (The value-record `len` field is internal; user code must call `.len()`.)
+// EXPECT_COMPILE_ERROR E_SIZE_ACCESSOR_FIELD
+module plan139.neg_t0_str_len_field
+
+test "str.len as field (no parens) is a compile error" {
+    ro s = "abc"
+    ro n = s.len
+    assert(n == 3)
+}

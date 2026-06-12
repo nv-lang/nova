@@ -1,0 +1,24 @@
+// Plan 147 Ф.3 — ORACLE row E NEG: `ro v` + `v.p = q` ❌ (L2 freeze at the slot).
+//
+// The pointer FIELD `p` itself is part of the owned graph frozen by the `ro`
+// binding (L2 reaches the slot, the wall is at the `*`, not before it). So
+// reassigning the field slot `v.p` is forbidden — even though writing THROUGH
+// the pointer (`*v.p = w`) is allowed (see e1).
+//
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+
+module plan147.e2_neg_vr_field_reassign
+
+import std.runtime.raw_mem.{RawMem}
+
+type Cell value { mut p *mut int }
+
+fn main() -> () {
+    unsafe {
+        ro a = RawMem.alloc(size_of[int]()) as *mut int
+        ro b = RawMem.alloc(size_of[int]()) as *mut int
+        ro v = Cell { p: a }
+        v.p = b
+        assert(*v.p == 0)
+    }
+}

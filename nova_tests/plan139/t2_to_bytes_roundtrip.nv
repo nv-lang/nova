@@ -1,0 +1,39 @@
+// Plan 139 Ф.2 — str.to_bytes() Nova-body (copy from @as_bytes view) round-trip.
+// to_bytes -> []u8 (owned copy) -> from_bytes_unchecked -> equal original.
+module plan139.t2_to_bytes_roundtrip
+
+test "to_bytes ascii length + content" {
+    ro s = "hello"
+    ro b = s.to_bytes()
+    assert(b.len() == 5)
+    assert(b[0] == 104)  // 'h'
+    assert(b[4] == 111)  // 'o'
+}
+
+test "to_bytes utf8 multibyte length" {
+    ro s = "héllo"          // h é(2 bytes) l l o = 6 bytes
+    ro b = s.to_bytes()
+    assert(b.len() == 6)
+}
+
+test "to_bytes empty" {
+    ro s = ""
+    ro b = s.to_bytes()
+    assert(b.len() == 0)
+}
+
+test "to_bytes round-trip via from_bytes_unchecked" {
+    ro s = "round-trip ünïcödé"
+    ro b = s.to_bytes()
+    ro r = str.from_bytes_unchecked(b)
+    assert(r == s)
+}
+
+test "to_bytes is owned copy (independent of source)" {
+    // Mutating the produced []u8 must not affect the str (it is a copy, not a view).
+    ro s = "abc"
+    mut b = s.to_bytes()
+    b.push(100)            // 'd'
+    assert(b.len() == 4)
+    assert(s.len() == 3)   // str unchanged
+}

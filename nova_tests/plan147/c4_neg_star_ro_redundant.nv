@@ -1,0 +1,15 @@
+// Plan 147 Ф.2 — ORACLE row C NEG: `*ro T` is redundant → hard error.
+//
+// Under the 3-axis model `*T ≡ *ro T` universally — a bare `*T` already IS
+// the ro-pointee canon (L3 default = ro), so writing `*ro T` is redundant.
+// Fix-it: drop the `ro`. (Retract of D245 flip-scan.)
+//
+// EXPECT_COMPILE_ERROR E_REDUNDANT_POINTER_RO
+
+module plan147.c4_neg_star_ro_redundant
+
+type Acc { ro id i64 }
+
+external fn p147_take(p *ro Acc) -> i64
+
+test "rejects *ro T" { assert(1 == 1) }

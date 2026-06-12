@@ -1,0 +1,21 @@
+// Plan 147 Ф.2-3 — ORACLE row A NEG: `ro r mut Point` → `r = X` ❌.
+//
+// R2-split: the type is `mut Point` (content ✅) but the binding is `ro`
+// (L1 fixed), so reassigning the name is forbidden.
+//
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module plan147.a5_neg_ro_mut_value_reassign
+
+type Point value {
+    mut x int
+    mut y int
+}
+
+fn mk(a int, b int) -> Point => { x: a, y: b }
+
+fn main() -> () {
+    ro b mut Point = mk(11, 12)
+    b = mk(13, 14)
+    assert(b.x == 13)
+}

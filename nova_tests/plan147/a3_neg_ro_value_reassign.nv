@@ -1,0 +1,18 @@
+// Plan 147 Ф.2-3 — ORACLE row A NEG: `ro r` (bare) → `r = X` ❌.
+//
+// Reassignment of the name is an L1 binding concern; a `ro` binding is fixed.
+//
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module plan147.a3_neg_ro_value_reassign
+
+type Point value {
+    mut x int
+    mut y int
+}
+
+fn main() -> () {
+    ro r = Point { x: 1, y: 2 }
+    r = Point { x: 3, y: 4 }
+    assert(r.x == 3)
+}

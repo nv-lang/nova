@@ -1,0 +1,37 @@
+// Plan 147 Ф.2-3 — A2 acceptance: `*T ≡ *ro T` UNIVERSALLY, every position.
+//
+// A bare `*T` is the self-contained ro-pointer canon in param / return /
+// field / local / cast / generic positions. No binding inheritance, no
+// position-dependence. (Reads through `*T` are always fine.)
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.a6_star_t_universal_positions_ok
+
+import std.runtime.raw_mem.{RawMem}
+
+// field position
+type Holder { p *int }
+
+// param + return position
+fn id_ptr(p *int) -> *int => p
+
+fn main() -> () {
+    unsafe {
+        ro raw = RawMem.alloc(size_of[int]()) as *mut int
+        *raw = 99
+
+        // local position: bare *T ro pointer; read ✅.
+        ro lp = raw as *int
+        assert(*lp == 99)
+
+        // param/return position round-trip.
+        ro rp = id_ptr(lp)
+        assert(*rp == 99)
+
+        // field position.
+        ro h = Holder { p: lp }
+        assert(*h.p == 99)
+    }
+    println("ok")
+}

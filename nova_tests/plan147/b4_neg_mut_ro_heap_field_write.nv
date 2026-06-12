@@ -1,0 +1,22 @@
+// Plan 147 Ф.5 — ORACLE row B NEG: `mut r ro Acc` → `r.money = v` ❌.
+//
+// R2-split on a HEAP record: the binding is `mut` (reassign ✅) but the type
+// is `ro Acc` (L2 content-view frozen), so field-write is forbidden. Mirrors
+// the value-record row A4; same sign, shared-object semantics.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+
+module plan147.b4_neg_mut_ro_heap_field_write
+
+type Acc {
+    mut money f64
+    ro name str
+}
+
+fn mk(m f64, n str) -> Acc => { money: m, name: n }
+
+fn main() -> () {
+    mut a ro Acc = mk(7.0, "c")
+    a.money = 5.0
+    assert(a.money == 5.0)
+}

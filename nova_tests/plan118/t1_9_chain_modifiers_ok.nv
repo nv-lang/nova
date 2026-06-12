@@ -1,9 +1,9 @@
-// Plan 118 / 138.5 — chained pointee-mut modifiers (postfix, final model).
+// Plan 118 / 147 — chained pointee-mut modifiers (postfix, 3-axis model).
 //
-// Final pointer model (Plan 138.5): pointee-mut is POSTFIX (`*ro T`/`*mut T`),
+// Pointer model (Plan 147 / D246): pointee-mut is POSTFIX (`*mut T`),
 // reassignability of the pointer is binding (`let`/`mut name`), NOT a type
-// property. Former outer-pointer-mut forms (`mut * ro Acc`) collapse to their
-// pointee form (`*ro Acc`) since the reassignability axis left the type.
+// property. The ro pointee is the bare canon `*T` (`*T ≡ *ro T`; explicit
+// `*ro T` is a hard error E_REDUNDANT_POINTER_RO, migrated here).
 
 module plan118.t1_9_chain_modifiers_ok
 
@@ -11,15 +11,15 @@ type Acc {
     ro id i64
 }
 
-// Pointer to ro Acc (pointee read-only).
-external fn p118_chain_a(p *ro Acc) -> ()
+// Pointer to ro Acc (pointee read-only = bare `*T`).
+external fn p118_chain_a(p *Acc) -> ()
 
 // Former `mut * ro Acc` (reassignable pointer to ro Acc). The pointer
-// reassignability is now binding-only, so as a *type* this is `*ro Acc`.
-external fn p118_chain_b(p *ro Acc) -> ()
+// reassignability is now binding-only, so as a *type* this is `*Acc`.
+external fn p118_chain_b(p *Acc) -> ()
 
 // Two-level chain: pointer-to-mut (pointer-to-ro Acc).
-external fn p118_chain_c(p *mut *ro Acc) -> ()
+external fn p118_chain_c(p *mut *Acc) -> ()
 
 test "chained right-binding modifiers parse + typecheck" {
     assert(1 == 1)

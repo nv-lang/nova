@@ -1,0 +1,62 @@
+// Plan 138.2 Ф.0d — @append is a COPY, not a move (D141).
+//
+// Proves the settled semantics: `dst.append(src)` copies every element of `src`
+// onto the end of `dst` and leaves `src` UNCHANGED. This is the opposite of the
+// old (rejected) move-merge that silently emptied `src`. Matches
+// StringBuilder.@append and the cross-language convention
+// (Python extend / Swift append(contentsOf:) / Java addAll).
+
+module plan90_1.append_copy_source_intact
+
+import std.collections.vec_owned.{Vec}
+
+test "append copies — source left fully intact" {
+    mut dst = Vec[int].from([1, 2, 3])
+    mut src = Vec[int].from([4, 5, 6])
+    dst.append(src)
+    // Destination got the copy.
+    assert(dst.equal(Vec[int].from([1, 2, 3, 4, 5, 6])))
+    // Source is UNCHANGED — neither emptied nor mutated.
+    assert(src.len() == 3)
+    assert(src.equal(Vec[int].from([4, 5, 6])))
+    assert(src.get(0) == Some(4))
+    assert(src.get(2) == Some(6))
+}
+
+test "append twice from same source — source reusable" {
+    // Because append copies, the same source can be appended repeatedly.
+    mut dst = Vec[int].new()
+    mut src = Vec[int].from([7, 8])
+    dst.append(src)
+    dst.append(src)
+    dst.append(src)
+    assert(dst.equal(Vec[int].from([7, 8, 7, 8, 7, 8])))
+    // Source still holds its original two elements after three copies.
+    assert(src.len() == 2)
+    assert(src.equal(Vec[int].from([7, 8])))
+}
+
+test "append bulk-copy correctness across growth" {
+    // Drive amortised ×2 growth via repeated bulk copies; each source stays
+    // intact and the concatenation is exact (proves memmove bulk-copy parity).
+    mut dst = Vec[int].new()
+    mut chunk = Vec[int].from([1, 2, 3, 4])
+    for _ in 0..50 {
+        dst.append(chunk)
+        // Source must remain intact on every iteration.
+        assert(chunk.len() == 4)
+    }
+    assert(dst.len() == 200)
+    assert(dst.get(0) == Some(1))
+    assert(dst.get(199) == Some(4))
+    assert(dst.get(102) == Some(3))   // 102 = 25*4 + 2 -> chunk index 2 -> value 3
+    assert(chunk.equal(Vec[int].from([1, 2, 3, 4])))
+}
+
+test "append empty source — no-op, both intact" {
+    mut dst = Vec[int].from([1, 2])
+    mut src = Vec[int].new()
+    dst.append(src)
+    assert(dst.equal(Vec[int].from([1, 2])))
+    assert(src.len() == 0)
+}

@@ -3,7 +3,8 @@
 // (forbidden) prefix type-modifier `mut *`.
 //
 // `mut p *mut T` — binding mut (p can be rebound) + pointee mut (target
-// writable). `let q *ro T` — fixed binding + read-only target.
+// writable). `ro q *T` — fixed binding + read-only target (bare `*T` is the
+// ro canon, `*T ≡ *ro T` per Plan 147 / D246).
 
 module plan138_5.pos_binding_mut_pointer
 
@@ -15,6 +16,6 @@ test "binding-mut pointer local + reassign" {
 }
 
 test "let-fixed read-only-target pointer binding" {
-    ro p *ro u8 = unsafe { RawMem.alloc(2) as *ro u8 }
-    assert(size_of[*ro u8]() == 8)
+    ro p *u8 = unsafe { RawMem.alloc(2) as *u8 }
+    assert(size_of[*u8]() == 8)
 }

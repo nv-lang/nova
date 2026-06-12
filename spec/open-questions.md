@@ -6984,7 +6984,9 @@ fn check_health() -> RuntimeStats {
 
 ### Vec[T] (Nova-native, std.collections.vec_owned)
 
-- Generic record с `priv mut data *mut T` + `len` + `cap`.
+- Generic record с `priv mut data *mut T` + `len` + `cap` (writable buffer —
+  явный `*mut T`: L3 pointee-mut из типа, D246; flip-scan D245 отклонён,
+  pointee-mut НЕ наследуется от mut-binding).
 - Элементы хранятся по РЕАЛЬНОМУ C-типу T в contiguous buffer.
 - `Vec[Option[int]]` хранит `NovaOpt_nova_int` inline (16 bytes/element).
 - `Vec[MyValueRecord]` хранит `NovaValue_MyValueRecord` inline.
@@ -7128,17 +7130,23 @@ fn mutate(x ref mut BigStruct)       // мутация caller-значения
 
 Не реализовано. Отложено — добавить проще чем убрать. Вернуться после Plan 118 / Plan 127 / Plan 120 stable.
 
-**Update (Plan 138.5, 2026-06-11):** raw-pointer mut-модель **финализирована**
-и больше не двусмысленна — таблица соответствия выше актуальна. В **типе**
-указателя мутируемость относится к **pointee** (target) и пишется постфиксом:
-`*T` ≡ `*ro T` (ro target), `*mut T` (writable target); перепривязываемость
-самого указателя — это **binding** (`ro`/`mut`, D36), не часть типа. Prefix-
-модификаторы перед `*` (`mut * T` / `ro * T` / `unsafe * T`) запрещены
+**Update (Plan 138.5 → FINAL три оси Plan 147 D246, 2026-06-12; D245 flip-scan
+отклонён):** raw-pointer mut-модель **финализирована** как **три ортогональные
+оси** ([D246](decisions/02-types.md#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee)):
+L1 binding (reassignability имени), L2 view (транзитивный freeze owned-графа,
+стена на `*`), L3 pointee-capability (из ТИПА, постфикс). В **типе** указателя
+мутируемость = **L3 pointee** (target), позиционно-независимо: `*mut T` =
+writable target, `*T` = ro. **`*T ≡ *ro T` УНИВЕРСАЛЬНО** (восстановлено): bare
+`*T` **НЕ наследует** binding (flip-scan отклонён — тип не был самодостаточен);
+writable pointee — **только** через явный `*mut T`. `*ro T` → `E_REDUNDANT_POINTER_RO`
+(fix-it `*T`); запись через ro-pointee → `E_POINTER_RO_ASSIGN`. Перепривязываемость
+указателя — **L1 binding** (`ro`/`mut`, D36), независима от L3. Prefix-модификаторы
+перед `*` (`mut * T` / `ro * T` / `unsafe * T`) запрещены
 (`E_POINTER_PREFIX_MODIFIER`), `Unsafe(Pointer)` retired, nullable = `Option[*T]`
 (NPO). Right-binding propagation через Pointer (D216 §V3.3) и `safe`-стоппер
-(§V3.4) **отозваны** — пропагировать нечего. Это снимает мотивацию «`ref T`
-как способ избежать путаницы raw-pointer mut»: путаницы больше нет; остаётся
-лишь чистый эргономический вопрос safe in-place мутации без `unsafe`.
+(§V3.4) **отозваны**. Это снимает мотивацию «`ref T` как способ избежать
+путаницы raw-pointer mut»: путаницы больше нет; остаётся лишь чистый
+эргономический вопрос safe in-place мутации без `unsafe`.
 
 ### Cross-refs
 
@@ -7365,3 +7373,40 @@ self-referential value-record use-case.
 - [D109 amend (Plan 126)](decisions/08-runtime.md#d109-amend-plan-126-2026-06-05--auto-derive-для-пользовательских-типов) — `E_AUTO_DERIVE_CYCLE` для `Clone` (прецедент cycle-detection).
 - Plan 141 — home plan.
 
+
+---
+
+## Q33. Глубина `ro` и эксклюзивность в GC-aliased модели (3-axis D246)
+
+**Вопрос:** как далеко должна простираться немутабельность `ro`, и нужна ли когда-нибудь
+эксклюзивность владения, в модели с GC + aliasing **без** borrow-checker?
+
+### Контекст (Plan 147, D246, 2026-06-12)
+
+3-axis модель (L1 binding / L2 view / L3 pointee-capability) приняла **сознательные trade-off'ы**:
+`ro` = per-PATH запрет записи через данное имя, НЕ глобальная иммутабельность объекта. Это sound в
+GC-модели (C4: нет borrow-checker, aliasing разрешён), но оставляет 3 открытых места.
+
+### Открытые места
+
+1. **Deep-immutable сквозь `*mut` нельзя навязать снаружи** (C++ shallow-const). `-> ro VR` где
+   `VR { p *mut T }`: морозит слоты VR, но `unsafe{ *v.p = w }` проходит (L2 — стена на `*`). Deep-ro
+   требует, чтобы **производитель** объявил поле `*T` (как `str { ptr *u8 }`). Нужен ли когда-нибудь
+   consumer-imposable deep-ro? V1 — нет.
+2. **Shared-mut heap-record под чужим `ro`.** Handle A `ro a`, handle B `mut b` алиасят один GC-объект;
+   B мутирует → A видит вопреки `ro`. Per-path-семантика, не баг. Нужна ли opt-in эксклюзивность
+   (`uniq`/`owned`) для гарантии object-freeze?
+3. **owned-vs-aliased heap-record статически неразличим** → граница СИНТАКСИЧЕСКИ на `*` (L2 стоп на `*`),
+   не по aliasing-статусу (неразрешим без ownership-tracking). Нужны ли ownership-аннотации для точной
+   границы (heap-record over-restrictive / `*mut` under-restrictive)?
+
+### Возможные направления (НЕ V1)
+- Ownership-tracking / borrow-checker-lite (Rust) — отвергнут C4 ради GC-простоты; пересмотр если
+  понадобится compile-time гарантия object-immutability/exclusivity.
+- `uniq`/`owned` opt-in (Pony-style reference capabilities) — точечная эксклюзивность без полного borrow.
+- Принять per-path семантику финальной (контракт: `ro` = «это имя не пишет», не «объект заморожен»).
+
+### Связь
+- [D246](decisions/02-types.md) — 3-axis модель + §trade-off (Plan 147).
+- C4 (GC + aliasing + нет borrow-checker) — фундамент.
+- Cross-ref: D175 §V2 (L2 binding-dominates / wall-at-`*`), D216 §V2.6 restored (`*T≡*ro T`).

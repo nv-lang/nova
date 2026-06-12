@@ -1,0 +1,21 @@
+// Plan 147 Ф.2-3 — ORACLE row A NEG: `mut r ro Point` → `r.x = 5` ❌.
+//
+// R2-split: the binding is `mut` (reassign ✅) but the type is `ro Point`
+// (L2 content-view frozen), so field-write is forbidden.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+
+module plan147.a4_neg_mut_ro_value_field_write
+
+type Point value {
+    mut x int
+    mut y int
+}
+
+fn mk(a int, b int) -> Point => { x: a, y: b }
+
+fn main() -> () {
+    mut a ro Point = mk(7, 8)
+    a.x = 5
+    assert(a.x == 5)
+}

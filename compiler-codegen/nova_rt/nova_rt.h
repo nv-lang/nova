@@ -52,10 +52,16 @@ typedef struct { nova_fn_vii fn; void* env; } NovaClos_vii;
 #define NOVA_CLOS_CALL_vii(f,a,b)   (((NovaClos_vii*)(f))->fn(((NovaClos_vii*)(f))->env, (a), (b)))
 typedef uint8_t  nova_byte;
 
-/* ---- String ---- */
+/* ---- String ----
+ * Plan 139 Ф.0: `str` is now a Nova value-record `{ ptr *ro u8, len int }`.
+ * This C typedef is the ABI image of that value-record. It is layout/ABI-
+ * identical to the previous `{const char* ptr; size_t len;}` on x64
+ * (`const char*` ≡ `const uint8_t*` — same 8-byte pointer; `size_t` ≡
+ * `int64_t` — same 8-byte width), so all ~354 runtime-C sites that consume
+ * the `nova_str` typedef keep working source-compatibly. sizeof == 16. */
 typedef struct {
-    const char* ptr;
-    size_t      len;
+    const uint8_t* ptr;   /* *ro u8 — immutable UTF-8 byte buffer */
+    int64_t        len;   /* length in BYTES (D26: str.len = bytes) */
 } nova_str;
 
 /* Plan 90: forward-декларация nv_panic (определён `static inline` в
@@ -76,7 +82,38 @@ static void nv_panic_insert_oob(nova_int i, nova_int len);
 static void nv_panic_negative_reserve(nova_int extra);
 
 static inline nova_str nova_str_from_cstr(const char* s) {
-    return (nova_str){ s, strlen(s) };
+    /* Plan 139 Ф.0: ptr field is now `const uint8_t*` (str value-record ABI). */
+    return (nova_str){ (const uint8_t*)s, (int64_t)strlen(s) };
+}
+
+/* Plan 139 Ф.4 — str → C-string pointer per D26 §3 (Nul-termination).
+ *
+ * Returns a `const char*` guaranteed NUL-terminated at offset `s.len`, suitable
+ * for direct use as a C `const char*`:
+ *   - Full str / slice ending at parent's len → `s.ptr[s.len] == '\0'` already;
+ *     return `s.ptr` ZERO-COPY.
+ *   - Mid-buffer slice (`s.ptr[s.len] != '\0'`) → allocate `len + 1` GC-tracked
+ *     bytes, copy + write the terminator, return the fresh buffer (copy
+ *     fallback, == @to_cstr semantics).
+ *
+ * Reading `s.ptr[s.len]` is always safe (D26 §2): a full str owns `len + 1`
+ * bytes (terminator), and a slice view's parent owns `parent.len + 1` bytes with
+ * `view.len <= parent.len`, so the byte at `view.ptr[view.len]` is in-bounds of
+ * the parent buffer. Embedded-NUL validation stays Nova-side in @as_cstr().
+ *
+ * Irreducible C primitive: str owns no allocator in Nova, and the one-past-end
+ * terminator peek (`s.ptr[s.len]`) requires raw buffer access not expressible on
+ * the `ro []u8` view (cap == len). Recorded in simplifications.md. */
+static inline const uint8_t* nova_fn_nova_str_terminated_ptr(nova_str s) {
+    if (s.ptr[s.len] == 0) {
+        return s.ptr;  /* already NUL-terminated — zero-copy */
+    }
+    uint8_t* buf = (uint8_t*)nova_alloc((size_t)s.len + 1);
+    if (s.len > 0) {
+        memcpy(buf, s.ptr, (size_t)s.len);
+    }
+    buf[s.len] = 0;
+    return buf;
 }
 
 /* Plan 90: O(1) доступ к байту строки. bounds-checked → panic.

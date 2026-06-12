@@ -1,0 +1,22 @@
+// Plan 139 Ф.1 — trim migrated to Nova-body (whitespace = byte <= 0x20).
+// NOTE: Nova-body returns an allocated copy (former C returned a zero-copy
+// view); content semantics identical. View-form deferred to lang-item @ptr
+// ([M-139-f0-lang-item-decl]).
+module plan139.t1_trim
+
+test "trim spaces" {
+    assert("  hi  ".trim() == "hi")
+    assert("hi".trim() == "hi")
+    assert("   ".trim() == "")
+    assert("".trim() == "")
+}
+
+test "trim tabs/newlines (control bytes <= 0x20)" {
+    assert("\t\nhi\r\n".trim() == "hi")
+    assert(" \t a b \t ".trim() == "a b")
+}
+
+test "trim preserves interior + utf8" {
+    assert("  héllo  ".trim() == "héllo")
+    assert("a".trim() == "a")
+}

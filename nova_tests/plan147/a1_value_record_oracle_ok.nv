@@ -1,0 +1,43 @@
+// Plan 147 Ф.2-3 — ORACLE row A (VALUE-record `Point`, by-copy).
+//
+// Positive forms only (compile + run):
+//   `mut r`            : `r = X` ✅, `r.x = 5` ✅
+//   `mut r ro Point`   : `r = X` ✅ (reassign), `r.x` ❌ (split: covered in neg)
+//   `ro r mut Point`   : `r.x = 5` ✅ (content), `r = X` ❌ (split: covered in neg)
+// Reading is always ✅.
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.a1_value_record_oracle_ok
+
+type Point value {
+    mut x int
+    mut y int
+}
+
+fn mk(a int, b int) -> Point => { x: a, y: b }
+
+fn main() -> () {
+    // mut binding, bare type: reassign ✅, field-write ✅.
+    mut r = mk(1, 2)
+    r = mk(3, 4)
+    r.x = 5
+    assert(r.x == 5)
+    assert(r.y == 4)
+
+    // mut r ro Point: reassign ✅ (binding mut), content frozen (neg elsewhere).
+    mut a ro Point = mk(7, 8)
+    a = mk(9, 10)
+    assert(a.x == 9)
+
+    // ro r mut Point: content ✅ (type mut), reassign ❌ (neg elsewhere).
+    ro b mut Point = mk(11, 12)
+    b.x = 13
+    assert(b.x == 13)
+
+    // bare ro r: read-only, read ✅.
+    ro c = mk(14, 15)
+    assert(c.x == 14)
+
+    println("ok")
+}

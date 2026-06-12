@@ -1,0 +1,10 @@
+// Plan 139 Ф.0 — GATE: trivial str literal + concat + println (A0.1)
+module plan139.t0_str_concat_gate
+
+test "str literal, concat, byte-len via value-record lowering" {
+    ro s = "abc"
+    assert(s.len() == 3)
+    ro t = s + "d"
+    assert(t.len() == 4)
+    assert(t == "abcd")
+}

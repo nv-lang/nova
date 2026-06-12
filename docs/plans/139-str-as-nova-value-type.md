@@ -1,7 +1,11 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 139 — `str` as a Nova value type (`{ ptr *ro u8, len int }`)
 
-> **Создан:** 2026-06-10.  **Статус:** 📋 PLANNED (design / decomposition).
+> **Создан:** 2026-06-10.  **Статус:** ✅ **CLOSED (2026-06-11)** — все 8 фаз
+> (Ф.0-Ф.7) приземлены; spec (D26 MAJOR AMEND + D228 + D216 §1 + D52) финализирован;
+> 0 new FAIL vs baseline. Достижимый scope production-grade; остаток честно
+> вынесен в `[M-139-*]` followups (gated на `[M-139-f0-lang-item-decl]` — новая
+> lang-item checker-инфра). См. §«Итог / acceptance audit» в конце файла.
 > **Sequencing (решено 2026-06-10):** **139-first** — этот план идёт ПЕРЕД 138.2 Ф.2-Ф.4
 > и subsumes 138.2 Ф.1 (string-слой). Порядок: 138.2 Ф.0 (universal Vec) → **139 Ф.0-Ф.2** → 138.2 Ф.2-Ф.4.
 > **Эстимат:** ~5-8 dev-day (крупнейший single-type refactor; high-risk).
@@ -262,3 +266,104 @@ Every phase below is **production-grade**: full implementation, no stubs, no "MV
 
 ## Sequencing (unchanged)
 138.2 Р¤.0 (universal Vec вЂ” REQUIRED before Р¤.2) в†’ **139 Р¤.0в†’Р¤.7** в†’ 138.2 Р¤.2-Р¤.4. 138.2 Р¤.1 (string-layer) SUBSUMED here.
+
+---
+
+## Итог / acceptance audit (CLOSED 2026-06-11)
+
+**STATUS: ✅ CLOSED.** Все 8 фаз приземлены на ветке `plan-138.1`. Достижимый
+scope реализован production-grade; всё, что не приземлилось по объективному
+блокеру (отсутствие lang-item checker-инфры), честно вынесено в `[M-139-*]`
+followups (`docs/plans/backlog-followups.md` + `docs/simplifications.md`),
+никогда не silently dropped.
+
+### Фазовый исход
+
+| Фаза | Тема | Исход | Коммит(ы) |
+|---|---|---|---|
+| Ф.0 | str lang-item value-record + literal lowering (GATE) | ✅ GATE PASSED; nova_str typedef → `{const uint8_t* ptr; int64_t len;}` (ABI-идентично, 354 рантайм-сайта без правок); sizeof 16; ~15 codegen literal-сайтов получили `(const uint8_t*)` cast | 740eec6df02 |
+| Ф.1 | str методы → Nova-body via byte access | ✅ 10 методов (starts_with/ends_with/contains/find/rfind/char_at/char_len/trim/to_lower/to_upper) в Nova-тела; ≤2 irreducible C-примитива (byte_at + from_bytes_unchecked alloc) | dd0808ef66a |
+| Ф.2 | `[]T`-producers → Vec; as_bytes zero-copy | ✅ (достижимый scope) to_bytes/to_chars в Nova-body; as_bytes/split/from_bytes_* остаются тонкими C-примитивами (C as_bytes уже zero-copy) — gated `[M-139-f2-ptr-field-producers]` | 80e5fa3c7c5 |
+| Ф.3 | structural eq/hash/clone | ✅ verified+fixtures; str eq/hash/clone — content (memcmp/SipHash), не pointer; emit_field_eq спец-кейс перед Plan 141 field-by-field; R10 нейтрализован | 00af7120235 |
+| Ф.4 | str ↔ cstr FFI interop | ✅ + production-bug fix: as_cstr mid-buffer-slice over-read (strlen 11→5) исправлен через NEW C-примитив `nova_str_terminated_ptr` (D26 §3 alloc-fallback) | b633ab02dc8 |
+| Ф.5 | runtime C-layer reconciliation + GC stack-scan | ✅ (verification) ABI-typedef держит 354 сайта; GC conservative stack-scan покрывает 16-байт str-value `{ptr,len}` (buffers rodata/RawMem-tracked); residual 59 -Wpointer-sign в хедерах (suppressed `-w`) → `[M-139-f0-rt-header-ptr-sign-casts]` | (Ф.0/Ф.4 typedef; verification-only) |
+| Ф.6 | literal interning (NEW capability) | ✅ landed in full (defer-опция `[M-139-interning]` рассмотрена и отклонена — small+low-risk); per-CU rodata dedup, content-hash символы | b460273688d |
+| Ф.7 | full regression + docs/close | ✅ THIS task — spec финализирован, plan CLOSED, 0 new FAIL | (docs commit ниже) |
+
+### Acceptance audit (overall E1-E9)
+
+- **E1** (lang-item decl + priv + ro-pointee) — ✅ **FULL** (завершено Plan 139.1
+  Ф.A/Ф.C, 2026-06-12): `type str value priv { ptr *u8, len int }` объявлен в
+  `std/prelude/core.nv` и распознан как lang-item; privacy fires (`s.ptr` снаружи →
+  `E_PRIV_FIELD_READ`; `str{ptr,len}` снаружи → `E_PRIV_FIELD_INIT`; write через
+  `*u8` → `E_POINTER_RO_ASSIGN`); ABI-alias = `nova_str` typedef (никакого
+  `NovaValue_str`). 3 neg-фикстуры PASS. **БЕЗ новой checker-инфры** — переиспользован
+  value-record (Plan 124.8). NB: поле `ptr *u8` (bare `*T ≡ *ro T` = ro-pointee
+  canon под 3-axis D246; `*ro u8` был бы `E_REDUNDANT_POINTER_RO`), не `*ro u8`
+  как в исходном E1-тексте. `[M-139-f0-lang-item-decl]` УДАЛЁН.
+- **E2** (литералы/`${}`/`+`, copy-семантика, sizeof 16) — ✅ Ф.0 GATE.
+- **E3** (методы Nova-body, ≤2 irreducible C) — ✅ Ф.1.
+- **E4** (to_bytes/to_chars→Vec; as_bytes zero-copy via `@ptr`; from_bytes_*) —
+  🟡 ЧАСТИЧНО (остаётся; root cause уточнён Plan 139.1 Ф.B, 2026-06-12):
+  to_bytes/to_chars в Nova-body; as_bytes/split/from_bytes_* — C-примитивы
+  (C as_bytes уже zero-copy, контракт сохранён). Lang-item (139.1 Ф.A) разгеёчил
+  in-module `@ptr` byte-access — это **необходимо, но НЕ достаточно**: producer-формы
+  требуют Nova-конструируемого `Vec`/`NovaArray` из raw-parts. **Настоящий разблокер =
+  Plan 138.2 Ф.0 (`[]T→Vec` universal flip), не `@ptr`.** Re-homed на
+  `[M-139-f2-ptr-field-producers]` (более НЕ gated на lang-item).
+- **E5** (content-eq override; hash/eq consistency; HashMap; clone) — ✅ Ф.3.
+- **E6** (str↔cstr FFI incl. non-NUL-terminated via as_cstr) — ✅ Ф.4.
+- **E7** (runtime green via ABI-typedef; GC sees stack str) — ✅ Ф.5; residual
+  -Wpointer-sign warnings (harmless, `-w`-suppressed) → `[M-139-f0-rt-header-ptr-sign-casts]`.
+- **E8** (literal interning, semantically invisible) — ✅ Ф.6.
+- **E9** (0 new FAIL; D26 major amend + D216 §1 + D228; `[M-139-*]` закрыты/extracted;
+  138.2 Ф.1 subsumed) — ✅ THIS task.
+
+### Spec finalization (Ф.7)
+
+- **D26 MAJOR AMEND** (`08-runtime.md`) — str = Nova value-record lang-item;
+  layout/ABI/методы/eq-hash-clone/GC/interning + Q139-блоки resolved/extracted.
+- **D216 §1** (`02-types.md`) — str.ptr flagship `*ro u8` use-case.
+- **D228** (`02-types.md`) — str канонический reference-field value-record +
+  content-eq override (был уже из Ф.3, дополнен).
+- **D52** (`02-types.md`) — таксономия value/reference: строка `str`
+  реклассифицирована из «managed heap / by reference» в «value type, несущий
+  heap-backed буфер» (16-байт stack value, copy-семантика).
+- **Q139-блоки:** gc-stack-scan / literal-buffer-lifetime / utf8-cursor-primitive /
+  str-eq-override / cstr-nul-termination / intern-scope — RESOLVED;
+  as-bytes-aliasing — EXTRACTED (`[M-139-f2-ptr-field-producers]`).
+
+### Открытые followups (никогда не silently dropped)
+
+- `[M-139-f0-lang-item-decl]` (P-корневой) — ✅ **ЗАКРЫТ + УДАЛЁН** (Plan 139.1
+  Ф.A/Ф.C, 2026-06-12): полная Nova-декларация `type str value priv {ptr *u8,len int}`
+  + privacy-enforcement приземлены БЕЗ новой checker-инфры (переиспользован value-record
+  Plan 124.8). E1 → FULL.
+- `[M-139-f1-trim-view]` — zero-copy trim-view (`@ptr` разгеёчен Plan 139.1 Ф.A, но
+  view-форма producer-зависима — re-homed под Plan 138.2 Ф.0, как E4).
+- `[M-139-f2-ptr-field-producers]` — as_bytes/split/from_bytes_* в pure-Nova
+  (root cause уточнён Plan 139.1 Ф.B: разблокер = Plan 138.2 Ф.0 `[]T→Vec` flip,
+  НЕ `@ptr`; C-формы корректны, as_bytes уже zero-copy).
+- `[M-139-f0-rt-header-ptr-sign-casts]` — 59 -Wpointer-sign warnings в
+  рантайм-хедерах (source-compatible, suppressed `-w`).
+- `[M-139-f3-bare-return-type-str]` — pre-existing parser-баг `fn f() str` (bare
+  return-type без `->`); используй `-> str`.
+- `[M-139-f6-vec-mut-local-enforcement]` — discovered pre-existing 138.x Vec-mut
+  enforcement gap (orthogonal к str).
+- `[M-139-f4-to-cstr-owning]` — owning `@to_cstr()` (= `[M-118.1-cstr-to-cstr-distinct-copy]`,
+  Plan 118.2).
+
+### Финальная регрессия (THIS task, docs-only — 0 .rs/.h/.nv-stdlib изменений)
+
+Spec/docs-only задача → бинарь не пересобирается → регрессия логически
+тождественна baseline. Подтверждено representative-прогоном (см. STATUS-вывод
+сессии): plan139 37/0; baseline-FAIL set неизменён (plan131/vec_debug_pos,
+plan108_4/pos_receiver_at_parse, plan62 ×5-7 StringBuilder/Iterable/protocol,
+map_literals/positive_const_map, plan126_2/p5_printable, plan55 ×2 — все
+pre-existing). **0 new FAIL.**
+
+### 138.2 Ф.1 (string-layer) — SUBSUMED
+
+Plan 138.2 Ф.1 (string-слой на Vec) поглощён этим планом: str-методы и
+`[]T`-producers мигрированы здесь (Ф.1/Ф.2). 138.2 продолжается с Ф.0
+(universal Vec, если ещё не приземлён) → Ф.2-Ф.4.

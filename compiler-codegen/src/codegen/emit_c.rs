@@ -681,6 +681,20 @@ pub struct CEmitter {
     /// equivalent: build fails with detailed diagnostic; user sees all E7001s
     /// в одном compile pass (better UX чем fail-fast).
     strict_errors: std::cell::RefCell<Vec<String>>,
+    /// Plan 139 Ф.6: literal interning. Maps a string-literal's raw content
+    /// → the C symbol name of its single shared `static const uint8_t[]`
+    /// rodata buffer. Identical literals (same bytes) reuse one buffer +
+    /// one `static const nova_str` value, so `"abc"` appearing N times
+    /// references one buffer (rodata dedup, size/perf win, identity-stable
+    /// ptr). Semantically invisible: str eq/hash are byte-content (Ф.3), so
+    /// pointer-identity coincidence cannot be observed by programs. The
+    /// symbol name is content-hash-based (stable, collision-resistant; R15).
+    interned_str_literals: HashMap<String, String>,
+    /// Plan 139 Ф.6: insertion-ordered list of interned literals to emit at
+    /// the `/*__INTERNED_STR_LITERALS__*/` preamble marker. Each entry =
+    /// (symbol, escaped_c_string, byte_len). Ordered (not just the HashMap)
+    /// for deterministic emitted-C output.
+    interned_str_emit: Vec<(String, String, usize)>,
     /// Plan 70.1: set of imported-module prefix names visible в this module
     /// (alias + last-segment of import path). Used в emit_call Member dispatch
     /// чтобы распознать `<alias>.func(args)` или `<module>.func(args)` pattern
@@ -1096,6 +1110,8 @@ impl CEmitter {
             var_boxed: HashMap::new(),
             warnings: std::cell::RefCell::new(Vec::new()),
             strict_errors: std::cell::RefCell::new(Vec::new()),
+            interned_str_literals: HashMap::new(),
+            interned_str_emit: Vec::new(),
             imported_modules: HashSet::new(),
             fn_module_map: HashMap::new(),
             private_const_c_names: HashMap::new(),
@@ -1770,6 +1786,16 @@ impl CEmitter {
             if let Item::Type(t) = item {
                 match &t.kind {
                     TypeDeclKind::Record(_) => {
+                        // Plan 139.1 (lang-item str): `str` — value-record, но
+                        // его C-тип — hand-written typedef `nova_str` в
+                        // nova_rt/nova_rt.h (ABI-bridge), НЕ `NovaValue_str`.
+                        // Skip любой forward-decl для str — иначе
+                        // `typedef struct NovaValue_str` конфликтует с
+                        // `nova_str`. Symmetric с RUNTIME_DEFINED_TYPES skip
+                        // в emit_type_decl. См. core.nv `type str value priv`.
+                        if t.name == "str" {
+                            continue;
+                        }
                         // Plan 124.8 V2 (D226): value-records emit own
                         // `typedef struct NovaValue_X NovaValue_X;` в
                         // emit_value_record_type. Skip Nova_X forward decl
@@ -1951,6 +1977,39 @@ impl CEmitter {
             let _ = self.emit_protocol_box_typedef(&proto_name, &[]);
         }
 
+        // Plan 138.2 Ф.0c (D29 method-level shadow): names of generic types
+        // that the user has REDECLARED in entry-peer-files with a DIFFERENT
+        // arity (e.g. user non-generic `type Vec { x, y }` shadowing an
+        // imported generic `type Vec[T]`). The user declaration wins entirely
+        // (D29): we must NOT register the imported generic template / methods
+        // for such a name, otherwise record-literals `Vec{...}` monomorphize
+        // through the import's template (`Nova_Vec____nova_int`) instead of the
+        // user struct, and the import's methods leak onto the user receiver.
+        // Empty in the common (no-shadow) case → zero behavioural change.
+        let user_shadowed_generic_types: HashSet<String> = {
+            let mut merged_arity: HashMap<String, usize> = HashMap::new();
+            for item in &module.items {
+                if let Item::Type(t) = item {
+                    let e = merged_arity.entry(t.name.clone()).or_insert(0);
+                    *e = (*e).max(t.generics.len());
+                }
+            }
+            let mut shadowed = HashSet::new();
+            for pf in &module.peer_files {
+                if !pf.is_entry_module { continue; }
+                for item in &pf.items_here {
+                    if let Item::Type(t) = item {
+                        if let Some(&m) = merged_arity.get(&t.name) {
+                            if m != t.generics.len() {
+                                shadowed.insert(t.name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            shadowed
+        };
+
         // 1a. Pre-populate generic_types + generic_type_templates BEFORE emit_type_decl
         // and method registration, so both know which types are generic templates.
         //
@@ -2001,6 +2060,13 @@ impl CEmitter {
                         );
                         continue;
                     }
+                    // Plan 138.2 Ф.0c: skip the imported generic template when
+                    // the user shadows this name with a different arity — user
+                    // wins (D29). The non-generic user `type Vec` is emitted
+                    // normally below; the generic import must not register.
+                    if user_shadowed_generic_types.contains(&t.name) {
+                        continue;
+                    }
                     self.generic_types.insert(t.name.clone());
                     self.generic_type_templates.insert(t.name.clone(), t.clone());
                 }
@@ -2026,6 +2092,11 @@ impl CEmitter {
                     if matches!(t.kind, crate::ast::TypeDeclKind::Protocol { .. }) {
                         // Protocol registration уже сделана через module.items
                         // pass или через emit_protocol_box_typedef on-demand.
+                        continue;
+                    }
+                    // Plan 138.2 Ф.0c: user-shadowed name — skip the imported
+                    // generic template (user's non-generic decl wins, D29).
+                    if user_shadowed_generic_types.contains(&t.name) {
                         continue;
                     }
                     // entry-only `insert` — module.items wins на коллизии
@@ -2302,6 +2373,22 @@ impl CEmitter {
             !user_type_spans.contains(&(t.name.clone(), t.span))
         };
         let should_skip_fn = |f: &FnDecl| -> bool {
+            // Plan 138.2 Ф.0c (D29 method-level shadow): skip emitting an
+            // imported generic type's method when the user has redeclared that
+            // type name with a different arity (e.g. `type Vec { x, y }` over
+            // imported `Vec[T]`). The method carries the import's carrier arity
+            // (`Vec[T]` receiver → generics.len()==1) which differs from the
+            // user's (0); a method the user wrote on their own redeclared type
+            // would match the user arity and is kept. User wins entirely.
+            if !user_shadowed_generic_types.is_empty() {
+                if let Some(r) = &f.receiver {
+                    if user_shadowed_generic_types.contains(&r.type_name)
+                        && !r.generics.is_empty()
+                    {
+                        return true;
+                    }
+                }
+            }
             let key = match &f.receiver {
                 Some(r) => format!("{}.{}", r.type_name, f.name),
                 None => f.name.clone(),
@@ -2400,6 +2487,23 @@ impl CEmitter {
         // ("", name) — единый mechanism для overload resolution.
         for item in &module.items {
             if let Item::Fn(f) = item {
+                // Plan 138.2 Ф.0c (D29 method-level shadow): skip registering
+                // an imported generic type's method when the user redeclared
+                // that type name with a different arity (`type Vec { x, y }`
+                // over imported `Vec[T]`). Registering it here would attempt to
+                // resolve the import's `Self`/`Option[Self]` return against the
+                // user's now-non-generic `Vec` → E7001 "Self outside receiver".
+                // User wins entirely (D29). Discriminator: the import's method
+                // carries carrier generics (`Vec[T]` → recv.generics non-empty).
+                if !user_shadowed_generic_types.is_empty() {
+                    if let Some(r) = &f.receiver {
+                        if user_shadowed_generic_types.contains(&r.type_name)
+                            && !r.generics.is_empty()
+                        {
+                            continue;
+                        }
+                    }
+                }
                 // === D84: free-function overload registration ===
                 if f.receiver.is_none() {
                     // Plan 70 PhaseA1.3: strict mode — free-fn overload registration
@@ -2781,6 +2885,11 @@ impl CEmitter {
                     if t.name == "Option" || t.name == "Result" {
                         continue;
                     }
+                    // Plan 138.2 Ф.0c: user-shadowed generic name — skip
+                    // (user's non-generic decl wins, D29).
+                    if user_shadowed_generic_types.contains(&t.name) {
+                        continue;
+                    }
                     self.generic_types.insert(t.name.clone());
                 }
             }
@@ -2959,6 +3068,24 @@ impl CEmitter {
                             };
                             let fn_decl_opt = if let Some(fd) = self.mono_method_decls.get(&key).cloned() {
                                 Some(fd)
+                            } else if recv_type.starts_with("Vec____")
+                                && self.mono_method_decls
+                                    .contains_key(&("[]T".to_string(), mname.to_string()))
+                            {
+                                // Plan 138.2 Ф.0-final: an array-extension method
+                                // (`fn[T] []T @map`) monomorphized onto a Vec-mono
+                                // receiver. The base FnDecl is keyed under `"[]T"`
+                                // (recv.type_name), not the mangled Vec receiver,
+                                // and is NOT a `generic_type_methods["Vec"]` entry
+                                // (it never was a Vec method). Route to the `[]T`
+                                // base body; `recv_type` stays `Vec____<elem>` so
+                                // `emit_monomorphized_method` emits the
+                                // `Nova_Vec____<elem>_method_<m>__…` instance with
+                                // the typed Vec receiver — matching the call-site
+                                // symbol emitted by the mono-routing block.
+                                self.mono_method_decls
+                                    .get(&("[]T".to_string(), mname.to_string()))
+                                    .cloned()
                             } else if let Some(ref base) = base_opt {
                                 self.mono_method_decls.get(&(base.clone(), mname.to_string()))
                                     .cloned()
@@ -3213,6 +3340,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // Plan 61 followup #4: per-E Fail dispatch splice.
         let per_e_decls = self.render_per_e_fail_decls();
         self.out = self.out.replace("/*__PER_E_FAIL_DECLS__*/", &per_e_decls);
+
+        // Plan 139 Ф.6: interned string-literal statics splice. Collected
+        // during body emission (intern_str_literal), emitted at the preamble
+        // marker as one shared rodata buffer + one nova_str value per content.
+        let interned = self.render_interned_str_literals();
+        self.out = self.out.replace("/*__INTERNED_STR_LITERALS__*/", &interned);
 
         // Plan 70 Ф.B0 (session 2): strict-error finalization gate.
         // Cascade-blocked sites (infer_expr_c_type, register_mono_instance,
@@ -3594,6 +3727,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // ДО NovaOpt маркера (file position Y) — fwd-decl там → CC-fail
         // `incomplete type`. См. `builtin_sum_method_fwd_decls`.
         self.line("/*__BUILTIN_SUM_METHOD_FWD_DECLS__*/");
+        // Plan 139 Ф.6: interned string-literal statics splice marker.
+        // Replaced in finalize with one shared `static const uint8_t[]` +
+        // `static const nova_str` per distinct literal content. Placed at
+        // file scope AFTER the nova_rt.h include (nova_str/uint8_t in scope).
+        self.line("/*__INTERNED_STR_LITERALS__*/");
         self.line("");
     }
 
@@ -3625,7 +3763,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let escaped = Self::escape_c_str(s);
                 let len = s.len();
                 self.line(&format!(
-                    "static const nova_str {} = {{(const char*)\"{}\" , {}}};",
+                    "static const nova_str {} = {{(const uint8_t*)\"{}\" , {}}};",
                     c_name, escaped, len
                 ));
                 self.var_types.insert(c.name.clone(), ty_c.clone());
@@ -4678,59 +4816,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.box_value_for_protocol(val, &concrete_c, &proto, &type_args)
     }
 
-    /// D33 §2 / D216 V2 binding-mut rule (Plan 138.4 Ф.4 G-D): a `mut`-bound
-    /// record field whose declared type is a bare `*T` (canonical *readonly*
-    /// pointer per D216 §1) carries the binding's mutability into the pointer
-    /// pointee — `mut data *T` ≡ `mut data *mut T`. At C-codegen level the
-    /// distinction is `const T*` (ro) vs `T*` (mut): a `const` pointee makes
-    /// `@data[i] = val` an illegal write, AND breaks the forward-`typedef`
-    /// emission for an erased pointee (`const Nova_any**` does not start with
-    /// `Nova_`, so the struct never forward-declares `Nova_any`). Applying the
-    /// binding-mut rule yields `Nova_T*` / `Nova_any*` — writable and
-    /// forward-declarable.
-    ///
-    /// Transparent over the outer modifier wrappers (`Readonly`/`Mut`/`Unsafe`)
-    /// so the pointee `T` (which may itself be a generic param resolved through
-    /// `current_type_subst`) is preserved through monomorphization. Only the
-    /// *immediate* pointer's pointee is promoted; nested pointers and an
-    /// already-`Mut`/`Unsafe` pointee are left untouched.
-    fn field_type_with_binding_mut(ty: &TypeRef, field_mutable: bool) -> TypeRef {
-        if !field_mutable {
-            return ty.clone();
-        }
-        Self::promote_pointer_pointee_mut(ty)
-    }
-
-    fn promote_pointer_pointee_mut(ty: &TypeRef) -> TypeRef {
-        match ty {
-            // Outer binding-level modifier wrappers are transparent — recurse
-            // into the wrapped type so `mut * T` / `ro * T` etc. still reach
-            // the immediate `Pointer`.
-            TypeRef::Readonly(inner, span) => {
-                TypeRef::Readonly(Box::new(Self::promote_pointer_pointee_mut(inner)), *span)
-            }
-            TypeRef::Mut(inner, span) => {
-                TypeRef::Mut(Box::new(Self::promote_pointer_pointee_mut(inner)), *span)
-            }
-            TypeRef::Unsafe(inner, span) => {
-                TypeRef::Unsafe(Box::new(Self::promote_pointer_pointee_mut(inner)), *span)
-            }
-            // Immediate pointer: a bare (canonical-ro) pointee is promoted to
-            // `Mut(pointee)`. An already-`Mut`/`Unsafe` pointee is left as-is
-            // (explicit modifier wins over the binding default).
-            TypeRef::Pointer(pointee, span) => {
-                match pointee.as_ref() {
-                    TypeRef::Mut(..) | TypeRef::Unsafe(..) => ty.clone(),
-                    TypeRef::Unit(_) => ty.clone(), // *() = void*, mutability irrelevant
-                    inner => TypeRef::Pointer(
-                        Box::new(TypeRef::Mut(Box::new(inner.clone()), inner.span())),
-                        *span,
-                    ),
-                }
-            }
-            other => other.clone(),
-        }
-    }
+    // **Plan 147 Ф.3 (D246, 3-axis L3):** the D33 §2 / D216 V2 binding-mut
+    // promotion (`field_type_with_binding_mut` / `promote_pointer_pointee_mut`)
+    // is REMOVED. Under the three-axis model pointee-mutability is read FROM
+    // THE TYPE (`*mut T` = mut, `*T ≡ *ro T` = ro), position- and
+    // binding-independent (L3 ⊥ L1). A `mut`-bound field never inherits a
+    // writable pointee — a writable heap buffer is declared `*mut T` explicitly
+    // (e.g. `Vec.data`), so its C codegen stays `Nova_T*` (no `const`) and the
+    // forward-`typedef` still fires. Field types are now emitted verbatim.
 
     fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
         // Plan 48: type parameter substitution (monomorphization context)
@@ -4996,7 +5089,27 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // Resolve the element C type (recurses: nested `[][]T`
                     // becomes Vec[Vec[T]]; records → Nova_X*; primitives →
                     // nova_*). On error, fall through to the legacy path.
-                    if let Ok(elem_c) = self.type_ref_to_c(inner) {
+                    if let Ok(mut elem_c) = self.type_ref_to_c(inner) {
+                        // Plan 138.2 Ф.0-final: int64-erasure of an UNRESOLVED
+                        // type-param element. When an erased `fn[T] []T @m`
+                        // base body is emitted with `T` NOT in
+                        // `current_type_subst`, `type_ref_to_c(inner)` returns a
+                        // dangling generic stub (`Nova_T*` — not a record/sum/
+                        // generic schema), giving the schema-less Vec mono
+                        // `Vec____Nova_T_p`. The legacy NovaArray path erased
+                        // such an unresolved element to `NovaArray_nova_int*`
+                        // (the `_` arm below, int64-slot bootstrap contract);
+                        // mirror that for the Vec mono so the base body lowers
+                        // to the always-concrete `Nova_Vec____nova_int*`. This
+                        // is the SAME erasure the Named-arm `any_erased`
+                        // carve-out (above) applies — not a heuristic, the
+                        // documented int64-erasure of the partial-mono path.
+                        // The concrete per-element Vec mono is still emitted at
+                        // each monomorphized call-site (where `T` IS in
+                        // `current_type_subst`).
+                        if self.is_generic_stub_c(&elem_c) && !elem_c.contains("____") {
+                            elem_c = "nova_int".to_string();
+                        }
                         let type_args_c = vec![elem_c];
                         let mangled =
                             Self::compute_generic_type_c_name("Vec", &type_args_c);
@@ -8775,6 +8888,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // duplicate typedef errors. The Nova type declarations (type T consume { ptr int })
             // serve only for type-checking and LinearityRegistry; C structs live in the header.
             "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
+            // Plan 139.1 (lang-item str): `str` declared as value-record
+            // `type str value priv { ptr *u8, len int }` в std/prelude/core.nv.
+            // Skip emission — C-тип str = hand-written typedef `nova_str`
+            // ({const uint8_t* ptr; int64_t len;}, nova_rt/nova_rt.h), ABI-
+            // identical. NOT NovaValue_str. Все ~354 рантайм-сайта + literal-
+            // lowering используют `nova_str` (type_ref_to_c "str" => "nova_str",
+            // emit_c.rs:4859). str — Record (не Sum), поэтому schema-branch
+            // ниже не срабатывает; просто return Ok. Closes [M-139-f0-lang-item-decl].
+            "str",
         ];
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — C struct + constructors живут в
@@ -8867,11 +8989,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         // translate successfully. Earlier arms catch generic-param erasure
                         // patterns (void* / NovaArray_nova_int*); this fall-through is for
                         // non-generic-param types where translation fail = compiler bug.
-                        // Plan 138.4 Ф.4 G-D: apply the D33 §2 binding-mut rule so a
-                        // `mut data *T` pointer field's pointee is mutable (no `const`).
-                        _ => self.type_ref_to_c(
-                                &Self::field_type_with_binding_mut(&f.ty, f.mutable),
-                            ).map_err(|e|
+                        // **Plan 147 Ф.3 (D246, 3-axis L3):** the D33 §2
+                        // binding-mut promotion is REMOVED — pointee-mutability
+                        // comes from the TYPE (`*mut T`), never inherited from
+                        // the field's `mut` binding (L1). A `mut`-bound bare
+                        // `*T` field is now a `mut`-reassignable handle to a
+                        // *ro* pointee (`const T*`); a writable buffer must be
+                        // declared `*mut T` explicitly (as `Vec.data` is). The
+                        // field type is emitted verbatim.
+                        _ => self.type_ref_to_c(&f.ty).map_err(|e|
                                 self.err_no_int_fallback(
                                     &format!("field `{}` в type `{}`", f.name, t.name),
                                     &e,
@@ -13108,11 +13234,14 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Plan 70 PhaseA3: strict — mono'd generic type instance fields.
                 let field_ctys: Vec<String> = fields.iter()
                     .map(|f| self.type_ref_to_c(
-                        // Plan 138.4 Ф.4 G-D: apply the D33 §2 binding-mut rule so a
-                        // `mut data *T` field's pointee is mutable (no `const`) —
-                        // keeps `@data[i] = val` writable AND lets the pointee
-                        // forward-`typedef` fire (see field_type_with_binding_mut).
-                        &Self::field_type_with_binding_mut(&f.ty, f.mutable),
+                        // **Plan 147 Ф.3 (D246, 3-axis L3):** binding-mut
+                        // promotion REMOVED — pointee-mut is from the TYPE
+                        // (`*mut T`), not inherited from the field's `mut`
+                        // binding. `Vec.data` is declared `*mut T` explicitly,
+                        // so its pointee stays writable (`Nova_T*`) and the
+                        // forward-`typedef` still fires (a `*mut` pointee is
+                        // not `const`-qualified).
+                        &f.ty,
                     ).map_err(|e| self.err_no_int_fallback(
                         &format!("mono'd generic type instance field `{}`", f.name),
                         &e,
@@ -16687,8 +16816,15 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
             // Plan 134: `null ptr` literal → C `((void*)0)` (*() = void*).
             ExprKind::NullPtrLit  => Ok("((void*)0)".into()),
             ExprKind::StrLit(s)   => {
-                let escaped = Self::escape_c_str(s);
-                Ok(format!("(nova_str){{.ptr=\"{}\", .len={}}}", escaped, s.len()))
+                // Plan 139 Ф.6: literal interning. Identical string literals
+                // share one `static const uint8_t[]` rodata buffer + one
+                // `static const nova_str` value (see intern_str_literal). The
+                // expression evaluates to that shared value. Semantically
+                // invisible: str eq/hash are byte-content (Ф.3), so the shared
+                // pointer identity cannot be observed; the buffer is `*ro`
+                // immutable so sharing is sound (R14). Falls back to an inline
+                // compound literal only for the empty string (no buffer needed).
+                Ok(self.intern_str_literal(s))
             }
             ExprKind::InterpolatedStr { parts } => {
                 self.emit_interpolated_str(parts)
@@ -17937,7 +18073,7 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                                     ty = err_c, tmp = try_tmp)
                             };
                             self.line(&format!(
-                                "nova_throw_typed((nova_str){{.ptr=\"<typed err>\", .len=11}}, {p}, {tid});",
+                                "nova_throw_typed((nova_str){{.ptr=(const uint8_t*)\"<typed err>\", .len=11}}, {p}, {tid});",
                                 p = payload_expr, tid = tid));
                         }
                         self.indent -= 1;
@@ -18049,7 +18185,7 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                                 ty = err_c, tmp = bang_tmp)
                         };
                         self.line(&format!(
-                            "nova_throw_typed((nova_str){{.ptr=\"<typed err>\", .len=11}}, {p}, {tid});",
+                            "nova_throw_typed((nova_str){{.ptr=(const uint8_t*)\"<typed err>\", .len=11}}, {p}, {tid});",
                             p = payload_expr, tid = tid));
                     }
                     self.indent -= 1;
@@ -18403,13 +18539,13 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                 // Bootstrap: tag function ignored, parts concatenated with args as strings.
                 // Build a single nova_str by concatenating all parts and arg string reprs.
                 if parts.is_empty() {
-                    return Ok("(nova_str){.ptr=\"\", .len=0}".into());
+                    return Ok("(nova_str){.ptr=(const uint8_t*)\"\", .len=0}".into());
                 }
                 if args.is_empty() {
                     // Simple string literal: all content is in parts[0]
                     let combined = parts.join("");
                     let escaped = Self::escape_c_str(&combined);
-                    return Ok(format!("(nova_str){{.ptr=\"{}\", .len={}}}", escaped, combined.len()));
+                    return Ok(format!("(nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}}", escaped, combined.len()));
                 }
                 // With interpolations: concatenate parts[0] + str.from(args[0]) + parts[1] + ...
                 // (D73: string interpolation uses From[X]/str. In bootstrap codegen we call
@@ -18418,7 +18554,7 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                 for (i, part) in parts.iter().enumerate() {
                     if !part.is_empty() {
                         let escaped = Self::escape_c_str(part);
-                        result_exprs.push(format!("(nova_str){{.ptr=\"{}\", .len={}}}", escaped, part.len()));
+                        result_exprs.push(format!("(nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}}", escaped, part.len()));
                     }
                     if let Some(arg) = args.get(i) {
                         let v = self.emit_expr(arg)?;
@@ -18432,7 +18568,7 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                     }
                 }
                 if result_exprs.is_empty() {
-                    return Ok("(nova_str){.ptr=\"\", .len=0}".into());
+                    return Ok("(nova_str){.ptr=(const uint8_t*)\"\", .len=0}".into());
                 }
                 let mut acc = result_exprs[0].clone();
                 for expr in &result_exprs[1..] {
@@ -18483,7 +18619,7 @@ if (_sf < 0 || _st < _sf || _st > _sv->len) {{ char _sbuf[96]; \
 int _sn = snprintf(_sbuf, 96, \"Vec: slice [%lld..%lld] out of bounds for length %lld\", \
 (long long)_sf, (long long)_st, (long long)_sv->len); \
 if (_sn < 0) _sn = 0; if (_sn > 95) _sn = 95; \
-nv_panic((nova_str){{.ptr=_sbuf,.len=(size_t)_sn}}); }} \
+nv_panic((nova_str){{.ptr=(const uint8_t*)_sbuf,.len=(nova_int)_sn}}); }} \
 nova_int _sl = _st - _sf; \
 {vty}* _sr = ({vty}*)nova_alloc(sizeof({vty})); \
 _sr->data = ({ety}*)(_sv->data + _sf); _sr->len = _sl; _sr->cap = _sl; \
@@ -19949,7 +20085,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                     ));
                                 }
                                 return Ok(format!(
-                                    "(nova_cancel_token_cancel_reason({}, nova_cancel_box_str((nova_str){{.ptr=\"cancelled\",.len=9}})), NOVA_UNIT)",
+                                    "(nova_cancel_token_cancel_reason({}, nova_cancel_box_str((nova_str){{.ptr=(const uint8_t*)\"cancelled\",.len=9}})), NOVA_UNIT)",
                                     obj_c));
                             }
                             "is_cancelled" => {
@@ -20332,7 +20468,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                 let none_check = self.option_is_none_check(&tmp, &elem_ty);
                                 self.line(&format!("if ({}) {{", none_check));
                                 self.indent += 1;
-                                self.line("Nova_Fail_fail((nova_str){.ptr=\"called unwrap on None\", .len=21});");
+                                self.line("Nova_Fail_fail((nova_str){.ptr=(const uint8_t*)\"called unwrap on None\", .len=21});");
                                 self.indent -= 1;
                                 self.line("}");
                                 return Ok(format!("({}.value)", tmp));
@@ -21896,7 +22032,32 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                             if self.current_type_subst.contains_key(n)
                                || self.method_overloads.keys().any(|(t, _)| t == n));
                         let key = (rt.clone(), method.clone());
-                        if let Some(overloads) = self.method_overloads.get(&key).cloned() {
+                        // Plan 138.2 Ф.0-final: under the universal `[]T` ≡
+                        // `Vec[T]` flip, an array-extension method call
+                        // (`xs.map(..)` where `xs : Nova_Vec____nova_int*`)
+                        // now arrives with `rt = "Vec____<elem>"` — a receiver
+                        // C-type under which NEITHER the erased base entry
+                        // (registered under `NovaArray_<elem>`) NOR the sentinel
+                        // (registered under `[]T`) is keyed. The direct
+                        // `method_overloads.get(&key)` therefore misses and the
+                        // call previously fell through to a path that emitted
+                        // the raw `__mono_method__[]T__map` sentinel symbol.
+                        // When the direct key is empty for a Vec-mono receiver,
+                        // splice in the `("[]T", method)` sentinel entries so the
+                        // mono-routing block below fires and emits the real
+                        // monomorphized function. (NovaArray receivers already
+                        // have their erased entry keyed directly.)
+                        let overloads_opt = self.method_overloads.get(&key).cloned()
+                            .or_else(|| {
+                                if rt.starts_with("Vec____") {
+                                    self.method_overloads
+                                        .get(&("[]T".to_string(), method.clone()))
+                                        .cloned()
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(overloads) = overloads_opt {
                             let candidates: Vec<MethodSig> = overloads.into_iter()
                                 .filter(|s| s.is_instance == want_instance)
                                 .collect();
@@ -21910,7 +22071,17 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                 // имеет — тоже идём в mono path с alt-key fn_decl.
                                 let has_sentinel_here = candidates.iter()
                                     .any(|c| c.c_name.starts_with("__mono_method__"));
-                                let has_sentinel_alt = rt.starts_with("NovaArray_")
+                                // Plan 138.2 Ф.0-final: under the universal `[]T`
+                                // ≡ `Vec[T]` flip the receiver C-type of an
+                                // array-extension method (`fn[T] []T @map`) is
+                                // now `Vec____<elem>` (from `Nova_Vec____<elem>*`)
+                                // — no longer `NovaArray_<elem>`. The sentinel is
+                                // still registered under the `("[]T", method)`
+                                // alt-key, so recognise BOTH receiver prefixes
+                                // when falling back to the `[]T` sentinel.
+                                let rt_is_array_ext = rt.starts_with("NovaArray_")
+                                    || rt.starts_with("Vec____");
+                                let has_sentinel_alt = rt_is_array_ext
                                     && self.method_overloads
                                         .get(&("[]T".to_string(), method.clone()))
                                         .map(|alts| alts.iter().any(|c|
@@ -21925,7 +22096,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                     // из rt для T-subst.
                                     let fn_decl_opt = self.mono_method_decls.get(&recv_key).cloned()
                                         .or_else(|| {
-                                            if rt.starts_with("NovaArray_") {
+                                            if rt_is_array_ext {
                                                 self.mono_method_decls.get(&("[]T".to_string(), method.clone())).cloned()
                                             } else {
                                                 None
@@ -21937,8 +22108,34 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                         // resolve_mono_type_args (которая ищет T в arg-positions,
                                         // не в receiver-position; для fn[T] []T @m T
                                         // приходит от receiver, не от args).
-                                        let elem_c = rt.strip_prefix("NovaArray_")
-                                            .unwrap_or("").to_string();
+                                        // Plan 138.2 Ф.0-final: extract the receiver
+                                        // element C-type so the first generic `T`
+                                        // of `fn[T] []T @m` pre-binds to the real
+                                        // element type. The legacy `NovaArray_<elem>`
+                                        // suffix is already a valid C type fragment
+                                        // (`nova_int`, `nova_str`, …). The post-flip
+                                        // `Vec____<sani>` suffix is the MANGLED elem
+                                        // (`Nova_Wrap_p` for a `Nova_Wrap*` element)
+                                        // — NOT a C type. Recover the real element
+                                        // C-type from `generic_type_instance_info`
+                                        // (records the un-mangled `type_args_c`), so
+                                        // a composite Vec receiver pre-binds `T` to
+                                        // `Nova_Wrap*` rather than the bogus
+                                        // `Nova_Wrap_p` (which would leak into closure
+                                        // param types as an unknown type name).
+                                        let elem_c = if let Some(na) = rt.strip_prefix("NovaArray_") {
+                                            na.to_string()
+                                        } else if rt.starts_with("Vec____") {
+                                            self.generic_type_instance_info.borrow()
+                                                .get(&format!("Nova_{}", rt))
+                                                .and_then(|(_, args)| args.first().cloned())
+                                                .unwrap_or_else(|| rt
+                                                    .strip_prefix("Vec____")
+                                                    .unwrap_or("")
+                                                    .to_string())
+                                        } else {
+                                            String::new()
+                                        };
                                         // Build initial subst_pending: T = elem_c (если есть),
                                         // остальные None.
                                         let mut subst_pending: Vec<(String, Option<String>)> =
@@ -23020,7 +23217,23 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                         // Plan 04 Этап 6: str.try_from([]byte) → Result[str, _].
                         // Validates UTF-8 + конвертирует в nova_str. Используется
                         // для финализации mixed text+binary в WriteBuffer.
-                        if parts[0] == "str" && arg_ty == "NovaArray_nova_byte*" {
+                        // Plan 138.2 Ф.0-final: under the universal `[]T` ≡
+                        // `Vec[T]` flip, `s.to_bytes()` now yields a
+                        // `Nova_Vec____nova_byte*` rather than the legacy
+                        // `NovaArray_nova_byte*`. The two structs are
+                        // layout-identical (`{ T* data; int64_t len; int64_t
+                        // cap; }`), so the runtime helper reading `arr->data`/
+                        // `arr->len` works on either; cast the Vec pointer to
+                        // the helper's `NovaArray_nova_byte*` param type.
+                        if parts[0] == "str"
+                            && (arg_ty == "NovaArray_nova_byte*"
+                                || arg_ty == "Nova_Vec____nova_byte*")
+                        {
+                            if arg_ty == "Nova_Vec____nova_byte*" {
+                                return Ok(format!(
+                                    "Nova_str_static_try_from_bytes((NovaArray_nova_byte*)({}))",
+                                    v));
+                            }
                             return Ok(format!("Nova_str_static_try_from_bytes({})", v));
                         }
                         // str → numeric / bool: используем парсеры.
@@ -23078,7 +23291,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                 self.indent += 1;
                                 let err_msg = format!("{}.try_from: parse error", target);
                                 self.line(&format!(
-                                    "{} = {}((nova_str){{.ptr=\"{}\", .len={}}});",
+                                    "{} = {}((nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}});",
                                     out, err_ctor, err_msg, err_msg.len()));
                                 self.indent -= 1;
                                 self.line("}");
@@ -23107,7 +23320,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                             self.line("} else {");
                             self.indent += 1;
                             self.line(&format!(
-                                "{} = {}((nova_str){{.ptr=\"char.try_from: invalid codepoint\", .len=37}});",
+                                "{} = {}((nova_str){{.ptr=(const uint8_t*)\"char.try_from: invalid codepoint\", .len=37}});",
                                 out, err_ctor));
                             self.indent -= 1;
                             self.line("}");
@@ -24450,7 +24663,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                     // Plan 109 (D179): StringBuilder is now Nova-defined.
                     // Generated method: Nova_StringBuilder_method_append (str overload).
                     self.line(&format!(
-                        "Nova_StringBuilder_method_append({}, (nova_str){{.ptr=\"{}\", .len={}}});",
+                        "Nova_StringBuilder_method_append({}, (nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}});",
                         sb, escaped, s.len()
                     ));
                 }
@@ -25816,7 +26029,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             };
             // Ключ — str literal из имени поля.
             let key_str = format!(
-                "(nova_str){{.ptr=\"{}\", .len={}}}",
+                "(nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}}",
                 Self::escape_c_str(&f.name),
                 f.name.len()
             );
@@ -28904,15 +29117,27 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
     /// Map a Nova str method name to a nova_rt C function name.
     fn str_method_to_rt(method: &str) -> Option<&'static str> {
         match method {
-            "starts_with" => Some("nova_str_starts_with"),
-            "ends_with"   => Some("nova_str_ends_with"),
-            "contains"    => Some("nova_str_contains"),
-            "to_upper"    => Some("nova_str_to_upper"),
-            "to_lower"    => Some("nova_str_to_lower"),
-            "trim"        => Some("nova_str_trim"),
+            // Plan 139 Ф.1: starts_with/ends_with/contains/to_upper/to_lower/
+            // trim/find/rfind/char_len/char_at MIGRATED to Nova-body
+            // (std/runtime/string.nv) — they read bytes via @as_bytes()/@byte_at
+            // and allocate via []u8/from_bytes_unchecked. Removed from this table
+            // so they fall through to the Nova-body dispatch (Nova_str_method_X).
+            //
             // Plan 96.1: метод @slice удалён в пользу bracket-формы `s[a..b]`
             // (D9 один очевидный путь). Если этот mapping вернёт Some для
             // "slice" — type-checker не найдёт external fn, выдаст error.
+            //
+            // RETAINED C primitives (Plan 139 Ф.1 scope-out, documented):
+            //   - byte_at: irreducible byte-access primitive (#1).
+            //   - eq/lt/le/gt/ge/concat/compare/hash: lowered DIRECTLY by the
+            //     BinOp operator codegen (== / < / + / ...) and HashMap key path,
+            //     not via the method — migrating the method alone keeps the C fn.
+            //     Structural eq/hash is Plan 139 Ф.3 scope.
+            //   - to_bytes/to_chars: MIGRATED to Nova-body (Plan 139 Ф.2).
+            //   - as_bytes/split/from_bytes_*: RETAINED C primitives — need str
+            //     @ptr field-access (zero-copy view construction / str{ptr,len}),
+            //     blocked on [M-139-f0-lang-item-decl]. Plan 139 Ф.2 scope-out.
+            //   - len/byte_len: O(1) field read, trivial primitive.
             "concat"      => Some("nova_str_concat"),
             "eq"          => Some("nova_str_eq"),
             "lt"          => Some("nova_str_lt"),
@@ -28920,15 +29145,12 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             "gt"          => Some("nova_str_gt"),
             "ge"          => Some("nova_str_ge"),
             "hash"        => Some("nova_str_hash"),
-            "find"        => Some("nova_str_find"),
-            "rfind"       => Some("nova_str_rfind"),
             "len"         => Some("nova_str_byte_len"),   // Plan 108 D26 rev: len = bytes O(1).
-            "char_len"    => Some("nova_str_char_len"),  // codepoints O(n).
             "byte_len"    => Some("nova_str_byte_len"),  // deprecated alias for len().
-            "to_bytes"    => Some("nova_str_to_bytes"),  // D178: renamed from bytes()
+            // Plan 139 Ф.2: to_bytes/to_chars MIGRATED to Nova-body (copy from
+            // @as_bytes() zero-copy view + UTF-8 decode cursor). Removed here so
+            // they fall through to Nova-body dispatch (Nova_str_method_X).
             "as_bytes"    => Some("nova_str_as_bytes"),  // D176: zero-copy readonly []u8
-            "to_chars"    => Some("nova_str_to_chars"),  // D178: renamed from chars()
-            "char_at"     => Some("nova_str_char_at"),
             "split"       => Some("nova_str_split"),
             "byte_at"     => Some("nova_str_byte_at"),  // Plan 90
             "compare"     => Some("nova_str_compare"),  // D178
@@ -29703,7 +29925,7 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                 "static inline NovaRes_{n}* nova_make_NovaRes_{n}_Err_typed(void* payload, NovaTypeId tid) {{ \
                  NovaRes_{n}* r = (NovaRes_{n}*)nova_alloc(sizeof(NovaRes_{n})); \
                  r->tag = NOVA_TAG_Result_Err; \
-                 r->payload.Err._0 = (nova_str){{.ptr = \"<typed err>\", .len = 11}}; \
+                 r->payload.Err._0 = (nova_str){{.ptr = (const uint8_t*)\"<typed err>\", .len = 11}}; \
                  r->err_typed_payload = payload; r->err_typed_type_id = tid; \
                  return r; }}\n",
                 n = name));
@@ -30812,7 +31034,13 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                         // sentinel + соответствующий mono_method_decls entry —
                         // используем mono-inference path для правильного
                         // U-substitution из closure args.
-                        if rt.starts_with("NovaArray_") {
+                        // Plan 138.2 Ф.0-final: under the universal flip the
+                        // receiver C-type of an array-extension method is now
+                        // `Vec____<elem>` (post-flip Vec mono) as well as the
+                        // legacy `NovaArray_<elem>`. Mirror the emit-side
+                        // routing fix so return-type inference for `xs.map(..)`
+                        // recovers the method-level generic `U` (return elem).
+                        if rt.starts_with("NovaArray_") || rt.starts_with("Vec____") {
                             let sentinel_key = ("[]T".to_string(), mn.clone());
                             let has_sentinel = self.method_overloads.get(&sentinel_key)
                                 .map(|alts| alts.iter().any(|s|
@@ -30826,8 +31054,23 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
                                     // Не используем resolve_mono_type_args (она требует
                                     // ВСЕ generics быть resolvable из args; для fn[T] []T
                                     // T приходит от receiver, не args — resolve вернёт Err).
-                                    let elem_c = rt.strip_prefix("NovaArray_")
-                                        .unwrap_or("").to_string();
+                                    // Plan 138.2 Ф.0-final: mirror the emit-side
+                                    // de-mangling — a `Vec____<sani>` receiver carries
+                                    // the MANGLED element; recover the un-mangled
+                                    // C-type from `generic_type_instance_info`.
+                                    let elem_c = if let Some(na) = rt.strip_prefix("NovaArray_") {
+                                        na.to_string()
+                                    } else if rt.starts_with("Vec____") {
+                                        self.generic_type_instance_info.borrow()
+                                            .get(&format!("Nova_{}", rt))
+                                            .and_then(|(_, args)| args.first().cloned())
+                                            .unwrap_or_else(|| rt
+                                                .strip_prefix("Vec____")
+                                                .unwrap_or("")
+                                                .to_string())
+                                    } else {
+                                        String::new()
+                                    };
                                     let mut subst_pending: Vec<(String, Option<String>)> =
                                         fn_decl.generics.iter().enumerate()
                                         .map(|(i, g)| {
@@ -32642,6 +32885,77 @@ if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
             }
             _ => false,
         }
+    }
+
+    /// Plan 139 Ф.6: intern a string literal. Returns a C expression that
+    /// evaluates to the literal's `nova_str` value. Identical literals (same
+    /// bytes) share ONE `static const uint8_t[]` rodata buffer + ONE
+    /// `static const nova_str` value, deduped by content. The shared statics
+    /// are emitted at the `/*__INTERNED_STR_LITERALS__*/` preamble marker in
+    /// `finalize`. The empty string keeps an inline compound literal (no
+    /// buffer to dedup; `.ptr=""` already shares one rodata byte).
+    ///
+    /// Symbol naming is content-hash-based (FNV-1a over the raw bytes,
+    /// rendered hex) → stable across compilations and collision-resistant
+    /// (R15). On the astronomically-unlikely hash collision between two
+    /// DIFFERENT contents we would alias them; to make that impossible the
+    /// dedup map is keyed by the FULL content, and a collision would attempt
+    /// to register two contents under one symbol — we disambiguate by
+    /// appending a sequence suffix when the hash-derived base is already
+    /// taken by a different content.
+    fn intern_str_literal(&mut self, s: &str) -> String {
+        // Empty string: no rodata buffer needed; inline compound literal with
+        // a shared empty-string literal pointer. Keeps parity with prior code.
+        if s.is_empty() {
+            return "(nova_str){.ptr=(const uint8_t*)\"\", .len=0}".into();
+        }
+        if let Some(sym) = self.interned_str_literals.get(s) {
+            return sym.clone();
+        }
+        // FNV-1a 64-bit over the raw UTF-8 bytes → stable hex symbol base.
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for b in s.as_bytes() {
+            hash ^= *b as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        let mut sym = format!("_nova_strlit_{:016x}", hash);
+        // Collision guard: if this symbol is already bound to a DIFFERENT
+        // content, append a disambiguating sequence suffix until unique.
+        if self.interned_str_emit.iter().any(|(existing, _, _)| existing == &sym) {
+            let mut seq = 1usize;
+            loop {
+                let candidate = format!("_nova_strlit_{:016x}_{}", hash, seq);
+                if !self.interned_str_emit.iter().any(|(existing, _, _)| existing == &candidate) {
+                    sym = candidate;
+                    break;
+                }
+                seq += 1;
+            }
+        }
+        let escaped = Self::escape_c_str(s);
+        self.interned_str_emit.push((sym.clone(), escaped, s.len()));
+        self.interned_str_literals.insert(s.to_string(), sym.clone());
+        sym
+    }
+
+    /// Plan 139 Ф.6: render all interned string-literal statics for the
+    /// `/*__INTERNED_STR_LITERALS__*/` preamble marker. Each literal becomes
+    /// one shared rodata buffer + one shared `static const nova_str` value.
+    fn render_interned_str_literals(&self) -> String {
+        if self.interned_str_emit.is_empty() {
+            return String::new();
+        }
+        let mut out = String::new();
+        out.push_str("/* Plan 139 Ф.6: interned string literals (rodata dedup). */\n");
+        for (sym, escaped, len) in &self.interned_str_emit {
+            // One shared immutable byte buffer + one shared nova_str value.
+            // `static const` → internal linkage, no cross-TU symbol clash.
+            out.push_str(&format!(
+                "static const uint8_t {sym}_buf[] = \"{escaped}\";\n\
+                 static const nova_str {sym} = {{ .ptr = {sym}_buf, .len = {len} }};\n"
+            ));
+        }
+        out
     }
 
     fn escape_c_str(s: &str) -> String {

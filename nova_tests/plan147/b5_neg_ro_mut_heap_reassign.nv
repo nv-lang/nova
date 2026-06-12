@@ -1,0 +1,22 @@
+// Plan 147 Ф.5 — ORACLE row B NEG: `ro r mut Acc` → `r = X` ❌.
+//
+// R2-split on a HEAP record: the type is `mut Acc` (content ✅) but the
+// binding is `ro` (L1 fixed), so reassigning the name is forbidden. Mirrors
+// the value-record row A5.
+//
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+
+module plan147.b5_neg_ro_mut_heap_reassign
+
+type Acc {
+    mut money f64
+    ro name str
+}
+
+fn mk(m f64, n str) -> Acc => { money: m, name: n }
+
+fn main() -> () {
+    ro b mut Acc = mk(11.0, "e")
+    b = mk(13.0, "f")
+    assert(b.money == 13.0)
+}

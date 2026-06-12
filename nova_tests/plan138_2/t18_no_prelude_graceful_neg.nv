@@ -1,0 +1,30 @@
+// Plan 138.2 Ф.0-final — t18: #no_prelude graceful degrade.
+//
+// A `#no_prelude` unit has NO `Vec` template (the prelude re-export is opted
+// out), so the `generic_type_templates.contains_key("Vec")` gates are OFF and
+// `[]int` degrades gracefully to the legacy NovaArray path. The unit must
+// still COMPILE and RUN correctly (not CC-FAIL). This pins the graceful-degrade
+// half of the flip contract — the gates were deliberately NOT removed.
+//
+// `#no_prelude` strips assert/panic too. We declare a local `panic` external
+// fn (codegen lowers it to `nv_panic` by name — the vec_owned.nv precedent)
+// and hand-roll the checks: a mismatch panics, a clean run exits 0.
+
+#no_prelude
+module plan138_2.t18_no_prelude_graceful_neg
+
+external fn panic(msg str) -> never
+
+fn check(cond bool, msg str) -> () {
+    if !cond {
+        panic(msg)
+    }
+}
+
+fn main() -> () {
+    mut x []int = [1, 2, 3]
+    x.push(4)
+    check(x.len() == 4, "no_prelude []int push/len")
+    check(x[3] == 4, "no_prelude []int index")
+    check(x[0] == 1, "no_prelude []int head")
+}

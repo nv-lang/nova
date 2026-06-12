@@ -1,0 +1,42 @@
+// Plan 138.2 Ф.0c (class #5 de-risk): user `type Vec` SHADOW under an
+// explicitly-imported generic `Vec[T]` — user wins entirely (D29 method-level
+// shadow). BEFORE the fix this CODEGEN-FAIL'd with `[E7310] type Vec is not
+// generic — it takes no type arguments, but 1 was provided`: the imported
+// `Vec[T]` methods (push/get/…) survived the type-shadow and arity-checked
+// their `Vec[T]` type-refs against the user's non-generic `Vec`.
+//
+// Pre-flip, `Vec` is NOT in the prelude, so the explicit `import vec_owned.{Vec}`
+// is an ordinary import collision — W_PRELUDE_SHADOW (a prelude-visibility lint)
+// does NOT fire here. It WILL fire once `Vec` enters the prelude (Ф.0-final);
+// suppress/warning coverage for that is t16. This fixture is the positive
+// de-risk guard: the user-Vec wins, compiles cleanly, and the prelude-Vec
+// methods do NOT leak onto the user receiver (no E7310, no method-arity cascade).
+
+module plan138_2.t14_user_vec_shadow_pos
+
+import std.collections.vec_owned.{Vec}
+
+// User's own non-generic `Vec` — a plain 2-field record. Shadows the imported
+// generic `Vec[T]` entirely (D29).
+type Vec { x int, y int }
+
+test "user-Vec literal + field read (prelude Vec[T] shadowed)" {
+    ro v = Vec { x: 1, y: 2 }
+    assert(v.x == 1)
+    assert(v.y == 2)
+}
+
+test "user-Vec mutate own field (no prelude method leak)" {
+    mut v = Vec { x: 10, y: 20 }
+    v.x = 99
+    assert(v.x == 99)
+    assert(v.y == 20)
+}
+
+test "two user-Vec values are independent records" {
+    ro a = Vec { x: 1, y: 2 }
+    ro b = Vec { x: 3, y: 4 }
+    assert(a.x == 1)
+    assert(b.x == 3)
+    assert(a.y + b.y == 6)
+}

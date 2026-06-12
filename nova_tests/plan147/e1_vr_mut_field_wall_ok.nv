@@ -1,0 +1,28 @@
+// Plan 147 Ф.3 — ORACLE row E + A3 acceptance: L2 freeze STOPS at `*` (P4).
+//
+// value-record `{ p *mut T }` under a `ro v` binding:
+//   `v.p = q`        ❌ — the field slot is frozen by the ro binding (L2).
+//   `unsafe{ *v.p=w }` ✅ — writing THROUGH the pointer is L3 (the pointee is
+//                          `*mut T` = writable); L2 freeze does NOT cross `*`.
+// This fixture exercises the POSITIVE half (`*v.p = w`). The negative half
+// (`v.p = q`) is in e2_neg_vr_field_reassign.nv.
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.e1_vr_mut_field_wall_ok
+
+import std.runtime.raw_mem.{RawMem}
+
+type Cell value { p *mut int }
+
+fn main() -> () {
+    unsafe {
+        ro buf = RawMem.alloc(size_of[int]()) as *mut int
+        *buf = 1
+        ro v = Cell { p: buf }
+        // L2 freeze stops at `*`: pointee write allowed (pointee is *mut int).
+        *v.p = 7
+        assert(*v.p == 7)
+    }
+    println("ok")
+}

@@ -113,6 +113,16 @@ export import std.prelude.collections.{Next, Iter, StringBuilder, WriteBuffer, R
 // продолжают работать (selective re-export не блокирует direct import).
 export import std.collections.range.{Range, RangeIter}
 
+// Plan 138.2 Ф.0-final (D239 universal flip): re-export `Vec`/`VecIter` so
+// `[]T ≡ Vec[T]` holds universally — every prelude unit now has the `Vec`
+// template available, so value/type-position `[]T` lowers to the typed
+// `Nova_Vec____<elem>*` storage (not the legacy NovaArray int64-erasure).
+// MUST come AFTER the Range re-export above: `vec_owned` depends on `Range`
+// (`Vec[T] @index(r Range)` range-slice view), and the prelude facade is
+// resolved top-to-bottom. `#no_prelude` units degrade gracefully (Vec
+// template absent → legacy NovaArray path, the contains_key("Vec") gates).
+export import std.collections.vec_owned.{Vec, VecIter}
+
 // Plan 62.E / 62.E.bis: re-export conversion / equality / hashing /
 // ordering / display protocols из std.prelude.protocols. 8 formal
 // protocol declarations: From/Into/TryFrom/TryInto/Hash/Equal/
@@ -199,5 +209,14 @@ export import std.runtime.string.{parse_int, pad_left, pad_right, repeat, replac
 ///   - 11 = Plan 91 Ф.2.6 done (2026-05-28, D178): str API cleanup:
 ///     bytes→to_bytes, chars→to_chars, parse_int_radix+parse_int→parse_int(radix=10),
 ///     compare added, split→readonly []str, readonly param syntax.
+///   - 12 = Plan 138 (D239): `[]T` ≡ `Vec[T]` foundation (record/sig
+///     lowering, array-literal typed-Vec construction) — gated on the Vec
+///     template being present per compilation unit.
+///   - 13 = (reserved increment — see chronology above).
+///   - 14 = Plan 138.2 Ф.0-final (D239 universal flip, 2026-06-11): `Vec`/
+///     `VecIter` re-exported from prelude → `[]T ≡ Vec[T]` UNIVERSAL. Every
+///     prelude unit lowers value/type-position `[]T` to typed
+///     `Nova_Vec____<elem>*` storage. `#no_prelude` units keep the legacy
+///     NovaArray path (graceful degrade).
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 13
+export const PRELUDE_VERSION int = 14

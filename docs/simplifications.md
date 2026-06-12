@@ -34696,6 +34696,640 @@ vec_owned.nv `check` ok.
   (undeclared); `@` = SelfAccess → `return nova_self` ✓. Тихий баг обнаружен на тестах.
 - 10/10 fixtures PASS. Ф.5 ([]T→Vec[T] alias) deferred → `[M-138-array-sugar-alias]`.
 
+## Plan 139 Ф.0 — `str` value-record ABI + literal-lowering cast (GATE PASSED 2026-06-11)
+
+**Цель Ф.0 (GATE):** `str` становится Nova value-record `{ ptr *ro u8, len int }`.
+Ф.0 закладывает ABI-фундамент: C-typedef `nova_str` переопределён в layout-идентичный
+образ value-record `{const uint8_t* ptr; int64_t len;}` (был `{const char*; size_t;}`).
+На x64 `const char*` ≡ `const uint8_t*` (тот же 8-байт указатель), `size_t` ≡ `int64_t`
+→ все ~354 рантайм-C-вхождения остаются source-compatible (риск-лимитер). sizeof = 16.
+
+**Что сделано (ABI-safe core = the GATE):**
+- typedef переопределён в 2 сайтах: `compiler-codegen/nova_rt/nova_rt.h:56` +
+  `compiler-codegen/nova_rt/vtables.h:42` → `{const uint8_t* ptr; int64_t len;}`.
+- literal-lowering: все codegen-сайты `(nova_str){.ptr="...", ...}` теперь эмитят
+  `(nova_str){.ptr=(const uint8_t*)"...", ...}` (cast → -Wpointer-sign clean).
+  Сайты в emit_c.rs: StrLit (16669), TaggedTemplate empty/parts (18384/18390/18399/18413),
+  typed-err throw (×2: 17922/18034), cancel reason (19934), unwrap-None (20317),
+  try_from parse-err (23063), char.try_from (23092), StringBuilder append (24435),
+  field-key str (25801), макрос Err_typed (29688), static-const str (3628 — был
+  `(const char*)`, стал `(const uint8_t*)`), Vec slice-panic `_sbuf` (18468:
+  `(const uint8_t*)_sbuf` + `.len=(nova_int)_sn`).
+- `nova_str_from_cstr` (nova_rt.h:84) — ptr-cast `(const uint8_t*)s` + `(int64_t)strlen`.
+- sizeof `"nova_str" => 16` (emit_c.rs:11413) НЕ тронут — остаётся 16.
+
+**GATE acceptance:** A0.1 ✓ (`ro s="abc"; println(s); ro t=s+"d"; println(t)` компилируется
+RELEASE-бинарём + печатает `abc`/`abcd`). A0.2 ✓ (typedef обновлён в обоих сайтах;
+ZERO pointer-sign warnings в сгенерированном `.c`-теле; все 59 остаточных -Wpointer-sign
+warnings — ТОЛЬКО в рантайм-C-хедерах array.h/conv.h/effects.h/nova_rt.h, подавлены
+build-флагами `-w`/`-Wno-everything`). A0.4 ✓ (sizeof 16). A0.5 ✓ (0 new FAIL).
+
+**ДОКАЗАТЕЛЬСТВА:** nova_tests/plan139/ 6/0 PASS: t0_str_literal (D26 byte-len, multibyte "é"=2),
+t0_str_concat_gate, t0_str_interp (${}), t0_str_pass_byvalue (copy semantics), t0_str_empty,
+neg_t0_str_len_field (`.len` field → E_SIZE_ACCESSOR_FIELD fires). Регрессии: 0 — plan138_1 10/0,
+plan138_2 6/0, plan138_3 2/0, plan131 27/1 (pre-existing vec_debug_pos), plan90_1 20/0,
+plan91_fe1 8/2 (pre-existing 'first'), plan126 21/0, plan108_4 12/1 (pre-existing
+pos_receiver_at_parse), plan62 29/7 (5 pre-existing CC-FAIL), plan77 7/0.
+
+**DEFERRED (extracted, NOT silently dropped):**
+- `[M-139-f0-lang-item-decl]` — полная Nova-декларация `type str value priv { ptr *ro u8, len int }`
+  как lang-item + privacy-enforcement (`s.ptr` → E_PRIV_FIELD, direct-construct forbidden,
+  `*ro u8` write → E_RO_POINTER_WRITE). Требует НОВОЙ checker-инфраструктуры lang-item
+  (сегодня `str` — чистый compiler-builtin, нет type-decl, нет privacy-гейта для builtin
+  member-access; `s.ptr` резолвится без ошибки). GATE этого НЕ требует (A0.1 + 0 new FAIL).
+  Neg-фикстуры neg_t0_str_priv_field/neg_t0_str_ptr_write/neg_t0_str_construct_direct
+  будут добавлены когда lang-item-decl приземлится. Home: Plan 139 (Ф.0 followup / Ф.1).
+- `[M-139-f0-rt-header-ptr-sign-casts]` — 59 -Wpointer-sign warnings в рантайм-C-хедерах
+  (array.h panic-литералы ×41, conv.h ×8, effects.h ×5, nova_rt.h byte_at-литерал и др.).
+  Source-compatible (компилируются), подавлены `-w` в build. Каст `(const uint8_t*)` на
+  string-литералы в этих хедерах — массовая правка (часть из 354-site работы),
+  отложена из Ф.0 (риск-граница ABI-стратегии). Home: Plan 139 Ф.5 (runtime reconciliation).
+
+## Plan 139 Ф.1 — str methods → Nova-body via byte access (2026-06-11)
+
+**ЧТО СДЕЛАНО:** 10 str-методов мигрированы из external C-функций `nova_str_X` в
+**Nova-body** (`std/runtime/string.nv`): `starts_with`, `ends_with`, `contains`,
+`find`, `rfind`, `char_at`, `char_len`, `trim`, `to_lower`, `to_upper`. Тела читают
+байты через `@as_bytes()` (zero-copy view) + `@byte_at` и аллоцируют через
+`[]u8.with_capacity` + `push` + `str.from_bytes_unchecked`. Семантика идентична
+бывшим C-функциям (find/rfind — codepoint-offsets, char_at — UTF-8 decode cursor,
+trim — whitespace ≤ 0x20, case — ASCII). Routing: удалены из `str_method_to_rt`
+(emit_c.rs) → fall-through на Nova-body dispatch (`Nova_str_method_X`);
+`runtime_registry.rs` entries flipped `c_name → ""` + `nova_body: Some(...)`.
+
+**≤2 НЕУСТРАНИМЫХ C-ПРИМИТИВА (acceptance A1.3):**
+1. `nova_str_byte_at` — O(1) byte-access primitive (Plan 90; foundation, на нём
+   читают все Nova-body методы через `@as_bytes`/`@byte_at`).
+2. buffer-alloc — через `str.from_bytes_unchecked` (`[]u8` → str). str не владеет
+   аллокатором; это designated primitive #2 плана.
+
+**ОТКЛОНЕНО ОТ `@ptr[i]`-формы (как буква плана требует) → byte_at-форма:**
+План Ф.1 формулирует чтение байтов как `@ptr[i]` (typed-ptr deref поля `*ro u8`).
+Это требует приземления полной lang-item декларации `type str value priv { ptr *ro u8,
+len int }` = `[M-139-f0-lang-item-decl]` (новая checker-инфра; сегодня `s.ptr`
+резолвится в `nova_int`, `p[0]` даёт CC-FAIL «subscripted value is not a pointer»).
+Достигнут ИДЕНТИЧНЫЙ outcome (методы Nova-body, семантика та же, ≤2 примитива) через
+`@byte_at`/`@as_bytes` — тот самый byte-access primitive, который план сам называет
+неустранимым. Литеральная `@ptr[i]`-форма остаётся gated на `[M-139-f0-lang-item-decl]`.
+
+**RETAINED C (scope-out, documented):** `eq`/`lt`/`le`/`gt`/`ge`/`concat`/`compare`/
+`hash` — лоуэрятся НАПРЯМУЮ из BinOp-кодогена операторов (`==`/`<`/`+`/...) и
+HashMap-key-path, миграция одного метода НЕ ретайрит C-функцию; `hash` = SipHash-1-3
+с per-process random seed (невоспроизводимо в Nova-body без seed-примитива). Это
+Plan 139 Ф.3 (structural eq/hash). `to_bytes`/`as_bytes`/`to_chars`/`split` →
+Vec — Plan 139 Ф.2. `len`/`byte_len` — O(1) field-read.
+
+**NEW [M-139-f1-trim-view]:** `@trim()` Nova-body возвращает АЛЛОЦИРОВАННУЮ копию
+(byte-loop + from_bytes_unchecked); бывшая C-версия `nova_str_trim` возвращала
+zero-copy slice-view (`{s.ptr + start, end - start}`, без alloc). Zero-copy view
+требует `@ptr` field-access → gated на `[M-139-f0-lang-item-decl]`. Контент
+идентичен; только перф (alloc vs view). Home: Plan 139 Ф.1 followup (после lang-item).
+
+**ДОКАЗАТЕЛЬСТВА:** nova_tests/plan139/ 17/0 PASS (6 Ф.0 + 11 новых: t1_starts_ends_contains,
+t1_find_rfind, t1_trim, t1_case, t1_char_len_utf8, t1_char_at_utf8, t1_byte_at,
+t1_concat, t1_compare_ordering [regression guards для retained-C], neg_t1_char_at_oob
+[OOB→None], neg_t1_byte_at_oob [runtime-panic]). Регрессии 0 new FAIL vs baseline:
+plan138_1 10/0, plan138_2 6/0, plan138_3 2/0, plan131 27/1 (pre-existing vec_debug_pos),
+plan90_1 20/0, plan126 21/0, plan91_fe1 8/2 (pre-existing 'first'), plan108_4 12/1
+(pre-existing fmt), plan77 7/0, plan62 29/7 (pre-existing StringBuilder-tag/Iterable/equals),
+str 13/0, plan60 6/0, plan34 8/0, plan91 2/0, plan108 5/0. **Pre-existing (НЕ моё):**
+str_builder 0/9 — `E_CONSUME_KEYWORD_MISSING` на `mut sb = StringBuilder.new()`
+(consume-guard checker-rule, воспроизводится тривиальной программой; StringBuilder.nv
+не трогался).
+
+## Plan 139 Ф.2 — str []T-producers → Nova-body (2026-06-11)
+
+**ЧТО СДЕЛАНО:** 2 из 5 `[]T`-producer'ов str мигрированы из external C-функций в
+**Nova-body** (`std/runtime/string.nv`): `@to_bytes() -> []u8` (копия байтов из
+`@as_bytes()` zero-copy view в новый `[]u8` через `with_capacity`+`push`) и
+`@to_chars() -> []char` (UTF-8 decode cursor над `@as_bytes()`, push каждого
+codepoint как `char` через `cp_to_char`). Семантика byte-for-byte идентична
+`nova_str_to_bytes`/`nova_str_to_chars`. Routing: удалены из `str_method_to_rt`
+(emit_c.rs) → fall-through на Nova-body dispatch; `runtime_registry.rs` entries
+flipped → `nova_body: Some(...)`.
+
+**ОТЛОЖЕНО (gated на `[M-139-f0-lang-item-decl]`, НЕ silently dropped):**
+План Ф.2 формулирует `as_bytes`/`split`/`from_bytes_*` как pure-Nova на базе
+**`@ptr` field-access**: `as_bytes` zero-copy = `Vec{ data: @ptr as *mut u8, ... }`,
+`split` = zero-copy view-slices `str{ ptr: s.ptr+start, len: ... }`, `from_bytes_*` =
+`str{ ptr: bytes.data, len: bytes.len }`. Все три требуют доступа к полю `@ptr`
+str value-record'а, которого СЕГОДНЯ НЕТ: `s.ptr` даёт type-check error «cannot
+access `.ptr` on str» (lang-item декларация `type str value priv {ptr *ro u8, len int}`
+не приземлена — это `[M-139-f0-lang-item-decl]`, новая checker-инфра). Поэтому
+`as_bytes`/`split`/`from_bytes_lossy`/`from_bytes_unchecked`/`from_bytes_unchecked_steal`
+ОСТАЮТСЯ тонкими C-примитивами (см. NEW [M-139-f2-ptr-field-producers] ниже).
+`nova_str_as_bytes` (array.h:638) уже zero-copy (алиасит `s.ptr`, cap==len) — C-форма
+сохраняет zero-copy-контракт до приземления lang-item; миграция в pure-Nova не теряет
+перф, только переносит на Nova-сторону.
+
+**RETAINED C (scope-out, documented):** `as_bytes` (zero-copy view — нужен `@ptr`),
+`split` (zero-copy view-slices — нужен `@ptr` + `str{ptr,len}` construct),
+`from_bytes_lossy`/`from_bytes_unchecked`/`from_bytes_unchecked_steal` (construct
+`str{ptr,len}` — нужен `@ptr` field-write/lang-item construction). Все 5 = home для
+[M-139-f2-ptr-field-producers].
+
+**SEQUENCING-NOTE:** план говорит Ф.2 «gated на 138.2 Ф.0 (universal Vec)». 138.2 Ф.0
+НЕ приземлён (Vec не в prelude; `[]T`-флип gated `generic_type_templates.contains_key("Vec")`).
+`@to_bytes`/`@to_chars` используют `[]u8`/`[]char` синтаксис, который в string.nv
+лоуэрится в `NovaArray` (как и Ф.1-методы trim/to_lower) — миграция работает БЕЗ
+universal-Vec. Полная `Vec[T]`-репрезентация (вместо NovaArray) для этих producer'ов
+придёт автоматически после 138.2 Ф.0 (флип `[]T`→`Vec` в type_ref_to_c); никаких
+правок в этих Nova-body не потребуется.
+
+**ДОКАЗАТЕЛЬСТВА:** nova_tests/plan139/ 20/0 PASS (+3 vs Ф.1-baseline 17/0:
+t2_to_bytes_roundtrip [ascii/utf8/empty/round-trip/owned-copy], t2_to_chars
+[ascii/multibyte/emoji/empty/cyrillic], neg_t2_as_bytes_mutate [as_bytes view = ro []u8,
+push→compile-error, доказывает immutability R8]). Регрессии 0 new FAIL vs baseline.
+
+## Plan 139 Ф.4 — str ↔ cstr FFI interop на value-record ABI (2026-06-11)
+
+(Оркестратор пометил задачу «F3», но enumerated FFI/cstr items — это doc-фаза
+**Ф.4** «FFI / cstr interop». Doc-Ф.3 = eq/hash/clone уже де-факто закрыта:
+str `==`/`!=`/`<`/`<=`/`>`/`>=` лоуэрятся DIRECTLY в BinOp codegen
+(emit_c.rs:16985-16996) на `nova_str_eq`/`_lt`/... — content-eq (memcmp/byte),
+str НИКОГДА не идёт field-by-field путём Plan 141. R10 «Plan 141 делает str
+pointer-eq» НЕ live — direct lowering уже content-eq. eq/hash верификация —
+вне scope этой задачи.)
+
+**ЧТО СДЕЛАНО:** реализован **D26 §3** (Nul-termination resolution) для str→C.
+До этого `@as_cstr()` был unconditional zero-copy (`CStr(bytes.as_ptr())`) →
+C-side `strlen` на mid-buffer слайсе over-read'ил в parent buffer:
+`"hello world"[0..5].as_cstr()` → strlen=**11** (нашёл NUL parent'а на байте 11)
+вместо **5**. Это нарушало D26 §3 (должен alloc+terminate когда `ptr[len]!=0`).
+
+- **NEW C-примитив** `nova_rt.h`: `nova_fn_nova_str_terminated_ptr(nova_str s)
+  -> const uint8_t*` — `s.ptr[s.len]==0`? → zero-copy `s.ptr`; иначе
+  `nova_alloc(len+1)` (GC-tracked) + `memcpy` + `'\0'`. Peek `s.ptr[s.len]`
+  ВСЕГДА safe (D26 §2: full str владеет `len+1`; slice's parent владеет
+  `parent.len+1`, `view.len<=parent.len` → байт в окне parent-буфера).
+- **std/ffi/cstr.nv:** `external unsafe fn nova_str_terminated_ptr(s str) -> *u8`
+  (free fn → C-имя `nova_fn_nova_str_terminated_ptr`). `as_cstr()` и
+  `as_cstr_unchecked()` маршрутятся через него вместо `bytes.as_ptr()`.
+- **plan115_ffi_test.h:** 3 тестовых shim'а (str→C by-value byte-sum,
+  CStr→C strlen, C→str via from_cstr).
+
+**RETAINED C (≤2 irreducible, documented):** (1) `nova_fn_nova_str_terminated_ptr`
+— peek одного байта за окном (`s.ptr[s.len]`, не выражается на `ro []u8` view
+с cap==len) + conditional `nova_alloc` (str не владеет аллокатором в Nova).
+Это естественный home для будущей `@to_cstr()` owning-copy (Plan 118.2). C-форма
+`nova_str_from_cstr` (nova_rt.h:84) уже uint8_t-ABI с Ф.0 — переиспользована для
+C→str. CStr(*u8) newtype + embedded-NUL scan — landed Plan 118.1.
+
+**ИЗМЕНЕНО только .h + .nv (НЕ .rs)** → nova rebuild НЕ нужен.
+
+**CLOSED:** as_cstr slice-over-read gap (был implicit в Plan 118.1 V1 zero-copy
+as_cstr; cstr.nv header line 11 «Sub-views могут не иметь terminating NUL —
+fallback alloc» был aspirational, теперь IMPLEMENTED). D26 §3 amend landed.
+
+**ДОКАЗАТЕЛЬСТВА:** nova_tests/plan139/ 26/0 PASS (+6: t4_from_cstr,
+t4_to_cstr_ffi, t4_slice_not_nul_terminated [strlen=5 не 11], t4_ffi_roundtrip,
+neg_t4_raw_ptr_to_ffi_unsafe [as_cstr_unchecked без unsafe{} →
+E_UNSAFE_CALL_REQUIRES_WRAP], neg_t4_cstr_embedded_nul [interior NUL → panic]).
+Регрессии 0 new FAIL vs baseline (plan118_1_cstr_nul 2/0, plan115 11/0,
+plan118_1 11/0, str 13/0, plan118 37/3 NPO pre-existing подтверждено git-stash).
+
+## Plan 139 Ф.3 — str structural eq / hash / clone (content-eq override) (2026-06-11)
+
+**ВЕРИФИКАЦИЯ + FIXTURE-COVERAGE фаза — 0 .rs/.h/.nv-stdlib изменений.** Doc-Ф.3
+(eq/hash/clone) уже де-факто реализована Plan 141 + предыдущими сессиями. Задача
+этой фазы — доказать инварианты fixture'ами и задокументировать механизм
+override'а; никаких compiler/runtime правок не потребовалось.
+
+**МЕХАНИЗМ (почему R10 НЕ live):**
+- Прямой `==`/`!=`/`<`/`<=`/`>`/`>=` на str → emit_c.rs:16985-16996 →
+  `nova_str_eq`/`_lt`/`_le`/`_gt`/`_ge` (content, memcmp/byte-cmp).
+- str-в-tuple/sum/record: `emit_field_eq` (emit_c.rs:11161-11164) спец-кейзит
+  `cty == "nova_str"` → `nova_str_eq` **ПЕРЕД** field-by-field веткой Plan 141.
+  → composite eq над str-полем = content-eq, НЕ pointer-eq. R10 «Plan 141 делает
+  str pointer-eq» нейтрализован этим спец-кейзом. Подтверждено probe:
+  `("ab"+"c", 1) == ("abc", 1)` → true.
+- str-keyed HashMap: `@hash`/`@eq` через str_method_to_rt (emit_c.rs:28911/28916)
+  → `nova_str_eq`/`nova_str_hash` (SipHash-1-3 над байтами, nova_rt.h:339).
+  Подтверждено: insert built-key `"ab"+"c"`, get literal `"abc"` → hit;
+  dup-content-key → overwrite (len остаётся 1).
+- clone = 16-байт value-copy handle над immutable (`*ro u8`) shared буфером;
+  deep-copy НЕ нужен. Подтверждено: copy валиден после rebind источника.
+
+**D228 amend (02-types.md):** добавлена заметка «Equality of reference-field
+value-records» — value-record carrying shared-immutable pointer field
+регистрирует content-eq для этого поля вместо наследования pointer-identity от
+field-by-field default. str = flagship use-case.
+
+**NEW [M-139-f3-bare-return-type-str]:** обнаружен pre-existing compiler-баг
+(НЕ связан с Ф.3, НЕ введён этой фазой): top-level `fn f(x str) str` (return-type
+БЕЗ `->`) лоуэрит return-тип как `nova_unit` → CC-FAIL «returning 'nova_str' from
+a function with incompatible result type 'nova_unit'». Канонический `-> str`
+работает (см. t0_str_pass_byvalue, t3_clone_independent). Вынесено в backlog.
+
+**ДОКАЗАТЕЛЬСТВА:** nova_tests/plan139/ 33/0 PASS (+7 vs Ф.4-baseline 26/0):
+t3_eq_distinct_buffers [R10 regression guard: built `"ab"+""` == literal `"ab"`,
+`"ab"+"c"` == `"a"+"bc"`, empty-slice == empty-literal], t3_eq_literal_vs_built,
+t3_hash_eq_consistency [equal strings → equal hash, distinct buffers],
+t3_hashmap_str_key [built-key insert / literal-lookup hit; dup-content overwrite],
+t3_clone_independent [value-copy valid after source rebind], neg_t3_ne_different_bytes,
+neg_t3_hashmap_miss [absent/case-different/removed content-keys miss]. Регрессии
+0 new FAIL vs baseline: str 13/0, plan138_1/2/3 10/6/2, plan131 27/1, plan90_1 20/0,
+plan126 21/0, plan108 5/0, plan108_4 12/1, plan62 29/7, plan77 7/0, map_literals 28/1,
+plan126_2 9/1, plan141 8/0 (eq-integration clean), plan48_1 2/0. Все FAIL'ы —
+pre-existing (0 .rs/.h изменений → regression невозможна).
+
+---
+
+## Plan 139 Ф.6 — str literal interning (rodata dedup) (2026-06-11)
+
+**NEW additive capability — НЕ simplification, НЕТ open [M-139-*].** Doc-Ф.6
+«Literal interning» приземлена ПОЛНОСТЬЮ (production-grade, не MVP).
+
+**ЧТО:** идентичные строковые литералы разделяют ОДИН `static const uint8_t[]`
+буфер в .rodata + ОДНО `static const nova_str` значение, deduped по контенту.
+`"abc"` × N → один буфер вместо N inline compound-литералов. Реализация —
+`CEmitter::intern_str_literal` (emit_c.rs, +113/-6, 1 файл): content-keyed
+dedup-map + FNV-1a content-hash символьные имена (`_nova_strlit_<hex>`,
+collision-resistant, sequence-suffix guard, R15) + preamble-маркер
+`/*__INTERNED_STR_LITERALS__*/`.
+
+**Семантически невидимо:** str eq/hash — byte-content (Ф.3) → совпадение
+pointer-identity не наблюдаемо; буфер `*ro u8` immutable → нет write-path
+(R14). Пустая строка сохраняет inline-форму. Top-level `const NAME = "lit"`
+эмитит собственный inline static-init (не через interning) → нет nested
+static-init constant-expression нарушения. Interning влияет только на
+function-body expression-позиции.
+
+**НИЧЕГО НЕ ОТЛОЖЕНО:** doc допускал defer dedup-interning как [M-139-interning]
+если «risky/large» — НО реализация оказалась small (1 файл) и low-risk (R14/R15
+LOW; semantically invisible), поэтому landed целиком. [M-139-interning] НЕ
+открыт.
+
+**ДОКАЗАТЕЛЬСТВА:** nova_tests/plan139/ 37/0 PASS (+4: t6_intern_dedup,
+t6_intern_eq_unaffected, t6_intern_large [10 distinct + 3 repeat → repeats
+collapse], neg_t6_intern_no_aliasing_bug). Emitted-C verified: "abc" buffer
+defined ровно 1× при 4 использованиях; alpha/epsilon/kappa в t6_intern_large
+каждый 1 буфер при 2 использованиях. Регрессии 0 new FAIL vs baseline (см.
+project-creation.txt Ф.6). NB: plan108_2 9/4 (E_LOCAL_NOT_MUT NEG-NO-ERROR на
+Vec push/pop/clear/truncate) — pre-existing на plan-138.1 (138.x Vec-миграция
+gap), вне зоны literal-lowering diff.
+
+## Plan 139 Ф.7 — spec finalization + CLOSE (2026-06-11)
+
+**ЗАКРЫТИЕ umbrella-плана 139.** Docs/spec-only задача (0 .rs/.h/.nv-stdlib
+изменений → бинарь не пересобирается, регрессия тождественна baseline).
+
+**SPEC ФИНАЛИЗИРОВАН:** D26 MAJOR AMEND (08-runtime.md — str = Nova value-record
+lang-item, консолидирует layout/ABI/методы/eq-hash-clone/GC/interning + Q139-блоки
+resolved/extracted), D216 §1 (str.ptr flagship `*ro u8`), D228 (str канонический
+reference-field value-record), D52 (таксономия — str реклассифицирован «managed
+heap/by reference» → «value type, несущий heap-backed буфер»).
+
+**ОСТАТОК (gated, никогда не silently dropped) — всё на корневом
+`[M-139-f0-lang-item-decl]`** (новая lang-item checker-инфра: полная Nova-декл
+`type str value priv {...}` + privacy-gate + `@ptr` member-access). До её
+приземления:
+- `s.ptr`→type-error (нет privacy-gate, нет field-resolution); поэтому
+  literal-формы Ф.1 (`@ptr[i]`) и Ф.2 (`as_bytes`/`split`/`from_bytes_*` в
+  pure-Nova zero-copy через `@ptr`-поле) недостижимы — `[M-139-f2-ptr-field-producers]`.
+- `@trim()` Nova-body аллоцирует копию (а не view) — `[M-139-f1-trim-view]`.
+- C-формы (as_bytes/split/from_bytes_*/byte_at) КОРРЕКТНЫ и production-grade
+  (C as_bytes уже zero-copy `ro Vec` над `*ro u8`), контракт сохранён до lang-item.
+
+**Прочие открытые [M-139-*]:** `[M-139-f0-rt-header-ptr-sign-casts]` (59
+-Wpointer-sign warnings, source-compatible, `-w`-suppressed),
+`[M-139-f3-bare-return-type-str]` (parser bare-return-type, use `->`),
+`[M-139-f6-vec-mut-local-enforcement]` (138.x Vec-mut gap, orthogonal),
+`[M-139-f4-to-cstr-owning]` (= [M-118.1-cstr-to-cstr-distinct-copy], Plan 118.2).
+
+**E1/E4 — 🟡 ЧАСТИЧНО** (literal-формы gated на lang-item); E2/E3/E5/E6/E7/E8/E9
+— ✅. Plan CLOSED с честным acceptance audit (см. plan-doc §«Итог»).
+138.2 Ф.1 (string-layer) — SUBSUMED.
+
+---
+
+## Plan 138.2 Ф.0a — bulk-insert/append parity на Vec[T] (класс #1, ДО универсального флипа)
+
+**Где.** `std/collections/vec_owned.nv`; фикстуры `nova_tests/plan138_2/t8..t11`.
+
+**Контекст.** Под D141 `[]T` extend-family имеет bulk-семантику: `dst.insert(i, src)`
+вставляет ВСЕ элементы массива `src` в позицию `i` (C-builtin `nova_array_insert_*`,
+`compiler-codegen/nova_rt/array.h:129-151`). После универсального флипа `[]T ≡ Vec[T]`
+(D239) эти вызовы начнут диспатчить на Vec-методы. `Vec.@append(mut other Vec[T])`
+УЖЕ bulk (совпадает), а `Vec.@insert(i int, v T)` = single-element (несовместимо =
+регрессия-класс #1). Ф.0a гасит класс ДО флипа.
+
+**Что сделано.** Добавлен bulk-insert на Vec, точно зеркалящий `nova_array_insert_*`:
+prefix kept → hole opened (memmove tail вправо на `src_len`) → src copied в hole
+(memmove, overlap-safe). **Self-insert safety:** `src_data`/`src_len` снапшотятся
+ДО `@reserve` (как C-builtin снапшотит `src_data`/`src_len` до realloc), т.к. при
+`v.insert(i, v)` `other.data == @data` и reserve может реаллоцировать буфер.
+`@append` уже bulk — только byte-parity check фикстурой (t9), кода не менял.
+
+**Упрощение (Open-Question fallback, явно санкционирован Ф.0a).** Bulk-insert назван
+`@splice(i, Vec[T])`, а НЕ вторым overload `@insert(i, Vec[T])`. Generic-метод
+overloads **коллапсят** в монорфизации: `mono_method_decls` (emit_c.rs ~8404) keyed
+`(type, method-name)` с одним `FnDecl` на key; mono-sentinel `MethodSig` несёт пустой
+`param_c_types` (~8408) → `resolve_overload` (emit_c.rs:9913) не дизамбигуирует
+single от bulk для concrete `Vec[int]` (verified empirically: оба роутятся на single,
+Vec-arg force-fit'ится в `nova_int v` → garbage; t10 «DISTINCT routing» FAIL до
+rename). Plan 138.2 Ф.0a §scope явно допускает `@splice`/`@insert_all`-rename как
+fallback. Distinct имена → distinct C-символы через single-overload short-circuit
+(`Vec____nova_int_method_insert` + `_method_splice`, оба per-T mono'd).
+
+**Почему так (а не fix mono).** Полноценная поддержка overload'ов generic-методов
+через монорфизацию с per-arg-type routing = глубокий codegen-рефактор (keyed-by-sig
+storage + concrete sentinel-types) — HIGH-risk прямо перед HIGH-risk флипом.
+Production-grade развязка: distinct-name API сегодня + `[M-138.2-generic-method-overload-mono]`
+как home для fold `@splice`→`@insert` overload. Ничего не dropped silently.
+
+**Открытые маркеры.** `[M-138.2-bulk-insert-overload]` (fold splice→insert-overload),
+`[M-138.2-generic-method-overload-mono]` (codegen mono overload-routing),
+`[M-138.2-nested-vec-elem-readback]` (DISCOVERED pre-existing: `Vec[Vec[T]]` второй
+push+get читает повреждённый элемент — orthogonal к Ф.0a, narrowed «two push get1»
+FAIL / `new+push` → CC-FAIL missing `NovaOpt_nova_int_p`).
+
+**Результат.** plan138_2 6/0 → **10/0** (+t8/t9/t10/t11). Broad regression 0 NEW FAIL:
+plan138_1 10/0, plan138_3 2/0, plan90_1 20/0 (parity-baseline), plan131 27/1 (pre-existing
+vec_debug_pos), plan126_2 9/1 (pre-existing p5_printable). NovaArray-путь активен (флип
+OFF) — Ф.0a приземляется зелёным. Только `.nv` правки → rebuild не нужен.
+
+## Plan 138.2 Ф.0b — Vec-backed map-literal bucket arrays (класс #4, ДО универсального флипа)
+
+**Где.** `std/collections/hashmap.nv` (import + `new_buckets` rewrite); фикстуры
+`nova_tests/plan138_2/t12_map_vec_bucket_pos.nv`, `t13_map_empty_in_map_position_neg.nv`.
+
+**Что.** Класс #4 (map_literals `[]T`-bucket cascade, feared 28-to-9 при универсальном
+`[]T≡Vec[T]` флипе) погашен ДО флипа, изолированно в HashMap CU. Two-part `.nv`-only фикс:
+1. `import std.collections.vec_owned.{Vec}` в hashmap.nv → регистрирует
+   `generic_type_templates["Vec"]` когда hashmap.nv — peer file → поле `_buckets []Slot[K,V]`
+   и return type `new_buckets` лоуэрятся через type-ref gate (`emit_c.rs:2074`) в
+   ТИПИЗИРОВАННЫЙ `Nova_Vec____Nova_Slot____*`, НЕ int64-erased `NovaArray_nova_int*`.
+   `vec_owned` тянет только `raw_mem` → нет цикла с hashmap. НЕ prelude-правка (это Ф.0-final).
+2. `new_buckets[K,V]` переписан на ЯВНЫЙ `Vec[Slot[K,V]]` API (`.with_capacity`+`.push`)
+   вместо `[]Slot[K,V]`-литерал-формы.
+
+**ROOT-CAUSE FINDING (для всех будущих pre-flip фаз).** `[]T` в ПОЗИЦИИ-ЗНАЧЕНИЯ
+(`[]T.with_capacity(n)`, `arr.push(...)`) НЕ Vec-gate-aware до флипа — D38
+array-static-method dispatch (`emit_c.rs:19863-19925`) безусловно роутит `[]T.with_capacity`/
+`.new` в `nova_array_new_<suffix>` (int64-erased NovaArray), БЕЗ `contains_key("Vec")` guard.
+Тогда как `[]T` в ТИПОВОЙ позиции (поле / return type) уже резолвится в типизированный Vec
+под gate. Рассинхрон → `new_buckets` строил int-erased буфер и возвращал под типизированным
+Vec-указателем → битый readback после `@maybe_grow` rehash. Value-position `[]T`→Vec
+lowering остаётся Ф.0-final концерном (guard = t3).
+
+**НЕ упрощение, а уточнение скоупа.** value-position `[]T`-NovaArray-erasure — ОЖИДАЕМОЕ
+pre-flip состояние, НЕ дефект; Ф.0-final его флипает. Новых `[M-138.2-*]` маркеров не
+требуется. Класс #4 оказался НЕ map-coercion codegen проблемой (record-punning/spread/
+from_fields прошли без правок), а rehash-path corruption, которую исходный 50-фикстурный
+map_literals gate НЕ ловил (строят через `with_capacity`+`insert_new`, не через runtime
+resize/rehash). t12 «growth past load factor (rehash)» — новый guard.
+
+**Per-commit SHA-таблица.**
+
+| Commit | Что |
+|---|---|
+| `<f0b-1>` | hashmap.nv `import vec_owned.{Vec}` + `new_buckets`→`Vec[Slot]` + t12/t13 fixtures + plan-doc + project-creation + simplifications + backlog |
+
+**Результат.** plan138_2 10/0 → **12/0** (+t12/t13). map_literals **28/1** (= baseline; только
+pre-existing `positive_const_map` E_CONST_NOT_CONSTEXPR). Hashmap CU `.c`: `_buckets =
+Nova_Vec____Nova_Slot____*`. **Регрессии: 0 NEW FAIL** vs baseline (verified против clean
+baseline через `git stash` для не-листовых дир): plan138_1 10/0, plan138_3 2/0, plan90_1
+20/0, plan131 27/1, plan126_2 9/1, plan79 25/0 (HashMap consumer), plan139 37/0, plan101_1
+18/0, plan126 21/0, plan137 16/0; pre-existing (НЕ мои): plan59 23/6, plan55 17/2, plan91_13
+2/6 (json incomplete-type), plan91_fe1 8/2 (no member first). Только `.nv` правки → rebuild
+не нужен.
+
+## Plan 138.2 Ф.0c — user-`type Vec` SHADOW под imported `Vec[T]` (класс #5, ДО универсального флипа)
+
+**Где.** `compiler-codegen/src/types/mod.rs` (type-checker shadow-skip),
+`compiler-codegen/src/codegen/emit_c.rs` (codegen generic-registration guards);
+фикстуры `nova_tests/plan138_2/t14_user_vec_shadow_pos.nv`,
+`t15_user_vec_no_push_neg.nv`, `t16_user_vec_shadow_suppress_pos.nv`. `.rs` правка →
+rebuild нужен.
+
+**Что.** Класс #5 (user `type Vec { x, y }` коллизит с prelude/imported `Vec[T]`,
+feared E7310 cascade при флипе) погашен ДО флипа. Воспроизводится через explicit
+`import std.collections.vec_owned.{Vec}` в юните с user-type `Vec` — тот же merge-эффект,
+что prelude-auto-import даст в Ф.0-final. Fix = единый shadow-set «user redeclared
+generic-type с ДРУГОЙ арностью» (entry-peer `items_here` vs merged `module.items`
+max-arity), guard'ит ЧЕТЫРЕ уровня прорыва shadow'а:
+1. **type-checker** (E7310 fix): новое поле `user_shadowed_generic_types: HashMap<name,
+   user_arity>` + helper `is_shadowed_import_method`; skip merged-метода (receiver ∈ set
+   И `recv.generics.len() != user_arity`) в arity-pass `check_fn` И assignability-pass
+   `f1_check_fn`.
+2. **codegen generic-registration** (record-literal mono fix): 4 сайта `generic_types.
+   insert` (module.items, peer_files, 1d-prepop) пропускают user-shadowed имя → `Vec{x,y}`
+   монорфизируется в user `Nova_Vec*`, `infer_expr_c_type` RecordLit больше не → `void*`.
+3. **method-receiver pre-population loop** (1c): skip imported-метода (E7001 `Self outside
+   receiver context` fix).
+4. **`should_skip_fn`** closure: skip imported-метода emit.
+
+**НЕ упрощение, а verified design-deferral: W_PRELUDE_SHADOW.** Lint `lint_prelude_shadow`
+(lints.rs:1459) fires только на prelude-visibility. Pre-flip `Vec` НЕ в prelude → explicit
+`import vec_owned.{Vec}` = ordinary import collision, НЕ prelude-shadow → warning корректно
+НЕ срабатывает. Поэтому t14 переформулирован из EXPECT_COMPILE_WARNING (как в исходном
+plan-spec) в **positive clean-compile** (user wins, no E7310, no method-leak). Warning
+заработает после Ф.0-final (Vec в prelude); t16 (`#allow(shadow)`) пиннит suppress на тот
+момент. Семантически правильно: warning о prelude-shadow не должен fire'иться пока Vec не
+в prelude. Это ВЕРИФИЦИРОВАНО (не предположено), задокументировано в плане Ф.0c CLOSED.
+
+**Per-commit SHA-таблица.**
+
+| Commit | Что |
+|---|---|
+| `<f0c-1>` | types/mod.rs shadow-skip + emit_c.rs 4-site guards + t14/t15/t16 fixtures + D29 amend + plan-doc + project-creation + simplifications + backlog |
+
+**Результат.** plan138_2 12/0 → **15/0** (t14 pos clean-compile, t15 neg CC-FAIL `no member
+named push`, t16 `#allow(shadow)` clean). plan123_3_1 **4/0** (gate, E7310 не возникает).
+**Регрессии: 0 NEW FAIL** vs post-138.4 baseline: plan138_1 10/0, plan138_3 2/0, plan90_1
+20/0, plan131 27/1, plan118_1 11/0, plan126_2 9/1, plan79 **25/0** (E7310 arity tests intact —
+критично), map_literals 28/1, plan101_1 18/0, plan101_2 2/0, plan120 8/0, plan124_8 40/0,
+plan126 21/0, plan137 16/0; pre-existing (НЕ мои, verified via stash-rebuild): plan72 14/2
+(Nova_Iterable/E7202), plan59 23/6 (tuple-mangle), plan91_13 2/6 (json incomplete-type).
+
+---
+
+## Plan 138.2 Ф.0d — `Vec @append` = COPY, не move (settled design decision, ДО флипа)
+
+**Где.** `std/collections/vec_owned.nv` (`@append`); фикстуры `nova_tests/plan131/vec_bulk_pos.nv`,
+`nova_tests/plan138_2/t9_vec_bulk_append_parity_pos.nv`, `nova_tests/plan90_1/append_copy_source_intact.nv` (NEW).
+
+**Решение (user-mandated, NON-NEGOTIABLE).** `Vec[T] mut @append(other Vec[T]) -> @` **КОПИРУЕТ**
+элементы `other` в хвост `self`, оставляя `other` **НЕТРОНУТЫМ**. НЕ move-merge. Signature: `other`
+без `mut`, `other.clear()` удалён, bulk `RawMem.copy` (memmove) сохранён.
+
+**Rationale.** (1) **StringBuilder-consistency** — `StringBuilder.@append` уже COPY (D181); Vec
+@append=move был бы внутренне несогласован в той же stdlib. (2) **Cross-language convention** —
+Python `extend` / Swift `append(contentsOf:)` / Java `addAll` = COPY; единственный move-аутлайер —
+Rust `Vec::append`. (3) **Footgun** — move-merge, тихо опустошающий аргумент, — классическая ловушка.
+D141 cross-ref.
+
+**Это НЕ упрощение, а пересмотр Ф.0a-формулировки.** Ф.0a описывал `@append` как «уже bulk move».
+Move-семантика была WRONG-by-decision; копия-результат `self` byte-паритетен старому
+`nova_array_append_*` (массив-builtin тоже не опустошал источник). Никакой функциональности не
+потеряно: `@extend` (generic Iter) и `@append` (fast bulk Vec→Vec) ОБА копируют. Move НЕ нужен и НЕ
+предлагается. Новых `[M-138.2-*]` маркеров не открыто.
+
+**Миграция фикстур (move→copy).** `plan131/vec_bulk_pos.nv` — тест переименован, assertions
+`b.is_empty()`/`b.len()==0` → `b.equal(Vec[int].from([4,5]))`+`b.len()==2`. `plan138_2/t9` — header+тест
+переформулированы, `assert(src.len()==0)` → `assert(src.len()==3)`+`src.equal(...)`. NEW
+`plan90_1/append_copy_source_intact.nv` — proof source-intact + re-usable-source (3× append) +
+bulk-copy-correctness-across-growth + empty-noop. Остальные append-фикстуры уже copy-совместимы
+(`ro src` / self-append `dst.append(dst)`).
+
+**Результат.** plan90_1 20/0 → **21/0** (+append_copy_source_intact). plan138_2 16/2 → **17/1** (t9 PASS;
+t17 = pre-existing flip-target, resolves Ф.0-final). plan131 26/2 → **27/1** (vec_bulk_pos PASS;
+vec_debug_pos = pre-existing `${v:?}` interp gap). str **13/0** (StringBuilder @append=copy precedent
+GREEN). **Регрессии: 0 NEW FAIL** vs baseline: plan138_1 10/0, plan138_3 2/0, plan101_1 18/0,
+plan126 21/0, plan137 16/0, map_literals 28/1 (positive_const_map pre-existing), plan126_2 9/1
+(p5_printable pre-existing), plan91_fe1 8/2 (NovaArray-erasure flip-targets pre-existing); pre-existing
+protocol-system (verified via stash-rebuild, идентичны на baseline vec_owned): plan91_8a 0/2
+(`equals` E7320), plan91_14 12/2 (`debug_fmt` E7320), plan91_8a_2 22/5 (Display-synthesis),
+str_builder 0/9 (`E_CONSUME_KEYWORD_MISSING` — unrelated to @append).
+
+## Plan 138.2 Ф.0-final — универсальный флип `[]T ≡ Vec[T]` (Vec-in-prelude) 🔴 BLOCKED + откат (HIGH-RISK протокол)
+
+**Где.** `std/prelude.nv`, `std/collections/vec_owned.nv`, `compiler-codegen/src/codegen/emit_c.rs`,
+`nova_tests/plan90_1/insert_*.nv` — всё **reverted к HEAD `cb6c8ea5077`** (Ф.0d baseline).
+
+**Что попытано (Option A — prelude-integration, единственный жизнеспособный per Ф.0 spike).** Полная
+реализация флипа: `export import std.collections.vec_owned.{Vec, VecIter}` в prelude (PRELUDE_VERSION
+13→14); `#prelude(core, runtime, collections, protocols)` + `import range.{Range}` на vec_owned.nv
+(разрыв цикла, зеркало range.nv); +188 LOC в emit_c.rs (3 codegen-патча для erased `[]T`-extension
+Vec-routing); `insert`→`splice` rename в 6 plan90_1 фикстурах (под флипом bulk-insert = `@splice`).
+
+**Почему НЕ прошёл (3 остаточных codegen-класса).** Флип вскрыл **новый** слой codegen-багов в
+erased-template path для `[]T`-extension методов (D141 extend-family) — невидимый до флипа, т.к.
+value-position `[]T` лоуэрился в NovaArray, не Vec. Spike залатал все три (emit_c.rs +188), и механика
+**доказана** (Vec-free юнит → `Nova_Vec____nova_int*`, plan138_1/3 + splice-migrated plan90_1 собирались),
+НО залатанная поверхность была слишком широкой/хрупкой для производственного порога «один coherent
+per-commit-green commit без half-states». Три класса → 3 followup-маркера:
+1. `[M-138.2-flip-erased-base-body-mono]` — erased base-body type-param → dangling `Nova_<T>*`;
+   нужна принципиальная erased-element-mono для Vec (как у NovaArray). Spike-fix = heuristic string-инспекция.
+2. `[M-138.2-flip-value-pos-arraylit-vec-gate]` (= ранее `[M-138.2-value-pos-arraylit-vec-gate]` из Ф.0b) —
+   value-position `[]T.with_capacity`/`.new`/literal/`.push` НЕ Vec-gate-aware (D38 dispatch
+   emit_c.rs:19863-19925 безусловно → NovaArray); под флипом универсально.
+3. `[M-138.2-flip-array-ext-vec-recv-routing]` — `[]T`-extension sentinel под `("[]T", method)`, НЕ под
+   Vec C-именем → Vec-receiver промахивается, `__mono_method__` утекает undefined в линкер.
+
+**Решение (VERIFY-OR-DOCUMENT, HIGH-RISK).** Spike откатан целиком (`git restore` 8 tracked files →
+HEAD); orphaned flip-acceptance фикстуры t3/t17/t18 (были untracked) удалены (re-create при реальном
+приземлении); binary пересобран против reverted emit_c.rs. Дерево GREEN, Ф.0a-d gains сохранены.
+**НЕ упрощение** — это документированный откат HIGH-RISK фазы; механизм корректен, блокер = незавершённая
+erased-template Vec-routing инфраструктура (отдельный codegen-план, аналог 138.4 G-A/G-B). Capstone
+закрыт-на-Ф.0-final как PARTIAL.
+
+**Следствие.** Ф.2/Ф.3/Ф.4/Ф.5 (retire NovaArray) **deferred** — блокируются Ф.0-final (нельзя ретирить
+NovaArray, пока value-position `[]T` лоуэрит в него). D239 PARTIAL (gated on Vec-in-prelude), D144 OPEN.
+
+**Результат.** Final broad regression **0 NEW FAIL** (reverted/GREEN, RELEASE binary пересобран):
+plan138_1 10/0, plan138_2 **15/0** (orphaned t3/t17/t18 удалены, committed t1-t16 GREEN; было 17/1 с
+untracked-fixtures), plan138_3 2/0, plan131 27/1 (vec_debug_pos pre-existing), plan90_1 21/0, plan91_fe1
+8/2 (pre-existing NovaArray-erasure flip-targets), map_literals 28/1 (positive_const_map pre-existing),
+plan101_1 18/0, plan126 21/0, plan126_2 9/1 (p5_printable pre-existing), str 13/0 (StringBuilder
+@append=copy GREEN), plan137 16/0. **190 pass / 8 fail — все pre-existing.**
+
+---
+
+## Plan 138.2 Ф.0-final — re-attempt #2 (2026-06-11): УНИВЕРСАЛЬНЫЙ ФЛИП ПРИЗЕМЛЁН 🟢 (NOT a simplification)
+
+**Re-attempt #2 закрыл BLOCKED-исход первой попытки (выше).** `[]T ≡ Vec[T]` теперь универсально:
+Vec/VecIter re-export'ятся из prelude, value/type-position `[]int` лоуэрит в `Nova_Vec____nova_int*`
+(typed storage), `#no_prelude` юниты graceful-degrade в legacy NovaArray. **0 новых FAIL; 3 flip-target
+GREEN.** Это полное приземление, НЕ упрощение.
+
+**Ключевое отличие от re-attempt #1 (откат):** первая попытка латала 3 erased-template Vec-routing
+класса heuristic-патчами шириной ~188 LOC (не прошли производственный порог). Re-attempt #2 закрыл
+те же 3 класса **принципиально**, ~7 локальными правками emit_c.rs, все по документированному
+int64-erasure контракту + `[]T`-sentinel alt-key паттерну (Plan 101.1 precedent):
+
+1. `[M-138.2-flip-erased-base-body-mono]` ✅ CLOSED. Array-арм `type_ref_to_c` (emit_c.rs:5109):
+   generic-stub element (`is_generic_stub_c`, dangling `Nova_T*`) → erase в `nova_int`. Тот же
+   int64-erasure что NovaArray `_`-арм (5188) + Named `any_erased` carve-out (5054). Concrete Vec
+   mono эмитится per-call-site.
+2. `[M-138.2-flip-array-ext-vec-recv-routing]` ✅ CLOSED. (a) call-routing splice'ит `("[]T",m)`
+   sentinel в candidates когда direct-key пуст для `Vec____*` receiver; (b) worklist-drain роутит
+   `Vec____*::m` на `[]T` base FnDecl (recv_type=`Vec____<elem>` → typed-Vec-receiver instance);
+   (c) elem-extract de-mangle через `generic_type_instance_info` (string-strip `Vec____` даёт mangled
+   `Nova_Wrap_p`, не C-тип). Mirror в `infer_expr_c_type`.
+3. `[M-138.2-flip-value-pos-arraylit-vec-gate]` ✅ CLOSED по факту. 4 contains_key("Vec")-гейта
+   (Plan 138.1) уже Vec-aware; универсальная prelude-доступность Vec = фикс (gate всегда ON для
+   prelude-юнитов). Проверено t3/t17.
+
+**Flip-induced semantic deltas (мигрированы корректно, документированы — НЕ дефекты):**
+- `str.try_from([]u8)`: под флипом arg = `Nova_Vec____nova_byte*` (не `NovaArray_nova_byte*`).
+  Структуры layout-идентичны → cast к helper param-type.
+- plan90_1: bulk `insert(i, array)` → `splice(i, other)` (6 фикстур). Vec разделяет single-elem
+  `@insert(i, v)` и bulk `@splice(i, other)` — sanctioned rename (vec_owned.nv:258-275).
+- plan90_1/reserve_negative_extra_neg: Vec `@reserve(additional<=0)` = lenient no-op (Rust-style),
+  legacy NovaArray panic'ил. Фикстура переформулирована positive. Semantic delta, не дефект.
+
+**Результат (RELEASE binary пересобран).** plan138_1 10/0, plan138_2 **18/0** (t3/t17/t18 re-created),
+plan138_3 2/0, plan91_fe1 **10/0** (было 8/2), plan90_1 21/0, plan131 27/1, map_literals 28/1,
+plan101_1 18/0, plan101_2 2/0, plan126 21/0, plan126_2 9/1, str 13/0, plan137 16/0, plan62 29/7
+(verified identical clean-HEAD baseline). **224 pass / 10 fail — все 10 pre-existing, 0 NEW FAIL.**
+DoD C1 proven: t3.c `Nova_Vec____nova_int* x`; t18.c (#no_prelude) Vec=0/NovaArray=2. PRELUDE_VERSION
+13→14. D239 PARTIAL→ACTIVE(universal); D144 closed. Ф.2/Ф.3 (retire NovaArray) теперь разблокированы.
+
+**Инцидент-нота (recovery).** В ходе baseline-сверки plan62 был сделан `git stash` своих изменений;
+`git stash pop` по ошибке применил stash другого worktree (M:N runtime WIP, conflict-state UU в
+runtime .c/.h + emit_c.rs). Recovery: `git checkout HEAD -- <conflicted>` сбросил чужой stash, затем
+`git stash apply stash@{N}` восстановил свой. Урок: при множественных worktree использовать
+`git stash apply stash@{N}` с явным индексом, НЕ `pop` (берёт stash@{0} = чужой). Чужой stash НЕ тронут.
+
+## Plan 138.2 Ф.2-Ф.5 — NovaArray retirement: producer-audit + close-PARTIAL (BLOCKED на Plan 139 Ф.2)
+
+**Что упрощено / отложено.** Полный физический retire `NOVA_ARRAY_DECL/IMPL` из `array.h` (DoD C5/C6)
+**НЕ выполнен** — принципиально заблокирован строковым/byte слоем, который остаётся на NovaArray до
+Plan 139 Ф.2. Это **VERIFY-OR-DOCUMENT исход** (не silent-cap): build НЕ трогался (0 codegen-change →
+GREEN), блокирующая цепочка задокументирована эмпирически в D239 spec + плане.
+
+**Почему BLOCKED (эмпирический grep-аудит post-flip .c-корпуса).** Живые NovaArray-потребители по
+element-class: `nova_byte`≈35700, `nova_str`≈2100, `nova_char`≈1200, `nova_int`≈440, `void_p`≈29,
+`int32_t`≈10. Пять producers переживают universal-flip:
+1. **string/byte слой (главный).** `nova_str_as_bytes`→`NovaArray_nova_byte*`, `nova_str_split`→
+   `NovaArray_nova_str*`, `from_bytes_*` = RETAINED C-примитивы (Plan 139 Ф.2 scope-out, gated
+   `[M-139-f0-lang-item-decl]`/`[M-139-f2-ptr-field-producers]`). WriteBuffer/StringBuilder bulk-ops
+   на `[]byte` (`nova_array_append_nova_byte`≈3300, `compare_nova_byte`≈556, append_zero/truncate/
+   reserve≈278). Удаление = unknown-type CC-FAIL по base64/json/encoding/text. **Risk RG.**
+2. **4 gate-сайта `contains_key("Vec")`** (emit_c.rs:2119/5123/26662/32328) = graceful-degrade для
+   `#no_prelude` (tested feature, 23 fixtures: plan107/plan62/plan110_9_np). **Risk RE — гейты ОБЯЗАНЫ остаться.**
+3. **closure-array `[]fn`** → `NovaArray_void_p*` (sanctioned exception, `[M-138.2-closure-array-vec]`).
+4. **parfor (D71)** internal result-буфер (`NovaArray_{int,bool,f64,str}`, layout-identical, не escape'ит)
+   → `[M-138.2-parfor-vec]`.
+5. **literal-bridge `Vec[T].from(items []T)`** static param → `NovaArray_nova_int*` dead stub
+   (`[M-138.2-self-in-param]`).
+
+**Ф.2 producer-audit (что РЕАЛЬНО сделано, 0 риска).** (2.1) parfor + (2.2) closure-array = sanctioned
+documented exceptions (followups заведены). (2.3) generic-Vec bulk-bridge VERIFIED уже retired
+(emit_c.rs:21458-21465 → RawMem Vec Nova-body, `[M-138-vec-bulk-parity]` DONE); остаётся `as_ptr`/
+`as_mut_ptr` (нет Vec-метода) + `nova_byte` string-layer (Plan 139). Фикстуры t19-t25 НЕ создавались
+(под-задачи свелись к verify+document; t25 grep-gate был бы RED by-design — retire не выполнен).
+
+**Семантически невидимо.** Никакое наблюдаемое поведение не изменилось: flip уже был GREEN (Ф.0-final),
+эта фаза = audit + docs. `[]T ≡ Vec[T]` работает универсально; NovaArray существует физически только
+как backing legacy-слоёв (string/byte/closure/parfor/#no_prelude), все layout-identical с Vec.
+
+**Регрессии: 0.** 0 codegen-change. Targeted broad-suites GREEN: plan138_1 10/0, plan138_2 18/0,
+plan138_3 2/0, plan90_1 21/0, plan131 27/1 (pre-existing vec_debug_pos), plan91_fe1 10/0, str 13/0,
+map_literals 28/1 (pre-existing const_map), plan101_1 18/0, plan126 21/0, plan126_2 9/1 (pre-existing
+p5_printable), plan137 16/0, concurrency parfor 3/0, plan55 16/3 (3 pre-existing: gc_stress RUN-FAIL +
+2× f3 nova_unit auto-derive). 0 NEW FAIL.
+
+**SHA-таблица (per-commit-green, docs-only).**
+| Commit | Что |
+|---|---|
+| `<f2-audit>` | docs(plan138.2 Ф.2): producer-audit — bulk-bridge retired, parfor/closure-array sanctioned exceptions; D239 spec amend; backlog markers |
+| `<f3-5-close>` | docs(plan138.2 Ф.3-Ф.5): close-PARTIAL — retire BLOCKED on Plan 139 Ф.2; project-creation + simplifications |
+
+**Вывод (FINAL CLOSE 2026-06-11).** Plan 138.2 ✅ CLOSED — универсальный Vec-флип `[]T ≡ Vec[T]`
+(ядро капстоуна, hard-часть) приземлён GREEN (re-attempt #2, commit `09d08107d6d`; C1 ✅,
+PRELUDE_VERSION 13→14, D239 ACTIVE-universal, D144 закрыт, 3 flip-блокера принципиально закрыты,
+193/3 broad-regression — 0 NEW FAIL). Промежуточный close-commit `b8ff72271c1` зафиксировал флип как
+«REVERTED» — это относилось к re-attempt #1 (откат при API-529), УСТАРЕЛО: re-attempt #2 флип LIVE.
+Физическое удаление макросов NovaArray (`NOVA_ARRAY_DECL/IMPL`, 33 вхождения в array.h + 4
+`contains_key("Vec")` gate-сайта) НЕ выполнено — producer-audit (Ф.2) завершён, физ-retire = отдельный
+re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; верифицировано grep'ом).
+
+| `<final-close>` | docs(plan138.2 FINAL CLOSE): correct b8ff722 «flip reverted» → flip LANDED GREEN (re-attempt #2); plan-doc header/Ф.5-ИСХОД/DoD-regression + project-creation + memory |
+
+| `D241` | spec(D241): canonical type-modifier order = **scope-adjacency** (канон `value priv`, не `priv value`); order-independence запрещён («one canonical syntax»). Обоснование: `value` type-level левее, `priv` field-default вплотную к `{…}`. Enforcement → `[M-138-canonical-modifier-order]` (флип plan124_8 order-independence-теста в negative). + 5 session design-review маркеров в backlog (unsafe-block-postfix, double-pointer-test, binding-type-mut-conflict, ptr-cast-reinterpret-unsafe, canonical-modifier-order). |
 ### Plan 83-study-go-c-mn Ф.1 — fixed-ring runq примитив (порт go1.4), 2026-06-11
 
 - **`[M-83-study-go-c-mn]` research+декомпозиция выполнены.** workflow (11 агентов) →
@@ -34803,6 +35437,216 @@ vec_owned.nv `check` ok.
   «cancel будит всех, scope не виснет», а не латентность. Verify ≥150 iters (не 50: P(false-good)=0.67).
 - **НЕ применён** gopark cancel-veto (scope-creep против несуществующего failure-mode) → P3 marker.
 
+### Plan 147 Ф.2-3 — 3-axis mutability parser+checker (L1/L2/L3), 2026-06-12
+
+- **Где:** parser/mod.rs (Star/KwRo arms + binding-stmt mut-preserve), types/mod.rs
+  (check_target_readonly + f1_check_assign_let + infer_expr_type + reassign-gate),
+  emit_c.rs (binding-mut promotion removed). Commit 34c13261913.
+- **Что:** реализована трёхосевая модель D246 (откат flip-scan D245). L1 binding
+  (`ro`/`mut` перед именем = переприсваиваемость), L2 view (`ro`/`mut` перед
+  value/record-типом = транзитивный freeze owned-графа, СТЕНА на `*`), L3 pointee
+  (`*T`=ro / `*mut T`=mut, ИЗ ТИПА, позиционно-независимо). `*T ≡ *ro T`
+  универсально; `*ro T`→E_REDUNDANT_POINTER_RO (hard, fix-it `*T`); `*p=v` через
+  ro-pointee→E_POINTER_RO_ASSIGN; R2-split `ro r mut T` (content✅/reassign❌);
+  голый `ro r`=freeze (P7); rebind `ro`-локала→E_LOCAL_NOT_MUT; content-coercion
+  E_READONLY_COERCE по L2-view (учёт binding для bare-type). plan147 oracle 19/19.
+- **Осознанные ограничения (НЕ упрощения модели — границы реализации checker'а):**
+  - **infer_expr_type для return-coercion / deref-write через call** — пропагирует
+    только `ro`-wrapped и pointer return-типы, и ТОЛЬКО когда ВСЕ overload'ы
+    согласны (call-resolution ещё не выполнена на этом этапе). Это НЕ полноценный
+    return-type inference (нет мономорфизации). Достаточно для oracle row D
+    (`-> ro Value`, `-> *T`/`-> *mut T`); более сложные формы (generic-return,
+    method-call-return `v.f()`) дают `None`→no-gate. Для них L3-нарушение
+    ловится позже C-компилятором (`const T*` write = CC-FAIL), не чистой Nova-
+    диагностикой. **Followup [M-147-infer-call-ret-mut-axis]** (P2).
+  - **L3 deref-write gate (`*p=v`)** срабатывает только когда `p` — простой Ident
+    или As-cast с известным типом в scope. `*(p+i)=v` (Binary operand) и прочие
+    составные lvalue-деривации дают `infer_expr_type=None`→no-gate; ловится C-
+    компилятором через const-pointee (поведение как до Plan 147). **Followup
+    [M-147-deref-write-compound-lvalue]** (P2).
+  - **Generic-element write `*v[i]=x` (oracle row E `Vec[*T]` vs `Vec[*mut T]`)**
+    — НЕ покрыт чистой Nova-диагностикой (element-type inference через `[]`-index
+    на generic-instance требует мономорфизации в checker'е). Ловится C-уровнем
+    (const element pointee). Документирован в oracle, но не enforced на Nova-
+    уровне. **Followup [M-147-generic-element-deref-write]** (P2).
+- **Почему:** ATOMIC parser+checker gate требует FULL oracle A-E green + 0 new FAIL
+  на baseline pointer/value dirs. Реализованы все формы где checker имеет тип; для
+  call/compound/generic-derived типов — graceful fallback на C-уровневый const-
+  enforcement (soundness сохранён: ro-pointee write всё равно отвергается, просто
+  позже и с C-, а не Nova-диагностикой). Production: ни одна форма не «тихо
+  разрешена» — либо Nova-error, либо CC-error.
+
+### Plan 147 Ф.4 — миграция 3-axis canon (2026-06-12)
+- **R2-split зеркало `mut r ro Point`** — реализовано полностью (НЕ упрощение):
+  Ф.2-3 gate реализовал только `ro r mut Point`, зеркало `mut r ro Point`
+  (mut-binding + ro-type-view → field-write freeze) пропускалось. Добавлен
+  `root_view_is_ro_type` в check_target_readonly → E_READONLY_FIELD. Oracle
+  a4 18/1→19/19. Это **закрытие** дыры, а не simplification.
+- **PRE-EXISTING gap (НЕ Plan 147): `null *()` не ловится retraction-guard'ом.**
+  Парсер `parse_primary` emit'ит E_NULL_PTR_RETRACTED_USE_OPTION только когда
+  `null` за которым bare prim-ident (`ptr`/`int`/…/`str`). Форма `null *()`
+  (typed-pointer-literal) не покрыта guard'ом → fall-through → `undefined
+  identifier null`. Фикстура plan118/t5_neg_null_ptr_retracted ожидает
+  E_NULL_PTR_RETRACTED_USE_OPTION → NEG-WRONG-MSG. Регрессия с Plan 134
+  (commit c41d568ae2c мигрировал тело фикстуры `null ptr`→`null *()`, но guard
+  не расширил). Orthogonal к 3-axis модели; не в scope Ф.4. Followup
+  **[M-147-null-star-ptr-retraction-guard]** (P3). Hard-error сохранён (просто
+  другой код).
+
+### Plan 147 Ф.5-Ф.6 — oracle corpus + CLOSE (2026-06-12)
+- **БЕЗ упрощений модели.** Ф.5 = чистый test-корпус (0 компилятор-кода), Ф.6 =
+  close/docs. 3-axis (D246) реализован полностью: parser+checker+codegen, oracle
+  A-E 30/0. Закрыт Ф.1-Ф.6, branch plan-138.1 (НЕ смёржен).
+- **ТРИ oracle-ячейки НЕ оформлены как чистые Nova-negatives** (документированные
+  границы, НЕ упрощения — soundness держится C-уровневым const-pointee, `const T*`
+  write = CC-FAIL; ни одна форма не «тихо разрешена»): **p=v на цепочках
+  [M-147-deref-write-compound-lvalue], `*v[i]=x` на Vec[*T]
+  [M-147-generic-element-deref-write], `s.ptr=q` str-поле write-ban (дополнительно
+  gated на [M-139-f0-lang-item-decl] — str = compiler built-in, нет Nova-source
+  lang-item декл). Каждая покрыта POSITIVE type-acceptance фикстурой (c7/e3/e5) с
+  границей в prose. НЕ конвертировать в EXPECT_COMPILE_ERROR пока соответствующий
+  enforcement не приземлится.
+- **[M-138-binding-type-mut-conflict] CLOSED** — НЕ требует visibility-aware
+  диагностики: D246 P6 split (L1 binding × L2 view) прямо разрешает обе пары
+  `ro X mut T`/`mut X ro T` как ортогональные оси. Это закрытие через модель, не
+  упрощение.
+
+### Plan 139.1 Ф.A — str lang-item decl + ABI-alias (E1-GATE, 2026-06-12)
+- **БЕЗ упрощений модели.** str объявлен как полноценный Nova value-record
+  `type str value priv { ptr *u8, len int }` в `std/prelude/core.nv`. Lang-item
+  линковка ПЕРЕИСПОЛЬЗУЕТ value-record-машинерию (Plan 124.8) — НИКАКОЙ новой
+  checker-инфры: str просто попадает в `self.types`, privacy fires через
+  существующий record-path `f3_check_member`. ABI-bridge: str ∈
+  `RUNTIME_DEFINED_TYPES` + forward-decl skip (emit_c.rs) — C-тип = hand-written
+  typedef `nova_str` ({const uint8_t* ptr; int64_t len;}), НИКАКОЙ `NovaValue_str`
+  struct (0 occ в gen-C). Все ~354 рантайм-сайта + literal-lowering не тронуты.
+- **Same-name field/method резолюция (НЕ упрощение — соответствует design):**
+  `f3_check_member` теперь предпочитает МЕТОД, если у типа есть одноимённый
+  метод (str: field `len` + method `@len()`). `s.len()` (method-call) больше не
+  мис-флагается `E_PRIV_FIELD_READ`. Bare field-read `s.ptr` (нет метода `ptr`)
+  по-прежнему fires privacy. Это документированный field/method same-name design
+  (см. E_BOUND_METHOD heuristic) — codegen уже резолвит `s.len()` в метод.
+- **`@byte_len` alias = `@len` (latent-bug fix, не упрощение):** 5 сайтов
+  string.nv (parse_int/pad_left/pad_right/repeat) + StringBuilder.with_capacity
+  вызывали `@byte_len()`, которого НЕ было среди registered str-методов —
+  «работало» только пока str member-access был полностью permissive (str НЕ был
+  в self.types). После приземления lang-item method-resolution стал строгим →
+  добавлен реальный метод `@byte_len() => @len()` (D26: str.len = bytes).
+- **e5_str_ptr_field_ok ORACLE-PIN SUPERSEDED (намеренно, не тихая регрессия):**
+  `nova_tests/plan147/e5` читал `s.ptr` снаружи str-модуля и EXPECT'ил ok под
+  pre-lang-item хардкод-примитивом. Теперь `s.ptr` снаружи → E_PRIV_FIELD_READ
+  (= GATE requirement). e5 мигрирован на public `s.len()`; кейс `s.ptr`-снаружи
+  закреплён dedicated neg-фикстурой `plan139_1/neg_str_priv_field.nv`. e5's
+  собственный header это анонсировал.
+- **Ф.B/Ф.C/Ф.D НЕ in scope этой задачи** (атомарный Ф.A = GATE). 10 external
+  C-методов str (`@concat`/`@hash`/`@as_bytes`/`from_bytes_*`/`@split`/`@compare`/
+  `@byte_at`/`@len`) пока C-routed — миграция на Nova-body via `@ptr` byte-access
+  = Ф.B. content-eq override (D228) уже работает через direct BinOp lowering
+  (не Plan 141 field-by-field). marker `[M-139-f0-lang-item-decl]` остаётся OPEN
+  до Ф.D close — НО самая сложная часть (lang-item infra + privacy) ПРИЗЕМЛЕНА.
+
+### Plan 139.1 Ф.B — str method C→Nova migration: VERIFY-OR-DOCUMENT, 0 retired (2026-06-12)
+- **РЕЗУЛЬТАТ: НИ ОДИН из 10 external методов не мигрирован — ни один не
+  мигрируем чисто СЕГОДНЯ.** Это VERIFY-OR-DOCUMENT исход (genuine effort →
+  documented), НЕ relaxed-gate. ZERO source changes → build остаётся зелёным
+  (plan139_1 2/0, plan139 37/0, str 13/0, plan91 2/0, plan126 21/0, plan108_4
+  12/1 [pos_receiver_at_parse c.fmt pre-existing] — идентично Ф.A baseline).
+- **КЛЮЧЕВОЙ ВЫВОД:** все pure-Nova-выразимые str-методы УЖЕ мигрированы в
+  Ф.1/Ф.2 (starts_with/ends_with/contains/find/rfind/char_len/char_at/trim/
+  to_lower/to_upper/to_bytes/to_chars/is_empty/parse_int/pad_*/repeat/replace).
+  Оставшиеся 10 — это в точности неустранимый C-bridge + operator-lowered +
+  D117-blocked. Премисса задачи («теперь `@ptr` доступен → мигрируй») верна, но
+  `@ptr`-field-access НЕОБХОДИМ, но НЕ ДОСТАТОЧЕН для producer-форм.
+- **Per-method root cause (verified, не предположение):**
+  - **`@byte_at`** — неустранимый raw-byte-read примитив (#1, давно задокументирован).
+  - **`@as_bytes`** — должен сконструировать `NovaArray_nova_byte*`-header,
+    алиасящий raw `@ptr`. `[]u8` → `NovaArray_*` (compiler primitive,
+    emit_c.rs:5173) — НЕТ Nova-surface конструктора NovaArray из raw-parts.
+    Заблокировано на `[]T`→`Vec` universal flip (Plan 138.2 Ф.0, НЕ приземлён);
+    `@ptr` сам по себе недостаточен. = `[M-139-f2-ptr-field-producers]`.
+  - **`@split`** — zero-copy str-sub-views `str{ptr:@ptr+off,len}` + push в
+    `NovaArray_nova_str*` (тот же NovaArray-from-raw блокер). = `[M-139-f2-*]`.
+  - **`str.from_bytes_unchecked`** — должен `alloc(len+1)` + copy + write `\0`
+    на `buf[len]` (D26 §3 NUL-инвариант) + `str{ptr,len}`. Возможно только через
+    raw `RawMem.alloc` + `*mut u8` index-write + str-literal — high-risk; C-форма
+    уже оптимальна (один memcpy). Aliasing-zero-copy НАРУШИЛ бы copy+NUL контракт
+    (`readonly` arg нельзя удержать). = `[M-139-f2-*]`.
+  - **`str.from_bytes_lossy`** — `_nova_validate_utf8` + U+FFFD substitution +
+    from_bytes_unchecked-конструкция (тот же str-construction блокер). = `[M-139-f2-*]`.
+  - **`str.from_bytes_unchecked_steal`** — consume + in-place `\0` + zero-copy
+    reuse; те же ограничения. = `[M-139-f2-*]`.
+  - **`@hash`** — SipHash-1-3 + скрытый per-process crypto seed
+    (`nova_hash_seed_k0/k1`); DoS-resistance ТРЕБУЕТ чтобы seed НЕ был Nova-видим.
+    Неустранимый. = NEW `[M-139.1-hash-irreducible-crypto-seed]`.
+  - **`@concat`** — лоуэрится НАПРЯМУЮ BinOp-`+`-operator codegen (не через метод).
+    Миграция тела НЕ retire'ит C-fn (`nova_str_concat` остаётся для `+`) и
+    добавляет perf-регрессию (push-loop vs memcpy). = NEW `[M-139.1-operator-lowered-methods]`.
+  - **`@compare`** — лоуэрится comparison-operator synthesis; то же что concat.
+    = `[M-139.1-operator-lowered-methods]`.
+  - **`@len`** — `s.len` field-style access = HARD ERROR `E_SIZE_ACCESSOR_FIELD`
+    (D117, emit_c.rs:17625) → НЕЛЬЗЯ field-read. Метод routes на
+    `nova_str_byte_len` (O(1) field-read в C — уже оптимально). = NEW
+    `[M-139.1-len-d117-method-only]`.
+- **ЧЕСТНОСТЬ vs ОШИБКА ПРОШЛОГО 139:** прошлый 139 закрыл E1/E4 с relaxed-gate
+  (str «вёл себя» как value-record но не был объявлен). ЗДЕСЬ обратное: НЕ
+  объявляем фейковую миграцию ради галочки. 0 методов retired — честный факт;
+  настоящий разблокер producer-форм = `[]T`→`Vec` flip (Plan 138.2 Ф.0), не Ф.B.
+
+### Plan 139.1 Ф.C — str content-eq override (D228) + E1 privacy neg fixtures (2026-06-12)
+**FIXTURES ONLY — 0 compiler/std source change, binary unchanged от Ф.A (6670216167a).**
+- **Content-eq (D228) — RE-VERIFY-AND-PIN, без source-изменений.** str's C-тип
+  остаётся hand-written `nova_str` typedef (ABI-alias landed Ф.A). BinOp `==`/`!=`
+  lowering (emit_c.rs ~17137) И `emit_field_eq` (~11310) ОБА key'ят на C-type-строку
+  `"nova_str"` → `nova_str_eq(l,r)` / `!nova_str_eq(l,r)`. `nova_str_eq` (nova_rt.h:238)
+  = `a.len==b.len && memcmp(a.ptr,b.ptr,a.len)==0` = настоящий content-eq. Override
+  УЖЕ был привязан к lang-item через Ф.A ABI-alias — объявление value-record НЕ
+  изменило `type_ref_to_c("str")=>"nova_str"`, поэтому str routes тем же content-eq
+  path'ом. Ф.C закрепляет DISTINCT-BUFFER позитивным тестом: `built = ("ab"+"cd")+"ef"`
+  (два отдельных `nova_str_concat` heap-alloc'а) сравнивается `== "abcdef"` (interned
+  literal = 3-й distinct buffer). Проверено в gen-C (str_lang_item_basic_ok.c:3796-3804):
+  вложенные `nova_str_concat` затем `nova_str_eq(built, _nova_strlit_...)` — НЕ
+  constant-folded, НЕ pointer-eq. Pointer-eq lowering ПРОВАЛИЛ бы этот assert.
+- **E1 negative corpus COMPLETE (3 фикстуры — dual buffer-protection + construction):**
+  - `neg_str_priv_field` (Ф.A): `s.ptr` снаружи → `E_PRIV_FIELD_READ` (binding-level
+    защита буфера — `priv` поле).
+  - `neg_str_ptr_write` (Ф.C NEW): запись через bare `*u8` (тип поля str) →
+    `E_POINTER_RO_ASSIGN` (type-level защита — `*u8 ≡ *ro u8` ro-pointee, D246).
+    Закреплено на bare `*u8`-параметре (НЕ `s.ptr`), т.к. outside-module `s.ptr`
+    фаerr'ит `E_PRIV_FIELD_READ` ПЕРВЫМ — privacy гейтит field-access до того как
+    pointee-write rule применится. Wrapped в `unsafe {}` чтобы фаerr'ил ТОЛЬКО
+    E_POINTER_RO_ASSIGN (bare `*p` добавил бы E_UNSAFE_REQUIRED, D216 §8).
+  - `neg_str_construct_direct` (Ф.C NEW): `str { ptr:p, len:n }` снаружи →
+    `E_PRIV_FIELD_INIT` (оба поля priv, D220 §4). Не даёт user-коду подделать str с
+    произвольной (ptr,len)-парой (нарушило бы D26 §3 NUL-инвариант + content-eq/hash
+    soundness). str-значения производимы только через public-surface lang-item'а.
+- **АНТИ-RELAXED-GATE:** content-eq доказан на distinct runtime-буферах в gen-C, не
+  на interned-литералах (которые прошли бы под pointer-eq). Каждый негатив эмпирически
+  подтверждён (фаerr'ит свой точный код до staging).
+
+## Plan 139.1 Ф.D — close (E1 ✅ FULL / E4 🟡 PARTIAL; root marker removed) — 2026-06-12
+- **STATUS:** Plan 139.1 ✅ CLOSED на `plan-138.1` (НЕ смёржен в main). E1-GATE PASSED
+  (Ф.A), не relaxed. Корневой `[M-139-f0-lang-item-decl]` УДАЛЁН из backlog (scope =
+  Nova-декл + privacy-инфра = приземлён).
+- **E1 → ✅ FULL:** `type str value priv { ptr *u8, len int }` объявлен + распознан как
+  lang-item; privacy fires (`E_PRIV_FIELD_READ` / `E_PRIV_FIELD_INIT` /
+  `E_POINTER_RO_ASSIGN`); ABI = `nova_str` typedef (нет `NovaValue_str`); 3 neg-фикстуры
+  PASS. БЕЗ новой checker-инфры — value-record (Plan 124.8) переиспользован целиком.
+- **E4 → 🟡 PARTIAL (честно, не relaxed):** все pure-Nova-выразимые методы уже мигрированы
+  (Plan 139 Ф.1/Ф.2, ~17). 10 оставшихся external НЕ мигрируемы сегодня (Ф.B
+  VERIFY-OR-DOCUMENT): `@byte_at`/`@hash` C-bridge-irreducible (crypto seed), `@concat`/
+  `@compare` operator-lowered, `as_bytes`/`split`/`from_bytes_*` gated на Plan 138.2 Ф.0
+  (`[]T→Vec` flip — `@ptr` необходим, но недостаточен), `@len` D117-method-only. Re-homed
+  на `[M-139-f2-ptr-field-producers]`.
+- **Регрессия (RELEASE binary, broad):** 0 new FAIL. plan139_1 4/0, plan139 37/0, str 13/0,
+  plan147 30/0, plan124_8 40/0, plan91 2/0, plan126 21/0, basics 8/0, contracts 250/0,
+  plan136_1 7/0, plan99 9/0, plan138 10/0, plan95 6/0. Все FAIL (plan62 ×7, plan108_4 ×1
+  pos_receiver_at_parse, plan131 vec_debug_pos, plan108_2 ×4 [M-139-f6], map_literals
+  positive_const_map ×1) — подтверждённо pre-existing per baseline a340d3bb673.
+- **Spec:** D26 / 02-types.md (str lang-item) / 08-runtime.md синхронизированы под Ф.A
+  (`ptr *u8` ro-pointee per D246); декл-строка `type str value priv {ptr *u8,len int}`.
+- **Docs only в Ф.D:** plan-docs (139.1 + 139 audit), project-creation.txt, simplifications.md,
+  backlog-followups.md (root marker removed, f1/f2 regated), memory. 0 source change → binary
+  unchanged @ 6670216167a.
 ### Plan 83-go-cmn Ф.3 — ОТЛОЖЕН (design-finding, без кода), 2026-06-11
 
 - **uv_async УЖЕ корректный note-примитив** (idempotent + before/after ordering + IOCP-backed

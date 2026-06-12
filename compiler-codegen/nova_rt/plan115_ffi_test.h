@@ -102,4 +102,49 @@ static inline void* nova_fn_p115_int_to_ptr(nova_int value) {
     return (void*)(uintptr_t)value;
 }
 
+/* ─── Plan 139 Ф.4 — str ↔ C-string FFI interop shim ───
+ *
+ * Exercises the `str` value-record ABI (`{const uint8_t* ptr; int64_t len;}`)
+ * at the C FFI boundary, proving Plan 139's risk-limiter (the nova_str typedef
+ * alias) holds end-to-end:
+ *
+ *   - p139_str_byte_sum(nova_str): reads .ptr/.len of a str passed BY VALUE,
+ *     sums the bytes. Proves str → C (a C fn taking the str value-record reads
+ *     the immutable UTF-8 buffer through `const uint8_t* ptr`, no copy).
+ *
+ *   - p139_cstr_strlen(const char*): receives a CStr (Nova `CStr(*u8)` newtype,
+ *     which marshals to `const char*` / `const uint8_t*` at the ABI) and runs
+ *     C strlen. Proves str → CStr → C: the NUL-terminator invariant (D26) means
+ *     a CStr from `s.as_cstr()` is a valid `const char*` and strlen terminates
+ *     correctly. The Nova-side `as_cstr()` scans for embedded NULs first.
+ *
+ *   - p139_make_str(): returns a `nova_str` constructed C-side via
+ *     nova_str_from_cstr from a static rodata C-string. Proves C → str
+ *     (from_cstr path): the returned 16-byte value-record carries a pointer
+ *     into rodata (never collected) and the correct byte length.
+ *
+ * All three take/return the `nova_str` typedef or its `const char*` field type
+ * unchanged — no Plan 139-specific C surface beyond the typedef redefinition. */
+
+static inline nova_int nova_fn_p139_str_byte_sum(nova_str s) {
+    nova_int acc = 0;
+    for (int64_t i = 0; i < s.len; i++) {
+        acc += (nova_int)(unsigned char)s.ptr[i];
+    }
+    return acc;
+}
+
+/* CStr (Nova `CStr(*u8)`) marshals to a raw byte pointer at the ABI. We take
+ * `const char*` (≡ `const uint8_t*`, same 8-byte ptr) and run libc strlen —
+ * valid because as_cstr() guarantees the NUL terminator (D26 invariant + the
+ * embedded-NUL scan). */
+static inline nova_int nova_fn_p139_cstr_strlen(const char* c) {
+    return (nova_int)strlen(c);
+}
+
+/* C → str via from_cstr: returns the canonical 11-byte greeting from rodata. */
+static inline nova_str nova_fn_p139_make_str(void) {
+    return nova_str_from_cstr("hello world");
+}
+
 #endif /* NOVA_P115_FFI_TEST_H */

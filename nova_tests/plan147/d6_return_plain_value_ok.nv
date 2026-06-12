@@ -1,0 +1,23 @@
+// Plan 147 Ф.5 — ORACLE row D positive: `-> Value` (bare, no `ro`).
+//
+// A plain (non-`ro`) return binds caller mut-default (D184): the caller's
+// `mut a = f()` gets a MUT content-view, so both reassign and field-write are
+// allowed. Contrast with `-> ro Value` (covered in d1/d2/d3) which freezes the
+// caller's content-view.
+//   `mut a = f()` → `a = X` ✅, `a.n = 5` ✅
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.d6_return_plain_value_ok
+
+type Value value { mut n int }
+
+fn make() -> Value => { n: 1 }
+
+fn main() -> () {
+    mut a = make()
+    a = make()
+    a.n = 5
+    assert(a.n == 5)
+    println("ok")
+}

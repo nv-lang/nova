@@ -22,7 +22,7 @@ test "append without prior view — no lint" {
 
 test "insert without prior view — no lint" {
     mut arr []int = [1, 4]
-    arr.insert(1, [2, 3])
+    arr.splice(1, [2, 3])
     assert(arr.len() == 4)
     assert(arr[1] == 2)
 }

@@ -1,0 +1,26 @@
+// Plan 139 Ф.6 — interning does not break Ф.3 content equality. An interned
+// literal and a runtime-built string with the same bytes must still compare
+// equal (content-eq, NOT pointer-eq). Interning shares pointers only across
+// identical literals; built strings get distinct buffers — content-eq bridges
+// both, so interning stays invisible.
+module plan139.t6_intern_eq_unaffected
+
+test "interned literal == built string (content-eq survives interning)" {
+    ro lit = "abc"
+    ro built = "ab".concat("c")
+    assert(lit == built, "interned literal == built (content)")
+    assert(built == lit, "symmetric")
+}
+
+test "interned literals hash like their built equals" {
+    ro lit = "hello"
+    ro built = "hel".concat("lo")
+    assert(lit == built, "equal content")
+    assert(lit.hash() == built.hash(), "equal content -> equal hash")
+}
+
+test "two interned occurrences hash equal" {
+    ro a = "world"
+    ro b = "world"
+    assert(a.hash() == b.hash(), "interned occurrences hash equal")
+}
