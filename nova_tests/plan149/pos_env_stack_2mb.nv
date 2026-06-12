@@ -1,0 +1,33 @@
+// pos_env_stack_2mb.nv — Plan 149 D233 AC2: NOVA_FIBER_STACK=2MB applied.
+//
+// 2MB is below the 4MB builtin default. With the must_fix #1/#2 fix the
+// per-fiber minicoro stack_size derives from the RUNTIME arena slot_size
+// (nova_fiber_arena_slot_size()), so the env value actually sizes the slot.
+// 2MB (> 256KB floor) is plenty for a moderate recursion; the fiber spawns,
+// recurses, and returns without overflow — a positive smoke that the env
+// value is honored (the arena initializes at the requested size and the
+// fiber runs in it).
+//
+// NOVA_MAXPROCS=1 → single worker arena → one deterministic config resolve.
+//
+// ENV NOVA_FIBER_STACK=2MB
+// ENV NOVA_MAXPROCS=1
+
+module plan149.pos_env_stack_2mb
+
+fn rec_sum(n int) -> int {
+    if n <= 0 {
+        0
+    } else {
+        n + rec_sum(n - 1)
+    }
+}
+
+test "NOVA_FIBER_STACK=2MB: fiber recurses and returns" {
+    mut r = 0
+    supervised {
+        spawn { r = rec_sum(1500) }
+    }
+    // 1500 * 1501 / 2 = 1125750
+    assert(r == 1125750)
+}

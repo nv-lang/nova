@@ -1,0 +1,47 @@
+// pos_max_fibers_roundup.nv — Plan 149 D233 AC3: NOVA_MAX_FIBERS auto-round-UP.
+//
+// NOVA_MAX_FIBERS=20000 is NOT a multiple of 64. The arena rounds it UP to
+// 20032 (the next multiple of 64) and clamps into [64, SLOT_COUNT_MAX]; the
+// user never has to know about the ×64 internal constraint. This is a positive
+// smoke that a non-multiple-of-64 value initializes the arena successfully and
+// fibers spawn under it (the rounded count 20032 is well above the spawn
+// counts here, so no exhaustion). The exact rounded value (20032) was verified
+// at the runtime level during Plan 149 closure; the Nova-level evidence is that
+// the program runs cleanly with a non-×64 NOVA_MAX_FIBERS.
+//
+// NOVA_MAXPROCS=1 → single worker arena, deterministic config resolution.
+//
+// ENV NOVA_MAX_FIBERS=20000
+// ENV NOVA_MAXPROCS=1
+
+module plan149.pos_max_fibers_roundup
+
+test "NOVA_MAX_FIBERS=20000 (rounds to 20032): 400 fibers spawn + sum" {
+    mut total = 0
+    supervised {
+        mut i = 1
+        while i <= 400 {
+            ro cur = i
+            spawn { total += cur }
+            i += 1
+        }
+    }
+    // 1 + 2 + ... + 400 = 80200
+    assert(total == 80200)
+}
+
+test "non-multiple-of-64 max: sequential supervised blocks reuse slots" {
+    mut acc = 0
+    mut blk = 0
+    while blk < 3 {
+        supervised {
+            mut i = 0
+            while i < 100 {
+                spawn { acc += 1 }
+                i += 1
+            }
+        }
+        blk += 1
+    }
+    assert(acc == 300)
+}
