@@ -2596,6 +2596,24 @@ loop-var с явной границей `v.len()`/`@len` (см. [Plan 140.2](../
 Прямой вызов `v.index(i)` (редкий) эмитит контракт-enforcement метода
 (`requires failed: 0 <= i && i < @len`) — формат D24/Plan 140.1.
 
+### Условие доказуемости элизии (verifier) + soundness
+
+Верификатор (`prove_vec_index_sites`, гейт non-trivial backend) доказывает
+`0 <= idx && idx < v.len()` для каждого `v[idx]`-сайта (**read И write-back
+`v[i]=val`**) под loop-bound `for i in lo..v.len()`; доказанные сайты — в
+proven-множестве для codegen-элизии.
+
+**Frame-условие (обязательно для soundness):** длина `v` должна быть
+**инвариантна** в теле цикла. Z3 моделирует `_field_len_int(v)` как
+фиксированное, а Nova переоценивает `0..v.len()` каждую итерацию — поэтому
+мутация длины ДО доступа сломала бы `i < v.len()@access`. Frame-check
+(`*_len_safe`) допускает `v` лишь как: `v[i]`-read, `v[i]=val` in-place-write
+(`mut @index` СОХРАНЯЕТ длину) и аксессоры `v.len()/cap()/byte_len()/is_empty()`;
+**length-changing методы** (`push`/`pop`/`insert`/`remove`/…), `&v`, передача
+`v` в вызов, реассайн `v` и любое bare-`v` → НЕ len-safe → сайт не элидируется
+(консервативно safe). Эволюция: B.4 MVP покрывал только read-only циклы; followup
+`[M-140.2-elision-writeback]` расширил на write-back (in-place запись).
+
 ### Почему контракт, а не codegen-only range-анализ
 
 Bounds как **декларативный контракт** на `@index`: (1) единый источник
