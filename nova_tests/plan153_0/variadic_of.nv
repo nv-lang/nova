@@ -1,0 +1,21 @@
+// [M-153-vec-of-variadic-codegen]: user-defined generic-static variadic
+// constructor `Vec[T].of(...args []T)`. Call-site variadic collection packs
+// `of(1,2,3)` args into a single `[]T` (= Vec[T]) value matching the body's
+// collected parameter. Exercises the std `Vec[T].of` (std/collections/vec/core).
+module plan153_0.variadic_of
+import std.collections.vec.{Vec}
+
+test "variadic of: int, multiple args" {
+    ro v = Vec[int].of(1, 2, 3)
+    assert(v.len() == 3 && v[0] == 1 && v[1] == 2 && v[2] == 3)
+}
+
+test "variadic of: empty (0 args)" {
+    ro v = Vec[int].of()
+    assert(v.len() == 0)
+}
+
+test "variadic of: str element type" {
+    ro v = Vec[str].of("a", "b")
+    assert(v.len() == 2 && v[0] == "a" && v[1] == "b")
+}

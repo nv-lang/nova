@@ -193,18 +193,20 @@ export fn Vec[T].from(items []T) -> Self => Vec[T].with_capacity(items.len()).ex
 // assignment, which applies the implicit numeric conversion correctly. The
 // in-module same-`T` bulk ops (`@realloc_to`/`@append`/`@clone`/`@insert`/
 // `@remove`/`@copy_from`/`@copy_within`) have matching strides and stay bulk.
-//
-// DEFERRED ([M-153-vec-of-variadic-codegen], user request 153.1): an ergonomic
-// variadic constructor `Vec[T].of(...items []T) -> Self => items` would read
-// better than `from([literal])` (under D239 a literal `[1,2,3]` is already a
-// `Vec[int]`, so `from([literal])` is redundant) and could return the collected
-// args zero-copy. BLOCKED by a codegen gap: call-site variadic collection
-// (packing `of(1,2,3)` args into a `[]T`) is implemented only for the external
-// `print`/`println` special-case, NOT for user-defined generic-static variadic
-// methods — codegen passes the raw args straight through (`_static_of(1,2,3)`
-// → "too many arguments", the fn expects one collected `Vec[int]*`). Lands in
-// 153.1 once user-defined variadic-collection codegen exists. `from` stays the
-// element-narrowing (`Vec[u8].from([1,2,3])`) + iterable-materialiser path.
+
+/// Ergonomic variadic constructor: `Vec[int].of(1, 2, 3)`. The call-site
+/// variadic args are collected into a single `[]T` (= `Vec[T]`) value and
+/// returned zero-copy. Reads better than `from([literal])` (under D239 a
+/// literal `[1,2,3]` is already a `Vec[int]`, so `from([literal])` is
+/// redundant). `of()` with no args yields an empty `Vec[T]`.
+///
+/// [M-153-vec-of-variadic-codegen] (resolved): user-defined generic-static
+/// variadic collection. The call-site packs `of(1,2,3)`'s args into a single
+/// collected `[]T` matching this body's `args` parameter — previously the raw
+/// args were passed straight through (`_static_of(1,2,3)` → "too many
+/// arguments"). `from` stays the element-narrowing (`Vec[u8].from([1,2,3])`) +
+/// iterable-materialiser path.
+export fn Vec[T].of(...args []T) -> Self => args
 
 // ──────────────────────────────────────────────────────────────────────────
 // Size / introspection

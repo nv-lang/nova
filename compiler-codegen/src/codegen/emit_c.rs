@@ -29990,6 +29990,26 @@ _cp++; \
                     {
                         Some((type_name.clone(), name.clone()))
                     }
+                    // [M-153-vec-of-variadic-codegen]: turbofish static call
+                    // `Type[T].method(...)` парсится как
+                    // Member{obj: TurboFish{base: Ident("Type"), ..}, name}.
+                    // method_overloads ключаются по declared type name ("Vec"),
+                    // не по mono-инстансу — без этой arm variadic-routing для
+                    // `Vec[int].of(1,2,3)` не fire'ит и call-site packing
+                    // (collect args в `[]T`) не происходит.
+                    ExprKind::TurboFish { base, .. }
+                        if matches!(&base.kind, ExprKind::Ident(_)) =>
+                    {
+                        if let ExprKind::Ident(n) = &base.kind {
+                            if self.method_overloads.keys().any(|(t, _)| t == n) {
+                                Some((n.clone(), name.clone()))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
                     _ => {
                         let obj_ty = self.infer_expr_c_type(obj);
                         let trimmed = obj_ty.trim_start_matches("Nova_")
