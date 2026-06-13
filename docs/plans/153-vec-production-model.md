@@ -147,6 +147,9 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
   доказуемого — 140.2, не здесь. `get`/`get(a..b)` — safe (`Option`).
 - **I8. Generic-корректность.** Все методы работают для value-record/Option/tuple-`T`
   (мономорфизация Plan 131), без int64-erasure.
+- **I9. Fluent-цепочки.** Мутирующие методы без data-возврата → `-> @`
+  (`v.reserve(10).extend(xs).sort()`), как `StringBuilder.@append`; data-returning —
+  возвращают значение. Требует устойчивого `@`-chaining (`[M-138.2-vec-self-return]`).
 
 ---
 
@@ -178,6 +181,19 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
   - **`@len(n)` — ЗАПРЕЩЁН.** Прямая установка `len` — footgun (UB при `len > cap`/
     рассинхрон с буфером; рост нечем заполнить). `@len` — **только getter**. Изменение
     размера: `@truncate(n)` (shrink), `@resize(n, v)` (grow с fill), `@push`/`@pop`.
+
+**Fluent-конвенция (chaining, как `StringBuilder.@append`):**
+- **Мутирующие `mut @...`, НЕ возвращающие данные → `-> @`** (для цепочек):
+  `@cap(n)`, `@swap`, `@resize`, `@shrink_to_fit`, `@reserve`, `@sort*`, `@dedup`,
+  `@rotate*`, `@fill`, `@reverse`, `@clear`, `@truncate`, `@retain` (сейчас `-> ()` —
+  **поправить на `-> @`**), `@push`/`@insert`/`@append` (уже `@`). Пример:
+  `v.reserve(10).extend(xs).sort()`.
+- **Data-returning остаются как есть** (нельзя одновременно `@` и значение):
+  `@pop->Option[T]`, `@remove->T`, `@swap_remove->T`, `@get->Option`, `@len/@cap->int`,
+  `@binary_search->Result`, `@split_at->(a,b)`.
+- **Зависимость:** устойчивый `@`-chaining сейчас сломан для generic-метода/value-
+  record receiver — **`[M-138.2-vec-self-return]`** (цепочка мис-типизирует receiver
+  в `void*`). Конвенция раскатывается **только после** фикса (153.1 Ф.0).
 - **Внутри type-методов — читать ПОЛЕ напрямую (`@cap`), не getter (`@cap()`)** —
   ноль индиректности (не зависим от инлайна `=> @cap`), яснее. Getter — внешний
   контракт. (vec_owned уже так.)
@@ -326,7 +342,10 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 
 **Per-sub-plan A-критерии** — в файлах `153.N`. Ключевые:
 - **153.0:** `[]T≡Vec` чистый алиас; модуль по слоям; ноль дублей; golden.
-- **153.1:** swap/resize/shrink/reserve_exact; capacity-инварианты держатся.
+- **153.1:** swap/resize/shrink/reserve_exact; capacity-инварианты держатся;
+  `@cap(n)` realloc (n>=len, иначе panic); `@len(n)` запрещён; **fluent-цепочки
+  работают** (`v.reserve(10).extend(xs).sort()`), `[M-138.2-vec-self-return]` закрыт;
+  `append`/`extend` консолидированы в `append`; accessor-конвенция (D117 AMEND).
 - **153.2:** ленивая цепочка без промежуточных аллокаций; collect; A-набор адаптеров.
 - **153.3:** sort стабилен; binary_search корректен; dedup; bounds `T: Compare`.
 - **153.4:** `v[a..b]` zero-copy view; split_at/chunks/windows; SliceMut write-only.
