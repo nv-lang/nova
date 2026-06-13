@@ -2540,6 +2540,20 @@ loop-var с явной границей `v.len()`/`@len` (см. [Plan 140.2](../
 - Общие `#pure` `@method()` (не из списка аксессоров) — **не** инлайнятся
   в SMT (V1); followup при необходимости (inline #pure method body как
   для свободных `#pure` fn).
+
+### Диагностика контракт-нарушения (follow-up 2026-06-13)
+
+Раз Part A впервые разрешил `@`-аксессоры в контрактах, runtime-сообщение
+о нарушении (`<file>:<line>: requires failed: <src>`) обязано рендерить их
+читаемо. Codegen-рендерер `expr_to_display` (emit_c) до этого имел catch-all
+`_ => "assert"` и не покрывал `Member`/`SelfAccess`/`Index` → `requires
+0 <= i && i < @len` печаталось как `… i < assert`. Баг был **невидим**
+существующим тестам: при наличии custom-message маркер матчил только её, а
+garbled `<src>` живёт в скобках (`failed: msg (<src>)`). Исправлено: добавлены
+армы для `Member` (`@field`/`obj.field`), `SelfAccess` (`@`), `Index`,
+char/float-литералов, `Path`, `as`/`is`, turbofish; дефолт `"assert"` →
+честный `"<expr>"`. Семантика проверки не менялась (только текст сообщения).
+Маркер `[M-140.2-contract-exprdisplay-selfaccess]` (backlog) — CLOSED.
 - Type-`invariant` уже использует bare-ident поля (`invariant balance >= 0`),
   а не `@field`; D256 не меняет этот путь.
 

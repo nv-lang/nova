@@ -33349,9 +33349,52 @@ _cp++; \
     fn expr_to_display(expr: &Expr) -> String {
         match &expr.kind {
             ExprKind::IntLit(n) => n.to_string(),
+            ExprKind::FloatLit(v) => {
+                // Re-attach a `.0` if Rust's float formatting elided it (1.0 → "1")
+                // so a float literal does not read like an int in the message.
+                let s = format!("{}", v);
+                if s.contains(|c| matches!(c, '.' | 'e' | 'E' | 'n' | 'i')) {
+                    s
+                } else {
+                    format!("{}.0", s)
+                }
+            }
             ExprKind::BoolLit(b) => b.to_string(),
             ExprKind::StrLit(s) => format!("\"{}\"", s),
+            ExprKind::CharLit(cp) => match char::from_u32(*cp) {
+                Some(ch) => format!("'{}'", ch),
+                None => format!("'\\u{{{:x}}}'", cp),
+            },
+            ExprKind::UnitLit => "()".to_string(),
+            ExprKind::NullPtrLit => "null".to_string(),
             ExprKind::Ident(n) => n.clone(),
+            ExprKind::Path(parts) => parts.join("::"),
+            // `@` (bare receiver) — appears standalone rarely; `@field`/`@method()`
+            // come through Member/Call with `obj == SelfAccess` (handled below).
+            ExprKind::SelfAccess => "@".to_string(),
+            // Plan 140.2 (D256 follow-up): self/member access in contracts.
+            // `@field` parses to `Member { obj: SelfAccess, name }` → render `@name`;
+            // a plain `obj.field` → `obj.field`. Before this, both fell through to
+            // the catch-all and printed the bogus literal "assert" in violation
+            // messages (e.g. `requires 0 <= i && i < @len` showed "… i < assert").
+            ExprKind::Member { obj, name } => {
+                if matches!(obj.kind, ExprKind::SelfAccess) {
+                    format!("@{}", name)
+                } else {
+                    format!("{}.{}", Self::expr_to_display(obj), name)
+                }
+            }
+            ExprKind::Index { obj, index } => {
+                format!("{}[{}]", Self::expr_to_display(obj), Self::expr_to_display(index))
+            }
+            // Turbofish is transparent in the bootstrap codegen — display its base.
+            ExprKind::TurboFish { base, .. } => Self::expr_to_display(base),
+            ExprKind::As(inner, ty) => {
+                format!("{} as {}", Self::expr_to_display(inner), crate::types::typeref_display(ty))
+            }
+            ExprKind::Is(inner, ty) => {
+                format!("{} is {}", Self::expr_to_display(inner), crate::types::typeref_display(ty))
+            }
             ExprKind::Binary { op, left, right } => {
                 let op_str = match op {
                     BinOp::Eq => "==", BinOp::Neq => "!=",
@@ -33387,7 +33430,9 @@ _cp++; \
                 };
                 format!("{}{}", op_str, Self::expr_to_display(operand))
             }
-            _ => "assert".to_string(),
+            // Honest placeholder for the remaining (rare-in-contracts) kinds —
+            // control flow, closures, etc. NEVER the bogus literal "assert".
+            _ => "<expr>".to_string(),
         }
     }
 

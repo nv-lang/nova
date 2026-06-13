@@ -37430,3 +37430,18 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   единств. изм. ветки vs main кроме docs/spec/fixtures = vec/access.nv; затронутые файлы = main): vec_debug_pos
   (debug-формат std), plan138_2 t14-16 user_vec_shadow (E7310 []T≡Vec resolution). Оба → владельцу 153.0.
   Коммиты 50cf68c8(merge+relocation) + e1d9da4f(test import vec_owned→vec).
+
+[2026-06-13] Plan 140.2 diagnostic follow-up — contract-violation expr-display (D256). После синка с main
+  (корневой generic-mono фикс 3a0798b1 + cleanup моего guard c2bbb685) адверсариальный аудит обнаружил:
+  contract_src в сообщении нарушения рендерил `@len` как «assert» (`requires failed: … i < assert`).
+  Корень — emit_c `expr_to_display` catch-all `_ => "assert"`, не покрывавший Member/SelfAccess/Index.
+  Баг невидим тестам: при custom-message маркер матчит только её, garbled `<src>` живёт в скобках
+  (`failed: msg (<src>)`). Всплыл, т.к. Part A (D256) ВПЕРВЫЕ разрешил `@`-аксессоры в контрактах;
+  generic-mono фикс лишь сделал видимым в mono'd телах (баг есть и в non-generic `@field`-контрактах).
+  Фикс (display-only, семантика не тронута): армы Member(`@field`/`obj.field`)/SelfAccess(`@`)/Index/
+  char-float-lit/Path/`as`/`is`/turbofish + дефолт `"assert"`→`"<expr>"`; `typeref_display`→`pub(crate)`.
+  Тесты: plan140_2/contract_exprdisplay_selfaccess_{pos,neg} (neg EXPECT `requires failed: @count > 0 &&
+  @count <= @limit`). Верификация (release): plan140_2 14/0, plan140_1 9/0, contracts 251/0/57skip (= baseline),
+  plan140 31/0/1skip; адверсариальный C-инспект — T1 src=«@count > 0 && @count <= @limit», T2 (Vec @index)
+  src=«0 <= i && i < @len» + custom-msg сохранён, ни одного stray «assert». D256 §«Диагностика» + маркер
+  [M-140.2-contract-exprdisplay-selfaccess] CLOSED. 0 регрессий.
