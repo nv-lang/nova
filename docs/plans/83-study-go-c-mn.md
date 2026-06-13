@@ -223,6 +223,23 @@ readiness в scheduler loop (process-wide poller, lastpoll single-poller token, 
 **Ключевые acceptance:** go/no-go decision в этом плане с замером residual surface; если GO —
 Plan 83.12 net-suite 30/30 под NOVA_NETPOLL + `net_echo_stress.nv` 66/66 single-poller token.
 
+**Заметка о libuv-ограничении (2026-06-14).** Вендорим **libuv 1.52.1** (актуальна; io_uring/
+IOCP/epoll/kqueue есть — `include/uv/version.h`). Ф.8 — это и есть **архитектурная развилка**:
+- **(A) Остаться на loop libuv** — «качать» событийный loop libuv из планировщика (completion-
+  модель + колбэки). Проще, кросс-платформа «из коробки», **НО не Go-уровень** тесной сплавки
+  I/O↔scheduler (готовность сокета приходит колбэком в отдельный loop, а не `netpoll()` из
+  `findrunnable`).
+- **(B) Собственный netpoller** (epoll/IOCP/kqueue, readiness-в-`findrunnable` как Go) — тугая
+  интеграция, но больше кода и теряем часть переносимости libuv.
+
+**Патчить/форкать libuv — НЕ вариант** (налог на поддержку форка, убивает лёгкие апгрейды; мы
+на свежей 1.52.1). Унаследованные ограничения ванильного libuv, которые Ф.8 и взвешивает:
+(1) `blocking{}`-threadpool кап `UV_THREADPOOL_SIZE` (default **4**, ~1024 max); (2) **один loop
+= бутылочное горло** при экстремальном числе соединений (multi-loop возможен, сложнее);
+(3) **API-bound** — внутренности libuv недоступны без форка. Go-уровень достижим только путём (B)
+для горячего сокет-пути, оставив libuv на fs/dns/process/threadpool/timers. Решение go/no-go по
+(B) принимать здесь же (**D247**).
+
 ---
 
 ## 5. Global acceptance
