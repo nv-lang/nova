@@ -36101,3 +36101,29 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   бы method-emission reachability-связь в concurrency/collections codegen без выгоды.
 - **Reachability ОК:** str prelude-методы эмитятся при использовании операторов (проба
   чистых ==/</+ без method-form PASS) — operator-emitted Nova-вызовы reachable.
+
+- **Plan 153.1 + 153.6 (Vec core API + Hash, 2026-06-13)**: 153.1 — fluent `-> @`
+  (reserve/retain переведены; остальные mut-методы уже), core API (swap/resize/resize_with/
+  fill_with/contains + `@cap_to(n)` точный capacity-сеттер, контракт `n>=len`). 153.6 —
+  `Vec[T Hash] @hash()` FNV-1a (u64-mul **врапается**; offset basis — hex, т.к. десятичная
+  форма > i64::MAX переполнила бы `int`). **Упрощения/отклонения (codegen-лимиты, не дизайн):**
+  (1) `@cap(n)` same-name setter overload → distinct **`@cap_to`** — generic-method-overload-
+  collapse в mono (`v.cap(10)`→0-арг геттер, "too many args"); (2) консолидация **append/extend
+  ОТЛОЖЕНА** — тот же overload-collapse + self-append footgun у generic-`append`; (3) scalar
+  **`(5).max(3)` ОТЛОЖЕН** — коллизия с системным C-макросом `max`/`min`; (4) **Vec как ключ
+  HashMap ОТЛОЖЕН** — pre-existing HashMap `k.eq` не диспатчит в Vec `@equal` для generic-
+  ключа (D237 eq→equal). `[M-138.2-vec-self-return]` подтверждён **ЗАКРЫТЫМ** (138.2+152.1;
+  цепочки работают — codegen-блокера 153.1 не было). Маркеры: `[M-153.1-cap-setter-overload]`,
+  `[M-153.1-append-extend-consolidation]`, `[M-153.6-vec-hashmap-key-eq]`,
+  `[M-153.6-fromiterator-gated]`, `[M-153-scalar-min-max]`. std `vec/*.nv` с диска → без
+  ребилда. plan153_1 5/5 + plan153_6 3/3; 0 регрессий (blast-radius + contracts 267/0,
+  прежний 266/1 = flaky). Коммиты `5f306045` (153.1) + `c8f3d08e` (153.6).
+
+- **Plan 140.3 — унификация failure-классификации + interp-сообщения контрактов (2026-06-13)**: (1) assert и
+  контракт-нарушение теперь тегают `error_kind = NOVA_THROW_PANIC` как `nv_panic` (раньше — только error_msg,
+  kind=USER) → три пути провала (panic/assert/contract) классифицируются ОДИНАКОВО (consume/supervised видят
+  Panic). Упрощение модели: «нарушение инварианта/контракта = panic» теперь не только в формате сообщения
+  (140.1), но и в классификации. (2) interp-сообщения `requires x>0, "got ${x}"` переиспользуют ОБЩУЮ
+  interp-машинерию (`emit_interpolated_str`) — не отдельный механизм; контракт-сообщение ведёт себя идентично
+  любой `"${x}"`-строке. dual-populate (`message` raw-fallback + `message_expr`) избегает регрессии на
+  не-interp-сайтах без отдельного error-пути.

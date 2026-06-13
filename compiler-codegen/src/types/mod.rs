@@ -16473,6 +16473,17 @@ impl ContractCtx {
                     self.check_ensures_expr(&contract.expr, &fn_effects, &fd.name, errors);
                 }
             }
+            // Plan 140.3 ([M-140.1-message-interpolation]): sub-выражения
+            // интерполированного сообщения (`"got ${x}"`) проверяем под теми же
+            // ghost-правилами, что и сам контракт (`result` допустим лишь в ensures).
+            if let Some(msg_expr) = &contract.message_expr {
+                match contract.kind {
+                    ContractKind::Requires =>
+                        self.check_requires_expr(msg_expr, &fn_effects, &fd.name, errors),
+                    _ =>
+                        self.check_ensures_expr(msg_expr, &fn_effects, &fd.name, errors),
+                }
+            }
         }
     }
 
