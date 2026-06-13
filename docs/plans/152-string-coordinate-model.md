@@ -1,206 +1,263 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Plan 152 — Строковая модель координат: байты-координаты, без int-индексации, char-итерация
+# Plan 152 — Строковая модель: линзы-типы (`as_bytes`/`as_chars`), байт-координаты, без int-индексации
 
 > **Создан:** 2026-06-13.  **Статус:** 📋 **PLANNED**, P1.
-> **Эстимат:** ~1–1.5 dev-day (точечный refactor: dispatch-таблица + `string.nv`
-> + новый `CharsIter` + миграция фикстур).  **Model:** Sonnet 4.6 + High + Thinking ON.
-> **Зависит от:** Plan 138 (D238 `Index[K,V]`), Plan 139/139.1 (`str` lang-item),
-> Plan 147 (D246 три оси мутабельности), D58/D241/D242 (`Next`/`Iter`).
-> **Предложено пользователем:** «рассмотреть с чистого листа, как сделать лучше».
+> **Эстимат:** ~2–3 dev-day (новый тип `CharsView` + перенос char-слоя с `str` в
+> линзу + sweep call-сайтов).  **Model:** Sonnet 4.6 + High + Thinking ON.
+> **Зависит от:** Plan 138 (D238 `Index[K,V]`, D239 `[]T≡Vec[T]`), Plan 131 (`Vec`
+> на raw ptr), Plan 139/139.1 (`str` lang-item), Plan 147 (D246), D58/D241/D242
+> (`Next`/`Iter`).
+> **Предложено пользователем:** «с чистого листа» → линзы `as_bytes()`/`as_chars()`,
+> убрать бэар `len()` (2026-06-13).
 
 ---
 
 ## Идея
 
 `str` хранится как UTF-8 `(ptr *ro u8, len int)` (Plan 139). При UTF-8-хранении
-O(1)-доступа по codepoint **не существует** — codepoint занимает 1–4 байта.
-Сейчас в Nova сидит рассогласование: `len()` = **байты** (O(1)), а `str[i]` через
-`Index[int, char]` (D238) = **codepoint** (O(n)). Это даёт:
+O(1)-доступа по codepoint **нет** — символ занимает 1–4 байта. Сейчас в Nova сидит
+рассогласование: `len()` = байты (O(1)), а `str[i]` через `Index[int, char]` (D238)
+= codepoint (O(n)); `@find`/`@rfind` отдают codepoint-offset, не композирующийся с
+байтовым slice; `@pad_*` обещают «width codepoints», а считают байты
+([string.nv:728](../../std/runtime/string.nv#L728)).
 
-- семантически кривой идиом `for i in 0..s.len() { s[i] }` (счётчик байт ↔ codepoint-индекс);
-- footgun «индексация выглядит O(1), а на деле O(n)-скан»;
-- латентный баг: `@pad_left`/`@pad_right` обещают «до width **codepoints**», а
-  считают `width - @len()` в **байтах** ([std/runtime/string.nv:728](../../std/runtime/string.nv#L728));
-- `@find`/`@rfind` возвращают **codepoint-offset**, который не композируется со
-  slice'ом `s[a..b]` (байтовым) без повторного O(n)-скана offset→байт.
+Решение — **линзы-типы (Swift-модель views), а не плоские `*_at`/`*_len` на `str`:**
 
-Решение (синтез Rust + Go + Swift, минус Python-O(1) на UTF-8 и минус UTF-16-грабли):
+> **`str` — это «кусок текста», тонкий. Чтобы работать с ним, выбираешь
+> представление-линзу: `as_bytes()` для байтов, `as_chars()` для символов. Каждая
+> линза несёт свои методы, согласованные по единице. Целочисленной индексации
+> самого `str` нет — координаты байтовые, символы вычисляются.**
 
-> **Строка — не random-access последовательность. Это UTF-8-буфер, который
-> итерируют, ищут и режут по диапазону, но не индексируют целым числом. Система
-> координат — байтовые смещения; codepoint и grapheme — это views поверх неё.**
+### Глубокая причина — асимметрия двух линз
 
-Как только убираем целочисленную индексацию `str[i]`, вся дилемма «единиц»
-исчезает по конструкции: `len` может быть байтами (дёшево, alloc-релевантно),
-итерация — codepoint'ами (эргономично, ожидаемо линейно), и рассогласовываться
-нечему — `len` и `[i]` больше не смешиваются.
+- **`as_bytes()` — reinterpretation, не вычисление.** Байты UTF-8 физически лежат
+  подряд → линза = настоящий `ro []u8` (≡ `Vec[u8]`, D239) с **O(1) `[i]`, `len()`,
+  срезами, итерацией — всё бесплатно из `Vec[u8]`**. Ничего не декодируется.
+- **`as_chars()` — decoding lens.** Codepoint'ы НЕ хранятся как массив — каждый
+  вычисляется при проходе. Поэтому линза **не может** быть `[]char` (это была бы
+  материализация, alloc) — она отдельный view-тип `CharsView`, декодирующий на лету.
+
+Эта асимметрия — правда UTF-8, и хорошо, что её видно в типах: `[]u8`
+(индексируемый слайс) vs `CharsView` (итерируемая линза). Байты — есть; символы —
+вычисляются.
+
+### Что это даёт
+
+1. **Вопрос «в каких единицах `len`?» растворяется по конструкции** — один `len()`
+   на каждой линзе, где он однозначен: `s.as_bytes().len()` (байты, O(1)) /
+   `s.as_chars().len()` (codepoint'ы, O(n)). Разноимённых `byte_len`/`char_len`
+   на `str` не нужно.
+2. **Симметрия `as_` (линза, дёшево, алиас) vs `to_` (владеемая копия, alloc):**
+   | | view (линза) | owned (копия) |
+   |---|---|---|
+   | байты | `as_bytes() -> ro []u8` | `to_bytes() -> []u8` |
+   | символы | **`as_chars() -> CharsView`** (NEW) | `to_chars() -> []char` |
+3. **`str` тонкий и концептуальный**; расширяемо — graphemes станут ещё одной
+   линзой `as_graphemes()` из `std/unicode`, симметрично.
 
 ---
 
-## D249. Строковая модель координат (амендит D26, D238, D58)
+## D249. Строковая координатная модель: линзы вместо плоских методов
 
 ### Что
 
-`str` подчиняется единой координатной модели:
+1. **`str` не индексируется целым числом.** `str` **не** реализует `Index[int, V]`
+   (ни `→char`, ни `→u8`). Бэар `str[i]` → `E_STR_NO_INT_INDEX` с fix-it («символ —
+   `s.as_chars().at(i)`; байт — `s.as_bytes()[i]`; срез — `s[a..b]`»).
 
-1. **Байтовый слой — правда, всегда открыт, дёшев.**
-   `@byte_len() -> int` (O(1)); `@as_bytes() -> ro []u8` (view, O(1)); доступ к
-   байту — `s.as_bytes()[i]` (явно «индексирую байты, O(1)»), а не `s[i]`.
+2. **Единственный `[]` на `str` — byte-range slice `str[a..b]`**: zero-copy view,
+   O(1), с проверкой границы на codepoint-boundary (panic при OOB / рассечении
+   символа). `str` реализует только `Index[Range, str]`.
 
-2. **Целочисленной индексации `str[i]` нет.** `str` **не** реализует
-   `Index[int, V]` — ни `int → char`, ни `int → u8`. Единственный `[]` —
-   slice по байтовому диапазону.
+3. **Байтовая линза `@as_bytes() -> ro []u8`** (есть). Весь байтовый слой — оттуда
+   и бесплатно из `Vec[u8]`: `s.as_bytes()[i]` (O(1) байт), `.len()` (O(1) байт),
+   `for b in s.as_bytes()`, срезы. `@byte_at` ретайрится (избыточен → `as_bytes()[i]`).
 
-3. **`str[a..b]` — byte-range slice**, zero-copy view, O(1), с проверкой границы
-   на codepoint-boundary (panic, если `a`/`b` рассекают символ). `str` реализует
-   только `Index[Range, str]`.
+4. **Символьная линза `@as_chars() -> CharsView`** (NEW, см. [D250](#d250)). Весь
+   codepoint-слой — оттуда: `len()` (O(n)), `at(i)` (O(n)), итерация `Next[char]`,
+   `indices()`. Плоские `@char_at`/`@char_len`/`@char_indices` со `str` **убраны**
+   (переезжают в `CharsView`).
 
-4. **Поиск возвращает байтовые смещения.** `@find`/`@rfind` → `Option[int]` =
-   **байт**-offset (не codepoint). Тогда поиск + slice композируются за O(1):
+5. **Поиск возвращает байтовые смещения.** `@find`/`@rfind` → `Option[int]` =
+   **байт**-offset (не codepoint) → композируется с `s[k..]` за O(1):
    ```nova
-   ro i = s.find("=")        // Option[int], байт-offset
-   match i { Some(k) => ro val = s[k+1..], None => ... }  // zero-copy, O(1)
+   ro i = s.find("=")
+   match i { Some(k) => ro val = s[k+1..], None => ... }   // zero-copy, O(1)
    ```
 
-5. **Итерация привилегирована, её дефолт — codepoint (`char`).**
-   `for c in s` → `char` (O(n) — не сюрприз, итерация и обязана быть линейной).
-   Явные гранулярности: `@as_bytes()` (`u8`), `@chars()` (`char`, = дефолт),
-   `@char_indices()` (`(int, char)` — байт-offset + char, чтобы резать после
-   обхода). `@to_chars() -> []char` остаётся как allocating-форма.
+6. **Итерация привилегирована, дефолт — `char`.** `for c in s` → `char` (делегирует
+   в `s.as_chars().iter()`, чтобы частый случай — обход символов — остался коротким).
+   O(n) тут не сюрприз (итерация и обязана быть линейной).
 
-6. **Codepoint-доступ — только явный, честно O(n).** `@char_at(i) -> Option[char]`
-   и `@char_len() -> int` остаются; имя сразу сигналит про скан. «Дай N-й символ»
-   целочисленным subscript'ом не выражается принципиально.
+7. **Бэар `len()` на `str` — нет.** Длина — свойство представления, живёт на линзе:
+   `s.as_bytes().len()` / `s.as_chars().len()`. `s.len()` → `E_STR_NO_LEN` с fix-it.
+   **Поблажка (recommended):** оставить `@byte_len() -> int` (O(1), читает поле `len`)
+   как шорткат — байтовая длина нужна повсюду для аллокаций, имя однозначно. Char-
+   длины шортката нет (только `as_chars().len()`). Поле `len` в layout остаётся
+   (storage-инвариант) — убирается публичный *метод* `@len()`.
 
-7. **Grapheme-слой — в `std/unicode` (future), не в ядре.** Требует Unicode-таблиц
-   (десятки КБ), версионно- и локале-зависим. Как `unicode-segmentation` в Rust.
-
-### `len()` — решение: **бэар `len()` убран**
-
-У `str` **нет** метода `@len()`. Длина выражается только явно:
-`@byte_len() -> int` (O(1), читает поле `len`) и `@char_len() -> int` (O(n)).
-Двусмысленность «байты vs codepoints vs graphemes» устраняется *по конструкции*,
-а не дисциплиной: автор обязан сказать, что имеет в виду. Это и предотвращает баг
-вроде `@pad_*`, где «width codepoints» молча считались байтами.
-
-Бэар `s.len()` → диагностика `E_STR_NO_LEN` с fix-it: «у `str` нет `len()` —
-используйте `byte_len()` (байты, O(1)) или `char_len()` (символы, O(n))».
-
-**Расхождение с `Vec[T].len()` — намеренное и задокументированное.** У `Vec[T]`
-ровно один однозначный счётчик элементов, поэтому `len()` корректен. У `str`
-«длины» три и они расходятся (`"é"` = 2 байта / 1 codepoint), поэтому единого
-`len()` у строки быть не должно — это не непоследовательность, а отражение того,
-что строка принципиально не одномерна. (Поле `len` в layout остаётся — это байты,
-storage-инвариант; убирается только публичный *метод* `@len()`.)
+8. **Grapheme-слой** — будущая линза `@as_graphemes() -> GraphemesView` из
+   `std/unicode` (Unicode-таблицы, версионно-зависимо) — не ядро.
 
 ### Сводная таблица API
 
-| Операция | Решение | Сложность |
+| Нужно | Как | Сложность |
 |---|---|---|
-| бэар `len()` | **нет** (`E_STR_NO_LEN` + fix-it) | — |
-| длина в байтах | `@byte_len()` | O(1) |
-| длина в символах | `@char_len()` | O(n) |
-| `s[i]` целым | **нет** (не `Index[int,_]`) | — |
-| `s[a..b]` | byte-range, boundary-checked, zero-copy | O(1) |
-| доступ к байту | `s.as_bytes()[i]` | O(1) |
-| доступ к codepoint | `@char_at(i) -> Option[char]` (явно) | O(n) |
-| `for c in s` | `char` (дефолт, через `@iter()`) | O(n) |
-| views | `@as_bytes()` / `@chars()` / `@char_indices()` | — |
-| поиск `@find`/`@rfind` | **байтовый** offset | O(n) |
-| graphemes | `std/unicode` (future), не ядро | O(n) |
+| байт по индексу | `s.as_bytes()[i]` | O(1) |
+| длина в байтах | `s.as_bytes().len()` или шорткат `s.byte_len()` | O(1) |
+| итерация по байтам | `for b in s.as_bytes()` | O(n) |
+| символ по индексу | `s.as_chars().at(i) -> Option[char]` | O(n) |
+| длина в символах | `s.as_chars().len()` | O(n) |
+| итерация по символам | `for c in s` или `for c in s.as_chars()` | O(n) |
+| (byte-offset, char) пары | `s.as_chars().indices()` | O(n) |
+| `s[i]` целым | **нет** (`E_STR_NO_INT_INDEX`) | — |
+| срез | `s[a..b]` (byte-range, boundary-checked, zero-copy) | O(1) |
+| бэар `len()` | **нет** (`E_STR_NO_LEN`) | — |
+| поиск | `@find`/`@rfind` → **байт-offset** | O(n) |
+| owned-копии | `to_bytes() -> []u8` / `to_chars() -> []char` | O(n) |
+| graphemes | `as_graphemes()` (future, `std/unicode`) | O(n) |
 
 ### Почему
 
-- Нет целого индекса, который одновременно дёшев, корректен и однозначен на UTF-8;
-  `str[i]` при любой единице — либо обрывок символа (байт), либо O(n)-ложь (codepoint),
-  либо не-символ (codepoint ≠ grapheme). Swift убрал int-subscript, Rust оставил
-  только slice — Nova следует им.
-- Байтовые координаты композируются (`find` → `slice` за O(1)); codepoint-offset'ы — нет.
-- Соответствует этосу Nova «никаких скрытых затрат» (D135): O(n) виден либо в
-  имени (`char_*`), либо в итерации (которая и так линейна).
+- Нет целого индекса строки, который одновременно дёшев, корректен и однозначен на
+  UTF-8 (байт = обрывок, codepoint = O(n)-ложь, codepoint ≠ grapheme). Swift убрал
+  int-subscript, Rust оставил только slice — Nova следует им.
+- Линза отвечает на вопрос «в каких единицах» самим своим типом: `len()`/`at()`
+  на линзе однозначны, плоские `byte_*`/`char_*` на `str` не нужны.
+- Байт-координаты композируются (`find`→`slice` за O(1)); codepoint-offset'ы — нет.
+- Соответствует этосу «никаких скрытых затрат» (D135): O(n) виден либо в линзе
+  (взял `as_chars` — принял O(n)), либо в итерации (она и так линейна).
 
 ### Что отвергнуто
 
-- **Go-вариант `str[i] -> u8` (байт, O(1)).** Индексация *строки* байтом
-  провоцирует тот же `for i in 0..len`-антипаттерн; байт нужен редко и доступен
-  явно через `s.as_bytes()[i]`. Subscript на строке резервируем под slice.
-- **Python-вариант `str[i] -> char`, O(1).** Невозможен на UTF-8 без отказа от
-  UTF-8-хранения (Plan 139 его зафиксировал); Python платит памятью (fixed-width
-  rep).
-- **Swift-вариант: дефолт = grapheme.** Максимально корректно, но тащит Unicode-data
-  в ядро. Для системного языка с тонким рантаймом — библиотека.
-- **Оставить `@len() = @byte_len()` (байты, O(1)).** Прагматично (меньше миграции),
-  но двусмысленность «байты vs символы» сохраняется и держится только дисциплиной
-  call-сайтов (ровно так и возник баг `@pad_*`). Отвергнуто в пользу явных
-  `byte_len`/`char_len` — correctness важнее экономии на миграции (решение
-  пользователя 2026-06-13).
+- **`str[i] -> u8` (Go) / `str[i] -> char` (Python).** Индексация *строки* любой
+  единицей провоцирует `for i in 0..len`-антипаттерн; нужное доступно явно через
+  линзу. Python-O(1) к тому же невозможен на UTF-8 (Plan 139 зафиксировал хранение).
+- **Дефолт = grapheme (Swift).** Корректнее всего, но тащит Unicode-data в ядро →
+  библиотека (`as_graphemes`).
+- **Оставить плоские `char_at`/`char_len` + `len()=байты` на `str`.** Прагматично,
+  но двусмысленность держится дисциплиной (источник бага `@pad_*`), и char-методы
+  засоряют тонкий `str`. Отвергнуто в пользу линз (решение пользователя 2026-06-13).
+- **Сделать `as_chars()` целочисленно-индексируемым (`chars[i]`).** Нет: это вернёт
+  «O(n) под видом O(1)» на уровень ниже. `CharsView` — итерируемый + `at(i)`
+  (имя сигналит скан), без `Index[int]`.
 
 ### Амендменты
 
-- **[D26](../../spec/decisions/08-runtime.md#d26)** (str semantics): добавить
-  «нет целочисленной codepoint-индексации; нет бэар `len()` (только `byte_len`/
-  `char_len`); дефолт-итерация = `char`; поиск = байт-offset».
+- **[D26](../../spec/decisions/08-runtime.md#d26)** (str semantics): «нет int-
+  индексации; нет бэар `len()`; работа через линзы `as_bytes`/`as_chars`; дефолт-
+  итерация = `char`; поиск = байт-offset».
 - **[D238](../../spec/decisions/03-syntax.md#d238)** (`Index[K,V]`): **RETRACT**
-  строку std-реализаций `str | int | char (panic OOB)`. Остаётся
-  `str | Range | str (byte-range view, panic OOB)`. `str` больше не реализует
-  `Index[int, V]`.
-- **[D58](../../spec/decisions/03-syntax.md#d58)** (`for x in c`): `str` реализует
-  `@iter() -> CharsIter`, `CharsIter` реализует `Next[char]`; `for c in s` yields `char`.
+  `str | int | char`. Остаётся только `str | Range | str` (byte-range view).
+- **[D58](../../spec/decisions/03-syntax.md#d58)** (`for x in c`): `for c in s`
+  yields `char` через `s.as_chars().iter()`; `CharsView` реализует `Next[char]`.
+
+---
+
+## D250. `CharsView` (decoding lens) + конвенция `as_`/`to_`
+
+### `CharsView`
+
+Линза над буфером `str`, дающая codepoint-представление. Тот же layout, что у `str`
+(алиасит тот же буфер, zero-copy):
+
+```nova
+// Линза: НЕ владеет буфером, алиасит str. value, 16 байт, copy.
+type CharsView value priv {
+    ptr      *ro u8     // тот же буфер, что у str (read-only)
+    byte_len int        // длина буфера в БАЙТАХ
+}
+```
+
+Методы (вся codepoint-алгебра — здесь, не на `str`):
+
+| Метод | Смысл | Сложность |
+|---|---|---|
+| `@len() -> int` | число codepoint'ов | O(n) |
+| `@at(i int) -> Option[char]` | i-й codepoint (имя сигналит скан) | O(n) |
+| `mut @next() -> Option[char]` | курсор (реализует `Next[char]`) | амортиз. O(1) |
+| `@iter() -> CharsView => self` | реализует `Iter[CharsView]` | O(1) |
+| `@indices() -> CharIndicesView` | пары `(byte_offset, char)` для slice | O(n) |
+| `@is_empty() -> bool` | `byte_len == 0` | O(1) |
+
+- **`CharsView` НЕ реализует `Index[int, char]`** — целочисленной индексации нет
+  (D249 §«Что отвергнуто»); только `at(i)` и итерация.
+- Decode-курсор — тот же UTF-8-алгоритм, что в нынешних `@char_at`/`@to_chars`
+  ([string.nv:219](../../std/runtime/string.nv#L219),[545](../../std/runtime/string.nv#L545)),
+  просто переезжает в `CharsView`. `char.try_from` валидирует codepoint
+  (невалид → U+FFFD).
+- `@indices()` даёт `(byte_offset, char)`, чтобы после обхода резать `str[a..b]`
+  по байтовому offset'у — мост между символьным проходом и байтовым slice.
+
+### Конвенция `as_` / `to_`
+
+Кодифицируется проектно-широко (не только для `str`):
+
+- **`as_<repr>() -> <view>`** — линза/реинтерпретация существующего буфера:
+  zero-copy, дёшево, **алиасит** источник (источник обязан пережить view). Источник
+  иммутабелен на время жизни view. Примеры: `str.as_bytes() -> ro []u8`,
+  `str.as_chars() -> CharsView`, (future) `str.as_graphemes()`.
+- **`to_<repr>() -> <owned>`** — материализация: новый **владеемый** объект, alloc,
+  без алиасинга. Примеры: `str.to_bytes() -> []u8`, `str.to_chars() -> []char`.
+
+### Lifetime / GC
+
+`CharsView` алиасит GC-буфер `str` (как уже делает `as_bytes()`). Безопасно: `str`
+иммутабелен (R8), буфер GC-managed, view держит `ptr` → conservative GC (Boehm)
+его видит; пока view жив, буфер не собран. Новых рисков сверх `str`/`as_bytes` нет.
 
 ---
 
 ## Фазы
 
-- **Ф.0 — Spec.** D249 в `03-syntax.md` (рядом с D238) + амендмент-блоки к D26/D238/D58.
-- **Ф.1 — Снять `Index[int, char]` со `str`.** Compiler built-in str-index dispatch
-  (`emit_c.rs` + checker): `str[i]` целым → `E_STR_NO_INT_INDEX` с fix-it hint
-  («использовать `s.char_at(i)` для символа или `s.as_bytes()[i]` для байта»).
-  `str[a..b]` (`Index[Range, str]`) сохранить. `@char_at` остаётся явным методом.
-- **Ф.2 — `@find`/`@rfind` → байт-offset.** Убрать cp-счётчик в
-  [string.nv:144](../../std/runtime/string.nv#L144),[174](../../std/runtime/string.nv#L174);
-  возвращать байтовый `i`. Обновить callers (`@replace` уже на `@split`, не на find).
-- **Ф.3 — `CharsIter` + `str.@iter()`.** Новый Nova-тип `CharsIter` (поля:
-  байт-view + cursor), `mut @next() -> Option[char]` (UTF-8 decode-курсор, тот же
-  алгоритм, что `@char_at`/`@to_chars`), `@iter() -> CharsIter => self`. `str @iter()
-  -> CharsIter`. `@char_indices() -> CharIndicesIter` (или allocating
-  `[]( int, char )`) — даёт байт-offset для последующего slice.
-- **Ф.4 — Убрать бэар `@len()` + починить единицы.** Удалить метод `@len()`
-  ([string.nv:39](../../std/runtime/string.nv#L39)); `@byte_len()` становится
-  примитивом (читает поле `@len` напрямую, [string.nv:46](../../std/runtime/string.nv#L46)).
-  Диагностика `E_STR_NO_LEN` на `s.len()` с fix-it (byte_len/char_len). Мигрировать
-  ВСЕ `@len()`-call-сайты: byte-ориентированные (parse_int/starts_with/ends_with/
-  contains/find/rfind/trim/to_lower/to_upper/concat/compare/repeat/as_bytes) →
-  `@byte_len()`; char-ориентированные (`@pad_left`/`@pad_right`
-  [string.nv:728](../../std/runtime/string.nv#L728),[736](../../std/runtime/string.nv#L736)) →
-  `@char_len()`. Поле `len` в layout остаётся (storage).
-- **Ф.5 — Фикстуры + миграция.** Позитивные (`for c in s`, `s[a..b]`, `find`+slice
-  композиция, `char_at`, `char_indices`) + негативные (`s[i]` целым →
-  `E_STR_NO_INT_INDEX`). Мигрировать существующие `str[i]`-usages в fixtures/stdlib
-  → `char_at(i)`/`as_bytes()[i]`. Тесты через релизные `nova` + компилятор.
-- **Ф.6 — Закрытие.** Финализировать D249; обновить README plans, project-creation.txt,
+- **Ф.0 — Spec.** D249 + D250 в `03-syntax.md`; амендмент-блоки к D26/D238/D58.
+- **Ф.1 — Снять `Index[int, char]` со `str`.** Compiler str-index dispatch + checker:
+  `str[i]` целым → `E_STR_NO_INT_INDEX` (fix-it: `as_chars().at(i)` / `as_bytes()[i]`
+  / `s[a..b]`). `str[a..b]` (`Index[Range, str]`) сохранить.
+- **Ф.2 — `@find`/`@rfind` → байт-offset.** Убрать cp-счётчик
+  ([string.nv:144](../../std/runtime/string.nv#L144),[174](../../std/runtime/string.nv#L174)).
+- **Ф.3 — `CharsView` + `str.@as_chars()`.** Новый тип `CharsView value priv {ptr,
+  byte_len}` с методами `len`/`at`/`next`/`iter`/`indices`/`is_empty`; перенести
+  decode-курсор из `@char_at`/`@to_chars`. `CharIndicesView` для `@indices()`.
+  `str @as_chars() -> CharsView`.
+- **Ф.4 — Тонкий `str`.** Убрать со `str`: `@len()`, `@char_at`, `@char_len`,
+  `@get`(Index[int]), `@byte_at` (→ `as_bytes()[i]`). Оставить/добавить:
+  `@as_bytes()`, `@as_chars()`, `@byte_len()` (O(1) шорткат, примитив над полем
+  `len`), `@to_bytes()`, `@to_chars()`. `for c in s` → `s.as_chars().iter()`.
+  `E_STR_NO_LEN` на `s.len()`. `@pad_*` → `as_chars().len()`
+  ([string.nv:728](../../std/runtime/string.nv#L728),[736](../../std/runtime/string.nv#L736)).
+- **Ф.5 — Фикстуры + миграция.** POS: `for c in s`, `s[a..b]`, `find`+slice,
+  `as_chars().at/len/indices`, `as_bytes()[i]/len`. NEG: `s[i]`→`E_STR_NO_INT_INDEX`,
+  `s.len()`→`E_STR_NO_LEN`, `chars[i]`→нет `Index[int]`. Мигрировать call-сайты:
+  `s.char_at(i)`→`s.as_chars().at(i)`, `s.char_len()`→`s.as_chars().len()`,
+  `s.len()`→`s.byte_len()`/`as_chars().len()` (по смыслу), `s[i]`→линза. Тесты через
+  релизные `nova` + компилятор.
+- **Ф.6 — Закрытие.** Финализировать D249/D250; README plans, project-creation.txt,
   simplifications.md, nova-private/discussion-log.md. Закоммитить пофазно.
 
 ---
 
 ## Критерии приёмки
 
-- **A1.** `str[i]` где `i: int` → compile-error `E_STR_NO_INT_INDEX` с fix-it.
-- **A2.** `str[a..b]` (Range) работает как zero-copy byte-slice, паника при OOB и
-  при рассечении codepoint-границы.
-- **A3.** `for c in s { ... }` итерирует `char` (codepoint), порядок и значения
-  идентичны `@to_chars()`.
-- **A4.** `@find`/`@rfind` возвращают **байтовый** offset; `s.find(x)` → `s[k..]`
-  композируется без повторного скана и даёт корректный zero-copy view.
-- **A5.** `@char_at(i) -> Option[char]`, `@char_len()`, `@byte_len()`, `@as_bytes()`,
-  `@chars()`, `@char_indices()` присутствуют и согласованы.
-- **A6.** `@pad_left(width, _)`/`@pad_right(width, _)` считают ширину в **codepoint'ах**
-  (тест с не-ASCII: `"é".pad_left(3,'·')` == `"··é"`, длина 3 символа).
-- **A7.** У `str` **нет** метода `@len()`; `s.len()` → `E_STR_NO_LEN` с fix-it.
-  `@byte_len()` (байты, O(1)) и `@char_len()` (символы, O(n)) — единственные
-  длины; все прежние `@len()`-call-сайты мигрированы без регрессий (parse_int и т.д.).
-- **A8.** `str` структурно реализует `Index[Range, str]` и `Iter[CharsIter]`, и
-  **не** реализует `Index[int, _]`.
-- **A9.** Полный `nova test` без новых FAIL vs baseline; plan152-фикстуры зелёные.
+- **A1.** `str[i]` где `i: int` → `E_STR_NO_INT_INDEX` с fix-it (линзы/slice).
+- **A2.** `str[a..b]` — zero-copy byte-slice; panic при OOB и рассечении codepoint.
+- **A3.** `@as_bytes() -> ro []u8` даёт O(1) `[i]`/`len()`/итерацию байтов; `@byte_at`
+  ретайрнут.
+- **A4.** `@as_chars() -> CharsView`; `CharsView` имеет `len()`(O(n))/`at(i)`/
+  `next()`/`iter()`/`indices()`/`is_empty()`; **не** реализует `Index[int, char]`
+  (`chars[i]` → ошибка).
+- **A5.** `for c in s { ... }` итерирует `char` (= `s.as_chars()` обход), значения/
+  порядок идентичны нынешнему `@to_chars()`.
+- **A6.** `@find`/`@rfind` → **байт**-offset; `s.find(x)`→`s[k..]` композируется
+  zero-copy без повторного скана.
+- **A7.** У `str` нет `@len()` (`s.len()`→`E_STR_NO_LEN`) и нет плоских
+  `@char_at`/`@char_len`/`@char_indices`. `@byte_len()` (O(1)) остаётся как шорткат.
+- **A8.** `@pad_left/@pad_right(width,_)` считают width в **codepoint'ах** (тест не-
+  ASCII: `"é".pad_left(3,'·') == "··é"`).
+- **A9.** `str` реализует `Index[Range, str]` и не реализует `Index[int, _]`;
+  `CharsView` реализует `Iter[CharsView]`/`Next[char]`.
+- **A10.** Конвенция `as_`/`to_` соблюдена: `as_*` — zero-copy view, `to_*` — owned.
+- **A11.** Полный `nova test` без новых FAIL vs baseline; plan152-фикстуры зелёные.
 
 ---
 
@@ -208,19 +265,18 @@ storage-инвариант; убирается только публичный *
 
 | Точка | Объём |
 |---|---|
-| Compiler dispatch (снять `Index[int,char]` для str + `E_STR_NO_INT_INDEX`) | малый (1 ветка в str-index lowering + checker-guard) |
-| `string.nv`: find/rfind → байт, pad_* → char_len, `@byte_len` примитив | малый |
-| **Убрать `@len()` + диагностика `E_STR_NO_LEN` + миграция всех call-сайтов** | **средний** (внутри `string.nv` ~12 методов + user-code/fixtures; sweep по `\.len\(\)` на str-receiver'ах) |
-| Новый `CharsIter` + `str.@iter` + `char_indices` | средний (1 Nova-тип + decode-курсор уже есть) |
-| Миграция `str[i]`-usages (fixtures/stdlib) | малый-средний (sweep по `\bstr-var\s*\[`; точное число — в Ф.1 audit) |
+| Compiler: снять `Index[int,char]` для str + `E_STR_NO_INT_INDEX` | малый |
+| `string.nv`: find/rfind → байт | малый |
+| **Новый `CharsView` (+ `CharIndicesView`) + перенос decode-курсора** | **средний** (1–2 Nova-типа; алгоритм уже есть) |
+| **Тонкий `str`: убрать `len/char_at/char_len/get/byte_at`, добавить `as_chars`** | **средний** (методы + `Next/Iter` wiring + `E_STR_NO_LEN`) |
+| Миграция call-сайтов (`char_at`/`char_len`/`str[i]`/`s.len()`) — stdlib + fixtures | **средний** (sweep + на каждом решить единицу) |
 | Фикстуры pos/neg | малый |
 
-Эстимат поднят до **~1.5–2 dev-day** (главный драйвер — sweep `str.len()` →
-`byte_len`/`char_len` по stdlib + fixtures; на каждом сайте нужно решить «байты
-или символы», механически не заменить). Риск всё ещё низкий: координатная модель
-уже наполовину байтовая (`byte_at`/`as_bytes`/`split`), убираем неконсистентные
-узлы (`Index[int,char]`, codepoint-offset find, двусмысленный `len`). Компилятор-
-инфра (Index/Iter/Next) готова из Plan 138/D58.
+Эстимат **~2–3 dev-day** (больше, чем плоский вариант: появляется новый тип-линза и
+переезжает целый слой методов). Риск умеренный, но локализован в `str`/`string.nv` +
+точечный compiler-dispatch; инфра `Index`/`Iter`/`Next`/`value`-records готова
+(Plan 138/139/D58). Главный драйвер времени — sweep call-сайтов, где механически не
+заменить (нужно решить «байт или символ»).
 
 ---
 
@@ -228,9 +284,11 @@ storage-инвариант; убирается только публичный *
 
 | D | Связь |
 |---|---|
-| D249 (NEW) | строковая координатная модель |
-| D26 AMEND | str semantics — нет int-index, char-итерация, байт-offset find |
+| D249 (NEW) | строковая координатная модель — линзы, без int-index, char-итерация |
+| D250 (NEW) | `CharsView` (decoding lens) + конвенция `as_`/`to_` |
+| D26 AMEND | str semantics — линзы, нет `len()`/int-index, байт-offset find |
 | D238 AMEND | RETRACT `str \| int \| char`; остаётся `str \| Range \| str` |
-| D58 AMEND | `str @iter() -> CharsIter`; `for c in s` yields `char` |
-| D240 | `MutIndex` — `str` иммутабельна, не реализует (R8) |
-| D241/D242 | `Next[T]`/`Iter[I]` — `CharsIter` реализует `Next[char]` |
+| D58 AMEND | `for c in s` → `char` через `as_chars().iter()` |
+| D239 | `[]u8` ≡ `Vec[u8]` — байтовая линза бесплатно из `Vec` |
+| D240 | `MutIndex` — `str`/`CharsView` иммутабельны, не реализуют (R8) |
+| D241/D242 | `Next[T]`/`Iter[I]` — `CharsView` реализует `Next[char]`/`Iter[CharsView]` |
