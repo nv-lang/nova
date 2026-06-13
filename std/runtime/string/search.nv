@@ -17,7 +17,7 @@ import std.runtime.raw_mem.{RawMem}
 // RawMem.compare (memcmp) вместо byte-loop. `@ptr`/`prefix.ptr` — priv `*ro u8`
 // (type-method privacy; ptr — не size-accessor → D117 не трогает).
 export fn str @starts_with(prefix str) -> bool {
-    ro (sn, pn) = (@len(), prefix.len())
+    ro (sn, pn) = (@byte_len(), prefix.byte_len())
     if pn > sn { return false }
     unsafe { RawMem.compare(@ptr, prefix.ptr, pn) == 0 }
 }
@@ -25,7 +25,7 @@ export fn str @starts_with(prefix str) -> bool {
 // True если строка заканчивается на suffix. Plan 152.1: RawMem.compare последних
 // `fn_len` байт (`@ptr + base`).
 export fn str @ends_with(suffix str) -> bool {
-    ro (sn, fn_len) = (@len(), suffix.len())
+    ro (sn, fn_len) = (@byte_len(), suffix.byte_len())
     if fn_len > sn { return false }
     unsafe { RawMem.compare(@ptr + (sn - fn_len), suffix.ptr, fn_len) == 0 }
 }
@@ -33,9 +33,9 @@ export fn str @ends_with(suffix str) -> bool {
 // True если needle встречается в строке. Plan 152.1: per-position RawMem.compare
 // (memcmp) вместо вложенного byte-loop. Пустой needle → true.
 export fn str @contains(needle str) -> bool {
-    ro nn = needle.len()
+    ro nn = needle.byte_len()
     if nn == 0 { return true }
-    ro sn = @len()
+    ro sn = @byte_len()
     if nn > sn { return false }
     mut i = 0
     while i + nn <= sn {
@@ -51,9 +51,9 @@ export fn str @contains(needle str) -> bool {
 // needle — валидный UTF-8 (R-UTF8), поэтому совпадение на byte-позиции i всегда
 // на codepoint-границе → byte-by-byte скан корректен.
 export fn str @find(needle str) -> Option[int] {
-    ro nn = needle.len()
+    ro nn = needle.byte_len()
     if nn == 0 { return Some(0) }
-    ro sn = @len()
+    ro sn = @byte_len()
     if nn > sn { return None }
     mut i = 0
     while i + nn <= sn {
@@ -66,8 +66,8 @@ export fn str @find(needle str) -> Option[int] {
 // БАЙТОВЫЙ offset последнего вхождения needle. Plan 152.1 Ф.2 (D249): byte-offset
 // (как @find). Пустой needle → byte-длина (Rust-parity `"abc".rfind("")==Some(3)`).
 export fn str @rfind(needle str) -> Option[int] {
-    ro sn = @len()
-    ro nn = needle.len()
+    ro sn = @byte_len()
+    ro nn = needle.byte_len()
     if nn == 0 {
         return Some(sn)
     }
@@ -92,8 +92,8 @@ export fn str @rfind(needle str) -> Option[int] {
 // `Vec[str].new()` (не `[]str.`) — cross-type producer на `Vec`; `ro []str` = L2 RO.
 export fn str @split(sep str) -> ro []str {
     mut out = Vec[str].new()
-    ro sep_len = sep.len()
-    ro sn = @len()
+    ro sep_len = sep.byte_len()
+    ro sn = @byte_len()
     if sep_len == 0 {
         // Empty separator — whole string as a single view (`@push` returns `@`).
         return out.push(@[0..sn])

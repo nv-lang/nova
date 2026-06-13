@@ -17,7 +17,7 @@ import std.runtime.string_builder.{StringBuilder}
 // требует @ptr field-access ([M-139-f0-lang-item-decl]), отложена.
 export fn str @trim() -> str {
     ro bytes = @as_bytes()
-    ro n = @len()
+    ro n = @byte_len()
     mut start = 0
     while start < n && (bytes[start] as int) <= 32 { start = start + 1 }
     mut end = n
@@ -33,7 +33,7 @@ export fn str @trim() -> str {
 // Lowercase копия (ASCII). Plan 139 Ф.1: Nova-body, alloc через []u8.
 export fn str @to_lower() -> str {
     ro bytes = @as_bytes()
-    ro n = @len()
+    ro n = @byte_len()
     mut out = []u8.with_capacity(n)
     mut i = 0
     while i < n {
@@ -48,7 +48,7 @@ export fn str @to_lower() -> str {
 // Uppercase копия (ASCII). Plan 139 Ф.1: Nova-body, alloc через []u8.
 export fn str @to_upper() -> str {
     ro bytes = @as_bytes()
-    ro n = @len()
+    ro n = @byte_len()
     mut out = []u8.with_capacity(n)
     mut i = 0
     while i < n {
@@ -61,7 +61,7 @@ export fn str @to_upper() -> str {
 }
 
 // Конкатенация двух строк (создаёт новую). O(a+b).
-// Plan 139.2 Ф.3: Nova-body — alloc `[]u8` размера `@len() + other.len()`,
+// Plan 139.2 Ф.3: Nova-body — alloc `[]u8` размера `@byte_len() + other.len()`,
 // копирует байты обоих операндов через @as_bytes() (zero-copy view), затем
 // `str.from_bytes_unchecked` (alloc fresh owned + NUL-term D26 §3). Семантика
 // байт-в-байт идентична бывшему C `nova_str_concat` (nova_rt.h:226: memcpy a,
@@ -88,7 +88,7 @@ export fn str @plus(other str) -> str => @concat(other)
 
 // Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.
 export fn str @pad_left(width int, fill char) -> str {
-    ro pad = width - @len()
+    ro pad = width - @byte_len()
     if pad <= 0 { return @ }
     ro fill_s = str.from(fill)
     StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).as_str()
@@ -96,7 +96,7 @@ export fn str @pad_left(width int, fill char) -> str {
 
 // Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.
 export fn str @pad_right(width int, fill char) -> str {
-    ro pad = width - @len()
+    ro pad = width - @byte_len()
     if pad <= 0 { return @ }
     ro fill_s = str.from(fill)
     StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).as_str()
@@ -112,7 +112,7 @@ export fn str @repeat(n int) -> str {
 // Note: uses @concat loop (not []str.join) to avoid circular import with std.text. O(n²) for
 // many replacements — acceptable for bootstrap; StringBuilder followup is [str-replace-buffered].
 export fn str @replace(from str, to str) -> str {
-    if from.len() == 0 { return @ }
+    if from.byte_len() == 0 { return @ }
     ro parts = @split(from)
     ro n = parts.len()
     if n == 0 { return @ }
