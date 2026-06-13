@@ -176,10 +176,14 @@
   `@ptr[i]` напрямую (field) работает (`@byte_at`). Обнаружено в Plan 152.1 (RawMem.compare
   обходит — передаём `@ptr` в fn). Fix если понадобится raw-ptr-local-index: emit_c трактует
   bound `*ro u8`-локал как скаляр, не указатель.
-- **`[M-152.1-str-index-range-contract]`** (planned, home **Plan 152.1 Ф.1 / 152.2**):
-  `str @index(r Range)` (`s[a..b]`) — чистый codegen `nova_str_slice_panic` с рантайм
-  bounds+codepoint-проверкой, НЕ контракт. Для элидируемой проверки (140.2-style, zero-cost
-  когда провабельно) сделать str `@index(Range)` контрактным Nova-методом (`requires` bounds).
+- **`[M-152.1-str-index-range-contract]`** ✅ **ДОСТИГНУТ (цель) Plan 152.1 Ф.1b 2026-06-13.**
+  `str[a..b]` теперь **byte-range** zero-copy slice с **элидируемой** bounds-проверкой
+  (140.2-style `index_site_elided`, zero-cost когда провабельно) + UTF-8 codepoint-boundary
+  guard — inline в codegen (зеркало Vec[T] elidable-slice), `nova_str_slice_panic` больше не
+  диспатчится. Заодно semantics codepoint→byte (чинит non-ASCII split + pre-existing split_edge).
+  **Остаток (deferred, не блокер):** отдельный Nova `str @index(Range)` метод (как `vec/slice.nv`,
+  Index[Range,str] protocol-formalism + routing) — отложен консистентно с Vec's собственной
+  Range-routing migration (`v[a..b]` тоже пока codegen-inline, не Nova-метод).
 - **D117 на `prefix.len`** (не баг — by-design до Plan 153): чтение size-accessor `len` как
   поля чужого инстанса → `E_SIZE_ACCESSOR_FIELD`. Internal-field-read **D117 AMEND у Plan 153**
   (Ф.5.1). До него str-методы используют `other.len()` (метод), не `other.len` (поле).

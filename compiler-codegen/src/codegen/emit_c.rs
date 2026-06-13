@@ -19029,16 +19029,10 @@ _sr; }}))",
                         // Для bootstrap проще: запретить open-ended для str-slice.
                         // Это decision — задокументируем как known limitation.
                         // Пока — emit как nova_str_byte_at-style цикл подсчёта.
-                        format!("({{ nova_str _s = ({}); nova_int _cp = 0; \
-for (size_t _i = 0; _i < _s.len; ) {{ \
-unsigned char _b = (unsigned char)_s.ptr[_i]; \
-if (_b < 0x80) _i += 1; \
-else if ((_b & 0xE0) == 0xC0) _i += 2; \
-else if ((_b & 0xF0) == 0xE0) _i += 3; \
-else if ((_b & 0xF8) == 0xF0) _i += 4; \
-else _i += 1; \
-_cp++; \
-}} _cp; }})", o)
+                        // Plan 152.1 Ф.1b (D249): str slice is BYTE-range — the
+                        // open-ended end is the BYTE length `_s.len` (was a codepoint
+                        // count). `_s` is defined by the inline byte-slice below.
+                        "_s.len".to_string()
                     } else if obj_ty.starts_with("NovaArray_") {
                         format!("({})->len", o)
                     } else {
@@ -19057,7 +19051,30 @@ _cp++; \
                         (None, _) => len_expr.clone(),
                     };
                     if obj_ty == "nova_str" {
-                        return Ok(format!("nova_str_slice_panic({}, {}, {})", o, from_expr, to_expr));
+                        // Plan 152.1 Ф.1b (D249): byte-range zero-copy sub-view (was
+                        // codepoint-indexed nova_str_slice_panic — the bug behind
+                        // non-ASCII split, which slices on byte offsets). Mirrors the
+                        // Vec[T] elidable slice above (140.2-style): byte bounds-check
+                        // elidable on proven-in-range sites + UTF-8 codepoint-boundary
+                        // guard (data-dependent → always-on). `from_expr`/`to_expr` are
+                        // byte offsets; open-ended end is `_s.len` (set in len_expr).
+                        let bounds_chk = if self.index_site_elided(expr.span.start) {
+                            String::new()
+                        } else {
+                            "if (_sf < 0 || _st < _sf || _st > _s.len) { char _sbuf[112]; \
+int _sn = snprintf(_sbuf, 112, \"str: slice [%lld..%lld] out of bounds for byte-length %lld\", \
+(long long)_sf, (long long)_st, (long long)_s.len); \
+if (_sn < 0) _sn = 0; if (_sn > 111) _sn = 111; \
+nv_panic((nova_str){.ptr=(const uint8_t*)_sbuf,.len=(nova_int)_sn}); } ".to_string()
+                        };
+                        return Ok(format!(
+                            "(({{ nova_str _s = ({o}); nova_int _sf = ({from}); nova_int _st = ({to}); \
+{chk}if ((_sf < _s.len && (((unsigned char)_s.ptr[_sf]) & 0xC0) == 0x80) || \
+(_st < _s.len && (((unsigned char)_s.ptr[_st]) & 0xC0) == 0x80)) \
+nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
+(nova_str){{.ptr = _s.ptr + _sf, .len = _st - _sf}}; }}))",
+                            o = o, from = from_expr, to = to_expr, chk = bounds_chk
+                        ));
                     } else if let Some(elem) = obj_ty.strip_prefix("NovaArray_") {
                         let elem = elem.trim_end_matches('*').trim();
                         return Ok(format!("nova_array_slice_{}({}, {}, {})", elem, o, from_expr, to_expr));
