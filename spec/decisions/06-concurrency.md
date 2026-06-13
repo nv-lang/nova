@@ -4643,6 +4643,22 @@ static inline Nova_Mutex* Nova_Mutex_static_new(void) {
 исключает эту проблему (объект не собирается GC, но сканируется на interior
 pointers).
 
+**Plan 151 (2026-06-13) — КОРНЕВОЙ фикс той же проблемы.** `GC_malloc_uncollectable`
+выше защищает ТОЛЬКО sync-примитивы; произвольные heap-объекты на main-стеке (напр.
+замыкание `body` в `supervised{spawn{ ro r = body() }}`) оставались уязвимы — при ≥4
+worker'ах GC во время `_materialize_pool` (до создания ленивой main-арены) не видел
+main-стек → premature collect → `closure->fn = 0` → worker зовёт NULL → RIP=0
+(маскируется под «fiber stack overflow in slot 0»; диагностика — [docs/debugging-races.md
+§2.1.1](../../docs/debugging-races.md)). **Фикс (`nova_rt/fiber_arena_win.c`):** main-thread
+`NT_TIB.StackBase` фиксируется ДО создания worker-пула (`nova_fiber_arena_set_main_stack`,
+зовётся из `_materialize_pool`); его **committed-only** регион (`MEM_COMMIT && !PAGE_GUARD
+&& !PAGE_NOACCESS`) пушится в GC `push_other_roots`-колбэк. Обобщает решение на ВСЕ
+main-stack-rooted объекты; `GC_malloc_uncollectable` для sync-примитивов остаётся как
+defense-in-depth. **Инвариант (M:N):** каждый root-bearing native-стек (main + worker-
+арены) ДОЛЖЕН сканироваться GC до любого STW. Дискриминаторы GC-collect-vs-overflow:
+`GC_DONT_GC=1` чинит; `NOVA_FIBER_STACK=64MB` не помогает; `MAXPROCS≤3` pass / `≥4` fail.
+Будущий hardening — единый global stack-registry (`[M-mn-gc-root-unified-stack-registry]`, → Plan 144).
+
 #### 5. Realtime context ban
 
 Методы `lock()` / `read()` / `write()` и `try_lock_for` / `try_read_for` /
