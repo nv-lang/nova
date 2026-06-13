@@ -35994,6 +35994,15 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   Это же закрыло латентную предсуществующую дыру: B.4 ассертил requires безусловно, что под `--contracts=off`
   могло бы элидировать requires-зависимый `v[i]`.
 
+- **Plan 140.2 diagnostic follow-up (2026-06-13) — `[M-140.2-contract-exprdisplay-selfaccess]`**: codegen-рендерер
+  contract/assert-сообщений (`expr_to_display`, emit_c) имел misleading catch-all `_ => "assert"` и не покрывал
+  `Member`/`SelfAccess`/`Index` → нарушение `requires 0<=i && i<@len` печаталось как `… i < assert`. Баг был
+  невидим тестам (custom-message маркеры матчили только текст сообщения, garbled `<src>` жил в скобках
+  `failed: msg (<src>)`); всплыл, т.к. Part A (D256) ВПЕРВЫЕ разрешил `@`-аксессоры в контрактах, а main
+  (0489689c) убрал custom-messages у Vec-контрактов → сырой `<src>` стал surfaced. Упрощение/исправление:
+  дефолт `"assert"`→честный `"<expr>"` + явные армы (Member→`@field`/`obj.field`, SelfAccess→`@`, Index, char/
+  float-lit, Path, `as`/`is`, turbofish); `typeref_display`→`pub(crate)`. Семантика проверки не тронута.
+
 - **Plan 152.1 Ф.2 + str-cleanups (2026-06-13)**: (Ф.2) `@find`/`@rfind` → **байт-offset**
   (было codepoint) — композируются с `s[k..]` за O(1); для ASCII byte==cp (миграция
   минимальна). Cleanups str-модуля: `u8`/`int == char` напрямую (Nova сравнивает по
