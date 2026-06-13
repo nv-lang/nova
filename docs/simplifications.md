@@ -36045,3 +36045,13 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   ("é".pad_left(3,'·') теперь "··é", было "·é"). Починил pre-existing types-тест.
 - split-семейство строит сегменты через @[a..b] (zero-copy); trim_matches/strip — через
   starts_with/ends_with + slice (без RawMem/StringBuilder); replacen — через @find на остатке.
+
+- **Plan 154 (method coherence, 2026-06-13)**: extension-методы — разрешены (нет orphan
+  rule), но **override чужого метода** (same-signature, из другого модуля) — теперь
+  `E_METHOD_REDEFINITION` (был **silent no-op**: codegen `method_overloads` first-match →
+  std-wins, тело юзера мёртвый код, без диагностики). Coherence-упрощение: единственный
+  путь «своего» метода — другое имя / overload / newtype+own-method / локальный type
+  re-decl, а не молчаливая глобальная подмена built-in (footgun monkey-patching). Fix
+  **type-check-only** (`types/mod.rs`, guard `user_declared_types` — не ломает Plan 62
+  локальный type-shadow, напр. for_in_range_iter). D267. `nova test plan154` 5/5 PASS,
+  корпус-скан 0 регрессий.

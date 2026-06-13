@@ -120,6 +120,7 @@
 | `[M-codegen-dead-erased-generic-stubs]` | Type-erased `Vec[any]` (prelude-вариадик) эмитит NULL-stub методы — DCE. | codegen-cleanup mini-план | P3 |
 | `[M-codegen-unit-block-temp-elision]` | `unit`-block-expr в discard-позиции → бессмысленный `_nv_tmp`. | codegen-cleanup mini-план | P3 |
 | `[M-codegen-src-synthesized-attribution]` | `/* SRC */` только statement-granular; синтезированный C без атрибуции. | codegen-cleanup mini-план | P3 |
+| `[M-method-resolution-registry-inconsistency]` | codegen держит два method-реестра с **противоположным** tie-break: `method_receivers` (single-key, last-wins) vs `method_overloads` (multi-key Vec, first-match). Безвреден после Plan 154 (override чужого метода = `E_METHOD_REDEFINITION`, D267), но дублирование+рассинхрон стоит унифицировать. Найдено при Plan 154 investigation. | codegen-cleanup mini-план | P3 |
 
 ## P3 — Docs / Sugar
 

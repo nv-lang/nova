@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E_METHOD_REDEFINITION
+//
+// Plan 154 [M-method-override-silent-noop]: переопределение существующего
+// std-метода `str @to_lower` с той же сигнатурой → ошибка (был silent no-op:
+// codegen first-match брал std, тело пользователя не вызывалось).
+module plan154.neg_override_str_to_lower
+
+fn str @to_lower() -> str => "X"
+
+fn main() -> () { print("ABC".to_lower()) }

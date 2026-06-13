@@ -1,0 +1,13 @@
+// Plan 154: overload по сигнатуре (разные arg-types) — разрешён (D84), не error.
+module plan154.pos_overload_sig
+
+type Foo { x int }
+
+fn Foo @m(a int) -> int => a
+fn Foo @m(a str) -> int => 0
+
+fn main() -> () {
+    ro f = Foo { x: 1 }
+    assert(f.m(5) == 5)
+    assert(f.m("hi") == 0)
+}

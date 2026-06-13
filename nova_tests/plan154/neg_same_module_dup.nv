@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR duplicate definition
+//
+// Plan 154 регресс-guard: same-module дубль метода — по-прежнему D84 ошибка
+// (фикс method-override не должен сломать существующую same-module проверку).
+module plan154.neg_same_module_dup
+
+type Foo { x int }
+
+fn Foo @bar() -> int => 1
+fn Foo @bar() -> int => 2
+
+fn main() -> () {}
