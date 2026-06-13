@@ -13163,6 +13163,47 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 } else { None }
             }),
         );
+        // Plan 140 cgfix ([M-138.2-flip-erased-base-body-mono]): emit the
+        // `requires`/`ensures` contract pre/postamble in the MONO'd generic-
+        // method body too. Previously the mono path skipped contract codegen
+        // entirely (only `emit_fn`'s non-generic path emitted it), so a
+        // contract violation on a generic-type method (e.g. `Vec[T] @index`
+        // OOB called via dispatch, `Bag[int] @at` OOB) went silently UNCAUGHT
+        // — a soundness hole. This ports the exact logic from `emit_fn`
+        // (lines ~14555+): build-/per-fn opt-out folds into `has_contracts`,
+        // Z3-proven contracts elide via `proven_contracts`, quantifiers skip.
+        let mono_contracts_elided_fn = self.contracts_off || fn_decl.contracts_unchecked;
+        let mono_has_contracts = !fn_decl.contracts.is_empty()
+            && !matches!(fn_decl.verify_mode, VerifyMode::Unverified)
+            && !mono_contracts_elided_fn;
+        let mono_has_ensures = mono_has_contracts
+            && fn_decl.contracts.iter().any(|c| matches!(c.kind, ContractKind::Ensures));
+        // Expose per-fn contract opt-out to body-level emitters
+        // (assert_static/assume), restored at fn-body end below.
+        let prev_mono_contracts_unchecked = self.contracts_unchecked_fn;
+        self.contracts_unchecked_fn = mono_contracts_elided_fn;
+        // emit requires checks (enforce-with-elision; unproven stay in release).
+        if mono_has_contracts {
+            for c in &fn_decl.contracts {
+                if matches!(c.kind, ContractKind::Requires) {
+                    if self.proven_contracts.contains(&(fn_decl.name.clone(), c.span.start)) {
+                        continue;
+                    }
+                    if matches!(c.expr.kind, ExprKind::Forall { .. } | ExprKind::Exists { .. }) {
+                        continue;
+                    }
+                    let expr_c = self.emit_expr(&c.expr)?;
+                    let expr_src = Self::expr_to_display(&c.expr);
+                    let (file_lit, line) = self.loc_for_span(c.span.start);
+                    let msg_arg = Self::contract_msg_arg(&c.message);
+                    self.line(&format!(
+                        "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"{}\", \"{}\", {}, {});",
+                        expr_c, fn_decl.name, Self::escape_c_str(&expr_src),
+                        file_lit, line, msg_arg
+                    ));
+                }
+            }
+        }
         // Ф.7: Erased Array runtime always returns NovaOpt_nova_int; emit a bridge wrapper
         // for methods whose concrete return type is NovaOpt_T (T != nova_int).
         // Bridge only works for pointer types: scalars (nova_str, nova_bool, nova_f64, nova_byte)
@@ -13204,9 +13245,72 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 let val = self.emit_expr(e)?;
                 if ret_c == "nova_unit" {
                     self.line(&format!("{};", val));
+                    // Plan 140 cgfix: ensures on a unit-return expr body.
+                    if mono_has_ensures {
+                        self.emit_ensures_checks(fn_decl)?;
+                    }
                     self.line("return NOVA_UNIT;");
+                } else if mono_has_ensures {
+                    // Plan 140 cgfix: collect into `_nova_result`, register
+                    // `result` for the ensures expression, then check + return.
+                    self.line(&format!("{} _nova_result = {};", ret_c, val));
+                    self.var_types.insert("result".into(), ret_c.clone());
+                    self.emit_ensures_checks(fn_decl)?;
+                    self.var_types.remove("result");
+                    self.line("return _nova_result;");
                 } else {
                     self.line(&format!("return {};", val));
+                }
+            }
+            FnBody::Block(block) if mono_has_ensures => {
+                // Plan 140 cgfix: block-body + ensures — route ALL returns
+                // (incl. early-return) through a post-label that collects the
+                // value into `_nova_result`, then run ensures-checks + final
+                // return. Mirrors `emit_fn`'s production-grade path; the
+                // `Stmt::Return` handler already honours `contracts_post_label`.
+                let post_label = format!("_nova_contract_post_{}", mono_name);
+                if ret_c != "nova_unit" {
+                    self.line(&format!("{} _nova_result;", ret_c));
+                }
+                let block_id = self.enter_defer_scope(block, false);
+                let saved_label = self.contracts_post_label.take();
+                self.contracts_post_label = Some(post_label.clone());
+                self.var_types.insert("result".into(), ret_c.clone());
+                for stmt in &block.stmts {
+                    self.emit_stmt(stmt)?;
+                }
+                if let Some(trailing) = &block.trailing {
+                    self.emit_source_annotation_for_expr(trailing);
+                    let trailing_ty = self.infer_expr_c_type(trailing);
+                    let val = self.emit_expr(trailing)?;
+                    if ret_c == "nova_unit" {
+                        self.line(&format!("{};", val));
+                    } else if trailing_ty == "nova_unit" && ret_c != "nova_unit" {
+                        // Divergent trailing (e.g. loop {} with internal returns):
+                        // no fallthrough value — the post-label is reached only
+                        // via the routed returns. Emit side-effect only.
+                        self.line(&format!("{};", val));
+                    } else if Self::needs_tuple_field_copy(&ret_c, &trailing_ty) {
+                        let tmp = self.fresh_tmp();
+                        self.emit_tuple_return_stash(&ret_c, &tmp, &val, &trailing_ty);
+                        self.line(&format!("_nova_result = {};", tmp));
+                    } else {
+                        self.line(&format!("_nova_result = {};", val));
+                    }
+                }
+                self.leave_defer_scope(block_id);
+                // Post-label (C label syntax: 0-indent).
+                let saved_indent_lbl = self.indent;
+                self.indent = 0;
+                self.line(&format!("{}:;", post_label));
+                self.indent = saved_indent_lbl;
+                self.emit_ensures_checks(fn_decl)?;
+                self.var_types.remove("result");
+                self.contracts_post_label = saved_label;
+                if ret_c == "nova_unit" {
+                    self.line("return NOVA_UNIT;");
+                } else {
+                    self.line("return _nova_result;");
                 }
             }
             FnBody::Block(block) => {
@@ -13266,6 +13370,8 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.current_receiver_type = saved_recv;
         self.current_fn_return_ty = saved_ret_ty;
         self.expected_record_type = saved_expected;
+        // Plan 140 cgfix: restore per-fn contract opt-out flag after fn body.
+        self.contracts_unchecked_fn = prev_mono_contracts_unchecked;
         for key in &saved_mono_array_elem_keys {
             self.array_element_types.remove(key);
         }

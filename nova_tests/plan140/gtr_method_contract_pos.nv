@@ -1,0 +1,40 @@
+// Plan 140 cgfix ([M-138.2-flip-erased-base-body-mono]): the positive
+// companion to `gtr_method_contract_neg.nv`. A generic-type method whose
+// `requires`/`ensures` contracts HOLD must run normally — the contract codegen
+// that was ported into `emit_monomorphized_method` must not introduce spurious
+// panics on the satisfied path, and `result` must be visible inside `ensures`.
+//
+//   * `b.at(1)` — `1` is in bounds for `n == 3` (`0 <= 1 && 1 < 3`), so the
+//     `requires` guard passes and the call returns `@n == 3`.
+//   * `b.checked()` — carries `ensures result >= 0`; the body returns `@n`
+//     (3 >= 0), so the POST guard passes. This proves the ensures pre/postamble
+//     survives monomorphization without firing on a held postcondition.
+//
+// No EXPECT_RUNTIME_PANIC: this fixture must PASS cleanly (all asserts hold,
+// no contract violation).
+
+module plan140.gtr_method_contract_pos
+
+type Bag[T] { priv n int }
+
+fn Bag[T].mk(n int) -> Self => { n }
+
+fn Bag[T] @at(i int) -> int
+    requires 0 <= i && i < @n, "Bag.at OOB"
+=> @n
+
+fn Bag[T] @checked() -> int
+    ensures result >= 0
+=> @n
+
+test "generic-method requires holds on in-bounds index" {
+    ro b = Bag[int].mk(3)
+    ro r = b.at(1)
+    assert(r == 3)
+}
+
+test "generic-method ensures survives mono and holds" {
+    ro b = Bag[int].mk(3)
+    ro c = b.checked()
+    assert(c == 3)
+}

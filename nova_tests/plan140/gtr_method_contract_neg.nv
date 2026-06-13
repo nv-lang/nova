@@ -1,0 +1,37 @@
+// EXPECT_RUNTIME_PANIC requires failed: Bag.at OOB
+//
+// Plan 140 cgfix ([M-138.2-flip-erased-base-body-mono]): a `requires` contract
+// on a GENERIC-TYPE method must fire at runtime when violated — just like the
+// non-generic path. Before the fix, the monomorphized method body
+// (`Bag____nova_int_method_at`) was emitted via `emit_monomorphized_method`,
+// which skipped contract codegen entirely; the precondition was SILENTLY
+// DROPPED and an out-of-bounds access went uncaught (a soundness hole). The
+// erased base stub never runs (the call dispatches to the mono'd body).
+//
+// `Bag[T] @at(i)` carries `requires 0 <= i && i < @n, "Bag.at OOB"`. `main`
+// calls `b.at(10)` on a `Bag[int]` with `n == 3`, so `10 < 3` is false → the
+// precondition is violated. The mono'd body now emits the
+// `nova_contract_violation(NOVA_CONTRACT_PRE, …)` guard → it fires → stderr
+// message (carrying the custom `"Bag.at OOB"` text) + abort() → nonzero exit.
+//
+// Note: should-abort test. Sole assertion is EXPECT_RUNTIME_PANIC (no stdout
+// assert — abort() does not flush libc stdout buffers). The companion positive
+// case is `gtr_method_contract_pos.nv`.
+//
+// `UNREACHABLE` is never printed because the abort terminates the process.
+
+module plan140.gtr_method_contract_neg
+
+type Bag[T] { priv n int }
+
+fn Bag[T].mk(n int) -> Self => { n }
+
+fn Bag[T] @at(i int) -> int
+    requires 0 <= i && i < @n, "Bag.at OOB"
+=> @n
+
+fn main() Io -> () {
+    ro b = Bag[int].mk(3)
+    ro _ = b.at(10)
+    println("UNREACHABLE")
+}
