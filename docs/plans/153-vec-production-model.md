@@ -175,9 +175,9 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
   - **`@cap(n)` — ДА:** realloc до ровно `n` (= `reserve_exact`+`shrink_to` под
     одним именем); контракт **`n >= len`**, иначе паника (fail-fast). Элементы
     сохраняются. Симметрично `@cap()`.
-  - **`@len(n)` — НЕТ (голым сеттером):** shrink ок (truncate), но **рост нечем
-    заполнить** (нужно дефолт-значение) → остаётся `@truncate(n)` (shrink) +
-    `@resize(n, v)` (grow с fill). `@len` — только getter.
+  - **`@len(n)` — ЗАПРЕЩЁН.** Прямая установка `len` — footgun (UB при `len > cap`/
+    рассинхрон с буфером; рост нечем заполнить). `@len` — **только getter**. Изменение
+    размера: `@truncate(n)` (shrink), `@resize(n, v)` (grow с fill), `@push`/`@pop`.
 - **Внутри type-методов — читать ПОЛЕ напрямую (`@cap`), не getter (`@cap()`)** —
   ноль индиректности (не зависим от инлайна `=> @cap`), яснее. Getter — внешний
   контракт. (vec_owned уже так.)
@@ -256,7 +256,7 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 - **D239 AMEND/CONFIRM** — `[]T` чистый алиас завершён (Plan 138 Ф.5 закрыт).
 - **D117 AMEND** — accessor-конвенция: read-getter `@name()=>@name`, write-setter
   `@name(v)` где есть безопасная семантика под капотом (`@cap(n)` → realloc, контракт
-  `n>=len`; `@len(n)` — нет, рост нечем заполнить → `truncate`/`resize`); внутри
+  `n>=len`; `@len(n)` — ЗАПРЕЩЁН, footgun → `truncate`/`resize`/`push`/`pop`); внутри
   type-метода field-read size-аккумулятора разрешён (E_SIZE_ACCESSOR_FIELD — только
   внешним callers). Кросс-план: применить и в Plan 152 (str).
 - **D238/D240 AMEND** (при необходимости) — `Index[Range]` со `str`-подобной view-
