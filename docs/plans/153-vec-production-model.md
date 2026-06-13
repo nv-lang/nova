@@ -169,9 +169,15 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 **Accessor-конвенция (D117 AMEND — формализовать):**
 - **Read-getter:** `@name() -> T => @name` (одноимённый метод без параметров читает
   поле). Снаружи — только `v.name()` (D117, `E_SIZE_ACCESSOR_FIELD` для `v.name`).
-- **Write-setter (где безопасно):** `@name(v T)` — одноимённая перегрузка по арности.
-  **НЕ заводить** для invariant-coupled размеров (`len`/`cap`) — мутация только через
-  `reserve`/`resize`/`truncate`/`shrink_to_fit`. Сеттер — для настоящих свойств.
+- **Write-setter:** `@name(v T)` — одноимённая перегрузка по арности — **допустим
+  там, где у него есть корректная безопасная семантика под капотом** (поддерживает
+  инварианты), а не «никогда для размеров».
+  - **`@cap(n)` — ДА:** realloc до ровно `n` (= `reserve_exact`+`shrink_to` под
+    одним именем); контракт **`n >= len`**, иначе паника (fail-fast). Элементы
+    сохраняются. Симметрично `@cap()`.
+  - **`@len(n)` — НЕТ (голым сеттером):** shrink ок (truncate), но **рост нечем
+    заполнить** (нужно дефолт-значение) → остаётся `@truncate(n)` (shrink) +
+    `@resize(n, v)` (grow с fill). `@len` — только getter.
 - **Внутри type-методов — читать ПОЛЕ напрямую (`@cap`), не getter (`@cap()`)** —
   ноль индиректности (не зависим от инлайна `=> @cap`), яснее. Getter — внешний
   контракт. (vec_owned уже так.)
@@ -249,9 +255,10 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 - **D264** (NEW) — Vec-протоколы (`Hash` + FromIterator/collect).
 - **D239 AMEND/CONFIRM** — `[]T` чистый алиас завершён (Plan 138 Ф.5 закрыт).
 - **D117 AMEND** — accessor-конвенция: read-getter `@name()=>@name`, write-setter
-  `@name(v)` (где безопасно, НЕ для `len`/`cap`); внутри type-метода field-read
-  size-аккумулятора разрешён (E_SIZE_ACCESSOR_FIELD — только внешним callers).
-  Кросс-план: применить и в Plan 152 (str).
+  `@name(v)` где есть безопасная семантика под капотом (`@cap(n)` → realloc, контракт
+  `n>=len`; `@len(n)` — нет, рост нечем заполнить → `truncate`/`resize`); внутри
+  type-метода field-read size-аккумулятора разрешён (E_SIZE_ACCESSOR_FIELD — только
+  внешним callers). Кросс-план: применить и в Plan 152 (str).
 - **D238/D240 AMEND** (при необходимости) — `Index[Range]` со `str`-подобной view-
   семантикой для Vec.
 
