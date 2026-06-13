@@ -37318,7 +37318,8 @@ Plan 140.2 — bounds-as-contract ✅ CLOSED Part A+B (2026-06-13, branch plan-1
   accessor-arm; один `_self` на все `@field` метода = верная конгруэнтность; БЕЗ изменений backend
   (z3.rs/smtlib.rs — Var auto-Int, fresh-const по AST-указателю). Checker: non-accessor `@method()` в
   контракте → внятная ошибка (не E2401). D24 AMEND + D256 + docs/contracts.md.
-  Part B: Vec `@index`/`mut @index` несут `requires 0<=i && i<@len` (D248 &&-форма; ручной if…panic убран);
+  Part B: Vec `@index`/`mut @index` несут `requires 0<=i && i<@len` (D248 &&-форма; ручной if…panic
+  СОХРАНЁН как runtime-guard для прямых `.index()` — generic-mono contract-enforcement пока не эмитится, gap);
   `@get`/`@first`/`@last` без контракта (None на OOB). Codegen RB2-fix: inline Vec-read переведён на
   lvalue-safe `(*({…;&data[i];}))` (как NovaArray) — `v[i].field=x`/`&v[i]` корректны под clang.
   B.4 ЭЛИЗИЯ (sound-MVP): `prove_vec_index_sites` (verify/pipeline.rs) per READ-сайт `v[idx]` доказывает

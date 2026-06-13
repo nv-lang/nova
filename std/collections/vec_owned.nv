@@ -404,6 +404,13 @@ export fn Vec[T] mut @swap_remove(i int) -> T {
 export fn Vec[T] @index(i int) -> T
     requires 0 <= i && i < @len
 {
+    // Runtime guard для ПРЯМОГО `v.index(i)`: contract-enforcement `requires`
+    // пока НЕ эмитится для generic-type mono'd методов (Plan 140 gap, чинится),
+    // поэтому держим явный bounds-panic. `v[i]` (inline codegen) имеет свою
+    // элидируемую проверку и через это тело не диспатчится.
+    if i < 0 || i >= @len {
+        panic("Vec: index out of bounds")
+    }
     unsafe { @data[i] }
 }
 
@@ -432,6 +439,11 @@ export fn Vec[T] @get(i int) -> Option[T] {
 export fn Vec[T] mut @index(i int, val T) -> ()
     requires 0 <= i && i < @len
 {
+    // Runtime guard для ПРЯМОГО `v.index(i, val)` (см. @index выше): generic-mono
+    // contract-enforcement пока не эмитится. `v[i] = val` (inline) не диспатчится сюда.
+    if i < 0 || i >= @len {
+        panic("Vec: index out of bounds")
+    }
     unsafe {
         @data[i] = val
     }
