@@ -9,7 +9,7 @@
 #allow(shadow)
 module plan138_2.t16_user_vec_shadow_suppress_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 type Vec { x int, y int }
 

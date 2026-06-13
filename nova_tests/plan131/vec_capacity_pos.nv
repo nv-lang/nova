@@ -2,7 +2,7 @@
 
 module plan131.vec_capacity_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "with_capacity reserves up front" {
     mut v = Vec[int].with_capacity(16)

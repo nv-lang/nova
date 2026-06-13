@@ -1,0 +1,46 @@
+// Plan 153.0 — the `collections.vec` folder-module: `Vec[T]` is declared in
+// core.nv, its methods are split across access.nv / mutate.nv / slice.nv /
+// iter.nv / protocols.nv (co-equal peers, all `module collections.vec`). A
+// caller that selectively imports `{Vec}` must see methods from EVERY peer.
+// Also confirms `[]T` ≡ `Vec[T]` interchangeability (D239).
+
+module plan153_0.vec_folder_module_pos
+
+import std.collections.vec.{Vec}
+
+// `[]T` param accepts both an array literal and a `Vec[T]` — same type (D239).
+fn sum(xs []int) -> int {
+    mut s = 0
+    for x in xs { s = s + x }
+    s
+}
+
+test "methods resolve across folder peers (core/access/mutate/slice/protocols)" {
+    mut v = Vec[int].new()        // core.nv constructor
+    v.push(10); v.push(20); v.push(30)   // mutate.nv
+    assert(v.len() == 3)          // core.nv
+    assert(v[1] == 20)            // access.nv @index
+    assert(v.get(5) == None)      // access.nv @get
+    ro w = v[0..2]                // slice.nv @index(Range) — zero-copy view
+    assert(w.len() == 2 && w[0] == 10 && w[1] == 20)
+    ro v2 = Vec[int].from([10, 20, 30])
+    assert(v.equal(v2))           // protocols.nv @equal
+}
+
+test "[]T and Vec[int] are interchangeable (D239)" {
+    ro lit []int = [1, 2, 3]
+    ro vec = Vec[int].from([1, 2, 3])   // inferred Vec[int]
+    assert(sum(lit) == 6)         // []T literal → []int param
+    assert(sum(vec) == 6)         // Vec[int] → []int param (D239 alias)
+    assert(lit.equal(vec))        // []T ≡ Vec[int]
+    // NOTE: an EXPLICITLY annotated `ro v Vec[int] = …` does NOT coerce to a
+    // `[]int` param yet (pre-existing residual E7301, [M-153-d239-explicit-vec-to-slice-param]);
+    // the inferred form above is the working path.
+}
+
+test "Vec[int] Compare is lexicographic (folder protocols.nv)" {
+    ro a = Vec[int].from([1, 2, 3])
+    ro b = Vec[int].from([1, 2, 4])
+    assert(a.compare(b) == -1)
+    assert(a.compare(a) == 0)
+}

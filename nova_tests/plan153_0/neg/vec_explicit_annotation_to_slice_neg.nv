@@ -1,0 +1,23 @@
+// Plan 153.0 NEG — residual `[]T ≡ Vec[T]` (D239) non-transparency: a value with
+// an EXPLICIT `Vec[int]` annotation does NOT coerce to a `[]int` parameter yet
+// (E7301), even though an *inferred* `Vec[int]` does (see the POS fixture
+// vec_folder_module_pos / plan138_1 t8). This pins the current residual; closing
+// it is [M-153-d239-explicit-vec-to-slice-param]. Pre-existing on main (the
+// alias was never fully transparent for explicit annotations).
+//
+// EXPECT_COMPILE_ERROR E7301
+
+module neg.vec_explicit_annotation_to_slice_neg
+
+import std.collections.vec.{Vec}
+
+fn sum(xs []int) -> int {
+    mut s = 0
+    for x in xs { s = s + x }
+    s
+}
+
+test "explicit Vec[int] annotation does not coerce to []int param (residual)" {
+    ro v Vec[int] = Vec[int].from([1, 2, 3])
+    assert(sum(v) == 6)   // E7301: cannot pass `Vec[int]` as `[]int` (residual)
+}

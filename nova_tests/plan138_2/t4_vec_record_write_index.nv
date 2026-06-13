@@ -10,7 +10,7 @@
 
 module plan138_2.t4_vec_record_write_index
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 type Point { x int, y int }
 

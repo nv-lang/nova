@@ -14,7 +14,7 @@
 
 module plan138_2.t7_vec_as_ptr
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "ro vec as_ptr deref-read under unsafe" {
     ro v = Vec[int].from([10, 20, 30])

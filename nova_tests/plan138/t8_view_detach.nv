@@ -3,7 +3,7 @@
 
 module plan138.t8_view_detach
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "push on range view detaches from parent" {
     mut v = Vec[int].from([10, 20, 30, 40, 50])

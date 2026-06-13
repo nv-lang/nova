@@ -27,7 +27,7 @@ module collections.hashmap
 // (not int64-erased `NovaArray_nova_int*`) — isolated to the HashMap CU.
 // vec_owned only imports raw_mem (no cycle with hashmap). Until Ф.0-final lands
 // Vec in the prelude, the rest of the `[]T` world keeps NovaArray-backing.
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Типы

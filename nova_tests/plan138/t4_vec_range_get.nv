@@ -3,7 +3,7 @@
 
 module plan138.t4_vec_range_get
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "inclusive range v[1..=3]" {
     ro v = Vec[int].from([10, 20, 30, 40, 50])

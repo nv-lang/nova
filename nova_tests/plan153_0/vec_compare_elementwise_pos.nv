@@ -1,0 +1,41 @@
+// Plan 153.0 — `Vec[T Compare] @compare` is element-wise (delegates to each
+// element's own ordering), NOT a raw byte memcmp. This locks in the correctness
+// fix: the prior `RawMem.compare` impl was only valid for `Vec[u8]`.
+//
+// The decisive case is `Vec[int]` with NEGATIVE values: byte-wise (little-endian)
+// memcmp would treat `-1` (0xFF..) as GREATER than `1` (0x01..) — sign inverted.
+// Element-wise `(-1).compare(1) == -1` is correct (−1 < 1).
+
+module plan153_0.vec_compare_elementwise_pos
+
+import std.collections.vec.{Vec}
+
+test "compare — signed ints order by value, not little-endian bytes" {
+    ro neg = Vec[int].from([-1])
+    ro pos = Vec[int].from([1])
+    // Element-wise: -1 < 1. (Byte-wise memcmp would wrongly give +1.)
+    assert(neg.compare(pos) == -1)
+    assert(pos.compare(neg) == 1)
+    assert(neg.compare(neg) == 0)
+}
+
+test "compare — lexicographic with length tiebreak" {
+    ro a = Vec[int].from([1, 2, 3])
+    ro b = Vec[int].from([1, 2, 4])
+    ro c = Vec[int].from([1, 2])
+    assert(a.compare(b) == -1)   // 3 < 4 at index 2
+    assert(b.compare(a) == 1)
+    assert(a.compare(c) == 1)    // a longer, common prefix equal
+    assert(c.compare(a) == -1)
+    assert(a.compare(a) == 0)
+}
+
+test "compare — multi-byte order is value order (1000 vs 2)" {
+    // 1000 = 0xE8 0x03 .. (LE) ; 2 = 0x02 .. — byte-wise memcmp on the first
+    // byte would say 1000 (0xE8) > 2 (0x02) which is accidentally right here,
+    // but the SECOND element disambiguates by value, not bytes.
+    ro a = Vec[int].from([1000])
+    ro b = Vec[int].from([2])
+    assert(a.compare(b) == 1)    // 1000 > 2 by value
+    assert(b.compare(a) == -1)
+}

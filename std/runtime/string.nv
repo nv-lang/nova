@@ -14,7 +14,7 @@ import std.runtime.string_builder.{StringBuilder}
 // Plan 139.2 Ф.0: Vec[u8].from_raw_parts cross-type bridge for @as_bytes
 // zero-copy view ([]u8 ≡ Vec[u8] under D239; the `Vec` name is needed because
 // the `[]T.` builtin static-dispatch only handles new/with_capacity).
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 // Plan 139.2 Ф.2: raw alloc + NUL-term + memcpy for from_bytes_* producers
 // (str owns a fresh, NUL-terminated buffer per D26 §3).
 import std.runtime.raw_mem.{RawMem}

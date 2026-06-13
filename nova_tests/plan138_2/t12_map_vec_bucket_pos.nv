@@ -1,6 +1,6 @@
 // Plan 138.2 Ф.0b (class #4) — t12: Vec-backed map-literal bucket arrays.
 //
-// After hashmap.nv imports `std.collections.vec_owned.{Vec}` the `[]Slot[K,V]`
+// After hashmap.nv imports `std.collections.vec.{Vec}` the `[]Slot[K,V]`
 // bucket field lowers to a TYPED `Nova_Vec____Nova_Slot____*` backing (not the
 // int64-erased `NovaArray_nova_int*`). This fixture exercises the Vec-backed
 // bucket end-to-end — insert / get / iter — across int→str, record-value, and

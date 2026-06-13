@@ -1,0 +1,20 @@
+// Plan 153.0 — folder-module `collections.vec` prelude-attribute carrier.
+//
+// `std/collections/vec/` is a *folder-module* (Nova module model: a folder
+// whose co-equal `.nv` files all declare the SAME `module collections.vec`
+// merge into one module — methods declared in any peer attach to the `Vec[T]`
+// type declared in `core.nv`). This `_module.nv` carries the shared
+// `#prelude(...)` membership for the whole folder-module (D174 / Plan 107);
+// each peer file ALSO repeats the directive so it resolves correctly when
+// compiled standalone as an entry. `_module.nv` itself carries no items.
+//
+// Layer layout (Plan 153 §2):
+//   core.nv        — `Vec[T]` type, constructors, len/cap, capacity mgmt
+//   access.nv      — index/get/first/last/as_ptr
+//   mutate.nv      — push/pop/insert/remove/clear/… + bulk ops
+//   slice.nv       — `v[a..b]` zero-copy range views (Index[Range])
+//   iter.nv        — VecIter + iter()/next() (Iter/Next protocols)
+//   functional.nv  — eager map/filter/fold/any/all combinators
+//   protocols.nv   — Equal / Clone / Display / Debug
+#prelude(core, runtime, collections, protocols)
+module collections.vec

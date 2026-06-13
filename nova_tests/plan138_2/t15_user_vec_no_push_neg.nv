@@ -9,7 +9,7 @@
 
 module plan138_2.t15_user_vec_no_push_neg
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 type Vec { x int, y int }
 

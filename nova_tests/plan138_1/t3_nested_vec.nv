@@ -3,7 +3,7 @@
 
 module plan138_1.t3_nested_vec
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "[][]int push rows and access grid[r][c]" {
     mut grid [][]int = []

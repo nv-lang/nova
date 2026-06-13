@@ -3,7 +3,7 @@
 
 module plan131.vec_nested_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "Vec[Vec[int]] push inner vectors and read back" {
     mut outer = Vec[Vec[int]].new()
