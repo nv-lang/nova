@@ -153,6 +153,32 @@ bounds contract into a no-op. Nova rejects the chain (and bool/unit operands of
 `<` `<=` `>` `>=`, `E_RELATIONAL_OPERAND_NOT_ORDERED`) at parse/check time;
 split into `&&` as shown (Plan 150 / D248).
 
+### Self-access (`@field`, `@len()`) in method contracts
+
+A **method** contract may refer to the receiver's own state. Read a field
+with `@field`, or a built-in size accessor with `@len()` / `@cap()` /
+`@byte_len()` / `@is_empty()` (the call form is interchangeable with the
+field, `@len()` ≡ `@len`):
+
+```nova
+fn Vec[T] @index(i int) -> T
+    requires 0 <= i && i < @len     // ✓ refers to the receiver's length
+{
+    unsafe { @data[i] }
+}
+```
+
+The SMT solver models the receiver as an entity `_self`; each `@field` becomes
+an uninterpreted `_field_<name>(_self)`, so `@len` in `requires` and `@len` in
+`ensures` denote the same term (consistent reasoning). Only **reads** are
+allowed — a contract is an expression, so there is no way to write a field in
+one.
+
+Calling a non-accessor `@method()` (or a non-`#pure` / `mut`-receiver method)
+in a contract is a clear compile error — the SMT encoder cannot model arbitrary
+method bodies. Reference the field directly, or extract a `#pure` free function
+(Plan 140.2 / D256).
+
 ### `ensures` and `result`
 
 A postcondition. `result` refers to the return value of the function.

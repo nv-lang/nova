@@ -16585,6 +16585,28 @@ impl ContractCtx {
                         ));
                     }
                 }
+                // Plan 140.2 Part A (D256): self-method call `@method()` в контракте.
+                // SMT-encoder поддерживает только встроенные #pure-аксессоры
+                // (`@len()`/`@cap()`/`@byte_len()`/`@is_empty()` → `_field_*_int(_self)`);
+                // прочие `@method()` (в т.ч. non-pure / mut-receiver) НЕ кодируются —
+                // даём внятную ошибку на checker-этапе вместо обобщённого E2401.
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if matches!(obj.kind, ExprKind::SelfAccess)
+                        && !matches!(name.as_str(), "len" | "cap" | "byte_len" | "is_empty")
+                    {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "self-метод `@{}()` в контракте не поддерживается SMT-encoder'ом \
+                                 (Plan 140.2: разрешены только #pure-аксессоры \
+                                 `@len()`/`@cap()`/`@byte_len()`/`@is_empty()`); \
+                                 ссылайтесь на поле напрямую (`@{}`) или вынесите логику в #pure fn",
+                                name, name,
+                            ),
+                            e.span,
+                        ));
+                        return;
+                    }
+                }
                 // Walk callee + args.
                 self.walk_expr(func, fn_effects, fn_name, errors, in_ensures);
                 for a in args {
