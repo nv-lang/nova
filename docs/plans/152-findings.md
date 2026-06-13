@@ -7,6 +7,30 @@
 
 ---
 
+## Решения (согласовано с автором, 2026-06-13)
+
+- **D-R1. 152.0 структура** — папка `std/runtime/string/`, co-equal файлы все
+  `module runtime.string` (НЕ facade-файл; см. F4). `_buffer` — sibling-модуль
+  `runtime.string_buffer`.
+- **D-R2. Чистка реестра str (в 152.0)** — удалить **вестигиальные Nova-body**
+  записи str из `runtime_registry.rs` (`len`/`byte_len`/`char_len`/`byte_at`/
+  `is_empty`/`starts_with`/`ends_with`/`contains`/`find`/`rfind`/`char_at`/`trim`/
+  `to_lower`/`to_upper`/`concat`/`plus`/`to_bytes`/`as_bytes`/`to_chars`/`split`/
+  `compare`/`parse_int`/`pad_left`/`pad_right`/`repeat`/`replace`). Они НЕ драйвят
+  резолв (F2). Интенция автора: всё в `.nv`, компилятор про str-методы не знает.
+  Guard: полный `nova test` без новых FAIL (флаги `is_consume`/`is_mut` у str-методов
+  отсутствуют → `types/mod.rs:12233` для str ничего не теряет).
+- **D-R3. Что компилятор по-прежнему знает про str (НЕ трогаем в 152.0)** — C-операторы
+  `==`/`!=`/`+`/`<`/`<=`/`>`/`>=` (хардкод `emit_c.rs:17302` → `nova_str_eq`/`concat`/
+  `lt`/…) + `@hash` (`nova_str_hash`, DoS-seed в C — намеренно). Реестровые записи
+  `eq`/`lt`/`le`/`gt`/`ge`/`hash` оставить, пока живёт хардкод операторов.
+- **D-R4. Декомиссия operator-lowering → 152.5a** — `<`/`<=`/`>`/`>=` должны
+  синтезироваться из `@compare` (Compare-протокол) вместо хардкода `nova_str_lt`;
+  `==`/`+` — из `@eq`/`@concat`. Затрагивает `emit_c.rs` codegen → отдельная фаза
+  с тест-guard'ом (маркер `[M-139.1-operator-lowered-methods]`). НЕ в 152.0.
+
+---
+
 ## F1 — База: `main`, не `plan-138.1` (шпаргалка устарела) ✅ resolved
 
 Шпаргалка/память: «str-инфра в `plan-138.1`, 139.x НЕ в main, сверься с базой».
@@ -33,13 +57,29 @@ truth: runtime_registry.rs». Реально:
 - **Резолв str-методов идёт из распарсенного `.nv`, НЕ из реестра**: probe-метод
   `@probe_byte_len`, добавленный только в `.nv` (без записи в реестре), резолвится и
   работает (Ф.0.0).
-- Роль реестра (`runtime_registry.rs`) сейчас: встроенное знание компилятора для
-  **C-dispatch** методов (`eq`/`lt`/`le`/`gt`/`ge`/`hash`, `nova_body: None`) + type-info
-  до парсинга std. Для Nova-body методов реестр дублирует `.nv` (вестигиально).
+- **Резолв str-методов = из распарсенного `.nv`, НЕ из реестра** (verified 2026-06-13):
+  метод `get` имеет **0** записей в реестре (живёт только в `string.nv`) — и
+  резолвится+работает **без импорта** (`nova test` PASS). str-методы доступны глобально
+  потому, что prelude **загружает** модуль `runtime.string` (`export import
+  std.runtime.string.{…}` парсит файл), а type-directed method-resolution находит ВСЕ
+  методы типа str в загруженном модуле (независимо от списка имён в import).
+- Реестр (`runtime_registry.rs`) для str-Nova-body записей (`find`/`len`/`split`/…) —
+  **вестигиален**: единственный потребитель `types/mod.rs:12233` читает их только ради
+  `is_consume`/`is_mut`-флагов, которых у str-методов нет (str иммутабелен, не consume).
+  Плюс мёртвая stub-gen (divergent).
+- Что компилятор **реально** ещё хардкодит про str (не в `.nv`): операторы
+  `==`/`!=`/`+`/`<`/`<=`/`>`/`>=` лоуэрятся напрямую в C `nova_str_eq`/`concat`/`lt`/…
+  ([emit_c.rs](../../compiler-codegen/src/codegen/emit_c.rs) BinOp, option (b)) +
+  `@hash` (`nova_str_hash`, security/DoS-seed) + C-helpers `nova_str_index_panic`/
+  `slice_panic`/`terminated_ptr`. Маркер `[M-139.1-operator-lowered-methods]` —
+  декомиссия operator-lowering (future).
 
-**Следствие:** str-методы можно править/добавлять/переносить на Nova-стороне свободно;
-реестр держать консистентным только для C-only методов (eq/lt/…/hash). Регенерацию
-стабов из реестра НЕ запускать (перезатрёт hand-written хелперы).
+**Следствие:** str-методы можно править/добавлять/переносить на Nova-стороне свободно
+(реестр НЕ драйвит резолв). **Авторская интенция (2026-06-13):** все str-методы — в
+`.nv`, компилятор про них не знает (кроме `@hash` + C-операторов). → 152.0 МОЖЕТ
+заодно вычистить вестигиальные str-Nova-body записи из реестра (безопасно: единственный
+консумер `types/mod.rs:12233` для str ничего не вставляет). Регенерацию стабов из
+реестра НЕ запускать (перезатрёт hand-written `.nv`).
 
 ---
 
