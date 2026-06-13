@@ -72,6 +72,12 @@ static inline void nova_contract_violation(
     /* Routing: fiber → fail-frame → test-frame → stderr+abort. */
     if (nova_in_fiber() && _nova_fail_top) {
         _nova_fail_top->error_msg = nova_str_from_cstr(buf);
+        /* Plan 140.3 (D24/D13 amend): a contract violation is a PANIC-class
+         * failure (a bug), identical to assert and nv_panic. Tag error_kind so
+         * ConsumeScope/supervised classify the caught error as Panic(msg), not
+         * a recoverable Failure(msg). Without this it defaulted to
+         * NOVA_THROW_USER and was indistinguishable from a normal throw. */
+        _nova_fail_top->error_kind = NOVA_THROW_PANIC;
         longjmp(_nova_fail_top->jmp, 1);
     }
     if (_nova_test_frame) {
