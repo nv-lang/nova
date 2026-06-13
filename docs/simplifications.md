@@ -36040,3 +36040,12 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   `[M-153.6-fromiterator-gated]`, `[M-153-scalar-min-max]`. std `vec/*.nv` с диска → без
   ребилда. plan153_1 5/5 + plan153_6 3/3; 0 регрессий (blast-radius + contracts 267/0,
   прежний 266/1 = flaky). Коммиты `5f306045` (153.1) + `c8f3d08e` (153.6).
+
+- **Plan 140.3 — унификация failure-классификации + interp-сообщения контрактов (2026-06-13)**: (1) assert и
+  контракт-нарушение теперь тегают `error_kind = NOVA_THROW_PANIC` как `nv_panic` (раньше — только error_msg,
+  kind=USER) → три пути провала (panic/assert/contract) классифицируются ОДИНАКОВО (consume/supervised видят
+  Panic). Упрощение модели: «нарушение инварианта/контракта = panic» теперь не только в формате сообщения
+  (140.1), но и в классификации. (2) interp-сообщения `requires x>0, "got ${x}"` переиспользуют ОБЩУЮ
+  interp-машинерию (`emit_interpolated_str`) — не отдельный механизм; контракт-сообщение ведёт себя идентично
+  любой `"${x}"`-строке. dual-populate (`message` raw-fallback + `message_expr`) избегает регрессии на
+  не-interp-сайтах без отдельного error-пути.

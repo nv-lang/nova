@@ -502,6 +502,12 @@ static inline void nova_assert_loc(
          * On main flow (no fiber): route to _nova_test_frame as before. */
         if (nova_in_fiber() && _nova_fail_top) {
             _nova_fail_top->error_msg = nova_str_from_cstr(buf);
+            /* Plan 140.3 (D13 amend): assert failure is a PANIC-class failure
+             * (spec D13: "assert failure = panic"), identical to nv_panic and
+             * contract violations. Tag error_kind so ConsumeScope/supervised
+             * classify the caught error as Panic(msg), not a recoverable
+             * Failure(msg). */
+            _nova_fail_top->error_kind = NOVA_THROW_PANIC;
             longjmp(_nova_fail_top->jmp, 1);
         }
         if (_nova_test_frame) {

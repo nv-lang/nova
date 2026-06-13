@@ -1,0 +1,14 @@
+// Plan 140.3 ([M-140.1-message-interpolation]): a SATISFIED interpolated-message
+// contract runs clean. The message is built lazily — only on a violation, inside
+// the emitted `if (!(cond)) { ... }` block — so a passing call pays zero
+// interpolation cost and does not panic.
+
+module plan140_1.contract_msg_interp_pos
+
+fn must_be_positive(x int) -> int
+    requires x > 0, "got ${x}"
+=> x
+
+test "satisfied interpolated-message contract: value passes through, no panic" {
+    assert(must_be_positive(7) == 7)
+}
