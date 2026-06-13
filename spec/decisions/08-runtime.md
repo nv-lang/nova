@@ -281,6 +281,26 @@ fn critical(...) -> Result =>
 
 ## D26. Базовая stdlib и prelude
 
+> **MAJOR AMEND (Plan 152.1 / D249-D250, 2026-06-13): разворот «школы B» на
+> координатную модель линз + инвариант R-UTF8.** Прежняя D26-формулировка («все
+> public-операции `str` codepoint-indexed, O(n)») **РАЗВЁРНУТА**:
+> - **Координаты `str` — байтовые.** `s[i]` (int) запрещён (`E_STR_NO_INT_INDEX`);
+>   единственный `str[..]` — byte-range slice `s[a..b]`. find/rfind/split — byte-offset.
+> - **Длина — через представление.** Бэар `s.len()` → `E_STR_NO_LEN`; `byte_len()`
+>   (O(1)) на `str`; codepoint-длина — `as_chars().count()` (O(n)).
+> - **Линзы:** `as_bytes() -> ro []u8` (reinterpretation, O(1)); `as_chars() ->
+>   CharsIter` (decoding lens, O(n) поток). Элементный доступ — через них, не плоскими
+>   `char_at`/`byte_at` (ретайрнуты).
+> - **Инвариант R-UTF8 (NEW):** значение `str` **всегда** валидный UTF-8. Конструкторы
+>   валидируют (`from_bytes` checked → Result; `from_bytes_lossy` → U+FFFD) либо несут
+>   явный контракт вызывающего (`from_bytes_unchecked*`). Делает `as_chars()`-decode
+>   тотальным; отличает Nova от Go (где `string` бывает невалиден). Лучше Go.
+> - **Список «базовых str-методов»:** `byte_len`/`as_bytes`/`as_chars`/`iter`/`to_bytes`/
+>   `to_chars`/slice `[a..b]`/`get(Range)`/find/rfind/split/trim/case/replace/pad/concat/
+>   parse + identity (eq/hash/clone/compare). НЕ `len`/`char_len`/`char_at`/`byte_at`/`get(int)`.
+>
+> См. [D249/D250](03-syntax.md#d249), Q-string-indexing/Q-string-len (open-questions.md).
+
 ### Что
 Базовые типы (`Option[T]`, `Result[T, E]`, `Error`, `never`,
 `Ordering`) и их конструкторы (`Some`, `None`, `Ok`, `Err`) живут в
