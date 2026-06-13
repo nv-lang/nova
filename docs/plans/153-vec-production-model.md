@@ -166,7 +166,7 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 
 ### 153.1 — Core API & capacity + консолидация дублей `[D259, A]`
 Добить императивное ядро до паритета: `@swap(i,j)`, `@shrink_to_fit()`, `@resize(n,v)`,
-`@reserve_exact`, `@contains` (наив, до 153.3), capacity-инварианты. Аудит
+`@contains` (наив, до 153.3), capacity-инварианты. Аудит
 существующих (push/pop/insert/remove/index/get/first/last/clear/truncate/reverse/fill).
 
 **Accessor-конвенция (D117 AMEND — формализовать):**
@@ -175,14 +175,12 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 - **Write-setter:** `@name(v T)` — одноимённая перегрузка по арности — **допустим
   там, где у него есть корректная безопасная семантика под капотом** (поддерживает
   инварианты), а не «никогда для размеров».
-  - **`@cap(n)` — ДА:** realloc до ёмкости **≥ n, округлённой вверх до степени 2**
-    (perf: дружит с аллокаторами, амортизирует рост). Контракт **`n >= len`**, иначе
-    паника. `@cap()` возвращает **реальную** (округлённую) ёмкость → `@cap(n)` = «не
-    меньше n». Точный контроль — `@reserve_exact(n)`/`@shrink_to_fit()` (без
-    округления, как Rust). Округление — helper `_round_up_pow2` (bit-twiddle
-    `v--;v|=v>>1;…;v++` или `clz`-вариант `1<<(64-clz(n-1))`, см.
-    jameshfisher.com/2018/03/30/round-up-power-2); edge: `n<=0`, `max(8, pow2(n))`,
-    overflow у 2^63. Тот же `_round_up_pow2` использует и growth-путь (push/reserve).
+  - **`@cap(n)` — ДА, ТОЧНО:** realloc до ёмкости **ровно `n`** (без pow2-округления —
+    явный абсолютный запрос). Контракт **`n >= len`**, иначе паника. Держит
+    round-trip `v.cap(n); v.cap()==n`. (pow2-округление — только неявный авто-рост и
+    `@reserve(add)`, helper `_round_up_pow2`: bit-twiddle `v--;v|=v>>1;…;v++` или
+    `clz` `1<<(64-clz(n-1))`, см. jameshfisher.com/2018/03/30/round-up-power-2; edge:
+    `n<=0`, `max(8,pow2)`, overflow 2^63.)
   - **`@len(n)` — ЗАПРЕЩЁН.** Прямая установка `len` — footgun (UB при `len > cap`/
     рассинхрон с буфером; рост нечем заполнить). `@len` — **только getter**. Изменение
     размера: `@truncate(n)` (shrink), `@resize(n, v)` (grow с fill), `@push`/`@pop`.
@@ -206,13 +204,15 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
   field-read size-аккумулятора **разрешён** (`E_SIZE_ACCESSOR_FIELD` — только для
   внешних callers). Снимает противоречие комментариев в `string.nv` (Plan 152).
 
-**Стратегия ёмкости — точная vs округлённая:**
-- **Точные (честят `n`):** конструктор `with_capacity(n)` / `from_raw_parts`,
-  `@reserve_exact(n)`, `@shrink_to_fit()` — ёмкость = ровно `n` (без pow2-округления).
-  Нужно для **предсказуемого detach слайсов**: автор точно знает, при каком push
-  мастер сделает realloc (и слайсы отвяжутся, см. 153.4).
-- **Округление до pow2 (perf):** автоматический рост (push/`reserve`) и `@cap(n)`-
-  сеттер — через `_round_up_pow2`. Для точной ёмкости через свойство — `reserve_exact`.
+**Стратегия ёмкости — явное точно, неявное pow2.** Принцип: явный *абсолютный*
+запрос ёмкости честится точно; неявный/амортизированный рост округляет до pow2.
+- **Точные (честят `n`, без округления):** конструктор `with_capacity(n)` /
+  `from_raw_parts`, **`@cap(n)`-сеттер**, `@shrink_to_fit()` (room for N more = `@cap(@len()+N)`).
+  Держит round-trip `v.cap(n); v.cap()==n` (accessor-конвенция) И даёт
+  **предсказуемый detach слайсов** (автор точно знает точку realloc, см. 153.4).
+- **Округление до pow2 (perf):** только **неявный** авто-рост на push и
+  амортизированный `@reserve(add)` — через `_round_up_pow2` (степень 2 = политика
+  роста для O(1)-амортизации, не явного запроса; как Rust `reserve` vs `reserve_exact`).
 
 **Консолидация дублей API (приведение в порядок):**
 - **`append` vs `extend` → один `append`.** Сейчас `@append(other Vec[T])` =
@@ -254,8 +254,9 @@ Plan 96. Opus. Эстимат ~3 dd.
 `resize`) буфер переезжает → слайс **отвязывается** в независимый снимок старого
 буфера (GC держит его живым через `ptr`, нет dangling). До realloc слайс видит мутации
 мастера; после — снимок на момент realloc. Предсказуемость точки detach обеспечивает
-**точная ёмкость через конструктор/`reserve_exact`** (153.1) — автор знает, при каком
-push произойдёт realloc. `SliceMut` write-through до detach; рост через `SliceMut`
+**точная ёмкость любого явного запроса** (`with_capacity`/`@cap(n)`,
+153.1) — автор знает, при каком push произойдёт realloc. `SliceMut` write-through до
+detach; рост через `SliceMut`
 запрещён (`push` — компайл-ошибка, R8-аналог str-линзы). Зафиксировать в
 Q-vec-mutability-through-view + Q-slice-view.
 
@@ -286,7 +287,7 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 ## 4. Spec / D / Q / документация (обязательные deliverables)
 
 **Решения (D) — резерв D259–D266:**
-- **D259** (NEW) — Vec core API & capacity (swap/resize/shrink/reserve_exact).
+- **D259** (NEW) — Vec core API & capacity (swap/resize/shrink/cap-exact).
 - **D260** (NEW) — ленивый итератор + адаптеры (model + Iter/Next интеграция).
 - **D261** (NEW) — sort & search (stable/unstable, binary_search, dedup).
 - **D262** (NEW) — слайсы и views (`Slice[T]`/`SliceMut[T]`, `v[a..b]` zero-copy).
@@ -294,8 +295,9 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 - **D264** (NEW) — Vec-протоколы (`Hash` + FromIterator/collect).
 - **D239 AMEND/CONFIRM** — `[]T` чистый алиас завершён (Plan 138 Ф.5 закрыт).
 - **D117 AMEND** — accessor-конвенция: read-getter `@name()=>@name`, write-setter
-  `@name(v)` где есть безопасная семантика под капотом (`@cap(n)` → realloc, контракт
-  `n>=len`; `@len(n)` — ЗАПРЕЩЁН, footgun → `truncate`/`resize`/`push`/`pop`); внутри
+  `@name(v)` где есть безопасная семантика под капотом (`@cap(n)` → realloc ТОЧНО до
+  n, контракт `n>=len`, round-trip; `@len(n)` — ЗАПРЕЩЁН, footgun →
+  `truncate`/`resize`/`push`/`pop`); внутри
   type-метода field-read size-аккумулятора разрешён (E_SIZE_ACCESSOR_FIELD — только
   внешним callers). Кросс-план: применить и в Plan 152 (str).
 - **D238/D240 AMEND** (при необходимости) — `Index[Range]` со `str`-подобной view-
@@ -311,8 +313,9 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
   Согласуется со str-линзами (152) и конвенцией `as_`/`to_` (I3). `Slice[T]` алиасит
   буфер `Vec`; владелец переживает view (GC). **Detach-on-resize (Go-модель):** при
   realloc мастера слайс отвязывается в снимок старого буфера (GC-safe, без dangling);
-  предсказуемость точки detach — через **точную ёмкость конструктора/`reserve_exact`**
-  (153.1). Это и причина, почему конструкторная ёмкость **не округляется** до pow2.
+  предсказуемость точки detach — через **точную ёмкость любого явного запроса**
+  (`with_capacity`/`@cap(n)`, 153.1). Поэтому явная ёмкость **не
+  округляется** до pow2 (округляет только неявный авто-рост).
 - **Q-vec-alias-completeness** (NEW) — **ЗАКРЫТО: `[]T` — чистый алиас** `Vec[T]`,
   раскрывается на type-resolution (D239); остаточные спец-кейсы убрать в 153.0.
 - **Q-vec-mutability-through-view** — мут-слайс `SliceMut[T]` (153.4-B): запись через
@@ -333,9 +336,10 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 
 - **153.0:** facade+подмодули компилируются; `[]T` и `Vec[T]` взаимозаменяемы (POS);
   остаточный спец-кейс `[]T` → ошибка/нет (NEG); golden существующих Vec-тестов.
-- **153.1:** `swap`/`resize`/`shrink_to_fit`/`reserve_exact` (POS); `@cap(100)`→
-  `@cap()==128` (pow2-округление), `@reserve_exact(100)`→точно 100 (без округления),
-  `@cap(n<len)`→panic (POS/NEG); `resize`<0, `swap` OOB → panic (NEG).
+- **153.1:** `swap`/`resize`/`shrink_to_fit` (POS); `@cap(100)`→
+  `@cap()==100` (ТОЧНО, round-trip), `with_capacity(100)`→точно 100, авто-рост:
+  push в cap-8 на 9-м → `@cap()==16` (pow2), `@reserve(100)`→128 (амортизированный
+  pow2); `@cap(n<len)`→panic (NEG); `resize`<0, `swap` OOB → panic (NEG).
 - **153.2:** `iter().map().filter().collect()` без промежуточных аллокаций (POS, +
   проверка ленивости — побочный эффект считает только потреблённые); `sum`/`min`/
   `enumerate`/`zip` (POS); `zip` разных длин (NEG/усечение); пустой `min`→`None` (NEG).
@@ -371,7 +375,7 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 
 **Per-sub-plan A-критерии** — в файлах `153.N`. Ключевые:
 - **153.0:** `[]T≡Vec` чистый алиас; модуль по слоям; ноль дублей; golden.
-- **153.1:** swap/resize/shrink/reserve_exact; capacity-инварианты держатся;
+- **153.1:** swap/resize/shrink; capacity-инварианты держатся;
   `@cap(n)` realloc (n>=len, иначе panic); `@len(n)` запрещён; **fluent-цепочки
   работают** (`v.reserve(10).extend(xs).sort()`), `[M-138.2-vec-self-return]` закрыт;
   `append`/`extend` консолидированы в `append`; accessor-конвенция (D117 AMEND).
