@@ -165,7 +165,8 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 компиляторе). Cross-module type-methods (прецедент 139.1/152.0). Эстимат ~1.5–2 dd.
 
 ### 153.1 — Core API & capacity + консолидация дублей `[D259, A]`
-Добить императивное ядро до паритета: `@swap(i,j)`, `@shrink_to_fit()`, `@resize(n,v)`,
+Добить императивное ядро до паритета: `@swap(i,j)`, `@shrink_to_fit()`,
+`@shrink_to(min)` (= `max(len,min)`, без паники), `@resize(n,v)`,
 `@contains` (наив, до 153.3), capacity-инварианты. Аудит
 существующих (push/pop/insert/remove/index/get/first/last/clear/truncate/reverse/fill).
 
@@ -176,8 +177,12 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
   там, где у него есть корректная безопасная семантика под капотом** (поддерживает
   инварианты), а не «никогда для размеров».
   - **`@cap(n)` — ДА, ТОЧНО:** realloc до ёмкости **ровно `n`** (без pow2-округления —
-    явный абсолютный запрос). Контракт **`n >= len`**, иначе паника. Держит
-    round-trip `v.cap(n); v.cap()==n`. (pow2-округление — только неявный авто-рост и
+    явный абсолютный запрос). Контракт **`n >= len`** (`n == len` валидно = zero-slack/
+    `shrink_to_fit`; `n == 0` при `len == 0` = free buffer); **`n < len` → паника**
+    (ёмкость физически не меньше числа элементов; молчаливый truncate/clamp — footgun,
+    ломает round-trip). Не-паникующая «ужать к `n` с полом `len`» — отдельный
+    `@shrink_to(min)` (= `max(len, min)`, Rust-parity). Держит round-trip
+    `v.cap(n); v.cap()==n`. (pow2-округление — только неявный авто-рост и
     `@reserve(add)`, helper `_round_up_pow2`: bit-twiddle `v--;v|=v>>1;…;v++` или
     `clz` `1<<(64-clz(n-1))`, см. jameshfisher.com/2018/03/30/round-up-power-2; edge:
     `n<=0`, `max(8,pow2)`, overflow 2^63.)
