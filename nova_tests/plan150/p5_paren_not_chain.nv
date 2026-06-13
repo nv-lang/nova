@@ -1,0 +1,14 @@
+// Plan 150 / D248 — parenthesization breaks the chain: `(a < b) == c` is an
+// intentional comparison of a bool result and stays legal (paren-aware
+// detection — the inner `<` is consumed inside the parentheses).
+//
+// EXPECT_OUTPUT: ok
+
+module plan150.p5_paren_not_chain
+
+fn main() -> () {
+    assert((3 < 5) == true)
+    assert((5 < 3) == false)
+    assert((2 < 3) != (4 < 1))
+    println("ok")
+}

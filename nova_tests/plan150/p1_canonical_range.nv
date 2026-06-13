@@ -1,0 +1,16 @@
+// Plan 150 / D248 — canonical range form `a <= b && b < c` works (the
+// replacement for the rejected `a <= b < c` chain).
+//
+// EXPECT_OUTPUT: ok
+
+module plan150.p1_canonical_range
+
+fn in_range(i int, n int) -> bool => 0 <= i && i < n
+
+fn main() -> () {
+    assert(in_range(5, 10))
+    assert(!in_range(10, 10))
+    assert(!in_range(-1, 10))
+    assert(in_range(0, 10))
+    println("ok")
+}

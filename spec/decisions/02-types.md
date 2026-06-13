@@ -11628,3 +11628,54 @@ v[1] = 99  // → v.@index(1, 99)   write-overload через MutIndex (D240)
 - [D144](#d144-sub-slice-views-для-t-и-str--arra-b--sa-b) — sub-slice views; D144 «future language version» снято D239
 - [D27](03-syntax.md#d27-синтаксис-массивов-t-префикс-nt-фиксированные) — `[]T` синтаксис сохраняется; семантика меняется: `[]T ≡ Vec[T]`
 - Plan 138 — полный план миграции; Plan 138.2 — NovaArray retirement
+
+---
+
+## D248. Запрет chained comparison + relational-операнды требуют ordered-категорию (Plan 150)
+
+> **Status:** 🆕 SPEC LANDED 2026-06-13 (Plan 150 Ф.0). Реализация — [Plan 150](../../docs/plans/150-chained-comparison-relational-safety.md)
+> Ф.1 (parser + checker). **Резолвит** [Q35](../open-questions.md). **Решение автора:** hard-error (как
+> Rust); chained comparison **НЕ добавляем** (только Python чейнит). **Разблокирует** `[M-140-bounds-as-contract]`.
+
+### Проблема (security-дефект)
+
+`0 <= i < n` парсится как `(0 <= i) < n` = `bool < n`. Так как `bool ∈ {0,1}`, выражение **вакуумно-истинно**
+для любого `n > 1` — предикат нейтрализуется молча. Следствие: канонический bounds-контракт
+`requires 0 <= i < @len` **молча вакуумен** → проверка границ тихо обходится. Nova была **хуже всех peers**
+(даже untyped JS коэрсит в детерминированно-неверный результат; Nova аннулирует предикат).
+
+### Решение
+
+1. **Chained comparison ОТКЛОНЁН (hard error).** Цепочка из ≥2 relational/equality операторов одного
+   precedence-уровня (`a OP1 b OP2 c`, где `OP ∈ {< <= > >= == !=}`) → **`E_CMP_CHAIN_UNSUPPORTED`** с
+   machine-applicable fix-it «`a OP1 b && b OP2 c`». Применяется **даже к ordered-типам** (`1 < 2 < 3` — тоже
+   ошибка) и к equality-цепочкам (`a == b == c`). Rationale: только Python чейнит; Go/Rust/Kotlin/Java/Swift —
+   hard-error. `&&` явно, без нового синтаксиса/парсер-сложности.
+
+2. **Relational-операнды требуют ordered-категорию.** `<` / `<=` / `>` / `>=` требуют mutually-ordered тип
+   (int/float/str/char или `@compare`-несущий тип). `bool` / `unit` как операнд → **`E_RELATIONAL_OPERAND_NOT_ORDERED`**.
+   `ptr`-relational → `E_PTR_ARITHMETIC_BANNED` (existing, Plan 115 — см. ptr type-checker rules). `==` / `!=`
+   на `bool`/`unit` — **остаются легальны** (под баном только relational). Консистентно с дизайном: bool
+   ordering уже method-only через `@compare` ([D183](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a),
+   `std/runtime/defaults.nv`), а **не** через оператор `<`.
+
+### Канон
+
+- **Диапазон:** `a <= b && b < c`. `requires 0 <= i && i < @len` — **реальный** (не вакуумный) bounds-контракт.
+- Permissive-на-Unknown/generic-категориях сохраняется (чекер фейлит только на definitively-known bool/unit
+  + concrete cross-category mismatch — не ломать generics).
+
+### Диагностические коды
+
+- **`E_CMP_CHAIN_UNSUPPORTED`** — ≥2 сравнения в цепочке (`a < b < c`, `0 <= i < n`, `a == b == c`); сообщение
+  «comparison operators cannot be chained» + fix-it «split into `a OP1 b && b OP2 c`». Эмитится в parser.
+- **`E_RELATIONAL_OPERAND_NOT_ORDERED`** — `bool`/`unit` как операнд `<`/`<=`/`>`/`>=`. Эмитится в checker.
+
+### Связь
+
+- [D183](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) — comparison-протоколы
+  (`@compare`/`@equal`); ordered-категория = `@compare`-несущие типы.
+- Plan 115 / `E_PTR_ARITHMETIC_BANNED` — ptr relational ban (reuse, без дублирования).
+- [Q35](../open-questions.md) — резолвит. `[M-140-bounds-as-contract]` — разблокирует (`requires 0 <= i && i < @len`).
+- **Отложено (сознательно):** Python-style chaining (`a<b<c` ≡ `a<b && b<c`) — НЕ добавляем; если будет
+  спрос — отдельное предложение в будущем.

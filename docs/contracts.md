@@ -135,6 +135,24 @@ fn clamp(x int, lo int, hi int) -> int
 }
 ```
 
+#### Range conditions: use `&&`, never a chain
+
+To constrain a value to a half-open range, write the canonical conjunction
+`lo <= i && i < hi` — **not** `lo <= i < hi`:
+
+```nova
+fn at(buf []int, i int) -> int
+    requires 0 <= i && i < buf.len     // ✓ a real bounds check
+=> buf[i]
+```
+
+A chained comparison such as `0 <= i < hi` is a **compile error**
+(`E_CMP_CHAIN_UNSUPPORTED`) in Nova. It would otherwise parse as
+`(0 <= i) < hi` = `bool < hi`, which is vacuously true — silently turning the
+bounds contract into a no-op. Nova rejects the chain (and bool/unit operands of
+`<` `<=` `>` `>=`, `E_RELATIONAL_OPERAND_NOT_ORDERED`) at parse/check time;
+split into `&&` as shown (Plan 150 / D248).
+
 ### `ensures` and `result`
 
 A postcondition. `result` refers to the return value of the function.
