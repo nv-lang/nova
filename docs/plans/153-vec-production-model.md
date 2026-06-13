@@ -6,7 +6,7 @@
 > Java — по полноте API, итераторам, слайсам и предсказуемости стоимости. `[]T` —
 > **чистый алиас** `Vec[T]` (D239).
 > **Эстимат (весь umbrella):** ~12–18 dev-day, декомпозирован на 153.0–153.6.
-> **Model:** Sonnet 4.6 + High + Thinking ON (153.2 итераторы / 153.4 слайс-views — Opus).
+> **Model:** Sonnet 4.6 + High + Thinking ON (153.2 итераторы — Opus).
 > **Зависит от:** Plan 131 (`Vec` на RawMem), Plan 138 (D238 `Index`/D240 `MutIndex`/
 > D239 `[]T≡Vec`), Plan 90.1 (extend-family), Plan 96 (sub-slice views),
 > D58/D241/D242 (`Next`/`Iter`), Plan 137 (`Compare`/`Equal`/`Hash`/`Clone`).
@@ -36,8 +36,11 @@
   `chunks`/`windows`/`zip`/`enumerate`/`take`/`skip`/`min`/`max`/`sum`/`drain`/
   `rotate`/`split_at`/`concat`/`flatten`/`resize`/`swap`; нет `@hash`
   (нельзя класть `Vec` в `HashSet`/ключом).
-- **Слайсы неоднозначны:** `v[a..b]` сейчас возвращает **owned-копию** (`-> Self`), а
-  не zero-copy view — расходится со str-линзами (152) и Rust `&[T]`.
+- **Слайсы — модель уже верна (Plan 96), но surface неполон:** `v[a..b]` **уже**
+  возвращает zero-copy view **того же типа** `[]T`=`Vec[T]` (`Self{data:@data+start,
+  len:n, cap:n}`, cap==len → push реаллоцирует → silent detach; D238 + Plan 96
+  **D-single-type**, «НЕ Rust-стиль 2 типов»). Не хватает только `split_at`/`chunks`/
+  `windows`/`as_slice` поверх той же модели.
 
 **Принцип (Rust Vec/slice + cost-transparency, как в Plan 152):**
 
@@ -77,7 +80,7 @@
 | take/skip/zip/enumerate | — | adapters | `slice`/— | core | ❌ | **153.2** |
 | chain/flat_map/flatten | — | adapters | `flat`/`flatMap` | `flatMap`/`flatten` | ❌ | **153.2** |
 | collect/for_each | — | `collect`/`for_each` | `forEach` | `toList`/`forEach` | ❌ | **153.2** |
-| **slice view `v[a..b]`** | `s[a:b]` (view) | `&v[a..b]` (view) | `slice` (copy) | `subList` (view) | ⚠ **owned-копия** | **153.4 (view)** |
+| **slice `v[a..b]`** | `s[a:b]` (view) | `&v[a..b]` (view) | `slice` (copy) | `subList` (view) | ✅ `[]T`-view (Plan 96) | +split_at/chunks/windows (153.4) |
 | split_at | — | `split_at` | — | — | ❌ | **153.4** |
 | chunks/windows | — | `chunks`/`windows` | — | `chunked`/`windowed` | ❌ | **153.4** |
 | first/last/get N | `s[0]` | `first`/`last`/`get` | `at` | `first`/`last` | ✅ first/last | **153.4 (N)** |
@@ -94,7 +97,8 @@
 
 **Вывод.** Императивное ядро (push/pop/insert/index/reserve) у Nova есть. Крупные
 пробелы — **(а) ленивые итераторы** (153.2, главный архитектурный лифт), **(б)
-sort/search/dedup** (153.3), **(в) zero-copy слайсы** (153.4), **(г) restructure-ops**
+sort/search/dedup** (153.3), **(в) slice-surface** split_at/chunks/windows (153.4 —
+модель `[]T`-view уже есть, Plan 96), **(г) restructure-ops**
 (153.5), **(д) Hash + FromIterator** (153.6). Без них Vec «на уровне голого Go-slice»,
 а не Rust/Kotlin/Java.
 
@@ -104,7 +108,7 @@ sort/search/dedup** (153.3), **(в) zero-copy слайсы** (153.4), **(г) res
 - **Типобезопасный generic-`T`** с мономорфизацией (Plan 131) — элементы в правильном
   C-типе, без int64-erasure (лучше Go `any`/interface-боксинга).
 - **`[]T ≡ Vec[T]`** — один тип, не два (Rust `Vec`/`&[T]` раздвоение) при сохранении
-  zero-copy views через отдельный slice-view (153.4).
+  zero-copy views тем же типом `[]T` (cap==len), БЕЗ отдельного Slice-типа (Plan 96 D-single-type) — проще Rust.
 
 ---
 
@@ -117,7 +121,7 @@ sort/search/dedup** (153.3), **(в) zero-copy слайсы** (153.4), **(г) res
         ├── core/access/mutate   (153.1): push/pop/insert/remove/index/cap/swap/fill
         ├── iter (153.2): VecIter + ЛЕНИВЫЕ адаптеры (Iter/Next) → collect
         ├── sort/search (153.3): sort*/binary_search/contains/index_of/dedup
-        ├── slice view (153.4): v[a..b] → Slice[T] (zero-copy) / MutSlice[T]
+        ├── slice (153.4): v[a..b] → []T view (zero-copy, cap==len, D238/Plan 96; same type)
         ├── restructure (153.5): concat/flatten/rotate/drain/split_at
         └── protocols (153.6): Equal/Compare/Clone/Hash/Display/Debug/FromIterator
    bounds-check элизия `v[i]` — Plan 140.2 (НЕ здесь)
@@ -133,8 +137,10 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 
 ## 2.5. Сквозные инварианты (self-consistency)
 
-- **I1. `[]T ≡ Vec[T]`** — всюду; никакого «второго типа массива». Slice-view (153.4) —
-  отдельный явный тип (`Slice[T]`), не альтернативный `[]T`.
+- **I1. `[]T ≡ Vec[T]`, и слайс — тот же `[]T`.** Никакого «второго типа массива» и
+  **никакого отдельного `Slice[T]`** (D238 «Slice отвергнут» + Plan 96 **D-single-type**).
+  `v[a..b]` = `[]T`-view (cap==len, zero-copy); мут-вариант — `mut []T` (receiver-mut),
+  не `MutSlice`. Передача view в `fn f(xs []T)` работает (same type).
 - **I2. Никакого скрытого O(n).** Индексация/`len`/`cap`/`push`(аморт.) — O(1);
   ленивые адаптеры — без промежуточных аллокаций; материализация только в `collect`/
   eager-терминаторах (имя явное).
@@ -253,22 +259,21 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 `@binary_search(x)`/`@binary_search_by`, `@contains`, `@index_of`/`@position(pred)`,
 `@dedup`/`@dedup_by`, `@partition(pred)`. Bounds на `T: Compare` где нужно. Эстимат ~2–3 dd.
 
-### 153.4 — Слайсы и views `[D262, Q-slice-view, A/B]`
-`v[a..b]` → **zero-copy `Slice[T]`** (а не owned-копия; решить Q-slice-view) +
-`MutSlice[T]` (мут-view); `@as_slice()`/`@as_mut_slice()`; `@split_at(i)`;
-`@chunks(n)`/`@windows(n)`; `@first_n`/`@last_n`. Перекликается со str-линзами (152) и
-Plan 96. Opus. Эстимат ~3 dd.
+### 153.4 — Слайсы и views (достроить на модели Plan 96) `[D262, A/B]`
+**Модель уже принята и приземлена** (D238 + Plan 96 **D-single-type** + **D-cap-len**):
+`v[a..b]` = zero-copy view **того же типа** `[]T`=`Vec[T]` (`{data:@data+a, len, cap:len}`,
+cap==len), НЕ отдельный `Slice`-тип. 153.4 = **подтвердить + достроить недостающее:**
+`@split_at(i) -> ([]T, []T)`, `@chunks(n) -> [][]T`, `@windows(n)`, `@first_n`/`@last_n`,
+`@as_slice() -> []T` (+ `mut @as_slice()` — мут-view через **receiver-mut overload**,
+как `@as_ptr`/`mut @as_ptr`, Plan 135/D247, НЕ имя `as_mut_slice`). Все возвращают
+`[]T`-views. Opus. Эстимат ~2 dd (модель готова).
 
-**Detach-on-resize семантика (Go-модель, GC-safe).** `Slice[T]` алиасит буфер мастера
-(`{ptr в master.data, len}`). При **ресайзе мастера** (push → realloc, `@cap(n)`,
-`resize`) буфер переезжает → слайс **отвязывается** в независимый снимок старого
-буфера (GC держит его живым через `ptr`, нет dangling). До realloc слайс видит мутации
-мастера; после — снимок на момент realloc. Предсказуемость точки detach обеспечивает
-**точная ёмкость любого явного запроса** (`with_capacity`/`@cap(n)`,
-153.1) — автор знает, при каком push произойдёт realloc. `MutSlice` write-through до
-detach; рост через `MutSlice`
-запрещён (`push` — компайл-ошибка, R8-аналог str-линзы). Зафиксировать в
-Q-vec-mutability-through-view + Q-slice-view.
+**Detach-on-resize (Go-модель, GC-safe) — уже D238/Plan 96.** View с `cap==len`
+алиасит буфер мастера; **push на view** → `cap==len` → realloc → **silent detach**
+(view получает свой буфер, родительский backing не перезаписывается — Go-footgun
+устранён без borrow-checker). Предсказуемость точки detach у мастера — через **точную
+ёмкость** (`with_capacity`/`@cap(n)`, 153.1). Мут-view (`mut []T`/`for mut x`) —
+write-through до detach. Подтвердить в доках; новых решений не требуется.
 
 ### 153.5 — Restructure-ops `[D263, B]`
 `@concat(other)`/`[][]T.flatten()`/`@rotate_left(n)`/`@rotate_right(n)`/`@drain(range)`/
@@ -286,7 +291,7 @@ Q-vec-mutability-through-view + Q-slice-view.
 **Phase A** (обязательно, связный минимум — Vec не хуже Go/Rust-core по императиву +
 базовым итераторам/сортировке): 153.0, 153.1, 153.2-A, 153.3, 153.6, 153.4-A (`as_slice`/
 `split_at`/`v[a..b]`-view). **Phase B** (продвинутое, отделяемо): 153.2-B (zip/chain/
-flat_map/…), 153.4-B (chunks/windows/MutSlice), 153.5 (concat/rotate/drain).
+flat_map/…), 153.4-B (chunks/windows/mut-view), 153.5 (concat/rotate/drain).
 
 **Acceptance Phase A:** `[]T≡Vec` консолидирован; императивное ядро + sort/search +
 базовые ленивые адаптеры + Hash + zero-copy `v[a..b]`; полный `nova test` зелёный.
@@ -300,7 +305,7 @@ flat_map/…), 153.4-B (chunks/windows/MutSlice), 153.5 (concat/rotate/drain).
 - **D259** (NEW) — Vec core API & capacity (swap/resize/cap-exact, reserve).
 - **D260** (NEW) — ленивый итератор + адаптеры (model + Iter/Next интеграция).
 - **D261** (NEW) — sort & search (stable/unstable, binary_search, dedup).
-- **D262** (NEW) — слайсы и views (`Slice[T]`/`MutSlice[T]`, `v[a..b]` zero-copy).
+- **D262** (NEW, минорный) — slice-op surface (split_at/chunks/windows) на `[]T`-view модели D238/Plan 96 (БЕЗ новых типов; подтверждает single-type).
 - **D263** (NEW) — restructure-ops (concat/flatten/rotate/drain).
 - **D264** (NEW) — Vec-протоколы (`Hash` + FromIterator/collect).
 - **D239 AMEND/CONFIRM** — `[]T` чистый алиас завершён (Plan 138 Ф.5 закрыт).
@@ -318,25 +323,27 @@ flat_map/…), 153.4-B (chunks/windows/MutSlice), 153.5 (concat/rotate/drain).
   Sequence/Java-Stream); материализация только `collect`/eager-терминаторами. Старый
   eager `[]T.map(f)->[]U` → тонкий сахар над `iter().map().collect()` ИЛИ deprecate
   (решить в 153.2 Ф.0; рекомендация — сахар, чтобы не ломать call-сайты).
-- **Q-slice-view** (NEW) — **ЗАКРЫТО: `v[a..b]` = zero-copy `Slice[T]`-view** (как Rust
-  `&[T]`/Go `s[a:b]`/Kotlin `subList`), не owned-копия; owned — явный `to_vec()`.
-  Согласуется со str-линзами (152) и конвенцией `as_`/`to_` (I3). `Slice[T]` алиасит
-  буфер `Vec`; владелец переживает view (GC). **Detach-on-resize (Go-модель):** при
-  realloc мастера слайс отвязывается в снимок старого буфера (GC-safe, без dangling);
-  предсказуемость точки detach — через **точную ёмкость любого явного запроса**
-  (`with_capacity`/`@cap(n)`, 153.1). Поэтому явная ёмкость **не
-  округляется** до pow2 (округляет только неявный авто-рост).
+- **Q-slice-view** — **НЕ открытый вопрос: УЖЕ РЕШЕНО** (D238 + Plan 96 **D-single-
+  type** + **D-cap-len**). `v[a..b]` = zero-copy view **того же типа** `[]T`=`Vec[T]`
+  (cap==len), **НЕ отдельный `Slice`-тип** (D238 «Slice отвергнут»). owned — явный
+  `to_vec()`/`clone()`. **Detach-on-resize (Go-модель):** push на view (cap==len) →
+  realloc → отвязка в свой буфер, родитель не перезаписан (Go-footgun устранён без
+  borrow-checker). Предсказуемость точки detach у мастера — через **точную ёмкость**
+  (`with_capacity`/`@cap(n)`, 153.1) → поэтому явная ёмкость **не округляется** до
+  pow2. 153.4 лишь **подтверждает + достраивает** split_at/chunks/windows. Согласуется
+  со str-линзой `as_bytes() -> ro []u8` (152) — тоже same-type view, не отдельный тип.
 - **Q-vec-alias-completeness** (NEW) — **ЗАКРЫТО: `[]T` — чистый алиас** `Vec[T]`,
   раскрывается на type-resolution (D239); остаточные спец-кейсы убрать в 153.0.
-- **Q-vec-mutability-through-view** — мут-слайс `MutSlice[T]` (153.4-B): запись через
-  view допускается, но `push` (рост) запрещён (detach) — как str R8 для байтовой линзы.
+- **Q-vec-mutability-through-view** — **РЕШЕНО (Plan 96):** мут-view — `mut []T`
+  (receiver-mut, НЕ тип `MutSlice`): запись элемента write-through в буфер мастера;
+  `push` НЕ запрещён, а реаллоцирует (cap==len) → detach (родитель не изменён).
 
 **Документация (`docs/`):**
 - `docs/vec.md` (NEW) — гайд: Vec/[]T, ленивые итераторы (vs eager), слайсы-views,
   sort/search, рецепты, таблица «откуда метод».
 - `docs/vec-internals.md` (NEW, 153.0) — структура `collections/vec/`, RawMem-слой,
   layout `{data,len,cap}`.
-- `docs/migration/d262-slice-views.md` (NEW) — миграция `v[a..b]` owned→view.
+- `docs/vec.md` раздел «слайсы» — модель `[]T`-view (cap==len, detach), split_at/chunks/windows (миграция не нужна — модель уже приземлена Plan 96).
 
 ---
 
@@ -360,7 +367,7 @@ flat_map/…), 153.4-B (chunks/windows/MutSlice), 153.5 (concat/rotate/drain).
   resize:** `with_capacity(4)` точная → slice → push до realloc видит мутацию, push
   с realloc → slice = снимок старого буфера (не видит новые), GC-safe (POS);
   `split_at`/`chunks`/`windows` (POS); OOB slice → panic, `windows(0)` → panic/empty,
-  `MutSlice` `push` → compile-error (NEG).
+  push на `mut []T`-view (cap==len) → realloc/detach, родитель НЕ изменён (POS, Go-модель).
 - **153.5:** `concat`/`flatten`/`rotate`/`drain` (POS); `drain` OOB → panic (NEG).
 - **153.6:** `Vec[int]` как ключ `HashMap`/в `HashSet` (Hash, POS); `collect` в Vec
   (POS); `Vec[T]` без `Hash` как ключ → compile-error (NEG).
@@ -391,7 +398,7 @@ flat_map/…), 153.4-B (chunks/windows/MutSlice), 153.5 (concat/rotate/drain).
   `append`/`extend` консолидированы в `append`; accessor-конвенция (D117 AMEND).
 - **153.2:** ленивая цепочка без промежуточных аллокаций; collect; A-набор адаптеров.
 - **153.3:** sort стабилен; binary_search корректен; dedup; bounds `T: Compare`.
-- **153.4:** `v[a..b]` zero-copy view; split_at/chunks/windows; MutSlice write-only.
+- **153.4:** `v[a..b]` zero-copy view; split_at/chunks/windows на `[]T`-view; mut-view write-through; push→detach.
 - **153.5:** concat/flatten/rotate/drain корректны.
 - **153.6:** `Vec[T: Hash]` хешируем (HashSet/ключ); collect-target.
 
@@ -444,7 +451,7 @@ commit `git diff --cached --stat`; после крупной задачи — `p
 | D259 (NEW) | Vec core API & capacity (153.1) |
 | D260 (NEW) | ленивый итератор + адаптеры (153.2) |
 | D261 (NEW) | sort & search (153.3) |
-| D262 (NEW) | слайсы/views `Slice[T]` (153.4) |
+| D262 (NEW, минор) | slice-op surface на `[]T`-view (153.4) |
 | D263 (NEW) | restructure-ops (153.5) |
 | D264 (NEW) | Vec-протоколы Hash + FromIterator (153.6) |
 | D239 CONFIRM/AMEND | `[]T` чистый алиас завершён (153.0) |
@@ -452,9 +459,9 @@ commit `git diff --cached --stat`; после крупной задачи — `p
 | D241/D242 | `Next`/`Iter` — VecIter + ленивые адаптеры |
 | D135 | cost-transparency (no hidden O(n)) |
 | Q-iterator-laziness (NEW) | **ЗАКРЫТО** — ленивые адаптеры канон |
-| Q-slice-view (NEW) | **ЗАКРЫТО** — `v[a..b]` zero-copy `Slice[T]` |
+| Q-slice-view | **УЖЕ РЕШЕНО** (D238+Plan 96) — `v[a..b]`=`[]T` zero-copy view, cap==len; НЕ отдельный тип |
 | Q-vec-alias-completeness (NEW) | **ЗАКРЫТО** — `[]T ≡ Vec[T]` чистый |
-| Q-vec-mutability-through-view (NEW) | `MutSlice` write-only, без роста |
+| Q-vec-mutability-through-view | мут-view `mut []T` (receiver-mut); push→realloc→detach |
 
 > Координация: **Plan 140.2** владеет bounds-элизией `v[i]` (НЕ дублировать).
 > **Plan 152** — str-линза `as_bytes()` = `ro []u8` = `Vec[u8]`-view (общая slice-инфра).
