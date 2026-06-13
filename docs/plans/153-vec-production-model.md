@@ -131,11 +131,13 @@ sort/search/dedup** (153.3), **(в) slice-surface** split_at/chunks/windows (153
    bounds-check элизия `v[i]` — Plan 140.2 (НЕ здесь)
 ```
 
-**Модульная раскладка (153.0).** `Vec` переезжает в папку `std/collections/vec/`
-(module-per-file): `core`/`access`/`mutate`/`iter`/`sort`/`slice`/`functional` +
-facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы) — складывается в
-`functional`/`iter` без дубля; `vec_owned.nv` распадается по слоям. `[]T` остаётся
-чистым алиасом (D239).
+**Модульная раскладка (153.0).** `Vec` переезжает в папку `std/collections/vec/`,
+модель **«папка = один модуль `collections.vec` из co-equal файлов»** (не facade-
+подмодули — резолвер запрещает файл+папку одного имени, урок 152.0). Файлы по слоям
+`core`/`access`/`mutate`/`iter`/`sort`/`slice`/`functional`, все `module collections.vec`.
+`vec.nv` (комбинаторы) + `vec_owned.nv` (`collections.vec_owned`) **сливаются** в один
+`collections.vec` (+ миграция ~6 импортов `vec_owned`→`vec`). `[]T` остаётся чистым
+алиасом (D239).
 
 ---
 
@@ -173,10 +175,24 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 Фаза A — обязательный связный минимум; Фаза B — продвинутое (отделяемо).
 
 ### 153.0 — Реструктуризация модуля + `[]T≡Vec` консолидация `[engineering, A]`
-Папка `std/collections/vec/` (core/access/mutate/iter/sort/slice/functional + facade);
-сложить `vec.nv`-комбинаторы без дубля; **доконсолидировать D239** (`[]T` — чистый
-алиас, добить Plan 138 Ф.5 если не завершён; убрать остаточные спец-кейсы `[]T` в
-компиляторе). Cross-module type-methods (прецедент 139.1/152.0). Эстимат ~1.5–2 dd.
+Папка `std/collections/vec/`, **модель «папка = ОДИН модуль из co-equal файлов»**
+(все файлы `module collections.vec`; прецедент 152.0/sync.nv — **НЕ** facade-подмодули
+`collections.vec.core`, резолвер запрещает файл+папку одного имени → ambiguous). Файлы
+по слоям: `core`/`access`/`mutate`/`iter`/`sort`/`slice`/`functional`, все —
+`module collections.vec`.
+- **Слияние двух модулей (Vec-нюанс, у str не было):** сейчас `vec_owned.nv`
+  (`collections.vec_owned`, тип `Vec[T]` + методы) ⊥ `vec.nv` (`collections.vec`,
+  eager-комбинаторы). Свести оба в один `collections.vec` внутри папки; удалить
+  standalone `vec.nv`/`vec_owned.nv` (иначе файл+папка `vec` → ambiguous).
+- **Миграция импортов (~6 сайтов):** `prelude.nv:124` (`export import
+  …vec_owned.{Vec,VecIter}` → `…vec`) + 5 прямых импортёров `collections.vec_owned`
+  → `collections.vec`. Тип `Vec[T]` — имя не меняется, меняется только module-path.
+- **Доконсолидировать D239** (`[]T` — чистый алиас, добить Plan 138 Ф.5 если не
+  завершён; убрать остаточные спец-кейсы `[]T` в компиляторе). Cross-module
+  type-methods (прецедент 139.1/152.0).
+- **Builder/RawMem:** если нужен общий низкоуровневый аллокатор-хелпер — приватная
+  fn внутри `collections.vec` (не отдельный модуль), на RawMem.
+Эстимат ~2–2.5 dd (×: миграция импортов + слияние модулей).
 
 ### 153.1 — Core API & capacity + консолидация дублей `[D259, A]`
 Добить императивное ядро до паритета: `@swap(i,j)`, `@resize(n,v)`,
@@ -389,8 +405,11 @@ flat_map/…), 153.4-B (chunks/windows/mut-view), 153.5 (concat/rotate/drain).
 
 Фикстуры `nova_tests/plan153_N/`, через релизные `nova` + компилятор.
 
-- **153.0:** facade+подмодули компилируются; `[]T` и `Vec[T]` взаимозаменяемы (POS);
-  остаточный спец-кейс `[]T` → ошибка/нет (NEG); golden существующих Vec-тестов.
+- **153.0:** папка-модуль `collections.vec` (co-equal файлы) компилируется; `vec.nv`+
+  `vec_owned.nv` слиты, standalone-файлы удалены, импорты `vec_owned`→`vec`
+  мигрированы (prelude + 5); `[]T` и `Vec[T]` взаимозаменяемы (POS); файл+папка `vec`
+  одного имени → ambiguous (NEG-проверка, что не осталось); golden существующих
+  Vec-тестов байт-в-байт.
 - **153.1:** `swap`/`resize`/`cap(len())`-shrink (POS); `@cap(100)`→
   `@cap()==100` (ТОЧНО, round-trip), `with_capacity(100)`→точно 100, авто-рост:
   push в cap-8 на 9-м → `@cap()==16` (pow2), `@reserve(100)`→128 (амортизированный
@@ -429,7 +448,8 @@ flat_map/…), 153.4-B (chunks/windows/mut-view), 153.5 (concat/rotate/drain).
   `vec.nv`↔`vec_owned.nv`); координация с Plan 140.2 (bounds-элизия) соблюдена.
 
 **Per-sub-plan A-критерии** — в файлах `153.N`. Ключевые:
-- **153.0:** `[]T≡Vec` чистый алиас; модуль по слоям; ноль дублей; golden.
+- **153.0:** `[]T≡Vec` чистый алиас; папка-модуль `collections.vec` (co-equal файлы);
+  `vec`+`vec_owned` слиты в один модуль, импорты мигрированы; ноль дублей; golden.
 - **153.1:** swap/resize/cap-exact; capacity-инварианты держатся;
   `@cap(n)` realloc (n>=len, иначе panic); `@len(n)` запрещён; **fluent-цепочки
   работают** (`v.reserve(10).extend(xs).sort()`), `[M-138.2-vec-self-return]` закрыт;
