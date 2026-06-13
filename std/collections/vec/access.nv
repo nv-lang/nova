@@ -14,8 +14,10 @@ module collections.vec
 /// Element at `i` by value — panics on OOB. Powers `v[i]` (D238 `@index` magic).
 ///
 /// Plan 140.2 (D257): the bounds check is a `requires` contract — Z3-proven
-/// sites elide it (zero-cost), unproven sites keep a runtime check in debug AND
-/// release. The hand-written `if…panic` is gone.
+/// `v[i]` sites elide it (zero-cost), unproven sites keep a runtime check in
+/// debug AND release. A transitional hand-written `if…panic` is retained inside
+/// this method body for DIRECT `v.index(i)` calls, because contract-enforcement
+/// is not yet emitted for generic-type monomorphized bodies (Plan 140 gap).
 ///
 /// # Examples
 ///
@@ -27,6 +29,13 @@ module collections.vec
 export fn Vec[T] @index(i int) -> T
     requires 0 <= i && i < @len
 {
+    // Runtime guard для ПРЯМОГО `v.index(i)`: contract-enforcement `requires`
+    // пока НЕ эмитится для generic-type mono'd методов (Plan 140 gap, чинится),
+    // поэтому держим явный bounds-panic. `v[i]` (inline codegen) имеет свою
+    // элидируемую проверку и через это тело не диспатчится.
+    if i < 0 || i >= @len {
+        panic("Vec: index out of bounds")
+    }
     unsafe { @data[i] }
 }
 
@@ -52,6 +61,11 @@ export fn Vec[T] @get(i int) -> Option[T] {
 export fn Vec[T] mut @index(i int, val T) -> ()
     requires 0 <= i && i < @len
 {
+    // Runtime guard для ПРЯМОГО `v.index(i, val)` (см. @index выше): generic-mono
+    // contract-enforcement пока не эмитится. `v[i] = val` (inline) не диспатчится сюда.
+    if i < 0 || i >= @len {
+        panic("Vec: index out of bounds")
+    }
     unsafe {
         @data[i] = val
     }
