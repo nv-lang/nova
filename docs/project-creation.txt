@@ -37419,3 +37419,14 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   (→Plan 153 D117 AMEND), codegen-gap raw-ptr-локала [M-raw-ptr-local-index-codegen], str @index
   без контракта (152.1/2). Коммиты 26f790b3/aeb92cae/ee22df11/85cb37b8/7de77005 + 65d15fca(spec).
   Остаток 152.1: Ф.1 (str[i]→E_STR_NO_INT_INDEX), Ф.3 (CharsIter), Ф.4 (len()→E_STR_NO_LEN) — breaking.
+
+[2026-06-13] Plan 140.2 — bidirectional sync с Plan 153.0 + relocation guard. Main (153.0 []T≡Vec)
+  удалил vec_owned.nv → папка-модуль std/collections/vec/{_module,access,core,iter,mutate,protocols,
+  slice}.nv. Merge modify/delete: принял удаление, перенёс 140.2 transitional bounds-guard в новое жильё
+  @index/mut @index — vec/access.nv (153.0 уже перенёс requires, но guard потерял → дыра generic-mono
+  воспроизвелась). Поправил doc «if…panic gone»→«transitional guard сохранён». Валидация release+z3+
+  enforce: plan140_2 12/0 (direct v.index(OOB) trap в новом модуле + элизия slice/cross-fn/write-back цела
+  + self-access контракты). Регрессия: plan131 27/1, plan138 53/3 — все 4 PRE-EXISTING из 153.0 (доказано:
+  единств. изм. ветки vs main кроме docs/spec/fixtures = vec/access.nv; затронутые файлы = main): vec_debug_pos
+  (debug-формат std), plan138_2 t14-16 user_vec_shadow (E7310 []T≡Vec resolution). Оба → владельцу 153.0.
+  Коммиты 50cf68c8(merge+relocation) + e1d9da4f(test import vec_owned→vec).
