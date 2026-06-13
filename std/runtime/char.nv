@@ -18,4 +18,3 @@ export external fn str.from(c char) -> str
 // Plan 91.13 followup: D54 запретил `int as char`; этот fn — explicit
 // "known-valid" path для skipping char.try_from(n)?? indirection.
 export external fn str.from_codepoint(cp int) -> str
-

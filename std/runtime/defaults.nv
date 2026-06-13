@@ -49,6 +49,62 @@ export fn char @compare(other char) -> int =>
     else if @ > other { 1 }
     else { 0 }
 
+// ─── char ASCII-core API (Plan 152.3a, D252) ───
+// ASCII-классификация/case/digit через char-сравнения (codepoint order); ноль
+// Unicode-таблиц. Семантика == Rust `char::is_ascii_*`/`to_digit`. (В defaults.nv,
+// не embedded char.nv: Nova-body методы на builtin char эмитятся только из
+// disk-loaded prelude-модуля, как char @compare.) Unicode-aware — Phase B (152.3b/152.4).
+
+export fn char @is_ascii() -> bool => @ <= '\u{7F}'
+export fn char @is_ascii_digit() -> bool => @ >= '0' && @ <= '9'
+export fn char @is_ascii_lowercase() -> bool => @ >= 'a' && @ <= 'z'
+export fn char @is_ascii_uppercase() -> bool => @ >= 'A' && @ <= 'Z'
+export fn char @is_ascii_alphabetic() -> bool => @is_ascii_lowercase() || @is_ascii_uppercase()
+export fn char @is_ascii_alphanumeric() -> bool => @is_ascii_alphabetic() || @is_ascii_digit()
+export fn char @is_ascii_hexdigit() -> bool =>
+    @is_ascii_digit() || (@ >= 'a' && @ <= 'f') || (@ >= 'A' && @ <= 'F')
+
+// ASCII whitespace (space, \t, \n, \r, \x0C) — как Rust (без \x0B vertical-tab).
+export fn char @is_ascii_whitespace() -> bool =>
+    @ == ' ' || @ == '\t' || @ == '\n' || @ == '\r' || @ == '\u{0C}'
+
+// ASCII case mapping (a-z↔A-Z); прочие символы — без изменений.
+export fn char @to_ascii_uppercase() -> char {
+    if @is_ascii_lowercase() {
+        match char.try_from(@ as int - 32) { Ok(u) => u, Err(_) => @ }
+    } else { @ }
+}
+export fn char @to_ascii_lowercase() -> char {
+    if @is_ascii_uppercase() {
+        match char.try_from(@ as int + 32) { Ok(l) => l, Err(_) => @ }
+    } else { @ }
+}
+
+// Цифровое значение в системе `radix` (2..=36): '0'-'9'→0-9, 'a'/'A'-..→10-35.
+// `None` если radix вне [2,36] / не цифра / значение >= radix. Rust `char::to_digit`.
+export fn char @to_digit(radix int) -> Option[int] {
+    if radix < 2 || radix > 36 { return None }
+    ro c = @ as int
+    mut d = -1
+    if @ >= '0' && @ <= '9' { d = c - ('0' as int) }
+    else if @ >= 'a' && @ <= 'z' { d = c - ('a' as int) + 10 }
+    else if @ >= 'A' && @ <= 'Z' { d = c - ('A' as int) + 10 }
+    if d < 0 || d >= radix { return None }
+    Some(d)
+}
+
+// Байт-длина UTF-8-кодировки codepoint'а (1-4). Rust `char::len_utf8`.
+export fn char @len_utf8() -> int {
+    ro c = @ as int
+    if c < 0x80 { 1 }
+    else if c < 0x800 { 2 }
+    else if c < 0x10000 { 3 }
+    else { 4 }
+}
+
+// UTF-8-кодировка codepoint'а как `str` (= `str.from(@)`).
+export fn char @encode_utf8() -> str => str.from(@)
+
 /// Compare.compare для int (signum, overflow-safe).
 export fn int @compare(other int) -> int =>
     if @ < other { -1 }
