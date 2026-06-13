@@ -18837,7 +18837,24 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 Ok(acc)
             }
             ExprKind::SelfAccess => {
-                Ok("nova_self".into())
+                // Plan 152.1 Ф.3 / `[M-138.2-vec-self-return]`: a value-record
+                // receiver is passed by-pointer (`NovaValue_X*`), so a BARE `@`
+                // used as a value (`return @`, `=> @`, `f(@)`, `Some(@)`) must be
+                // dereferenced to yield the value the type denotes. `@field` /
+                // `@method(...)` / `@[i]` never reach here — their SelfAccess
+                // special-cases emit `nova_self->…` directly. `str` (and other
+                // by-value receivers) stay `nova_self` (already a value).
+                let self_by_ptr_value_record = self.var_types.get("nova_self")
+                    .map(|c| c.starts_with("NovaValue_") && c.ends_with('*'))
+                    .unwrap_or(false)
+                    || self.current_receiver_type.as_deref()
+                        .map(|t| t != "str" && self.value_record_names.contains(t))
+                        .unwrap_or(false);
+                if self_by_ptr_value_record {
+                    Ok("(*nova_self)".into())
+                } else {
+                    Ok("nova_self".into())
+                }
             }
             ExprKind::Index { obj, index } => {
                 let obj_ty = self.infer_expr_c_type(obj);
@@ -22294,8 +22311,11 @@ _cp++; \
                             Some(n.clone())
                         } else {
                             // Instance call (obj — variable). Берём из obj_ty.
-                            let trimmed = obj_ty.trim_start_matches("Nova_")
-                                .trim_end_matches('*').trim().to_string();
+                            // Plan 152.1 Ф.3: value records are `NovaValue_<Name>` —
+                            // strip that prefix so dispatch resolves under the
+                            // "<Name>" multi-overload key (same-named methods on
+                            // different types disambiguate by receiver type).
+                            let trimmed = Self::strip_recv_c_prefix(&obj_ty);
                             if !trimmed.is_empty() && trimmed != "void" {
                                 Some(trimmed)
                             } else {
@@ -22304,8 +22324,7 @@ _cp++; \
                         }
                     } else {
                         // Не-Ident obj (expr) → всегда instance.
-                        let trimmed = obj_ty.trim_start_matches("Nova_")
-                            .trim_end_matches('*').trim().to_string();
+                        let trimmed = Self::strip_recv_c_prefix(&obj_ty);
                         if !trimmed.is_empty() && trimmed != "void" {
                             Some(trimmed)
                         } else {
@@ -22679,6 +22698,14 @@ _cp++; \
                                 if let Some(sig) = chosen {
                                     if want_instance {
                                         let obj_c = self.emit_expr(obj)?;
+                                        // Plan 152.1 Ф.3: value-record receiver
+                                        // (`NovaValue_X`) needs `&obj` (by-pointer ABI,
+                                        // D226) / NamedTuple-mut needs `&obj` too —
+                                        // route through prepare_method_recv (no-op for
+                                        // heap/primitive receivers).
+                                        let obj_ty_local = self.infer_expr_c_type(obj);
+                                        let obj_c = self.prepare_method_recv(
+                                            &obj_c, &obj_ty_local, sig.recv_mutable, Some(obj));
                                         let mut full = vec![obj_c];
                                         full.extend(arg_strs);
                                         return Ok(format!("{}({})", sig.c_name, full.join(", ")));
@@ -25378,6 +25405,18 @@ _cp++; \
         let iter_struct = if arr_ty.starts_with("NovaTuple_") {
             arr_ty.strip_prefix("NovaTuple_").unwrap_or("")
                 .trim_end_matches('*').trim().to_string()
+        } else if arr_ty.starts_with("NovaValue_") {
+            // Plan 152.1 Ф.3: value-record iterator (e.g. `CharsIter value priv`).
+            // C-type is `NovaValue_<Name>` (not `Nova_<Name>`) — strip the value
+            // prefix so the "<Name>" method-table key resolves `next`/`iter`.
+            arr_ty.strip_prefix("NovaValue_").unwrap_or("")
+                .trim_end_matches('*').trim().to_string()
+        } else if arr_ty == "nova_str" {
+            // Plan 152.1 Ф.3 (D58 amend): `for c in s` (s: str) decodes codepoints
+            // via `str @iter() -> CharsIter`. str's C-type is `nova_str` (lang-item,
+            // lowercase), not `Nova_<Name>` — map it to the "str" method-table key so
+            // Case 2 below synthesizes `s.iter()` (str has no `next`, only `iter`).
+            "str".to_string()
         } else {
             arr_ty.strip_prefix("Nova_").unwrap_or("")
                 .trim_end_matches('*').trim().to_string()
@@ -25496,9 +25535,17 @@ _cp++; \
                 let elem_c_ty = opt_c_ty.strip_prefix("NovaOpt_")
                     .map(str::to_string)
                     .unwrap_or_else(|| "nova_int".to_string());
+                // Plan 152.1 Ф.3: value-record iterator (`NovaValue_*`) is a stack
+                // value; `mut @next()` takes a by-pointer receiver, so pass `&it`
+                // (reference-record iterators are already pointers — pass as-is).
+                let next_self = if arr_ty.starts_with("NovaValue_") && !arr_ty.ends_with('*') {
+                    format!("&{}", it_tmp)
+                } else {
+                    it_tmp.clone()
+                };
                 self.line(&format!(
                     "{} {} = Nova_{}_method_next({});",
-                    opt_c_ty, opt_tmp, iter_type, it_tmp));
+                    opt_c_ty, opt_tmp, iter_type, next_self));
                 // Plan 118 Ф.5: NPO-aware is-none check для for-in iterator.
                 let none_check = self.option_is_none_check(&opt_tmp, &elem_c_ty);
                 self.line(&format!("if ({}) break;", none_check));
@@ -30457,6 +30504,19 @@ _cp++; \
     /// from_targets / try_from_targets (которые хранят Nova-имена).
     /// `nova_int` → `int`, `nova_str` → `str`, `Nova_Wrapper*` → `Wrapper`.
     /// Числовые primitive C-aliases (`int32_t` etc.) → соответствующее Nova-имя.
+    /// Plan 152.1 Ф.3: derive the `method_overloads` receiver key from a C
+    /// receiver type. Strips a trailing `*` and the `NovaValue_` (value record) or
+    /// `Nova_` (heap record) prefix, yielding the raw "<Name>" the method table is
+    /// keyed by. (`nova_str`/`nova_int`/… stay as-is — handled by earlier dispatch.)
+    fn strip_recv_c_prefix(obj_ty: &str) -> String {
+        let no_ptr = obj_ty.trim_end_matches('*').trim();
+        no_ptr.strip_prefix("NovaValue_")
+            .or_else(|| no_ptr.strip_prefix("Nova_"))
+            .unwrap_or(no_ptr)
+            .trim()
+            .to_string()
+    }
+
     fn nova_type_name_from_c(c_ty: &str) -> String {
         // Plan 134: `nova_ptr` typedef removed. `void*` = Nova `*()`.
         // cast-check table uses "*()"; но для as-cast источника void*
@@ -30481,7 +30541,13 @@ _cp++; \
             "uint16_t"  => "u16".into(),
             "uint32_t"  => "u32".into(),
             "uint64_t"  => "u64".into(),
-            other => other.strip_prefix("Nova_").unwrap_or(other).to_string(),
+            // Plan 152.1 Ф.3: value records have C-type `NovaValue_<Name>` (not
+            // `Nova_<Name>`). Strip that prefix first so e.g. a `CharsIter`-receiver
+            // method dispatches under the "CharsIter" method-table key, not the raw
+            // "NovaValue_CharsIter".
+            other => other.strip_prefix("NovaValue_")
+                .or_else(|| other.strip_prefix("Nova_"))
+                .unwrap_or(other).to_string(),
         }
     }
 
@@ -31222,7 +31288,19 @@ _cp++; \
                 // self contexts; non-int silent miscompilation possible но
                 // не observed в test corpus.
                 // Documented как Cat B13.
-                self.var_types.get("nova_self").cloned().unwrap_or_else(|| "nova_int".into())
+                let raw = self.var_types.get("nova_self").cloned()
+                    .unwrap_or_else(|| "nova_int".into());
+                // Plan 152.1 Ф.3: a value-record receiver `nova_self` has C-type
+                // `NovaValue_X*` (by-pointer), but bare `@` denotes the VALUE
+                // (`emit_expr` yields `(*nova_self)`). Infer the by-value type so
+                // `@field` accessor selection (`.` vs `->`) stays consistent with
+                // the deref'd emission. Heap records (`Nova_X*`) and by-value `str`
+                // (`nova_str`) are unaffected.
+                if raw.starts_with("NovaValue_") && raw.ends_with('*') {
+                    raw.trim_end_matches('*').trim().to_string()
+                } else {
+                    raw
+                }
             }
             ExprKind::HandlerLit { effect_name, .. } => {
                 // handler Switch { ... } has type NovaVtable_Switch*
