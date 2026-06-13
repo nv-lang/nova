@@ -161,6 +161,15 @@ monomorphized nested recursion) RUN-FAIL'ит на «fiber stack overflow in slo
 overflow'ит и на 8MB — orthogonal codegen-баг вне scope Plan 149. Маркер
 `[M-cancellation-test-mono-recursion-overflow]` (P2, отдельный).
 
+> **⚠ ПОЗДНЕЕ ИСПРАВЛЕНИЕ (Plan 151, 2026-06-13):** диагноз «mono-recursion /
+> unbounded codegen recursion» ВЫШЕ оказался **НЕВЕРНЫМ**. Plan 151 Ф.0 доказал,
+> что codegen чист (тот же бинарь PASS под `NOVA_AUTOARM=0` / `NOVA_MAXPROCS<=3`;
+> non-generic repro падает идентично). Реальный root-cause — **GC premature-collect
+> heap-замыкания** в M:N рантайме (main-стек не сканируется при сборке во время
+> материализации пула при ≥4 worker'ах). Фикс — RUNTIME (`fiber_arena_win.c`), НЕ
+> codegen. `cancellation_test` un-quarantined. Маркер закрыт как
+> `[M-mn-worker-fiber-closure-call-stack-overflow]`. См. [Plan 151](151-codegen-mono-recursion-closure-generics.md).
+
 **Acceptance:** AC1 (default 4MB, no regression), AC2 (env stack scales — verified slot_size),
 AC3 (20000→20032 round-up), AC4 (toml bake + env override — verified), AC5 (garbage/floor/clamp →
 warn + default, no crash), AC7 (no scheduler/GC regression), AC8 (pos+neg green), AC9 (bitmap MAX),
@@ -193,3 +202,6 @@ AC10 (D233 + docs + marker + self-ref) — ✅. AC6 (per-worker × MAXPROCS) —
    собственном TU тоже overflow'ит даже на 64MB — unbounded codegen recursion).
    Все test-кейсы сохранены verbatim. Codegen root-cause НЕ тронут; маркер
    `[M-cancellation-test-mono-recursion-overflow]` **остаётся OPEN**.
+   > **⚠ Plan 151 (2026-06-13):** диагноз «unbounded codegen recursion» был НЕВЕРЕН
+   > (codegen чист; реальный баг — GC premature-collect замыкания в M:N рантайме).
+   > `cancellation_test` un-quarantined, маркер закрыт. См. [Plan 151](151-codegen-mono-recursion-closure-generics.md).

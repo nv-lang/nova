@@ -241,6 +241,16 @@ void* nova_fiber_committed_low(const void* block_ptr);
 void nova_fiber_arena_thread_exit(void);
 void nova_fiber_arena_release_retired(void);
 
+/* Plan 151 (2026-06-13, Windows): зафиксировать NT_TIB.StackBase главного
+ * потока для GC push_other_roots-колбэка. Зовётся один раз из
+ * _materialize_pool (runtime.c) на главном потоке ДО создания worker-пула.
+ * Главный поток может не иметь СВОЕЙ fiber-арены в момент GC (создаётся
+ * лениво на первом mco_create), поэтому его native-стек иначе выпадет из
+ * обхода → premature collect heap-замыкания, удерживаемого блокированным
+ * в supervised main'ом. POSIX/disabled — no-op (per-thread скан Boehm
+ * видит главный стек штатно; арена demand-paged). */
+void nova_fiber_arena_set_main_stack(void);
+
 #endif /* NOVA_FIBER_ARENA_ENABLED */
 
 #endif /* NOVA_RT_FIBER_ARENA_H */

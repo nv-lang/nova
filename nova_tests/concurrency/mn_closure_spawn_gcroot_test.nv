@@ -1,0 +1,79 @@
+// mn_closure_spawn_gcroot_test.nv — Plan 151 Ф.4 regression guard.
+//
+// MINIMAL NON-GENERIC repro for the M:N main-thread-stack GC-root bug fixed in
+// Plan 151 Ф.1 (marker redirected to [M-mn-worker-fiber-closure-call-stack-overflow]).
+//
+// BEFORE the fix this crashed armed (NOVA_AUTOARM unset) at NOVA_MAXPROCS>=4
+// with the misleading "fiber stack overflow in slot 0": the closure heap object
+// passed into supervised{spawn{ ro r=body(); ... }} was rooted only on the main
+// thread's native stack while main blocked in nova_supervised_run_impl; a GC
+// firing during worker-pool materialization (before main created its lazy fiber
+// arena) prematurely collected the closure (closure->fn zeroed by reuse), so the
+// worker fiber called NULL (RIP=0). The crash was NOT monomorphization — this
+// guard is deliberately NON-GENERIC to prove generics are not involved, and it
+// must run ARMED (default), NOT only under NOVA_AUTOARM=0.
+//
+// This fixture must run armed at the default worker count. Do NOT add a
+// `// ENV NOVA_AUTOARM=0` directive — that would mask the very bug it guards.
+
+module concurrency.mn_closure_spawn_gcroot_test
+
+import std.concurrency.cancellation
+
+
+// Non-generic mirror of within[int]: a closure-param spawn-body whose only live
+// root for the closure is the `body` param on the main thread's native stack.
+fn run_int(body fn() -> int) -> Option[int] {
+    ro tok = CancelToken.new()
+    mut result Option[int] = None
+
+    supervised(cancel: tok) {
+        spawn {
+            ro r = body()
+            result = Some(r)
+            tok.cancel("body completed")
+        }
+        spawn {
+            Time.sleep(1000)
+            tok.cancel("timeout")
+        }
+    }
+    result
+}
+
+
+test "non-generic closure-spawn: body fast → Some(result) (armed GC-root guard)" {
+    ro r = run_int(|| 42)
+    ro got = match r {
+        Some(v) => v
+        None    => -1
+    }
+    assert(got == 42)
+}
+
+
+test "non-generic closure-spawn: multiple calls in sequence (re-arm GC pressure)" {
+    mut sum = 0
+    mut i = 0
+    while i < 5 {
+        ro r = run_int(|| 7)
+        ro got = match r {
+            Some(v) => v
+            None    => 0
+        }
+        sum = sum + got
+        i = i + 1
+    }
+    assert(sum == 35)
+}
+
+
+// Also exercise the real generic within[T] armed (same root cause surface).
+test "generic within[int] armed → Some (GC-root guard)" {
+    ro r = within(1000, || 99)
+    ro got = match r {
+        Some(v) => v
+        None    => -1
+    }
+    assert(got == 99)
+}
