@@ -372,6 +372,13 @@ pub struct FnDecl {
     /// Plan 113 (D172): `#blocking` attribute перед `fn`.
     /// Runtime threadpool offload — callers wrap fn in uv_queue_work, fiber parks.
     pub blocking_attr: bool,
+    /// Plan 154.1 (D268): `#impl(P1 + P2 + ...)` ведущий атрибут на МЕТОД-декларации
+    /// (`fn T @m`) — opt-in объявление, что метод реализует метод протокола(ов) P.
+    /// Checker валидирует подпись против P + привязывает P к receiver-типу
+    /// (`type_impl_protocols`). Пустой вектор = без `#impl` (структурная конформность
+    /// по-прежнему работает). На тип-декларациях `#impl` хранится отдельно
+    /// (`TypeDecl.impl_protocols`, D186/Plan 91.9).
+    pub impl_protocols: Vec<String>,
     /// Plan 110.7.3.a (D188 §FFI): `#cancel_safe` attribute на `external fn`.
     /// Attests что C-side function is cancel-safe — can be invoked from inside
     /// ConsumeScope on_exit body (under cancel-shield). Without this attribute,

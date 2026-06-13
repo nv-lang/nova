@@ -2074,6 +2074,25 @@ impl CEmitter {
             }
         }
 
+        // Plan 154.1 (D268) — method-level `#impl(P)` (`#impl(Debug)` before a
+        // `fn T @m`) ALSO binds P to the receiver type T, exactly as if P were
+        // listed on T's `type` declaration. Same `type_impl_protocols` registry,
+        // same bare-call-synthesis gate. The checker has already validated the
+        // signature (verify_method_impl_protocols); here we only record the bond.
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                if f.impl_protocols.is_empty() { continue; }
+                if let Some(recv) = &f.receiver {
+                    let entry = self.type_impl_protocols
+                        .entry(recv.type_name.clone())
+                        .or_default();
+                    for p in &f.impl_protocols {
+                        entry.insert(p.clone());
+                    }
+                }
+            }
+        }
+
         // Plan 97.1 Ф.2 (D142): pre-register non-generic protocol-методы
         // в `protocol_method_registry`. Generic-protocol'ы регистрируются
         // в loop ниже (с t.generics.is_empty() == false), но non-generic

@@ -2460,6 +2460,17 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
+        // Plan 154.1 (D268): verify method-level `#impl(P1 + P2 + ...)` annotations
+        // (`#impl(Debug)` directly before a `fn T @m`). Opt-in: a method without
+        // `#impl` is unaffected (structural conformance unchanged). See
+        // `verify_method_impl_protocols` for the 3 error codes.
+        for item in &module.items {
+            if let Item::Fn(fd) = item {
+                if fd.impl_protocols.is_empty() { continue; }
+                self.verify_method_impl_protocols(fd, errors);
+            }
+        }
+
         // Plan 91.8a.2 part 3 (D183 amendment, Q4 strict): E_BLANKET_IDENTITY_OVERRIDE.
         // Identity From blanket `fn[T] T.from(t T) -> T => t` declared в prelude.
         // Override запрещён: попытка явно объявить `fn TypeName.from(t TypeName) -> TypeName`
@@ -5894,6 +5905,136 @@ impl<'a> TypeCheckCtx<'a> {
                     ),
                     td.span,
                 ));
+            }
+        }
+    }
+
+    /// Plan 154.1 (D268): verify a METHOD-level `#impl(P1 + P2 + ...)` annotation
+    /// on `fn T @m(...)`. Unlike the type-level pass (`verify_impl_protocols`,
+    /// which checks T provides ALL of P's methods), this checks that THIS method
+    /// `@m` legitimately implements a method OF P:
+    ///   1. P is a known protocol type            → else E_IMPL_UNKNOWN_PROTOCOL
+    ///   2. `@m` ∈ P's declared methods            → else E_IMPL_NOT_A_PROTOCOL_METHOD
+    ///   3. signature (params + return + receiver  → else E_IMPL_SIGNATURE_MISMATCH
+    ///      mutability) matches P's `@m`, modulo `Self` ↔ T
+    ///
+    /// Opt-in: the binding `type_impl_protocols[T] += P` happens in codegen
+    /// (emit_c.rs ~2063, mirrored for method-level `#impl`). Absence of `#impl`
+    /// is never an error — structural conformance still satisfies `[T P]` bounds.
+    fn verify_method_impl_protocols(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // `#impl` on a function requires a receiver — a protocol method is always
+        // a method on a type. A free function can never BE a protocol method.
+        let recv = match &fd.receiver {
+            Some(r) => r,
+            None => {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_IMPL_NOT_A_PROTOCOL_METHOD] free function `{}` has `#impl(...)` \
+                         but `#impl` on a `fn` requires a receiver (`fn T @{}(...)`). \
+                         Protocol methods are always methods on a type.",
+                        fd.name, fd.name,
+                    ),
+                    fd.span,
+                ));
+                return;
+            }
+        };
+        for proto_name in &fd.impl_protocols {
+            // Plan 137 (D237): renamed protocols — helpful redirect.
+            if let Some((_, new_name)) = Self::RENAMED_PROTOCOLS.iter()
+                .find(|(old, _)| *old == proto_name.as_str())
+            {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_PROTOCOL_RENAMED] protocol `{}` was renamed to `{}` (D237). \
+                         Use `#impl({})` instead.",
+                        proto_name, new_name, new_name,
+                    ),
+                    fd.span,
+                ));
+                continue;
+            }
+            let proto_decl = match self.types.get(proto_name.as_str()) {
+                Some(td) => td,
+                None => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_IMPL_UNKNOWN_PROTOCOL] method `{} @{}` has `#impl({})` but \
+                             `{}` is not a known type. Did you forget to import it, or \
+                             misspell the protocol name?",
+                            recv.type_name, fd.name, proto_name, proto_name,
+                        ),
+                        fd.span,
+                    ));
+                    continue;
+                }
+            };
+            let proto_methods = match &proto_decl.kind {
+                TypeDeclKind::Protocol { methods, .. } => methods,
+                _ => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_IMPL_UNKNOWN_PROTOCOL] method `{} @{}` has `#impl({})` but \
+                             `{}` is not a protocol — it's a different kind of type. \
+                             `#impl(...)` only accepts protocol names.",
+                            recv.type_name, fd.name, proto_name, proto_name,
+                        ),
+                        fd.span,
+                    ));
+                    continue;
+                }
+            };
+            // `@m` must be one of P's declared methods.
+            let proto_method = match proto_methods.iter().find(|m| m.name == fd.name) {
+                Some(m) => m,
+                None => {
+                    let avail = proto_methods.iter()
+                        .map(|m| format!("`@{}`", m.name))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_IMPL_NOT_A_PROTOCOL_METHOD] method `@{}` is not declared by \
+                             protocol `{}`. `{}` declares: {}. Did you mean one of those, \
+                             or a different protocol in `#impl(...)`?",
+                            fd.name, proto_name, proto_name, avail,
+                        ),
+                        fd.span,
+                    ));
+                    continue;
+                }
+            };
+            // Signature: params + return type, modulo `Self` ↔ T.
+            if let Some(reason) = check_signature_match(fd, proto_method) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_IMPL_SIGNATURE_MISMATCH] method `{} @{}` has `#impl({})` but its \
+                         signature does not match protocol `{}`'s `@{}`. Expected: `{}`. {}\n  \
+                         note: protocol method signatures must match exactly (arity, param \
+                         types, return type — modulo Self ↔ {}).",
+                        recv.type_name, fd.name, proto_name, proto_name, fd.name,
+                        render_method_sig(&proto_method.name, &proto_method.params, &proto_method.return_type),
+                        reason, recv.type_name,
+                    ),
+                    fd.span,
+                ));
+                continue;
+            }
+            // Receiver mutability (ro / mut / consume) must match P's `@m`.
+            if let Some((_, code, proto_qual, fix)) =
+                check_receiver_mut_match(fd, proto_method, proto_name, &recv.type_name)
+            {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_IMPL_SIGNATURE_MISMATCH] method `{} @{}` has `#impl({})` but its \
+                         receiver mutability does not match protocol `{}`'s `{} @{}(...)`. {} \
+                         (detail: {})",
+                        recv.type_name, fd.name, proto_name, proto_name, proto_qual,
+                        fd.name, fix, code,
+                    ),
+                    fd.span,
+                ));
+                continue;
             }
         }
     }
