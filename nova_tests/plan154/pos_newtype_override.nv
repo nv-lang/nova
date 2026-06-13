@@ -1,0 +1,13 @@
+// Plan 154: own-метод user-типа с именем как у built-in (`to_lower`) — разрешён
+// (ключ `Locale.to_lower` ≠ `str.to_lower`, разный receiver-тип; НЕ E_METHOD_REDEFINITION).
+// Это санкционированный способ "своего" to_lower (newtype + own-method).
+module plan154.pos_newtype_override
+
+type Locale { s str }
+
+fn Locale @to_lower() -> str => "custom"
+
+fn main() -> () {
+    ro l = Locale { s: "ABC" }
+    assert(l.to_lower() == "custom")
+}

@@ -256,6 +256,20 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         else { None }
     };
 
+    // Plan 154 [M-method-override-silent-noop]: типы, объявленные ЛОКАЛЬНО в
+    // user-коде (entry peers). Если пользователь сам (пере)объявил `type Range`,
+    // то `fn Range @step_by` — метод на ЕГО типе (legit shadow всего типа,
+    // Plan 62 user-wins), а не silent-override prelude/built-in метода. Ошибку
+    // E_METHOD_REDEFINITION шлём ТОЛЬКО для методов на типах, которые юзер НЕ
+    // объявлял локально (str/Vec/… из prelude — footgun, см. ниже).
+    let user_declared_types: std::collections::HashSet<String> = module
+        .peer_files
+        .iter()
+        .filter(|pf| pf.is_entry_module)
+        .flat_map(|pf| pf.items_here.iter())
+        .filter_map(|it| if let Item::Type(td) = it { Some(td.name.clone()) } else { None })
+        .collect();
+
     for item in &module.items {
         match item {
             Item::Type(td) => {
@@ -348,18 +362,58 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                             _ => false,
                         }
                     });
+                    // Plan 154 [M-method-override-silent-noop]: переопределение
+                    // **метода** (receiver present) с той же сигнатурой, что у
+                    // метода из std/prelude/импортированного модуля — это SILENT
+                    // NO-OP: codegen `method_overloads` резолвит call-site
+                    // first-match, а prelude/std prepend'ится первым → выигрывает
+                    // существующее определение, тело пользователя НИКОГДА не
+                    // вызывается (проверено: `fn str @to_lower` → "ABC".to_lower()
+                    // печатает "abc", std-версия). Раньше — молча принималось
+                    // (Some(_) → user-wins в env.fns, но codegen игнорирует) → нет
+                    // диагностики. Теперь — ошибка: extension-метод должен иметь
+                    // другое имя ИЛИ отличаться сигнатурой (overload, D84); для
+                    // смены поведения типа — newtype + own-method (02-types §override
+                    // через own-methods). Type/const/free-fn shadowing — без изменений
+                    // (Plan 62 prelude-shadow: user-wins + W_PRELUDE_SHADOW).
+                    //
+                    // ИСКЛЮЧЕНИЕ (Plan 62): если receiver-тип объявлен ЛОКАЛЬНО юзером
+                    // (`user_declared_types`) — это методы на ЕГО (пере)объявленном
+                    // типе (shadow всего типа), не override чужого метода → НЕ ошибка
+                    // (напр. nova_tests/syntax/for_in_range_iter.nv: локальные
+                    // `type Range`+`fn Range @step_by`).
+                    let is_method = fd.receiver.is_some();
+                    let recv_user_local = fd.receiver.as_ref()
+                        .map(|r| user_declared_types.contains(&r.type_name))
+                        .unwrap_or(false);
                     match classify_dup(&key) {
+                        Some(_) if is_method && !recv_user_local => {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_METHOD_REDEFINITION] метод `{}` уже определён \
+                                     (std/prelude или импортированный модуль); \
+                                     переопределение с той же сигнатурой молча игнорируется \
+                                     кодогеном (выигрывает существующее определение, тело \
+                                     не вызывается). Используй extension-метод с ДРУГИМ именем \
+                                     или overload с отличающейся сигнатурой (D84); для смены \
+                                     поведения типа — newtype + own-method.",
+                                    key
+                                ),
+                                fd.span,
+                            ));
+                            continue;
+                        }
                         Some(true) => {
                             // Plan 62.F.bis Ф.2: silent user-wins; structured
                             // W_PRELUDE_SHADOW warning эмитится через
-                            // `lints::lint_prelude_shadow`.
+                            // `lints::lint_prelude_shadow`. (free-fn/type/const)
                             if let Some(pos) = dup_pos {
                                 entry[pos] = fd.clone();
                             }
                             continue;
                         }
                         Some(false) => {
-                            // Codegen-only merge — silent shadow.
+                            // Codegen-only merge — silent shadow. (free-fn/type/const)
                             if let Some(pos) = dup_pos {
                                 entry[pos] = fd.clone();
                             }

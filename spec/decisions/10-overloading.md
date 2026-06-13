@@ -347,3 +347,62 @@ Variadic — это «catch-all» на произвольную арность; 
   резолвятся одинаково и concrete-перегрузка доминирует. Триггер —
   обсуждение D87/D88 (specialization для конкретного типа vs generic
   с default).
+
+---
+
+## D267. Method coherence: extension — да, override чужого метода — `E_METHOD_REDEFINITION`
+
+> **Статус:** принято и реализовано ([Plan 154](../../docs/plans/154-method-override-coherence.md),
+> 2026-06-13). Закрывает `[M-method-override-silent-noop]`.
+
+### Что
+
+У Nova **нет orphan rule** ([02-types §«Структурная проверка вместо impl»](02-types.md))
+— метод на типе можно объявить из любого модуля (extension-методы). Но
+**переопределение существующего метода** `fn T @m` с **той же сигнатурой**
+(receiver-type + arity + arg-types + return + receiver-mut, все оси D84), что у
+метода `T.@m`, **уже определённого в другом модуле** (std/prelude/импорт), —
+**compile-error `E_METHOD_REDEFINITION`**.
+
+**Исключение:** если пользователь **сам объявил `type T` локально** (shadow всего
+типа), методы на этом T — его (Plan 62 user-wins, не override чужого).
+
+### Почему
+
+Раньше это был **silent no-op**: type-check классифицировал дубль как prelude-shadow
+(user-wins в `env.fns`), но codegen `method_overloads` резолвит call-site
+**first-match**, а prelude/std prepend'ится первым → выигрывает существующее
+определение, тело пользователя **никогда не вызывается**. Программист уверен, что
+переопределил `str.to_lower`, а поведение не меняется (мёртвый код). Худший исход —
+не ошибка, не override.
+
+Глобальный override built-in/std метода к тому же **coherence-хазард**: stdlib и
+чужие библиотеки, зовущие `to_lower` внутри, получили бы нелокальный сюрприз
+(проблема monkey-patching из JS-прототипов). Прецедент строгости: Rust orphan rule,
+Kotlin/C#/Swift (member/inherent wins, extension не переопределяет), Go (нельзя
+добавлять к чужим типам).
+
+### Как сделать «свой» метод (разрешённые пути)
+
+- **Extension с другим именем:** `fn str @shout()` — ок (нет orphan rule).
+- **Overload по сигнатуре:** `fn T @m(int)` + `fn T @m(str)` (D84).
+- **Receiver-mut overload:** `fn T @m()` + `fn T mut @m()` ([D-Plan 135](#)).
+- **Newtype + own-method:** `type Locale { use _ str }` + `fn Locale @to_lower()` —
+  override-precedence ([02-types §«Override через own-methods»](02-types.md)).
+- **Локальный re-decl типа:** `type Range {...}` + `fn Range @step_by(...)` (Plan 62
+  user-wins; receiver-тип объявлен локально).
+
+### Реализация
+
+[types/mod.rs](../../compiler-codegen/src/types/mod.rs) `check_module`, `Item::Fn`:
+для метода (`receiver.is_some()`), у которого `classify_dup` = `Some(_)` (shadow'ит
+prelude/merged) и receiver-тип **не** в `user_declared_types` (типы из entry-peers) —
+`E_METHOD_REDEFINITION`. Site type-check → компиляция падает до codegen.
+
+### Связь
+
+- [D84](#d84) — оси перегрузки (override = совпадение по всем осям; overload = хотя
+  бы одна различается → разрешён).
+- **Plan 62** — prelude-shadow для type/const/free-fn + локальный type re-decl
+  (user-wins + W_PRELUDE_SHADOW) — **не задет** (фикс только для методов на не-локальных
+  типах).

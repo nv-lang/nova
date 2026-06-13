@@ -1,0 +1,8 @@
+// Plan 154: extension-метод с НОВЫМ именем на str — разрешён (нет orphan rule).
+module plan154.pos_extension_new_name
+
+fn str @shout() -> str => @to_upper()
+
+fn main() -> () {
+    assert("abc".shout() == "ABC")
+}
