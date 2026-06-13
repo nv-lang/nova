@@ -1404,6 +1404,19 @@ static void _materialize_pool(void) {
     int n_workers = _target_workers;
     if (n_workers < 1) n_workers = 1;  /* defensive — резолвер уже клэмпит */
 
+    /* Plan 151 (2026-06-13): зафиксировать native-стек главного потока для
+     * GC push_other_roots ДО создания worker'ов. Мы гарантированно на main
+     * (см. doc выше: «до материализации программа однопоточна») и main НЕ
+     * крутит fiber здесь → NT_TIB.StackBase описывает настоящий native-стек.
+     * Без этого: при ≥4 worker'ах GC может сработать во время materialize'а,
+     * пока main блокирован в supervised-setup и держит ЕДИНСТВЕННЫЙ корень на
+     * heap-замыкание spawn-body; собственная fiber-арена main'а ещё не создана
+     * (lazy на первом mco_create) → его стек выпадает из обхода → premature
+     * collect замыкания → closure->fn зануляется → worker зовёт NULL (RIP=0),
+     * рапортуется VEH как «fiber stack overflow in slot 0».
+     * [M-cancellation-test-mono-recursion-overflow] — НЕ моно-рекурсия. */
+    nova_fiber_arena_set_main_stack();
+
 #ifdef NOVA_GC_THREADS_REGISTER
     /* Boehm требует разрешения explicit thread registration ПЕРЕД
      * первым GC_register_my_thread. Idempotent — safe вызывать

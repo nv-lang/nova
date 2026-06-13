@@ -100,6 +100,20 @@ static __declspec(thread) NovaFiberArenaWin* _t_arena = NULL;
 static NovaFiberArenaWin* volatile _nova_fw_arena_list = NULL;
 static CRITICAL_SECTION  _nova_fw_list_lock;
 
+/* Plan 151 (2026-06-13): NT_TIB.StackBase главного потока. Захватывается
+ * на main в _materialize_pool (runtime.c) через nova_fiber_arena_set_main_stack
+ * ДО создания worker-пула. Нужен GC push_other_roots-колбэку: главный
+ * поток может не иметь СВОЕЙ fiber-арены в момент сборки (его арена
+ * создаётся лениво лишь на ПЕРВОМ mco_create, а GC может сработать раньше —
+ * во время _materialize_pool, когда main блокирован в supervised setup и
+ * держит ЕДИНСТВЕННЫЙ корень на heap-замыкание spawn-body). Без явного
+ * push'а этого диапазона Boehm STW-скан главного стека под ≥4 worker'ах
+ * детерминированно НЕ видит замыкание → premature collect → closure->fn
+ * обнуляется реюзом → worker-fiber зовёт NULL → RIP=0 (рапортуется VEH
+ * как «fiber stack overflow in slot 0»). Симметрия с per-arena native_base
+ * push'ем (§П3.3), но для главного потока, у которого арены ещё нет. */
+static void* volatile _nova_fw_main_stack_base = NULL;
+
 static INIT_ONCE _nova_fw_once = INIT_ONCE_STATIC_INIT;
 
 /* ── Минимальный stderr-вывод для overflow-диагностики ──────────── */
@@ -205,6 +219,21 @@ static void _nova_fw_gc_push_region(char* lo, char* hi) {
  * обход append-only списка без лока безопасен. */
 static void _nova_fw_gc_push_other_roots(void) {
     size_t pushed = 0, arenas = 0;
+    /* Plan 151: главный поток может не иметь СОБСТВЕННОЙ fiber-арены в момент
+     * сборки (она создаётся лениво на первом mco_create главного потока). Если
+     * ни одна из арен в списке не принадлежит главному потоку, его native-стек
+     * (с корнями на heap, удерживаемыми блокированным в supervised main'ом)
+     * иначе НЕ попадёт в обход → premature collect. Явно push'им зафиксированный
+     * диапазон главного стека. (Когда у главного потока СВОЯ арена появляется,
+     * её native_base пушится в цикле ниже — диапазоны совпадают, double-push
+     * GC безвреден: тот же conservative range.) */
+    void* main_sb = _nova_fw_main_stack_base;
+    if (main_sb) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (VirtualQuery((char*)main_sb - 1, &mbi, sizeof(mbi))) {
+            _nova_fw_gc_push_region((char*)mbi.AllocationBase, (char*)main_sb);
+        }
+    }
     for (NovaFiberArenaWin* a = _nova_fw_arena_list; a; a = a->next) {
         char* base = a->base;
         if (!base) continue;            /* retired */
@@ -574,6 +603,17 @@ void* nova_fiber_committed_low(const void* block_ptr) {
 }
 
 /* ── Misc API ───────────────────────────────────────────────────── */
+
+/* Plan 151: записать NT_TIB.StackBase главного потока. Зовётся ОДИН раз
+ * из _materialize_pool (runtime.c) на главном потоке (TIB описывает native-
+ * стек — main не крутит fiber в этот момент). См. _nova_fw_main_stack_base. */
+void nova_fiber_arena_set_main_stack(void) {
+#if defined(_WIN32) && NOVA_FIBER_ARENA_ENABLED
+    if (!_nova_fw_main_stack_base) {
+        _nova_fw_main_stack_base = (void*)__readgsqword(0x08);  /* NT_TIB.StackBase */
+    }
+#endif
+}
 
 bool nova_fiber_arena_contains(const void* ptr) {
     return _nova_fw_find_arena(ptr) != NULL;

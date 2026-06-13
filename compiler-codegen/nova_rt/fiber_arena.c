@@ -718,6 +718,10 @@ void* nova_fiber_committed_low(const void* block_ptr) {
 void nova_fiber_arena_thread_exit(void) { }
 void nova_fiber_arena_release_retired(void) { }
 
+/* Plan 151: POSIX no-op — Boehm STW per-thread скан видит главный native-
+ * стек штатно (TIB-свопа как на Windows нет; main не крутит fiber здесь). */
+void nova_fiber_arena_set_main_stack(void) { }
+
 NovaFiberArenaStats nova_fiber_arena_stats(void) {
     NovaFiberArenaStats s = { 0 };
     if (_t_arena && _t_arena->base) {
