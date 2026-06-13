@@ -226,6 +226,32 @@ Q1: Does the test process EXIT non-zero?
                   └─ NO  → assertion logic bug, not race; fix Nova-side
 ```
 
+### 2.1.1 «SEGV выглядит как stack-overflow, а это GC premature-collect» (Plan 151)
+
+**Симптом-обманка.** Arena-VEH печатает `fiber stack overflow in slot 0`, но это
+**red herring** — на самом деле GC преждевременно собрал heap-объект (замыкание),
+рутованный только на не-сканируемом native-стеке → его блок реюзнут → `closure->fn`
+занулён → worker зовёт `fn() == NULL` → **RIP=0 (jump-to-null)**, что VEH ошибочно
+рапортует как overflow.
+
+**Tell-tales (segv_diag.c — применим и к ДЕТЕРМИНИРОВАННЫМ крашам, не только races):**
+- **RIP=0** (или мусорный) + DEP/EXEC fault.
+- **Стек почти пуст** (НЕ runaway/deep) — overflow был бы глубокий стек.
+- Heap-указатель, который «должен жить», == NULL (напр. `closure->fn == 0`).
+
+**Дискриминаторы (отличить GC-collect от реального overflow / codegen):**
+1. `GC_DONT_GC=1` **чинит** → это GC-баг (не stack-size, не codegen).
+2. `NOVA_FIBER_STACK=64MB` **НЕ помогает** → не размер стека.
+3. `NOVA_MAXPROCS` sweep: ≥N fail / <N pass детерминированно → **GC-timing-окно**
+   (напр. GC во время `_materialize_pool` до создания ленивой main-арены).
+4. `NOVA_AUTOARM=0` **pass** → M:N-specific (cooperative-режим рутует иначе).
+
+**Паттерн фикса:** убедиться, что native-стек, держащий корень, **сканируется GC** —
+напр. зафиксировать main-thread `NT_TIB.StackBase` ДО создания worker-пула и пушить
+его committed-регион в GC push_other_roots-колбэк (`fiber_arena_win.c`,
+`_nova_fw_gc_push_region` — committed/!guard/!noaccess-only, чтобы не AV'нуть на
+uncommitted). **НЕ ищи баг в codegen/мономорфизации**, если дискриминаторы 1+4 сходятся.
+
 ### 2.2 «It worked yesterday, fails today»
 
 **ALWAYS bisect first.** Hypothesis-driven debugging on regressions is
