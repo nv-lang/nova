@@ -5,7 +5,7 @@
 
 module plan140_2.b_lvalue_contexts
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 type Point { x int, y int }
 

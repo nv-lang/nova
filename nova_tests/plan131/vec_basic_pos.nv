@@ -2,7 +2,7 @@
 
 module plan131.vec_basic_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "new / push / pop / len / is_empty / clear" {
     mut v = Vec[int].new()

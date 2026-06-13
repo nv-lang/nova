@@ -4,7 +4,7 @@
 
 module neg.vec_remove_oob_neg
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "remove(0) on empty panics" {
     mut v = Vec[int].new()

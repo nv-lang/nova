@@ -1,0 +1,104 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+# `Vec[T]` / `[]T` — internals & module layout
+
+> **Audience:** Nova stdlib contributors. For the user-facing guide see
+> [`vec.md`](vec.md) (Plan 153.1+). **Spec:** [D239](../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
+> (`[]T ≡ Vec[T]`), [D232](../spec/decisions/02-types.md#d232-vect--nova-native-generic-growable-array)
+> (`Vec[T]` on RawMem), [D238](../spec/decisions/03-syntax.md)/[D240](../spec/decisions/03-syntax.md)
+> (`Index`/`MutIndex`).
+
+## What `Vec[T]` is
+
+`Vec[T]` is a fully **Nova-implemented** generic growable array — no compiler
+magic beyond typed pointers ([D216](../spec/decisions/02-types.md)),
+`size_of[T]()` ([D199](../spec/decisions/02-types.md)) and pointer arithmetic
+(Plan 131). `[]T` is a **pure syntactic alias** of `Vec[T]` (D239): the compiler
+expands `[]T → Vec[T]` at type-resolution, an array literal `[1, 2, 3]` *builds*
+a `Vec[int]`, and a slice `v[a..b]` is a zero-copy `[]T`-view of the same type
+(Plan 96, cap == len).
+
+### Layout
+
+```
+Vec[T] = { mut data *mut T, mut len int, mut cap int }
+```
+
+- `data` — heap buffer of `cap` element **slots**, first `len` live. Stored
+  **typed** (`Nova_T*`), no int64-slot erasure: `Vec[Option[int]]`,
+  `Vec[MyRecord]`, `Vec[Vec[int]]` all use their natural per-element C width.
+- `data` is GC-tracked (`RawMem.alloc`); the conservative scan over the buffer
+  keeps pointer-valued elements alive.
+- Growth is amortised ×2 (initial cap 8); an explicit `with_capacity(n)` honours
+  `n` exactly (so the realloc point — and thus slice detach — is predictable).
+
+### Unsafe model (D216 §8)
+
+Every raw-pointer op (`alloc`, `data + i`, deref read/write) is wrapped in
+`unsafe { }`. The element API is fully **safe** to use — in-place mutation is the
+safe `v[i] = val` (D240 `MutIndex`). The only deliberate escape is the FFI
+accessor `@as_ptr()` (recv-mut overload: `*T` on `ro`, `*mut T` on `mut`):
+calling it is safe (a pointer-value copy), *dereferencing* the result is the
+caller's `unsafe` obligation.
+
+## Module layout — `std/collections/vec/` (folder-module)
+
+`std/collections/vec/` is a **folder-module** (Nova module model: every co-equal
+`.nv` file in the folder declares the SAME `module collections.vec` and they
+merge into one module — a method in any peer attaches to the `Vec[T]` type from
+`core.nv`). The owning Vec type + all its methods live here; the prelude
+re-exports `Vec`/`VecIter` from it, so the **type and its methods are
+prelude-global** (`v.push(x)` works without an import).
+
+| File | Layer |
+|---|---|
+| `_module.nv` | folder-wide `#prelude(...)` attribute carrier (no items) |
+| `core.nv` | `Vec[T]` type, constructors (`new`/`with_capacity`/`from`/`from_raw_parts`/`into_raw`), `len`/`cap`/`is_empty`, capacity mgmt (`reserve`/`realloc_to`), buffer helpers, module-private `panic` |
+| `access.nv` | `@index`/`@get`/`@first`/`@last`/`@as_ptr` (read + `v[i]=val` write) |
+| `mutate.nv` | `push`/`pop`/`insert`/`splice`/`remove`/`swap_remove`/`clear`/`truncate`/`reverse` + bulk (`extend`/`append`/`retain`/`copy_from`/`copy_within`/`fill`/`append_zero`) |
+| `slice.nv` | `@index(Range)`/`@get(Range)` — zero-copy `[]T` views (Plan 96) |
+| `iter.nv` | `VecIter[T]` + `@iter()`/`@next()` (`Iter`/`Next`, D58) |
+| `protocols.nv` | `Equal`/`Compare`/`Clone`/`Display`/`Debug` |
+| *(future)* `sort.nv` | Plan 153.3 sort/search; `iter.nv` grows lazy adapters in Plan 153.2 |
+
+Conventions proven for this folder-module (Plan 153.0):
+- A **module-private** helper (`external fn panic`, `alloc_buf`, `null_buf`) is
+  declared ONCE (in `core.nv`) and is visible to every co-equal peer.
+- Each peer repeats `#prelude(core, runtime, collections, protocols)` so it
+  resolves correctly when compiled standalone as an entry; `_module.nv` carries
+  the same directive for the folder.
+- A file `vec.nv` and a folder `vec/` of the same name are **forbidden**
+  (`ambiguous module`) — the legacy `vec.nv` was folded in, `vec_owned.nv` (the
+  old `collections.vec_owned` module name) was retired.
+
+### Eager combinators are NOT in the folder
+
+`map`/`filter`/`fold`/`any`/`all` live in a **separate** module
+[`std/collections/vec_seq.nv`](../std/collections/vec_seq.nv)
+(`collections.vec_seq`), reached by an explicit `import std.collections.vec_seq`
+— NOT in the prelude-global folder. Reason: a prelude-global method's
+identifiers (its method-level generics `[Acc]` and its callback params `f`/`op`)
+leak into every unit's merged body, so a unit with a top-level `fn f`/`fn op` or
+a `type Acc` would capture/shadow them ([M-codegen-var-types-fn-scope] + D145).
+`@retain(pred)` survives only because `pred` is uncommon. Confining the
+combinators behind an explicit import keeps them opt-in, exactly as the
+pre-153.0 `collections.vec` module did. Plan 153.2 reworks these into **lazy**
+iterator adapters on `VecIter` (`iter().map().filter().collect()`, no
+intermediate allocations); whether the lazy layer can safely become
+prelude-global is revisited there ([M-153-vec-combinators-prelude-global]).
+
+## Compare vs Equal
+
+`Vec[T: Compare] @compare` (protocols.nv) is **lexicographic, element-wise** —
+it delegates to each element's own `@compare`, like Rust `Vec<T: Ord>`. It is
+NOT a raw byte `memcmp`: that prior impl was correct only for `Vec[u8]` (for
+`Vec[f64]` IEEE-754 byte order ≠ numeric order; for `Vec[int]` little-endian
+byte order ≠ value order; for records it compared addresses). A `u8`-specialised
+memcmp fast-path is a perf followup ([M-153-vec-compare-u8-memcmp-fastpath]).
+`@equal` is likewise element-wise (via each element's `==`).
+
+Both read `self` and the other operand **raw** (`unsafe { @data[i] }` /
+`unsafe { other.data[i] }`) once the index is proven in bounds — no redundant
+`@index` bounds check. The deref is extracted to a typed local before the
+`.compare`/`!=` so dispatch resolves on element type `T` (a method call kept
+*inline* on a generic raw deref mis-resolves in the erased stub —
+[M-codegen-erased-stub-method-on-varindex-deref]).

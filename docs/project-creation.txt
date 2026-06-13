@@ -37335,6 +37335,54 @@ Plan 140.2 — bounds-as-contract ✅ CLOSED Part A+B (2026-06-13, branch plan-1
   (inline + per-site элидируемый check). Build: D: = exFAT (junction невозможен) → libz3.lib скопирован в
   worktree vcpkg_installed (gitignored). Followup: [M-140.2-elision-writeback] (write-back/general циклы, P3).
 
+=== Plan 153.0 — Vec[T] folder-module + []T≡Vec консолидация (2026-06-13) ===
+
+Фундамент umbrella'а Плана 153 (production-grade Vec). `plan-153` commit 2a5df8e4 (76 файлов).
+
+СДЕЛАНО:
+- collections.vec_owned ретайрнут; Vec[T] переехал в folder-модуль std/collections/vec/
+  (co-equal: _module.nv #prelude-носитель + core/access/mutate/slice/iter/protocols).
+  Модель folder-модуля провалидирована probe'ом (cross-file тип в core.nv + методы в
+  access.nv резолвятся; #prelude per-file; module-private хелперы — panic/alloc_buf —
+  видны всем co-equal файлам, объявлены ОДИН раз в core.nv).
+- legacy vec.nv свёрнут; ~55 import-сайтов мигрированы vec_owned->vec; prelude re-export'ит
+  Vec/VecIter из folder.
+
+КЛЮЧЕВОЕ РЕШЕНИЕ (отклонение от буквы плана): eager-комбинаторы (map/filter/fold/any/all)
+НЕ свёрнуты в prelude-global folder, а вынесены в ОТДЕЛЬНЫЙ explicit-import collections.vec_seq.
+Причина (найдено 2 реальные регрессии): prelude-global метод вносит свои идентификаторы в
+merged-body каждого юнита -> метод-генерик [Acc] шадовит юзерский type Acc (D145), callback
+-параметр f/op коллизит с top-level fn f/fn op ([M-codegen-var-types-fn-scope]). Репро в
+корпусе: plan138_5 (type Acc), plan61 (fn op). Метод-резолв в Nova ГЛОБАЛЕН по имени (тело —
+только при импорте) -> import-error NEG невозможен; изоляция доказана исчезновением shadow/
+collision. Лениво-итераторная переделка (153.2) пересмотрит prelude-global lazy-слой.
+
+КОРРЕКТНОСТНЫЕ ФИКСЫ (surfaced автором во время исполнения):
+- Vec[T Compare] @compare: byte-wise RawMem.compare (memcmp — корректен ТОЛЬКО для Vec[u8];
+  для f64 IEEE-754 байт-порядок != числовой, для int LE != value, для record — адреса) ->
+  ПОЭЛЕМЕНТНЫЙ lexicographic через @compare элемента (как Rust Vec<T:Ord>), перенесён в
+  protocols.nv. @equal/@compare читают оба операнда сыро (unsafe{@data[i]}/unsafe{other.data[i]},
+  index доказан) без лишнего @index bounds-check.
+- Инлайн-форма unsafe{@data[i].compare(other.data[i])} (предложена автором) НЕ компилировалась
+  -> расследование изолировало минимальный 4-строчный репро -> root-cause PARSER-баг D38
+  turbofish (@buf[i].compare парсился как @buf::<i>.compare, одиночный i = валидное имя типа,
+  [i]=type-arg, .compare( совпал с Type[T].method(...) формой -> индекс терялся). Фикс на ветке
+  plan-cgfix-erased-stub (6f74c0ba, parser/mod.rs try_parse_turbofish_args гейт base_is_type_like,
+  251/0 регрессия, фоновый агент). После мёржа typed-locals workaround можно упростить.
+
+ОТЛОЖЕНО (маркеры): [M-153-vec-of-variadic-codegen] (variadic Vec[T].of(...) — call-site
+variadic-collection не реализован для user-методов), [M-153-d239-explicit-vec-to-slice-param]
+(явная аннотация Vec[int]->[]int param E7301, pre-existing), [M-153-vec-compare-u8-memcmp-fastpath]
+(perf), [M-153-vec-combinators-prelude-global] (153.2), [M-153-scalar-min-max] (Ф.0 153.1/153.2).
+
+ВЕРИФИКАЦИЯ: строгий base(main d4f45e8d)-vs-post diff в отдельном temp-worktree (компилятор
+не менялся -> переиспользован nova.exe): plan13* 191/5, plan90_1/140_2/128/99, plan91 10/10,
+basics/generics/plan62, plan61 -- 0 регрессий. plan153_0 3/3 (2 POS folder-module+alias+compare,
+1 NEG E7301). ОГРАНИЧЕНИЕ среды: Bash-таймаут потолок 10 мин даже для background -> полный nova
+test (~60-90 мин) дробить на батчи (записано в memory).
+
+SPEC/DOCS: D239 CONFIRM (02-types.md) + Q-vec-alias-completeness (open-questions.md) +
+docs/vec-internals.md (структура folder-модуля + RawMem-слой + Compare-семантика).
 Plan 140.2 followup ✅ (2026-06-13): (1) WRITE-BACK ЭЛИЗИЯ [M-140.2-elision-writeback §1] — frame-check
   расширен read-only → len-инвариантный: `v[i]=val` (mut @index) СОХРАНЯЕТ длину, поэтому циклы
   `for i in 0..v.len() { v[i]=f(v[i]) }` теперь элидируют И запись, И чтение (length-changing методы/`&v`/

@@ -3,7 +3,7 @@
 
 module plan131.vec_grow_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "push 1000 ints, verify len and every value" {
     mut v = Vec[int].new()

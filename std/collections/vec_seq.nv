@@ -1,0 +1,151 @@
+// std.collections.vec_seq — eager functional combinators on `[]T` (≡ `Vec[T]`).
+//
+// `map`/`filter`/`fold`/`any`/`all` over `[]T`. These are EAGER (each step
+// materialises a new `Vec`). They live in a SEPARATE, explicitly-imported
+// module — NOT in the prelude-visible `collections.vec` folder-module — by
+// design:
+//
+//   A prelude-global method's identifiers (its method-level generics and its
+//   callback params) leak into every compilation unit's merged body. A unit
+//   with a top-level `fn f`/`fn op` or a `type Acc` would then capture the
+//   combinator's `f(x)` call or shadow its `[Acc]` generic
+//   ([M-codegen-var-types-fn-scope] + D145). `@retain(pred)` survives because
+//   `pred` is uncommon, but `map(f)`/`fold(_, f)` are not — `fn f`/`fn op`
+//   exist in the corpus (plan61). Keeping the combinators behind an explicit
+//   `import std.collections.vec_seq` confines them to opt-in units, exactly as
+//   the pre-153.0 `collections.vec` module did.
+//
+// Plan 153.2 reworks these into LAZY iterator adapters
+// (`iter().map().filter().collect()`, no intermediate allocations) per
+// Q-iterator-laziness (recommendation: thin eager sugar over the lazy core).
+// This module is the transitional home until then.
+//
+// Method-level generic `[U]`/`[Acc]` (D42 Model B) lets one `[]T`-method work
+// with any target type independent of the receiver `T`.
+
+module collections.vec_seq
+
+import std.collections.vec.{Vec}
+
+/// Apply `f` to each element — new array `[]U`.
+///
+/// # Examples
+/// ```nova
+/// let v []int = [1, 2, 3]
+/// assert(v.map(|x| x * 2) == [2, 4, 6])
+/// ```
+#stable(since = "0.1")
+export fn[T] []T @map[U](f fn(T) -> U) -> []U {
+    mut out []U = []U.with_capacity(@len())
+    for x in @ {                          // implicit iter (D58)
+        out.push(f(x))
+    }
+    out
+}
+
+/// Keep only elements where `pred(x) == true`. Preserves order; returns a new
+/// array (original not mutated).
+///
+/// # Examples
+/// ```nova
+/// let v []int = [1, 2, 3, 4, 5]
+/// assert(v.filter(|x| x % 2 == 0) == [2, 4])
+/// ```
+#stable(since = "0.1")
+export fn[T] []T @filter(pred fn(T) -> bool) -> []T {
+    mut out []T = []
+    for x in @ {
+        if pred(x) { out.push(x) }
+    }
+    out
+}
+
+/// Left fold (reduce): accumulator `init`, updated by `f(acc, x)` for each `x`.
+///
+/// # Examples
+/// ```nova
+/// let v []int = [1, 2, 3, 4]
+/// assert(v.fold(0, |acc, x| acc + x) == 10)
+/// ```
+#stable(since = "0.1")
+export fn[T] []T @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
+    mut acc = init
+    for x in @ {
+        acc = f(acc, x)
+    }
+    acc
+}
+
+/// True if at least one element satisfies `pred`. Short-circuits on the first
+/// match. Empty array → `false`.
+///
+/// # Examples
+/// ```nova
+/// let v []int = [1, 2, 3]
+/// assert(v.any(|x| x > 2))
+/// assert(!v.any(|x| x > 10))
+/// ```
+#stable(since = "0.1")
+export fn[T] []T @any(pred fn(T) -> bool) -> bool {
+    for x in @ {
+        if pred(x) { return true }
+    }
+    false
+}
+
+/// True if all elements satisfy `pred`. Short-circuits on the first mismatch.
+/// Vacuous truth: empty array → `true`.
+///
+/// # Examples
+/// ```nova
+/// let v []int = [2, 4, 6]
+/// assert(v.all(|x| x % 2 == 0))
+/// ```
+#stable(since = "0.1")
+export fn[T] []T @all(pred fn(T) -> bool) -> bool {
+    for x in @ {
+        if !pred(x) { return false }
+    }
+    true
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────────────────────────────────
+
+test "map preserves length and applies function" {
+    ro v []int = [1, 2, 3]
+    ro doubled = v.map(|x| x * 2)
+    assert(doubled.len() == 3)
+    assert(doubled.get(0) == Some(2))
+    assert(doubled.get(2) == Some(6))
+}
+
+test "filter keeps matching elements" {
+    ro v []int = [1, 2, 3, 4, 5]
+    ro even = v.filter(|x| x % 2 == 0)
+    assert(even.len() == 2)
+    assert(even.get(0) == Some(2))
+    assert(even.get(1) == Some(4))
+}
+
+test "fold sums elements" {
+    ro v []int = [1, 2, 3, 4]
+    ro sum = v.fold(0, |acc, x| acc + x)
+    assert(sum == 10)
+}
+
+test "any/all on empty array" {
+    ro v []int = []
+    assert(!v.any(|x| x > 0))             // ни одного → false
+    assert(v.all(|x| x > 0))               // вакуумная истина → true
+}
+
+test "for-loop over array uses implicit iter (D58)" {
+    ro v []int = [1, 2, 3]
+    mut total = 0
+    for x in v {                           // implicit iter — без .iter()
+        total += x
+    }
+    assert(total == 6)
+}

@@ -5715,7 +5715,15 @@ impl Parser {
     /// Если parse_type fails внутри — rollback (Index). Возвращает Some((args,
     /// end_span_of_RBracket)) при успехе и оставляет позицию **сразу за `]`**;
     /// возвращает None и оставляет позицию **на `[`** при rollback.
-    fn try_parse_turbofish_args(&mut self) -> Option<(Vec<TypeRef>, Span)> {
+    ///
+    /// `base_is_type_like`: true когда base-выражение перед `[` может быть
+    /// именем ТИПА (bare `Ident` / `Path`), а не value-выражением. Нужно для
+    /// разрешения неоднозначности `expr[i].method(...)`: статический
+    /// turbofish-вызов `Type[T].method(...)` всегда имеет type-name base, тогда
+    /// как `@buf[i].compare(...)` / `arr[i].m(...)` — это INDEX за которым идёт
+    /// method-call (base — value, не тип). Без этого `@buf[i]` (i как одно-
+    /// именный type-арг) мис-парсился turbofish'ем `@buf::<i>`, теряя индекс.
+    fn try_parse_turbofish_args(&mut self, base_is_type_like: bool) -> Option<(Vec<TypeRef>, Span)> {
         debug_assert!(matches!(self.peek().kind, TokenKind::LBracket));
         let saved_pos = self.pos;
         // Bump `[`
@@ -5758,7 +5766,14 @@ impl Parser {
             TokenKind::Question => true,
             TokenKind::Dot => {
                 // `.` IDENT `(` — method call. Голый `.field` — не turbofish.
-                matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                // Однако `Type[T].method(...)` (static call на generic-типе) —
+                // единственная легальная форма этого continuation, и её base
+                // ВСЕГДА имя типа (`Deque`/`HashMap[..]`/…). `@buf[i].cmp(...)`
+                // и `arr[i].m(...)` имеют value-base — это INDEX + method-call,
+                // НЕ turbofish. Требуем type-like base, иначе одно-именный
+                // type-арг (`[i]`) ложно триггерит turbofish и теряет индекс.
+                base_is_type_like
+                    && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
                     && matches!(self.peek_at(2).kind, TokenKind::LParen)
             }
             _ => false,
@@ -6478,7 +6493,18 @@ impl Parser {
                     // turbofish — N type-args + обязательный postfix-continuation
                     // (call / method-call / try). Multi-arg внутри `[...]` →
                     // однозначно turbofish (Index не имеет comma).
-                    if let Some((type_args, end_span)) = self.try_parse_turbofish_args() {
+                    // `base_is_type_like`: имя типа (bare `Ident` / `Path`) может
+                    // быть receiver статического turbofish-вызова
+                    // `Type[T].method(...)`. Value-base (`@buf`, `arr[i]`,
+                    // `f().x`, …) НЕ может — там `[...]` это Index. Гейтит только
+                    // `.IDENT(` continuation внутри try_parse_turbofish_args;
+                    // `[T](args)` / `[T]?` остаются доступны любому base
+                    // (`req.body.parse[T]()` и т.п.).
+                    let base_is_type_like = matches!(
+                        &expr.kind,
+                        ExprKind::Ident(_) | ExprKind::Path(_)
+                    );
+                    if let Some((type_args, end_span)) = self.try_parse_turbofish_args(base_is_type_like) {
                         expr = Expr::new(
                             ExprKind::TurboFish {
                                 base: Box::new(expr.clone()),

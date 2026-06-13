@@ -1,6 +1,6 @@
 // Plan 138.2 Ф.0-final — t3: universal flip proof, Vec-free unit.
 //
-// NO `import std.collections.vec_owned.{Vec}` anywhere. Under the universal
+// NO `import std.collections.vec.{Vec}` anywhere. Under the universal
 // `[]T` ≡ `Vec[T]` flip (Vec/VecIter re-exported from the prelude), value- and
 // type-position `[]int` lowers to the typed `Nova_Vec____nova_int*` storage,
 // NOT the legacy `NovaArray_nova_int*` int64-erasure. This fixture pins that:

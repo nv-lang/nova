@@ -13,7 +13,7 @@
 
 module plan138_2.t2_vec_mut_index
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "v[i] = val writes through (MutIndex), reads back via scalar @index" {
     mut v = Vec[int].from([10, 20, 30])

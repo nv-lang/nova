@@ -11581,6 +11581,18 @@ v[1] = 99  // → v.@index(1, 99)   write-overload через MutIndex (D240)
 > `Nova_Vec____nova_int*`, typed storage). Юниты с `#no_prelude` **graceful-degrade**
 > на legacy `NovaArray_T`-путь (4 gate-сайта `generic_type_templates.contains_key("Vec")`
 > в `emit_c.rs` остаются — проходят для prelude-юнитов, fallback для `#no_prelude`).
+>
+> **Plan 153.0 CONFIRM (2026-06-13):** `Vec[T]` переехал в **folder-module**
+> `std/collections/vec/` (co-equal `core`/`access`/`mutate`/`slice`/`iter`/
+> `protocols` + `_module.nv`), модуль `collections.vec_owned` ретайрнут (имя
+> исчезло; ~55 import-сайтов мигрированы `vec_owned`→`vec`; prelude re-export'ит
+> `Vec`/`VecIter` из folder). Eager-комбинаторы (`map`/`filter`/`fold`/`any`/
+> `all`) вынесены в отдельный explicit-import `collections.vec_seq` (НЕ
+> prelude-global — иначе их generic/param-идентификаторы засоряют каждый юнит,
+> [M-153-vec-combinators-prelude-global]). `[]T ≡ Vec[T]` подтверждён для
+> инферированных значений; ОСТАЁТСЯ residual: ЯВНАЯ аннотация `v Vec[int]` не
+> коэрсится в `[]int`-параметр (`E7301`, [M-153-d239-explicit-vec-to-slice-param]).
+> См. [docs/vec-internals.md](../../docs/vec-internals.md).
 
 ### NovaArray retirement — частичный (BLOCKED на Plan 139 Ф.2)
 

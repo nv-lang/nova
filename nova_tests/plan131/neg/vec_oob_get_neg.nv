@@ -3,7 +3,7 @@
 
 module neg.vec_oob_get_neg
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "get(100) on empty returns None (no panic)" {
     mut v = Vec[int].new()

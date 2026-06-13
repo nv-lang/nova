@@ -1,0 +1,126 @@
+// std.collections.vec (access) — element access: index/get/first/last/as_ptr.
+//
+// `v[i]` (panic on OOB) and `v.get(i)` (safe `Option`) are the read pair.
+// In-place element mutation is `v[i] = val` (D240 `MutIndex`). There is NO
+// `first_mut`/`get_mut`: Nova's value model has no borrow to hand back —
+// mutate through `v[i] = x`, `mut @index`, or a `mut []T` view (slice.nv).
+#prelude(core, runtime, collections, protocols)
+module collections.vec
+
+// ──────────────────────────────────────────────────────────────────────────
+// Access
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Element at `i` by value — panics on OOB. Powers `v[i]` (D238 `@index` magic).
+///
+/// Plan 140.2 (D257): the bounds check is a `requires` contract — Z3-proven
+/// `v[i]` sites elide it (zero-cost), unproven sites keep a runtime check in
+/// debug AND release. A transitional hand-written `if…panic` is retained inside
+/// this method body for DIRECT `v.index(i)` calls, because contract-enforcement
+/// is not yet emitted for generic-type monomorphized bodies (Plan 140 gap).
+///
+/// # Examples
+///
+/// ```nova
+/// let v = Vec[int].from([10, 20, 30])
+/// assert(v[0] == 10)
+/// assert(v[2] == 30)
+/// ```
+export fn Vec[T] @index(i int) -> T
+    requires 0 <= i && i < @len
+{
+    // Runtime guard для ПРЯМОГО `v.index(i)`: contract-enforcement `requires`
+    // пока НЕ эмитится для generic-type mono'd методов (Plan 140 gap, чинится),
+    // поэтому держим явный bounds-panic. `v[i]` (inline codegen) имеет свою
+    // элидируемую проверку и через это тело не диспатчится.
+    if i < 0 || i >= @len {
+        panic("Vec: index out of bounds")
+    }
+    unsafe { @data[i] }
+}
+
+/// Element at `i` by value, or `None` if out of bounds.
+export fn Vec[T] @get(i int) -> Option[T] {
+    if i < 0 || i >= @len {
+        return None
+    }
+    Some(unsafe { @data[i] })
+}
+
+/// Write `v[i] = val` — panics on OOB. Powers `v[i] = val` (D240 `MutIndex`
+/// magic).
+///
+/// NAMING ([M-138-mutindex-rename], Plan 138.4 Ф.2): this is the third `@index`
+/// overload — a `mut @index(key, val)` write that coexists with the scalar read
+/// `@index(i) -> T` and the range read `@index(r Range) -> Vec` (slice.nv).
+/// Full-signature overload mangling for generic-type methods gives each
+/// overload a distinct C symbol, so the prior collision is resolved. `v[i] =
+/// val` is still codegen-inlined (`Stmt::Assign` + `ExprKind::Index`) and does
+/// not dispatch through this method, but the name conforms to the D240
+/// `a.@index(key, val)` protocol contract.
+export fn Vec[T] mut @index(i int, val T) -> ()
+    requires 0 <= i && i < @len
+{
+    // Runtime guard для ПРЯМОГО `v.index(i, val)` (см. @index выше): generic-mono
+    // contract-enforcement пока не эмитится. `v[i] = val` (inline) не диспатчится сюда.
+    if i < 0 || i >= @len {
+        panic("Vec: index out of bounds")
+    }
+    unsafe {
+        @data[i] = val
+    }
+}
+
+/// First element by value, or `None` if empty.
+export fn Vec[T] @first() -> Option[T] => @get(0)
+
+/// Last element by value, or `None` if empty.
+export fn Vec[T] @last() -> Option[T] {
+    if @len == 0 {
+        return None
+    }
+    @get(@len - 1)
+}
+
+/// Raw read-only pointer to the element buffer, for FFI / interop with C
+/// `(ptr, len)` APIs. The `ro` receiver yields a `*T` (canonical ro pointer,
+/// `*T ≡ *ro T` per Plan 147 / D246; ABI `const T*`).
+///
+/// SAFE to call — extracting the pointer *value* is not a dereference.
+/// Dereferencing the returned pointer (`*p`, `p.read()`, `p + i`) needs an
+/// `unsafe { }` block, and the caller owns these invariants:
+///   - Only `[0, len())` element slots are live; never read past `len()`.
+///   - The pointer is INVALIDATED by any reallocating mutation
+///     (`push`/`reserve`/`insert`/`with_capacity` growth). Re-fetch after such.
+///   - On an empty `Vec` (`cap == 0`) `@data` is the `null_buf` placeholder —
+///     non-null but a single never-live slot; do not dereference it.
+///
+/// The recv-mut companion `mut @as_ptr() -> *mut T` (below) yields a writable
+/// `*mut T` when called on a `mut`-bound receiver (Plan 138.4 recv-mut
+/// overload dispatch).
+export fn Vec[T] @as_ptr() -> *T => @data
+
+/// Raw mutable pointer to the element buffer — the writable recv-mut overload
+/// of `@as_ptr`. Selected when the receiver is `mut`-bound; yields `*mut T`
+/// (ABI `T*`) so a `p.write(v)` / `*p = v` store is permitted under `unsafe`.
+///
+/// SAFE to call; same dereference-needs-unsafe and realloc-invalidation /
+/// empty-`Vec` caveats as the `ro` overload above.
+export fn Vec[T] mut @as_ptr() -> *mut T => @data
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────────────────────────────────
+
+test "get / first / last" {
+    mut v = Vec[int].from([10, 20, 30])
+    assert(v.get(0) == Some(10))
+    assert(v.get(2) == Some(30))
+    assert(v.get(3) == None)
+    assert(v.first() == Some(10))
+    assert(v.last() == Some(30))
+
+    ro empty = Vec[int].new()
+    assert(empty.first() == None)
+    assert(empty.last() == None)
+}

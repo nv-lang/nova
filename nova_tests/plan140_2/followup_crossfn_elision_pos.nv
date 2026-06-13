@@ -5,7 +5,7 @@
 
 module plan140_2.followup_crossfn_elision_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 fn at(v Vec[int], i int) -> int
     requires 0 <= i && i < v.len()

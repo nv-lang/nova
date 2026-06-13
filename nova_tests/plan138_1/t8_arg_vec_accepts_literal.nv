@@ -3,7 +3,7 @@
 
 module plan138_1.t8_arg_vec_accepts_literal
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 fn f(a []int) -> int {
     mut sum = 0

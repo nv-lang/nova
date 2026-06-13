@@ -24,7 +24,7 @@
 
 module plan138_2.t6_fluent_push
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "fluent push chain builds the vector in one expression (task example)" {
     ro v = Vec[u8].with_capacity(3)

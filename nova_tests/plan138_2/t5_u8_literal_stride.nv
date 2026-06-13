@@ -15,7 +15,7 @@
 module plan138_2.t5_u8_literal_stride
 
 import std.runtime.raw_mem
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "u8 literal has 1-byte stride: compare against push-built equals" {
     // LITERAL-built `[]u8` — the path under test.

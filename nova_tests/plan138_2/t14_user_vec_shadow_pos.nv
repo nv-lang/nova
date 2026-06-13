@@ -14,7 +14,7 @@
 
 module plan138_2.t14_user_vec_shadow_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 // User's own non-generic `Vec` — a plain 2-field record. Shadows the imported
 // generic `Vec[T]` entirely (D29).

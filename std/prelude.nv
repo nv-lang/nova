@@ -121,7 +121,7 @@ export import std.collections.range.{Range, RangeIter}
 // (`Vec[T] @index(r Range)` range-slice view), and the prelude facade is
 // resolved top-to-bottom. `#no_prelude` units degrade gracefully (Vec
 // template absent → legacy NovaArray path, the contains_key("Vec") gates).
-export import std.collections.vec_owned.{Vec, VecIter}
+export import std.collections.vec.{Vec, VecIter}
 
 // Plan 62.E / 62.E.bis: re-export conversion / equality / hashing /
 // ordering / display protocols из std.prelude.protocols. 8 formal
