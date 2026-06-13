@@ -122,6 +122,43 @@ export fn Vec[T Clone] @clone() -> Self {
     out
 }
 
+// ─── Hash ─────────────────────────────────────────────────────────────
+
+/// Order- and length-sensitive content hash — folds the length and each
+/// element's own `@hash()` (bound `[T Hash]`) via FNV-1a (64-bit). This is what
+/// makes `Vec[T: Hash]` itself `Hash` (Plan 153.6 / D264), so a `Vec[int]` works
+/// as a `HashMap` key or `HashSet` member.
+///
+/// Consistent with `@equal` (the `Hash`+`Equal` table contract): equal vectors —
+/// same length, element-wise `==` — produce equal hashes, because the fold reads
+/// the same length then the same per-element `@hash()` sequence.
+///
+/// u64 arithmetic wraps on overflow (Nova semantics), which IS the FNV mixing
+/// step; the offset basis is a hex literal because its decimal form exceeds
+/// `i64::MAX` (a bare decimal would be parsed as `int` first and overflow).
+///
+/// # Examples
+///
+/// ```nova
+/// let a = Vec[int].from([1, 2, 3])
+/// let b = Vec[int].from([1, 2, 3])
+/// assert(a.hash() == b.hash())
+/// ```
+export fn Vec[T Hash] @hash() -> u64 {
+    // FNV-1a (64-bit): offset basis, then `h = (h ^ x) * prime` per step.
+    ro prime = 0x100000001b3 as u64
+    mut h = 0xcbf29ce484222325 as u64
+    h = (h ^ (@len as u64)) * prime
+    for i in 0..@len {
+        // Typed local first — `.hash()` on a raw deref kept *inside* the `unsafe`
+        // block misresolves in codegen (same idiom as `@equal`/`@compare`).
+        ro e = unsafe { @data[i] }
+        ro eh = e.hash()
+        h = (h ^ eh) * prime
+    }
+    h
+}
+
 // ─── Display / Debug ───────────────────────────────────────────
 
 /// Append a human-readable representation of `self` to `sb`.

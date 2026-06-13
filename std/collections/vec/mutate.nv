@@ -167,6 +167,62 @@ export fn Vec[T] mut @reverse() -> @ {
     @
 }
 
+/// Swap the elements at indices `i` and `j` in place. `i == j` is a no-op.
+/// Panics if either index is out of bounds. Returns `@` for chaining.
+export fn Vec[T] mut @swap(i int, j int) -> @
+    requires 0 <= i && i < @len && 0 <= j && j < @len
+{
+    if i != j {
+        unsafe {
+            (@data[i], @data[j]) = (@data[j], @data[i])
+        }
+    }
+    @
+}
+
+/// Resize to exactly `n` elements. `n > len` appends copies of `v`; `n < len`
+/// truncates (drops the tail); `n == len` is a no-op. Panics on negative `n`.
+/// Returns `@` for chaining. (`@resize_with` generates new elements via a
+/// closure instead of cloning a value.)
+export fn Vec[T] mut @resize(n int, v T) -> @
+    requires n >= 0
+{
+    if n < @len {
+        @len = n
+    } else if n > @len {
+        ro start = @len
+        @reserve(n - @len)
+        for i in start..n {
+            unsafe {
+                @data[i] = v
+            }
+        }
+        @len = n
+    }
+    @
+}
+
+/// Resize to exactly `n` elements, generating each new element by calling `f()`.
+/// `n > len` appends `f()` results in order; `n < len` truncates; `n == len` is
+/// a no-op. Panics on negative `n`. Returns `@` for chaining.
+export fn Vec[T] mut @resize_with(n int, f fn() -> T) -> @
+    requires n >= 0
+{
+    if n < @len {
+        @len = n
+    } else if n > @len {
+        ro start = @len
+        @reserve(n - @len)
+        for i in start..n {
+            unsafe {
+                @data[i] = f()
+            }
+        }
+        @len = n
+    }
+    @
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Bulk operations
 // ──────────────────────────────────────────────────────────────────────────
@@ -229,10 +285,10 @@ export fn Vec[T] mut @append(other Vec[T]) -> @ {
 /// Keep only the elements for which `pred(elem)` returns `true`, preserving
 /// relative order. O(n).
 ///
-/// NOTE (153.1): currently `-> ()`; the fluent-chaining convention flips this
-/// to `-> @` once [M-138.2-vec-self-return] (generic-method `@`-return) is
-/// fixed in 153.1 Ф.0.
-export fn Vec[T] mut @retain(pred fn(T) -> bool) -> () {
+/// Returns `@` (self) for fluent chaining (Plan 153.1 fluent convention;
+/// [M-138.2-vec-self-return] — generic-method `@`-return — is closed, so the
+/// `-> @` flip is live).
+export fn Vec[T] mut @retain(pred fn(T) -> bool) -> @ {
     mut write = 0
     for read in 0..@len {
         ro v = unsafe { @data[read] }
@@ -246,6 +302,7 @@ export fn Vec[T] mut @retain(pred fn(T) -> bool) -> () {
         }
     }
     @len = write
+    @
 }
 
 // ─── []T extend-family parity (Plan 90.1 / D141; [M-138-vec-bulk-parity]) ──
@@ -333,6 +390,18 @@ export fn Vec[T] mut @fill(v T) -> @ {
             unsafe {
                 @data[i] = v
             }
+        }
+    }
+    @
+}
+
+/// Overwrite every live element with the result of calling `f()` (invoked once
+/// per slot, in order `0..len`). The closure counterpart of `@fill(v)`.
+/// Returns `@` for chaining.
+export fn Vec[T] mut @fill_with(f fn() -> T) -> @ {
+    for i in 0..@len {
+        unsafe {
+            @data[i] = f()
         }
     }
     @

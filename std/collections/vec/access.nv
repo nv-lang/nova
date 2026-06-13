@@ -72,6 +72,28 @@ export fn Vec[T] @last() -> Option[T] {
     @get(@len - 1)
 }
 
+/// `true` if any element equals `v` — a linear O(n) scan via `==`. Works for any
+/// element type with `==` defined (all primitives + `Equal` types); opaque types
+/// degrade to reference identity, exactly like `@equal` (protocols.nv). A faster
+/// sorted `binary_search` lands in Plan 153.3.
+///
+/// ```nova
+/// let v = Vec[int].from([10, 20, 30])
+/// assert(v.contains(20))
+/// assert(!v.contains(99))
+/// ```
+export fn Vec[T] @contains(v T) -> bool {
+    // Typed local so `==` dispatches on element type `T`; a method/operator kept
+    // *inside* the `unsafe` deref misresolves in codegen (same idiom as @equal).
+    for i in 0..@len {
+        ro e = unsafe { @data[i] }
+        if e == v {
+            return true
+        }
+    }
+    false
+}
+
 /// Raw read-only pointer to the element buffer, for FFI / interop with C
 /// `(ptr, len)` APIs. The `ro` receiver yields a `*T` (canonical ro pointer,
 /// `*T ≡ *ro T` per Plan 147 / D246; ABI `const T*`).

@@ -51,7 +51,7 @@
 | Маркер | Суть | Home | Pri |
 |---|---|---|---|
 | `[M-cancellation-test-mono-recursion-overflow]` → renamed `[M-mn-worker-fiber-closure-call-stack-overflow]` | ✅ **CLOSED (Plan 151, 2026-06-13).** Имя `mono-recursion` оказалось **мисдиагнозом** (Audits 2/3 Plan 149). Plan 151 Ф.0 5-way isolation matrix доказал: codegen ЧИСТ (тот же бинарь PASS под `NOVA_AUTOARM=0` / `NOVA_MAXPROCS<=3`); это НЕ мономорфизация и НЕ stack-size. **Реальный root-cause — GC-reachability bug в M:N рантайме:** heap-замыкание, передаваемое в `supervised{spawn{ ro r=body() }}`, укоренено ТОЛЬКО на native-стеке главного потока, пока main блокирован в `nova_supervised_run_impl`; при ≥4 worker'ах GC срабатывает во время `_materialize_pool` (до создания ленивой fiber-арены main'а), Boehm STW не видит main-стек → premature collect замыкания → `closure->fn` зануляется реюзом → worker-fiber зовёт NULL (RIP=0), что arena-VEH рапортует как обманчивое «fiber stack overflow in slot 0». Подтверждено: `GC_DONT_GC=1` чинит; spawn-diag показал `closure->fn==0` на `mco_resume`. **Фикс (Plan 151 Ф.1, RUNTIME — НЕ codegen):** `fiber_arena_win.c` пушит native-стек главного потока как GC-root в `_nova_fw_gc_push_other_roots` (`nova_fiber_arena_set_main_stack`, вызывается из `_materialize_pool`). cancellation_test un-quarantined (Ф.2), PASS armed 80/80 (MAXPROCS default/2/8/16); regression-guard `mn_closure_spawn_gcroot_test.nv` (Ф.4) genuine (8/8 fail pre-fix). 0 regressions (concurrency 112 PASS / 4 pre-existing). | [Plan 151](151-codegen-mono-recursion-closure-generics.md) | ✅ DONE |
-| `[M-mn-gc-root-unified-stack-registry]` | Hardening (Go-`allg`-inspired): Plan 151 пропатчил КОНКРЕТНУЮ дыру (main-стек не сканировался GC до ленивой арены). Go-инвариант сильнее: ВСЕ root-bearing стеки (main + каждая worker-арена) в едином глобальном реестре, сканируемом атомарно ДО любого GC — структурно убивает будущие timing-варианты этого класса (пропущенный стек в др. окне). НЕ срочно (точечный фикс работает, 2-го экземпляра нет). **Делать с [Plan 144](144-precise-gc-implementation.md) (precise GC субсумирует — точные роуты вместо «просканировал ли все стеки»), либо on-demand.** | Plan 144 / floating | P3 |
+| `[M-mn-gc-root-unified-stack-registry]` | Hardening (Go-`allg`-inspired): Plan 151 пропатчил КОНКРЕТНУЮ дыру (main-стек не сканировался GC до ленивой арены). Go-инвариант сильнее: ВСЕ root-bearing стеки (main + каждая worker-арена) в едином глобальном реестре, сканируемом атомарно ДО любого GC — структурно убивает будущие timing-варианты этого класса (пропущенный стек в др. окне). НЕ срочно (точечный фикс работает, 2-го экземпляра нет). **Делать с [Plan 144](144-precise-gc-implementation.md) (precise GC субсумирует — точные роуты вместо «просканировал ли все стеки»), либо on-demand.** Конкретный адрес после декомпозиции 2026-06-13: **Plan 144 §8 Ф.0** (спроектировать unified roots registry) + **Ф.3** (precise root-scan через цепочку + реестр заменяет консервативный скан). | Plan 144 §8 Ф.0/Ф.3 | P3 |
 | `[M-128.1-array-namedtuple-ro-method]` | `vs[i].ro_method()` на `[]NamedTuple`: pointer-cast в int-слот vs by-value receiver → clang mismatch; gated. | plan-128 Followups | P2 |
 | `[M-128.1-nonpure-index-key]` | Side-effecting `arr[next_idx()]` на pointer-ABI receiver вычисляется дважды; hoist-to-temp V2 не сделан. | plan-128 Followups | P2 |
 | `[M-codegen-var-types-fn-scope]` | `var_types` (codegen local-type map) НЕ scoped по функциям — локалы протекают между функциями. Plan 139.2 surfaced: Nova-body str-метод с `Vec[u8]`-локалом `a` протёк → block-expr `{ro a=…; a+b}` мис-инферил value-тип как Vec-view → SEGV. Точечно закрыт в block-expr inference (emit_block_expr + infer Block-арм пред-регистрируют блок-локалы, commit 3917d17c); корневой fix — per-fn scope/clear var_types (broad, regression-риск). | plan-139.2 post-close | P2 |
@@ -206,6 +206,37 @@
   остаётся.
 - **`[M-154.1-required-conformance]`** (planned, P3): возможный переход opt-in →
   required (номинальная конформность, как Rust) отдельным шагом после 154.1.
+
+## Follow-up: Plan 153.1 (Vec core API — отложенные из-за codegen-лимитов)
+- **`[M-153.1-cap-setter-overload]`** (planned, home **Plan 153.1 / D259**): accessor-
+  convention ideal — same-name `@cap(n)` write-setter, overload'ящий `@cap()` getter
+  (D117 AMEND). Сейчас распадается: mono'd `v.cap(10)` мис-резолвится в 0-арг геттер
+  ("too many arguments") — та же generic-method-overload-collapse, что держит `@splice`
+  отдельно от `@insert` ([M-138.2-generic-method-overload-mono]). 153.1 поставил distinct
+  `@cap_to(n)`; свернуть в `@cap(n)`-overload, когда mono-overload dispatch заработает.
+- **`[M-153.1-append-extend-consolidation]`** (planned, home **Plan 153.1 / D259**): план
+  хотел один `append` (concrete Vec bulk + generic Iter overload), `extend` убрать.
+  Заблокировано тем же overload-collapse + у generic-`append` (`for x in items {@push(x)}`)
+  self-append footgun (`v.append(v)` растёт во время итерации; bulk-версия снапшотит длину).
+  Оставлены раздельно: `@append(Vec[T])` (bulk, self-safe) + `@extend[S Iter[T]]` (generic).
+  Консолидировать, когда overload-mono + self-alias-safe generic append.
+- **`[M-153-scalar-min-max]`** (planned, home **Plan 153.1/153.2 Ф.0**): `(5).max(3)` /
+  `.min(b)` метод-форма падает на коллизии с системным C-макросом `max`/`min` (нет в
+  1-арговых `int_method_to_c`/`f64_method_to_c`). Нужен рантайм-хелпер `nova_int_max` /
+  `fmax`-роутинг. НЕ гейтит Vec-ядро (cap-shrink-to-fit = `cap_to(len())`). Отложен из 153.1 Ф.0.
+
+## Follow-up: Plan 153.6 (Vec-протоколы Hash + FromIterator)
+- **`[M-153.6-vec-hashmap-key-eq]`** (planned, P2, home **Plan 153.6 / HashMap**): `Vec[T]`
+  как ключ `HashMap`/член `HashSet` упирается в pre-existing HashMap-codegen-баг — collision-
+  check `k.eq(key)` (`hashmap.nv:529`) НЕ диспатчит в Vec-`@equal` для generic-type ключа →
+  CC-FAIL «no member named `eq` in Nova_Vec____nova_int». D237 переименовал `eq`→`equal`, но
+  codegen-lookup `.eq()` для generic-типа не находит `@equal` (тот же generic-method-dispatch-gap
+  класс, что overload `@cap`/`@splice`). `Vec[T Hash] @hash()` РАБОТАЕТ (153.6, plan153_6/hash
+  3/3); это вторая (equality) половина ключ-контракта. Сурфейснуто 153.6.
+- **`[M-153.6-fromiterator-gated]`** (planned, home **Plan 153.6 / 153.2**): FromIterator-
+  протокол + `iter.collect() -> Vec[U]` gated на 153.2 (ленивый итератор + collect-инфра).
+  Build-from-iterable УЖЕ есть (`Vec[T].from(items)` + `@extend[S Iter[T]]`); протокол-форма
+  `collect`-таргета приземляется вместе с 153.2.
 
 ## Конвенция
 - **Planned** маркер → Followups своего плана (+ индекс-строка здесь с home).
