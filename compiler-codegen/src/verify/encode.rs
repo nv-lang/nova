@@ -17,6 +17,11 @@ use std::collections::HashMap;
 use crate::ast::{Expr, ExprKind, BinOp, UnOp};
 use super::ir::*;
 
+/// Plan 140.2 Part A (D256): SMT-имя receiver'а (`@`) при кодировании
+/// контракта метода. `@field` → `_field_<name>_<sort>(_self)`. На call-site
+/// (Part A.2) подставляется фактическим receiver'ом через SmtTerm::substitute.
+pub const SELF_RECEIVER_VAR: &str = "_self";
+
 #[derive(Debug, Clone)]
 pub enum EncodingError {
     /// Конструкция не поддерживается trivial-encoder'ом 33.1.
@@ -504,10 +509,16 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             "type check `is {:?}` в контракте не поддерживается; \
              используйте discriminant через #pure fn", ty))),
 
-        // SelfAccess (@field) — нет контекста receiver'а в SMT.
-        ExprKind::SelfAccess => Err(EncodingError::Unsupported(
-            "`@field` (self-access) в контракте не поддерживается; \
-             передавайте поля явным параметром в #pure fn".into())),
+        // Plan 140.2 Part A (D256): `@` (self/receiver) — модель «receiver как
+        // SMT-сущность». Кодируем bare `@` как стабильную переменную `_self`.
+        // Тогда `@field` (Member{obj:SelfAccess}) автоматически идёт через
+        // Member-arm → `_field_<name>_<sort>(_self)`, а `@len()` (zero-arg
+        // accessor) — через Call-arm → `_field_len_int(_self)`. Один и тот же
+        // `_self`-Var на все `@field` метода даёт верную конгруэнтность
+        // (бэкенд auto-объявляет `_self` как Int, `_field_*(_self)` —
+        // стабильную константу по AST-указателю аргумента). При call-site
+        // instantiation (Part A.2) `_self` подставляется фактическим receiver'ом.
+        ExprKind::SelfAccess => Ok(SmtTerm::Var(SELF_RECEIVER_VAR.to_string())),
 
         // InterpolatedStr — строковая интерполяция вне SMT.
         ExprKind::InterpolatedStr { .. } => Err(EncodingError::Unsupported(

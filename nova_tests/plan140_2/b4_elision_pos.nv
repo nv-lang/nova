@@ -1,0 +1,23 @@
+// Plan 140.2 Part B (D257 / B.4): элизия bounds-check на доказуемо in-range
+// индексе. `for i in 0..v.len()` + read-only `v` ⇒ frame-инвариант длины ⇒
+// `0 <= i < v.len()` доказывается Z3 ⇒ inline-проверка элидируется (с z3).
+// Корректность не зависит от элизии (тест проходит и на Trivial).
+
+module plan140_2.b4_elision_pos
+
+import std.collections.vec_owned.{Vec}
+
+// `v` — read-only параметр, используется только как `v.len()` и `v[i]`-read.
+// Frame-safe ⇒ `v[i]` элидируется.
+fn sum_all(v Vec[int]) -> int {
+    mut s = 0
+    for i in 0..v.len() {
+        s = s + v[i]
+    }
+    s
+}
+
+test "sum via (elided) index access" {
+    ro v = Vec[int].from([10, 20, 30, 40])
+    assert(sum_all(v) == 100)
+}

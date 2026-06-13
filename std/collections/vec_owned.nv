@@ -401,10 +401,9 @@ export fn Vec[T] mut @swap_remove(i int) -> T {
 /// assert(v[0] == 10)
 /// assert(v[2] == 30)
 /// ```
-export fn Vec[T] @index(i int) -> T {
-    if i < 0 || i >= @len {
-        panic("Vec: index out of bounds")
-    }
+export fn Vec[T] @index(i int) -> T
+    requires 0 <= i && i < @len
+{
     unsafe { @data[i] }
 }
 
@@ -430,10 +429,9 @@ export fn Vec[T] @get(i int) -> Option[T] {
 /// (emit_c.rs `Stmt::Assign` + `ExprKind::Index`) and does not dispatch through
 /// this method, but the name now conforms to the D240 `a.@index(key, val)`
 /// protocol contract.
-export fn Vec[T] mut @index(i int, val T) -> () {
-    if i < 0 || i >= @len {
-        panic("Vec: index out of bounds")
-    }
+export fn Vec[T] mut @index(i int, val T) -> ()
+    requires 0 <= i && i < @len
+{
     unsafe {
         @data[i] = val
     }

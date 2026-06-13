@@ -16,10 +16,23 @@
 | [D114](#d114-smt-cache--parallel-verification) | SMT cache + parallel verification |
 | [D116](#d116-z3-backend-через-собственные-ffi-биндинги) | Z3 backend через собственные FFI-биндинги |
 | [D121](#d121-benchmark-dsl--bench---measure--) | Benchmark DSL — `bench "..." { measure { ... } }` + `bench.*` namespace |
+| [D256](#d256-field--method-self-access-в-контрактах) | `@field` / `@method()` self-access в контрактах (SMT-encoder) |
+| [D257](#d257-vec-index-bounds-как-элидируемый-контракт) | Vec `@index` bounds как элидируемый контракт |
 
 ---
 
 ## D24. Стратегия SMT-проверки контрактов
+
+> **AMEND (Plan 140.2 Part A, 2026-06-13) — `@field` self-access в контрактах.**
+> Прежнее ограничение «контракт не может ссылаться на `@field` (self-access);
+> передавайте поля явным параметром в #pure fn» — **RETRACT**. Контракт метода
+> (`requires`/`ensures`/`invariant`) теперь **МОЖЕТ** ссылаться на поля receiver'а
+> через `@field` (read-only) и на встроенные #pure-аксессоры `@len()`/`@cap()`/
+> `@byte_len()`/`@is_empty()`. SMT-модель: receiver — сущность `_self`; `@f` →
+> uninterpreted `_field_<name>_<sort>(_self)` (та же конвенция, что для
+> `obj.field` параметра). Полное описание — [D256](#d256-field--method-self-access-в-контрактах).
+> Прочие `@method()` (non-accessor / non-pure / mut-receiver) НЕ кодируются —
+> внятная checker-ошибка (не E2401). Запускает `[M-140-bounds-as-contract]` Part A.
 
 > **Note (Plan 33.1, D96):** Атрибуты используют префикс **`#`** (не `@`),
 > см. [D96](#d96-синтаксис-атрибутов-name-без-квадратных-скобок).
@@ -2464,3 +2477,141 @@ JSON variant — D107 schema extension.
 - [D121](#d121) — bench DSL (Plan 57).
 - D133-D165 — Plan 100 family error codes.
 - Plan 28, Plan 36 — nova-cli infra.
+
+---
+
+## D256. `@field` / `@method()` self-access в контрактах
+
+> **Status:** active (spec). Реализация — [Plan 140.2](../../docs/plans/140.2-vec-bounds-as-contract.md)
+> Part A (2026-06-13). Amends [D24](#d24-стратегия-smt-проверки-контрактов).
+> Пререквизит для [D257](#) (Vec `@index` bounds как элидируемый контракт, Part B).
+
+### Что
+
+Контракт **метода** (`requires` / `ensures`, а также type-`invariant`) может
+ссылаться на состояние receiver'а:
+
+- **`@field`** — чтение поля receiver'а (read-only). Пример:
+  `fn Vec[T] @index(i int) -> T requires 0 <= i && i < @len`.
+- **Встроенные #pure-аксессоры** `@len()` / `@cap()` / `@byte_len()` /
+  `@is_empty()` — zero-arg size-аксессоры (D117 call-syntax). Кодируются
+  идентично соответствующему `@field` (`@len()` ≡ `@len`).
+
+Прочие `@method()` (non-accessor, non-`#pure`, либо с `mut`/`consume`-receiver)
+в контракте **НЕ поддерживаются** — checker даёт внятную ошибку (не обобщённый
+E2401-encoder-reject), указывая на конкретный `@method()`.
+
+### Почему
+
+До Plan 140.2 SMT-encoder отвергал `ExprKind::SelfAccess` (`@`) с E2401
+(«`@field` в контракте не поддерживается»). Это делало **невыразимыми**
+любые контракты метода о собственном состоянии (`requires @len > 0`,
+`ensures result <= @cap`, …) и, в частности, блокировало bounds-as-contract
+для `Vec @index` (нельзя написать `requires 0 <= i && i < @len`). Обходной
+путь «вынести поле в явный параметр #pure fn» громоздкий и не работает для
+magic-методов (`@index`), где сигнатуру задаёт язык.
+
+### SMT-модель
+
+- Bare `@` (receiver) кодируется как стабильная SMT-переменная **`_self`**.
+- `@field` (`Member{obj: SelfAccess, name}`) → `_field_<name>_<sort>(_self)` —
+  та же uninterpreted-function конвенция, что для `obj.field` параметра.
+  Один и тот же `_self` на все `@field` метода ⇒ верная конгруэнтность
+  (`@len` в `requires` и `@len` в `ensures` — один и тот же терм).
+- `@len()` / `@cap()` / `@byte_len()` zero-arg → `_field_<name>_int(_self)`
+  с автоматической аксиомой `>= 0` (size-аксессор неотрицателен).
+- `_self` авто-объявляется бэкендом как Int-сущность; sort поля выводится
+  эвристикой имени (`is_*`/`*?` → Bool, иначе Int) — как для `obj.field`.
+
+### Call-site instantiation (Part A.2 / Part B)
+
+Для **элизии** доказуемого доступа: на call-сайте (`v[idx]`, маршрутизируемом
+через контракт `@index`) `_self` подставляется фактическим receiver'ом
+(`_self` ↦ `v`), `i` ↦ `idx`. Тогда контракт callee `0 <= i && i < @len`
+становится goal'ом `0 <= idx && idx < _field_len_int(v)`, который Z3
+доказывает под loop-инвариантом `for i in 0..v.len()`. MVP — индекс есть
+loop-var с явной границей `v.len()`/`@len` (см. [Plan 140.2](../../docs/plans/140.2-vec-bounds-as-contract.md) Part B).
+
+### Границы (V1)
+
+- Только **чтение** `@field`; запись `@field` в контракте невозможна
+  синтаксически (контракт — выражение, не statement). `mut @field`-вектор —
+  только через `mut`/`consume`-receiver `@method()`, который отклонён.
+- Общие `#pure` `@method()` (не из списка аксессоров) — **не** инлайнятся
+  в SMT (V1); followup при необходимости (inline #pure method body как
+  для свободных `#pure` fn).
+- Type-`invariant` уже использует bare-ident поля (`invariant balance >= 0`),
+  а не `@field`; D256 не меняет этот путь.
+
+### Связь
+
+- [D24](#d24-стратегия-smt-проверки-контрактов) — стратегия SMT-проверки
+  (amended: `@field` теперь разрешён).
+- [D117] — size-accessor uniformity (`@len()` ≡ `@len`).
+- D257 — Vec `@index` bounds как элидируемый контракт (Part B; первый
+  потребитель D256).
+- `[M-140-bounds-as-contract]` — маркер, закрываемый Plan 140.2.
+
+---
+
+## D257. Vec `@index` bounds как элидируемый контракт
+
+> **Status:** active (spec). Реализация — [Plan 140.2](../../docs/plans/140.2-vec-bounds-as-contract.md)
+> Part B (2026-06-13). Зависит от [D256](#d256-field--method-self-access-в-контрактах)
+> (`@field` в контрактах) + [D24](#d24-стратегия-smt-проверки-контрактов)/Plan 140
+> (enforce-with-elision) + [D248](02-types.md) (`&&`-форма).
+>
+> **Примечание:** это бывший преждевременный D249, **отозванный** до того, как
+> Part A (D256) разблокировал `@field` в контрактах; теперь внесён под номером
+> D257 (D249–D255 — за Plan 152).
+
+### Что
+
+`Vec[T] @index(i int) -> T` и `Vec[T] mut @index(i int, val T)` несут
+**контракт** `requires 0 <= i && i < @len` (вместо прежнего ручного
+`if i < 0 || i >= @len { panic(...) }`). Bounds-проверка становится
+**элидируемым контрактом** по модели D24/Plan 140:
+
+- индекс, **доказанный** SMT in-bounds (напр. `for i in 0..v.len()`), —
+  проверка **элидируется** (zero-cost);
+- **недоказанный** индекс — runtime-проверка **остаётся** и в debug, и в
+  release; OOB → fail-fast abort (не silent UB).
+
+`@get(i)` / `@first()` / `@last()` (возвращают `Option[T]`) — **без**
+контракта: `None` на OOB остаётся их штатной семантикой (это и есть
+безопасный безконтрактный путь для «может не быть элемента»).
+
+### Codegen (context-sensitive)
+
+`v[i]` имеет три контекстно-зависимых пути; все **сохраняют inline-эмиссию**
+(маршрутизация через value-возвращающий метод сломала бы lvalue-контексты):
+
+- **rvalue** `v[i]` (чтение) — lvalue-safe bounds-checked stmt-expr
+  `(*({ …; &data[i]; }))` (та же форма, что `NovaArray`), чтобы
+  `v[i].field = x`, `&v[i]`, `v[i].mut_method()` оставались корректными;
+- **write** `v[i] = val` — inline statement-block;
+- bounds-check в обоих путях **элидируется** на доказанных index-сайтах
+  (per-site proven-множество от верификатора), иначе always-on.
+
+Прямой вызов `v.index(i)` (редкий) эмитит контракт-enforcement метода
+(`requires failed: 0 <= i && i < @len`) — формат D24/Plan 140.1.
+
+### Почему контракт, а не codegen-only range-анализ
+
+Bounds как **декларативный контракт** на `@index`: (1) единый источник
+истины (precondition в сигнатуре, не разбросанные codegen-паники),
+(2) верификатор/инструменты могут о нём рассуждать, (3) элизия — следствие
+доказательства контракта на call-сайте (D256 call-site instantiation),
+а не отдельная codegen-эвристика. Sibling `[M-opt-elide-proven-overflow-checks]`
+(чистая codegen-range элизия overflow-чеков) — альтернативный не-контрактный
+путь, не пересекается.
+
+### Связь
+
+- [D256](#d256-field--method-self-access-в-контрактах) — `@field` в
+  контрактах (пререквизит: без него `requires … @len` = E2401).
+- [D24](#d24-стратегия-smt-проверки-контрактов) / Plan 140 — enforce-with-elision.
+- [D248](02-types.md) / Plan 150 — `&&`-форма (вакуумная `0 <= i < @len` —
+  compile-error).
+- [D238] / [D240] — `@index` / `MutIndex` magic (`v[i]` / `v[i] = val`).
+- `[M-140-bounds-as-contract]` — маркер, закрываемый этим блоком.

@@ -1,0 +1,11 @@
+// Plan 140.2 Part B: прямой вызов @index (.index(i)) эмитит контракт-enforcement
+// `requires 0 <= i && i < @len` корректно (instance-метод, nova_self в scope).
+module plan140_2.b_index_direct_call_pos
+
+import std.collections.vec_owned.{Vec}
+
+test "direct @index call in-bounds" {
+    ro v = Vec[int].from([10, 20, 30])
+    assert(v.index(0) == 10)
+    assert(v.index(2) == 30)
+}

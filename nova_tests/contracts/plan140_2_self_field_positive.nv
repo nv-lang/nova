@@ -1,0 +1,36 @@
+// Plan 140.2 Part A (D256): @field (self-access) в контракте инстанс-метода.
+// requires/ensures могут ссылаться на @field receiver'а; кодируется в SMT
+// (UF `_field_count_int(_self)`), доказывается Z3 — НЕ E2401. Codegen
+// runtime-enforcement недоказанного requires использует receiver (nova_self).
+// REQUIRES_SMT_BACKEND z3
+
+module contracts.plan140_2_self_field_positive
+
+type Counter {
+    count int
+}
+
+// requires @count >= 0 (assumption) ⇒ ensures result >= 0 (goal):
+// _field_count_int(_self) >= 0 ⇒ _field_count_int(_self) + _field_count_int(_self) >= 0.
+// ensures доказывается Z3 (элидируется); requires остаётся runtime-проверкой.
+#verify
+fn Counter @doubled() -> int
+    requires @count >= 0
+    ensures result >= 0
+{
+    @count + @count
+}
+
+// ensures result == @count — рефлексивно после подстановки result→@count.
+#verify
+fn Counter @identity_count() -> int
+    ensures result == @count
+{
+    @count
+}
+
+test "self-field contract positive" {
+    ro c = Counter { count: 5 }
+    assert(c.doubled() == 10)
+    assert(c.identity_count() == 5)
+}

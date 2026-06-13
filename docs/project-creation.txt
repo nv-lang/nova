@@ -37299,3 +37299,26 @@ Plan 140.2 — bounds-as-contract PLANNED (2026-06-13, НЕ исполнен; in
   (bounds-as-contract + context-sensitive de-inline). Преждевременный D249 отозван. План: docs/plans/140.2.
   Процессный bonus: разблокирована worktree-сборка — repo_root=current_dir (main.rs:666), libuv-кэш в
   CWD/target/libuv-cache/libuv.lib; копия root-level libuv.lib туда → worktree собирает без vcvars.
+
+Plan 140.2 — bounds-as-contract ✅ CLOSED Part A+B (2026-06-13, branch plan-140.2-bounds-contract; коммиты
+  9a667fbc(A)/e8e8ab38(B core)/5a4c366e(B.4)). D256 (Part A) + D257 (Part B.0); D249–D255 — за Plan 152.
+  Part A (пререквизит, снят блокер E2401): SMT-encoder кодирует `@field` self-access — bare `@` → Var `_self`,
+  `@field` (Member{SelfAccess}) идёт через СУЩЕСТВУЮЩИЙ `_field_<name>_<sort>(obj)` UF, `@len()` — через
+  accessor-arm; один `_self` на все `@field` метода = верная конгруэнтность; БЕЗ изменений backend
+  (z3.rs/smtlib.rs — Var auto-Int, fresh-const по AST-указателю). Checker: non-accessor `@method()` в
+  контракте → внятная ошибка (не E2401). D24 AMEND + D256 + docs/contracts.md.
+  Part B: Vec `@index`/`mut @index` несут `requires 0<=i && i<@len` (D248 &&-форма; ручной if…panic убран);
+  `@get`/`@first`/`@last` без контракта (None на OOB). Codegen RB2-fix: inline Vec-read переведён на
+  lvalue-safe `(*({…;&data[i];}))` (как NovaArray) — `v[i].field=x`/`&v[i]` корректны под clang.
+  B.4 ЭЛИЗИЯ (sound-MVP): `prove_vec_index_sites` (verify/pipeline.rs) per READ-сайт `v[idx]` доказывает
+  `0<=idx<_field_len_int(v)` под loop-bound `for i in lo..hi`, гейт non-trivial backend (z3). SOUNDNESS:
+  Nova переоценивает `v.len()` каждую итерацию, но Z3 моделит длину как фикс → frame-check «`v` read-only в
+  цикле» обязателен (мутация ДО доступа сломала бы инвариант); MVP = read-only циклы. proven сайт →
+  codegen элидит inline-check (по span Index-выражения, переживает desugar), недоказанный → abort (debug И
+  release). Threading: report.proven_index_sites→env→emitter. Perf: pre-scan loop-less fn (избегает O(n²)
+  collect_pure_fns). Тесты (z3): contracts 297/0, basics + vec-heavy 0 новых FAIL, plan140_2 (lvalue/
+  direct-call/elision-pos/soundness-neg) 4/0 + 2 contracts (@field pos/@method neg).
+  АРХИТЕКТУРНАЯ ПРАВКА: буквальный план-B.2 «route v[i] через mono-@index + Plan-140-элизия на call-site»
+  несостоятелен (per-method ключ = всё-или-ничего, ломает lvalue) — выбран альтернативный путь плана
+  (inline + per-site элидируемый check). Build: D: = exFAT (junction невозможен) → libz3.lib скопирован в
+  worktree vcpkg_installed (gitignored). Followup: [M-140.2-elision-writeback] (write-back/general циклы, P3).
