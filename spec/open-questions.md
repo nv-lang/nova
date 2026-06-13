@@ -7576,3 +7576,32 @@ checker (`bool`/`unit` relational-операнд → `E_RELATIONAL_OPERAND_NOT_O
 - `[M-140-bounds-as-contract]` (Plan 140): контракт должен быть
   `requires 0 <= i && i < @len`, НЕ `0 <= i < @len`.
 - [03-syntax.md](decisions/03-syntax.md) — операторы сравнения, precedence/ассоциативность.
+
+---
+
+## Q-vec-alias-completeness — `[]T` — чистый алиас `Vec[T]` (Plan 153.0)
+
+**Контекст.** D239 объявил `[]T ≡ Vec[T]` (синтаксический псевдоним). Открытый
+вопрос: завершён ли алиас (нет остаточных спец-кейсов `[]T` в компиляторе), и
+консолидирован ли модуль (`vec.nv` ↔ `vec_owned.nv` дубль).
+
+**✅ ЗАКРЫТО 2026-06-13 — Plan 153.0** (`plan-153` commit `2a5df8e4`):
+- `Vec[T]` переехал в folder-модуль `std/collections/vec/` (co-equal слои), модуль
+  `collections.vec_owned` ретайрнут, `vec.nv` свёрнут, prelude re-export'ит из folder.
+  Дубля больше нет.
+- `[]T ≡ Vec[T]` подтверждён (D239 CONFIRM, [02-types.md](decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)):
+  литерал `[1,2,3]` строит `Vec[int]`, инферированный `Vec[int]` передаётся в `[]int`-параметр,
+  `[]T`-методы резолвятся на `Vec[T]`.
+
+**Остаточный спец-кейс (отложен).** ЯВНАЯ аннотация `ro v Vec[int] = …` НЕ коэрсится в
+`[]int`-параметр (`E7301`), хотя инферированный коэрсится — pre-existing на main, residual
+непрозрачность алиаса для explicit-annotation coercion. Home: `[M-153-d239-explicit-vec-to-slice-param]`
+(type-checker coercion fix). Pin: `nova_tests/plan153_0/neg/vec_explicit_annotation_to_slice_neg`.
+
+### Связанное (Plan 153)
+- `Q-iterator-laziness` / `Q-iter-mut` / `Q-vec-operator-plus` / `Q-slice-view` — закрыты
+  записями в плане [153](plans/153-vec-production-model.md) §4; реализация в 153.2/153.4/153.5.
+  Переносятся сюда по мере закрытия их sub-планов.
+- Отклонение 153.0: eager-комбинаторы вынесены в `collections.vec_seq` (не prelude-global) —
+  иначе их идентификаторы засоряют каждый юнит. См. план §«Статус 153.0» +
+  `[M-153-vec-combinators-prelude-global]`.
