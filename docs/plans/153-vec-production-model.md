@@ -322,6 +322,46 @@ remove/index/get/first/last/clear/truncate/reverse/fill).
 
 Эстимат ~2–2.5 dd.
 
+> #### Статус 153.1 — 🟡 ЧАСТИЧНО (2026-06-13, main): core API + fluent ЗАКРЫТЫ; консолидация + scalar-min-max ОТЛОЖЕНЫ (codegen-лимиты)
+>
+> **Ф.0 (блокеры) — переоценка.** `[M-138.2-vec-self-return]` оказался **уже закрыт**
+> (138.2 return-position subset + 152.1 value-record codegen, ДО написания плана 153):
+> `v.push(1).push(2)`, `.reverse()`, `.fill()` цепочки работают (проба). Codegen-блокера
+> НЕТ. `[M-153-scalar-min-max]` (`(5).max(3)`) **отложен** — падает на коллизии с системным
+> C-макросом `max`/`min` (нет в 1-арговых `int_method_to_c`/`f64_method_to_c`); НЕ гейтит
+> Vec-ядро (cap-shrink = `cap_to(len())`).
+>
+> **Ф.1 (fluent) ✅.** `@reserve`, `@retain` переведены `-> ()` → `-> @` (остальные
+> mut-методы уже `-> @`: push/insert/splice/clear/truncate/reverse/extend/append/copy_from/
+> copy_within/fill/append_zero). Data-returning (`pop`/`remove`/`swap_remove`) оставлены.
+> Цепочки `v.reserve(8).push(1).push(2)`, `v.retain(p).push(x)` — POS-фикстура зелёная.
+>
+> **Ф.2 (core API & capacity) ✅.** Добавлены: `@swap(i,j)`, `@resize(n,v)`, `@resize_with(n,f)`,
+> `@fill_with(f)`, `@contains(v)` (наивный O(n) `==`, как `@equal`), `@cap_to(n)` точный
+> capacity-сеттер (realloc до ровно `n`, контракт `n >= @len`, `n<len`→паника; покрывает
+> shrink-to-fit `cap_to(len())` + room-for-N `cap_to(len()+N)`). Все mut-методы `-> @`
+> (fluent). POS + 3 NEG (`cap_to<len`, `swap` OOB, `resize` neg `n` — контракт-паники)
+> зелёные (`nova_tests/plan153_1/` 5/5).
+>
+> **Отклонение от плана (зафиксировано).** (1) **`@cap(n)`-сеттер → `@cap_to(n)`**: accessor-
+> конвенция (same-name setter overload'ящий `@cap()` getter, D117 AMEND) распадается в mono —
+> `v.cap(10)` мис-резолвится в 0-арг геттер ("too many arguments"), generic-method-overload-
+> collapse ([M-138.2-generic-method-overload-mono], та же причина, что держит `@splice` ≠
+> `@insert`). Distinct `@cap_to` маршрутизируется чисто → `[M-153.1-cap-setter-overload]`.
+> (2) **Консолидация `append`/`extend` ОТЛОЖЕНА** (`[M-153.1-append-extend-consolidation]`):
+> один `append` (concrete bulk + generic Iter overload) блокирован тем же overload-collapse;
+> вдобавок generic-`append` (`for x in items {@push(x)}`) **ломает self-append** `v.append(v)`
+> (рост во время итерации — bulk-версия снапшотит длину). Оставлены раздельно: `@append(Vec[T])`
+> bulk+self-safe, `@extend[S Iter[T]]` generic.
+>
+> **Verify.** Blast-radius (plan90_1/plan90/plan131/plan138_2/plan128/plan153_0/plan153_1/
+> contracts/basics/generics/plan62) — 0 НОВЫХ FAIL (plan131 27/1 = pre-existing vec_debug,
+> чинит 154.1). std vec/*.nv читаются с диска → правки без ребилда компилятора.
+>
+> **Открытые маркеры:** `[M-153.1-cap-setter-overload]`, `[M-153.1-append-extend-consolidation]`,
+> `[M-153-scalar-min-max]` (все gated на codegen). D259 spec — частичный (core API без
+> overload-формы сеттера/консолидации).
+
 ### 153.2 — Ленивый итератор + адаптеры `[D260, Q-iterator-laziness, Q-iter-mut, A/B]`
 **Главный лифт.** Ленивые адаптеры на `VecIter` (Iter/Next, D241/D242). Полный набор
 паритета Rust/Kotlin-Sequence/Java-Stream:

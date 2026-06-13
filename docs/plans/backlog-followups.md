@@ -207,6 +207,24 @@
 - **`[M-154.1-required-conformance]`** (planned, P3): возможный переход opt-in →
   required (номинальная конформность, как Rust) отдельным шагом после 154.1.
 
+## Follow-up: Plan 153.1 (Vec core API — отложенные из-за codegen-лимитов)
+- **`[M-153.1-cap-setter-overload]`** (planned, home **Plan 153.1 / D259**): accessor-
+  convention ideal — same-name `@cap(n)` write-setter, overload'ящий `@cap()` getter
+  (D117 AMEND). Сейчас распадается: mono'd `v.cap(10)` мис-резолвится в 0-арг геттер
+  ("too many arguments") — та же generic-method-overload-collapse, что держит `@splice`
+  отдельно от `@insert` ([M-138.2-generic-method-overload-mono]). 153.1 поставил distinct
+  `@cap_to(n)`; свернуть в `@cap(n)`-overload, когда mono-overload dispatch заработает.
+- **`[M-153.1-append-extend-consolidation]`** (planned, home **Plan 153.1 / D259**): план
+  хотел один `append` (concrete Vec bulk + generic Iter overload), `extend` убрать.
+  Заблокировано тем же overload-collapse + у generic-`append` (`for x in items {@push(x)}`)
+  self-append footgun (`v.append(v)` растёт во время итерации; bulk-версия снапшотит длину).
+  Оставлены раздельно: `@append(Vec[T])` (bulk, self-safe) + `@extend[S Iter[T]]` (generic).
+  Консолидировать, когда overload-mono + self-alias-safe generic append.
+- **`[M-153-scalar-min-max]`** (planned, home **Plan 153.1/153.2 Ф.0**): `(5).max(3)` /
+  `.min(b)` метод-форма падает на коллизии с системным C-макросом `max`/`min` (нет в
+  1-арговых `int_method_to_c`/`f64_method_to_c`). Нужен рантайм-хелпер `nova_int_max` /
+  `fmax`-роутинг. НЕ гейтит Vec-ядро (cap-shrink-to-fit = `cap_to(len())`). Отложен из 153.1 Ф.0.
+
 ## Конвенция
 - **Planned** маркер → Followups своего плана (+ индекс-строка здесь с home).
 - **Floating** (нет плана) → здесь полностью.

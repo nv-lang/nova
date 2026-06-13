@@ -216,6 +216,39 @@ export fn Vec[T] @len() -> int => @len
 /// Number of allocated element slots.
 export fn Vec[T] @cap() -> int => @cap
 
+/// Set the capacity to **exactly** `n` slots (no ×2 rounding) — the precise,
+/// absolute capacity request (Plan 153.1 / D259). Reallocates the buffer,
+/// preserving the live `len` elements; `n == 0` (only valid when `len == 0`)
+/// frees down to the null buffer.
+///
+/// Contract `n >= @len`: the capacity can never physically drop below the live
+/// element count. A silent truncate/clamp there would be a footgun (it would
+/// drop live elements and break the `v.cap_to(n); v.cap() == n` round-trip), so
+/// `n < len` is a **panic**, not a clamp.
+///
+/// Covers — no separate methods needed:
+///   - shrink-to-fit  = `v.cap_to(v.len())`
+///   - room-for-N     = `v.cap_to(v.len() + n)`
+/// Unlike `@reserve` (amortised ×2 growth), this honours `n` exactly, so it also
+/// gives a predictable realloc point for slice detach (153.4). Returns `@`.
+///
+/// NAMING ([M-153.1-cap-setter-overload]): the accessor-convention ideal is a
+/// same-name `@cap(n)` write-setter overloading the `@cap()` getter (D117 AMEND).
+/// That collapses in monomorphization today — a mono'd `v.cap(10)` mis-resolves
+/// to the 0-arg getter and passes the extra arg ("too many arguments"), the same
+/// generic-method-overload limitation that keeps `@splice` distinct from
+/// `@insert` ([M-138.2-generic-method-overload-mono]). The distinct `@cap_to`
+/// name routes cleanly; fold it back into a `@cap(n)` overload once mono-overload
+/// dispatch lands.
+export fn Vec[T] mut @cap_to(n int) -> @
+    requires n >= @len
+{
+    if n != @cap {
+        @realloc_to(n)
+    }
+    @
+}
+
 /// `true` if the vector has no live elements.
 export fn Vec[T] @is_empty() -> bool => @len == 0
 
@@ -247,11 +280,16 @@ fn Vec[T] mut @realloc_to(new_cap int) -> () {
 /// Ensure room for at least `additional` more elements beyond the current
 /// length. Grows the buffer with a ×2 strategy (initial capacity 8) when the
 /// current capacity does not suffice. No-op when `additional <= 0` or capacity
-/// already covers `len + additional`. This is the sole public growth method.
-export fn Vec[T] mut @reserve(additional int) -> () {
+/// already covers `len + additional`. This is the sole *amortised* growth method
+/// (rounds the buffer up to a ×2 capacity for O(1)-amortised push); the exact,
+/// un-rounded capacity setter is `@cap(n)` (Plan 153.1 / D259).
+///
+/// Returns `@` (self) for fluent chaining — `v.reserve(10).append(xs).sort()`
+/// (Plan 153.1 fluent convention, precedent `StringBuilder.@append`).
+export fn Vec[T] mut @reserve(additional int) -> @ {
     ro needed = @len + additional
     if needed <= @cap {
-        return
+        return @
     }
     mut new_cap = if @cap == 0 { 8 } else { @cap * 2 }
     // KEEP as while: non-unit-step (×2 doubling), not a `0..@len` index loop.
@@ -259,6 +297,7 @@ export fn Vec[T] mut @reserve(additional int) -> () {
         new_cap = new_cap * 2
     }
     @realloc_to(new_cap)
+    @
 }
 
 // ──────────────────────────────────────────────────────────────────────────
