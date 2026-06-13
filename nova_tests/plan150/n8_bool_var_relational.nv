@@ -1,0 +1,8 @@
+// Plan 150 / D248 — bool operand of a relational operator rejected: `flag < 5`
+// (the bool-vs-int footgun where a forgotten comparison silently coerces).
+//
+// EXPECT_COMPILE_ERROR E_RELATIONAL_OPERAND_NOT_ORDERED
+
+module plan150.n8_bool_var_relational
+
+fn f(flag bool) -> bool => flag < 5

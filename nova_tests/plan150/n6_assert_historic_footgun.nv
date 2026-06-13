@@ -1,0 +1,12 @@
+// Plan 150 / D248 — the historic vacuous-PASS footgun `assert(0 <= 100 < 10)`
+// is now a COMPILE error. Previously it parsed as `(0<=100)<10` = `bool<10`,
+// which was vacuously true, so the assert silently passed despite 100 ∉ [0,10).
+//
+// EXPECT_COMPILE_ERROR E_CMP_CHAIN_UNSUPPORTED
+
+module plan150.n6_assert_historic_footgun
+
+fn main() -> () {
+    assert(0 <= 100 < 10)
+    println("ok")
+}

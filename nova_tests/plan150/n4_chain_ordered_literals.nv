@@ -1,0 +1,8 @@
+// Plan 150 / D248 — chaining rejected even for ordered literals (`1 < 2 < 3`).
+// The rule is structural (≥2 comparisons at one level), not type-dependent.
+//
+// EXPECT_COMPILE_ERROR E_CMP_CHAIN_UNSUPPORTED
+
+module plan150.n4_chain_ordered_literals
+
+fn f() -> bool => 1 < 2 < 3

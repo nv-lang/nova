@@ -1,0 +1,15 @@
+// Plan 150 / D248 — single (unchained) comparisons on ordered types stay legal.
+//
+// EXPECT_OUTPUT: ok
+
+module plan150.p3_single_and_ordered
+
+fn main() -> () {
+    assert(3 < 5)
+    assert(5 > 3)
+    assert(3 <= 3)
+    assert(5 >= 3)
+    assert(2 == 2)
+    assert(2 != 3)
+    println("ok")
+}

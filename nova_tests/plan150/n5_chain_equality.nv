@@ -1,0 +1,8 @@
+// Plan 150 / D248 — equality chains (`a == b == c`) rejected too: `(a==b)==c`
+// compares a bool against the third operand.
+//
+// EXPECT_COMPILE_ERROR E_CMP_CHAIN_UNSUPPORTED
+
+module plan150.n5_chain_equality
+
+fn f(a int, b int, c int) -> bool => a == b == c

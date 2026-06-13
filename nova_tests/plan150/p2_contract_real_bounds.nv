@@ -1,0 +1,18 @@
+// Plan 150 / D248 — `requires lo <= i && i < hi` is a REAL (non-vacuous) bounds
+// contract: the `&&` form actually constrains both ends (unlike the vacuous
+// `lo <= i < hi` chain it replaces). A valid call passes.
+//
+// EXPECT_OUTPUT: ok
+
+module plan150.p2_contract_real_bounds
+
+fn offset(i int, lo int, hi int) -> int
+    requires lo <= i && i < hi
+=> i - lo
+
+fn main() -> () {
+    assert(offset(5, 0, 10) == 5)
+    assert(offset(3, 2, 8) == 1)
+    assert(offset(0, 0, 1) == 0)
+    println("ok")
+}

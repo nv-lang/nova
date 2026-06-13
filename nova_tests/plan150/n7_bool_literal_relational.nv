@@ -1,0 +1,8 @@
+// Plan 150 / D248 — `bool` is not an ordered type: `true < false` rejected.
+// Boolean ordering is method-only via `@compare` (D183), not the `<` operator.
+//
+// EXPECT_COMPILE_ERROR E_RELATIONAL_OPERAND_NOT_ORDERED
+
+module plan150.n7_bool_literal_relational
+
+fn f() -> bool => true < false

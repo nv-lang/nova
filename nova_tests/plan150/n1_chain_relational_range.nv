@@ -1,0 +1,9 @@
+// Plan 150 / D248 — chained relational comparison is rejected.
+// `0 <= i < n` parses as `(0 <= i) < n` = `bool < n` (vacuously true for n>1) —
+// the security footgun that silently neutralizes `requires 0 <= i < @len`.
+//
+// EXPECT_COMPILE_ERROR E_CMP_CHAIN_UNSUPPORTED
+
+module plan150.n1_chain_relational_range
+
+fn in_range(i int, n int) -> bool => 0 <= i < n

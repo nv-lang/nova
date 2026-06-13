@@ -1,0 +1,7 @@
+// Plan 150 / D248 — `a < b < c` chained comparison rejected.
+//
+// EXPECT_COMPILE_ERROR E_CMP_CHAIN_UNSUPPORTED
+
+module plan150.n2_chain_lt_lt
+
+fn f(a int, b int, c int) -> bool => a < b < c

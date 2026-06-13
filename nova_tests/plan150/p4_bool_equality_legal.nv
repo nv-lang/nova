@@ -1,0 +1,16 @@
+// Plan 150 / D248 — `==`/`!=` on bool stay legal; only relational < <= > >= are
+// banned for bool operands.
+//
+// EXPECT_OUTPUT: ok
+
+module plan150.p4_bool_equality_legal
+
+fn main() -> () {
+    assert(true == true)
+    assert(true != false)
+    ro a = (3 < 5)
+    ro b = (5 < 3)
+    assert(a != b)
+    assert(a == true)
+    println("ok")
+}
