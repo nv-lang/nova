@@ -141,6 +141,10 @@ _Static_assert(sizeof(NovaFrame) % sizeof(void*) == 0,
 > известному смещению, без runtime-вычисления размера, дружелюбнее оптимизатору.
 > `alloca` понадобился бы только при динамическом числе корней — которого нет.
 
+> **⚠ ABI ещё НЕ финальна.** Плоский `void* slot[N]` moving-небезопасен для interior
+> `str.ptr` и не несёт провенанс базы. Финальная раскладка (base+offset пары + бит
+> провенанса) — в **§7.6**, заморозка в Ф.0 GATE после закрытия дыр H1/H3/H4/H5.
+
 ### 7.2. Codegen-паттерн (на функцию с heap-корнями)
 
 ```c
@@ -263,6 +267,73 @@ out:
 > каждый вызов становится safe-point'ом с write-back. Поэтому Ф.2 **обязана** довести до
 > O1; O2/O3 — последующая полировка. AC Ф.5 (перф vs Boehm) меряется на **O1+**, не на O0.
 
+### 7.6. Решения по открытым вопросам Q7–Q15 (research 2026-06-14)
+
+Multi-agent research: 6 prec-survey'ев по языкам + adversarial-проверка по коду
+(emit_c.rs, net.c, `nova_str` typedef). Вердикт проверки: **ACCEPT WITH CHANGES** —
+стратегия верна, но 4 soundness-дыры (H1/H3/H4/H5) надо закрыть **до заморозки frame ABI
+в Ф.0**.
+
+#### Рекомендации (что доказано в других рантаймах)
+
+| Вопрос | Решение | Прецедент | Меняет §7.1 ABI |
+|---|---|---|---|
+| **Q7** interior (`str.ptr` в середину) | `base+offset` пара: корень = `{buffer_base(GC-ptr), offset, len}`; non-moving — mark базы, moving — `str.ptr=new_base+offset` | HotSpot `DerivedPointerTable`; .NET object-start (fallback); Go/Boehm/Julia — негативные | **ДА** |
+| **Q8** aggregate (`{ptr,len}` в плоском слоте) | FLATTEN: per-type bitmap = **compile-time** источник назначения слотов; ptr-поле→слот, len/cap→локалы; `str.ptr` kind=INTERIOR | Go per-word bitmap; Mercury/MLton root-list; OCaml uniform-rep отвергнут | **ДА** |
+| **Q9** FFI | 2 тира: Tier-1 авто-shim рутит **базы** аргументов в registry (Go-cgo контракт); Tier-2 `Pinner` для C-retained | OCaml `caml_local_roots`, Go `runtime.Pinner`, .NET `fixed{}` | нет |
+| **Q10** closures | точный per-capture env-bitmap; layout-id в заголовке; word0 `fn` = НЕ-GC-ptr | Go `gcdata`, JVM/.NET display-классы, MLton | нет |
+| **Q15** may-GC | выводимый внутренний эффект `{NoGC⊑MayGC}`, fixpoint+SCC по монтоморфному графу; гонит элизию O1 | Go `nowritebarrierrec`, HotSpot safepoint-elision, Koka | нет |
+
+#### ⚠ Soundness-дыры (prerequisites Ф.0 GATE — проверены по коду)
+
+- **H1 (high) — `str.ptr` НЕ всегда в GC-объект.** Литералы интернируются в `static const
+  uint8_t[]` (emit_c.rs), FFI-строки — чужие буферы. «base = GC-корень, метим/двигаем» —
+  unsound. **Фикс:** бит **провенанса** (GC / static / foreign) в представлении базы;
+  heap-lookup тотален над произвольным `uint8_t*` (возвращает «не GC → skip»).
+- **H2 (high) — «слот ALIAS-ит дом `str.ptr`» нереализуемо.** `nova_str` by-value, clang
+  владеет хранилищем, держит в регистрах/копирует. Слот = **копия**, не алиас → reload
+  обязателен (как и признаёт §7.5 honest-limit). **Фикс:** слот = авторитетная копия базы;
+  инварианты #2+#3 применяются к `str`; после reload `str.ptr=new_base+off`. Убрать
+  формулировку «free write-back/auto-fixup».
+- **H5 (high) — замыкания захватывают ПО УКАЗАТЕЛЮ.** env-поля = `T* cap=&local`/`_c->cap`
+  (emit_c.rs) → interior-указатели в **стековые кадры**, не by-value. «Трассировать env как
+  запись» неверно; под moving — коррапт. **Фикс:** мигрировать на **by-value захват**
+  (боксить escaping, Go-style — делает Q10 истинным) ЛИБО kind=interior-in-frame + запрет
+  move (конфликт с Ф.7 copying-стеки). Ф.0-блокер.
+- **H4 (high) — may-GC: косвенные/FFI-callback рёбра.** First-class замыкания
+  (`(*fn)(env,…)`) + C→Nova callbacks — fixpoint может пропустить ребро → ложный NoGC →
+  UAF. **Фикс (soundness):** дефолт решётки = **MayGC (top)**; NoGC доказывать. Открытый
+  indirect/extern/callback = MayGC.
+- **H3 (high) — `blocking{}`-offload рутинг.** Tier-1 shim на запаркованной fiber-цепочке
+  = пропущенный корень. **Фикс:** внешний вызов внутри `blocking{}` статически → Tier-2
+  (pin/copy); базы в own root-frame offload-потока на всю длительность.
+- **H6/H7 (med)** — дескриптор interior-pair слота: считать на **финальной** форме кадра
+  (после slot-coloring), запрет красить interior-пару поверх plain-слота; reload-элизию
+  (#9) гейтить на proven-NoGC из H4.
+
+#### Frame ABI после Q7+Q8 (цель заморозки Ф.0)
+
+```c
+// Текущий §7.1 bare-slot moving-небезопасен для interior str.ptr и без провенанса.
+// Расширение: различать plain-slot и interior base+offset pair + бит провенанса.
+struct { NovaFrame hdr; void* slot[1]; intptr_t off[1]; } fr;  // interior-корень str
+//   slot[0] = buffer_base (GC-ptr; провенанс = GC|static|foreign), off[0] = str.ptr - base
+//   non-moving: if (prov==GC) mark(slot[0]);             // off игнор; len — обычный локал
+//   moving:     if (prov==GC) slot[0]=relocate(slot[0]); str.ptr = (uint8_t*)slot[0]+off[0];
+// Статический per-frame дескриптор: какие слоты plain, какие interior-пары (после coloring).
+```
+
+#### Вердикт по moving (Ф.6+)
+
+Категория compile-to-C односторонняя: Mercury non-moving десятилетиями; Bigloo остался
+консервативным; LLVM `ShadowStackGC` non-moving (moving ушёл в `gc.statepoint` с кооперацией
+бэкенда, которой clang не даёт); CHICKEN moving — только ценой CPS/отказа от
+calling-convention. **Не строить general moving.** Цель — **non-moving precise +
+regions/bump-арены** (locality/throughput/анти-фрагментация без fixup-налога). Moving гейтить
+к узкому **pinned, НЕ-interior** подмножеству — только если конкретная workload докажет нужду.
+Представление base+offset (Q7) заложить **сейчас** (ABI), чтобы не запереть moving навсегда
+(ловушка Julia), но **коллектор строить под non-moving**.
+
 ## 8. Декомпозиция по фазам
 
 Два полукорпуса: **non-moving precise (Ф.0–Ф.5)** — даёт точную пометку, убирает
@@ -272,14 +343,14 @@ false-retention и integer-как-указатель, разблокирует g
 
 | Ф | Цель | AC |
 |---|------|-----|
-| **Ф.0** GATE | Заморозить ABI shadow-frame (§7.1), определение safe-point, протокол swap вершины на fiber-switch, взаимодействие с blocking{}-offload, дисциплина pop на error/panic/defer-путях. Спроектировать unified roots registry. | Design-doc + spec D-блок (D2xx) + open-questions; реестр вершин описан; решение non-moving-first зафиксировано. Без кода. |
+| **Ф.0** GATE | Заморозить ABI shadow-frame (§7.6: base+offset пары + бит провенанса, НЕ плоский `void* slot[N]`), определение safe-point, протокол swap вершины на fiber-switch, взаимодействие с blocking{}-offload, дисциплина pop на error/panic/defer. Спроектировать unified roots registry. **Закрыть prerequisites §7.6 ДО заморозки ABI:** H1 (провенанс `str.ptr`: GC/static/foreign), H5 (семантика захвата замыканий — by-value boxing vs interior-in-frame kind), H3 (tier-классификация `blocking{}`-FFI = Tier-2), H4 (may-GC дефолт = MayGC top). | Design-doc + spec D-блок (D2xx) + open-questions; реестр вершин описан; **H1/H3/H4/H5 разрешены** (провенанс-бит, capture-семантика, tier-правило, MayGC-дефолт); non-moving-first зафиксировано. Без кода. |
 | **Ф.1** Heap bitmaps | Codegen эмитит per-type pointer-offset bitmap; allocator пишет layout-id в заголовок каждого объекта. (Лёгкая сторона — layout известен.) | Каждая heap-аллокация несёт layout-id; precise heap-tracer метит объект точно при заданных корнях; unit-тест на 3-4 типах (record/sum/nested-ptr). |
 | **Ф.2** Codegen shadow-frame (non-moving) | Эмит frame-struct + push/pop + write-back перед safe-point'ами для функций с heap-локалами, живущими через safe-point. Инварианты 1,2,4. Pop на всех exit-путях (incl. `?`/panic/defer). **Довести до тира O1** (§7.5: frame-elision + effect-safe-points + per-safepoint live-set) — не опционально, а условие жизнеспособности. | Кадр — авторитетный источник: тест, где Boehm conservative ложно удерживает (integer похож на указатель / dead-but-on-stack) → точная сборка. Pop-discipline тест: early-return + panic + defer не ломают цепочку. O1-проверка: leaf/`#no_gc`-вызовы НЕ порождают кадр/write-back. |
 | **Ф.3** Runtime precise root-scan | GC обходит shadow-цепочку + unified registry вместо консервативного скана C-стеков/fiber-arena. Swap вершины на fiber-switch. | Boehm stack-scan отключён (свой root-provider); полная регрессия зелёная; **закрывает reference-mn-race** (fiber-stack scan больше не консервативен) — стресс-фикстура M:N зелёная без `GC_DONT_GC`. |
 | **Ф.4** Safe-point completeness | Гарантировать safe-point'ы на call/alloc/loop-back-edge; GC стартует только в них (cooperative). Интеграция с preempt. | Стресс: GC не может сработать между write-back и use; ноль use-after-free под `NOVA_GC_STRESS` (collect на каждом safe-point). |
 | **Ф.5** Non-moving precise GC online ✦ | Precise mark-sweep на shadow-stack + heap-bitmaps; conservative fallback только для подлинно-unknown layout. O2-полировка (§7.5: coloring, sink/LICM, coalescing, единый epilogue). **ВЕХА.** | Полная nova test регрессия зелёная; bench vs Boehm baseline (не хуже X%) **меряется на O1+, не на O0**; false-retention бенч улучшен; 8MB fiber-reserve можно НЕ трогать (это Ф.7). |
-| **Ф.6** Moving/compaction | Codegen: reload-after-safe-point (инвариант 3); GC обновляет root-слоты в кадрах + heap-указатели; bump/compact allocator. | Compaction-тест: фрагментированный heap уплотняется, все адреса обновлены, ноль dangling; перемещаемый-объект тест зелёный. |
-| **Ф.7** Растущие/копирующие стеки ✦ | С precise-roots fiber-стек мал и релоцируем → снять 8MB→2KB reserve (связка с [Plan 146](146-growable-fiber-stacks.md) copying-вариант). | 100k+ fiber'ов в бюджете памяти (снимает потолок fiber_arena Plan 82/149); copying-grow с релокацией указателей зелёный. |
+| **Ф.6** Moving/compaction ⚠ | **ПЕРЕСМОТРЕНО (§7.6 moving-вердикт):** general moving в compile-to-C НЕ строить (Mercury/Bigloo/LLVM-ShadowStackGC прецеденты + interior-`str.ptr` fixup-налог). Вместо: **regions/bump-арены** для locality/анти-фрагментации. Moving — только узкое **pinned, НЕ-interior** подмножество, и только если workload докажет нужду. Codegen reload (инв. 3) + base+offset fixup — лишь для этого подмножества. | Regions/bump-арена даёт compaction-подобный выигрыш без pointer-fixup; (опц.) pinned non-interior copying-nursery зелёный на доказанной workload. |
+| **Ф.7** Растущие стеки ✦ | Снять 8MB→малый reserve (связка с [Plan 146](146-growable-fiber-stacks.md)). **Развилка (см. §7.6 + H5):** **segmented** (добавить чанк при нехватке — НЕ нужен moving, работает с non-moving precise ИЛИ даже conservative — основной путь) vs **copying** (релокация стека — нужен moving + блокируется H5: замыкания захватывают по указателю В кадры → копирование инвалидирует, если не чинить). Учитывая moving-вердикт §7.6, целить **segmented**; copying — только если решён H5 (by-value capture) и доказана нужда. | 100k+ fiber'ов в бюджете (снимает потолок fiber_arena Plan 82/149); segmented-grow зелёный без релокации указателей. |
 | **Ф.8** Generational/concurrent groundwork | Write-barriers (§4.3) для incremental/concurrent; tri-color подготовка. **Post-v1.0, опционально.** | Deferred — отдельная design-сессия; AC определяются тогда. |
 
 ✦ = пользовательская веха (milestone).
