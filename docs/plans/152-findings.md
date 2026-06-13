@@ -24,10 +24,21 @@
   `==`/`!=`/`+`/`<`/`<=`/`>`/`>=` (хардкод `emit_c.rs:17302` → `nova_str_eq`/`concat`/
   `lt`/…) + `@hash` (`nova_str_hash`, DoS-seed в C — намеренно). Реестровые записи
   `eq`/`lt`/`le`/`gt`/`ge`/`hash` оставить, пока живёт хардкод операторов.
-- **D-R4. Декомиссия operator-lowering → 152.5a** — `<`/`<=`/`>`/`>=` должны
-  синтезироваться из `@compare` (Compare-протокол) вместо хардкода `nova_str_lt`;
-  `==`/`+` — из `@eq`/`@concat`. Затрагивает `emit_c.rs` codegen → отдельная фаза
-  с тест-guard'ом (маркер `[M-139.1-operator-lowered-methods]`). НЕ в 152.0.
+- **D-R4. Декомиссия operator-lowering → 152.5a** — `<`/`<=`/`>`/`>=` синтезировать из
+  `@compare` (Compare-протокол) вместо хардкода `nova_str_lt`; `==`/`+` — из `@eq`/`@concat`.
+  Удаление реестровых `eq`/`lt`/`le`/`gt`/`ge` — **в одной фазе** с codegen-reroute (без
+  промежутка без резолва). **Конечное состояние реестра str: только `@hash`.** Затрагивает
+  `emit_c.rs` → отдельная фаза в 152.5a. **Полная декомиссия, БЕЗ perf-retain** (override
+  автора проекта 2026-06-13: всё в `.nv`, C-lowering НЕ оставлять). **Perf — через
+  RawMem-примитивы в Nova-body:** `@compare`→`RawMem.compare` (memcmp), `@concat`→
+  `RawMem.copy_nonoverlapping` (memcpy) ≈ C-скорость без byte-loop. Бенч — подтвердить
+  паритет, не решать. Маркер `[M-139.1-operator-lowered-methods]`.
+
+> **Q1/Q2 апрув автора (2026-06-13):** Q1 → **вариант C** (`CharsView` → `CharsIter`
+> `{buf str, pos int}`, `Next[char]`; нет позиционных `at`/`len`-коллекции; codepoint-count
+> = `as_chars().count()`; нет `char_len`/`char_at` на `str`). D250 переопределён в
+> [152.1](152.1-coordinate-model-lenses.md). Q2 → D-R4 апрув с perf-гардом (выше).
+> Автор НЕ редактирует файлы 152 (во избежание конфликтов) — все правки вносит исполнитель.
 
 ---
 
