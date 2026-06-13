@@ -54,16 +54,20 @@ stable-address). `[M-83.10.4-iso-cancel-startup-race]` ✅ CLOSED (Ф.5 verify-o
    └───────────────────────────────────────┴──────────────────────────────┘
                                          │
                                          ▼
-            [M-opt-preempt-strided-loop] → убрать per-iteration `nova_preempt_check()`
-            на loop back-edge (emit_c.rs:15625): это барьер-call, мешает clang
-            оптимизировать tight/copy-циклы (нет векторизации/unroll). Замена —
-            signal-preemption (Go 1.14 SIGURG): ОС-сигнал вытесняет БЕЗ per-iteration
-            call'а → copy-циклы компилируются как обычный C, clang оптимизирует.
-            Interim (если SIGURG далеко): small-loop-skip — НЕ вставлять check для
-            циклов с провабельно малым/константным bound; long-running — оставить.
-            Текущий compromise (Plan 44.7): tight-loops preempt'ятся per-iteration
-            call'ом — корректно, но не оптимально для hot copy-loops.
-            Long-term, ПОСЛЕ стабилизации планировщика. OS-уровень, переносим.
+            [M-opt-preempt-strided-loop] → per-iteration `nova_preempt_check()`
+            (emit_c.rs:15625) = clang-opt барьер (нет векторизации/unroll
+            tight/copy-циклов).
+            MVP (БЕЗ SIGURG): НЕ вставлять check там, где НЕ НУЖНО = ПРОВАБЛИ
+            короткий цикл (КОНСТАНТНЫЙ / малый bound). ВАЖНО: variable/unbounded
+            циклы (вкл. большие copy-loops) — check ОСТАВИТЬ, иначе re-introduce
+            tight-loop-starvation (ровно то, что Go чинил SIGURG'ом: fiber на
+            огромном copy/compute монополизирует worker).
+            Copy-loops лечить ОТДЕЛЬНО: lower memcpy-идиомы в `RawMem.copy` (как
+            Vec bulk-ops уже делают — bounded+fast, без per-element loop и без
+            starvation), а НЕ skip'ом preempt-check.
+            Long-term: signal-preemption (Go 1.14 SIGURG) — general случай
+            (variable-bound preemptable без call'а). OS-уровень, переносим, ПОСЛЕ
+            стабилизации планировщика.
 
    Сбоку (не M:N-критично): Plan 145 (MSVC codegen) — нужен для MSVC-валидации
    всего вышеперечисленного; пока Plan 83-go-cmn валидируется на clang.
