@@ -483,6 +483,15 @@ pub struct Contract {
     /// `__FILE__`/`__LINE__`. Только string-literal допустим в этой позиции
     /// (не-литерал → `E_CONTRACT_MESSAGE_NOT_STRING`).
     pub message: Option<String>,
+    /// Plan 140.3 ([M-140.1-message-interpolation]): интерполированное сообщение
+    /// `requires <expr>, "... ${e} ..."` — десугарится в `ExprKind::InterpolatedStr`.
+    /// requires/ensures codegen ПРЕДПОЧИТАЕТ это поле: вычисляет строку НА САЙТЕ
+    /// нарушения (lazy, только при провале), захватывая runtime-значения. Когда
+    /// оно `Some`, `message` параллельно хранит СЫРОЙ литерал (`"got ${x}"`) как
+    /// fallback для сайтов, пока не поддерживающих interp (type invariants —
+    /// показывают литерал, как до Plan 140.3; без silent-drop). Плоский литерал
+    /// (без `${}`) → `message_expr = None`, только `message`. Оба `None` — без сообщения.
+    pub message_expr: Option<Expr>,
 }
 
 /// Plan 33.2 (D24): frame-target — l-value, который функция читает
