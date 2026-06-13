@@ -270,3 +270,41 @@ export fn str @lines() -> ro []str {
     if start < sn { out.push(@[start..sn]) }
     out
 }
+
+// Байтовые offset'ы всех non-overlapping вхождений `needle` (Rust `match_indices`,
+// но только offset'ы). Пустой needle → пусто. Композируется со slice.
+export fn str @match_indices(needle str) -> []int {
+    mut out = Vec[int].new()
+    ro nn = needle.byte_len()
+    if nn == 0 { return out }
+    ro sn = @byte_len()
+    mut i = 0
+    while i + nn <= sn {
+        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } {
+            out.push(i)
+            i = i + nn
+        } else {
+            i = i + 1
+        }
+    }
+    out
+}
+
+// Все вхождения `needle` как подстроки (zero-copy views) — Rust `matches`.
+// Пустой needle → пусто.
+export fn str @matches(needle str) -> ro []str {
+    mut out = Vec[str].new()
+    ro nn = needle.byte_len()
+    if nn == 0 { return out }
+    ro sn = @byte_len()
+    mut i = 0
+    while i + nn <= sn {
+        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } {
+            out.push(@[i..i + nn])
+            i = i + nn
+        } else {
+            i = i + 1
+        }
+    }
+    out
+}

@@ -306,3 +306,15 @@ export fn str @compare(other str) -> int {
     if an > bn { return 1 }
     0
 }
+
+// True если `idx` — на границе codepoint'а (Rust `is_char_boundary`): idx==0,
+// idx==byte_len, или байт по idx НЕ continuation (`(b & 0xC0) != 0x80`). Для
+// безопасной нарезки: `s[a..b]` паникует при рассечении, `is_char_boundary` —
+// предварительная проверка без паники. O(1).
+export fn str @is_char_boundary(idx int) -> bool {
+    ro n = @byte_len()
+    if idx == 0 || idx == n { return true }
+    if idx < 0 || idx > n { return false }
+    ro bytes = @as_bytes()
+    (bytes[idx] as int & 0xC0) != 0x80
+}

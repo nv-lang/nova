@@ -144,20 +144,32 @@ export fn str @concat(other str) -> str {
 // Оператор `+`: `s1 + s2 == s1.@plus(s2)` → @concat (D46).
 export fn str @plus(other str) -> str => @concat(other)
 
-// Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.
+// Pad строку слева до width CODEPOINT'ов символом fill. Если width <= длины — s.
+// Plan 152.2 Ф.3: ширина в codepoint'ах (`as_chars().count()`), не байтах — иначе
+// для multibyte `"é".pad_left(3,'·')` дало бы 1 паддинг вместо 2.
 export fn str @pad_left(width int, fill char) -> str {
-    ro pad = width - @byte_len()
+    ro pad = width - @as_chars().count()
     if pad <= 0 { return @ }
     ro fill_s = str.from(fill)
     StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).as_str()
 }
 
-// Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.
+// Pad строку справа до width CODEPOINT'ов символом fill. Если width <= длины — s.
 export fn str @pad_right(width int, fill char) -> str {
-    ro pad = width - @byte_len()
+    ro pad = width - @as_chars().count()
     if pad <= 0 { return @ }
     ro fill_s = str.from(fill)
     StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).as_str()
+}
+
+// Pad с обеих сторон до width CODEPOINT'ов (левый паддинг = floor(pad/2)). Plan 152.2 Ф.3.
+export fn str @pad_center(width int, fill char) -> str {
+    ro pad = width - @as_chars().count()
+    if pad <= 0 { return @ }
+    ro left = pad / 2
+    ro right = pad - left
+    ro fill_s = str.from(fill)
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, left).append(@).append_repeat(fill_s, right).as_str()
 }
 
 // Повторение строки n раз. n <= 0 → пустая строка.
@@ -181,4 +193,26 @@ export fn str @replace(from str, to str) -> str {
         i = i + 1
     }
     result
+}
+
+// Заменить первые `n` non-overlapping вхождений `from` на `to` (Rust `replacen`).
+// `n <= 0` / пустой `from` → s без изменений. Scan через @find на остатке (`rest`),
+// concat сегментов (как @replace, O(результата) на concat — bootstrap-acceptable).
+export fn str @replacen(from str, to str, n int) -> str {
+    ro fn_len = from.byte_len()
+    if n <= 0 || fn_len == 0 { return @ }
+    mut result = ""
+    mut rest = @
+    mut count = 0
+    while count < n {
+        match rest.find(from) {
+            Some(k) => {
+                result = result.concat(rest[0..k]).concat(to)
+                rest = rest[k + fn_len .. rest.byte_len()]
+                count = count + 1
+            },
+            None => break,
+        }
+    }
+    result.concat(rest)
 }
