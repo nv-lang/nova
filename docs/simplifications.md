@@ -35971,3 +35971,14 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   лишь при включённых контрактах) — двойным доказательством (pass без requires vs с requires; contract = разница).
   Это же закрыло латентную предсуществующую дыру: B.4 ассертил requires безусловно, что под `--contracts=off`
   могло бы элидировать requires-зависимый `v[i]`.
+
+- **Plan 152.1 Ф.2 + str-cleanups (2026-06-13)**: (Ф.2) `@find`/`@rfind` → **байт-offset**
+  (было codepoint) — композируются с `s[k..]` за O(1); для ASCII byte==cp (миграция
+  минимальна). Cleanups str-модуля: `u8`/`int == char` напрямую (Nova сравнивает по
+  ASCII-cp — убран verbose `as int == 'X' as int`); byte-сравнения через
+  **`RawMem.compare`** (memcmp) вместо byte-loop'ов (starts_with/ends_with/contains/find/
+  rfind/split, search.nv −58 строк); `@sub_view` (unsafe) → `@[a..b]` (`Index[Range,str]`);
+  `@push` возвращает `@` → `return out.push(...)`. Все cleanups golden (plan139 37/0,
+  plan91_fe2 10/0, plan152_0/1 PASS). Находки: D117 на `prefix.len` (cross-instance
+  size-accessor; D117 AMEND у Plan 153); codegen-gap raw-ptr-локала (`@ptr[i]` работает,
+  `ro p=@ptr; p[i]` — нет); str `@index(Range)` без контракта (нет элизии bounds — 152.1/2).
