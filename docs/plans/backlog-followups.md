@@ -218,20 +218,17 @@
 ## Follow-up: Plan 153.1 (Vec core API — отложенные из-за codegen-лимитов)
 - **`[M-153.1-cap-setter-overload]`** ✅ **RESOLVED** (через фикс
   `[M-138.2-generic-method-overload-mono]` ниже): same-name `@cap(n)` write-setter (overload
-  `@cap()` getter, D117 AMEND) теперь работает — `@cap_to` переименован обратно в `@cap(n)`.
-  Caveat: цепочка `v.cap(n).push(...)` ещё нет → `[M-138.2-overload-chain-return-infer]`.
-- **`[M-138.2-generic-method-overload-mono]`** ✅ **DISPATCH FIXED**: mono'd generic-type
-  instance-method вызов теперь различает overload'ы по арности+param-типам (call-site block 5b
-  emit_c.rs ~22922 + `__<paramtype>` suffix ~22982, reuse erased-base mangle 2858; body-side
-  через side-map `mono_name→FnDecl`). Box-arity repro + `@cap(n)` PASS; STRICT no-op для
-  1-overload методов. **Разблокирует** (не сделано — отдельные std-рефакторы): merge
-  `@splice`→`@insert`-overload, append/extend-консолидация (`[M-153.1-append-extend-consolidation]`).
-- **`[M-138.2-overload-chain-return-infer]`** (planned, P3, home **Plan 153.1 / followup**):
-  CALL-dispatch overload'ов починен, но codegen RETURN-TYPE inference для ЦЕПОЧЕЧНОГО receiver
-  (`v.cap(n).push(...)`) ещё first-wins → берёт getter-возврат (int), `.push` на int падает
-  (ловит 154.1 guard). Касается getter/setter пар с РАЗНЫМИ возвратами (cap getter int vs
-  setter @). Statement-form работает; реальный код `@cap` не чейнит. Fix: арность-disambig в
-  return-infer (`infer_mono_method_ret` empty-args wrapper + find-сайты).
+  `@cap()` getter, D117 AMEND) полностью работает — statement + fluent chain
+  (`v.cap(n).push(...)`). `@cap_to` переименован обратно в `@cap(n)`.
+- **`[M-138.2-generic-method-overload-mono]`** ✅ **FIXED** (dispatch + chain return-infer):
+  (1) DISPATCH — mono'd generic-type instance-method вызов различает overload'ы по
+  арности+param-типам (call-site block 5b emit_c.rs ~22922 + `__<paramtype>` suffix ~22982,
+  reuse erased-base mangle 2858; body-side side-map `mono_name→FnDecl`). (2) RETURN-TYPE
+  inference для chained overloaded `-> @` setter (Ф.3 fallback ~32041 + `infer_mono_method_ret_with_args`
+  ~29689 arity-disambig) — `v.cap(n).push(...)` инферит setter-возврат как mono-receiver, не
+  getter-int. Box-arity repro + `@cap(n)` statement+chain PASS; STRICT no-op для 1-overload.
+  **Разблокирует** (отдельные std-рефакторы): merge `@splice`→`@insert`-overload,
+  append/extend-консолидация (`[M-153.1-append-extend-consolidation]`).
 - **`[M-153.1-append-extend-consolidation]`** (planned, home **Plan 153.1 / D259**): план
   хотел один `append` (concrete Vec bulk + generic Iter overload), `extend` убрать.
   Заблокировано тем же overload-collapse + у generic-`append` (`for x in items {@push(x)}`)

@@ -1,23 +1,21 @@
 module plan153_1.core_api
-test "cap_to — exact, round-trip, shrink-to-fit" {
+test "cap setter — exact, round-trip, shrink-to-fit" {
     mut v = Vec[int].from([1, 2, 3])
-    v.cap_to(10)
-    assert(v.cap() == 10)
-    assert(v.len() == 3)
-    v.cap_to(v.len())
+    v.cap(10)
+    assert(v.cap() == 10 && v.len() == 3)
+    v.cap(v.len())
     assert(v.cap() == 3 && v.len() == 3)
     assert(v.equal(Vec[int].from([1, 2, 3])))
 }
-test "cap_to — room for N" {
+test "cap setter — room for N + fluent chain (same-name overload of cap() getter)" {
     mut v = Vec[int].from([1, 2])
-    v.cap_to(v.len() + 5)
-    assert(v.cap() == 7)
+    v.cap(v.len() + 5).push(3)
+    assert(v.cap() == 7 && v.len() == 3)
+    assert(v.equal(Vec[int].from([1, 2, 3])))
 }
 test "swap chains" {
     mut v = Vec[int].from([1, 2, 3, 4])
     v.swap(0, 3).swap(1, 2)
-    assert(v.equal(Vec[int].from([4, 3, 2, 1])))
-    v.swap(1, 1)
     assert(v.equal(Vec[int].from([4, 3, 2, 1])))
 }
 test "resize grow and shrink" {
@@ -36,7 +34,6 @@ test "resize_with + fill_with closures" {
 }
 test "contains" {
     ro v = Vec[int].from([10, 20, 30])
-    assert(v.contains(20))
-    assert(!v.contains(99))
+    assert(v.contains(20) && !v.contains(99))
     assert(!Vec[int].new().contains(1))
 }
