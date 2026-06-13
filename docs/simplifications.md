@@ -35954,6 +35954,28 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   `i<v.len()@guard` держится на доступе), т.к. Z3 моделит длину как фиксированную, а Nova переоценивает
   `0..v.len()` каждую итерацию. Гейт non-trivial backend ⇒ дефолтные (Trivial) сборки не платят ничего.
 
+- **Plan 153.0 — `Vec[T]` folder-module + `[]T≡Vec` консолидация (2026-06-13)**: `collections.vec_owned`
+  ретайрнут, `Vec[T]` переехал в **folder-module** `std/collections/vec/` (co-equal `core`/`access`/`mutate`/
+  `slice`/`iter`/`protocols` + `_module.nv`-носитель `#prelude`); legacy `vec.nv` свёрнут; ~55 import-сайтов
+  мигрированы `vec_owned`→`vec`; prelude re-export'ит `Vec`/`VecIter` из folder. **Ключевое решение (OPTION B):**
+  eager-комбинаторы (`map`/`filter`/`fold`/`any`/`all`) НЕ свёрнуты в prelude-global folder, а вынесены в
+  ОТДЕЛЬНЫЙ explicit-import `collections.vec_seq` — иначе их идентификаторы засоряют каждый юнит: метод-генерик
+  `[Acc]` шадовит `type Acc` (D145), а callback-параметр `f`/`op` коллизит с top-level `fn f`/`fn op`
+  (`[M-codegen-var-types-fn-scope]`; репро в корпусе: plan138_5 `type Acc`, plan61 `fn op`). Метод-резолв в
+  Nova ГЛОБАЛЕН по имени (тело — только при импорте), поэтому «import-error NEG» невозможен; изоляция
+  доказана исчезновением shadow/collision. **Корректностный фикс (user-flagged):** `Vec[T Compare] @compare`
+  переведён с байтового `RawMem.compare` (memcmp — корректен ТОЛЬКО для `Vec[u8]`; для `f64`/`int`-LE/record —
+  молча неверно) на **поэлементный** lexicographic через `@compare` элемента (как Rust `Vec<T:Ord>`), перенесён
+  в protocols.nv; `@equal`/`@compare` читают оба операнда сыро (`unsafe{@data[i]}`/`unsafe{other.data[i]}`,
+  index доказан) без лишнего `@index` bounds-check. Инлайн-форма `unsafe{@data[i].compare(other.data[i])}`
+  (предложенная автором) НЕ компилировалась из-за **PARSER-бага D38 turbofish** (`@buf[i].compare` мис-парсился
+  как `@buf::<i>.compare`, `i`=имя типа) — фикс в parser/mod.rs на ветке `plan-cgfix-erased-stub` (6f74c0ba),
+  после мёржа typed-locals workaround можно упростить. Variadic-ctor `Vec[T].of(...items)=>items` (эргономичнее
+  `from([литерал])` под D239) ОТЛОЖЕН — call-site variadic-collection не реализован для user-методов
+  (`[M-153-vec-of-variadic-codegen]`). Residual D239: явная аннотация `v Vec[int]`→`[]int`-param не коэрсится
+  (E7301, pre-existing, `[M-153-d239-explicit-vec-to-slice-param]`). Верификация: строгий base(main)-vs-post
+  diff по blast-radius (plan13* 191/5, plan90_1/140_2/128/99, plan91, basics/generics/plan62, plan61) — **0
+  регрессий**; plan153_0 3/3 (2 POS + 1 NEG). D239 CONFIRM в 02-types.md + docs/vec-internals.md.
 - **Plan 140.2 followup (2026-06-13)**: (1) **write-back элизия** `[M-140.2-elision-writeback]` — frame-check
   расширен с «read-only» на «len-инвариантный»: `v[i]=val` (mut @index) СОХРАНЯЕТ длину, поэтому write-back
   циклы `for i in 0..v.len() { v[i]=f(v[i]) }` теперь элидируют И запись, И чтение (length-changing методы

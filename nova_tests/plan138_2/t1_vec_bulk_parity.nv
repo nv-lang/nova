@@ -7,7 +7,7 @@
 
 module plan138_2.t1_vec_bulk_parity
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "copy_from — equal-length overwrite" {
     mut dst = Vec[int].from([0, 0, 0])

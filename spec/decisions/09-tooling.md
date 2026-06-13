@@ -2593,8 +2593,14 @@ loop-var с явной границей `v.len()`/`@len` (см. [Plan 140.2](../
 - bounds-check в обоих путях **элидируется** на доказанных index-сайтах
   (per-site proven-множество от верификатора), иначе always-on.
 
-Прямой вызов `v.index(i)` (редкий) эмитит контракт-enforcement метода
-(`requires failed: 0 <= i && i < @len`) — формат D24/Plan 140.1.
+Прямой вызов `v.index(i)` (редкий) попадает в mono'd-тело `@index`. **NB
+(Plan 140 gap):** contract-enforcement `requires` пока **НЕ** эмитится для
+generic-type mono'd методов, поэтому тело `@index`/`mut @index` сохраняет
+явный runtime-guard `if i<0 || i>=@len { panic("Vec: index out of bounds") }`
+(он и ловит OOB прямого вызова — message «Vec: index out of bounds», не
+contract-violation). Когда generic-mono enforcement починят, guard станет
+избыточным (его уберут — `requires` будет enforce'иться). Inline `v[i]` через
+это тело не диспатчится и безопасен своей (элидируемой) проверкой.
 
 ### Условие доказуемости элизии (verifier) + soundness
 

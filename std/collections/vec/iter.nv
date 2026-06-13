@@ -1,0 +1,42 @@
+// std.collections.vec (iter) — `VecIter[T]` index-cursor iterator.
+//
+// `@iter()` powers `for x in v` (Iter[T] protocol, D58) and is the source for
+// the eager combinators in `functional.nv`. Plan 153.2 builds the lazy adapter
+// family (map/filter/… → collect) on top of this `Next`/`Iter` foundation.
+#prelude(core, runtime, collections, protocols)
+module collections.vec
+
+// ─── Iterable[T] ─────────────────────────────────────────────────────────
+
+/// Index-cursor iterator over a `Vec[T]`.
+///
+/// Holds a copy of the buffer pointer (`data`) and the element count at the
+/// moment `iter()` was called; the GC sees the data pointer through this
+/// record and keeps the buffer alive. Concurrent mutation of the originating
+/// `Vec` during iteration is *not* checked — the caller is responsible for
+/// not pushing/removing while iterating.
+export type VecIter[T] {
+    priv data *mut T
+    priv mut idx int
+    priv len int
+}
+
+/// Return an iterator that yields each element in insertion order.
+///
+/// # Examples
+///
+/// ```nova
+/// let v = Vec[int].from([10, 20, 30])
+/// for x in v { println(x) }  // 10, 20, 30
+/// ```
+export fn Vec[T] @iter() -> VecIter[T] =>
+    { @data, idx: 0, @len }
+
+/// Advance the iterator. Returns `Some(T)` while elements remain, `None`
+/// once the vector is exhausted (subsequent calls keep returning `None`).
+export fn VecIter[T] mut @next() -> Option[T] {
+    if @idx >= @len { return None }
+    ro v = unsafe { @data[@idx] }
+    @idx = @idx + 1
+    Some(v)
+}

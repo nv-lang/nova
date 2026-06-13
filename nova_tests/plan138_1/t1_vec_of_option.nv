@@ -4,7 +4,7 @@
 
 module plan138_1.t1_vec_of_option
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "[]Option[int] literal stores Some/None; v[i] returns Option[int]" {
     mut v []Option[int] = [Some(1), None, Some(3)]

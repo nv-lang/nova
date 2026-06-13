@@ -3,7 +3,7 @@
 // Under the universal flip a Vec-free unit storing COMPOSITE elements
 // (`[]Option[int]`, `[]Point`, `[][]int`) gets TYPED storage in the
 // `Nova_Vec____<elem>*` buffer — NOT int64-slot erasure. Field/element reads
-// recover the real typed value. No `import std.collections.vec_owned`.
+// recover the real typed value. No `import std.collections.vec`.
 
 module plan138_2.t17_novec_typed_storage_pos
 

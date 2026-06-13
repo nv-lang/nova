@@ -8,7 +8,7 @@
 
 module plan90_1.append_copy_source_intact
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "append copies — source left fully intact" {
     mut dst = Vec[int].from([1, 2, 3])

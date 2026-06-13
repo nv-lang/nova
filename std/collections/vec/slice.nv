@@ -1,0 +1,50 @@
+// std.collections.vec (slice) — zero-copy sub-range views, `Index[Range]`.
+//
+// `v[a..b]` returns a view of the SAME type `[]T` ≡ `Vec[T]` (Plan 96
+// D-single-type — NOT a separate `Slice` type) sharing the parent buffer
+// (interior pointer at `data + start`, `cap == len`). The GC keeps the parent
+// buffer alive while the view is reachable (`GC_all_interior_pointers`, Plan
+// 138 Ф.2). A subsequent reallocating mutation on the view (`push` at
+// `cap == len`) detaches it into a fresh buffer, so it never mutates the parent
+// (Go-model detach, GC-safe).
+//
+// `as_slice()` (a copying view whose name lied) was REMOVED in Plan 138.1; an
+// owning copy is `clone()`. Plan 153.4 adds split_at/chunks/windows on this
+// same view model.
+#prelude(core, runtime, collections, protocols)
+module collections.vec
+
+import std.collections.range.{Range}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Range views (zero-copy slices) — `Index[Range]`
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Zero-copy sub-range view — the slice `[r.start, r.end)` over the same
+/// backing buffer. Powers `v[a..b]` once range-slice dispatch routes here.
+///
+/// Panics on out-of-bounds (`start < 0`, `end < start`, or `end > len`).
+///
+/// NOTE (wiring deferred): `v[a..b]` is currently intercepted by codegen
+/// range-slice magic (emit_c.rs `ExprKind::Index` + `Range`) which builds the
+/// identical view struct inline and never dispatches to this method. The method
+/// is present (and overloads with `@index(i int)`) so the `Index[Range,
+/// Vec[T]]` contract is satisfied as a real Nova body; routing `v[range]`
+/// through it replaces the codegen magic in a later phase.
+export fn Vec[T] @index(r Range) -> Self {
+    if r.start < 0 || r.end < r.start || r.end > @len {
+        panic("Vec: slice out of bounds")
+    }
+    ro n = r.end - r.start
+    Self { data: unsafe { @data + r.start }, len: n, cap: n }
+}
+
+/// Safe zero-copy sub-range view — `Some(view)` when `[r.start, r.end)` is in
+/// bounds, `None` otherwise. The non-panicking counterpart of `@index(Range)`.
+export fn Vec[T] @get(r Range) -> Option[Self] {
+    if r.start < 0 || r.end < r.start || r.end > @len {
+        return None
+    }
+    ro n = r.end - r.start
+    Some(Self { data: unsafe { @data + r.start }, len: n, cap: n })
+}

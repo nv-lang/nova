@@ -8,7 +8,7 @@
 
 module plan140_2.followup_crossfn_contractsoff_neg
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 fn at_unchecked(v Vec[int], i int) -> int
     requires 0 <= i && i < v.len()
