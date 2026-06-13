@@ -12,6 +12,10 @@
 > D58/D241/D242 (`Next`/`Iter`), Plan 137 (`Compare`/`Equal`/`Hash`/`Clone`).
 > **Coordinate:** **Plan 140.2** (Vec `@index` bounds-as-contract) — НЕ дублировать,
 > ссылаться. **Plan 152** (str — байтовая линза = `ro []u8` = `Vec[u8]`-view).
+> **Предполагает примитивы:** скалярные `int.min(b)`/`int.max(b)` (метод-форма
+> `a.max(b)`, как `a.sin()`) — **сейчас отсутствуют** (`[M-153-scalar-min-max]`);
+> нужны для shrink-to-min-идиомы и `@min`/`@max`-терминаторов итератора (153.2).
+> Если не добавлены к старту — добавить как мелкий number-примитив (Ф.0).
 > **Предложено пользователем:** «привести Vec в порядок; `[]T` = алиас на `Vec[T]`».
 
 ---
@@ -180,7 +184,8 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
     zero-slack); `n == 0` при `len == 0` = free buffer); **`n < len` → паника**
     (ёмкость физически не меньше числа элементов; молчаливый truncate/clamp — footgun,
     ломает round-trip). **Покрывает (отдельные методы не нужны):** shrink-to-fit =
-    `cap(len())`, shrink-to-min = `cap(max(len(), min))`, room-for-N = `cap(len()+N)`.
+    `cap(len())`, shrink-to-min = `cap(@len().max(min))` (метод-форма `a.max(b)`, как
+    `a.sin()`), room-for-N = `cap(len()+N)`.
     Держит round-trip `v.cap(n); v.cap()==n`. (pow2-округление — только неявный
     авто-рост и
     `@reserve(add)`, helper `_round_up_pow2`: bit-twiddle `v--;v|=v>>1;…;v++` или
