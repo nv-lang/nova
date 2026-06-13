@@ -1,0 +1,45 @@
+// Plan 138.2 regression ([M-138.2-flip-erased-base-body-mono] family):
+// a generic type-method whose body calls a method on a VARIABLE-INDEXED raw
+// pointer-field deref kept INLINE — `@buf[i].compare(...)` — used to be
+// MIS-PARSED as a turbofish `@buf::<i>.compare(...)` (the single lowercase
+// type-arg `i` made `[i]` look like a turbofish type-arg list, and the
+// post-`]` `.compare(` continuation matched the `Type[T].method(...)` static-
+// call form). The receiver then LOST its index (`@buf` instead of `@buf[i]`)
+// AND mis-dispatched to `Nova_str_method_compare` → CC-FAIL
+// `passing 'nova_int *' to parameter of incompatible type 'nova_str'`.
+//
+// Fix: the `.IDENT(` turbofish continuation now requires a TYPE-LIKE base
+// (bare `Ident` / `Path`, e.g. `Deque[int].new()`); a value base like `@buf`
+// makes `[i]` an INDEX. Literal index `[0]` already worked (a numeric literal
+// is not a parseable type, so it never tripped the turbofish path).
+module plan138_2.t17_var_index_inline_method_pos
+
+import std.runtime.raw_mem.{RawMem}
+
+type Bag[T] priv { mut buf *mut T, mut n int }
+
+fn Bag[T].mk(a T, b T) -> Self {
+    ro p = unsafe { RawMem.alloc(2 * size_of[T]()) as *mut T }
+    unsafe { p[0] = a; p[1] = b }
+    Self { buf: p, n: 2 }
+}
+
+fn Bag[T Compare] @cmp(other Bag[T]) -> int {
+    for i in 0..@n {
+        ro c = unsafe { @buf[i].compare(other.buf[i]) }
+        if c != 0 { return c }
+    }
+    0
+}
+
+test "var-index inline method call on generic raw-ptr field" {
+    ro a = Bag[int].mk(3, 5)
+    ro b = Bag[int].mk(3, 9)
+    assert(a.cmp(b) == -1)
+}
+
+test "var-index inline method, equal prefix" {
+    ro a = Bag[int].mk(7, 7)
+    ro b = Bag[int].mk(7, 7)
+    assert(a.cmp(b) == 0)
+}
