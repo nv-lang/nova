@@ -247,11 +247,14 @@ fn Vec[T] mut @realloc_to(new_cap int) -> () {
 /// Ensure room for at least `additional` more elements beyond the current
 /// length. Grows the buffer with a ×2 strategy (initial capacity 8) when the
 /// current capacity does not suffice. No-op when `additional <= 0` or capacity
-/// already covers `len + additional`. This is the sole public growth method.
-export fn Vec[T] mut @reserve(additional int) -> () {
+/// already covers `len + additional`. The sole public growth method.
+///
+/// Returns `@` (self) for fluent chaining — `v.reserve(10).extend(xs).sort()`
+/// (Plan 153 fluent convention, §design L168/L285; precedent `StringBuilder.@append`).
+export fn Vec[T] mut @reserve(additional int) -> @ {
     ro needed = @len + additional
     if needed <= @cap {
-        return
+        return @
     }
     mut new_cap = if @cap == 0 { 8 } else { @cap * 2 }
     // KEEP as while: non-unit-step (×2 doubling), not a `0..@len` index loop.
@@ -259,6 +262,7 @@ export fn Vec[T] mut @reserve(additional int) -> () {
         new_cap = new_cap * 2
     }
     @realloc_to(new_cap)
+    @
 }
 
 // ──────────────────────────────────────────────────────────────────────────

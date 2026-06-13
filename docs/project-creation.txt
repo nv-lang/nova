@@ -37567,3 +37567,15 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   [M-139.1-operator-lowered-methods] ЗАКРЫТ. Spec D254 D-R4 DONE. Фикстура plan152_5/
   bench_operators (perf-smoke). Замечено (pre-D-R4 plan-152 дельта vs main, НЕ D-R4): plan96
   18/5 (vs main 19/4), plan91_7 4/1 (vs main 5/0) — одинаково на ae465fce и D-R4, из 152.1/152.2.
+
+[2026-06-13] Фикс pre-D-R4 plan-152 дельты vs main (диагностика workflow'ом, выбор автора):
+  (1) plan91_7/array_mut_chain_test (CC-FAIL): Vec.@reserve в plan-152 потерял fluent-возврат
+  (`-> @` → `-> ()`), что ПРОТИВОРЕЧИТ дизайну Plan 153 (153-vec-production-model.md L168/L285:
+  `v.reserve(10).extend(xs).sort()`, «как StringBuilder.@append»). Восстановлен `-> @` (return @
+  на обоих путях) — plan91_7 5/0 (был 4/1, совпал с main). Vec-регрессия чистая (callers
+  v.reserve игнорируют возврат). (2) plan96/neg_str_slice_oob (NEG-WRONG-PANIC): негатив-тест
+  ищет в панике `array: slice`, но Plan 152.1 (D249) дал str собственный slice-путь с паникой
+  `str: slice [a..b] out of bounds for byte-length N` — директива обновлена `array:`→`str:`.
+  plan96 19/4 (был 18/5, совпал с main; остаток slice_array_of_ranges `Nova_Range_p` —
+  pre-existing на main). Оба — устаревшие фикстуры/регрессия, не обновлённые при ранних
+  152.1/152.2/153.x изменениях; программы вели себя корректно.
