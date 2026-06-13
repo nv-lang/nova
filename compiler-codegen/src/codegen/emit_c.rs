@@ -473,6 +473,10 @@ pub struct CEmitter {
     /// Codegen skip emit для runtime check'ов помеченных как proven —
     /// true zero-cost даже в debug.
     proven_contracts: std::collections::HashSet<(String, usize)>,
+    /// Plan 140.2 Part B (D257 / B.4): proven READ-сайты `v[idx]` (по span.start
+    /// Index-выражения). Codegen элидит inline bounds-check на этих сайтах
+    /// (zero-cost доказанный доступ; недоказанные проверяются always-on).
+    proven_index_sites: std::collections::HashSet<usize>,
     /// Plan 140 Ф.2 (D24 amend): build-level contract opt-out
     /// (`nova build --contracts=off` / `nova-codegen ... --contracts=off`).
     /// Когда `true` — codegen НЕ эмитит НИ ОДНУ контракт-проверку
@@ -1058,6 +1062,7 @@ impl CEmitter {
             contracts_post_label: None,
             ghost_vars: std::collections::HashSet::new(),
             proven_contracts: std::collections::HashSet::new(),
+            proven_index_sites: std::collections::HashSet::new(),
             contracts_off: false,
             contracts_unchecked_fn: false,
             record_invariants: HashMap::new(),
@@ -1409,6 +1414,15 @@ impl CEmitter {
         self.proven_contracts.clear();
         for (name, span) in proven {
             self.proven_contracts.insert((name.clone(), span.start));
+        }
+    }
+
+    /// Plan 140.2 Part B (D257 / B.4): proven READ-сайты `v[idx]` для элизии
+    /// inline bounds-check (по span.start Index-выражения).
+    pub fn set_proven_index_sites(&mut self, sites: &[crate::diag::Span]) {
+        self.proven_index_sites.clear();
+        for span in sites {
+            self.proven_index_sites.insert(span.start);
         }
     }
 
@@ -18941,11 +18955,21 @@ _cp++; \
                     // `*(...&...)` form is a valid lvalue in both Clang and GCC.
                     let tmp_v = self.fresh_tmp_named("vec");
                     let tmp_i = self.fresh_tmp_named("vi");
+                    // Plan 140.2 Part B (D257 / B.4): элидировать bounds-check на
+                    // index-сайтах, доказанных in-range верификатором (read-only
+                    // цикл `for i in 0..v.len()`). Безопасный доступ → zero-cost.
+                    // Недоказанные — always-on проверка (debug И release).
+                    let bounds_chk = if self.proven_index_sites.contains(&expr.span.start) {
+                        String::new()
+                    } else {
+                        format!(
+                            "if (__builtin_expect({i} < 0 || {i} >= ({o})->len, 0)) nv_panic_index_oob({i}, ({o})->len); ",
+                            i = tmp_i, o = o,
+                        )
+                    };
                     return Ok(format!(
-                        "(*({{ {ty}* {v} = ({o})->data; nova_int {i} = ({idx}); \
-if (__builtin_expect({i} < 0 || {i} >= ({o})->len, 0)) nv_panic_index_oob({i}, ({o})->len); \
-&{v}[{i}]; }}))",
-                        ty = elem_ty, v = tmp_v, i = tmp_i, o = o, idx = i
+                        "(*({{ {ty}* {v} = ({o})->data; nova_int {i} = ({idx}); {chk}&{v}[{i}]; }}))",
+                        ty = elem_ty, v = tmp_v, i = tmp_i, o = o, idx = i, chk = bounds_chk
                     ));
                 }
                 // Plan 138 Ф.3 (D238): `str[i]` → `char`, panic on OOB or invalid UTF-8.

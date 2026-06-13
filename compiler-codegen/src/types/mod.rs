@@ -67,6 +67,10 @@ pub struct ModuleEnv {
     /// Codegen в release-сборке стирает соответствующие runtime-checks
     /// (zero-cost guarantee). В debug — checks всегда emit'ятся.
     pub proven_contracts: Vec<(String, Span)>,
+    /// Plan 140.2 Part B (D257 / B.4): spans Index-выражений `v[idx]` (READ),
+    /// чьи bounds доказаны in-range (read-only цикл). Codegen элидит inline
+    /// bounds-check на этих сайтах.
+    pub proven_index_sites: Vec<Span>,
 }
 
 /// Минимальная проверка модуля. Регистрирует имена и базовую структуру —
@@ -710,6 +714,7 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         // невалидном AST может крашнуть).
         let report = crate::verify::verify_module(module);
         env.proven_contracts = report.proven;
+        env.proven_index_sites = report.proven_index_sites;
         for e in report.errors { errors.push(e); }
         // warnings пока silent — добавим warning infrastructure
         // в Plan 36 production hardening.

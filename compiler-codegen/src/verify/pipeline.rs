@@ -172,6 +172,50 @@ impl VerificationPipeline {
         }
     }
 
+    /// Plan 140.2 Part B (D257 / B.4): доказать bounds READ-сайтов `v[idx]`
+    /// внутри `fd` для элизии — **sound-MVP: только read-only циклы**.
+    ///
+    /// Возвращает spans Index-выражений (READ-позиция), для которых
+    /// `0 <= idx && idx < v.len()` доказано под loop-bound `for i in lo..v.len()`
+    /// И `v` используется в теле цикла ТОЛЬКО на чтение (`v[i]`-read + аксессоры
+    /// `v.len()/cap()/…`). Read-only ⇒ длина `v` инвариантна ⇒ элизия sound
+    /// (frame-check ловит запись `v[i]=…`, мутирующие методы, `&v`, передачу
+    /// `v` в вызов и любое bare-использование — всё это сделало бы длину
+    /// потенциально изменчивой/алиасимой). Z3 моделирует `_field_len_int(v)`
+    /// как фиксированное, поэтому frame-инвариантность ОБЯЗАТЕЛЬНА для soundness.
+    /// Trivial backend ничего не докажет → пустой результат (нулевая цена;
+    /// вызывается только при non-trivial backend из `verify_module`).
+    pub fn prove_vec_index_sites(&self, module: &Module, fd: &FnDecl) -> Vec<Span> {
+        let body = match &fd.body { FnBody::Block(b) => b, _ => return Vec::new() };
+        // Perf: дешёвый pre-scan — без `for`-цикла элидировать нечего. Пропускаем
+        // дорогой setup (backend + collect_pure_fns O(module)) для loop-less fn.
+        if !idx_block_has_for(body) { return Vec::new(); }
+        let mut backend = self.create_backend();
+        let pure_views = collect_pure_views(module);
+        let empty_pure: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let pure_fns = collect_pure_fns(module, &empty_pure);
+        let trusted_fns = collect_trusted_fns(module);
+        let var_sorts: std::collections::HashMap<String, SortRef> = fd.params.iter()
+            .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
+        let ctx = super::encode::EncodeCtx {
+            pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts,
+        };
+        for p in &fd.params {
+            backend.declare_var(&p.name, type_to_sort(&p.ty));
+        }
+        // Контрактные `requires` метода — assumptions (напр. `requires v.len() > 0`).
+        for c in &fd.contracts {
+            if matches!(c.kind, ContractKind::Requires) {
+                if let Ok(t) = super::encode::encode_expr_with_ctx(&c.expr, &ctx) {
+                    backend.assert(Assertion { formula: t, label: None });
+                }
+            }
+        }
+        let mut proven: Vec<Span> = Vec::new();
+        idx_walk_block(body, &ctx, backend.as_mut(), &[], &mut proven);
+        proven
+    }
+
     /// Verify одну функцию: возвращает list of (Contract span, VerifyResult).
     /// Backend выбирается через `BackendChoice` (env-var / CLI flag).
     ///
@@ -3969,6 +4013,21 @@ let t0 = std::time::Instant::now();
             .errors
             .push(Diagnostic::new(super::crosscheck::format_one(d), span));
     }
+
+    // Plan 140.2 Part B (D257 / B.4): доказать bounds READ-сайтов `v[idx]` для
+    // элизии inline bounds-check. Только при non-trivial backend — Trivial не
+    // докажет `i < v.len()`, поэтому при дефолтной сборке pass пропускается
+    // (нулевая цена; элизии без z3 всё равно нет, см. D24). Запускается на ВСЕХ
+    // функциях (не только контрактных) — горячие циклы редко `#verify`.
+    if !matches!(pipeline.backend, BackendChoice::Trivial) {
+        for item in &module.items {
+            if let Item::Fn(fd) = item {
+                let sites = pipeline.prove_vec_index_sites(module, fd);
+                report.proven_index_sites.extend(sites);
+            }
+        }
+    }
+
     report
 }
 
@@ -4275,6 +4334,280 @@ pub struct ModuleVerifyReport {
     pub errors: Vec<Diagnostic>,
     /// Warnings — counterexamples для контрактов без `#verify`.
     pub warnings: Vec<Diagnostic>,
+    /// Plan 140.2 Part B (D257 / B.4): spans Index-выражений `v[idx]` (READ),
+    /// чьи bounds доказаны in-range под loop-инвариантом read-only цикла.
+    /// Codegen элидит inline bounds-check на этих сайтах (по span.start).
+    pub proven_index_sites: Vec<Span>,
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 140.2 Part B (D257 / B.4): per-index-site bounds proving (sound-MVP).
+//
+// Walk fd body, отслеживая loop-bound assumptions (`for i in lo..hi` →
+// `lo <= i && i < hi`). Для `v[idx]` READ-сайта, где `v` read-only в цикле
+// (frame-инвариант длины) и `0 <= idx && idx < v.len()` доказан Z3 — записать
+// span для элизии. Frame-check (`*_reads_only`) консервативен: любое
+// использование `v` кроме `v[i]`-read и аксессоров `v.len()/…` → НЕ read-only.
+// ──────────────────────────────────────────────────────────────────────────
+
+fn idx_is_ident(e: &Expr, name: &str) -> bool {
+    matches!(&e.kind, ExprKind::Ident(n) if n == name)
+}
+
+/// Дешёвый pre-scan: содержит ли блок `for`-цикл (на любой глубине common
+/// control-flow)? Неполнота (for внутри необработанного конструкта) → пропуск
+/// pass = no elision = safe, не unsound. Избегает O(module) setup для loop-less fn.
+fn idx_block_has_for(block: &Block) -> bool {
+    block.stmts.iter().any(idx_stmt_has_for)
+        || block.trailing.as_deref().map_or(false, idx_expr_has_for)
+}
+
+fn idx_stmt_has_for(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Expr(e) => idx_expr_has_for(e),
+        Stmt::Let(decl) => idx_expr_has_for(&decl.value),
+        Stmt::Assign { target, value, .. } => idx_expr_has_for(target) || idx_expr_has_for(value),
+        Stmt::Return { value: Some(e), .. } => idx_expr_has_for(e),
+        _ => false,
+    }
+}
+
+fn idx_expr_has_for(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::For { .. } => true,
+        ExprKind::Block(b) => idx_block_has_for(b),
+        ExprKind::If { cond, then, else_ } => {
+            idx_expr_has_for(cond) || idx_block_has_for(then)
+                || match else_ {
+                    Some(ElseBranch::Block(b)) => idx_block_has_for(b),
+                    Some(ElseBranch::If(e2)) => idx_expr_has_for(e2),
+                    None => false,
+                }
+        }
+        ExprKind::While { cond, body, .. } => idx_expr_has_for(cond) || idx_block_has_for(body),
+        ExprKind::Loop { body, .. } => idx_block_has_for(body),
+        ExprKind::Binary { left, right, .. } => idx_expr_has_for(left) || idx_expr_has_for(right),
+        ExprKind::Unary { operand, .. } => idx_expr_has_for(operand),
+        ExprKind::Call { func, args, .. } => idx_expr_has_for(func) || args.iter().any(|a| idx_expr_has_for(a.expr())),
+        ExprKind::Member { obj, .. } => idx_expr_has_for(obj),
+        ExprKind::As(inner, _) => idx_expr_has_for(inner),
+        ExprKind::Index { obj, index } => idx_expr_has_for(obj) || idx_expr_has_for(index),
+        _ => false,
+    }
+}
+
+/// `hi` цикла даёт кандидата-vec, если это `v.len()` / `v.len`.
+fn idx_recv_of_len(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Call { func, args, .. } if args.is_empty() => {
+            if let ExprKind::Member { obj, name } = &func.kind {
+                if name == "len" {
+                    if let ExprKind::Ident(v) = &obj.kind { return Some(v.clone()); }
+                }
+            }
+            None
+        }
+        ExprKind::Member { obj, name } if name == "len" => {
+            if let ExprKind::Ident(v) = &obj.kind { Some(v.clone()) } else { None }
+        }
+        _ => None,
+    }
+}
+
+/// Exclusive range `lo..hi` (НЕ `..=`); обе границы заданы.
+fn idx_excl_range(e: &Expr) -> Option<(&Expr, &Expr)> {
+    if let ExprKind::Range { start: Some(s), end: Some(en), inclusive: false } = &e.kind {
+        Some((s, en))
+    } else { None }
+}
+
+/// Frame-check: pattern может связать (shadow) имя `v`?
+fn idx_pattern_binds(pat: &Pattern, v: &str) -> bool {
+    match pat {
+        Pattern::Ident { name, .. } => name == v,
+        // Консервативно: любой составной паттерн может связать/затенить v.
+        _ => true,
+    }
+}
+
+/// Frame-check: `v` используется в блоке ТОЛЬКО на чтение (длина инвариантна)?
+fn idx_block_reads_only(block: &Block, v: &str) -> bool {
+    block.stmts.iter().all(|s| idx_stmt_reads_only(s, v))
+        && block.trailing.as_ref().map_or(true, |t| idx_expr_reads_only(t, v))
+}
+
+fn idx_stmt_reads_only(stmt: &Stmt, v: &str) -> bool {
+    match stmt {
+        Stmt::Expr(e) => idx_expr_reads_only(e, v),
+        Stmt::Let(decl) => {
+            if idx_pattern_binds(&decl.pattern, v) { return false; } // shadow v → бросаем
+            idx_expr_reads_only(&decl.value, v)
+        }
+        Stmt::Assign { target, value, .. } => {
+            match &target.kind {
+                // `v[..] = ..` — запись (нужен mut v); read-only MVP это исключает.
+                ExprKind::Index { obj, index } => {
+                    if idx_is_ident(obj, v) { return false; }
+                    idx_expr_reads_only(obj, v) && idx_expr_reads_only(index, v) && idx_expr_reads_only(value, v)
+                }
+                ExprKind::Ident(n) if n == v => false, // `v = ..` переприсваивание
+                _ => idx_expr_reads_only(target, v) && idx_expr_reads_only(value, v),
+            }
+        }
+        Stmt::Break(_) | Stmt::Continue(_) => true,
+        // `return` (может «вынести»/алиасить v) и прочие stmt — консервативно.
+        _ => false,
+    }
+}
+
+fn idx_expr_reads_only(e: &Expr, v: &str) -> bool {
+    match &e.kind {
+        ExprKind::Ident(n) => n != v, // bare-использование v → НЕ read-only
+        ExprKind::Index { obj, index } => {
+            if idx_is_ident(obj, v) {
+                idx_expr_reads_only(index, v) // v[i] read — obj=v безопасен
+            } else {
+                idx_expr_reads_only(obj, v) && idx_expr_reads_only(index, v)
+            }
+        }
+        ExprKind::Call { func, args, .. } => {
+            if let ExprKind::Member { obj, name } = &func.kind {
+                if idx_is_ident(obj, v) {
+                    if matches!(name.as_str(), "len" | "cap" | "byte_len" | "is_empty") {
+                        return args.iter().all(|a| idx_expr_reads_only(a.expr(), v));
+                    }
+                    return false; // v.<метод>() — потенциальная мутация
+                }
+            }
+            idx_expr_reads_only(func, v) && args.iter().all(|a| idx_expr_reads_only(a.expr(), v))
+        }
+        ExprKind::Member { obj, .. } => {
+            if idx_is_ident(obj, v) { true } else { idx_expr_reads_only(obj, v) } // чтение поля v безопасно
+        }
+        ExprKind::Binary { left, right, .. } => idx_expr_reads_only(left, v) && idx_expr_reads_only(right, v),
+        ExprKind::Unary { operand, .. } => idx_expr_reads_only(operand, v),
+        ExprKind::As(inner, _) => idx_expr_reads_only(inner, v),
+        ExprKind::If { cond, then, else_ } => {
+            idx_expr_reads_only(cond, v) && idx_block_reads_only(then, v)
+                && match else_ {
+                    Some(ElseBranch::Block(b)) => idx_block_reads_only(b, v),
+                    Some(ElseBranch::If(e)) => idx_expr_reads_only(e, v),
+                    None => true,
+                }
+        }
+        ExprKind::For { pattern, iter, body, .. } => {
+            if idx_pattern_binds(pattern, v) { return false; }
+            idx_expr_reads_only(iter, v) && idx_block_reads_only(body, v)
+        }
+        ExprKind::While { cond, body, .. } => idx_expr_reads_only(cond, v) && idx_block_reads_only(body, v),
+        ExprKind::Block(b) => idx_block_reads_only(b, v),
+        ExprKind::IntLit(_) | ExprKind::BoolLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+        | ExprKind::CharLit(_) | ExprKind::UnitLit | ExprKind::SelfAccess | ExprKind::Path(_)
+        | ExprKind::NullPtrLit => true,
+        // Match, closures, interp, spawn, with, … — консервативно НЕ read-only.
+        _ => false,
+    }
+}
+
+/// Доказать `0 <= idx && idx < v.len()` под текущими assumptions backend'а.
+fn idx_try_prove(idx: &Expr, recv: &str, ctx: &super::encode::EncodeCtx, backend: &mut dyn SmtBackend) -> bool {
+    let idx_t = match super::encode::encode_expr_with_ctx(idx, ctx) { Ok(t) => t, Err(_) => return false };
+    // `_field_len_int(v)` — тот же терм, что `v.len()` в loop-bound (конгруэнтность).
+    let len_t = SmtTerm::App("_field_len_int".into(), vec![SmtTerm::Var(recv.to_string())]);
+    let ge0 = SmtTerm::App("<=".into(), vec![SmtTerm::IntLit(0), idx_t.clone()]);
+    let lt = SmtTerm::App("<".into(), vec![idx_t, len_t]);
+    let goal = SmtTerm::and(vec![ge0, lt]);
+    matches!(try_prove(backend, goal), SatResult::Unsat(_))
+}
+
+fn idx_walk_block(block: &Block, ctx: &super::encode::EncodeCtx, backend: &mut dyn SmtBackend, frame_safe: &[String], proven: &mut Vec<Span>) {
+    for stmt in &block.stmts {
+        idx_walk_stmt(stmt, ctx, backend, frame_safe, proven);
+    }
+    if let Some(t) = &block.trailing {
+        idx_walk_expr(t, ctx, backend, frame_safe, proven);
+    }
+}
+
+fn idx_walk_stmt(stmt: &Stmt, ctx: &super::encode::EncodeCtx, backend: &mut dyn SmtBackend, frame_safe: &[String], proven: &mut Vec<Span>) {
+    match stmt {
+        Stmt::Expr(e) => idx_walk_expr(e, ctx, backend, frame_safe, proven),
+        Stmt::Let(decl) => idx_walk_expr(&decl.value, ctx, backend, frame_safe, proven),
+        Stmt::Assign { target, value, .. } => {
+            // target = WRITE (`v[i]=..` не элидируем в read-only MVP); но индекс — read.
+            if let ExprKind::Index { index, .. } = &target.kind {
+                idx_walk_expr(index, ctx, backend, frame_safe, proven);
+            } else {
+                idx_walk_expr(target, ctx, backend, frame_safe, proven);
+            }
+            idx_walk_expr(value, ctx, backend, frame_safe, proven);
+        }
+        Stmt::Return { value: Some(e), .. } => idx_walk_expr(e, ctx, backend, frame_safe, proven),
+        _ => {}
+    }
+}
+
+fn idx_walk_expr(e: &Expr, ctx: &super::encode::EncodeCtx, backend: &mut dyn SmtBackend, frame_safe: &[String], proven: &mut Vec<Span>) {
+    match &e.kind {
+        ExprKind::For { pattern, iter, body, .. } => {
+            if let (Some((lo, hi)), Pattern::Ident { name: var, is_mut: false, .. }) = (idx_excl_range(iter), pattern) {
+                backend.push();
+                let lo_t = super::encode::encode_expr_with_ctx(lo, ctx).ok();
+                let hi_t = super::encode::encode_expr_with_ctx(hi, ctx).ok();
+                if let (Some(lo_t), Some(hi_t)) = (lo_t, hi_t) {
+                    backend.assert(Assertion { formula: SmtTerm::App("<=".into(), vec![lo_t, SmtTerm::Var(var.clone())]), label: None });
+                    backend.assert(Assertion { formula: SmtTerm::App("<".into(), vec![SmtTerm::Var(var.clone()), hi_t]), label: None });
+                }
+                // Кандидат-vec из `hi = v.len()`, frame-safe если read-only в теле.
+                let mut new_fs: Vec<String> = frame_safe.to_vec();
+                if let Some(recv) = idx_recv_of_len(hi) {
+                    if idx_block_reads_only(body, &recv) && !new_fs.contains(&recv) {
+                        new_fs.push(recv);
+                    }
+                }
+                idx_walk_block(body, ctx, backend, &new_fs, proven);
+                backend.pop();
+            } else {
+                idx_walk_expr(iter, ctx, backend, frame_safe, proven);
+                idx_walk_block(body, ctx, backend, frame_safe, proven);
+            }
+        }
+        ExprKind::Index { obj, index } => {
+            if let ExprKind::Ident(recv) = &obj.kind {
+                if frame_safe.iter().any(|s| s == recv) && idx_try_prove(index, recv, ctx, backend) {
+                    proven.push(e.span);
+                }
+            }
+            idx_walk_expr(obj, ctx, backend, frame_safe, proven);
+            idx_walk_expr(index, ctx, backend, frame_safe, proven);
+        }
+        ExprKind::Binary { left, right, .. } => {
+            idx_walk_expr(left, ctx, backend, frame_safe, proven);
+            idx_walk_expr(right, ctx, backend, frame_safe, proven);
+        }
+        ExprKind::Unary { operand, .. } => idx_walk_expr(operand, ctx, backend, frame_safe, proven),
+        ExprKind::As(inner, _) => idx_walk_expr(inner, ctx, backend, frame_safe, proven),
+        ExprKind::Call { func, args, .. } => {
+            idx_walk_expr(func, ctx, backend, frame_safe, proven);
+            for a in args { idx_walk_expr(a.expr(), ctx, backend, frame_safe, proven); }
+        }
+        ExprKind::Member { obj, .. } => idx_walk_expr(obj, ctx, backend, frame_safe, proven),
+        ExprKind::If { cond, then, else_ } => {
+            idx_walk_expr(cond, ctx, backend, frame_safe, proven);
+            idx_walk_block(then, ctx, backend, frame_safe, proven);
+            match else_ {
+                Some(ElseBranch::Block(b)) => idx_walk_block(b, ctx, backend, frame_safe, proven),
+                Some(ElseBranch::If(e2)) => idx_walk_expr(e2, ctx, backend, frame_safe, proven),
+                None => {}
+            }
+        }
+        ExprKind::While { cond, body, .. } => {
+            idx_walk_expr(cond, ctx, backend, frame_safe, proven);
+            idx_walk_block(body, ctx, backend, frame_safe, proven);
+        }
+        ExprKind::Block(b) => idx_walk_block(b, ctx, backend, frame_safe, proven),
+        _ => {}
+    }
 }
 
 
