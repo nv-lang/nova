@@ -35928,6 +35928,17 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   форма диапазона — `a <= b && b < c`. Как Rust; chaining НЕ добавлен. Чисто compile-time (parser+checker),
   zero codegen change. plan150 13/13, full check-sweep 2938 файлов 0 регрессий.
 
+- **Plan 152.0 — реструктуризация модуля `str` + три упрощения (2026-06-13)**: `string.nv` (766 строк)
+  → папка `std/runtime/string/{core,search,transform,parse,chars}.nv`. Три решения-упрощения по ходу:
+  **(D-R5)** НЕ вводить отдельный `StrBuf`/`string_buffer.nv` — `Vec[u8]` уже RawMem-буфер, а `StringBuilder`
+  уже обёртка над ним; `trim`/`concat`/`to_bytes` push-loop'ы → `Vec.@append` (`RawMem.copy` memmove) +
+  `from_bytes_unchecked_steal` (ноль copy-paste, без второй копии). **(D-R2)** Вычистить 24 вестигиальных
+  Nova-body str-записи из `runtime_registry.rs` (−370 строк) — резолв str-методов идёт из распарсенного
+  `.nv`, не из реестра (доказано: метод `get` без записи резолвится); остался только `@hash`+C-операторы.
+  **(F4)** Модель модулей «папка = ОДИН модуль из co-equal файлов» (все `module runtime.string`) вместо
+  facade-файла (резолвер запрещает file+folder одного имени) → импорты/prelude/реестр без миграции. Gate
+  PASS 2534/FAIL 181 — 0 новых регрессий. Минимализм API (хендофф 153): не плодить типы/записи, выразимые
+  через существующее (`Vec`).
 - **Plan 140.2 — Vec @index bounds как элидируемый контракт (D256+D257, 2026-06-13)**: `requires 0<=i && i<@len`
   на `Vec @index` теперь возможен и оптимизируется. КЛЮЧЕВОЕ УПРОЩЕНИЕ Part A: `@field` в контракте кодируется
   **через уже существующую machinery** — bare `@` → SMT-Var `_self`, и `@field`/`@len()` сами идут через

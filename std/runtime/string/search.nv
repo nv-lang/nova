@@ -1,0 +1,190 @@
+// AUTO-SPLIT from std/runtime/string.nv (Plan 152.0 Ф.2). Bodies byte-identical.
+// Co-equal file of module `runtime.string` (folder = one module, AMEND F4).
+// Role: search + split (byte-offset).
+//
+// Plan 91 Ф.2.5/2.6 (D177/D178): str Nova-body methods. #no_prelude breaks the
+// prelude->string->prelude import cycle.
+
+#no_prelude
+module runtime.string
+
+import std.prelude.core.{Option, Some, None}
+import std.collections.vec_owned.{Vec}
+
+
+// True если строка начинается с prefix. Plan 139 Ф.1: Nova-body, byte-compare
+// через @as_bytes(). Семантика идентична nova_str_starts_with.
+export fn str @starts_with(prefix str) -> bool {
+    ro pn = prefix.len()
+    ro sn = @len()
+    if pn > sn { return false }
+    ro sb = @as_bytes()
+    ro pb = prefix.as_bytes()
+    mut i = 0
+    while i < pn {
+        if sb[i] != pb[i] { return false }
+        i = i + 1
+    }
+    true
+}
+
+// True если строка заканчивается на suffix. Plan 139 Ф.1: Nova-body byte-compare.
+export fn str @ends_with(suffix str) -> bool {
+    ro fn_len = suffix.len()
+    ro sn = @len()
+    if fn_len > sn { return false }
+    ro sb = @as_bytes()
+    ro fb = suffix.as_bytes()
+    ro base = sn - fn_len
+    mut i = 0
+    while i < fn_len {
+        if sb[base + i] != fb[i] { return false }
+        i = i + 1
+    }
+    true
+}
+
+// True если needle встречается в строке. Plan 139 Ф.1: Nova-body byte-scan.
+// Пустой needle → true (как nova_str_contains).
+export fn str @contains(needle str) -> bool {
+    ro nn = needle.len()
+    if nn == 0 { return true }
+    ro sn = @len()
+    if nn > sn { return false }
+    ro sb = @as_bytes()
+    ro nb = needle.as_bytes()
+    mut i = 0
+    while i <= sn - nn {
+        mut j = 0
+        mut matched = true
+        while j < nn {
+            if sb[i + j] != nb[j] { matched = false; break }
+            j = j + 1
+        }
+        if matched { return true }
+        i = i + 1
+    }
+    false
+}
+
+// Codepoint-offset первого вхождения needle. None если нет. Plan 139 Ф.1:
+// Nova-body. Идёт по UTF-8: i — byte offset, cp — codepoint offset; совпадение
+// допустимо на любой byte-позиции (как nova_str_find), возвращается cp-offset.
+export fn str @find(needle str) -> Option[int] {
+    ro nn = needle.len()
+    if nn == 0 { return Some(0) }
+    ro sn = @len()
+    if nn > sn { return None }
+    ro sb = @as_bytes()
+    ro nb = needle.as_bytes()
+    mut cp = 0
+    mut i = 0
+    while i + nn <= sn {
+        mut j = 0
+        mut matched = true
+        while j < nn {
+            if sb[i + j] != nb[j] { matched = false; break }
+            j = j + 1
+        }
+        if matched { return Some(cp) }
+        ro b = sb[i] as int
+        if b < 0x80 { i = i + 1 }
+        else if (b & 0xE0) == 0xC0 { i = i + 2 }
+        else if (b & 0xF0) == 0xE0 { i = i + 3 }
+        else if (b & 0xF8) == 0xF0 { i = i + 4 }
+        else { i = i + 1 }
+        cp = cp + 1
+    }
+    None
+}
+
+// Codepoint-offset последнего вхождения needle. Plan 139 Ф.1: Nova-body.
+// Идём слева направо, запоминаем последний codepoint-индекс match'а.
+export fn str @rfind(needle str) -> Option[int] {
+    ro sn = @len()
+    ro sb = @as_bytes()
+    ro nn = needle.len()
+    if nn == 0 {
+        // Возвращает total codepoint count (как nova_str_rfind).
+        return Some(@char_len())
+    }
+    if nn > sn { return None }
+    ro nb = needle.as_bytes()
+    mut last = -1
+    mut cp = 0
+    mut i = 0
+    while i + nn <= sn {
+        mut j = 0
+        mut matched = true
+        while j < nn {
+            if sb[i + j] != nb[j] { matched = false; break }
+            j = j + 1
+        }
+        if matched { last = cp }
+        ro b = sb[i] as int
+        if b < 0x80 { i = i + 1 }
+        else if (b & 0xE0) == 0xC0 { i = i + 2 }
+        else if (b & 0xF0) == 0xE0 { i = i + 3 }
+        else if (b & 0xF8) == 0xF0 { i = i + 4 }
+        else { i = i + 1 }
+        cp = cp + 1
+    }
+    if last < 0 { None } else { Some(last) }
+}
+
+// Build a zero-copy str sub-view `str{ptr: @ptr+off, len}` over THIS string's
+// backing buffer. Module-private helper for @split. `str` is a declared
+// lang-item (Plan 139.1) with priv fields `ptr *u8` / `len int`; this receiver
+// is `str`, so it has type-method priv access (privacy is type-based, not
+// module-based) and can read `@ptr` and construct a `str{...}` value-record in
+// its own module (Plan 139.2 Ф.0 PROOF). `@ptr + off` is raw pointer
+// arithmetic (`@ptr` is `*u8`), so it is wrapped in `unsafe` — the analogue of
+// `Vec[T] @index(r Range)`'s `@data + r.start` (vec_owned.nv:754). The
+// returned view ALIASES this string's bytes (no copy); the originating owner
+// (`@`) must outlive the view, and the view is read-only (str buffer is
+// immutable, R8). `off`/`seg_len` are caller-guaranteed in `[0, @len()]`.
+fn str @sub_view(off int, seg_len int) -> str {
+    str { ptr: unsafe { @ptr + off }, len: seg_len }
+}
+
+// Split по separator. Returns zero-copy views (readonly). D178: readonly return.
+// Plan 139.2 Ф.2: Nova-body — byte-scan over @as_bytes(), each segment is a
+// zero-copy sub-view `str{ptr: @ptr+off, len}` (NOT a copy) pushed into a
+// Vec[str], returned as `ro []str`. Semantics identical to the retired C
+// nova_str_split (nova_rt/array.h:650): empty `sep` yields a single-element
+// array holding the whole string; otherwise non-overlapping matches split the
+// string and the trailing tail is always pushed (N matches ⇒ N+1 segments).
+// Spelled `Vec[str].new()` (not the `[]str.` alias) because the cross-type
+// producer is named on `Vec`; the `ro []str` return enforces L2 read-only.
+export fn str @split(sep str) -> ro []str {
+    mut out = Vec[str].new()
+    ro sep_len = sep.len()
+    ro sn = @len()
+    if sep_len == 0 {
+        // Empty separator — whole string as a single view (как C: push s).
+        out.push(@sub_view(0, sn))
+        return out
+    }
+    ro sb = @as_bytes()
+    ro pb = sep.as_bytes()
+    mut start = 0
+    mut i = 0
+    while i + sep_len <= sn {
+        mut j = 0
+        mut matched = true
+        while j < sep_len {
+            if sb[i + j] != pb[j] { matched = false; break }
+            j = j + 1
+        }
+        if matched {
+            out.push(@sub_view(start, i - start))
+            i = i + sep_len
+            start = i
+        } else {
+            i = i + 1
+        }
+    }
+    // Trailing segment [start, sn).
+    out.push(@sub_view(start, sn - start))
+    out
+}

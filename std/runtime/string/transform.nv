@@ -1,0 +1,126 @@
+// AUTO-SPLIT from std/runtime/string.nv (Plan 152.0 Ф.2). Bodies byte-identical.
+// Co-equal file of module `runtime.string` (folder = one module, AMEND F4).
+// Role: trim / case(ASCII) / concat / pad / repeat / replace.
+//
+// Plan 91 Ф.2.5/2.6 (D177/D178): str Nova-body methods. #no_prelude breaks the
+// prelude->string->prelude import cycle.
+
+#no_prelude
+module runtime.string
+
+import std.runtime.string_builder.{StringBuilder}
+
+
+// Убирает whitespace с начала и конца. Plan 139 Ф.1: Nova-body. Whitespace =
+// байт <= ' ' (0x20), как nova_str_trim. Возвращает копию (alloc через
+// StringBuilder); бывшая C-версия возвращала zero-copy view — view-форма
+// требует @ptr field-access ([M-139-f0-lang-item-decl]), отложена.
+export fn str @trim() -> str {
+    ro bytes = @as_bytes()
+    ro n = @len()
+    mut start = 0
+    while start < n && (bytes[start] as int) <= 32 { start = start + 1 }
+    mut end = n
+    while end > start && (bytes[end - 1] as int) <= 32 { end = end - 1 }
+    // Plan 152.0 Ф.3: bulk-copy the kept byte range via Vec.@append (RawMem.copy
+    // memmove — the single buffer-building home) + steal-into-str (reuse the buffer,
+    // no second memcpy). Replaces the per-byte push-loop (zero copy-paste).
+    mut out = []u8.with_capacity(end - start)
+    out.append(bytes[start..end])
+    str.from_bytes_unchecked_steal(out)
+}
+
+// Lowercase копия (ASCII). Plan 139 Ф.1: Nova-body, alloc через []u8.
+export fn str @to_lower() -> str {
+    ro bytes = @as_bytes()
+    ro n = @len()
+    mut out = []u8.with_capacity(n)
+    mut i = 0
+    while i < n {
+        mut c = bytes[i] as int
+        if c >= 65 && c <= 90 { c = c + 32 }
+        out.push(c as u8)
+        i = i + 1
+    }
+    str.from_bytes_unchecked(out)
+}
+
+// Uppercase копия (ASCII). Plan 139 Ф.1: Nova-body, alloc через []u8.
+export fn str @to_upper() -> str {
+    ro bytes = @as_bytes()
+    ro n = @len()
+    mut out = []u8.with_capacity(n)
+    mut i = 0
+    while i < n {
+        mut c = bytes[i] as int
+        if c >= 97 && c <= 122 { c = c - 32 }
+        out.push(c as u8)
+        i = i + 1
+    }
+    str.from_bytes_unchecked(out)
+}
+
+// Конкатенация двух строк (создаёт новую). O(a+b).
+// Plan 139.2 Ф.3: Nova-body — alloc `[]u8` размера `@len() + other.len()`,
+// копирует байты обоих операндов через @as_bytes() (zero-copy view), затем
+// `str.from_bytes_unchecked` (alloc fresh owned + NUL-term D26 §3). Семантика
+// байт-в-байт идентична бывшему C `nova_str_concat` (nova_rt.h:226: memcpy a,
+// memcpy b, NUL). Метод вызываем напрямую (`s.concat(t)`) и из `@plus` body.
+// ОПЕРАТОР `+` лоуэрится ОТДЕЛЬНО, напрямую в C `nova_str_concat` (option (b),
+// emit_c.rs BinOp::Add для nova_str) — C-форма (один memcpy-проход + один alloc)
+// оптимальнее push-loop, и operator-lowering ортогонален method-dispatch.
+// Декомиссия operator-lowering — отдельный future-план (см.
+// [M-139.1-operator-lowered-methods]).
+export fn str @concat(other str) -> str {
+    ro a = @as_bytes()
+    ro b = other.as_bytes()
+    // Plan 152.0 Ф.3: one alloc (cap a+b) + two bulk Vec.@append (RawMem.copy
+    // memmove) + steal-into-str (reuse buffer, no second memcpy). Identical bytes
+    // to the retired C nova_str_concat (1 alloc + 2 memcpy + NUL); zero push-loop.
+    mut out = []u8.with_capacity(a.len() + b.len())
+    out.append(a)
+    out.append(b)
+    str.from_bytes_unchecked_steal(out)
+}
+
+// Оператор `+`: `s1 + s2 == s1.@plus(s2)` → @concat (D46).
+export fn str @plus(other str) -> str => @concat(other)
+
+// Pad строку слева до width codepoints символом fill. Если width <= len — возвращает s.
+export fn str @pad_left(width int, fill char) -> str {
+    ro pad = width - @len()
+    if pad <= 0 { return @ }
+    ro fill_s = str.from(fill)
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).as_str()
+}
+
+// Pad строку справа до width codepoints символом fill. Если width <= len — возвращает s.
+export fn str @pad_right(width int, fill char) -> str {
+    ro pad = width - @len()
+    if pad <= 0 { return @ }
+    ro fill_s = str.from(fill)
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).as_str()
+}
+
+// Повторение строки n раз. n <= 0 → пустая строка.
+export fn str @repeat(n int) -> str {
+    if n <= 0 { return "" }
+    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).as_str()
+}
+
+// Заменить все non-overlapping occurrences `from` на `to`. Empty `from` → возвращает s unchanged.
+// Note: uses @concat loop (not []str.join) to avoid circular import with std.text. O(n²) for
+// many replacements — acceptable for bootstrap; StringBuilder followup is [str-replace-buffered].
+export fn str @replace(from str, to str) -> str {
+    if from.len() == 0 { return @ }
+    ro parts = @split(from)
+    ro n = parts.len()
+    if n == 0 { return @ }
+    mut result = parts[0]
+    mut i = 1
+    while i < n {
+        result = result.concat(to).concat(parts[i])
+        i = i + 1
+    }
+    result
+}

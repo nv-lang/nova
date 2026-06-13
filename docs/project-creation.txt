@@ -37300,6 +37300,17 @@ Plan 140.2 — bounds-as-contract PLANNED (2026-06-13, НЕ исполнен; in
   Процессный bonus: разблокирована worktree-сборка — repo_root=current_dir (main.rs:666), libuv-кэш в
   CWD/target/libuv-cache/libuv.lib; копия root-level libuv.lib туда → worktree собирает без vcvars.
 
+[2026-06-13] Plan 152.0 (реструктуризация str-модуля) ✅ ЗАКРЫТ (Ф.0.0–Ф.6, branch plan-152, worktree
+  nova-p152, не merged). string.nv(766) → папка std/runtime/string/{core,search,transform,parse,chars}.nv,
+  все co-equal `module runtime.string` (F4: выбрана модель co-equal folder — папка=один модуль, все module runtime.string; facade тоже валиден по Rule E b, но co-equal проще;
+  прецедент sync.nv+sync_test.nv). Чистка реестра D-R2: −24 вестигиальных Nova-body str-записи (−370 строк),
+  резолв str из .nv а не реестра (метод get без записи резолвится). _buffer≡Vec[u8] (D-R5, без StrBuf):
+  trim/concat/to_bytes push-loop → Vec.@append(RawMem.copy memmove)+from_bytes_unchecked_steal; StringBuilder
+  уже обёртка над Vec → Ф.4 де-факто. Findings F1(база=main не plan-138.1)/F2(str-резолв из .nv)/F3(facade
+  export-import)/F4(модель модулей)/D-R1..R5. Координация 152↔153 (Slice отозван — нет такого типа, D238).
+  Q1 апрув: D250 CharsView→CharsIter {buf str,pos}. Gate PASS 2534/FAIL 181 — 0 новых (apples-to-apples vs
+  main; «32 новых» = артефакт неполного baseline, см. 152-gate-verification.md). Коммиты 8e029e70/1d84ade6/
+  e09cc4b5/449a3722. Дальше: 152.1 (CharsIter + убрать int-index/len + find→byte-offset, трогает codegen).
 Plan 140.2 — bounds-as-contract ✅ CLOSED Part A+B (2026-06-13, branch plan-140.2-bounds-contract; коммиты
   9a667fbc(A)/e8e8ab38(B core)/5a4c366e(B.4)). D256 (Part A) + D257 (Part B.0); D249–D255 — за Plan 152.
   Part A (пререквизит, снят блокер E2401): SMT-encoder кодирует `@field` self-access — bare `@` → Var `_self`,

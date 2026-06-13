@@ -1,0 +1,11 @@
+// Plan 152.0 — A0.7: interpolation `${e}` / `${e:?}` not broken by the module
+// restructure (DAG str<->StringBuilder acyclic; facade keeps StringBuilder public).
+module plan152_0.interpolation_intact
+
+test "interpolation Display + Debug intact after refactor" {
+    ro n = 42
+    assert("val=${n}" == "val=42")
+    ro s = "hi"
+    assert("[${s}]" == "[hi]")
+    assert("dbg=${n:?}" == "dbg=42")
+}

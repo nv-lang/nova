@@ -164,6 +164,15 @@
 ## Follow-up: stale-tag cleanup
 Триаж (w33ant6rp) нашёл **34 маркера с устаревшим OPEN-тегом** (30 RESOLVED + 4 SUPERSEDED — gap закрыт, текст висит): `[M-115-ptr-arithmetic]`, `[M-83.10.4-residual-flaky]`, `[M-83.10.4-supervised-cancel-armed-race]`, `[M-138-getmut-rename]` (superseded) + 30 resolved (полный список в workflow-output w33ant6rp). **Followup:** поправить их статус в source-планах (отдельный doc-проход), чтобы grep по OPEN был честным.
 
+## Follow-up: Plan 152.0 (str-модуль) — остаточные маркеры
+- **`[M-139.1-operator-lowered-methods]`** (planned, home **Plan 152.5a / D-R4**): декомиссия
+  хардкода str-операторов в `emit_c.rs:17302` (`<`/`==`/`+` → C `nova_str_lt`/`eq`/`concat`) —
+  синтезировать из `@compare`/`@eq`/`@concat`; после — удалить реестровые `eq`/`lt`/`le`/`gt`/`ge`
+  (реестр str → только `@hash`). Perf через RawMem в Nova-body (без perf-retain C, override автора).
+- **Урок (методология baseline)** — [152-gate-verification.md](152-gate-verification.md): не убивать
+  baseline досрочно (частичный → ложные «регрессы» в непокрытом хвосте); экстракция имён через
+  `awk '$1~/FAIL/{print $2}'`, не regex по строке; main-бинарь = быстрый оракул «новое vs pre-existing».
+
 ## Конвенция
 - **Planned** маркер → Followups своего плана (+ индекс-строка здесь с home).
 - **Floating** (нет плана) → здесь полностью.
