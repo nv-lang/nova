@@ -39,10 +39,9 @@ export fn Vec[T] mut @pop() -> Option[T] {
 
 /// Insert `v` at index `i`, shifting later elements right. Panics if
 /// `i > len` (i == len is an append).
-export fn Vec[T] mut @insert(i int, v T) -> @ {
-    if i < 0 || i > @len {
-        panic("Vec.insert: index out of bounds")
-    }
+export fn Vec[T] mut @insert(i int, v T) -> @
+    requires 0 <= i && i <= @len
+{
     @reserve(1)
     unsafe {
         // Shift the suffix `[i, len)` one slot right with a single overlap-safe
@@ -75,10 +74,9 @@ export fn Vec[T] mut @insert(i int, v T) -> @ {
 /// disambiguate `insert(i, T)` from `insert(i, Vec[T])` for a concrete
 /// `Vec[int]`. Distinct names route cleanly; folding `@splice` back into an
 /// `@insert` overload waits on [M-138.2-generic-method-overload-mono].
-export fn Vec[T] mut @splice(i int, other Vec[T]) -> @ {
-    if i < 0 || i > @len {
-        panic("Vec.splice: index out of bounds")
-    }
+export fn Vec[T] mut @splice(i int, other Vec[T]) -> @
+    requires 0 <= i && i <= @len
+{
     // Snapshot `other`'s buffer/length BEFORE `@reserve` may realloc `@data`.
     // A self-insert (`v.insert(i, v)`) has `other.data == @data`; after the
     // reserve `@data` may point at a fresh buffer, so the snapshot keeps the
@@ -104,10 +102,9 @@ export fn Vec[T] mut @splice(i int, other Vec[T]) -> @ {
 
 /// Remove and return the element at `i`, shifting later elements left.
 /// Panics if `i` is out of bounds.
-export fn Vec[T] mut @remove(i int) -> T {
-    if i < 0 || i >= @len {
-        panic("Vec.remove: index out of bounds")
-    }
+export fn Vec[T] mut @remove(i int) -> T
+    requires 0 <= i && i < @len
+{
     ro removed = unsafe { @data[i] }
     unsafe {
         // Shift the suffix `(i, len)` one slot left with a single overlap-safe
@@ -123,10 +120,9 @@ export fn Vec[T] mut @remove(i int) -> T {
 
 /// Remove the element at `i` in O(1) by swapping it with the last element,
 /// then popping. Does not preserve order. Panics if `i` is out of bounds.
-export fn Vec[T] mut @swap_remove(i int) -> T {
-    if i < 0 || i >= @len {
-        panic("Vec.swap_remove: index out of bounds")
-    }
+export fn Vec[T] mut @swap_remove(i int) -> T
+    requires 0 <= i && i < @len
+{
     ro removed = unsafe { @data[i] }
     ro last = @len - 1
     if i != last {
@@ -275,10 +271,9 @@ export fn Vec[T] mut @retain(pred fn(T) -> bool) -> () {
 /// dst.copy_from(src)
 /// assert(dst.equal(src))
 /// ```
-export fn Vec[T] mut @copy_from(other Vec[T]) -> @ {
-    if @len != other.len() {
-        panic("Vec.copy_from: length mismatch (use dst[..n].copy_from(src[..n]) for partial copy)")
-    }
+export fn Vec[T] mut @copy_from(other Vec[T]) -> @
+    requires @len == other.len()
+{
     if @len > 0 {
         unsafe {
             RawMem.copy(other.data as *u8, @data as *mut u8, @len * size_of[T]())
@@ -299,11 +294,9 @@ export fn Vec[T] mut @copy_from(other Vec[T]) -> @ {
 /// v.copy_within(0, 2, 2)   // [1,2,3,4,5] -> [1,2,1,2,5]
 /// assert(v.equal(Vec[int].from([1, 2, 1, 2, 5])))
 /// ```
-export fn Vec[T] mut @copy_within(src_from int, dst_from int, len int) -> @ {
-    if len < 0 || src_from < 0 || dst_from < 0 ||
-       src_from + len > @len || dst_from + len > @len {
-        panic("Vec.copy_within: range out of bounds")
-    }
+export fn Vec[T] mut @copy_within(src_from int, dst_from int, len int) -> @
+    requires len >= 0 && src_from >= 0 && dst_from >= 0 && src_from + len <= @len && dst_from + len <= @len
+{
     if len > 0 {
         unsafe {
             RawMem.copy((@data + src_from) as *u8, (@data + dst_from) as *mut u8, len * size_of[T]())
@@ -359,10 +352,9 @@ export fn Vec[T] mut @fill(v T) -> @ {
 /// v.append_zero(3)
 /// assert(v.equal(Vec[int].from([1, 2, 0, 0, 0])))
 /// ```
-export fn Vec[T] mut @append_zero(n int) -> @ {
-    if n < 0 {
-        panic("Vec.append_zero: n must be >= 0")
-    }
+export fn Vec[T] mut @append_zero(n int) -> @
+    requires n >= 0
+{
     if n == 0 {
         return @
     }

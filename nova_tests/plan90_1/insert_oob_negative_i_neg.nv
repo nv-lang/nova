@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC splice: index
+// EXPECT_RUNTIME_PANIC requires failed
 //
 // Plan 90.1 — негатив: bulk insert (splice) — negative index → panic.
 // D141 amend: i < 0 → panic "Vec.splice: index out of bounds".

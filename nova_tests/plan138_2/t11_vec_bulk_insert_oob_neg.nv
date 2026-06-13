@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC Vec.splice: index out of bounds
+// EXPECT_RUNTIME_PANIC requires failed
 //
 // Plan 138.2 Ф.0a (class #1) — t11: bulk @splice out-of-bounds index panics.
 //

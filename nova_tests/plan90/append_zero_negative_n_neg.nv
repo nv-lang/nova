@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC append_zero: n must be >= 0
+// EXPECT_RUNTIME_PANIC requires failed
 //
 // Plan 90 followup — негатив: append_zero(n) с n < 0 → panic.
 // D141 amend (2026-06-01): отрицательный n — bug, panic с diagnostic.
