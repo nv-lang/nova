@@ -223,6 +223,40 @@ readiness в scheduler loop (process-wide poller, lastpoll single-poller token, 
 **Ключевые acceptance:** go/no-go decision в этом плане с замером residual surface; если GO —
 Plan 83.12 net-suite 30/30 под NOVA_NETPOLL + `net_echo_stress.nv` 66/66 single-poller token.
 
+**Заметка о libuv-ограничении (2026-06-14).** Вендорим **libuv 1.52.1** (актуальна; io_uring/
+IOCP/epoll/kqueue есть — `include/uv/version.h`). Ф.8 — это и есть **архитектурная развилка**:
+- **(A) Остаться на loop libuv** — «качать» событийный loop libuv из планировщика (completion-
+  модель + колбэки). Проще, кросс-платформа «из коробки», **НО не Go-уровень** тесной сплавки
+  I/O↔scheduler (готовность сокета приходит колбэком в отдельный loop, а не `netpoll()` из
+  `findrunnable`).
+- **(B) Собственный netpoller** (epoll/IOCP/kqueue, readiness-в-`findrunnable` как Go) — тугая
+  интеграция, но больше кода и теряем часть переносимости libuv.
+
+**Патчить/форкать libuv — НЕ вариант** (налог на поддержку форка, убивает лёгкие апгрейды; мы
+на свежей 1.52.1). Унаследованные ограничения ванильного libuv, которые Ф.8 и взвешивает:
+(1) `blocking{}`-threadpool кап `UV_THREADPOOL_SIZE` (default **4**, ~1024 max); (2) **один loop
+= бутылочное горло** при экстремальном числе соединений (multi-loop возможен, сложнее);
+(3) **API-bound** — внутренности libuv недоступны без форка. Go-уровень достижим только путём (B)
+для горячего сокет-пути, оставив libuv на fs/dns/process/threadpool/timers. Решение go/no-go по
+(B) принимать здесь же (**D247**).
+
+**Вердикт о реальном выигрыше + статус задачи (2026-06-14).**
+- **Перф-выигрыш над libuv — МАРГИНАЛЕН.** libuv не узкое место (на нём крутится Node.js).
+  Латентность: −1 cross-thread хоп = единицы µs, заметно лишь при **миллионах** мелких I/O/сек;
+  масштаб: важен на C1M (Камардин), до которого далеко. → **Ради скорости строить НЕ стоит.**
+- **Единственное Nova-оправдание — не скорость, а ГОНКИ:** интегрированный поллер убирает
+  cross-thread передачу loop-libuv→scheduler (источник iso-cancel / Plan 83.11 surface). Но
+  крупные гонки уже закрыты (grow-vs-wake Ф.1b, iso-cancel через Ф.2) → остаточный surface,
+  вероятно, **мал**. **Ф.8 = измеряемый gate:** строить только если замер покажет ощутимый
+  residual surface ИЛИ упрёмся в экстремальный масштаб. **DEFAULT — остаёмся на libuv.**
+- **Гибрид (если GO):** свой epoll/kqueue netpoller на **Linux/macOS** (Go-1.4 `netpoll_epoll.c`/
+  `netpoll_kqueue.c`, BSD-3, уже зафетчен — порт алгоритма, обвязка на наши gopark/goready), а
+  **libuv оставить на Windows** (IOCP-readiness — дорогая/рискованная часть, которую libuv уже
+  решил) + fs/dns/process/threadpool. **Linux-first** (серверы Linux, дёшево ≈1–2 недели).
+- **Статус — САМОДОСТАТОЧНО/ОТКЛАДЫВАЕМО:** модульная подсистема, не на критическом пути.
+  Prereq `gopark`/`goready` УЖЕ есть (Ф.2 ✅) + runq (Ф.1 ✅) → readiness-only строится хоть
+  сейчас; **полная форма с дедлайнами ждёт таймер-хип Ф.6**. Строить по go/no-go, не превентивно.
+
 ---
 
 ## 5. Global acceptance

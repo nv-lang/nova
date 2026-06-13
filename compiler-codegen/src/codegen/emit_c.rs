@@ -788,6 +788,11 @@ pub struct CEmitter {
     mono_worklist: Vec<(String, Vec<(String, String)>, String)>,
     /// Plan 48: already-instantiated mangled names (for dedup).
     mono_instantiated: HashSet<String>,
+    // [M-138.2-generic-method-overload-mono] maps a mono'd method's FINAL C name ->
+    // the exact overload FnDecl chosen at the call-site. Without it the worklist
+    // drain re-finds the FnDecl by BARE name (first-wins) and emits the wrong
+    // overload body (e.g. a 0-arg getter body under the setter's suffixed name).
+    mono_method_fndecl_for_name: HashMap<String, crate::ast::FnDecl>,
     /// Plan 48: active type substitution during monomorphized fn emission.
     /// Maps type_param_name → concrete C type. Set/cleared around emit_monomorphized_fn.
     current_type_subst: HashMap<String, String>,
@@ -1165,6 +1170,7 @@ impl CEmitter {
             self_method_decls: HashMap::new(),
             mono_worklist: Vec::new(),
             mono_instantiated: HashSet::new(),
+            mono_method_fndecl_for_name: HashMap::new(),
             current_type_subst: HashMap::new(),
             current_method_turbofish: Vec::new(),
             mono_fwd_decls: String::new(),
@@ -3251,7 +3257,12 @@ impl CEmitter {
                                     .or_else(|| info.get(&format!("Nova_{}", recv_type)))
                                     .map(|(b, _)| b.clone())
                             };
-                            let fn_decl_opt = if let Some(fd) = self.mono_method_decls.get(&key).cloned() {
+                            let fn_decl_opt = if let Some(fd) = self.mono_method_fndecl_for_name.get(&mono_name).cloned() {
+                                // [M-138.2-generic-method-overload-mono] exact overload chosen
+                                // at the call-site (keyed on the suffixed mono name) — authoritative
+                                // over the bare-name first-wins re-find below.
+                                Some(fd)
+                            } else if let Some(fd) = self.mono_method_decls.get(&key).cloned() {
                                 Some(fd)
                             } else if recv_type.starts_with("Vec____")
                                 && self.mono_method_decls
@@ -13014,6 +13025,11 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // Enqueue for body emission — prefix __method__TYPE::name so worklist drain can route
         let worklist_key = format!("__method__{}::{}", recv_type, fn_decl.name);
         self.mono_worklist.push((worklist_key, type_subst, mono_name.to_string()));
+        // [M-138.2-generic-method-overload-mono] Record the EXACT chosen overload
+        // for this final mono name so the drain emits its body (not a bare-name
+        // first-wins re-lookup). Keyed on the suffixed `mono_name`, so getter and
+        // setter (distinct mono names) each map to their own FnDecl.
+        self.mono_method_fndecl_for_name.insert(mono_name.to_string(), fn_decl.clone());
     }
 
     /// Plan 48: emit a monomorphized METHOD body (instance method variant of emit_monomorphized_fn).
@@ -22940,9 +22956,54 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         // method dispatch на mono'd sum-types fails → fallback
                         // emits literal `l->@sz()` в C → compile error.
                         let method_stripped = method.trim_start_matches('@');
-                        let method_decl = self.generic_type_methods.get(&base_name)
-                            .and_then(|ms| ms.iter().find(|m| m.name == method_stripped))
-                            .cloned();
+                        // [M-138.2-generic-method-overload-mono] Overload-aware selection.
+                        // `generic_type_methods` holds ALL same-name overloads; a bare
+                        // first-wins `.find()` picks overload 0 (e.g. the 0-arg `@cap()`
+                        // getter for `v.cap(10)` -> wrong arity). Disambiguate by arity,
+                        // then by param C-type (under the receiver type-subst), when >1
+                        // candidate; record the overload INDEX (declaration order = the
+                        // erased-base `existing_count`) so the mono name gets the matching
+                        // `__<paramtype>` suffix below. STRICT no-op (index 0, first
+                        // candidate) when <=1 candidate — the overwhelming common case.
+                        let same_name: Vec<crate::ast::FnDecl> = self.generic_type_methods
+                            .get(&base_name)
+                            .map(|ms| ms.iter().filter(|m| m.name == method_stripped).cloned().collect())
+                            .unwrap_or_default();
+                        let (method_decl, overload_index): (Option<crate::ast::FnDecl>, usize) =
+                            if same_name.len() <= 1 {
+                                (same_name.first().cloned(), 0)
+                            } else {
+                                // Receiver type-subst (T -> concrete) for the param-type compare.
+                                let recv_subst_vec: Vec<(String, String)> = self.generic_type_templates
+                                    .get(&base_name)
+                                    .map(|t| t.generics.iter().zip(type_args_c.iter())
+                                        .map(|(g, c)| (g.name.clone(), c.clone())).collect())
+                                    .unwrap_or_default();
+                                let saved_sel = std::mem::replace(
+                                    &mut self.current_type_subst,
+                                    recv_subst_vec.iter().cloned().collect());
+                                let arg_c: Vec<String> = args.iter()
+                                    .map(|a| self.infer_expr_c_type(a.expr())).collect();
+                                // pass 1: arity + per-param C-type match; pass 2: arity-only.
+                                let mut pick: Option<usize> = None;
+                                for (idx, m) in same_name.iter().enumerate() {
+                                    if m.params.len() != args.len() { continue; }
+                                    let mut ok = true;
+                                    for (p, ac) in m.params.iter().zip(arg_c.iter()) {
+                                        let pc = self.type_ref_to_c(&p.ty).unwrap_or_default();
+                                        if !pc.is_empty() && &pc != ac { ok = false; break; }
+                                    }
+                                    if ok { pick = Some(idx); break; }
+                                }
+                                if pick.is_none() {
+                                    pick = same_name.iter().position(|m| m.params.len() == args.len());
+                                }
+                                self.current_type_subst = saved_sel;
+                                match pick {
+                                    Some(idx) => (Some(same_name[idx].clone()), idx),
+                                    None => (same_name.first().cloned(), 0),
+                                }
+                            };
                         if let Some(fn_decl) = method_decl {
                             // Plan 103.6: sync-class check for generic-type methods
                             // (OnceCell[T], Lazy[T]).  fn_decl comes from
@@ -22996,6 +23057,36 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                     format!("{}_method_{}", rt_trimmed, method_stripped)
                                 } else {
                                     format!("{}_static_{}", rt_trimmed, method_stripped)
+                                };
+                                // [M-138.2-generic-method-overload-mono] For a 2nd+ same-name
+                                // overload, append the SAME `__<paramtype>` suffix the erased
+                                // base uses (~2858) so the mono getter/setter get distinct C
+                                // names (e.g. `..._method_cap` vs `..._method_cap__nova_int`).
+                                // Param C-types under the receiver+method type-subst; empty
+                                // suffix (0-arg overloads) falls back to `__mut`/`__ro`.
+                                let base_method_name = if overload_index > 0 {
+                                    let saved_ov = std::mem::replace(
+                                        &mut self.current_type_subst,
+                                        type_subst.iter().cloned().collect());
+                                    let suffix = fn_decl.params.iter()
+                                        .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_default()
+                                            .replace('*', "_p")
+                                            .replace(' ', "_")
+                                            .replace('[', "_arr_")
+                                            .replace(']', ""))
+                                        .collect::<Vec<_>>()
+                                        .join("_");
+                                    self.current_type_subst = saved_ov;
+                                    let mut_recv = matches!(
+                                        fn_decl.receiver.as_ref().map(|r| r.mutable), Some(true));
+                                    if suffix.is_empty() {
+                                        if mut_recv { format!("{base_method_name}__mut") }
+                                        else { format!("{base_method_name}__ro") }
+                                    } else {
+                                        format!("{base_method_name}__{suffix}")
+                                    }
+                                } else {
+                                    base_method_name
                                 };
                                 // Append method-level type-args suffix к method_c_name если
                                 // их > 0. Receiver-args уже в rt_trimmed (через mangled).
@@ -29615,7 +29706,22 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
             .collect();
         let template = self.generic_type_templates.get(base_name)?.clone();
         let methods = self.generic_type_methods.get(base_name)?.clone();
-        let fd = methods.iter().find(|m| m.name == method)?.clone();
+        // [M-138.2-generic-method-overload-mono] Overload-aware return-type inference:
+        // pick the same-name candidate whose arity matches the call (the 1-arg
+        // `@cap(n)` setter -> `@`, not the 0-arg getter -> `int`), so a CHAINED
+        // receiver (`v.cap(n).push(...)`) infers the right return. First-wins
+        // fallback when no arity match / <=1 candidate (the common case).
+        let fd = {
+            let same: Vec<&crate::ast::FnDecl> =
+                methods.iter().filter(|m| m.name == method).collect();
+            let chosen: &crate::ast::FnDecl = if same.len() <= 1 {
+                *same.first()?
+            } else {
+                same.iter().find(|m| m.params.len() == args.len())
+                    .copied().unwrap_or(same[0])
+            };
+            chosen.clone()
+        };
         let ret_ref = fd.return_type.as_ref()?.clone();
         // Строим подстановку: receiver generic_param_name → concrete_c_type.
         let mut subst: Vec<(String, Option<String>)> = template.generics.iter()
@@ -29902,6 +30008,26 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                             && self.method_overloads.keys().any(|(t, _)| t == type_name) =>
                     {
                         Some((type_name.clone(), name.clone()))
+                    }
+                    // [M-153-vec-of-variadic-codegen]: turbofish static call
+                    // `Type[T].method(...)` парсится как
+                    // Member{obj: TurboFish{base: Ident("Type"), ..}, name}.
+                    // method_overloads ключаются по declared type name ("Vec"),
+                    // не по mono-инстансу — без этой arm variadic-routing для
+                    // `Vec[int].of(1,2,3)` не fire'ит и call-site packing
+                    // (collect args в `[]T`) не происходит.
+                    ExprKind::TurboFish { base, .. }
+                        if matches!(&base.kind, ExprKind::Ident(_)) =>
+                    {
+                        if let ExprKind::Ident(n) = &base.kind {
+                            if self.method_overloads.keys().any(|(t, _)| t == n) {
+                                Some((n.clone(), name.clone()))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
                     }
                     _ => {
                         let obj_ty = self.infer_expr_c_type(obj);
@@ -31938,8 +32064,22 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                         .zip(type_args_c.iter())
                                         .map(|(g, c)| (g.name.clone(), Some(c.clone())))
                                         .collect();
+                                    // [M-138.2-overload-chain-return-infer] overload-aware:
+                                    // pick the same-name candidate matching the call arity
+                                    // (the 1-arg `@cap(n)` setter -> `@`/Self -> mono receiver,
+                                    // not the 0-arg getter -> int), so a chained `v.cap(n).push`
+                                    // infers the receiver. First-wins when <=1 candidate.
                                     if let Some(method_decl) = self.generic_type_methods.get(&base_name)
-                                        .and_then(|ms| ms.iter().find(|m| m.name == mn))
+                                        .and_then(|ms| {
+                                            let same: Vec<&crate::ast::FnDecl> =
+                                                ms.iter().filter(|m| m.name == mn).collect();
+                                            if same.len() <= 1 {
+                                                same.first().copied()
+                                            } else {
+                                                same.iter().find(|m| m.params.len() == args.len())
+                                                    .copied().or_else(|| same.first().copied())
+                                            }
+                                        })
                                     {
                                         if let Some(ret_ty) = &method_decl.return_type {
                                             let c_ty_opt = Self::apply_type_subst_to_ref(ret_ty, &subst)

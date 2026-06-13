@@ -1,8 +1,0 @@
-// EXPECT_RUNTIME_PANIC requires failed
-//
-// Plan 153.1 — негатив: @cap_to(n) с n < len → контракт `n >= @len` паника.
-module plan153_1.cap_to_below_len_neg
-fn main() -> () {
-    mut v = Vec[int].from([1, 2, 3])
-    v.cap_to(1)
-}

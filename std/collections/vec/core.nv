@@ -193,18 +193,20 @@ export fn Vec[T].from(items []T) -> Self => Vec[T].with_capacity(items.len()).ex
 // assignment, which applies the implicit numeric conversion correctly. The
 // in-module same-`T` bulk ops (`@realloc_to`/`@append`/`@clone`/`@insert`/
 // `@remove`/`@copy_from`/`@copy_within`) have matching strides and stay bulk.
-//
-// DEFERRED ([M-153-vec-of-variadic-codegen], user request 153.1): an ergonomic
-// variadic constructor `Vec[T].of(...items []T) -> Self => items` would read
-// better than `from([literal])` (under D239 a literal `[1,2,3]` is already a
-// `Vec[int]`, so `from([literal])` is redundant) and could return the collected
-// args zero-copy. BLOCKED by a codegen gap: call-site variadic collection
-// (packing `of(1,2,3)` args into a `[]T`) is implemented only for the external
-// `print`/`println` special-case, NOT for user-defined generic-static variadic
-// methods — codegen passes the raw args straight through (`_static_of(1,2,3)`
-// → "too many arguments", the fn expects one collected `Vec[int]*`). Lands in
-// 153.1 once user-defined variadic-collection codegen exists. `from` stays the
-// element-narrowing (`Vec[u8].from([1,2,3])`) + iterable-materialiser path.
+
+/// Ergonomic variadic constructor: `Vec[int].of(1, 2, 3)`. The call-site
+/// variadic args are collected into a single `[]T` (= `Vec[T]`) value and
+/// returned zero-copy. Reads better than `from([literal])` (under D239 a
+/// literal `[1,2,3]` is already a `Vec[int]`, so `from([literal])` is
+/// redundant). `of()` with no args yields an empty `Vec[T]`.
+///
+/// [M-153-vec-of-variadic-codegen] (resolved): user-defined generic-static
+/// variadic collection. The call-site packs `of(1,2,3)`'s args into a single
+/// collected `[]T` matching this body's `args` parameter — previously the raw
+/// args were passed straight through (`_static_of(1,2,3)` → "too many
+/// arguments"). `from` stays the element-narrowing (`Vec[u8].from([1,2,3])`) +
+/// iterable-materialiser path.
+export fn Vec[T].of(...args []T) -> Self => args
 
 // ──────────────────────────────────────────────────────────────────────────
 // Size / introspection
@@ -217,30 +219,28 @@ export fn Vec[T] @len() -> int => @len
 export fn Vec[T] @cap() -> int => @cap
 
 /// Set the capacity to **exactly** `n` slots (no ×2 rounding) — the precise,
-/// absolute capacity request (Plan 153.1 / D259). Reallocates the buffer,
-/// preserving the live `len` elements; `n == 0` (only valid when `len == 0`)
-/// frees down to the null buffer.
+/// absolute capacity request (Plan 153.1 / D259). The accessor-convention
+/// write-setter (D117 AMEND): a same-name 1-arg overload of the 0-arg `@cap()`
+/// getter. Reallocates the buffer, preserving the live `len` elements; `n == 0`
+/// (only valid when `len == 0`) frees down to the null buffer.
 ///
 /// Contract `n >= @len`: the capacity can never physically drop below the live
 /// element count. A silent truncate/clamp there would be a footgun (it would
-/// drop live elements and break the `v.cap_to(n); v.cap() == n` round-trip), so
+/// drop live elements and break the `v.cap(n); v.cap() == n` round-trip), so
 /// `n < len` is a **panic**, not a clamp.
 ///
 /// Covers — no separate methods needed:
-///   - shrink-to-fit  = `v.cap_to(v.len())`
-///   - room-for-N     = `v.cap_to(v.len() + n)`
+///   - shrink-to-fit  = `v.cap(v.len())`
+///   - room-for-N     = `v.cap(v.len() + n)`
 /// Unlike `@reserve` (amortised ×2 growth), this honours `n` exactly, so it also
 /// gives a predictable realloc point for slice detach (153.4). Returns `@`.
 ///
-/// NAMING ([M-153.1-cap-setter-overload]): the accessor-convention ideal is a
-/// same-name `@cap(n)` write-setter overloading the `@cap()` getter (D117 AMEND).
-/// That collapses in monomorphization today — a mono'd `v.cap(10)` mis-resolves
-/// to the 0-arg getter and passes the extra arg ("too many arguments"), the same
-/// generic-method-overload limitation that keeps `@splice` distinct from
-/// `@insert` ([M-138.2-generic-method-overload-mono]). The distinct `@cap_to`
-/// name routes cleanly; fold it back into a `@cap(n)` overload once mono-overload
-/// dispatch lands.
-export fn Vec[T] mut @cap_to(n int) -> @
+/// The getter/setter overload monomorphizes correctly: the generic-method
+/// arity-overload-mono dispatch gap [M-138.2-generic-method-overload-mono] is
+/// fixed, so a mono'd `v.cap(10)` disambiguates to this 1-arg setter (not the
+/// 0-arg getter). This is the accessor-convention form the distinct `@cap_to`
+/// workaround was holding the place for.
+export fn Vec[T] mut @cap(n int) -> @
     requires n >= @len
 {
     if n != @cap {

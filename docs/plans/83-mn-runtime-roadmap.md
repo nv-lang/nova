@@ -54,8 +54,20 @@ stable-address). `[M-83.10.4-iso-cancel-startup-race]` ✅ CLOSED (Ф.5 verify-o
    └───────────────────────────────────────┴──────────────────────────────┘
                                          │
                                          ▼
-            [M-opt-preempt-strided-loop] → signal-preemption (Go 1.14 SIGURG):
-            long-term, ПОСЛЕ стабилизации планировщика. OS-уровень, переносим.
+            [M-opt-preempt-strided-loop] → per-iteration `nova_preempt_check()`
+            (emit_c.rs:15625) = clang-opt барьер (нет векторизации/unroll
+            tight/copy-циклов).
+            MVP (БЕЗ SIGURG): НЕ вставлять check там, где НЕ НУЖНО = ПРОВАБЛИ
+            короткий цикл (КОНСТАНТНЫЙ / малый bound). ВАЖНО: variable/unbounded
+            циклы (вкл. большие copy-loops) — check ОСТАВИТЬ, иначе re-introduce
+            tight-loop-starvation (ровно то, что Go чинил SIGURG'ом: fiber на
+            огромном copy/compute монополизирует worker).
+            Copy-loops лечить ОТДЕЛЬНО: lower memcpy-идиомы в `RawMem.copy` (как
+            Vec bulk-ops уже делают — bounded+fast, без per-element loop и без
+            starvation), а НЕ skip'ом preempt-check.
+            Long-term: signal-preemption (Go 1.14 SIGURG) — general случай
+            (variable-bound preemptable без call'а). OS-уровень, переносим, ПОСЛЕ
+            стабилизации планировщика.
 
    Сбоку (не M:N-критично): Plan 145 (MSVC codegen) — нужен для MSVC-валидации
    всего вышеперечисленного; пока Plan 83-go-cmn валидируется на clang.
