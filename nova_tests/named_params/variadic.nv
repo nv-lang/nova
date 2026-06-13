@@ -57,7 +57,7 @@ test "variadic: дефолтный start именованный, пустой п
 // --- то же для str-параметра ---
 
 fn label_count(prefix str, ...items []int) -> int {
-    mut c = prefix.len()
+    mut c = prefix.byte_len()
     for it in items { c = c + it }
     c
 }

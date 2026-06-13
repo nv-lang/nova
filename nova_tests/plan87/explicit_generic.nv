@@ -18,7 +18,7 @@ test "for s str in string array" {
     ro words []str = ["alpha", "beta"]
     mut total_len = 0
     for s str in words {
-        total_len = total_len + s.len()
+        total_len = total_len + s.byte_len()
     }
     assert(total_len == 9)
 }

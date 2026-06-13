@@ -22,5 +22,5 @@ test "call unsafe fn inside unsafe block (same call-site rule)" {
     unsafe {
         ro c = s.as_cstr_unchecked()
     }
-    assert(s.len() == 3)
+    assert(s.byte_len() == 3)
 }

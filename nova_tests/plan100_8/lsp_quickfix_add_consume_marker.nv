@@ -14,7 +14,7 @@ type Buffer consume { data str; size int }
 fn Buffer consume @flush() -> () { () }
 fn Buffer consume @discard() -> () { () }
 
-fn make_buffer(s str) -> Buffer => { data: s; size: s.len() }
+fn make_buffer(s str) -> Buffer => { data: s; size: s.byte_len() }
 
 test "consume type with marker — compiles clean (LSP quick fix target)" {
     consume buf = make_buffer("hello")

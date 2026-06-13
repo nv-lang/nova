@@ -20,6 +20,6 @@ test "&value:? emits hex address" {
         ro s = "ptr=${&a:?}"
         // Address is non-deterministic, just check format prefix.
         assert(s.starts_with("ptr=0x"))
-        assert(s.len() > 8)
+        assert(s.byte_len() > 8)
     }
 }

@@ -106,7 +106,7 @@ test "GC корр: str sentinel жив после 10k строк" {
     mut count = 0
     for i in 0..10_000 {
         ro s = "item_${i}_x"
-        count = count + s.len()
+        count = count + s.byte_len()
     }
     assert(sentinel == "hello_boehm_gc")
     assert(count > 0)

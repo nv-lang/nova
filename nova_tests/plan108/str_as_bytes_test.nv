@@ -15,7 +15,7 @@ test "str.as_bytes: basic byte values" {
 test "str.as_bytes: length matches str.len" {
     ro s = "Nova"
     ro view = s.as_bytes()
-    assert(view.len() == s.len())
+    assert(view.len() == s.byte_len())
 }
 
 test "str.as_bytes: iterate over bytes" {

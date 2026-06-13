@@ -4,7 +4,7 @@
 
 module plan125_followups.never_cast_arg_position
 
-fn take_str(s str) -> int => s.len()
+fn take_str(s str) -> int => s.byte_len()
 
 fn use_div(c bool) Fail -> int {
     take_str(if c { "hello" } else { throw "bad" })

@@ -5,7 +5,7 @@ module basics.strings
 fn count_lines(s str) -> int {
     mut count = 1
     mut i = 0
-    while i < s.len() {
+    while i < s.byte_len() {
         // ВАЖНО: пока нет .as_chars().nth(), просто считаем
         i += 1
     }
@@ -14,7 +14,7 @@ fn count_lines(s str) -> int {
 
 fn main() {
     ro greeting = "hello, world"
-    println("len = ", greeting.len())
+    println("len = ", greeting.byte_len())
     println("upper = ", greeting.to_upper())
     println("starts with 'hello' = ", greeting.starts_with("hello"))
     println("contains 'world' = ", greeting.contains("world"))

@@ -52,7 +52,7 @@ test "let с явным int типом" {
 
 test "let с явным str типом" {
     ro s str = "nova"
-    assert(s.len() == 4)
+    assert(s.byte_len() == 4)
 }
 
 test "let mut с типом" {
