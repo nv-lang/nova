@@ -1,5 +1,7 @@
-// Plan 139 Ф.1 — find/rfind migrated to Nova-body. Returns CODEPOINT offsets
-// (UTF-8 boundary-aware), identical to former nova_str_find/nova_str_rfind.
+// Plan 139 Ф.1 — find/rfind migrated to Nova-body.
+// Plan 152.1 Ф.2 (D249): find/rfind теперь возвращают BYTE offsets (композируются
+// с s[k..]); для ASCII byte-offset == прежний cp-offset (тесты ниже не меняются),
+// для не-ASCII — byte-offset (UTF-8 тест мигрирован).
 module plan139.t1_find_rfind
 
 test "find basic" {
@@ -19,9 +21,9 @@ test "rfind basic" {
     assert("hello".rfind("") == Some(5))  // empty → total codepoint count
 }
 
-test "find codepoint offset (utf8)" {
-    ro s = "héllo"            // codepoints: h=0 é=1 l=2 l=3 o=4
-    assert(s.find("l") == Some(2))   // codepoint offset, not byte offset 3
-    assert(s.find("o") == Some(4))
-    assert(s.rfind("l") == Some(3))
+test "find byte offset (utf8)" {
+    ro s = "héllo"            // bytes: h=0 é=1,2 l=3 l=4 o=5 (byte_len 6)
+    assert(s.find("l") == Some(3))   // byte offset (was cp offset 2)
+    assert(s.find("o") == Some(5))   // byte offset (was 4)
+    assert(s.rfind("l") == Some(4))  // last 'l' byte offset (was 3)
 }
