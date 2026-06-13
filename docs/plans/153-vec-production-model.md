@@ -30,7 +30,7 @@
   `iter().map().filter().collect()` (Rust)/Sequence (Kotlin)/Stream (Java).
 - **Прод-пробелы:** нет `sort`/`binary_search`/`contains`/`index_of`/`dedup`/
   `chunks`/`windows`/`zip`/`enumerate`/`take`/`skip`/`min`/`max`/`sum`/`drain`/
-  `rotate`/`split_at`/`concat`/`flatten`/`resize`/`shrink_to_fit`/`swap`; нет `@hash`
+  `rotate`/`split_at`/`concat`/`flatten`/`resize`/`swap`; нет `@hash`
   (нельзя класть `Vec` в `HashSet`/ключом).
 - **Слайсы неоднозначны:** `v[a..b]` сейчас возвращает **owned-копию** (`-> Self`), а
   не zero-copy view — расходится со str-линзами (152) и Rust `&[T]`.
@@ -57,7 +57,7 @@
 | swap | — | `swap` | — | `Collections.swap` | ❌ | **153.1** |
 | index/get | `s[i]` | `[i]`/`get` | `[i]`/`at` | `get` | ✅ | ✅ |
 | reserve/with_cap | — | `reserve`/`with_capacity` | — | `ensureCapacity` | ✅ | ✅ |
-| shrink_to_fit | — | `shrink_to_fit` | — | `trimToSize` | ❌ | **153.1** |
+| shrink-to-fit | — | `shrink_to_fit` | — | `trimToSize` | ❌ | **= `cap(len())`** (153.1) |
 | resize/truncate | — | `resize`/`truncate` | `length=` | — | ⚠ только `truncate` | **153.1** |
 | clear/fill/reverse | — | `clear`/`fill`/`reverse` | `fill`/`reverse` | `clear`/`fill`/`reverse` | ✅ | ✅ |
 | contains | `slices.Contains` | `contains` | `includes` | `contains` | ❌ | **153.3** |
@@ -165,8 +165,7 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 компиляторе). Cross-module type-methods (прецедент 139.1/152.0). Эстимат ~1.5–2 dd.
 
 ### 153.1 — Core API & capacity + консолидация дублей `[D259, A]`
-Добить императивное ядро до паритета: `@swap(i,j)`, `@shrink_to_fit()`,
-`@shrink_to(min)` (= `max(len,min)`, без паники), `@resize(n,v)`,
+Добить императивное ядро до паритета: `@swap(i,j)`, `@resize(n,v)`,
 `@contains` (наив, до 153.3), capacity-инварианты. Аудит
 существующих (push/pop/insert/remove/index/get/first/last/clear/truncate/reverse/fill).
 
@@ -178,11 +177,12 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
   инварианты), а не «никогда для размеров».
   - **`@cap(n)` — ДА, ТОЧНО:** realloc до ёмкости **ровно `n`** (без pow2-округления —
     явный абсолютный запрос). Контракт **`n >= len`** (`n == len` валидно = zero-slack/
-    `shrink_to_fit`; `n == 0` при `len == 0` = free buffer); **`n < len` → паника**
+    zero-slack); `n == 0` при `len == 0` = free buffer); **`n < len` → паника**
     (ёмкость физически не меньше числа элементов; молчаливый truncate/clamp — footgun,
-    ломает round-trip). Не-паникующая «ужать к `n` с полом `len`» — отдельный
-    `@shrink_to(min)` (= `max(len, min)`, Rust-parity). Держит round-trip
-    `v.cap(n); v.cap()==n`. (pow2-округление — только неявный авто-рост и
+    ломает round-trip). **Покрывает (отдельные методы не нужны):** shrink-to-fit =
+    `cap(len())`, shrink-to-min = `cap(max(len(), min))`, room-for-N = `cap(len()+N)`.
+    Держит round-trip `v.cap(n); v.cap()==n`. (pow2-округление — только неявный
+    авто-рост и
     `@reserve(add)`, helper `_round_up_pow2`: bit-twiddle `v--;v|=v>>1;…;v++` или
     `clz` `1<<(64-clz(n-1))`, см. jameshfisher.com/2018/03/30/round-up-power-2; edge:
     `n<=0`, `max(8,pow2)`, overflow 2^63.)
@@ -192,7 +192,7 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 
 **Fluent-конвенция (chaining, как `StringBuilder.@append`):**
 - **Мутирующие `mut @...`, НЕ возвращающие данные → `-> @`** (для цепочек):
-  `@cap(n)`, `@swap`, `@resize`, `@shrink_to_fit`, `@reserve`, `@sort*`, `@dedup`,
+  `@cap(n)`, `@swap`, `@resize`, `@reserve`, `@sort*`, `@dedup`,
   `@rotate*`, `@fill`, `@reverse`, `@clear`, `@truncate`, `@retain` (сейчас `-> ()` —
   **поправить на `-> @`**), `@push`/`@insert`/`@append` (уже `@`). Пример:
   `v.reserve(10).extend(xs).sort()`.
@@ -212,7 +212,7 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 **Стратегия ёмкости — явное точно, неявное pow2.** Принцип: явный *абсолютный*
 запрос ёмкости честится точно; неявный/амортизированный рост округляет до pow2.
 - **Точные (честят `n`, без округления):** конструктор `with_capacity(n)` /
-  `from_raw_parts`, **`@cap(n)`-сеттер**, `@shrink_to_fit()` (room for N more = `@cap(@len()+N)`).
+  `from_raw_parts`, **`@cap(n)`-сеттер** (shrink-to-fit = `cap(len())`, room-for-N = `cap(len()+N)`).
   Держит round-trip `v.cap(n); v.cap()==n` (accessor-конвенция) И даёт
   **предсказуемый detach слайсов** (автор точно знает точку realloc, см. 153.4).
 - **Округление до pow2 (perf):** только **неявный** авто-рост на push и
@@ -292,7 +292,7 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 ## 4. Spec / D / Q / документация (обязательные deliverables)
 
 **Решения (D) — резерв D259–D266:**
-- **D259** (NEW) — Vec core API & capacity (swap/resize/shrink/cap-exact).
+- **D259** (NEW) — Vec core API & capacity (swap/resize/cap-exact, reserve).
 - **D260** (NEW) — ленивый итератор + адаптеры (model + Iter/Next интеграция).
 - **D261** (NEW) — sort & search (stable/unstable, binary_search, dedup).
 - **D262** (NEW) — слайсы и views (`Slice[T]`/`SliceMut[T]`, `v[a..b]` zero-copy).
@@ -341,7 +341,7 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 
 - **153.0:** facade+подмодули компилируются; `[]T` и `Vec[T]` взаимозаменяемы (POS);
   остаточный спец-кейс `[]T` → ошибка/нет (NEG); golden существующих Vec-тестов.
-- **153.1:** `swap`/`resize`/`shrink_to_fit` (POS); `@cap(100)`→
+- **153.1:** `swap`/`resize`/`cap(len())`-shrink (POS); `@cap(100)`→
   `@cap()==100` (ТОЧНО, round-trip), `with_capacity(100)`→точно 100, авто-рост:
   push в cap-8 на 9-м → `@cap()==16` (pow2), `@reserve(100)`→128 (амортизированный
   pow2); `@cap(n<len)`→panic (NEG); `resize`<0, `swap` OOB → panic (NEG).
@@ -380,7 +380,7 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 
 **Per-sub-plan A-критерии** — в файлах `153.N`. Ключевые:
 - **153.0:** `[]T≡Vec` чистый алиас; модуль по слоям; ноль дублей; golden.
-- **153.1:** swap/resize/shrink; capacity-инварианты держатся;
+- **153.1:** swap/resize/cap-exact; capacity-инварианты держатся;
   `@cap(n)` realloc (n>=len, иначе panic); `@len(n)` запрещён; **fluent-цепочки
   работают** (`v.reserve(10).extend(xs).sort()`), `[M-138.2-vec-self-return]` закрыт;
   `append`/`extend` консолидированы в `append`; accessor-конвенция (D117 AMEND).
