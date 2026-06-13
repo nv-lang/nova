@@ -128,6 +128,28 @@
 | (новый, Ф.0) | Reject chained comparison (`E_CMP_CHAIN_UNSUPPORTED` + fix-it); relational-операнды требуют ordered-категорию (bool/unit → `E_RELATIONAL_OPERAND_NOT_ORDERED`; `==`/`!=` на bool легальны) |
 | Plan 115 | reuse `E_PTR_ARITHMETIC_BANNED` (ptr relational) |
 
-## Статус
-📋 **PLANNED** — решение автора (2026-06-13): hard-error (option a, как Rust); chained comparison
-НЕ добавляем. Готов к выполнению (~1–1.5 dev-day, Ф.0-Ф.3).
+## Статус — ✅ CLOSED Ф.0-Ф.3 (2026-06-13, branch `plan-150`, merged в main)
+
+> Решение автора (2026-06-13): hard-error (option a, как Rust); chained comparison НЕ добавлен.
+
+### По фазам
+| Фаза | Commit | Суть |
+|---|---|---|
+| Ф.0 spec | `52d98ab0` | D248 (02-types.md): reject chained comparison + relational-operand ordering; 2 кода ошибок |
+| Ф.1 parser+checker | `ad181324` | parser `parse_cmp`/`parse_eq`: ≥2 сравнений → `E_CMP_CHAIN_UNSUPPORTED` (paren-aware, fix-it); checker Binary-walk: bool/unit relational-операнд → `E_RELATIONAL_OPERAND_NOT_ORDERED` (conservative via `infer_arg_ty`) |
+| Ф.2 тесты | `f67313f1` | 13 фикстур (8 neg + 5 pos) в `nova_tests/plan150/` |
+| Ф.3 docs+close | `91a2191b` | Q35 CLOSED; contracts.md канонная range-форма; backlog (`[M-comparison-bool-operand-or-chaining]` closed, `[M-140-bounds-as-contract]` форма `&&` + unblocked) |
+
+### Acceptance verdict (A1-A8)
+| # | Критерий | Verdict | Доказательство |
+|---|---|---|---|
+| **A1** | `a OP1 b OP2 c` (≥2 cmp) → `E_CMP_CHAIN_UNSUPPORTED`, даже `1<2<3` | ✅ | n1/n2/n3/n5 + n4 (`1<2<3`) PASS |
+| **A2** | Rust-grade диагностика + fix-it `a OP1 b && b OP2 c` | ✅ | сообщение «comparison operators cannot be chained» + «split into … && …» |
+| **A3** | bool/unit операнд `<`/`<=`/`>`/`>=` → `E_RELATIONAL_OPERAND_NOT_ORDERED`; `==`/`!=` на bool легально | ✅ | n7 (`true<false`)/n8 (`flag<5`) PASS; p4 (bool ==/!=) PASS |
+| **A4** | ptr-relational → `E_PTR_ARITHMETIC_BANNED` сохраняется | ✅ | plan115/regression clean (не тронут) |
+| **A5** | `0<=i && i<n` работает; `requires lo<=i && i<hi` — реальный bounds-check | ✅ | p1 + p2 (контракт) run «ok» |
+| **A6** | `assert(0<=100<10)` теперь compile-error | ✅ | n6 PASS (`E_CMP_CHAIN_UNSUPPORTED`) |
+| **A7** | pos+neg релизным nova; 0 регрессий (basics + широкий sweep); permissive-на-generics | ✅ | plan150 13/13; check-sweep **2938 файлов 0 hits**; RUN: basics 8/0, contracts 250/0, plan147 30/0, generics 5/0, plan139 37/0, plan140 7/0 |
+| **A8** | spec D-блок + Q35 resolved + docs | ✅ | D248 + Q35 CLOSED + contracts.md |
+
+**Zero codegen change** — изменение чисто compile-time (parser + checker), runtime неизменён.

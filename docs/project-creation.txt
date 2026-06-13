@@ -37277,3 +37277,15 @@ Workflow (investigate→design→review→implement) + я доделал Test/Ve
   → codegen. Это единственная остаточная недоработка — codegen root-fix отдельным планом.
 
 Validation: grow_vs_wake инвариант PASS, suite green. Коммиты 94f5d6e7/62156a8f/fc145428/2b9d9d34.
+
+Plan 150 — reject chained comparison + ban bool relational (D248, 2026-06-13, branch plan-150, merge 8cf6263f).
+  SECURITY-дыра закрыта: `0 <= i < n` парсился как `(0<=i)<n` = `bool<n` (вакуумно-истинно) →
+  `requires 0<=i<@len` молча нейтрализовался. Решение автора: hard-error (как Rust); chained comparison
+  НЕ добавлен (только Python чейнит). Parser (parse_cmp/parse_eq): ≥2 сравнений → E_CMP_CHAIN_UNSUPPORTED
+  + fix-it «split into a OP1 b && b OP2 c» (paren-aware: `(a<b)<c` легален). Checker (Binary-walk):
+  bool/unit операнд </<=/>/>= → E_RELATIONAL_OPERAND_NOT_ORDERED (conservative via infer_arg_ty; ==/!= на
+  bool легально; ptr → E_PTR_ARITHMETIC_BANNED reuse). Канонная форма диапазона = `a <= b && b < c`.
+  Резолвит Q35; разблокирует [M-140-bounds-as-contract] (форма `&&`). Verification: plan150 13/13 (8 neg +
+  5 pos), check-sweep 2938 файлов 0 ложных hits, RUN basics 8/0 + contracts 250/0 + plan147 30/0 +
+  generics 5/0 + plan139 37/0 + plan140 7/0; zero codegen change (чисто compile-time).
+  Коммиты 52d98ab0(Ф.0)/ad181324(Ф.1)/f67313f1(Ф.2)/91a2191b(Ф.3).

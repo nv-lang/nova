@@ -35921,3 +35921,9 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   out-of-scope, НЕ лечится стеком/split (64MB и single-TU тоже overflow). **Quarantine** (sentinel
   _fixture.toml → suite skip) + **marker OPEN P2 → codegen**. ⚠ Единственная остаточная недоработка:
   реальный codegen root-fix отложен (отдельный план), не Plan 149. Тест сохранён verbatim, nova check зелёный.
+
+- **Plan 150 — chained-comparison footgun устранён (D248, 2026-06-13)**: `0 <= i < n` (и любая цепочка
+  из ≥2 сравнений, и bool/unit как операнд relational) теперь **hard-error на компиляции**
+  (`E_CMP_CHAIN_UNSUPPORTED` / `E_RELATIONAL_OPERAND_NOT_ORDERED`), а не молча вакуумно-истинно. Канонная
+  форма диапазона — `a <= b && b < c`. Как Rust; chaining НЕ добавлен. Чисто compile-time (parser+checker),
+  zero codegen change. plan150 13/13, full check-sweep 2938 файлов 0 регрессий.
