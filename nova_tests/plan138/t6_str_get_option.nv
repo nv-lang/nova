@@ -1,23 +1,25 @@
-// Plan 138 Ф.4 — t6: str.get(i) → Option[char]
-// A6: "abc".get(0) → Option[char]
+// Plan 138 Ф.4 — t6: was `str.get(i) -> Option[char]` (D238 safe int-index).
+// Plan 152.1 (D249 + D238 AMEND): `str.get(i)` (int) RETIRED with the lens model.
+// The safe i-th codepoint is `s.as_chars().nth(i) -> Option[char]` (O(n)) — also
+// None on OOB / negative, so the semantics carry over exactly.
 
 module plan138.t6_str_get_option
 
-test "str.get in-bounds returns Some" {
+test "as_chars().nth in-bounds returns Some" {
     ro s = "abc"
-    assert(s.get(0) == Some('a'))
-    assert(s.get(1) == Some('b'))
-    assert(s.get(2) == Some('c'))
+    assert(s.as_chars().nth(0) == Some('a'))
+    assert(s.as_chars().nth(1) == Some('b'))
+    assert(s.as_chars().nth(2) == Some('c'))
 }
 
-test "str.get out-of-bounds returns None" {
+test "as_chars().nth out-of-bounds returns None" {
     ro s = "abc"
-    assert(s.get(3) == None)
-    assert(s.get(9) == None)
-    assert(s.get(-1) == None)
+    assert(s.as_chars().nth(3) == None)
+    assert(s.as_chars().nth(9) == None)
+    assert(s.as_chars().nth(-1) == None)
 }
 
-test "str.get on empty string" {
+test "as_chars().nth on empty string" {
     ro s = ""
-    assert(s.get(0) == None)
+    assert(s.as_chars().nth(0) == None)
 }

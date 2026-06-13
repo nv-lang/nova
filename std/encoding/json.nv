@@ -298,7 +298,7 @@ fn is_hex_digit(c char) -> bool =>
     is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 
 fn Lexer mut @read_keyword(kw str, t Token, line int, col int) Fail[ParseJsonError] -> TokenWithPos {
-    for i in 0..kw.len() {
+    for i in 0..kw.byte_len() {
         ro expected = kw.as_chars().nth(i)
         ro actual = @peek()
         if Some(expected.unwrap_or(' ')) != actual {

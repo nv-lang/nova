@@ -117,7 +117,7 @@ test "split-by-find: parse 'key:value'" {
     ro i = s.find(":").unwrap_or(-1)
     assert(i == 4)
     ro key = s[0..i]
-    ro val = s[i + 1..s.len()]
+    ro val = s[i + 1..s.byte_len()]
     assert(key == "user")
     assert(val == "42")
 }
@@ -127,7 +127,7 @@ test "split-by-rfind: get last segment of path" {
     ro i = path.rfind("/").unwrap_or(-1)
     assert(i == 14)
     ro dir = path[0..i]
-    ro name = path[i + 1..path.len()]
+    ro name = path[i + 1..path.byte_len()]
     assert(dir == "/usr/local/bin")
     assert(name == "nova")
 }
@@ -138,7 +138,7 @@ test "split-by-rfind: get last segment of path" {
 
 test "slice: full range == original" {
     ro s = "hello"
-    ro r = s[0..s.len()]
+    ro r = s[0..s.byte_len()]
     assert(r == "hello")
 }
 
@@ -146,7 +146,7 @@ test "slice: empty slice (a == b)" {
     ro s = "hello"
     ro r = s[2..2]
     assert(r == "")
-    assert(r.len() == 0)
+    assert(r.byte_len() == 0)
 }
 
 test "slice: middle" {
@@ -161,7 +161,7 @@ test "slice: from start" {
 
 test "slice: to end" {
     ro s = "hello"
-    ro r = s[2..s.len()]
+    ro r = s[2..s.byte_len()]
     assert(r == "llo")
 }
 
@@ -185,29 +185,29 @@ test "rfind is case-sensitive" {
 // ================================================================
 // SECTION 7: len/char_len — Plan 108 D26 rev
 // ================================================================
-// Plan 108 D26 rev: s.len() — длина в байтах O(1) (как Rust/Go).
+// Plan 108 D26 rev: s.byte_len() — длина в байтах O(1) (как Rust/Go).
 //                  s.as_chars().count() — длина в codepoints O(n).
 
 test "len: ASCII — bytes == codepoints" {
     ro s = "hello"
-    assert(s.len() == 5)          // 5 bytes (ASCII; D26 rev: len = bytes O(1))
+    assert(s.byte_len() == 5)          // 5 bytes (ASCII; D26 rev: len = bytes O(1))
     assert(s.as_chars().count() == 5)     // 5 codepoints
 }
 
 test "len: Cyrillic — bytes != codepoints" {
     ro s = "Привет"               // 6 codepoints, 12 bytes (2 byte/char UTF-8)
-    assert(s.len() == 12)          // D26 rev: len = bytes
+    assert(s.byte_len() == 12)          // D26 rev: len = bytes
     assert(s.as_chars().count() == 6)      // codepoints
 }
 
 test "len: emoji — 4 байта на codepoint" {
     ro s = "ab😀cd"                // 5 codepoints, 4 ASCII + 4 emoji = 8 bytes
-    assert(s.len() == 8)            // D26 rev: len = bytes
+    assert(s.byte_len() == 8)            // D26 rev: len = bytes
     assert(s.as_chars().count() == 5)       // codepoints
 }
 
 test "len: empty string" {
-    assert("".len() == 0)
+    assert("".byte_len() == 0)
     assert("".as_chars().count() == 0)
 }
 
@@ -215,7 +215,7 @@ test "len for mixed content" {
     ro s = "a Привет b"           // a + space + 6 cyrillic + space + b = 10 codepoints
                                    // ASCII: a, space, space, b = 4 bytes
                                    // Cyrillic: 6*2 = 12 bytes; total bytes = 16
-    assert(s.len() == 16)           // D26 rev: bytes
+    assert(s.byte_len() == 16)           // D26 rev: bytes
     assert(s.as_chars().count() == 10)      // codepoints
 }
 
@@ -259,7 +259,7 @@ test "slice across emoji boundary" {
     ro s = "ab😀cd"                // codepoints: a(0) b(1) 😀(2) c(3) d(4)
     ro r = s[2..3]
     assert(r == "😀")
-    assert(r.len() == 4)           // emoji = 4 bytes (D26 rev: len = bytes)
+    assert(r.byte_len() == 4)           // emoji = 4 bytes (D26 rev: len = bytes)
     assert(r.as_chars().count() == 1)      // 1 codepoint
 }
 

@@ -1,6 +1,6 @@
 // concat_ok.nv — Plan 139.2 Ф.3
 // str @concat(other) -> str — Nova-body. Allocates a fresh []u8 of size
-// @len() + other.len(), copies both operands' bytes (via @as_bytes()), then
+// @len() + other.byte_len(), copies both operands' bytes (via @as_bytes()), then
 // str.from_bytes_unchecked (owned + NUL-term). Byte-exact with the retired C
 // nova_str_concat. Direct method-form call (`s.concat(t)`) routes here; the
 // `+` operator lowers separately to C nova_str_concat (option (b)) — both
@@ -13,25 +13,25 @@ test "concat: basic ASCII" {
     ro b = "bar"
     ro r = a.concat(b)
     assert(r == "foobar")
-    assert(r.len() == 6)
+    assert(r.byte_len() == 6)
 }
 
 test "concat: empty left operand" {
     ro r = "".concat("tail")
     assert(r == "tail")
-    assert(r.len() == 4)
+    assert(r.byte_len() == 4)
 }
 
 test "concat: empty right operand" {
     ro r = "head".concat("")
     assert(r == "head")
-    assert(r.len() == 4)
+    assert(r.byte_len() == 4)
 }
 
 test "concat: both empty" {
     ro r = "".concat("")
     assert(r == "")
-    assert(r.len() == 0)
+    assert(r.byte_len() == 0)
 }
 
 test "concat: multi-byte UTF-8 preserved byte-exact" {
@@ -40,7 +40,7 @@ test "concat: multi-byte UTF-8 preserved byte-exact" {
     ro b = " ★"
     ro r = a.concat(b)
     assert(r == "café ★")
-    assert(r.len() == a.len() + b.len())
+    assert(r.byte_len() == a.byte_len() + b.byte_len())
     // NUL-term invariant + byte boundary: last byte of é region intact.
     assert(r.as_bytes()[0] == 0x63 as u8)   // 'c'
     assert(r.as_bytes()[3] == 0xC3 as u8)   // é lead byte
@@ -61,7 +61,7 @@ test "concat: method result equals `+` operator result" {
 test "concat: chained concat (used by @replace internally)" {
     ro r = "a".concat("b").concat("c").concat("d")
     assert(r == "abcd")
-    assert(r.len() == 4)
+    assert(r.byte_len() == 4)
 }
 
 test "concat: result is independently owned (source unchanged)" {

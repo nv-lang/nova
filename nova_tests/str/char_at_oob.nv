@@ -17,5 +17,5 @@ test "char_at: negative index returns None" {
 
 test "char_at: index equals len returns None" {
     ro s = "hello"
-    assert(s.as_chars().nth(s.len()) == None)
+    assert(s.as_chars().nth(s.byte_len()) == None)
 }

@@ -21,14 +21,14 @@ test "byte_at: multi-byte UTF-8 leading + continuation bytes" {
     ro s = "é"
     assert(s.as_bytes()[0] == 0xC3 as u8)
     assert(s.as_bytes()[1] == 0xA9 as u8)
-    assert(s.len() == 2)
+    assert(s.byte_len() == 2)
 }
 
 test "byte_at: agrees with as_bytes view" {
     ro s = "hello"
     ro view = s.as_bytes()
     mut i = 0
-    while i < s.len() {
+    while i < s.byte_len() {
         assert(s.as_bytes()[i] == view[i])
         i = i + 1
     }

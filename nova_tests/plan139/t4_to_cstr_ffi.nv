@@ -16,7 +16,7 @@ test "str -> CStr -> C strlen matches str byte length" {
     ro s = "hello"
     ro c = s.as_cstr()
     assert(p139_cstr_strlen(c) == 5)
-    assert(p139_cstr_strlen(c) == s.len())
+    assert(p139_cstr_strlen(c) == s.byte_len())
 }
 
 test "str passed BY VALUE to C reads .ptr/.len (byte sum)" {

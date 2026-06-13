@@ -14,7 +14,7 @@
 // negative fixture nova_tests/plan139_1/neg_str_priv_field.nv (EXPECT_COMPILE_ERROR
 // E_PRIV_FIELD_READ). e5's original header anticipated this flip (see git history).
 //
-// This fixture now pins only the cleanly-checkable public surface: `s.len()`
+// This fixture now pins only the cleanly-checkable public surface: `s.byte_len()`
 // (public method, = bytes per D26) on a literal. The `*u8` ro-pointee canon
 // itself is exercised by the b2/e2 rows of Plan 147.
 //
@@ -26,7 +26,7 @@ fn main() -> () {
     ro s = "hello"
     // public length accessor (= bytes per D26 rev). The priv `ptr` field is no
     // longer read here — that case moved to plan139_1/neg_str_priv_field.nv.
-    ro n = s.len()
+    ro n = s.byte_len()
     assert(n == 5)
     println("ok")
 }

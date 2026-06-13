@@ -4,16 +4,16 @@ module plan139.t0_str_literal
 
 test "str literal len is byte count (D26)" {
     ro s = "abc"
-    assert(s.len() == 3)
+    assert(s.byte_len() == 3)
 }
 
 test "ascii literal byte-length" {
     ro s = "hello world"
-    assert(s.len() == 11)
+    assert(s.byte_len() == 11)
 }
 
 test "multibyte literal counts BYTES not codepoints (D26 str.len = bytes)" {
-    // "é" is 2 UTF-8 bytes; .len() reports bytes.
+    // "é" is 2 UTF-8 bytes; .byte_len() reports bytes.
     ro s = "é"
-    assert(s.len() == 2)
+    assert(s.byte_len() == 2)
 }

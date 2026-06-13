@@ -33,7 +33,7 @@ test "block-expr with str local, int trailing" {
     // str prelude present + a str local `s` inside the block; trailing is int.
     // Stresses the var_types interaction that caused the original mis-typing.
     ro r = { ro s = "hello"
-        ro n = s.len()
+        ro n = s.byte_len()
         n + 1 }
     assert(r == 6)
 }

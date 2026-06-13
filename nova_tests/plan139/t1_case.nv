@@ -26,6 +26,6 @@ test "case preserves non-ascii bytes" {
 
 test "len preserved after case" {
     ro s = "MixedCase"
-    assert(s.to_lower().len() == s.len())
-    assert(s.to_upper().len() == s.len())
+    assert(s.to_lower().byte_len() == s.byte_len())
+    assert(s.to_upper().byte_len() == s.byte_len())
 }

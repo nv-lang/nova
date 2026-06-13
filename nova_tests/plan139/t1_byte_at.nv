@@ -14,7 +14,7 @@ test "byte_at multibyte raw bytes" {
     ro s = "é"                // 0xC3 0xA9
     assert(s.as_bytes()[0] == 0xC3)
     assert(s.as_bytes()[1] == 0xA9)
-    assert(s.len() == 2)
+    assert(s.byte_len() == 2)
 }
 
 test "as_bytes view matches byte_at" {
@@ -22,7 +22,7 @@ test "as_bytes view matches byte_at" {
     ro bs = s.as_bytes()
     assert(bs.len() == 5)
     mut i = 0
-    while i < s.len() {
+    while i < s.byte_len() {
         assert(bs[i] == s.as_bytes()[i])
         i = i + 1
     }
