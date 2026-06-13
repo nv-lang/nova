@@ -238,6 +238,18 @@
   Build-from-iterable УЖЕ есть (`Vec[T].from(items)` + `@extend[S Iter[T]]`); протокол-форма
   `collect`-таргета приземляется вместе с 153.2.
 
+## Follow-up: Plan 153.4 (slices — value-record element typedef)
+- **`[M-153.4-vec-value-record-field-access]`** (planned, P2, home **Plan 153.4 / Plan 96 H3**):
+  slice-каст value-record (`ranges[1..3]` на `[]Range`) **ЗАКРЫТ** (emit_c.rs:19052 un-mangle
+  `_p`→`*` для element-cast; передан агентом 152-sweep'а, был pre-existing, НЕ регрессия 152).
+  Остаётся доступ к **ПОЛЮ** элемента value-record — `ranges[0].start` — тот же корень (элемент
+  мангатится в `Nova_Range_p`, теряет точный тип), но ДРУГОЙ codepath (element-field-access,
+  Plan 96 H3 / array_element_types Ф.4.5). Не входил в acceptance. Применить аналогичный un-mangle.
+- **stale neg-message** (floating, P3): plan96/neg_slice_{a_gt_b,a_negative,oob_to} ждут
+  `EXPECT_RUNTIME_PANIC array: slice`, а сообщение теперь `Vec: slice ... out of bounds` (D239
+  `[]T`→`Vec` rename, emit_c.rs:19045). Pre-existing stale-ожидание, не codegen-баг. Выровнять
+  EXPECT на `Vec: slice`, или сделать message нейтральным к array/Vec.
+
 ## Конвенция
 - **Planned** маркер → Followups своего плана (+ индекс-строка здесь с home).
 - **Floating** (нет плана) → здесь полностью.

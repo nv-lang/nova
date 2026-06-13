@@ -19024,6 +19024,23 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                             .unwrap_or("nova_int")
                             .trim_end_matches('*')
                             .trim();
+                        // [M-153.4-vec-value-record-slice-typedef] `elem_ty` here is the
+                        // MANGLED Vec-name element form: a value-record (or Nova_T*)
+                        // element reads as `Nova_Range_p` (`_p` = the `*` mangling used in
+                        // symbol names), which is NOT a declared C typedef — so the cast
+                        // below `(Nova_Range_p*)` hits "undeclared identifier" in clang.
+                        // Restore each trailing `_p` to `*` so the slice cast emits the
+                        // real C type (`Nova_Range**` for the `*mut T` element buffer).
+                        // Primitive elements (`nova_int`) have no `_p` and pass unchanged.
+                        let elem_c = {
+                            let mut base = elem_ty;
+                            let mut stars = 0usize;
+                            while let Some(stem) = base.strip_suffix("_p") {
+                                base = stem;
+                                stars += 1;
+                            }
+                            format!("{}{}", base, "*".repeat(stars))
+                        };
                         let from_expr = match start.as_deref() {
                             Some(s) => self.emit_expr(s)?,
                             None => "((nova_int)0LL)".to_string(),
@@ -19054,7 +19071,7 @@ nova_int _sl = _st - _sf; \
 {vty}* _sr = ({vty}*)nova_alloc(sizeof({vty})); \
 _sr->data = ({ety}*)(_sv->data + _sf); _sr->len = _sl; _sr->cap = _sl; \
 _sr; }}))",
-                            vty = vec_ty, o = o, from = from_expr, to = to_expr_inner, ety = elem_ty, chk = slice_chk
+                            vty = vec_ty, o = o, from = from_expr, to = to_expr_inner, ety = elem_c, chk = slice_chk
                         ));
                     }
                     let len_expr = if obj_ty == "nova_str" {
