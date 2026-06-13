@@ -2616,7 +2616,7 @@ len-инвариантен над всем телом → `v[0..v.len()]` вне
 
 **Покрытие:** скалярный `v[i]` (read + write-back `v[i]=val`); **slice `v[a..b]`**
 (`0<=a && a<=b && b<=v.len()`, inline-проверка элидируется); **cross-fn** — `v[i]`
-внутри `fn helper(v,i) requires 0<=i<v.len()` (bound из requires, см. ниже).
+внутри `fn helper(v,i) requires 0<=i && i<v.len()` (bound из requires, см. ниже).
 
 **Два proven-множества (soundness под `--contracts=off`):**
 - **always-safe** — bound доказан из LOOP/CODE (без `requires`): loop-bound,

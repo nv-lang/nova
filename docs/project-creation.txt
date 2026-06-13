@@ -37339,7 +37339,7 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   §2 SLICE: `v[a..b]` — verifier доказывает `0<=a && a<=b && b<=v.len()`; inline slice-проверка
   (emit_c, "Vec: slice [...]") теперь элидируема (slice_chk-gate). fn-level frame-safety (idx_collect_index_objs
   + idx_block_len_safe над всем телом) даёт `v[0..v.len()]` вне цикла. Range добавлен в frame-check.
-  §3 CROSS-FN: `v[i]` внутри `fn helper(v,i) requires 0<=i<v.len()` элидируется — bound из fn-requires.
+  §3 CROSS-FN: `v[i]` внутри `fn helper(v,i) requires 0<=i && i<v.len()` элидируется — bound из fn-requires.
   КЛЮЧЕВОЙ soundness-механизм: ДВА proven-множества вместо одного. Z3 моделит длину как фикс; под
   `--contracts=off`/`#unchecked` requires не enforced → элизия по нему unsound. Поэтому prove_vec_index_sites
   делает 2 pass'а: без requires (always-safe, loop/code) и с requires (all); contract-based = all−always.

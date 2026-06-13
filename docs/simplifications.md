@@ -35953,7 +35953,7 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 - **Plan 140.2 followup §2–§3 (2026-06-13): slice + cross-fn элизия.** (§2 slice) `v[a..b]` — та же
   inline-проверка, что у скаляра, теперь элидируется (3-условная граница); fn-level frame-safety (vec
   len-инвариантен над всем телом) даёт `v[0..v.len()]` вне цикла. (§3 cross-fn) `v[i]` внутри
-  `fn helper(v,i) requires 0<=i<v.len()` элидируется — bound берётся из fn-`requires`. КЛЮЧЕВОЙ soundness-
+  `fn helper(v,i) requires 0<=i && i<v.len()` элидируется — bound берётся из fn-`requires`. КЛЮЧЕВОЙ soundness-
   механизм: **2 proven-множества** вместо одного. Z3 моделит длину как фикс, а под `--contracts=off`/`#unchecked`
   сам `requires` не enforced → элизия по нему была бы unsound. Поэтому verifier различает «доказано из
   loop/code» (always-safe, элидится всегда) и «доказано только с requires» (contract-based, codegen элидит

@@ -7615,7 +7615,7 @@ frame-check «длина `v` инвариантна в цикле» (Z3 моде
   длину); `for i in 0..v.len() { v[i]=f(v[i]) }` элидирует И запись, И чтение.
 - **§2 slice** — `v[a..b]` slice-bounds (`0<=a && a<=b && b<=v.len()`); inline
   slice-проверка элидируется на доказанных сайтах.
-- **§3 cross-fn (callee-side)** — `v[i]` внутри `fn helper(v,i) requires 0<=i<v.len()`
+- **§3 cross-fn (callee-side)** — `v[i]` внутри `fn helper(v,i) requires 0<=i && i<v.len()`
   элидируется (bound из requires; **contract-based** proven-set, codegen элидит
   только при включённых контрактах — под `--contracts=off`/`#unchecked` проверка
   остаётся, т.к. requires там не enforced).
