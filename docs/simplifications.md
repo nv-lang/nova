@@ -36070,3 +36070,13 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 - **@eq_ignore_ascii_case** (str + char) — ASCII case-insensitive, без Unicode-таблиц
   (é/É не фолдятся). Unicode folding (eq_ignore_case) — 152.5b.
 - D-R4 (str-operator C-lowering декомиссия) выделен из 152.5a как отдельная тяжёлая фаза.
+
+## Plan 152.6 (D255 — UTF-16/code-point interop), 2026-06-13
+- **Размещение в std/encoding (не prelude)** — UTF-16/code_points это FFI/протокол-
+  концерн, не повседневная str-операция; импортируется явно (как base64/json).
+  str-расширения из импортируемого std-модуля корректно dot-резолвятся.
+- **from_utf16 двухпроходно** (валидация в []int → построение str) — ранний `return Err`
+  без живого consume-типа (StringBuilder создаётся ПОСЛЕ всех Err-путей) обходит D133
+  consume-on-all-paths. consume StringBuilder + str.from_codepoint (known-valid path).
+- **Контракты Plan 140 на surrogate-помощниках** (decode_surrogate_pair requires
+  is_*_surrogate + ensures result∈[0x10000,0x10FFFF]) — повсеместное применение.

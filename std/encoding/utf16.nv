@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/encoding/utf16.nv — UTF-16 / code-point interop (Plan 152.6, D255).
+//
+// Дополняет байтовый слой (`str.from_bytes_*` / `@to_bytes` / `@as_bytes`) и
+// codepoint-линзу (`@as_chars`): даёт конверсии в/из UTF-16 (Windows API,
+// JS-interop, JSON `\uXXXX`) и доступ к сырым int-codepoint'ам для
+// низкоуровневых протоколов/таблиц.
+//
+// Инвариант R-UTF8 (D26 AMEND): любой `str` на выходе — валидный UTF-8.
+// `from_utf16` проверяет surrogate-пары; невалидный UTF-16 (lone/усечённый
+// surrogate) → `Err(Utf16Error)`, str НЕ конструируется.
+//
+// `str`-методы (`@encode_utf16` / `@code_points` / `str.from_utf16`) — тонкие
+// делегаты в свободные функции этого модуля; импортируется явно
+// (`import std.encoding.utf16`), не prelude — это FFI/протокол-концерн.
+
+module encoding.utf16
+
+// ─── Ошибка декодирования UTF-16 ───
+
+/// Невалидная последовательность UTF-16 code units. Хранит проблемный code
+/// unit (0..0xFFFF) для диагностики.
+export type Utf16Error
+    | LoneHighSurrogate(int)        // high surrogate без следующего low
+    | LoneLowSurrogate(int)         // low surrogate без предшествующего high
+    | TruncatedSurrogatePair(int)   // high surrogate в самом конце входа
+
+// ─── Surrogate-помощники (UTF-16 spec) ───
+
+/// High (leading) surrogate: U+D800..=U+DBFF.
+export fn is_high_surrogate(u int) -> bool => u >= 0xD800 && u <= 0xDBFF
+
+/// Low (trailing) surrogate: U+DC00..=U+DFFF.
+export fn is_low_surrogate(u int) -> bool => u >= 0xDC00 && u <= 0xDFFF
+
+/// Сборка supplementary-codepoint (U+10000..=U+10FFFF) из валидной surrogate-
+/// пары. Caller гарантирует `is_high_surrogate(hi) && is_low_surrogate(lo)`.
+export fn decode_surrogate_pair(hi int, lo int) -> int
+    requires is_high_surrogate(hi)
+    requires is_low_surrogate(lo)
+    ensures result >= 0x10000 && result <= 0x10FFFF
+    => 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00)
+
+// ─── str → UTF-16 ───
+
+/// UTF-16 code units строки. BMP-codepoint → один u16; supplementary
+/// (cp > 0xFFFF) → surrogate-пара (два u16). Аналог Rust `str::encode_utf16`,
+/// JS-строкового представления. Roundtrip: `from_utf16(s.encode_utf16()) == Ok(s)`.
+export fn str @encode_utf16() -> []u16 {
+    // capacity hint: code units ≤ byte_len (ASCII=1 байт=1 unit; не-ASCII —
+    // меньше units чем байт, кроме supplementary 4 байта→2 units; byte_len —
+    // безопасная верхняя граница без второго прохода).
+    mut out = []u16.with_capacity(@byte_len())
+    for c in @as_chars() {
+        ro cp = c as int
+        if cp < 0x10000 {
+            out.push(cp as u16)
+        } else {
+            ro v = cp - 0x10000
+            out.push((0xD800 + (v >> 10)) as u16)       // high surrogate
+            out.push((0xDC00 + (v & 0x3FF)) as u16)     // low surrogate
+        }
+    }
+    out
+}
+
+// ─── UTF-16 → str (checked) ───
+
+/// Декодирование UTF-16 code units в `str`. Валидирует surrogate-пары:
+/// lone high/low или усечённая пара → `Err(Utf16Error)`. На выходе — валидный
+/// UTF-8 (R-UTF8). Аналог Rust `String::from_utf16`.
+///
+/// Двухпроходно: сначала валидация в `[]int` codepoint'ов (ранний `Err`
+/// безопасен — нет живого consume-типа), затем построение `str` из codepoint'ов
+/// через `StringBuilder` (потребляется один раз на единственном успешном пути).
+export fn str.from_utf16(units []u16) -> Result[str, Utf16Error] {
+    ro n = units.len()
+    mut cps = []int.with_capacity(n)
+    mut i = 0
+    while i < n {
+        ro u = units[i] as int
+        if is_high_surrogate(u) {
+            if i + 1 >= n { return Err(TruncatedSurrogatePair(u)) }
+            ro lo = units[i + 1] as int
+            if !is_low_surrogate(lo) { return Err(LoneHighSurrogate(u)) }
+            cps.push(decode_surrogate_pair(u, lo))
+            i = i + 2
+        } else if is_low_surrogate(u) {
+            return Err(LoneLowSurrogate(u))
+        } else {
+            cps.push(u)             // BMP scalar (validated: не surrogate)
+            i = i + 1
+        }
+    }
+    // Все code units валидны → строим str. StringBuilder создаётся ПОСЛЕ всех
+    // ранних `return Err`, потребляется один раз через @as_str (D133-safe).
+    consume sb = StringBuilder.with_capacity(cps.len() * 2)
+    for cp in cps { sb.append(str.from_codepoint(cp)) }   // cp validated → known-valid path
+    Ok(sb.as_str())
+}
+
+// ─── str → raw code points ───
+
+/// Сырые int-codepoint'ы строки (без `char`-обёртки) — для низкоуровневых
+/// протоколов/таблиц. Значения идентичны `@as_chars()` как int.
+/// `code_points("a😀") == [0x61, 0x1F600]`.
+export fn str @code_points() -> []int {
+    mut out = []int.with_capacity(@byte_len())
+    for c in @as_chars() { out.push(c as int) }
+    out
+}

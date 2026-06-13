@@ -82,6 +82,23 @@ for b in s.as_bytes() { ... } // u8 (bytes) — explicit
 `as_*` lenses borrow (zero-copy). For an independent owned value use `to_*`:
 `s.to_bytes() -> []u8`, `s.to_chars() -> []char` (both allocate).
 
+## Encoding interop (UTF-16 / code points)
+
+For FFI / JS-interop / protocols, `import std.encoding.utf16` adds UTF-16 and raw
+code-point conversions (not in prelude — these are interop concerns, not everyday
+string ops):
+
+- `s.encode_utf16() -> []u16` — UTF-16 code units (supplementary code points become
+  surrogate pairs).
+- `str.from_utf16(units []u16) -> Result[str, Utf16Error]` — checked decode; a lone or
+  truncated surrogate is an `Err`, so the result is always valid UTF-8 (R-UTF8).
+- `s.code_points() -> []int` — raw `int` code points (no `char` wrapper), same values as
+  `as_chars()` cast to `int`.
+
+`from_utf16(s.encode_utf16()) == Ok(s)` round-trips on ASCII, BMP and supplementary
+(e.g. `"😀"`). Surrogate helpers (`is_high_surrogate`/`is_low_surrogate`/
+`decode_surrogate_pair`) live in the same module.
+
 ## Where each operation lives
 
 | Operation | Method | Notes |
@@ -93,6 +110,7 @@ for b in s.as_bytes() { ... } // u8 (bytes) — explicit
 | search | `find`/`rfind`/`contains`/`starts_with`/`ends_with` | byte offsets |
 | split/trim/replace/pad/repeat/concat | `transform`/`search` | see std/runtime/string/ |
 | owned bytes/chars | `to_bytes`/`to_chars` | alloc |
+| UTF-16 / code points | `encode_utf16`/`from_utf16`/`code_points` | `import std.encoding.utf16` |
 | identity | `==` / `compare` / `hash` / clone | content-based |
 
 > Unicode-correct operations (normalization, grapheme segmentation, Unicode case,

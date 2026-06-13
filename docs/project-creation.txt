@@ -37522,3 +37522,17 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   opt-in Phase B; str не collation'ит молча). Фикстура plan152_5/comparison 1/0. D-R4 (декомиссия
   хардкода str-операторов ==/</+ в emit_c.rs → синтез из @eq/@compare/@concat на RawMem-body)
   ОТЛОЖЕН как отдельная тяжёлая codegen-фаза ([M-139.1-operator-lowered-methods]). 0 регрессий.
+
+[2026-06-13] Plan 152.6 (UTF-16/32 interop, D255) ✅ ЗАКРЫТ Ф.0-Ф.4. Новый модуль
+  std/encoding/utf16.nv (encoding.utf16, импортируется явно — не prelude): Utf16Error
+  (LoneHigh/LoneLow/TruncatedSurrogatePair) + surrogate-помощники с контрактами Plan 140
+  (is_high/low_surrogate, decode_surrogate_pair requires+ensures). str-методы (тонкие
+  делегаты, dot-резолвятся при import): @encode_utf16()->[]u16 (BMP→1unit, supplementary→
+  surrogate-пара), str.from_utf16(units)->Result[str,Utf16Error] (checked, двухпроходно:
+  валидация в []int → построение через consume StringBuilder + str.from_codepoint, R-UTF8),
+  @code_points()->[]int. Spec D255 + docs/strings.md encoding-секция. Фикстура
+  plan152_6/utf16_interop 11 тестов 1/0 (roundtrip ASCII/BMP/😀 + 3 neg surrogate +
+  code_points==as_chars). 0 новых FAIL (targeted sweep: str/basics/plan152_1-6/plan91_13;
+  plan91_13 2/6 — pre-existing Nova_JsonValue recursive sum-type, на main тоже 2/6).
+  Дизайн-открытие: str-расширения из импортируемого std-модуля dot-резолвятся (прецедента
+  в std не было — проверено пробой).
