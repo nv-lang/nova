@@ -2,6 +2,7 @@
 // requires/ensures могут ссылаться на @field receiver'а; кодируется в SMT
 // (UF `_field_count_int(_self)`), доказывается Z3 — НЕ E2401. Codegen
 // runtime-enforcement недоказанного requires использует receiver (nova_self).
+// REQUIRES_SMT_BACKEND z3
 
 module contracts.plan140_2_self_field_positive
 

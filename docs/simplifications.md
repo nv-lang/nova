@@ -35927,3 +35927,18 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   (`E_CMP_CHAIN_UNSUPPORTED` / `E_RELATIONAL_OPERAND_NOT_ORDERED`), а не молча вакуумно-истинно. Канонная
   форма диапазона — `a <= b && b < c`. Как Rust; chaining НЕ добавлен. Чисто compile-time (parser+checker),
   zero codegen change. plan150 13/13, full check-sweep 2938 файлов 0 регрессий.
+
+- **Plan 140.2 — Vec @index bounds как элидируемый контракт (D256+D257, 2026-06-13)**: `requires 0<=i && i<@len`
+  на `Vec @index` теперь возможен и оптимизируется. КЛЮЧЕВОЕ УПРОЩЕНИЕ Part A: `@field` в контракте кодируется
+  **через уже существующую machinery** — bare `@` → SMT-Var `_self`, и `@field`/`@len()` сами идут через
+  имеющийся `_field_<name>_<sort>(obj)` UF (тот же, что для `obj.field` параметра). Ноль изменений в backend
+  (z3.rs/smtlib.rs): свободная Var auto-объявляется Int, `_field_*(_self)` минтит стабильную fresh-const по
+  AST-указателю аргумента → один `_self` даёт верную конгруэнтность «бесплатно». Изначальная попытка
+  «объявить sorted-UF над uninterpreted record-sort» была отвергнута (prefix-dispatch `_field_*` всё равно
+  ушёл бы на fresh-const путь — лишняя работа без выгоды). Part B B.4 элизия: **per-index-site**, а НЕ
+  per-method — буквальный план «route v[i] через mono-@index + Plan-140-элизия» оказался несостоятелен
+  (per-(fn,span) ключ элидит «всё-или-ничего», и метод-вызов ломает lvalue `v[i].field=x`). Inline-путь
+  сохранён (lvalue-safe `*(&p[i])`-форма, сворачивается C-инлайнером в `p[i]` — zero overhead на недоказанном).
+  SOUNDNESS: элизия гейтирована frame-check «`v` read-only в цикле» (read-only ⇒ длина инвариантна ⇒
+  `i<v.len()@guard` держится на доступе), т.к. Z3 моделит длину как фиксированную, а Nova переоценивает
+  `0..v.len()` каждую итерацию. Гейт non-trivial backend ⇒ дефолтные (Trivial) сборки не платят ничего.
