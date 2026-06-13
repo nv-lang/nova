@@ -194,6 +194,75 @@ for (NovaFrame* f = top; f; f = f->prev) {
 - **Cooperative safe-points.** GC стартует только в safe-point'ах (call/alloc/loop
   back-edge) — между write-back и use GC сработать не может.
 
+### 7.5. Оптимизации (тиры O0–O3)
+
+**Фундаментальный потолок (honest limit).** У Go write-back **ленивый** — статические
+карты дают GC найти указатель *где он лежит* (регистр/слот) в момент сборки. У нас карт
+нет → write-back **энергичный** (eager): GC найдёт корень только там, куда мы его *явно
+положили*. Оптимизации уменьшают **число** энергичных write-back'ов, **не делают** их
+ленивыми. Этот зазор — цена компиляции-в-C.
+
+**Кто оптимизирует.** clang НЕ уберёт наши `fr.slot[i]=…` сам: `nova_shadow_top=&fr.hdr`
+публикует адрес кадра в глобал, читаемый GC → для clang записи в `fr` имеют видимый
+side-effect (escape). **Все оптимизации ниже обязан делать codegen Nova на своём IR ДО
+эмита C**, не надеясь на clang.
+
+Стоимость схемы: (A) push/pop кадра, (B) обнуление слотов, (C) write-back перед
+safe-point, (D) reload после (moving), (E) доступ к TLS-вершине.
+
+| # | Оптимизация | Срезает | Сила |
+|---|---|---|---|
+| 1 | Нет кадра, если нет корня живого через safe-point | A+B+C функции | 🔥 макс |
+| 2 | **Effect-driven safe-points**: вызов `#no_gc`/pure — НЕ safe-point | C | 🔥 макс |
+| 3 | Per-safepoint live-set: писать только корни, живые в ЭТОЙ точке | C | 🔥 |
+| 4 | Slot coloring: непересекающиеся live-range делят слот → меньше `nroots` | B+C+размер | ⚙ |
+| 5 | Store sinking + LICM для write-back | C (не-достигнутые пути / циклы) | ⚙ |
+| 6 | Frame coalescing: leaf-кластер пушит ОДИН кадр | A | ⚙ |
+| 7 | Single-epilogue + unwinder-reset для pop | A на error/panic/defer + риск | ⚙ |
+| 8 | Вершина в регистре (трюк Go `g`→r14) | E (TLS-load) | 🔧 adv |
+| 9 | Selective reload: только movable-слоты | D | 🔧 moving |
+| 10 | Fold `shadow_top` в fiber-CB (рядом со swap стека) | E + кэш-линия | free |
+
+**Ключевое #1+#2.** Большинство мелких функций корней-через-safe-point не имеют → **0
+операций**. А `#no_gc`/pure-вызовы (система эффектов Nova!) перестают быть safe-point'ами →
+write-back перед ними не нужен. Монтоморфизация делает анализ точным (нет виртуального
+dispatch). Здесь Nova **обыгрывает наивный Henderson** — за счёт своей системы эффектов.
+
+```c
+int64_t nova_len(NovaStr* s) { return s->len; }   // leaf, не аллоцирует → кадра НЕТ
+// ...
+NovaObj* a = nova_make_obj();
+fr.slot[0] = a;            // нужно: впереди аллокация
+nova_log_int(a->id);       // #no_gc, pure → НЕ safe-point → write-back НЕ нужен
+nova_other_alloc();        // safe-point → a уже в слоте ✓
+```
+
+**#7 — снятие риска инварианта pop.** Pop не в каждой точке выхода (легко забыть на
+`?`/panic), а единый epilogue + сброс вершины в unwinder при раскрутке (как `longjmp`
+у Henderson) → на исключительных путях pop вообще не пишем.
+
+```c
+NovaObj* ret;
+if (err) { ret = NULL; goto out; }
+ret = r;
+out:
+    nova_shadow_top = fr.hdr.prev;   // ЕДИНСТВЕННОЕ место pop; panic-путь чинит unwinder
+    return ret;
+```
+
+**Тиры (привязка к §8):**
+
+| Тир | Оптимизации | Фаза | Зачем |
+|---|---|---|---|
+| **O0** | наивно: кадр на каждую функцию с корнями, write-back перед каждым вызовом | Ф.2 (эталон) | корректность, baseline |
+| **O1** | #1 + #2 + #3 (frame-elision + effect-safe-points + per-safepoint live-set) | Ф.2 завершение | **условие жизнеспособности** — без них каждый вызов = safe-point с write-back, перф «съеден» |
+| **O2** | #4 + #5 + #6 + #7 (coloring, sink/LICM, coalescing, единый epilogue) | Ф.4–Ф.5 | перф-полировка + снятие риска pop |
+| **O3** | #8 + #9 + #10 (регистр-вершина, selective reload, fold в CB) | Ф.6+ / флаг | финальный TLS/moving-перф |
+
+> **O0→O1 — НЕ «оптимизация ради скорости», а условие жизнеспособности схемы.** Без #1/#2
+> каждый вызов становится safe-point'ом с write-back. Поэтому Ф.2 **обязана** довести до
+> O1; O2/O3 — последующая полировка. AC Ф.5 (перф vs Boehm) меряется на **O1+**, не на O0.
+
 ## 8. Декомпозиция по фазам
 
 Два полукорпуса: **non-moving precise (Ф.0–Ф.5)** — даёт точную пометку, убирает
@@ -205,10 +274,10 @@ false-retention и integer-как-указатель, разблокирует g
 |---|------|-----|
 | **Ф.0** GATE | Заморозить ABI shadow-frame (§7.1), определение safe-point, протокол swap вершины на fiber-switch, взаимодействие с blocking{}-offload, дисциплина pop на error/panic/defer-путях. Спроектировать unified roots registry. | Design-doc + spec D-блок (D2xx) + open-questions; реестр вершин описан; решение non-moving-first зафиксировано. Без кода. |
 | **Ф.1** Heap bitmaps | Codegen эмитит per-type pointer-offset bitmap; allocator пишет layout-id в заголовок каждого объекта. (Лёгкая сторона — layout известен.) | Каждая heap-аллокация несёт layout-id; precise heap-tracer метит объект точно при заданных корнях; unit-тест на 3-4 типах (record/sum/nested-ptr). |
-| **Ф.2** Codegen shadow-frame (non-moving) | Эмит frame-struct + push/pop + write-back перед safe-point'ами для функций с heap-локалами, живущими через safe-point. Инварианты 1,2,4. Pop на всех exit-путях (incl. `?`/panic/defer). | Кадр — авторитетный источник: тест, где Boehm conservative ложно удерживает (integer похож на указатель / dead-but-on-stack) → точная сборка. Pop-discipline тест: early-return + panic + defer не ломают цепочку. |
+| **Ф.2** Codegen shadow-frame (non-moving) | Эмит frame-struct + push/pop + write-back перед safe-point'ами для функций с heap-локалами, живущими через safe-point. Инварианты 1,2,4. Pop на всех exit-путях (incl. `?`/panic/defer). **Довести до тира O1** (§7.5: frame-elision + effect-safe-points + per-safepoint live-set) — не опционально, а условие жизнеспособности. | Кадр — авторитетный источник: тест, где Boehm conservative ложно удерживает (integer похож на указатель / dead-but-on-stack) → точная сборка. Pop-discipline тест: early-return + panic + defer не ломают цепочку. O1-проверка: leaf/`#no_gc`-вызовы НЕ порождают кадр/write-back. |
 | **Ф.3** Runtime precise root-scan | GC обходит shadow-цепочку + unified registry вместо консервативного скана C-стеков/fiber-arena. Swap вершины на fiber-switch. | Boehm stack-scan отключён (свой root-provider); полная регрессия зелёная; **закрывает reference-mn-race** (fiber-stack scan больше не консервативен) — стресс-фикстура M:N зелёная без `GC_DONT_GC`. |
 | **Ф.4** Safe-point completeness | Гарантировать safe-point'ы на call/alloc/loop-back-edge; GC стартует только в них (cooperative). Интеграция с preempt. | Стресс: GC не может сработать между write-back и use; ноль use-after-free под `NOVA_GC_STRESS` (collect на каждом safe-point). |
-| **Ф.5** Non-moving precise GC online ✦ | Precise mark-sweep на shadow-stack + heap-bitmaps; conservative fallback только для подлинно-unknown layout. **ВЕХА.** | Полная nova test регрессия зелёная; bench vs Boehm baseline (не хуже X%); false-retention бенч улучшен; 8MB fiber-reserve можно НЕ трогать (это Ф.7). |
+| **Ф.5** Non-moving precise GC online ✦ | Precise mark-sweep на shadow-stack + heap-bitmaps; conservative fallback только для подлинно-unknown layout. O2-полировка (§7.5: coloring, sink/LICM, coalescing, единый epilogue). **ВЕХА.** | Полная nova test регрессия зелёная; bench vs Boehm baseline (не хуже X%) **меряется на O1+, не на O0**; false-retention бенч улучшен; 8MB fiber-reserve можно НЕ трогать (это Ф.7). |
 | **Ф.6** Moving/compaction | Codegen: reload-after-safe-point (инвариант 3); GC обновляет root-слоты в кадрах + heap-указатели; bump/compact allocator. | Compaction-тест: фрагментированный heap уплотняется, все адреса обновлены, ноль dangling; перемещаемый-объект тест зелёный. |
 | **Ф.7** Растущие/копирующие стеки ✦ | С precise-roots fiber-стек мал и релоцируем → снять 8MB→2KB reserve (связка с [Plan 146](146-growable-fiber-stacks.md) copying-вариант). | 100k+ fiber'ов в бюджете памяти (снимает потолок fiber_arena Plan 82/149); copying-grow с релокацией указателей зелёный. |
 | **Ф.8** Generational/concurrent groundwork | Write-barriers (§4.3) для incremental/concurrent; tri-color подготовка. **Post-v1.0, опционально.** | Deferred — отдельная design-сессия; AC определяются тогда. |
