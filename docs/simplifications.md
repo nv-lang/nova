@@ -36004,3 +36004,23 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   plan91_fe2 10/0, plan152_0/1 PASS). Находки: D117 на `prefix.len` (cross-instance
   size-accessor; D117 AMEND у Plan 153); codegen-gap raw-ptr-локала (`@ptr[i]` работает,
   `ro p=@ptr; p[i]` — нет); str `@index(Range)` без контракта (нет элизии bounds — 152.1/2).
+
+## Plan 152.1 (D249/D250 — string lens model), 2026-06-13
+- **str координатная модель = линзы + байт-координаты (D249).** str[i](int) запрещён
+  (E_STR_NO_INT_INDEX), бэар len()/char_at/char_len/byte_at/get(int) ретайрнуты
+  (E_STR_NO_LEN); единственный length на str — byte_len() (O(1)). Доступ через
+  as_bytes()[i] (байт, O(1)) / as_chars().nth(i) (codepoint, O(n)). Стоимость всегда видна.
+- **str[a..b] → BYTE-range (был codepoint).** Чинит реальный баг: split на non-ASCII
+  падал (передаёт байт-offset'ы в codepoint-индексированный slice). Inline elidable bounds
+  (140.2) — `nova_str_slice_panic` больше не диспатчится. Bonus: pre-existing split_edge починен.
+- **CharsIter value priv = поток, не коллекция** (Next[char]+Iter; нет Index/at/len → no O(n²)
+  footgun). str @iter()=>@as_chars() → for c in s.
+- **value-record codegen ABI fixes (Ф.3, побочно).** CharsIter — первый общий value-record с
+  методами; вскрыл и закрыл for-in NovaValue_-strip + by-ptr &it; bare-@ self-deref (self-return);
+  nova_type_name_from_c/recv-dispatch NovaValue_-strip + prepare_method_recv в multi-overload path.
+  Закрыл класс [M-138.2-vec-self-return] для value-records (бонус для StringBuilder fluent).
+- **Конвенция as_/to_ кодифицирована:** as_<repr>() = lens (borrows, zero-copy);
+  to_<repr>() = owned (alloc).
+- **Находка [M-152.1-str-subview-record-ctor]:** `str{ptr:@ptr+off,len}` construction в str-методе
+  мис-компилируется («passing nova_str to nova_int»); runtime.string линкуется в каждую программу →
+  ломает весь str-код. Обход: slice-методы строят view через inline @[a..b]. Класс value-record codegen.

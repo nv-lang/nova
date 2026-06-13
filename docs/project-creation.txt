@@ -37445,3 +37445,26 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   plan140 31/0/1skip; адверсариальный C-инспект — T1 src=«@count > 0 && @count <= @limit», T2 (Vec @index)
   src=«0 <= i && i < @len» + custom-msg сохранён, ни одного stray «assert». D256 §«Диагностика» + маркер
   [M-140.2-contract-exprdisplay-selfaccess] CLOSED. 0 регрессий.
+
+[2026-06-13] Plan 152.1 (string coordinate model — lenses, D249/D250) ✅ ЗАКРЫТ Ф.0-Ф.5 (ветка plan-152).
+  Разворот «школы B» (codepoint-indexed) на координатную модель линз с байтовыми координатами.
+  Ф.1a: str[i](int) → E_STR_NO_INT_INDEX (checker f3/Index-арм, дискриминация по типу индекса; Range
+  разрешён). Ф.1b: str[a..b] → BYTE-range zero-copy slice (был codepoint — РЕАЛЬНЫЙ БАГ: split на
+  non-ASCII падал, "a,é,b".split → panic slice[5..6]; заодно починил pre-existing str/split_edge);
+  inline elidable bounds (140.2 index_site_elided) + UTF-8 codepoint-boundary guard; контракт-методы
+  str @index(r Range) requires 0<=start&&start<=end&&end<=byte_len() + @get(r Range)->Option[str]
+  (slice.nv, через @[a..b]-делегацию). Ф.3: CharsIter value priv {buf str, pos int} (Next[char]+Iter,
+  count/nth/is_empty); str @as_chars()/@iter() → for c in s; ПЕРВЫЙ общий value-record с методами —
+  потребовал фиксов value-record codegen ABI (for-in NovaValue_ strip + by-ptr &it для mut @next; bare-@
+  self deref для self-return @iter()=>@; nova_type_name_from_c/recv-dispatch + prepare_method_recv в
+  multi-overload) → заодно закрыл класс [M-138.2-vec-self-return] для value-records. Ф.4: ретайр бэар
+  @len/@char_at/@char_len/@byte_at/@get(int) → E_STR_NO_LEN (checker, targeted+fix-it, self-@len
+  field-read изъят); @byte_len()=>@len (field, единственный length на str). Ф.5: широкая миграция ~280
+  сайтов (char_at→as_chars().nth, char_len→as_chars().count, byte_at→as_bytes()[i], str.len()→byte_len(),
+  compiler-driven через E_STR_NO_LEN) по std+nova_tests+examples + D238-миграция plan138 t5/t6/t_neg.
+  Ф.0: D249/D250 (03-syntax) + D26 MAJOR AMEND (08-runtime, R-UTF8 инвариант) + D238/D58 AMEND;
+  Q-string-indexing ПЕРЕЗАКРЫТ (вариант C) + Q-string-len ЗАКРЫТ; docs/strings.md + migration/d249.
+  Синк bidirectional с main ×2 (подтянул 140-generic-contract-fix + 153.0 Vec folder-module + vec
+  requires-contracts). plan152_1 6/0; ноль новых регрессий vs true main-оракул (целевые дир + check-sweep
+  всех .len()). Маркеры: [M-152.1-str-subview-record-ctor] (str{ptr:@ptr+off} construction регрессит
+  codegen — обход через @[a..b]); [M-152.1-str-index-range-contract] достигнут (элидируемые bounds).
