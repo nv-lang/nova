@@ -4439,6 +4439,19 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// Plan 152.1 Ф.1: strip `ro`/`mut`/`unsafe` wrappers and return the base
+    /// `Named` type's last path segment (e.g. `"str"`, `"Range"`, `"CharsIter"`),
+    /// or `None` for non-Named types.
+    fn typeref_named_base(t: &TypeRef) -> Option<&str> {
+        match t {
+            TypeRef::Named { path, .. } => path.last().map(|s| s.as_str()),
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _) => Self::typeref_named_base(inner),
+            _ => None,
+        }
+    }
+
     fn f1_expr(
         &self,
         e: &Expr,
@@ -4499,6 +4512,28 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Index { obj, index } => {
                 self.f1_expr(obj, gs, scope, errors);
                 self.f1_expr(index, gs, scope, errors);
+                // Plan 152.1 Ф.1 (D249): `str` is NOT integer-indexable — codepoint
+                // indexing a UTF-8 string is O(n) hiding behind `[i]`. Only the
+                // byte-range slice `str[a..b]` (Range index) is valid. Discriminate
+                // by the INDEX TYPE (not just a literal `a..b`) so `let r = 2..5;
+                // s[r]` is also accepted. Element access goes through a lens.
+                let index_is_range = matches!(index.kind, ExprKind::Range { .. })
+                    || self.infer_expr_type(index, scope).as_ref()
+                        .and_then(Self::typeref_named_base) == Some("Range");
+                if !index_is_range {
+                    if let Some(obj_tr) = self.infer_expr_type(obj, scope) {
+                        if Self::typeref_named_base(&obj_tr) == Some("str") {
+                            errors.push(Diagnostic::new(
+                                "[E_STR_NO_INT_INDEX] `str` cannot be indexed by an integer — \
+                                 codepoint indexing a UTF-8 string is O(n) masquerading as O(1) \
+                                 (D249). Use a lens: byte `s.as_bytes()[i]` (O(1)), codepoint \
+                                 `s.as_chars().nth(i)` (O(n)); the only `str[..]` form is the \
+                                 byte-range slice `s[a..b]`.".to_string(),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
             }
             ExprKind::If { cond, then, else_ } => {
                 self.f1_expr(cond, gs, scope, errors);

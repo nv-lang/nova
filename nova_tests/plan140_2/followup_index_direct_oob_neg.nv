@@ -3,7 +3,7 @@
 // НЕ эмитится для generic-type mono'd методов (Plan 140 gap) → дыра для прямых
 // вызовов. Восстановлен явный bounds-panic в теле @index → OOB ловится.
 // (Inline `v[i]` всегда был безопасен своей проверкой; это про `.index()`.)
-// EXPECT_RUNTIME_PANIC index out of bounds
+// EXPECT_RUNTIME_PANIC requires failed
 
 module plan140_2.followup_index_direct_oob_neg
 

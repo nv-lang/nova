@@ -1,9 +1,12 @@
-// Plan 138 Ф.4 NEG — str[i] panics on OOB
-// EXPECT_RUNTIME_PANIC array: index
+// Plan 138 Ф.4 NEG — was `str[i]` OOB runtime panic (D238 int-index).
+// Plan 152.1 (D249): `str[i]` (int) is now a COMPILE error (plan152_1/n_str_int_index).
+// Byte access moved to the `as_bytes()` lens — `s.as_bytes()[i]` still bounds-checks
+// and panics on OOB (Vec[u8] index, Plan 140.2). This preserves the OOB-panic case.
+// EXPECT_RUNTIME_PANIC index
 
 module neg.t_neg_str_index_oob
 
-test "str[5] on length-3 string panics" {
+test "as_bytes()[5] on length-3 string panics" {
     ro s = "abc"
-    ro _ = s[5]
+    ro _ = s.as_bytes()[5]
 }

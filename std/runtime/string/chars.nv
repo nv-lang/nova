@@ -1,6 +1,7 @@
 // AUTO-SPLIT from std/runtime/string.nv (Plan 152.0 Ф.2). Bodies byte-identical.
 // Co-equal file of module `runtime.string` (folder = one module, AMEND F4).
-// Role: char_at (codepoint access; CharsIter lands in 152.1).
+// Role: codepoint layer — `CharsIter` decoding lens (Plan 152.1 Ф.3, D250) +
+//       legacy `char_at`/`get` (retired in Ф.4 → use `as_chars().nth(i)`).
 //
 // Plan 91 Ф.2.5/2.6 (D177/D178): str Nova-body methods. #no_prelude breaks the
 // prelude->string->prelude import cycle.
@@ -10,6 +11,151 @@ module runtime.string
 
 import std.prelude.core.{Option, Some, None}
 
+
+// ─── CharsIter — codepoint decoding lens (Plan 152.1 Ф.3, D250) ───
+//
+// `as_chars()` is a DECODING lens (not a reinterpretation like `as_bytes()`):
+// codepoints are not stored contiguously — they are decoded on the fly. So the
+// honest primitive is a STREAM (iterator), not a collection: there is no cache,
+// `nth(i)`/`count()` are each O(n), and exposing positional `at(i)`+`len()`
+// would invite the `for i in 0..len { at(i) }` = O(n²) footgun that we removed
+// from `str[i]` (invariant I2 "no hidden O(n)"). Mirrors Rust `str::chars()`.
+//
+// `value priv` (D250): the iterator holds `buf` (the source str, an alias of the
+// same UTF-8 buffer — conservative GC sees `ptr` through the str field and keeps
+// the buffer alive) + `pos` (current byte offset). No priv-poking, no `unsafe`:
+// decoding reads bytes via the public zero-copy `buf.as_bytes()` view.
+//
+// `value` = stack-allocated (no per-iteration heap churn). CharsIter is the first
+// general value-record iterator; Plan 152.1 Ф.3 added the codegen support it
+// needs (for-in `NovaValue_*` iterator-struct derivation + by-pointer `&it` for
+// `mut @next()`; value-record self-return deref for `@iter() => @`, which also
+// fixes `[M-138.2-vec-self-return]`).
+export type CharsIter value priv {
+    buf str    // borrows str (alias of the buffer; GC sees ptr through the field)
+    pos int    // current byte offset into buf
+}
+
+// Module-private constructor. A static method on `CharsIter` has
+// `current_recv_type == "CharsIter"` → it may initialise the `priv` fields
+// (type-based privacy, Plan 139.1/D220). `str @as_chars()` (receiver `str`)
+// cannot init CharsIter's priv fields directly, so it routes through here —
+// same pattern as `str.alloc_copy` constructing `str{...}`.
+fn CharsIter.new(buf str) -> CharsIter => { buf, pos: 0 }
+
+// `Next[char]`: decode the codepoint at `buf[pos]`, advance `pos` by its UTF-8
+// byte length, return it. `None` when exhausted (`pos >= byte_len`). Amortised
+// O(1). The decode cursor is the UTF-8 algorithm that used to live in the
+// retired `@char_at` (reads bytes via `@buf.as_bytes()`, no `unsafe`).
+// R-UTF8 (D26 AMEND): the source str is always valid UTF-8, so the decode is
+// total — no malformed-sequence branch is reachable (the `else` arm only guards
+// against a truncated tail and degrades to a single-byte step).
+export fn CharsIter mut @next() -> Option[char] {
+    ro bytes = @buf.as_bytes()
+    ro n = @buf.byte_len()
+    if @pos >= n { return None }
+    ro b = bytes[@pos] as int
+    mut cp = b
+    mut step = 1
+    if b < 0x80 {
+        cp = b; step = 1
+    } else if (b & 0xE0) == 0xC0 && @pos + 1 < n {
+        cp = ((b & 0x1F) << 6) | (bytes[@pos+1] as int & 0x3F)
+        step = 2
+    } else if (b & 0xF0) == 0xE0 && @pos + 2 < n {
+        cp = ((b & 0x0F) << 12) | ((bytes[@pos+1] as int & 0x3F) << 6) | (bytes[@pos+2] as int & 0x3F)
+        step = 3
+    } else if (b & 0xF8) == 0xF0 && @pos + 3 < n {
+        cp = ((b & 0x07) << 18) | ((bytes[@pos+1] as int & 0x3F) << 12) | ((bytes[@pos+2] as int & 0x3F) << 6) | (bytes[@pos+3] as int & 0x3F)
+        step = 4
+    } else {
+        cp = b; step = 1
+    }
+    @pos = @pos + step
+    Some(cp_to_char(cp))
+}
+
+// `Iter` (self-iterator): a CharsIter IS its own iterator, so `for c in it` and
+// `it.iter()` route through the single for-in path (D58). Trivial `=> self`.
+export fn CharsIter @iter() -> CharsIter => @
+
+// Number of codepoints remaining from `pos` to the end. O(n). Counts UTF-8
+// leading bytes (non-continuation: `(b & 0xC0) != 0x80`) without decoding —
+// identical count to walking `next()` to exhaustion, but cheaper. On a fresh
+// `s.as_chars()` (pos == 0) this is the full codepoint length of `s`.
+export fn CharsIter @count() -> int {
+    ro bytes = @buf.as_bytes()
+    ro n = @buf.byte_len()
+    mut count = 0
+    mut i = @pos
+    while i < n {
+        ro b = bytes[i] as int
+        if (b & 0xC0) != 0x80 { count = count + 1 }
+        i = i + 1
+    }
+    count
+}
+
+// The i-th codepoint from the current position (0-based), or `None` if there are
+// fewer than `i+1` codepoints left. O(n) explicit scan (no positional cache —
+// see the type doc on why this is not `Index[int]`). Non-mutating: scans from
+// `pos` without advancing, so it is safe to call on a temporary
+// (`s.as_chars().nth(i)`).
+export fn CharsIter @nth(idx int) -> Option[char] {
+    if idx < 0 { return None }
+    ro bytes = @buf.as_bytes()
+    ro n = @buf.byte_len()
+    mut cp_idx = 0
+    mut i = @pos
+    while i < n {
+        ro b = bytes[i] as int
+        mut cp = b
+        mut step = 1
+        if b < 0x80 {
+            cp = b; step = 1
+        } else if (b & 0xE0) == 0xC0 && i + 1 < n {
+            cp = ((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F)
+            step = 2
+        } else if (b & 0xF0) == 0xE0 && i + 2 < n {
+            cp = ((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F)
+            step = 3
+        } else if (b & 0xF8) == 0xF0 && i + 3 < n {
+            cp = ((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F)
+            step = 4
+        } else {
+            cp = b; step = 1
+        }
+        if cp_idx == idx {
+            return Some(cp_to_char(cp))
+        }
+        cp_idx = cp_idx + 1
+        i = i + step
+    }
+    None
+}
+
+// True if no codepoints remain. O(1). (`pos >= byte_len` ⇔ exhausted, since a
+// valid UTF-8 buffer has no trailing continuation-only tail.)
+export fn CharsIter @is_empty() -> bool => @pos >= @buf.byte_len()
+
+
+// ─── str codepoint lenses (Plan 152.1 Ф.3, D250) ───
+
+// Lazy codepoint iterator over the string (borrows `self`; O(1) to create).
+// The codepoint layer of the lens model: `s.as_chars().count()` for codepoint
+// length, `s.as_chars().nth(i)` for the i-th codepoint, `for c in s.as_chars()`
+// (or just `for c in s`) to walk. Convention: `as_*` = lens/iterator (borrows),
+// `to_*` = owned copy (`to_chars()` allocates a `[]char`).
+export fn str @as_chars() -> CharsIter => CharsIter.new(@)
+
+// `Iter` for str: `s.iter()` => `s.as_chars()`, so `for c in s` decodes
+// codepoints (D58 amend). Single entry point — no separate byte/char ambiguity:
+// the char lens is the default iteration unit (matching Go `for range`, Rust
+// `.chars()` when spelled, Swift `for c in s`).
+export fn str @iter() -> CharsIter => @as_chars()
+
+
+// ─── legacy codepoint access (retired in Plan 152.1 Ф.4) ───
 
 // Codepoint по индексу (codepoint-indexed). None при OOB. Plan 139 Ф.1:
 // Nova-body — UTF-8 decode cursor (один из ≤2 неустранимых алгоритмов, но

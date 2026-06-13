@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC splice: index
+// EXPECT_RUNTIME_PANIC requires failed
 //
 // Plan 90.1 — негатив: bulk insert (splice) — index > len → panic.
 // D141 amend: valid range [0, len]; len+1 → panic.
