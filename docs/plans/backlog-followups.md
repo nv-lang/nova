@@ -193,6 +193,20 @@
   baseline досрочно (частичный → ложные «регрессы» в непокрытом хвосте); экстракция имён через
   `awk '$1~/FAIL/{print $2}'`, не regex по строке; main-бинарь = быстрый оракул «новое vs pre-existing».
 
+## Follow-up: Plan 154.1 (#impl-конформность + Display/Debug примитивов)
+- **`[M-154.1-box-generic-static-ctor]`** (floating, P2): `Box[T].@new`
+  generic-static-construction CC-FAIL — `(Box)[T];` течёт как сырой C в codegen.
+  Всплыло в диагностической пробе 154.1 (НЕ связано с мис-диспатчем `.debug`).
+  Generic-static-constructor codegen-gap; home — отдельный codegen-фикс.
+- **`[M-154.1-static-call-unresolved-loud]`** (planned, home **Plan 154.1 / followup**):
+  общий «неизвестная free-fn (напр. был `str.from_debug` → undefined
+  `nova_fn_str_from_debug`) → **compile-error** вместо link-time undefined symbol».
+  Расширение robustness на static-путь (`free_fn_c_name` fall-through
+  emit_c.rs:11129). Под Variant B конкретный `str.from_debug`-кейс мёртв, но класс
+  остаётся.
+- **`[M-154.1-required-conformance]`** (planned, P3): возможный переход opt-in →
+  required (номинальная конформность, как Rust) отдельным шагом после 154.1.
+
 ## Конвенция
 - **Planned** маркер → Followups своего плана (+ индекс-строка здесь с home).
 - **Floating** (нет плана) → здесь полностью.
