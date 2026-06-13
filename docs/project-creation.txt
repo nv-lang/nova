@@ -37468,3 +37468,19 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   requires-contracts). plan152_1 6/0; ноль новых регрессий vs true main-оракул (целевые дир + check-sweep
   всех .len()). Маркеры: [M-152.1-str-subview-record-ctor] (str{ptr:@ptr+off} construction регрессит
   codegen — обход через @[a..b]); [M-152.1-str-index-range-contract] достигнут (элидируемые bounds).
+
+[2026-06-13] Plan 152.2 (полный str-surface, D251) ✅ ЗАКРЫТ Ф.1-Ф.3 (ветка plan-152).
+  Добил str до паритета Go/Rust/TS/Kotlin/Java поверх линз (D249/D250), всё byte-координатно.
+  Ф.1 split-семейство (search.nv): splitn/rsplitn (≤n частей), rsplit (справа, reverse),
+  split_once/rsplit_once → Option[(str,str)], split_terminator (без пустого хвоста),
+  split_whitespace (ASCII-WS runs; non-ASCII → [M-152-ws-unicode]/152.4), lines (\n,\r\n);
+  всё byte-scan + zero-copy @[a..b] views + helper is_ascii_ws. Ф.2 trim/strip (transform.nv):
+  @trim/@trim_start/@trim_end ТЕПЕРЬ zero-copy (закрыл [M-139-f1-trim-view] через @[a..b]!);
+  @trim_matches/start/end (char-pattern, multibyte-safe через str.from(c)+starts/ends_with);
+  @strip_prefix/@strip_suffix → Option[str]. Ф.3: @match_indices→[]int (byte-offset'ы)/
+  @matches→[]str (search.nv); @is_char_boundary (core.nv, O(1) Rust-parity); @replacen
+  (transform, @find на остатке); @pad_left/right FIX (ширина byte→codepoint, as_chars().count())
+  + @pad_center. Spec: D251 (03-syntax). Фикстуры plan152_2 (split_family/trim_strip/
+  search_transform, pos+neg) 3/0. Бонус: pad codepoint-fix починил pre-existing types-тест
+  (16/5→17/4). Ноль новых регрессий. Маркеры: [M-139-f1-trim-view] CLOSED (zero-copy trim);
+  [M-152.1-str-subview-record-ctor] остаётся (прямая str{ptr:@ptr+off} конструкция — обход @[a..b]).

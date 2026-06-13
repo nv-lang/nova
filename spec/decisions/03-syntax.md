@@ -9934,3 +9934,37 @@ type CharsIter value priv { buf str, pos int }   // borrows str; GC видит p
 
 ---
 
+## D251. Полный str-surface (паритет Go/Rust/TS/Kotlin/Java)
+
+Added: 2026-06-13  Status: IMPLEMENTED 2026-06-13 (Plan 152.2 Ф.1-Ф.3)
+
+Прод-поверхность `str` поверх координатной модели D249/D250. **Все позиции/длины —
+байтовые** (или явный char через линзу); поиск/нарезка — byte-offset; нарезка/trim/
+strip/split возвращают **zero-copy** sub-views (`@[a..b]`).
+
+- **split-семейство** (search.nv, byte-scan + zero-copy views): `@split(sep)`,
+  `@splitn(n, sep)` / `@rsplitn(n, sep)` (≤ n частей, последняя = остаток; reverse для
+  rsplit\*), `@rsplit(sep)` (справа, обратный порядок), `@split_once(sep)` /
+  `@rsplit_once(sep)` → `Option[(str, str)]`, `@split_terminator(sep)` (без пустого
+  хвоста), `@split_whitespace()` (ASCII-WS runs; non-ASCII → `[M-152-ws-unicode]`,
+  152.4), `@lines()` (`\n`/`\r\n`, без терминатора).
+- **trim/strip** (transform.nv, **zero-copy** views): `@trim` / `@trim_start` /
+  `@trim_end` (ASCII-WS ≤0x20; Unicode-WS — Phase B); `@trim_matches(c char)` /
+  `@trim_start_matches` / `@trim_end_matches` (codepoint-pattern, multibyte-safe через
+  `str.from(c)`); `@strip_prefix(p)` / `@strip_suffix(s)` → `Option[str]`.
+- **search-доп** (search.nv): `@match_indices(needle) -> []int` (byte-offset'ы),
+  `@matches(needle) -> []str` (views); `@is_char_boundary(idx) -> bool` (core.nv, O(1),
+  Rust-parity — для безопасной нарезки без паники).
+- **transform** (transform.nv): `@replace` (все), `@replacen(from, to, n)` (первые n),
+  `@repeat`, `@pad_left` / `@pad_right` / `@pad_center` — **ширина в CODEPOINT'ах**
+  (`as_chars().count()`, не байты: `"é".pad_left(3,'·') == "··é"`).
+- **slice/owned-линзы:** `s[a..b]` (panic) / `@get(a..b) -> Option[str]` (None при
+  OOB/не-границе) — byte-range, zero-copy (D249/slice.nv); `@to_bytes() -> []u8` /
+  `@to_chars() -> []char` (owned, alloc).
+
+Аллокации (для не-zero-copy путей: replace/repeat/pad) — через `_buffer`/`StringBuilder`
+(Plan 152.0). codepoint-семантика поиска/split (прежняя школа B) переведена на байт.
+Полный план — [Plan 152.2](../../docs/plans/152.2-string-surface-parity.md).
+
+---
+

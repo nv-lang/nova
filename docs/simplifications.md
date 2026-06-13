@@ -36033,3 +36033,15 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 - **Находка [M-152.1-str-subview-record-ctor]:** `str{ptr:@ptr+off,len}` construction в str-методе
   мис-компилируется («passing nova_str to nova_int»); runtime.string линкуется в каждую программу →
   ломает весь str-код. Обход: slice-методы строят view через inline @[a..b]. Класс value-record codegen.
+
+## Plan 152.2 (D251 — full str-surface), 2026-06-13
+- **str-surface добит до прод-паритета**, всё byte-координатно + zero-copy: split-семейство
+  (splitn/rsplit/rsplitn/split_once/rsplit_once/split_terminator/split_whitespace/lines),
+  trim/strip (trim_matches char-pattern, strip_prefix/suffix → Option), match_indices/matches,
+  is_char_boundary, replacen, pad_center.
+- **@trim теперь ZERO-COPY** (sub-view @[start..end], не alloc) — закрыл [M-139-f1-trim-view].
+  Ключ: `@[a..b]` (codegen строит view напрямую) обходит баг прямой str{ptr:@ptr+off}-конструкции.
+- **@pad_* FIX: ширина в codepoint'ах** (as_chars().count()), была в байтах — баг для multibyte
+  ("é".pad_left(3,'·') теперь "··é", было "·é"). Починил pre-existing types-тест.
+- split-семейство строит сегменты через @[a..b] (zero-copy); trim_matches/strip — через
+  starts_with/ends_with + slice (без RawMem/StringBuilder); replacen — через @find на остатке.
