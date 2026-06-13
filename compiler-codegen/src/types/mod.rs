@@ -6793,6 +6793,21 @@ fn expr_is_ptr_typed(e: &Expr, scope: &HashMap<String, TypeRef>) -> bool {
     }
 }
 
+/// **Plan 150 / D248:** is this type definitively `bool` or `unit`? Relational
+/// operators (`<` `<=` `>` `>=`) require an ORDERED operand category; `bool`
+/// ordering is method-only via `@compare` (D183), and `unit` has no order at
+/// all. Transparent over L1/L2 modifier wrappers (`ro bool` is still bool).
+/// Conservative: callers pass a definitively-inferred type (from
+/// `infer_arg_ty`) and treat `None`/other as permissive (don't fire).
+fn typeref_is_bool_or_unit(ty: &TypeRef) -> bool {
+    match ty {
+        TypeRef::Unit(_) => true,
+        TypeRef::Named { path, .. } => path.last().map_or(false, |s| s == "bool"),
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) => typeref_is_bool_or_unit(inner),
+        _ => false,
+    }
+}
+
 fn prim_ref(name: &str, span: Span) -> TypeRef {
     TypeRef::Named {
         path: vec![name.to_string()],
@@ -7548,6 +7563,31 @@ impl<'a> BoundCtx<'a> {
                                  арифметики сделайте `(p as u64) <op> ...`.",
                                 op
                             ),
+                            e.span,
+                        ));
+                    }
+                }
+                // Plan 150 / D248: relational operators require an ORDERED operand
+                // type. `bool` / `unit` are not ordered (bool ordering is
+                // method-only via `@compare`, D183) — `flag < 5` / `true < false`
+                // is the silent-coercion footgun. `==`/`!=` on bool/unit stay legal
+                // (not relational, hence excluded here). Conservative: fires only
+                // when an operand type is definitively known to be bool/unit
+                // (permissive on unknown/generic — does not break inference).
+                if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+                    let is_bool_unit = |x: &Expr| {
+                        Self::infer_arg_ty(x, scope)
+                            .map_or(false, |t| typeref_is_bool_or_unit(&t))
+                    };
+                    if is_bool_unit(left) || is_bool_unit(right) {
+                        errors.push(Diagnostic::new(
+                            "[E_RELATIONAL_OPERAND_NOT_ORDERED] `bool` / `unit` is not \
+                             an ordered type — the relational operators `<` `<=` `>` \
+                             `>=` require operands of an ordered category (int, float, \
+                             str, char, or a type carrying `@compare`). Boolean ordering \
+                             is method-only via `@compare` (D183 / Plan 150 D248), not \
+                             the `<` operator. Use `==` / `!=` for boolean equality."
+                                .to_string(),
                             e.span,
                         ));
                     }

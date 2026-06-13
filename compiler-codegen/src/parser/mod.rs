@@ -140,6 +140,30 @@ fn redundant_pointer_ro_error(span: Span) -> Diagnostic {
     )
 }
 
+/// **Plan 150 / D248:** comparison operators cannot be chained (`a < b < c`,
+/// `0 <= i < n`, `a == b == c`). Nova does NOT support Python-style chaining;
+/// the canonical range form is `a OP1 b && b OP2 c`. Hard error with a fix-it
+/// (matches Rust). This rejects the vacuous-truth footgun where `0 <= i < n`
+/// parses as `(0 <= i) < n` = `bool < n` (always true for `n > 1`), silently
+/// neutralizing `requires 0 <= i < @len` bounds contracts. Equality chains
+/// (`a == b == c`) are rejected for the same reason. The detection is
+/// paren-aware: `(a < b) < c` parses the inner `<` inside the parentheses, so
+/// the outer loop only sees ONE operator and is NOT flagged — explicit
+/// parenthesization is an intentional `bool`-comparison and stays legal.
+fn chained_comparison_error(span: Span) -> Diagnostic {
+    Diagnostic::new(
+        "[E_CMP_CHAIN_UNSUPPORTED] comparison operators cannot be chained \
+         (e.g. `a < b < c` or `0 <= i < n`). Nova does not support Python-style \
+         chained comparison: `a < b < c` would otherwise parse as `(a < b) < c`, \
+         comparing a `bool` against the third operand — a silent vacuous-truth \
+         bug. Fix: split into `a OP1 b && b OP2 c` (e.g. `0 <= i && i < n`). \
+         If you really mean to compare a comparison result, parenthesize it \
+         explicitly (`(a < b) == c`)."
+            .to_string(),
+        span,
+    )
+}
+
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Self::with_src(tokens, String::new())
@@ -5847,12 +5871,20 @@ impl Parser {
 
     fn parse_eq(&mut self) -> Result<Expr, Diagnostic> {
         let mut left = self.parse_cmp()?;
+        let mut seen_equality = false;
         loop {
             let op = match self.peek().kind {
                 TokenKind::EqEq => BinOp::Eq,
                 TokenKind::BangEq => BinOp::Neq,
                 _ => break,
             };
+            // Plan 150 / D248: a SECOND equality operator at this level means a
+            // chained comparison (`a == b == c`) — hard error, same as
+            // relational chains. Paren-aware (see parse_cmp).
+            if seen_equality {
+                return Err(chained_comparison_error(left.span.merge(self.peek().span)));
+            }
+            seen_equality = true;
             self.bump();
             self.skip_newlines();
             let right = self.parse_cmp()?;
@@ -5871,6 +5903,7 @@ impl Parser {
 
     fn parse_cmp(&mut self) -> Result<Expr, Diagnostic> {
         let mut left = self.parse_bit_or()?;
+        let mut seen_relational = false;
         loop {
             let op = match self.peek().kind {
                 TokenKind::Lt => BinOp::Lt,
@@ -5879,6 +5912,14 @@ impl Parser {
                 TokenKind::Ge => BinOp::Ge,
                 _ => break,
             };
+            // Plan 150 / D248: a SECOND relational operator at this level
+            // means a chained comparison (`a < b < c`, `0 <= i < n`) — hard
+            // error. Paren-aware: `(a < b) < c` consumes the inner `<` inside
+            // the parentheses, so the outer loop sees only one operator here.
+            if seen_relational {
+                return Err(chained_comparison_error(left.span.merge(self.peek().span)));
+            }
+            seen_relational = true;
             self.bump();
             self.skip_newlines();
             let right = self.parse_bit_or()?;
