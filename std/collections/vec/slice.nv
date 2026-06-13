@@ -31,10 +31,9 @@ import std.collections.range.{Range}
 /// is present (and overloads with `@index(i int)`) so the `Index[Range,
 /// Vec[T]]` contract is satisfied as a real Nova body; routing `v[range]`
 /// through it replaces the codegen magic in a later phase.
-export fn Vec[T] @index(r Range) -> Self {
-    if r.start < 0 || r.end < r.start || r.end > @len {
-        panic("Vec: slice out of bounds")
-    }
+export fn Vec[T] @index(r Range) -> Self
+    requires r.start >= 0 && r.end >= r.start && r.end <= @len
+{
     ro n = r.end - r.start
     Self { data: unsafe { @data + r.start }, len: n, cap: n }
 }
