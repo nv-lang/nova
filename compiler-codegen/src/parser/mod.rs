@@ -1372,20 +1372,31 @@ impl Parser {
             contract_attrs.unsafe_attr = true;
         }
         // Plan 52 Ф.1: `#from_fields` валиден только перед `type`-декларацией.
-        // Plan 91.9 (D186): `#impl(...)` тоже только перед `type`.
         // Plan 124.8 [M-124.8-zero-on-move]: `#zero_on_move` — также только
         // перед `type`.
-        if (!type_attrs.is_empty() || !impl_protocols.is_empty() || zero_on_move_attr)
+        if (!type_attrs.is_empty() || zero_on_move_attr)
             && !matches!(self.peek().kind, TokenKind::KwType)
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "`#from_fields` / `#from_pairs` / `#impl` / `#zero_on_move` are only valid before `type`",
+                "`#from_fields` / `#from_pairs` / `#zero_on_move` are only valid before `type`",
+                span,
+            ));
+        }
+        // Plan 91.9 (D186): `#impl(...)` валиден перед `type`-декларацией.
+        // Plan 154.1 (D268): `#impl(...)` ТАКЖЕ валиден перед `fn`-декларацией
+        // метода (opt-in conformance). Перед остальными item'ами — ошибка.
+        if !impl_protocols.is_empty()
+            && !matches!(self.peek().kind, TokenKind::KwType | TokenKind::KwFn)
+        {
+            let span = self.peek().span;
+            return Err(Diagnostic::new(
+                "`#impl(...)` is only valid before `type` or `fn`",
                 span,
             ));
         }
         let parsed = match self.peek().kind {
-            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, blocking_attr, cancel_safe_attr, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, blocking_attr, cancel_safe_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
@@ -2465,7 +2476,7 @@ impl Parser {
 
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, impl_protocols: Vec<String>, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -2876,6 +2887,8 @@ impl Parser {
             realtime_attr,
             blocking_attr,
             cancel_safe_attr,
+            // Plan 154.1 (D268): `#impl(P)` ведущий атрибут на методе.
+            impl_protocols,
             // Plan 33.1 (D24): contracts + verify attributes.
             // Backward-compat: пустой Vec для функций без контрактов;
             // Default verify_mode / Unknown purity для функций без атрибутов.

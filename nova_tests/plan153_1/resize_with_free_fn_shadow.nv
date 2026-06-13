@@ -1,0 +1,22 @@
+// Regression (2026-06-14): a module-level free `fn f` must NOT capture the
+// closure parameter `f` inside Vec.resize_with / fill_with. Before the fix in
+// types/mod.rs (check_call_argbind), `f()` inside the std method resolved to
+// this module's `fn f(x int)` instead of the local closure param, raising a
+// spurious "обязательный параметр `x` не передан". A local binding shadows a
+// module free function of the same name.
+module plan153_1.resize_with_free_fn_shadow
+
+import std.collections.vec.{Vec}
+
+// Same name as the closure param `f` inside Vec.resize_with / fill_with.
+fn f(x int) -> int => x + 100
+
+test "free fn f does not shadow resize_with closure param" {
+    mut v = Vec[int].new()
+    v.resize_with(3, || 7)
+    assert(v.len() == 3)
+    assert(v[0] == 7)
+    assert(v[2] == 7)
+    // the free fn still works on its own
+    assert(f(1) == 101)
+}

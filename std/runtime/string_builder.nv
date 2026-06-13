@@ -123,6 +123,18 @@ export fn StringBuilder mut @append(c char) -> @ {
 // Append raw []u8 bytes. Caller отвечает за UTF-8 validity.
 export fn StringBuilder mut @append(ro arr []u8) -> @ { @buf.append(arr); @ }
 
+// Plan 154.1 (D269): typed scalar overloads so `sb.append(x)` dispatches on
+// the value's type uniformly — no `append_int`-style names, no caller-side
+// `str.from`. Used by the primitive Display impls in std/prelude/protocols.nv
+// (`fn int @display(mut sb StringBuilder) { sb.append(@) }`), and convenient
+// for users directly. `bool` appends the literal "true"/"false" with no
+// intermediate; `int`/`f64` route through `str.from` (the same conv.h
+// formatters the interp path uses), avoiding the temp StringBuilder an
+// interp-string body would otherwise allocate.
+export fn StringBuilder mut @append(n int) -> @ { @append(str.from(n)) }
+export fn StringBuilder mut @append(x f64) -> @ { @append(str.from(x)) }
+export fn StringBuilder mut @append(b bool) -> @ { if b { @append("true") } else { @append("false") } }
+
 // Append строку s ровно n раз. n <= 0 → no-op.
 // Single reserve(total) → один realloc вместо n× амортизированного doubling.
 // `as_bytes()` — zero-copy view; `append` в loop без indirection.

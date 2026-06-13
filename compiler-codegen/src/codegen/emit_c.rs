@@ -2115,6 +2115,25 @@ impl CEmitter {
             }
         }
 
+        // Plan 154.1 (D268) — method-level `#impl(P)` (`#impl(Debug)` before a
+        // `fn T @m`) ALSO binds P to the receiver type T, exactly as if P were
+        // listed on T's `type` declaration. Same `type_impl_protocols` registry,
+        // same bare-call-synthesis gate. The checker has already validated the
+        // signature (verify_method_impl_protocols); here we only record the bond.
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                if f.impl_protocols.is_empty() { continue; }
+                if let Some(recv) = &f.receiver {
+                    let entry = self.type_impl_protocols
+                        .entry(recv.type_name.clone())
+                        .or_default();
+                    for p in &f.impl_protocols {
+                        entry.insert(p.clone());
+                    }
+                }
+            }
+        }
+
         // Plan 97.1 Ф.2 (D142): pre-register non-generic protocol-методы
         // в `protocol_method_registry`. Generic-protocol'ы регистрируются
         // в loop ниже (с t.generics.is_empty() == false), но non-generic
@@ -23201,6 +23220,43 @@ _cp++; \
                     // at the external_registry dispatch site (path #1 above) — Once methods
                     // route through there before reaching this method_receivers branch.
                     let is_generic_type = self.generic_types.contains(&type_name);
+                    // Plan 154.1 Ф.1 / D269: instance-call counterpart of the static
+                    // guard below. If the receiver is a PRIMITIVE C-type but the
+                    // single-key `method_receivers` fallback resolved `method` to a
+                    // GENERIC/erased container type (e.g. `Vec`), the primitive cannot
+                    // be an instance of it. Primitive-direct-dispatch (above, ~23042)
+                    // and default-body synthesis (~23091) both already MISSED, so
+                    // emitting `Nova_<Generic>_method_*(prim, ...)` would silently call
+                    // an erased no-op stub with a type-confused receiver — the
+                    // long-standing `vec_debug_pos` mis-dispatch (a primitive element's
+                    // `.debug(sb)` inside `Vec[T] @debug` routed to `Nova_Vec_method_debug`).
+                    // Fail LOUDLY at compile time instead of emitting a wrong/no-op call.
+                    // (Ф.3 gives primitives concrete @display/@debug → они резолвятся на
+                    // ~23042 ДО этого guard'а → для них guard не срабатывает; guard
+                    // остаётся safety-net для реальных «нет такого метода» случаев.)
+                    if is_instance && is_generic_type {
+                        let recv_ty = self.infer_expr_c_type(obj);
+                        let prim_name = match recv_ty.as_str() {
+                            "nova_int" => Some("int"),
+                            "nova_char" => Some("char"),
+                            "nova_bool" => Some("bool"),
+                            "nova_f32" => Some("f32"),
+                            "nova_f64" => Some("f64"),
+                            "nova_str" => Some("str"),
+                            _ => None,
+                        };
+                        if let Some(pn) = prim_name {
+                            return Err(format!(
+                                "[E_PRIMITIVE_NO_PROTOCOL_METHOD] примитив `{prim}` не \
+                                 имеет метода `{m}` — `{prim}` не реализует протокол, \
+                                 предоставляющий `.{m}(...)`, а generic-тип `{reg}` \
+                                 (single-key fallback) не применим к примитивному \
+                                 ресиверу. Подсказка: дать `{prim}` конкретный метод \
+                                 через `#impl(<Protocol>)` для `{m}`, либо это опечатка.",
+                                prim = pn, m = method, reg = type_name,
+                            ));
+                        }
+                    }
                     // Plan 101.1: bare-T receiver mono dispatch для `fn[T] T @method`.
                     // type_name = "T" (typevar), нет real Nova type. Resolve T из
                     // obj's actual type, mono-dispatch.

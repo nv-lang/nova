@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_IMPL_UNKNOWN_PROTOCOL
+//
+// Plan 154.1 (D268): #impl(P) where P is not a known protocol.
+module plan154_1.neg_impl_unknown_protocol
+
+type Point { x int }
+
+#impl(NotAProtocol)
+fn Point @display(mut sb StringBuilder) -> () { sb.append("x") }
+
+fn main() -> () {}

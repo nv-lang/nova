@@ -37465,6 +37465,39 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   E_METHOD_REDEFINITION РОВНО 1 вхождение (только neg-фикстура) → 0 регрессий; std
   компилируется. D267 (10-overloading.md). branch plan-154 (синкан с main).
 
+Plan 154.1 (opt-in #impl-конформность + конкретные Display/Debug примитивов, 2026-06-13,
+  branch plan-154.1 / worktree nova-p154) — ЗАКРЫТ Ф.1–Ф.5. Закрывает класс
+  silent-mis-dispatch «primitive-element protocol-метод»: mono-тело `Vec[T] @debug`
+  вызывает `@data[i].debug(sb)` на элементе; для примитива без конкретного `@debug`
+  single-key `method_receivers`-fallback тихо роутил в erased Vec-стаб (no-op) →
+  `vec_debug_pos` выдавал мусор.
+  - Ф.1 (commit 73e2a0ed): guard в instance-dispatch — примитив-ресивер + резолв в
+    generic-тип → E_PRIMITIVE_NO_PROTOCOL_METHOD (вместо неверного/no-op вызова).
+    vec_debug_pos RUN-FAIL → CC-FAIL (правильное промежуточное).
+  - Ф.2 (commit 01d4dc16): #impl(P) ведущий атрибут теперь и на МЕТОД-декларациях
+    (был только на type). FnDecl.impl_protocols; парсер разрешает #impl перед fn;
+    чекер verify_method_impl_protocols — 3 кода (E_IMPL_UNKNOWN_PROTOCOL /
+    E_IMPL_NOT_A_PROTOCOL_METHOD / E_IMPL_SIGNATURE_MISMATCH); codegen биндит
+    type_impl_protocols[T] += P. Opt-in — структурная конформность не сломана.
+  - Ф.3 (commits a9115c71 -> 634426b7): 5 примитивов (int/f64/bool/char/str) ×
+    Display/Debug. Сперва interp-тела (sb.append("${@}")); по фидбэку автора переделано
+    на типизированные @append-overload'ы StringBuilder (@append(int)/(f64)/(bool)
+    добавлены) + sb.append(@) — без промежуточной nova_str от interp-temp. Debug char/str
+    (кавычки+escape) оставлен на interp ${@:?} (логика в conv.h, не рекурсирует).
+    f32 отложен [M-154.1-f32-display-debug] (нет conv.h-форматтера; Vec[f32].debug =
+    громкий CC-FAIL, не silent).
+  - Ф.4: throwaway НЕ реализован (str.from_debug / synthesis mis-key / gate loosening —
+    мёртвы под Variant B, примитивы резолвятся direct-dispatch'ем до synthesis).
+  - Ф.5: D268+D269 (10-overloading.md); plan154_1 5/5 (3 neg EXPECT_COMPILE_ERROR + 2 pos
+    прогон+assert). ВАЖНО: интерпретатор (nova run) выключаем — тестировал только через
+    test-build/test (C-codegen).
+  Verify (release nova): vec_debug_pos зелёный; plan131 28/0, basics/generics/plan99/
+  plan90_1/plan140_2 чисто; plan91 1/1, plan128 18/1, plan62 7-fail, plan138_2 3 — все =
+  baseline, 0 новых FAIL (StringBuilder тронут — blast radius проверен). Closes
+  [M-91.14-derive-debug]. Followups: [M-154.1-f32-display-debug],
+  [M-154.1-box-generic-static-ctor], [M-154.1-static-call-unresolved-loud],
+  [M-154.1-required-conformance].
+
 [2026-06-13] Plan 140.3 (семейство 140 followups, ветка plan-140.3-followups). Два маркера закрыты:
   #1 [M-140-contract-panic-unwind] (commit 60e909a0): assert/контракт нарушение тегает fail-frame
   error_kind=NOVA_THROW_PANIC (как nv_panic, D188) → пойманное consume/supervised классифицируется как
@@ -37480,3 +37513,19 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   (прямой @display(sb)+typed StringBuilder.@append — Plan 154.1). Тесты plan140_1/contract_msg_interp_{pos,neg};
   адверсариальный C-инспект (lazy if-блок + _dyn). 0 регрессий (plan140_1 11/0, contracts 251/0, plan140 34/0,
   plan140_2 13/0). Дизайн примитивного Display (через sb.@append) передан агенту Plan 154.1.
+
+[2026-06-14] Fix: local binding shadows module free function в check_call_argbind (regression
+  от plan-153 vec resize_with/fill_with). Симптом: nova check trivial_congruence_positive.nv
+  → "обязательный параметр `x` не передан" в std/collections/vec/mutate.nv:218/404 (`@data[i]=f()`).
+  Цепочка диагностики: агент винил 809e8605 (моё 154.0 method-coherence) → ОПРОВЕРГНУТО (чистый
+  main падает 3/3 → не моё); бисект указал на 1d6d2ca5 (140.3 interp-contracts) → МИС-АТРИБУЦИЯ
+  (нелинейная история: 1d6d2ca5~1=60e909a0 не содержит plan-153 vec-веток). НАСТОЯЩИЙ корень —
+  plan-153 добавил Vec @resize_with(n, f fn()->T) / @fill_with с closure-параметром `f`; вызов
+  `f()` в теле метода резолвился в СВОБОДНУЮ `fn f` из ENTRY-модуля (тест с `fn f(x int)`)
+  вместо локального параметра → bind_call_args против чужих params → MissingRequired. Баг
+  прецедента: check_call_argbind (types/mod.rs) для `Ident(name)` сразу лез в `fn_decls`, не
+  проверив `scope`. Фикс: `if scope.contains_key(name) { return; }` ПЕРЕД lookup'ом free-fn —
+  локальное связывание (в т.ч. closure-параметр) шейдоунит одноимённую свободную функцию;
+  closure-вызов валидируется через fn-type/codegen. Verify: trivial_congruence PASS 3/3 (было
+  8/8 FAIL); guard-тест plan153_1/resize_with_free_fn_shadow (free `fn f` + resize_with);
+  contracts 251/0 (+57skip), broad regression 0 новых FAIL. НЕ Plan 154.1 — отдельный коммит.
