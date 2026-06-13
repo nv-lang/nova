@@ -172,17 +172,18 @@ impl VerificationPipeline {
         }
     }
 
-    /// Plan 140.2 Part B (D257 / B.4): доказать bounds READ-сайтов `v[idx]`
-    /// внутри `fd` для элизии — **sound-MVP: только read-only циклы**.
+    /// Plan 140.2 Part B (D257 / B.4 + [M-140.2-elision-writeback]): доказать bounds
+    /// `v[idx]`-сайтов (READ и write-back `v[i]=val`) внутри `fd` для элизии.
     ///
-    /// Возвращает spans Index-выражений (READ-позиция), для которых
+    /// Возвращает spans Index-выражений (read ИЛИ write-target), для которых
     /// `0 <= idx && idx < v.len()` доказано под loop-bound `for i in lo..v.len()`
-    /// И `v` используется в теле цикла ТОЛЬКО на чтение (`v[i]`-read + аксессоры
-    /// `v.len()/cap()/…`). Read-only ⇒ длина `v` инвариантна ⇒ элизия sound
-    /// (frame-check ловит запись `v[i]=…`, мутирующие методы, `&v`, передачу
-    /// `v` в вызов и любое bare-использование — всё это сделало бы длину
-    /// потенциально изменчивой/алиасимой). Z3 моделирует `_field_len_int(v)`
-    /// как фиксированное, поэтому frame-инвариантность ОБЯЗАТЕЛЬНА для soundness.
+    /// И длина `v` **инвариантна** в теле цикла. Frame-check (`*_len_safe`)
+    /// допускает `v[i]`-read + `v[i]=val` in-place-write (mut @index СОХРАНЯЕТ
+    /// длину) + аксессоры `v.len()/cap()/…`; запрещает length-changing методы
+    /// (push/pop/insert/…), `&v`, передачу `v` в вызов, реассайн `v` и bare-`v`
+    /// (всё это меняет/алиасит длину). Длина инвариантна ⇒ `i<v.len()@guard`
+    /// держится на доступе ⇒ элизия sound. Z3 моделирует `_field_len_int(v)` как
+    /// фиксированное, поэтому frame-инвариантность ОБЯЗАТЕЛЬНА для soundness.
     /// Trivial backend ничего не докажет → пустой результат (нулевая цена;
     /// вызывается только при non-trivial backend из `verify_module`).
     pub fn prove_vec_index_sites(&self, module: &Module, fd: &FnDecl) -> Vec<Span> {
@@ -4334,20 +4335,22 @@ pub struct ModuleVerifyReport {
     pub errors: Vec<Diagnostic>,
     /// Warnings — counterexamples для контрактов без `#verify`.
     pub warnings: Vec<Diagnostic>,
-    /// Plan 140.2 Part B (D257 / B.4): spans Index-выражений `v[idx]` (READ),
-    /// чьи bounds доказаны in-range под loop-инвариантом read-only цикла.
-    /// Codegen элидит inline bounds-check на этих сайтах (по span.start).
+    /// Plan 140.2 Part B (D257 / B.4): spans Index-выражений `v[idx]` (read ИЛИ
+    /// write-target `v[i]=val`), чьи bounds доказаны in-range под len-инвариантом
+    /// цикла. Codegen элидит inline bounds-check на этих сайтах (по span.start).
     pub proven_index_sites: Vec<Span>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 140.2 Part B (D257 / B.4): per-index-site bounds proving (sound-MVP).
+// Plan 140.2 Part B (D257 / B.4 + [M-140.2-elision-writeback]): per-index-site
+// bounds proving.
 //
 // Walk fd body, отслеживая loop-bound assumptions (`for i in lo..hi` →
-// `lo <= i && i < hi`). Для `v[idx]` READ-сайта, где `v` read-only в цикле
-// (frame-инвариант длины) и `0 <= idx && idx < v.len()` доказан Z3 — записать
-// span для элизии. Frame-check (`*_reads_only`) консервативен: любое
-// использование `v` кроме `v[i]`-read и аксессоров `v.len()/…` → НЕ read-only.
+// `lo <= i && i < hi`). Для `v[idx]`-сайта (read ИЛИ write-back `v[i]=val`), где
+// длина `v` инвариантна в цикле (frame-check) и `0 <= idx && idx < v.len()`
+// доказан Z3 — записать span для элизии. Frame-check (`*_len_safe`)
+// консервативен: `v` допускается лишь как `v[i]` (read/in-place-write) и
+// аксессоры `v.len()/…`; любое иное использование → НЕ len-safe.
 // ──────────────────────────────────────────────────────────────────────────
 
 fn idx_is_ident(e: &Expr, name: &str) -> bool {
@@ -4431,27 +4434,31 @@ fn idx_pattern_binds(pat: &Pattern, v: &str) -> bool {
 }
 
 /// Frame-check: `v` используется в блоке ТОЛЬКО на чтение (длина инвариантна)?
-fn idx_block_reads_only(block: &Block, v: &str) -> bool {
-    block.stmts.iter().all(|s| idx_stmt_reads_only(s, v))
-        && block.trailing.as_ref().map_or(true, |t| idx_expr_reads_only(t, v))
+fn idx_block_len_safe(block: &Block, v: &str) -> bool {
+    block.stmts.iter().all(|s| idx_stmt_len_safe(s, v))
+        && block.trailing.as_ref().map_or(true, |t| idx_expr_len_safe(t, v))
 }
 
-fn idx_stmt_reads_only(stmt: &Stmt, v: &str) -> bool {
+fn idx_stmt_len_safe(stmt: &Stmt, v: &str) -> bool {
     match stmt {
-        Stmt::Expr(e) => idx_expr_reads_only(e, v),
+        Stmt::Expr(e) => idx_expr_len_safe(e, v),
         Stmt::Let(decl) => {
             if idx_pattern_binds(&decl.pattern, v) { return false; } // shadow v → бросаем
-            idx_expr_reads_only(&decl.value, v)
+            idx_expr_len_safe(&decl.value, v)
         }
         Stmt::Assign { target, value, .. } => {
             match &target.kind {
-                // `v[..] = ..` — запись (нужен mut v); read-only MVP это исключает.
+                // `v[i] = val` (mut @index) — in-place запись, СОХРАНЯЕТ длину v
+                // (write-back); length-changing методы (push/pop/insert/remove/…)
+                // ловятся Call-arm'ом в idx_expr_len_safe → frame-unsafe.
                 ExprKind::Index { obj, index } => {
-                    if idx_is_ident(obj, v) { return false; }
-                    idx_expr_reads_only(obj, v) && idx_expr_reads_only(index, v) && idx_expr_reads_only(value, v)
+                    if idx_is_ident(obj, v) {
+                        return idx_expr_len_safe(index, v) && idx_expr_len_safe(value, v);
+                    }
+                    idx_expr_len_safe(obj, v) && idx_expr_len_safe(index, v) && idx_expr_len_safe(value, v)
                 }
                 ExprKind::Ident(n) if n == v => false, // `v = ..` переприсваивание
-                _ => idx_expr_reads_only(target, v) && idx_expr_reads_only(value, v),
+                _ => idx_expr_len_safe(target, v) && idx_expr_len_safe(value, v),
             }
         }
         Stmt::Break(_) | Stmt::Continue(_) => true,
@@ -4460,51 +4467,51 @@ fn idx_stmt_reads_only(stmt: &Stmt, v: &str) -> bool {
     }
 }
 
-fn idx_expr_reads_only(e: &Expr, v: &str) -> bool {
+fn idx_expr_len_safe(e: &Expr, v: &str) -> bool {
     match &e.kind {
-        ExprKind::Ident(n) => n != v, // bare-использование v → НЕ read-only
+        ExprKind::Ident(n) => n != v, // bare-использование v → НЕ len-safe
         ExprKind::Index { obj, index } => {
             if idx_is_ident(obj, v) {
-                idx_expr_reads_only(index, v) // v[i] read — obj=v безопасен
+                idx_expr_len_safe(index, v) // v[i] read — obj=v безопасен
             } else {
-                idx_expr_reads_only(obj, v) && idx_expr_reads_only(index, v)
+                idx_expr_len_safe(obj, v) && idx_expr_len_safe(index, v)
             }
         }
         ExprKind::Call { func, args, .. } => {
             if let ExprKind::Member { obj, name } = &func.kind {
                 if idx_is_ident(obj, v) {
                     if matches!(name.as_str(), "len" | "cap" | "byte_len" | "is_empty") {
-                        return args.iter().all(|a| idx_expr_reads_only(a.expr(), v));
+                        return args.iter().all(|a| idx_expr_len_safe(a.expr(), v));
                     }
                     return false; // v.<метод>() — потенциальная мутация
                 }
             }
-            idx_expr_reads_only(func, v) && args.iter().all(|a| idx_expr_reads_only(a.expr(), v))
+            idx_expr_len_safe(func, v) && args.iter().all(|a| idx_expr_len_safe(a.expr(), v))
         }
         ExprKind::Member { obj, .. } => {
-            if idx_is_ident(obj, v) { true } else { idx_expr_reads_only(obj, v) } // чтение поля v безопасно
+            if idx_is_ident(obj, v) { true } else { idx_expr_len_safe(obj, v) } // чтение поля v безопасно
         }
-        ExprKind::Binary { left, right, .. } => idx_expr_reads_only(left, v) && idx_expr_reads_only(right, v),
-        ExprKind::Unary { operand, .. } => idx_expr_reads_only(operand, v),
-        ExprKind::As(inner, _) => idx_expr_reads_only(inner, v),
+        ExprKind::Binary { left, right, .. } => idx_expr_len_safe(left, v) && idx_expr_len_safe(right, v),
+        ExprKind::Unary { operand, .. } => idx_expr_len_safe(operand, v),
+        ExprKind::As(inner, _) => idx_expr_len_safe(inner, v),
         ExprKind::If { cond, then, else_ } => {
-            idx_expr_reads_only(cond, v) && idx_block_reads_only(then, v)
+            idx_expr_len_safe(cond, v) && idx_block_len_safe(then, v)
                 && match else_ {
-                    Some(ElseBranch::Block(b)) => idx_block_reads_only(b, v),
-                    Some(ElseBranch::If(e)) => idx_expr_reads_only(e, v),
+                    Some(ElseBranch::Block(b)) => idx_block_len_safe(b, v),
+                    Some(ElseBranch::If(e)) => idx_expr_len_safe(e, v),
                     None => true,
                 }
         }
         ExprKind::For { pattern, iter, body, .. } => {
             if idx_pattern_binds(pattern, v) { return false; }
-            idx_expr_reads_only(iter, v) && idx_block_reads_only(body, v)
+            idx_expr_len_safe(iter, v) && idx_block_len_safe(body, v)
         }
-        ExprKind::While { cond, body, .. } => idx_expr_reads_only(cond, v) && idx_block_reads_only(body, v),
-        ExprKind::Block(b) => idx_block_reads_only(b, v),
+        ExprKind::While { cond, body, .. } => idx_expr_len_safe(cond, v) && idx_block_len_safe(body, v),
+        ExprKind::Block(b) => idx_block_len_safe(b, v),
         ExprKind::IntLit(_) | ExprKind::BoolLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::CharLit(_) | ExprKind::UnitLit | ExprKind::SelfAccess | ExprKind::Path(_)
         | ExprKind::NullPtrLit => true,
-        // Match, closures, interp, spawn, with, … — консервативно НЕ read-only.
+        // Match, closures, interp, spawn, with, … — консервативно НЕ len-safe.
         _ => false,
     }
 }
@@ -4534,8 +4541,14 @@ fn idx_walk_stmt(stmt: &Stmt, ctx: &super::encode::EncodeCtx, backend: &mut dyn 
         Stmt::Expr(e) => idx_walk_expr(e, ctx, backend, frame_safe, proven),
         Stmt::Let(decl) => idx_walk_expr(&decl.value, ctx, backend, frame_safe, proven),
         Stmt::Assign { target, value, .. } => {
-            // target = WRITE (`v[i]=..` не элидируем в read-only MVP); но индекс — read.
-            if let ExprKind::Index { index, .. } = &target.kind {
+            // `v[i] = val` write-сайт: если `v` frame-safe и `0<=i<v.len()` доказан —
+            // записать span target'а (codegen элидит bounds-check записи). Индекс — read.
+            if let ExprKind::Index { obj, index } = &target.kind {
+                if let ExprKind::Ident(recv) = &obj.kind {
+                    if frame_safe.iter().any(|s| s == recv) && idx_try_prove(index, recv, ctx, backend) {
+                        proven.push(target.span);
+                    }
+                }
                 idx_walk_expr(index, ctx, backend, frame_safe, proven);
             } else {
                 idx_walk_expr(target, ctx, backend, frame_safe, proven);
@@ -4558,10 +4571,10 @@ fn idx_walk_expr(e: &Expr, ctx: &super::encode::EncodeCtx, backend: &mut dyn Smt
                     backend.assert(Assertion { formula: SmtTerm::App("<=".into(), vec![lo_t, SmtTerm::Var(var.clone())]), label: None });
                     backend.assert(Assertion { formula: SmtTerm::App("<".into(), vec![SmtTerm::Var(var.clone()), hi_t]), label: None });
                 }
-                // Кандидат-vec из `hi = v.len()`, frame-safe если read-only в теле.
+                // Кандидат-vec из `hi = v.len()`, frame-safe если длина инвариантна в теле.
                 let mut new_fs: Vec<String> = frame_safe.to_vec();
                 if let Some(recv) = idx_recv_of_len(hi) {
-                    if idx_block_reads_only(body, &recv) && !new_fs.contains(&recv) {
+                    if idx_block_len_safe(body, &recv) && !new_fs.contains(&recv) {
                         new_fs.push(recv);
                     }
                 }

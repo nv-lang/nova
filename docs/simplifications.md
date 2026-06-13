@@ -35942,3 +35942,10 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   SOUNDNESS: элизия гейтирована frame-check «`v` read-only в цикле» (read-only ⇒ длина инвариантна ⇒
   `i<v.len()@guard` держится на доступе), т.к. Z3 моделит длину как фиксированную, а Nova переоценивает
   `0..v.len()` каждую итерацию. Гейт non-trivial backend ⇒ дефолтные (Trivial) сборки не платят ничего.
+
+- **Plan 140.2 followup (2026-06-13)**: (1) **write-back элизия** `[M-140.2-elision-writeback]` — frame-check
+  расширен с «read-only» на «len-инвариантный»: `v[i]=val` (mut @index) СОХРАНЯЕТ длину, поэтому write-back
+  циклы `for i in 0..v.len() { v[i]=f(v[i]) }` теперь элидируют И запись, И чтение (length-changing методы
+  по-прежнему frame-unsafe). (2) **`NOVA_Z3_LIB_DIR`** env-override в `build.rs` (зеркало `NOVA_GC_LIB_DIR`):
+  z3-сборка в worktree указывает на общий `libz3.lib` main-репо вместо копии 1.9 ГБ — критично на FS без
+  junction/symlink (exFAT). Освободило 1.9 ГБ.

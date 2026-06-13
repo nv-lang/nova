@@ -16097,11 +16097,20 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                                         .unwrap_or("nova_int")
                                         .trim()
                                 ));
+                            // Plan 140.2 B.4 / [M-140.2-elision-writeback]: элидировать
+                            // bounds-check записи `v[i]=val` на доказанных in-range
+                            // write-сайтах (frame-safe len-invariant цикл). Иначе always-on.
+                            let wchk = if self.proven_index_sites.contains(&target.span.start) {
+                                String::new()
+                            } else {
+                                format!(
+                                    "if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); ",
+                                    arr = arr_c,
+                                )
+                            };
                             self.line(&format!(
-                                "{{ nova_int _wi = ({idx}); \
-if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
-(({arr})->data)[_wi] = ({ty})({val}); }}",
-                                arr = arr_c, idx = idx_c, val = val_c, ty = elem_ty
+                                "{{ nova_int _wi = ({idx}); {chk}(({arr})->data)[_wi] = ({ty})({val}); }}",
+                                arr = arr_c, idx = idx_c, val = val_c, ty = elem_ty, chk = wchk
                             ));
                             return Ok(());
                         }
@@ -18956,7 +18965,7 @@ _cp++; \
                     let tmp_v = self.fresh_tmp_named("vec");
                     let tmp_i = self.fresh_tmp_named("vi");
                     // Plan 140.2 Part B (D257 / B.4): элидировать bounds-check на
-                    // index-сайтах, доказанных in-range верификатором (read-only
+                    // index-сайтах, доказанных in-range верификатором (len-инвариантный
                     // цикл `for i in 0..v.len()`). Безопасный доступ → zero-cost.
                     // Недоказанные — always-on проверка (debug И release).
                     let bounds_chk = if self.proven_index_sites.contains(&expr.span.start) {

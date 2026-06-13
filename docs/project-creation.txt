@@ -37322,3 +37322,15 @@ Plan 140.2 — bounds-as-contract ✅ CLOSED Part A+B (2026-06-13, branch plan-1
   несостоятелен (per-method ключ = всё-или-ничего, ломает lvalue) — выбран альтернативный путь плана
   (inline + per-site элидируемый check). Build: D: = exFAT (junction невозможен) → libz3.lib скопирован в
   worktree vcpkg_installed (gitignored). Followup: [M-140.2-elision-writeback] (write-back/general циклы, P3).
+
+Plan 140.2 followup ✅ (2026-06-13): (1) WRITE-BACK ЭЛИЗИЯ [M-140.2-elision-writeback §1] — frame-check
+  расширен read-only → len-инвариантный: `v[i]=val` (mut @index) СОХРАНЯЕТ длину, поэтому циклы
+  `for i in 0..v.len() { v[i]=f(v[i]) }` теперь элидируют И запись, И чтение (length-changing методы/`&v`/
+  передача-в-вызов/реассайн по-прежнему frame-unsafe → не элидируются). verify (prove_vec_index_sites):
+  Assign-target `v[idx]` записывается в proven-set; codegen write-path (emit_c) элидит bounds-check записи
+  по span target'а. pos b4_writeback_elision_pos (спот-чек C: `((v)->data)[_wi]=…` И RHS `v[i]` без
+  nv_panic_index_oob), neg b4_writeback_soundness_neg (`v.pop()` в цикле → НЕ элидируется → OOB-write trap).
+  Переименование reads_only→len_safe. plan140_2 6/0. Остаток маркера: slice @index(Range) + cross-fn.
+  (2) NOVA_Z3_LIB_DIR env-override в build.rs (зеркало NOVA_GC_LIB_DIR) — z3-сборка в worktree указывает на
+  общий libz3.lib main-репо вместо копии 1.9 ГБ (критично на exFAT без junction); протестировано
+  (override-сборка с удалённой копией) → копия удалена, 1.9 ГБ освобождено.
