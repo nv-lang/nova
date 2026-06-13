@@ -219,3 +219,25 @@ Rust-модель bounds-check. Применение к Vec — followup Plan 13
 `vcpkg_installed`, untracked via `.git/info/exclude`). Default-бэкенд остаётся `Trivial` даже при
 скомпилированном Z3 (детерминизм verify-suite Plan 33); полный Z3 — `NOVA_SMT_BACKEND=z3`. Safe degrade
 без Z3 верифицирован (proven меньше → больше runtime-checks, никогда не unsafe).
+
+## Followup — Plan 140.3 (2026-06-13, ветка `plan-140.3-followups`)
+
+- `[M-140-contract-panic-unwind]` ✅ **CLOSED** (commit `60e909a0`). Уточнение Q34 §2:
+  не «abort→unwind» (в файбере assert/контракт уже разматываются к fail-frame —
+  не abort), а **унификация классификации**. `nv_panic` тегал fail-frame
+  `error_kind = NOVA_THROW_PANIC` (D188), а `nova_assert_loc`/`nova_contract_violation`
+  ставили только `error_msg` (kind = NOVA_THROW_USER) → пойманный `consume`-scope'ом
+  assert/контракт классифицировался как recoverable **Failure**, не **Panic** —
+  хотя spec D13 говорит «assert failure = panic». Фикс: обе fail-frame ветки теперь
+  ставят `error_kind = NOVA_THROW_PANIC` → assert + контракт + panic классифицируются
+  ОДИНАКОВО (формат сообщения уже был унифицирован Plan 140.1). 2 строки в хедерах,
+  без ABI/codegen-изменений. Тест `plan140/consume_assert_contract_panic_class`
+  (compile+link, зеркало `codegen_consume_panic_caught`). Верифицировано: plan140
+  32/0, plan110 50/0, contracts 251/0, plan100_4 42/0, plan125_1 15/0 — 0 регрессий
+  от Failure→Panic-реклассификации.
+- `[M-140.1-message-interpolation]` ✅ **CLOSED** (commit `1d6d2ca5`) — interp-сообщения
+  контрактов `requires x>0, "got ${x}"`. Полное acceptance — в
+  [140.1-contract-custom-message.md](140.1-contract-custom-message.md) §Followup.
+- `[M-140-contract-levels]` (P3) — остаётся deferred (per-module opt-out + Eiffel-гранулярность).
+  По именованию: module-opt-out = голый `#unchecked` перед `module X` (как `#stable`/
+  `#no_prelude`), НЕ `#unchecked_module` (суффикса `_module` в Nova нет).

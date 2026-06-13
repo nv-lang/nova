@@ -36023,3 +36023,12 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   **type-check-only** (`types/mod.rs`, guard `user_declared_types` — не ломает Plan 62
   локальный type-shadow, напр. for_in_range_iter). D267. `nova test plan154` 5/5 PASS,
   корпус-скан 0 регрессий.
+
+- **Plan 140.3 — унификация failure-классификации + interp-сообщения контрактов (2026-06-13)**: (1) assert и
+  контракт-нарушение теперь тегают `error_kind = NOVA_THROW_PANIC` как `nv_panic` (раньше — только error_msg,
+  kind=USER) → три пути провала (panic/assert/contract) классифицируются ОДИНАКОВО (consume/supervised видят
+  Panic). Упрощение модели: «нарушение инварианта/контракта = panic» теперь не только в формате сообщения
+  (140.1), но и в классификации. (2) interp-сообщения `requires x>0, "got ${x}"` переиспользуют ОБЩУЮ
+  interp-машинерию (`emit_interpolated_str`) — не отдельный механизм; контракт-сообщение ведёт себя идентично
+  любой `"${x}"`-строке. dual-populate (`message` raw-fallback + `message_expr`) избегает регрессии на
+  не-interp-сайтах без отдельного error-пути.

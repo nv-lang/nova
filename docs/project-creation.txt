@@ -37464,3 +37464,19 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   EXPECT_COMPILE_ERROR + 3 pos прогон+assert); корпус-скан `nova check nova_tests` —
   E_METHOD_REDEFINITION РОВНО 1 вхождение (только neg-фикстура) → 0 регрессий; std
   компилируется. D267 (10-overloading.md). branch plan-154 (синкан с main).
+
+[2026-06-13] Plan 140.3 (семейство 140 followups, ветка plan-140.3-followups). Два маркера закрыты:
+  #1 [M-140-contract-panic-unwind] (commit 60e909a0): assert/контракт нарушение тегает fail-frame
+  error_kind=NOVA_THROW_PANIC (как nv_panic, D188) → пойманное consume/supervised классифицируется как
+  Panic, не recoverable Failure (по spec D13 «assert=panic»; формат сообщения уже унифицирован 140.1). НЕ
+  «abort→unwind» — в файбере уже разматывается к fail-frame. 2 строки в contracts.h+effects.h. Тест
+  plan140/consume_assert_contract_panic_class. 0 регрессий (plan110 50/0, plan100_4 42/0, plan125_1 15/0,
+  contracts 251/0). #3 [M-140.1-message-interpolation] (commit 1d6d2ca5): interp-сообщения контрактов
+  requires x>0, "got ${x}" (синтаксис Nova ${...}, не {x}). Contract.message_expr (dual-populate: message =
+  сырой fallback для не-interp-сайтов/инвариантов, message_expr = InterpolatedStr); parser desugar при `${`;
+  codegen emit_contract_check строит сообщение LAZY (только при провале, внутри if(!cond){…}) →
+  nova_contract_violation_dyn (nova_str, %.*s). Scope: requires (mono+non-mono); ensures/invariant статика
+  (ensures ${result} нужен result-var-rewrite — follow-on); ${примитив} через interp fast-path nova_int_to_str
+  (прямой @display(sb)+typed StringBuilder.@append — Plan 154.1). Тесты plan140_1/contract_msg_interp_{pos,neg};
+  адверсариальный C-инспект (lazy if-блок + _dyn). 0 регрессий (plan140_1 11/0, contracts 251/0, plan140 34/0,
+  plan140_2 13/0). Дизайн примитивного Display (через sb.@append) передан агенту Plan 154.1.

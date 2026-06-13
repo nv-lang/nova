@@ -40,6 +40,16 @@
 > **Note (Plan 33.3 Ф.9):** Атрибут `#must_verify` **переименован** в **`#verify`**.
 > В старых текстах этого D-блока встречается `#must_verify` — читать как `#verify`.
 >
+> **AMEND (Plan 140.3, 2026-06-13) — violation = panic-class + interp-сообщения.**
+> (1) `nova_contract_violation` тегает fail-frame `error_kind = NOVA_THROW_PANIC`
+> (как `nv_panic`/assert, [D13](08-runtime.md#d13)) → пойманное `consume`/supervised
+> нарушение классифицируется как **Panic**, не recoverable Failure (формат сообщения
+> уже унифицирован Plan 140.1). (2) Сообщение `requires <e>, "..."` может быть
+> **interp-строкой** `"... ${x} ..."` (синтаксис Nova interp; значения захватываются
+> lazy на сайте нарушения через `nova_contract_violation_dyn`) — для `requires`;
+> ensures/invariant пока статика. `[M-140-contract-panic-unwind]` +
+> `[M-140.1-message-interpolation]` (Plan 140.3).
+>
 > **AMEND (Plan 140, 2026-06-12) — release-eval = «enforce-with-elision».**
 > Прежняя формулировка «в release недоказанные контракты **стираются**
 > (zero-cost, как `assert`/`NDEBUG`)» — **RETRACT**. Контракты больше **НЕ
