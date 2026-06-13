@@ -120,7 +120,26 @@ truth: runtime_registry.rs». Реально:
 
 ---
 
-## F4 — Резолвер запрещает `file + folder` с одним именем; решено задуманной моделью «папка = один модуль» ✅ resolved
+## F4 — Структура модуля str: co-equal folder-module (conforms D29/Rule E) ✅ resolved
+
+> **⚠ ПОПРАВКА (2026-06-13, сверка со спекой 07-modules.md):** моё первоначальное
+> «facade НЕВОЗМОЖЕН» — **неверно**. Это уже специфицировано: **D29** (folder = module,
+> peers) + **Rule E** (Plan 42):
+> - **Rule E (a) — конфликт:** `string.nv` (module `runtime.string`) + `string/X.nv`,
+>   где `X.nv` объявляет **peer** `module runtime.string` → `ambiguous module`. Мой
+>   Ф.0.0-probe тестировал **именно (a)** (probe.nv = `module runtime.string`) и я
+>   ошибочно обобщил до «facade невозможен».
+> - **Rule E (b) — facade ВАЛИДЕН:** `string.nv` (facade, module `runtime.string`,
+>   `export import`) + `string/core.nv` объявляет **вложенный** `module runtime.string.core`
+>   → `string/` = namespace-container, валидно. **Т.е. оригинальный facade-дизайн 152.0
+>   был реализуем** — если submodule'ы объявляют `runtime.string.<sub>`, не peer.
+>
+> **Выбор 152.0 — co-equal folder-module** (НЕ facade): папка `string/`, БЕЗ `string.nv`,
+> все файлы `module runtime.string` (pure folder-module, D29). Валиден по той же спеке,
+> и **проще** facade: один модуль → тривиальный cross-file priv-доступ к `@ptr`/`@len`,
+> ноль re-export-boilerplate, `import std.runtime.string.{X}` без изменений. Оба варианта
+> конформны D29/Rule E; co-equal выбран за простоту. (Прецедент co-equal в std:
+> `sync.nv`+`sync_test.nv` = `module runtime.sync`.)
 
 > **РЕШЕНО (2026-06-13, подсказка автора):** дизайн facade из 152.0 не нужен. Модель
 > модулей Nova **изначально** допускает: папка = ОДИН модуль, много **равноправных**

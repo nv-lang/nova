@@ -7592,6 +7592,19 @@ Plan 139.1). Этот блок — **umbrella** над per-фазовыми amen
 **9 из 10** str-методов из external-C в Nova-body; **только `@hash` остаётся C**
 (обоснованное security-исключение, см. ниже).
 
+> **AMEND Plan 152.0 (D-R2, 2026-06-13):** str-методы переехали из одного файла
+> `std/runtime/string.nv` в папку-модуль `std/runtime/string/{core,search,transform,
+> parse,chars}.nv` (co-equal файлы, все `module runtime.string`, D29/07-modules.md). И
+> **вестигиальные Nova-body str-записи удалены из `runtime_registry.rs`** (24 записи,
+> −370 строк): резолв str-методов идёт из **распарсенного `.nv`**, не из реестра
+> (доказано — метод `get` без записи в реестре резолвится без импорта; единственный
+> консумер реестра для str `types/mod.rs:12233` читает только `is_consume`/`is_mut`,
+> которых у str нет). В реестре остались только C-dispatch записи `eq`/`lt`/`le`/`gt`/`ge`
+> (бэкают operator-lowering `emit_c.rs:17302`) + `@hash`. Декомиссия operator-lowering
+> (→ только `@hash`) — Plan 152.5a (D-R4, `[M-139.1-operator-lowered-methods]`). Stub-gen
+> из реестра НЕ запускать (перезатрёт hand-written `.nv`). См.
+> [Plan 152 findings F2/D-R2](../../docs/plans/152-findings.md).
+
 ### Ключевая переоценка privacy (исправляет пессимизм Plan 139.1 Ф.B)
 
 1. **Privacy у Nova — type-based, не module-based.** `priv_access_allowed_base`
