@@ -37514,3 +37514,11 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   из disk-loaded prelude-модуля (defaults.nv), НЕ из embedded char.nv (парсится лишь для
   checker'а → type-check проходил, codegen падал в member-access). 152.3b (Unicode) — Phase B
   (gated на 152.4). 0 регрессий.
+
+[2026-06-13] Plan 152.5a (comparison core, D254) ✅ ЗАКРЫТ (кроме D-R4). byte-`Ord` (str
+  @compare, D178 byte-lex) — дефолт, задокументирован. @eq_ignore_ascii_case: str (core.nv,
+  byte-fold A-Z/a-z, длины равны) + char (defaults.nv, via to_ascii_lowercase); не-ASCII не
+  фолдится (é≠É). Spec D254 + Q-string-collation ЗАКРЫТ (дефолт byte-Ord; locale UCA-collator —
+  opt-in Phase B; str не collation'ит молча). Фикстура plan152_5/comparison 1/0. D-R4 (декомиссия
+  хардкода str-операторов ==/</+ в emit_c.rs → синтез из @eq/@compare/@concat на RawMem-body)
+  ОТЛОЖЕН как отдельная тяжёлая codegen-фаза ([M-139.1-operator-lowered-methods]). 0 регрессий.

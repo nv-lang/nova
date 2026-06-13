@@ -105,6 +105,10 @@ export fn char @len_utf8() -> int {
 // UTF-8-кодировка codepoint'а как `str` (= `str.from(@)`).
 export fn char @encode_utf8() -> str => str.from(@)
 
+// ASCII case-insensitive equality (Plan 152.5a, D254). Rust `char::eq_ignore_ascii_case`.
+export fn char @eq_ignore_ascii_case(other char) -> bool =>
+    @to_ascii_lowercase() == other.to_ascii_lowercase()
+
 /// Compare.compare для int (signum, overflow-safe).
 export fn int @compare(other int) -> int =>
     if @ < other { -1 }

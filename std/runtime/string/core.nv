@@ -318,3 +318,23 @@ export fn str @is_char_boundary(idx int) -> bool {
     ro bytes = @as_bytes()
     (bytes[idx] as int & 0xC0) != 0x80
 }
+
+// Module-private: ASCII lowercase of a single byte (A-Z → a-z; else unchanged).
+fn ascii_lower_byte(b int) -> int => if b >= 65 && b <= 90 { b + 32 } else { b }
+
+// ASCII case-insensitive equality (Plan 152.5a, D254). Без Unicode-таблиц: только
+// A-Z/a-z складываются. Длины должны совпадать (ASCII-case не меняет байт-длину).
+// Rust `str::eq_ignore_ascii_case`. Для Unicode case-folding — `eq_ignore_case`
+// (152.5b, делегат std/unicode).
+export fn str @eq_ignore_ascii_case(other str) -> bool {
+    ro n = @byte_len()
+    if n != other.byte_len() { return false }
+    ro a = @as_bytes()
+    ro b = other.as_bytes()
+    mut i = 0
+    while i < n {
+        if ascii_lower_byte(a[i] as int) != ascii_lower_byte(b[i] as int) { return false }
+        i = i + 1
+    }
+    true
+}

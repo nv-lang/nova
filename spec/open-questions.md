@@ -4098,6 +4098,18 @@ parser char-литералы **не поддерживает** — это бло
 
 ---
 
+## Q-string-collation. Сравнение/упорядочивание строк ✅ ЗАКРЫТО (2026-06-13, Plan 152.5 / D254)
+
+> **РЕШЕНИЕ: дефолт = byte-`Ord`; locale-collation — отдельный opt-in UCA-слой (Phase B).**
+> `str.compare`/`Ord`/`Equal`/`Hash` — byte-lexicographic (быстрый, детерминированный,
+> locale-НЕзависимый, как Rust/Go). `eq_ignore_ascii_case` (ASCII-fold, без таблиц) — в ядре.
+> Locale-aware — явный `std/unicode/collate.Collator` на UCA (DUCET) + опц. CLDR-tailoring
+> (Phase B, `[M-152-collation]`); `str` НИКОГДА не делает collation молча. Unicode
+> case-folding (`eq_ignore_case`) — 152.5b (делегат std/unicode). Прецедент: Rust (byte Ord
+> + crate), Go (byte + `x/text/collate`). См. [D254](decisions/03-syntax.md#d254).
+
+---
+
 ## Q-cstring. Гарантия nul-termination для `nova_str.ptr`
 
 ✅ **ЗАКРЫТО 2026-06-03** — Plan 118.1 / D26 amend

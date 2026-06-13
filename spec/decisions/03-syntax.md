@@ -10001,3 +10001,35 @@ Unicode-данных `std/unicode` (Plan 152.4). См. [Plan 152.3](../../docs/p
 
 ---
 
+## D254. Модель сравнения строк — byte-`Ord` дефолт + явный collation
+
+Added: 2026-06-13  Status: 152.5a (core) IMPLEMENTED 2026-06-13; 152.5b (Unicode/locale) — Phase B
+
+Дефолтное сравнение `str` — **byte-lexicographic** (быстрое, детерминированное,
+locale-НЕзависимое, как Rust/Go). Locale-aware collation — отдельный явный opt-in
+слой; `str` никогда не делает collation молча.
+
+### 152.5a — Ядро (Фаза A, IMPLEMENTED)
+- **`@compare(other) -> int`** (`Compare`/`Equal`/`Hash`) — byte-lexicographic (D178):
+  memcmp-style на `@as_bytes()` + length-tiebreak. Дефолт `Ord`; сортировка
+  детерминирована, locale-независима.
+- **`@eq_ignore_ascii_case(other) -> bool`** (str + char) — ASCII case-insensitive eq
+  (только A-Z/a-z складываются, БЕЗ Unicode-таблиц; длины должны совпадать). Rust
+  `str/char::eq_ignore_ascii_case`. Не-ASCII (`é`/`É`) — байт-различны (не фолдятся).
+
+### 152.5b — Unicode/locale (Фаза B, зависит 152.4)
+- **`@eq_ignore_case(other) -> bool`** — Unicode case folding (`std/unicode.fold_case`;
+  `eq_ignore_case("STRASSE","straße")`).
+- **`std/unicode/collate.Collator`** — UCA/DUCET ordering + опц. CLDR-tailoring (аналог JS
+  `localeCompare` / Java `Collator`). Roadmap `[M-152-collation]`.
+
+### D-R4 (отложено в рамках 152.5a) — декомиссия str-operator C-lowering
+`==`/`!=`/`<`/`<=`/`>`/`>=`/`+` для `str` ещё лоуэрятся хардкодом в C
+(`nova_str_eq`/`lt`/`concat`, `emit_c.rs`); реестр str — только `@hash` + эти операторы.
+Полная декомиссия (синтез из `@eq`/`@compare`/`@concat` Nova-body на RawMem-примитивах,
+БЕЗ perf-retain C) — отдельная тяжёлая codegen-фаза, маркер `[M-139.1-operator-lowered-methods]`.
+
+См. [Plan 152.5](../../docs/plans/152.5-comparison-collation.md), Q-string-collation (open-questions.md).
+
+---
+

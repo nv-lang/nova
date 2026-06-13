@@ -36063,3 +36063,10 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   (defaults.nv, где char @compare), НЕ в embedded char.nv (ExternalRegistry парсит его лишь
   для checker'а; codegen не эмитит методы builtin-типа оттуда → call падал в C member-access).
 - json.nv is_digit/is_hex_digit/is_num_start → делегируют на char-методы (ноль приватных дублей).
+
+## Plan 152.5a (D254 — comparison core), 2026-06-13
+- **byte-`Ord` дефолт** (str @compare byte-lex) — детерминированный, locale-независимый
+  (Rust/Go); locale-collation — явный opt-in UCA-слой (Phase B), str не collation'ит молча.
+- **@eq_ignore_ascii_case** (str + char) — ASCII case-insensitive, без Unicode-таблиц
+  (é/É не фолдятся). Unicode folding (eq_ignore_case) — 152.5b.
+- D-R4 (str-operator C-lowering декомиссия) выделен из 152.5a как отдельная тяжёлая фаза.
