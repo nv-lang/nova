@@ -67,6 +67,12 @@ pub struct ModuleEnv {
     /// Codegen в release-сборке стирает соответствующие runtime-checks
     /// (zero-cost guarantee). В debug — checks всегда emit'ятся.
     pub proven_contracts: Vec<(String, Span)>,
+    /// Plan 140.2 Part B (D257 / B.4): spans Index-сайтов, доказанных из LOOP/CODE
+    /// (без contract-requires). Codegen элидит ВСЕГДА.
+    pub proven_index_sites: Vec<Span>,
+    /// Plan 140.2 followup §2: Index-сайты, доказанные ТОЛЬКО с fn-`requires`.
+    /// Codegen элидит ТОЛЬКО при включённых контрактах (не `--contracts=off`).
+    pub proven_index_sites_contract: Vec<Span>,
 }
 
 /// Минимальная проверка модуля. Регистрирует имена и базовую структуру —
@@ -710,6 +716,8 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         // невалидном AST может крашнуть).
         let report = crate::verify::verify_module(module);
         env.proven_contracts = report.proven;
+        env.proven_index_sites = report.proven_index_sites;
+        env.proven_index_sites_contract = report.proven_index_sites_contract;
         for e in report.errors { errors.push(e); }
         // warnings пока silent — добавим warning infrastructure
         // в Plan 36 production hardening.
@@ -16583,6 +16591,28 @@ impl ContractCtx {
                             ),
                             e.span,
                         ));
+                    }
+                }
+                // Plan 140.2 Part A (D256): self-method call `@method()` в контракте.
+                // SMT-encoder поддерживает только встроенные #pure-аксессоры
+                // (`@len()`/`@cap()`/`@byte_len()`/`@is_empty()` → `_field_*_int(_self)`);
+                // прочие `@method()` (в т.ч. non-pure / mut-receiver) НЕ кодируются —
+                // даём внятную ошибку на checker-этапе вместо обобщённого E2401.
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if matches!(obj.kind, ExprKind::SelfAccess)
+                        && !matches!(name.as_str(), "len" | "cap" | "byte_len" | "is_empty")
+                    {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "self-метод `@{}()` в контракте не поддерживается SMT-encoder'ом \
+                                 (Plan 140.2: разрешены только #pure-аксессоры \
+                                 `@len()`/`@cap()`/`@byte_len()`/`@is_empty()`); \
+                                 ссылайтесь на поле напрямую (`@{}`) или вынесите логику в #pure fn",
+                                name, name,
+                            ),
+                            e.span,
+                        ));
+                        return;
                     }
                 }
                 // Walk callee + args.

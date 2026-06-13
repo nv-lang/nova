@@ -473,6 +473,14 @@ pub struct CEmitter {
     /// Codegen skip emit для runtime check'ов помеченных как proven —
     /// true zero-cost даже в debug.
     proven_contracts: std::collections::HashSet<(String, usize)>,
+    /// Plan 140.2 Part B (D257 / B.4): proven Index-сайты `v[idx]`/`v[a..b]`
+    /// (по span.start), доказанные из LOOP/CODE. Codegen элидит inline
+    /// bounds-check ВСЕГДА (safe даже под `--contracts=off`).
+    proven_index_sites: std::collections::HashSet<usize>,
+    /// Plan 140.2 followup §2: Index-сайты, доказанные ТОЛЬКО с fn-`requires`
+    /// (cross-fn). Элидируются ТОЛЬКО при включённых контрактах — под
+    /// `--contracts=off`/`#unchecked` requires не enforced → элизия unsound.
+    proven_index_sites_contract: std::collections::HashSet<usize>,
     /// Plan 140 Ф.2 (D24 amend): build-level contract opt-out
     /// (`nova build --contracts=off` / `nova-codegen ... --contracts=off`).
     /// Когда `true` — codegen НЕ эмитит НИ ОДНУ контракт-проверку
@@ -1058,6 +1066,8 @@ impl CEmitter {
             contracts_post_label: None,
             ghost_vars: std::collections::HashSet::new(),
             proven_contracts: std::collections::HashSet::new(),
+            proven_index_sites: std::collections::HashSet::new(),
+            proven_index_sites_contract: std::collections::HashSet::new(),
             contracts_off: false,
             contracts_unchecked_fn: false,
             record_invariants: HashMap::new(),
@@ -1410,6 +1420,34 @@ impl CEmitter {
         for (name, span) in proven {
             self.proven_contracts.insert((name.clone(), span.start));
         }
+    }
+
+    /// Plan 140.2 Part B (D257 / B.4): proven Index-сайты (loop/code-based) для
+    /// элизии inline bounds-check (по span.start Index-выражения).
+    pub fn set_proven_index_sites(&mut self, sites: &[crate::diag::Span]) {
+        self.proven_index_sites.clear();
+        for span in sites {
+            self.proven_index_sites.insert(span.start);
+        }
+    }
+
+    /// Plan 140.2 followup §2: contract-based proven Index-сайты (доказаны через
+    /// fn-`requires`). Элидируются ТОЛЬКО при включённых контрактах.
+    pub fn set_proven_index_sites_contract(&mut self, sites: &[crate::diag::Span]) {
+        self.proven_index_sites_contract.clear();
+        for span in sites {
+            self.proven_index_sites_contract.insert(span.start);
+        }
+    }
+
+    /// Plan 140.2: можно ли элидировать inline bounds-check Index-сайта `span`?
+    /// loop/code-доказанные — всегда; contract-доказанные — только если контракты
+    /// для этой fn НЕ сняты (`--contracts=off` / `#unchecked` оставляют проверку,
+    /// т.к. requires там не enforced → элизия по нему была бы unsound).
+    fn index_site_elided(&self, span_start: usize) -> bool {
+        self.proven_index_sites.contains(&span_start)
+            || (!self.contracts_elided_here()
+                && self.proven_index_sites_contract.contains(&span_start))
     }
 
     /// Plan 140 Ф.2 (D24 amend): build-level contract opt-out
@@ -16083,11 +16121,20 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                                         .unwrap_or("nova_int")
                                         .trim()
                                 ));
+                            // Plan 140.2 B.4 / [M-140.2-elision-writeback]: элидировать
+                            // bounds-check записи `v[i]=val` на доказанных in-range
+                            // write-сайтах (frame-safe len-invariant цикл). Иначе always-on.
+                            let wchk = if self.index_site_elided(target.span.start) {
+                                String::new()
+                            } else {
+                                format!(
+                                    "if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); ",
+                                    arr = arr_c,
+                                )
+                            };
                             self.line(&format!(
-                                "{{ nova_int _wi = ({idx}); \
-if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
-(({arr})->data)[_wi] = ({ty})({val}); }}",
-                                arr = arr_c, idx = idx_c, val = val_c, ty = elem_ty
+                                "{{ nova_int _wi = ({idx}); {chk}(({arr})->data)[_wi] = ({ty})({val}); }}",
+                                arr = arr_c, idx = idx_c, val = val_c, ty = elem_ty, chk = wchk
                             ));
                             return Ok(());
                         }
@@ -18825,19 +18872,25 @@ if (_wi < 0 || _wi >= ({arr})->len) nv_panic_index_oob(_wi, ({arr})->len); \
                             }
                             (None, _) => format!("({})->len", o),
                         };
-                        // Statement-expr: bounds-check, then build view struct.
-                        return Ok(format!(
-                            "(({{ {vty}* _sv = ({o}); nova_int _sf = ({from}); nova_int _st = ({to}); \
-if (_sf < 0 || _st < _sf || _st > _sv->len) {{ char _sbuf[96]; \
+                        // Plan 140.2 followup §2: элидировать slice bounds-check
+                        // на доказанных in-range slice-сайтах; иначе always-on.
+                        let slice_chk = if self.index_site_elided(expr.span.start) {
+                            String::new()
+                        } else {
+                            "if (_sf < 0 || _st < _sf || _st > _sv->len) { char _sbuf[96]; \
 int _sn = snprintf(_sbuf, 96, \"Vec: slice [%lld..%lld] out of bounds for length %lld\", \
 (long long)_sf, (long long)_st, (long long)_sv->len); \
 if (_sn < 0) _sn = 0; if (_sn > 95) _sn = 95; \
-nv_panic((nova_str){{.ptr=(const uint8_t*)_sbuf,.len=(nova_int)_sn}}); }} \
+nv_panic((nova_str){.ptr=(const uint8_t*)_sbuf,.len=(nova_int)_sn}); } ".to_string()
+                        };
+                        // Statement-expr: bounds-check (elidable), then build view struct.
+                        return Ok(format!(
+                            "(({{ {vty}* _sv = ({o}); nova_int _sf = ({from}); nova_int _st = ({to}); {chk}\
 nova_int _sl = _st - _sf; \
 {vty}* _sr = ({vty}*)nova_alloc(sizeof({vty})); \
 _sr->data = ({ety}*)(_sv->data + _sf); _sr->len = _sl; _sr->cap = _sl; \
 _sr; }}))",
-                            vty = vec_ty, o = o, from = from_expr, to = to_expr_inner, ety = elem_ty
+                            vty = vec_ty, o = o, from = from_expr, to = to_expr_inner, ety = elem_ty, chk = slice_chk
                         ));
                     }
                     let len_expr = if obj_ty == "nova_str" {
@@ -18933,15 +18986,29 @@ _cp++; \
                             .trim_end_matches('*')
                             .trim()
                             .to_string());
-                    // Use statement-expr for lvalue-compatible bounds-checked access:
-                    // ({ T* _vd = _v->data; if (idx < 0 || idx >= _v->len) panic; _vd[idx]; })
+                    // Plan 140.2 Part B (RB2 fix): emit an lvalue-safe bounds-checked
+                    // read via the pointer-deref trick `(*({ ...; &_vd[_i]; }))` —
+                    // mirrors `emit_bchk_array_access` (NovaArray). A plain stmt-expr
+                    // ending in `_vd[_i]` is NOT an lvalue in Clang, breaking
+                    // `v[i].field = x`, `&v[i]`, and `v[i].mut_method()`; the
+                    // `*(...&...)` form is a valid lvalue in both Clang and GCC.
                     let tmp_v = self.fresh_tmp_named("vec");
                     let tmp_i = self.fresh_tmp_named("vi");
+                    // Plan 140.2 Part B (D257 / B.4): элидировать bounds-check на
+                    // index-сайтах, доказанных in-range верификатором (len-инвариантный
+                    // цикл `for i in 0..v.len()`). Безопасный доступ → zero-cost.
+                    // Недоказанные — always-on проверка (debug И release).
+                    let bounds_chk = if self.index_site_elided(expr.span.start) {
+                        String::new()
+                    } else {
+                        format!(
+                            "if (__builtin_expect({i} < 0 || {i} >= ({o})->len, 0)) nv_panic_index_oob({i}, ({o})->len); ",
+                            i = tmp_i, o = o,
+                        )
+                    };
                     return Ok(format!(
-                        "(({{ {ty}* {v} = ({o})->data; nova_int {i} = ({idx}); \
-if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
-{v}[{i}]; }}))",
-                        ty = elem_ty, v = tmp_v, i = tmp_i, o = o, idx = i
+                        "(*({{ {ty}* {v} = ({o})->data; nova_int {i} = ({idx}); {chk}&{v}[{i}]; }}))",
+                        ty = elem_ty, v = tmp_v, i = tmp_i, o = o, idx = i, chk = bounds_chk
                     ));
                 }
                 // Plan 138 Ф.3 (D238): `str[i]` → `char`, panic on OOB or invalid UTF-8.

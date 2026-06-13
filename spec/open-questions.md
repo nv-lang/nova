@@ -7576,3 +7576,58 @@ checker (`bool`/`unit` relational-операнд → `E_RELATIONAL_OPERAND_NOT_O
 - `[M-140-bounds-as-contract]` (Plan 140): контракт должен быть
   `requires 0 <= i && i < @len`, НЕ `0 <= i < @len`.
 - [03-syntax.md](decisions/03-syntax.md) — операторы сравнения, precedence/ассоциативность.
+
+---
+
+## Q36. Scope call-site instantiation для `@field`-контрактов (Plan 140.2, D256/D257) — ✅ ЗАКРЫТО (2026-06-13)
+
+**Вопрос:** при поддержке `@field` в контрактах ([D256](decisions/09-tooling.md#d256-field--method-self-access-в-контрактах)) —
+какой MVP-scope у call-site instantiation? (a) **within-function** (метод
+доказывает о своём `@field` в ensures/invariant) vs (b) **full cross-function**
+(caller доказывает контракт callee, подставляя свой receiver: для `@index`
+requires `0<=i && i<@len` — `_self`↦`v`, `i`↦`idx` на сайте `v[idx]`).
+
+### Контекст (2026-06-13, всплыло при Plan 140.2 A.0)
+
+Для **элизии** bounds (`for i in 0..v.len() { …v[i]… }`) нужен вариант (b):
+caller инстанцирует `@index` requires на сайте `v[i]`. Investigation
+(5-агентный sweep) показал: общей call-site precondition-проверки в
+верификаторе НЕТ вообще (только `decreases` для self-recursion, и она не
+детектит даже method-форму `obj.m(args)`); Plan-140 элизия keyed по
+`(fn_name, contract_span)` — элидит ВНУТРИ callee («всё-или-ничего»),
+непригодна для per-site. Полная cross-function instantiation (доказывать
+`requires` ВСЕХ callee на ВСЕХ вызовах) — большой риск: внезапно всплыли бы
+десятки недоказанных preconditions по всему codebase → broken build.
+
+### Решение (2026-06-13)
+
+**Специализированная per-index-site instantiation, НЕ общая cross-function.**
+B.4 `prove_vec_index_sites` (verify/pipeline.rs) инстанцирует ТОЛЬКО `@index`
+requires на `v[idx]` READ-сайтах (`_self`↦`v`, `i`↦`idx`), доказывает под
+loop-bound `for i in lo..hi`. Это покрывает A3 («минимум для loop-var индекса
+с границей `v.len()`/`@len`») без риска массовых новых ошибок: pass только
+ДОБАВЛЯет proven-сайты, никогда не создаёт diagnostic. Soundness — через
+frame-check «длина `v` инвариантна в цикле» (Z3 моделит `_field_len_int(v)` как
+фиксированное, а Nova переоценивает `0..v.len()` каждую итерацию).
+
+**Расширено (2026-06-13, `[M-140.2-elision-writeback]` ✅ §1–§3):**
+- **§1 write-back** — frame-check read-only → len-инвариантный (`v[i]=val` СОХРАНЯЕТ
+  длину); `for i in 0..v.len() { v[i]=f(v[i]) }` элидирует И запись, И чтение.
+- **§2 slice** — `v[a..b]` slice-bounds (`0<=a && a<=b && b<=v.len()`); inline
+  slice-проверка элидируется на доказанных сайтах.
+- **§3 cross-fn (callee-side)** — `v[i]` внутри `fn helper(v,i) requires 0<=i<v.len()`
+  элидируется (bound из requires; **contract-based** proven-set, codegen элидит
+  только при включённых контрактах — под `--contracts=off`/`#unchecked` проверка
+  остаётся, т.к. requires там не enforced).
+
+**Отложено** (остаток): **caller-side** требование (caller доказывает callee
+`requires` на call-site → элидировать сам requires-CHECK callee) — это per-method
+all-or-nothing (требует доказательства на ВСЕХ call-site), low-value (requires-check
+дёшев); декларативный `requires` на `@index(Range)` (slice safety уже через
+inline-gate); экзотические не-loop-var индексы (Z3-арифметика уже покрывает большинство).
+
+### Связанное
+- [D256](decisions/09-tooling.md#d256-field--method-self-access-в-контрактах) — `@field`/`@method()` self-access в контрактах.
+- [D257](decisions/09-tooling.md#d257-vec-index-bounds-как-элидируемый-контракт) — Vec `@index` bounds как элидируемый контракт.
+- [Q34](#q34-политика-enforce-in-release-для-контрактов-plan-140-d24-amend) — enforce-in-release (Plan 140, base-механизм элизии).
+- `[M-140.2-elision-writeback]` (backlog) — расширение элизии за пределы read-only-MVP.

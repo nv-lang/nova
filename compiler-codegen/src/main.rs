@@ -495,6 +495,9 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     // Plan 33.3 Ф.9.9: передаём proven контракты в codegen для
     // selective stripping (true zero-cost даже в debug).
     emitter.set_proven_contracts(&module_env.proven_contracts);
+    // Plan 140.2 Part B (D257 / B.4): proven index-сайты для элизии bounds-check.
+    emitter.set_proven_index_sites(&module_env.proven_index_sites);
+    emitter.set_proven_index_sites_contract(&module_env.proven_index_sites_contract);
     // Plan 140 Ф.2 (D24 amend): build-policy `--contracts=off` элидирует ВСЕ
     // контракт-проверки глобально (legacy zero-cost). Default `enforce` —
     // недоказанные проверяются (debug И release; Z3-proven уже элидированы).

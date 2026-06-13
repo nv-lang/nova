@@ -35939,3 +35939,35 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   facade-файла (резолвер запрещает file+folder одного имени) → импорты/prelude/реестр без миграции. Gate
   PASS 2534/FAIL 181 — 0 новых регрессий. Минимализм API (хендофф 153): не плодить типы/записи, выразимые
   через существующее (`Vec`).
+- **Plan 140.2 — Vec @index bounds как элидируемый контракт (D256+D257, 2026-06-13)**: `requires 0<=i && i<@len`
+  на `Vec @index` теперь возможен и оптимизируется. КЛЮЧЕВОЕ УПРОЩЕНИЕ Part A: `@field` в контракте кодируется
+  **через уже существующую machinery** — bare `@` → SMT-Var `_self`, и `@field`/`@len()` сами идут через
+  имеющийся `_field_<name>_<sort>(obj)` UF (тот же, что для `obj.field` параметра). Ноль изменений в backend
+  (z3.rs/smtlib.rs): свободная Var auto-объявляется Int, `_field_*(_self)` минтит стабильную fresh-const по
+  AST-указателю аргумента → один `_self` даёт верную конгруэнтность «бесплатно». Изначальная попытка
+  «объявить sorted-UF над uninterpreted record-sort» была отвергнута (prefix-dispatch `_field_*` всё равно
+  ушёл бы на fresh-const путь — лишняя работа без выгоды). Part B B.4 элизия: **per-index-site**, а НЕ
+  per-method — буквальный план «route v[i] через mono-@index + Plan-140-элизия» оказался несостоятелен
+  (per-(fn,span) ключ элидит «всё-или-ничего», и метод-вызов ломает lvalue `v[i].field=x`). Inline-путь
+  сохранён (lvalue-safe `*(&p[i])`-форма, сворачивается C-инлайнером в `p[i]` — zero overhead на недоказанном).
+  SOUNDNESS: элизия гейтирована frame-check «`v` read-only в цикле» (read-only ⇒ длина инвариантна ⇒
+  `i<v.len()@guard` держится на доступе), т.к. Z3 моделит длину как фиксированную, а Nova переоценивает
+  `0..v.len()` каждую итерацию. Гейт non-trivial backend ⇒ дефолтные (Trivial) сборки не платят ничего.
+
+- **Plan 140.2 followup (2026-06-13)**: (1) **write-back элизия** `[M-140.2-elision-writeback]` — frame-check
+  расширен с «read-only» на «len-инвариантный»: `v[i]=val` (mut @index) СОХРАНЯЕТ длину, поэтому write-back
+  циклы `for i in 0..v.len() { v[i]=f(v[i]) }` теперь элидируют И запись, И чтение (length-changing методы
+  по-прежнему frame-unsafe). (2) **`NOVA_Z3_LIB_DIR`** env-override в `build.rs` (зеркало `NOVA_GC_LIB_DIR`):
+  z3-сборка в worktree указывает на общий `libz3.lib` main-репо вместо копии 1.9 ГБ — критично на FS без
+  junction/symlink (exFAT). Освободило 1.9 ГБ.
+
+- **Plan 140.2 followup §2–§3 (2026-06-13): slice + cross-fn элизия.** (§2 slice) `v[a..b]` — та же
+  inline-проверка, что у скаляра, теперь элидируется (3-условная граница); fn-level frame-safety (vec
+  len-инвариантен над всем телом) даёт `v[0..v.len()]` вне цикла. (§3 cross-fn) `v[i]` внутри
+  `fn helper(v,i) requires 0<=i<v.len()` элидируется — bound берётся из fn-`requires`. КЛЮЧЕВОЙ soundness-
+  механизм: **2 proven-множества** вместо одного. Z3 моделит длину как фикс, а под `--contracts=off`/`#unchecked`
+  сам `requires` не enforced → элизия по нему была бы unsound. Поэтому verifier различает «доказано из
+  loop/code» (always-safe, элидится всегда) и «доказано только с requires» (contract-based, codegen элидит
+  лишь при включённых контрактах) — двойным доказательством (pass без requires vs с requires; contract = разница).
+  Это же закрыло латентную предсуществующую дыру: B.4 ассертил requires безусловно, что под `--contracts=off`
+  могло бы элидировать requires-зависимый `v[i]`.

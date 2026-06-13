@@ -2504,6 +2504,9 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         // statically proven. Безопасный degrade без Z3 (TrivialBackend proves
         // a smaller class → больше runtime-checked, не unsafe).
         emitter.set_proven_contracts(&module_env.proven_contracts);
+        // Plan 140.2 Part B (D257 / B.4): proven index-сайты для элизии bounds-check.
+        emitter.set_proven_index_sites(&module_env.proven_index_sites);
+        emitter.set_proven_index_sites_contract(&module_env.proven_index_sites_contract);
         emitter.emit_module(&module)
             .map_err(|e| format!("codegen error: {}", e))?
     };
