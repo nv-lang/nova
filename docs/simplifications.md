@@ -35949,3 +35949,14 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   по-прежнему frame-unsafe). (2) **`NOVA_Z3_LIB_DIR`** env-override в `build.rs` (зеркало `NOVA_GC_LIB_DIR`):
   z3-сборка в worktree указывает на общий `libz3.lib` main-репо вместо копии 1.9 ГБ — критично на FS без
   junction/symlink (exFAT). Освободило 1.9 ГБ.
+
+- **Plan 140.2 followup §2–§3 (2026-06-13): slice + cross-fn элизия.** (§2 slice) `v[a..b]` — та же
+  inline-проверка, что у скаляра, теперь элидируется (3-условная граница); fn-level frame-safety (vec
+  len-инвариантен над всем телом) даёт `v[0..v.len()]` вне цикла. (§3 cross-fn) `v[i]` внутри
+  `fn helper(v,i) requires 0<=i<v.len()` элидируется — bound берётся из fn-`requires`. КЛЮЧЕВОЙ soundness-
+  механизм: **2 proven-множества** вместо одного. Z3 моделит длину как фикс, а под `--contracts=off`/`#unchecked`
+  сам `requires` не enforced → элизия по нему была бы unsound. Поэтому verifier различает «доказано из
+  loop/code» (always-safe, элидится всегда) и «доказано только с requires» (contract-based, codegen элидит
+  лишь при включённых контрактах) — двойным доказательством (pass без requires vs с requires; contract = разница).
+  Это же закрыло латентную предсуществующую дыру: B.4 ассертил requires безусловно, что под `--contracts=off`
+  могло бы элидировать requires-зависимый `v[i]`.

@@ -37334,3 +37334,19 @@ Plan 140.2 followup ✅ (2026-06-13): (1) WRITE-BACK ЭЛИЗИЯ [M-140.2-elisi
   (2) NOVA_Z3_LIB_DIR env-override в build.rs (зеркало NOVA_GC_LIB_DIR) — z3-сборка в worktree указывает на
   общий libz3.lib main-репо вместо копии 1.9 ГБ (критично на exFAT без junction); протестировано
   (override-сборка с удалённой копией) → копия удалена, 1.9 ГБ освобождено.
+
+Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writeback].
+  §2 SLICE: `v[a..b]` — verifier доказывает `0<=a && a<=b && b<=v.len()`; inline slice-проверка
+  (emit_c, "Vec: slice [...]") теперь элидируема (slice_chk-gate). fn-level frame-safety (idx_collect_index_objs
+  + idx_block_len_safe над всем телом) даёт `v[0..v.len()]` вне цикла. Range добавлен в frame-check.
+  §3 CROSS-FN: `v[i]` внутри `fn helper(v,i) requires 0<=i<v.len()` элидируется — bound из fn-requires.
+  КЛЮЧЕВОЙ soundness-механизм: ДВА proven-множества вместо одного. Z3 моделит длину как фикс; под
+  `--contracts=off`/`#unchecked` requires не enforced → элизия по нему unsound. Поэтому prove_vec_index_sites
+  делает 2 pass'а: без requires (always-safe, loop/code) и с requires (all); contract-based = all−always.
+  Codegen `index_site_elided`: always-set элидит всегда, contract-set — только если !contracts_elided_here().
+  Это же закрыло латентную дыру B.4 (безусловный assert requires). Тесты: followup_slice_elision_pos +
+  followup_crossfn_elision_pos (спот-чек C: requires-check есть, v[i] без nv_panic_index_oob) +
+  followup_crossfn_contractsoff_neg (под // CONTRACTS off — v[i] С проверкой → OOB trap). plan140_2 9/0.
+  Регрессия 0 новых (plan96 neg_slice ×4 — PRE-EXISTING: []T→Vec flip сделал `[...]` Vec'ом → "Vec: slice"
+  vs устаревшее "array: slice" в plan96; вне scope 140.2). Остаток маркера: caller-side requires-CHECK элизия
+  (low-value) + декларативный requires на @index(Range).

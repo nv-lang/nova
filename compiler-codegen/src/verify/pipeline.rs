@@ -186,12 +186,24 @@ impl VerificationPipeline {
     /// фиксированное, поэтому frame-инвариантность ОБЯЗАТЕЛЬНА для soundness.
     /// Trivial backend ничего не докажет → пустой результат (нулевая цена;
     /// вызывается только при non-trivial backend из `verify_module`).
-    pub fn prove_vec_index_sites(&self, module: &Module, fd: &FnDecl) -> Vec<Span> {
-        let body = match &fd.body { FnBody::Block(b) => b, _ => return Vec::new() };
-        // Perf: дешёвый pre-scan — без `for`-цикла элидировать нечего. Пропускаем
-        // дорогой setup (backend + collect_pure_fns O(module)) для loop-less fn.
-        if !idx_block_has_for(body) { return Vec::new(); }
-        let mut backend = self.create_backend();
+    /// Возвращает `(always_safe, contract_based)`:
+    /// - **always_safe** — bounds доказаны из LOOP/CODE (без contract-`requires`):
+    ///   loop-bound `for i in 0..v.len()`, fn-level frame-safety, slice-константы.
+    ///   Элидируются ВСЕГДА (безопасно даже под `--contracts=off`).
+    /// - **contract_based** — bounds доказаны ТОЛЬКО с учётом fn-`requires`
+    ///   (напр. `v[i]` внутри `fn helper(v,i) requires 0<=i<v.len()`). Codegen
+    ///   элидит их ТОЛЬКО при включённых контрактах (под `--contracts=off`
+    ///   requires не enforced → элизия по нему была бы unsound).
+    pub fn prove_vec_index_sites(&self, module: &Module, fd: &FnDecl) -> (Vec<Span>, Vec<Span>) {
+        let empty = (Vec::new(), Vec::new());
+        let body = match &fd.body { FnBody::Block(b) => b, _ => return empty };
+        // Perf pre-scan: без `v[...]`-сайтов элидировать нечего → пропустить дорогой
+        // setup (backend + collect_pure_fns O(module)).
+        let mut idx_objs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        idx_collect_index_objs_block(body, &mut idx_objs);
+        if idx_objs.is_empty() { return empty; }
+
+        // Shared ctx (collect_pure_fns O(module) — ОДИН раз на обе pass'ы).
         let pure_views = collect_pure_views(module);
         let empty_pure: std::collections::HashSet<String> = std::collections::HashSet::new();
         let pure_fns = collect_pure_fns(module, &empty_pure);
@@ -201,20 +213,42 @@ impl VerificationPipeline {
         let ctx = super::encode::EncodeCtx {
             pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts,
         };
-        for p in &fd.params {
-            backend.declare_var(&p.name, type_to_sort(&p.ty));
-        }
-        // Контрактные `requires` метода — assumptions (напр. `requires v.len() > 0`).
-        for c in &fd.contracts {
-            if matches!(c.kind, ContractKind::Requires) {
-                if let Ok(t) = super::encode::encode_expr_with_ctx(&c.expr, &ctx) {
-                    backend.assert(Assertion { formula: t, label: None });
+        // fn-level frame-safe seed: vec len-инвариантен над ВСЕМ телом fn (не
+        // только в цикле) → `v[0..v.len()]` / `v[i]` вне явного цикла кандидаты.
+        let base_fs: Vec<String> = idx_objs.iter()
+            .filter(|n| idx_block_len_safe(body, n))
+            .cloned().collect();
+
+        let declare = |backend: &mut dyn SmtBackend| {
+            for p in &fd.params { backend.declare_var(&p.name, type_to_sort(&p.ty)); }
+        };
+
+        // Pass A — БЕЗ requires: bounds только из loop/code (always-safe).
+        let mut backend_a = self.create_backend();
+        declare(backend_a.as_mut());
+        let mut always: Vec<Span> = Vec::new();
+        idx_walk_block(body, &ctx, backend_a.as_mut(), &base_fs, &mut always);
+
+        // Pass B — С requires (только если они есть): all = loop/code + contract;
+        // contract_based = all − always.
+        let has_requires = fd.contracts.iter().any(|c| matches!(c.kind, ContractKind::Requires));
+        let mut contract: Vec<Span> = Vec::new();
+        if has_requires {
+            let mut backend_b = self.create_backend();
+            declare(backend_b.as_mut());
+            for c in &fd.contracts {
+                if matches!(c.kind, ContractKind::Requires) {
+                    if let Ok(t) = super::encode::encode_expr_with_ctx(&c.expr, &ctx) {
+                        backend_b.assert(Assertion { formula: t, label: None });
+                    }
                 }
             }
+            let mut all: Vec<Span> = Vec::new();
+            idx_walk_block(body, &ctx, backend_b.as_mut(), &base_fs, &mut all);
+            let always_starts: std::collections::HashSet<usize> = always.iter().map(|s| s.start).collect();
+            for sp in all { if !always_starts.contains(&sp.start) { contract.push(sp); } }
         }
-        let mut proven: Vec<Span> = Vec::new();
-        idx_walk_block(body, &ctx, backend.as_mut(), &[], &mut proven);
-        proven
+        (always, contract)
     }
 
     /// Verify одну функцию: возвращает list of (Contract span, VerifyResult).
@@ -4023,8 +4057,9 @@ let t0 = std::time::Instant::now();
     if !matches!(pipeline.backend, BackendChoice::Trivial) {
         for item in &module.items {
             if let Item::Fn(fd) = item {
-                let sites = pipeline.prove_vec_index_sites(module, fd);
-                report.proven_index_sites.extend(sites);
+                let (always, contract) = pipeline.prove_vec_index_sites(module, fd);
+                report.proven_index_sites.extend(always);
+                report.proven_index_sites_contract.extend(contract);
             }
         }
     }
@@ -4335,10 +4370,14 @@ pub struct ModuleVerifyReport {
     pub errors: Vec<Diagnostic>,
     /// Warnings — counterexamples для контрактов без `#verify`.
     pub warnings: Vec<Diagnostic>,
-    /// Plan 140.2 Part B (D257 / B.4): spans Index-выражений `v[idx]` (read ИЛИ
-    /// write-target `v[i]=val`), чьи bounds доказаны in-range под len-инвариантом
-    /// цикла. Codegen элидит inline bounds-check на этих сайтах (по span.start).
+    /// Plan 140.2 Part B (D257 / B.4): spans Index-сайтов `v[idx]`/`v[a..b]`,
+    /// чьи bounds доказаны из LOOP/CODE (без contract-requires). Codegen элидит
+    /// ВСЕГДА (safe даже под `--contracts=off`).
     pub proven_index_sites: Vec<Span>,
+    /// Plan 140.2 followup §2: Index-сайты, доказанные ТОЛЬКО с учётом fn-`requires`
+    /// (cross-fn: `v[i]` под `requires 0<=i<v.len()`). Codegen элидит ТОЛЬКО при
+    /// включённых контрактах (под `--contracts=off` requires не enforced).
+    pub proven_index_sites_contract: Vec<Span>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4355,48 +4394,6 @@ pub struct ModuleVerifyReport {
 
 fn idx_is_ident(e: &Expr, name: &str) -> bool {
     matches!(&e.kind, ExprKind::Ident(n) if n == name)
-}
-
-/// Дешёвый pre-scan: содержит ли блок `for`-цикл (на любой глубине common
-/// control-flow)? Неполнота (for внутри необработанного конструкта) → пропуск
-/// pass = no elision = safe, не unsound. Избегает O(module) setup для loop-less fn.
-fn idx_block_has_for(block: &Block) -> bool {
-    block.stmts.iter().any(idx_stmt_has_for)
-        || block.trailing.as_deref().map_or(false, idx_expr_has_for)
-}
-
-fn idx_stmt_has_for(stmt: &Stmt) -> bool {
-    match stmt {
-        Stmt::Expr(e) => idx_expr_has_for(e),
-        Stmt::Let(decl) => idx_expr_has_for(&decl.value),
-        Stmt::Assign { target, value, .. } => idx_expr_has_for(target) || idx_expr_has_for(value),
-        Stmt::Return { value: Some(e), .. } => idx_expr_has_for(e),
-        _ => false,
-    }
-}
-
-fn idx_expr_has_for(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::For { .. } => true,
-        ExprKind::Block(b) => idx_block_has_for(b),
-        ExprKind::If { cond, then, else_ } => {
-            idx_expr_has_for(cond) || idx_block_has_for(then)
-                || match else_ {
-                    Some(ElseBranch::Block(b)) => idx_block_has_for(b),
-                    Some(ElseBranch::If(e2)) => idx_expr_has_for(e2),
-                    None => false,
-                }
-        }
-        ExprKind::While { cond, body, .. } => idx_expr_has_for(cond) || idx_block_has_for(body),
-        ExprKind::Loop { body, .. } => idx_block_has_for(body),
-        ExprKind::Binary { left, right, .. } => idx_expr_has_for(left) || idx_expr_has_for(right),
-        ExprKind::Unary { operand, .. } => idx_expr_has_for(operand),
-        ExprKind::Call { func, args, .. } => idx_expr_has_for(func) || args.iter().any(|a| idx_expr_has_for(a.expr())),
-        ExprKind::Member { obj, .. } => idx_expr_has_for(obj),
-        ExprKind::As(inner, _) => idx_expr_has_for(inner),
-        ExprKind::Index { obj, index } => idx_expr_has_for(obj) || idx_expr_has_for(index),
-        _ => false,
-    }
 }
 
 /// `hi` цикла даёт кандидата-vec, если это `v.len()` / `v.len`.
@@ -4508,6 +4505,12 @@ fn idx_expr_len_safe(e: &Expr, v: &str) -> bool {
         }
         ExprKind::While { cond, body, .. } => idx_expr_len_safe(cond, v) && idx_block_len_safe(body, v),
         ExprKind::Block(b) => idx_block_len_safe(b, v),
+        // slice `v[a..b]` (read) — len-safe, если границы a/b len-safe (slice
+        // не мутирует v). Сам `Index{obj:v, ...}` обрабатывается выше.
+        ExprKind::Range { start, end, .. } => {
+            start.as_deref().map_or(true, |s| idx_expr_len_safe(s, v))
+                && end.as_deref().map_or(true, |e| idx_expr_len_safe(e, v))
+        }
         ExprKind::IntLit(_) | ExprKind::BoolLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::CharLit(_) | ExprKind::UnitLit | ExprKind::SelfAccess | ExprKind::Path(_)
         | ExprKind::NullPtrLit => true,
@@ -4525,6 +4528,76 @@ fn idx_try_prove(idx: &Expr, recv: &str, ctx: &super::encode::EncodeCtx, backend
     let lt = SmtTerm::App("<".into(), vec![idx_t, len_t]);
     let goal = SmtTerm::and(vec![ge0, lt]);
     matches!(try_prove(backend, goal), SatResult::Unsat(_))
+}
+
+/// Plan 140.2 followup §2 (slice): доказать slice-bounds
+/// `0 <= start && start <= end && end <= v.len()` для `v[start..end]`.
+/// Open-ended границы: start→0, end→v.len(); inclusive `..=` → end+1.
+fn idx_try_prove_slice(
+    start: Option<&Expr>, end: Option<&Expr>, inclusive: bool,
+    recv: &str, ctx: &super::encode::EncodeCtx, backend: &mut dyn SmtBackend,
+) -> bool {
+    let len_t = SmtTerm::App("_field_len_int".into(), vec![SmtTerm::Var(recv.to_string())]);
+    let st = match start {
+        Some(s) => match super::encode::encode_expr_with_ctx(s, ctx) { Ok(t) => t, Err(_) => return false },
+        None => SmtTerm::IntLit(0),
+    };
+    let en = match end {
+        Some(e) => {
+            let t = match super::encode::encode_expr_with_ctx(e, ctx) { Ok(t) => t, Err(_) => return false };
+            if inclusive { SmtTerm::App("+".into(), vec![t, SmtTerm::IntLit(1)]) } else { t }
+        }
+        None => len_t.clone(),
+    };
+    let ge0 = SmtTerm::App("<=".into(), vec![SmtTerm::IntLit(0), st.clone()]);
+    let le = SmtTerm::App("<=".into(), vec![st, en.clone()]);
+    let le_len = SmtTerm::App("<=".into(), vec![en, len_t]);
+    let goal = SmtTerm::and(vec![ge0, le, le_len]);
+    matches!(try_prove(backend, goal), SatResult::Unsat(_))
+}
+
+/// Собрать имена идентификаторов, появляющихся как obj в `v[...]` (Index),
+/// — кандидаты-vec для fn-level frame-safety seed.
+fn idx_collect_index_objs_block(block: &Block, out: &mut std::collections::HashSet<String>) {
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Expr(e) => idx_collect_index_objs_expr(e, out),
+            Stmt::Let(decl) => idx_collect_index_objs_expr(&decl.value, out),
+            Stmt::Assign { target, value, .. } => { idx_collect_index_objs_expr(target, out); idx_collect_index_objs_expr(value, out); }
+            Stmt::Return { value: Some(e), .. } => idx_collect_index_objs_expr(e, out),
+            _ => {}
+        }
+    }
+    if let Some(t) = &block.trailing { idx_collect_index_objs_expr(t, out); }
+}
+
+fn idx_collect_index_objs_expr(e: &Expr, out: &mut std::collections::HashSet<String>) {
+    match &e.kind {
+        ExprKind::Index { obj, index } => {
+            if let ExprKind::Ident(n) = &obj.kind { out.insert(n.clone()); }
+            idx_collect_index_objs_expr(obj, out);
+            idx_collect_index_objs_expr(index, out);
+        }
+        ExprKind::For { iter, body, .. } => { idx_collect_index_objs_expr(iter, out); idx_collect_index_objs_block(body, out); }
+        ExprKind::While { cond, body, .. } => { idx_collect_index_objs_expr(cond, out); idx_collect_index_objs_block(body, out); }
+        ExprKind::Loop { body, .. } => idx_collect_index_objs_block(body, out),
+        ExprKind::If { cond, then, else_ } => {
+            idx_collect_index_objs_expr(cond, out);
+            idx_collect_index_objs_block(then, out);
+            match else_ { Some(ElseBranch::Block(b)) => idx_collect_index_objs_block(b, out), Some(ElseBranch::If(e2)) => idx_collect_index_objs_expr(e2, out), None => {} }
+        }
+        ExprKind::Block(b) => idx_collect_index_objs_block(b, out),
+        ExprKind::Binary { left, right, .. } => { idx_collect_index_objs_expr(left, out); idx_collect_index_objs_expr(right, out); }
+        ExprKind::Unary { operand, .. } => idx_collect_index_objs_expr(operand, out),
+        ExprKind::As(inner, _) => idx_collect_index_objs_expr(inner, out),
+        ExprKind::Call { func, args, .. } => { idx_collect_index_objs_expr(func, out); for a in args { idx_collect_index_objs_expr(a.expr(), out); } }
+        ExprKind::Member { obj, .. } => idx_collect_index_objs_expr(obj, out),
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { idx_collect_index_objs_expr(s, out); }
+            if let Some(en) = end { idx_collect_index_objs_expr(en, out); }
+        }
+        _ => {}
+    }
 }
 
 fn idx_walk_block(block: &Block, ctx: &super::encode::EncodeCtx, backend: &mut dyn SmtBackend, frame_safe: &[String], proven: &mut Vec<Span>) {
@@ -4587,8 +4660,16 @@ fn idx_walk_expr(e: &Expr, ctx: &super::encode::EncodeCtx, backend: &mut dyn Smt
         }
         ExprKind::Index { obj, index } => {
             if let ExprKind::Ident(recv) = &obj.kind {
-                if frame_safe.iter().any(|s| s == recv) && idx_try_prove(index, recv, ctx, backend) {
-                    proven.push(e.span);
+                if frame_safe.iter().any(|s| s == recv) {
+                    let proven_site = match &index.kind {
+                        // slice `v[a..b]` — доказать 3-условную slice-границу.
+                        ExprKind::Range { start, end, inclusive } => idx_try_prove_slice(
+                            start.as_deref(), end.as_deref(), *inclusive, recv, ctx, backend,
+                        ),
+                        // scalar `v[i]` — `0<=i && i<v.len()`.
+                        _ => idx_try_prove(index, recv, ctx, backend),
+                    };
+                    if proven_site { proven.push(e.span); }
                 }
             }
             idx_walk_expr(obj, ctx, backend, frame_safe, proven);

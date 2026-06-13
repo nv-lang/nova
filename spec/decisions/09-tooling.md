@@ -2611,8 +2611,24 @@ proven-множестве для codegen-элизии.
 (`mut @index` СОХРАНЯЕТ длину) и аксессоры `v.len()/cap()/byte_len()/is_empty()`;
 **length-changing методы** (`push`/`pop`/`insert`/`remove`/…), `&v`, передача
 `v` в вызов, реассайн `v` и любое bare-`v` → НЕ len-safe → сайт не элидируется
-(консервативно safe). Эволюция: B.4 MVP покрывал только read-only циклы; followup
-`[M-140.2-elision-writeback]` расширил на write-back (in-place запись).
+(консервативно safe). Bound берётся из loop-bound, fn-level frame-safety (vec
+len-инвариантен над всем телом → `v[0..v.len()]` вне цикла) или fn-`requires`.
+
+**Покрытие:** скалярный `v[i]` (read + write-back `v[i]=val`); **slice `v[a..b]`**
+(`0<=a && a<=b && b<=v.len()`, inline-проверка элидируется); **cross-fn** — `v[i]`
+внутри `fn helper(v,i) requires 0<=i<v.len()` (bound из requires, см. ниже).
+
+**Два proven-множества (soundness под `--contracts=off`):**
+- **always-safe** — bound доказан из LOOP/CODE (без `requires`): loop-bound,
+  fn-frame-safety, slice-константы. Элидируется ВСЕГДА.
+- **contract-based** — bound доказан ТОЛЬКО с учётом fn-`requires` (cross-fn).
+  Codegen элидит **только при включённых контрактах**: под `--contracts=off` /
+  `#unchecked` сам `requires` не enforced (проверка на входе fn стёрта), поэтому
+  inline bounds-check ДОЛЖНА остаться (иначе OOB-UB). Verifier различает их
+  двойным доказательством (без requires → always; с requires \ без → contract).
+
+Эволюция: B.4 MVP — read-only циклы; followup — write-back, slice, cross-fn
+(`[M-140.2-elision-writeback]`).
 
 ### Почему контракт, а не codegen-only range-анализ
 
