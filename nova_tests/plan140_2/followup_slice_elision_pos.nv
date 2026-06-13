@@ -1,0 +1,18 @@
+// Plan 140.2 followup §2 (slice): элизия slice-bounds `v[a..b]`.
+// `v[0..v.len()]` (whole) провабельно in-bounds (0<=0 && 0<=len && len<=len),
+// `v` не мутируется → fn-frame-safe → slice bounds-check элидируется (always-safe,
+// из CODE — без requires). Корректность не зависит от элизии.
+
+module plan140_2.followup_slice_elision_pos
+
+import std.collections.vec.{Vec}
+
+fn slice_whole(v Vec[int]) -> int {
+    ro s = v[0..v.len()]
+    s.len()
+}
+
+test "whole-slice bounds elided" {
+    ro v = Vec[int].from([10, 20, 30, 40])
+    assert(slice_whole(v) == 4)
+}

@@ -35928,6 +35928,17 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   форма диапазона — `a <= b && b < c`. Как Rust; chaining НЕ добавлен. Чисто compile-time (parser+checker),
   zero codegen change. plan150 13/13, full check-sweep 2938 файлов 0 регрессий.
 
+- **Plan 152.0 — реструктуризация модуля `str` + три упрощения (2026-06-13)**: `string.nv` (766 строк)
+  → папка `std/runtime/string/{core,search,transform,parse,chars}.nv`. Три решения-упрощения по ходу:
+  **(D-R5)** НЕ вводить отдельный `StrBuf`/`string_buffer.nv` — `Vec[u8]` уже RawMem-буфер, а `StringBuilder`
+  уже обёртка над ним; `trim`/`concat`/`to_bytes` push-loop'ы → `Vec.@append` (`RawMem.copy` memmove) +
+  `from_bytes_unchecked_steal` (ноль copy-paste, без второй копии). **(D-R2)** Вычистить 24 вестигиальных
+  Nova-body str-записи из `runtime_registry.rs` (−370 строк) — резолв str-методов идёт из распарсенного
+  `.nv`, не из реестра (доказано: метод `get` без записи резолвится); остался только `@hash`+C-операторы.
+  **(F4)** Модель модулей «папка = ОДИН модуль из co-equal файлов» (все `module runtime.string`) вместо
+  facade-файла (резолвер запрещает file+folder одного имени) → импорты/prelude/реестр без миграции. Gate
+  PASS 2534/FAIL 181 — 0 новых регрессий. Минимализм API (хендофф 153): не плодить типы/записи, выразимые
+  через существующее (`Vec`).
 - **Plan 140.2 — Vec @index bounds как элидируемый контракт (D256+D257, 2026-06-13)**: `requires 0<=i && i<@len`
   на `Vec @index` теперь возможен и оптимизируется. КЛЮЧЕВОЕ УПРОЩЕНИЕ Part A: `@field` в контракте кодируется
   **через уже существующую machinery** — bare `@` → SMT-Var `_self`, и `@field`/`@len()` сами идут через
@@ -35965,3 +35976,31 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   (E7301, pre-existing, `[M-153-d239-explicit-vec-to-slice-param]`). Верификация: строгий base(main)-vs-post
   diff по blast-radius (plan13* 191/5, plan90_1/140_2/128/99, plan91, basics/generics/plan62, plan61) — **0
   регрессий**; plan153_0 3/3 (2 POS + 1 NEG). D239 CONFIRM в 02-types.md + docs/vec-internals.md.
+- **Plan 140.2 followup (2026-06-13)**: (1) **write-back элизия** `[M-140.2-elision-writeback]` — frame-check
+  расширен с «read-only» на «len-инвариантный»: `v[i]=val` (mut @index) СОХРАНЯЕТ длину, поэтому write-back
+  циклы `for i in 0..v.len() { v[i]=f(v[i]) }` теперь элидируют И запись, И чтение (length-changing методы
+  по-прежнему frame-unsafe). (2) **`NOVA_Z3_LIB_DIR`** env-override в `build.rs` (зеркало `NOVA_GC_LIB_DIR`):
+  z3-сборка в worktree указывает на общий `libz3.lib` main-репо вместо копии 1.9 ГБ — критично на FS без
+  junction/symlink (exFAT). Освободило 1.9 ГБ.
+
+- **Plan 140.2 followup §2–§3 (2026-06-13): slice + cross-fn элизия.** (§2 slice) `v[a..b]` — та же
+  inline-проверка, что у скаляра, теперь элидируется (3-условная граница); fn-level frame-safety (vec
+  len-инвариантен над всем телом) даёт `v[0..v.len()]` вне цикла. (§3 cross-fn) `v[i]` внутри
+  `fn helper(v,i) requires 0<=i && i<v.len()` элидируется — bound берётся из fn-`requires`. КЛЮЧЕВОЙ soundness-
+  механизм: **2 proven-множества** вместо одного. Z3 моделит длину как фикс, а под `--contracts=off`/`#unchecked`
+  сам `requires` не enforced → элизия по нему была бы unsound. Поэтому verifier различает «доказано из
+  loop/code» (always-safe, элидится всегда) и «доказано только с requires» (contract-based, codegen элидит
+  лишь при включённых контрактах) — двойным доказательством (pass без requires vs с requires; contract = разница).
+  Это же закрыло латентную предсуществующую дыру: B.4 ассертил requires безусловно, что под `--contracts=off`
+  могло бы элидировать requires-зависимый `v[i]`.
+
+- **Plan 152.1 Ф.2 + str-cleanups (2026-06-13)**: (Ф.2) `@find`/`@rfind` → **байт-offset**
+  (было codepoint) — композируются с `s[k..]` за O(1); для ASCII byte==cp (миграция
+  минимальна). Cleanups str-модуля: `u8`/`int == char` напрямую (Nova сравнивает по
+  ASCII-cp — убран verbose `as int == 'X' as int`); byte-сравнения через
+  **`RawMem.compare`** (memcmp) вместо byte-loop'ов (starts_with/ends_with/contains/find/
+  rfind/split, search.nv −58 строк); `@sub_view` (unsafe) → `@[a..b]` (`Index[Range,str]`);
+  `@push` возвращает `@` → `return out.push(...)`. Все cleanups golden (plan139 37/0,
+  plan91_fe2 10/0, plan152_0/1 PASS). Находки: D117 на `prefix.len` (cross-instance
+  size-accessor; D117 AMEND у Plan 153); codegen-gap raw-ptr-локала (`@ptr[i]` работает,
+  `ro p=@ptr; p[i]` — нет); str `@index(Range)` без контракта (нет элизии bounds — 152.1/2).

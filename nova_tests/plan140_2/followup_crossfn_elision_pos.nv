@@ -1,0 +1,20 @@
+// Plan 140.2 followup §2 (cross-fn / requires-based): элизия `v[i]`, когда
+// индексация спрятана за вызовом функции, а граница задана fn-`requires`.
+// `at(v,i) requires 0<=i<v.len()` → внутри `v[i]` провабелен ИЗ requires →
+// contract-based элизия (codegen элидит ТОЛЬКО при включённых контрактах).
+
+module plan140_2.followup_crossfn_elision_pos
+
+import std.collections.vec.{Vec}
+
+fn at(v Vec[int], i int) -> int
+    requires 0 <= i && i < v.len()
+{
+    v[i]
+}
+
+test "cross-fn requires-based index access" {
+    ro v = Vec[int].from([10, 20, 30])
+    assert(at(v, 0) == 10)
+    assert(at(v, 2) == 30)
+}

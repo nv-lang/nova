@@ -1,0 +1,43 @@
+// Plan 152.1 Ф.2 (D249): @find / @rfind возвращают БАЙТОВЫЙ offset (композируется
+// с s[k..]). Для не-ASCII byte-offset ≠ cp-offset — это и проверяем.
+module plan152_1.find_byte_offset
+
+test "find: ASCII byte-offset (== cp-offset)" {
+    assert("hello".find("llo") == Some(2))
+    assert("hello".find("h") == Some(0))
+    assert("hello".find("o") == Some(4))
+    assert("hello".find("xyz") == None)
+}
+
+test "find: non-ASCII byte-offset (héllo: é занимает 2 байта)" {
+    ro s = "héllo"           // bytes: h(0) é(1,2) l(3) l(4) o(5), byte_len=6
+    assert(s.byte_len() == 6)
+    assert(s.find("l") == Some(3))     // byte 3, НЕ cp 2
+    assert(s.find("llo") == Some(3))
+    assert(s.find("o") == Some(5))
+    assert(s.find("h") == Some(0))
+}
+
+test "find composes with byte-slice s[k..]" {
+    ro s = "key=héllo"
+    match s.find("=") {
+        Some(k) => {
+            assert(k == 3)
+            assert(s[k+1..] == "héllo")   // byte-slice from byte-offset → correct
+        },
+        None => assert(false),
+    }
+}
+
+test "rfind: byte-offset of last match" {
+    assert("hello".rfind("l") == Some(3))
+    ro s = "héllo"
+    assert(s.rfind("l") == Some(4))       // last 'l' at byte 4
+    assert(s.rfind("o") == Some(5))
+    assert("hello".rfind("xyz") == None)
+}
+
+test "find/rfind empty needle (Rust-parity)" {
+    assert("abc".find("") == Some(0))
+    assert("héllo".rfind("") == Some(6))  // byte-length
+}

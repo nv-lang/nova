@@ -3,9 +3,14 @@
 **English** | [Русский](contracts.ru.md)
 
 Nova's contract system lets you state what a function **requires** and
-**ensures**, then verifies those claims at compile time via an SMT
-solver. Proven contracts are erased in release builds — zero runtime
-cost. Unproven ones fall back to runtime assertions in debug.
+**ensures**, then verifies those claims at compile time via an SMT solver.
+Nova uses **enforce-with-elision** (D24 / Plan 140), *not* debug-only asserts:
+a **proven** contract is elided (zero runtime cost, even in debug); an
+**unproven** one is enforced at runtime in **both debug and release**
+(fail-fast `nova_contract_violation` abort, never silent UB). You opt out of
+an unproven check only explicitly — per-fn `#unchecked` or build-policy
+`--contracts=off`. Without the SMT backend the proven set is empty, so every
+contract is checked (safe degrade, slower, not unsafe).
 
 Spec: [D24](../spec/decisions/09-tooling.md#d24-стратегия-smt-проверки-контрактов)
 (SMT strategy) ·
@@ -179,6 +184,38 @@ in a contract is a clear compile error — the SMT encoder cannot model arbitrar
 method bodies. Reference the field directly, or extract a `#pure` free function
 (Plan 140.2 / D256).
 
+### Bounds as an elidable contract (`Vec @index`)
+
+`Vec[T] @index`/`mut @index` carry `requires 0 <= i && i < @len`, so an
+out-of-bounds `v[i]` is a contract violation. This makes bounds an **elidable
+contract** (D257), following the same enforce-with-elision model as any contract:
+
+- a **provably** in-bounds access compiles with **no runtime check** (zero-cost);
+- an **unproven** access keeps the check and aborts on OOB (in debug *and*
+  release) — never silent UB.
+
+The verifier proves an access in-bounds when the index is bounded by, e.g.:
+
+```nova
+for i in 0 .. v.len() {
+    sum = sum + v[i]          // proven: i ∈ [0, v.len()) → check elided
+    v[i] = v[i] * 2           // write-back also elided (in-place keeps length)
+}
+ro s = v[0 .. v.len()]        // slice v[a..b]: 0<=a && a<=b && b<=v.len() proven
+
+fn at(v Vec[int], i int) -> int
+    requires 0 <= i && i < v.len()
+=> v[i]                       // cross-fn: bound comes from the `requires`
+```
+
+Elision needs the SMT backend (`NOVA_SMT_BACKEND=z3`); without it every access is
+checked (safe degrade). It also needs the vector's **length to be invariant** in
+scope — a length-changing call (`push`/`pop`/…) on the same vector keeps the check
+(soundness). For accesses proven only via a `requires`, the check is kept under
+`--contracts=off` / `#unchecked` (where the `requires` is no longer enforced).
+`@get`/`@first`/`@last` return `Option` and stay `None` on OOB — they carry no
+bounds contract.
+
 ### `ensures` and `result`
 
 A postcondition. `result` refers to the return value of the function.
@@ -280,9 +317,11 @@ fn safe_log(x int) -> int
 
 ### `#unverified`
 
-Opts out of SMT verification. Contracts are kept as **runtime
-assertions** in debug; skipped in release. Use for contracts the
-solver cannot handle (non-linear arithmetic, string predicates, etc.).
+Opts out of SMT *verification* (not enforcement). The contracts are
+**unproven**, so they are enforced at runtime in **both debug and release**
+(enforce-with-elision — nothing is elided). Use for contracts the solver
+cannot handle (non-linear arithmetic, string predicates, etc.). To drop the
+runtime check too, use `#unchecked` / `--contracts=off`.
 
 ```nova
 #unverified
@@ -371,8 +410,8 @@ error: effectful function call in contract expression
 
 Inserts an **intermediate proof step** visible to the SMT solver.
 Breaks a complex contract into smaller, independently verifiable
-facts. In debug — runtime check; in release — erased after being
-proven.
+facts. Proven → elided (zero-cost, debug *and* release); unproven →
+runtime check kept in debug *and* release (enforce-with-elision).
 
 ```nova
 #verify
@@ -874,14 +913,14 @@ result-ref       = 'result'                  // only in ensures
 | Attribute | On | Meaning |
 |---|---|---|
 | `#verify` | fn | **Strict** SMT: compile error if contracts not proven (was `#must_verify` pre-Plan 33.3) |
-| `#unverified` | fn | Skip SMT; keep contracts as runtime assertions in debug |
+| `#unverified` | fn | Skip SMT; contracts enforced at runtime in debug **and** release (unproven) |
 | `#pure` | fn | Pure (no effects), usable in contract expressions |
 | `#nooverflow` | fn | Add overflow proof obligations for every `+`/`-`/`*` on sized integers |
 | `#trusted` | fn / `with` binding | Accept contracts as axioms without proof |
 | `#opaque` | `#pure` fn | Hide body from SMT; require `reveal` to expose |
 | `#fuel(n)` | `#opaque #pure` fn | N-level recursive unrolling after `reveal` |
 | `#verify_timeout(ms)` | `#verify` fn | Override per-function SMT timeout |
-| *(no attribute)* | fn with contracts | Soft mode: SMT tries, failure → W2401/W2402 warning + runtime fallback in debug |
+| *(no attribute)* | fn with contracts | Soft mode: SMT tries, failure → W2401/W2402 warning + runtime check in debug **and** release |
 
 ---
 
