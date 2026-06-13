@@ -175,9 +175,14 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 - **Write-setter:** `@name(v T)` — одноимённая перегрузка по арности — **допустим
   там, где у него есть корректная безопасная семантика под капотом** (поддерживает
   инварианты), а не «никогда для размеров».
-  - **`@cap(n)` — ДА:** realloc до ровно `n` (= `reserve_exact`+`shrink_to` под
-    одним именем); контракт **`n >= len`**, иначе паника (fail-fast). Элементы
-    сохраняются. Симметрично `@cap()`.
+  - **`@cap(n)` — ДА:** realloc до ёмкости **≥ n, округлённой вверх до степени 2**
+    (perf: дружит с аллокаторами, амортизирует рост). Контракт **`n >= len`**, иначе
+    паника. `@cap()` возвращает **реальную** (округлённую) ёмкость → `@cap(n)` = «не
+    меньше n». Точный контроль — `@reserve_exact(n)`/`@shrink_to_fit()` (без
+    округления, как Rust). Округление — helper `_round_up_pow2` (bit-twiddle
+    `v--;v|=v>>1;…;v++` или `clz`-вариант `1<<(64-clz(n-1))`, см.
+    jameshfisher.com/2018/03/30/round-up-power-2); edge: `n<=0`, `max(8, pow2(n))`,
+    overflow у 2^63. Тот же `_round_up_pow2` использует и growth-путь (push/reserve).
   - **`@len(n)` — ЗАПРЕЩЁН.** Прямая установка `len` — footgun (UB при `len > cap`/
     рассинхрон с буфером; рост нечем заполнить). `@len` — **только getter**. Изменение
     размера: `@truncate(n)` (shrink), `@resize(n, v)` (grow с fill), `@push`/`@pop`.
@@ -307,8 +312,9 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 
 - **153.0:** facade+подмодули компилируются; `[]T` и `Vec[T]` взаимозаменяемы (POS);
   остаточный спец-кейс `[]T` → ошибка/нет (NEG); golden существующих Vec-тестов.
-- **153.1:** `swap`/`resize`/`shrink_to_fit`/`reserve_exact` (POS); `resize`<0,
-  `swap` OOB → panic (NEG).
+- **153.1:** `swap`/`resize`/`shrink_to_fit`/`reserve_exact` (POS); `@cap(100)`→
+  `@cap()==128` (pow2-округление), `@reserve_exact(100)`→точно 100 (без округления),
+  `@cap(n<len)`→panic (POS/NEG); `resize`<0, `swap` OOB → panic (NEG).
 - **153.2:** `iter().map().filter().collect()` без промежуточных аллокаций (POS, +
   проверка ленивости — побочный эффект считает только потреблённые); `sum`/`min`/
   `enumerate`/`zip` (POS); `zip` разных длин (NEG/усечение); пустой `min`→`None` (NEG).
