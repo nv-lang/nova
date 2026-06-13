@@ -206,6 +206,14 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
   field-read size-аккумулятора **разрешён** (`E_SIZE_ACCESSOR_FIELD` — только для
   внешних callers). Снимает противоречие комментариев в `string.nv` (Plan 152).
 
+**Стратегия ёмкости — точная vs округлённая:**
+- **Точные (честят `n`):** конструктор `with_capacity(n)` / `from_raw_parts`,
+  `@reserve_exact(n)`, `@shrink_to_fit()` — ёмкость = ровно `n` (без pow2-округления).
+  Нужно для **предсказуемого detach слайсов**: автор точно знает, при каком push
+  мастер сделает realloc (и слайсы отвяжутся, см. 153.4).
+- **Округление до pow2 (perf):** автоматический рост (push/`reserve`) и `@cap(n)`-
+  сеттер — через `_round_up_pow2`. Для точной ёмкости через свойство — `reserve_exact`.
+
 **Консолидация дублей API (приведение в порядок):**
 - **`append` vs `extend` → один `append`.** Сейчас `@append(other Vec[T])` =
   bulk `RawMem.copy` (быстрый Vec→Vec), `@extend[S Iter[T]]` = generic per-element
@@ -240,6 +248,16 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 `SliceMut[T]` (мут-view); `@as_slice()`/`@as_mut_slice()`; `@split_at(i)`;
 `@chunks(n)`/`@windows(n)`; `@first_n`/`@last_n`. Перекликается со str-линзами (152) и
 Plan 96. Opus. Эстимат ~3 dd.
+
+**Detach-on-resize семантика (Go-модель, GC-safe).** `Slice[T]` алиасит буфер мастера
+(`{ptr в master.data, len}`). При **ресайзе мастера** (push → realloc, `@cap(n)`,
+`resize`) буфер переезжает → слайс **отвязывается** в независимый снимок старого
+буфера (GC держит его живым через `ptr`, нет dangling). До realloc слайс видит мутации
+мастера; после — снимок на момент realloc. Предсказуемость точки detach обеспечивает
+**точная ёмкость через конструктор/`reserve_exact`** (153.1) — автор знает, при каком
+push произойдёт realloc. `SliceMut` write-through до detach; рост через `SliceMut`
+запрещён (`push` — компайл-ошибка, R8-аналог str-линзы). Зафиксировать в
+Q-vec-mutability-through-view + Q-slice-view.
 
 ### 153.5 — Restructure-ops `[D263, B]`
 `@concat(other)`/`[][]T.flatten()`/`@rotate_left(n)`/`@rotate_right(n)`/`@drain(range)`/
@@ -291,7 +309,10 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 - **Q-slice-view** (NEW) — **ЗАКРЫТО: `v[a..b]` = zero-copy `Slice[T]`-view** (как Rust
   `&[T]`/Go `s[a:b]`/Kotlin `subList`), не owned-копия; owned — явный `to_vec()`.
   Согласуется со str-линзами (152) и конвенцией `as_`/`to_` (I3). `Slice[T]` алиасит
-  буфер `Vec`; владелец переживает view (GC).
+  буфер `Vec`; владелец переживает view (GC). **Detach-on-resize (Go-модель):** при
+  realloc мастера слайс отвязывается в снимок старого буфера (GC-safe, без dangling);
+  предсказуемость точки detach — через **точную ёмкость конструктора/`reserve_exact`**
+  (153.1). Это и причина, почему конструкторная ёмкость **не округляется** до pow2.
 - **Q-vec-alias-completeness** (NEW) — **ЗАКРЫТО: `[]T` — чистый алиас** `Vec[T]`,
   раскрывается на type-resolution (D239); остаточные спец-кейсы убрать в 153.0.
 - **Q-vec-mutability-through-view** — мут-слайс `SliceMut[T]` (153.4-B): запись через
@@ -321,9 +342,11 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 - **153.3:** `sort`/`sort_by`/`binary_search`/`dedup`/`index_of`/`contains` (POS);
   `binary_search` на неотсортированном → unspecified-but-safe (NEG-doc); `sort` для
   `T` без `Compare` → compile-error (NEG).
-- **153.4:** `v[a..b]` zero-copy (мутация владельца видна/lifetime), `split_at`/`chunks`/
-  `windows` (POS); OOB slice → panic, `windows(0)` → panic/empty (NEG); `SliceMut`
-  `push` → compile-error (NEG).
+- **153.4:** `v[a..b]` zero-copy (мутация владельца видна до realloc); **detach-on-
+  resize:** `with_capacity(4)` точная → slice → push до realloc видит мутацию, push
+  с realloc → slice = снимок старого буфера (не видит новые), GC-safe (POS);
+  `split_at`/`chunks`/`windows` (POS); OOB slice → panic, `windows(0)` → panic/empty,
+  `SliceMut` `push` → compile-error (NEG).
 - **153.5:** `concat`/`flatten`/`rotate`/`drain` (POS); `drain` OOB → panic (NEG).
 - **153.6:** `Vec[int]` как ключ `HashMap`/в `HashSet` (Hash, POS); `collect` в Vec
   (POS); `Vec[T]` без `Hash` как ключ → compile-error (NEG).
