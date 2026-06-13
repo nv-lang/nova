@@ -352,8 +352,9 @@ Variadic — это «catch-all» на произвольную арность; 
 
 ## D267. Method coherence: extension — да, override чужого метода — `E_METHOD_REDEFINITION`
 
-> **Статус:** принято и реализовано ([Plan 154](../../docs/plans/154-method-override-coherence.md),
-> 2026-06-13). Закрывает `[M-method-override-silent-noop]`.
+> **Статус:** принято и реализовано ([Plan 154.0](../../docs/plans/154.0-method-override-coherence.md),
+> umbrella [154](../../docs/plans/154-no-silent-dispatch.md), 2026-06-13). Закрывает
+> `[M-method-override-silent-noop]`.
 
 ### Что
 
