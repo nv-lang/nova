@@ -17,6 +17,7 @@
 | [D116](#d116-z3-backend-через-собственные-ffi-биндинги) | Z3 backend через собственные FFI-биндинги |
 | [D121](#d121-benchmark-dsl--bench---measure--) | Benchmark DSL — `bench "..." { measure { ... } }` + `bench.*` namespace |
 | [D256](#d256-field--method-self-access-в-контрактах) | `@field` / `@method()` self-access в контрактах (SMT-encoder) |
+| [D257](#d257-vec-index-bounds-как-элидируемый-контракт) | Vec `@index` bounds как элидируемый контракт |
 
 ---
 
@@ -2550,3 +2551,67 @@ loop-var с явной границей `v.len()`/`@len` (см. [Plan 140.2](../
 - D257 — Vec `@index` bounds как элидируемый контракт (Part B; первый
   потребитель D256).
 - `[M-140-bounds-as-contract]` — маркер, закрываемый Plan 140.2.
+
+---
+
+## D257. Vec `@index` bounds как элидируемый контракт
+
+> **Status:** active (spec). Реализация — [Plan 140.2](../../docs/plans/140.2-vec-bounds-as-contract.md)
+> Part B (2026-06-13). Зависит от [D256](#d256-field--method-self-access-в-контрактах)
+> (`@field` в контрактах) + [D24](#d24-стратегия-smt-проверки-контрактов)/Plan 140
+> (enforce-with-elision) + [D248](02-types.md) (`&&`-форма).
+>
+> **Примечание:** это бывший преждевременный D249, **отозванный** до того, как
+> Part A (D256) разблокировал `@field` в контрактах; теперь внесён под номером
+> D257 (D249–D255 — за Plan 152).
+
+### Что
+
+`Vec[T] @index(i int) -> T` и `Vec[T] mut @index(i int, val T)` несут
+**контракт** `requires 0 <= i && i < @len` (вместо прежнего ручного
+`if i < 0 || i >= @len { panic(...) }`). Bounds-проверка становится
+**элидируемым контрактом** по модели D24/Plan 140:
+
+- индекс, **доказанный** SMT in-bounds (напр. `for i in 0..v.len()`), —
+  проверка **элидируется** (zero-cost);
+- **недоказанный** индекс — runtime-проверка **остаётся** и в debug, и в
+  release; OOB → fail-fast abort (не silent UB).
+
+`@get(i)` / `@first()` / `@last()` (возвращают `Option[T]`) — **без**
+контракта: `None` на OOB остаётся их штатной семантикой (это и есть
+безопасный безконтрактный путь для «может не быть элемента»).
+
+### Codegen (context-sensitive)
+
+`v[i]` имеет три контекстно-зависимых пути; все **сохраняют inline-эмиссию**
+(маршрутизация через value-возвращающий метод сломала бы lvalue-контексты):
+
+- **rvalue** `v[i]` (чтение) — lvalue-safe bounds-checked stmt-expr
+  `(*({ …; &data[i]; }))` (та же форма, что `NovaArray`), чтобы
+  `v[i].field = x`, `&v[i]`, `v[i].mut_method()` оставались корректными;
+- **write** `v[i] = val` — inline statement-block;
+- bounds-check в обоих путях **элидируется** на доказанных index-сайтах
+  (per-site proven-множество от верификатора), иначе always-on.
+
+Прямой вызов `v.index(i)` (редкий) эмитит контракт-enforcement метода
+(`requires failed: 0 <= i && i < @len`) — формат D24/Plan 140.1.
+
+### Почему контракт, а не codegen-only range-анализ
+
+Bounds как **декларативный контракт** на `@index`: (1) единый источник
+истины (precondition в сигнатуре, не разбросанные codegen-паники),
+(2) верификатор/инструменты могут о нём рассуждать, (3) элизия — следствие
+доказательства контракта на call-сайте (D256 call-site instantiation),
+а не отдельная codegen-эвристика. Sibling `[M-opt-elide-proven-overflow-checks]`
+(чистая codegen-range элизия overflow-чеков) — альтернативный не-контрактный
+путь, не пересекается.
+
+### Связь
+
+- [D256](#d256-field--method-self-access-в-контрактах) — `@field` в
+  контрактах (пререквизит: без него `requires … @len` = E2401).
+- [D24](#d24-стратегия-smt-проверки-контрактов) / Plan 140 — enforce-with-elision.
+- [D248](02-types.md) / Plan 150 — `&&`-форма (вакуумная `0 <= i < @len` —
+  compile-error).
+- [D238] / [D240] — `@index` / `MutIndex` magic (`v[i]` / `v[i] = val`).
+- `[M-140-bounds-as-contract]` — маркер, закрываемый этим блоком.

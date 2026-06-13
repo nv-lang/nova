@@ -18933,14 +18933,18 @@ _cp++; \
                             .trim_end_matches('*')
                             .trim()
                             .to_string());
-                    // Use statement-expr for lvalue-compatible bounds-checked access:
-                    // ({ T* _vd = _v->data; if (idx < 0 || idx >= _v->len) panic; _vd[idx]; })
+                    // Plan 140.2 Part B (RB2 fix): emit an lvalue-safe bounds-checked
+                    // read via the pointer-deref trick `(*({ ...; &_vd[_i]; }))` —
+                    // mirrors `emit_bchk_array_access` (NovaArray). A plain stmt-expr
+                    // ending in `_vd[_i]` is NOT an lvalue in Clang, breaking
+                    // `v[i].field = x`, `&v[i]`, and `v[i].mut_method()`; the
+                    // `*(...&...)` form is a valid lvalue in both Clang and GCC.
                     let tmp_v = self.fresh_tmp_named("vec");
                     let tmp_i = self.fresh_tmp_named("vi");
                     return Ok(format!(
-                        "(({{ {ty}* {v} = ({o})->data; nova_int {i} = ({idx}); \
-if ({i} < 0 || {i} >= ({o})->len) nv_panic_index_oob({i}, ({o})->len); \
-{v}[{i}]; }}))",
+                        "(*({{ {ty}* {v} = ({o})->data; nova_int {i} = ({idx}); \
+if (__builtin_expect({i} < 0 || {i} >= ({o})->len, 0)) nv_panic_index_oob({i}, ({o})->len); \
+&{v}[{i}]; }}))",
                         ty = elem_ty, v = tmp_v, i = tmp_i, o = o, idx = i
                     ));
                 }
