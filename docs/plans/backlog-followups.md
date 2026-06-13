@@ -37,6 +37,7 @@
 | `[M-nova-linux-build]` | Prerequisite для TSAN: проверить/наладить сборку+тесты Nova на Linux (cargo + libuv + Boehm + runtime C под Linux clang). Nova разрабатывается на Windows — Linux-сборка не верифицирована (возможны Windows-измы в runtime C). Разблокирует `[M-tsan-race-detector]` + Linux-CI вообще. | floating | P2 |
 | `[M-146-growable-stacks]` | Растущие fiber-стеки — снять потолок ~16k одновременных fiber'ов (Plan 82 fixed-8MB). segmented (Boehm-ok, hot-split) vs copying (gated на Plan 144). **ВЕРДИКТ 2026-06-12: ОТЛОЖЕНО** (потребность не доказана; whole-program shadow-stack дорог; см. Plan 146 §6). При упоре в потолок — сперва `[M-fiber-arena-raise-cap]`, не растущие стеки. **УТОЧНЕНИЕ 2026-06-14 (research Q7-Q15, [Plan 144 §7.6](144-precise-gc-implementation.md)):** когда дойдём — путь **segmented** (не двигает стек → не нужен moving-GC, совместим даже с Boehm). **Copying заблокирован дважды:** (а) moving-вердикт §7.6 (general moving в compile-to-C не строим), (б) H5 — замыкания захватывают по указателю В кадры (`T* cap=&local`) → копирование стека инвалидирует их, пока не перейдём на by-value capture. | Plan 146 | P3 |
 | `[M-fiber-arena-raise-cap]` | ✅ **SUPERSEDED + IMPLEMENTED — [Plan 149](149-configurable-fiber-arena.md)** (Ф.0-Ф.6 closed+merged 2026-06-12, D233) — configurable fiber arena: стек/макс через env (`NOVA_FIBER_STACK`/`NOVA_MAX_FIBERS`) + nova.toml `[runtime]`, default 8MB→4MB, авто-округление вверх + clamp + garbage→warn+default; compile-time bitmap MAX (262144) отделён от runtime default; per-fiber minicoro stack scales с runtime slot_size. | Plan 149 | ✅ done |
+| `[M-fiber-stack-lazy-decommit]` | Возврат **физической** RAM при усадке fiber-стека: декоммит страниц выше high-water mark (Win `VirtualFree(MEM_DECOMMIT)`/`MEM_RESET`; Linux `madvise(MADV_DONTNEED/FREE)`). Виртуальный адрес остаётся зарезервирован → **указатели целы** (адреса те же, физ-страницы вернутся page-fault'ом при регросте). **Делать ЛЕНИВО — scavenge на sysmon/GC, НЕ на каждом возврате** (per-return декоммит = syscall+TLB+page-fault thrashing на колеблющихся стеках — тот же hot-split, что у сегментного). **Дополнение, НЕ замена сегментному:** отдаёт RAM простаивающих/усохших fiber'ов, но **НЕ снимает потолок** одновременных fiber'ов (тот из-за ВИРТУАЛЬНОЙ брони 8MB×N, не физической — для потолка нужен меньший резерв/segmented). Прецедент: heap-scavenger Go. Идея автора 2026-06-14. | Plan 149 / 146 | P3 |
 | `[M-comparison-bool-operand-or-chaining]` | `0 <= i < @len` парсится как `(0<=i) < @len` = `bool < @len` → молча **вакуумно-истинно** (range-check обходится; SECURITY для контрактов — `requires 0<=i<@len` вакуумен). Nova сейчас хуже всех peers (даже untyped JS коэрсит; Nova нейтрализует предикат). Решение автора (2026-06-13): **hard-error (как Rust); chained comparison ОТКЛОНЁН** (`&&` явно) → **[Plan 150](150-chained-comparison-relational-safety.md)** ✅ **CLOSED 2026-06-13** (Ф.0-Ф.1: D248 + `E_CMP_CHAIN_UNSUPPORTED` parser + `E_RELATIONAL_OPERAND_NOT_ORDERED` checker; full check-sweep 2938 файлов = 0 регрессий; 13 фикстур plan150). Резолвил Q35; разблокировал `[M-140-bounds-as-contract]`. | Plan 150 | ✅ DONE |
 
 ## P2 — Correctness / Completeness
@@ -215,12 +216,22 @@
   `@append(f32)` + ветка в interp-map → затем `#impl(Display/Debug) fn f32`.
 
 ## Follow-up: Plan 153.1 (Vec core API — отложенные из-за codegen-лимитов)
-- **`[M-153.1-cap-setter-overload]`** (planned, home **Plan 153.1 / D259**): accessor-
-  convention ideal — same-name `@cap(n)` write-setter, overload'ящий `@cap()` getter
-  (D117 AMEND). Сейчас распадается: mono'd `v.cap(10)` мис-резолвится в 0-арг геттер
-  ("too many arguments") — та же generic-method-overload-collapse, что держит `@splice`
-  отдельно от `@insert` ([M-138.2-generic-method-overload-mono]). 153.1 поставил distinct
-  `@cap_to(n)`; свернуть в `@cap(n)`-overload, когда mono-overload dispatch заработает.
+- **`[M-153.1-cap-setter-overload]`** ✅ **RESOLVED** (через фикс
+  `[M-138.2-generic-method-overload-mono]` ниже): same-name `@cap(n)` write-setter (overload
+  `@cap()` getter, D117 AMEND) теперь работает — `@cap_to` переименован обратно в `@cap(n)`.
+  Caveat: цепочка `v.cap(n).push(...)` ещё нет → `[M-138.2-overload-chain-return-infer]`.
+- **`[M-138.2-generic-method-overload-mono]`** ✅ **DISPATCH FIXED**: mono'd generic-type
+  instance-method вызов теперь различает overload'ы по арности+param-типам (call-site block 5b
+  emit_c.rs ~22922 + `__<paramtype>` suffix ~22982, reuse erased-base mangle 2858; body-side
+  через side-map `mono_name→FnDecl`). Box-arity repro + `@cap(n)` PASS; STRICT no-op для
+  1-overload методов. **Разблокирует** (не сделано — отдельные std-рефакторы): merge
+  `@splice`→`@insert`-overload, append/extend-консолидация (`[M-153.1-append-extend-consolidation]`).
+- **`[M-138.2-overload-chain-return-infer]`** (planned, P3, home **Plan 153.1 / followup**):
+  CALL-dispatch overload'ов починен, но codegen RETURN-TYPE inference для ЦЕПОЧЕЧНОГО receiver
+  (`v.cap(n).push(...)`) ещё first-wins → берёт getter-возврат (int), `.push` на int падает
+  (ловит 154.1 guard). Касается getter/setter пар с РАЗНЫМИ возвратами (cap getter int vs
+  setter @). Statement-form работает; реальный код `@cap` не чейнит. Fix: арность-disambig в
+  return-infer (`infer_mono_method_ret` empty-args wrapper + find-сайты).
 - **`[M-153.1-append-extend-consolidation]`** (planned, home **Plan 153.1 / D259**): план
   хотел один `append` (concrete Vec bulk + generic Iter overload), `extend` убрать.
   Заблокировано тем же overload-collapse + у generic-`append` (`for x in items {@push(x)}`)
