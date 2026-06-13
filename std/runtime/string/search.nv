@@ -15,15 +15,11 @@ import std.collections.vec_owned.{Vec}
 // True если строка начинается с prefix. Plan 139 Ф.1: Nova-body, byte-compare
 // через @as_bytes(). Семантика идентична nova_str_starts_with.
 export fn str @starts_with(prefix str) -> bool {
-    ro pn = prefix.len()
-    ro sn = @len()
+    ro (sn, pn) = (@len(), prefix.len())
     if pn > sn { return false }
-    ro sb = @as_bytes()
-    ro pb = prefix.as_bytes()
-    mut i = 0
-    while i < pn {
+    ro (sb, pb) = (@as_bytes(), prefix.as_bytes())
+    for i in 0..pn {
         if sb[i] != pb[i] { return false }
-        i = i + 1
     }
     true
 }
