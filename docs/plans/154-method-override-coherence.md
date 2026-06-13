@@ -1,9 +1,11 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 154 — Method coherence: запрет silent no-op переопределения метода
 
-> **Создан:** 2026-06-13. **Статус:** 🟡 IN PROGRESS (branch `plan-154`, worktree
-> `nova-p154`). **P1** (correctness/footgun). **Эстимат:** ~½ dev-day.
-> **Закрывает:** `[M-method-override-silent-noop]`. **D-блок:** D267 (NEW).
+> **Создан:** 2026-06-13. **Статус:** ✅ **CLOSED 2026-06-13** (commit `809e8605` +
+> логи `063b743b`; смёржен в main `e7bad2cd` через bidirectional-синк). **P1**
+> (correctness/footgun). **Эстимат:** ~½ dev-day (факт ~½).
+> **Закрывает:** `[M-method-override-silent-noop]`. **D-блок:** D267 (NEW, 10-overloading.md).
+> **Верификация:** `nova test plan154` 5/5 PASS (release nova); корпус-скан 0 регрессий.
 > **Model:** Sonnet 4.6 + High + Thinking ON.
 
 ---
