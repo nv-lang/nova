@@ -290,18 +290,17 @@ export fn str @to_chars() -> []char {
 // emit_c.rs BinOp comparison/eq для nova_str) — C-форма (memcmp) оптимальнее
 // byte-loop. См. [M-139.1-operator-lowered-methods].
 export fn str @compare(other str) -> int {
-    ro a = @as_bytes()
-    ro b = other.as_bytes()
     ro an = @byte_len()
     ro bn = other.byte_len()
     ro min = if an < bn { an } else { bn }
-    mut i = 0
-    while i < min {
-        ro av = a[i] as int
-        ro bv = b[i] as int
-        if av != bv { return av - bv }
-        i = i + 1
-    }
+    // Plan 152.5a D-R4: RawMem.compare (= memcmp) over the shared prefix instead
+    // of a byte-loop — perf-parity with the retired C nova_str_compare, so the
+    // synthesized `<`/`<=`/`>`/`>=` operators (now Nova-routed) carry no penalty.
+    // `@ptr`/`other.ptr` are priv `*ro u8` (type-method privacy, str's home module,
+    // same as @starts_with). memcmp result is sign-correct (magnitude irrelevant
+    // for Ord); length-tiebreak on a shared prefix (identical to byte-loop form).
+    ro c = unsafe { RawMem.compare(@ptr, other.ptr, min) }
+    if c != 0 { return c }
     if an < bn { return -1 }
     if an > bn { return 1 }
     0
