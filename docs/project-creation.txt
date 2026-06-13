@@ -37445,3 +37445,22 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   plan140 31/0/1skip; адверсариальный C-инспект — T1 src=«@count > 0 && @count <= @limit», T2 (Vec @index)
   src=«0 <= i && i < @len» + custom-msg сохранён, ни одного stray «assert». D256 §«Диагностика» + маркер
   [M-140.2-contract-exprdisplay-selfaccess] CLOSED. 0 регрессий.
+
+- Plan 154 (method coherence, 2026-06-13): закрыт [M-method-override-silent-noop].
+  Баг (репро от пользователя): `fn str @to_lower()` в user-модуле молча игнорировался —
+  type-check считал prelude-shadow (user-wins в env.fns), но codegen method_overloads
+  резолвит call-site FIRST-MATCH, std prepend'ится первым → выигрывает std, тело юзера
+  НЕ вызывается, без диагностики (проверено: "ABC".to_lower() печатает "abc", не override).
+  Investigation — workflow (3 Explore-агента, 191k ток.): корень = рассогласование
+  type-check user-wins ↔ codegen first-match std-wins; каталог легит-кейсов. Fix
+  (types/mod.rs check_module, type-check-only): для метода (receiver.is_some()) с
+  classify_dup=Some(_) и receiver-типом НЕ из user_declared_types (типы entry-peers) →
+  E_METHOD_REDEFINITION → компиляция падает до codegen. Адверсариальный прогон поймал
+  регресс — for_in_range_iter.nv (локальные `type Range`+`fn Range @step_by`, legit
+  Plan 62 user-wins); добавлен user_declared_types-guard (ошибка только для НЕ-локальных
+  типов: str — да, Range — нет). Разрешено: extension с другим именем / overload по
+  сигнатуре (D84) / receiver-mut (Plan 135) / newtype+own-method / локальный type re-decl.
+  Верификация (release nova+компилятор): `nova test plan154` 5/5 PASS (2 neg
+  EXPECT_COMPILE_ERROR + 3 pos прогон+assert); корпус-скан `nova check nova_tests` —
+  E_METHOD_REDEFINITION РОВНО 1 вхождение (только neg-фикстура) → 0 регрессий; std
+  компилируется. D267 (10-overloading.md). branch plan-154 (синкан с main).
