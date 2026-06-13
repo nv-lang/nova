@@ -117,7 +117,7 @@ sort/search/dedup** (153.3), **(в) zero-copy слайсы** (153.4), **(г) res
         ├── core/access/mutate   (153.1): push/pop/insert/remove/index/cap/swap/fill
         ├── iter (153.2): VecIter + ЛЕНИВЫЕ адаптеры (Iter/Next) → collect
         ├── sort/search (153.3): sort*/binary_search/contains/index_of/dedup
-        ├── slice view (153.4): v[a..b] → Slice[T] (zero-copy) / SliceMut[T]
+        ├── slice view (153.4): v[a..b] → Slice[T] (zero-copy) / MutSlice[T]
         ├── restructure (153.5): concat/flatten/rotate/drain/split_at
         └── protocols (153.6): Equal/Compare/Clone/Hash/Display/Debug/FromIterator
    bounds-check элизия `v[i]` — Plan 140.2 (НЕ здесь)
@@ -255,7 +255,7 @@ facade `collections.vec`. Текущий `vec.nv` (eager-комбинаторы)
 
 ### 153.4 — Слайсы и views `[D262, Q-slice-view, A/B]`
 `v[a..b]` → **zero-copy `Slice[T]`** (а не owned-копия; решить Q-slice-view) +
-`SliceMut[T]` (мут-view); `@as_slice()`/`@as_mut_slice()`; `@split_at(i)`;
+`MutSlice[T]` (мут-view); `@as_slice()`/`@as_mut_slice()`; `@split_at(i)`;
 `@chunks(n)`/`@windows(n)`; `@first_n`/`@last_n`. Перекликается со str-линзами (152) и
 Plan 96. Opus. Эстимат ~3 dd.
 
@@ -265,8 +265,8 @@ Plan 96. Opus. Эстимат ~3 dd.
 буфера (GC держит его живым через `ptr`, нет dangling). До realloc слайс видит мутации
 мастера; после — снимок на момент realloc. Предсказуемость точки detach обеспечивает
 **точная ёмкость любого явного запроса** (`with_capacity`/`@cap(n)`,
-153.1) — автор знает, при каком push произойдёт realloc. `SliceMut` write-through до
-detach; рост через `SliceMut`
+153.1) — автор знает, при каком push произойдёт realloc. `MutSlice` write-through до
+detach; рост через `MutSlice`
 запрещён (`push` — компайл-ошибка, R8-аналог str-линзы). Зафиксировать в
 Q-vec-mutability-through-view + Q-slice-view.
 
@@ -286,7 +286,7 @@ Q-vec-mutability-through-view + Q-slice-view.
 **Phase A** (обязательно, связный минимум — Vec не хуже Go/Rust-core по императиву +
 базовым итераторам/сортировке): 153.0, 153.1, 153.2-A, 153.3, 153.6, 153.4-A (`as_slice`/
 `split_at`/`v[a..b]`-view). **Phase B** (продвинутое, отделяемо): 153.2-B (zip/chain/
-flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
+flat_map/…), 153.4-B (chunks/windows/MutSlice), 153.5 (concat/rotate/drain).
 
 **Acceptance Phase A:** `[]T≡Vec` консолидирован; императивное ядро + sort/search +
 базовые ленивые адаптеры + Hash + zero-copy `v[a..b]`; полный `nova test` зелёный.
@@ -300,7 +300,7 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
 - **D259** (NEW) — Vec core API & capacity (swap/resize/cap-exact, reserve).
 - **D260** (NEW) — ленивый итератор + адаптеры (model + Iter/Next интеграция).
 - **D261** (NEW) — sort & search (stable/unstable, binary_search, dedup).
-- **D262** (NEW) — слайсы и views (`Slice[T]`/`SliceMut[T]`, `v[a..b]` zero-copy).
+- **D262** (NEW) — слайсы и views (`Slice[T]`/`MutSlice[T]`, `v[a..b]` zero-copy).
 - **D263** (NEW) — restructure-ops (concat/flatten/rotate/drain).
 - **D264** (NEW) — Vec-протоколы (`Hash` + FromIterator/collect).
 - **D239 AMEND/CONFIRM** — `[]T` чистый алиас завершён (Plan 138 Ф.5 закрыт).
@@ -328,7 +328,7 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
   округляется** до pow2 (округляет только неявный авто-рост).
 - **Q-vec-alias-completeness** (NEW) — **ЗАКРЫТО: `[]T` — чистый алиас** `Vec[T]`,
   раскрывается на type-resolution (D239); остаточные спец-кейсы убрать в 153.0.
-- **Q-vec-mutability-through-view** — мут-слайс `SliceMut[T]` (153.4-B): запись через
+- **Q-vec-mutability-through-view** — мут-слайс `MutSlice[T]` (153.4-B): запись через
   view допускается, но `push` (рост) запрещён (detach) — как str R8 для байтовой линзы.
 
 **Документация (`docs/`):**
@@ -360,7 +360,7 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
   resize:** `with_capacity(4)` точная → slice → push до realloc видит мутацию, push
   с realloc → slice = снимок старого буфера (не видит новые), GC-safe (POS);
   `split_at`/`chunks`/`windows` (POS); OOB slice → panic, `windows(0)` → panic/empty,
-  `SliceMut` `push` → compile-error (NEG).
+  `MutSlice` `push` → compile-error (NEG).
 - **153.5:** `concat`/`flatten`/`rotate`/`drain` (POS); `drain` OOB → panic (NEG).
 - **153.6:** `Vec[int]` как ключ `HashMap`/в `HashSet` (Hash, POS); `collect` в Vec
   (POS); `Vec[T]` без `Hash` как ключ → compile-error (NEG).
@@ -391,7 +391,7 @@ flat_map/…), 153.4-B (chunks/windows/SliceMut), 153.5 (concat/rotate/drain).
   `append`/`extend` консолидированы в `append`; accessor-конвенция (D117 AMEND).
 - **153.2:** ленивая цепочка без промежуточных аллокаций; collect; A-набор адаптеров.
 - **153.3:** sort стабилен; binary_search корректен; dedup; bounds `T: Compare`.
-- **153.4:** `v[a..b]` zero-copy view; split_at/chunks/windows; SliceMut write-only.
+- **153.4:** `v[a..b]` zero-copy view; split_at/chunks/windows; MutSlice write-only.
 - **153.5:** concat/flatten/rotate/drain корректны.
 - **153.6:** `Vec[T: Hash]` хешируем (HashSet/ключ); collect-target.
 
@@ -454,7 +454,7 @@ commit `git diff --cached --stat`; после крупной задачи — `p
 | Q-iterator-laziness (NEW) | **ЗАКРЫТО** — ленивые адаптеры канон |
 | Q-slice-view (NEW) | **ЗАКРЫТО** — `v[a..b]` zero-copy `Slice[T]` |
 | Q-vec-alias-completeness (NEW) | **ЗАКРЫТО** — `[]T ≡ Vec[T]` чистый |
-| Q-vec-mutability-through-view (NEW) | `SliceMut` write-only, без роста |
+| Q-vec-mutability-through-view (NEW) | `MutSlice` write-only, без роста |
 
 > Координация: **Plan 140.2** владеет bounds-элизией `v[i]` (НЕ дублировать).
 > **Plan 152** — str-линза `as_bytes()` = `ro []u8` = `Vec[u8]`-view (общая slice-инфра).
