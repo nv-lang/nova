@@ -113,38 +113,61 @@ heap-корни, и **связывает кадры в цепочку** (per-fib
 
 ### 7.1. Runtime-структуры
 
+Каноничная раскладка — **inline-roots**: корни лежат СРАЗУ за заголовком (как в
+оригинальном Henderson), поэтому поле-указатель `roots` НЕ нужно — GC вычисляет
+адрес массива как `(void**)(f + 1)`. Экономия: −8 байт на кадр и −1 запись на вызов.
+
 ```c
 typedef struct NovaFrame {
-    struct NovaFrame* prev;   // кадр вызывающего
-    uint32_t          nroots; // число root-слотов в этом кадре
-    void**            roots;  // указатель на массив корней (обычно inline за hdr)
+    struct NovaFrame* prev;   // кадр вызывающего (цепочка)
+    uint32_t          nroots; // число root-слотов; сами слоты — сразу за заголовком
+    // void* slot[nroots];    // (концептуально) корни: (void**)(this + 1)
 } NovaFrame;
+
+// Инвариант codegen↔runtime: между заголовком и слотами НЕТ padding,
+//   т.е. offsetof(combined, slot) == sizeof(NovaFrame). Выполняется т.к. и prev,
+//   и void*-слоты выровнены на 8; закрепить статически:
+_Static_assert(sizeof(NovaFrame) % sizeof(void*) == 0,
+               "roots must start right after header, no padding");
 
 // ВЕРШИНА цепочки — per-FIBER, не per-OS-thread:
 //   swap'ается на каждом fiber-switch (как NT_TIB.StackBase в fiber_arena).
 // Каждый OS-worker и каждый blocking{}-offload-поток имеют СВОЮ вершину.
 ```
 
+> **Почему не `alloca`.** `nroots` известен СТАТИЧЕСКИ на каждую функцию (число
+> локалов фиксировано на этапе компиляции) → достаточно обычного локального struct'а
+> с inline-массивом `{ NovaFrame hdr; void* slot[N]; }`: смежная раскладка по
+> известному смещению, без runtime-вычисления размера, дружелюбнее оптимизатору.
+> `alloca` понадобился бы только при динамическом числе корней — которого нет.
+
 ### 7.2. Codegen-паттерн (на функцию с heap-корнями)
 
 ```c
 ReturnType f(args) {
-    struct { NovaFrame hdr; void* r0; void* r1; } fr;
-    fr.r0 = NULL; fr.r1 = NULL;              // (1) ОБНУЛИТЬ до первого safe-point
-    fr.hdr.prev = nova_shadow_top;           // (2) push
-    fr.hdr.nroots = 2; fr.hdr.roots = &fr.r0;
+    struct { NovaFrame hdr; void* slot[2]; } fr;  // slot[] смежно за hdr (компилятор сам)
+    fr.slot[0] = NULL; fr.slot[1] = NULL;    // (1) ОБНУЛИТЬ до первого safe-point
+    fr.hdr.prev   = nova_shadow_top;         // (2) push
+    fr.hdr.nroots = 2;                       //     roots-поле убрано (inline за hdr)
     nova_shadow_top = &fr.hdr;
     ...
-    fr.r0 = live_ptr;                         // (3) write-back ПЕРЕД safe-point
-    call_that_may_gc();                       //     safe-point
-    // moving-режим: live_ptr = fr.r0;        // (4) reload ПОСЛЕ (адрес мог сдвинуться)
+    fr.slot[0] = live_ptr;                   // (3) write-back ПЕРЕД safe-point
+    call_that_may_gc();                      //     safe-point
+    // moving-режим: live_ptr = fr.slot[0];  // (4) reload ПОСЛЕ (адрес мог сдвинуться)
     ...
-    nova_shadow_top = fr.hdr.prev;            // (5) pop на КАЖДОМ выходе (return/panic/defer)
+    nova_shadow_top = fr.hdr.prev;           // (5) pop на КАЖДОМ выходе (return/panic/defer)
     return ...;
 }
 ```
 
-GC-скан: `for (NovaFrame* f = top; f; f = f->prev) for (i<f->nroots) mark(f->roots[i]);`
+GC-скан (корни читаются как `(void**)(f + 1)`):
+```c
+for (NovaFrame* f = top; f; f = f->prev) {
+    void** roots = (void**)(f + 1);
+    for (uint32_t i = 0; i < f->nroots; i++)
+        if (roots[i]) mark(roots[i]);
+}
+```
 
 ### 7.3. Четыре инварианта (источник всех багов техники)
 
