@@ -9,7 +9,7 @@
 module runtime.string
 
 import std.prelude.core.{Option, Some, None}
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 import std.runtime.raw_mem.{RawMem}
 
 

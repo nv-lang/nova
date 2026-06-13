@@ -3,7 +3,7 @@
 
 module plan138.t2_vec_get_some_none
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "get in-bounds returns Some" {
     ro v = Vec[int].from([10, 20, 30])

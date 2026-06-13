@@ -2,7 +2,7 @@
 // `requires 0 <= i && i < @len` корректно (instance-метод, nova_self в scope).
 module plan140_2.b_index_direct_call_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "direct @index call in-bounds" {
     ro v = Vec[int].from([10, 20, 30])

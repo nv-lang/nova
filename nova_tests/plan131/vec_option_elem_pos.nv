@@ -4,7 +4,7 @@
 
 module plan131.vec_option_elem_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "Vec[Option[int]] push Some/None/Some and read back" {
     mut v = Vec[Option[int]].new()

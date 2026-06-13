@@ -3,7 +3,7 @@
 
 module plan131.vec_from_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "from slice copies elements" {
     ro v = Vec[int].from([5, 10, 15, 20])

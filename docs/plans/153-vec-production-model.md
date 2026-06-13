@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 153 (umbrella) — Production-grade `Vec[T]` / `[]T`: API-паритет, итераторы, слайсы
 
-> **Создан:** 2026-06-13.  **Статус:** 📋 **PLANNED umbrella**, P1.
+> **Создан:** 2026-06-13.  **Статус:** 🟡 **IN PROGRESS** — **153.0 ✅ ЗАКРЫТ** (2026-06-13,
+> branch `plan-153`, commit `2a5df8e4`; см. «Статус 153.0» ниже); 153.1–153.6 PLANNED. P1.
 > **Цель:** коллекция `Vec[T]` Nova не хуже (а где можно — лучше) Go / Rust / TS / Kotlin /
 > Java — по полноте API, итераторам, слайсам и предсказуемости стоимости. `[]T` —
 > **чистый алиас** `Vec[T]` (D239).
@@ -193,6 +194,53 @@ sort/search/dedup** (153.3), **(в) slice-surface** split_at/chunks/windows (153
 - **Builder/RawMem:** если нужен общий низкоуровневый аллокатор-хелпер — приватная
   fn внутри `collections.vec` (не отдельный модуль), на RawMem.
 Эстимат ~2–2.5 dd (×: миграция импортов + слияние модулей).
+
+> #### Статус 153.0 — ✅ ЗАКРЫТ (2026-06-13, `plan-153` commit `2a5df8e4`)
+>
+> **Сделано.** Folder-модуль `std/collections/vec/` создан: co-equal `_module.nv`
+> (`#prelude`-носитель) + `core` (тип/конструкторы/`len`/`cap`/capacity/helpers/`panic`) +
+> `access` (index/get/first/last/as_ptr) + `mutate` (push/pop/insert/splice/remove/
+> swap_remove/clear/truncate/reverse + bulk) + `slice` (`@index(Range)`/`@get(Range)`) +
+> `iter` (VecIter+next) + `protocols` (Equal/Compare/Clone/Display/Debug). `vec_owned.nv`
+> (модуль `collections.vec_owned`) ретайрнут; legacy `vec.nv` свёрнут; **~55 import-сайтов**
+> мигрированы `vec_owned`→`vec`; prelude re-export'ит `Vec`/`VecIter` из folder. Модель
+> folder-модуля провалидирована probe'ом (cross-file тип/методы + `#prelude` + видимость
+> module-private хелперов между co-equal файлами).
+>
+> **Отклонение от плана (зафиксировано).** Eager-комбинаторы (`map`/`filter`/`fold`/`any`/
+> `all`) НЕ свёрнуты в prelude-global folder (как буквально предлагал план «складывается в
+> functional/iter»), а вынесены в ОТДЕЛЬНЫЙ explicit-import модуль `collections.vec_seq`.
+> Причина: prelude-global метод вносит свои идентификаторы (метод-генерик `[Acc]`,
+> callback-параметр `f`/`op`) в merged-body КАЖДОГО юнита → `[Acc]` шадовит юзерский
+> `type Acc` (D145), `f`/`op` коллизит с top-level `fn f`/`fn op` (`[M-codegen-var-types-fn-scope]`;
+> реальные репро в корпусе: plan138_5 `type Acc`, plan61 `fn op`). Метод-резолв в Nova
+> **глобален по имени** (тело — только при импорте), поэтому import-error невозможен;
+> изоляция доказана исчезновением shadow/collision. Лениво-итераторная переделка
+> комбинаторов (153.2) пересмотрит, может ли lazy-слой стать prelude-global
+> (`[M-153-vec-combinators-prelude-global]`).
+>
+> **Бонус-фиксы (user-flagged во время исполнения).** (1) `Vec[T Compare] @compare` переведён
+> с байтового `RawMem.compare` (memcmp — корректно ТОЛЬКО для `Vec[u8]`; для `f64`/`int`-LE/
+> record — молча неверно) на **поэлементный** lexicographic (как Rust `Vec<T:Ord>`), перенесён
+> в `protocols.nv`; `@equal`/`@compare` читают оба операнда сыро без лишнего `@index`
+> bounds-check. (2) Инлайн-форма `unsafe{@data[i].compare(other.data[i])}` (предложена автором)
+> упиралась в **PARSER-баг D38 turbofish** (`@buf[i].compare`→`@buf::<i>.compare`) — фикс на
+> ветке `plan-cgfix-erased-stub` (`6f74c0ba`, parser-correctness, 251/0), pending merge.
+>
+> **Критерии приёмки 153.0 (§6) — статус.**
+> - ✅ `[]T ≡ Vec[T]` чистый алиас (CONFIRM; residual: явная аннотация `v Vec[int]`→`[]int`-param
+>   не коэрсится, E7301, pre-existing, `[M-153-d239-explicit-vec-to-slice-param]`).
+> - ✅ Модуль по слоям (folder co-equal files).
+> - ✅ Ноль дублей (`vec.nv`↔`vec_owned.nv` устранён; комбинаторы — единственный экземпляр в `vec_seq`).
+> - ✅ Golden существующих Vec-тестов: строгий base(main)-vs-post diff по blast-radius
+>   (plan13* 191/5, plan90_1/140_2/128/99, plan91, basics/generics/plan62, plan61) — **0 регрессий**.
+> - ✅ G4 (без новых FAIL по blast-radius), G6 (структурировано по слоям, координация с 140.2 соблюдена).
+> - ✅ Spec D239 CONFIRM (02-types.md) + Q-vec-alias-completeness (open-questions.md) + `docs/vec-internals.md`.
+> - ✅ pos+neg фикстуры `nova_tests/plan153_0/` (3/3: folder-module + alias POS, compare POS, E7301 NEG).
+>
+> **Открытые маркеры:** `[M-153-vec-of-variadic-codegen]`, `[M-153-d239-explicit-vec-to-slice-param]`,
+> `[M-153-vec-compare-u8-memcmp-fastpath]`, `[M-153-vec-combinators-prelude-global]`,
+> `[M-153-scalar-min-max]` (Ф.0 153.1/153.2). Полная история — `simplifications.md`.
 
 ### 153.1 — Core API & capacity + консолидация дублей `[D259, A]`
 Добить императивное ядро до паритета: `@swap(i,j)`, `@resize(n,v)`,

@@ -1,0 +1,305 @@
+// std.collections.vec (core) — `Vec[T]`, a fully Nova-implemented generic
+// growable array backed by a raw `*mut T` heap buffer (Plan 131 Ф.3).
+//
+// Контекст. `[]T` ([D27](../../../spec/decisions/03-syntax.md#d27)) is the
+// built-in slice/dynamic-array primitive; `[]T ≡ Vec[T]` (D239). `Vec[T]` is a
+// *library* type implemented entirely in Nova on top of
+// `std.runtime.raw_mem.RawMem` — a production growable collection needs no
+// compiler magic beyond typed pointers (D216), `size_of[T]()` (D199) and
+// pointer arithmetic (Plan 131 Ф.2).
+//
+// Key property: elements are stored *typed* in a contiguous `*mut T` buffer.
+// `Vec[Option[int]]`, `Vec[MyRecord]`, `Vec[Vec[int]]` all work with their
+// natural per-element C representation — no int64-slot erasure. Pointer
+// arithmetic `data + i` is scaled by `sizeof(T)` automatically by the C
+// backend (the buffer pointer carries the element stride).
+//
+// Allocation. `RawMem.alloc(n)` returns 8-byte-aligned zeroed GC-tracked
+// memory. The buffer is GC-tracked, so it stays alive while the `Vec`
+// (and thus the `data` pointer field) is reachable. Element T values that are
+// themselves heap pointers (records / sum-types / arrays) are kept alive by
+// the conservative scan over the buffer.
+//
+// Unsafe model (D216 §8). Every raw-pointer operation (alloc, `data + i`,
+// deref read/write) is wrapped in an `unsafe { }` block. The element-access
+// API is fully safe — no `unsafe` to *use*; in-place element mutation is the
+// safe `v[i] = val` (D240 `MutIndex` write). The lone deliberate escape is the
+// FFI accessor `@as_ptr()` (recv-mut overload: `*T` on a `ro` receiver,
+// `*mut T` on a `mut` receiver) — calling it is safe (a pointer-value copy,
+// not a deref), but *dereferencing* the returned pointer is the caller's
+// `unsafe` obligation.
+
+// Plan 153.0 (D239 universal flip): `Vec`/`VecIter` are re-exported by
+// `std/prelude.nv`. A full auto-import of `std.prelude` here would create a
+// cycle (prelude → vec → prelude) and trip the R27 auto-import opt-out for
+// every importer. Mirror `range.nv`'s precedent: opt into the minimal prelude
+// subset this module's API actually needs (see `_module.nv` for the
+// folder-wide directive) —
+//   core      → Option/Result/Ordering (return types, `@pop()->Option[T]`),
+//   runtime   → assert/panic (bounds checks, test bodies),
+//   collections→ Next/Iter protocols (VecIter) + StringBuilder (`@display`),
+//   protocols → Display/Clone/Index/MutIndex (`@clone`, `@display`, `v[i]`).
+// `Range` lives in the prelude facade (`std/collections/range.nv`), imported
+// explicitly in `slice.nv` for the `@index(r Range)` zero-copy view.
+#prelude(core, runtime, collections, protocols)
+module collections.vec
+
+import std.runtime.raw_mem.{RawMem}
+
+// Module-private `panic` declaration (same signature as
+// `std/prelude/runtime.nv`), shared by every co-equal peer in this
+// folder-module. Mirrors `std/ffi/cstr.nv`: a module imported by user code
+// cannot rely on the prelude `panic` being visible in the *consuming* module
+// when its bodies are inlined cross-module, and a plain `import std.prelude.*`
+// would trip the R27 auto-import opt-out for every importer. A local
+// external-fn decl perturbs nothing; codegen lowers it to `nv_panic` by name.
+external fn panic(msg str) -> never
+
+// ──────────────────────────────────────────────────────────────────────────
+// Type
+// ──────────────────────────────────────────────────────────────────────────
+
+/// A contiguous growable array of `T`, heap-backed via a raw `*mut T` buffer.
+///
+/// Amortised O(1) `push`, O(1) indexed `get`, ×2 growth. Empty `Vec[T].new()`
+/// allocates nothing until the first `push` (cap = 0).
+///
+/// # Examples
+///
+/// ```nova
+/// mut v = Vec[int].new()
+/// v.push(1); v.push(2); v.push(3)
+/// assert(v.len() == 3)
+/// assert(v.get(1) == Some(2))
+/// ```
+export type Vec[T] priv {
+    // Raw element buffer. `cap` elements wide; first `len` are live.
+    // Never read/written outside `unsafe` blocks in this module.
+    //
+    // Declared `mut data *mut T` under the THREE-AXIS pointer model
+    // (Plan 147 / D246; D245 flip-scan RETRACTED):
+    //   - L1 binding-mut (`mut` before the name) makes the *field* reassignable
+    //     (`@data = dst` in @realloc_to);
+    //   - L3 postfix pointee-mut (`*mut T`) makes the *pointee* writable so
+    //     `@data[i] = val` (push / index-set) is a valid store.
+    // Both axes are REQUIRED and INDEPENDENT — pointee-mut is NOT inherited
+    // from the binding (3-axis forbids it; a bare `*T ≡ *ro T` is a ro pointee
+    // regardless of the binding). A writable, reassignable buffer therefore
+    // spells out both `mut` (binding) and `*mut` (pointee) explicitly.
+    //
+    // Codegen lowers `*mut T` to the live element C type `Nova_T*` (no
+    // `const`), preserving the generic `T` through monomorphization (no
+    // `Nova_any*` pointee erasure).
+    mut data *mut T
+    // Number of live (initialised) elements.
+    mut len int
+    // Number of allocated element slots (`data` capacity).
+    mut cap int
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Constructors
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Create an empty `Vec[T]` — no allocation, cap = 0.
+export fn Vec[T].new() -> Self =>
+    { data: null_buf[T](), len: 0, cap: 0 }
+
+/// Create an empty `Vec[T]` pre-allocated to hold at least `n` elements
+/// without reallocating.
+export fn Vec[T].with_capacity(n int) -> Self {
+    if n <= 0 {
+        return Vec[T].new()
+    }
+    Self { data: alloc_buf[T](n), len: 0, cap: n }
+}
+
+/// Build a `Vec[T]` directly from its three raw components — the element
+/// buffer pointer, the live-element count, and the allocated capacity.
+///
+/// This is the cross-type bridge that lets *other* modules hand a `(ptr, len,
+/// cap)` triple to a `Vec` without going through `push`/`extend`. The `data`,
+/// `len` and `cap` fields are `priv` (visible only to `Vec` type-methods), so a
+/// caller in another module cannot spell `Self { data: …, … }` itself — this
+/// public constructor is the only sanctioned entry. It is the inverse of the
+/// `@as_ptr()` / `@len()` / `@cap()` accessors and the analogue of Rust's
+/// `Vec::from_raw_parts`.
+///
+/// # Contract / unsafety
+///
+/// Calling this is `unsafe`-obligated at the *call site*: the caller asserts
+///   - `ptr` points at a live allocation of at least `cap` element slots whose
+///     first `len` slots are initialised (`0 <= len <= cap`), and
+///   - the pointed-to memory stays alive for the lifetime of the returned
+///     `Vec` (for GC-tracked buffers the returned `Vec.data` field keeps it
+///     reachable; for a zero-copy *view* over a foreign buffer — e.g.
+///     `str.@as_bytes()` aliasing a string's internal bytes — the originating
+///     owner must outlive the view, and the view must be treated read-only).
+///
+/// The incoming `ptr` is a `*T` (canonical ro pointee, `*T ≡ *ro T`); it is
+/// reinterpreted as the field's `*mut T` inside an `unsafe` block. The cast
+/// only re-labels pointee-mutability (L3) — no address arithmetic — so it is a
+/// pointer-value copy, never a dereference here. Whether the resulting buffer
+/// is *actually* writable is the caller's invariant (a `ro` view must not be
+/// pushed/index-written; binding the result `ro` enforces this at L2).
+export fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self {
+    Self { data: unsafe { ptr as *mut T }, len, cap }
+}
+
+/// Consume this `Vec[T]`, surrendering ownership of its raw element buffer and
+/// returning the writable `*mut T` data pointer. The exact inverse of
+/// `from_raw_parts` and the analogue of Rust's `Vec::into_raw_parts` (here just
+/// the pointer; `len`/`cap` must be snapshotted via `@len()`/`@cap()` BEFORE
+/// the call, since the receiver is consumed).
+///
+/// This is the *only* sanctioned way for another module to absorb a `Vec`'s
+/// backing allocation without a copy: the `consume` receiver discharges the
+/// Vec's ownership (D133), and the returned `*mut T` lets the new owner reuse
+/// the buffer in place. Used by `str.from_bytes_unchecked_steal` to steal a
+/// `[]u8`'s buffer into a `str` (zero-copy when spare capacity holds the NUL
+/// terminator).
+///
+/// # Contract / unsafety
+/// The returned pointer aliases the (now-consumed) buffer; the caller becomes
+/// its sole owner and is responsible for its lifetime. For a GC-tracked buffer
+/// the pointer keeps the allocation reachable as long as the new owner holds
+/// it. Dereferencing still needs `unsafe { }` (raw pointer). Yielding the
+/// pointer value is itself safe — it is not a dereference — so no `unsafe`
+/// wraps the `=> @data` body.
+export fn Vec[T] consume @into_raw() -> *mut T => @data
+
+/// Build a `Vec[T]` by copying every element of an iterable source.
+///
+/// Plan 138.1 Ф.0.1: the source is annotated `[]T` (NOT a distinct built-in
+/// array param). After the D239 type-flip `[]T` ≡ `Vec[T]`, so this signature
+/// becomes `from(items Vec[T])` — a `clone`-like copy — and continues to
+/// compile and behave identically. The actual copy loop is delegated to the
+/// generic-`Iter` `@extend` (mutate.nv), so the only `[]T` reference in this
+/// folder-module is here in the signature.
+///
+/// NOTE (deferred): converting `from` itself to a fully generic
+/// `from[S Iter[T]](items S)` is blocked by a codegen gap — static methods
+/// with method-level generics do not propagate the type-arg substitution into
+/// for-in / inner generic calls (emits an unresolved `____Nova_S_p` symbol).
+/// `@extend` (an instance method) does not hit this gap and IS converted.
+export fn Vec[T].from(items []T) -> Self => Vec[T].with_capacity(items.len()).extend(items)
+// NOTE ([M-138-rawmem-bulk-ops], Plan 138.2): `from` is intentionally NOT
+// bulk-copied via `RawMem.copy_nonoverlapping`. The source `items` is supplied
+// by the caller and may carry a *different element C-width* than `T` — most
+// commonly `Vec[u8].from([1, 2, 3])`, where the array literal is built as a
+// `Vec[int]` (8-byte slots) and only narrowed to `u8` element-by-element. A
+// byte-wise memcpy would read the wrong bytes (`size_of[T]()` is the *target*
+// stride, not the source's). The `@extend` loop performs a per-element typed
+// assignment, which applies the implicit numeric conversion correctly. The
+// in-module same-`T` bulk ops (`@realloc_to`/`@append`/`@clone`/`@insert`/
+// `@remove`/`@copy_from`/`@copy_within`) have matching strides and stay bulk.
+//
+// DEFERRED ([M-153-vec-of-variadic-codegen], user request 153.1): an ergonomic
+// variadic constructor `Vec[T].of(...items []T) -> Self => items` would read
+// better than `from([literal])` (under D239 a literal `[1,2,3]` is already a
+// `Vec[int]`, so `from([literal])` is redundant) and could return the collected
+// args zero-copy. BLOCKED by a codegen gap: call-site variadic collection
+// (packing `of(1,2,3)` args into a `[]T`) is implemented only for the external
+// `print`/`println` special-case, NOT for user-defined generic-static variadic
+// methods — codegen passes the raw args straight through (`_static_of(1,2,3)`
+// → "too many arguments", the fn expects one collected `Vec[int]*`). Lands in
+// 153.1 once user-defined variadic-collection codegen exists. `from` stays the
+// element-narrowing (`Vec[u8].from([1,2,3])`) + iterable-materialiser path.
+
+// ──────────────────────────────────────────────────────────────────────────
+// Size / introspection
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Number of live elements.
+export fn Vec[T] @len() -> int => @len
+
+/// Number of allocated element slots.
+export fn Vec[T] @cap() -> int => @cap
+
+/// `true` if the vector has no live elements.
+export fn Vec[T] @is_empty() -> bool => @len == 0
+
+// ──────────────────────────────────────────────────────────────────────────
+// Capacity management
+// ──────────────────────────────────────────────────────────────────────────
+
+// Reallocate the buffer to exactly `new_cap` slots (must be >= len), copying
+// the live prefix. `new_cap == 0` frees down to the null buffer.
+fn Vec[T] mut @realloc_to(new_cap int) -> () {
+    if new_cap == 0 {
+        @data = null_buf[T]()
+        @cap = 0
+        return
+    }
+    ro dst = alloc_buf[T](new_cap)
+    // Bulk-copy the live prefix. Source (old `@data`) and destination (fresh
+    // `dst`) are distinct GC-tracked buffers, so `copy_nonoverlapping` (memcpy)
+    // is safe and faster than a per-element loop. Pointer-valued elements move
+    // bitwise; both buffers are reachable during the copy so the GC keeps every
+    // referent alive.
+    unsafe {
+        RawMem.copy_nonoverlapping(@data as *u8, dst as *mut u8, @len * size_of[T]())
+    }
+    @data = dst
+    @cap = new_cap
+}
+
+/// Ensure room for at least `additional` more elements beyond the current
+/// length. Grows the buffer with a ×2 strategy (initial capacity 8) when the
+/// current capacity does not suffice. No-op when `additional <= 0` or capacity
+/// already covers `len + additional`. This is the sole public growth method.
+export fn Vec[T] mut @reserve(additional int) -> () {
+    ro needed = @len + additional
+    if needed <= @cap {
+        return
+    }
+    mut new_cap = if @cap == 0 { 8 } else { @cap * 2 }
+    // KEEP as while: non-unit-step (×2 doubling), not a `0..@len` index loop.
+    while new_cap < needed {
+        new_cap = new_cap * 2
+    }
+    @realloc_to(new_cap)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Free helpers — buffer allocation
+// ──────────────────────────────────────────────────────────────────────────
+
+// Allocate a zeroed `*mut T` buffer of `n` element slots. `n > 0`.
+fn alloc_buf[T](n int) -> *mut T {
+    unsafe {
+        RawMem.alloc(n * size_of[T]()) as *mut T
+    }
+}
+
+// The empty (capacity-0) buffer. A 1-slot allocation acts as a non-null,
+// never-dereferenced placeholder so that `data` always has a valid `*mut T`
+// value; `len`/`cap` guard every access.
+fn null_buf[T]() -> *mut T {
+    unsafe {
+        RawMem.alloc(size_of[T]()) as *mut T
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────────────────────────────────
+
+test "with_capacity / reserve" {
+    mut v = Vec[int].with_capacity(16)
+    assert(v.cap() >= 16)
+    assert(v.len() == 0)
+    for i in 0..10 { v.push(i) }
+    assert(v.len() == 10)
+    v.reserve(20)
+    assert(v.cap() >= 30)
+}
+
+test "grow — 1000 pushes preserve order" {
+    mut v = Vec[int].new()
+    for i in 0..1000 { v.push(i) }
+    assert(v.len() == 1000)
+    assert(v.get(0) == Some(0))
+    assert(v.get(500) == Some(500))
+    assert(v.get(999) == Some(999))
+}

@@ -5,7 +5,7 @@
 
 module plan140_2.followup_slice_elision_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 fn slice_whole(v Vec[int]) -> int {
     ro s = v[0..v.len()]

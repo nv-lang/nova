@@ -2,7 +2,7 @@
 
 module plan131.vec_access_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "get in-bounds and out-of-bounds" {
     mut v = Vec[int].from([10, 20, 30])

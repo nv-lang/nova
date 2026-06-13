@@ -8,7 +8,7 @@ module plan138_1.t4_vec_of_tuple
 // compilation unit (D239 flip is gated on `generic_type_templates["Vec"]`).
 // `Vec` is not yet in the prelude (Ф.5-prerequisite migration), so a typed-
 // storage fixture must pull it explicitly — same convention as t1/t3/t9.
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "[](int, str) push and index via [i]" {
     mut v [](int, str) = []

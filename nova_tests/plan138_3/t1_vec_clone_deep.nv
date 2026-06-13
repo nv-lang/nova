@@ -19,7 +19,7 @@
 
 module plan138_3.t1_vec_clone_deep
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 type Point {
     mut x int

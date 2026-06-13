@@ -4,7 +4,7 @@
 
 module plan131.vec_record_elem_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 type Point { x int, y int }
 

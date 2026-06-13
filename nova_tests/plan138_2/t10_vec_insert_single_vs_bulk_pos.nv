@@ -14,7 +14,7 @@
 
 module plan138_2.t10_vec_insert_single_vs_bulk_pos
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "single insert — one element of type T (int)" {
     mut v = Vec[int].from([1, 2, 4])

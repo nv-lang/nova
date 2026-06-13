@@ -3,7 +3,7 @@
 
 module plan138.t1_vec_index_basic
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "v[0] v[1] v[2] on Vec[int]" {
     ro v = Vec[int].from([10, 20, 30])

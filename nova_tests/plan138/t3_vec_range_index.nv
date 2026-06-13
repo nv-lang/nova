@@ -3,7 +3,7 @@
 
 module plan138.t3_vec_range_index
 
-import std.collections.vec_owned.{Vec}
+import std.collections.vec.{Vec}
 
 test "v[1..3] yields a 2-element view" {
     ro v = Vec[int].from([10, 20, 30, 40, 50])
