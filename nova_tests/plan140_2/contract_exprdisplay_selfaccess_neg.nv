@@ -1,0 +1,29 @@
+// Plan 140.2 (D256 follow-up): a contract-VIOLATION message must render
+// `@field` self-access readably (`@count`, `@limit`), NOT the bogus literal
+// "assert" that the emit_c `expr_to_display` catch-all `_ => "assert"` used to
+// produce for any Member/SelfAccess/Index node. Part A (D256) first ENABLED
+// `@`-accessors inside contracts, so this display path only started firing then;
+// the generic-mono enforcement fix (c2bbb685) merely made it visible (the same
+// garble exists for non-generic `@field` contracts — exercised here).
+//
+// `Counter` is NON-generic, so this hits the contract-display path independently
+// of the generic-mono fix. No custom message → the raw contract source is the
+// surfaced text (format A: "<file>:<line>: requires failed: <src>"). At count=0
+// the first conjunct `@count > 0` is false → the precondition fires.
+//
+// Pre-fix this message read "requires failed: assert > 0 && assert <= assert".
+// EXPECT_RUNTIME_PANIC requires failed: @count > 0 && @count <= @limit
+
+module plan140_2.contract_exprdisplay_selfaccess_neg
+
+type Counter { count int, limit int }
+
+fn Counter @step() -> int
+    requires @count > 0 && @count <= @limit
+=> @count - 1
+
+test "contract-violation message renders @field readably (not 'assert')" {
+    ro c = Counter { count: 0, limit: 10 }
+    ro r = c.step()
+    assert(r == -1)
+}

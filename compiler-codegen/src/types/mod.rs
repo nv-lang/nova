@@ -6861,7 +6861,7 @@ fn pointee_is_writable(ty: &TypeRef) -> Option<bool> {
 }
 
 /// Ф.1: человекочитаемое отображение TypeRef для диагностик.
-fn typeref_display(tr: &TypeRef) -> String {
+pub(crate) fn typeref_display(tr: &TypeRef) -> String {
     match tr {
         TypeRef::Named { path, generics, .. } => {
             let base = path.join(".");
