@@ -172,6 +172,16 @@
 Триаж (w33ant6rp) нашёл **34 маркера с устаревшим OPEN-тегом** (30 RESOLVED + 4 SUPERSEDED — gap закрыт, текст висит): `[M-115-ptr-arithmetic]`, `[M-83.10.4-residual-flaky]`, `[M-83.10.4-supervised-cancel-armed-race]`, `[M-138-getmut-rename]` (superseded) + 30 resolved (полный список в workflow-output w33ant6rp). **Followup:** поправить их статус в source-планах (отдельный doc-проход), чтобы grep по OPEN был честным.
 
 ## Follow-up: Plan 152.0/152.1 (str-модуль) — остаточные маркеры
+- **`[M-152.1-str-subview-record-ctor]`** (floating, P2): конструкция str sub-view
+  через value-record-литерал с pointer-арифметикой на priv `@ptr` —
+  `str { ptr: @ptr + off, len: n }` в str-методе — **мис-компилируется** («passing
+  nova_str to nova_int»); т.к. `runtime.string` линкуется в КАЖДУЮ программу, это
+  ломает весь str-код. Обнаружено в Plan 152.1 Ф.1b при попытке сделать `str
+  @index(Range)`/`@get(Range)` через прямую конструкцию. **Обход (приземлён):** оба
+  метода строят view через inline `@[a..b]` (codegen лоуэрит в `(nova_str){.ptr=…+from}`
+  напрямую, минуя Nova-конструкцию value-record'а). Класс — value-record codegen (как
+  закрытые в Ф.3 self-return/dispatch, но для record-literal-construction с @ptr-arith).
+  Fix разблокирует прямую str-subview-конструкцию (и `[M-139-f1-trim-view]` zero-copy trim).
 - **`[M-raw-ptr-local-index-codegen]`** (floating, P3): индексация raw-pointer-**локала**
   не кодгенится — `ro p = @ptr; p[i]` → C «subscripted value is not a pointer», хотя
   `@ptr[i]` напрямую (field) работает (`@byte_at`). Обнаружено в Plan 152.1 (RawMem.compare

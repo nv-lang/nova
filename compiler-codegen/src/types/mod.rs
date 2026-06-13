@@ -5328,12 +5328,14 @@ impl<'a> TypeCheckCtx<'a> {
         // `@byte_len() => @len` (D117 carve-out) — only NON-self receivers (external
         // `s.len()` / `s.char_at(i)` / …) are diagnosed.
         if tname == "str" && !matches!(obj.kind, ExprKind::SelfAccess) {
+            // NB: `get` is NOT listed — `str @get(r Range) -> Option[str]` is the
+            // valid safe-slice accessor (slice.nv). The retired `get(int)` simply
+            // fails arg-resolution against `get(Range)` (no `str.get(int)` sites remain).
             let hint = match name {
                 "len"      => Some("`byte_len()` (byte length, O(1)) or `as_chars().count()` (codepoint count, O(n))"),
                 "char_len" => Some("`as_chars().count()` (codepoint count, O(n))"),
                 "char_at"  => Some("`as_chars().nth(i)` (i-th codepoint, O(n))"),
                 "byte_at"  => Some("`as_bytes()[i]` (i-th byte, O(1), bounds-checked)"),
-                "get"      => Some("`as_chars().nth(i)` (codepoint) or `as_bytes()[i]` (byte)"),
                 _ => None,
             };
             if let Some(hint) = hint {
