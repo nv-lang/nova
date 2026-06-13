@@ -1,0 +1,25 @@
+// Plan 152.1 Ф.1 (D249): `str[a..b]` byte-range slice (the ONLY valid `str[..]`
+// form) keeps working after the integer-index ban. Range index — allowed.
+module plan152_1.str_slice_byte
+
+test "str byte-range slice (literal Range index)" {
+    ro s = "hello"
+    assert(s[0..2] == "he")
+    assert(s[2..5] == "llo")
+    assert(s[1..4] == "ell")
+}
+
+test "open-ended slices" {
+    ro s = "hello"
+    assert(s[2..] == "llo")
+    assert(s[..2] == "he")
+    assert(s[..] == "hello")
+}
+
+test "find composes with byte-slice" {
+    ro s = "key=value"
+    match s.find("=") {
+        Some(k) => assert(s[k+1..] == "value"),
+        None => assert(false),
+    }
+}

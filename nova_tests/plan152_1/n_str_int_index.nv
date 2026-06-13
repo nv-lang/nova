@@ -1,0 +1,12 @@
+// Plan 152.1 Ф.1 (D249): integer-indexing a `str` is banned. Codepoint indexing
+// a UTF-8 string is O(n) masquerading as O(1) — element access goes through a
+// lens (`as_bytes()[i]` byte O(1) / `as_chars().nth(i)` codepoint O(n)).
+//
+// EXPECT_COMPILE_ERROR E_STR_NO_INT_INDEX
+
+module plan152_1.n_str_int_index
+
+fn first(s str) -> str {
+    ro _x = s[0]   // int index on str → E_STR_NO_INT_INDEX (use as_bytes()[0] / as_chars().nth(0))
+    s
+}

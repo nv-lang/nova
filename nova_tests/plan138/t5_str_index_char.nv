@@ -1,16 +1,19 @@
-// Plan 138 Ф.4 — t5: s[i] → char, panic on OOB
-// A5: "abc"[0] → 'a' (char, panic OOB)
+// Plan 138 Ф.4 — t5: was `s[i] -> char` (D238 `str | int | char`).
+// Plan 152.1 (D249 + D238 AMEND): integer-indexing a str is RETRACTED — codepoint
+// indexing UTF-8 is O(n) hiding behind `[i]`. The i-th codepoint now goes through
+// the `as_chars()` lens: `s.as_chars().nth(i) -> Option[char]` (O(n), explicit).
+// The compile-error for `s[i]` lives in plan152_1/n_str_int_index.
 
 module plan138.t5_str_index_char
 
-test "str[0] gives first char" {
+test "as_chars().nth(i): i-th codepoint" {
     ro s = "abc"
-    assert(s[0] == 'a')
-    assert(s[1] == 'b')
-    assert(s[2] == 'c')
+    assert(s.as_chars().nth(0) == Some('a'))
+    assert(s.as_chars().nth(1) == Some('b'))
+    assert(s.as_chars().nth(2) == Some('c'))
 }
 
-test "str literal direct index" {
-    assert("hello"[0] == 'h')
-    assert("hello"[4] == 'o')
+test "as_chars().nth on str literal" {
+    assert("hello".as_chars().nth(0) == Some('h'))
+    assert("hello".as_chars().nth(4) == Some('o'))
 }
