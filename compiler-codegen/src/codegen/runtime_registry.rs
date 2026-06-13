@@ -128,19 +128,12 @@ fn str_runtime() -> Vec<RuntimeFn> {
     // registry (F2). Only the C-dispatch entries that back operator lowering
     // (emit_c.rs) + the DoS-seed hash remain. eq/lt/le/gt/ge go in 152.5a (D-R4,
     // operator decommission) -> registry ends with only @hash.
+    // Plan 152.5a D-R4 DONE: eq/lt/le/gt/ge removed — `==`/`!=`/`<`/`<=`/`>`/`>=`
+    // now synthesize from the Nova-body `str @eq`/`@compare` (core.nv) via the
+    // emit_c.rs nova_str BinOp arm; `+` from `@concat`. Method-form `s.eq(t)` etc.
+    // resolve to those Nova bodies too. Registry now ends with only @hash
+    // (irreducible: SipHash + crypto-seed). Closes [M-139.1-operator-lowered-methods].
     vec![
-        RuntimeFn {
-            module: "std.runtime.string",
-            receiver: Some("str"),
-            is_static: false, is_mut: false, is_consume: false,
-            name: "eq",
-            params: &[("other", "str")],
-            return_ty: "bool",
-            effects: &[],
-            c_name: "nova_str_eq",
-            doc: "Равенство по контенту (memcmp). O(min). Также вызывается оператором ==.",
-        nova_body: None,
-    },
         // D109 (Plan 48 Ф.8): FNV-1a hash для str — ключ HashMap.
         // Codegen vector: `prim_builtin_method` dispatch перехватывает
         // вызов до общего resolver'а (emit_c.rs); declaration здесь —
@@ -155,57 +148,6 @@ fn str_runtime() -> Vec<RuntimeFn> {
             effects: &[],
             c_name: "nova_str_hash",
             doc: "FNV-1a хеш по байтам строки. Используется в std.collections.HashMap.",
-            nova_body: None,
-        },
-        // 2026-05-12: lex byte-wise compare для nova_str. Bootstrap MVP —
-        // ASCII-correct; UTF-8 partial. Полное Unicode collation —
-        // production milestone.
-        RuntimeFn {
-            module: "std.runtime.string",
-            receiver: Some("str"),
-            is_static: false, is_mut: false, is_consume: false,
-            name: "lt",
-            params: &[("other", "str")],
-            return_ty: "bool",
-            effects: &[],
-            c_name: "nova_str_lt",
-            doc: "Lexicographic less-than (byte-wise). Также вызывается оператором `<`.",
-            nova_body: None,
-        },
-        RuntimeFn {
-            module: "std.runtime.string",
-            receiver: Some("str"),
-            is_static: false, is_mut: false, is_consume: false,
-            name: "le",
-            params: &[("other", "str")],
-            return_ty: "bool",
-            effects: &[],
-            c_name: "nova_str_le",
-            doc: "Lexicographic less-or-equal. Также вызывается оператором `<=`.",
-            nova_body: None,
-        },
-        RuntimeFn {
-            module: "std.runtime.string",
-            receiver: Some("str"),
-            is_static: false, is_mut: false, is_consume: false,
-            name: "gt",
-            params: &[("other", "str")],
-            return_ty: "bool",
-            effects: &[],
-            c_name: "nova_str_gt",
-            doc: "Lexicographic greater-than. Также вызывается оператором `>`.",
-            nova_body: None,
-        },
-        RuntimeFn {
-            module: "std.runtime.string",
-            receiver: Some("str"),
-            is_static: false, is_mut: false, is_consume: false,
-            name: "ge",
-            params: &[("other", "str")],
-            return_ty: "bool",
-            effects: &[],
-            c_name: "nova_str_ge",
-            doc: "Lexicographic greater-or-equal. Также вызывается оператором `>=`.",
             nova_body: None,
         },
     ]

@@ -36090,3 +36090,14 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   Debug-derive `debug_fmt` для nested-struct/Vec (plan91_14/plan131), StringBuilder
   struct-tag в #no_prelude + protocol-codegen Iterable/equals (plan62), рекурсивный
   `Nova_JsonValue` sum-type (plan91_13). Кандидаты на отдельный codegen-план.
+
+## Plan 152.5a D-R4 (str-operator C-lowering декомиссия), 2026-06-13
+- **Операторы str → Nova-body** (==/!=/</<=/>/>= /+ синтезируются из @eq/@compare/@concat),
+  реестр str = только @hash. Perf-паритет через RawMem-примитивы в Nova-body (memcmp/memcpy
+  = те же что снятые C-fn); бенч подтвердил (дельта в compile-шуме).
+- **Scope decommission = user-facing операторы + method-form**, НЕ codegen-внутренние
+  хелперы. C nova_str_eq/concat остались для emit_field_eq (структурная eq полей: HashMap-
+  ключи, record-==) + ScopeOutcome cancel-marker + concat-аккумулятор — reroute этих создал
+  бы method-emission reachability-связь в concurrency/collections codegen без выгоды.
+- **Reachability ОК:** str prelude-методы эмитятся при использовании операторов (проба
+  чистых ==/</+ без method-form PASS) — operator-emitted Nova-вызовы reachable.

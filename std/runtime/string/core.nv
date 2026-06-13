@@ -285,10 +285,11 @@ export fn str @to_chars() -> []char {
 // при равенстве префикса — знак (@len() - other.len()). Семантика идентична
 // бывшему C `nova_str_compare` (array.h:989: memcmp(min_len) + length tiebreak
 // -1/0/1). Метод вызываем напрямую (`s.compare(t)`) и Compare-протоколом
-// (`@compare(o) == 0` synthesis, D178). ОПЕРАТОРЫ `<`/`<=`/`>`/`>=`/`==`/`!=`
-// лоуэрятся ОТДЕЛЬНО, напрямую в C `nova_str_lt`/…/`nova_str_eq` (option (b),
-// emit_c.rs BinOp comparison/eq для nova_str) — C-форма (memcmp) оптимальнее
-// byte-loop. См. [M-139.1-operator-lowered-methods].
+// (`@compare(o) == 0` synthesis, D178). Plan 152.5a D-R4: ОПЕРАТОРЫ
+// `<`/`<=`/`>`/`>=` теперь синтезируются из `@compare` (emit_c.rs nova_str BinOp
+// arm → `Nova_str_method_compare(l,r) OP 0`), `==`/`!=` из `@eq`, `+` из `@concat`
+// — хардкод C `nova_str_lt`/`eq`/`concat` в operator-lowering снят. Закрывает
+// `[M-139.1-operator-lowered-methods]`.
 export fn str @compare(other str) -> int {
     ro an = @byte_len()
     ro bn = other.byte_len()
@@ -304,6 +305,18 @@ export fn str @compare(other str) -> int {
     if an < bn { return -1 }
     if an > bn { return 1 }
     0
+}
+
+// Content equality (Plan 152.5a D-R4). Backs the `==`/`!=` operators (emit_c.rs
+// nova_str BinOp arm → `Nova_str_method_eq`) and the `Equal` protocol, replacing
+// the retired C `nova_str_eq`. Length-first short-circuit (unequal length ⇒ not
+// equal, O(1)) then RawMem.compare (= memcmp) over the bytes — perf-parity with
+// the C form (which did the same length-check + memcmp). `@ptr`/`other.ptr` are
+// priv `*ro u8` (type-method privacy, str's home module).
+export fn str @eq(other str) -> bool {
+    ro n = @byte_len()
+    if n != other.byte_len() { return false }
+    unsafe { RawMem.compare(@ptr, other.ptr, n) == 0 }
 }
 
 // True если `idx` — на границе codepoint'а (Rust `is_char_boundary`): idx==0,

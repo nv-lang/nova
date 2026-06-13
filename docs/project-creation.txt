@@ -37550,3 +37550,20 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   12/2 + plan131 27/1 (Debug-derive debug_fmt nested struct/Vec), plan91_13 2/6
   (рекурсивный Nova_JsonValue sum-type). Phase B (позже): 152.4 std/unicode (Opus) →
   152.3b/152.5b/152.7-B. Остаток D-R4 (str-operator C-lowering декомиссия) отложен.
+
+[2026-06-13] Plan 152.5a D-R4 ✅ ВЫПОЛНЕН (декомиссия str-operator C-lowering). Операторы
+  ==/!=/</<=/>/>= /+ для str теперь синтезируются из Nova-body: == → Nova_str_method_eq
+  (core.nv: length-first + RawMem.compare memcmp), </<=/>/>= → Nova_str_method_compare
+  (RawMem.compare + length-tiebreak) OP 0, + → Nova_str_method_concat (уже RawMem:
+  with_capacity+2×Vec.append+steal). Изменения: core.nv (@compare→RawMem [step1 ae465fce]
+  + новый @eq [step2]); runtime_registry.rs (str_runtime = только @hash); emit_c.rs (nova_str
+  BinOp arm + void* arm + str_method_to_rt — убраны eq/lt/le/gt/ge). Реестр str = только @hash
+  (SipHash crypto-seed). Rebuild nova-cli 2m24s. Бенч-паритет: 5M cmp + 200k concat, before
+  (C-операторы ae465fce) 23.5–28.2s ≈ after (Nova-body) 22.6–29.2s — дельта в compile-шуме,
+  регрессии нет. C nova_str_eq/concat остались ТОЛЬКО codegen-внутренними (emit_field_eq
+  структурная eq HashMap-ключей/record-==; ScopeOutcome cancel-marker + concat-acc) — не
+  операторы. 0 регрессий (str/plan137/plan152_*/plan91_13/plan131/plan138 + reachability-проба
+  чистых операторов PASS; protocols флакает 23/3↔24/2 идентично pre/post — не D-R4). Маркер
+  [M-139.1-operator-lowered-methods] ЗАКРЫТ. Spec D254 D-R4 DONE. Фикстура plan152_5/
+  bench_operators (perf-smoke). Замечено (pre-D-R4 plan-152 дельта vs main, НЕ D-R4): plan96
+  18/5 (vs main 19/4), plan91_7 4/1 (vs main 5/0) — одинаково на ae465fce и D-R4, из 152.1/152.2.
