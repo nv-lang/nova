@@ -419,6 +419,23 @@ str `@plus`; Q-vec-operator-plus), `[][]T.flatten()`, `@rotate_left(n)`/
 `collect`-target (мост с 153.2); аудит consistency Equal/Compare/Clone/Display/Debug
 (уже есть). Эстимат ~1.5 dd.
 
+> #### Статус 153.6 — 🟡 ЧАСТИЧНО (2026-06-13, main): Hash ✅; FromIterator + HashMap-key ОТЛОЖЕНЫ
+>
+> **Hash ✅.** `Vec[T Hash] @hash() -> u64` (protocols.nv) — FNV-1a (64-bit): fold длины +
+> per-element `@hash()`, `h = (h ^ x) * prime`. u64-mul **врапается** (Nova-семантика, проверено)
+> = FNV mixing-шаг; offset basis — **hex**-литерал (десятичная форма > i64::MAX, парсилась бы
+> как `int` с overflow). Consistency с `@equal` (равные Vec → равный hash). plan153_6/hash 3/3
+> (equal-hash, empty/single round-trip, content+length distinguish).
+>
+> **Отложено.** (1) **Vec как ключ HashMap/HashSet** — `[M-153.6-vec-hashmap-key-eq]`:
+> pre-existing HashMap-codegen-баг — collision-check `k.eq(key)` (hashmap.nv:529) НЕ диспатчит
+> в Vec-`@equal` (D237 eq→equal; generic-type gap) → «no member named eq». `@hash` готов, это
+> equality-половина ключ-контракта. (2) **FromIterator/collect** — `[M-153.6-fromiterator-gated]`:
+> gated на 153.2 (collect-инфра); build-from-iterable уже есть (`from`/`@extend`).
+>
+> **Аудит consistency.** Equal/Compare/Clone/Display/Debug на месте (153.0); Hash добавлен
+> consistent с Equal. D264 — частичный (Hash готов; FromIterator с 153.2).
+
 ---
 
 ## 3А. Фазы по приоритету — «сейчас» vs «позже»

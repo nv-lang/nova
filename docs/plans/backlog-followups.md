@@ -225,6 +225,19 @@
   1-арговых `int_method_to_c`/`f64_method_to_c`). Нужен рантайм-хелпер `nova_int_max` /
   `fmax`-роутинг. НЕ гейтит Vec-ядро (cap-shrink-to-fit = `cap_to(len())`). Отложен из 153.1 Ф.0.
 
+## Follow-up: Plan 153.6 (Vec-протоколы Hash + FromIterator)
+- **`[M-153.6-vec-hashmap-key-eq]`** (planned, P2, home **Plan 153.6 / HashMap**): `Vec[T]`
+  как ключ `HashMap`/член `HashSet` упирается в pre-existing HashMap-codegen-баг — collision-
+  check `k.eq(key)` (`hashmap.nv:529`) НЕ диспатчит в Vec-`@equal` для generic-type ключа →
+  CC-FAIL «no member named `eq` in Nova_Vec____nova_int». D237 переименовал `eq`→`equal`, но
+  codegen-lookup `.eq()` для generic-типа не находит `@equal` (тот же generic-method-dispatch-gap
+  класс, что overload `@cap`/`@splice`). `Vec[T Hash] @hash()` РАБОТАЕТ (153.6, plan153_6/hash
+  3/3); это вторая (equality) половина ключ-контракта. Сурфейснуто 153.6.
+- **`[M-153.6-fromiterator-gated]`** (planned, home **Plan 153.6 / 153.2**): FromIterator-
+  протокол + `iter.collect() -> Vec[U]` gated на 153.2 (ленивый итератор + collect-инфра).
+  Build-from-iterable УЖЕ есть (`Vec[T].from(items)` + `@extend[S Iter[T]]`); протокол-форма
+  `collect`-таргета приземляется вместе с 153.2.
+
 ## Конвенция
 - **Planned** маркер → Followups своего плана (+ индекс-строка здесь с home).
 - **Floating** (нет плана) → здесь полностью.
