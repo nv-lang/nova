@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 152 (umbrella) — Production-grade строковая модель: линзы, координаты, Unicode-корректность
 
-> **Создан:** 2026-06-13.  **Статус:** 📋 **PLANNED umbrella**, P1.
+> **Создан:** 2026-06-13.  **Статус:** 🟢 **PHASE A ЗАКРЫТА** (2026-06-13), Phase B — позже, P1.
 > **Цель:** строковый слой Nova не хуже (а где можно — лучше) Go / Rust / TS / Kotlin /
 > Java — по корректности (Unicode), полноте API и предсказуемости стоимости.
 > **Эстимат (весь umbrella):** ~14–21 dev-day, декомпозирован на 152.0–152.7
@@ -393,6 +393,43 @@ Rust/Go, без скрытого O(n); полный `nova test` зелёный; 
 помечается `[M-152-unicode-*]`-маркерами и в `docs/strings.md` («ASCII-complete;
 полный Unicode — Phase B»). Без B Nova **хуже** Java/JS/Kotlin по Unicode → B
 обязательна к закрытию, просто позже.
+
+---
+
+## 3Б. Статус выполнения ✅ PHASE A ЗАКРЫТА (2026-06-13, ветка `plan-152`)
+
+| Sub-plan | Статус | Коммит / примечание |
+|---|---|---|
+| **152.0** реструктуризация модуля | ✅ | папка `std/runtime/string/` (core/search/transform/parse/chars/slice); golden байт-эквивалентность |
+| **152.1** координаты + линзы (D249/D250) | ✅ | `E_STR_NO_INT_INDEX`/`E_STR_NO_LEN`; `as_bytes`/`as_chars`(CharsIter); `str[a..b]` byte-slice; find=байт-offset |
+| **152.2** полный str-surface (D251) | ✅ | split/trim/strip/replacen/pad/match_indices; `get(Range)` |
+| **152.3a** char ASCII-core (D252) | ✅ | `fe3b116c` — is_ascii_*/to_ascii_*/to_digit/len_utf8/encode_utf8 в defaults.nv |
+| **152.5a** сравнение-core (D254) | ✅ | `40f9dfae` — byte-`Ord` дефолт + `eq_ignore_ascii_case` (str+char); **D-R4 отложен** |
+| **152.6** UTF-16/32 interop (D255) | ✅ | `db5ee133` — `std/encoding/utf16.nv`: encode_utf16/from_utf16/code_points + surrogate |
+| **152.7-A** интерполяция через рефактор | ✅ | подтверждено `plan152_0/interpolation_intact` PASS (рефактор 152.0 не сломал `${...}`) |
+
+**Регрессия (targeted sweep, 0 новых FAIL):** str 13/0, basics 8/0, plan152_0 2/0,
+plan152_1 6/0, plan152_2 3/0, plan152_3 1/0, plan152_5 1/0, plan152_6 1/0 (11 тестов),
+plan137 16/0, plan148 17/0, plan139 37/0, plan139_1 4/0, plan138 10/0, plan90_1 21/0,
+plan108 5/0. **Pre-existing (идентичны на main, НЕ Plan 152):** plan62 29/7
+(StringBuilder struct-tag в #no_prelude + Iterable/equals protocol-codegen), plan91_14
+12/2 + plan131 27/1 (Debug-derive `debug_fmt` для nested struct / Vec), plan91_13 2/6
+(рекурсивный `Nova_JsonValue` sum-type). Эти баги — в Debug-derive/protocol/recursive-
+sum codegen, вне строкового слоя; кандидаты на отдельный план.
+
+**Остаток D-R4** (152.5a): декомиссия хардкода str-операторов `==`/`<`/`+` в `emit_c.rs`
+(синтез из `@eq`/`@compare`/`@concat` на RawMem-body, без perf-retain C) — отдельная
+тяжёлая codegen-фаза, маркер `[M-139.1-operator-lowered-methods]`.
+
+**Acceptance Phase A:** строки координатно-консистентны (нет int-index/бэар-len,
+find=байт-offset, линзы), ASCII-полны, API-паритет Rust/Go, без скрытого O(n); spec
+A-части закрыты (D249/D250/D251/D255 + A-части D252/D254 + AMEND D26/D238/D58 +
+Q-string-indexing/-len/-collation/-module). G4 (полный `nova test` зелёный целиком) —
+финальный umbrella-гейт, прогоняется один раз в самом конце (Phase B).
+
+**Phase B (позже):** 152.4 `std/unicode` (норм./graphemes/folding/case-map — Opus,
+Unicode-data pipeline) → 152.3b (char Unicode) → 152.5b (locale-collation/UCA) →
+152.7-B (формат-спеки + Write-sink). За `[M-152-unicode-*]`/`[M-152-collation]`.
 
 ---
 

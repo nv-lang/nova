@@ -36080,3 +36080,13 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   consume-on-all-paths. consume StringBuilder + str.from_codepoint (known-valid path).
 - **Контракты Plan 140 на surrogate-помощниках** (decode_surrogate_pair requires
   is_*_surrogate + ensures result∈[0x10000,0x10FFFF]) — повсеместное применение.
+
+## Plan 152 Phase A закрыта (shippable-минимум), 2026-06-13
+- **Phase A vs B граница.** Phase A (координатная модель + линзы + ASCII-полнота +
+  API-паритет Rust/Go + UTF-16 interop) самодостаточна и зашиплена; Unicode-корректность
+  (нормализация/graphemes/folding/locale-collation) честно вынесена в Phase B за
+  [M-152-unicode-*] — `str` ASCII-complete, не маскирует отставание.
+- **Pre-existing main-баги, выявленные при регрессии Plan 152** (НЕ строковый слой):
+  Debug-derive `debug_fmt` для nested-struct/Vec (plan91_14/plan131), StringBuilder
+  struct-tag в #no_prelude + protocol-codegen Iterable/equals (plan62), рекурсивный
+  `Nova_JsonValue` sum-type (plan91_13). Кандидаты на отдельный codegen-план.

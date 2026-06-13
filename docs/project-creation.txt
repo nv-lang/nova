@@ -37536,3 +37536,17 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   plan91_13 2/6 — pre-existing Nova_JsonValue recursive sum-type, на main тоже 2/6).
   Дизайн-открытие: str-расширения из импортируемого std-модуля dot-резолвятся (прецедента
   в std не было — проверено пробой).
+
+[2026-06-13] Plan 152 PHASE A ✅ ЗАКРЫТА (umbrella shippable-минимум). Закрыты:
+  152.0 (папка std/runtime/string/ + golden), 152.1 (линзы D249/D250 + E_STR_NO_INT_INDEX/
+  E_STR_NO_LEN + byte-slice + find=байт-offset), 152.2 (полный surface D251), 152.3a
+  (char ASCII D252, fe3b116c), 152.5a (byte-Ord + eq_ignore_ascii_case D254, 40f9dfae),
+  152.6 (UTF-16 interop D255, db5ee133), 152.7-A (интерполяция через рефактор —
+  plan152_0/interpolation_intact PASS). Попутно d9caa1df: миграция устаревшей
+  folder_split_golden фикстуры (get(int)->char ретайрнут → as_chars().nth). Targeted
+  регрессия 0 новых FAIL (str/basics/plan152_*/plan137/plan148/plan139/plan138/plan90_1/
+  plan108). Pre-existing на main (НЕ Plan 152, кандидаты на отдельный план): plan62 29/7
+  (StringBuilder struct-tag #no_prelude + protocol-codegen Iterable/equals), plan91_14
+  12/2 + plan131 27/1 (Debug-derive debug_fmt nested struct/Vec), plan91_13 2/6
+  (рекурсивный Nova_JsonValue sum-type). Phase B (позже): 152.4 std/unicode (Opus) →
+  152.3b/152.5b/152.7-B. Остаток D-R4 (str-operator C-lowering декомиссия) отложен.
