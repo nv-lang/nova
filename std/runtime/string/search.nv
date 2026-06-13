@@ -23,7 +23,7 @@ export fn str @starts_with(prefix str) -> bool {
 }
 
 // True если строка заканчивается на suffix. Plan 152.1: RawMem.compare последних
-// `fn_len` байт (`@ptr + base`, как @sub_view).
+// `fn_len` байт (`@ptr + base`).
 export fn str @ends_with(suffix str) -> bool {
     ro (sn, fn_len) = (@len(), suffix.len())
     if fn_len > sn { return false }
@@ -81,51 +81,34 @@ export fn str @rfind(needle str) -> Option[int] {
     if last < 0 { None } else { Some(last) }
 }
 
-// Build a zero-copy str sub-view `str{ptr: @ptr+off, len}` over THIS string's
-// backing buffer. Module-private helper for @split. `str` is a declared
-// lang-item (Plan 139.1) with priv fields `ptr *u8` / `len int`; this receiver
-// is `str`, so it has type-method priv access (privacy is type-based, not
-// module-based) and can read `@ptr` and construct a `str{...}` value-record in
-// its own module (Plan 139.2 Ф.0 PROOF). `@ptr + off` is raw pointer
-// arithmetic (`@ptr` is `*u8`), so it is wrapped in `unsafe` — the analogue of
-// `Vec[T] @index(r Range)`'s `@data + r.start` (vec_owned.nv:754). The
-// returned view ALIASES this string's bytes (no copy); the originating owner
-// (`@`) must outlive the view, and the view is read-only (str buffer is
-// immutable, R8). `off`/`seg_len` are caller-guaranteed in `[0, @len()]`.
-fn str @sub_view(off int, seg_len int) -> str {
-    str { ptr: unsafe { @ptr + off }, len: seg_len }
-}
 
 // Split по separator. Returns zero-copy views (readonly). D178: readonly return.
-// Plan 139.2 Ф.2: Nova-body — byte-scan over @as_bytes(), each segment is a
-// zero-copy sub-view `str{ptr: @ptr+off, len}` (NOT a copy) pushed into a
-// Vec[str], returned as `ro []str`. Semantics identical to the retired C
-// nova_str_split (nova_rt/array.h:650): empty `sep` yields a single-element
-// array holding the whole string; otherwise non-overlapping matches split the
-// string and the trailing tail is always pushed (N matches ⇒ N+1 segments).
-// Spelled `Vec[str].new()` (not the `[]str.` alias) because the cross-type
-// producer is named on `Vec`; the `ro []str` return enforces L2 read-only.
+// Plan 152.1: per-position RawMem.compare (memcmp) для матча sep; каждый сегмент —
+// byte-range zero-copy view `@[a..b]` (Index[Range,str], bounds-checked) вместо
+// бывшего unsafe-хелпера `@sub_view`. `@push` возвращает `@`, поэтому хвост/пустой
+// случай — `return out.push(...)` без отдельного `out`. Семантика как у retired C
+// nova_str_split: пустой `sep` → один элемент со всей строкой; иначе
+// non-overlapping матчи (N матчей ⇒ N+1 сегментов, хвост всегда push'ится).
+// `Vec[str].new()` (не `[]str.`) — cross-type producer на `Vec`; `ro []str` = L2 RO.
 export fn str @split(sep str) -> ro []str {
     mut out = Vec[str].new()
     ro sep_len = sep.len()
     ro sn = @len()
     if sep_len == 0 {
-        // Empty separator — whole string as a single view (как C: push s).
-        out.push(@sub_view(0, sn))
-        return out
+        // Empty separator — whole string as a single view (`@push` returns `@`).
+        return out.push(@[0..sn])
     }
     mut start = 0
     mut i = 0
     while i + sep_len <= sn {
         if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
-            out.push(@sub_view(start, i - start))
+            out.push(@[start..i])   // byte-range zero-copy view (Index[Range,str])
             i = i + sep_len
             start = i
         } else {
             i = i + 1
         }
     }
-    // Trailing segment [start, sn).
-    out.push(@sub_view(start, sn - start))
-    out
+    // Trailing segment [start, sn) — `@push` returns `@` (the Vec).
+    out.push(@[start..sn])
 }
