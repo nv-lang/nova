@@ -29,8 +29,8 @@ test "into — Unicode паритет len с str" {
     sb.append("Привет")
     ro cp_before = sb.len()    // sb.len() = codepoints
     ro s = sb.into()
-    // Plan 108 D26 rev: str.len() = bytes O(1), str.char_len() = codepoints O(n).
-    assert(s.char_len() == cp_before)   // 6 codepoints == sb.len()
+    // Plan 108 D26 rev: str.len() = bytes O(1), str.as_chars().count() = codepoints O(n).
+    assert(s.as_chars().count() == cp_before)   // 6 codepoints == sb.len()
     assert(s.len() == 12)               // 12 bytes (2 bytes per Cyrillic codepoint)
 }
 
@@ -56,7 +56,7 @@ test "into — emoji сохраняется" {
     sb.append('🎉')
     ro s = sb.into()
     assert(s == "done 🎉")
-    assert(s.char_len() == 6)  // d,o,n,e,space,🎉 = 6 codepoints (D26 rev: use char_len)
+    assert(s.as_chars().count() == 6)  // d,o,n,e,space,🎉 = 6 codepoints (D26 rev: use char_len)
     assert(s.len() == 9)       // 4 ASCII + 1 space + 4 emoji bytes = 9 bytes
 }
 

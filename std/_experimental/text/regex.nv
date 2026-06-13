@@ -104,7 +104,7 @@ type Parser {
 
 fn Parser.new(p str) -> Self => { pattern: p, pos: 0 }
 
-fn Parser @peek() -> Option[char] => @pattern.char_at(@pos)
+fn Parser @peek() -> Option[char] => @pattern.as_chars().nth(@pos)
 
 fn Parser mut @advance() -> Option[char] {
     ro c = @peek()
@@ -245,7 +245,7 @@ fn Parser mut @parse_char_class() Fail[CompileError] -> RegexNode {
                     None    => throw UnclosedClass { position: start }
                 }
                 // Может быть range: \d-\f
-                if @peek() == Some('-') && @pattern.char_at(@pos + 1) != Some(']') {
+                if @peek() == Some('-') && @pattern.as_chars().nth(@pos + 1) != Some(']') {
                     @advance()
                     ro to = match @advance() {
                         Some('\\') => match @advance() {
@@ -262,7 +262,7 @@ fn Parser mut @parse_char_class() Fail[CompileError] -> RegexNode {
             }
             Some(c) => {
                 @advance()
-                if @peek() == Some('-') && @pattern.char_at(@pos + 1) != Some(']') {
+                if @peek() == Some('-') && @pattern.as_chars().nth(@pos + 1) != Some(']') {
                     @advance()
                     ro to = match @advance() {
                         Some(x) => x
@@ -557,7 +557,7 @@ fn try_match(re Regex, text str, start_pos int) -> Option[int] {
 
     mut pos = start_pos
     while pos < text.len() {
-        ro c = match text.char_at(pos) { Some(ch) => ch, None => break }
+        ro c = match text.as_chars().nth(pos) { Some(ch) => ch, None => break }
 
         // Reset next
         for k in 0..n { next[k] = false }

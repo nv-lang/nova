@@ -4,22 +4,22 @@
 module plan139.neg_t1_char_at_oob
 
 test "char_at past end is None" {
-    assert("abc".char_at(3) == None)
-    assert("abc".char_at(100) == None)
+    assert("abc".as_chars().nth(3) == None)
+    assert("abc".as_chars().nth(100) == None)
 }
 
 test "char_at negative index is None" {
-    assert("abc".char_at(-1) == None)
-    assert("abc".char_at(-100) == None)
+    assert("abc".as_chars().nth(-1) == None)
+    assert("abc".as_chars().nth(-100) == None)
 }
 
 test "char_at on empty string is None" {
-    assert("".char_at(0) == None)
-    assert("".char_at(-1) == None)
+    assert("".as_chars().nth(0) == None)
+    assert("".as_chars().nth(-1) == None)
 }
 
 test "char_at multibyte OOB by codepoint not byte" {
     ro s = "é"               // 1 codepoint, 2 bytes
-    assert(s.char_at(0) == Some('é'))
-    assert(s.char_at(1) == None)   // codepoint index 1 OOB even though byte 1 exists
+    assert(s.as_chars().nth(0) == Some('é'))
+    assert(s.as_chars().nth(1) == None)   // codepoint index 1 OOB even though byte 1 exists
 }

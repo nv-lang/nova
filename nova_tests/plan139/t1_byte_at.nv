@@ -5,15 +5,15 @@ module plan139.t1_byte_at
 
 test "byte_at ascii" {
     ro s = "abc"
-    assert(s.byte_at(0) == 97)
-    assert(s.byte_at(1) == 98)
-    assert(s.byte_at(2) == 99)
+    assert(s.as_bytes()[0] == 97)
+    assert(s.as_bytes()[1] == 98)
+    assert(s.as_bytes()[2] == 99)
 }
 
 test "byte_at multibyte raw bytes" {
     ro s = "é"                // 0xC3 0xA9
-    assert(s.byte_at(0) == 0xC3)
-    assert(s.byte_at(1) == 0xA9)
+    assert(s.as_bytes()[0] == 0xC3)
+    assert(s.as_bytes()[1] == 0xA9)
     assert(s.len() == 2)
 }
 
@@ -23,7 +23,7 @@ test "as_bytes view matches byte_at" {
     assert(bs.len() == 5)
     mut i = 0
     while i < s.len() {
-        assert(bs[i] == s.byte_at(i))
+        assert(bs[i] == s.as_bytes()[i])
         i = i + 1
     }
 }

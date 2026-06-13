@@ -200,8 +200,8 @@ fn decode_with(s str, require_padding bool) Fail[Base64Error] -> []u8 {
     // Считаем сколько `=` в конце — это даёт длину выхода.
     // URL-safe без padding: оцениваем по длине.
     ro trimmed_len = if require_padding {
-        if s.char_at(s.len() - 1) == Some('=') {
-            if s.char_at(s.len() - 2) == Some('=') {
+        if s.as_chars().nth(s.len() - 1) == Some('=') {
+            if s.as_chars().nth(s.len() - 2) == Some('=') {
                 s.len() - 2
             } else {
                 s.len() - 1
@@ -258,7 +258,7 @@ fn decode_with(s str, require_padding bool) Fail[Base64Error] -> []u8 {
 }
 
 fn decode_or_throw(s str, pos int) Fail[Base64Error] -> u8 {
-    match s.char_at(pos) {
+    match s.as_chars().nth(pos) {
         Some(c) => match decode_char(c) {
             Some(v) => v
             None    => throw InvalidChar { position: pos, char: c }

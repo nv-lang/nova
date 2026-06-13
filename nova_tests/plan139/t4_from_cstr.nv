@@ -13,7 +13,7 @@ test "from_cstr: C-returned str has correct bytes and length" {
     ro s = p139_make_str()
     assert(s == "hello world")
     assert(s.len() == 11)
-    assert(s.char_len() == 11)
+    assert(s.as_chars().count() == 11)
 }
 
 test "from_cstr result interops with Nova str methods" {

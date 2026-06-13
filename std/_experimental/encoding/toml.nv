@@ -86,7 +86,7 @@ export fn Toml.parse(s str) Fail[ParseTomlError] -> TomlValue {
 // Lexing helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-fn TomlParser @peek() -> Option[char] => @input.char_at(@pos)
+fn TomlParser @peek() -> Option[char] => @input.as_chars().nth(@pos)
 
 fn TomlParser mut @advance() -> Option[char] {
     ro c = @peek()
@@ -282,7 +282,7 @@ fn TomlParser mut @match_keyword(kw str) -> bool {
     ro saved = @pos
     mut i = 0
     while i < kw.len() {
-        if @peek() != kw.char_at(i) {
+        if @peek() != kw.as_chars().nth(i) {
             @pos = saved
             return false
         }

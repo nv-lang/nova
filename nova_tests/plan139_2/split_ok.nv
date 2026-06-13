@@ -56,9 +56,9 @@ test "split: separator over UTF-8 boundary preserves multi-byte segments" {
     assert(parts[2] == "o")
     // Verify the multi-byte segment is byte-exact (zero-copy view, no corruption).
     assert(parts[0].len() == 3)            // 'h' + 2-byte 'é'
-    assert(parts[0].byte_at(0) == 0x68 as u8)   // 'h'
-    assert(parts[0].byte_at(1) == 0xC3 as u8)   // 'é' lead
-    assert(parts[0].byte_at(2) == 0xA9 as u8)   // 'é' cont
+    assert(parts[0].as_bytes()[0] == 0x68 as u8)   // 'h'
+    assert(parts[0].as_bytes()[1] == 0xC3 as u8)   // 'é' lead
+    assert(parts[0].as_bytes()[2] == 0xA9 as u8)   // 'é' cont
 }
 
 test "split: empty string, non-empty sep → single empty segment" {

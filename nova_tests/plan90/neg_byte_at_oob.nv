@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC str.byte_at: index out of bounds
+// EXPECT_RUNTIME_PANIC out of bounds
 //
 // Plan 90 Ф.4.6 — негатив: byte_at за границей строки → panic.
 //
@@ -9,5 +9,5 @@ module plan90.neg_byte_at_oob
 
 fn main() -> () {
     ro s = "AB"
-    ro _ = s.byte_at(5)
+    ro _ = s.as_bytes()[5]
 }

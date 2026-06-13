@@ -42,9 +42,9 @@ test "concat: multi-byte UTF-8 preserved byte-exact" {
     assert(r == "café ★")
     assert(r.len() == a.len() + b.len())
     // NUL-term invariant + byte boundary: last byte of é region intact.
-    assert(r.byte_at(0) == 0x63 as u8)   // 'c'
-    assert(r.byte_at(3) == 0xC3 as u8)   // é lead byte
-    assert(r.byte_at(4) == 0xA9 as u8)   // é continuation
+    assert(r.as_bytes()[0] == 0x63 as u8)   // 'c'
+    assert(r.as_bytes()[3] == 0xC3 as u8)   // é lead byte
+    assert(r.as_bytes()[4] == 0xA9 as u8)   // é continuation
 }
 
 test "concat: method result equals `+` operator result" {

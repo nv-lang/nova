@@ -237,7 +237,7 @@ fn Lexer.new(input str) -> Self =>
     { input, pos: 0, line: 1, col: 1 }
 
 // Текущий символ (Option, None если конец).
-fn Lexer @peek() -> Option[char] => @input.char_at(@pos)
+fn Lexer @peek() -> Option[char] => @input.as_chars().nth(@pos)
 
 fn Lexer mut @advance() -> Option[char] {
     ro c = @peek()
@@ -299,7 +299,7 @@ fn is_hex_digit(c char) -> bool =>
 
 fn Lexer mut @read_keyword(kw str, t Token, line int, col int) Fail[ParseJsonError] -> TokenWithPos {
     for i in 0..kw.len() {
-        ro expected = kw.char_at(i)
+        ro expected = kw.as_chars().nth(i)
         ro actual = @peek()
         if Some(expected.unwrap_or(' ')) != actual {
             throw UnexpectedChar { @line, @col, found: actual.unwrap_or(' ') }

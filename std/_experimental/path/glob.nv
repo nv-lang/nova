@@ -33,14 +33,14 @@ fn match_at(pattern str, pi int, path str, si int) -> bool {
         return si == path.len()
     }
 
-    ro p = match pattern.char_at(pi) { Some(c) => c, None => return false }
+    ro p = match pattern.as_chars().nth(pi) { Some(c) => c, None => return false }
 
     if p == '*' {
         // Check for ** (recursive)
-        if pi + 1 < pattern.len() && pattern.char_at(pi + 1) == Some('*') {
+        if pi + 1 < pattern.len() && pattern.as_chars().nth(pi + 1) == Some('*') {
             // Skip extra * and any following /
             mut next_pi = pi + 2
-            if next_pi < pattern.len() && pattern.char_at(next_pi) == Some('/') {
+            if next_pi < pattern.len() && pattern.as_chars().nth(next_pi) == Some('/') {
                 next_pi += 1
             }
             // ** matches anything including /
@@ -58,7 +58,7 @@ fn match_at(pattern str, pi int, path str, si int) -> bool {
         while try_si <= path.len() {
             if match_at(pattern, next_pi, path, try_si) { return true }
             // Останавливаемся на /
-            if try_si < path.len() && path.char_at(try_si) == Some('/') {
+            if try_si < path.len() && path.as_chars().nth(try_si) == Some('/') {
                 return match_at(pattern, next_pi, path, try_si)
             }
             try_si += 1
@@ -68,13 +68,13 @@ fn match_at(pattern str, pi int, path str, si int) -> bool {
 
     if p == '?' {
         if si == path.len() { return false }
-        if path.char_at(si) == Some('/') { return false }
+        if path.as_chars().nth(si) == Some('/') { return false }
         return match_at(pattern, pi + 1, path, si + 1)
     }
 
     if p == '[' {
         if si == path.len() { return false }
-        ro c = match path.char_at(si) { Some(ch) => ch, None => return false }
+        ro c = match path.as_chars().nth(si) { Some(ch) => ch, None => return false }
         ro (matched, next_pi) = match_class(pattern, pi + 1, c)
         if !matched { return false }
         return match_at(pattern, next_pi, path, si + 1)
@@ -82,7 +82,7 @@ fn match_at(pattern str, pi int, path str, si int) -> bool {
 
     // Literal char
     if si == path.len() { return false }
-    if path.char_at(si) != Some(p) { return false }
+    if path.as_chars().nth(si) != Some(p) { return false }
     match_at(pattern, pi + 1, path, si + 1)
 }
 
@@ -90,13 +90,13 @@ fn match_at(pattern str, pi int, path str, si int) -> bool {
 fn match_class(pattern str, start int, c char) -> (bool, int) {
     mut pi = start
     mut negate = false
-    if pi < pattern.len() && pattern.char_at(pi) == Some('!') {
+    if pi < pattern.len() && pattern.as_chars().nth(pi) == Some('!') {
         negate = true
         pi += 1
     }
     mut found = false
     while pi < pattern.len() {
-        match pattern.char_at(pi) {
+        match pattern.as_chars().nth(pi) {
             Some(']') => {
                 ro result = if negate { !found } else { found }
                 return (result, pi + 1)
@@ -104,10 +104,10 @@ fn match_class(pattern str, start int, c char) -> (bool, int) {
             Some(ch) => {
                 // Check for range a-z
                 if pi + 2 < pattern.len()
-                   && pattern.char_at(pi + 1) == Some('-')
-                   && pattern.char_at(pi + 2) != Some(']') {
+                   && pattern.as_chars().nth(pi + 1) == Some('-')
+                   && pattern.as_chars().nth(pi + 2) != Some(']') {
                     ro from_c = ch
-                    ro to_c = match pattern.char_at(pi + 2) { Some(x) => x, None => return (false, pi) }
+                    ro to_c = match pattern.as_chars().nth(pi + 2) { Some(x) => x, None => return (false, pi) }
                     if (c as int) >= (from_c as int) && (c as int) <= (to_c as int) {
                         found = true
                     }

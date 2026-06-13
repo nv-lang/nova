@@ -37,7 +37,7 @@ test "from_bytes_unchecked: explicit byte build" {
     b.push(67 as u8)   // 'C'
     ro s = str.from_bytes_unchecked(b)
     assert(s == "ABC")
-    assert(s.byte_at(0) == 65 as u8)
+    assert(s.as_bytes()[0] == 65 as u8)
 }
 
 test "from_bytes_lossy: valid UTF-8 fast path (copy)" {
@@ -56,11 +56,11 @@ test "from_bytes_lossy: invalid byte replaced with U+FFFD" {
     ro s = str.from_bytes_lossy(b)
     // "A" + U+FFFD (3 bytes) + "B" = 5 bytes.
     assert(s.len() == 5)
-    assert(s.byte_at(0) == 0x41 as u8)   // 'A'
-    assert(s.byte_at(1) == 0xEF as u8)   // FFFD byte 1
-    assert(s.byte_at(2) == 0xBF as u8)   // FFFD byte 2
-    assert(s.byte_at(3) == 0xBD as u8)   // FFFD byte 3
-    assert(s.byte_at(4) == 0x42 as u8)   // 'B'
+    assert(s.as_bytes()[0] == 0x41 as u8)   // 'A'
+    assert(s.as_bytes()[1] == 0xEF as u8)   // FFFD byte 1
+    assert(s.as_bytes()[2] == 0xBF as u8)   // FFFD byte 2
+    assert(s.as_bytes()[3] == 0xBD as u8)   // FFFD byte 3
+    assert(s.as_bytes()[4] == 0x42 as u8)   // 'B'
 }
 
 test "from_bytes_lossy: truncated multi-byte sequence replaced" {
@@ -69,9 +69,9 @@ test "from_bytes_lossy: truncated multi-byte sequence replaced" {
     b.push(0xC3 as u8) // lead of 2-byte seq, but no continuation follows
     ro s = str.from_bytes_lossy(b)
     assert(s.len() == 3)                 // single U+FFFD
-    assert(s.byte_at(0) == 0xEF as u8)
-    assert(s.byte_at(1) == 0xBF as u8)
-    assert(s.byte_at(2) == 0xBD as u8)
+    assert(s.as_bytes()[0] == 0xEF as u8)
+    assert(s.as_bytes()[1] == 0xBF as u8)
+    assert(s.as_bytes()[2] == 0xBD as u8)
 }
 
 test "from_bytes_unchecked_steal: zero-copy reuse when cap > len" {

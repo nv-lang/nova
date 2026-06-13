@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC str.byte_at: index out of bounds
+// EXPECT_RUNTIME_PANIC out of bounds
 //
 // Plan 139 Ф.1 — byte_at remains the irreducible C byte-access primitive and
 // retains its panic-on-OOB contract (Plan 90). The Nova-body str methods read
@@ -10,5 +10,5 @@ module plan139.neg_t1_byte_at_oob
 
 fn main() -> () {
     ro s = "AB"
-    ro _ = s.byte_at(5)
+    ro _ = s.as_bytes()[5]
 }

@@ -78,7 +78,7 @@ export fn Markdown.to_html(md str) -> str {
             paragraph = StringBuilder.new()
             if in_list { buf.append("</ul>\n"); in_list = false }
             mut level = 0
-            while level < 6 && line.char_at(level) == Some('#') {
+            while level < 6 && line.as_chars().nth(level) == Some('#') {
                 level += 1
             }
             ro text = line[level..line.len()].trim()
@@ -145,13 +145,13 @@ fn render_inline(s str) -> str {
     consume buf = StringBuilder.with_capacity(s.len())
     mut i = 0
     while i < s.len() {
-        ro c = match s.char_at(i) { Some(ch) => ch, None => break }
+        ro c = match s.as_chars().nth(i) { Some(ch) => ch, None => break }
 
         // Inline code
         if c == '`' {
             ro start = i + 1
             mut end = start
-            while end < s.len() && s.char_at(end) != Some('`') { end += 1 }
+            while end < s.len() && s.as_chars().nth(end) != Some('`') { end += 1 }
             if end < s.len() {
                 buf.append("<code>")
                 buf.append(escape_html(s[start..end]))
@@ -162,11 +162,11 @@ fn render_inline(s str) -> str {
         }
 
         // Bold ** ... **
-        if c == '*' && s.char_at(i + 1) == Some('*') {
+        if c == '*' && s.as_chars().nth(i + 1) == Some('*') {
             ro start = i + 2
             mut end = start
             while end + 1 < s.len() {
-                if s.char_at(end) == Some('*') && s.char_at(end + 1) == Some('*') { break }
+                if s.as_chars().nth(end) == Some('*') && s.as_chars().nth(end + 1) == Some('*') { break }
                 end += 1
             }
             if end + 1 < s.len() {
@@ -182,7 +182,7 @@ fn render_inline(s str) -> str {
         if c == '*' {
             ro start = i + 1
             mut end = start
-            while end < s.len() && s.char_at(end) != Some('*') { end += 1 }
+            while end < s.len() && s.as_chars().nth(end) != Some('*') { end += 1 }
             if end < s.len() {
                 buf.append("<em>")
                 buf.append(escape_html(s[start..end]))
@@ -197,7 +197,7 @@ fn render_inline(s str) -> str {
             ro close_bracket_opt = find_in(s, ']', i + 1)
             match close_bracket_opt {
                 Some(close_bracket) => {
-                    if s.char_at(close_bracket + 1) == Some('(') {
+                    if s.as_chars().nth(close_bracket + 1) == Some('(') {
                         ro close_paren_opt = find_in(s, ')', close_bracket + 2)
                         match close_paren_opt {
                             Some(close_paren) => {
@@ -230,7 +230,7 @@ fn render_inline(s str) -> str {
 fn find_in(s str, target char, start int) -> Option[int] {
     mut i = start
     while i < s.len() {
-        if s.char_at(i) == Some(target) { return Some(i) }
+        if s.as_chars().nth(i) == Some(target) { return Some(i) }
         i += 1
     }
     None

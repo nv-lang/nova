@@ -4,18 +4,18 @@
 module str.char_at_oob
 
 test "char_at: empty string returns None" {
-    assert("".char_at(0) == None)
+    assert("".as_chars().nth(0) == None)
 }
 
 test "char_at: large index returns None" {
-    assert("abc".char_at(100) == None)
+    assert("abc".as_chars().nth(100) == None)
 }
 
 test "char_at: negative index returns None" {
-    assert("abc".char_at(-1) == None)
+    assert("abc".as_chars().nth(-1) == None)
 }
 
 test "char_at: index equals len returns None" {
     ro s = "hello"
-    assert(s.char_at(s.len()) == None)
+    assert(s.as_chars().nth(s.len()) == None)
 }

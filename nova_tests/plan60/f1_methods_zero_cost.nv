@@ -16,7 +16,7 @@ fn main() -> () {
 
     ro s str = "hello"
     assert(s.len() == 5, "str len = bytes (ASCII)")
-    assert(s.char_len() == 5, "str char_len (ASCII)")
+    assert(s.as_chars().count() == 5, "str char_len (ASCII)")
     assert(!s.is_empty(), "str is_empty method false")
 
     ro e str = ""
@@ -26,7 +26,7 @@ fn main() -> () {
     // UTF-8: 1 codepoint, 2 bytes  (Plan 108 D26 rev: len=bytes, char_len=codepoints)
     ro u str = "ы"
     assert(u.len() == 2, "utf8 len = bytes")       // 'ы' = 2 bytes
-    assert(u.char_len() == 1, "utf8 char_len")      // 1 codepoint
+    assert(u.as_chars().count() == 1, "utf8 char_len")      // 1 codepoint
     assert(!u.is_empty(), "utf8 is_empty false")
 
     println("plan60/f1 OK")

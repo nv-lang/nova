@@ -6,7 +6,7 @@ fn count_lines(s str) -> int {
     mut count = 1
     mut i = 0
     while i < s.len() {
-        // ВАЖНО: пока нет .char_at(), просто считаем
+        // ВАЖНО: пока нет .as_chars().nth(), просто считаем
         i += 1
     }
     count

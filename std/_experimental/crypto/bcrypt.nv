@@ -206,17 +206,17 @@ fn bcrypt_base64_encode(data []u8) -> str {
 
 
 fn alphabet_char(idx int) -> char =>
-    BCRYPT_ALPHABET.char_at(idx).unwrap_or('.')
+    BCRYPT_ALPHABET.as_chars().nth(idx).unwrap_or('.')
 
 
 fn bcrypt_base64_decode(s str) -> Option[[]u8] {
     mut out []u8 = []
     mut i = 0
     while i + 3 < s.len() {
-        ro c0 = bcrypt_decode_char(s.char_at(i))
-        ro c1 = bcrypt_decode_char(s.char_at(i + 1))
-        ro c2 = bcrypt_decode_char(s.char_at(i + 2))
-        ro c3 = bcrypt_decode_char(s.char_at(i + 3))
+        ro c0 = bcrypt_decode_char(s.as_chars().nth(i))
+        ro c1 = bcrypt_decode_char(s.as_chars().nth(i + 1))
+        ro c2 = bcrypt_decode_char(s.as_chars().nth(i + 2))
+        ro c3 = bcrypt_decode_char(s.as_chars().nth(i + 3))
         match (c0, c1, c2, c3) {
             (Some(a), Some(b), Some(c), Some(d)) => {
                 ro triple = (a << 18) | (b << 12) | (c << 6) | d
@@ -230,7 +230,7 @@ fn bcrypt_base64_decode(s str) -> Option[[]u8] {
     }
     // Trailing
     if i + 1 < s.len() {
-        match (bcrypt_decode_char(s.char_at(i)), bcrypt_decode_char(s.char_at(i + 1))) {
+        match (bcrypt_decode_char(s.as_chars().nth(i)), bcrypt_decode_char(s.as_chars().nth(i + 1))) {
             (Some(a), Some(b)) => out.push(((a << 2) | (b >> 4)) as u8)
             _ => return None
         }

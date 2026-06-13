@@ -186,29 +186,29 @@ test "rfind is case-sensitive" {
 // SECTION 7: len/char_len — Plan 108 D26 rev
 // ================================================================
 // Plan 108 D26 rev: s.len() — длина в байтах O(1) (как Rust/Go).
-//                  s.char_len() — длина в codepoints O(n).
+//                  s.as_chars().count() — длина в codepoints O(n).
 
 test "len: ASCII — bytes == codepoints" {
     ro s = "hello"
     assert(s.len() == 5)          // 5 bytes (ASCII; D26 rev: len = bytes O(1))
-    assert(s.char_len() == 5)     // 5 codepoints
+    assert(s.as_chars().count() == 5)     // 5 codepoints
 }
 
 test "len: Cyrillic — bytes != codepoints" {
     ro s = "Привет"               // 6 codepoints, 12 bytes (2 byte/char UTF-8)
     assert(s.len() == 12)          // D26 rev: len = bytes
-    assert(s.char_len() == 6)      // codepoints
+    assert(s.as_chars().count() == 6)      // codepoints
 }
 
 test "len: emoji — 4 байта на codepoint" {
     ro s = "ab😀cd"                // 5 codepoints, 4 ASCII + 4 emoji = 8 bytes
     assert(s.len() == 8)            // D26 rev: len = bytes
-    assert(s.char_len() == 5)       // codepoints
+    assert(s.as_chars().count() == 5)       // codepoints
 }
 
 test "len: empty string" {
     assert("".len() == 0)
-    assert("".char_len() == 0)
+    assert("".as_chars().count() == 0)
 }
 
 test "len for mixed content" {
@@ -216,7 +216,7 @@ test "len for mixed content" {
                                    // ASCII: a, space, space, b = 4 bytes
                                    // Cyrillic: 6*2 = 12 bytes; total bytes = 16
     assert(s.len() == 16)           // D26 rev: bytes
-    assert(s.char_len() == 10)      // codepoints
+    assert(s.as_chars().count() == 10)      // codepoints
 }
 
 // ================================================================
@@ -250,7 +250,7 @@ test "split-by-find with Cyrillic" {
     assert(i == 4)                 // codepoint offset
     ro key = s[0..i]
     // Plan 108 D26 rev: slice uses codepoint indices; use char_len() not len().
-    ro val = s[i + 1..s.char_len()]
+    ro val = s[i + 1..s.as_chars().count()]
     assert(key == "ключ")
     assert(val == "значение")
 }
@@ -260,7 +260,7 @@ test "slice across emoji boundary" {
     ro r = s[2..3]
     assert(r == "😀")
     assert(r.len() == 4)           // emoji = 4 bytes (D26 rev: len = bytes)
-    assert(r.char_len() == 1)      // 1 codepoint
+    assert(r.as_chars().count() == 1)      // 1 codepoint
 }
 
 // ================================================================
