@@ -503,3 +503,59 @@ export type Index[K, V] protocol {
 export type MutIndex[K, V] protocol {
     mut @index(key K, val V)
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 154.1 (D269) — concrete Display + Debug for primitive scalars
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Why these exist (the `vec_debug_pos` mis-dispatch, Plan 154.1):
+//   A container's monomorphized `Vec[T] @debug` body calls `@data[i].debug(sb)`
+//   on the ELEMENT. When T is a primitive (`int`, `f64`, ...), the element has
+//   no concrete `@debug` method, so codegen's single-key `method_receivers`
+//   fallback used to mis-route the call to the container's own erased
+//   `Nova_Vec_method_debug` stub (a type-confused no-op). Giving each primitive
+//   a CONCRETE `@display`/`@debug` lets element-dispatch resolve correctly
+//   (`Nova_int_method_debug`), and the guard in emit_c.rs (Plan 154.1 Ф.1)
+//   turns any remaining primitive-via-generic mis-dispatch into a loud error.
+//
+// Bodies route through interp-string lowering (`${@}` / `${@:?}`), which maps
+// each primitive C-type to its correct conv.h formatter (`nova_int_to_str`,
+// `nova_f64_to_str`, `nova_bool_to_str` → "true"/"false", `nova_char_to_str`,
+// `nova_*_to_debug_str` for the `:?` variants — char/str debug add quotes and
+// escapes). Interp lowering uses the conv.h formatter DIRECTLY for primitives
+// (never re-dispatches to the method), so these bodies do NOT recurse.
+//
+// `#impl(Display)` / `#impl(Debug)` opt-in (Plan 154.1 Ф.2 / D268) binds the
+// protocol to the primitive type and checks the signature.
+//
+// NOTE: `f32` is intentionally omitted — it has no conv.h formatter and is not
+// in the interp primitive-direct map, so a `${@}` body would re-dispatch and
+// recurse. Tracked as `[M-154.1-f32-display-debug]`; until then a `Vec[f32]`
+// element `.debug(sb)` surfaces the loud `E_PRIMITIVE_NO_PROTOCOL_METHOD`
+// guard (Ф.1) rather than silently mis-dispatching.
+
+#impl(Display)
+fn int @display(mut sb StringBuilder) -> () { sb.append("${@}") }
+#impl(Debug)
+fn int @debug(mut sb StringBuilder) -> () { sb.append("${@:?}") }
+
+#impl(Display)
+fn f64 @display(mut sb StringBuilder) -> () { sb.append("${@}") }
+#impl(Debug)
+fn f64 @debug(mut sb StringBuilder) -> () { sb.append("${@:?}") }
+
+#impl(Display)
+fn bool @display(mut sb StringBuilder) -> () { sb.append("${@}") }
+#impl(Debug)
+fn bool @debug(mut sb StringBuilder) -> () { sb.append("${@:?}") }
+
+#impl(Display)
+fn char @display(mut sb StringBuilder) -> () { sb.append("${@}") }
+#impl(Debug)
+fn char @debug(mut sb StringBuilder) -> () { sb.append("${@:?}") }
+
+#impl(Display)
+fn str @display(mut sb StringBuilder) -> () { sb.append("${@}") }
+#impl(Debug)
+fn str @debug(mut sb StringBuilder) -> () { sb.append("${@:?}") }
