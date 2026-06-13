@@ -51,10 +51,17 @@ fn main() {
     };
     let triplet = std::env::var("VCPKG_TRIPLET").unwrap_or_else(|_| triplet_default.into());
 
-    let lib_dir = std::path::PathBuf::from(&manifest_dir)
-        .join("vcpkg_installed")
-        .join(&triplet)
-        .join("lib");
+    // Plan 140.2 followup: `NOVA_Z3_LIB_DIR` override (зеркало `NOVA_GC_LIB_DIR`).
+    // Worktree-сборка может указать на ОБЩИЙ libz3 main-репозитория без копии
+    // `libz3.lib` (~1.9 ГБ) в свой `vcpkg_installed/` — критично на FS без
+    // junction/symlink (exFAT). Пусто/не задано → дефолтный `manifest/vcpkg_installed`.
+    let lib_dir = match std::env::var("NOVA_Z3_LIB_DIR") {
+        Ok(dir) if !dir.trim().is_empty() => std::path::PathBuf::from(dir),
+        _ => std::path::PathBuf::from(&manifest_dir)
+            .join("vcpkg_installed")
+            .join(&triplet)
+            .join("lib"),
+    };
 
     // Linux: prefer system-installed libz3 (apt-installed libz3-dev) если
     // vcpkg_installed/ нет. Hard-error был бы избыточным — apt-route
@@ -121,4 +128,5 @@ fn main() {
 
     println!("cargo:rerun-if-changed=vcpkg.json");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=NOVA_Z3_LIB_DIR");
 }
