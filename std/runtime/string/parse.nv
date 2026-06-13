@@ -1,0 +1,79 @@
+// AUTO-SPLIT from std/runtime/string.nv (Plan 152.0 Ф.2). Bodies byte-identical.
+// Co-equal file of module `runtime.string` (folder = one module, AMEND F4).
+// Role: parse_int / try_parse_int.
+//
+// Plan 91 Ф.2.5/2.6 (D177/D178): str Nova-body methods. #no_prelude breaks the
+// prelude->string->prelude import cycle.
+
+#no_prelude
+module runtime.string
+
+import std.prelude.core.{Option, Some, None, Result, Ok, Err}
+
+
+// D178: merge of parse_int() + parse_int_radix(). Default radix=10 → decimal.
+// Digits 0-9, a-z/A-Z (case-insensitive for radix>10). None при error.
+// Nova body — единый путь для всех баз через Plan 54 Ф.2 dispatch.
+export fn str @parse_int(radix int = 10) -> Option[int] {
+    if radix < 2 || radix > 36 { return None }
+    ro bytes = @as_bytes()
+    ro n = @byte_len()
+    if n == 0 { return None }
+    mut neg = false
+    mut start = 0
+    if bytes[0] == '-' {
+        neg = true
+        start = 1
+    } else if bytes[0] == '+' {
+        start = 1
+    }
+    if start >= n { return None }
+    mut acc = 0
+    for j in start..n {
+        ro c = bytes[j] as int
+        mut d = -1
+        if c >= '0' && c <= '9' {
+            d = c - '0'
+        } else if c >= 'a' && c <= 'z' {
+            d = c - 'a' + 10
+        } else if c >= 'A' && c <= 'Z' {
+            d = c - 'A' + 10
+        }
+        if d < 0 || d >= radix { return None }
+        if acc > (9223372036854775807 - d) / radix { return None }
+        acc = acc * radix + d
+    }
+    Some(if neg { -acc } else { acc })
+}
+
+/// Error variants for @try_parse_int. Exported so callers can match on them.
+export type ParseIntError | Empty | InvalidDigit | Overflow | InvalidRadix
+
+/// Strict variant of @parse_int — returns Result с explicit error info.
+/// `radix` valid range: 2..=36. Empty / `-` / `+` без digits → Err(Empty).
+/// Invalid digit для radix → Err(InvalidDigit). i64 overflow → Err(Overflow).
+/// radix < 2 или > 36 → Err(InvalidRadix).
+#stable(since = "0.1")
+export fn str @try_parse_int(radix int = 10) -> Result[int, ParseIntError] {
+    if radix < 2 || radix > 36 { return Err(InvalidRadix) }
+    ro bytes = @as_bytes()
+    ro n = @byte_len()
+    if n == 0 { return Err(Empty) }
+    mut neg = false
+    mut start = 0
+    if bytes[0] == '-' { neg = true; start = 1 }
+    else if bytes[0] == '+' { start = 1 }
+    if start >= n { return Err(Empty) }
+    mut acc = 0
+    for j in start..n {
+        ro c = bytes[j] as int
+        mut d = -1
+        if c >= '0' && c <= '9' { d = c - '0' }
+        else if c >= 'a' && c <= 'z' { d = c - 'a' + 10 }
+        else if c >= 'A' && c <= 'Z' { d = c - 'A' + 10 }
+        if d < 0 || d >= radix { return Err(InvalidDigit) }
+        if acc > (9223372036854775807 - d) / radix { return Err(Overflow) }
+        acc = acc * radix + d
+    }
+    Ok(if neg { -acc } else { acc })
+}

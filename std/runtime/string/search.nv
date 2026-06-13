@@ -1,0 +1,114 @@
+// AUTO-SPLIT from std/runtime/string.nv (Plan 152.0 Ф.2). Bodies byte-identical.
+// Co-equal file of module `runtime.string` (folder = one module, AMEND F4).
+// Role: search + split (byte-offset).
+//
+// Plan 91 Ф.2.5/2.6 (D177/D178): str Nova-body methods. #no_prelude breaks the
+// prelude->string->prelude import cycle.
+
+#no_prelude
+module runtime.string
+
+import std.prelude.core.{Option, Some, None}
+import std.collections.vec_owned.{Vec}
+import std.runtime.raw_mem.{RawMem}
+
+
+// True если строка начинается с prefix. Plan 152.1: byte-compare через
+// RawMem.compare (memcmp) вместо byte-loop. `@ptr`/`prefix.ptr` — priv `*ro u8`
+// (type-method privacy; ptr — не size-accessor → D117 не трогает).
+export fn str @starts_with(prefix str) -> bool {
+    ro (sn, pn) = (@len(), prefix.len())
+    if pn > sn { return false }
+    unsafe { RawMem.compare(@ptr, prefix.ptr, pn) == 0 }
+}
+
+// True если строка заканчивается на suffix. Plan 152.1: RawMem.compare последних
+// `fn_len` байт (`@ptr + base`).
+export fn str @ends_with(suffix str) -> bool {
+    ro (sn, fn_len) = (@len(), suffix.len())
+    if fn_len > sn { return false }
+    unsafe { RawMem.compare(@ptr + (sn - fn_len), suffix.ptr, fn_len) == 0 }
+}
+
+// True если needle встречается в строке. Plan 152.1: per-position RawMem.compare
+// (memcmp) вместо вложенного byte-loop. Пустой needle → true.
+export fn str @contains(needle str) -> bool {
+    ro nn = needle.len()
+    if nn == 0 { return true }
+    ro sn = @len()
+    if nn > sn { return false }
+    mut i = 0
+    while i + nn <= sn {
+        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { return true }
+        i = i + 1
+    }
+    false
+}
+
+// БАЙТОВЫЙ offset первого вхождения needle. None если нет. Plan 152.1 Ф.2 (D249):
+// возвращает byte-offset (композируется с `s[k..]` за O(1) — cp-offset был
+// несоставим со slice; для ASCII byte-offset == прежний cp-offset). Haystack и
+// needle — валидный UTF-8 (R-UTF8), поэтому совпадение на byte-позиции i всегда
+// на codepoint-границе → byte-by-byte скан корректен.
+export fn str @find(needle str) -> Option[int] {
+    ro nn = needle.len()
+    if nn == 0 { return Some(0) }
+    ro sn = @len()
+    if nn > sn { return None }
+    mut i = 0
+    while i + nn <= sn {
+        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { return Some(i) }
+        i = i + 1
+    }
+    None
+}
+
+// БАЙТОВЫЙ offset последнего вхождения needle. Plan 152.1 Ф.2 (D249): byte-offset
+// (как @find). Пустой needle → byte-длина (Rust-parity `"abc".rfind("")==Some(3)`).
+export fn str @rfind(needle str) -> Option[int] {
+    ro sn = @len()
+    ro nn = needle.len()
+    if nn == 0 {
+        return Some(sn)
+    }
+    if nn > sn { return None }
+    mut last = -1
+    mut i = 0
+    while i + nn <= sn {
+        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { last = i }
+        i = i + 1
+    }
+    if last < 0 { None } else { Some(last) }
+}
+
+
+// Split по separator. Returns zero-copy views (readonly). D178: readonly return.
+// Plan 152.1: per-position RawMem.compare (memcmp) для матча sep; каждый сегмент —
+// byte-range zero-copy view `@[a..b]` (Index[Range,str], bounds-checked) вместо
+// бывшего unsafe-хелпера `@sub_view`. `@push` возвращает `@`, поэтому хвост/пустой
+// случай — `return out.push(...)` без отдельного `out`. Семантика как у retired C
+// nova_str_split: пустой `sep` → один элемент со всей строкой; иначе
+// non-overlapping матчи (N матчей ⇒ N+1 сегментов, хвост всегда push'ится).
+// `Vec[str].new()` (не `[]str.`) — cross-type producer на `Vec`; `ro []str` = L2 RO.
+export fn str @split(sep str) -> ro []str {
+    mut out = Vec[str].new()
+    ro sep_len = sep.len()
+    ro sn = @len()
+    if sep_len == 0 {
+        // Empty separator — whole string as a single view (`@push` returns `@`).
+        return out.push(@[0..sn])
+    }
+    mut start = 0
+    mut i = 0
+    while i + sep_len <= sn {
+        if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
+            out.push(@[start..i])   // byte-range zero-copy view (Index[Range,str])
+            i = i + sep_len
+            start = i
+        } else {
+            i = i + 1
+        }
+    }
+    // Trailing segment [start, sn) — `@push` returns `@` (the Vec).
+    out.push(@[start..sn])
+}

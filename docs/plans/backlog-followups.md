@@ -164,6 +164,27 @@
 ## Follow-up: stale-tag cleanup
 Триаж (w33ant6rp) нашёл **34 маркера с устаревшим OPEN-тегом** (30 RESOLVED + 4 SUPERSEDED — gap закрыт, текст висит): `[M-115-ptr-arithmetic]`, `[M-83.10.4-residual-flaky]`, `[M-83.10.4-supervised-cancel-armed-race]`, `[M-138-getmut-rename]` (superseded) + 30 resolved (полный список в workflow-output w33ant6rp). **Followup:** поправить их статус в source-планах (отдельный doc-проход), чтобы grep по OPEN был честным.
 
+## Follow-up: Plan 152.0/152.1 (str-модуль) — остаточные маркеры
+- **`[M-raw-ptr-local-index-codegen]`** (floating, P3): индексация raw-pointer-**локала**
+  не кодгенится — `ro p = @ptr; p[i]` → C «subscripted value is not a pointer», хотя
+  `@ptr[i]` напрямую (field) работает (`@byte_at`). Обнаружено в Plan 152.1 (RawMem.compare
+  обходит — передаём `@ptr` в fn). Fix если понадобится raw-ptr-local-index: emit_c трактует
+  bound `*ro u8`-локал как скаляр, не указатель.
+- **`[M-152.1-str-index-range-contract]`** (planned, home **Plan 152.1 Ф.1 / 152.2**):
+  `str @index(r Range)` (`s[a..b]`) — чистый codegen `nova_str_slice_panic` с рантайм
+  bounds+codepoint-проверкой, НЕ контракт. Для элидируемой проверки (140.2-style, zero-cost
+  когда провабельно) сделать str `@index(Range)` контрактным Nova-методом (`requires` bounds).
+- **D117 на `prefix.len`** (не баг — by-design до Plan 153): чтение size-accessor `len` как
+  поля чужого инстанса → `E_SIZE_ACCESSOR_FIELD`. Internal-field-read **D117 AMEND у Plan 153**
+  (Ф.5.1). До него str-методы используют `other.len()` (метод), не `other.len` (поле).
+- **`[M-139.1-operator-lowered-methods]`** (planned, home **Plan 152.5a / D-R4**): декомиссия
+  хардкода str-операторов в `emit_c.rs:17302` (`<`/`==`/`+` → C `nova_str_lt`/`eq`/`concat`) —
+  синтезировать из `@compare`/`@eq`/`@concat`; после — удалить реестровые `eq`/`lt`/`le`/`gt`/`ge`
+  (реестр str → только `@hash`). Perf через RawMem в Nova-body (без perf-retain C, override автора).
+- **Урок (методология baseline)** — [152-gate-verification.md](152-gate-verification.md): не убивать
+  baseline досрочно (частичный → ложные «регрессы» в непокрытом хвосте); экстракция имён через
+  `awk '$1~/FAIL/{print $2}'`, не regex по строке; main-бинарь = быстрый оракул «новое vs pre-existing».
+
 ## Конвенция
 - **Planned** маркер → Followups своего плана (+ индекс-строка здесь с home).
 - **Floating** (нет плана) → здесь полностью.
