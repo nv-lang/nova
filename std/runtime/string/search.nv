@@ -112,3 +112,161 @@ export fn str @split(sep str) -> ro []str {
     // Trailing segment [start, sn) — `@push` returns `@` (the Vec).
     out.push(@[start..sn])
 }
+
+// Module-private: ASCII whitespace (space + \t\n\v\f\r). These bytes are < 0x80,
+// so they never appear as UTF-8 continuation bytes — a byte-scan is codepoint-safe.
+fn is_ascii_ws(b int) -> bool => b == 32 || (b >= 9 && b <= 13)
+
+// Plan 152.2 Ф.1 (D251): split into AT MOST `n` parts; the last part is the
+// unsplit remainder (Rust `splitn`). `n <= 0` → empty; `n == 1` / empty sep →
+// whole string. Byte-scan, zero-copy `@[a..b]` views.
+export fn str @splitn(n int, sep str) -> ro []str {
+    mut out = Vec[str].new()
+    if n <= 0 { return out }
+    ro sep_len = sep.byte_len()
+    ro sn = @byte_len()
+    if sep_len == 0 || n == 1 {
+        return out.push(@[0..sn])
+    }
+    mut start = 0
+    mut i = 0
+    mut splits = 0
+    while i + sep_len <= sn && splits < n - 1 {
+        if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
+            out.push(@[start..i])
+            i = i + sep_len
+            start = i
+            splits = splits + 1
+        } else {
+            i = i + 1
+        }
+    }
+    out.push(@[start..sn])
+}
+
+// Split from the RIGHT, parts in REVERSE order (Rust `rsplit`). Empty sep → whole.
+export fn str @rsplit(sep str) -> ro []str {
+    mut out = Vec[str].new()
+    ro sep_len = sep.byte_len()
+    ro sn = @byte_len()
+    if sep_len == 0 { return out.push(@[0..sn]) }
+    mut end = sn
+    mut i = sn - sep_len
+    while i >= 0 {
+        if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
+            out.push(@[i + sep_len .. end])
+            end = i
+            i = i - sep_len
+        } else {
+            i = i - 1
+        }
+    }
+    out.push(@[0..end])
+}
+
+// `rsplit` into AT MOST `n` parts (reverse order). `n <= 0` → empty; `n == 1` /
+// empty sep → whole.
+export fn str @rsplitn(n int, sep str) -> ro []str {
+    mut out = Vec[str].new()
+    if n <= 0 { return out }
+    ro sep_len = sep.byte_len()
+    ro sn = @byte_len()
+    if sep_len == 0 || n == 1 { return out.push(@[0..sn]) }
+    mut end = sn
+    mut i = sn - sep_len
+    mut splits = 0
+    while i >= 0 && splits < n - 1 {
+        if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
+            out.push(@[i + sep_len .. end])
+            end = i
+            i = i - sep_len
+            splits = splits + 1
+        } else {
+            i = i - 1
+        }
+    }
+    out.push(@[0..end])
+}
+
+// Split at the FIRST occurrence of `sep` → `Some((before, after))`, `None` if
+// not found. Byte-offsets, zero-copy views (Rust `split_once`).
+export fn str @split_once(sep str) -> Option[(str, str)] {
+    match @find(sep) {
+        Some(k) => Some((@[0..k], @[k + sep.byte_len() .. @byte_len()])),
+        None    => None,
+    }
+}
+
+// Split at the LAST occurrence of `sep` → `Some((before, after))`, `None` if
+// not found (Rust `rsplit_once`).
+export fn str @rsplit_once(sep str) -> Option[(str, str)] {
+    match @rfind(sep) {
+        Some(k) => Some((@[0..k], @[k + sep.byte_len() .. @byte_len()])),
+        None    => None,
+    }
+}
+
+// Like `split`, but a trailing empty segment (when the string ends with `sep`)
+// is omitted (Rust `split_terminator`). `"a,b,".split_terminator(",") == ["a","b"]`.
+export fn str @split_terminator(sep str) -> ro []str {
+    mut out = Vec[str].new()
+    ro sep_len = sep.byte_len()
+    ro sn = @byte_len()
+    if sep_len == 0 { return out.push(@[0..sn]) }
+    mut start = 0
+    mut i = 0
+    while i + sep_len <= sn {
+        if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
+            out.push(@[start..i])
+            i = i + sep_len
+            start = i
+        } else {
+            i = i + 1
+        }
+    }
+    if start < sn { out.push(@[start..sn]) }
+    out
+}
+
+// Split on runs of ASCII whitespace, skipping empty segments (leading/trailing WS
+// ignored). Rust/Go `Fields`/`split_whitespace`. Non-ASCII Unicode whitespace —
+// Phase B (`[M-152-ws-unicode]`, delegates to std/unicode in Plan 152.4).
+export fn str @split_whitespace() -> ro []str {
+    mut out = Vec[str].new()
+    ro bytes = @as_bytes()
+    ro sn = @byte_len()
+    mut i = 0
+    while i < sn {
+        while i < sn && is_ascii_ws(bytes[i] as int) { i = i + 1 }
+        if i >= sn { break }
+        ro start = i
+        while i < sn && !is_ascii_ws(bytes[i] as int) { i = i + 1 }
+        out.push(@[start..i])
+    }
+    out
+}
+
+// Split into lines, each WITHOUT its terminator. Handles `\n` and `\r\n` (the
+// trailing `\r` is stripped). A final line without a trailing newline is included;
+// the empty string yields no lines (Rust `lines`).
+export fn str @lines() -> ro []str {
+    mut out = Vec[str].new()
+    ro bytes = @as_bytes()
+    ro sn = @byte_len()
+    if sn == 0 { return out }
+    mut start = 0
+    mut i = 0
+    while i < sn {
+        if (bytes[i] as int) == 10 {
+            mut end = i
+            if end > start && (bytes[end - 1] as int) == 13 { end = end - 1 }
+            out.push(@[start..end])
+            i = i + 1
+            start = i
+        } else {
+            i = i + 1
+        }
+    }
+    if start < sn { out.push(@[start..sn]) }
+    out
+}
