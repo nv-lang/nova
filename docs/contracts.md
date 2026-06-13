@@ -179,6 +179,10 @@ an uninterpreted `_field_<name>(_self)`, so `@len` in `requires` and `@len` in
 allowed — a contract is an expression, so there is no way to write a field in
 one.
 
+When such a contract is unproven and fires at runtime, the violation message
+renders the self-access **readably** — `requires failed: 0 <= i && i < @len` —
+naming the actual field, not a placeholder (Plan 140.2 / D256 §Diagnostics).
+
 Calling a non-accessor `@method()` (or a non-`#pure` / `mut`-receiver method)
 in a contract is a clear compile error — the SMT encoder cannot model arbitrary
 method bodies. Reference the field directly, or extract a `#pure` free function
