@@ -288,14 +288,12 @@ fn Lexer mut @next_token() Fail[ParseJsonError] -> TokenWithPos {
     }
 }
 
-fn is_num_start(c char) -> bool =>
-    c == '-' || (c >= '0' && c <= '9')
+// Plan 152.3a (D252): delegate to char ASCII-core methods (zero private dups).
+fn is_num_start(c char) -> bool => c == '-' || c.is_ascii_digit()
 
-fn is_digit(c char) -> bool =>
-    c >= '0' && c <= '9'
+fn is_digit(c char) -> bool => c.is_ascii_digit()
 
-fn is_hex_digit(c char) -> bool =>
-    is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+fn is_hex_digit(c char) -> bool => c.is_ascii_hexdigit()
 
 fn Lexer mut @read_keyword(kw str, t Token, line int, col int) Fail[ParseJsonError] -> TokenWithPos {
     for i in 0..kw.byte_len() {

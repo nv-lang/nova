@@ -36055,3 +36055,11 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   **type-check-only** (`types/mod.rs`, guard `user_declared_types` — не ломает Plan 62
   локальный type-shadow, напр. for_in_range_iter). D267. `nova test plan154` 5/5 PASS,
   корпус-скан 0 регрессий.
+
+## Plan 152.3a (D252 — char ASCII API), 2026-06-13
+- **char получил ASCII-API** (is_ascii_*/to_ascii_case/to_digit/len_utf8/encode_utf8) через
+  char-сравнения (`@ >= '0'`), ноль Unicode-таблиц. Rust char:: parity. В defaults.nv.
+- **Находка: Nova-body методы на builtin char — только в disk-loaded prelude-модуле**
+  (defaults.nv, где char @compare), НЕ в embedded char.nv (ExternalRegistry парсит его лишь
+  для checker'а; codegen не эмитит методы builtin-типа оттуда → call падал в C member-access).
+- json.nv is_digit/is_hex_digit/is_num_start → делегируют на char-методы (ноль приватных дублей).

@@ -37503,3 +37503,14 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   EXPECT_COMPILE_ERROR + 3 pos прогон+assert); корпус-скан `nova check nova_tests` —
   E_METHOD_REDEFINITION РОВНО 1 вхождение (только neg-фикстура) → 0 регрессий; std
   компилируется. D267 (10-overloading.md). branch plan-154 (синкан с main).
+
+[2026-06-13] Plan 152.3a (char ASCII-core API, D252) ✅ ЗАКРЫТ (ветка plan-152). char (u32
+  codepoint) получил прод-API уровня Rust char::. ASCII-core в std/runtime/defaults.nv (рядом
+  с char @compare): is_ascii/is_ascii_digit/alphabetic/alphanumeric/whitespace/uppercase/
+  lowercase/hexdigit; to_ascii_uppercase/lowercase (char.try_from(@ as int ±32)); to_digit(radix)
+  ->Option[int]; len_utf8; encode_utf8. Через char-сравнения, ноль Unicode-таблиц. Spec D252.
+  json.nv is_digit/is_hex_digit/is_num_start консолидированы на char-методы (A3). Фикстура
+  plan152_3/char_ascii 1/0. КЛЮЧЕВАЯ НАХОДКА: Nova-body методы на BUILTIN char эмитятся только
+  из disk-loaded prelude-модуля (defaults.nv), НЕ из embedded char.nv (парсится лишь для
+  checker'а → type-check проходил, codegen падал в member-access). 152.3b (Unicode) — Phase B
+  (gated на 152.4). 0 регрессий.

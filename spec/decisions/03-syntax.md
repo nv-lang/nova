@@ -9968,3 +9968,36 @@ strip/split возвращают **zero-copy** sub-views (`@[a..b]`).
 
 ---
 
+## D252. `char`-тип API — классификация / case / digit
+
+Added: 2026-06-13  Status: 152.3a (ASCII) IMPLEMENTED 2026-06-13 (Plan 152.3a); 152.3b (Unicode) — Phase B
+
+`char` (u32 codepoint) получает прод-API уровня Rust `char` / Java `Character` / Go
+`unicode`. **Двухуровнево:** ASCII-core (в ядре, без таблиц) + Unicode-aware (делегат
+в `std/unicode`, Phase B).
+
+### 152.3a — ASCII-core (Фаза A, IMPLEMENTED)
+
+В `std/runtime/defaults.nv` (рядом с `char @compare` — Nova-body методы на builtin
+`char` эмитятся только из disk-loaded prelude-модуля, НЕ из embedded `char.nv`,
+который парсится лишь для checker'а). Все предикаты — через char-сравнения (codepoint
+order), ноль Unicode-таблиц; семантика == Rust `char::is_ascii_*`/`to_digit`:
+
+- `@is_ascii` / `@is_ascii_digit` / `@is_ascii_alphabetic` / `@is_ascii_alphanumeric` /
+  `@is_ascii_whitespace` (space\t\n\r\x0C, без \x0B) / `@is_ascii_uppercase` /
+  `@is_ascii_lowercase` / `@is_ascii_hexdigit`.
+- `@to_ascii_uppercase` / `@to_ascii_lowercase` (a-z↔A-Z через `char.try_from(@ as int ±32)`).
+- `@to_digit(radix) -> Option[int]` (2..=36; None вне диапазона/не-цифра/значение≥radix).
+- `@len_utf8() -> int` (1-4); `@encode_utf8() -> str` (= `str.from(@)`).
+
+Ad-hoc `is_digit`/`is_hexdigit` (json.nv) консолидированы на эти методы.
+
+### 152.3b — Unicode-aware (Фаза B, делегат 152.4)
+
+`@is_alphabetic`/`@is_numeric`/`@is_alphanumeric`/`@is_whitespace`/`@is_uppercase`/
+`@is_lowercase`/`@is_control`/`@general_category()`; `@to_uppercase()`/`@to_lowercase()`
+(multi-codepoint — ß→ss, ﬁ→FI → возвращают последовательность, не один char). Зависят от
+Unicode-данных `std/unicode` (Plan 152.4). См. [Plan 152.3](../../docs/plans/152.3-char-type-api.md).
+
+---
+
