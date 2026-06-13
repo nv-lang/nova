@@ -37289,3 +37289,13 @@ Plan 150 — reject chained comparison + ban bool relational (D248, 2026-06-13, 
   5 pos), check-sweep 2938 файлов 0 ложных hits, RUN basics 8/0 + contracts 250/0 + plan147 30/0 +
   generics 5/0 + plan139 37/0 + plan140 7/0; zero codegen change (чисто compile-time).
   Коммиты 52d98ab0(Ф.0)/ad181324(Ф.1)/f67313f1(Ф.2)/91a2191b(Ф.3).
+
+Plan 140.2 — bounds-as-contract PLANNED (2026-06-13, НЕ исполнен; investigation + decomposition, merge 5361110a).
+  Попытка `requires 0<=i && i<@len` на Vec @index вскрыла 2 блокера: (A) контракты НЕ поддерживают
+  @field self-access (verify/encode.rs:508 → E2401) → требование невыразимо + ломает сборку (basics 0/8);
+  (B) inline v[i] — lvalue (v[i].field=x, &v[i]), de-inline на value-метод ломает lvalue. v[i] уже
+  безопасен (always-on check) — не хватает только ЭЛИЗИИ доказуемого доступа. Решение автора:
+  prerequisite-first — Part A (@field/@method() в SMT-контрактах: encoder+checker) → Part B
+  (bounds-as-contract + context-sensitive de-inline). Преждевременный D249 отозван. План: docs/plans/140.2.
+  Процессный bonus: разблокирована worktree-сборка — repo_root=current_dir (main.rs:666), libuv-кэш в
+  CWD/target/libuv-cache/libuv.lib; копия root-level libuv.lib туда → worktree собирает без vcvars.
