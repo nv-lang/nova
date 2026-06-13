@@ -10,54 +10,36 @@ module runtime.string
 
 import std.prelude.core.{Option, Some, None}
 import std.collections.vec_owned.{Vec}
+import std.runtime.raw_mem.{RawMem}
 
 
-// True если строка начинается с prefix. Plan 139 Ф.1: Nova-body, byte-compare
-// через @as_bytes(). Семантика идентична nova_str_starts_with.
+// True если строка начинается с prefix. Plan 152.1: byte-compare через
+// RawMem.compare (memcmp) вместо byte-loop. `@ptr`/`prefix.ptr` — priv `*ro u8`
+// (type-method privacy; ptr — не size-accessor → D117 не трогает).
 export fn str @starts_with(prefix str) -> bool {
     ro (sn, pn) = (@len(), prefix.len())
     if pn > sn { return false }
-    ro (sb, pb) = (@as_bytes(), prefix.as_bytes())
-    for i in 0..pn {
-        if sb[i] != pb[i] { return false }
-    }
-    true
+    unsafe { RawMem.compare(@ptr, prefix.ptr, pn) == 0 }
 }
 
-// True если строка заканчивается на suffix. Plan 139 Ф.1: Nova-body byte-compare.
+// True если строка заканчивается на suffix. Plan 152.1: RawMem.compare последних
+// `fn_len` байт (`@ptr + base`, как @sub_view).
 export fn str @ends_with(suffix str) -> bool {
-    ro fn_len = suffix.len()
-    ro sn = @len()
+    ro (sn, fn_len) = (@len(), suffix.len())
     if fn_len > sn { return false }
-    ro sb = @as_bytes()
-    ro fb = suffix.as_bytes()
-    ro base = sn - fn_len
-    mut i = 0
-    while i < fn_len {
-        if sb[base + i] != fb[i] { return false }
-        i = i + 1
-    }
-    true
+    unsafe { RawMem.compare(@ptr + (sn - fn_len), suffix.ptr, fn_len) == 0 }
 }
 
-// True если needle встречается в строке. Plan 139 Ф.1: Nova-body byte-scan.
-// Пустой needle → true (как nova_str_contains).
+// True если needle встречается в строке. Plan 152.1: per-position RawMem.compare
+// (memcmp) вместо вложенного byte-loop. Пустой needle → true.
 export fn str @contains(needle str) -> bool {
     ro nn = needle.len()
     if nn == 0 { return true }
     ro sn = @len()
     if nn > sn { return false }
-    ro sb = @as_bytes()
-    ro nb = needle.as_bytes()
     mut i = 0
-    while i <= sn - nn {
-        mut j = 0
-        mut matched = true
-        while j < nn {
-            if sb[i + j] != nb[j] { matched = false; break }
-            j = j + 1
-        }
-        if matched { return true }
+    while i + nn <= sn {
+        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { return true }
         i = i + 1
     }
     false
@@ -73,17 +55,9 @@ export fn str @find(needle str) -> Option[int] {
     if nn == 0 { return Some(0) }
     ro sn = @len()
     if nn > sn { return None }
-    ro sb = @as_bytes()
-    ro nb = needle.as_bytes()
     mut i = 0
     while i + nn <= sn {
-        mut j = 0
-        mut matched = true
-        while j < nn {
-            if sb[i + j] != nb[j] { matched = false; break }
-            j = j + 1
-        }
-        if matched { return Some(i) }
+        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { return Some(i) }
         i = i + 1
     }
     None
@@ -93,23 +67,15 @@ export fn str @find(needle str) -> Option[int] {
 // (как @find). Пустой needle → byte-длина (Rust-parity `"abc".rfind("")==Some(3)`).
 export fn str @rfind(needle str) -> Option[int] {
     ro sn = @len()
-    ro sb = @as_bytes()
     ro nn = needle.len()
     if nn == 0 {
         return Some(sn)
     }
     if nn > sn { return None }
-    ro nb = needle.as_bytes()
     mut last = -1
     mut i = 0
     while i + nn <= sn {
-        mut j = 0
-        mut matched = true
-        while j < nn {
-            if sb[i + j] != nb[j] { matched = false; break }
-            j = j + 1
-        }
-        if matched { last = i }
+        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { last = i }
         i = i + 1
     }
     if last < 0 { None } else { Some(last) }
@@ -148,18 +114,10 @@ export fn str @split(sep str) -> ro []str {
         out.push(@sub_view(0, sn))
         return out
     }
-    ro sb = @as_bytes()
-    ro pb = sep.as_bytes()
     mut start = 0
     mut i = 0
     while i + sep_len <= sn {
-        mut j = 0
-        mut matched = true
-        while j < sep_len {
-            if sb[i + j] != pb[j] { matched = false; break }
-            j = j + 1
-        }
-        if matched {
+        if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
             out.push(@sub_view(start, i - start))
             i = i + sep_len
             start = i
