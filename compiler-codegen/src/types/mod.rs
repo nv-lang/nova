@@ -8331,6 +8331,17 @@ impl<'a> BoundCtx<'a> {
         // Резолвим callee → список параметров.
         let callee_params: &[Param] = match &base.kind {
             ExprKind::Ident(name) => {
+                // Plan 153 fix (regression from vec `resize_with`/`fill_with`,
+                // 2026-06-14): a LOCAL binding named `name` — in particular a
+                // closure parameter like `f fn() -> T` — SHADOWS a module-level
+                // free function of the same name. Without this guard, `f()`
+                // inside such a method resolved to a free `fn f(x int)` from the
+                // *entry* module (e.g. a `contracts` test that happens to define
+                // `fn f`), and arg-checking the closure call against the free
+                // fn's params raised a spurious `обязательный параметр не передан`.
+                // The closure call is validated via the var's fn-type / codegen,
+                // so skip the free-fn arg-check entirely when shadowed.
+                if scope.contains_key(name) { return; }
                 let Some(overloads) = self.fn_decls.get(name) else { return; };
                 match overloads.as_slice() {
                     [single] => &single.params,

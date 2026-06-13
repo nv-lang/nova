@@ -37513,3 +37513,19 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   (прямой @display(sb)+typed StringBuilder.@append — Plan 154.1). Тесты plan140_1/contract_msg_interp_{pos,neg};
   адверсариальный C-инспект (lazy if-блок + _dyn). 0 регрессий (plan140_1 11/0, contracts 251/0, plan140 34/0,
   plan140_2 13/0). Дизайн примитивного Display (через sb.@append) передан агенту Plan 154.1.
+
+[2026-06-14] Fix: local binding shadows module free function в check_call_argbind (regression
+  от plan-153 vec resize_with/fill_with). Симптом: nova check trivial_congruence_positive.nv
+  → "обязательный параметр `x` не передан" в std/collections/vec/mutate.nv:218/404 (`@data[i]=f()`).
+  Цепочка диагностики: агент винил 809e8605 (моё 154.0 method-coherence) → ОПРОВЕРГНУТО (чистый
+  main падает 3/3 → не моё); бисект указал на 1d6d2ca5 (140.3 interp-contracts) → МИС-АТРИБУЦИЯ
+  (нелинейная история: 1d6d2ca5~1=60e909a0 не содержит plan-153 vec-веток). НАСТОЯЩИЙ корень —
+  plan-153 добавил Vec @resize_with(n, f fn()->T) / @fill_with с closure-параметром `f`; вызов
+  `f()` в теле метода резолвился в СВОБОДНУЮ `fn f` из ENTRY-модуля (тест с `fn f(x int)`)
+  вместо локального параметра → bind_call_args против чужих params → MissingRequired. Баг
+  прецедента: check_call_argbind (types/mod.rs) для `Ident(name)` сразу лез в `fn_decls`, не
+  проверив `scope`. Фикс: `if scope.contains_key(name) { return; }` ПЕРЕД lookup'ом free-fn —
+  локальное связывание (в т.ч. closure-параметр) шейдоунит одноимённую свободную функцию;
+  closure-вызов валидируется через fn-type/codegen. Verify: trivial_congruence PASS 3/3 (было
+  8/8 FAIL); guard-тест plan153_1/resize_with_free_fn_shadow (free `fn f` + resize_with);
+  contracts 251/0 (+57skip), broad regression 0 новых FAIL. НЕ Plan 154.1 — отдельный коммит.
