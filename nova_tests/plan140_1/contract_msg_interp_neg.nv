@@ -1,0 +1,21 @@
+// Plan 140.3 ([M-140.1-message-interpolation]): a contract message may
+// interpolate runtime values via `${...}` (the same Nova interp-string syntax as
+// in normal strings), reusing the InterpolatedStr machinery. `requires x > 0,
+// "got ${x}"` is violated at x=-5; the runtime violation message renders the
+// CAPTURED value: "<file>:<line>: requires failed: got -5 (x > 0)".
+//
+// Before Plan 140.3 the message was a static literal and showed "got ${x}"
+// verbatim (no value capture). The interpolation is built lazily — only on the
+// failing path, inside the emitted `if (!(cond)) { ... }` block.
+// EXPECT_RUNTIME_PANIC requires failed: got -5 (x > 0)
+
+module plan140_1.contract_msg_interp_neg
+
+fn must_be_positive(x int) -> int
+    requires x > 0, "got ${x}"
+=> x
+
+test "interpolated requires message captures the runtime argument value" {
+    ro r = must_be_positive(-5)
+    assert(r == -5)
+}

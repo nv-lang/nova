@@ -12,6 +12,13 @@ an unproven check only explicitly — per-fn `#unchecked` or build-policy
 `--contracts=off`. Without the SMT backend the proven set is empty, so every
 contract is checked (safe degrade, slower, not unsafe).
 
+A contract violation — like an `assert` failure — is **panic-class**: caught by a
+`consume`/supervised scope it is classified as a `Panic`, not a recoverable
+`Failure` (Plan 140.3 / D13). A `requires` message may **interpolate runtime
+values** with `${...}` — `requires x > 0, "got ${x}"` renders `got -5` at the
+failing call (the message is built only on violation, never on the passing path;
+Plan 140.3).
+
 Spec: [D24](../spec/decisions/09-tooling.md#d24-стратегия-smt-проверки-контрактов)
 (SMT strategy) ·
 [D111](../spec/decisions/09-tooling.md#d111-assume--assert_static--trusted-external)

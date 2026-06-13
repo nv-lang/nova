@@ -12,6 +12,13 @@ runtime, даже в debug); **недоказанный** — проверяет
 build-policy `--contracts=off`. Без SMT-бэкенда proven-множество пусто →
 проверяется каждый контракт (safe degrade: медленнее, но не unsafe).
 
+Нарушение контракта — как и провал `assert` — **panic-класса**: пойманное
+`consume`/supervised-скоупом, оно классифицируется как `Panic`, а не recoverable
+`Failure` (Plan 140.3 / D13). Сообщение `requires` может **интерполировать
+runtime-значения** через `${...}` — `requires x > 0, "got ${x}"` показывает
+`got -5` на провалившемся вызове (сообщение строится только при нарушении, не на
+успешном пути; Plan 140.3).
+
 Spec: [D24](../spec/decisions/09-tooling.md#d24-стратегия-smt-проверки-контрактов)
 (SMT-стратегия) ·
 [D111](../spec/decisions/09-tooling.md#d111-assume--assert_static--trusted-external)

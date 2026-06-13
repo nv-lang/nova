@@ -1404,6 +1404,47 @@ impl CEmitter {
         }
     }
 
+    /// Plan 140.3 ([M-140.1-message-interpolation]): эмитит ОДИН контракт-чек
+    /// `if (!(cond)) <violation>;`. Статическое сообщение (или его отсутствие) —
+    /// прежний zero-cost one-liner через `nova_contract_violation`. ИНТЕРПОЛИРОВАННОЕ
+    /// (`contract.message_expr` = `InterpolatedStr`) — failure-БЛОК, который строит
+    /// сообщение LAZY (только при провале, внутри `if`) через interp-машинерию и
+    /// маршрутизируется через `nova_contract_violation_dyn` (nova_str user_msg).
+    /// `cond_c` — уже сэмиченное C-условие; `kind_c` ∈ {NOVA_CONTRACT_PRE/_POST/_INV};
+    /// `raw_src` — НЕэкранированный source контракта для диагностики.
+    fn emit_contract_check(
+        &mut self,
+        cond_c: &str,
+        kind_c: &str,
+        fn_name: &str,
+        raw_src: &str,
+        file_lit: &str,
+        line: usize,
+        contract: &Contract,
+    ) -> Result<(), String> {
+        let esc_src = Self::escape_c_str(raw_src);
+        if let Some(msg_expr) = &contract.message_expr {
+            if let ExprKind::InterpolatedStr { parts } = &msg_expr.kind {
+                self.line(&format!("if (!({})) {{", cond_c));
+                self.indent += 1;
+                let msg_var = self.emit_interpolated_str(parts)?;
+                self.line(&format!(
+                    "nova_contract_violation_dyn({}, \"{}\", \"{}\", \"{}\", {}, {});",
+                    kind_c, fn_name, esc_src, file_lit, line, msg_var
+                ));
+                self.indent -= 1;
+                self.line("}");
+                return Ok(());
+            }
+        }
+        let msg_arg = Self::contract_msg_arg(&contract.message);
+        self.line(&format!(
+            "if (!({})) nova_contract_violation({}, \"{}\", \"{}\", \"{}\", {}, {});",
+            cond_c, kind_c, fn_name, esc_src, file_lit, line, msg_arg
+        ));
+        Ok(())
+    }
+
     /// Plan 14 std-fix: выключает SRC-комментарии но оставляет source для
     /// line:col в codegen-ошибках. Вызывается main.rs когда `--annotate-source`
     /// не передан.
@@ -13214,12 +13255,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     let expr_c = self.emit_expr(&c.expr)?;
                     let expr_src = Self::expr_to_display(&c.expr);
                     let (file_lit, line) = self.loc_for_span(c.span.start);
-                    let msg_arg = Self::contract_msg_arg(&c.message);
-                    self.line(&format!(
-                        "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"{}\", \"{}\", {}, {});",
-                        expr_c, fn_decl.name, Self::escape_c_str(&expr_src),
-                        file_lit, line, msg_arg
-                    ));
+                    self.emit_contract_check(
+                        &expr_c, "NOVA_CONTRACT_PRE", &fn_decl.name, &expr_src, &file_lit, line, c,
+                    )?;
                 }
             }
         }
@@ -14349,6 +14387,12 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Plan 140.1 Ф.2 (D24 amend): location-first format
                 // `<file>:<line>: ensures failed: [<msg> (]<expr>[)]`.
                 let (file_lit, line) = self.loc_for_span(c.span.start);
+                // Plan 140.3: ensures uses the STATIC message path (raw `message`
+                // fallback). Interp in ensures is deferred — `${result}` would emit
+                // C `result` but the ensures var is `_nova_result` (substitute_result_var
+                // applies to the condition only), so interpolation needs result-var
+                // rewrite in the message build too ([M-140.1-message-interpolation]
+                // follow-on). `${param}` would work, but we keep ensures uniform.
                 let msg_arg = Self::contract_msg_arg(&c.message);
                 self.line(&format!(
                     "if (!({})) nova_contract_violation(NOVA_CONTRACT_POST, \"{}\", \"{}\", \"{}\", {}, {});",
@@ -14733,12 +14777,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     // Plan 140.1 Ф.2 (D24 amend): location-first format
                     // `<file>:<line>: requires failed: [<msg> (]<expr>[)]`.
                     let (file_lit, line) = self.loc_for_span(c.span.start);
-                    let msg_arg = Self::contract_msg_arg(&c.message);
-                    self.line(&format!(
-                        "if (!({})) nova_contract_violation(NOVA_CONTRACT_PRE, \"{}\", \"{}\", \"{}\", {}, {});",
-                        expr_c, f.name, Self::escape_c_str(&expr_src),
-                        file_lit, line, msg_arg
-                    ));
+                    self.emit_contract_check(
+                        &expr_c, "NOVA_CONTRACT_PRE", &f.name, &expr_src, &file_lit, line, c,
+                    )?;
                 }
             }
         }

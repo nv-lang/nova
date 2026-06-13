@@ -72,11 +72,59 @@ static inline void nova_contract_violation(
     /* Routing: fiber → fail-frame → test-frame → stderr+abort. */
     if (nova_in_fiber() && _nova_fail_top) {
         _nova_fail_top->error_msg = nova_str_from_cstr(buf);
+        /* Plan 140.3 (D24/D13 amend): a contract violation is a PANIC-class
+         * failure (a bug), identical to assert and nv_panic. Tag error_kind so
+         * ConsumeScope/supervised classify the caught error as Panic(msg), not
+         * a recoverable Failure(msg). Without this it defaulted to
+         * NOVA_THROW_USER and was indistinguishable from a normal throw. */
+        _nova_fail_top->error_kind = NOVA_THROW_PANIC;
         longjmp(_nova_fail_top->jmp, 1);
     }
     if (_nova_test_frame) {
         /* fail_msg хранит const char* — buf на стеке, поэтому копируем
          * через nova_alloc для пере-жития longjmp'а. */
+        size_t n = 0;
+        while (buf[n]) n++;
+        char* heap = (char*)nova_alloc(n + 1);
+        for (size_t i = 0; i <= n; i++) heap[i] = buf[i];
+        _nova_test_frame->fail_msg = heap;
+        longjmp(_nova_test_frame->jmp, 1);
+    }
+    fprintf(stderr, "%s\n", buf);
+    abort();
+}
+
+/* Plan 140.3 ([M-140.1-message-interpolation]): variant for a DYNAMIC message
+ * built at the violation site (an interpolated `nova_str`, not necessarily
+ * NUL-terminated → rendered with %.*s). Identical routing, format-B
+ * ("<file>:<line>: <kind> failed: <msg> (<src>)") and error_kind=PANIC tagging
+ * as nova_contract_violation. Only reached on a violation (codegen emits it
+ * inside the `if (!(cond)) { ... }` block), so building the message is lazy. */
+static inline void nova_contract_violation_dyn(
+    NovaContractKind kind,
+    const char* fn_name,
+    const char* contract_src,
+    const char* file,
+    int line,
+    nova_str user_msg)
+{
+    (void)fn_name;
+    char buf[512];
+    const char* kind_str =
+        (kind == NOVA_CONTRACT_PRE)  ? "requires" :
+        (kind == NOVA_CONTRACT_POST) ? "ensures"  :
+                                       "invariant";
+    snprintf(buf, sizeof(buf),
+        "%s:%d: %s failed: %.*s (%s)",
+        file, line, kind_str,
+        (int)user_msg.len, (const char*)user_msg.ptr, contract_src);
+
+    if (nova_in_fiber() && _nova_fail_top) {
+        _nova_fail_top->error_msg = nova_str_from_cstr(buf);
+        _nova_fail_top->error_kind = NOVA_THROW_PANIC;
+        longjmp(_nova_fail_top->jmp, 1);
+    }
+    if (_nova_test_frame) {
         size_t n = 0;
         while (buf[n]) n++;
         char* heap = (char*)nova_alloc(n + 1);

@@ -1,0 +1,52 @@
+// Plan 140.3 ([M-140-contract-panic-unwind]): an assert failure AND a contract
+// (`requires`) violation are PANIC-class failures, identical to `panic()`.
+//
+// Before: nova_assert_loc / nova_contract_violation set only error_msg on the
+// fail-frame (leaving error_kind = NOVA_THROW_USER), so a ConsumeScope/supervised
+// catch classified them as a recoverable Failure — NOT Panic — even though spec
+// D13 says "assert failure = panic". Now both tag error_kind = NOVA_THROW_PANIC
+// (like nv_panic), so `@on_exit(outcome ScopeOutcome)` receives `Panic(msg)`.
+//
+// Compile+link check (mirrors codegen_consume_panic_caught.nv): the ScopeOutcome
+// discrimination path (`error_kind == NOVA_THROW_PANIC ? Panic : Failure`) is
+// generated for an assert/contract failure inside a consume body. The runtime
+// re-raise of a panic cannot be caught in a passing test (same reason the panic
+// fixture only asserts compilation); the actual Panic-classification is verified
+// by adversarial C inspection of the emitted ScopeOutcome path.
+
+module plan140.consume_assert_contract_panic_class
+
+type ResZ {
+    ro id int
+}
+
+fn ResZ.new(id int) -> ResZ => { id }
+
+fn ResZ consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+fn checked_pos(x int) -> int
+    requires x > 0
+=> x
+
+// assert failure inside a consume body → on_exit receives Panic outcome.
+fn use_asserting() -> int {
+    consume r = ResZ.new(1) {
+        assert(false, "boom")
+        r.id
+    }
+}
+
+// contract (requires) violation inside a consume body → on_exit receives Panic.
+fn use_contract_violation() -> int {
+    consume r = ResZ.new(1) {
+        ro _ = checked_pos(-1)
+        r.id
+    }
+}
+
+test "Plan 140.3: assert/contract in consume body compile to Panic-class outcome" {
+    // Compile+link check — see header. Both panicking fns above must codegen the
+    // ScopeOutcome Panic/Failure discrimination that now reads the error_kind
+    // set by assert/contract violation.
+    assert(true)
+}
