@@ -95,14 +95,10 @@ export external fn str @hash() -> u64
 // Plan 139 Ф.2: Nova-body — копирует байты из @as_bytes() (zero-copy view)
 // в новый []u8. Семантика идентична nova_str_to_bytes (полная копия, owned).
 export fn str @to_bytes() -> []u8 {
-    ro view = @as_bytes()
-    ro n = @len()
-    mut out = []u8.with_capacity(n)
-    mut i = 0
-    while i < n {
-        out.push(view[i])
-        i = i + 1
-    }
+    // Plan 152.0 Ф.3: bulk copy via Vec.@append (RawMem.copy memmove) — zero
+    // push-loop. Owned []u8 copy of the bytes (identical to nova_str_to_bytes).
+    mut out = []u8.with_capacity(@len())
+    out.append(@as_bytes())
     out
 }
 

@@ -34,6 +34,20 @@
   `RawMem.copy_nonoverlapping` (memcpy) ≈ C-скорость без byte-loop. Бенч — подтвердить
   паритет, не решать. Маркер `[M-139.1-operator-lowered-methods]`.
 
+- **D-R5. `_buffer` = `Vec[u8]`, отдельный `StrBuf`/`string_buffer.nv` НЕ вводится**
+  (Ф.1/Ф.3/Ф.4, исполнение 2026-06-13). План задавал отдельный internal-модуль
+  `string_buffer.nv` (`StrBuf` на RawMem). Но **`Vec[u8]` уже И ЕСТЬ RawMem-буфер**
+  (Plan 131): `@with_capacity`/`@append` (`RawMem.copy` memmove, НЕ push-loop, vec_owned.nv:568)/
+  `from_bytes_unchecked_steal` (reuse buffer, без второй копии). И **`StringBuilder` уже
+  тонкая обёртка** над `{mut buf []u8}` (= Ф.4 де-факто выполнен). Вводить `StrBuf` —
+  дублировать grow/alloc/NUL Vec'а (нарушает DRY + минимализм API, хендофф 153 п.3).
+  **Решение:** `Vec[u8]` — единственный «дом буфера»; Ф.3 = заменить push-loop'ы
+  (`trim`/`concat`/`to_bytes`) на `Vec.@append` (bulk memmove) + `from_bytes_unchecked_steal`.
+  Цель автора («builder-логика в одном месте на RawMem, ноль push-loop-копипаста»)
+  достигнута через Vec, без нового типа. **AMEND 152.0 Scope:** `string_buffer.nv` строка
+  снята; `_buffer` ≡ `Vec[u8]`. (`to_lower`/`to_upper`/`from_bytes_lossy` сохраняют свои
+  loop'ы — это per-byte ТРАНСФОРМ, не copy-paste alloc/grow/NUL.)
+
 > **Q1/Q2 апрув автора (2026-06-13):** Q1 → **вариант C** (`CharsView` → `CharsIter`
 > `{buf str, pos int}`, `Next[char]`; нет позиционных `at`/`len`-коллекции; codepoint-count
 > = `as_chars().count()`; нет `char_len`/`char_at` на `str`). D250 переопределён в

@@ -22,13 +22,12 @@ export fn str @trim() -> str {
     while start < n && (bytes[start] as int) <= 32 { start = start + 1 }
     mut end = n
     while end > start && (bytes[end - 1] as int) <= 32 { end = end - 1 }
+    // Plan 152.0 Ф.3: bulk-copy the kept byte range via Vec.@append (RawMem.copy
+    // memmove — the single buffer-building home) + steal-into-str (reuse the buffer,
+    // no second memcpy). Replaces the per-byte push-loop (zero copy-paste).
     mut out = []u8.with_capacity(end - start)
-    mut i = start
-    while i < end {
-        out.push(bytes[i])
-        i = i + 1
-    }
-    str.from_bytes_unchecked(out)
+    out.append(bytes[start..end])
+    str.from_bytes_unchecked_steal(out)
 }
 
 // Lowercase копия (ASCII). Plan 139 Ф.1: Nova-body, alloc через []u8.
@@ -75,20 +74,13 @@ export fn str @to_upper() -> str {
 export fn str @concat(other str) -> str {
     ro a = @as_bytes()
     ro b = other.as_bytes()
-    ro an = @len()
-    ro bn = other.len()
-    mut out = []u8.with_capacity(an + bn)
-    mut i = 0
-    while i < an {
-        out.push(a[i])
-        i = i + 1
-    }
-    mut j = 0
-    while j < bn {
-        out.push(b[j])
-        j = j + 1
-    }
-    str.from_bytes_unchecked(out)
+    // Plan 152.0 Ф.3: one alloc (cap a+b) + two bulk Vec.@append (RawMem.copy
+    // memmove) + steal-into-str (reuse buffer, no second memcpy). Identical bytes
+    // to the retired C nova_str_concat (1 alloc + 2 memcpy + NUL); zero push-loop.
+    mut out = []u8.with_capacity(a.len() + b.len())
+    out.append(a)
+    out.append(b)
+    str.from_bytes_unchecked_steal(out)
 }
 
 // Оператор `+`: `s1 + s2 == s1.@plus(s2)` → @concat (D46).
