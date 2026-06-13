@@ -519,43 +519,48 @@ export type MutIndex[K, V] protocol {
 //   (`Nova_int_method_debug`), and the guard in emit_c.rs (Plan 154.1 Ф.1)
 //   turns any remaining primitive-via-generic mis-dispatch into a loud error.
 //
-// Bodies route through interp-string lowering (`${@}` / `${@:?}`), which maps
-// each primitive C-type to its correct conv.h formatter (`nova_int_to_str`,
-// `nova_f64_to_str`, `nova_bool_to_str` → "true"/"false", `nova_char_to_str`,
-// `nova_*_to_debug_str` for the `:?` variants — char/str debug add quotes and
-// escapes). Interp lowering uses the conv.h formatter DIRECTLY for primitives
-// (never re-dispatches to the method), so these bodies do NOT recurse.
+// Display bodies are uniform `sb.append(@)` — they dispatch on the value's
+// type through the typed `@append` overloads on StringBuilder (str/char/int/
+// f64/bool; see std/runtime/string_builder.nv). No intermediate `nova_str`
+// from an interp-string temp StringBuilder.
+//
+// Debug bodies: for `int`/`f64`/`bool` the debug form is identical to display
+// (`nova_*_to_debug_str` == `nova_*_to_str`), so they reuse `sb.append(@)`.
+// For `char`/`str` debug adds quotes + escapes (`'c'`, `"a\nb"`); that logic
+// lives in the conv.h `nova_char_to_debug_str` / `nova_str_to_debug_str`
+// formatters, reached from Nova via the interp `:?` spec. The interp path uses
+// the conv.h formatter DIRECTLY for primitives (never re-dispatches to this
+// method), so the char/str debug bodies do NOT recurse.
 //
 // `#impl(Display)` / `#impl(Debug)` opt-in (Plan 154.1 Ф.2 / D268) binds the
 // protocol to the primitive type and checks the signature.
 //
-// NOTE: `f32` is intentionally omitted — it has no conv.h formatter and is not
-// in the interp primitive-direct map, so a `${@}` body would re-dispatch and
-// recurse. Tracked as `[M-154.1-f32-display-debug]`; until then a `Vec[f32]`
-// element `.debug(sb)` surfaces the loud `E_PRIMITIVE_NO_PROTOCOL_METHOD`
-// guard (Ф.1) rather than silently mis-dispatching.
+// NOTE: `f32` is intentionally omitted — it has no conv.h formatter (and no
+// `@append(f32)` overload), tracked as `[M-154.1-f32-display-debug]`. Until
+// then a `Vec[f32]` element `.debug(sb)` surfaces the loud
+// `E_PRIMITIVE_NO_PROTOCOL_METHOD` guard (Ф.1) rather than mis-dispatching.
 
 #impl(Display)
-fn int @display(mut sb StringBuilder) -> () { sb.append("${@}") }
+fn int @display(mut sb StringBuilder) -> () { sb.append(@) }
 #impl(Debug)
-fn int @debug(mut sb StringBuilder) -> () { sb.append("${@:?}") }
+fn int @debug(mut sb StringBuilder) -> () { sb.append(@) }
 
 #impl(Display)
-fn f64 @display(mut sb StringBuilder) -> () { sb.append("${@}") }
+fn f64 @display(mut sb StringBuilder) -> () { sb.append(@) }
 #impl(Debug)
-fn f64 @debug(mut sb StringBuilder) -> () { sb.append("${@:?}") }
+fn f64 @debug(mut sb StringBuilder) -> () { sb.append(@) }
 
 #impl(Display)
-fn bool @display(mut sb StringBuilder) -> () { sb.append("${@}") }
+fn bool @display(mut sb StringBuilder) -> () { sb.append(@) }
 #impl(Debug)
-fn bool @debug(mut sb StringBuilder) -> () { sb.append("${@:?}") }
+fn bool @debug(mut sb StringBuilder) -> () { sb.append(@) }
 
 #impl(Display)
-fn char @display(mut sb StringBuilder) -> () { sb.append("${@}") }
+fn char @display(mut sb StringBuilder) -> () { sb.append(@) }
 #impl(Debug)
 fn char @debug(mut sb StringBuilder) -> () { sb.append("${@:?}") }
 
 #impl(Display)
-fn str @display(mut sb StringBuilder) -> () { sb.append("${@}") }
+fn str @display(mut sb StringBuilder) -> () { sb.append(@) }
 #impl(Debug)
 fn str @debug(mut sb StringBuilder) -> () { sb.append("${@:?}") }
