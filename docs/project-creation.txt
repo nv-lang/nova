@@ -37464,3 +37464,36 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   EXPECT_COMPILE_ERROR + 3 pos прогон+assert); корпус-скан `nova check nova_tests` —
   E_METHOD_REDEFINITION РОВНО 1 вхождение (только neg-фикстура) → 0 регрессий; std
   компилируется. D267 (10-overloading.md). branch plan-154 (синкан с main).
+
+Plan 154.1 (opt-in #impl-конформность + конкретные Display/Debug примитивов, 2026-06-13,
+  branch plan-154.1 / worktree nova-p154) — ЗАКРЫТ Ф.1–Ф.5. Закрывает класс
+  silent-mis-dispatch «primitive-element protocol-метод»: mono-тело `Vec[T] @debug`
+  вызывает `@data[i].debug(sb)` на элементе; для примитива без конкретного `@debug`
+  single-key `method_receivers`-fallback тихо роутил в erased Vec-стаб (no-op) →
+  `vec_debug_pos` выдавал мусор.
+  - Ф.1 (commit 73e2a0ed): guard в instance-dispatch — примитив-ресивер + резолв в
+    generic-тип → E_PRIMITIVE_NO_PROTOCOL_METHOD (вместо неверного/no-op вызова).
+    vec_debug_pos RUN-FAIL → CC-FAIL (правильное промежуточное).
+  - Ф.2 (commit 01d4dc16): #impl(P) ведущий атрибут теперь и на МЕТОД-декларациях
+    (был только на type). FnDecl.impl_protocols; парсер разрешает #impl перед fn;
+    чекер verify_method_impl_protocols — 3 кода (E_IMPL_UNKNOWN_PROTOCOL /
+    E_IMPL_NOT_A_PROTOCOL_METHOD / E_IMPL_SIGNATURE_MISMATCH); codegen биндит
+    type_impl_protocols[T] += P. Opt-in — структурная конформность не сломана.
+  - Ф.3 (commits a9115c71 -> 634426b7): 5 примитивов (int/f64/bool/char/str) ×
+    Display/Debug. Сперва interp-тела (sb.append("${@}")); по фидбэку автора переделано
+    на типизированные @append-overload'ы StringBuilder (@append(int)/(f64)/(bool)
+    добавлены) + sb.append(@) — без промежуточной nova_str от interp-temp. Debug char/str
+    (кавычки+escape) оставлен на interp ${@:?} (логика в conv.h, не рекурсирует).
+    f32 отложен [M-154.1-f32-display-debug] (нет conv.h-форматтера; Vec[f32].debug =
+    громкий CC-FAIL, не silent).
+  - Ф.4: throwaway НЕ реализован (str.from_debug / synthesis mis-key / gate loosening —
+    мёртвы под Variant B, примитивы резолвятся direct-dispatch'ем до synthesis).
+  - Ф.5: D268+D269 (10-overloading.md); plan154_1 5/5 (3 neg EXPECT_COMPILE_ERROR + 2 pos
+    прогон+assert). ВАЖНО: интерпретатор (nova run) выключаем — тестировал только через
+    test-build/test (C-codegen).
+  Verify (release nova): vec_debug_pos зелёный; plan131 28/0, basics/generics/plan99/
+  plan90_1/plan140_2 чисто; plan91 1/1, plan128 18/1, plan62 7-fail, plan138_2 3 — все =
+  baseline, 0 новых FAIL (StringBuilder тронут — blast radius проверен). Closes
+  [M-91.14-derive-debug]. Followups: [M-154.1-f32-display-debug],
+  [M-154.1-box-generic-static-ctor], [M-154.1-static-call-unresolved-loud],
+  [M-154.1-required-conformance].

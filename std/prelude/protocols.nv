@@ -537,8 +537,10 @@ export type MutIndex[K, V] protocol {
 //
 // NOTE: `f32` is intentionally omitted — it has no conv.h formatter (and no
 // `@append(f32)` overload), tracked as `[M-154.1-f32-display-debug]`. Until
-// then a `Vec[f32]` element `.debug(sb)` surfaces the loud
-// `E_PRIMITIVE_NO_PROTOCOL_METHOD` guard (Ф.1) rather than mis-dispatching.
+// then a `Vec[f32]` element `.debug(sb)` surfaces a loud compile error
+// (CC-FAIL — f32 routes through the str.from fallback and hits a C type
+// mismatch, not the Ф.1 `E_PRIMITIVE_NO_PROTOCOL_METHOD` guard) rather than
+// silently mis-dispatching.
 
 #impl(Display)
 fn int @display(mut sb StringBuilder) -> () { sb.append(@) }

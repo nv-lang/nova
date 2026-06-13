@@ -1,0 +1,21 @@
+// Plan 154.1 (D268): method-level #impl(P) opt-in — binds protocol to the
+// receiver type + checks the signature. Structural conformance unchanged.
+module plan154_1.pos_user_impl_method
+
+type Point { x int, y int }
+
+#impl(Display)
+fn Point @display(mut sb StringBuilder) -> () {
+    sb.append("Point(")
+    sb.append(@x)
+    sb.append(", ")
+    sb.append(@y)
+    sb.append(")")
+}
+
+test "user #impl(Display) on a method works" {
+    consume sb = StringBuilder.new()
+    ro p = Point { x: 1, y: 2 }
+    p.display(sb)
+    assert(sb.as_str() == "Point(1, 2)")
+}

@@ -36023,3 +36023,17 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   **type-check-only** (`types/mod.rs`, guard `user_declared_types` — не ломает Plan 62
   локальный type-shadow, напр. for_in_range_iter). D267. `nova test plan154` 5/5 PASS,
   корпус-скан 0 регрессий.
+
+- **Plan 154.1 (#impl opt-in конформность + Display/Debug примитивов, 2026-06-13)**:
+  (а) **opt-in `#impl(P)`** — ведущий атрибут `#impl(Display)` теперь и на МЕТОД-декларациях
+  (`fn int @display`), не только на `type`. Конформность остаётся **структурной**; `#impl` —
+  необязательная пометка, которая проверяет подпись против протокола + явно биндит протокол
+  к типу (`type_impl_protocols`). Не required (как Rust) — путь туда отдельным шагом. 3 кода:
+  `E_IMPL_UNKNOWN_PROTOCOL` / `E_IMPL_NOT_A_PROTOCOL_METHOD` / `E_IMPL_SIGNATURE_MISMATCH`.
+  (б) **конкретные Display/Debug примитивов** закрывают silent-mis-dispatch: элемент-вызов
+  `@data[i].debug(sb)` в mono `Vec[T] @debug` для примитива тихо роутился в erased Vec-стаб
+  (no-op). Дать `int/f64/bool/char/str` конкретный `@debug`/`@display` (Variant B) → чинит
+  «даром» через direct-dispatch; codegen-guard `E_PRIMITIVE_NO_PROTOCOL_METHOD` ловит
+  остаток громко. Тела — `sb.append(@)` через типизированные `@append`-overload'ы (без
+  interp-temp nova_str). f32 отложен (`[M-154.1-f32-display-debug]`). D268/D269.
+  `vec_debug_pos` зелёный, 0 регрессий.

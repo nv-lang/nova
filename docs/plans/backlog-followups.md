@@ -206,6 +206,13 @@
   остаётся.
 - **`[M-154.1-required-conformance]`** (planned, P3): возможный переход opt-in →
   required (номинальная конформность, как Rust) отдельным шагом после 154.1.
+- **`[M-154.1-f32-display-debug]`** (floating, P2): `f32` не получил конкретных
+  `#impl(Display)`/`#impl(Debug)` — нет conv.h-форматтера `nova_f32_*` и
+  `@append(f32)`-overload'а; `${f32}`-body рекурсировал бы (f32 не в interp
+  primitive-direct map). Сейчас `Vec[f32].debug` даёт громкий CC-FAIL (f32 идёт
+  через str.from-fallback → C type mismatch, НЕ через Ф.1-guard) — не silent, но
+  и не зелёный. Лечить: conv.h `nova_f32_to_str`/`_to_debug_str` (f32→double) +
+  `@append(f32)` + ветка в interp-map → затем `#impl(Display/Debug) fn f32`.
 
 ## Конвенция
 - **Planned** маркер → Followups своего плана (+ индекс-строка здесь с home).
