@@ -29,7 +29,7 @@ module collections.vec
 /// assert(v[2] == 30)
 /// ```
 export fn Vec[T] @index(i int) -> T
-    requires 0 <= i && i < @len, "Vec: index out of bounds"
+    requires 0 <= i && i < @len
 {
     unsafe { @data[i] }
 }
@@ -54,7 +54,7 @@ export fn Vec[T] @get(i int) -> Option[T] {
 /// not dispatch through this method, but the name conforms to the D240
 /// `a.@index(key, val)` protocol contract.
 export fn Vec[T] mut @index(i int, val T) -> ()
-    requires 0 <= i && i < @len, "Vec: index out of bounds"
+    requires 0 <= i && i < @len
 {
     unsafe {
         @data[i] = val

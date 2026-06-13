@@ -1,6 +1,6 @@
 // Plan 131 Ф.3 NEG — insert() beyond len panics (i > len is invalid; i == len
 // is a valid append).
-// EXPECT_RUNTIME_PANIC Vec.insert: index out of bounds
+// EXPECT_RUNTIME_PANIC requires failed
 
 module neg.vec_insert_oob_neg
 

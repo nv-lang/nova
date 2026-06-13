@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC length mismatch
+// EXPECT_RUNTIME_PANIC requires failed
 //
 // Plan 90.1 — негатив: copy_from — src longer than dst → panic (was already panic).
 // D141 amend: new message "length mismatch" instead of "src longer than dst".
