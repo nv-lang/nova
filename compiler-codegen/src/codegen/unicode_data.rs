@@ -734,6 +734,243 @@ pub fn render_word_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::Resul
     Ok(out)
 }
 
+// ─── Plan 152.3b: General_Category + binary-property tables (UCD) ───
+
+/// General_Category 2-letter abbreviation -> stable small int (1..=30). MUST match
+/// the decoding in std/unicode/category.nv (mirror of `wb_cat_code`/`words.nv`).
+///
+/// The 30 General_Category values, grouped by their top-level major class, in the
+/// canonical UCD order (TR44 Table 12). Code 30 (`Cn`) is the default for any
+/// codepoint NOT listed in `UnicodeData.txt` (unassigned/reserved/noncharacter).
+///
+///   Letters:    1=Lu 2=Ll 3=Lt 4=Lm 5=Lo
+///   Marks:      6=Mn 7=Mc 8=Me
+///   Numbers:    9=Nd 10=Nl 11=No
+///   Punctuation:12=Pc 13=Pd 14=Ps 15=Pe 16=Pi 17=Pf 18=Po
+///   Symbols:    19=Sm 20=Sc 21=Sk 22=So
+///   Separators: 23=Zs 24=Zl 25=Zp
+///   Other:      26=Cc 27=Cf 28=Cs 29=Co 30=Cn
+fn gc_cat_code(abbr: &str) -> u8 {
+    match abbr {
+        "Lu" => 1,
+        "Ll" => 2,
+        "Lt" => 3,
+        "Lm" => 4,
+        "Lo" => 5,
+        "Mn" => 6,
+        "Mc" => 7,
+        "Me" => 8,
+        "Nd" => 9,
+        "Nl" => 10,
+        "No" => 11,
+        "Pc" => 12,
+        "Pd" => 13,
+        "Ps" => 14,
+        "Pe" => 15,
+        "Pi" => 16,
+        "Pf" => 17,
+        "Po" => 18,
+        "Sm" => 19,
+        "Sc" => 20,
+        "Sk" => 21,
+        "So" => 22,
+        "Zs" => 23,
+        "Zl" => 24,
+        "Zp" => 25,
+        "Cc" => 26,
+        "Cf" => 27,
+        "Cs" => 28,
+        "Co" => 29,
+        "Cn" => 30,
+        _ => 0,
+    }
+}
+
+/// `Cn` (unassigned) code — the implicit default for any codepoint absent from
+/// the emitted GC table (mirrors how the break tables omit their "Other" default).
+const GC_CN: u8 = 30;
+
+/// General_Category + binary-property range tables derived from the UCD.
+pub struct CategoryTables {
+    /// (lo, hi, code) General_Category ranges, sorted by lo, with consecutive
+    /// equal-category runs collapsed. `Cn` (default, code 30) runs are OMITTED —
+    /// any codepoint not covered is implicitly `Cn` (absent => Cn).
+    pub gc: Vec<(u32, u32, u8)>,
+    /// (lo, hi) `Alphabetic` ranges (DerivedCoreProperties), sorted/merged.
+    pub alpha: Vec<(u32, u32)>,
+    /// (lo, hi) `White_Space` ranges (PropList), sorted/merged.
+    pub white_space: Vec<(u32, u32)>,
+}
+
+/// Collapse a sorted list of (cp, code) into compact (lo, hi, code) ranges,
+/// merging adjacent codepoints that carry the same code.
+fn collapse_cp_codes(mut pairs: Vec<(u32, u8)>) -> Vec<(u32, u32, u8)> {
+    pairs.sort_by_key(|&(cp, _)| cp);
+    let mut out: Vec<(u32, u32, u8)> = Vec::new();
+    for (cp, code) in pairs {
+        if let Some(last) = out.last_mut() {
+            if last.2 == code && cp == last.1 + 1 {
+                last.1 = cp;
+                continue;
+            }
+        }
+        out.push((cp, cp, code));
+    }
+    out
+}
+
+/// Sort + merge a set of (lo, hi) ranges into the minimal sorted, non-overlapping,
+/// non-adjacent cover (adjacent ranges hi+1==next.lo are joined for compactness).
+fn merge_ranges(mut ranges: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
+    ranges.sort_by_key(|&(lo, _)| lo);
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for (lo, hi) in ranges {
+        if let Some(last) = out.last_mut() {
+            if lo <= last.1.saturating_add(1) {
+                if hi > last.1 {
+                    last.1 = hi;
+                }
+                continue;
+            }
+        }
+        out.push((lo, hi));
+    }
+    out
+}
+
+/// Parse the UCD General_Category (`UnicodeData.txt` field 2) plus the
+/// `Alphabetic` (`DerivedCoreProperties.txt`) and `White_Space` (`PropList.txt`)
+/// binary properties into compact range tables. Numeric is NOT a separate table —
+/// it is derived at runtime as GC ∈ {Nd, Nl, No} (matches Rust `char::is_numeric`).
+///
+/// `UnicodeData.txt` range rows: a `<..., First>` line and the following
+/// `<..., Last>` line bracket a contiguous block sharing the same category; both
+/// carry the same field-2 abbreviation, so the whole [First..=Last] span is
+/// assigned that code. All other rows are single codepoints.
+pub fn parse_category_tables(ucd_dir: &Path) -> anyhow::Result<CategoryTables> {
+    let read = |name: &str| -> anyhow::Result<String> {
+        let p = ucd_dir.join(name);
+        std::fs::read_to_string(&p)
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {}", p.display(), e))
+    };
+
+    // --- UnicodeData.txt field 2 = General_Category abbreviation ---
+    // Fields (';'-separated): [0]=codepoint, [1]=name, [2]=GC. A name ending in
+    // ", First>" opens a range closed by the next ", Last>" row (same GC).
+    let mut gc_pairs: Vec<(u32, u8)> = Vec::new();
+    let mut pending_first: Option<(u32, u8)> = None;
+    for line in read("UnicodeData.txt")?.lines() {
+        let f: Vec<&str> = line.split(';').collect();
+        if f.len() < 3 {
+            continue;
+        }
+        let cp = match u32::from_str_radix(f[0], 16) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let code = gc_cat_code(f[2].trim());
+        if code == 0 {
+            // Unknown abbreviation — UCD should never produce this; skip defensively.
+            continue;
+        }
+        let name = f[1];
+        if name.ends_with(", First>") {
+            pending_first = Some((cp, code));
+        } else if name.ends_with(", Last>") {
+            // Close the range opened by the matching First> row. First/Last carry
+            // the same GC; assign the whole [First..=Last] span that category.
+            if let Some((first_cp, first_code)) = pending_first.take() {
+                debug_assert_eq!(first_code, code);
+                for x in first_cp..=cp {
+                    gc_pairs.push((x, first_code));
+                }
+            } else {
+                gc_pairs.push((cp, code));
+            }
+        } else {
+            gc_pairs.push((cp, code));
+        }
+    }
+    let gc = collapse_cp_codes(gc_pairs);
+
+    // --- DerivedCoreProperties.txt: Alphabetic ---
+    let mut alpha: Vec<(u32, u32)> = Vec::new();
+    for line in read("DerivedCoreProperties.txt")?.lines() {
+        let core = line.split('#').next().unwrap_or("").trim();
+        if core.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = core.split(';').collect();
+        if parts.len() < 2 || parts[1].trim() != "Alphabetic" {
+            continue;
+        }
+        if let Some(r) = parse_range_pair(parts[0]) {
+            alpha.push(r);
+        }
+    }
+    let alpha = merge_ranges(alpha);
+
+    // --- PropList.txt: White_Space ---
+    let mut white_space: Vec<(u32, u32)> = Vec::new();
+    for line in read("PropList.txt")?.lines() {
+        let core = line.split('#').next().unwrap_or("").trim();
+        if core.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = core.split(';').collect();
+        if parts.len() < 2 || parts[1].trim() != "White_Space" {
+            continue;
+        }
+        if let Some(r) = parse_range_pair(parts[0]) {
+            white_space.push(r);
+        }
+    }
+    let white_space = merge_ranges(white_space);
+
+    Ok(CategoryTables { gc, alpha, white_space })
+}
+
+/// Render `std/unicode/category_data.nv` (peer of the future category.nv). GC
+/// ranges as `;`-separated `lo,hi,code` (lowercase hex); Alphabetic/White_Space as
+/// `lo,hi` range pairs (binary search). Sorted by lo deterministically.
+pub fn render_category_data_nv(t: &CategoryTables, version: &str) -> String {
+    let mut out = String::new();
+    out.push_str("// AUTO-GENERATED by `nova-codegen unicode`. DO NOT EDIT BY HAND.\n");
+    out.push_str("// Source: UCD UnicodeData.txt (field 2 = General_Category)\n");
+    out.push_str("//         + DerivedCoreProperties.txt (Alphabetic) + PropList.txt (White_Space).\n");
+    out.push_str("// Regenerate: nova-codegen unicode --ucd-dir <UCD-dir> --root <repo>\n");
+    out.push_str("//\n");
+    out.push_str("// GC_DATA : \"lo,hi,code;..\"  General_Category ranges (default Cn=30 absent)\n");
+    out.push_str("//   code: Letters    1=Lu 2=Ll 3=Lt 4=Lm 5=Lo\n");
+    out.push_str("//         Marks      6=Mn 7=Mc 8=Me\n");
+    out.push_str("//         Numbers    9=Nd 10=Nl 11=No\n");
+    out.push_str("//         Punct.     12=Pc 13=Pd 14=Ps 15=Pe 16=Pi 17=Pf 18=Po\n");
+    out.push_str("//         Symbols    19=Sm 20=Sc 21=Sk 22=So\n");
+    out.push_str("//         Separators 23=Zs 24=Zl 25=Zp\n");
+    out.push_str("//         Other      26=Cc 27=Cf 28=Cs 29=Co 30=Cn (default, omitted)\n");
+    out.push_str("// ALPHA_DATA : \"lo,hi;..\"  Alphabetic ranges (DerivedCoreProperties)\n");
+    out.push_str("// WS_DATA    : \"lo,hi;..\"  White_Space ranges (PropList)\n");
+    out.push_str("// Numeric is derived at runtime as GC in {Nd,Nl,No} (char::is_numeric); no table.\n");
+    out.push_str("// All ranges sorted by lo (binary search). Pinned to UNICODE_VERSION.\n");
+    out.push('\n');
+    out.push_str("module std.unicode\n");
+    out.push('\n');
+    out.push_str(&format!(
+        "export const CATEGORY_UNICODE_VERSION str = \"{}\"\n\n",
+        version
+    ));
+    let gc_s: Vec<String> = t
+        .gc
+        .iter()
+        .map(|&(lo, hi, code)| format!("{:x},{:x},{:x}", lo, hi, code))
+        .collect();
+    out.push_str(&format!("const GC_DATA str = \"{}\"\n\n", gc_s.join(";")));
+    out.push_str(&format!("const ALPHA_DATA str = \"{}\"\n\n", emit_range_pairs(&t.alpha)));
+    out.push_str(&format!("const WS_DATA str = \"{}\"\n", emit_range_pairs(&t.white_space)));
+    let _ = GC_CN; // documents the default; not emitted (Cn ranges are omitted).
+    out
+}
+
 // ─── Plan 152.4.4: case folding + Unicode case mapping (UAX, SpecialCasing) ───
 
 /// Case-mapping data: full case folding + full lower/upper mappings, plus the
