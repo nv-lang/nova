@@ -1,0 +1,95 @@
+// [M-opt-preempt-strided-loop] Part B — a pure element-wise copy loop
+// `for i in lo..hi { dst[i] = src[i] }` over Vec[T] is lowered to a single
+// overlap-safe bulk copy (memmove): no per-element loop, no preempt-check, no
+// per-element bounds branch. Results MUST be identical to the per-element loop.
+//
+// The codegen effect (memmove emitted; loop gone) is asserted by grepping the
+// emitted C in closure verification. These tests pin the SEMANTICS.
+
+module plan143.copy_loop_memmove
+
+import std.collections.vec.{Vec}
+
+test "full copy loop — lowered, correct" {
+    mut src = Vec[int].from([10, 20, 30, 40, 50])
+    mut dst = Vec[int].from([0, 0, 0, 0, 0])
+    ro n =src.len()
+    for i in 0..n {
+        dst[i] = src[i]
+    }
+    assert(dst.equal(Vec[int].from([10, 20, 30, 40, 50])))
+}
+
+test "partial sub-range copy — only [1,4) copied" {
+    mut src = Vec[int].from([1, 2, 3, 4, 5])
+    mut dst = Vec[int].from([9, 9, 9, 9, 9])
+    for i in 1..4 {
+        dst[i] = src[i]
+    }
+    assert(dst.equal(Vec[int].from([9, 2, 3, 4, 9])))
+}
+
+test "self copy (overlap-safe memmove) — no corruption" {
+    mut v = Vec[int].from([7, 8, 9])
+    ro n =v.len()
+    for i in 0..n {
+        v[i] = v[i]
+    }
+    assert(v.equal(Vec[int].from([7, 8, 9])))
+}
+
+test "empty range — no-op" {
+    mut src = Vec[int].from([1, 2, 3])
+    mut dst = Vec[int].from([4, 5, 6])
+    for i in 2..2 {
+        dst[i] = src[i]
+    }
+    assert(dst.equal(Vec[int].from([4, 5, 6])))
+}
+
+test "fallback: extra statement keeps the loop — correct" {
+    mut src = Vec[int].from([1, 2, 3])
+    mut dst = Vec[int].from([0, 0, 0])
+    mut sum = 0
+    for i in 0..3 {
+        dst[i] = src[i]
+        sum = sum + src[i]
+    }
+    assert(dst.equal(Vec[int].from([1, 2, 3])))
+    assert(sum == 6)
+}
+
+test "offset-overlapping writable views — propagation preserved" {
+    // a = v[1..5] (base+1), b = v[0..4] (base+0): destructive forward overlap.
+    // The ascending per-element loop PROPAGATES (v -> [0,0,0,0,0]); the runtime
+    // overlap guard must fall to the element loop here, NOT memmove (which would
+    // give [0,0,1,2,3]). This is the adversarial-review regression guard.
+    mut v = Vec[int].from([0, 1, 2, 3, 4])
+    mut a = v[1..5]
+    mut b = v[0..4]
+    for i in 0..4 {
+        a[i] = b[i]
+    }
+    assert(v.equal(Vec[int].from([0, 0, 0, 0, 0])))
+}
+
+test "non-destructive overlap (dst before src) — memmove matches loop" {
+    // a = v[0..4] (base+0), b = v[1..5] (base+1): dst <= src, forward-safe; both
+    // the loop and memmove shift left -> [1,2,3,4,4].
+    mut v = Vec[int].from([0, 1, 2, 3, 4])
+    mut a = v[0..4]
+    mut b = v[1..5]
+    for i in 0..4 {
+        a[i] = b[i]
+    }
+    assert(v.equal(Vec[int].from([1, 2, 3, 4, 4])))
+}
+
+test "inclusive range copy — correct (no hi+1 overflow path)" {
+    mut src = Vec[int].from([5, 6, 7, 8])
+    mut dst = Vec[int].from([0, 0, 0, 0])
+    for i in 0..=3 {
+        dst[i] = src[i]
+    }
+    assert(dst.equal(Vec[int].from([5, 6, 7, 8])))
+}

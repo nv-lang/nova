@@ -11703,8 +11703,85 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     format!("({} && {})", tag_eq, field_conds.join(" && "))
                 };
             }
+            // Plan 153.3 fix: mono'd generic sum whose legacy `sum_schemas`
+            // entry is absent under the mono'd key (generic sums register the
+            // schema under the GENERIC name; the mono'd key may be unregistered
+            // here) — structural `==` otherwise silently degraded to pointer
+            // identity (`Foo[int].A(1) == A(1)` → false). Reconstruct the
+            // substituted variant schema from the generic template + recorded
+            // mono type-args and emit the same tag+payload recursion. Mono'd
+            // sum C tags use the FULL mangled prefix `Nova_<mono>` (the mono
+            // constructor emits `NOVA_TAG_Nova_<mono>_<V>`), unlike non-generic
+            // sums (which strip `Nova_`), so the tag prefix is the full c-type
+            // name (sans `*`). Strictly a fallback BEFORE pointer-identity — it
+            // only fires for sums currently broken, never changing a sum that
+            // already resolved via `sum_schemas`/@equal/@compare above.
+            {
+                let full_c = cty.trim_end_matches('*');
+                if let Some(recon) = self.reconstruct_mono_sum_schema(full_c) {
+                    let mut field_conds: Vec<String> = Vec::new();
+                    for (var_name, field_types) in &recon {
+                        if field_types.is_empty() {
+                            continue;
+                        }
+                        let var_fields: Vec<String> = field_types
+                            .iter()
+                            .enumerate()
+                            .map(|(i, fty)| {
+                                let li = format!("({})->payload.{}._{}", l, var_name, i);
+                                let ri = format!("({})->payload.{}._{}", r, var_name, i);
+                                self.emit_field_eq(fty, &li, &ri, depth + 1)
+                            })
+                            .collect();
+                        field_conds.push(format!(
+                            "(({l})->tag != NOVA_TAG_{ty}_{v} || ({fields}))",
+                            l = l,
+                            ty = full_c,
+                            v = var_name,
+                            fields = var_fields.join(" && ")
+                        ));
+                    }
+                    let tag_eq = format!("(({l})->tag == ({r})->tag)", l = l, r = r);
+                    return if field_conds.is_empty() {
+                        tag_eq
+                    } else {
+                        format!("({} && {})", tag_eq, field_conds.join(" && "))
+                    };
+                }
+            }
             // No structural info available — fall back to pointer identity.
             return format!("(({}) == ({}))", l, r);
+        }
+        // Plan 153.3 fix: Result is a *special* heap-pointer ABI `NovaRes_<n>*`
+        // (NOT a `Nova_X*` sum — it carries extra typed-error fields), so it
+        // failed the `Nova_`-prefix sum test above and fell through to pointer
+        // identity (`Ok(1) == Ok(1)` → false). Compare tag + the active
+        // variant's payload structurally. `novares_ok_err` yields the concrete
+        // `(ok, err)` C-types; every mono'd Result instance shares the generic
+        // tags `NOVA_TAG_Result_Ok`/`_Err`.
+        if cty.starts_with("NovaRes_") && cty.ends_with('*') {
+            if let Some((ok_c, err_c)) = self.novares_ok_err(cty) {
+                let ok_eq = self.emit_field_eq(
+                    &ok_c,
+                    &format!("({})->payload.Ok._0", l),
+                    &format!("({})->payload.Ok._0", r),
+                    depth + 1,
+                );
+                let err_eq = self.emit_field_eq(
+                    &err_c,
+                    &format!("({})->payload.Err._0", l),
+                    &format!("({})->payload.Err._0", r),
+                    depth + 1,
+                );
+                return format!(
+                    "((({l})->tag == ({r})->tag) && (({l})->tag != NOVA_TAG_Result_Ok \
+                     || ({ok})) && (({l})->tag != NOVA_TAG_Result_Err || ({err})))",
+                    l = l,
+                    r = r,
+                    ok = ok_eq,
+                    err = err_eq
+                );
+            }
         }
         // Any other pointer (void*/nova_ptr/double-ptr/typed raw ptr) — opaque,
         // identity comparison is the only meaningful equality.
@@ -11720,6 +11797,68 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // we have no field schema for, where byte-compare is the best available
         // and keeps codegen total.
         format!("(memcmp(&{}, &{}, sizeof({})) == 0)", l, r, cty)
+    }
+
+    /// Plan 153.3: reconstruct the *substituted* variant schema of a mono'd
+    /// generic sum (`Nova_Foo____nova_int` → `[("A", ["nova_int"]), ("B", [])]`)
+    /// from the generic template + the recorded mono type-args. Used by
+    /// `emit_field_eq` when the legacy `sum_schemas` lacks the mono'd key, so
+    /// structural `==` works instead of degrading to pointer identity.
+    ///
+    /// `full_c_name` is the full mangled name WITH the `Nova_` prefix (the key
+    /// of `generic_type_instance_info`, e.g. `"Nova_Foo____nova_int"`). Returns
+    /// variants in template declaration order. Pure `&self` / read-only:
+    /// substitutes a payload that is a *bare* generic type-param by position;
+    /// any other payload slot reuses the generic schema's stored C-type
+    /// (concrete for non-param payloads, `void*` for the rare nested-generic
+    /// case — degraded to identity for that slot only, never wrong for the
+    /// common scalar/record/str/nested-mono'd-sum payloads).
+    fn reconstruct_mono_sum_schema(&self, full_c_name: &str) -> Option<Vec<(String, Vec<String>)>> {
+        let (base, type_args_c) = {
+            let info = self.generic_type_instance_info.borrow();
+            info.get(full_c_name)?.clone()
+        };
+        let template = self.generic_type_templates.get(&base)?;
+        let variants = match &template.kind {
+            TypeDeclKind::Sum(vs) => vs,
+            _ => return None,
+        };
+        // generic param name → concrete C type, by declaration position.
+        let param_map: HashMap<String, String> = template
+            .generics
+            .iter()
+            .enumerate()
+            .filter_map(|(i, g)| type_args_c.get(i).map(|c| (g.name.clone(), c.clone())))
+            .collect();
+        let generic_schema = self.sum_schemas.get(&base);
+        let mut out: Vec<(String, Vec<String>)> = Vec::new();
+        for v in variants {
+            let tyrefs: Vec<&TypeRef> = match &v.kind {
+                SumVariantKind::Unit => Vec::new(),
+                SumVariantKind::Tuple(types) => types.iter().collect(),
+                SumVariantKind::Record(fields) => fields.iter().map(|f| &f.ty).collect(),
+            };
+            let mut slot_c: Vec<String> = Vec::new();
+            for (i, tr) in tyrefs.iter().enumerate() {
+                let c = match tr {
+                    TypeRef::Named { path, generics, .. }
+                        if path.len() == 1
+                            && generics.is_empty()
+                            && param_map.contains_key(&path[0]) =>
+                    {
+                        param_map.get(&path[0]).cloned().unwrap()
+                    }
+                    _ => generic_schema
+                        .and_then(|gs| gs.get(&v.name))
+                        .and_then(|slots| slots.get(i))
+                        .cloned()
+                        .unwrap_or_else(|| "void*".to_string()),
+                };
+                slot_c.push(c);
+            }
+            out.push((v.name.clone(), slot_c));
+        }
+        Some(out)
     }
 
     /// Plan 49 Ф.6 cross-type cascade helper: C-type string → Nova type name
@@ -15713,6 +15852,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     /// throw-path through NovaFailFrame). is_loop_body=true: break/continue
     /// в нашей собственной body — local, не пересекают loop boundary.
     fn emit_loop_body_inline(&mut self, body: &Block) -> Result<(), String> {
+        self.emit_loop_body_inline_ex(body, false)
+    }
+
+    /// [M-opt-preempt-strided-loop] Part A: `skip_preempt` omits the
+    /// per-iteration safepoint for provably-short loops (constant/small
+    /// bound). Such loops cannot monopolise a worker (bounded by
+    /// construction), and the `nova_preempt_check()` call is a barrier that
+    /// blocks clang vectorization/unroll of tight bodies. Variable/unbounded
+    /// loops MUST pass `false` — else tight-loop-starvation returns (a
+    /// CPU-bound fiber on a large/unbounded loop monopolises its worker,
+    /// exactly what the per-iteration safepoint prevents).
+    fn emit_loop_body_inline_ex(&mut self, body: &Block, skip_preempt: bool) -> Result<(), String> {
         let block_id = self.enter_defer_scope(body, true);
         // Plan 44.7: preemption safepoint at the loop backedge. Emitted as
         // the first statement of the body so it runs at the start of every
@@ -15721,7 +15872,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // it a tight arithmetic loop with no function calls (`while i < N
         // { i = i + 1 }`) would never reach a prologue safepoint and could
         // monopolise its worker. No-op in single-thread mode.
-        self.line("nova_preempt_check();");
+        if !skip_preempt {
+            self.line("nova_preempt_check();");
+        }
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
         }
@@ -15731,6 +15884,169 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
         self.leave_defer_scope(block_id);
         Ok(())
+    }
+
+    /// [M-opt-preempt-strided-loop] Part A: compile-time integer value of a
+    /// literal range bound (`0`, `16`). `None` if not a plain integer literal
+    /// — callers then conservatively KEEP the preempt-check (correctness over
+    /// optimization). Only plain literals fold; variables/arithmetic/negatives
+    /// are treated as non-const (safe under-approximation).
+    fn loop_bound_int_literal(e: &Expr) -> Option<i64> {
+        match &e.kind {
+            ExprKind::IntLit(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// [M-opt-preempt-strided-loop] Part B: recognize a pure element-wise copy
+    /// loop `for i in lo..hi { dst[i] = src[i] }` over `Vec[T]` and lower it to
+    /// a single overlap-safe bulk copy (memmove) — eliminating the per-element
+    /// loop entirely (no preempt-check, no per-element bounds branch; clang
+    /// emits a vectorized memmove). Returns `Some(tmp)` when lowered, `None`
+    /// when the body is not a recognized safe copy (caller emits the loop).
+    ///
+    /// Conservative — lowers ONLY when ALL hold (else fall back to the loop):
+    ///   * body is exactly one `dst[i] = src[i]` plain assign, no trailing;
+    ///   * both indices are exactly the loop variable;
+    ///   * `dst`/`src` are plain identifiers (pure, single-eval, no side fx);
+    ///   * both are the SAME `Vec[T]` type (flat `T*` storage → slot-copy ==
+    ///     value-copy), excluding raw `*mut Vec` buffers (`...**`);
+    ///   * element is a flat POD: primitive/value-record (`nova_*`) or pointer
+    ///     (`..._p`) — inline-struct elements are skipped (slot-copy may differ).
+    /// Overlap-safe `memmove` (RawMem.copy semantics) handles self-copy / views;
+    /// the bounds guard preserves the per-element OOB-panic.
+    fn try_emit_range_copy_memmove(
+        &mut self,
+        binding: &str,
+        start: &Expr,
+        end: &Expr,
+        inclusive: bool,
+        body: &Block,
+    ) -> Result<Option<String>, String> {
+        if body.stmts.len() != 1 || body.trailing.is_some() {
+            return Ok(None);
+        }
+        let (target, value) = match &body.stmts[0] {
+            Stmt::Assign { target, op: AssignOp::Assign, value, .. } => (target, value),
+            _ => return Ok(None),
+        };
+        let (dst_obj, dst_idx) = match &target.kind {
+            ExprKind::Index { obj, index } => (obj, index),
+            _ => return Ok(None),
+        };
+        let (src_obj, src_idx) = match &value.kind {
+            ExprKind::Index { obj, index } => (obj, index),
+            _ => return Ok(None),
+        };
+        // Both indices must be exactly the loop variable.
+        let idx_ok = |k: &ExprKind| matches!(k, ExprKind::Ident(n) if n == binding);
+        if !idx_ok(&dst_idx.kind) || !idx_ok(&src_idx.kind) {
+            return Ok(None);
+        }
+        // `dst`/`src` must be plain identifiers — pure, evaluated once, no aliasing
+        // surprises from complex receiver exprs.
+        if !matches!(&dst_obj.kind, ExprKind::Ident(_))
+            || !matches!(&src_obj.kind, ExprKind::Ident(_))
+        {
+            return Ok(None);
+        }
+        // Same `Vec[T]` value type on both sides (flat `T*` slot storage).
+        // Exclude raw `*mut Vec` (`Nova_Vec____...**`) — that is a pointer, not a Vec.
+        let dst_ty = self.infer_expr_c_type(dst_obj);
+        let src_ty = self.infer_expr_c_type(src_obj);
+        if !dst_ty.starts_with("Nova_Vec____")
+            || dst_ty.trim_end().ends_with("**")
+            || dst_ty != src_ty
+        {
+            return Ok(None);
+        }
+        // Element must be a flat POD slot (slot-copy == value-copy): primitive /
+        // value-record (`nova_*`) or pointer element (`..._p`). Inline composite
+        // elements are skipped — conservative.
+        let elem_suffix = dst_ty
+            .trim_end_matches('*')
+            .trim()
+            .strip_prefix("Nova_Vec____")
+            .unwrap_or("");
+        let elem_flat_pod = elem_suffix.starts_with("nova_") || elem_suffix.ends_with("_p");
+        if !elem_flat_pod {
+            return Ok(None);
+        }
+
+        // --- Recognized: emit overlap-correct bulk copy in place of the loop. ---
+        let dst_c = self.emit_expr(dst_obj)?;
+        let src_c = self.emit_expr(src_obj)?;
+        let lo_c = self.emit_expr(start)?;
+        let hi_c = self.emit_expr(end)?;
+        let vd = self.fresh_tmp();
+        let vs = self.fresh_tmp();
+        let vlo = self.fresh_tmp();
+        let vlast = self.fresh_tmp();
+        let vn = self.fresh_tmp();
+        let vds = self.fresh_tmp();
+        let vss = self.fresh_tmp();
+        let vnb = self.fresh_tmp();
+        let vk = self.fresh_tmp();
+        let tmp = self.fresh_tmp();
+        self.line(&format!("nova_unit {};", tmp));
+        self.line("{");
+        self.indent += 1;
+        self.line(&format!("{} {} = {};", dst_ty, vd, dst_c));
+        self.line(&format!("{} {} = {};", src_ty, vs, src_c));
+        self.line(&format!("nova_int {} = ({});", vlo, lo_c));
+        // `last` = highest index the per-element loop would touch. Formed WITHOUT
+        // `hi + 1` so an inclusive end == I64_MAX cannot signed-overflow (UB);
+        // the `+1` lives only in the count, computed after the bounds check has
+        // proven `last < len <= I64_MAX`.
+        let last_expr = if inclusive {
+            format!("({})", hi_c)
+        } else {
+            format!("({}) - 1", hi_c)
+        };
+        self.line(&format!("nova_int {} = {};", vlast, last_expr));
+        self.line(&format!("if ({} >= {}) {{", vlast, vlo));
+        self.indent += 1;
+        // Preserve the per-element OOB-panic (highest accessed index = `last`).
+        self.line(&format!("if ({} < 0) nv_panic_index_oob({}, ({})->len);", vlo, vlo, vd));
+        self.line(&format!(
+            "if ({} >= ({})->len) nv_panic_index_oob({}, ({})->len);",
+            vlast, vs, vlast, vs
+        ));
+        self.line(&format!(
+            "if ({} >= ({})->len) nv_panic_index_oob({}, ({})->len);",
+            vlast, vd, vlast, vd
+        ));
+        self.line(&format!("nova_int {} = {} - {} + 1;", vn, vlast, vlo));
+        self.line(&format!("void* {} = (void*)(({})->data + {});", vds, vd, vlo));
+        self.line(&format!("void* {} = (void*)(({})->data + {});", vss, vs, vlo));
+        self.line(&format!("size_t {} = (size_t){} * sizeof(*({})->data);", vnb, vn, vd));
+        // The ascending per-element loop `dst[i]=src[i]` equals memmove EXCEPT
+        // under destructive forward overlap — dst strictly inside [src, src+n),
+        // reachable via writable offset-overlapping Vec views (`a=v[1..];
+        // b=v[0..]; a[i]=b[i]`), where the loop PROPAGATES. Fast-path memmove
+        // (vectorized, overlap-safe) when that cannot happen; otherwise fall
+        // back to the propagating ascending element copy to match the loop.
+        self.line(&format!(
+            "if ((uintptr_t){d} <= (uintptr_t){s} || (uintptr_t){d} >= (uintptr_t){s} + {nb}) {{",
+            d = vds, s = vss, nb = vnb
+        ));
+        self.indent += 1;
+        self.line(&format!("memmove({}, {}, {});", vds, vss, vnb));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line(&format!(
+            "for (nova_int {k} = 0; {k} < {n}; {k}++) ({d})->data[{lo} + {k}] = ({s})->data[{lo} + {k}];",
+            k = vk, n = vn, d = vd, s = vs, lo = vlo
+        ));
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line(&format!("{} = NOVA_UNIT;", tmp));
+        Ok(Some(tmp))
     }
 
     /// Emit a defer/errdefer body as void-effect statements (no result value,
@@ -17746,6 +18062,24 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         }
                         _ => return Err(format!("unsupported operator {:?} on tuple", op)),
                     }
+                }
+                // Plan 153.3: Result `NovaRes_<n>*` structural `==`/`!=`. Result
+                // is a special heap-pointer ABI (not a `Nova_X*` sum), so it
+                // bypasses the sum branch below and previously compared as raw
+                // pointer identity (`r == Ok(x)` always false). Route through
+                // emit_field_eq (tag + active-variant payload, see its
+                // `NovaRes_` arm).
+                if matches!(op, BinOp::Eq | BinOp::Neq)
+                    && ((lty.starts_with("NovaRes_") && lty.ends_with('*'))
+                        || (rty.starts_with("NovaRes_") && rty.ends_with('*')))
+                {
+                    let res_ty = if lty.starts_with("NovaRes_") { lty.clone() } else { rty.clone() };
+                    let eq = self.emit_field_eq(&res_ty, &l, &r, 0);
+                    return Ok(match op {
+                        BinOp::Eq => format!("({})", eq),
+                        BinOp::Neq => format!("(!({}))", eq),
+                        _ => unreachable!(),
+                    });
                 }
                 // Nova_T* sum type pointer equality: compare tag + payload fields.
                 // Plan 131 Ф.3: a sum/record *value* is a single pointer
@@ -25636,9 +25970,33 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                 "for-in: open-ended Range without start bound (Plan 96 Ф.2)".to_string())?;
             let end = end.as_deref().ok_or_else(||
                 "for-in: open-ended Range without end bound (Plan 96 Ф.2)".to_string())?;
+            // [M-opt-preempt-strided-loop] Part B: `for i in lo..hi { dst[i] =
+            // src[i] }` on Vec[T] → single overlap-safe bulk copy (memmove),
+            // dropping the per-element loop entirely. Conservative recognizer;
+            // falls through to the normal loop when not a safe copy pattern.
+            if let Some(tmp) = self.try_emit_range_copy_memmove(&binding, start, end, *inclusive, body)? {
+                return Ok(tmp);
+            }
             let s = self.emit_expr(start)?;
             let e = self.emit_expr(end)?;
             let cmp = if *inclusive { "<=" } else { "<" };
+            // [M-opt-preempt-strided-loop] Part A: provably-short const-bound
+            // range loop → omit the per-iteration preempt-check so clang can
+            // vectorize/unroll. Conservative: BOTH bounds must be plain int
+            // literals AND the iteration count must lie in [0, MAX] (small
+            // enough it cannot monopolise a worker). Anything else (variable
+            // bound, large const) keeps the check — correctness over speed.
+            const NOVA_PREEMPT_SKIP_MAX_ITERS: i64 = 1024;
+            let skip_preempt = match (
+                Self::loop_bound_int_literal(start),
+                Self::loop_bound_int_literal(end),
+            ) {
+                (Some(lo), Some(hi)) => {
+                    let count = if *inclusive { hi - lo + 1 } else { hi - lo };
+                    (0..=NOVA_PREEMPT_SKIP_MAX_ITERS).contains(&count)
+                }
+                _ => false,
+            };
             let tmp = self.fresh_tmp();
             self.line(&format!("nova_unit {};", tmp));
             self.line(&format!(
@@ -25653,7 +26011,7 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
             let was_mut = self.var_mutable.remove(&binding);
             // Plan 20 Ф.4: defer/errdefer внутри loop body должен выполняться
             // на каждой итерации (LIFO, fail-frame throw-path).
-            self.emit_loop_body_inline(body)?;
+            self.emit_loop_body_inline_ex(body, skip_preempt)?;
             // Restore prior state.
             match prev_ty {
                 Some(t) => { self.var_types.insert(binding.clone(), t); }

@@ -1,0 +1,36 @@
+// [M-opt-preempt-strided-loop] Part A — const-small range loops omit the
+// per-iteration `nova_preempt_check()` (so clang can vectorize/unroll), while
+// variable/unbounded loops KEEP it (else tight-loop-starvation returns).
+//
+// Behavioral: results must be identical regardless of the skip. The codegen
+// effect (check present/absent) is asserted separately by grepping the emitted
+// C in the closure verification (const loop body: no preempt-check; variable
+// loop body: preempt-check present).
+
+module plan143.preempt_loop_skip
+
+test "const-small range loop result correct (preempt-check skipped)" {
+    mut s = 0
+    for i in 0..16 {
+        s = s + i
+    }
+    assert(s == 120)
+}
+
+test "variable-bound range loop result correct (preempt-check kept)" {
+    mut n = 100
+    mut t = 0
+    for j in 0..n {
+        t = t + 1
+    }
+    assert(t == 100)
+}
+
+test "large const range loop keeps check (count over threshold)" {
+    // count = 5000 > 1024 threshold → preempt-check NOT skipped (could starve).
+    mut c = 0
+    for k in 0..5000 {
+        c = c + 1
+    }
+    assert(c == 5000)
+}

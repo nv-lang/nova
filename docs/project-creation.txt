@@ -37691,3 +37691,18 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   Acceptance (см. ниже в плане 138.2) выполнены. Neg overload'а — контрактный cap_below_len_neg.
   Broad regression 0 новых FAIL. Новый followup [M-138.2-overload-no-match-typecheck] (no-match
   overload-вызов сейчас CC-FAIL'ит вместо чистого type-check error). Закрытие 153.1 codegen-долга.
+
+[2026-06-14] Plan 143 — [M-opt-preempt-strided-loop] Part A+B (оптимизация loop-codegen). Worktree
+  nova-p143, merge 7c047a1b. Part A: skip per-iteration nova_preempt_check() на provably-short
+  const-bound range-циклах (оба bound'а — int-литералы, count∈[0,1024] → starvation-safe) →
+  разблокирует clang-векторизацию; variable/large циклы check сохраняют. Part B: распознавание
+  `for i in lo..hi { dst[i]=src[i] }` на Vec[T] → overlap-safe bulk copy (memmove fast-path +
+  forward-element-loop fallback на destructive overlap; inclusive-overflow-safe `last` без hi+1).
+  Процесс: adversarial-review workflow (6 агентов, 5 линз) нашёл inclusive i64::MAX overflow→UB;
+  мой эмпирический probe (run на main vs worktree) поймал aliasing-баг, который review ОШИБОЧНО
+  списал как safe — writable offset-overlap view'ы (`a=v[1..]; b=v[0..]; a[i]=b[i]`) пропагируют
+  ≠ memmove. Оба закрыты overlap-guard'ом (runtime `dst<=src||no-overlap ? memmove : element-loop`)
+  + last-формой. plan143 12 кейсов PASS; регрессия 0 new fail (Vec/collection слайс + concurrency
+  smoke; 4 «фейла» в plan138_2/plan125 — pre-existing, подтверждено на main-бинаре). Merge clean
+  3-way с 153 structural-== (1cc82de5) — разные регионы emit_c.rs. 🟡 long-term остаётся SIGURG
+  async-preempt (general для variable циклов) — cross-link Plan 144 §7.4 (общий async-yield).
