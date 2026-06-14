@@ -21136,17 +21136,15 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         ));
                     }
                 }
-                // Plan 14 Ф.4: если obj — record и `method` это fn-typed поле
-                // (записано в record_field_fn_sigs), эмитим closure-call
-                // через NOVA_CLOS_CALL_* macro.
+                // Plan 14 Ф.4 / Plan 153.2: если obj — record и `method` это
+                // fn-typed поле, эмитим closure-call через NOVA_CLOS_CALL_*
+                // macro. `fn_field_call_sig` покрывает И concrete records
+                // (record_field_fn_sigs), И GENERIC types (lazy iterator
+                // адаптеры `priv f fn(T)->U`) — для последних param/ret
+                // резолвятся из template + current_type_subst, иначе `(@f)(x)`
+                // эмитился бы как невалидный `void*`-вызов.
                 {
-                    let obj_ty = self.infer_expr_c_type(obj);
-                    if let Some(record_name) = obj_ty
-                        .strip_prefix("Nova_")
-                        .map(|s| s.trim_end_matches('*').to_string())
-                    {
-                        let key = (record_name.clone(), method.clone());
-                        if let Some((param_tys, ret_ty)) = self.record_field_fn_sigs.get(&key).cloned() {
+                    if let Some((param_tys, ret_ty)) = self.fn_field_call_sig(obj, method) {
                             let o = self.emit_expr(obj)?;
                             let mut arg_strs = Vec::new();
                             for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
@@ -21177,7 +21175,6 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                     ))
                                 }
                             };
-                        }
                     }
                 }
                 // D38 array-static-method: `[]T.new()` / `[]T.with_capacity(n)`.
@@ -32030,6 +32027,104 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
         false
     }
 
+    /// Plan 153.2: C return-type of calling a fn-typed RECORD FIELD as
+    /// `obj.field(args)` / `(@field)(args)`. Returns `None` when `field` is not
+    /// a function-typed field of `obj`'s type (then the caller continues with
+    /// the normal method-call inference). Mirrors the emit-side closure-field
+    /// call routing (`record_field_fn_sigs`) so the inferred type matches what
+    /// is actually emitted — concrete records read the resolved return C-type
+    /// from `record_field_fn_sigs`; generic adapters resolve the field's
+    /// declared `fn(...)->R` return TypeRef from the type template and
+    /// substitute the active type params (`current_type_subst`).
+    /// Plan 153.2: full `(param_c_tys, ret_c_ty)` signature for calling a
+    /// fn-typed RECORD FIELD as `obj.field(args)`. The emit-side companion of
+    /// `fn_field_call_ret_c` — feeds the `NOVA_CLOS_CALL` routing so closure
+    /// fields of GENERIC types (the lazy iterator adapters: `priv f fn(T)->U`)
+    /// emit a real closure call instead of an invalid `void*` call. Concrete
+    /// records read the resolved sig straight from `record_field_fn_sigs`;
+    /// generic types resolve the declared `fn(P..)->R` from the type template
+    /// and substitute the active type params (`current_type_subst`) so the
+    /// param/return C-types are concrete at the call site.
+    fn fn_field_call_sig(&self, obj: &Expr, field: &str) -> Option<(Vec<String>, String)> {
+        let obj_ty = self.infer_expr_c_type(obj);
+        if obj_ty.is_empty() || obj_ty == "void*" {
+            return None;
+        }
+        let stripped = obj_ty.trim_start_matches("const ").trim();
+        let struct_name = stripped
+            .strip_prefix("Nova_")
+            .or_else(|| stripped.strip_prefix("NovaValue_"))
+            .unwrap_or(stripped)
+            .trim_end_matches('*')
+            .trim()
+            .to_string();
+        if struct_name.is_empty() {
+            return None;
+        }
+        let base_name: String = struct_name
+            .split("____")
+            .next()
+            .unwrap_or(&struct_name)
+            .to_string();
+        // Generic type: resolve the field's `fn(P..)->R` from the template and
+        // substitute the active type params — the `record_field_fn_sigs` entry
+        // (if any) carries void*-erased types, useless for the call cast.
+        if self.generic_types.contains(&base_name) {
+            if let Some(template) = self.generic_type_templates.get(&base_name) {
+                if let crate::ast::TypeDeclKind::Record(fields) = &template.kind {
+                    if let Some(fdecl) = fields.iter().find(|f| f.name == field) {
+                        if let crate::ast::TypeRef::Func {
+                            params, return_type, ..
+                        } = &fdecl.ty
+                        {
+                            let subst: Vec<(String, Option<String>)> = self
+                                .current_type_subst
+                                .iter()
+                                .map(|(k, v)| (k.clone(), Some(v.clone())))
+                                .collect();
+                            let mut ptys = Vec::with_capacity(params.len());
+                            for p in params {
+                                let c = Self::apply_type_subst_to_ref(p, &subst)
+                                    .or_else(|| self.type_ref_to_c(p).ok())?;
+                                ptys.push(c);
+                            }
+                            let ret = match return_type {
+                                Some(rt) => Self::apply_type_subst_to_ref(rt, &subst)
+                                    .or_else(|| self.type_ref_to_c(rt).ok())?,
+                                None => "nova_unit".to_string(),
+                            };
+                            return Some((ptys, ret));
+                        }
+                    }
+                }
+            }
+            return None;
+        }
+        // Concrete record: the resolved sig is recorded at emit time.
+        for key_name in [struct_name.as_str(), base_name.as_str()] {
+            if let Some(sig) = self
+                .record_field_fn_sigs
+                .get(&(key_name.to_string(), field.to_string()))
+            {
+                return Some(sig.clone());
+            }
+        }
+        None
+    }
+
+    /// Plan 153.2: C return-type of calling a fn-typed RECORD FIELD as
+    /// `obj.field(args)` / `(@field)(args)`. Returns `None` when `field` is not
+    /// a function-typed field of `obj`'s type (then the caller continues with
+    /// the normal method-call inference). Mirrors the emit-side closure-field
+    /// call routing (`record_field_fn_sigs`) so the inferred type matches what
+    /// is actually emitted — concrete records read the resolved return C-type
+    /// from `record_field_fn_sigs`; generic adapters resolve the field's
+    /// declared `fn(...)->R` return TypeRef from the type template and
+    /// substitute the active type params (`current_type_subst`).
+    fn fn_field_call_ret_c(&self, obj: &Expr, field: &str) -> Option<String> {
+        self.fn_field_call_sig(obj, field).map(|(_, ret)| ret)
+    }
+
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
         // D38 turbofish: type_args не меняют c-тип; делегируем в base.
         if let ExprKind::TurboFish { base, .. } = &expr.kind {
@@ -32568,6 +32663,25 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                     return concrete_type;
                                 }
                                 return concrete_type;
+                            }
+                        }
+                    }
+                }
+                // Plan 153.2: a Call whose `func` is a fn-typed RECORD FIELD
+                // (`obj.f(x)` / `(@f)(x)`) yields the field's declared fn
+                // RETURN type — mirror the emit-side NOVA_CLOS_CALL routing
+                // (`record_field_fn_sigs`, ~emit_c.rs:21149). Without this the
+                // call result fell through to the `nova_int` default, which
+                // silently mistyped any non-int closure-field return and broke
+                // `if (@pred)(x)` (bool) — the load-bearing pattern for the lazy
+                // iterator adapters (map/filter/… store the closure in a field).
+                // Must run BEFORE the method-name lookups below: a fn-typed
+                // field is never a method, so a positive hit here is definitive.
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if !name.starts_with('@') {
+                        if let Some(ret_c) = self.fn_field_call_ret_c(obj, name) {
+                            if !ret_c.is_empty() && ret_c != "void*" {
+                                return ret_c;
                             }
                         }
                     }
