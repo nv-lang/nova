@@ -727,9 +727,27 @@ fn cmd_unicode(
     let srel = "std/unicode/sentence_data.nv";
     let sabs = root.join(srel);
     let sstats = format!("{} sb ranges", stables.len());
+    // Plan 152.5b: collation (UCA / DUCET, UTS #10). Needs allkeys.txt (UCA).
+    // Skipped gracefully if allkeys.txt is absent so the 152.4 UCD-only flow
+    // still works in dirs without the UCA data.
+    let coll_data: Option<(String, String, std::path::PathBuf, &str)> =
+        if ucd_dir.join("allkeys.txt").exists() {
+            let coll = unicode_data::parse_collation_tables(ucd_dir)?;
+            let content = unicode_data::render_collate_data_nv(&coll, version);
+            let rel = "std/unicode/collate_data.nv";
+            let stats = format!(
+                "{} single / {} contraction-keys / {} implicit ranges",
+                coll.single.len(),
+                coll.contractions.len(),
+                coll.implicit.len()
+            );
+            Some((content, stats, root.join(rel), rel))
+        } else {
+            None
+        };
     // Optional conformance fixtures: UAX #15 (normalization) + UAX #29 (graphemes)
-    // + case-mapping breadth (Plan 152.4.4).
-    let confs: Vec<(String, std::path::PathBuf)> = if emit_conformance {
+    // + case-mapping breadth (Plan 152.4.4) + UTS #10 collation (Plan 152.5b).
+    let mut confs: Vec<(String, std::path::PathBuf)> = if emit_conformance {
         vec![
             (
                 unicode_data::render_conformance_nv(ucd_dir, conformance_limit)?,
@@ -755,6 +773,13 @@ fn cmd_unicode(
     } else {
         Vec::new()
     };
+    // Plan 152.5b: collation conformance (UTS #10) — only when the UCA test data
+    // is present (CollationTest_SHIFTED.txt) and conformance is requested.
+    if emit_conformance && coll_data.is_some() {
+        if let Ok(c) = unicode_data::render_collation_conformance_nv(ucd_dir, conformance_limit) {
+            confs.push((c, root.join("nova_tests/plan152_5/collation_conformance.nv")));
+        }
+    }
     if check {
         let norm = |s: &str| s.replace("\r\n", "\n");
         let existing = std::fs::read_to_string(&abs)
@@ -810,6 +835,18 @@ fn cmd_unicode(
                 ));
             }
         }
+        // Plan 152.5b: collation table (only if the UCA data was present).
+        if let Some((cl_content, cl_stats, cl_abs, cl_rel)) = &coll_data {
+            let ex = std::fs::read_to_string(cl_abs)
+                .map_err(|e| anyhow!("failed to read {}: {}", cl_abs.display(), e))?;
+            if norm(&ex) != norm(cl_content) {
+                return Err(anyhow!(
+                    "{} diverges from UCA DUCET ({}).\n\
+                     Run `nova-codegen unicode --ucd-dir <UCA+UCD-dir>` to regenerate.",
+                    cl_rel, cl_stats
+                ));
+            }
+        }
         for (c, p) in &confs {
             let ex = std::fs::read_to_string(p)
                 .map_err(|e| anyhow!("failed to read {}: {}", p.display(), e))?;
@@ -817,7 +854,11 @@ fn cmd_unicode(
                 return Err(anyhow!("{} diverges from UCD test data; regenerate.", p.display()));
             }
         }
-        println!("OK: {} ({}) + {} ({}) + {} ({}) + {} ({}) + {} ({}) match UCD.", rel, stats, grel, gstats, crel, cstats, wrel, wstats, srel, sstats);
+        print!("OK: {} ({}) + {} ({}) + {} ({}) + {} ({}) + {} ({})", rel, stats, grel, gstats, crel, cstats, wrel, wstats, srel, sstats);
+        if let Some((_, cl_stats, _, cl_rel)) = &coll_data {
+            print!(" + {} ({})", cl_rel, cl_stats);
+        }
+        println!(" match UCD.");
     } else {
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent)
@@ -838,6 +879,16 @@ fn cmd_unicode(
         std::fs::write(&sabs, &scontent)
             .map_err(|e| anyhow!("failed to write {}: {}", sabs.display(), e))?;
         println!("wrote {} ({}).", srel, sstats);
+        // Plan 152.5b: collation table (only if the UCA data was present).
+        if let Some((cl_content, cl_stats, cl_abs, cl_rel)) = &coll_data {
+            if let Some(parent) = cl_abs.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| anyhow!("failed to create {}: {}", parent.display(), e))?;
+            }
+            std::fs::write(cl_abs, cl_content)
+                .map_err(|e| anyhow!("failed to write {}: {}", cl_abs.display(), e))?;
+            println!("wrote {} ({}).", cl_rel, cl_stats);
+        }
         for (c, p) in &confs {
             if let Some(parent) = p.parent() {
                 std::fs::create_dir_all(parent)

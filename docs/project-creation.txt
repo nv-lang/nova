@@ -38002,3 +38002,13 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   удаление интерпретатора ЛИБО порт interp-only тестов на C-codegen; чистка tests/ integration.
 
 [2026-06-14] Plan 157 interpreter-UNSUPPORTED formalized: spec D274 (08-runtime) + open-question Q-interpreter-future + regression test nova-cli/tests/interp_unsupported.rs (negative `nova run` errors + positive `nova check` works, via release binary, 2/2 PASS). Acceptance criteria in plan; backlog [M-interp-unsupported].
+
+[2026-06-14] Plan 152.5b — Unicode collation (UCA/DUCET, UTS #10, D254). std/unicode/collate.nv (opt-in):
+  collate_compare/sort_key/eq + Collator. NFD → collation elements (contractions + S2.1 discontiguous +
+  implicit-веса) → multi-level Shifted sort key → лекс-сравнение. collate_data.nv из DUCET allkeys.txt
+  (38443 single/77 contraction/21 implicit). G0: CollationTest_SHIFTED 50000/50000 spread out-of-band
+  (independent oracle), коммит 1500; полный 227800 → slow-lane Plan 156. Scope: DUCET non-tailored + Shifted;
+  CLDR-tailoring + eq_ignore_case → [M-152-collation-tailoring]. ВОССТАНОВЛЕНО после reboot (агент завис):
+  широкий прогон поймал 4/200 чанка = UCA S2.1 (discontiguous contractions, combining-mark вклинивается в
+  контракцию при NFD-reorder) → реализовал S2.1 → 200/200. Codegen-баг: match-as-return c mut None→bool
+  (typed Option[str] workaround). Закрывает [M-152-collation]. Plan 152 std/unicode полностью реализован.
