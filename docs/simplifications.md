@@ -36184,3 +36184,15 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   ложное «обязательный параметр не передан»). Фикс — `scope.contains_key` guard перед free-fn
   lookup; closure-вызов валидируется через fn-type/codegen. Не новый дизайн — приведение
   реализации к ожидаемой семантике шейдоунинга. Guard-тест `plan153_1/resize_with_free_fn_shadow`.
+
+[2026-06-14] Plan 143 Part B (Vec copy-loop → memmove) — recognizer ДЕЛИБЕРАТНО консервативен
+  (это НЕ срезка, а корректная граница безопасности): lowering срабатывает ТОЛЬКО когда (1) тело —
+  ровно один plain-assign без trailing; (2) оба индекса — буквально loop-var; (3) dst/src — plain
+  Ident'ы (pure, single-eval); (4) одинаковый Vec[T] flat-storage (не raw `*mut Vec` `..**`);
+  (5) flat-POD элемент (`nova_*` / `_p`-указатель). НЕ покрыто → fallback на корректный per-element
+  цикл: inline-struct элементы (slot-copy ≠ value-copy неочевиден), сложные индексы (`dst[f(i)]`,
+  `dst[i+1]`), не-Vec контейнеры, мульти-стейтмент тела, += и др. AssignOp. Всё непокрытое
+  компилируется обычным циклом — семантически корректно, просто без memmove-ускорения. Расширение
+  safe-set (доказуемо-flat value-records) — возможный followup, требует per-T flatness-доказательства.
+  ВАЖНО: overlap-семантика СОХРАНЕНА точно (runtime guard: destructive forward-overlap → element-loop
+  пропагация, как per-element; иначе memmove) — не упрощение, а полное соответствие циклу.
