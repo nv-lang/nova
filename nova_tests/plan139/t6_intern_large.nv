@@ -24,6 +24,6 @@ test "many distinct literals + repeats compile and behave correctly" {
     assert(l9 == r9, "kappa repeat equal")
     assert(l0 != l1, "distinct stay distinct")
     assert(l7 != l8, "distinct stay distinct 2")
-    assert(l0.len() == 5, "alpha len 5")
-    assert(l6.len() == 3, "eta len 3")
+    assert(l0.byte_len() == 5, "alpha len 5")
+    assert(l6.byte_len() == 3, "eta len 3")
 }

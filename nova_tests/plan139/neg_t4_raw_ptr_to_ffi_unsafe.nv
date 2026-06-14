@@ -12,5 +12,5 @@ import std.ffi.cstr.{CStr}
 test "as_cstr_unchecked without unsafe block is rejected" {
     ro s = "hello"
     ro c = s.as_cstr_unchecked()   // unsafe fn — needs unsafe { ... }
-    assert(s.len() == 5)
+    assert(s.byte_len() == 5)
 }

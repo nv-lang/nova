@@ -39,9 +39,11 @@ test "parse submodule: parse_int / ParseIntError path" {
     assert("xyz".parse_int() == None)
 }
 
-test "chars submodule: get (char_at)" {
-    assert("abc".get(0) == Some('a'))
-    assert("abc".get(9) == None)
+test "chars submodule: as_chars().nth (replaces retired char_at/get(int))" {
+    // D249/D250: positional codepoint access is the codepoint lens, not str.get
+    // (which is now get(Range)->Option[str]). Retired char_at/get(int)->char.
+    assert("abc".as_chars().nth(0) == Some('a'))
+    assert("abc".as_chars().nth(9) == None)
 }
 
 test "A0.6: StringBuilder (Vec[u8] wrapper) == str.concat" {

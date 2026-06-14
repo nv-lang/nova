@@ -15,58 +15,22 @@ import std.runtime.raw_mem.{RawMem}
 external fn panic(msg str) -> never
 
 
-// Длина строки в байтах. O(1). (Plan 108 D26 rev: len = bytes, char_len = codepoints).
-// Plan 139.2 Ф.1: Nova-body — читает priv-поле `@len` напрямую (str — declared
-// lang-item, Plan 139.1; receiver `str` ⇒ type-method privacy ⇒ видит priv-поля).
-// Бывший nova_str_byte_len = `(nova_int)s.len` — байтовая длина O(1), идентично.
-// D117 (E_SIZE_ACCESSOR_FIELD) НЕ срабатывает: bare field-read `@len` через
-// `SelfAccess` (obj_ty = `nova_self`, не `nova_str`) — тот же путь, что у
-// Vec[T] @len() => @len (vec_owned.nv:182). D117 запрещает field-read только
-// у внешних callers (`s.len`), не у самого type-метода. Последний C-резидент
-// byte-access — @byte_at (unsafe @ptr[i]).
-export fn str @len() -> int => @len
+// Длина строки в БАЙТАХ. O(1). Plan 152.1 Ф.4 (D249): единственный length-метод
+// на самом `str` — bare `@len()` / `@char_len()` ретайрнуты (lens-модель; bare
+// `s.len()` снаружи → E_STR_NO_LEN). codepoint-длина — `s.as_chars().count()`
+// (O(n)). Nova-body — читает priv-поле `@len` напрямую (str — declared lang-item,
+// Plan 139.1; receiver `str` ⇒ type-method privacy ⇒ видит priv-поля; bare
+// self-field-read `@len` НЕ ловится E_STR_NO_LEN — он для НЕ-self receiver'ов).
+// D26: str.len = bytes. Бывший nova_str_byte_len = `(nova_int)s.len` — идентично.
+export fn str @byte_len() -> int => @len
 
-// Plan 139.1: явный байтовый алиас `len` (D26: str.len = bytes). Используется
-// в parse_int / pad_left / pad_right / repeat и StringBuilder.with_capacity
-// call-сайтах для читаемости (vs codepoint-длина @char_len). Nova-body — нет
-// нового C-кода. Должен существовать как реальный метод теперь, когда str —
-// объявленный lang-item с активным method-resolution (Plan 139.1 Ф.A).
-export fn str @byte_len() -> int => @len()
+// Plan 152.1 Ф.4 (D249): `@char_len()` (codepoint count) and `@byte_at(i)` (byte
+// access) are RETIRED in favour of the lens model — codepoint count is
+// `s.as_chars().count()` (O(n), explicit), byte access is `s.as_bytes()[i]`
+// (O(1), bounds-checked). Bare `s.char_len()` / `s.byte_at(i)` → E_STR_NO_LEN.
 
-// Длина строки в codepoint'ах. O(n). Используй для итерации по символам.
-// Plan 139 Ф.1: Nova-body — считает не-continuation байты (UTF-8 leading +
-// ASCII), читая байты через @as_bytes() (zero-copy view). Семантика идентична
-// бывшему nova_str_char_len: continuation-байт = `(b & 0xC0) == 0x80`.
-export fn str @char_len() -> int {
-    ro bytes = @as_bytes()
-    ro n = @len()
-    mut count = 0
-    mut i = 0
-    while i < n {
-        ro b = bytes[i] as int
-        if (b & 0xC0) != 0x80 { count = count + 1 }
-        i = i + 1
-    }
-    count
-}
-
-// UTF-8 байт по индексу. O(1). Panic при выходе за границы. Plan 90 — неустранимый
-// примитив для byte-алгоритмов (lexer/find/trim) на Nova. Plan 139.2 Ф.1: Nova-body
-// — bounds-check + raw priv-pointer index `unsafe { @ptr[i] }`. `@ptr` — priv-поле
-// `*u8` (str's ro pointee), читаемое type-методом (type-based privacy, Plan 139.1).
-// Индексирование сырого указателя НЕ bounds-check'ается компилятором (это unsafe),
-// поэтому явный guard воспроизводит панику бывшего nova_str_byte_at (nova_rt.h:122):
-// `i < 0 || i >= len` → panic("str.byte_at: index out of bounds"). Идентичное
-// сообщение и семантика. Mirrors Vec[T] @index (vec_owned.nv:382).
-export fn str @byte_at(i int) -> u8 {
-    if i < 0 || i >= @len() {
-        panic("str.byte_at: index out of bounds")
-    }
-    unsafe { @ptr[i] }
-}
-
-// True если строка пустая. O(1) через @len (байты).
-export fn str @is_empty() -> bool => @len() == 0
+// True если строка пустая. O(1) через @byte_len (байты).
+export fn str @is_empty() -> bool => @byte_len() == 0
 
 // Plan 91.7 (D180): canonical default. Возвращает пустую строку.
 export fn str.new() -> Self => ""
@@ -97,7 +61,7 @@ export external fn str @hash() -> u64
 export fn str @to_bytes() -> []u8 {
     // Plan 152.0 Ф.3: bulk copy via Vec.@append (RawMem.copy memmove) — zero
     // push-loop. Owned []u8 copy of the bytes (identical to nova_str_to_bytes).
-    mut out = []u8.with_capacity(@len())
+    mut out = []u8.with_capacity(@byte_len())
     out.append(@as_bytes())
     out
 }
@@ -122,7 +86,7 @@ export fn str @to_bytes() -> []u8 {
 // size-like accessors are method-only). `@ptr` is not a size accessor, so the
 // direct priv-field read is allowed.
 export fn str @as_bytes() -> ro []u8 {
-    Vec[u8].from_raw_parts(@ptr, @len(), @len())
+    Vec[u8].from_raw_parts(@ptr, @byte_len(), @byte_len())
 }
 
 // Module-private: is the byte at `b` a UTF-8 continuation byte (0b10xxxxxx)?
@@ -285,8 +249,10 @@ export fn str.from_bytes_unchecked_steal(consume bytes []u8) -> str {
 // irreducible: decode-курсор на Nova, не C).
 export fn str @to_chars() -> []char {
     ro bytes = @as_bytes()
-    ro n = @len()
-    mut out = []char.with_capacity(@char_len())
+    ro n = @byte_len()
+    // Plan 152.1 Ф.4: capacity hint = byte length (codepoint count ≤ byte count;
+    // `@char_len()` retired — over-allocating by the multibyte slack is fine).
+    mut out = []char.with_capacity(@byte_len())
     mut i = 0
     while i < n {
         ro b = bytes[i] as int
@@ -319,24 +285,68 @@ export fn str @to_chars() -> []char {
 // при равенстве префикса — знак (@len() - other.len()). Семантика идентична
 // бывшему C `nova_str_compare` (array.h:989: memcmp(min_len) + length tiebreak
 // -1/0/1). Метод вызываем напрямую (`s.compare(t)`) и Compare-протоколом
-// (`@compare(o) == 0` synthesis, D178). ОПЕРАТОРЫ `<`/`<=`/`>`/`>=`/`==`/`!=`
-// лоуэрятся ОТДЕЛЬНО, напрямую в C `nova_str_lt`/…/`nova_str_eq` (option (b),
-// emit_c.rs BinOp comparison/eq для nova_str) — C-форма (memcmp) оптимальнее
-// byte-loop. См. [M-139.1-operator-lowered-methods].
+// (`@compare(o) == 0` synthesis, D178). Plan 152.5a D-R4: ОПЕРАТОРЫ
+// `<`/`<=`/`>`/`>=` теперь синтезируются из `@compare` (emit_c.rs nova_str BinOp
+// arm → `Nova_str_method_compare(l,r) OP 0`), `==`/`!=` из `@eq`, `+` из `@concat`
+// — хардкод C `nova_str_lt`/`eq`/`concat` в operator-lowering снят. Закрывает
+// `[M-139.1-operator-lowered-methods]`.
 export fn str @compare(other str) -> int {
-    ro a = @as_bytes()
-    ro b = other.as_bytes()
-    ro an = @len()
-    ro bn = other.len()
+    ro an = @byte_len()
+    ro bn = other.byte_len()
     ro min = if an < bn { an } else { bn }
-    mut i = 0
-    while i < min {
-        ro av = a[i] as int
-        ro bv = b[i] as int
-        if av != bv { return av - bv }
-        i = i + 1
-    }
+    // Plan 152.5a D-R4: RawMem.compare (= memcmp) over the shared prefix instead
+    // of a byte-loop — perf-parity with the retired C nova_str_compare, so the
+    // synthesized `<`/`<=`/`>`/`>=` operators (now Nova-routed) carry no penalty.
+    // `@ptr`/`other.ptr` are priv `*ro u8` (type-method privacy, str's home module,
+    // same as @starts_with). memcmp result is sign-correct (magnitude irrelevant
+    // for Ord); length-tiebreak on a shared prefix (identical to byte-loop form).
+    ro c = unsafe { RawMem.compare(@ptr, other.ptr, min) }
+    if c != 0 { return c }
     if an < bn { return -1 }
     if an > bn { return 1 }
     0
+}
+
+// Content equality (Plan 152.5a D-R4). Backs the `==`/`!=` operators (emit_c.rs
+// nova_str BinOp arm → `Nova_str_method_eq`) and the `Equal` protocol, replacing
+// the retired C `nova_str_eq`. Length-first short-circuit (unequal length ⇒ not
+// equal, O(1)) then RawMem.compare (= memcmp) over the bytes — perf-parity with
+// the C form (which did the same length-check + memcmp). `@ptr`/`other.ptr` are
+// priv `*ro u8` (type-method privacy, str's home module).
+export fn str @eq(other str) -> bool {
+    ro n = @byte_len()
+    if n != other.byte_len() { return false }
+    unsafe { RawMem.compare(@ptr, other.ptr, n) == 0 }
+}
+
+// True если `idx` — на границе codepoint'а (Rust `is_char_boundary`): idx==0,
+// idx==byte_len, или байт по idx НЕ continuation (`(b & 0xC0) != 0x80`). Для
+// безопасной нарезки: `s[a..b]` паникует при рассечении, `is_char_boundary` —
+// предварительная проверка без паники. O(1).
+export fn str @is_char_boundary(idx int) -> bool {
+    ro n = @byte_len()
+    if idx == 0 || idx == n { return true }
+    if idx < 0 || idx > n { return false }
+    ro bytes = @as_bytes()
+    (bytes[idx] as int & 0xC0) != 0x80
+}
+
+// Module-private: ASCII lowercase of a single byte (A-Z → a-z; else unchanged).
+fn ascii_lower_byte(b int) -> int => if b >= 65 && b <= 90 { b + 32 } else { b }
+
+// ASCII case-insensitive equality (Plan 152.5a, D254). Без Unicode-таблиц: только
+// A-Z/a-z складываются. Длины должны совпадать (ASCII-case не меняет байт-длину).
+// Rust `str::eq_ignore_ascii_case`. Для Unicode case-folding — `eq_ignore_case`
+// (152.5b, делегат std/unicode).
+export fn str @eq_ignore_ascii_case(other str) -> bool {
+    ro n = @byte_len()
+    if n != other.byte_len() { return false }
+    ro a = @as_bytes()
+    ro b = other.as_bytes()
+    mut i = 0
+    while i < n {
+        if ascii_lower_byte(a[i] as int) != ascii_lower_byte(b[i] as int) { return false }
+        i = i + 1
+    }
+    true
 }

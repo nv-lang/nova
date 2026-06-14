@@ -36014,6 +36014,38 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   size-accessor; D117 AMEND у Plan 153); codegen-gap raw-ptr-локала (`@ptr[i]` работает,
   `ro p=@ptr; p[i]` — нет); str `@index(Range)` без контракта (нет элизии bounds — 152.1/2).
 
+## Plan 152.1 (D249/D250 — string lens model), 2026-06-13
+- **str координатная модель = линзы + байт-координаты (D249).** str[i](int) запрещён
+  (E_STR_NO_INT_INDEX), бэар len()/char_at/char_len/byte_at/get(int) ретайрнуты
+  (E_STR_NO_LEN); единственный length на str — byte_len() (O(1)). Доступ через
+  as_bytes()[i] (байт, O(1)) / as_chars().nth(i) (codepoint, O(n)). Стоимость всегда видна.
+- **str[a..b] → BYTE-range (был codepoint).** Чинит реальный баг: split на non-ASCII
+  падал (передаёт байт-offset'ы в codepoint-индексированный slice). Inline elidable bounds
+  (140.2) — `nova_str_slice_panic` больше не диспатчится. Bonus: pre-existing split_edge починен.
+- **CharsIter value priv = поток, не коллекция** (Next[char]+Iter; нет Index/at/len → no O(n²)
+  footgun). str @iter()=>@as_chars() → for c in s.
+- **value-record codegen ABI fixes (Ф.3, побочно).** CharsIter — первый общий value-record с
+  методами; вскрыл и закрыл for-in NovaValue_-strip + by-ptr &it; bare-@ self-deref (self-return);
+  nova_type_name_from_c/recv-dispatch NovaValue_-strip + prepare_method_recv в multi-overload path.
+  Закрыл класс [M-138.2-vec-self-return] для value-records (бонус для StringBuilder fluent).
+- **Конвенция as_/to_ кодифицирована:** as_<repr>() = lens (borrows, zero-copy);
+  to_<repr>() = owned (alloc).
+- **Находка [M-152.1-str-subview-record-ctor]:** `str{ptr:@ptr+off,len}` construction в str-методе
+  мис-компилируется («passing nova_str to nova_int»); runtime.string линкуется в каждую программу →
+  ломает весь str-код. Обход: slice-методы строят view через inline @[a..b]. Класс value-record codegen.
+
+## Plan 152.2 (D251 — full str-surface), 2026-06-13
+- **str-surface добит до прод-паритета**, всё byte-координатно + zero-copy: split-семейство
+  (splitn/rsplit/rsplitn/split_once/rsplit_once/split_terminator/split_whitespace/lines),
+  trim/strip (trim_matches char-pattern, strip_prefix/suffix → Option), match_indices/matches,
+  is_char_boundary, replacen, pad_center.
+- **@trim теперь ZERO-COPY** (sub-view @[start..end], не alloc) — закрыл [M-139-f1-trim-view].
+  Ключ: `@[a..b]` (codegen строит view напрямую) обходит баг прямой str{ptr:@ptr+off}-конструкции.
+- **@pad_* FIX: ширина в codepoint'ах** (as_chars().count()), была в байтах — баг для multibyte
+  ("é".pad_left(3,'·') теперь "··é", было "·é"). Починил pre-existing types-тест.
+- split-семейство строит сегменты через @[a..b] (zero-copy); trim_matches/strip — через
+  starts_with/ends_with + slice (без RawMem/StringBuilder); replacen — через @find на остатке.
+
 - **Plan 154 (method coherence, 2026-06-13)**: extension-методы — разрешены (нет orphan
   rule), но **override чужого метода** (same-signature, из другого модуля) — теперь
   `E_METHOD_REDEFINITION` (был **silent no-op**: codegen `method_overloads` first-match →
@@ -36023,6 +36055,52 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   **type-check-only** (`types/mod.rs`, guard `user_declared_types` — не ломает Plan 62
   локальный type-shadow, напр. for_in_range_iter). D267. `nova test plan154` 5/5 PASS,
   корпус-скан 0 регрессий.
+
+## Plan 152.3a (D252 — char ASCII API), 2026-06-13
+- **char получил ASCII-API** (is_ascii_*/to_ascii_case/to_digit/len_utf8/encode_utf8) через
+  char-сравнения (`@ >= '0'`), ноль Unicode-таблиц. Rust char:: parity. В defaults.nv.
+- **Находка: Nova-body методы на builtin char — только в disk-loaded prelude-модуле**
+  (defaults.nv, где char @compare), НЕ в embedded char.nv (ExternalRegistry парсит его лишь
+  для checker'а; codegen не эмитит методы builtin-типа оттуда → call падал в C member-access).
+- json.nv is_digit/is_hex_digit/is_num_start → делегируют на char-методы (ноль приватных дублей).
+
+## Plan 152.5a (D254 — comparison core), 2026-06-13
+- **byte-`Ord` дефолт** (str @compare byte-lex) — детерминированный, locale-независимый
+  (Rust/Go); locale-collation — явный opt-in UCA-слой (Phase B), str не collation'ит молча.
+- **@eq_ignore_ascii_case** (str + char) — ASCII case-insensitive, без Unicode-таблиц
+  (é/É не фолдятся). Unicode folding (eq_ignore_case) — 152.5b.
+- D-R4 (str-operator C-lowering декомиссия) выделен из 152.5a как отдельная тяжёлая фаза.
+
+## Plan 152.6 (D255 — UTF-16/code-point interop), 2026-06-13
+- **Размещение в std/encoding (не prelude)** — UTF-16/code_points это FFI/протокол-
+  концерн, не повседневная str-операция; импортируется явно (как base64/json).
+  str-расширения из импортируемого std-модуля корректно dot-резолвятся.
+- **from_utf16 двухпроходно** (валидация в []int → построение str) — ранний `return Err`
+  без живого consume-типа (StringBuilder создаётся ПОСЛЕ всех Err-путей) обходит D133
+  consume-on-all-paths. consume StringBuilder + str.from_codepoint (known-valid path).
+- **Контракты Plan 140 на surrogate-помощниках** (decode_surrogate_pair requires
+  is_*_surrogate + ensures result∈[0x10000,0x10FFFF]) — повсеместное применение.
+
+## Plan 152 Phase A закрыта (shippable-минимум), 2026-06-13
+- **Phase A vs B граница.** Phase A (координатная модель + линзы + ASCII-полнота +
+  API-паритет Rust/Go + UTF-16 interop) самодостаточна и зашиплена; Unicode-корректность
+  (нормализация/graphemes/folding/locale-collation) честно вынесена в Phase B за
+  [M-152-unicode-*] — `str` ASCII-complete, не маскирует отставание.
+- **Pre-existing main-баги, выявленные при регрессии Plan 152** (НЕ строковый слой):
+  Debug-derive `debug_fmt` для nested-struct/Vec (plan91_14/plan131), StringBuilder
+  struct-tag в #no_prelude + protocol-codegen Iterable/equals (plan62), рекурсивный
+  `Nova_JsonValue` sum-type (plan91_13). Кандидаты на отдельный codegen-план.
+
+## Plan 152.5a D-R4 (str-operator C-lowering декомиссия), 2026-06-13
+- **Операторы str → Nova-body** (==/!=/</<=/>/>= /+ синтезируются из @eq/@compare/@concat),
+  реестр str = только @hash. Perf-паритет через RawMem-примитивы в Nova-body (memcmp/memcpy
+  = те же что снятые C-fn); бенч подтвердил (дельта в compile-шуме).
+- **Scope decommission = user-facing операторы + method-form**, НЕ codegen-внутренние
+  хелперы. C nova_str_eq/concat остались для emit_field_eq (структурная eq полей: HashMap-
+  ключи, record-==) + ScopeOutcome cancel-marker + concat-аккумулятор — reroute этих создал
+  бы method-emission reachability-связь в concurrency/collections codegen без выгоды.
+- **Reachability ОК:** str prelude-методы эмитятся при использовании операторов (проба
+  чистых ==/</+ без method-form PASS) — operator-emitted Nova-вызовы reachable.
 
 - **Plan 154.1 (#impl opt-in конформность + Display/Debug примитивов, 2026-06-13)**:
   (а) **opt-in `#impl(P)`** — ведущий атрибут `#impl(Display)` теперь и на МЕТОД-декларациях

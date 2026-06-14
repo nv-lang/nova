@@ -81,6 +81,6 @@ test "str — присваивание = логическая копия (immuta
     ro s1 = "hello"
     ro s2 = s1                  // тот же ptr или новый — неважно
     assert(s1 == s2)
-    assert(s1.len() == 5)
-    assert(s2.len() == 5)
+    assert(s1.byte_len() == 5)
+    assert(s2.byte_len() == 5)
 }

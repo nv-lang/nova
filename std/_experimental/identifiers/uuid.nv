@@ -308,7 +308,7 @@ export fn Uuid.from(s str) Fail[ParseUuidError] -> Self {
 }
 
 fn check_dash(s str, pos int) Fail[ParseUuidError] -> () {
-    match s.char_at(pos) {
+    match s.as_chars().nth(pos) {
         Some('-') => ()
         _         => throw MissingDash { position: pos }
     }
@@ -319,7 +319,7 @@ fn parse_hex_range(s str, from int, to int) Fail[ParseUuidError] -> u64 {
     mut acc u64 = 0
     mut i = from
     while i < to {
-        match s.char_at(i) {
+        match s.as_chars().nth(i) {
             Some(c) => {
                 ro d = hex_value(c, i)
                 acc = acc * 16 + (d as u64)

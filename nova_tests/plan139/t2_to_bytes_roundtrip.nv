@@ -35,5 +35,5 @@ test "to_bytes is owned copy (independent of source)" {
     mut b = s.to_bytes()
     b.push(100)            // 'd'
     assert(b.len() == 4)
-    assert(s.len() == 3)   // str unchanged
+    assert(s.byte_len() == 3)   // str unchanged
 }

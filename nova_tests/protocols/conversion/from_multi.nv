@@ -13,7 +13,7 @@ type MyNum { val int }
 fn MyNum.from(v int) -> MyNum => { val: v }
 
 // From[str] — длина строки в codepoint'ах.
-fn MyNum.from(s str) -> MyNum => { val: s.len() }
+fn MyNum.from(s str) -> MyNum => { val: s.byte_len() }
 
 // From[bool] — 1 или 0.
 fn MyNum.from(b bool) -> MyNum => { val: if b { 1 } else { 0 } }

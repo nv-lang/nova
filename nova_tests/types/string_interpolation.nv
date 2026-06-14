@@ -98,5 +98,5 @@ test "interpolation efficiency — большая строка через String
     ro s = "x"
     ro r = "${s}${s}${s}${s}${s}${s}${s}${s}${s}${s}${s}${s}"
     assert(r == "xxxxxxxxxxxx")
-    assert(r.len() == 12)
+    assert(r.byte_len() == 12)
 }

@@ -9,7 +9,7 @@ type Point { x int, y int }
 
 fn want_bool(b bool) -> int => if b { 1 } else { 0 }
 fn want_int(n int) -> int => n
-fn want_str(s str) -> int => s.len()
+fn want_str(s str) -> int => s.byte_len()
 fn want_point(p Point) -> int => p.x
 
 test "Ф.1 — correct assignments compile" {

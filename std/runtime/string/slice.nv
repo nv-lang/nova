@@ -1,0 +1,51 @@
+// Co-equal file of module `runtime.string` (folder = one module, AMEND F4).
+// Role: byte-range slice — `Index[Range, str]` (Plan 152.1 Ф.1b, D249).
+//
+// `s[a..b]` is a BYTE-range zero-copy sub-view (was codepoint-indexed — the bug
+// behind non-ASCII `split`). It shares the parent buffer (interior pointer at
+// `@ptr + start`; conservative GC keeps the buffer alive while the view is
+// reachable) — `str` is immutable (R8), so the view never diverges. Mirrors
+// `Vec[T] @index(Range)` (std/collections/vec/slice.nv).
+//
+// Both methods build the view via the inline byte-slice `@[a..b]` (which codegen
+// lowers to a `(nova_str){.ptr=…+from, .len=…}` view directly). They deliberately
+// do NOT write `str { ptr: @ptr + off, len }` — constructing a str sub-view via a
+// value-record literal with pointer arithmetic on the priv `@ptr` mis-compiles
+// ("passing nova_str to nova_int"); since `runtime.string` links into every
+// program, that would break all str code. See [M-152.1-str-subview-record-ctor].
+//
+// Plan 91 Ф.2.5/2.6: str Nova-body methods. #no_prelude breaks the
+// prelude->string->prelude import cycle.
+
+#no_prelude
+module runtime.string
+
+import std.prelude.core.{Option, Some, None}
+import std.collections.range.{Range}
+
+
+// Byte-range sub-view `s[r.start, r.end)`. The numeric bounds are a `requires`
+// CONTRACT (D257 / Plan 140.2): Z3-proven call-sites elide the check (zero-cost),
+// unproven ones are checked at runtime (and in release — enforce-with-elision,
+// D24). The inline `@[a..b]` also carries the UTF-8 codepoint-boundary guard
+// (data-dependent → a runtime panic; slicing through a codepoint would yield
+// invalid UTF-8, breaking R-UTF8). `s[a..b]` sugar lowers to the identical inline
+// byte-slice; this Nova body carries the contract for the `Index[Range, str]`
+// protocol and direct `s.index(a..b)` calls.
+export fn str @index(r Range) -> str
+    requires 0 <= r.start && r.start <= r.end && r.end <= @byte_len()
+{
+    @[r.start..r.end]
+}
+
+// Safe byte-range slice — `Some(view)` when `[r.start, r.end)` is in bounds AND
+// both cut points land on codepoint boundaries, `None` otherwise. The
+// non-panicking counterpart of `@index(Range)` (mirrors `Vec[T] @get(Range)`).
+export fn str @get(r Range) -> Option[str] {
+    ro n = @byte_len()
+    if r.start < 0 || r.end < r.start || r.end > n { return None }
+    ro bytes = @as_bytes()
+    if r.start < n && (bytes[r.start] as int & 0xC0) == 0x80 { return None }
+    if r.end < n && (bytes[r.end] as int & 0xC0) == 0x80 { return None }
+    Some(@[r.start..r.end])
+}

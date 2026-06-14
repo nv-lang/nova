@@ -44,14 +44,14 @@ test "float exponent" {
 test "string literal" {
     ro s = "hello"
     assert(s == "hello")
-    assert(s.len() == 5)
+    assert(s.byte_len() == 5)
 }
 
 test "string escapes" {
     ro nl = "a\nb"
-    assert(nl.len() == 3)
+    assert(nl.byte_len() == 3)
     ro tab = "x\ty"
-    assert(tab.len() == 3)
+    assert(tab.byte_len() == 3)
     ro q = "he said \"hi\""
     assert(q.contains("\""))
     ro bs = "back\\slash"

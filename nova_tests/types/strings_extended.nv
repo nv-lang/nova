@@ -14,7 +14,7 @@ fn classify(cmd str) -> int => match cmd {
 test "escape \\n newline" {
     ro nl = "line1\nline2"
     assert(nl.contains("\n"))
-    assert(nl.len() > 10)
+    assert(nl.byte_len() > 10)
 }
 
 test "escape \\t tab" {
@@ -34,7 +34,7 @@ test "escape backslash" {
 
 test "пустая строка" {
     ro s = ""
-    assert(s.len() == 0)
+    assert(s.byte_len() == 0)
     assert(s == "")
     assert(s + "x" == "x")
 }
@@ -42,8 +42,8 @@ test "пустая строка" {
 test "Unicode chars (Cyrillic)" {
     ro cyr = "привет"
     // Plan 108 D26 rev: len() = bytes O(1); char_len() = codepoints O(n).
-    assert(cyr.len() == 12)        // 6 codepoints × 2 bytes = 12 bytes
-    assert(cyr.char_len() == 6)    // 6 codepoints
+    assert(cyr.byte_len() == 12)        // 6 codepoints × 2 bytes = 12 bytes
+    assert(cyr.as_chars().count() == 6)    // 6 codepoints
 }
 
 test "Unicode mixed ASCII + Cyrillic" {
@@ -70,12 +70,12 @@ test "concat последовательно" {
     ro a = "1"
     ro b = a + "2" + "3" + "4" + "5"
     assert(b == "12345")
-    assert(b.len() == 5)
+    assert(b.byte_len() == 5)
 }
 
 test "длинная строка" {
     ro big = "the quick brown fox jumps over the lazy dog"
-    assert(big.len() > 30)
+    assert(big.byte_len() > 30)
     assert(big.starts_with("the"))
     assert(big.ends_with("dog"))
     assert(big.contains("brown"))

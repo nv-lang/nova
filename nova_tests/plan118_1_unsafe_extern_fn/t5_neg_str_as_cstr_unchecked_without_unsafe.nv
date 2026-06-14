@@ -10,5 +10,5 @@ import std.ffi.cstr.{CStr}
 test "as_cstr_unchecked without unsafe rejected" {
     ro s = "hello"
     ro c = s.as_cstr_unchecked()
-    assert(s.len() == 5)
+    assert(s.byte_len() == 5)
 }

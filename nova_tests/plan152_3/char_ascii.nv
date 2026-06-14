@@ -1,0 +1,61 @@
+// Plan 152.3a (D252): char ASCII-core API. Rust char::is_ascii_*/to_digit parity.
+module plan152_3.char_ascii
+
+test "is_ascii_* predicates" {
+    assert('A'.is_ascii())
+    assert('A'.is_ascii_alphabetic())
+    assert('z'.is_ascii_alphabetic())
+    assert('7'.is_ascii_digit())
+    assert('7'.is_ascii_alphanumeric())
+    assert('A'.is_ascii_uppercase())
+    assert('a'.is_ascii_lowercase())
+    assert(' '.is_ascii_whitespace())
+    assert('\t'.is_ascii_whitespace())
+    assert('f'.is_ascii_hexdigit())
+    assert('F'.is_ascii_hexdigit())
+    assert('9'.is_ascii_hexdigit())
+}
+
+test "is_ascii_* negatives" {
+    assert(!'@'.is_ascii_alphabetic())
+    assert(!'\n'.is_ascii_alphanumeric())
+    assert(!'g'.is_ascii_hexdigit())
+    assert(!'A'.is_ascii_lowercase())
+    assert(!'a'.is_ascii_uppercase())
+    assert(!'x'.is_ascii_digit())
+    assert(!'é'.is_ascii())            // non-ASCII
+}
+
+test "to_ascii_uppercase / to_ascii_lowercase" {
+    assert('a'.to_ascii_uppercase() == 'A')
+    assert('Z'.to_ascii_lowercase() == 'z')
+    assert('A'.to_ascii_uppercase() == 'A')      // already upper → unchanged
+    assert('5'.to_ascii_uppercase() == '5')      // non-letter → unchanged
+    assert('é'.to_ascii_uppercase() == 'é')      // non-ASCII → unchanged
+}
+
+test "to_digit(radix)" {
+    assert('7'.to_digit(10) == Some(7))
+    assert('0'.to_digit(10) == Some(0))
+    assert('f'.to_digit(16) == Some(15))
+    assert('F'.to_digit(16) == Some(15))
+    assert('A'.to_digit(16) == Some(10))
+    assert('z'.to_digit(36) == Some(35))
+}
+
+test "to_digit negatives" {
+    assert('g'.to_digit(16) == None)             // not a hex digit
+    assert('7'.to_digit(2) == None)              // >= radix
+    assert('9'.to_digit(1) == None)              // radix < 2
+    assert('9'.to_digit(37) == None)             // radix > 36
+    assert('@'.to_digit(10) == None)             // not a digit
+}
+
+test "len_utf8 / encode_utf8" {
+    assert('a'.len_utf8() == 1)
+    assert('é'.len_utf8() == 2)                  // U+00E9
+    assert('я'.len_utf8() == 2)
+    assert('😀'.len_utf8() == 4)                  // U+1F600
+    assert('a'.encode_utf8() == "a")
+    assert('é'.encode_utf8() == "é")
+}

@@ -6,13 +6,13 @@ fn rebind_local(s str) -> int {
     // local rebinding (copy of the 16-byte value-record handle)
     mut local = s
     local = local + "X"
-    return local.len()
+    return local.byte_len()
 }
 
 test "str passed by value; caller binding unchanged (copy semantics)" {
     ro original = "abc"
     ro inner_len = rebind_local(original)
     assert(inner_len == 4)        // local saw "abcX"
-    assert(original.len() == 3)   // caller's str unchanged
+    assert(original.byte_len() == 3)   // caller's str unchanged
     assert(original == "abc")
 }

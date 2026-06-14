@@ -190,27 +190,27 @@ export fn Base64.decode_url(s str) Fail[Base64Error] -> []u8 =>
 
 fn decode_with(s str, require_padding bool) Fail[Base64Error] -> []u8 {
     // Если требуется padding — длина обязательно кратна 4.
-    if require_padding && s.len() % 4 != 0 {
-        throw InvalidLength { actual: s.len() }
+    if require_padding && s.byte_len() % 4 != 0 {
+        throw InvalidLength { actual: s.byte_len() }
     }
-    if s.len() == 0 {
+    if s.byte_len() == 0 {
         return []
     }
 
     // Считаем сколько `=` в конце — это даёт длину выхода.
     // URL-safe без padding: оцениваем по длине.
     ro trimmed_len = if require_padding {
-        if s.char_at(s.len() - 1) == Some('=') {
-            if s.char_at(s.len() - 2) == Some('=') {
-                s.len() - 2
+        if s.as_chars().nth(s.byte_len() - 1) == Some('=') {
+            if s.as_chars().nth(s.byte_len() - 2) == Some('=') {
+                s.byte_len() - 2
             } else {
-                s.len() - 1
+                s.byte_len() - 1
             }
         } else {
-            s.len()
+            s.byte_len()
         }
     } else {
-        s.len()
+        s.byte_len()
     }
 
     // Каждые 4 символа → 3 байта; неполный последний блок даёт 1 или 2.
@@ -251,19 +251,19 @@ fn decode_with(s str, require_padding bool) Fail[Base64Error] -> []u8 {
         out.push(((triple >> 8) & 0xFF) as u8)
     } else if tail == 1 {
         // Невалидно — 1 символ хвоста не несёт целого байта.
-        throw InvalidLength { actual: s.len() }
+        throw InvalidLength { actual: s.byte_len() }
     }
 
     out
 }
 
 fn decode_or_throw(s str, pos int) Fail[Base64Error] -> u8 {
-    match s.char_at(pos) {
+    match s.as_chars().nth(pos) {
         Some(c) => match decode_char(c) {
             Some(v) => v
             None    => throw InvalidChar { position: pos, char: c }
         }
-        None => throw InvalidLength { actual: s.len() }
+        None => throw InvalidLength { actual: s.byte_len() }
     }
 }
 

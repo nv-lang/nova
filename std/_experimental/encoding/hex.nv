@@ -80,7 +80,7 @@ export fn Hex.decode(s str) Fail[ParseHexError] -> []u8 {
 }
 
 fn digit_value(s str, pos int) Fail[ParseHexError] -> int {
-    match s.char_at(pos) {
+    match s.as_chars().nth(pos) {
         Some(c) => {
             ro n = c as int
             if n >= 48 && n <= 57 {

@@ -122,14 +122,14 @@ fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
             if i == 0 { throw MissingScheme }
             ro scheme = s[0..i]
             // Первый символ — letter
-            match scheme.char_at(0) {
+            match scheme.as_chars().nth(0) {
                 Some(c) if !is_alpha(c) =>
                     throw InvalidScheme { value: scheme }
                 _ => ()
             }
             // Остальные — letter/digit/+/-/.
             for j in 1..scheme.len() {
-                match scheme.char_at(j) {
+                match scheme.as_chars().nth(j) {
                     Some(c) if !is_scheme_char(c) =>
                         throw InvalidScheme { value: scheme }
                     _ => ()
@@ -198,7 +198,7 @@ fn parse_path(s str) -> (str, str) {
 fn find_first_of(s str, chars str) -> Option[int] {
     mut i = 0
     while i < s.len() {
-        match s.char_at(i) {
+        match s.as_chars().nth(i) {
             Some(c) => if chars.contains(str.from(c)) { return Some(i) }
             None    => return None
         }
@@ -356,7 +356,7 @@ export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
     mut buf = WriteBuffer.with_capacity(s.len())
     mut i = 0
     while i < s.len() {
-        match s.char_at(i) {
+        match s.as_chars().nth(i) {
             Some('%') => {
                 if i + 2 >= s.len() {
                     throw InvalidPercentEncoding { position: i }
@@ -403,7 +403,7 @@ fn hex_upper(n u8) -> char =>
     }
 
 fn hex_value_or_throw(s str, pos int) Fail[ParseUrlError] -> u8 {
-    match s.char_at(pos) {
+    match s.as_chars().nth(pos) {
         Some(c) => {
             ro n = c as int
             if n >= 48 && n <= 57 {

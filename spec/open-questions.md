@@ -4049,12 +4049,24 @@ parser char-литералы **не поддерживает** — это бло
 
 ---
 
-## Q-string-indexing. Семантика `s[i]` для `str` ✅ ЗАКРЫТО (2026-05-07)
+## Q-string-indexing. Семантика `s[i]` для `str` ✅ ПЕРЕЗАКРЫТО (2026-06-13, Plan 152.1)
 
-> **Решение: вариант B (Codepoint).** В соответствии с школой B
-> codepoint-indexed API (D26 пересмотрен 2026-05-07), `s[i]` —
-> codepoint at index, `Option[char]`. O(n) cost — это явная цена
-> школы B; для hot-path есть explicit `s.bytes()` → byte-level access.
+> **РЕШЕНИЕ (2026-06-13, Plan 152.1 / D249): вариант «линзы / byte-coordinates»**
+> (переоткрывает прежнее закрытие «вариант B / codepoint-indexed», 2026-05-07).
+> `str` **НЕ индексируется целым** — `s[i]` (int) → **`E_STR_NO_INT_INDEX`** (fix-it:
+> байт `s.as_bytes()[i]` O(1) / codepoint `s.as_chars().nth(i)` O(n)). Единственный
+> `str[..]` — **byte-range slice** `s[a..b]` (`Index[Range,str]`, zero-copy view,
+> bounds-as-`requires`-контракт + UTF-8-codepoint-boundary panic; slice.nv). Бэар
+> `s.len()` → **`E_STR_NO_LEN`**; длина — `byte_len()` (O(1)) / `as_chars().count()`
+> (O(n)). **Обоснование:** на UTF-8 codepoint-index = O(n)-ложь под видом O(1);
+> байт-offset композируется со slice за O(1) (find→s[k..]). Прецедент: Rust (нет
+> int-index), Swift (нет int-subscript). Полная модель — [D249/D250](decisions/03-syntax.md#d249).
+>
+> *(Историческая запись прежнего закрытия — вариант B / codepoint — ниже; развёрнут
+> D26 MAJOR AMEND 2026-06-13.)*
+
+> **Прежнее решение (2026-05-07, РАЗВЁРНУТО): вариант B (Codepoint).** В соответствии
+> со школой B codepoint-indexed API, `s[i]` — codepoint at index, `Option[char]`.
 
 **Контекст.** D26 фиксирует `str` как UTF-8 byte slice внутри, но
 **все public operations работают на codepoint-уровне**. Что означает
@@ -4072,6 +4084,29 @@ parser char-литералы **не поддерживает** — это бло
 
 **Связь:** [D26](decisions/08-runtime.md#d26), Q-char-literals,
 [D27](decisions/03-syntax.md#d27).
+
+---
+
+## Q-string-len. Единица длины `str` ✅ ЗАКРЫТО (2026-06-13, Plan 152.1 / D249)
+
+> **РЕШЕНИЕ: нет бэар `len()`.** Длина — свойство представления (у `str` три
+> расходящиеся длины: байты / codepoint'ы / graphemes). `str.byte_len() -> int`
+> (O(1)) — единственный length-метод на самом `str` (шорткат для аллокаций);
+> codepoint-длина — `as_chars().count()` (O(n)); grapheme-длина (Phase B) —
+> `as_graphemes().count()`. Бэар `s.len()` → **`E_STR_NO_LEN`** с fix-it. Расхождение
+> с `Vec.len()` намеренное. См. [D249](decisions/03-syntax.md#d249), [D26 AMEND](decisions/08-runtime.md#d26).
+
+---
+
+## Q-string-collation. Сравнение/упорядочивание строк ✅ ЗАКРЫТО (2026-06-13, Plan 152.5 / D254)
+
+> **РЕШЕНИЕ: дефолт = byte-`Ord`; locale-collation — отдельный opt-in UCA-слой (Phase B).**
+> `str.compare`/`Ord`/`Equal`/`Hash` — byte-lexicographic (быстрый, детерминированный,
+> locale-НЕзависимый, как Rust/Go). `eq_ignore_ascii_case` (ASCII-fold, без таблиц) — в ядре.
+> Locale-aware — явный `std/unicode/collate.Collator` на UCA (DUCET) + опц. CLDR-tailoring
+> (Phase B, `[M-152-collation]`); `str` НИКОГДА не делает collation молча. Unicode
+> case-folding (`eq_ignore_case`) — 152.5b (делегат std/unicode). Прецедент: Rust (byte Ord
+> + crate), Go (byte + `x/text/collate`). См. [D254](decisions/03-syntax.md#d254).
 
 ---
 
