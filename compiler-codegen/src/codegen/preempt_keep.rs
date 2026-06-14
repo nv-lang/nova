@@ -51,9 +51,19 @@ pub struct PreemptKeepSet {
 
 impl PreemptKeepSet {
     /// Whether the given FnDecl must keep its prologue preempt-check.
-    /// Unknown keys (a function not seen by the pre-pass) conservatively
-    /// return `true` (KEEP) — never elide a function the analysis did not
-    /// account for.
+    ///
+    /// CONSERVATIVE CONTRACT: the analysis is only trusted to ELIDE when the
+    /// pre-pass actually ran over the program (see [`populated`]). Callers
+    /// therefore gate on `!populated() || must_keep(...)` — when the universe
+    /// was never populated, EVERY function is kept. Within a populated set,
+    /// every emitted FnDecl was registered as a node, so a queried key is
+    /// always present and `contains` reflects the real KEEP decision. A key
+    /// that is genuinely unknown to a populated set (a function emitted from
+    /// outside the registered universe — none exist today) returns `false`
+    /// here; such a path would be unsound, so any future emit site that lowers
+    /// a not-registered function MUST keep unconditionally (see
+    /// `emit_prologue_preempt_check_unconditional` in emit_c.rs) rather than
+    /// consult this method.
     pub fn must_keep(&self, key: &FnKey) -> bool {
         self.keep.contains(key)
     }
