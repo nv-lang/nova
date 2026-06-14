@@ -1,0 +1,17 @@
+// Plan 104.9 (D278): words dropped from keyword highlighting (`handler` since
+// D142; `race`/`region`/`with_timeout`/`cancel_scope` which never were keywords;
+// `and`/`or`/`not` — Nova uses `&&`/`||`/`!`) are plain identifiers. Prove it: the
+// lexer yields `Ident`, so they are usable as binding names.
+module plan104_9.pos_former_keywords_are_identifiers
+
+test "former / non keywords usable as identifiers" {
+    ro handler = 1
+    ro race = 2
+    ro region = 3
+    ro with_timeout = 4
+    ro cancel_scope = 5
+    ro and = 6
+    ro or = 7
+    ro not = 8
+    assert(handler + race + region + with_timeout + cancel_scope + and + or + not == 36)
+}
