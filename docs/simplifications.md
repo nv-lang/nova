@@ -36141,3 +36141,40 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   interp-машинерию (`emit_interpolated_str`) — не отдельный механизм; контракт-сообщение ведёт себя идентично
   любой `"${x}"`-строке. dual-populate (`message` raw-fallback + `message_expr`) избегает регрессии на
   не-interp-сайтах без отдельного error-пути.
+
+- **Plan 152.4 foundation — module-level `ro NAME = EXPR` lazy-static globals (codegen runtime side) (2026-06-14)**:
+  D199/Plan 148 Ф.3 ввели strict const/ro partition на module-level (constexpr RHS → `const`, runtime RHS →
+  `ro`), но реализована была только **диагностика** (`E_RO_FOR_CONSTEXPR_PREFER_CONST`) — у module-level `ro` с
+  runtime-RHS не было ни codegen, ни регистрации в name-resolution (top-level `let` исторически был no-op).
+  Достроена runtime-сторона: (1) `types/mod.rs check_module` регистрирует module-level `Item::Let` в
+  `env.consts`; (2) `NameResCtx::collect_decl_names` собирает его имя (иначе use-site → «undefined identifier»);
+  (3) `emit_c.rs` эмитит lazy-static через `emit_lazy_const` (file-scope storage + init-flag + first-touch
+  getter, тот же путь, что non-constexpr `const` до Plan 114). Эмиссия перенесена в §1b1-moved (после
+  `/*__GENERIC_TYPE_DEFS__*/`, до fn-forward-decls) — тип глобала может быть mono-generic (`HashMap[int,str]` →
+  `Nova_HashMap____nova_int__nova_str`), и `static <T> _value;` должен идти ПОСЛЕ его typedef. (4) Попутно
+  исправлен `infer_expr_c_type`: UPPER_CASE-биндер (`ro COMPOSE_TABLE`, D30 SCREAMING_SNAKE) парсит `.get(k)` как
+  `Path(["COMPOSE_TABLE","get"])`; emit_expr уже переписывал это в Member-вызов (emit_c.rs:24055), а инференс —
+  нет → при сосуществовании нескольких инстанцирований базы возврат метода падал в name-keyed fallback и брал не
+  тот `V` (`NovaOpt_nova_str` для `HashMap[int,int]`-глобала). Добавлен зеркальный rewrite в infer_expr_c_type.
+  Эта фича — storage-механизм для Unicode-таблиц 152.4 (lazy-парсинг embedded-строки в HashMap при первом
+  доступе). Zero blast-radius: module-level non-constexpr `ro` не существует нигде в std/nova_tests (constexpr
+  `const` запрещён Plan 114.4 → `lazy_consts` пуст для всего legacy-кода → fix не активируется). Фикстура
+  `nova_tests/plan152_4/lazy_static_global.nv` (5 тестов: `HashMap[int,str]`/`HashMap[int,int]` × lowercase/
+  UPPER_CASE биндеры + scalar int). Followup `[M-lazy-static-thread-safety]` (first-touch init не thread-safe —
+  как и `const` lazy-init, не новый класс).
+
+- **`[M-hashmap-tuple-key-mono]` — HashMap с кортеж-ключом: checker over-accepts → codegen CC-FAIL (2026-06-14, обнаружено Plan 152.4)**:
+  `HashMap[(int,int), int]` проходит `nova check` (тип-уровень OK), но codegen падает с CC-FAIL (НЕ silent —
+  hard error). Mono полу-инстанцирован: переменная объявляется как `Nova_HashMap____nova_int__nova_int*`
+  (кортеж-ключ ошибочно стёрт в `nova_int`), конструктор использует полный mangle
+  `Nova_HashMap_____NovaTuple_2_8_nova_int_8_nova_int__nova_int_static_new()`, а `insert` уходит в **erased**
+  `Nova_HashMap_method_insert(m, (void*)(intptr_t)(tuple), …)` — три рассогласованных пути; typedef
+  tuple-key варианта не эмитится → `use of undeclared identifier 'Nova_HashMap_____NovaTuple…'`. Корень: mono-имя
+  HashMap считает только примитивные/Named-ключи; кортеж-ключ не получает `Hash`/`Equal` авто-derive (Plan 126
+  покрыл records, не анонимные кортежи). Развилка фикса: (a) codegen — поддержать tuple-key end-to-end
+  (авто-derive `Hash`/`Equal` для кортежей + единый key-mangle + mono-typedef), ЛИБО (b) checker — отклонять
+  `K`-без-`Hash` на тип-уровне (`E_HASHMAP_KEY_NOT_HASH`), честный отказ вместо CC-FAIL. Смежно
+  `[M-153.6-vec-hashmap-key-eq]` (Vec-ключ: `k.eq` не диспатчит в `@equal`) — общий класс «generic-ключ HashMap
+  без рабочего Hash/Equal». Связь Plan 154 (checker over-accepts), но это CC-FAIL, не silent-noop. Workaround в
+  152.4: упакованный int-ключ `(a<<21)|b` в `HashMap[int,int]` для composition-таблицы. Маркер заведён в
+  backlog-followups.md (P2, floating).

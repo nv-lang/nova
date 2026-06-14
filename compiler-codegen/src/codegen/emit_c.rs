@@ -2637,6 +2637,14 @@ impl CEmitter {
             }
         }
 
+        // 1b1. Plan 152.4 (D199 ro-runtime side): module-level `ro NAME = EXPR`
+        // lazy-static globals are emitted LATER — see «1b1-moved» just after the
+        // `/*__GENERIC_TYPE_DEFS__*/` placeholder. They must come after generic
+        // type instance definitions (a lazy-static's type can be a mono'd generic
+        // like `HashMap[int,str]`; its `static <T> _value;` storage decl needs the
+        // typedef first), and emitting their getter body there also lets call
+        // routing (method_receivers §1c / generics §1d) be fully set up.
+
         // 1b2. D39 / Plan 11 Ф.9: collect embed-fields per record-type.
         // Используется на 1d для генерации auto-proxy methods.
         for item in &module.items {
@@ -3092,6 +3100,45 @@ impl CEmitter {
 
         // Plan 48 Ф.3: placeholder for generic type instance definitions (filled after drain).
         self.line("/*__GENERIC_TYPE_DEFS__*/");
+
+        // 1b1-moved. Plan 152.4 (D199 ro-runtime side): module-level
+        // `ro NAME = EXPR` — a lazy-static global. The strict const/ro partition
+        // (`check_ro_module_partition`) guarantees only a genuinely runtime RHS
+        // (call/effect/alloc) reaches here as `ro` (a constexpr-eligible RHS is
+        // forced to `const` and handled in §1b above). We reuse the const
+        // lazy-init getter (`emit_lazy_const`): file-scope storage + `init` flag
+        // + `nova_const_<name>()` built on first use; reads route through
+        // `lazy_consts` (same desugaring as a non-constexpr `const`, Plan 14 Ф.2).
+        //
+        // Emitted HERE (after `/*__GENERIC_TYPE_DEFS__*/`, before fn forward
+        // decls) — NOT in §1b — for two reasons: (1) the global's C type may be a
+        // mono'd generic (`HashMap[int,str]` → `Nova_HashMap____nova_int__nova_str`)
+        // whose typedef is spliced into `__GENERIC_TYPE_DEFS__`; the `static <T>
+        // _value;` storage decl must follow that typedef. (2) The getter body
+        // calls into user fns; method-receiver (§1c) and generic (§1d) routing
+        // tables are fully populated by now, so the call lowers correctly.
+        // Single named binding only (Ident, or a single-segment unit Variant for
+        // the UPPER_CASE constant-name form), non-ghost. Thread-safety of
+        // first-touch init: see `[M-lazy-static-thread-safety]`.
+        for item in &module.items {
+            if let Item::Let(l) = item {
+                if l.is_ghost { continue; }
+                let name = match &l.pattern {
+                    Pattern::Ident { name, .. } => Some(name.clone()),
+                    Pattern::Variant { path, kind: VariantPatternKind::Unit, .. }
+                        if path.len() == 1 => Some(path[0].clone()),
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    let ty_c = if let Some(ty) = &l.ty {
+                        self.type_ref_to_c(ty)?
+                    } else {
+                        self.infer_expr_c_type(&l.value)
+                    };
+                    self.emit_lazy_const(&name, &ty_c, &l.value)?;
+                }
+            }
+        }
 
         // 2. Forward declarations for all functions (types are now known)
         for item in &module.items {
@@ -31266,6 +31313,43 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         );
                     }
                     return self.infer_expr_c_type(&acc);
+                }
+            }
+        }
+        // Plan 152.4: mirror the emit-side rewrite (~emit_c.rs:24055). A Call
+        // whose func is `Path([lazyconst, method])` is an INSTANCE method call
+        // on the lazy-static global value, NOT a static `Type.method(...)` call.
+        // UPPER_CASE binders (`ro COMPOSE_TABLE = …`, D30 SCREAMING_SNAKE_CASE)
+        // parse their `.get(k)` as `Path(["COMPOSE_TABLE","get"])`; emit_expr
+        // already rewrites this to a `Member{Ident,..}` call, but the type
+        // inference did not — so the return type fell back to a name-keyed
+        // method lookup and, when several generic instantiations of the base
+        // coexist, picked the wrong one (e.g. `NovaOpt_nova_str` for a
+        // `HashMap[int,int]` global). Rewrite to the Member form and recurse so
+        // the receiver type resolves via `var_types[lazyconst]`.
+        if let ExprKind::Call { func, args, trailing } = &expr.kind {
+            if let ExprKind::Path(parts) = &func.kind {
+                if parts.len() == 2 && self.lazy_consts.contains(&parts[0]) {
+                    let new_obj = Expr {
+                        kind: ExprKind::Ident(parts[0].clone()),
+                        span: func.span,
+                    };
+                    let new_func = Expr {
+                        kind: ExprKind::Member {
+                            obj: Box::new(new_obj),
+                            name: parts[1].clone(),
+                        },
+                        span: func.span,
+                    };
+                    let new_call = Expr {
+                        kind: ExprKind::Call {
+                            func: Box::new(new_func),
+                            args: args.clone(),
+                            trailing: trailing.clone(),
+                        },
+                        span: expr.span,
+                    };
+                    return self.infer_expr_c_type(&new_call);
                 }
             }
         }
