@@ -10591,6 +10591,30 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         ty.uses_any_type_param(type_params)
     }
 
+    /// Plan 153.2 gap A: does this TypeRef contain a function type anywhere?
+    /// Used to detect closure-holding generic-type fields (`f fn(T)->U`,
+    /// `step fn()->Option[T]`) whose erased-method body produces invalid C
+    /// (closure cast through literal type-param placeholders). Recurses through
+    /// the type-constructor wrappers so a wrapped/nested function is also caught.
+    fn type_ref_contains_func(ty: &crate::ast::TypeRef) -> bool {
+        use crate::ast::TypeRef;
+        match ty {
+            TypeRef::Func { .. } => true,
+            TypeRef::Named { generics, .. } =>
+                generics.iter().any(Self::type_ref_contains_func),
+            TypeRef::Array(inner, _)
+            | TypeRef::FixedArray(_, inner, _)
+            | TypeRef::Pointer(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Readonly(inner, _) =>
+                Self::type_ref_contains_func(inner),
+            TypeRef::Tuple(elems, _) =>
+                elems.iter().any(Self::type_ref_contains_func),
+            _ => false,
+        }
+    }
+
     /// Collect type names referenced in a type declaration's fields/variants.
     fn collect_typeref_names_in_typedecl(
         t: &crate::ast::TypeDecl,
@@ -11059,6 +11083,21 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     if matches!(&fld.ty,
                         TypeRef::Pointer(..) | TypeRef::Mut(..) | TypeRef::Unsafe(..))
                         && Self::type_ref_uses_any_type_param(&fld.ty, &type_params)
+                    {
+                        return true;
+                    }
+                    // Plan 153.2 gap A: function-typed field over type params
+                    // (e.g. lazy-iterator adapters `MapIt[I,T,U] { f fn(T)->U }`
+                    // / `BoxIter[T] { step fn()->Option[T] }`). The erased body
+                    // lowers `(@f)(x)` to a closure cast through `Nova_U*(*)(...)`
+                    // (literal `U`/`T` placeholders) and dispatches `@field.method()`
+                    // on the erased self → invalid C. The caller-side mono pass
+                    // (drain_generic_type_worklist → emit_monomorphized_method)
+                    // produces a correct concrete instance with a populated
+                    // current_type_subst, so the erased base is never legitimately
+                    // called for these chains — route it to a safe NULL stub.
+                    if Self::type_ref_uses_any_type_param(&fld.ty, &type_params)
+                        && Self::type_ref_contains_func(&fld.ty)
                     {
                         return true;
                     }
@@ -12167,6 +12206,78 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             TypeRef::Named { generics, .. } => {
                 for g in generics {
                     self.register_tuples_in_typeref(g, subst);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Plan 153.2 gap A: eagerly register a generic-TYPE instance (and any nested
+    /// generic instances) found in a TypeRef, given a substitution for type-params.
+    ///
+    /// This closes the registration-timing hole: when a generic-type method's
+    /// RETURN type is itself a generic instance (e.g. `@vmap -> MapIt[VecIter[T],T,U]`,
+    /// `@bmap -> BoxIter[U]`), the codegen previously registered only the METHOD
+    /// instance — the return TYPE's instance got registered only LATER, when the
+    /// mono'd method body was drained. A chained call on the result
+    /// (`....vmap(f).collect()`) runs the emit-side generic-instance method dispatch
+    /// ("5b") which keys EXCLUSIVELY off `generic_type_instance_info`; at that moment
+    /// the key is ABSENT, so 5b is skipped and the call falls through to the ERASED
+    /// base method, whose body is emitted with EMPTY current_type_subst → `Vec[U].new()`
+    /// mangles `U` literally → `Nova_Vec____Nova_U_p` corruption.
+    ///
+    /// Modeled on `register_tuples_in_typeref` (abort-on-unresolved) + the canonical
+    /// enqueue+register block in `try_infer_variant_mono_args` (12236-12246). Inner
+    /// instances are registered FIRST (depth-first) so forward-typedef ordering in
+    /// `generic_type_defs_buf` stays valid (mirrors the depth-loop in drain).
+    fn register_generic_instances_in_typeref(
+        &self,
+        ty: &crate::ast::TypeRef,
+        subst: &[(String, Option<String>)],
+    ) {
+        use crate::ast::TypeRef;
+        match ty {
+            TypeRef::Named { path, generics, .. } if !generics.is_empty() => {
+                let base = path.last().cloned().unwrap_or_default();
+                // Recurse into nested generic args FIRST (depth-first).
+                for g in generics {
+                    self.register_generic_instances_in_typeref(g, subst);
+                }
+                // Option/Result are builtin sum-types (NovaOpt_/NovaRes_), NOT
+                // user generic-type templates — their inner instances were already
+                // handled by the recursion above; nothing to register for the
+                // outer Option/Result wrapper itself.
+                if base == "Option" || base == "Result" { return; }
+                // Only register when the base is a user-defined generic template.
+                if !self.generic_type_templates.contains_key(&base) { return; }
+                // Resolve every generic arg under the subst; abort if any unresolved
+                // (avoids emitting `Nova_..._Nova_U_p` placeholder instances —
+                // mirrors register_tuples_in_typeref's abort and drain's guard).
+                let mut args_c: Vec<String> = Vec::with_capacity(generics.len());
+                for g in generics {
+                    match Self::apply_type_subst_to_ref(g, subst) {
+                        Some(c) => args_c.push(c),
+                        None => return,
+                    }
+                }
+                let mangled = Self::compute_generic_type_c_name(&base, &args_c);
+                if !self.emitted_generic_type_instances.contains(&mangled) {
+                    let mut wl = self.generic_type_worklist.borrow_mut();
+                    if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                        wl.push((base.clone(), args_c.clone(), mangled.clone()));
+                    }
+                }
+                self.generic_type_instance_info.borrow_mut()
+                    .entry(mangled)
+                    .or_insert_with(|| (base, args_c));
+            }
+            TypeRef::Array(inner, _) => {
+                self.register_generic_instances_in_typeref(inner, subst);
+            }
+            // Option[T]/Result[T,E] arrive as Named with generics — covered above.
+            TypeRef::Tuple(elems, _) => {
+                for e in elems {
+                    self.register_generic_instances_in_typeref(e, subst);
                 }
             }
             _ => {}
@@ -22645,6 +22756,15 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                                 }
                                             }
                                             self.current_type_subst = saved_subst;
+                                            // Plan 153.2 gap A: pre-register return-type
+                                            // generic instance (turbofish static path).
+                                            if let Some(rt) = fn_decl.return_type.as_ref() {
+                                                let subst_opt: Vec<(String, Option<String>)> =
+                                                    type_subst.iter()
+                                                        .map(|(n, c)| (n.clone(), Some(c.clone())))
+                                                        .collect();
+                                                self.register_generic_instances_in_typeref(rt, &subst_opt);
+                                            }
                                             // Strip "Nova_" so recv_type stays consistent with
                                             // instance-method path (receiver_c_type adds it back).
                                             let recv_type_stripped = mangled.strip_prefix("Nova_").unwrap_or(&mangled);
@@ -23883,6 +24003,19 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                     arg_strs.push(self.emit_expr(a.expr())?);
                                 }
                                 self.current_type_subst = saved_subst;
+                                // Plan 153.2 gap A: eagerly register the return
+                                // type's generic instance (e.g. vmap -> MapIt[..],
+                                // bmap -> BoxIter[U]) BEFORE the chained call on the
+                                // result is emitted, so that chained call finds it in
+                                // generic_type_instance_info and takes the mono path
+                                // (5b) instead of the erased base method.
+                                if let Some(rt) = fn_decl.return_type.as_ref() {
+                                    let subst_opt: Vec<(String, Option<String>)> =
+                                        type_subst.iter()
+                                            .map(|(n, c)| (n.clone(), Some(c.clone())))
+                                            .collect();
+                                    self.register_generic_instances_in_typeref(rt, &subst_opt);
+                                }
                                 // Enqueue mono method emission
                                 self.register_mono_method_instance(
                                     &fn_decl, type_subst, &method_c_name, &rt_trimmed);
@@ -29742,6 +29875,113 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                     for n in added { bound.remove(&n); }
                 }
             }
+            // Plan 153.2 gap B: control-flow arms were missing here, so any name
+            // referenced ONLY inside a `while`/`for`/`loop`/`while let`/`if let`
+            // body that is captured by an enclosing closure was never collected
+            // as a free variable (fell through to `_ => {}`). This mirrors the
+            // canonical complete visitor `collect_idents_expr`, but preserves
+            // scope discipline (loop-var / pattern bindings shadow captures).
+            ExprKind::While { cond, body, .. } => {
+                Self::collect_truly_free_idents(cond, bound, out);
+                Self::collect_truly_free_idents_block(body, bound, out);
+            }
+            ExprKind::Loop { body, .. } => {
+                Self::collect_truly_free_idents_block(body, bound, out);
+            }
+            ExprKind::For { pattern, iter, body, .. }
+            | ExprKind::ParallelFor { pattern, iter, body, .. } => {
+                // `iter` is evaluated in the OUTER scope (loop var not yet bound).
+                Self::collect_truly_free_idents(iter, bound, out);
+                let mut pat_binds: HashSet<String> = HashSet::new();
+                Self::collect_pattern_bindings(pattern, &mut pat_binds);
+                let added: Vec<String> = pat_binds.iter()
+                    .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
+                    .collect();
+                Self::collect_truly_free_idents_block(body, bound, out);
+                for n in added { bound.remove(&n); }
+            }
+            ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
+                // scrutinee evaluated before the pattern binds.
+                Self::collect_truly_free_idents(scrutinee, bound, out);
+                let mut pat_binds: HashSet<String> = HashSet::new();
+                Self::collect_pattern_bindings(pattern, &mut pat_binds);
+                let added: Vec<String> = pat_binds.iter()
+                    .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
+                    .collect();
+                Self::collect_truly_free_idents_block(body, bound, out);
+                for n in added { bound.remove(&n); }
+            }
+            ExprKind::IfLet { pattern, scrutinee, then, else_ } => {
+                // scrutinee evaluated before the pattern binds.
+                Self::collect_truly_free_idents(scrutinee, bound, out);
+                let mut pat_binds: HashSet<String> = HashSet::new();
+                Self::collect_pattern_bindings(pattern, &mut pat_binds);
+                let added: Vec<String> = pat_binds.iter()
+                    .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
+                    .collect();
+                Self::collect_truly_free_idents_block(then, bound, out);
+                for n in added { bound.remove(&n); }
+                // else branch does NOT see the pattern bindings.
+                if let Some(e) = else_ {
+                    match e {
+                        ElseBranch::Block(b) =>
+                            Self::collect_truly_free_idents_block(b, bound, out),
+                        ElseBranch::If(ex) =>
+                            Self::collect_truly_free_idents(ex, bound, out),
+                    }
+                }
+            }
+            // Remaining sub-expr-bearing arms (robustness: future captures inside
+            // these constructs are now collected). No new bindings introduced.
+            ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Throw(e)
+            | ExprKind::Spawn(e) | ExprKind::As(e, _) | ExprKind::Is(e, _) => {
+                Self::collect_truly_free_idents(e, bound, out);
+            }
+            ExprKind::Coalesce(l, r) => {
+                Self::collect_truly_free_idents(l, bound, out);
+                Self::collect_truly_free_idents(r, bound, out);
+            }
+            ExprKind::TurboFish { base, .. } => {
+                Self::collect_truly_free_idents(base, bound, out);
+            }
+            ExprKind::Range { start, end, .. } => {
+                if let Some(s) = start { Self::collect_truly_free_idents(s, bound, out); }
+                if let Some(e) = end { Self::collect_truly_free_idents(e, bound, out); }
+            }
+            ExprKind::ArrayLit(elems) => {
+                for elem in elems {
+                    match elem {
+                        ArrayElem::Item(x) | ArrayElem::Spread(x) =>
+                            Self::collect_truly_free_idents(x, bound, out),
+                    }
+                }
+            }
+            ExprKind::MapLit { elems, .. } => {
+                for me in elems {
+                    match me {
+                        crate::ast::MapElem::Pair(k, v) => {
+                            Self::collect_truly_free_idents(k, bound, out);
+                            Self::collect_truly_free_idents(v, bound, out);
+                        }
+                        crate::ast::MapElem::Spread(e) =>
+                            Self::collect_truly_free_idents(e, bound, out),
+                    }
+                }
+            }
+            ExprKind::RecordLit { fields, .. } => {
+                // Spread `...expr` is encoded as a field with is_spread=true and
+                // value=Some(expr), so recursing every f.value covers it.
+                for f in fields {
+                    if let Some(v) = &f.value { Self::collect_truly_free_idents(v, bound, out); }
+                }
+            }
+            ExprKind::With { bindings, body } => {
+                for b in bindings { Self::collect_truly_free_idents(&b.handler, bound, out); }
+                Self::collect_truly_free_idents_block(body, bound, out);
+            }
+            ExprKind::Interrupt(Some(v)) => {
+                Self::collect_truly_free_idents(v, bound, out);
+            }
             _ => {}
         }
     }
@@ -30627,6 +30867,20 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
             self.type_subst_overrides.replace(saved_type_subst);
         }
         let ret_c = Self::apply_type_subst_to_ref(&ret_ref, &subst)?;
+        // Plan 153.2 gap A (registration-timing fix): eagerly register the
+        // return type's generic instance(s) as a side-effect of inferring it.
+        // `infer_mono_method_ret_with_args` is the inference path that runs when
+        // a CHAINED outer call (`....vmap(f).collect()`) computes its receiver
+        // type (`infer_expr_c_type(obj)` -> here for the inner `vmap`). Without
+        // this, the inner adapter's return instance (e.g. MapIt[VecIter[T],T,U])
+        // is registered only LATER, when the inner call is EMITTED — which is
+        // AFTER the outer 5b dispatch already chose its path. Registering here
+        // (a &self body, mutating only the RefCell registries) makes the
+        // instance present in `generic_type_instance_info` BEFORE the outer
+        // dispatch's lookup, so the chained call takes the mono path instead of
+        // the erased base method. abort-on-unresolved inside the helper keeps
+        // placeholder (`Nova_U`) instances out of the registry.
+        self.register_generic_instances_in_typeref(&ret_ref, &subst);
         // Если return type совпадает с самим типом (Self), используем mono тип
         if ret_c == format!("Nova_{}*", base_name) {
             // Возвращается Self → нужен конкретный mono тип
