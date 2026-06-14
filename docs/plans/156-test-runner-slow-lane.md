@@ -1,9 +1,10 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 156 — Slow-test lane: большие тесты в репо, вне дефолт-регресса (`[M-test-runner-large-test-lane]`)
 
-> **Создан:** 2026-06-14. **Ревизия:** 2026-06-14 (добавлен суффикс `_slow.nv` как основной
-> механизм для одиночных файлов; папка/сентинел оставлены для поддеревьев). **Статус:** 📋
-> PLANNED (дизайн готов, research-обоснован кодом). P2.
+> **Создан:** 2026-06-14. **Ревизия:** 2026-06-14 (rev-2: ужато до **suffix-only** —
+> единственный механизм `_slow.nv`; папка `slow/`/сентинел `_slow.toml` отложены в
+> `[M-156-slow-subtree-dir]` до появления первого медленного folder-module, YAGNI).
+> **Статус:** 📋 PLANNED (дизайн готов, research-обоснован кодом). P2.
 > **Владеет:** `[M-test-runner-large-test-lane]`. **Зависит от:** Plan 24/26 (test-runner).
 > **Триггер:** ТРЕБОВАНИЕ — дефолтный `nova test`/CI быстрый по компиляции И выполнению
 > (см. [docs/test-conventions.md](../test-conventions.md) §«регресс должен быть быстрым»).
@@ -16,61 +17,52 @@
 
 ## Решение (research-обоснованное, код-grounded)
 
-### Naming: суффикс `_slow.nv` (одиночные файлы, основной) + папка `slow/` / сентинел `_slow.toml` (поддеревья)
-Два механизма, **зеркало fixtures** (которые уже работают двумя способами — папка
-`fixtures/` ИЛИ сентинел `_fixture.toml`):
+### Naming: суффикс `_slow.nv` (единственный механизм)
+**Один механизм — per-file суффикс `_slow.nv`.** Прецедент — существующее семейство
+суффиксов `_windows.nv`/`_linux.nv`/`_macos.nv`/`_test`/`_module.nv` (snake_case,
+`-` нельзя — это идентификатор). Наш реальный кейс (5–6 conformance-корпусов) — это
+**по одному сгенерированному файлу**, суффикс покрывает его на 100%.
 
-| Случай | Механизм | Прецедент |
-|---|---|---|
-| **один большой файл** (наш case: 5–6 conformance-корпусов) | **суффикс `_slow.nv`** | семейство `_windows.nv`/`_linux.nv`/`_test`/`_module.nv` |
-| целое медленное поддерево / folder-module из peers | папка **`slow/`** (без `_`) или сентинел **`_slow.toml`** | `fixtures/` + `_fixture.toml` |
+> **Папка `slow/` + сентинел `_slow.toml` НЕ вводятся** (rev-2). Они оправданы лишь когда
+> медленный тест — это folder-module из ≥2 peer'ов (нельзя запускать поодиночке) и ВСЕ
+> они медленные. Такого теста сейчас нет → YAGNI. Отложено в `[M-156-slow-subtree-dir]`;
+> добавляется аддитивно (зеркало `fixtures/`+`_fixture.toml`), ничего не ломая, когда
+> появится первый медленный folder-module.
 
-Правило Nova: спец-**директории** — обычным словом (`fixtures/`, `slow/`); спец-**файлы**
-(сентинелы и per-file суффиксы) — с `_`-аффиксом (`_fixture.toml`, `_module.nv`,
-`_windows.nv`). Поэтому директория lane = `slow/` (НЕ `_slow/` — было бы непоследовательно
-с `fixtures/`).
-
-### Механизм отбора — суффикс `_slow.nv` ИЛИ папка `slow/` (НЕ source-маркер)
-Оба варианта решаются на этапе **discovery** в `walk_nv` (`test_runner.rs:3302`) — файл с
-полным корпусом **никогда не читается** при дефолтном прогоне:
-
-- **Суффикс `_slow.nv`** — проверка `stem.ends_with("_slow")` в том же цикле
-  (`:3327-3341`), где уже фильтруются `_windows.nv`/`_module.nv`/`_test`. `read_dir` даёт
-  лишь dirent (имя), содержимое 5–10 MB **не читается** → нулевой per-file I/O. Это
-  **основной** механизм: со-локация (`collation_conformance.nv` рядом с
-  `collation_conformance_slow.nv`), попадает в существующее семейство суффиксов, не плодит
-  дерево.
-- **Папка `slow/` / сентинел `_slow.toml`** — скип до `read_dir`, зеркало `is_fixture_dir`
-  (`:3287`). Для случая «медленное поддерево» (folder-module из многих peers): один
-  dir-check выкидывает всё дерево.
+### Механизм отбора — суффикс `_slow.nv` (НЕ source-маркер)
+Решается на этапе **discovery** в `walk_nv` (`test_runner.rs:3302`) — файл с полным корпусом
+**никогда не читается** при дефолтном прогоне. Проверка `stem.ends_with("_slow")` в том же
+цикле (`:3327-3341`), где уже фильтруются `_windows.nv`/`_module.nv`/`_test`. `read_dir`
+даёт лишь dirent (имя), содержимое 5–10 MB **не читается** → нулевой per-file I/O.
+Со-локация: `collation_conformance.nv` лежит рядом с `collation_conformance_slow.nv`.
 
 Почему НЕ source-маркер `// EXPECT_SLOW`: виден только после discovery + чтения первых 30
 строк (`run_one`), т.е. **не убирает файл из hot-path** (в отличие от суффикса имени, который
 виден до чтения). Manifest отвергнут (дублирование, против D89 anti-pattern).
 
 ### Флаги — `--include-slow` (default-skip) + `--slow-only`
-- default: `_slow/` скипается (как Rust `#[ignore]`, инверсия Go `-short`).
-- `--include-slow`: добавить `_slow/` к обычному прогону (merge-gate/nightly).
-- `--slow-only`: только `_slow/` (выделенная CI-job, локальное доказательство G0).
+- default: `*_slow.nv` скипается (как Rust `#[ignore]`, инверсия Go `-short`).
+- `--include-slow`: добавить `*_slow.nv` к обычному прогону (merge-gate/nightly).
+- `--slow-only`: только `*_slow.nv` (выделенная CI-job, локальное доказательство G0).
 - Композиция с `--filter`/`--skip`/`--include-stdlib` — ортогональна (lane = discovery,
   фильтры — после, `run_all:3649`).
 
-### Реализация (~35 строк, discovery-level)
-1. `test_runner.rs`: два хелпера рядом с `is_fixture_dir` —
-   - `is_slow_file(path)`: `path.file_stem().ends_with("_slow")` (per-file суффикс).
-   - `is_slow_dir(dir)`: имя `slow` или сентинел `_slow.toml` (поддеревья).
+### Реализация (~25 строк, discovery-level)
+1. `test_runner.rs`: один хелпер рядом с `is_fixture_dir` —
+   `is_slow_file(stem)`: `stem.ends_with("_slow")` (per-file суффикс; снимается ДО `_test`
+   и OS-суффикса — см. «порядок снятия» ниже).
 2. `walk_nv` → `walk_nv_filtered(root, out, include_slow)`; `walk_nv` зовёт с
-   `include_slow=true` (сохранить поведение `nova check <dir>`, он `pub`). Гарды:
-   `is_slow_dir` в начале + в цикле рекурсии по подпапкам; `is_slow_file` в цикле
-   `direct_nv` рядом с проверкой `_module`/OS-суффиксов (`:3327-3341`).
+   `include_slow=true` (сохранить поведение `nova check <dir>`, он `pub`). Гард:
+   `is_slow_file` в цикле `direct_nv` рядом с проверкой `_module`/OS-суффиксов
+   (`:3327-3341`).
 3. `TestAllOpts` (`:2526`): `+include_slow: bool, +slow_only: bool`.
 4. `run_all` (`:3606`): `include_slow = opts.include_slow || opts.slow_only`; при
    `slow_only` собрать ТОЛЬКО slow (инверс-фильтр: `walk_nv_filtered(..,true)` минус
-   `walk_nv_filtered(..,false)`, либо отдельный обход с `keep = is_slow_*`).
+   `walk_nv_filtered(..,false)`, либо отдельный обход с `keep = is_slow_file`).
 5. `main.rs` clap `TestAll` (`:142`): `--include-slow`/`--slow-only`; протянуть через
    `cmd_test_all` (хардкод-блок `:1063-1092` сейчас не wired — там прецедент).
 6. `docs/test-conventions.md`: флипнуть `[M-…]` note на done, описать суффикс `_slow.nv` +
-   папку `slow/` + флаги.
+   флаги.
 
 ### Генератор conformance — два lane
 `nova-codegen unicode --emit-conformance` пишет ОБА (рядом, со-локация через суффикс):
@@ -80,8 +72,6 @@
   500 → ~456 блоков для 227800). `--check` проверяет оба при `--conformance-full`. Имя
   модуля у full-файла отдельное (`module …conformance_slow`), чтобы не коллидить с
   fast-сэмплом-peer'ом в той же папке.
-- Альтернатива для очень больших корпусов — папка `plan152_4/slow/<kind>_full.nv` (если
-  хочется отделить визуально); суффикс предпочтительнее ради со-локации с fast-сэмплом.
 - collation-генератор уже существует (`unicode_data.rs`, `render_collation_conformance_nv`)
   — добавить `--conformance-full` ветку; остальные kind следуют тому же паттерну.
 
@@ -95,7 +85,7 @@
 ### Размер репо — коммитить полные текст-фикстуры
 Полный collation `.nv` ~10 MB+; но это детерминированный текст (git delta-жмёт хорошо,
 меняется только на Unicode-bump). Коммитить **фикстуры** (не UCD): slow-job
-self-contained (только nova+репо, без сети/UCD). `_slow.nv`/`slow/` вне дефолт-walk →
+self-contained (только nova+репо, без сети/UCD). `*_slow.nv` вне дефолт-walk →
 размер не стоит времени дефолт-прогона, только разовый clone-bandwidth.
 
 ### Миграция (важно)
@@ -108,14 +98,15 @@ breadth теперь в slow-файлах.
 Пробел: `fixtures/` + `_fixture.toml` (Plan 55 Ф.8) и per-file суффиксы
 (`_windows.nv`/`_linux.nv`/`_macos.nv` Plan 42.12, `_test`) нормированы **только кодом**
 (`test_runner.rs:3282`,`:3327-3341`), в `spec/decisions/` их НЕТ (в отличие от `_module.nv`
-= D100, 07-modules.md:1575). Раз вводим ещё одну discovery-конвенцию (`_slow.nv`/`slow/`),
+= D100, 07-modules.md:1575). Раз вводим ещё одну discovery-конвенцию (`_slow.nv`),
 нормировать **все** одним D-блоком в `spec/decisions/09-tooling.md` (рядом с D89
 EXPECT-маркерами): test-discovery skip/route-конвенции —
-- папки-скип: `fixtures/`/`_fixture.toml` (вспом. входные данные), `slow/`/`_slow.toml`
-  (большие поддеревья, opt-in);
+- папки-скип: `fixtures/`/`_fixture.toml` (вспом. входные данные);
 - per-file суффиксы: `_module.nv` (peer-конфиг, не тест), `_windows.nv`/`_linux.nv`/
   `_macos.nv` (OS-гейт), `_test` (наименование, для OS-матча отрезается), `_slow.nv`
   (большой тест, opt-in).
+- (отложено `[M-156-slow-subtree-dir]`: папка `slow/`/`_slow.toml` для медленных поддеревьев
+  — нормировать, когда будет введена.)
 
 Зафиксировать **порядок снятия суффиксов** (важно для корректной комбинации): `_module`
 (скип всего файла) → отрезать `_slow` (роут в slow-lane) → отрезать `_test` → OS-суффикс
@@ -125,11 +116,11 @@ EXPECT-маркерами): test-discovery skip/route-конвенции —
 сломается). Канонический порядок в имени: `<core>[_<os>][_test][_slow].nv`.
 
 ## Критерии приёмки
-- A1. `nova test` (default) НЕ запускает ни `*_slow.nv`, ни `slow/`; файл-корпус не читается
+- A1. `nova test` (default) НЕ запускает `*_slow.nv`; файл-корпус не читается
   (нулевой per-file I/O); время регресса не растёт от больших фикстур.
-- A2. `nova test --include-slow` / `--slow-only` гоняют slow-файлы и `slow/`; композиция с
+- A2. `nova test --include-slow` / `--slow-only` гоняют slow-файлы; композиция с
   `--filter`/`--skip` работает.
-- A3. `nova check <path>` на slow-файле/папке (path-based) по-прежнему работает.
+- A3. `nova check <path>` на slow-файле (path-based) по-прежнему работает.
 - A4. Суффикс `_slow.nv` комбинируется с прочими (`foo_conformance_slow.nv`,
   `bar_windows_slow.nv` — гейтится и по OS, и по slow).
 - A5. Генератор пишет оба lane детерминированно (`<kind>_conformance.nv` +
@@ -137,6 +128,11 @@ EXPECT-маркерами): test-discovery skip/route-конвенции —
 - A6. Полные наборы (collation/normalization/…) как `*_conformance_slow.nv`, коммитнуты.
 - A7. CI: fast-gate + slow-gate (merge/nightly).
 - G0: без упрощений — полнота доказывается slow-lane прогоном.
+
+## Отложено (out-of-scope rev-2)
+- **`[M-156-slow-subtree-dir]`** — папка `slow/` + сентинел `_slow.toml` для случая
+  «медленный folder-module из ≥2 peers». YAGNI до появления первого такого теста;
+  добавляется аддитивно (зеркало `fixtures/`+`_fixture.toml`), не ломая suffix-механизм.
 
 ## Прайор-арт
 Go `-short`/build-tags; Rust `#[ignore]`+`--ignored`, двухуровневый bors-CI; LLVM
