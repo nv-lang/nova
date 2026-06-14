@@ -564,3 +564,277 @@ pub fn render_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::Result<Str
     }
     Ok(out)
 }
+
+// ─── Plan 152.4.4: case folding + Unicode case mapping (UAX, SpecialCasing) ───
+
+/// Case-mapping data: full case folding + full lower/upper mappings, plus the
+/// `Cased` / `Case_Ignorable` ranges needed for the Final_Sigma context rule.
+pub struct CaseTables {
+    /// cp -> full case folding (CaseFolding.txt status C+F), != [cp].
+    pub fold: BTreeMap<u32, Vec<u32>>,
+    /// cp -> full lowercase (SpecialCasing unconditional, else UnicodeData simple), != [cp].
+    pub lower: BTreeMap<u32, Vec<u32>>,
+    /// cp -> full uppercase (SpecialCasing unconditional, else UnicodeData simple), != [cp].
+    pub upper: BTreeMap<u32, Vec<u32>>,
+    /// (lo, hi) `Cased` ranges (DerivedCoreProperties), sorted by lo.
+    pub cased: Vec<(u32, u32)>,
+    /// (lo, hi) `Case_Ignorable` ranges (DerivedCoreProperties), sorted by lo.
+    pub case_ignorable: Vec<(u32, u32)>,
+}
+
+/// Parse `CaseFolding.txt`, `SpecialCasing.txt`, `UnicodeData.txt` and
+/// `DerivedCoreProperties.txt` into the locale-independent case-mapping tables.
+///
+/// Locale rules are deliberately excluded (D253: no-locale): language-tagged
+/// SpecialCasing entries (tr/az/lt) and Turkic folding (status T) are dropped.
+/// The single context rule (Final_Sigma) is NOT baked into the table — the
+/// default σ mapping is kept and `case.nv` applies the ς form contextually using
+/// the `Cased`/`Case_Ignorable` ranges below.
+pub fn parse_case_tables(ucd_dir: &Path) -> anyhow::Result<CaseTables> {
+    let read = |name: &str| -> anyhow::Result<String> {
+        let p = ucd_dir.join(name);
+        std::fs::read_to_string(&p)
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {}", p.display(), e))
+    };
+
+    // --- UnicodeData.txt simple mappings: [12]=upper [13]=lower (single cp) ---
+    let mut upper: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    let mut lower: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for line in read("UnicodeData.txt")?.lines() {
+        let f: Vec<&str> = line.split(';').collect();
+        if f.len() < 15 {
+            continue;
+        }
+        let cp = match u32::from_str_radix(f[0], 16) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Ok(u) = u32::from_str_radix(f[12].trim(), 16) {
+            if u != cp {
+                upper.insert(cp, vec![u]);
+            }
+        }
+        if let Ok(l) = u32::from_str_radix(f[13].trim(), 16) {
+            if l != cp {
+                lower.insert(cp, vec![l]);
+            }
+        }
+    }
+
+    // --- SpecialCasing.txt: full mappings override the simple ones ---
+    // "code; lower; title; upper; (condition;)? # comment". A non-empty condition
+    // field (Final_Sigma / tr / az / lt / ...) marks a conditional/locale entry —
+    // skipped here (Final_Sigma is handled in case.nv).
+    for line in read("SpecialCasing.txt")?.lines() {
+        let core = line.split('#').next().unwrap_or("").trim();
+        if core.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = core.split(';').map(|s| s.trim()).collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        let conditional = parts.get(4).map_or(false, |s| !s.is_empty());
+        if conditional {
+            continue;
+        }
+        let cp = match u32::from_str_radix(parts[0], 16) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let lo = parse_cps(parts[1]);
+        let up = parse_cps(parts[3]);
+        if lo.as_slice() != [cp] {
+            lower.insert(cp, lo);
+        }
+        if up.as_slice() != [cp] {
+            upper.insert(cp, up);
+        }
+    }
+
+    // --- CaseFolding.txt: full folding = status C (common) + F (full) ---
+    // S (simple) and T (Turkic, locale) are excluded.
+    let mut fold: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for line in read("CaseFolding.txt")?.lines() {
+        let core = line.split('#').next().unwrap_or("").trim();
+        if core.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = core.split(';').map(|s| s.trim()).collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        if parts[1] != "C" && parts[1] != "F" {
+            continue;
+        }
+        let cp = match u32::from_str_radix(parts[0], 16) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let m = parse_cps(parts[2]);
+        if m.as_slice() != [cp] {
+            fold.insert(cp, m);
+        }
+    }
+
+    // --- DerivedCoreProperties.txt: Cased + Case_Ignorable (Final_Sigma ctx) ---
+    let mut cased: Vec<(u32, u32)> = Vec::new();
+    let mut case_ignorable: Vec<(u32, u32)> = Vec::new();
+    for line in read("DerivedCoreProperties.txt")?.lines() {
+        let core = line.split('#').next().unwrap_or("").trim();
+        if core.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = core.split(';').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        match parts[1].trim() {
+            "Cased" => {
+                if let Some(r) = parse_range_pair(parts[0]) {
+                    cased.push(r);
+                }
+            }
+            "Case_Ignorable" => {
+                if let Some(r) = parse_range_pair(parts[0]) {
+                    case_ignorable.push(r);
+                }
+            }
+            _ => {}
+        }
+    }
+    cased.sort_by_key(|&(lo, _)| lo);
+    case_ignorable.sort_by_key(|&(lo, _)| lo);
+
+    Ok(CaseTables { fold, lower, upper, cased, case_ignorable })
+}
+
+fn emit_range_pairs(ranges: &[(u32, u32)]) -> String {
+    ranges
+        .iter()
+        .map(|&(lo, hi)| format!("{:x},{:x}", lo, hi))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// Render `std/unicode/case_data.nv` (peer of case.nv). Mapping tables reuse the
+/// `cp:d1,d2;..` format (parsed by `parse_decomp_table`); Cased/Case_Ignorable use
+/// `lo,hi;..` range pairs (binary search). Sorted/keyed deterministically.
+pub fn render_case_data_nv(t: &CaseTables, version: &str) -> String {
+    let mut out = String::new();
+    out.push_str("// AUTO-GENERATED by `nova-codegen unicode`. DO NOT EDIT BY HAND.\n");
+    out.push_str("// Source: UCD CaseFolding.txt + SpecialCasing.txt + UnicodeData.txt\n");
+    out.push_str("//         + DerivedCoreProperties.txt (Cased / Case_Ignorable).\n");
+    out.push_str("// Regenerate: nova-codegen unicode --ucd-dir <UCD-dir> --root <repo>\n");
+    out.push_str("//\n");
+    out.push_str("// FOLD_DATA / LOWER_DATA / UPPER_DATA : \"cp:m1,m2,..;..\" full mapping seq\n");
+    out.push_str("//   (locale-independent: SpecialCasing conditional/language entries excluded;\n");
+    out.push_str("//    Turkic fold status T excluded; Final_Sigma handled in case.nv).\n");
+    out.push_str("// CASED_DATA / CASE_IGNORABLE_DATA : \"lo,hi;..\" ranges (Final_Sigma context).\n");
+    out.push('\n');
+    out.push_str("module std.unicode\n");
+    out.push('\n');
+    out.push_str(&format!(
+        "export const CASE_UNICODE_VERSION str = \"{}\"\n\n",
+        version
+    ));
+    out.push_str(&format!("const FOLD_DATA str = \"{}\"\n\n", emit_map_seq(&t.fold)));
+    out.push_str(&format!("const LOWER_DATA str = \"{}\"\n\n", emit_map_seq(&t.lower)));
+    out.push_str(&format!("const UPPER_DATA str = \"{}\"\n\n", emit_map_seq(&t.upper)));
+    out.push_str(&format!("const CASED_DATA str = \"{}\"\n\n", emit_range_pairs(&t.cased)));
+    out.push_str(&format!(
+        "const CASE_IGNORABLE_DATA str = \"{}\"\n",
+        emit_range_pairs(&t.case_ignorable)
+    ));
+    out
+}
+
+/// Render `nova_tests/plan152_4/case_conformance.nv` — breadth check that the
+/// runtime parses+applies every mapping. For a uniform spread-sample of all mapped
+/// codepoints, assert `fold_case`/`to_uppercase`/`to_lowercase` of the isolated
+/// codepoint match the UCD-derived expected sequence. (Contextual Final_Sigma is
+/// exercised by the hand-authored `case.nv` word cases — an isolated Σ has no
+/// preceding cased char, so its lowercase is the default σ here, matching.)
+///
+/// SCOPE (important — this check is self-referential for SELECTION): the expected
+/// values are derived from the SAME `parse_case_tables` that emits `case_data.nv`,
+/// so this validates the runtime PARSER + lookup + multi-codepoint emission
+/// (round-trip), NOT the table SELECTION. A selection regression (wrong UnicodeData
+/// column, dropping a CaseFolding C/F row, or wrongly keeping a Turkic/locale
+/// SpecialCasing entry) would shift both sides together and still pass. Selection
+/// correctness is pinned independently by the hand-typed oracle asserts in
+/// `case.nv` (Turkic-exclusion I→i, İ→i̇, field-index sentinels, 3-cp expansions,
+/// Final_Sigma with case-ignorable interleaving).
+pub fn render_case_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::Result<String> {
+    let t = parse_case_tables(ucd_dir)?;
+    let esc = |cps: &[u32]| -> String {
+        let mut s = String::new();
+        for &cp in cps {
+            s.push_str(&format!("\\u{{{:x}}}", cp));
+        }
+        s
+    };
+    let mut keys: BTreeSet<u32> = BTreeSet::new();
+    keys.extend(t.fold.keys().copied());
+    keys.extend(t.lower.keys().copied());
+    keys.extend(t.upper.keys().copied());
+    let keys: Vec<u32> = keys.into_iter().collect();
+    let total = keys.len();
+    // Uniform spread across the WHOLE key range (NOT a contiguous head): pick
+    // `take` indices evenly via i*total/take, so the committed sample always spans
+    // low ASCII through the ligatures (U+FB00..), Greek iota-subscript titlecase
+    // (U+1F88..) and the supplementary-plane cased scripts (Deseret/Adlam/…).
+    let take = limit.min(total);
+    let mut sel: Vec<u32> = Vec::with_capacity(take);
+    if take == total {
+        sel.extend_from_slice(&keys);
+    } else {
+        for i in 0..take {
+            sel.push(keys[i * total / take]);
+        }
+    }
+    let expect = |m: &BTreeMap<u32, Vec<u32>>, cp: u32| -> String {
+        match m.get(&cp) {
+            Some(v) => esc(v),
+            None => esc(&[cp]),
+        }
+    };
+    let mut out = String::new();
+    out.push_str("// AUTO-GENERATED by `nova-codegen unicode --emit-conformance`. DO NOT EDIT.\n");
+    out.push_str("// Case-mapping breadth conformance (UCD-derived): for a uniform spread sample\n");
+    out.push_str("// of all mapped codepoints, assert fold_case/to_uppercase/to_lowercase of the\n");
+    out.push_str("// isolated codepoint equal the expected full mapping sequence.\n");
+    out.push_str("// NOTE: self-referential for SELECTION (expected derived from the same generator)\n");
+    out.push_str("//   -> validates the runtime PARSER+lookup+emission, not table selection; the\n");
+    out.push_str("//   no-locale SELECTION is pinned by the hand-typed oracle in case.nv.\n");
+    out.push_str(&format!(
+        "// Coverage: uniform spread = {} of {} mapped codepoints (low ASCII .. supplementary).\n",
+        sel.len(), total
+    ));
+    out.push_str("module plan152_4.case_conformance\n\n");
+    out.push_str("import std.unicode.{fold_case, to_uppercase, to_lowercase}\n\n");
+    const CHUNK: usize = 250;
+    for (ci, chunk) in sel.chunks(CHUNK).enumerate() {
+        out.push_str(&format!(
+            "test \"case-mapping conformance (chunk {}, {} cps)\" {{\n",
+            ci, chunk.len()
+        ));
+        for &cp in chunk {
+            let src = esc(&[cp]);
+            out.push_str(&format!(
+                "    assert(fold_case(\"{}\") == \"{}\")\n",
+                src, expect(&t.fold, cp)
+            ));
+            out.push_str(&format!(
+                "    assert(to_uppercase(\"{}\") == \"{}\")\n",
+                src, expect(&t.upper, cp)
+            ));
+            out.push_str(&format!(
+                "    assert(to_lowercase(\"{}\") == \"{}\")\n",
+                src, expect(&t.lower, cp)
+            ));
+        }
+        out.push_str("}\n\n");
+    }
+    Ok(out)
+}

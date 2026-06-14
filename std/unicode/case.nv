@@ -1,0 +1,141 @@
+// Plan 152.4.4 (D253): Unicode case folding + case mapping (locale-independent).
+//
+// Opt-in `std.unicode` peer (NOT prelude — table cost paid only by importers).
+// Co-equal with `case_data.nv` (generated tables) in the `std.unicode`
+// folder-module, so the `*_DATA` constants are visible here directly. Reuses peer
+// helpers: parse_cp_list / str_to_cps / cps_to_str / parse_decomp_table
+// (normalize.nv), parse_flat / in_ranges2 (graphemes.nv).
+//
+//   fold_case(s)    — full case folding (CaseFolding C+F), for caseless matching.
+//   to_uppercase(s) — full Unicode uppercase (multi-codepoint: ß→SS, ﬁ→FI, …).
+//   to_lowercase(s) — full Unicode lowercase incl. the Final_Sigma context rule.
+//
+// "Locale-independent" (D253): SpecialCasing language entries (tr/az/lt) and
+// Turkic folding (status T) are excluded by the generator. The only context rule
+// in the language-neutral subset — Final_Sigma — is applied here. Title-casing
+// needs UAX #29 word boundaries ([M-152-word-boundaries]) and is deferred.
+//
+// Note: case folding is NOT normalization. For full caseless matching of
+// canonically-equivalent text, normalize first (UAX #15) then fold.
+
+module std.unicode
+
+import std.collections.hashmap.{HashMap}
+import std.collections.vec.{Vec}
+
+// ── lazy-static case tables (built once on first touch) ──
+ro fold_map HashMap[int, str] = parse_decomp_table(FOLD_DATA)
+ro lower_map HashMap[int, str] = parse_decomp_table(LOWER_DATA)
+ro upper_map HashMap[int, str] = parse_decomp_table(UPPER_DATA)
+ro cased_flat Vec[int] = parse_flat(CASED_DATA)
+ro caseign_flat Vec[int] = parse_flat(CASE_IGNORABLE_DATA)
+
+fn is_cased(cp int) -> bool => in_ranges2(cased_flat, cp)
+fn is_case_ignorable(cp int) -> bool => in_ranges2(caseign_flat, cp)
+
+// Greek sigma — the one context-dependent lowercase in the no-locale subset.
+const CAP_SIGMA int = 0x3A3
+const SMALL_SIGMA int = 0x3C3
+const SMALL_FINAL_SIGMA int = 0x3C2
+
+// Single-codepoint sequence (identity mapping). Helpers return `Vec[int]` (never
+// a bare `push`/`append` tail) so every `if`/`match` branch unifies cleanly.
+fn single(cp int) -> Vec[int] {
+    mut v = Vec[int].with_capacity(1)
+    v.push(cp)
+    v
+}
+
+// Per-codepoint table lookup → mapped sequence, or [cp] when unmapped.
+fn fold_one(cp int) -> Vec[int] {
+    match fold_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
+}
+fn upper_one(cp int) -> Vec[int] {
+    match upper_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
+}
+fn lower_one(cp int) -> Vec[int] {
+    match lower_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
+}
+
+/// Full case folding (UCD CaseFolding status C+F) — for caseless matching.
+/// Idempotent on its own output. Multi-codepoint folds apply (ß → "ss").
+export fn fold_case(s str) -> str {
+    mut out = Vec[int].with_capacity(s.byte_len())
+    for c in s.as_chars() {
+        for d in fold_one(c as int) { out.push(d) }
+    }
+    cps_to_str(out)
+}
+
+/// Full Unicode uppercase (locale-independent). Multi-codepoint expansions apply
+/// (ß → "SS", ﬁ → "FI", ﬀ → "FF", ŉ → "ʼN", …). No Turkic/Lithuanian tailoring.
+export fn to_uppercase(s str) -> str {
+    mut out = Vec[int].with_capacity(s.byte_len())
+    for c in s.as_chars() {
+        for d in upper_one(c as int) { out.push(d) }
+    }
+    cps_to_str(out)
+}
+
+/// Full Unicode lowercase (locale-independent), including the Final_Sigma context
+/// rule (Greek Σ → ς word-finally, σ otherwise). İ (U+0130) → "i̇" via the
+/// unconditional mapping; no Turkic locale tailoring.
+export fn to_lowercase(s str) -> str {
+    ro cps = str_to_cps(s)
+    ro n = cps.len()
+    mut out = Vec[int].with_capacity(n)
+    mut i = 0
+    while i < n {
+        ro cp = cps[i]
+        ro mapped = if cp == CAP_SIGMA {
+            single(if is_final_sigma(cps, i) { SMALL_FINAL_SIGMA } else { SMALL_SIGMA })
+        } else {
+            lower_one(cp)
+        }
+        for d in mapped { out.push(d) }
+        i = i + 1
+    }
+    cps_to_str(out)
+}
+
+// Final_Sigma (UAX / SpecialCasing): the Σ at index `i` lowercases to ς iff it is
+// preceded by (a cased char, then zero+ case-ignorable) AND NOT followed by
+// (zero+ case-ignorable, then a cased char).
+fn is_final_sigma(cps Vec[int], i int) -> bool {
+    // before: a cased char must precede (skipping case-ignorable runs).
+    mut j = i - 1
+    mut before_cased = false
+    mut scan = true
+    while scan && j >= 0 {
+        ro c = cps[j]
+        if is_case_ignorable(c) {
+            j = j - 1
+        } else if is_cased(c) {
+            before_cased = true
+            scan = false
+        } else {
+            scan = false
+        }
+    }
+    if before_cased {
+        // after: a cased char must NOT follow (skipping case-ignorable runs).
+        ro n = cps.len()
+        mut k = i + 1
+        mut after_cased = false
+        scan = true
+        while scan && k < n {
+            ro c = cps[k]
+            if is_case_ignorable(c) {
+                k = k + 1
+            } else if is_cased(c) {
+                after_cased = true
+                scan = false
+            } else {
+                scan = false
+            }
+        }
+        !after_cased
+    } else {
+        false
+    }
+}
