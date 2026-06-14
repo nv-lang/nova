@@ -80,6 +80,7 @@
 | `[M-ptr-cast-reinterpret-unsafe]` | **OPEN (учтён в coercion Plan 147 Ф.3/D246).** Ro-laundering ветка `(a) *ro T → *mut T widening` **ПОКРЫТА** D246: `*T→*mut T` (= `*ro→*mut` под `*T≡*ro T`) запрещён в coercion, `*mut→*T` авто-сужение. ОСТАЁТСЯ ветка `(b) *T → *U` (смена pointee-типа, `*u8→*int` = OOB/align/aliasing UB) — должна требовать `unsafe`/`E_PTR_CAST_REINTERPRET`; это ОТДЕЛЬНАЯ ось от ro-mut, D246 её не закрывает. Сейчас `as *U` = safe-reinterpret. D216 cast-rules amend. | plan-138.5 Followups | P2 |
 | `[M-138-canonical-modifier-order]` | ✅ **CLOSED Plan 148 Ф.1 (2026-06-12, D241 enforcement).** Parser (`parse_type_decl` modifier-loop) присваивает каждому модификатору canonical rank (`value`=0 → `consume`=1 → `priv`=2), проверяет монотонность и при инверсии эмитит `E_MODIFIER_ORDER` с machine-applicable fix-it (переписывает регион в rank-канон). Обобщено на ВСЕ type-модификаторы (новый модификатор = rank по scope). `plan124_8/modifier_order_independence_ok` ФЛИПНУТ в negative. pos+neg фикстуры `nova_tests/plan148/mo_*` (7/0). D241 (03-syntax.md) IMPLEMENTED + amend D124/D220 (02-types.md). | plan-138 (closed) | ✅ DONE |
 | `[M-codegen-unify-tuple-repr]` | ✅ **CLOSED Plan 148 Ф.4 (2026-06-12, D123 amend).** Кортежи унифицированы на on-demand mono'd typed структуры. (A1) Concrete tuples (f64/str/record/bool) хранят реальные C-типы полей — без int-boxing/`(intptr_t)`-каста (уже был default через mono'd путь; подтверждено фикстурой). (A2) Blanket `_NovaTuple1..8` pre-decl РЕТАЙРНУТ — legacy all-int `_NovaTupleN` эмитится on-demand per requested arity (`register_legacy_tuple` + `/*__LEGACY_TUPLE_TYPEDEFS__*/` splice, idempotent `#ifndef`); на практике только arity 2 (erased `HashMap`/`Set` `(K,V)`). (A3) tuple eq/debug корректны по типам (per-element compare через `emit_field_eq`). КЛЮЧЕВОЙ ФИКС: field-read (`emit_expr` Member-digit) + `infer_expr_c_type` декодируют элемент-тип напрямую из mono'd struct name в `obj_ty` (`parse_mono_tuple_elements`), не только из per-Ident side-table — чинит field access на fn-параметрах, call-result кортежах и **вложенных** `t.0.1` цепочках. Закрыло 5 pre-existing CC-FAIL в plan59 (f2/f10/f13/f15/f16). Новый код `[E_TUPLE_DESTRUCTURE_ARITY]` на 3 codegen-сайтах. (A4) полная регрессия зелёная (~30 директорий vs baseline-бинарь в temp-worktree: 0 новых FAIL, +5 fixed). Фикстуры `nova_tests/plan148/tr_*` (2 pos: `tr_tuple_typed_fields_ok`, `tr_tuple_eq_debug_ok`; 2 neg: `tr_tuple_destructure_arity_neg`, `tr_tuple_destructure_overlong_neg`). plan148 17/0. Остаток (НЕ блокирует): mono'd-tuple-of-Vec forward-decl ordering (plan59 f5 / types arrays — pre-existing, отдельная ось); out-of-range tuple field index не reject'ится (pre-existing checker gap). | plan-148 (closed) | ✅ DONE |
+| `[M-hashmap-tuple-key-mono]` | **OPEN (обнаружено Plan 152.4, 2026-06-14).** `HashMap[(int,int), int]` (кортеж как ключ): `nova check` **ПРИНИМАЕТ** (тип-уровень OK), но codegen даёт **CC-FAIL** (НЕ silent — hard error). Полу-инстанцированный mono: переменная объявляется как `Nova_HashMap____nova_int__nova_int*` (ключ-кортеж ошибочно стёрт в `nova_int`), конструктор использует полный mangle `Nova_HashMap_____NovaTuple_2_8_nova_int_8_nova_int__nova_int_static_new()`, а `insert` уходит в **erased** `Nova_HashMap_method_insert(m, (void*)(intptr_t)(tuple), …)` — три рассогласованных пути; typedef tuple-key варианта не эмитится → `use of undeclared identifier 'Nova_HashMap_____NovaTuple…'`. Корень: mono-имя HashMap считает только примитивные/Named-ключи, кортеж-ключ не получает `Hash`/`Equal` авто-derive (Plan 126 покрыл records, не кортежи) и mono-typedef не эмитится. Решение (развилка): (a) codegen — поддержать tuple-key (авто-derive `Hash`/`Equal` для кортежей + полный mono-typedef + единый key-mangle на всех путях), ЛИБО (b) checker — отклонять `K`-без-`Hash` на тип-уровне с `E_HASHMAP_KEY_NOT_HASH` (тогда честный отказ вместо CC-FAIL). Связь Plan 154 (checker over-accepts → codegen не доставляет; но это CC-FAIL, не silent-noop). Репро: `HashMap[(int,int),int].new(); m.insert((1,2),42); m.get((1,2))`. Workaround: упакованный int-ключ `(a<<21)\|b` в `HashMap[int,int]` (использован в 152.4 для composition-таблицы). | floating (codegen / checker) | P2 |
 
 ## P2 — Perf optimization (escape/Z3-driven; correctness-neutral)
 
@@ -89,6 +90,7 @@
 | `[M-opt-value-sum-types]` | Compiler-inferred value(stack)/heap для sum-типов (recursion+size+escape; прозрачно — immutable); payload-less интернирование. | new perf-план (Plan 120/139) | P2 |
 | `[M-opt-elide-proven-overflow-checks]` | Z3/range-элизия доказуемо-безопасных integer-overflow чеков (proven→elide, как Plan 140). | new perf-план / Plan 140 | P2 |
 | `[M-opt-preempt-strided-loop]` | `nova_preempt_check()` в back-edge КАЖДОГО цикла блокирует clang-векторизацию. **✅ Part A+B DONE (Plan 143, merge `7c047a1b`, 2026-06-14):** (A) skip preempt-check на provably-short const-bound range-циклах (оба bound'а — int-литералы, count ∈ [0,1024] → starvation-safe, разблокирует векторизацию); (B) `for i in lo..hi { dst[i]=src[i] }` на Vec[T] → overlap-safe bulk copy (memmove fast-path + element-loop fallback на destructive forward-overlap; inclusive-overflow-safe). **Adversarial-review (6 агентов) + эмпирический probe** нашли 2 бага — закрыты: writable offset-overlap view'ы (`a=v[1..]; a[i]=b[i]`) пропагируют ≠ memmove → runtime overlap-guard; inclusive `hi+1` при i64::MAX = UB → `last` без +1. plan143: 9 copy + 3 preempt кейса PASS; регрессия 0 new fail (Vec/collection слайс + concurrency). **🟡 Остаётся long-term:** signal-based async preemption (Go 1.14 SIGURG) — general для variable-bound циклов без per-iteration call. **Cross-link Plan 144:** SIGURG = ОБЩИЙ async-yield (preempt + GC safe-point, [§7.4](144-precise-gc-implementation.md)). | Plan 143 (A+B done) / SIGURG → 144 §7.4 | 🟡 A+B done, SIGURG P2 |
+| `[M-opt-leaf-preempt-entry-elision]` | Элидировать **function-prologue** `nova_preempt_check()` ([emit_c.rs:14925](../../compiler-codegen/src/codegen/emit_c.rs#L14925), Plan 44.7 — «first statement каждой Nova-функции») на функциях, провабельно достигающих safepoint БЕЗ своего entry-check. Тривиальные leaf-форвардеры (напр. `StringBuilder.append(f32)` → `append(f64)`) сейчас несут лишний барьер-call. **Safe subset (доступен сразу):** no-loop + no-call (pure leaf, straight-line return) → элидировать тривиально. **Full (correct, prod):** элидировать iff НЕТ циклов И функция НЕ на call-cycle (не рекурсивна прямо/косвенно) И все callee статически разрешены; **conservative KEEP** при indirect/closure-call/FFI-callback (recursion/indirect = главный hazard, default=KEEP — та же семья, что Plan 144 may-GC §7.5#2). Interprocedural call-graph SCC; whole-program моно помогает. Частично снимается SIGURG'ом. **Self-contained** (codegen-анализ, без cross-module dep). Home **Plan 143 §2.B** (perf, correctness-neutral, sibling `[M-opt-preempt-strided-loop]`). | Plan 143 §2.B | P2 |
 
 ## P2 — Ergonomics / stdlib combinators
 
@@ -113,6 +115,9 @@
 | `[M-91.fe5-math-time-conformance]` | math (sqrt/ln) есть; Instant/Duration time-API conformance pending. | plan-91 Followups | P2 |
 | `[M-ide-integration-deferred]` | Production LSP (hover/goto/completion/refs/rename/format) 104.2–104.6 не построены (104.7 tree-sitter закрыт). | plan-104 Followups | P2 |
 | `[M-118.1-ffi-perf-bench]` | memcpy/memmove bench harness для FFI intrinsics не построен (сами intrinsics landed). | plan-118.1 Followups | P2 |
+| `[M-152-graphemes]` | **OPEN (Plan 152.4.3, Phase B).** `str.@as_graphemes() -> GraphemesView` (extended grapheme clusters, UAX #29: combining marks / ZWJ-emoji / regional-indicator флаги) — третья линза, симметрична `as_bytes`/`as_chars`. Нужна `nova-codegen unicode`-генерация `GraphemeBreakProperty.txt` + `emoji-data.txt` таблиц + UAX #29-алгоритм. Conformance — `GraphemeBreakTest.txt`. Нормализация (152.4.1/2) уже залендена. | Plan 152.4.3 | P2 |
+| `[M-152-case-fold]` | **OPEN (Plan 152.4.4, Phase B).** `fold_case(s)` (caseless matching, для 152.5b `eq_ignore_case`) + полные Unicode `to_uppercase`/`to_lowercase`/`to_titlecase` (multi-codepoint: ß→SS, ﬁ→FI) — апгрейд ASCII-only `transform.nv`. Нужны `CaseFolding.txt` + `SpecialCasing.txt` таблицы (`nova-codegen unicode`). | Plan 152.4.4 | P2 |
+| `[M-lazy-static-thread-safety]` | **OPEN (Plan 152.4 foundation).** Module-level `ro` lazy-static globals (`emit_lazy_const`) используют first-touch init **без синхронизации** (`if (!_init) { _value = build(); _init = 1; }`). При конкурентном первом доступе из нескольких fiber'ов/потоков — race (двойной build + torn `_init`). Не хуже существующего non-constexpr `const` lazy-init (та же модель) — не новый класс. Fix: `pthread_once`/atomic-CAS guard, либо eager-init на старте для prelude-критичных. Unicode-таблицы сейчас обычно тригерятся из main до spawn. | floating | P3 |
 
 ## P3 — Codegen cleanliness (генерируемый C полиш; рантайм не затронут)
 
@@ -237,6 +242,11 @@
   Скаляр `ro x f32 = 1.5` коэрсится верно; explicit `v.push(x)` тоже. Проблема — f32 элементы
   в **array-литерале** под `Vec[f32].from`. Лечить: коэрсия f64-литералов → f32 при инференсе
   типа элемента массива из контекста `Vec[f32]`. Не про Display/Debug.
+- **`[M-float-roundtrip-printing]`** (floating, P3, выявлено в аудите 154.1): float→str
+  (`nova_f64_to_str`, и f32 через него) использует `%g` с дефолтной 6-знач точностью — **лосси**
+  на >6 значащих для f64 И f32 (не round-trip). Проектный стандарт, консистентный, НЕ регрессия;
+  но для прод-качества stdlib желателен shortest-round-trip формат (Ryū/Grisu). Затрагивает
+  весь stdlib-float — отдельная задача, не f32-специфична.
 
 ## Follow-up: Plan 153.1 (Vec core API — отложенные из-за codegen-лимитов)
 - **`[M-153.1-cap-setter-overload]`** ✅ **RESOLVED** (через фикс
@@ -270,6 +280,10 @@
   `.min(b)` метод-форма падает на коллизии с системным C-макросом `max`/`min` (нет в
   1-арговых `int_method_to_c`/`f64_method_to_c`). Нужен рантайм-хелпер `nova_int_max` /
   `fmax`-роутинг. НЕ гейтит Vec-ядро (cap-shrink-to-fit = `cap_to(len())`). Отложен из 153.1 Ф.0.
+- **`[M-153.1-of-vs-from-sweep]`** (planned, P3, churn): конструктор-конвенция формализована
+  (план 153.1 / D259 + док `from` в core.nv направляет на `of`): литералы → `Vec[T].of(a,b,c)`,
+  конверсия коллекции → `from(coll)`. Опциональный sweep существующих `from([литерал])` → `of(...)`
+  в тестах/stdlib — низкий приоритет (оба корректны; чистый churn в большом diff'е).
 
 ## Follow-up: Plan 153.6 (Vec-протоколы Hash + FromIterator)
 - **`[M-153.6-vec-hashmap-key-eq]`** (planned, P2, home **Plan 153.6 / HashMap**): `Vec[T]`
@@ -285,22 +299,28 @@
   `collect`-таргета приземляется вместе с 153.2.
 
 ## Follow-up: Plan 153.3 (sort & search)
-- **`[M-153.3-sort-unstable-inplace]`** (planned, P3, perf): `@sort_unstable[_by][_by_key]`
-  сейчас **alias стабильного** bottom-up merge sort (correctness-first MVP, sort.nv). Дать
-  отдельный быстрый in-place introsort/pdqsort (без O(n) scratch, лучше cache/branch) — это и
-  есть смысл `_unstable`. Не гейтит ничего (стабильная сортировка корректна для всех кейсов).
-- **`[M-153-select-nth]`** (planned, P3, home **Plan 153.3 roadmap**): `@select_nth_unstable`
-  (quickselect, k-й порядковый элемент за O(n) средн.) — явно отложен планом 153.3 §Roadmap.
-- **`[M-153-result-eq-literal-expected-type]`** (planned, P2, home **checker / type-inference**):
-  `result == Ok(x)` где Result имеет **non-default E** (≠`str`; напр. `binary_search`→
-  `Result[int,int]`) — литерал `Ok(x)` инферит `E=str` (дефолт), не унифицируется с типом LHS →
-  два разных `NovaRes_<...>` → структурный eq сравнивает несовпадающие payload-типы → **CC-FAIL**.
-  Нужна **expected-type propagation** в чекере: для `Eq/Neq` протянуть тип одного операнда как
-  expected другому (`types/mod.rs`, ~18k строк, 20 Binary-армов; mutable `walk_expr`@18478 —
-  desugar-проход, реальная bidirectional-инференция в другом месте). Глубокий change, узкая польза
-  (общий `Result[_, str]` УЖЕ работает; `binary_search` использует `match`). Surfaced при
-  структурном `==`-фиксе (`1cc82de5`). **Не** добавляли same-type guard: текущий CC-FAIL громче
-  silent-wrong identity.
+- **`[M-153.3-sort-unstable-inplace]`** ✅ **RESOLVED** (commit `468bccf5`): `@sort_unstable[_by]
+  [_by_key]` переведены с alias-стабильного на **настоящий in-place heapsort** (O(n log n) worst,
+  O(1) extra — даёт `_unstable` его смысл: без scratch-буфера и без quicksort O(n²)-обрыва).
+  Тест `plan153_3/heapsort_rigor` 5/5.
+- **`[M-153.3-sort-pdqsort]`** (planned, P3, **perf-only — НЕ упрощение**): heapsort корректен и
+  worst-case-оптимален; pattern-defeating quicksort (pdqsort) обгоняет его лишь по константам
+  (cache/branch). Чистая perf-оптимизация поверх рабочего, гарантированного алгоритма.
+- **`[M-153-select-nth]`** ✅ **RESOLVED** (commit `468bccf5`): `@select_nth_unstable(k)` реализован
+  как **introselect** — median-of-three quickselect (O(n) средн.) + depth-guard fallback на
+  heapsort (O(n log n) worst, без O(n²)), контракт `k ∈ [0,len)`. Тест `plan153_3/select_nth` 4/4
+  + OOB-panic neg.
+- **`[M-153-result-eq-literal-expected-type]`** ✅ **RESOLVED** (codegen re-emit): `result == Ok(x)`
+  / `== Err(x)` для Result с **non-default E** (≠`str`; напр. `binary_search`→`Result[int,int]`)
+  теперь работает. Был баг: голый литерал `Ok(x)` инферил `E=str` (codegen-дефолт `emit_c.rs:5172`,
+  т.к. чекер оставляет variant-ctor без типа by design — тест `infer_call_sum_variant_stays_unknown`)
+  → `binary_search() == Ok(2)` сравнивал два разных `NovaRes_<…>` → CC-FAIL. **Фикс** (codegen-local,
+  `==`-NovaRes_-бранч): если типы операндов `Eq/Neq` расходятся и одна сторона — голый `Ok/Err`-
+  литерал, переэмитить её под concrete `NovaRes_<n>` другой стороны (`reemit_result_variant_as` +
+  `expr_is_result_ctor`, payload-cast). Тест `plan153_3/result_eq_literal` (binary_search ==Ok/Err
+  non-default-E + explicit Result[int,int] + default-E Result[int,str] не сломан). Частный случай
+  отложенного-с-мая `Q-overload-result-type` (general expected-type propagation для overload-резолва
+  `@into` остаётся открытым — см. Q).
 
 ## Follow-up: Plan 153.4 (slices — value-record element typedef)
 - **`[M-153.4-vec-value-record-field-access]`** (planned, P2, home **Plan 153.4 / Plan 96 H3**):
@@ -309,10 +329,10 @@
   Остаётся доступ к **ПОЛЮ** элемента value-record — `ranges[0].start` — тот же корень (элемент
   мангатится в `Nova_Range_p`, теряет точный тип), но ДРУГОЙ codepath (element-field-access,
   Plan 96 H3 / array_element_types Ф.4.5). Не входил в acceptance. Применить аналогичный un-mangle.
-- **stale neg-message** (floating, P3): plan96/neg_slice_{a_gt_b,a_negative,oob_to} ждут
-  `EXPECT_RUNTIME_PANIC array: slice`, а сообщение теперь `Vec: slice ... out of bounds` (D239
-  `[]T`→`Vec` rename, emit_c.rs:19045). Pre-existing stale-ожидание, не codegen-баг. Выровнять
-  EXPECT на `Vec: slice`, или сделать message нейтральным к array/Vec.
+- **stale neg-message** ✅ **CLOSED 2026-06-14 (Plan 152 sweep)**: plan96/neg_slice_{a_gt_b,
+  a_negative,oob_to} ждали `EXPECT_RUNTIME_PANIC array: slice`, а сообщение теперь
+  `Vec: slice ... out of bounds` (D239 `[]T`→`Vec` rename, emit_c.rs:19045). Директивы
+  выровнены на `Vec: slice`. plan96 23/0. Program behaviour был корректен (OOB → panic).
 
 ## Конвенция
 - **Planned** маркер → Followups своего плана (+ индекс-строка здесь с home).

@@ -4110,6 +4110,24 @@ parser char-литералы **не поддерживает** — это бло
 
 ---
 
+## Q-unicode-data. Откуда и как берутся Unicode-таблицы ✅ ЗАКРЫТО (2026-06-14, Plan 152.4 / D253)
+
+> **РЕШЕНИЕ: build-time codegen из UCD, версия-пин, ленивые таблицы, без ICU.**
+> Таблицы (нормализация: NFD/NFKD/CCC/canonical-composition; далее grapheme/case)
+> генерируются инструментом **`nova-codegen unicode --ucd-dir <UCD>`** из официального
+> Unicode Character Database (`UnicodeData.txt`, `CompositionExclusions.txt`,
+> `DerivedNormalizationProps.txt`, …) в компактные `;`-кодированные Nova-таблицы
+> `std/unicode/norm_data.nv`. Пин к версии (`const UNICODE_VERSION str = "16.0"`),
+> **ленивая** инициализация (парсятся в `HashMap` при первом вызове через module-level
+> `ro` lazy-static, D199). НЕ хардкодим вручную, НЕ зависим от ICU/ОС. `--check` —
+> CI-guard (расхождение с UCD → fail). Conformance — официальный `NormalizationTest.txt`
+> (`--emit-conformance` → фикстура plan152_4). Прецедент: Rust `unicode-*` (codegen),
+> Go `maketables`. См. [D253](decisions/03-syntax.md#d253),
+> [Plan 152.4](../docs/plans/152.4-std-unicode.md). UCD-файлы в репозиторий НЕ
+> коммитятся (объём); путь к ним передаётся `--ucd-dir`.
+
+---
+
 ## Q-cstring. Гарантия nul-termination для `nova_str.ptr`
 
 ✅ **ЗАКРЫТО 2026-06-03** — Plan 118.1 / D26 amend
@@ -4974,16 +4992,16 @@ let-аннотации. Multi-target Into — пока не покрываетс
 (`Into[T]` — частный случай через single-target), Plan 11 (bootstrap
 для осей 1, 2, 4).
 
-**Родственный кейс — структурное `==` с variant-литералом (Plan 153.3, 2026-06-14).** Тот же
-дефицит bidirectional inference всплыл **вне** overload-резолва. `result == Ok(x)`, где
-`result : Result[int, int]` (non-default `E`): литерал `Ok(x)` инферится bottom-up как
-`Result[int, str]` (`E` дефолтит `str`), НЕ унифицируется с типом LHS → структурный eq сравнивает
-два разных `NovaRes_<…>` (payload `int` vs `str`) → **CC-FAIL**. Нужно то же самое: для `Eq/Neq`
-протянуть тип одного операнда как **expected** другому (top-down), чтобы variant-литерал инферил
-свои type-params из контекста. Общий `Result[_, str]` (E совпадает с дефолтом) уже работает после
-структурного `==`-фикса (commit `1cc82de5`); workaround — `match` или явная аннотация. Tracked:
-`[M-153-result-eq-literal-expected-type]`. **Усиливает мотивацию** реализовать expected-type
-propagation как **общий** top-down проход (binop-операнды, не только overload-резолв `@into`).
+**Родственный кейс — структурное `==` с variant-литералом (Plan 153.3, 2026-06-14) ✅ ЗАКРЫТ
+точечно.** Тот же дефицит bidirectional inference всплыл **вне** overload-резолва: `result == Ok(x)`,
+где `result : Result[int, int]` (non-default `E`) — литерал `Ok(x)` инферился bottom-up как
+`Result[int, str]` (`E` дефолтит `str`), не совпадал с LHS → структурный eq сравнивал два разных
+`NovaRes_<…>` → CC-FAIL. **Решено codegen-точечно** (`[M-153-result-eq-literal-expected-type]`
+RESOLVED): в `==`-NovaRes_-ветке, если типы операндов `Eq/Neq` расходятся и одна сторона — голый
+`Ok/Err`-литерал, codegen переэмитит её под concrete `NovaRes_<n>` другой стороны
+(`reemit_result_variant_as`). Это **частное** решение для binop-`==`; **общий** top-down expected-type
+проход (overload-резолв `@into`, return-position, record-поле) — **остаётся открытым** в этом Q.
+Точечный codegen-фикс == усиливает мотивацию для общей реализации (та же механика, шире охват).
 
 ---
 

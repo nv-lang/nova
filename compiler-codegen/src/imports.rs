@@ -1068,7 +1068,26 @@ fn resolve_one(
                 Item::Type(t) => (Some(t.name.clone()), t.is_export),
                 Item::Fn(f) => (Some(f.name.clone()), f.is_export),
                 Item::Const(c) => (Some(c.name.clone()), c.is_export),
-                // Plan 57: bench не экспортируется (как test/let/lemma).
+                // Plan 152.4: module-level `ro NAME = EXPR` lazy-static global —
+                // a private (no `export` on `let`) runtime binding. Extract its
+                // binder name so it can be carried across the module boundary:
+                // an imported fn in the same module reads it via the lazy getter
+                // emitted by emit_module. Single named binder (Ident, or a
+                // single-segment unit Variant for the UPPER_CASE form), non-ghost.
+                Item::Let(l) if !l.is_ghost => {
+                    let n = match &l.pattern {
+                        crate::ast::Pattern::Ident { name, .. } => Some(name.clone()),
+                        crate::ast::Pattern::Variant {
+                            path,
+                            kind: crate::ast::VariantPatternKind::Unit,
+                            ..
+                        } if path.len() == 1 => Some(path[0].clone()),
+                        _ => None,
+                    };
+                    (n, false)
+                }
+                // Plan 57: bench не экспортируется (как test/lemma). ghost let —
+                // spec-only, не emit'ится в codegen.
                 Item::Test(_) | Item::Bench(_) | Item::Let(_) | Item::Lemma(_) => (None, false),
             };
             match (&item, name) {
@@ -1099,8 +1118,18 @@ fn resolve_one(
                         visible_acc.insert(final_name);
                     }
                 }
+                (Item::Let(_), Some(_)) => {
+                    // Plan 152.4: module-level `ro NAME = EXPR` lazy-static
+                    // global. Merge into `merged_items` for codegen completeness
+                    // (an exported fn from this module may read it — e.g.
+                    // `ccc_of` reads `ccc_map`); the lazy getter is emitted in
+                    // emit_module's §1b1-moved pass over the merged items. Not
+                    // added to `visible_acc` — `let` has no `export`, so it stays
+                    // module-private (only same-module peers reference it).
+                    merged_items.push(item);
+                }
                 _ => {
-                    // Test blocks / top-level let — игнорируем для imported.
+                    // Test blocks / ghost let — игнорируем для imported.
                 }
             }
         }

@@ -2678,6 +2678,14 @@ impl CEmitter {
             }
         }
 
+        // 1b1. Plan 152.4 (D199 ro-runtime side): module-level `ro NAME = EXPR`
+        // lazy-static globals are emitted LATER — see «1b1-moved» just after the
+        // `/*__GENERIC_TYPE_DEFS__*/` placeholder. They must come after generic
+        // type instance definitions (a lazy-static's type can be a mono'd generic
+        // like `HashMap[int,str]`; its `static <T> _value;` storage decl needs the
+        // typedef first), and emitting their getter body there also lets call
+        // routing (method_receivers §1c / generics §1d) be fully set up.
+
         // 1b2. D39 / Plan 11 Ф.9: collect embed-fields per record-type.
         // Используется на 1d для генерации auto-proxy methods.
         for item in &module.items {
@@ -3133,6 +3141,45 @@ impl CEmitter {
 
         // Plan 48 Ф.3: placeholder for generic type instance definitions (filled after drain).
         self.line("/*__GENERIC_TYPE_DEFS__*/");
+
+        // 1b1-moved. Plan 152.4 (D199 ro-runtime side): module-level
+        // `ro NAME = EXPR` — a lazy-static global. The strict const/ro partition
+        // (`check_ro_module_partition`) guarantees only a genuinely runtime RHS
+        // (call/effect/alloc) reaches here as `ro` (a constexpr-eligible RHS is
+        // forced to `const` and handled in §1b above). We reuse the const
+        // lazy-init getter (`emit_lazy_const`): file-scope storage + `init` flag
+        // + `nova_const_<name>()` built on first use; reads route through
+        // `lazy_consts` (same desugaring as a non-constexpr `const`, Plan 14 Ф.2).
+        //
+        // Emitted HERE (after `/*__GENERIC_TYPE_DEFS__*/`, before fn forward
+        // decls) — NOT in §1b — for two reasons: (1) the global's C type may be a
+        // mono'd generic (`HashMap[int,str]` → `Nova_HashMap____nova_int__nova_str`)
+        // whose typedef is spliced into `__GENERIC_TYPE_DEFS__`; the `static <T>
+        // _value;` storage decl must follow that typedef. (2) The getter body
+        // calls into user fns; method-receiver (§1c) and generic (§1d) routing
+        // tables are fully populated by now, so the call lowers correctly.
+        // Single named binding only (Ident, or a single-segment unit Variant for
+        // the UPPER_CASE constant-name form), non-ghost. Thread-safety of
+        // first-touch init: see `[M-lazy-static-thread-safety]`.
+        for item in &module.items {
+            if let Item::Let(l) = item {
+                if l.is_ghost { continue; }
+                let name = match &l.pattern {
+                    Pattern::Ident { name, .. } => Some(name.clone()),
+                    Pattern::Variant { path, kind: VariantPatternKind::Unit, .. }
+                        if path.len() == 1 => Some(path[0].clone()),
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    let ty_c = if let Some(ty) = &l.ty {
+                        self.type_ref_to_c(ty)?
+                    } else {
+                        self.infer_expr_c_type(&l.value)
+                    };
+                    self.emit_lazy_const(&name, &ty_c, &l.value)?;
+                }
+            }
+        }
 
         // 2. Forward declarations for all functions (types are now known)
         for item in &module.items {
@@ -4090,6 +4137,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.indent = 1;
         self.line(&format!("if (!_nova_const_{}_init) {{", name));
         self.indent = 2;
+        // Plan 152.4: register the storage cell as a GC root BEFORE building.
+        // The Boehm backend runs with GC_set_no_dls(1) (alloc_boehm.c), which
+        // leaves the program's static/BSS data unscanned — so this file-scope
+        // `static` pointer is NOT a GC root by default, and a large lazy value
+        // (e.g. the Unicode HashMap tables) is collected the first time GC fires
+        // under memory pressure → use-after-free. Registering the cell up front
+        // means a GC triggered mid-build sees it (still NULL — harmless), and
+        // after assignment the object lives in a scanned root. No-op under
+        // malloc/RC backends.
+        self.line(&format!(
+            "nova_gc_add_root(&_nova_const_{n}_value, (char*)(&_nova_const_{n}_value) + sizeof(_nova_const_{n}_value));",
+            n = name
+        ));
         // Передать ty_c как ожидаемый record-target для D55 coercion
         // (`const FOO = { ... }` без явного имени типа должен подхватить
         // тип из аннотации/typed-target).
@@ -18073,8 +18133,32 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     && ((lty.starts_with("NovaRes_") && lty.ends_with('*'))
                         || (rty.starts_with("NovaRes_") && rty.ends_with('*')))
                 {
-                    let res_ty = if lty.starts_with("NovaRes_") { lty.clone() } else { rty.clone() };
-                    let eq = self.emit_field_eq(&res_ty, &l, &r, 0);
+                    let l_res = lty.starts_with("NovaRes_") && lty.ends_with('*');
+                    let r_res = rty.starts_with("NovaRes_") && rty.ends_with('*');
+                    let mut l2 = l.clone();
+                    let mut r2 = r.clone();
+                    let mut res_ty = if l_res { lty.clone() } else { rty.clone() };
+                    // [M-153-result-eq-literal-expected-type]: a bare `Ok(x)`/`Err(x)`
+                    // literal leaves its `E` (or `T`) defaulted (variant ctors are
+                    // left untyped by design) — e.g. `Ok(2)` → `Result[int, str]`, so
+                    // `binary_search() == Ok(2)` (Result[int,int]) would compare two
+                    // different `NovaRes_<n>` → CC-FAIL. Re-emit the literal side
+                    // against the OTHER operand's concrete Result type so both share
+                    // one representation (expected-type propagation, codegen-local).
+                    if lty != rty {
+                        if l_res && self.expr_is_result_ctor(right) {
+                            if let Some(re) = self.reemit_result_variant_as(right, &lty)? {
+                                r2 = re;
+                                res_ty = lty.clone();
+                            }
+                        } else if r_res && self.expr_is_result_ctor(left) {
+                            if let Some(re) = self.reemit_result_variant_as(left, &rty)? {
+                                l2 = re;
+                                res_ty = rty.clone();
+                            }
+                        }
+                    }
+                    let eq = self.emit_field_eq(&res_ty, &l2, &r2, 0);
                     return Ok(match op {
                         BinOp::Eq => format!("({})", eq),
                         BinOp::Neq => format!("(!({}))", eq),
@@ -31125,6 +31209,50 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
         }
     }
 
+    /// Plan 153.3 [M-153-result-eq-literal-expected-type]: is `e` a bare
+    /// `Ok(x)` / `Err(x)` variant-constructor literal (one arg)? Used to detect
+    /// a Result literal whose `(T,E)` defaulted, so a `==` against a concrete
+    /// Result can re-emit it with the matching type.
+    fn expr_is_result_ctor(&self, e: &crate::ast::Expr) -> bool {
+        if let crate::ast::ExprKind::Call { func, args, .. } = &e.kind {
+            if let crate::ast::ExprKind::Ident(v) = &func.kind {
+                return (v == "Ok" || v == "Err") && args.len() == 1;
+            }
+        }
+        false
+    }
+
+    /// Plan 153.3 [M-153-result-eq-literal-expected-type]: re-emit a bare
+    /// `Ok(x)`/`Err(x)` literal as `target_novares_ty` (a concrete
+    /// `NovaRes_<n>*`) instead of its defaulted type, casting the payload to the
+    /// target variant's C-type. `None` if `e` isn't a result-ctor literal or the
+    /// target type carries no resolvable `(ok, err)`.
+    fn reemit_result_variant_as(
+        &mut self,
+        e: &crate::ast::Expr,
+        target_novares_ty: &str,
+    ) -> Result<Option<String>, String> {
+        let (variant, payload_expr) = match &e.kind {
+            crate::ast::ExprKind::Call { func, args, .. } => match &func.kind {
+                crate::ast::ExprKind::Ident(v)
+                    if (v == "Ok" || v == "Err") && args.len() == 1 =>
+                {
+                    (v.clone(), args[0].expr())
+                }
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+        let (ok_c, err_c) = match self.novares_ok_err(target_novares_ty) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        let payload_c = if variant == "Ok" { ok_c } else { err_c };
+        let arg_c = self.emit_expr(payload_expr)?;
+        let ctor = self.result_ctor_name(target_novares_ty, &variant);
+        Ok(Some(format!("{}(({}){})", ctor, payload_c, arg_c)))
+    }
+
     /// Plan 59 Ф.7.5 D1c: каноничный C-тип Result-представления для пары
     /// `(ok_c, err_c)`. **Единственная точка решения legacy↔mono** —
     /// `type_ref_to_c[Result]` и producer-сайты (`char.try_from`,
@@ -31781,6 +31909,43 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         );
                     }
                     return self.infer_expr_c_type(&acc);
+                }
+            }
+        }
+        // Plan 152.4: mirror the emit-side rewrite (~emit_c.rs:24055). A Call
+        // whose func is `Path([lazyconst, method])` is an INSTANCE method call
+        // on the lazy-static global value, NOT a static `Type.method(...)` call.
+        // UPPER_CASE binders (`ro COMPOSE_TABLE = …`, D30 SCREAMING_SNAKE_CASE)
+        // parse their `.get(k)` as `Path(["COMPOSE_TABLE","get"])`; emit_expr
+        // already rewrites this to a `Member{Ident,..}` call, but the type
+        // inference did not — so the return type fell back to a name-keyed
+        // method lookup and, when several generic instantiations of the base
+        // coexist, picked the wrong one (e.g. `NovaOpt_nova_str` for a
+        // `HashMap[int,int]` global). Rewrite to the Member form and recurse so
+        // the receiver type resolves via `var_types[lazyconst]`.
+        if let ExprKind::Call { func, args, trailing } = &expr.kind {
+            if let ExprKind::Path(parts) = &func.kind {
+                if parts.len() == 2 && self.lazy_consts.contains(&parts[0]) {
+                    let new_obj = Expr {
+                        kind: ExprKind::Ident(parts[0].clone()),
+                        span: func.span,
+                    };
+                    let new_func = Expr {
+                        kind: ExprKind::Member {
+                            obj: Box::new(new_obj),
+                            name: parts[1].clone(),
+                        },
+                        span: func.span,
+                    };
+                    let new_call = Expr {
+                        kind: ExprKind::Call {
+                            func: Box::new(new_func),
+                            args: args.clone(),
+                            trailing: trailing.clone(),
+                        },
+                        span: expr.span,
+                    };
+                    return self.infer_expr_c_type(&new_call);
                 }
             }
         }

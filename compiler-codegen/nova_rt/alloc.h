@@ -40,6 +40,19 @@ void  nova_release(void* ptr);
 void* nova_alloc_uncollectable(size_t size);
 void  nova_free_uncollectable(void* ptr);
 
+/* Plan 152.4: register a static-storage pointer range [lo, hi) as a GC root.
+ *
+ * Module-level `ro NAME = EXPR` lazy-static globals store their value in a
+ * file-scope `static T* _value;`. The Boehm backend runs with GC_set_no_dls(1)
+ * (alloc_boehm.c) which, together with the Windows data-segment registration,
+ * does NOT scan the program's static/BSS data — so such a static pointer is
+ * NOT a GC root and its object is collected under memory pressure (latent until
+ * a lazy-static held a large GC graph — the Unicode tables). The lazy-const
+ * getter calls this once to register its storage cell as a root.
+ *
+ * Under malloc/RC backends: no-op (nothing is collected). */
+void  nova_gc_add_root(void* lo, void* hi);
+
 /* Instrumentation — available in all alloc implementations.
  * nova_gc_alloc_count : total allocations since nova_gc_init
  * nova_gc_free_count  : total frees/releases since nova_gc_init

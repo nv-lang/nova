@@ -460,10 +460,46 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                 }
                 env.consts.insert(cd.name.clone(), cd.clone());
             }
-            Item::Let(_) | Item::Test(_) | Item::Bench(_) | Item::Lemma(_) => {
-                // top-level let — не используется в Nova-исходниках. test/bench —
-                // регистрируются отдельно (имя — string-literal, не идентификатор),
-                // конфликта по имени быть не может.
+            Item::Let(ld) => {
+                // Plan 152.4 (D199 ro-runtime side): a module-level `ro NAME = EXPR`
+                // is a lazy-static global. The strict const/ro partition
+                // (`check_ro_module_partition`) forces a constexpr-eligible RHS to
+                // `const`; a genuinely runtime RHS (call/effect/alloc) stays `ro`
+                // and reaches here. Register it like a const so USES resolve with
+                // the right type (incl. method receivers, e.g. `tbl.get(k)`). The
+                // constexpr-check pass iterates only `Item::Const`, so a runtime
+                // RHS registered here is not rejected. Single named binding only
+                // (Ident / single-segment unit Variant for UPPER_CASE), non-ghost.
+                if !ld.is_ghost {
+                    let name = match &ld.pattern {
+                        crate::ast::Pattern::Ident { name, .. } => Some(name.clone()),
+                        crate::ast::Pattern::Variant {
+                            path,
+                            kind: crate::ast::VariantPatternKind::Unit,
+                            ..
+                        } if path.len() == 1 => Some(path[0].clone()),
+                        _ => None,
+                    };
+                    if let Some(name) = name {
+                        names.insert(name.clone());
+                        env.consts.insert(
+                            name.clone(),
+                            crate::ast::ConstDecl {
+                                doc: None,
+                                doc_attrs: Vec::new(),
+                                is_export: false,
+                                name,
+                                ty: ld.ty.clone(),
+                                value: ld.value.clone(),
+                                span: ld.span,
+                            },
+                        );
+                    }
+                }
+            }
+            Item::Test(_) | Item::Bench(_) | Item::Lemma(_) => {
+                // test/bench — регистрируются отдельно (имя — string-literal, не
+                // идентификатор), конфликта по имени быть не может.
                 // Ф.4.1: lemma — ghost, только для proof; не регистрируется в env.
             }
         }
@@ -9754,8 +9790,34 @@ impl NameResCtx {
                     Item::Const(cd) => {
                         out.insert(cd.name.clone());
                     }
+                    // Plan 152.4 (D199 ro-runtime side): a module-level
+                    // `ro NAME = EXPR` is a lazy-static global (genuinely
+                    // runtime RHS — call/effect/alloc; the strict const/ro
+                    // partition forces a constexpr RHS to `const`). Its binder
+                    // is a resolvable top-level name, exactly like a `const`, so
+                    // collect it for name-resolution — otherwise USES
+                    // (`tbl.get(k)`) would be flagged «undefined identifier».
+                    // Single named binder only (Ident, or single-segment unit
+                    // Variant for the UPPER_CASE form), non-ghost. Mirrors the
+                    // env.consts registration in `check_module`.
+                    Item::Let(ld) if !ld.is_ghost => {
+                        match &ld.pattern {
+                            crate::ast::Pattern::Ident { name, .. } => {
+                                out.insert(name.clone());
+                            }
+                            crate::ast::Pattern::Variant {
+                                path,
+                                kind: crate::ast::VariantPatternKind::Unit,
+                                ..
+                            } if path.len() == 1 => {
+                                out.insert(path[0].clone());
+                            }
+                            _ => {}
+                        }
+                    }
                     // Plan 57: bench — top-level item но имя — string-literal,
-                    // не идентификатор; в name resolution не участвует.
+                    // не идентификатор; в name resolution не участвует. ghost
+                    // `let` — spec-only, не резолвится.
                     Item::Let(_) | Item::Test(_) | Item::Bench(_) | Item::Lemma(_) => {}
                 }
             }
