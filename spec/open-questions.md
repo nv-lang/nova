@@ -7790,3 +7790,19 @@ Part A+B `[M-opt-preempt-strided-loop]` (D270, merge `7c047a1b`) и `[M-opt-leaf
 
 Связь: [D270](decisions/06-concurrency.md)/[D271](decisions/06-concurrency.md), Plan 143 §2.A/§2.B,
 `[M-opt-preempt-strided-loop]` (SIGURG-часть open) / `[M-opt-leaf-preempt-entry-elision]` (✅ done).
+
+## Q-interpreter-future — судьба древесного интерпретатора
+
+Интерпретатор (`nova run`) сделан UNSUPPORTED ([D274](decisions/08-runtime.md), Plan 156):
+команда громко ошибается, мёртвые interp-тесты удалены, модуль `interp/` оставлен «для
+справки». Открыто:
+1. **Полная вырезка vs сохранение.** Удалить `interp/` целиком ЛИБО держать как
+   reference / будущий REPL? Сейчас — сохранён, из сборки-контракта исключён.
+2. **Внутренний dev-инструмент `nova-codegen run` / `test-interp`** тоже гоняет интерпретатор
+   и НЕ застаблен этой задачей (только user-facing `nova run`). Привести к тому же
+   «unsupported»-поведению?
+3. **`docs/nova-codegen.md`/`.ru.md`** всё ещё описывают `nova-codegen run`/`test-interp`
+   как рабочие (на сайте codegen-страница уже помечена unsupported) — нестыковка.
+
+Связь: [D274](decisions/08-runtime.md), [Plan 156](../docs/plans/156-interpreter-unsupported.md),
+`[M-interp-unsupported]`.
