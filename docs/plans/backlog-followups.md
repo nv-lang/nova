@@ -62,6 +62,8 @@
 | `[M-153-vec-compare-u8-memcmp-fastpath]` | Plan 153.0 (perf-only). `Vec[T Compare] @compare` теперь поэлементный (корректно для всех T). `Vec[u8]` мог бы взять memcmp fast-path (для u8 байтовый = поэлементный, вектори­зуется), но это требует u8-специализации (type-dispatch на element). Не корректностный — perf. | Plan 153 / perf | P3 |
 | `[M-153-vec-combinators-prelude-global]` | Plan 153.0/153.2. Eager-комбинаторы вынесены в отдельный explicit-import `collections.vec_seq` (не prelude-global), т.к. их идентификаторы (`[Acc]`/`f`/`op`) засоряют каждый юнит (shadow `type Acc` / collision `fn f`/`fn op`) — корень `[M-codegen-var-types-fn-scope]` + D145. Плана 153.2 переделывает их в LAZY-адаптеры на VecIter; пересмотреть, может ли lazy-слой стать prelude-global (после фикса scope-leak, или дизайном без поллюции). | Plan 153.2 | P3 |
 | `[M-153-scalar-min-max]` | Plan 153 Ф.0 (предполагается планом). Скалярные `int.min(b)`/`int.max(b)` (метод-форма `a.max(b)`, как `a.sin()`) ОТСУТСТВУЮТ; нужны для shrink-to-min идиомы (`cap(@len().max(min))`, 153.1) + `@min`/`@max`-терминаторов ленивого итератора (153.2). Мелкий number-примитив. | Plan 153.1/153.2 Ф.0 | P2 |
+| `[M-153.2-generic-over-source-zerocost]` | Plan 153.2 (perf-only, НЕ упрощение). Ленивый слой (`collections.vec_lazy`, D260) — boxed-fluent: каждый адаптер боксит `step`-замыкание (heap-thunk/адаптер). Allocation-free между элементами, но не zero-cost по closure-боксу. Апгрейд — generic-over-source мономорфный курсор (`Map[I,F]` ∥ Rust `Map<I,F>`), инлайн без боксинга, поверх рабочего boxed (тот же API). Детали в 153.2 Followups. | Plan 153.2 / D260 | P3 |
+| `[M-153.2-tuple-elem-adapter]` | Plan 153.2. Tuple-PRESERVING адаптер сразу после `enumerate` (`enumerate().filter(..)`/`.take`/`.skip`, элемент остаётся `(int,T)`) упирается в residual `Option[<mono-tuple>]` closure-typing gap. Workaround: схлопнуть кортеж `map`'ом (`enumerate().map(\|p\| ...)` — поддержано). Детали в 153.2 Followups. | Plan 153.2 | P2 |
 | `[M-138.2-varindex-method-turbofish-misparse]` (был `[M-codegen-erased-stub-method-on-varindex-deref]`) | ✅ **FIXED on branch `plan-cgfix-erased-stub` (commit `6f74c0ba`, 2026-06-13), pending merge.** Discovered Plan 153.0; root-cause оказался **PARSER (D38 turbofish), НЕ codegen/erased-stub** (мисдиагноз). `@buf[i].compare(o.buf[i])` мис-парсился как turbofish static-call `@buf::<i>.compare(...)` — одиночный lowercase `i` парсится как валидное имя типа, `[i]`→type-arg, `.compare(` совпал с `Type[T].method(...)` формой → индекс ресивера терялся (turbofish transparent в codegen → `@buf` = голый указатель) → str-fallback dispatch → CC-FAIL `passing 'T*' to 'nova_str'`. **Fix:** `try_parse_turbofish_args` (parser/mod.rs ~5766+6493) — гейтить `.IDENT(` turbofish-продолжение по `base_is_type_like` (base перед `[` = Ident/Path = имя типа); `@buf[i]` (base=Member) роллбэчится в Index. **Минимальный репро:** `fn Bag[T Compare] @cmp(o Bag[T]) -> int { for i in 0..@n { ro c = unsafe { @buf[i].compare(o.buf[i]) }; … } }`. Триггер: generic-T ∧ var-index `[i]` (литерал `[0]` парсится не-как-тип → ОК) ∧ method `.IDENT(` после `]`. После мёржа фикса инлайн-форма работает → typed-locals workaround в `Vec.@compare`/`@equal` (protocols.nv) можно упростить. Permanent fixture `plan138_2/t17_var_index_inline_method_pos`. Residual: `[T]?` (try) на value-base структурно похож, не покрыт (не exercised). | branch plan-cgfix-erased-stub (pending merge) | P2 |
 | `[M-138.2-bulk-insert-overload]` | Ф.0a Open-Question resolution: bulk-insert живёт как `@splice(i, Vec[T])`, НЕ как второй overload `@insert(i, Vec[T])`. Generic-method overloads коллапсят в монорфизации — `mono_method_decls` (emit_c.rs ~8404) keyed `(type, name)` с одним FnDecl на key, mono-sentinel `MethodSig` несёт пустой `param_c_types` (~8408) → `resolve_overload` не дизамбигуирует single `insert(i,T)` от bulk `insert(i,Vec[T])` для concrete `Vec[int]` (verified: оба роутятся на single, Vec-arg force-fit'ится в `nova_int v` → garbage). Plan 138.2 Ф.0a явно санкционирует `@splice`-rename как fallback. Fold обратно в `@insert` overload ждёт `[M-138.2-generic-method-overload-mono]`. | plan-138.2 Ф.0a Followups | P2 |
 | `[M-138.2-generic-method-overload-mono]` | Codegen: generic-метод overloads должны переживать монорфизацию с per-arg-type routing. Сегодня `mono_method_decls` (emit_c.rs ~8404) = `HashMap<(String,String), FnDecl>` (один decl на (type, method-name), overload-коллапс) + mono-sentinel `MethodSig` с пустым `param_c_types` (~8408). Нужно: keyed-by-mangled-sig storage + concrete `param_c_types` в sentinel, чтобы `resolve_overload` (emit_c.rs:9913) дизамбигуировал по C-типам аргументов. Разблокирует fold `@splice`→`@insert` overload ([M-138.2-bulk-insert-overload]). | new codegen-план | P2 |
@@ -319,6 +321,32 @@
   протокол + `iter.collect() -> Vec[U]` gated на 153.2 (ленивый итератор + collect-инфра).
   Build-from-iterable УЖЕ есть (`Vec[T].from(items)` + `@extend[S Iter[T]]`); протокол-форма
   `collect`-таргета приземляется вместе с 153.2.
+
+## Follow-up: Plan 153.2 (ленивый итератор — отложенные Phase B / perf)
+- **`[M-153.2-generic-over-source-zerocost]`** (planned, P3, **perf-only — НЕ упрощение**,
+  home **Plan 153.2 / D260**): текущий ленивый слой (`collections.vec_lazy`) использует
+  **boxed-fluent**-модель — `BoxIter[T] { priv step fn() -> Option[T] }`, каждый адаптер
+  боксит `step`-замыкание (heap-thunk на адаптер). Это корректный, allocation-free **между**
+  элементами (нет промежуточных `Vec`), но не zero-cost по closure-боксу. Zero-cost
+  апгрейд — generic-over-source мономорфный курсор-тип (`Map[I, F]` параметризован
+  upstream-итератором, как Rust `Map<I, F>`), инлайнящийся без боксинга. Поверх рабочего
+  boxed (одинаковый API). Gated на пере-обкатке mono closure-несущих generic-типов с
+  type-параметром-итератором (`996ca01a` лифт покрыл method-body mono + closure-capture;
+  generic-over-iterator-source — следующий шаг).
+- **`[M-153.2-tuple-elem-adapter]`** (planned, P2, home **Plan 153.2**): tuple-PRESERVING
+  адаптер сразу после `enumerate` (`enumerate().filter(..)` / `.take(n)` / `.skip(n)`, где
+  элемент остаётся `(int, T)`-кортежем) упирается в residual `Option[<mono-tuple>]`
+  closure-typing gap (closure-возврат `Option` mono-кортежа теряет точный тип). Workaround:
+  схлопнуть кортеж через `map` в той же стадии (`enumerate().map(|p| ...)` — поддержано,
+  `plan153_2/chains`). Фикс — расширить codegen target-type propagation на closure-возврат
+  `Option[tuple]` (тот же класс, что fix #2 в `caf56226` — `return None` под mono-target).
+- **`[M-153.2-iter-phase-b]`** (planned, roadmap — **НЕ упрощение**, home **Plan 153.2 Phase B**):
+  заявленный B-набор адаптеров/терминаторов ещё не реализован: `zip`/`unzip`/`chain`/
+  `flat_map`/`flatten`/`scan`/`inspect`/`step_by`/`take_while`/`skip_while`/`peekable`/
+  `min_by[_key]`/`max_by[_key]`/`partition`/`chunk_by`/`into_iter`. Плюс мут-итерация
+  `for mut x`/`mut @iter()` (Q-iter-mut, write-through путь) + `FromIterator`/`collect`-в-
+  произвольный-таргет (`[M-153.6-fromiterator-gated]`). Phase A (map/filter/filter_map/
+  enumerate/take/skip + 13 терминаторов) закрыта и протестирована (`plan153_2/` 4/4).
 
 ## Follow-up: Plan 153.3 (sort & search)
 - **`[M-153.3-sort-unstable-inplace]`** ✅ **RESOLVED** (commit `468bccf5`): `@sort_unstable[_by]

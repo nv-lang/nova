@@ -2,7 +2,10 @@
 # Plan 153 (umbrella) — Production-grade `Vec[T]` / `[]T`: API-паритет, итераторы, слайсы
 
 > **Создан:** 2026-06-13.  **Статус:** 🟡 **IN PROGRESS** — **153.0 ✅ ЗАКРЫТ** (2026-06-13,
-> branch `plan-153`, commit `2a5df8e4`; см. «Статус 153.0» ниже); 153.1–153.6 PLANNED. P1.
+> branch `plan-153`, commit `2a5df8e4`; см. «Статус 153.0» ниже); **153.1 🟡 ЧАСТИЧНО**
+> (core API + fluent ✅, консолидация отложена); **153.2 ✅ ЗАКРЫТ (Phase A)** (ленивые
+> итераторы, `plan-153.2-mono-closures`, commits `996ca01a`+`caf56226`, D260); **153.3
+> ✅ ЗАКРЫТ** (sort/search); **153.6 🟡 ЧАСТИЧНО** (Hash ✅); 153.4/153.5 PLANNED. P1.
 > **Цель:** коллекция `Vec[T]` Nova не хуже (а где можно — лучше) Go / Rust / TS / Kotlin /
 > Java — по полноте API, итераторам, слайсам и предсказуемости стоимости. `[]T` —
 > **чистый алиас** `Vec[T]` (D239).
@@ -409,6 +412,73 @@ remove/index/get/first/last/clear/truncate/reverse/fill).
 collect/find/any/all/count/sum/enumerate/for_each/min/max/nth/last/`mut @iter`;
 **B:** zip/unzip/chain/flat_map/flatten/scan/inspect/step_by/take_while/skip_while/
 peekable/min_by(_key)/max_by(_key)/partition/chunk_by/into_iter. Opus. Эстимат ~4–5 dd.
+
+> #### Статус 153.2 — ✅ ЗАКРЫТ (Phase A) (`plan-153.2-mono-closures`, commits `996ca01a` лифт + `caf56226` ленивый слой, D260)
+>
+> **Сделано — продакшн-полнота без упрощений (обязательный критерий приёмки).** Ленивые
+> итераторы для `Vec[T]`/`[]T` реализованы по **boxed-fluent**-модели (D260): тип-курсор
+> `BoxIter[T] { priv step fn() -> Option[T] }`, вход `v.lazy()` мостит `VecIter`→`BoxIter`,
+> адаптеры — fluent-методы, возвращающие новый `BoxIter` (оборачивают upstream-`step`),
+> терминаторы тянут цепочку. **Промежуточных аллокаций нет** — pull-модель, по одному
+> элементу на запрос (доказано инструментацией: побочный счётчик считает ТОЛЬКО реально
+> протянутые элементы — `take`/`find`/`any`/`all`/`nth` коротят).
+>
+> - **A-набор адаптеров (✅):** `map`/`filter`/`filter_map`/`enumerate`/`take`/`skip`
+>   (трансформ) + терминаторы `collect`/`fold`/`reduce`/`count`/`sum`/`any`/`all`/`find`/
+>   `for_each`/`min`/`max`/`nth`/`last`. `min`/`max` — на `[T Compare]` (через
+>   `x.compare(best)`, не скалярный `min`/`max`); `sum(zero T)` — без числового протокола
+>   (явная аддитивная идентичность делает тип элемента и пустой результат явными).
+> - **Модуль:** sibling FILE-модуль [`std/collections/vec_lazy.nv`](../../std/collections/vec_lazy.nv)
+>   (`module collections.vec_lazy`), explicit-import (`import std.collections.vec_lazy`),
+>   **НЕ** prelude folder `collections.vec` — закрытие closure-dense адаптерных
+>   идентификаторов (`[U]`/`[Acc]`/`f`/`pred`) per [M-codegen-var-types-fn-scope]/D145, в
+>   точности как `vec_seq.nv`. Eager `vec_seq` оставлен без изменений (Q-iterator-laziness:
+>   lazy — канон; решение в шапке модуля).
+>
+> **Лифт mono×closures (codegen, `996ca01a`).** Чтобы generic-type-методы с CLOSURE-телом
+> мономорфизировались корректно: gap A — `register_generic_instances_in_typeref`; gap B —
+> closure-capture в loop-arms. 7/7 пробников PASS.
+>
+> **THREE codegen-фикса (`caf56226`, `compiler-codegen/src/codegen/emit_c.rs`, релиз
+> пересобран):** (1) per-test flush реестра mut-capture box'ов `var_boxed` в `emit_test`
+> (box `_box_<name>` утекал между C-функциями тестов → CC-FAIL); (2) `Stmt::Return` эмитит
+> значение с типом возврата функции как target — голый `return None` в mono-замыкании
+> резолвится в `NovaOpt_<mono>`, не erased `NovaOpt_nova_int`; (3) `infer_expr_c_type`
+> регистрирует generic-инстанс типа-возврата, когда generic free-fn ИЛИ метод generic-типа
+> возвращает generic-инстанс (`box_vec[int](it)->BoxIter[int]`, `Vec[T] @lazy()->BoxIter[T]`)
+> — иначе `.method()` на временном промахивался мимо dispatch-path 5b и попадал в erased
+> NULL-stub (drain 0 / segfault).
+>
+> **Критерии приёмки 153.2 Phase A (все ✅, проверены релизным `nova`, C-codegen):**
+> 1. **Лень** — построение цепочки без терминатора НЕ выполняет работу (counter == 0);
+>    `take(3)` тянет ровно 3; `find`/`any`/`all`/`nth` коротят на первом матче/промахе.
+>    Тест `plan153_2/laziness` (8 кейсов).
+> 2. **Композиция** — multi-stage `map→filter→collect`, `filter→map`, `skip→take`,
+>    `map→filter→fold`, `filter_map`, `enumerate→map`, длинная `map→filter→skip→take`.
+>    `plan153_2/chains` (10 кейсов).
+> 3. **Адаптеры/терминаторы** покрыты раздельно: `plan153_2/adapters` + `plan153_2/terminators`.
+> 4. **Прод-полнота без упрощений** — pull-модель real allocation-free (не материализует
+>    в промежуточный Vec); адаптеры реентерабельны (каждый копирует receiver `mut src = @`
+>    в свежее захватывающее замыкание — не мутирует BoxIter вызывающего до terminator-drain).
+> 5. **0 регрессий** — verified pre-existing FAILs (plan103_1/expected_runtime/plan101_1/
+>    range.nv) против baseline-компилятора (main `82ada7ac`).
+>
+> **Остаток (Phase B, отложено за маркерами — НЕ упрощение, заявленный B-набор):**
+> `zip`/`unzip`/`chain`/`flat_map`/`flatten`/`scan`/`inspect`/`step_by`/`take_while`/
+> `skip_while`/`peekable`/`min_by[_key]`/`max_by[_key]`/`partition`/`chunk_by`/`into_iter`
+> + мут-итерация `for mut x`/`mut @iter()` (Q-iter-mut, отдельный write-through путь) +
+> `collect`-target FromIterator (мост 153.6). Tuple-PRESERVING-адаптер сразу после
+> `enumerate` (`enumerate().filter(..)`) gated на `[M-153.2-tuple-elem-adapter]`
+> (residual `Option[<mono-tuple>]` closure-typing gap — схлопнуть tuple через `map` сначала).
+> Zero-cost generic-over-source апгрейд поверх boxed — `[M-153.2-generic-over-source-zerocost]`.
+>
+> > #### Статус автономного прогона 153.2 — `<run-date>`
+> >
+> > Лифт mono×closures (`996ca01a`) + ленивый слой (`caf56226`) закоммичены (DCO `-s`, без
+> > Co-Authored-By, только intended-файлы в индексе). plan153_2 4/4 PASS (adapters/chains/
+> > laziness/terminators) с корректным GC-env (worktree-setup). 0 регрессий по blast-radius.
+> > Сопутствующие bug-фиксы той же ветки: `ffc5d28f` (std.sort/binary_search консолидация,
+> > Bug A) + `cf3951e2` (chained `Vec[f32]` turbofish-static return-inference, Bug B).
 
 ### 153.3 — Sort & search `[D261, A]`
 `@sort()`/`@sort_by(cmp)`/`@sort_by_key(key)` (stable; + `@sort_unstable*`),
