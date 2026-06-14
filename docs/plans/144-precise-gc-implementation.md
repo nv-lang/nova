@@ -197,7 +197,12 @@ for (NovaFrame* f = top; f; f = f->prev) {
   `[M-mn-gc-root-unified-stack-registry]` и **снимает Windows fiber-stack
   conservative-scan** (корень race'ов — Plan 83.11 §12.23 / reference-mn-race).
 - **Cooperative safe-points.** GC стартует только в safe-point'ах (call/alloc/loop
-  back-edge) — между write-back и use GC сработать не может.
+  back-edge) — между write-back и use GC сработать не может. **Связь с async-preempt
+  (`[M-opt-preempt-strided-loop]`):** будущий SIGURG (Go 1.14 async-preemption) даёт
+  ASYNC safe-point без per-iteration call'а → проектировать его как **общий async-yield
+  (preempt + GC)**, folding «preempt-check + GC-poll» в одну точку снимает часть per-call
+  нагрузки. NB: async-preempt НЕ делает write-back ленивым (карт нет — §7.5 honest-limit);
+  это про точки вытеснения, не про reconstruct корней.
 
 ### 7.5. Оптимизации (тиры O0–O3)
 

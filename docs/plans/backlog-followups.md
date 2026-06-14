@@ -88,7 +88,7 @@
 | `[M-opt-auto-scoped-ref]` | Escape-analysis авто pass-value-param-by-ref + return-slot elision (NRVO); обобщить ресивер-`&obj`. | new perf-план (value-types thread) | P2 |
 | `[M-opt-value-sum-types]` | Compiler-inferred value(stack)/heap для sum-типов (recursion+size+escape; прозрачно — immutable); payload-less интернирование. | new perf-план (Plan 120/139) | P2 |
 | `[M-opt-elide-proven-overflow-checks]` | Z3/range-элизия доказуемо-безопасных integer-overflow чеков (proven→elide, как Plan 140). | new perf-план / Plan 140 | P2 |
-| `[M-opt-preempt-strided-loop]` | `nova_preempt_check()` в back-edge КАЖДОГО цикла (emit_c.rs:14215/15100) блокирует clang'у memset/SIMD-векторизацию. Strip-mine: outer-chunk (check раз в N) + inner-N (без чека → векторизуется); + data-movement через RawMem. Long-term: signal-based async preemption (Go 1.14; в C-рантайме реализуемо — Go доказал M:N в C 2012-13). | Plan 143 §2 / cross-ref Plan 25 G5 + 82/83.x | P2 |
+| `[M-opt-preempt-strided-loop]` | `nova_preempt_check()` в back-edge КАЖДОГО цикла (emit_c.rs:14215/15100) блокирует clang'у memset/SIMD-векторизацию. Strip-mine: outer-chunk (check раз в N) + inner-N (без чека → векторизуется); + data-movement через RawMem. Long-term: signal-based async preemption (Go 1.14; в C-рантайме реализуемо — Go доказал M:N в C 2012-13). **Cross-link Plan 144 (2026-06-14):** SIGURG проектировать как ОБЩИЙ async-yield — служит и async GC safe-point'ом ([Plan 144 §7.4](144-precise-gc-implementation.md)), не только preempt; folding preempt-check+GC-poll в одну точку. | Plan 143 §2 / cross-ref Plan 25 G5 + 82/83.x + 144 §7.4 | P2 |
 
 ## P2 — Ergonomics / stdlib combinators
 
