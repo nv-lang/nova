@@ -65,6 +65,22 @@
 #define _Alignas(n) __declspec(align(n))
 #endif
 
+/* ── C11 _Static_assert fallback (MS permissive mode) ───────────
+ * _Static_assert — C11 keyword; в MSVC он доступен только под
+ * /std:c11+. Раннер компилит БЕЗ /std:c11 (та опция ломает MS-extension
+ * struct-cast'ы codegen'а, см. шапку), поэтому в permissive MS-режиме
+ * `_Static_assert` — undefined → C2143. Runtime использует его в
+ * fiber_arena.h (Plan 149, slot-count invariant). Map на классический
+ * negative-array-size трюк (работает в C89+); __COUNTER__ даёт уникальное
+ * имя typedef на каждое использование. Сообщение игнорируется (как и в
+ * negative-size трюке — диагностика будет «отрицательный размер массива»). */
+#ifndef _Static_assert
+#define NOVA_SA_CAT_(a, b) a##b
+#define NOVA_SA_CAT(a, b) NOVA_SA_CAT_(a, b)
+#define _Static_assert(cond, msg) \
+    typedef char NOVA_SA_CAT(nova_static_assert_, __COUNTER__)[(cond) ? 1 : -1]
+#endif
+
 /* ── Memory-ordering константы (имена GCC builtin'ов) ───────────── */
 #ifndef __ATOMIC_RELAXED
 #define __ATOMIC_RELAXED  0
@@ -178,6 +194,70 @@ static __forceinline bool _nova_compat_cas_sz(volatile void* p, void* expected,
 #define __atomic_compare_exchange_n(p, expected, desired, weak, succ, fail) \
     _nova_compat_cas_sz((volatile void*)(p), (void*)(expected), \
                         (__int64)(desired), sizeof(*(p)))
+
+/* ── Plan 145: дошимить остальные __atomic_* (Plan 103/83.12 атомики,
+ * добавленные после Plan 82 compat-слоя; иначе LNK2019/C2065 на MSVC).
+ * Bitwise RMW → _InterlockedAnd/Or/Xor (возвращают OLD, как GCC fetch_*).
+ * nand/max — нет прямого intrinsic → CAS-loop. add/sub_fetch → fetch ± delta.
+ * Все полно-барьерные (over-strong, но sound для любого order на x64 TSO). ── */
+
+static __forceinline __int64 _nova_compat_and_sz(volatile void* p, __int64 v, size_t sz) {
+    if (sz == 1)      return (__int64)_InterlockedAnd8((volatile char*)p, (char)v);
+    else if (sz == 4) return (__int64)_InterlockedAnd  ((volatile long*)p, (long)v);
+    else              return          _InterlockedAnd64((volatile __int64*)p, v);
+}
+static __forceinline __int64 _nova_compat_or_sz(volatile void* p, __int64 v, size_t sz) {
+    if (sz == 1)      return (__int64)_InterlockedOr8((volatile char*)p, (char)v);
+    else if (sz == 4) return (__int64)_InterlockedOr  ((volatile long*)p, (long)v);
+    else              return          _InterlockedOr64((volatile __int64*)p, v);
+}
+static __forceinline __int64 _nova_compat_xor_sz(volatile void* p, __int64 v, size_t sz) {
+    if (sz == 1)      return (__int64)_InterlockedXor8((volatile char*)p, (char)v);
+    else if (sz == 4) return (__int64)_InterlockedXor  ((volatile long*)p, (long)v);
+    else              return          _InterlockedXor64((volatile __int64*)p, v);
+}
+/* nand: new = ~(old & v); возвращает OLD (CAS-loop). */
+static __forceinline __int64 _nova_compat_nand_sz(volatile void* p, __int64 v, size_t sz) {
+    for (;;) {
+        __int64 old = _nova_compat_load_sz((const volatile void*)p, sz);
+        __int64 neu = ~(old & v);
+        __int64 e = old;
+        if (_nova_compat_cas_sz(p, &e, neu, sz)) return old;
+    }
+}
+/* signed max; возвращает OLD (CAS-loop). */
+static __forceinline __int64 _nova_compat_max_sz(volatile void* p, __int64 v, size_t sz) {
+    for (;;) {
+        __int64 old = _nova_compat_load_sz((const volatile void*)p, sz);
+        if (old >= v) return old;
+        __int64 e = old;
+        if (_nova_compat_cas_sz(p, &e, v, sz)) return old;
+    }
+}
+
+#define __atomic_fetch_and(p, val, order) \
+    _nova_compat_and_sz((volatile void*)(p), (__int64)(val), sizeof(*(p)))
+#define __atomic_fetch_or(p, val, order) \
+    _nova_compat_or_sz((volatile void*)(p), (__int64)(val), sizeof(*(p)))
+#define __atomic_fetch_xor(p, val, order) \
+    _nova_compat_xor_sz((volatile void*)(p), (__int64)(val), sizeof(*(p)))
+#define __atomic_fetch_nand(p, val, order) \
+    _nova_compat_nand_sz((volatile void*)(p), (__int64)(val), sizeof(*(p)))
+#define __atomic_fetch_max(p, val, order) \
+    _nova_compat_max_sz((volatile void*)(p), (__int64)(val), sizeof(*(p)))
+
+/* add_fetch/sub_fetch: GCC возвращают НОВОЕ значение (fetch ± delta). */
+#define __atomic_add_fetch(p, val, order) \
+    (_nova_compat_fadd_sz((volatile void*)(p), (__int64)(val), sizeof(*(p))) + (__int64)(val))
+#define __atomic_sub_fetch(p, val, order) \
+    (_nova_compat_fadd_sz((volatile void*)(p), -(__int64)(val), sizeof(*(p))) - (__int64)(val))
+
+/* Non-_n load/store: GCC __atomic_load(ptr, ret, o) -> *ret = *ptr;
+ * __atomic_store(ptr, valp, o) -> *ptr = *valp. (x64 aligned <=8B атомарно.) */
+#define __atomic_load(p, ret, order) \
+    do { _ReadWriteBarrier(); *(ret) = *(p); } while (0)
+#define __atomic_store(p, valp, order) \
+    _nova_compat_store_sz((volatile void*)(p), (__int64)*(valp), sizeof(*(p)), (order))
 
 /* ── __builtin_* shim ───────────────────────────────────────────── */
 

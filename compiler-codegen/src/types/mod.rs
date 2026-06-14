@@ -19718,14 +19718,21 @@ impl UnsafeCtx {
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
                     if let crate::ast::InterpStrPart::Expr { expr: ex, spec } = p {
-                        // **Plan 91.14 Ф.5 (D229):** ban only bare ${ptr}
-                        // (spec=None). Explicit ${ptr:?} (spec=Debug) is the
-                        // intended opt-in path — caller acknowledges address
-                        // disclosure через DebugPrintable invocation. Still
-                        // requires unsafe context (enforced by `*T` impl).
-                        if matches!(spec, crate::ast::FormatSpec::None)
-                            && self.expr_is_typed_pointer(ex)
-                        {
+                        // **Plan 91.14 Ф.5 (D229) + Plan 152.7-B (D258):** ban
+                        // display-formatted pointers. Explicit ${ptr:?} (Debug)
+                        // is the intended opt-in path — caller acknowledges
+                        // address disclosure через Debug invocation. A rich spec
+                        // (`Spec`) is display-class unless its kind is Debug, so
+                        // it's banned too. Still requires unsafe context
+                        // (enforced by `*T` impl).
+                        let spec_is_display = match spec {
+                            crate::ast::FormatSpec::None => true,
+                            crate::ast::FormatSpec::Debug => false,
+                            crate::ast::FormatSpec::Spec(s) => {
+                                !matches!(s.kind, crate::ast::format_spec::Kind::Debug)
+                            }
+                        };
+                        if spec_is_display && self.expr_is_typed_pointer(ex) {
                             errors.push(Diagnostic::new(
                                 "[E_PTR_NO_DISPLAY_USE_DEBUG_STR] typed pointer \
                                  value cannot be interpolated в str через bare \
@@ -19840,6 +19847,7 @@ mod primitive_mut_method_tests {
             imports: Vec::new(),
             items: fns.into_iter().map(Item::Fn).collect(),
             attrs: Vec::new(),
+            contract_opt_out: Default::default(),
             doc_attrs: Vec::new(),
             span: dummy_span(),
             peer_files: Vec::new(),
@@ -20107,6 +20115,7 @@ mod named_tuple_ctor_infer_tests {
             imports: Vec::new(),
             items: types.into_iter().map(Item::Type).collect(),
             attrs: Vec::new(),
+            contract_opt_out: Default::default(),
             doc_attrs: Vec::new(),
             span: dummy_span(),
             peer_files: Vec::new(),
@@ -20381,6 +20390,7 @@ mod named_tuple_ctor_infer_tests {
             imports: Vec::new(),
             items: vec![Item::Type(p), Item::Fn(user_equal)],
             attrs: Vec::new(),
+            contract_opt_out: Default::default(),
             doc_attrs: Vec::new(),
             span: dummy_span(),
             peer_files: Vec::new(),

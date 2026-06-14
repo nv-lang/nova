@@ -4523,7 +4523,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn cast_from_nova_int(value: &str, target_ty: &str) -> String {
         if target_ty == "nova_int" { return value.to_string(); }
         if target_ty == "nova_f64" {
-            return format!("({{ union {{ nova_int i; nova_f64 f; }} _u; _u.i = ({}); _u.f; }})", value);
+            // Plan 145 — portable bit-reinterpret (MSVC C2059): nova_bits_i2f
+            // (array.h) вместо GNU statement-expression union-pun.
+            return format!("nova_bits_i2f({})", value);
         }
         if target_ty.ends_with('*') {
             return format!("({})(intptr_t)({})", target_ty, value);
@@ -10240,25 +10242,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// До Plan 96 codegen эмитил `(obj)->data[idx]` без проверки —
     /// controlled buffer overflow на запись, UB на чтение (D27 §1632 drift).
     ///
-    /// `obj_expr` и `idx_expr` — уже emit'нутые подвыражения. Тип obj
-    /// выводится через `__typeof__` (Clang/GCC) — корректно работает с
-    /// erasure-кейсами, где статический C-тип не совпадает с runtime
-    /// типом (self-field, array-of-arrays via erased nova_int).
-    /// Каждое подвыражение вычисляется **один** раз (захват в `_a`/`_i`).
+    /// `obj_expr` и `idx_expr` — уже emit'нутые подвыражения; `storage_elem_ty`
+    /// — C-тип ФИЗИЧЕСКОГО элемента буфера (`a->data[i]`), напр. `nova_int` для
+    /// erased-хранилища (self-field, array-of-arrays) или конкретный тип для
+    /// типизированного NovaArray. Вызывающий при необходимости кастует результат
+    /// к «реальному» типу (см. call-sites: `(({real})({bchk}))`).
     ///
-    /// Форма `*({ ... &_a->data[_i]; })` — statement-expression возвращает
-    /// pointer (rvalue), затем `*` deref'ит в lvalue. Это обходит Clang-
-    /// ограничение «stmt-expr is not lvalue» (GCC принимает stmt-expr-as-lvalue
-    /// напрямую, Clang — нет). Pointer-deref всегда lvalue в обоих компиляторах.
+    /// Plan 145 — portable форма (MSVC C2059 fix). Раньше использовался GNU
+    /// statement-expression + `__typeof__` (cl.exe не поддерживает). Теперь —
+    /// `*(T*)nova_idx_chk((void*)(arr), (i), sizeof(T))` (хелпер в array.h):
+    /// `void*`-параметр лаундерит тип (strict-aliasing safe), bounds-check +
+    /// single-eval обоих подвыражений внутри хелпера, а `*(T*)…` — валидный
+    /// lvalue в любом компиляторе (для `arr[i] = v` / `&arr[i]` / `arr[i].m()`).
     fn emit_bchk_array_access(
+        storage_elem_ty: &str,
         obj_expr: &str,
         idx_expr: &str,
     ) -> String {
         format!(
-            "(*({{ __typeof__({o}) _a = ({o}); nova_int _i = ({i}); \
-if (__builtin_expect(_i < 0 || _i >= _a->len, 0)) nv_panic_index_oob(_i, _a->len); \
-&_a->data[_i]; }}))",
-            o = obj_expr, i = idx_expr,
+            "(*({elem}*)nova_idx_chk((void*)({o}), ({i}), sizeof({elem})))",
+            elem = storage_elem_ty, o = obj_expr, i = idx_expr,
         )
     }
 
@@ -10266,22 +10269,34 @@ if (__builtin_expect(_i < 0 || _i >= _a->len, 0)) nv_panic_index_oob(_i, _a->len
     /// Bounds-check on outer (idx_outer) AND inner (idx_inner). Inner array
     /// is reached via cast `(inner_arr_ty)(outer->data[idx_outer])` —
     /// element-type erasure (nested arrays stored as nova_int).
-    /// Возвращает `*(...&...->data[i])` (см. emit_bchk_array_access для
-    /// обоснования формы).
+    ///
+    /// Plan 145 — portable форма (MSVC C2059 fix): два вложенных
+    /// `*(T*)nova_idx_chk(...)` вместо GNU statement-expression. Внешний буфер
+    /// хранит inner-array-указатели как erased `nova_int`; читаем его как
+    /// `nova_int`, кастуем к `inner_arr_ty`, затем индексируем внутренний по
+    /// его storage-типу (`strip(inner_arr_ty)`, обычно `nova_int`). Каждое
+    /// подвыражение вычисляется один раз; результат — lvalue (`*(T*)…`).
     fn emit_bchk_double_array_access(
         inner_arr_ty: &str,
         outer_expr: &str,
         outer_idx_expr: &str,
         inner_idx_expr: &str,
     ) -> String {
+        // Inner element storage type: physical type held in inner->data[].
+        // For erased nested arrays this is nova_int.
+        let inner_storage = inner_arr_ty
+            .strip_prefix("NovaArray_")
+            .map(|s| s.trim_end_matches('*').trim().to_string())
+            .unwrap_or_else(|| "nova_int".to_string());
+        // Outer buffer stores inner-array pointers erased as nova_int.
+        let outer_access = format!(
+            "(*(nova_int*)nova_idx_chk((void*)({oe}), ({oi}), sizeof(nova_int)))",
+            oe = outer_expr, oi = outer_idx_expr,
+        );
+        let inner_arr = format!("(({ity})({oa}))", ity = inner_arr_ty, oa = outer_access);
         format!(
-            "(*({{ __typeof__({oe}) _ao = ({oe}); nova_int _io = ({oi}); \
-if (__builtin_expect(_io < 0 || _io >= _ao->len, 0)) nv_panic_index_oob(_io, _ao->len); \
-{ity} _ai = ({ity})(_ao->data[_io]); nova_int _ii = ({ii}); \
-if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai->len); \
-&_ai->data[_ii]; }}))",
-            ity = inner_arr_ty,
-            oe = outer_expr, oi = outer_idx_expr, ii = inner_idx_expr,
+            "(*({is}*)nova_idx_chk((void*)({ia}), ({ii}), sizeof({is})))",
+            is = inner_storage, ia = inner_arr, ii = inner_idx_expr,
         )
     }
 
@@ -19196,9 +19211,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                             let payload_expr = if err_c.ends_with('*') {
                                 format!("(void*)({}->payload.Err._0)", try_tmp)
                             } else {
+                                // Plan 145 — portable heap-box (MSVC C2059): nova_box_value
+                                // (array.h) вместо stmt-expr; src = адресуемое поле Err._0.
                                 format!(
-                                    "({{ {ty}* _ep = ({ty}*)nova_alloc(sizeof({ty})); \
-                                     *_ep = {tmp}->payload.Err._0; (void*)_ep; }})",
+                                    "nova_box_value(&({tmp}->payload.Err._0), sizeof({ty}))",
                                     ty = err_c, tmp = try_tmp)
                             };
                             self.line(&format!(
@@ -19308,9 +19324,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         let payload_expr = if err_c.ends_with('*') {
                             format!("(void*)({}->payload.Err._0)", bang_tmp)
                         } else {
+                            // Plan 145 — portable heap-box (MSVC C2059): nova_box_value
+                            // (array.h) вместо stmt-expr; src = адресуемое поле Err._0.
                             format!(
-                                "({{ {ty}* _ep = ({ty}*)nova_alloc(sizeof({ty})); \
-                                 *_ep = {tmp}->payload.Err._0; (void*)_ep; }})",
+                                "nova_box_value(&({tmp}->payload.Err._0), sizeof({ty}))",
                                 ty = err_c, tmp = bang_tmp)
                         };
                         self.line(&format!(
@@ -19775,25 +19792,19 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                             }
                             (None, _) => format!("({})->len", o),
                         };
-                        // Plan 140.2 followup §2: элидировать slice bounds-check
-                        // на доказанных in-range slice-сайтах; иначе always-on.
-                        let slice_chk = if self.index_site_elided(expr.span.start) {
-                            String::new()
+                        // Plan 145 — portable Vec slice (MSVC C2059): nova_vec_slice_chk/
+                        // nochk (array.h) вместо GNU statement-expression. Plan 140.2 §2
+                        // элизия bounds-check на proven-in-range сайтах -> _nochk.
+                        // (open-ended `v[a..]` двоично вычисляет `o` как и прежняя форма.)
+                        let slice_helper = if self.index_site_elided(expr.span.start) {
+                            "nova_vec_slice_nochk"
                         } else {
-                            "if (_sf < 0 || _st < _sf || _st > _sv->len) { char _sbuf[96]; \
-int _sn = snprintf(_sbuf, 96, \"Vec: slice [%lld..%lld] out of bounds for length %lld\", \
-(long long)_sf, (long long)_st, (long long)_sv->len); \
-if (_sn < 0) _sn = 0; if (_sn > 95) _sn = 95; \
-nv_panic((nova_str){.ptr=(const uint8_t*)_sbuf,.len=(nova_int)_sn}); } ".to_string()
+                            "nova_vec_slice_chk"
                         };
-                        // Statement-expr: bounds-check (elidable), then build view struct.
                         return Ok(format!(
-                            "(({{ {vty}* _sv = ({o}); nova_int _sf = ({from}); nova_int _st = ({to}); {chk}\
-nova_int _sl = _st - _sf; \
-{vty}* _sr = ({vty}*)nova_alloc(sizeof({vty})); \
-_sr->data = ({ety}*)(_sv->data + _sf); _sr->len = _sl; _sr->cap = _sl; \
-_sr; }}))",
-                            vty = vec_ty, o = o, from = from_expr, to = to_expr_inner, ety = elem_c, chk = slice_chk
+                            "({vty}*){helper}((void*)({o}), ({from}), ({to}), sizeof({ety}))",
+                            vty = vec_ty, helper = slice_helper, o = o,
+                            from = from_expr, to = to_expr_inner, ety = elem_c
                         ));
                     }
                     let len_expr = if obj_ty == "nova_str" {
@@ -19838,23 +19849,20 @@ _sr; }}))",
                         // elidable on proven-in-range sites + UTF-8 codepoint-boundary
                         // guard (data-dependent → always-on). `from_expr`/`to_expr` are
                         // byte offsets; open-ended end is `_s.len` (set in len_expr).
-                        let bounds_chk = if self.index_site_elided(expr.span.start) {
-                            String::new()
-                        } else {
-                            "if (_sf < 0 || _st < _sf || _st > _s.len) { char _sbuf[112]; \
-int _sn = snprintf(_sbuf, 112, \"str: slice [%lld..%lld] out of bounds for byte-length %lld\", \
-(long long)_sf, (long long)_st, (long long)_s.len); \
-if (_sn < 0) _sn = 0; if (_sn > 111) _sn = 111; \
-nv_panic((nova_str){.ptr=(const uint8_t*)_sbuf,.len=(nova_int)_sn}); } ".to_string()
-                        };
-                        return Ok(format!(
-                            "(({{ nova_str _s = ({o}); nova_int _sf = ({from}); nova_int _st = ({to}); \
-{chk}if ((_sf < _s.len && (((unsigned char)_s.ptr[_sf]) & 0xC0) == 0x80) || \
-(_st < _s.len && (((unsigned char)_s.ptr[_st]) & 0xC0) == 0x80)) \
-nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
-(nova_str){{.ptr = _s.ptr + _sf, .len = _st - _sf}}; }}))",
-                            o = o, from = from_expr, to = to_expr, chk = bounds_chk
-                        ));
+                        // Plan 145 — portable str slice (MSVC C2059): nova_str_slice_*
+                        // (array.h) вместо GNU statement-expression. Plan 152.1 byte-range
+                        // zero-copy view + UTF-8 codepoint-boundary guard (внутри хелпера);
+                        // Plan 140.2 элизия bounds -> _nochk (guard остаётся, data-dependent).
+                        // open-ended `s[a..]` -> *_to_end_* (конец = s.len; single-eval `o`).
+                        let str_elided = self.index_site_elided(expr.span.start);
+                        if end.is_none() {
+                            let h = if str_elided { "nova_str_slice_to_end_nochk" }
+                                    else { "nova_str_slice_to_end_chk" };
+                            return Ok(format!("{h}(({o}), ({from}))", h = h, o = o, from = from_expr));
+                        }
+                        let h = if str_elided { "nova_str_slice_nochk" } else { "nova_str_slice_chk" };
+                        return Ok(format!("{h}(({o}), ({from}), ({to}))",
+                            h = h, o = o, from = from_expr, to = to_expr));
                     } else if let Some(elem) = obj_ty.strip_prefix("NovaArray_") {
                         let elem = elem.trim_end_matches('*').trim();
                         return Ok(format!("nova_array_slice_{}({}, {}, {})", elem, o, from_expr, to_expr));
@@ -19877,7 +19885,9 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         let key = format!("(nova_self->{})", Self::mangle_field_name(field));
                         if let Some(elem_ty) = self.array_element_types.get(&key).cloned() {
                             let o = self.emit_expr(obj)?;
-                            let bchk = Self::emit_bchk_array_access(&o, &i);
+                            // erased self-field array: physical storage is nova_int,
+                            // cast result to the real element type below.
+                            let bchk = Self::emit_bchk_array_access("nova_int", &o, &i);
                             return Ok(format!("(({})({}))", elem_ty, bchk));
                         }
                     }
@@ -19912,23 +19922,24 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                     // ending in `_vd[_i]` is NOT an lvalue in Clang, breaking
                     // `v[i].field = x`, `&v[i]`, and `v[i].mut_method()`; the
                     // `*(...&...)` form is a valid lvalue in both Clang and GCC.
-                    let tmp_v = self.fresh_tmp_named("vec");
-                    let tmp_i = self.fresh_tmp_named("vi");
                     // Plan 140.2 Part B (D257 / B.4): элидировать bounds-check на
                     // index-сайтах, доказанных in-range верификатором (len-инвариантный
                     // цикл `for i in 0..v.len()`). Безопасный доступ → zero-cost.
                     // Недоказанные — always-on проверка (debug И release).
-                    let bounds_chk = if self.index_site_elided(expr.span.start) {
-                        String::new()
+                    //
+                    // Plan 145 — portable форма (MSVC C2059 fix): nova_idx_chk/nochk
+                    // (array.h) вместо GNU statement-expression. `void*`-параметр
+                    // лаундерит тип (strict-aliasing safe), оба подвыражения (o, idx)
+                    // вычисляются один раз (аргументы fn), а `*(T*)…` — валидный
+                    // lvalue (`v[i].field = x`, `&v[i]`, `v[i].mut_method()`).
+                    let helper = if self.index_site_elided(expr.span.start) {
+                        "nova_idx_nochk"
                     } else {
-                        format!(
-                            "if (__builtin_expect({i} < 0 || {i} >= ({o})->len, 0)) nv_panic_index_oob({i}, ({o})->len); ",
-                            i = tmp_i, o = o,
-                        )
+                        "nova_idx_chk"
                     };
                     return Ok(format!(
-                        "(*({{ {ty}* {v} = ({o})->data; nova_int {i} = ({idx}); {chk}&{v}[{i}]; }}))",
-                        ty = elem_ty, v = tmp_v, i = tmp_i, o = o, idx = i, chk = bounds_chk
+                        "(*({ty}*){helper}((void*)({o}), ({idx}), sizeof({ty})))",
+                        ty = elem_ty, helper = helper, o = o, idx = i,
                     ));
                 }
                 // Plan 138 Ф.3 (D238): `str[i]` → `char`, panic on OOB or invalid UTF-8.
@@ -19939,6 +19950,15 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                 }
                 if obj_ty.starts_with("NovaArray_") {
                     let o = self.emit_expr(obj)?;
+                    // Plan 145 — физический storage-тип элемента буфера (data[i]):
+                    // strip "NovaArray_" из obj_ty (напр. "nova_int" для erased,
+                    // "nova_f64" для типизированного). Передаётся в bounds-check
+                    // хелпер для sizeof/cast; «реальный» тип восстанавливается
+                    // отдельным кастом на сайтах array-of-arrays / str-boxed ниже.
+                    let storage_elem = obj_ty
+                        .strip_prefix("NovaArray_")
+                        .map(|s| s.trim_end_matches('*').trim().to_string())
+                        .unwrap_or_else(|| "nova_int".to_string());
                     // Check if elements are pointer types stored as nova_int (e.g. inner arrays or records)
                     let arr_var_name = if let ExprKind::Ident(n) = &obj.kind { Some(n.as_str()) } else { None };
                     let inner_elem_ty = arr_var_name
@@ -19951,12 +19971,12 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                     if let Some(ref inner_ty) = inner_elem_ty {
                         if inner_ty.starts_with("NovaArray_") {
                             // array-of-arrays: cast the element and get data pointer
-                            let bchk = Self::emit_bchk_array_access(&o, &i);
+                            let bchk = Self::emit_bchk_array_access(&storage_elem, &o, &i);
                             return Ok(format!("(({})({}))", inner_ty, bchk));
                         }
                         if inner_ty.ends_with('*') {
                             // array-of-record-pointers: cast element to real pointer type
-                            let bchk = Self::emit_bchk_array_access(&o, &i);
+                            let bchk = Self::emit_bchk_array_access(&storage_elem, &o, &i);
                             return Ok(format!("(({})({}))", inner_ty, bchk));
                         }
                     }
@@ -19965,11 +19985,11 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         .map(|n| self.str_box_arrays.contains(n))
                         .unwrap_or(false);
                     if is_str_boxed {
-                        let bchk = Self::emit_bchk_array_access(&o, &i);
+                        let bchk = Self::emit_bchk_array_access(&storage_elem, &o, &i);
                         return Ok(format!("(*(nova_str*)({}))", bchk));
                     }
                     // Default: NovaArray_nova_int element — raw data access
-                    Ok(Self::emit_bchk_array_access(&o, &i))
+                    Ok(Self::emit_bchk_array_access(&storage_elem, &o, &i))
                 } else if let ExprKind::Index { obj: outer_arr, index: outer_idx } = &obj.kind {
                     // Double-indexing: arr[i][j] where arr[i] is a nova_int storing a NovaArray_*
                     // Check if the outer array has element type tracking
@@ -26053,6 +26073,21 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                 InterpStrPart::Expr { expr: e, spec } => {
                     let arg_ty = self.infer_expr_c_type(e);
                     let v = self.emit_expr(e)?;
+                    // **Plan 152.7-B (D258):** rich Rust-style format spec
+                    // (width / precision / align / fill / sign / radix). Handled
+                    // by a dedicated lowering that renders a core string then
+                    // applies padding/alignment via nova_fmt_* runtime helpers.
+                    // Trivial specs are normalized to None/Debug by the parser,
+                    // so this only fires for genuinely-rich specs.
+                    if let crate::ast::FormatSpec::Spec(rich) = spec {
+                        let appended = self.emit_format_spec_value(
+                            e, &arg_ty, &v, rich, &sb)?;
+                        self.line(&format!(
+                            "Nova_StringBuilder_method_append({}, {});",
+                            sb, appended
+                        ));
+                        continue;
+                    }
                     // **Plan 91.14 Ф.4 (D229):** branch on format spec.
                     // - FormatSpec::None → Display.@display (D237 rename from Printable.@fmt).
                     // - FormatSpec::Debug → Debug.@debug (D237 rename from DebugPrintable.@debug_fmt).
@@ -26205,6 +26240,247 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
         self.var_types
             .insert(result.clone(), "nova_str".to_string());
         Ok(result)
+    }
+
+    /// **Plan 152.7-B (D258):** lower a rich format spec `${expr:SPEC}` to a C
+    /// expression producing the formatted `nova_str`. Returns the C expression
+    /// (the caller appends it to the interp StringBuilder). `sb` is the interp
+    /// builder (used only for the user-type fallback path, which renders the
+    /// value into a fresh builder).
+    ///
+    /// Pipeline: render a "core" string (radix digits / fixed-precision float /
+    /// display-or-debug text), split sign+prefix from body for sign-aware
+    /// zero-pad, apply string-precision truncation, then pad/align via
+    /// `nova_fmt_pad`. All runtime helpers live in `nova_rt/conv.h` and are
+    /// locale-independent.
+    fn emit_format_spec_value(
+        &mut self,
+        e: &Expr,
+        arg_ty: &str,
+        v: &str,
+        spec: &crate::ast::format_spec::FormatSpecParsed,
+        sb: &str,
+    ) -> Result<String, String> {
+        use crate::ast::format_spec::{Align, Kind, Sign};
+
+        // C literal for the fill char (Unicode scalar value).
+        let fill_cp = spec.fill as u32 as i64;
+        // align code: 0 left, 1 right, 2 center. Resolve the default per value
+        // category at the call sites below (numbers right, strings left).
+        let align_code = |a: Option<Align>, default_left: bool| -> i32 {
+            match a {
+                Some(Align::Left) => 0,
+                Some(Align::Right) => 1,
+                Some(Align::Center) => 2,
+                None => if default_left { 0 } else { 1 },
+            }
+        };
+        let width_lit = spec
+            .width
+            .map(|w| w as i64)
+            .unwrap_or(0);
+        let zero_pad = if spec.zero_pad { 1 } else { 0 };
+        let sign_plus = matches!(spec.sign, Sign::Plus);
+
+        // Classify the value type.
+        let is_int = matches!(
+            arg_ty,
+            "nova_int" | "int64_t" | "int32_t" | "int16_t" | "int8_t"
+                | "uint64_t" | "uint32_t" | "uint16_t" | "uint8_t"
+        );
+        let is_float = matches!(arg_ty, "nova_f64" | "nova_f32");
+        let is_str = arg_ty == "nova_str";
+        let is_char = matches!(e.kind, ExprKind::CharLit(_)) || arg_ty == "nova_char";
+        let is_bool = arg_ty == "nova_bool";
+
+        // ---- radix / integer path ----
+        if spec.kind.is_radix() {
+            if !is_int {
+                return Err(format!(
+                    "[E_BAD_FORMAT_SPEC] integer radix format (`x`/`X`/`b`/`o`) \
+                     requires an integer value, but `${{...}}` has C-type `{}`. \
+                     Radix formatting applies to `int`/sized ints only. \
+                     Plan 152.7-B (D258).",
+                    arg_ty
+                ));
+            }
+            let (base, upper) = match spec.kind {
+                Kind::LowerHex => (16, 0),
+                Kind::UpperHex => (16, 1),
+                Kind::Binary => (2, 0),
+                Kind::Octal => (8, 0),
+                _ => unreachable!(),
+            };
+            // `_ = sign_plus`: radix formatting is unsigned (two's complement),
+            // so the `+` sign flag does not apply (matches Rust).
+            let _ = sign_plus;
+            let alt = if spec.alternate { 1 } else { 0 };
+            let iv = format!("(nova_int)({})", v);
+            let body = format!("nova_fmt_int_radix_body({}, {}, {})", iv, base, upper);
+            let prefix = format!(
+                "nova_fmt_radix_prefix({}, {}, {})",
+                alt, base, upper
+            );
+            return Ok(format!(
+                "nova_fmt_pad({}, {}, {}, {}, {}, {})",
+                prefix,
+                body,
+                fill_cp,
+                align_code(spec.align, false),
+                width_lit,
+                zero_pad
+            ));
+        }
+
+        // ---- integer (decimal) ----
+        if is_int && !matches!(spec.kind, Kind::Debug) {
+            let iv = format!("(nova_int)({})", v);
+            let body = format!("nova_fmt_int_body({}, 10, 0)", iv);
+            let prefix = format!(
+                "nova_fmt_int_prefix({}, {})",
+                iv,
+                if sign_plus { 1 } else { 0 }
+            );
+            return Ok(format!(
+                "nova_fmt_pad({}, {}, {}, {}, {}, {})",
+                prefix,
+                body,
+                fill_cp,
+                align_code(spec.align, false),
+                width_lit,
+                zero_pad
+            ));
+        }
+
+        // ---- float ----
+        if is_float && !matches!(spec.kind, Kind::Debug) {
+            let dv = format!("(double)({})", v);
+            // Body: fixed precision if `.N` given, else the default `%g` repr
+            // (then strip its sign so the sign/prefix split stays uniform).
+            let (prefix, body) = if let Some(p) = spec.precision {
+                (
+                    format!(
+                        "nova_fmt_f64_prefix({}, {})",
+                        dv,
+                        if sign_plus { 1 } else { 0 }
+                    ),
+                    format!("nova_fmt_f64_body({}, {})", dv, p),
+                )
+            } else {
+                // No precision: default repr via nova_f64_to_str, but it carries
+                // its own sign. Use an empty prefix and let the body include the
+                // sign; force-`+` is honored by prepending via the prefix only
+                // when the value is non-negative.
+                let body = format!("nova_f64_to_str({})", dv);
+                let prefix = if sign_plus {
+                    // prefix '+' only for >= 0 (nova_f64_to_str already prints
+                    // '-' for negatives).
+                    format!(
+                        "(({} >= 0.0) ? (nova_str){{\"+\", 1}} : (nova_str){{\"\", 0}})",
+                        dv
+                    )
+                } else {
+                    "(nova_str){\"\", 0}".to_string()
+                };
+                (prefix, body)
+            };
+            return Ok(format!(
+                "nova_fmt_pad({}, {}, {}, {}, {}, {})",
+                prefix,
+                body,
+                fill_cp,
+                align_code(spec.align, false),
+                width_lit,
+                zero_pad
+            ));
+        }
+
+        // ---- string / char / bool / user-type: render a core str, then pad ----
+        // Determine the core (unpadded) string per the kind (Display vs Debug).
+        let is_debug = matches!(spec.kind, Kind::Debug);
+        let core: String = if is_char {
+            if is_debug {
+                format!("nova_char_to_debug_str({})", v)
+            } else {
+                format!("nova_char_to_str({})", v)
+            }
+        } else if is_str {
+            if is_debug {
+                format!("nova_str_to_debug_str({})", v)
+            } else {
+                v.to_string()
+            }
+        } else if is_bool {
+            if is_debug {
+                format!("nova_bool_to_debug_str({})", v)
+            } else {
+                format!("nova_bool_to_str({})", v)
+            }
+        } else if is_int {
+            // int with `?` debug kind + non-radix.
+            if is_debug {
+                format!("nova_int_to_debug_str((nova_int)({}))", v)
+            } else {
+                format!("nova_int_to_str((nova_int)({}))", v)
+            }
+        } else if is_float {
+            // float with `?` debug kind.
+            format!("nova_f64_to_debug_str((double)({}))", v)
+        } else {
+            // User type: render via @display / @debug into a fresh builder, then
+            // steal the string. This reuses the exact same dispatch the bare
+            // ${x}/${x:?} path uses, so user Display/Debug impls are honored.
+            let method_name = if is_debug { "debug" } else { "display" };
+            let arg_type = arg_ty
+                .trim_start_matches("Nova_")
+                .trim_end_matches('*')
+                .to_string();
+            let has_explicit =
+                self.all_methods.contains(&(arg_type.clone(), method_name.to_string()));
+            let method_c_fn: Option<String> = if has_explicit {
+                let safe = Self::sanitize_c_for_ident(&arg_type);
+                Some(format!("Nova_{}_method_{}", safe, method_name))
+            } else if is_debug {
+                self.try_synthesize_default_method_with_gate(
+                    &arg_type, arg_ty, method_name, false)
+            } else {
+                self.try_synthesize_default_method(&arg_type, arg_ty, method_name)
+            };
+            let fn_name = method_c_fn.ok_or_else(|| {
+                format!(
+                    "[E_BAD_FORMAT_SPEC] value of type `{}` in `${{...:SPEC}}` does \
+                     not implement {} — cannot apply a format spec to it. \
+                     Plan 152.7-B (D258).",
+                    arg_type,
+                    if is_debug { "Debug" } else { "Display" }
+                )
+            })?;
+            // Render into a dedicated builder, then steal to a str.
+            let fmt_sb = self.fresh_tmp_named("fmt_sb");
+            self.line(&format!(
+                "Nova_StringBuilder* {} = Nova_StringBuilder_static_with_capacity(16);",
+                fmt_sb
+            ));
+            self.line(&format!("{}({}, {});", fn_name, v, fmt_sb));
+            let _ = sb; // interp builder unused on this path.
+            format!("Nova_StringBuilder_consume_as_str({})", fmt_sb)
+        };
+
+        // Apply string-precision truncation (codepoints), then pad/align.
+        // Strings default to LEFT alignment (Rust); precision truncates.
+        let core_after_prec = if let Some(p) = spec.precision {
+            format!("nova_fmt_str_precision({}, {})", core, p as i64)
+        } else {
+            core
+        };
+        Ok(format!(
+            "nova_fmt_pad((nova_str){{\"\", 0}}, {}, {}, {}, {}, {})",
+            core_after_prec,
+            fill_cp,
+            align_code(spec.align, true),
+            width_lit,
+            zero_pad
+        ))
     }
 
     // ---- block expression ----

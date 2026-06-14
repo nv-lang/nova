@@ -5,8 +5,8 @@
 // Demonstrates TcpStream.connect + write + read_bytes.
 //
 // Usage (start echo_server.nv first):
-//   nova run examples/net/echo_server.nv &
-//   nova run examples/net/echo_client.nv
+//   nova build examples/net/echo_server.nv -o echo_server && ./echo_server &
+//   nova build examples/net/echo_client.nv -o echo_client && ./echo_client
 //
 // See also: examples/net/echo_server.nv
 

@@ -949,6 +949,134 @@ static inline void nv_panic_index_oob(nova_int idx, nova_int len) {
     nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
 }
 
+/* Plan 145 — portable bounds-checked element access (MSVC C2059 fix).
+ *
+ * Раньше codegen эмитил GNU statement-expression
+ *   (*({ __typeof__(arr) _a = (arr); nova_int _i = (i);
+ *        if (_i < 0 || _i >= _a->len) nv_panic_index_oob(_i, _a->len);
+ *        &_a->data[_i]; }))
+ * — `({ ... })` и `__typeof__` это расширения GCC/Clang, cl.exe их не
+ * поддерживает → C2059, MSVC ломался на большинстве индексаций.
+ *
+ * Все array/Vec структуры Nova имеют идентичный начальный layout
+ *   { T* data; int64_t len; int64_t cap }
+ * (NovaArray_T и Nova_Vec____T), поэтому общий header-каст через `void*`
+ * даёт portable доступ к len/data при любом T. Параметр `arr` объявлен
+ * `void*` — это «лаундерит» исходный тип, так что чтение через NovaArrHdr*
+ * безопасно относительно strict-aliasing (void* алиасит всё). Сайт
+ * передаёт sizeof(T) и кастует результат `(T*)`, восстанавливая lvalue:
+ *   *(T*)nova_idx_chk((void*)(arr), (i), sizeof(T))
+ * Оба подвыражения (arr, idx) вычисляются ровно один раз (аргументы fn).
+ *
+ *   nova_idx_chk   — с bounds-check (panic при OOB); default индексаций.
+ *   nova_idx_nochk — без проверки, для сайтов, доказанных in-range
+ *                    верификатором (Plan 140.2 D257 elision).
+ */
+typedef struct NovaArrHdr {
+    void*   data;
+    int64_t len;
+    int64_t cap;
+} NovaArrHdr;
+
+static inline void* nova_idx_chk(void* arr, nova_int i, size_t esz) {
+    NovaArrHdr* h = (NovaArrHdr*)arr;
+    if (i < 0 || i >= h->len) nv_panic_index_oob(i, h->len);
+    return (char*)h->data + (size_t)i * esz;
+}
+
+static inline void* nova_idx_nochk(void* arr, nova_int i, size_t esz) {
+    NovaArrHdr* h = (NovaArrHdr*)arr;
+    return (char*)h->data + (size_t)i * esz;
+}
+
+/* Plan 145 — portable bit-reinterpret nova_int -> nova_f64 (MSVC C2059).
+ * Заменяет GNU statement-expression union-pun
+ * `({ union { nova_int i; nova_f64 f; } _u; _u.i = (v); _u.f; })`.
+ * Union type-punning well-defined в C (в отличие от C++). */
+static inline nova_f64 nova_bits_i2f(nova_int i) {
+    union { nova_int i; nova_f64 f; } u;
+    u.i = i;
+    return u.f;
+}
+
+/* Plan 145 — portable heap-box (MSVC). Копирует sz байт из *src в свежий
+ * GC-блок, возвращает указатель. Заменяет stmt-expr
+ * `({ T* _p = nova_alloc(sizeof T); *_p = *src; (void*)_p; })` для
+ * АДРЕСУЕМОГО src (lvalue, напр. поле payload.Err._0). */
+static inline void* nova_box_value(const void* src, size_t sz) {
+    void* p = nova_alloc(sz);
+    memcpy(p, src, sz);
+    return p;
+}
+
+/* Plan 145 — portable Vec[T] zero-copy sub-view slice (MSVC). Все Vec
+ * структуры имеют начальный layout NovaArrHdr; новый view alloc'ится и
+ * указывает внутрь исходного буфера (data + from*esz). _chk — с
+ * bounds-check (panic), _nochk — proven in-range (Plan 140.2 элизия). */
+static inline void* nova_vec_slice_chk(void* src, nova_int from, nova_int to, size_t esz) {
+    NovaArrHdr* s = (NovaArrHdr*)src;
+    if (from < 0 || to < from || to > s->len) {
+        char buf[96];
+        int n = snprintf(buf, 96, "Vec: slice [%lld..%lld] out of bounds for length %lld",
+                         (long long)from, (long long)to, (long long)s->len);
+        if (n < 0) n = 0; if (n > 95) n = 95;
+        nv_panic((nova_str){ .ptr = (const uint8_t*)buf, .len = (nova_int)n });
+    }
+    NovaArrHdr* r = (NovaArrHdr*)nova_alloc(sizeof(NovaArrHdr));
+    r->data = (char*)s->data + (size_t)from * esz;
+    r->len = to - from;
+    r->cap = to - from;
+    return r;
+}
+static inline void* nova_vec_slice_nochk(void* src, nova_int from, nova_int to, size_t esz) {
+    NovaArrHdr* s = (NovaArrHdr*)src;
+    NovaArrHdr* r = (NovaArrHdr*)nova_alloc(sizeof(NovaArrHdr));
+    r->data = (char*)s->data + (size_t)from * esz;
+    r->len = to - from;
+    r->cap = to - from;
+    return r;
+}
+
+/* Plan 145 — portable str byte-range slice (MSVC). Plan 152.1 byte-range
+ * zero-copy sub-view. _chk: byte bounds (panic) + UTF-8 codepoint-boundary
+ * guard. _nochk: bounds элидированы (proven), boundary guard остаётся
+ * (data-dependent). *_to_end_* варианты — для open-ended `s[from..]`:
+ * конец = s.len, single-eval `s` (избегаем double-eval исходного выраж.). */
+static inline void nova_str_slice_utf8_guard(nova_str s, nova_int from, nova_int to) {
+    if ((from < s.len && (((unsigned char)s.ptr[from]) & 0xC0) == 0x80) ||
+        (to   < s.len && (((unsigned char)s.ptr[to])   & 0xC0) == 0x80)) {
+        const char* m = "str: slice splits a UTF-8 codepoint";
+        nv_panic((nova_str){ .ptr = (const uint8_t*)m, .len = (nova_int)strlen(m) });
+    }
+}
+static inline void nova_str_slice_bounds(nova_str s, nova_int from, nova_int to) {
+    if (from < 0 || to < from || to > s.len) {
+        char buf[112];
+        int n = snprintf(buf, 112, "str: slice [%lld..%lld] out of bounds for byte-length %lld",
+                         (long long)from, (long long)to, (long long)s.len);
+        if (n < 0) n = 0; if (n > 111) n = 111;
+        nv_panic((nova_str){ .ptr = (const uint8_t*)buf, .len = (nova_int)n });
+    }
+}
+static inline nova_str nova_str_slice_chk(nova_str s, nova_int from, nova_int to) {
+    nova_str_slice_bounds(s, from, to);
+    nova_str_slice_utf8_guard(s, from, to);
+    { nova_str r; r.ptr = s.ptr + from; r.len = to - from; return r; }
+}
+static inline nova_str nova_str_slice_nochk(nova_str s, nova_int from, nova_int to) {
+    nova_str_slice_utf8_guard(s, from, to);
+    { nova_str r; r.ptr = s.ptr + from; r.len = to - from; return r; }
+}
+static inline nova_str nova_str_slice_to_end_chk(nova_str s, nova_int from) {
+    nova_str_slice_bounds(s, from, s.len);
+    nova_str_slice_utf8_guard(s, from, s.len);
+    { nova_str r; r.ptr = s.ptr + from; r.len = s.len - from; return r; }
+}
+static inline nova_str nova_str_slice_to_end_nochk(nova_str s, nova_int from) {
+    nova_str_slice_utf8_guard(s, from, s.len);
+    { nova_str r; r.ptr = s.ptr + from; r.len = s.len - from; return r; }
+}
+
 /* Plan 138 Ф.3 (D238): str[i] → char — panicking codepoint accessor.
  * Wraps nova_str_char_at; panics с nv_panic_index_oob если idx OOB или
  * невалидный UTF-8. O(idx) — линейная итерация по UTF-8. */

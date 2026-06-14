@@ -2732,8 +2732,8 @@ mod tests {
 
         #[test]
         fn suppress_via_allow_prelude_shadow_clause() {
-            // Module clause `allow_prelude_shadow` парсится → ModuleAttrKind.
-            let mut m = parse("module myapp allow_prelude_shadow\ntype Option { foo int }\n");
+            // D174 (Plan 107): `#allow(shadow)` attribute before `module` → ModuleAttrKind.
+            let mut m = parse("#allow(shadow)\nmodule myapp\ntype Option { foo int }\n");
             add_fake_prelude(&mut m, &["Option"]);
             let ws = lint_prelude_shadow(&m);
             assert!(ws.is_empty(), "suppress should silence W_PRELUDE_SHADOW, got {:?}", ws);
@@ -2741,9 +2741,9 @@ mod tests {
 
         #[test]
         fn no_prelude_does_not_suppress_explicit_shadow_lint() {
-            // `no_prelude` отключает auto-import — visibility set пуст,
+            // `#no_prelude` (D174, Plan 107) отключает auto-import — visibility set пуст,
             // shadowing невозможен → no warning естественно.
-            let mut m = parse("module myapp no_prelude\ntype Option { foo int }\n");
+            let mut m = parse("#no_prelude\nmodule myapp\ntype Option { foo int }\n");
             // НЕ добавляем fake prelude peer'ы — `no_prelude` исключает их.
             let ws = lint_prelude_shadow(&m);
             assert!(ws.is_empty(), "no_prelude → no prelude visibility, no warning");

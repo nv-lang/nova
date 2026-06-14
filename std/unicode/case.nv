@@ -27,6 +27,7 @@ import std.collections.vec.{Vec}
 ro fold_map HashMap[int, str] = parse_decomp_table(FOLD_DATA)
 ro lower_map HashMap[int, str] = parse_decomp_table(LOWER_DATA)
 ro upper_map HashMap[int, str] = parse_decomp_table(UPPER_DATA)
+ro title_map HashMap[int, str] = parse_decomp_table(TITLE_DATA)
 ro cased_flat Vec[int] = parse_flat(CASED_DATA)
 ro caseign_flat Vec[int] = parse_flat(CASE_IGNORABLE_DATA)
 
@@ -55,6 +56,11 @@ fn upper_one(cp int) -> Vec[int] {
 }
 fn lower_one(cp int) -> Vec[int] {
     match lower_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
+}
+// Per-codepoint titlecase mapping (used by `to_titlecase` in words.nv for the
+// first cased char of each word; rest of the word goes through lower_one).
+fn title_one(cp int) -> Vec[int] {
+    match title_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
 }
 
 /// Full case folding (UCD CaseFolding status C+F) — for caseless matching.

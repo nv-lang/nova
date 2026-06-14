@@ -1,0 +1,37 @@
+// Plan 144.0 may-GC effect analysis — POSITIVE (classified NoGC).
+//
+// `forward_once` and `forward_chain` make ONLY statically-resolved direct
+// calls to free fns that are themselves NoGC (`leaf_double`, `leaf_triple`).
+// Every call edge resolves to a known FnDecl, no node on the reachable cone
+// allocates / goes indirect / calls FFI / is unresolved, so transitive
+// propagation keeps the whole acyclic cone NoGC.
+//
+// This is the transitive-propagation POSITIVE: it proves MayGC does NOT flow
+// up callers when every callee is proven NoGC (Plan §3.4).
+//
+// NB: bodies avoid `+` (conservatively allocating) — they combine results with
+// `*` only.
+//
+// EXPECT (gc-effect-analyze --format json): leaf_double, leaf_triple,
+// forward_once, forward_chain → all "NoGC".
+
+module plan144_0.positive_leaf_forwarder
+
+fn leaf_double(x int) -> int => x * 2
+
+fn leaf_triple(x int) -> int => x * 3
+
+// Single resolved forward to a NoGC callee.
+fn forward_once(x int) -> int => leaf_double(x)
+
+// Longer acyclic chain: both callees resolve to NoGC leaves, combined with
+// `*` (non-allocating). Still NoGC end-to-end.
+fn forward_chain(x int) -> int => forward_once(x) * leaf_triple(x)
+
+test "forwarder forwards" {
+    assert(leaf_double(4) == 8)
+    assert(leaf_triple(4) == 12)
+    assert(forward_once(4) == 8)
+    // forward_once(2)=4, leaf_triple(2)=6, 4*6 = 24
+    assert(forward_chain(2) == 24)
+}
