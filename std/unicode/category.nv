@@ -1,0 +1,163 @@
+// Plan 152.3b (D253): code-point-level Unicode classification API.
+//
+// Opt-in `std.unicode` peer (NOT prelude — table cost paid only by importers).
+// Co-equal with `category_data.nv` (generated tables) in the `std.unicode`
+// folder-module, so the `*_DATA` constants are visible here directly. Reuses peer
+// helpers: parse_flat / range_lookup3 / in_ranges2 (graphemes.nv); cps_to_str
+// (normalize.nv); lower_one / upper_one (case.nv).
+//
+//   general_category(cp)  — the UCD General_Category (TR44) of a code point.
+//   is_alphabetic / is_whitespace / is_numeric / is_uppercase / is_lowercase /
+//   is_control / is_alphanumeric — binary predicates (1:1 with the UCD, NOT an
+//   ASCII approximation).
+//   char_to_uppercase(cp) / char_to_lowercase(cp) — full per-code-point case
+//   mapping, returned as a str (multi-code-point: ß → "SS").
+//
+// These are the code-point analogues of the string-level `to_uppercase` /
+// `to_lowercase` (case.nv): a single code point with no surrounding context.
+// Final_Sigma is a string-level context rule, so for a lone Σ (U+03A3) the
+// lowercase is σ (the non-final form) — the correct context-free answer.
+
+module std.unicode
+
+import std.collections.vec.{Vec}
+
+// ─── General_Category codes (MUST match nova-codegen unicode `gc_cat_code`) ───
+// Canonical UCD order (TR44 Table 12); mirrors the generator's 1..=30 mapping.
+// `Cn` (code 30) is the default for any code point absent from GC_DATA.
+const GC_LU int = 1     // Letter, uppercase
+const GC_LL int = 2     // Letter, lowercase
+const GC_LT int = 3     // Letter, titlecase
+const GC_LM int = 4     // Letter, modifier
+const GC_LO int = 5     // Letter, other
+const GC_MN int = 6     // Mark, nonspacing
+const GC_MC int = 7     // Mark, spacing combining
+const GC_ME int = 8     // Mark, enclosing
+const GC_ND int = 9     // Number, decimal digit
+const GC_NL int = 10    // Number, letter
+const GC_NO int = 11    // Number, other
+const GC_PC int = 12    // Punctuation, connector
+const GC_PD int = 13    // Punctuation, dash
+const GC_PS int = 14    // Punctuation, open
+const GC_PE int = 15    // Punctuation, close
+const GC_PI int = 16    // Punctuation, initial quote
+const GC_PF int = 17    // Punctuation, final quote
+const GC_PO int = 18    // Punctuation, other
+const GC_SM int = 19    // Symbol, math
+const GC_SC int = 20    // Symbol, currency
+const GC_SK int = 21    // Symbol, modifier
+const GC_SO int = 22    // Symbol, other
+const GC_ZS int = 23    // Separator, space
+const GC_ZL int = 24    // Separator, line
+const GC_ZP int = 25    // Separator, paragraph
+const GC_CC int = 26    // Other, control
+const GC_CF int = 27    // Other, format
+const GC_CS int = 28    // Other, surrogate
+const GC_CO int = 29    // Other, private use
+const GC_CN int = 30    // Other, not assigned (default)
+
+/// The 30 Unicode General_Category values (UCD TR44 Table 12), in canonical
+/// order. `Cn` is the value of every code point not assigned a category by
+/// `UnicodeData.txt` (unassigned / reserved / noncharacter).
+export type GeneralCategory
+    | Lu | Ll | Lt | Lm | Lo
+    | Mn | Mc | Me
+    | Nd | Nl | No
+    | Pc | Pd | Ps | Pe | Pi | Pf | Po
+    | Sm | Sc | Sk | So
+    | Zs | Zl | Zp
+    | Cc | Cf | Cs | Co | Cn
+
+// ─── lazy-static range tables (built once on first touch) ───
+// GC_DATA: (lo,hi,code) triples (stride 3) → range_lookup3. ALPHA_DATA / WS_DATA:
+// (lo,hi) pairs (stride 2) → in_ranges2. All sorted by lo (binary search).
+ro gc_flat Vec[int] = parse_flat(GC_DATA)
+ro alpha_flat Vec[int] = parse_flat(ALPHA_DATA)
+ro ws_flat Vec[int] = parse_flat(WS_DATA)
+
+// Raw General_Category code (1..=30) of `cp`; 30 (`Cn`) when absent from GC_DATA
+// (range_lookup3 returns 0 for "not found", which we map to the Cn default).
+fn gc_code(cp int) -> int {
+    ro c = range_lookup3(gc_flat, cp)
+    if c == 0 { GC_CN } else { c }
+}
+
+// Map a generator category code (1..=30) to the GeneralCategory variant.
+fn gc_from_code(code int) -> GeneralCategory {
+    match code {
+        1  => Lu
+        2  => Ll
+        3  => Lt
+        4  => Lm
+        5  => Lo
+        6  => Mn
+        7  => Mc
+        8  => Me
+        9  => Nd
+        10 => Nl
+        11 => No
+        12 => Pc
+        13 => Pd
+        14 => Ps
+        15 => Pe
+        16 => Pi
+        17 => Pf
+        18 => Po
+        19 => Sm
+        20 => Sc
+        21 => Sk
+        22 => So
+        23 => Zs
+        24 => Zl
+        25 => Zp
+        26 => Cc
+        27 => Cf
+        28 => Cs
+        29 => Co
+        _  => Cn
+    }
+}
+
+// ─── public API ───
+
+/// The UCD General_Category of code point `cp`. Returns `Cn` (not assigned) for
+/// any code point absent from `UnicodeData.txt` (unassigned/reserved/noncharacter)
+/// and for out-of-range values.
+export fn general_category(cp int) -> GeneralCategory => gc_from_code(gc_code(cp))
+
+/// Alphabetic (UCD `Alphabetic` derived core property). Broader than `Lu|Ll|Lt`:
+/// includes `Lm|Lo|Nl` and Other_Alphabetic marks, exactly per DerivedCoreProperties.
+export fn is_alphabetic(cp int) -> bool => in_ranges2(alpha_flat, cp)
+
+/// White_Space (UCD `White_Space` binary property from PropList.txt).
+export fn is_whitespace(cp int) -> bool => in_ranges2(ws_flat, cp)
+
+/// Numeric: General_Category ∈ {Nd, Nl, No} (matches Rust `char::is_numeric` and
+/// the generator note — derived from GC, no separate table).
+export fn is_numeric(cp int) -> bool {
+    ro c = gc_code(cp)
+    c == GC_ND || c == GC_NL || c == GC_NO
+}
+
+/// Uppercase letter: General_Category == Lu.
+export fn is_uppercase(cp int) -> bool => gc_code(cp) == GC_LU
+
+/// Lowercase letter: General_Category == Ll.
+export fn is_lowercase(cp int) -> bool => gc_code(cp) == GC_LL
+
+/// Control character: General_Category == Cc.
+export fn is_control(cp int) -> bool => gc_code(cp) == GC_CC
+
+/// Alphanumeric: alphabetic OR numeric.
+export fn is_alphanumeric(cp int) -> bool => is_alphabetic(cp) || is_numeric(cp)
+
+/// Full uppercase mapping of a single code point, as a str. Multi-code-point
+/// expansions apply (ß → "SS", ﬁ → "FI"); no locale tailoring. Reuses the
+/// case.nv `UPPER_DATA` table via `upper_one`.
+export fn char_to_uppercase(cp int) -> str => cps_to_str(upper_one(cp))
+
+/// Full lowercase mapping of a single code point, as a str. Final_Sigma is a
+/// string-level context rule, so a lone Σ (U+03A3) lowercases to σ (U+03C3, the
+/// non-final form) — the correct context-free answer. Reuses `LOWER_DATA` via
+/// `lower_one`.
+export fn char_to_lowercase(cp int) -> str => cps_to_str(lower_one(cp))
