@@ -38042,3 +38042,5 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   широкий прогон поймал 4/200 чанка = UCA S2.1 (discontiguous contractions, combining-mark вклинивается в
   контракцию при NFD-reorder) → реализовал S2.1 → 200/200. Codegen-баг: match-as-return c mut None→bool
   (typed Option[str] workaround). Закрывает [M-152-collation]. Plan 152 std/unicode полностью реализован.
+
+[2026-06-14] codegen lib-test fix (Plan 140.3 followup, merged e83c8914): Plan 140.3 added Module.contract_opt_out but 4 test-only Module{} initializers were missed -> cargo test -p nova-codegen --lib failed E0063 x4, blocking the WHOLE nova-codegen lib-test target (release binary unaffected). Fix: contract_opt_out: Default::default() (full enforce). The fix unblocked the target and REVEALED 33 pre-existing stale unit tests (26 parser::tests with removed `let` syntax from Plan 114/D184 + 5 sum_schema_registry + 2 lints prelude_shadow) that never ran while the target was broken -> new marker [M-codegen-libtest-stale-tests]. Honest 770/33.
