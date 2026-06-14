@@ -833,7 +833,11 @@ fn cmd_unicode(
                 return Err(anyhow!("{} diverges from UCD test data; regenerate.", p.display()));
             }
         }
-        println!("OK: {} ({}) + {} ({}) + {} ({}) + {} ({}) match UCD.", rel, stats, grel, gstats, crel, cstats, wrel, wstats);
+        print!("OK: {} ({}) + {} ({}) + {} ({}) + {} ({})", rel, stats, grel, gstats, crel, cstats, wrel, wstats);
+        if let Some((_, cl_stats, _, cl_rel)) = &coll_data {
+            print!(" + {} ({})", cl_rel, cl_stats);
+        }
+        println!(" match UCD.");
     } else {
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent)
