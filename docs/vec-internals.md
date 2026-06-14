@@ -57,8 +57,10 @@ prelude-global** (`v.push(x)` works without an import).
 | `mutate.nv` | `push`/`pop`/`insert`/`splice`/`remove`/`swap_remove`/`clear`/`truncate`/`reverse` + bulk (`extend`/`append`/`retain`/`copy_from`/`copy_within`/`fill`/`append_zero`) |
 | `slice.nv` | `@index(Range)`/`@get(Range)` — zero-copy `[]T` views (Plan 96) |
 | `iter.nv` | `VecIter[T]` + `@iter()`/`@next()` (`Iter`/`Next`, D58) |
-| `protocols.nv` | `Equal`/`Compare`/`Clone`/`Display`/`Debug` |
-| *(future)* `sort.nv` | Plan 153.3 sort/search; `iter.nv` grows lazy adapters in Plan 153.2 |
+| `sort.nv` | `@sort*`/`@binary_search*`/`@dedup*`/`@partition`/`@index_of`/`@position` (Plan 153.3) |
+| `restructure.nv` | `@concat`/operator `+`/`@rotate_left`/`@rotate_right`/`@drain`/`@insert_slice` (Plan 153.5) |
+| `protocols.nv` | `Equal`/`Compare`/`Clone`/`Hash`/`Display`/`Debug` |
+| *(future)* | `iter.nv` grows lazy adapters in Plan 153.2 |
 
 Conventions proven for this folder-module (Plan 153.0):
 - A **module-private** helper (`external fn panic`, `alloc_buf`, `null_buf`) is
@@ -102,3 +104,85 @@ Both read `self` and the other operand **raw** (`unsafe { @data[i] }` /
 `.compare`/`!=` so dispatch resolves on element type `T` (a method call kept
 *inline* on a generic raw deref mis-resolves in the erased stub —
 [M-codegen-erased-stub-method-on-varindex-deref]).
+
+## Restructure ops — concat / operator `+` / rotate / drain / insert_slice
+
+`restructure.nv` (Plan 153.5, [D263](../spec/decisions/10-overloading.md#d263-vec-restructure-ops--оператор---plus--concat))
+holds the ops that **build a new vector** from existing data or **move whole runs**
+of elements. All are Nova-body over bulk `RawMem.copy`.
+
+### Concat and operator `+` (non-mutating join)
+
+```nova
+ro a = Vec[int].from([1, 2, 3])
+ro b = Vec[int].from([4, 5])
+ro c = a.concat(b)        // c == [1,2,3,4,5];  a, b untouched
+ro d = a + b              // d == [1,2,3,4,5];  `+` == @plus == @concat
+mut e = Vec[int].from([1, 2])
+e += Vec[int].from([3, 4]) // e == [1,2,3,4];  a += b  ==  a = a + b (fresh Vec)
+```
+
+- `@concat(other) -> Vec[T]` allocates **exactly** `a.len() + b.len()` (`with_capacity`),
+  then two bulk `RawMem.copy` passes — O(a+b), one allocation. Neither operand is
+  mutated. This is the body of the `+` operator (`@plus(other) => @concat(other)`).
+- **`+` vs `append`.** `a + b` is a **new** Vec (Kotlin/Python/Ruby semantics);
+  `a += b` lowers to `a = a + b` (a fresh concat Vec), *not* an in-place grow. To grow
+  `a` in place use **`a.append(b)`** (the in-place bulk merge in `mutate.nv`). One layer,
+  one semantics — `concat`/`+` build, `append` mutate.
+- **Codegen.** `@plus` is a Nova method; the `+`/`+=` *operator-lowering* is wired in
+  `emit_c.rs`: `BinOp::Add` on `Vec[T]` routes through `vec_method_call("plus", …)`
+  (registering the mono instance first), and `a += b` is desugared to `a = a + b`
+  (raw C `a += b` on a struct/pointer operand is illegal).
+
+### Rotate (cyclic shift, in place)
+
+```nova
+mut v = Vec[int].from([1, 2, 3, 4, 5])
+v.rotate_left(2)          // [3,4,5,1,2]
+v.rotate_right(2)         // [1,2,3,4,5]  (right by k == left by len-k)
+```
+
+`mut @rotate_left(n) -> @` / `mut @rotate_right(n) -> @` reduce `n` mod `len` (so any
+`n >= 0` is valid; a full/multi-turn rotation is identity), then shift in place — O(len)
+time, O(min(n, len−n)) scratch, overlap-safe `RawMem.copy`. Empty/single-element vectors
+are unchanged. Contract `requires n >= 0`. They return `@` for chaining.
+
+### Drain (cut a range out, return it owned)
+
+```nova
+mut v = Vec[int].from([1, 2, 3, 4, 5])
+ro cut = v.drain(1..4)    // cut == [2,3,4];  v == [1,5]
+```
+
+`mut @drain(range Range) -> Vec[T]` copies the half-open `[start, end)` run into a new
+owned `Vec`, shifts the suffix down to close the gap, and shortens `self` by
+`range.len()` — O(len). Empty range drains nothing (returns empty `Vec`, `self`
+untouched). Contract `requires start>=0 && end>=start && end<=@len` (OOB / reversed → panic).
+
+### insert_slice (slice-flavoured bulk insert)
+
+```nova
+mut v = Vec[int].from([1, 2, 5, 6])
+v.insert_slice(2, Vec[int].from([3, 4]))   // [1,2,3,4,5,6]
+```
+
+`mut @insert_slice(i, sl []T) -> @` inserts every element of `sl` at index `i` (`i == len`
+is an append), shifting the existing suffix right. Under D239 a `[]T` *is* a `Vec[T]`, so it
+delegates to `@splice` (mutate.nv); the distinct name documents the slice-argument intent
+(Rust `Vec::splice` / Go `slices.Insert`). Overlap-safe → a self-insert is correct.
+Contract `requires 0 <= i && i <= @len`.
+
+### flatten — deferred
+
+`[][]T.flatten() -> []T` is **not** provided yet ([M-153.5-flatten-nested-receiver]): a
+correct `.flatten()` method needs a **nested generic receiver** `Vec[Vec[T]] @flatten()`
+so the body can name the innermost element `T`. Neither receiver form the compiler accepts
+expresses this — `Vec[Vec[T]]` is rejected by the parser in carrier position, and `[][]T`
+binds the receiver typevar to the *immediate* element (`Vec[int]`), not the innermost
+(`int`), yielding the wrong return type. Until structural typevar unification for nested
+receivers lands in both parser and monomorphizer, flatten one level explicitly:
+
+```nova
+mut flat = Vec[int].new()
+for inner in nested { flat.append(inner) }   // inner : Vec[int]
+```
