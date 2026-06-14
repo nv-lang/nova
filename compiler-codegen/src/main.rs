@@ -684,12 +684,31 @@ fn cmd_unicode(
         tables.ccc.len(),
         tables.comp.len()
     );
-    // Optional UAX #15 conformance fixture.
-    let conf: Option<(String, std::path::PathBuf)> = if emit_conformance {
-        let c = unicode_data::render_conformance_nv(ucd_dir, conformance_limit)?;
-        Some((c, root.join("nova_tests/plan152_4/normalization_conformance.nv")))
+    // Plan 152.4.3: grapheme-break tables (UAX #29).
+    let gtables = unicode_data::parse_grapheme_tables(ucd_dir)?;
+    let gcontent = unicode_data::render_grapheme_data_nv(&gtables, version);
+    let grel = "std/unicode/grapheme_data.nv";
+    let gabs = root.join(grel);
+    let gstats = format!(
+        "{} gcb / {} extpict / {} incb ranges",
+        gtables.gcb.len(),
+        gtables.ext_pict.len(),
+        gtables.incb.len()
+    );
+    // Optional conformance fixtures: UAX #15 (normalization) + UAX #29 (graphemes).
+    let confs: Vec<(String, std::path::PathBuf)> = if emit_conformance {
+        vec![
+            (
+                unicode_data::render_conformance_nv(ucd_dir, conformance_limit)?,
+                root.join("nova_tests/plan152_4/normalization_conformance.nv"),
+            ),
+            (
+                unicode_data::render_grapheme_conformance_nv(ucd_dir, conformance_limit)?,
+                root.join("nova_tests/plan152_4/grapheme_conformance.nv"),
+            ),
+        ]
     } else {
-        None
+        Vec::new()
     };
     if check {
         let norm = |s: &str| s.replace("\r\n", "\n");
@@ -702,14 +721,25 @@ fn cmd_unicode(
                 rel, stats
             ));
         }
-        if let Some((c, p)) = &conf {
+        {
+            let ex = std::fs::read_to_string(&gabs)
+                .map_err(|e| anyhow!("failed to read {}: {}", gabs.display(), e))?;
+            if norm(&ex) != norm(&gcontent) {
+                return Err(anyhow!(
+                    "{} diverges from UCD ({}).\n\
+                     Run `nova-codegen unicode --ucd-dir <UCD-dir>` to regenerate.",
+                    grel, gstats
+                ));
+            }
+        }
+        for (c, p) in &confs {
             let ex = std::fs::read_to_string(p)
                 .map_err(|e| anyhow!("failed to read {}: {}", p.display(), e))?;
             if norm(&ex) != norm(c) {
-                return Err(anyhow!("{} diverges from NormalizationTest.txt; regenerate.", p.display()));
+                return Err(anyhow!("{} diverges from UCD test data; regenerate.", p.display()));
             }
         }
-        println!("OK: {} matches UCD ({}).", rel, stats);
+        println!("OK: {} ({}) + {} ({}) match UCD.", rel, stats, grel, gstats);
     } else {
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent)
@@ -718,7 +748,10 @@ fn cmd_unicode(
         std::fs::write(&abs, &content)
             .map_err(|e| anyhow!("failed to write {}: {}", abs.display(), e))?;
         println!("wrote {} ({}).", rel, stats);
-        if let Some((c, p)) = &conf {
+        std::fs::write(&gabs, &gcontent)
+            .map_err(|e| anyhow!("failed to write {}: {}", gabs.display(), e))?;
+        println!("wrote {} ({}).", grel, gstats);
+        for (c, p) in &confs {
             if let Some(parent) = p.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| anyhow!("failed to create {}: {}", parent.display(), e))?;
