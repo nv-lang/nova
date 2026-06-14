@@ -125,9 +125,12 @@ portable).
   устранены), линковка проходит (LNK2019 устранён). Зелёные на MSVC: plan90 9/0, plan90_1 21/0,
   plan96 23/0, plan131 28/0, plan152_1 6/0, plan152_2 3/0, generics 5/0, basics 8/0. Остаток —
   см. §11.
-- **Ф.6 — Спека/доки/логи + коммиты.** D-блок про portable index/slice/box codegen + запрет
-  GNU stmt-expr; backlog (`[M-msvc-bounds-check-stmt-expr]` закрыт, новый followup открыт);
-  project-creation.txt / simplifications.md / nova-private discussion-log.
+- **Ф.6 — Спека/D/доки/логи + коммиты.** **D276 (NEW, `spec/decisions/08-runtime.md`)** —
+  «Generated C must be MSVC-portable (no GNU extensions)» (обобщает Plan-82 compat-прецедент
+  на весь генерируемый C); `compiler-codegen/README` §MSVC-портируемость; backlog
+  (`[M-msvc-bounds-check-stmt-expr]` закрыт, новый followup открыт); project-creation.txt /
+  simplifications.md / nova-private discussion-log. (Q-блок не заводился — открытого вопроса
+  нет, решение зафиксировано D276.)
 
 ## 9. Критерии приёмки
 
@@ -144,7 +147,9 @@ portable).
   🟢 ЧАСТИЧНО: подавляющее большинство зелёное; остаток — узкий struct-elem-write (§11).
 - **AC7:** pos+neg фикстуры plan145 проходят через РЕЛИЗНЫЕ nova-codegen (clang 6/6; MSVC 5/6,
   1 = struct-elem-write followup). ✅
-- **AC8:** spec/доки/логи обновлены; `[M-msvc-bounds-check-stmt-expr]` закрыт; followup открыт. ✅
+- **AC8:** spec обновлена (**D276** в `08-runtime.md`); доки (`compiler-codegen/README`) и логи
+  (project-creation/simplifications/backlog/discussion-log) обновлены; `[M-msvc-bounds-check-stmt-expr]`
+  закрыт; followup `[M-145-msvc-remaining-stmt-expr]` открыт. ✅
 
 ## 10. Статус
 

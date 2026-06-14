@@ -7837,3 +7837,50 @@ commit lazy, but this can exhaust user VA or hit a commit limit. POSIX aborts on
 mmap failure; Windows downsize-retries. Operators tuning to extremes should size
 the product against available virtual address space.
 
+## D276 (NEW) — Generated C must be MSVC-portable (no GNU extensions) (Plan 145)
+
+> **Решение:** Codegen эмитит C, компилируемый **всеми тремя toolchain'ами** Nova
+> (Clang, GCC, **MSVC cl.exe**). Раннер компилит под MSVC в **permissive C-режиме
+> БЕЗ `/std:c11`** (та опция ломает MS-extension struct-cast'ы `(StructTy)(v)`,
+> которые эмитит codegen — C2440). Отсюда жёсткое правило: **в генерируемом C и в
+> рантайм-заголовках `nova_rt/` запрещены GNU/Clang-расширения, которых нет у
+> cl.exe в этом режиме.** Контекст: при попытке снять MSVC-baseline (Plan 83) MSVC
+> оказался сломан широко — регрессия после Plan 82 (был 1049/16), накопленная из
+> 4 независимых причин, всплывающих каскадом `C2059 → C2143 → LNK2019 → C2440`.
+
+**Правила (что нельзя и чем заменять):**
+
+1. **GNU statement-expression `({ … })` + `__typeof__`** — cl.exe → C2059. Запрещены
+   в генерируемом C. Значение-возвращающие многошаговые конструкции выносятся в
+   `static inline`-хелперы в `nova_rt/array.h`. Для индексации/слайсов/heap-box/
+   bitcast — **generic-хелперы через `void*`** (тип-лаундеринг через `void*` снимает
+   strict-aliasing: компилятор теряет исходный тип → доступ через `NovaArrHdr*`
+   безопасен) + общий header `NovaArrHdr { void* data; int64_t len; int64_t cap }`
+   (layout NovaArray ≡ Vec ≡ slice). Сайт восстанавливает элемент-тип `(ELEM*)`-кастом
+   + `sizeof(ELEM)`; результат — **lvalue** (`*(T*)…`), оба подвыражения **single-eval**
+   (аргументы функции). Хелперы Plan 145: `nova_idx_chk`/`nova_idx_nochk`,
+   `nova_vec_slice_chk`/`nochk`, `nova_str_slice_chk`/`nochk` (+`*_to_end_*` для
+   open-ended single-eval, с UTF-8 codepoint-boundary guard), `nova_box_value`
+   (memcpy heap-box адресуемого источника), `nova_bits_i2f` (union-pun в функции).
+   `_nochk`-варианты обслуживают элизию bounds-check (Plan 140.2 D257).
+
+2. **C11 keyword'ы и GCC/Clang builtin'ы** (`_Static_assert`, `_Alignas`, `__atomic_*`,
+   `__builtin_*`) — шимятся в `nova_rt/nova_msvc_compat.h`, force-included (`/FI`) в
+   каждый TU под `_MSC_VER && !__clang__`. Любой новый builtin/keyword в рантайме →
+   добавить шим туда (иначе C2143/C2065/LNK2019). Plan 145 дошимил `_Static_assert`
+   (→ negative-array-size трюк) и полный набор `__atomic_*` (fetch_and/or/xor/nand,
+   add_fetch/sub_fetch, fetch_max, non-`_n` load/store; bitwise → `_Interlocked*`,
+   nand/max → CAS-loop). Барьеры over-strong (full `_Interlocked*`) — sound для
+   любого запрошенного порядка на x64 TSO.
+
+**Остаток (Plan 145.1, `[M-145-msvc-remaining-stmt-expr]`):** узкие codegen-конструкции,
+всё ещё несовместимые с cl.exe и пока оставленные stmt-expr (раскрылись после
+устранения главных блокеров): struct-element write по индексу (`vec_of_struct[i] = val`
+→ C2440 на присваивании struct-значения через `*(struct*)void_ptr`-lvalue),
+heap-box value-rvalue, Option-get composite repack, record-invariant wrap.
+
+> **Прецедент:** D-блок Plan 82 (compat-слой `nova_msvc_compat.h`). D276 обобщает
+> правило на ВЕСЬ генерируемый C, а не только runtime builtins.
+> **Конвенция для разработчиков** — также в [compiler-codegen/README.md](../../compiler-codegen/README.md)
+> §«MSVC-портируемость генерируемого C».
+
