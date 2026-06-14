@@ -33070,10 +33070,26 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                             drop(info);
                             if let Some((base_name, type_args_c)) = instance_opt {
                                 if let Some(tmpl) = self.generic_type_templates.get(&base_name) {
-                                    let subst: Vec<(String, Option<String>)> = tmpl.generics.iter()
+                                    let mut subst: Vec<(String, Option<String>)> = tmpl.generics.iter()
                                         .zip(type_args_c.iter())
                                         .map(|(g, c)| (g.name.clone(), Some(c.clone())))
                                         .collect();
+                                    // Plan 153.4: bind `Self` to the concrete mono'd
+                                    // receiver pointer type so a method return that
+                                    // EMBEDS `Self` inside a composite — `(Self, Self)`
+                                    // (`@split_at`), `Option[(T, Self)]` (`@split_first`)
+                                    // — resolves its inner `Self` elements. The
+                                    // top-level-`Self` case is handled by the `.or_else`
+                                    // below, but that never recursed into tuple/Option
+                                    // elements, so `let (l, r) = v.split_at(i)` declared
+                                    // the local with the GENERIC `Nova_Vec*` tuple
+                                    // (vs the mono `Nova_Vec_int*` the callee returns)
+                                    // → C "incompatible tuple type" init error.
+                                    let self_mono = format!(
+                                        "{}*",
+                                        Self::compute_generic_type_c_name(&base_name, &type_args_c),
+                                    );
+                                    subst.push(("Self".to_string(), Some(self_mono)));
                                     // [M-138.2-overload-chain-return-infer] overload-aware:
                                     // pick the same-name candidate matching the call arity
                                     // (the 1-arg `@cap(n)` setter -> `@`/Self -> mono receiver,

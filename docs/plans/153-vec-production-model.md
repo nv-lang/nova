@@ -456,6 +456,36 @@ Opus. Эстимат ~2–2.5 dd (модель готова).
 ёмкость** (`with_capacity`/`@cap(n)`, 153.1). Мут-view (`mut []T`/`for mut x`) —
 write-through до detach. Подтвердить в доках; новых решений не требуется.
 
+> #### Статус 153.4 — 🟢 A ЗАКРЫТА (2026-06-14, ветка plan-153.4-slices): eager-views; B (chunks/windows) deferred
+>
+> **153.4-A ✅ (eager zero-copy `[]T`-views, БЕЗ внешней аллокации).** Новый peer-файл
+> `std/collections/vec/views.nv` (folder-module `collections.vec`): `@split_at(i) -> (Self,Self)`
+> (два view, `requires 0<=i<=len`, OOB→panic, НЕ clamp); `@split_first()`/`@split_last() ->
+> Option[(T, Self)]` (голова/хвост + view, пусто→`None`); `@first_n(n)`/`@last_n(n) -> Self`
+> (префикс/суффикс, **CLAMP** `n>len`→весь, `n<=0`→пусто — «take up to N» никогда не сюрпризит);
+> `@as_slice() -> Self` (ro-view всего) + `mut @as_slice() -> mut Self` (мут-view через
+> **receiver-mut overload**, как `@as_ptr`/`mut @as_ptr` — НЕ имя `as_mut_slice`, D247/Plan 135).
+> Все возвращают `[]T`≡`Vec[T]`-views (zero-copy, `cap==len`); detach-on-resize подтверждён тестом
+> (`first_n→push` детачит, родитель не тронут). Тесты `plan153_4/views` (14 `test`-блоков:
+> split_at делит + invariant `len(l)+len(r)==len` + boundaries 0/len + write-through;
+> split_first/last non-empty + empty→None + single; first_n/last_n exact+clamp+empty;
+> mut as_slice write-through; detach) + негатив `plan153_4/split_at_oob_neg` (EXPECT_RUNTIME_PANIC).
+> Все PASS через релизный nova (C-codegen).
+>
+> **Codegen-фикс (без упрощений).** Return-type inference генерик-инстанс-методов (emit_c.rs
+> `infer_expr_c_type`, generic-type-instance fallback ~33073) НЕ резолвил `Self`, ВЛОЖЕННЫЙ в
+> композит (`(Self,Self)`, `Option[(T,Self)]`): `subst` нёс только generic-параметры (`T`), а
+> top-level-`Self` обрабатывался отдельным `.or_else`, который не рекурсировал в tuple/Option
+> элементы → локал `let (l,r)=v.split_at(i)` объявлялся с ГЕНЕРИК-tuple `Nova_Vec*` (vs mono
+> `Nova_Vec_int*` из callee) → C «incompatible tuple type». Фикс: `subst.push(("Self", mono-receiver))`
+> перед `apply_type_subst_to_ref` → вложенный `Self` резолвится. Аддитивно (резолвит там, где раньше
+> `None`); 0 регрессий (plan153_0/1/3/6, generics, basics, plan131/138/90_1 чисто; plan138_2 4-FAIL
+> идентичны baseline = pre-existing Vec-shadow E7310 + transient lld-link file-lock).
+>
+> **153.4-B 🔶 DEFERRED — `[M-153.4-chunks-windows-lazy]` (gated на Plan 153.2).** `@chunks`/
+> `@chunks_exact`/`@rchunks`/`@windows` — рекомендация плана = **ленивые** итераторы (без аллокации
+> внешнего Vec) → зависят от ленивой инфры 153.2 (другой worktree). НЕ реализованы наспех eager.
+
 ### 153.5 — Restructure-ops + оператор `+` `[D263, Q-vec-operator-plus, B]`
 `@concat(other) -> Vec[T]` + **оператор `+`** (`@plus`, `a + b` = новый Vec, как
 str `@plus`; Q-vec-operator-plus), `[][]T.flatten()`, `@rotate_left(n)`/
