@@ -7669,12 +7669,66 @@ checker (`bool`/`unit` relational-операнд → `E_RELATIONAL_OPERAND_NOT_O
 (type-checker coercion fix). Pin: `nova_tests/plan153_0/neg/vec_explicit_annotation_to_slice_neg`.
 
 ### Связанное (Plan 153)
-- `Q-iterator-laziness` / `Q-iter-mut` / `Q-vec-operator-plus` / `Q-slice-view` — закрыты
-  записями в плане [153](plans/153-vec-production-model.md) §4; реализация в 153.2/153.4/153.5.
-  Переносятся сюда по мере закрытия их sub-планов.
+- `Q-iterator-laziness` / `Q-iter-mut` — ✅ закрыты по факту реализацией (ниже).
+  `Q-vec-operator-plus` / `Q-slice-view` — закрыты записями в плане
+  [153](plans/153-vec-production-model.md) §4; реализация в 153.4/153.5. Переносятся
+  сюда по мере закрытия их sub-планов.
 - Отклонение 153.0: eager-комбинаторы вынесены в `collections.vec_seq` (не prelude-global) —
   иначе их идентификаторы засоряют каждый юнит. См. план §«Статус 153.0» +
   `[M-153-vec-combinators-prelude-global]`.
+
+## Q-iterator-laziness — eager `[]T.map` vs ленивый итератор (Plan 153.2)
+
+**Контекст.** До 153.2 `[]T.map(f) -> []U` материализовал на каждом шаге (O(n)
+промежуточных аллокаций на цепочке); `VecIter` умел только `next()`. Вопрос: ленивый
+итератор (Rust `iter()`+adapters / Kotlin Sequence / Java Stream) — канон, и что делать
+с eager-комбинаторами?
+
+**✅ ЗАКРЫТО 2026-06-14 — Plan 153.2 Phase A** (`plan-153.2-mono-closures`, commits
+`996ca01a` лифт + `caf56226` ленивый слой; [D260](decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)):
+
+- **Ленивые адаптеры — КАНОН** (этос cost-transparency, D135). Реализованы по
+  **boxed-fluent**-модели: `BoxIter[T] { priv step fn() -> Option[T] }`, вход `v.lazy()`
+  мостит `VecIter`→`BoxIter`, адаптеры fluent-методы → новый `BoxIter`, терминаторы тянут
+  цепочку. **Промежуточных аллокаций нет** (pull, по одному элементу) — доказано
+  инструментацией (`plan153_2/laziness`: счётчик считает только протянутые элементы,
+  `take`/`find`/`any`/`all`/`nth` коротят). A-набор: `map`/`filter`/`filter_map`/
+  `enumerate`/`take`/`skip` + `collect`/`fold`/`reduce`/`count`/`sum`/`any`/`all`/`find`/
+  `for_each`/`min`/`max`/`nth`/`last`.
+- **Eager `[]T.map` — НЕ deprecated, НЕ переписан в сахар.** Eager
+  `collections.vec_seq` оставлен без изменений как переходный eager-surface; lazy
+  (`collections.vec_lazy`) — канонический allocation-free путь. Оба за раздельными
+  explicit-import. Eager НЕ выражен сахаром над lazy сознательно — чтобы не навязывать
+  lazy-import eager-пользователям, и потому что prelude-global closure-несущий метод
+  засоряет каждый юнит (тот же scope-leak, что держит `vec_seq` вне prelude;
+  `[M-153-vec-combinators-prelude-global]`).
+- **Phase B** (заявленный полный набор) отложен за маркерами — `zip`/`chain`/`flat_map`/
+  `flatten`/`scan`/`step_by`/`take_while`/… + `into_iter`. Это roadmap, НЕ упрощение.
+
+### Связанное
+- [D260](decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — модель + codegen-инварианты.
+- `[M-153.2-generic-over-source-zerocost]` — zero-cost (un-boxed) апгрейд поверх boxed.
+- `[M-153.2-tuple-elem-adapter]` — tuple-PRESERVING-адаптер после `enumerate`.
+
+## Q-iter-mut — мутабельная итерация `Vec[T]` (Plan 153.2)
+
+**Контекст.** Нужна ли мутабельная итерация (`iter_mut` в Rust, индексами в Kotlin) и в
+каком виде? Имя `iter_mut` или receiver-mut overload?
+
+**✅ ЗАКРЫТО (дизайн) — Plan 153.2.** Мутабельная итерация — через **`for mut x in v`**
+(write-through в буфер) + **`mut @iter()`** (receiver-mut overload `@iter`, **НЕ** имя
+`iter_mut`). Семантика как мут-view (`mut []T`): write ок (write-through в буфер мастера),
+рост → detach (Plan 96 модель). Согласуется с accessor receiver-mut конвенцией (Plan 135,
+`@as_ptr`/`mut @as_ptr`).
+
+**Реализация — Phase B.** В Phase-A-слое (`vec_lazy.nv`) реализованы read-only ленивые
+адаптеры/терминаторы; write-through `for mut x` / `mut @iter()` — отдельный codegen-путь
+(lvalue write-back в буфер), приземляется в Phase B вместе с остальным B-набором.
+Дизайн-решение зафиксировано (имя НЕ `iter_mut`, а receiver-mut overload).
+
+### Связанное
+- [D260](decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — ленивый итератор (read-side).
+- Plan 96 / Plan 135 — мут-view `mut []T` write-through + receiver-mut accessor-конвенция.
 ## Q36. Scope call-site instantiation для `@field`-контрактов (Plan 140.2, D256/D257) — ✅ ЗАКРЫТО (2026-06-13)
 
 **Вопрос:** при поддержке `@field` в контрактах ([D256](decisions/09-tooling.md#d256-field--method-self-access-в-контрактах)) —

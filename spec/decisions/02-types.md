@@ -11705,3 +11705,96 @@ v[1] = 99  // → v.@index(1, 99)   write-overload через MutIndex (D240)
 - [Q35](../open-questions.md) — резолвит. `[M-140-bounds-as-contract]` — разблокирует (`requires 0 <= i && i < @len`).
 - **Отложено (сознательно):** Python-style chaining (`a<b<c` ≡ `a<b && b<c`) — НЕ добавляем; если будет
   спрос — отдельное предложение в будущем.
+
+---
+
+## D260. Ленивый итератор `Vec[T]` — boxed-fluent адаптеры (Plan 153.2)
+
+**Status:** ACTIVE (Plan 153.2 Phase A, 2026-06-14). **Depends on:**
+[D232](#d232-vect--nova-native-generic-growable-array) (`Vec[T]`),
+[D239](#d239-t--синтаксический-псевдоним-vect) (`[]T ≡ Vec[T]`),
+[D58](03-syntax.md) (`Iter`/`Next` — `VecIter`). **Закрывает:**
+[Q-iterator-laziness](../open-questions.md), [Q-iter-mut](../open-questions.md) (Phase A).
+
+### Решение
+
+Ленивый итератор `Vec[T]` реализован по **boxed-fluent**-модели. Канон лени — этос
+cost-transparency (D135): цепочка `v.lazy().map(f).filter(p).collect()` **не делает
+промежуточных аллокаций**; каждый адаптер оборачивает upstream-`step`-замыкание и тянет
+по одному элементу на запрос; цепочку приводит в движение только терминатор.
+
+```nova
+type BoxIter[T] { priv step fn() -> Option[T] }      // boxed-курсор
+fn Vec[T] @lazy() -> BoxIter[T]                       // вход (мост VecIter→BoxIter)
+fn BoxIter[T] @map[U](f fn(T) -> U) -> BoxIter[U]     // адаптер → новый BoxIter
+fn BoxIter[T] mut @collect() -> Vec[T]               // терминатор драйвит цепочку
+```
+
+- **`BoxIter[T]`** держит единственный `step`-thunk: `Some(x)` (следующий элемент) /
+  `None` (исчерпан). Адаптеры строят новые `BoxIter` обёрткой `step`; **ничего не
+  выполняется**, пока терминатор не потянет.
+- **Вход** `v.lazy()` мостит `VecIter[T]`→`BoxIter[T]` (free-fn `box_iter[T]`,
+  захватывающий курсор). `[]T` тождественно `Vec[T]` (D239) → `lazy()` есть и на слайсе.
+- **Адаптеры** (lazy, возвращают новый `BoxIter`, без аллокации): `map`/`filter`/
+  `filter_map`/`enumerate`/`take`/`skip` (Phase A). Каждый копирует receiver
+  (`mut src = @`) в свежее захватывающее замыкание → цепочка **реентерабельна** на
+  терминатор-вызов и не мутирует BoxIter вызывающего, пока терминатор её не сдренит.
+- **Терминаторы** (драйвят/коротят): `collect`/`fold`/`reduce`/`count`/`sum(zero T)`/
+  `any`/`all`/`find`/`for_each`/`min`/`max`/`nth`/`last` (Phase A). `min`/`max` — на
+  `[T Compare]`; `sum(zero T)` — аддитивная идентичность вместо числового протокола.
+
+### Модульное размещение
+
+`BoxIter`/адаптеры/терминаторы — в sibling **FILE-модуле**
+[`std/collections/vec_lazy.nv`](../../std/collections/vec_lazy.nv) (`module
+collections.vec_lazy`), доступном через `import std.collections.vec_lazy`, **НЕ** внутри
+prelude folder-модуля `collections.vec`. Причина та же, что у eager `vec_seq` (D239
+status-note): prelude-global generic-type-метод с CLOSURE-телом утекает свои method-level
+generics (`[U]`/`[Acc]`) и callback-параметры (`f`/`pred`) в merged-body КАЖДОГО юнита →
+коллизия с top-level `fn f`/`type Acc` ([M-codegen-var-types-fn-scope] + D145). Адаптеры
+closure-dense → opt-in import.
+
+### Eager `vec_seq` сосуществует
+
+Eager `collections.vec_seq` (`v.map(f) -> new Vec`, материализует каждый шаг) **оставлен
+без изменений** как переходный eager-surface. Lazy — канонический allocation-free путь
+(Q-iterator-laziness); оба за раздельными explicit-import (eager НЕ переписан в сахар над
+lazy, чтобы не навязывать lazy-import eager-пользователям).
+
+### Codegen-инварианты (обязательны для мономорфизации closure-несущих методов)
+
+Реализация потребовала фиксов в `compiler-codegen/src/codegen/emit_c.rs` (без них —
+silent CC-FAIL / drain-0 / segfault), зафиксированных как контракт:
+
+1. **mut-capture box-реестр (`var_boxed`) флашится per-test** (`emit_test`) — box
+   `_box_<name>` не должен утекать между C-функциями тестов.
+2. **`Stmt::Return` эмитит значение с типом возврата функции как target** — голый
+   `return None` в mono-замыкании резолвится в `NovaOpt_<mono>`, не erased
+   `NovaOpt_nova_int`.
+3. **`infer_expr_c_type` регистрирует generic-инстанс типа-возврата**, когда generic
+   free-fn ИЛИ метод generic-типа возвращает generic-инстанс (`box_vec[int](it) ->
+   BoxIter[int]`, `Vec[T] @lazy() -> BoxIter[T]`) — иначе `.method()` на временном
+   промахивается мимо generic-instance dispatch-path (block 5b) и попадает в erased
+   NULL-stub.
+
+(Лифт mono×closures — register_generic_instances_in_typeref + closure-capture в loop-arms,
+commit `996ca01a`.)
+
+### Отложено (Phase B — НЕ упрощение, заявленный B-набор)
+
+`zip`/`unzip`/`chain`/`flat_map`/`flatten`/`scan`/`inspect`/`step_by`/`take_while`/
+`skip_while`/`peekable`/`min_by[_key]`/`max_by[_key]`/`partition`/`chunk_by`/`into_iter`;
+мут-итерация `for mut x`/`mut @iter()` (Q-iter-mut write-through — отдельный путь);
+`collect`-target FromIterator (мост 153.6). Zero-cost generic-over-source апгрейд поверх
+boxed (монооморфный курсор-тип без бокса) — `[M-153.2-generic-over-source-zerocost]`.
+Tuple-PRESERVING-адаптер сразу после `enumerate` — `[M-153.2-tuple-elem-adapter]`
+(residual `Option[<mono-tuple>]` closure-typing gap; схлопнуть tuple через `map`).
+
+### Связь
+
+- [D232](#d232-vect--nova-native-generic-growable-array) — `Vec[T]`; [D239](#d239-t--синтаксический-псевдоним-vect) — `[]T ≡ Vec[T]`.
+- [D58](03-syntax.md) — `Iter`/`Next` (`VecIter` — upstream-источник для `lazy()`).
+- [D135](01-philosophy.md) — cost-transparency (no hidden O(n)) — обоснование лени.
+- [Q-iterator-laziness](../open-questions.md) — закрыта (lazy = канон).
+- [Q-iter-mut](../open-questions.md) — Phase A закрывает терминаторами/адаптерами; мут-итерация — Phase B.
+- Plan 153.2 — план; `vec_seq.nv` / `vec_lazy.nv` — реализация.
