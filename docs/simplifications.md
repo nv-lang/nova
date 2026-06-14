@@ -36205,4 +36205,3 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   safe-set (доказуемо-flat value-records) — возможный followup, требует per-T flatness-доказательства.
   ВАЖНО: overlap-семантика СОХРАНЕНА точно (runtime guard: destructive forward-overlap → element-loop
   пропагация, как per-element; иначе memmove) — не упрощение, а полное соответствие циклу.
->>>>>>> main
