@@ -276,10 +276,10 @@
   Остаётся доступ к **ПОЛЮ** элемента value-record — `ranges[0].start` — тот же корень (элемент
   мангатится в `Nova_Range_p`, теряет точный тип), но ДРУГОЙ codepath (element-field-access,
   Plan 96 H3 / array_element_types Ф.4.5). Не входил в acceptance. Применить аналогичный un-mangle.
-- **stale neg-message** (floating, P3): plan96/neg_slice_{a_gt_b,a_negative,oob_to} ждут
-  `EXPECT_RUNTIME_PANIC array: slice`, а сообщение теперь `Vec: slice ... out of bounds` (D239
-  `[]T`→`Vec` rename, emit_c.rs:19045). Pre-existing stale-ожидание, не codegen-баг. Выровнять
-  EXPECT на `Vec: slice`, или сделать message нейтральным к array/Vec.
+- **stale neg-message** ✅ **CLOSED 2026-06-14 (Plan 152 sweep)**: plan96/neg_slice_{a_gt_b,
+  a_negative,oob_to} ждали `EXPECT_RUNTIME_PANIC array: slice`, а сообщение теперь
+  `Vec: slice ... out of bounds` (D239 `[]T`→`Vec` rename, emit_c.rs:19045). Директивы
+  выровнены на `Vec: slice`. plan96 23/0. Program behaviour был корректен (OOB → panic).
 
 ## Конвенция
 - **Planned** маркер → Followups своего плана (+ индекс-строка здесь с home).

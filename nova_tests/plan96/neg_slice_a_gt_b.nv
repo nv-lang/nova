@@ -1,6 +1,8 @@
-// EXPECT_RUNTIME_PANIC array: slice
+// EXPECT_RUNTIME_PANIC Vec: slice
 //
 // Plan 96 Ф.4 — негатив: arr[5..3] (a > b) → panic.
+// D239 ([]T≡Vec): сообщение паники `Vec: slice [a..b] out of bounds for length N`
+// (было `array: slice`). Директива выровнена под новый текст.
 
 module plan96.neg_slice_a_gt_b
 
