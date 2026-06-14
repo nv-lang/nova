@@ -36372,3 +36372,38 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   starvation, только недополученная оптимизация. Hardcode synthesized-conversion-знаний был бы ИМЕННО
   shortcut, маскирующим недоказанный случай как элидируемый → сознательно отвергнут. Расширения (cross-
   module манифест KEEP-флага, minimal-SCC-cut, synthesized-conversion-регистр) — Q-loop-opt-thresholds §B.
+
+- **Plan 152.4.4 — Unicode case folding + case mapping `fold_case`/`to_uppercase`/`to_lowercase` (2026-06-14, D253)**:
+  Locale-independent Unicode case (UAX / SpecialCasing) в opt-in `std/unicode`. `fold_case(s)` —
+  полное case folding (CaseFolding.txt status **C+F**, для caseless matching: Σ/σ/ς→σ, ß→"ss", Kelvin→k,
+  идемпотентно). `to_uppercase`/`to_lowercase(s)->str` — полное Unicode case mapping, multi-codepoint
+  (ß→SS, ﬁ→FI, ﬃ→FFI 3-cp, İ→"i"+◌̇, ŉ→ʼN) + **Final_Sigma** context (Σ→ς в конце слова / σ иначе, через
+  `Cased`/`Case_Ignorable` range-таблицы, скип case-ignorable). Данные: `nova-codegen unicode` теперь
+  эмитит `std/unicode/case_data.nv` — FOLD/LOWER/UPPER maps (`cp:m1,m2;..`) из CaseFolding C+F +
+  SpecialCasing **unconditional** + UnicodeData[12]=upper/[13]=lower, плюс CASED/CASE_IGNORABLE ranges из
+  DerivedCoreProperties. Lazy-static `ro` (как нормализация/graphemes). plan152_4 10/10.
+  **Исключено ПО ДИЗАЙНУ (не упрощение):** (a) locale tailoring — tr/az/lt SpecialCasing conditional +
+  Turkic fold status T (D253 §no-locale; locale-case = отдельная фича); (b) title-casing — определён над
+  UAX #29 word boundaries, которых ещё нет → вынесен в `[M-152-word-boundaries]` (зависит от другого
+  модуля). ASCII `transform.nv` `to_upper/lower` оставлены ASCII-only (Unicode-версии в opt-in std/unicode
+  — иначе таблицы попали бы в prelude, нарушив A6).
+  **G0 «без упрощений» — двухслойная проверка (честно про scope):** (1) breadth-conformance
+  `case_conformance.nv` — **полный 2981/2981 mapped codepoints** out-of-band PASS (коммит — **uniform-spread
+  1500**, охватывает ASCII…лигатуры FB00…supplementary plane). НО expected выводится из того же
+  `parse_case_tables` → проверяет рантайм **парсер+lookup+emission** (round-trip), НЕ **выборку** таблиц
+  (self-referential). (2) **Independent UCD hand-oracle** в `case.nv` (expected вручную из UCD-спеки) пиннит
+  именно выборку, которую breadth не ловит: Turkic/locale-исключение (I→i не ı; i→I не İ; İ→i̇), field-index
+  sentinels, 3-cp expansions, Final_Sigma с case-ignorable interleaving (’ U+2019). Этот двухслойный подход —
+  результат adversarial-review (4 агента): review нашёл, что одна breadth-конформность переоценивала G0
+  («2981/2981 = доказано» было завышено — оно про парсер, не про выборку) + что коммитнутая выборка была
+  **низким head'ом** (stride=1 при limit 1500/total 2981 → U+0041..U+ABBF, без лигатур/high-plane), а не
+  spread. Оба честно исправлены (uniform-spread + independent oracle + точная формулировка).
+  **Санкционированное упрощение — только РАЗМЕР коммитнутой фикстуры** (1500 spread вместо 2981; полнота
+  out-of-band, согласовано с автором), как у нормализации.
+  **Codegen-баг попутно (`[M-codegen-fluent-tail-if-unify]`):** fluent-метод (`-> @`: `StringBuilder.append`,
+  `Vec.push`) как хвост ветки `if`/`match` типизируется в C как `Builder*`/`Vec*`; при unit-соседе →
+  несовпадение типов C (CC-FAIL). `match` коэрсит (unit-арм доминирует), но вложенный `if` с обоими
+  fluent-хвостами — нет → сломал компиляцию ВСЕГО `std.unicode` (normalize/graphemes тоже, т.к. peer'ы).
+  Workaround (не codegen-fix): helper'ы (`single`/`fold_one`/`upper_one`/`lower_one`) возвращают `Vec[int]`,
+  `push`/`append` только внутри for-циклов — ни один хвост ветки не fluent. Настоящий fix (коэрсия
+  mismatched if/match-веток в unit в discard-позиции) — followup.

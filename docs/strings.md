@@ -144,9 +144,28 @@ Option[str]`, `count()`, `is_empty()`, O(n), no positional `[i]`. Implements the
 extended grapheme cluster rules GB1–GB13 **plus GB9c** (Indic Conjunct Break,
 Unicode 15.1) — verified against the official `GraphemeBreakTest.txt`.
 
-Case folding / Unicode case mapping (`fold_case`, multi-codepoint
-`to_uppercase`/`to_lowercase`) and locale collation are **roadmap** (Plan 152.4.4 /
-152.5b — `[M-152-case-fold]`).
+### Case folding & Unicode case mapping
+
+Locale-independent, multi-codepoint — the Unicode upgrade of core's ASCII-only
+`str.to_upper()`/`to_lower()` (which stay ASCII so they need no tables):
+
+```nova
+import std.unicode
+
+assert(fold_case("MASSE") == fold_case("masse"))   // caseless match
+assert(fold_case("ß") == "ss")                      // full fold
+assert(to_uppercase("straße") == "STRASSE")         // ß → SS (multi-cp)
+assert(to_uppercase("ﬁle") == "FILE")               // ligature ﬁ → FI
+assert(to_lowercase("ΟΔΟΣ") == "οδος")               // final Σ → ς, others → σ
+```
+
+- `fold_case(s)` — full case folding (UCD `CaseFolding` C+F) for caseless matching.
+  Not normalization: for canonically-equivalent text, normalize first, then fold.
+- `to_uppercase(s)` / `to_lowercase(s)` — full Unicode case mapping, including the
+  **Final_Sigma** context rule (Greek Σ → ς word-finally, σ otherwise). No locale
+  tailoring (Turkic/Lithuanian); title-casing needs word boundaries and is roadmap.
+
+Locale collation (`Collator`, UCA/CLDR) remains **roadmap** (Plan 152.5b).
 
 ## Encoding interop (UTF-16 / code points)
 

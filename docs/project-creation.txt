@@ -37892,3 +37892,22 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   synthesized-conversion `str.from` — нет FnDecl → KEEP), sound над моно, никаких shortcut'ов. Остаток —
   Q-loop-opt-thresholds §B (cross-module precision, minimal-SCC-cut вместо KEEP-all). Ветка НЕ merged
   (финальный merge делает оператор).
+
+[2026-06-14] Plan 152.4.4 — Unicode case folding + case mapping (D253, Phase B завершение std/unicode).
+  fold_case/to_uppercase/to_lowercase(s)->str в opt-in std/unicode (locale-independent). Генератор
+  nova-codegen unicode расширен: parse_case_tables (CaseFolding C+F + SpecialCasing unconditional +
+  UnicodeData[12,13] + DerivedCoreProperties Cased/Case_Ignorable) → std/unicode/case_data.nv (1557 fold /
+  1460 lower / 1552 upper / 176 cased / 506 case-ign ranges). case.nv: fold_case (полное folding,
+  идемпотентно), to_uppercase (multi-cp: ß→SS, ﬁ→FI, ﬃ→FFI, ŉ→ʼN), to_lowercase + Final_Sigma context
+  (Σ→ς в конце слова / σ иначе, через Cased/Case_Ignorable, скип case-ignorable). Title-casing вынесен в
+  [M-152-word-boundaries] (зависит от UAX #29 word segmentation — другой модуль); locale (tr/az/lt) +
+  Turkic-fold исключены по дизайну. Acceptance (G0 двухслойно): breadth-conformance case_conformance.nv
+  полный 2981/2981 mapped codepoints out-of-band (коммит uniform-spread 1500) — проверяет парсер+lookup+
+  emission; independent UCD hand-oracle в case.nv (Turkic-excl I→i, field-index, 3-cp, Final_Sigma+case-
+  ignorable) — пиннит выборку. plan152_4 10/10 (7 pos incl case/case_conformance + 3 neg incl n_case_opt_in),
+  релизный nova+nova-codegen. 0 регрессий (str/basics/plan139 + только plan152_4 импортит std.unicode).
+  Adversarial-review (workflow, 4 агента + верификация): 0 production-дефектов, но 3 честные слабости
+  исправлены — uniform-spread выборка (была head U+0041..ABBF), independent oracle (breadth был
+  self-referential), точная формулировка G0. Codegen-баг попутно [M-codegen-fluent-tail-if-unify]
+  (fluent-@-хвост в if-ветке + unit-сосед → CC-FAIL; workaround helper'ами через Vec[int]). Закрывает
+  [M-152-case-fold]; Plan 152.4 (std/unicode) полностью реализован кроме title-casing. Ветка plan-152.
