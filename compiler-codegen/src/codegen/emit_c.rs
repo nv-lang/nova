@@ -15621,6 +15621,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     /// throw-path through NovaFailFrame). is_loop_body=true: break/continue
     /// в нашей собственной body — local, не пересекают loop boundary.
     fn emit_loop_body_inline(&mut self, body: &Block) -> Result<(), String> {
+        self.emit_loop_body_inline_ex(body, false)
+    }
+
+    /// [M-opt-preempt-strided-loop] Part A: `skip_preempt` omits the
+    /// per-iteration safepoint for provably-short loops (constant/small
+    /// bound). Such loops cannot monopolise a worker (bounded by
+    /// construction), and the `nova_preempt_check()` call is a barrier that
+    /// blocks clang vectorization/unroll of tight bodies. Variable/unbounded
+    /// loops MUST pass `false` — else tight-loop-starvation returns (a
+    /// CPU-bound fiber on a large/unbounded loop monopolises its worker,
+    /// exactly what the per-iteration safepoint prevents).
+    fn emit_loop_body_inline_ex(&mut self, body: &Block, skip_preempt: bool) -> Result<(), String> {
         let block_id = self.enter_defer_scope(body, true);
         // Plan 44.7: preemption safepoint at the loop backedge. Emitted as
         // the first statement of the body so it runs at the start of every
@@ -15629,7 +15641,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // it a tight arithmetic loop with no function calls (`while i < N
         // { i = i + 1 }`) would never reach a prologue safepoint and could
         // monopolise its worker. No-op in single-thread mode.
-        self.line("nova_preempt_check();");
+        if !skip_preempt {
+            self.line("nova_preempt_check();");
+        }
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
         }
@@ -15639,6 +15653,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
         self.leave_defer_scope(block_id);
         Ok(())
+    }
+
+    /// [M-opt-preempt-strided-loop] Part A: compile-time integer value of a
+    /// literal range bound (`0`, `16`). `None` if not a plain integer literal
+    /// — callers then conservatively KEEP the preempt-check (correctness over
+    /// optimization). Only plain literals fold; variables/arithmetic/negatives
+    /// are treated as non-const (safe under-approximation).
+    fn loop_bound_int_literal(e: &Expr) -> Option<i64> {
+        match &e.kind {
+            ExprKind::IntLit(n) => Some(*n),
+            _ => None,
+        }
     }
 
     /// Emit a defer/errdefer body as void-effect statements (no result value,
@@ -25531,6 +25557,23 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
             let s = self.emit_expr(start)?;
             let e = self.emit_expr(end)?;
             let cmp = if *inclusive { "<=" } else { "<" };
+            // [M-opt-preempt-strided-loop] Part A: provably-short const-bound
+            // range loop → omit the per-iteration preempt-check so clang can
+            // vectorize/unroll. Conservative: BOTH bounds must be plain int
+            // literals AND the iteration count must lie in [0, MAX] (small
+            // enough it cannot monopolise a worker). Anything else (variable
+            // bound, large const) keeps the check — correctness over speed.
+            const NOVA_PREEMPT_SKIP_MAX_ITERS: i64 = 1024;
+            let skip_preempt = match (
+                Self::loop_bound_int_literal(start),
+                Self::loop_bound_int_literal(end),
+            ) {
+                (Some(lo), Some(hi)) => {
+                    let count = if *inclusive { hi - lo + 1 } else { hi - lo };
+                    (0..=NOVA_PREEMPT_SKIP_MAX_ITERS).contains(&count)
+                }
+                _ => false,
+            };
             let tmp = self.fresh_tmp();
             self.line(&format!("nova_unit {};", tmp));
             self.line(&format!(
@@ -25545,7 +25588,7 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
             let was_mut = self.var_mutable.remove(&binding);
             // Plan 20 Ф.4: defer/errdefer внутри loop body должен выполняться
             // на каждой итерации (LIFO, fail-frame throw-path).
-            self.emit_loop_body_inline(body)?;
+            self.emit_loop_body_inline_ex(body, skip_preempt)?;
             // Restore prior state.
             match prev_ty {
                 Some(t) => { self.var_types.insert(binding.clone(), t); }
