@@ -4096,6 +4096,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.indent = 1;
         self.line(&format!("if (!_nova_const_{}_init) {{", name));
         self.indent = 2;
+        // Plan 152.4: register the storage cell as a GC root BEFORE building.
+        // The Boehm backend runs with GC_set_no_dls(1) (alloc_boehm.c), which
+        // leaves the program's static/BSS data unscanned — so this file-scope
+        // `static` pointer is NOT a GC root by default, and a large lazy value
+        // (e.g. the Unicode HashMap tables) is collected the first time GC fires
+        // under memory pressure → use-after-free. Registering the cell up front
+        // means a GC triggered mid-build sees it (still NULL — harmless), and
+        // after assignment the object lives in a scanned root. No-op under
+        // malloc/RC backends.
+        self.line(&format!(
+            "nova_gc_add_root(&_nova_const_{n}_value, (char*)(&_nova_const_{n}_value) + sizeof(_nova_const_{n}_value));",
+            n = name
+        ));
         // Передать ty_c как ожидаемый record-target для D55 coercion
         // (`const FOO = { ... }` без явного имени типа должен подхватить
         // тип из аннотации/typed-target).
