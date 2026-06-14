@@ -1,0 +1,71 @@
+// Plan 144.0 may-GC effect analysis — NEGATIVE (classified MayGC).
+//
+// REGRESSION GUARD for the H4 first-class method-value hole (review finding):
+// an UNBOUND method value `Type.@method` used in value position (NOT
+// immediately called) parses to `Member { obj, name: "@method" }` — the parser
+// prefixes the method name with `@` (parser/mod.rs `format!("@{}", mname)`) and
+// produces a `Member` (not a `Call`).  In value position codegen routes it to
+// `emit_method_value` (emit_c.rs:18682), which heap-allocates TWO structs via
+// `nova_alloc` — a captured-self env struct AND a closure struct
+// (emit_c.rs ~30287-30300).  That is a real GC allocation = a GC safe-point.
+//
+// `take_adder` produces such a method value (`Counter.@add`) and contains NO
+// other allocation seed (its only sub-expression is the `Member`).  Before the
+// fix, the `Member` arm ignored `name` and recursed only into `obj`, so this
+// body had no seed and was WRONGLY proven NoGC despite emitting two
+// `nova_alloc`s — a missed safe-point/root (use-after-free once Plan 144 Ф.2
+// consumes the set).  The `@`-prefix seed in the `Member` arm now classifies it
+// MayGC, as the lattice default demands (Plan §3.1 acceptance #1 / #8).
+//
+// `drive` forwards the produced method value into the resolved NoGC `apply`
+// helper; it inherits MayGC from `take_adder` via call-edge propagation.
+// `Counter @scale` itself is a PURE scalar receiver method (`@base * n`, a graph
+// node) and is classified independently as NoGC — proving the MayGC verdict on
+// the producers is driven by the method-VALUE allocation, NOT by the method
+// body.  (The body avoids `+`, which is conservatively allocating at the
+// template level — Plan §3.3 — so the contrast stays clean.)
+//
+// NB: only the UNBOUND `Type.@method` form survives (Plan 132 removed the bound
+// `instance.@method` value form → E_BOUND_METHOD_REMOVED); the bound form is
+// exercised at the AST level by the `bound_method_value_allocates_is_may_gc`
+// unit test in may_gc.rs.
+//
+// EXPECT (gc-effect-analyze --format json):
+//   * fn::take_adder::            → "MayGC"  (produces a method value → allocates)
+//   * fn::drive::Counter,int      → "MayGC"  (forwards value: alloc + indirect call)
+//   * Counter::scale::int         → "NoGC"   (pure `*` scalar receiver method body)
+//   * Counter::new::int           → "MayGC"  (record literal `{ base }` allocates)
+
+module plan144_0.negative_method_value
+
+type Counter {
+    base int
+}
+
+fn Counter.new(b int) -> Self => { base: b }
+
+// Pure scalar receiver method — `@base * n`, no calls of its own → NoGC.  Uses
+// `*` (not `+`, which is conservatively allocating) so the method BODY is
+// provably NoGC; this isolates the method-VALUE allocation as the sole driver
+// of the producers' MayGC verdict below.
+fn Counter @scale(n int) -> int => @base * n
+
+// Produces an UNBOUND method value `Counter.@scale` (no call) → heap-allocates
+// env + closure → MayGC.  This is the regression-guard core: WITHOUT the
+// `@`-prefix seed this body has no allocation and would be wrongly NoGC.
+fn take_adder() -> fn(Counter, int) -> int => Counter.@scale
+
+// Forwards the produced method value through an indirect call.  Building the
+// value allocates (take_adder is MayGC) and the indirect `f(c, n)` is itself a
+// MayGC seed.
+fn drive(c Counter, n int) -> int {
+    ro f = take_adder()
+    f(c, n)
+}
+
+test "unbound method value allocates env + closure" {
+    ro c = Counter.new(10)
+    ro f = Counter.@scale
+    assert(f(c, 5) == 50)
+    assert(drive(c, 7) == 70)
+}

@@ -454,8 +454,25 @@ impl<'a> Analyzer<'a> {
             }
 
             // ===================== ACCESS =====================
-            ExprKind::Member { obj, .. } => {
-                // Field / `obj.0` read accessor — no alloc; recurse into obj.
+            ExprKind::Member { obj, name } => {
+                // A `Member` is one of:
+                //   * a plain field / `obj.0` read accessor — non-allocating;
+                //   * a METHOD VALUE `obj.@m` (bound) or `Type.@m` (unbound) —
+                //     the parser prefixes the method name with `@`
+                //     (parser/mod.rs `format!("@{}", mname)`), and in value
+                //     position (NOT immediately called) codegen routes it to
+                //     `emit_method_value`/`_typed`, which heap-allocates TWO
+                //     structs via `nova_alloc` — a captured-self env struct AND
+                //     a closure struct (emit_c.rs ~30287-30300).  Both the bound
+                //     and unbound forms share the single `@`-prefix marker and
+                //     both allocate, so one check covers both (mirror the
+                //     dispatch in emit_c.rs:18682).  This closes the H4
+                //     first-class method-value hole: a bare single-overload
+                //     `xs.@push` (no `As`-cast disambiguator) would otherwise
+                //     escape every seed and be wrongly proven NoGC.
+                if name.starts_with('@') {
+                    self.flag_mut(cur).allocates = true;
+                }
                 self.walk_expr(cur, recv, scope, obj);
             }
             ExprKind::Index { obj, index } => {
@@ -1692,6 +1709,76 @@ mod tests {
         assert!(set.is_no_gc(&key_of(&c)));
         assert!(set.is_no_gc(&key_of(&b)));
         assert!(set.is_no_gc(&key_of(&a)), "deep pure chain must stay NoGC end-to-end");
+    }
+
+    #[test]
+    fn bound_method_value_allocates_is_may_gc() {
+        // fn mv(xs Vec) => xs.@push
+        // A bare BOUND method value `xs.@push` (no trailing `()`, no `as fn`
+        // cast) parses to `Member { obj: Ident("xs"), name: "@push" }`.  `xs`
+        // is an in-scope param, so without the `@`-prefix allocation seed NO
+        // other seed fires and the fn would be wrongly proven NoGC — yet
+        // codegen emits TWO `nova_alloc`s (env + closure).  Must be MayGC.
+        let mv = free_fn(
+            "mv",
+            vec![param("xs", "Vec")],
+            e(ExprKind::Member {
+                obj: Box::new(ident("xs")),
+                name: "@push".to_string(),
+            }),
+        );
+        let fns: Vec<&FnDecl> = vec![&mv];
+        let set = compute_may_gc_set(fns.into_iter());
+        assert!(
+            !set.is_no_gc(&key_of(&mv)),
+            "bound method value `xs.@push` heap-allocates env+closure → MayGC"
+        );
+    }
+
+    #[test]
+    fn unbound_method_value_allocates_is_may_gc() {
+        // fn umv() => Vec.@push
+        // An UNBOUND method value `Type.@m` also parses to
+        // `Member { obj, name: "@push" }` (same `@`-prefix marker) and codegen
+        // routes it to `emit_method_value` (is_unbound branch), which still
+        // heap-allocates env + closure.  The single `@`-prefix check covers
+        // both forms.  Must be MayGC.
+        let umv = free_fn(
+            "umv",
+            vec![],
+            e(ExprKind::Member {
+                obj: Box::new(ident("Vec")),
+                name: "@push".to_string(),
+            }),
+        );
+        let fns: Vec<&FnDecl> = vec![&umv];
+        let set = compute_may_gc_set(fns.into_iter());
+        assert!(
+            !set.is_no_gc(&key_of(&umv)),
+            "unbound method value `Vec.@push` heap-allocates env+closure → MayGC"
+        );
+    }
+
+    #[test]
+    fn plain_field_member_stays_no_gc() {
+        // fn rd(p Point) => p.x
+        // A PLAIN field read (`name` has NO `@` prefix) must NOT trip the
+        // method-value allocation seed — it stays NoGC.  Guards against the
+        // fix over-firing on ordinary `.field` access.
+        let rd = free_fn(
+            "rd",
+            vec![param("p", "Point")],
+            e(ExprKind::Member {
+                obj: Box::new(ident("p")),
+                name: "x".to_string(),
+            }),
+        );
+        let fns: Vec<&FnDecl> = vec![&rd];
+        let set = compute_may_gc_set(fns.into_iter());
+        assert!(
+            set.is_no_gc(&key_of(&rd)),
+            "plain field read `p.x` must remain NoGC (no `@`-prefix seed)"
+        );
     }
 
     #[test]
