@@ -9,7 +9,11 @@ a **proven** contract is elided (zero runtime cost, even in debug); an
 **unproven** one is enforced at runtime in **both debug and release**
 (fail-fast `nova_contract_violation` abort, never silent UB). You opt out of
 an unproven check only explicitly — per-fn `#unchecked` or build-policy
-`--contracts=off`. Without the SMT backend the proven set is empty, so every
+`--contracts=off`. The opt-out has three scopes (Plan 140.3): `#unchecked` on
+a **fn**, `#unchecked` on a **module** (`#unchecked` before `module X`), or the
+build flag; and Eiffel-style **per-kind** granularity — `#unchecked(requires)` /
+`#unchecked(ensures)` / `#unchecked(invariant)` (combinable, fn or module) elide
+only the listed kinds. Without the SMT backend the proven set is empty, so every
 contract is checked (safe degrade, slower, not unsafe).
 
 A contract violation — like an `assert` failure — is **panic-class**: caught by a

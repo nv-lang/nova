@@ -9,7 +9,11 @@ debug-only assert'ы: **доказанный** контракт элидируе
 runtime, даже в debug); **недоказанный** — проверяется в runtime И в debug,
 И в release (fail-fast abort `nova_contract_violation`, без тихого UB). Снять
 проверку с недоказанного можно только явно — per-fn `#unchecked` или
-build-policy `--contracts=off`. Без SMT-бэкенда proven-множество пусто →
+build-policy `--contracts=off`. У opt-out три уровня (Plan 140.3): `#unchecked`
+на **функции**, `#unchecked` на **модуле** (перед `module X`), или build-флаг; плюс
+Eiffel-style **per-kind** гранулярность — `#unchecked(requires)` /
+`#unchecked(ensures)` / `#unchecked(invariant)` (комбинируемо, fn или module)
+элидируют только перечисленные виды. Без SMT-бэкенда proven-множество пусто →
 проверяется каждый контракт (safe degrade: медленнее, но не unsafe).
 
 Нарушение контракта — как и провал `assert` — **panic-класса**: пойманное
