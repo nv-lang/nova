@@ -177,3 +177,30 @@ plan90/90_1/96/131/152_1/152_2/generics/basics. Полная цель §5 (≥10
 3. **Option-get repack composite** (`composite_arr.get(i)`): stmt-expr (нужен temp +
    generated NovaOpt-тип, недоступный в array.h).
 4. **record-invariant wrap** (типы с `invariant`): stmt-expr (редкий путь).
+
+### §11.1 Расследование Plan 145.1 (2026-06-14) — БЛОКЕР: codegen emission determinism
+
+Попытка закрыть остаток выявила следующее (правки **НЕ смёржены**, откат к main):
+
+- **(4) record-invariant — FALSE POSITIVE.** Код (`emit_c.rs` RecordLit-арм) эмитит обычный
+  **statement-block** (`self.line("{")` + поля + check), НЕ GNU statement-expression. Уже
+  portable под MSVC. Снимается из остатка.
+- **(1)/(2)/(3) — portable-формы НАПИСАНЫ и семантически верны**, проверены точечно (incl.
+  scalar compound literal для primitive-throw — на cl.exe **компилируется и проходит**;
+  memcpy-в-слот через `nova_idx_chk` для struct-write; `(NovaOpt_X){.value=nova_npo_from_tagged_int(...)}`
+  для get). **НО их применение пертурбирует порядок эмиссии codegen и обнажает ДВА
+  пре-существующих латентных order-зависимых бага prelude:**
+  - **(A) init-order OOB:** `panic: array: index 0 out of bounds for length 0` в prelude
+    static-init (НЕ в коде теста — index 0 при чтении пустого массива во время инициализации).
+  - **(B) `var_boxed` cross-function leak:** closure mut-capture box `_box_<v>` объявляется в
+    одной test-функции и используется в другой → `use of undeclared identifier` (CC-FAIL).
+  Порядок эмиссии зависит от **HashMap-iteration (не детерминирован)**; `main` стабилен лишь
+  потому, что его случайный порядок не триггерит баги. Тот же source при разных сборках/прогонах
+  даёт PASS либо FAIL. Любое codegen-изменение (в т.ч. корректные portable-stmt-expr) перебрасывает
+  в «плохой» порядок.
+- **ВЫВОД:** остаток (1)(2)(3) заблокирован на **codegen emission determinism + 2 латентных
+  prelude-бага** → новый маркер `[M-codegen-emission-nondeterminism]` (P1). Сначала **Plan 145.2**
+  (детерминированная эмиссия: BTreeMap/insertion-order вместо HashMap на emission-путях; robust
+  `var_boxed`-flush на входе каждой top-level fn; order-независимый prelude static-init), затем
+  (1)(2)(3) применятся чисто. Дизайн portable-форм сохранён в этом расследовании для повторного
+  применения после 145.2.
