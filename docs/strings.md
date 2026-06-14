@@ -22,6 +22,11 @@ you pick a **lens**:
    GraphemesView  (UAX #29 cluster stream)
    next / count / is_empty — O(n);  no [i]
    ── grapheme layer (visible "character", a str slice) ──
+
+        as_words() ▼   (opt-in: import std.unicode)
+   WordsView  (UAX #29 word segments; O(n) to create)
+   next / count / is_empty;  no [i]
+   ── word layer (words / spaces / punctuation, str slices) ──
 ```
 
 - **`as_bytes()` is a reinterpretation** — the bytes physically lie contiguously,
@@ -37,6 +42,10 @@ you pick a **lens**:
   O(n), no `[i]`). It is **opt-in** (`import std.unicode`) because it needs Unicode
   tables — the byte/codepoint layers above stay table-free. See
   [Unicode operations](#unicode-operations-opt-in-stdunicode) below.
+- **`as_words()` is the word-segment lens** — UAX #29 word boundaries (`import
+  std.unicode`); iterates words, whitespace and punctuation as `str` slices. Unlike
+  the others it is **O(n) to create** (word rules need lookahead, so boundaries are
+  materialized once). Powers `to_titlecase`.
 
 ## Length
 
@@ -45,6 +54,7 @@ you pick a **lens**:
 | byte length | `s.byte_len()` | O(1) |
 | codepoint count | `s.as_chars().count()` | O(n) |
 | grapheme count | `s.as_graphemes().count()` (`import std.unicode`) | O(n) |
+| word count | `s.as_words().count()` (`import std.unicode`) | O(n) |
 
 There is **no bare `s.len()`** — `str` has three diverging lengths (bytes,
 codepoints, graphemes), so the unit is always explicit. `s.len()` → `E_STR_NO_LEN`.
@@ -163,7 +173,28 @@ assert(to_lowercase("ΟΔΟΣ") == "οδος")               // final Σ → ς,
   Not normalization: for canonically-equivalent text, normalize first, then fold.
 - `to_uppercase(s)` / `to_lowercase(s)` — full Unicode case mapping, including the
   **Final_Sigma** context rule (Greek Σ → ς word-finally, σ otherwise). No locale
-  tailoring (Turkic/Lithuanian); title-casing needs word boundaries and is roadmap.
+  tailoring (Turkic/Lithuanian).
+
+### Word segmentation & title-casing (UAX #29)
+
+`str.@as_words() -> WordsView` is the fourth lens — iterate UAX #29 word segments
+(words, whitespace and punctuation — every inter-boundary piece). Unlike the other
+lenses it is **O(n) to create** (the word rules need lookahead, so boundaries are
+materialized once), not O(1).
+
+```nova
+import std.unicode
+
+assert("can't 3.14".as_words().count() == 3)         // "can't" | " " | "3.14"
+assert(to_titlecase("hello world") == "Hello World") // first cased char per word
+assert(to_titlecase("ﬁle") == "File")                // ﬁ → "Fi" (title mapping)
+```
+
+- `as_words()` / `WordsView` — `next()`/`count()`/`is_empty()`, UAX #29 boundary
+  rules WB1–WB16 (handles `can't`, `3.14`, regional-indicator flags, ZWJ-emoji).
+- `to_titlecase(s)` — titlecases the first cased char of each word (using the
+  **titlecase** mapping, e.g. ǆ → ǅ, not uppercase Ǆ) and lowercases the rest with
+  Final_Sigma. Locale-independent. Sentence segmentation is roadmap.
 
 Locale collation (`Collator`, UCA/CLDR) remains **roadmap** (Plan 152.5b).
 
@@ -192,7 +223,9 @@ string ops):
 | byte lens | `str.as_bytes() -> ro []u8` | O(1) `[i]`/`len()` |
 | codepoint lens | `str.as_chars() -> CharsIter` | `next`/`count`/`nth`/`is_empty` |
 | grapheme lens | `str.as_graphemes() -> GraphemesView` | `import std.unicode`; UAX #29 |
+| word lens | `str.as_words() -> WordsView` | `import std.unicode`; UAX #29; O(n) create |
 | normalization | `normalize_nfc/nfd/nfkc/nfkd(s)` | `import std.unicode`; UAX #15 |
+| case fold / map / title | `fold_case`/`to_uppercase`/`to_lowercase`/`to_titlecase(s)` | `import std.unicode` |
 | slice | `str[a..b]` / `str.get(a..b)` | byte-range, zero-copy |
 | search | `find`/`rfind`/`contains`/`starts_with`/`ends_with` | byte offsets |
 | split/trim/replace/pad/repeat/concat | `transform`/`search` | see std/runtime/string/ |

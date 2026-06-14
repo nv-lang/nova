@@ -36419,3 +36419,29 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   (вне scope): литерал-операнды (i+1, i*2) codegen вообще не чекает (rty литерала ≠ nova_int) — поэтому
   always-safe тесты используют var+var (i+j) паттерны. * нелинеен → Z3 часто Unknown → консервативно чек
   (не упрощение — soundness: никогда не элидируем без пруфа).
+
+- **Plan 152.4.5 — word-сегментация (UAX #29) + `to_titlecase` (2026-06-14, D253)**:
+  Четвёртая линза `str.@as_words() -> WordsView` (UAX #29 word boundaries WB1-WB16) + `to_titlecase(s)`
+  в opt-in std/unicode — закрывает std/unicode кроме sentence-сегментации. Генератор `nova-codegen unicode`
+  расширен: `word_data.nv` (WB-категории range-таблица из WordBreakProperty.txt; ExtPict для WB3c reused из
+  grapheme_data) + TITLE-маппинг в `case_data.nv` (UnicodeData[14] с fallback на [12] + SpecialCasing title).
+  Алгоритм (words.nv): полный rule-cascade WB3..WB999 с **lookahead** (WB6/7/7b/7c/11/12 — next/prevprev base
+  через skip-ignorables) + **WB4 ignore-rule** (Extend/Format/ZWJ фолдятся в предыдущий base) + **RI-parity**
+  (WB15/16). `to_titlecase`: первая cased-буква слова через TITLE-маппинг (не upper — ǆ→ǅ), остальное lowercase
+  с Final_Sigma над оригинальными cps. WordsView (`value priv {buf, bounds, idx}`) материализует границы один
+  раз (as_words O(n) на создание, НЕ O(1) как as_chars/as_graphemes — задокументировано; word-правила требуют
+  lookahead).
+  **G0 «без упрощений»:** **полный WordBreakTest.txt 1826/1826** (content-checked) out-of-band PASS — и это
+  **INDEPENDENT** oracle (boundaries заданы в UCD-тест-файле, НЕ выводятся из генератора, в отличие от
+  case-breadth). Коммит — uniform-spread 1500. plan152_4 13/13 (9 pos + 4 neg). title≠upper пиннит hand-case
+  ǆ→ǅ. Sentence-сегментация исключена **по дизайну** (отдельный UAX #29 алгоритм SB1-SB11 → `[M-152-sentence-boundaries]`).
+  **Adversarial-review (4 агента + верификация) — 3 подтверждённые находки, ВСЕ исправлены:** (1) `WordsView.count()`
+  игнорировал `@idx` (возвращал total, не remaining — расходилось с CharsIter/GraphemesView) → фикс `b-1-@idx`;
+  (2) **O(n²)** в `wb_ri_run` (rescan RI-прогона на каждой позиции — нарушал claim «O(n)») → инкрементальная
+  RI-чётность `wb_ri_step` за один проход O(n) (как в graphemes); (3) маркер `[M-152-sentence-boundaries]`
+  упоминался в доках, но не был в backlog → добавлен. Sanctioned simplification — только размер фикстуры (1500
+  spread; полнота out-of-band).
+  **Codegen-баг попутно (`[M-codegen-short-freefn-name-collision]`):** 2-буквенное имя free-функции `wb` дало
+  каскад `undefined identifier wb` (коллизия с runtime-локалом `wb` в write_buffer.nv на C-уровне; спаны
+  указывали в peer-файлы из-за merged-буфера модуля). Workaround — renamed `wb`→`wbcat`. Настоящий fix
+  (mangling/scoping имён free-функций vs C-локалов) — followup.

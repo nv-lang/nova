@@ -37938,3 +37938,13 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   (OE1-OE5, вкл. 2 runtime-panic neg) + регрессии contracts 314/0, plan140 51/0, basics 8/0, Trivial
   1/0/4skip (OE6/OE7). 0 регрессий, soundness неизменна. D272 + D24/04-effects/open-questions amend +
   contracts.md/.ru + README + backlog (marker CLOSED).
+
+[2026-06-14] Plan 152.4.5 — word-сегментация (UAX #29) + to_titlecase (D253). Завершает std/unicode
+  кроме sentence-сегментации. str.@as_words()->WordsView (4-я линза, WB1-WB16: lookahead WB6/7/11/12 +
+  WB4 ignore + RI-parity) над word_data.nv (WordBreakProperty range-таблица). to_titlecase: первая
+  cased-буква слова через TITLE-маппинг (не upper — ǆ→ǅ) + lowercase остального с Final_Sigma. Генератор:
+  word_data.nv (1407 wb ranges) + TITLE в case_data.nv (1479, UnicodeData[14]+SpecialCasing). Acceptance G0:
+  полный WordBreakTest.txt 1826/1826 (content-checked, INDEPENDENT UCD-oracle) out-of-band; коммит spread 1500;
+  plan152_4 13/13. Adversarial-review (4 агента): 3 находки исправлены — count() учитывает idx, RI-parity O(n)
+  (была O(n²)), маркер sentence-boundaries в backlog. Codegen-баг [M-codegen-short-freefn-name-collision]
+  (wb→wbcat). Закрывает [M-152-word-boundaries]; sentence → [M-152-sentence-boundaries]. Ветка plan-152.
