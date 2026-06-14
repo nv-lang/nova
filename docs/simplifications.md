@@ -36344,3 +36344,13 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   `[M-method-resolution-registry-inconsistency]` — return-inference половину). Минорная находка: `\u{24}\u{7b}`
   (escapes) декодится в `${` → запускает interpolation (literal `${` через escapes невыразим) — low-pri.
   Commits: A `e4b23a79` + B `738b6c2e` + feature `8b1f81f1` + docs.
+
+[2026-06-14] Plan 140.4 (overflow-элизия, D271, ветка plan-140-overflow-elide): V1 покрывает binary-
+  выражения int +/-/* (главный реальный кейс — loop/requires-bounded арифметика). Compound-assign (x += y,
+  codegen AssignOp→nova_int_checked_*) ОТЛОЖЕН → [M-140.4-compound-assign-overflow-elision] (P3): таргеты
+  обычно безграничные аккумуляторы (sum += a[i], редко доказуемо), отдельный Stmt::Assign AST-путь со своей
+  span-привязкой → высокая стоимость, near-zero реализуемая элизия; чек остаётся (sound). НЕ упрощение
+  core-фичи — документированная scope-граница низко-ценного пути (binary covers 95%). Также pre-existing
+  (вне scope): литерал-операнды (i+1, i*2) codegen вообще не чекает (rty литерала ≠ nova_int) — поэтому
+  always-safe тесты используют var+var (i+j) паттерны. * нелинеен → Z3 часто Unknown → консервативно чек
+  (не упрощение — soundness: никогда не элидируем без пруфа).

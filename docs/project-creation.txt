@@ -37848,3 +37848,21 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   8 батчей). Это **частное** решение для binop-`==`; общий expected-type проход (overload `@into`,
   return-position) остаётся в Q-overload-result-type. Итог: 153.3 без упрощений — sort_unstable
   (heapsort), select_nth (introselect), result==literal — все три закрыты по-настоящему.
+
+[2026-06-14] Plan 140.4 — Proven-safe int-overflow check elision (D271, ветка plan-140-overflow-elide,
+  worktree nova-p140, от main 73688ea3). Реализует отложенную «Plan 33.8 Ф.1.3». Always-on
+  nova_int_checked_{add,sub,mul} (int overflow = panic, Plan 33.8/D13) элидируется когда Z3 доказывает
+  range-fit INT64_MIN<=a OP b<=INT64_MAX под loop/литерал/requires-фактами. КЛЮЧ (understand-workflow,
+  3 read-агента): чек ТОЛЬКО для безграничного int; sized wrap (нечего элидировать); #nooverflow-машинерия
+  (33.7) BitVec-only → к int неприменима ⇒ int=безграничный Z3-Int, пруф=range-fit, sound by construction
+  (операнды не ограничиваются искусственно); * нелинеен → Unknown → консервативно чек. Зеркало Plan 140.2:
+  verify prove_int_overflow_sites (2-проходный Pass A без requires=always-safe / Pass B−A=contract-based;
+  non-trivial gate; ovf_walk_* пушит loop-bounds; обходит Block И Expr-тела) → 2 proven-множества в
+  ModuleVerifyReport/ModuleEnv → codegen overflow_site_elided гейтит emit_expr + emit_expr_with_target_type.
+  Граница soundness (как D257): always-safe элидится даже под --contracts=off/#unchecked; contract-based —
+  лишь при enforced requires; overflow-panic = soundness-guard, элидируется ТОЛЬКО пруфом. Scope V1 = binary
+  +/-/* (compound-assign отложен → [M-140.4-compound-assign-overflow-elision]). Валидация C-инспекцией:
+  always-safe i+j z3-off=0/Trivial=1, contract a+b enforce=0/off=1, mul bounded=0/unbounded=1. plan140_4 5/0
+  (OE1-OE5, вкл. 2 runtime-panic neg) + регрессии contracts 314/0, plan140 51/0, basics 8/0, Trivial
+  1/0/4skip (OE6/OE7). 0 регрессий, soundness неизменна. D271 + D24/04-effects/open-questions amend +
+  contracts.md/.ru + README + backlog (marker CLOSED).
