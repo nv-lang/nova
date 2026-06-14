@@ -61,11 +61,11 @@ test "leaderboard ranking + aggregate pipeline" {
     assert(asc[0] == 5,                "ascending sort min boundary")
     assert(asc[asc.len() - 1] == 99,   "ascending sort max boundary")
 
-    // A present score is found...
+    // A present score is found... (Plan 153.x: Vec canon -> Result[int,int])
     match asc.binary_search(64) {
-        Some(pos) => assert(asc[pos] == 64, "binary_search returned wrong index")
-        None      => assert(false, "64 should be present")
+        Ok(pos) => assert(asc[pos] == 64, "binary_search returned wrong index")
+        Err(_)  => assert(false, "64 should be present")
     }
-    // ...and an absent score is not.
-    assert(asc.binary_search(100) == None, "100 was never scored")
+    // ...and an absent score is not (100 > max, so insertion point is len).
+    assert(asc.binary_search(100) == Err(asc.len()), "100 was never scored")
 }

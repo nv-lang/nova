@@ -37938,6 +37938,31 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   (OE1-OE5, вкл. 2 runtime-panic neg) + регрессии contracts 314/0, plan140 51/0, basics 8/0, Trivial
   1/0/4skip (OE6/OE7). 0 регрессий, soundness неизменна. D272 + D24/04-effects/open-questions amend +
   contracts.md/.ru + README + backlog (marker CLOSED).
+[2026-06-14] Plan 153.2 — Ленивый итератор Vec[T]/[]T (D260, Phase A; branch plan-153.2-mono-closures,
+  commits 996ca01a лифт + caf56226 ленивый слой). Boxed-fluent модель: BoxIter[T] { priv step fn() ->
+  Option[T] }; вход v.lazy() мостит VecIter→BoxIter; адаптеры map/filter/filter_map/enumerate/take/skip →
+  новый BoxIter (оборачивают upstream step); терминаторы collect/fold/reduce/count/sum/any/all/find/for_each/
+  min/max/nth/last тянут цепочку. Промежуточных аллокаций НЕТ (pull, по одному элементу — доказано
+  инструментацией plan153_2/laziness: счётчик считает только протянутые; take/find/any/all/nth коротят).
+  Реентерабельность — каждый адаптер копирует receiver (mut src = @) в свежее замыкание. Модуль — sibling
+  FILE-module std/collections/vec_lazy.nv (collections.vec_lazy), explicit-import, НЕ prelude folder
+  collections.vec (closure-dense идентификаторы [U]/[Acc]/f/pred засоряли бы каждый юнит — [M-codegen-var-
+  types-fn-scope]/D145, как vec_seq.nv). Eager vec_seq оставлен без изменений (lazy = канон, Q-iterator-
+  laziness; eager НЕ сахар над lazy — чтобы не навязывать lazy-import). THREE codegen-фикса (emit_c.rs, релиз
+  пересобран): (1) per-test flush var_boxed в emit_test (box _box_<name> утекал между тестами → CC-FAIL);
+  (2) Stmt::Return эмитит value с return-type как target (голый return None → NovaOpt_<mono>, не erased
+  NovaOpt_nova_int); (3) infer_expr_c_type регистрирует generic-инстанс return-type для generic free-fn /
+  метода generic-типа возвращающего generic-инстанс (иначе .method() на временном → erased NULL-stub,
+  drain 0/segfault). Лифт mono×closures (996ca01a): gap A register_generic_instances_in_typeref + gap B
+  closure-capture в loop-arms, 7/7 пробников. plan153_2 4/4, 0 регрессий (baseline main 82ada7ac). Отложено
+  Phase B (НЕ упрощение): zip/chain/flat_map/flatten/scan/step_by/take_while/skip_while/peekable/min_by/max_by/
+  partition/chunk_by/into_iter + for mut x / mut @iter (Q-iter-mut) + FromIterator/collect-target →
+  [M-153.2-iter-phase-b]; zero-cost generic-over-source (un-boxed) → [M-153.2-generic-over-source-zerocost];
+  tuple-preserving после enumerate → [M-153.2-tuple-elem-adapter]. D260 (02-types) + Q-iterator-laziness/
+  Q-iter-mut (open-questions) + docs/vec-lazy.md + vec-internals.md + backlog + план §153.2-статус.
+  Bug-фиксы той же ветки: ffc5d28f (std.sort binary_search консолидация под D239, Bug A,
+  [M-153.x-std-sort-consolidate] RESOLVED) + cf3951e2 (chained Vec[f32] turbofish-static return-inference,
+  Bug B, [M-154.1-chained-vec-f32-method-misdispatch] FIXED — gap C registration timing).
 
 [2026-06-14] Plan 134 — Refinement-проход «убрать встроенный тип ptr → *()» (ветка plan-134, worktree
   nova-p134, от c0f269dd). Ф.1–Ф.3 (typedef nova_ptr removed; *() → void*; cast-matrix; миграция
@@ -38065,3 +38090,126 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
 [2026-06-14] codegen lib-test stale-tests fix [M-codegen-libtest-stale-tests] CLOSED: the contract_opt_out fix (above) unblocked the nova-codegen lib-test target and surfaced 33 pre-existing stale unit tests that never ran while the target was broken. Updated ONLY the stale tests (zero production-code change): 26 parser::tests::* migrated Nova source inputs `let`->`ro`/`mut` (Plan 114/D184 removed `let`; the Rust `let` in the test harness itself was kept, only the Nova string literals migrated); 2 lints::tests::prelude_shadow::* migrated to `#no_prelude` / `#allow(shadow)` line attributes (Plan 107/D174 removed inline clauses); 5 codegen::sum_schema_registry::tests::* updated routing expectations for Option.unwrap_or (Nova-body migration, Plan 99). "bez uproshcheniy kak dlya proda": assertions kept meaningful, nothing masked. Final: cargo test --lib GREEN 803 passed / 0 failed (was 770/33).
 
 [2026-06-14] Q-interpreter-future RESOLVED: internal dev binary nova-codegen interpreter entry points stubbed as UNSUPPORTED, mirroring the user-facing nova run stub (Plan 157 / D274). The `run` and `test-interp` handlers no longer construct interp::Interpreter; they now error out loudly (clear message + nonzero exit) pointing at C codegen (nova-codegen compile / nova test); clap doc-strings marked [UNSUPPORTED] (commit 0d7116f4). Other commands (compile/check/test-build/...) keep working. docs/nova-codegen.{md,ru.md} aligned (same commit): run/test-interp marked UNSUPPORTED, interp/ described as kept-for-reference-not-wired. Regression compiler-codegen/tests/interp_tool_unsupported.rs (commit a4e26525): negative (run + test-interp error) + positive (compile works) = 3/3 PASS via release binary; cargo build --release green. interp/ module KEPT for reference (NOT deleted), consistent with "poka ne podderzhivaem" / D274; full removal of the module deliberately DEFERRED (sole residual, [M-interp-unsupported]). Acceptance criteria met: loud nonzero-exit error (not a silent no-op), compile/check still work, neg+pos test green via the compiler, "bez uproshcheniy kak dlya proda". Branch chore-disable-interp-codegen-tool, worktree nova-interp2.
+[2026-06-14] Codegen: if/match-выражение коэрсится в unit когда одна ветка unit (D275, ветка
+  plan-cgfix-fluent-tail-if). Закрывает [M-codegen-fluent-tail-if-unify]. Fluent `-> @`-хвост (Vec.push,
+  типа Vec*) как хвост ветки if/match рядом с не-расходящимся unit-сиблингом в discard-позиции →
+  tmp(Vec*) = NOVA_UNIT (C-несовпадение) → CC-FAIL, ломало компиляцию всего std.unicode (folder-module:
+  один if в case.nv валил normalize/graphemes/words как peer'ы). emit_match уже коэрсил (unit-доминирование
+  [M-91.13]), emit_if_expr — нет. Fix (compiler-codegen/src/codegen/emit_c.rs): (1) emit_if_expr (~25905) —
+  симметричный (else_diverges, else_ty) для обеих форм else + gated unit-доминирование (gated на
+  chosen!=nova_unit и не-расходящийся сиблинг → Plan 125 divergence-выбор сохранён; симметрично — fluent в
+  then ИЛИ else); (2) infer_expr_c_type(Match) (~34643) — то же any-unit-arm→nova_unit, что и emit_match
+  (infer↔emit симметрия; иначе if {out.push} else {match} рассинхрон Vec* vs unit → CC-FAIL в to_lowercase).
+  Workaround УБРАН из std/unicode/case.nv (восстановлен прямой prod fluent-стиль: single→
+  Vec[int].with_capacity(1).push(cp); fold_case/to_uppercase — match с fluent None-армом; to_lowercase
+  Final_Sigma — if {push} else {match}; удалены fold_one/upper_one. Остаток single/lower_one/title_one —
+  peer-shared API для words.nv, НЕ воркэраунд). Критерий «без упрощений как для прода» выполнен. Acceptance:
+  nova_tests/cgfix_fluent_tail_if/repro.nv 1/1 (4 позитива + 3 контроля) + plan152_4 13/13 + 0 новых
+  регрессий (baseline сверен против merge-base 22aa4944). Коммиты ef6d570a (emit_if_expr+фикстура) +
+  f9c6e372 (infer(Match) симметрия) + 0f0a65a8 (case.nv restore). D275 + Q-match-unit-arms-in-expr amend.
+
+[2026-06-14] Plan 153.4 — Слайсы и views на модели Plan 96 (D262, ветка plan-153.4-slices, impl-commit
+  5ccccf72). 153.4-A ЗАКРЫТА (eager zero-copy `[]T`-views, БЕЗ внешней аллокации); 153.4-B (chunks/windows)
+  отложена ленивой за `[M-153.4-chunks-windows-lazy]` (gated на Plan 153.2). Новый peer-файл folder-модуля
+  `std/collections/vec/views.nv` (collections.vec): `@split_at(i)->(Self,Self)` (контракт 0<=i<=len, OOB→panic,
+  НЕ clamp, инвариант len(l)+len(r)==len); `@split_first()`/`@split_last()->Option[(T,Self)]` (пусто→None);
+  `@first_n(n)`/`@last_n(n)->Self` (CLAMP «take up to N»); `@as_slice()->Self` (ro whole-view) + recv-mut
+  overload `mut @as_slice()->mut Self` (write-through, как `@as_ptr`/`mut @as_ptr`, НЕ имя as_mut_slice).
+  Все возвращают `[]T`≡`Vec[T]`-views того же типа (НЕ отдельный Slice — D-single-type Plan 96), zero-copy,
+  cap==len; detach-on-resize (Go-модель, GC-safe) подтверждён тестом (first_n→push детачит, родитель не
+  тронут). Codegen-фикс (без упрощений): return-type inference генерик-инстанс-методов (emit_c.rs
+  infer_expr_c_type, generic-type-instance fallback) НЕ резолвил `Self`, вложенный в композит ((Self,Self),
+  Option[(T,Self)]) — subst нёс только generic-параметры, top-level-Self обрабатывался отдельным .or_else без
+  рекурсии в tuple/Option элементы → локал `let (l,r)=v.split_at(i)` объявлялся с генерик-tuple Nova_Vec* (vs
+  mono Nova_Vec_int* из callee) → C «incompatible tuple type». Фикс: subst.push(("Self", mono-receiver)) перед
+  apply_type_subst_to_ref. Аддитивно, 0 регрессий. Доки: D262 (spec/decisions/03-syntax.md + index),
+  153-vec-production-model.md статус+критерии+вердикт, vec-internals.md «Slices & views» + module-layout
+  views.nv, collections/vec-owned.md slice-таблица+пример, backlog `[M-153.4-chunks-windows-lazy]`,
+  simplifications.md. Верификация (релизный nova C-codegen, env NOVA_GC_LIB_DIR/INCLUDE_DIR на main repo):
+  plan153_4 2/0, plan96 23/0, plan153_0 4/0, plan153_1 7/0, plan138 10/0, basics 8/0 = 54 PASS / 0 FAIL.
+
+=== Plan 153.5 - Vec restructure-ops + operator `+` (D263, 2026-06-14) ===
+
+Branch plan-153.5-restructure, commit e8f700e4. Adds std/collections/vec/restructure.nv
+(co-equal file of folder-module collections.vec), Nova-body over bulk RawMem.copy:
+  - @concat(other) -> Vec[T]: non-mutating join (one exact alloc + two bulk copies;
+    operands untouched).
+  - operator `+` (@plus => @concat): a + b is a NEW Vec (mirrors str @plus, D46);
+    a += b lowers to a = a + b (fresh concat Vec) - to grow in place use a.append(b).
+  - mut @rotate_left(n)/@rotate_right(n) -> @: cyclic in-place shift (n mod len,
+    overlap-safe, O(len), right == left by len-k). requires n >= 0.
+  - mut @drain(range) -> Vec[T]: cut [start,end) out, return removed run owned;
+    suffix shifted down, self shortened. requires start>=0 && end>=start && end<=len.
+  - mut @insert_slice(i, sl []T) -> @: insert a slice at i (delegates to @splice
+    under D239 []T == Vec[T]). requires 0<=i && i<=len.
+Codegen (emit_c.rs, +68): operator `+`/`+=` lowering for overloaded-add types - BinOp::Add
+on Vec[T] routes through vec_method_call("plus", ..) before the generic sum-pointer arm
+(registers the mono instance first); a += b desugared to Binary{Add} (raw C a += b illegal
+on a struct/pointer operand). Minimal-targeted; does NOT touch struct-tag / protocol-resolve
+/ prelude / Option-arg paths.
+
+DEFERRED (honestly, NOT a simplification of what shipped) - [M-153.5-flatten-nested-receiver],
+P2: [][]T.flatten() needs a nested generic receiver Vec[Vec[T]] @flatten() so the body can
+name the innermost T. Blocked by two real compiler limits: parser rejects a nested type in
+the carrier slot, and the [][]T receiver form binds T to the immediate element (Vec[int])
+not the innermost (int) -> wrong return type (verified probe RUN-FAIL). A correct fix is
+structural typevar unification for nested receivers in BOTH parser and monomorphizer (the
+whole []T-method-dispatch path) - out of scope for the restructure surface. Workaround in
+docs: flatten one level explicitly via bulk @append.
+
+Spec/docs: D263 (spec/decisions/10-overloading.md), Q-vec-operator-plus CLOSED
+(spec/open-questions.md), docs/vec-internals.md restructure section + module-layout table,
+plan 153 status block, backlog marker, simplifications.md.
+
+Tests (release nova, C-codegen): plan153_5 5/5 (restructure POS - non-mutation concat/+,
++= append, rotate inversion+identity, drain cut+empty, insert_slice mid+end; NEG runtime-panic
+drain_oob / drain_reversed / insert_slice_oob / rotate_negative). 0 regressions from 153.5
+(7 suites: plan153_5 5/5, plan90 9/9, plan90_1 21/21, plan153_0 4/4, plan153_1 7/7, basics 8/8,
+plan62 29/7). The 7 plan62 FAILs are PRE-EXISTING (prelude/module/protocol struct-tag,
+orthogonal to restructure-ops) - proven by a baseline binary built at parent commit c0f269dd
+in a temp worktree: IDENTICAL 29/7, same test names and error categories (temp worktree removed
++ pruned).
+
+----------------------------------------------------------------------------------------------------
+Plan 153.5 followup (2026-06-14, branch plan-153.5-restructure, commits 1c323d0e parser+mono +
+16753d23 flatten): [][]T.flatten() RESOLVED -- marker [M-153.5-flatten-nested-receiver] CLOSED.
+
+The deferred flatten is now implemented together with its enabler: nested generic method receivers
+at ARBITRARY depth. Vec[Vec[T]] @flatten() -> Vec[T] (production carrier form, == [][]T @flatten()
+-> []T under D239) in std/collections/vec/restructure.nv: pre-size out = with_capacity(sum of
+inner.len()) then bulk out.append(inner) per row (RawMem.copy fast path; operands untouched; empty
+rows/outer handled).
+
+Root cause (both halves, a deep cross-cutting compiler fix, NOT a workaround): (1) the PARSER
+rejected the carrier Vec[Vec[T]] ("expected ] got identifier") and collapsed [][]T -> "[]T";
+(2) the MONOMORPHIZER bound the receiver typevar T to the IMMEDIATE element (Vec[int]) not the
+INNERMOST (int) -> wrong return type Vec[Vec[int]] + segfault on element indexing. Fix (recursive,
+depth-agnostic, no one-level hardcoding): AST Receiver.receiver_ty carries the full structured
+receiver type (type_name flattens to "[][]T" and loses depth); parser accepts a nested parse_type
+in the carrier slot + recursive free-typevar collection, and counts [] depth + descends to the
+innermost Named for the slice form; monomorphizer reuses the recursive infer_type_param_binding
+(bind T = innermost element at any depth) on ALL receiver-typevar-bind paths + depth-aware sentinel
+keys "[]"*N+"T". Flat []T (depth 1) stays byte-identical (legacy NovaArray_ path); override gated to
+genuinely nested receivers. Checker collects nested typevars for E_UNUSED_PREFIX_TYPEVAR but does
+NOT seed the scope from receiver_ty (keeps E_UNDECLARED_TYPEVAR_IN_RECEIVER). Side compiler bug
+fixed: @data + @len on a Vec[Vec[T]] (data = *mut Vec[T] -> single Nova_Vec____*) mis-dispatched
+ptr+int into the pointee @plus(=@concat) -> segfault; emit_c.rs Add arm now requires BOTH operands
+to be the matching record/Vec value type, ptr+int falls through to typed pointer arithmetic.
+
+Sanctioned orthogonal pre-existing remainder (out of scope): the slice form fn[T] [][]T -> []T whose
+body BUILDS a fresh Vec[T].new() hits a pre-existing erased-base-body limit that ALSO breaks flat
+fn[T] []T with Vec[T].new() on baseline. Production flatten is the CARRIER form (matches all stdlib)
+and works fully; slice-form nested receiver binding is proven separately (count_all/first_row).
+
+Spec/docs: D145 AMEND (spec/decisions/02-types.md -- nested generic receivers, depth-agnostic
+structural typevar bind) + D263 AMEND (spec/decisions/10-overloading.md -- flatten no longer
+deferred); plan 153 status block (flatten implemented, marker closed); backlog marker -> done;
+docs/vec-internals.md flatten section + nested-receiver note; simplifications.md resolution entry.
+
+Tests (release nova, C-codegen): plan153_5_nested 4/4 (flatten_depth2 int+str, flatten_depth3
+depth>=3 + nested-typed return, slice_nested count_all/first_row, control_flat flat unchanged) +
+plan153_5/flatten ([[1,2],[3],[4,5]] -> [1,2,3,4,5], empty rows/outer, str, double-flatten
+Vec[Vec[Vec[int]]]) + flatten_plus_guard (operator + guard). 0 NEW regressions across the broad
+slice/vec/generic-dispatch watch (plan90/90_1/96/138/138_2/147/153_0/1/3, basics, generics);
+plan62/syntax FAIL sets byte-for-byte identical to a baseline binary at parent c5865ba0 in a temp
+worktree (incl. the highest-risk iterator/method-dispatch tests). Temp worktree removed cleanly.

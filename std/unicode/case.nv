@@ -39,21 +39,13 @@ const CAP_SIGMA int = 0x3A3
 const SMALL_SIGMA int = 0x3C3
 const SMALL_FINAL_SIGMA int = 0x3C2
 
-// Single-codepoint sequence (identity mapping). Helpers return `Vec[int]` (never
-// a bare `push`/`append` tail) so every `if`/`match` branch unifies cleanly.
-fn single(cp int) -> Vec[int] {
-    mut v = Vec[int].with_capacity(1)
-    v.push(cp)
-    v
-}
+// Single-codepoint sequence (identity mapping). Fluent self-return tail —
+// `with_capacity(1).push(cp)` returns the `Vec` (`@`), the natural one-liner.
+fn single(cp int) -> Vec[int] => Vec[int].with_capacity(1).push(cp)
 
-// Per-codepoint table lookup → mapped sequence, or [cp] when unmapped.
-fn fold_one(cp int) -> Vec[int] {
-    match fold_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
-}
-fn upper_one(cp int) -> Vec[int] {
-    match upper_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
-}
+// Per-codepoint table lookup → mapped sequence, or [cp] when unmapped. Used by
+// `to_lowercase` here and by `to_titlecase` (words.nv); the `Some` arm decodes
+// the packed mapping, the `None` arm is the identity codepoint.
 fn lower_one(cp int) -> Vec[int] {
     match lower_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
 }
@@ -68,7 +60,13 @@ fn title_one(cp int) -> Vec[int] {
 export fn fold_case(s str) -> str {
     mut out = Vec[int].with_capacity(s.byte_len())
     for c in s.as_chars() {
-        for d in fold_one(c as int) { out.push(d) }
+        // `None` arm is a fluent `out.push(..)` tail (typed `Vec*`); the `Some`
+        // arm yields unit — the `match` coerces to unit in statement position
+        // ([M-codegen-fluent-tail-if-unify], now fixed in codegen).
+        match fold_map.get(c as int) {
+            Some(seq) => { for d in parse_cp_list(seq) { out.push(d) } }
+            None => out.push(c as int)
+        }
     }
     cps_to_str(out)
 }
@@ -78,7 +76,10 @@ export fn fold_case(s str) -> str {
 export fn to_uppercase(s str) -> str {
     mut out = Vec[int].with_capacity(s.byte_len())
     for c in s.as_chars() {
-        for d in upper_one(c as int) { out.push(d) }
+        match upper_map.get(c as int) {
+            Some(seq) => { for d in parse_cp_list(seq) { out.push(d) } }
+            None => out.push(c as int)
+        }
     }
     cps_to_str(out)
 }
@@ -93,12 +94,16 @@ export fn to_lowercase(s str) -> str {
     mut i = 0
     while i < n {
         ro cp = cps[i]
-        ro mapped = if cp == CAP_SIGMA {
-            single(if is_final_sigma(cps, i) { SMALL_FINAL_SIGMA } else { SMALL_SIGMA })
+        if cp == CAP_SIGMA {
+            // Σ → ς word-finally, σ otherwise — fluent `out.push(..)` tail in the
+            // `then` branch, unit-yielding `else` (the if coerces to unit).
+            out.push(if is_final_sigma(cps, i) { SMALL_FINAL_SIGMA } else { SMALL_SIGMA })
         } else {
-            lower_one(cp)
+            match lower_map.get(cp) {
+                Some(seq) => { for d in parse_cp_list(seq) { out.push(d) } }
+                None => out.push(cp)
+            }
         }
-        for d in mapped { out.push(d) }
         i = i + 1
     }
     cps_to_str(out)

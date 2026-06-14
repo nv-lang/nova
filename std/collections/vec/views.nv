@@ -1,0 +1,270 @@
+// std.collections.vec (views) — eager zero-copy `[]T`-views (Plan 153.4, D262).
+//
+// Every method here returns a `[]T` ≡ `Vec[T]` view of the SAME type (Plan 96
+// D-single-type — there is NO separate `Slice` type, D238) sharing the parent
+// element buffer: an interior pointer at `@data + start`, `len == cap` (D-cap-
+// len). The GC keeps the parent buffer alive while any view is reachable
+// (`GC_all_interior_pointers`, Plan 138 Ф.2).
+//
+// **Detach-on-resize (Go-model, GC-safe).** A view has `cap == len`, so the
+// first *reallocating* mutation on it (`push`/`reserve`/`insert` at `cap ==
+// len`) reallocates into a fresh buffer (`@realloc_to`, core.nv) and the view
+// silently DETACHES — it never overwrites the parent's backing store (the Go
+// shared-backing footgun is removed without a borrow-checker). Until that
+// detach point, a `mut`-bound view writes *through* to the parent buffer
+// (`v[i] = x` / `mut @as_slice`). The detach point is predictable because exact
+// capacity is honoured (`with_capacity`/`@cap(n)`, 153.1 — no pow2 rounding).
+//
+// This is the same view model as `@index(Range)` (`v[a..b]`, slice.nv) and the
+// str linse `as_bytes() -> ro []u8` (Plan 152) — all same-type, zero-copy. An
+// owning copy is `clone()` / `to_vec()`, never a view.
+//
+// `@chunks`/`@chunks_exact`/`@rchunks`/`@windows` are LAZY iterators (Rust-like,
+// no outer-`Vec` allocation) and depend on the lazy-iterator infrastructure of
+// Plan 153.2 — they are deferred under [M-153.4-chunks-windows-lazy] (gated on
+// 153.2) and intentionally NOT implemented eagerly here.
+#prelude(core, runtime, collections, protocols)
+module collections.vec
+
+// ──────────────────────────────────────────────────────────────────────────
+// Whole-buffer views — `as_slice`
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Read-only zero-copy view of the entire `Vec` as a `[]T` (`cap == len`).
+///
+/// The returned view aliases the parent's element buffer at offset 0; it is the
+/// `Vec`-side analogue of `str.@as_bytes()`. Because the view's `cap == len`, a
+/// reallocating mutation on it detaches it (it never disturbs the parent). Use
+/// this to pass a `Vec` where a sub-range-style `[]T` view is expected without a
+/// copy; for an OWNING copy use `clone()`.
+///
+/// The recv-mut companion `mut @as_slice() -> mut []T` (below) yields a
+/// write-through view when called on a `mut`-bound receiver (Plan 138.4 recv-mut
+/// overload dispatch — same shape as `@as_ptr` / `mut @as_ptr` in access.nv).
+///
+/// ```nova
+/// let v = Vec[int].from([1, 2, 3])
+/// let s = v.as_slice()
+/// assert(s.len() == 3 && s[0] == 1)
+/// ```
+export fn Vec[T] @as_slice() -> Self =>
+    { @data, @len, cap: @len }
+
+/// Mutable zero-copy view of the entire `Vec` — the writable recv-mut overload
+/// of `@as_slice`. Selected when the receiver is `mut`-bound; element writes
+/// (`s[i] = x`, `for mut x in s`) go *through* to the parent buffer until a
+/// reallocating mutation detaches the view (Go-model, see file header). Named
+/// `mut @as_slice` (receiver-mut overload), NOT `as_mut_slice` (D247 / Plan 135
+/// accessor convention, mirroring `mut @as_ptr`).
+///
+/// ```nova
+/// mut v = Vec[int].from([1, 2, 3])
+/// mut s = v.as_slice()
+/// s[0] = 99
+/// assert(v[0] == 99)            // write-through to the parent
+/// ```
+export fn Vec[T] mut @as_slice() -> mut Self =>
+    { @data, @len, cap: @len }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Splitting — split_at / split_first / split_last
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Split into two adjacent zero-copy views at index `i`: `([0, i), [i, len))`.
+/// Both halves alias the parent buffer (`cap == len` each); no copy.
+///
+/// Contract `0 <= i <= len` — `i == 0` yields `(empty, whole)`, `i == len`
+/// yields `(whole, empty)`. An out-of-range `i` is a `requires` violation
+/// (panic), not a clamp: a silent clamp would hide a caller bug and break the
+/// `len(left) + len(right) == len` invariant.
+///
+/// ```nova
+/// let v = Vec[int].from([1, 2, 3, 4, 5])
+/// let (l, r) = v.split_at(2)
+/// assert(l.len() == 2 && r.len() == 3)
+/// assert(l[0] == 1 && r[0] == 3)
+/// ```
+export fn Vec[T] @split_at(i int) -> (Self, Self)
+    requires 0 <= i && i <= @len
+{
+    ro left = Self { @data, len: i, cap: i }
+    ro right = Self { data: unsafe { @data + i }, len: @len - i, cap: @len - i }
+    (left, right)
+}
+
+/// `Some((first, rest))` — the first element by value and a zero-copy view of
+/// the remaining `[1, len)` tail — or `None` when empty. The tail view aliases
+/// the parent buffer (`cap == len`).
+///
+/// ```nova
+/// let v = Vec[int].from([1, 2, 3])
+/// match v.split_first() {
+///     Some((h, t)) => { assert(h == 1 && t.len() == 2 && t[0] == 2) }
+///     None => { assert(false) }
+/// }
+/// assert(Vec[int].new().split_first() == None)
+/// ```
+export fn Vec[T] @split_first() -> Option[(T, Self)] {
+    if @len == 0 {
+        return None
+    }
+    ro head = unsafe { @data[0] }
+    ro tail = Self { data: unsafe { @data + 1 }, len: @len - 1, cap: @len - 1 }
+    Some((head, tail))
+}
+
+/// `Some((last, init))` — the last element by value and a zero-copy view of the
+/// leading `[0, len-1)` portion — or `None` when empty. The `init` view aliases
+/// the parent buffer (`cap == len`).
+///
+/// ```nova
+/// let v = Vec[int].from([1, 2, 3])
+/// match v.split_last() {
+///     Some((l, init)) => { assert(l == 3 && init.len() == 2 && init[1] == 2) }
+///     None => { assert(false) }
+/// }
+/// assert(Vec[int].new().split_last() == None)
+/// ```
+export fn Vec[T] @split_last() -> Option[(T, Self)] {
+    if @len == 0 {
+        return None
+    }
+    ro n = @len - 1
+    ro last = unsafe { @data[n] }
+    ro init = Self { @data, len: n, cap: n }
+    Some((last, init))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Prefix / suffix views — first_n / last_n
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Zero-copy view of the first `n` elements (`[0, min(n, len))`). CLAMPS rather
+/// than panics: `n > len` yields the whole `Vec`, `n <= 0` yields an empty view.
+/// Clamping (not a contract) is the right default for a "take up to N" prefix —
+/// it mirrors Rust's `[..n.min(len)]` idiom and never surprises a caller asking
+/// for "at most n". The aliased view has `cap == len`.
+///
+/// ```nova
+/// let v = Vec[int].from([1, 2, 3, 4, 5])
+/// assert(v.first_n(3).len() == 3)
+/// assert(v.first_n(99).len() == 5)   // clamped to len
+/// assert(v.first_n(0).len() == 0)
+/// ```
+export fn Vec[T] @first_n(n int) -> Self {
+    mut k = n
+    if k < 0 {
+        k = 0
+    }
+    if k > @len {
+        k = @len
+    }
+    { @data, len: k, cap: k }
+}
+
+/// Zero-copy view of the last `n` elements (`[len - min(n, len), len)`). CLAMPS
+/// rather than panics: `n > len` yields the whole `Vec`, `n <= 0` yields an
+/// empty view (same rationale as `first_n`). The aliased view has `cap == len`.
+///
+/// ```nova
+/// let v = Vec[int].from([1, 2, 3, 4, 5])
+/// assert(v.last_n(2).equal(Vec[int].from([4, 5])))
+/// assert(v.last_n(99).len() == 5)    // clamped to len
+/// assert(v.last_n(0).len() == 0)
+/// ```
+export fn Vec[T] @last_n(n int) -> Self {
+    mut k = n
+    if k < 0 {
+        k = 0
+    }
+    if k > @len {
+        k = @len
+    }
+    ro start = @len - k
+    { data: unsafe { @data + start }, len: k, cap: k }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────────────────────────────────
+
+test "as_slice — ro whole view" {
+    ro v = Vec[int].from([1, 2, 3])
+    ro s = v.as_slice()
+    assert(s.len() == 3)
+    assert(s[0] == 1 && s[2] == 3)
+    assert(s.equal(v))
+}
+
+test "mut as_slice — write-through to parent" {
+    mut v = Vec[int].from([1, 2, 3])
+    mut s = v.as_slice()
+    s[0] = 99
+    s[2] = 77
+    assert(v[0] == 99 && v[2] == 77)
+}
+
+test "split_at — two views, invariant len(l)+len(r)==len" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro (l, r) = v.split_at(2)
+    assert(l.len() == 2 && r.len() == 3)
+    assert(l.len() + r.len() == v.len())
+    assert(l[0] == 1 && l[1] == 2)
+    assert(r[0] == 3 && r[2] == 5)
+}
+
+test "split_at — boundary 0 and len" {
+    ro v = Vec[int].from([1, 2, 3])
+    ro (l0, r0) = v.split_at(0)
+    assert(l0.len() == 0 && r0.len() == 3)
+    ro (l3, r3) = v.split_at(3)
+    assert(l3.len() == 3 && r3.len() == 0)
+}
+
+test "split_first / split_last — non-empty" {
+    ro v = Vec[int].from([10, 20, 30])
+    match v.split_first() {
+        Some((h, t)) => {
+            assert(h == 10)
+            assert(t.len() == 2 && t[0] == 20 && t[1] == 30)
+        }
+        None => { assert(false) }
+    }
+    match v.split_last() {
+        Some((l, init)) => {
+            assert(l == 30)
+            assert(init.len() == 2 && init[0] == 10 && init[1] == 20)
+        }
+        None => { assert(false) }
+    }
+}
+
+test "split_first / split_last — empty -> None" {
+    ro v = Vec[int].new()
+    assert(v.split_first() == None)
+    assert(v.split_last() == None)
+}
+
+test "first_n / last_n — exact, clamp, empty" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    assert(v.first_n(3).equal(Vec[int].from([1, 2, 3])))
+    assert(v.last_n(2).equal(Vec[int].from([4, 5])))
+    // clamp above len
+    assert(v.first_n(99).len() == 5)
+    assert(v.last_n(99).len() == 5)
+    // clamp at/below 0
+    assert(v.first_n(0).len() == 0)
+    assert(v.last_n(0).len() == 0)
+    assert(v.first_n(-3).len() == 0)
+}
+
+test "view detach-on-resize — push detaches, parent untouched" {
+    mut v = Vec[int].from([1, 2, 3])
+    // first_n yields a cap==len view; pushing reallocates → detach.
+    mut head = v.first_n(2)
+    assert(head.cap() == head.len())
+    head.push(99)
+    // head detached into its own buffer; parent is untouched.
+    assert(head.equal(Vec[int].from([1, 2, 99])))
+    assert(v.equal(Vec[int].from([1, 2, 3])))
+}

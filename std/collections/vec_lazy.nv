@@ -1,0 +1,359 @@
+// std.collections.vec_lazy — LAZY iterator adapters & terminators on `Vec[T]`.
+//
+// Plan 153.2 (D260). The boxed-fluent lazy iterator layer: a `v.lazy()`
+// pipeline `v.lazy().map(f).filter(p).collect()` performs **no intermediate
+// allocations** — each adapter wraps the upstream `step` closure and pulls one
+// element at a time on demand; only a terminator drives the chain.
+//
+// ── Why a SEPARATE, explicitly-imported module (not the prelude `vec/` folder)
+//
+// This is a sibling FILE-module `std/collections/vec_lazy.nv` (module
+// `collections.vec_lazy`), NOT a peer inside the `std/collections/vec/`
+// folder-module (`collections.vec`) — exactly the placement `vec_seq.nv` uses.
+// A `.nv` file physically inside `vec/` MUST declare `module collections.vec`
+// (D29 rev-3 path rule, E_D78_MODULE_PATH_MISMATCH) and would then inherit the
+// folder's `#prelude(...)` membership. Keeping the lazy layer as a sibling file
+// makes it **not** prelude-visible: it must be brought in with
+// `import std.collections.vec_lazy`.
+//
+// The reason is the same one documented in `vec_seq.nv`: a prelude-global
+// generic-type method whose body stores/forwards a CLOSURE leaks its method-
+// level generics (`[U]`, `[Acc]`) and its callback params (`f`/`pred`) into
+// every compilation unit's merged body ([M-codegen-var-types-fn-scope] + D145).
+// A unit with a top-level `fn f` / `fn op` / `type Acc` would then collide.
+// The lazy adapters are closure-dense (every adapter takes `f`/`pred`), so they
+// stay behind an opt-in import — exactly as the eager `vec_seq` combinators do.
+//
+// ── Relationship to the eager `vec_seq` combinators (Q-iterator-laziness)
+//
+// `vec_seq` (`v.map(f)` → new `Vec`, eager) is RETAINED unchanged as the
+// transitional eager surface. The lazy layer here is the canonical, allocation-
+// free path per Q-iterator-laziness; the two coexist behind separate explicit
+// imports. (`vec_seq` is not re-expressed as sugar over `lazy` to avoid forcing
+// the lazy import on eager users.)
+//
+// ── Architecture (the proven boxed-fluent shape, Plan 153.2 lift 996ca01a)
+//
+//   type BoxIter[T] { priv step fn() -> Option[T] }     // the boxed cursor
+//   fn Vec[T] @lazy() -> BoxIter[T]                      // entry (bridge)
+//   adapters : fn BoxIter[T] @map[U](..) -> BoxIter[U]   // return a new BoxIter
+//   terminators : fn BoxIter[T] mut @collect() -> Vec[T] // drive the chain
+//
+// Each adapter copies the receiver (`mut src = @`) into a fresh capturing
+// closure, so the pipeline is re-entrant per terminator call and never mutates
+// the caller's BoxIter in place until a terminator drains it.
+
+module collections.vec_lazy
+
+import std.collections.vec.{Vec, VecIter}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Core type + entry bridge
+// ──────────────────────────────────────────────────────────────────────────
+
+/// A boxed, lazy iterator over `T`. Holds a single `step` thunk that yields the
+/// next element (`Some`) or signals exhaustion (`None`). Adapters build new
+/// `BoxIter`s by wrapping `step`; nothing runs until a terminator pulls.
+export type BoxIter[T] { priv step fn() -> Option[T] }
+
+/// Advance the lazy iterator by one element.
+export fn BoxIter[T] mut @next() -> Option[T] => (@step)()
+
+/// Bridge a `VecIter[T]` into a `BoxIter[T]` (free constructor, capturing the
+/// cursor). The entry point `Vec[T] @lazy()` routes through here.
+export fn box_iter[T](it VecIter[T]) -> BoxIter[T] {
+    mut src = it
+    { step: || src.next() }
+}
+
+/// Begin a lazy, allocation-free iterator pipeline over the vector.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let v = Vec[int].from([1, 2, 3, 4])
+/// let got = v.lazy().map(|x| x * 2).filter(|x| x > 4).collect()
+/// assert(got == [6, 8])
+/// ```
+export fn Vec[T] @lazy() -> BoxIter[T] => box_iter[T](@iter())
+
+// ──────────────────────────────────────────────────────────────────────────
+// Adapters (lazy — return a new BoxIter, no allocation)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Lazily apply `f` to each yielded element.
+export fn BoxIter[T] @map[U](f fn(T) -> U) -> BoxIter[U] {
+    mut src = @
+    { step: || match src.next() {
+        Some(x) => Some(f(x)),
+        None => None,
+    } }
+}
+
+/// Lazily keep only elements for which `pred` holds.
+export fn BoxIter[T] @filter(pred fn(T) -> bool) -> BoxIter[T] {
+    mut src = @
+    { step: || {
+        while true {
+            match src.next() {
+                Some(x) => { if pred(x) { return Some(x) } },
+                None => return None,
+            }
+        }
+        None
+    } }
+}
+
+/// Lazily map-and-filter: `f` returns `Some(u)` to yield `u`, `None` to skip.
+export fn BoxIter[T] @filter_map[U](f fn(T) -> Option[U]) -> BoxIter[U] {
+    mut src = @
+    { step: || {
+        while true {
+            match src.next() {
+                Some(x) => match f(x) {
+                    Some(u) => return Some(u),
+                    None => {},
+                },
+                None => return None,
+            }
+        }
+        None
+    } }
+}
+
+/// Lazily pair each element with its 0-based index: `(i, x)`.
+///
+/// Supported compositions: `enumerate().collect()` and consuming the pair in
+/// the same stage, e.g. `enumerate().map(|p| p.0 * 100 + p.1)`. Chaining a
+/// tuple-PRESERVING adapter directly after `enumerate` (`enumerate().filter(..)`
+/// / `.take(n)` / `.skip(n)`, where the element stays the `(int, T)` tuple) is
+/// gated on a residual `Option[<mono-tuple>]` closure-typing gap
+/// `[M-153.2-tuple-elem-adapter]`; collapse the tuple with `map` first.
+export fn BoxIter[T] @enumerate() -> BoxIter[(int, T)] {
+    mut src = @
+    mut i = 0
+    { step: || match src.next() {
+        Some(x) => {
+            ro idx = i
+            i = i + 1
+            Some((idx, x))
+        },
+        None => None,
+    } }
+}
+
+/// Lazily yield at most the first `n` elements, then stop.
+export fn BoxIter[T] @take(n int) -> BoxIter[T] {
+    mut src = @
+    mut left = n
+    { step: || {
+        if left <= 0 { return None }
+        left = left - 1
+        src.next()
+    } }
+}
+
+/// Lazily discard the first `n` elements, then yield the rest.
+export fn BoxIter[T] @skip(n int) -> BoxIter[T] {
+    mut src = @
+    mut to_drop = n
+    { step: || {
+        while to_drop > 0 {
+            to_drop = to_drop - 1
+            match src.next() {
+                Some(_) => {},
+                None => return None,
+            }
+        }
+        src.next()
+    } }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Terminators (drive the chain to completion / short-circuit)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Drain the iterator into a fresh `Vec[T]`.
+export fn BoxIter[T] mut @collect() -> Vec[T] {
+    mut out = Vec[T].new()
+    while true {
+        match @next() {
+            Some(x) => out.push(x),
+            None => return out,
+        }
+    }
+    out
+}
+
+/// Left fold: thread `init` through `f(acc, x)` over every element.
+export fn BoxIter[T] mut @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
+    mut acc = init
+    while true {
+        match @next() {
+            Some(x) => { acc = f(acc, x) },
+            None => return acc,
+        }
+    }
+    acc
+}
+
+/// Reduce without an explicit seed: `None` when empty, else fold from the first
+/// element using `f`.
+export fn BoxIter[T] mut @reduce(f fn(T, T) -> T) -> Option[T] {
+    mut acc = match @next() {
+        Some(first) => first,
+        None => return None,
+    }
+    while true {
+        match @next() {
+            Some(x) => { acc = f(acc, x) },
+            None => return Some(acc),
+        }
+    }
+    Some(acc)
+}
+
+/// Count the remaining elements (drains the iterator).
+export fn BoxIter[T] mut @count() -> int {
+    mut n = 0
+    while true {
+        match @next() {
+            Some(_) => { n = n + 1 },
+            None => return n,
+        }
+    }
+    n
+}
+
+/// Sum the remaining elements starting from `zero` (the additive identity for
+/// `T`, e.g. `0` / `0.0`). Allocation-free; `zero` makes the element type and
+/// the empty-iterator result explicit without a numeric protocol.
+export fn BoxIter[T] mut @sum(zero T) -> T {
+    mut acc = zero
+    while true {
+        match @next() {
+            Some(x) => { acc = acc + x },
+            None => return acc,
+        }
+    }
+    acc
+}
+
+/// `true` if any remaining element satisfies `pred` (short-circuits).
+export fn BoxIter[T] mut @any(pred fn(T) -> bool) -> bool {
+    while true {
+        match @next() {
+            Some(x) => { if pred(x) { return true } },
+            None => return false,
+        }
+    }
+    false
+}
+
+/// `true` if all remaining elements satisfy `pred` (short-circuits on first
+/// miss; vacuously `true` when empty).
+export fn BoxIter[T] mut @all(pred fn(T) -> bool) -> bool {
+    while true {
+        match @next() {
+            Some(x) => { if !pred(x) { return false } },
+            None => return true,
+        }
+    }
+    true
+}
+
+/// First remaining element satisfying `pred`, or `None` (short-circuits).
+export fn BoxIter[T] mut @find(pred fn(T) -> bool) -> Option[T] {
+    while true {
+        match @next() {
+            Some(x) => { if pred(x) { return Some(x) } },
+            None => return None,
+        }
+    }
+    None
+}
+
+/// Run `f` for its side effect on every remaining element.
+export fn BoxIter[T] mut @for_each(f fn(T) -> ()) -> () {
+    mut go = true
+    while go {
+        match @next() {
+            Some(x) => { f(x) },
+            None => { go = false },
+        }
+    }
+}
+
+/// Smallest remaining element by the element's own `Compare`, or `None`.
+export fn BoxIter[T Compare] mut @min() -> Option[T] {
+    mut best = match @next() {
+        Some(first) => first,
+        None => return None,
+    }
+    while true {
+        match @next() {
+            Some(x) => { if x.compare(best) < 0 { best = x } },
+            None => return Some(best),
+        }
+    }
+    Some(best)
+}
+
+/// Largest remaining element by the element's own `Compare`, or `None`.
+export fn BoxIter[T Compare] mut @max() -> Option[T] {
+    mut best = match @next() {
+        Some(first) => first,
+        None => return None,
+    }
+    while true {
+        match @next() {
+            Some(x) => { if x.compare(best) > 0 { best = x } },
+            None => return Some(best),
+        }
+    }
+    Some(best)
+}
+
+/// 0-based `n`-th remaining element (consumes the first `n`), or `None`.
+export fn BoxIter[T] mut @nth(n int) -> Option[T] {
+    mut k = n
+    while true {
+        match @next() {
+            Some(x) => {
+                if k == 0 { return Some(x) }
+                k = k - 1
+            },
+            None => return None,
+        }
+    }
+    None
+}
+
+/// Last remaining element, or `None` if the iterator is empty (drains it).
+export fn BoxIter[T] mut @last() -> Option[T] {
+    mut result = None
+    while true {
+        match @next() {
+            Some(x) => { result = Some(x) },
+            None => return result,
+        }
+    }
+    result
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tests (smoke — full coverage in nova_tests/plan153_2/)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "lazy map -> filter -> collect" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro got = v.lazy().map(|x| x * 10).filter(|x| x > 25).collect()
+    assert(got == [30, 40, 50, 60])
+}
+
+test "lazy fold / count / sum" {
+    ro v = Vec[int].from([1, 2, 3, 4])
+    assert(v.lazy().fold(0, |acc, x| acc + x) == 10)
+    assert(v.lazy().count() == 4)
+    assert(v.lazy().sum(0) == 10)
+}

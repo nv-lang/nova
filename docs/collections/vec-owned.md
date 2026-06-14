@@ -100,11 +100,28 @@ fn main() -> () {
 | `retain` | `mut @retain(pred fn(T) -> bool) -> ()` | Keep only elements where `pred` returns true; O(n) |
 | `reverse` | `mut @reverse() -> ()` | Reverse live elements in place |
 
+### Slices & views (Plan 153.4 / D262)
+
+Zero-copy `[]T`-views of the **same type** sharing the parent buffer (`cap == len`);
+no `Slice` type. A reallocating mutation on a view detaches it (Go-model, GC-safe);
+an *owning* copy is `clone()`/`to_vec()`. Lazy `chunks`/`windows` are deferred
+(`[M-153.4-chunks-windows-lazy]`, gated on Plan 153.2). See
+[`vec-internals.md` → Slices & views](../vec-internals.md#slices--views-plan-1534--d262).
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `as_slice` | `@as_slice() -> []T` | Read-only zero-copy whole-view (NOT a copy) |
+| `as_slice` (mut) | `mut @as_slice() -> mut []T` | Write-through whole-view (recv-mut overload, like `mut @as_ptr`) |
+| `split_at` | `@split_at(i int) -> ([]T, []T)` | Two adjacent views at `i`; `requires 0 <= i <= len` (OOB panics) |
+| `split_first` | `@split_first() -> Option[(T, []T)]` | First element + tail view; empty → `None` |
+| `split_last` | `@split_last() -> Option[(T, []T)]` | Last element + init view; empty → `None` |
+| `first_n` | `@first_n(n int) -> []T` | Prefix view; **clamps** (`n > len` → whole, `n <= 0` → empty) |
+| `last_n` | `@last_n(n int) -> []T` | Suffix view; **clamps** (same as `first_n`) |
+
 ### Conversion
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `as_slice` | `@as_slice() -> []T` | Copy live elements into a new `[]T` |
 | `iter` | `@iter() -> VecIter[T]` | Index-cursor iterator |
 
 ### Protocols
@@ -143,6 +160,32 @@ assert(v.swap_remove(0) == 2)      // [5, 3, 4] (order disrupted)
 mut v = Vec[int].from([1, 2, 3, 4, 5, 6])
 v.retain(|x| x % 2 == 0)
 assert(v.as_slice() == [2, 4, 6])
+```
+
+### Slices & views (zero-copy)
+
+```nova
+let v = Vec[int].from([1, 2, 3, 4, 5])
+
+// split_at: two views of the same buffer (contract 0 <= i <= len)
+let (l, r) = v.split_at(2)
+assert(l.len() == 2 && r.len() == 3 && l[0] == 1 && r[0] == 3)
+
+// first_n / last_n clamp ("take up to N")
+assert(v.first_n(3).len() == 3)
+assert(v.first_n(99).len() == 5)        // clamped to len
+assert(v.last_n(2).equal(Vec[int].from([4, 5])))
+
+// mut @as_slice writes through to the parent (until detach)
+mut w = Vec[int].from([1, 2, 3])
+mut s = w.as_slice()
+s[0] = 99
+assert(w[0] == 99)
+
+// detach-on-resize: pushing onto a cap==len view reallocs; parent untouched
+mut head = w.first_n(2)
+head.push(7)                            // detaches into a fresh buffer
+assert(w.equal(Vec[int].from([99, 2, 3])))  // parent unchanged
 ```
 
 ### Value-struct elements

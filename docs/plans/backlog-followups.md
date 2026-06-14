@@ -62,6 +62,9 @@
 | `[M-153-vec-compare-u8-memcmp-fastpath]` | Plan 153.0 (perf-only). `Vec[T Compare] @compare` теперь поэлементный (корректно для всех T). `Vec[u8]` мог бы взять memcmp fast-path (для u8 байтовый = поэлементный, вектори­зуется), но это требует u8-специализации (type-dispatch на element). Не корректностный — perf. | Plan 153 / perf | P3 |
 | `[M-153-vec-combinators-prelude-global]` | Plan 153.0/153.2. Eager-комбинаторы вынесены в отдельный explicit-import `collections.vec_seq` (не prelude-global), т.к. их идентификаторы (`[Acc]`/`f`/`op`) засоряют каждый юнит (shadow `type Acc` / collision `fn f`/`fn op`) — корень `[M-codegen-var-types-fn-scope]` + D145. Плана 153.2 переделывает их в LAZY-адаптеры на VecIter; пересмотреть, может ли lazy-слой стать prelude-global (после фикса scope-leak, или дизайном без поллюции). | Plan 153.2 | P3 |
 | `[M-153-scalar-min-max]` | Plan 153 Ф.0 (предполагается планом). Скалярные `int.min(b)`/`int.max(b)` (метод-форма `a.max(b)`, как `a.sin()`) ОТСУТСТВУЮТ; нужны для shrink-to-min идиомы (`cap(@len().max(min))`, 153.1) + `@min`/`@max`-терминаторов ленивого итератора (153.2). Мелкий number-примитив. | Plan 153.1/153.2 Ф.0 | P2 |
+| `[M-153.2-generic-over-source-zerocost]` | Plan 153.2 (perf-only, НЕ упрощение). Ленивый слой (`collections.vec_lazy`, D260) — boxed-fluent: каждый адаптер боксит `step`-замыкание (heap-thunk/адаптер). Allocation-free между элементами, но не zero-cost по closure-боксу. Апгрейд — generic-over-source мономорфный курсор (`Map[I,F]` ∥ Rust `Map<I,F>`), инлайн без боксинга, поверх рабочего boxed (тот же API). Детали в 153.2 Followups. | Plan 153.2 / D260 | P3 |
+| `[M-153.2-tuple-elem-adapter]` | Plan 153.2. Tuple-PRESERVING адаптер сразу после `enumerate` (`enumerate().filter(..)`/`.take`/`.skip`, элемент остаётся `(int,T)`) упирается в residual `Option[<mono-tuple>]` closure-typing gap. Workaround: схлопнуть кортеж `map`'ом (`enumerate().map(\|p\| ...)` — поддержано). Детали в 153.2 Followups. | Plan 153.2 | P2 |
+| `[M-153.5-flatten-nested-receiver]` | ✅ **РАЗРЕШЁН 2026-06-14** (Plan 153.5, branch `plan-153.5-restructure`, commits `1c323d0e` parser+mono + `16753d23` flatten). Вложенные generic-ресиверы произвольной глубины + `@flatten` реализованы. **Root-cause (обе половины):** (1) ПАРСЕР отвергал carrier `Vec[Vec[T]]` («expected `]`, got identifier») и схлопывал `[][]T`→`"[]T"`; (2) МОНОРФИЗАТОР биндил receiver-typevar `T` в *непосредственный* элемент (`Vec[int]`), не во *внутренний* (`int`) → неверный return-тип + segfault (mono'd `out` = `Nova_Vec____Nova_Vec____nova_int_p`). **Фикс (рекурсивный, depth-agnostic):** AST `Receiver.receiver_ty: Option<TypeRef>` несёт полный структурированный тип (единственное место, где глубина переживает — `type_name` flatten'ит); парсер принимает вложенный `parse_type` в carrier-слоте + рекурсивный сбор free-typevars (carrier) и считает глубину `[]` + спуск до внутреннего `Named` (slice); монорфизатор переиспользует рекурсивный `infer_type_param_binding` (bind `T` = innermost element, любая глубина) на ВСЕХ путях receiver-typevar-bind + depth-aware sentinel-ключи `"[]"*N+"T"`; flat `[]T` (depth 1) остался byte-identical, override гейтнут `receiver_ty_is_nested`. Checker collect'ит вложенные typevar'ы для `E_UNUSED_PREFIX_TYPEVAR` (но НЕ сидит scope из `receiver_ty` — сохраняет `E_UNDECLARED_TYPEVAR_IN_RECEIVER`). `@flatten` (`Vec[Vec[T]] @flatten() -> Vec[T]`, production carrier-форма) в `std/collections/vec/restructure.nv`. Фикстуры plan153_5_nested 4/4 (depth2/depth3/slice_nested/control_flat) + plan153_5/flatten. D263 AMEND + D145 AMEND. **Ортогональный pre-existing остаток (вне scope):** slice-форма `fn[T] [][]T -> []T` с телом, СТРОЯЩИМ `Vec[T].new()`, упирается в erased-base-body лимит (ломает и flat `[]T` с `Vec[T].new()` на baseline). История — `simplifications.md`. | Plan 153.5 | ✅ done |
 | `[M-138.2-varindex-method-turbofish-misparse]` (был `[M-codegen-erased-stub-method-on-varindex-deref]`) | ✅ **FIXED on branch `plan-cgfix-erased-stub` (commit `6f74c0ba`, 2026-06-13), pending merge.** Discovered Plan 153.0; root-cause оказался **PARSER (D38 turbofish), НЕ codegen/erased-stub** (мисдиагноз). `@buf[i].compare(o.buf[i])` мис-парсился как turbofish static-call `@buf::<i>.compare(...)` — одиночный lowercase `i` парсится как валидное имя типа, `[i]`→type-arg, `.compare(` совпал с `Type[T].method(...)` формой → индекс ресивера терялся (turbofish transparent в codegen → `@buf` = голый указатель) → str-fallback dispatch → CC-FAIL `passing 'T*' to 'nova_str'`. **Fix:** `try_parse_turbofish_args` (parser/mod.rs ~5766+6493) — гейтить `.IDENT(` turbofish-продолжение по `base_is_type_like` (base перед `[` = Ident/Path = имя типа); `@buf[i]` (base=Member) роллбэчится в Index. **Минимальный репро:** `fn Bag[T Compare] @cmp(o Bag[T]) -> int { for i in 0..@n { ro c = unsafe { @buf[i].compare(o.buf[i]) }; … } }`. Триггер: generic-T ∧ var-index `[i]` (литерал `[0]` парсится не-как-тип → ОК) ∧ method `.IDENT(` после `]`. После мёржа фикса инлайн-форма работает → typed-locals workaround в `Vec.@compare`/`@equal` (protocols.nv) можно упростить. Permanent fixture `plan138_2/t17_var_index_inline_method_pos`. Residual: `[T]?` (try) на value-base структурно похож, не покрыт (не exercised). | branch plan-cgfix-erased-stub (pending merge) | P2 |
 | `[M-138.2-bulk-insert-overload]` | Ф.0a Open-Question resolution: bulk-insert живёт как `@splice(i, Vec[T])`, НЕ как второй overload `@insert(i, Vec[T])`. Generic-method overloads коллапсят в монорфизации — `mono_method_decls` (emit_c.rs ~8404) keyed `(type, name)` с одним FnDecl на key, mono-sentinel `MethodSig` несёт пустой `param_c_types` (~8408) → `resolve_overload` не дизамбигуирует single `insert(i,T)` от bulk `insert(i,Vec[T])` для concrete `Vec[int]` (verified: оба роутятся на single, Vec-arg force-fit'ится в `nova_int v` → garbage). Plan 138.2 Ф.0a явно санкционирует `@splice`-rename как fallback. Fold обратно в `@insert` overload ждёт `[M-138.2-generic-method-overload-mono]`. | plan-138.2 Ф.0a Followups | P2 |
 | `[M-138.2-generic-method-overload-mono]` | Codegen: generic-метод overloads должны переживать монорфизацию с per-arg-type routing. Сегодня `mono_method_decls` (emit_c.rs ~8404) = `HashMap<(String,String), FnDecl>` (один decl на (type, method-name), overload-коллапс) + mono-sentinel `MethodSig` с пустым `param_c_types` (~8408). Нужно: keyed-by-mangled-sig storage + concrete `param_c_types` в sentinel, чтобы `resolve_overload` (emit_c.rs:9913) дизамбигуировал по C-типам аргументов. Разблокирует fold `@splice`→`@insert` overload ([M-138.2-bulk-insert-overload]). | new codegen-план | P2 |
@@ -135,7 +138,7 @@
 |---|---|---|---|
 | `[M-codegen-dead-erased-generic-stubs]` | Type-erased `Vec[any]` (prelude-вариадик) эмитит NULL-stub методы — DCE. | codegen-cleanup mini-план | P3 |
 | `[M-codegen-unit-block-temp-elision]` | `unit`-block-expr в discard-позиции → бессмысленный `_nv_tmp`. | codegen-cleanup mini-план | P3 |
-| `[M-codegen-fluent-tail-if-unify]` | Fluent-метод (`-> @`, напр. `StringBuilder.append`/`Vec.push`) как **хвост ветки `if`/`match`** типизируется в C как `Builder*`/`Vec*`; если сосед-ветка `unit` — несовпадение типов C (`assigning to 'Nova_StringBuilder *' from incompatible type`), CC-FAIL. `match` коэрсит (unit доминирует через for-арм), но **вложенный `if` с обеими fluent-хвостами** — нет → весь enclosing-юнит не компилится. Найдено в Plan 152.4.4 (`case.nv` сломал компиляцию всего `std.unicode`). Workaround: helper'ы возвращают значение (`Vec[int]`), `push`/`append` только внутри for-циклов (никогда хвост ветки). Fix: codegen должен коэрсить mismatched if/match-ветки в `unit` в statement-позиции (discard). | codegen-cleanup mini-план | P3 |
+| `[M-codegen-fluent-tail-if-unify]` | ✅ **CLOSED 2026-06-14 (D275, ветка `plan-cgfix-fluent-tail-if`).** Fluent-метод (`-> @`, `Vec.push`/`StringBuilder.append`) как **хвост ветки `if`/`match`** типизировался в C как `Vec*`/`Builder*`; при не-расходящемся `unit`-соседе в discard-позиции → `tmp(Vec*) = NOVA_UNIT;` (C-несовпадение) → CC-FAIL, ломало компиляцию всего `std.unicode` (peer-модуль). `emit_match` коэрсил (unit-доминирование `[M-91.13]`), `emit_if_expr` — нет. **Fix** (`compiler-codegen/src/codegen/emit_c.rs`): (1) `emit_if_expr` (~25905) — симметричный `(else_diverges, else_ty)` для обеих форм else + gated unit-доминирование (gated на `chosen != nova_unit` и не-расходящийся сиблинг → Plan 125 сохранён); (2) `infer_expr_c_type(Match)` (~34643) — то же `any-unit-arm → nova_unit`, что и `emit_match` (infer↔emit симметрия, иначе `if {push} else {match}` рассинхрон). **Workaround УБРАН** из `std/unicode/case.nv` (прямой fluent-стиль восстановлен; critério «без упрощений как для прода» выполнен). Acceptance: `cgfix_fluent_tail_if` 1/1 + `plan152_4` 13/13 + 0 новых регрессий (vs merge-base `22aa4944`). Коммиты `ef6d570a`+`f9c6e372`+`0f0a65a8`. | D275 | ✅ DONE |
 | `[M-codegen-src-synthesized-attribution]` | `/* SRC */` только statement-granular; синтезированный C без атрибуции. | codegen-cleanup mini-план | P3 |
 | `[M-codegen-short-freefn-name-collision]` | Free-функция с коротким именем `wb` (std.unicode/words.nv) дала каскад `undefined identifier wb` при компиляции — коллизия с runtime-локалом `wb` в `write_buffer.nv` (генерится в C как `wb` в каждом юните). Спаны указывали в peer-файлы (merged-буфер модуля). Workaround: переименование `wb`→`wbcat`. Fix: codegen должен мэнглить/скоупить имена free-функций так, чтобы они не сталкивались с C-локалами runtime-хелперов. Найдено в Plan 152.4.5. | codegen-cleanup mini-план | P3 |
 | `[M-codegen-line-wrapped-or-chain-closure]` | Длинная `\|\|`-цепочка булевых сравнений, **перенесённая на 2 строки** в теле free-fn (block-body `{ a == X \|\| ... \n \|\| ... }`), мис-лоуэрилась в codegen в **closure-захват**: генерился `nova_lambda_*_env` со ссылками на module-`const` (`SB_LF`/`SB_CR`/…) как на **C-локалы**, которых в скоупе функции нет → каскад `use of undefined SB_LF` во всех юнитах, импортирующих модуль (peer merged-buffer). Workaround: однострочное `=>`-тело (`fn sb_sb8_blocker(c int) -> bool => c == X \|\| … \|\| Y`). Подозрение: парс/лоуэр многострочного `\|\|` после первого operand'а интерпретирует продолжение как closure-материал. Найдено в Plan 152.4.6. Fix: codegen не должен синтезировать closure для чисто-выражательного многострочного `\|\|`-тела. | codegen-cleanup mini-план | P3 |
@@ -263,13 +266,18 @@
   f64-ПЕРЕМЕННАЯ в `[]f32`-контексте (`Vec[f32].from([f64var])`) — НЕ сужается молча (был тихий
   мусор), а даёт громкую `E_ARRAY_ELEM_NARROW` (D44/D54 — narrowing не-литералов только через
   явный `as f32`). pos+neg тесты `plan154_1` (9/9).
-- **`[M-154.1-chained-vec-f32-method-misdispatch]`** (floating, P2, **NEW** 2026-06-14): chained
-  `Vec[f32].X().debug()` (напр. `Vec[f32].new().debug(a)` или `.from([...]).debug(a)`) мис-диспатчит
-  `.debug` на `str.debug` → передаёт `Vec[f32]*` в str-метод → CC-FAIL. Корень: `infer_expr_c_type`
-  turbofish-static-call return для f32 не даёт `Nova_Vec____nova_f32*` → `.debug` падает на
-  str-overload (добавлен в Ф.3). **Pre-existing** (с Ф.3 str @debug, в main), НЕ от literal-coercion
-  (срабатывает и на `.new()` без литералов). Vec[int] chained работает. Non-chained Vec[f32] работает.
-  Лечить: infer turbofish-static return type для f32. Класс Plan 154 (silent/wrong dispatch).
+- **`[M-154.1-chained-vec-f32-method-misdispatch]`** ✅ **RESOLVED 2026-06-14** (Plan 153.x):
+  chained `Vec[f32].new().debug(a)` / `.from([...]).debug(a)` мис-диспатчил `.debug` на
+  `str.debug` → `Vec[f32]*` в str-метод → CC-FAIL. **Корень — gap C (registration timing)**, НЕ
+  infer turbofish-return (тот УЖЕ давал `Nova_Vec____nova_f32*` корректно): outer-`.debug`
+  dispatch (block 5b ~emit_c.rs:23816) достигался ДО эмита inner `Vec[f32].new()`, поэтому
+  инстанс `Nova_Vec____nova_f32` ещё не был в `generic_type_instance_info` → block 5b
+  промахивался, fall-through на str `@debug` overload (Ф.3). `Vec[int]` работал лишь т.к.
+  регистрируется prelude/std повсеместно. **Фикс:** зеркалирование emit-side static-call
+  registration (~22724) на inference-пути (TurboFish-Member branch, ~32990) —
+  `infer_expr_c_type(obj)` (вызывается dispatcher'ом ~22828 ДО block 5b) регистрирует инстанс +
+  queue'ит worklist. Фикстура `plan153_3/vec_f32_chained_debug` PASS; 0 регрессий (plan154 5/5,
+  plan154_1 9/9, plan153_3 8/8, basics 8/8, plan90/90_1/138/91 чисто).
 - **`[M-float-roundtrip-printing]`** (floating, P3, выявлено в аудите 154.1): float→str
   (`nova_f64_to_str`, и f32 через него) использует `%g` с дефолтной 6-знач точностью — **лосси**
   на >6 значащих для f64 И f32 (не round-trip). Проектный стандарт, консистентный, НЕ регрессия;
@@ -331,6 +339,32 @@
   Build-from-iterable УЖЕ есть (`Vec[T].from(items)` + `@extend[S Iter[T]]`); протокол-форма
   `collect`-таргета приземляется вместе с 153.2.
 
+## Follow-up: Plan 153.2 (ленивый итератор — отложенные Phase B / perf)
+- **`[M-153.2-generic-over-source-zerocost]`** (planned, P3, **perf-only — НЕ упрощение**,
+  home **Plan 153.2 / D260**): текущий ленивый слой (`collections.vec_lazy`) использует
+  **boxed-fluent**-модель — `BoxIter[T] { priv step fn() -> Option[T] }`, каждый адаптер
+  боксит `step`-замыкание (heap-thunk на адаптер). Это корректный, allocation-free **между**
+  элементами (нет промежуточных `Vec`), но не zero-cost по closure-боксу. Zero-cost
+  апгрейд — generic-over-source мономорфный курсор-тип (`Map[I, F]` параметризован
+  upstream-итератором, как Rust `Map<I, F>`), инлайнящийся без боксинга. Поверх рабочего
+  boxed (одинаковый API). Gated на пере-обкатке mono closure-несущих generic-типов с
+  type-параметром-итератором (`996ca01a` лифт покрыл method-body mono + closure-capture;
+  generic-over-iterator-source — следующий шаг).
+- **`[M-153.2-tuple-elem-adapter]`** (planned, P2, home **Plan 153.2**): tuple-PRESERVING
+  адаптер сразу после `enumerate` (`enumerate().filter(..)` / `.take(n)` / `.skip(n)`, где
+  элемент остаётся `(int, T)`-кортежем) упирается в residual `Option[<mono-tuple>]`
+  closure-typing gap (closure-возврат `Option` mono-кортежа теряет точный тип). Workaround:
+  схлопнуть кортеж через `map` в той же стадии (`enumerate().map(|p| ...)` — поддержано,
+  `plan153_2/chains`). Фикс — расширить codegen target-type propagation на closure-возврат
+  `Option[tuple]` (тот же класс, что fix #2 в `caf56226` — `return None` под mono-target).
+- **`[M-153.2-iter-phase-b]`** (planned, roadmap — **НЕ упрощение**, home **Plan 153.2 Phase B**):
+  заявленный B-набор адаптеров/терминаторов ещё не реализован: `zip`/`unzip`/`chain`/
+  `flat_map`/`flatten`/`scan`/`inspect`/`step_by`/`take_while`/`skip_while`/`peekable`/
+  `min_by[_key]`/`max_by[_key]`/`partition`/`chunk_by`/`into_iter`. Плюс мут-итерация
+  `for mut x`/`mut @iter()` (Q-iter-mut, write-through путь) + `FromIterator`/`collect`-в-
+  произвольный-таргет (`[M-153.6-fromiterator-gated]`). Phase A (map/filter/filter_map/
+  enumerate/take/skip + 13 терминаторов) закрыта и протестирована (`plan153_2/` 4/4).
+
 ## Follow-up: Plan 153.3 (sort & search)
 - **`[M-153.3-sort-unstable-inplace]`** ✅ **RESOLVED** (commit `468bccf5`): `@sort_unstable[_by]
   [_by_key]` переведены с alias-стабильного на **настоящий in-place heapsort** (O(n log n) worst,
@@ -354,8 +388,40 @@
   non-default-E + explicit Result[int,int] + default-E Result[int,str] не сломан). Частный случай
   отложенного-с-мая `Q-overload-result-type` (general expected-type propagation для overload-резолва
   `@into` остаётся открытым — см. Q).
+- **`[M-153.x-std-sort-consolidate]`** ✅ **PARTIAL / RESOLVED (binary_search)** (2026-06-14): после
+  Plan 153.3 prelude `Vec[T Compare] @binary_search -> Result[int,int]` (`collections.vec/access.nv`)
+  стал ПЕРЕКРЫВАТЬ `std.sort`-овский `[]int @binary_search -> Option[int]` (D239 `[]T ≡ Vec[T]` →
+  оба = метод на `Vec[int]`, prelude побеждает резолв) → `plan91/sort_basic` (+ `plan91_fe4/
+  sort_aggregate_pipeline`, `plan91_fe5/sort_realistic`) CC-FAIL на `binary_search() == Some(_)`
+  (`NovaRes_*` vs `NovaOpt_*`). **Фикс:** канон = Vec `Result`-форма; `[]int @binary_search` УДАЛЁН
+  из `std/sort.nv`; call-sites мигрированы на `== Ok(i)` / `== Err(insertion_point)` (`sort_basic`,
+  `sort_aggregate_pipeline`, `sort_realistic`, `plan91_fe4/neg/edge_and_error_paths`). plan91 2/0,
+  plan153_3 7/0; **бонусом починены 2 ранее-красных** (sort_aggregate_pipeline, sort_realistic).
+  **`@sort`/`@sort_by`/`@min`/`@max` НАМЕРЕННО ОСТАВЛЕНЫ в `std.sort`** (не return-type-конфликтят;
+  их `[]int`-exact-receiver сигнатуры всё ещё ТРЕБУЮТСЯ — см. блокер ниже). Generic `*_of`-семейство
+  + `@sum`/`@product` нетронуты.
+- **`[M-153.x-array-new-not-vec]`** (planned, **codegen-блокер полной консолидации std.sort → Vec**):
+  `[]int.new()` / `[]int.with_capacity()` лоуэрятся в ЛЕГАСИ runtime-тип `NovaArray_T` (НЕ `Vec[T]`),
+  тогда как литерал `[1,2,3]` → настоящий `Vec____nova_int`. Вызов prelude Vec `mut @`-метода
+  (`@sort`/`@reverse`) на `NovaArray`-ресивере мис-диспатчится в erased-generic `Nova_Vec_method_*`
+  (element-width стёрт до `void*`) → метод **молча no-op'ит** оригинал (`a.sort()` не мутирует `a`).
+  Поэтому `std.sort` `[]int @sort`/`@sort_by` нельзя удалить, не отрегрессив каждый `[]int.new()…sort()`
+  (напр. `plan91_7/sort_chain_test`). Полная консолидация sort/sort_by/min/max в Vec-канон + перенос
+  eager-`@min`/`@max` в `collections.vec` ГЕЙТИТСЯ на этом фиксе (роутинг `[]T`-static-конструкторов
+  на `Vec[T]`). Связано с `[M-method-resolution-registry-inconsistency]` (last-wins реестр; тот же
+  класс что pre-existing `empty.min()` → `Nova_Duration_method_min` коллизия в `plan91_fe4/neg`).
 
 ## Follow-up: Plan 153.4 (slices — value-record element typedef)
+- **`[M-153.4-chunks-windows-lazy]`** (planned, **gated на Plan 153.2**, home **Plan 153.4 / D262**):
+  `@chunks(n)` / `@chunks_exact(n)` / `@rchunks(n)` / `@windows(n)` — рекомендация плана = **ЛЕНИВЫЕ
+  итераторы** (Rust/Kotlin-стиль, БЕЗ аллокации внешнего `[][]T`-Vec), yield'ящие zero-copy `[]T`-views
+  на том же буфере. Зависят от ленивой итератор-инфраструктуры Plan 153.2 (`VecIter`/`Iter`/`Next` +
+  адаптер-протокол), которая идёт параллельно в другом worktree. НЕ реализованы наспех eager здесь
+  (eager-форма аллоцировала бы Vec-of-views и расходилась бы с ленивым каноном Q-iterator-laziness).
+  Eager-views БЕЗ внешней аллокации (`@split_at`/`@split_first`/`@split_last`/`@first_n`/`@last_n`/
+  `@as_slice`+`mut @as_slice`) ЗАКРЫТЫ в 153.4-A (`std/collections/vec/views.nv`). Закрытие этого
+  маркера = добавить 4 lazy-метода поверх 153.2-инфры (chunks → step-n iterator, windows → sliding,
+  rchunks → reverse-step). Pin: новые фикстуры `plan153_4/chunks*`/`windows*` при реализации. | Plan 153.2 | P2 |
 - **`[M-153.4-vec-value-record-field-access]`** (planned, P2, home **Plan 153.4 / Plan 96 H3**):
   slice-каст value-record (`ranges[1..3]` на `[]Range`) **ЗАКРЫТ** (emit_c.rs:19052 un-mangle
   `_p`→`*` для element-cast; передан агентом 152-sweep'а, был pre-existing, НЕ регрессия 152).

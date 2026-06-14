@@ -540,3 +540,82 @@ type-confused no-op) — `vec_debug_pos` выдавал мусор.
 - [D268](#d268) — `#impl` opt-in (механизм привязки протокола).
 - [D229](#) / [D237](#) — Display/Debug протоколы + `${:?}` interp-spec.
 - [D267](#d267) — sibling из той же зоны диспатча (cross-module override coherence).
+
+---
+
+## D263. Vec restructure-ops + оператор `+` (`@plus` ≡ `@concat`)
+
+**Plan 153.5** (commit `e8f700e4`). `Vec[T]`/`[]T` получают слой **restructure-ops** —
+операции, строящие НОВЫЙ вектор из существующих данных или переставляющие целые прогоны
+элементов. Реализовано на Nova-body поверх bulk `RawMem.copy`
+([std/collections/vec/restructure.nv](../../std/collections/vec/restructure.nv), co-equal файл
+folder-модуля `collections.vec`). Закрывает **Q-vec-operator-plus** (см.
+[open-questions.md](../open-questions.md)).
+
+### Решение
+
+| Метод | Сигнатура | Семантика |
+|---|---|---|
+| **concat** | `Vec[T] @concat(other Vec[T]) -> Vec[T]` | non-mutating join: одна аллокация ровно на `a+b` + два bulk-copy; операнды нетронуты |
+| **оператор `+`** | `Vec[T] @plus(other Vec[T]) -> Vec[T] => @concat(other)` | `a + b` = НОВЫЙ Vec (как str `@plus`, [D46](03-syntax.md#d46)); `a += b` ≡ `a = a + b` |
+| **rotate_left** | `Vec[T] mut @rotate_left(n int) -> @  requires n >= 0` | циклический сдвиг влево in place; `n mod len`; O(len) time, O(min(n,len−n)) scratch |
+| **rotate_right** | `Vec[T] mut @rotate_right(n int) -> @  requires n >= 0` | сдвиг вправо ≡ left на `len − k` |
+| **drain** | `Vec[T] mut @drain(range Range) -> Vec[T]  requires start>=0 && end>=start && end<=@len` | вырезать `[start,end)`, вернуть удалённое владеемым; суффикс сдвигается вниз; `self` короче на `range.len()` |
+| **insert_slice** | `Vec[T] mut @insert_slice(i int, sl []T) -> @  requires 0<=i && i<=@len` | вставить срез на `i` (`i==len`=append); делегирует в `@splice` (под [D239](02-types.md#d239-t--синтаксический-псевдоним-vect) `[]T` ЕСТЬ `Vec[T]`) |
+
+**Принципы.**
+- **`+` не мутирует** (как Kotlin/Python/Ruby `+`): `a + b` — свежий буфер, операнды нетронуты.
+  Рост `a` in place — отдельный `a.append(b)` (mutate.nv); `a += b` лоуэрится в свежий concat-Vec,
+  НЕ в in-place append (`+=` ≡ `=`-через-`+`, единая семантика оператора).
+- **`@concat` ≠ `@append`.** `@append(Vec[T])` (mutate.nv) — in-place bulk-merge в `self`;
+  `@concat` — новый Vec. Один слой = одна семантика (инвариант I4 плана).
+- **`@insert_slice` = `[]T`-вариант `@splice`** (берёт `Vec[T]`): имя документирует slice-аргумент
+  (Rust `Vec::splice` / Go `slices.Insert`), тело — делегация (overlap-safe → self-insert корректен).
+- **Контракты `requires`** (rotate/drain/insert_slice) — out-of-bounds/отрицательный сдвиг →
+  runtime-panic (D13-семантика контрактов).
+
+### Codegen (operator `+` / `+=`)
+
+`@plus`/`@concat` — Nova-body; **operator-lowering** `+`/`+=` добавлен в
+[emit_c.rs](../../compiler-codegen/src/codegen/emit_c.rs) двумя минимально-таргетными точками:
+1. `Stmt::Assign`: `a += b` / `a -= b` на типе с method-лоуэрингом `+` (`nova_str`, `Nova_Vec____*`,
+   любой `Nova_*`-record с `@plus`) десугарится в синтез-`Binary{Add}` → re-emit через полный
+   binop-dispatch (а не сырой C `a += b` на struct/pointer операнде → CC-FAIL). Перегружаемы только
+   `Add`/`Sub`.
+2. `BinOp::Add`: `Vec[T] + Vec[T]` → `vec_method_call(.., "plus", ..)` ПЕРЕД generic-`Nova_*`-sum-pointer
+   Add-arm (тот эмитит голый `_method_plus(l,r)` без инстанцирования mono-тела → undefined symbol на
+   линковке); `vec_method_call` регистрирует mono-инстанс первым.
+
+### AMEND (2026-06-14, `plan-153.5-restructure` commits `1c323d0e` + `16753d23`): flatten реализован
+
+`[][]T.flatten() -> []T` **больше НЕ отложен** — реализован вместе с фундаментом
+**вложенных generic-ресиверов произвольной глубины** (см. [D145 AMEND](02-types.md#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101),
+2026-06-14). Маркер `[M-153.5-flatten-nested-receiver]` **РАЗРЕШЁН**.
+
+| Метод | Сигнатура | Семантика |
+|---|---|---|
+| **flatten** | `Vec[Vec[T]] @flatten() -> Vec[T]` (≡ `[][]T @flatten() -> []T` под D239) | конкатенация внутренних рядов в один новый `Vec[T]`; pre-size `with_capacity(Σ inner.len())` + bulk `@append(inner)` на ряд (copy-fast-path, операнды нетронуты); пустые ряды/внешний — корректно |
+
+Реализация — Nova-body в
+[std/collections/vec/restructure.nv](../../std/collections/vec/restructure.nv):
+сперва суммирует все `inner.len()` для точной пре-аллокации `out`, затем bulk-копирует
+каждый ряд `out.append(inner)` (тот же `RawMem.copy` fast-path, что `@concat`/`@append`).
+Production-форма — **carrier** `Vec[Vec[T]] @flatten()` (совпадает с записью stdlib).
+
+**Что разблокировало (корень — D145 AMEND):** обе принимаемые формы ресивера раньше
+теряли вложенность — `Vec[Vec[T]]` ПАРСЕР отвергал в carrier-слоте, `[][]T` монорфизатор
+биндил `T` в *непосредственный* элемент (`Vec[int]`), не во *внутренний* (`int`). Фикс —
+**структурная унификация typevar для вложенных ресиверов на любой глубине** в ОБОИХ
+парсере (carrier-слот принимает `parse_type` + сбор free-typevars; slice-форма считает
+глубину `[]` и спускается до внутреннего `Named`) И монорфизаторе (рекурсивный
+`infer_type_param_binding` биндит receiver-typevar в element-of-element… до самого
+внутреннего, depth-agnostic). Cross-cutting: тот же `[]T`-method-dispatch путь, через
+который идут все slice-методы stdlib — flat `[]T` (depth 1) остался byte-identical.
+
+### Связь
+
+- [D46](03-syntax.md#d46) — operator overloading через `@plus` (str-прецедент; этот D-блок
+  распространяет на `Vec[T]`).
+- [D239](02-types.md#d239-t--синтаксический-псевдоним-vect) — `[]T ≡ Vec[T]` (insert_slice-аргумент; `Vec[Vec[T]] ≡ [][]T` для flatten).
+- [D145](02-types.md#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101) AMEND — вложенные generic-ресиверы произвольной глубины (фундамент `@flatten`).
+- Plan 153.1 mutate.nv — `@append`/`@splice` (in-place; restructure НЕ дублирует; `@flatten` переиспользует bulk `@append`).
