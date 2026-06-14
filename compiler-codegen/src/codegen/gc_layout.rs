@@ -227,6 +227,104 @@ fn is_builtin_heap_container(name: &str) -> bool {
     )
 }
 
+/// Whether a type's EMITTED C representation is a single pointer — i.e.
+/// `type_ref_to_c` returns a `*`-suffixed C type.  This is exactly the NPO
+/// (Null Pointer Optimization) predicate emit_c's `register_novaopt_decl` uses
+/// to decide `Option[T]`'s lowering: when the inner C type ends in `*`, the
+/// option is `typedef struct NovaOpt_X { T* value; }` — a single 8-byte heap
+/// pointer @0; otherwise it is the tagged inline struct `{ int tag; T value; }`.
+///
+/// Mirrors `type_ref_to_c` (emit_c.rs:5249+) for the constructs that can appear
+/// as an Option inner; it must NEVER under-report (a false→tagged path is the
+/// conservative, sound direction — it recurses into the payload and over-marks
+/// the scalar tag rather than missing a pointer).  A type the predicate cannot
+/// PROVE pointer-lowered returns `false` and is therefore modelled as the
+/// tagged form, which is always sound.
+fn inner_lowers_to_single_pointer(
+    ty: &TypeRef,
+    type_decls: &HashMap<String, TypeDecl>,
+) -> bool {
+    let ty = strip_modifiers(ty);
+    match ty {
+        // `*T` family (`T*`, `void*`, `*ro u8`, `*()`) → `*`-suffixed.
+        TypeRef::Pointer(_, _) => true,
+        // Closures / function types → `void*`.
+        TypeRef::Func { .. } => true,
+        // `[]T` / `[N]T` → `Nova_Vec____*` / `NovaArray_*`.
+        TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => true,
+        // Anonymous protocol object → `void*` (emit_c.rs:5658).
+        TypeRef::Protocol { .. } => true,
+        // Value-aggregates lower to an inline struct (NOT a pointer).
+        TypeRef::Tuple(_, _) | TypeRef::Unit(_) => false,
+        TypeRef::Named { path, generics, .. } => {
+            let name = path.last().map(|s| s.as_str()).unwrap_or("");
+            // `str` → `nova_str` value struct (not a pointer).
+            if name == "str" && generics.is_empty() {
+                return false;
+            }
+            // Primitive scalars → not a pointer.
+            if generics.is_empty() && prim_emit(name).is_some() {
+                return false;
+            }
+            // Built-in heap containers → `Nova_Vec____*` etc.
+            if is_builtin_heap_container(name) {
+                return true;
+            }
+            // Result → `NovaRes_<ok>_<err>*` (always a heap pointer ABI).
+            if name == "Result" {
+                return true;
+            }
+            // `Option[T]` inner of an Option: the inner option lowers to a
+            // `NovaOpt_X` *value struct* (NPO or tagged) — NOT a pointer — so a
+            // nested `Option[Option[..]]` falls into the tagged branch (matches
+            // emit_c, which has the outer NovaOpt hold a struct field).
+            if name == "Option" {
+                return false;
+            }
+            // User-declared named type: heap record / sum → `Nova_X*`;
+            // value-record / named-tuple → inline struct; newtype/alias → recurse.
+            if generics.is_empty() {
+                if let Some(td) = type_decls.get(name) {
+                    return named_decl_lowers_to_single_pointer(td, type_decls);
+                }
+            }
+            // Unknown / unresolved generic slot: emit_c erases it to a pointer
+            // representation in practice (`void*` / `Nova_X*`).  Treating it as
+            // a pointer here keeps the NPO option at 8 bytes; but since the
+            // CALLER (the Option arm) only consults this to choose the NPO fast
+            // path, and the tagged fallback is strictly more conservative, we
+            // return `false` so an unknown inner is modelled as the tagged form
+            // (which over-marks rather than risks a wrong NPO size).
+            false
+        }
+        _ => false,
+    }
+}
+
+/// NPO eligibility for a user-declared named type (delegate of
+/// `inner_lowers_to_single_pointer`).
+fn named_decl_lowers_to_single_pointer(
+    td: &TypeDecl,
+    type_decls: &HashMap<String, TypeDecl>,
+) -> bool {
+    match &td.kind {
+        // Heap record / sum → `Nova_X*` pointer.
+        TypeDeclKind::Record(_) if td.allocation.is_heap() => true,
+        TypeDeclKind::Sum(_) => true,
+        // Value-record / named-tuple → inline value struct.
+        TypeDeclKind::Record(_) | TypeDeclKind::NamedTuple(_) => false,
+        // Newtype / alias — transparent: recurse on the inner type.
+        TypeDeclKind::Newtype(inner) | TypeDeclKind::Alias(inner) => {
+            inner_lowers_to_single_pointer(inner, type_decls)
+        }
+        // Opaque / effect / protocol — emit_c erases to a pointer (`void*` /
+        // `NovaBox_*`); treat as a pointer so the NPO option stays 8 bytes.
+        TypeDeclKind::Opaque
+        | TypeDeclKind::Effect(_)
+        | TypeDeclKind::Protocol { .. } => true,
+    }
+}
+
 /// Classify one field's emitted C slot: size/align + GC-pointer offsets within
 /// it.  `type_decls` is the resolved TypeDecl registry; `visited` guards
 /// value-type recursion (a value-record cannot transitively contain itself
@@ -266,13 +364,21 @@ fn classify_field(
         },
 
         // ---- anonymous protocol / dyn object ----
-        // `NovaBox_X{ void* data; const VT* vtable }` fat pointer, value-
-        // embedded: data @0 = GC pointer, vtable @8 = NON-GC static const.
+        // emit_c lowers an ANONYMOUS `protocol { .. }` value-position type to
+        // `void*` — a SINGLE 8-byte pointer (emit_c.rs:5658), NOT the 16-byte
+        // `NovaBox_X{ void* data; const VT* vtable }` fat pointer used for
+        // NAMED protocol types (which route through `classify_named_decl`'s
+        // Protocol arm).  The bare `void*` points into the GC heap (a boxed dyn
+        // object), so it is ONE GC pointer @0.  Sizing it 16 over-sizes the
+        // field and shifts every following field's offset — review finding #3
+        // (a wrong offset MISSES the real next pointer → future-tracer UAF).
+        // Flag `unresolved` for max safety: the anonymous dyn object model is
+        // opaque (consistent with the named-protocol path flagging it).
         TypeRef::Protocol { .. } => FieldClass {
-            size: 2 * PTR_SIZE,
+            size: PTR_SIZE,
             align: PTR_ALIGN,
             rel_pointer_offsets: vec![0],
-            unresolved: false,
+            unresolved: true,
         },
 
         // ---- []T (Vec) and [N]T (FixedArray) ----
@@ -369,17 +475,84 @@ fn classify_field(
                 };
             }
 
-            // Option / Result: boxed/NPO representations at the field level are
-            // a single pointer slot in today's emit_c lowering (NovaOpt_*/
-            // NovaRes_*).  Conservatively a GC pointer (the contained payload's
-            // own GC slots are reached transitively through the box).
-            if name == "Option" || name == "Result" {
+            // Result[T,E] — ALWAYS lowers to `NovaRes_<ok>_<err>*`, a single
+            // heap pointer (emit_c.rs:5336 / result_repr_c_type).  One GC
+            // pointer slot @0; the (T,E) payload's own GC slots are reached
+            // transitively through the box.
+            if name == "Result" {
                 return FieldClass {
                     size: PTR_SIZE,
                     align: PTR_ALIGN,
                     rel_pointer_offsets: vec![0],
                     unresolved: false,
                 };
+            }
+
+            // Option[T] — TWO distinct emit_c lowerings (register_novaopt_decl,
+            // emit_c.rs:5289 / 32169):
+            //   (a) NPO form  — inner C type ends in `*` (boxed record/sum,
+            //       `*T`, container, closure, protocol, Result, newtype-over-ptr):
+            //       `typedef struct NovaOpt_X { T* value; }` — a single 8-byte
+            //       heap pointer @0, NULL = None.  → `{size:8, [0]}`.
+            //   (b) Tagged form — inner is a scalar / `str` / value-record /
+            //       by-value tuple / by-value sum:
+            //       `typedef struct NovaOpt_X { int tag; <payload> value; }`.
+            //       `int` = `nova_int` = 8 bytes on x64 (Plan 133), so the tag
+            //       occupies offset 0..8 (SCALAR — never a GC pointer) and the
+            //       payload starts at `align_up(8, align(payload))`.  Any GC
+            //       pointer inside the payload lives at `payload_base + sub`, and
+            //       the field size is `align_up(payload_base + size(payload),
+            //       max(8, align(payload)))` — NOT 8.  Modelling this uniformly
+            //       as one 8-byte pointer @0 MISSES the real payload pointers and
+            //       under-sizes the field, shifting every following field
+            //       (Plan 144.1 review findings #1/#2 — a future-tracer UAF).
+            if name == "Option" {
+                let inner = generics.first();
+                match inner {
+                    Some(inner_ty) if inner_lowers_to_single_pointer(inner_ty, type_decls) => {
+                        // (a) NPO: single heap pointer @0.
+                        return FieldClass {
+                            size: PTR_SIZE,
+                            align: PTR_ALIGN,
+                            rel_pointer_offsets: vec![0],
+                            unresolved: false,
+                        };
+                    }
+                    Some(inner_ty) => {
+                        // (b) Tagged inline struct `{ int tag; <payload> }`.
+                        let inner_fc = classify_field(inner_ty, type_decls, visited);
+                        // Tag: nova_int = 8 bytes / align 8, SCALAR (offset 0).
+                        const TAG_SIZE: usize = 8;
+                        const TAG_ALIGN: usize = 8;
+                        let payload_align = inner_fc.align.max(1);
+                        let payload_base = align_up(TAG_SIZE, payload_align);
+                        let rel: Vec<usize> = inner_fc
+                            .rel_pointer_offsets
+                            .iter()
+                            .map(|o| payload_base + o)
+                            .collect();
+                        let max_align = TAG_ALIGN.max(payload_align);
+                        let size = align_up(payload_base + inner_fc.size, max_align);
+                        return FieldClass {
+                            size,
+                            align: max_align,
+                            rel_pointer_offsets: rel,
+                            unresolved: inner_fc.unresolved,
+                        };
+                    }
+                    None => {
+                        // Erased `Option` with no inner — emit_c falls back to
+                        // `NovaOpt_nova_int` (tagged, `{int tag; nova_int}`),
+                        // 16 bytes, NO GC pointer.  Conservative direction: we
+                        // cannot prove the payload scalar, so flag unresolved.
+                        return FieldClass {
+                            size: 16,
+                            align: 8,
+                            rel_pointer_offsets: Vec::new(),
+                            unresolved: true,
+                        };
+                    }
+                }
             }
 
             // User-defined named type — consult the TypeDecl registry.
@@ -779,6 +952,21 @@ mod tests {
         TypeRef::Array(Box::new(inner), sp())
     }
 
+    /// `Option[inner]`.
+    fn ty_option(inner: TypeRef) -> TypeRef {
+        TypeRef::Named { path: vec!["Option".to_string()], generics: vec![inner], span: sp() }
+    }
+
+    /// `Result[ok, err]`.
+    fn ty_result(ok: TypeRef, err: TypeRef) -> TypeRef {
+        TypeRef::Named { path: vec!["Result".to_string()], generics: vec![ok, err], span: sp() }
+    }
+
+    /// An anonymous `protocol { }` type (lowers to `void*`).
+    fn ty_protocol() -> TypeRef {
+        TypeRef::Protocol { methods: Vec::new(), span: sp() }
+    }
+
     fn rfield(name: &str, t: TypeRef) -> RecordField {
         RecordField { name: name.to_string(), ty: t, span: sp(), ..Default::default() }
     }
@@ -1126,6 +1314,212 @@ mod tests {
         let info = map.get("Mystery").unwrap();
         assert_eq!(info.pointer_offsets, vec![0], "unknown field over-approximated as a GC pointer");
         assert!(info.unresolved, "unknown field flags the type unresolved (consumer scans conservatively)");
+    }
+
+    // ---- Option / Result field layout (review findings #1 / #2) ----
+
+    /// NPO `Option[T]` where T is a HEAP record → inner C type `Nova_Inner*`
+    /// ends in `*`, so emit_c lowers it to `{ Nova_Inner* value; }` — ONE 8-byte
+    /// GC pointer @0.  Verify the NPO fast path is preserved.
+    #[test]
+    fn option_npo_pointer_inner() {
+        // type Inner { a int }   (heap → Nova_Inner*)
+        // type H { opt Option[Inner] }   → opt@0 (NovaOpt NPO, ptr@0) → {0}
+        let inner = record_decl("Inner", AllocKind::Heap, vec![rfield("a", ty("int"))]);
+        let h = record_decl(
+            "H",
+            AllocKind::Heap,
+            vec![rfield("opt", ty_option(ty("Inner")))],
+        );
+        let reg = registry(vec![inner, h]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("H").unwrap();
+        assert_eq!(info.pointer_offsets, vec![0], "NPO Option[heap-record] is a single GC pointer @0");
+        assert_eq!(info.size, Some(8), "NPO Option lowers to one 8-byte pointer");
+        assert!(!info.unresolved);
+    }
+
+    /// Tagged `Option[str]` followed by a heap field — the crux of finding #1.
+    /// emit_c lowers `Option[str]` to `{ int tag; nova_str value; }`: tag@0 (8,
+    /// scalar), str.ptr@(base+0), str.len@(base+8).  payload base = align_up(8,
+    /// align(str)=8) = 8, so str.ptr is at field+8 (GC), str.len at field+16
+    /// (scalar); the Option field spans 8..32 → size 24.  The trailing heap
+    /// `after` field then lands at offset (8 + 24)=32 and MUST be marked.
+    #[test]
+    fn option_str_field_tagged_recursed() {
+        // type Inner { a int }   (heap → Nova_Inner*)
+        // type OptStrHolder { lead int, opt Option[str], after Inner }
+        // lead@0(8) | opt@8 (tag@8 scalar, str.ptr@16 GC, str.len@24 scalar; 24B)
+        //          | after@32 (Nova_Inner* GC)
+        // → size 40, ptr_offsets {16, 32}
+        let inner = record_decl("Inner", AllocKind::Heap, vec![rfield("a", ty("int"))]);
+        let holder = record_decl(
+            "OptStrHolder",
+            AllocKind::Heap,
+            vec![
+                rfield("lead", ty("int")),
+                rfield("opt", ty_option(ty("str"))),
+                rfield("after", ty("Inner")),
+            ],
+        );
+        let reg = registry(vec![inner, holder]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("OptStrHolder").unwrap();
+        assert_eq!(
+            info.pointer_offsets,
+            vec![16, 32],
+            "tagged Option[str]: str.ptr@16 GC; trailing heap field @32 NOT shifted off"
+        );
+        assert_eq!(info.size, Some(40), "lead(8)+Option[str](24)+Inner ptr(8)=40");
+        assert!(!info.unresolved);
+    }
+
+    /// Tagged `Option[int]` carries NO GC pointer (its payload is a scalar), and
+    /// must NOT shift the trailing heap field off the bitmap — finding #1 case 2.
+    #[test]
+    fn option_int_field_tagged_no_inner_ptr() {
+        // type Inner { a int }   (heap)
+        // type OptInt { lead int, opt Option[int], after Inner }
+        // lead@0(8) | opt@8 = {int tag@8; nova_int value@16} = 16B, NO GC ptr
+        //          | after@24 (Nova_Inner* GC)
+        // → size 32, ptr_offsets {24}
+        let inner = record_decl("Inner", AllocKind::Heap, vec![rfield("a", ty("int"))]);
+        let holder = record_decl(
+            "OptInt",
+            AllocKind::Heap,
+            vec![
+                rfield("lead", ty("int")),
+                rfield("opt", ty_option(ty("int"))),
+                rfield("after", ty("Inner")),
+            ],
+        );
+        let reg = registry(vec![inner, holder]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("OptInt").unwrap();
+        assert_eq!(
+            info.pointer_offsets,
+            vec![24],
+            "Option[int] has no inner GC ptr; only the trailing heap field @24 is marked"
+        );
+        assert_eq!(info.size, Some(32), "lead(8)+Option[int](16)+Inner ptr(8)=32");
+        assert!(!info.unresolved);
+    }
+
+    /// Record with TWO `Option[str]` fields then a heap field — finding #2's
+    /// exact reproduction (`type Rec { a Option[str], b Option[str], c Box }`).
+    /// Each Option[str] is 24 bytes with str.ptr at its base+8.
+    #[test]
+    fn record_two_option_str_then_heap() {
+        // a@0 = Option[str] (tag@0, str.ptr@8 GC, str.len@16) 24B
+        // b@24 = Option[str] (tag@24, str.ptr@32 GC, str.len@40) 24B
+        // c@48 = Nova_Box* GC
+        // → size 56, ptr_offsets {8, 32, 48}
+        let boxd = record_decl("Box", AllocKind::Heap, vec![rfield("a", ty("int"))]);
+        let rec = record_decl(
+            "Rec",
+            AllocKind::Heap,
+            vec![
+                rfield("a", ty_option(ty("str"))),
+                rfield("b", ty_option(ty("str"))),
+                rfield("c", ty("Box")),
+            ],
+        );
+        let reg = registry(vec![boxd, rec]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("Rec").unwrap();
+        assert_eq!(
+            info.pointer_offsets,
+            vec![8, 32, 48],
+            "two Option[str] str.ptrs @8/@32 + heap field @48; none missed"
+        );
+        assert_eq!(info.size, Some(56));
+        assert!(!info.unresolved);
+    }
+
+    /// `Result[T,E]` field is a single `NovaRes_*` heap pointer @0; a heap field
+    /// after it is NOT shifted (Result keeps the single-pointer model).
+    #[test]
+    fn result_field_single_pointer() {
+        // type Box { a int }   (heap)
+        // type R { lead int, res Result[int, str], after Box }
+        // lead@0(8) | res@8 (NovaRes_* ptr@8) | after@16 (Nova_Box* @16)
+        // → size 24, ptr_offsets {8, 16}
+        let boxd = record_decl("Box", AllocKind::Heap, vec![rfield("a", ty("int"))]);
+        let r = record_decl(
+            "R",
+            AllocKind::Heap,
+            vec![
+                rfield("lead", ty("int")),
+                rfield("res", ty_result(ty("int"), ty("str"))),
+                rfield("after", ty("Box")),
+            ],
+        );
+        let reg = registry(vec![boxd, r]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("R").unwrap();
+        assert_eq!(
+            info.pointer_offsets,
+            vec![8, 16],
+            "Result is one NovaRes_* ptr@8; trailing heap field @16 marked"
+        );
+        assert_eq!(info.size, Some(24));
+    }
+
+    /// `Option[Box]` (NPO, pointer inner) followed by a heap field — NPO path
+    /// keeps the field 8 bytes so the next pointer offset is accurate.
+    #[test]
+    fn option_npo_then_heap_field_offsets_accurate() {
+        // type Box { a int }   (heap)
+        // type N { lead int, opt Option[Box], after Box }
+        // lead@0(8) | opt@8 (NovaOpt NPO ptr@8) | after@16 (Nova_Box* @16)
+        // → size 24, ptr_offsets {8, 16}
+        let boxd = record_decl("Box", AllocKind::Heap, vec![rfield("a", ty("int"))]);
+        let n = record_decl(
+            "N",
+            AllocKind::Heap,
+            vec![
+                rfield("lead", ty("int")),
+                rfield("opt", ty_option(ty("Box"))),
+                rfield("after", ty("Box")),
+            ],
+        );
+        let reg = registry(vec![boxd, n]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("N").unwrap();
+        assert_eq!(info.pointer_offsets, vec![8, 16], "NPO Option@8 (8B) + heap @16");
+        assert_eq!(info.size, Some(24));
+    }
+
+    // ---- anonymous protocol field layout (review finding #3) ----
+
+    /// Anonymous `protocol { }` field is `void*` (8 bytes), ONE GC pointer @0;
+    /// a heap field after it must land at the correct (un-shifted) offset.
+    #[test]
+    fn anon_protocol_field_is_void_ptr_eight_bytes() {
+        // type Box { a int }   (heap)
+        // type Holder { lead int, p protocol{}, b Box }
+        // lead@0(8) | p@8 (void* GC) | b@16 (Nova_Box* GC)
+        // → size 24, ptr_offsets {8, 16}
+        let boxd = record_decl("Box", AllocKind::Heap, vec![rfield("a", ty("int"))]);
+        let holder = record_decl(
+            "Holder",
+            AllocKind::Heap,
+            vec![
+                rfield("lead", ty("int")),
+                rfield("p", ty_protocol()),
+                rfield("b", ty("Box")),
+            ],
+        );
+        let reg = registry(vec![boxd, holder]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("Holder").unwrap();
+        assert_eq!(
+            info.pointer_offsets,
+            vec![8, 16],
+            "anon protocol void* @8 (8B); trailing heap field @16 NOT @24"
+        );
+        assert_eq!(info.size, Some(24), "lead(8)+void*(8)+Nova_Box*(8)=24");
+        assert!(info.unresolved, "anon-protocol object model is opaque → over-approximate");
     }
 
     /// Empty/default map is not populated.
