@@ -1077,6 +1077,16 @@ static inline nova_str nova_str_slice_to_end_nochk(nova_str s, nova_int from) {
     { nova_str r; r.ptr = s.ptr + from; r.len = s.len - from; return r; }
 }
 
+/* Plan 145.1 — portable repack тэггированного NovaOpt_nova_int в NPO
+ * (single-pointer) Option-payload (MSVC). Извлекает указатель-или-NULL за
+ * ОДИН доступ к `t` (source single-eval); сайт оборачивает результат в
+ * `(NovaOpt_X){ .value = (X)nova_npo_from_tagged_int(...) }` (compound
+ * literal — без GNU statement-expression). Заменяет
+ * `({ NovaOpt_nova_int t = …; NovaOpt_X r; r.value = …; r; })`. */
+static inline void* nova_npo_from_tagged_int(NovaOpt_nova_int t) {
+    return t.tag == NOVA_TAG_Option_Some ? (void*)(intptr_t)t.value : (void*)0;
+}
+
 /* Plan 138 Ф.3 (D238): str[i] → char — panicking codepoint accessor.
  * Wraps nova_str_char_at; panics с nv_panic_index_oob если idx OOB или
  * невалидный UTF-8. O(idx) — линейная итерация по UTF-8. */

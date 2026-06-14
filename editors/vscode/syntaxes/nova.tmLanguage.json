@@ -150,15 +150,15 @@
             "patterns": [
                 {
                     "name": "keyword.control.flow.nova",
-                    "match": "\\b(if|else|match|for|while|loop|break|continue|return|throw|spawn|detach|parallel|supervised|race|select|with_timeout|cancel_scope|in|forbid|realtime|with|region|interrupt|defer)\\b"
+                    "match": "\\b(if|else|match|for|while|loop|break|continue|return|throw|in|with|defer|errdefer|okdefer|select|spawn|supervised|parallel|detach|blocking|interrupt|forbid|realtime)\\b"
                 },
                 {
                     "name": "keyword.declaration.nova",
-                    "match": "\\b(fn|type|alias|effect|handler|protocol|const|module|import|export|as|use|test|external)\\b"
+                    "match": "\\b(fn|type|alias|effect|protocol|const|module|import|export|as|use|test|external|lemma)\\b"
                 },
                 {
                     "name": "storage.modifier.nova",
-                    "match": "\\b(ro|mut|consume)\\b"
+                    "match": "\\b(ro|mut|consume|priv|pub|unsafe)\\b"
                 },
                 {
                     "name": "variable.language.self.nova",
@@ -254,7 +254,7 @@
             ]
         },
         "type-decl": {
-            "match": "\\b(type|effect|handler)\\s+([A-Z][a-zA-Z0-9_]*)",
+            "match": "\\b(type|effect|protocol|alias)\\s+([A-Z][a-zA-Z0-9_]*)",
             "captures": {
                 "1": { "name": "keyword.declaration.type.nova" },
                 "2": { "name": "entity.name.type.declaration.nova" }

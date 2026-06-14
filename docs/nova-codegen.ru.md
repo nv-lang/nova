@@ -3,8 +3,14 @@
 [English](nova-codegen.md) | **Русский**
 
 `nova-codegen` — внутренний компилятор Nova: парсер + type-checker +
-treewalk-интерпретатор + C-бэкенд + cross-file resolver + SMT-верификатор
-контрактов.
+C-бэкенд + cross-file resolver + SMT-верификатор контрактов.
+
+> **Treewalk-интерпретатор сейчас НЕ поддерживается**
+> (Q-interpreter-future / D274). Команды `run` и `test-interp` —
+> громкие заглушки: печатают ошибку и выходят с ненулевым кодом,
+> указывая на C-codegen. Модуль `interp/` оставлен в дереве для
+> справки, но больше не подключён ни к одной команде — компилируй в C
+> и запускай результат.
 
 > **Внутренний компонент.** Для повседневной работы — `nova` CLI
 > ([docs/nova-cli.ru.md](nova-cli.ru.md)). `nova-codegen` остаётся
@@ -108,42 +114,32 @@ underline'ом исходника.
 
 ### `nova-codegen run`
 
-Type-check + интерпретировать (вызывается `fn main`).
+**[НЕ ПОДДЕРЖИВАЕТСЯ]** — treewalk-интерпретатор сейчас не
+поддерживается (Q-interpreter-future / D274).
 
 ```
 nova-codegen run FILE
 ```
 
-**Pipeline:**
-
-1. parse + path-check + type-check
-2. `types::annotate_map_literals` (Plan 52 Ф.7) — аннотация
-   `[k: v]`-литералов inferred K/V
-3. `desugar::desugar_module` (Plan 52 Ф.5) — десугаринг map-литералов
-   в `with_capacity` + `@insert`
-4. `interp::Interpreter::new()` → `load_module` → `run_main`
-
-Treewalk-интерпретатор имеет паритет с codegen-бэкендом — те же
-эффекты, handler'ы, structured concurrency, контракты, defer, channels.
+Это громкая заглушка: печатает ошибку и выходит с кодом `1`. Чтобы
+запустить программу, скомпилируй её в C и запусти результат — через
+[`nova-codegen compile`](#nova-codegen-compile) или `nova` CLI:
+`nova build` / `nova test`.
 
 ---
 
 ### `nova-codegen test-interp`
 
-Запустить `test "..." { ... }` блоки в файле через интерпретатор (без C-codegen).
+**[НЕ ПОДДЕРЖИВАЕТСЯ]** — прогон тестов через treewalk-интерпретатор
+сейчас не поддерживается (Q-interpreter-future / D274).
 
 ```
 nova-codegen test-interp FILE
 ```
 
-**Pipeline:** parse → path-check → annotate_map_literals → desugar →
-`interp::run_tests` → `tests: N passed, N failed`.
-
-Exit `1` если хотя бы один тест fail'нул; печатает имена failed-тестов.
-
-Это интерпретаторный тест-режим (быстро, но без C-pipeline). Для
-проверки codegen-pipeline'а используй [`test-build`](#nova-codegen-test-build)
-или [`test-all`](#nova-codegen-test-all).
+Это громкая заглушка: печатает ошибку и выходит с кодом `1`. Прогоняй
+тесты через C-pipeline — через `nova` CLI `nova test`, либо
+[`test-build`](#nova-codegen-test-build) / [`test-all`](#nova-codegen-test-all).
 
 ---
 
@@ -395,7 +391,7 @@ NOVA_SMT_BACKEND=z3 nova test
 | `diag` | Структурированные диагностики (`Diagnostic`, `Span`, `byte_to_line_col`) |
 | `doc` | Plan 45 — DocModel, рендеры, MCP-server |
 | `imports` | Plan 35 R31 — cross-file resolver (`resolve_imports_inline`) |
-| `interp` | Treewalk-интерпретатор (`Interpreter::new/load_module/run_main/run_tests`) |
+| `interp` | Treewalk-интерпретатор — **НЕ ПОДДЕРЖИВАЕТСЯ**, оставлен для справки; больше не подключён ни к одной команде (Q-interpreter-future / D274) |
 | `lexer` | Токенизация, `lex(&src) -> Vec<Token>` |
 | `lints` | D-rule based lints (`lint_module`) |
 | `manifest` | `nova.toml` + D78 path/module enforcement |
@@ -417,7 +413,7 @@ src/
   parser/                 recursive-descent parser
   ast/                    типы AST
   types/                  type checker + effect inference + lints
-  interp/                 treewalk interpreter
+  interp/                 treewalk interpreter (НЕ ПОДДЕРЖИВАЕТСЯ, оставлен для справки)
   codegen/                C-бэкенд
     emit_c.rs             основной codegen (~20k LOC)
     runtime_registry.rs   source-of-truth для std/runtime/*.nv stubs

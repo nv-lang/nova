@@ -7892,12 +7892,19 @@ heap-box value-rvalue, Option-get composite repack, record-invariant wrap.
 - `nova run` остаётся **видимой** подкомандой CLI (discoverability), но при вызове
   немедленно завершается с ошибкой и подсказкой `nova build <file>` / `nova test`
   (exit ≠ 0; help помечен `[UNSUPPORTED]`). Сознательная **громкая** граница, не тихий no-op.
+- **Внутренний dev-бинарник `nova-codegen`** тоже застаблен (2026-06-14): его команды
+  `run` и `test-interp` больше не конструируют `interp::Interpreter`, а немедленно
+  ошибаются (exit ≠ 0) с указанием на C-codegen (`nova-codegen compile`, `nova test`);
+  doc-строки clap помечены `[UNSUPPORTED]`. Прочие команды (`compile`, `check`,
+  `test-build`, …) работают. То же громкое поведение, что и у `nova run`.
 - Модуль `interp/` сохранён «для справки» (помечен `//!`-нотой), но из пайплайна исключён.
   Мёртвые interpreter-тесты (`integration.rs`, `spec_nova.rs`, `run_interp_named.rs`,
   `common/mod.rs`) удалены — они ссылались на изъятый библиотечный крейт `nova`.
 - Регресс-защита контракта — `nova-cli/tests/interp_unsupported.rs` (negative: `nova run`
-  ошибается + указывает на C-codegen; positive: `nova check` работает), прогон через
-  релизный бинарник.
+  ошибается + указывает на C-codegen; positive: `nova check` работает) и
+  `compiler-codegen/tests/interp_tool_unsupported.rs` (negative: `nova-codegen run` /
+  `test-interp` ошибаются; positive: `nova-codegen compile` работает), прогон через
+  релизные бинарники.
 
 **Почему.** Интерпретатор расходился с C-семантикой и тормозил разработку; единый
 C-codegen-путь — единственный поддерживаемый и тестируемый. «пока» намеренно: возможна

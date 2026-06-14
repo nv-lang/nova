@@ -21711,7 +21711,7 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 **Что сделано:**
 Plan 83.13 — research-only deliverable по precise GC decision для Nova
 (Boehm replacement strategy). Написан документ
-`docs/research/precise-gc-decision-2026.md` (5801 слов, 8 разделов).
+`docs/research/09-precise-gc-decision-2026.md` (5801 слов, 8 разделов).
 Создан worktree `nova-p83-13` (branch `plan-83-13`) от `github/plan-83-5`.
 Проведён обширный research: прочитаны 9 internal plan docs + Nova runtime
 source files (alloc_boehm.c, alloc.h, fiber_arena_win.c, fibers.h,
@@ -21749,7 +21749,7 @@ prototype, performance microbench против Boehm baseline.
    изменится.
 
 **Files modified:**
-- docs/research/precise-gc-decision-2026.md — новый файл (5801 слов).
+- docs/research/09-precise-gc-decision-2026.md — новый файл (5801 слов).
 - docs/plans/README.md — row 83.13 ✅ V1 RESEARCH DELIVERED.
 - docs/simplifications.md — entry [M-83.13-precise-gc-research-v1].
 - docs/project-creation.txt — этот блок.
@@ -38088,6 +38088,8 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
 [2026-06-14] codegen lib-test fix (Plan 140.3 followup, merged e83c8914): Plan 140.3 added Module.contract_opt_out but 4 test-only Module{} initializers were missed -> cargo test -p nova-codegen --lib failed E0063 x4, blocking the WHOLE nova-codegen lib-test target (release binary unaffected). Fix: contract_opt_out: Default::default() (full enforce). The fix unblocked the target and REVEALED 33 pre-existing stale unit tests (26 parser::tests with removed `let` syntax from Plan 114/D184 + 5 sum_schema_registry + 2 lints prelude_shadow) that never ran while the target was broken -> new marker [M-codegen-libtest-stale-tests]. Honest 770/33.
 
 [2026-06-14] codegen lib-test stale-tests fix [M-codegen-libtest-stale-tests] CLOSED: the contract_opt_out fix (above) unblocked the nova-codegen lib-test target and surfaced 33 pre-existing stale unit tests that never ran while the target was broken. Updated ONLY the stale tests (zero production-code change): 26 parser::tests::* migrated Nova source inputs `let`->`ro`/`mut` (Plan 114/D184 removed `let`; the Rust `let` in the test harness itself was kept, only the Nova string literals migrated); 2 lints::tests::prelude_shadow::* migrated to `#no_prelude` / `#allow(shadow)` line attributes (Plan 107/D174 removed inline clauses); 5 codegen::sum_schema_registry::tests::* updated routing expectations for Option.unwrap_or (Nova-body migration, Plan 99). "bez uproshcheniy kak dlya proda": assertions kept meaningful, nothing masked. Final: cargo test --lib GREEN 803 passed / 0 failed (was 770/33).
+
+[2026-06-14] Q-interpreter-future RESOLVED: internal dev binary nova-codegen interpreter entry points stubbed as UNSUPPORTED, mirroring the user-facing nova run stub (Plan 157 / D274). The `run` and `test-interp` handlers no longer construct interp::Interpreter; they now error out loudly (clear message + nonzero exit) pointing at C codegen (nova-codegen compile / nova test); clap doc-strings marked [UNSUPPORTED] (commit 0d7116f4). Other commands (compile/check/test-build/...) keep working. docs/nova-codegen.{md,ru.md} aligned (same commit): run/test-interp marked UNSUPPORTED, interp/ described as kept-for-reference-not-wired. Regression compiler-codegen/tests/interp_tool_unsupported.rs (commit a4e26525): negative (run + test-interp error) + positive (compile works) = 3/3 PASS via release binary; cargo build --release green. interp/ module KEPT for reference (NOT deleted), consistent with "poka ne podderzhivaem" / D274; full removal of the module deliberately DEFERRED (sole residual, [M-interp-unsupported]). Acceptance criteria met: loud nonzero-exit error (not a silent no-op), compile/check still work, neg+pos test green via the compiler, "bez uproshcheniy kak dlya proda". Branch chore-disable-interp-codegen-tool, worktree nova-interp2.
 [2026-06-14] Codegen: if/match-выражение коэрсится в unit когда одна ветка unit (D275, ветка
   plan-cgfix-fluent-tail-if). Закрывает [M-codegen-fluent-tail-if-unify]. Fluent `-> @`-хвост (Vec.push,
   типа Vec*) как хвост ветки if/match рядом с не-расходящимся unit-сиблингом в discard-позиции →
@@ -38257,3 +38259,22 @@ docs/vec-lazy.md FromIterator section + collect_set terminator row.
   plan138 10/0 = 0 регрессий. Docs: backlog-followups (marker CLOSED), 153-vec-production-model.md
   (статус 153.4 -> ЗАКРЫТ ЦЕЛИКОМ + 153.4-B блок), spec 03-syntax.md#d262 (таблица + статус), vec/views.nv
   header, docs/collections/vec-owned.md (lazy slice-view таблица), docs/vec-internals.md.
+[2026-06-15] Plan 145.2 — Codegen emission determinism (ветка plan-145.2). Из находки Plan 145.1:
+  эмиссия C недетерминирована (порядок итерации Rust HashMap, RandomState рандом per-process) → `.c`
+  разный между сборками, что будило 2 латентных order-зависимых бага prelude — (A) init-order
+  static-init OOB, (B) var_boxed closure-box cross-function leak. main стабилен лишь по «удаче»
+  порядка; portable-фиксы Plan 145.1 перебрасывали в «плохой» порядок → flaky (это и блокировало 145.1).
+  Investigation-workflow (4 агента) дал карту: критичны method_overloads (эмиссия embed-proxies +
+  enqueue mono-worklist) + embed_fields. ФИКС: HashMap→BTreeMap (сортированная детерминированная
+  итерация; ключи Ord; drop-in). Этого хватило — латентные баги перестали будиться (overload 10/10,
+  bare-str-read 10/10; clang 0 net-new). РАЗБЛОКИРОВАЛ Plan 145.1: поверх детерминизма переприменены
+  3 portable-формы (struct-write memcpy-в-слот; heap-box-примитива scalar compound literal; Option-get
+  composite compound-literal+nova_npo_from_tagged_int) — применились ЧИСТО. ИТОГ MSVC: ВСЁ зелёное
+  (plan145 6/0, plan138 10/0, plan138_1 10/0, plan91_fe1 10/0, plan90/96/131/152_1/basics/generics);
+  clang 0 net-new. Коммиты plan-145.2: 5f695b80 (BTreeMap) + 7429dace (145.1 portable) + 29cce45f
+  (guards plan145_2) + 16ee0a3f (docs). Остаток: value-record throw-выражение (узкий stmt-expr) +
+  benign NovaOpt-typedef-order non-det (косметика) → P3. Метод-урок: при недетерминизме эмиссии бисект
+  по пересборкам обманчив; детерминизм чинить первым. Investigation через ultracode-workflow.
+[2026-06-14] Plan 156 -- slow-test lane: large tests in the repo, out of the default regression ([M-test-runner-large-test-lane] CLOSED). REQUIREMENT (author): the default `nova test`/CI must stay fast in BOTH compilation AND execution; full conformance corpora (collation 227800, normalization, words, ...) must live in the repo but NOT run by default. Mechanism (rev-2, suffix-only, ~discovery-level, no simplifications): per-file suffix `_slow.nv` (mirror of the `_windows.nv`/`_test`/`_module.nv` family) resolved at DISCOVERY -- a `*_slow.nv` file is never read on a default run (read_dir gives only the dirent name -> zero per-file I/O). `is_slow_file_stem(stem)->ends_with("_slow")`; `walk_nv` -> `walk_nv_filtered(root,out,lane)`; suffix-peel in canonical order (`_module` whole-skip -> `_slow` -> `_test` -> OS-suffix on core_stem). `SlowLane{Exclude(default)|Include|Only}` on `TestAllOpts`; clap flags `--include-slow`/`--slow-only` (Exclude = default-skip like Rust `#[ignore]`; Only = dedicated CI job). Generator `nova-codegen unicode --conformance-full` writes `*_conformance_slow.nv` (limit=usize::MAX -> whole corpus, renderers chunk by 500). Rust discovery unit-tests `plan156_slow_lane_tests` + `nova_tests/plan156/` fixtures. Spec D277 (09-tooling.md) normalizes ALL test-discovery skip/route conventions (fixtures/, OS-suffix, _module.nv, _slow.nv + peel order); `docs/test-conventions.md` flipped to IMPLEMENTED. Verified: AC A1-A5 (default skips, flags run + compose with --filter/--skip, `nova check <path>` on a slow file still works, suffix combines with OS/_test, generator deterministic two-lane), release build green, discovery unit-tests PASS. DATA-GATED (NOT a mechanism simplification): full collation/sentence corpora population (CollationTest_SHIFTED 227800 pairs) is not yet committed -- needs UCD data (allkeys.txt/CollationTest) absent from the repo; tracked by [M-152-collation-full-conformance]. Deferred (out-of-scope rev-2): the `slow/` directory + `_slow.toml` sentinel for slow folder-modules -> [M-156-slow-subtree-dir] (YAGNI). Worktree nova-p156, branch plan-156.
+
+[2026-06-15] Plan 156 rev-3 (storage decision) -- supersedes the "DATA-GATED / not yet committed" note above. After a cross-ecosystem research workflow (Go/Rust/TS-Node/Kotlin-Java/ICU/CPython, web-verified -> docs/research/10-unicode-test-data-storage.md), decided (user) to NOT commit the full `*_conformance_slow.nv` corpora. The Populate phase had fetched UCD 16.0 over the network and committed all 6 corpora (~23 MB incl. collation 227800/227800, 16.2 MB) on plan-156 -- these were DROPPED from history via `git rebase --onto` (removing the Populate commit) BEFORE merge so they never enter main's permanent history. New contract: full corpora are gitignored (`nova_tests/**/*_conformance_slow.nv`) and REGENERATED ON-DEMAND from pinned UCD (`nova-codegen unicode --emit-conformance --conformance-full --ucd-dir <UCD>` -> gitignored cache -> `nova test --slow-only`; empty cache -> 0 tests = skip-never-fail). Only the fast `*_conformance.nv` sample (~1.6 MB) stays committed. Rationale: Nova has a byte-identical deterministic generator, so committing ~23 MB (+~16 MB/Unicode-bump forever, collation lines don't delta-compress) buys nothing over the generator; Go and CPython (both with generators) chose the same model -> leanest repos. NOT a simplification (full corpus proven generable), a history-hygiene choice. git-lfs / separate-repo / submodule all rejected for this solo + ~16-worktree + exFAT/Windows profile (see research doc). Docs reconciled: Plan 156 doc (rev-3 section), docs/test-conventions.md, spec D277 example, .gitignore, backlog [M-test-runner-large-test-lane]/[M-152-collation-full-conformance]. Worktree nova-p156, branch plan-156.

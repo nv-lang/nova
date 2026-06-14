@@ -16,23 +16,24 @@ endif
 " ============================================================================
 
 " Declarations
-" Plan 114 (D184): let/readonly retracted; ro/mut/consume binding triad.
-syntax keyword novaDeclaration fn type alias effect handler protocol const module import export as use test external
+" Plan 114 (D184): let/readonly retracted (now plain idents → compile error);
+" ro/mut/consume binding triad. Plan 97 (D142): handler retracted.
+syntax keyword novaDeclaration fn type alias effect protocol const module import export as use test external lemma
 
-" Storage modifiers
-syntax keyword novaModifier ro mut consume
+" Storage / visibility / safety modifiers (D184, D220, D216)
+syntax keyword novaModifier ro mut consume priv pub unsafe
 
 " Control flow
 syntax keyword novaConditional if else match
 syntax keyword novaRepeat for while loop
 syntax keyword novaStatement break continue return throw with interrupt
-syntax keyword novaStatement defer
+syntax keyword novaStatement defer errdefer okdefer
 
 " Concurrency primitives (D14, D50, D75)
-syntax keyword novaConcurrency spawn detach parallel supervised cancel_scope race select with_timeout
+syntax keyword novaConcurrency spawn detach parallel supervised blocking select
 
-" Memory / safety blocks (D6, D63, D64)
-syntax keyword novaMemory region forbid realtime
+" Effect / safety modifiers (D6, D63, D64)
+syntax keyword novaMemory forbid realtime
 
 " Operators / patterns
 syntax keyword novaOperator is in

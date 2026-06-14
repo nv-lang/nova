@@ -1,0 +1,10 @@
+// lane_big_slow.nv — Plan 156 slow-lane fixture: a SLOW test.
+// Stem ends in `_slow` → SKIPPED by the default run (`nova test`),
+// included only via --include-slow, and is the sole-class run under
+// --slow-only. (Trivial body here: the suffix, not runtime, classifies it.)
+
+module plan156.lane_big_slow
+
+test "slow test runs only when opted in" {
+    assert(2 + 2 == 4)
+}

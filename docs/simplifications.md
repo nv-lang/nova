@@ -12940,7 +12940,7 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 
 ### [M-83.13-precise-gc-research-v1] Plan 83.13 V1 RESEARCH DELIVERED — precise GC decision document (2026-05-26)
 
-- **Где:** `docs/research/precise-gc-decision-2026.md`. Worktree
+- **Где:** `docs/research/09-precise-gc-decision-2026.md`. Worktree
   `nova-p83-13`, branch `plan-83-13`.
 
 - **Что сделано (V1):**
@@ -26454,7 +26454,7 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 
 ### [M-83.13-precise-gc-research-v1] Plan 83.13 V1 RESEARCH DELIVERED — precise GC decision document (2026-05-26)
 
-- **Где:** `docs/research/precise-gc-decision-2026.md`. Worktree
+- **Где:** `docs/research/09-precise-gc-decision-2026.md`. Worktree
   `nova-p83-13`, branch `plan-83-13`.
 
 - **Что сделано (V1):**
@@ -36653,6 +36653,8 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 - [2026-06-14] codegen lib-test contract_opt_out fix (Plan 140.3 followup, e83c8914): unblocked the nova-codegen lib-test target (was E0063 x4). NOT a shortcut - Default::default() is the semantically-correct neutral (full enforce). Surfaced 33 pre-existing stale tests (let-removal drift) -> [M-codegen-libtest-stale-tests]; reported honestly as 770/33, not claimed green.
 
 - [2026-06-14] codegen lib-test stale-tests restored to green [M-codegen-libtest-stale-tests] CLOSED: 33 pre-existing stale unit tests (surfaced by the contract_opt_out unblock) updated to current language/compiler reality — NOT a shortcut. 26 parser::tests migrated Nova inputs `let`->`ro`/`mut` (Plan 114/D184), 2 lints prelude_shadow → `#no_prelude`/`#allow(shadow)` (Plan 107/D174), 5 sum_schema_registry → Option.unwrap_or Nova-body routing expectations (Plan 99). Zero production-code change; «без упрощений как для прода» — ассерты остались осмысленными, ничего не ослаблено/замаскировано. `cargo test --lib` 803/0 (был 770/33).
+
+- [2026-06-14] Q-interpreter-future RESOLVED — internal `nova-codegen` interpreter entry points stubbed UNSUPPORTED (mirrors the user-facing `nova run` stub, Plan 157 / D274). `run` and `test-interp` no longer construct `interp::Interpreter`; they error out LOUDLY (clear message + nonzero exit, NOT a silent no-op) pointing at C codegen; clap doc-strings `[UNSUPPORTED]` (commit `0d7116f4`). `compile`/`check`/`test-build` keep working; `docs/nova-codegen.{md,ru.md}` aligned. Regression `compiler-codegen/tests/interp_tool_unsupported.rs` (commit `a4e26525`): neg run/test-interp + pos compile, 3/3 PASS via release binary; `cargo build --release` green. The `interp/` module is KEPT for reference (NOT deleted), consistent with «пока не поддерживаем» / D274 — full module removal deliberately DEFERRED (sole residual, `[M-interp-unsupported]`). «без упрощений как для прода»: loud product boundary, real neg+pos test, docs in sync — not a shortcut.
 [2026-06-14] Plan 153.4 (slices/views, D262, ветка plan-153.4-slices, commit `5ccccf72`): 153.4-A
   (eager zero-copy `[]T`-views: split_at/split_first/split_last/first_n/last_n/as_slice + recv-mut
   mut @as_slice) ЗАКРЫТА. **Осознанная отложка — 153.4-B `@chunks`/`@chunks_exact`/`@rchunks`/`@windows`
@@ -36797,3 +36799,27 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   **Урок:** под структурно-итераторной моделью «FromIterator» — это паттерн (`collect`/`from`/`extend`),
   а не trait; одна enforced-абстракция упёрлась бы в static-generic gap, набор поверх рабочей
   instance-инфры даёт полный паритет без компилятор-хирургии.
+[2026-06-15] Plan 145.2 (codegen emission determinism, ветка plan-145.2) + Plan 145.1 поверх него.
+  КОРЕНЬ (из находки 145.1): эмиссия C зависела от порядка итерации Rust HashMap (RandomState,
+  рандом per-process) → `.c` недетерминирован между сборками; это будило 2 ЛАТЕНТНЫХ order-зависимых
+  бага prelude: (A) init-order static-init OOB («array: index 0 out of bounds for length 0»);
+  (B) var_boxed (closure mut-capture box `_box_<v>`) cross-function leak (CC-FAIL undeclared). main
+  «стабилен» лишь по «удаче» порядка; любое codegen-изменение (portable-stmt-expr 145.1) → «плохой»
+  порядок → flaky. ФИКС 145.2: `method_overloads` + `embed_fields` HashMap→BTreeMap (детерминированная
+  итерация эмиссии embed-proxies + enqueue в mono-worklist; ключи Ord; API drop-in). НЕ упрощение —
+  корректное упрочнение; sort-на-каждом-сайте был бы хрупче (можно пропустить сайт). НЕ чинил сами
+  (A)/(B) изоляцией: emit_test/emit_lambda_body УЖЕ save/restore var_boxed — баг шёл через ПОРЯДОК
+  эмиссии lambda-bodies/mono-инстансов, детерминизм = корневой фикс. Остаток benign: порядок
+  NovaOpt-typedef'ов всё ещё non-det (косметика, независимые typedef, overload/rd 10/10 не триггерят)
+  → residual P3. ВАЛИДАЦИЯ: overload_method_values 10/10 + bare-str-array-read 10/10 (ранее flaky);
+  clang 0 net-new (set-diff syntax). РАЗБЛОКИРОВАЛ 145.1: поверх 145.2 переприменены struct-write
+  (memcpy-в-слот через nova_idx_chk, гейт NovaArrHdr) + heap-box-примитива (scalar compound literal +
+  nova_box_value — на cl.exe компилируется) + Option-get composite (`(NovaOpt_X){.value=
+  nova_npo_from_tagged_int(...)}`) → применились ЧИСТО, MSVC ВСЁ зелёное (plan145 6/0, plan138 10/0,
+  plan138_1 10/0, plan91_fe1 10/0, plan90/96/131/152_1/basics/generics), clang 0 net-new, overload/rd
+  8/8. Регресс-guard nova_tests/plan145_2/ (closure-capture-cross-test + str-array-rw). Остаток узкий:
+  value-record throw-как-выражение (rvalue в expression-контексте) → stmt-expr (редкий, P3). Урок
+  (см. discussion-log): бисект по ПЕРЕсборкам ненадёжен при недетерминизме эмиссии — один прогон ≠
+  свойство source; детерминизм надо чинить ПЕРВЫМ, чтобы баги стали воспроизводимы.
+- [2026-06-14] Plan 156 (slow-test lane, [M-test-runner-large-test-lane] CLOSED): the MECHANISM is COMPLETE with NO simplifications. The `_slow.nv` discovery suffix + `SlowLane{Exclude|Include|Only}` + `--include-slow`/`--slow-only` flags + the `--conformance-full` generator + spec D277 + Rust unit-tests + plan156 fixtures are all production-grade per AC A1-A5 (verified: default skips slow files with zero per-file I/O, flags run + compose with filters, `nova check <path>` on a slow file still works, suffix combines with OS/_test, generator is deterministic two-lane; release build green). The ONLY deferral is DATA-GATED, not a mechanism/algorithm shortcut: the full collation/sentence conformance corpora (CollationTest_SHIFTED 227800 pairs + sentence set) are not yet committed to the slow lane because the UCD source data (allkeys.txt/CollationTest) is absent from the repo. When the data is fetched, `nova-codegen unicode --conformance-full` populates `*_conformance_slow.nv` and the slow-gate proves G0. Tracked by [M-152-collation-full-conformance]. This is data availability, NOT a simplification of the algorithm or the lane mechanism. (Separately deferred by design: the `slow/` directory + `_slow.toml` sentinel for slow folder-modules -> [M-156-slow-subtree-dir], YAGNI.)
+- [2026-06-15] Plan 156 **rev-3 (storage)** — supersedes the "DATA-GATED / not yet committed" framing above. The full `*_conformance_slow.nv` corpora are deliberately **NOT committed**; they are **regenerated on-demand** from pinned UCD into a gitignored cache (`nova-codegen unicode --emit-conformance --conformance-full --ucd-dir <UCD>` → `nova test --slow-only`; empty cache → 0 tests = skip-never-fail). Rationale (cross-ecosystem research, docs/research/10-unicode-test-data-storage.md): Nova has a byte-identical deterministic generator, so committing ~23 MB (collation 15.5 MB + ~16 MB/Unicode-bump forever) buys nothing the generator doesn't already give; Go and CPython (both with generators) chose the same download/regenerate model — leanest repos. This is NOT a simplification (full corpus IS reachable, was proven generated at 227800/227800 in the Populate phase), but a storage/history-hygiene choice (user decision 2026-06-15). The Populate-committed 23 MB was dropped from plan-156 history via rebase BEFORE merge so it never enters main.

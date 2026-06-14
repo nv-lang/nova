@@ -18,6 +18,7 @@
 | [D121](#d121-benchmark-dsl--bench---measure--) | Benchmark DSL — `bench "..." { measure { ... } }` + `bench.*` namespace |
 | [D256](#d256-field--method-self-access-в-контрактах) | `@field` / `@method()` self-access в контрактах (SMT-encoder) |
 | [D257](#d257-vec-index-bounds-как-элидируемый-контракт) | Vec `@index` bounds как элидируемый контракт |
+| [D277](#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv) | Test-discovery skip/route-конвенции — `fixtures/`, OS-суффикс, `_slow.nv` |
 
 ---
 
@@ -2754,3 +2755,120 @@ Binary-выражения `int` `+`/`-`/`*`. Compound-assign (`x += y`) отло
 - [D257](#d257-vec-index-bounds-как-элидируемый-контракт) / Plan 140.2 — bounds-элизия (sibling-механика).
 - [04-effects.md](04-effects.md) / D13 / Plan 33.8 — `int` overflow = panic (что элидируем).
 - `[M-opt-elide-proven-overflow-checks]` — маркер, закрываемый этим блоком.
+
+---
+
+## D277. Test-discovery skip/route-конвенции — `fixtures/`, OS-суффикс, `_slow.nv`
+
+> **Plan 156** (`[M-test-runner-large-test-lane]`) — нормирует **все**
+> discovery-конвенции test-runner'а (`compiler-codegen/src/test_runner.rs`),
+> которые ранее были зафиксированы **только кодом**, и вводит slow-lane.
+> Sibling к [D89](#d89-test-tooling-конвенции--expect-маркеры-для-negative-тестов)
+> (тот — per-file **content**-маркеры `EXPECT_*`; этот — per-path/per-name
+> **discovery**-конвенции, решаемые до чтения файла). Cross-ref:
+> [D100](07-modules.md#d100-_modulenv-peer--module-config-convention) (`_module.nv`
+> peer-config), [D99](07-modules.md#d99-conditional-compilation-filename-suffix--cfg)
+> (OS-суффикс семейство), [docs/plans/156-test-runner-slow-lane.md](../../docs/plans/156-test-runner-slow-lane.md).
+
+### Что
+
+`nova test` (test-discovery walker `walk_nv` / `walk_nv_filtered`) **не каждый**
+`.nv`-файл и **не каждый** каталог в `nova_tests/` трактует как runnable test.
+Часть путей — **вспомогательные** (input-данные, peer-конфиг), часть — **гейтится**
+(OS, slow-lane). Эти решения принимаются на этапе **discovery** (по имени dirent'а,
+**до чтения** содержимого файла) — в отличие от [D89](#d89-test-tooling-конвенции--expect-маркеры-для-negative-тестов)
+EXPECT-маркеров, которые видны лишь после чтения первых 30 строк. Нормируются здесь
+**единым** перечнем, чтобы любой Nova-conformant runner реализовал ту же конвенцию.
+
+### Правило
+
+#### Скип каталогов (вспомогательные входные данные, не тесты)
+
+| Конвенция | Что |
+|---|---|
+| каталог с именем `fixtures` | **skip целиком** — стандартная конвенция (параллель Rust `tests/data/`, Python `fixtures/`, Go `testdata/`). Plan 55 Ф.8. |
+| сентинел-файл `_fixture.toml` в каталоге | **skip целиком** — explicit override, когда имя `fixtures` нельзя/нежелательно. Plan 55 Ф.8. |
+
+Каталог-fixture содержит input-данные (`nova doc` ingestion-сэмплы, intermediate
+doc-pipeline-файлы): часто без `main`/`test "..."`, не должен компилироваться как
+standalone test. Доступ — explicit `nova check <path>` (path-based, не через
+discovery) или integration-tests. Реализация — `is_fixture_dir(dir)`.
+
+#### Per-file суффиксы (skip / route)
+
+Суффикс — `snake_case`-хвост `file_stem` (без `.nv`). `-` нельзя (это идентификатор).
+
+| Суффикс | Семантика |
+|---|---|
+| `_module.nv` | **peer-конфиг, НЕ тест** — module-config peer ([D100](07-modules.md#d100-_modulenv-peer--module-config-convention)): только module-level атрибуты, без items. **Whole-file skip** (никогда не standalone test). Plan 42.10. |
+| `_windows.nv` / `_linux.nv` / `_macos.nv` / `_unix.nv` / `_posix.nv` | **OS-гейт** — standalone test active **только** на матчащей платформе, на прочих skip'ается. Семейство нормировано в [D99](07-modules.md#d99-conditional-compilation-filename-suffix--cfg) (то же, что для peer-files folder-module). Plan 42.12. |
+| `_test` | **наименование** (не гейт) — обычный test; для OS-матча суффикс **отрезается** (см. порядок снятия), чтобы `foo_windows_test.nv` гейтился по `_windows`. |
+| `_slow.nv` | **большой/медленный тест** (Plan 156) — opt-in. Default `nova test` его **skip'ает** (файл-корпус **не читается** — нулевой per-file I/O); включается `--include-slow` (добавить к обычному прогону) / `--slow-only` (только slow-файлы). |
+
+#### Канонический порядок снятия суффиксов
+
+Суффиксы **комбинируются**; чтобы комбинация резолвилась корректно, они снимаются в
+**фиксированном порядке** (важно: `_slow` снимается ДО OS-проверки, иначе OS-гейт на
+`foo_windows_slow.nv` увидел бы `…_slow`-хвост и не распознал OS):
+
+1. `_module` → **whole-file skip** (раньше всего; файл вообще не тест).
+2. `_slow` → **lane-routing** (Exclude/Include/Only); затем суффикс отрезается.
+3. `_test` → отрезать (наименование).
+4. **OS-суффикс** → проверить на остатке (`core_stem`); не-матч → skip.
+
+Канонический порядок суффиксов **в имени**: `<core>[_<os>][_test][_slow].nv`.
+Примеры валидных комбинаций:
+- `foo_windows_test.nv` — OS-гейт (`_windows`) + наименование (`_test`).
+- `collation_conformance_slow.nv` — slow-lane (большой conformance-корпус).
+- `foo_windows_slow.nv` — гейтится **и** по OS (`_windows`), **и** по slow-lane.
+
+#### Флаги slow-lane (Plan 156)
+
+- **default** (`nova test` без флагов): `*_slow.nv` **skip** (инверсия Go `-short`,
+  аналог Rust `#[ignore]`) — дефолт-регресс быстрый.
+- `--include-slow`: обычные тесты **И** `*_slow.nv` (merge-gate / nightly).
+- `--slow-only`: **только** `*_slow.nv` (выделенная CI-job, доказательство G0
+  «без упрощений», out-of-band).
+- Композиция с `--filter`/`--skip`/`--include-stdlib` ортогональна: lane решается
+  на discovery, эти фильтры — после.
+
+#### Хранение полных корпусов (rev-3, 2026-06-15)
+
+Большие conformance-корпуса (`*_conformance_slow.nv`: collation 227800 пар ≈ 15.5 MB,
+normalization 19965 ≈ 5 MB, …) **НЕ коммитятся** в репозиторий — они **регенерируются
+on-demand** детерминированным генератором (`nova-codegen unicode --emit-conformance
+--conformance-full --ucd-dir <UCD>`) из pinned UCD в gitignored-кэш
+(`nova_tests/**/*_conformance_slow.nv`), затем гоняются `nova test --slow-only`. Коммитится
+**только** fast-сэмпл `*_conformance.nv` (~1500 case'ов). Пустой кэш → `--slow-only` находит
+0 тестов = **skip-never-fail** (не ошибка; offline/без-UCD прогон зелёный). Обоснование
+(модель Go `-long`/CPython `open_urlresource`; cross-eco research
+[docs/research/10-unicode-test-data-storage.md](../../docs/research/10-unicode-test-data-storage.md)):
+у Nova есть байт-идентичный генератор, поэтому коммит ~23 MB регенерируемого build-output
+не даёт ничего сверх него, но навсегда утяжеляет историю. git-lfs / submodule / отдельная
+тест-репа отвергнуты для этого профиля. Полнота (G0 «без упрощений») доказывается
+slow-gate-прогоном (CI merge/nightly), а не наличием файлов в git.
+
+### Деферрал
+
+- **`[M-156-slow-subtree-dir]`** — каталог `slow/` + сентинел `_slow.toml` (зеркало
+  `fixtures/`+`_fixture.toml`) для случая «медленный **folder-module** из ≥2 peers,
+  которые нельзя запускать поодиночке». Сейчас такого теста нет (все медленные тесты
+  — по одному сгенерированному файлу) → YAGNI. Добавляется **аддитивно**, не ломая
+  suffix-механизм, когда появится первый медленный folder-module.
+
+### Связь
+
+- [D89](#d89-test-tooling-конвенции--expect-маркеры-для-negative-тестов) — sibling:
+  per-file content-маркеры (после чтения); D277 — per-path/per-name discovery
+  (до чтения).
+- [D99](07-modules.md#d99-conditional-compilation-filename-suffix--cfg) — OS-суффикс
+  семейство (`_windows`/`_linux`/`_macos`/`_unix`/`_posix`), единый source of truth.
+- [D100](07-modules.md#d100-_modulenv-peer--module-config-convention) — `_module.nv`
+  peer-config.
+- [docs/plans/156-test-runner-slow-lane.md](../../docs/plans/156-test-runner-slow-lane.md)
+  — реализация slow-lane (`is_slow_file_stem`, `SlowLane`, `walk_nv_filtered`).
+- [docs/test-conventions.md](../../docs/test-conventions.md) — практический guide.
+- `compiler-codegen/src/test_runner.rs` — каноническая реализация (`is_fixture_dir`,
+  `is_slow_file_stem`, `walk_nv_filtered`, `SlowLane`).
+- `[M-test-runner-large-test-lane]` — маркер slow-lane; `[M-156-slow-subtree-dir]`
+  — отложенный folder-module-вариант.
