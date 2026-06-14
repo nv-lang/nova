@@ -1,0 +1,40 @@
+// Plan 104.9 (D278): the editor highlighters claim these are current keywords —
+// prove via the compiler that they are real by compiling and running a program
+// that uses them. Negatives for the REMOVED keywords (let/readonly/safe) live in
+// plan114/ and plan138_5/.
+module plan104_9.pos_current_keywords_compile
+
+const LIMIT = 3
+
+fn sum_to(n int) -> int {
+    mut total = 0
+    for i in 0..n {
+        if i == 0 {
+            continue
+        }
+        total = total + i
+    }
+    return total
+}
+
+fn first_match(n int) -> str {
+    ro r = match n {
+        0 => "zero"
+        _ => "other"
+    }
+    return r
+}
+
+test "control-flow keywords compile and run" {
+    mut k = 0
+    while k < LIMIT {
+        k = k + 1
+    }
+    assert(k == 3)
+    loop {
+        break
+    }
+    assert(sum_to(4) == 6)
+    assert(first_match(0) == "zero")
+    assert(first_match(9) == "other")
+}
