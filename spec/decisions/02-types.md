@@ -6023,6 +6023,11 @@ Codepoint-indexed (как существующий `nova_str_slice` метод).
 > 101.5 partial). Plan 101.1 codegen для non-int mono-dispatch —
 > marker [M-fn-prefix-int-only-mono] ✅ RESOLVED (Plan 101 Group I, vec_map_int_str fix).
 >
+> **AMEND (2026-06-14, Plan 153.5):** вложенные generic-ресиверы произвольной глубины
+> (`fn[T] [][]T @m` / `fn[T] Vec[Vec[T]] @m` — structural typevar-bind в самый
+> внутренний элемент, depth-agnostic) — см. секцию «AMEND … вложенные generic-ресиверы»
+> ниже. Разблокировало `@flatten` (D263); закрыло `[M-153.5-flatten-nested-receiver]`.
+>
 > **Реализовано (Plan 101.1–101.4 + 101.2):**
 > - **101.1** ✅ — Parser `fn[T] ReceiverType @method` + 5 disambiguation
 >   error codes (E_UNDECLARED_TYPEVAR_IN_RECEIVER, E_BARE_TYPEVAR_NEEDS_PREFIX,
@@ -6251,6 +6256,80 @@ protocol composition = decl-time method-set union. Разные scopes,
 fn[T] (T, T) @duplicate(a T) -> (T, T) => (a, a)   // T дважды → один T
 fn[T] [][]T @flatten() -> []T => ...                // T в receiver и return — один T
 ```
+
+### AMEND (2026-06-14, Plan 153.5 commit `1c323d0e`): вложенные generic-ресиверы произвольной глубины
+
+`fn[T]`-typevar в receiver-position теперь связывается **структурной унификацией на
+ЛЮБОЙ глубине вложенности** — не только на верхнем уровне элемента. Это закрывает дыру,
+из-за которой `[][]T @flatten()` (= carrier-форма `Vec[Vec[T]] @flatten()` под
+[D239](#d239-t--синтаксический-псевдоним-vect)) не работал: тело должно назвать
+**внутренний** `T`, а компилятор биндил его в *непосредственный* элемент.
+
+**Корень (обе формы записи теряли вложенность до фикса):**
+- **Carrier** `Vec[Vec[T]]` — ПАРСЕР отвергал вложенный тип в carrier-слоте
+  (`parse_generic_decl_params` ждал `parse_ident` на каждый слот → «expected `]`, got
+  identifier»).
+- **Slice** `[][]T` — ПАРСИЛСЯ, но монорфизатор биндил receiver-typevar `T` в
+  *непосредственный* элемент (`Vec[int]`), не во *внутренний* (`int`) — вложенность
+  `[][]T` схлопывалась в один `"[]T"`-ресивер → тело строило `out []T == Vec[Vec[int]]`,
+  возвращало неверный тип (verified probe RUN-FAIL, mono'd `out` =
+  `Nova_Vec____Nova_Vec____nova_int_p`).
+
+**Правило (после AMEND):**
+- **Обе формы записи приняты и эквивалентны** под D239: `fn[T] Vec[Vec[T]] @m` ≡
+  `fn[T] [][]T @m`. Парсер несёт полный структурированный тип ресивера в
+  `Receiver.receiver_ty` (`type_name` его flatten'ит в `"[][]T"` и теряет глубину —
+  поэтому нужен отдельный структурный слот).
+- **Receiver-typevar биндится в самый внутренний элемент**, рекурсивно (depth-agnostic):
+  для `Vec[Vec[T]]`/`[][]T` `T = element-of-element`; для `Vec[Vec[Vec[T]]]`/`[][][]T`
+  `T` = element третьего уровня; и так далее. Унификация — структурная (по форме типа),
+  не one-level-hardcoded.
+- **Свободные typevar'ы collect'ятся рекурсивно** из вложенного carrier-слота для
+  проверки `E_UNUSED_PREFIX_TYPEVAR` (typevar объявлен в `fn[T]`, но не упомянут в
+  ресивере → ошибка) — собираются из `receiver_ty`, а не из flatten'енного имени.
+- **`E_UNDECLARED_TYPEVAR_IN_RECEIVER` сохраняется** для `fn []T @m` / `fn [][]T @m`
+  **без** `fn[T]`-префикса (scope-typevar НЕ сидится из `receiver_ty` — это намеренно,
+  иначе ошибка маскировалась бы; см. checker-заметку).
+
+```nova
+fn[T] [][]T @flatten() -> []T => ...                // T = innermost (depth 2) — РАБОТАЕТ
+fn[T] Vec[Vec[T]] @flatten() -> Vec[T] => ...       // carrier-форма, ≡ выше под D239
+fn[T] [][][]T @deep_count() -> int => ...           // depth 3 — T = innermost
+fn[T] [][]T @first_row() -> []T => ...              // вложенный-типизированный return
+```
+
+**Реализация (depth-agnostic, без one-level-hardcoding):**
+- **AST** — `Receiver.receiver_ty: Option<TypeRef>` несёт полный структурированный тип
+  вложенного ресивера (единственное место, где глубина переживает — `type_name`
+  flatten'ит в `"[][]T"`).
+- **Parser** — slice `[][]T`: счёт глубины `Array` + спуск до внутреннего `Named` →
+  строит `Array(Array(Named T))`. Carrier `Vec[Vec[T]]`: новый разбор принимает
+  ВЛОЖЕННЫЙ `parse_type` в слоте (детект `Ident[`) + рекурсивный сбор free-typevars;
+  структурные слоты сворачиваются в `receiver_ty`. Free-fn `[T Bound=D]`-разбор не
+  тронут.
+- **Mono** — переиспользован существующий рекурсивный `infer_type_param_binding` для
+  структурного бинда receiver-typevar (Array-арм также снимает mono-форму `Vec____`,
+  восстанавливая элемент через `generic_type_instance_info`); override применён на ВСЕХ
+  путях, биндящих receiver-typevar (emit-dispatch carrier + `[]T`-sentinel slice +
+  call-site return-inference). Depth-aware sentinel-ключи `"[]"*N+"T"` заменили
+  hardcoded `"[]T"`. **Flat `[]T` (depth 1) остался byte-identical** (legacy
+  `NovaArray_`-путь); override гейтится `receiver_ty_is_nested` — только для реально
+  вложенных ресиверов.
+- **Checker** — вложенные typevar'ы из `receiver_ty` собираются в `referenced`-множество
+  для `E_UNUSED_PREFIX_TYPEVAR`; scope `gs` **НЕ** сидится из `receiver_ty` (сохраняет
+  `E_UNDECLARED_TYPEVAR_IN_RECEIVER` — verified, что seed был бы регрессией).
+
+**Cross-cutting заметка.** Это путь, через который идут ВСЕ `[]T`-методы stdlib (slice-
+dispatch). Изменение специально гейтнуто на genuinely-nested ресиверы → flat-случай
+неизменен. См. [D263 AMEND](10-overloading.md#d263-vec-restructure-ops--оператор---plus--concat)
+(`@flatten` использует этот фундамент).
+
+**Известное ортогональное ограничение (pre-existing, вне scope):** slice-форма
+`fn[T] [][]T -> []T`, чьё тело **строит** свежий `Vec[T].new()`, упирается в
+pre-existing erased-base-body лимит, который ЛОМАЕТ и flat `fn[T] []T` с `Vec[T].new()`
+на baseline (`expected struct 'Vec____Nova_T_p'`). Production-flatten — CARRIER-форма
+`Vec[Vec[T]] @flatten` (как все stdlib), работает полностью; slice-form nested-receiver
+binding доказан отдельно (`@count_all`/`@first_row`).
 
 ### Backward-compat
 

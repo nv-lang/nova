@@ -1,0 +1,55 @@
+// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver] — the SLICE spelling of
+// a nested generic receiver: `fn[T] [][]T @method`. Proves the parser accepts
+// arbitrarily-nested `[]..[]T` (recursive depth + typevar collection) AND the
+// monomorphizer binds `T` structurally to the innermost element.
+//
+//   `@count_all` on `[][]T` -> int    : iterates BOTH levels (T = int).
+//   `@first_row` on `[][]T` -> []T     : returns the first inner row (= Vec[T]),
+//                                        exercising the `[]T` (depth-1) return
+//                                        binding from a depth-2 receiver.
+//
+// (A `[][]T -> []T` flatten that BUILDS a fresh `Vec[T].new()` in the slice-form
+//  body hits a SEPARATE, pre-existing erased-base-body limitation of the
+//  `fn[T] []…` form — orthogonal to nested-receiver binding; the production
+//  flatten is the carrier form `Vec[Vec[T]] @flatten`, see flatten_depth2.nv.)
+
+module plan153_5_nested.slice_nested
+
+import std.collections.vec.{Vec}
+
+// Count every innermost element across a `[][]T` (two-level iteration).
+export fn[T] [][]T @count_all() -> int {
+    mut n = 0
+    for inner in @ {
+        for _x in inner {
+            n = n + 1
+        }
+    }
+    n
+}
+
+// Return the first inner row of a `[][]T` as a `[]T` (= Vec[T]).
+export fn[T] [][]T @first_row() -> []T {
+    @[0]
+}
+
+test "count_all over [[1,2],[3,4,5]] == 5 (slice [][]T, T=int)" {
+    ro a = Vec[int].from([1, 2])
+    ro b = Vec[int].from([3, 4, 5])
+    mut nested = Vec[Vec[int]].new()
+    nested.push(a)
+    nested.push(b)
+    assert(nested.count_all() == 5)
+}
+
+test "first_row returns the leading []T row (T=int)" {
+    ro a = Vec[int].from([10, 20])
+    ro b = Vec[int].from([30, 40, 50])
+    mut nested = Vec[Vec[int]].new()
+    nested.push(a)
+    nested.push(b)
+    ro row = nested.first_row()
+    assert(row.len() == 2)
+    assert(row[0] == 10)
+    assert(row[1] == 20)
+}

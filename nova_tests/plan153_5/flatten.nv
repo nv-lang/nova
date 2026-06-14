@@ -1,0 +1,85 @@
+// Plan 153.5 (D263) — `[][]T @flatten() -> []T` (closes
+// [M-153.5-flatten-nested-receiver]). Concatenate every inner `Vec[T]` of a
+// `Vec[Vec[T]]` into one flat `Vec[T]`, in order, building a NEW buffer
+// (operands unchanged). The production method lives in
+// std/collections/vec/restructure.nv; this fixture exercises it through the
+// stdlib import path (NOT a locally-declared method).
+//
+// `T` binds to the innermost element via structural typevar unification: a
+// `Vec[Vec[int]]` flattens to `Vec[int]`. Deeper nesting (`Vec[Vec[Vec[int]]]`)
+// flattens one level per call, so a double `.flatten().flatten()` produces a
+// flat `Vec[int]`.
+
+module plan153_5.flatten
+
+import std.collections.vec.{Vec}
+
+test "flatten [[1,2],[3],[4,5]] -> [1,2,3,4,5]" {
+    mut nested = Vec[Vec[int]].new()
+    nested.push(Vec[int].from([1, 2]))
+    nested.push(Vec[int].from([3]))
+    nested.push(Vec[int].from([4, 5]))
+    ro flat = nested.flatten()
+    assert(flat.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    // outer + inner rows are untouched (flatten copies, never moves)
+    assert(nested.len() == 3)
+    ro row0 = nested[0]
+    assert(row0.len() == 2)
+}
+
+test "flatten with empty inner rows skips them" {
+    mut nested = Vec[Vec[int]].new()
+    nested.push(Vec[int].from([7]))
+    nested.push(Vec[int].new())
+    nested.push(Vec[int].from([8, 9]))
+    nested.push(Vec[int].new())
+    ro flat = nested.flatten()
+    assert(flat.equal(Vec[int].from([7, 8, 9])))
+}
+
+test "flatten of empty outer -> empty []" {
+    mut nested = Vec[Vec[int]].new()
+    ro flat = nested.flatten()
+    assert(flat.len() == 0)
+    assert(flat.is_empty())
+}
+
+test "flatten where every inner row is empty -> empty" {
+    mut nested = Vec[Vec[int]].new()
+    nested.push(Vec[int].new())
+    nested.push(Vec[int].new())
+    ro flat = nested.flatten()
+    assert(flat.len() == 0)
+}
+
+test "flatten str elements [[\"a\"],[\"b\",\"c\"]] -> [\"a\",\"b\",\"c\"]" {
+    mut nested = Vec[Vec[str]].new()
+    nested.push(Vec[str].from(["a"]))
+    nested.push(Vec[str].from(["b", "c"]))
+    ro flat = nested.flatten()
+    assert(flat.len() == 3)
+    assert(flat[0] == "a")
+    assert(flat[1] == "b")
+    assert(flat[2] == "c")
+}
+
+test "double flatten Vec[Vec[Vec[int]]] -> Vec[int]" {
+    ro a = Vec[int].from([1, 2])
+    ro b = Vec[int].from([3])
+    mut l2x = Vec[Vec[int]].new()
+    l2x.push(a)
+    l2x.push(b)
+    ro c = Vec[int].from([4, 5])
+    mut l2y = Vec[Vec[int]].new()
+    l2y.push(c)
+    mut l3 = Vec[Vec[Vec[int]]].new()
+    l3.push(l2x)
+    l3.push(l2y)
+
+    // first flatten: Vec[Vec[Vec[int]]] -> Vec[Vec[int]]
+    ro mid = l3.flatten()
+    assert(mid.len() == 3)
+    // second flatten: Vec[Vec[int]] -> Vec[int]
+    ro flat = mid.flatten()
+    assert(flat.equal(Vec[int].from([1, 2, 3, 4, 5])))
+}
