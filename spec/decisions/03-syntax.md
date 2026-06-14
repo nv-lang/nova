@@ -10067,7 +10067,7 @@ strip/split возвращают **zero-copy** sub-views (`@[a..b]`).
 
 ## D252. `char`-тип API — классификация / case / digit
 
-Added: 2026-06-13  Status: 152.3a (ASCII) IMPLEMENTED 2026-06-13 (Plan 152.3a); 152.3b (Unicode) — Phase B
+Added: 2026-06-13  Status: 152.3a (ASCII) IMPLEMENTED 2026-06-13 (Plan 152.3a); 152.3b (Unicode) IMPLEMENTED 2026-06-15 (Plan 152.3b)
 
 `char` (u32 codepoint) получает прод-API уровня Rust `char` / Java `Character` / Go
 `unicode`. **Двухуровнево:** ASCII-core (в ядре, без таблиц) + Unicode-aware (делегат
@@ -10089,12 +10089,42 @@ order), ноль Unicode-таблиц; семантика == Rust `char::is_asci
 
 Ad-hoc `is_digit`/`is_hexdigit` (json.nv) консолидированы на эти методы.
 
-### 152.3b — Unicode-aware (Фаза B, делегат 152.4)
+### 152.3b — Unicode-aware (Фаза B, IMPLEMENTED — делегат в std.unicode)
 
-`@is_alphabetic`/`@is_numeric`/`@is_alphanumeric`/`@is_whitespace`/`@is_uppercase`/
-`@is_lowercase`/`@is_control`/`@general_category()`; `@to_uppercase()`/`@to_lowercase()`
-(multi-codepoint — ß→ss, ﬁ→FI → возвращают последовательность, не один char). Зависят от
-Unicode-данных `std/unicode` (Plan 152.4). См. [Plan 152.3](../../docs/plans/152.3-char-type-api.md).
+**Opt-in** char-методы (доступны ТОЛЬКО под `import std.unicode`, как `str
+@as_graphemes` — за размер таблиц платит импортирующий, НЕ prelude). Реализованы в
+[`std/unicode/category.nv`](../../std/unicode/category.nv) char-receiver-обёртками над
+code-point-предикатами того же модуля; 1:1 с UCD 16.0, семантика == Rust `char`:
+
+- `@is_alphabetic` / `@is_numeric` / `@is_alphanumeric` / `@is_whitespace` /
+  `@is_uppercase` / `@is_lowercase` / `@is_control` — бинарные предикаты.
+- `@general_category() -> GeneralCategory` — UCD General_Category (TR44 Table 12),
+  все 30 значений (`Lu|Ll|Lt|Lm|Lo|Mn|Mc|Me|Nd|Nl|No|Pc|Pd|Ps|Pe|Pi|Pf|Po|Sm|Sc|Sk|
+  So|Zs|Zl|Zp|Cc|Cf|Cs|Co|Cn`); `Cn` (not assigned) — дефолт для code point'а вне
+  `UnicodeData.txt`. Объявлен как `export type GeneralCategory` в `category.nv`.
+- `@to_uppercase() -> str` / `@to_lowercase() -> str` — полное per-code-point
+  case-mapping, возвращают **`str`** (НЕ один `char`): результат может быть
+  multi-code-point (ß→`"SS"`, ﬁ→`"FI"`, İ→`"i"`+◌̇). `CharsView` НЕ существует; возврат
+  `str` — финальное решение (см. ниже). Final_Sigma — string-level контекст-правило,
+  поэтому одиночная Σ (U+03A3) lowercase'ится в σ (non-final form) — корректный
+  context-free ответ. Переиспользует `upper_one`/`lower_one` из `case.nv` (152.4.4).
+
+**Делегация (под капотом).** Предикаты делегируют в `std.unicode` code-point-функции
+(`general_category`/`is_alphabetic`/`is_numeric`/…), которые читают новую таблицу
+[`std/unicode/category_data.nv`](../../std/unicode/category_data.nv): General_Category
+(`UnicodeData.txt` поле 2) + бинарные `Alphabetic` (DerivedCoreProperties.txt) и
+`White_Space` (PropList.txt) из UCD 16.0. `is_numeric` выводится из GC (Nd|Nl|No, как
+Rust), отдельной таблицы не требует. Таблица сгенерирована build-time-инструментом
+`nova-codegen unicode` (range-таблицы binary-search, как `word_data.nv`); `--check` —
+CI-guard. Char-методы остаются **вне prelude**: программа без `import std.unicode` их
+не видит (pin'ит negative-фикстура).
+
+**`@to_uppercase()` возврат `str`, НЕ итератор.** Возможные формы возврата были `str`
+(материализованный) vs `CharsView`/итератор (как Rust `char::to_uppercase()` →
+`ToUppercase: Iterator<Item=char>`). Решение — **`str`**: (1) `CharsView` для char-case
+в Nova не существует и не нужен (расширение 1–3 cp — крошечное), (2) симметрия со
+string-level `to_uppercase(s) -> str` (case.nv), (3) `str` напрямую конкатенируется/
+сравнивается без сбора. См. [Plan 152.3](../../docs/plans/152.3-char-type-api.md).
 
 ---
 
