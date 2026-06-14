@@ -28426,6 +28426,22 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
             return Ok(None);
         }
 
+        // Plan 154.1 [M-154.1-f32-literal-coercion] guard: a `[]f64` built in a
+        // `[]f32` context with NON-literal elements is an implicit f64→f32
+        // narrowing that would silently reinterpret bits → garbage. Numeric
+        // LITERALS already coerced above (elem_c would be nova_f32); reaching here
+        // with nova_f64 under an f32 hint means a variable / non-literal element.
+        // Fail LOUDLY (D44/D54: no silent narrowing of variables).
+        if elem_c == "nova_f64"
+            && self.current_array_elem_hint.as_deref() == Some("nova_f32")
+        {
+            return Err(
+                "[E_ARRAY_ELEM_NARROW] массив `[]f64` в контексте `[]f32`: неявное \
+                 сужение f64→f32 для НЕ-литералов запрещено (D44/D54). Числовые \
+                 литералы приводятся автоматически; для переменных/выражений \
+                 добавьте `as f32` к каждому элементу.".to_string());
+        }
+
         // 2) Monomorphize `Vec[elem_c]`: compute the mangled C name and register
         //    the type instance (struct + methods) on the worklist — exactly the
         //    path `type_ref_to_c(TypeRef::Array)` uses.

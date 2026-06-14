@@ -243,7 +243,10 @@
   (контекст переопределяет default-тип). `try_emit_typed_vec_literal` берёт float-hint когда ВСЕ
   элементы — числовые литералы (FloatLit/IntLit); turbofish-static арг-array-литерал эмитится с
   param-C-типом (узко: только array-литералы, иначе ломались Result-арги sort). Работает:
-  `Vec[f32].from([1.5,2.5])` / `from([1,2])` / `of(1.5,2)`. plan154_1 8/8.
+  `Vec[f32].from([1.5,2.5])` / `from([1,2])` / `of(1.5,2)`. **Прод-граница (commit `bcf01137`):**
+  f64-ПЕРЕМЕННАЯ в `[]f32`-контексте (`Vec[f32].from([f64var])`) — НЕ сужается молча (был тихий
+  мусор), а даёт громкую `E_ARRAY_ELEM_NARROW` (D44/D54 — narrowing не-литералов только через
+  явный `as f32`). pos+neg тесты `plan154_1` (9/9).
 - **`[M-154.1-chained-vec-f32-method-misdispatch]`** (floating, P2, **NEW** 2026-06-14): chained
   `Vec[f32].X().debug()` (напр. `Vec[f32].new().debug(a)` или `.from([...]).debug(a)`) мис-диспатчит
   `.debug` на `str.debug` → передаёт `Vec[f32]*` в str-метод → CC-FAIL. Корень: `infer_expr_c_type`

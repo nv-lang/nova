@@ -37864,6 +37864,15 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   return-position) остаётся в Q-overload-result-type. Итог: 153.3 без упрощений — sort_unstable
   (heapsort), select_nth (introselect), result==literal — все три закрыты по-настоящему.
 
+[2026-06-14] Plan 154.1 f32-literal-coercion — прод-граница (commit bcf01137, обязательный критерий
+  «без упрощений»). При негативном тесте всплыло: `Vec[f32].from([f64var])` (f64-ПЕРЕМЕННАЯ, не
+  литерал) check проходил, но RUN давал тихий мусор (строил []f64 → реинтерпретация бит как f32).
+  Это footgun — переменная не должна молча сужаться f64→f32. Фикс: гард в try_emit_typed_vec_literal —
+  если elem_c=nova_f64 под nova_f32-hint (литералы уже коэрснуты в nova_f32 выше; сюда доходит только
+  не-литерал) → громкая E_ARRAY_ELEM_NARROW (D44/D54: narrowing не-литералов только через явный
+  `as f32`). Гард узкий (только []f64 в []f32-контексте). pos+neg: plan154_1 9/9
+  (neg_array_elem_narrow EXPECT_COMPILE_ERROR); broad regression 0 новых FAIL. D44 impl-note дополнен.
+
 [2026-06-14] Plan 143.2 — элизия function-entry preempt-check на provably-leaf функциях (D271,
   `[M-opt-leaf-preempt-entry-elision]`, ветка plan-143-leaf-preempt-elision; commits a35e4df7 plan +
   d37dd913 feat + c2d98141 test + 9de1cbcf fix). Sibling §2.B к D270 §A (loop-back-edge элизия).
