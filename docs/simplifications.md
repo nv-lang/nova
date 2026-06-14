@@ -36189,11 +36189,14 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
     (2) `NovaRes_`-ветка в `emit_field_eq` + `==`-оператор-маршрутизация → tag + Ok/Err payload
     через `novares_ok_err`. Верифицировано: custom 1/2-param sum (int/str, pos/neg variant+
     payload), Result==Result (совпадающие типы int/int + int/str), Option не задет; broad-
-    регрессия (8 батчей) чиста (все suspects pre-existing/флак). **Остаток
-    `[M-153-result-eq-literal-expected-type]`:** `result == Ok(x)` с non-default-E
-    (`binary_search`→Result[int,int]) — литерал `Ok(x)` дефолтит E=str, не унифицируется с LHS
-    (expected-type propagation в чекере — глубокий change, отложен; `Result[_,str]` уже
-    работает; binary_search на `match`).
+    регрессия (8 батчей) чиста (все suspects pre-existing/флак). **`result == Ok(x)` / `== Err(x)`
+    для non-default-E ✅ ДОПОЛНИТЕЛЬНО ПОЧИНЕНО** (`[M-153-result-eq-literal-expected-type]`
+    RESOLVED): голый `Ok/Err`-литерал дефолтил E=str (чекер оставляет variant-ctor без типа by
+    design → codegen-дефолт), не совпадал по типу с LHS → `binary_search()==Ok(2)` CC-FAIL'ил.
+    Фикс codegen-local: в `==`-NovaRes_-ветке, при расхождении типов операндов, голый result-ctor
+    переэмитится под concrete `NovaRes_<n>` другой стороны (`reemit_result_variant_as` +
+    `expr_is_result_ctor`). Тест `plan153_3/result_eq_literal`. Частный случай общего
+    `Q-overload-result-type` (expected-type propagation для `@into` остаётся открытым).
 
 - **Plan 140.3 — унификация failure-классификации + interp-сообщения контрактов (2026-06-13)**: (1) assert и
   контракт-нарушение теперь тегают `error_kind = NOVA_THROW_PANIC` как `nv_panic` (раньше — только error_msg,

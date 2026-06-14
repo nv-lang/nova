@@ -4992,16 +4992,16 @@ let-аннотации. Multi-target Into — пока не покрываетс
 (`Into[T]` — частный случай через single-target), Plan 11 (bootstrap
 для осей 1, 2, 4).
 
-**Родственный кейс — структурное `==` с variant-литералом (Plan 153.3, 2026-06-14).** Тот же
-дефицит bidirectional inference всплыл **вне** overload-резолва. `result == Ok(x)`, где
-`result : Result[int, int]` (non-default `E`): литерал `Ok(x)` инферится bottom-up как
-`Result[int, str]` (`E` дефолтит `str`), НЕ унифицируется с типом LHS → структурный eq сравнивает
-два разных `NovaRes_<…>` (payload `int` vs `str`) → **CC-FAIL**. Нужно то же самое: для `Eq/Neq`
-протянуть тип одного операнда как **expected** другому (top-down), чтобы variant-литерал инферил
-свои type-params из контекста. Общий `Result[_, str]` (E совпадает с дефолтом) уже работает после
-структурного `==`-фикса (commit `1cc82de5`); workaround — `match` или явная аннотация. Tracked:
-`[M-153-result-eq-literal-expected-type]`. **Усиливает мотивацию** реализовать expected-type
-propagation как **общий** top-down проход (binop-операнды, не только overload-резолв `@into`).
+**Родственный кейс — структурное `==` с variant-литералом (Plan 153.3, 2026-06-14) ✅ ЗАКРЫТ
+точечно.** Тот же дефицит bidirectional inference всплыл **вне** overload-резолва: `result == Ok(x)`,
+где `result : Result[int, int]` (non-default `E`) — литерал `Ok(x)` инферился bottom-up как
+`Result[int, str]` (`E` дефолтит `str`), не совпадал с LHS → структурный eq сравнивал два разных
+`NovaRes_<…>` → CC-FAIL. **Решено codegen-точечно** (`[M-153-result-eq-literal-expected-type]`
+RESOLVED): в `==`-NovaRes_-ветке, если типы операндов `Eq/Neq` расходятся и одна сторона — голый
+`Ok/Err`-литерал, codegen переэмитит её под concrete `NovaRes_<n>` другой стороны
+(`reemit_result_variant_as`). Это **частное** решение для binop-`==`; **общий** top-down expected-type
+проход (overload-резолв `@into`, return-position, record-поле) — **остаётся открытым** в этом Q.
+Точечный codegen-фикс == усиливает мотивацию для общей реализации (та же механика, шире охват).
 
 ---
 

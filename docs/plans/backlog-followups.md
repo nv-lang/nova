@@ -90,6 +90,7 @@
 | `[M-opt-value-sum-types]` | Compiler-inferred value(stack)/heap для sum-типов (recursion+size+escape; прозрачно — immutable); payload-less интернирование. | new perf-план (Plan 120/139) | P2 |
 | `[M-opt-elide-proven-overflow-checks]` | Z3/range-элизия доказуемо-безопасных integer-overflow чеков (proven→elide, как Plan 140). | new perf-план / Plan 140 | P2 |
 | `[M-opt-preempt-strided-loop]` | `nova_preempt_check()` в back-edge КАЖДОГО цикла блокирует clang-векторизацию. **✅ Part A+B DONE (Plan 143, merge `7c047a1b`, 2026-06-14):** (A) skip preempt-check на provably-short const-bound range-циклах (оба bound'а — int-литералы, count ∈ [0,1024] → starvation-safe, разблокирует векторизацию); (B) `for i in lo..hi { dst[i]=src[i] }` на Vec[T] → overlap-safe bulk copy (memmove fast-path + element-loop fallback на destructive forward-overlap; inclusive-overflow-safe). **Adversarial-review (6 агентов) + эмпирический probe** нашли 2 бага — закрыты: writable offset-overlap view'ы (`a=v[1..]; a[i]=b[i]`) пропагируют ≠ memmove → runtime overlap-guard; inclusive `hi+1` при i64::MAX = UB → `last` без +1. plan143: 9 copy + 3 preempt кейса PASS; регрессия 0 new fail (Vec/collection слайс + concurrency). **🟡 Остаётся long-term:** signal-based async preemption (Go 1.14 SIGURG) — general для variable-bound циклов без per-iteration call. **Cross-link Plan 144:** SIGURG = ОБЩИЙ async-yield (preempt + GC safe-point, [§7.4](144-precise-gc-implementation.md)). | Plan 143 (A+B done) / SIGURG → 144 §7.4 | 🟡 A+B done, SIGURG P2 |
+| `[M-opt-leaf-preempt-entry-elision]` | Элидировать **function-prologue** `nova_preempt_check()` ([emit_c.rs:14925](../../compiler-codegen/src/codegen/emit_c.rs#L14925), Plan 44.7 — «first statement каждой Nova-функции») на функциях, провабельно достигающих safepoint БЕЗ своего entry-check. Тривиальные leaf-форвардеры (напр. `StringBuilder.append(f32)` → `append(f64)`) сейчас несут лишний барьер-call. **Safe subset (доступен сразу):** no-loop + no-call (pure leaf, straight-line return) → элидировать тривиально. **Full (correct, prod):** элидировать iff НЕТ циклов И функция НЕ на call-cycle (не рекурсивна прямо/косвенно) И все callee статически разрешены; **conservative KEEP** при indirect/closure-call/FFI-callback (recursion/indirect = главный hazard, default=KEEP — та же семья, что Plan 144 may-GC §7.5#2). Interprocedural call-graph SCC; whole-program моно помогает. Частично снимается SIGURG'ом. **Self-contained** (codegen-анализ, без cross-module dep). Home **Plan 143 §2.B** (perf, correctness-neutral, sibling `[M-opt-preempt-strided-loop]`). | Plan 143 §2.B | P2 |
 
 ## P2 — Ergonomics / stdlib combinators
 
@@ -278,6 +279,10 @@
   `.min(b)` метод-форма падает на коллизии с системным C-макросом `max`/`min` (нет в
   1-арговых `int_method_to_c`/`f64_method_to_c`). Нужен рантайм-хелпер `nova_int_max` /
   `fmax`-роутинг. НЕ гейтит Vec-ядро (cap-shrink-to-fit = `cap_to(len())`). Отложен из 153.1 Ф.0.
+- **`[M-153.1-of-vs-from-sweep]`** (planned, P3, churn): конструктор-конвенция формализована
+  (план 153.1 / D259 + док `from` в core.nv направляет на `of`): литералы → `Vec[T].of(a,b,c)`,
+  конверсия коллекции → `from(coll)`. Опциональный sweep существующих `from([литерал])` → `of(...)`
+  в тестах/stdlib — низкий приоритет (оба корректны; чистый churn в большом diff'е).
 
 ## Follow-up: Plan 153.6 (Vec-протоколы Hash + FromIterator)
 - **`[M-153.6-vec-hashmap-key-eq]`** (planned, P2, home **Plan 153.6 / HashMap**): `Vec[T]`
@@ -304,17 +309,17 @@
   как **introselect** — median-of-three quickselect (O(n) средн.) + depth-guard fallback на
   heapsort (O(n log n) worst, без O(n²)), контракт `k ∈ [0,len)`. Тест `plan153_3/select_nth` 4/4
   + OOB-panic neg.
-- **`[M-153-result-eq-literal-expected-type]`** (planned, P2, home **codegen / type-inference**):
-  `result == Ok(x)` где Result имеет **non-default E** (≠`str`; напр. `binary_search`→`Result[int,
-  int]`) — литерал `Ok(x)` инферит `E=str` (**codegen-дефолт** `emit_c.rs:5172`
-  `NovaRes_nova_int_nova_str`, потому что **чекер оставляет variant-ctor без типа by design** —
-  тест `infer_call_sum_variant_stays_unknown`), не унифицируется с типом LHS → два разных
-  `NovaRes_<…>` → структурный eq сравнивает несовпадающие payload → **CC-FAIL**. Фикс —
-  expected-type propagation для Ok/Err-литерала в `==` (codegen: протянуть concrete Result-тип
-  одного операнда в эмиссию литерала другого). **Pre-existing project-level gap** (класс
-  Q-overload-result-type, отложен с мая) — НЕ упрощение, внесённое 153.3: `Result[_, str]` уже
-  работает, `binary_search` использует `match`. Same-type guard НЕ добавляли (CC-FAIL громче
-  silent-wrong).
+- **`[M-153-result-eq-literal-expected-type]`** ✅ **RESOLVED** (codegen re-emit): `result == Ok(x)`
+  / `== Err(x)` для Result с **non-default E** (≠`str`; напр. `binary_search`→`Result[int,int]`)
+  теперь работает. Был баг: голый литерал `Ok(x)` инферил `E=str` (codegen-дефолт `emit_c.rs:5172`,
+  т.к. чекер оставляет variant-ctor без типа by design — тест `infer_call_sum_variant_stays_unknown`)
+  → `binary_search() == Ok(2)` сравнивал два разных `NovaRes_<…>` → CC-FAIL. **Фикс** (codegen-local,
+  `==`-NovaRes_-бранч): если типы операндов `Eq/Neq` расходятся и одна сторона — голый `Ok/Err`-
+  литерал, переэмитить её под concrete `NovaRes_<n>` другой стороны (`reemit_result_variant_as` +
+  `expr_is_result_ctor`, payload-cast). Тест `plan153_3/result_eq_literal` (binary_search ==Ok/Err
+  non-default-E + explicit Result[int,int] + default-E Result[int,str] не сломан). Частный случай
+  отложенного-с-мая `Q-overload-result-type` (general expected-type propagation для overload-резолва
+  `@into` остаётся открытым — см. Q).
 
 ## Follow-up: Plan 153.4 (slices — value-record element typedef)
 - **`[M-153.4-vec-value-record-field-access]`** (planned, P2, home **Plan 153.4 / Plan 96 H3**):
