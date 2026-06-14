@@ -4523,7 +4523,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn cast_from_nova_int(value: &str, target_ty: &str) -> String {
         if target_ty == "nova_int" { return value.to_string(); }
         if target_ty == "nova_f64" {
-            return format!("({{ union {{ nova_int i; nova_f64 f; }} _u; _u.i = ({}); _u.f; }})", value);
+            // Plan 145 — portable bit-reinterpret (MSVC C2059): nova_bits_i2f
+            // (array.h) вместо GNU statement-expression union-pun.
+            return format!("nova_bits_i2f({})", value);
         }
         if target_ty.ends_with('*') {
             return format!("({})(intptr_t)({})", target_ty, value);
@@ -19209,9 +19211,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             let payload_expr = if err_c.ends_with('*') {
                                 format!("(void*)({}->payload.Err._0)", try_tmp)
                             } else {
+                                // Plan 145 — portable heap-box (MSVC C2059): nova_box_value
+                                // (array.h) вместо stmt-expr; src = адресуемое поле Err._0.
                                 format!(
-                                    "({{ {ty}* _ep = ({ty}*)nova_alloc(sizeof({ty})); \
-                                     *_ep = {tmp}->payload.Err._0; (void*)_ep; }})",
+                                    "nova_box_value(&({tmp}->payload.Err._0), sizeof({ty}))",
                                     ty = err_c, tmp = try_tmp)
                             };
                             self.line(&format!(
@@ -19321,9 +19324,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         let payload_expr = if err_c.ends_with('*') {
                             format!("(void*)({}->payload.Err._0)", bang_tmp)
                         } else {
+                            // Plan 145 — portable heap-box (MSVC C2059): nova_box_value
+                            // (array.h) вместо stmt-expr; src = адресуемое поле Err._0.
                             format!(
-                                "({{ {ty}* _ep = ({ty}*)nova_alloc(sizeof({ty})); \
-                                 *_ep = {tmp}->payload.Err._0; (void*)_ep; }})",
+                                "nova_box_value(&({tmp}->payload.Err._0), sizeof({ty}))",
                                 ty = err_c, tmp = bang_tmp)
                         };
                         self.line(&format!(
@@ -19788,25 +19792,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                             (None, _) => format!("({})->len", o),
                         };
-                        // Plan 140.2 followup §2: элидировать slice bounds-check
-                        // на доказанных in-range slice-сайтах; иначе always-on.
-                        let slice_chk = if self.index_site_elided(expr.span.start) {
-                            String::new()
+                        // Plan 145 — portable Vec slice (MSVC C2059): nova_vec_slice_chk/
+                        // nochk (array.h) вместо GNU statement-expression. Plan 140.2 §2
+                        // элизия bounds-check на proven-in-range сайтах -> _nochk.
+                        // (open-ended `v[a..]` двоично вычисляет `o` как и прежняя форма.)
+                        let slice_helper = if self.index_site_elided(expr.span.start) {
+                            "nova_vec_slice_nochk"
                         } else {
-                            "if (_sf < 0 || _st < _sf || _st > _sv->len) { char _sbuf[96]; \
-int _sn = snprintf(_sbuf, 96, \"Vec: slice [%lld..%lld] out of bounds for length %lld\", \
-(long long)_sf, (long long)_st, (long long)_sv->len); \
-if (_sn < 0) _sn = 0; if (_sn > 95) _sn = 95; \
-nv_panic((nova_str){.ptr=(const uint8_t*)_sbuf,.len=(nova_int)_sn}); } ".to_string()
+                            "nova_vec_slice_chk"
                         };
-                        // Statement-expr: bounds-check (elidable), then build view struct.
                         return Ok(format!(
-                            "(({{ {vty}* _sv = ({o}); nova_int _sf = ({from}); nova_int _st = ({to}); {chk}\
-nova_int _sl = _st - _sf; \
-{vty}* _sr = ({vty}*)nova_alloc(sizeof({vty})); \
-_sr->data = ({ety}*)(_sv->data + _sf); _sr->len = _sl; _sr->cap = _sl; \
-_sr; }}))",
-                            vty = vec_ty, o = o, from = from_expr, to = to_expr_inner, ety = elem_c, chk = slice_chk
+                            "({vty}*){helper}((void*)({o}), ({from}), ({to}), sizeof({ety}))",
+                            vty = vec_ty, helper = slice_helper, o = o,
+                            from = from_expr, to = to_expr_inner, ety = elem_c
                         ));
                     }
                     let len_expr = if obj_ty == "nova_str" {
@@ -19851,23 +19849,20 @@ _sr; }}))",
                         // elidable on proven-in-range sites + UTF-8 codepoint-boundary
                         // guard (data-dependent → always-on). `from_expr`/`to_expr` are
                         // byte offsets; open-ended end is `_s.len` (set in len_expr).
-                        let bounds_chk = if self.index_site_elided(expr.span.start) {
-                            String::new()
-                        } else {
-                            "if (_sf < 0 || _st < _sf || _st > _s.len) { char _sbuf[112]; \
-int _sn = snprintf(_sbuf, 112, \"str: slice [%lld..%lld] out of bounds for byte-length %lld\", \
-(long long)_sf, (long long)_st, (long long)_s.len); \
-if (_sn < 0) _sn = 0; if (_sn > 111) _sn = 111; \
-nv_panic((nova_str){.ptr=(const uint8_t*)_sbuf,.len=(nova_int)_sn}); } ".to_string()
-                        };
-                        return Ok(format!(
-                            "(({{ nova_str _s = ({o}); nova_int _sf = ({from}); nova_int _st = ({to}); \
-{chk}if ((_sf < _s.len && (((unsigned char)_s.ptr[_sf]) & 0xC0) == 0x80) || \
-(_st < _s.len && (((unsigned char)_s.ptr[_st]) & 0xC0) == 0x80)) \
-nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
-(nova_str){{.ptr = _s.ptr + _sf, .len = _st - _sf}}; }}))",
-                            o = o, from = from_expr, to = to_expr, chk = bounds_chk
-                        ));
+                        // Plan 145 — portable str slice (MSVC C2059): nova_str_slice_*
+                        // (array.h) вместо GNU statement-expression. Plan 152.1 byte-range
+                        // zero-copy view + UTF-8 codepoint-boundary guard (внутри хелпера);
+                        // Plan 140.2 элизия bounds -> _nochk (guard остаётся, data-dependent).
+                        // open-ended `s[a..]` -> *_to_end_* (конец = s.len; single-eval `o`).
+                        let str_elided = self.index_site_elided(expr.span.start);
+                        if end.is_none() {
+                            let h = if str_elided { "nova_str_slice_to_end_nochk" }
+                                    else { "nova_str_slice_to_end_chk" };
+                            return Ok(format!("{h}(({o}), ({from}))", h = h, o = o, from = from_expr));
+                        }
+                        let h = if str_elided { "nova_str_slice_nochk" } else { "nova_str_slice_chk" };
+                        return Ok(format!("{h}(({o}), ({from}), ({to}))",
+                            h = h, o = o, from = from_expr, to = to_expr));
                     } else if let Some(elem) = obj_ty.strip_prefix("NovaArray_") {
                         let elem = elem.trim_end_matches('*').trim();
                         return Ok(format!("nova_array_slice_{}({}, {}, {})", elem, o, from_expr, to_expr));
