@@ -1,0 +1,27 @@
+// Plan 143.2 [M-opt-leaf-preempt-entry-elision] — NEGATIVE (entry-check KEPT).
+//
+// `is_even` → `is_odd` → `is_even` form a 2-node strongly-connected component
+// (mutual recursion, SCC>1). Both functions sit on the cycle, so BOTH MUST
+// KEEP their prologue `nova_preempt_check();` (it is sufficient that the cycle
+// retains ≥1 safepoint; the analysis conservatively keeps every member).
+//
+// Verify in negative_mutual_recursion.c: bodies of BOTH `is_even` and
+// `is_odd` contain `nova_preempt_check();` (NOT the elided marker).
+
+module plan143_2.negative_mutual_recursion
+
+fn is_even(n int) -> bool {
+    if n == 0 { true } else { is_odd(n - 1) }
+}
+
+fn is_odd(n int) -> bool {
+    if n == 0 { false } else { is_even(n - 1) }
+}
+
+test "mutual recursion parity" {
+    assert(is_even(0))
+    assert(is_odd(1))
+    assert(is_even(4))
+    assert(is_odd(7))
+    assert(is_even(10))
+}

@@ -1,0 +1,32 @@
+// Plan 143.2 [M-opt-leaf-preempt-entry-elision] — NEGATIVE (entry-check KEPT).
+//
+// `callback_target` is a pure leaf (it would otherwise ELIDE), BUT it is taken
+// as a first-class VALUE inside an ANALYZED fn body (`make_handler`, NOT a
+// test block — the pre-pass walks fn bodies only). Once a function's address
+// is taken it can become the target of an indirect call from anywhere (incl. a
+// future cycle), so the analysis flags it `address_taken` → `callback_target`
+// MUST KEEP its prologue `nova_preempt_check();`.
+//
+// `dispatch` calls its fn-value parameter (`f(x)`) → indirect → KEEP too.
+//
+// Verify in negative_address_taken.c: bodies of `callback_target` and
+// `dispatch` contain `nova_preempt_check();` (NOT elided).
+
+module plan143_2.negative_address_taken
+
+// Pure leaf — but address-taken in make_handler below, so KEPT.
+fn callback_target(x int) -> int => x + 100
+
+fn dispatch(f fn(int) -> int, x int) -> int => f(x)
+
+// Normal fn body that takes `callback_target` as a value and dispatches
+// through it. The value-reference here flags `callback_target` address-taken.
+fn run_handler(x int) -> int {
+    ro g = callback_target            // address-taken (value position)
+    dispatch(g, x)
+}
+
+test "address-taken fn kept" {
+    assert(run_handler(1) == 101)
+    assert(callback_target(2) == 102)
+}
