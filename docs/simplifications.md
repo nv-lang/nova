@@ -36173,7 +36173,8 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
     (Compare-bound где упорядочено; comparator'ы возвращают int — нет Ordering, D183;
     `binary_search -> Result[int,int]` Ok=found/Err=insert-point). **sort:** bottom-up
     **STABLE merge sort** (O(n log n), O(n) scratch) под `@sort`/`@sort_by`/`@sort_by_key`
-    + `*_unstable` (пока **alias stable** — perf followup `[M-153.3-sort-unstable-inplace]`).
+    + `*_unstable` = настоящий **in-place heapsort** (commit `468bccf5` — НЕ alias; O(n log n)
+    worst, O(1) extra). UPD: ниже отдельная запись «153.3 production-grade — снятие упрощений».
     **reorder:** `@dedup`/`@dedup_by`/`@dedup_by_key` (consecutive, O(n)),
     `@partition(pred)->int` (in-place unstable, returns split-point). Всё на чистых Nova-
     замыканиях (делегирование `|a,b| a.compare(b)` и `key(a).compare(key(b))` работает) +
