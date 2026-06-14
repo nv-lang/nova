@@ -37644,3 +37644,17 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   closure-вызов валидируется через fn-type/codegen. Verify: trivial_congruence PASS 3/3 (было
   8/8 FAIL); guard-тест plan153_1/resize_with_free_fn_shadow (free `fn f` + resize_with);
   contracts 251/0 (+57skip), broad regression 0 новых FAIL. НЕ Plan 154.1 — отдельный коммит.
+
+[2026-06-14] Plan 154.1 followup: f32 Display/Debug [M-154.1-f32-display-debug] RESOLVED + общий
+  codegen-фикс self-call overload-резолва. (1) f32 теперь как остальные примитивы: conv.h
+  nova_f32_to_str/_to_debug_str (widen f32->double + f64-форматтер; %g 6-знач прячет хвост),
+  @append(f32) = @append(x as f64), ветка nova_f32 в interp display+debug map + exclusion list,
+  #impl(Display/Debug) fn f32. (2) Корень-фикс (по замечанию автора — НЕ workaround): self-call
+  `@m(args)` в emit_c.rs (SelfAccess-dispatch ~20306) тайбрейкал overload'ы ТОЛЬКО по recv_mutable,
+  игнорируя типы аргументов -> `@append(x as f64)` (все @append mut) брал ПЕРВЫЙ (базовый str)
+  overload -> C passing nova_f64 to nova_str. Фикс: сперва фильтр own_inst по param_c_types==arg_c_types,
+  потом тайбрейк по recv_mutable. Existing self-@append всегда целили str-базу -> латентный баг.
+  Verify: plan154_1 6/6 (+pos_f32_display_debug); broad regression 0 новых FAIL (plan62=7 baseline,
+  plan91 даже 2/0, plan124_8 40/0, plan131/139/153_1/contracts чисто). Новый отдельный баг найден:
+  Vec[f32].from([f64-литералы]) мис-коэрсит -> [M-154.1-f32-literal-coercion] (не Display/Debug).
+  [M-154.1-required-conformance] перенесён в Q37.

@@ -221,15 +221,17 @@
   Расширение robustness на static-путь (`free_fn_c_name` fall-through
   emit_c.rs:11129). Под Variant B конкретный `str.from_debug`-кейс мёртв, но класс
   остаётся.
-- **`[M-154.1-required-conformance]`** (planned, P3): возможный переход opt-in →
-  required (номинальная конформность, как Rust) отдельным шагом после 154.1.
-- **`[M-154.1-f32-display-debug]`** (floating, P2): `f32` не получил конкретных
-  `#impl(Display)`/`#impl(Debug)` — нет conv.h-форматтера `nova_f32_*` и
-  `@append(f32)`-overload'а; `${f32}`-body рекурсировал бы (f32 не в interp
-  primitive-direct map). Сейчас `Vec[f32].debug` даёт громкий CC-FAIL (f32 идёт
-  через str.from-fallback → C type mismatch, НЕ через Ф.1-guard) — не silent, но
-  и не зелёный. Лечить: conv.h `nova_f32_to_str`/`_to_debug_str` (f32→double) +
-  `@append(f32)` + ветка в interp-map → затем `#impl(Display/Debug) fn f32`.
+- **`[M-154.1-required-conformance]`** → перенесён в **[Q37](../../spec/open-questions.md#q37-конформность-протоколов-opt-in-структурная-vs-required-номинальная--частично-2026-06-13-plan-1541--d268)** (открытый вопрос дизайна, не actionable-работа): opt-in (структурная) vs required (номинальная) конформность.
+- **`[M-154.1-f32-display-debug]`** ✅ **RESOLVED 2026-06-14**: f32 получил `#impl(Display)`/`#impl(Debug)`.
+  conv.h `nova_f32_to_str`/`_to_debug_str` (widen→double + f64-форматтер) + `@append(f32)`
+  (`x as f64`) + ветка в interp-map. Заодно починен общий codegen-баг: self-call `@m(args)`
+  overload-резолв по типам аргументов (был только по `recv_mutable` → `@append(x as f64)`
+  брал базовый str-overload). plan154_1 6/6.
+- **`[M-154.1-f32-literal-coercion]`** (floating, P2, **NEW** 2026-06-14): `Vec[f32].from([1.5, 2.5])`
+  мис-коэрсит f64 array-литералы в f32 (бит-реинтерпретация → мусорные значения в debug-выводе).
+  Скаляр `ro x f32 = 1.5` коэрсится верно; explicit `v.push(x)` тоже. Проблема — f32 элементы
+  в **array-литерале** под `Vec[f32].from`. Лечить: коэрсия f64-литералов → f32 при инференсе
+  типа элемента массива из контекста `Vec[f32]`. Не про Display/Debug.
 
 ## Follow-up: Plan 153.1 (Vec core API — отложенные из-за codegen-лимитов)
 - **`[M-153.1-cap-setter-overload]`** ✅ **RESOLVED** (через фикс

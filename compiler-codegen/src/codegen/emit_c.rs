@@ -20303,23 +20303,42 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         // downstream dispatch (str_method_to_rt, CancelToken, etc.) —
                         // fall through for those so they are handled correctly.
                         let self_is_mut = self.current_receiver_is_mut;
+                        // Plan 154.1 fix (2026-06-14): resolve self-call overloads by
+                        // ARGUMENT C-types, not just receiver mutability. Previously,
+                        // with multiple `@m` overloads the code tiebroke ONLY on
+                        // recv_mutable → `@append(x as f64)` (all `@append` overloads
+                        // are `mut`) picked the FIRST (base `str`) overload and emitted
+                        // a call passing nova_f64 to the str-typed param. Now: narrow to
+                        // overloads whose param C-types match the arg C-types first; then
+                        // tiebreak by recv_mutable among the matches. (Existing self
+                        // `@append` calls all targeted the str base, so this latent bug
+                        // was never exercised before f32's `@append(x as f64)`.)
+                        let arg_c_types: Vec<String> = args.iter()
+                            .map(|a| self.infer_expr_c_type(a.expr()))
+                            .collect();
                         let c_fn_opt = self.method_overloads
                             .get(&(recv_type.clone(), method_stripped.clone()))
                             .and_then(|sigs| {
-                                // Own (non-delegated, non-external) instance method wins.
-                                // Plan 135 Ф.2: tiebreak by recv_mutable when multiple
-                                // overloads exist (e.g. `@kind()` ro vs mut inside a
-                                // mut-receiver body calls mut overload).
-                                let own_inst: Vec<_> = sigs.iter()
+                                let own_inst: Vec<&MethodSig> = sigs.iter()
                                     .filter(|s| s.is_instance && !s.is_delegated && !s.is_external)
                                     .collect();
-                                if own_inst.len() > 1 {
-                                    own_inst.iter()
+                                // Narrow by argument types (arity + exact C-type match).
+                                let arg_matched: Vec<&MethodSig> = own_inst.iter().copied()
+                                    .filter(|s| s.param_c_types.len() == arg_c_types.len()
+                                        && s.param_c_types.iter().zip(arg_c_types.iter())
+                                            .all(|(want, got)| want == got))
+                                    .collect();
+                                let pool: Vec<&MethodSig> =
+                                    if !arg_matched.is_empty() { arg_matched } else { own_inst };
+                                if pool.len() > 1 {
+                                    // Plan 135 Ф.2: tiebreak by recv_mutable (`@kind()`
+                                    // ro vs mut inside a mut-receiver body).
+                                    pool.iter()
                                         .find(|s| s.recv_mutable == self_is_mut)
-                                        .or_else(|| own_inst.first())
+                                        .or_else(|| pool.first())
                                         .map(|s| s.c_name.clone())
                                 } else {
-                                    own_inst.into_iter().map(|s| s.c_name.clone()).next()
+                                    pool.first().map(|s| s.c_name.clone())
                                 }
                                 .or_else(|| {
                                     // Fallback: delegated proxy (also non-external).
@@ -25315,6 +25334,8 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                             "nova_char" => Some("nova_char_to_debug_str"),
                             "nova_bool" => Some("nova_bool_to_debug_str"),
                             "nova_f64" => Some("nova_f64_to_debug_str"),
+                            // Plan 154.1 [M-154.1-f32-display-debug].
+                            "nova_f32" => Some("nova_f32_to_debug_str"),
                             "nova_int" => Some("nova_int_to_debug_str"),
                             _ => None,
                         }
@@ -25325,6 +25346,8 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                             "nova_char" => Some("nova_char_to_str"),
                             "nova_bool" => Some("nova_bool_to_str"),
                             "nova_f64" => Some("nova_f64_to_str"),
+                            // Plan 154.1 [M-154.1-f32-display-debug].
+                            "nova_f32" => Some("nova_f32_to_str"),
                             "nova_int" => Some("nova_int_to_str"),
                             _ => None,
                         }
@@ -25361,7 +25384,7 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                     if !matches!(e.kind, ExprKind::CharLit(_))
                         && !matches!(arg_ty.as_str(),
                             "nova_str" | "nova_char" | "nova_bool"
-                            | "nova_f64" | "nova_int")
+                            | "nova_f64" | "nova_f32" | "nova_int")
                     {
                         let arg_type = arg_ty
                             .trim_start_matches("Nova_")

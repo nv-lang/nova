@@ -1,0 +1,48 @@
+// Plan 154.1 [M-154.1-f32-display-debug]: f32 Display/Debug parity with other
+// primitives — direct, interp, and Vec[f32].
+module plan154_1.pos_f32_display_debug
+
+import std.collections.vec.{Vec}
+
+fn dsp(x str) -> str { x }
+
+test "f32 display + debug direct" {
+    consume a = StringBuilder.new()
+    ro x f32 = 1.5
+    x.display(a)
+    assert(a.as_str() == "1.5")
+    consume b = StringBuilder.new()
+    x.debug(b)
+    assert(b.as_str() == "1.5")
+}
+
+test "f32 interp ${x} / ${x:?}" {
+    ro x f32 = 2.5
+    assert(dsp("${x}") == "2.5")
+    assert(dsp("${x:?}") == "2.5")
+}
+
+test "Vec[f32] display + debug" {
+    // NOTE: explicit f32 values via push — `Vec[f32].from([1.5, 2.5])` mis-coerces
+    // f64 array literals to f32 (separate bug [M-154.1-f32-literal-coercion]).
+    mut v = Vec[f32].new()
+    ro x f32 = 1.5
+    ro y f32 = 2.5
+    v.push(x)
+    v.push(y)
+    consume a = StringBuilder.new()
+    v.debug(a)
+    assert(a.as_str() == "Vec[1.5, 2.5]")
+    consume b = StringBuilder.new()
+    v.display(b)
+    assert(b.as_str() == "Vec[1.5, 2.5]")
+}
+
+// StringBuilder typed @append(f32) overload (resolves via the arg-type self-call
+// fix in emit_c.rs).
+test "StringBuilder append f32" {
+    consume sb = StringBuilder.new()
+    ro x f32 = 3.5
+    sb.append(x)
+    assert(sb.as_str() == "3.5")
+}

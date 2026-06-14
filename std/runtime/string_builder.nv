@@ -134,6 +134,9 @@ export fn StringBuilder mut @append(ro arr []u8) -> @ { @buf.append(arr); @ }
 export fn StringBuilder mut @append(n int) -> @ { @append(str.from(n)) }
 export fn StringBuilder mut @append(x f64) -> @ { @append(str.from(x)) }
 export fn StringBuilder mut @append(b bool) -> @ { if b { @append("true") } else { @append("false") } }
+// Plan 154.1 [M-154.1-f32-display-debug]: f32 widens to f64 (lossless), reuses
+// the f64 path → nova_f64_to_str.
+export fn StringBuilder mut @append(x f32) -> @ { @append(x as f64) }
 
 // Append строку s ровно n раз. n <= 0 → no-op.
 // Single reserve(total) → один realloc вместо n× амортизированного doubling.
