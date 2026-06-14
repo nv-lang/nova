@@ -37797,3 +37797,32 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   `result == Ok(x)` для non-default-E — pre-existing project-level inference gap (чекер оставляет
   variant-ctor без типа by design → codegen дефолтит E=str, emit_c.rs:5172), класс
   Q-overload-result-type (отложен с мая), не внесён 153.3 (`match` работает).
+
+[2026-06-14] Plan 143.2 — элизия function-entry preempt-check на provably-leaf функциях (D271,
+  `[M-opt-leaf-preempt-entry-elision]`, ветка plan-143-leaf-preempt-elision; commits a35e4df7 plan +
+  d37dd913 feat + c2d98141 test + 9de1cbcf fix). Sibling §2.B к D270 §A (loop-back-edge элизия).
+  RCA-мотивация: Plan 44.7 эмитит `nova_preempt_check()` ПЕРВЫМ стейтментом КАЖДОЙ Nova-функции
+  (cooperative M:N safepoint). Тривиальные leaf-форвардеры (`StringBuilder.append(f32)` → `append(f64)`,
+  масса stdlib-листьев) несут этот барьер-call зря — он не нужен, т.к. fiber крутится без yield'а ТОЛЬКО
+  через цикл (его back-edge check сохранён отдельно) или рекурсию (цикл в call-графе). Решение: **source-
+  level whole-program pre-pass** `compiler-codegen/src/codegen/preempt_keep.rs::compute_preempt_keep_set` —
+  call-граф над FnDecl-символами (entry module.items + импортируемые peer_files), per-fn флаги
+  indirect/ffi/address_taken, итеративный Tarjan SCC. `KEEP = cycle ∪ makes_indirect ∪ makes_ffi ∪
+  address_taken`; ELIDE иначе. Хранится на CEmitter, populated в emit_module ДО emit-цикла; emit_fn
+  prologue эмитит check только для key ∈ KEEP. **Соундно над монтоморфизацией:** KEEP-статус шаблона
+  (определяется ИСХОДНИКОМ) наследуется всеми моно/erased-инстансами через тот же ключ; over-approximated
+  рёбра только ДОБАВЛЯЮТ KEEP → ни один рекурсивный цикл не теряет safepoint. Conservative default: любой
+  неразрешённый/cross-module callee, named/spread-args, ambiguous overload, любое сомнение → KEEP.
+  **Adversarial-review (≥5 линз) + эмпирический probe** нашли РЕАЛЬНУЮ дыру: on-demand emit-пути
+  (emit_monomorphized_fn/_method, emit_generic_fn_erased/_method_erased) лоуэрили тело БЕЗ prologue-check →
+  рекурсивный generic терял safepoint в КАЖДОМ моно-инстансе (starvation-risk). Фикс Ф.4: keyed-check в
+  mono/erased-пути (инстанс наследует KEEP шаблона) + unconditional KEEP в closure/trailing-block/spawn-
+  fiber-entry (без source-key). Probe подтвердил: рекурсивный `gcount[T]` держит check в обоих инстансах,
+  non-recursive `gid[T]` элидит. Acceptance: plan143_2 7/7 (positives элидированы — pure_leaf/pure_branch/
+  leaf_callee/forward_once/forward_chain; negatives KEPT — self/mutual-recursion, indirect/closure, FFI,
+  address-taken; проверено в сгенерённом C). Регрессия 0 net-new fail (plan90_1/131/138/101_*/136/125_1/
+  139/147/143/143_2 + concurrency preempt-слайс; единственный non-pass bare_t_identity pre-existing E7320
+  на main). Критерий «без упрощений как для прода» соблюдён: conservative-KEEP при любом сомнении (вкл.
+  synthesized-conversion `str.from` — нет FnDecl → KEEP), sound над моно, никаких shortcut'ов. Остаток —
+  Q-loop-opt-thresholds §B (cross-module precision, minimal-SCC-cut вместо KEEP-all). Ветка НЕ merged
+  (финальный merge делает оператор).
