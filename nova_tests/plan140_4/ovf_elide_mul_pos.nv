@@ -1,0 +1,22 @@
+// REQUIRES_SMT_BACKEND z3
+// Plan 140.4 OE5 (proven `*`): `i * j` с loop-bounded i,j (`0..N`) ⇒
+// `i*j ∈ [0, (N-1)²]` доказывается Z3 (нелинейно, но границы конечны) ⇒
+// `nova_int_checked_mul` элидируется. Неограниченный `a*b` (без фактов) остался бы
+// проверяемым (Z3 → Unknown → консервативно чек, см. ovf_unbounded_panic_neg-аналог).
+// Корректность инвариантна к элизии.
+module plan140_4.ovf_elide_mul_pos
+
+fn mul_sum() -> int {
+    mut total = 0
+    for i in 0..10 {
+        for j in 0..10 {
+            ro prod = i * j
+            total = total + prod
+        }
+    }
+    total
+}
+
+test "loop i*j elided overflow, correct sum" {
+    assert(mul_sum() == 2025)
+}

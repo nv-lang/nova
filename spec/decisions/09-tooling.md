@@ -34,6 +34,13 @@
 > Прочие `@method()` (non-accessor / non-pure / mut-receiver) НЕ кодируются —
 > внятная checker-ошибка (не E2401). Запускает `[M-140-bounds-as-contract]` Part A.
 
+> **AMEND (Plan 140.4, 2026-06-14) — overflow-чеки.** Модель enforce-with-elision
+> теперь покрывает и always-on `int`-overflow проверки (Plan 33.8 Ф.1.2): Z3-
+> доказанные `a OP b` в диапазоне i64 → элидируются (always-safe — всегда;
+> contract-based — лишь при enforced `requires`), недоказанные → checked-форма
+> остаётся (и в release). Полное описание —
+> [D272](#d272-элизия-доказуемо-безопасных-int-overflow-проверок).
+
 > **Note (Plan 33.1, D96):** Атрибуты используют префикс **`#`** (не `@`),
 > см. [D96](#d96-синтаксис-атрибутов-name-без-квадратных-скобок).
 >
@@ -2692,3 +2699,58 @@ Bounds как **декларативный контракт** на `@index`: (1)
   compile-error).
 - [D238] / [D240] — `@index` / `MutIndex` magic (`v[i]` / `v[i] = val`).
 - `[M-140-bounds-as-contract]` — маркер, закрываемый этим блоком.
+
+## D272. Элизия доказуемо-безопасных `int`-overflow проверок
+
+> **Plan 140.4** (`[M-opt-elide-proven-overflow-checks]`); реализует отложенную
+> «Ф.1.3 overflow-VC оптимизация» из Plan 33.8. Sibling к
+> [D257](#d257-vec-index-bounds-как-элидируемый-контракт) (тот — bounds-чеки; этот
+> — overflow-чеки), та же модель enforce-with-elision
+> [D24](#d24-стратегия-smt-проверки-контрактов).
+
+### Проблема
+
+Plan 33.8 Ф.1.2 ([04-effects.md](04-effects.md): `int` overflow = `panic`, D13)
+эмитит **always-on** checked-форму для каждого безграничного `int` `+`/`-`/`*`:
+`nova_int_checked_{add,sub,mul}` → `__builtin_*_overflow` → `nv_panic`. Это
+soundness-guard (нет silent wrap/UB), но в горячих циклах большинство чеков
+доказуемо лишние (`for i in 0..N { … i + j … }` не переполнит i64).
+
+### Решение
+
+`int` моделируется безграничным Z3-`Int` (overflow-концепции у него нет), поэтому
+доказательство — **range-fit**: для `a OP b` доказать
+`INT64_MIN <= (a OP b) <= INT64_MAX` под доступными фактами (литералы, `requires`,
+loop-bounds `for i in lo..hi`, `nat >= 0`). Runtime-чек паникует ⇔ истинный
+математический результат выходит за i64 → доказательство in-range = условие
+элизии. Операнды НЕ ограничиваются искусственно → цель доказуема лишь при реальных
+фактах → **sound by construction**. `*` нелинеен → Z3 часто `Unknown` →
+**консервативно оставляем чек** (никогда не элидируем без пруфа).
+
+### Два proven-множества (граница soundness — как [D257](#d257-vec-index-bounds-как-элидируемый-контракт))
+
+| множество | доказано из | codegen элидит |
+|-----------|-------------|----------------|
+| **always-safe** | loop/code/литералов (без `requires`) | **всегда** — даже под `--contracts=off` / `#unchecked` (пруф контракт-независим) |
+| **contract-based** | с fn-`requires` (Pass B ∖ Pass A) | **только при enforced `requires`** — под `--contracts=off` / `#unchecked(requires)` чек остаётся (requires не enforced ⇒ элизия unsound) |
+
+`int`-overflow panic — реальный safety-guard: **никогда** не элидируется одним лишь
+`#unchecked` — ТОЛЬКО пруфом (always-safe множество контракт-независимо и потому
+элидируется даже под `#unchecked`; contract-based — нет). Реализация: verify
+`prove_int_overflow_sites` (двухпроходный, зеркало `prove_vec_index_sites`,
+non-trivial backend gate); codegen `overflow_site_elided(span)` гейтит две
+binary-эмиссии (`emit_expr` + `emit_expr_with_target_type`).
+
+### Scope (V1)
+
+Binary-выражения `int` `+`/`-`/`*`. Compound-assign (`x += y`) отложен —
+аккумуляторы безграничны (редко доказуемо), отдельный AST-путь →
+`[M-140.4-compound-assign-overflow-elision]`. Sized-типы (wrap, Plan 33.7) и
+`/`/`%`/унарный `-` (нет checked-хелпера) — вне scope.
+
+### Связь
+
+- [D24](#d24-стратегия-smt-проверки-контрактов) / Plan 140 — enforce-with-elision (та же модель).
+- [D257](#d257-vec-index-bounds-как-элидируемый-контракт) / Plan 140.2 — bounds-элизия (sibling-механика).
+- [04-effects.md](04-effects.md) / D13 / Plan 33.8 — `int` overflow = panic (что элидируем).
+- `[M-opt-elide-proven-overflow-checks]` — маркер, закрываемый этим блоком.

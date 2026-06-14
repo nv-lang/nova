@@ -1,0 +1,23 @@
+// REQUIRES_SMT_BACKEND z3
+// Plan 140.4 ([M-opt-elide-proven-overflow-checks]) OE1 (always-safe): `i + j` где
+// i,j — loop-bounded переменные (`0..N`) ⇒ `i + j ∈ [0, 2N)` доказывается Z3 из
+// loop-bounds (БЕЗ requires) ⇒ `nova_int_checked_add(i,j)` элидируется (и под
+// `--contracts=off` тоже — пруф контракт-независим). Аккумулятор `total` безграничен
+// ⇒ его `total + pair` чек остаётся. Корректность инвариантна к элизии (тест
+// проходит и на Trivial). C-инспекция подтверждает элизию (см. план OE1).
+module plan140_4.ovf_elide_loop_pos
+
+fn nested_sum() -> int {
+    mut total = 0
+    for i in 0..10 {
+        for j in 0..10 {
+            ro pair = i + j
+            total = total + pair
+        }
+    }
+    total
+}
+
+test "loop i+j elided overflow, correct sum" {
+    assert(nested_sum() == 900)
+}

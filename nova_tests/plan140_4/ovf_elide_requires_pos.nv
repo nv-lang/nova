@@ -1,0 +1,17 @@
+// REQUIRES_SMT_BACKEND z3
+// Plan 140.4 OE2: contract-based overflow elision. `requires` ограничивает оба
+// операнда ⇒ `a + b ∈ [0, 2000]` доказывается Z3 ⇒ `nova_int_checked_add`
+// элидируется (при `--contracts=enforce`). Под `--contracts=off` чек вернулся бы
+// (см. ovf_contracts_off_panic_neg). Корректность инвариантна к элизии.
+module plan140_4.ovf_elide_requires_pos
+
+fn bounded_add(a int, b int) -> int
+    requires 0 <= a && a <= 1000
+    requires 0 <= b && b <= 1000
+=> a + b
+
+test "requires-bounded add elided, correct" {
+    assert(bounded_add(300, 400) == 700)
+    assert(bounded_add(1000, 1000) == 2000)
+    assert(bounded_add(0, 0) == 0)
+}

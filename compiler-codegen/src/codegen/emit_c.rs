@@ -481,6 +481,14 @@ pub struct CEmitter {
     /// (cross-fn). Элидируются ТОЛЬКО при включённых контрактах — под
     /// `--contracts=off`/`#unchecked` requires не enforced → элизия unsound.
     proven_index_sites_contract: std::collections::HashSet<usize>,
+    /// Plan 140.4 ([M-opt-elide-proven-overflow-checks]): proven `int` `+`/`-`/`*`
+    /// сайты (по span.start), чей результат доказан в диапазоне i64 из LOOP/CODE.
+    /// Codegen элидит `nova_int_checked_*` ВСЕГДА (safe даже под `--contracts=off`).
+    proven_overflow_sites: std::collections::HashSet<usize>,
+    /// Plan 140.4: `int`-арифм. сайты, доказанные ТОЛЬКО с fn-`requires`.
+    /// Элидируются ТОЛЬКО при включённых контрактах — под `--contracts=off` /
+    /// `#unchecked(requires)` requires не enforced → элизия была бы unsound.
+    proven_overflow_sites_contract: std::collections::HashSet<usize>,
     /// Plan 140 Ф.2 (D24 amend): build-level contract opt-out
     /// (`nova build --contracts=off` / `nova-codegen ... --contracts=off`).
     /// Когда `true` — codegen НЕ эмитит НИ ОДНУ контракт-проверку
@@ -1082,6 +1090,8 @@ impl CEmitter {
             proven_contracts: std::collections::HashSet::new(),
             proven_index_sites: std::collections::HashSet::new(),
             proven_index_sites_contract: std::collections::HashSet::new(),
+            proven_overflow_sites: std::collections::HashSet::new(),
+            proven_overflow_sites_contract: std::collections::HashSet::new(),
             contracts_off: false,
             contract_opt_out_fn: crate::ast::ContractOptOut::default(),
             contract_opt_out_module: crate::ast::ContractOptOut::default(),
@@ -1519,6 +1529,32 @@ impl CEmitter {
         self.proven_index_sites.contains(&span_start)
             || (!self.contracts_elided_here()
                 && self.proven_index_sites_contract.contains(&span_start))
+    }
+
+    /// Plan 140.4 ([M-opt-elide-proven-overflow-checks]): proven `int`-overflow
+    /// сайты. `always` — доказаны из loop/code (элидируются всегда); `contract` —
+    /// только с fn-`requires` (элидируются лишь при включённых контрактах).
+    pub fn set_proven_overflow_sites(&mut self, always: &[crate::diag::Span], contract: &[crate::diag::Span]) {
+        self.proven_overflow_sites.clear();
+        for span in always {
+            self.proven_overflow_sites.insert(span.start);
+        }
+        self.proven_overflow_sites_contract.clear();
+        for span in contract {
+            self.proven_overflow_sites_contract.insert(span.start);
+        }
+    }
+
+    /// Plan 140.4: можно ли элидировать `nova_int_checked_*` на сайте `span`?
+    /// loop/code-доказанные — всегда; contract-доказанные — только если контракты
+    /// (`requires`) для этой fn НЕ сняты (`--contracts=off` / `#unchecked(requires)`
+    /// оставляют проверку, т.к. requires там не enforced → элизия была бы unsound).
+    /// Та же логика, что `index_site_elided` — overflow-panic = soundness-guard,
+    /// элидируется ТОЛЬКО пруфом, никогда одним лишь `#unchecked`.
+    fn overflow_site_elided(&self, span_start: usize) -> bool {
+        self.proven_overflow_sites.contains(&span_start)
+            || (!self.contracts_elided_here()
+                && self.proven_overflow_sites_contract.contains(&span_start))
     }
 
     /// Plan 140 Ф.2 (D24 amend): build-level contract opt-out
@@ -17730,7 +17766,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         _ => None,
                     };
                     if let Some(helper) = checked {
-                        return Ok(format!("{}({}, {})", helper, l, r));
+                        // Plan 140.4: элидировать checked-форму на доказанном сайте.
+                        if !self.overflow_site_elided(expr.span.start) {
+                            return Ok(format!("{}({}, {})", helper, l, r));
+                        }
                     }
                 }
                 let op_str = match op {
@@ -18507,7 +18546,12 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         _ => None,
                     };
                     if let Some(helper) = checked {
-                        return Ok(format!("{}({}, {})", helper, l, r));
+                        // Plan 140.4 ([M-opt-elide-proven-overflow-checks]): на
+                        // SMT-доказанных in-range сайтах элидируем checked-форму
+                        // → plain C-оператор ниже (нулевая цена). Иначе always-on.
+                        if !self.overflow_site_elided(expr.span.start) {
+                            return Ok(format!("{}({}, {})", helper, l, r));
+                        }
                     }
                 }
                 let op_str = match op {

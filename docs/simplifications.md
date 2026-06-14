@@ -36372,3 +36372,12 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   starvation, только недополученная оптимизация. Hardcode synthesized-conversion-знаний был бы ИМЕННО
   shortcut, маскирующим недоказанный случай как элидируемый → сознательно отвергнут. Расширения (cross-
   module манифест KEEP-флага, minimal-SCC-cut, synthesized-conversion-регистр) — Q-loop-opt-thresholds §B.
+[2026-06-14] Plan 140.4 (overflow-элизия, D272, ветка plan-140-overflow-elide): V1 покрывает binary-
+  выражения int +/-/* (главный реальный кейс — loop/requires-bounded арифметика). Compound-assign (x += y,
+  codegen AssignOp→nova_int_checked_*) ОТЛОЖЕН → [M-140.4-compound-assign-overflow-elision] (P3): таргеты
+  обычно безграничные аккумуляторы (sum += a[i], редко доказуемо), отдельный Stmt::Assign AST-путь со своей
+  span-привязкой → высокая стоимость, near-zero реализуемая элизия; чек остаётся (sound). НЕ упрощение
+  core-фичи — документированная scope-граница низко-ценного пути (binary covers 95%). Также pre-existing
+  (вне scope): литерал-операнды (i+1, i*2) codegen вообще не чекает (rty литерала ≠ nova_int) — поэтому
+  always-safe тесты используют var+var (i+j) паттерны. * нелинеен → Z3 часто Unknown → консервативно чек
+  (не упрощение — soundness: никогда не элидируем без пруфа).
