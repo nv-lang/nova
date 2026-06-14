@@ -10240,25 +10240,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// До Plan 96 codegen эмитил `(obj)->data[idx]` без проверки —
     /// controlled buffer overflow на запись, UB на чтение (D27 §1632 drift).
     ///
-    /// `obj_expr` и `idx_expr` — уже emit'нутые подвыражения. Тип obj
-    /// выводится через `__typeof__` (Clang/GCC) — корректно работает с
-    /// erasure-кейсами, где статический C-тип не совпадает с runtime
-    /// типом (self-field, array-of-arrays via erased nova_int).
-    /// Каждое подвыражение вычисляется **один** раз (захват в `_a`/`_i`).
+    /// `obj_expr` и `idx_expr` — уже emit'нутые подвыражения; `storage_elem_ty`
+    /// — C-тип ФИЗИЧЕСКОГО элемента буфера (`a->data[i]`), напр. `nova_int` для
+    /// erased-хранилища (self-field, array-of-arrays) или конкретный тип для
+    /// типизированного NovaArray. Вызывающий при необходимости кастует результат
+    /// к «реальному» типу (см. call-sites: `(({real})({bchk}))`).
     ///
-    /// Форма `*({ ... &_a->data[_i]; })` — statement-expression возвращает
-    /// pointer (rvalue), затем `*` deref'ит в lvalue. Это обходит Clang-
-    /// ограничение «stmt-expr is not lvalue» (GCC принимает stmt-expr-as-lvalue
-    /// напрямую, Clang — нет). Pointer-deref всегда lvalue в обоих компиляторах.
+    /// Plan 145 — portable форма (MSVC C2059 fix). Раньше использовался GNU
+    /// statement-expression + `__typeof__` (cl.exe не поддерживает). Теперь —
+    /// `*(T*)nova_idx_chk((void*)(arr), (i), sizeof(T))` (хелпер в array.h):
+    /// `void*`-параметр лаундерит тип (strict-aliasing safe), bounds-check +
+    /// single-eval обоих подвыражений внутри хелпера, а `*(T*)…` — валидный
+    /// lvalue в любом компиляторе (для `arr[i] = v` / `&arr[i]` / `arr[i].m()`).
     fn emit_bchk_array_access(
+        storage_elem_ty: &str,
         obj_expr: &str,
         idx_expr: &str,
     ) -> String {
         format!(
-            "(*({{ __typeof__({o}) _a = ({o}); nova_int _i = ({i}); \
-if (__builtin_expect(_i < 0 || _i >= _a->len, 0)) nv_panic_index_oob(_i, _a->len); \
-&_a->data[_i]; }}))",
-            o = obj_expr, i = idx_expr,
+            "(*({elem}*)nova_idx_chk((void*)({o}), ({i}), sizeof({elem})))",
+            elem = storage_elem_ty, o = obj_expr, i = idx_expr,
         )
     }
 
@@ -10266,22 +10267,34 @@ if (__builtin_expect(_i < 0 || _i >= _a->len, 0)) nv_panic_index_oob(_i, _a->len
     /// Bounds-check on outer (idx_outer) AND inner (idx_inner). Inner array
     /// is reached via cast `(inner_arr_ty)(outer->data[idx_outer])` —
     /// element-type erasure (nested arrays stored as nova_int).
-    /// Возвращает `*(...&...->data[i])` (см. emit_bchk_array_access для
-    /// обоснования формы).
+    ///
+    /// Plan 145 — portable форма (MSVC C2059 fix): два вложенных
+    /// `*(T*)nova_idx_chk(...)` вместо GNU statement-expression. Внешний буфер
+    /// хранит inner-array-указатели как erased `nova_int`; читаем его как
+    /// `nova_int`, кастуем к `inner_arr_ty`, затем индексируем внутренний по
+    /// его storage-типу (`strip(inner_arr_ty)`, обычно `nova_int`). Каждое
+    /// подвыражение вычисляется один раз; результат — lvalue (`*(T*)…`).
     fn emit_bchk_double_array_access(
         inner_arr_ty: &str,
         outer_expr: &str,
         outer_idx_expr: &str,
         inner_idx_expr: &str,
     ) -> String {
+        // Inner element storage type: physical type held in inner->data[].
+        // For erased nested arrays this is nova_int.
+        let inner_storage = inner_arr_ty
+            .strip_prefix("NovaArray_")
+            .map(|s| s.trim_end_matches('*').trim().to_string())
+            .unwrap_or_else(|| "nova_int".to_string());
+        // Outer buffer stores inner-array pointers erased as nova_int.
+        let outer_access = format!(
+            "(*(nova_int*)nova_idx_chk((void*)({oe}), ({oi}), sizeof(nova_int)))",
+            oe = outer_expr, oi = outer_idx_expr,
+        );
+        let inner_arr = format!("(({ity})({oa}))", ity = inner_arr_ty, oa = outer_access);
         format!(
-            "(*({{ __typeof__({oe}) _ao = ({oe}); nova_int _io = ({oi}); \
-if (__builtin_expect(_io < 0 || _io >= _ao->len, 0)) nv_panic_index_oob(_io, _ao->len); \
-{ity} _ai = ({ity})(_ao->data[_io]); nova_int _ii = ({ii}); \
-if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai->len); \
-&_ai->data[_ii]; }}))",
-            ity = inner_arr_ty,
-            oe = outer_expr, oi = outer_idx_expr, ii = inner_idx_expr,
+            "(*({is}*)nova_idx_chk((void*)({ia}), ({ii}), sizeof({is})))",
+            is = inner_storage, ia = inner_arr, ii = inner_idx_expr,
         )
     }
 
@@ -19877,7 +19890,9 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         let key = format!("(nova_self->{})", Self::mangle_field_name(field));
                         if let Some(elem_ty) = self.array_element_types.get(&key).cloned() {
                             let o = self.emit_expr(obj)?;
-                            let bchk = Self::emit_bchk_array_access(&o, &i);
+                            // erased self-field array: physical storage is nova_int,
+                            // cast result to the real element type below.
+                            let bchk = Self::emit_bchk_array_access("nova_int", &o, &i);
                             return Ok(format!("(({})({}))", elem_ty, bchk));
                         }
                     }
@@ -19912,23 +19927,24 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                     // ending in `_vd[_i]` is NOT an lvalue in Clang, breaking
                     // `v[i].field = x`, `&v[i]`, and `v[i].mut_method()`; the
                     // `*(...&...)` form is a valid lvalue in both Clang and GCC.
-                    let tmp_v = self.fresh_tmp_named("vec");
-                    let tmp_i = self.fresh_tmp_named("vi");
                     // Plan 140.2 Part B (D257 / B.4): элидировать bounds-check на
                     // index-сайтах, доказанных in-range верификатором (len-инвариантный
                     // цикл `for i in 0..v.len()`). Безопасный доступ → zero-cost.
                     // Недоказанные — always-on проверка (debug И release).
-                    let bounds_chk = if self.index_site_elided(expr.span.start) {
-                        String::new()
+                    //
+                    // Plan 145 — portable форма (MSVC C2059 fix): nova_idx_chk/nochk
+                    // (array.h) вместо GNU statement-expression. `void*`-параметр
+                    // лаундерит тип (strict-aliasing safe), оба подвыражения (o, idx)
+                    // вычисляются один раз (аргументы fn), а `*(T*)…` — валидный
+                    // lvalue (`v[i].field = x`, `&v[i]`, `v[i].mut_method()`).
+                    let helper = if self.index_site_elided(expr.span.start) {
+                        "nova_idx_nochk"
                     } else {
-                        format!(
-                            "if (__builtin_expect({i} < 0 || {i} >= ({o})->len, 0)) nv_panic_index_oob({i}, ({o})->len); ",
-                            i = tmp_i, o = o,
-                        )
+                        "nova_idx_chk"
                     };
                     return Ok(format!(
-                        "(*({{ {ty}* {v} = ({o})->data; nova_int {i} = ({idx}); {chk}&{v}[{i}]; }}))",
-                        ty = elem_ty, v = tmp_v, i = tmp_i, o = o, idx = i, chk = bounds_chk
+                        "(*({ty}*){helper}((void*)({o}), ({idx}), sizeof({ty})))",
+                        ty = elem_ty, helper = helper, o = o, idx = i,
                     ));
                 }
                 // Plan 138 Ф.3 (D238): `str[i]` → `char`, panic on OOB or invalid UTF-8.
@@ -19939,6 +19955,15 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                 }
                 if obj_ty.starts_with("NovaArray_") {
                     let o = self.emit_expr(obj)?;
+                    // Plan 145 — физический storage-тип элемента буфера (data[i]):
+                    // strip "NovaArray_" из obj_ty (напр. "nova_int" для erased,
+                    // "nova_f64" для типизированного). Передаётся в bounds-check
+                    // хелпер для sizeof/cast; «реальный» тип восстанавливается
+                    // отдельным кастом на сайтах array-of-arrays / str-boxed ниже.
+                    let storage_elem = obj_ty
+                        .strip_prefix("NovaArray_")
+                        .map(|s| s.trim_end_matches('*').trim().to_string())
+                        .unwrap_or_else(|| "nova_int".to_string());
                     // Check if elements are pointer types stored as nova_int (e.g. inner arrays or records)
                     let arr_var_name = if let ExprKind::Ident(n) = &obj.kind { Some(n.as_str()) } else { None };
                     let inner_elem_ty = arr_var_name
@@ -19951,12 +19976,12 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                     if let Some(ref inner_ty) = inner_elem_ty {
                         if inner_ty.starts_with("NovaArray_") {
                             // array-of-arrays: cast the element and get data pointer
-                            let bchk = Self::emit_bchk_array_access(&o, &i);
+                            let bchk = Self::emit_bchk_array_access(&storage_elem, &o, &i);
                             return Ok(format!("(({})({}))", inner_ty, bchk));
                         }
                         if inner_ty.ends_with('*') {
                             // array-of-record-pointers: cast element to real pointer type
-                            let bchk = Self::emit_bchk_array_access(&o, &i);
+                            let bchk = Self::emit_bchk_array_access(&storage_elem, &o, &i);
                             return Ok(format!("(({})({}))", inner_ty, bchk));
                         }
                     }
@@ -19965,11 +19990,11 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         .map(|n| self.str_box_arrays.contains(n))
                         .unwrap_or(false);
                     if is_str_boxed {
-                        let bchk = Self::emit_bchk_array_access(&o, &i);
+                        let bchk = Self::emit_bchk_array_access(&storage_elem, &o, &i);
                         return Ok(format!("(*(nova_str*)({}))", bchk));
                     }
                     // Default: NovaArray_nova_int element — raw data access
-                    Ok(Self::emit_bchk_array_access(&o, &i))
+                    Ok(Self::emit_bchk_array_access(&storage_elem, &o, &i))
                 } else if let ExprKind::Index { obj: outer_arr, index: outer_idx } = &obj.kind {
                     // Double-indexing: arr[i][j] where arr[i] is a nova_int storing a NovaArray_*
                     // Check if the outer array has element type tracking

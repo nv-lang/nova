@@ -949,6 +949,46 @@ static inline void nv_panic_index_oob(nova_int idx, nova_int len) {
     nv_panic((nova_str){ .ptr = buf, .len = (size_t)n });
 }
 
+/* Plan 145 — portable bounds-checked element access (MSVC C2059 fix).
+ *
+ * Раньше codegen эмитил GNU statement-expression
+ *   (*({ __typeof__(arr) _a = (arr); nova_int _i = (i);
+ *        if (_i < 0 || _i >= _a->len) nv_panic_index_oob(_i, _a->len);
+ *        &_a->data[_i]; }))
+ * — `({ ... })` и `__typeof__` это расширения GCC/Clang, cl.exe их не
+ * поддерживает → C2059, MSVC ломался на большинстве индексаций.
+ *
+ * Все array/Vec структуры Nova имеют идентичный начальный layout
+ *   { T* data; int64_t len; int64_t cap }
+ * (NovaArray_T и Nova_Vec____T), поэтому общий header-каст через `void*`
+ * даёт portable доступ к len/data при любом T. Параметр `arr` объявлен
+ * `void*` — это «лаундерит» исходный тип, так что чтение через NovaArrHdr*
+ * безопасно относительно strict-aliasing (void* алиасит всё). Сайт
+ * передаёт sizeof(T) и кастует результат `(T*)`, восстанавливая lvalue:
+ *   *(T*)nova_idx_chk((void*)(arr), (i), sizeof(T))
+ * Оба подвыражения (arr, idx) вычисляются ровно один раз (аргументы fn).
+ *
+ *   nova_idx_chk   — с bounds-check (panic при OOB); default индексаций.
+ *   nova_idx_nochk — без проверки, для сайтов, доказанных in-range
+ *                    верификатором (Plan 140.2 D257 elision).
+ */
+typedef struct NovaArrHdr {
+    void*   data;
+    int64_t len;
+    int64_t cap;
+} NovaArrHdr;
+
+static inline void* nova_idx_chk(void* arr, nova_int i, size_t esz) {
+    NovaArrHdr* h = (NovaArrHdr*)arr;
+    if (i < 0 || i >= h->len) nv_panic_index_oob(i, h->len);
+    return (char*)h->data + (size_t)i * esz;
+}
+
+static inline void* nova_idx_nochk(void* arr, nova_int i, size_t esz) {
+    NovaArrHdr* h = (NovaArrHdr*)arr;
+    return (char*)h->data + (size_t)i * esz;
+}
+
 /* Plan 138 Ф.3 (D238): str[i] → char — panicking codepoint accessor.
  * Wraps nova_str_char_at; panics с nv_panic_index_oob если idx OOB или
  * невалидный UTF-8. O(idx) — линейная итерация по UTF-8. */

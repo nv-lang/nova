@@ -1,0 +1,22 @@
+// Plan 145 — t3: nested `grid[r][c]` + lvalue-receiver на результате индексации.
+// `grid[r][c]` упражняет двойную индексацию; `grid[i].push(..)` проверяет, что
+// результат `v[i]` остаётся lvalue (метод-ресивер) после миграции на хелпер.
+
+module plan145.t3_nested_grid_pos
+
+import std.collections.vec.{Vec}
+
+test "grid[r][c] read" {
+    mut grid [][]int = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    assert(grid[0][0] == 1)
+    assert(grid[1][2] == 6)
+    assert(grid[2][1] == 8)
+}
+
+test "grid[i].push — lvalue receiver on index result" {
+    mut grid [][]int = []
+    grid.push([10, 20])
+    grid[0].push(30)
+    assert(grid[0].len() == 3)
+    assert(grid[0][2] == 30)
+}
