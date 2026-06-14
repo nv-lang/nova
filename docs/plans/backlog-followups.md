@@ -146,6 +146,7 @@
 | `[M-118-aliasing-xor-rules]` | Rust-style XOR aliasing намеренно НЕ нужен (GC + auto-promote); revisit только если перф потребует. |
 | `[M-118-inline-assembly]` | Inline asm — вне scope языка. Открыт лишь в тривиальном «не реализовано». → drop. |
 | `[M-118-lifetimes-rust-style]` | Rust lifetimes — вне scope (Nova GC + Go-style auto-promote). → drop. |
+| `[M-134-stdlib-ptr-alias]` | Опциональный prelude-алиас `type ptr = *()` (если `*()` читается шумно). Пользовательское решение — НЕ ставим в prelude по умолчанию (явный `*()` самодокументируется). Home: Plan 134 Followup. |
 
 ---
 

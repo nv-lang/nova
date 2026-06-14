@@ -36419,3 +36419,16 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   (вне scope): литерал-операнды (i+1, i*2) codegen вообще не чекает (rty литерала ≠ nova_int) — поэтому
   always-safe тесты используют var+var (i+j) паттерны. * нелинеен → Z3 часто Unknown → консервативно чек
   (не упрощение — soundness: никогда не элидируем без пруфа).
+
+[2026-06-14] Plan 134 (refinement-проход «ptr → *()», ветка plan-134): НЕ упрощения, но честные
+  границы/осознанно-оставленные хвосты. (1) Use-в-type-позиции `ptr`/`nova_ptr` ловится на `nova check`
+  (E_TYPE_UNKNOWN), но cast-VALIDITY (`*() as bool`/`str`/`f64`/`char`/narrow-int → E_PTR_CAST_INVALID_TARGET)
+  по-прежнему enforced на codegen-этапе, а не type-check — это легитимно: правило зависит от resolved
+  C-типов (src="*()" из nova_type_name_from_c("void*")), нет смысла дублировать в checker. Проверяется
+  fixture'ой plan115/t1_ptr_str_cast_neg (EXPECT_COMPILE_ERROR через полный pipeline). (2) В types/mod.rs
+  `cat_of_depth` оставлен dead-but-documented arm `"ptr" => TyCat::Ptr` (legacy-compat комментарий) — он
+  недостижим для валидных программ, т.к. walk_typeref reject'ит `ptr` раньше; оставлен намеренно как
+  defensive/transition-safety, не вычищен. (3) Регрессия plan118 37/3: 3 NPO-edge FAIL (Some((0 as *()))
+  под null-pointer-optimization) — pre-existing на main (identical к main-бинарю), территория Plan 118 NPO,
+  вне scope 134; НЕ маскируются, зафиксированы как honest known-issue. Core-фича (удаление ptr + миграция)
+  — без упрощений и заглушек.
