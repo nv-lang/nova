@@ -36383,3 +36383,25 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   (вне scope): литерал-операнды (i+1, i*2) codegen вообще не чекает (rty литерала ≠ nova_int) — поэтому
   always-safe тесты используют var+var (i+j) паттерны. * нелинеен → Z3 часто Unknown → консервативно чек
   (не упрощение — soundness: никогда не элидируем без пруфа).
+[2026-06-14] Plan 144.0 (may-GC effect analysis, D273, ветка plan-144-may-gc-effect-analysis): анализ
+  ДЕЛИБЕРАТНО консервативен — это НЕ срезка, а корректная граница соундности (критерий приёмки #8 «без
+  упрощений как для прода»). Решётка дефолтит в MayGC (top); NoGC доказывается только над полностью
+  разрешённым неаллоцирующим конусом. Что помечается MayGC по консервативности (всё это — потеря элизии
+  тира O1, НЕ потеря корректности; ложный NoGC = пропущенный safe-point/корень = UAF, поэтому при ЛЮБОМ
+  сомнении → MayGC): **(a)** любой callee, не сматченный к known FnDecl (cross-module / closure-local /
+  bare-ident) → unresolved → MayGC; **(b)** любой indirect/closure/fn-ptr/with/spawn/select/parallel-for
+  вызов (цель статически неизвестна) → MayGC; **(c)** любой FFI/extern (C может вызвать Nova-callback,
+  may-GC неизвестен) → MayGC; **(d)** first-class method-value `obj.@m`/`Type.@m` (codegen эмитит env+
+  closure alloc) → MayGC; **(e)** аллокация: allowlist provably-non-allocating, а ЛЮБОЙ неизвестный AST-
+  узел → считается аллоцирующим (top) — это сознательный over-approximation, не пробел; **(f)** str-
+  литерал в allowlist как non-allocating ТОЛЬКО для интернированного `static const u8[]`, но граница
+  «интернирован vs строится буфер» консервативна; **(g)** рекурсивная SCC с аллокацией в любом члене →
+  вся SCC MayGC. Над монтоморфизацией seed-свойства source-level → вердикт шаблона наследуется всеми
+  инстансами (over-approximation: spurious-рёбра только ДОБАВЛЯЮТ MayGC). Hardcode «знаний» о конкретных
+  prelude-функциях как NoGC без source-доказательства был бы ИМЕННО shortcut, маскирующим недоказанный
+  случай как элидируемый → сознательно отвергнут. **Emit-nothing** — намеренное ограничение scope этого
+  плана: набор НЕ потребляется codegen'ом (нулевой риск для рантайма), потребление тиром O1 (frame-
+  elision / write-back-skip) = Plan 144 Ф.2, отдельно и под гейтом. Residual-точность (cross-module
+  callee-резолюция через manifest, str-interning-граница, более тонкая alloc-классификация) — все
+  консервативны (теряют элизию, остаются соундны) → Q-may-gc-precision; браться имеет смысл лишь когда
+  Ф.2 начнёт потреблять набор и профиль покажет доминирующие упущенные элизии.

@@ -37918,3 +37918,34 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   (OE1-OE5, вкл. 2 runtime-panic neg) + регрессии contracts 314/0, plan140 51/0, basics 8/0, Trivial
   1/0/4skip (OE6/OE7). 0 регрессий, soundness неизменна. D272 + D24/04-effects/open-questions amend +
   contracts.md/.ru + README + backlog (marker CLOSED).
+[2026-06-14] Plan 144.0 — may-GC effect analysis (D273, ветка plan-144-may-gc-effect-analysis,
+  worktree nova-p144). Доставлен РАНО, вне очереди Ф.0 родительского Plan 144, чтобы de-risk'нуть
+  самую опасную soundness-дыру precise-GC — H4 (§7.6): косвенные/FFI-callback рёбра → fixpoint мог бы
+  пропустить ребро → ложный NoGC → пропущенный GC safe-point/корень → use-after-free (как только тир
+  O1 обопрётся на набор). Чисто COMPILE-TIME, **EMIT-NOTHING** — анализ вычисляется и доступен через CLI
+  `nova gc-effect-analyze <path> [--format json|text]` + unit-тесты ТОЛЬКО; `emit_c.rs` НЕ зовёт модуль
+  во время эмиссии (потребление = Plan 144 Ф.2, отдельно/под гейтом). Решётка двухточечная, дефолт =
+  MayGC (top), NoGC ДОКАЗЫВАЕТСЯ над полностью разрешённым неаллоцирующим конусом вызовов. Реализация
+  `compiler-codegen/src/codegen/may_gc.rs` переиспользует инфру `preempt_keep.rs` (Plan 143.2): source-
+  level whole-program call-graph над FnDecl, `fn_key`, overload-резолюция (`approx_arg_sig`/
+  `add_candidate_edges`), итеративный Tarjan — но с двумя делибератными отличиями: (1) полное SCC-
+  разбиение (не только cycle-membership) для обратной пропагации MayGC по коллерам через конденсацию;
+  (2) `address_taken` сам по себе НЕ seed'ит MayGC (быть first-class значением ≠ аллоцировать).
+  Seed self-MayGC = аллокация ∪ indirect/closure/spawn/with/select/parallel-for ∪ FFI/extern ∪
+  unresolved-callee ∪ first-class-method-value. Allowlist provably-non-allocating (арифметика/сравнения/
+  field-index без копии/скаляр-касты/литералы-скаляры/чтение локала/интернированный str-литерал); ЛЮБОЙ
+  неизвестный AST-узел → аллоцирует (top). Adversarial-review (≥3 soundness-линзы: indirect/FFI-дыра,
+  направление пропагации, SCC-с-аллокацией, default-top) нашёл 1 РЕАЛЬНУЮ находку: first-class method-
+  value (`obj.@m`/`Type.@m` в value-позиции) парсится как `@`-префиксный `Member`, codegen эмитит 2×
+  `nova_alloc` (captured-self env + closure) — был ложный NoGC, ровно H4 first-class-fn-value форма;
+  фикс (commit b908acb2): `@`-префиксный `Member`-узел seed'ит аллокацию (soundness-only, NoGC→MayGC).
+  Acceptance: plan144_0 10 фикстур (positive_pure_leaf/leaf_forwarder/pure_recursion → NoGC;
+  negative_allocates_record/calls_allocator/ffi_call/indirect_call/method_value/recursive_alloc/
+  unknown_callee → MayGC) через РЕЛИЗНЫЙ nova gc-effect-analyze + 19/19 may_gc unit-тестов PASS; release-
+  сборка из nova-cli/ чистая (Finished); генерируемый C НЕ изменён (emit-nothing подтверждён). Критерий
+  «без упрощений как для прода» соблюдён: нет stub'ов/TODO-срезов, conservative-MayGC при любом сомнении,
+  soundness > агрессивность элизии. Spec D273 (06-concurrency.md) + Q-may-gc-precision (open-questions,
+  residual-точность: cross-module callee, str-interning, alloc-классификация) + Plan 144 §7.6 H4/Ф.0
+  отметки (H4-слайс закрыт рано) + backlog [M-144.0-may-gc-effect-analysis] (analysis done; O1 = Ф.2).
+  Commits: 6276d729 (plan) + 60590d21 (анализ) + 13042ed8 (CLI) + b95f3854 (фикстуры) + b908acb2
+  (review-фикс) + docs-коммит (этот). Ветка НЕ merged (финальный merge делает оператор).
