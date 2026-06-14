@@ -1,9 +1,15 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 134 — Удалить встроенный тип `ptr`; заменить на `*()`
 
-> **Создан:** 2026-06-09.  **Статус:** ✅ CLOSED 2026-06-09.
-> **Эстимат:** ~½ dev-day.  **Model:** Sonnet 4.6.
+> **Создан:** 2026-06-09.  **Статус:** ✅ CLOSED 2026-06-09 (Ф.1–Ф.3 merged в main);
+> refinement-проход 2026-06-14 (ветка `plan-134`) — ранний `nova check`-reject
+> через `E_TYPE_UNKNOWN` + миграционный hint, fixture-полировка, doc-финализация.
+> **Эстимат:** ~½ dev-day.  **Model:** Sonnet 4.6 (impl) + Opus 4.8 (refinement).
 > **Зависит от:** Plan 118 (типизированные указатели `*T`).
+>
+> **Production-grade, без упрощений:** нет TODO/заглушек; `ptr` ловится на
+> этапе type-check (не откладывается до codegen), C-кодоген эмитит `void*`,
+> casts работают, регрессий нет (0 net-new FAIL vs main baseline).
 
 ---
 
@@ -103,13 +109,32 @@ ro p *() = 0 as *()
 
 ## Acceptance criteria
 
-- **A-134.a** — `ptr` в Nova-коде → compile error «type `ptr` removed; use `*()`»
-- **A-134.b** — `*()` в type position → C-тип `void*`
-- **A-134.c** — `0 as *()` → null pointer, работает
-- **A-134.d** — `nova_ptr` typedef удалён из nova_rt.h
-- **A-134.e** — plan115 тесты PASS с `*()`
-- **A-134.f** — `OnceCell[T](*())` / `Lazy[T](*())` / `Condvar(*())` компилируются
-- **A-134.g** — 0 regressions в full `nova test`
+- **A-134.a** ✅ — `ptr`/`nova_ptr` в Nova-коде в type-позиции → `nova check`
+  error `[E_TYPE_UNKNOWN] type \`ptr\` is removed — use \`*()\` …` + hint
+  (`type ptr = *()`). Срабатывает на этапе type-check (`types/mod.rs`
+  `walk_typeref` guard), не откладывается до codegen. Defensive codegen-time
+  зеркало (`emit_c.rs` / `external_registry.rs`) на случай обхода checker'а.
+  Verify: `nova_tests/plan134/t1_ptr_removed_neg.nv` PASS.
+- **A-134.b** ✅ — `*()` в type position → C-тип `void*`
+  (`t2_unit_ptr_type_ok` PASS).
+- **A-134.c** ✅ — `(0 as *())` → null pointer, работает
+  (`t3_null_unit_ptr_ok` PASS).
+- **A-134.d** ✅ — `nova_ptr` typedef удалён из `nova_rt.h`
+  (осталась только debug-helper `nova_ptr_to_debug_str(const void*)` —
+  это имя функции, не тип).
+- **A-134.e** ✅ — plan115 тесты PASS с `*()` (11/0).
+- **A-134.f** ✅ — `OnceCell[T](*())` / `Lazy[T](*())` / `Condvar(*())`
+  компилируются и работают (plan103_5 20/0, plan91_12 9/0, plan103_4 25/0).
+- **A-134.g** ✅ — 0 net-new FAIL vs main baseline (plan118 37/3, syntax 47/7,
+  plan62 29/7 — все FAIL pre-existing и identical к main bin'арю; basics 8/0).
+- **A-134.h** ✅ — **production-grade, без упрощений**: нет TODO/заглушек;
+  полная миграция `ptr`/`nova_ptr` по compiler + std + examples + nova_tests
+  (остатки — только prose-комментарии и поле-имя `ptr` в `str{ptr,len}`).
+
+### Cast-matrix verification (A-134.c расширенный)
+
+`nova_tests/plan134/t4_unit_ptr_cast_ok.nv` PASS — round-trip
+`int ↔ *()`, `u64 ↔ *()`, `i64 ↔ *()`, `(0 as *())` → 0, wide-address bits.
 
 ---
 
