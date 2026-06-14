@@ -38211,3 +38211,104 @@ Vec[Vec[Vec[int]]]) + flatten_plus_guard (operator + guard). 0 NEW regressions a
 slice/vec/generic-dispatch watch (plan90/90_1/96/138/138_2/147/153_0/1/3, basics, generics);
 plan62/syntax FAIL sets byte-for-byte identical to a baseline binary at parent c5865ba0 in a temp
 worktree (incl. the highest-risk iterator/method-dispatch tests). Temp worktree removed cleanly.
+
+================================================================================
+=== Plan 153.2 F.2 - zero-cost lazy iterator: by-value mono of generic value-records (Stage 1) + generic-over-source adapters (Stage 2) - 2026-06-14/15 ===
+================================================================================
+
+Branch plan-153.2-zerocost. Commits 0da18125 (Stage 1) + 515de574 (Stage 2).
+Goal (perf-only, NOT a simplification): kill the per-adapter heap overhead of the
+boxed-fluent lazy iterator (D260). Two composable stages.
+
+STAGE 1 - by-value monomorphization of generic value-records (commit 0da18125).
+Taught the monomorphizer to lower a generic `type X[T] value {...}` instance BY
+VALUE: each mono instance becomes an inline `NovaValue_<short>` struct, passed/
+returned/copied by value with NO `nova_alloc` for the wrapper record - mirroring
+the non-generic `str`/value-record path (D228). `BoxIter[T]` marked `value` in
+std/collections/vec_lazy.nv:57. For the canonical chain
+`v.lazy().map().filter().collect()`: 5 BoxIter wrapper heap allocations -> 0
+(verify: grep `nova_alloc(sizeof(Nova_BoxIter` over all plan153_2/*.c = 0; the
+by-value `NovaValue_BoxIter...` struct appears throughout - adapters 89 / chains
+98 / laziness 64 / terminators 74 occurrences). Receiver ABI stays always-pointer
+(D226): `NovaValue_<short>*` to a stack slot.
+Codegen contract (all in emit_c.rs, all gated on AllocKind::Value so heap generics
++ the 6 existing value-records are untouched):
+  - receiver_c_type: value generic mono receiver -> `NovaValue_<short>*`,
+    order-free of type_aliases via value_generic_mono_short /
+    value_aware_generic_c_type.
+  - generic-instance method dispatch (block 5b): route value receiver through
+    prepare_method_recv (pass by address, &obj / hoisted temp).
+  - fn-typed-field call `(@step)()`: accessor `.` vs `->` chosen by receiver
+    value-ness ((*nova_self).step).
+  - return-type inference (infer_mono_method_ret_with_args + dispatch 5b +
+    overload-pool rt-strip): strip `NovaValue_` BEFORE `Nova_` so the `Nova_<rt>`
+    registry lookup hits - this fixed the method-level-generic `.map[U]` chain
+    inference that had collapsed to `int`.
+
+STAGE 2 - generic-over-source zero-cost adapters (commit 515de574).
+New sibling FILE-module std/collections/vec_iter_zc.nv (module
+collections.vec_iter_zc, opt-in import, same D145/leak rationale as
+vec_lazy/vec_seq). Rust-style Map<I,F>/Filter<I,P> adapters as generic-over-source
+`value` records: MapIter[I,T,U] / FilterIter[I,T] / FilterMapIter[I,T,U], each
+holding the upstream iterator INLINE as field `src I` (NOT a boxed `step`). `@next`
+dispatches `(@src).next()` by a static, monomorphized call. A chain
+v.ziter().zmap(f).zfilter(p).zcollect() monomorphizes to ONE nested concrete type
+FilterIter[MapIter[VecIter[int],int,int],int]; each next() inlines down to base
+VecIter.next(). Entry Vec[T] @ziter() + chainable zmap/zfilter/zfilter_map +
+per-type terminators zcollect/zfold/zcount/zsum/zfor_each/zany/zall/zfind.
+Measured (canonical map().filter().collect()): per-adapter heap allocs 3 -> 0
+(nova_lambda_env + _box_src + NovaClosBase step-thunk removed), source-box
+(_box_src) 9 -> 0, per-element step() fn-ptr indirection ELIMINATED (source called
+statically).
+Additional codegen fixes (all gated on AllocKind::Value):
+  - value_aware_subst_to_ref (new &self mirror of static apply_type_subst_to_ref):
+    nested-generic arg carries the NovaValue_ prefix so the worklist mono name
+    AGREES with type_ref_to_c / field / type-decl name (was: two divergent
+    instances -> undefined-struct CC-FAIL).
+  - split_top_level_mono_args + registry-backed mono_type_args_of: depth-aware
+    mono type-args parse (naive args_str.split("__") tore a nested
+    generic-over-source arg into fragments, mis-binding I/T -> Vec[nova_int*]
+    garbage). Applied at the 3 split("__") parse sites.
+  - erased_type_ref_c: type-param check made RECURSIVE (uses_any_type_param) so an
+    erased adapter stub yields the erased base pointer, not a placeholder-laden
+    mono name.
+  - drain_generic_type_worklist placeholder guard: value-GATED nested-placeholder
+    skip (mangled_has_nested_placeholder) - skips emitting a value mono whose
+    by-value field would reference an undefined inner placeholder struct, WITHOUT
+    suppressing the needed heap Vec[Slot[K,V]] forward-typedef carrier.
+
+DESIGN DECISION: sibling, NOT replace. boxed-fluent vec_lazy (BoxIter) RETAINED as
+the closure-fluent alternative (one erased cursor, uniform BoxIter[T] at every
+stage). vec_iter_zc is the allocation-free sibling behind a separate opt-in import.
+Documented at the top of vec_iter_zc.nv.
+
+RESIDUAL (honest): the callback f/pred is still a boxed-closure field (void* +
+NOVA_CLOS_CALL per element) in BOTH shapes - the last box after record/source/step
+are gone. Rust-style inline mapping needs closures-as-mono-types (env as a concrete
+type-param) - a larger lift, filed [M-153.2-closure-as-mono-type] (P3). take/skip/
+enumerate (stateful / tuple-element) remain on boxed vec_lazy - porting is wiring,
+not new compiler capability.
+
+REGRESSION LESSON: an over-eager early version of the drain guard (NOT value-gated)
+regressed 15 HashMap/value-record files (plan139 t3/neg_t3, plan152_4
+case/normalize/graphemes/sentences/words + conformance, plan152_5 collation) -
+caught via the baseline binary at 0da18125 - then FIXED by gating the
+nested-placeholder skip on value templates; all 15 restored. Lesson: any new
+drain/worklist guard in the monomorphizer MUST be gated on AllocKind::Value or it
+hits heap generics (HashMap Vec[Slot[K,V]] forward-typedef carrier).
+
+SPEC/DOCS: D277 NEW (spec/decisions/02-types.md - by-value mono of generic
+value-records + generic-over-source zero-cost adapters; amends D228 + D260, depends
+D226); D228 + D260 amend-pointers added; README index row. docs/vec-lazy.md
+(zero-cost vec_iter_zc section + cost table), docs/vec-internals.md (two lazy shapes
+section), docs/plans/backlog-followups.md
+([M-153.2-generic-over-source-zerocost] -> PARTIAL Stage 1+2, home D277),
+docs/simplifications.md resolution+residual entry.
+
+TESTS (release nova, C-codegen, clang): plan153_2 4/4 (adapters/chains/laziness/
+terminators). Broad cross-suite watch across str/value-record/generic-heavy dirs -
+0 NEW regressions vs a baseline binary at parent 7562fcea: plan139 37/0, plan139_1
+4/0, plan124_8 40/0 (most relevant to value-record mono), plan147 30/30, plan108
+5/0, plan88 5/5, plan99 9/9, plan138 10/10, plan48/59/62/101, plan153_3 8/0,
+plan153_5 7/0, plan153_5_nested 4/0. All pre-existing FAIL sets byte-identical to
+baseline. Both commits are codegen-only (emit_c.rs) gated on AllocKind::Value.

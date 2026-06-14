@@ -2,7 +2,8 @@
 # Lazy iterators over `Vec[T]` / `[]T`
 
 > **Audience:** Nova users. **Spec:** [D260](../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)
-> (lazy iterator model), [D239](../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
+> (lazy iterator model), [D277](../spec/decisions/02-types.md#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2)
+> (by-value `BoxIter` + zero-cost `vec_iter_zc`), [D239](../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
 > (`[]T ≡ Vec[T]`). **Internals:** [`vec-internals.md`](vec-internals.md). Plan 153.2.
 
 A lazy iterator processes a vector **one element at a time, on demand**, with **no
@@ -156,13 +157,60 @@ let early = v.lazy().map(|x| x + 1).take(3).any(|x| x == 3)
   `take_while`/`skip_while`/`peekable`/`min_by[_key]`/`max_by[_key]`/`partition`/
   `chunk_by`/`into_iter`, plus mutable iteration (`for mut x` / `mut @iter()`) and
   `FromIterator`/`collect`-into-arbitrary-target.
-- **Cost.** The current model boxes each `step` closure (a heap thunk per adapter).
-  A zero-cost, fully-monomorphized generic-over-source variant is a planned perf
-  upgrade (`[M-153.2-generic-over-source-zerocost]`); it does not change the API.
+- **Cost.** `BoxIter[T]` is now a `value` record (D277 Stage 1), so the **wrapper
+  record itself costs zero heap allocations** — a `v.lazy().map().filter().collect()`
+  chain went from 5 `BoxIter` heap boxes to **0**, passed by value on the stack.
+  What remains boxed in this model is the per-adapter **`step` closure** (a heap
+  thunk + a box of the captured source, plus a `step()` pointer call per element).
+  For an allocation-free *and* indirection-free chain, use the zero-cost
+  generic-over-source sibling — see below.
+
+## Zero-cost sibling — `collections.vec_iter_zc`
+
+`vec_lazy`/`BoxIter` is the **closure-fluent** surface: one erased cursor type,
+uniform `BoxIter[T]` at every stage, at the cost of a boxed `step` per adapter.
+For hot paths there is an **allocation-free, indirection-free** sibling module:
+
+```nova
+import std.collections.vec_iter_zc
+
+let v = Vec[int].from([1, 2, 3, 4, 5, 6])
+let got = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zcollect()
+assert(got == [30, 40, 50, 60])
+```
+
+Each adapter is its **own generic-over-source `value` record** (`MapIter[I,T,U]` /
+`FilterIter[I,T]` / `FilterMapIter[I,T,U]`) that holds the upstream iterator
+**inline** as a field `src I` — not a boxed `step` closure. `@next()` calls
+`(@src).next()` by a **static, monomorphized** dispatch, so a chain
+`v.ziter().zmap(f).zfilter(p)` monomorphizes to a *single* nested concrete type
+`FilterIter[MapIter[VecIter[int], int, int], int]`, and every `.next()` inlines
+down to the base `VecIter.next()` — no per-element function-pointer call.
+
+| | `vec_lazy` (`BoxIter`) | `vec_iter_zc` (Map/Filter) |
+|---|---|---|
+| wrapper record per adapter | 0 heap (by-value, D277 Stage 1) | 0 heap (by-value) |
+| source box (`_box_src`) per adapter | 1 heap | **0** (source held inline) |
+| `step` closure thunk per adapter | 1 heap (`NovaClosBase`) | **0** (static dispatch) |
+| per-element source indirection | fn-ptr call | **none** (inlined) |
+| residual heap | the user's `f`/`pred` closure env | the user's `f`/`pred` closure env |
+
+For the canonical `map().filter().collect()` chain this removes **6 adapter
+allocations and 9 source boxes**; the only heap left is the user's own `f`/`pred`
+closure environment (irreducible without closures-as-mono-types —
+`[M-153.2-closure-as-mono-type]`).
+
+The two coexist behind separate explicit imports — `vec_iter_zc` is **not** a
+replacement. Reach for it on hot paths; `vec_lazy` stays the ergonomic
+single-cursor default. Entry is `v.ziter()`; adapters `zmap`/`zfilter`/
+`zfilter_map`; terminators `zcollect`/`zfold`/`zcount`/`zsum`/`zfor_each`/`zany`/
+`zall`/`zfind`. `take`/`skip`/`enumerate` (stateful / tuple-element) remain on
+boxed `vec_lazy` for now.
 
 ## See also
 
 - [`vec-internals.md`](vec-internals.md) — module layout, the boxed-fluent shape,
-  Compare/Equal.
-- [D260](../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — the decision record.
+  the zero-cost generic-over-source sibling, Compare/Equal.
+- [D260](../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — boxed-fluent decision record.
+- [D277](../spec/decisions/02-types.md#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) — by-value `BoxIter` monomorphization + the zero-cost `vec_iter_zc` sibling.
 - [Q-iterator-laziness](../spec/open-questions.md) — why lazy is the canon.

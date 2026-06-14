@@ -36750,3 +36750,64 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   запись-резолв (append-only), не правка старой; carrier-slot нужен отдельный структурный AST-носитель
   (`receiver_ty`), т.к. `type_name` теряет глубину; структурный typevar-бинд обязан быть рекурсивным
   (innermost element), depth-agnostic, гейтнутым на nested — иначе ломает весь flat `[]T`-dispatch.
+
+### Plan 153.2 Ф.2 — zero-cost lazy-итератор: by-value mono generic value-records (Stage 1) + generic-over-source (Stage 2), 2026-06-14/15
+
+- **Где** — `compiler-codegen/src/codegen/emit_c.rs` (by-value mono machinery, всё gate на
+  `AllocKind::Value`); `std/collections/vec_lazy.nv:57` (`BoxIter[T]` помечен `value`); НОВЫЙ модуль
+  `std/collections/vec_iter_zc.nv` (`module collections.vec_iter_zc`, opt-in import). Commits
+  `0da18125` (Stage 1) + `515de574` (Stage 2) на ветке `plan-153.2-zerocost`. Spec — D277 NEW (amends
+  D228 «value-record allocation» + D260 «boxed-fluent lazy», depends D226). Доки — `vec-lazy.md`
+  (zero-cost-sibling секция + cost-таблица), `vec-internals.md` (two-lazy-shapes секция).
+- **Что СДЕЛАНО (не упрощение — выполненная perf-работа):**
+  - **Stage 1 — by-value мономорфизация generic value-records.** Монорфизатор научен лоуэрить
+    generic `type X[T] value {…}` BY VALUE для каждого mono-инстанса (inline `NovaValue_<short>`,
+    passed/returned/copied по значению, БЕЗ `nova_alloc` для wrapper-рекорда — зеркало str/non-generic
+    value-record-пути D228). `BoxIter[T]` стал `value` → канон `v.lazy().map().filter().collect()`:
+    **5 → 0** wrapper-record heap-allocs (`grep nova_alloc(sizeof(Nova_BoxIter` = 0 во всех
+    сгенерённых `plan153_2/*.c`; by-value `NovaValue_BoxIter…` struct повсюду). Codegen-контракт:
+    `receiver_c_type` → `NovaValue_<short>*` (D226 always-ptr, order-free helpers
+    `value_generic_mono_short`/`value_aware_generic_c_type`); generic-instance dispatch (block 5b)
+    маршрутит value-receiver через `prepare_method_recv` (передача по адресу); fn-typed-field вызов
+    `(@step)()` — accessor `.` vs `->` по value-ness; return-inference (`infer_mono_method_ret_with_args`
+    + dispatch 5b + overload-pool rt-strip) снимает `NovaValue_` ПЕРЕД `Nova_`, чтобы `Nova_<rt>`-lookup
+    попал (иначе `.map[U]`-цепочка коллапсировала в `int`).
+  - **Stage 2 — generic-over-source zero-cost адаптеры.** Sibling-модуль `vec_iter_zc`: Rust-style
+    `MapIter[I,T,U]`/`FilterIter[I,T]`/`FilterMapIter[I,T,U]` — каждый generic-over-source `value`-рекорд,
+    держащий upstream INLINE полем `src I` (НЕ boxed `step`); `@next()` диспетчит `(@src).next()`
+    статически. Цепочка `v.ziter().zmap(f).zfilter(p).zcollect()` → один вложенный mono-тип
+    `FilterIter[MapIter[VecIter[int],int,int],int]`, `next()` инлайнится до `VecIter.next()`. Измерено:
+    per-adapter heap **3 → 0** (`nova_lambda_env`+`_box_src`+`NovaClosBase` step-thunk), source-box
+    `_box_src` **9 → 0**, per-element `step()` fn-ptr индирекция убрана. Доп. codegen-фиксы: value-aware
+    `apply_type_subst_to_ref`-зеркало (nested-arg `NovaValue_`-префикс → mono-имя согласуется);
+    depth-aware mono-args splitter (`split_top_level_mono_args`+`mono_type_args_of` — naive `split("__")`
+    рвал вложенный generic-over-source арг); recursive `erased_type_ref_c` placeholder-check;
+    value-gated nested-placeholder drain-guard.
+- **Что УПРОЩЕНО / остаток (честно):**
+  - **callback `f`/`pred` — всё ещё boxed-closure-поле** (`void*` + `NOVA_CLOS_CALL` на элемент) в ОБЕИХ
+    формах. Это последний box в цепочке после убирания record/source/step. Rust-style инлайн мэппера
+    требует **closures-as-mono-types** (env как конкретный type-param с запечённым env-типом) — отдельный
+    крупный лифт. `[M-153.2-closure-as-mono-type]` (P3). **Почему не сейчас:** Stage 1 убрал record-alloc,
+    Stage 2 — source-box+step-индирекцию; closures-as-mono-types — структурно бóльшая фича (capture-env
+    как type-param, не perf-патч одного сайта).
+  - **`take`/`skip`/`enumerate`** (stateful / tuple-element адаптеры) — пока ТОЛЬКО на boxed `vec_lazy`,
+    в `vec_iter_zc` НЕ портированы. **Почему не сейчас:** порт — wiring (тот же generic-over-source
+    шаблон), не новая compiler-capability; за пределами канон-измерения `map/filter/collect`.
+  - **Дизайн-решение sibling, НЕ замена:** boxed `vec_lazy` (`BoxIter`) СОХРАНЁН как closure-fluent
+    альтернатива (одна erased курсор-форма, единообразный `BoxIter[T]`). `vec_iter_zc` — allocation-free
+    сиблинг за отдельным opt-in import. Это НЕ упрощение, а сознательный two-surface дизайн.
+- **Как чинить остаток** — closures-as-mono-types: при мономорфизации замыкания печь env-тип в
+  type-param, заменить `void* f` + `NOVA_CLOS_CALL` на статический вызов конкретного env-struct (см.
+  `[M-153.2-closure-as-mono-type]`). take/skip/enumerate-порт — добавить `TakeIter[I]`/`SkipIter[I]`/
+  `EnumerateIter[I]` value-рекорды по тому же шаблону + tuple-element resolve (`[M-153.2-tuple-elem-adapter]`).
+- **Приоритет** — остатки P3 (closure-box, take/skip/enumerate-порт); не блокируют, канон-цепочка
+  `map/filter/collect` полностью allocation-free + indirection-free.
+- **Тесты / регрессии** — `plan153_2/` 4/4 (adapters/chains/laziness/terminators); широкая cross-suite
+  проверка по str/value-record/generic-heavy директориям (plan139 37/0, plan139_1 4/0, plan124_8 40/0,
+  plan147 30/30, plan108 5/0, plan88/99/100_1/138, plan48/59/62/101, plan153_3/5/5_nested) — **0 новых
+  регрессий** против baseline-бинаря на родителе `7562fcea` (все pre-existing FAIL'ы byte-identical).
+  **Регресс-урок:** over-eager ранняя версия drain-guard'а (НЕ value-gated) сломала 15 HashMap/
+  value-record файлов (plan139 t3/neg_t3, plan152_4 case/normalize/graphemes/sentences/words+conformance,
+  plan152_5 collation) — пойман baseline-бинарём @`0da18125`, FIXED гейтингом skip'а на value-шаблон;
+  все 15 восстановлены. **Урок:** любой новый drain/worklist-guard в монорфизаторе ОБЯЗАН быть gate'нут
+  на `AllocKind::Value`, иначе бьёт heap-generics (HashMap `Vec[Slot[K,V]]` forward-typedef carrier).

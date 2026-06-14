@@ -97,6 +97,51 @@ method-level generics (`[U]`/`[Acc]`), so it must stay behind an explicit
 `import std.collections.vec_lazy`. Whether the lazy layer can ever become
 prelude-global is revisited under [M-153-vec-combinators-prelude-global].
 
+### Two lazy shapes: boxed-fluent vs zero-cost (D277)
+
+There are now **two** lazy surfaces, behind separate explicit imports:
+
+| | `vec_lazy` — `BoxIter[T]` | `vec_iter_zc` — `MapIter[I,T,U]`/`FilterIter[I,T]` |
+|---|---|---|
+| cursor type | ONE erased `value` record, uniform `BoxIter[T]` at every stage | a NEW generic-over-source `value` record per adapter; the chain monomorphizes to one nested concrete type |
+| source held as | a boxed `step fn()->Option[T]` thunk | the upstream iterator **inline**, field `src I` |
+| `next()` | calls the boxed `step()` (fn-ptr indirection per element) | calls `(@src).next()` by **static, monomorphized** dispatch (inlined) |
+| wrapper record alloc | **0 heap** — `BoxIter` is `value`, by-value mono (D277 Stage 1) | **0 heap** — by-value mono |
+| source box (`_box_src`) | 1 heap per adapter | **0** (source inline) |
+| `step` thunk (`NovaClosBase`) | 1 heap per adapter | **0** (static dispatch) |
+| API style | closure-fluent, ergonomic single cursor | Rust-style nested adapters, hot-path |
+
+**D277 Stage 1** (`BoxIter[T]` marked `value` in `vec_lazy.nv:57`) taught the
+monomorphizer to lower a *generic* `value` record by value — inline
+`NovaValue_<short>` struct, passed/returned/copied with no `nova_alloc` for the
+wrapper, mirroring the non-generic `str` value-record path. For the canonical
+`v.lazy().map().filter().collect()` chain this eliminates **5 `BoxIter` wrapper
+heap allocations → 0** (`grep nova_alloc(sizeof(Nova_BoxIter` over the generated
+`plan153_2/*.c` is 0). The receiver ABI stays always-pointer (D226):
+`NovaValue_<short>*` to a stack slot, threaded through `prepare_method_recv`.
+
+**D277 Stage 2** is the sibling [`std/collections/vec_iter_zc.nv`](../std/collections/vec_iter_zc.nv)
+(`collections.vec_iter_zc`). Because each adapter holds its source inline as
+`src I` and dispatches statically, a `v.ziter().zmap(f).zfilter(p).zcollect()`
+chain has **0 adapter allocations, 0 source boxes, and no per-element source
+indirection** — removing 6 adapter allocs and 9 source boxes versus the boxed
+form. The codegen lift (all gated on `AllocKind::Value`, heap generics untouched):
+a `&self` value-aware `apply_type_subst_to_ref` mirror so the worklist mono-name
+agrees with the `type_ref_to_c`/field name (nested-generic args carry the
+`NovaValue_` prefix); a depth-aware mono-arg splitter (`split_top_level_mono_args`
++ registry-backed `mono_type_args_of`) so a nested generic-over-source arg is not
+torn by `split("__")`; a recursive type-param check in `erased_type_ref_c`; and a
+**value-gated** nested-placeholder skip in `drain_generic_type_worklist` (the
+non-gated early version regressed 15 HashMap/value-record files — gating it on
+value templates restored all 15).
+
+**Residual** (honest): the user's `f`/`pred` is still a boxed closure field
+(`void*` + `NOVA_CLOS_CALL` per element) in **both** shapes — Rust-style inline
+mapping needs closures-as-mono-types (`[M-153.2-closure-as-mono-type]`, P3).
+`take`/`skip`/`enumerate` (stateful / tuple-element adapters) remain on boxed
+`vec_lazy`. `vec_iter_zc` is a sibling, **not** a replacement — `vec_lazy` stays
+the ergonomic single-cursor default.
+
 ## Slices & views (Plan 153.4 / D262)
 
 A **slice** in Nova is a zero-copy `[]T`-**view of the same type** — there is no
