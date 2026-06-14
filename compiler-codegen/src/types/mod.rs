@@ -3781,6 +3781,22 @@ impl<'a> TypeCheckCtx<'a> {
                 if gs.contains(name) {
                     return;
                 }
+                // Plan 134: встроенный тип `ptr` (и его C-имя `nova_ptr`) удалён.
+                // `*()` (pointer-to-unit → `void*`) — канонический opaque-pointer.
+                // Ловим использование на этапе `nova check` (не откладываем до
+                // codegen): даём понятную миграционную ошибку с подсказкой.
+                // A-134.a / Plan 134 Ф.1.7.
+                if name == "ptr" || name == "nova_ptr" {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TYPE_UNKNOWN] type `{name}` is removed — use `*()` \
+                             (pointer-to-unit = `void*`) instead (Plan 134). \
+                             For a short alias write `type ptr = *()` in your own code.",
+                        ),
+                        *span,
+                    ));
+                    return;
+                }
                 if arity_exempt(name) {
                     return;
                 }
