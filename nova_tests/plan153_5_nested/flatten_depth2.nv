@@ -1,18 +1,26 @@
 // Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver] — depth-2 nested
-// generic CARRIER receiver `Vec[Vec[T]] @flatten() -> Vec[T]`.
+// generic CARRIER receiver `Vec[Vec[T]] @flatten_probe() -> Vec[T]`.
 //
 // The method's receiver typevar `T` must bind to the element-OF-element
 // (innermost `int`), NOT the immediate element (`Vec[int]`). Before the fix the
 // monomorphizer bound `T = Vec[int]`, so `out Vec[T]` mistyped as
 // `Vec[Vec[int]]` and the result indexed elements as Vec pointers (segfault).
 // Structural typevar unification now binds `T = int` at depth 2.
+//
+// NOTE: the method is named `@flatten_probe` (not `@flatten`) because the
+// production `Vec[Vec[T]] @flatten()` now lives in std
+// (std/collections/vec/restructure.nv); a co-named cross-module extension here
+// would trip E_METHOD_REDEFINITION. This probe keeps a *distinct* name so it
+// still exercises the depth-2 nested-receiver compiler path independently of the
+// stdlib method (the production `@flatten` is covered by nova_tests/plan153_5/
+// flatten.nv).
 
 module plan153_5_nested.flatten_depth2
 
 import std.collections.vec.{Vec}
 
 // Concatenate every inner `Vec[T]` of a `Vec[Vec[T]]` into one flat `Vec[T]`.
-export fn Vec[Vec[T]] @flatten() -> Vec[T] {
+export fn Vec[Vec[T]] @flatten_probe() -> Vec[T] {
     mut out = Vec[T].new()
     for inner in @ {
         for x in inner {
@@ -28,7 +36,7 @@ test "flatten [[1,2],[3,4]] -> [1,2,3,4] (int)" {
     mut nested = Vec[Vec[int]].new()
     nested.push(a)
     nested.push(b)
-    ro flat = nested.flatten()
+    ro flat = nested.flatten_probe()
     assert(flat.len() == 4)
     assert(flat[0] == 1)
     assert(flat[1] == 2)
@@ -38,7 +46,7 @@ test "flatten [[1,2],[3,4]] -> [1,2,3,4] (int)" {
 
 test "flatten of empty outer -> empty" {
     mut nested = Vec[Vec[int]].new()
-    ro flat = nested.flatten()
+    ro flat = nested.flatten_probe()
     assert(flat.len() == 0)
 }
 
@@ -50,7 +58,7 @@ test "flatten with an empty inner row is skipped" {
     nested.push(a)
     nested.push(empty)
     nested.push(b)
-    ro flat = nested.flatten()
+    ro flat = nested.flatten_probe()
     assert(flat.len() == 3)
     assert(flat[0] == 7)
     assert(flat[1] == 8)
@@ -63,7 +71,7 @@ test "flatten [[\"a\"],[\"b\",\"c\"]] -> 3 strings (str element)" {
     mut nested = Vec[Vec[str]].new()
     nested.push(a)
     nested.push(b)
-    ro flat = nested.flatten()
+    ro flat = nested.flatten_probe()
     assert(flat.len() == 3)
     assert(flat[0] == "a")
     assert(flat[1] == "b")

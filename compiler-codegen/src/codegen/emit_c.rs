@@ -18447,7 +18447,24 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     // call WITHOUT instantiating the monomorphized body, which then
                     // fails to link (`undefined symbol …_method_plus`). Routing via
                     // `vec_method_call` registers the mono instance first.
-                    if matches!(op, BinOp::Add) {
+                    //
+                    // GUARD ([M-153.5-flatten-nested-receiver]): the `@plus`
+                    // operator dispatch is ONLY for `Vec + Vec`, where BOTH
+                    // operands are `Vec` *values*. It must NOT fire for typed
+                    // pointer arithmetic `data + n` over a `*mut Vec[T]` buffer
+                    // (the `data` field of a `Vec[Vec[T]]`): there `data`'s C type
+                    // is `Nova_Vec____<elem>*` (a single-pointer Vec value type,
+                    // because `Vec` records lower to one pointer), so `lty` alone
+                    // looks like a Vec — but the operand `n` is an `int`, so this
+                    // is `ptr + int` and belongs to the typed pointer-arithmetic
+                    // arm below. Require the OTHER operand to also be a `Vec`
+                    // (concat), otherwise fall through. Without this, `@data + @len`
+                    // mis-dispatched to `Vec____<elem>_method_plus(data, len)` —
+                    // calling concat with an `int` second arg → segfault.
+                    if matches!(op, BinOp::Add)
+                        && lty.starts_with("Nova_Vec____")
+                        && rty.starts_with("Nova_Vec____")
+                    {
                         if let Some(vty) = &vec_ty {
                             let mangled = vty.trim_end_matches('*').to_string();
                             if let Some(call) =
@@ -18595,7 +18612,19 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     let type_name_sum_full = sty.trim_end_matches('*').to_string();
                     let type_name_sum = sty.strip_prefix("Nova_").unwrap_or("").trim_end_matches('*').to_string();
                     // D46 operator overloading: Nova_T* + Nova_T* → Nova_T_method_plus(l, r).
-                    if matches!(op, BinOp::Add) {
+                    // GUARD ([M-153.5-flatten-nested-receiver]): `@plus` is binary
+                    // over two record/sum *values* — BOTH operands must be single
+                    // `Nova_X*` pointers. A `Nova_X* + int` is typed pointer
+                    // arithmetic over a `*mut Record` buffer (`data + n`, where
+                    // `data`'s element type `Record` lowers to a single `Nova_X*`),
+                    // NOT operator overload — fall through to the pointer-arithmetic
+                    // arm below. Without this, `@data + @len` over a `Vec[Record]`
+                    // buffer mis-dispatched to `Nova_X_method_plus(data, len)` with
+                    // an `int` second arg → segfault.
+                    if matches!(op, BinOp::Add)
+                        && is_single_nova_ptr(&lty)
+                        && is_single_nova_ptr(&rty)
+                    {
                         return Ok(format!("{}_method_plus({}, {})", type_name_sum_full, l, r));
                     }
                     // Plan 65 Ф.12 / D124: dispatch `-` to the receiver's

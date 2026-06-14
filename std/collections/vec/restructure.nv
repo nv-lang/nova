@@ -7,8 +7,9 @@
 //   `+` operator    -> @plus    — `a + b` is a new Vec (≡ @concat); operands
 //                                 are unchanged. `a += b` lowers to `a = a + b`
 //                                 (a fresh concat Vec; D263).
-//   [][]T.@flatten() -> []T     — DEFERRED (nested generic receiver, see below /
-//                                 [M-153.5-flatten-nested-receiver]).
+//   [][]T.@flatten() -> []T     — concatenate every inner `Vec[T]` of a
+//                                 `Vec[Vec[T]]` into one flat `Vec[T]` (new
+//                                 buffer), in order. `T` = innermost element.
 //   mut @rotate_left(n)         — cyclic shift left by `n` (in place).
 //   mut @rotate_right(n)        — cyclic shift right by `n` (in place).
 //   mut @drain(range) -> Vec[T] — cut out `[range)`, RETURN the removed run as
@@ -87,40 +88,45 @@ export fn Vec[T] @plus(other Vec[T]) -> Vec[T] => @concat(other)
 // Flatten (vector-of-vectors)
 // ──────────────────────────────────────────────────────────────────────────
 //
-// `[][]T.flatten() -> []T` — concatenate every inner `Vec[T]` of a
-// `Vec[Vec[T]]` into one flat `Vec[T]`, in order (Rust `[[T]].concat()` /
-// Kotlin `flatten()`).
-//
-// DEFERRED ([M-153.5-flatten-nested-receiver]): a real `.flatten()` METHOD
-// needs a **nested generic receiver** `Vec[Vec[T]] @flatten()` so that the body
-// can name the innermost element type `T` (the result `Vec[T]`). Neither of the
-// two receiver forms the compiler accepts can express this correctly today:
-//
-//   1. `Vec[Vec[T]] @flatten()` — the PARSER rejects a nested type in receiver
-//      carrier position: `parse_generic_decl_params` calls `parse_ident` per
-//      carrier slot, so a carrier slot MUST be a bare typevar name (`Vec[T]`),
-//      never a nested type (`Vec[Vec[T]]`) → "expected `]`, got identifier".
-//
-//   2. `fn[T] [][]T @flatten()` — the `[]T` slice-receiver form PARSES, but the
-//      monomorphizer binds the receiver typevar `T` to the *immediate* element
-//      (`Vec[int]`), NOT the innermost (`int`): the `[][]T` nesting is collapsed
-//      to a single `"[]T"` receiver whose `T` = element. The mono'd body then
-//      builds `out []T == Vec[Vec[int]]` and returns the wrong type → wrong
-//      result at runtime (verified: probe RUN-FAIL; mono'd `out` typed
-//      `Nova_Vec____Nova_Vec____nova_int_p`).
-//
-// A correct `flatten` therefore requires structural typevar unification for
-// nested receivers in BOTH the parser (accept `parse_type` in carrier position +
-// collect free typevars) AND the monomorphizer (bind `T` = element-of-element).
-// That is a deep, cross-cutting change to the whole `[]T`-method dispatch path
-// (all of stdlib's slice methods route through it), out of scope for the
-// restructure-ops surface. Until then, flatten one level explicitly:
-//
-//   mut flat = Vec[int].new()
-//   for inner in nested { flat.append(inner) }   // inner : Vec[int]
-//
-// (the `@append(Vec[T])` bulk path, mutate.nv) — exactly what the method body
-// would do. Tracked `[M-153.5-flatten-nested-receiver]`.
+/// Concatenate every inner `Vec[T]` of a `Vec[Vec[T]]` into one flat `Vec[T]`,
+/// in order — `[[1, 2], [3], [4, 5]].flatten() == [1, 2, 3, 4, 5]`. A NEW buffer
+/// is built; neither the outer vector nor any inner row is mutated. Empty inner
+/// rows contribute nothing; an empty outer vector flattens to an empty `Vec[T]`
+/// (Rust `[[T]].concat()` / Kotlin `flatten()`). O(N) where N is the total inner
+/// element count — one exact allocation plus a bulk `RawMem.copy` per inner row.
+///
+/// The receiver is a **nested generic carrier** `Vec[Vec[T]]`: structural
+/// typevar unification binds `T` to the innermost element (`int` for
+/// `Vec[Vec[int]]`), so the result is `Vec[T]`, not `Vec[Vec[T]]`. Flatten more
+/// than one level by flattening repeatedly: a `Vec[Vec[Vec[T]]]` becomes a flat
+/// `Vec[T]` via `nested.flatten().flatten()`.
+///
+/// # Examples
+///
+/// ```nova
+/// mut nested = Vec[Vec[int]].new()
+/// nested.push(Vec[int].from([1, 2]))
+/// nested.push(Vec[int].from([3]))
+/// nested.push(Vec[int].from([4, 5]))
+/// ro flat = nested.flatten()
+/// assert(flat.equal(Vec[int].from([1, 2, 3, 4, 5])))
+/// ```
+export fn Vec[Vec[T]] @flatten() -> Vec[T] {
+    // Pre-size the output to the exact total element count so the per-row bulk
+    // appends below never reallocate (each `@append` would otherwise ×2-grow).
+    mut total = 0
+    for inner in @ {
+        total = total + inner.len()
+    }
+    mut out = Vec[T].with_capacity(total)
+    // Bulk-copy each inner row onto the end of `out` (the `@append(Vec[T])`
+    // fast path, mutate.nv — one `RawMem.copy` per row, COPY not move so the
+    // inner rows are left unchanged). Empty rows are no-ops inside `@append`.
+    for inner in @ {
+        out.append(inner)
+    }
+    out
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Rotate (cyclic shift, in place)
@@ -285,6 +291,28 @@ test "operator += appends" {
     mut a = Vec[int].from([1, 2])
     a += Vec[int].from([3, 4])
     assert(a.equal(Vec[int].from([1, 2, 3, 4])))
+}
+
+test "flatten concatenates inner vecs" {
+    mut nested = Vec[Vec[int]].new()
+    nested.push(Vec[int].from([1, 2]))
+    nested.push(Vec[int].from([3]))
+    nested.push(Vec[int].from([4, 5]))
+    ro flat = nested.flatten()
+    assert(flat.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    // operands untouched (flatten copies, never moves)
+    assert(nested.len() == 3)
+
+    // empty inner rows contribute nothing
+    mut holes = Vec[Vec[int]].new()
+    holes.push(Vec[int].from([7]))
+    holes.push(Vec[int].new())
+    holes.push(Vec[int].from([8, 9]))
+    assert(holes.flatten().equal(Vec[int].from([7, 8, 9])))
+
+    // empty outer → empty
+    mut none = Vec[Vec[int]].new()
+    assert(none.flatten().len() == 0)
 }
 
 test "rotate_left / rotate_right" {
