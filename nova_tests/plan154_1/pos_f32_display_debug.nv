@@ -46,3 +46,25 @@ test "StringBuilder append f32" {
     sb.append(x)
     assert(sb.as_str() == "3.5")
 }
+
+// Production-grade evidence: non-exact f32 values format cleanly (no f32→f64
+// widening artifacts), consistent with f64 (both via conv.h %g). f32 widens
+// losslessly to double, then the f64 formatter runs — so quality == f64.
+test "f32 non-exact values format cleanly" {
+    consume a = StringBuilder.new()
+    ro p f32 = 0.1
+    p.display(a)
+    assert(a.as_str() == "0.1")
+    consume b = StringBuilder.new()
+    ro pi f32 = 3.14159
+    pi.display(b)
+    assert(b.as_str() == "3.14159")
+    consume c = StringBuilder.new()
+    ro n f32 = 0.0 - 2.5
+    n.display(c)
+    assert(c.as_str() == "-2.5")
+    consume z = StringBuilder.new()
+    ro zero f32 = 0.0
+    zero.display(z)
+    assert(z.as_str() == "0")
+}
