@@ -15760,6 +15760,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     /// throw-path through NovaFailFrame). is_loop_body=true: break/continue
     /// в нашей собственной body — local, не пересекают loop boundary.
     fn emit_loop_body_inline(&mut self, body: &Block) -> Result<(), String> {
+        self.emit_loop_body_inline_ex(body, false)
+    }
+
+    /// [M-opt-preempt-strided-loop] Part A: `skip_preempt` omits the
+    /// per-iteration safepoint for provably-short loops (constant/small
+    /// bound). Such loops cannot monopolise a worker (bounded by
+    /// construction), and the `nova_preempt_check()` call is a barrier that
+    /// blocks clang vectorization/unroll of tight bodies. Variable/unbounded
+    /// loops MUST pass `false` — else tight-loop-starvation returns (a
+    /// CPU-bound fiber on a large/unbounded loop monopolises its worker,
+    /// exactly what the per-iteration safepoint prevents).
+    fn emit_loop_body_inline_ex(&mut self, body: &Block, skip_preempt: bool) -> Result<(), String> {
         let block_id = self.enter_defer_scope(body, true);
         // Plan 44.7: preemption safepoint at the loop backedge. Emitted as
         // the first statement of the body so it runs at the start of every
@@ -15768,7 +15780,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // it a tight arithmetic loop with no function calls (`while i < N
         // { i = i + 1 }`) would never reach a prologue safepoint and could
         // monopolise its worker. No-op in single-thread mode.
-        self.line("nova_preempt_check();");
+        if !skip_preempt {
+            self.line("nova_preempt_check();");
+        }
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
         }
@@ -15778,6 +15792,169 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
         self.leave_defer_scope(block_id);
         Ok(())
+    }
+
+    /// [M-opt-preempt-strided-loop] Part A: compile-time integer value of a
+    /// literal range bound (`0`, `16`). `None` if not a plain integer literal
+    /// — callers then conservatively KEEP the preempt-check (correctness over
+    /// optimization). Only plain literals fold; variables/arithmetic/negatives
+    /// are treated as non-const (safe under-approximation).
+    fn loop_bound_int_literal(e: &Expr) -> Option<i64> {
+        match &e.kind {
+            ExprKind::IntLit(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// [M-opt-preempt-strided-loop] Part B: recognize a pure element-wise copy
+    /// loop `for i in lo..hi { dst[i] = src[i] }` over `Vec[T]` and lower it to
+    /// a single overlap-safe bulk copy (memmove) — eliminating the per-element
+    /// loop entirely (no preempt-check, no per-element bounds branch; clang
+    /// emits a vectorized memmove). Returns `Some(tmp)` when lowered, `None`
+    /// when the body is not a recognized safe copy (caller emits the loop).
+    ///
+    /// Conservative — lowers ONLY when ALL hold (else fall back to the loop):
+    ///   * body is exactly one `dst[i] = src[i]` plain assign, no trailing;
+    ///   * both indices are exactly the loop variable;
+    ///   * `dst`/`src` are plain identifiers (pure, single-eval, no side fx);
+    ///   * both are the SAME `Vec[T]` type (flat `T*` storage → slot-copy ==
+    ///     value-copy), excluding raw `*mut Vec` buffers (`...**`);
+    ///   * element is a flat POD: primitive/value-record (`nova_*`) or pointer
+    ///     (`..._p`) — inline-struct elements are skipped (slot-copy may differ).
+    /// Overlap-safe `memmove` (RawMem.copy semantics) handles self-copy / views;
+    /// the bounds guard preserves the per-element OOB-panic.
+    fn try_emit_range_copy_memmove(
+        &mut self,
+        binding: &str,
+        start: &Expr,
+        end: &Expr,
+        inclusive: bool,
+        body: &Block,
+    ) -> Result<Option<String>, String> {
+        if body.stmts.len() != 1 || body.trailing.is_some() {
+            return Ok(None);
+        }
+        let (target, value) = match &body.stmts[0] {
+            Stmt::Assign { target, op: AssignOp::Assign, value, .. } => (target, value),
+            _ => return Ok(None),
+        };
+        let (dst_obj, dst_idx) = match &target.kind {
+            ExprKind::Index { obj, index } => (obj, index),
+            _ => return Ok(None),
+        };
+        let (src_obj, src_idx) = match &value.kind {
+            ExprKind::Index { obj, index } => (obj, index),
+            _ => return Ok(None),
+        };
+        // Both indices must be exactly the loop variable.
+        let idx_ok = |k: &ExprKind| matches!(k, ExprKind::Ident(n) if n == binding);
+        if !idx_ok(&dst_idx.kind) || !idx_ok(&src_idx.kind) {
+            return Ok(None);
+        }
+        // `dst`/`src` must be plain identifiers — pure, evaluated once, no aliasing
+        // surprises from complex receiver exprs.
+        if !matches!(&dst_obj.kind, ExprKind::Ident(_))
+            || !matches!(&src_obj.kind, ExprKind::Ident(_))
+        {
+            return Ok(None);
+        }
+        // Same `Vec[T]` value type on both sides (flat `T*` slot storage).
+        // Exclude raw `*mut Vec` (`Nova_Vec____...**`) — that is a pointer, not a Vec.
+        let dst_ty = self.infer_expr_c_type(dst_obj);
+        let src_ty = self.infer_expr_c_type(src_obj);
+        if !dst_ty.starts_with("Nova_Vec____")
+            || dst_ty.trim_end().ends_with("**")
+            || dst_ty != src_ty
+        {
+            return Ok(None);
+        }
+        // Element must be a flat POD slot (slot-copy == value-copy): primitive /
+        // value-record (`nova_*`) or pointer element (`..._p`). Inline composite
+        // elements are skipped — conservative.
+        let elem_suffix = dst_ty
+            .trim_end_matches('*')
+            .trim()
+            .strip_prefix("Nova_Vec____")
+            .unwrap_or("");
+        let elem_flat_pod = elem_suffix.starts_with("nova_") || elem_suffix.ends_with("_p");
+        if !elem_flat_pod {
+            return Ok(None);
+        }
+
+        // --- Recognized: emit overlap-correct bulk copy in place of the loop. ---
+        let dst_c = self.emit_expr(dst_obj)?;
+        let src_c = self.emit_expr(src_obj)?;
+        let lo_c = self.emit_expr(start)?;
+        let hi_c = self.emit_expr(end)?;
+        let vd = self.fresh_tmp();
+        let vs = self.fresh_tmp();
+        let vlo = self.fresh_tmp();
+        let vlast = self.fresh_tmp();
+        let vn = self.fresh_tmp();
+        let vds = self.fresh_tmp();
+        let vss = self.fresh_tmp();
+        let vnb = self.fresh_tmp();
+        let vk = self.fresh_tmp();
+        let tmp = self.fresh_tmp();
+        self.line(&format!("nova_unit {};", tmp));
+        self.line("{");
+        self.indent += 1;
+        self.line(&format!("{} {} = {};", dst_ty, vd, dst_c));
+        self.line(&format!("{} {} = {};", src_ty, vs, src_c));
+        self.line(&format!("nova_int {} = ({});", vlo, lo_c));
+        // `last` = highest index the per-element loop would touch. Formed WITHOUT
+        // `hi + 1` so an inclusive end == I64_MAX cannot signed-overflow (UB);
+        // the `+1` lives only in the count, computed after the bounds check has
+        // proven `last < len <= I64_MAX`.
+        let last_expr = if inclusive {
+            format!("({})", hi_c)
+        } else {
+            format!("({}) - 1", hi_c)
+        };
+        self.line(&format!("nova_int {} = {};", vlast, last_expr));
+        self.line(&format!("if ({} >= {}) {{", vlast, vlo));
+        self.indent += 1;
+        // Preserve the per-element OOB-panic (highest accessed index = `last`).
+        self.line(&format!("if ({} < 0) nv_panic_index_oob({}, ({})->len);", vlo, vlo, vd));
+        self.line(&format!(
+            "if ({} >= ({})->len) nv_panic_index_oob({}, ({})->len);",
+            vlast, vs, vlast, vs
+        ));
+        self.line(&format!(
+            "if ({} >= ({})->len) nv_panic_index_oob({}, ({})->len);",
+            vlast, vd, vlast, vd
+        ));
+        self.line(&format!("nova_int {} = {} - {} + 1;", vn, vlast, vlo));
+        self.line(&format!("void* {} = (void*)(({})->data + {});", vds, vd, vlo));
+        self.line(&format!("void* {} = (void*)(({})->data + {});", vss, vs, vlo));
+        self.line(&format!("size_t {} = (size_t){} * sizeof(*({})->data);", vnb, vn, vd));
+        // The ascending per-element loop `dst[i]=src[i]` equals memmove EXCEPT
+        // under destructive forward overlap — dst strictly inside [src, src+n),
+        // reachable via writable offset-overlapping Vec views (`a=v[1..];
+        // b=v[0..]; a[i]=b[i]`), where the loop PROPAGATES. Fast-path memmove
+        // (vectorized, overlap-safe) when that cannot happen; otherwise fall
+        // back to the propagating ascending element copy to match the loop.
+        self.line(&format!(
+            "if ((uintptr_t){d} <= (uintptr_t){s} || (uintptr_t){d} >= (uintptr_t){s} + {nb}) {{",
+            d = vds, s = vss, nb = vnb
+        ));
+        self.indent += 1;
+        self.line(&format!("memmove({}, {}, {});", vds, vss, vnb));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line(&format!(
+            "for (nova_int {k} = 0; {k} < {n}; {k}++) ({d})->data[{lo} + {k}] = ({s})->data[{lo} + {k}];",
+            k = vk, n = vn, d = vd, s = vs, lo = vlo
+        ));
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line(&format!("{} = NOVA_UNIT;", tmp));
+        Ok(Some(tmp))
     }
 
     /// Emit a defer/errdefer body as void-effect statements (no result value,
@@ -25685,9 +25862,33 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                 "for-in: open-ended Range without start bound (Plan 96 Ф.2)".to_string())?;
             let end = end.as_deref().ok_or_else(||
                 "for-in: open-ended Range without end bound (Plan 96 Ф.2)".to_string())?;
+            // [M-opt-preempt-strided-loop] Part B: `for i in lo..hi { dst[i] =
+            // src[i] }` on Vec[T] → single overlap-safe bulk copy (memmove),
+            // dropping the per-element loop entirely. Conservative recognizer;
+            // falls through to the normal loop when not a safe copy pattern.
+            if let Some(tmp) = self.try_emit_range_copy_memmove(&binding, start, end, *inclusive, body)? {
+                return Ok(tmp);
+            }
             let s = self.emit_expr(start)?;
             let e = self.emit_expr(end)?;
             let cmp = if *inclusive { "<=" } else { "<" };
+            // [M-opt-preempt-strided-loop] Part A: provably-short const-bound
+            // range loop → omit the per-iteration preempt-check so clang can
+            // vectorize/unroll. Conservative: BOTH bounds must be plain int
+            // literals AND the iteration count must lie in [0, MAX] (small
+            // enough it cannot monopolise a worker). Anything else (variable
+            // bound, large const) keeps the check — correctness over speed.
+            const NOVA_PREEMPT_SKIP_MAX_ITERS: i64 = 1024;
+            let skip_preempt = match (
+                Self::loop_bound_int_literal(start),
+                Self::loop_bound_int_literal(end),
+            ) {
+                (Some(lo), Some(hi)) => {
+                    let count = if *inclusive { hi - lo + 1 } else { hi - lo };
+                    (0..=NOVA_PREEMPT_SKIP_MAX_ITERS).contains(&count)
+                }
+                _ => false,
+            };
             let tmp = self.fresh_tmp();
             self.line(&format!("nova_unit {};", tmp));
             self.line(&format!(
@@ -25702,7 +25903,7 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
             let was_mut = self.var_mutable.remove(&binding);
             // Plan 20 Ф.4: defer/errdefer внутри loop body должен выполняться
             // на каждой итерации (LIFO, fail-frame throw-path).
-            self.emit_loop_body_inline(body)?;
+            self.emit_loop_body_inline_ex(body, skip_preempt)?;
             // Restore prior state.
             match prev_ty {
                 Some(t) => { self.var_types.insert(binding.clone(), t); }
