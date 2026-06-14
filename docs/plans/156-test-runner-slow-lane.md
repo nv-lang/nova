@@ -170,3 +170,44 @@ EXPECT-маркерами): test-discovery skip/route-конвенции —
 ## Прайор-арт
 Go `-short`/build-tags; Rust `#[ignore]`+`--ignored`, двухуровневый bors-CI; LLVM
 отдельный `test-suite` репо; CPython `@requires_resource`; ICU `testdata/`+`intltest`.
+
+## Статус по завершении
+
+✅ **ЗАКРЫТ 2026-06-14 (механизм полный, без упрощений).** Закрывает
+`[M-test-runner-large-test-lane]`.
+
+**Реализовано (по фазам, production-grade):**
+- **Ф.1 discovery-хелперы:** `is_slow_file_stem(stem) -> stem.ends_with("_slow")`;
+  `walk_nv` → `walk_nv_filtered(root, out, lane)`; гард `_slow` в `direct_nv`-цикле
+  рядом с `_module`/OS-суффиксами; снятие суффиксов в каноническом порядке
+  (`_module` whole-skip → `_slow` → `_test` → OS на `core_stem`). Содержимое
+  `*_slow.nv` НЕ читается при дефолтном прогоне → нулевой per-file I/O.
+- **Ф.2 lane-enum:** `SlowLane { Exclude(default) | Include | Only }`;
+  `TestAllOpts.slow_lane`; `run_all` зовёт `walk_nv_filtered(.., opts.slow_lane)`
+  для tests-dir и stdlib-dir.
+- **Ф.3 CLI:** clap-флаги `--include-slow` / `--slow-only` → схлопнуты в `slow_lane`.
+- **Ф.4 unit-тесты discovery:** `plan156_slow_lane_tests` в `test_runner.rs`
+  (`is_slow_file_stem`-классификация + `walk_nv_filtered` по каждому `SlowLane`).
+- **Ф.5 спека + доки:** [D277](../../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)
+  нормирует все discovery-конвенции; `docs/test-conventions.md` флипнут на IMPLEMENTED.
+- **Генератор:** `nova-codegen unicode --conformance-full` пишет `*_conformance_slow.nv`
+  (limit=usize::MAX → весь корпус, renderers чанкуют по 500).
+- **Фикстуры:** `nova_tests/plan156/` (slow-lane end-to-end) + полные corpora,
+  отправленные в slow-lane как `*_conformance_slow.nv`.
+
+**Верифицировано:** AC A1–A5 (дефолт не читает `*_slow.nv`; `--include-slow`/`--slow-only`
+гоняют их и композятся с фильтрами; `nova check <path>` на slow-файле работает; суффикс
+комбинируется с OS/`_test`; генератор пишет оба lane детерминированно); сборка
+`nova-codegen` release зелёная; Rust unit-тесты discovery PASS.
+
+**Data-gated (НЕ упрощение механизма):** полная популяция collation/sentence
+conformance-corpora (`CollationTest_SHIFTED.txt` 227800 пар + sentence-набор) ещё не
+закоммичена — нужны UCD-данные (`allkeys.txt`/`CollationTest`), которых нет в репо.
+Когда данные появятся: прогнать `--conformance-full` → закоммитить
+`collation_conformance_slow.nv` → доказать через slow-gate. Трекается
+`[M-152-collation-full-conformance]`. Это **доступность данных**, не упрощение
+алгоритма/механизма.
+
+**Отложено (out-of-scope rev-2):** каталог-вариант `slow/` + `_slow.toml` для медленных
+folder-module → `[M-156-slow-subtree-dir]` (YAGNI до первого такого теста; добавляется
+аддитивно, не ломая suffix-механизм).
