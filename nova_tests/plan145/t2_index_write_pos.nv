@@ -1,0 +1,24 @@
+// Plan 145 — t2: write-index `v[i] = val`.
+// Write-путь (C-блок, не stmt-expr) не должен регрессировать после миграции
+// read-индексации. Проверяем write-through на Vec[int]/Vec[str].
+
+module plan145.t2_index_write_pos
+
+import std.collections.vec.{Vec}
+
+test "v[i] = val writes through on Vec[int]" {
+    mut v = [1, 2, 3]
+    v[0] = 10
+    v[1] = 20
+    v[2] = 30
+    assert(v[0] == 10)
+    assert(v[1] == 20)
+    assert(v[2] == 30)
+}
+
+test "v[i] = val on Vec[str]" {
+    mut v = ["a", "b"]
+    v[0] = "x"
+    assert(v[0] == "x")
+    assert(v[1] == "b")
+}

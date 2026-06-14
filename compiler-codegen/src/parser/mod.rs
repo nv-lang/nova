@@ -9598,27 +9598,42 @@ impl Parser {
                         span,
                     )
                 })?;
-                // **Plan 91.14 Ф.2 (D229):** после expr peek для `:` token.
-                // Если присутствует — parse format spec (V1: только `?` → Debug).
+                // **Plan 91.14 Ф.2 (D229) + Plan 152.7-B (D258):** after expr,
+                // peek for a `:` token. If present, the REMAINDER of the raw
+                // `${...}` body (everything after the colon) is the format spec.
+                //
+                // We must parse the spec from the RAW substring, not via the
+                // Nova sub-lexer: a Rust-style spec like `<5`, `*^10`, `.2`,
+                // `#x`, `08X` is NOT a valid Nova token sequence (`<`/`^`/`#`
+                // etc. would mis-lex or error). The sub-parser already stopped
+                // at the colon after consuming the full expression, so the
+                // colon token's byte span gives us the precise split point in
+                // `expr_src`.
                 let spec = if matches!(sub.peek().kind, TokenKind::Colon) {
-                    sub.bump(); // consume `:`
-                    parse_format_spec(&mut sub, span)?
+                    let colon_end = sub.peek().span.end;
+                    // `expr_src` is the raw `${...}` body; slice off the spec
+                    // text after the colon and parse it directly.
+                    let spec_raw = expr_src.get(colon_end..).unwrap_or("");
+                    crate::ast::format_spec::parse_rich_format_spec(spec_raw)
+                        .map_err(|msg| Diagnostic::new(msg, span))?
                 } else {
+                    // No `:` — but the sub-parser must have consumed the whole
+                    // expression. Any leftover token is a genuine syntax error.
+                    if !matches!(sub.peek().kind, TokenKind::Eof) {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "[E_FORMAT_SPEC_TRAILING] unexpected tokens after \
+                                 expression in `${{...}}`: expected end of \
+                                 expression or a `:` format spec, found `{}`. \
+                                 Valid syntax — `${{expr}}`, `${{expr:?}}`, or \
+                                 `${{expr:SPEC}}` (Plan 152.7-B).",
+                                sub.peek().kind.name(),
+                            ),
+                            span,
+                        ));
+                    }
                     crate::ast::FormatSpec::None
                 };
-                // Если что-то осталось после spec — syntax error (внутри ${...}
-                // не должно быть лишних tokens).
-                if !matches!(sub.peek().kind, TokenKind::Eof) {
-                    return Err(Diagnostic::new(
-                        format!(
-                            "[E_FORMAT_SPEC_TRAILING] unexpected tokens after format spec \
-                             in `${{...}}`: expected end of expression, found `{}`. \
-                             Plan 91.14: valid syntax — `${{expr}}` or `${{expr:?}}`.",
-                            sub.peek().kind.name(),
-                        ),
-                        span,
-                    ));
-                }
                 parts.push(InterpPart::Expr(inner, spec));
                 i = j + 1;
                 continue;
@@ -9664,58 +9679,15 @@ impl Parser {
 
 enum InterpPart {
     Lit(String),
-    /// Plan 91.14 (D229): expr с optional format spec (`${expr}` или `${expr:?}`).
-    /// V1 specs: FormatSpec::None / FormatSpec::Debug.
+    /// Plan 91.14 (D229) + Plan 152.7-B (D258): expr with optional format spec.
+    /// Specs: FormatSpec::None / FormatSpec::Debug / FormatSpec::Spec(..).
     Expr(Expr, crate::ast::FormatSpec),
 }
 
-/// **Plan 91.14 Ф.2 (D229):** parse format spec после `:` token inside `${...}`.
-///
-/// Called from `desugar_string_interpolation` после `parse_expr()` если peek = `:`.
-/// V1 grammar:
-/// - `?` → `FormatSpec::Debug` (calls DebugPrintable.@debug_fmt)
-/// - empty (after `:`) → `E_FORMAT_SPEC_EMPTY`
-/// - whitespace before spec → `E_FORMAT_SPEC_WHITESPACE` (strict, no forgiveness)
-/// - unknown ident → `E_FORMAT_SPEC_UNKNOWN` с suggestion list
-///
-/// Future extensions ([M-91.14-format-dsl-extensions]): `:hex`, `:pad-N`, `:.3`, etc.
-fn parse_format_spec(
-    sub: &mut Parser,
-    interp_span: crate::diag::Span,
-) -> Result<crate::ast::FormatSpec, Diagnostic> {
-    // After consuming `:`, peek next token:
-    match &sub.peek().kind {
-        TokenKind::Question => {
-            sub.bump();
-            Ok(crate::ast::FormatSpec::Debug)
-        }
-        TokenKind::Eof => Err(Diagnostic::new(
-            "[E_FORMAT_SPEC_EMPTY] format spec после `:` is empty in `${...}`. \
-             Expected `?` для debug-format (V1). \
-             Example: `${expr:?}`. Plan 91.14 (D229)."
-                .to_string(),
-            interp_span,
-        )),
-        TokenKind::Ident(name) => Err(Diagnostic::new(
-            format!(
-                "[E_FORMAT_SPEC_UNKNOWN] unknown format spec `{}` в `${{...}}`. \
-                 V1 supports только `?` (debug). Did you mean `${{expr:?}}`? \
-                 Future specs (`hex`, `pad-N`, `.N`) — [M-91.14-format-dsl-extensions]. \
-                 Plan 91.14 (D229).",
-                name,
-            ),
-            interp_span,
-        )),
-        other => Err(Diagnostic::new(
-            format!(
-                "[E_FORMAT_SPEC_UNKNOWN] unexpected token `{}` после `:` в `${{...}}`. \
-                 V1 supports только `?` (debug). Plan 91.14 (D229).",
-                other.name(),
-            ),
-            interp_span,
-        )),
-    }
-}
+// Plan 152.7-B (D258): the format spec is parsed directly from the raw `${...}`
+// substring via `crate::ast::format_spec::parse_rich_format_spec` (a Rust-style
+// spec is not a valid Nova token sequence, so it cannot be sub-lexed). The old
+// token-driven `parse_format_spec` helper (Plan 91.14, `:?`-only) was retired.
 
 fn parser_utf8_char_len(first_byte: u8) -> usize {
     match first_byte {
@@ -9949,7 +9921,7 @@ mod tests {
         let m = parse_or_panic(
             r#"
             fn area(r f64) -> f64 {
-                let pi = 3.14
+                ro pi = 3.14
                 pi * r * r
             }
             "#,
@@ -9986,7 +9958,7 @@ mod tests {
         let m = parse_or_panic(
             r#"
             type User {
-                readonly id u64
+                ro id u64
                 name str
             }
             "#,
@@ -10197,7 +10169,7 @@ mod tests {
         let m = parse_or_panic(
             r#"
             fn loop_test() -> int {
-                let mut s = 0
+                mut s = 0
                 for i in 0..10 {
                     s += i
                 }
@@ -10213,7 +10185,7 @@ mod tests {
         let m = parse_or_panic(
             r#"
             fn run() {
-                with Db = handler Db {
+                with Db = effect Db {
                     query(q) => []
                     exec(q) => 0
                 } {
@@ -10272,7 +10244,7 @@ mod tests {
 
     #[test]
     fn closure_light_one_param_expr() {
-        let m = parse_or_panic("let inc = |x| x + 1\n");
+        let m = parse_or_panic("ro inc = |x| x + 1\n");
         let (params, body) = first_let_closure_light(&m);
         assert_eq!(params.len(), 1);
         assert_eq!(params[0].name, "x");
@@ -10281,7 +10253,7 @@ mod tests {
 
     #[test]
     fn closure_light_no_params() {
-        let m = parse_or_panic("let zero = || 0\n");
+        let m = parse_or_panic("ro zero = || 0\n");
         let (params, body) = first_let_closure_light(&m);
         assert!(params.is_empty());
         assert!(matches!(body, crate::ast::ClosureBody::Expr(_)));
@@ -10289,7 +10261,7 @@ mod tests {
 
     #[test]
     fn closure_light_wildcard_param() {
-        let m = parse_or_panic("let any = |_| 42\n");
+        let m = parse_or_panic("ro any = |_| 42\n");
         let (params, _body) = first_let_closure_light(&m);
         assert_eq!(params.len(), 1);
         assert_eq!(params[0].name, "_");
@@ -10297,7 +10269,7 @@ mod tests {
 
     #[test]
     fn closure_light_multi_params() {
-        let m = parse_or_panic("let add = |a, b| a + b\n");
+        let m = parse_or_panic("ro add = |a, b| a + b\n");
         let (params, _body) = first_let_closure_light(&m);
         assert_eq!(params.len(), 2);
         assert_eq!(params[0].name, "a");
@@ -10308,8 +10280,8 @@ mod tests {
     fn closure_light_block_body() {
         let m = parse_or_panic(
             r#"
-            let f = |x| {
-                let y = x * 2
+            ro f = |x| {
+                ro y = x * 2
                 y + 1
             }
             "#,
@@ -10324,8 +10296,8 @@ mod tests {
     fn closure_light_no_params_block_body() {
         let m = parse_or_panic(
             r#"
-            let g = || {
-                let x = 10
+            ro g = || {
+                ro x = 10
                 x * x
             }
             "#,
@@ -10338,7 +10310,7 @@ mod tests {
     #[test]
     fn closure_light_in_call_arg() {
         // Closure-light внутри args вызова — частый use-case (HOF).
-        let m = parse_or_panic("let r = list.filter(|x| x > 0)\n");
+        let m = parse_or_panic("ro r = list.filter(|x| x > 0)\n");
         let Item::Let(l) = &m.items[0] else { panic!() };
         // r = ExprKind::Call { ... args: [Closure...] }
         let ExprKind::Call { args, .. } = &l.value.kind else {
@@ -10352,7 +10324,7 @@ mod tests {
     #[test]
     fn closure_light_typed_param_rejected() {
         // |x int| — невалидно, типы только в closure-full.
-        let result = parse("let bad = |x int| x + 1\n");
+        let result = parse("ro bad = |x int| x + 1\n");
         assert!(result.is_err(), "typed param must be rejected in closure-light");
         let err = result.unwrap_err();
         assert!(
@@ -10365,7 +10337,7 @@ mod tests {
     #[test]
     fn closure_light_arrow_in_body_rejected() {
         // |x| => expr — невалидно (D22-rev: closure-light не использует =>).
-        let result = parse("let bad = |x| => x + 1\n");
+        let result = parse("ro bad = |x| => x + 1\n");
         assert!(result.is_err(), "`|x| => expr` must be rejected");
         let err = result.unwrap_err();
         assert!(
@@ -10379,7 +10351,7 @@ mod tests {
     fn closure_light_does_not_break_binary_or() {
         // `|` в infix-position — binary OR, не closure.
         // 5 | 2 — bitwise OR, должно дать значение 7 (но мы парсим, не вычисляем).
-        let m = parse_or_panic("let r = 5 | 2\n");
+        let m = parse_or_panic("ro r = 5 | 2\n");
         let Item::Let(l) = &m.items[0] else { panic!() };
         // Должен быть Binary, не ClosureLight.
         assert!(
@@ -10392,7 +10364,7 @@ mod tests {
     #[test]
     fn closure_light_does_not_break_logical_or() {
         // `||` в infix-position — logical OR, не no-arg closure.
-        let m = parse_or_panic("let r = true || false\n");
+        let m = parse_or_panic("ro r = true || false\n");
         let Item::Let(l) = &m.items[0] else { panic!() };
         assert!(
             matches!(l.value.kind, ExprKind::Binary { .. }),
@@ -10419,7 +10391,7 @@ mod tests {
 
     #[test]
     fn closure_full_typed_expr_body() {
-        let m = parse_or_panic("let f = fn(x int) -> int => x * 2\n");
+        let m = parse_or_panic("ro f = fn(x int) -> int => x * 2\n");
         let sb = first_let_closure_full(&m);
         assert_eq!(sb.params.len(), 1);
         assert_eq!(sb.params[0].name, "x");
@@ -10431,8 +10403,8 @@ mod tests {
     fn closure_full_typed_block_body() {
         let m = parse_or_panic(
             r#"
-            let f = fn(x int, y int) -> int {
-                let z = x + y
+            ro f = fn(x int, y int) -> int {
+                ro z = x + y
                 z * 2
             }
             "#,
@@ -10445,7 +10417,7 @@ mod tests {
     #[test]
     fn closure_full_with_effects() {
         let m = parse_or_panic(
-            "let mid = fn(req int) Db Log -> int => req + 1\n",
+            "ro mid = fn(req int) Db Log -> int => req + 1\n",
         );
         let sb = first_let_closure_full(&m);
         assert_eq!(sb.effects.len(), 2);
@@ -10454,7 +10426,7 @@ mod tests {
 
     #[test]
     fn closure_full_no_params() {
-        let m = parse_or_panic("let pure = fn() -> int => 42\n");
+        let m = parse_or_panic("ro pure = fn() -> int => 42\n");
         let sb = first_let_closure_full(&m);
         assert!(sb.params.is_empty());
         assert!(sb.return_type.is_some());
@@ -10462,7 +10434,7 @@ mod tests {
 
     #[test]
     fn closure_full_no_return_type() {
-        let m = parse_or_panic("let logger = fn(s str) Log { let x = s }\n");
+        let m = parse_or_panic("ro logger = fn(s str) Log { ro x = s }\n");
         let sb = first_let_closure_full(&m);
         assert_eq!(sb.params.len(), 1);
         assert!(sb.return_type.is_none());
@@ -10471,7 +10443,7 @@ mod tests {
 
     #[test]
     fn closure_full_generics_rejected() {
-        let result = parse("let f = fn[T](x T) -> T => x\n");
+        let result = parse("ro f = fn[T](x T) -> T => x\n");
         assert!(result.is_err(), "generics on closure-full must be rejected in bootstrap");
         let err = result.unwrap_err();
         assert!(
@@ -10484,7 +10456,7 @@ mod tests {
     #[test]
     fn closure_full_in_call_arg() {
         let m = parse_or_panic(
-            "let r = list.map(fn(x int) -> int => x * 2)\n",
+            "ro r = list.map(fn(x int) -> int => x * 2)\n",
         );
         let Item::Let(l) = &m.items[0] else { panic!() };
         let ExprKind::Call { args, .. } = &l.value.kind else {
@@ -10590,7 +10562,7 @@ mod tests {
         let m = parse_or_panic(
             r#"
             fn dummy(x fn() -> int) -> int => x()
-            let r = dummy() {
+            ro r = dummy() {
                 42
             }
             "#,
@@ -10642,7 +10614,7 @@ mod tests {
         let m = parse_or_panic(
             r#"
             fn dummy(x fn(int) -> bool) -> bool => x(1)
-            let r = dummy() fn(x int) -> bool => x > 0
+            ro r = dummy() fn(x int) -> bool => x > 0
             "#,
         );
         let Item::Let(l) = &m.items[1] else { panic!() };
@@ -10660,8 +10632,8 @@ mod tests {
         let m = parse_or_panic(
             r#"
             fn dummy(x fn(int, int) -> int) -> int => x(1, 2)
-            let r = dummy() fn(a int, b int) -> int {
-                let s = a + b
+            ro r = dummy() fn(a int, b int) -> int {
+                ro s = a + b
                 s * 2
             }
             "#,
@@ -10679,7 +10651,7 @@ mod tests {
         let m = parse_or_panic(
             r#"
             fn dummy(x fn(int) Db -> int) Db -> int => x(1)
-            let r = dummy() fn(n int) Db -> int => n
+            ro r = dummy() fn(n int) Db -> int => n
             "#,
         );
         let Item::Let(l) = &m.items[1] else { panic!() };

@@ -204,15 +204,16 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 Активная разработка. Спецификация стабильна по ключевым областям
 (эффекты, handlers, синтаксис, память, конкуренция). Один компилятор:
 
-- **compiler-codegen** — Rust-реализация с парсером, type-checker'ом,
-  treewalk-интерпретатором и C-backend codegen'ом. Компилирует Nova в C
-  через нативный runtime (эффекты, файберы, GC, каналы); используется как
-  для интерактивных запусков (`run`, `test`), так и для нативной
-  компиляции (`build`).
+- **compiler-codegen** — Rust-реализация с парсером, type-checker'ом
+  и C-backend codegen'ом. Компилирует Nova в C через нативный runtime
+  (эффекты, файберы, GC, каналы); обслуживает как тестовые запуски
+  (`test`), так и нативную компиляцию (`build`).
 - **nova-cli** — единая точка входа для пользователя (`nova check`,
-  `nova build`, `nova run`, `nova test`, `nova regen-runtime`).
-  `nova-codegen` остаётся как внутренний инструмент для IDE / CI /
-  отладки codegen'а.
+  `nova build`, `nova test`, `nova regen-runtime`). Точка входа
+  интерпретатора `nova run` сейчас **не поддерживается** — Nova
+  компилируется в C, поэтому используйте `nova build` (нативный бинарь)
+  или `nova test`. `nova-codegen` остаётся как внутренний инструмент
+  для IDE / CI / отладки codegen'а.
 
 Что работает сегодня (bootstrap):
 
@@ -246,11 +247,9 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 # собрать nova CLI (требуется Rust + Cargo)
 cd nova-cli && cargo build --release && cd ..
 
-# скомпилировать .nv в нативный бинарь
-nova-cli/target/release/nova build path/to/hello.nv
-
-# запустить через интерпретатор (без нативной компиляции)
-nova-cli/target/release/nova run path/to/hello.nv
+# скомпилировать .nv в нативный бинарь и запустить его
+nova-cli/target/release/nova build path/to/hello.nv -o hello
+./hello
 
 # только type-check
 nova-cli/target/release/nova check path/to/hello.nv

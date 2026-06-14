@@ -20,7 +20,7 @@ package `nova`, crate `nova-cli`).
 - [Project root discovery](#project-root-discovery)
 - [Commands](#commands)
   - [`nova check`](#nova-check) — type-check
-  - [`nova run`](#nova-run) — interpreter
+  - [`nova run`](#nova-run) — interpreter (currently **NOT supported**)
   - [`nova add`](#nova-add) — add a dependency
   - [`nova update`](#nova-update) — re-resolve git pins
   - [`nova info`](#nova-info) — package effect-surface
@@ -33,6 +33,7 @@ package `nova`, crate `nova-cli`).
   - [`nova doc-mcp`](#nova-doc-mcp) — MCP server
   - [`nova contracts`](#nova-contracts) — contract inspection (Plan 33.3)
   - [`nova bench`](#nova-bench) — benchmark infrastructure (Plan 57)
+  - [`nova consume-analyze`](#nova-consume-analyze) — consume-type coverage (Plan 100.8)
 - [Environment variables](#environment-variables)
 - [Migration binaries](#migration-binaries)
 - [Related documents](#related-documents)
@@ -48,11 +49,11 @@ nova check                       # type-check whole workspace
 nova check encoding/             # walk a directory recursively
 nova check lib.nv                # single file
 
-nova run hello.nv                # interpret
+nova build app.nv -o app         # compile to a native binary (the way to run code)
+./app                            # then execute it
 nova add mathlib --path ../mathlib   # add a dependency, update nova.lock
 nova info mathlib                # a dependency's effect-surface
-nova build app.nv -o app         # compile to a native binary
-nova test                        # run all nova_tests/
+nova test                        # compile + run all nova_tests/
 nova test --filter basics        # substring subset
 
 nova doc lib.nv                  # markdown to stdout
@@ -62,6 +63,10 @@ nova doc . --check --strict      # CI doc validation
 nova bench run bench.nv          # run benchmarks
 nova contracts verify foo.nv     # SMT-verify contracts
 ```
+
+> **No interpreter.** Nova compiles to C — there is no `nova run`. To run
+> a program, `nova build` it and execute the binary; to run tests, use
+> `nova test`. See [`nova run`](#nova-run) below.
 
 ---
 
@@ -109,6 +114,37 @@ Apply to every subcommand:
 5. `CI=true` → never
 6. `TERM=dumb` → never
 7. Default — on
+
+### Field-cache tuning (advanced)
+
+Every subcommand also accepts the [Plan 123](plans/123.1-core-cse.md)
+field-caching knobs. These are forensic / escape-hatch flags — the
+defaults are correct for normal use; you only touch them when
+investigating a codegen-cache regression.
+
+| Flag | Effect |
+|---|---|
+| `--no-field-cache` | Disable field caching entirely (== `NOVA_FIELD_CACHE=0`) |
+| `--no-field-cache-licm` | Disable the LICM phase (D218) |
+| `--no-field-cache-pure` | Disable the pure-call cache phase (D219) |
+| `--no-field-cache-chain` | Disable the chain cache phase (D217 V4) |
+| `--no-field-cache-ipa` | Disable IPA refinements (D223 V7.1) |
+| `--field-cache-threshold N` | Min `@field` reads to cache (default 2) |
+| `--field-cache-licm-threshold N` | Min reads inside a loop (default 2) |
+| `--field-cache-pure-threshold N` | Min `@method()` calls (default 2) |
+| `--field-cache-chain-threshold N` | Min chain occurrences (default 2) |
+| `--field-cache-max N` | Per-fn cap across all layers (default 8) |
+| `--field-cache-licm-max N` | Per-loop LICM cap (default 4) |
+| `--field-cache-chain-depth N` | Chain max depth (default 4, min 2) |
+| `--field-cache-ipa-iter N` | IPA iterative-closure cap (default 10) |
+
+`nova check` additionally exposes `--explain-cache`, `--telemetry-cache`,
+`--telemetry-json`, `--telemetry-baseline FILE`,
+`--telemetry-gate-affected-drop F`, and `--telemetry-gate-caches-drop F`
+for cache-analysis reporting and CI regression gating.
+
+The field-cache flags are omitted from the per-command tables below to
+keep them readable; assume every command accepts the whole family.
 
 ---
 
@@ -223,15 +259,27 @@ not yet implemented.
 
 ### `nova run`
 
-Run a `.nv` file through the interpreter (no C-backend compile).
+> **Currently NOT supported.** The tree-walking interpreter is disabled.
+
+`nova run` is still a visible subcommand, but invoking it errors out and
+points you at the C-codegen path:
 
 ```
 nova run FILE
 ```
 
-- `FILE` — path to a `.nv` file with `fn main`
-- Backed by `nova_codegen::interp::Interpreter`
-- Equivalent to `nova-codegen run`
+```
+error: the Nova interpreter (`nova run`) is currently NOT supported.
+Use `nova build <file>` to compile to an executable, or `nova test` to
+compile and run tests (both via C codegen).
+```
+
+(exit `1`).
+
+Nova compiles to C; there is no supported interpreter. To run a program,
+[`nova build`](#nova-build) it and execute the resulting binary; to
+compile and run tests, use [`nova test`](#nova-test) /
+[`nova test-build`](#nova-test-build).
 
 ---
 
@@ -1028,6 +1076,38 @@ nova bench dashboard [--history-branch BRANCH] [--out DIR] [--max-entries N] [--
 | `--echarts-url` | jsdelivr URL | Custom echarts URL (offline = local) |
 
 Generates `index.html` + `bench-<safe>.html` per bench + `data.json`.
+
+> The `nova bench` family also exposes the diagnostic subcommands
+> `field-cache` (real wall-clock measurement of the Plan 123 field-cache
+> impact), `cpu-instr-check`, `membw-check`, and `callgrind-check`. Run
+> `nova bench <sub> --help` for their flags.
+
+---
+
+### `nova consume-analyze`
+
+Consume-type coverage analyzer ([Plan 100.8](plans/100.8-performance-ide-tooling.md) / D7).
+Scans a file or directory, collects all consume-typed bindings, and
+reports how many are covered via consume-methods, `errdefer`, or
+`okdefer`. Useful as a CI hygiene check.
+
+```
+nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `PATH` | — | `.nv` file or directory to analyze |
+| `--format` | `human` | `human` or `json` |
+| `--fail-on-uncovered` | off | Exit non-zero if any uncovered consume binding is found (CI gate) |
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| `0` | All consume bindings covered |
+| `1` | Uncovered bindings found |
+| `2` | Usage error |
 
 ---
 

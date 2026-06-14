@@ -1,0 +1,13 @@
+// EXPECT_RUNTIME_PANIC out of bounds
+//
+// Plan 145 — негатив: индексация Vec за границей → panic через nova_idx_chk.
+// `fn main` (не test-блок): panic должен дойти до runtime-frame.
+
+module plan145.neg_vec_index_oob
+
+import std.collections.vec.{Vec}
+
+fn main() -> () {
+    ro v = [1, 2, 3]
+    ro _ = v[5]
+}

@@ -1,0 +1,26 @@
+// Plan 145 — t1: bounds-checked read index on Vec[T] / []T literal.
+// Покрывает Vec inline-путь индексации (emit_c.rs ~19929) после миграции
+// со stmt-expr на portable `nova_idx_chk`.
+
+module plan145.t1_index_read_pos
+
+import std.collections.vec.{Vec}
+
+test "v[i] read on Vec[int] literal" {
+    ro v = [10, 20, 30]
+    assert(v[0] == 10)
+    assert(v[1] == 20)
+    assert(v[2] == 30)
+}
+
+test "v[i] read on Vec[int].from" {
+    ro v = Vec[int].from([100, 200, 300])
+    assert(v[0] == 100)
+    assert(v[2] == 300)
+}
+
+test "v[i] read on Vec[str]" {
+    ro v = ["hello", "world"]
+    assert(v[0] == "hello")
+    assert(v[1] == "world")
+}

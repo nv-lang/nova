@@ -1,0 +1,32 @@
+// Plan 144.0 may-GC effect analysis — NEGATIVE (classified MayGC).
+//
+// `ping` → `pong` → `ping` form a 2-node strongly-connected component (mutual
+// recursion). `ping` ALLOCATES (ArrayLit `[n]` in its base case) → it is
+// `self_may_gc`. Per Plan §3.4 a single allocating member taints the WHOLE
+// SCC: the component is MayGC, so BOTH `ping` and `pong` are MayGC — even
+// though `pong` itself never allocates.
+//
+// Contrast with positive_pure_recursion.nv (same cycle SHAPE, but NO member
+// allocates → whole SCC NoGC). Together they prove the SCC-condensation
+// propagation is correct in both directions: cyclicity alone does NOT force
+// MayGC; an allocation INSIDE the cycle does, and it floods every member.
+//
+// EXPECT (gc-effect-analyze --format json): ping, pong → both "MayGC".
+
+module plan144_0.negative_recursive_alloc
+
+// Allocates in the base case (ArrayLit) → self_may_gc → taints the SCC.
+fn ping(n int) -> []int {
+    if n <= 0 { [n] } else { pong(n - 1) }
+}
+
+// No allocation of its own, but on the same SCC as the allocating `ping`
+// → MayGC by SCC-taint.
+fn pong(n int) -> []int {
+    if n <= 0 { ping(0) } else { ping(n - 1) }
+}
+
+test "recursive scc with allocating member" {
+    assert(ping(0).len == 1)
+    assert(pong(3).len == 1)
+}

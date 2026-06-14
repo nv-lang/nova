@@ -1,0 +1,11 @@
+// Plan 152.4.4 (criterion A6): case functions are part of the OPT-IN std.unicode
+// module — NOT in the prelude. Without `import std.unicode`, `fold_case` is not in
+// scope: the program must not silently compile. Pins the opt-in boundary.
+//
+// EXPECT_COMPILE_ERROR undefined identifier
+module plan152_4.n_case_opt_in
+
+test "fold_case is undefined without import std.unicode" {
+    ro x = fold_case("ABC")
+    assert(x == "abc")
+}

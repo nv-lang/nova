@@ -1,0 +1,34 @@
+// Plan 144.0 may-GC effect analysis — POSITIVE (classified NoGC).
+//
+// `is_even` → `is_odd` → `is_even` form a 2-node strongly-connected component
+// (mutual recursion, SCC>1). Neither member allocates, goes indirect, calls
+// FFI, or has an unresolved callee, and the SCC has NO out-edge into any
+// MayGC SCC. Per Plan §3.4 a cycle is NoGC iff no member self-MayGC and no
+// external edge reaches MayGC — so the WHOLE pure-recursive SCC is NoGC.
+//
+// This is the SCC POSITIVE: it proves a pure recursive cycle is NOT forced
+// MayGC merely by being cyclic (only allocation/indirect/etc. inside the SCC
+// would do that — see negative_recursive_alloc.nv for the contrast).
+//
+// NB: bodies use `-` and comparisons only (no `+` → no conservative
+// alloc-seed).
+//
+// EXPECT (gc-effect-analyze --format json): is_even, is_odd → both "NoGC".
+
+module plan144_0.positive_pure_recursion
+
+fn is_even(n int) -> bool {
+    if n == 0 { true } else { is_odd(n - 1) }
+}
+
+fn is_odd(n int) -> bool {
+    if n == 0 { false } else { is_even(n - 1) }
+}
+
+test "pure mutual recursion parity" {
+    assert(is_even(0))
+    assert(is_odd(1))
+    assert(is_even(4))
+    assert(is_odd(7))
+    assert(is_even(10))
+}

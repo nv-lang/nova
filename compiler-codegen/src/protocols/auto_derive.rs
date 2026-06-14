@@ -1673,6 +1673,7 @@ mod tests {
             imports: vec![],
             items,
             attrs: vec![],
+            contract_opt_out: Default::default(),
             doc_attrs: vec![],
             span: Span::dummy(),
             peer_files: vec![],

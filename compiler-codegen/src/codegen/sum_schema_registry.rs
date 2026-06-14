@@ -1037,15 +1037,25 @@ mod tests {
         let none_v = entry.variants.iter().find(|v| v.variant_name == "None").unwrap();
         assert!(none_v.field_c_types.is_empty());
 
-        // Method routing для unwrap_or: HardcodedRuntimeFn с per-T mangling.
-        let unwrap_or_routing = entry.method_routing.get("unwrap_or")
-            .expect("Option.unwrap_or must be routed");
-        match unwrap_or_routing {
+        // Plan 95.bis Ф.2 + Plan 99: `unwrap_or` УБРАН из baseline —
+        // перенесён на Nova-body (`fn Option[T] @unwrap_or => match @ ...`
+        // в std/prelude/core.nv). В baseline-only entry его routing
+        // отсутствует (как и у `is_some`, удалённого Plan 95 Ф.4.2).
+        assert!(entry.method_routing.get("unwrap_or").is_none(),
+            "Option.unwrap_or мигрирован на Nova-body — НЕ в baseline method_routing");
+        assert!(entry.method_routing.get("is_some").is_none(),
+            "Option.is_some мигрирован на Nova-body — НЕ в baseline method_routing");
+
+        // Оставшийся per-baseline метод — `unwrap` (inline sentinel). Он
+        // подтверждает, что baseline routing-map населён, а не пуст.
+        let unwrap_routing = entry.method_routing.get("unwrap")
+            .expect("Option.unwrap должен оставаться в baseline routing");
+        match unwrap_routing {
             MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
-                assert_eq!(c_name, "Nova_Option_method_unwrap_or");
-                assert!(*is_per_t, "Option methods must be per-T mangled");
+                assert_eq!(c_name, "<inline>");
+                assert!(!*is_per_t);
             }
-            other => panic!("expected HardcodedRuntimeFn for Option.unwrap_or, got {:?}", other),
+            other => panic!("expected HardcodedRuntimeFn<inline> for Option.unwrap, got {:?}", other),
         }
     }
 
@@ -1269,21 +1279,17 @@ mod tests {
         // Plan 95 Ф.4.2: is_some УДАЛЕНО из baseline — перенесено на
         // Nova-body. Без prelude scan'а baseline-only lookup → None
         // (DeclaredBody-entry регистрируется через `init_prelude_decls_
-        // from_items`, не здесь). Verify Option.unwrap_or как пример
-        // оставшегося per-T trampoline.
+        // from_items`, не здесь).
         assert!(reg.lookup_method_routing("Option", "is_some").is_none(),
             "is_some убран из baseline — регистрируется DeclaredBody через prelude scan");
-        let r = reg.lookup_method_routing("Option", "unwrap_or")
-            .expect("Option.unwrap_or must be routed");
-        match r {
-            MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
-                assert_eq!(c_name, "Nova_Option_method_unwrap_or");
-                assert!(*is_per_t);
-            }
-            other => panic!("expected HardcodedRuntimeFn, got {:?}", other),
-        }
 
-        // Option.unwrap → inline sentinel.
+        // Plan 95.bis Ф.2 + Plan 99: `unwrap_or` тоже УБРАН из baseline
+        // (Nova-body `fn Option[T] @unwrap_or => match @ ...` в core.nv).
+        // Baseline-only lookup → None, точно как у `is_some`.
+        assert!(reg.lookup_method_routing("Option", "unwrap_or").is_none(),
+            "Option.unwrap_or мигрирован на Nova-body — НЕ в baseline (None без prelude scan)");
+
+        // Option.unwrap → остаётся inline sentinel (Plan 95 не трогает unwrap).
         let r = reg.lookup_method_routing("Option", "unwrap").unwrap();
         match r {
             MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
@@ -1293,14 +1299,19 @@ mod tests {
             other => panic!("expected HardcodedRuntimeFn<inline>, got {:?}", other),
         }
 
-        // Result.unwrap_or — non-per-T trampoline.
-        let r = reg.lookup_method_routing("Result", "unwrap_or").unwrap();
+        // Plan 95.bis Ф.2 + Plan 99: Result.unwrap_or тоже УБРАН из baseline
+        // (Nova-body в core.nv) — baseline-only lookup → None.
+        assert!(reg.lookup_method_routing("Result", "unwrap_or").is_none(),
+            "Result.unwrap_or мигрирован на Nova-body — НЕ в baseline (None без prelude scan)");
+
+        // Result.unwrap → остаётся inline sentinel.
+        let r = reg.lookup_method_routing("Result", "unwrap").unwrap();
         match r {
             MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
-                assert_eq!(c_name, "Nova_Result_method_unwrap_or");
+                assert_eq!(c_name, "<inline>");
                 assert!(!*is_per_t);
             }
-            other => panic!("expected HardcodedRuntimeFn non-per-T, got {:?}", other),
+            other => panic!("expected HardcodedRuntimeFn<inline> for Result.unwrap, got {:?}", other),
         }
 
         // Result.unknown_method → None.
@@ -1417,20 +1428,29 @@ mod tests {
         assert!(entry.origin_module.is_some(),
             "Prelude entry должен иметь origin_module = Some(std.prelude.core)");
 
-        // **Critical**: method_routing inherited от Hardcoded — Option.unwrap_or
+        // **Critical**: method_routing inherited от Hardcoded — Option.unwrap
         // (которая NOT в declared items, но В Hardcoded routing) всё ещё
-        // findable через registry.
-        let routing = reg.lookup_method_routing("Option", "unwrap_or")
-            .expect("Option.unwrap_or должен оставаться routable после Prelude scan'а");
+        // findable через registry после Prelude scan'а. `unwrap` остаётся
+        // inline sentinel (Plan 95 не трогает unwrap).
+        let routing = reg.lookup_method_routing("Option", "unwrap")
+            .expect("Option.unwrap должен оставаться routable после Prelude scan'а");
         match routing {
             MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
-                assert_eq!(c_name, "Nova_Option_method_unwrap_or",
+                assert_eq!(c_name, "<inline>",
                     "routing must inherit от HardcodedBaseline");
-                assert!(*is_per_t,
-                    "is_per_t flag должен сохраниться");
+                assert!(!*is_per_t,
+                    "is_per_t flag должен сохраниться (unwrap — non-per-T inline)");
             }
-            other => panic!("expected HardcodedRuntimeFn, got {:?}", other),
+            other => panic!("expected HardcodedRuntimeFn<inline>, got {:?}", other),
         }
+
+        // Plan 95.bis Ф.2 + Plan 99: `unwrap_or` мигрирован на Nova-body и
+        // УБРАН из baseline. Он не задекларирован в этих items и не в
+        // baseline routing → после Prelude scan'а lookup → None
+        // (init_prelude_decls_from_items не выдумывает routing для
+        // незадекларированных, не-baseline методов).
+        assert!(reg.lookup_method_routing("Option", "unwrap_or").is_none(),
+            "Option.unwrap_or (Nova-body, не в этих items) не routable из baseline-inherited entry");
 
         // Plan 95 Ф.4.2: `is_some` УДАЛЁН из baseline (перенесён на
         // Nova-body, регистрируется через DeclaredBody). Для external
@@ -1474,15 +1494,22 @@ mod tests {
             .expect("Result must resolve");
         assert_eq!(entry.source, SchemaSource::DeclaredFromPrelude);
 
-        // Routing для Result.unwrap_or — non-per-T (`is_per_t = false`).
-        let routing = reg.lookup_method_routing("Result", "unwrap_or").unwrap();
+        // Inherited baseline routing для Result.unwrap (inline sentinel,
+        // non-per-T) findable после Prelude scan'а — behavior-preserving
+        // inheritance. (`unwrap` остаётся в baseline; Plan 95 не трогает его.)
+        let routing = reg.lookup_method_routing("Result", "unwrap").unwrap();
         match routing {
             MethodRouting::HardcodedRuntimeFn { c_name, is_per_t } => {
-                assert_eq!(c_name, "Nova_Result_method_unwrap_or");
+                assert_eq!(c_name, "<inline>");
                 assert!(!*is_per_t, "Result methods — non-per-T в bootstrap'е");
             }
-            other => panic!("expected HardcodedRuntimeFn non-per-T, got {:?}", other),
+            other => panic!("expected HardcodedRuntimeFn<inline> non-per-T, got {:?}", other),
         }
+
+        // Plan 95.bis Ф.2 + Plan 99: Result.unwrap_or мигрирован на Nova-body
+        // и УБРАН из baseline. Не задекларирован в этих items → lookup → None.
+        assert!(reg.lookup_method_routing("Result", "unwrap_or").is_none(),
+            "Result.unwrap_or (Nova-body, не в этих items) не routable из baseline-inherited entry");
     }
 
     /// **Plan 95 Ф.1.2**: Nova-body метод на `Option`/`Result` (с `body !=
@@ -1552,11 +1579,12 @@ mod tests {
             "external method `unwrap` остаётся C-routed (не DeclaredBody), got {:?}",
             routing);
 
-        // unwrap_or — вообще не declared в items, но в Hardcoded routing
-        // map'е — findable через inheritance (нерегрессионный sanity).
-        let routing = reg.lookup_method_routing("Option", "unwrap_or")
-            .expect("unwrap_or routing inherited from baseline");
-        assert!(matches!(routing, MethodRouting::HardcodedRuntimeFn { .. }));
+        // unwrap_or — Plan 95.bis Ф.2 + Plan 99: мигрирован на Nova-body и
+        // УБРАН из baseline. Не declared в этих items → не routable
+        // (нерегрессионный sanity: prelude scan не выдумывает routing для
+        // методов вне baseline и вне items).
+        assert!(reg.lookup_method_routing("Option", "unwrap_or").is_none(),
+            "unwrap_or (Nova-body, не в items) не routable из baseline-inherited entry");
     }
 
     /// **Plan 95 Ф.1.2 (Result)**: Nova-body `is_ok` на `Result` → `DeclaredBody`.
