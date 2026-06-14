@@ -21,6 +21,11 @@ pub struct Module {
     /// Plan 42 Sub-plan 42.A: module-level attributes (`#forbid X, Y`).
     /// `#requires` отвергнут — нарушает AI-first explicit principle.
     pub attrs: Vec<ModuleAttr>,
+    /// Plan 140.3 ([M-140-contract-levels]): module-level `#unchecked`
+    /// (`#unchecked` перед `module X`, опц. `(requires/ensures/invariant)`) —
+    /// элидирует контракт-страховку соответствующих видов во ВСЁМ модуле
+    /// (per-fn `#unchecked` ⊔ этим). Default — ничего не элидируется.
+    pub contract_opt_out: ContractOptOut,
     /// Plan 45 Ф.22.1 / D105: module-level doc-attrs
     /// (`#stable`/`#unstable`/`#experimental`/`#deprecated`/`#hide_doc`/etc.).
     /// Семантически: tier propagates на items module'а без явного override.
@@ -184,6 +189,10 @@ pub enum ModuleAttrKind {
     /// (требует generic attribute parser, который пока hardcoded на
     /// `TypeAttr` enum'ы; см. ast::TypeAttr).
     AllowPreludeShadow,
+    /// Plan 140.3 ([M-140-contract-levels]): module-level `#unchecked`
+    /// (+ опц. `(requires/ensures/invariant)`) — элидирует контракт-страховку
+    /// соответствующих видов во ВСЁМ модуле (folded в `Module.contract_opt_out`).
+    Unchecked(ContractOptOut),
     /// **Plan 90.1 D141 amend:** `#allow(view_extend_detach)` before `module`.
     /// Suppresses `W_VIEW_EXTEND_DETACH` warnings emitted by
     /// `lints::lint_view_extend_detach` when a grow-method (append / insert /
@@ -472,8 +481,46 @@ pub struct FnDecl {
     /// недоказанность под свою ответственность. Ортогонально `verify_mode`
     /// (`#verify`/`#unverified` управляют статическим доказательством;
     /// `#unchecked` — наличием runtime-страховки). Build-аналог — глобальный
-    /// `--contracts=off`. Default `false` (enforce-with-elision).
-    pub contracts_unchecked: bool,
+    /// `--contracts=off`. Default — ничего не элидируется (enforce-with-elision).
+    ///
+    /// Plan 140.3 ([M-140-contract-levels]): `#unchecked` (bare) элидирует ВСЕ
+    /// виды; `#unchecked(requires)` / `#unchecked(ensures)` / `#unchecked(invariant)`
+    /// (комбинируемо) — Eiffel-style раздельная гранулярность.
+    pub contract_opt_out: ContractOptOut,
+}
+
+/// Plan 140.3 ([M-140-contract-levels]): per-kind contract opt-out — Eiffel-style
+/// раздельное отключение runtime-страховки pre/post/invariant. Применяется на
+/// уровне функции (`#unchecked` перед `fn`) И модуля (`#unchecked` перед `module`).
+/// Эффективная элизия вида = build `--contracts=off` ИЛИ module-opt-out(вид) ИЛИ
+/// fn-opt-out(вид). `Default` — всё `false` (полный enforce).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContractOptOut {
+    /// элидировать `requires` (предусловия).
+    pub requires: bool,
+    /// элидировать `ensures` (постусловия).
+    pub ensures: bool,
+    /// элидировать type-`invariant`.
+    pub invariant: bool,
+}
+
+impl ContractOptOut {
+    /// bare `#unchecked` — все три вида.
+    pub fn all() -> Self {
+        Self { requires: true, ensures: true, invariant: true }
+    }
+    /// есть ли хоть один элидируемый вид.
+    pub fn any(&self) -> bool {
+        self.requires || self.ensures || self.invariant
+    }
+    /// объединение (module ⊔ fn).
+    pub fn merged(&self, other: &Self) -> Self {
+        Self {
+            requires: self.requires || other.requires,
+            ensures: self.ensures || other.ensures,
+            invariant: self.invariant || other.invariant,
+        }
+    }
 }
 
 /// Plan 33.1 (D24): один контракт-clause функции.

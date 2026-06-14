@@ -1,0 +1,17 @@
+// Plan 140.3 ([M-140-contract-levels]): per-kind opt-out is COMBINABLE —
+// `#unchecked(requires, ensures)` elides BOTH. At x=-5 both `requires x > 0`
+// and `ensures result > 100` are violated, but both are elided, so the call
+// runs clean (no panic). Proves the comma-separated kind list works.
+
+module plan140_3.unchecked_combined_kinds_pos
+
+#unchecked(requires, ensures)
+fn f(x int) -> int
+    requires x > 0
+    ensures result > 100
+=> x
+
+test "#unchecked(requires, ensures): both elided — no panic at x=-5" {
+    ro r = f(-5)
+    assert(r == -5)
+}

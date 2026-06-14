@@ -36207,6 +36207,15 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   любой `"${x}"`-строке. dual-populate (`message` raw-fallback + `message_expr`) избегает регрессии на
   не-interp-сайтах без отдельного error-пути.
 
+- **Plan 140.3 followups — interp ensures/invariant + contract-levels (2026-06-14)**: (1) interp в сообщениях
+  ensures/invariant переиспользует ОБЩИЙ emit_interpolated_str (не отдельный механизм); ensures-`${result}`
+  решён через literal-aware `substitute_result_var_in_code` (пропуск C-строк) — не AST-rewrite, минимум кода.
+  (2) **contract-levels**: `contracts_unchecked: bool` → `ContractOptOut{requires,ensures,invariant}` —
+  один тип покрывает bare `#unchecked` (все), per-kind `#unchecked(kind)`, module-level; gate
+  `contracts_elided_for(kind)` = `--contracts=off` ⊔ module ⊔ fn — единая формула для всех уровней/видов.
+  Упрощение: per-fn all-or-nothing флаг заменён на per-kind без дублирования (один ContractOptOut на всех
+  уровнях, merged через `||`).
+
 - **Plan 152.4 foundation — module-level `ro NAME = EXPR` lazy-static globals (codegen runtime side) (2026-06-14)**:
   D199/Plan 148 Ф.3 ввели strict const/ro partition на module-level (constexpr RHS → `const`, runtime RHS →
   `ro`), но реализована была только **диагностика** (`E_RO_FOR_CONSTEXPR_PREFER_CONST`) — у module-level `ro` с
