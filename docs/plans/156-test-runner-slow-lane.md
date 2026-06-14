@@ -14,7 +14,14 @@
 
 ## Решение (research-обоснованное, код-grounded)
 
-### Механизм отбора — папка `nova_tests/_slow/` (НЕ source-маркер)
+### Naming: `slow/` (директория, без `_`) + `_slow.toml` (сентинел, с `_`)
+Правило Nova (выявлено при ревью): спец-**директории** — обычным словом (`fixtures/`);
+спец-**файлы-сентинелы** — с `_` (`_fixture.toml`, `_module.nv`). Поэтому директория
+lane = **`slow/`** (НЕ `_slow/` — было бы непоследовательно с `fixtures/`), опц.
+сентинел = **`_slow.toml`** (как `_fixture.toml`). (Ниже по тексту `_slow/` читать как
+`slow/`.)
+
+### Механизм отбора — папка `nova_tests/slow/` (НЕ source-маркер)
 Скип на этапе **discovery** в `walk_nv` (`test_runner.rs:3302`), зеркало существующего
 `is_fixture_dir` (`:3287`, скипает `fixtures/` + sentinel `_fixture.toml`). Папка
 `_slow/` (или sentinel `_slow.toml`) пропускается до `read_dir` — **нулевой per-file I/O**,
