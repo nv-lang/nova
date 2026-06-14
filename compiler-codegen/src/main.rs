@@ -85,7 +85,8 @@ enum Cmd {
         #[arg(long = "emit-conformance")]
         emit_conformance: bool,
         /// Максимум case'ов в conformance-фикстуре (compile/run-time bound).
-        #[arg(long = "conformance-limit", default_value_t = 600)]
+        /// Part 0 целиком + stride-выборка Parts 1-5 (чанки по 500 на test).
+        #[arg(long = "conformance-limit", default_value_t = 1500)]
         conformance_limit: usize,
         /// Не записывать; сравнить с существующим и упасть при несовпадении.
         #[arg(long = "check")]
