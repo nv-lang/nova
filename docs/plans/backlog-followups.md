@@ -62,7 +62,8 @@
 | `[M-153-vec-compare-u8-memcmp-fastpath]` | Plan 153.0 (perf-only). `Vec[T Compare] @compare` теперь поэлементный (корректно для всех T). `Vec[u8]` мог бы взять memcmp fast-path (для u8 байтовый = поэлементный, вектори­зуется), но это требует u8-специализации (type-dispatch на element). Не корректностный — perf. | Plan 153 / perf | P3 |
 | `[M-153-vec-combinators-prelude-global]` | Plan 153.0/153.2. Eager-комбинаторы вынесены в отдельный explicit-import `collections.vec_seq` (не prelude-global), т.к. их идентификаторы (`[Acc]`/`f`/`op`) засоряют каждый юнит (shadow `type Acc` / collision `fn f`/`fn op`) — корень `[M-codegen-var-types-fn-scope]` + D145. Плана 153.2 переделывает их в LAZY-адаптеры на VecIter; пересмотреть, может ли lazy-слой стать prelude-global (после фикса scope-leak, или дизайном без поллюции). | Plan 153.2 | P3 |
 | `[M-153-scalar-min-max]` | Plan 153 Ф.0 (предполагается планом). Скалярные `int.min(b)`/`int.max(b)` (метод-форма `a.max(b)`, как `a.sin()`) ОТСУТСТВУЮТ; нужны для shrink-to-min идиомы (`cap(@len().max(min))`, 153.1) + `@min`/`@max`-терминаторов ленивого итератора (153.2). Мелкий number-примитив. | Plan 153.1/153.2 Ф.0 | P2 |
-| `[M-153.2-generic-over-source-zerocost]` | Plan 153.2 (perf-only, НЕ упрощение). Ленивый слой (`collections.vec_lazy`, D260) — boxed-fluent: каждый адаптер боксит `step`-замыкание (heap-thunk/адаптер). Allocation-free между элементами, но не zero-cost по closure-боксу. Апгрейд — generic-over-source мономорфный курсор (`Map[I,F]` ∥ Rust `Map<I,F>`), инлайн без боксинга, поверх рабочего boxed (тот же API). Детали в 153.2 Followups. | Plan 153.2 / D260 | P3 |
+| `[M-153.2-generic-over-source-zerocost]` | 🟡 PARTIAL (Stage 2 реализован). Plan 153.2 (perf-only, НЕ упрощение). Zero-cost generic-over-source слой `collections.vec_iter_zc` зашиплен: адаптеры — generic-over-source `value`-рекорды (`MapIter[I,T,U]`/`FilterIter[I,T]`), источник инлайн полем `src I`, `@next()` статически диспетчит `(@src).next()`; цепочка мономорфизируется в один вложенный тип. Измерено: per-adapter allocs 3→0, source-box 9→0, step-индирекция убрана. Остаток: callback `f`/`pred` ещё boxed-closure → `[M-153.2-closure-as-mono-type]`; `take`/`skip`/`enumerate` пока на boxed `vec_lazy`. Детали в 153.2 Followups. | Plan 153.2 / D260 | P3 |
+| `[M-153.2-closure-as-mono-type]` | Plan 153.2 (perf-only). В `vec_iter_zc` callback-поля `f`/`pred` остаются boxed-замыканиями (`void*`+`NOVA_CLOS_CALL`, fn-ptr индирекция на элемент). Rust-style инлайн мэппера требует closures-as-mono-types (env как конкретный type-param). Отдельный крупный лифт поверх Stage 2. | Plan 153.2 | P3 |
 | `[M-153.2-tuple-elem-adapter]` | Plan 153.2. Tuple-PRESERVING адаптер сразу после `enumerate` (`enumerate().filter(..)`/`.take`/`.skip`, элемент остаётся `(int,T)`) упирается в residual `Option[<mono-tuple>]` closure-typing gap. Workaround: схлопнуть кортеж `map`'ом (`enumerate().map(\|p\| ...)` — поддержано). Детали в 153.2 Followups. | Plan 153.2 | P2 |
 | `[M-153.5-flatten-nested-receiver]` | ✅ **РАЗРЕШЁН 2026-06-14** (Plan 153.5, branch `plan-153.5-restructure`, commits `1c323d0e` parser+mono + `16753d23` flatten). Вложенные generic-ресиверы произвольной глубины + `@flatten` реализованы. **Root-cause (обе половины):** (1) ПАРСЕР отвергал carrier `Vec[Vec[T]]` («expected `]`, got identifier») и схлопывал `[][]T`→`"[]T"`; (2) МОНОРФИЗАТОР биндил receiver-typevar `T` в *непосредственный* элемент (`Vec[int]`), не во *внутренний* (`int`) → неверный return-тип + segfault (mono'd `out` = `Nova_Vec____Nova_Vec____nova_int_p`). **Фикс (рекурсивный, depth-agnostic):** AST `Receiver.receiver_ty: Option<TypeRef>` несёт полный структурированный тип (единственное место, где глубина переживает — `type_name` flatten'ит); парсер принимает вложенный `parse_type` в carrier-слоте + рекурсивный сбор free-typevars (carrier) и считает глубину `[]` + спуск до внутреннего `Named` (slice); монорфизатор переиспользует рекурсивный `infer_type_param_binding` (bind `T` = innermost element, любая глубина) на ВСЕХ путях receiver-typevar-bind + depth-aware sentinel-ключи `"[]"*N+"T"`; flat `[]T` (depth 1) остался byte-identical, override гейтнут `receiver_ty_is_nested`. Checker collect'ит вложенные typevar'ы для `E_UNUSED_PREFIX_TYPEVAR` (но НЕ сидит scope из `receiver_ty` — сохраняет `E_UNDECLARED_TYPEVAR_IN_RECEIVER`). `@flatten` (`Vec[Vec[T]] @flatten() -> Vec[T]`, production carrier-форма) в `std/collections/vec/restructure.nv`. Фикстуры plan153_5_nested 4/4 (depth2/depth3/slice_nested/control_flat) + plan153_5/flatten. D263 AMEND + D145 AMEND. **Ортогональный pre-existing остаток (вне scope):** slice-форма `fn[T] [][]T -> []T` с телом, СТРОЯЩИМ `Vec[T].new()`, упирается в erased-base-body лимит (ломает и flat `[]T` с `Vec[T].new()` на baseline). История — `simplifications.md`. | Plan 153.5 | ✅ done |
 | `[M-138.2-varindex-method-turbofish-misparse]` (был `[M-codegen-erased-stub-method-on-varindex-deref]`) | ✅ **FIXED on branch `plan-cgfix-erased-stub` (commit `6f74c0ba`, 2026-06-13), pending merge.** Discovered Plan 153.0; root-cause оказался **PARSER (D38 turbofish), НЕ codegen/erased-stub** (мисдиагноз). `@buf[i].compare(o.buf[i])` мис-парсился как turbofish static-call `@buf::<i>.compare(...)` — одиночный lowercase `i` парсится как валидное имя типа, `[i]`→type-arg, `.compare(` совпал с `Type[T].method(...)` формой → индекс ресивера терялся (turbofish transparent в codegen → `@buf` = голый указатель) → str-fallback dispatch → CC-FAIL `passing 'T*' to 'nova_str'`. **Fix:** `try_parse_turbofish_args` (parser/mod.rs ~5766+6493) — гейтить `.IDENT(` turbofish-продолжение по `base_is_type_like` (base перед `[` = Ident/Path = имя типа); `@buf[i]` (base=Member) роллбэчится в Index. **Минимальный репро:** `fn Bag[T Compare] @cmp(o Bag[T]) -> int { for i in 0..@n { ro c = unsafe { @buf[i].compare(o.buf[i]) }; … } }`. Триггер: generic-T ∧ var-index `[i]` (литерал `[0]` парсится не-как-тип → ОК) ∧ method `.IDENT(` после `]`. После мёржа фикса инлайн-форма работает → typed-locals workaround в `Vec.@compare`/`@equal` (protocols.nv) можно упростить. Permanent fixture `plan138_2/t17_var_index_inline_method_pos`. Residual: `[T]?` (try) на value-base структурно похож, не покрыт (не exercised). | branch plan-cgfix-erased-stub (pending merge) | P2 |
@@ -340,16 +341,36 @@
   `collect`-таргета приземляется вместе с 153.2.
 
 ## Follow-up: Plan 153.2 (ленивый итератор — отложенные Phase B / perf)
-- **`[M-153.2-generic-over-source-zerocost]`** (planned, P3, **perf-only — НЕ упрощение**,
-  home **Plan 153.2 / D260**): текущий ленивый слой (`collections.vec_lazy`) использует
-  **boxed-fluent**-модель — `BoxIter[T] { priv step fn() -> Option[T] }`, каждый адаптер
-  боксит `step`-замыкание (heap-thunk на адаптер). Это корректный, allocation-free **между**
-  элементами (нет промежуточных `Vec`), но не zero-cost по closure-боксу. Zero-cost
-  апгрейд — generic-over-source мономорфный курсор-тип (`Map[I, F]` параметризован
-  upstream-итератором, как Rust `Map<I, F>`), инлайнящийся без боксинга. Поверх рабочего
-  boxed (одинаковый API). Gated на пере-обкатке mono closure-несущих generic-типов с
-  type-параметром-итератором (`996ca01a` лифт покрыл method-body mono + closure-capture;
-  generic-over-iterator-source — следующий шаг).
+- **`[M-153.2-generic-over-source-zerocost]`** (🟡 **PARTIAL — STAGE 2 реализован**, P3,
+  **perf-only — НЕ упрощение**, home **Plan 153.2 / D260**): zero-cost generic-over-source
+  слой `collections.vec_iter_zc` реализован и зашиплен (Plan 153.2 Ф.2). Каждый адаптер —
+  свой generic-over-source `value`-рекорд (`MapIter[I, T, U]` / `FilterIter[I, T]` /
+  `FilterMapIter[I, T, U]`), держащий upstream-итератор **инлайн** полем `src I` (не
+  boxed `step`-замыкание); `@next()` диспетчит `(@src).next()` СТАТИЧЕСКИМ
+  мономорфным вызовом. Цепочка `v.ziter().zmap(f).zfilter(p).zcollect()` мономорфизируется
+  в один вложенный конкретный тип (`FilterIter[MapIter[VecIter[int], int, int], int]`),
+  каждый `next()` инлайнится до базового `VecIter.next()`. **Измерено** на каноничной
+  цепочке `map().filter().collect()`: per-adapter heap-allocs **3 → 0** (убраны
+  `nova_lambda_env` + `_box_src` source-box + `NovaClosBase` step-thunk на каждый адаптер),
+  source-box (`_box_src`) **9 → 0**, per-element `step()` fn-ptr индирекция убрана целиком
+  (источник зовётся статически). **Compiler-changes** (все в `emit_c.rs`): value-aware
+  `apply_type_subst_to_ref` (nested-generic arg prefix), depth-aware mono-args splitter
+  (`split_top_level_mono_args` + registry-backed `mono_type_args_of` — раньше naive
+  `split("__")` рвал вложенный `____`), recursive `erased_type_ref_c` placeholder check,
+  value-gated nested-placeholder drain guard. **Остаток** (honest): callback `f`/`pred`
+  всё ещё boxed-closure-поле (`void* f` + `NOVA_CLOS_CALL`) — Rust-style инлайн `f` требует
+  closures-as-mono-types (env как конкретный type-param), это бóльший лифт →
+  `[M-153.2-closure-as-mono-type]`. `take`/`skip`/`enumerate` (stateful / tuple-элемент)
+  пока на boxed-fluent `vec_lazy` surface; портирование — wiring, не новая
+  compiler-capability. boxed-fluent `vec_lazy` (`BoxIter`) сохранён как closure-fluent
+  альтернатива (одна эрейзнутая курсор-форма, ценой ~3 alloc/адаптер).
+- **`[M-153.2-closure-as-mono-type]`** (planned, P3, **perf-only**, home **Plan 153.2**):
+  в zero-cost `vec_iter_zc` callback-поля `f fn(T)->U` / `pred fn(T)->bool` остаются
+  boxed-замыканиями (`void*` + `NOVA_CLOS_CALL`), т.е. вызов мэппера на элемент идёт через
+  fn-ptr индирекцию. Rust-style полный инлайн требует мономорфизации замыкания как
+  конкретного type-param с запечённым env-типом (closures-as-mono-types). Это отдельный
+  крупный лифт поверх Stage 2 (Stage 1 убрал record-alloc, Stage 2 — source-box + step-
+  индирекцию, этот маркер — последний closure-box).
 - **`[M-153.2-tuple-elem-adapter]`** (planned, P2, home **Plan 153.2**): tuple-PRESERVING
   адаптер сразу после `enumerate` (`enumerate().filter(..)` / `.take(n)` / `.skip(n)`, где
   элемент остаётся `(int, T)`-кортежем) упирается в residual `Option[<mono-tuple>]`
