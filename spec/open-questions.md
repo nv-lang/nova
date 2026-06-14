@@ -7676,12 +7676,34 @@ checker (`bool`/`unit` relational-операнд → `E_RELATIONAL_OPERAND_NOT_O
 (type-checker coercion fix). Pin: `nova_tests/plan153_0/neg/vec_explicit_annotation_to_slice_neg`.
 
 ### Связанное (Plan 153)
-- `Q-iterator-laziness` / `Q-iter-mut` / `Q-vec-operator-plus` / `Q-slice-view` — закрыты
-  записями в плане [153](plans/153-vec-production-model.md) §4; реализация в 153.2/153.4/153.5.
+- `Q-iterator-laziness` / `Q-iter-mut` / `Q-slice-view` — закрыты записями в плане
+  [153](plans/153-vec-production-model.md) §4; реализация в 153.2/153.4.
   Переносятся сюда по мере закрытия их sub-планов.
+- `Q-vec-operator-plus` — **✅ ЗАКРЫТО (Plan 153.5)**, отдельная запись ниже.
 - Отклонение 153.0: eager-комбинаторы вынесены в `collections.vec_seq` (не prelude-global) —
   иначе их идентификаторы засоряют каждый юнит. См. план §«Статус 153.0» +
   `[M-153-vec-combinators-prelude-global]`.
+
+## Q-vec-operator-plus — оператор `+` для `Vec[T]` (Plan 153.5)
+
+**Контекст.** Нужен ли `Vec[T]` оператор `+`, и какая у него семантика — мутирующая
+(растит левый операнд, как `append`) или non-mutating (новый Vec)?
+
+**✅ ЗАКРЫТО 2026-06-14 — Plan 153.5** (`plan-153.5-restructure` commit `e8f700e4`,
+[D263](decisions/10-overloading.md#d263-vec-restructure-ops--оператор---plus--concat)):
+- **`a + b` = НОВЫЙ `Vec[T]`** — `Vec[T] @plus(other) -> Vec[T] => @concat(other)`
+  (как str `@plus`, [D46](decisions/03-syntax.md#d46)). Операнды **не мутируются**
+  (как Kotlin/Python/Ruby `+`). Прецедент выбран осознанно: `+` на коллекции = чистая
+  конкатенация, не сайд-эффект.
+- **`a += b` ≡ `a = a + b`** (свежий concat-Vec) — НЕ in-place append. Единая семантика
+  оператора (compound-assign лоуэрится через тот же `@plus`). Рост левого операнда in place
+  остаётся за явным `a.append(b)` (mutate.nv) — две разные операции, два разных имени
+  (инвариант I4 плана: один слой = одна семантика).
+- **Codegen** (`emit_c.rs`): operator-lowering `+`/`+=` маршрутизируется в Nova-body `@plus`
+  через `vec_method_call` (регистрирует mono-инстанс перед эмиссией) + десугаринг `+=` →
+  `Binary{Add}` (сырой C `a += b` на struct/pointer-операнде нелегален).
+- Тесты `plan153_5/restructure` (POS: non-mutation `+`/concat, `+=` append) — релизный nova
+  C-codegen, 5/5 PASS.
 ## Q36. Scope call-site instantiation для `@field`-контрактов (Plan 140.2, D256/D257) — ✅ ЗАКРЫТО (2026-06-13)
 
 **Вопрос:** при поддержке `@field` в контрактах ([D256](decisions/09-tooling.md#d256-field--method-self-access-в-контрактах)) —

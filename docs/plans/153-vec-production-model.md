@@ -2,7 +2,9 @@
 # Plan 153 (umbrella) — Production-grade `Vec[T]` / `[]T`: API-паритет, итераторы, слайсы
 
 > **Создан:** 2026-06-13.  **Статус:** 🟡 **IN PROGRESS** — **153.0 ✅ ЗАКРЫТ** (2026-06-13,
-> branch `plan-153`, commit `2a5df8e4`; см. «Статус 153.0» ниже); 153.1–153.6 PLANNED. P1.
+> branch `plan-153`, commit `2a5df8e4`; см. «Статус 153.0»); **153.1 🟡 ЧАСТИЧНО**, **153.3 ✅**,
+> **153.5 ✅ ЗАКРЫТ** (2026-06-14, branch `plan-153.5-restructure`, commit `e8f700e4`; см.
+> «Статус 153.5»), **153.6 🟡 ЧАСТИЧНО**; 153.2 / 153.4 PLANNED. P1.
 > **Цель:** коллекция `Vec[T]` Nova не хуже (а где можно — лучше) Go / Rust / TS / Kotlin /
 > Java — по полноте API, итераторам, слайсам и предсказуемости стоимости. `[]T` —
 > **чистый алиас** `Vec[T]` (D239).
@@ -462,6 +464,88 @@ str `@plus`; Q-vec-operator-plus), `[][]T.flatten()`, `@rotate_left(n)`/
 `@rotate_right(n)`, `@drain(range) -> Vec[T]` (вырезать диапазон, вернуть владеемый),
 `@insert_slice(i, sl)`. (extend/append/retain/splice — уже есть, аудит.) Эстимат ~1.5–2 dd.
 
+> #### Статус 153.5 — ✅ ЗАКРЫТ (2026-06-14, `plan-153.5-restructure` commit `e8f700e4`)
+>
+> **Сделано (production-grade, без упрощений).** Новый слой
+> [`std/collections/vec/restructure.nv`](../../std/collections/vec/restructure.nv) (co-equal
+> файл folder-модуля `collections.vec`), все методы на Nova-body поверх bulk `RawMem.copy`:
+> - **`@concat(other) -> Vec[T]`** — non-mutating join (НЕ `@append`, который растит `self`
+>   in place): одна аллокация ровно на `a + b` элементов (`with_capacity(a+b)`), затем два
+>   bulk-`RawMem.copy` прохода; операнды нетронуты. Семантика Kotlin/Python `+`, Rust `concat`.
+> - **Оператор `+`** — `export fn Vec[T] @plus(other) -> Vec[T] => @concat(other)`; `a + b` =
+>   НОВЫЙ Vec (как str `@plus`, D46). `a += b` лоуэрится в `a = a + b` (свежий concat-Vec) —
+>   рост `a` in place остаётся за `a.append(b)`. Codegen-поддержка `+`/`+=` добавлена в
+>   `emit_c.rs` (см. ниже).
+> - **`mut @rotate_left(n)` / `mut @rotate_right(n) -> @`** — циклический сдвиг in place.
+>   `n` редуцируется `mod len` (любой `n >= 0` валиден; полный/много-оборотный = identity).
+>   O(len) time, O(min(n, len−n)) scratch; overlap-safe; right ≡ left на `len − k`. Контракт
+>   `requires n >= 0`. Пустой/одноэлементный — без изменений.
+> - **`mut @drain(range Range) -> Vec[T]`** — вырезать `[start, end)`, вернуть удалённое
+>   как НОВЫЙ владеемый `Vec[T]`; суффикс сдвигается вниз (overlap-safe), `self` короче на
+>   `range.len()`. O(len). Контракт `requires start>=0 && end>=start && end<=@len`. Пустой
+>   диапазон → пустой Vec, `self` нетронут.
+> - **`mut @insert_slice(i, sl []T) -> @`** — вставить срез `sl` на индекс `i` (`i==len` =
+>   append); под D239 `[]T` ЕСТЬ `Vec[T]`, поэтому делегирует в `@splice` (overlap-safe →
+>   self-insert корректен). Имя документирует slice-аргумент (Rust `splice` / Go `slices.Insert`).
+>   Контракт `requires 0 <= i && i <= @len`.
+>
+> **Codegen (`emit_c.rs`, +68).** Две точки для оператор-перегруженного `+`/`+=`, обе
+> минимально-таргетные (не трогают struct-tag / protocol-resolve / prelude / Option-arg —
+> ортогональны pre-existing plan62-фейлам):
+> 1. `Stmt::Assign` arm: `a += b` / `a -= b` на типе с method-лоуэрингом `+` (`nova_str`,
+>    `Nova_Vec____*`, любой `Nova_*`-record с `@plus`) десугарится в синтез-`Binary{Add}` →
+>    re-emit через полный binop-dispatch (а не сырой C `a += b`, нелегальный на struct/pointer
+>    операнде → CC-FAIL). Только `Add`/`Sub` перегружаемы.
+> 2. `BinOp::Add` arm: `Vec[T] + Vec[T]` маршрутизируется через `vec_method_call(.., "plus", ..)`
+>    ПЕРЕД generic-`Nova_*`-sum-pointer Add-arm (тот эмитит голый `_method_plus(l, r)` без
+>    инстанцирования mono-тела → undefined symbol при линковке). `vec_method_call` регистрирует
+>    mono-инстанс первым.
+>
+> **Отклонение от плана (зафиксировано, честно).** `[][]T.flatten() -> []T` **ОТЛОЖЕН**
+> (`[M-153.5-flatten-nested-receiver]`): корректному `.flatten()`-методу нужен **вложенный
+> generic-ресивер** `Vec[Vec[T]] @flatten()`, чтобы тело назвало внутренний `T`. Обе принимаемые
+> компилятором формы ресивера это не выражают: (1) `Vec[Vec[T]]` — ПАРСЕР отвергает вложенный
+> тип в carrier-слоте (`parse_generic_decl_params` → `parse_ident` на слот → «expected `]`»);
+> (2) `[][]T` — ПАРСИТСЯ, но монорфизатор биндит `T` в *непосредственный* элемент (`Vec[int]`),
+> не в внутренний (`int`), и тело строит/возвращает неверный тип (verified probe RUN-FAIL,
+> mono'd `out` типизирован `Nova_Vec____Nova_Vec____nova_int_p`). Это глубокий cross-cutting фикс
+> структурной унификации typevar для вложенных ресиверов в ОБОИХ парсере и монорфизаторе (весь
+> `[]T`-method-dispatch stdlib идёт через этот путь) — вне scope restructure-surface. Обходной
+> путь — flatten один уровень явно: `for inner in nested { flat.append(inner) }` (тот же bulk-
+> путь, что делало бы тело). Документировано in-file + `[M-153.5-flatten-nested-receiver]`.
+>
+> **Критерии приёмки 153.5 (все ✅, проверены релизным `nova` C-codegen).**
+> 1. **`@concat` / `+` не мутируют операнды** — `c = a.concat(b)` и `d = a + b` дают
+>    `[1,2,3,4,5]`, при этом `a.len()==3`, `b.len()==2` (тест `restructure.nv` POS).
+> 2. **`+=` = append-семантика через concat** — `a += b` даёт конкатенацию (свежий буфер; тест
+>    `restructure.nv` «operator += appends»).
+> 3. **`rotate_left`/`rotate_right` обратимы + `n%len==0` identity** — `[1..5].rotate_left(2)` =
+>    `[3,4,5,1,2]`, `.rotate_right(2)` восстанавливает; `rotate_left(3)`/`(6)` на `[1,2,3]` = no-op.
+> 4. **`drain` возвращает вырез + укорачивает + пустой диапазон** — `v.drain(1..4)` = `[2,3,4]`,
+>    `v` = `[1,5]`; `u.drain(1..1)` = пусто, `u` нетронут.
+> 5. **`insert_slice` середина + конец(=append)** — `[1,2,5,6].insert_slice(2,[3,4])` =
+>    `[1,2,3,4,5,6]`; вставка на `len` = append.
+> 6. **Контракт-паники (NEG, runtime-panic фикстуры):** `drain` OOB (`drain_oob_neg`), `drain`
+>    reversed-range (`drain_reversed_neg`), `insert_slice` `i>len` (`insert_slice_oob_neg`),
+>    `rotate` отрицательный `n` (`rotate_negative_neg`) — все паникуют по `requires`.
+> 7. **0 регрессий от 153.5.** Релизным `nova` прогнаны 7 сьютов: plan153_5 5/5, plan90 9/9,
+>    plan90_1 21/21, plan153_0 4/4, plan153_1 7/7, basics 8/8, plan62 29/7. Все 7 plan62-FAIL —
+>    **PRE-EXISTING** (НЕ регрессии 153.5): доказано baseline-бинарём на родительском коммите
+>    `c0f269dd` (один до `e8f700e4`) в temp-worktree — ИДЕНТИЧНЫЕ 29/7, те же имена тестов и те же
+>    категории ошибок (prelude/module/protocol struct-tag — ортогональны restructure-ops; единственное
+>    не-аддитивное изменение `e8f700e4` = `emit_c.rs` +/+= handling, не трогает их кодпути). Temp-
+>    worktree удалён + pruned.
+>
+> **Бинарь актуален.** Релизный `nova` новее всех `.rs`-исходников; `std/collections/vec/
+> restructure.nv` грузится с диска при компиляции (не `include_str!`), совпадает с HEAD.
+>
+> **Spec / Q.** D263 (restructure-ops + оператор `+`) записан в [10-overloading.md](../../spec/decisions/10-overloading.md);
+> Q-vec-operator-plus → ✅ ЗАКРЫТО в [open-questions.md](../../spec/open-questions.md). Гайд —
+> `docs/strings.md`-аналог: раздел concat/+/restructure в [vec-internals.md](../vec-internals.md).
+>
+> **Открытые маркеры:** `[M-153.5-flatten-nested-receiver]` (P2, parser+mono nested-receiver).
+> Полная история — `simplifications.md`.
+
 ### 153.6 — Протоколы (Equal/Compare/Clone/**Hash**/Display/Debug/FromIterator) `[D264, A]`
 Добавить `Vec[T: Hash] @hash()` (для `HashSet[Vec]`/ключа); закрепить `FromIterator`/
 `collect`-target (мост с 153.2); аудит consistency Equal/Compare/Clone/Display/Debug
@@ -506,7 +590,9 @@ flat_map/…), 153.4-B (chunks/windows/mut-view), 153.5 (concat/rotate/drain).
 - **D260** (NEW) — ленивый итератор + адаптеры (model + Iter/Next интеграция).
 - **D261** (NEW) — sort & search (stable/unstable, binary_search, dedup).
 - **D262** (NEW, минорный) — slice-op surface (split_at/chunks/windows) на `[]T`-view модели D238/Plan 96 (БЕЗ новых типов; подтверждает single-type).
-- **D263** (NEW) — restructure-ops (concat/flatten/rotate/drain).
+- **D263** (NEW) ✅ — restructure-ops (concat/`+`/rotate/drain/insert_slice) — записан
+  ([10-overloading.md](../../spec/decisions/10-overloading.md)); flatten отложен
+  (`[M-153.5-flatten-nested-receiver]`).
 - **D264** (NEW) — Vec-протоколы (`Hash` + FromIterator/collect).
 - **D239 AMEND/CONFIRM** — `[]T` чистый алиас завершён (Plan 138 Ф.5 закрыт).
 - **D117 AMEND** — accessor-конвенция: read-getter `@name()=>@name`, write-setter
@@ -663,7 +749,7 @@ commit `git diff --cached --stat`; после крупной задачи — `p
 | D260 (NEW) | ленивый итератор + адаптеры (153.2) |
 | D261 (NEW) | sort & search (153.3) |
 | D262 (NEW, минор) | slice-op surface на `[]T`-view (153.4) |
-| D263 (NEW) | restructure-ops (153.5) |
+| D263 (NEW) ✅ | restructure-ops + оператор `+` (153.5) — записан в [10-overloading.md](../../spec/decisions/10-overloading.md) |
 | D264 (NEW) | Vec-протоколы Hash + FromIterator (153.6) |
 | D239 CONFIRM/AMEND | `[]T` чистый алиас завершён (153.0) |
 | D238/D240 | `Index`/`MutIndex` — Vec index + Range-view |
@@ -674,7 +760,7 @@ commit `git diff --cached --stat`; после крупной задачи — `p
 | Q-vec-alias-completeness (NEW) | **ЗАКРЫТО** — `[]T ≡ Vec[T]` чистый |
 | Q-vec-mutability-through-view | мут-view `mut []T` (receiver-mut); push→realloc→detach |
 | Q-iter-mut (NEW) | **ЗАКРЫТО** — `for mut x` / `mut @iter()`, write-through |
-| Q-vec-operator-plus (NEW) | **ЗАКРЫТО** — `a+b`=`@concat`, `+=`=`append` |
+| Q-vec-operator-plus (NEW) | **✅ ЗАКРЫТО** (153.5) — `a+b`=`@plus`≡`@concat` (новый Vec), `+=`=`a=a+b`; запись в [open-questions.md](../../spec/open-questions.md) |
 
 > Координация: **Plan 140.2** владеет bounds-элизией `v[i]` (НЕ дублировать).
 > **Plan 152** — str-линза `as_bytes()` = `ro []u8` = `Vec[u8]`-view (общая slice-инфра).
