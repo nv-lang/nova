@@ -278,8 +278,8 @@ fn int @display(mut sb StringBuilder) -> () { sb.append(@) }
 - **Три кода ошибок** (checker): `E_IMPL_UNKNOWN_PROTOCOL` (P не протокол),
   `E_IMPL_NOT_A_PROTOCOL_METHOD` (`@m` не объявлен в `P`),
   `E_IMPL_SIGNATURE_MISMATCH` (подпись/receiver-mut не совпадает).
-- **Где применяется в stdlib:** примитивы `int/f64/bool/char/str` получили конкретные
-  `#impl(Display)` + `#impl(Debug)` в [protocols.nv](../std/prelude/protocols.nv) —
+- **Где применяется в stdlib:** все 6 примитивов (`int/f64/bool/char/str/f32`) получили
+  конкретные `#impl(Display)` + `#impl(Debug)` в [protocols.nv](../std/prelude/protocols.nv) —
   это чинит мис-диспатч `Vec[T].debug(sb)` на примитивном элементе (Plan 154.1 / D269).
 
 Подробности — [D268](../spec/decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации)
