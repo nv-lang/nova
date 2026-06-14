@@ -12940,7 +12940,7 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 
 ### [M-83.13-precise-gc-research-v1] Plan 83.13 V1 RESEARCH DELIVERED — precise GC decision document (2026-05-26)
 
-- **Где:** `docs/research/precise-gc-decision-2026.md`. Worktree
+- **Где:** `docs/research/09-precise-gc-decision-2026.md`. Worktree
   `nova-p83-13`, branch `plan-83-13`.
 
 - **Что сделано (V1):**
@@ -26454,7 +26454,7 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 
 ### [M-83.13-precise-gc-research-v1] Plan 83.13 V1 RESEARCH DELIVERED — precise GC decision document (2026-05-26)
 
-- **Где:** `docs/research/precise-gc-decision-2026.md`. Worktree
+- **Где:** `docs/research/09-precise-gc-decision-2026.md`. Worktree
   `nova-p83-13`, branch `plan-83-13`.
 
 - **Что сделано (V1):**
@@ -36775,3 +36775,5 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   value-record throw-как-выражение (rvalue в expression-контексте) → stmt-expr (редкий, P3). Урок
   (см. discussion-log): бисект по ПЕРЕсборкам ненадёжен при недетерминизме эмиссии — один прогон ≠
   свойство source; детерминизм надо чинить ПЕРВЫМ, чтобы баги стали воспроизводимы.
+- [2026-06-14] Plan 156 (slow-test lane, [M-test-runner-large-test-lane] CLOSED): the MECHANISM is COMPLETE with NO simplifications. The `_slow.nv` discovery suffix + `SlowLane{Exclude|Include|Only}` + `--include-slow`/`--slow-only` flags + the `--conformance-full` generator + spec D277 + Rust unit-tests + plan156 fixtures are all production-grade per AC A1-A5 (verified: default skips slow files with zero per-file I/O, flags run + compose with filters, `nova check <path>` on a slow file still works, suffix combines with OS/_test, generator is deterministic two-lane; release build green). The ONLY deferral is DATA-GATED, not a mechanism/algorithm shortcut: the full collation/sentence conformance corpora (CollationTest_SHIFTED 227800 pairs + sentence set) are not yet committed to the slow lane because the UCD source data (allkeys.txt/CollationTest) is absent from the repo. When the data is fetched, `nova-codegen unicode --conformance-full` populates `*_conformance_slow.nv` and the slow-gate proves G0. Tracked by [M-152-collation-full-conformance]. This is data availability, NOT a simplification of the algorithm or the lane mechanism. (Separately deferred by design: the `slow/` directory + `_slow.toml` sentinel for slow folder-modules -> [M-156-slow-subtree-dir], YAGNI.)
+- [2026-06-15] Plan 156 **rev-3 (storage)** — supersedes the "DATA-GATED / not yet committed" framing above. The full `*_conformance_slow.nv` corpora are deliberately **NOT committed**; they are **regenerated on-demand** from pinned UCD into a gitignored cache (`nova-codegen unicode --emit-conformance --conformance-full --ucd-dir <UCD>` → `nova test --slow-only`; empty cache → 0 tests = skip-never-fail). Rationale (cross-ecosystem research, docs/research/10-unicode-test-data-storage.md): Nova has a byte-identical deterministic generator, so committing ~23 MB (collation 15.5 MB + ~16 MB/Unicode-bump forever) buys nothing the generator doesn't already give; Go and CPython (both with generators) chose the same download/regenerate model — leanest repos. This is NOT a simplification (full corpus IS reachable, was proven generated at 227800/227800 in the Populate phase), but a storage/history-hygiene choice (user decision 2026-06-15). The Populate-committed 23 MB was dropped from plan-156 history via rebase BEFORE merge so it never enters main.

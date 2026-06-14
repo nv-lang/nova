@@ -2580,6 +2580,8 @@ pub struct TestAllOpts<'a> {
     /// все контракт-проверки на codegen для всего прогона (legacy zero-cost).
     /// Propagated to every per-test TestBuildOpts. Default `false` (enforce).
     pub contracts_off: bool,
+    /// Plan 156: slow-lane selection. Default Exclude (skip *_slow.nv).
+    pub slow_lane: SlowLane,
 }
 
 // ---------- Plan 26 Ф.13: graceful Ctrl+C ----------
@@ -3296,10 +3298,38 @@ pub fn is_fixture_dir(dir: &Path) -> bool {
     false
 }
 
+/// Plan 156: slow-lane selection mode for test discovery.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SlowLane {
+    /// Default `nova test`: skip `*_slow.nv` entirely (large/slow tests).
+    Exclude,
+    /// `--include-slow`: run normal tests AND `*_slow.nv`.
+    Include,
+    /// `--slow-only`: run ONLY `*_slow.nv`.
+    Only,
+}
+
+/// Plan 156: per-file slow-test suffix. A test file whose stem ends in
+/// `_slow` (e.g. `collation_conformance_slow.nv`) is a large/slow test,
+/// excluded from the default run, included only via --include-slow/--slow-only.
+/// Peeled BEFORE `_test` and the OS-suffix (canonical `<core>[_<os>][_test][_slow]`)
+/// so it composes with them. Zero per-file I/O: matched on the dirent name in
+/// `walk_nv_filtered` — the file body is never read at default discovery.
+pub fn is_slow_file_stem(stem: &str) -> bool { stem.ends_with("_slow") }
+
 /// Рекурсивный обход директории, возвращает все .nv файлы.
 /// Plan 36: pub — используется в `nova check <dir>` flow.
 /// Plan 55 Ф.8: skip fixture directories per `is_fixture_dir` convention.
 pub fn walk_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    // Explicit-path / `nova check <dir>` must see slow files too.
+    walk_nv_filtered(root, out, SlowLane::Include)
+}
+
+/// Plan 156: slow-lane-aware variant of [`walk_nv`]. The default test run
+/// (`nova test`) passes [`SlowLane::Exclude`] to skip `*_slow.nv` files
+/// without ever reading their bodies; `--include-slow` / `--slow-only` route
+/// through [`SlowLane::Include`] / [`SlowLane::Only`].
+pub fn walk_nv_filtered(root: &Path, out: &mut Vec<PathBuf>, lane: SlowLane) -> Result<()> {
     if !root.is_dir() {
         return Ok(());
     }
@@ -3333,7 +3363,15 @@ pub fn walk_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
                 if stem == "_module" {
                     continue;
                 }
-                let core_stem = stem.strip_suffix("_test").unwrap_or(stem);
+                // Plan 156: peel _slow (outermost suffix) -> slow-lane routing.
+                let is_slow = is_slow_file_stem(stem);
+                match lane {
+                    SlowLane::Exclude => { if is_slow { continue; } }
+                    SlowLane::Only    => { if !is_slow { continue; } }
+                    SlowLane::Include => {}
+                }
+                let stem_no_slow = stem.strip_suffix("_slow").unwrap_or(stem);
+                let core_stem = stem_no_slow.strip_suffix("_test").unwrap_or(stem_no_slow);
                 if !crate::imports::peer_active_for_target_pub(core_stem, target) {
                     continue;
                 }
@@ -3353,7 +3391,7 @@ pub fn walk_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     // в самом walk_nv (defensive: можно skip здесь чтобы избежать syscalls,
     // но centralized check внутри walk_nv — единственная точка истины).
     for sub in sub_dirs {
-        walk_nv(&sub, out)?;
+        walk_nv_filtered(&sub, out, lane)?;
     }
     Ok(())
 }
@@ -3606,12 +3644,12 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     // Collect .nv files.
     let mut inputs: Vec<(PathBuf, /*is_stdlib*/ bool)> = Vec::new();
     let mut tests_files = Vec::new();
-    walk_nv(opts.tests_dir, &mut tests_files)?;
+    walk_nv_filtered(opts.tests_dir, &mut tests_files, opts.slow_lane)?;
     for p in tests_files { inputs.push((p, false)); }
     if opts.include_stdlib {
         if let Some(stdlib) = opts.stdlib_dir {
             let mut stdlib_files = Vec::new();
-            walk_nv(stdlib, &mut stdlib_files)?;
+            walk_nv_filtered(stdlib, &mut stdlib_files, opts.slow_lane)?;
             for p in stdlib_files { inputs.push((p, true)); }
         }
     }
@@ -4338,5 +4376,106 @@ mod tests {
         let src = std::fs::read_to_string(&nv_path).expect("read p0 fixture");
         let result = codegen_to_c(&nv_path, &src, None, false);
         assert!(result.is_ok(), "P3-B vtable dispatch: codegen должен успешно скомпилировать, но: {:?}", result.err());
+    }
+}
+
+// Plan 156: slow-test-lane discovery (`*_slow.nv`).
+#[cfg(test)]
+mod plan156_slow_lane_tests {
+    use super::{is_slow_file_stem, walk_nv_filtered, SlowLane};
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+
+    /// Collect the bare file names (basename, with extension) discovered by a
+    /// walk — robust to path separators across platforms.
+    fn names(files: &[PathBuf]) -> BTreeSet<String> {
+        files
+            .iter()
+            .map(|p| {
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .expect("utf-8 file name")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    fn write(path: &Path, body: &str) {
+        std::fs::write(path, body).expect("write fixture file");
+    }
+
+    #[test]
+    fn is_slow_file_stem_classification() {
+        assert!(is_slow_file_stem("big_slow"), "_slow stem must be slow");
+        assert!(
+            !is_slow_file_stem("notslow"),
+            "ends with 'slow' but not '_slow' -> NOT slow"
+        );
+        assert!(!is_slow_file_stem("a"), "plain stem must not be slow");
+    }
+
+    #[test]
+    fn walk_nv_filtered_slow_lanes() {
+        // Unique, deterministic temp dir (process id, no timestamps/random).
+        let root = std::env::temp_dir().join(format!("nova_p156_slowlane_{}", std::process::id()));
+        // Idempotency: start from a clean slate.
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+        let sub = root.join("sub");
+        std::fs::create_dir_all(&sub).expect("create temp sub");
+
+        // Distinct `module X` per file (or none) so folder-module detection
+        // does NOT group them into a single non-standalone unit.
+        write(&root.join("a.nv"), "module a_mod\n");
+        write(&root.join("big_slow.nv"), "module big_slow_mod\n");
+        // Edge: ends with "slow" but NOT "_slow" -> treated as NORMAL.
+        write(&root.join("notslow.nv"), "module notslow_mod\n");
+        write(&sub.join("nested_slow.nv"), "module nested_slow_mod\n");
+        write(&sub.join("plain.nv"), "module plain_mod\n");
+
+        // Exclude: skip *_slow.nv at every level.
+        let mut excl = Vec::new();
+        walk_nv_filtered(&root, &mut excl, SlowLane::Exclude).expect("walk exclude");
+        let excl = names(&excl);
+        assert!(excl.contains("a.nv"), "Exclude must keep a.nv: {:?}", excl);
+        assert!(
+            excl.contains("notslow.nv"),
+            "Exclude must keep notslow.nv (edge): {:?}",
+            excl
+        );
+        assert!(
+            excl.contains("plain.nv"),
+            "Exclude must keep sub/plain.nv: {:?}",
+            excl
+        );
+        assert!(
+            !excl.contains("big_slow.nv"),
+            "Exclude must drop big_slow.nv: {:?}",
+            excl
+        );
+        assert!(
+            !excl.contains("nested_slow.nv"),
+            "Exclude must drop sub/nested_slow.nv: {:?}",
+            excl
+        );
+
+        // Include: everything.
+        let mut incl = Vec::new();
+        walk_nv_filtered(&root, &mut incl, SlowLane::Include).expect("walk include");
+        let incl = names(&incl);
+        for f in ["a.nv", "big_slow.nv", "notslow.nv", "nested_slow.nv", "plain.nv"] {
+            assert!(incl.contains(f), "Include must contain {}: {:?}", f, incl);
+        }
+
+        // Only: ONLY *_slow.nv.
+        let mut only = Vec::new();
+        walk_nv_filtered(&root, &mut only, SlowLane::Only).expect("walk only");
+        let only = names(&only);
+        let expected: BTreeSet<String> =
+            ["big_slow.nv", "nested_slow.nv"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(only, expected, "Only must contain exactly the *_slow.nv files");
+
+        // Cleanup.
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

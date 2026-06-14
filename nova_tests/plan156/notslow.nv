@@ -1,0 +1,10 @@
+// notslow.nv — Plan 156 slow-lane EDGE fixture.
+// The stem ends with the substring "slow" but NOT with the `_slow`
+// suffix, so it is classified as a NORMAL test: runs by default and
+// under --include-slow, EXCLUDED under --slow-only.
+
+module plan156.notslow
+
+test "notslow is a normal test" {
+    assert(3 + 3 == 6)
+}
