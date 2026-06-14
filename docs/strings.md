@@ -17,6 +17,11 @@ you pick a **lens**:
    ro []u8  (Vec[u8] view)                   CharsIter  (decoding stream)
    O(1) [i] / len() / slice / iterate        next / count / nth / is_empty — O(n)
    ── byte layer (u8) ──                      ── codepoint layer (char) ──
+
+        as_graphemes() ▼   (opt-in: import std.unicode)
+   GraphemesView  (UAX #29 cluster stream)
+   next / count / is_empty — O(n);  no [i]
+   ── grapheme layer (visible "character", a str slice) ──
 ```
 
 - **`as_bytes()` is a reinterpretation** — the bytes physically lie contiguously,
@@ -25,6 +30,13 @@ you pick a **lens**:
   a *stream* (iterator), not a collection: `count()`/`nth(i)` are O(n), and there is
   deliberately **no positional `at(i)`/`len()`** (that would invite `for i in
   0..len { at(i) }` = O(n²)). Mirrors Rust `str::chars()`.
+- **`as_graphemes()` is the user-perceived lens** — extended grapheme clusters
+  (UAX #29): what a human sees as one character even when it spans several
+  codepoints (`é` = `e`+◌́; `🇺🇸` = 2 regional indicators; `👨‍👩‍👧` = a ZWJ-emoji
+  sequence — each is **one** grapheme). Also a *stream* (`next`/`count`/`is_empty`,
+  O(n), no `[i]`). It is **opt-in** (`import std.unicode`) because it needs Unicode
+  tables — the byte/codepoint layers above stay table-free. See
+  [Unicode operations](#unicode-operations-opt-in-stdunicode) below.
 
 ## Length
 
@@ -32,6 +44,7 @@ you pick a **lens**:
 |---|---|---|
 | byte length | `s.byte_len()` | O(1) |
 | codepoint count | `s.as_chars().count()` | O(n) |
+| grapheme count | `s.as_graphemes().count()` (`import std.unicode`) | O(n) |
 
 There is **no bare `s.len()`** — `str` has three diverging lengths (bytes,
 codepoints, graphemes), so the unit is always explicit. `s.len()` → `E_STR_NO_LEN`.
@@ -82,6 +95,59 @@ for b in s.as_bytes() { ... } // u8 (bytes) — explicit
 `as_*` lenses borrow (zero-copy). For an independent owned value use `to_*`:
 `s.to_bytes() -> []u8`, `s.to_chars() -> []char` (both allocate).
 
+## Unicode operations (opt-in: `std/unicode`)
+
+The core lenses above are **ASCII-complete and byte/codepoint-correct without any
+Unicode tables**. Operations that need the Unicode Character Database live in a
+separate `std/unicode` module you import explicitly — so a program that doesn't do
+Unicode normalization/segmentation never pays for the tables (they are
+range-encoded and lazily initialized, pinned to `UNICODE_VERSION`, generated from
+the official UCD by `nova-codegen unicode`; no ICU / OS dependency).
+
+### Normalization (UAX #15)
+
+```nova
+import std.unicode
+
+ro a = "e\u{301}"            // "e" + combining acute
+ro b = "é"                   // precomposed U+00E9
+assert(normalize_nfc(a) == normalize_nfc(b))   // canonically equal
+assert(normalize_nfkc("ﬁ") == "fi")            // compatibility fold of the ligature
+```
+
+- `normalize_nfc(s) -> str`, `normalize_nfd(s) -> str` — canonical (de)composition.
+- `normalize_nfkc(s) -> str`, `normalize_nfkd(s) -> str` — compatibility forms.
+
+Full UAX #15 algorithm (decomposition + canonical ordering by CCC + canonical
+composition with the blocking rule + algorithmic Hangul) — verified against the
+official `NormalizationTest.txt`.
+
+### Grapheme clusters (UAX #29)
+
+`str.@as_graphemes() -> GraphemesView` is the third lens — iterate over
+user-perceived characters:
+
+```nova
+import std.unicode
+
+assert("é".as_graphemes().count() == 1)        // e + combining acute → 1
+assert("🇺🇸".as_graphemes().count() == 1)        // 2 regional indicators → 1 flag
+assert("👨‍👩‍👧".as_graphemes().count() == 1)        // ZWJ-emoji family → 1
+
+for g in "a🇺🇸b".as_graphemes() {              // g is a str slice of one cluster
+    // "a", "🇺🇸", "b"
+}
+```
+
+`GraphemesView` mirrors `CharsIter` (a value-record stream): `next() ->
+Option[str]`, `count()`, `is_empty()`, O(n), no positional `[i]`. Implements the
+extended grapheme cluster rules GB1–GB13 **plus GB9c** (Indic Conjunct Break,
+Unicode 15.1) — verified against the official `GraphemeBreakTest.txt`.
+
+Case folding / Unicode case mapping (`fold_case`, multi-codepoint
+`to_uppercase`/`to_lowercase`) and locale collation are **roadmap** (Plan 152.4.4 /
+152.5b — `[M-152-case-fold]`).
+
 ## Encoding interop (UTF-16 / code points)
 
 For FFI / JS-interop / protocols, `import std.encoding.utf16` adds UTF-16 and raw
@@ -106,6 +172,8 @@ string ops):
 | byte length | `str.byte_len()` | O(1), reads the `len` field |
 | byte lens | `str.as_bytes() -> ro []u8` | O(1) `[i]`/`len()` |
 | codepoint lens | `str.as_chars() -> CharsIter` | `next`/`count`/`nth`/`is_empty` |
+| grapheme lens | `str.as_graphemes() -> GraphemesView` | `import std.unicode`; UAX #29 |
+| normalization | `normalize_nfc/nfd/nfkc/nfkd(s)` | `import std.unicode`; UAX #15 |
 | slice | `str[a..b]` / `str.get(a..b)` | byte-range, zero-copy |
 | search | `find`/`rfind`/`contains`/`starts_with`/`ends_with` | byte offsets |
 | split/trim/replace/pad/repeat/concat | `transform`/`search` | see std/runtime/string/ |
@@ -113,6 +181,8 @@ string ops):
 | UTF-16 / code points | `encode_utf16`/`from_utf16`/`code_points` | `import std.encoding.utf16` |
 | identity | `==` / `compare` / `hash` / clone | content-based |
 
-> Unicode-correct operations (normalization, grapheme segmentation, Unicode case,
-> collation) are Phase B — `std/unicode` (Plan 152.4). The core above is
-> ASCII-complete and byte/codepoint-correct without Unicode tables.
+> Normalization (UAX #15) and grapheme segmentation (UAX #29) ship in the opt-in
+> `std/unicode` module — see [Unicode operations](#unicode-operations-opt-in-stdunicode).
+> Unicode case folding/mapping and locale collation remain Phase B (Plan 152.4.4 /
+> 152.5b). The core lenses above are ASCII-complete and byte/codepoint-correct
+> without any Unicode tables.
