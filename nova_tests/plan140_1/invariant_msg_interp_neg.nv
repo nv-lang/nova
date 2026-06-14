@@ -1,0 +1,18 @@
+// Plan 140.3 ([M-140.1-message-interpolation]): a record `invariant` message may
+// interpolate `${field}` — at the check site each field is bound as a shadow-local
+// (and registered in var_types so the interp picks the right converter), so the
+// message renders the offending field value. Violated at construction (balance=-5).
+// EXPECT_RUNTIME_PANIC invariant failed: balance was -5 (balance >= 0)
+
+module plan140_1.invariant_msg_interp_neg
+
+type Account {
+    balance int
+}
+    invariant balance >= 0, "balance was ${balance}"
+
+fn main() Io -> () {
+    ro bad = Account { balance: -5 }
+    println("UNREACHABLE")
+    ro _ = bad
+}

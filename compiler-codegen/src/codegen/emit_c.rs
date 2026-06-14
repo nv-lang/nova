@@ -455,7 +455,7 @@ pub struct CEmitter {
     /// name. Each entry is `(expr, span, message)` — `message` (Plan 140.1
     /// Ф.2, D24 amend) is the optional user message for the location-first
     /// violation diagnostic (`<file>:<line>: invariant failed: <msg> (<expr>)`).
-    record_invariants: HashMap<String, Vec<(Expr, Span, Option<String>)>>,
+    record_invariants: HashMap<String, Vec<(Expr, Span, Option<String>, Option<Expr>)>>,
     /// Plan 33.1 Ф.4 (D24): если установлено — функция имеет ensures-контракты,
     /// и все `Stmt::Return X` подменяются на `{ _nova_result = X; goto <label>; }`.
     /// Trailing block-expression также. После label эмитятся ensures-checks
@@ -1426,14 +1426,25 @@ impl CEmitter {
         raw_src: &str,
         file_lit: &str,
         line: usize,
-        contract: &Contract,
+        message: &Option<String>,
+        message_expr: &Option<Expr>,
     ) -> Result<(), String> {
         let esc_src = Self::escape_c_str(raw_src);
-        if let Some(msg_expr) = &contract.message_expr {
+        if let Some(msg_expr) = message_expr {
             if let ExprKind::InterpolatedStr { parts } = &msg_expr.kind {
                 self.line(&format!("if (!({})) {{", cond_c));
                 self.indent += 1;
+                // Capture the emitted message-build region so an `ensures` message
+                // can have `result` rewritten to the collected `_nova_result` C var
+                // (mirror of the condition's `substitute_result_var`), letting
+                // `${result}` interpolate the actual return value. For `requires`
+                // (PRE) `result` is illegal, so the region is left untouched.
+                let region_start = self.out.len();
                 let msg_var = self.emit_interpolated_str(parts)?;
+                if kind_c == "NOVA_CONTRACT_POST" {
+                    let region = self.out.split_off(region_start);
+                    self.out.push_str(&Self::substitute_result_var_in_code(&region));
+                }
                 self.line(&format!(
                     "nova_contract_violation_dyn({}, \"{}\", \"{}\", \"{}\", {}, {});",
                     kind_c, fn_name, esc_src, file_lit, line, msg_var
@@ -1443,7 +1454,7 @@ impl CEmitter {
                 return Ok(());
             }
         }
-        let msg_arg = Self::contract_msg_arg(&contract.message);
+        let msg_arg = Self::contract_msg_arg(message);
         self.line(&format!(
             "if (!({})) nova_contract_violation({}, \"{}\", \"{}\", \"{}\", {}, {});",
             cond_c, kind_c, fn_name, esc_src, file_lit, line, msg_arg
@@ -1737,8 +1748,8 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Type(td) = item {
                 if !td.invariants.is_empty() {
-                    let invs: Vec<(Expr, Span, Option<String>)> = td.invariants.iter()
-                        .map(|c| (c.expr.clone(), c.span, c.message.clone())).collect();
+                    let invs: Vec<(Expr, Span, Option<String>, Option<Expr>)> = td.invariants.iter()
+                        .map(|c| (c.expr.clone(), c.span, c.message.clone(), c.message_expr.clone())).collect();
                     self.record_invariants.insert(td.name.clone(), invs);
                 }
             }
@@ -13272,7 +13283,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     let expr_src = Self::expr_to_display(&c.expr);
                     let (file_lit, line) = self.loc_for_span(c.span.start);
                     self.emit_contract_check(
-                        &expr_c, "NOVA_CONTRACT_PRE", &fn_decl.name, &expr_src, &file_lit, line, c,
+                        &expr_c, "NOVA_CONTRACT_PRE", &fn_decl.name, &expr_src, &file_lit, line, &c.message, &c.message_expr,
                     )?;
                 }
             }
@@ -14403,18 +14414,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Plan 140.1 Ф.2 (D24 amend): location-first format
                 // `<file>:<line>: ensures failed: [<msg> (]<expr>[)]`.
                 let (file_lit, line) = self.loc_for_span(c.span.start);
-                // Plan 140.3: ensures uses the STATIC message path (raw `message`
-                // fallback). Interp in ensures is deferred — `${result}` would emit
-                // C `result` but the ensures var is `_nova_result` (substitute_result_var
-                // applies to the condition only), so interpolation needs result-var
-                // rewrite in the message build too ([M-140.1-message-interpolation]
-                // follow-on). `${param}` would work, but we keep ensures uniform.
-                let msg_arg = Self::contract_msg_arg(&c.message);
-                self.line(&format!(
-                    "if (!({})) nova_contract_violation(NOVA_CONTRACT_POST, \"{}\", \"{}\", \"{}\", {}, {});",
-                    expr_c_subst, f.name, Self::escape_c_str(&expr_src),
-                    file_lit, line, msg_arg
-                ));
+                // Plan 140.3: ensures supports interpolated messages too. The helper
+                // rewrites `result` → `_nova_result` in the emitted message build for
+                // POST (mirror of the condition's substitute_result_var above), so
+                // `ensures result > 0, "got ${result}"` interpolates the return value.
+                self.emit_contract_check(
+                    &expr_c_subst, "NOVA_CONTRACT_POST", &f.name, &expr_src, &file_lit, line, &c.message, &c.message_expr,
+                )?;
             }
         }
         Ok(())
@@ -14449,6 +14455,53 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             let _ = is_word;
         }
         out
+    }
+
+    /// Plan 140.3: like `substitute_result_var` but **skips the contents of C
+    /// string literals** so an interpolated message's literal text (e.g.
+    /// `"result was "`) is preserved byte-for-byte (incl. UTF-8) — only `result`
+    /// identifiers in CODE become `_nova_result`. Used to rewrite an `ensures`
+    /// interpolated-message build so `${result}` reads the collected return var.
+    fn substitute_result_var_in_code(c: &str) -> String {
+        let bytes = c.as_bytes();
+        let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+        let target = b"result";
+        let mut i = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            // Copy a whole `"..."` string literal verbatim (respecting `\"`).
+            if b == b'"' {
+                out.push(b);
+                i += 1;
+                while i < bytes.len() {
+                    let c2 = bytes[i];
+                    out.push(c2);
+                    i += 1;
+                    if c2 == b'\\' && i < bytes.len() {
+                        out.push(bytes[i]);
+                        i += 1;
+                        continue;
+                    }
+                    if c2 == b'"' {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if i + target.len() <= bytes.len()
+                && &bytes[i..i + target.len()] == target
+                && (i == 0 || !(bytes[i-1].is_ascii_alphanumeric() || bytes[i-1] == b'_'))
+                && (i + target.len() == bytes.len()
+                    || !(bytes[i+target.len()].is_ascii_alphanumeric() || bytes[i+target.len()] == b'_'))
+            {
+                out.extend_from_slice(b"_nova_result");
+                i += target.len();
+                continue;
+            }
+            out.push(b);
+            i += 1;
+        }
+        String::from_utf8(out).unwrap_or_else(|_| c.to_string())
     }
 
     /// Plan 33.3 Ф.9.1: walks block для сбора `ghost let` имён.
@@ -14794,7 +14847,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     // `<file>:<line>: requires failed: [<msg> (]<expr>[)]`.
                     let (file_lit, line) = self.loc_for_span(c.span.start);
                     self.emit_contract_check(
-                        &expr_c, "NOVA_CONTRACT_PRE", &f.name, &expr_src, &file_lit, line, c,
+                        &expr_c, "NOVA_CONTRACT_PRE", &f.name, &expr_src, &file_lit, line, &c.message, &c.message_expr,
                     )?;
                 }
             }
@@ -18292,7 +18345,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         // отдельный line-emit, а не expr-substitution.
                         // Поскольку lit обычно tmp (см. emit_record_lit), просто
                         // эмитим check после.
-                        for (inv_expr, span, inv_msg) in &invs {
+                        for (inv_expr, span, inv_msg, inv_msg_expr) in &invs {
                             // Bind поля record'а как `tmp->field` для invariant-eval.
                             // В bootstrap — простой text substitution через
                             // emit_expr с self.expected_record_type set.
@@ -18314,20 +18367,36 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                                 // — НЕ под `#ifdef NOVA_CONTRACTS_RUNTIME`.
                                 self.line("{");
                                 // Decl shadow-locals для каждого поля → tmp->field.
+                                // Register C types in var_types so the condition AND an
+                                // interpolated message (`${field}`) infer the right
+                                // converter; saved for restore below (no scope leak).
+                                let mut saved_vt: Vec<(String, Option<String>)> = Vec::new();
                                 for (fname, ftyc) in &fields_schema {
                                     self.line(&format!("    {} {} = {}->{};", ftyc, fname, lit, fname));
+                                    saved_vt.push((fname.clone(), self.var_types.insert(fname.clone(), ftyc.clone())));
                                 }
                                 let inv_c = self.emit_expr(inv_expr)?;
                                 // Plan 140.1 Ф.2 (D24 amend): location-first
                                 // format `<file>:<line>: invariant failed:
                                 // [<msg> (]<expr>[)]`.
                                 let (file_lit, line) = self.loc_for_span(span.start);
-                                let msg_arg = Self::contract_msg_arg(inv_msg);
-                                self.line(&format!(
-                                    "    if (!({})) nova_contract_violation(NOVA_CONTRACT_INV, \"{}\", \"{}\", \"{}\", {}, {});",
-                                    inv_c, struct_name, Self::escape_c_str(&inv_src), file_lit, line, msg_arg
-                                ));
+                                // Plan 140.3: route through emit_contract_check so an
+                                // invariant message can interpolate (`${field}` reads
+                                // the shadow-locals bound just above). +1 indent to
+                                // align with the manual shadow-local indentation.
+                                self.indent += 1;
+                                self.emit_contract_check(
+                                    &inv_c, "NOVA_CONTRACT_INV", &struct_name, &inv_src,
+                                    &file_lit, line, inv_msg, inv_msg_expr,
+                                )?;
+                                self.indent -= 1;
                                 self.line("}");
+                                for (fname, prev) in saved_vt {
+                                    match prev {
+                                        Some(t) => { self.var_types.insert(fname, t); }
+                                        None => { self.var_types.remove(&fname); }
+                                    }
+                                }
                             }
                         }
                     }
