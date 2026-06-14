@@ -36419,3 +36419,40 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   (вне scope): литерал-операнды (i+1, i*2) codegen вообще не чекает (rty литерала ≠ nova_int) — поэтому
   always-safe тесты используют var+var (i+j) паттерны. * нелинеен → Z3 часто Unknown → консервативно чек
   (не упрощение — soundness: никогда не элидируем без пруфа).
+
+- **Plan 153.5 — restructure-ops + оператор `+` (2026-06-14, D263, ветка `plan-153.5-restructure`,
+  commit `e8f700e4`)**: новый co-equal файл `std/collections/vec/restructure.nv` (folder-модуль
+  `collections.vec`), все методы — Nova-body поверх bulk `RawMem.copy`. **`@concat(other) -> Vec[T]`**
+  (non-mutating join: 1 аллокация ровно на `a+b` + 2 bulk-copy; операнды нетронуты) + **оператор `+`**
+  (`@plus => @concat`, `a+b`=НОВЫЙ Vec как str `@plus`/D46; `a += b` ≡ `a = a + b`, рост in place — за
+  `a.append(b)`) + **`mut @rotate_left/right(n) -> @`** (циклический сдвиг in place, `n mod len`,
+  overlap-safe, O(len)) + **`mut @drain(range) -> Vec[T]`** (вырезать `[start,end)`, вернуть владеемым,
+  суффикс вниз, `self` короче) + **`mut @insert_slice(i, sl []T) -> @`** (делегирует в `@splice` под D239
+  `[]T≡Vec[T]`). Контракты `requires` (rotate/drain/insert_slice — OOB/reversed/negative → panic). Codegen
+  `+`/`+=` (emit_c.rs +68): `BinOp::Add` на `Vec[T]` → `vec_method_call("plus")` ПЕРЕД generic-sum-Add-arm
+  (иначе голый `_method_plus` без mono-инстанса → undefined symbol); `a += b` десугарится в `Binary{Add}`
+  (сырой C `a += b` на struct/pointer нелегален). Минимально-таргетно, не трогает struct-tag/protocol/
+  prelude/Option-arg кодпути.
+  **Production-grade, без упрощений (обязательный критерий):** все 5 методов — реальные алгоритмы с
+  правильной cost (concat одна exact-аллокация + 2 bulk-copy, не per-element; rotate O(len) с
+  O(min(n,len−n)) scratch и right≡left-на-len−k; drain один copy-out + один shift-down; insert_slice через
+  overlap-safe `@splice` → self-insert корректен). `+` non-mutating (Kotlin/Python семантика, не in-place
+  footgun). Контракт-паники — настоящие `requires`, не молчаливый clamp.
+  **САНКЦИОНИРОВАННОЕ ОТКЛОНЕНИЕ (честно про scope) — `[][]T.flatten()` ОТЛОЖЕН** (`[M-153.5-flatten-
+  nested-receiver]`, P2): это НЕ упрощение реализованного, а **отсутствующая фича**, заблокированная двумя
+  настоящими compiler-лимитами (не workaround'имо корректно на surface-слое). Корректному `.flatten()`
+  нужен вложенный generic-ресивер `Vec[Vec[T]] @flatten()` (тело должно назвать внутренний `T`); (1) ПАРСЕР
+  отвергает вложенный тип в carrier-слоте (`parse_generic_decl_params`→`parse_ident`); (2) `[][]T`-форма
+  ПАРСИТСЯ, но монорфизатор биндит `T` в непосредственный элемент (`Vec[int]`), не во внутренний (`int`) —
+  verified probe RUN-FAIL (mono'd `out` = `Nova_Vec____Nova_Vec____nova_int_p`, неверный return-тип).
+  Корректный фикс = структурная typevar-унификация для вложенных ресиверов в ОБОИХ парсере+монорфизаторе
+  (cross-cutting весь `[]T`-method-dispatch path) — сознательно вне scope restructure-surface (не хак-обход,
+  который маскировал бы неверный тип). Обход в доках: flatten один уровень явно через bulk `@append`.
+  **Тесты:** plan153_5 5/5 (POS `restructure` — non-mutation concat/`+`, `+=` append, rotate-инверсия+
+  identity, drain вырез+empty, insert_slice mid+end; NEG runtime-panic `drain_oob`/`drain_reversed`/
+  `insert_slice_oob`/`rotate_negative`), релизный nova C-codegen. **0 регрессий 153.5** (7 сьютов: plan153_5
+  5/5, plan90 9/9, plan90_1 21/21, plan153_0 4/4, plan153_1 7/7, basics 8/8, plan62 29/7). 7 plan62-FAIL =
+  PRE-EXISTING (prelude/module/protocol struct-tag — ортогональны restructure-ops): доказано baseline-
+  бинарём на родительском коммите `c0f269dd` в temp-worktree — ИДЕНТИЧНЫЕ 29/7, те же имена/категории
+  (temp-worktree удалён+pruned). std `vec/*.nv` грузится с диска → правки без ребилда компилятора (но
+  emit_c.rs трогали → бинарь пересобран, новее всех .rs).

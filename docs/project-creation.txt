@@ -37938,3 +37938,45 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   (OE1-OE5, вкл. 2 runtime-panic neg) + регрессии contracts 314/0, plan140 51/0, basics 8/0, Trivial
   1/0/4skip (OE6/OE7). 0 регрессий, soundness неизменна. D272 + D24/04-effects/open-questions amend +
   contracts.md/.ru + README + backlog (marker CLOSED).
+
+=== Plan 153.5 - Vec restructure-ops + operator `+` (D263, 2026-06-14) ===
+
+Branch plan-153.5-restructure, commit e8f700e4. Adds std/collections/vec/restructure.nv
+(co-equal file of folder-module collections.vec), Nova-body over bulk RawMem.copy:
+  - @concat(other) -> Vec[T]: non-mutating join (one exact alloc + two bulk copies;
+    operands untouched).
+  - operator `+` (@plus => @concat): a + b is a NEW Vec (mirrors str @plus, D46);
+    a += b lowers to a = a + b (fresh concat Vec) - to grow in place use a.append(b).
+  - mut @rotate_left(n)/@rotate_right(n) -> @: cyclic in-place shift (n mod len,
+    overlap-safe, O(len), right == left by len-k). requires n >= 0.
+  - mut @drain(range) -> Vec[T]: cut [start,end) out, return removed run owned;
+    suffix shifted down, self shortened. requires start>=0 && end>=start && end<=len.
+  - mut @insert_slice(i, sl []T) -> @: insert a slice at i (delegates to @splice
+    under D239 []T == Vec[T]). requires 0<=i && i<=len.
+Codegen (emit_c.rs, +68): operator `+`/`+=` lowering for overloaded-add types - BinOp::Add
+on Vec[T] routes through vec_method_call("plus", ..) before the generic sum-pointer arm
+(registers the mono instance first); a += b desugared to Binary{Add} (raw C a += b illegal
+on a struct/pointer operand). Minimal-targeted; does NOT touch struct-tag / protocol-resolve
+/ prelude / Option-arg paths.
+
+DEFERRED (honestly, NOT a simplification of what shipped) - [M-153.5-flatten-nested-receiver],
+P2: [][]T.flatten() needs a nested generic receiver Vec[Vec[T]] @flatten() so the body can
+name the innermost T. Blocked by two real compiler limits: parser rejects a nested type in
+the carrier slot, and the [][]T receiver form binds T to the immediate element (Vec[int])
+not the innermost (int) -> wrong return type (verified probe RUN-FAIL). A correct fix is
+structural typevar unification for nested receivers in BOTH parser and monomorphizer (the
+whole []T-method-dispatch path) - out of scope for the restructure surface. Workaround in
+docs: flatten one level explicitly via bulk @append.
+
+Spec/docs: D263 (spec/decisions/10-overloading.md), Q-vec-operator-plus CLOSED
+(spec/open-questions.md), docs/vec-internals.md restructure section + module-layout table,
+plan 153 status block, backlog marker, simplifications.md.
+
+Tests (release nova, C-codegen): plan153_5 5/5 (restructure POS - non-mutation concat/+,
++= append, rotate inversion+identity, drain cut+empty, insert_slice mid+end; NEG runtime-panic
+drain_oob / drain_reversed / insert_slice_oob / rotate_negative). 0 regressions from 153.5
+(7 suites: plan153_5 5/5, plan90 9/9, plan90_1 21/21, plan153_0 4/4, plan153_1 7/7, basics 8/8,
+plan62 29/7). The 7 plan62 FAILs are PRE-EXISTING (prelude/module/protocol struct-tag,
+orthogonal to restructure-ops) - proven by a baseline binary built at parent commit c0f269dd
+in a temp worktree: IDENTICAL 29/7, same test names and error categories (temp worktree removed
++ pruned).
