@@ -5,7 +5,8 @@
 > branch `plan-153`, commit `2a5df8e4`; см. «Статус 153.0» ниже); **153.1 🟡 ЧАСТИЧНО**
 > (core API + fluent ✅, консолидация отложена); **153.2 ✅ ЗАКРЫТ (Phase A)** (ленивые
 > итераторы, `plan-153.2-mono-closures`, commits `996ca01a`+`caf56226`, D260); **153.3
-> ✅ ЗАКРЫТ** (sort/search); **153.4 ✅ ЗАКРЫТ** (eager slices, commit `5ccccf72`, D262);
+> ✅ ЗАКРЫТ** (sort/search); **153.4 ✅ ЗАКРЫТ ЦЕЛИКОМ** (A: eager slices `5ccccf72`; B: lazy
+> chunks/windows `37884153`, D262 IMPLEMENTED ЦЕЛИКОМ);
 > **153.5 ✅ ЗАКРЫТ** (restructure-ops + flatten/вложенные ресиверы, commits `e8f700e4`+
 > `1c323d0e`+`16753d23`, D263); **153.6 ✅ ЗАКРЫТ** (Hash ✅ + FromIterator/collect-target
 > ✅ D264; HashMap-Vec-key отложен). P1.
@@ -791,7 +792,7 @@ flat_map/…), 153.4-B (chunks/windows/mut-view), 153.5 (concat/rotate/drain).
 - **D259** (NEW) — Vec core API & capacity (swap/resize/cap-exact, reserve).
 - **D260** (NEW) — ленивый итератор + адаптеры (model + Iter/Next интеграция).
 - **D261** (NEW) — sort & search (stable/unstable, binary_search, dedup).
-- **D262** (✅ IMPLEMENTED 2026-06-14, минорный) — slice-op surface (split_at/first_n/last_n/as_slice; chunks/windows lazy-deferred) на `[]T`-view модели D238/Plan 96 (БЕЗ новых типов; подтверждает single-type). Зафиксирован в spec/decisions/03-syntax.md#d262.
+- **D262** (✅ IMPLEMENTED ЦЕЛИКОМ — A 2026-06-14, B 2026-06-15, минорный) — slice-op surface (split_at/first_n/last_n/as_slice eager + chunks/chunks_exact/rchunks/windows **ленивые** `-> BoxIter[Self]`) на `[]T`-view модели D238/Plan 96 (БЕЗ новых типов; подтверждает single-type). Зафиксирован в spec/decisions/03-syntax.md#d262; `[M-153.4-chunks-windows-lazy]` ✅ CLOSED.
 - **D263** (✅ IMPLEMENTED 2026-06-14) — restructure-ops (concat/`+`/rotate/drain/insert_slice + **flatten**) — записан ([10-overloading.md](../../spec/decisions/10-overloading.md)); flatten реализован через вложенные generic-ресиверы произвольной глубины (D145/D263 AMEND, `[M-153.5-flatten-nested-receiver]` ✅ ЗАКРЫТ).
 - **D264** (✅ IMPLEMENTED 2026-06-14) — Vec-протоколы (`Hash` + FromIterator/collect-target) —
   записан в [02-types.md](../../spec/decisions/02-types.md#d264-vec-протоколы-hash--fromiterator--collect-target-plan-1536).
