@@ -1,0 +1,327 @@
+// std.collections.vec (restructure) — Plan 153.5 / D263 restructure-ops.
+//
+// Operations that build a NEW vector from existing data, or reshape a vector
+// in place by moving whole runs of elements:
+//
+//   @concat(other) -> Vec[T]   — non-mutating join `self ++ other` (new buffer).
+//   `+` operator    -> @plus    — `a + b` is a new Vec (≡ @concat); operands
+//                                 are unchanged. `a += b` lowers to `a = a + b`
+//                                 (a fresh concat Vec; D263).
+//   [][]T.@flatten() -> []T     — DEFERRED (nested generic receiver, see below /
+//                                 [M-153.5-flatten-nested-receiver]).
+//   mut @rotate_left(n)         — cyclic shift left by `n` (in place).
+//   mut @rotate_right(n)        — cyclic shift right by `n` (in place).
+//   mut @drain(range) -> Vec[T] — cut out `[range)`, RETURN the removed run as
+//                                 an owned Vec; the receiver is shortened.
+//   mut @insert_slice(i, sl)    — splice a slice `sl` in at index `i`.
+//
+// extend/append/retain/splice already live in mutate.nv (audited — NOT
+// duplicated): `@append(Vec[T])` is the in-place bulk merge, `@splice(i, other)`
+// is the in-place bulk insert. The new ops here are the *non-mutating* join
+// (`@concat`/`+`) plus the move-runs reshapers (rotate/drain) and the
+// slice-flavoured insert (`@insert_slice`, an `@splice` alias taking a `[]T`).
+#prelude(core, runtime, collections, protocols)
+module collections.vec
+
+import std.runtime.raw_mem.{RawMem}
+import std.collections.range.{Range}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Concat / operator `+`
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Build a NEW `Vec[T]` that is `self` followed by `other`. Neither operand is
+/// mutated (unlike `@append`, which grows `self` in place). O(self + other) — one
+/// allocation sized exactly for both runs, then two bulk `RawMem.copy` passes.
+///
+/// This is the non-mutating join and the body of the `+` operator (`@plus`).
+/// Matches Kotlin/Python `+` and Rust `[a, b].concat()` semantics.
+///
+/// # Examples
+///
+/// ```nova
+/// ro a = Vec[int].from([1, 2, 3])
+/// ro b = Vec[int].from([4, 5])
+/// ro c = a.concat(b)
+/// assert(c.equal(Vec[int].from([1, 2, 3, 4, 5])))
+/// assert(a.len() == 3)   // operands untouched
+/// assert(b.len() == 2)
+/// ```
+export fn Vec[T] @concat(other Vec[T]) -> Vec[T] {
+    ro a = @len
+    ro b = other.len()
+    mut out = Vec[T].with_capacity(a + b)
+    if a > 0 {
+        unsafe {
+            RawMem.copy(@data as *u8, out.data as *mut u8, a * size_of[T]())
+        }
+    }
+    if b > 0 {
+        unsafe {
+            RawMem.copy(other.data as *u8, (out.data + a) as *mut u8, b * size_of[T]())
+        }
+    }
+    // `out` was built with exact capacity `a + b`; set its live length to match
+    // the two bulk copies above (the buffer slots are now initialised). `len`
+    // is a `priv` field of the same `Vec` type, so a co-module type-method may
+    // write it directly on another instance (same idiom as `other.data` reads).
+    out.len = a + b
+    out
+}
+
+/// Operator `+`: `a + b == a.@plus(b)` → `@concat` (D46 / Q-vec-operator-plus).
+/// Produces a NEW `Vec[T]`; the operands are unchanged. `a += b` lowers to
+/// `a = a + b` (a fresh Vec) — to grow `a` in place use `a.append(b)`.
+///
+/// # Examples
+///
+/// ```nova
+/// ro a = Vec[int].from([1, 2])
+/// ro b = Vec[int].from([3, 4])
+/// ro c = a + b
+/// assert(c.equal(Vec[int].from([1, 2, 3, 4])))
+/// ```
+export fn Vec[T] @plus(other Vec[T]) -> Vec[T] => @concat(other)
+
+// ──────────────────────────────────────────────────────────────────────────
+// Flatten (vector-of-vectors)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// `[][]T.flatten() -> []T` — concatenate every inner `Vec[T]` of a
+// `Vec[Vec[T]]` into one flat `Vec[T]`, in order (Rust `[[T]].concat()` /
+// Kotlin `flatten()`).
+//
+// DEFERRED ([M-153.5-flatten-nested-receiver]): a real `.flatten()` METHOD
+// needs a **nested generic receiver** `Vec[Vec[T]] @flatten()` so that the body
+// can name the innermost element type `T` (the result `Vec[T]`). Neither of the
+// two receiver forms the compiler accepts can express this correctly today:
+//
+//   1. `Vec[Vec[T]] @flatten()` — the PARSER rejects a nested type in receiver
+//      carrier position: `parse_generic_decl_params` calls `parse_ident` per
+//      carrier slot, so a carrier slot MUST be a bare typevar name (`Vec[T]`),
+//      never a nested type (`Vec[Vec[T]]`) → "expected `]`, got identifier".
+//
+//   2. `fn[T] [][]T @flatten()` — the `[]T` slice-receiver form PARSES, but the
+//      monomorphizer binds the receiver typevar `T` to the *immediate* element
+//      (`Vec[int]`), NOT the innermost (`int`): the `[][]T` nesting is collapsed
+//      to a single `"[]T"` receiver whose `T` = element. The mono'd body then
+//      builds `out []T == Vec[Vec[int]]` and returns the wrong type → wrong
+//      result at runtime (verified: probe RUN-FAIL; mono'd `out` typed
+//      `Nova_Vec____Nova_Vec____nova_int_p`).
+//
+// A correct `flatten` therefore requires structural typevar unification for
+// nested receivers in BOTH the parser (accept `parse_type` in carrier position +
+// collect free typevars) AND the monomorphizer (bind `T` = element-of-element).
+// That is a deep, cross-cutting change to the whole `[]T`-method dispatch path
+// (all of stdlib's slice methods route through it), out of scope for the
+// restructure-ops surface. Until then, flatten one level explicitly:
+//
+//   mut flat = Vec[int].new()
+//   for inner in nested { flat.append(inner) }   // inner : Vec[int]
+//
+// (the `@append(Vec[T])` bulk path, mutate.nv) — exactly what the method body
+// would do. Tracked `[M-153.5-flatten-nested-receiver]`.
+
+// ──────────────────────────────────────────────────────────────────────────
+// Rotate (cyclic shift, in place)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Rotate the live elements left by `n` positions, in place. Element at index
+/// `i` moves to `(i - n) mod len`; the first `n` elements wrap to the end.
+/// `n` is reduced mod `len`, so any `n >= 0` is valid (a full or multi-turn
+/// rotation is the identity). O(len) time, O(min(n, len-n)) scratch.
+///
+/// Empty / single-element vectors are unchanged. Returns `@` for chaining.
+///
+/// # Examples
+///
+/// ```nova
+/// mut v = Vec[int].from([1, 2, 3, 4, 5])
+/// v.rotate_left(2)
+/// assert(v.equal(Vec[int].from([3, 4, 5, 1, 2])))
+/// ```
+export fn Vec[T] mut @rotate_left(n int) -> @
+    requires n >= 0
+{
+    if @len < 2 {
+        return @
+    }
+    ro k = n % @len
+    if k == 0 {
+        return @
+    }
+    // Save the leading `k` elements, shift the suffix `[k, len)` down to the
+    // front (overlap-safe memmove), then drop the saved prefix into the tail.
+    mut head = Vec[T].with_capacity(k)
+    unsafe {
+        RawMem.copy(@data as *u8, head.data as *mut u8, k * size_of[T]())
+    }
+    head.len = k
+    unsafe {
+        RawMem.copy((@data + k) as *u8, @data as *mut u8, (@len - k) * size_of[T]())
+        RawMem.copy(head.data as *u8, (@data + (@len - k)) as *mut u8, k * size_of[T]())
+    }
+    @
+}
+
+/// Rotate the live elements right by `n` positions, in place. Element at index
+/// `i` moves to `(i + n) mod len`; the last `n` elements wrap to the front.
+/// `n` is reduced mod `len`. O(len) time. Empty / single-element vectors are
+/// unchanged. Returns `@` for chaining.
+///
+/// # Examples
+///
+/// ```nova
+/// mut v = Vec[int].from([1, 2, 3, 4, 5])
+/// v.rotate_right(2)
+/// assert(v.equal(Vec[int].from([4, 5, 1, 2, 3])))
+/// ```
+export fn Vec[T] mut @rotate_right(n int) -> @
+    requires n >= 0
+{
+    if @len < 2 {
+        return @
+    }
+    ro k = n % @len
+    if k == 0 {
+        return @
+    }
+    // Rotating right by `k` is rotating left by `len - k`.
+    @rotate_left(@len - k)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Drain (cut out a range, return it owned)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Remove the half-open range `[range.start, range.end)` from `self` and return
+/// the removed elements as a NEW owned `Vec[T]`. The suffix after the range is
+/// shifted down to close the gap, so `self` is shortened by `range.len()`.
+/// O(len) — one bulk copy out + one bulk shift down.
+///
+/// Panics if the range is out of bounds (`start < 0`, `end < start`, or
+/// `end > len`). An empty range drains nothing and returns an empty `Vec`.
+///
+/// # Examples
+///
+/// ```nova
+/// mut v = Vec[int].from([1, 2, 3, 4, 5])
+/// ro cut = v.drain(1..4)
+/// assert(cut.equal(Vec[int].from([2, 3, 4])))
+/// assert(v.equal(Vec[int].from([1, 5])))
+/// ```
+export fn Vec[T] mut @drain(range Range) -> Vec[T]
+    requires range.start >= 0 && range.end >= range.start && range.end <= @len
+{
+    ro start = range.start
+    ro end = range.end
+    ro count = end - start
+    mut out = Vec[T].with_capacity(count)
+    if count == 0 {
+        return out
+    }
+    // Copy the drained run out, then shift the suffix `[end, len)` left into the
+    // hole at `start` (overlap-safe memmove), and shorten `self`.
+    unsafe {
+        RawMem.copy((@data + start) as *u8, out.data as *mut u8, count * size_of[T]())
+    }
+    out.len = count
+    ro tail = @len - end
+    if tail > 0 {
+        unsafe {
+            RawMem.copy((@data + end) as *u8, (@data + start) as *mut u8, tail * size_of[T]())
+        }
+    }
+    @len = @len - count
+    out
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Insert a slice
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Insert every element of slice `sl` at index `i`, shifting the existing suffix
+/// `[i, len)` right by `sl.len()` slots. Panics if `i > len` (`i == len` is a
+/// bulk append). Overlap-safe (memmove), so a self-insert
+/// (`v.insert_slice(i, v[a..b])`) is correct. O(len + sl.len()).
+///
+/// This is the slice-flavoured bulk insert — the `[]T` counterpart of `@splice`
+/// (which takes a `Vec[T]`). Under D239 a `[]T` IS a `Vec[T]`, so this delegates
+/// straight to `@splice`; the distinct name documents the slice-argument intent
+/// (Rust `Vec::splice` / Go `slices.Insert`). Returns `@` for chaining.
+///
+/// # Examples
+///
+/// ```nova
+/// mut v = Vec[int].from([1, 2, 5, 6])
+/// v.insert_slice(2, Vec[int].from([3, 4]))
+/// assert(v.equal(Vec[int].from([1, 2, 3, 4, 5, 6])))
+/// ```
+export fn Vec[T] mut @insert_slice(i int, sl []T) -> @
+    requires 0 <= i && i <= @len
+{
+    @splice(i, sl)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────────────────────────────────
+
+test "concat / operator + does not mutate operands" {
+    ro a = Vec[int].from([1, 2, 3])
+    ro b = Vec[int].from([4, 5])
+    ro c = a.concat(b)
+    assert(c.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    assert(a.len() == 3)
+    assert(b.len() == 2)
+
+    ro d = a + b
+    assert(d.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    assert(a.len() == 3)
+    assert(b.len() == 2)
+}
+
+test "operator += appends" {
+    mut a = Vec[int].from([1, 2])
+    a += Vec[int].from([3, 4])
+    assert(a.equal(Vec[int].from([1, 2, 3, 4])))
+}
+
+test "rotate_left / rotate_right" {
+    mut v = Vec[int].from([1, 2, 3, 4, 5])
+    v.rotate_left(2)
+    assert(v.equal(Vec[int].from([3, 4, 5, 1, 2])))
+    v.rotate_right(2)
+    assert(v.equal(Vec[int].from([1, 2, 3, 4, 5])))
+
+    // n % len == 0 is identity
+    mut w = Vec[int].from([1, 2, 3])
+    w.rotate_left(3)
+    assert(w.equal(Vec[int].from([1, 2, 3])))
+    w.rotate_left(6)
+    assert(w.equal(Vec[int].from([1, 2, 3])))
+}
+
+test "drain returns cut + shortens receiver" {
+    mut v = Vec[int].from([1, 2, 3, 4, 5])
+    ro cut = v.drain(1..4)
+    assert(cut.equal(Vec[int].from([2, 3, 4])))
+    assert(v.equal(Vec[int].from([1, 5])))
+
+    // empty range drains nothing
+    mut u = Vec[int].from([7, 8, 9])
+    ro none = u.drain(1..1)
+    assert(none.len() == 0)
+    assert(u.equal(Vec[int].from([7, 8, 9])))
+}
+
+test "insert_slice" {
+    mut v = Vec[int].from([1, 2, 5, 6])
+    v.insert_slice(2, Vec[int].from([3, 4]))
+    assert(v.equal(Vec[int].from([1, 2, 3, 4, 5, 6])))
+
+    // insert at end == append
+    mut w = Vec[int].from([1, 2])
+    w.insert_slice(2, Vec[int].from([3, 4]))
+    assert(w.equal(Vec[int].from([1, 2, 3, 4])))
+}

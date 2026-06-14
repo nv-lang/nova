@@ -16882,7 +16882,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     self.line(&format!("{};", val));
                 }
             }
-            Stmt::Assign { target, op, value, .. } => {
+            Stmt::Assign { target, op, value, span } => {
                 // Special case: array element assignment where elements are stored
                 // as pointer-stomped nova_int (e.g. @buckets[idx] = Occupied{...}).
                 // emit_expr(target) returns a cast lvalue which is illegal in C.
@@ -16962,6 +16962,52 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                             self.line(&format!("{}->data[{}] = (nova_int)(intptr_t)({});", arr_c, idx_c, val));
                             return Ok(());
                         }
+                    }
+                }
+                // Plan 153.5 (D263 / Q-vec-operator-plus): operator-overloaded
+                // compound assignment. `a += b` on a type whose `+` lowers to a
+                // method (`@plus` / `@concat`) — `str`, `Vec[T]`, or any `Nova_*`
+                // record with a registered `@plus` — must route through that
+                // method, NOT a raw C `a += b` (illegal on a struct/pointer
+                // operand → CC-FAIL). Desugar to `a = a + b` by synthesising a
+                // `Binary` Add node and re-emitting through the full binop
+                // dispatch (which already picks str-concat / Vec-plus / sum-plus).
+                // `a += b` on a `Vec[T]` therefore yields a NEW Vec (concat
+                // semantics) — to grow in place use `a.append(b)` (D263). Only
+                // `Add`/`Sub` are overloadable operators; `*=`/`/=` are not.
+                if matches!(op, AssignOp::Add | AssignOp::Sub) {
+                    let tgt_ty = self.infer_expr_c_type(target);
+                    let is_overloaded_add_ty = tgt_ty == "nova_str"
+                        || (tgt_ty.starts_with("Nova_Vec____")
+                            && !tgt_ty.trim_end().ends_with("**"))
+                        || (tgt_ty.starts_with("Nova_")
+                            && tgt_ty.ends_with('*')
+                            && !tgt_ty.ends_with("**")
+                            && tgt_ty != "nova_int"
+                            && !tgt_ty.starts_with("Nova_Vec____"));
+                    if is_overloaded_add_ty {
+                        let bin_op = match op {
+                            AssignOp::Add => BinOp::Add,
+                            AssignOp::Sub => BinOp::Sub,
+                            _ => unreachable!(),
+                        };
+                        let synth = Expr::new(
+                            ExprKind::Binary {
+                                op: bin_op,
+                                left: Box::new(target.clone()),
+                                right: Box::new(value.clone()),
+                            },
+                            *span,
+                        );
+                        // `emit_expr` on the synthesised Binary dispatches the
+                        // operator to its method (e.g. `Nova_str_method_concat`,
+                        // `Nova_Vec____<elem>_method_plus`). A non-overloaded
+                        // operand-type pair surfaces here as a normal binop error
+                        // rather than silently emitting bad C.
+                        let rhs = self.emit_expr(&synth)?;
+                        let tgt = self.emit_expr(target)?;
+                        self.line(&format!("{} = {};", tgt, rhs));
+                        return Ok(());
                     }
                 }
                 let tgt = self.emit_expr(target)?;
@@ -18190,7 +18236,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         Some(rty.clone())
                     } else { None };
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
-                        if let Some(vty) = vec_ty {
+                        if let Some(vty) = &vec_ty {
                             let mangled = vty.trim_end_matches('*').to_string();
                             if let Some(call) =
                                 self.vec_method_call(&mangled, "equal", &[l.clone(), r.clone()])
@@ -18200,6 +18246,24 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                                     BinOp::Neq => Ok(format!("(!({}))", call)),
                                     _ => unreachable!(),
                                 };
+                            }
+                        }
+                    }
+                    // Plan 153.5 (D263 / Q-vec-operator-plus): `Vec[T] + Vec[T]`
+                    // → the `@plus` Nova-body method (restructure.nv), which
+                    // delegates to `@concat` (a NEW Vec; operands unchanged). Must
+                    // come BEFORE the generic `Nova_*` sum-pointer Add arm below:
+                    // that arm emits a bare `Nova_Vec____<elem>_method_plus(l, r)`
+                    // call WITHOUT instantiating the monomorphized body, which then
+                    // fails to link (`undefined symbol …_method_plus`). Routing via
+                    // `vec_method_call` registers the mono instance first.
+                    if matches!(op, BinOp::Add) {
+                        if let Some(vty) = &vec_ty {
+                            let mangled = vty.trim_end_matches('*').to_string();
+                            if let Some(call) =
+                                self.vec_method_call(&mangled, "plus", &[l.clone(), r.clone()])
+                            {
+                                return Ok(format!("({})", call));
                             }
                         }
                     }
