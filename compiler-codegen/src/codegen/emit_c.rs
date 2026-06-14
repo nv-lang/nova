@@ -8845,6 +8845,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 self.current_receiver_type = prev_recv;
                 let params_s = if parts.is_empty() { "void".into() } else { parts.join(", ") };
                 self.var_types.insert(format!("fn_ret_{}", f.name), ret_c.clone());
+                // Plan 152.4.3: type-qualified return key (disambiguates same-named
+                // methods across types in the inference fallback).
+                self.var_types.insert(format!("fn_ret_{}_{}", recv.type_name, f.name), ret_c.clone());
                 self.line(&format!("static {} {}({});", ret_c, mangled, params_s));
                 return Ok(());
             }
@@ -8869,6 +8872,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let mangled = self.mangle_fn(f);
         // Register return type so call sites can infer print helper
         self.var_types.insert(format!("fn_ret_{}", f.name), ret.clone());
+        // Plan 152.4.3: also register a TYPE-QUALIFIED return key for methods —
+        // the name-only key above is last-wins across types, so same-named methods
+        // on different receivers collide (e.g. `CharsIter.next -> Option[char]` vs
+        // `GraphemesView.next -> Option[str]`); the inference fallback prefers this.
+        if let Some(recv) = &f.receiver {
+            self.var_types.insert(format!("fn_ret_{}_{}", recv.type_name, f.name), ret.clone());
+        }
         // Plan 72 P2-A: register Result[T,E] return params so `let r = f(...)`
         // (call RHS, no annotation) populates `result_type_params[r]` correctly
         // instead of falling back to `(nova_int, nova_str)`.
@@ -33531,7 +33541,24 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         "hash" => return "nova_int".into(),
                         _ => {}
                     }
-                    // User-defined method: look up return type registered during forward decl
+                    // User-defined method: look up return type registered during forward decl.
+                    // Plan 152.4.3: prefer the TYPE-QUALIFIED key (receiver type + method)
+                    // so same-named methods on different types disambiguate (e.g. `next`
+                    // on CharsIter -> Option[char] vs GraphemesView -> Option[str]); the
+                    // name-only key is last-wins across types. obj_ty here is a plain type
+                    // (generic mono types resolved earlier via infer_mono_method_ret).
+                    {
+                        let bare = obj_ty.trim_end_matches('*');
+                        let recv_tn = bare.strip_prefix("NovaValue_")
+                            .or_else(|| bare.strip_prefix("Nova_"))
+                            .unwrap_or(bare);
+                        if !recv_tn.is_empty() {
+                            let tq = format!("fn_ret_{}_{}", recv_tn, method);
+                            if let Some(ret_ty) = self.var_types.get(&tq) {
+                                return ret_ty.clone();
+                            }
+                        }
+                    }
                     let ret_key = format!("fn_ret_{}", method);
                     if let Some(ret_ty) = self.var_types.get(&ret_key) {
                         return ret_ty.clone();
