@@ -37797,3 +37797,22 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   `result == Ok(x)` для non-default-E — pre-existing project-level inference gap (чекер оставляет
   variant-ctor без типа by design → codegen дефолтит E=str, emit_c.rs:5172), класс
   Q-overload-result-type (отложен с мая), не внесён 153.3 (`match` работает).
+
+[2026-06-14] Plan 152.4.3 — grapheme-сегментация as_graphemes() (UAX #29) + 2 compiler-фикса.
+  Третья линза `str.@as_graphemes() -> GraphemesView` (после as_bytes/as_chars): extended grapheme
+  clusters (UAX #29) — «видимые символы» (é=e+◌́; флаг 🇺🇸=2 RI; 👨‍👩‍👧=ZWJ-emoji; каждый=1 grapheme).
+  Данные: `nova-codegen unicode` теперь эмитит std/unicode/grapheme_data.nv — range-таблицы (binary-search)
+  GCB (GraphemeBreakProperty) + Extended_Pictographic (emoji-data) + InCB (DerivedCoreProperties); 1419 gcb /
+  517 extpict / 439 incb ranges. Алгоритм graphemes.nv: GraphemesView (value priv {buf,pos}, как CharsIter)
+  → Next[str] (next()=срез-кластер) + iter/count/is_empty; правила GB1-GB13 + GB9c (Indic Conjunct Break,
+  Unicode 15.1); Hangul через GCB; emoji-ZWJ через GB11; флаги через GB12/13. G0 «без упрощений»: ПОЛНЫЙ
+  GraphemeBreakTest.txt = 1093/1093 (content-checked, не count-proxy) + hand-picked PASS. 0 новых регрессий
+  (plan138 3 FAIL pre-existing на main — verified). Закрывает [M-152-graphemes]. Phase B остаток: 152.4.4
+  folding/case-mapping ([M-152-case-fold]).
+  Два compiler-бага найдены и починены попутно (отдельные коммиты): (A parser e4b23a79) literal U+0001 в
+  string-литералах ломал interp-splitter (байт 0x01 = безусловный \$-sentinel → push next + skip 2 → desync в
+  multibyte → panic); fix: sentinel только если next='$', одиночный U+0001 (из \u{1}) проходит как контент.
+  (B codegen 738b6c2e) метод-возврат инференс падал в name-only fn_ret_<m> (last-wins по типам) —
+  CharsIter.next->Option[char] vs GraphemesView.next->Option[str] коллизия (call верный, temp-тип чужой →
+  CC-FAIL); fix: type-qualified fn_ret_<Type>_<m> (частично закрывает [M-method-resolution-registry-inconsistency]).
+  Commits: A e4b23a79 + B 738b6c2e + feature 8b1f81f1 + docs, ветка plan-152.

@@ -36310,3 +36310,25 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   safe-set (доказуемо-flat value-records) — возможный followup, требует per-T flatness-доказательства.
   ВАЖНО: overlap-семантика СОХРАНЕНА точно (runtime guard: destructive forward-overlap → element-loop
   пропагация, как per-element; иначе memmove) — не упрощение, а полное соответствие циклу.
+
+- **Plan 152.4.3 — grapheme-сегментация `as_graphemes()` (UAX #29) + 2 compiler-фикса (2026-06-14, D253)**:
+  Третья линза строки `str.@as_graphemes() -> GraphemesView` (симметрична as_bytes/as_chars): extended
+  grapheme clusters — «видимые символы» (é=e+◌́; 🇺🇸=2 RI; 👨‍👩‍👧=ZWJ-emoji; каждый=1). Данные: `nova-codegen
+  unicode` теперь эмитит `std/unicode/grapheme_data.nv` — range-таблицы (binary-search) GCB
+  (GraphemeBreakProperty) + Extended_Pictographic (emoji-data) + InCB (DerivedCoreProperties). Алгоритм
+  (graphemes.nv): GraphemesView (`value priv`, как CharsIter) реализует Next[str] (next()=срез-кластер) +
+  iter/count/is_empty; правила UAX #29 GB1-GB13 **+ GB9c** (Indic Conjunct Break, U15.1); Hangul через
+  GCB-категории; emoji-ZWJ через GB11; флаги через GB12/13. G0 «без упрощений»: **полный** GraphemeBreakTest.txt
+  **1093/1093** (content-checked — проверяет точную последовательность кластеров, не count-proxy) + hand-picked.
+  0 новых регрессий (plan138 3 FAIL pre-existing на main). Закрывает `[M-152-graphemes]`. Phase B остаток:
+  152.4.4 folding/case-map (`[M-152-case-fold]`).
+  **2 compiler-бага попутно (отдельные коммиты):** (A, parser `e4b23a79`) literal U+0001 в string-литералах
+  ломал interp-splitter — байт 0x01 трактовался как `\$`-sentinel безусловно (push next byte + skip 2 → desync
+  в середину multibyte → parser panic); fix: sentinel только если next byte = `$`, lone U+0001 (из `\u{1}`,
+  частый в UAX #29 тест-данных) проходит как контент. (B, codegen `738b6c2e`) `infer_expr_c_type` метод-возврат
+  падал в name-only `fn_ret_<m>` (last-wins по типам) — `CharsIter.next()->Option[char]` vs
+  `GraphemesView.next()->Option[str]` коллизировали (call верный, temp-тип чужой → CC-FAIL); fix:
+  type-qualified `fn_ret_<Type>_<m>` ключ + предпочтение в fallback (частично закрывает
+  `[M-method-resolution-registry-inconsistency]` — return-inference половину). Минорная находка: `\u{24}\u{7b}`
+  (escapes) декодится в `${` → запускает interpolation (literal `${` через escapes невыразим) — low-pri.
+  Commits: A `e4b23a79` + B `738b6c2e` + feature `8b1f81f1` + docs.
