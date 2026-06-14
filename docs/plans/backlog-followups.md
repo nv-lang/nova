@@ -114,6 +114,9 @@
 | `[M-91.fe5-math-time-conformance]` | math (sqrt/ln) есть; Instant/Duration time-API conformance pending. | plan-91 Followups | P2 |
 | `[M-ide-integration-deferred]` | Production LSP (hover/goto/completion/refs/rename/format) 104.2–104.6 не построены (104.7 tree-sitter закрыт). | plan-104 Followups | P2 |
 | `[M-118.1-ffi-perf-bench]` | memcpy/memmove bench harness для FFI intrinsics не построен (сами intrinsics landed). | plan-118.1 Followups | P2 |
+| `[M-152-graphemes]` | **OPEN (Plan 152.4.3, Phase B).** `str.@as_graphemes() -> GraphemesView` (extended grapheme clusters, UAX #29: combining marks / ZWJ-emoji / regional-indicator флаги) — третья линза, симметрична `as_bytes`/`as_chars`. Нужна `nova-codegen unicode`-генерация `GraphemeBreakProperty.txt` + `emoji-data.txt` таблиц + UAX #29-алгоритм. Conformance — `GraphemeBreakTest.txt`. Нормализация (152.4.1/2) уже залендена. | Plan 152.4.3 | P2 |
+| `[M-152-case-fold]` | **OPEN (Plan 152.4.4, Phase B).** `fold_case(s)` (caseless matching, для 152.5b `eq_ignore_case`) + полные Unicode `to_uppercase`/`to_lowercase`/`to_titlecase` (multi-codepoint: ß→SS, ﬁ→FI) — апгрейд ASCII-only `transform.nv`. Нужны `CaseFolding.txt` + `SpecialCasing.txt` таблицы (`nova-codegen unicode`). | Plan 152.4.4 | P2 |
+| `[M-lazy-static-thread-safety]` | **OPEN (Plan 152.4 foundation).** Module-level `ro` lazy-static globals (`emit_lazy_const`) используют first-touch init **без синхронизации** (`if (!_init) { _value = build(); _init = 1; }`). При конкурентном первом доступе из нескольких fiber'ов/потоков — race (двойной build + torn `_init`). Не хуже существующего non-constexpr `const` lazy-init (та же модель) — не новый класс. Fix: `pthread_once`/atomic-CAS guard, либо eager-init на старте для prelude-критичных. Unicode-таблицы сейчас обычно тригерятся из main до spawn. | floating | P3 |
 
 ## P3 — Codegen cleanliness (генерируемый C полиш; рантайм не затронут)
 

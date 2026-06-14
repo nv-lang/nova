@@ -10001,6 +10001,48 @@ Unicode-данных `std/unicode` (Plan 152.4). См. [Plan 152.3](../../docs/p
 
 ---
 
+## D253. `std/unicode` — нормализация (NFC/NFD/NFKC/NFKD, UAX #15)
+
+Added: 2026-06-14  Status: 152.4.1+152.4.2 (нормализация) IMPLEMENTED 2026-06-14; Phase B (graphemes/folding/case-mapping) — остаётся
+
+Полная Unicode-нормализация — отдельный **opt-in** модуль `std/unicode` (модуль
+`std.unicode`, folder-module), импортируется явно; НЕ prelude (за размер таблиц
+платит импортирующий, criterion A6). Ядро (152.1–152.3a: байты/codepoint/ASCII)
+остаётся prelude-доступным и собирается без `std/unicode`.
+
+### Что в ядре vs библиотеке
+Ядро: байты, codepoint decode/encode, ASCII case/classification, byte-`Compare`.
+`std/unicode`: нормализация (здесь, реализовано); grapheme-сегментация (152.4.3),
+case folding + Unicode case mapping (152.4.4), collation (152.5b) — Phase B.
+
+### API (152.4.2, реализовано)
+Free-function форма (D253): **`normalize_nfc/nfd/nfkc/nfkd(s str) -> str`**.
+- **NFD** = canonical decomposition + canonical ordering (стабильная сортировка
+  combining-марок по CCC, starter'ы — барьеры).
+- **NFC** = NFD + canonical composition (blocking-rule UAX #15).
+- **NFKD/NFKC** = compatibility decomposition вместо canonical.
+Hangul декомпозируется/композируется **алгоритмически** (UAX #15 §Hangul, L+V и
+LV+T), не по таблицам.
+
+### Данные (152.4.1, Q-unicode-data)
+Таблицы генерируются build-time-инструментом **`nova-codegen unicode`** из UCD
+(`UnicodeData.txt`, `CompositionExclusions.txt`, `DerivedNormalizationProps.txt`) в
+`std/unicode/norm_data.nv` — компактные `;`-строки (NFD/NFKD full decomp, CCC,
+canonical composition), пин к `UNICODE_VERSION` (16.0). Парсятся **лениво** в
+`HashMap` при первом вызове (module-level `ro` lazy-static, D199). Composition-ключ —
+упакованный int `(a<<21)|b` (tuple-key HashMap — codegen-gap). Без ICU/ОС;
+`--check` — CI-guard. Прецедент: Rust `unicode-*` (codegen), Go `maketables`.
+
+### Conformance
+Официальный `NormalizationTest.txt` (UAX #15): фикстура
+`nova_tests/plan152_4/normalization_conformance.nv` (генерируется
+`nova-codegen unicode --emit-conformance`, capped).
+
+См. [Plan 152.4](../../docs/plans/152.4-std-unicode.md), Q-unicode-data
+(open-questions.md). Phase B остаток: `[M-152-graphemes]`, `[M-152-case-fold]`.
+
+---
+
 ## D254. Модель сравнения строк — byte-`Ord` дефолт + явный collation
 
 Added: 2026-06-13  Status: 152.5a (core) IMPLEMENTED 2026-06-13; 152.5b (Unicode/locale) — Phase B

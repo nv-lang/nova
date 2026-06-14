@@ -36178,3 +36178,38 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   без рабочего Hash/Equal». Связь Plan 154 (checker over-accepts), но это CC-FAIL, не silent-noop. Workaround в
   152.4: упакованный int-ключ `(a<<21)|b` в `HashMap[int,int]` для composition-таблицы. Маркер заведён в
   backlog-followups.md (P2, floating).
+
+- **Plan 152.4 foundation hardening — lazy-static GC-root + cross-module merge (2026-06-14, commit `e22baf23`)**:
+  Два латентных пробела фундамента lazy-static (152.4.0), оба вскрылись при построении `std/unicode` (большие
+  `HashMap`-таблицы в module-level `ro`-глобалах). (1) **GC-rooting:** Boehm-бэкенд работает с `GC_set_no_dls(1)`
+  (alloc_boehm.c — против /proc-walk SEGV под Docker), что оставляет static/BSS data НЕсканированной → file-scope
+  `static T* _value;` lazy-static'а НЕ был GC-root → объект собирался при первом GC под давлением памяти →
+  use-after-free/SEGV. Латентно, пока lazy-static не держал большой граф (~2k/6k-записные Unicode-таблицы,
+  перешагивающие порог GC). Диагностика: `GC_DONT_GC=1` чинил; крэш зависел от набора функций (порог аллокаций).
+  Fix: runtime `nova_gc_add_root(lo,hi)` (Boehm→`GC_add_roots`; malloc/RC→no-op); `emit_lazy_const` регистрирует
+  storage-cell как root ДО first-touch build (объект stack-rooted во время build, затем живёт в сканируемой
+  cell). (2) **Cross-module:** `resolve_imports_inline` переносил `Item::Fn`/`Const`/`Type` через границу модуля,
+  но дропал `Item::Let` → импортированная fn, читающая same-module lazy-static (`ccc_of` читает `ccc_map`),
+  компилировалась с undeclared identifier. Fix: мёрж module-level `Item::Let` в `merged_items` (приватно — у
+  `let` нет `export`). Оба — no-op для legacy (module-level non-constexpr `ro` нет в std/nova_tests; constexpr
+  `const` обязателен по strict-партиции Plan 114.4 → `lazy_consts` пуст). Spawns `[M-lazy-static-thread-safety]`
+  (first-touch init не thread-safe — как `const` lazy-init, не новый класс).
+
+- **Plan 152.4.1 + 152.4.2 — std/unicode normalization (NFC/NFD/NFKC/NFKD, UAX #15) (2026-06-14, commit `a8df78a5`, D253/Q-unicode-data)**:
+  Opt-in модуль `std.unicode` (НЕ prelude — за таблицы платит импортирующий, A6); free-function API
+  `normalize_nfc/nfd/nfkc/nfkd(s)->str`. **152.4.1 data pipeline:** внутренний build-tool `nova-codegen unicode
+  --ucd-dir <UCD> --root <repo>` (`compiler-codegen/src/codegen/unicode_data.rs`) парсит UCD (UnicodeData +
+  CompositionExclusions + DerivedNormalizationProps) → `std/unicode/norm_data.nv` (компактные `;`-строки:
+  NFD/NFKD full decomp, CCC, canonical composition; пин `UNICODE_VERSION=16.0`); `--check` CI-guard,
+  `--emit-conformance` пишет UAX #15-фикстуру. Без ICU/ОС (прецедент Rust `unicode-*`/Go `maketables`). Таблицы
+  байт-идентичны reference-генератору (2081/5913/934/961). **152.4.2 нормализация:** `std/unicode/normalize.nv` —
+  таблицы парсятся лениво в `HashMap` (module-level `ro` lazy-static, D199); decompose (таблица + алгоритмический
+  Hangul UAX #15 §Hangul) → canonical ordering (стабильная insertion-sort по CCC, starter'ы — барьеры) →
+  canonical composition (blocking-rule + Hangul L+V/LV+T). Composition-ключ — упакованный int `(a<<21)|b`
+  (tuple-key HashMap — codegen-gap `[M-hashmap-tuple-key-mono]`). Тесты: plan152_4/normalize 16 кейсов +
+  **UAX #15 conformance** (NormalizationTest.txt, 600 cases/2400 asserts, capped+logged) — PASS. 0 регрессий
+  (plan148/basics/generics/plan139/plan153/plan152; plan114 2 FAIL pre-existing на main — verified). Решение по
+  `[]int`: писать **явный `Vec[int]`** (не `[]int`) — `[]T`-static-конструктор (`[]int.with_capacity`) не
+  флипается в Vec (даёт legacy `NovaArray`), хотя `[]int`-тип флипается → Vec/NovaArray-mismatch → garbage-index
+  panic; явный `Vec[int]` обходит (`[M-138.2-flip-*` семейство). Phase B остаток: 152.4.3 graphemes
+  (`[M-152-graphemes]`), 152.4.4 folding/case-map (`[M-152-case-fold]`).

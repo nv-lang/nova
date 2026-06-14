@@ -4110,6 +4110,24 @@ parser char-литералы **не поддерживает** — это бло
 
 ---
 
+## Q-unicode-data. Откуда и как берутся Unicode-таблицы ✅ ЗАКРЫТО (2026-06-14, Plan 152.4 / D253)
+
+> **РЕШЕНИЕ: build-time codegen из UCD, версия-пин, ленивые таблицы, без ICU.**
+> Таблицы (нормализация: NFD/NFKD/CCC/canonical-composition; далее grapheme/case)
+> генерируются инструментом **`nova-codegen unicode --ucd-dir <UCD>`** из официального
+> Unicode Character Database (`UnicodeData.txt`, `CompositionExclusions.txt`,
+> `DerivedNormalizationProps.txt`, …) в компактные `;`-кодированные Nova-таблицы
+> `std/unicode/norm_data.nv`. Пин к версии (`const UNICODE_VERSION str = "16.0"`),
+> **ленивая** инициализация (парсятся в `HashMap` при первом вызове через module-level
+> `ro` lazy-static, D199). НЕ хардкодим вручную, НЕ зависим от ICU/ОС. `--check` —
+> CI-guard (расхождение с UCD → fail). Conformance — официальный `NormalizationTest.txt`
+> (`--emit-conformance` → фикстура plan152_4). Прецедент: Rust `unicode-*` (codegen),
+> Go `maketables`. См. [D253](decisions/03-syntax.md#d253),
+> [Plan 152.4](../docs/plans/152.4-std-unicode.md). UCD-файлы в репозиторий НЕ
+> коммитятся (объём); путь к ним передаётся `--ucd-dir`.
+
+---
+
 ## Q-cstring. Гарантия nul-termination для `nova_str.ptr`
 
 ✅ **ЗАКРЫТО 2026-06-03** — Plan 118.1 / D26 amend
