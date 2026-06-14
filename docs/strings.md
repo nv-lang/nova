@@ -235,7 +235,28 @@ assert("the resp. leaders are".as_sentences().count() == 1) // lowercase after "
   segments (`"Mr. "`, `"Smith went home. "`, `"He slept."`), because a capital
   letter after `.` is a boundary. That is the documented spec behaviour.
 
-Locale collation (`Collator`, UCA/CLDR) remains **roadmap** (Plan 152.5b).
+### Collation (UCA / DUCET ordering)
+
+`str`'s default `compare`/`<` is **byte-lexicographic** (fast, deterministic,
+locale-independent). For Unicode-aware ordering, `import std.unicode` gives a UCA
+(UTS #10) DUCET collator — `str` never collates silently (D254):
+
+```nova
+import std.unicode
+
+assert(collate_compare("apple", "Apple") < 0)   // case is tertiary, not primary
+assert(collate_compare("café", "cafe") > 0)      // accent is secondary
+ro key = collate_sort_key("naïve")               // []int sort key (cache for sorting)
+ro c = Collator.root()                            // c.order(a,b) / c.key(s) / c.same(a,b)
+```
+
+- `collate_compare(a,b) -> int` (-1/0/+1), `collate_sort_key(s) -> []int`,
+  `collate_eq`, `Collator.root()`. Multi-level (primary/secondary/tertiary +
+  quaternary) **Shifted** variable-weighting; NFD-normalizes first; handles
+  contractions (incl. UCA S2.1 discontiguous) and implicit weights (CJK etc.).
+- Scope: **DUCET (root, non-tailored)**. CLDR locale-tailoring + `eq_ignore_case` are
+  roadmap (Plan 152.5b, `[M-152-collation-tailoring]`) — like Rust `unicode-collation`
+  DUCET mode / ICU root collator.
 
 ## Encoding interop (UTF-16 / code points)
 
@@ -270,7 +291,8 @@ string ops):
 | split/trim/replace/pad/repeat/concat | `transform`/`search` | see std/runtime/string/ |
 | owned bytes/chars | `to_bytes`/`to_chars` | alloc |
 | UTF-16 / code points | `encode_utf16`/`from_utf16`/`code_points` | `import std.encoding.utf16` |
-| identity | `==` / `compare` / `hash` / clone | content-based |
+| identity | `==` / `compare` / `hash` / clone | content-based (byte-`Ord`) |
+| collation (UCA) | `collate_compare`/`collate_sort_key`/`Collator` | `import std.unicode`; DUCET/UTS #10 |
 
 > Normalization (UAX #15) and grapheme segmentation (UAX #29) ship in the opt-in
 > `std/unicode` module — see [Unicode operations](#unicode-operations-opt-in-stdunicode).

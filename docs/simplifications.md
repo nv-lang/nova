@@ -36482,3 +36482,25 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   C-codegen; чистка `tests/` integration-таргетов.
 
 - [2026-06-14] Plan 157 (interpreter UNSUPPORTED) formal artifacts: spec D274, Q-interpreter-future, regression test interp_unsupported.rs (neg+pos, release). `nova run` is a LOUD error (not a silent no-op) — a deliberate product boundary, not a shortcut.
+
+- **Plan 152.5b — Unicode collation (UCA/DUCET, UTS #10) (2026-06-14, D254)**:
+  `std/unicode/collate.nv` (opt-in, НЕ prelude — `str` Ord = byte-lex по D254):
+  `collate_compare(a,b)->int` / `collate_sort_key(s)->[]int` / `collate_eq` / `Collator.root()`.
+  Алгоритм: NFD → collation elements (longest-match contractions + implicit-веса CJK/Tangut §10.1)
+  → multi-level sort key (**Shifted** variable-weighting: variable CE демоутится в L4) → лекс-сравнение.
+  Данные: `nova-codegen unicode` → `collate_data.nv` из DUCET `allkeys.txt` (38443 single / 77 contraction /
+  21 implicit ranges, 666KB). G0: `CollationTest_SHIFTED.txt` (INDEPENDENT UCD-oracle) **50000-пар uniform
+  spread = 200/200** out-of-band (коммит 1500).
+  **Scope (честно, не упрощение алгоритма):** DUCET (non-tailored, root) + Shifted-вариант. CLDR
+  locale-tailoring + `eq_ignore_case` — отдельный слой → `[M-152-collation-tailoring]` (как Rust
+  `unicode-collation` DUCET-mode / ICU root collator). Полный 227800-conformance не как один тест (велик для
+  clang) → slow-lane Plan 156 (`[M-152-collation-full-conformance]`). Surrogate-строки CollationTest
+  пропускаются (Nova `str` = валидный UTF-8; отсортированный файл остаётся неубывающим).
+  **ВОССТАНОВЛЕНИЕ после reboot + найденный баг:** фоновый агент реализовал DUCET, но завис; его работа
+  уцелела в worktree. При верификации широкий out-of-band прогон (50000) поймал **4/200 краевых чанка** —
+  это **UCA S2.1 (discontiguous contractions)**: combining-mark меньшего ccc, вклинившийся при NFD-канон-
+  упорядочивании между базой и продолжением контракции, рвал contiguous-матч. Реализовал S2.1
+  (`s21_match`: longest-match с пропуском interposed-lower-ccc марок, mark коллируется отдельно) → 200/200.
+  Этот баг — урок про ценность широкого out-of-band прогона: коммит-1500 его пропускал (повезло), 50000
+  поймал. Codegen-баг попутно: `match`-as-return-тело с `mut found = None` выводил тип результата как `bool`
+  → workaround типизированным `mut found Option[str] = None`.
