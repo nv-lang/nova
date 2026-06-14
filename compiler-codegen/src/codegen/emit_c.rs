@@ -18041,8 +18041,32 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     && ((lty.starts_with("NovaRes_") && lty.ends_with('*'))
                         || (rty.starts_with("NovaRes_") && rty.ends_with('*')))
                 {
-                    let res_ty = if lty.starts_with("NovaRes_") { lty.clone() } else { rty.clone() };
-                    let eq = self.emit_field_eq(&res_ty, &l, &r, 0);
+                    let l_res = lty.starts_with("NovaRes_") && lty.ends_with('*');
+                    let r_res = rty.starts_with("NovaRes_") && rty.ends_with('*');
+                    let mut l2 = l.clone();
+                    let mut r2 = r.clone();
+                    let mut res_ty = if l_res { lty.clone() } else { rty.clone() };
+                    // [M-153-result-eq-literal-expected-type]: a bare `Ok(x)`/`Err(x)`
+                    // literal leaves its `E` (or `T`) defaulted (variant ctors are
+                    // left untyped by design) — e.g. `Ok(2)` → `Result[int, str]`, so
+                    // `binary_search() == Ok(2)` (Result[int,int]) would compare two
+                    // different `NovaRes_<n>` → CC-FAIL. Re-emit the literal side
+                    // against the OTHER operand's concrete Result type so both share
+                    // one representation (expected-type propagation, codegen-local).
+                    if lty != rty {
+                        if l_res && self.expr_is_result_ctor(right) {
+                            if let Some(re) = self.reemit_result_variant_as(right, &lty)? {
+                                r2 = re;
+                                res_ty = lty.clone();
+                            }
+                        } else if r_res && self.expr_is_result_ctor(left) {
+                            if let Some(re) = self.reemit_result_variant_as(left, &rty)? {
+                                l2 = re;
+                                res_ty = rty.clone();
+                            }
+                        }
+                    }
+                    let eq = self.emit_field_eq(&res_ty, &l2, &r2, 0);
                     return Ok(match op {
                         BinOp::Eq => format!("({})", eq),
                         BinOp::Neq => format!("(!({}))", eq),
@@ -31075,6 +31099,50 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
             }
             _ => format!("nova_make_Result_{}", variant),
         }
+    }
+
+    /// Plan 153.3 [M-153-result-eq-literal-expected-type]: is `e` a bare
+    /// `Ok(x)` / `Err(x)` variant-constructor literal (one arg)? Used to detect
+    /// a Result literal whose `(T,E)` defaulted, so a `==` against a concrete
+    /// Result can re-emit it with the matching type.
+    fn expr_is_result_ctor(&self, e: &crate::ast::Expr) -> bool {
+        if let crate::ast::ExprKind::Call { func, args, .. } = &e.kind {
+            if let crate::ast::ExprKind::Ident(v) = &func.kind {
+                return (v == "Ok" || v == "Err") && args.len() == 1;
+            }
+        }
+        false
+    }
+
+    /// Plan 153.3 [M-153-result-eq-literal-expected-type]: re-emit a bare
+    /// `Ok(x)`/`Err(x)` literal as `target_novares_ty` (a concrete
+    /// `NovaRes_<n>*`) instead of its defaulted type, casting the payload to the
+    /// target variant's C-type. `None` if `e` isn't a result-ctor literal or the
+    /// target type carries no resolvable `(ok, err)`.
+    fn reemit_result_variant_as(
+        &mut self,
+        e: &crate::ast::Expr,
+        target_novares_ty: &str,
+    ) -> Result<Option<String>, String> {
+        let (variant, payload_expr) = match &e.kind {
+            crate::ast::ExprKind::Call { func, args, .. } => match &func.kind {
+                crate::ast::ExprKind::Ident(v)
+                    if (v == "Ok" || v == "Err") && args.len() == 1 =>
+                {
+                    (v.clone(), args[0].expr())
+                }
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+        let (ok_c, err_c) = match self.novares_ok_err(target_novares_ty) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        let payload_c = if variant == "Ok" { ok_c } else { err_c };
+        let arg_c = self.emit_expr(payload_expr)?;
+        let ctor = self.result_ctor_name(target_novares_ty, &variant);
+        Ok(Some(format!("{}(({}){})", ctor, payload_c, arg_c)))
     }
 
     /// Plan 59 Ф.7.5 D1c: каноничный C-тип Result-представления для пары
