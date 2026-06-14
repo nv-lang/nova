@@ -37948,3 +37948,12 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   plan152_4 13/13. Adversarial-review (4 агента): 3 находки исправлены — count() учитывает idx, RI-parity O(n)
   (была O(n²)), маркер sentence-boundaries в backlog. Codegen-баг [M-codegen-short-freefn-name-collision]
   (wb→wbcat). Закрывает [M-152-word-boundaries]; sentence → [M-152-sentence-boundaries]. Ветка plan-152.
+
+[2026-06-14] Plan 152.7-B — формат-спеки в интерполяции (D258). Rust-style mini-language
+  ${expr:[[fill]align][sign][#][0][width][.precision][type]]} (база D229 — только :?). Реализация:
+  FormatSpec AST + parser + emit_c.rs + runtime conv.h (int/radix/pad/prefix/f64 body). negative hex =
+  two's-complement; alt-префикс всегда строчный (:#X→0xFF, как Rust). plan152_7 5/5 (t1 width/align,
+  t2 zero-pad/sign, t3 radix x/X/b/o+#, t4 precision + n_bad_format_spec). B2 (Write-sink) отложено →
+  152.7.1 [M-152.7-write-sink]. ВОССТАНОВЛЕНО после reboot: фоновый агент завис, его реализация уцелела
+  в worktree; сохранил checkpoint, проверил, починил баг #X-префикса (0X→0x), добавил neg+доки. Ветка
+  worktree-agent (merge в main отдельно).
