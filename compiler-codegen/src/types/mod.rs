@@ -73,6 +73,13 @@ pub struct ModuleEnv {
     /// Plan 140.2 followup §2: Index-сайты, доказанные ТОЛЬКО с fn-`requires`.
     /// Codegen элидит ТОЛЬКО при включённых контрактах (не `--contracts=off`).
     pub proven_index_sites_contract: Vec<Span>,
+    /// Plan 140.4 ([M-opt-elide-proven-overflow-checks]): spans `int` `+`/`-`/`*`,
+    /// доказанных в диапазоне i64 из LOOP/CODE. Codegen элидит `nova_int_checked_*`
+    /// ВСЕГДА (safe даже под `--contracts=off`).
+    pub proven_overflow_sites: Vec<Span>,
+    /// Plan 140.4: `int`-арифм. сайты, доказанные ТОЛЬКО с fn-`requires`. Codegen
+    /// элидит ТОЛЬКО при включённых контрактах (не `--contracts=off`).
+    pub proven_overflow_sites_contract: Vec<Span>,
 }
 
 /// Минимальная проверка модуля. Регистрирует имена и базовую структуру —
@@ -808,6 +815,8 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         env.proven_contracts = report.proven;
         env.proven_index_sites = report.proven_index_sites;
         env.proven_index_sites_contract = report.proven_index_sites_contract;
+        env.proven_overflow_sites = report.proven_overflow_sites;
+        env.proven_overflow_sites_contract = report.proven_overflow_sites_contract;
         for e in report.errors { errors.push(e); }
         // warnings пока silent — добавим warning infrastructure
         // в Plan 36 production hardening.

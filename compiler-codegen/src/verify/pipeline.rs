@@ -251,6 +251,74 @@ impl VerificationPipeline {
         (always, contract)
     }
 
+    /// Plan 140.4 ([M-opt-elide-proven-overflow-checks]): доказать, что бинарные
+    /// `int` `+`/`-`/`*` в теле `fd` не переполняют i64 (`INT64_MIN <= a OP b <=
+    /// INT64_MAX` в безграничной Int-арифметике под loop/code/requires-фактами) →
+    /// элидировать `nova_int_checked_*`. Структура — клон `prove_vec_index_sites`:
+    /// возвращает `(always_safe, contract_based)`; always-safe доказаны без requires
+    /// (элидируются ВСЕГДА), contract_based — только с requires (элидируются лишь
+    /// при включённых контрактах, под `--contracts=off` чек остаётся).
+    pub fn prove_int_overflow_sites(&self, module: &Module, fd: &FnDecl) -> (Vec<Span>, Vec<Span>) {
+        let empty = (Vec::new(), Vec::new());
+        // Тело fn — Block ИЛИ Expr (`=> a + b` — очень частая форма!); оба
+        // обходятся. External — пропуск.
+        let has_arith = match &fd.body {
+            FnBody::Block(b) => ovf_block_has_arith(b),
+            FnBody::Expr(e) => ovf_expr_has_arith(e),
+            _ => return empty,
+        };
+        // Perf pre-scan: без `int` +/-/* сайтов элидировать нечего → пропустить
+        // дорогой setup (backend + collect_pure_fns O(module)).
+        if !has_arith { return empty; }
+
+        let pure_views = collect_pure_views(module);
+        let empty_pure: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let pure_fns = collect_pure_fns(module, &empty_pure);
+        let trusted_fns = collect_trusted_fns(module);
+        let var_sorts: std::collections::HashMap<String, SortRef> = fd.params.iter()
+            .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
+        let ctx = super::encode::EncodeCtx {
+            pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts,
+        };
+        let declare = |backend: &mut dyn SmtBackend| {
+            for p in &fd.params { backend.declare_var(&p.name, type_to_sort(&p.ty)); }
+        };
+
+        // Pass A — БЕЗ requires: range-bounds только из loop/code/литералов (always-safe).
+        let mut backend_a = self.create_backend();
+        declare(backend_a.as_mut());
+        let mut always: Vec<Span> = Vec::new();
+        match &fd.body {
+            FnBody::Block(b) => ovf_walk_block(b, &ctx, backend_a.as_mut(), &mut always),
+            FnBody::Expr(e) => ovf_walk_expr(e, &ctx, backend_a.as_mut(), &mut always),
+            _ => {}
+        }
+
+        // Pass B — С requires: all = loop/code + contract; contract_based = all − always.
+        let has_requires = fd.contracts.iter().any(|c| matches!(c.kind, ContractKind::Requires));
+        let mut contract: Vec<Span> = Vec::new();
+        if has_requires {
+            let mut backend_b = self.create_backend();
+            declare(backend_b.as_mut());
+            for c in &fd.contracts {
+                if matches!(c.kind, ContractKind::Requires) {
+                    if let Ok(t) = super::encode::encode_expr_with_ctx(&c.expr, &ctx) {
+                        backend_b.assert(Assertion { formula: t, label: None });
+                    }
+                }
+            }
+            let mut all: Vec<Span> = Vec::new();
+            match &fd.body {
+                FnBody::Block(b) => ovf_walk_block(b, &ctx, backend_b.as_mut(), &mut all),
+                FnBody::Expr(e) => ovf_walk_expr(e, &ctx, backend_b.as_mut(), &mut all),
+                _ => {}
+            }
+            let always_starts: std::collections::HashSet<usize> = always.iter().map(|s| s.start).collect();
+            for sp in all { if !always_starts.contains(&sp.start) { contract.push(sp); } }
+        }
+        (always, contract)
+    }
+
     /// Verify одну функцию: возвращает list of (Contract span, VerifyResult).
     /// Backend выбирается через `BackendChoice` (env-var / CLI flag).
     ///
@@ -4060,6 +4128,12 @@ let t0 = std::time::Instant::now();
                 let (always, contract) = pipeline.prove_vec_index_sites(module, fd);
                 report.proven_index_sites.extend(always);
                 report.proven_index_sites_contract.extend(contract);
+                // Plan 140.4 ([M-opt-elide-proven-overflow-checks]): доказать, что
+                // `int` `+`/`-`/`*` не переполняет i64 → элидировать checked-форму.
+                // Тот же non-trivial гейт (Trivial не докажет range-goal).
+                let (ovf_always, ovf_contract) = pipeline.prove_int_overflow_sites(module, fd);
+                report.proven_overflow_sites.extend(ovf_always);
+                report.proven_overflow_sites_contract.extend(ovf_contract);
             }
         }
     }
@@ -4378,6 +4452,16 @@ pub struct ModuleVerifyReport {
     /// (cross-fn: `v[i]` под `requires 0<=i<v.len()`). Codegen элидит ТОЛЬКО при
     /// включённых контрактах (под `--contracts=off` requires не enforced).
     pub proven_index_sites_contract: Vec<Span>,
+    /// Plan 140.4 ([M-opt-elide-proven-overflow-checks]): spans бинарных `int`
+    /// `+`/`-`/`*`, чей результат доказан в диапазоне i64 из LOOP/CODE/литералов
+    /// (без contract-requires). Codegen элидит `nova_int_checked_*` ВСЕГДА (safe
+    /// даже под `--contracts=off` — пруф независим от контрактов).
+    pub proven_overflow_sites: Vec<Span>,
+    /// Plan 140.4: `int`-арифм. сайты, доказанные ТОЛЬКО с учётом fn-`requires`
+    /// (`requires 0<=a && a<=1000` ⇒ `a+5` в диапазоне). Codegen элидит ТОЛЬКО при
+    /// включённых контрактах (под `--contracts=off`/`#unchecked(requires)` чек
+    /// остаётся — requires не enforced ⇒ элизия была бы unsound).
+    pub proven_overflow_sites_contract: Vec<Span>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4700,6 +4784,148 @@ fn idx_walk_expr(e: &Expr, ctx: &super::encode::EncodeCtx, backend: &mut dyn Smt
             idx_walk_block(body, ctx, backend, frame_safe, proven);
         }
         ExprKind::Block(b) => idx_walk_block(b, ctx, backend, frame_safe, proven),
+        _ => {}
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 140.4 ([M-opt-elide-proven-overflow-checks]): per-arith-site overflow
+// proving. Walk fd body отслеживая loop-bound assumptions (`for i in lo..hi` →
+// `lo <= i && i < hi`); для каждого `int` `+`/`-`/`*` доказать
+// `INT64_MIN <= a OP b <= INT64_MAX` (безграничная Int-арифметика) → записать
+// span для элизии `nova_int_checked_*`. Frame-safety не нужна (overflow не
+// зависит от длины). Mirror `idx_walk_*` без frame_safe-аргумента.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Дешёвый pre-scan: есть ли в выражении хоть один бинарный `+`/`-`/`*`?
+/// Перед дорогим backend/pure_fns-setup. Консервативно-полный (false-positive →
+/// просто пустой walk; false-negative недопустим → рекурсия по всем узлам).
+/// Взаимно-рекурсивна с `ovf_block_has_arith` (тело fn — Block ИЛИ Expr).
+fn ovf_expr_has_arith(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Binary { op, left, right } =>
+            matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) || ovf_expr_has_arith(left) || ovf_expr_has_arith(right),
+        ExprKind::Unary { operand, .. } => ovf_expr_has_arith(operand),
+        ExprKind::As(inner, _) => ovf_expr_has_arith(inner),
+        ExprKind::Index { obj, index } => ovf_expr_has_arith(obj) || ovf_expr_has_arith(index),
+        ExprKind::Call { func, args, .. } => ovf_expr_has_arith(func) || args.iter().any(|a| ovf_expr_has_arith(a.expr())),
+        ExprKind::Member { obj, .. } => ovf_expr_has_arith(obj),
+        ExprKind::For { iter, body, .. } => ovf_expr_has_arith(iter) || ovf_block_has_arith(body),
+        ExprKind::While { cond, body, .. } => ovf_expr_has_arith(cond) || ovf_block_has_arith(body),
+        ExprKind::Loop { body, .. } => ovf_block_has_arith(body),
+        ExprKind::If { cond, then, else_ } => ovf_expr_has_arith(cond) || ovf_block_has_arith(then) || match else_ {
+            Some(ElseBranch::Block(b)) => ovf_block_has_arith(b),
+            Some(ElseBranch::If(e2)) => ovf_expr_has_arith(e2),
+            None => false,
+        },
+        ExprKind::Block(b) => ovf_block_has_arith(b),
+        ExprKind::Range { start, end, .. } =>
+            start.as_ref().is_some_and(|s| ovf_expr_has_arith(s)) || end.as_ref().is_some_and(|en| ovf_expr_has_arith(en)),
+        _ => false,
+    }
+}
+
+fn ovf_block_has_arith(block: &Block) -> bool {
+    block.stmts.iter().any(|s| match s {
+        Stmt::Expr(e) => ovf_expr_has_arith(e),
+        Stmt::Let(d) => ovf_expr_has_arith(&d.value),
+        Stmt::Assign { target, value, .. } => ovf_expr_has_arith(target) || ovf_expr_has_arith(value),
+        Stmt::Return { value: Some(e), .. } => ovf_expr_has_arith(e),
+        _ => false,
+    }) || block.trailing.as_ref().is_some_and(|t| ovf_expr_has_arith(t))
+}
+
+/// Доказать `INT64_MIN <= (left OP right) <= INT64_MAX` (безграничная Int-арифм.)
+/// под текущими assumptions. `Unsat` = доказано. `false` при encode-ошибке или
+/// не-`Unsat` (mul нелинеен → часто `Unknown` → консервативно НЕ элидируем).
+/// BitVec/FP-операнды: range-goal с `IntLit` даёт sort-mismatch ⇒ не доказывается
+/// (и span такого сайта codegen всё равно не чекает — `nova_int`-only).
+fn ovf_try_prove(op: BinOp, left: &Expr, right: &Expr, ctx: &super::encode::EncodeCtx, backend: &mut dyn SmtBackend) -> bool {
+    let op_s = match op { BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*", _ => return false };
+    let lt = match super::encode::encode_expr_with_ctx(left, ctx) { Ok(t) => t, Err(_) => return false };
+    let rt = match super::encode::encode_expr_with_ctx(right, ctx) { Ok(t) => t, Err(_) => return false };
+    let res = SmtTerm::App(op_s.into(), vec![lt, rt]);
+    let ge_min = SmtTerm::App("<=".into(), vec![SmtTerm::IntLit(i64::MIN), res.clone()]);
+    let le_max = SmtTerm::App("<=".into(), vec![res, SmtTerm::IntLit(i64::MAX)]);
+    let goal = SmtTerm::and(vec![ge_min, le_max]);
+    matches!(try_prove(backend, goal), SatResult::Unsat(_))
+}
+
+fn ovf_walk_block(block: &Block, ctx: &super::encode::EncodeCtx, backend: &mut dyn SmtBackend, proven: &mut Vec<Span>) {
+    for stmt in &block.stmts { ovf_walk_stmt(stmt, ctx, backend, proven); }
+    if let Some(t) = &block.trailing { ovf_walk_expr(t, ctx, backend, proven); }
+}
+
+fn ovf_walk_stmt(stmt: &Stmt, ctx: &super::encode::EncodeCtx, backend: &mut dyn SmtBackend, proven: &mut Vec<Span>) {
+    match stmt {
+        Stmt::Expr(e) => ovf_walk_expr(e, ctx, backend, proven),
+        Stmt::Let(decl) => ovf_walk_expr(&decl.value, ctx, backend, proven),
+        Stmt::Assign { target, value, .. } => {
+            ovf_walk_expr(target, ctx, backend, proven);
+            ovf_walk_expr(value, ctx, backend, proven);
+        }
+        Stmt::Return { value: Some(e), .. } => ovf_walk_expr(e, ctx, backend, proven),
+        _ => {}
+    }
+}
+
+fn ovf_walk_expr(e: &Expr, ctx: &super::encode::EncodeCtx, backend: &mut dyn SmtBackend, proven: &mut Vec<Span>) {
+    match &e.kind {
+        ExprKind::For { pattern, iter, body, .. } => {
+            if let (Some((lo, hi)), Pattern::Ident { name: var, is_mut: false, .. }) = (idx_excl_range(iter), pattern) {
+                backend.push();
+                let lo_t = super::encode::encode_expr_with_ctx(lo, ctx).ok();
+                let hi_t = super::encode::encode_expr_with_ctx(hi, ctx).ok();
+                if let (Some(lo_t), Some(hi_t)) = (lo_t, hi_t) {
+                    backend.assert(Assertion { formula: SmtTerm::App("<=".into(), vec![lo_t, SmtTerm::Var(var.clone())]), label: None });
+                    backend.assert(Assertion { formula: SmtTerm::App("<".into(), vec![SmtTerm::Var(var.clone()), hi_t]), label: None });
+                }
+                ovf_walk_block(body, ctx, backend, proven);
+                backend.pop();
+            } else {
+                ovf_walk_expr(iter, ctx, backend, proven);
+                ovf_walk_block(body, ctx, backend, proven);
+            }
+        }
+        ExprKind::Binary { op, left, right } => {
+            if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul)
+                && ovf_try_prove(*op, left, right, ctx, backend)
+            {
+                proven.push(e.span);
+            }
+            ovf_walk_expr(left, ctx, backend, proven);
+            ovf_walk_expr(right, ctx, backend, proven);
+        }
+        ExprKind::Unary { operand, .. } => ovf_walk_expr(operand, ctx, backend, proven),
+        ExprKind::As(inner, _) => ovf_walk_expr(inner, ctx, backend, proven),
+        ExprKind::Index { obj, index } => {
+            ovf_walk_expr(obj, ctx, backend, proven);
+            ovf_walk_expr(index, ctx, backend, proven);
+        }
+        ExprKind::Call { func, args, .. } => {
+            ovf_walk_expr(func, ctx, backend, proven);
+            for a in args { ovf_walk_expr(a.expr(), ctx, backend, proven); }
+        }
+        ExprKind::Member { obj, .. } => ovf_walk_expr(obj, ctx, backend, proven),
+        ExprKind::If { cond, then, else_ } => {
+            ovf_walk_expr(cond, ctx, backend, proven);
+            ovf_walk_block(then, ctx, backend, proven);
+            match else_ {
+                Some(ElseBranch::Block(b)) => ovf_walk_block(b, ctx, backend, proven),
+                Some(ElseBranch::If(e2)) => ovf_walk_expr(e2, ctx, backend, proven),
+                None => {}
+            }
+        }
+        ExprKind::While { cond, body, .. } => {
+            ovf_walk_expr(cond, ctx, backend, proven);
+            ovf_walk_block(body, ctx, backend, proven);
+        }
+        ExprKind::Loop { body, .. } => ovf_walk_block(body, ctx, backend, proven),
+        ExprKind::Block(b) => ovf_walk_block(b, ctx, backend, proven),
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { ovf_walk_expr(s, ctx, backend, proven); }
+            if let Some(en) = end { ovf_walk_expr(en, ctx, backend, proven); }
+        }
         _ => {}
     }
 }
