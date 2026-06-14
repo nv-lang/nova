@@ -3,8 +3,13 @@
 **English** | [Русский](nova-codegen.ru.md)
 
 `nova-codegen` is the internal Nova compiler: parser + type checker +
-treewalk interpreter + C backend + cross-file resolver + SMT contract
-verifier.
+C backend + cross-file resolver + SMT contract verifier.
+
+> **The tree-walking interpreter is currently NOT supported**
+> (Q-interpreter-future / D274). The `run` and `test-interp` commands
+> are loud stubs that error out and point to C codegen. The `interp/`
+> module is kept in-tree for reference but is no longer wired into a
+> runnable command — compile to C and run that instead.
 
 > **Internal component.** For day-to-day use, prefer the `nova` CLI
 > ([docs/nova-cli.md](nova-cli.md)). `nova-codegen` remains the entry
@@ -108,42 +113,32 @@ underline.
 
 ### `nova-codegen run`
 
-Type-check and interpret (calls `fn main`).
+**[UNSUPPORTED]** — the tree-walking interpreter is currently not
+supported (Q-interpreter-future / D274).
 
 ```
 nova-codegen run FILE
 ```
 
-**Pipeline:**
-
-1. parse + path-check + type-check
-2. `types::annotate_map_literals` (Plan 52 Ф.7) — annotate
-   `[k: v]` literals with inferred K/V
-3. `desugar::desugar_module` (Plan 52 Ф.5) — desugar map literals
-   into `with_capacity` + `@insert`
-4. `interp::Interpreter::new()` → `load_module` → `run_main`
-
-The treewalk interpreter has parity with the C backend — same effects,
-handlers, structured concurrency, contracts, defer, channels.
+This command is a loud stub: it prints an error and exits `1`. To run
+a program, compile it to C and run that instead — use
+[`nova-codegen compile`](#nova-codegen-compile), or the `nova` CLI:
+`nova build` / `nova test`.
 
 ---
 
 ### `nova-codegen test-interp`
 
-Run `test "..." { ... }` blocks in a file via the interpreter (no C-codegen).
+**[UNSUPPORTED]** — running tests through the tree-walking interpreter
+is currently not supported (Q-interpreter-future / D274).
 
 ```
 nova-codegen test-interp FILE
 ```
 
-**Pipeline:** parse → path-check → annotate_map_literals → desugar →
-`interp::run_tests` → `tests: N passed, N failed`.
-
-Exit `1` if at least one test failed; prints names of failed tests.
-
-This is the interpreter-mode test runner (fast, but no C pipeline).
-For codegen pipeline checks use [`test-build`](#nova-codegen-test-build)
-or [`test-all`](#nova-codegen-test-all).
+This command is a loud stub: it prints an error and exits `1`. Run
+tests through the C pipeline instead — use the `nova` CLI `nova test`,
+or [`test-build`](#nova-codegen-test-build) / [`test-all`](#nova-codegen-test-all).
 
 ---
 
@@ -395,7 +390,7 @@ library API directly (no subprocess). Public modules from `lib.rs`:
 | `diag` | Structured diagnostics (`Diagnostic`, `Span`, `byte_to_line_col`) |
 | `doc` | Plan 45 — DocModel, renderers, MCP server |
 | `imports` | Plan 35 R31 — cross-file resolver (`resolve_imports_inline`) |
-| `interp` | Treewalk interpreter (`Interpreter::new/load_module/run_main/run_tests`) |
+| `interp` | Treewalk interpreter — **UNSUPPORTED**, kept for reference; no longer wired into any command (Q-interpreter-future / D274) |
 | `lexer` | Tokenization, `lex(&src) -> Vec<Token>` |
 | `lints` | D-rule based lints (`lint_module`) |
 | `manifest` | `nova.toml` + D78 path/module enforcement |
@@ -417,7 +412,7 @@ src/
   parser/                 recursive-descent parser
   ast/                    AST types
   types/                  type checker + effect inference + lints
-  interp/                 treewalk interpreter
+  interp/                 treewalk interpreter (UNSUPPORTED, kept for reference)
   codegen/                C backend
     emit_c.rs             main codegen (~20k LOC)
     runtime_registry.rs   source-of-truth for std/runtime/*.nv stubs
