@@ -747,7 +747,7 @@ integer types wrap instead of panicking (see above); reach for
 **Proven-safe overflow checks are elided.** Each `int` `+`/`-`/`*` compiles to an
 always-on overflow check (`nova_int_checked_*`). When the Z3 backend proves the result
 stays in the 64-bit range — from loop bounds, literals, or a `requires` — the check is
-**removed** (zero-cost), exactly like an elided bounds check (D271, same enforce-with-
+**removed** (zero-cost), exactly like an elided bounds check (D272, same enforce-with-
 elision model). A loop-bounded `i + j` or a `requires`-bounded `a + b` emits a plain C
 operator; an unprovable op keeps the check (debug *and* release). Elision is **proof-
 only** — never triggered by `#unchecked` alone: a check proven only via `requires` is

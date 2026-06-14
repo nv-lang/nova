@@ -737,7 +737,7 @@ wrap-around недопустим.
 компилируется в always-on overflow-чек (`nova_int_checked_*`). Когда Z3-backend
 доказывает, что результат остаётся в 64-битном диапазоне — из loop-bounds, литералов
 или `requires` — чек **убирается** (zero-cost), ровно как элидируемый bounds-чек
-(D271, та же модель enforce-with-elision). Loop-ограниченный `i + j` или `requires`-
+(D272, та же модель enforce-with-elision). Loop-ограниченный `i + j` или `requires`-
 ограниченный `a + b` эмитят обычный C-оператор; недоказанная операция оставляет чек
 (в debug *и* release). Элизия **только пруфом** — никогда одним лишь `#unchecked`: чек,
 доказанный только через `requires`, остаётся под `--contracts=off` / `#unchecked(requires)`.

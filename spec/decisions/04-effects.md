@@ -3345,7 +3345,7 @@ type RuntimeError
 > **AMEND (Plan 140.4, 2026-06-14) — элизия пруфом.** Этот overflow-`panic`
 > always-on (debug И release), но **Z3-доказуемо-безопасные** операции
 > элидируют checked-форму (zero-cost) — модель enforce-with-elision
-> [D24](09-tooling.md)/[D271](09-tooling.md). Элизия **только пруфом** (доказать
+> [D24](09-tooling.md)/[D272](09-tooling.md). Элизия **только пруфом** (доказать
 > `INT64_MIN <= a OP b <= INT64_MAX`): never by `#unchecked` — always-safe
 > множество (loop/литералы) элидируется всегда, contract-based (`requires`) — лишь
 > при enforced контрактах; недоказанные операции остаются проверяемыми и в release.
