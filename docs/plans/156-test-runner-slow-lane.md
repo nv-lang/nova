@@ -174,7 +174,19 @@ EXPECT-маркерами): test-discovery skip/route-конвенции —
 - A6. Полные наборы (collation/normalization/…) как `*_conformance_slow.nv` — **gitignored,
   регенерируются on-demand** из pinned UCD (rev-3); коммитится только fast-сэмпл.
 - A7. CI: fast-gate + slow-gate (merge/nightly).
-- G0: без упрощений — полнота доказывается slow-lane прогоном.
+- **A8 (rev-3).** `*_conformance_slow.nv` **gitignored** (`git check-ignore` подтверждает; не
+  попадают в `git status`/индекс); в истории НЕ коммитятся (Populate-коммит выкинут rebase'ом
+  до мержа — `a944aedd` НЕ в ancestry plan-156). Проверено релизным бинарём.
+- **A9 (rev-3, skip-never-fail).** `--slow-only` на дереве без slow-файлов → 0 тестов,
+  **exit 0** (не ошибка). Проверено: `plan152_4 --slow-only` → PASS:0 FAIL:0 exit 0.
+- **A10 (rev-3, regen-pickup).** Регенерированный/положенный в кэш `*_conformance_slow.nv`
+  подхватывается `--slow-only` (PASS) и при этом остаётся gitignored; default-прогон его
+  исключает. Проверено релизным бинарём (demo-slow → `--slow-only` PASS:1, default исключает,
+  `check-ignore` ✅). Полная генерация всех 6 корпусов (incl. collation 227800/227800)
+  доказана Populate-фазой (`--check` byte-identical; sentence/word/grapheme `--slow-only`=PASS).
+- **G0 (обязательный, «без упрощений как для прода»):** механизм slow-lane — production-grade,
+  без упрощений/заглушек (suffix-discovery + флаги + unit-тесты + spec D277). Полнота корпусов
+  доказывается slow-gate-прогоном (out-of-band), не наличием файлов в git.
 
 ## Отложено (out-of-scope rev-2)
 - **`[M-156-slow-subtree-dir]`** — папка `slow/` + сентинел `_slow.toml` для случая

@@ -2832,6 +2832,22 @@ discovery) или integration-tests. Реализация — `is_fixture_dir(di
 - Композиция с `--filter`/`--skip`/`--include-stdlib` ортогональна: lane решается
   на discovery, эти фильтры — после.
 
+#### Хранение полных корпусов (rev-3, 2026-06-15)
+
+Большие conformance-корпуса (`*_conformance_slow.nv`: collation 227800 пар ≈ 15.5 MB,
+normalization 19965 ≈ 5 MB, …) **НЕ коммитятся** в репозиторий — они **регенерируются
+on-demand** детерминированным генератором (`nova-codegen unicode --emit-conformance
+--conformance-full --ucd-dir <UCD>`) из pinned UCD в gitignored-кэш
+(`nova_tests/**/*_conformance_slow.nv`), затем гоняются `nova test --slow-only`. Коммитится
+**только** fast-сэмпл `*_conformance.nv` (~1500 case'ов). Пустой кэш → `--slow-only` находит
+0 тестов = **skip-never-fail** (не ошибка; offline/без-UCD прогон зелёный). Обоснование
+(модель Go `-long`/CPython `open_urlresource`; cross-eco research
+[docs/research/10-unicode-test-data-storage.md](../../docs/research/10-unicode-test-data-storage.md)):
+у Nova есть байт-идентичный генератор, поэтому коммит ~23 MB регенерируемого build-output
+не даёт ничего сверх него, но навсегда утяжеляет историю. git-lfs / submodule / отдельная
+тест-репа отвергнуты для этого профиля. Полнота (G0 «без упрощений») доказывается
+slow-gate-прогоном (CI merge/nightly), а не наличием файлов в git.
+
 ### Деферрал
 
 - **`[M-156-slow-subtree-dir]`** — каталог `slow/` + сентинел `_slow.toml` (зеркало
