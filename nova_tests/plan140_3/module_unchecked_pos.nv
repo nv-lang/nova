@@ -1,0 +1,16 @@
+// Plan 140.3 ([M-140-contract-levels]): module-level `#unchecked` before
+// `module X` elides contract enforcement for the WHOLE module. A violated
+// `requires` therefore does NOT panic — proving the module opt-out applies.
+// (Bare `#unchecked` = all kinds; here it covers the requires below.)
+
+#unchecked
+module plan140_3.module_unchecked_pos
+
+fn must_be_positive(x int) -> int
+    requires x > 0
+=> x
+
+test "module #unchecked elides requires — no panic on x=-5" {
+    ro r = must_be_positive(-5)
+    assert(r == -5)
+}

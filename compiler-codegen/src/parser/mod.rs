@@ -41,10 +41,10 @@ pub(crate) struct ContractAttrs {
     /// gets priv-field access to listed types (escape hatch для unit
     /// tests). Default empty Vec = no extra access.
     pub test_access_for: Vec<String>,
-    /// Plan 140 Ф.2 (D24 amend): `#unchecked` — per-fn opt-out из
-    /// contract enforcement (элидирует даже недоказанные контракт-проверки).
-    /// Default `false`.
-    pub contracts_unchecked: bool,
+    /// Plan 140 Ф.2 (D24 amend) + Plan 140.3 ([M-140-contract-levels]):
+    /// `#unchecked` — per-fn opt-out из contract enforcement. Bare = все виды;
+    /// `#unchecked(requires/ensures/invariant)` — Eiffel-гранулярность.
+    pub contract_opt_out: ContractOptOut,
 }
 
 impl ContractAttrs {
@@ -60,7 +60,7 @@ impl ContractAttrs {
             && !self.unsafe_attr
             && self.fn_eval_max_depth.is_none()
             && self.test_access_for.is_empty()
-            && !self.contracts_unchecked
+            && !self.contract_opt_out.any()
     }
 }
 
@@ -442,11 +442,20 @@ impl Parser {
         // Kept for structural compat. module_attrs already has #no_prelude etc.
         let mut all_attrs = module_attrs;
         all_attrs.extend(clause_attrs);
+        // Plan 140.3 ([M-140-contract-levels]): fold module-level `#unchecked`
+        // attrs into a single ContractOptOut (union over kinds).
+        let mut contract_opt_out = crate::ast::ContractOptOut::default();
+        for a in &all_attrs {
+            if let ModuleAttrKind::Unchecked(opt) = &a.kind {
+                contract_opt_out = contract_opt_out.merged(opt);
+            }
+        }
         Ok(Module {
             name: module_name,
             imports,
             items,
             attrs: all_attrs,
+            contract_opt_out,
             doc_attrs: module_doc_attrs,
             span,
             peer_files: Vec::new(),
@@ -702,12 +711,29 @@ impl Parser {
             let is_no_prelude_attr = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "no_prelude");
             let is_prelude_attr    = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "prelude");
             let is_allow_attr      = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "allow");
+            let is_unchecked       = matches!(&next_kind, Some(TokenKind::Ident(name)) if name == "unchecked");
             if !is_forbid && !is_cfg && !is_doc && !is_must_verify_module && !is_proof_budget
-                && !is_no_prelude_attr && !is_prelude_attr && !is_allow_attr {
+                && !is_no_prelude_attr && !is_prelude_attr && !is_allow_attr && !is_unchecked {
                 break; // not a module-level attribute
             }
             let attr_start = self.peek().span;
             self.bump(); // #
+
+            if is_unchecked {
+                // Plan 140.3 ([M-140-contract-levels]): module-level `#unchecked`
+                // (+ опц. `(requires/ensures/invariant)`) — элидирует контракт-
+                // страховку соответствующих видов во ВСЁМ модуле.
+                self.bump(); // unchecked (ident)
+                let opt = self.parse_unchecked_kinds()?;
+                self.expect_newline_or_eof()?;
+                let attr_end = self.tokens[self.pos.saturating_sub(1)].span;
+                module_attrs.push(ModuleAttr {
+                    kind: ModuleAttrKind::Unchecked(opt),
+                    effects: Vec::new(),
+                    span: attr_start.merge(attr_end),
+                });
+                continue;
+            }
 
             if is_must_verify_module {
                 // Plan 33.3 Ф.13: `#must_verify_module` — все функции MustVerify.
@@ -2170,11 +2196,11 @@ impl Parser {
                     attrs.test_access_for.extend(names);
                 }
                 "unchecked" => {
-                    // Plan 140 Ф.2 (D24 amend): `#unchecked` — per-fn opt-out
-                    // из contract enforcement. Codegen элидирует ВСЕ контракт-
-                    // проверки в теле fn (даже недоказанные Z3) — zero-cost для
-                    // проверенного hot-path. Ортогонально #verify/#unverified.
-                    if attrs.contracts_unchecked {
+                    // Plan 140 Ф.2 (D24 amend) + Plan 140.3 ([M-140-contract-levels]):
+                    // `#unchecked` (bare) элидирует ВСЕ виды контракт-проверок в теле
+                    // fn; `#unchecked(requires/ensures/invariant)` — Eiffel-style
+                    // раздельная гранулярность. Ортогонально #verify/#unverified.
+                    if attrs.contract_opt_out.any() {
                         let span = self.peek().span;
                         return Err(Diagnostic::new(
                             "duplicate `#unchecked` attribute",
@@ -2183,7 +2209,7 @@ impl Parser {
                     }
                     self.bump(); // #
                     self.bump(); // unchecked
-                    attrs.contracts_unchecked = true;
+                    attrs.contract_opt_out = self.parse_unchecked_kinds()?;
                 }
                 _ => break, // unknown #-name — не contract-attr, выходим
             }
@@ -2431,6 +2457,60 @@ impl Parser {
                 ))
             }
         }
+    }
+
+    /// Plan 140.3 ([M-140-contract-levels]): после `#unchecked` — опц. `(kinds)`,
+    /// где kind ∈ {requires, ensures, invariant} (комбинируемо, через запятую).
+    /// Без скобок — bare `#unchecked` = все три вида. Общий для fn- И module-уровня.
+    fn parse_unchecked_kinds(&mut self) -> Result<ContractOptOut, Diagnostic> {
+        if !matches!(self.peek().kind, TokenKind::LParen) {
+            return Ok(ContractOptOut::all());
+        }
+        self.bump(); // (
+        let mut opt = ContractOptOut::default();
+        loop {
+            match self.peek().kind.clone() {
+                TokenKind::Ident(n) => {
+                    match n.as_str() {
+                        "requires" => opt.requires = true,
+                        "ensures" => opt.ensures = true,
+                        "invariant" => opt.invariant = true,
+                        _ => {
+                            let sp = self.peek().span;
+                            return Err(Diagnostic::new(
+                                format!("[E_UNCHECKED_KIND] `#unchecked(...)` принимает только \
+                                         `requires` / `ensures` / `invariant`, got `{}`", n),
+                                sp,
+                            ));
+                        }
+                    }
+                    self.bump();
+                }
+                TokenKind::RParen => break,
+                _ => {
+                    let sp = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "ожидался `requires`/`ensures`/`invariant` или `)` в `#unchecked(...)`",
+                        sp,
+                    ));
+                }
+            }
+            if matches!(self.peek().kind, TokenKind::Comma) {
+                self.bump();
+                self.skip_newlines();
+            } else {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RParen)?;
+        if !opt.any() {
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                "`#unchecked(...)` требует хотя бы один вид: `requires`/`ensures`/`invariant`",
+                sp,
+            ));
+        }
+        Ok(opt)
     }
 
     /// Plan 33.2: парсит `reads <expr>{, <expr>}*` или `modifies <expr>{, <expr>}*`.
@@ -2917,8 +2997,8 @@ impl Parser {
             test_access_for: contract_attrs.test_access_for.clone(),
             // Plan 126.2 Ф.1: user-written fns никогда не compiler-generated.
             compiler_generated: false,
-            // Plan 140 Ф.2 (D24 amend): `#unchecked` per-fn contract opt-out.
-            contracts_unchecked: contract_attrs.contracts_unchecked,
+            // Plan 140 Ф.2 + Plan 140.3 ([M-140-contract-levels]): per-fn opt-out.
+            contract_opt_out: contract_attrs.contract_opt_out,
         })
     }
 

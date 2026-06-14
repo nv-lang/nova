@@ -488,12 +488,14 @@ pub struct CEmitter {
     /// во всём модуле — глобально восстанавливает legacy zero-cost. Default
     /// `false` (enforce-with-elision: недоказанные проверяются и в release).
     contracts_off: bool,
-    /// Plan 140 Ф.2: per-fn `#unchecked` opt-out для тела ТЕКУЩЕЙ функции.
-    /// Устанавливается на входе в emit fn-body из `f.contracts_unchecked`,
-    /// восстанавливается на выходе (parallel to `in_realtime`). Используется
-    /// body-уровневыми эмиттерами (`assert_static`/`assume`/record-invariant
-    /// при конструировании), которые не имеют прямого доступа к `&FnDecl`.
-    contracts_unchecked_fn: bool,
+    /// Plan 140 Ф.2 + Plan 140.3 ([M-140-contract-levels]): per-fn contract
+    /// opt-out (`#unchecked` / `#unchecked(kinds)`) для тела ТЕКУЩЕЙ функции,
+    /// УЖЕ объединённый с module-level opt-out. Set на входе в fn-body,
+    /// restored на выходе. Per-kind гейт — `contracts_elided_for(kind)` /
+    /// `invariants_elided_here()`.
+    contract_opt_out_fn: crate::ast::ContractOptOut,
+    /// Plan 140.3: module-level `#unchecked` opt-out (set при входе в module).
+    contract_opt_out_module: crate::ast::ContractOptOut,
     /// Maps array variable name → actual element C type (e.g. "Nova_Box*").
     /// The array always uses nova_int storage but elements may be pointers to records.
     array_element_types: HashMap<String, String>,
@@ -1074,7 +1076,8 @@ impl CEmitter {
             proven_index_sites: std::collections::HashSet::new(),
             proven_index_sites_contract: std::collections::HashSet::new(),
             contracts_off: false,
-            contracts_unchecked_fn: false,
+            contract_opt_out_fn: crate::ast::ContractOptOut::default(),
+            contract_opt_out_module: crate::ast::ContractOptOut::default(),
             record_invariants: HashMap::new(),
             array_element_types: HashMap::new(),
             option_inner_types: HashMap::new(),
@@ -1522,7 +1525,30 @@ impl CEmitter {
     /// Используется body-уровневыми эмиттерами (`assert_static`/`assume`/
     /// record-invariant), у которых нет прямого `&FnDecl`.
     fn contracts_elided_here(&self) -> bool {
-        self.contracts_off || self.contracts_unchecked_fn
+        // body-level assert_static/assume — precondition-like → requires-gated.
+        self.contracts_elided_for(crate::ast::ContractKind::Requires)
+    }
+
+    /// Plan 140.3 ([M-140-contract-levels]): элидируется ли контракт-вид `kind`
+    /// здесь? = build `--contracts=off` ИЛИ module-opt-out(kind) ИЛИ fn-opt-out(kind).
+    /// `Requires` → `.requires`; `Ensures`/`EnsuresFail` → `.ensures`.
+    fn contracts_elided_for(&self, kind: crate::ast::ContractKind) -> bool {
+        if self.contracts_off {
+            return true;
+        }
+        let pick = |o: &crate::ast::ContractOptOut| match kind {
+            crate::ast::ContractKind::Requires => o.requires,
+            _ => o.ensures,
+        };
+        pick(&self.contract_opt_out_module) || pick(&self.contract_opt_out_fn)
+    }
+
+    /// Plan 140.3: элидируется ли type-`invariant`-страховка здесь?
+    /// = `--contracts=off` ИЛИ module/fn `#unchecked(invariant)` (или bare).
+    fn invariants_elided_here(&self) -> bool {
+        self.contracts_off
+            || self.contract_opt_out_module.invariant
+            || self.contract_opt_out_fn.invariant
     }
 
     /// Get the Span of a statement (where in source it came from).
@@ -1591,6 +1617,10 @@ impl CEmitter {
     }
 
     pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
+        // Plan 140.3 ([M-140-contract-levels]): module-level `#unchecked` opt-out
+        // applies to every fn/type in the module — ORed with per-fn opt-out by
+        // `contracts_elided_for` / `invariants_elided_here`.
+        self.contract_opt_out_module = module.contract_opt_out.clone();
         // Plan 127 Ф.2/Ф.3: run value-record escape analysis upfront so
         // codegen знает which value-record locals must be heap-promoted
         // (AllocKind::ValueHeapPromoted). Cheap: single AST walk; result
@@ -13259,16 +13289,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // — a soundness hole. This ports the exact logic from `emit_fn`
         // (lines ~14555+): build-/per-fn opt-out folds into `has_contracts`,
         // Z3-proven contracts elide via `proven_contracts`, quantifiers skip.
-        let mono_contracts_elided_fn = self.contracts_off || fn_decl.contracts_unchecked;
-        let mono_has_contracts = !fn_decl.contracts.is_empty()
-            && !matches!(fn_decl.verify_mode, VerifyMode::Unverified)
-            && !mono_contracts_elided_fn;
-        let mono_has_ensures = mono_has_contracts
+        // Plan 140.3 ([M-140-contract-levels]): per-kind opt-out. Set the fn-level
+        // opt-out (contracts_elided_for ORs it with module-level), then gate
+        // requires and ensures INDEPENDENTLY. Restored at fn-body end below.
+        let prev_mono_contract_opt_out = self.contract_opt_out_fn.clone();
+        self.contract_opt_out_fn = fn_decl.contract_opt_out.clone();
+        let mono_verifiable = !fn_decl.contracts.is_empty()
+            && !matches!(fn_decl.verify_mode, VerifyMode::Unverified);
+        let mono_has_contracts = mono_verifiable
+            && !self.contracts_elided_for(ContractKind::Requires);
+        let mono_has_ensures = mono_verifiable
+            && !self.contracts_elided_for(ContractKind::Ensures)
             && fn_decl.contracts.iter().any(|c| matches!(c.kind, ContractKind::Ensures));
-        // Expose per-fn contract opt-out to body-level emitters
-        // (assert_static/assume), restored at fn-body end below.
-        let prev_mono_contracts_unchecked = self.contracts_unchecked_fn;
-        self.contracts_unchecked_fn = mono_contracts_elided_fn;
         // emit requires checks (enforce-with-elision; unproven stay in release).
         if mono_has_contracts {
             for c in &fn_decl.contracts {
@@ -13455,7 +13487,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.current_fn_return_ty = saved_ret_ty;
         self.expected_record_type = saved_expected;
         // Plan 140 cgfix: restore per-fn contract opt-out flag after fn body.
-        self.contracts_unchecked_fn = prev_mono_contracts_unchecked;
+        self.contract_opt_out_fn = prev_mono_contract_opt_out;
         for key in &saved_mono_array_elem_keys {
             self.array_element_types.remove(key);
         }
@@ -14790,10 +14822,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // (requires/ensures) и в decreases-guard ниже. Также выставляется как
         // `self.contracts_unchecked_fn` на входе в fn-body для body-уровневых
         // эмиттеров (assert_static/assume/record-invariant).
-        let contracts_elided_fn = self.contracts_off || f.contracts_unchecked;
-        let has_contracts = !f.contracts.is_empty()
-            && !matches!(f.verify_mode, VerifyMode::Unverified)
-            && !contracts_elided_fn;
+        // Plan 140.3 ([M-140-contract-levels]): set the fn-level opt-out EARLY so
+        // `contracts_elided_for(kind)` (which ORs module-level) drives the per-kind
+        // gates below AND the body-level emitters (assert_static/assume/record-
+        // invariant). Restored after fn-body (parallel to in_realtime).
+        let prev_contract_opt_out_fn = self.contract_opt_out_fn.clone();
+        self.contract_opt_out_fn = f.contract_opt_out.clone();
+        let verifiable = !f.contracts.is_empty()
+            && !matches!(f.verify_mode, VerifyMode::Unverified);
+        let has_contracts = verifiable && !self.contracts_elided_for(ContractKind::Requires);
         // Plan 33.3 Ф.9.4 (D24): `decreases <expr>` для fn → recursion-depth
         // guard. Каждый entry в fn инкрементит thread-local counter; если
         // превышает порог (10000) — runtime panic. Это catches infinite
@@ -14801,7 +14838,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // ждёт SMT (Z3 backend).
         // Plan 140 Ф.2: `#unchecked` / `--contracts=off` элидируют и
         // decreases recursion-guard (контракт-проверка как и прочие).
-        let _depth_var = if f.decreases.is_some() && !contracts_elided_fn {
+        let _depth_var = if f.decreases.is_some() && !self.contracts_elided_for(ContractKind::Requires) {
             // Sanitize fn name для C-identifier.
             let san: String = f.name.chars()
                 .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
@@ -14862,12 +14899,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         if f.blocking_attr {
             self.in_blocking = true;
         }
-        // Plan 140 Ф.2 (D24 amend): expose per-fn contract opt-out к
-        // body-уровневым эмиттерам (assert_static/assume/record-invariant).
-        // `contracts_elided_fn` = build `--contracts=off` ИЛИ per-fn
-        // `#unchecked`. Restored после fn-body (parallel to in_realtime).
-        let prev_contracts_unchecked_fn = self.contracts_unchecked_fn;
-        self.contracts_unchecked_fn = contracts_elided_fn;
+        // Plan 140.3 ([M-140-contract-levels]): per-fn contract opt-out уже
+        // выставлен ВЫШЕ (early, до has_contracts) — для per-kind гейтов И
+        // body-уровневых эмиттеров (assert_static/assume/record-invariant);
+        // restored после fn-body через `prev_contract_opt_out_fn`.
         // Plan 127 Ф.3: track current fn-id for escape-result lookup при
         // emit_let / emit_record_lit. Format must match
         // `escape_analyze::fn_id` (free fn → name; method → `<recv>::<name>`).
@@ -14879,7 +14914,11 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         });
         let prev_promoted_locals = std::mem::take(&mut self.promoted_value_record_locals);
         // emit body — collect into _nova_result if ensures present
-        let has_ensures = has_contracts && f.contracts.iter().any(|c| matches!(c.kind, ContractKind::Ensures));
+        // Plan 140.3: ensures gated INDEPENDENTLY from requires (has_contracts) —
+        // `#unchecked(requires)` must NOT also drop ensures, and vice-versa.
+        let has_ensures = verifiable
+            && !self.contracts_elided_for(ContractKind::Ensures)
+            && f.contracts.iter().any(|c| matches!(c.kind, ContractKind::Ensures));
         match &f.body {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
@@ -14945,7 +14984,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.in_realtime = prev_in_realtime;
         self.in_blocking = prev_in_blocking;
         // Plan 140 Ф.2: restore per-fn contract opt-out flag after fn body.
-        self.contracts_unchecked_fn = prev_contracts_unchecked_fn;
+        self.contract_opt_out_fn = prev_contract_opt_out_fn;
         // Plan 127 Ф.3: restore prev fn-id + promoted-locals after fn body.
         self.current_fn_id = prev_fn_id;
         self.promoted_value_record_locals = prev_promoted_locals;
@@ -18356,9 +18395,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                             let inv_src = Self::expr_to_display(inv_expr);
                             // Получаем поля типа.
                             // Plan 140 Ф.2 (D24 amend): per-fn `#unchecked` /
-                            // build `--contracts=off` элидируют invariant-check
-                            // при конструировании record'а внутри opt-out fn.
-                            if self.contracts_elided_here() {
+                            // build `--contracts=off` / `#unchecked(invariant)`
+                            // (module или окружающей fn) элидируют invariant-check.
+                            if self.invariants_elided_here() {
                                 continue;
                             }
                             if let Some(fields_schema) = self.record_schemas.get(&struct_name).cloned() {
