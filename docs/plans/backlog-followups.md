@@ -338,6 +338,28 @@
   non-default-E + explicit Result[int,int] + default-E Result[int,str] не сломан). Частный случай
   отложенного-с-мая `Q-overload-result-type` (general expected-type propagation для overload-резолва
   `@into` остаётся открытым — см. Q).
+- **`[M-153.x-std-sort-consolidate]`** ✅ **PARTIAL / RESOLVED (binary_search)** (2026-06-14): после
+  Plan 153.3 prelude `Vec[T Compare] @binary_search -> Result[int,int]` (`collections.vec/access.nv`)
+  стал ПЕРЕКРЫВАТЬ `std.sort`-овский `[]int @binary_search -> Option[int]` (D239 `[]T ≡ Vec[T]` →
+  оба = метод на `Vec[int]`, prelude побеждает резолв) → `plan91/sort_basic` (+ `plan91_fe4/
+  sort_aggregate_pipeline`, `plan91_fe5/sort_realistic`) CC-FAIL на `binary_search() == Some(_)`
+  (`NovaRes_*` vs `NovaOpt_*`). **Фикс:** канон = Vec `Result`-форма; `[]int @binary_search` УДАЛЁН
+  из `std/sort.nv`; call-sites мигрированы на `== Ok(i)` / `== Err(insertion_point)` (`sort_basic`,
+  `sort_aggregate_pipeline`, `sort_realistic`, `plan91_fe4/neg/edge_and_error_paths`). plan91 2/0,
+  plan153_3 7/0; **бонусом починены 2 ранее-красных** (sort_aggregate_pipeline, sort_realistic).
+  **`@sort`/`@sort_by`/`@min`/`@max` НАМЕРЕННО ОСТАВЛЕНЫ в `std.sort`** (не return-type-конфликтят;
+  их `[]int`-exact-receiver сигнатуры всё ещё ТРЕБУЮТСЯ — см. блокер ниже). Generic `*_of`-семейство
+  + `@sum`/`@product` нетронуты.
+- **`[M-153.x-array-new-not-vec]`** (planned, **codegen-блокер полной консолидации std.sort → Vec**):
+  `[]int.new()` / `[]int.with_capacity()` лоуэрятся в ЛЕГАСИ runtime-тип `NovaArray_T` (НЕ `Vec[T]`),
+  тогда как литерал `[1,2,3]` → настоящий `Vec____nova_int`. Вызов prelude Vec `mut @`-метода
+  (`@sort`/`@reverse`) на `NovaArray`-ресивере мис-диспатчится в erased-generic `Nova_Vec_method_*`
+  (element-width стёрт до `void*`) → метод **молча no-op'ит** оригинал (`a.sort()` не мутирует `a`).
+  Поэтому `std.sort` `[]int @sort`/`@sort_by` нельзя удалить, не отрегрессив каждый `[]int.new()…sort()`
+  (напр. `plan91_7/sort_chain_test`). Полная консолидация sort/sort_by/min/max в Vec-канон + перенос
+  eager-`@min`/`@max` в `collections.vec` ГЕЙТИТСЯ на этом фиксе (роутинг `[]T`-static-конструкторов
+  на `Vec[T]`). Связано с `[M-method-resolution-registry-inconsistency]` (last-wins реестр; тот же
+  класс что pre-existing `empty.min()` → `Nova_Duration_method_min` коллизия в `plan91_fe4/neg`).
 
 ## Follow-up: Plan 153.4 (slices — value-record element typedef)
 - **`[M-153.4-vec-value-record-field-access]`** (planned, P2, home **Plan 153.4 / Plan 96 H3**):

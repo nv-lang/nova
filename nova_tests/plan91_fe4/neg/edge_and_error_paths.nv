@@ -21,16 +21,16 @@ test "sort: empty and miss return None / empty aggregates" {
     // sum/product identity on empty
     assert(empty.sum() == 0, "empty sum is 0")
 
-    // binary_search miss -> None
+    // binary_search miss -> Err(insertion_point) (Plan 153.x: Vec canon Result)
     mut xs = [2, 4, 6, 8]
     xs.sort()
     match xs.binary_search(5) {
-        Some(_) => assert(false, "5 absent -> None")
-        None => assert(true)
+        Ok(_) => assert(false, "5 absent -> Err")
+        Err(_) => assert(true)
     }
     match xs.binary_search(100) {
-        Some(_) => assert(false, "100 absent -> None")
-        None => assert(true)
+        Ok(_) => assert(false, "100 absent -> Err")
+        Err(_) => assert(true)
     }
 }
 
