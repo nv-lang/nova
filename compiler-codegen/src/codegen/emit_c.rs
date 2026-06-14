@@ -5454,10 +5454,25 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     wl.push((name.clone(), type_args_c.clone(), mangled.clone()));
                                 }
                             }
-                            // Register instance info for emit_call method dispatch
+                            // Register instance info for emit_call method dispatch.
+                            // Keyed by the `Nova_`-prefixed mangled name for BOTH
+                            // heap and value templates — the dispatch path strips
+                            // either `NovaValue_` or `Nova_` and re-prefixes `Nova_`.
                             self.generic_type_instance_info.borrow_mut()
                                 .entry(mangled.clone())
                                 .or_insert_with(|| (name.clone(), type_args_c));
+                            // Plan 153.2 Ф.1 (STAGE 1): a `value` generic record
+                            // instance is carried BY VALUE — `NovaValue_<short>`
+                            // (no trailing `*`), the same shape as a non-generic
+                            // value-record. The whole D226 value-record ABI keys
+                            // off the `NovaValue_` prefix (is_value_type /
+                            // prepare_method_recv / SelfAccess deref), so this one
+                            // return drives the by-value lowering end-to-end. Heap
+                            // generics keep the `Nova_<mangled>*` pointer ABI.
+                            if self.is_value_generic_template(&name) {
+                                return Ok(format!(
+                                    "NovaValue_{}", Self::mono_short_name(&mangled)));
+                            }
                             return Ok(format!("{}*", mangled));
                         }
                         // User-defined type — pointer to struct
@@ -10821,6 +10836,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // `Nova_Option*` (incomplete type) — корень Plan 93 Ф.0 CC-fail'а.
             "Option" | "Result" => self.builtin_sum_receiver_c_type(type_name),
             other => {
+                // Plan 153.2 Ф.1 (STAGE 1 — by-value generic value-records):
+                // a `value` generic mono receiver (`BoxIter____nova_int`) is a
+                // D226 value-record — its receiver C-type is a POINTER to a
+                // stack slot (`NovaValue_<short>*`), so `@field`-mutating `mut`
+                // methods propagate to the caller, EXACTLY as the non-generic
+                // value-record path does (~line 10917). Order-independent: does
+                // not need `type_aliases` populated first.
+                if let Some(short) = self.value_generic_mono_short(other) {
+                    return format!("NovaValue_{}*", short);
+                }
                 // Plan 101.1: bare typevar receiver (`fn[T] T @method`) —
                 // resolve T via current_type_subst при mono-emission.
                 // Без этого receiver_c_type("T") → "Nova_T*" (placeholder).
@@ -12163,6 +12188,93 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             .collect::<Vec<_>>()
             .join("__");
         format!("Nova_{}____{}", base_name, args)
+    }
+
+    /// Plan 153.2 Ф.1 (STAGE 1 — by-value generic value-records): the
+    /// **short** mono name for a generic instance — i.e. the heap-form
+    /// mangled name with the `Nova_` prefix dropped
+    /// (`Nova_BoxIter____nova_int` → `BoxIter____nova_int`). This short name
+    /// is the key used by `value_record_names` / `record_schemas` /
+    /// `type_aliases` (mirroring the NON-generic value-record path, which
+    /// keys those tables by the bare type name). The worklist and
+    /// `generic_type_instance_info` keep the full `Nova_`-prefixed mangled
+    /// name unchanged — only the *C-type surface* of a `value` template
+    /// switches to the `NovaValue_<short>` by-value form.
+    fn mono_short_name(mangled_nova: &str) -> &str {
+        mangled_nova.strip_prefix("Nova_").unwrap_or(mangled_nova)
+    }
+
+    /// Plan 153.2 Ф.1 (STAGE 1): is this generic base a `value` record
+    /// template (`type X[T] value { … }`, `AllocKind::Value`)? Gate for the
+    /// by-value monomorphization split. Returns `false` for heap records,
+    /// sums, newtypes, and any non-generic / unknown name — so every
+    /// existing generic (all heap) and every existing value-record (all
+    /// non-generic, never in `generic_type_templates`) is untouched.
+    fn is_value_generic_template(&self, base_name: &str) -> bool {
+        use crate::ast::{AllocKind, TypeDeclKind};
+        self.generic_type_templates.get(base_name)
+            .map(|t| matches!(t.kind, TypeDeclKind::Record(_))
+                && t.allocation == AllocKind::Value)
+            .unwrap_or(false)
+    }
+
+    /// Plan 153.2 Ф.1 (STAGE 1): is `name` — in ANY surface form (base
+    /// `BoxIter`, short mono `BoxIter____nova_int`, `Nova_`-prefixed mono
+    /// `Nova_BoxIter____nova_int`, or already-by-value `NovaValue_BoxIter…`)
+    /// — an instance of a `value` generic record template? Returns the
+    /// SHORT mono name (`BoxIter____nova_int`) if so, else `None`.
+    ///
+    /// This is ORDER-INDEPENDENT: it does not rely on `type_aliases` /
+    /// `value_record_names` having been populated yet (those are filled by
+    /// `emit_generic_type_instance`, which may run AFTER a method fwd-decl /
+    /// body that needs the receiver type). It re-derives value-ness straight
+    /// from `generic_type_instance_info` (mangled → base) + the template's
+    /// `AllocKind`. For a bare base name it never fires (no `____`), which is
+    /// correct — a bare `BoxIter` is never a concrete carrier.
+    fn value_generic_mono_short(&self, name: &str) -> Option<String> {
+        let trimmed = name.trim_end_matches('*').trim();
+        // Normalize to the short mono name (drop NovaValue_/Nova_ prefix).
+        let short = trimmed
+            .strip_prefix("NovaValue_")
+            .or_else(|| trimmed.strip_prefix("Nova_"))
+            .unwrap_or(trimmed);
+        // A concrete mono instance always carries the `____` arg separator.
+        if !short.contains("____") {
+            return None;
+        }
+        // Resolve base via instance-info (keyed by the `Nova_`-prefixed name).
+        let nova_key = format!("Nova_{}", short);
+        let base = {
+            let info = self.generic_type_instance_info.borrow();
+            info.get(&nova_key).map(|(b, _)| b.clone())
+        };
+        // Fallback: base = substring before the first `____` (instance-info
+        // may not be registered yet for this exact name).
+        let base = base.unwrap_or_else(|| {
+            short.split("____").next().unwrap_or(short).to_string()
+        });
+        if self.is_value_generic_template(&base) {
+            Some(short.to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Plan 153.2 Ф.1 (STAGE 1): normalize a generic-instance C-type string to
+    /// its correct by-value/heap surface. `Nova_<short>*` (heap pointer form
+    /// emitted by `compute_generic_type_c_name` / `apply_type_subst_to_ref`,
+    /// both static and value-blind) is rewritten to `NovaValue_<short>` (no
+    /// `*`, by value) when `<short>` names a `value` generic record instance.
+    /// All other strings (heap generics, primitives, NovaOpt/NovaRes, tuples,
+    /// already-NovaValue forms) pass through unchanged. Apply this on any
+    /// return-type / let-binding inference that may produce a generic instance,
+    /// so the local-var type matches the by-value method ABI.
+    fn value_aware_generic_c_type(&self, c_ty: &str) -> String {
+        if let Some(short) = self.value_generic_mono_short(c_ty) {
+            format!("NovaValue_{}", short)
+        } else {
+            c_ty.to_string()
+        }
     }
 
     /// Plan 59 Phase 5: compute mono'd tuple struct C name.
@@ -14262,10 +14374,31 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         }
                     }
                 }
+                // Plan 153.2 Ф.1 (STAGE 1 — by-value generic value-records):
+                // a `value` template (`type X[T] value { … }`) monomorphizes to
+                // an INLINE struct `NovaValue_<short>` registered in
+                // `value_record_names` — exactly mirroring the non-generic
+                // `emit_value_record_type` path. The record literal then takes
+                // the `value_record_names` stack-init branch (`NovaValue_X t;
+                // t.f = v;`) instead of `nova_alloc(sizeof(Nova_X))`, killing the
+                // wrapper heap allocation. Heap templates keep `struct Nova_<…>`
+                // (pointer ABI). `short` = mangled name minus the `Nova_` prefix,
+                // the key the value-record machinery expects (parity with the
+                // non-generic value-record which keys by bare type name).
+                let short = Self::mono_short_name(mangled).to_string();
+                let is_value = matches!(template.allocation, crate::ast::AllocKind::Value);
+                let struct_c_name = if is_value {
+                    format!("NovaValue_{}", short)
+                } else {
+                    mangled.to_string()
+                };
                 // Forward decl to handle circular/self-referential types
-                self.line(&format!("typedef struct {0} {0};", mangled));
-                self.line(&format!("struct {} {{", mangled));
+                self.line(&format!("typedef struct {0} {0};", struct_c_name));
+                self.line(&format!("struct {} {{", struct_c_name));
                 self.indent += 1;
+                if is_value && fields.is_empty() {
+                    self.line("char _empty_value_record_marker;");
+                }
                 for (f, c_ty) in fields.iter().zip(field_ctys) {
                     let mf = Self::mangle_field_name(&f.name);
                     self.line(&format!("{} {};", c_ty, mf));
@@ -14274,8 +14407,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 self.indent -= 1;
                 self.line("};");
                 self.line("");
-                let schema_key = mangled.strip_prefix("Nova_").unwrap_or(mangled);
-                self.record_schemas.insert(schema_key.to_string(), schema);
+                // Schema is keyed by the short mono name for BOTH forms (heap
+                // path also strips `Nova_`).
+                self.record_schemas.insert(short.clone(), schema);
+                if is_value {
+                    // Activate the D226 value-record ABI for this mono instance:
+                    // mark it value, and alias the short name → its by-value
+                    // C-type so any `type_ref_to_c`/`type_aliases` consumer that
+                    // keys by the short name resolves to `NovaValue_<short>`.
+                    self.value_record_names.insert(short.clone());
+                    self.type_aliases.insert(
+                        short.clone(), format!("NovaValue_{}", short));
+                }
             }
             TypeDeclKind::Sum(variants) => {
                 // Tag enum
@@ -21632,7 +21775,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             let mut arg_strs = Vec::new();
                             for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                             let field_mangled = Self::mangle_field_name(method);
-                            let f_expr = format!("({}->{})", o, field_mangled);
+                            // Plan 153.2 Ф.1 (STAGE 1 — by-value generic
+                            // value-records): a fn-typed field on a VALUE receiver
+                            // (`@step` where `nova_self : NovaValue_BoxIter…*`,
+                            // emitted as the value `(*nova_self)`) is accessed with
+                            // `.`, not `->`. Heap records (`Nova_X*`) stay `->`.
+                            let obj_field_ty = self.infer_expr_c_type(obj);
+                            let accessor = if Self::is_value_type(&obj_field_ty) {
+                                "."
+                            } else {
+                                "->"
+                            };
+                            let f_expr = format!("({}{}{})", o, accessor, field_mangled);
                             let macro_name = Self::clos_call_macro(&param_tys, &ret_ty);
                             return match macro_name {
                                 Some(m) => {
@@ -24146,7 +24300,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // If receiver type is a concrete generic instance (e.g. "Nova_HashMap____nova_str__nova_int*"),
                 // look up the method in generic_type_methods and emit a monomorphized instance.
                 {
-                    let rt_trimmed = obj_ty.trim_start_matches("Nova_")
+                    // Plan 153.2 Ф.1 (STAGE 1): a by-value generic value-record
+                    // receiver has C-type `NovaValue_<short>` (no `*`). Strip the
+                    // `NovaValue_` prefix FIRST (else `trim_start_matches("Nova_")`
+                    // would mangle it into `Value_<short>`), then fall back to the
+                    // heap `Nova_` strip. `generic_type_instance_info` is always
+                    // keyed by the `Nova_`-prefixed mangled name (for both forms),
+                    // so we re-prefix `Nova_<short>` for the lookup.
+                    let rt_trimmed = obj_ty
+                        .strip_prefix("NovaValue_")
+                        .unwrap_or_else(|| obj_ty.trim_start_matches("Nova_"))
                         .trim_end_matches('*').trim().to_string();
                     // generic_type_instance_info keys have "Nova_" prefix; rt_trimmed doesn't.
                     let instance_opt: Option<(String, Vec<String>)> =
@@ -24429,7 +24592,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     &fn_decl, type_subst, &method_c_name, &rt_trimmed);
                                 if is_instance {
                                     let obj_c = self.emit_expr(obj)?;
-                                    let mut full = vec![obj_c];
+                                    // Plan 153.2 Ф.1 (STAGE 1 — by-value generic
+                                    // value-records): a `value` receiver
+                                    // (`NovaValue_<short>`) uses the D226
+                                    // always-pointer ABI — the method takes
+                                    // `NovaValue_<short>*`, so pass `&obj` (lvalue)
+                                    // or hoist an rvalue chain result to a temp and
+                                    // take its address. `prepare_method_recv` does
+                                    // exactly this and is a no-op for heap (`Nova_*`)
+                                    // receivers, leaving every existing generic
+                                    // method dispatch byte-identical.
+                                    let recv_mut = fn_decl.receiver.as_ref()
+                                        .map(|r| r.mutable).unwrap_or(false);
+                                    let recv = self.prepare_method_recv(
+                                        &obj_c, &obj_ty, recv_mut, Some(obj));
+                                    let mut full = vec![recv];
                                     full.extend(arg_strs);
                                     return Ok(format!("{}({})", method_c_name, full.join(", ")));
                                 } else {
@@ -28764,6 +28941,41 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         tmp = tmp, name = f.name, val = val));
                 }
             }
+        } else if self.current_fn_return_ty.as_deref()
+            .map(|t| t.starts_with("NovaValue_") && !t.ends_with('*'))
+            .unwrap_or(false)
+        {
+            // Plan 153.2 Ф.1 (STAGE 1 — by-value generic value-records):
+            // anonymous record without spread whose function return type is a
+            // by-value value-record (`NovaValue_<short>`, e.g. the BoxIter mono
+            // adapters `fn BoxIter[T] @map[U](..) -> BoxIter[U] { … { step: … } }`).
+            // Emit STACK init `NovaValue_X t; t.f = v;` — no `nova_alloc` for the
+            // wrapper record. This is the allocation Stage 1 removes.
+            let struct_c_name = self.current_fn_return_ty.clone().unwrap();
+            let struct_name = struct_c_name
+                .strip_prefix("NovaValue_").unwrap_or(&struct_c_name).to_string();
+            self.line(&format!("{cname} {tmp};", cname = struct_c_name, tmp = tmp));
+            for f in fields {
+                if f.is_spread { continue; }
+                let field_ty = self.record_schemas.get(&struct_name)
+                    .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
+                let val = if let Some(v) = &f.value {
+                    self.emit_record_field_value(v, &field_ty)?
+                } else {
+                    f.name.clone()
+                };
+                let mfn = Self::mangle_field_name(&f.name);
+                if field_ty == "void*" {
+                    let val_ty = if let Some(v) = &f.value {
+                        self.infer_expr_c_type(v)
+                    } else { "nova_int".into() };
+                    let boxed = self.box_value_as_void_ptr(&val, &val_ty);
+                    self.line(&format!("{}.{} = {};", tmp, mfn, boxed));
+                } else {
+                    self.line(&format!("{}.{} = {};", tmp, mfn, val));
+                }
+            }
+            self.var_types.insert(tmp.clone(), struct_c_name);
         } else {
             // Anonymous record without spread: infer struct type from function return context.
             // This handles `fn Foo[T].of(v T) -> Foo[T] => { field: v }` in monomorphized
@@ -31438,8 +31650,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         method: &str,
         args: &[crate::ast::CallArg],
     ) -> Option<String> {
-        // Формат: "Nova_X____A__B*" или без суффикса "*"
-        let stripped = obj_ty.strip_prefix("Nova_")?.trim_end_matches('*');
+        // Формат: "Nova_X____A__B*" или без суффикса "*".
+        // Plan 153.2 Ф.1 (STAGE 1 — point E): a by-value generic value-record
+        // receiver is "NovaValue_X____A__B" (no `*`) — strip THAT prefix first,
+        // else `strip_prefix("Nova_")` mis-parses it to base `Value_X`.
+        let stripped = obj_ty
+            .strip_prefix("NovaValue_")
+            .or_else(|| obj_ty.strip_prefix("Nova_"))?
+            .trim_end_matches('*');
         // Должно содержать "____" — разделитель base от type args
         let sep_pos = stripped.find("____")?;
         let base_name = &stripped[..sep_pos];
@@ -31607,11 +31825,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.register_generic_instances_in_typeref(&ret_ref, &subst);
         // Если return type совпадает с самим типом (Self), используем mono тип
         if ret_c == format!("Nova_{}*", base_name) {
-            // Возвращается Self → нужен конкретный mono тип
+            // Возвращается Self → нужен конкретный mono тип.
             let mangled = Self::compute_generic_type_c_name(base_name, &type_args);
-            return Some(format!("{}*", mangled));
+            // Plan 153.2 Ф.1 (STAGE 1): if the receiver type itself is a `value`
+            // generic record (a `Self`-returning adapter on a value-record), the
+            // Self mono is by-value `NovaValue_<short>`, not the heap `Nova_*`.
+            return Some(self.value_aware_generic_c_type(&format!("{}*", mangled)));
         }
-        Some(ret_c)
+        // Plan 153.2 Ф.1 (STAGE 1): the value-blind static `apply_type_subst_
+        // to_ref` returns `Nova_<short>*` even for a `value` generic instance
+        // (e.g. `BoxIter[U]`). Normalize to the by-value `NovaValue_<short>` so
+        // the let-binding local var type matches the by-value method ABI.
+        Some(self.value_aware_generic_c_type(&ret_c))
     }
 
     /// Plan 14 std-fix: возвращаемый C-тип для встроенных методов str.
@@ -33454,7 +33679,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                         }
                         let mangled = Self::compute_generic_type_c_name(&struct_name, &type_args_c);
-                        format!("{}*", mangled)
+                        // Plan 153.2 Ф.1 (STAGE 1): a `value` generic record
+                        // literal has the by-value C-type `NovaValue_<short>`
+                        // (no `*`), matching what `type_ref_to_c` returns and
+                        // what the record-lit emitter produces.
+                        if self.is_value_generic_template(&struct_name) {
+                            format!("NovaValue_{}", Self::mono_short_name(&mangled))
+                        } else {
+                            format!("{}*", mangled)
+                        }
                     } else {
                         "void*".into()
                     }
@@ -33857,8 +34090,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 }
                                 _ => {
                                     let obj_ty = self.infer_expr_c_type(obj);
-                                    let trimmed = obj_ty.trim_start_matches("Nova_")
-                                        .trim_end_matches('*').trim().to_string();
+                                    // Plan 153.2 Ф.1 (STAGE 1 — point E): a by-value
+                                    // generic value-record receiver has C-type
+                                    // `NovaValue_<short>` — strip that prefix FIRST
+                                    // (else `trim_start_matches("Nova_")` mangles it
+                                    // into `Value_<short>` and the `Nova_<rt>` registry
+                                    // lookup below misses → wrong return-type inference).
+                                    let trimmed = obj_ty
+                                        .strip_prefix("NovaValue_")
+                                        .map(|s| s.trim_end_matches('*').trim().to_string())
+                                        .unwrap_or_else(|| obj_ty.trim_start_matches("Nova_")
+                                            .trim_end_matches('*').trim().to_string());
                                     if !trimmed.is_empty() && trimmed != "void" {
                                         // Plan 75: primitive C-names → Nova type names for
                                         // method_overloads lookup (keys use Nova names).
@@ -34197,7 +34439,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                                     // the dispatch-site `register_generic_
                                                     // instances_in_typeref` calls.
                                                     self.register_generic_instances_in_typeref(ret_ty, &subst);
-                                                    return c_ty;
+                                                    // Plan 153.2 Ф.1 (STAGE 1): a
+                                                    // method whose return type is a
+                                                    // `value` generic instance (e.g.
+                                                    // `BoxIter[U]`) must infer the
+                                                    // by-value C-type `NovaValue_<short>`,
+                                                    // not the heap `Nova_<short>*` that the
+                                                    // value-blind static `apply_type_subst_
+                                                    // to_ref` produced — so the let-binding
+                                                    // local var type matches the by-value
+                                                    // method ABI.
+                                                    return self.value_aware_generic_c_type(&c_ty);
                                                 }
                                             }
                                         }

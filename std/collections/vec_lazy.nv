@@ -54,7 +54,7 @@ import std.collections.vec.{Vec, VecIter}
 /// A boxed, lazy iterator over `T`. Holds a single `step` thunk that yields the
 /// next element (`Some`) or signals exhaustion (`None`). Adapters build new
 /// `BoxIter`s by wrapping `step`; nothing runs until a terminator pulls.
-export type BoxIter[T] { priv step fn() -> Option[T] }
+export type BoxIter[T] value { priv step fn() -> Option[T] }
 
 /// Advance the lazy iterator by one element.
 export fn BoxIter[T] mut @next() -> Option[T] => (@step)()
