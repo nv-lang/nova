@@ -44,8 +44,12 @@
 // `T` flows through unchanged at `filter`; `zmap` retargets to `U`. The element
 // type and source type are both monomorphized, so each distinct chain shape is
 // its own concrete type (Rust-identical). The current surface threads the
-// PRIMITIVE chains exercised by the tests (`map`/`filter`/`collect`/`fold`/
-// `sum`/`count`/`any`/`all`/`find`/`for_each`). Adapters whose ELEMENT is a
+// PRIMITIVE chains exercised by the tests (`map`/`filter`/`collect`/
+// `collect_into`/`fold`/`sum`/`count`/`any`/`all`/`find`/`for_each`). The
+// streaming terminators (`fold`/`sum`/`count`/`any`/`all`/`find`/`for_each`)
+// and `collect_into` allocate NOTHING in the terminator body itself
+// (Stage 4); `collect`'s result `Vec` is the only A-set terminator that
+// allocates. Adapters whose ELEMENT is a
 // tuple (`enumerate`) and the `take`/`skip` stateful adapters are provided on
 // the boxed-fluent `vec_lazy` surface; porting them here is wiring, not new
 // compiler capability ([M-153.2-generic-over-source-zerocost]).
@@ -166,6 +170,27 @@ export fn MapIter[I, T, U] mut @zcollect() -> Vec[U] {
     out
 }
 
+/// Drain the chain into a CALLER-PROVIDED, reusable buffer `out` (Stage 4,
+/// [M-153.2-collect-into]). Unlike `zcollect`, NO result `Vec` is allocated —
+/// the body is byte-identical to `zcollect`'s drain loop minus the
+/// `Vec[U].new()` header allocation. Amortizes to ZERO `nova_alloc` when `out`
+/// is reused across calls (its backing buffer is retained; only the first
+/// fill, or a growth past the current capacity, allocates).
+///
+/// Semantics: APPENDS to `out` (does not clear it first). To reuse a dirty
+/// buffer as a fresh sink, the caller calls `out.clear()` (len = 0, buffer
+/// kept) before passing it in. Returns `()` — the filled buffer is observed
+/// through the caller's own `out` binding (`Vec[T]` is a heap reference type).
+export fn MapIter[I, T, U] mut @zcollect_into(out mut Vec[U]) -> () {
+    mut go = true
+    while go {
+        match @next() {
+            Some(x) => out.push(x),
+            None => { go = false },
+        }
+    }
+}
+
 export fn MapIter[I, T, U] mut @zfold[Acc](init Acc, f fn(Acc, U) -> Acc) -> Acc {
     mut acc = init
     while true {
@@ -252,6 +277,18 @@ export fn FilterIter[I, T] mut @zcollect() -> Vec[T] {
     out
 }
 
+/// Drain into a caller-provided reusable buffer `out` (Stage 4). APPENDS; no
+/// result `Vec` allocation. See `MapIter.zcollect_into` for the contract.
+export fn FilterIter[I, T] mut @zcollect_into(out mut Vec[T]) -> () {
+    mut go = true
+    while go {
+        match @next() {
+            Some(x) => out.push(x),
+            None => { go = false },
+        }
+    }
+}
+
 export fn FilterIter[I, T] mut @zfold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
     mut acc = init
     while true {
@@ -336,6 +373,18 @@ export fn FilterMapIter[I, T, U] mut @zcollect() -> Vec[U] {
         }
     }
     out
+}
+
+/// Drain into a caller-provided reusable buffer `out` (Stage 4). APPENDS; no
+/// result `Vec` allocation. See `MapIter.zcollect_into` for the contract.
+export fn FilterMapIter[I, T, U] mut @zcollect_into(out mut Vec[U]) -> () {
+    mut go = true
+    while go {
+        match @next() {
+            Some(x) => out.push(x),
+            None => { go = false },
+        }
+    }
 }
 
 export fn FilterMapIter[I, T, U] mut @zfold[Acc](init Acc, f fn(Acc, U) -> Acc) -> Acc {
