@@ -721,6 +721,12 @@ fn cmd_unicode(
     let wrel = "std/unicode/word_data.nv";
     let wabs = root.join(wrel);
     let wstats = format!("{} wb ranges", wtables.len());
+    // Plan 152.4.6: sentence-boundary tables (UAX #29).
+    let stables = unicode_data::parse_sentence_tables(ucd_dir)?;
+    let scontent = unicode_data::render_sentence_data_nv(&stables, version);
+    let srel = "std/unicode/sentence_data.nv";
+    let sabs = root.join(srel);
+    let sstats = format!("{} sb ranges", stables.len());
     // Optional conformance fixtures: UAX #15 (normalization) + UAX #29 (graphemes)
     // + case-mapping breadth (Plan 152.4.4).
     let confs: Vec<(String, std::path::PathBuf)> = if emit_conformance {
@@ -740,6 +746,10 @@ fn cmd_unicode(
             (
                 unicode_data::render_word_conformance_nv(ucd_dir, conformance_limit)?,
                 root.join("nova_tests/plan152_4/word_conformance.nv"),
+            ),
+            (
+                unicode_data::render_sentence_conformance_nv(ucd_dir, conformance_limit)?,
+                root.join("nova_tests/plan152_4/sentence_conformance.nv"),
             ),
         ]
     } else {
@@ -789,6 +799,17 @@ fn cmd_unicode(
                 ));
             }
         }
+        {
+            let ex = std::fs::read_to_string(&sabs)
+                .map_err(|e| anyhow!("failed to read {}: {}", sabs.display(), e))?;
+            if norm(&ex) != norm(&scontent) {
+                return Err(anyhow!(
+                    "{} diverges from UCD ({}).\n\
+                     Run `nova-codegen unicode --ucd-dir <UCD-dir>` to regenerate.",
+                    srel, sstats
+                ));
+            }
+        }
         for (c, p) in &confs {
             let ex = std::fs::read_to_string(p)
                 .map_err(|e| anyhow!("failed to read {}: {}", p.display(), e))?;
@@ -796,7 +817,7 @@ fn cmd_unicode(
                 return Err(anyhow!("{} diverges from UCD test data; regenerate.", p.display()));
             }
         }
-        println!("OK: {} ({}) + {} ({}) + {} ({}) + {} ({}) match UCD.", rel, stats, grel, gstats, crel, cstats, wrel, wstats);
+        println!("OK: {} ({}) + {} ({}) + {} ({}) + {} ({}) + {} ({}) match UCD.", rel, stats, grel, gstats, crel, cstats, wrel, wstats, srel, sstats);
     } else {
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent)
@@ -814,6 +835,9 @@ fn cmd_unicode(
         std::fs::write(&wabs, &wcontent)
             .map_err(|e| anyhow!("failed to write {}: {}", wabs.display(), e))?;
         println!("wrote {} ({}).", wrel, wstats);
+        std::fs::write(&sabs, &scontent)
+            .map_err(|e| anyhow!("failed to write {}: {}", sabs.display(), e))?;
+        println!("wrote {} ({}).", srel, sstats);
         for (c, p) in &confs {
             if let Some(parent) = p.parent() {
                 std::fs::create_dir_all(parent)

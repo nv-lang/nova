@@ -36445,3 +36445,40 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   каскад `undefined identifier wb` (коллизия с runtime-локалом `wb` в write_buffer.nv на C-уровне; спаны
   указывали в peer-файлы из-за merged-буфера модуля). Workaround — renamed `wb`→`wbcat`. Настоящий fix
   (mangling/scoping имён free-функций vs C-локалов) — followup.
+
+- **Plan 152.7-B — формат-спеки в интерполяции (Rust-style mini-language, 2026-06-14, D258)**:
+  `${expr:[[fill]align][sign][#][0][width][.precision][type]]}` — полный Rust-style формат-DSL
+  (база D229/Plan 91.14 поддерживала только `:?`). align/fill (`<`/`^`/`>` + fill-char), sign `+`,
+  alt `#` (radix-префикс), zero-pad `0`, width, `.precision` (f64 знаки / str усечение), type
+  (`x`/`X`/`b`/`o`/`?`). Реализация: AST `FormatSpec` (format_spec.rs) + parser + codegen (emit_c.rs) →
+  runtime conv.h (`nova_fmt_int_body`/`_radix_body`/`_pad`/`_radix_prefix`/`_f64_body`). Целые — nova_int
+  (64-bit), negative hex = two's-complement (`${-1:x}`→`ffffffffffffffff`, как Rust). G0 без упрощений:
+  полный Rust-style набор, не подмножество; plan152_7 5/5 (4 pos + 1 neg).
+  **Восстановление после reboot:** этот sub-plan делал фоновый агент, который завис (watchdog) на
+  дописывании тестов; его реализация (~972 строки) уцелела в worktree некоммитнутой. Я её сохранил
+  checkpoint-коммитом, проверил (4/4), нашёл+починил **1 баг**: `nova_fmt_radix_prefix` делал `0X` для
+  `:#X`, а Rust всегда строчный `0x` (`upper` влияет только на цифры) → fix `buf[n++]='x'`. Добавил
+  негативный тест + доки (D258, план, strings.md).
+  **Sanctioned scope:** реализован B1 (формат-спеки). **B2 (обобщение sink `@display(mut w Write)`) —
+  отложено по дизайну** (breaking: меняет сигнатуры всех `@display`/`@debug`) → Plan 152.7.1 /
+  `[M-152.7-write-sink]`. Не упрощение — отдельная breaking-задача.
+
+- **Interpreter disabled — `nova run` errors as unsupported (2026-06-14)**: древовидный
+  интерпретатор отключён; единственный поддерживаемый путь исполнения — Nova → C
+  (`nova build` / `nova test`). `nova run` СОХРАНЁН как видимая CLI-команда (не удалён из
+  справки), но при вызове печатает явное «interpreter not currently supported» и направляет
+  на C-codegen. Это НЕ упрощение реализации, а сознательная продуктовая политика: tree-walker
+  не поддерживается, поведение при вызове честное (loud error, не silent no-op). Сделано:
+  (a) `nova-cli/src/main.rs` — `run` → error-stub (не зовёт интерпретатор); (b)
+  `compiler-codegen/src/interp/mod.rs` — module-note «currently unsupported» в коде;
+  (c) удалены DEAD interp-тесты, ссылавшиеся на снятый `nova` interpreter-крейт
+  (`nova-cli/tests/run_interp_named.rs` + interp-части `compiler-codegen/tests/{spec_nova.rs,
+  integration.rs}` + `tests/common` хелперы); (d) user-facing доки + www site вычищены от
+  `nova run` (README/.ru + examples + сайт `be06628`); (e) nova-cli доки
+  (`docs/nova-cli.md`/.ru.md) выверены против реального CLI. Историческое упоминание `nova run`
+  в plans/spec/promts/scripts/nova_tests НЕ скрабилось (out of scope — historical fixture text).
+  Ветка `chore-disable-interp-nova-run` (worktree nova-noninterp). Residual →
+  `[M-interp-unsupported]`: полное удаление интерпретатора ЛИБО порт interp-only тестов на
+  C-codegen; чистка `tests/` integration-таргетов.
+
+- [2026-06-14] Plan 157 (interpreter UNSUPPORTED) formal artifacts: spec D274, Q-interpreter-future, regression test interp_unsupported.rs (neg+pos, release). `nova run` is a LOUD error (not a silent no-op) — a deliberate product boundary, not a shortcut.

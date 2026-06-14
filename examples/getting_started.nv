@@ -1,8 +1,8 @@
 // getting_started.nv — a single self-contained tour of Nova's core ideas.
 //
-// Run it:        nova-cli/target/release/nova run    examples/getting_started.nv
-// Test it:       nova-cli/target/release/nova test   examples/getting_started.nv
-// Type-check it: nova-cli/target/release/nova check   examples/getting_started.nv
+// Build it:      nova-cli/target/release/nova build examples/getting_started.nv -o getting_started && ./getting_started
+// Test it:       nova-cli/target/release/nova test  examples/getting_started.nv
+// Type-check it: nova-cli/target/release/nova check examples/getting_started.nv
 //
 // This file demonstrates, end to end and without any network / FFI / unsafe:
 //   1. fn main + println        — the classic "hello" baseline
