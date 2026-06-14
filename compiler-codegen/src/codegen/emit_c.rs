@@ -32981,6 +32981,33 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                     .collect();
                                 let mangled = Self::compute_generic_type_c_name(type_name, &type_args_c);
                                 let concrete_type = format!("{}*", mangled);
+                                // [M-154.1-chained-vec-f32-method-misdispatch] gap C
+                                // (registration timing): mirror the emit-side static-call
+                                // registration (~emit_c.rs:22724) HERE, on the inference
+                                // path. A CHAINED `Vec[f32].new().debug(a)` reaches the
+                                // outer `.debug` dispatch (block 5b ~23816) BEFORE the
+                                // inner `Vec[f32].new()` is ever emitted, so the inner
+                                // generic instance (`Nova_Vec____nova_f32`) was not yet in
+                                // `generic_type_instance_info` — block 5b missed and the
+                                // call fell through to the str `@debug` overload (Ф.3),
+                                // passing a `Nova_Vec____nova_f32*` into a str method
+                                // (CC-FAIL). `Vec[int]` only worked because it is already
+                                // registered pervasively by the prelude/std. Registering
+                                // the instance (and queueing the worklist for body emit)
+                                // during `infer_expr_c_type(obj)` — which the dispatcher
+                                // calls at ~22828 BEFORE block 5b — closes the timing gap.
+                                // `&self` mutation is fine: both fields are `RefCell`.
+                                if type_args_c.iter().all(|c| !c.is_empty() && c != "void*") {
+                                    self.generic_type_instance_info.borrow_mut()
+                                        .entry(mangled.clone())
+                                        .or_insert_with(|| (type_name.clone(), type_args_c.clone()));
+                                    if !self.emitted_generic_type_instances.contains(&mangled) {
+                                        let mut wl = self.generic_type_worklist.borrow_mut();
+                                        if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                                            wl.push((type_name.clone(), type_args_c.clone(), mangled.clone()));
+                                        }
+                                    }
+                                }
                                 if let Some(tmpl) = self.generic_type_templates.get(type_name) {
                                     let type_subst: Vec<(String, Option<String>)> = tmpl.generics.iter()
                                         .zip(type_args_c.iter())

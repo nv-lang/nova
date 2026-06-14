@@ -247,13 +247,18 @@
   f64-ПЕРЕМЕННАЯ в `[]f32`-контексте (`Vec[f32].from([f64var])`) — НЕ сужается молча (был тихий
   мусор), а даёт громкую `E_ARRAY_ELEM_NARROW` (D44/D54 — narrowing не-литералов только через
   явный `as f32`). pos+neg тесты `plan154_1` (9/9).
-- **`[M-154.1-chained-vec-f32-method-misdispatch]`** (floating, P2, **NEW** 2026-06-14): chained
-  `Vec[f32].X().debug()` (напр. `Vec[f32].new().debug(a)` или `.from([...]).debug(a)`) мис-диспатчит
-  `.debug` на `str.debug` → передаёт `Vec[f32]*` в str-метод → CC-FAIL. Корень: `infer_expr_c_type`
-  turbofish-static-call return для f32 не даёт `Nova_Vec____nova_f32*` → `.debug` падает на
-  str-overload (добавлен в Ф.3). **Pre-existing** (с Ф.3 str @debug, в main), НЕ от literal-coercion
-  (срабатывает и на `.new()` без литералов). Vec[int] chained работает. Non-chained Vec[f32] работает.
-  Лечить: infer turbofish-static return type для f32. Класс Plan 154 (silent/wrong dispatch).
+- **`[M-154.1-chained-vec-f32-method-misdispatch]`** ✅ **RESOLVED 2026-06-14** (Plan 153.x):
+  chained `Vec[f32].new().debug(a)` / `.from([...]).debug(a)` мис-диспатчил `.debug` на
+  `str.debug` → `Vec[f32]*` в str-метод → CC-FAIL. **Корень — gap C (registration timing)**, НЕ
+  infer turbofish-return (тот УЖЕ давал `Nova_Vec____nova_f32*` корректно): outer-`.debug`
+  dispatch (block 5b ~emit_c.rs:23816) достигался ДО эмита inner `Vec[f32].new()`, поэтому
+  инстанс `Nova_Vec____nova_f32` ещё не был в `generic_type_instance_info` → block 5b
+  промахивался, fall-through на str `@debug` overload (Ф.3). `Vec[int]` работал лишь т.к.
+  регистрируется prelude/std повсеместно. **Фикс:** зеркалирование emit-side static-call
+  registration (~22724) на inference-пути (TurboFish-Member branch, ~32990) —
+  `infer_expr_c_type(obj)` (вызывается dispatcher'ом ~22828 ДО block 5b) регистрирует инстанс +
+  queue'ит worklist. Фикстура `plan153_3/vec_f32_chained_debug` PASS; 0 регрессий (plan154 5/5,
+  plan154_1 9/9, plan153_3 8/8, basics 8/8, plan90/90_1/138/91 чисто).
 - **`[M-float-roundtrip-printing]`** (floating, P3, выявлено в аудите 154.1): float→str
   (`nova_f64_to_str`, и f32 через него) использует `%g` с дефолтной 6-знач точностью — **лосси**
   на >6 значащих для f64 И f32 (не round-trip). Проектный стандарт, консистентный, НЕ регрессия;
