@@ -10780,6 +10780,21 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         return c_ty.clone();
                     }
                 }
+                // Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: a
+                // NESTED slice receiver (`[][]T`, `[][][]T`, …, depth >= 2) is
+                // NOT a single-level array. Reconstruct the structured
+                // `Array(Array(...Named))` type and lower it via `type_ref_to_c`
+                // (which, under D239, mono's each level to `Nova_Vec____<elem>*`)
+                // — this yields the correct multi-level receiver C type with
+                // `current_type_subst` (T=int) in scope. The single-level `[]T`
+                // case below is UNCHANGED (legacy `NovaArray_<elem>*`), so flat
+                // dispatch stays byte-identical.
+                if other.starts_with("[][]") {
+                    let nested_ty = Self::slice_str_to_typeref(other);
+                    if let Ok(c) = self.type_ref_to_c(&nested_ty) {
+                        return c;
+                    }
+                }
                 // Extension methods on array types: []T, []str, []int, etc.
                 if let Some(elem_ty) = other.strip_prefix("[]") {
                     let c_elem_owned: String;
@@ -10864,10 +10879,51 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         }
     }
 
+    /// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: reconstruct the
+    /// structured `Array(Array(...Named))` TypeRef from a slice-receiver string
+    /// `"[]"*N + innermost` (`"[][]T"` → `Array(Array(Named T))`). Used to lower
+    /// a nested slice receiver via the canonical `type_ref_to_c` path.
+    fn slice_str_to_typeref(s: &str) -> crate::ast::TypeRef {
+        use crate::ast::TypeRef;
+        let mut depth = 0usize;
+        let mut rest = s;
+        while let Some(r) = rest.strip_prefix("[]") {
+            depth += 1;
+            rest = r;
+        }
+        let dummy = Span::default();
+        let mut ty = TypeRef::Named {
+            path: vec![rest.to_string()],
+            generics: Vec::new(),
+            span: dummy,
+        };
+        for _ in 0..depth {
+            ty = TypeRef::Array(Box::new(ty), dummy);
+        }
+        ty
+    }
+
     /// Convert a receiver type name to a valid C identifier component.
     /// []T → "NovaArray_nova_int", []str → "NovaArray_nova_str", etc.
+    /// Plan 153.5: a NESTED slice receiver (`[][]T`, depth >= 2) mangles to
+    /// `NovaArray_` repeated per level so distinct nesting depths get distinct
+    /// C identifiers (avoids arity/symbol collision the spec warns about).
     /// Other names are returned unchanged (already valid C identifiers).
     fn receiver_type_c_ident(type_name: &str) -> String {
+        if type_name.starts_with("[][]") {
+            // depth >= 2: strip ALL leading "[]" levels, mangle the innermost
+            // element once, and prefix one "NovaArray_" per level so each depth
+            // is a distinct, valid C identifier.
+            let mut depth = 0usize;
+            let mut rest = type_name;
+            while let Some(r) = rest.strip_prefix("[]") {
+                depth += 1;
+                rest = r;
+            }
+            let inner_ident = Self::receiver_type_c_ident(&format!("[]{}", rest));
+            // inner_ident is already "NovaArray_<elem>"; add (depth-1) more.
+            return format!("{}{}", "NovaArray_".repeat(depth - 1), inner_ident);
+        }
         if let Some(elem_ty) = type_name.strip_prefix("[]") {
             let c_elem = match elem_ty {
                 "str"  => "nova_str",
@@ -12538,6 +12594,117 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         Ok(result)
     }
 
+    /// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: count the
+    /// slice/Vec NESTING DEPTH of a (possibly nested) Vec-mono receiver C type
+    /// `rt` (the `Nova_`-stripped, `*`-stripped form). `Vec____nova_int` → 1,
+    /// `Vec____Nova_Vec____nova_int_p` → 2, `Vec____Nova_Vec____Nova_Vec____nova_int_p_p`
+    /// → 3, … by walking `generic_type_instance_info` (which records each level's
+    /// un-mangled element). A non-Vec `rt` → 0. Used to pick the matching
+    /// `"[]"*depth + "T"` slice-receiver sentinel key so `[][]T`/`[][][]T`
+    /// extension methods route to the real monomorphized function rather than
+    /// the hardcoded single-level `"[]T"` key.
+    fn vec_nesting_depth(&self, rt: &str) -> usize {
+        let mut depth = 0usize;
+        let mut cur = rt.trim_end_matches('*').trim().to_string();
+        loop {
+            if cur.starts_with("NovaArray_") {
+                depth += 1;
+                // Legacy array elem is the suffix after the prefix.
+                cur = cur.trim_start_matches("NovaArray_").trim_end_matches('*').to_string();
+                continue;
+            }
+            if cur.starts_with("Vec____") || cur.starts_with("Nova_Vec____") {
+                depth += 1;
+                let key = if cur.starts_with("Nova_") { cur.clone() } else { format!("Nova_{}", cur) };
+                let elem = self.generic_type_instance_info.borrow()
+                    .get(&key)
+                    .and_then(|(base, args)| {
+                        if base == "Vec" { args.first().cloned() } else { None }
+                    });
+                match elem {
+                    Some(e) => { cur = e.trim_end_matches('*').trim().to_string(); }
+                    None => break,
+                }
+                continue;
+            }
+            break;
+        }
+        depth
+    }
+
+    /// Plan 153.5 (D263): the slice-receiver sentinel key `"[]"*depth + "T"` for a
+    /// Vec-mono receiver C type `rt`, or `None` if `rt` is not a Vec/array mono.
+    fn slice_sentinel_key_for_rt(&self, rt: &str) -> Option<String> {
+        let depth = self.vec_nesting_depth(rt);
+        if depth == 0 { None } else { Some(format!("{}T", "[]".repeat(depth))) }
+    }
+
+    /// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: collect every
+    /// free typevar (short all-uppercase single-segment `Named`) in a structured
+    /// receiver type, recursively, in first-seen order. Used to seed the
+    /// structural receiver-typevar re-binding when the method's typevars are
+    /// carrier-declared (and thus NOT listed in `fn_decl.generics`).
+    fn collect_receiver_typevars(ty: &crate::ast::TypeRef, out: &mut Vec<String>) {
+        use crate::ast::TypeRef;
+        match ty {
+            TypeRef::Named { path, generics, .. } => {
+                if path.len() == 1 && generics.is_empty() {
+                    let n = &path[0];
+                    if !n.is_empty()
+                        && n.len() <= 2
+                        && n.chars().all(|c| c.is_ascii_uppercase())
+                        && !out.contains(n)
+                    {
+                        out.push(n.clone());
+                    }
+                }
+                for g in generics {
+                    Self::collect_receiver_typevars(g, out);
+                }
+            }
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                Self::collect_receiver_typevars(inner, out);
+            }
+            TypeRef::Tuple(items, _) => {
+                for it in items {
+                    Self::collect_receiver_typevars(it, out);
+                }
+            }
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Pointer(inner, _) => Self::collect_receiver_typevars(inner, out),
+            _ => {}
+        }
+    }
+
+    /// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: a structured
+    /// receiver type is NESTED (needs structural typevar re-binding) iff the
+    /// top-level type's IMMEDIATE generic arg / array element is itself a
+    /// compound type rather than a bare typevar / concrete Named. For a FLAT
+    /// receiver (`Vec[T]` → immediate generic `Named T`; `[]T` → element
+    /// `Named T`) the template-derived shallow binding already equals the
+    /// structural one, so no override is needed. For `Vec[Vec[T]]` / `[][]T`
+    /// the immediate arg is itself an `Array`/generic-`Named`, so the method's
+    /// receiver typevar binds DEEPER than the template's and must be overridden.
+    fn receiver_ty_is_nested(ty: &crate::ast::TypeRef) -> bool {
+        use crate::ast::TypeRef;
+        match ty {
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                matches!(inner.as_ref(),
+                    TypeRef::Array(..) | TypeRef::FixedArray(..))
+                    || matches!(inner.as_ref(),
+                        TypeRef::Named { generics, .. } if !generics.is_empty())
+            }
+            TypeRef::Named { generics, .. } => {
+                generics.iter().any(|g| matches!(g,
+                    TypeRef::Array(..) | TypeRef::FixedArray(..))
+                    || matches!(g, TypeRef::Named { generics: gg, .. } if !gg.is_empty()))
+            }
+            _ => false,
+        }
+    }
+
     /// Plan 48 Ф.0 / Plan 98 Ф.1: match param_typeref against concrete_c,
     /// bind type params in subst.
     ///
@@ -12568,14 +12735,37 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     }
                 }
             }
-            // []T → extract element type from NovaArray_X*
+            // []T → extract element type from the receiver's concrete C type.
             crate::ast::TypeRef::Array(inner, _) => {
-                // concrete_c like "NovaArray_nova_int*"
+                // Legacy spelling: `NovaArray_<elem>*` — strip prefix + `*`.
                 if let Some(inner_c) = concrete_c
                     .strip_prefix("NovaArray_")
                     .and_then(|s| s.strip_suffix('*'))
                 {
                     self.infer_type_param_binding(inner, inner_c, subst);
+                    return;
+                }
+                // Plan 138.2 / D239 flip: `[]T` ≡ `Vec[T]`, so the concrete is
+                // the mono'd `Nova_Vec____<sani_elem>*`. Recover the REAL element
+                // C-type from `generic_type_instance_info` (which records the
+                // un-mangled `type_args_c`) and recurse — this lets a structural
+                // receiver bind (`[][]T` against `Nova_Vec____Nova_Vec____nova_int_p*`)
+                // descend through EVERY level. Plan 153.5 (D263).
+                let stripped = concrete_c.trim_end_matches('*').trim();
+                if stripped.starts_with("Nova_Vec____") || stripped.starts_with("Vec____") {
+                    let key = if stripped.starts_with("Nova_") {
+                        stripped.to_string()
+                    } else {
+                        format!("Nova_{}", stripped)
+                    };
+                    let elem = self.generic_type_instance_info.borrow()
+                        .get(&key)
+                        .and_then(|(base, args)| {
+                            if base == "Vec" { args.first().cloned() } else { None }
+                        });
+                    if let Some(elem_c) = elem {
+                        self.infer_type_param_binding(inner, &elem_c, subst);
+                    }
                 }
             }
             // Plan 98 Ф.1: Option[T] / Result[T,E] / user-generic types
@@ -23360,15 +23550,17 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         // mono-routing block below fires and emits the real
                         // monomorphized function. (NovaArray receivers already
                         // have their erased entry keyed directly.)
+                        // Plan 153.5 (D263): depth-aware slice sentinel key —
+                        // `"[]"*depth + "T"` for a NESTED Vec-mono receiver
+                        // (`[][]T`, `[][][]T`, …), reducing to the legacy `"[]T"`
+                        // at depth 1. `None` for non-Vec receivers.
+                        let slice_key = self.slice_sentinel_key_for_rt(&rt);
                         let overloads_opt = self.method_overloads.get(&key).cloned()
                             .or_else(|| {
-                                if rt.starts_with("Vec____") {
+                                slice_key.as_ref().and_then(|sk|
                                     self.method_overloads
-                                        .get(&("[]T".to_string(), method.clone()))
-                                        .cloned()
-                                } else {
-                                    None
-                                }
+                                        .get(&(sk.clone(), method.clone()))
+                                        .cloned())
                             });
                         if let Some(overloads) = overloads_opt {
                             let candidates: Vec<MethodSig> = overloads.into_iter()
@@ -23394,23 +23586,25 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                 // when falling back to the `[]T` sentinel.
                                 let rt_is_array_ext = rt.starts_with("NovaArray_")
                                     || rt.starts_with("Vec____");
+                                // Plan 153.5 (D263): depth-aware sentinel alt-key.
                                 let has_sentinel_alt = rt_is_array_ext
-                                    && self.method_overloads
-                                        .get(&("[]T".to_string(), method.clone()))
+                                    && slice_key.as_ref().map(|sk| self.method_overloads
+                                        .get(&(sk.clone(), method.clone()))
                                         .map(|alts| alts.iter().any(|c|
                                             c.is_instance == want_instance
                                             && c.c_name.starts_with("__mono_method__")))
-                                        .unwrap_or(false);
+                                        .unwrap_or(false))
+                                    .unwrap_or(false);
                                 if has_sentinel_here || has_sentinel_alt {
                                     let recv_key = (rt.clone(), method.clone());
                                     // Plan 101.1: для array-ext receivers, mono_method_decls
-                                    // key — это recv.type_name "[]T", не rt "NovaArray_<X>".
-                                    // Fallback lookup по "[]T" с попыткой extract element-type
-                                    // из rt для T-subst.
+                                    // key — это recv.type_name "[]T"/"[][]T"…, не rt "Vec____<X>".
+                                    // Fallback lookup по depth-matched slice key.
                                     let fn_decl_opt = self.mono_method_decls.get(&recv_key).cloned()
                                         .or_else(|| {
                                             if rt_is_array_ext {
-                                                self.mono_method_decls.get(&("[]T".to_string(), method.clone())).cloned()
+                                                slice_key.as_ref().and_then(|sk|
+                                                    self.mono_method_decls.get(&(sk.clone(), method.clone())).cloned())
                                             } else {
                                                 None
                                             }
@@ -23449,19 +23643,45 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                         } else {
                                             String::new()
                                         };
-                                        // Build initial subst_pending: T = elem_c (если есть),
-                                        // остальные None.
+                                        // Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]:
+                                        // bind the receiver typevar(s) STRUCTURALLY so a NESTED
+                                        // receiver (`[][]T`, `[][][]T`, `Vec[Vec[T]]`, …) binds
+                                        // `T` to the element-of-element (innermost), not the
+                                        // immediate element. Reuses the existing recursive
+                                        // `infer_type_param_binding` primitive: when the parser
+                                        // preserved the full structured receiver type
+                                        // (`Receiver.receiver_ty`), unify it against the receiver's
+                                        // concrete mangled C type `Nova_<rt>*`. For the FLAT `[]T`
+                                        // case the structural bind reduces to exactly the old
+                                        // one-level result (T = immediate element = innermost), so
+                                        // single-level dispatch is byte-identical. If no structured
+                                        // receiver type is available, fall back to the legacy flat
+                                        // `T = elem_c` seed.
+                                        let recv_structured_ty = fn_decl.receiver.as_ref()
+                                            .and_then(|r| r.receiver_ty.clone());
                                         let mut subst_pending: Vec<(String, Option<String>)> =
-                                            fn_decl.generics.iter().enumerate()
-                                                .map(|(i, g)| {
-                                                    let init = if i == 0 && !elem_c.is_empty() {
-                                                        Some(elem_c.clone())
-                                                    } else {
-                                                        None
-                                                    };
-                                                    (g.name.clone(), init)
-                                                })
+                                            fn_decl.generics.iter()
+                                                .map(|g| (g.name.clone(), None))
                                                 .collect();
+                                        let mut bound_structurally = false;
+                                        if let Some(rty) = &recv_structured_ty {
+                                            let recv_concrete_c = format!("Nova_{}*", rt);
+                                            self.infer_type_param_binding(
+                                                rty, &recv_concrete_c, &mut subst_pending);
+                                            bound_structurally = subst_pending.iter()
+                                                .any(|(_, c)| c.is_some());
+                                        }
+                                        // Legacy flat fallback: seed first generic = immediate
+                                        // element when structural unification produced nothing
+                                        // (e.g. a `NovaArray_` receiver, or a receiver with no
+                                        // preserved structured type).
+                                        if !bound_structurally && !elem_c.is_empty() {
+                                            if let Some(slot) = subst_pending.first_mut() {
+                                                if slot.1.is_none() {
+                                                    slot.1 = Some(elem_c.clone());
+                                                }
+                                            }
+                                        }
                                         // Infer остальные generics из args + closure return.
                                         for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
                                             let arg_c = self.infer_expr_c_type(arg.expr());
@@ -23488,11 +23708,13 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                             .collect();
                                         let base_c_name = format!("Nova_{}_method_{}", rt, method);
                                         let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
-                                        // Plan 101 [M-fn-prefix-int-only-mono]: register с recv_type "[]T"
-                                        // если sentinel found через alt-key — иначе worklist drain
-                                        // не найдёт fn_decl в mono_method_decls (там key = "[]T", не concrete).
+                                        // Plan 101 [M-fn-prefix-int-only-mono]: register с recv_type
+                                        // "[]T" (или depth-matched "[][]T"… — Plan 153.5) если
+                                        // sentinel found через alt-key — иначе worklist drain не
+                                        // найдёт fn_decl в mono_method_decls (там key = slice-form,
+                                        // не concrete).
                                         let recv_type_for_reg = if has_sentinel_alt && !has_sentinel_here {
-                                            "[]T".to_string()
+                                            slice_key.clone().unwrap_or_else(|| "[]T".to_string())
                                         } else {
                                             rt.clone()
                                         };
@@ -23822,6 +24044,54 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                     .zip(type_args_c.iter())
                                     .map(|(g, c)| (g.name.clone(), c.clone()))
                                     .collect();
+                                // Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]:
+                                // for a NESTED carrier receiver (`Vec[Vec[T]] @flatten`,
+                                // `Vec[Vec[Vec[T]]]`, …) the method's OWN receiver typevar
+                                // `T` is DIFFERENT from the `Vec` template's `T` even though
+                                // they share the spelling: the method's `T` binds to the
+                                // element-OF-element (innermost), while the template `T`
+                                // above bound to the immediate element (`Vec[int]`). Re-bind
+                                // the method's receiver typevars STRUCTURALLY against the
+                                // concrete receiver C type using the parser-preserved
+                                // structured receiver type, OVERRIDING the template-derived
+                                // (shallow) binding. Reuses the existing recursive
+                                // `infer_type_param_binding` primitive — depth-agnostic. For
+                                // a FLAT carrier (`Vec[T] @m`) the structural bind reproduces
+                                // the identical `T = element` result, so single-level
+                                // dispatch is unchanged.
+                                if let Some(recv_ty) = fn_decl.receiver.as_ref()
+                                    .and_then(|r| r.receiver_ty.as_ref())
+                                {
+                                    if Self::receiver_ty_is_nested(recv_ty) {
+                                        let recv_concrete_c = format!("Nova_{}*", rt_trimmed);
+                                        // Seed from the receiver's free typevars (carrier-
+                                        // declared `T` lives in `receiver_ty`, NOT in
+                                        // `fn_decl.generics`), plus any explicit method
+                                        // generics.
+                                        let mut tvars: Vec<String> = Vec::new();
+                                        Self::collect_receiver_typevars(recv_ty, &mut tvars);
+                                        for g in &fn_decl.generics {
+                                            if !tvars.contains(&g.name) {
+                                                tvars.push(g.name.clone());
+                                            }
+                                        }
+                                        let mut pend: Vec<(String, Option<String>)> = tvars
+                                            .iter().map(|n| (n.clone(), None)).collect();
+                                        self.infer_type_param_binding(
+                                            recv_ty, &recv_concrete_c, &mut pend);
+                                        for (n, c) in pend {
+                                            if let Some(c) = c {
+                                                if let Some(slot) = type_subst.iter_mut()
+                                                    .find(|(sn, _)| sn == &n)
+                                                {
+                                                    slot.1 = c;
+                                                } else {
+                                                    type_subst.push((n, c));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 // Plan 99.1 Ф.1: extract'нуто в
                                 // `resolve_method_level_subst` helper (Plan 48
                                 // method-param mono логика). Identical behavior;
@@ -30604,6 +30874,37 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
             .zip(type_args.iter())
             .map(|(g, c)| (g.name.clone(), Some(c.clone())))
             .collect();
+        // Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: for a NESTED
+        // carrier receiver (`Vec[Vec[T]] @flatten`) the call-site return-type
+        // inference must bind the method's receiver typevar `T` STRUCTURALLY to
+        // the element-OF-element (innermost), not the immediate element the
+        // template binding above produced. Mirrors the emission-side override in
+        // emit_call path 5b. For a FLAT carrier (`Vec[T] @m`) the structural
+        // bind reproduces the identical `T = element`, so single-level inference
+        // is unchanged. `obj_ty` is the concrete receiver C type.
+        if let Some(recv_ty) = fd.receiver.as_ref().and_then(|r| r.receiver_ty.as_ref()) {
+            if Self::receiver_ty_is_nested(recv_ty) {
+                let mut tvars: Vec<String> = Vec::new();
+                Self::collect_receiver_typevars(recv_ty, &mut tvars);
+                for g in &fd.generics {
+                    if !tvars.contains(&g.name) {
+                        tvars.push(g.name.clone());
+                    }
+                }
+                let mut pend: Vec<(String, Option<String>)> = tvars
+                    .iter().map(|n| (n.clone(), None)).collect();
+                self.infer_type_param_binding(recv_ty, obj_ty, &mut pend);
+                for (n, c) in pend {
+                    if let Some(c) = c {
+                        if let Some(slot) = subst.iter_mut().find(|(sn, _)| sn == &n) {
+                            slot.1 = Some(c);
+                        } else {
+                            subst.push((n, Some(c)));
+                        }
+                    }
+                }
+            }
+        }
         // Plan 48 method-param mono (Plan 63 followup): добавляем method-level
         // generics из call-site inference. Mirrors emit_call path 5b Step 2
         // (typed closure-param var_types pre-population) — needed so
@@ -32967,23 +33268,29 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         // routing fix so return-type inference for `xs.map(..)`
                         // recovers the method-level generic `U` (return elem).
                         if rt.starts_with("NovaArray_") || rt.starts_with("Vec____") {
-                            let sentinel_key = ("[]T".to_string(), mn.clone());
+                            // Plan 153.5 (D263): depth-aware slice sentinel key
+                            // (`"[]"*depth+"T"`) so `[][]T`/`[][][]T` extension
+                            // methods route their return-type inference correctly.
+                            let slice_key_ret = self.slice_sentinel_key_for_rt(&rt)
+                                .unwrap_or_else(|| "[]T".to_string());
+                            let sentinel_key = (slice_key_ret.clone(), mn.clone());
                             let has_sentinel = self.method_overloads.get(&sentinel_key)
                                 .map(|alts| alts.iter().any(|s|
                                     s.is_instance == want_inst
                                     && s.c_name.starts_with("__mono_method__")))
                                 .unwrap_or(false);
                             if has_sentinel {
-                                let recv_key = ("[]T".to_string(), mn.clone());
-                                if let Some(fn_decl) = self.mono_method_decls.get(&recv_key) {
-                                    // Pre-bind T (первый generic) = receiver-element type.
-                                    // Не используем resolve_mono_type_args (она требует
-                                    // ВСЕ generics быть resolvable из args; для fn[T] []T
-                                    // T приходит от receiver, не args — resolve вернёт Err).
-                                    // Plan 138.2 Ф.0-final: mirror the emit-side
-                                    // de-mangling — a `Vec____<sani>` receiver carries
-                                    // the MANGLED element; recover the un-mangled
-                                    // C-type from `generic_type_instance_info`.
+                                let recv_key = (slice_key_ret.clone(), mn.clone());
+                                if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
+                                    // Plan 153.5 (D263): bind the receiver typevar(s)
+                                    // STRUCTURALLY (innermost element at any depth)
+                                    // via the parser-preserved structured receiver
+                                    // type, mirroring the emit-side path 5b. For a
+                                    // FLAT `[]T` receiver this reduces to the legacy
+                                    // `T = immediate element` seed.
+                                    let recv_structured_ty = fn_decl.receiver.as_ref()
+                                        .and_then(|r| r.receiver_ty.clone());
+                                    // Legacy flat elem (fallback seed).
                                     let elem_c = if let Some(na) = rt.strip_prefix("NovaArray_") {
                                         na.to_string()
                                     } else if rt.starts_with("Vec____") {
@@ -32998,16 +33305,25 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                         String::new()
                                     };
                                     let mut subst_pending: Vec<(String, Option<String>)> =
-                                        fn_decl.generics.iter().enumerate()
-                                        .map(|(i, g)| {
-                                            let init = if i == 0 && !elem_c.is_empty() {
-                                                Some(elem_c.clone())
-                                            } else {
-                                                None
-                                            };
-                                            (g.name.clone(), init)
-                                        })
+                                        fn_decl.generics.iter()
+                                        .map(|g| (g.name.clone(), None))
                                         .collect();
+                                    let mut bound_structurally = false;
+                                    if let Some(rty) = &recv_structured_ty {
+                                        let recv_concrete_c = format!("Nova_{}*", rt);
+                                        self.infer_type_param_binding(
+                                            rty, &recv_concrete_c, &mut subst_pending);
+                                        bound_structurally = subst_pending.iter()
+                                            .any(|(_, c)| c.is_some());
+                                    }
+                                    if !bound_structurally && !elem_c.is_empty() {
+                                        if let Some(slot) = subst_pending.first_mut() {
+                                            if slot.1.is_none() {
+                                                slot.1 = Some(elem_c.clone());
+                                            }
+                                        }
+                                    }
+                                    let fn_decl = &fn_decl;
                                     // Infer остальные generics из args + closure return.
                                     for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
                                         let arg_c = self.infer_expr_c_type(arg.expr());
@@ -33134,7 +33450,7 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                             drop(info);
                             if let Some((base_name, type_args_c)) = instance_opt {
                                 if let Some(tmpl) = self.generic_type_templates.get(&base_name) {
-                                    let subst: Vec<(String, Option<String>)> = tmpl.generics.iter()
+                                    let mut subst: Vec<(String, Option<String>)> = tmpl.generics.iter()
                                         .zip(type_args_c.iter())
                                         .map(|(g, c)| (g.name.clone(), Some(c.clone())))
                                         .collect();
@@ -33155,6 +33471,45 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                             }
                                         })
                                     {
+                                        // Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]:
+                                        // for a NESTED carrier receiver (`Vec[Vec[T]] @flatten`)
+                                        // the method's receiver typevar `T` binds to the
+                                        // element-OF-element (innermost), NOT the immediate
+                                        // element the shallow `tmpl.generics` binding above
+                                        // produced. Re-bind structurally so the call-site
+                                        // return-type inference (`ro flat = nested.flatten()`)
+                                        // types `flat` as `Vec[int]`, not `Vec[Vec[int]]`.
+                                        // Mirrors emit_call path 5b. Flat receivers are
+                                        // unaffected (`receiver_ty_is_nested` is false).
+                                        if let Some(recv_ty) = method_decl.receiver.as_ref()
+                                            .and_then(|r| r.receiver_ty.as_ref())
+                                        {
+                                            if Self::receiver_ty_is_nested(recv_ty) {
+                                                let recv_concrete_c = format!("Nova_{}*", rt);
+                                                let mut tvars: Vec<String> = Vec::new();
+                                                Self::collect_receiver_typevars(recv_ty, &mut tvars);
+                                                for g in &method_decl.generics {
+                                                    if !tvars.contains(&g.name) {
+                                                        tvars.push(g.name.clone());
+                                                    }
+                                                }
+                                                let mut pend: Vec<(String, Option<String>)> = tvars
+                                                    .iter().map(|n| (n.clone(), None)).collect();
+                                                self.infer_type_param_binding(
+                                                    recv_ty, &recv_concrete_c, &mut pend);
+                                                for (n, c) in pend {
+                                                    if let Some(c) = c {
+                                                        if let Some(slot) = subst.iter_mut()
+                                                            .find(|(sn, _)| sn == &n)
+                                                        {
+                                                            slot.1 = Some(c);
+                                                        } else {
+                                                            subst.push((n, Some(c)));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                         if let Some(ret_ty) = &method_decl.return_type {
                                             let c_ty_opt = Self::apply_type_subst_to_ref(ret_ty, &subst)
                                                 .or_else(|| {

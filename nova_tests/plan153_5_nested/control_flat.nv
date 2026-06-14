@@ -1,0 +1,49 @@
+// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver] — CONTROL: the
+// single-level (depth-1) generic receiver forms MUST remain byte-identical
+// after the nested-receiver fix. Both the SLICE form `fn[T] []T @m` and the
+// CARRIER form `fn Vec[T] @m` are exercised here; their `T` binds to the
+// immediate element (= innermost, since depth is 1), exactly as before.
+
+module plan153_5_nested.control_flat
+
+import std.collections.vec.{Vec}
+
+// Flat SLICE-form `[]T` receiver — copy every element into a fresh Vec.
+// (This is the canonical `fn[T] []T @m` shape used across plan101/stdlib.)
+export fn[T] []T @doubled_len() -> int {
+    mut n = 0
+    for _x in @ {
+        n = n + 2
+    }
+    n
+}
+
+// Flat CARRIER-form `Vec[T]` receiver returning `Vec[T]` (depth-1).
+export fn Vec[T] @copy_all() -> Vec[T] {
+    mut out = Vec[T].new()
+    for x in @ {
+        out.push(x)
+    }
+    out
+}
+
+test "flat []T method still binds T = element (int)" {
+    ro v = Vec[int].from([1, 2, 3])
+    assert(v.doubled_len() == 6)
+}
+
+test "flat Vec[T] method returns Vec[T] (int)" {
+    ro v = Vec[int].from([5, 6, 7])
+    ro c = v.copy_all()
+    assert(c.len() == 3)
+    assert(c[0] == 5)
+    assert(c[2] == 7)
+}
+
+test "flat Vec[T] method returns Vec[T] (str)" {
+    ro v = Vec[str].from(["x", "y"])
+    ro c = v.copy_all()
+    assert(c.len() == 2)
+    assert(c[0] == "x")
+    assert(c[1] == "y")
+}
