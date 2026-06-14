@@ -33,11 +33,13 @@ Test-runner — [Plan 24](plans/24-cross-platform-test-runner.md) +
 sentences 512, collation 227800). Размер коммит-фикстуры регулируется
 `nova-codegen unicode --emit-conformance --conformance-limit <N>`.
 
-> **Механизм** (lane для больших тестов вне дефолт-прогона) — в работе,
-> `[M-test-runner-large-test-lane]`: конвенция (папка `nova_tests/_slow/` /
-> `_conformance_full/` или маркер `// EXPECT_SLOW`), которую `nova-codegen test-all`
-> скипает по умолчанию; прогон через флаг `--include-slow`. До его готовности большой
-> набор не коммитится в обычный путь, а регенерится out-of-band.
+> **Механизм** (lane для больших тестов вне дефолт-прогона) — дизайн готов
+> ([Plan 156](plans/156-test-runner-slow-lane.md), `[M-test-runner-large-test-lane]`):
+> конвенция (rev-2 suffix-only) — **per-file суффикс `_slow.nv`** (зеркало семейства
+> `_windows.nv`/`_test`; skip на этапе discovery в `walk_nv` → файл-корпус не читается),
+> который `nova-codegen test-all` скипает по умолчанию; прогон через `--include-slow` /
+> `--slow-only`. Полные наборы коммитятся как `*_conformance_slow.nv`. До реализации
+> большой набор не коммитится в обычный путь, а регенерится out-of-band.
 
 ---
 
