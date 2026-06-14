@@ -17223,6 +17223,36 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if *op == AssignOp::Assign {
                     if let ExprKind::Index { obj: arr_obj, index } = &target.kind {
                         let arr_obj_ty = self.infer_expr_c_type(arr_obj);
+                        // Plan 145.1 — struct-VALUE element write (nova_str / value-record):
+                        // cl.exe (MSVC) отвергает `*(struct*)void_ptr = v` (C2440) и
+                        // `(struct)(const v)` struct-cast. Пишем через memcpy в слот-адрес:
+                        // nova_idx_chk/nochk возвращает void* (адрес элемента) — без
+                        // struct-assign-через-void-deref и без struct-cast. `val`
+                        // материализуется в temp (init принимает const, single-eval).
+                        // ГЕЙТ: только NovaArrHdr-layout коллекции (NovaArray_*/Nova_Vec____*),
+                        // НЕ raw `*mut T` буферы (`@data[i]=v`: nova_str* и т.п.) — иначе
+                        // nova_idx_chk кастит raw-указатель в NovaArrHdr* и читает мусорный len.
+                        let we_elem_ty = self.infer_expr_c_type(target);
+                        let we_hdr_collection = arr_obj_ty.starts_with("NovaArray_")
+                            || (arr_obj_ty.starts_with("Nova_Vec____")
+                                && !arr_obj_ty.trim_end().ends_with("**"));
+                        if we_hdr_collection
+                            && Self::is_struct_c_type(&we_elem_ty)
+                            && !we_elem_ty.ends_with('*') {
+                            let arr_c = self.emit_expr(arr_obj)?;
+                            let idx_c = self.emit_expr(index)?;
+                            let val_c = self.emit_expr(value)?;
+                            let helper = if self.index_site_elided(target.span.start) {
+                                "nova_idx_nochk"
+                            } else {
+                                "nova_idx_chk"
+                            };
+                            self.line(&format!(
+                                "{{ {ty} _nv_set = ({val}); memcpy({helper}((void*)({arr}), ({idx}), sizeof({ty})), &_nv_set, sizeof({ty})); }}",
+                                ty = we_elem_ty, val = val_c, helper = helper, arr = arr_c, idx = idx_c
+                            ));
+                            return Ok(());
+                        }
                         // Plan 138 Ф.2 (D240): `v[i] = val` on Vec[T] — inline bounds-checked write.
                         // Vec[T] layout: { T* data; nova_int len; nova_int cap }.
                         // Emit: { _v->data[_i] = val; } with bounds check + panic.
@@ -20050,7 +20080,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     let is_primitive = Self::primitive_type_id(&val_ty).is_some();
                     let payload_expr = if val_ty.ends_with('*') {
                         format!("({})", v)
+                    } else if is_primitive {
+                        // Plan 145.1 — portable heap-box примитива в throw-КАК-ВЫРАЖЕНИИ
+                        // (MSVC C2059): scalar compound literal + nova_box_value (memcpy)
+                        // вместо GNU statement-expression. (Stmt::Throw уже portable —
+                        // hoisted temp; здесь throw условный, hoist небезопасен.)
+                        format!("nova_box_value(&({ty}){{ ({val}) }}, sizeof({ty}))", ty = val_ty, val = v)
                     } else {
+                        // value-record throw-как-выражение — редкий; stmt-expr остаётся
+                        // (compound-literal member-init не годится для multi-field struct).
+                        // Plan 145.2 residual `[M-145-msvc-remaining-stmt-expr]`.
                         format!(
                             "({{ {ty}* _p = ({ty}*)nova_alloc(sizeof({ty})); *_p = ({val}); _p; }})",
                             ty = val_ty, val = v
@@ -23239,12 +23278,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     if ec.ends_with('*') && ec != "nova_int*" {
                                         let sani = Self::sanitize_for_novaopt(&ec);
                                         self.register_novaopt_decl(&sani, &ec);
-                                        let t = self.fresh_tmp();
-                                        let r = self.fresh_tmp();
+                                        // Plan 145.1 — portable (MSVC C2059): compound literal +
+                                        // nova_npo_from_tagged_int (array.h) вместо GNU
+                                        // statement-expression. NPO Option = { value }; источник
+                                        // (array_get) single-eval внутри хелпера.
                                         return Ok(format!(
-                                            "({{ NovaOpt_nova_int {t} = nova_array_get_nova_int({}); \
-                                             NovaOpt_{sani} {r}; {r}.value = {t}.tag ? ({ec}){t}.value : ({ec})0; {r}; }})",
-                                            arg_strs.join(", "), t = t, r = r, sani = sani, ec = ec));
+                                            "(NovaOpt_{sani}){{ .value = ({ec})nova_npo_from_tagged_int(nova_array_get_nova_int({args})) }}",
+                                            sani = sani, ec = ec, args = arg_strs.join(", ")));
                                     }
                                 }
                             }
