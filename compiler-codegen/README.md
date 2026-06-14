@@ -172,6 +172,33 @@ CLI-флаги для `compile`:
 Заголовки (`array.h`, `effects.h`, `fibers.h`, `cast.h`, `channels.h`,
 `sync.h`, `minicoro.h`, `nova_rt.h`) — header-only.
 
+### MSVC-портируемость генерируемого C (Plan 82 / 145)
+
+`nova test --toolchain msvc` собирает через `cl.exe` (vcvars auto-detect).
+cl.exe в permissive C-режиме (раннер НЕ использует `/std:c11` — та опция
+ломает MS-extension struct-cast'ы, что эмитит codegen). Отсюда **конвенция:
+генерируемый C и рантайм-заголовки не должны содержать GNU-расширений**,
+которых нет у cl.exe:
+
+- **НЕ эмитить GNU statement-expression `({ ... })` и `__typeof__`** (cl.exe →
+  C2059). Для значение-возвращающих многошаговых конструкций — выносить в
+  `static inline`-хелпер в `nova_rt/array.h`. Индексация/слайсы/heap-box/
+  bitcast используют generic-хелперы через `void*` (тип-лаундеринг снимает
+  strict-aliasing) + общий header `NovaArrHdr { void* data; i64 len; i64 cap }`
+  (layout NovaArray ≡ Vec): `nova_idx_chk/nochk`, `nova_vec_slice_chk/nochk`,
+  `nova_str_slice_chk/nochk` (+`*_to_end_*`), `nova_box_value`, `nova_bits_i2f`.
+  Сайт даёт элемент-тип `(ELEM*)`-кастом + `sizeof(ELEM)`; результат — lvalue
+  (`*(T*)…`), оба подвыражения single-eval (аргументы fn).
+- **C11 keyword'ы и GCC/Clang builtin'ы** (`_Static_assert`, `_Alignas`,
+  `__atomic_*`, `__builtin_*`) — шимятся в `nova_rt/nova_msvc_compat.h`,
+  force-included (`/FI`) в каждый TU под `_MSC_VER && !__clang__`. Новый
+  builtin в рантайме → добавить шим туда (иначе C2143/C2065/LNK2019).
+
+Остаток несовместимостей (узкие, Plan 145.1 / `[M-145-msvc-remaining-stmt-expr]`):
+struct-element write по индексу (`vec_of_struct[i]=val`, C2440 на присваивании
+struct через `*(struct*)void_ptr`), heap-box value-rvalue, Option-get composite,
+record-invariant wrap — всё ещё stmt-expr.
+
 ### Path/module enforcement (D78)
 
 Если файл лежит внутри пакета (`nova.toml` в parent dirs), компилятор

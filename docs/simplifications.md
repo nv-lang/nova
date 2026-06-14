@@ -36419,3 +36419,35 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   (вне scope): литерал-операнды (i+1, i*2) codegen вообще не чекает (rty литерала ≠ nova_int) — поэтому
   always-safe тесты используют var+var (i+j) паттерны. * нелинеен → Z3 часто Unknown → консервативно чек
   (не упрощение — soundness: никогда не элидируем без пруфа).
+
+[2026-06-14] Plan 145 (MSVC codegen portability, ветка plan-145, НЕ merged): восстановлен MSVC (был
+  сломан широко — регрессия после Plan 82 1049/16). КЛЮЧЕВОЕ: план называл 1 причину (indexing
+  stmt-expr), реально MSVC ломали 4 НЕЗАВИСИМЫЕ проблемы каскадом (C2059→C2143→LNK2019→C2440),
+  каждый фикс открывал следующую:
+  (1) GNU statement-expression ({...})+__typeof__ в генерируемом C (индексация 1D/2D/Vec, Vec/str
+  slice, heap-box Err-payload, int→f64 bitcast) → cl.exe C2059. Фикс: portable inline-хелперы в
+  array.h. НАХОДКА (улучшение vs §4 per-type-синтеза): layout NovaArray≡Vec ({ptr data;i64 len;i64
+  cap}) → ОДИН generic-хелпер через void* (тип-лаундеринг снимает strict-aliasing) + общий
+  NovaArrHdr-каст; сайт даёт (ELEM*)+sizeof(ELEM); single-eval (аргументы fn) + lvalue (*(T*)…).
+  Хелперы: nova_idx_chk/nochk, nova_vec_slice_chk/nochk, nova_str_slice_chk/nochk(+*_to_end_* для
+  open-ended single-eval, с UTF-8 boundary guard), nova_box_value (memcpy, адресуемый Err._0),
+  nova_bits_i2f.
+  (2) _Static_assert (C11) в fiber_arena.h (Plan 149) → C2143: раннер компилит БЕЗ /std:c11 (та
+  опция ломает MS-extension struct-cast'ы codegen'а), а в permissive-режиме _Static_assert не keyword.
+  Рубил ВСЮ MSVC-сборку рантайма первым. Фикс: шим в nova_msvc_compat.h (negative-array-size трюк).
+  (3) Неполный __atomic_* набор → LNK2019: рантайм (Plan 103 sync / 83.12 net / eventloop) использует
+  атомики, добавленные ПОСЛЕ Plan-82 compat-слоя (fetch_and/or/xor/nand, add_fetch/sub_fetch,
+  fetch_max, non-_n load/store); net.obj/eventloop.obj линкуются ВСЕГДА → ломали ЛЮБОЙ MSVC-тест.
+  Фикс: дошимил тем же паттерном (_Interlocked* + sizeof-dispatch; nand/max через CAS-loop).
+  Результат: clang 0 net-new FAIL (22 директории; +2 fixed: plan138_2 t2_vec_mut_index, t7_vec_as_ptr —
+  lvalue write/as_ptr теперь корректен); MSVC зелёный на plan90/90_1/96/131/152_1/152_2/generics/basics.
+  C-инспекция: на index-путях __typeof__=0, stmt-expr=0. 6 фикстур plan145 (clang 6/6; MSVC 5/6).
+  ОСТАТОК (followup [M-145-msvc-remaining-stmt-expr] → Plan 145.1; НЕ упрощение — узкие пути,
+  раскрылись ПОСЛЕ устранения главных блокеров, в исходном scope §4 не значились): (a) struct-element
+  write по индексу (vec_of_struct[i]=val) → cl.exe C2440 на присваивании struct-значения через
+  *(struct*)void_ptr-lvalue (init из того же lvalue — ОК, Vec[int]-write — ОК, только struct-элементы;
+  3 теста: plan145 t2, plan138 t_vec_write_index, plan138_1); нужен memcpy-set helper для write-index.
+  (b) heap-box value-rvalue (throw <non-ptr value>; src не адресуем). (c) Option-get repack composite
+  (arr.get(i); нужен temp + generated NovaOpt-тип, недоступный в array.h). (d) record-invariant wrap.
+  Маркер [M-msvc-bounds-check-stmt-expr] ✅ ЗАКРЫТ. Откат: const-drop strlit (попытка чинить C2440)
+  отменён — не починил void-deref-аспект, немотивированное послабление (literals non-const).

@@ -37938,3 +37938,33 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   (OE1-OE5, вкл. 2 runtime-panic neg) + регрессии contracts 314/0, plan140 51/0, basics 8/0, Trivial
   1/0/4skip (OE6/OE7). 0 регрессий, soundness неизменна. D272 + D24/04-effects/open-questions amend +
   contracts.md/.ru + README + backlog (marker CLOSED).
+
+[2026-06-14] Plan 145 — MSVC codegen portability: восстановление MSVC (ветка plan-145, worktree
+  nova-p145, от main c0f269dd, НЕ merged). MSVC был сломан широко (регрессия после Plan 82 1049/16).
+  КЛЮЧЕВОЙ ВЫВОД: план называл 1 причину (indexing stmt-expr), но при MSVC-валидации вскрылось 4
+  НЕЗАВИСИМЫЕ проблемы каскадом — каждый фикс открывал следующую (C2059 → C2143 → LNK2019 → C2440).
+  (1) GNU statement-expression ({...})+__typeof__ в генерируемом C (cl.exe не поддерживает → C2059):
+  индексация массива/Vec (1D/2D/Vec inline), Vec-slice, str-slice, heap-box Err-payload, int→f64
+  bit-reinterpret. Фикс — portable inline-хелперы в array.h. Дизайн-находка (понимание-фаза +
+  adversarial-review workflow, 4+5 агентов): layout NovaArray ≡ Vec ({ptr data; i64 len; i64 cap},
+  data первым) → ОДИН generic-хелпер через void* (тип-лаундеринг снимает strict-aliasing) + общий
+  NovaArrHdr-каст, вместо per-type-синтеза из §4; сайт даёт (ELEM*)-каст + sizeof(ELEM); single-eval
+  (оба подвыр. — аргументы fn) + lvalue (*(T*)…). nova_idx_chk/nochk, nova_vec_slice_chk/nochk,
+  nova_str_slice_chk/nochk (+ *_to_end_* для open-ended single-eval; UTF-8 boundary guard в хелпере),
+  nova_box_value (memcpy), nova_bits_i2f. (2) _Static_assert (C11) в fiber_arena.h (Plan 149) → C2143:
+  раннер без /std:c11 (та опция ломает MS-extension struct-cast'ы) → keyword не определён, рубил всю
+  MSVC-сборку рантайма. Фикс — шим в nova_msvc_compat.h (force /FI). (3) неполный __atomic_* набор →
+  LNK2019 (net/eventloop всегда линкуются, ломали любой MSVC-тест): дошимлены fetch_and/or/xor/nand,
+  add_fetch/sub_fetch, fetch_max, non-_n load/store (тот же _Interlocked* + sizeof-dispatch; nand/max
+  CAS-loop). Adversarial-review нашёл false-positive «CRITICAL» (self-field nova_int hardcode) —
+  опровергнут чтением регистрации (array_element_types: фильтр elem_c.ends_with('*') → только
+  pointer-элементы, storage всегда nova_int) + эмпирикой (plan91_fe1 10/0, t4 sizeof(nova_byte)).
+  Валидация: clang 22 директории 0 net-new FAIL (+2 fixed: plan138_2 t2_vec_mut_index/t7_vec_as_ptr —
+  lvalue write/as_ptr); MSVC зелёный plan90/90_1/96/131/152_1/152_2/generics/basics; C-инспекция
+  __typeof__=0 на индексах. 6 фикстур plan145 (clang 6/6, MSVC 5/6). Коммиты 1407344c (index),
+  ece06025 (_Static_assert), d54d36bc (slice/box/bitcast), 89c2c051 (atomics), + docs/logs. ОСТАТОК →
+  [M-145-msvc-remaining-stmt-expr] / Plan 145.1: struct-element write по индексу (C2440 на
+  *(struct*)void_ptr-присваивании; 3 теста), heap-box value-rvalue, Option-get composite repack,
+  record-invariant wrap (узкие пути, раскрылись после устранения главных блокеров). [M-msvc-bounds-
+  check-stmt-expr] ✅ ЗАКРЫТ. Параллельно (отдельная задача, другой агент): Plan 134 (убрать ptr→*())
+  доведён до прода в worktree nova-p134/ветка plan-134 (5 коммитов, 0 net-new FAIL, НЕ merged).
