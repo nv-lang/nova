@@ -1028,3 +1028,349 @@ pub fn render_case_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::Resul
     }
     Ok(out)
 }
+
+// ─── Plan 152.5b: Unicode collation (UCA / DUCET, UTS #10) ───
+
+/// A single DUCET collation element: (variable, primary, secondary, tertiary).
+/// All weights are 16-bit. `variable` marks the `*`-prefixed CEs in allkeys.txt
+/// (punctuation/symbols), which the Shifted variable-weighting variant demotes to
+/// the quaternary level.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct CollElem {
+    pub variable: bool,
+    pub p: u16,
+    pub s: u16,
+    pub t: u16,
+}
+
+/// Parsed DUCET tables (the Default Unicode Collation Element Table).
+pub struct CollationTables {
+    /// Single codepoint -> its collation-element list (longest match has length 1).
+    pub single: BTreeMap<u32, Vec<CollElem>>,
+    /// Multi-codepoint contractions, keyed by the FIRST codepoint -> list of
+    /// (remaining-codepoints, CE-list). Sorted longest-first per key so the
+    /// runtime greedily takes the longest match.
+    pub contractions: BTreeMap<u32, Vec<(Vec<u32>, Vec<CollElem>)>>,
+    /// Implicit-weight ranges (UTS #10 §10.1) NOT listed in allkeys.txt:
+    /// (lo, hi, base, kind). kind 0 = Han/default formula
+    /// (AAAA = base + (cp >> 15), BBBB = (cp & 0x7FFF) | 0x8000); kind 1 =
+    /// siniform `@implicitweights` block (AAAA = base, BBBB = (cp - lo) | 0x8000).
+    /// Sorted by lo for binary search. cps matching none use base 0xFBC0, kind 0.
+    pub implicit: Vec<(u32, u32, u16, u8)>,
+    /// `true` if any variable CE exists (sanity; always true for real DUCET).
+    pub has_variable: bool,
+}
+
+/// Parse one allkeys.txt collation-element group `[*.PPPP.SSSS.TTTT]` (or `.`
+/// prefix for non-variable). Returns all CEs on the line in order.
+fn parse_coll_elems(rhs: &str) -> Vec<CollElem> {
+    let mut out = Vec::new();
+    let bytes = rhs.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] != b'[' {
+            i += 1;
+            continue;
+        }
+        // Find the closing ']'.
+        let start = i + 1;
+        let end = match rhs[start..].find(']') {
+            Some(e) => start + e,
+            None => break,
+        };
+        let body = &rhs[start..end]; // "*PPPP.SSSS.TTTT" or ".PPPP.SSSS.TTTT"
+        let variable = body.starts_with('*');
+        // Strip the leading marker ('*' or '.') then split on '.'.
+        let rest = &body[1..];
+        let parts: Vec<&str> = rest.split('.').collect();
+        if parts.len() == 3 {
+            if let (Ok(p), Ok(s), Ok(t)) = (
+                u16::from_str_radix(parts[0].trim(), 16),
+                u16::from_str_radix(parts[1].trim(), 16),
+                u16::from_str_radix(parts[2].trim(), 16),
+            ) {
+                out.push(CollElem { variable, p, s, t });
+            }
+        }
+        i = end + 1;
+    }
+    out
+}
+
+/// Parse `allkeys.txt` (DUCET) + `PropList.txt` (Unified_Ideograph) into the
+/// collation tables. The `@implicitweights` directives in allkeys.txt give the
+/// siniform blocks (Tangut/Nushu/Khitan). Han implicit ranges come from
+/// `Unified_Ideograph`, split into core (CJK Unified/Compat blocks, base 0xFB40)
+/// vs extension (base 0xFB80).
+pub fn parse_collation_tables(ucd_dir: &Path) -> anyhow::Result<CollationTables> {
+    let read = |name: &str| -> anyhow::Result<String> {
+        let p = ucd_dir.join(name);
+        std::fs::read_to_string(&p)
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {}", p.display(), e))
+    };
+
+    let mut single: BTreeMap<u32, Vec<CollElem>> = BTreeMap::new();
+    let mut contractions: BTreeMap<u32, Vec<(Vec<u32>, Vec<CollElem>)>> = BTreeMap::new();
+    let mut implicit: Vec<(u32, u32, u16, u8)> = Vec::new();
+    let mut has_variable = false;
+
+    for line in read("allkeys.txt")?.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // `@implicitweights LO..HI; BASE` — siniform block (kind 1).
+        if let Some(rest) = line.strip_prefix("@implicitweights") {
+            let rest = rest.split('#').next().unwrap_or("").trim();
+            if let Some((range, base)) = rest.split_once(';') {
+                if let (Some((lo, hi)), Ok(b)) = (
+                    parse_range_pair(range.trim()),
+                    u16::from_str_radix(base.trim(), 16),
+                ) {
+                    implicit.push((lo, hi, b, 1));
+                }
+            }
+            continue;
+        }
+        if line.starts_with('@') || line.starts_with('#') {
+            continue;
+        }
+        // "CP [CP ...] ; [.PPPP.SSSS.TTTT][...] # comment"
+        let core = line.split('#').next().unwrap_or("");
+        let (lhs, rhs) = match core.split_once(';') {
+            Some(x) => x,
+            None => continue,
+        };
+        let cps: Vec<u32> = lhs
+            .split_whitespace()
+            .filter_map(|x| u32::from_str_radix(x, 16).ok())
+            .collect();
+        if cps.is_empty() {
+            continue;
+        }
+        let ces = parse_coll_elems(rhs);
+        if ces.is_empty() {
+            continue;
+        }
+        if ces.iter().any(|c| c.variable) {
+            has_variable = true;
+        }
+        if cps.len() == 1 {
+            single.insert(cps[0], ces);
+        } else {
+            contractions
+                .entry(cps[0])
+                .or_default()
+                .push((cps[1..].to_vec(), ces));
+        }
+    }
+
+    // Longest-first per first-cp so the runtime greedy longest-match is correct.
+    for v in contractions.values_mut() {
+        v.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then(a.0.cmp(&b.0)));
+    }
+
+    // --- Han implicit ranges from PropList Unified_Ideograph (kind 0) ---
+    // Core Han = Unified_Ideograph within the CJK Unified Ideographs block
+    // (4E00..9FFF) or the CJK Compatibility Ideographs block (F900..FAFF):
+    // base 0xFB40. Everything else Unified_Ideograph: base 0xFB80.
+    let is_core = |lo: u32, hi: u32| -> bool {
+        // These UCD ranges never straddle a block boundary, so testing lo suffices.
+        (0x4E00..=0x9FFF).contains(&lo)
+            || (0xF900..=0xFAFF).contains(&lo)
+            || (0x4E00..=0x9FFF).contains(&hi)
+            || (0xF900..=0xFAFF).contains(&hi)
+    };
+    for line in read("PropList.txt")?.lines() {
+        let core = line.split('#').next().unwrap_or("").trim();
+        if core.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = core.split(';').collect();
+        if parts.len() < 2 || parts[1].trim() != "Unified_Ideograph" {
+            continue;
+        }
+        if let Some((lo, hi)) = parse_range_pair(parts[0]) {
+            let base = if is_core(lo, hi) { 0xFB40u16 } else { 0xFB80u16 };
+            implicit.push((lo, hi, base, 0));
+        }
+    }
+    implicit.sort_by_key(|&(lo, _, _, _)| lo);
+
+    Ok(CollationTables { single, contractions, implicit, has_variable })
+}
+
+/// Encode a CE list as "vP.S.T|vP.S.T|.." (lowercase hex; `*` prefix = variable).
+fn emit_coll_elems(ces: &[CollElem]) -> String {
+    ces.iter()
+        .map(|c| {
+            format!(
+                "{}{:x}.{:x}.{:x}",
+                if c.variable { "*" } else { "" },
+                c.p,
+                c.s,
+                c.t
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+/// Render `std/unicode/collate_data.nv` (peer of collate.nv). Three string tables:
+///   SINGLE_DATA      : "cp:ce|ce;..."             single codepoint -> CE list
+///   CONTRACTION_DATA : "cp0:r1,r2=ce|ce#..;..."   first cp -> contraction variants
+///   IMPLICIT_DATA    : "lo,hi,base,kind;..."      implicit-weight ranges (UTS#10 §10.1)
+/// where each CE = "[*]P.S.T" (lowercase hex; `*` = variable, Shifted-demoted).
+pub fn render_collate_data_nv(t: &CollationTables, version: &str) -> String {
+    let mut out = String::new();
+    out.push_str("// AUTO-GENERATED by `nova-codegen unicode`. DO NOT EDIT BY HAND.\n");
+    out.push_str("// Source: Unicode Collation Algorithm DUCET allkeys.txt (UTS #10)\n");
+    out.push_str("//         + PropList.txt (Unified_Ideograph, for implicit Han weights).\n");
+    out.push_str("// Regenerate: nova-codegen unicode --ucd-dir <UCA+UCD-dir> --root <repo>\n");
+    out.push_str("//\n");
+    out.push_str("// SINGLE_DATA      : \"cp:ce|ce;..\"             codepoint -> collation-element list\n");
+    out.push_str("// CONTRACTION_DATA : \"cp0:rest=ces#rest=ces;..\" first cp -> contraction variants\n");
+    out.push_str("//   (rest = trailing cps `a,b`; ces = `ce|ce`; variants longest-first)\n");
+    out.push_str("// IMPLICIT_DATA    : \"lo,hi,base,kind;..\"     UTS#10 §10.1 implicit ranges\n");
+    out.push_str("//   kind 0: AAAA=base+(cp>>15), BBBB=(cp&7fff)|8000 (Han core fb40 / ext fb80;\n");
+    out.push_str("//           fallback base fbc0 in collate.nv for unranged cps)\n");
+    out.push_str("//   kind 1: AAAA=base, BBBB=(cp-lo)|8000 (siniform @implicitweights blocks)\n");
+    out.push_str("// Each CE = \"[*]P.S.T\" lowercase hex; `*` prefix = variable (Shifted-demoted to L4).\n");
+    out.push('\n');
+    out.push_str("module std.unicode\n");
+    out.push('\n');
+    out.push_str(&format!(
+        "export const COLLATE_UNICODE_VERSION str = \"{}\"\n\n",
+        version
+    ));
+    // SINGLE_DATA
+    let single_s: Vec<String> = t
+        .single
+        .iter()
+        .map(|(cp, ces)| format!("{:x}:{}", cp, emit_coll_elems(ces)))
+        .collect();
+    out.push_str(&format!("const SINGLE_DATA str = \"{}\"\n\n", single_s.join(";")));
+    // CONTRACTION_DATA
+    let contr_s: Vec<String> = t
+        .contractions
+        .iter()
+        .map(|(cp0, variants)| {
+            let vs: Vec<String> = variants
+                .iter()
+                .map(|(rest, ces)| {
+                    let rs: Vec<String> = rest.iter().map(|x| format!("{:x}", x)).collect();
+                    format!("{}={}", rs.join(","), emit_coll_elems(ces))
+                })
+                .collect();
+            format!("{:x}:{}", cp0, vs.join("#"))
+        })
+        .collect();
+    out.push_str(&format!(
+        "const CONTRACTION_DATA str = \"{}\"\n\n",
+        contr_s.join(";")
+    ));
+    // IMPLICIT_DATA
+    let impl_s: Vec<String> = t
+        .implicit
+        .iter()
+        .map(|&(lo, hi, base, kind)| format!("{:x},{:x},{:x},{:x}", lo, hi, base, kind))
+        .collect();
+    out.push_str(&format!("const IMPLICIT_DATA str = \"{}\"\n", impl_s.join(";")));
+    out
+}
+
+/// Render `nova_tests/plan152_5/collation_conformance.nv` — the official UTS #10
+/// conformance check (CollationTest_SHIFTED.txt). Each non-comment line is a
+/// string (space-separated hex cps); the file lists them in non-decreasing
+/// collation order under the **Shifted** variable-weighting variant. For each
+/// consecutive pair in a (uniform-spread) sample we assert
+/// `compare(prev, cur) != Greater` — i.e. the collator never reverses the file's
+/// canonical order. (We use the SHIFTED file because collate.nv implements the
+/// Shifted variant.) Cases are chunked to keep generated C functions small.
+pub fn render_collation_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::Result<String> {
+    // The CollationTest files live under a `CollationTest/` subdir of the zip.
+    let candidates = [
+        ucd_dir.join("CollationTest/CollationTest_SHIFTED.txt"),
+        ucd_dir.join("CollationTest_SHIFTED.txt"),
+    ];
+    let path = candidates
+        .iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "CollationTest_SHIFTED.txt not found (looked in {:?})",
+                candidates
+            )
+        })?;
+    let data = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("failed to read {}: {}", path.display(), e))?;
+    let esc = |cps: &[u32]| -> String {
+        let mut s = String::new();
+        for &cp in cps {
+            s.push_str(&format!("\\u{{{:x}}}", cp));
+        }
+        s
+    };
+    // Collect each data line's codepoint sequence (skip comments / blank / @).
+    let mut lines: Vec<Vec<u32>> = Vec::new();
+    for line in data.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('@') {
+            continue;
+        }
+        // "CP CP CP;\t# comment ..." — take the part before ';'.
+        let core = line.split(';').next().unwrap_or("");
+        let cps: Vec<u32> = core
+            .split_whitespace()
+            .filter_map(|x| u32::from_str_radix(x, 16).ok())
+            .collect();
+        if !cps.is_empty() {
+            lines.push(cps);
+        }
+    }
+    // Uniform spread across the whole file (spans all scripts / weight ranges),
+    // keeping ADJACENT pairs so the order assertion is meaningful. We sample
+    // `limit` consecutive-pair windows evenly: pick start indices, assert
+    // compare(line[i], line[i+1]) != Greater.
+    let total_pairs = lines.len().saturating_sub(1);
+    let take = limit.min(total_pairs);
+    let mut idxs: Vec<usize> = Vec::with_capacity(take);
+    if take == total_pairs {
+        idxs.extend(0..total_pairs);
+    } else if take > 0 {
+        for i in 0..take {
+            idxs.push(i * total_pairs / take);
+        }
+    }
+    let mut out = String::new();
+    out.push_str("// AUTO-GENERATED by `nova-codegen unicode --emit-conformance`. DO NOT EDIT.\n");
+    out.push_str("// UTS #10 collation conformance from CollationTest_SHIFTED.txt: the file\n");
+    out.push_str("// lists strings in non-decreasing DUCET order (Shifted variable weighting).\n");
+    out.push_str("// For sampled consecutive pairs assert collate_compare(prev, cur) <= 0\n");
+    out.push_str("// (D183: comparison returns int -1/0/+1, not an Ordering sum-type).\n");
+    out.push_str(&format!(
+        "// Coverage: uniform spread = {} of {} consecutive pairs.\n",
+        idxs.len(),
+        total_pairs
+    ));
+    out.push_str("module plan152_5.collation_conformance\n\n");
+    out.push_str("import std.unicode.{collate_compare}\n\n");
+    const CHUNK: usize = 250;
+    for (ci, chunk) in idxs.chunks(CHUNK).enumerate() {
+        out.push_str(&format!(
+            "test \"UTS#10 CollationTest_SHIFTED order (chunk {}, {} pairs)\" {{\n",
+            ci,
+            chunk.len()
+        ));
+        for &i in chunk {
+            let prev = esc(&lines[i]);
+            let cur = esc(&lines[i + 1]);
+            out.push_str(&format!(
+                "    assert(collate_compare(\"{}\", \"{}\") <= 0)\n",
+                prev, cur
+            ));
+        }
+        out.push_str("}\n\n");
+    }
+    Ok(out)
+}

@@ -1,0 +1,349 @@
+// Plan 152.5b (D254): Unicode collation — UCA / DUCET (UTS #10).
+//
+// Opt-in `std.unicode` peer (NOT prelude — `str` NEVER collates silently; the
+// default `str` Ord is byte-lexicographic, D254). Co-equal with `collate_data.nv`
+// (generated DUCET tables) in the `std.unicode` folder-module, so the `*_DATA`
+// constants are visible here directly. Reuses peer helpers from normalize.nv
+// (hex / str_to_cps / cps_to_str / parse_cp_list / normalize_nfd) and the table
+// parsers below.
+//
+// Algorithm (UTS #10, Default Unicode Collation Element Table):
+//   1. Normalize the input to NFD (canonical decomposition + ordering).
+//   2. Map the normalized codepoints to collation elements: greedy longest-match
+//      against the DUCET (contractions first, then single cps); codepoints with
+//      no table entry (CJK ideographs, siniform blocks, unassigned) get
+//      algorithmic IMPLICIT weights (UTS #10 §10.1).
+//   3. Build the multi-level sort key under the **Shifted** variable-weighting
+//      variant (§4): variable CEs are demoted to level 4; the key is
+//      L1.. 0 L2.. 0 L3.. 0 L4.. concatenated.
+//   4. compare(a, b) = lexicographic compare of the two sort keys.
+//
+// SCOPE (honest): this implements the **DUCET (default, non-tailored) collation**
+// with the **Shifted** variable-weighting variant — matching the official
+// CollationTest_SHIFTED.txt conformance oracle. Locale tailoring (CLDR) is NOT
+// implemented (see `[M-152-collation-tailoring]`); for tailored ordering use a
+// future locale Collator. This is the same scope as Rust's `unicode-collation`
+// DUCET mode / ICU root collator without tailoring.
+
+module std.unicode
+
+import std.collections.hashmap.{HashMap}
+import std.collections.vec.{Vec}
+
+// ── DUCET table parsing (lazy-static, built once on first touch) ──
+
+// SINGLE_DATA "cp:ce|ce;.." -> { cp -> "ce|ce" } (CE list kept as text, parsed
+// per-codepoint by `single_ces`). Reuses the normalize.nv `:`-split shape.
+fn parse_collate_single(data str) -> HashMap[int, str] {
+    ro entries = data.split(";")
+    mut m = HashMap[int, str].with_capacity(entries.len() + 8)
+    for entry in entries {
+        match entry.split_once(":") {
+            Some((k, v)) => {
+                ro cp = hex(k)
+                if cp >= 0 { m.insert(cp, v) }
+            }
+            None => {}
+        }
+    }
+    m
+}
+
+// CONTRACTION_DATA "cp0:rest=ces#rest=ces;.." -> { cp0 -> "rest=ces#rest=ces" }
+// keyed by the FIRST codepoint; variants kept as text (parsed by `match_contraction`).
+fn parse_collate_contractions(data str) -> HashMap[int, str] {
+    ro entries = data.split(";")
+    mut m = HashMap[int, str].with_capacity(entries.len() + 8)
+    for entry in entries {
+        match entry.split_once(":") {
+            Some((k, v)) => {
+                ro cp = hex(k)
+                if cp >= 0 { m.insert(cp, v) }
+            }
+            None => {}
+        }
+    }
+    m
+}
+
+// IMPLICIT_DATA "lo,hi,base,kind;.." -> flat [lo,hi,base,kind, ..] (sorted by lo).
+fn parse_implicit(data str) -> Vec[int] {
+    mut out = Vec[int].with_capacity(128)
+    for entry in data.split(";") {
+        for f in entry.split(",") {
+            ro v = hex(f)
+            if v >= 0 { out.push(v) }
+        }
+    }
+    out
+}
+
+ro collate_single_map HashMap[int, str] = parse_collate_single(SINGLE_DATA)
+ro collate_contraction_map HashMap[int, str] = parse_collate_contractions(CONTRACTION_DATA)
+ro implicit_flat Vec[int] = parse_implicit(IMPLICIT_DATA)
+
+// ── collation-element parsing ──
+// One CE is encoded "[*]P.S.T". We unpack it into 4 ints appended to `acc`:
+//   [variable(0/1), primary, secondary, tertiary]
+// so the whole CE stream is a flat Vec[int] of quadruples (avoids a struct/tuple
+// HashMap value — see [M-hashmap-tuple-key-mono]).
+fn push_one_ce(mut acc Vec[int], ce str) -> int {
+    mut variable = 0
+    mut body = ce
+    match ce.strip_prefix("*") {
+        Some(rest) => { variable = 1; body = rest }
+        None => {}
+    }
+    ro parts = body.split(".")
+    if parts.len() == 3 {
+        ro p = hex(parts[0])
+        ro s = hex(parts[1])
+        ro t = hex(parts[2])
+        if p >= 0 && s >= 0 && t >= 0 {
+            acc.push(variable)
+            acc.push(p)
+            acc.push(s)
+            acc.push(t)
+        }
+    }
+    0
+}
+
+// Parse a "ce|ce|.." CE list into flat quadruples appended to `acc`.
+fn push_ce_list(mut acc Vec[int], ces str) {
+    for ce in ces.split("|") { push_one_ce(acc, ce) }
+}
+
+// Implicit weights (UTS #10 §10.1) for a codepoint with no DUCET entry. Appends
+// TWO collation elements (4 ints each) to `acc`:
+//   CE1 = [0, AAAA, 0x20, 0x02]   CE2 = [0, BBBB, 0, 0]
+// kind 0 (Han/default): AAAA = base + (cp >> 15), BBBB = (cp & 0x7fff) | 0x8000.
+// kind 1 (siniform):    AAAA = base,              BBBB = (cp - lo) | 0x8000.
+// Codepoints in no implicit range fall back to base 0xFBC0, kind 0.
+fn push_implicit(mut acc Vec[int], cp int) {
+    mut base = 0xFBC0
+    mut kind = 0
+    mut lo = 0
+    ro count = implicit_flat.len() / 4
+    mut i = 0
+    mut found = false
+    while i < count && !found {
+        ro rlo = implicit_flat[i * 4]
+        ro rhi = implicit_flat[i * 4 + 1]
+        if cp >= rlo && cp <= rhi {
+            base = implicit_flat[i * 4 + 2]
+            kind = implicit_flat[i * 4 + 3]
+            lo = rlo
+            found = true
+        }
+        i = i + 1
+    }
+    mut aaaa = 0
+    mut bbbb = 0
+    if kind == 1 {
+        aaaa = base
+        bbbb = (cp - lo) | 0x8000
+    } else {
+        aaaa = base + (cp >> 15)
+        bbbb = (cp & 0x7FFF) | 0x8000
+    }
+    acc.push(0)
+    acc.push(aaaa)
+    acc.push(0x20)
+    acc.push(0x02)
+    acc.push(0)
+    acc.push(bbbb)
+    acc.push(0)
+    acc.push(0)
+}
+
+// Greedy longest-match contraction at position `i` of `cps`. Returns the number
+// of codepoints consumed (>= 2) on a match and appends its CEs to `acc`; returns
+// 0 if no contraction starting at cps[i] applies. Contraction variants are stored
+// longest-first, so the first matching variant is the longest.
+fn match_contraction(mut acc Vec[int], cps Vec[int], i int) -> int {
+    ro first = cps[i]
+    mut consumed = 0
+    match collate_contraction_map.get(first) {
+        Some(variants) => {
+            for variant in variants.split("#") {
+                if consumed == 0 {
+                    match variant.split_once("=") {
+                        Some((rest, ces)) => {
+                            ro tail = parse_cp_list(rest)
+                            ro need = tail.len()
+                            if need >= 1 && i + need < cps.len() + 1 {
+                                mut ok = true
+                                mut k = 0
+                                while k < need && ok {
+                                    if cps[i + 1 + k] != tail[k] { ok = false }
+                                    k = k + 1
+                                }
+                                if ok {
+                                    push_ce_list(acc, ces)
+                                    consumed = need + 1
+                                }
+                            }
+                        }
+                        None => {}
+                    }
+                }
+            }
+        }
+        None => {}
+    }
+    consumed
+}
+
+// Map the NFD-normalized codepoints of `s` to the flat collation-element stream
+// (quadruples [variable, primary, secondary, tertiary]).
+fn collation_elements(s str) -> Vec[int] {
+    ro cps = str_to_cps(normalize_nfd(s))
+    ro n = cps.len()
+    mut acc = Vec[int].with_capacity(n * 8)
+    mut i = 0
+    while i < n {
+        ro consumed = match_contraction(acc, cps, i)
+        if consumed > 0 {
+            i = i + consumed
+        } else {
+            ro cp = cps[i]
+            match collate_single_map.get(cp) {
+                Some(ces) => { push_ce_list(acc, ces) }
+                None => { push_implicit(acc, cp) }
+            }
+            i = i + 1
+        }
+    }
+    acc
+}
+
+// ── sort-key construction (Shifted variable weighting, UTS #10 §4) ──
+//
+// L4 (quaternary) rule for Shifted:
+//   - variable CE:                        L1=L2=L3=0, L4 = original L1
+//   - ignorable (L1==0) after a variable: L1=L2=L3=L4=0  (fully removed)
+//   - completely ignorable (all zero) not after variable: removed (no L4)
+//   - ignorable (L1==0, but L2/L3 != 0) not after variable: L4 = 0xFFFF
+//   - normal non-variable (L1 != 0):      L4 = 0xFFFF
+// A non-ignorable (L1 != 0) CE clears the "after variable" state.
+//
+// Sort key = [ all L1>0 primaries ] 0 [ all L2>0 secondaries ] 0
+//            [ all L3>0 tertiaries ] 0 [ all L4 quaternaries ].
+// (Zero weights are skipped at each level; the 0 separators keep levels apart so
+// a shorter run at level N always sorts before a longer one — standard UCA.)
+const L4_MAX int = 0xFFFF
+
+/// Build the UCA sort key for `s` as a `[]int` of 16-bit weights (Shifted variant).
+/// `compare`/`eq` byte-compare these keys. Caching a precomputed key for repeated
+/// comparisons (e.g. sorting) avoids re-normalizing per comparison.
+export fn collate_sort_key(s str) -> Vec[int] {
+    ro ce = collation_elements(s)
+    ro m = ce.len() / 4
+    mut prim = Vec[int].with_capacity(m + 1)
+    mut sec = Vec[int].with_capacity(m + 1)
+    mut tert = Vec[int].with_capacity(m + 1)
+    mut quat = Vec[int].with_capacity(m + 1)
+    mut after_variable = false
+    mut j = 0
+    while j < m {
+        ro variable = ce[j * 4]
+        ro p = ce[j * 4 + 1]
+        ro s2 = ce[j * 4 + 2]
+        ro t = ce[j * 4 + 3]
+        if variable == 1 {
+            // Demote: contributes only L4 = original primary.
+            if p != 0 { quat.push(p) }
+            after_variable = true
+        } else if p == 0 {
+            // Ignorable at the primary level.
+            if after_variable {
+                // Removed entirely (no weight at any level).
+            } else if s2 != 0 || t != 0 {
+                // Keep secondary/tertiary; L4 = FFFF.
+                if s2 != 0 { sec.push(s2) }
+                if t != 0 { tert.push(t) }
+                quat.push(L4_MAX)
+            }
+            // completely-ignorable (all zero) not after variable: drop silently.
+        } else {
+            // Normal non-variable, non-ignorable element.
+            prim.push(p)
+            if s2 != 0 { sec.push(s2) }
+            if t != 0 { tert.push(t) }
+            quat.push(L4_MAX)
+            after_variable = false
+        }
+        j = j + 1
+    }
+    mut key = Vec[int].with_capacity(prim.len() + sec.len() + tert.len() + quat.len() + 4)
+    for w in prim { key.push(w) }
+    key.push(0)
+    for w in sec { key.push(w) }
+    key.push(0)
+    for w in tert { key.push(w) }
+    key.push(0)
+    for w in quat { key.push(w) }
+    key
+}
+
+// Lexicographic compare of two weight keys: -1 / 0 / +1 (D183 int convention).
+fn compare_keys(a Vec[int], b Vec[int]) -> int {
+    ro na = a.len()
+    ro nb = b.len()
+    ro n = if na < nb { na } else { nb }
+    mut i = 0
+    mut result = 0
+    while i < n && result == 0 {
+        if a[i] < b[i] {
+            result = -1
+        } else if a[i] > b[i] {
+            result = 1
+        }
+        i = i + 1
+    }
+    if result == 0 {
+        if na < nb { result = -1 } else if na > nb { result = 1 }
+    }
+    result
+}
+
+/// Collate two strings under DUCET (Shifted variant). Returns -1 / 0 / +1 (D183
+/// int convention), matching `str @compare`. Analogous to JS `localeCompare`
+/// (root locale) / Java `Collator` (no tailoring). NOTE: this is opt-in — `str`'s
+/// default `<`/`compare` stays byte-lexicographic (D254).
+export fn collate_compare(a str, b str) -> int {
+    compare_keys(collate_sort_key(a), collate_sort_key(b))
+}
+
+/// True iff `a` and `b` collate equal under DUCET (Shifted). Equal collation does
+/// NOT imply byte equality (case/accent/punctuation may be folded into levels).
+export fn collate_eq(a str, b str) -> bool {
+    collate_compare(a, b) == 0
+}
+
+// ── Collator (key-caching convenience) ──
+//
+// A value-type wrapper that exposes the DUCET collator as an object, mirroring
+// `java.text.Collator` / `Intl.Collator`. Stateless for DUCET (no tailoring), so
+// it's a thin handle; `sort_key`/`compare` delegate to the free functions. A
+// future tailored Collator ([M-152-collation-tailoring]) would carry locale data.
+export type Collator value {
+    // DUCET has no per-instance state yet; the field reserves space for a future
+    // strength/locale parameter without changing the call sites.
+    strength int
+}
+
+// Strength = highest level compared. 4 = quaternary (default, full Shifted key).
+const STRENGTH_QUATERNARY int = 4
+
+/// The root (DUCET, non-tailored) collator. Method names are `order`/`key`/`same`
+/// (not the `@compare`/`@equal` protocol names) — collation is opt-in and must not
+/// be mistaken for `str`'s default byte Ord (D254).
+export fn Collator.root() -> Collator => { strength: STRENGTH_QUATERNARY }
+
+export fn Collator @order(a str, b str) -> int => collate_compare(a, b)
+
+export fn Collator @key(s str) -> Vec[int] => collate_sort_key(s)
+
+export fn Collator @same(a str, b str) -> bool => collate_eq(a, b)
