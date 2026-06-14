@@ -232,11 +232,25 @@
   (`x as f64`) + ветка в interp-map. Заодно починен общий codegen-баг: self-call `@m(args)`
   overload-резолв по типам аргументов (был только по `recv_mutable` → `@append(x as f64)`
   брал базовый str-overload). plan154_1 6/6.
-- **`[M-154.1-f32-literal-coercion]`** (floating, P2, **NEW** 2026-06-14): `Vec[f32].from([1.5, 2.5])`
-  мис-коэрсит f64 array-литералы в f32 (бит-реинтерпретация → мусорные значения в debug-выводе).
-  Скаляр `ro x f32 = 1.5` коэрсится верно; explicit `v.push(x)` тоже. Проблема — f32 элементы
-  в **array-литерале** под `Vec[f32].from`. Лечить: коэрсия f64-литералов → f32 при инференсе
-  типа элемента массива из контекста `Vec[f32]`. Не про Display/Debug.
+- **`[M-154.1-f32-literal-coercion]`** ✅ **RESOLVED 2026-06-14** (commit `4e0d340a`): приведение
+  числовых array-литералов к f32 из контекста — приведение кодогена в соответствие с уже
+  задокументированным правилом **[D44](../../spec/decisions/03-syntax.md#d44-числовые-литералы)**
+  (контекст переопределяет default-тип). `try_emit_typed_vec_literal` берёт float-hint когда ВСЕ
+  элементы — числовые литералы (FloatLit/IntLit); turbofish-static арг-array-литерал эмитится с
+  param-C-типом (узко: только array-литералы, иначе ломались Result-арги sort). Работает:
+  `Vec[f32].from([1.5,2.5])` / `from([1,2])` / `of(1.5,2)`. plan154_1 8/8.
+- **`[M-154.1-chained-vec-f32-method-misdispatch]`** (floating, P2, **NEW** 2026-06-14): chained
+  `Vec[f32].X().debug()` (напр. `Vec[f32].new().debug(a)` или `.from([...]).debug(a)`) мис-диспатчит
+  `.debug` на `str.debug` → передаёт `Vec[f32]*` в str-метод → CC-FAIL. Корень: `infer_expr_c_type`
+  turbofish-static-call return для f32 не даёт `Nova_Vec____nova_f32*` → `.debug` падает на
+  str-overload (добавлен в Ф.3). **Pre-existing** (с Ф.3 str @debug, в main), НЕ от literal-coercion
+  (срабатывает и на `.new()` без литералов). Vec[int] chained работает. Non-chained Vec[f32] работает.
+  Лечить: infer turbofish-static return type для f32. Класс Plan 154 (silent/wrong dispatch).
+- **`[M-float-roundtrip-printing]`** (floating, P3, выявлено в аудите 154.1): float→str
+  (`nova_f64_to_str`, и f32 через него) использует `%g` с дефолтной 6-знач точностью — **лосси**
+  на >6 значащих для f64 И f32 (не round-trip). Проектный стандарт, консистентный, НЕ регрессия;
+  но для прод-качества stdlib желателен shortest-round-trip формат (Ryū/Grisu). Затрагивает
+  весь stdlib-float — отдельная задача, не f32-специфична.
 - **`[M-float-roundtrip-printing]`** (floating, P3, выявлено в аудите 154.1): float→str
   (`nova_f64_to_str`, и f32 через него) использует `%g` с дефолтной 6-знач точностью — **лосси**
   на >6 значащих для f64 И f32 (не round-trip). Проектный стандарт, консистентный, НЕ регрессия;
