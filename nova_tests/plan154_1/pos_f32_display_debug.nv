@@ -22,9 +22,7 @@ test "f32 interp ${x} / ${x:?}" {
     assert(dsp("${x:?}") == "2.5")
 }
 
-test "Vec[f32] display + debug" {
-    // NOTE: explicit f32 values via push — `Vec[f32].from([1.5, 2.5])` mis-coerces
-    // f64 array literals to f32 (separate bug [M-154.1-f32-literal-coercion]).
+test "Vec[f32] display + debug (explicit push)" {
     mut v = Vec[f32].new()
     ro x f32 = 1.5
     ro y f32 = 2.5
@@ -36,6 +34,24 @@ test "Vec[f32] display + debug" {
     consume b = StringBuilder.new()
     v.display(b)
     assert(b.as_str() == "Vec[1.5, 2.5]")
+}
+
+// [M-154.1-f32-literal-coercion] RESOLVED: numeric array literals coerce to f32
+// from the Vec[f32] context (`from([...])` / variadic `of(...)`), both float-
+// and int-literals. Was: f64 literals built a []f64 reinterpreted as f32 → garbage.
+test "Vec[f32].from / .of literal coercion" {
+    ro vf = Vec[f32].from([1.5, 2.5])
+    consume a = StringBuilder.new()
+    vf.debug(a)
+    assert(a.as_str() == "Vec[1.5, 2.5]")
+    ro vi = Vec[f32].from([1, 2])
+    consume b = StringBuilder.new()
+    vi.debug(b)
+    assert(b.as_str() == "Vec[1, 2]")
+    ro vo = Vec[f32].of(1.5, 2)
+    consume c = StringBuilder.new()
+    vo.debug(c)
+    assert(c.as_str() == "Vec[1.5, 2]")
 }
 
 // StringBuilder typed @append(f32) overload (resolves via the arg-type self-call

@@ -36323,6 +36323,16 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   ВАЖНО: overlap-семантика СОХРАНЕНА точно (runtime guard: destructive forward-overlap → element-loop
   пропагация, как per-element; иначе memmove) — не упрощение, а полное соответствие циклу.
 
+- **Plan 154.1: f32-literal-coercion + узость turbofish-static арг-приведения (2026-06-14)**:
+  числовые array-литералы теперь приводятся к f32 из контекста (`Vec[f32].from([1.5,2.5])`/`of(...)`)
+  — приведение кодогена к уже специфицированному D44 (не новое правило). **Осознанная узость (не
+  упрощение, а граница безопасности):** приведение арг-array-литерала к param-типу в turbofish-
+  static-call применяется ТОЛЬКО к array-литералам; другие арги (Result/Option/скаляр) — обычный
+  emit_expr, т.к. широкая форма мис-оборачивала Result-арги Vec.sort. Гард приведения: только
+  всё-литеральные массивы (f64-переменная не сужается молча — это была бы потеря точности).
+  **Отдельные pre-existing баги (не от фикса, маркеры):** chained `Vec[f32].X().debug()` мис-диспатч
+  на str.debug (`[M-154.1-chained-vec-f32-method-misdispatch]`); plan91/sort_basic — plan-153.3 sort.
+
 - **Plan 152.4.3 — grapheme-сегментация `as_graphemes()` (UAX #29) + 2 compiler-фикса (2026-06-14, D253)**:
   Третья линза строки `str.@as_graphemes() -> GraphemesView` (симметрична as_bytes/as_chars): extended
   grapheme clusters — «видимые символы» (é=e+◌́; 🇺🇸=2 RI; 👨‍👩‍👧=ZWJ-emoji; каждый=1). Данные: `nova-codegen

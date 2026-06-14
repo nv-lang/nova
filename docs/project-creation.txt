@@ -37796,6 +37796,21 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   `[M-153-select-nth]`), *_unstable in-place (`[M-153.3-sort-unstable-inplace]`). Закрытие в
   плане 153 §153.3 (критерии приёмки) + simplifications.md + backlog.
 
+[2026-06-14] Plan 154.1 followup: [M-154.1-f32-literal-coercion] RESOLVED (commit 4e0d340a).
+  `Vec[f32].from([1.5, 2.5])` строил []f64 (литералы по умолчанию f64) и передавал сырьём в
+  Vec[f32].from → биты реинтерпретировались как f32 → мусор. Фикс — приведение КОДОГЕНА к уже
+  задокументированному правилу D44 (контекст переопределяет default-тип литерала): (1)
+  try_emit_typed_vec_literal берёт float-hint когда ВСЕ элементы — числовые литералы (FloatLit/
+  IntLit); (2) turbofish-static-call арг-array-литерал эмитится с param-C-типом (узко: ТОЛЬКО
+  array-литералы — широкая форма ломала Result-арги Vec.sort). Гард: всё-литеральные массивы (f64-
+  переменная не сужается молча). Работает: from([1.5,2.5]) / from([1,2]) / of(1.5,2) (float+int
+  литералы). plan154_1 8/8; broad regression 0 новых FAIL. D44 дополнен примерами .from/.of +
+  impl-note. ВАЖНО — два ОТДЕЛЬНЫХ pre-existing бага, найденных при регрессии (НЕ от этого фикса):
+  (а) chained Vec[f32].X().debug() мис-диспатчит .debug на str.debug (срабатывает и на .new();
+  infer turbofish-static return для f32 + str @debug из Ф.3) → [M-154.1-chained-vec-f32-method-
+  misdispatch]; (б) plan91/sort_basic CC-FAIL — это plan-153.3 std.sort (Result-codegen, []int),
+  мои code-paths не задеты. coercion = «приведение типа» (рус.).
+
 [2026-06-14] Plan 153.3 follow-up — снятие упрощений (production-grade критерий приёмки, commit
   468bccf5). Автор: «без упрощений как для прода — обязательный критерий приёмки». Закрыл два
   отложения, которые были РЕАЛЬНЫМИ упрощениями: (1) `@sort_unstable[_by][_by_key]` — был alias

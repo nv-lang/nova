@@ -22583,7 +22583,26 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                                 type_subst.iter().cloned().collect(),
                                             );
                                             let mut arg_strs = Vec::new();
-                                            for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                                            for (i, a) in args.iter().enumerate() {
+                                                // Plan 154.1 [M-154.1-f32-literal-coercion]: emit an
+                                                // ARRAY-LITERAL arg with its type-substituted param C-type
+                                                // (current_type_subst set above → T → concrete elem) so the
+                                                // element type flows in: Vec[f32].from([1.5,2.5]) → []f32,
+                                                // not []f64 reinterpreted. NARROWED to array literals — other
+                                                // args (Result/Option/scalar) keep plain emit_expr, because
+                                                // emit_expr_with_target_type otherwise mis-wraps typed values
+                                                // (it broke Vec sort's `Result` args → C type error).
+                                                let arg_expr = a.expr();
+                                                let target_c = if matches!(&arg_expr.kind, ExprKind::ArrayLit(_)) {
+                                                    fn_decl.params.get(i)
+                                                        .and_then(|p| self.type_ref_to_c(&p.ty).ok())
+                                                        .filter(|c| !c.is_empty() && c != "void*")
+                                                } else { None };
+                                                match target_c {
+                                                    Some(tc) => arg_strs.push(self.emit_expr_with_target_type(arg_expr, &tc)?),
+                                                    None => arg_strs.push(self.emit_expr(arg_expr)?),
+                                                }
+                                            }
                                             self.current_type_subst = saved_subst;
                                             // Strip "Nova_" so recv_type stays consistent with
                                             // instance-method path (receiver_c_type adds it back).
@@ -28324,7 +28343,22 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
         }) {
             // First item drove the type. Promote to the sized-int element hint
             // when the item collapsed to the erased `nova_int` default.
-            if c == "nova_int" {
+            //
+            // Plan 154.1 [M-154.1-f32-literal-coercion]: numeric LITERALS coerce
+            // to the expected float element type (f32/f64) from context — mirrors
+            // `ro x f32 = 1.5`. Guarded to all-numeric-literal arrays so a f64
+            // VARIABLE is never silently narrowed (that stays f64 / a type error).
+            // Without this, `Vec[f32].from([1.5, 2.5])` built a []f64 whose bits
+            // got reinterpreted as f32 → garbage.
+            let all_numeric_lits = !elems.is_empty() && elems.iter().all(|e| matches!(e,
+                ArrayElem::Item(ex) if matches!(&ex.kind,
+                    ExprKind::FloatLit(_) | ExprKind::IntLit(_))));
+            if all_numeric_lits
+                && matches!(self.current_array_elem_hint.as_deref(),
+                    Some("nova_f32") | Some("nova_f64"))
+            {
+                self.current_array_elem_hint.clone().unwrap()
+            } else if c == "nova_int" {
                 match self.current_array_elem_hint.as_deref() {
                     Some(h) if hint_overrides_int(h) => h.to_string(),
                     _ => c,
