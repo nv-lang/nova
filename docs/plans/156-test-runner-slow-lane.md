@@ -4,7 +4,9 @@
 > **Создан:** 2026-06-14. **Ревизия:** 2026-06-14 (rev-2: ужато до **suffix-only** —
 > единственный механизм `_slow.nv`; папка `slow/`/сентинел `_slow.toml` отложены в
 > `[M-156-slow-subtree-dir]` до появления первого медленного folder-module, YAGNI).
-> **Статус:** 📋 PLANNED (дизайн готов, research-обоснован кодом). P2.
+> **Статус:** ✅ IMPLEMENTED (suffix-only механизм `_slow.nv` + флаги
+> `--include-slow`/`--slow-only`; нормировано [D277](../../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
+> Отложен только каталог-вариант `[M-156-slow-subtree-dir]`. P2.
 > **Владеет:** `[M-test-runner-large-test-lane]`. **Зависит от:** Plan 24/26 (test-runner).
 > **Триггер:** ТРЕБОВАНИЕ — дефолтный `nova test`/CI быстрый по компиляции И выполнению
 > (см. [docs/test-conventions.md](../test-conventions.md) §«регресс должен быть быстрым»).
@@ -14,6 +16,34 @@
 Сейчас 5 conformance-файлов (~5 MB) лежат в обычном `nova_tests/plan152_4/` и
 **гоняются в каждом `nova test`** — медленно. Нужно: хранить большие тесты в репо, но
 **не запускать** их в дефолте; дефолт = малый стайд-сэмпл (1500).
+
+## Статус реализации
+
+✅ **Suffix-only механизм РЕАЛИЗОВАН** (discovery-level, как спроектировано ниже).
+Что зашло, по фазам:
+
+- **Ф.1 — discovery-хелперы:** `is_slow_file_stem(stem) -> stem.ends_with("_slow")`
+  рядом с `is_fixture_dir` (`compiler-codegen/src/test_runner.rs`). `walk_nv` →
+  `walk_nv_filtered(root, out, lane: SlowLane)`; `walk_nv` зовёт с `SlowLane::Include`
+  (поведение path-based `nova check <dir>` сохранено). Гард `_slow` — в цикле
+  `direct_nv` рядом с `_module`/OS-суффиксами; снятие суффиксов в каноническом
+  порядке (`_module` whole-skip → peel `_slow` → peel `_test` → OS-суффикс на
+  `core_stem`).
+- **Ф.2 — lane-enum + опция:** `SlowLane { Exclude | Include | Only }` (default
+  `Exclude`); `TestAllOpts` получил поле `slow_lane: SlowLane`; `run_all` зовёт
+  `walk_nv_filtered(.., opts.slow_lane)` для tests-dir и stdlib-dir.
+- **Ф.3 — CLI wiring:** clap-флаги `--include-slow` / `--slow-only` (booleans)
+  протянуты через `cmd_test_all` и схлопнуты в `slow_lane` (`slow_only → Only`,
+  иначе `include_slow → Include`, иначе `Exclude`).
+- **Ф.4 — unit-тесты discovery:** модуль `plan156_slow_lane_tests` в `test_runner.rs`
+  (`is_slow_file_stem`-классификация + `walk_nv_filtered` по каждому `SlowLane`).
+- **Ф.5 — спека + доки:** [D277](../../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)
+  нормирует все discovery-конвенции (`fixtures/`/`_fixture.toml`, OS-суффикс,
+  `_module.nv`, `_slow.nv` + порядок снятия); `docs/test-conventions.md` флипнут на
+  IMPLEMENTED.
+
+Отложено: каталог-вариант `slow/` + `_slow.toml` (`[M-156-slow-subtree-dir]`,
+см. ниже) — добавится аддитивно для медленных folder-module.
 
 ## Решение (research-обоснованное, код-grounded)
 
@@ -95,6 +125,9 @@ fast-сэмпл (без изменения имени) + полную `*_conform
 breadth теперь в slow-файлах.
 
 ## Спека (нормирование runner-конвенций)
+✅ **СДЕЛАНО** — нормировано в [D277](../../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)
+(09-tooling.md, sibling к D89). Дизайн-обоснование ниже сохранено как rationale.
+
 Пробел: `fixtures/` + `_fixture.toml` (Plan 55 Ф.8) и per-file суффиксы
 (`_windows.nv`/`_linux.nv`/`_macos.nv` Plan 42.12, `_test`) нормированы **только кодом**
 (`test_runner.rs:3282`,`:3327-3341`), в `spec/decisions/` их НЕТ (в отличие от `_module.nv`
