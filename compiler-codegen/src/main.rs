@@ -23,9 +23,11 @@ enum Cmd {
         #[arg(long = "explain-cache")]
         explain_cache: bool,
     },
-    /// Type-check + интерпретировать (вызывается main).
+    /// [UNSUPPORTED] tree-walking interpreter — use C codegen
+    /// (`nova-codegen compile`, or `nova build` / `nova test`).
     Run { file: PathBuf },
-    /// Запустить тесты в файле через интерпретатор (без C-codegen).
+    /// [UNSUPPORTED] interpreter-driven tests — use C codegen
+    /// (`nova test`, or `nova-codegen compile`).
     #[command(name = "test-interp")]
     TestInterp { file: PathBuf },
     /// Скомпилировать Nova-файл в C (вывод в stdout или -o файл).
@@ -379,69 +381,16 @@ fn emit_explain_report(report: &nova_codegen::field_cache::ExplainReport) {
     }
 }
 
-fn cmd_run(path: &PathBuf) -> Result<()> {
-    let src = read_file(path)?;
-    let mut module = nova_codegen::parser::parse(&src).map_err(|d| {
-        anyhow!(
-            "{}",
-            d.render(&src, &path.to_string_lossy())
-        )
-    })?;
-    check_module_path(path, &module)?;
-    nova_codegen::types::check_module(&module).map_err(|errs| {
-        let messages: Vec<String> = errs
-            .iter()
-            .map(|d| d.render(&src, &path.to_string_lossy()))
-            .collect();
-        anyhow!("{}", messages.join("\n"))
-    })?;
-    // Plan 52 Ф.5: десугаринг map-литералов `[k: v]` → block-expression
-    // ПОСЛЕ type-check (типы проверены), ДО интерпретации.
-    // Plan 52 Ф.7: аннотируем MapLit-узлы inferred K/V — для генерации
-    // turbofish `HashMap[K,V].with_capacity(n)` в десугаринге.
-    // Plan 114.4.2 (D199) Ф.3: rewrite const fn calls to literals в AST
-    // и удалить const fn declarations (codegen drop). После check_module
-    // (V1 subset enforced), до десугаринга / annotation passes — чтобы
-    // dependent expressions видели уже-литералы.
-    let cfn_errs = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
-    if !cfn_errs.is_empty() {
-        let messages: Vec<String> = cfn_errs
-            .iter()
-            .map(|d| d.render(&src, &path.to_string_lossy()))
-            .collect();
-        return Err(anyhow!("{}", messages.join("\n")));
-    }
-    // Plan 114.4.4.5 V4.1: monomorphize mixed const fns (per-const-arg
-    // specialization). Runs AFTER rewriter (fully-const fns dropped).
-    let mono_errs = nova_codegen::const_fn_mono::specialize_mixed_const_fns(&mut module);
-    if !mono_errs.is_empty() {
-        let messages: Vec<String> = mono_errs
-            .iter()
-            .map(|d| d.render(&src, &path.to_string_lossy()))
-            .collect();
-        return Err(anyhow!("{}", messages.join("\n")));
-    }
-    nova_codegen::types::annotate_map_literals(&mut module);
-    nova_codegen::desugar::desugar_module(&mut module);
-    // Plan 123.1 (D217): field caching (interp-path).
-    {
-        let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
-        nova_codegen::field_cache::cache_module(&mut module, &cfg);
-    }
-    let mut interp = nova_codegen::interp::Interpreter::new();
-    interp.load_module(&module).map_err(|d| {
-        anyhow!(
-            "{}",
-            d.render(&src, &path.to_string_lossy())
-        )
-    })?;
-    interp.run_main().map_err(|d| {
-        anyhow!(
-            "{}",
-            d.render(&src, &path.to_string_lossy())
-        )
-    })?;
-    Ok(())
+/// Q-interpreter-future / D274: the tree-walking interpreter is UNSUPPORTED.
+/// The user-facing `nova run` was stubbed (Plan 157); this internal dev entry
+/// point follows. The `interp/` module is kept for reference but is no longer
+/// wired into a runnable command — use C codegen instead.
+fn cmd_run(_path: &PathBuf) -> Result<()> {
+    Err(anyhow!(
+        "the tree-walking interpreter is currently NOT supported.\n\
+         Use C codegen instead: `nova-codegen compile <file>`,\n\
+         or the `nova` CLI: `nova build` / `nova test`."
+    ))
 }
 
 fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source: bool, lint: bool, contracts: &str) -> Result<()> {
@@ -554,68 +503,15 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     Ok(())
 }
 
-fn cmd_test(path: &PathBuf) -> Result<()> {
-    let src = read_file(path)?;
-    let mut module = nova_codegen::parser::parse(&src).map_err(|d| {
-        anyhow!(
-            "{}",
-            d.render(&src, &path.to_string_lossy())
-        )
-    })?;
-    check_module_path(path, &module)?;
-    // Plan 52 Ф.5: десугаринг map-литералов перед интерпретацией тестов.
-    // Plan 52 Ф.7: аннотируем MapLit-узлы inferred K/V — для генерации
-    // turbofish `HashMap[K,V].with_capacity(n)` в десугаринге.
-    // Plan 114.4.2 (D199) Ф.3: rewrite const fn calls to literals в AST
-    // и удалить const fn declarations (codegen drop). После check_module
-    // (V1 subset enforced), до десугаринга / annotation passes — чтобы
-    // dependent expressions видели уже-литералы.
-    let cfn_errs = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
-    if !cfn_errs.is_empty() {
-        let messages: Vec<String> = cfn_errs
-            .iter()
-            .map(|d| d.render(&src, &path.to_string_lossy()))
-            .collect();
-        return Err(anyhow!("{}", messages.join("\n")));
-    }
-    // Plan 114.4.4.5 V4.1: monomorphize mixed const fns (per-const-arg
-    // specialization). Runs AFTER rewriter (fully-const fns dropped).
-    let mono_errs = nova_codegen::const_fn_mono::specialize_mixed_const_fns(&mut module);
-    if !mono_errs.is_empty() {
-        let messages: Vec<String> = mono_errs
-            .iter()
-            .map(|d| d.render(&src, &path.to_string_lossy()))
-            .collect();
-        return Err(anyhow!("{}", messages.join("\n")));
-    }
-    nova_codegen::types::annotate_map_literals(&mut module);
-    nova_codegen::desugar::desugar_module(&mut module);
-    // Plan 123.1 (D217): field caching (test-interp-path).
-    {
-        let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
-        nova_codegen::field_cache::cache_module(&mut module, &cfg);
-    }
-    let mut interp = nova_codegen::interp::Interpreter::new();
-    interp.load_module(&module).map_err(|d| {
-        anyhow!(
-            "{}",
-            d.render(&src, &path.to_string_lossy())
-        )
-    })?;
-    let (passed, failed, failed_names) = interp.run_tests().map_err(|d| {
-        anyhow!(
-            "{}",
-            d.render(&src, &path.to_string_lossy())
-        )
-    })?;
-    println!("tests: {} passed, {} failed", passed, failed);
-    if failed > 0 {
-        for name in failed_names {
-            println!("  FAIL: {}", name);
-        }
-        return Err(anyhow!("{} test(s) failed", failed));
-    }
-    Ok(())
+/// Q-interpreter-future / D274: running tests through the tree-walking
+/// interpreter is UNSUPPORTED. Tests run via C codegen (`nova test`). The
+/// `interp/` module is kept for reference but is no longer wired here.
+fn cmd_test(_path: &PathBuf) -> Result<()> {
+    Err(anyhow!(
+        "the tree-walking interpreter is currently NOT supported.\n\
+         Run tests via C codegen instead: use the `nova` CLI `nova test`,\n\
+         or compile with `nova-codegen compile <file>`."
+    ))
 }
 
 /// Plan 13 Ф.3: emit-runtime-stubs.
