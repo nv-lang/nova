@@ -214,12 +214,13 @@ Active development. The specification is stable across core features
 (effects, handlers, syntax, memory, concurrency). Single compiler:
 
 - **compiler-codegen** — Rust implementation with parser,
-  type-checker, treewalk interpreter, and C-backend codegen.
+  type-checker, and C-backend codegen.
   Compiles Nova to C via a native runtime (effects, fibers, GC, channels);
-  used for both interactive runs (`run`, `test`) and native
-  compilation (`build`).
+  drives both test runs (`test`) and native compilation (`build`).
 - **nova-cli** — single user-facing entry point (`nova check`,
-  `nova build`, `nova run`, `nova test`, `nova regen-runtime`).
+  `nova build`, `nova test`, `nova regen-runtime`). The interpreter
+  entry point `nova run` is currently **unsupported** — Nova compiles
+  to C, so use `nova build` (native binary) or `nova test`.
   `nova-codegen` остаётся как внутренний инструмент для IDE / CI /
   отладки.
 
@@ -257,11 +258,9 @@ Build the `nova` CLI, then use it to compile Nova programs:
 # build nova CLI (requires Rust + Cargo)
 cd nova-cli && cargo build --release && cd ..
 
-# compile a Nova file to a native binary
-nova-cli/target/release/nova build path/to/hello.nv
-
-# run via interpreter (no native compilation)
-nova-cli/target/release/nova run path/to/hello.nv
+# compile a Nova file to a native binary, then run it
+nova-cli/target/release/nova build path/to/hello.nv -o hello
+./hello
 
 # type-check only
 nova-cli/target/release/nova check path/to/hello.nv
@@ -290,8 +289,9 @@ Once `nova` is built, run the guided tour program — one self-contained
 file that compiles, runs, and tests with no setup:
 
 ```sh
-# run it (prints the cart totals)
-nova-cli/target/release/nova run examples/getting_started.nv
+# build it to a native binary, then run it (prints the cart totals)
+nova-cli/target/release/nova build examples/getting_started.nv -o getting_started
+./getting_started
 
 # run its in-file tests (handler-swapped, no mocks)
 nova-cli/target/release/nova test examples/getting_started.nv
