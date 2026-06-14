@@ -58,7 +58,8 @@ prelude-global** (`v.push(x)` works without an import).
 | `slice.nv` | `@index(Range)`/`@get(Range)` — zero-copy `[]T` views (Plan 96) |
 | `iter.nv` | `VecIter[T]` + `@iter()`/`@next()` (`Iter`/`Next`, D58) |
 | `protocols.nv` | `Equal`/`Compare`/`Clone`/`Display`/`Debug` |
-| *(future)* `sort.nv` | Plan 153.3 sort/search; `iter.nv` grows lazy adapters in Plan 153.2 |
+| `sort.nv` | Plan 153.3 sort/search (`@sort`/`@binary_search`/`@dedup`/…) |
+| *(sibling)* `vec_lazy.nv` | Plan 153.2 LAZY iterator adapters — a SEPARATE explicit-import module `collections.vec_lazy`, NOT in this folder (closure-dense, see below) |
 
 Conventions proven for this folder-module (Plan 153.0):
 - A **module-private** helper (`external fn panic`, `alloc_buf`, `null_buf`) is
@@ -81,10 +82,18 @@ leak into every unit's merged body, so a unit with a top-level `fn f`/`fn op` or
 a `type Acc` would capture/shadow them ([M-codegen-var-types-fn-scope] + D145).
 `@retain(pred)` survives only because `pred` is uncommon. Confining the
 combinators behind an explicit import keeps them opt-in, exactly as the
-pre-153.0 `collections.vec` module did. Plan 153.2 reworks these into **lazy**
-iterator adapters on `VecIter` (`iter().map().filter().collect()`, no
-intermediate allocations); whether the lazy layer can safely become
-prelude-global is revisited there ([M-153-vec-combinators-prelude-global]).
+pre-153.0 `collections.vec` module did.
+
+Plan 153.2 added the **lazy** iterator layer
+[`std/collections/vec_lazy.nv`](../std/collections/vec_lazy.nv)
+(`collections.vec_lazy`, `v.lazy().map().filter().collect()`, no intermediate
+allocations — see the user guide [`vec-lazy.md`](vec-lazy.md) and
+[D260](../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)).
+It is a **sibling FILE-module**, NOT a peer inside `vec/`, for the very same
+scope-leak reason: every lazy adapter takes a closure (`f`/`pred`) and has
+method-level generics (`[U]`/`[Acc]`), so it must stay behind an explicit
+`import std.collections.vec_lazy`. Whether the lazy layer can ever become
+prelude-global is revisited under [M-153-vec-combinators-prelude-global].
 
 ## Compare vs Equal
 
