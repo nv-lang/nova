@@ -945,6 +945,13 @@ pub struct CEmitter {
     /// allocated as `NovaValue_<type_name>*` instead of stack-init.
     /// Consumed (taken) immediately by emit_record_lit, restoring to None.
     pending_value_record_heap_promote: Option<String>,
+    /// Plan 143.2 [M-opt-leaf-preempt-entry-elision]: whole-program set of
+    /// FnKeys whose function-prologue `nova_preempt_check();` MUST be kept.
+    /// Computed once per module in `emit_module` (source-level call-graph
+    /// pre-pass, see `preempt_keep`). Consulted in `emit_fn` prologue: a fn
+    /// whose key is absent may ELIDE its entry-check (provably-leaf). Default
+    /// `populated()==false` → KEEP everything (unit-test / direct construction).
+    preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet,
 }
 
 /// D160 Plan 100.4.3: kind of a defer entry — determines which exit paths trigger it.
@@ -1215,6 +1222,9 @@ impl CEmitter {
             current_fn_id: None,
             promoted_value_record_locals: HashSet::new(),
             pending_value_record_heap_promote: None,
+            // Plan 143.2: default empty/unpopulated → KEEP everything until
+            // emit_module runs the pre-pass.
+            preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet::default(),
         }
     }
 
@@ -1585,6 +1595,32 @@ impl CEmitter {
         // (AllocKind::ValueHeapPromoted). Cheap: single AST walk; result
         // is empty (no allocations) если module has no value-records.
         self.escape_result = Some(crate::escape_analyze::analyze_module(module));
+
+        // Plan 143.2 [M-opt-leaf-preempt-entry-elision]: whole-program
+        // call-graph pre-pass computing which fns must KEEP their prologue
+        // preempt-check. Source-level over `module.items` (flat entry merge)
+        // PLUS every peer file's `items_here` (covers imported-module
+        // FnDecls). Conservative: any cycle/indirect/FFI/address-taken/
+        // unresolved callee => KEEP. Computed BEFORE the emit loop so
+        // `emit_fn` can consult it. Sound over monomorphization (KEEP status
+        // of a source template inherited by all instances).
+        {
+            let mut all_fns: Vec<&FnDecl> = Vec::new();
+            for item in &module.items {
+                if let Item::Fn(f) = item {
+                    all_fns.push(f);
+                }
+            }
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    if let Item::Fn(f) = item {
+                        all_fns.push(f);
+                    }
+                }
+            }
+            self.preempt_keep =
+                crate::codegen::preempt_keep::compute_preempt_keep_set(all_fns);
+        }
 
         // Plan 70.1: register imported-module prefix names (aliases + last-segments)
         // для emit_call Member dispatch rewrite. См. поле `imported_modules` doc.
@@ -14922,7 +14958,26 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // never raised. Together with the loop-backedge check this gives
         // observable Go-style preemption: a CPU-bound fiber can't starve
         // its peers even with no explicit runtime.yield().
-        self.line("nova_preempt_check();");
+        //
+        // Plan 143.2 [M-opt-leaf-preempt-entry-elision]: ELIDE this prologue
+        // check on provably-leaf functions. A fiber can run unbounded without
+        // yielding only via a loop (its OWN back-edge check is preserved
+        // separately, emit_loop_body_inline_ex) or via recursion (a call-graph
+        // cycle). The whole-program pre-pass (`preempt_keep`, computed in
+        // emit_module) marks a fn KEEP iff it is on a cycle, makes an
+        // indirect/closure/fn-ptr call, makes an FFI/extern call, or is
+        // address-taken. CONSERVATIVE: when the pre-pass did not run
+        // (`populated()==false`, e.g. direct CEmitter construction in unit
+        // tests) we KEEP unconditionally — never elide under doubt.
+        let keep_preempt = !self.preempt_keep.populated()
+            || self
+                .preempt_keep
+                .must_keep(&crate::codegen::preempt_keep::fn_key(f));
+        if keep_preempt {
+            self.line("nova_preempt_check();");
+        } else {
+            self.line("/* preempt-check elided: provably-leaf (Plan 143.2) */");
+        }
         let saved_expected = self.expected_record_type.clone();
         self.expected_record_type = Self::struct_name_from_c_type(&ret);
         // Plan 33.1 Ф.4 (D24): emit contracts.
