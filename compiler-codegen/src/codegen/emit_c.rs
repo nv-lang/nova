@@ -947,6 +947,13 @@ pub struct CEmitter {
     /// allocated as `NovaValue_<type_name>*` instead of stack-init.
     /// Consumed (taken) immediately by emit_record_lit, restoring to None.
     pending_value_record_heap_promote: Option<String>,
+    /// Plan 143.2 [M-opt-leaf-preempt-entry-elision]: whole-program set of
+    /// FnKeys whose function-prologue `nova_preempt_check();` MUST be kept.
+    /// Computed once per module in `emit_module` (source-level call-graph
+    /// pre-pass, see `preempt_keep`). Consulted in `emit_fn` prologue: a fn
+    /// whose key is absent may ELIDE its entry-check (provably-leaf). Default
+    /// `populated()==false` → KEEP everything (unit-test / direct construction).
+    preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet,
 }
 
 /// D160 Plan 100.4.3: kind of a defer entry — determines which exit paths trigger it.
@@ -1218,6 +1225,9 @@ impl CEmitter {
             current_fn_id: None,
             promoted_value_record_locals: HashSet::new(),
             pending_value_record_heap_promote: None,
+            // Plan 143.2: default empty/unpopulated → KEEP everything until
+            // emit_module runs the pre-pass.
+            preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet::default(),
         }
     }
 
@@ -1626,6 +1636,32 @@ impl CEmitter {
         // (AllocKind::ValueHeapPromoted). Cheap: single AST walk; result
         // is empty (no allocations) если module has no value-records.
         self.escape_result = Some(crate::escape_analyze::analyze_module(module));
+
+        // Plan 143.2 [M-opt-leaf-preempt-entry-elision]: whole-program
+        // call-graph pre-pass computing which fns must KEEP their prologue
+        // preempt-check. Source-level over `module.items` (flat entry merge)
+        // PLUS every peer file's `items_here` (covers imported-module
+        // FnDecls). Conservative: any cycle/indirect/FFI/address-taken/
+        // unresolved callee => KEEP. Computed BEFORE the emit loop so
+        // `emit_fn` can consult it. Sound over monomorphization (KEEP status
+        // of a source template inherited by all instances).
+        {
+            let mut all_fns: Vec<&FnDecl> = Vec::new();
+            for item in &module.items {
+                if let Item::Fn(f) = item {
+                    all_fns.push(f);
+                }
+            }
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    if let Item::Fn(f) = item {
+                        all_fns.push(f);
+                    }
+                }
+            }
+            self.preempt_keep =
+                crate::codegen::preempt_keep::compute_preempt_keep_set(all_fns);
+        }
 
         // Plan 70.1: register imported-module prefix names (aliases + last-segments)
         // для emit_call Member dispatch rewrite. См. поле `imported_modules` doc.
@@ -7097,6 +7133,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
         self.line(&format!("static void {}(mco_coro* _co) {{", spawn_id));
         self.indent += 1;
+        // Plan 143.2: prologue safepoint — unconditional. This is a FIBER-ENTRY
+        // function reached indirectly via the scheduler; its body is user Nova
+        // code that may run straight-line work before the first loop/call. KEEP
+        // conservatively (no source FnDecl key for a spawn-body block).
+        self.emit_prologue_preempt_check_unconditional();
         // Plan 44.5 Layer 5: _c всегда нужен — entry function reads
         // _c->_nova_parent_scope для remote-fiber cleanup (decrement
         // pending_remote + signal_main). Раньше для empty-capture spawn
@@ -11067,6 +11108,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.indent = 0;
         self.line(&format!("static {} {}({}) {{", ret_c, mangled, params_s));
         self.indent += 1;
+        // Plan 143.2: prologue safepoint. Erased generic method body inherits
+        // the SOURCE template (`f`) KEEP-status — a recursive generic method
+        // keeps a safepoint in its erased form too.
+        self.emit_prologue_preempt_check(f);
         // Register nova_self only for instance methods
         let mut saved_array_elem_keys: Vec<String> = Vec::new();
         if is_instance {
@@ -13348,6 +13393,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.indent = 0;
         self.line(&format!("static {} {}({}) {{", ret_c, mono_name, params_str));
         self.indent += 1;
+        // Plan 143.2: prologue safepoint. The monomorphized instance inherits
+        // the KEEP-status of its SOURCE template (`fn_decl`), so a recursive
+        // generic method keeps a safepoint in every instantiation.
+        self.emit_prologue_preempt_check(fn_decl);
         // Register nova_self and params in var_types (только если instance method)
         let prev_self = if is_instance {
             self.var_types.insert("nova_self".to_string(), recv_c.clone())
@@ -14391,6 +14440,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.indent = 0;
         self.line(&format!("static {} {}({}) {{", ret_c, mono_name, params_str));
         self.indent += 1;
+        // Plan 143.2: prologue safepoint. The monomorphized instance inherits
+        // the KEEP-status of its SOURCE template (`fn_decl`), so a recursive
+        // generic free fn keeps a safepoint in every instantiation.
+        self.emit_prologue_preempt_check(fn_decl);
         // Register params in var_types with concrete C types
         let saved_var_types: Vec<(String, Option<String>)> = fn_decl.params.iter()
             .zip(&param_c_tys)
@@ -14550,6 +14603,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.indent = 0;
         self.line(&format!("static void* {}({}) {{", mangled, params_str));
         self.indent += 1;
+        // Plan 143.2: prologue safepoint. Erased generic free-fn body inherits
+        // the SOURCE template (`f`) KEEP-status — a recursive generic fn keeps
+        // a safepoint in its erased form too.
+        self.emit_prologue_preempt_check(f);
         // Register params with their concrete (or erased) types
         let saved: Vec<(String, Option<String>)> = f.params.iter().zip(&param_c_tys)
             .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
@@ -14792,6 +14849,42 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     // generation для test scaffolding non-stdlib external fn — вводить через
     // effect-based mechanism.
 
+    // Plan 143.2 [M-opt-leaf-preempt-entry-elision]: emit the function-prologue
+    // preemption safepoint (Plan 44.7) — the first statement of every emitted
+    // Nova function — consulting the whole-program KEEP set. The check is
+    // ELIDED only on a function the pre-pass proved leaf (not on a call-graph
+    // cycle, no indirect/closure/fn-ptr call, no FFI/extern call, not
+    // address-taken). CONSERVATIVE: when the pre-pass never ran
+    // (`populated()==false`, e.g. a CEmitter built directly in a unit test) we
+    // KEEP unconditionally. Used by emit_fn AND by every on-demand emit path
+    // that lowers a *source* FnDecl (monomorphized / erased generic
+    // fn+method) — the source-template key is the same one the pre-pass
+    // registered, so KEEP-status is inherited by all instantiations (sound
+    // over monomorphization).
+    fn emit_prologue_preempt_check(&mut self, f: &FnDecl) {
+        let keep_preempt = !self.preempt_keep.populated()
+            || self
+                .preempt_keep
+                .must_keep(&crate::codegen::preempt_keep::fn_key(f));
+        if keep_preempt {
+            self.line("nova_preempt_check();");
+        } else {
+            self.line("/* preempt-check elided: provably-leaf (Plan 143.2) */");
+        }
+    }
+
+    // Plan 143.2: unconditional prologue safepoint for emitted code that has NO
+    // source-level FnDecl in the pre-pass universe (lambdas / closures /
+    // trailing-block bodies). These are reachable only through INDIRECT calls
+    // (a fn-pointer / closure value), which the pre-pass already forces the
+    // *caller* to KEEP — but the closure body itself is its own C function and
+    // must carry a safepoint too (a closure stored and re-invoked could form an
+    // unbounded cycle the source analysis cannot see). Conservative default
+    // per acceptance criterion #6: never elide an unproven case.
+    fn emit_prologue_preempt_check_unconditional(&mut self) {
+        self.line("nova_preempt_check();");
+    }
+
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
         // D82: external fn — Nova body отсутствует, реализация в nova_rt/.
         // Skip emit'инг полностью: dispatch на C-функцию делается в emit_call.
@@ -15017,7 +15110,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // never raised. Together with the loop-backedge check this gives
         // observable Go-style preemption: a CPU-bound fiber can't starve
         // its peers even with no explicit runtime.yield().
-        self.line("nova_preempt_check();");
+        //
+        // Plan 143.2 [M-opt-leaf-preempt-entry-elision]: ELIDE this prologue
+        // check on provably-leaf functions. A fiber can run unbounded without
+        // yielding only via a loop (its OWN back-edge check is preserved
+        // separately, emit_loop_body_inline_ex) or via recursion (a call-graph
+        // cycle). The whole-program pre-pass (`preempt_keep`, computed in
+        // emit_module) marks a fn KEEP iff it is on a cycle, makes an
+        // indirect/closure/fn-ptr call, makes an FFI/extern call, or is
+        // address-taken. CONSERVATIVE: when the pre-pass did not run
+        // (`populated()==false`, e.g. direct CEmitter construction in unit
+        // tests) we KEEP unconditionally — never elide under doubt.
+        self.emit_prologue_preempt_check(f);
         let saved_expected = self.expected_record_type.clone();
         self.expected_record_type = Self::struct_name_from_c_type(&ret);
         // Plan 33.1 Ф.4 (D24): emit contracts.
@@ -20052,6 +20156,10 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
             self.indent = 0;
             self.line(&format!("static {} {}({}) {{", ret_c_ty, fn_name, body_param_list));
             self.indent += 1;
+            // Plan 143.2: prologue safepoint — unconditional. Trailing-block
+            // body is its own C function reached indirectly via the DSL fn; no
+            // source FnDecl key, so KEEP conservatively.
+            self.emit_prologue_preempt_check_unconditional();
             // If there are captures, extract env pointer and define macros so the body
             // can reference outer variables by name (matching how spawn bodies work).
             if let Some(ref env_name) = env_struct_name {
@@ -29804,6 +29912,10 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
         // Body function implementation
         self.line(&format!("static {} {}({}) {{", ret_c_ty, body_name, body_params_str));
         self.indent = 1;
+        // Plan 143.2: prologue safepoint — unconditional. A closure body is its
+        // own C function reachable only via an indirect call; no source FnDecl
+        // key, so KEEP conservatively (a re-invoked closure could cycle).
+        self.emit_prologue_preempt_check_unconditional();
         // Unpack env. Mut-captures: register `name → _env->name` in var_boxed
         // so ExprKind::Ident emits `(*_env->name)` — pointer-safe, no #define.
         // Immutable captures: local copy (no aliasing needed).

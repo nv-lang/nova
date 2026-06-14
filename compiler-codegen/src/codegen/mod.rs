@@ -1,5 +1,6 @@
 pub mod emit_c;
 pub mod external_registry;
+pub mod preempt_keep;
 pub mod runtime_registry;
 pub mod sum_schema_registry;
 pub mod unicode_data;

@@ -1,0 +1,22 @@
+// Plan 143.2 [M-opt-leaf-preempt-entry-elision] — NEGATIVE (entry-check KEPT).
+//
+// `add_via_c` calls an external (FFI) function `p143_c_add` (defined in
+// p143_ffi_shim.h, force-included via this package's nova.toml). A C callee is
+// an unknown call target that could re-enter Nova on an unanalyzed path, so
+// the caller is flagged `makes_ffi` and MUST KEEP its function-prologue
+// `nova_preempt_check();`.
+//
+// Verify in negative_ffi_call.c: body of `add_via_c` contains
+// `nova_preempt_check();` (NOT the elided marker).
+
+module plan143_2.negative_ffi_call
+
+external fn p143_c_add(a int, b int) -> int
+
+// Calls FFI → KEEP.
+fn add_via_c(x int, y int) -> int => p143_c_add(x, y)
+
+test "ffi caller kept" {
+    assert(add_via_c(3, 4) == 7)
+    assert(add_via_c(100, 23) == 123)
+}

@@ -1,0 +1,36 @@
+// Plan 143.2 [M-opt-leaf-preempt-entry-elision] — NEGATIVE (entry-check KEPT).
+//
+// `run_op` receives a function value `op fn(int) -> int` and CALLS it
+// (`op(x)`). The call target is not a statically-known FnDecl (it is an
+// fn-pointer / closure parameter), so the analysis cannot prove the dynamic
+// callee is acyclic → `makes_indirect` → `run_op` MUST KEEP its prologue
+// `nova_preempt_check();`.
+//
+// `drive` is a normal fn (NOT a test block — the pre-pass only walks fn
+// bodies, not test blocks) that passes `triple` as a VALUE to `run_op`. So
+// `triple` is ADDRESS-TAKEN inside an analyzed fn body → it too MUST KEEP its
+// check.
+//
+// Verify in negative_indirect_call.c:
+//   * body of `run_op`  contains `nova_preempt_check();`  (indirect → KEPT)
+//   * body of `triple`  contains `nova_preempt_check();`  (address-taken → KEPT)
+//   * body of `drive`   contains `nova_preempt_check();`  (calls run_op which is
+//     indirect — actually `drive` resolves a direct edge to run_op; run_op is
+//     KEPT, drive itself is a plain resolved forwarder so MAY elide — see note)
+
+module plan143_2.negative_indirect_call
+
+fn triple(x int) -> int => x * 3
+
+// Indirect call through a fn-value parameter → KEEP.
+fn run_op(op fn(int) -> int, x int) -> int => op(x)
+
+// Normal fn body: takes the address of `triple` (passing it as a value) and
+// forwards to run_op. The address-take here is what flags `triple` for KEEP.
+fn drive(x int) -> int => run_op(triple, x)
+
+test "indirect call through fn value" {
+    assert(drive(5) == 15)
+    assert(drive(0) == 0)
+    assert(run_op(triple, 4) == 12)
+}

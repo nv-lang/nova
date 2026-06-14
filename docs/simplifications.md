@@ -36344,3 +36344,21 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   `[M-method-resolution-registry-inconsistency]` — return-inference половину). Минорная находка: `\u{24}\u{7b}`
   (escapes) декодится в `${` → запускает interpolation (literal `${` через escapes невыразим) — low-pri.
   Commits: A `e4b23a79` + B `738b6c2e` + feature `8b1f81f1` + docs.
+
+[2026-06-14] Plan 143.2 (leaf function-entry preempt-check элизия, D271) — KEEP-границы ДЕЛИБЕРАТНО
+  консервативны (это НЕ срезка, а корректная граница соундности; критерий приёмки #6 «без упрощений как
+  для прода»). Элидируется prologue `nova_preempt_check()` ТОЛЬКО на провабельно-leaf функциях; СОХРАНЯЕТСЯ
+  (KEEP) при ЛЮБОМ из: (1) функция на call-граф цикле (self/mutual-recursion SCC); (2) indirect/closure/
+  fn-ptr-call; (3) FFI/extern-call; (4) address-taken. Conservative default — что НЕ элидируется и почему
+  (всё это корректный safepoint, просто не доказано-лишний): **(a)** non-self method-call, чей receiver-тип
+  не source-evident → KEEP (нельзя точно резолвить overload → нельзя доказать ацикличность); **(b)** callee
+  из модуля без доступного тела в эмит-юните (cross-module) → KEEP; **(c)** named/spread-args (неуверенная
+  arity) и ambiguous overload → KEEP; **(d)** compiler-synthesized conversions (`str.from(int/f64)` — нет
+  `FnDecl` в AST, только `external fn str.from(c char)`) держат форвардер `StringBuilder.append(f32)` в KEEP,
+  т.к. внутренний arg-тип не доказуем `str` на source-уровне; **(e)** все члены рекурсивного SCC держат
+  safepoint (соундности хватило бы ≥1 на цикл — minimal-SCC-cut отложен). Над монтоморфизацией KEEP-статус
+  source-шаблона наследуется ВСЕМИ моно/erased-инстансами (over-approximation: лишние рёбра только ДОБАВЛЯЮТ
+  KEEP). Любая из этих границ = функция несёт КОРРЕКТНЫЙ entry-check (как до Plan 143.2) — нулевой риск
+  starvation, только недополученная оптимизация. Hardcode synthesized-conversion-знаний был бы ИМЕННО
+  shortcut, маскирующим недоказанный случай как элидируемый → сознательно отвергнут. Расширения (cross-
+  module манифест KEEP-флага, minimal-SCC-cut, synthesized-conversion-регистр) — Q-loop-opt-thresholds §B.
