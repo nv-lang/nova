@@ -245,3 +245,17 @@ Rust-модель bounds-check. Применение к Vec — followup Plan 13
   codegen gate per-kind (`contracts_elided_for`/`invariants_elided_here`) — requires/
   ensures/decreases/invariant независимо. Тесты `plan140_3/*` 4/0 (neg-пара доказывает
   независимость видов); 0 регрессий (contracts 251/0, plan140 42/0, basics 8/0).
+
+  **Критерии приёмки (contract-levels):**
+  - **CL1** ✅ — module-opt-out: `#unchecked` перед `module X` элидирует контракт-
+    страховку всего модуля (`plan140_3/module_unchecked_pos`: violated requires → нет паники).
+  - **CL2** ✅ — per-kind на fn-уровне: `#unchecked(requires)` элидирует ТОЛЬКО requires,
+    `ensures` остаётся (`unchecked_requires_elided_ensures_kept_neg`: violation всплывает как
+    `ensures failed`, не `requires failed` — доказывает независимость).
+  - **CL3** ✅ — зеркало: `#unchecked(ensures)` элидирует ТОЛЬКО ensures, requires остаётся
+    (`unchecked_ensures_elided_requires_kept_neg`: `requires failed`).
+  - **CL4** ✅ — `#unchecked(invariant)` (module-уровень) элидирует type-invariant
+    (`unchecked_invariant_pos`: невалидная конструкция без паники).
+  - **CL5** ✅ — имя: голое `#unchecked` на модуле (НЕ `#unchecked_module`); плохой вид →
+    `E_UNCHECKED_KIND`. Эффективная элизия = `--contracts=off` ⊔ module-opt-out(kind) ⊔
+    fn-opt-out(kind). 0 регрессий по всем буфер-бакетам (release nova, verified на latest main).
