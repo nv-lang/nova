@@ -10638,6 +10638,11 @@ Records keep type-level priv flip (D220 §3.3.1 unaffected).
 
 ### D228 NEW — Value-record allocation contract (Plan 124.8 Ф.2/Ф.4)
 
+> **Extended by [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2)** (Plan 153.2, 2026-06-15): by-value
+> стек-codegen распространён с не-generic value-records на **generic**
+> `type X[T] value {…}` — каждый mono-инстанс = inline `NovaValue_<short>`,
+> passed/returned/copied by value, 0 `nova_alloc` для wrapper (зеркаля str-путь).
+>
 > Renumbered from D226 (2026-06-03) — D226 in main concurrently assigned
 > to «signed indexing convention» commit `8827f8ec132`. D227 taken by
 > «numeric literal inference» commit `41d4be096fa`. D228 next free.
@@ -11797,7 +11802,11 @@ v[1] = 99  // → v.@index(1, 99)   write-overload через MutIndex (D240)
 
 ## D260. Ленивый итератор `Vec[T]` — boxed-fluent адаптеры (Plan 153.2)
 
-**Status:** ACTIVE (Plan 153.2 Phase A, 2026-06-14). **Depends on:**
+**Status:** ACTIVE (Plan 153.2 Phase A, 2026-06-14). **Amended by
+[D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2)** (2026-06-15): `BoxIter[T]` помечен `value` →
+wrapper-рекорд лоуэрится by-value (0 heap-аллокаций обёртки, Stage 1); добавлен
+allocation-free generic-over-source sibling `collections.vec_iter_zc` (Stage 2).
+**Depends on:**
 [D232](#d232-vect--nova-native-generic-growable-array) (`Vec[T]`),
 [D239](#d239-t--синтаксический-псевдоним-vect) (`[]T ≡ Vec[T]`),
 [D58](03-syntax.md) (`Iter`/`Next` — `VecIter`). **Закрывает:**
@@ -11873,7 +11882,7 @@ commit `996ca01a`.)
 `skip_while`/`peekable`/`min_by[_key]`/`max_by[_key]`/`partition`/`chunk_by`/`into_iter`;
 мут-итерация `for mut x`/`mut @iter()` (Q-iter-mut write-through — отдельный путь);
 `collect`-target FromIterator (мост 153.6). Zero-cost generic-over-source апгрейд поверх
-boxed (монооморфный курсор-тип без бокса) — `[M-153.2-generic-over-source-zerocost]`.
+boxed (мономорфный курсор-тип без бокса) — **реализован Stage 2, см. [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2)** (`[M-153.2-generic-over-source-zerocost]` → 🟡 PARTIAL).
 Tuple-PRESERVING-адаптер сразу после `enumerate` — `[M-153.2-tuple-elem-adapter]`
 (residual `Option[<mono-tuple>]` closure-typing gap; схлопнуть tuple через `map`).
 
@@ -11885,3 +11894,128 @@ Tuple-PRESERVING-адаптер сразу после `enumerate` — `[M-153.2-
 - [Q-iterator-laziness](../open-questions.md) — закрыта (lazy = канон).
 - [Q-iter-mut](../open-questions.md) — Phase A закрывает терминаторами/адаптерами; мут-итерация — Phase B.
 - Plan 153.2 — план; `vec_seq.nv` / `vec_lazy.nv` — реализация.
+
+---
+
+## D277. By-value мономорфизация generic value-records + generic-over-source zero-cost адаптеры (Plan 153.2 Ф.2)
+
+**Status:** ACTIVE (Plan 153.2 Stage 1 + Stage 2, 2026-06-14/15). **Amends:**
+[D228](#d228) (value-record allocation contract — распространён на **generic**
+`type X[T] value {…}`), [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)
+(lazy-итератор — добавлен allocation-free sibling-слой). **Зависит от:**
+[D226](#d226) (always-pointer receiver ABI), [D123](#d123-tuple-monomorphization)/
+[D216](#d216-generic-anonymous-tuple-monomorphization) (mono-инфраструктура).
+**Маркеры:** `[M-153.2-generic-over-source-zerocost]` → 🟡 PARTIAL (Stage 2 done),
+`[M-153.2-closure-as-mono-type]` (P3 остаток).
+
+### Контекст
+
+[D228](#d228) дал by-value стек-codegen для **не-generic** `value`-рекордов (6
+языковых типов: `str` + 5). [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)
+зашипил lazy-итератор по **boxed-fluent**-модели: `BoxIter[T]` — единый erased
+курсор, держащий `step`-thunk; адаптеры не аллоцируют **промежуточный Vec**, но
+сам wrapper-рекорд `BoxIter[T]` (как любой generic-рекорд) лоуэрился в **heap**
+(`nova_alloc(sizeof(Nova_BoxIter…))`, один на адаптер), плюс per-element fn-ptr
+индирекция через `step()`. Решение закрывает обе статьи накладных расходов в две
+композируемые стадии.
+
+### Stage 1 — by-value мономорфизация generic value-records
+
+`type X[T] value {…}` теперь лоуэрится **BY VALUE** для КАЖДОЙ конкретной
+mono-инстанции, зеркаля не-generic value-record-путь ([D228](#d228)) и str-путь
+([D26](08-runtime.md)). Mono-инстанс `X[int]` = inline-struct `NovaValue_<short>`
+(`<short>` = sanitized mono-имя), **передаётся/возвращается/копируется по
+значению**, **без `nova_alloc` для wrapper-рекорда**. Receiver-ABI — always-pointer
+([D226](#d226)): `NovaValue_<short>*` на стек-слот (`&obj` / hoist+`&temp`
+на call-site через `prepare_method_recv`), как у не-generic value-record.
+`BoxIter[T]` помечен `value` ([`std/collections/vec_lazy.nv`](../../std/collections/vec_lazy.nv)) —
+тот же fluent API D260, но теперь **0 wrapper-аллокаций**.
+
+**Codegen-контракт (обязателен — gate на `AllocKind::Value`, heap-generics не
+тронуты):**
+
+1. **`receiver_c_type`** value-generic-mono receiver → `NovaValue_<short>*`,
+   order-free относительно `type_aliases` (helpers `value_generic_mono_short` /
+   `value_aware_generic_c_type`).
+2. **generic-instance method-dispatch (block 5b)** маршрутит value-receiver
+   через `prepare_method_recv` → передача по адресу.
+3. **fn-typed-field вызов** `(@step)()` — accessor `.` vs `->` выбирается по
+   value-ness receiver'а (`(*nova_self).step`).
+4. **return-type inference** (`infer_mono_method_ret_with_args` + dispatch 5b +
+   overload-pool rt-strip) снимает `NovaValue_` ПЕРЕД `Nova_`, чтобы
+   `Nova_<rt>`-lookup в реестре попал (иначе method-level-generic-цепочка
+   `.map[U]` коллапсировала в `int`).
+
+### Stage 2 — generic-over-source zero-cost адаптеры
+
+Новый **sibling FILE-модуль** [`std/collections/vec_iter_zc.nv`](../../std/collections/vec_iter_zc.nv)
+(`module collections.vec_iter_zc`, opt-in import — тот же D145/leak-rationale, что
+у `vec_lazy`/`vec_seq`). Rust-style `Map<I,F>`/`Filter<I,P>`: каждый адаптер —
+**generic-over-source** `value`-рекорд (`MapIter[I,T,U]` / `FilterIter[I,T]` /
+`FilterMapIter[I,T,U]`), держащий upstream-итератор **INLINE** полем `src I` (НЕ
+boxed `step`-замыкание). `@next()` диспетчит `(@src).next()` **статически,
+мономорфизованно**. Цепочка `v.ziter().zmap(f).zfilter(p).zcollect()`
+мономорфизуется в ОДИН вложенный конкретный тип
+`FilterIter[MapIter[VecIter[int],int,int],int]`; каждый `next()` инлайнится до
+базового `VecIter.next()`. Вход — `Vec[T] @ziter()`; адаптеры zmap/zfilter/
+zfilter_map; per-type терминаторы zcollect/zfold/zcount/zsum/zfor_each/zany/zall/
+zfind.
+
+**Дополнительные codegen-фиксы (все gate на `AllocKind::Value`):**
+
+1. **`value_aware_subst_to_ref`** (новый `&self`-зеркало статического
+   `apply_type_subst_to_ref`): nested-generic-арг несёт `NovaValue_`-префикс →
+   worklist-enqueued mono-имя СОГЛАСУЕТСЯ с `type_ref_to_c`/field/type-decl именем
+   (иначе две расходящиеся инстанции → undefined-struct CC-FAIL).
+2. **`split_top_level_mono_args` + `mono_type_args_of`** (registry-backed,
+   depth-aware): наивный `args_str.split("__")` рвал nested generic-over-source
+   арг на 3 фрагмента, мис-биндя `I`/`T` → Vec[nova_int*] garbage. Применено в 3
+   split-сайтах.
+3. **`erased_type_ref_c`** — type-param-чек сделан РЕКУРСИВНЫМ
+   (`uses_any_type_param`) → erased-stub возвращает erased-base-pointer, не
+   placeholder-laden mono-имя.
+4. **`drain_generic_type_worklist`** placeholder-guard (value-GATED
+   `mangled_has_nested_placeholder`) — skip эмита value-mono, чьё by-value поле
+   ссылалось бы на undefined inner-placeholder struct, БЕЗ подавления нужного heap
+   `Vec[Slot[K,V]]` forward-typedef. **Регресс-урок:** over-eager ранняя версия
+   guard'а (НЕ value-gated) сломала 15 HashMap/value-record файлов (plan139 t3/
+   neg_t3, plan152_4 case/normalize/graphemes/sentences/words+conformance,
+   plan152_5 collation) — пойман baseline-бинарём @`0da18125`, FIXED гейтингом на
+   value-шаблон; все 15 восстановлены.
+
+### Дизайн-решение: sibling, не замена
+
+`vec_iter_zc` — **НОВЫЙ sibling-модуль**, boxed-fluent `vec_lazy`/`BoxIter`
+**сохранён** как closure-fluent-альтернатива (единый erased курсор, единообразный
+`BoxIter[T]` на каждой стадии). `vec_iter_zc` — allocation-free сиблинг (один
+вложенный mono-тип на цепочку). Оба за раздельными explicit-import. Задокументировано
+в шапке `vec_iter_zc.nv`.
+
+### Измерено (канон `v.lazy/ziter().map().filter().collect()`)
+
+| | boxed-fluent `vec_lazy` | zero-cost `vec_iter_zc` |
+|---|---|---|
+| wrapper-record heap allocs (адаптер-цепочка) | **6 → 0** (Stage 1: by-value `NovaValue_<short>`) | 0 |
+| source-box (`_box_src`) | 9 | **0** (source inline полем `src I`) |
+| per-element `step()` fn-ptr индирекция | есть | **убрана** (статический dispatch) |
+| остаточный heap | env замыкания `f`/`pred` (1 `NovaClosBase` + lambda-env на каждое замыкание) | то же — irreducible без closures-as-mono-types |
+
+Stage 1 verify: `grep nova_alloc(sizeof(Nova_BoxIter` = **0** во всех
+сгенерённых `plan153_2/*.c`; `NovaValue_BoxIter…` by-value struct — повсюду
+(adapters 89 / chains 98 / laziness 64 / terminators 74 вхождений).
+
+### Остаток (честно)
+
+- **callback `f`/`pred` ещё boxed-closure** (`void*` + `NOVA_CLOS_CALL` на
+  элемент). Rust-style инлайн мэппера требует **closures-as-mono-types** (env как
+  конкретный type-param) — отдельный крупный лифт. `[M-153.2-closure-as-mono-type]`
+  (P3).
+- **`take`/`skip`/`enumerate`** (stateful / tuple-element) остаются на boxed
+  `vec_lazy` — порт = wiring, не новая compiler-способность.
+
+### Связь
+
+- [D228](#d228) — value-record allocation contract (распространён на generic).
+- [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — boxed-fluent lazy (now 0 wrapper-allocs via Stage 1; zero-cost sibling via Stage 2).
+- [D226](#d226) — always-pointer receiver ABI (mono value-receiver).
+- Plan 153.2 — план; `vec_lazy.nv` / `vec_iter_zc.nv` — реализация.
