@@ -36526,3 +36526,5 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   Этот баг — урок про ценность широкого out-of-band прогона: коммит-1500 его пропускал (повезло), 50000
   поймал. Codegen-баг попутно: `match`-as-return-тело с `mut found = None` выводил тип результата как `bool`
   → workaround типизированным `mut found Option[str] = None`.
+
+- [2026-06-14] codegen lib-test contract_opt_out fix (Plan 140.3 followup, e83c8914): unblocked the nova-codegen lib-test target (was E0063 x4). NOT a shortcut - Default::default() is the semantically-correct neutral (full enforce). Surfaced 33 pre-existing stale tests (let-removal drift) -> [M-codegen-libtest-stale-tests]; reported honestly as 770/33, not claimed green.
