@@ -184,6 +184,169 @@ export fn BoxIter[T] @skip(n int) -> BoxIter[T] {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Slice-view iterators — chunks / chunks_exact / rchunks / windows (Plan 153.4)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// These are the LAZY half of the Plan 153.4 slice surface (`[M-153.4-chunks-
+// windows-lazy]`, D262). Each is an instance method on `Vec[T]` (not on
+// `BoxIter`) that returns a `BoxIter[Vec[T]]` — a lazy iterator whose every
+// yielded element is a **zero-copy `[]T` view** (`Vec[T]` header with
+// `cap == len`) over the SAME backing buffer (Plan 96 D-single-type / D238),
+// exactly like `v[a..b]` (slice.nv). No outer `Vec[Vec[T]]` is allocated up
+// front (the Rust `slice::chunks`/`windows` model): each `step` pull builds one
+// sub-range view on demand. Drive the chain with any terminator —
+// `v.chunks(n).collect()` materialises the `[][]T` only when asked, and
+// `v.chunks(n).map(|w| w.len())` / `.for_each(...)` never allocate the outer
+// `Vec` at all.
+//
+// They live HERE in the explicitly-imported lazy module (not the prelude `vec/`
+// folder) for the same reason as every other adapter: the bodies store a
+// capturing closure (the `step` thunk), and a prelude-global generic-type method
+// whose body forwards a closure leaks its generics into every compilation unit
+// ([M-codegen-var-types-fn-scope] + D145). Keeping them behind `import
+// std.collections.vec_lazy` confines that to opt-in users.
+//
+// Contract `n > 0` (a `requires`, enforced as a runtime panic at the call): a
+// zero or negative window/chunk size is a caller bug, not a clamp — a silent
+// clamp would hide it and there is no sensible "0-wide" view to yield.
+//
+// The early-exhaustion path returns a `None` bound to an explicitly-typed local
+// (`ro done Option[Self] = None`) rather than a bare `return None`: a bare `None`
+// in a closure body whose element type is the *concrete* `Vec[T]` view (not a
+// free generic flowing from the receiver) would otherwise be monomorphised to a
+// default `Option[<elem>]` and mismatch the `BoxIter[Self]` step's return type
+// (the closure-typing gap behind `[M-153.2-tuple-elem-adapter]`). Annotating the
+// local pins it to `Option[Self]`.
+
+/// Lazily split into non-overlapping `[]T` chunks of `n` elements, left to right
+/// — the last chunk is SHORT (`len % n` elements) when `n` does not divide
+/// evenly. Each yielded chunk is a zero-copy view (`cap == len`) over the same
+/// buffer; no outer `Vec` is allocated until a terminator runs.
+///
+/// Contract `n > 0`.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let v = Vec[int].of(1, 2, 3, 4, 5)
+/// let cs = v.chunks(2).collect()        // [][]T view list
+/// assert(cs.len() == 3)
+/// assert(cs[0].equal(Vec[int].of(1, 2)) && cs[2].equal(Vec[int].of(5)))
+/// ```
+export fn Vec[T] @chunks(n int) -> BoxIter[Self]
+    requires n > 0
+{
+    mut src = @
+    mut i = 0
+    ro total = @len()
+    { step: || {
+        if i >= total {
+            ro done Option[Self] = None
+            return done
+        }
+        ro end = if i + n < total { i + n } else { total }
+        ro w = src[i..end]
+        i = i + n
+        Some(w)
+    } }
+}
+
+/// Lazily split into non-overlapping `[]T` chunks of EXACTLY `n` elements — any
+/// short trailing remainder (`len % n` elements) is DROPPED (Rust
+/// `slice::chunks_exact`). Every yielded chunk is a zero-copy view of length `n`.
+///
+/// Contract `n > 0`. Use `@chunks` to keep the short tail.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let v = Vec[int].of(1, 2, 3, 4, 5)
+/// let cs = v.chunks_exact(2).collect()
+/// assert(cs.len() == 2)                  // the trailing [5] is dropped
+/// assert(cs[1].equal(Vec[int].of(3, 4)))
+/// ```
+export fn Vec[T] @chunks_exact(n int) -> BoxIter[Self]
+    requires n > 0
+{
+    mut src = @
+    mut i = 0
+    ro total = @len()
+    { step: || {
+        if i + n > total {
+            ro done Option[Self] = None
+            return done
+        }
+        ro w = src[i..(i + n)]
+        i = i + n
+        Some(w)
+    } }
+}
+
+/// Lazily split into non-overlapping `[]T` chunks of `n` elements, RIGHT to left
+/// (from the end) — the LAST yielded chunk (the leading one) is short when `n`
+/// does not divide `len`. The chunks are yielded back-to-front: the final `n`
+/// elements first. Each is a zero-copy view (Rust `slice::rchunks`).
+///
+/// Contract `n > 0`.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let v = Vec[int].of(1, 2, 3, 4, 5)
+/// let cs = v.rchunks(2).collect()
+/// assert(cs[0].equal(Vec[int].of(4, 5)))   // tail first
+/// assert(cs[2].equal(Vec[int].of(1)))      // short leading chunk last
+/// ```
+export fn Vec[T] @rchunks(n int) -> BoxIter[Self]
+    requires n > 0
+{
+    mut src = @
+    mut end = @len()
+    { step: || {
+        if end <= 0 {
+            ro done Option[Self] = None
+            return done
+        }
+        ro start = if end - n > 0 { end - n } else { 0 }
+        ro w = src[start..end]
+        end = start
+        Some(w)
+    } }
+}
+
+/// Lazily yield all OVERLAPPING `[]T` windows of width `n` — consecutive views
+/// `[0, n)`, `[1, n+1)`, … `[len-n, len)`, each sharing `n - 1` elements with the
+/// next (Rust `slice::windows`). When `n > len` nothing is yielded. Each window
+/// is a zero-copy view; no outer `Vec` is allocated until a terminator runs.
+///
+/// Contract `n > 0`.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let v = Vec[int].of(1, 2, 3, 4)
+/// let ws = v.windows(2).collect()
+/// assert(ws.len() == 3)
+/// assert(ws[0].equal(Vec[int].of(1, 2)) && ws[2].equal(Vec[int].of(3, 4)))
+/// ```
+export fn Vec[T] @windows(n int) -> BoxIter[Self]
+    requires n > 0
+{
+    mut src = @
+    mut i = 0
+    ro total = @len()
+    { step: || {
+        if i + n > total {
+            ro done Option[Self] = None
+            return done
+        }
+        ro w = src[i..(i + n)]
+        i = i + 1
+        Some(w)
+    } }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Terminators (drive the chain to completion / short-circuit)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -410,4 +573,20 @@ test "lazy collect_set dedups (Set collect-target)" {
     ro s = v.lazy().collect_set()
     assert(s.len() == 3)
     assert(s.contains(2))
+}
+
+test "lazy chunks — non-overlapping, short last chunk" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro cs = v.chunks(2).collect()
+    assert(cs.len() == 3)
+    assert(cs[0].equal(Vec[int].of(1, 2)))
+    assert(cs[2].equal(Vec[int].of(5)))
+}
+
+test "lazy windows — overlapping width-n views" {
+    ro v = Vec[int].of(1, 2, 3, 4)
+    ro ws = v.windows(2).collect()
+    assert(ws.len() == 3)
+    assert(ws[0].equal(Vec[int].of(1, 2)))
+    assert(ws[2].equal(Vec[int].of(3, 4)))
 }

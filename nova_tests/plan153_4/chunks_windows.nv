@@ -1,0 +1,173 @@
+// Plan 153.4 (D262) — LAZY chunks / chunks_exact / rchunks / windows yielding
+// zero-copy `[]T` views ([M-153.4-chunks-windows-lazy]). Each adapter returns a
+// `BoxIter[Vec[T]]` over the same backing buffer; `collect()` materialises the
+// `[][]T` only on demand. Positive coverage: even/odd splitting, short remainder,
+// exact-drop, reverse order, overlapping windows, empty / single / oversize n.
+module plan153_4.chunks_windows
+
+import std.collections.vec_lazy
+
+// ── chunks: non-overlapping, last chunk may be short ───────────────────────
+
+test "chunks — evenly divisible splits into full chunks" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+    ro cs = v.chunks(2).collect()
+    assert(cs.len() == 3)
+    assert(cs[0].equal(Vec[int].of(1, 2)))
+    assert(cs[1].equal(Vec[int].of(3, 4)))
+    assert(cs[2].equal(Vec[int].of(5, 6)))
+}
+
+test "chunks — short trailing remainder is kept" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro cs = v.chunks(2).collect()
+    assert(cs.len() == 3)
+    assert(cs[0].equal(Vec[int].of(1, 2)))
+    assert(cs[1].equal(Vec[int].of(3, 4)))
+    assert(cs[2].equal(Vec[int].of(5)))    // remainder
+}
+
+test "chunks — n == 1 yields singleton views" {
+    ro v = Vec[int].of(7, 8, 9)
+    ro cs = v.chunks(1).collect()
+    assert(cs.len() == 3)
+    assert(cs[0].equal(Vec[int].of(7)))
+    assert(cs[2].equal(Vec[int].of(9)))
+}
+
+test "chunks — n >= len yields a single whole-vec view" {
+    ro v = Vec[int].of(1, 2, 3)
+    ro cs = v.chunks(10).collect()
+    assert(cs.len() == 1)
+    assert(cs[0].equal(Vec[int].of(1, 2, 3)))
+}
+
+test "chunks — views are zero-copy (cap == len, alias the buffer)" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro cs = v.chunks(2).collect()
+    assert(cs[0].cap() == cs[0].len())     // cap==len => a view, not a copy
+    assert(cs[2].len() == 1)
+}
+
+test "chunks — lazy map without materialising the outer Vec" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    // chunk lengths: 2, 2, 1 — never builds a Vec[Vec[int]]
+    ro lens = v.chunks(2).map(|w| w.len()).collect()
+    assert(lens == [2, 2, 1])
+}
+
+// ── chunks_exact: full chunks only, short tail dropped ─────────────────────
+
+test "chunks_exact — drops the short trailing remainder" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro cs = v.chunks_exact(2).collect()
+    assert(cs.len() == 2)
+    assert(cs[0].equal(Vec[int].of(1, 2)))
+    assert(cs[1].equal(Vec[int].of(3, 4)))
+}
+
+test "chunks_exact — evenly divisible behaves like chunks" {
+    ro v = Vec[int].of(1, 2, 3, 4)
+    ro cs = v.chunks_exact(2).collect()
+    assert(cs.len() == 2)
+    assert(cs[0].equal(Vec[int].of(1, 2)))
+    assert(cs[1].equal(Vec[int].of(3, 4)))
+}
+
+test "chunks_exact — n > len yields nothing" {
+    ro v = Vec[int].of(1, 2, 3)
+    ro cs = v.chunks_exact(5).collect()
+    assert(cs.len() == 0)
+}
+
+// ── rchunks: from the end, leading chunk may be short ──────────────────────
+
+test "rchunks — yields back-to-front, short leading chunk last" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro cs = v.rchunks(2).collect()
+    assert(cs.len() == 3)
+    assert(cs[0].equal(Vec[int].of(4, 5)))   // tail first
+    assert(cs[1].equal(Vec[int].of(2, 3)))
+    assert(cs[2].equal(Vec[int].of(1)))      // short leading chunk last
+}
+
+test "rchunks — evenly divisible" {
+    ro v = Vec[int].of(1, 2, 3, 4)
+    ro cs = v.rchunks(2).collect()
+    assert(cs.len() == 2)
+    assert(cs[0].equal(Vec[int].of(3, 4)))
+    assert(cs[1].equal(Vec[int].of(1, 2)))
+}
+
+test "rchunks — n >= len yields a single whole-vec view" {
+    ro v = Vec[int].of(1, 2, 3)
+    ro cs = v.rchunks(9).collect()
+    assert(cs.len() == 1)
+    assert(cs[0].equal(Vec[int].of(1, 2, 3)))
+}
+
+// ── windows: overlapping width-n views ─────────────────────────────────────
+
+test "windows — overlapping consecutive views" {
+    ro v = Vec[int].of(1, 2, 3, 4)
+    ro ws = v.windows(2).collect()
+    assert(ws.len() == 3)
+    assert(ws[0].equal(Vec[int].of(1, 2)))
+    assert(ws[1].equal(Vec[int].of(2, 3)))   // overlaps prior by 1
+    assert(ws[2].equal(Vec[int].of(3, 4)))
+}
+
+test "windows — width 3" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro ws = v.windows(3).collect()
+    assert(ws.len() == 3)
+    assert(ws[0].equal(Vec[int].of(1, 2, 3)))
+    assert(ws[1].equal(Vec[int].of(2, 3, 4)))
+    assert(ws[2].equal(Vec[int].of(3, 4, 5)))
+}
+
+test "windows — n == len yields one window (the whole vec)" {
+    ro v = Vec[int].of(1, 2, 3)
+    ro ws = v.windows(3).collect()
+    assert(ws.len() == 1)
+    assert(ws[0].equal(Vec[int].of(1, 2, 3)))
+}
+
+test "windows — n > len yields nothing" {
+    ro v = Vec[int].of(1, 2)
+    ro ws = v.windows(3).collect()
+    assert(ws.len() == 0)
+}
+
+test "windows — n == 1 yields each element as a singleton view" {
+    ro v = Vec[int].of(1, 2, 3)
+    ro ws = v.windows(1).collect()
+    assert(ws.len() == 3)
+    assert(ws[0].equal(Vec[int].of(1)))
+    assert(ws[2].equal(Vec[int].of(3)))
+}
+
+// ── empty receiver across all four ─────────────────────────────────────────
+
+test "empty vec — every adapter yields nothing" {
+    ro v = Vec[int].new()
+    assert(v.chunks(2).collect().len() == 0)
+    assert(v.chunks_exact(2).collect().len() == 0)
+    assert(v.rchunks(2).collect().len() == 0)
+    assert(v.windows(2).collect().len() == 0)
+}
+
+// ── lazy composition: terminators other than collect ───────────────────────
+
+test "windows feed a lazy fold (pairwise sums) without outer Vec" {
+    ro v = Vec[int].of(1, 2, 3, 4)
+    // sum of each adjacent pair: 3, 5, 7 -> total 15
+    ro total = v.windows(2).map(|w| w[0] + w[1]).fold(0, |acc, x| acc + x)
+    assert(total == 15)
+}
+
+test "chunks count is the number of chunks (drains lazily)" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7)
+    assert(v.chunks(3).count() == 3)         // [1,2,3] [4,5,6] [7]
+    assert(v.chunks_exact(3).count() == 2)   // [1,2,3] [4,5,6]
+}

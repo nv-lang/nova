@@ -36665,6 +36665,24 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   инвариант len(l)+len(r)==len) и протестированы (plan153_4/views 14 блоков + split_at_oob_neg).
   Документированная scope-граница (B = ленивый слой за 153.2), а не тихий tech-debt. Маркер заведён
   в backlog-followups.md (P2, gated Plan 153.2). Приоритет P2.
+- [2026-06-15] Plan 153.4-B (lazy chunks/windows, D262, ветка plan-153-wave): **`[M-153.4-chunks-
+  windows-lazy]` ✅ CLOSED — без упрощений.** `@chunks(n)`/`@chunks_exact(n)`/`@rchunks(n)`/`@windows(n)`
+  реализованы ленивыми итераторами поверх инфры Plan 153.2 (которая теперь готова): каждый — инстанс-
+  метод `Vec[T] @… -> BoxIter[Self]` в `std/collections/vec_lazy.nv` (sibling-файл, НЕ prelude `vec/`:
+  bodies форвардят capturing-closure → generics-leak D145, opt-in `import std.collections.vec_lazy`),
+  yield'ящий zero-copy `[]T`≡`Vec[T]`-views (`src[a..b]`, `cap==len`) на том же буфере (Plan 96/D238).
+  БЕЗ аллокации внешнего `[][]T`-Vec (Rust `slice::chunks`/`windows`): `collect()` материализует только
+  по требованию, `chunks(n).map/fold/count/for_each` — без внешней аллокации вовсе. Контракт `n > 0`
+  (`requires`, runtime-panic). **Compiler НЕ трогался** — единственный нюанс codegen решён аннотацией
+  локала: early-exhaustion `ro done Option[Self] = None` вместо bare `return None` (bare-None в closure
+  с КОНКРЕТНЫМ элементом `Vec[T]`, не свободным generic'ом, монофится в дефолтный `Option[<elem>]` и
+  расходится со step-return `BoxIter[Self]`; тот же класс что `[M-153.2-tuple-elem-adapter]`). Это НЕ
+  упрощение/маскировка — семантика полная (short remainder в chunks, drop хвоста в chunks_exact, reverse
+  в rchunks, overlap в windows, empty/single/oversize-n), контракты осмысленны, тесты полные. Фикстуры
+  `plan153_4/chunks_windows` (23 test-блока) + 4 негатива (chunks/chunks_exact/rchunks/windows n<=0,
+  EXPECT_RUNTIME_PANIC requires) + smoke в vec_lazy.nv. Верификация (релизный nova C-codegen): plan153_4
+  7/0, plan153_2 4/0, plan96 23/0, plan153_0 4/0, plan153_1 7/0, basics 8/0, plan131 28/0, plan138 10/0
+  = 0 регрессий. **Plan 153.4 (A+B) ЗАКРЫТ ЦЕЛИКОМ.**
 - **Plan 153.5 — restructure-ops + оператор `+` (2026-06-14, D263, ветка `plan-153.5-restructure`,
   commit `e8f700e4`)**: новый co-equal файл `std/collections/vec/restructure.nv` (folder-модуль
   `collections.vec`), все методы — Nova-body поверх bulk `RawMem.copy`. **`@concat(other) -> Vec[T]`**

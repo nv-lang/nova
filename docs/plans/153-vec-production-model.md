@@ -529,7 +529,7 @@ Opus. Эстимат ~2–2.5 dd (модель готова).
 ёмкость** (`with_capacity`/`@cap(n)`, 153.1). Мут-view (`mut []T`/`for mut x`) —
 write-through до detach. Подтвердить в доках; новых решений не требуется.
 
-> #### Статус 153.4 — 🟢 A ЗАКРЫТА (2026-06-14, ветка plan-153.4-slices): eager-views; B (chunks/windows) deferred
+> #### Статус 153.4 — ✅ ЗАКРЫТ ЦЕЛИКОМ (A: eager-views 2026-06-14 `plan-153.4-slices`; B: lazy chunks/windows 2026-06-15 `plan-153-wave`)
 >
 > **153.4-A ✅ (eager zero-copy `[]T`-views, БЕЗ внешней аллокации).** Новый peer-файл
 > `std/collections/vec/views.nv` (folder-module `collections.vec`): `@split_at(i) -> (Self,Self)`
@@ -555,9 +555,25 @@ write-through до detach. Подтвердить в доках; новых ре
 > `None`); 0 регрессий (plan153_0/1/3/6, generics, basics, plan131/138/90_1 чисто; plan138_2 4-FAIL
 > идентичны baseline = pre-existing Vec-shadow E7310 + transient lld-link file-lock).
 >
-> **153.4-B 🔶 DEFERRED — `[M-153.4-chunks-windows-lazy]` (gated на Plan 153.2).** `@chunks`/
-> `@chunks_exact`/`@rchunks`/`@windows` — рекомендация плана = **ленивые** итераторы (без аллокации
-> внешнего Vec) → зависят от ленивой инфры 153.2 (другой worktree). НЕ реализованы наспех eager.
+> **153.4-B ✅ ЗАКРЫТА (2026-06-15, ветка plan-153-wave) — `[M-153.4-chunks-windows-lazy]` CLOSED.**
+> `@chunks(n)` / `@chunks_exact(n)` / `@rchunks(n)` / `@windows(n)` реализованы **ленивыми** итераторами
+> (рекомендация плана; Rust/Kotlin-стиль, БЕЗ аллокации внешнего `[][]T`-Vec) поверх ленивой инфры
+> Plan 153.2. Каждый — инстанс-метод `Vec[T] @… -> BoxIter[Self]` в `std/collections/vec_lazy.nv`
+> (sibling-файл, НЕ prelude `vec/`-папка: bodies форвардят capturing-closure → generics-leak D145, как
+> все адаптеры → opt-in `import std.collections.vec_lazy`), yield'ящий zero-copy `[]T`≡`Vec[T]`-views
+> (`src[a..b]`, `cap==len`) на том же буфере (Plan 96 D-single-type/D238). `collect()` материализует
+> `[][]T` (`Vec[Vec[T]]`) только по требованию; `chunks(n).map(|w| w.len())` / `.fold` / `.count` /
+> `.for_each` — без аллокации внешнего Vec вовсе. Семантика: `chunks` непересек., last короткий;
+> `chunks_exact` дропает короткий хвост; `rchunks` с конца (leading короткий, yield back-to-front);
+> `windows` перекрывающиеся width-n (n−1 общих с соседним), `n>len`→пусто. Контракт `n > 0` (`requires`,
+> runtime-panic). **Без compiler-фикса** — early-exhaustion возвращает `ro done Option[Self] = None`
+> (типизированный локал), т.к. bare `return None` в closure с КОНКРЕТНЫМ `Vec[T]` элементом (не свободный
+> generic) монофится в дефолтный `Option[<elem>]` и расходится со step-return `BoxIter[Self]` (тот же
+> класс что `[M-153.2-tuple-elem-adapter]`). Тесты `plan153_4/chunks_windows` (23 test-блока) + 4 негатива
+> (`chunks_zero_neg`/`chunks_exact_zero_neg`/`rchunks_zero_neg`/`windows_neg`, EXPECT_RUNTIME_PANIC
+> requires) + smoke в самом vec_lazy.nv. Верификация (релизный nova C-codegen, env GC на main repo):
+> **plan153_4 7/0, plan153_2 4/0, plan96 23/0, plan153_0 4/0, plan153_1 7/0, basics 8/0, plan131 28/0,
+> plan138 10/0 = 0 регрессий.**
 >
 > **Критерии приёмки 153.4-A (все ✅).**
 > 1. Slice-поверхность построена на `[]T`-view модели (D238/D239 + Plan 96), **БЕЗ** нового

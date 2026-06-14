@@ -141,9 +141,16 @@ pow2 rounding). The GC keeps the parent buffer alive while any view is reachable
 `to_vec()`, never a view.
 
 `@chunks`/`@chunks_exact`/`@rchunks`/`@windows` are **lazy** iterators (Rust-like,
-no outer-`Vec` allocation), deferred under `[M-153.4-chunks-windows-lazy]` and
-gated on the Plan 153.2 lazy-iterator infrastructure — they are intentionally NOT
-implemented eagerly.
+no outer-`Vec` allocation) that yield `[]T` views one at a time — each is an
+instance method `Vec[T] @… -> BoxIter[[]T]` (`requires n > 0`) in the explicitly-
+imported lazy module `std/collections/vec_lazy.nv`, built on the Plan 153.2 lazy
+infrastructure (Plan 153.4-B, `[M-153.4-chunks-windows-lazy]` ✅ closed). They are
+intentionally NOT in the prelude `vec/` folder (closure-dense bodies leak generics,
+D145) nor eager (an eager form would allocate a `Vec`-of-views). `collect()`
+materialises the `[][]T` only on demand; `chunks(n).map(|w| …)` / `.fold` /
+`.count` never allocate the outer `Vec`. `chunks` keeps a short trailing remainder;
+`chunks_exact` drops it; `rchunks` walks from the end (yielding back-to-front, the
+leading chunk short); `windows` slides by 1 (overlapping, `n > len` → empty).
 
 ## Compare vs Equal
 

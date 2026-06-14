@@ -428,16 +428,22 @@
   класс что pre-existing `empty.min()` → `Nova_Duration_method_min` коллизия в `plan91_fe4/neg`).
 
 ## Follow-up: Plan 153.4 (slices — value-record element typedef)
-- **`[M-153.4-chunks-windows-lazy]`** (planned, **gated на Plan 153.2**, home **Plan 153.4 / D262**):
-  `@chunks(n)` / `@chunks_exact(n)` / `@rchunks(n)` / `@windows(n)` — рекомендация плана = **ЛЕНИВЫЕ
-  итераторы** (Rust/Kotlin-стиль, БЕЗ аллокации внешнего `[][]T`-Vec), yield'ящие zero-copy `[]T`-views
-  на том же буфере. Зависят от ленивой итератор-инфраструктуры Plan 153.2 (`VecIter`/`Iter`/`Next` +
-  адаптер-протокол), которая идёт параллельно в другом worktree. НЕ реализованы наспех eager здесь
-  (eager-форма аллоцировала бы Vec-of-views и расходилась бы с ленивым каноном Q-iterator-laziness).
-  Eager-views БЕЗ внешней аллокации (`@split_at`/`@split_first`/`@split_last`/`@first_n`/`@last_n`/
-  `@as_slice`+`mut @as_slice`) ЗАКРЫТЫ в 153.4-A (`std/collections/vec/views.nv`). Закрытие этого
-  маркера = добавить 4 lazy-метода поверх 153.2-инфры (chunks → step-n iterator, windows → sliding,
-  rchunks → reverse-step). Pin: новые фикстуры `plan153_4/chunks*`/`windows*` при реализации. | Plan 153.2 | P2 |
+- **`[M-153.4-chunks-windows-lazy]`** ✅ **CLOSED 2026-06-14** (Plan 153.4-B, home **Plan 153.4 / D262**):
+  `@chunks(n)` / `@chunks_exact(n)` / `@rchunks(n)` / `@windows(n)` реализованы **ЛЕНИВО** (Rust/Kotlin-
+  стиль, БЕЗ аллокации внешнего `[][]T`-Vec) поверх ленивой инфры Plan 153.2 — каждый = инстанс-метод
+  `Vec[T] @… -> BoxIter[Self]` в `std/collections/vec_lazy.nv` (sibling-файл, не prelude `vec/`: bodies
+  форвардят capturing-closure → generics-leak, как все адаптеры), yield'ящий zero-copy `[]T`-views
+  (`src[a..b]`, `cap==len`) на том же буфере; `collect()` материализует `[][]T` только по требованию,
+  `chunks(n).map(|w| …)`/`fold`/`count`/`for_each` — без аллокации внешнего Vec вовсе. Контракт `n > 0`
+  (`requires`, runtime-panic). Заметка по codegen: early-exhaustion возвращает `ro done Option[Self] =
+  None` (типизированный локал), т.к. bare `return None` в closure с КОНКРЕТНЫМ элементом `Vec[T]` (не
+  свободный generic) монофится в дефолтный `Option[<elem>]` и расходится с `BoxIter[Self]` step-return
+  (тот же класс что `[M-153.2-tuple-elem-adapter]`) — БЕЗ compiler-фикса, чисто аннотацией локала.
+  Фикстуры: `plan153_4/chunks_windows` (23 test-блока: even/odd split, short remainder, exact-drop,
+  reverse rchunks, overlapping windows, n==1, n>=len, empty, lazy map/fold/count) + 4 негатива
+  `chunks_zero_neg`/`chunks_exact_zero_neg`/`rchunks_zero_neg`/`windows_neg` (EXPECT_RUNTIME_PANIC
+  requires). Верификация: plan153_4 7/0, plan153_2 4/0, plan96 23/0, plan153_0 4/0, plan153_1 7/0,
+  basics 8/0, plan131 28/0, plan138 10/0 = 0 регрессий. **153.4 (A+B) ЗАКРЫТ ЦЕЛИКОМ.**
 - **`[M-153.4-vec-value-record-field-access]`** (planned, P2, home **Plan 153.4 / Plan 96 H3**):
   slice-каст value-record (`ranges[1..3]` на `[]Range`) **ЗАКРЫТ** (emit_c.rs:19052 un-mangle
   `_p`→`*` для element-cast; передан агентом 152-sweep'а, был pre-existing, НЕ регрессия 152).

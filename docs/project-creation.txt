@@ -38233,3 +38233,27 @@ the workaround; NEG fixture locks the boundary) + [M-153.6-collect-map-tuple-rec
 @collect_map() does not parse — tuple receiver type-arg rejected; HashMap target = HashMap.from(...)).
 D264 written in full (02-types.md: Hash + FromIterator/collect-target); D260 "deferred" note updated;
 docs/vec-lazy.md FromIterator section + collect_set terminator row.
+
+[2026-06-15] Plan 153.4-B — LAZY chunks/chunks_exact/rchunks/windows (D262, ветка plan-153-wave).
+  [M-153.4-chunks-windows-lazy] CLOSED -> Plan 153.4 (A+B) ЗАКРЫТ ЦЕЛИКОМ. Реализованы 4 ленивых
+  slice-view итератора поверх готовой инфры Plan 153.2 (BoxIter), как инстанс-методы Vec[T] в
+  std/collections/vec_lazy.nv (sibling-файл, НЕ prelude vec/ папка — closure-dense bodies leak generics
+  D145 -> opt-in `import std.collections.vec_lazy`): @chunks(n)/@chunks_exact(n)/@rchunks(n)/@windows(n),
+  каждый -> BoxIter[Self], yield'ит zero-copy []T≡Vec[T] views (src[a..b], cap==len) на том же буфере
+  (Plan 96 D-single-type / D238). БЕЗ аллокации внешнего [][]T-Vec (Rust slice::chunks/windows model):
+  collect() материализует [][]T только по требованию; chunks(n).map(|w| w.len())/.fold/.count/.for_each
+  не аллоцируют внешний Vec вовсе. Семантика: chunks непересек. left->right (last короткий);
+  chunks_exact дропает короткий хвост; rchunks от конца (yield back-to-front, leading короткий); windows
+  перекрывающиеся width-n (n-1 общих, n>len -> пусто). Контракт n>0 (requires, runtime-panic). NO
+  compiler changes — единственный нюанс codegen решён аннотацией локала: early-exhaustion возвращает
+  `ro done Option[Self] = None` вместо bare `return None` (bare-None в closure с КОНКРЕТНЫМ Vec[T]
+  элементом, не свободным generic, монофится в дефолтный Option[<elem>] и расходится со step-return
+  BoxIter[Self]; тот же класс что [M-153.2-tuple-elem-adapter]). Релизный бинарь грузит vec_lazy.nv с
+  диска -> rebuild не нужен. Тесты plan153_4/chunks_windows (23 test-блока: even/odd split, short
+  remainder, exact-drop, reverse rchunks, overlapping windows, n==1, n>=len, empty, lazy map/fold/count)
+  + 4 негатива chunks_zero_neg/chunks_exact_zero_neg/rchunks_zero_neg/windows_neg (EXPECT_RUNTIME_PANIC
+  requires) + smoke в vec_lazy.nv. Верификация (релизный nova, C-codegen, env GC на main repo):
+  plan153_4 7/0, plan153_2 4/0, plan96 23/0, plan153_0 4/0, plan153_1 7/0, basics 8/0, plan131 28/0,
+  plan138 10/0 = 0 регрессий. Docs: backlog-followups (marker CLOSED), 153-vec-production-model.md
+  (статус 153.4 -> ЗАКРЫТ ЦЕЛИКОМ + 153.4-B блок), spec 03-syntax.md#d262 (таблица + статус), vec/views.nv
+  header, docs/collections/vec-owned.md (lazy slice-view таблица), docs/vec-internals.md.

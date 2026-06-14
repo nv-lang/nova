@@ -89,6 +89,34 @@ let hit = v.lazy().map(|x| x).find(|x| x == 3)            // Some(3), map ran 3�
 | `take` | `@take(n int) -> BoxIter[T]` | at most the first `n` |
 | `skip` | `@skip(n int) -> BoxIter[T]` | all but the first `n` |
 
+### Slice-view iterators (lazy `[]T`-view producers — Plan 153.4)
+
+Instance methods on `Vec[T]` (not on `BoxIter`) that split the vector into a lazy
+iterator of **zero-copy `[]T` views** (`Vec[T]` headers with `cap == len`, sharing
+the parent buffer like `v[a..b]`). No outer `Vec[Vec[T]]` is allocated up front —
+each `step` pull builds one sub-range view on demand (Rust `slice::chunks` /
+`windows`). Each `requires n > 0` (a zero/negative size panics, no clamp). Drive
+them with any terminator: `v.chunks(n).collect()` materialises the `[][]T` only on
+demand, `v.windows(n).map(|w| …)` / `.fold` / `.count` never allocate the outer
+`Vec` at all.
+
+| Adapter | Signature | Yields |
+|---|---|---|
+| `chunks` | `@chunks(n int) -> BoxIter[[]T]` | non-overlapping chunks of `n`; **last chunk short** |
+| `chunks_exact` | `@chunks_exact(n int) -> BoxIter[[]T]` | full chunks of `n` only; **short tail dropped** |
+| `rchunks` | `@rchunks(n int) -> BoxIter[[]T]` | chunks from the end (yielded back-to-front); **leading chunk short** |
+| `windows` | `@windows(n int) -> BoxIter[[]T]` | overlapping width-`n` views (`n-1` shared); `n > len` → empty |
+
+```nova
+let v = Vec[int].of(1, 2, 3, 4, 5)
+assert(v.chunks(2).collect().len() == 3)             // [1,2] [3,4] [5]
+assert(v.chunks_exact(2).collect().len() == 2)       // [1,2] [3,4] (drops [5])
+assert(v.windows(2).collect().len() == 4)            // [1,2] [2,3] [3,4] [4,5]
+// lazy — no Vec[Vec[int]] ever allocated:
+let pair_sums = v.windows(2).map(|w| w[0] + w[1]).collect()
+assert(pair_sums == [3, 5, 7, 9])
+```
+
 ### Terminators (drive the chain / short-circuit)
 
 | Terminator | Signature | Result |

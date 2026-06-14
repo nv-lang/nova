@@ -134,8 +134,10 @@ collection you already have (`from(some_vec)` / `from(some_slice)`).
 
 Zero-copy `[]T`-views of the **same type** sharing the parent buffer (`cap == len`);
 no `Slice` type. A reallocating mutation on a view detaches it (Go-model, GC-safe);
-an *owning* copy is `clone()`/`to_vec()`. Lazy `chunks`/`windows` are deferred
-(`[M-153.4-chunks-windows-lazy]`, gated on Plan 153.2). See
+an *owning* copy is `clone()`/`to_vec()`. The lazy slice-view iterators
+`chunks`/`chunks_exact`/`rchunks`/`windows` live in the explicitly-imported lazy
+module (`import std.collections.vec_lazy`) — they yield `[]T` views one at a time
+with **no outer `Vec` allocation** (Rust `slice::chunks`/`windows`). See
 [`vec-internals.md` → Slices & views](../vec-internals.md#slices--views-plan-1534--d262).
 
 | Method | Signature | Description |
@@ -147,6 +149,15 @@ an *owning* copy is `clone()`/`to_vec()`. Lazy `chunks`/`windows` are deferred
 | `split_last` | `@split_last() -> Option[(T, []T)]` | Last element + init view; empty → `None` |
 | `first_n` | `@first_n(n int) -> []T` | Prefix view; **clamps** (`n > len` → whole, `n <= 0` → empty) |
 | `last_n` | `@last_n(n int) -> []T` | Suffix view; **clamps** (same as `first_n`) |
+
+**Lazy slice-view iterators** (`import std.collections.vec_lazy`; each `-> BoxIter[[]T]`, `requires n > 0`):
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `chunks` | `@chunks(n int) -> BoxIter[[]T]` | Non-overlapping chunks of `n`; last chunk short |
+| `chunks_exact` | `@chunks_exact(n int) -> BoxIter[[]T]` | Full chunks of `n` only; short tail dropped |
+| `rchunks` | `@rchunks(n int) -> BoxIter[[]T]` | Non-overlapping chunks from the end (yielded back-to-front); leading chunk short |
+| `windows` | `@windows(n int) -> BoxIter[[]T]` | Overlapping width-`n` views (`n-1` shared); `n > len` → empty |
 
 ### Conversion
 
