@@ -417,10 +417,13 @@ peekable/min_by(_key)/max_by(_key)/partition/chunk_by/into_iter. Opus. Эсти�
 > Ok=found/Err=insert-point, `@is_sorted` по adjacent-парам; (4) `@dedup*` consecutive +
 > `v.sort().dedup()`=unique (fluent chain); (5) `@partition(pred)->int` split-point, satisfying-
 > первыми; (6) **0 регрессий** (vec-sanity: plan153_0/1/6 + plan90/90_1 чисты). Тесты plan153_3:
-> search 4/4 + sort 5/5 + dedup_partition 5/5. **Отложено:** `@select_nth_unstable`
-> (`[M-153-select-nth]`); `*_unstable` in-place (`[M-153.3-sort-unstable-inplace]` — пока alias
-> stable); `binary_search() == Ok(x)` для non-default-E gated на
-> `[M-153-result-eq-literal-expected-type]` (используется `match`).
+> search 4/4 + sort 5/5 + dedup_partition 5/5 + heapsort_rigor 5/5 + select_nth 4/4 + OOB-neg.
+> **Production-grade без упрощений (commit `468bccf5`):** `@sort_unstable*` — настоящий **in-place
+> heapsort** (O(n log n) worst, O(1) extra), НЕ alias стабильного; `@select_nth_unstable` —
+> **introselect** (median-of-three quickselect + heapsort depth-guard, O(n) avg / O(n log n) worst,
+> контракт `k∈[0,len)`). Оба — реальные алгоритмы. **Остаток:** pdqsort поверх heapsort
+> (`[M-153.3-sort-pdqsort]` — perf-only, не упрощение); `binary_search() == Ok(x)` для non-default-E
+> — pre-existing inference gap (`[M-153-result-eq-literal-expected-type]`; `match` работает).
 
 ### 153.4 — Слайсы и views (достроить на модели Plan 96) `[D262, A/B]`
 **Модель уже принята и приземлена** (D238 + Plan 96 **D-single-type** + **D-cap-len**):

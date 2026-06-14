@@ -37755,3 +37755,20 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   5/5; vec-sanity (plan153_0/1/6 + plan90/90_1) чист. Отложено: select_nth (quickselect,
   `[M-153-select-nth]`), *_unstable in-place (`[M-153.3-sort-unstable-inplace]`). Закрытие в
   плане 153 §153.3 (критерии приёмки) + simplifications.md + backlog.
+
+[2026-06-14] Plan 153.3 follow-up — снятие упрощений (production-grade критерий приёмки, commit
+  468bccf5). Автор: «без упрощений как для прода — обязательный критерий приёмки». Закрыл два
+  отложения, которые были РЕАЛЬНЫМИ упрощениями: (1) `@sort_unstable[_by][_by_key]` — был alias
+  стабильного merge sort (корректно, но не отдельный алгоритм + O(n) scratch, что убивает смысл
+  `_unstable`); заменён на настоящий **in-place binary heapsort** (build-max-heap + pop-to-tail,
+  итеративный sift-down без рекурсии, O(n log n) worst гарантированно, O(1) extra). (2)
+  `@select_nth_unstable(k)` — был отложен планом (Roadmap); реализован как **introselect**:
+  median-of-three quickselect (убивает sorted/reverse O(n²)-кейс) + depth-guard, который на
+  исчерпании глубины (~2·log₂n) откатывается на heapsort → worst O(n log n), avg O(n); контракт
+  `k∈[0,len)` (паника при OOB). Тесты: heapsort_rigor 5/5 (reverse-20, all-equal, sorted,
+  matches-stable, by-key), select_nth 4/4 (k-th + partition-инвариант, min/max, дубли,
+  reverse-30) + OOB-panic neg. Std-only (sort.nv), без ребилда. Остаток — НЕ упрощения: pdqsort
+  поверх heapsort (`[M-153.3-sort-pdqsort]`, чистый perf поверх гарантированного алгоритма); и
+  `result == Ok(x)` для non-default-E — pre-existing project-level inference gap (чекер оставляет
+  variant-ctor без типа by design → codegen дефолтит E=str, emit_c.rs:5172), класс
+  Q-overload-result-type (отложен с мая), не внесён 153.3 (`match` работает).

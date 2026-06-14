@@ -290,22 +290,28 @@
   `collect`-таргета приземляется вместе с 153.2.
 
 ## Follow-up: Plan 153.3 (sort & search)
-- **`[M-153.3-sort-unstable-inplace]`** (planned, P3, perf): `@sort_unstable[_by][_by_key]`
-  сейчас **alias стабильного** bottom-up merge sort (correctness-first MVP, sort.nv). Дать
-  отдельный быстрый in-place introsort/pdqsort (без O(n) scratch, лучше cache/branch) — это и
-  есть смысл `_unstable`. Не гейтит ничего (стабильная сортировка корректна для всех кейсов).
-- **`[M-153-select-nth]`** (planned, P3, home **Plan 153.3 roadmap**): `@select_nth_unstable`
-  (quickselect, k-й порядковый элемент за O(n) средн.) — явно отложен планом 153.3 §Roadmap.
-- **`[M-153-result-eq-literal-expected-type]`** (planned, P2, home **checker / type-inference**):
-  `result == Ok(x)` где Result имеет **non-default E** (≠`str`; напр. `binary_search`→
-  `Result[int,int]`) — литерал `Ok(x)` инферит `E=str` (дефолт), не унифицируется с типом LHS →
-  два разных `NovaRes_<...>` → структурный eq сравнивает несовпадающие payload-типы → **CC-FAIL**.
-  Нужна **expected-type propagation** в чекере: для `Eq/Neq` протянуть тип одного операнда как
-  expected другому (`types/mod.rs`, ~18k строк, 20 Binary-армов; mutable `walk_expr`@18478 —
-  desugar-проход, реальная bidirectional-инференция в другом месте). Глубокий change, узкая польза
-  (общий `Result[_, str]` УЖЕ работает; `binary_search` использует `match`). Surfaced при
-  структурном `==`-фиксе (`1cc82de5`). **Не** добавляли same-type guard: текущий CC-FAIL громче
-  silent-wrong identity.
+- **`[M-153.3-sort-unstable-inplace]`** ✅ **RESOLVED** (commit `468bccf5`): `@sort_unstable[_by]
+  [_by_key]` переведены с alias-стабильного на **настоящий in-place heapsort** (O(n log n) worst,
+  O(1) extra — даёт `_unstable` его смысл: без scratch-буфера и без quicksort O(n²)-обрыва).
+  Тест `plan153_3/heapsort_rigor` 5/5.
+- **`[M-153.3-sort-pdqsort]`** (planned, P3, **perf-only — НЕ упрощение**): heapsort корректен и
+  worst-case-оптимален; pattern-defeating quicksort (pdqsort) обгоняет его лишь по константам
+  (cache/branch). Чистая perf-оптимизация поверх рабочего, гарантированного алгоритма.
+- **`[M-153-select-nth]`** ✅ **RESOLVED** (commit `468bccf5`): `@select_nth_unstable(k)` реализован
+  как **introselect** — median-of-three quickselect (O(n) средн.) + depth-guard fallback на
+  heapsort (O(n log n) worst, без O(n²)), контракт `k ∈ [0,len)`. Тест `plan153_3/select_nth` 4/4
+  + OOB-panic neg.
+- **`[M-153-result-eq-literal-expected-type]`** (planned, P2, home **codegen / type-inference**):
+  `result == Ok(x)` где Result имеет **non-default E** (≠`str`; напр. `binary_search`→`Result[int,
+  int]`) — литерал `Ok(x)` инферит `E=str` (**codegen-дефолт** `emit_c.rs:5172`
+  `NovaRes_nova_int_nova_str`, потому что **чекер оставляет variant-ctor без типа by design** —
+  тест `infer_call_sum_variant_stays_unknown`), не унифицируется с типом LHS → два разных
+  `NovaRes_<…>` → структурный eq сравнивает несовпадающие payload → **CC-FAIL**. Фикс —
+  expected-type propagation для Ok/Err-литерала в `==` (codegen: протянуть concrete Result-тип
+  одного операнда в эмиссию литерала другого). **Pre-existing project-level gap** (класс
+  Q-overload-result-type, отложен с мая) — НЕ упрощение, внесённое 153.3: `Result[_, str]` уже
+  работает, `binary_search` использует `match`. Same-type guard НЕ добавляли (CC-FAIL громче
+  silent-wrong).
 
 ## Follow-up: Plan 153.4 (slices — value-record element typedef)
 - **`[M-153.4-vec-value-record-field-access]`** (planned, P2, home **Plan 153.4 / Plan 96 H3**):
