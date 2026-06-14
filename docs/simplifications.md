@@ -36752,3 +36752,26 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   запись-резолв (append-only), не правка старой; carrier-slot нужен отдельный структурный AST-носитель
   (`receiver_ty`), т.к. `type_name` теряет глубину; структурный typevar-бинд обязан быть рекурсивным
   (innermost element), depth-agnostic, гейтнутым на nested — иначе ломает весь flat `[]T`-dispatch.
+
+[2026-06-15] Plan 145.2 (codegen emission determinism, ветка plan-145.2) + Plan 145.1 поверх него.
+  КОРЕНЬ (из находки 145.1): эмиссия C зависела от порядка итерации Rust HashMap (RandomState,
+  рандом per-process) → `.c` недетерминирован между сборками; это будило 2 ЛАТЕНТНЫХ order-зависимых
+  бага prelude: (A) init-order static-init OOB («array: index 0 out of bounds for length 0»);
+  (B) var_boxed (closure mut-capture box `_box_<v>`) cross-function leak (CC-FAIL undeclared). main
+  «стабилен» лишь по «удаче» порядка; любое codegen-изменение (portable-stmt-expr 145.1) → «плохой»
+  порядок → flaky. ФИКС 145.2: `method_overloads` + `embed_fields` HashMap→BTreeMap (детерминированная
+  итерация эмиссии embed-proxies + enqueue в mono-worklist; ключи Ord; API drop-in). НЕ упрощение —
+  корректное упрочнение; sort-на-каждом-сайте был бы хрупче (можно пропустить сайт). НЕ чинил сами
+  (A)/(B) изоляцией: emit_test/emit_lambda_body УЖЕ save/restore var_boxed — баг шёл через ПОРЯДОК
+  эмиссии lambda-bodies/mono-инстансов, детерминизм = корневой фикс. Остаток benign: порядок
+  NovaOpt-typedef'ов всё ещё non-det (косметика, независимые typedef, overload/rd 10/10 не триггерят)
+  → residual P3. ВАЛИДАЦИЯ: overload_method_values 10/10 + bare-str-array-read 10/10 (ранее flaky);
+  clang 0 net-new (set-diff syntax). РАЗБЛОКИРОВАЛ 145.1: поверх 145.2 переприменены struct-write
+  (memcpy-в-слот через nova_idx_chk, гейт NovaArrHdr) + heap-box-примитива (scalar compound literal +
+  nova_box_value — на cl.exe компилируется) + Option-get composite (`(NovaOpt_X){.value=
+  nova_npo_from_tagged_int(...)}`) → применились ЧИСТО, MSVC ВСЁ зелёное (plan145 6/0, plan138 10/0,
+  plan138_1 10/0, plan91_fe1 10/0, plan90/96/131/152_1/basics/generics), clang 0 net-new, overload/rd
+  8/8. Регресс-guard nova_tests/plan145_2/ (closure-capture-cross-test + str-array-rw). Остаток узкий:
+  value-record throw-как-выражение (rvalue в expression-контексте) → stmt-expr (редкий, P3). Урок
+  (см. discussion-log): бисект по ПЕРЕсборкам ненадёжен при недетерминизме эмиссии — один прогон ≠
+  свойство source; детерминизм надо чинить ПЕРВЫМ, чтобы баги стали воспроизводимы.
