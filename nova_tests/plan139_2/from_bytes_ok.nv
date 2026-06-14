@@ -10,7 +10,7 @@ test "from_bytes_unchecked: round-trip ASCII" {
     ro bytes = "hello".to_bytes()
     ro s = str.from_bytes_unchecked(bytes)
     assert(s == "hello")
-    assert(s.len() == 5)
+    assert(s.byte_len() == 5)
 }
 
 test "from_bytes_unchecked: round-trip multi-byte UTF-8" {
@@ -19,14 +19,14 @@ test "from_bytes_unchecked: round-trip multi-byte UTF-8" {
     ro bytes = original.to_bytes()
     ro s = str.from_bytes_unchecked(bytes)
     assert(s == original)
-    assert(s.len() == original.len())
+    assert(s.byte_len() == original.byte_len())
 }
 
 test "from_bytes_unchecked: empty array → empty string" {
     mut empty = []u8.new()
     ro s = str.from_bytes_unchecked(empty)
     assert(s == "")
-    assert(s.len() == 0)
+    assert(s.byte_len() == 0)
 }
 
 test "from_bytes_unchecked: explicit byte build" {
@@ -37,7 +37,7 @@ test "from_bytes_unchecked: explicit byte build" {
     b.push(67 as u8)   // 'C'
     ro s = str.from_bytes_unchecked(b)
     assert(s == "ABC")
-    assert(s.byte_at(0) == 65 as u8)
+    assert(s.as_bytes()[0] == 65 as u8)
 }
 
 test "from_bytes_lossy: valid UTF-8 fast path (copy)" {
@@ -55,12 +55,12 @@ test "from_bytes_lossy: invalid byte replaced with U+FFFD" {
     b.push(66 as u8)   // 'B'
     ro s = str.from_bytes_lossy(b)
     // "A" + U+FFFD (3 bytes) + "B" = 5 bytes.
-    assert(s.len() == 5)
-    assert(s.byte_at(0) == 0x41 as u8)   // 'A'
-    assert(s.byte_at(1) == 0xEF as u8)   // FFFD byte 1
-    assert(s.byte_at(2) == 0xBF as u8)   // FFFD byte 2
-    assert(s.byte_at(3) == 0xBD as u8)   // FFFD byte 3
-    assert(s.byte_at(4) == 0x42 as u8)   // 'B'
+    assert(s.byte_len() == 5)
+    assert(s.as_bytes()[0] == 0x41 as u8)   // 'A'
+    assert(s.as_bytes()[1] == 0xEF as u8)   // FFFD byte 1
+    assert(s.as_bytes()[2] == 0xBF as u8)   // FFFD byte 2
+    assert(s.as_bytes()[3] == 0xBD as u8)   // FFFD byte 3
+    assert(s.as_bytes()[4] == 0x42 as u8)   // 'B'
 }
 
 test "from_bytes_lossy: truncated multi-byte sequence replaced" {
@@ -68,10 +68,10 @@ test "from_bytes_lossy: truncated multi-byte sequence replaced" {
     mut b = []u8.new()
     b.push(0xC3 as u8) // lead of 2-byte seq, but no continuation follows
     ro s = str.from_bytes_lossy(b)
-    assert(s.len() == 3)                 // single U+FFFD
-    assert(s.byte_at(0) == 0xEF as u8)
-    assert(s.byte_at(1) == 0xBF as u8)
-    assert(s.byte_at(2) == 0xBD as u8)
+    assert(s.byte_len() == 3)                 // single U+FFFD
+    assert(s.as_bytes()[0] == 0xEF as u8)
+    assert(s.as_bytes()[1] == 0xBF as u8)
+    assert(s.as_bytes()[2] == 0xBD as u8)
 }
 
 test "from_bytes_unchecked_steal: zero-copy reuse when cap > len" {
@@ -82,7 +82,7 @@ test "from_bytes_unchecked_steal: zero-copy reuse when cap > len" {
     b.push(122 as u8)  // 'z'
     ro s = str.from_bytes_unchecked_steal(b)
     assert(s == "xyz")
-    assert(s.len() == 3)
+    assert(s.byte_len() == 3)
 }
 
 test "from_bytes_unchecked_steal: alloc+copy fallback when cap == len" {
@@ -93,12 +93,12 @@ test "from_bytes_unchecked_steal: alloc+copy fallback when cap == len" {
     b.push(119 as u8)  // 'w'
     ro s = str.from_bytes_unchecked_steal(b)
     assert(s == "qw")
-    assert(s.len() == 2)
+    assert(s.byte_len() == 2)
 }
 
 test "from_bytes_unchecked_steal: empty buffer" {
     mut b = []u8.new()
     ro s = str.from_bytes_unchecked_steal(b)
     assert(s == "")
-    assert(s.len() == 0)
+    assert(s.byte_len() == 0)
 }

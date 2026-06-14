@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC str.byte_at: index out of bounds
+// EXPECT_RUNTIME_PANIC out of bounds
 //
 // Plan 139.2 Ф.1 — негатив: @byte_at с отрицательным index панику́ет.
 //
@@ -10,5 +10,5 @@ module plan139_2.byte_at_oob_neg
 
 fn main() -> () {
     ro s = "abc"
-    ro _ = s.byte_at(-1)         // ← OOB: negative index
+    ro _ = s.as_bytes()[-1]         // ← OOB: negative index
 }

@@ -4,7 +4,7 @@ module plan139.t0_str_empty
 
 test "empty str has len 0 and is_empty" {
     ro e = ""
-    assert(e.len() == 0)
+    assert(e.byte_len() == 0)
     assert(e.is_empty())
 }
 
@@ -12,5 +12,5 @@ test "empty + concat yields the other operand" {
     ro e = ""
     ro s = e + "abc"
     assert(s == "abc")
-    assert(s.len() == 3)
+    assert(s.byte_len() == 3)
 }

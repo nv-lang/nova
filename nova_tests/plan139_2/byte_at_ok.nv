@@ -7,34 +7,34 @@ module plan139_2.byte_at_ok
 
 test "byte_at: ASCII bytes" {
     ro s = "ABC"
-    assert(s.byte_at(0) == 65 as u8)   // 'A'
-    assert(s.byte_at(1) == 66 as u8)   // 'B'
-    assert(s.byte_at(2) == 67 as u8)   // 'C'
+    assert(s.as_bytes()[0] == 65 as u8)   // 'A'
+    assert(s.as_bytes()[1] == 66 as u8)   // 'B'
+    assert(s.as_bytes()[2] == 67 as u8)   // 'C'
 }
 
 test "byte_at: single char" {
-    assert("z".byte_at(0) == 122 as u8)
+    assert("z".as_bytes()[0] == 122 as u8)
 }
 
 test "byte_at: multi-byte UTF-8 leading + continuation bytes" {
     // "é" = 0xC3 0xA9 (U+00E9, 2-byte UTF-8).
     ro s = "é"
-    assert(s.byte_at(0) == 0xC3 as u8)
-    assert(s.byte_at(1) == 0xA9 as u8)
-    assert(s.len() == 2)
+    assert(s.as_bytes()[0] == 0xC3 as u8)
+    assert(s.as_bytes()[1] == 0xA9 as u8)
+    assert(s.byte_len() == 2)
 }
 
 test "byte_at: agrees with as_bytes view" {
     ro s = "hello"
     ro view = s.as_bytes()
     mut i = 0
-    while i < s.len() {
-        assert(s.byte_at(i) == view[i])
+    while i < s.byte_len() {
+        assert(s.as_bytes()[i] == view[i])
         i = i + 1
     }
 }
 
 test "byte_at: last byte at len-1" {
     ro s = "abcd"
-    assert(s.byte_at(s.len() - 1) == 100 as u8)   // 'd'
+    assert(s.as_bytes()[s.byte_len() - 1] == 100 as u8)   // 'd'
 }

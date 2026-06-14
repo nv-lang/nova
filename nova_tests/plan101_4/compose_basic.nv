@@ -25,7 +25,7 @@ type MyFile {
 }
 
 fn MyFile @read() -> str => "data from ${@name}"
-fn MyFile @write(s str) -> int => s.len()
+fn MyFile @write(s str) -> int => s.byte_len()
 
 
 // Generic bounded функция: T должен удовлетворить ReadWriter →

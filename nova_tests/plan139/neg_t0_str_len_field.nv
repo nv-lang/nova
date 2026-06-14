@@ -1,7 +1,8 @@
-// Plan 139 Ф.0 — A0.3 (enforceable subset): str's `len` is a method-only
-// size-accessor (D117 / Plan 60). Reading it as a bare field is rejected.
-// (The value-record `len` field is internal; user code must call `.len()`.)
-// EXPECT_COMPILE_ERROR E_SIZE_ACCESSOR_FIELD
+// Plan 139 Ф.0 — str's `len` is internal. Plan 152.1 Ф.4 (D249) supersedes the
+// D117 size-accessor rule for `str`: both `s.len` (field) and `s.len()` (the
+// retired method) are now rejected with E_STR_NO_LEN — `str` has three diverging
+// lengths, so length goes through a lens (`byte_len()` / `as_chars().count()`).
+// EXPECT_COMPILE_ERROR E_STR_NO_LEN
 module plan139.neg_t0_str_len_field
 
 test "str.len as field (no parens) is a compile error" {

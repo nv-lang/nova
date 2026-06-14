@@ -23,7 +23,7 @@ type FileC {
 }
 
 fn FileC @read() -> str => @name
-fn FileC @write(s str) -> int => s.len()
+fn FileC @write(s str) -> int => s.byte_len()
 
 
 fn use_rwc[T RWC](x T) -> str {

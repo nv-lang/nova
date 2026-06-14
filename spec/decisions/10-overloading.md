@@ -183,6 +183,18 @@ param-types suffix: `Nova_T_method_m__nova_str`, `Nova_T_method_m__nova_int`.
   мутабельности receiver'а: `ro a; a.m()` → ro overload,
   `mut b; b.m()` → mut overload. Аналог C++ `const`-overloading.
   Тесты: `nova_tests/plan135/` (8/8 PASS).
+- ✅ **Generic-type method overloads в монорфизации** (`fn Vec[T] @cap()` vs
+  `fn Vec[T] mut @cap(n int)` — арность; `fn Box[T] @tag(int)` vs `@tag(str)` —
+  arg-type) — Plan 153.1 / `[M-138.2-generic-method-overload-mono]` (2026-06-13):
+  раньше mono-диспатч коллапсировал overloads first-by-name (`v.cap(10)` → 0-арг
+  геттер → «too many args»). Теперь call-site дизамбигуирует по арности → param-
+  C-типам (через side-map `mono_method_fndecl_for_name`), а return-type inference
+  для **chained** receiver'а (`v.cap(n).push(x)`) резолвит `@`/Self тем же arity-
+  aware выбором (Ф.3-fallback). Тесты: `nova_tests/plan153_1/generic_overload.nv`
+  (3/3: арность + param-type + chain), `core_api.nv` (fluent). Caveat: вызов
+  overload'а **без совпадения** по арности всё ещё CC-FAIL'ит (codegen fall-
+  through к первому кандидату), а не чистый type-check error — followup
+  `[M-138.2-overload-no-match-typecheck]`.
 
 #### Strict matching типов
 

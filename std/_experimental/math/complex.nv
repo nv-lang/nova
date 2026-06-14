@@ -355,10 +355,10 @@ export fn Complex.from(s str) Fail[ParseComplexError] -> Self {
 fn split_re_im(body str) -> Option[(str, str)] {
     mut i = 1                              // пропускаем знак re если есть
     while i < body.len() {
-        ro c = body.char_at(i)
+        ro c = body.as_chars().nth(i)
         if c == '+' || c == '-' {
             // Не часть экспоненты `1e-5`?
-            ro prev = body.char_at(i - 1)
+            ro prev = body.as_chars().nth(i - 1)
             if prev != 'e' && prev != 'E' {
                 ro re_s = body[0..i]
                 ro im_s = body[i..body.len()]

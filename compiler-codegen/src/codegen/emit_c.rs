@@ -17579,9 +17579,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     let void_side = if lty == "void*" { &l } else { &r };
                     let concrete_side = if lty == "void*" { &r } else { &l };
                     if concrete_ty == "nova_str" {
+                        // Plan 152.5a D-R4: Nova-body @eq (see the nova_str BinOp arm below).
                         return match op {
-                            BinOp::Eq  => Ok(format!("(nova_str_eq(*(nova_str*)({}), {}))", void_side, concrete_side)),
-                            BinOp::Neq => Ok(format!("(!nova_str_eq(*(nova_str*)({}), {}))", void_side, concrete_side)),
+                            BinOp::Eq  => Ok(format!("(Nova_str_method_eq(*(nova_str*)({}), {}))", void_side, concrete_side)),
+                            BinOp::Neq => Ok(format!("(!Nova_str_method_eq(*(nova_str*)({}), {}))", void_side, concrete_side)),
                             _ => Ok("(0)".into()),
                         };
                     } else if concrete_ty == "nova_int" || concrete_ty == "nova_bool"
@@ -17621,19 +17622,21 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // skip nova_str path and fall through to Nova_T* @plus dispatch.
                 let lhs_is_nova_ptr = lty.starts_with("Nova_") && lty.ends_with('*');
                 if (lty == "nova_str" || rty == "nova_str") && !lhs_is_nova_ptr {
+                    // Plan 152.5a D-R4: operators synthesize from the Nova-body
+                    // str methods (`@eq`/`@compare`/`@concat`, core.nv) instead of
+                    // the retired hardcoded C `nova_str_eq`/`lt`/`concat`. `@eq`
+                    // is length-first + memcmp; `@compare` is RawMem.compare +
+                    // length-tiebreak; `@concat` is alloc + 2 memcpy + steal —
+                    // perf-parity with the old C forms. Closes
+                    // [M-139.1-operator-lowered-methods].
                     return match op {
-                        BinOp::Eq  => Ok(format!("(nova_str_eq({}, {}))", l, r)),
-                        BinOp::Neq => Ok(format!("(!nova_str_eq({}, {}))", l, r)),
-                        // Ф.9.2: routing через @plus body `=> @concat(other)`.
-                        BinOp::Add => Ok(format!("(nova_str_concat({}, {}))", l, r)),
-                        // 2026-05-12: lex byte-wise compare для nova_str.
-                        // Bootstrap MVP — ASCII-correct; UTF-8 partial.
-                        // Полное Unicode collation — production milestone.
-                        // См. nova_rt.h nova_str_cmp/lt/le/gt/ge.
-                        BinOp::Lt  => Ok(format!("(nova_str_lt({}, {}))", l, r)),
-                        BinOp::Le  => Ok(format!("(nova_str_le({}, {}))", l, r)),
-                        BinOp::Gt  => Ok(format!("(nova_str_gt({}, {}))", l, r)),
-                        BinOp::Ge  => Ok(format!("(nova_str_ge({}, {}))", l, r)),
+                        BinOp::Eq  => Ok(format!("(Nova_str_method_eq({}, {}))", l, r)),
+                        BinOp::Neq => Ok(format!("(!Nova_str_method_eq({}, {}))", l, r)),
+                        BinOp::Add => Ok(format!("(Nova_str_method_concat({}, {}))", l, r)),
+                        BinOp::Lt  => Ok(format!("((Nova_str_method_compare({}, {})) < 0)", l, r)),
+                        BinOp::Le  => Ok(format!("((Nova_str_method_compare({}, {})) <= 0)", l, r)),
+                        BinOp::Gt  => Ok(format!("((Nova_str_method_compare({}, {})) > 0)", l, r)),
+                        BinOp::Ge  => Ok(format!("((Nova_str_method_compare({}, {})) >= 0)", l, r)),
                         _ => Err(format!("unsupported operator {:?} on nova_str", op)),
                     };
                 }
@@ -19230,16 +19233,10 @@ _sr; }}))",
                         // Для bootstrap проще: запретить open-ended для str-slice.
                         // Это decision — задокументируем как known limitation.
                         // Пока — emit как nova_str_byte_at-style цикл подсчёта.
-                        format!("({{ nova_str _s = ({}); nova_int _cp = 0; \
-for (size_t _i = 0; _i < _s.len; ) {{ \
-unsigned char _b = (unsigned char)_s.ptr[_i]; \
-if (_b < 0x80) _i += 1; \
-else if ((_b & 0xE0) == 0xC0) _i += 2; \
-else if ((_b & 0xF0) == 0xE0) _i += 3; \
-else if ((_b & 0xF8) == 0xF0) _i += 4; \
-else _i += 1; \
-_cp++; \
-}} _cp; }})", o)
+                        // Plan 152.1 Ф.1b (D249): str slice is BYTE-range — the
+                        // open-ended end is the BYTE length `_s.len` (was a codepoint
+                        // count). `_s` is defined by the inline byte-slice below.
+                        "_s.len".to_string()
                     } else if obj_ty.starts_with("NovaArray_") {
                         format!("({})->len", o)
                     } else {
@@ -19258,7 +19255,30 @@ _cp++; \
                         (None, _) => len_expr.clone(),
                     };
                     if obj_ty == "nova_str" {
-                        return Ok(format!("nova_str_slice_panic({}, {}, {})", o, from_expr, to_expr));
+                        // Plan 152.1 Ф.1b (D249): byte-range zero-copy sub-view (was
+                        // codepoint-indexed nova_str_slice_panic — the bug behind
+                        // non-ASCII split, which slices on byte offsets). Mirrors the
+                        // Vec[T] elidable slice above (140.2-style): byte bounds-check
+                        // elidable on proven-in-range sites + UTF-8 codepoint-boundary
+                        // guard (data-dependent → always-on). `from_expr`/`to_expr` are
+                        // byte offsets; open-ended end is `_s.len` (set in len_expr).
+                        let bounds_chk = if self.index_site_elided(expr.span.start) {
+                            String::new()
+                        } else {
+                            "if (_sf < 0 || _st < _sf || _st > _s.len) { char _sbuf[112]; \
+int _sn = snprintf(_sbuf, 112, \"str: slice [%lld..%lld] out of bounds for byte-length %lld\", \
+(long long)_sf, (long long)_st, (long long)_s.len); \
+if (_sn < 0) _sn = 0; if (_sn > 111) _sn = 111; \
+nv_panic((nova_str){.ptr=(const uint8_t*)_sbuf,.len=(nova_int)_sn}); } ".to_string()
+                        };
+                        return Ok(format!(
+                            "(({{ nova_str _s = ({o}); nova_int _sf = ({from}); nova_int _st = ({to}); \
+{chk}if ((_sf < _s.len && (((unsigned char)_s.ptr[_sf]) & 0xC0) == 0x80) || \
+(_st < _s.len && (((unsigned char)_s.ptr[_st]) & 0xC0) == 0x80)) \
+nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
+(nova_str){{.ptr = _s.ptr + _sf, .len = _st - _sf}}; }}))",
+                            o = o, from = from_expr, to = to_expr, chk = bounds_chk
+                        ));
                     } else if let Some(elem) = obj_ty.strip_prefix("NovaArray_") {
                         let elem = elem.trim_end_matches('*').trim();
                         return Ok(format!("nova_array_slice_{}({}, {}, {})", elem, o, from_expr, to_expr));
@@ -29994,11 +30014,10 @@ _cp++; \
             // concat: MIGRATED to Nova-body (Plan 139.2 Ф.3) — falls through to
             // Nova_str_method_concat. No entry here. (The `+` operator still
             // lowers directly to C nova_str_concat via the BinOp path.)
-            "eq"          => Some("nova_str_eq"),
-            "lt"          => Some("nova_str_lt"),
-            "le"          => Some("nova_str_le"),
-            "gt"          => Some("nova_str_gt"),
-            "ge"          => Some("nova_str_ge"),
+            // Plan 152.5a D-R4: eq/lt/le/gt/ge removed — method-form `s.eq(t)` etc.
+            // fall through to the Nova-body dispatch (Nova_str_method_eq /
+            // _compare-synthesized). Operators reroute to the same Nova bodies
+            // (BinOp nova_str arm). Only @hash stays C (irreducible crypto-seed).
             "hash"        => Some("nova_str_hash"),
             "len"         => Some("nova_str_byte_len"),   // Plan 108 D26 rev: len = bytes O(1).
             "byte_len"    => Some("nova_str_byte_len"),  // deprecated alias for len().

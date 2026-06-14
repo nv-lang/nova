@@ -12,7 +12,7 @@ test "str.as_cstr() returns CStr" {
     ro c = s.as_cstr()
     // C-side strlen would see "hello\0" (5 bytes + terminator). Verify
     // только that method compiles + returns CStr type (.0 field test).
-    assert(s.len() == 5)
+    assert(s.byte_len() == 5)
 }
 
 test "str.as_cstr_unchecked() returns CStr — requires unsafe {} (Plan 118.1.5)" {
@@ -20,11 +20,11 @@ test "str.as_cstr_unchecked() returns CStr — requires unsafe {} (Plan 118.1.5)
     unsafe {
         ro c = s.as_cstr_unchecked()
     }
-    assert(s.len() == 4)
+    assert(s.byte_len() == 4)
 }
 
 test "empty str.as_cstr() works" {
     ro s = ""
     ro c = s.as_cstr()
-    assert(s.len() == 0)
+    assert(s.byte_len() == 0)
 }

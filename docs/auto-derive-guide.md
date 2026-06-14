@@ -260,10 +260,37 @@ Auto-derive **совместим** с:
 
 V1 fokuses на type-check level — auto-derive **suppresses** `E_IMPL_MISSING_METHODS` корректно, что разблокирует pattern usage в downstream type-checked code. Полное `==` wiring через method_table — Plan 126 V2 (когда понадобится в production stdlib).
 
+## Метод-уровень `#impl(P)` — opt-in конформность (D268, Plan 154.1)
+
+`#impl(P)` как ведущий атрибут работает не только на **типе** (auto-derive выше),
+но и на отдельной **метод-декларации** — это **необязательная** пометка «этот метод
+реализует метод протокола `P`»:
+
+```nova
+#impl(Display)
+fn int @display(mut sb StringBuilder) -> () { sb.append(@) }
+```
+
+- **Opt-in, не required.** Конформность остаётся **структурной** — тип с подходящим
+  методом удовлетворяет бонд `[T Display]` и без `#impl`. `#impl` лишь **добавляет**
+  проверку подписи против `P` + явно привязывает `P` к receiver-типу
+  (`type_impl_protocols`), как если бы `P` был перечислен на `type`-декларации.
+- **Три кода ошибок** (checker): `E_IMPL_UNKNOWN_PROTOCOL` (P не протокол),
+  `E_IMPL_NOT_A_PROTOCOL_METHOD` (`@m` не объявлен в `P`),
+  `E_IMPL_SIGNATURE_MISMATCH` (подпись/receiver-mut не совпадает).
+- **Где применяется в stdlib:** примитивы `int/f64/bool/char/str` получили конкретные
+  `#impl(Display)` + `#impl(Debug)` в [protocols.nv](../std/prelude/protocols.nv) —
+  это чинит мис-диспатч `Vec[T].debug(sb)` на примитивном элементе (Plan 154.1 / D269).
+
+Подробности — [D268](../spec/decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации)
+и [Plan 154.1](plans/154.1-impl-conformance-primitive-format.md).
+
 ## См. также
 
 - [Plan 126 — Auto-derive протоколов](plans/126-auto-derive-protocols.md) —
   весь roadmap, design rationale, AC list.
+- [D268 / D269 — метод-уровень `#impl` + конкретные Display/Debug примитивов](../spec/decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации)
+  (Plan 154.1).
 - [D109 amend](../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов)
   — auto-derive rules.
 - [D230 NEW](../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1) —

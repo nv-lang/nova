@@ -56,7 +56,7 @@ test "try_from Err — содержимое сообщения" {
 type NonEmpty { text str }
 
 fn NonEmpty.try_from(s str) -> Result[NonEmpty, str] =>
-    if s.len() > 0 {
+    if s.byte_len() > 0 {
         Ok(NonEmpty { text: s })
     } else {
         Err("empty string")

@@ -37446,6 +37446,45 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   src=«0 <= i && i < @len» + custom-msg сохранён, ни одного stray «assert». D256 §«Диагностика» + маркер
   [M-140.2-contract-exprdisplay-selfaccess] CLOSED. 0 регрессий.
 
+[2026-06-13] Plan 152.1 (string coordinate model — lenses, D249/D250) ✅ ЗАКРЫТ Ф.0-Ф.5 (ветка plan-152).
+  Разворот «школы B» (codepoint-indexed) на координатную модель линз с байтовыми координатами.
+  Ф.1a: str[i](int) → E_STR_NO_INT_INDEX (checker f3/Index-арм, дискриминация по типу индекса; Range
+  разрешён). Ф.1b: str[a..b] → BYTE-range zero-copy slice (был codepoint — РЕАЛЬНЫЙ БАГ: split на
+  non-ASCII падал, "a,é,b".split → panic slice[5..6]; заодно починил pre-existing str/split_edge);
+  inline elidable bounds (140.2 index_site_elided) + UTF-8 codepoint-boundary guard; контракт-методы
+  str @index(r Range) requires 0<=start&&start<=end&&end<=byte_len() + @get(r Range)->Option[str]
+  (slice.nv, через @[a..b]-делегацию). Ф.3: CharsIter value priv {buf str, pos int} (Next[char]+Iter,
+  count/nth/is_empty); str @as_chars()/@iter() → for c in s; ПЕРВЫЙ общий value-record с методами —
+  потребовал фиксов value-record codegen ABI (for-in NovaValue_ strip + by-ptr &it для mut @next; bare-@
+  self deref для self-return @iter()=>@; nova_type_name_from_c/recv-dispatch + prepare_method_recv в
+  multi-overload) → заодно закрыл класс [M-138.2-vec-self-return] для value-records. Ф.4: ретайр бэар
+  @len/@char_at/@char_len/@byte_at/@get(int) → E_STR_NO_LEN (checker, targeted+fix-it, self-@len
+  field-read изъят); @byte_len()=>@len (field, единственный length на str). Ф.5: широкая миграция ~280
+  сайтов (char_at→as_chars().nth, char_len→as_chars().count, byte_at→as_bytes()[i], str.len()→byte_len(),
+  compiler-driven через E_STR_NO_LEN) по std+nova_tests+examples + D238-миграция plan138 t5/t6/t_neg.
+  Ф.0: D249/D250 (03-syntax) + D26 MAJOR AMEND (08-runtime, R-UTF8 инвариант) + D238/D58 AMEND;
+  Q-string-indexing ПЕРЕЗАКРЫТ (вариант C) + Q-string-len ЗАКРЫТ; docs/strings.md + migration/d249.
+  Синк bidirectional с main ×2 (подтянул 140-generic-contract-fix + 153.0 Vec folder-module + vec
+  requires-contracts). plan152_1 6/0; ноль новых регрессий vs true main-оракул (целевые дир + check-sweep
+  всех .len()). Маркеры: [M-152.1-str-subview-record-ctor] (str{ptr:@ptr+off} construction регрессит
+  codegen — обход через @[a..b]); [M-152.1-str-index-range-contract] достигнут (элидируемые bounds).
+
+[2026-06-13] Plan 152.2 (полный str-surface, D251) ✅ ЗАКРЫТ Ф.1-Ф.3 (ветка plan-152).
+  Добил str до паритета Go/Rust/TS/Kotlin/Java поверх линз (D249/D250), всё byte-координатно.
+  Ф.1 split-семейство (search.nv): splitn/rsplitn (≤n частей), rsplit (справа, reverse),
+  split_once/rsplit_once → Option[(str,str)], split_terminator (без пустого хвоста),
+  split_whitespace (ASCII-WS runs; non-ASCII → [M-152-ws-unicode]/152.4), lines (\n,\r\n);
+  всё byte-scan + zero-copy @[a..b] views + helper is_ascii_ws. Ф.2 trim/strip (transform.nv):
+  @trim/@trim_start/@trim_end ТЕПЕРЬ zero-copy (закрыл [M-139-f1-trim-view] через @[a..b]!);
+  @trim_matches/start/end (char-pattern, multibyte-safe через str.from(c)+starts/ends_with);
+  @strip_prefix/@strip_suffix → Option[str]. Ф.3: @match_indices→[]int (byte-offset'ы)/
+  @matches→[]str (search.nv); @is_char_boundary (core.nv, O(1) Rust-parity); @replacen
+  (transform, @find на остатке); @pad_left/right FIX (ширина byte→codepoint, as_chars().count())
+  + @pad_center. Spec: D251 (03-syntax). Фикстуры plan152_2 (split_family/trim_strip/
+  search_transform, pos+neg) 3/0. Бонус: pad codepoint-fix починил pre-existing types-тест
+  (16/5→17/4). Ноль новых регрессий. Маркеры: [M-139-f1-trim-view] CLOSED (zero-copy trim);
+  [M-152.1-str-subview-record-ctor] остаётся (прямая str{ptr:@ptr+off} конструкция — обход @[a..b]).
+
 - Plan 154 (method coherence, 2026-06-13): закрыт [M-method-override-silent-noop].
   Баг (репро от пользователя): `fn str @to_lower()` в user-модуле молча игнорировался —
   type-check считал prelude-shadow (user-wins в env.fns), но codegen method_overloads
@@ -37464,6 +37503,82 @@ Plan 140.2 followup §2-§3 ✅ (2026-06-13): закрыт [M-140.2-elision-writ
   EXPECT_COMPILE_ERROR + 3 pos прогон+assert); корпус-скан `nova check nova_tests` —
   E_METHOD_REDEFINITION РОВНО 1 вхождение (только neg-фикстура) → 0 регрессий; std
   компилируется. D267 (10-overloading.md). branch plan-154 (синкан с main).
+
+[2026-06-13] Plan 152.3a (char ASCII-core API, D252) ✅ ЗАКРЫТ (ветка plan-152). char (u32
+  codepoint) получил прод-API уровня Rust char::. ASCII-core в std/runtime/defaults.nv (рядом
+  с char @compare): is_ascii/is_ascii_digit/alphabetic/alphanumeric/whitespace/uppercase/
+  lowercase/hexdigit; to_ascii_uppercase/lowercase (char.try_from(@ as int ±32)); to_digit(radix)
+  ->Option[int]; len_utf8; encode_utf8. Через char-сравнения, ноль Unicode-таблиц. Spec D252.
+  json.nv is_digit/is_hex_digit/is_num_start консолидированы на char-методы (A3). Фикстура
+  plan152_3/char_ascii 1/0. КЛЮЧЕВАЯ НАХОДКА: Nova-body методы на BUILTIN char эмитятся только
+  из disk-loaded prelude-модуля (defaults.nv), НЕ из embedded char.nv (парсится лишь для
+  checker'а → type-check проходил, codegen падал в member-access). 152.3b (Unicode) — Phase B
+  (gated на 152.4). 0 регрессий.
+
+[2026-06-13] Plan 152.5a (comparison core, D254) ✅ ЗАКРЫТ (кроме D-R4). byte-`Ord` (str
+  @compare, D178 byte-lex) — дефолт, задокументирован. @eq_ignore_ascii_case: str (core.nv,
+  byte-fold A-Z/a-z, длины равны) + char (defaults.nv, via to_ascii_lowercase); не-ASCII не
+  фолдится (é≠É). Spec D254 + Q-string-collation ЗАКРЫТ (дефолт byte-Ord; locale UCA-collator —
+  opt-in Phase B; str не collation'ит молча). Фикстура plan152_5/comparison 1/0. D-R4 (декомиссия
+  хардкода str-операторов ==/</+ в emit_c.rs → синтез из @eq/@compare/@concat на RawMem-body)
+  ОТЛОЖЕН как отдельная тяжёлая codegen-фаза ([M-139.1-operator-lowered-methods]). 0 регрессий.
+
+[2026-06-13] Plan 152.6 (UTF-16/32 interop, D255) ✅ ЗАКРЫТ Ф.0-Ф.4. Новый модуль
+  std/encoding/utf16.nv (encoding.utf16, импортируется явно — не prelude): Utf16Error
+  (LoneHigh/LoneLow/TruncatedSurrogatePair) + surrogate-помощники с контрактами Plan 140
+  (is_high/low_surrogate, decode_surrogate_pair requires+ensures). str-методы (тонкие
+  делегаты, dot-резолвятся при import): @encode_utf16()->[]u16 (BMP→1unit, supplementary→
+  surrogate-пара), str.from_utf16(units)->Result[str,Utf16Error] (checked, двухпроходно:
+  валидация в []int → построение через consume StringBuilder + str.from_codepoint, R-UTF8),
+  @code_points()->[]int. Spec D255 + docs/strings.md encoding-секция. Фикстура
+  plan152_6/utf16_interop 11 тестов 1/0 (roundtrip ASCII/BMP/😀 + 3 neg surrogate +
+  code_points==as_chars). 0 новых FAIL (targeted sweep: str/basics/plan152_1-6/plan91_13;
+  plan91_13 2/6 — pre-existing Nova_JsonValue recursive sum-type, на main тоже 2/6).
+  Дизайн-открытие: str-расширения из импортируемого std-модуля dot-резолвятся (прецедента
+  в std не было — проверено пробой).
+
+[2026-06-13] Plan 152 PHASE A ✅ ЗАКРЫТА (umbrella shippable-минимум). Закрыты:
+  152.0 (папка std/runtime/string/ + golden), 152.1 (линзы D249/D250 + E_STR_NO_INT_INDEX/
+  E_STR_NO_LEN + byte-slice + find=байт-offset), 152.2 (полный surface D251), 152.3a
+  (char ASCII D252, fe3b116c), 152.5a (byte-Ord + eq_ignore_ascii_case D254, 40f9dfae),
+  152.6 (UTF-16 interop D255, db5ee133), 152.7-A (интерполяция через рефактор —
+  plan152_0/interpolation_intact PASS). Попутно d9caa1df: миграция устаревшей
+  folder_split_golden фикстуры (get(int)->char ретайрнут → as_chars().nth). Targeted
+  регрессия 0 новых FAIL (str/basics/plan152_*/plan137/plan148/plan139/plan138/plan90_1/
+  plan108). Pre-existing на main (НЕ Plan 152, кандидаты на отдельный план): plan62 29/7
+  (StringBuilder struct-tag #no_prelude + protocol-codegen Iterable/equals), plan91_14
+  12/2 + plan131 27/1 (Debug-derive debug_fmt nested struct/Vec), plan91_13 2/6
+  (рекурсивный Nova_JsonValue sum-type). Phase B (позже): 152.4 std/unicode (Opus) →
+  152.3b/152.5b/152.7-B. Остаток D-R4 (str-operator C-lowering декомиссия) отложен.
+
+[2026-06-13] Plan 152.5a D-R4 ✅ ВЫПОЛНЕН (декомиссия str-operator C-lowering). Операторы
+  ==/!=/</<=/>/>= /+ для str теперь синтезируются из Nova-body: == → Nova_str_method_eq
+  (core.nv: length-first + RawMem.compare memcmp), </<=/>/>= → Nova_str_method_compare
+  (RawMem.compare + length-tiebreak) OP 0, + → Nova_str_method_concat (уже RawMem:
+  with_capacity+2×Vec.append+steal). Изменения: core.nv (@compare→RawMem [step1 ae465fce]
+  + новый @eq [step2]); runtime_registry.rs (str_runtime = только @hash); emit_c.rs (nova_str
+  BinOp arm + void* arm + str_method_to_rt — убраны eq/lt/le/gt/ge). Реестр str = только @hash
+  (SipHash crypto-seed). Rebuild nova-cli 2m24s. Бенч-паритет: 5M cmp + 200k concat, before
+  (C-операторы ae465fce) 23.5–28.2s ≈ after (Nova-body) 22.6–29.2s — дельта в compile-шуме,
+  регрессии нет. C nova_str_eq/concat остались ТОЛЬКО codegen-внутренними (emit_field_eq
+  структурная eq HashMap-ключей/record-==; ScopeOutcome cancel-marker + concat-acc) — не
+  операторы. 0 регрессий (str/plan137/plan152_*/plan91_13/plan131/plan138 + reachability-проба
+  чистых операторов PASS; protocols флакает 23/3↔24/2 идентично pre/post — не D-R4). Маркер
+  [M-139.1-operator-lowered-methods] ЗАКРЫТ. Spec D254 D-R4 DONE. Фикстура plan152_5/
+  bench_operators (perf-smoke). Замечено (pre-D-R4 plan-152 дельта vs main, НЕ D-R4): plan96
+  18/5 (vs main 19/4), plan91_7 4/1 (vs main 5/0) — одинаково на ae465fce и D-R4, из 152.1/152.2.
+
+[2026-06-13] Фикс pre-D-R4 plan-152 дельты vs main (диагностика workflow'ом, выбор автора):
+  (1) plan91_7/array_mut_chain_test (CC-FAIL): Vec.@reserve в plan-152 потерял fluent-возврат
+  (`-> @` → `-> ()`), что ПРОТИВОРЕЧИТ дизайну Plan 153 (153-vec-production-model.md L168/L285:
+  `v.reserve(10).extend(xs).sort()`, «как StringBuilder.@append»). Восстановлен `-> @` (return @
+  на обоих путях) — plan91_7 5/0 (был 4/1, совпал с main). Vec-регрессия чистая (callers
+  v.reserve игнорируют возврат). (2) plan96/neg_str_slice_oob (NEG-WRONG-PANIC): негатив-тест
+  ищет в панике `array: slice`, но Plan 152.1 (D249) дал str собственный slice-путь с паникой
+  `str: slice [a..b] out of bounds for byte-length N` — директива обновлена `array:`→`str:`.
+  plan96 19/4 (был 18/5, совпал с main; остаток slice_array_of_ranges `Nova_Range_p` —
+  pre-existing на main). Оба — устаревшие фикстуры/регрессия, не обновлённые при ранних
+  152.1/152.2/153.x изменениях; программы вели себя корректно.
 
 Plan 154.1 (opt-in #impl-конформность + конкретные Display/Debug примитивов, 2026-06-13,
   branch plan-154.1 / worktree nova-p154) — ЗАКРЫТ Ф.1–Ф.5. Закрывает класс
@@ -37544,3 +37659,35 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   invariant НЕЗАВИСИМО). E_UNCHECKED_KIND на плохой вид. Тесты plan140_3/* 4/0 (neg-пара доказывает
   независимость видов). 0 регрессий по всем (contracts 251/0, plan140 42/0, plan140_1 15/0, plan140_2 13/0,
   basics 8/0). #3 (примитивный Display через sb.@append) оставлен агенту 154.1 (он его ведёт).
+
+[2026-06-14] Plan 153.1 codegen-полнота — generic-method overload-mono + variadic `Vec.of` +
+  value-record slice (3 codegen-блокера снятых, разблокируют каноничный Vec-API).
+  #1 [M-138.2-generic-method-overload-mono] ✅ FIXED (dispatch + chain return-infer). Симптом:
+  `v.cap(10)` → «too many arguments» — mono-диспатч одноимённых overloads (`@cap()` геттер vs
+  `@cap(n)` сеттер) коллапсировал first-by-name (геттер «выигрывал», получал лишний арг). Корень:
+  codegen mono-регистр `mono_method_decls` keyed `(type,name)` = ОДИН FnDecl на ключ + mono-sentinel
+  `MethodSig` с пустым `param_c_types` → `resolve_overload` не дизамбигуировал. Фикс — 8 правок
+  emit_c.rs (commit f7f56f0f): (a) side-map `mono_method_fndecl_for_name: HashMap<String,FnDecl>`
+  несёт полный FnDecl per mono-instance (заполняется в register_mono_method_instance, читается в
+  drain-цикле перед общим lookup'ом); (b) call-site (block 5b) — выбор overload по АРНОСТИ →
+  param-C-типам вместо first-wins `.find`, с suffix `__<paramtype>` на mangled-имя для
+  overload_index>0 (reuse erased-base mangle), гейт `same_name.len()<=1` сохраняет single-путь;
+  (c) return-type inference: arity-aware выбор в `infer_mono_method_ret_with_args` И в Ф.3-fallback
+  (~32041) — последнее КРИТИЧНО для chained receiver `v.cap(n).push(x)`: цепочка инферит Self/`@`
+  сеттера как mono-ресивер (иначе `.push` не находил метод). Следствие: `@cap_to`→`@cap` (точный
+  capacity-сеттер вернул каноничное overload-имя getter/setter); fluent-chain работает. D84
+  (10-overloading) дополнен ✅-нотой. Pos-тест plan153_1/generic_overload.nv 3/3 (арность Box[T]
+  getter/setter + param-type @tag(int)/@tag(str) + Vec @cap chain). Box-arity репро PASS.
+  #2 [M-153-vec-of-variadic-codegen] ✅ CLOSED (commit 3d9a7361, фоновый агент). `Vec[T].of(...args
+  []T) => args`. Корень: `lookup_variadic_arity` не обрабатывал turbofish-static форму `Type[T].of(...)`
+  (парсится `Member{obj:TurboFish{base:Ident("Vec")},name:"of"}`); добавлен `TurboFish{base:Ident}`-arm
+  → существующая variadic-routing синтезирует ArrayLit из хвоста args → ре-диспатч в mono-static. C:
+  `with_capacity(n)`+N×`push` собирают `[]T`, тело `return args` (zero-copy). Constructor в core.nv.
+  Тест plan153_0/variadic_of.nv 3/3 (multi/empty/non-int). Scope: `[]int.of(...)` array-ext-сахар —
+  ОТДЕЛЬНЫЙ gap (static-методы на `__array`-receiver не диспатчатся вообще), не часть маркера.
+  #3 value-record slice codegen ✅ (commit 8d493e5a). Slice-view Vec'а кастил `(ety*)(data+off)` с
+  mangled `_p`-суффиксом элемент-типа (`T_p` вместо `T*`) → CC-FAIL для value-record элементов; фикс
+  un-mangle `_p`→`*` перед кастом. plan96 19/4→23/3.
+  Acceptance (см. ниже в плане 138.2) выполнены. Neg overload'а — контрактный cap_below_len_neg.
+  Broad regression 0 новых FAIL. Новый followup [M-138.2-overload-no-match-typecheck] (no-match
+  overload-вызов сейчас CC-FAIL'ит вместо чистого type-check error). Закрытие 153.1 codegen-долга.

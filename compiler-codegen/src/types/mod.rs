@@ -5384,6 +5384,38 @@ impl<'a> TypeCheckCtx<'a> {
         }
         let TypeRef::Named { path, .. } = &obj_tr else { return; };
         let Some(tname) = path.last() else { return; };
+        // Plan 152.1 Ф.4 (D249): str's bare length / codepoint-access / byte-access
+        // accessors are retired for the lens model. Targeted error (fires BEFORE the
+        // priv-field-read path below — `str` has a priv `len` FIELD — and before the
+        // generic "no method" error) guiding to the lens replacement. `@byte_len()`
+        // (O(1) byte-length shortcut) stays. EXEMPTION: a bare self-access `@len`
+        // (obj == SelfAccess) is the legitimate backing-field read inside str's own
+        // `@byte_len() => @len` (D117 carve-out) — only NON-self receivers (external
+        // `s.len()` / `s.char_at(i)` / …) are diagnosed.
+        if tname == "str" && !matches!(obj.kind, ExprKind::SelfAccess) {
+            // NB: `get` is NOT listed — `str @get(r Range) -> Option[str]` is the
+            // valid safe-slice accessor (slice.nv). The retired `get(int)` simply
+            // fails arg-resolution against `get(Range)` (no `str.get(int)` sites remain).
+            let hint = match name {
+                "len"      => Some("`byte_len()` (byte length, O(1)) or `as_chars().count()` (codepoint count, O(n))"),
+                "char_len" => Some("`as_chars().count()` (codepoint count, O(n))"),
+                "char_at"  => Some("`as_chars().nth(i)` (i-th codepoint, O(n))"),
+                "byte_at"  => Some("`as_bytes()[i]` (i-th byte, O(1), bounds-checked)"),
+                _ => None,
+            };
+            if let Some(hint) = hint {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_STR_NO_LEN] `str.{}()` was retired (D249 lens model): a `str` \
+                         has three diverging lengths, so length / element access goes through \
+                         a representation lens — use {}.",
+                        name, hint
+                    ),
+                    span,
+                ));
+                return;
+            }
+        }
         let Some(td) = self.types.get(tname) else { return; };
         match &td.kind {
             TypeDeclKind::Record(fields) => {

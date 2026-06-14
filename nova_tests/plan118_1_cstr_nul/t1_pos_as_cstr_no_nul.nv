@@ -9,7 +9,7 @@ import std.ffi.cstr.{CStr}
 test "as_cstr on NUL-free strings succeeds (no panic)" {
     ro a = "hello".as_cstr()
     ro b = "".as_cstr()
-    assert("hello".len() == 5)
+    assert("hello".byte_len() == 5)
 }
 
 test "as_cstr_unchecked does NOT scan — no panic even with an embedded NUL" {
