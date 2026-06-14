@@ -211,10 +211,13 @@
   `awk '$1~/FAIL/{print $2}'`, не regex по строке; main-бинарь = быстрый оракул «новое vs pre-existing».
 
 ## Follow-up: Plan 154.1 (#impl-конформность + Display/Debug примитивов)
-- **`[M-154.1-box-generic-static-ctor]`** (floating, P2): `Box[T].@new`
-  generic-static-construction CC-FAIL — `(Box)[T];` течёт как сырой C в codegen.
-  Всплыло в диагностической пробе 154.1 (НЕ связано с мис-диспатчем `.debug`).
-  Generic-static-constructor codegen-gap; home — отдельный codegen-фикс.
+- **`[M-154.1-box-generic-static-ctor]`** ✅ **RESOLVED 2026-06-14** (by plan-153.1): the
+  `(Box)[T];` raw-C leak from the 154.1 probe is no longer reproducible — plan-153.1's
+  generic-static/method codegen fixes (`f7f56f0f` overload-mono, `3d9a7361` variadic,
+  `8d493e5a` value-record slice) landed after the marker was filed and cover it. Verified
+  5 construction forms (concrete `Box[int].new`, generic-context `wrap`, nested
+  `Box[Box[int]]`, `.of` overloads in plan153_1/generic_overload). Regression guard
+  `plan154_1/pos_box_generic_static_ctor`.
 - **`[M-154.1-static-call-unresolved-loud]`** ✅ **RESOLVED 2026-06-14**: `Prim.method(...)`
   на примитиве, дошедший до fall-through emit_c.rs ~24376 (все валидные primitive
   static-методы/интринсики резолвятся раньше) → `E_UNKNOWN_STATIC_METHOD` compile-error
