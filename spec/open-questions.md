@@ -613,6 +613,38 @@ fn sort[T](xs [T]) -> [T]
 
 ---
 
+## Q-may-gc-precision. Точность may-GC effect analysis (residual после Plan 144.0)
+
+**Контекст.** [D273](decisions/06-concurrency.md#d273) ([Plan 144.0](../docs/plans/144.0-may-gc-effect-analysis.md))
+зафиксировал may-GC решётку с дефолтом **MayGC (top)** и доказательством NoGC только над полностью
+разрешённым неаллоцирующим конусом вызовов. Соундность закрыта (любое сомнение → MayGC). Остаётся
+**точность** — где консервативный анализ помечает MayGC, хотя реально NoGC, теряя элизию тира O1:
+
+1. **Cross-module callee-резолюция.** Вызов в функцию из другого модуля, чей `FnDecl` не в текущей
+   вселенной графа, → unresolved → MayGC. Точнее было бы тянуть may-GC-эффект через manifest/
+   exports (как `exports_consume_types` в [D164](decisions/02-types.md#d164)), чтобы доказуемо-NoGC
+   peer-функции не отравляли коллера.
+2. **Точность str-literal-interning.** Сейчас интернированный str-литерал (`static const u8[]`) —
+   в allowlist как non-allocating, но граница «интернирован vs строится буфер» (интерполяция,
+   `from`-конверсии) консервативна; тонкая классификация дала бы больше NoGC-листьев.
+3. **Более тонкая классификация alloc-сайтов.** `.clone()` на provably-POD/value-record (str —
+   value-record после Plan 139), малые `ArrayLit`/`RecordLit`, которые codegen может разместить на
+   стеке без `nova_alloc`, сейчас все → MayGC. Сверка с реальными emit-путями `emit_c.rs`
+   уточнила бы allowlist.
+
+**Почему отложено.** Все три — улучшения **точности**, не соундности: каждый residual-кейс уже
+покрыт консервативным MayGC (теряем элизию, остаёмся корректны). Браться имеет смысл только когда
+Plan 144 Ф.2 начнёт **потреблять** набор (тир O1) и измеримая доля элизий теряется на этих
+паттернах — иначе оптимизируем неиспользуемый артефакт.
+
+**Когда вернуться.** Вместе с Plan 144 Ф.2 (потребление O1), если профиль покажет, что
+cross-module / clone / interpolation-сайты доминируют в упущенной элизии.
+
+**Связь.** [D273](decisions/06-concurrency.md#d273), [D271](decisions/06-concurrency.md#d271)
+(sibling [Q-loop-opt-thresholds]), Plan 144 §7.5 (тиры O0–O3) / §7.6 (H4), [M-144.0-may-gc-effect-analysis].
+
+---
+
 ## Q15. Enum с числовыми значениями ✅ ЗАКРЫТО ([D52](decisions/02-types.md#d52))
 
 [D52](decisions/02-types.md#d52) ввёл sum-варианты с числовыми
