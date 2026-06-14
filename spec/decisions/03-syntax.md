@@ -10220,3 +10220,50 @@ Roundtrip-инвариант: `from_utf16(s.encode_utf16()) == Ok(s)` на ASCII
 
 ---
 
+## D258. Формат-спеки в интерполяции — Rust-style mini-language
+
+Added: 2026-06-14  Status: B1 (format mini-language) IMPLEMENTED 2026-06-14 (Plan 152.7-B); B2 (Write-sink обобщение) — отложено в 152.7.1 (breaking). AMEND D229/D44/D183.
+
+Расширяет интерполяцию `${expr:SPEC}` (база — D229, Plan 91.14, поддерживала только
+`:?` Debug) до полного **Rust-style** mini-language. Синтаксис `${...}` не меняется.
+
+### Грамматика спека (после `:`)
+`[[fill]align][sign][#][0][width][.precision][type]`
+- **align** `<` (left) / `^` (center) / `>` (right); опц. **fill**-char перед align
+  (`${x:*^10}` → центрирование с заполнением `*`). Дефолт-выравнивание: числа вправо,
+  прочее влево.
+- **sign** `+` — всегда печатать знак для чисел (`${n:+}`).
+- **`#`** alternate — radix-префикс для целых (`0x`/`0o`/`0b`). Префикс **всегда
+  строчный** даже для `:#X` → `0xFF` (как Rust; `upper` влияет только на цифры).
+- **`0`** zero-pad — нули между знаком/префиксом и цифрами (sign-aware: `${n:08x}`,
+  `${n:#08x}` → `0x0000ff`).
+- **width** — мин. ширина поля (в Unicode-скаляр-ширине).
+- **`.precision`** — для f64 = число знаков после точки; для str = усечение.
+- **type** — `x`/`X` (hex), `b` (binary), `o` (octal), `?` (Debug, из D229). Дефолт —
+  Display.
+
+Семантика выровнена с Rust `format!`. Прецедент: Rust mini-language, Python f-string.
+
+### Диагностика (compile-time)
+- `E_FORMAT_SPEC_UNKNOWN` — неизвестный type-char (с fix-it: список поддерживаемых).
+- `E_BAD_FORMAT_SPEC` — структурно невалидный спек (напр. `.` без цифр precision).
+- `E_FORMAT_SPEC_EMPTY` / `E_FORMAT_SPEC_TRAILING` — из D229 (пустой спек / мусор).
+Невалидный спек — **всегда compile-error**, никогда не молчаливый pass.
+
+### Реализация
+AST `FormatSpec` (`compiler-codegen/src/ast/format_spec.rs`, расширен от Plan 91.14) +
+парсер (`parser/mod.rs`) + codegen (`emit_c.rs`) → runtime-хелперы
+`compiler-codegen/nova_rt/conv.h` (`nova_fmt_int_body`/`_radix_body`/`_pad`/
+`_radix_prefix`/`_f64_body` + sign/prefix). Целые — `nova_int` (64-bit), negative hex =
+two's-complement (`${-1:x}` → `ffffffffffffffff`, как Rust).
+
+### Отложено (B2 → Plan 152.7.1, `[M-152.7-write-sink]`)
+Обобщение `@display(mut sb StringBuilder)` → `@display(mut w Write)` (форматтер в любой
+sink: StringBuilder/WriteBuffer/stdout, direct-to-sink `print` без промежуточной str).
+Breaking (меняет сигнатуры всех `@display`/`@debug`) → отдельный sub-plan.
+
+См. [Plan 152.7](../../docs/plans/152.7-interpolation-formatting.md),
+[D229](02-types.md#d229-Debug-protocol--format-spec-expr).
+
+---
+
