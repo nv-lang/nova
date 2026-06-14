@@ -26073,6 +26073,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 InterpStrPart::Expr { expr: e, spec } => {
                     let arg_ty = self.infer_expr_c_type(e);
                     let v = self.emit_expr(e)?;
+                    // **Plan 152.7-B (D258):** rich Rust-style format spec
+                    // (width / precision / align / fill / sign / radix). Handled
+                    // by a dedicated lowering that renders a core string then
+                    // applies padding/alignment via nova_fmt_* runtime helpers.
+                    // Trivial specs are normalized to None/Debug by the parser,
+                    // so this only fires for genuinely-rich specs.
+                    if let crate::ast::FormatSpec::Spec(rich) = spec {
+                        let appended = self.emit_format_spec_value(
+                            e, &arg_ty, &v, rich, &sb)?;
+                        self.line(&format!(
+                            "Nova_StringBuilder_method_append({}, {});",
+                            sb, appended
+                        ));
+                        continue;
+                    }
                     // **Plan 91.14 Ф.4 (D229):** branch on format spec.
                     // - FormatSpec::None → Display.@display (D237 rename from Printable.@fmt).
                     // - FormatSpec::Debug → Debug.@debug (D237 rename from DebugPrintable.@debug_fmt).
@@ -26225,6 +26240,247 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.var_types
             .insert(result.clone(), "nova_str".to_string());
         Ok(result)
+    }
+
+    /// **Plan 152.7-B (D258):** lower a rich format spec `${expr:SPEC}` to a C
+    /// expression producing the formatted `nova_str`. Returns the C expression
+    /// (the caller appends it to the interp StringBuilder). `sb` is the interp
+    /// builder (used only for the user-type fallback path, which renders the
+    /// value into a fresh builder).
+    ///
+    /// Pipeline: render a "core" string (radix digits / fixed-precision float /
+    /// display-or-debug text), split sign+prefix from body for sign-aware
+    /// zero-pad, apply string-precision truncation, then pad/align via
+    /// `nova_fmt_pad`. All runtime helpers live in `nova_rt/conv.h` and are
+    /// locale-independent.
+    fn emit_format_spec_value(
+        &mut self,
+        e: &Expr,
+        arg_ty: &str,
+        v: &str,
+        spec: &crate::ast::format_spec::FormatSpecParsed,
+        sb: &str,
+    ) -> Result<String, String> {
+        use crate::ast::format_spec::{Align, Kind, Sign};
+
+        // C literal for the fill char (Unicode scalar value).
+        let fill_cp = spec.fill as u32 as i64;
+        // align code: 0 left, 1 right, 2 center. Resolve the default per value
+        // category at the call sites below (numbers right, strings left).
+        let align_code = |a: Option<Align>, default_left: bool| -> i32 {
+            match a {
+                Some(Align::Left) => 0,
+                Some(Align::Right) => 1,
+                Some(Align::Center) => 2,
+                None => if default_left { 0 } else { 1 },
+            }
+        };
+        let width_lit = spec
+            .width
+            .map(|w| w as i64)
+            .unwrap_or(0);
+        let zero_pad = if spec.zero_pad { 1 } else { 0 };
+        let sign_plus = matches!(spec.sign, Sign::Plus);
+
+        // Classify the value type.
+        let is_int = matches!(
+            arg_ty,
+            "nova_int" | "int64_t" | "int32_t" | "int16_t" | "int8_t"
+                | "uint64_t" | "uint32_t" | "uint16_t" | "uint8_t"
+        );
+        let is_float = matches!(arg_ty, "nova_f64" | "nova_f32");
+        let is_str = arg_ty == "nova_str";
+        let is_char = matches!(e.kind, ExprKind::CharLit(_)) || arg_ty == "nova_char";
+        let is_bool = arg_ty == "nova_bool";
+
+        // ---- radix / integer path ----
+        if spec.kind.is_radix() {
+            if !is_int {
+                return Err(format!(
+                    "[E_BAD_FORMAT_SPEC] integer radix format (`x`/`X`/`b`/`o`) \
+                     requires an integer value, but `${{...}}` has C-type `{}`. \
+                     Radix formatting applies to `int`/sized ints only. \
+                     Plan 152.7-B (D258).",
+                    arg_ty
+                ));
+            }
+            let (base, upper) = match spec.kind {
+                Kind::LowerHex => (16, 0),
+                Kind::UpperHex => (16, 1),
+                Kind::Binary => (2, 0),
+                Kind::Octal => (8, 0),
+                _ => unreachable!(),
+            };
+            // `_ = sign_plus`: radix formatting is unsigned (two's complement),
+            // so the `+` sign flag does not apply (matches Rust).
+            let _ = sign_plus;
+            let alt = if spec.alternate { 1 } else { 0 };
+            let iv = format!("(nova_int)({})", v);
+            let body = format!("nova_fmt_int_radix_body({}, {}, {})", iv, base, upper);
+            let prefix = format!(
+                "nova_fmt_radix_prefix({}, {}, {})",
+                alt, base, upper
+            );
+            return Ok(format!(
+                "nova_fmt_pad({}, {}, {}, {}, {}, {})",
+                prefix,
+                body,
+                fill_cp,
+                align_code(spec.align, false),
+                width_lit,
+                zero_pad
+            ));
+        }
+
+        // ---- integer (decimal) ----
+        if is_int && !matches!(spec.kind, Kind::Debug) {
+            let iv = format!("(nova_int)({})", v);
+            let body = format!("nova_fmt_int_body({}, 10, 0)", iv);
+            let prefix = format!(
+                "nova_fmt_int_prefix({}, {})",
+                iv,
+                if sign_plus { 1 } else { 0 }
+            );
+            return Ok(format!(
+                "nova_fmt_pad({}, {}, {}, {}, {}, {})",
+                prefix,
+                body,
+                fill_cp,
+                align_code(spec.align, false),
+                width_lit,
+                zero_pad
+            ));
+        }
+
+        // ---- float ----
+        if is_float && !matches!(spec.kind, Kind::Debug) {
+            let dv = format!("(double)({})", v);
+            // Body: fixed precision if `.N` given, else the default `%g` repr
+            // (then strip its sign so the sign/prefix split stays uniform).
+            let (prefix, body) = if let Some(p) = spec.precision {
+                (
+                    format!(
+                        "nova_fmt_f64_prefix({}, {})",
+                        dv,
+                        if sign_plus { 1 } else { 0 }
+                    ),
+                    format!("nova_fmt_f64_body({}, {})", dv, p),
+                )
+            } else {
+                // No precision: default repr via nova_f64_to_str, but it carries
+                // its own sign. Use an empty prefix and let the body include the
+                // sign; force-`+` is honored by prepending via the prefix only
+                // when the value is non-negative.
+                let body = format!("nova_f64_to_str({})", dv);
+                let prefix = if sign_plus {
+                    // prefix '+' only for >= 0 (nova_f64_to_str already prints
+                    // '-' for negatives).
+                    format!(
+                        "(({} >= 0.0) ? (nova_str){{\"+\", 1}} : (nova_str){{\"\", 0}})",
+                        dv
+                    )
+                } else {
+                    "(nova_str){\"\", 0}".to_string()
+                };
+                (prefix, body)
+            };
+            return Ok(format!(
+                "nova_fmt_pad({}, {}, {}, {}, {}, {})",
+                prefix,
+                body,
+                fill_cp,
+                align_code(spec.align, false),
+                width_lit,
+                zero_pad
+            ));
+        }
+
+        // ---- string / char / bool / user-type: render a core str, then pad ----
+        // Determine the core (unpadded) string per the kind (Display vs Debug).
+        let is_debug = matches!(spec.kind, Kind::Debug);
+        let core: String = if is_char {
+            if is_debug {
+                format!("nova_char_to_debug_str({})", v)
+            } else {
+                format!("nova_char_to_str({})", v)
+            }
+        } else if is_str {
+            if is_debug {
+                format!("nova_str_to_debug_str({})", v)
+            } else {
+                v.to_string()
+            }
+        } else if is_bool {
+            if is_debug {
+                format!("nova_bool_to_debug_str({})", v)
+            } else {
+                format!("nova_bool_to_str({})", v)
+            }
+        } else if is_int {
+            // int with `?` debug kind + non-radix.
+            if is_debug {
+                format!("nova_int_to_debug_str((nova_int)({}))", v)
+            } else {
+                format!("nova_int_to_str((nova_int)({}))", v)
+            }
+        } else if is_float {
+            // float with `?` debug kind.
+            format!("nova_f64_to_debug_str((double)({}))", v)
+        } else {
+            // User type: render via @display / @debug into a fresh builder, then
+            // steal the string. This reuses the exact same dispatch the bare
+            // ${x}/${x:?} path uses, so user Display/Debug impls are honored.
+            let method_name = if is_debug { "debug" } else { "display" };
+            let arg_type = arg_ty
+                .trim_start_matches("Nova_")
+                .trim_end_matches('*')
+                .to_string();
+            let has_explicit =
+                self.all_methods.contains(&(arg_type.clone(), method_name.to_string()));
+            let method_c_fn: Option<String> = if has_explicit {
+                let safe = Self::sanitize_c_for_ident(&arg_type);
+                Some(format!("Nova_{}_method_{}", safe, method_name))
+            } else if is_debug {
+                self.try_synthesize_default_method_with_gate(
+                    &arg_type, arg_ty, method_name, false)
+            } else {
+                self.try_synthesize_default_method(&arg_type, arg_ty, method_name)
+            };
+            let fn_name = method_c_fn.ok_or_else(|| {
+                format!(
+                    "[E_BAD_FORMAT_SPEC] value of type `{}` in `${{...:SPEC}}` does \
+                     not implement {} — cannot apply a format spec to it. \
+                     Plan 152.7-B (D258).",
+                    arg_type,
+                    if is_debug { "Debug" } else { "Display" }
+                )
+            })?;
+            // Render into a dedicated builder, then steal to a str.
+            let fmt_sb = self.fresh_tmp_named("fmt_sb");
+            self.line(&format!(
+                "Nova_StringBuilder* {} = Nova_StringBuilder_static_with_capacity(16);",
+                fmt_sb
+            ));
+            self.line(&format!("{}({}, {});", fn_name, v, fmt_sb));
+            let _ = sb; // interp builder unused on this path.
+            format!("Nova_StringBuilder_consume_as_str({})", fmt_sb)
+        };
+
+        // Apply string-precision truncation (codepoints), then pad/align.
+        // Strings default to LEFT alignment (Rust); precision truncates.
+        let core_after_prec = if let Some(p) = spec.precision {
+            format!("nova_fmt_str_precision({}, {})", core, p as i64)
+        } else {
+            core
+        };
+        Ok(format!(
+            "nova_fmt_pad((nova_str){{\"\", 0}}, {}, {}, {}, {}, {})",
+            core_after_prec,
+            fill_cp,
+            align_code(spec.align, true),
+            width_lit,
+            zero_pad
+        ))
     }
 
     // ---- block expression ----

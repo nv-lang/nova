@@ -37968,3 +37968,77 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   record-invariant wrap (узкие пути, раскрылись после устранения главных блокеров). [M-msvc-bounds-
   check-stmt-expr] ✅ ЗАКРЫТ. Параллельно (отдельная задача, другой агент): Plan 134 (убрать ptr→*())
   доведён до прода в worktree nova-p134/ветка plan-134 (5 коммитов, 0 net-new FAIL, НЕ merged).
+[2026-06-14] Plan 144.0 — may-GC effect analysis (D273, ветка plan-144-may-gc-effect-analysis,
+  worktree nova-p144). Доставлен РАНО, вне очереди Ф.0 родительского Plan 144, чтобы de-risk'нуть
+  самую опасную soundness-дыру precise-GC — H4 (§7.6): косвенные/FFI-callback рёбра → fixpoint мог бы
+  пропустить ребро → ложный NoGC → пропущенный GC safe-point/корень → use-after-free (как только тир
+  O1 обопрётся на набор). Чисто COMPILE-TIME, **EMIT-NOTHING** — анализ вычисляется и доступен через CLI
+  `nova gc-effect-analyze <path> [--format json|text]` + unit-тесты ТОЛЬКО; `emit_c.rs` НЕ зовёт модуль
+  во время эмиссии (потребление = Plan 144 Ф.2, отдельно/под гейтом). Решётка двухточечная, дефолт =
+  MayGC (top), NoGC ДОКАЗЫВАЕТСЯ над полностью разрешённым неаллоцирующим конусом вызовов. Реализация
+  `compiler-codegen/src/codegen/may_gc.rs` переиспользует инфру `preempt_keep.rs` (Plan 143.2): source-
+  level whole-program call-graph над FnDecl, `fn_key`, overload-резолюция (`approx_arg_sig`/
+  `add_candidate_edges`), итеративный Tarjan — но с двумя делибератными отличиями: (1) полное SCC-
+  разбиение (не только cycle-membership) для обратной пропагации MayGC по коллерам через конденсацию;
+  (2) `address_taken` сам по себе НЕ seed'ит MayGC (быть first-class значением ≠ аллоцировать).
+  Seed self-MayGC = аллокация ∪ indirect/closure/spawn/with/select/parallel-for ∪ FFI/extern ∪
+  unresolved-callee ∪ first-class-method-value. Allowlist provably-non-allocating (арифметика/сравнения/
+  field-index без копии/скаляр-касты/литералы-скаляры/чтение локала/интернированный str-литерал); ЛЮБОЙ
+  неизвестный AST-узел → аллоцирует (top). Adversarial-review (≥3 soundness-линзы: indirect/FFI-дыра,
+  направление пропагации, SCC-с-аллокацией, default-top) нашёл 1 РЕАЛЬНУЮ находку: first-class method-
+  value (`obj.@m`/`Type.@m` в value-позиции) парсится как `@`-префиксный `Member`, codegen эмитит 2×
+  `nova_alloc` (captured-self env + closure) — был ложный NoGC, ровно H4 first-class-fn-value форма;
+  фикс (commit b908acb2): `@`-префиксный `Member`-узел seed'ит аллокацию (soundness-only, NoGC→MayGC).
+  Acceptance: plan144_0 10 фикстур (positive_pure_leaf/leaf_forwarder/pure_recursion → NoGC;
+  negative_allocates_record/calls_allocator/ffi_call/indirect_call/method_value/recursive_alloc/
+  unknown_callee → MayGC) через РЕЛИЗНЫЙ nova gc-effect-analyze + 19/19 may_gc unit-тестов PASS; release-
+  сборка из nova-cli/ чистая (Finished); генерируемый C НЕ изменён (emit-nothing подтверждён). Критерий
+  «без упрощений как для прода» соблюдён: нет stub'ов/TODO-срезов, conservative-MayGC при любом сомнении,
+  soundness > агрессивность элизии. Spec D273 (06-concurrency.md) + Q-may-gc-precision (open-questions,
+  residual-точность: cross-module callee, str-interning, alloc-классификация) + Plan 144 §7.6 H4/Ф.0
+  отметки (H4-слайс закрыт рано) + backlog [M-144.0-may-gc-effect-analysis] (analysis done; O1 = Ф.2).
+  Commits: 6276d729 (plan) + 60590d21 (анализ) + 13042ed8 (CLI) + b95f3854 (фикстуры) + b908acb2
+  (review-фикс) + docs-коммит (этот). Ветка НЕ merged (финальный merge делает оператор).
+
+[2026-06-14] Plan 152.4.5 — word-сегментация (UAX #29) + to_titlecase (D253). Завершает std/unicode
+  кроме sentence-сегментации. str.@as_words()->WordsView (4-я линза, WB1-WB16: lookahead WB6/7/11/12 +
+  WB4 ignore + RI-parity) над word_data.nv (WordBreakProperty range-таблица). to_titlecase: первая
+  cased-буква слова через TITLE-маппинг (не upper — ǆ→ǅ) + lowercase остального с Final_Sigma. Генератор:
+  word_data.nv (1407 wb ranges) + TITLE в case_data.nv (1479, UnicodeData[14]+SpecialCasing). Acceptance G0:
+  полный WordBreakTest.txt 1826/1826 (content-checked, INDEPENDENT UCD-oracle) out-of-band; коммит spread 1500;
+  plan152_4 13/13. Adversarial-review (4 агента): 3 находки исправлены — count() учитывает idx, RI-parity O(n)
+  (была O(n²)), маркер sentence-boundaries в backlog. Codegen-баг [M-codegen-short-freefn-name-collision]
+  (wb→wbcat). Закрывает [M-152-word-boundaries]; sentence → [M-152-sentence-boundaries]. Ветка plan-152.
+
+[2026-06-14] Plan 152.7-B — формат-спеки в интерполяции (D258). Rust-style mini-language
+  ${expr:[[fill]align][sign][#][0][width][.precision][type]]} (база D229 — только :?). Реализация:
+  FormatSpec AST + parser + emit_c.rs + runtime conv.h (int/radix/pad/prefix/f64 body). negative hex =
+  two's-complement; alt-префикс всегда строчный (:#X→0xFF, как Rust). plan152_7 5/5 (t1 width/align,
+  t2 zero-pad/sign, t3 radix x/X/b/o+#, t4 precision + n_bad_format_spec). B2 (Write-sink) отложено →
+  152.7.1 [M-152.7-write-sink]. ВОССТАНОВЛЕНО после reboot: фоновый агент завис, его реализация уцелела
+  в worktree; сохранил checkpoint, проверил, починил баг #X-префикса (0X→0x), добавил neg+доки. Ветка
+  worktree-agent (merge в main отдельно).
+
+[2026-06-14] Interpreter disabled — `nova run` errors as unsupported (C-codegen only). Древовидный
+  интерпретатор отключён: `nova run` остаётся видимой CLI-командой, но при вызове печатает явное
+  сообщение «interpreter not currently supported» и направляет на `nova build` / `nova test` (единственный
+  поддерживаемый путь — Nova → C). Изменения: nova-cli/src/main.rs (run → error-stub, ad0251e8);
+  compiler-codegen/src/interp/mod.rs (module-note «currently unsupported»); удалены DEAD interp-тесты
+  снятого `nova` interpreter-крейта (run_interp_named.rs, spec_nova.rs/integration.rs interp-части,
+  tests/common хелперы); user-facing доки + www вычищены от `nova run` (README/.ru + examples +
+  сайт be06628); nova-cli доки (docs/nova-cli.md/.ru.md) выверены против реального CLI (2c8fb861).
+  Историю `nova run` в plans/spec/promts/project-creation НЕ скрабил (out of scope). Ветка
+  chore-disable-interp-nova-run, worktree nova-noninterp. Followup [M-interp-unsupported]: полное
+  удаление интерпретатора ЛИБО порт interp-only тестов на C-codegen; чистка tests/ integration.
+
+[2026-06-14] Plan 157 interpreter-UNSUPPORTED formalized: spec D274 (08-runtime) + open-question Q-interpreter-future + regression test nova-cli/tests/interp_unsupported.rs (negative `nova run` errors + positive `nova check` works, via release binary, 2/2 PASS). Acceptance criteria in plan; backlog [M-interp-unsupported].
+
+[2026-06-14] Plan 152.5b — Unicode collation (UCA/DUCET, UTS #10, D254). std/unicode/collate.nv (opt-in):
+  collate_compare/sort_key/eq + Collator. NFD → collation elements (contractions + S2.1 discontiguous +
+  implicit-веса) → multi-level Shifted sort key → лекс-сравнение. collate_data.nv из DUCET allkeys.txt
+  (38443 single/77 contraction/21 implicit). G0: CollationTest_SHIFTED 50000/50000 spread out-of-band
+  (independent oracle), коммит 1500; полный 227800 → slow-lane Plan 156. Scope: DUCET non-tailored + Shifted;
+  CLDR-tailoring + eq_ignore_case → [M-152-collation-tailoring]. ВОССТАНОВЛЕНО после reboot (агент завис):
+  широкий прогон поймал 4/200 чанка = UCA S2.1 (discontiguous contractions, combining-mark вклинивается в
+  контракцию при NFD-reorder) → реализовал S2.1 → 200/200. Codegen-баг: match-as-return c mut None→bool
+  (typed Option[str] workaround). Закрывает [M-152-collation]. Plan 152 std/unicode полностью реализован.

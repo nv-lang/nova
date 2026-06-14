@@ -36451,3 +36451,110 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   (arr.get(i); нужен temp + generated NovaOpt-тип, недоступный в array.h). (d) record-invariant wrap.
   Маркер [M-msvc-bounds-check-stmt-expr] ✅ ЗАКРЫТ. Откат: const-drop strlit (попытка чинить C2440)
   отменён — не починил void-deref-аспект, немотивированное послабление (literals non-const).
+[2026-06-14] Plan 144.0 (may-GC effect analysis, D273, ветка plan-144-may-gc-effect-analysis): анализ
+  ДЕЛИБЕРАТНО консервативен — это НЕ срезка, а корректная граница соундности (критерий приёмки #8 «без
+  упрощений как для прода»). Решётка дефолтит в MayGC (top); NoGC доказывается только над полностью
+  разрешённым неаллоцирующим конусом. Что помечается MayGC по консервативности (всё это — потеря элизии
+  тира O1, НЕ потеря корректности; ложный NoGC = пропущенный safe-point/корень = UAF, поэтому при ЛЮБОМ
+  сомнении → MayGC): **(a)** любой callee, не сматченный к known FnDecl (cross-module / closure-local /
+  bare-ident) → unresolved → MayGC; **(b)** любой indirect/closure/fn-ptr/with/spawn/select/parallel-for
+  вызов (цель статически неизвестна) → MayGC; **(c)** любой FFI/extern (C может вызвать Nova-callback,
+  may-GC неизвестен) → MayGC; **(d)** first-class method-value `obj.@m`/`Type.@m` (codegen эмитит env+
+  closure alloc) → MayGC; **(e)** аллокация: allowlist provably-non-allocating, а ЛЮБОЙ неизвестный AST-
+  узел → считается аллоцирующим (top) — это сознательный over-approximation, не пробел; **(f)** str-
+  литерал в allowlist как non-allocating ТОЛЬКО для интернированного `static const u8[]`, но граница
+  «интернирован vs строится буфер» консервативна; **(g)** рекурсивная SCC с аллокацией в любом члене →
+  вся SCC MayGC. Над монтоморфизацией seed-свойства source-level → вердикт шаблона наследуется всеми
+  инстансами (over-approximation: spurious-рёбра только ДОБАВЛЯЮТ MayGC). Hardcode «знаний» о конкретных
+  prelude-функциях как NoGC без source-доказательства был бы ИМЕННО shortcut, маскирующим недоказанный
+  случай как элидируемый → сознательно отвергнут. **Emit-nothing** — намеренное ограничение scope этого
+  плана: набор НЕ потребляется codegen'ом (нулевой риск для рантайма), потребление тиром O1 (frame-
+  elision / write-back-skip) = Plan 144 Ф.2, отдельно и под гейтом. Residual-точность (cross-module
+  callee-резолюция через manifest, str-interning-граница, более тонкая alloc-классификация) — все
+  консервативны (теряют элизию, остаются соундны) → Q-may-gc-precision; браться имеет смысл лишь когда
+  Ф.2 начнёт потреблять набор и профиль покажет доминирующие упущенные элизии.
+
+- **Plan 152.4.5 — word-сегментация (UAX #29) + `to_titlecase` (2026-06-14, D253)**:
+  Четвёртая линза `str.@as_words() -> WordsView` (UAX #29 word boundaries WB1-WB16) + `to_titlecase(s)`
+  в opt-in std/unicode — закрывает std/unicode кроме sentence-сегментации. Генератор `nova-codegen unicode`
+  расширен: `word_data.nv` (WB-категории range-таблица из WordBreakProperty.txt; ExtPict для WB3c reused из
+  grapheme_data) + TITLE-маппинг в `case_data.nv` (UnicodeData[14] с fallback на [12] + SpecialCasing title).
+  Алгоритм (words.nv): полный rule-cascade WB3..WB999 с **lookahead** (WB6/7/7b/7c/11/12 — next/prevprev base
+  через skip-ignorables) + **WB4 ignore-rule** (Extend/Format/ZWJ фолдятся в предыдущий base) + **RI-parity**
+  (WB15/16). `to_titlecase`: первая cased-буква слова через TITLE-маппинг (не upper — ǆ→ǅ), остальное lowercase
+  с Final_Sigma над оригинальными cps. WordsView (`value priv {buf, bounds, idx}`) материализует границы один
+  раз (as_words O(n) на создание, НЕ O(1) как as_chars/as_graphemes — задокументировано; word-правила требуют
+  lookahead).
+  **G0 «без упрощений»:** **полный WordBreakTest.txt 1826/1826** (content-checked) out-of-band PASS — и это
+  **INDEPENDENT** oracle (boundaries заданы в UCD-тест-файле, НЕ выводятся из генератора, в отличие от
+  case-breadth). Коммит — uniform-spread 1500. plan152_4 13/13 (9 pos + 4 neg). title≠upper пиннит hand-case
+  ǆ→ǅ. Sentence-сегментация исключена **по дизайну** (отдельный UAX #29 алгоритм SB1-SB11 → `[M-152-sentence-boundaries]`).
+  **Adversarial-review (4 агента + верификация) — 3 подтверждённые находки, ВСЕ исправлены:** (1) `WordsView.count()`
+  игнорировал `@idx` (возвращал total, не remaining — расходилось с CharsIter/GraphemesView) → фикс `b-1-@idx`;
+  (2) **O(n²)** в `wb_ri_run` (rescan RI-прогона на каждой позиции — нарушал claim «O(n)») → инкрементальная
+  RI-чётность `wb_ri_step` за один проход O(n) (как в graphemes); (3) маркер `[M-152-sentence-boundaries]`
+  упоминался в доках, но не был в backlog → добавлен. Sanctioned simplification — только размер фикстуры (1500
+  spread; полнота out-of-band).
+  **Codegen-баг попутно (`[M-codegen-short-freefn-name-collision]`):** 2-буквенное имя free-функции `wb` дало
+  каскад `undefined identifier wb` (коллизия с runtime-локалом `wb` в write_buffer.nv на C-уровне; спаны
+  указывали в peer-файлы из-за merged-буфера модуля). Workaround — renamed `wb`→`wbcat`. Настоящий fix
+  (mangling/scoping имён free-функций vs C-локалов) — followup.
+
+- **Plan 152.7-B — формат-спеки в интерполяции (Rust-style mini-language, 2026-06-14, D258)**:
+  `${expr:[[fill]align][sign][#][0][width][.precision][type]]}` — полный Rust-style формат-DSL
+  (база D229/Plan 91.14 поддерживала только `:?`). align/fill (`<`/`^`/`>` + fill-char), sign `+`,
+  alt `#` (radix-префикс), zero-pad `0`, width, `.precision` (f64 знаки / str усечение), type
+  (`x`/`X`/`b`/`o`/`?`). Реализация: AST `FormatSpec` (format_spec.rs) + parser + codegen (emit_c.rs) →
+  runtime conv.h (`nova_fmt_int_body`/`_radix_body`/`_pad`/`_radix_prefix`/`_f64_body`). Целые — nova_int
+  (64-bit), negative hex = two's-complement (`${-1:x}`→`ffffffffffffffff`, как Rust). G0 без упрощений:
+  полный Rust-style набор, не подмножество; plan152_7 5/5 (4 pos + 1 neg).
+  **Восстановление после reboot:** этот sub-plan делал фоновый агент, который завис (watchdog) на
+  дописывании тестов; его реализация (~972 строки) уцелела в worktree некоммитнутой. Я её сохранил
+  checkpoint-коммитом, проверил (4/4), нашёл+починил **1 баг**: `nova_fmt_radix_prefix` делал `0X` для
+  `:#X`, а Rust всегда строчный `0x` (`upper` влияет только на цифры) → fix `buf[n++]='x'`. Добавил
+  негативный тест + доки (D258, план, strings.md).
+  **Sanctioned scope:** реализован B1 (формат-спеки). **B2 (обобщение sink `@display(mut w Write)`) —
+  отложено по дизайну** (breaking: меняет сигнатуры всех `@display`/`@debug`) → Plan 152.7.1 /
+  `[M-152.7-write-sink]`. Не упрощение — отдельная breaking-задача.
+
+- **Interpreter disabled — `nova run` errors as unsupported (2026-06-14)**: древовидный
+  интерпретатор отключён; единственный поддерживаемый путь исполнения — Nova → C
+  (`nova build` / `nova test`). `nova run` СОХРАНЁН как видимая CLI-команда (не удалён из
+  справки), но при вызове печатает явное «interpreter not currently supported» и направляет
+  на C-codegen. Это НЕ упрощение реализации, а сознательная продуктовая политика: tree-walker
+  не поддерживается, поведение при вызове честное (loud error, не silent no-op). Сделано:
+  (a) `nova-cli/src/main.rs` — `run` → error-stub (не зовёт интерпретатор); (b)
+  `compiler-codegen/src/interp/mod.rs` — module-note «currently unsupported» в коде;
+  (c) удалены DEAD interp-тесты, ссылавшиеся на снятый `nova` interpreter-крейт
+  (`nova-cli/tests/run_interp_named.rs` + interp-части `compiler-codegen/tests/{spec_nova.rs,
+  integration.rs}` + `tests/common` хелперы); (d) user-facing доки + www site вычищены от
+  `nova run` (README/.ru + examples + сайт `be06628`); (e) nova-cli доки
+  (`docs/nova-cli.md`/.ru.md) выверены против реального CLI. Историческое упоминание `nova run`
+  в plans/spec/promts/scripts/nova_tests НЕ скрабилось (out of scope — historical fixture text).
+  Ветка `chore-disable-interp-nova-run` (worktree nova-noninterp). Residual →
+  `[M-interp-unsupported]`: полное удаление интерпретатора ЛИБО порт interp-only тестов на
+  C-codegen; чистка `tests/` integration-таргетов.
+
+- [2026-06-14] Plan 157 (interpreter UNSUPPORTED) formal artifacts: spec D274, Q-interpreter-future, regression test interp_unsupported.rs (neg+pos, release). `nova run` is a LOUD error (not a silent no-op) — a deliberate product boundary, not a shortcut.
+
+- **Plan 152.5b — Unicode collation (UCA/DUCET, UTS #10) (2026-06-14, D254)**:
+  `std/unicode/collate.nv` (opt-in, НЕ prelude — `str` Ord = byte-lex по D254):
+  `collate_compare(a,b)->int` / `collate_sort_key(s)->[]int` / `collate_eq` / `Collator.root()`.
+  Алгоритм: NFD → collation elements (longest-match contractions + implicit-веса CJK/Tangut §10.1)
+  → multi-level sort key (**Shifted** variable-weighting: variable CE демоутится в L4) → лекс-сравнение.
+  Данные: `nova-codegen unicode` → `collate_data.nv` из DUCET `allkeys.txt` (38443 single / 77 contraction /
+  21 implicit ranges, 666KB). G0: `CollationTest_SHIFTED.txt` (INDEPENDENT UCD-oracle) **50000-пар uniform
+  spread = 200/200** out-of-band (коммит 1500).
+  **Scope (честно, не упрощение алгоритма):** DUCET (non-tailored, root) + Shifted-вариант. CLDR
+  locale-tailoring + `eq_ignore_case` — отдельный слой → `[M-152-collation-tailoring]` (как Rust
+  `unicode-collation` DUCET-mode / ICU root collator). Полный 227800-conformance не как один тест (велик для
+  clang) → slow-lane Plan 156 (`[M-152-collation-full-conformance]`). Surrogate-строки CollationTest
+  пропускаются (Nova `str` = валидный UTF-8; отсортированный файл остаётся неубывающим).
+  **ВОССТАНОВЛЕНИЕ после reboot + найденный баг:** фоновый агент реализовал DUCET, но завис; его работа
+  уцелела в worktree. При верификации широкий out-of-band прогон (50000) поймал **4/200 краевых чанка** —
+  это **UCA S2.1 (discontiguous contractions)**: combining-mark меньшего ccc, вклинившийся при NFD-канон-
+  упорядочивании между базой и продолжением контракции, рвал contiguous-матч. Реализовал S2.1
+  (`s21_match`: longest-match с пропуском interposed-lower-ccc марок, mark коллируется отдельно) → 200/200.
+  Этот баг — урок про ценность широкого out-of-band прогона: коммит-1500 его пропускал (повезло), 50000
+  поймал. Codegen-баг попутно: `match`-as-return-тело с `mut found = None` выводил тип результата как `bool`
+  → workaround типизированным `mut found Option[str] = None`.

@@ -1,0 +1,43 @@
+// Plan 144.0 may-GC effect analysis — NEGATIVE (classified MayGC).
+//
+// Each function here constructs heap memory directly via an ALLOCATING
+// expression seed (Plan §3.3):
+//   * `mk_point`  — RecordLit (heap-record alloc).
+//   * `mk_array`  — ArrayLit  ([]int buffer alloc).
+//   * `mk_map`    — MapLit    (HashMap alloc).
+// Any allocation seed makes the node `self_may_gc` → MayGC (lattice top).
+// Allocation is a SOURCE property: even the value-record / mono fast paths are
+// indistinguishable from heap allocation at the template level, so the sound
+// verdict is MayGC at ANY doubt.
+//
+// EXPECT (gc-effect-analyze --format json): mk_point, mk_array, mk_map → all
+// "effect": "MayGC", "no_gc": false.
+
+module plan144_0.negative_allocates_record
+
+import std.collections.hashmap.{HashMap}
+
+type Point {
+    x int
+    y int
+}
+
+// RecordLit → heap-record allocation → MayGC. (`-> Point` already declares the
+// type, so the literal is written without the redundant `Point` prefix.)
+fn mk_point(a int, b int) -> Point => { x: a, y: b }
+
+// ArrayLit → buffer allocation → MayGC.
+fn mk_array(a int, b int) -> []int => [a, b, a]
+
+// MapLit → HashMap allocation → MayGC.
+fn mk_map(k int, v int) -> HashMap[int, int] => [k: v]
+
+test "constructors allocate" {
+    ro p = mk_point(1, 2)
+    assert(p.x == 1)
+    assert(p.y == 2)
+    ro xs = mk_array(3, 4)
+    assert(xs.len == 3)
+    ro m = mk_map(5, 6)
+    assert(m.len == 1)
+}

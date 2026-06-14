@@ -6204,3 +6204,78 @@ Cross-module precision + minimal-SCC-cut (KEEP 1 члена на цикл вме
 `StringBuilder.append(f32)` в KEEP (нет source-доказательства arg-type) — корректный conservative-KEEP, НЕ
 shortcut. Частично снимается SIGURG'ом (Plan 144 §7.4, общий async-yield).
 
+## D273 — may-GC effect lattice (Plan 144.0, closes precise-GC hole H4 / Q15)
+
+> **Создан:** 2026-06-14 ([Plan 144.0](../../docs/plans/144.0-may-gc-effect-analysis.md), ветка
+> `plan-144-may-gc-effect-analysis`). **Compile-time, EMIT-NOTHING** анализ: вычисляет для каждой
+> функции внутренний эффект may-GC. Closes soundness-дыру **H4** ([Plan 144 §7.6](../../docs/plans/144-precise-gc-implementation.md#76))
+> и вопрос **Q15** этого слайса. Sibling [D271]: тот же source-level whole-program call-graph
+> pre-pass (`fn_key`/overload-резолюция/Tarjan SCC из `preempt_keep.rs`), но другая решётка и
+> направление пропагации. **Ничего не эмитит** в генерируемый C — потребляется тиром **O1** позже
+> (Plan 144 Ф.2: frame-elision / write-back-skip), отдельно и под гейтом.
+
+### Решётка (двухточечная, дефолт = top)
+```
+        MayGC   (top, ⊤)   ← ДЕФОЛТ (soundness — H4)
+          │
+        NoGC    (bottom, ⊥) ← доказывается
+```
+`is_no_gc(f)` истинно **ТОЛЬКО** когда весь статический конус вызовов из `f` полностью разрешён по
+именам И не содержит ни одной аллокации. **Любое сомнение → MayGC.** Ложный NoGC = пропущенный
+GC safe-point / корень = use-after-free (как только Ф.2 обопрётся на набор), поэтому соундность
+важнее агрессивности элизии.
+
+### Seed `self_may_gc(node)` — узел сам MayGC, если ИСТИННО любое из
+1. **Аллоцирует** — тело содержит аллоцирующее выражение (см. allowlist ниже).
+2. **Indirect-вызов** — closure / fn-ptr / метод-на-не-self / trailing-block / `with` / `spawn` /
+   `select` / `parallel-for`, а также **first-class method value** (`obj.@m` / `Type.@m` в
+   value-позиции — codegen эмитит env+closure `nova_alloc`'и): цель/аллокация неизвестна → top.
+3. **FFI/extern** — внешняя функция; её may-GC неизвестен → top (C может вызвать Nova-callback).
+4. **Неразрешённый callee** — bare-ident / `Type.method` / `module.func`, не сматченный ни к одному
+   known `FnDecl` (cross-module / closure-local) → top.
+
+> NB (отличие от [D271]): `address_taken` сам по себе **НЕ** делает узел MayGC — быть first-class
+> значением не значит аллоцировать; MayGC у КОЛЛЕРА через `makes_indirect`.
+
+### Принцип allowlist'а аллокации (soundness)
+**Allowlist provably-non-allocating, всё прочее → аллоцирует.** Не-аллоцирующими считаются ТОЛЬКО:
+целочисленная/плавающая арифметика, сравнения, доступ к полю/индексу без копии, `as`-касты
+скаляров, literal-скаляры, return/break/continue, чтение локала, интернированный str-литерал
+(`static const u8[]`). Аллоцируют: `RecordLit`/sum-конструкторы/`ArrayLit`/`MapLit`,
+интерполяция/конкатенация str (буфер), лямбды/замыкания (env), `spawn`/`detach`/`blocking`/
+`supervised`/`parallel-for` (fiber/runtime), boxing escaping-значений, vec/StringBuilder/Map
+конструкторы и `.clone()` на heap-типах. **Любой неизвестный AST-узел → аллоцирует (top).**
+
+### Транзитивная пропагация (SCC-конденсация, обратный топо)
+MayGC течёт **вверх по коллерам**: SCC помечается MayGC ⟺ любой его член `self_may_gc=true` ИЛИ
+любое исходящее ребро (в ДРУГУЮ SCC) ведёт в MayGC-SCC; обработка SCC в обратном топологическом
+порядке (callee → caller). `NoGC = {узлы вне MayGC-SCC}`. Рекурсивная SCC с аллокацией в любом
+члене → вся SCC MayGC; чистая рекурсия без аллокаций и без MayGC-рёбер → NoGC.
+
+### Соундность над мономорфизацией
+Свойства seed (аллокация / indirect / FFI / unresolved) — **исходные** (source-level): вердикт,
+вычисленный на шаблоне, наследуется КАЖДЫМ мономорфным/erased-инстансом. Over-approximation
+рёбер/seed'ов ⇒ over-approximation MayGC ⇒ ни один реальный may-GC-инстанс не пропущен; spurious-
+рёбра лишь теряют элизию (NoGC→MayGC), не ломают соундность. Conservative-gating как
+`PreemptKeepSet`: при `populated==false` (анализ не прогонялся над непустой вселенной) — **никто не
+NoGC** (всё MayGC).
+
+### Реализация и introspection
+`compiler-codegen/src/codegen/may_gc.rs` — `compute_may_gc_set` / `MayGcSet` / `is_no_gc`;
+introspection-CLI `nova gc-effect-analyze <path> [--format json|text]` (зеркало `consume-analyze`,
+в бинарь ничего не эмитит). `emit_c.rs` НЕ зовёт модуль во время эмиссии (emit-nothing инвариант).
+
+### Acceptance
+plan144_0: 3 позитивные (`pure_leaf`/`leaf_forwarder`/`pure_recursion` → NoGC) + 7 негативных
+(`allocates_record`/`calls_allocator`/`ffi_call`/`indirect_call`/`method_value`/`recursive_alloc`/
+`unknown_callee` → MayGC) фикстуры через релизный `nova gc-effect-analyze`; 19/19 may_gc unit-тестов
+PASS; release-сборка чистая, генерируемый C не изменён (emit-nothing). Adversarial-review закрыл
+дыру first-class-method-value (`Type.@m` в value-позиции эмитит env+closure alloc — был ложный NoGC,
+ровно H4-форма) — `@`-префиксный `Member` теперь seed'ит аллокацию. **Без упрощений как для прода.**
+
+### Open / long-term
+Cross-module callee-резолюция, точность str-literal-interning, более тонкая классификация alloc-
+сайтов — [Q-may-gc-precision] (open-questions.md). Все консервативны (теряют элизию, остаются
+соундны). O1-потребление набора (frame-elision / write-back-skip) — Plan 144 Ф.2,
+[M-144.0-may-gc-effect-analysis].
+

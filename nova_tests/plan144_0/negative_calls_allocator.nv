@@ -1,0 +1,31 @@
+// Plan 144.0 may-GC effect analysis — NEGATIVE (classified MayGC).
+//
+// `make_box` allocates (ArrayLit) → MayGC on its own seed. `caller` and
+// `caller2` themselves contain NO allocation seed — they only make a single
+// statically-resolved direct call into `make_box`. Transitive propagation up
+// the call graph (Plan §3.4) carries MayGC from callee to caller: `caller`'s
+// SCC has an out-edge into `make_box`'s MayGC SCC → `caller` is MayGC, and so
+// is `caller2` (two hops).
+//
+// This is the up-the-callers propagation NEGATIVE: it proves a non-allocating
+// function is STILL MayGC when any callee in its reachable cone allocates.
+//
+// EXPECT (gc-effect-analyze --format json): make_box, caller, caller2 → all
+// "MayGC".
+
+module plan144_0.negative_calls_allocator
+
+// Allocating leaf (ArrayLit) → MayGC seed.
+fn make_box(x int) -> []int => [x]
+
+// No own allocation; resolved edge into make_box → MayGC by propagation.
+fn caller(x int) -> []int => make_box(x)
+
+// Two hops from the allocator; still MayGC.
+fn caller2(x int) -> []int => caller(x)
+
+test "alloc propagates up callers" {
+    assert(make_box(7).len == 1)
+    assert(caller(8).len == 1)
+    assert(caller2(9).len == 1)
+}

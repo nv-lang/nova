@@ -7883,4 +7883,26 @@ heap-box value-rvalue, Option-get composite repack, record-invariant wrap.
 > правило на ВЕСЬ генерируемый C, а не только runtime builtins.
 > **Конвенция для разработчиков** — также в [compiler-codegen/README.md](../../compiler-codegen/README.md)
 > §«MSVC-портируемость генерируемого C».
+## D274 — Tree-walking interpreter currently UNSUPPORTED; C-codegen only (Plan 157)
+
+**Решение.** Древесный интерпретатор (`nova run`, модуль `compiler-codegen/src/interp/`)
+**временно НЕ поддерживается**. Nova собирается, тестируется и поставляется **только**
+через компиляцию в C (`nova build`, `nova test`, `nova test-build`).
+
+- `nova run` остаётся **видимой** подкомандой CLI (discoverability), но при вызове
+  немедленно завершается с ошибкой и подсказкой `nova build <file>` / `nova test`
+  (exit ≠ 0; help помечен `[UNSUPPORTED]`). Сознательная **громкая** граница, не тихий no-op.
+- Модуль `interp/` сохранён «для справки» (помечен `//!`-нотой), но из пайплайна исключён.
+  Мёртвые interpreter-тесты (`integration.rs`, `spec_nova.rs`, `run_interp_named.rs`,
+  `common/mod.rs`) удалены — они ссылались на изъятый библиотечный крейт `nova`.
+- Регресс-защита контракта — `nova-cli/tests/interp_unsupported.rs` (negative: `nova run`
+  ошибается + указывает на C-codegen; positive: `nova check` работает), прогон через
+  релизный бинарник.
+
+**Почему.** Интерпретатор расходился с C-семантикой и тормозил разработку; единый
+C-codegen-путь — единственный поддерживаемый и тестируемый. «пока» намеренно: возможна
+полная вырезка ЛИБО восстановление — см. `Q-interpreter-future`.
+
+Связь: [Plan 157](../../docs/plans/157-interpreter-unsupported.md),
+[open-questions Q-interpreter-future](../open-questions.md), маркер `[M-interp-unsupported]`.
 

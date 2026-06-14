@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 152.7-B (D258) POS T2 — zero-pad (`0`) + sign (`+`).
+//
+// Zero-pad is sign-aware: zeros go BETWEEN the sign/prefix and the digits.
+module plan152_7.t2_pos_zero_pad_sign
+
+test "zero pad positive" {
+    assert("${42:05}" == "00042")
+}
+
+test "zero pad exact width" {
+    assert("${42:02}" == "42")
+}
+
+test "zero pad negative (sign-aware)" {
+    assert("${-7:05}" == "-0007")
+}
+
+test "zero pad negative wide" {
+    assert("${-42:06}" == "-00042")
+}
+
+test "force plus sign" {
+    assert("${42:+}" == "+42")
+}
+
+test "force plus sign on zero" {
+    assert("${0:+}" == "+0")
+}
+
+test "minus is default" {
+    assert("${-42:+}" == "-42")
+}
+
+test "plus with zero pad (sign-aware)" {
+    assert("${42:+06}" == "+00042")
+}
+
+test "plus with width right-align" {
+    assert("${42:+6}" == "   +42")
+}

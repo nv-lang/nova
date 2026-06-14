@@ -5,7 +5,7 @@
 // data, echoes it back. Demonstrates the TcpListener + TcpStream async API.
 //
 // Usage:
-//   nova run examples/net/echo_server.nv
+//   nova build examples/net/echo_server.nv -o echo_server && ./echo_server
 //   # In another terminal:
 //   echo "hello nova" | nc 127.0.0.1 7777
 //

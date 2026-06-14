@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 152.7-B (D258) POS T4 — precision (`.N`): float decimal places +
+// string truncation, combined with width / align / sign.
+module plan152_7.t4_pos_precision
+
+test "float precision 2" {
+    assert("${3.14159:.2}" == "3.14")
+}
+
+test "float precision 0 (round to integer, no point)" {
+    assert("${3.7:.0}" == "4")
+}
+
+test "float precision 4" {
+    assert("${3.14159:.4}" == "3.1416")
+}
+
+test "float precision pads zeros" {
+    assert("${2.5:.3}" == "2.500")
+}
+
+test "float negative precision" {
+    assert("${-2.5:.1}" == "-2.5")
+}
+
+test "float precision force plus" {
+    assert("${2.5:+.1}" == "+2.5")
+}
+
+test "float precision with width right-align" {
+    assert("${3.14159:8.2}" == "    3.14")
+}
+
+test "float precision with width zero-pad (sign-aware)" {
+    assert("${-3.14:08.2}" == "-0003.14")
+}
+
+test "float precision left-align" {
+    assert("${3.14159:<8.2}" == "3.14    ")
+}
+
+test "string truncation by precision (codepoints)" {
+    ro s = "hello"
+    assert("${s:.3}" == "hel")
+}
+
+test "string truncation longer than string is no-op" {
+    ro s = "hi"
+    assert("${s:.5}" == "hi")
+}
+
+test "string truncation + width" {
+    ro s = "hello"
+    assert("${s:>5.3}" == "  hel")
+}
