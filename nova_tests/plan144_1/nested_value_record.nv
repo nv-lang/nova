@@ -1,0 +1,40 @@
+// Plan 144.1 — GC pointer-offset bitmap: nested VALUE-record → recursed
+// pointer offsets (inline embed, NOT one opaque pointer).
+//
+// `Vptr value { p Box }` (D228 value-record) is laid out INLINE wherever it
+// appears as a field — `NovaValue_Vptr` is embedded, not boxed. `Box` is a
+// heap record → one `Nova_Box*` GC pointer. So `Vptr` itself has its single GC
+// pointer at offset 0.
+//
+// When `Vptr` is embedded in `Holder`, the pass must RECURSE into the value
+// record and splice its pointer offset at the field's base offset (NOT treat
+// the whole value-record field as one pointer):
+//   Holder { x@0 (int 8), v@8 (Vptr inline: p ptr @8), y@16 (int 8) }
+//   → size 24, align 8, pointer_offsets = [8]   (the recursed Box ptr)
+//
+// EXPECT (gc-layout-analyze --format json):
+//   Box    → size 8,  align 8, pointer_offsets [],  unresolved false
+//   Vptr   → size 8,  align 8, pointer_offsets [0],  unresolved false
+//   Holder → size 24, align 8, pointer_offsets [8],  unresolved false
+
+module plan144_1.nested_value_record
+
+type Box { a int }
+
+type Vptr value { p Box }
+
+type Holder {
+    x int
+    v Vptr
+    y int
+}
+
+fn holder_x(h Holder) -> int => h.x + h.y
+
+test "nested value-record constructs and reads" {
+    ro b = Box { a: 9 }
+    ro vp = Vptr { p: b }
+    ro h = Holder { x: 10, v: vp, y: 20 }
+    assert(holder_x(h) == 30)
+    assert(h.v.p.a == 9)
+}

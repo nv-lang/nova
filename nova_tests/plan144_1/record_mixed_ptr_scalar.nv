@@ -1,0 +1,36 @@
+// Plan 144.1 — GC pointer-offset bitmap: record with mixed pointer + scalar
+// fields, plus the scalar-only ("non-GC field") case.
+//
+// `Inner` is a default (heap) record → at the FIELD level it is a single
+// `Nova_Inner*` GC pointer slot. `Outer` interleaves it with two scalar `int`
+// fields, so the bitmap must contain EXACTLY the boxed field's offset.
+//
+// Emitted C layout (x64, all fields 8-byte):
+//   Outer { tag@0 (int, scalar 8), child@8 (Nova_Inner* GC 8), n@16 (int 8) }
+//   → size 24, align 8, pointer_offsets = [8]
+//
+// `Inner { a int }` is scalar-only → EMPTY bitmap (the "non-GC field" / scalar
+// type AC case): a record whose every field is a scalar carries no GC slot.
+//
+// EXPECT (gc-layout-analyze --format json):
+//   Inner  → size 8,  align 8, pointer_offsets [],   variants [], unresolved false
+//   Outer  → size 24, align 8, pointer_offsets [8],  variants [], unresolved false
+
+module plan144_1.record_mixed_ptr_scalar
+
+type Inner { a int }
+
+type Outer {
+    tag int
+    child Inner
+    n int
+}
+
+fn outer_sum(o Outer) -> int => o.tag + o.n
+
+test "record mixed ptr/scalar constructs and reads" {
+    ro inner = Inner { a: 7 }
+    ro outer = Outer { tag: 1, child: inner, n: 41 }
+    assert(outer_sum(outer) == 42)
+    assert(outer.child.a == 7)
+}

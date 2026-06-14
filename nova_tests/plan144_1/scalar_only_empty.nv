@@ -1,0 +1,32 @@
+// Plan 144.1 — GC pointer-offset bitmap: pure-scalar record → EMPTY bitmap.
+//
+// Every field is a primitive scalar (int / bool / char). A scalar carries no
+// GC-managed pointer, so the bitmap is empty — the canonical "non-GC field"
+// AC case proving the pass does NOT over-mark scalars.
+//
+// Layout note — `char` is the one width subtlety: emit_c lowers `char` →
+// `nova_char` = `typedef int64_t` (8 bytes), NOT the 4 the size-math table
+// reports. So `flag bool` (1) then `c char` (8, align 8) pads to:
+//   Scalars { n@0 (int 8), flag@8 (bool 1), c@16 (char/nova_char 8) }
+//   → tail-padded to align 8 → size 24, align 8, pointer_offsets []
+//
+// EXPECT (gc-layout-analyze --format json):
+//   Scalars → size 24, align 8, pointer_offsets [], variants [], unresolved false
+
+module plan144_1.scalar_only_empty
+
+type Scalars {
+    n int
+    flag bool
+    c char
+}
+
+fn pick(s Scalars) -> int {
+    if s.flag { s.n } else { 0 }
+}
+
+test "scalar-only record constructs and reads" {
+    ro s = Scalars { n: 5, flag: true, c: 'a' }
+    assert(pick(s) == 5)
+    assert(s.c == 'a')
+}

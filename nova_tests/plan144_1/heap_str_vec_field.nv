@@ -1,0 +1,62 @@
+// Plan 144.1 — GC pointer-offset bitmap: types embedding `str` and `[]T` (Vec)
+// heap fields → those offsets marked.
+//
+// `str = {ptr *u8, len int}` is a value-embedded record: `ptr` @field+0 IS a
+// GC-pointer slot (object-start lookup tolerates a literal/FFI buffer at mark —
+// §7.6 H1); `len` @field+8 is scalar. The pass recurses into the str's inline
+// layout and marks ONLY the ptr sub-offset.
+//
+// `[]int` (Vec) is lowered by emit_c to ONE 8-byte `Nova_Vec____*` HEAP POINTER
+// at the field level (NOT the 16-byte slice the size-math reports), so the
+// field is a single GC pointer slot.
+//
+// Emitted C layout:
+//   WithStr { id@0 (int 8), name@8 (str: ptr@8 GC, len@16 scalar) }
+//     → size 24, align 8, pointer_offsets [8]            (str.ptr)
+//   WithVec { len@0 (int 8), items@8 (Nova_Vec* GC 8) }
+//     → size 16, align 8, pointer_offsets [8]            (Vec ptr)
+//   Both { lead@0 (int 8), label@8 (str ptr@8), tags@24 (Vec ptr) }
+//     → str occupies @8..24, Vec ptr @24 → pointer_offsets [8, 24]
+//
+// EXPECT (gc-layout-analyze --format json):
+//   WithStr → size 24, align 8, pointer_offsets [8]
+//   WithVec → size 16, align 8, pointer_offsets [8]
+//   Both    → size 32, align 8, pointer_offsets [8, 24]
+
+module plan144_1.heap_str_vec_field
+
+type WithStr {
+    id int
+    name str
+}
+
+type WithVec {
+    len int
+    items []int
+}
+
+type Both {
+    lead int
+    label str
+    tags []int
+}
+
+fn names_id(w WithStr) -> int => w.id
+
+fn vec_first(w WithVec) -> int {
+    if w.len > 0 { w.items[0] } else { 0 }
+}
+
+test "heap str/vec fields construct and read" {
+    ro ws = WithStr { id: 3, name: "hi" }
+    assert(names_id(ws) == 3)
+    assert(ws.name == "hi")
+
+    ro items []int = [10, 20, 30]
+    ro wv = WithVec { len: 3, items }
+    assert(vec_first(wv) == 10)
+
+    ro both = Both { lead: 1, label: "tag", tags: items }
+    assert(both.lead == 1)
+    assert(both.tags.len() == 3)
+}
