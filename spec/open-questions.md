@@ -4787,12 +4787,23 @@ match-arms и:
 - Либо в type-checker'е требовать всем arm'ам совпадающий не-unit
   тип, если match в expr-position (более строгая семантика).
 
-**Status.** Не закрыто. Workaround достаточен для bootstrap, но
-ограничивает идиоматический Nova-код. После полного codegen rewrite
-(Plan 02) — закрыть.
+**Status.** Не закрыто (этот конкретный void-statement-arm симптом). Workaround
+достаточен для bootstrap, но ограничивает идиоматический Nova-код. После
+полного codegen rewrite (Plan 02) — закрыть.
+
+**Родственный кейс — ЗАКРЫТ (D275, 2026-06-14).** Зеркальная проблема —
+**value-ветка (fluent `-> @`-хвост, типа `Vec*`) рядом с unit-сиблингом** в
+discard-позиции — была codegen-mismatch'ем (объявлялся `tmp(Vec*) =
+NOVA_UNIT;` → CC-FAIL). `emit_match` это коэрсил (unit-доминирование `[M-91.13]`),
+а `emit_if_expr` нет. [D275](decisions/08-runtime.md#d275)
+распространил unit-коэрс на `if` и выровнял `infer_expr_c_type(Match)` с emit
+(`[M-codegen-fluent-tail-if-unify]` закрыт; workaround в `std/unicode/case.nv`
+убран). Это другой симптом (value-vs-unit, не void-statement-arm), но та же
+семейная зона «unit в expr-position match/if».
 
 **Связь:** Plan 02 (codegen-c-backend), [D19](decisions/03-syntax.md#d19)
-(match-arms `=>`), Q-pattern-mut (ниже — связанное ограничение).
+(match-arms `=>`), [D275](decisions/08-runtime.md#d275)
+(if↔match unit-коэрс паритет), Q-pattern-mut (ниже — связанное ограничение).
 
 ---
 

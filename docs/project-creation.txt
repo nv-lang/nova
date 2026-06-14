@@ -37957,3 +37957,21 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   152.7.1 [M-152.7-write-sink]. ВОССТАНОВЛЕНО после reboot: фоновый агент завис, его реализация уцелела
   в worktree; сохранил checkpoint, проверил, починил баг #X-префикса (0X→0x), добавил neg+доки. Ветка
   worktree-agent (merge в main отдельно).
+
+[2026-06-14] Codegen: if/match-выражение коэрсится в unit когда одна ветка unit (D275, ветка
+  plan-cgfix-fluent-tail-if). Закрывает [M-codegen-fluent-tail-if-unify]. Fluent `-> @`-хвост (Vec.push,
+  типа Vec*) как хвост ветки if/match рядом с не-расходящимся unit-сиблингом в discard-позиции →
+  tmp(Vec*) = NOVA_UNIT (C-несовпадение) → CC-FAIL, ломало компиляцию всего std.unicode (folder-module:
+  один if в case.nv валил normalize/graphemes/words как peer'ы). emit_match уже коэрсил (unit-доминирование
+  [M-91.13]), emit_if_expr — нет. Fix (compiler-codegen/src/codegen/emit_c.rs): (1) emit_if_expr (~25905) —
+  симметричный (else_diverges, else_ty) для обеих форм else + gated unit-доминирование (gated на
+  chosen!=nova_unit и не-расходящийся сиблинг → Plan 125 divergence-выбор сохранён; симметрично — fluent в
+  then ИЛИ else); (2) infer_expr_c_type(Match) (~34643) — то же any-unit-arm→nova_unit, что и emit_match
+  (infer↔emit симметрия; иначе if {out.push} else {match} рассинхрон Vec* vs unit → CC-FAIL в to_lowercase).
+  Workaround УБРАН из std/unicode/case.nv (восстановлен прямой prod fluent-стиль: single→
+  Vec[int].with_capacity(1).push(cp); fold_case/to_uppercase — match с fluent None-армом; to_lowercase
+  Final_Sigma — if {push} else {match}; удалены fold_one/upper_one. Остаток single/lower_one/title_one —
+  peer-shared API для words.nv, НЕ воркэраунд). Критерий «без упрощений как для прода» выполнен. Acceptance:
+  nova_tests/cgfix_fluent_tail_if/repro.nv 1/1 (4 позитива + 3 контроля) + plan152_4 13/13 + 0 новых
+  регрессий (baseline сверен против merge-base 22aa4944). Коммиты ef6d570a (emit_if_expr+фикстура) +
+  f9c6e372 (infer(Match) симметрия) + 0f0a65a8 (case.nv restore). D275 + Q-match-unit-arms-in-expr amend.

@@ -7837,3 +7837,93 @@ commit lazy, but this can exhaust user VA or hit a commit limit. POSIX aborts on
 mmap failure; Windows downsize-retries. Operators tuning to extremes should size
 the product against available virtual address space.
 
+## D275 (NEW). Codegen: `if`/`match`-выражение коэрсится в `unit`, когда одна ветка `unit` (паритет if↔match)
+
+**Source:** ветка `plan-cgfix-fluent-tail-if` (2026-06-14).
+**Status:** ✅ ACTIVE 2026-06-14.
+**Closes:** `[M-codegen-fluent-tail-if-unify]`.
+**Связь:** [D132](03-syntax.md#d132---fluent-return-метод-возвращает-receiver) (`-> @` fluent-return), [D55](02-types.md#d55) (match с unit-веткой → стиль), [D217 amend Plan 123.4.4](#d217-amend-plan-1234-4--codegen-fluent-chain-root-temp-pre-pass), [Q-match-unit-arms-in-expr](../open-questions.md#q-match-unit-arms-in-expr).
+
+### 1. Что фиксируется (codegen-семантика)
+
+Когда `if`/`match`-выражение стоит в **statement/discard-позиции** и одна из
+его ветвей даёт реальное value-`T` (например fluent-хвост `-> @`: `v.push(cp)`
+типа `Nova_Vec*`), а **другая, не-расходящаяся** ветка даёт `nova_unit`, типы
+ветвей C-несовместимы. В этом случае всё `if`/`match`-выражение коэрсится в
+`unit` — значения отбрасываются (`_nv_if = NOVA_UNIT; (void)(<push>);`), а не
+эмитится `tmp(Vec*) = NOVA_UNIT;` (несовпадение типов C → CC-FAIL).
+
+Это **паритет двух конструкций**: `emit_match` уже имел unit-доминирование
+(`[M-91.13]` — unit-арм «доминирует» над value-армами в discard-позиции).
+`emit_if_expr` этой симметрии не имел → `if { out.push(..) } else { match {…} }`
+не компилировался. D275 распространяет правило на `if` **и** выравнивает
+inference с emit.
+
+### 2. Правила
+
+1. **Симметрия ветвей `if`.** Тип + расходимость считаются одинаково для
+   then- и else-ветки (для `ElseBranch::Block` и `ElseBranch::If`). Fluent-хвост
+   может быть в любой из двух — обе стороны проверяются.
+2. **Unit-доминирование (gated).** Если выбранный (divergence-aware) тип
+   `chosen != nova_unit`, но **другая не-расходящаяся** ветка даёт `nova_unit`
+   — всё выражение → `nova_unit`. Гейт `chosen != nova_unit` оставляет обычный
+   value-typed `if c {1} else {2}` нетронутым.
+3. **Расходимость приоритетнее unit (Plan 125 сохранён).** Расходящийся сосед
+   (`return`/`throw`/`panic`) **НЕ** форсит unit — это поведение divergence-aware
+   выбора ветки из Plan 125 и оно сохраняется (unit-доминирование смотрит только
+   на **не-расходящиеся** ветки).
+4. **infer↔emit симметрия для `match`.** `infer_expr_c_type(Match)` применяет то
+   же правило «есть не-расходящаяся unit-арм → весь match `nova_unit`», что и
+   `emit_match`. Раньше inference возвращал тип не-unit арм'ы (`Vec*`), пока emit
+   эмитил `nova_unit` → enclosing `if`/assign объявлял temp `Vec*` и присваивал в
+   него `nova_unit` → CC-FAIL. Теперь inference и emission согласованы.
+
+### 3. Почему это корректно
+
+В discard-позиции значение `if`/`match` отбрасывается — выбор «common type»
+между несовместимыми ветвями семантически не наблюдаем. Эффекты обеих ветвей
+(мутации fluent-хвоста, side-effecty unit-statements) выполняются как и прежде;
+коэрсится только тип результата. Downstream emit (`emit_block_into`/
+`emit_assign_typed`) уже обрабатывает `ty == "nova_unit"` — новых путей не
+требуется.
+
+### 4. Где в коде
+
+`compiler-codegen/src/codegen/emit_c.rs`:
+- `emit_if_expr` (объявлена ~line 25853; fallback ~25905-25923) —
+  symmetric `(else_diverges, else_ty)` + gated unit-доминирование.
+- `infer_expr_c_type(Match)` (~line 34643) — `any_unit_arm` →
+  `nova_unit`, зеркало `emit_match` `[M-91.13]` (~27249-27259).
+
+### 5. Эффект на std
+
+Снят workaround в `std/unicode/case.nv`: per-codepoint мэппинги больше не
+обязаны прятать `push` в for-циклах через `Vec[int]`-возвращающие helper'ы.
+Восстановлен прямой fluent-стиль: `single` → `Vec[int].with_capacity(1).push(cp)`;
+`fold_case`/`to_uppercase`/`to_lowercase` — `match`/`if` с fluent `out.push(cp)`
+в одной ветке и unit-сиблингом в другой (в т.ч. Final_Sigma-путь
+`if { out.push(..) } else { match {…} }`).
+
+### 6. Acceptance (G0 «без упрощений» — реальный prod-стиль, не воркэраунд)
+
+- **CFI-1** Fluent `Vec.push`-хвост в then, unit else → компилится, `if`=unit ✅
+- **CFI-2** Зеркало — fluent-хвост в else, unit then ✅
+- **CFI-3** No-else (`if c { v.push(1) }`) ✅
+- **CFI-4** Nested `if` с fluent-хвостами внутри + unit outer-сиблинг ✅
+- **Контроли (не должны меняться):** `if c {1} else {2}` остаётся `int`;
+  str-`if` остаётся str; nested value-`if` остаётся str ✅
+- Фикстура `nova_tests/cgfix_fluent_tail_if/repro.nv` 1/1 PASS.
+- Directly-touched suite `plan152_4` (std.unicode) **13/13** PASS с прямым
+  fluent-стилем в `case.nv` (workaround убран — критерий приёмки выполнен).
+- 0 новых регрессий (baseline сверен против merge-base `22aa4944`; наборы FAIL
+  идентичны — все pre-existing).
+
+### 7. Граница / followups
+
+Покрыт **discard-позиционный** случай (значение отбрасывается). Случай, когда
+несовместимые fluent-vs-unit ветви стоят в **value-position** (результат
+действительно нужен с не-unit типом) — это пользовательская type-ошибка, не
+codegen-баг; type-checker должен её ловить (родственно
+[Q-match-unit-arms-in-expr](../open-questions.md#q-match-unit-arms-in-expr)).
+D275 чинит именно codegen-mismatch в statement-позиции.
+
