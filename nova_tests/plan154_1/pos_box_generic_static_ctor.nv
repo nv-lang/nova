@@ -1,0 +1,19 @@
+// Regression guard [M-154.1-box-generic-static-ctor]: generic-type static
+// constructor Box[T].new — the `(Box)[T];` raw-C leak surfaced in a 154.1 probe
+// is no longer reproducible (resolved by plan-153.1 generic-static codegen fixes
+// f7f56f0f / 3d9a7361 / 8d493e5a). This locks the construction paths.
+module plan154_1.pos_box_generic_static_ctor
+
+type Box[T] { val T }
+fn Box[T].new(v T) -> Self => { val: v }
+
+fn[T] wrap(v T) -> Box[T] => Box[T].new(v)
+
+test "concrete + generic-context + nested Box[T].new" {
+    ro a = Box[int].new(5)
+    assert(a.val == 5)
+    ro b = wrap(7)
+    assert(b.val == 7)
+    ro c = Box[Box[int]].new(Box[int].new(9))
+    assert(c.val.val == 9)
+}

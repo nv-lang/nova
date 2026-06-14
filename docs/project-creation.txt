@@ -37660,6 +37660,20 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   независимость видов). 0 регрессий по всем (contracts 251/0, plan140 42/0, plan140_1 15/0, plan140_2 13/0,
   basics 8/0). #3 (примитивный Display через sb.@append) оставлен агенту 154.1 (он его ведёт).
 
+[2026-06-14] Plan 154.1 followup: f32 Display/Debug [M-154.1-f32-display-debug] RESOLVED + общий
+  codegen-фикс self-call overload-резолва. (1) f32 теперь как остальные примитивы: conv.h
+  nova_f32_to_str/_to_debug_str (widen f32->double + f64-форматтер; %g 6-знач прячет хвост),
+  @append(f32) = @append(x as f64), ветка nova_f32 в interp display+debug map + exclusion list,
+  #impl(Display/Debug) fn f32. (2) Корень-фикс (по замечанию автора — НЕ workaround): self-call
+  `@m(args)` в emit_c.rs (SelfAccess-dispatch ~20306) тайбрейкал overload'ы ТОЛЬКО по recv_mutable,
+  игнорируя типы аргументов -> `@append(x as f64)` (все @append mut) брал ПЕРВЫЙ (базовый str)
+  overload -> C passing nova_f64 to nova_str. Фикс: сперва фильтр own_inst по param_c_types==arg_c_types,
+  потом тайбрейк по recv_mutable. Existing self-@append всегда целили str-базу -> латентный баг.
+  Verify: plan154_1 6/6 (+pos_f32_display_debug); broad regression 0 новых FAIL (plan62=7 baseline,
+  plan91 даже 2/0, plan124_8 40/0, plan131/139/153_1/contracts чисто). Новый отдельный баг найден:
+  Vec[f32].from([f64-литералы]) мис-коэрсит -> [M-154.1-f32-literal-coercion] (не Display/Debug).
+  [M-154.1-required-conformance] перенесён в Q37.
+
 [2026-06-14] Plan 153.1 codegen-полнота — generic-method overload-mono + variadic `Vec.of` +
   value-record slice (3 codegen-блокера снятых, разблокируют каноничный Vec-API).
   #1 [M-138.2-generic-method-overload-mono] ✅ FIXED (dispatch + chain return-infer). Симптом:
@@ -37692,6 +37706,22 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   Broad regression 0 новых FAIL. Новый followup [M-138.2-overload-no-match-typecheck] (no-match
   overload-вызов сейчас CC-FAIL'ит вместо чистого type-check error). Закрытие 153.1 codegen-долга.
 
+[2026-06-14] Plan 154.1 followups #2: static-call-loud + box-generic-static-ctor закрыты.
+  (1) [M-154.1-static-call-unresolved-loud] RESOLVED (commit 99dee599): `Prim.method(...)` на
+  примитиве, дошедший до fall-through emit_c.rs ~24376, → E_UNKNOWN_STATIC_METHOD compile-error
+  вместо undefined-символа `nova_fn_<prim>_<method>` на линковке. Подтверждено: str.from_debug(42)
+  раньше PASS-check → link-error; теперь ясная ошибка. Узко: только примитив-ресиверы (str/int/
+  bool/char/f64/f32/byte/u*/i*) — все валидные primitive static-методы/интринсики (str.from,
+  str.from_bytes_lossy) резолвятся РАНЬШЕ, проверено; модуль-qualified free-fn и user-типы не
+  задеты. neg-тест plan154_1/neg_unknown_static_method. Общий non-primitive путь оставлен открытым
+  (fall-through обслуживает legit runtime-builtin + bootstrap-без-peer_files D134). (2)
+  [M-154.1-box-generic-static-ctor] RESOLVED by plan-153.1: `(Box)[T];` raw-C leak из 154.1-пробы
+  больше НЕ воспроизводится — generic-static/method codegen-фиксы 153.1 (f7f56f0f overload-mono,
+  3d9a7361 variadic, 8d493e5a value-record slice) приземлились после заведения маркера и покрыли
+  его. Проверено 5 форм конструкции; guard plan154_1/pos_box_generic_static_ctor. Также good-citizen:
+  generic_overload.nv str.len()->byte_len() (D249). plan154_1 8/8; broad regression 0 новых FAIL
+  (plan128/plan91 baseline). Слив в main держался пока там WIP plan-153.3 (Vec search) другого агента.
+
 [2026-06-14] Plan 143 — [M-opt-preempt-strided-loop] Part A+B (оптимизация loop-codegen). Worktree
   nova-p143, merge 7c047a1b. Part A: skip per-iteration nova_preempt_check() на provably-short
   const-bound range-циклах (оба bound'а — int-литералы, count∈[0,1024] → starvation-safe) →
@@ -37706,3 +37736,37 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   smoke; 4 «фейла» в plan138_2/plan125 — pre-existing, подтверждено на main-бинаре). Merge clean
   3-way с 153 structural-== (1cc82de5) — разные регионы emit_c.rs. 🟡 long-term остаётся SIGURG
   async-preempt (general для variable циклов) — cross-link Plan 144 §7.4 (общий async-yield).
+
+[2026-06-14] Plan 153.3 (sort & search) + структурное `==` для mono'd generic-sum/Result.
+  Триггер: 153.3 binary_search возвращает Result, а `result == Ok(x)` падал — раскопка показала
+  НЕ prelude-gap, а глубокий codegen-баг: `emit_field_eq` деградировал в pointer-identity для
+  mono'd generic-sum (legacy `sum_schemas` keyed generic-именем, mono'd-ключ отсутствует →
+  `Foo[int].A(1)==A(1)`→false) И для Result (`NovaRes_*` спец-ABI с typed-error-полями не матчит
+  `Nova_`-sum-тест → identity). Урок дисциплины: подтвердил гипотезы инспекцией сгенерённого C
+  (`((a)==(nova_make_...))` = identity, не tag+payload), изолировал кастомные sum vs Result (два
+  разных представления/бага). Фикс — 2 правки emit_c.rs (commit 1cc82de5, +157 строк):
+  (1) `reconstruct_mono_sum_schema(full_c_name)` реконструирует substituted-схему вариантов из
+  generic-шаблона (`generic_type_templates`) + recorded type-args (`generic_type_instance_info`),
+  подставляя bare-type-param payload'ы по позиции; ветка в emit_field_eq СТРОГО перед identity-
+  fallback (не регрессит рабочие sum). Тег mono'd generic-sum = ПОЛНЫЙ `Nova_<mono>` (эмпирически:
+  `NOVA_TAG_Nova_Foo____nova_int_A`), в отличие от non-generic (стрипнутый). (2) `NovaRes_`-ветка
+  в emit_field_eq + маршрутизация `==`/`!=` оператора → tag + Ok/Err payload через готовый
+  `novares_ok_err(c_ty)->(ok_c,err_c)`; теги generic `NOVA_TAG_Result_Ok/Err`. Верификация:
+  custom Foo[T]/Bar[T,E] (int/str, pos/neg variant+payload), Result==Result совпадающих типов
+  (int/int + int/str, Ok/Err), Option не задет. **Broad-регрессия** (workflow, 8 параллельных
+  батчей, 22 dir): ЧИСТА — все 4 «suspect»-фейла pre-existing/флак, не мой eq (f6=Option-мисдиспатч
+  на closure-return; plan90 30/1=флак, ре-ран 31/0; plan103_3 CC-FAIL=`Nova_never` effects + 2
+  race-TIMEOUT; plan153_1=мой str.len-фикстур D249, починен `83b83ec6`). Отложен `#3`
+  `[M-153-result-eq-literal-expected-type]`: `result == Ok(x)` non-default-E (E дефолтит str, не
+  унифицируется с LHS) — expected-type propagation в чекере (18k строк, 20 Binary-армов; глубоко,
+  узко; `Result[_,str]` уже ок; binary_search на `match`); guard НЕ добавлен (CC-FAIL громче
+  silent-wrong).
+  **153.3 API** (commits `cf95c423` search + `1d85edc3` sort/dedup/partition): 18 методов —
+  search (index_of/position/rposition/is_sorted[_by]/binary_search[_by][_by_key]), sort
+  (bottom-up STABLE merge sort: sort/sort_by/sort_by_key + 3 *_unstable alias-stable), reorder
+  (dedup/dedup_by/dedup_by_key/partition). Comparator'ы int (D183, нет Ordering). Чистые Nova-
+  замыкания (`|a,b| a.compare(b)`, `key(a).compare(key(b))` — делегирование де-рискнуто пробой) +
+  module `buf.data` idiom для merge-scratch. plan153_3 search 4/4 + sort 5/5 + dedup_partition
+  5/5; vec-sanity (plan153_0/1/6 + plan90/90_1) чист. Отложено: select_nth (quickselect,
+  `[M-153-select-nth]`), *_unstable in-place (`[M-153.3-sort-unstable-inplace]`). Закрытие в
+  плане 153 §153.3 (критерии приёмки) + simplifications.md + backlog.

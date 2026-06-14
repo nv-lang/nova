@@ -211,25 +211,32 @@
   `awk '$1~/FAIL/{print $2}'`, не regex по строке; main-бинарь = быстрый оракул «новое vs pre-existing».
 
 ## Follow-up: Plan 154.1 (#impl-конформность + Display/Debug примитивов)
-- **`[M-154.1-box-generic-static-ctor]`** (floating, P2): `Box[T].@new`
-  generic-static-construction CC-FAIL — `(Box)[T];` течёт как сырой C в codegen.
-  Всплыло в диагностической пробе 154.1 (НЕ связано с мис-диспатчем `.debug`).
-  Generic-static-constructor codegen-gap; home — отдельный codegen-фикс.
-- **`[M-154.1-static-call-unresolved-loud]`** (planned, home **Plan 154.1 / followup**):
-  общий «неизвестная free-fn (напр. был `str.from_debug` → undefined
-  `nova_fn_str_from_debug`) → **compile-error** вместо link-time undefined symbol».
-  Расширение robustness на static-путь (`free_fn_c_name` fall-through
-  emit_c.rs:11129). Под Variant B конкретный `str.from_debug`-кейс мёртв, но класс
-  остаётся.
-- **`[M-154.1-required-conformance]`** (planned, P3): возможный переход opt-in →
-  required (номинальная конформность, как Rust) отдельным шагом после 154.1.
-- **`[M-154.1-f32-display-debug]`** (floating, P2): `f32` не получил конкретных
-  `#impl(Display)`/`#impl(Debug)` — нет conv.h-форматтера `nova_f32_*` и
-  `@append(f32)`-overload'а; `${f32}`-body рекурсировал бы (f32 не в interp
-  primitive-direct map). Сейчас `Vec[f32].debug` даёт громкий CC-FAIL (f32 идёт
-  через str.from-fallback → C type mismatch, НЕ через Ф.1-guard) — не silent, но
-  и не зелёный. Лечить: conv.h `nova_f32_to_str`/`_to_debug_str` (f32→double) +
-  `@append(f32)` + ветка в interp-map → затем `#impl(Display/Debug) fn f32`.
+- **`[M-154.1-box-generic-static-ctor]`** ✅ **RESOLVED 2026-06-14** (by plan-153.1): the
+  `(Box)[T];` raw-C leak from the 154.1 probe is no longer reproducible — plan-153.1's
+  generic-static/method codegen fixes (`f7f56f0f` overload-mono, `3d9a7361` variadic,
+  `8d493e5a` value-record slice) landed after the marker was filed and cover it. Verified
+  5 construction forms (concrete `Box[int].new`, generic-context `wrap`, nested
+  `Box[Box[int]]`, `.of` overloads in plan153_1/generic_overload). Regression guard
+  `plan154_1/pos_box_generic_static_ctor`.
+- **`[M-154.1-static-call-unresolved-loud]`** ✅ **RESOLVED 2026-06-14**: `Prim.method(...)`
+  на примитиве, дошедший до fall-through emit_c.rs ~24376 (все валидные primitive
+  static-методы/интринсики резолвятся раньше) → `E_UNKNOWN_STATIC_METHOD` compile-error
+  вместо undefined-символа `nova_fn_<prim>_<method>` на линковке. Узко: только примитив-
+  ресиверы (модуль-qualified free-fn и user-типы не задеты). neg-тест
+  `plan154_1/neg_unknown_static_method`; broad regression 0 новых FAIL. **Остаток (не-primitive
+  путь):** общий случай «unknown free-fn в произвольном модуле» сложнее (fall-through
+  обслуживает legit runtime-builtin + bootstrap-без-peer_files D134) — не покрыт, низкий приоритет.
+- **`[M-154.1-required-conformance]`** → перенесён в **[Q37](../../spec/open-questions.md#q37-конформность-протоколов-opt-in-структурная-vs-required-номинальная--частично-2026-06-13-plan-1541--d268)** (открытый вопрос дизайна, не actionable-работа): opt-in (структурная) vs required (номинальная) конформность.
+- **`[M-154.1-f32-display-debug]`** ✅ **RESOLVED 2026-06-14**: f32 получил `#impl(Display)`/`#impl(Debug)`.
+  conv.h `nova_f32_to_str`/`_to_debug_str` (widen→double + f64-форматтер) + `@append(f32)`
+  (`x as f64`) + ветка в interp-map. Заодно починен общий codegen-баг: self-call `@m(args)`
+  overload-резолв по типам аргументов (был только по `recv_mutable` → `@append(x as f64)`
+  брал базовый str-overload). plan154_1 6/6.
+- **`[M-154.1-f32-literal-coercion]`** (floating, P2, **NEW** 2026-06-14): `Vec[f32].from([1.5, 2.5])`
+  мис-коэрсит f64 array-литералы в f32 (бит-реинтерпретация → мусорные значения в debug-выводе).
+  Скаляр `ro x f32 = 1.5` коэрсится верно; explicit `v.push(x)` тоже. Проблема — f32 элементы
+  в **array-литерале** под `Vec[f32].from`. Лечить: коэрсия f64-литералов → f32 при инференсе
+  типа элемента массива из контекста `Vec[f32]`. Не про Display/Debug.
 
 ## Follow-up: Plan 153.1 (Vec core API — отложенные из-за codegen-лимитов)
 - **`[M-153.1-cap-setter-overload]`** ✅ **RESOLVED** (через фикс
@@ -276,6 +283,24 @@
   протокол + `iter.collect() -> Vec[U]` gated на 153.2 (ленивый итератор + collect-инфра).
   Build-from-iterable УЖЕ есть (`Vec[T].from(items)` + `@extend[S Iter[T]]`); протокол-форма
   `collect`-таргета приземляется вместе с 153.2.
+
+## Follow-up: Plan 153.3 (sort & search)
+- **`[M-153.3-sort-unstable-inplace]`** (planned, P3, perf): `@sort_unstable[_by][_by_key]`
+  сейчас **alias стабильного** bottom-up merge sort (correctness-first MVP, sort.nv). Дать
+  отдельный быстрый in-place introsort/pdqsort (без O(n) scratch, лучше cache/branch) — это и
+  есть смысл `_unstable`. Не гейтит ничего (стабильная сортировка корректна для всех кейсов).
+- **`[M-153-select-nth]`** (planned, P3, home **Plan 153.3 roadmap**): `@select_nth_unstable`
+  (quickselect, k-й порядковый элемент за O(n) средн.) — явно отложен планом 153.3 §Roadmap.
+- **`[M-153-result-eq-literal-expected-type]`** (planned, P2, home **checker / type-inference**):
+  `result == Ok(x)` где Result имеет **non-default E** (≠`str`; напр. `binary_search`→
+  `Result[int,int]`) — литерал `Ok(x)` инферит `E=str` (дефолт), не унифицируется с типом LHS →
+  два разных `NovaRes_<...>` → структурный eq сравнивает несовпадающие payload-типы → **CC-FAIL**.
+  Нужна **expected-type propagation** в чекере: для `Eq/Neq` протянуть тип одного операнда как
+  expected другому (`types/mod.rs`, ~18k строк, 20 Binary-армов; mutable `walk_expr`@18478 —
+  desugar-проход, реальная bidirectional-инференция в другом месте). Глубокий change, узкая польза
+  (общий `Result[_, str]` УЖЕ работает; `binary_search` использует `match`). Surfaced при
+  структурном `==`-фиксе (`1cc82de5`). **Не** добавляли same-type guard: текущий CC-FAIL громче
+  silent-wrong identity.
 
 ## Follow-up: Plan 153.4 (slices — value-record element typedef)
 - **`[M-153.4-vec-value-record-field-access]`** (planned, P2, home **Plan 153.4 / Plan 96 H3**):

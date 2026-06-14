@@ -535,12 +535,10 @@ export type MutIndex[K, V] protocol {
 // `#impl(Display)` / `#impl(Debug)` opt-in (Plan 154.1 Ф.2 / D268) binds the
 // protocol to the primitive type and checks the signature.
 //
-// NOTE: `f32` is intentionally omitted — it has no conv.h formatter (and no
-// `@append(f32)` overload), tracked as `[M-154.1-f32-display-debug]`. Until
-// then a `Vec[f32]` element `.debug(sb)` surfaces a loud compile error
-// (CC-FAIL — f32 routes through the str.from fallback and hits a C type
-// mismatch, not the Ф.1 `E_PRIMITIVE_NO_PROTOCOL_METHOD` guard) rather than
-// silently mis-dispatching.
+// `f32` (Plan 154.1 followup [M-154.1-f32-display-debug], 2026-06-14): now
+// covered — conv.h `nova_f32_to_str`/`_to_debug_str` widen to double + reuse
+// the f64 formatter; `@append(f32)` casts to f64; interp-map routes `${f32}`
+// directly to conv.h. Numeric debug == display (no escaping).
 
 #impl(Display)
 fn int @display(mut sb StringBuilder) -> () { sb.append(@) }
@@ -551,6 +549,11 @@ fn int @debug(mut sb StringBuilder) -> () { sb.append(@) }
 fn f64 @display(mut sb StringBuilder) -> () { sb.append(@) }
 #impl(Debug)
 fn f64 @debug(mut sb StringBuilder) -> () { sb.append(@) }
+
+#impl(Display)
+fn f32 @display(mut sb StringBuilder) -> () { sb.append(@) }
+#impl(Debug)
+fn f32 @debug(mut sb StringBuilder) -> () { sb.append(@) }
 
 #impl(Display)
 fn bool @display(mut sb StringBuilder) -> () { sb.append(@) }

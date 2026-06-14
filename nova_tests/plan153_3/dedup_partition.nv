@@ -1,0 +1,34 @@
+// Plan 153.3 — dedup (consecutive) + partition (in-place reorder).
+module plan153_3.dedup_partition
+
+test "dedup consecutive only" {
+    mut v = Vec[int].from([1, 1, 2, 3, 3, 3, 1])
+    v.dedup()
+    assert(v.equal(Vec[int].from([1, 2, 3, 1])))
+}
+
+test "sort then dedup = unique" {
+    mut v = Vec[int].from([3, 1, 2, 1, 3, 2])
+    v.sort().dedup()
+    assert(v.equal(Vec[int].from([1, 2, 3])))
+}
+
+test "dedup_by parity" {
+    mut v = Vec[int].from([1, 2, 4, 7, 8])
+    v.dedup_by(|a, b| (a % 2) == (b % 2))
+    assert(v.equal(Vec[int].from([1, 2, 7, 8])))
+}
+
+test "dedup_by_key tens" {
+    mut w = Vec[int].from([10, 11, 20, 21, 30])
+    w.dedup_by_key(|x| x / 10)
+    assert(w.equal(Vec[int].from([10, 20, 30])))
+}
+
+test "partition evens first" {
+    mut v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro p = v.partition(|x| x % 2 == 0)
+    assert(p == 3)
+    assert(v[0] % 2 == 0 && v[1] % 2 == 0 && v[2] % 2 == 0)
+    assert(v[3] % 2 == 1 && v[4] % 2 == 1 && v[5] % 2 == 1)
+}
