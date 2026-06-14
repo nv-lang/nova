@@ -38211,3 +38211,25 @@ Vec[Vec[Vec[int]]]) + flatten_plus_guard (operator + guard). 0 NEW regressions a
 slice/vec/generic-dispatch watch (plan90/90_1/96/138/138_2/147/153_0/1/3, basics, generics);
 plan62/syntax FAIL sets byte-for-byte identical to a baseline binary at parent c5865ba0 in a temp
 worktree (incl. the highest-risk iterator/method-dispatch tests). Temp worktree removed cleanly.
+
+[2026-06-14] Plan 153.6 — FromIterator / collect-target (D264), branch plan-153-wave. Closed
+[M-153.6-fromiterator-gated]. Key insight: Nova types iterators STRUCTURALLY (D58 — any
+mut @next()->Option[T] is iterable; Next[T]/Iter[I] are protocols), so FromIterator is NOT one
+enforced single-method protocol (that would need static-generic-method-dispatch, which is gated) but
+a SET of constructors/terminators — Rust-parity collect/FromIterator/extend over the existing infra.
+Surface: (1) @collect()->Vec (default, already in the 153.2 lazy layer); (2) NEW BoxIter[T Hash]
+mut @collect_set()->Set[T] (dedup, Rust collect::<HashSet>()) in std/collections/vec_lazy.nv + import
+std.collections.set (graph vec_lazy->{vec,set->hashmap->vec} is acyclic — vec imports neither set nor
+vec_lazy); (3) other targets compose over the collected Vec (Set.from_iter(it.collect()),
+HashMap.from(pairs.collect()) — under D239 the collected Vec IS the []T arg); (4) FromIterator from any
+Iter source = Vec[T].new().extend(src) (instance @extend[S Iter[T]] monomorphizes for Range/VecIter/Vec).
+NO compiler changes (std + spec + docs + tests only; the release binary loads vec_lazy.nv from disk).
+Tests plan153_6/collect_target 12/12 + collect_static_generic_neg (NEG). 0 regressions (plan153_2 4/4,
+plan153_0/1/3/4/5, plan96 23/23, set/hashmap/vec_seq stdlib, basics 8/8; plan62 29/7 PRE-EXISTING
+struct-tag/protocol — vec_lazy not imported, grep-proven). Gated (compiler gaps, NOT simplifications):
+[M-153.6-collect-static-generic] (static generic Vec[T].from_iter[S Iter[T]] with for-in over S does
+not compile — bound not resolved for for-in dispatch in a static generic method; instance @extend is
+the workaround; NEG fixture locks the boundary) + [M-153.6-collect-map-tuple-receiver] (BoxIter[(K,V)]
+@collect_map() does not parse — tuple receiver type-arg rejected; HashMap target = HashMap.from(...)).
+D264 written in full (02-types.md: Hash + FromIterator/collect-target); D260 "deferred" note updated;
+docs/vec-lazy.md FromIterator section + collect_set terminator row.

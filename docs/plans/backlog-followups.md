@@ -334,10 +334,25 @@
   codegen-lookup `.eq()` для generic-типа не находит `@equal` (тот же generic-method-dispatch-gap
   класс, что overload `@cap`/`@splice`). `Vec[T Hash] @hash()` РАБОТАЕТ (153.6, plan153_6/hash
   3/3); это вторая (equality) половина ключ-контракта. Сурфейснуто 153.6.
-- **`[M-153.6-fromiterator-gated]`** (planned, home **Plan 153.6 / 153.2**): FromIterator-
-  протокол + `iter.collect() -> Vec[U]` gated на 153.2 (ленивый итератор + collect-инфра).
-  Build-from-iterable УЖЕ есть (`Vec[T].from(items)` + `@extend[S Iter[T]]`); протокол-форма
-  `collect`-таргета приземляется вместе с 153.2.
+- **`[M-153.6-fromiterator-gated]`** ✅ **RESOLVED** (2026-06-14, Plan 153.6 / D264):
+  FromIterator / collect-target приземлён поверх ленивого слоя 153.2. Surface:
+  `BoxIter[T] @collect()->Vec` (default) + `BoxIter[T Hash] @collect_set()->Set` (dedup,
+  `vec_lazy.nv`) + композиция над собранным `Vec` для прочих таргетов
+  (`Set.from_iter(it.collect())` / `HashMap.from(pairs.collect())`) + `Vec[T].new().extend(src)`
+  (FromIterator из любого `Iter`-источника). plan153_6/collect_target 12/12. Остаток — два
+  gated compiler-gap маркера ниже (НЕ упрощение).
+- **`[M-153.6-collect-static-generic]`** (planned, P2, home **Plan 153.6 / codegen**):
+  *статический* generic-конструктор `Vec[T].from_iter[S Iter[T]](src S)` с for-in по `S` в
+  теле не компилируется — bound `S Iter[T]` не резолвится для for-in dispatch внутри static
+  generic-метода (typevar остаётся `Nova_S`; CODEGEN-FAIL «for-in: type 'S' has neither…»).
+  Тот же класс, что generic-method-dispatch-collapse. Рабочий обход — instance-`@extend`
+  (`Vec[T].new().extend(src)`). NEG-фикстура `plan153_6/collect_static_generic_neg` лочит
+  границу (`EXPECT_COMPILE_ERROR`); фикс → flip в позитив.
+- **`[M-153.6-collect-map-tuple-receiver]`** (planned, P3, home **Plan 153.6 / parser**):
+  прямой терминатор `BoxIter[(K, V)] mut @collect_map() -> HashMap[K, V]` не парсится —
+  receiver type-аргумент кортежем (`BoxIter[(K, V)]`) отвергается («expected identifier,
+  got `(`»). HashMap collect-target остаётся `HashMap.from(pipeline.collect())`. Фикс —
+  принять composite type в receiver type-arg слоте парсера.
 
 ## Follow-up: Plan 153.2 (ленивый итератор — отложенные Phase B / perf)
 - **`[M-153.2-generic-over-source-zerocost]`** (planned, P3, **perf-only — НЕ упрощение**,
@@ -361,9 +376,10 @@
   заявленный B-набор адаптеров/терминаторов ещё не реализован: `zip`/`unzip`/`chain`/
   `flat_map`/`flatten`/`scan`/`inspect`/`step_by`/`take_while`/`skip_while`/`peekable`/
   `min_by[_key]`/`max_by[_key]`/`partition`/`chunk_by`/`into_iter`. Плюс мут-итерация
-  `for mut x`/`mut @iter()` (Q-iter-mut, write-through путь) + `FromIterator`/`collect`-в-
-  произвольный-таргет (`[M-153.6-fromiterator-gated]`). Phase A (map/filter/filter_map/
-  enumerate/take/skip + 13 терминаторов) закрыта и протестирована (`plan153_2/` 4/4).
+  `for mut x`/`mut @iter()` (Q-iter-mut, write-through путь). `FromIterator`/collect-target
+  ✅ закрыт (Plan 153.6 / D264 — `@collect`/`@collect_set` + `from`/`from_iter`/`@extend`).
+  Phase A (map/filter/filter_map/enumerate/take/skip + 13 терминаторов + `@collect_set`)
+  закрыта и протестирована (`plan153_2/` 4/4, `plan153_6/collect_target` 12/12).
 
 ## Follow-up: Plan 153.3 (sort & search)
 - **`[M-153.3-sort-unstable-inplace]`** ✅ **RESOLVED** (commit `468bccf5`): `@sort_unstable[_by]

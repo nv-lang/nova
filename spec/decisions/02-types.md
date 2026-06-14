@@ -11932,9 +11932,13 @@ commit `996ca01a`.)
 
 `zip`/`unzip`/`chain`/`flat_map`/`flatten`/`scan`/`inspect`/`step_by`/`take_while`/
 `skip_while`/`peekable`/`min_by[_key]`/`max_by[_key]`/`partition`/`chunk_by`/`into_iter`;
-мут-итерация `for mut x`/`mut @iter()` (Q-iter-mut write-through — отдельный путь);
-`collect`-target FromIterator (мост 153.6). Zero-cost generic-over-source апгрейд поверх
-boxed (монооморфный курсор-тип без бокса) — `[M-153.2-generic-over-source-zerocost]`.
+мут-итерация `for mut x`/`mut @iter()` (Q-iter-mut write-through — отдельный путь).
+**collect-target FromIterator — ✅ ЗАКРЫТ (Plan 153.6 / [D264](#d264-vec-протоколы-hash--fromiterator--collect-target-plan-1536)):**
+`@collect()->Vec` (default) + `@collect_set()->Set` (терминаторы) + `from`/`from_iter`/`@extend`
+(прочие таргеты/источники); статический generic-конструктор + tuple-`@collect_map` gated
+(`[M-153.6-collect-static-generic]`/`[M-153.6-collect-map-tuple-receiver]`).
+Zero-cost generic-over-source апгрейд поверх boxed (монооморфный курсор-тип без бокса) —
+`[M-153.2-generic-over-source-zerocost]`.
 Tuple-PRESERVING-адаптер сразу после `enumerate` — `[M-153.2-tuple-elem-adapter]`
 (residual `Option[<mono-tuple>]` closure-typing gap; схлопнуть tuple через `map`).
 
@@ -11946,3 +11950,73 @@ Tuple-PRESERVING-адаптер сразу после `enumerate` — `[M-153.2-
 - [Q-iterator-laziness](../open-questions.md) — закрыта (lazy = канон).
 - [Q-iter-mut](../open-questions.md) — Phase A закрывает терминаторами/адаптерами; мут-итерация — Phase B.
 - Plan 153.2 — план; `vec_seq.nv` / `vec_lazy.nv` — реализация.
+
+## D264. Vec-протоколы: `Hash` + FromIterator / collect-target (Plan 153.6)
+
+**Статус:** ✅ IMPLEMENTED — `Hash` (2026-06-13) + FromIterator/collect-target (2026-06-14).
+
+`Vec[T]` дополняет набор протоколов (`Equal`/`Compare`/`Clone`/`Display`/`Debug` —
+[D230 amend](#collections-vec--hashmap--set--element-wise-deep--conditional-bound))
+двумя возможностями: **content-`Hash`** и **FromIterator / collect-target** (мост к
+ленивому слою D260). Оба — под conditional-bound на `T` (Rust `impl<T: Hash> Hash for
+Vec<T>` / `impl<T> FromIterator<T> for Vec<T>`).
+
+### `Vec[T Hash] @hash() -> u64`
+
+Order- и length-sensitive content-hash (`protocols.nv`): FNV-1a (64-bit), сворачивает
+длину + per-element `@hash()` (`h = (h ^ x) * prime`). Consistency с `@equal`: равные
+Vec (равная длина + element-wise `==`) → равный hash (контракт `Hash`+`Equal`). u64-mul
+**врапается** (Nova-семантика = FNV mixing-шаг); offset-basis — **hex**-литерал (десятичная
+форма > `i64::MAX`). Делает `Vec[T: Hash]` сам `Hash` → элемент `HashSet`. (Вторая,
+equality-половина ключ-контракта `HashMap` — `[M-153.6-vec-hashmap-key-eq]`, pre-existing
+generic-key-dispatch gap; `@hash` готов.)
+
+### FromIterator / collect-target
+
+Nova **структурно**-типизирует итераторы ([D58](03-syntax.md): любой `mut @next() ->
+Option[T]` итерируем; `Next[T]`/`Iter[I]` — протоколы), поэтому FromIterator — **НЕ**
+отдельный enforced-протокол с одним методом, а **набор конструкторов/терминаторов**,
+строящих коллекцию из любого итератора. Канон:
+
+1. **Default collect-target → `Vec`** (ленивый слой D260): `BoxIter[T] mut @collect() ->
+   Vec[T]` — материализует pipeline в один проход, без промежуточного `Vec` на стадию.
+2. **`Set` collect-target:** `BoxIter[T Hash] mut @collect_set() -> Set[T]` (dedup; Rust
+   `iter.collect::<HashSet<_>>()`). Allocation-free над pipeline (pull + insert на лету).
+3. **Прочие таргеты — композицией над собранным `Vec`:** `Set[T].from_iter(it.collect())`,
+   `HashMap[K, V].from(pairs.collect())`. `Set.from_iter([]T)` и `HashMap.from([](K,V))`
+   уже принимают собранный `Vec` (под D239 `[]T ≡ Vec[T]`).
+4. **FromIterator из произвольного `Iter`-источника (без ленивой стадии):**
+   `Vec[T].new().extend(src)` — instance-метод `@extend[S Iter[T]]` (`mutate.nv`)
+   мономорфизируется корректно для любого `S` (Range/VecIter/Vec). Прямой call-site
+   идиом — НЕ требует обёртки.
+
+### Gated (compiler-gaps, не упрощение)
+
+- **`[M-153.6-collect-static-generic]`** — *статический* generic-конструктор
+  `Vec[T].from_iter[S Iter[T]](src S)` с for-in по `S` в теле **не компилируется**: bound
+  `S Iter[T]` не резолвится для for-in dispatch внутри **static** generic-метода (typevar
+  остаётся `Nova_S`). Тот же класс, что generic-method-dispatch-collapse (`@cap`/`@splice`).
+  Instance-`@extend` (#4) — рабочий обход. NEG-фикстура `collect_static_generic_neg`
+  лочит границу (`EXPECT_COMPILE_ERROR for-in: type 'S'`).
+- **`[M-153.6-collect-map-tuple-receiver]`** — прямой терминатор `BoxIter[(K, V)] mut
+  @collect_map() -> HashMap[K, V]` **не парсится**: receiver type-аргумент кортежем
+  (`BoxIter[(K, V)]`) отвергается парсером (`expected identifier, got '('`). HashMap
+  collect-target остаётся `HashMap.from(pipeline.collect())` (#3).
+
+### Зачем структурный набор, а не enforced-протокол
+
+Один enforced `FromIterator[T]`-протокол с методом-конструктором потребовал бы
+static-generic-method-dispatch (gated, см. выше). Структурный набор — это паритет Rust
+(`collect`/`FromIterator`/`extend`) при существующей инфре: `@collect`/`@collect_set`
+(терминаторы), `from`/`from_iter` (конструкторы из собранного), `@extend` (из источника).
+Cost-transparency сохраняется: ленивый путь без промежуточных аллокаций (D260), материализация
+именами `collect*`/`from*`/`extend`.
+
+### Связь
+
+- [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — ленивый слой;
+  `@collect`/`@collect_set` — его терминаторы.
+- [D58](03-syntax.md) — `Iter`/`Next` структурный duck-typing (основа FromIterator).
+- [D239](#d239-t--синтаксический-псевдоним-vect) — `[]T ≡ Vec[T]` (собранный `Vec` = `[]T`-аргумент `from_iter`).
+- [D230 amend](#collections-vec--hashmap--set--element-wise-deep--conditional-bound) — conditional-bound протоколы коллекций.
+- Plan 153.6 — план; `vec_lazy.nv` (`@collect_set`) / `protocols.nv` (`@hash`) / `set.nv` (`from_iter`) — реализация.

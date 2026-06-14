@@ -39,6 +39,19 @@
 //   adapters : fn BoxIter[T] @map[U](..) -> BoxIter[U]   // return a new BoxIter
 //   terminators : fn BoxIter[T] mut @collect() -> Vec[T] // drive the chain
 //
+// ── FromIterator / collect-target (Plan 153.6, D264)
+//
+// `@collect()` is the default collect-target (`-> Vec[T]`); `@collect_set()` is
+// the `Set[T]` collect-target (dedup, `[T Hash]`). Other targets compose over
+// `@collect()`: hand the collected `Vec` to that collection's `from`/`from_iter`
+// constructor — `HashMap[K,V].from(pairs.lazy()…​.collect())`,
+// `Set[T].from_iter(v.lazy()…​.collect())`. Building a `Vec` directly from an
+// arbitrary `Iter` source (no lazy stage) is `Vec[T].new().extend(src)` (the
+// `@extend[S Iter[T]]` instance method, mutate.nv). A *static* generic
+// `Vec[T].from_iter[S Iter[T]]` constructor and a tuple-element `@collect_map()`
+// terminator are gated on a compiler gap — see `[M-153.6-collect-static-generic]`
+// and `[M-153.6-collect-map-tuple-receiver]`.
+//
 // Each adapter copies the receiver (`mut src = @`) into a fresh capturing
 // closure, so the pipeline is re-entrant per terminator call and never mutates
 // the caller's BoxIter in place until a terminator drains it.
@@ -46,6 +59,7 @@
 module collections.vec_lazy
 
 import std.collections.vec.{Vec, VecIter}
+import std.collections.set.{Set}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Core type + entry bridge
@@ -173,12 +187,45 @@ export fn BoxIter[T] @skip(n int) -> BoxIter[T] {
 // Terminators (drive the chain to completion / short-circuit)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Drain the iterator into a fresh `Vec[T]`.
+/// Drain the iterator into a fresh `Vec[T]` — the default collect-target.
+///
+/// This is the lazy half of the **FromIterator / collect-target** bridge
+/// (Plan 153.6 / D264): a whole pipeline materialises here, in one pass, with
+/// no intermediate `Vec` per stage. To target a *different* collection, either
+/// use a typed terminator (`@collect_set()` below) or hand the collected `Vec`
+/// to that collection's `from`/`from_iter` constructor —
+/// `HashMap[K, V].from(pairs.lazy().map(|x| (x, x*x)).collect())`,
+/// `Set[T].from_iter(v.lazy().filter(p).collect())`.
 export fn BoxIter[T] mut @collect() -> Vec[T] {
     mut out = Vec[T].new()
     while true {
         match @next() {
             Some(x) => out.push(x),
+            None => return out,
+        }
+    }
+    out
+}
+
+/// Drain the iterator into a fresh `Set[T]`, deduplicating elements — the
+/// `Set` collect-target (Rust `iter.collect::<HashSet<_>>()`).
+///
+/// `[T Hash]` because `Set` (a `HashMap[T, ()]`) keys on the element. Equal
+/// elements collapse to one; iteration order is unspecified. Allocation-free
+/// over the pipeline (pulls one element at a time, inserts on the fly).
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let v = Vec[int].from([1, 2, 2, 3, 3, 3])
+/// let s = v.lazy().collect_set()
+/// assert(s.len() == 3)
+/// ```
+export fn BoxIter[T Hash] mut @collect_set() -> Set[T] {
+    mut out = Set[T].new()
+    while true {
+        match @next() {
+            Some(x) => { out.insert(x) },
             None => return out,
         }
     }
@@ -356,4 +403,11 @@ test "lazy fold / count / sum" {
     assert(v.lazy().fold(0, |acc, x| acc + x) == 10)
     assert(v.lazy().count() == 4)
     assert(v.lazy().sum(0) == 10)
+}
+
+test "lazy collect_set dedups (Set collect-target)" {
+    ro v = Vec[int].from([1, 2, 2, 3, 3, 3])
+    ro s = v.lazy().collect_set()
+    assert(s.len() == 3)
+    assert(s.contains(2))
 }

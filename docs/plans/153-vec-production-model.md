@@ -7,7 +7,8 @@
 > итераторы, `plan-153.2-mono-closures`, commits `996ca01a`+`caf56226`, D260); **153.3
 > ✅ ЗАКРЫТ** (sort/search); **153.4 ✅ ЗАКРЫТ** (eager slices, commit `5ccccf72`, D262);
 > **153.5 ✅ ЗАКРЫТ** (restructure-ops + flatten/вложенные ресиверы, commits `e8f700e4`+
-> `1c323d0e`+`16753d23`, D263); **153.6 🟡 ЧАСТИЧНО** (Hash ✅). P1.
+> `1c323d0e`+`16753d23`, D263); **153.6 ✅ ЗАКРЫТ** (Hash ✅ + FromIterator/collect-target
+> ✅ D264; HashMap-Vec-key отложен). P1.
 > **Цель:** коллекция `Vec[T]` Nova не хуже (а где можно — лучше) Go / Rust / TS / Kotlin /
 > Java — по полноте API, итераторам, слайсам и предсказуемости стоимости. `[]T` —
 > **чистый алиас** `Vec[T]` (D239).
@@ -705,7 +706,7 @@ str `@plus`; Q-vec-operator-plus), `[][]T.flatten()`, `@rotate_left(n)`/
 `collect`-target (мост с 153.2); аудит consistency Equal/Compare/Clone/Display/Debug
 (уже есть). Эстимат ~1.5 dd.
 
-> #### Статус 153.6 — 🟡 ЧАСТИЧНО (2026-06-13, main): Hash ✅; FromIterator + HashMap-key ОТЛОЖЕНЫ
+> #### Статус 153.6 — ✅ ЗАКРЫТ (Hash 2026-06-13 + FromIterator/collect-target 2026-06-14, D264); HashMap-Vec-key отложен
 >
 > **Hash ✅.** `Vec[T Hash] @hash() -> u64` (protocols.nv) — FNV-1a (64-bit): fold длины +
 > per-element `@hash()`, `h = (h ^ x) * prime`. u64-mul **врапается** (Nova-семантика, проверено)
@@ -713,14 +714,45 @@ str `@plus`; Q-vec-operator-plus), `[][]T.flatten()`, `@rotate_left(n)`/
 > как `int` с overflow). Consistency с `@equal` (равные Vec → равный hash). plan153_6/hash 3/3
 > (equal-hash, empty/single round-trip, content+length distinguish).
 >
-> **Отложено.** (1) **Vec как ключ HashMap/HashSet** — `[M-153.6-vec-hashmap-key-eq]`:
-> pre-existing HashMap-codegen-баг — collision-check `k.eq(key)` (hashmap.nv:529) НЕ диспатчит
-> в Vec-`@equal` (D237 eq→equal; generic-type gap) → «no member named eq». `@hash` готов, это
-> equality-половина ключ-контракта. (2) **FromIterator/collect** — `[M-153.6-fromiterator-gated]`:
-> gated на 153.2 (collect-инфра); build-from-iterable уже есть (`from`/`@extend`).
+> **FromIterator / collect-target ✅ (2026-06-14, D264, `[M-153.6-fromiterator-gated]` ЗАКРЫТ).**
+> Nova типизирует итераторы **структурно** (D58: любой `mut @next()->Option[T]` итерируем),
+> поэтому FromIterator — НЕ enforced-протокол с одним методом, а **набор конструкторов/терминаторов**
+> (паритет Rust `collect`/`FromIterator`/`extend` поверх существующей инфры):
+> - **Default collect-target → `Vec`:** `BoxIter[T] mut @collect() -> Vec[T]` (ленивый слой
+>   153.2, уже был) — материализует pipeline в один проход без промежуточного `Vec` на стадию.
+> - **`Set` collect-target (NEW):** `BoxIter[T Hash] mut @collect_set() -> Set[T]` (vec_lazy.nv,
+>   dedup; Rust `iter.collect::<HashSet<_>>()`). Allocation-free над pipeline (pull+insert).
+> - **Прочие таргеты — композицией над собранным `Vec`:** `Set[T].from_iter(it.collect())`,
+>   `HashMap[K,V].from(pairs.collect())` (под D239 собранный `Vec` ЕСТЬ `[]T`-аргумент `from_iter`).
+> - **FromIterator из произвольного `Iter`-источника (без ленивой стадии):**
+>   `Vec[T].new().extend(src)` — instance `@extend[S Iter[T]]` мономорфизируется корректно для
+>   любого `S` (Range/VecIter/Vec); прямой call-site идиом без обёртки.
+>
+> **Критерии приёмки 153.6 FromIterator (все ✅, проверены релизным nova, C-codegen):**
+> 1. **Default target — Vec:** `src.lazy().map().filter().collect()` = ожидаемый Vec; пустой
+>    pipeline → пустой Vec. 2. **`@collect_set` дедуп:** int + str элементы, после `map`/`filter`,
+>    пустой → пустой Set. 3. **collect-в-Set/HashMap композицией:** `Set.from_iter(it.collect())`
+>    + `HashMap.from(pairs.collect())`. 4. **FromIterator из источника:** `extend(0..5)` (Range),
+>    `extend(vec)` (Vec), `extend(collected)` (VecIter). 5. **0 регрессий** (plan153_2 4/4,
+>    plan153_0/1/3/4/5, plan96 23/23, set/hashmap/vec_seq stdlib, basics 8/8; plan62 29/7
+>    PRE-EXISTING struct-tag/protocol — не импортит vec_lazy, доказано). Тесты plan153_6/collect_target
+>    12/12 + collect_static_generic_neg (NEG).
+>
+> **Gated (compiler-gaps, НЕ упрощение).** (1) **`[M-153.6-collect-static-generic]`** — *статический*
+> generic-конструктор `Vec[T].from_iter[S Iter[T]](src S)` с for-in по `S` НЕ компилируется (bound
+> `S Iter[T]` не резолвится для for-in dispatch в static generic-методе; CODEGEN-FAIL). Instance-`@extend`
+> — рабочий обход; NEG-фикстура `collect_static_generic_neg` лочит границу. (2) **`[M-153.6-collect-map-tuple-receiver]`**
+> — прямой `BoxIter[(K,V)] @collect_map()->HashMap` НЕ парсится (receiver type-арг кортежем).
+> HashMap collect-target = `HashMap.from(pipeline.collect())`.
+>
+> **Отложено (вне scope 153.6).** **Vec как ключ HashMap/HashSet** — `[M-153.6-vec-hashmap-key-eq]`:
+> pre-existing HashMap-codegen-баг — collision-check `k.eq(key)` (hashmap.nv) НЕ диспатчит в
+> Vec-`@equal` (D237 eq→equal; generic-type gap) → «no member named eq». `@hash` готов, это
+> equality-половина ключ-контракта.
 >
 > **Аудит consistency.** Equal/Compare/Clone/Display/Debug на месте (153.0); Hash добавлен
-> consistent с Equal. D264 — частичный (Hash готов; FromIterator с 153.2).
+> consistent с Equal; FromIterator/collect-target поверх ленивого слоя (D260). **D264 — записан
+> полностью** (spec/decisions/02-types.md: Hash + FromIterator/collect-target).
 
 ---
 
@@ -745,7 +777,8 @@ flat_map/…), 153.4-B (chunks/windows/mut-view), 153.5 (concat/rotate/drain).
 - **D261** (NEW) — sort & search (stable/unstable, binary_search, dedup).
 - **D262** (✅ IMPLEMENTED 2026-06-14, минорный) — slice-op surface (split_at/first_n/last_n/as_slice; chunks/windows lazy-deferred) на `[]T`-view модели D238/Plan 96 (БЕЗ новых типов; подтверждает single-type). Зафиксирован в spec/decisions/03-syntax.md#d262.
 - **D263** (✅ IMPLEMENTED 2026-06-14) — restructure-ops (concat/`+`/rotate/drain/insert_slice + **flatten**) — записан ([10-overloading.md](../../spec/decisions/10-overloading.md)); flatten реализован через вложенные generic-ресиверы произвольной глубины (D145/D263 AMEND, `[M-153.5-flatten-nested-receiver]` ✅ ЗАКРЫТ).
-- **D264** (NEW) — Vec-протоколы (`Hash` + FromIterator/collect).
+- **D264** (✅ IMPLEMENTED 2026-06-14) — Vec-протоколы (`Hash` + FromIterator/collect-target) —
+  записан в [02-types.md](../../spec/decisions/02-types.md#d264-vec-протоколы-hash--fromiterator--collect-target-plan-1536).
 - **D239 AMEND/CONFIRM** — `[]T` чистый алиас завершён (Plan 138 Ф.5 закрыт).
 - **D117 AMEND** — accessor-конвенция: read-getter `@name()=>@name`, write-setter
   `@name(v)` где есть безопасная семантика под капотом (`@cap(n)` → realloc ТОЧНО до

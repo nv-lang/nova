@@ -1,0 +1,101 @@
+// Plan 153.6 (D264) — FromIterator / collect-target.
+//
+// The collect-target bridge: materialise an iterator pipeline into a chosen
+// collection. `@collect()` (default) → Vec; `@collect_set()` → Set (dedup);
+// other targets compose over a collected Vec via `from`/`from_iter`. Building a
+// Vec directly from any `Iter` source is `Vec[T].new().extend(src)`.
+module plan153_6.collect_target
+
+import std.collections.vec_lazy
+import std.collections.set.{Set}
+import std.collections.hashmap.{HashMap}
+
+// ── Default collect-target: Vec ───────────────────────────────────────────
+
+test "collect default target is Vec" {
+    ro src = Vec[int].of(1, 2, 3, 4, 5, 6)
+    ro got = src.lazy().map(|x| x * 10).filter(|x| x > 25).collect()
+    assert(got == [30, 40, 50, 60])
+}
+
+test "collect empty pipeline yields empty Vec" {
+    ro src = Vec[int].of(1, 2, 3)
+    ro got = src.lazy().filter(|x| x > 100).collect()
+    assert(got.len() == 0)
+}
+
+// ── FromIterator from an arbitrary Iter source (no lazy stage) ─────────────
+
+test "extend builds Vec from a Range source (FromIterator idiom)" {
+    ro v = Vec[int].new().extend(0..5)
+    assert(v.len() == 5)
+    assert(v[0] == 0)
+    assert(v[4] == 4)
+}
+
+test "extend builds Vec from another Vec source" {
+    ro src = Vec[int].of(3, 4, 5)
+    ro v = Vec[int].new().extend(src)
+    assert(v == [3, 4, 5])
+}
+
+test "extend from a lazy pipeline's VecIter source" {
+    // The collected Vec is itself an Iter source for another build.
+    ro base = Vec[int].of(1, 2, 3)
+    ro doubled = base.lazy().map(|x| x * 2).collect()
+    ro v = Vec[int].new().extend(doubled)
+    assert(v == [2, 4, 6])
+}
+
+// ── Set collect-target ─────────────────────────────────────────────────────
+
+test "collect_set deduplicates (int)" {
+    ro src = Vec[int].of(1, 2, 2, 3, 3, 3)
+    ro s = src.lazy().collect_set()
+    assert(s.len() == 3)
+    assert(s.contains(1))
+    assert(s.contains(2))
+    assert(s.contains(3))
+    assert(!s.contains(9))
+}
+
+test "collect_set after map collapses to distinct keys" {
+    ro src = Vec[int].of(1, 2, 3, 4, 5, 6)
+    ro s = src.lazy().map(|x| x % 3).collect_set()
+    assert(s.len() == 3)
+    assert(s.contains(0))
+    assert(s.contains(1))
+    assert(s.contains(2))
+}
+
+test "collect_set works for str elements" {
+    ro src = Vec[str].of("a", "b", "a", "c", "b")
+    ro s = src.lazy().collect_set()
+    assert(s.len() == 3)
+    assert(s.contains("a"))
+    assert(s.contains("c"))
+}
+
+test "collect_set of empty pipeline is empty" {
+    ro src = Vec[int].of(1, 2, 3)
+    ro s = src.lazy().filter(|x| x > 100).collect_set()
+    assert(s.len() == 0)
+}
+
+// ── Set / HashMap collect-target via the collected Vec ─────────────────────
+
+test "collect lazy pipeline into Set via from_iter" {
+    ro src = Vec[int].of(1, 2, 2, 3, 3, 3)
+    ro s = Set[int].from_iter(src.lazy().collect())
+    assert(s.len() == 3)
+    assert(s.contains(2))
+}
+
+test "collect mapped pairs into HashMap via from" {
+    ro src = Vec[int].of(1, 2, 3)
+    ro pairs = src.lazy().map(|x| (x, x * x)).collect()
+    ro m = HashMap[int, int].from(pairs)
+    assert(m.len() == 3)
+    assert(m.get(2) == Some(4))
+    assert(m.get(3) == Some(9))
+}

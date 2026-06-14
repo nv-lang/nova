@@ -36750,3 +36750,32 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   запись-резолв (append-only), не правка старой; carrier-slot нужен отдельный структурный AST-носитель
   (`receiver_ty`), т.к. `type_name` теряет глубину; структурный typevar-бинд обязан быть рекурсивным
   (innermost element), depth-agnostic, гейтнутым на nested — иначе ломает весь flat `[]T`-dispatch.
+
+[2026-06-14] Plan 153.6 — **FromIterator / collect-target (D264)** на ветке `plan-153-wave`. Закрыл
+  `[M-153.6-fromiterator-gated]`. **Ключевое решение:** Nova типизирует итераторы **структурно**
+  (D58 — любой `mut @next()->Option[T]` итерируем; `Next[T]`/`Iter[I]` — протоколы), поэтому
+  FromIterator — **НЕ** enforced-протокол с одним методом-конструктором (это потребовало бы
+  static-generic-method-dispatch, который gated), а **набор конструкторов/терминаторов** = паритет
+  Rust `collect`/`FromIterator`/`extend` поверх существующей инфры. Surface: (1) `@collect()->Vec`
+  (default, был в ленивом слое 153.2); (2) **NEW** `BoxIter[T Hash] @collect_set()->Set[T]` (dedup,
+  Rust `collect::<HashSet>()`) в `std/collections/vec_lazy.nv` + `import std.collections.set` (граф
+  `vec_lazy→{vec,set→hashmap→vec}` ацикличен — vec не импортит ни set, ни vec_lazy); (3) прочие
+  таргеты композицией над собранным `Vec` (`Set.from_iter(it.collect())`, `HashMap.from(pairs.collect())`
+  — под D239 собранный `Vec` ЕСТЬ `[]T`-аргумент); (4) FromIterator из произвольного `Iter`-источника —
+  `Vec[T].new().extend(src)` (instance `@extend[S Iter[T]]` мономорфизируется корректно для Range/VecIter/
+  Vec). **БЕЗ компилятор-правок** (только std + spec + docs + tests; релизный бинарь грузит `vec_lazy.nv`
+  с диска). Тесты plan153_6/collect_target 12/12 + collect_static_generic_neg (NEG). 0 регрессий
+  (plan153_2 4/4, plan153_0/1/3/4/5, plan96 23/23, set/hashmap/vec_seq stdlib, basics 8/8; plan62 29/7
+  PRE-EXISTING struct-tag/protocol — vec_lazy не импортится, доказано grep'ом). **Gated (compiler-gaps,
+  НЕ упрощение):** (а) `[M-153.6-collect-static-generic]` — *статический* generic-конструктор
+  `Vec[T].from_iter[S Iter[T]]` с for-in по `S` в теле НЕ компилируется (bound `S Iter[T]` не резолвится
+  для for-in dispatch внутри static generic-метода — typevar остаётся `Nova_S`; тот же класс, что
+  generic-method-dispatch-collapse `@cap`/`@splice`); рабочий обход — instance-`@extend`; NEG-фикстура
+  лочит границу (`EXPECT_COMPILE_ERROR for-in: type 'S'`). (б) `[M-153.6-collect-map-tuple-receiver]` —
+  прямой терминатор `BoxIter[(K,V)] @collect_map()->HashMap` НЕ парсится (receiver type-арг кортежем
+  отвергается: «expected identifier, got `(`»); HashMap-таргет = `HashMap.from(pipeline.collect())`.
+  D264 записан полностью (02-types.md: Hash + FromIterator/collect-target); D260 «Отложено» обновлён
+  (collect-target ✅); docs/vec-lazy.md FromIterator-секция + `collect_set`-строка таблицы терминаторов.
+  **Урок:** под структурно-итераторной моделью «FromIterator» — это паттерн (`collect`/`from`/`extend`),
+  а не trait; одна enforced-абстракция упёрлась бы в static-generic gap, набор поверх рабочей
+  instance-инфры даёт полный паритет без компилятор-хирургии.

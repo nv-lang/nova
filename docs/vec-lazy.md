@@ -93,7 +93,8 @@ let hit = v.lazy().map(|x| x).find(|x| x == 3)            // Some(3), map ran 3�
 
 | Terminator | Signature | Result |
 |---|---|---|
-| `collect` | `mut @collect() -> Vec[T]` | drain into a fresh `Vec` |
+| `collect` | `mut @collect() -> Vec[T]` | drain into a fresh `Vec` (default collect-target) |
+| `collect_set` | `[T Hash] mut @collect_set() -> Set[T]` | drain into a `Set` (dedup) |
 | `fold` | `mut @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc` | left fold |
 | `reduce` | `mut @reduce(f fn(T, T) -> T) -> Option[T]` | fold from first; `None` if empty |
 | `count` | `mut @count() -> int` | number of remaining elements |
@@ -143,6 +144,41 @@ let found = v.lazy().find(|x| x > 100)
 let early = v.lazy().map(|x| x + 1).take(3).any(|x| x == 3)
 ```
 
+## FromIterator / collect-target (Plan 153.6, D264)
+
+Materialise a pipeline (or any iterator source) into a chosen collection.
+
+```nova
+import std.collections.vec_lazy
+import std.collections.set.{Set}
+import std.collections.hashmap.{HashMap}
+
+// Default target — Vec
+let v = src.lazy().map(|x| x * 2).collect()
+
+// Set target — dedup (Rust `iter.collect::<HashSet<_>>()`)
+let s = src.lazy().filter(|x| x > 0).collect_set()
+
+// HashMap target — collect pairs, then `from`
+let m = HashMap[int, int].from(src.lazy().map(|x| (x, x * x)).collect())
+
+// Set target (alternative) — collect a Vec, then `from_iter`
+let s2 = Set[int].from_iter(src.lazy().collect())
+
+// Build a Vec from ANY Iter source directly (no lazy stage) — `@extend`
+let from_range = Vec[int].new().extend(0..5)        // [0, 1, 2, 3, 4]
+let from_vec   = Vec[int].new().extend(other_vec)   // copy
+```
+
+Nova types iterators **structurally** ([D58]): any `mut @next() -> Option[T]` is
+iterable, so FromIterator is a *set* of constructors/terminators rather than one
+enforced single-method protocol — `@collect`/`@collect_set` (terminators),
+`from`/`from_iter` (constructors from a collected `Vec`), `@extend` (build from a
+source). Gated (compiler gaps, not simplifications): a *static* generic
+`Vec[T].from_iter[S Iter[T]]` constructor (`[M-153.6-collect-static-generic]` — use
+`Vec[T].new().extend(src)`) and a tuple-element `@collect_map()` terminator
+(`[M-153.6-collect-map-tuple-receiver]` — use `HashMap.from(pairs.collect())`).
+
 ## Known limits (Phase A)
 
 - **`enumerate` then a tuple-preserving adapter.** `enumerate().map(|p| ...)` (the
@@ -154,8 +190,8 @@ let early = v.lazy().map(|x| x + 1).take(3).any(|x| x == 3)
 - **Phase B adapters not yet present** (roadmap, not a simplification):
   `zip`/`unzip`/`chain`/`flat_map`/`flatten`/`scan`/`inspect`/`step_by`/
   `take_while`/`skip_while`/`peekable`/`min_by[_key]`/`max_by[_key]`/`partition`/
-  `chunk_by`/`into_iter`, plus mutable iteration (`for mut x` / `mut @iter()`) and
-  `FromIterator`/`collect`-into-arbitrary-target.
+  `chunk_by`/`into_iter`, plus mutable iteration (`for mut x` / `mut @iter()`).
+  (`FromIterator`/collect-target is done — see the section above, D264.)
 - **Cost.** The current model boxes each `step` closure (a heap thunk per adapter).
   A zero-cost, fully-monomorphized generic-over-source variant is a planned perf
   upgrade (`[M-153.2-generic-over-source-zerocost]`); it does not change the API.
@@ -165,4 +201,8 @@ let early = v.lazy().map(|x| x + 1).take(3).any(|x| x == 3)
 - [`vec-internals.md`](vec-internals.md) — module layout, the boxed-fluent shape,
   Compare/Equal.
 - [D260](../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — the decision record.
+- [D264](../spec/decisions/02-types.md#d264-vec-протоколы-hash--fromiterator--collect-target-plan-1536) — Hash + FromIterator / collect-target.
+- [D58]: ../spec/decisions/03-syntax.md — `Iter`/`Next` structural iteration.
 - [Q-iterator-laziness](../spec/open-questions.md) — why lazy is the canon.
+
+[D58]: ../spec/decisions/03-syntax.md
