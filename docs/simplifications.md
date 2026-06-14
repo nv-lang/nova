@@ -36480,3 +36480,5 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   Ветка `chore-disable-interp-nova-run` (worktree nova-noninterp). Residual →
   `[M-interp-unsupported]`: полное удаление интерпретатора ЛИБО порт interp-only тестов на
   C-codegen; чистка `tests/` integration-таргетов.
+
+- [2026-06-14] Plan 156 (interpreter UNSUPPORTED) formal artifacts: spec D274, Q-interpreter-future, regression test interp_unsupported.rs (neg+pos, release). `nova run` is a LOUD error (not a silent no-op) — a deliberate product boundary, not a shortcut.

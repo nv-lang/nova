@@ -37969,3 +37969,5 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   Историю `nova run` в plans/spec/promts/project-creation НЕ скрабил (out of scope). Ветка
   chore-disable-interp-nova-run, worktree nova-noninterp. Followup [M-interp-unsupported]: полное
   удаление интерпретатора ЛИБО порт interp-only тестов на C-codegen; чистка tests/ integration.
+
+[2026-06-14] Plan 156 interpreter-UNSUPPORTED formalized: spec D274 (08-runtime) + open-question Q-interpreter-future + regression test nova-cli/tests/interp_unsupported.rs (negative `nova run` errors + positive `nova check` works, via release binary, 2/2 PASS). Acceptance criteria in plan; backlog [M-interp-unsupported].
