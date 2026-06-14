@@ -1,0 +1,74 @@
+// Plan 153.2 (D260) — LAZINESS proof. The defining property: a pipeline does no
+// work until a terminator pulls, and pulls only as many elements as it needs.
+// We instrument `map`/`filter` with a side-effect counter (a mut captured via a
+// closure) and assert the counter reflects ONLY the elements actually drained —
+// not the whole source. If the layer were eager, the counters would equal the
+// source length regardless of `take`/`find`/`any`/`nth` short-circuiting.
+module plan153_2.laziness
+
+import std.collections.vec_lazy
+
+test "building a pipeline performs NO work (no terminator)" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    mut calls = 0
+    // map + filter are constructed but never driven — no terminator.
+    ro _pipeline = v.lazy().map(|x| { calls += 1; x * 2 }).filter(|x| x > 0)
+    assert(calls == 0, "no element should have been touched")
+}
+
+test "take pulls only the first n source elements" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6, 7, 8])
+    mut calls = 0
+    ro got = v.lazy().map(|x| { calls += 1; x * 10 }).take(3).collect()
+    assert(got == [10, 20, 30])
+    assert(calls == 3, "map ran for exactly the 3 taken elements")
+}
+
+test "find short-circuits: map stops at the first match" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    mut calls = 0
+    ro found = v.lazy().map(|x| { calls += 1; x }).find(|x| x == 3)
+    assert(found == Some(3))
+    assert(calls == 3, "map ran only through the matching element")
+}
+
+test "any short-circuits on the first true" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    mut calls = 0
+    ro hit = v.lazy().map(|x| { calls += 1; x }).any(|x| x >= 2)
+    assert(hit)
+    assert(calls == 2, "stopped after the second element")
+}
+
+test "all short-circuits on the first false" {
+    ro v = Vec[int].from([2, 4, 5, 6, 8])
+    mut calls = 0
+    ro ok = v.lazy().map(|x| { calls += 1; x }).all(|x| x % 2 == 0)
+    assert(!ok)
+    assert(calls == 3, "stopped at the first odd (the 3rd element)")
+}
+
+test "nth pulls only up to the requested index" {
+    ro v = Vec[int].from([10, 20, 30, 40, 50])
+    mut calls = 0
+    ro got = v.lazy().map(|x| { calls += 1; x }).nth(2)
+    assert(got == Some(30))
+    assert(calls == 3, "pulled elements 0..=2 only")
+}
+
+test "filter is lazy: predicate runs once per source element, not extra" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    mut seen = 0
+    ro got = v.lazy().filter(|x| { seen += 1; x % 2 == 0 }).take(2).collect()
+    assert(got == [2, 4])
+    // pulls until 2 survivors are produced: 1(no),2(yes),3(no),4(yes) → 4 evals
+    assert(seen == 4, "predicate evaluated exactly until the take quota was met")
+}
+
+test "skip does not call downstream map for skipped elements" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    mut calls = 0
+    ro got = v.lazy().skip(2).map(|x| { calls += 1; x * 100 }).collect()
+    assert(got == [300, 400, 500])
+    assert(calls == 3, "map ran only for the 3 elements after skip")
+}

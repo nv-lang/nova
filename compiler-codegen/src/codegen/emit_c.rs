@@ -4023,6 +4023,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let saved_protocol_vars = self.protocol_vars.clone();
         let saved_result_type_params_test = self.result_type_params.clone(); // Plan 72 P1-C
         let saved_protocol_var_vtable_test = self.protocol_var_vtable.clone(); // Plan 72 P3-B
+        // Plan 153.2: each `test {}` block is emitted as its OWN C function, so
+        // the closure mut-capture box registry must NOT leak between tests. Two
+        // tests both naming a captured `mut calls` would otherwise share the
+        // `_box_calls` entry: the box declaration is emitted in the first test's
+        // function, but the second test reuses the cached `_box_calls` name —
+        // referencing an identifier undeclared in ITS scope (CC-FAIL). `emit_fn`
+        // flushes via `flush_boxed_vars`; `emit_test` must do the same, scoped to
+        // the test body and restored afterwards.
+        let saved_var_boxed = std::mem::take(&mut self.var_boxed);
         self.line(&format!("static nova_unit nova_test_{}(void) {{", safe));
         self.indent = 1;
         self.emit_block_stmts(&t.body, "nova_unit")?;
@@ -4036,6 +4045,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.protocol_vars = saved_protocol_vars;
         self.result_type_params = saved_result_type_params_test; // Plan 72 P1-C
         self.protocol_var_vtable = saved_protocol_var_vtable_test; // Plan 72 P3-B
+        self.var_boxed = saved_var_boxed; // Plan 153.2: per-test box registry
         let test_body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
         // Flush any lambdas discovered during this test's emit
@@ -17117,10 +17127,25 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // returning (return is functional-level exit — walks ALL).
                 // If no defers active, this is a no-op.
                 if let Some(v) = value {
-                    let val = self.emit_expr(v)?;
+                    let ret_ty = self.current_fn_return_ty.clone().unwrap_or_else(|| "nova_int".to_string());
+                    // Plan 153.2: emit the return value with the function's return
+                    // type as the target so type-directed literals resolve to the
+                    // declared type instead of the erased default. The motivating
+                    // case is a bare `return None` inside a monomorphized closure
+                    // whose return type is `NovaOpt_<mono>` (e.g. a tuple option in
+                    // `take`/`skip`/`filter` over an `enumerate()` iterator): plain
+                    // `emit_expr` emitted `(NovaOpt_nova_int){None}`, a C type
+                    // mismatch against the closure's `NovaOpt__NovaTuple_…` result.
+                    // `emit_expr_with_target_type` only specializes None/typed-int/
+                    // array-literal targets and otherwise delegates to `emit_expr`,
+                    // so non-literal returns are unchanged.
+                    let val = if ret_ty != "nova_int" && ret_ty != "nova_unit" {
+                        self.emit_expr_with_target_type(v, &ret_ty)?
+                    } else {
+                        self.emit_expr(v)?
+                    };
                     // Plan 72 P3-B return: box explicit return value for a protocol return type.
                     let val = self.wrap_protocol_return(val, v);
-                    let ret_ty = self.current_fn_return_ty.clone().unwrap_or_else(|| "nova_int".to_string());
                     if let Some(label) = post_label {
                         // Contracts mode: stash в _nova_result, defer cleanup,
                         // потом goto. Если defers пустой — просто assign + goto.
@@ -33360,6 +33385,22 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                                 });
                                             if let Some(c_ty) = c_ty_opt {
                                                 if !c_ty.is_empty() && c_ty != "void*" {
+                                                    // Plan 153.2 gap A2: an instance method
+                                                    // on a generic-TYPE receiver whose RETURN
+                                                    // type is itself a generic instance (e.g.
+                                                    // `Vec[T] @lazy() -> BoxIter[T]`,
+                                                    // `BoxIter[T] @enumerate() -> BoxIter[(int,T)]`)
+                                                    // inferred the correct mono C-type here but
+                                                    // never REGISTERED the instance. A
+                                                    // subsequent `.collect()` / `.next()` on
+                                                    // that temporary then missed the registry
+                                                    // (dispatch path 5b) and fell to the erased
+                                                    // NULL stub → segfault. Register the
+                                                    // return-type's generic instance(s) eagerly,
+                                                    // mirroring the free-fn-call fix above and
+                                                    // the dispatch-site `register_generic_
+                                                    // instances_in_typeref` calls.
+                                                    self.register_generic_instances_in_typeref(ret_ty, &subst);
                                                     return c_ty;
                                                 }
                                             }
@@ -33593,6 +33634,21 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                 let resolved = Self::apply_type_subst_to_ref(ret_ty_ref, &subst);
                                 if let Some(c_ty) = resolved {
                                     if !c_ty.is_empty() && c_ty != "void*" {
+                                        // Plan 153.2 gap A2: a generic FREE-FN call whose
+                                        // RETURN type is a generic-TYPE instance (e.g.
+                                        // `box_vec[int](it) -> BoxIter[int]`) inferred the
+                                        // correct mono C-type string here, but never
+                                        // REGISTERED the instance in
+                                        // `generic_type_instance_info` / the worklist. A
+                                        // subsequent `.method()` on that temporary then
+                                        // failed the registry lookup at dispatch (path 5b)
+                                        // and fell to the erased NULL stub
+                                        // (`Nova_BoxIter_method_*`) → terminator drained 0
+                                        // elements. Eagerly register the return-type's
+                                        // generic instance(s) here, mirroring the
+                                        // dispatch-site fix in the method paths above
+                                        // (`register_generic_instances_in_typeref`).
+                                        self.register_generic_instances_in_typeref(ret_ty_ref, &subst);
                                         return c_ty;
                                     }
                                 }
