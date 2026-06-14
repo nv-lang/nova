@@ -404,7 +404,7 @@ Rust/Go, без скрытого O(n); полный `nova test` зелёный; 
 | **152.1** координаты + линзы (D249/D250) | ✅ | `E_STR_NO_INT_INDEX`/`E_STR_NO_LEN`; `as_bytes`/`as_chars`(CharsIter); `str[a..b]` byte-slice; find=байт-offset |
 | **152.2** полный str-surface (D251) | ✅ | split/trim/strip/replacen/pad/match_indices; `get(Range)` |
 | **152.3a** char ASCII-core (D252) | ✅ | `fe3b116c` — is_ascii_*/to_ascii_*/to_digit/len_utf8/encode_utf8 в defaults.nv |
-| **152.5a** сравнение-core (D254) | ✅ | `40f9dfae` — byte-`Ord` дефолт + `eq_ignore_ascii_case` (str+char); **D-R4 отложен** |
+| **152.5a** сравнение-core (D254) | ✅ | `40f9dfae` — byte-`Ord` дефолт + `eq_ignore_ascii_case` (str+char); **D-R4 ✅ ВЫПОЛНЕН** (`ae465fce` + step2) — операторы `==`/`<`/`<=`/`>`/`>=`/`+` синтезируются из `@eq`/`@compare`/`@concat`, реестр str = только `@hash`; `[M-139.1-operator-lowered-methods]` ЗАКРЫТ |
 | **152.6** UTF-16/32 interop (D255) | ✅ | `db5ee133` — `std/encoding/utf16.nv`: encode_utf16/from_utf16/code_points + surrogate |
 | **152.7-A** интерполяция через рефактор | ✅ | подтверждено `plan152_0/interpolation_intact` PASS (рефактор 152.0 не сломал `${...}`) |
 
@@ -417,9 +417,12 @@ plan108 5/0. **Pre-existing (идентичны на main, НЕ Plan 152):** pla
 (рекурсивный `Nova_JsonValue` sum-type). Эти баги — в Debug-derive/protocol/recursive-
 sum codegen, вне строкового слоя; кандидаты на отдельный план.
 
-**Остаток D-R4** (152.5a): декомиссия хардкода str-операторов `==`/`<`/`+` в `emit_c.rs`
-(синтез из `@eq`/`@compare`/`@concat` на RawMem-body, без perf-retain C) — отдельная
-тяжёлая codegen-фаза, маркер `[M-139.1-operator-lowered-methods]`.
+**D-R4** (152.5a): ✅ ВЫПОЛНЕН (2026-06-13, `ae465fce` + step2) — декомиссия хардкода
+str-операторов `==`/`!=`/`<`/`<=`/`>`/`>=`/`+` в `emit_c.rs` завершена: `==`/`!=` →
+Nova-body `@eq`, `<`/`<=`/`>`/`>=` → `Nova_str_method_compare(l,r) OP 0`, `+` → `@concat`
+(RawMem). Реестр str (`str_method_to_rt`) = только `@hash`. Бенч-паритет RawMem-body ≈ C
+подтверждён. Маркер `[M-139.1-operator-lowered-methods]` ЗАКРЫТ. (Подробности — в
+[152.5](152.5-comparison-collation.md#прогресс).)
 
 **Acceptance Phase A:** строки координатно-консистентны (нет int-index/бэар-len,
 find=байт-offset, линзы), ASCII-полны, API-паритет Rust/Go, без скрытого O(n); spec
