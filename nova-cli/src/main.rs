@@ -550,6 +550,25 @@ enum Cmd {
         #[arg(long = "fail-on-uncovered")]
         fail_on_uncovered: bool,
     },
+    /// Plan 144.0 / H4: may-GC effect-analysis introspection.
+    ///
+    /// Scans a Nova source file or directory, collects every non-external
+    /// function across the module set, runs the whole-program may-GC pre-pass
+    /// (`compute_may_gc_set`), and reports per function whether it is provably
+    /// `NoGC` (cannot trigger a GC safe-point) or — conservatively — `MayGC`,
+    /// plus a summary. The lattice default is MayGC (top); NoGC must be PROVEN.
+    ///
+    /// COMPILE-TIME introspection only — emits NOTHING into the generated C.
+    ///
+    /// Exit code: 0 = ok, 2 = usage error.
+    #[command(name = "gc-effect-analyze")]
+    GcEffectAnalyze {
+        /// Path to a `.nv` file or directory to analyze.
+        path: PathBuf,
+        /// Output format: `text` (default) or `json`.
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
 }
 
 /// Plan 57: `nova bench <subcommand>`.
@@ -3766,6 +3785,135 @@ fn cmd_consume_analyze(path: &Path, format: &str, fail_on_uncovered: bool) -> Re
     Ok(())
 }
 
+/// Plan 144.0 / H4: `nova gc-effect-analyze <path> [--format text|json]`.
+///
+/// Compile-time introspection over the may-GC effect pre-pass. Collects every
+/// non-external function across the module set (file or directory), runs the
+/// whole-program `compute_may_gc_set`, and reports each function's key with its
+/// classification (NoGC / MayGC) plus a summary. EMITS NOTHING into generated
+/// C — purely diagnostic.
+///
+/// SOUNDNESS: the lattice default is MayGC (top); a function is reported NoGC
+/// only when the pre-pass PROVED it (fully resolved + non-allocating static
+/// call cone). At any doubt the verdict is MayGC.
+fn cmd_gc_effect_analyze(path: &Path, format: &str) -> Result<()> {
+    use nova_codegen::ast::{Item, Module};
+
+    // Collect .nv files (file or directory) — identical to consume-analyze.
+    let files: Vec<PathBuf> = if path.is_file() {
+        vec![path.to_path_buf()]
+    } else if path.is_dir() {
+        let mut fs = Vec::new();
+        nova_codegen::test_runner::walk_nv(path, &mut fs)
+            .map_err(|e| anyhow!("walk {}: {}", path.display(), e))?;
+        fs.sort();
+        fs
+    } else {
+        return Err(usage_err(format!("path not found: {}", path.display())));
+    };
+
+    // Parse every file and KEEP the owned modules alive so the FnDecl
+    // references we hand to `compute_may_gc_set` stay valid for the whole call.
+    let mut modules: Vec<(PathBuf, Module)> = Vec::with_capacity(files.len());
+    for file in &files {
+        // Reuse the consume-analyze parse helper (parse + type-check); the
+        // may-GC pass only consumes the parsed AST, diagnostics are ignored.
+        let (module, _diags) = consume_analyze_parse(file)?;
+        modules.push((file.clone(), module));
+    }
+
+    // Gather ALL non-external FnDecls across the whole module set — mirrors
+    // how `emit_c` builds `all_fns` for the codegen pre-pass (top-level items
+    // plus peer-file items). `compute_may_gc_set` skips externals internally.
+    let mut all_fns: Vec<&nova_codegen::ast::FnDecl> = Vec::new();
+    for (_file, module) in &modules {
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                all_fns.push(f);
+            }
+        }
+        for pf in &module.peer_files {
+            for item in &pf.items_here {
+                if let Item::Fn(f) = item {
+                    all_fns.push(f);
+                }
+            }
+        }
+    }
+
+    let set = nova_codegen::codegen::may_gc::compute_may_gc_set(all_fns.iter().copied());
+
+    // Build the per-function classification report. Only non-external
+    // functions are graph nodes; external (FFI) decls are not classified here
+    // (their may-GC is unknown — callers of them are already MayGC).
+    struct FnReport {
+        key: String,
+        no_gc: bool,
+    }
+    let mut fn_reports: Vec<FnReport> = Vec::new();
+    for f in &all_fns {
+        let is_external =
+            f.is_external || matches!(f.body, nova_codegen::ast::FnBody::External);
+        if is_external {
+            continue;
+        }
+        let key = nova_codegen::codegen::may_gc::fn_key(f);
+        let no_gc = set.is_no_gc(&key);
+        fn_reports.push(FnReport { key, no_gc });
+    }
+    // Stable, deterministic ordering for reproducible output.
+    fn_reports.sort_by(|a, b| a.key.cmp(&b.key));
+    fn_reports.dedup_by(|a, b| a.key == b.key);
+
+    let total = fn_reports.len();
+    let no_gc_count = fn_reports.iter().filter(|r| r.no_gc).count();
+    let may_gc_count = total - no_gc_count;
+
+    if format == "json" {
+        let fn_entries: Vec<serde_json::Value> = fn_reports
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "key": r.key,
+                    "effect": if r.no_gc { "NoGC" } else { "MayGC" },
+                    "no_gc": r.no_gc,
+                })
+            })
+            .collect();
+        let out = serde_json::json!({
+            "schema": "nova-gc-effect-analyze/v1",
+            "populated": set.populated(),
+            "functions_analyzed": total,
+            "no_gc": no_gc_count,
+            "may_gc": may_gc_count,
+            "functions": fn_entries,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        println!("{}", bold("may-GC effect report (gc-effect-analyze):"));
+        println!();
+        if !set.populated() {
+            // Empty universe → conservatively EVERYONE is MayGC; nothing proven.
+            println!("  (no functions analyzed — universe empty; all callers treated as MayGC)");
+        }
+        for r in &fn_reports {
+            let (status, label) = if r.no_gc {
+                ("✅", "NoGC ")
+            } else {
+                ("⚠ ", "MayGC")
+            };
+            println!("  {} {}  {}", status, label, r.key);
+        }
+        println!();
+        println!(
+            "  Summary: {} function(s) analyzed; {} NoGC, {} MayGC",
+            total, no_gc_count, may_gc_count,
+        );
+    }
+
+    Ok(())
+}
+
 fn cmd_build(
     path: &Path,
     output: Option<&Path>,
@@ -5314,6 +5462,9 @@ fn run() -> ExitCode {
         Cmd::Bench(sub) => cmd_bench(sub),
         Cmd::ConsumeAnalyze { path, format, fail_on_uncovered } => {
             cmd_consume_analyze(&path, &format, fail_on_uncovered)
+        }
+        Cmd::GcEffectAnalyze { path, format } => {
+            cmd_gc_effect_analyze(&path, &format)
         }
     };
     match result {
