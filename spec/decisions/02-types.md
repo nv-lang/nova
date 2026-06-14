@@ -6620,6 +6620,17 @@ fn int @compare(other int) -> int =>
 
 - **Codegen synthesis (`[M-91.8a.2-default-codegen]`):** type T который имеет `@compare` но не `@equal` пока компилируется только если `@equal` объявлен явно. Eager synthesis из default body — отдельный codegen pass.
 - **Operator dispatch (D184, Plan 91.8b):** `==` всё ещё dispatches к `@eq` (D46). Renaming `@eq` → `@equal` в operator dispatch — задача Plan 91.8b. До 91.8b implementer пишет оба: `@equal` (protocol) + `@eq` (operator).
+- **Structural `==` для mono'd generic-sum + Result ✅ (Plan 153.3, commit `1cc82de5`):** дефолтное
+  структурное `==` (tag + payload, без user `@equal`/`@compare`) теперь покрывает
+  **мономорфизированные generic-sum** (`Foo[int].A(1) == A(1)`) и **Result** (`NovaRes_*`). Раньше
+  оба тихо деградировали в pointer-identity: legacy `sum_schemas` keyed generic-именем (mono'd-ключ
+  отсутствовал → `emit_field_eq` промахивался мимо schema), а Result-`NovaRes_*` (спец-ABI с
+  typed-error-полями) не матчил `Nova_`-sum-тест. Фикс: `reconstruct_mono_sum_schema`
+  (substituted-схема вариантов из generic-шаблона + recorded type-args; tag-префикс = полный
+  `Nova_<mono>`) + `NovaRes_`-ветка в `emit_field_eq`/`==`-операторе через `novares_ok_err`.
+  **Остаток `[M-153-result-eq-literal-expected-type]`:** `result == Ok(x)` с non-default-E
+  (≠`str`) — литерал `Ok(x)` дефолтит `E=str`, не унифицируется с типом LHS → нужна expected-type
+  propagation в чекере (`Result[_, str]` уже работает; иначе `match`).
 - **Generic sort/min/max (D185, Plan 91.8c):** generic `fn[T Compare]` array methods — отдельный subplan.
 
 ### Связь

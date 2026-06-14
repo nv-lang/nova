@@ -4974,6 +4974,17 @@ let-аннотации. Multi-target Into — пока не покрываетс
 (`Into[T]` — частный случай через single-target), Plan 11 (bootstrap
 для осей 1, 2, 4).
 
+**Родственный кейс — структурное `==` с variant-литералом (Plan 153.3, 2026-06-14).** Тот же
+дефицит bidirectional inference всплыл **вне** overload-резолва. `result == Ok(x)`, где
+`result : Result[int, int]` (non-default `E`): литерал `Ok(x)` инферится bottom-up как
+`Result[int, str]` (`E` дефолтит `str`), НЕ унифицируется с типом LHS → структурный eq сравнивает
+два разных `NovaRes_<…>` (payload `int` vs `str`) → **CC-FAIL**. Нужно то же самое: для `Eq/Neq`
+протянуть тип одного операнда как **expected** другому (top-down), чтобы variant-литерал инферил
+свои type-params из контекста. Общий `Result[_, str]` (E совпадает с дефолтом) уже работает после
+структурного `==`-фикса (commit `1cc82de5`); workaround — `match` или явная аннотация. Tracked:
+`[M-153-result-eq-literal-expected-type]`. **Усиливает мотивацию** реализовать expected-type
+propagation как **общий** top-down проход (binop-операнды, не только overload-резолв `@into`).
+
 ---
 
 ## Q-clone-semantics. `@clone()` — shallow или deep / рекурсивно?

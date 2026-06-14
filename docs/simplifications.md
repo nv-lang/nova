@@ -36167,6 +36167,33 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
     sweep). Новый followup: `[M-138.2-overload-no-match-typecheck]` (type-checker
     должен отвергать no-match overload-вызов чисто, сейчас CC-FAIL).
 
+- **Plan 153.3 (sort & search) + структурное `==` для mono'd generic-sum/Result (2026-06-14)**.
+  - **153.3 API** (commits `cf95c423` search + `1d85edc3` sort/dedup/partition). **search:**
+    `@index_of`/`@position`/`@rposition`/`@is_sorted[_by]`/`@binary_search[_by][_by_key]`
+    (Compare-bound где упорядочено; comparator'ы возвращают int — нет Ordering, D183;
+    `binary_search -> Result[int,int]` Ok=found/Err=insert-point). **sort:** bottom-up
+    **STABLE merge sort** (O(n log n), O(n) scratch) под `@sort`/`@sort_by`/`@sort_by_key`
+    + `*_unstable` (пока **alias stable** — perf followup `[M-153.3-sort-unstable-inplace]`).
+    **reorder:** `@dedup`/`@dedup_by`/`@dedup_by_key` (consecutive, O(n)),
+    `@partition(pred)->int` (in-place unstable, returns split-point). Всё на чистых Nova-
+    замыканиях (делегирование `|a,b| a.compare(b)` и `key(a).compare(key(b))` работает) +
+    module `buf.data` idiom. ~18 методов; plan153_3 search 4/4 + sort 5/5 + dedup_partition
+    5/5; sanity vec-модуля чист. `@select_nth` (quickselect) явно deferred планом
+    `[M-153-select-nth]`.
+  - **Структурное `==` для mono'd generic-sum + Result** (commit `1cc82de5`). `emit_field_eq`
+    деградировал в pointer-identity для (1) mono'd generic-sum (`Foo[int].A(1)==A(1)`→false:
+    legacy `sum_schemas` без mono'd-ключа) и (2) Result (`NovaRes_*` спец-ABI не матчит
+    `Nova_`-sum-тест). Фиксы: (1) `reconstruct_mono_sum_schema` — substituted-схема из generic-
+    шаблона + `generic_type_instance_info` (tag-префикс = полный mangled `Nova_<mono>`);
+    (2) `NovaRes_`-ветка в `emit_field_eq` + `==`-оператор-маршрутизация → tag + Ok/Err payload
+    через `novares_ok_err`. Верифицировано: custom 1/2-param sum (int/str, pos/neg variant+
+    payload), Result==Result (совпадающие типы int/int + int/str), Option не задет; broad-
+    регрессия (8 батчей) чиста (все suspects pre-existing/флак). **Остаток
+    `[M-153-result-eq-literal-expected-type]`:** `result == Ok(x)` с non-default-E
+    (`binary_search`→Result[int,int]) — литерал `Ok(x)` дефолтит E=str, не унифицируется с LHS
+    (expected-type propagation в чекере — глубокий change, отложен; `Result[_,str]` уже
+    работает; binary_search на `match`).
+
 - **Plan 140.3 — унификация failure-классификации + interp-сообщения контрактов (2026-06-13)**: (1) assert и
   контракт-нарушение теперь тегают `error_kind = NOVA_THROW_PANIC` как `nv_panic` (раньше — только error_msg,
   kind=USER) → три пути провала (panic/assert/contract) классифицируются ОДИНАКОВО (consume/supervised видят

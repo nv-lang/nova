@@ -284,6 +284,24 @@
   Build-from-iterable УЖЕ есть (`Vec[T].from(items)` + `@extend[S Iter[T]]`); протокол-форма
   `collect`-таргета приземляется вместе с 153.2.
 
+## Follow-up: Plan 153.3 (sort & search)
+- **`[M-153.3-sort-unstable-inplace]`** (planned, P3, perf): `@sort_unstable[_by][_by_key]`
+  сейчас **alias стабильного** bottom-up merge sort (correctness-first MVP, sort.nv). Дать
+  отдельный быстрый in-place introsort/pdqsort (без O(n) scratch, лучше cache/branch) — это и
+  есть смысл `_unstable`. Не гейтит ничего (стабильная сортировка корректна для всех кейсов).
+- **`[M-153-select-nth]`** (planned, P3, home **Plan 153.3 roadmap**): `@select_nth_unstable`
+  (quickselect, k-й порядковый элемент за O(n) средн.) — явно отложен планом 153.3 §Roadmap.
+- **`[M-153-result-eq-literal-expected-type]`** (planned, P2, home **checker / type-inference**):
+  `result == Ok(x)` где Result имеет **non-default E** (≠`str`; напр. `binary_search`→
+  `Result[int,int]`) — литерал `Ok(x)` инферит `E=str` (дефолт), не унифицируется с типом LHS →
+  два разных `NovaRes_<...>` → структурный eq сравнивает несовпадающие payload-типы → **CC-FAIL**.
+  Нужна **expected-type propagation** в чекере: для `Eq/Neq` протянуть тип одного операнда как
+  expected другому (`types/mod.rs`, ~18k строк, 20 Binary-армов; mutable `walk_expr`@18478 —
+  desugar-проход, реальная bidirectional-инференция в другом месте). Глубокий change, узкая польза
+  (общий `Result[_, str]` УЖЕ работает; `binary_search` использует `match`). Surfaced при
+  структурном `==`-фиксе (`1cc82de5`). **Не** добавляли same-type guard: текущий CC-FAIL громче
+  silent-wrong identity.
+
 ## Follow-up: Plan 153.4 (slices — value-record element typedef)
 - **`[M-153.4-vec-value-record-field-access]`** (planned, P2, home **Plan 153.4 / Plan 96 H3**):
   slice-каст value-record (`ranges[1..3]` на `[]Range`) **ЗАКРЫТ** (emit_c.rs:19052 un-mangle
