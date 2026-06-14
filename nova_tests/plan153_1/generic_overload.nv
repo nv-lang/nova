@@ -8,7 +8,7 @@ fn Box[T].of(x T) -> Self => { inner: x }
 fn Box[T] @slot() -> T => @inner                 // getter (0-arg)
 fn Box[T] mut @slot(x T) -> () { @inner = x }    // setter (1-arg) — ARITY overload
 fn Box[T] @tag(n int) -> int => n + 1            // PARAM-TYPE overload (int)
-fn Box[T] @tag(s str) -> int => s.byte_len()     //                    (str), same arity (D249: str.len() retired)
+fn Box[T] @tag(s str) -> int => s.byte_len()     //                    (str), same arity (D249: str.len retired)
 
 test "arity overload getter/setter on generic type" {
     mut b = Box[int].of(5)

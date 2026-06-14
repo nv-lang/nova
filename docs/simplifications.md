@@ -36193,3 +36193,16 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   вместо криптичного undefined-символа на линковке; узко (только примитивы, валидные интринсики
   резолвятся раньше). **Отложено:** общий non-primitive «unknown free-fn» (fall-through обслуживает
   legit builtin'ы + bootstrap D134); `Vec[f32].from([f64-литералы])` коэрсинг (`[M-154.1-f32-literal-coercion]`).
+
+[2026-06-14] Plan 143 Part B (Vec copy-loop → memmove) — recognizer ДЕЛИБЕРАТНО консервативен
+  (это НЕ срезка, а корректная граница безопасности): lowering срабатывает ТОЛЬКО когда (1) тело —
+  ровно один plain-assign без trailing; (2) оба индекса — буквально loop-var; (3) dst/src — plain
+  Ident'ы (pure, single-eval); (4) одинаковый Vec[T] flat-storage (не raw `*mut Vec` `..**`);
+  (5) flat-POD элемент (`nova_*` / `_p`-указатель). НЕ покрыто → fallback на корректный per-element
+  цикл: inline-struct элементы (slot-copy ≠ value-copy неочевиден), сложные индексы (`dst[f(i)]`,
+  `dst[i+1]`), не-Vec контейнеры, мульти-стейтмент тела, += и др. AssignOp. Всё непокрытое
+  компилируется обычным циклом — семантически корректно, просто без memmove-ускорения. Расширение
+  safe-set (доказуемо-flat value-records) — возможный followup, требует per-T flatness-доказательства.
+  ВАЖНО: overlap-семантика СОХРАНЕНА точно (runtime guard: destructive forward-overlap → element-loop
+  пропагация, как per-element; иначе memmove) — не упрощение, а полное соответствие циклу.
+>>>>>>> main

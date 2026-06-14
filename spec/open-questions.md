@@ -7720,3 +7720,15 @@ inline-gate); экзотические не-loop-var индексы (Z3-ариф
 - [D268](decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации) — opt-in `#impl` (решение V1).
 - [D186](decisions/02-types.md#d186) — `#impl(P)` на типах (auto-derive opt-in).
 - `[M-154.1-required-conformance]` (backlog) — возможный переход к required.
+
+## Q-loop-opt-thresholds. Loop codegen opt — порог элизии + расширение safe-set (Plan 143 §2.A / D270) — 🟡 OPEN (minor, 2026-06-14)
+
+Part A+B `[M-opt-preempt-strided-loop]` приземлены (D270, merge `7c047a1b`). Открытые design-вопросы
+(minor, НЕ блокеры — непокрытое всегда даёт корректный fallback на цикл):
+1. **Порог preempt-elision (count ≤ 1024)** — захардкожен. Делать tunable (env/attr)? Какое значение
+   оптимально (vectorization-win vs preempt-latency)? Снимется SIGURG'ом (variable-bound без порога).
+2. **Copy-loop safe-set** — сейчас только flat-POD элемент (`nova_*` / pointer `_p`). Расширить на
+   value-record (`str`) и доказуемо-flat composite? Нужно per-T flatness-доказательство (slot-copy == value-copy).
+3. **Обобщить copy-loop lowering** за пределы `Vec[T]` (на `[]T`-views / raw `*mut T`)? Сейчас — только Vec.
+
+Связь: [D270](decisions/06-concurrency.md), Plan 143 §2.A, `[M-opt-preempt-strided-loop]` (SIGURG-часть open).
