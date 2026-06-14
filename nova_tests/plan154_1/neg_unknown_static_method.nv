@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_STATIC_METHOD
+//
+// Plan 154.1 [M-154.1-static-call-unresolved-loud]: an unknown static method on
+// a primitive type (here `str.from_debug`, which does not exist) must fail with a
+// clear compile error, not a cryptic `undefined symbol: nova_fn_str_from_debug`
+// at link time.
+module plan154_1.neg_unknown_static_method
+
+fn main() -> () {
+    ro s = str.from_debug(42)
+    println(s)
+}
