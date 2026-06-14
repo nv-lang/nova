@@ -34640,12 +34640,25 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         MatchArmBody::Block(b) => this.block_trailing_diverges(b),
                     }
                 };
+                // [M-codegen-fluent-tail-if-unify] (2026-06-14): MUST stay
+                // symmetric with `emit_match`'s `[M-91.13]` unit-domination
+                // (lines ~27249-27259): if a non-unit arm type is chosen but
+                // SOME other non-divergent arm yields nova_unit, the arm types
+                // are incompatible and the match is used in statement position
+                // → `emit_match` coerces the whole match to nova_unit. If THIS
+                // inference disagreed (returned the non-unit arm type) the
+                // result temp would be declared `nova_unit` by emit yet read as
+                // `Vec*` by an enclosing `if`/assignment → C type mismatch. So
+                // detect the any-unit-arm case up front and yield nova_unit too.
+                let any_unit_arm = arms.iter().any(|arm| {
+                    !arm_diverges(self, arm) && infer_arm(self, arm) == "nova_unit"
+                });
                 // First pass: find a non-unit, non-nova_int, non-divergent type.
                 for arm in arms {
                     if arm_diverges(self, arm) { continue; }
                     let t = infer_arm(self, arm);
                     if t != "nova_unit" && t != "nova_int" {
-                        return t;
+                        return if any_unit_arm { "nova_unit".into() } else { t };
                     }
                 }
                 // Second pass: any non-unit, still skipping divergent arms.
@@ -34655,7 +34668,7 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                     let t = infer_arm(self, arm);
                     if t != "nova_unit" {
                         all_unit = false;
-                        return t;
+                        return if any_unit_arm { "nova_unit".into() } else { t };
                     }
                 }
                 // All non-divergent arms are nova_unit → match is unit (statement-position).
