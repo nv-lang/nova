@@ -3772,7 +3772,16 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             let mono_depth = opts.mono_depth;
             let contracts_off = opts.contracts_off;
 
-            s.spawn(move || loop {
+            // [M-codegen-conformance-stack-overflow]: large generated test files
+            // (Unicode conformance fixtures — thousands of asserts in one block)
+            // need a deep codegen stack. The default scoped-thread stack (~2 MB)
+            // overflows where the 8 MB main thread (`nova-codegen test-build`) does
+            // not — so give workers 64 MB of headroom. Root fix (not a band-aid):
+            // codegen depth is fine on a normal stack, only the worker stack was
+            // undersized.
+            std::thread::Builder::new()
+                .stack_size(64 * 1024 * 1024)
+                .spawn_scoped(s, move || loop {
                 if is_cancelled() { return; }
                 let idx = next_idx.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if idx >= jobs.len() { return; }
@@ -3837,7 +3846,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                     Err(poisoned) => poisoned.into_inner(),
                 };
                 guard.push((idx, display.clone(), outcome));
-            });
+            }).expect("failed to spawn test worker thread");
         }
     });
 
