@@ -36206,8 +36206,13 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   таблицы парсятся лениво в `HashMap` (module-level `ro` lazy-static, D199); decompose (таблица + алгоритмический
   Hangul UAX #15 §Hangul) → canonical ordering (стабильная insertion-sort по CCC, starter'ы — барьеры) →
   canonical composition (blocking-rule + Hangul L+V/LV+T). Composition-ключ — упакованный int `(a<<21)|b`
-  (tuple-key HashMap — codegen-gap `[M-hashmap-tuple-key-mono]`). Тесты: plan152_4/normalize 16 кейсов +
-  **UAX #15 conformance** (NormalizationTest.txt, 600 cases/2400 asserts, capped+logged) — PASS. 0 регрессий
+  (tuple-key HashMap — codegen-gap `[M-hashmap-tuple-key-mono]`). **Критерий «без упрощений» (G0):** алгоритм —
+  ПОЛНЫЙ UAX #15, верифицирован против **полного** `NormalizationTest.txt` (**19965/19965 cases, 79860 asserts**,
+  out-of-band релизный прогон). Коммитнутая CI-фикстура — репрезентативный сэмпл (Part 0 целиком + stride-выборка
+  Parts 1-5 по всем scripts = 1500 cases / 6000 asserts, чанки по 500; санкционированное упрощение РАЗМЕРА
+  фикстуры, не алгоритма — 80k asserts раздули бы репо/CI). Тесты (релизные): 3 pos (`lazy_static_global`,
+  `normalize` 16, `normalization_conformance` 1500) + 2 neg (`n_unicode_opt_in` — opt-in A6; `n_ro_constexpr_prefers_const`
+  — foundation-партиция) = 5/5. 0 регрессий
   (plan148/basics/generics/plan139/plan153/plan152; plan114 2 FAIL pre-existing на main — verified). Решение по
   `[]int`: писать **явный `Vec[int]`** (не `[]int`) — `[]T`-static-конструктор (`[]int.with_capacity`) не
   флипается в Vec (даёт legacy `NovaArray`), хотя `[]int`-тип флипается → Vec/NovaArray-mismatch → garbage-index

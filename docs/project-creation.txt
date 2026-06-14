@@ -37644,3 +37644,28 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   closure-вызов валидируется через fn-type/codegen. Verify: trivial_congruence PASS 3/3 (было
   8/8 FAIL); guard-тест plan153_1/resize_with_free_fn_shadow (free `fn f` + resize_with);
   contracts 251/0 (+57skip), broad regression 0 новых FAIL. НЕ Plan 154.1 — отдельный коммит.
+
+[2026-06-14] Plan 152.4.1+152.4.2 (std/unicode normalization NFC/NFD/NFKC/NFKD, UAX #15) + lazy-static foundation hardening.
+  Продолжение Phase B Plan 152 (подобрал работу закрытого агента). (1) Foundation 152.4.0 (commit 52db92c1):
+  module-level `ro NAME=EXPR` lazy-static globals — codegen (emit_lazy_const) + name-res. Починил 2 бага агента
+  (name-res не собирал Item::Let → undefined; ordering storage до mono-typedef → CC-FAIL) + 3-й
+  (UPPER_CASE Path-форма `COMPOSE_TABLE.get()` мис-инферила метод-возврат — зеркалил emit-side rewrite в
+  infer_expr_c_type). (2) Foundation hardening (commit e22baf23): lazy-static `static T* _value;` НЕ был GC-root
+  под GC_set_no_dls(1) (Boehm не сканит static/BSS) → большой граф (Unicode-таблицы) собирался при первом GC под
+  давлением → use-after-free/SEGV; fix runtime nova_gc_add_root + регистрация cell в emit_lazy_const до build.
+  + cross-module: resolve_imports_inline переносил Fn/Const/Type но дропал Item::Let → импортированная fn,
+  читающая same-module lazy-static, → undeclared; fix мёрж module-level Let в merged_items (приватно). Оба no-op
+  для legacy (module-level non-constexpr ro нет в std/nova_tests). (3) 152.4.1 data pipeline (commit a8df78a5):
+  внутренний build-tool `nova-codegen unicode --ucd-dir <UCD>` (unicode_data.rs) → std/unicode/norm_data.nv
+  (компактные ;-таблицы NFD/NFKD/CCC/comp, пин UNICODE_VERSION=16.0; --check CI-guard; --emit-conformance);
+  без ICU; таблицы байт-идентичны reference-генератору (2081/5913/934/961). (4) 152.4.2 normalize.nv: decompose
+  (таблица + алгоритмический Hangul) → canonical ordering (стабильно по CCC) → canonical composition (blocking +
+  Hangul L+V/LV+T); таблицы — lazy-static HashMap; composition-ключ packed (a<<21)|b (tuple-key HashMap — gap
+  [M-hashmap-tuple-key-mono]). G0 «без упрощений» (обязательный критерий): алгоритм — ПОЛНЫЙ UAX #15,
+  верифицирован против полного NormalizationTest.txt = 19965/19965 cases (79860 asserts) PASS out-of-band;
+  коммитнут CI-сэмпл 1500/6000 (Part0 целиком + stride Parts 1-5, все scripts) — санкционированное упрощение
+  РАЗМЕРА фикстуры, не алгоритма. Тесты (релизные) 5/5: 3 pos + 2 neg (opt-in A6 + foundation-партиция).
+  D253 + Q-unicode-data (RESOLVED). 0 регрессий (plan148/basics/generics/plan139/plan153/plan152; plan114 2 FAIL
+  pre-existing на main — verified). Phase B: graphemes 152.4.3 ([M-152-graphemes]) + folding/case-map 152.4.4
+  ([M-152-case-fold]) — отложены, не упрощены. Открыл [M-lazy-static-thread-safety] (first-touch не thread-safe).
+  Ветка plan-152, коммиты 52db92c1 + e22baf23 + a8df78a5 + docs.
