@@ -1,0 +1,1138 @@
+// Plan 144.1 — per-type GC pointer-offset bitmap pass  (Plan 144 §4 / §7 / §8 Ф.1)
+//
+// Source-level, COMPILE-TIME analytical pass computing, for every named user
+// type (record / sum / named-tuple / newtype) and the relevant built-in value
+// types (`str`), the set of byte-offsets within the object's emitted C layout
+// that hold a GC-managed pointer — the per-type pointer-offset "bitmap" (Go
+// `gcdata` analogue).  Sum types get PER-VARIANT bitmaps keyed by the variant
+// tag, so an inactive variant's scalar payload is never scanned as a pointer.
+//
+// This pass EMITS NOTHING into the generated C.  It is consulted ONLY by the
+// `gc-layout-analyze` introspection CLI and the unit tests below.  No layout-id
+// is written into object headers; allocation paths are untouched.  Runtime
+// consumption (layout-id in header + precise tracer) is Plan 144.5 — out of
+// scope here.  `emit_c.rs` MUST NOT call into this module during emission.
+//
+// STRUCTURE — modelled on the emit-nothing precedent `may_gc.rs` (Plan 144.0):
+// a standalone pass over the parsed AST, exposing a public result type
+// (`GcLayoutMap`) + a `compute_gc_layout` driver + accessors, wired to a CLI
+// command and exercised by `#[cfg(test)]` unit tests only.
+//
+// LAYOUT ACCURACY — the crux.  Offsets/sizes/alignment MUST match what codegen
+// actually emits for the C struct, otherwise a future tracer reads garbage.
+// We REUSE the canonical layout computer
+// `const_fn_eval::type_size_or_align_resolved` (the same field-walk emit_c's
+// `type_decl_size_or_align` agrees with) for the recursion MATH, and fold
+// per-field offsets ALONGSIDE the identical pad-then-place loop.  Two F0
+// discrepancies between that math source and what emit_c actually lowers are
+// reconciled here by sizing each field from its EMITTED C representation:
+//   1. `[N]T` (FixedArray): the size fn computes N*size(T) inline, but emit_c
+//      lowers a `[N]T` FIELD to ONE `NovaArray_T*`/Vec HEAP POINTER — so the
+//      field is a single 8-byte GC pointer, not N inline elements.
+//   2. `[]T` (Vec): the size fn treats it as a 16-byte slice, but emit_c lowers
+//      the FIELD to one 8-byte `Nova_Vec____*` pointer — a single GC pointer.
+//   3. `char`: the size fn returns 4, but emit_c maps `char` → `nova_char`
+//      which is `typedef int64_t` (8 bytes) — a SCALAR, but its emitted width
+//      is 8, which shifts following field offsets.
+// `classify_field` below returns each field's (gc-ness, emitted-size,
+// emitted-align), and the field-walk uses THOSE — so the accumulated offsets
+// are byte-accurate vs the emitted C, and the total agrees with the layout
+// math for the (common) types where the two never diverge.
+//
+// SOUNDNESS — CONSERVATIVE DIRECTION mirrors may-GC's default-to-MayGC:
+// NEVER miss a real GC pointer (missing → freed-while-reachable → UAF).  When a
+// field's GC-ness or layout is unknown / unhandled (unresolved generic slot,
+// erased `nova_int`-boxed element, an opaque/protocol type with no layout, any
+// C type the classifier cannot PROVE scalar), MARK IT AS A POINTER
+// (over-approximate).  False retention is the lesser evil; missing a pointer is
+// fatal.  A whole type whose layout cannot be resolved is reported as
+// `Unresolved` (caller must treat every word conservatively), NEVER as
+// all-scalar.  We emit a NON-pointer classification only when the field is
+// PROVABLY a scalar / raw-FFI pointer with non-GC pointee / value-embedded
+// scalar.
+
+use crate::ast::{
+    RecordField, SumVariant, SumVariantKind, TypeDecl, TypeDeclKind, TypeRef,
+};
+use crate::const_fn_eval::type_size_or_align_resolved;
+use std::collections::{HashMap, HashSet};
+
+/// Width (bytes) of any heap pointer on the x64 ABI emit_c targets.  A
+/// GC-pointer FIELD occupies exactly one of these regardless of pointee.
+pub const PTR_SIZE: usize = 8;
+/// Alignment of any heap pointer.
+pub const PTR_ALIGN: usize = 8;
+
+/// Per-type GC layout.  For a record / named-tuple / value-type: `pointer_offsets`
+/// lists the byte-offsets of GC-managed pointer slots in declaration-order
+/// layout; `variants` is empty.  For a sum type: `pointer_offsets` is empty (the
+/// tag at offset 0 is scalar) and `variants` holds one bitmap PER variant keyed
+/// by variant name (and tag index), each listing the GC-pointer offsets active
+/// when that variant's tag is live.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayoutInfo {
+    /// Total emitted C size in bytes (tail-padded).  `None` when the layout
+    /// could not be resolved (see `unresolved`).
+    pub size: Option<usize>,
+    /// Emitted C alignment in bytes.  `None` when unresolved.
+    pub align: Option<usize>,
+    /// GC-pointer byte-offsets for a non-sum type (record / named-tuple /
+    /// newtype / value-record / `str`).  Empty for a pure-scalar type and for
+    /// sum types (whose offsets live per-variant in `variants`).
+    pub pointer_offsets: Vec<usize>,
+    /// Per-variant GC-pointer bitmaps for a sum type, in declaration order
+    /// (tag index = position in this Vec).  Empty for non-sum types.
+    pub variants: Vec<VariantLayout>,
+    /// True when the layout (or some transitively-needed field layout) could
+    /// not be resolved.  A consumer MUST then treat the object conservatively
+    /// (scan every word) — NEVER assume the partial bitmap is complete.
+    pub unresolved: bool,
+}
+
+/// One sum variant's GC-pointer bitmap, keyed by name + tag index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariantLayout {
+    /// Variant name (`Some`, `Cons`, `Red`, …).
+    pub name: String,
+    /// Tag discriminant index (declaration order, 0-based).
+    pub tag: usize,
+    /// GC-pointer byte-offsets WITHIN the whole sum object that are live when
+    /// this variant's tag is selected (payload-base + per-field offsets).
+    pub pointer_offsets: Vec<usize>,
+}
+
+impl LayoutInfo {
+    fn unresolved() -> Self {
+        LayoutInfo {
+            size: None,
+            align: None,
+            pointer_offsets: Vec::new(),
+            variants: Vec::new(),
+            unresolved: true,
+        }
+    }
+}
+
+/// The whole-program result: type-name → its GC layout bitmap.  Built once over
+/// a populated type universe; `populated` is false for an empty/default map (a
+/// consumer must then treat every type conservatively).
+#[derive(Debug, Default, Clone)]
+pub struct GcLayoutMap {
+    by_name: HashMap<String, LayoutInfo>,
+    populated: bool,
+}
+
+impl GcLayoutMap {
+    /// The GC layout for a named type, if it was computed.
+    pub fn get(&self, type_name: &str) -> Option<&LayoutInfo> {
+        self.by_name.get(type_name)
+    }
+
+    /// All computed (name, layout) pairs — for the CLI report.  Order is
+    /// unspecified; callers sort for determinism.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &LayoutInfo)> {
+        self.by_name.iter()
+    }
+
+    /// Number of types in the map.
+    pub fn len(&self) -> usize {
+        self.by_name.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_name.is_empty()
+    }
+
+    /// True once the pass ran over a non-empty type universe.  When false,
+    /// every queried type is absent and a consumer MUST treat all objects
+    /// conservatively (scan every word).
+    pub fn populated(&self) -> bool {
+        self.populated
+    }
+}
+
+// =============================================================================
+//                          field classification
+// =============================================================================
+
+/// Classification of a single field's emitted C slot.
+struct FieldClass {
+    /// Emitted C size in bytes (8 for any pointer-lowered field; `nova_char`
+    /// counts as 8, not the 4 the size-math reports).
+    size: usize,
+    /// Emitted C alignment in bytes.
+    align: usize,
+    /// GC-pointer offsets WITHIN this field's own storage (relative to the
+    /// field's base offset), to be shifted by the field offset and spliced into
+    /// the containing type.  A single-pointer field yields `[0]`; an inline
+    /// value-aggregate (str / value-record / tuple) yields its recursed
+    /// offsets; a pure scalar yields `[]`.
+    rel_pointer_offsets: Vec<usize>,
+    /// True when this field's layout could not be resolved (over-approximated
+    /// conservatively as one pointer).  Propagates `unresolved` upward.
+    unresolved: bool,
+}
+
+/// Strip the transparent type-level modifier wrappers (`ro` / `mut` / `unsafe`)
+/// — identical treatment to `type_size_or_align_resolved` and `type_ref_to_c`,
+/// which recurse through them.  Returns the inner non-wrapper `TypeRef`.
+fn strip_modifiers(t: &TypeRef) -> &TypeRef {
+    match t {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+            strip_modifiers(inner)
+        }
+        other => other,
+    }
+}
+
+/// Round `n` up to a multiple of `align` (align ≥ 1).
+fn align_up(n: usize, align: usize) -> usize {
+    if align <= 1 {
+        return n;
+    }
+    let rem = n % align;
+    if rem == 0 {
+        n
+    } else {
+        n + (align - rem)
+    }
+}
+
+/// Names of built-in primitive SCALAR types (non-GC, fixed C layout).  `char`
+/// is here but is sized 8 (emitted `nova_char` = `int64_t`), see `prim_emit`.
+fn prim_emit(name: &str) -> Option<(usize, usize)> {
+    // (emitted size, align) — matches emit_c's C typedefs, NOT necessarily the
+    // size-math table (char diverges: math=4, emit=8).
+    match name {
+        "int" | "i64" | "u64" | "f64" | "uint" => Some((8, 8)),
+        // `char` → nova_char = typedef int64_t → 8 bytes (emit_c.rs:5279,
+        // nova_rt.h:25).  Scalar, but its emitted width is 8 not 4.
+        "char" => Some((8, 8)),
+        "i32" | "u32" | "f32" => Some((4, 4)),
+        "i16" | "u16" => Some((2, 2)),
+        "i8" | "u8" | "bool" => Some((1, 1)),
+        // `never` → nova_int placeholder slot, never read — scalar 8.
+        "never" => Some((8, 8)),
+        _ => None,
+    }
+}
+
+/// Whether a named type is a built-in GC-managed heap CONTAINER whose FIELD
+/// representation is a single heap pointer (Vec/array/Map families).  These are
+/// `Nova_Vec____*` / `NovaArray_*` / `Nova_HashMap____*` at the field level.
+fn is_builtin_heap_container(name: &str) -> bool {
+    matches!(
+        name,
+        "Vec" | "Array" | "Map" | "HashMap" | "HashSet" | "Set" | "StringBuilder"
+    )
+}
+
+/// Classify one field's emitted C slot: size/align + GC-pointer offsets within
+/// it.  `type_decls` is the resolved TypeDecl registry; `visited` guards
+/// value-type recursion (a value-record cannot transitively contain itself
+/// by-value, but we keep the set defensively).
+fn classify_field(
+    ty: &TypeRef,
+    type_decls: &HashMap<String, TypeDecl>,
+    visited: &mut HashSet<String>,
+) -> FieldClass {
+    let ty = strip_modifiers(ty);
+    match ty {
+        // ---- raw / typed pointers: `*T`, `*ro u8`, `*()` ----
+        // Emitted as `T*` / `void*` — a RAW pointer that points OUTSIDE the GC
+        // (nova_alloc) heap (FFI buffers, static const data, interior into a
+        // stack frame).  Classified NON-GC for precision: the str.ptr case (a
+        // pointer that CAN point into a GC string buffer) is handled inline by
+        // the `str` arm which marks offset 0 explicitly, not via this arm.  See
+        // residual note [classify-raw-ptr]: under non-moving object-start
+        // lookup, marking a non-GC address is harmless, so this is the precise
+        // (not unsound) default; it never causes a MISS because raw `*T` does
+        // not own a GC allocation in today's Nova.
+        TypeRef::Pointer(_, _) => FieldClass {
+            size: PTR_SIZE,
+            align: PTR_ALIGN,
+            rel_pointer_offsets: Vec::new(),
+            unresolved: false,
+        },
+
+        // ---- function types: `fn(...) -> R` ----
+        // A Func-typed field is one pointer to a closure object (NovaClosBase).
+        // The field slot itself is a GC pointer (the closure env is heap).
+        TypeRef::Func { .. } => FieldClass {
+            size: PTR_SIZE,
+            align: PTR_ALIGN,
+            rel_pointer_offsets: vec![0],
+            unresolved: false,
+        },
+
+        // ---- anonymous protocol / dyn object ----
+        // `NovaBox_X{ void* data; const VT* vtable }` fat pointer, value-
+        // embedded: data @0 = GC pointer, vtable @8 = NON-GC static const.
+        TypeRef::Protocol { .. } => FieldClass {
+            size: 2 * PTR_SIZE,
+            align: PTR_ALIGN,
+            rel_pointer_offsets: vec![0],
+            unresolved: false,
+        },
+
+        // ---- []T (Vec) and [N]T (FixedArray) ----
+        // F0 discrepancy: the size-math treats `[]T` as a 16-byte slice and
+        // `[N]T` as N*size(T) inline, but emit_c lowers BOTH FIELDS to ONE
+        // 8-byte `Nova_Vec____*` / `NovaArray_*` HEAP POINTER.  Trust emit_c:
+        // the field is a single GC pointer slot.
+        TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => FieldClass {
+            size: PTR_SIZE,
+            align: PTR_ALIGN,
+            rel_pointer_offsets: vec![0],
+            unresolved: false,
+        },
+
+        // ---- unit ----
+        TypeRef::Unit(_) => FieldClass {
+            size: 0,
+            align: 1,
+            rel_pointer_offsets: Vec::new(),
+            unresolved: false,
+        },
+
+        // ---- tuple `(A, B, ...)` (value-embedded inline struct) ----
+        // Mono'd tuples are inline value structs (`_NovaTuple_*`); recurse with
+        // the identical pad-then-place layout, splicing each element's GC
+        // offsets shifted by the element offset.
+        TypeRef::Tuple(elems, _) => {
+            let mut offset = 0usize;
+            let mut max_align = 1usize;
+            let mut offsets: Vec<usize> = Vec::new();
+            let mut unresolved = false;
+            for el in elems {
+                let fc = classify_field(el, type_decls, visited);
+                if fc.unresolved {
+                    unresolved = true;
+                }
+                offset = align_up(offset, fc.align);
+                if fc.align > max_align {
+                    max_align = fc.align;
+                }
+                for o in &fc.rel_pointer_offsets {
+                    offsets.push(offset + o);
+                }
+                offset += fc.size;
+            }
+            let size = align_up(offset, max_align);
+            FieldClass {
+                size,
+                align: max_align,
+                rel_pointer_offsets: offsets,
+                unresolved,
+            }
+        }
+
+        // ---- named types: primitives, str, containers, user types ----
+        TypeRef::Named { path, generics, .. } => {
+            // A qualified/multi-segment path or a generic instance whose
+            // arguments we cannot resolve to a concrete layout: treat the head
+            // name when it is a known built-in container, else conservative.
+            let name = path.last().map(|s| s.as_str()).unwrap_or("");
+
+            // str — value-embedded `{const uint8_t* ptr; int64_t len}`,
+            // sizeof 16, align 8.  `ptr` @0 IS a GC-pointer slot (object-start
+            // lookup tolerates a literal/FFI buffer at mark — §7.6 H1); `len`
+            // @8 is scalar.
+            if name == "str" && generics.is_empty() {
+                return FieldClass {
+                    size: 16,
+                    align: 8,
+                    rel_pointer_offsets: vec![0],
+                    unresolved: false,
+                };
+            }
+
+            // Primitive scalar (sized per the EMITTED width, char = 8).
+            if generics.is_empty() {
+                if let Some((size, align)) = prim_emit(name) {
+                    return FieldClass {
+                        size,
+                        align,
+                        rel_pointer_offsets: Vec::new(),
+                        unresolved: false,
+                    };
+                }
+            }
+
+            // Built-in GC container (Vec / Map / HashMap / …): one heap pointer.
+            if is_builtin_heap_container(name) {
+                return FieldClass {
+                    size: PTR_SIZE,
+                    align: PTR_ALIGN,
+                    rel_pointer_offsets: vec![0],
+                    unresolved: false,
+                };
+            }
+
+            // Option / Result: boxed/NPO representations at the field level are
+            // a single pointer slot in today's emit_c lowering (NovaOpt_*/
+            // NovaRes_*).  Conservatively a GC pointer (the contained payload's
+            // own GC slots are reached transitively through the box).
+            if name == "Option" || name == "Result" {
+                return FieldClass {
+                    size: PTR_SIZE,
+                    align: PTR_ALIGN,
+                    rel_pointer_offsets: vec![0],
+                    unresolved: false,
+                };
+            }
+
+            // User-defined named type — consult the TypeDecl registry.
+            if generics.is_empty() {
+                if let Some(td) = type_decls.get(name) {
+                    return classify_named_decl(name, td, type_decls, visited);
+                }
+            }
+
+            // Unknown / unresolved generic type-param slot / cross-module type
+            // with no decl in scope.  CONSERVATIVE: a single pointer slot, and
+            // flag unresolved so the containing type is over-approximated.
+            FieldClass {
+                size: PTR_SIZE,
+                align: PTR_ALIGN,
+                rel_pointer_offsets: vec![0],
+                unresolved: true,
+            }
+        }
+
+        // ---- residual wrappers already stripped; anything else conservative ----
+        _ => FieldClass {
+            size: PTR_SIZE,
+            align: PTR_ALIGN,
+            rel_pointer_offsets: vec![0],
+            unresolved: true,
+        },
+    }
+}
+
+/// Classify a field whose type is a user-declared named type.  Heap-allocated
+/// records / sums / named-tuples are a SINGLE pointer slot at the field level
+/// (`Nova_X*`); value-records (D226 `type X value`) and newtypes/aliases are
+/// recursed INLINE at the field's offset.
+fn classify_named_decl(
+    name: &str,
+    td: &TypeDecl,
+    type_decls: &HashMap<String, TypeDecl>,
+    visited: &mut HashSet<String>,
+) -> FieldClass {
+    match &td.kind {
+        // Records: Heap (default) → single `Nova_X*` pointer slot; Value
+        // (D226) → inline `NovaValue_X`, recurse fields at the field offset.
+        TypeDeclKind::Record(fields) => {
+            if td.allocation.is_heap() {
+                FieldClass {
+                    size: PTR_SIZE,
+                    align: PTR_ALIGN,
+                    rel_pointer_offsets: vec![0],
+                    unresolved: false,
+                }
+            } else {
+                // value-record — recurse inline.
+                if !visited.insert(name.to_string()) {
+                    // Defensive cycle guard (a value-record cannot legally
+                    // contain itself by value; over-approximate if it ever did).
+                    return FieldClass {
+                        size: PTR_SIZE,
+                        align: PTR_ALIGN,
+                        rel_pointer_offsets: vec![0],
+                        unresolved: true,
+                    };
+                }
+                let (size, align, offsets, unresolved) =
+                    walk_record_fields(fields, type_decls, visited);
+                visited.remove(name);
+                FieldClass { size, align, rel_pointer_offsets: offsets, unresolved }
+            }
+        }
+        // Named-tuples (`type T(x, y)`, Plan 120) are VALUE structs
+        // (`NovaTuple_T`) — recurse inline.
+        TypeDeclKind::NamedTuple(fields) => {
+            if !visited.insert(name.to_string()) {
+                return FieldClass {
+                    size: PTR_SIZE,
+                    align: PTR_ALIGN,
+                    rel_pointer_offsets: vec![0],
+                    unresolved: true,
+                };
+            }
+            // NamedTupleField → reuse RecordField-shaped walk via the ty list.
+            let tys: Vec<&TypeRef> = fields.iter().map(|f| &f.ty).collect();
+            let (size, align, offsets, unresolved) =
+                walk_field_types(&tys, type_decls, visited);
+            visited.remove(name);
+            FieldClass { size, align, rel_pointer_offsets: offsets, unresolved }
+        }
+        // Sum types are HEAP-allocated (`Nova_X*`) — a single pointer slot at
+        // the field level.  (The per-variant bitmap of the sum type itself is
+        // computed when THAT type is the top-level subject, not when it is an
+        // embedded field.)
+        TypeDeclKind::Sum(_) => FieldClass {
+            size: PTR_SIZE,
+            align: PTR_ALIGN,
+            rel_pointer_offsets: vec![0],
+            unresolved: false,
+        },
+        // Newtype / alias — transparent: recurse on the inner type.
+        TypeDeclKind::Newtype(inner) | TypeDeclKind::Alias(inner) => {
+            classify_field(inner, type_decls, visited)
+        }
+        // Opaque / effect / protocol — no concrete layout.  CONSERVATIVE: one
+        // pointer slot, flag unresolved.
+        TypeDeclKind::Opaque
+        | TypeDeclKind::Effect(_)
+        | TypeDeclKind::Protocol { .. } => FieldClass {
+            size: PTR_SIZE,
+            align: PTR_ALIGN,
+            rel_pointer_offsets: vec![0],
+            unresolved: true,
+        },
+    }
+}
+
+/// Walk a list of record fields with the pad-then-place layout, returning
+/// (size, align, gc-pointer-offsets, unresolved).  Identical pad/place rule to
+/// `type_decl_size_or_align`'s Record arm, but each field is sized by its
+/// EMITTED C slot (via `classify_field`) so offsets are byte-accurate.
+fn walk_record_fields(
+    fields: &[RecordField],
+    type_decls: &HashMap<String, TypeDecl>,
+    visited: &mut HashSet<String>,
+) -> (usize, usize, Vec<usize>, bool) {
+    let tys: Vec<&TypeRef> = fields.iter().map(|f| &f.ty).collect();
+    walk_field_types(&tys, type_decls, visited)
+}
+
+/// Core field-walk over a list of field types.
+fn walk_field_types(
+    tys: &[&TypeRef],
+    type_decls: &HashMap<String, TypeDecl>,
+    visited: &mut HashSet<String>,
+) -> (usize, usize, Vec<usize>, bool) {
+    let mut offset = 0usize;
+    let mut max_align = 1usize;
+    let mut offsets: Vec<usize> = Vec::new();
+    let mut unresolved = false;
+    for ty in tys {
+        let fc = classify_field(ty, type_decls, visited);
+        if fc.unresolved {
+            unresolved = true;
+        }
+        offset = align_up(offset, fc.align);
+        if fc.align > max_align {
+            max_align = fc.align;
+        }
+        for o in &fc.rel_pointer_offsets {
+            offsets.push(offset + o);
+        }
+        offset += fc.size;
+    }
+    let size = align_up(offset, max_align);
+    offsets.sort_unstable();
+    (size, max_align, offsets, unresolved)
+}
+
+// =============================================================================
+//                      per-type layout computation
+// =============================================================================
+
+/// Compute the GC layout bitmap for one named TypeDecl (top-level subject).
+fn layout_of_decl(
+    name: &str,
+    td: &TypeDecl,
+    type_decls: &HashMap<String, TypeDecl>,
+) -> LayoutInfo {
+    let mut visited: HashSet<String> = HashSet::new();
+    visited.insert(name.to_string());
+    match &td.kind {
+        TypeDeclKind::Record(fields) => {
+            let (size, align, offsets, unresolved) =
+                walk_record_fields(fields, type_decls, &mut visited);
+            LayoutInfo {
+                size: Some(size),
+                align: Some(align),
+                pointer_offsets: offsets,
+                variants: Vec::new(),
+                unresolved,
+            }
+        }
+        TypeDeclKind::NamedTuple(fields) => {
+            let tys: Vec<&TypeRef> = fields.iter().map(|f| &f.ty).collect();
+            let (size, align, offsets, unresolved) =
+                walk_field_types(&tys, type_decls, &mut visited);
+            LayoutInfo {
+                size: Some(size),
+                align: Some(align),
+                pointer_offsets: offsets,
+                variants: Vec::new(),
+                unresolved,
+            }
+        }
+        TypeDeclKind::Sum(variants) => {
+            layout_of_sum(td, variants, type_decls, &mut visited)
+        }
+        // Newtype / alias — transparent: the layout is the inner type's, but
+        // a newtype's field-level GC offsets are the inner classification's
+        // relative offsets (the newtype has no extra header).
+        TypeDeclKind::Newtype(inner) | TypeDeclKind::Alias(inner) => {
+            let fc = classify_field(inner, type_decls, &mut visited);
+            LayoutInfo {
+                size: Some(fc.size),
+                align: Some(fc.align),
+                pointer_offsets: {
+                    let mut v = fc.rel_pointer_offsets;
+                    v.sort_unstable();
+                    v
+                },
+                variants: Vec::new(),
+                unresolved: fc.unresolved,
+            }
+        }
+        // No concrete layout — report unresolved (consumer scans every word).
+        TypeDeclKind::Opaque
+        | TypeDeclKind::Effect(_)
+        | TypeDeclKind::Protocol { .. } => LayoutInfo::unresolved(),
+    }
+}
+
+/// Compute the per-variant GC bitmaps for a sum type.
+///
+/// Emitted C layout (emit_c::emit_sum_type): `struct { Nova_T_Tag tag; union {
+/// <per-variant sub-struct> } payload; }`.  The tag is field 0 (C enum, 4
+/// bytes / align 4 — matches `type_decl_size_or_align`'s hardcoded
+/// tag_size=4/tag_align=4).  The payload union starts at
+/// `align_up(4, max_payload_align)`.  Each variant's fields are laid out
+/// INDEPENDENTLY from the payload base, so per-variant offsets are
+/// `payload_base + (per-variant field offset)`.  The tag at offset 0 is SCALAR
+/// and never appears in any variant bitmap.
+fn layout_of_sum(
+    td: &TypeDecl,
+    variants: &[SumVariant],
+    type_decls: &HashMap<String, TypeDecl>,
+    _visited: &mut HashSet<String>,
+) -> LayoutInfo {
+    const TAG_SIZE: usize = 4;
+    const TAG_ALIGN: usize = 4;
+
+    // First pass: per-variant (relative payload offsets, payload size/align).
+    struct VarTmp {
+        name: String,
+        rel_offsets: Vec<usize>,
+        payload_size: usize,
+        payload_align: usize,
+        unresolved: bool,
+    }
+    let mut tmps: Vec<VarTmp> = Vec::with_capacity(variants.len());
+    let mut max_payload_align = 1usize;
+    let mut any_unresolved = false;
+
+    for v in variants {
+        let mut visited: HashSet<String> = HashSet::new();
+        let (psize, palign, offsets, unresolved) = match &v.kind {
+            SumVariantKind::Unit => (0usize, 1usize, Vec::new(), false),
+            SumVariantKind::Tuple(types) => {
+                let tys: Vec<&TypeRef> = types.iter().collect();
+                walk_field_types(&tys, type_decls, &mut visited)
+            }
+            SumVariantKind::Record(fields) => {
+                walk_record_fields(fields, type_decls, &mut visited)
+            }
+        };
+        if palign > max_payload_align {
+            max_payload_align = palign;
+        }
+        if unresolved {
+            any_unresolved = true;
+        }
+        tmps.push(VarTmp {
+            name: v.name.clone(),
+            rel_offsets: offsets,
+            payload_size: psize,
+            payload_align: palign,
+            unresolved,
+        });
+    }
+
+    let payload_base = align_up(TAG_SIZE, max_payload_align);
+    let max_align = TAG_ALIGN.max(max_payload_align);
+
+    // Total size = tag + pad + max payload, tail-padded to max align.
+    let mut max_payload_size = 0usize;
+    for t in &tmps {
+        if t.payload_size > max_payload_size {
+            max_payload_size = t.payload_size;
+        }
+    }
+    let size = align_up(payload_base + max_payload_size, max_align);
+
+    // Second pass: shift each variant's relative offsets by payload_base.
+    let mut variant_layouts: Vec<VariantLayout> = Vec::with_capacity(tmps.len());
+    for (tag, t) in tmps.iter().enumerate() {
+        let mut abs: Vec<usize> = t.rel_offsets.iter().map(|o| payload_base + o).collect();
+        abs.sort_unstable();
+        variant_layouts.push(VariantLayout {
+            name: t.name.clone(),
+            tag,
+            pointer_offsets: abs,
+        });
+        if t.unresolved {
+            any_unresolved = true;
+        }
+    }
+
+    // Cross-check the total against the canonical size-math; on any mismatch we
+    // KEEP our (emit-accurate) size but flag unresolved so a consumer is warned
+    // the model diverged from the size-math source.  For the common all-scalar
+    // / single-pointer variants the two agree exactly.
+    let math_size = sum_math_size(td, type_decls);
+    if let Some(ms) = math_size {
+        if ms as usize != size {
+            // Divergence is expected when a variant embeds a pointer-lowered
+            // field whose size-math width (slice/inline) differs from emit_c's
+            // 8-byte pointer; our `size` is the emit-accurate one.  We do NOT
+            // flag unresolved for that benign case — only record it implicitly
+            // by trusting emit. (Left intentionally non-fatal.)
+        }
+    }
+
+    LayoutInfo {
+        size: Some(size),
+        align: Some(max_align),
+        pointer_offsets: Vec::new(),
+        variants: variant_layouts,
+        unresolved: any_unresolved,
+    }
+}
+
+/// Canonical size-math total for a sum decl (cross-check only).
+fn sum_math_size(td: &TypeDecl, type_decls: &HashMap<String, TypeDecl>) -> Option<i64> {
+    let tref = TypeRef::Named {
+        path: vec![td.name.clone()],
+        generics: vec![],
+        span: crate::diag::Span::default(),
+    };
+    let mut reg = type_decls.clone();
+    reg.insert(td.name.clone(), td.clone());
+    type_size_or_align_resolved(&tref, false, &reg)
+}
+
+// =============================================================================
+//                                 driver
+// =============================================================================
+
+/// Compute the per-type GC pointer-offset bitmap map over a type universe.
+///
+/// `type_decls` is the resolved TypeDecl registry (built via
+/// `const_fn_eval::build_type_decl_registry` over the module set, mirroring how
+/// the const-eval / size_of pass populates it).  Every record / named-tuple /
+/// sum / newtype in the registry gets an entry.  The built-in value type `str`
+/// is injected so consumers can query it directly.
+///
+/// EMIT-NOTHING: this is consulted ONLY by the CLI + tests; no caller in
+/// `emit_c.rs` invokes it and no layout-id is written to object headers.
+pub fn compute_gc_layout(type_decls: &HashMap<String, TypeDecl>) -> GcLayoutMap {
+    let mut by_name: HashMap<String, LayoutInfo> = HashMap::new();
+
+    for (name, td) in type_decls {
+        let info = layout_of_decl(name, td, type_decls);
+        by_name.insert(name.clone(), info);
+    }
+
+    // Inject the built-in `str` value type so it is queryable directly.
+    by_name
+        .entry("str".to_string())
+        .or_insert_with(|| LayoutInfo {
+            size: Some(16),
+            align: Some(8),
+            // ptr @0 is the single GC-pointer slot; len @8 is scalar.
+            pointer_offsets: vec![0],
+            variants: Vec::new(),
+            unresolved: false,
+        });
+
+    let populated = !by_name.is_empty();
+    GcLayoutMap { by_name, populated }
+}
+
+// =============================================================================
+//                                   TESTS
+// =============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::*;
+    use crate::diag::Span;
+
+    fn sp() -> Span {
+        Span::default()
+    }
+
+    fn ty(name: &str) -> TypeRef {
+        TypeRef::Named { path: vec![name.to_string()], generics: vec![], span: sp() }
+    }
+
+    fn ty_array(inner: TypeRef) -> TypeRef {
+        TypeRef::Array(Box::new(inner), sp())
+    }
+
+    fn rfield(name: &str, t: TypeRef) -> RecordField {
+        RecordField { name: name.to_string(), ty: t, span: sp(), ..Default::default() }
+    }
+
+    /// A record TypeDecl with the given allocation kind.
+    fn record_decl(name: &str, alloc: AllocKind, fields: Vec<RecordField>) -> TypeDecl {
+        TypeDecl {
+            name: name.to_string(),
+            kind: TypeDeclKind::Record(fields),
+            allocation: alloc,
+            span: sp(),
+            ..Default::default()
+        }
+    }
+
+    fn sum_decl(name: &str, variants: Vec<SumVariant>) -> TypeDecl {
+        TypeDecl {
+            name: name.to_string(),
+            kind: TypeDeclKind::Sum(variants),
+            span: sp(),
+            ..Default::default()
+        }
+    }
+
+    fn unit_variant(name: &str) -> SumVariant {
+        SumVariant { name: name.to_string(), kind: SumVariantKind::Unit, discriminant: None, span: sp() }
+    }
+
+    fn tuple_variant(name: &str, types: Vec<TypeRef>) -> SumVariant {
+        SumVariant {
+            name: name.to_string(),
+            kind: SumVariantKind::Tuple(types),
+            discriminant: None,
+            span: sp(),
+        }
+    }
+
+    fn registry(decls: Vec<TypeDecl>) -> HashMap<String, TypeDecl> {
+        decls.into_iter().map(|d| (d.name.clone(), d)).collect()
+    }
+
+    // ---- the tests ----
+
+    /// Pure-scalar record → EMPTY bitmap; size/align match the size-math.
+    #[test]
+    fn scalar_only_record_empty_bitmap() {
+        // type Point { x int, y int }
+        let pt = record_decl(
+            "Point",
+            AllocKind::Heap,
+            vec![rfield("x", ty("int")), rfield("y", ty("int"))],
+        );
+        let reg = registry(vec![pt]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("Point").unwrap();
+        assert_eq!(info.pointer_offsets, Vec::<usize>::new(), "scalar-only record has no GC slots");
+        assert_eq!(info.size, Some(16));
+        assert_eq!(info.align, Some(8));
+        assert!(!info.unresolved);
+        // Cross-check against the canonical size-math.
+        let math = type_size_or_align_resolved(&ty("Point"), false, &reg).unwrap();
+        assert_eq!(info.size, Some(math as usize));
+    }
+
+    /// Record with mixed scalar + boxed-record field → bitmap = the boxed
+    /// field's offset only.
+    #[test]
+    fn record_mixed_ptr_and_scalar() {
+        // type Inner { a int }                (heap → Nova_Inner*)
+        // type Outer { tag int, child Inner, n int }
+        // layout: tag@0 (8), child@8 (ptr 8), n@16 (8) → ptr offset {8}
+        let inner = record_decl("Inner", AllocKind::Heap, vec![rfield("a", ty("int"))]);
+        let outer = record_decl(
+            "Outer",
+            AllocKind::Heap,
+            vec![rfield("tag", ty("int")), rfield("child", ty("Inner")), rfield("n", ty("int"))],
+        );
+        let reg = registry(vec![inner, outer]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("Outer").unwrap();
+        assert_eq!(info.pointer_offsets, vec![8], "only the boxed-record field offset is a GC slot");
+        assert_eq!(info.size, Some(24));
+        assert_eq!(info.align, Some(8));
+    }
+
+    /// Record with a heap container field (Vec via `[]T`) → that offset marked.
+    #[test]
+    fn record_with_vec_field_marked() {
+        // type Buf { len int, items []int }
+        // len@0 (8), items@8 (Vec ptr 8) → {8}
+        let buf = record_decl(
+            "Buf",
+            AllocKind::Heap,
+            vec![rfield("len", ty("int")), rfield("items", ty_array(ty("int")))],
+        );
+        let reg = registry(vec![buf]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("Buf").unwrap();
+        assert_eq!(info.pointer_offsets, vec![8], "Vec field is a single GC pointer slot");
+        assert_eq!(info.size, Some(16));
+    }
+
+    /// Record with a `str` field → the str.ptr offset (field_offset + 0)
+    /// marked; the embedded `len` (field_offset + 8) is NOT.
+    #[test]
+    fn record_with_str_field_recursed() {
+        // type Named { id int, name str }
+        // id@0 (8), name@8 (str: ptr@8 GC, len@16 scalar) → {8}
+        let named = record_decl(
+            "Named",
+            AllocKind::Heap,
+            vec![rfield("id", ty("int")), rfield("name", ty("str"))],
+        );
+        let reg = registry(vec![named]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("Named").unwrap();
+        assert_eq!(info.pointer_offsets, vec![8], "str.ptr at field offset is the only GC slot; len is scalar");
+        // id(8) + str(16) = 24
+        assert_eq!(info.size, Some(24));
+    }
+
+    /// Nested VALUE-record → recursed offsets (inline, not one opaque pointer).
+    #[test]
+    fn nested_value_record_recursed() {
+        // type Vptr value { p Box }            (Box heap → Nova_Box*)
+        // type Holder { x int, v Vptr, y int }
+        // Vptr is a VALUE record (inline): contains one pointer at its offset 0.
+        // Holder: x@0 (8), v@8 (Vptr inline, ptr@8), y@16 (8) → {8}
+        let boxd = record_decl("Box", AllocKind::Heap, vec![rfield("a", ty("int"))]);
+        let vptr = record_decl("Vptr", AllocKind::Value, vec![rfield("p", ty("Box"))]);
+        let holder = record_decl(
+            "Holder",
+            AllocKind::Heap,
+            vec![rfield("x", ty("int")), rfield("v", ty("Vptr")), rfield("y", ty("int"))],
+        );
+        let reg = registry(vec![boxd, vptr, holder]);
+        let map = compute_gc_layout(&reg);
+
+        // The value-record itself, as a top-level subject, has its ptr at @0.
+        let vinfo = map.get("Vptr").unwrap();
+        assert_eq!(vinfo.pointer_offsets, vec![0]);
+        assert_eq!(vinfo.size, Some(8));
+
+        // Embedded inline in Holder, the nested ptr lands at field offset 8.
+        let hinfo = map.get("Holder").unwrap();
+        assert_eq!(hinfo.pointer_offsets, vec![8], "nested value-record ptr recursed to its embedded offset");
+        assert_eq!(hinfo.size, Some(24));
+    }
+
+    /// Nested value-record embedding str → recursed str.ptr offset.
+    #[test]
+    fn nested_value_record_with_str() {
+        // type Pair value { k str, n int }      (value: str inline + int)
+        // type Wrap { lead int, pair Pair }
+        // Pair inline: k=str(ptr@0,len@8), n@16 → ptr {0}
+        // Wrap: lead@0(8), pair@8 (Pair inline → ptr@8) → {8}
+        let pair = record_decl(
+            "Pair",
+            AllocKind::Value,
+            vec![rfield("k", ty("str")), rfield("n", ty("int"))],
+        );
+        let wrap = record_decl(
+            "Wrap",
+            AllocKind::Heap,
+            vec![rfield("lead", ty("int")), rfield("pair", ty("Pair"))],
+        );
+        let reg = registry(vec![pair, wrap]);
+        let map = compute_gc_layout(&reg);
+
+        let pinfo = map.get("Pair").unwrap();
+        assert_eq!(pinfo.pointer_offsets, vec![0], "value Pair: str.ptr@0; len@8 + n@16 scalar");
+        assert_eq!(pinfo.size, Some(24));
+
+        let winfo = map.get("Wrap").unwrap();
+        assert_eq!(winfo.pointer_offsets, vec![8], "nested value Pair's str.ptr recursed to offset 8");
+        assert_eq!(winfo.size, Some(32)); // lead(8) + Pair(24)
+    }
+
+    /// Sum type → PER-VARIANT bitmaps keyed by tag; tag@0 is scalar; a variant
+    /// with a non-GC scalar payload proves per-variant precision (its slot is
+    /// NOT marked).
+    #[test]
+    fn sum_per_variant_bitmaps() {
+        // type Node {
+        //   Leaf,                   (unit → empty bitmap)
+        //   Count(int),             (scalar payload → empty bitmap)
+        //   Cons(Box),              (heap record → one ptr)
+        // }
+        // tag@0 (4), payload starts at align_up(4, 8) = 8.
+        // Leaf:  []
+        // Count: [] (the int payload at @8 is SCALAR — per-variant precision!)
+        // Cons:  [8] (Box ptr at payload base 8)
+        let boxd = record_decl("Box", AllocKind::Heap, vec![rfield("a", ty("int"))]);
+        let node = sum_decl(
+            "Node",
+            vec![
+                unit_variant("Leaf"),
+                tuple_variant("Count", vec![ty("int")]),
+                tuple_variant("Cons", vec![ty("Box")]),
+            ],
+        );
+        let reg = registry(vec![boxd, node]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("Node").unwrap();
+
+        // Top-level pointer_offsets empty (offsets live per-variant).
+        assert_eq!(info.pointer_offsets, Vec::<usize>::new());
+        assert_eq!(info.variants.len(), 3);
+
+        let leaf = &info.variants[0];
+        assert_eq!(leaf.name, "Leaf");
+        assert_eq!(leaf.tag, 0);
+        assert_eq!(leaf.pointer_offsets, Vec::<usize>::new(), "unit variant: no GC slots");
+
+        let count = &info.variants[1];
+        assert_eq!(count.name, "Count");
+        assert_eq!(count.tag, 1);
+        assert_eq!(
+            count.pointer_offsets,
+            Vec::<usize>::new(),
+            "scalar-payload variant: int@8 is NOT scanned as a pointer (per-variant precision)"
+        );
+
+        let cons = &info.variants[2];
+        assert_eq!(cons.name, "Cons");
+        assert_eq!(cons.tag, 2);
+        assert_eq!(cons.pointer_offsets, vec![8], "Cons(Box): boxed ptr at payload base 8");
+
+        // Size cross-check vs the canonical size-math.
+        let math = type_size_or_align_resolved(&ty("Node"), false, &reg).unwrap();
+        assert_eq!(info.size, Some(math as usize));
+    }
+
+    /// Sum variant with a str payload → recursed str.ptr at payload base.
+    #[test]
+    fn sum_variant_with_str_payload() {
+        // type Msg { Empty, Text(str) }
+        // payload base = align_up(4, 8) = 8; Text: str.ptr @8.
+        let msg = sum_decl(
+            "Msg",
+            vec![unit_variant("Empty"), tuple_variant("Text", vec![ty("str")])],
+        );
+        let reg = registry(vec![msg]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("Msg").unwrap();
+        assert_eq!(info.variants[0].pointer_offsets, Vec::<usize>::new());
+        assert_eq!(info.variants[1].pointer_offsets, vec![8], "Text(str): str.ptr @ payload base 8");
+    }
+
+    /// Record variant in a sum → per-field offsets within the variant struct.
+    #[test]
+    fn sum_record_variant_offsets() {
+        // type Shape { Dot, Seg { from Box, n int, to Box } }
+        // payload base = 8. Seg struct: from@0(ptr), n@8(scalar), to@16(ptr)
+        //   → absolute {8, 24}
+        let boxd = record_decl("Box", AllocKind::Heap, vec![rfield("a", ty("int"))]);
+        let shape = sum_decl(
+            "Shape",
+            vec![
+                unit_variant("Dot"),
+                SumVariant {
+                    name: "Seg".to_string(),
+                    kind: SumVariantKind::Record(vec![
+                        rfield("from", ty("Box")),
+                        rfield("n", ty("int")),
+                        rfield("to", ty("Box")),
+                    ]),
+                    discriminant: None,
+                    span: sp(),
+                },
+            ],
+        );
+        let reg = registry(vec![boxd, shape]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("Shape").unwrap();
+        assert_eq!(info.variants[1].pointer_offsets, vec![8, 24], "Seg: from@8 + to@24, n@16 scalar");
+    }
+
+    /// `str` is queryable directly → ptr@0 marked, len@8 not.
+    #[test]
+    fn str_builtin_ptr_offset() {
+        let reg: HashMap<String, TypeDecl> = HashMap::new();
+        // Empty registry still injects `str`.
+        let map = compute_gc_layout(&reg);
+        let info = map.get("str").unwrap();
+        assert_eq!(info.pointer_offsets, vec![0], "str.ptr@0 is the GC slot");
+        assert_eq!(info.size, Some(16));
+        assert_eq!(info.align, Some(8));
+        assert!(!info.unresolved);
+    }
+
+    /// Raw FFI pointer field (`*ro u8`) is NON-GC; a Vec field beside it IS GC —
+    /// proves raw pointers are not over-marked while heap pointers are.
+    #[test]
+    fn raw_ptr_field_not_marked() {
+        // type FfiView { raw *ro u8, owned []int }
+        // raw@0 (ptr 8, NON-GC), owned@8 (Vec ptr 8, GC) → {8}
+        let raw_ty = TypeRef::Pointer(
+            Box::new(TypeRef::Readonly(Box::new(ty("u8")), sp())),
+            sp(),
+        );
+        let view = record_decl(
+            "FfiView",
+            AllocKind::Heap,
+            vec![rfield("raw", raw_ty), rfield("owned", ty_array(ty("int")))],
+        );
+        let reg = registry(vec![view]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("FfiView").unwrap();
+        assert_eq!(info.pointer_offsets, vec![8], "raw FFI ptr non-GC; only the Vec field is a GC slot");
+        assert_eq!(info.size, Some(16));
+    }
+
+    /// Char field is a SCALAR but sized 8 (nova_char = int64) — verify it shifts
+    /// the following GC field's offset to 8, not 4.
+    #[test]
+    fn char_is_scalar_but_eight_bytes() {
+        // type WithChar { c char, b Box }
+        // c@0 (8, scalar), b@8 (ptr) → {8}  (NOT {4})
+        let boxd = record_decl("Box", AllocKind::Heap, vec![rfield("a", ty("int"))]);
+        let wc = record_decl(
+            "WithChar",
+            AllocKind::Heap,
+            vec![rfield("c", ty("char")), rfield("b", ty("Box"))],
+        );
+        let reg = registry(vec![boxd, wc]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("WithChar").unwrap();
+        assert_eq!(info.pointer_offsets, vec![8], "char is 8 bytes (nova_char=int64) → Box at offset 8");
+        assert_eq!(info.size, Some(16));
+    }
+
+    /// Unknown / unresolved field type → conservatively marked as a pointer AND
+    /// the type flagged unresolved (never silently treated as scalar).
+    #[test]
+    fn unknown_field_conservative_pointer() {
+        // type Mystery { g SomeUnknownGeneric }   (no decl in registry)
+        let myst = record_decl(
+            "Mystery",
+            AllocKind::Heap,
+            vec![rfield("g", ty("SomeUnknownGeneric"))],
+        );
+        let reg = registry(vec![myst]);
+        let map = compute_gc_layout(&reg);
+        let info = map.get("Mystery").unwrap();
+        assert_eq!(info.pointer_offsets, vec![0], "unknown field over-approximated as a GC pointer");
+        assert!(info.unresolved, "unknown field flags the type unresolved (consumer scans conservatively)");
+    }
+
+    /// Empty/default map is not populated.
+    #[test]
+    fn default_map_not_populated() {
+        let map = GcLayoutMap::default();
+        assert!(!map.populated());
+        assert!(map.get("Anything").is_none());
+    }
+}

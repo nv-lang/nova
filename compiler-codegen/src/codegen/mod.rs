@@ -1,5 +1,6 @@
 pub mod emit_c;
 pub mod external_registry;
+pub mod gc_layout;
 pub mod may_gc;
 pub mod preempt_keep;
 pub mod runtime_registry;

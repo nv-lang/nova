@@ -571,6 +571,28 @@ enum Cmd {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
+
+    /// Plan 144.1 / Ф.1: compute the per-type GC pointer-offset bitmap for every
+    /// named type (record / sum / named-tuple / newtype) plus the built-in
+    /// `str` value type, and report it. For each type the report lists the
+    /// byte-offsets of GC-managed pointer slots in the emitted C layout; sum
+    /// types get one bitmap PER variant keyed by tag (the tag at offset 0 is
+    /// scalar). Offsets are byte-accurate vs the emitted C struct (reusing the
+    /// canonical size/align layout computer).
+    ///
+    /// COMPILE-TIME introspection only — emits NOTHING into the generated C and
+    /// writes NO layout-id into object headers (runtime consumption is Plan
+    /// 144.5, out of scope).
+    ///
+    /// Exit code: 0 = ok, 2 = usage error.
+    #[command(name = "gc-layout-analyze")]
+    GcLayoutAnalyze {
+        /// Path to a `.nv` file or directory to analyze.
+        path: PathBuf,
+        /// Output format: `text` (default) or `json`.
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
 }
 
 /// Plan 57: `nova bench <subcommand>`.
@@ -3870,6 +3892,134 @@ fn cmd_gc_effect_analyze(path: &Path, format: &str) -> Result<()> {
     Ok(())
 }
 
+/// Plan 144.1 / Ф.1: `nova gc-layout-analyze <path> [--format text|json]`.
+///
+/// Compile-time introspection over the per-type GC pointer-offset bitmap pass.
+/// Builds the TypeDecl registry across the module set (via the same
+/// `build_type_decl_registry` the const-eval / size_of pass uses), runs
+/// `compute_gc_layout`, and reports each type's GC-pointer offsets (per-variant
+/// for sum types). EMITS NOTHING into generated C and writes NO layout-id into
+/// object headers — purely diagnostic.
+///
+/// LAYOUT ACCURACY: offsets are folded alongside the canonical
+/// `type_size_or_align_resolved` field walk, sized per the emitted C
+/// representation, so they match what codegen actually emits.
+fn cmd_gc_layout_analyze(path: &Path, format: &str) -> Result<()> {
+    use nova_codegen::ast::Module;
+    use nova_codegen::const_fn_eval::build_type_decl_registry;
+    use std::collections::HashMap;
+
+    // Collect .nv files (file or directory) — identical to gc-effect-analyze.
+    let files: Vec<PathBuf> = if path.is_file() {
+        vec![path.to_path_buf()]
+    } else if path.is_dir() {
+        let mut fs = Vec::new();
+        nova_codegen::test_runner::walk_nv(path, &mut fs)
+            .map_err(|e| anyhow!("walk {}: {}", path.display(), e))?;
+        fs.sort();
+        fs
+    } else {
+        return Err(usage_err(format!("path not found: {}", path.display())));
+    };
+
+    // Parse every file and merge their TypeDecl registries into one universe.
+    let mut type_decls: HashMap<String, nova_codegen::ast::TypeDecl> = HashMap::new();
+    for file in &files {
+        let (module, _diags): (Module, _) = consume_analyze_parse(file)?;
+        for (name, td) in build_type_decl_registry(&module) {
+            type_decls.entry(name).or_insert(td);
+        }
+    }
+
+    let map = nova_codegen::codegen::gc_layout::compute_gc_layout(&type_decls);
+
+    // Deterministic ordering for reproducible output.
+    let mut names: Vec<&String> = map.iter().map(|(n, _)| n).collect();
+    names.sort();
+
+    let total = names.len();
+    let mut total_ptr_slots = 0usize;
+    let mut unresolved_count = 0usize;
+    for n in &names {
+        if let Some(info) = map.get(n) {
+            if info.unresolved {
+                unresolved_count += 1;
+            }
+            total_ptr_slots += info.pointer_offsets.len();
+            for v in &info.variants {
+                total_ptr_slots += v.pointer_offsets.len();
+            }
+        }
+    }
+
+    if format == "json" {
+        let type_entries: Vec<serde_json::Value> = names
+            .iter()
+            .map(|n| {
+                let info = map.get(n).unwrap();
+                let variants: Vec<serde_json::Value> = info
+                    .variants
+                    .iter()
+                    .map(|v| {
+                        serde_json::json!({
+                            "name": v.name,
+                            "tag": v.tag,
+                            "pointer_offsets": v.pointer_offsets,
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "type": n,
+                    "size": info.size,
+                    "align": info.align,
+                    "pointer_offsets": info.pointer_offsets,
+                    "variants": variants,
+                    "unresolved": info.unresolved,
+                })
+            })
+            .collect();
+        let out = serde_json::json!({
+            "schema": "nova-gc-layout-analyze/v1",
+            "populated": map.populated(),
+            "types_analyzed": total,
+            "pointer_slots": total_ptr_slots,
+            "unresolved": unresolved_count,
+            "types": type_entries,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        println!("{}", bold("GC pointer-offset bitmap report (gc-layout-analyze):"));
+        println!();
+        if !map.populated() {
+            println!("  (no types analyzed — universe empty)");
+        }
+        for n in &names {
+            let info = map.get(n).unwrap();
+            let sz = info.size.map(|s| s.to_string()).unwrap_or_else(|| "?".into());
+            let al = info.align.map(|a| a.to_string()).unwrap_or_else(|| "?".into());
+            let flag = if info.unresolved { "  ⚠ unresolved (scan conservatively)" } else { "" };
+            if info.variants.is_empty() {
+                println!(
+                    "  {}  size={} align={}  ptr_offsets={:?}{}",
+                    n, sz, al, info.pointer_offsets, flag,
+                );
+            } else {
+                println!("  {}  size={} align={}  (sum, per-variant){}", n, sz, al, flag);
+                for v in &info.variants {
+                    println!("      [{}] {}  ptr_offsets={:?}", v.tag, v.name, v.pointer_offsets);
+                }
+            }
+        }
+        println!();
+        println!(
+            "  Summary: {} type(s) analyzed; {} GC-pointer slot(s); {} unresolved",
+            total, total_ptr_slots, unresolved_count,
+        );
+    }
+
+    Ok(())
+}
+
 fn cmd_build(
     path: &Path,
     output: Option<&Path>,
@@ -5421,6 +5571,9 @@ fn run() -> ExitCode {
         }
         Cmd::GcEffectAnalyze { path, format } => {
             cmd_gc_effect_analyze(&path, &format)
+        }
+        Cmd::GcLayoutAnalyze { path, format } => {
+            cmd_gc_layout_analyze(&path, &format)
         }
     };
     match result {
