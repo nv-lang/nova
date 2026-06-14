@@ -36175,3 +36175,12 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   interp-машинерию (`emit_interpolated_str`) — не отдельный механизм; контракт-сообщение ведёт себя идентично
   любой `"${x}"`-строке. dual-populate (`message` raw-fallback + `message_expr`) избегает регрессии на
   не-interp-сайтах без отдельного error-пути.
+
+- **Scoping: локальное связывание шейдоунит модульную свободную функцию (2026-06-14, fix)**:
+  закреплено лексическое правило — параметр/`let` с именем `f` (в частности closure-параметр
+  `f fn() -> T`) перекрывает одноимённую свободную `fn f` модуля. Был баг в `check_call_argbind`
+  (`Ident(name)` резолвился прямо из `fn_decls` мимо `scope`), всплывший как регрессия plan-153
+  (`Vec.@resize_with`/`@fill_with`: вызов closure `f()` ловил свободную `fn f` ENTRY-модуля →
+  ложное «обязательный параметр не передан»). Фикс — `scope.contains_key` guard перед free-fn
+  lookup; closure-вызов валидируется через fn-type/codegen. Не новый дизайн — приведение
+  реализации к ожидаемой семантике шейдоунинга. Guard-тест `plan153_1/resize_with_free_fn_shadow`.
