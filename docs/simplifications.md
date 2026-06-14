@@ -36133,6 +36133,40 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   ребилда. plan153_1 5/5 + plan153_6 3/3; 0 регрессий (blast-radius + contracts 267/0,
   прежний 266/1 = flaky). Коммиты `5f306045` (153.1) + `c8f3d08e` (153.6).
 
+- **Plan 153.1 follow-up — codegen-полнота: generic-method-overload-mono + variadic
+  + value-record slice (2026-06-13)**. Снимает упрощения-отложения (1)(2) записи
+  153.1 выше (они были codegen-лимитами, не дизайном — теперь починены).
+  - **`[M-138.2-generic-method-overload-mono]` ✅ FIXED.** Mono-диспатч коллапсировал
+    одноимённые overloads first-by-name (`v.cap(10)` ловил 0-арг геттер → «too many
+    args»). Корень: `mono_method_decls` keyed `(type,name)` = один FnDecl на ключ +
+    mono-sentinel с пустым `param_c_types`. Фикс (8 правок `emit_c.rs`): side-map
+    `mono_method_fndecl_for_name` (несёт полный FnDecl per mono-instance) +
+    call-site дизамбигуация по **арности → param-C-типам** (вместо first-wins
+    `.find`), + suffix `__<paramtype>` на mangled-имя для overload_index>0, +
+    arity-aware выбор в **return-type inference** (`infer_mono_method_ret_with_args`
+    и Ф.3-fallback) — последнее чинит **chained** receiver `v.cap(n).push(x)` (Self/`@`
+    резолвится в mono-тип). Гейт `same_name.len()<=1` сохраняет single-overload путь.
+    Следствие: **`@cap_to`→`@cap`** (точный capacity-сеттер вернул каноничное имя,
+    overload getter/setter), fluent-chain работает. D84 (10-overloading) дополнен
+    ✅-нотой «generic-type overloads в монорфизации».
+  - **`[M-153-vec-of-variadic-codegen]` ✅ CLOSED** (commit `3d9a7361`). `Vec[T].of(...args
+    []T) => args` (variadic static-конструктор). Корень: `lookup_variadic_arity` не
+    обрабатывал turbofish-static форму `Type[T].method(...)` (парсится `Member{obj:
+    TurboFish}`); добавлен `TurboFish{base:Ident}`-arm → variadic-routing синтезирует
+    `ArrayLit` из хвоста args → ре-диспатч в обычный mono-static. C-путь: `with_capacity(n)`
+    + N×`push` → `static_of(собранный []T)` → тело `return args` (zero-copy). Constructor
+    приземлён в `core.nv`. Scope: `[]int.of(...)` (array-ext-сахар) — отдельный gap
+    (static-методы на `__array`-receiver не диспатчатся вообще), не часть маркера.
+  - **Value-record slice codegen ✅** (commit `8d493e5a`). При построении slice-view
+    у Vec элемент-тип в касте `(ety*)(data+off)` брал mangled `_p`-суффикс (`T_p` вместо
+    `T*`) → CC-FAIL для value-record элементов. Фикс: un-mangle `_p`→`*` перед кастом.
+    plan96 19/4→23/3.
+  - Тесты: `plan153_1/generic_overload.nv` 3/3 (pos: арность+param-type+chain),
+    `plan153_0/variadic_of.nv` 3/3 (multi/empty/non-int). Neg overload'а покрыт
+    контрактным `cap_below_len_neg` (`@cap(n) requires n>=len`). 0 регрессий (broad
+    sweep). Новый followup: `[M-138.2-overload-no-match-typecheck]` (type-checker
+    должен отвергать no-match overload-вызов чисто, сейчас CC-FAIL).
+
 - **Plan 140.3 — унификация failure-классификации + interp-сообщения контрактов (2026-06-13)**: (1) assert и
   контракт-нарушение теперь тегают `error_kind = NOVA_THROW_PANIC` как `nv_panic` (раньше — только error_msg,
   kind=USER) → три пути провала (panic/assert/contract) классифицируются ОДИНАКОВО (consume/supervised видят

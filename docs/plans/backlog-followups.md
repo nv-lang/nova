@@ -245,6 +245,14 @@
   getter-int. Box-arity repro + `@cap(n)` statement+chain PASS; STRICT no-op для 1-overload.
   **Разблокирует** (отдельные std-рефакторы): merge `@splice`→`@insert`-overload,
   append/extend-консолидация (`[M-153.1-append-extend-consolidation]`).
+- **`[M-138.2-overload-no-match-typecheck]`** (planned, P2, home **Plan 138.2 / type-checker**):
+  вызов generic-метод-overload'а **без совпадения** по арности/типам (напр. `b.slot(1, 2)` где
+  `@slot` = 0-арг getter + 1-арг setter) сейчас **CC-FAIL'ит** на clang-стадии (codegen fall-
+  through к первому кандидату → «too many arguments»), а не отвергается чисто type-checker'ом до
+  codegen. Нужно: валидация overload-арности/типов на call-site (`types/mod.rs`, E_… +
+  кандидаты-сигнатуры в hint). Surfaced при закрытии `[M-138.2-generic-method-overload-mono]`
+  (dispatch для МАТЧАЩИХ overload'ов починен; no-match-диагностика — отдельный type-check слой).
+  `EXPECT_COMPILE_ERROR` (Nova-codegen) сейчас не ловит этот кейс (codegen «успешен», падает clang).
 - **`[M-153.1-append-extend-consolidation]`** (planned, home **Plan 153.1 / D259**): план
   хотел один `append` (concrete Vec bulk + generic Iter overload), `extend` убрать.
   Заблокировано тем же overload-collapse + у generic-`append` (`for x in items {@push(x)}`)

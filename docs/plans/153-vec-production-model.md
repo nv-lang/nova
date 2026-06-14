@@ -289,6 +289,24 @@ remove/index/get/first/last/clear/truncate/reverse/fill).
 - **Зависимость:** устойчивый `@`-chaining сейчас сломан для generic-метода/value-
   record receiver — **`[M-138.2-vec-self-return]`** (цепочка мис-типизирует receiver
   в `void*`). Конвенция раскатывается **только после** фикса (153.1 Ф.0).
+
+> **✅ Статус 153.1 codegen-полнота (2026-06-14) — критерии приёмки.** Codegen-блокеры
+> chaining/overload сняты: `[M-138.2-vec-self-return]` (простой `-> @`, был закрыт 138.2+152.1)
+> + `[M-138.2-generic-method-overload-mono]` (overloaded setter chain + dispatch, FIXED `f7f56f0f`)
+> + `[M-153-vec-of-variadic-codegen]` (FIXED `3d9a7361`). **Критерии приёмки (все ✅, проверены
+> релизным `nova`):**
+> 1. Generic-type overload по **арности** в mono: `@cap()` getter vs `@cap(n)` setter
+>    (`v.cap(10)` → setter, не «too many args»). Тест `plan153_1/generic_overload.nv`.
+> 2. Overload по **типу аргумента** (та же арность): `@tag(int)` vs `@tag(str)` → правильное тело.
+> 3. **Fluent chain** мутирующего `-> @` setter: `v.cap(n).push(x)` — return инферится как
+>    mono-receiver (Self), `.push` находит метод. `generic_overload.nv` + `core_api.nv`.
+> 4. **Single-overload** методы не затронуты (гейт `same_name.len()<=1`, строго no-op).
+> 5. **Variadic** `Vec[T].of(...args []T)`: multi/empty/non-int собираются+диспатчат.
+>    `plan153_0/variadic_of.nv`.
+> 6. `@cap(n)` контракт `n>=len`: `n<len` → паника (neg-тест `cap_below_len_neg`).
+> 7. **0 регрессий** (broad sweep: plan90_1/131/96/138_2/128/101/62/basics/generics/map_literals/153_0/1/6).
+> Остаток (followup, не гейт приёмки): `[M-138.2-overload-no-match-typecheck]` (no-match overload →
+> CC-FAIL вместо чистого type-check error); `[]int.of` array-ext-сахар (отдельный static-dispatch gap).
 - **Внутри type-методов — читать ПОЛЕ напрямую (`@cap`), не getter (`@cap()`)** —
   ноль индиректности (не зависим от инлайна `=> @cap`), яснее. Getter — внешний
   контракт. (vec_owned уже так.)
