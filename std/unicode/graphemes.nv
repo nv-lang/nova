@@ -1,0 +1,251 @@
+// Plan 152.4.3 (D253): grapheme-cluster segmentation (UAX #29) — `as_graphemes()`
+// lens. A grapheme = a user-perceived character (may be several codepoints): é
+// (e + combining), 🇺🇸 (two regional indicators), 👨‍👩‍👧 (ZWJ emoji) each = 1.
+//
+// Third string lens, symmetric with `as_bytes()` (bytes) / `as_chars()`
+// (codepoints): `as_graphemes()` (extended grapheme clusters). Decoding lens, so
+// a STREAM (iterator), not a collection — like CharsIter (no positional cache;
+// `count()` is O(n)). Opt-in `std.unicode` peer; tables are lazy-static.
+//
+// Algorithm: UAX #29 extended grapheme cluster boundary rules GB1-GB13 over the
+// Grapheme_Cluster_Break property (grapheme_data.nv, generated from
+// GraphemeBreakProperty.txt) + Extended_Pictographic (emoji-data.txt) for GB11.
+
+module std.unicode
+
+import std.collections.vec.{Vec}
+
+// ─── GCB category codes (MUST match nova-codegen unicode `gcb_cat_code`) ───
+const GCB_CR int = 1
+const GCB_LF int = 2
+const GCB_CONTROL int = 3
+const GCB_EXTEND int = 4
+const GCB_ZWJ int = 5
+const GCB_RI int = 6
+const GCB_PREPEND int = 7
+const GCB_SPACINGMARK int = 8
+const GCB_L int = 9
+const GCB_V int = 10
+const GCB_T int = 11
+const GCB_LV int = 12
+const GCB_LVT int = 13
+
+// ─── lazy-static range tables (built once on first touch) ───
+// Flat int arrays: GCB stride 3 (lo,hi,cat), ExtPict stride 2 (lo,hi); both
+// sorted by lo (binary search). `hex` is shared from the `std.unicode` peer
+// normalize.nv (folder-module peers share declarations).
+fn parse_flat(data str) -> Vec[int] {
+    mut out = Vec[int].with_capacity(1024)
+    for entry in data.split(";") {
+        for f in entry.split(",") {
+            ro v = hex(f)
+            if v >= 0 { out.push(v) }
+        }
+    }
+    out
+}
+
+ro gcb_flat Vec[int] = parse_flat(GCB_DATA)
+ro extpict_flat Vec[int] = parse_flat(EXTPICT_DATA)
+
+// Binary search over sorted (lo,hi,cat) triples; returns cat or 0 (Other).
+fn range_lookup3(t Vec[int], cp int) -> int {
+    ro count = t.len() / 3
+    mut lo = 0
+    mut hi = count - 1
+    mut res = 0
+    while lo <= hi {
+        ro mid = (lo + hi) / 2
+        ro rlo = t[mid * 3]
+        ro rhi = t[mid * 3 + 1]
+        if cp < rlo {
+            hi = mid - 1
+        } else if cp > rhi {
+            lo = mid + 1
+        } else {
+            res = t[mid * 3 + 2]
+            lo = hi + 1
+        }
+    }
+    res
+}
+
+// Binary search over sorted (lo,hi) pairs; membership test.
+fn in_ranges2(t Vec[int], cp int) -> bool {
+    ro count = t.len() / 2
+    mut lo = 0
+    mut hi = count - 1
+    mut res = false
+    while lo <= hi {
+        ro mid = (lo + hi) / 2
+        ro rlo = t[mid * 2]
+        ro rhi = t[mid * 2 + 1]
+        if cp < rlo {
+            hi = mid - 1
+        } else if cp > rhi {
+            lo = mid + 1
+        } else {
+            res = true
+            lo = hi + 1
+        }
+    }
+    res
+}
+
+fn gcb(cp int) -> int => range_lookup3(gcb_flat, cp)
+fn is_ext_pict(cp int) -> bool => in_ranges2(extpict_flat, cp)
+
+// GB9c (Indic Conjunct Break, Unicode 15.1+): Indic_Conjunct_Break property.
+const INCB_CONSONANT int = 1
+const INCB_EXTEND int = 2
+const INCB_LINKER int = 3
+ro incb_flat Vec[int] = parse_flat(INCB_DATA)
+fn incb_of(cp int) -> int => range_lookup3(incb_flat, cp)
+
+// UTF-8 decode at byte offset `i`: returns (codepoint, byte_step). R-UTF8 (D26)
+// makes this total; the `else` arm guards a truncated tail (single-byte step).
+fn decode_at(s str, i int) -> (int, int) {
+    ro bytes = s.as_bytes()
+    ro n = s.byte_len()
+    ro b = bytes[i] as int
+    if b < 0x80 {
+        (b, 1)
+    } else if ((b & 0xE0) == 0xC0) && (i + 1 < n) {
+        (((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F), 2)
+    } else if ((b & 0xF0) == 0xE0) && (i + 2 < n) {
+        (((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F), 3)
+    } else if ((b & 0xF8) == 0xF0) && (i + 3 < n) {
+        (((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F), 4)
+    } else {
+        (b, 1)
+    }
+}
+
+// Is there a grapheme boundary BEFORE `cur` (between `prev` and `cur`)?
+// `gb11` = prev is a ZWJ closing an `ExtPict Extend*` run (GB11 eligibility);
+// `cur_ep` = cur is Extended_Pictographic; `ri_count` = consecutive RIs ending at prev.
+fn is_grapheme_break(prev int, cur int, gb11 bool, cur_ep bool, ri_count int, incb_eligible bool, cur_incb_cons bool) -> bool {
+    if prev == GCB_CR && cur == GCB_LF {
+        false                                                       // GB3
+    } else if prev == GCB_CONTROL || prev == GCB_CR || prev == GCB_LF {
+        true                                                        // GB4
+    } else if cur == GCB_CONTROL || cur == GCB_CR || cur == GCB_LF {
+        true                                                        // GB5
+    } else if prev == GCB_L && (cur == GCB_L || cur == GCB_V || cur == GCB_LV || cur == GCB_LVT) {
+        false                                                       // GB6
+    } else if (prev == GCB_LV || prev == GCB_V) && (cur == GCB_V || cur == GCB_T) {
+        false                                                       // GB7
+    } else if (prev == GCB_LVT || prev == GCB_T) && cur == GCB_T {
+        false                                                       // GB8
+    } else if cur == GCB_EXTEND || cur == GCB_ZWJ {
+        false                                                       // GB9
+    } else if cur == GCB_SPACINGMARK {
+        false                                                       // GB9a
+    } else if prev == GCB_PREPEND {
+        false                                                       // GB9b
+    } else if incb_eligible && cur_incb_cons {
+        false                                                       // GB9c (Indic conjunct)
+    } else if gb11 && cur_ep {
+        false                                                       // GB11
+    } else if prev == GCB_RI && cur == GCB_RI && ((ri_count % 2) == 1) {
+        false                                                       // GB12/13
+    } else {
+        true                                                        // GB999
+    }
+}
+
+// ─── GraphemesView — the third lens ───
+export type GraphemesView value priv {
+    buf str    // borrows str (alias of the buffer; GC sees ptr through the field)
+    pos int    // current byte offset into buf
+}
+
+fn GraphemesView.new(buf str) -> GraphemesView => { buf, pos: 0 }
+
+// `Next[str]`: the next extended grapheme cluster as a byte-slice of `buf`, or
+// `None` when exhausted. Decodes codepoints from `pos`, applies UAX #29 boundary
+// rules, returns `buf[start..pos]`.
+export fn GraphemesView mut @next() -> Option[str] {
+    ro n = @buf.byte_len()
+    if @pos >= n { return None }
+    ro start = @pos
+    // First codepoint of the cluster (GB1: no break at start).
+    ro (cp0, step0) = decode_at(@buf, @pos)
+    @pos = @pos + step0
+    mut prev = gcb(cp0)
+    mut ri_count = if prev == GCB_RI { 1 } else { 0 }
+    mut ext_run = is_ext_pict(cp0)   // in an `ExtPict Extend*` run
+    mut gb11 = false                 // prev is a GB11-eligible ZWJ
+    mut incb_run = incb_of(cp0) == INCB_CONSONANT   // in an InCB Consonant-started run
+    mut incb_linker = false                          // run has seen >=1 InCB Linker (GB9c)
+    mut going = true
+    while going && @pos < n {
+        ro (cp1, step1) = decode_at(@buf, @pos)
+        ro cur = gcb(cp1)
+        ro cur_ep = is_ext_pict(cp1)
+        ro cur_incb = incb_of(cp1)
+        if is_grapheme_break(prev, cur, gb11, cur_ep, ri_count, incb_run && incb_linker, cur_incb == INCB_CONSONANT) {
+            going = false
+        } else {
+            @pos = @pos + step1
+            if cur == GCB_RI {
+                if prev == GCB_RI { ri_count = ri_count + 1 } else { ri_count = 1 }
+            } else {
+                ri_count = 0
+            }
+            if cur == GCB_ZWJ && ext_run {
+                gb11 = true
+                ext_run = false
+            } else if cur_ep {
+                ext_run = true
+                gb11 = false
+            } else if cur == GCB_EXTEND && ext_run {
+                ext_run = true
+                gb11 = false
+            } else {
+                ext_run = false
+                gb11 = false
+            }
+            // GB9c InCB run tracking: a Consonant starts a run; InCB Extend/Linker
+            // continue it (a Linker arms the conjunct); anything else ends it.
+            if cur_incb == INCB_CONSONANT {
+                incb_run = true
+                incb_linker = false
+            } else if incb_run && (cur_incb == INCB_EXTEND || cur_incb == INCB_LINKER) {
+                if cur_incb == INCB_LINKER { incb_linker = true }
+            } else {
+                incb_run = false
+                incb_linker = false
+            }
+            prev = cur
+        }
+    }
+    Some(@buf[start..@pos])
+}
+
+// `Iter` (self-iterator): `for g in s.as_graphemes()` routes through for-in (D58).
+export fn GraphemesView @iter() -> GraphemesView => @
+
+// Number of grapheme clusters remaining. O(n). Non-mutating: iterates a value
+// copy (GraphemesView is a `value` record), so safe on a temporary.
+export fn GraphemesView @count() -> int {
+    mut it = @
+    mut c = 0
+    mut going = true
+    while going {
+        match it.next() {
+            Some(_) => { c = c + 1 }
+            None => { going = false }
+        }
+    }
+    c
+}
+
+// True if no graphemes remain. O(1).
+export fn GraphemesView @is_empty() -> bool => @pos >= @buf.byte_len()
+
+// ─── str lens ───
+// Lazy grapheme iterator (borrows `self`; O(1) to create). The grapheme layer of
+// the lens model: `s.as_graphemes().count()` for user-visible length, `for g in
+// s.as_graphemes()` to walk visible characters.
+export fn str @as_graphemes() -> GraphemesView => GraphemesView.new(@)

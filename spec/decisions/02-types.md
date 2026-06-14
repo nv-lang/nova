@@ -6628,9 +6628,12 @@ fn int @compare(other int) -> int =>
   typed-error-полями) не матчил `Nova_`-sum-тест. Фикс: `reconstruct_mono_sum_schema`
   (substituted-схема вариантов из generic-шаблона + recorded type-args; tag-префикс = полный
   `Nova_<mono>`) + `NovaRes_`-ветка в `emit_field_eq`/`==`-операторе через `novares_ok_err`.
-  **Остаток `[M-153-result-eq-literal-expected-type]`:** `result == Ok(x)` с non-default-E
-  (≠`str`) — литерал `Ok(x)` дефолтит `E=str`, не унифицируется с типом LHS → нужна expected-type
-  propagation в чекере (`Result[_, str]` уже работает; иначе `match`).
+  **`result == Ok(x)` / `== Err(x)` ✅** (`[M-153-result-eq-literal-expected-type]` RESOLVED): голый
+  `Ok/Err`-литерал с non-default-E (напр. `binary_search`→`Result[int,int]`) дефолтил `E=str` и не
+  совпадал по типу с LHS → CC-FAIL. Фикс codegen-local: в `==`-NovaRes_-ветке, если типы операндов
+  расходятся и одна сторона — голый result-ctor, она переэмитится под concrete `NovaRes_<n>` другой
+  (`reemit_result_variant_as`). General expected-type propagation для overload-резолва (`@into`)
+  остаётся в `Q-overload-result-type`.
 - **Generic sort/min/max (D185, Plan 91.8c):** generic `fn[T Compare]` array methods — отдельный subplan.
 
 ### Связь

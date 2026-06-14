@@ -170,6 +170,12 @@ export fn Vec[T] consume @into_raw() -> *mut T => @data
 
 /// Build a `Vec[T]` by copying every element of an iterable source.
 ///
+/// **Convention (Plan 153.1 / D259):** use `from` to convert an **existing**
+/// `[]T` / collection — `Vec[int].from(some_slice)`. For a **literal element
+/// list** prefer the variadic `Vec[T].of(a, b, c)`: `Vec[int].of(1, 2, 3)` reads
+/// cleaner than `from([1, 2, 3])`, which is redundant under D239 (a literal
+/// `[1, 2, 3]` is already a `Vec[int]`). `of` narrows too (`Vec[u8].of(1, 2, 3)`).
+///
 /// Plan 138.1 Ф.0.1: the source is annotated `[]T` (NOT a distinct built-in
 /// array param). After the D239 type-flip `[]T` ≡ `Vec[T]`, so this signature
 /// becomes `from(items Vec[T])` — a `clone`-like copy — and continues to

@@ -455,7 +455,7 @@ pub struct CEmitter {
     /// name. Each entry is `(expr, span, message)` — `message` (Plan 140.1
     /// Ф.2, D24 amend) is the optional user message for the location-first
     /// violation diagnostic (`<file>:<line>: invariant failed: <msg> (<expr>)`).
-    record_invariants: HashMap<String, Vec<(Expr, Span, Option<String>)>>,
+    record_invariants: HashMap<String, Vec<(Expr, Span, Option<String>, Option<Expr>)>>,
     /// Plan 33.1 Ф.4 (D24): если установлено — функция имеет ensures-контракты,
     /// и все `Stmt::Return X` подменяются на `{ _nova_result = X; goto <label>; }`.
     /// Trailing block-expression также. После label эмитятся ensures-checks
@@ -488,12 +488,14 @@ pub struct CEmitter {
     /// во всём модуле — глобально восстанавливает legacy zero-cost. Default
     /// `false` (enforce-with-elision: недоказанные проверяются и в release).
     contracts_off: bool,
-    /// Plan 140 Ф.2: per-fn `#unchecked` opt-out для тела ТЕКУЩЕЙ функции.
-    /// Устанавливается на входе в emit fn-body из `f.contracts_unchecked`,
-    /// восстанавливается на выходе (parallel to `in_realtime`). Используется
-    /// body-уровневыми эмиттерами (`assert_static`/`assume`/record-invariant
-    /// при конструировании), которые не имеют прямого доступа к `&FnDecl`.
-    contracts_unchecked_fn: bool,
+    /// Plan 140 Ф.2 + Plan 140.3 ([M-140-contract-levels]): per-fn contract
+    /// opt-out (`#unchecked` / `#unchecked(kinds)`) для тела ТЕКУЩЕЙ функции,
+    /// УЖЕ объединённый с module-level opt-out. Set на входе в fn-body,
+    /// restored на выходе. Per-kind гейт — `contracts_elided_for(kind)` /
+    /// `invariants_elided_here()`.
+    contract_opt_out_fn: crate::ast::ContractOptOut,
+    /// Plan 140.3: module-level `#unchecked` opt-out (set при входе в module).
+    contract_opt_out_module: crate::ast::ContractOptOut,
     /// Maps array variable name → actual element C type (e.g. "Nova_Box*").
     /// The array always uses nova_int storage but elements may be pointers to records.
     array_element_types: HashMap<String, String>,
@@ -1074,7 +1076,8 @@ impl CEmitter {
             proven_index_sites: std::collections::HashSet::new(),
             proven_index_sites_contract: std::collections::HashSet::new(),
             contracts_off: false,
-            contracts_unchecked_fn: false,
+            contract_opt_out_fn: crate::ast::ContractOptOut::default(),
+            contract_opt_out_module: crate::ast::ContractOptOut::default(),
             record_invariants: HashMap::new(),
             array_element_types: HashMap::new(),
             option_inner_types: HashMap::new(),
@@ -1426,14 +1429,25 @@ impl CEmitter {
         raw_src: &str,
         file_lit: &str,
         line: usize,
-        contract: &Contract,
+        message: &Option<String>,
+        message_expr: &Option<Expr>,
     ) -> Result<(), String> {
         let esc_src = Self::escape_c_str(raw_src);
-        if let Some(msg_expr) = &contract.message_expr {
+        if let Some(msg_expr) = message_expr {
             if let ExprKind::InterpolatedStr { parts } = &msg_expr.kind {
                 self.line(&format!("if (!({})) {{", cond_c));
                 self.indent += 1;
+                // Capture the emitted message-build region so an `ensures` message
+                // can have `result` rewritten to the collected `_nova_result` C var
+                // (mirror of the condition's `substitute_result_var`), letting
+                // `${result}` interpolate the actual return value. For `requires`
+                // (PRE) `result` is illegal, so the region is left untouched.
+                let region_start = self.out.len();
                 let msg_var = self.emit_interpolated_str(parts)?;
+                if kind_c == "NOVA_CONTRACT_POST" {
+                    let region = self.out.split_off(region_start);
+                    self.out.push_str(&Self::substitute_result_var_in_code(&region));
+                }
                 self.line(&format!(
                     "nova_contract_violation_dyn({}, \"{}\", \"{}\", \"{}\", {}, {});",
                     kind_c, fn_name, esc_src, file_lit, line, msg_var
@@ -1443,7 +1457,7 @@ impl CEmitter {
                 return Ok(());
             }
         }
-        let msg_arg = Self::contract_msg_arg(&contract.message);
+        let msg_arg = Self::contract_msg_arg(message);
         self.line(&format!(
             "if (!({})) nova_contract_violation({}, \"{}\", \"{}\", \"{}\", {}, {});",
             cond_c, kind_c, fn_name, esc_src, file_lit, line, msg_arg
@@ -1511,7 +1525,30 @@ impl CEmitter {
     /// Используется body-уровневыми эмиттерами (`assert_static`/`assume`/
     /// record-invariant), у которых нет прямого `&FnDecl`.
     fn contracts_elided_here(&self) -> bool {
-        self.contracts_off || self.contracts_unchecked_fn
+        // body-level assert_static/assume — precondition-like → requires-gated.
+        self.contracts_elided_for(crate::ast::ContractKind::Requires)
+    }
+
+    /// Plan 140.3 ([M-140-contract-levels]): элидируется ли контракт-вид `kind`
+    /// здесь? = build `--contracts=off` ИЛИ module-opt-out(kind) ИЛИ fn-opt-out(kind).
+    /// `Requires` → `.requires`; `Ensures`/`EnsuresFail` → `.ensures`.
+    fn contracts_elided_for(&self, kind: crate::ast::ContractKind) -> bool {
+        if self.contracts_off {
+            return true;
+        }
+        let pick = |o: &crate::ast::ContractOptOut| match kind {
+            crate::ast::ContractKind::Requires => o.requires,
+            _ => o.ensures,
+        };
+        pick(&self.contract_opt_out_module) || pick(&self.contract_opt_out_fn)
+    }
+
+    /// Plan 140.3: элидируется ли type-`invariant`-страховка здесь?
+    /// = `--contracts=off` ИЛИ module/fn `#unchecked(invariant)` (или bare).
+    fn invariants_elided_here(&self) -> bool {
+        self.contracts_off
+            || self.contract_opt_out_module.invariant
+            || self.contract_opt_out_fn.invariant
     }
 
     /// Get the Span of a statement (where in source it came from).
@@ -1580,6 +1617,10 @@ impl CEmitter {
     }
 
     pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
+        // Plan 140.3 ([M-140-contract-levels]): module-level `#unchecked` opt-out
+        // applies to every fn/type in the module — ORed with per-fn opt-out by
+        // `contracts_elided_for` / `invariants_elided_here`.
+        self.contract_opt_out_module = module.contract_opt_out.clone();
         // Plan 127 Ф.2/Ф.3: run value-record escape analysis upfront so
         // codegen знает which value-record locals must be heap-promoted
         // (AllocKind::ValueHeapPromoted). Cheap: single AST walk; result
@@ -1737,8 +1778,8 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Type(td) = item {
                 if !td.invariants.is_empty() {
-                    let invs: Vec<(Expr, Span, Option<String>)> = td.invariants.iter()
-                        .map(|c| (c.expr.clone(), c.span, c.message.clone())).collect();
+                    let invs: Vec<(Expr, Span, Option<String>, Option<Expr>)> = td.invariants.iter()
+                        .map(|c| (c.expr.clone(), c.span, c.message.clone(), c.message_expr.clone())).collect();
                     self.record_invariants.insert(td.name.clone(), invs);
                 }
             }
@@ -2637,6 +2678,14 @@ impl CEmitter {
             }
         }
 
+        // 1b1. Plan 152.4 (D199 ro-runtime side): module-level `ro NAME = EXPR`
+        // lazy-static globals are emitted LATER — see «1b1-moved» just after the
+        // `/*__GENERIC_TYPE_DEFS__*/` placeholder. They must come after generic
+        // type instance definitions (a lazy-static's type can be a mono'd generic
+        // like `HashMap[int,str]`; its `static <T> _value;` storage decl needs the
+        // typedef first), and emitting their getter body there also lets call
+        // routing (method_receivers §1c / generics §1d) be fully set up.
+
         // 1b2. D39 / Plan 11 Ф.9: collect embed-fields per record-type.
         // Используется на 1d для генерации auto-proxy methods.
         for item in &module.items {
@@ -3092,6 +3141,45 @@ impl CEmitter {
 
         // Plan 48 Ф.3: placeholder for generic type instance definitions (filled after drain).
         self.line("/*__GENERIC_TYPE_DEFS__*/");
+
+        // 1b1-moved. Plan 152.4 (D199 ro-runtime side): module-level
+        // `ro NAME = EXPR` — a lazy-static global. The strict const/ro partition
+        // (`check_ro_module_partition`) guarantees only a genuinely runtime RHS
+        // (call/effect/alloc) reaches here as `ro` (a constexpr-eligible RHS is
+        // forced to `const` and handled in §1b above). We reuse the const
+        // lazy-init getter (`emit_lazy_const`): file-scope storage + `init` flag
+        // + `nova_const_<name>()` built on first use; reads route through
+        // `lazy_consts` (same desugaring as a non-constexpr `const`, Plan 14 Ф.2).
+        //
+        // Emitted HERE (after `/*__GENERIC_TYPE_DEFS__*/`, before fn forward
+        // decls) — NOT in §1b — for two reasons: (1) the global's C type may be a
+        // mono'd generic (`HashMap[int,str]` → `Nova_HashMap____nova_int__nova_str`)
+        // whose typedef is spliced into `__GENERIC_TYPE_DEFS__`; the `static <T>
+        // _value;` storage decl must follow that typedef. (2) The getter body
+        // calls into user fns; method-receiver (§1c) and generic (§1d) routing
+        // tables are fully populated by now, so the call lowers correctly.
+        // Single named binding only (Ident, or a single-segment unit Variant for
+        // the UPPER_CASE constant-name form), non-ghost. Thread-safety of
+        // first-touch init: see `[M-lazy-static-thread-safety]`.
+        for item in &module.items {
+            if let Item::Let(l) = item {
+                if l.is_ghost { continue; }
+                let name = match &l.pattern {
+                    Pattern::Ident { name, .. } => Some(name.clone()),
+                    Pattern::Variant { path, kind: VariantPatternKind::Unit, .. }
+                        if path.len() == 1 => Some(path[0].clone()),
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    let ty_c = if let Some(ty) = &l.ty {
+                        self.type_ref_to_c(ty)?
+                    } else {
+                        self.infer_expr_c_type(&l.value)
+                    };
+                    self.emit_lazy_const(&name, &ty_c, &l.value)?;
+                }
+            }
+        }
 
         // 2. Forward declarations for all functions (types are now known)
         for item in &module.items {
@@ -4049,6 +4137,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.indent = 1;
         self.line(&format!("if (!_nova_const_{}_init) {{", name));
         self.indent = 2;
+        // Plan 152.4: register the storage cell as a GC root BEFORE building.
+        // The Boehm backend runs with GC_set_no_dls(1) (alloc_boehm.c), which
+        // leaves the program's static/BSS data unscanned — so this file-scope
+        // `static` pointer is NOT a GC root by default, and a large lazy value
+        // (e.g. the Unicode HashMap tables) is collected the first time GC fires
+        // under memory pressure → use-after-free. Registering the cell up front
+        // means a GC triggered mid-build sees it (still NULL — harmless), and
+        // after assignment the object lives in a scanned root. No-op under
+        // malloc/RC backends.
+        self.line(&format!(
+            "nova_gc_add_root(&_nova_const_{n}_value, (char*)(&_nova_const_{n}_value) + sizeof(_nova_const_{n}_value));",
+            n = name
+        ));
         // Передать ty_c как ожидаемый record-target для D55 coercion
         // (`const FOO = { ... }` без явного имени типа должен подхватить
         // тип из аннотации/typed-target).
@@ -8785,6 +8886,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 self.current_receiver_type = prev_recv;
                 let params_s = if parts.is_empty() { "void".into() } else { parts.join(", ") };
                 self.var_types.insert(format!("fn_ret_{}", f.name), ret_c.clone());
+                // Plan 152.4.3: type-qualified return key (disambiguates same-named
+                // methods across types in the inference fallback).
+                self.var_types.insert(format!("fn_ret_{}_{}", recv.type_name, f.name), ret_c.clone());
                 self.line(&format!("static {} {}({});", ret_c, mangled, params_s));
                 return Ok(());
             }
@@ -8809,6 +8913,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let mangled = self.mangle_fn(f);
         // Register return type so call sites can infer print helper
         self.var_types.insert(format!("fn_ret_{}", f.name), ret.clone());
+        // Plan 152.4.3: also register a TYPE-QUALIFIED return key for methods —
+        // the name-only key above is last-wins across types, so same-named methods
+        // on different receivers collide (e.g. `CharsIter.next -> Option[char]` vs
+        // `GraphemesView.next -> Option[str]`); the inference fallback prefers this.
+        if let Some(recv) = &f.receiver {
+            self.var_types.insert(format!("fn_ret_{}_{}", recv.type_name, f.name), ret.clone());
+        }
         // Plan 72 P2-A: register Result[T,E] return params so `let r = f(...)`
         // (call RHS, no annotation) populates `result_type_params[r]` correctly
         // instead of falling back to `(nova_int, nova_str)`.
@@ -13387,16 +13498,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // — a soundness hole. This ports the exact logic from `emit_fn`
         // (lines ~14555+): build-/per-fn opt-out folds into `has_contracts`,
         // Z3-proven contracts elide via `proven_contracts`, quantifiers skip.
-        let mono_contracts_elided_fn = self.contracts_off || fn_decl.contracts_unchecked;
-        let mono_has_contracts = !fn_decl.contracts.is_empty()
-            && !matches!(fn_decl.verify_mode, VerifyMode::Unverified)
-            && !mono_contracts_elided_fn;
-        let mono_has_ensures = mono_has_contracts
+        // Plan 140.3 ([M-140-contract-levels]): per-kind opt-out. Set the fn-level
+        // opt-out (contracts_elided_for ORs it with module-level), then gate
+        // requires and ensures INDEPENDENTLY. Restored at fn-body end below.
+        let prev_mono_contract_opt_out = self.contract_opt_out_fn.clone();
+        self.contract_opt_out_fn = fn_decl.contract_opt_out.clone();
+        let mono_verifiable = !fn_decl.contracts.is_empty()
+            && !matches!(fn_decl.verify_mode, VerifyMode::Unverified);
+        let mono_has_contracts = mono_verifiable
+            && !self.contracts_elided_for(ContractKind::Requires);
+        let mono_has_ensures = mono_verifiable
+            && !self.contracts_elided_for(ContractKind::Ensures)
             && fn_decl.contracts.iter().any(|c| matches!(c.kind, ContractKind::Ensures));
-        // Expose per-fn contract opt-out to body-level emitters
-        // (assert_static/assume), restored at fn-body end below.
-        let prev_mono_contracts_unchecked = self.contracts_unchecked_fn;
-        self.contracts_unchecked_fn = mono_contracts_elided_fn;
         // emit requires checks (enforce-with-elision; unproven stay in release).
         if mono_has_contracts {
             for c in &fn_decl.contracts {
@@ -13411,7 +13524,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     let expr_src = Self::expr_to_display(&c.expr);
                     let (file_lit, line) = self.loc_for_span(c.span.start);
                     self.emit_contract_check(
-                        &expr_c, "NOVA_CONTRACT_PRE", &fn_decl.name, &expr_src, &file_lit, line, c,
+                        &expr_c, "NOVA_CONTRACT_PRE", &fn_decl.name, &expr_src, &file_lit, line, &c.message, &c.message_expr,
                     )?;
                 }
             }
@@ -13583,7 +13696,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.current_fn_return_ty = saved_ret_ty;
         self.expected_record_type = saved_expected;
         // Plan 140 cgfix: restore per-fn contract opt-out flag after fn body.
-        self.contracts_unchecked_fn = prev_mono_contracts_unchecked;
+        self.contract_opt_out_fn = prev_mono_contract_opt_out;
         for key in &saved_mono_array_elem_keys {
             self.array_element_types.remove(key);
         }
@@ -14542,18 +14655,13 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                 // Plan 140.1 Ф.2 (D24 amend): location-first format
                 // `<file>:<line>: ensures failed: [<msg> (]<expr>[)]`.
                 let (file_lit, line) = self.loc_for_span(c.span.start);
-                // Plan 140.3: ensures uses the STATIC message path (raw `message`
-                // fallback). Interp in ensures is deferred — `${result}` would emit
-                // C `result` but the ensures var is `_nova_result` (substitute_result_var
-                // applies to the condition only), so interpolation needs result-var
-                // rewrite in the message build too ([M-140.1-message-interpolation]
-                // follow-on). `${param}` would work, but we keep ensures uniform.
-                let msg_arg = Self::contract_msg_arg(&c.message);
-                self.line(&format!(
-                    "if (!({})) nova_contract_violation(NOVA_CONTRACT_POST, \"{}\", \"{}\", \"{}\", {}, {});",
-                    expr_c_subst, f.name, Self::escape_c_str(&expr_src),
-                    file_lit, line, msg_arg
-                ));
+                // Plan 140.3: ensures supports interpolated messages too. The helper
+                // rewrites `result` → `_nova_result` in the emitted message build for
+                // POST (mirror of the condition's substitute_result_var above), so
+                // `ensures result > 0, "got ${result}"` interpolates the return value.
+                self.emit_contract_check(
+                    &expr_c_subst, "NOVA_CONTRACT_POST", &f.name, &expr_src, &file_lit, line, &c.message, &c.message_expr,
+                )?;
             }
         }
         Ok(())
@@ -14588,6 +14696,53 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             let _ = is_word;
         }
         out
+    }
+
+    /// Plan 140.3: like `substitute_result_var` but **skips the contents of C
+    /// string literals** so an interpolated message's literal text (e.g.
+    /// `"result was "`) is preserved byte-for-byte (incl. UTF-8) — only `result`
+    /// identifiers in CODE become `_nova_result`. Used to rewrite an `ensures`
+    /// interpolated-message build so `${result}` reads the collected return var.
+    fn substitute_result_var_in_code(c: &str) -> String {
+        let bytes = c.as_bytes();
+        let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+        let target = b"result";
+        let mut i = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            // Copy a whole `"..."` string literal verbatim (respecting `\"`).
+            if b == b'"' {
+                out.push(b);
+                i += 1;
+                while i < bytes.len() {
+                    let c2 = bytes[i];
+                    out.push(c2);
+                    i += 1;
+                    if c2 == b'\\' && i < bytes.len() {
+                        out.push(bytes[i]);
+                        i += 1;
+                        continue;
+                    }
+                    if c2 == b'"' {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if i + target.len() <= bytes.len()
+                && &bytes[i..i + target.len()] == target
+                && (i == 0 || !(bytes[i-1].is_ascii_alphanumeric() || bytes[i-1] == b'_'))
+                && (i + target.len() == bytes.len()
+                    || !(bytes[i+target.len()].is_ascii_alphanumeric() || bytes[i+target.len()] == b'_'))
+            {
+                out.extend_from_slice(b"_nova_result");
+                i += target.len();
+                continue;
+            }
+            out.push(b);
+            i += 1;
+        }
+        String::from_utf8(out).unwrap_or_else(|_| c.to_string())
     }
 
     /// Plan 33.3 Ф.9.1: walks block для сбора `ghost let` имён.
@@ -14876,10 +15031,15 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // (requires/ensures) и в decreases-guard ниже. Также выставляется как
         // `self.contracts_unchecked_fn` на входе в fn-body для body-уровневых
         // эмиттеров (assert_static/assume/record-invariant).
-        let contracts_elided_fn = self.contracts_off || f.contracts_unchecked;
-        let has_contracts = !f.contracts.is_empty()
-            && !matches!(f.verify_mode, VerifyMode::Unverified)
-            && !contracts_elided_fn;
+        // Plan 140.3 ([M-140-contract-levels]): set the fn-level opt-out EARLY so
+        // `contracts_elided_for(kind)` (which ORs module-level) drives the per-kind
+        // gates below AND the body-level emitters (assert_static/assume/record-
+        // invariant). Restored after fn-body (parallel to in_realtime).
+        let prev_contract_opt_out_fn = self.contract_opt_out_fn.clone();
+        self.contract_opt_out_fn = f.contract_opt_out.clone();
+        let verifiable = !f.contracts.is_empty()
+            && !matches!(f.verify_mode, VerifyMode::Unverified);
+        let has_contracts = verifiable && !self.contracts_elided_for(ContractKind::Requires);
         // Plan 33.3 Ф.9.4 (D24): `decreases <expr>` для fn → recursion-depth
         // guard. Каждый entry в fn инкрементит thread-local counter; если
         // превышает порог (10000) — runtime panic. Это catches infinite
@@ -14887,7 +15047,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // ждёт SMT (Z3 backend).
         // Plan 140 Ф.2: `#unchecked` / `--contracts=off` элидируют и
         // decreases recursion-guard (контракт-проверка как и прочие).
-        let _depth_var = if f.decreases.is_some() && !contracts_elided_fn {
+        let _depth_var = if f.decreases.is_some() && !self.contracts_elided_for(ContractKind::Requires) {
             // Sanitize fn name для C-identifier.
             let san: String = f.name.chars()
                 .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
@@ -14933,7 +15093,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     // `<file>:<line>: requires failed: [<msg> (]<expr>[)]`.
                     let (file_lit, line) = self.loc_for_span(c.span.start);
                     self.emit_contract_check(
-                        &expr_c, "NOVA_CONTRACT_PRE", &f.name, &expr_src, &file_lit, line, c,
+                        &expr_c, "NOVA_CONTRACT_PRE", &f.name, &expr_src, &file_lit, line, &c.message, &c.message_expr,
                     )?;
                 }
             }
@@ -14948,12 +15108,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         if f.blocking_attr {
             self.in_blocking = true;
         }
-        // Plan 140 Ф.2 (D24 amend): expose per-fn contract opt-out к
-        // body-уровневым эмиттерам (assert_static/assume/record-invariant).
-        // `contracts_elided_fn` = build `--contracts=off` ИЛИ per-fn
-        // `#unchecked`. Restored после fn-body (parallel to in_realtime).
-        let prev_contracts_unchecked_fn = self.contracts_unchecked_fn;
-        self.contracts_unchecked_fn = contracts_elided_fn;
+        // Plan 140.3 ([M-140-contract-levels]): per-fn contract opt-out уже
+        // выставлен ВЫШЕ (early, до has_contracts) — для per-kind гейтов И
+        // body-уровневых эмиттеров (assert_static/assume/record-invariant);
+        // restored после fn-body через `prev_contract_opt_out_fn`.
         // Plan 127 Ф.3: track current fn-id for escape-result lookup при
         // emit_let / emit_record_lit. Format must match
         // `escape_analyze::fn_id` (free fn → name; method → `<recv>::<name>`).
@@ -14965,7 +15123,11 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         });
         let prev_promoted_locals = std::mem::take(&mut self.promoted_value_record_locals);
         // emit body — collect into _nova_result if ensures present
-        let has_ensures = has_contracts && f.contracts.iter().any(|c| matches!(c.kind, ContractKind::Ensures));
+        // Plan 140.3: ensures gated INDEPENDENTLY from requires (has_contracts) —
+        // `#unchecked(requires)` must NOT also drop ensures, and vice-versa.
+        let has_ensures = verifiable
+            && !self.contracts_elided_for(ContractKind::Ensures)
+            && f.contracts.iter().any(|c| matches!(c.kind, ContractKind::Ensures));
         match &f.body {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
@@ -15031,7 +15193,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.in_realtime = prev_in_realtime;
         self.in_blocking = prev_in_blocking;
         // Plan 140 Ф.2: restore per-fn contract opt-out flag after fn body.
-        self.contracts_unchecked_fn = prev_contracts_unchecked_fn;
+        self.contract_opt_out_fn = prev_contract_opt_out_fn;
         // Plan 127 Ф.3: restore prev fn-id + promoted-locals after fn body.
         self.current_fn_id = prev_fn_id;
         self.promoted_value_record_locals = prev_promoted_locals;
@@ -17981,8 +18143,32 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                     && ((lty.starts_with("NovaRes_") && lty.ends_with('*'))
                         || (rty.starts_with("NovaRes_") && rty.ends_with('*')))
                 {
-                    let res_ty = if lty.starts_with("NovaRes_") { lty.clone() } else { rty.clone() };
-                    let eq = self.emit_field_eq(&res_ty, &l, &r, 0);
+                    let l_res = lty.starts_with("NovaRes_") && lty.ends_with('*');
+                    let r_res = rty.starts_with("NovaRes_") && rty.ends_with('*');
+                    let mut l2 = l.clone();
+                    let mut r2 = r.clone();
+                    let mut res_ty = if l_res { lty.clone() } else { rty.clone() };
+                    // [M-153-result-eq-literal-expected-type]: a bare `Ok(x)`/`Err(x)`
+                    // literal leaves its `E` (or `T`) defaulted (variant ctors are
+                    // left untyped by design) — e.g. `Ok(2)` → `Result[int, str]`, so
+                    // `binary_search() == Ok(2)` (Result[int,int]) would compare two
+                    // different `NovaRes_<n>` → CC-FAIL. Re-emit the literal side
+                    // against the OTHER operand's concrete Result type so both share
+                    // one representation (expected-type propagation, codegen-local).
+                    if lty != rty {
+                        if l_res && self.expr_is_result_ctor(right) {
+                            if let Some(re) = self.reemit_result_variant_as(right, &lty)? {
+                                r2 = re;
+                                res_ty = lty.clone();
+                            }
+                        } else if r_res && self.expr_is_result_ctor(left) {
+                            if let Some(re) = self.reemit_result_variant_as(left, &rty)? {
+                                l2 = re;
+                                res_ty = rty.clone();
+                            }
+                        }
+                    }
+                    let eq = self.emit_field_eq(&res_ty, &l2, &r2, 0);
                     return Ok(match op {
                         BinOp::Eq => format!("({})", eq),
                         BinOp::Neq => format!("(!({}))", eq),
@@ -18629,7 +18815,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                         // отдельный line-emit, а не expr-substitution.
                         // Поскольку lit обычно tmp (см. emit_record_lit), просто
                         // эмитим check после.
-                        for (inv_expr, span, inv_msg) in &invs {
+                        for (inv_expr, span, inv_msg, inv_msg_expr) in &invs {
                             // Bind поля record'а как `tmp->field` для invariant-eval.
                             // В bootstrap — простой text substitution через
                             // emit_expr с self.expected_record_type set.
@@ -18640,9 +18826,9 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                             let inv_src = Self::expr_to_display(inv_expr);
                             // Получаем поля типа.
                             // Plan 140 Ф.2 (D24 amend): per-fn `#unchecked` /
-                            // build `--contracts=off` элидируют invariant-check
-                            // при конструировании record'а внутри opt-out fn.
-                            if self.contracts_elided_here() {
+                            // build `--contracts=off` / `#unchecked(invariant)`
+                            // (module или окружающей fn) элидируют invariant-check.
+                            if self.invariants_elided_here() {
                                 continue;
                             }
                             if let Some(fields_schema) = self.record_schemas.get(&struct_name).cloned() {
@@ -18651,20 +18837,36 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
                                 // — НЕ под `#ifdef NOVA_CONTRACTS_RUNTIME`.
                                 self.line("{");
                                 // Decl shadow-locals для каждого поля → tmp->field.
+                                // Register C types in var_types so the condition AND an
+                                // interpolated message (`${field}`) infer the right
+                                // converter; saved for restore below (no scope leak).
+                                let mut saved_vt: Vec<(String, Option<String>)> = Vec::new();
                                 for (fname, ftyc) in &fields_schema {
                                     self.line(&format!("    {} {} = {}->{};", ftyc, fname, lit, fname));
+                                    saved_vt.push((fname.clone(), self.var_types.insert(fname.clone(), ftyc.clone())));
                                 }
                                 let inv_c = self.emit_expr(inv_expr)?;
                                 // Plan 140.1 Ф.2 (D24 amend): location-first
                                 // format `<file>:<line>: invariant failed:
                                 // [<msg> (]<expr>[)]`.
                                 let (file_lit, line) = self.loc_for_span(span.start);
-                                let msg_arg = Self::contract_msg_arg(inv_msg);
-                                self.line(&format!(
-                                    "    if (!({})) nova_contract_violation(NOVA_CONTRACT_INV, \"{}\", \"{}\", \"{}\", {}, {});",
-                                    inv_c, struct_name, Self::escape_c_str(&inv_src), file_lit, line, msg_arg
-                                ));
+                                // Plan 140.3: route through emit_contract_check so an
+                                // invariant message can interpolate (`${field}` reads
+                                // the shadow-locals bound just above). +1 indent to
+                                // align with the manual shadow-local indentation.
+                                self.indent += 1;
+                                self.emit_contract_check(
+                                    &inv_c, "NOVA_CONTRACT_INV", &struct_name, &inv_src,
+                                    &file_lit, line, inv_msg, inv_msg_expr,
+                                )?;
+                                self.indent -= 1;
                                 self.line("}");
+                                for (fname, prev) in saved_vt {
+                                    match prev {
+                                        Some(t) => { self.var_types.insert(fname, t); }
+                                        None => { self.var_types.remove(&fname); }
+                                    }
+                                }
                             }
                         }
                     }
@@ -31051,6 +31253,50 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
         }
     }
 
+    /// Plan 153.3 [M-153-result-eq-literal-expected-type]: is `e` a bare
+    /// `Ok(x)` / `Err(x)` variant-constructor literal (one arg)? Used to detect
+    /// a Result literal whose `(T,E)` defaulted, so a `==` against a concrete
+    /// Result can re-emit it with the matching type.
+    fn expr_is_result_ctor(&self, e: &crate::ast::Expr) -> bool {
+        if let crate::ast::ExprKind::Call { func, args, .. } = &e.kind {
+            if let crate::ast::ExprKind::Ident(v) = &func.kind {
+                return (v == "Ok" || v == "Err") && args.len() == 1;
+            }
+        }
+        false
+    }
+
+    /// Plan 153.3 [M-153-result-eq-literal-expected-type]: re-emit a bare
+    /// `Ok(x)`/`Err(x)` literal as `target_novares_ty` (a concrete
+    /// `NovaRes_<n>*`) instead of its defaulted type, casting the payload to the
+    /// target variant's C-type. `None` if `e` isn't a result-ctor literal or the
+    /// target type carries no resolvable `(ok, err)`.
+    fn reemit_result_variant_as(
+        &mut self,
+        e: &crate::ast::Expr,
+        target_novares_ty: &str,
+    ) -> Result<Option<String>, String> {
+        let (variant, payload_expr) = match &e.kind {
+            crate::ast::ExprKind::Call { func, args, .. } => match &func.kind {
+                crate::ast::ExprKind::Ident(v)
+                    if (v == "Ok" || v == "Err") && args.len() == 1 =>
+                {
+                    (v.clone(), args[0].expr())
+                }
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+        let (ok_c, err_c) = match self.novares_ok_err(target_novares_ty) {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        let payload_c = if variant == "Ok" { ok_c } else { err_c };
+        let arg_c = self.emit_expr(payload_expr)?;
+        let ctor = self.result_ctor_name(target_novares_ty, &variant);
+        Ok(Some(format!("{}(({}){})", ctor, payload_c, arg_c)))
+    }
+
     /// Plan 59 Ф.7.5 D1c: каноничный C-тип Result-представления для пары
     /// `(ok_c, err_c)`. **Единственная точка решения legacy↔mono** —
     /// `type_ref_to_c[Result]` и producer-сайты (`char.try_from`,
@@ -31707,6 +31953,43 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         );
                     }
                     return self.infer_expr_c_type(&acc);
+                }
+            }
+        }
+        // Plan 152.4: mirror the emit-side rewrite (~emit_c.rs:24055). A Call
+        // whose func is `Path([lazyconst, method])` is an INSTANCE method call
+        // on the lazy-static global value, NOT a static `Type.method(...)` call.
+        // UPPER_CASE binders (`ro COMPOSE_TABLE = …`, D30 SCREAMING_SNAKE_CASE)
+        // parse their `.get(k)` as `Path(["COMPOSE_TABLE","get"])`; emit_expr
+        // already rewrites this to a `Member{Ident,..}` call, but the type
+        // inference did not — so the return type fell back to a name-keyed
+        // method lookup and, when several generic instantiations of the base
+        // coexist, picked the wrong one (e.g. `NovaOpt_nova_str` for a
+        // `HashMap[int,int]` global). Rewrite to the Member form and recurse so
+        // the receiver type resolves via `var_types[lazyconst]`.
+        if let ExprKind::Call { func, args, trailing } = &expr.kind {
+            if let ExprKind::Path(parts) = &func.kind {
+                if parts.len() == 2 && self.lazy_consts.contains(&parts[0]) {
+                    let new_obj = Expr {
+                        kind: ExprKind::Ident(parts[0].clone()),
+                        span: func.span,
+                    };
+                    let new_func = Expr {
+                        kind: ExprKind::Member {
+                            obj: Box::new(new_obj),
+                            name: parts[1].clone(),
+                        },
+                        span: func.span,
+                    };
+                    let new_call = Expr {
+                        kind: ExprKind::Call {
+                            func: Box::new(new_func),
+                            args: args.clone(),
+                            trailing: trailing.clone(),
+                        },
+                        span: expr.span,
+                    };
+                    return self.infer_expr_c_type(&new_call);
                 }
             }
         }
@@ -33468,7 +33751,24 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         "hash" => return "nova_int".into(),
                         _ => {}
                     }
-                    // User-defined method: look up return type registered during forward decl
+                    // User-defined method: look up return type registered during forward decl.
+                    // Plan 152.4.3: prefer the TYPE-QUALIFIED key (receiver type + method)
+                    // so same-named methods on different types disambiguate (e.g. `next`
+                    // on CharsIter -> Option[char] vs GraphemesView -> Option[str]); the
+                    // name-only key is last-wins across types. obj_ty here is a plain type
+                    // (generic mono types resolved earlier via infer_mono_method_ret).
+                    {
+                        let bare = obj_ty.trim_end_matches('*');
+                        let recv_tn = bare.strip_prefix("NovaValue_")
+                            .or_else(|| bare.strip_prefix("Nova_"))
+                            .unwrap_or(bare);
+                        if !recv_tn.is_empty() {
+                            let tq = format!("fn_ret_{}_{}", recv_tn, method);
+                            if let Some(ret_ty) = self.var_types.get(&tq) {
+                                return ret_ty.clone();
+                            }
+                        }
+                    }
                     let ret_key = format!("fn_ret_{}", method);
                     if let Some(ret_ty) = self.var_types.get(&ret_key) {
                         return ret_ty.clone();

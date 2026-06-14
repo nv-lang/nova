@@ -136,6 +136,14 @@ void* nova_alloc_uncollectable(size_t size) {
     return p;
 }
 
+/* Plan 152.4: register [lo, hi) as a GC root. Needed because GC_set_no_dls(1)
+ * (see nova_gc_init) leaves the program's static/BSS data unscanned, so a
+ * module-level lazy-static `static T* _value;` would otherwise not be a root
+ * and its (possibly large) object graph would be collected under pressure. */
+void nova_gc_add_root(void* lo, void* hi) {
+    GC_add_roots((char*)lo, (char*)hi);
+}
+
 void nova_free_uncollectable(void* ptr) {
     if (!ptr) return;
     GC_free(ptr);

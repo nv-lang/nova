@@ -37645,6 +37645,46 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   8/8 FAIL); guard-тест plan153_1/resize_with_free_fn_shadow (free `fn f` + resize_with);
   contracts 251/0 (+57skip), broad regression 0 новых FAIL. НЕ Plan 154.1 — отдельный коммит.
 
+[2026-06-14] Plan 140.3 followups (ветка plan-140.3-followups) — три фичи, production-grade:
+  (#1+#2, commit 83755d15) interp `${...}` распространён на ensures И invariant (раньше только requires).
+  ensures `${result}`: билд сообщения захватывается, result→_nova_result переписывается через
+  substitute_result_var_in_code (ПРОПУСКАЕТ содержимое C-строк-литералов → текст, вкл. UTF-8, не калечится;
+  наивная подстановка ломала "result was "). invariant `${field}`: record_invariants несёт message_expr;
+  поля биндятся shadow-local'ами + регистрируются в var_types (save/restore). Тесты plan140_1/{ensures,
+  invariant}_msg_interp_{pos,neg}; plan140_1 15/0.
+  (#4 [M-140-contract-levels], commit 77932ea3) module-opt-out `#unchecked` перед `module X` (голое имя)
+  + Eiffel per-kind `#unchecked(requires/ensures/invariant)` (fn И module). AST ContractOptOut{requires,
+  ensures,invariant} (заменил bool) + Module.contract_opt_out + ModuleAttrKind::Unchecked; codegen per-fn
+  флаг → per-kind гейт contracts_elided_for(kind)/invariants_elided_here() (requires/ensures/decreases/
+  invariant НЕЗАВИСИМО). E_UNCHECKED_KIND на плохой вид. Тесты plan140_3/* 4/0 (neg-пара доказывает
+  независимость видов). 0 регрессий по всем (contracts 251/0, plan140 42/0, plan140_1 15/0, plan140_2 13/0,
+  basics 8/0). #3 (примитивный Display через sb.@append) оставлен агенту 154.1 (он его ведёт).
+
+[2026-06-14] Plan 152.4.1+152.4.2 (std/unicode normalization NFC/NFD/NFKC/NFKD, UAX #15) + lazy-static foundation hardening.
+  Продолжение Phase B Plan 152 (подобрал работу закрытого агента). (1) Foundation 152.4.0 (commit 52db92c1):
+  module-level `ro NAME=EXPR` lazy-static globals — codegen (emit_lazy_const) + name-res. Починил 2 бага агента
+  (name-res не собирал Item::Let → undefined; ordering storage до mono-typedef → CC-FAIL) + 3-й
+  (UPPER_CASE Path-форма `COMPOSE_TABLE.get()` мис-инферила метод-возврат — зеркалил emit-side rewrite в
+  infer_expr_c_type). (2) Foundation hardening (commit e22baf23): lazy-static `static T* _value;` НЕ был GC-root
+  под GC_set_no_dls(1) (Boehm не сканит static/BSS) → большой граф (Unicode-таблицы) собирался при первом GC под
+  давлением → use-after-free/SEGV; fix runtime nova_gc_add_root + регистрация cell в emit_lazy_const до build.
+  + cross-module: resolve_imports_inline переносил Fn/Const/Type но дропал Item::Let → импортированная fn,
+  читающая same-module lazy-static, → undeclared; fix мёрж module-level Let в merged_items (приватно). Оба no-op
+  для legacy (module-level non-constexpr ro нет в std/nova_tests). (3) 152.4.1 data pipeline (commit a8df78a5):
+  внутренний build-tool `nova-codegen unicode --ucd-dir <UCD>` (unicode_data.rs) → std/unicode/norm_data.nv
+  (компактные ;-таблицы NFD/NFKD/CCC/comp, пин UNICODE_VERSION=16.0; --check CI-guard; --emit-conformance);
+  без ICU; таблицы байт-идентичны reference-генератору (2081/5913/934/961). (4) 152.4.2 normalize.nv: decompose
+  (таблица + алгоритмический Hangul) → canonical ordering (стабильно по CCC) → canonical composition (blocking +
+  Hangul L+V/LV+T); таблицы — lazy-static HashMap; composition-ключ packed (a<<21)|b (tuple-key HashMap — gap
+  [M-hashmap-tuple-key-mono]). G0 «без упрощений» (обязательный критерий): алгоритм — ПОЛНЫЙ UAX #15,
+  верифицирован против полного NormalizationTest.txt = 19965/19965 cases (79860 asserts) PASS out-of-band;
+  коммитнут CI-сэмпл 1500/6000 (Part0 целиком + stride Parts 1-5, все scripts) — санкционированное упрощение
+  РАЗМЕРА фикстуры, не алгоритма. Тесты (релизные) 5/5: 3 pos + 2 neg (opt-in A6 + foundation-партиция).
+  D253 + Q-unicode-data (RESOLVED). 0 регрессий (plan148/basics/generics/plan139/plan153/plan152; plan114 2 FAIL
+  pre-existing на main — verified). Phase B: graphemes 152.4.3 ([M-152-graphemes]) + folding/case-map 152.4.4
+  ([M-152-case-fold]) — отложены, не упрощены. Открыл [M-lazy-static-thread-safety] (first-touch не thread-safe).
+  Ветка plan-152, коммиты 52db92c1 + e22baf23 + a8df78a5 + docs.
+
 [2026-06-14] Plan 154.1 followup: f32 Display/Debug [M-154.1-f32-display-debug] RESOLVED + общий
   codegen-фикс self-call overload-резолва. (1) f32 теперь как остальные примитивы: conv.h
   nova_f32_to_str/_to_debug_str (widen f32->double + f64-форматтер; %g 6-знач прячет хвост),
@@ -37770,3 +37810,56 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   infer turbofish-static return для f32 + str @debug из Ф.3) → [M-154.1-chained-vec-f32-method-
   misdispatch]; (б) plan91/sort_basic CC-FAIL — это plan-153.3 std.sort (Result-codegen, []int),
   мои code-paths не задеты. coercion = «приведение типа» (рус.).
+
+[2026-06-14] Plan 153.3 follow-up — снятие упрощений (production-grade критерий приёмки, commit
+  468bccf5). Автор: «без упрощений как для прода — обязательный критерий приёмки». Закрыл два
+  отложения, которые были РЕАЛЬНЫМИ упрощениями: (1) `@sort_unstable[_by][_by_key]` — был alias
+  стабильного merge sort (корректно, но не отдельный алгоритм + O(n) scratch, что убивает смысл
+  `_unstable`); заменён на настоящий **in-place binary heapsort** (build-max-heap + pop-to-tail,
+  итеративный sift-down без рекурсии, O(n log n) worst гарантированно, O(1) extra). (2)
+  `@select_nth_unstable(k)` — был отложен планом (Roadmap); реализован как **introselect**:
+  median-of-three quickselect (убивает sorted/reverse O(n²)-кейс) + depth-guard, который на
+  исчерпании глубины (~2·log₂n) откатывается на heapsort → worst O(n log n), avg O(n); контракт
+  `k∈[0,len)` (паника при OOB). Тесты: heapsort_rigor 5/5 (reverse-20, all-equal, sorted,
+  matches-stable, by-key), select_nth 4/4 (k-th + partition-инвариант, min/max, дубли,
+  reverse-30) + OOB-panic neg. Std-only (sort.nv), без ребилда. Остаток — НЕ упрощения: pdqsort
+  поверх heapsort (`[M-153.3-sort-pdqsort]`, чистый perf поверх гарантированного алгоритма); и
+  `result == Ok(x)` для non-default-E — pre-existing project-level inference gap (чекер оставляет
+  variant-ctor без типа by design → codegen дефолтит E=str, emit_c.rs:5172), класс
+  Q-overload-result-type (отложен с мая), не внесён 153.3 (`match` работает).
+
+[2026-06-14] Plan 152.4.3 — grapheme-сегментация as_graphemes() (UAX #29) + 2 compiler-фикса.
+  Третья линза `str.@as_graphemes() -> GraphemesView` (после as_bytes/as_chars): extended grapheme
+  clusters (UAX #29) — «видимые символы» (é=e+◌́; флаг 🇺🇸=2 RI; 👨‍👩‍👧=ZWJ-emoji; каждый=1 grapheme).
+  Данные: `nova-codegen unicode` теперь эмитит std/unicode/grapheme_data.nv — range-таблицы (binary-search)
+  GCB (GraphemeBreakProperty) + Extended_Pictographic (emoji-data) + InCB (DerivedCoreProperties); 1419 gcb /
+  517 extpict / 439 incb ranges. Алгоритм graphemes.nv: GraphemesView (value priv {buf,pos}, как CharsIter)
+  → Next[str] (next()=срез-кластер) + iter/count/is_empty; правила GB1-GB13 + GB9c (Indic Conjunct Break,
+  Unicode 15.1); Hangul через GCB; emoji-ZWJ через GB11; флаги через GB12/13. G0 «без упрощений»: ПОЛНЫЙ
+  GraphemeBreakTest.txt = 1093/1093 (content-checked, не count-proxy) + hand-picked PASS. 0 новых регрессий
+  (plan138 3 FAIL pre-existing на main — verified). Закрывает [M-152-graphemes]. Phase B остаток: 152.4.4
+  folding/case-mapping ([M-152-case-fold]).
+  Два compiler-бага найдены и починены попутно (отдельные коммиты): (A parser e4b23a79) literal U+0001 в
+  string-литералах ломал interp-splitter (байт 0x01 = безусловный \$-sentinel → push next + skip 2 → desync в
+  multibyte → panic); fix: sentinel только если next='$', одиночный U+0001 (из \u{1}) проходит как контент.
+  (B codegen 738b6c2e) метод-возврат инференс падал в name-only fn_ret_<m> (last-wins по типам) —
+  CharsIter.next->Option[char] vs GraphemesView.next->Option[str] коллизия (call верный, temp-тип чужой →
+  CC-FAIL); fix: type-qualified fn_ret_<Type>_<m> (частично закрывает [M-method-resolution-registry-inconsistency]).
+  Commits: A e4b23a79 + B 738b6c2e + feature 8b1f81f1 + docs, ветка plan-152.
+
+[2026-06-14] Plan 153.3 — #3 `result == Ok(x)` non-default-E ПОЧИНЕН (автор: «без упрощений —
+  обязательный критерий»). Изначально классифицировал #3 как pre-existing project-gap (отложен с
+  мая, не моё упрощение) — верно по происхождению, но автор хотел полноценную эргономику
+  `binary_search() == Ok(2)`. Докопал: чекер намеренно оставляет variant-ctor `Ok(x)` без типа
+  (тест `infer_call_sum_variant_stays_unknown`) → codegen дефолтит голый `Ok(x)` в E=str
+  (`type_ref_to_c` fallback на `NovaRes_nova_int_nova_str`). Полный bidirectional inference в
+  чекере (18k строк) — большой риск; **выбрал codegen-точечный фикс**: в `==`-NovaRes_-ветке
+  (emit_c.rs), если типы операндов `Eq/Neq` расходятся и одна сторона — голый `Ok/Err`-литерал
+  (`expr_is_result_ctor`), переэмитить её под concrete `NovaRes_<n>` другой стороны
+  (`reemit_result_variant_as`: novares_ok_err → (ok,err), emit payload, result_ctor_name +
+  payload-cast). Локально (фейрит только при mismatch + голый ctor) → минимальный blast-radius.
+  Тест `plan153_3/result_eq_literal` 3/3: binary_search==Ok/Err (non-default E=int), explicit
+  Result[int,int]==Ok/Err, default-E Result[int,str] не сломан. Ребилд + broad-регрессия (workflow,
+  8 батчей). Это **частное** решение для binop-`==`; общий expected-type проход (overload `@into`,
+  return-position) остаётся в Q-overload-result-type. Итог: 153.3 без упрощений — sort_unstable
+  (heapsort), select_nth (introselect), result==literal — все три закрыты по-настоящему.

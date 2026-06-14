@@ -36173,7 +36173,8 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
     (Compare-bound где упорядочено; comparator'ы возвращают int — нет Ordering, D183;
     `binary_search -> Result[int,int]` Ok=found/Err=insert-point). **sort:** bottom-up
     **STABLE merge sort** (O(n log n), O(n) scratch) под `@sort`/`@sort_by`/`@sort_by_key`
-    + `*_unstable` (пока **alias stable** — perf followup `[M-153.3-sort-unstable-inplace]`).
+    + `*_unstable` = настоящий **in-place heapsort** (commit `468bccf5` — НЕ alias; O(n log n)
+    worst, O(1) extra). UPD: ниже отдельная запись «153.3 production-grade — снятие упрощений».
     **reorder:** `@dedup`/`@dedup_by`/`@dedup_by_key` (consecutive, O(n)),
     `@partition(pred)->int` (in-place unstable, returns split-point). Всё на чистых Nova-
     замыканиях (делегирование `|a,b| a.compare(b)` и `key(a).compare(key(b))` работает) +
@@ -36188,11 +36189,14 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
     (2) `NovaRes_`-ветка в `emit_field_eq` + `==`-оператор-маршрутизация → tag + Ok/Err payload
     через `novares_ok_err`. Верифицировано: custom 1/2-param sum (int/str, pos/neg variant+
     payload), Result==Result (совпадающие типы int/int + int/str), Option не задет; broad-
-    регрессия (8 батчей) чиста (все suspects pre-existing/флак). **Остаток
-    `[M-153-result-eq-literal-expected-type]`:** `result == Ok(x)` с non-default-E
-    (`binary_search`→Result[int,int]) — литерал `Ok(x)` дефолтит E=str, не унифицируется с LHS
-    (expected-type propagation в чекере — глубокий change, отложен; `Result[_,str]` уже
-    работает; binary_search на `match`).
+    регрессия (8 батчей) чиста (все suspects pre-existing/флак). **`result == Ok(x)` / `== Err(x)`
+    для non-default-E ✅ ДОПОЛНИТЕЛЬНО ПОЧИНЕНО** (`[M-153-result-eq-literal-expected-type]`
+    RESOLVED): голый `Ok/Err`-литерал дефолтил E=str (чекер оставляет variant-ctor без типа by
+    design → codegen-дефолт), не совпадал по типу с LHS → `binary_search()==Ok(2)` CC-FAIL'ил.
+    Фикс codegen-local: в `==`-NovaRes_-ветке, при расхождении типов операндов, голый result-ctor
+    переэмитится под concrete `NovaRes_<n>` другой стороны (`reemit_result_variant_as` +
+    `expr_is_result_ctor`). Тест `plan153_3/result_eq_literal`. Частный случай общего
+    `Q-overload-result-type` (expected-type propagation для `@into` остаётся открытым).
 
 - **Plan 140.3 — унификация failure-классификации + interp-сообщения контрактов (2026-06-13)**: (1) assert и
   контракт-нарушение теперь тегают `error_kind = NOVA_THROW_PANIC` как `nv_panic` (раньше — только error_msg,
@@ -36202,6 +36206,92 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   interp-машинерию (`emit_interpolated_str`) — не отдельный механизм; контракт-сообщение ведёт себя идентично
   любой `"${x}"`-строке. dual-populate (`message` raw-fallback + `message_expr`) избегает регрессии на
   не-interp-сайтах без отдельного error-пути.
+
+- **Plan 140.3 followups — interp ensures/invariant + contract-levels (2026-06-14)**: (1) interp в сообщениях
+  ensures/invariant переиспользует ОБЩИЙ emit_interpolated_str (не отдельный механизм); ensures-`${result}`
+  решён через literal-aware `substitute_result_var_in_code` (пропуск C-строк) — не AST-rewrite, минимум кода.
+  (2) **contract-levels**: `contracts_unchecked: bool` → `ContractOptOut{requires,ensures,invariant}` —
+  один тип покрывает bare `#unchecked` (все), per-kind `#unchecked(kind)`, module-level; gate
+  `contracts_elided_for(kind)` = `--contracts=off` ⊔ module ⊔ fn — единая формула для всех уровней/видов.
+  Упрощение: per-fn all-or-nothing флаг заменён на per-kind без дублирования (один ContractOptOut на всех
+  уровнях, merged через `||`).
+
+- **Plan 152.4 foundation — module-level `ro NAME = EXPR` lazy-static globals (codegen runtime side) (2026-06-14)**:
+  D199/Plan 148 Ф.3 ввели strict const/ro partition на module-level (constexpr RHS → `const`, runtime RHS →
+  `ro`), но реализована была только **диагностика** (`E_RO_FOR_CONSTEXPR_PREFER_CONST`) — у module-level `ro` с
+  runtime-RHS не было ни codegen, ни регистрации в name-resolution (top-level `let` исторически был no-op).
+  Достроена runtime-сторона: (1) `types/mod.rs check_module` регистрирует module-level `Item::Let` в
+  `env.consts`; (2) `NameResCtx::collect_decl_names` собирает его имя (иначе use-site → «undefined identifier»);
+  (3) `emit_c.rs` эмитит lazy-static через `emit_lazy_const` (file-scope storage + init-flag + first-touch
+  getter, тот же путь, что non-constexpr `const` до Plan 114). Эмиссия перенесена в §1b1-moved (после
+  `/*__GENERIC_TYPE_DEFS__*/`, до fn-forward-decls) — тип глобала может быть mono-generic (`HashMap[int,str]` →
+  `Nova_HashMap____nova_int__nova_str`), и `static <T> _value;` должен идти ПОСЛЕ его typedef. (4) Попутно
+  исправлен `infer_expr_c_type`: UPPER_CASE-биндер (`ro COMPOSE_TABLE`, D30 SCREAMING_SNAKE) парсит `.get(k)` как
+  `Path(["COMPOSE_TABLE","get"])`; emit_expr уже переписывал это в Member-вызов (emit_c.rs:24055), а инференс —
+  нет → при сосуществовании нескольких инстанцирований базы возврат метода падал в name-keyed fallback и брал не
+  тот `V` (`NovaOpt_nova_str` для `HashMap[int,int]`-глобала). Добавлен зеркальный rewrite в infer_expr_c_type.
+  Эта фича — storage-механизм для Unicode-таблиц 152.4 (lazy-парсинг embedded-строки в HashMap при первом
+  доступе). Zero blast-radius: module-level non-constexpr `ro` не существует нигде в std/nova_tests (constexpr
+  `const` запрещён Plan 114.4 → `lazy_consts` пуст для всего legacy-кода → fix не активируется). Фикстура
+  `nova_tests/plan152_4/lazy_static_global.nv` (5 тестов: `HashMap[int,str]`/`HashMap[int,int]` × lowercase/
+  UPPER_CASE биндеры + scalar int). Followup `[M-lazy-static-thread-safety]` (first-touch init не thread-safe —
+  как и `const` lazy-init, не новый класс).
+
+- **`[M-hashmap-tuple-key-mono]` — HashMap с кортеж-ключом: checker over-accepts → codegen CC-FAIL (2026-06-14, обнаружено Plan 152.4)**:
+  `HashMap[(int,int), int]` проходит `nova check` (тип-уровень OK), но codegen падает с CC-FAIL (НЕ silent —
+  hard error). Mono полу-инстанцирован: переменная объявляется как `Nova_HashMap____nova_int__nova_int*`
+  (кортеж-ключ ошибочно стёрт в `nova_int`), конструктор использует полный mangle
+  `Nova_HashMap_____NovaTuple_2_8_nova_int_8_nova_int__nova_int_static_new()`, а `insert` уходит в **erased**
+  `Nova_HashMap_method_insert(m, (void*)(intptr_t)(tuple), …)` — три рассогласованных пути; typedef
+  tuple-key варианта не эмитится → `use of undeclared identifier 'Nova_HashMap_____NovaTuple…'`. Корень: mono-имя
+  HashMap считает только примитивные/Named-ключи; кортеж-ключ не получает `Hash`/`Equal` авто-derive (Plan 126
+  покрыл records, не анонимные кортежи). Развилка фикса: (a) codegen — поддержать tuple-key end-to-end
+  (авто-derive `Hash`/`Equal` для кортежей + единый key-mangle + mono-typedef), ЛИБО (b) checker — отклонять
+  `K`-без-`Hash` на тип-уровне (`E_HASHMAP_KEY_NOT_HASH`), честный отказ вместо CC-FAIL. Смежно
+  `[M-153.6-vec-hashmap-key-eq]` (Vec-ключ: `k.eq` не диспатчит в `@equal`) — общий класс «generic-ключ HashMap
+  без рабочего Hash/Equal». Связь Plan 154 (checker over-accepts), но это CC-FAIL, не silent-noop. Workaround в
+  152.4: упакованный int-ключ `(a<<21)|b` в `HashMap[int,int]` для composition-таблицы. Маркер заведён в
+  backlog-followups.md (P2, floating).
+
+- **Plan 152.4 foundation hardening — lazy-static GC-root + cross-module merge (2026-06-14, commit `e22baf23`)**:
+  Два латентных пробела фундамента lazy-static (152.4.0), оба вскрылись при построении `std/unicode` (большие
+  `HashMap`-таблицы в module-level `ro`-глобалах). (1) **GC-rooting:** Boehm-бэкенд работает с `GC_set_no_dls(1)`
+  (alloc_boehm.c — против /proc-walk SEGV под Docker), что оставляет static/BSS data НЕсканированной → file-scope
+  `static T* _value;` lazy-static'а НЕ был GC-root → объект собирался при первом GC под давлением памяти →
+  use-after-free/SEGV. Латентно, пока lazy-static не держал большой граф (~2k/6k-записные Unicode-таблицы,
+  перешагивающие порог GC). Диагностика: `GC_DONT_GC=1` чинил; крэш зависел от набора функций (порог аллокаций).
+  Fix: runtime `nova_gc_add_root(lo,hi)` (Boehm→`GC_add_roots`; malloc/RC→no-op); `emit_lazy_const` регистрирует
+  storage-cell как root ДО first-touch build (объект stack-rooted во время build, затем живёт в сканируемой
+  cell). (2) **Cross-module:** `resolve_imports_inline` переносил `Item::Fn`/`Const`/`Type` через границу модуля,
+  но дропал `Item::Let` → импортированная fn, читающая same-module lazy-static (`ccc_of` читает `ccc_map`),
+  компилировалась с undeclared identifier. Fix: мёрж module-level `Item::Let` в `merged_items` (приватно — у
+  `let` нет `export`). Оба — no-op для legacy (module-level non-constexpr `ro` нет в std/nova_tests; constexpr
+  `const` обязателен по strict-партиции Plan 114.4 → `lazy_consts` пуст). Spawns `[M-lazy-static-thread-safety]`
+  (first-touch init не thread-safe — как `const` lazy-init, не новый класс).
+
+- **Plan 152.4.1 + 152.4.2 — std/unicode normalization (NFC/NFD/NFKC/NFKD, UAX #15) (2026-06-14, commit `a8df78a5`, D253/Q-unicode-data)**:
+  Opt-in модуль `std.unicode` (НЕ prelude — за таблицы платит импортирующий, A6); free-function API
+  `normalize_nfc/nfd/nfkc/nfkd(s)->str`. **152.4.1 data pipeline:** внутренний build-tool `nova-codegen unicode
+  --ucd-dir <UCD> --root <repo>` (`compiler-codegen/src/codegen/unicode_data.rs`) парсит UCD (UnicodeData +
+  CompositionExclusions + DerivedNormalizationProps) → `std/unicode/norm_data.nv` (компактные `;`-строки:
+  NFD/NFKD full decomp, CCC, canonical composition; пин `UNICODE_VERSION=16.0`); `--check` CI-guard,
+  `--emit-conformance` пишет UAX #15-фикстуру. Без ICU/ОС (прецедент Rust `unicode-*`/Go `maketables`). Таблицы
+  байт-идентичны reference-генератору (2081/5913/934/961). **152.4.2 нормализация:** `std/unicode/normalize.nv` —
+  таблицы парсятся лениво в `HashMap` (module-level `ro` lazy-static, D199); decompose (таблица + алгоритмический
+  Hangul UAX #15 §Hangul) → canonical ordering (стабильная insertion-sort по CCC, starter'ы — барьеры) →
+  canonical composition (blocking-rule + Hangul L+V/LV+T). Composition-ключ — упакованный int `(a<<21)|b`
+  (tuple-key HashMap — codegen-gap `[M-hashmap-tuple-key-mono]`). **Критерий «без упрощений» (G0):** алгоритм —
+  ПОЛНЫЙ UAX #15, верифицирован против **полного** `NormalizationTest.txt` (**19965/19965 cases, 79860 asserts**,
+  out-of-band релизный прогон). Коммитнутая CI-фикстура — репрезентативный сэмпл (Part 0 целиком + stride-выборка
+  Parts 1-5 по всем scripts = 1500 cases / 6000 asserts, чанки по 500; санкционированное упрощение РАЗМЕРА
+  фикстуры, не алгоритма — 80k asserts раздули бы репо/CI). Тесты (релизные): 3 pos (`lazy_static_global`,
+  `normalize` 16, `normalization_conformance` 1500) + 2 neg (`n_unicode_opt_in` — opt-in A6; `n_ro_constexpr_prefers_const`
+  — foundation-партиция) = 5/5. 0 регрессий
+  (plan148/basics/generics/plan139/plan153/plan152; plan114 2 FAIL pre-existing на main — verified). Решение по
+  `[]int`: писать **явный `Vec[int]`** (не `[]int`) — `[]T`-static-конструктор (`[]int.with_capacity`) не
+  флипается в Vec (даёт legacy `NovaArray`), хотя `[]int`-тип флипается → Vec/NovaArray-mismatch → garbage-index
+  panic; явный `Vec[int]` обходит (`[M-138.2-flip-*` семейство). Phase B остаток: 152.4.3 graphemes
+  (`[M-152-graphemes]`), 152.4.4 folding/case-map (`[M-152-case-fold]`).
 
 - **Scoping: локальное связывание шейдоунит модульную свободную функцию (2026-06-14, fix)**:
   закреплено лексическое правило — параметр/`let` с именем `f` (в частности closure-параметр
@@ -36242,3 +36332,25 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   всё-литеральные массивы (f64-переменная не сужается молча — это была бы потеря точности).
   **Отдельные pre-existing баги (не от фикса, маркеры):** chained `Vec[f32].X().debug()` мис-диспатч
   на str.debug (`[M-154.1-chained-vec-f32-method-misdispatch]`); plan91/sort_basic — plan-153.3 sort.
+
+- **Plan 152.4.3 — grapheme-сегментация `as_graphemes()` (UAX #29) + 2 compiler-фикса (2026-06-14, D253)**:
+  Третья линза строки `str.@as_graphemes() -> GraphemesView` (симметрична as_bytes/as_chars): extended
+  grapheme clusters — «видимые символы» (é=e+◌́; 🇺🇸=2 RI; 👨‍👩‍👧=ZWJ-emoji; каждый=1). Данные: `nova-codegen
+  unicode` теперь эмитит `std/unicode/grapheme_data.nv` — range-таблицы (binary-search) GCB
+  (GraphemeBreakProperty) + Extended_Pictographic (emoji-data) + InCB (DerivedCoreProperties). Алгоритм
+  (graphemes.nv): GraphemesView (`value priv`, как CharsIter) реализует Next[str] (next()=срез-кластер) +
+  iter/count/is_empty; правила UAX #29 GB1-GB13 **+ GB9c** (Indic Conjunct Break, U15.1); Hangul через
+  GCB-категории; emoji-ZWJ через GB11; флаги через GB12/13. G0 «без упрощений»: **полный** GraphemeBreakTest.txt
+  **1093/1093** (content-checked — проверяет точную последовательность кластеров, не count-proxy) + hand-picked.
+  0 новых регрессий (plan138 3 FAIL pre-existing на main). Закрывает `[M-152-graphemes]`. Phase B остаток:
+  152.4.4 folding/case-map (`[M-152-case-fold]`).
+  **2 compiler-бага попутно (отдельные коммиты):** (A, parser `e4b23a79`) literal U+0001 в string-литералах
+  ломал interp-splitter — байт 0x01 трактовался как `\$`-sentinel безусловно (push next byte + skip 2 → desync
+  в середину multibyte → parser panic); fix: sentinel только если next byte = `$`, lone U+0001 (из `\u{1}`,
+  частый в UAX #29 тест-данных) проходит как контент. (B, codegen `738b6c2e`) `infer_expr_c_type` метод-возврат
+  падал в name-only `fn_ret_<m>` (last-wins по типам) — `CharsIter.next()->Option[char]` vs
+  `GraphemesView.next()->Option[str]` коллизировали (call верный, temp-тип чужой → CC-FAIL); fix:
+  type-qualified `fn_ret_<Type>_<m>` ключ + предпочтение в fallback (частично закрывает
+  `[M-method-resolution-registry-inconsistency]` — return-inference половину). Минорная находка: `\u{24}\u{7b}`
+  (escapes) декодится в `${` → запускает interpolation (literal `${` через escapes невыразим) — low-pri.
+  Commits: A `e4b23a79` + B `738b6c2e` + feature `8b1f81f1` + docs.

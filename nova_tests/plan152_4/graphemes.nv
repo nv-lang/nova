@@ -1,0 +1,37 @@
+// Plan 152.4.3: grapheme-cluster segmentation (UAX #29) — `as_graphemes()` lens.
+// Hand-picked cases: combining marks, regional-indicator flags, ZWJ emoji,
+// Hangul jamo, CR-LF. Bulk UAX #29 conformance — separate generated fixture.
+module plan152_4.graphemes
+
+import std.unicode.{GraphemesView}
+
+test "grapheme count: combining / flags / ZWJ-emoji = 1 each" {
+    assert("hello".as_graphemes().count() == 5)
+    assert("e\u{301}".as_graphemes().count() == 1)              // é = e + combining acute
+    assert("\u{e9}".as_graphemes().count() == 1)               // precomposed é
+    assert("cafe\u{301}".as_graphemes().count() == 4)          // café (decomposed) = 4 visible
+    assert("\u{1f1fa}\u{1f1f8}".as_graphemes().count() == 1)   // 🇺🇸 flag (2 RI)
+    assert("\u{1f1fa}\u{1f1f8}\u{1f1eb}\u{1f1f7}".as_graphemes().count() == 2)  // 🇺🇸🇫🇷
+    assert("\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}".as_graphemes().count() == 1)  // 👨‍👩‍👧 ZWJ family
+}
+
+test "grapheme slices: next() returns whole clusters" {
+    mut g = "a\u{301}b".as_graphemes()
+    match g.next() { Some(s) => assert(s == "a\u{301}"), None => assert(false) }
+    match g.next() { Some(s) => assert(s == "b"), None => assert(false) }
+    assert(g.next() == None)
+}
+
+test "Hangul + CR-LF + empty" {
+    assert("\u{ac00}".as_graphemes().count() == 1)             // 가 precomposed syllable
+    assert("\u{1100}\u{1161}".as_graphemes().count() == 1)     // L + V jamo = 1 cluster
+    assert("\u{1100}\u{1161}\u{11a8}".as_graphemes().count() == 1)  // L + V + T = 1
+    assert("a\r\nb".as_graphemes().count() == 3)               // a | CR-LF | b
+    assert("".as_graphemes().count() == 0)
+}
+
+test "for-in over graphemes (self-iter, D58)" {
+    mut n = 0
+    for g in "a\u{301}\u{1f1fa}\u{1f1f8}x".as_graphemes() { n = n + 1 }
+    assert(n == 3)   // [a+acute] [🇺🇸] [x]
+}

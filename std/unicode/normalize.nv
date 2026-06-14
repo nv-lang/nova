@@ -1,0 +1,259 @@
+// Plan 152.4.2 (D253): Unicode normalization — NFC / NFD / NFKC / NFKD (UAX #15).
+//
+// Opt-in module (`import std.unicode.{normalize_nfc, ...}`); NOT in the prelude,
+// so the table cost is paid only by importers (criterion A6). Co-equal peer of
+// `norm_data.nv` (generated tables) in the `std.unicode` folder-module — peers
+// share declarations, so the `*_DATA` constants are visible here directly.
+//
+// Algorithm (UAX #15):
+//   NFD  = canonical decomposition, then canonical ordering of combining marks.
+//   NFC  = NFD, then canonical composition.
+//   NFKD = compatibility decomposition, then canonical ordering.
+//   NFKC = NFKD, then canonical composition.
+// Hangul syllables are decomposed/composed algorithmically (not via tables).
+//
+// Tables (norm_data.nv) hold FULL decompositions already, so decomposition is a
+// single table lookup per codepoint (no recursion needed at runtime).
+
+module std.unicode
+
+import std.collections.hashmap.{HashMap}
+import std.collections.vec.{Vec}
+
+// ---- Hangul constants (UAX #15) ----
+const SBASE int = 0xAC00
+const LBASE int = 0x1100
+const VBASE int = 0x1161
+const TBASE int = 0x11A7
+const LCOUNT int = 19
+const VCOUNT int = 21
+const TCOUNT int = 28
+const NCOUNT int = 588    // VCOUNT * TCOUNT
+const SCOUNT int = 11172  // LCOUNT * NCOUNT
+
+// ---- table parsing ----
+
+// Parse a lowercase-hex integer; -1 on malformed input (the generated tables
+// are always well-formed, so the sentinel is a safety net, not a hot path).
+fn hex(s str) -> int {
+    // D102: `radix` has a default → keyword-only.
+    match s.parse_int(radix: 16) { Some(v) => v, None => -1 }
+}
+
+// "d1,d2,d3" (comma-separated hex) -> [d1, d2, d3].
+fn parse_cp_list(s str) -> Vec[int] {
+    mut out = Vec[int].with_capacity(4)
+    for part in s.split(",") {
+        ro cp = hex(part)
+        if cp >= 0 { out.push(cp) }
+    }
+    out
+}
+
+// "cp:d1,d2;cp2:..." -> { cp -> "d1,d2" } (decomposition kept as text, parsed
+// lazily by `decompose`).
+fn parse_decomp_table(data str) -> HashMap[int, str] {
+    ro entries = data.split(";")
+    mut m = HashMap[int, str].with_capacity(entries.len() + 8)
+    for entry in entries {
+        match entry.split_once(":") {
+            Some((k, v)) => {
+                ro cp = hex(k)
+                if cp >= 0 { m.insert(cp, v) }
+            }
+            None => {}
+        }
+    }
+    m
+}
+
+// "cp:ccc;..." -> { cp -> ccc }.
+fn parse_ccc_table(data str) -> HashMap[int, int] {
+    ro entries = data.split(";")
+    mut m = HashMap[int, int].with_capacity(entries.len() + 8)
+    for entry in entries {
+        match entry.split_once(":") {
+            Some((k, v)) => {
+                ro cp = hex(k)
+                ro cc = hex(v)
+                if cp >= 0 && cc >= 0 { m.insert(cp, cc) }
+            }
+            None => {}
+        }
+    }
+    m
+}
+
+// "a,b:cp;..." -> { (a << 21) | b -> cp }. Packed-int key avoids tuple-key
+// HashMap (codepoints fit in 21 bits; see [M-hashmap-tuple-key-mono]).
+fn parse_comp_table(data str) -> HashMap[int, int] {
+    ro entries = data.split(";")
+    mut m = HashMap[int, int].with_capacity(entries.len() + 8)
+    for entry in entries {
+        match entry.split_once(":") {
+            Some((ab, cp_s)) => {
+                match ab.split_once(",") {
+                    Some((a_s, b_s)) => {
+                        ro a = hex(a_s)
+                        ro b = hex(b_s)
+                        ro cp = hex(cp_s)
+                        if a >= 0 && b >= 0 && cp >= 0 { m.insert((a << 21) | b, cp) }
+                    }
+                    None => {}
+                }
+            }
+            None => {}
+        }
+    }
+    m
+}
+
+// ---- lazy-static tables (built once on first normalization call) ----
+ro nfd_map HashMap[int, str] = parse_decomp_table(NFD_DATA)
+ro nfkd_map HashMap[int, str] = parse_decomp_table(NFKD_DATA)
+ro ccc_map HashMap[int, int] = parse_ccc_table(CCC_DATA)
+ro comp_map HashMap[int, int] = parse_comp_table(COMP_DATA)
+
+fn ccc_of(cp int) -> int {
+    match ccc_map.get(cp) { Some(c) => c, None => 0 }
+}
+
+fn decomp_lookup(cp int, compat bool) -> Option[str] {
+    if compat { nfkd_map.get(cp) } else { nfd_map.get(cp) }
+}
+
+fn is_hangul_syllable(cp int) -> bool {
+    cp >= SBASE && cp < SBASE + SCOUNT
+}
+
+// ---- codepoint <-> str ----
+fn str_to_cps(s str) -> Vec[int] {
+    mut out = Vec[int].with_capacity(s.byte_len())
+    for c in s.as_chars() { out.push(c as int) }
+    out
+}
+
+fn cps_to_str(cps Vec[int]) -> str {
+    consume sb = StringBuilder.with_capacity(cps.len() * 2)
+    for cp in cps { sb.append(str.from_codepoint(cp)) }
+    sb.as_str()
+}
+
+// ---- decomposition ----
+fn decompose(cps Vec[int], compat bool) -> Vec[int] {
+    mut out = Vec[int].with_capacity(cps.len() * 2)
+    for cp in cps {
+        if is_hangul_syllable(cp) {
+            ro si = cp - SBASE
+            out.push(LBASE + si / NCOUNT)
+            out.push(VBASE + (si % NCOUNT) / TCOUNT)
+            ro t = si % TCOUNT
+            if t != 0 { out.push(TBASE + t) }
+        } else {
+            match decomp_lookup(cp, compat) {
+                Some(seq) => { for d in parse_cp_list(seq) { out.push(d) } }
+                None => { out.push(cp) }
+            }
+        }
+    }
+    out
+}
+
+// ---- canonical ordering (stable insertion sort by combining class) ----
+// Starters (ccc == 0) act as barriers: a combining mark is never reordered past
+// a starter, and equal-class marks keep their input order (stability).
+fn canonical_order(arr Vec[int]) -> Vec[int] {
+    mut a = Vec[int].with_capacity(arr.len())
+    for x in arr { a.push(x) }
+    ro n = a.len()
+    mut i = 1
+    while i < n {
+        ro cc = ccc_of(a[i])
+        if cc != 0 {
+            mut j = i
+            while j > 0 && ccc_of(a[j - 1]) > cc {
+                ro tmp = a[j]
+                a[j] = a[j - 1]
+                a[j - 1] = tmp
+                j = j - 1
+            }
+        }
+        i = i + 1
+    }
+    a
+}
+
+// ---- canonical composition ----
+// Primary composite of (a, b), or -1 if none. Hangul L+V and LV+T are handled
+// algorithmically; everything else via the inverted canonical-decomposition map.
+fn compose_pair(a int, b int) -> int {
+    if a >= LBASE && a < LBASE + LCOUNT && b >= VBASE && b < VBASE + VCOUNT {
+        ro li = a - LBASE
+        ro vi = b - VBASE
+        SBASE + (li * VCOUNT + vi) * TCOUNT
+    } else if a >= SBASE && a < SBASE + SCOUNT && ((a - SBASE) % TCOUNT) == 0
+        && b > TBASE && b < TBASE + TCOUNT {
+        a + (b - TBASE)
+    } else {
+        match comp_map.get((a << 21) | b) { Some(cp) => cp, None => -1 }
+    }
+}
+
+// Canonical composition (UAX #15): walk the canonically-ordered sequence, folding
+// each combining mark into the last starter when a primary composite exists and
+// the mark is not blocked (no equal/greater class mark intervenes).
+fn compose(cps Vec[int]) -> Vec[int] {
+    ro n = cps.len()
+    mut out = Vec[int].with_capacity(n)
+    if n == 0 {
+        out
+    } else {
+        out.push(cps[0])
+        mut starter_pos = 0
+        mut starter_ch = cps[0]
+        mut last_ccc = ccc_of(cps[0])
+        // A non-starter first char can never compose (no starter precedes it).
+        if last_ccc != 0 { last_ccc = 256 }
+        mut i = 1
+        while i < n {
+            ro ch = cps[i]
+            ro cc = ccc_of(ch)
+            ro comp = compose_pair(starter_ch, ch)
+            if comp >= 0 && (last_ccc < cc || last_ccc == 0) {
+                out[starter_pos] = comp
+                starter_ch = comp
+            } else {
+                if cc == 0 {
+                    starter_pos = out.len()
+                    starter_ch = ch
+                }
+                last_ccc = cc
+                out.push(ch)
+            }
+            i = i + 1
+        }
+        out
+    }
+}
+
+// ---- public API (D253: free-function form `normalize_nfc(s) -> str`) ----
+
+/// Canonical decomposition + canonical ordering (NFD).
+export fn normalize_nfd(s str) -> str {
+    cps_to_str(canonical_order(decompose(str_to_cps(s), false)))
+}
+
+/// Compatibility decomposition + canonical ordering (NFKD).
+export fn normalize_nfkd(s str) -> str {
+    cps_to_str(canonical_order(decompose(str_to_cps(s), true)))
+}
+
+/// Canonical decomposition, ordering, then canonical composition (NFC).
+export fn normalize_nfc(s str) -> str {
+    cps_to_str(compose(canonical_order(decompose(str_to_cps(s), false))))
+}
+
+/// Compatibility decomposition, ordering, then canonical composition (NFKC).
+export fn normalize_nfkc(s str) -> str {
+    cps_to_str(compose(canonical_order(decompose(str_to_cps(s), true))))
+}

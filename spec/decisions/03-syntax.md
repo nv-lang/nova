@@ -10011,6 +10011,63 @@ Unicode-данных `std/unicode` (Plan 152.4). См. [Plan 152.3](../../docs/p
 
 ---
 
+## D253. `std/unicode` — нормализация (UAX #15) + grapheme-сегментация (UAX #29)
+
+Added: 2026-06-14  Status: 152.4.1+152.4.2 (нормализация) + 152.4.3 (graphemes) IMPLEMENTED 2026-06-14; Phase B (folding/case-mapping 152.4.4) — остаётся
+
+Полная Unicode-нормализация — отдельный **opt-in** модуль `std/unicode` (модуль
+`std.unicode`, folder-module), импортируется явно; НЕ prelude (за размер таблиц
+платит импортирующий, criterion A6). Ядро (152.1–152.3a: байты/codepoint/ASCII)
+остаётся prelude-доступным и собирается без `std/unicode`.
+
+### Что в ядре vs библиотеке
+Ядро: байты, codepoint decode/encode, ASCII case/classification, byte-`Compare`.
+`std/unicode`: нормализация + grapheme-сегментация (здесь, реализовано);
+case folding + Unicode case mapping (152.4.4), collation (152.5b) — Phase B.
+
+### API (152.4.2, реализовано)
+Free-function форма (D253): **`normalize_nfc/nfd/nfkc/nfkd(s str) -> str`**.
+- **NFD** = canonical decomposition + canonical ordering (стабильная сортировка
+  combining-марок по CCC, starter'ы — барьеры).
+- **NFC** = NFD + canonical composition (blocking-rule UAX #15).
+- **NFKD/NFKC** = compatibility decomposition вместо canonical.
+Hangul декомпозируется/композируется **алгоритмически** (UAX #15 §Hangul, L+V и
+LV+T), не по таблицам.
+
+### Данные (152.4.1, Q-unicode-data)
+Таблицы генерируются build-time-инструментом **`nova-codegen unicode`** из UCD
+(`UnicodeData.txt`, `CompositionExclusions.txt`, `DerivedNormalizationProps.txt`) в
+`std/unicode/norm_data.nv` — компактные `;`-строки (NFD/NFKD full decomp, CCC,
+canonical composition), пин к `UNICODE_VERSION` (16.0). Парсятся **лениво** в
+`HashMap` при первом вызове (module-level `ro` lazy-static, D199). Composition-ключ —
+упакованный int `(a<<21)|b` (tuple-key HashMap — codegen-gap). Без ICU/ОС;
+`--check` — CI-guard. Прецедент: Rust `unicode-*` (codegen), Go `maketables`.
+
+### API grapheme-сегментации (152.4.3, реализовано)
+Третья линза `str.@as_graphemes() -> GraphemesView` (симметрична
+`as_bytes`/`as_chars`): extended grapheme clusters (UAX #29) — то, что человек
+видит как один символ (é = e+◌́; 🇺🇸 = 2 RI; 👨‍👩‍👧 = ZWJ-emoji — каждый 1 grapheme).
+`GraphemesView` (`value priv {buf,pos}`, как `CharsIter`) реализует `Next[str]`
+(`mut next() -> Option[str]`, срез-кластер) + `iter`/`count`/`is_empty`; decoding
+lens (поток, O(n) `count`, нет позиционного кэша — I2). Правила GB1-GB13 **+ GB9c**
+(Indic Conjunct Break, U15.1) над Grapheme_Cluster_Break + Extended_Pictographic +
+Indic_Conjunct_Break (range-таблицы binary-search, `grapheme_data.nv` из
+GraphemeBreakProperty.txt + emoji-data.txt + DerivedCoreProperties.txt). Hangul
+L/V/T — через GCB-категории.
+
+### Conformance
+- UAX #15: `NormalizationTest.txt` — фикстура
+  `normalization_conformance.nv` (полный 19965/19965 verified out-of-band; коммит — сэмпл).
+- UAX #29: `GraphemeBreakTest.txt` — фикстура `grapheme_conformance.nv`
+  (**полный 1093/1093**, content-checked). Обе генерируются
+  `nova-codegen unicode --emit-conformance`.
+
+См. [Plan 152.4](../../docs/plans/152.4-std-unicode.md), Q-unicode-data
+(open-questions.md). Phase B остаток: `[M-152-case-fold]` (folding + Unicode
+case-mapping 152.4.4). AMEND D250 §«линзы» — `as_graphemes` третья линза.
+
+---
+
 ## D254. Модель сравнения строк — byte-`Ord` дефолт + явный collation
 
 Added: 2026-06-13  Status: 152.5a (core) IMPLEMENTED 2026-06-13; 152.5b (Unicode/locale) — Phase B

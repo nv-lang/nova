@@ -65,6 +65,33 @@ enum Cmd {
     },
     /// Plan 13: распечатать registry runtime-функций для sanity.
     DumpRuntime,
+    /// Plan 152.4.1 (Q-unicode-data): сгенерировать таблицы нормализации
+    /// `std/unicode/norm_data.nv` из UCD (UnicodeData.txt + CompositionExclusions
+    /// + DerivedNormalizationProps). Internal build tool — не через `nova` CLI.
+    /// `--check` — сравнить с существующим файлом и fail при diff (CI guard).
+    Unicode {
+        /// Директория с UCD-файлами (UnicodeData.txt и т.д.).
+        #[arg(long = "ucd-dir")]
+        ucd_dir: PathBuf,
+        /// Корень репозитория (куда писать `std/unicode/`). По умолчанию `.`.
+        #[arg(long = "root", default_value = ".")]
+        root: PathBuf,
+        /// Версия Unicode, под которую сгенерированы таблицы (пин).
+        #[arg(long = "unicode-version", default_value = "16.0")]
+        unicode_version: String,
+        /// Также сгенерировать UAX #15 conformance-фикстуру
+        /// `nova_tests/plan152_4/normalization_conformance.nv` из
+        /// NormalizationTest.txt (capped — см. `--conformance-limit`).
+        #[arg(long = "emit-conformance")]
+        emit_conformance: bool,
+        /// Максимум case'ов в conformance-фикстуре (compile/run-time bound).
+        /// Part 0 целиком + stride-выборка Parts 1-5 (чанки по 500 на test).
+        #[arg(long = "conformance-limit", default_value_t = 1500)]
+        conformance_limit: usize,
+        /// Не записывать; сравнить с существующим и упасть при несовпадении.
+        #[arg(long = "check")]
+        check: bool,
+    },
     /// Plan 24: cross-platform test runner — сборка одного .nv в .exe
     /// и проверка EXPECT-маркера (D89). Заменяет per-file логику из
     /// run_tests.ps1.
@@ -227,6 +254,8 @@ fn run() -> ExitCode {
         Cmd::EmitRuntimeStubs { root, check } =>
             cmd_emit_runtime_stubs(&root, check),
         Cmd::DumpRuntime => cmd_dump_runtime(),
+        Cmd::Unicode { ucd_dir, root, unicode_version, emit_conformance, conformance_limit, check } =>
+            cmd_unicode(&ucd_dir, &root, &unicode_version, emit_conformance, conformance_limit, check),
         Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts, timeout, gc, contracts } =>
             cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts, timeout, &gc, &contracts),
         Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed, retries, gc, contracts } =>
@@ -628,6 +657,109 @@ fn cmd_emit_runtime_stubs(root: &PathBuf, check: bool) -> Result<()> {
         println!("OK: {} runtime stub file(s) match registry.", total_files);
     } else {
         println!("emitted {} runtime stub file(s).", total_files);
+    }
+    Ok(())
+}
+
+/// Plan 152.4.1 (Q-unicode-data): generate `std/unicode/norm_data.nv` from the
+/// UCD. `--check` compares against the existing file and fails on diff (CI
+/// guard), mirroring `cmd_emit_runtime_stubs`.
+fn cmd_unicode(
+    ucd_dir: &Path,
+    root: &Path,
+    version: &str,
+    emit_conformance: bool,
+    conformance_limit: usize,
+    check: bool,
+) -> Result<()> {
+    use nova_codegen::codegen::unicode_data;
+    let tables = unicode_data::parse_ucd(ucd_dir)?;
+    let content = unicode_data::render_norm_data_nv(&tables, version);
+    let rel = "std/unicode/norm_data.nv";
+    let abs = root.join(rel);
+    let stats = format!(
+        "{} nfd / {} nfkd / {} ccc / {} comp",
+        tables.nfd.len(),
+        tables.nfkd.len(),
+        tables.ccc.len(),
+        tables.comp.len()
+    );
+    // Plan 152.4.3: grapheme-break tables (UAX #29).
+    let gtables = unicode_data::parse_grapheme_tables(ucd_dir)?;
+    let gcontent = unicode_data::render_grapheme_data_nv(&gtables, version);
+    let grel = "std/unicode/grapheme_data.nv";
+    let gabs = root.join(grel);
+    let gstats = format!(
+        "{} gcb / {} extpict / {} incb ranges",
+        gtables.gcb.len(),
+        gtables.ext_pict.len(),
+        gtables.incb.len()
+    );
+    // Optional conformance fixtures: UAX #15 (normalization) + UAX #29 (graphemes).
+    let confs: Vec<(String, std::path::PathBuf)> = if emit_conformance {
+        vec![
+            (
+                unicode_data::render_conformance_nv(ucd_dir, conformance_limit)?,
+                root.join("nova_tests/plan152_4/normalization_conformance.nv"),
+            ),
+            (
+                unicode_data::render_grapheme_conformance_nv(ucd_dir, conformance_limit)?,
+                root.join("nova_tests/plan152_4/grapheme_conformance.nv"),
+            ),
+        ]
+    } else {
+        Vec::new()
+    };
+    if check {
+        let norm = |s: &str| s.replace("\r\n", "\n");
+        let existing = std::fs::read_to_string(&abs)
+            .map_err(|e| anyhow!("failed to read {}: {}", abs.display(), e))?;
+        if norm(&existing) != norm(&content) {
+            return Err(anyhow!(
+                "{} diverges from UCD ({}).\n\
+                 Run `nova-codegen unicode --ucd-dir <UCD-dir>` to regenerate.",
+                rel, stats
+            ));
+        }
+        {
+            let ex = std::fs::read_to_string(&gabs)
+                .map_err(|e| anyhow!("failed to read {}: {}", gabs.display(), e))?;
+            if norm(&ex) != norm(&gcontent) {
+                return Err(anyhow!(
+                    "{} diverges from UCD ({}).\n\
+                     Run `nova-codegen unicode --ucd-dir <UCD-dir>` to regenerate.",
+                    grel, gstats
+                ));
+            }
+        }
+        for (c, p) in &confs {
+            let ex = std::fs::read_to_string(p)
+                .map_err(|e| anyhow!("failed to read {}: {}", p.display(), e))?;
+            if norm(&ex) != norm(c) {
+                return Err(anyhow!("{} diverges from UCD test data; regenerate.", p.display()));
+            }
+        }
+        println!("OK: {} ({}) + {} ({}) match UCD.", rel, stats, grel, gstats);
+    } else {
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| anyhow!("failed to create {}: {}", parent.display(), e))?;
+        }
+        std::fs::write(&abs, &content)
+            .map_err(|e| anyhow!("failed to write {}: {}", abs.display(), e))?;
+        println!("wrote {} ({}).", rel, stats);
+        std::fs::write(&gabs, &gcontent)
+            .map_err(|e| anyhow!("failed to write {}: {}", gabs.display(), e))?;
+        println!("wrote {} ({}).", grel, gstats);
+        for (c, p) in &confs {
+            if let Some(parent) = p.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| anyhow!("failed to create {}: {}", parent.display(), e))?;
+            }
+            std::fs::write(p, c)
+                .map_err(|e| anyhow!("failed to write {}: {}", p.display(), e))?;
+            println!("wrote {}.", p.display());
+        }
     }
     Ok(())
 }

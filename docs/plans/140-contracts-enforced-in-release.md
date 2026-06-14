@@ -170,10 +170,9 @@ Rust-модель bounds-check. Применение к Vec — followup Plan 13
   который УЖЕ покрыт enforce-in-release — см. Ф.1: record-invariant `#ifdef` снят наравне с requires/ensures).
   Когда/если появятся декларативные type invariants — они автоматически наследуют ту же enforce-with-elision
   семантику (общий codegen-путь). Маркер оставлен как напоминание-якорь, не блокер.
-- `[M-140-contract-levels]` — **OPEN (deferred, не блокер).** Per-module opt-out
-  (`#unchecked_module` / манифест) + Eiffel-style раздельная гранулярность (pre / post / invariant
-  по отдельности). V1 (Ф.2) даёт per-fn `#unchecked` + build `--contracts=off` — достаточно для hot-path.
-  Per-module/per-clause — по запросу. Home: backlog (Q34 §3 cross-ref).
+- `[M-140-contract-levels]` ✅ **CLOSED 2026-06-14** (Plan 140.3). Per-module opt-out
+  (`#unchecked` перед `module X` — НЕ `#unchecked_module`) + Eiffel-style раздельная
+  гранулярность `#unchecked(requires/ensures/invariant)` (fn И module). См. §Followup ниже.
 - `[M-140-contract-panic-unwind]` — **OPEN (deferred, не блокер).** Release violation как
   panic-unwind (recoverable, ловится supervised-scope/`okrescue`) вместо текущего `abort` (Ф.1).
   Default = abort (контракт-violation = баг программы, fail-fast). Делать если понадобится graceful
@@ -238,6 +237,25 @@ Rust-модель bounds-check. Применение к Vec — followup Plan 13
 - `[M-140.1-message-interpolation]` ✅ **CLOSED** (commit `1d6d2ca5`) — interp-сообщения
   контрактов `requires x>0, "got ${x}"`. Полное acceptance — в
   [140.1-contract-custom-message.md](140.1-contract-custom-message.md) §Followup.
-- `[M-140-contract-levels]` (P3) — остаётся deferred (per-module opt-out + Eiffel-гранулярность).
-  По именованию: module-opt-out = голый `#unchecked` перед `module X` (как `#stable`/
-  `#no_prelude`), НЕ `#unchecked_module` (суффикса `_module` в Nova нет).
+- `[M-140-contract-levels]` ✅ **CLOSED 2026-06-14** (commit `77932ea3`) — per-module
+  opt-out + Eiffel-гранулярность. **(a)** `#unchecked` перед `module X` — элидирует
+  контракт-страховку всего модуля (голое имя, НЕ `#unchecked_module`). **(b)**
+  `#unchecked(requires/ensures/invariant)` (комбинируемо) на fn И module уровне.
+  `ContractOptOut{requires,ensures,invariant}` (заменил `bool`) + `Module.contract_opt_out`;
+  codegen gate per-kind (`contracts_elided_for`/`invariants_elided_here`) — requires/
+  ensures/decreases/invariant независимо. Тесты `plan140_3/*` 4/0 (neg-пара доказывает
+  независимость видов); 0 регрессий (contracts 251/0, plan140 42/0, basics 8/0).
+
+  **Критерии приёмки (contract-levels):**
+  - **CL1** ✅ — module-opt-out: `#unchecked` перед `module X` элидирует контракт-
+    страховку всего модуля (`plan140_3/module_unchecked_pos`: violated requires → нет паники).
+  - **CL2** ✅ — per-kind на fn-уровне: `#unchecked(requires)` элидирует ТОЛЬКО requires,
+    `ensures` остаётся (`unchecked_requires_elided_ensures_kept_neg`: violation всплывает как
+    `ensures failed`, не `requires failed` — доказывает независимость).
+  - **CL3** ✅ — зеркало: `#unchecked(ensures)` элидирует ТОЛЬКО ensures, requires остаётся
+    (`unchecked_ensures_elided_requires_kept_neg`: `requires failed`).
+  - **CL4** ✅ — `#unchecked(invariant)` (module-уровень) элидирует type-invariant
+    (`unchecked_invariant_pos`: невалидная конструкция без паники).
+  - **CL5** ✅ — имя: голое `#unchecked` на модуле (НЕ `#unchecked_module`); плохой вид →
+    `E_UNCHECKED_KIND`. Эффективная элизия = `--contracts=off` ⊔ module-opt-out(kind) ⊔
+    fn-opt-out(kind). 0 регрессий по всем буфер-бакетам (release nova, verified на latest main).
