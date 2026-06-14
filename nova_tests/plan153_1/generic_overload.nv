@@ -1,0 +1,29 @@
+// Plan 153.1 / [M-138.2-generic-method-overload-mono]: generic-type method
+// overloads (arity + param-type) resolve correctly in monomorphization —
+// dispatch (call) + return-type inference (chained receiver).
+module plan153_1.generic_overload
+
+type Box[T] priv { mut inner T }
+fn Box[T].of(x T) -> Self => { inner: x }
+fn Box[T] @slot() -> T => @inner                 // getter (0-arg)
+fn Box[T] mut @slot(x T) -> () { @inner = x }    // setter (1-arg) — ARITY overload
+fn Box[T] @tag(n int) -> int => n + 1            // PARAM-TYPE overload (int)
+fn Box[T] @tag(s str) -> int => s.byte_len()     //                    (str), same arity (D249: str.len() retired)
+
+test "arity overload getter/setter on generic type" {
+    mut b = Box[int].of(5)
+    assert(b.slot() == 5)
+    b.slot(10)
+    assert(b.slot() == 10)
+}
+test "param-type overload (same arity, different types)" {
+    ro b = Box[int].of(0)
+    assert(b.tag(7) == 8)
+    assert(b.tag("abc") == 3)
+}
+test "Vec @cap getter/setter + fluent chain (return-type infer)" {
+    mut v = Vec[int].from([1, 2])
+    v.cap(v.len() + 5).push(3)
+    assert(v.cap() == 7 && v.len() == 3)
+    assert(v.equal(Vec[int].from([1, 2, 3])))
+}

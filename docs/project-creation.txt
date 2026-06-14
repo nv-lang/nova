@@ -37658,3 +37658,35 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   plan91 даже 2/0, plan124_8 40/0, plan131/139/153_1/contracts чисто). Новый отдельный баг найден:
   Vec[f32].from([f64-литералы]) мис-коэрсит -> [M-154.1-f32-literal-coercion] (не Display/Debug).
   [M-154.1-required-conformance] перенесён в Q37.
+
+[2026-06-14] Plan 153.1 codegen-полнота — generic-method overload-mono + variadic `Vec.of` +
+  value-record slice (3 codegen-блокера снятых, разблокируют каноничный Vec-API).
+  #1 [M-138.2-generic-method-overload-mono] ✅ FIXED (dispatch + chain return-infer). Симптом:
+  `v.cap(10)` → «too many arguments» — mono-диспатч одноимённых overloads (`@cap()` геттер vs
+  `@cap(n)` сеттер) коллапсировал first-by-name (геттер «выигрывал», получал лишний арг). Корень:
+  codegen mono-регистр `mono_method_decls` keyed `(type,name)` = ОДИН FnDecl на ключ + mono-sentinel
+  `MethodSig` с пустым `param_c_types` → `resolve_overload` не дизамбигуировал. Фикс — 8 правок
+  emit_c.rs (commit f7f56f0f): (a) side-map `mono_method_fndecl_for_name: HashMap<String,FnDecl>`
+  несёт полный FnDecl per mono-instance (заполняется в register_mono_method_instance, читается в
+  drain-цикле перед общим lookup'ом); (b) call-site (block 5b) — выбор overload по АРНОСТИ →
+  param-C-типам вместо first-wins `.find`, с suffix `__<paramtype>` на mangled-имя для
+  overload_index>0 (reuse erased-base mangle), гейт `same_name.len()<=1` сохраняет single-путь;
+  (c) return-type inference: arity-aware выбор в `infer_mono_method_ret_with_args` И в Ф.3-fallback
+  (~32041) — последнее КРИТИЧНО для chained receiver `v.cap(n).push(x)`: цепочка инферит Self/`@`
+  сеттера как mono-ресивер (иначе `.push` не находил метод). Следствие: `@cap_to`→`@cap` (точный
+  capacity-сеттер вернул каноничное overload-имя getter/setter); fluent-chain работает. D84
+  (10-overloading) дополнен ✅-нотой. Pos-тест plan153_1/generic_overload.nv 3/3 (арность Box[T]
+  getter/setter + param-type @tag(int)/@tag(str) + Vec @cap chain). Box-arity репро PASS.
+  #2 [M-153-vec-of-variadic-codegen] ✅ CLOSED (commit 3d9a7361, фоновый агент). `Vec[T].of(...args
+  []T) => args`. Корень: `lookup_variadic_arity` не обрабатывал turbofish-static форму `Type[T].of(...)`
+  (парсится `Member{obj:TurboFish{base:Ident("Vec")},name:"of"}`); добавлен `TurboFish{base:Ident}`-arm
+  → существующая variadic-routing синтезирует ArrayLit из хвоста args → ре-диспатч в mono-static. C:
+  `with_capacity(n)`+N×`push` собирают `[]T`, тело `return args` (zero-copy). Constructor в core.nv.
+  Тест plan153_0/variadic_of.nv 3/3 (multi/empty/non-int). Scope: `[]int.of(...)` array-ext-сахар —
+  ОТДЕЛЬНЫЙ gap (static-методы на `__array`-receiver не диспатчатся вообще), не часть маркера.
+  #3 value-record slice codegen ✅ (commit 8d493e5a). Slice-view Vec'а кастил `(ety*)(data+off)` с
+  mangled `_p`-суффиксом элемент-типа (`T_p` вместо `T*`) → CC-FAIL для value-record элементов; фикс
+  un-mangle `_p`→`*` перед кастом. plan96 19/4→23/3.
+  Acceptance (см. ниже в плане 138.2) выполнены. Neg overload'а — контрактный cap_below_len_neg.
+  Broad regression 0 новых FAIL. Новый followup [M-138.2-overload-no-match-typecheck] (no-match
+  overload-вызов сейчас CC-FAIL'ит вместо чистого type-check error). Закрытие 153.1 codegen-долга.
