@@ -151,6 +151,12 @@ enum Cmd {
         /// Включить std/* файлы в прогон.
         #[arg(long = "include-stdlib")]
         include_stdlib: bool,
+        /// Plan 156: include *_slow.nv large/slow tests (default: skipped).
+        #[arg(long = "include-slow")]
+        include_slow: bool,
+        /// Plan 156: run ONLY *_slow.nv large/slow tests.
+        #[arg(long = "slow-only")]
+        slow_only: bool,
         /// Фильтр по display-name (substring).
         #[arg(long)]
         filter: Option<String>,
@@ -260,8 +266,8 @@ fn run() -> ExitCode {
             cmd_unicode(&ucd_dir, &root, &unicode_version, emit_conformance, conformance_limit, check),
         Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts, timeout, gc, contracts } =>
             cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts, timeout, &gc, &contracts),
-        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed, retries, gc, contracts } =>
-            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts, timeout, jobs, &format, verbose, quiet, results_file.as_deref(), rerun_failed, retries, &gc, &contracts),
+        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, include_slow, slow_only, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed, retries, gc, contracts } =>
+            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, include_slow, slow_only, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts, timeout, jobs, &format, verbose, quiet, results_file.as_deref(), rerun_failed, retries, &gc, &contracts),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -933,6 +939,8 @@ fn cmd_test_all(
     tests_dir: &PathBuf,
     stdlib_dir: &PathBuf,
     include_stdlib: bool,
+    include_slow: bool,
+    slow_only: bool,
     filter: Option<&str>,
     mode: &str,
     toolchain: &str,
@@ -1007,6 +1015,13 @@ fn cmd_test_all(
         None
     };
     let gc_kind = test_runner::GcKind::parse(gc)?;
+    let slow_lane = if slow_only {
+        test_runner::SlowLane::Only
+    } else if include_slow {
+        test_runner::SlowLane::Include
+    } else {
+        test_runner::SlowLane::Exclude
+    };
     let opts = test_runner::TestAllOpts {
         tests_dir,
         stdlib_dir: stdlib_dir_opt,
@@ -1036,6 +1051,8 @@ fn cmd_test_all(
         // Plan 140 Ф.2 (D24 amend): `--contracts=off` → элидировать все
         // контракт-проверки на codegen для всех тестов прогона (legacy).
         contracts_off: contracts == "off",
+        // Plan 156: slow-lane selection (--include-slow / --slow-only).
+        slow_lane,
     };
     let summary = test_runner::run_all(opts)?;
     test_runner::print_summary(&summary, format);

@@ -4313,6 +4313,8 @@ fn cmd_test(
         // Plan 140 Ф.2 (D24 amend): `nova test` enforce'ит контракты по
         // умолчанию (тесты проверяют поведение enforce-with-elision).
         contracts_off: false,
+        // Plan 156: default `nova test` skips *_slow.nv large/slow tests.
+        slow_lane: test_runner::SlowLane::Exclude,
     };
 
     // Plan 57.D.1: optionally aggregate PerfTimer markers across all
