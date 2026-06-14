@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::diag::Span;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeMap};
 use std::fmt::Write as FmtWrite;
 
 /// Plan 11 Ф.1: одна signature методa в multi-overload registry.
@@ -394,7 +394,12 @@ pub struct CEmitter {
     /// is_external). Используется на call-site для resolve по arg-types
     /// (Ф.2). Single-key `method_receivers` остаётся для backward compat —
     /// single-overload пути ссылаются на него.
-    method_overloads: HashMap<(String, String), Vec<MethodSig>>,
+    // Plan 145.2: BTreeMap (не HashMap) — детерминированная итерация. Эта мапа
+    // итерируется при эмиссии (embed-proxies ~9891, registration ~3123) и влияет
+    // на ПОРЯДОК генерируемого C + порядок enqueue в mono-worklist. HashMap-порядок
+    // (рандом per-run) делал эмиссию недетерминированной и обнажал латентные
+    // order-зависимые баги prelude (init-order OOB, var_boxed leak). Ключ Ord.
+    method_overloads: BTreeMap<(String, String), Vec<MethodSig>>,
     /// Plan 125 followup `[M-125-method-call-never-detection]`: set of
     /// (receiver_c_type, method_name) pairs OR (`"<free>"`, fn_name) where
     /// the declared AST return type is `never`. Populated during method/fn
@@ -414,7 +419,9 @@ pub struct CEmitter {
     /// D39 / Plan 11 Ф.9: embed-поля per record-type.
     /// Key = wrapper type name; value = list of (field_name, embedded_type_name,
     /// is_anonymous). Используется для auto-proxy generation после AST-walk fn-items.
-    embed_fields: HashMap<String, Vec<(String, String, bool)>>,
+    // Plan 145.2: BTreeMap — детерминированная итерация (keys() при registration
+    // ~3118 и эмиссии embed-proxies ~9886/9891). Ключ Ord.
+    embed_fields: BTreeMap<String, Vec<(String, String, bool)>>,
     /// Plan 06 Ф.3: для каждого типа Coll с методом `mut @iter() -> IterT`
     /// запоминаем имя IterT. Используется в for-in: при `for x in coll`
     /// (где `coll: Coll`) вставляем implicit `.iter()` и emit'им loop
@@ -1069,11 +1076,11 @@ impl CEmitter {
             sum_schemas: HashMap::new(),
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
-            method_overloads: HashMap::new(),
+            method_overloads: BTreeMap::new(),
             never_returning_methods: HashSet::new(),
             external_registry: super::external_registry::ExternalRegistry::load_builtins()
                 .expect("failed to load std/runtime/*.nv (Plan 13 Ф.8)"),
-            embed_fields: HashMap::new(),
+            embed_fields: BTreeMap::new(),
             all_methods: HashSet::new(),
             iter_returns: HashMap::new(),
             from_targets: HashMap::new(),
