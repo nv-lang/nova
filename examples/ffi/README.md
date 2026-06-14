@@ -8,16 +8,16 @@
 
 | File | What |
 |---|---|
-| `ptr_basics.nv` | `ptr` primitive type usage — null, casts, typed handles |
+| `ptr_basics.nv` | `*()` opaque pointer usage — null, casts, typed handles |
 | `sqlite_mini.nv` | Minimal libsqlite3 binding sketch — handles + tuple returns |
 
 ## Build status
 
 Plan 115 V1 ships:
-- `ptr` opaque pointer type ✓
+- `*()` opaque pointer type (`void*`; Plan 134 retired the `ptr` builtin) ✓
 - Tuple-by-value FFI returns ✓
 - User-level `external fn` declarations ✓ (D82 amend)
-- Tuple newtype handles `type X(ptr)` ✓ ([M-115-newtype-constructor] closed)
+- Tuple newtype handles `type X(*())` ✓ ([M-115-newtype-constructor] closed)
 - `[ffi]` build pipeline в nova.toml ✓ ([M-115-ffi-build-pipeline] closed)
 
 ## How user FFI works
@@ -51,7 +51,7 @@ Pending followups:
 ## See also
 
 - `docs/ffi-cookbook.md` — complete tutorial with three library examples
-- `spec/decisions/02-types.md#d214` — `ptr` primitive type spec
+- `spec/decisions/02-types.md#d214` — FFI opaque-pointer spec (`*()`; Plan 134)
 - `nova_tests/plan115/` — fixture tests exercising the FFI primitives
 - `compiler-codegen/nova_rt/plan115_ffi_test.h` — Plan 115 Ф.2 test shim
   used by `nova_tests/plan115/t2_external_fn_tuple_ok.nv`
