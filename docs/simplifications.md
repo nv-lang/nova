@@ -12940,7 +12940,7 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 
 ### [M-83.13-precise-gc-research-v1] Plan 83.13 V1 RESEARCH DELIVERED — precise GC decision document (2026-05-26)
 
-- **Где:** `docs/research/precise-gc-decision-2026.md`. Worktree
+- **Где:** `docs/research/09-precise-gc-decision-2026.md`. Worktree
   `nova-p83-13`, branch `plan-83-13`.
 
 - **Что сделано (V1):**
@@ -26454,7 +26454,7 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 
 ### [M-83.13-precise-gc-research-v1] Plan 83.13 V1 RESEARCH DELIVERED — precise GC decision document (2026-05-26)
 
-- **Где:** `docs/research/precise-gc-decision-2026.md`. Worktree
+- **Где:** `docs/research/09-precise-gc-decision-2026.md`. Worktree
   `nova-p83-13`, branch `plan-83-13`.
 
 - **Что сделано (V1):**

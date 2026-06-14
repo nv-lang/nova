@@ -21711,7 +21711,7 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 **Что сделано:**
 Plan 83.13 — research-only deliverable по precise GC decision для Nova
 (Boehm replacement strategy). Написан документ
-`docs/research/precise-gc-decision-2026.md` (5801 слов, 8 разделов).
+`docs/research/09-precise-gc-decision-2026.md` (5801 слов, 8 разделов).
 Создан worktree `nova-p83-13` (branch `plan-83-13`) от `github/plan-83-5`.
 Проведён обширный research: прочитаны 9 internal plan docs + Nova runtime
 source files (alloc_boehm.c, alloc.h, fiber_arena_win.c, fibers.h,
@@ -21749,7 +21749,7 @@ prototype, performance microbench против Boehm baseline.
    изменится.
 
 **Files modified:**
-- docs/research/precise-gc-decision-2026.md — новый файл (5801 слов).
+- docs/research/09-precise-gc-decision-2026.md — новый файл (5801 слов).
 - docs/plans/README.md — row 83.13 ✅ V1 RESEARCH DELIVERED.
 - docs/simplifications.md — entry [M-83.13-precise-gc-research-v1].
 - docs/project-creation.txt — этот блок.

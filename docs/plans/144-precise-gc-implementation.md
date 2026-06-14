@@ -24,7 +24,7 @@ Plan 83.13 по своему scope — **ТОЛЬКО research** («decision doc
 
 ## 2. Контекст и решение из research (Plan 83.13)
 
-Decision-документ: [`docs/research/precise-gc-decision-2026.md`](../research/precise-gc-decision-2026.md)
+Decision-документ: [`docs/research/09-precise-gc-decision-2026.md`](../research/09-precise-gc-decision-2026.md)
 (5801 слов, 8 секций; merge `d743a77f21b`, 2026-05-26).
 
 **Рекомендация 83.13:** **Option B (Hybrid Boehm + Nova-managed arenas)** на v1.0,
