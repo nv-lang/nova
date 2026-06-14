@@ -36560,3 +36560,5 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   → workaround типизированным `mut found Option[str] = None`.
 
 - [2026-06-14] codegen lib-test contract_opt_out fix (Plan 140.3 followup, e83c8914): unblocked the nova-codegen lib-test target (was E0063 x4). NOT a shortcut - Default::default() is the semantically-correct neutral (full enforce). Surfaced 33 pre-existing stale tests (let-removal drift) -> [M-codegen-libtest-stale-tests]; reported honestly as 770/33, not claimed green.
+
+- [2026-06-14] codegen lib-test stale-tests restored to green [M-codegen-libtest-stale-tests] CLOSED: 33 pre-existing stale unit tests (surfaced by the contract_opt_out unblock) updated to current language/compiler reality — NOT a shortcut. 26 parser::tests migrated Nova inputs `let`->`ro`/`mut` (Plan 114/D184), 2 lints prelude_shadow → `#no_prelude`/`#allow(shadow)` (Plan 107/D174), 5 sum_schema_registry → Option.unwrap_or Nova-body routing expectations (Plan 99). Zero production-code change; «без упрощений как для прода» — ассерты остались осмысленными, ничего не ослаблено/замаскировано. `cargo test --lib` 803/0 (был 770/33).
