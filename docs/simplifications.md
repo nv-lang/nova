@@ -36329,7 +36329,9 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   упрощение, а граница безопасности):** приведение арг-array-литерала к param-типу в turbofish-
   static-call применяется ТОЛЬКО к array-литералам; другие арги (Result/Option/скаляр) — обычный
   emit_expr, т.к. широкая форма мис-оборачивала Result-арги Vec.sort. Гард приведения: только
-  всё-литеральные массивы (f64-переменная не сужается молча — это была бы потеря точности).
+  всё-литеральные массивы. **f64-переменная в `[]f32`-контексте — НЕ молчит:** `Vec[f32].from([f64var])`
+  даёт громкую `E_ARRAY_ELEM_NARROW` (был тихий мусор; D44/D54 — narrowing не-литералов только через
+  явный `as f32`). Это и есть прод-граница: коэрсятся только литералы, переменные требуют явного каста.
   **Отдельные pre-existing баги (не от фикса, маркеры):** chained `Vec[f32].X().debug()` мис-диспатч
   на str.debug (`[M-154.1-chained-vec-f32-method-misdispatch]`); plan91/sort_basic — plan-153.3 sort.
 
@@ -36407,3 +36409,13 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   Workaround (не codegen-fix): helper'ы (`single`/`fold_one`/`upper_one`/`lower_one`) возвращают `Vec[int]`,
   `push`/`append` только внутри for-циклов — ни один хвост ветки не fluent. Настоящий fix (коэрсия
   mismatched if/match-веток в unit в discard-позиции) — followup.
+
+[2026-06-14] Plan 140.4 (overflow-элизия, D272, ветка plan-140-overflow-elide): V1 покрывает binary-
+  выражения int +/-/* (главный реальный кейс — loop/requires-bounded арифметика). Compound-assign (x += y,
+  codegen AssignOp→nova_int_checked_*) ОТЛОЖЕН → [M-140.4-compound-assign-overflow-elision] (P3): таргеты
+  обычно безграничные аккумуляторы (sum += a[i], редко доказуемо), отдельный Stmt::Assign AST-путь со своей
+  span-привязкой → высокая стоимость, near-zero реализуемая элизия; чек остаётся (sound). НЕ упрощение
+  core-фичи — документированная scope-граница низко-ценного пути (binary covers 95%). Также pre-existing
+  (вне scope): литерал-операнды (i+1, i*2) codegen вообще не чекает (rty литерала ≠ nova_int) — поэтому
+  always-safe тесты используют var+var (i+j) паттерны. * нелинеен → Z3 часто Unknown → консервативно чек
+  (не упрощение — soundness: никогда не элидируем без пруфа).

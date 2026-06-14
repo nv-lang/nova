@@ -744,6 +744,16 @@ function panics instead of returning a wrong (wrapped) result. Sized
 integer types wrap instead of panicking (see above); reach for
 `#nooverflow` on them when wrap-around is not acceptable.
 
+**Proven-safe overflow checks are elided.** Each `int` `+`/`-`/`*` compiles to an
+always-on overflow check (`nova_int_checked_*`). When the Z3 backend proves the result
+stays in the 64-bit range — from loop bounds, literals, or a `requires` — the check is
+**removed** (zero-cost), exactly like an elided bounds check (D272, same enforce-with-
+elision model). A loop-bounded `i + j` or a `requires`-bounded `a + b` emits a plain C
+operator; an unprovable op keeps the check (debug *and* release). Elision is **proof-
+only** — never triggered by `#unchecked` alone: a check proven only via `requires` is
+kept under `--contracts=off` / `#unchecked(requires)`. Needs `NOVA_SMT_BACKEND=z3`;
+without it every op is checked. `*` is non-linear, so Z3 may leave it checked.
+
 Bitwise operators `&`, `|`, `^`, `<<`, `>>` are available in contracts
 on sized-integer operands (they remain unsupported on `int`).
 
