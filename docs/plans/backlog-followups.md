@@ -89,7 +89,7 @@
 | `[M-opt-auto-scoped-ref]` | Escape-analysis авто pass-value-param-by-ref + return-slot elision (NRVO); обобщить ресивер-`&obj`. | new perf-план (value-types thread) | P2 |
 | `[M-opt-value-sum-types]` | Compiler-inferred value(stack)/heap для sum-типов (recursion+size+escape; прозрачно — immutable); payload-less интернирование. | new perf-план (Plan 120/139) | P2 |
 | `[M-opt-elide-proven-overflow-checks]` | Z3/range-элизия доказуемо-безопасных integer-overflow чеков (proven→elide, как Plan 140). | new perf-план / Plan 140 | P2 |
-| `[M-opt-preempt-strided-loop]` | `nova_preempt_check()` в back-edge КАЖДОГО цикла (emit_c.rs:14215/15100) блокирует clang'у memset/SIMD-векторизацию. Strip-mine: outer-chunk (check раз в N) + inner-N (без чека → векторизуется); + data-movement через RawMem. Long-term: signal-based async preemption (Go 1.14; в C-рантайме реализуемо — Go доказал M:N в C 2012-13). **Cross-link Plan 144 (2026-06-14):** SIGURG проектировать как ОБЩИЙ async-yield — служит и async GC safe-point'ом ([Plan 144 §7.4](144-precise-gc-implementation.md)), не только preempt; folding preempt-check+GC-poll в одну точку. | Plan 143 §2 / cross-ref Plan 25 G5 + 82/83.x + 144 §7.4 | P2 |
+| `[M-opt-preempt-strided-loop]` | `nova_preempt_check()` в back-edge КАЖДОГО цикла блокирует clang-векторизацию. **✅ Part A+B DONE (Plan 143, merge `7c047a1b`, 2026-06-14):** (A) skip preempt-check на provably-short const-bound range-циклах (оба bound'а — int-литералы, count ∈ [0,1024] → starvation-safe, разблокирует векторизацию); (B) `for i in lo..hi { dst[i]=src[i] }` на Vec[T] → overlap-safe bulk copy (memmove fast-path + element-loop fallback на destructive forward-overlap; inclusive-overflow-safe). **Adversarial-review (6 агентов) + эмпирический probe** нашли 2 бага — закрыты: writable offset-overlap view'ы (`a=v[1..]; a[i]=b[i]`) пропагируют ≠ memmove → runtime overlap-guard; inclusive `hi+1` при i64::MAX = UB → `last` без +1. plan143: 9 copy + 3 preempt кейса PASS; регрессия 0 new fail (Vec/collection слайс + concurrency). **🟡 Остаётся long-term:** signal-based async preemption (Go 1.14 SIGURG) — general для variable-bound циклов без per-iteration call. **Cross-link Plan 144:** SIGURG = ОБЩИЙ async-yield (preempt + GC safe-point, [§7.4](144-precise-gc-implementation.md)). | Plan 143 (A+B done) / SIGURG → 144 §7.4 | 🟡 A+B done, SIGURG P2 |
 
 ## P2 — Ergonomics / stdlib combinators
 
@@ -215,25 +215,37 @@
   `awk '$1~/FAIL/{print $2}'`, не regex по строке; main-бинарь = быстрый оракул «новое vs pre-existing».
 
 ## Follow-up: Plan 154.1 (#impl-конформность + Display/Debug примитивов)
-- **`[M-154.1-box-generic-static-ctor]`** (floating, P2): `Box[T].@new`
-  generic-static-construction CC-FAIL — `(Box)[T];` течёт как сырой C в codegen.
-  Всплыло в диагностической пробе 154.1 (НЕ связано с мис-диспатчем `.debug`).
-  Generic-static-constructor codegen-gap; home — отдельный codegen-фикс.
-- **`[M-154.1-static-call-unresolved-loud]`** (planned, home **Plan 154.1 / followup**):
-  общий «неизвестная free-fn (напр. был `str.from_debug` → undefined
-  `nova_fn_str_from_debug`) → **compile-error** вместо link-time undefined symbol».
-  Расширение robustness на static-путь (`free_fn_c_name` fall-through
-  emit_c.rs:11129). Под Variant B конкретный `str.from_debug`-кейс мёртв, но класс
-  остаётся.
-- **`[M-154.1-required-conformance]`** (planned, P3): возможный переход opt-in →
-  required (номинальная конформность, как Rust) отдельным шагом после 154.1.
-- **`[M-154.1-f32-display-debug]`** (floating, P2): `f32` не получил конкретных
-  `#impl(Display)`/`#impl(Debug)` — нет conv.h-форматтера `nova_f32_*` и
-  `@append(f32)`-overload'а; `${f32}`-body рекурсировал бы (f32 не в interp
-  primitive-direct map). Сейчас `Vec[f32].debug` даёт громкий CC-FAIL (f32 идёт
-  через str.from-fallback → C type mismatch, НЕ через Ф.1-guard) — не silent, но
-  и не зелёный. Лечить: conv.h `nova_f32_to_str`/`_to_debug_str` (f32→double) +
-  `@append(f32)` + ветка в interp-map → затем `#impl(Display/Debug) fn f32`.
+- **`[M-154.1-box-generic-static-ctor]`** ✅ **RESOLVED 2026-06-14** (by plan-153.1): the
+  `(Box)[T];` raw-C leak from the 154.1 probe is no longer reproducible — plan-153.1's
+  generic-static/method codegen fixes (`f7f56f0f` overload-mono, `3d9a7361` variadic,
+  `8d493e5a` value-record slice) landed after the marker was filed and cover it. Verified
+  5 construction forms (concrete `Box[int].new`, generic-context `wrap`, nested
+  `Box[Box[int]]`, `.of` overloads in plan153_1/generic_overload). Regression guard
+  `plan154_1/pos_box_generic_static_ctor`.
+- **`[M-154.1-static-call-unresolved-loud]`** ✅ **RESOLVED 2026-06-14**: `Prim.method(...)`
+  на примитиве, дошедший до fall-through emit_c.rs ~24376 (все валидные primitive
+  static-методы/интринсики резолвятся раньше) → `E_UNKNOWN_STATIC_METHOD` compile-error
+  вместо undefined-символа `nova_fn_<prim>_<method>` на линковке. Узко: только примитив-
+  ресиверы (модуль-qualified free-fn и user-типы не задеты). neg-тест
+  `plan154_1/neg_unknown_static_method`; broad regression 0 новых FAIL. **Остаток (не-primitive
+  путь):** общий случай «unknown free-fn в произвольном модуле» сложнее (fall-through
+  обслуживает legit runtime-builtin + bootstrap-без-peer_files D134) — не покрыт, низкий приоритет.
+- **`[M-154.1-required-conformance]`** → перенесён в **[Q37](../../spec/open-questions.md#q37-конформность-протоколов-opt-in-структурная-vs-required-номинальная--частично-2026-06-13-plan-1541--d268)** (открытый вопрос дизайна, не actionable-работа): opt-in (структурная) vs required (номинальная) конформность.
+- **`[M-154.1-f32-display-debug]`** ✅ **RESOLVED 2026-06-14**: f32 получил `#impl(Display)`/`#impl(Debug)`.
+  conv.h `nova_f32_to_str`/`_to_debug_str` (widen→double + f64-форматтер) + `@append(f32)`
+  (`x as f64`) + ветка в interp-map. Заодно починен общий codegen-баг: self-call `@m(args)`
+  overload-резолв по типам аргументов (был только по `recv_mutable` → `@append(x as f64)`
+  брал базовый str-overload). plan154_1 6/6.
+- **`[M-154.1-f32-literal-coercion]`** (floating, P2, **NEW** 2026-06-14): `Vec[f32].from([1.5, 2.5])`
+  мис-коэрсит f64 array-литералы в f32 (бит-реинтерпретация → мусорные значения в debug-выводе).
+  Скаляр `ro x f32 = 1.5` коэрсится верно; explicit `v.push(x)` тоже. Проблема — f32 элементы
+  в **array-литерале** под `Vec[f32].from`. Лечить: коэрсия f64-литералов → f32 при инференсе
+  типа элемента массива из контекста `Vec[f32]`. Не про Display/Debug.
+- **`[M-float-roundtrip-printing]`** (floating, P3, выявлено в аудите 154.1): float→str
+  (`nova_f64_to_str`, и f32 через него) использует `%g` с дефолтной 6-знач точностью — **лосси**
+  на >6 значащих для f64 И f32 (не round-trip). Проектный стандарт, консистентный, НЕ регрессия;
+  но для прод-качества stdlib желателен shortest-round-trip формат (Ryū/Grisu). Затрагивает
+  весь stdlib-float — отдельная задача, не f32-специфична.
 
 ## Follow-up: Plan 153.1 (Vec core API — отложенные из-за codegen-лимитов)
 - **`[M-153.1-cap-setter-overload]`** ✅ **RESOLVED** (через фикс
@@ -249,6 +261,14 @@
   getter-int. Box-arity repro + `@cap(n)` statement+chain PASS; STRICT no-op для 1-overload.
   **Разблокирует** (отдельные std-рефакторы): merge `@splice`→`@insert`-overload,
   append/extend-консолидация (`[M-153.1-append-extend-consolidation]`).
+- **`[M-138.2-overload-no-match-typecheck]`** (planned, P2, home **Plan 138.2 / type-checker**):
+  вызов generic-метод-overload'а **без совпадения** по арности/типам (напр. `b.slot(1, 2)` где
+  `@slot` = 0-арг getter + 1-арг setter) сейчас **CC-FAIL'ит** на clang-стадии (codegen fall-
+  through к первому кандидату → «too many arguments»), а не отвергается чисто type-checker'ом до
+  codegen. Нужно: валидация overload-арности/типов на call-site (`types/mod.rs`, E_… +
+  кандидаты-сигнатуры в hint). Surfaced при закрытии `[M-138.2-generic-method-overload-mono]`
+  (dispatch для МАТЧАЩИХ overload'ов починен; no-match-диагностика — отдельный type-check слой).
+  `EXPECT_COMPILE_ERROR` (Nova-codegen) сейчас не ловит этот кейс (codegen «успешен», падает clang).
 - **`[M-153.1-append-extend-consolidation]`** (planned, home **Plan 153.1 / D259**): план
   хотел один `append` (concrete Vec bulk + generic Iter overload), `extend` убрать.
   Заблокировано тем же overload-collapse + у generic-`append` (`for x in items {@push(x)}`)
@@ -272,6 +292,24 @@
   протокол + `iter.collect() -> Vec[U]` gated на 153.2 (ленивый итератор + collect-инфра).
   Build-from-iterable УЖЕ есть (`Vec[T].from(items)` + `@extend[S Iter[T]]`); протокол-форма
   `collect`-таргета приземляется вместе с 153.2.
+
+## Follow-up: Plan 153.3 (sort & search)
+- **`[M-153.3-sort-unstable-inplace]`** (planned, P3, perf): `@sort_unstable[_by][_by_key]`
+  сейчас **alias стабильного** bottom-up merge sort (correctness-first MVP, sort.nv). Дать
+  отдельный быстрый in-place introsort/pdqsort (без O(n) scratch, лучше cache/branch) — это и
+  есть смысл `_unstable`. Не гейтит ничего (стабильная сортировка корректна для всех кейсов).
+- **`[M-153-select-nth]`** (planned, P3, home **Plan 153.3 roadmap**): `@select_nth_unstable`
+  (quickselect, k-й порядковый элемент за O(n) средн.) — явно отложен планом 153.3 §Roadmap.
+- **`[M-153-result-eq-literal-expected-type]`** (planned, P2, home **checker / type-inference**):
+  `result == Ok(x)` где Result имеет **non-default E** (≠`str`; напр. `binary_search`→
+  `Result[int,int]`) — литерал `Ok(x)` инферит `E=str` (дефолт), не унифицируется с типом LHS →
+  два разных `NovaRes_<...>` → структурный eq сравнивает несовпадающие payload-типы → **CC-FAIL**.
+  Нужна **expected-type propagation** в чекере: для `Eq/Neq` протянуть тип одного операнда как
+  expected другому (`types/mod.rs`, ~18k строк, 20 Binary-армов; mutable `walk_expr`@18478 —
+  desugar-проход, реальная bidirectional-инференция в другом месте). Глубокий change, узкая польза
+  (общий `Result[_, str]` УЖЕ работает; `binary_search` использует `match`). Surfaced при
+  структурном `==`-фиксе (`1cc82de5`). **Не** добавляли same-type guard: текущий CC-FAIL громче
+  silent-wrong identity.
 
 ## Follow-up: Plan 153.4 (slices — value-record element typedef)
 - **`[M-153.4-vec-value-record-field-access]`** (planned, P2, home **Plan 153.4 / Plan 96 H3**):

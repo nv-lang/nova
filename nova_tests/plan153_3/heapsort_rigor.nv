@@ -1,0 +1,45 @@
+// Plan 153.3 — heapsort (sort_unstable) correctness on non-trivial inputs:
+// reverse-sorted (worst for naive quicksort), all-equal, already-sorted.
+module plan153_3.heapsort_rigor
+
+test "unstable: reverse-sorted 20 -> ascending" {
+    mut v = Vec[int].new()
+    mut i = 20
+    while i > 0 {
+        i = i - 1
+        v.push(i)
+    }
+    v.sort_unstable()
+    assert(v.is_sorted())
+    assert(v.len() == 20)
+    assert(v[0] == 0 && v[19] == 19)
+}
+
+test "unstable: all-equal stays" {
+    mut e = Vec[int].from([5, 5, 5, 5, 5])
+    e.sort_unstable()
+    assert(e.equal(Vec[int].from([5, 5, 5, 5, 5])))
+}
+
+test "unstable: already-sorted stays" {
+    mut s = Vec[int].from([1, 2, 3, 4, 5, 6, 7])
+    s.sort_unstable()
+    assert(s.is_sorted() && s.len() == 7 && s[0] == 1 && s[6] == 7)
+}
+
+test "unstable matches stable on mixed input" {
+    mut a = Vec[int].from([7, 3, 7, 1, 9, 1, 3, 8, 2, 7, 0, 5])
+    mut b = a.clone()
+    a.sort()
+    b.sort_unstable()
+    assert(a.equal(b))
+}
+
+test "unstable_by descending + by_key" {
+    mut v = Vec[int].from([4, 1, 7, 2, 9, 3])
+    v.sort_unstable_by(|x, y| y - x)
+    assert(v.equal(Vec[int].from([9, 7, 4, 3, 2, 1])))
+    mut w = Vec[int].from([-5, 2, -1, 4, -3])
+    w.sort_unstable_by_key(|x| if x < 0 { 0 - x } else { x })
+    assert(w.equal(Vec[int].from([-1, 2, -3, 4, -5])))
+}

@@ -183,6 +183,18 @@ param-types suffix: `Nova_T_method_m__nova_str`, `Nova_T_method_m__nova_int`.
   мутабельности receiver'а: `ro a; a.m()` → ro overload,
   `mut b; b.m()` → mut overload. Аналог C++ `const`-overloading.
   Тесты: `nova_tests/plan135/` (8/8 PASS).
+- ✅ **Generic-type method overloads в монорфизации** (`fn Vec[T] @cap()` vs
+  `fn Vec[T] mut @cap(n int)` — арность; `fn Box[T] @tag(int)` vs `@tag(str)` —
+  arg-type) — Plan 153.1 / `[M-138.2-generic-method-overload-mono]` (2026-06-13):
+  раньше mono-диспатч коллапсировал overloads first-by-name (`v.cap(10)` → 0-арг
+  геттер → «too many args»). Теперь call-site дизамбигуирует по арности → param-
+  C-типам (через side-map `mono_method_fndecl_for_name`), а return-type inference
+  для **chained** receiver'а (`v.cap(n).push(x)`) резолвит `@`/Self тем же arity-
+  aware выбором (Ф.3-fallback). Тесты: `nova_tests/plan153_1/generic_overload.nv`
+  (3/3: арность + param-type + chain), `core_api.nv` (fluent). Caveat: вызов
+  overload'а **без совпадения** по арности всё ещё CC-FAIL'ит (codegen fall-
+  through к первому кандидату), а не чистый type-check error — followup
+  `[M-138.2-overload-no-match-typecheck]`.
 
 #### Strict matching типов
 
@@ -495,14 +507,33 @@ type-confused no-op) — `vec_debug_pos` выдавал мусор.
   без промежуточной `nova_str` от interp-temp. Debug `char`/`str` (кавычки+escape)
   использует interp `${@:?}` → conv.h `nova_*_to_debug_str` напрямую (не рекурсирует:
   interp для примитивов зовёт форматтер, не метод).
-- **f32 отложен** (`[M-154.1-f32-display-debug]`): нет conv.h-форматтера / `@append(f32)`;
-  `Vec[f32].debug` пока даёт громкий CC-FAIL, не silent.
+- **f32** (followup 2026-06-14, `e38f30ee`): догнал остальные — conv.h `nova_f32_to_str`/
+  `_to_debug_str` (widen→double + `%g`, 6-знач прячет f32→f64 хвост), `@append(f32)`
+  (`x as f64`), ветка `nova_f32` в interp display+debug map + exclusion list. (Остался
+  отдельный коэрсинг-баг `Vec[f32].from([f64-литералы])` — `[M-154.1-f32-literal-coercion]`,
+  не про печать.)
 
 ### Инвариант interp
 
 `${x}` / `${x:?}` для примитивов по-прежнему идут через conv.h-форматтеры напрямую
 (interp-путь исключает примитивы из method-dispatch), поэтому конкретные методы их не
 перехватывают и не ломают.
+
+### Followups codegen-hardening (2026-06-14)
+
+Два общих codegen-фикса, всплывших при доведении f32:
+
+1. **Self-method-call overload по типам аргументов** (`e38f30ee`). Вызов `@m(args)` (receiver
+   `@`, внутри тела метода) при нескольких overload'ах тайбрейкал **только** по
+   receiver-mutability (Plan 135 Ф.2), игнорируя типы аргументов. С `@append`-overload'ами (все
+   `mut`) `@append(x as f64)` брал ПЕРВЫЙ (базовый `str`) → C передавал `nova_f64` в `nova_str`-
+   параметр. Фикс: сперва сузить own-instance overload'ы по `param_c_types == arg_c_types`, потом
+   тайбрейк по `recv_mutable`. (Existing self-`@append` всегда целили `str`-базу → латентный баг.)
+2. **`E_UNKNOWN_STATIC_METHOD`** (`99dee599`, `[M-154.1-static-call-unresolved-loud]`). Вызов
+   `Prim.method(...)` на примитиве, дошедший до codegen fall-through (все валидные primitive
+   static-методы/интринсики — `str.from`, `str.from_bytes_lossy` — резолвятся раньше), раньше
+   эмитил `nova_fn_<prim>_<method>` → undefined-символ на линковке. Теперь — громкий compile-error.
+   Узко: только примитив-ресиверы (модуль-qualified free-fn и user-типы не задеты).
 
 ### Связь
 

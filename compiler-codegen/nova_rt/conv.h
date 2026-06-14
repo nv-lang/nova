@@ -144,6 +144,13 @@ static inline nova_str nova_f64_to_str(double v) {
     return (nova_str){ buf, (size_t)n };
 }
 
+/* Plan 154.1 [M-154.1-f32-display-debug]: f32 → str via widening to double +
+ * f64 formatter. `%g` default 6-sig-fig precision hides the f32→f64 mantissa
+ * tail for typical values (0.1f → "0.1"). */
+static inline nova_str nova_f32_to_str(nova_f32 v) {
+    return nova_f64_to_str((double)v);
+}
+
 /* === char (codepoint) → str (UTF-8 encode) === */
 /* Infallible: codepoint предполагается валидным (0..0x10FFFF, не surrogate).
  * Если не валидный — эмитим replacement char U+FFFD. */
@@ -200,6 +207,11 @@ static inline nova_str nova_int_to_debug_str(nova_int v) {
 /* f64 → debug str: same as display. */
 static inline nova_str nova_f64_to_debug_str(double v) {
     return nova_f64_to_str(v);
+}
+
+/* f32 → debug str: same as display (Plan 154.1). */
+static inline nova_str nova_f32_to_debug_str(nova_f32 v) {
+    return nova_f32_to_str(v);
 }
 
 /* str → debug str: quoted + escaped form (Rust-style).

@@ -6113,3 +6113,45 @@ Subset **добавляет только global-DRAIN точки (consumers)**, 
 невозможны. Suite 106/4 no-regression; grow_vs_wake 25/25; ring_overflow @MP=4 25/25. Ф.3
 coalescing остаётся заблокирован (нужен routing). См. план §9.11.1.
 
+## D270 — Loop codegen opt: preempt-check elision + copy-loop bulk-lowering (Plan 143 §2, [M-opt-preempt-strided-loop])
+
+> **Создан:** 2026-06-14 (Plan 143 §2, merge `7c047a1b`). Две correctness-neutral codegen-оптимизации
+> per-iteration loop-overhead. Обе семантически прозрачны — наблюдаемое поведение цикла не меняется.
+
+### §A — Preempt-check elision на provably-short const-bound циклах
+
+`nova_preempt_check()` (M:N cooperative safepoint, Plan 44.7) эмитится в back-edge КАЖДОГО цикла —
+барьер-call, блокирующий clang-векторизацию/unroll. **Решение:** опускать его для **provably-short**
+range-циклов `for i in lo..hi`, где ОБА bound'а — целочисленные литералы И iteration-count ∈ [0, 1024].
+
+**Контракт вытеснения:** такой цикл **ограничен по построению** (≤1024 итер.) → не может
+монополизировать worker → отсутствие safepoint starvation-safe. Variable/unbounded и large-const
+(count>1024) циклы check **СОХРАНЯЮТ** (иначе возврат tight-loop-starvation — ровно то, что Plan 44.7
+предотвращает). Порог 1024 консервативен; вложенный unbounded цикл имеет СВОЙ safepoint (элизия —
+только внешнего const-small). Реализация: `emit_loop_body_inline_ex(skip_preempt)`.
+
+### §B — Copy-loop → overlap-safe bulk copy (memmove)
+
+`for i in lo..hi { dst[i] = src[i] }` на `Vec[T]` → одиночный bulk-copy вместо per-element цикла
+(убирает preempt-check + per-element bounds-branch; clang векторизует). **Консервативный recognizer**
+(иначе fallback на корректный цикл): single plain-assign без trailing; оба индекса = loop-var; dst/src
+= plain Ident'ы (pure, single-eval); одинаковый `Vec[T]` flat-storage (не raw `*mut Vec`); flat-POD
+элемент (`nova_*` / pointer `_p`).
+
+**Инвариант overlap-семантики (полное соответствие циклу, НЕ упрощение):** восходящий per-element
+цикл ПРОПАГИРУЕТ при destructive forward-overlap (dst строго внутри `[src, src+n)` — достижимо через
+writable offset-overlap Vec-view'ы: `a=v[1..]; b=v[0..]; a[i]=b[i]`). Поэтому emit'ится runtime
+overlap-guard: `if (dst ≤ src ∨ нет overlap) memmove; else forward-element-loop` (пропагация). Bounds
+сохранены: highest-index `last` формируется БЕЗ `hi+1` (inclusive-overflow-safe при end==i64::MAX).
+
+### Acceptance
+plan143 12 кейсов PASS (preempt skip/keep/large; copy full/partial/self/empty/inclusive/offset-overlap-
+propagation/non-destructive-overlap/extra-stmt-fallback); сгенерённый C проверен (skip + memmove с
+overlap-guard + bounds); регрессия 0 new fail (Vec/collection слайс + concurrency smoke). Оба бага
+(inclusive overflow, aliasing) найдены adversarial-review + эмпирическим baseline-vs-ветка probe.
+
+### Long-term
+General async-preemption (Go 1.14 SIGURG) уберёт per-iteration call для variable-bound циклов без
+порога — SIGURG-часть `[M-opt-preempt-strided-loop]` (open). Cross-link **Plan 144 §7.4**: SIGURG =
+ОБЩИЙ async-yield (preempt + async GC safe-point).
+

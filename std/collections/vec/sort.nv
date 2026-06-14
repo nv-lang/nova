@@ -1,0 +1,302 @@
+// std.collections.vec (sort) — Plan 153.3 sort family.
+//
+// Two distinct production algorithms:
+//   * STABLE   = bottom-up merge sort (O(n log n) guaranteed, O(n) scratch),
+//                preserves equal-element order — `@sort[_by][_by_key]`.
+//   * UNSTABLE = in-place binary heapsort (O(n log n) guaranteed, O(1) extra),
+//                no equal-order guarantee but zero allocation —
+//                `@sort_unstable[_by][_by_key]`.
+// Heapsort gives `*_unstable` its real purpose (no scratch buffer) with a hard
+// O(n log n) worst case (no quicksort O(n²) cliff). A pattern-defeating
+// quicksort (pdqsort) would beat heapsort's constants — pure perf-opt, tracked
+// `[M-153.3-sort-pdqsort]`, NOT a correctness/complexity gap.
+// Comparators return int (<0 / 0 / >0); there is no `Ordering` type (D183).
+#prelude(core, runtime, collections, protocols)
+module collections.vec
+
+// Internal driver: bottom-up STABLE merge sort by `cmp`. Not exported.
+// Equal elements keep input order (`cmp(a, b) <= 0` takes the left run first).
+fn Vec[T] mut @_msort(cmp fn(T, T) -> int) -> @ {
+    ro n = @len
+    if n < 2 {
+        return @
+    }
+    mut buf = Vec[T].with_capacity(n)
+    mut width = 1
+    while width < n {
+        buf.clear()
+        mut i = 0
+        while i < n {
+            mut mid = i + width
+            if mid > n { mid = n }
+            mut hi = i + width + width
+            if hi > n { hi = n }
+            mut a = i
+            mut b = mid
+            while a < mid && b < hi {
+                ro ea = unsafe { @data[a] }
+                ro eb = unsafe { @data[b] }
+                if cmp(ea, eb) <= 0 {
+                    buf.push(ea)
+                    a = a + 1
+                } else {
+                    buf.push(eb)
+                    b = b + 1
+                }
+            }
+            while a < mid {
+                ro ea = unsafe { @data[a] }
+                buf.push(ea)
+                a = a + 1
+            }
+            while b < hi {
+                ro eb = unsafe { @data[b] }
+                buf.push(eb)
+                b = b + 1
+            }
+            i = i + width + width
+        }
+        mut j = 0
+        while j < n {
+            ro bj = unsafe { buf.data[j] }
+            unsafe { @data[j] = bj }
+            j = j + 1
+        }
+        width = width + width
+    }
+    @
+}
+
+// Internal: sift element at `root` down a max-heap over [0, end). Iterative.
+// Max-heap by `cmp` (`cmp(a,b) < 0` ⇒ a precedes b ⇒ a is "smaller"), so the
+// largest element bubbles to index 0.
+fn Vec[T] mut @_sift_down(root_in int, end int, cmp fn(T, T) -> int) -> @ {
+    mut root = root_in
+    mut child = root + root + 1
+    while child < end {
+        mut sel = child
+        if child + 1 < end {
+            ro lc = unsafe { @data[child] }
+            ro rc = unsafe { @data[child + 1] }
+            if cmp(lc, rc) < 0 {
+                sel = child + 1
+            }
+        }
+        ro rootv = unsafe { @data[root] }
+        ro selv = unsafe { @data[sel] }
+        if cmp(rootv, selv) >= 0 {
+            return @
+        }
+        @swap(root, sel)
+        root = sel
+        child = root + root + 1
+    }
+    @
+}
+
+// Internal: in-place UNSTABLE heapsort by `cmp` (ascending). Build a max-heap,
+// then pop the max to the shrinking tail. O(n log n) worst, O(1) extra space.
+fn Vec[T] mut @_heapsort(cmp fn(T, T) -> int) -> @ {
+    ro n = @len
+    if n < 2 {
+        return @
+    }
+    mut start = n / 2
+    while start > 0 {
+        start = start - 1
+        @_sift_down(start, n, cmp)
+    }
+    mut end = n
+    while end > 1 {
+        end = end - 1
+        @swap(0, end)
+        @_sift_down(0, end, cmp)
+    }
+    @
+}
+
+/// Sort in place ascending by the element's own `Compare` (stable). O(n log n).
+export fn Vec[T Compare] mut @sort() -> @ => @_msort(|a, b| a.compare(b))
+
+/// Sort in place by a custom comparator `cmp(a, b)` (`<0`/`0`/`>0`), stable.
+export fn Vec[T] mut @sort_by(cmp fn(T, T) -> int) -> @ => @_msort(cmp)
+
+/// Sort in place by a projected key, ordered by the key type's `Compare`, stable.
+export fn Vec[T] mut @sort_by_key[K Compare](key fn(T) -> K) -> @ => @_msort(|a, b| key(a).compare(key(b)))
+
+/// Unstable in-place sort by the element's own `Compare` — heapsort, O(n log n),
+/// O(1) extra space (no scratch buffer, unlike `@sort`). No equal-order guarantee.
+export fn Vec[T Compare] mut @sort_unstable() -> @ => @_heapsort(|a, b| a.compare(b))
+
+/// Unstable in-place sort by comparator `cmp(a, b)` (`<0`/`0`/`>0`) — heapsort.
+export fn Vec[T] mut @sort_unstable_by(cmp fn(T, T) -> int) -> @ => @_heapsort(cmp)
+
+/// Unstable in-place sort by projected key — heapsort.
+export fn Vec[T] mut @sort_unstable_by_key[K Compare](key fn(T) -> K) -> @ => @_heapsort(|a, b| key(a).compare(key(b)))
+
+// ─── dedup + partition (Plan 153.3 reordering) ────────────────────────
+
+/// Remove CONSECUTIVE equal elements in place (each compared with the last
+/// kept via `==`), preserving order. O(n). Pair with `@sort()` to drop *all*
+/// duplicates (`v.sort().dedup()`). Returns `@`.
+export fn Vec[T] mut @dedup() -> @ {
+    if @len < 2 {
+        return @
+    }
+    mut write = 1
+    for read in 1..@len {
+        ro cur = unsafe { @data[read] }
+        ro prev = unsafe { @data[write - 1] }
+        if !(cur == prev) {
+            if write != read {
+                unsafe { @data[write] = cur }
+            }
+            write = write + 1
+        }
+    }
+    @len = write
+    @
+}
+
+/// Remove consecutive elements considered equal by `eq(prev, cur)`. O(n).
+export fn Vec[T] mut @dedup_by(eq fn(T, T) -> bool) -> @ {
+    if @len < 2 {
+        return @
+    }
+    mut write = 1
+    for read in 1..@len {
+        ro cur = unsafe { @data[read] }
+        ro prev = unsafe { @data[write - 1] }
+        if !eq(prev, cur) {
+            if write != read {
+                unsafe { @data[write] = cur }
+            }
+            write = write + 1
+        }
+    }
+    @len = write
+    @
+}
+
+/// Remove consecutive elements with equal projected key (`key(x)` via `==`). O(n).
+export fn Vec[T] mut @dedup_by_key[K Equal](key fn(T) -> K) -> @ {
+    if @len < 2 {
+        return @
+    }
+    mut write = 1
+    for read in 1..@len {
+        ro cur = unsafe { @data[read] }
+        ro prev = unsafe { @data[write - 1] }
+        ro kc = key(cur)
+        ro kp = key(prev)
+        if !(kc == kp) {
+            if write != read {
+                unsafe { @data[write] = cur }
+            }
+            write = write + 1
+        }
+    }
+    @len = write
+    @
+}
+
+/// Reorder in place so every element satisfying `pred` precedes those that do
+/// not; returns the partition point (the count of satisfying elements).
+/// UNSTABLE (swap-based; does not preserve relative order). O(n).
+export fn Vec[T] mut @partition(pred fn(T) -> bool) -> int {
+    mut i = 0
+    for j in 0..@len {
+        ro ej = unsafe { @data[j] }
+        if pred(ej) {
+            if i != j {
+                @swap(i, j)
+            }
+            i = i + 1
+        }
+    }
+    i
+}
+
+// ─── select_nth (introselect, Plan 153.3) ─────────────────────────────
+
+// Internal: move the median of @data[a]/@data[b]/@data[c] to index `c`
+// (median-of-three pivot — kills the sorted/reverse O(n²) quickselect case).
+fn Vec[T] mut @_median3_to_end(a int, b int, c int, cmp fn(T, T) -> int) -> @ {
+    ro va = unsafe { @data[a] }
+    ro vb = unsafe { @data[b] }
+    ro vc = unsafe { @data[c] }
+    ro med = if cmp(va, vb) < 0 {
+        if cmp(vb, vc) < 0 { b } else { if cmp(va, vc) < 0 { c } else { a } }
+    } else {
+        if cmp(va, vc) < 0 { a } else { if cmp(vb, vc) < 0 { c } else { b } }
+    }
+    if med != c {
+        @swap(med, c)
+    }
+    @
+}
+
+// Internal: Lomuto partition of [lo, hi) around a median-of-three pivot.
+// Returns the pivot's final index `p`; [lo, p) < pivot ≤ [p, hi).
+fn Vec[T] mut @_partition_range(lo int, hi int, cmp fn(T, T) -> int) -> int {
+    ro mid = lo + (hi - lo) / 2
+    @_median3_to_end(lo, mid, hi - 1, cmp)
+    ro pivot = unsafe { @data[hi - 1] }
+    mut i = lo
+    for j in lo..hi - 1 {
+        ro ej = unsafe { @data[j] }
+        if cmp(ej, pivot) < 0 {
+            if i != j {
+                @swap(i, j)
+            }
+            i = i + 1
+        }
+    }
+    @swap(i, hi - 1)
+    i
+}
+
+// Internal: introselect over [lo, hi) for global index `k`. Quickselect with a
+// depth guard: on exhaustion fall back to the O(n log n) heapsort (after a full
+// sort the k-th order statistic sits at index k). Average O(n), worst O(n log n).
+fn Vec[T] mut @_qselect(lo_in int, hi_in int, k int, depth_in int, cmp fn(T, T) -> int) -> @ {
+    mut lo = lo_in
+    mut hi = hi_in
+    mut depth = depth_in
+    while hi - lo > 1 {
+        if depth == 0 {
+            @_heapsort(cmp)
+            return @
+        }
+        depth = depth - 1
+        ro p = @_partition_range(lo, hi, cmp)
+        if k == p {
+            return @
+        }
+        if k < p {
+            hi = p
+        } else {
+            lo = p + 1
+        }
+    }
+    @
+}
+
+/// Partition in place so the element at sorted position `k` lands at `self[k]`,
+/// every earlier element ≤ it and every later element ≥ it (UNSTABLE). Returns
+/// that k-th-smallest value. Introselect: O(n) average, O(n log n) worst
+/// (heapsort guard — no quickselect O(n²) cliff). Panics if `k` is out of bounds.
+export fn Vec[T Compare] mut @select_nth_unstable(k int) -> T
+    requires k >= 0 && k < @len
+{
+    ro n = @len
+    mut lim = 0
+    mut m = n
+    while m > 1 {
+        m = m / 2
+        lim = lim + 1
+    }
+    lim = lim + lim + 2
+    @_qselect(0, n, k, lim, |a, b| a.compare(b))
+    unsafe { @data[k] }
+}

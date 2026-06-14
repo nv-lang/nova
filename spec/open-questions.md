@@ -4992,6 +4992,17 @@ let-аннотации. Multi-target Into — пока не покрываетс
 (`Into[T]` — частный случай через single-target), Plan 11 (bootstrap
 для осей 1, 2, 4).
 
+**Родственный кейс — структурное `==` с variant-литералом (Plan 153.3, 2026-06-14).** Тот же
+дефицит bidirectional inference всплыл **вне** overload-резолва. `result == Ok(x)`, где
+`result : Result[int, int]` (non-default `E`): литерал `Ok(x)` инферится bottom-up как
+`Result[int, str]` (`E` дефолтит `str`), НЕ унифицируется с типом LHS → структурный eq сравнивает
+два разных `NovaRes_<…>` (payload `int` vs `str`) → **CC-FAIL**. Нужно то же самое: для `Eq/Neq`
+протянуть тип одного операнда как **expected** другому (top-down), чтобы variant-литерал инферил
+свои type-params из контекста. Общий `Result[_, str]` (E совпадает с дефолтом) уже работает после
+структурного `==`-фикса (commit `1cc82de5`); workaround — `match` или явная аннотация. Tracked:
+`[M-153-result-eq-literal-expected-type]`. **Усиливает мотивацию** реализовать expected-type
+propagation как **общий** top-down проход (binop-операнды, не только overload-резолв `@into`).
+
 ---
 
 ## Q-clone-semantics. `@clone()` — shallow или deep / рекурсивно?
@@ -7710,3 +7721,43 @@ inline-gate); экзотические не-loop-var индексы (Z3-ариф
 - [D257](decisions/09-tooling.md#d257-vec-index-bounds-как-элидируемый-контракт) — Vec `@index` bounds как элидируемый контракт.
 - [Q34](#q34-политика-enforce-in-release-для-контрактов-plan-140-d24-amend) — enforce-in-release (Plan 140, base-механизм элизии).
 - `[M-140.2-elision-writeback]` (backlog) — расширение элизии за пределы read-only-MVP.
+
+
+## Q37. Конформность протоколов: opt-in (структурная) vs required (номинальная) — 🟡 ЧАСТИЧНО (2026-06-13, Plan 154.1 / D268)
+
+### Контекст (Plan 154.1, D268, 2026-06-13)
+
+`#impl(P)` стал применим и к **метод**-декларациям (`fn int @display`), не только к типам.
+Конформность в Nova — **структурная**: тип с подходящим методом удовлетворяет бонд
+`[T P]` БЕЗ всякой пометки. `#impl(P)` — **необязательная** добавка (проверка подписи +
+явная привязка протокола к типу). Это путь Go (структурный), не Rust (номинальный/required).
+
+### Решение (для V1)
+
+**Opt-in** — `#impl` не обязателен, отсутствие не ошибка. Зафиксировано в
+[D268](decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации).
+Не ломает существующий код, миграция не нужна.
+
+### Открытое место
+
+Стоит ли когда-нибудь сделать конформность **required** (как Rust: явный `#impl(P)`
+обязателен для использования типа там, где ожидается `P`)? Плюсы: ясность намерения,
+ловит «случайную» конформность; минусы: миграция всего корпуса, теряется Go-лёгкость.
+Не для V1 — отдельным шагом, если вообще. Трекается как `[M-154.1-required-conformance]`.
+
+### Связь
+- [D268](decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации) — opt-in `#impl` (решение V1).
+- [D186](decisions/02-types.md#d186) — `#impl(P)` на типах (auto-derive opt-in).
+- `[M-154.1-required-conformance]` (backlog) — возможный переход к required.
+
+## Q-loop-opt-thresholds. Loop codegen opt — порог элизии + расширение safe-set (Plan 143 §2.A / D270) — 🟡 OPEN (minor, 2026-06-14)
+
+Part A+B `[M-opt-preempt-strided-loop]` приземлены (D270, merge `7c047a1b`). Открытые design-вопросы
+(minor, НЕ блокеры — непокрытое всегда даёт корректный fallback на цикл):
+1. **Порог preempt-elision (count ≤ 1024)** — захардкожен. Делать tunable (env/attr)? Какое значение
+   оптимально (vectorization-win vs preempt-latency)? Снимется SIGURG'ом (variable-bound без порога).
+2. **Copy-loop safe-set** — сейчас только flat-POD элемент (`nova_*` / pointer `_p`). Расширить на
+   value-record (`str`) и доказуемо-flat composite? Нужно per-T flatness-доказательство (slot-copy == value-copy).
+3. **Обобщить copy-loop lowering** за пределы `Vec[T]` (на `[]T`-views / raw `*mut T`)? Сейчас — только Vec.
+
+Связь: [D270](decisions/06-concurrency.md), Plan 143 §2.A, `[M-opt-preempt-strided-loop]` (SIGURG-часть open).

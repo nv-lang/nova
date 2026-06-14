@@ -36133,6 +36133,67 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   ребилда. plan153_1 5/5 + plan153_6 3/3; 0 регрессий (blast-radius + contracts 267/0,
   прежний 266/1 = flaky). Коммиты `5f306045` (153.1) + `c8f3d08e` (153.6).
 
+- **Plan 153.1 follow-up — codegen-полнота: generic-method-overload-mono + variadic
+  + value-record slice (2026-06-13)**. Снимает упрощения-отложения (1)(2) записи
+  153.1 выше (они были codegen-лимитами, не дизайном — теперь починены).
+  - **`[M-138.2-generic-method-overload-mono]` ✅ FIXED.** Mono-диспатч коллапсировал
+    одноимённые overloads first-by-name (`v.cap(10)` ловил 0-арг геттер → «too many
+    args»). Корень: `mono_method_decls` keyed `(type,name)` = один FnDecl на ключ +
+    mono-sentinel с пустым `param_c_types`. Фикс (8 правок `emit_c.rs`): side-map
+    `mono_method_fndecl_for_name` (несёт полный FnDecl per mono-instance) +
+    call-site дизамбигуация по **арности → param-C-типам** (вместо first-wins
+    `.find`), + suffix `__<paramtype>` на mangled-имя для overload_index>0, +
+    arity-aware выбор в **return-type inference** (`infer_mono_method_ret_with_args`
+    и Ф.3-fallback) — последнее чинит **chained** receiver `v.cap(n).push(x)` (Self/`@`
+    резолвится в mono-тип). Гейт `same_name.len()<=1` сохраняет single-overload путь.
+    Следствие: **`@cap_to`→`@cap`** (точный capacity-сеттер вернул каноничное имя,
+    overload getter/setter), fluent-chain работает. D84 (10-overloading) дополнен
+    ✅-нотой «generic-type overloads в монорфизации».
+  - **`[M-153-vec-of-variadic-codegen]` ✅ CLOSED** (commit `3d9a7361`). `Vec[T].of(...args
+    []T) => args` (variadic static-конструктор). Корень: `lookup_variadic_arity` не
+    обрабатывал turbofish-static форму `Type[T].method(...)` (парсится `Member{obj:
+    TurboFish}`); добавлен `TurboFish{base:Ident}`-arm → variadic-routing синтезирует
+    `ArrayLit` из хвоста args → ре-диспатч в обычный mono-static. C-путь: `with_capacity(n)`
+    + N×`push` → `static_of(собранный []T)` → тело `return args` (zero-copy). Constructor
+    приземлён в `core.nv`. Scope: `[]int.of(...)` (array-ext-сахар) — отдельный gap
+    (static-методы на `__array`-receiver не диспатчатся вообще), не часть маркера.
+  - **Value-record slice codegen ✅** (commit `8d493e5a`). При построении slice-view
+    у Vec элемент-тип в касте `(ety*)(data+off)` брал mangled `_p`-суффикс (`T_p` вместо
+    `T*`) → CC-FAIL для value-record элементов. Фикс: un-mangle `_p`→`*` перед кастом.
+    plan96 19/4→23/3.
+  - Тесты: `plan153_1/generic_overload.nv` 3/3 (pos: арность+param-type+chain),
+    `plan153_0/variadic_of.nv` 3/3 (multi/empty/non-int). Neg overload'а покрыт
+    контрактным `cap_below_len_neg` (`@cap(n) requires n>=len`). 0 регрессий (broad
+    sweep). Новый followup: `[M-138.2-overload-no-match-typecheck]` (type-checker
+    должен отвергать no-match overload-вызов чисто, сейчас CC-FAIL).
+
+- **Plan 153.3 (sort & search) + структурное `==` для mono'd generic-sum/Result (2026-06-14)**.
+  - **153.3 API** (commits `cf95c423` search + `1d85edc3` sort/dedup/partition). **search:**
+    `@index_of`/`@position`/`@rposition`/`@is_sorted[_by]`/`@binary_search[_by][_by_key]`
+    (Compare-bound где упорядочено; comparator'ы возвращают int — нет Ordering, D183;
+    `binary_search -> Result[int,int]` Ok=found/Err=insert-point). **sort:** bottom-up
+    **STABLE merge sort** (O(n log n), O(n) scratch) под `@sort`/`@sort_by`/`@sort_by_key`
+    + `*_unstable` (пока **alias stable** — perf followup `[M-153.3-sort-unstable-inplace]`).
+    **reorder:** `@dedup`/`@dedup_by`/`@dedup_by_key` (consecutive, O(n)),
+    `@partition(pred)->int` (in-place unstable, returns split-point). Всё на чистых Nova-
+    замыканиях (делегирование `|a,b| a.compare(b)` и `key(a).compare(key(b))` работает) +
+    module `buf.data` idiom. ~18 методов; plan153_3 search 4/4 + sort 5/5 + dedup_partition
+    5/5; sanity vec-модуля чист. `@select_nth` (quickselect) явно deferred планом
+    `[M-153-select-nth]`.
+  - **Структурное `==` для mono'd generic-sum + Result** (commit `1cc82de5`). `emit_field_eq`
+    деградировал в pointer-identity для (1) mono'd generic-sum (`Foo[int].A(1)==A(1)`→false:
+    legacy `sum_schemas` без mono'd-ключа) и (2) Result (`NovaRes_*` спец-ABI не матчит
+    `Nova_`-sum-тест). Фиксы: (1) `reconstruct_mono_sum_schema` — substituted-схема из generic-
+    шаблона + `generic_type_instance_info` (tag-префикс = полный mangled `Nova_<mono>`);
+    (2) `NovaRes_`-ветка в `emit_field_eq` + `==`-оператор-маршрутизация → tag + Ok/Err payload
+    через `novares_ok_err`. Верифицировано: custom 1/2-param sum (int/str, pos/neg variant+
+    payload), Result==Result (совпадающие типы int/int + int/str), Option не задет; broad-
+    регрессия (8 батчей) чиста (все suspects pre-existing/флак). **Остаток
+    `[M-153-result-eq-literal-expected-type]`:** `result == Ok(x)` с non-default-E
+    (`binary_search`→Result[int,int]) — литерал `Ok(x)` дефолтит E=str, не унифицируется с LHS
+    (expected-type propagation в чекере — глубокий change, отложен; `Result[_,str]` уже
+    работает; binary_search на `match`).
+
 - **Plan 140.3 — унификация failure-классификации + interp-сообщения контрактов (2026-06-13)**: (1) assert и
   контракт-нарушение теперь тегают `error_kind = NOVA_THROW_PANIC` как `nv_panic` (раньше — только error_msg,
   kind=USER) → три пути провала (panic/assert/contract) классифицируются ОДИНАКОВО (consume/supervised видят
@@ -36218,3 +36279,33 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   флипается в Vec (даёт legacy `NovaArray`), хотя `[]int`-тип флипается → Vec/NovaArray-mismatch → garbage-index
   panic; явный `Vec[int]` обходит (`[M-138.2-flip-*` семейство). Phase B остаток: 152.4.3 graphemes
   (`[M-152-graphemes]`), 152.4.4 folding/case-map (`[M-152-case-fold]`).
+
+- **Scoping: локальное связывание шейдоунит модульную свободную функцию (2026-06-14, fix)**:
+  закреплено лексическое правило — параметр/`let` с именем `f` (в частности closure-параметр
+  `f fn() -> T`) перекрывает одноимённую свободную `fn f` модуля. Был баг в `check_call_argbind`
+  (`Ident(name)` резолвился прямо из `fn_decls` мимо `scope`), всплывший как регрессия plan-153
+  (`Vec.@resize_with`/`@fill_with`: вызов closure `f()` ловил свободную `fn f` ENTRY-модуля →
+  ложное «обязательный параметр не передан»). Фикс — `scope.contains_key` guard перед free-fn
+  lookup; closure-вызов валидируется через fn-type/codegen. Не новый дизайн — приведение
+  реализации к ожидаемой семантике шейдоунинга. Guard-тест `plan153_1/resize_with_free_fn_shadow`.
+
+- **Plan 154.1: f32-печать + два общих codegen-фикса (2026-06-14)**: (1) f32 получил
+  Display/Debug как остальные примитивы (conv.h widen→f64, `@append(f32)`, interp-map). (2) **общий
+  фикс**: self-call `@m(args)` теперь резолвит overload по типам аргументов (был только по
+  receiver-mutability → `@append(x as f64)` брал базовый str-overload). (3) **robustness**:
+  `Prim.method(...)` с неизвестным static-методом → `E_UNKNOWN_STATIC_METHOD` (compile-error)
+  вместо криптичного undefined-символа на линковке; узко (только примитивы, валидные интринсики
+  резолвятся раньше). **Отложено:** общий non-primitive «unknown free-fn» (fall-through обслуживает
+  legit builtin'ы + bootstrap D134); `Vec[f32].from([f64-литералы])` коэрсинг (`[M-154.1-f32-literal-coercion]`).
+
+[2026-06-14] Plan 143 Part B (Vec copy-loop → memmove) — recognizer ДЕЛИБЕРАТНО консервативен
+  (это НЕ срезка, а корректная граница безопасности): lowering срабатывает ТОЛЬКО когда (1) тело —
+  ровно один plain-assign без trailing; (2) оба индекса — буквально loop-var; (3) dst/src — plain
+  Ident'ы (pure, single-eval); (4) одинаковый Vec[T] flat-storage (не raw `*mut Vec` `..**`);
+  (5) flat-POD элемент (`nova_*` / `_p`-указатель). НЕ покрыто → fallback на корректный per-element
+  цикл: inline-struct элементы (slot-copy ≠ value-copy неочевиден), сложные индексы (`dst[f(i)]`,
+  `dst[i+1]`), не-Vec контейнеры, мульти-стейтмент тела, += и др. AssignOp. Всё непокрытое
+  компилируется обычным циклом — семантически корректно, просто без memmove-ускорения. Расширение
+  safe-set (доказуемо-flat value-records) — возможный followup, требует per-T flatness-доказательства.
+  ВАЖНО: overlap-семантика СОХРАНЕНА точно (runtime guard: destructive forward-overlap → element-loop
+  пропагация, как per-element; иначе memmove) — не упрощение, а полное соответствие циклу.
