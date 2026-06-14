@@ -36184,3 +36184,12 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   ложное «обязательный параметр не передан»). Фикс — `scope.contains_key` guard перед free-fn
   lookup; closure-вызов валидируется через fn-type/codegen. Не новый дизайн — приведение
   реализации к ожидаемой семантике шейдоунинга. Guard-тест `plan153_1/resize_with_free_fn_shadow`.
+
+- **Plan 154.1: f32-печать + два общих codegen-фикса (2026-06-14)**: (1) f32 получил
+  Display/Debug как остальные примитивы (conv.h widen→f64, `@append(f32)`, interp-map). (2) **общий
+  фикс**: self-call `@m(args)` теперь резолвит overload по типам аргументов (был только по
+  receiver-mutability → `@append(x as f64)` брал базовый str-overload). (3) **robustness**:
+  `Prim.method(...)` с неизвестным static-методом → `E_UNKNOWN_STATIC_METHOD` (compile-error)
+  вместо криптичного undefined-символа на линковке; узко (только примитивы, валидные интринсики
+  резолвятся раньше). **Отложено:** общий non-primitive «unknown free-fn» (fall-through обслуживает
+  legit builtin'ы + bootstrap D134); `Vec[f32].from([f64-литералы])` коэрсинг (`[M-154.1-f32-literal-coercion]`).

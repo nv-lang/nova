@@ -37690,3 +37690,19 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   Acceptance (см. ниже в плане 138.2) выполнены. Neg overload'а — контрактный cap_below_len_neg.
   Broad regression 0 новых FAIL. Новый followup [M-138.2-overload-no-match-typecheck] (no-match
   overload-вызов сейчас CC-FAIL'ит вместо чистого type-check error). Закрытие 153.1 codegen-долга.
+
+[2026-06-14] Plan 154.1 followups #2: static-call-loud + box-generic-static-ctor закрыты.
+  (1) [M-154.1-static-call-unresolved-loud] RESOLVED (commit 99dee599): `Prim.method(...)` на
+  примитиве, дошедший до fall-through emit_c.rs ~24376, → E_UNKNOWN_STATIC_METHOD compile-error
+  вместо undefined-символа `nova_fn_<prim>_<method>` на линковке. Подтверждено: str.from_debug(42)
+  раньше PASS-check → link-error; теперь ясная ошибка. Узко: только примитив-ресиверы (str/int/
+  bool/char/f64/f32/byte/u*/i*) — все валидные primitive static-методы/интринсики (str.from,
+  str.from_bytes_lossy) резолвятся РАНЬШЕ, проверено; модуль-qualified free-fn и user-типы не
+  задеты. neg-тест plan154_1/neg_unknown_static_method. Общий non-primitive путь оставлен открытым
+  (fall-through обслуживает legit runtime-builtin + bootstrap-без-peer_files D134). (2)
+  [M-154.1-box-generic-static-ctor] RESOLVED by plan-153.1: `(Box)[T];` raw-C leak из 154.1-пробы
+  больше НЕ воспроизводится — generic-static/method codegen-фиксы 153.1 (f7f56f0f overload-mono,
+  3d9a7361 variadic, 8d493e5a value-record slice) приземлились после заведения маркера и покрыли
+  его. Проверено 5 форм конструкции; guard plan154_1/pos_box_generic_static_ctor. Также good-citizen:
+  generic_overload.nv str.len()->byte_len() (D249). plan154_1 8/8; broad regression 0 новых FAIL
+  (plan128/plan91 baseline). Слив в main держался пока там WIP plan-153.3 (Vec search) другого агента.
