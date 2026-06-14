@@ -36323,6 +36323,16 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   ВАЖНО: overlap-семантика СОХРАНЕНА точно (runtime guard: destructive forward-overlap → element-loop
   пропагация, как per-element; иначе memmove) — не упрощение, а полное соответствие циклу.
 
+- **Plan 154.1: f32-literal-coercion + узость turbofish-static арг-приведения (2026-06-14)**:
+  числовые array-литералы теперь приводятся к f32 из контекста (`Vec[f32].from([1.5,2.5])`/`of(...)`)
+  — приведение кодогена к уже специфицированному D44 (не новое правило). **Осознанная узость (не
+  упрощение, а граница безопасности):** приведение арг-array-литерала к param-типу в turbofish-
+  static-call применяется ТОЛЬКО к array-литералам; другие арги (Result/Option/скаляр) — обычный
+  emit_expr, т.к. широкая форма мис-оборачивала Result-арги Vec.sort. Гард приведения: только
+  всё-литеральные массивы (f64-переменная не сужается молча — это была бы потеря точности).
+  **Отдельные pre-existing баги (не от фикса, маркеры):** chained `Vec[f32].X().debug()` мис-диспатч
+  на str.debug (`[M-154.1-chained-vec-f32-method-misdispatch]`); plan91/sort_basic — plan-153.3 sort.
+
 - **Plan 152.4.3 — grapheme-сегментация `as_graphemes()` (UAX #29) + 2 compiler-фикса (2026-06-14, D253)**:
   Третья линза строки `str.@as_graphemes() -> GraphemesView` (симметрична as_bytes/as_chars): extended
   grapheme clusters — «видимые символы» (é=e+◌́; 🇺🇸=2 RI; 👨‍👩‍👧=ZWJ-emoji; каждый=1). Данные: `nova-codegen
@@ -36344,3 +36354,21 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   `[M-method-resolution-registry-inconsistency]` — return-inference половину). Минорная находка: `\u{24}\u{7b}`
   (escapes) декодится в `${` → запускает interpolation (literal `${` через escapes невыразим) — low-pri.
   Commits: A `e4b23a79` + B `738b6c2e` + feature `8b1f81f1` + docs.
+
+[2026-06-14] Plan 143.2 (leaf function-entry preempt-check элизия, D271) — KEEP-границы ДЕЛИБЕРАТНО
+  консервативны (это НЕ срезка, а корректная граница соундности; критерий приёмки #6 «без упрощений как
+  для прода»). Элидируется prologue `nova_preempt_check()` ТОЛЬКО на провабельно-leaf функциях; СОХРАНЯЕТСЯ
+  (KEEP) при ЛЮБОМ из: (1) функция на call-граф цикле (self/mutual-recursion SCC); (2) indirect/closure/
+  fn-ptr-call; (3) FFI/extern-call; (4) address-taken. Conservative default — что НЕ элидируется и почему
+  (всё это корректный safepoint, просто не доказано-лишний): **(a)** non-self method-call, чей receiver-тип
+  не source-evident → KEEP (нельзя точно резолвить overload → нельзя доказать ацикличность); **(b)** callee
+  из модуля без доступного тела в эмит-юните (cross-module) → KEEP; **(c)** named/spread-args (неуверенная
+  arity) и ambiguous overload → KEEP; **(d)** compiler-synthesized conversions (`str.from(int/f64)` — нет
+  `FnDecl` в AST, только `external fn str.from(c char)`) держат форвардер `StringBuilder.append(f32)` в KEEP,
+  т.к. внутренний arg-тип не доказуем `str` на source-уровне; **(e)** все члены рекурсивного SCC держат
+  safepoint (соундности хватило бы ≥1 на цикл — minimal-SCC-cut отложен). Над монтоморфизацией KEEP-статус
+  source-шаблона наследуется ВСЕМИ моно/erased-инстансами (over-approximation: лишние рёбра только ДОБАВЛЯЮТ
+  KEEP). Любая из этих границ = функция несёт КОРРЕКТНЫЙ entry-check (как до Plan 143.2) — нулевой риск
+  starvation, только недополученная оптимизация. Hardcode synthesized-conversion-знаний был бы ИМЕННО
+  shortcut, маскирующим недоказанный случай как элидируемый → сознательно отвергнут. Расширения (cross-
+  module манифест KEEP-флага, minimal-SCC-cut, synthesized-conversion-регистр) — Q-loop-opt-thresholds §B.

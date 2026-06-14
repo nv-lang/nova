@@ -90,7 +90,7 @@
 | `[M-opt-value-sum-types]` | Compiler-inferred value(stack)/heap для sum-типов (recursion+size+escape; прозрачно — immutable); payload-less интернирование. | new perf-план (Plan 120/139) | P2 |
 | `[M-opt-elide-proven-overflow-checks]` | Z3/range-элизия доказуемо-безопасных integer-overflow чеков (proven→elide, как Plan 140). | new perf-план / Plan 140 | P2 |
 | `[M-opt-preempt-strided-loop]` | `nova_preempt_check()` в back-edge КАЖДОГО цикла блокирует clang-векторизацию. **✅ Part A+B DONE (Plan 143, merge `7c047a1b`, 2026-06-14):** (A) skip preempt-check на provably-short const-bound range-циклах (оба bound'а — int-литералы, count ∈ [0,1024] → starvation-safe, разблокирует векторизацию); (B) `for i in lo..hi { dst[i]=src[i] }` на Vec[T] → overlap-safe bulk copy (memmove fast-path + element-loop fallback на destructive forward-overlap; inclusive-overflow-safe). **Adversarial-review (6 агентов) + эмпирический probe** нашли 2 бага — закрыты: writable offset-overlap view'ы (`a=v[1..]; a[i]=b[i]`) пропагируют ≠ memmove → runtime overlap-guard; inclusive `hi+1` при i64::MAX = UB → `last` без +1. plan143: 9 copy + 3 preempt кейса PASS; регрессия 0 new fail (Vec/collection слайс + concurrency). **🟡 Остаётся long-term:** signal-based async preemption (Go 1.14 SIGURG) — general для variable-bound циклов без per-iteration call. **Cross-link Plan 144:** SIGURG = ОБЩИЙ async-yield (preempt + GC safe-point, [§7.4](144-precise-gc-implementation.md)). | Plan 143 (A+B done) / SIGURG → 144 §7.4 | 🟡 A+B done, SIGURG P2 |
-| `[M-opt-leaf-preempt-entry-elision]` | Элидировать **function-prologue** `nova_preempt_check()` ([emit_c.rs:14925](../../compiler-codegen/src/codegen/emit_c.rs#L14925), Plan 44.7 — «first statement каждой Nova-функции») на функциях, провабельно достигающих safepoint БЕЗ своего entry-check. Тривиальные leaf-форвардеры (напр. `StringBuilder.append(f32)` → `append(f64)`) сейчас несут лишний барьер-call. **Safe subset (доступен сразу):** no-loop + no-call (pure leaf, straight-line return) → элидировать тривиально. **Full (correct, prod):** элидировать iff НЕТ циклов И функция НЕ на call-cycle (не рекурсивна прямо/косвенно) И все callee статически разрешены; **conservative KEEP** при indirect/closure-call/FFI-callback (recursion/indirect = главный hazard, default=KEEP — та же семья, что Plan 144 may-GC §7.5#2). Interprocedural call-graph SCC; whole-program моно помогает. Частично снимается SIGURG'ом. **Self-contained** (codegen-анализ, без cross-module dep). Home **Plan 143 §2.B** (perf, correctness-neutral, sibling `[M-opt-preempt-strided-loop]`). | Plan 143 §2.B | P2 |
+| `[M-opt-leaf-preempt-entry-elision]` | ✅ **DONE (Plan 143.2, D271, ветка `plan-143-leaf-preempt-elision`, 2026-06-14):** function-prologue `nova_preempt_check()` (Plan 44.7) элидируется на provably-leaf функциях через source-level whole-program pre-pass (`preempt_keep.rs`): call-граф над FnDecl + per-fn флаги indirect/ffi/address_taken + Tarjan SCC, `KEEP = cycle ∪ indirect ∪ ffi ∪ address_taken`, ELIDE иначе. Соундно над монтоморфизацией (KEEP-статус шаблона наследуется всеми моно/erased-инстансами тем же ключом). Conservative default = KEEP при любом сомнении. plan143_2 7/7 (positives элидированы, negatives KEPT — verified в C); регрессия 0 net-new fail. Adversarial-review закрыл реальную дыру (рекурсивный generic терял safepoint в моно-инстансе). Commits a35e4df7+d37dd913+c2d98141+9de1cbcf. **Остаток (Q-loop-opt-thresholds §B, minor):** cross-module precision, minimal-SCC-cut, synthesized-conversion arg-typing; SIGURG (Plan 144 §7.4) general для variable-bound. | Plan 143 §2.B | ✅ done |
 
 ## P2 — Ergonomics / stdlib combinators
 
@@ -236,11 +236,25 @@
   (`x as f64`) + ветка в interp-map. Заодно починен общий codegen-баг: self-call `@m(args)`
   overload-резолв по типам аргументов (был только по `recv_mutable` → `@append(x as f64)`
   брал базовый str-overload). plan154_1 6/6.
-- **`[M-154.1-f32-literal-coercion]`** (floating, P2, **NEW** 2026-06-14): `Vec[f32].from([1.5, 2.5])`
-  мис-коэрсит f64 array-литералы в f32 (бит-реинтерпретация → мусорные значения в debug-выводе).
-  Скаляр `ro x f32 = 1.5` коэрсится верно; explicit `v.push(x)` тоже. Проблема — f32 элементы
-  в **array-литерале** под `Vec[f32].from`. Лечить: коэрсия f64-литералов → f32 при инференсе
-  типа элемента массива из контекста `Vec[f32]`. Не про Display/Debug.
+- **`[M-154.1-f32-literal-coercion]`** ✅ **RESOLVED 2026-06-14** (commit `4e0d340a`): приведение
+  числовых array-литералов к f32 из контекста — приведение кодогена в соответствие с уже
+  задокументированным правилом **[D44](../../spec/decisions/03-syntax.md#d44-числовые-литералы)**
+  (контекст переопределяет default-тип). `try_emit_typed_vec_literal` берёт float-hint когда ВСЕ
+  элементы — числовые литералы (FloatLit/IntLit); turbofish-static арг-array-литерал эмитится с
+  param-C-типом (узко: только array-литералы, иначе ломались Result-арги sort). Работает:
+  `Vec[f32].from([1.5,2.5])` / `from([1,2])` / `of(1.5,2)`. plan154_1 8/8.
+- **`[M-154.1-chained-vec-f32-method-misdispatch]`** (floating, P2, **NEW** 2026-06-14): chained
+  `Vec[f32].X().debug()` (напр. `Vec[f32].new().debug(a)` или `.from([...]).debug(a)`) мис-диспатчит
+  `.debug` на `str.debug` → передаёт `Vec[f32]*` в str-метод → CC-FAIL. Корень: `infer_expr_c_type`
+  turbofish-static-call return для f32 не даёт `Nova_Vec____nova_f32*` → `.debug` падает на
+  str-overload (добавлен в Ф.3). **Pre-existing** (с Ф.3 str @debug, в main), НЕ от literal-coercion
+  (срабатывает и на `.new()` без литералов). Vec[int] chained работает. Non-chained Vec[f32] работает.
+  Лечить: infer turbofish-static return type для f32. Класс Plan 154 (silent/wrong dispatch).
+- **`[M-float-roundtrip-printing]`** (floating, P3, выявлено в аудите 154.1): float→str
+  (`nova_f64_to_str`, и f32 через него) использует `%g` с дефолтной 6-знач точностью — **лосси**
+  на >6 значащих для f64 И f32 (не round-trip). Проектный стандарт, консистентный, НЕ регрессия;
+  но для прод-качества stdlib желателен shortest-round-trip формат (Ryū/Grisu). Затрагивает
+  весь stdlib-float — отдельная задача, не f32-специфична.
 - **`[M-float-roundtrip-printing]`** (floating, P3, выявлено в аудите 154.1): float→str
   (`nova_f64_to_str`, и f32 через него) использует `%g` с дефолтной 6-знач точностью — **лосси**
   на >6 значащих для f64 И f32 (не round-trip). Проектный стандарт, консистентный, НЕ регрессия;

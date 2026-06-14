@@ -1,0 +1,22 @@
+// Plan 143.2 [M-opt-leaf-preempt-entry-elision] — NEGATIVE (entry-check KEPT).
+//
+// `count_down` calls ITSELF (direct self-recursion) → a self-loop in the call
+// graph. Unbounded recursion without a loop would otherwise run a fiber with
+// no safepoint; the prologue `nova_preempt_check();` MUST be KEPT so the
+// recursive cycle has a safepoint on every iteration.
+//
+// Verify in negative_self_recursion.c: the body of `count_down` contains
+// `nova_preempt_check();` (NOT the elided marker).
+
+module plan143_2.negative_self_recursion
+
+// Direct self-recursion: sum 1..=n.
+fn sum_to(n int) -> int {
+    if n <= 0 { 0 } else { sum_to(n - 1) + n }
+}
+
+test "self recursion sums" {
+    assert(sum_to(4) == 10)   // 4+3+2+1
+    assert(sum_to(0) == 0)
+    assert(sum_to(10) == 55)
+}

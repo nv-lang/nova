@@ -37796,6 +37796,21 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   `[M-153-select-nth]`), *_unstable in-place (`[M-153.3-sort-unstable-inplace]`). Закрытие в
   плане 153 §153.3 (критерии приёмки) + simplifications.md + backlog.
 
+[2026-06-14] Plan 154.1 followup: [M-154.1-f32-literal-coercion] RESOLVED (commit 4e0d340a).
+  `Vec[f32].from([1.5, 2.5])` строил []f64 (литералы по умолчанию f64) и передавал сырьём в
+  Vec[f32].from → биты реинтерпретировались как f32 → мусор. Фикс — приведение КОДОГЕНА к уже
+  задокументированному правилу D44 (контекст переопределяет default-тип литерала): (1)
+  try_emit_typed_vec_literal берёт float-hint когда ВСЕ элементы — числовые литералы (FloatLit/
+  IntLit); (2) turbofish-static-call арг-array-литерал эмитится с param-C-типом (узко: ТОЛЬКО
+  array-литералы — широкая форма ломала Result-арги Vec.sort). Гард: всё-литеральные массивы (f64-
+  переменная не сужается молча). Работает: from([1.5,2.5]) / from([1,2]) / of(1.5,2) (float+int
+  литералы). plan154_1 8/8; broad regression 0 новых FAIL. D44 дополнен примерами .from/.of +
+  impl-note. ВАЖНО — два ОТДЕЛЬНЫХ pre-existing бага, найденных при регрессии (НЕ от этого фикса):
+  (а) chained Vec[f32].X().debug() мис-диспатчит .debug на str.debug (срабатывает и на .new();
+  infer turbofish-static return для f32 + str @debug из Ф.3) → [M-154.1-chained-vec-f32-method-
+  misdispatch]; (б) plan91/sort_basic CC-FAIL — это plan-153.3 std.sort (Result-codegen, []int),
+  мои code-paths не задеты. coercion = «приведение типа» (рус.).
+
 [2026-06-14] Plan 153.3 follow-up — снятие упрощений (production-grade критерий приёмки, commit
   468bccf5). Автор: «без упрощений как для прода — обязательный критерий приёмки». Закрыл два
   отложения, которые были РЕАЛЬНЫМИ упрощениями: (1) `@sort_unstable[_by][_by_key]` — был alias
@@ -37848,3 +37863,32 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   8 батчей). Это **частное** решение для binop-`==`; общий expected-type проход (overload `@into`,
   return-position) остаётся в Q-overload-result-type. Итог: 153.3 без упрощений — sort_unstable
   (heapsort), select_nth (introselect), result==literal — все три закрыты по-настоящему.
+
+[2026-06-14] Plan 143.2 — элизия function-entry preempt-check на provably-leaf функциях (D271,
+  `[M-opt-leaf-preempt-entry-elision]`, ветка plan-143-leaf-preempt-elision; commits a35e4df7 plan +
+  d37dd913 feat + c2d98141 test + 9de1cbcf fix). Sibling §2.B к D270 §A (loop-back-edge элизия).
+  RCA-мотивация: Plan 44.7 эмитит `nova_preempt_check()` ПЕРВЫМ стейтментом КАЖДОЙ Nova-функции
+  (cooperative M:N safepoint). Тривиальные leaf-форвардеры (`StringBuilder.append(f32)` → `append(f64)`,
+  масса stdlib-листьев) несут этот барьер-call зря — он не нужен, т.к. fiber крутится без yield'а ТОЛЬКО
+  через цикл (его back-edge check сохранён отдельно) или рекурсию (цикл в call-графе). Решение: **source-
+  level whole-program pre-pass** `compiler-codegen/src/codegen/preempt_keep.rs::compute_preempt_keep_set` —
+  call-граф над FnDecl-символами (entry module.items + импортируемые peer_files), per-fn флаги
+  indirect/ffi/address_taken, итеративный Tarjan SCC. `KEEP = cycle ∪ makes_indirect ∪ makes_ffi ∪
+  address_taken`; ELIDE иначе. Хранится на CEmitter, populated в emit_module ДО emit-цикла; emit_fn
+  prologue эмитит check только для key ∈ KEEP. **Соундно над монтоморфизацией:** KEEP-статус шаблона
+  (определяется ИСХОДНИКОМ) наследуется всеми моно/erased-инстансами через тот же ключ; over-approximated
+  рёбра только ДОБАВЛЯЮТ KEEP → ни один рекурсивный цикл не теряет safepoint. Conservative default: любой
+  неразрешённый/cross-module callee, named/spread-args, ambiguous overload, любое сомнение → KEEP.
+  **Adversarial-review (≥5 линз) + эмпирический probe** нашли РЕАЛЬНУЮ дыру: on-demand emit-пути
+  (emit_monomorphized_fn/_method, emit_generic_fn_erased/_method_erased) лоуэрили тело БЕЗ prologue-check →
+  рекурсивный generic терял safepoint в КАЖДОМ моно-инстансе (starvation-risk). Фикс Ф.4: keyed-check в
+  mono/erased-пути (инстанс наследует KEEP шаблона) + unconditional KEEP в closure/trailing-block/spawn-
+  fiber-entry (без source-key). Probe подтвердил: рекурсивный `gcount[T]` держит check в обоих инстансах,
+  non-recursive `gid[T]` элидит. Acceptance: plan143_2 7/7 (positives элидированы — pure_leaf/pure_branch/
+  leaf_callee/forward_once/forward_chain; negatives KEPT — self/mutual-recursion, indirect/closure, FFI,
+  address-taken; проверено в сгенерённом C). Регрессия 0 net-new fail (plan90_1/131/138/101_*/136/125_1/
+  139/147/143/143_2 + concurrency preempt-слайс; единственный non-pass bare_t_identity pre-existing E7320
+  на main). Критерий «без упрощений как для прода» соблюдён: conservative-KEEP при любом сомнении (вкл.
+  synthesized-conversion `str.from` — нет FnDecl → KEEP), sound над моно, никаких shortcut'ов. Остаток —
+  Q-loop-opt-thresholds §B (cross-module precision, minimal-SCC-cut вместо KEEP-all). Ветка НЕ merged
+  (финальный merge делает оператор).

@@ -6155,3 +6155,52 @@ General async-preemption (Go 1.14 SIGURG) уберёт per-iteration call для
 порога — SIGURG-часть `[M-opt-preempt-strided-loop]` (open). Cross-link **Plan 144 §7.4**: SIGURG =
 ОБЩИЙ async-yield (preempt + async GC safe-point).
 
+## D271 — Function-entry preempt-check elision на provably-leaf функциях (Plan 143 §2.B, [M-opt-leaf-preempt-entry-elision])
+
+> **Создан:** 2026-06-14 (Plan 143 §2.B, ветка `plan-143-leaf-preempt-elision`). Correctness-neutral
+> codegen-оптимизация: элидирует **function-prologue** `nova_preempt_check()` (Plan 44.7 — first statement
+> КАЖДОЙ Nova-функции, [emit_c.rs:14925](../../compiler-codegen/src/codegen/emit_c.rs#L14925)). Sibling [D270 §A]
+> элидит per-loop back-edge check; D271 — per-function entry check. Семантически прозрачна.
+
+### Инвариант вытеснения (соундность)
+Fiber бежит безгранично без yield'а **ТОЛЬКО** через (a) **цикл** — его back-edge `nova_preempt_check()`
+СОХРАНЁН (D270 §A элидит лишь const-small finite); (b) **рекурсию** — цикл в call-графе. ⇒ Entry-check
+безопасно опустить, если функция **провабельно НЕ может крутиться без safepoint'а**, т.е. каждый
+рекурсивный цикл сохраняет ≥1 члена с safepoint'ом.
+
+### Правило (conservative KEEP)
+Функция `f` СОХРАНЯЕТ prologue entry-check ⟺ **любое** из:
+1. `f` на call-граф **цикле** — self-recursive ИЛИ член SCC>1 (взаимная рекурсия);
+2. `f` делает **indirect/closure/fn-ptr-call** (цель статически неизвестна → ацикличность не доказать);
+3. `f` делает **FFI/extern-call** (C может вызвать Nova-callback → неизвестная цель);
+4. `f` **address-taken** (используется как fn-value/callback → цель чьего-то indirect-вызова).
+
+**ELIDE** иначе (non-recursive, статически-резолвимые callee, не-indirect, не-address-taken). `has_loop`
+для entry-check **НЕ важен** (цикл держит свой back-edge check; bounded straight-line терминируется).
+
+### Интеграция — source-level whole-program pre-pass
+Call-граф над source-level `FnDecl`-символами (entry `module.items` + все импортируемые `peer_files`),
+computed ДО эмита (`compute_preempt_keep_set` в `compiler-codegen/src/codegen/preempt_keep.rs`). Узлы =
+non-external FnDecl (ключ `receiver::name::param-signature`); рёбра = direct resolved-call; per-fn флаги
+indirect/ffi/address_taken; итеративный Tarjan SCC. `KEEP = cycle ∪ makes_indirect ∪ makes_ffi ∪
+address_taken`. **Соундно над монтоморфизацией:** рекурсия/indirect/FFI/address-taken определяются
+ИСХОДНИКОМ → KEEP-статус шаблона наследуется ВСЕМИ инстансами (over-approximation: лишние рёбра только
+ДОБАВЛЯЮТ KEEP, ни один цикл не теряется). On-demand emit-пути (mono/erased-инстансы) консультируют тот же
+KEEP-set по тому же ключу; closure/trailing-block/spawn-fiber-entry (без source-key) — unconditional KEEP.
+**Conservative default:** любой неразрешённый/cross-module-неуверенный callee, named/spread-args, ambiguous
+overload, любое сомнение → KEEP. Никогда не элидим под вопросом — соундность важнее агрессивности.
+
+### Acceptance
+plan143_2 7/7 PASS: positives (`pure_leaf`, `pure_branch`, `leaf_callee`, `forward_once`, `forward_chain`)
+ЭЛИДИРОВАНЫ; negatives — self-recursion, mutual-recursion SCC, indirect/closure, FFI, address-taken — KEPT
+(проверено в сгенерённом C). Probe: рекурсивный generic `gcount[T]` держит check в обоих моно-инстансах;
+non-recursive `gid[T]` элидит. Регрессия 0 new fail (Vec/collection/concurrency слайс; pre-existing
+подтверждены на main-бинаре). Adversarial-review (≥5 линз) закрыл интеграционные emit-дыры (рекурсивный
+generic терял safepoint в моно-инстансе — реальная starvation-дыра).
+
+### Open / long-term
+Cross-module precision + minimal-SCC-cut (KEEP 1 члена на цикл вместо всех) — [Q-loop-opt-thresholds]
+(open-questions.md). Compiler-synthesized conversions (`str.from(int/f64)` — нет `FnDecl`) держат
+`StringBuilder.append(f32)` в KEEP (нет source-доказательства arg-type) — корректный conservative-KEEP, НЕ
+shortcut. Частично снимается SIGURG'ом (Plan 144 §7.4, общий async-yield).
+
