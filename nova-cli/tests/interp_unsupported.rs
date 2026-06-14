@@ -1,4 +1,4 @@
-// Plan 156 / D274: the tree-walking interpreter is currently UNSUPPORTED.
+// Plan 157 / D274: the tree-walking interpreter is currently UNSUPPORTED.
 //
 // `nova run` must error out with a clear message (NEGATIVE), while the normal
 // C-codegen front-end path (`nova check`) must keep working (POSITIVE). Both

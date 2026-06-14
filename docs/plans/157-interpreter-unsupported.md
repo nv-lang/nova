@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Plan 156: Tree-walking interpreter — UNSUPPORTED (C-codegen only)
+# Plan 157: Tree-walking interpreter — UNSUPPORTED (C-codegen only)
 
 > **Создан:** 2026-06-14.
 > **Статус:** ✅ DONE (2026-06-14) — `nova run` громко ошибается, мёртвые interp-тесты

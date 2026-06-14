@@ -7837,7 +7837,7 @@ commit lazy, but this can exhaust user VA or hit a commit limit. POSIX aborts on
 mmap failure; Windows downsize-retries. Operators tuning to extremes should size
 the product against available virtual address space.
 
-## D274 — Tree-walking interpreter currently UNSUPPORTED; C-codegen only (Plan 156)
+## D274 — Tree-walking interpreter currently UNSUPPORTED; C-codegen only (Plan 157)
 
 **Решение.** Древесный интерпретатор (`nova run`, модуль `compiler-codegen/src/interp/`)
 **временно НЕ поддерживается**. Nova собирается, тестируется и поставляется **только**
@@ -7857,6 +7857,6 @@ the product against available virtual address space.
 C-codegen-путь — единственный поддерживаемый и тестируемый. «пока» намеренно: возможна
 полная вырезка ЛИБО восстановление — см. `Q-interpreter-future`.
 
-Связь: [Plan 156](../../docs/plans/156-interpreter-unsupported.md),
+Связь: [Plan 157](../../docs/plans/157-interpreter-unsupported.md),
 [open-questions Q-interpreter-future](../open-questions.md), маркер `[M-interp-unsupported]`.
 
