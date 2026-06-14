@@ -36383,3 +36383,57 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   (вне scope): литерал-операнды (i+1, i*2) codegen вообще не чекает (rty литерала ≠ nova_int) — поэтому
   always-safe тесты используют var+var (i+j) паттерны. * нелинеен → Z3 часто Unknown → консервативно чек
   (не упрощение — soundness: никогда не элидируем без пруфа).
+
+[2026-06-14] Plan 153.2 (ленивый итератор Vec[T]/[]T, D260, Phase A; branch plan-153.2-mono-closures,
+  commits 996ca01a лифт + caf56226 ленивый слой) — продакшн-полнота без упрощений (обязательный критерий
+  приёмки). **Модель — boxed-fluent:** `BoxIter[T] { priv step fn() -> Option[T] }`; вход `v.lazy()` мостит
+  `VecIter`→`BoxIter`; адаптеры (`map`/`filter`/`filter_map`/`enumerate`/`take`/`skip`) — fluent-методы →
+  новый `BoxIter` (оборачивают upstream-`step`); терминаторы (`collect`/`fold`/`reduce`/`count`/`sum`/`any`/
+  `all`/`find`/`for_each`/`min`/`max`/`nth`/`last`) тянут цепочку. **Промежуточных аллокаций нет** — pull,
+  по одному элементу (доказано инструментацией: `plan153_2/laziness` — счётчик считает ТОЛЬКО протянутые
+  элементы; `take`/`find`/`any`/`all`/`nth` коротят). Адаптеры реентерабельны (каждый копирует receiver
+  `mut src = @` в свежее захватывающее замыкание — не мутирует BoxIter вызывающего до terminator-drain).
+  **Модуль:** sibling FILE-модуль `std/collections/vec_lazy.nv` (`module collections.vec_lazy`), explicit-
+  import, НЕ prelude folder `collections.vec` — закрытие closure-dense адаптерных идентификаторов (`[U]`/
+  `[Acc]`/`f`/`pred`) per [M-codegen-var-types-fn-scope]/D145, в точности как `vec_seq.nv`. Eager `vec_seq`
+  оставлен без изменений (Q-iterator-laziness: lazy — канон; eager НЕ переписан в сахар над lazy — чтобы не
+  навязывать lazy-import eager-пользователям). **THREE codegen-фикса** в `compiler-codegen/src/codegen/
+  emit_c.rs` (релиз пересобран): (1) per-test flush реестра mut-capture box'ов `var_boxed` в `emit_test`
+  (box `_box_<name>` утекал между C-функциями тестов → CC-FAIL); (2) `Stmt::Return` эмитит значение с типом
+  возврата функции как target — голый `return None` в mono-замыкании резолвится в `NovaOpt_<mono>`, не erased
+  `NovaOpt_nova_int`; (3) `infer_expr_c_type` регистрирует generic-инстанс типа-возврата, когда generic
+  free-fn ИЛИ метод generic-типа возвращает generic-инстанс (`box_iter[int](it)->BoxIter[int]`, `Vec[T]
+  @lazy()->BoxIter[T]`) — иначе `.method()` на временном промахивался мимо dispatch-path 5b и попадал в
+  erased NULL-stub (drain 0 / segfault). **Лифт mono×closures (996ca01a):** gap A —
+  `register_generic_instances_in_typeref`; gap B — closure-capture в loop-arms; 7/7 пробников. Acceptance:
+  plan153_2 4/4 (adapters/chains/laziness/terminators), 0 регрессий (verified pre-existing FAILs против
+  baseline main 82ada7ac). **Отложено (Phase B — НЕ упрощение, заявленный B-набор):** zip/unzip/chain/
+  flat_map/flatten/scan/inspect/step_by/take_while/skip_while/peekable/min_by[_key]/max_by[_key]/partition/
+  chunk_by/into_iter + мут-итерация for mut x / mut @iter() (Q-iter-mut write-through) + FromIterator/collect-
+  target (мост 153.6) → [M-153.2-iter-phase-b]. Zero-cost generic-over-source (un-boxed курсор) поверх boxed
+  → [M-153.2-generic-over-source-zerocost] (perf, тот же API). Tuple-preserving адаптер после enumerate →
+  [M-153.2-tuple-elem-adapter] (residual Option[mono-tuple] closure-typing gap; схлопнуть через map).
+  Boxed-выбор (а не сразу generic-over-source) — сознательный: даёт рабочую allocation-free лень с минимальной
+  codegen-площадью; zero-cost — отдельный perf-апгрейд поверх, НЕ предусловие. D260 + Q-iterator-laziness/
+  Q-iter-mut (open-questions) + docs/vec-lazy.md (user-гайд) + vec-internals.md.
+
+[2026-06-14] Plan 153.x bug-фиксы той же ветки (plan-153.2-mono-closures). **Bug A (ffc5d28f) — std.sort/
+  binary_search консолидация ([M-153.x-std-sort-consolidate] RESOLVED для binary_search):** Plan 153.3 добавил
+  prelude `Vec[T Compare] @binary_search -> Result[int,int]` (`collections.vec/access.nv`); под D239
+  (`[]T≡Vec[T]`) это второй `@binary_search` на `Vec[int]`, ВЫИГРЫВАЮЩИЙ резолв над std.sort'овским
+  `[]int @binary_search -> Option[int]` → `xs.binary_search(t) == Some(i)` = hard C-type error (`NovaRes_*` vs
+  `NovaOpt_*`). Канон = Vec Result-форма (Ok(i) found / Err(insertion_point)); удалён ТОЛЬКО конфликтующий
+  `[]int @binary_search -> Option` из std/sort.nv; call-sites мигрированы на `== Ok/Err` (plan91/sort_basic,
+  plan91_fe4/sort_aggregate_pipeline + neg/edge_and_error_paths, plan91_fe5/sort_realistic). `@sort`/`@sort_by`/
+  `@min`/`@max` НАМЕРЕННО ОСТАВЛЕНЫ в std.sort (не return-type-конфликтят; их `[]int`-exact-receiver
+  сигнатуры ТРЕБУЮТСЯ — `[]int.new()`/`with_capacity()` лоуэрят в ЛЕГАСИ `NovaArray_T`, не `Vec[T]`, и
+  prelude Vec `mut @`-метод на таком ресивере мис-диспатчится в erased generic → молча no-op'ит). Полная
+  консолидация sort→Vec гейтится codegen-блокером [M-153.x-array-new-not-vec]. **Bug B (cf3951e2) —
+  [M-154.1-chained-vec-f32-method-misdispatch] FIXED:** chained `Vec[f32].new().debug(a)` мис-диспатчил
+  `.debug` на str `@debug` overload (→ `Nova_Vec____nova_f32*` в str-метод → CC-FAIL). Корень — gap C
+  (registration timing), НЕ turbofish-static-return (тот УЖЕ давал верный тип): outer-`.debug` dispatch
+  (block 5b ~emit_c.rs:23816) достигался ДО эмита inner `Vec[f32].new()` → инстанс не в
+  `generic_type_instance_info` → fall-through на str. `Vec[int]` работал лишь т.к. регистрируется prelude/std
+  повсеместно. Фикс — зеркалирование emit-side static-call registration на inference-путь (TurboFish-Member
+  branch ~32990; `infer_expr_c_type(obj)` вызывается dispatcher'ом ~22828 ДО block 5b) → инстанс
+  регистрируется + worklist-queue'ится вовремя. +27 строк emit_c.rs (additive, single branch) + фикстура.

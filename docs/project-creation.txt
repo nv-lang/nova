@@ -37918,3 +37918,28 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   (OE1-OE5, вкл. 2 runtime-panic neg) + регрессии contracts 314/0, plan140 51/0, basics 8/0, Trivial
   1/0/4skip (OE6/OE7). 0 регрессий, soundness неизменна. D272 + D24/04-effects/open-questions amend +
   contracts.md/.ru + README + backlog (marker CLOSED).
+[2026-06-14] Plan 153.2 — Ленивый итератор Vec[T]/[]T (D260, Phase A; branch plan-153.2-mono-closures,
+  commits 996ca01a лифт + caf56226 ленивый слой). Boxed-fluent модель: BoxIter[T] { priv step fn() ->
+  Option[T] }; вход v.lazy() мостит VecIter→BoxIter; адаптеры map/filter/filter_map/enumerate/take/skip →
+  новый BoxIter (оборачивают upstream step); терминаторы collect/fold/reduce/count/sum/any/all/find/for_each/
+  min/max/nth/last тянут цепочку. Промежуточных аллокаций НЕТ (pull, по одному элементу — доказано
+  инструментацией plan153_2/laziness: счётчик считает только протянутые; take/find/any/all/nth коротят).
+  Реентерабельность — каждый адаптер копирует receiver (mut src = @) в свежее замыкание. Модуль — sibling
+  FILE-module std/collections/vec_lazy.nv (collections.vec_lazy), explicit-import, НЕ prelude folder
+  collections.vec (closure-dense идентификаторы [U]/[Acc]/f/pred засоряли бы каждый юнит — [M-codegen-var-
+  types-fn-scope]/D145, как vec_seq.nv). Eager vec_seq оставлен без изменений (lazy = канон, Q-iterator-
+  laziness; eager НЕ сахар над lazy — чтобы не навязывать lazy-import). THREE codegen-фикса (emit_c.rs, релиз
+  пересобран): (1) per-test flush var_boxed в emit_test (box _box_<name> утекал между тестами → CC-FAIL);
+  (2) Stmt::Return эмитит value с return-type как target (голый return None → NovaOpt_<mono>, не erased
+  NovaOpt_nova_int); (3) infer_expr_c_type регистрирует generic-инстанс return-type для generic free-fn /
+  метода generic-типа возвращающего generic-инстанс (иначе .method() на временном → erased NULL-stub,
+  drain 0/segfault). Лифт mono×closures (996ca01a): gap A register_generic_instances_in_typeref + gap B
+  closure-capture в loop-arms, 7/7 пробников. plan153_2 4/4, 0 регрессий (baseline main 82ada7ac). Отложено
+  Phase B (НЕ упрощение): zip/chain/flat_map/flatten/scan/step_by/take_while/skip_while/peekable/min_by/max_by/
+  partition/chunk_by/into_iter + for mut x / mut @iter (Q-iter-mut) + FromIterator/collect-target →
+  [M-153.2-iter-phase-b]; zero-cost generic-over-source (un-boxed) → [M-153.2-generic-over-source-zerocost];
+  tuple-preserving после enumerate → [M-153.2-tuple-elem-adapter]. D260 (02-types) + Q-iterator-laziness/
+  Q-iter-mut (open-questions) + docs/vec-lazy.md + vec-internals.md + backlog + план §153.2-статус.
+  Bug-фиксы той же ветки: ffc5d28f (std.sort binary_search консолидация под D239, Bug A,
+  [M-153.x-std-sort-consolidate] RESOLVED) + cf3951e2 (chained Vec[f32] turbofish-static return-inference,
+  Bug B, [M-154.1-chained-vec-f32-method-misdispatch] FIXED — gap C registration timing).
