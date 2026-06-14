@@ -157,60 +157,175 @@ fn push_implicit(mut acc Vec[int], cp int) {
     acc.push(0)
 }
 
-// Greedy longest-match contraction at position `i` of `cps`. Returns the number
-// of codepoints consumed (>= 2) on a match and appends its CEs to `acc`; returns
-// 0 if no contraction starting at cps[i] applies. Contraction variants are stored
-// longest-first, so the first matching variant is the longest.
-fn match_contraction(mut acc Vec[int], cps Vec[int], i int) -> int {
-    ro first = cps[i]
-    mut consumed = 0
+// ── contraction lookup helpers (variants keyed by first cp; "rest=ces#..") ──
+
+fn cp_seq_eq(a Vec[int], b Vec[int]) -> bool {
+    if a.len() != b.len() {
+        false
+    } else {
+        mut ok = true
+        mut i = 0
+        while i < a.len() {
+            if a[i] != b[i] { ok = false }
+            i = i + 1
+        }
+        ok
+    }
+}
+
+// `pre` is a strict prefix of `full`?
+fn cp_seq_is_prefix(pre Vec[int], full Vec[int]) -> bool {
+    if pre.len() >= full.len() {
+        false
+    } else {
+        mut ok = true
+        mut i = 0
+        while i < pre.len() {
+            if pre[i] != full[i] { ok = false }
+            i = i + 1
+        }
+        ok
+    }
+}
+
+// Exact contraction match: does `first` have a variant whose tail == `tail`?
+// Returns its CE string. (No early break — iterate all variants, keep last hit.)
+fn contraction_lookup(first int, tail Vec[int]) -> Option[str] {
+    mut found Option[str] = None
     match collate_contraction_map.get(first) {
         Some(variants) => {
             for variant in variants.split("#") {
-                if consumed == 0 {
-                    match variant.split_once("=") {
-                        Some((rest, ces)) => {
-                            ro tail = parse_cp_list(rest)
-                            ro need = tail.len()
-                            if need >= 1 && i + need < cps.len() + 1 {
-                                mut ok = true
-                                mut k = 0
-                                while k < need && ok {
-                                    if cps[i + 1 + k] != tail[k] { ok = false }
-                                    k = k + 1
-                                }
-                                if ok {
-                                    push_ce_list(acc, ces)
-                                    consumed = need + 1
+                match variant.split_once("=") {
+                    Some((rest, ces)) => {
+                        if cp_seq_eq(parse_cp_list(rest), tail) { found = Some(ces) }
+                    }
+                    None => {}
+                }
+            }
+        }
+        None => {}
+    }
+    found
+}
+
+// Is `tail` a strict prefix of some longer variant tail of `first`? (keep extending)
+fn contraction_has_longer(first int, tail Vec[int]) -> bool {
+    match collate_contraction_map.get(first) {
+        Some(variants) => {
+            mut yes = false
+            for variant in variants.split("#") {
+                match variant.split_once("=") {
+                    Some((rest, _ces)) => {
+                        if cp_seq_is_prefix(tail, parse_cp_list(rest)) { yes = true }
+                    }
+                    None => {}
+                }
+            }
+            yes
+        }
+        None => false
+    }
+}
+
+fn cp_seq_push(src Vec[int], x int) -> Vec[int] {
+    mut out = Vec[int].with_capacity(src.len() + 1)
+    for v in src { out.push(v) }
+    out.push(x)
+    out
+}
+
+// UCA S2.1: longest contraction match at `i` with **discontiguous** extension —
+// a contraction continuation may match across an interposed non-starter whose
+// combining class is strictly lower (the interposed mark is collated separately).
+// `used` marks already-consumed indices (read-only here). Returns the chosen CE
+// string (None ⇒ caller emits implicit weights) + the list of consumed indices
+// (always includes `i`).
+fn s21_match(cps Vec[int], used Vec[int], i int) -> (Option[str], Vec[int]) {
+    ro n = cps.len()
+    ro first = cps[i]
+    mut best_ces = collate_single_map.get(first)   // longest exact so far = `first` alone
+    mut best_consumed = Vec[int].with_capacity(4)
+    best_consumed.push(i)
+    match collate_contraction_map.get(first) {
+        Some(_) => {
+            mut cur_tail = Vec[int].with_capacity(4)     // matched tail cps (after first)
+            mut cur_consumed = Vec[int].with_capacity(4) // their indices (in order)
+            mut prev_ccc = 0
+            mut j = i + 1
+            mut going = true
+            while going && j < n {
+                if used[j] == 1 {
+                    j = j + 1
+                } else {
+                    ro cj = cps[j]
+                    ro ccj = ccc_of(cj)
+                    ro eligible = if ccj == 0 { prev_ccc == 0 } else { ccj > prev_ccc }
+                    if eligible {
+                        ro trial = cp_seq_push(cur_tail, cj)
+                        match contraction_lookup(first, trial) {
+                            Some(ces) => {
+                                cur_tail = trial
+                                cur_consumed = cp_seq_push(cur_consumed, j)
+                                best_ces = Some(ces)
+                                best_consumed = with_base(i, cur_consumed)
+                                prev_ccc = 0
+                                j = j + 1
+                            }
+                            None => {
+                                if contraction_has_longer(first, trial) {
+                                    cur_tail = trial
+                                    cur_consumed = cp_seq_push(cur_consumed, j)
+                                    prev_ccc = 0
+                                    j = j + 1
+                                } else if ccj == 0 {
+                                    going = false
+                                } else {
+                                    prev_ccc = ccj
+                                    j = j + 1
                                 }
                             }
                         }
-                        None => {}
+                    } else if ccj == 0 {
+                        going = false
+                    } else {
+                        prev_ccc = ccj
+                        j = j + 1
                     }
                 }
             }
         }
         None => {}
     }
-    consumed
+    (best_ces, best_consumed)
+}
+
+// [i] ++ consumed (the discontiguously-matched tail indices).
+fn with_base(i int, consumed Vec[int]) -> Vec[int] {
+    mut out = Vec[int].with_capacity(consumed.len() + 1)
+    out.push(i)
+    for x in consumed { out.push(x) }
+    out
 }
 
 // Map the NFD-normalized codepoints of `s` to the flat collation-element stream
-// (quadruples [variable, primary, secondary, tertiary]).
+// (quadruples [variable, primary, secondary, tertiary]). Applies UCA S2.1.
 fn collation_elements(s str) -> Vec[int] {
     ro cps = str_to_cps(normalize_nfd(s))
     ro n = cps.len()
+    mut used = Vec[int].with_capacity(n)
+    mut z = 0
+    while z < n { used.push(0) z = z + 1 }
     mut acc = Vec[int].with_capacity(n * 8)
     mut i = 0
     while i < n {
-        ro consumed = match_contraction(acc, cps, i)
-        if consumed > 0 {
-            i = i + consumed
+        if used[i] == 1 {
+            i = i + 1
         } else {
-            ro cp = cps[i]
-            match collate_single_map.get(cp) {
-                Some(ces) => { push_ce_list(acc, ces) }
-                None => { push_implicit(acc, cp) }
+            ro (ces, consumed) = s21_match(cps, used, i)
+            for idx in consumed { used[idx] = 1 }
+            match ces {
+                Some(cs) => { push_ce_list(acc, cs) }
+                None => { push_implicit(acc, cps[i]) }
             }
             i = i + 1
         }

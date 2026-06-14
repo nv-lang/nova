@@ -1324,6 +1324,13 @@ pub fn render_collation_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::
             .split_whitespace()
             .filter_map(|x| u32::from_str_radix(x, 16).ok())
             .collect();
+        // Skip lines containing a surrogate (U+D800..U+DFFF): Nova `str` is always
+        // valid UTF-8 (R-UTF8) and cannot represent lone surrogates as a literal.
+        // The file is sorted, so dropping a line keeps the rest non-decreasing —
+        // the consecutive-pair order assertions stay valid.
+        if cps.iter().any(|&cp| (0xD800..=0xDFFF).contains(&cp)) {
+            continue;
+        }
         if !cps.is_empty() {
             lines.push(cps);
         }
