@@ -36404,11 +36404,37 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   out-of-band, согласовано с автором), как у нормализации.
   **Codegen-баг попутно (`[M-codegen-fluent-tail-if-unify]`):** fluent-метод (`-> @`: `StringBuilder.append`,
   `Vec.push`) как хвост ветки `if`/`match` типизируется в C как `Builder*`/`Vec*`; при unit-соседе →
-  несовпадение типов C (CC-FAIL). `match` коэрсит (unit-арм доминирует), но вложенный `if` с обоими
+  несовпадение типов C (CC-FAIL). `match` коэрсил (unit-арм доминирует), но вложенный `if` с обоими
   fluent-хвостами — нет → сломал компиляцию ВСЕГО `std.unicode` (normalize/graphemes тоже, т.к. peer'ы).
-  Workaround (не codegen-fix): helper'ы (`single`/`fold_one`/`upper_one`/`lower_one`) возвращают `Vec[int]`,
-  `push`/`append` только внутри for-циклов — ни один хвост ветки не fluent. Настоящий fix (коэрсия
-  mismatched if/match-веток в unit в discard-позиции) — followup.
+  Workaround (не codegen-fix): helper'ы (`single`/`fold_one`/`upper_one`/`lower_one`) возвращали `Vec[int]`,
+  `push`/`append` только внутри for-циклов — ни один хвост ветки не fluent.
+
+  **✅ РАЗРЕШЁН 2026-06-14 (D275, ветка `plan-cgfix-fluent-tail-if`).** Настоящий codegen-fix сделан,
+  workaround **убран** из `std/unicode/case.nv` (восстановлен прямой prod-стиль — критерий приёмки
+  «без упрощений как для прода» выполнен).
+  *Что было:* `emit_if_expr` не имел unit-доминирования, которое уже было у `emit_match` (`[M-91.13]`):
+  value-ветка (fluent `Vec*`-хвост) рядом с не-расходящимся unit-сиблингом в discard-позиции →
+  объявлялся `tmp(Vec*) = NOVA_UNIT;` → CC-FAIL.
+  *Как исправлено* (`compiler-codegen/src/codegen/emit_c.rs`): (1) в `emit_if_expr` (~25905) добавлен
+  симметричный расчёт `(else_diverges, else_ty)` для обеих форм else (Block/If) + gated unit-доминирование
+  (когда `chosen != nova_unit`, а другая **не-расходящаяся** ветка = `nova_unit` → всё `if` коэрсится в
+  `nova_unit`, значения отбрасываются как `(void)(<push>)`). Гейт сохраняет обычный value-`if` нетронутым
+  и не ломает divergence-aware выбор ветки Plan 125; симметрично — fluent-хвост в then ИЛИ else.
+  (2) Выяснилось, что fix был НЕПОЛНЫМ для `if { out.push(..) } else { match {…} }`:
+  `infer_expr_c_type(Match)` возвращал тип не-unit арм'ы (`Vec*`), пока `emit_match` уже коэрсил в
+  `nova_unit` → enclosing `if` видел обе ветки как `Vec*`. Закрыто (~34643): `infer_expr_c_type(Match)`
+  теперь применяет то же `any-non-divergent-arm-is-unit → nova_unit`, что и `emit_match` (восстановлена
+  infer↔emit симметрия).
+  *Что убрано в `case.nv`:* `single` → fluent one-liner `Vec[int].with_capacity(1).push(cp)`;
+  `fold_case`/`to_uppercase` инлайнят lookup как `match` с fluent `out.push(cp)` в None-арме и unit Some;
+  `to_lowercase` Final_Sigma — прямой `if { out.push(..) } else { match {…} }`; удалены неиспользуемые
+  `fold_one`/`upper_one`. *Остаток (НЕ воркэраунд этого бага):* `single`/`lower_one`/`title_one` остаются
+  `Vec[int]`-возвращающими helper'ами — это peer-shared API для `words.nv` (`to_titlecase`), а не обход.
+  *Критерии приёмки (G0):* фикстура `nova_tests/cgfix_fluent_tail_if/repro.nv` 1/1 (позитивы: fluent-хвост
+  в then/в else/no-else/nested + контроли: `if {1} else {2}`=int, str-`if`=str, nested value-`if`=str);
+  directly-touched `plan152_4` (std.unicode) 13/13 с прямым fluent-стилем; 0 новых регрессий (baseline
+  сверен против merge-base `22aa4944` — наборы FAIL идентичны, все pre-existing). Коммиты `ef6d570a`
+  (emit_if_expr + фикстура) + `f9c6e372` (infer(Match) симметрия) + `0f0a65a8` (case.nv restore).
 
 [2026-06-14] Plan 140.4 (overflow-элизия, D272, ветка plan-140-overflow-elide): V1 покрывает binary-
   выражения int +/-/* (главный реальный кейс — loop/requires-bounded арифметика). Compound-assign (x += y,

@@ -26058,19 +26058,48 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             let then_ty = then.trailing.as_ref()
                 .map(|e| self.infer_expr_c_type(e))
                 .unwrap_or_else(|| "nova_unit".into());
-            let chosen = if then_diverges {
-                // Use else-branch's inferred type.
-                match else_ {
-                    Some(ElseBranch::Block(b)) => b.trailing.as_ref()
+            // Compute the else-branch type + divergence symmetrically with the
+            // then-branch, so the unit-domination fallback below can see EITHER
+            // side being unit (the fluent-tail may be in then OR else).
+            let (else_diverges, else_ty): (bool, String) = match else_ {
+                Some(ElseBranch::Block(b)) => (
+                    self.block_trailing_diverges(b),
+                    b.trailing.as_ref()
                         .map(|e| self.infer_expr_c_type(e))
                         .unwrap_or_else(|| "nova_unit".into()),
-                    Some(ElseBranch::If(e)) => self.infer_expr_c_type(e),
-                    None => then_ty.clone(),
-                }
+                ),
+                Some(ElseBranch::If(e)) => (
+                    self.expr_diverges_125(e),
+                    self.infer_expr_c_type(e),
+                ),
+                None => (false, "nova_unit".into()),
+            };
+            let chosen = if then_diverges {
+                // Use else-branch's inferred type.
+                else_ty.clone()
             } else {
                 then_ty.clone()
             };
-            self.debug_if_infer_125("emit_if_expr", then_diverges, &then_ty, "<else>", &chosen);
+            // [M-codegen-fluent-tail-if-unify] (2026-06-14): mirror emit_match's
+            // unit-domination fallback (lines ~27210-27230). If the chosen type
+            // is a real value type but the OTHER, non-divergent branch yields
+            // nova_unit, the two branches are type-incompatible AND the if is in
+            // discard/statement position — coerce the WHOLE if to nova_unit
+            // (values dropped) rather than emit `tmp(Vec*) = NOVA_UNIT;` which is
+            // a C type mismatch → CC-FAIL. This bites fluent self-return tails
+            // (`-> @`, e.g. `v.push(1)` typed Nova_Vec*) sitting in one if-branch
+            // while the sibling branch yields unit. Gated on chosen != nova_unit
+            // (don't touch the common case) and on the OTHER branch being
+            // non-divergent (a divergent sibling must NOT force unit — that is
+            // existing Plan 125 behavior and must be preserved).
+            let chosen = if chosen != "nova_unit" {
+                let then_is_unit = !then_diverges && then_ty == "nova_unit";
+                let else_is_unit = !else_diverges && else_ty == "nova_unit";
+                if then_is_unit || else_is_unit { "nova_unit".into() } else { chosen }
+            } else {
+                chosen
+            };
+            self.debug_if_infer_125("emit_if_expr", then_diverges, &then_ty, &else_ty, &chosen);
             chosen
         };
         let cond_val = self.emit_expr(cond)?;
@@ -34968,12 +34997,25 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         MatchArmBody::Block(b) => this.block_trailing_diverges(b),
                     }
                 };
+                // [M-codegen-fluent-tail-if-unify] (2026-06-14): MUST stay
+                // symmetric with `emit_match`'s `[M-91.13]` unit-domination
+                // (lines ~27249-27259): if a non-unit arm type is chosen but
+                // SOME other non-divergent arm yields nova_unit, the arm types
+                // are incompatible and the match is used in statement position
+                // → `emit_match` coerces the whole match to nova_unit. If THIS
+                // inference disagreed (returned the non-unit arm type) the
+                // result temp would be declared `nova_unit` by emit yet read as
+                // `Vec*` by an enclosing `if`/assignment → C type mismatch. So
+                // detect the any-unit-arm case up front and yield nova_unit too.
+                let any_unit_arm = arms.iter().any(|arm| {
+                    !arm_diverges(self, arm) && infer_arm(self, arm) == "nova_unit"
+                });
                 // First pass: find a non-unit, non-nova_int, non-divergent type.
                 for arm in arms {
                     if arm_diverges(self, arm) { continue; }
                     let t = infer_arm(self, arm);
                     if t != "nova_unit" && t != "nova_int" {
-                        return t;
+                        return if any_unit_arm { "nova_unit".into() } else { t };
                     }
                 }
                 // Second pass: any non-unit, still skipping divergent arms.
@@ -34983,7 +35025,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     let t = infer_arm(self, arm);
                     if t != "nova_unit" {
                         all_unit = false;
-                        return t;
+                        return if any_unit_arm { "nova_unit".into() } else { t };
                     }
                 }
                 // All non-divergent arms are nova_unit → match is unit (statement-position).

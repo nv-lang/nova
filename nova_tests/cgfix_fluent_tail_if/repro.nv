@@ -1,0 +1,119 @@
+// [M-codegen-fluent-tail-if-unify] regression fixture.
+//
+// A fluent self-return method (`-> @`, e.g. Vec.push / StringBuilder.append)
+// used as the TAIL of one `if`-branch while the SIBLING branch yields `unit`
+// used to make codegen pick the pointer type (`Nova_Vec*`) for the whole
+// if-expression and then emit `tmp(Vec*) = NOVA_UNIT;` into the unit branch →
+// C "incompatible type" CC-FAIL. `match` already coerced such mixed
+// unit/value statement-position selections to unit; `emit_if_expr` now does
+// the same. These tests would not COMPILE before the fix.
+
+module cgfix_fluent_tail_if.repro
+
+import std.collections.vec.{Vec}
+
+// ── POSITIVE: fluent `-> @` push tail in if-branch, unit sibling ──
+// then = Nova_Vec*  (fluent push), else = unit. if is in statement position.
+fn fill(cond bool) -> Vec[int] {
+    mut v = Vec[int].with_capacity(2)
+    if cond { v.push(1) }       // tail = Nova_Vec____nova_int* (fluent -> @)
+    else    { v.push(2); () }   // tail = unit
+    v
+}
+
+// ── POSITIVE: mirror — fluent tail in the ELSE branch, unit in then ──
+fn fill_mirror(cond bool) -> Vec[int] {
+    mut v = Vec[int].with_capacity(2)
+    if cond { v.push(7); () }   // tail = unit
+    else    { v.push(9) }       // tail = Nova_Vec____nova_int* (fluent -> @)
+    v
+}
+
+// ── POSITIVE: if WITHOUT else, fluent tail (no-else already coerces to unit,
+//    but keep as a guard so it stays valid). ──
+fn fill_noelse(cond bool) -> Vec[int] {
+    mut v = Vec[int].with_capacity(2)
+    if cond { v.push(5) }       // tail = Nova_Vec* ; no else → discarded
+    v
+}
+
+// ── POSITIVE: nested if with fluent tails on inner branches, unit sibling. ──
+fn fill_nested(a bool, b bool) -> Vec[int] {
+    mut v = Vec[int].with_capacity(4)
+    if a {
+        if b { v.push(1) } else { v.push(2) }   // inner: both fluent tails
+    } else {
+        v.push(3); ()                            // unit sibling at outer level
+    }
+    v
+}
+
+// ── CONTROL: value-typed if must STAY its value type (NOT coerced to unit). ──
+fn pick_int(c bool) -> int {
+    ro x = if c { 1 } else { 2 }   // both branches int → if-expr stays int
+    x
+}
+
+fn pick_str(c bool) -> str {
+    if c { "yes" } else { "no" }   // both branches str → if-expr stays str
+}
+
+// ── CONTROL: nested value-typed if stays its value type. ──
+fn classify(n int) -> str {
+    if n > 0 {
+        if n > 10 { "big" } else { "small" }
+    } else {
+        "non-positive"
+    }
+}
+
+test "fluent push tail with unit sibling (then=value)" {
+    ro a = fill(true)
+    ro b = fill(false)
+    assert(a.len() == 1)
+    assert(b.len() == 1)
+    assert(a[0] == 1)
+    assert(b[0] == 2)
+}
+
+test "fluent push tail with unit sibling (else=value, mirror)" {
+    ro a = fill_mirror(true)
+    ro b = fill_mirror(false)
+    assert(a.len() == 1)
+    assert(b.len() == 1)
+    assert(a[0] == 7)
+    assert(b[0] == 9)
+}
+
+test "fluent push tail, no else branch" {
+    ro a = fill_noelse(true)
+    ro b = fill_noelse(false)
+    assert(a.len() == 1)
+    assert(b.len() == 0)
+    assert(a[0] == 5)
+}
+
+test "nested if with fluent tails and unit sibling" {
+    ro ab = fill_nested(true, true)
+    ro anb = fill_nested(true, false)
+    ro nab = fill_nested(false, true)
+    assert(ab.len() == 1 && ab[0] == 1)
+    assert(anb.len() == 1 && anb[0] == 2)
+    assert(nab.len() == 1 && nab[0] == 3)
+}
+
+test "control: value-typed if stays int" {
+    assert(pick_int(true) == 1)
+    assert(pick_int(false) == 2)
+}
+
+test "control: value-typed if stays str" {
+    assert(pick_str(true) == "yes")
+    assert(pick_str(false) == "no")
+}
+
+test "control: nested value-typed if stays str" {
+    assert(classify(20) == "big")
+    assert(classify(5) == "small")
+    assert(classify(-1) == "non-positive")
+}
