@@ -1,0 +1,16 @@
+// Plan 140.3 ([M-140-contract-levels]): `#unchecked(invariant)` at module level
+// elides ONLY type-invariant enforcement. An otherwise-violating construction
+// (`balance = -5` vs `invariant balance >= 0`) therefore does NOT panic.
+
+#unchecked(invariant)
+module plan140_3.unchecked_invariant_pos
+
+type Account {
+    balance int
+}
+    invariant balance >= 0
+
+test "#unchecked(invariant): invalid construction does not panic (invariant elided)" {
+    ro a = Account { balance: -5 }
+    assert(a.balance == -5)
+}

@@ -37645,6 +37645,21 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   8/8 FAIL); guard-тест plan153_1/resize_with_free_fn_shadow (free `fn f` + resize_with);
   contracts 251/0 (+57skip), broad regression 0 новых FAIL. НЕ Plan 154.1 — отдельный коммит.
 
+[2026-06-14] Plan 140.3 followups (ветка plan-140.3-followups) — три фичи, production-grade:
+  (#1+#2, commit 83755d15) interp `${...}` распространён на ensures И invariant (раньше только requires).
+  ensures `${result}`: билд сообщения захватывается, result→_nova_result переписывается через
+  substitute_result_var_in_code (ПРОПУСКАЕТ содержимое C-строк-литералов → текст, вкл. UTF-8, не калечится;
+  наивная подстановка ломала "result was "). invariant `${field}`: record_invariants несёт message_expr;
+  поля биндятся shadow-local'ами + регистрируются в var_types (save/restore). Тесты plan140_1/{ensures,
+  invariant}_msg_interp_{pos,neg}; plan140_1 15/0.
+  (#4 [M-140-contract-levels], commit 77932ea3) module-opt-out `#unchecked` перед `module X` (голое имя)
+  + Eiffel per-kind `#unchecked(requires/ensures/invariant)` (fn И module). AST ContractOptOut{requires,
+  ensures,invariant} (заменил bool) + Module.contract_opt_out + ModuleAttrKind::Unchecked; codegen per-fn
+  флаг → per-kind гейт contracts_elided_for(kind)/invariants_elided_here() (requires/ensures/decreases/
+  invariant НЕЗАВИСИМО). E_UNCHECKED_KIND на плохой вид. Тесты plan140_3/* 4/0 (neg-пара доказывает
+  независимость видов). 0 регрессий по всем (contracts 251/0, plan140 42/0, plan140_1 15/0, plan140_2 13/0,
+  basics 8/0). #3 (примитивный Display через sb.@append) оставлен агенту 154.1 (он его ведёт).
+
 [2026-06-14] Plan 152.4.1+152.4.2 (std/unicode normalization NFC/NFD/NFKC/NFKD, UAX #15) + lazy-static foundation hardening.
   Продолжение Phase B Plan 152 (подобрал работу закрытого агента). (1) Foundation 152.4.0 (commit 52db92c1):
   module-level `ro NAME=EXPR` lazy-static globals — codegen (emit_lazy_const) + name-res. Починил 2 бага агента

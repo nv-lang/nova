@@ -1,0 +1,15 @@
+// Plan 140.3: a SATISFIED invariant (valid construction) does not fire — the
+// interpolated message is never built. Confirms the invariant interp path does
+// not perturb the passing construction.
+
+module plan140_1.invariant_msg_interp_pos
+
+type Account {
+    balance int
+}
+    invariant balance >= 0, "balance was ${balance}"
+
+test "satisfied invariant interp: construction ok" {
+    ro ok = Account { balance: 42 }
+    assert(ok.balance == 42)
+}
