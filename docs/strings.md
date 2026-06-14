@@ -27,6 +27,11 @@ you pick a **lens**:
    WordsView  (UAX #29 word segments; O(n) to create)
    next / count / is_empty;  no [i]
    ── word layer (words / spaces / punctuation, str slices) ──
+
+        as_sentences() ▼   (opt-in: import std.unicode)
+   SentencesView  (UAX #29 sentence segments; O(n) to create)
+   next / count / is_empty;  no [i]
+   ── sentence layer (a sentence + its trailing whitespace, str slices) ──
 ```
 
 - **`as_bytes()` is a reinterpretation** — the bytes physically lie contiguously,
@@ -46,6 +51,12 @@ you pick a **lens**:
   std.unicode`); iterates words, whitespace and punctuation as `str` slices. Unlike
   the others it is **O(n) to create** (word rules need lookahead, so boundaries are
   materialized once). Powers `to_titlecase`.
+- **`as_sentences()` is the sentence-segment lens** — UAX #29 sentence boundaries
+  (`import std.unicode`); iterates sentences (each with its trailing whitespace and
+  terminator) as `str` slices. Also **O(n) to create**. Note: the default UAX #29
+  algorithm has **no abbreviation dictionary**, so `"Mr. Smith"` splits after `Mr.`
+  (a capital letter after `.` is a boundary) — this is the spec's documented
+  behaviour, not a bug.
 
 ## Length
 
@@ -55,6 +66,7 @@ you pick a **lens**:
 | codepoint count | `s.as_chars().count()` | O(n) |
 | grapheme count | `s.as_graphemes().count()` (`import std.unicode`) | O(n) |
 | word count | `s.as_words().count()` (`import std.unicode`) | O(n) |
+| sentence count | `s.as_sentences().count()` (`import std.unicode`) | O(n) |
 
 There is **no bare `s.len()`** — `str` has three diverging lengths (bytes,
 codepoints, graphemes), so the unit is always explicit. `s.len()` → `E_STR_NO_LEN`.
@@ -194,7 +206,34 @@ assert(to_titlecase("ﬁle") == "File")                // ﬁ → "Fi" (title ma
   rules WB1–WB16 (handles `can't`, `3.14`, regional-indicator flags, ZWJ-emoji).
 - `to_titlecase(s)` — titlecases the first cased char of each word (using the
   **titlecase** mapping, e.g. ǆ → ǅ, not uppercase Ǆ) and lowercases the rest with
-  Final_Sigma. Locale-independent. Sentence segmentation is roadmap.
+  Final_Sigma. Locale-independent.
+
+### Sentence segmentation (UAX #29)
+
+`str.@as_sentences() -> SentencesView` is the fifth lens — iterate UAX #29 sentence
+segments (each sentence together with its trailing whitespace and terminator). Like
+`as_words` it is **O(n) to create** (the sentence rules need an Extend/Format
+ignore-rule, an ATerm/STerm context state machine, and an SB8 forward lookahead, so
+boundaries are materialized once).
+
+```nova
+import std.unicode
+
+assert("3.4".as_sentences().count() == 1)            // ATerm between digits (SB6)
+assert("the resp. leaders are".as_sentences().count() == 1) // lowercase after "." (SB8)
+{
+    mut sv = "Hello! World".as_sentences()
+    assert(sv.next() == Some("Hello! "))             // STerm + space + capital → split
+    assert(sv.next() == Some("World"))
+    assert(sv.next() == None)
+}
+```
+
+- `as_sentences()` / `SentencesView` — `next()`/`count()`/`is_empty()`, UAX #29
+  boundary rules SB1–SB11 (+ SB998 default-no-break). Default UAX #29 has **no
+  abbreviation dictionary**: `"Mr. Smith went home. He slept."` yields three
+  segments (`"Mr. "`, `"Smith went home. "`, `"He slept."`), because a capital
+  letter after `.` is a boundary. That is the documented spec behaviour.
 
 Locale collation (`Collator`, UCA/CLDR) remains **roadmap** (Plan 152.5b).
 
@@ -238,3 +277,23 @@ string ops):
 > Unicode case folding/mapping and locale collation remain Phase B (Plan 152.4.4 /
 > 152.5b). The core lenses above are ASCII-complete and byte/codepoint-correct
 > without any Unicode tables.
+
+## Interpolation & format specs
+
+Interpolation is `${expr}` (Display) / `${expr:?}` (Debug). A Rust-style format
+spec follows the colon — `${expr:[[fill]align][sign][#][0][width][.precision][type]}`
+(Plan 152.7-B, D258):
+
+```nova
+assert("${42:5}" == "   42")        // min width, right-aligned (numbers)
+assert("${42:<5}" == "42   ")       // left align
+assert("${42:*^7}" == "**42***")    // fill + center
+assert("${42:05}" == "00042")       // zero-pad
+assert("${255:x}" == "ff")          // hex; X=upper, b=binary, o=octal
+assert("${255:#x}" == "0xff")       // # alternate radix prefix (always lowercase)
+assert("${3.14159:.2}" == "3.14")   // precision (f64); for str = truncate
+```
+
+A malformed spec is a **compile error** (`E_FORMAT_SPEC_UNKNOWN` / `E_BAD_FORMAT_SPEC`),
+never a silent pass. (Generalizing the formatter to write into any `Write` sink —
+`@display(mut w Write)` — is roadmap, Plan 152.7.1.)

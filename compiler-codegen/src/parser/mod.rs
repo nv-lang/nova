@@ -9598,27 +9598,42 @@ impl Parser {
                         span,
                     )
                 })?;
-                // **Plan 91.14 Ф.2 (D229):** после expr peek для `:` token.
-                // Если присутствует — parse format spec (V1: только `?` → Debug).
+                // **Plan 91.14 Ф.2 (D229) + Plan 152.7-B (D258):** after expr,
+                // peek for a `:` token. If present, the REMAINDER of the raw
+                // `${...}` body (everything after the colon) is the format spec.
+                //
+                // We must parse the spec from the RAW substring, not via the
+                // Nova sub-lexer: a Rust-style spec like `<5`, `*^10`, `.2`,
+                // `#x`, `08X` is NOT a valid Nova token sequence (`<`/`^`/`#`
+                // etc. would mis-lex or error). The sub-parser already stopped
+                // at the colon after consuming the full expression, so the
+                // colon token's byte span gives us the precise split point in
+                // `expr_src`.
                 let spec = if matches!(sub.peek().kind, TokenKind::Colon) {
-                    sub.bump(); // consume `:`
-                    parse_format_spec(&mut sub, span)?
+                    let colon_end = sub.peek().span.end;
+                    // `expr_src` is the raw `${...}` body; slice off the spec
+                    // text after the colon and parse it directly.
+                    let spec_raw = expr_src.get(colon_end..).unwrap_or("");
+                    crate::ast::format_spec::parse_rich_format_spec(spec_raw)
+                        .map_err(|msg| Diagnostic::new(msg, span))?
                 } else {
+                    // No `:` — but the sub-parser must have consumed the whole
+                    // expression. Any leftover token is a genuine syntax error.
+                    if !matches!(sub.peek().kind, TokenKind::Eof) {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "[E_FORMAT_SPEC_TRAILING] unexpected tokens after \
+                                 expression in `${{...}}`: expected end of \
+                                 expression or a `:` format spec, found `{}`. \
+                                 Valid syntax — `${{expr}}`, `${{expr:?}}`, or \
+                                 `${{expr:SPEC}}` (Plan 152.7-B).",
+                                sub.peek().kind.name(),
+                            ),
+                            span,
+                        ));
+                    }
                     crate::ast::FormatSpec::None
                 };
-                // Если что-то осталось после spec — syntax error (внутри ${...}
-                // не должно быть лишних tokens).
-                if !matches!(sub.peek().kind, TokenKind::Eof) {
-                    return Err(Diagnostic::new(
-                        format!(
-                            "[E_FORMAT_SPEC_TRAILING] unexpected tokens after format spec \
-                             in `${{...}}`: expected end of expression, found `{}`. \
-                             Plan 91.14: valid syntax — `${{expr}}` or `${{expr:?}}`.",
-                            sub.peek().kind.name(),
-                        ),
-                        span,
-                    ));
-                }
                 parts.push(InterpPart::Expr(inner, spec));
                 i = j + 1;
                 continue;
@@ -9664,58 +9679,15 @@ impl Parser {
 
 enum InterpPart {
     Lit(String),
-    /// Plan 91.14 (D229): expr с optional format spec (`${expr}` или `${expr:?}`).
-    /// V1 specs: FormatSpec::None / FormatSpec::Debug.
+    /// Plan 91.14 (D229) + Plan 152.7-B (D258): expr with optional format spec.
+    /// Specs: FormatSpec::None / FormatSpec::Debug / FormatSpec::Spec(..).
     Expr(Expr, crate::ast::FormatSpec),
 }
 
-/// **Plan 91.14 Ф.2 (D229):** parse format spec после `:` token inside `${...}`.
-///
-/// Called from `desugar_string_interpolation` после `parse_expr()` если peek = `:`.
-/// V1 grammar:
-/// - `?` → `FormatSpec::Debug` (calls DebugPrintable.@debug_fmt)
-/// - empty (after `:`) → `E_FORMAT_SPEC_EMPTY`
-/// - whitespace before spec → `E_FORMAT_SPEC_WHITESPACE` (strict, no forgiveness)
-/// - unknown ident → `E_FORMAT_SPEC_UNKNOWN` с suggestion list
-///
-/// Future extensions ([M-91.14-format-dsl-extensions]): `:hex`, `:pad-N`, `:.3`, etc.
-fn parse_format_spec(
-    sub: &mut Parser,
-    interp_span: crate::diag::Span,
-) -> Result<crate::ast::FormatSpec, Diagnostic> {
-    // After consuming `:`, peek next token:
-    match &sub.peek().kind {
-        TokenKind::Question => {
-            sub.bump();
-            Ok(crate::ast::FormatSpec::Debug)
-        }
-        TokenKind::Eof => Err(Diagnostic::new(
-            "[E_FORMAT_SPEC_EMPTY] format spec после `:` is empty in `${...}`. \
-             Expected `?` для debug-format (V1). \
-             Example: `${expr:?}`. Plan 91.14 (D229)."
-                .to_string(),
-            interp_span,
-        )),
-        TokenKind::Ident(name) => Err(Diagnostic::new(
-            format!(
-                "[E_FORMAT_SPEC_UNKNOWN] unknown format spec `{}` в `${{...}}`. \
-                 V1 supports только `?` (debug). Did you mean `${{expr:?}}`? \
-                 Future specs (`hex`, `pad-N`, `.N`) — [M-91.14-format-dsl-extensions]. \
-                 Plan 91.14 (D229).",
-                name,
-            ),
-            interp_span,
-        )),
-        other => Err(Diagnostic::new(
-            format!(
-                "[E_FORMAT_SPEC_UNKNOWN] unexpected token `{}` после `:` в `${{...}}`. \
-                 V1 supports только `?` (debug). Plan 91.14 (D229).",
-                other.name(),
-            ),
-            interp_span,
-        )),
-    }
-}
+// Plan 152.7-B (D258): the format spec is parsed directly from the raw `${...}`
+// substring via `crate::ast::format_spec::parse_rich_format_spec` (a Rust-style
+// spec is not a valid Nova token sequence, so it cannot be sub-lexed). The old
+// token-driven `parse_format_spec` helper (Plan 91.14, `:?`-only) was retired.
 
 fn parser_utf8_char_len(first_byte: u8) -> usize {
     match first_byte {

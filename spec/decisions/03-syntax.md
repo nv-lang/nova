@@ -10014,9 +10014,9 @@ Unicode-данных `std/unicode` (Plan 152.4). См. [Plan 152.3](../../docs/p
 
 ---
 
-## D253. `std/unicode` — нормализация (UAX #15) + grapheme/word-сегментация (UAX #29) + case folding/mapping/title-casing
+## D253. `std/unicode` — нормализация (UAX #15) + grapheme/word/sentence-сегментация (UAX #29) + case folding/mapping/title-casing
 
-Added: 2026-06-14  Status: 152.4.1+152.4.2 (нормализация) + 152.4.3 (graphemes) + 152.4.4 (case folding/mapping) + 152.4.5 (word-сегментация + title-casing) IMPLEMENTED 2026-06-14; остаётся sentence-сегментация (`[M-152-sentence-boundaries]`) + collation (152.5b)
+Added: 2026-06-14  Status: 152.4.1+152.4.2 (нормализация) + 152.4.3 (graphemes) + 152.4.4 (case folding/mapping) + 152.4.5 (word-сегментация + title-casing) + 152.4.6 (sentence-сегментация) IMPLEMENTED 2026-06-14; остаётся collation (152.5b)
 
 Полная Unicode-нормализация — отдельный **opt-in** модуль `std/unicode` (модуль
 `std.unicode`, folder-module), импортируется явно; НЕ prelude (за размер таблиц
@@ -10025,8 +10025,8 @@ Added: 2026-06-14  Status: 152.4.1+152.4.2 (нормализация) + 152.4.3 
 
 ### Что в ядре vs библиотеке
 Ядро: байты, codepoint decode/encode, ASCII case/classification, byte-`Compare`.
-`std/unicode`: нормализация + grapheme-сегментация + case folding/mapping (здесь,
-реализовано); collation (152.5b) + title-casing (нужны word boundaries) — Phase B.
+`std/unicode`: нормализация + grapheme/word/sentence-сегментация + case
+folding/mapping/title-casing (здесь, реализовано); collation (152.5b) — Phase B.
 
 ### API (152.4.2, реализовано)
 Free-function форма (D253): **`normalize_nfc/nfd/nfkc/nfkd(s str) -> str`**.
@@ -10091,7 +10091,28 @@ ignore-rule ⇒ границы материализуются один раз), 
 Extended_Pictographic для WB3c переиспользуется из grapheme_data.nv).
 **`to_titlecase(s) -> str`** (locale-independent): титулкейс первой cased-буквы каждого
 слова (UAX #29) + lowercase остального (с Final_Sigma). Использует TITLE-маппинг
-(не upper — ǆ→ǅ, не Ǆ). Sentence-сегментация — `[M-152-sentence-boundaries]` (Phase B).
+(не upper — ǆ→ǅ, не Ǆ).
+
+### API sentence-сегментация (152.4.6, реализовано)
+Пятая линза `str.@as_sentences() -> SentencesView`: UAX #29 sentence boundaries
+(SB1-SB11 + SB998) — итерирует сегменты-предложения (предложение + хвостовой
+whitespace/терминатор). Как `as_words` — **O(n) на создание** (правила SB требуют
+SB5 ignore-rule (Extend/Format) + ATerm/STerm-контекст + SB8 forward-lookahead ⇒
+границы материализуются один раз). `SentencesView` (`value priv {buf, bounds, idx}`,
+как `WordsView`) реализует `Next[str]` + `iter`/`count` (remaining, позиционный)/
+`is_empty`. **Важно:** sentence-правила по умолчанию НЕ ломают (SB998 = ×) —
+противоположно grapheme/word (по умолчанию ломают). Данные:
+`std/unicode/sentence_data.nv` (SB-категории range-таблица из
+SentenceBreakProperty.txt: 14 категорий CR/LF/Extend/Sep/Format/Sp/Lower/Upper/
+OLetter/Numeric/ATerm/SContinue/STerm/Close).
+- **SB6** ATerm × Numeric (`3.4` — одно предложение); **SB7** (Upper|Lower) ATerm ×
+  Upper (`U.S.A`); **SB8** ATerm Close* Sp* × (¬…)* Lower (`resp. leaders` — строчная
+  буква после `.` подавляет разрыв ⇒ одно предложение); **SB8a** (STerm|ATerm) Close*
+  Sp* × (SContinue|STerm|ATerm); **SB9-SB11** — терминатор + Close*/Sp* + опц. ParaSep
+  ⇒ разрыв.
+- **По дизайну (не упрощение):** дефолтный UAX #29 без словаря аббревиатур —
+  `Mr. Smith` ломается после `Mr.` (заглавная `S` ⇒ SB8 не срабатывает, SB11 ломает),
+  как в эталонном `SentenceBreakTest.txt`. Это поведение UAX #29, не баг.
 
 ### Conformance
 - UAX #15: `NormalizationTest.txt` — фикстура
@@ -10106,12 +10127,15 @@ Extended_Pictographic для WB3c переиспользуется из grapheme
 - Word (152.4.5): `word_conformance.nv` — UAX #29 из `WordBreakTest.txt` (**полный
   1826/1826 content-checked verified out-of-band**; коммит — uniform-spread 1500).
   **Independent** UCD oracle (boundaries заданы в тест-файле, не выводятся из генератора).
-  Все — `nova-codegen unicode --emit-conformance`.
+- Sentence (152.4.6): `sentence_conformance.nv` — UAX #29 из `SentenceBreakTest.txt`
+  (**полный 512/512 content-checked**; коммит = весь тест-файл, т.к. < лимита 1500).
+  **Independent** UCD oracle (boundaries заданы в тест-файле). Все —
+  `nova-codegen unicode --emit-conformance`.
 
 См. [Plan 152.4](../../docs/plans/152.4-std-unicode.md), Q-unicode-data
-(open-questions.md). Phase B остаток: sentence-сегментация (`[M-152-sentence-boundaries]`),
-collation (152.5b). `[M-152-case-fold]` + `[M-152-word-boundaries]` ЗАКРЫТЫ.
-AMEND D250 §«линзы» — `as_graphemes` 3-я, `as_words` 4-я линза.
+(open-questions.md). Phase B остаток: collation (152.5b). `[M-152-case-fold]` +
+`[M-152-word-boundaries]` + `[M-152-sentence-boundaries]` ЗАКРЫТЫ.
+AMEND D250 §«линзы» — `as_graphemes` 3-я, `as_words` 4-я, `as_sentences` 5-я линза.
 
 ---
 
@@ -10193,6 +10217,53 @@ dot-call при `import std.encoding.utf16`).
 Roundtrip-инвариант: `from_utf16(s.encode_utf16()) == Ok(s)` на ASCII/BMP/supplementary.
 
 См. [Plan 152.6](../../docs/plans/152.6-utf16-encoding-interop.md).
+
+---
+
+## D258. Формат-спеки в интерполяции — Rust-style mini-language
+
+Added: 2026-06-14  Status: B1 (format mini-language) IMPLEMENTED 2026-06-14 (Plan 152.7-B); B2 (Write-sink обобщение) — отложено в 152.7.1 (breaking). AMEND D229/D44/D183.
+
+Расширяет интерполяцию `${expr:SPEC}` (база — D229, Plan 91.14, поддерживала только
+`:?` Debug) до полного **Rust-style** mini-language. Синтаксис `${...}` не меняется.
+
+### Грамматика спека (после `:`)
+`[[fill]align][sign][#][0][width][.precision][type]`
+- **align** `<` (left) / `^` (center) / `>` (right); опц. **fill**-char перед align
+  (`${x:*^10}` → центрирование с заполнением `*`). Дефолт-выравнивание: числа вправо,
+  прочее влево.
+- **sign** `+` — всегда печатать знак для чисел (`${n:+}`).
+- **`#`** alternate — radix-префикс для целых (`0x`/`0o`/`0b`). Префикс **всегда
+  строчный** даже для `:#X` → `0xFF` (как Rust; `upper` влияет только на цифры).
+- **`0`** zero-pad — нули между знаком/префиксом и цифрами (sign-aware: `${n:08x}`,
+  `${n:#08x}` → `0x0000ff`).
+- **width** — мин. ширина поля (в Unicode-скаляр-ширине).
+- **`.precision`** — для f64 = число знаков после точки; для str = усечение.
+- **type** — `x`/`X` (hex), `b` (binary), `o` (octal), `?` (Debug, из D229). Дефолт —
+  Display.
+
+Семантика выровнена с Rust `format!`. Прецедент: Rust mini-language, Python f-string.
+
+### Диагностика (compile-time)
+- `E_FORMAT_SPEC_UNKNOWN` — неизвестный type-char (с fix-it: список поддерживаемых).
+- `E_BAD_FORMAT_SPEC` — структурно невалидный спек (напр. `.` без цифр precision).
+- `E_FORMAT_SPEC_EMPTY` / `E_FORMAT_SPEC_TRAILING` — из D229 (пустой спек / мусор).
+Невалидный спек — **всегда compile-error**, никогда не молчаливый pass.
+
+### Реализация
+AST `FormatSpec` (`compiler-codegen/src/ast/format_spec.rs`, расширен от Plan 91.14) +
+парсер (`parser/mod.rs`) + codegen (`emit_c.rs`) → runtime-хелперы
+`compiler-codegen/nova_rt/conv.h` (`nova_fmt_int_body`/`_radix_body`/`_pad`/
+`_radix_prefix`/`_f64_body` + sign/prefix). Целые — `nova_int` (64-bit), negative hex =
+two's-complement (`${-1:x}` → `ffffffffffffffff`, как Rust).
+
+### Отложено (B2 → Plan 152.7.1, `[M-152.7-write-sink]`)
+Обобщение `@display(mut sb StringBuilder)` → `@display(mut w Write)` (форматтер в любой
+sink: StringBuilder/WriteBuffer/stdout, direct-to-sink `print` без промежуточной str).
+Breaking (меняет сигнатуры всех `@display`/`@debug`) → отдельный sub-plan.
+
+См. [Plan 152.7](../../docs/plans/152.7-interpolation-formatting.md),
+[D229](02-types.md#d229-Debug-protocol--format-spec-expr).
 
 ---
 

@@ -7837,3 +7837,26 @@ commit lazy, but this can exhaust user VA or hit a commit limit. POSIX aborts on
 mmap failure; Windows downsize-retries. Operators tuning to extremes should size
 the product against available virtual address space.
 
+## D274 — Tree-walking interpreter currently UNSUPPORTED; C-codegen only (Plan 157)
+
+**Решение.** Древесный интерпретатор (`nova run`, модуль `compiler-codegen/src/interp/`)
+**временно НЕ поддерживается**. Nova собирается, тестируется и поставляется **только**
+через компиляцию в C (`nova build`, `nova test`, `nova test-build`).
+
+- `nova run` остаётся **видимой** подкомандой CLI (discoverability), но при вызове
+  немедленно завершается с ошибкой и подсказкой `nova build <file>` / `nova test`
+  (exit ≠ 0; help помечен `[UNSUPPORTED]`). Сознательная **громкая** граница, не тихий no-op.
+- Модуль `interp/` сохранён «для справки» (помечен `//!`-нотой), но из пайплайна исключён.
+  Мёртвые interpreter-тесты (`integration.rs`, `spec_nova.rs`, `run_interp_named.rs`,
+  `common/mod.rs`) удалены — они ссылались на изъятый библиотечный крейт `nova`.
+- Регресс-защита контракта — `nova-cli/tests/interp_unsupported.rs` (negative: `nova run`
+  ошибается + указывает на C-codegen; positive: `nova check` работает), прогон через
+  релизный бинарник.
+
+**Почему.** Интерпретатор расходился с C-семантикой и тормозил разработку; единый
+C-codegen-путь — единственный поддерживаемый и тестируемый. «пока» намеренно: возможна
+полная вырезка ЛИБО восстановление — см. `Q-interpreter-future`.
+
+Связь: [Plan 157](../../docs/plans/157-interpreter-unsupported.md),
+[open-questions Q-interpreter-future](../open-questions.md), маркер `[M-interp-unsupported]`.
+

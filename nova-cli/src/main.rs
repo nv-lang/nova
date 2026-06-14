@@ -174,7 +174,9 @@ enum Cmd {
         #[arg(long = "telemetry-gate-caches-drop", value_name = "F")]
         telemetry_gate_caches_drop: Option<f64>,
     },
-    /// Run a Nova source file via the interpreter.
+    /// [UNSUPPORTED] Run a Nova file via the interpreter — the
+    /// tree-walking interpreter is currently NOT supported; use
+    /// `nova build <file>` or `nova test` (C codegen) instead.
     Run {
         file: PathBuf,
     },
@@ -2113,63 +2115,17 @@ fn num_cpus() -> usize {
         .unwrap_or(1)
 }
 
-fn cmd_run(path: &Path) -> Result<()> {
-    if !path.is_file() {
-        bail!("file not found: {}", path.display());
-    }
-    let src = read_file(path)?;
-    let path_str = path.to_string_lossy();
-    let mut module = nova_codegen::parser::parse(&src)
-        .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
-    check_module_path(path, &module)?;
-    // Plan 50 Ф.2 (закрытие [M-interp-named]): cross-file resolve через
-    // inline expansion — тот же codepath, что в `cmd_build` и
-    // `test_runner::codegen_to_c`. Импортированные callee мёрджатся в
-    // `module` ДО type-check → `callnorm` ниже видит ВСЕ сигнатуры (в
-    // т.ч. дефолты импортированных функций) и раскладывает named args
-    // корректно. Раньше `cmd_run` нормализовал только single-file —
-    // переставленные named для импортированного callee давали неверный
-    // результат в `nova run` ([M-interp-named]).
-    //
-    // Graceful: если файл вне Nova-проекта (нет nova.toml) — repo не
-    // найден, resolve пропускается; single-file без импортов работает
-    // и так (prelude auto-import тоже требует repo — поведение
-    // консистентно с отсутствием stdlib вне проекта).
-    if let Some(repo) = nova_codegen::test_runner::find_repo_root_from(path) {
-        let stdlib_dir = repo.join("std");
-        nova_codegen::imports::resolve_imports_inline(path, &mut module, &repo, &stdlib_dir)
-            .map_err(|e| anyhow!("import resolution: {}", e))?;
-    }
-    nova_codegen::types::check_module(&module).map_err(|errs| {
-        let msgs: Vec<String> = errs
-            .iter()
-            .map(|d| d.render(&src, &path_str))
-            .collect();
-        anyhow!("{}", msgs.join("\n"))
-    })?;
-    // Plan 126.2 Ф.2: inject synthesized built-in protocol methods so the
-    // interpreter (nova run) resolves auto-derived @equals/@hash/@clone/
-    // @compare/@fmt the same way codegen does. After type-check, before
-    // desugar/callnorm/interp.
-    nova_codegen::protocols::auto_derive::inject_synthesized_methods(&mut module);
-    // Plan 52 Ф.5: десугаринг map-литералов `[k: v]` → block-expression
-    // ПОСЛЕ type-check, ДО callnorm/interp.
-    // Plan 52 Ф.7: аннотация inferred K/V для turbofish в десугаринге.
-    nova_codegen::types::annotate_map_literals(&mut module);
-    nova_codegen::desugar::desugar_module(&mut module);
-    // Plan 46 (D102) Ф.2: нормализация call-site для treewalk-interp —
-    // named args → positional + вставка defaults. После resolve_imports
-    // (нужны все сигнатуры) и type-check, до запуска интерпретатора.
-    nova_codegen::callnorm::normalize_module(&mut module);
-    nova_codegen::chain_norm::normalize_chains_module(&mut module);
-    let mut interp = nova_codegen::interp::Interpreter::new();
-    interp
-        .load_module(&module)
-        .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
-    interp
-        .run_main()
-        .map_err(|d| anyhow!("{}", d.render(&src, &path_str)))?;
-    Ok(())
+fn cmd_run(_path: &Path) -> Result<()> {
+    // Интерпретатор Nova (treewalk) сейчас НЕ поддерживается. Nova
+    // тестируется и шипится через C-codegen; `nova run` оставлен видимой
+    // командой только чтобы дать понятную ошибку и направить на codegen.
+    // Сам treewalk-движок (compiler-codegen/src/interp) сохранён для
+    // справки, но не обслуживается.
+    bail!(
+        "the Nova interpreter (`nova run`) is currently NOT supported.\n\
+         Use `nova build <file>` to compile to an executable, or `nova test` \
+         to compile and run tests (both via C codegen)."
+    )
 }
 
 /// Plan 45 Ф.12 / D107: `nova doc <file> [--format markdown|json]
