@@ -172,17 +172,40 @@ delegates to `@splice` (mutate.nv); the distinct name documents the slice-argume
 (Rust `Vec::splice` / Go `slices.Insert`). Overlap-safe → a self-insert is correct.
 Contract `requires 0 <= i && i <= @len`.
 
-### flatten — deferred
-
-`[][]T.flatten() -> []T` is **not** provided yet ([M-153.5-flatten-nested-receiver]): a
-correct `.flatten()` method needs a **nested generic receiver** `Vec[Vec[T]] @flatten()`
-so the body can name the innermost element `T`. Neither receiver form the compiler accepts
-expresses this — `Vec[Vec[T]]` is rejected by the parser in carrier position, and `[][]T`
-binds the receiver typevar to the *immediate* element (`Vec[int]`), not the innermost
-(`int`), yielding the wrong return type. Until structural typevar unification for nested
-receivers lands in both parser and monomorphizer, flatten one level explicitly:
+### flatten (concatenate the inner rows)
 
 ```nova
-mut flat = Vec[int].new()
-for inner in nested { flat.append(inner) }   // inner : Vec[int]
+ro nested = Vec[Vec[int]].from([[1, 2], [3], [4, 5]])
+ro flat = nested.flatten()    // [1, 2, 3, 4, 5]
 ```
+
+`Vec[Vec[T]] @flatten() -> Vec[T]` (≡ `[][]T @flatten() -> []T` under D239) concatenates
+every inner row into one fresh `Vec[T]`. It first sums each `inner.len()` to pre-size
+`out = Vec[T].with_capacity(total)`, then bulk-copies each row via `out.append(inner)` (the
+`@append(Vec[T])` `RawMem.copy` fast path — copy, not move, so the operands are unchanged).
+Empty inner rows and an empty outer vector are handled naturally. O(Σ inner.len()), one
+allocation. The production form is the **carrier** receiver `Vec[Vec[T]] @flatten()` — the
+same spelling the rest of the stdlib uses.
+
+#### Nested generic receivers (the enabler)
+
+`flatten` is the first stdlib method with a **nested generic receiver**. A correct
+`.flatten()` must name the *innermost* element `T` so the result is `Vec[T]`, not
+`Vec[Vec[int]]`. This needed structural typevar unification at **arbitrary nesting depth**
+([D145 AMEND](../spec/decisions/02-types.md#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101)),
+fixed in both the parser and the monomorphizer (Plan 153.5, commit `1c323d0e`):
+
+- Both spellings are accepted and equivalent under D239: `fn[T] Vec[Vec[T]] @m` ≡
+  `fn[T] [][]T @m`. The full structured receiver type is carried on `Receiver.receiver_ty`
+  (`type_name` flattens to `"[][]T"` and would lose the depth, so a separate slot is needed).
+- The receiver typevar binds to the **innermost** element, recursively: `Vec[Vec[T]]` ⇒
+  `T = element-of-element`; `Vec[Vec[Vec[T]]]` ⇒ third-level element; and so on
+  (depth-agnostic, not one-level-hardcoded).
+- Flat `[]T` (depth 1) is **byte-identical** to before — the override is gated to genuinely
+  nested receivers, so the whole `[]T`-method-dispatch path that every slice method rides on
+  is unchanged for the common case.
+
+Before this fix the parser rejected the carrier form (`Vec[Vec[T]]` → "expected `]`") and
+collapsed the slice form (`[][]T` → `"[]T"`), while the monomorphizer bound `T` to the
+*immediate* element (`Vec[int]`), producing the wrong return type and a segfault. See
+[D263 AMEND](../spec/decisions/10-overloading.md#d263-vec-restructure-ops--оператор---plus--concat).

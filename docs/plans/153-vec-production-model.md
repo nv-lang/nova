@@ -501,18 +501,50 @@ str `@plus`; Q-vec-operator-plus), `[][]T.flatten()`, `@rotate_left(n)`/
 >    инстанцирования mono-тела → undefined symbol при линковке). `vec_method_call` регистрирует
 >    mono-инстанс первым.
 >
-> **Отклонение от плана (зафиксировано, честно).** `[][]T.flatten() -> []T` **ОТЛОЖЕН**
-> (`[M-153.5-flatten-nested-receiver]`): корректному `.flatten()`-методу нужен **вложенный
-> generic-ресивер** `Vec[Vec[T]] @flatten()`, чтобы тело назвало внутренний `T`. Обе принимаемые
-> компилятором формы ресивера это не выражают: (1) `Vec[Vec[T]]` — ПАРСЕР отвергает вложенный
-> тип в carrier-слоте (`parse_generic_decl_params` → `parse_ident` на слот → «expected `]`»);
-> (2) `[][]T` — ПАРСИТСЯ, но монорфизатор биндит `T` в *непосредственный* элемент (`Vec[int]`),
-> не в внутренний (`int`), и тело строит/возвращает неверный тип (verified probe RUN-FAIL,
-> mono'd `out` типизирован `Nova_Vec____Nova_Vec____nova_int_p`). Это глубокий cross-cutting фикс
-> структурной унификации typevar для вложенных ресиверов в ОБОИХ парсере и монорфизаторе (весь
-> `[]T`-method-dispatch stdlib идёт через этот путь) — вне scope restructure-surface. Обходной
-> путь — flatten один уровень явно: `for inner in nested { flat.append(inner) }` (тот же bulk-
-> путь, что делало бы тело). Документировано in-file + `[M-153.5-flatten-nested-receiver]`.
+> **flatten — ✅ РЕАЛИЗОВАН (followup 2026-06-14, commits `1c323d0e` + `16753d23`).**
+> `[][]T.flatten() -> []T` (production carrier-форма `Vec[Vec[T]] @flatten() -> Vec[T]`)
+> залендён в [restructure.nv](../../std/collections/vec/restructure.nv) вместе с фундаментом
+> **вложенных generic-ресиверов произвольной глубины** — `[M-153.5-flatten-nested-receiver]`
+> **ЗАКРЫТ**. flatten pre-size'ит `out = with_capacity(Σ inner.len())`, затем bulk-копирует
+> каждый ряд `out.append(inner)` (тот же `RawMem.copy` fast-path).
+>
+> **Root-cause фикса (обе половины — НЕ упрощение, глубокий compiler-fix).** Раньше обе формы
+> ресивера теряли вложенность: (1) ПАРСЕР отвергал carrier `Vec[Vec[T]]` («expected `]`») и
+> схлопывал `[][]T`→`"[]T"`; (2) МОНОРФИЗАТОР биндил receiver-typevar `T` в *непосредственный*
+> элемент (`Vec[int]`), не во *внутренний* (`int`) → неверный return-тип + segfault на
+> индексации (verified probe был RUN-FAIL, mono'd `out` = `Nova_Vec____Nova_Vec____nova_int_p`).
+> **Фикс (рекурсивный, depth-agnostic, без one-level-hardcoding):** AST-носитель
+> `Receiver.receiver_ty: Option<TypeRef>` (полный структурированный тип — `type_name`
+> flatten'ит и теряет глубину); парсер принимает вложенный `parse_type` в carrier-слоте +
+> рекурсивный сбор free-typevars (carrier) и считает глубину `[]` + спуск до внутреннего
+> `Named` (slice); монорфизатор переиспользует рекурсивный `infer_type_param_binding` (bind
+> `T` = innermost element на любой глубине) на ВСЕХ путях receiver-typevar-bind + depth-aware
+> sentinel-ключи `"[]"*N+"T"`. Flat `[]T` (depth 1) остался **byte-identical** (legacy
+> `NovaArray_`-путь); override гейтнут `receiver_ty_is_nested`. Checker collect'ит вложенные
+> typevar'ы для `E_UNUSED_PREFIX_TYPEVAR`, но НЕ сидит scope из `receiver_ty` (сохраняет
+> `E_UNDECLARED_TYPEVAR_IN_RECEIVER` — seed был бы регрессией, verified). Spec — D145 AMEND
+> (02-types) + D263 AMEND (10-overloading).
+>
+> **Compiler-bug по дороге (FIXED, не упрощение).** `@data + @len` внутри Vec-методов на
+> `Vec[Vec[T]]` (где `data` = `*mut Vec[T]`, лоуэрится в одиночный `Nova_Vec____*`) мис-
+> диспатчил `ptr + int` в pointee-`@plus`(=`@concat`) → segfault; emit_c.rs Add-арм (Vec-plus +
+> generic sum-plus) теперь требует ОБА операнда matching record/Vec value-типа, `ptr + int`
+> падает в типизированную pointer-арифметику (verified: scalar-операнд `@plus(int)` overload'ов
+> нигде нет).
+>
+> **Cross-cutting + честно про остаток.** Это путь, через который идут ВСЕ `[]T`-методы stdlib —
+> изменение специально гейтнуто на genuinely-nested ресиверы, flat-случай неизменен (0 регрессий
+> по slice/vec/generic-surface). **Ортогональный pre-existing остаток (вне scope):** slice-форма
+> `fn[T] [][]T -> []T`, чьё тело СТРОИТ свежий `Vec[T].new()`, упирается в pre-existing erased-
+> base-body лимит, который ЛОМАЕТ и flat `fn[T] []T` с `Vec[T].new()` на baseline. Production-
+> flatten — CARRIER-форма (как все stdlib), работает полностью; slice-form nested-receiver
+> binding доказан отдельно (`@count_all`/`@first_row`).
+>
+> **Тесты flatten/nested:** plan153_5_nested 4/4 (`flatten_depth2` Vec[Vec[T]]→Vec[T] int+str,
+> `flatten_depth3` depth≥3 + nested-typed return, `slice_nested` `@count_all`/`@first_row`,
+> `control_flat` flat unchanged) + plan153_5/`flatten` (positive `[[1,2],[3],[4,5]].flatten()==
+> [1,2,3,4,5]`, empty rows, empty outer, str-elements, double-flatten `Vec[Vec[Vec[int]]]`) +
+> `flatten_plus_guard` (operator-`+` регрессия-гард).
 >
 > **Критерии приёмки 153.5 (все ✅, проверены релизным `nova` C-codegen).**
 > 1. **`@concat` / `+` не мутируют операнды** — `c = a.concat(b)` и `d = a + b` дают
@@ -539,12 +571,15 @@ str `@plus`; Q-vec-operator-plus), `[][]T.flatten()`, `@rotate_left(n)`/
 > **Бинарь актуален.** Релизный `nova` новее всех `.rs`-исходников; `std/collections/vec/
 > restructure.nv` грузится с диска при компиляции (не `include_str!`), совпадает с HEAD.
 >
-> **Spec / Q.** D263 (restructure-ops + оператор `+`) записан в [10-overloading.md](../../spec/decisions/10-overloading.md);
-> Q-vec-operator-plus → ✅ ЗАКРЫТО в [open-questions.md](../../spec/open-questions.md). Гайд —
-> `docs/strings.md`-аналог: раздел concat/+/restructure в [vec-internals.md](../vec-internals.md).
+> **Spec / Q.** D263 (restructure-ops + оператор `+`) записан в [10-overloading.md](../../spec/decisions/10-overloading.md)
+> + **D263 AMEND** (flatten реализован) + **D145 AMEND** (02-types: вложенные generic-ресиверы
+> произвольной глубины, фундамент flatten); Q-vec-operator-plus → ✅ ЗАКРЫТО в
+> [open-questions.md](../../spec/open-questions.md). Гайд — `docs/strings.md`-аналог: раздел
+> concat/+/restructure/flatten + заметка о вложенных ресиверах в [vec-internals.md](../vec-internals.md).
 >
-> **Открытые маркеры:** `[M-153.5-flatten-nested-receiver]` (P2, parser+mono nested-receiver).
-> Полная история — `simplifications.md`.
+> **Открытые маркеры:** нет (все 153.5-маркеры закрыты;
+> `[M-153.5-flatten-nested-receiver]` ✅ РАЗРЕШЁН followup'ом 2026-06-14 — вложенные
+> generic-ресиверы + flatten). Полная история — `simplifications.md`.
 
 ### 153.6 — Протоколы (Equal/Compare/Clone/**Hash**/Display/Debug/FromIterator) `[D264, A]`
 Добавить `Vec[T: Hash] @hash()` (для `HashSet[Vec]`/ключа); закрепить `FromIterator`/
