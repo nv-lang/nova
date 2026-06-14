@@ -36456,3 +36456,52 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   бинарём на родительском коммите `c0f269dd` в temp-worktree — ИДЕНТИЧНЫЕ 29/7, те же имена/категории
   (temp-worktree удалён+pruned). std `vec/*.nv` грузится с диска → правки без ребилда компилятора (но
   emit_c.rs трогали → бинарь пересобран, новее всех .rs).
+
+- **РЕЗОЛВ `[M-153.5-flatten-nested-receiver]` — вложенные generic-ресиверы произвольной глубины + flatten
+  (2026-06-14, ветка `plan-153.5-restructure`, commits `1c323d0e` parser+mono + `16753d23` flatten)**:
+  flatten **больше НЕ deferred/упрощение** — реализован. Запись 153.5 выше фиксировала `[][]T.flatten()`
+  как САНКЦИОНИРОВАННОЕ ОТКЛОНЕНИЕ (отсутствующая фича за двумя compiler-лимитами); followup закрыл оба
+  лимита и саму фичу. `Vec[Vec[T]] @flatten() -> Vec[T]` (production carrier-форма ≡ `[][]T @flatten() ->
+  []T` под D239) в `std/collections/vec/restructure.nv`: pre-size `out = with_capacity(Σ inner.len())` +
+  bulk `out.append(inner)` на ряд (copy-fast-path `RawMem.copy`, операнды нетронуты; пустые ряды/внешний —
+  корректно). **Root-cause (обе половины, глубокий cross-cutting fix — НЕ хак-обход):** (1) ПАРСЕР отвергал
+  carrier `Vec[Vec[T]]` («expected `]`, got identifier») и схлопывал `[][]T`→`"[]T"`; (2) МОНОРФИЗАТОР
+  биндил receiver-typevar `T` в *непосредственный* элемент (`Vec[int]`), не во *внутренний* (`int`) →
+  неверный return-тип `Vec[Vec[int]]` + segfault на индексации (verified probe RUN-FAIL, mono'd `out` =
+  `Nova_Vec____Nova_Vec____nova_int_p`). **Фикс (рекурсивный, depth-agnostic, без one-level-hardcoding):**
+  AST-носитель `Receiver.receiver_ty: Option<TypeRef>` (полный структурированный тип — единственное место,
+  где глубина переживает; `type_name` flatten'ит в `"[][]T"`); ПАРСЕР: slice `[][]T` — счёт глубины
+  `Array` + спуск до внутреннего `Named` (`slice_receiver_depth_and_inner`), carrier `Vec[Vec[T]]` — новый
+  `parse_generic_decl_params_inner` принимает вложенный `parse_type` в слоте (детект `Ident[`) +
+  рекурсивный сбор free-typevars (`collect_free_typevars`/`ident_is_typevar`), структурные слоты в
+  `receiver_ty` (free-fn `[T Bound=D]`-разбор не тронут); МОНО: переиспользован рекурсивный
+  `infer_type_param_binding` (Array-арм также снимает mono-форму `Vec____` через
+  `generic_type_instance_info`), override на ВСЕХ путях receiver-typevar-bind (emit-dispatch carrier +
+  `[]T`-sentinel slice + call-site return-inference) + depth-aware sentinel-ключи `"[]"*N+"T"`
+  (`vec_nesting_depth`/`slice_sentinel_key_for_rt`) вместо hardcoded `"[]T"`; `receiver_c_type`/
+  `receiver_type_c_ident` сделаны multi-`[]`-tolerant, **flat `[]T` (depth 1) остался byte-identical**
+  (legacy `NovaArray_`-путь), override гейтнут `receiver_ty_is_nested`/`collect_receiver_typevars`; CHECKER:
+  collect вложенных typevar'ов из `receiver_ty` в `referenced`-set для `E_UNUSED_PREFIX_TYPEVAR`, но scope
+  `gs` НЕ сидится из `receiver_ty` (сохраняет `E_UNDECLARED_TYPEVAR_IN_RECEIVER` для `fn []T @m` без
+  префикса — verified, что seed был бы регрессией, откатил). **Compiler-bug по дороге (FIXED, не
+  упрощение):** для `Vec[Vec[T]]` поле `data` = `*mut Vec[T]` лоуэрится в одиночный `Nova_Vec____*`;
+  `@data + @len` мис-диспатчил `ptr + int` в pointee-`@plus`(=`@concat`) → segfault; emit_c.rs ~18450/18612
+  Add-арм (Vec-plus + generic sum-plus) теперь требует ОБА операнда matching record/Vec value-типа, `ptr +
+  int` падает в типизированную pointer-арифметику (verified: scalar-операнд `@plus(int)` overload'ов нигде
+  нет). **САНКЦИОНИРОВАННЫЙ остаток (честно, ортогональный pre-existing, вне scope):** slice-форма `fn[T]
+  [][]T -> []T`, чьё тело СТРОИТ свежий `Vec[T].new()`, упирается в pre-existing erased-base-body лимит,
+  который ЛОМАЕТ и flat `fn[T] []T` с `Vec[T].new()` на baseline (`expected struct 'Vec____Nova_T_p'`).
+  Production-flatten — CARRIER-форма (как все stdlib), работает полностью; slice-form nested-receiver
+  binding доказан отдельно (`@count_all`/`@first_row`). **Тесты:** plan153_5_nested 4/4 (`flatten_depth2`
+  Vec[Vec[T]]→Vec[T] int+str, `flatten_depth3` depth≥3 + nested-typed return, `slice_nested`
+  `@count_all`/`@first_row`, `control_flat` flat unchanged) + plan153_5/`flatten` (`[[1,2],[3],[4,5]]`→
+  `[1,2,3,4,5]`, empty rows/outer, str, double-flatten `Vec[Vec[Vec[int]]]`) + `flatten_plus_guard`
+  (operator-`+` гард), релизный nova C-codegen. **0 НОВЫХ регрессий** (broad slice/vec/generic-dispatch
+  watch: plan153_5/_nested, plan90/90_1, plan96, plan138/_2, plan147, plan153_0/1/3, basics, generics —
+  всё зелёное; plan62/syntax FAIL-сеты byte-for-byte идентичны baseline на родителе `c5865ba0` в temp-
+  worktree, ВКЛЮЧАЯ высокорисковые iterator/method-dispatch тесты). Spec — D145 AMEND (02-types) + D263
+  AMEND (10-overloading); backlog-маркер → ✅ done; vec-internals.md flatten-секция + nested-receiver
+  заметка. **Урок:** «отложенная фича за compiler-лимитом» ≠ «упрощение реализованного» — её резолв = новая
+  запись-резолв (append-only), не правка старой; carrier-slot нужен отдельный структурный AST-носитель
+  (`receiver_ty`), т.к. `type_name` теряет глубину; структурный typevar-бинд обязан быть рекурсивным
+  (innermost element), depth-agnostic, гейтнутым на nested — иначе ломает весь flat `[]T`-dispatch.
