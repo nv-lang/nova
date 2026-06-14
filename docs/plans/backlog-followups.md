@@ -280,6 +280,10 @@
   `.min(b)` метод-форма падает на коллизии с системным C-макросом `max`/`min` (нет в
   1-арговых `int_method_to_c`/`f64_method_to_c`). Нужен рантайм-хелпер `nova_int_max` /
   `fmax`-роутинг. НЕ гейтит Vec-ядро (cap-shrink-to-fit = `cap_to(len())`). Отложен из 153.1 Ф.0.
+- **`[M-153.1-of-vs-from-sweep]`** (planned, P3, churn): конструктор-конвенция формализована
+  (план 153.1 / D259 + док `from` в core.nv направляет на `of`): литералы → `Vec[T].of(a,b,c)`,
+  конверсия коллекции → `from(coll)`. Опциональный sweep существующих `from([литерал])` → `of(...)`
+  в тестах/stdlib — низкий приоритет (оба корректны; чистый churn в большом diff'е).
 
 ## Follow-up: Plan 153.6 (Vec-протоколы Hash + FromIterator)
 - **`[M-153.6-vec-hashmap-key-eq]`** (planned, P2, home **Plan 153.6 / HashMap**): `Vec[T]`
@@ -306,17 +310,17 @@
   как **introselect** — median-of-three quickselect (O(n) средн.) + depth-guard fallback на
   heapsort (O(n log n) worst, без O(n²)), контракт `k ∈ [0,len)`. Тест `plan153_3/select_nth` 4/4
   + OOB-panic neg.
-- **`[M-153-result-eq-literal-expected-type]`** (planned, P2, home **codegen / type-inference**):
-  `result == Ok(x)` где Result имеет **non-default E** (≠`str`; напр. `binary_search`→`Result[int,
-  int]`) — литерал `Ok(x)` инферит `E=str` (**codegen-дефолт** `emit_c.rs:5172`
-  `NovaRes_nova_int_nova_str`, потому что **чекер оставляет variant-ctor без типа by design** —
-  тест `infer_call_sum_variant_stays_unknown`), не унифицируется с типом LHS → два разных
-  `NovaRes_<…>` → структурный eq сравнивает несовпадающие payload → **CC-FAIL**. Фикс —
-  expected-type propagation для Ok/Err-литерала в `==` (codegen: протянуть concrete Result-тип
-  одного операнда в эмиссию литерала другого). **Pre-existing project-level gap** (класс
-  Q-overload-result-type, отложен с мая) — НЕ упрощение, внесённое 153.3: `Result[_, str]` уже
-  работает, `binary_search` использует `match`. Same-type guard НЕ добавляли (CC-FAIL громче
-  silent-wrong).
+- **`[M-153-result-eq-literal-expected-type]`** ✅ **RESOLVED** (codegen re-emit): `result == Ok(x)`
+  / `== Err(x)` для Result с **non-default E** (≠`str`; напр. `binary_search`→`Result[int,int]`)
+  теперь работает. Был баг: голый литерал `Ok(x)` инферил `E=str` (codegen-дефолт `emit_c.rs:5172`,
+  т.к. чекер оставляет variant-ctor без типа by design — тест `infer_call_sum_variant_stays_unknown`)
+  → `binary_search() == Ok(2)` сравнивал два разных `NovaRes_<…>` → CC-FAIL. **Фикс** (codegen-local,
+  `==`-NovaRes_-бранч): если типы операндов `Eq/Neq` расходятся и одна сторона — голый `Ok/Err`-
+  литерал, переэмитить её под concrete `NovaRes_<n>` другой стороны (`reemit_result_variant_as` +
+  `expr_is_result_ctor`, payload-cast). Тест `plan153_3/result_eq_literal` (binary_search ==Ok/Err
+  non-default-E + explicit Result[int,int] + default-E Result[int,str] не сломан). Частный случай
+  отложенного-с-мая `Q-overload-result-type` (general expected-type propagation для overload-резолва
+  `@into` остаётся открытым — см. Q).
 
 ## Follow-up: Plan 153.4 (slices — value-record element typedef)
 - **`[M-153.4-vec-value-record-field-access]`** (planned, P2, home **Plan 153.4 / Plan 96 H3**):

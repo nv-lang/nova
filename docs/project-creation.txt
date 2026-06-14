@@ -37797,3 +37797,20 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   `result == Ok(x)` для non-default-E — pre-existing project-level inference gap (чекер оставляет
   variant-ctor без типа by design → codegen дефолтит E=str, emit_c.rs:5172), класс
   Q-overload-result-type (отложен с мая), не внесён 153.3 (`match` работает).
+
+[2026-06-14] Plan 153.3 — #3 `result == Ok(x)` non-default-E ПОЧИНЕН (автор: «без упрощений —
+  обязательный критерий»). Изначально классифицировал #3 как pre-existing project-gap (отложен с
+  мая, не моё упрощение) — верно по происхождению, но автор хотел полноценную эргономику
+  `binary_search() == Ok(2)`. Докопал: чекер намеренно оставляет variant-ctor `Ok(x)` без типа
+  (тест `infer_call_sum_variant_stays_unknown`) → codegen дефолтит голый `Ok(x)` в E=str
+  (`type_ref_to_c` fallback на `NovaRes_nova_int_nova_str`). Полный bidirectional inference в
+  чекере (18k строк) — большой риск; **выбрал codegen-точечный фикс**: в `==`-NovaRes_-ветке
+  (emit_c.rs), если типы операндов `Eq/Neq` расходятся и одна сторона — голый `Ok/Err`-литерал
+  (`expr_is_result_ctor`), переэмитить её под concrete `NovaRes_<n>` другой стороны
+  (`reemit_result_variant_as`: novares_ok_err → (ok,err), emit payload, result_ctor_name +
+  payload-cast). Локально (фейрит только при mismatch + голый ctor) → минимальный blast-radius.
+  Тест `plan153_3/result_eq_literal` 3/3: binary_search==Ok/Err (non-default E=int), explicit
+  Result[int,int]==Ok/Err, default-E Result[int,str] не сломан. Ребилд + broad-регрессия (workflow,
+  8 батчей). Это **частное** решение для binop-`==`; общий expected-type проход (overload `@into`,
+  return-position) остаётся в Q-overload-result-type. Итог: 153.3 без упрощений — sort_unstable
+  (heapsort), select_nth (introselect), result==literal — все три закрыты по-настоящему.
