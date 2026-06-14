@@ -374,4 +374,203 @@ static inline nova_char_decode_result nova_int_to_char(nova_int n) {
     return r;
 }
 
+/* ============================================================================
+ * Plan 152.7-B (D258) — format-spec mini-language runtime helpers.
+ *
+ * Rust-style `${expr:[[fill]align][sign][#][0][width][.precision][type]]}`.
+ * All formatting is locale-INDEPENDENT (no setlocale; fixed ASCII digit/letter
+ * tables, '.' decimal point regardless of host locale). Codegen parses the
+ * spec at compile time (ast/format_spec.rs) and emits calls into these helpers.
+ *
+ * The split between "prefix" (sign + alt radix marker) and "body" (the
+ * magnitude digits) lets `0`-padding insert zeros BETWEEN the sign/prefix and
+ * the digits (e.g. `-007`, `0x00ff`) — matching Rust/printf semantics.
+ * ============================================================================ */
+
+/* Encode one Unicode scalar (the fill char) into UTF-8 at `dst`, returning the
+ * number of bytes written (1..4). Invalid scalars are coerced to U+FFFD. */
+static inline size_t nova_fmt_encode_fill(int32_t cp, char* dst) {
+    if (cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
+    if (cp < 0x80)        { dst[0] = (char)cp; return 1; }
+    if (cp < 0x800)       { dst[0]=(char)(0xC0|(cp>>6)); dst[1]=(char)(0x80|(cp&0x3F)); return 2; }
+    if (cp < 0x10000)     { dst[0]=(char)(0xE0|(cp>>12)); dst[1]=(char)(0x80|((cp>>6)&0x3F)); dst[2]=(char)(0x80|(cp&0x3F)); return 3; }
+    dst[0]=(char)(0xF0|(cp>>18)); dst[1]=(char)(0x80|((cp>>12)&0x3F)); dst[2]=(char)(0x80|((cp>>6)&0x3F)); dst[3]=(char)(0x80|(cp&0x3F));
+    return 4;
+}
+
+/* Count Unicode scalar values (codepoints) in a UTF-8 byte run — used as the
+ * "display width" of the content (Rust counts chars for width/precision). */
+static inline size_t nova_fmt_char_count(const char* p, size_t len) {
+    size_t n = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (((unsigned char)p[i] & 0xC0) != 0x80) n++;
+    }
+    return n;
+}
+
+/* Byte length of the first `nchars` codepoints of a UTF-8 run (for truncation
+ * to a precision in codepoints without splitting a multibyte char). */
+static inline size_t nova_fmt_bytes_for_chars(const char* p, size_t len, size_t nchars) {
+    size_t i = 0, seen = 0;
+    while (i < len && seen < nchars) {
+        size_t step = 1;
+        unsigned char b = (unsigned char)p[i];
+        if      (b >= 0xF0) step = 4;
+        else if (b >= 0xE0) step = 3;
+        else if (b >= 0xC0) step = 2;
+        if (i + step > len) step = len - i;
+        i += step;
+        seen++;
+    }
+    return i;
+}
+
+/* align: 0 = left (pad right), 1 = right (pad left), 2 = center.
+ * width is in CODEPOINTS. `prefix` (sign / `0x` etc.) is always emitted first,
+ * unpadded by alignment-fill but counted toward width; `zero_pad` (when align
+ * is the implied numeric right-align) inserts `'0'` between prefix and body.
+ *
+ * Returns a freshly GC-allocated nova_str. */
+static inline nova_str nova_fmt_pad(
+    nova_str prefix, nova_str body,
+    int32_t fill_cp, int align, int64_t width, int zero_pad)
+{
+    size_t content_chars = nova_fmt_char_count(prefix.ptr, prefix.len)
+                         + nova_fmt_char_count(body.ptr, body.len);
+    int64_t pad_total = (width > (int64_t)content_chars)
+                      ? (width - (int64_t)content_chars) : 0;
+
+    /* Zero-padding: fill is '0', placed between prefix and body, never split. */
+    if (zero_pad && pad_total > 0) {
+        size_t need = prefix.len + (size_t)pad_total + body.len;
+        char* buf = (char*)nova_alloc(need + 1);
+        size_t j = 0;
+        memcpy(buf + j, prefix.ptr, prefix.len); j += prefix.len;
+        for (int64_t k = 0; k < pad_total; k++) buf[j++] = '0';
+        memcpy(buf + j, body.ptr, body.len); j += body.len;
+        buf[j] = '\0';
+        return (nova_str){ buf, j };
+    }
+
+    int64_t left_pad = 0, right_pad = 0;
+    switch (align) {
+        case 0: right_pad = pad_total; break;             /* left-justify */
+        case 2: left_pad = pad_total / 2;                 /* center */
+                right_pad = pad_total - left_pad; break;
+        default: left_pad = pad_total; break;             /* right-justify */
+    }
+
+    char fbuf[4];
+    size_t fbytes = nova_fmt_encode_fill(fill_cp, fbuf);
+    size_t need = prefix.len + body.len
+                + (size_t)(left_pad + right_pad) * fbytes;
+    char* buf = (char*)nova_alloc(need + 1);
+    size_t j = 0;
+    for (int64_t k = 0; k < left_pad; k++) { memcpy(buf + j, fbuf, fbytes); j += fbytes; }
+    memcpy(buf + j, prefix.ptr, prefix.len); j += prefix.len;
+    memcpy(buf + j, body.ptr, body.len); j += body.len;
+    for (int64_t k = 0; k < right_pad; k++) { memcpy(buf + j, fbuf, fbytes); j += fbytes; }
+    buf[j] = '\0';
+    return (nova_str){ buf, j };
+}
+
+/* int → decimal magnitude digit string. Produces UNSIGNED magnitude only;
+ * sign/prefix handled by the caller via nova_fmt_int_prefix + nova_fmt_pad.
+ * Handles INT64_MIN correctly via the unsigned domain. */
+static inline nova_str nova_fmt_int_body(nova_int v, int base, int upper) {
+    uint64_t mag = (v < 0) ? (uint64_t)(-(v + 1)) + 1u : (uint64_t)v;
+    const char* digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    char tmp[66];
+    size_t n = 0;
+    if (mag == 0) { tmp[n++] = '0'; }
+    while (mag > 0) { tmp[n++] = digits[mag % (uint64_t)base]; mag /= (uint64_t)base; }
+    char* buf = (char*)nova_alloc(n + 1);
+    for (size_t k = 0; k < n; k++) buf[k] = tmp[n - 1 - k];
+    buf[n] = '\0';
+    return (nova_str){ buf, n };
+}
+
+/* Radix body (`x`/`X`/`b`/`o`): reinterpret the value as an UNSIGNED two's-
+ * complement bit pattern (Rust semantics — `{:x}` of -1i64 == "ff..ff").
+ * No sign char; the `#` prefix is added separately. */
+static inline nova_str nova_fmt_int_radix_body(nova_int v, int base, int upper) {
+    uint64_t bits = (uint64_t)v;
+    const char* digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    char tmp[66];
+    size_t n = 0;
+    if (bits == 0) { tmp[n++] = '0'; }
+    while (bits > 0) { tmp[n++] = digits[bits % (uint64_t)base]; bits /= (uint64_t)base; }
+    char* buf = (char*)nova_alloc(n + 1);
+    for (size_t k = 0; k < n; k++) buf[k] = tmp[n - 1 - k];
+    buf[n] = '\0';
+    return (nova_str){ buf, n };
+}
+
+/* Build the sign + alt-radix prefix string for a DECIMAL integer.
+ *   sign_plus : force a leading '+' for non-negatives. */
+static inline nova_str nova_fmt_int_prefix(nova_int v, int sign_plus) {
+    char buf[2];
+    size_t n = 0;
+    if (v < 0) buf[n++] = '-';
+    else if (sign_plus) buf[n++] = '+';
+    if (n == 0) return (nova_str){ "", 0 };
+    char* out = (char*)nova_alloc(n + 1);
+    memcpy(out, buf, n);
+    out[n] = '\0';
+    return (nova_str){ out, n };
+}
+
+/* Build the alt-radix prefix (`0x`/`0X`/`0o`/`0b`) for a radix integer.
+ * Radix formatting is unsigned (two's complement), so there is never a sign. */
+static inline nova_str nova_fmt_radix_prefix(int alt, int base, int upper) {
+    if (!alt) return (nova_str){ "", 0 };
+    char buf[2];
+    size_t n = 0;
+    if (base == 16)      { buf[n++] = '0'; buf[n++] = upper ? 'X' : 'x'; }
+    else if (base == 8)  { buf[n++] = '0'; buf[n++] = 'o'; }
+    else if (base == 2)  { buf[n++] = '0'; buf[n++] = 'b'; }
+    if (n == 0) return (nova_str){ "", 0 };
+    char* out = (char*)nova_alloc(n + 1);
+    memcpy(out, buf, n);
+    out[n] = '\0';
+    return (nova_str){ out, n };
+}
+
+/* f64 → fixed-precision magnitude string (no sign), `prec` decimal places. */
+static inline nova_str nova_fmt_f64_body(double v, int prec) {
+    double mag = (v < 0.0) ? -v : v;
+    /* worst case: 309 integer digits + '.' + prec + NUL. Cap precision. */
+    if (prec < 0) prec = 0;
+    if (prec > 64) prec = 64;
+    int cap = 340 + prec + 2;
+    char* buf = (char*)nova_alloc((size_t)cap);
+    int n = snprintf(buf, (size_t)cap, "%.*f", prec, mag);
+    if (n < 0) n = 0;
+    return (nova_str){ buf, (size_t)n };
+}
+
+/* Sign prefix for a float value (NaN/Inf carry their own sign from snprintf for
+ * the body path, but the fixed-precision body above takes magnitude, so the
+ * sign is computed here from the raw value). */
+static inline nova_str nova_fmt_f64_prefix(double v, int sign_plus) {
+    /* signbit handles -0.0 too (Rust prints "-0.00" for f64 -0.0). */
+    int neg = (v < 0.0) || (v == 0.0 && (1.0 / v) < 0.0);
+    char buf[2]; size_t n = 0;
+    if (neg) buf[n++] = '-';
+    else if (sign_plus) buf[n++] = '+';
+    if (n == 0) return (nova_str){ "", 0 };
+    char* out = (char*)nova_alloc(n + 1);
+    memcpy(out, buf, n); out[n] = '\0';
+    return (nova_str){ out, n };
+}
+
+/* Truncate a string to `prec` codepoints (string precision). Returns a view
+ * into the same backing bytes (zero-copy) — safe because nova_str is immutable
+ * and the source outlives the interpolation expression. */
+static inline nova_str nova_fmt_str_precision(nova_str s, int64_t prec) {
+    if (prec < 0) return s;
+    size_t nbytes = nova_fmt_bytes_for_chars(s.ptr, s.len, (size_t)prec);
+    return (nova_str){ s.ptr, nbytes };
+}
+
 #endif /* NOVA_CONV_H */
