@@ -90,6 +90,9 @@ enum Cmd {
         /// Part 0 целиком + stride-выборка Parts 1-5 (чанки по 500 на test).
         #[arg(long = "conformance-limit", default_value_t = 1500)]
         conformance_limit: usize,
+        /// Plan 156: ALSO emit full (uncapped) *_conformance_slow.nv slow-lane files.
+        #[arg(long = "conformance-full")]
+        conformance_full: bool,
         /// Не записывать; сравнить с существующим и упасть при несовпадении.
         #[arg(long = "check")]
         check: bool,
@@ -262,8 +265,8 @@ fn run() -> ExitCode {
         Cmd::EmitRuntimeStubs { root, check } =>
             cmd_emit_runtime_stubs(&root, check),
         Cmd::DumpRuntime => cmd_dump_runtime(),
-        Cmd::Unicode { ucd_dir, root, unicode_version, emit_conformance, conformance_limit, check } =>
-            cmd_unicode(&ucd_dir, &root, &unicode_version, emit_conformance, conformance_limit, check),
+        Cmd::Unicode { ucd_dir, root, unicode_version, emit_conformance, conformance_limit, conformance_full, check } =>
+            cmd_unicode(&ucd_dir, &root, &unicode_version, emit_conformance, conformance_limit, conformance_full, check),
         Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts, timeout, gc, contracts } =>
             cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts, timeout, &gc, &contracts),
         Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, include_slow, slow_only, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed, retries, gc, contracts } =>
@@ -569,15 +572,35 @@ fn cmd_emit_runtime_stubs(root: &PathBuf, check: bool) -> Result<()> {
     Ok(())
 }
 
+/// Plan 156: derive the slow-lane sibling path for a conformance fixture, i.e.
+/// `<dir>/<kind>_conformance.nv` -> `<dir>/<kind>_conformance_slow.nv`.
+fn slow_conformance_path(fast: &Path) -> PathBuf {
+    let stem = fast
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = fast
+        .extension()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "nv".to_string());
+    let slow_name = format!("{}_slow.{}", stem, ext);
+    match fast.parent() {
+        Some(dir) => dir.join(slow_name),
+        None => PathBuf::from(slow_name),
+    }
+}
+
 /// Plan 152.4.1 (Q-unicode-data): generate `std/unicode/norm_data.nv` from the
 /// UCD. `--check` compares against the existing file and fails on diff (CI
 /// guard), mirroring `cmd_emit_runtime_stubs`.
+#[allow(clippy::too_many_arguments)]
 fn cmd_unicode(
     ucd_dir: &Path,
     root: &Path,
     version: &str,
     emit_conformance: bool,
     conformance_limit: usize,
+    conformance_full: bool,
     check: bool,
 ) -> Result<()> {
     use nova_codegen::codegen::unicode_data;
@@ -680,6 +703,50 @@ fn cmd_unicode(
     if emit_conformance && coll_data.is_some() {
         if let Ok(c) = unicode_data::render_collation_conformance_nv(ucd_dir, conformance_limit) {
             confs.push((c, root.join("nova_tests/plan152_5/collation_conformance.nv")));
+        }
+    }
+    // Plan 156: ALSO emit the FULL (uncapped) corpus as `<kind>_conformance_slow.nv`
+    // slow-lane files. Re-render each conformance kind with limit = usize::MAX, then
+    // rewrite the module declaration line (`...conformance` -> `...conformance_slow`)
+    // and the destination path (`_conformance.nv` -> `_conformance_slow.nv`). This
+    // reuses the exact same renderers (no renderer surgery / duplication).
+    if emit_conformance && conformance_full {
+        // (rendered-full-string, fast-path) for each kind being emitted.
+        let mut full: Vec<(String, std::path::PathBuf)> = vec![
+            (
+                unicode_data::render_conformance_nv(ucd_dir, usize::MAX)?,
+                root.join("nova_tests/plan152_4/normalization_conformance.nv"),
+            ),
+            (
+                unicode_data::render_grapheme_conformance_nv(ucd_dir, usize::MAX)?,
+                root.join("nova_tests/plan152_4/grapheme_conformance.nv"),
+            ),
+            (
+                unicode_data::render_case_conformance_nv(ucd_dir, usize::MAX)?,
+                root.join("nova_tests/plan152_4/case_conformance.nv"),
+            ),
+            (
+                unicode_data::render_word_conformance_nv(ucd_dir, usize::MAX)?,
+                root.join("nova_tests/plan152_4/word_conformance.nv"),
+            ),
+            (
+                unicode_data::render_sentence_conformance_nv(ucd_dir, usize::MAX)?,
+                root.join("nova_tests/plan152_4/sentence_conformance.nv"),
+            ),
+        ];
+        if coll_data.is_some() {
+            if let Ok(c) = unicode_data::render_collation_conformance_nv(ucd_dir, usize::MAX) {
+                full.push((c, root.join("nova_tests/plan152_5/collation_conformance.nv")));
+            }
+        }
+        for (content_full, fast_path) in full {
+            // Rewrite the single `module ...conformance` declaration line to append
+            // `_slow`. The substring `_conformance\n` appears exactly once in the
+            // generated output (the module line), so a 1-shot replacen is precise.
+            let slow_content = content_full.replacen("_conformance\n", "_conformance_slow\n", 1);
+            // Derive the sibling `_conformance_slow.nv` path from the fast path.
+            let slow_path = slow_conformance_path(&fast_path);
+            confs.push((slow_content, slow_path));
         }
     }
     if check {

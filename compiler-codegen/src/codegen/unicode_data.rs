@@ -527,7 +527,9 @@ pub fn render_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::Result<Str
     // Part 0 in full, then uniform stride-sample of the rest to fill the budget.
     let budget = limit.saturating_sub(part0.len()).max(1);
     let stride = (rest.len() / budget).max(1);
-    let mut cases: Vec<[String; 5]> = Vec::with_capacity(limit);
+    // Capacity is only a hint; the final size is bounded by the available data,
+    // so clamp it (limit may be usize::MAX for the Plan 156 uncapped slow corpus).
+    let mut cases: Vec<[String; 5]> = Vec::with_capacity(limit.min(part0.len() + rest.len()));
     cases.extend(part0.iter().cloned());
     let mut i = 0usize;
     while i < rest.len() && cases.len() < limit {
