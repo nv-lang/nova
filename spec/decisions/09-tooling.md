@@ -19,6 +19,7 @@
 | [D256](#d256-field--method-self-access-в-контрактах) | `@field` / `@method()` self-access в контрактах (SMT-encoder) |
 | [D257](#d257-vec-index-bounds-как-элидируемый-контракт) | Vec `@index` bounds как элидируемый контракт |
 | [D277](#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv) | Test-discovery skip/route-конвенции — `fixtures/`, OS-суффикс, `_slow.nv` |
+| [D278](#d278-editor-syntax-highlighting-keyword-set-must-track-the-lexer) | Editor syntax-highlighting keyword set MUST track the lexer (conformance-тест) |
 
 ---
 
@@ -2872,3 +2873,58 @@ slow-gate-прогоном (CI merge/nightly), а не наличием файл
   `is_slow_file_stem`, `walk_nv_filtered`, `SlowLane`).
 - `[M-test-runner-large-test-lane]` — маркер slow-lane; `[M-156-slow-subtree-dir]`
   — отложенный folder-module-вариант.
+
+---
+
+## D278. Editor syntax-highlighting keyword set MUST track the lexer
+
+**Plan 104.9 (2026-06-14).**
+
+### Контекст
+
+Подсветка `.nv` живёт в нескольких независимых артефактах (VSCode TextMate-grammar,
+vim syntax, Zed/Helix/Neovim tree-sitter queries, кастомный хайлайтер сайта). Каждый
+держит собственную копию списка ключевых слов. Без принудительной связи они дрейфуют:
+к Plan 104.9 хайлайтеры подсвечивали изъятые `let`/`readonly`/`safe`/`handler`,
+несуществующие `race`/`with_timeout`/`cancel_scope`/`region`, логические `and`/`or`/`not`
+(которых в Nova нет — есть `&&`/`||`/`!`), и НЕ подсвечивали актуальные
+`unsafe`/`priv`/`pub`/`blocking`/`errdefer`/`okdefer`/`lemma`.
+
+### Решение
+
+1. **Единственный источник истины** для множества ключевых слов Nova —
+   `compiler-codegen/src/lexer/mod.rs`, функция `lex_ident_or_keyword`. Лексема →
+   `Kw*`-токен ⇔ это ключевое слово. Никакой другой документ/файл не является
+   авторитетным; все хайлайтеры — производные.
+
+2. **Три класса лексем** (хайлайтеры обязаны различать):
+   - **ACTIVE** — лексер даёт `Kw*`-токен и слово валидно → подсвечивать как keyword.
+   - **RETIRED** — лексер даёт `Kw*`-токен ТОЛЬКО для точной диагностики удаления
+     (`let`→E_KW_REMOVED_LET, `readonly`→E_KW_REMOVED_READONLY, `safe`→E_SAFE_RETIRED);
+     слово невалидно → НЕ подсвечивать как keyword.
+   - **НЕ keyword** — лексер даёт `Ident` (`handler` после D142; `and`/`or`/`not`;
+     `race`/`with_timeout`/`cancel_scope`/`region`) → НЕ подсвечивать как keyword.
+
+3. **Контекстные не-лексер keyword'ы** (`requires`/`ensures`/`invariant`/`old` —
+   contract-clauses; распознаются парсером позиционно) допускается подсвечивать для
+   читаемости. `apply`/`bench`/`measure`/`null` намеренно НЕ подсвечиваются: лексер
+   держит их идентификаторами во избежание поломки пользовательских имён.
+
+4. **Conformance-тест обязателен** (`compiler-codegen/tests/syntax_highlight_conformance.rs`):
+   лексит каждое слово через живой `lex()` (anchor к компилятору) и проверяет каждый
+   in-repo хайлайтер на отсутствие фантомов + полноту (для regex-хайлайтеров). Артефакт
+   из отдельного репо (сайт) имеет собственный guard
+   (`www/site/scripts/check-highlight-keywords.mjs`).
+
+5. **tree-sitter-хайлайтеры** (Zed/Helix/Neovim) ограничены токенами внешней грамматики
+   `github.com/nv-lang/tree-sitter-nova`. Когда грамматика отстаёт — недостающие
+   keyword'ы документируются inline + в backlog (`[M-treesitter-grammar-keyword-bump]`),
+   НЕ замалчиваются.
+
+### Связь
+
+- [editors/README.md](../../editors/README.md) — раздел «Source-of-truth для keyword'ов»
+  + чеклист «обновить при добавлении keyword'а».
+- [Q38](../open-questions.md#q38) — открытый вопрос: генерировать keyword-списки ИЗ
+  лексера (единый источник, без дублирования) vs ручная поддержка + conformance-тест.
+- [docs/plans/104.9-syntax-highlight-keyword-sync.md](../../docs/plans/104.9-syntax-highlight-keyword-sync.md).

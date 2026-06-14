@@ -7931,3 +7931,38 @@ Part A+B `[M-opt-preempt-strided-loop]` (D270, merge `7c047a1b`) и `[M-opt-leaf
 
 Связь: [D274](decisions/08-runtime.md), [Plan 157](../docs/plans/157-interpreter-unsupported.md),
 `[M-interp-unsupported]`.
+
+## Q38. Генерация keyword-списков хайлайтеров из лексера vs ручная поддержка — 🟡 OPEN (2026-06-14, Plan 104.9 / D278)
+
+### Контекст
+
+[D278](decisions/09-tooling.md#d278) зафиксировал: лексер
+(`compiler-codegen/src/lexer/mod.rs`) — единственный источник истины для множества
+keyword'ов, а хайлайтеры (VSCode/vim/Zed/Helix/Neovim/сайт) — производные. Сейчас
+каждый хайлайтер держит **ручную копию** списка, а от дрейфа защищает
+conformance-тест (`syntax_highlight_conformance.rs` дёргает живой `lex()`) + node-guard
+сайта. Это ловит рассинхрон, но:
+
+- дублирует «правду» в N артефактах (+ авторитетный список в самом тесте);
+- при добавлении нового keyword'а в лексер тест НЕ упадёт автоматически, пока его не
+  добавят в ACTIVE-список теста (residual, прикрыт чеклистом в `editors/README.md`).
+
+### Открытое место
+
+Генерировать keyword-списки **из** лексера (codegen-шаг: `nova-codegen emit-highlight`
+или build-script, пишущий keyword-секции VSCode/vim/scm/JS из enumerable-набора
+лексера) — единый источник, ноль дублирования, новый keyword автоматически попадает
+во все хайлайтеры. Минусы: нужен enumerable keyword-API в лексере (сейчас набор
+выражен только `match`-арми в `lex_ident_or_keyword`); генерируемые файлы vs
+ handcrafted (scope-категории VSCode/цвета — не выводятся из лексера автоматически,
+keyword'ы — лишь часть грамматики); cross-repo доставка в сайт.
+
+### Решение (для V1)
+
+Ручная поддержка + conformance-guard (Plan 104.9 / D278). Авто-генерация — потенциальный
+следующий шаг, не для V1.
+
+### Связь
+- [D278](decisions/09-tooling.md#d278) — source-of-truth + conformance-тест (решение V1).
+- [docs/plans/104.9-syntax-highlight-keyword-sync.md](../docs/plans/104.9-syntax-highlight-keyword-sync.md).
+- `[M-treesitter-grammar-keyword-bump]` (backlog) — связанный followup по tree-sitter-грамматике.
