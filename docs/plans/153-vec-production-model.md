@@ -526,6 +526,55 @@ Opus. Эстимат ~2–2.5 dd (модель готова).
 ёмкость** (`with_capacity`/`@cap(n)`, 153.1). Мут-view (`mut []T`/`for mut x`) —
 write-through до detach. Подтвердить в доках; новых решений не требуется.
 
+> #### Статус 153.4 — 🟢 A ЗАКРЫТА (2026-06-14, ветка plan-153.4-slices): eager-views; B (chunks/windows) deferred
+>
+> **153.4-A ✅ (eager zero-copy `[]T`-views, БЕЗ внешней аллокации).** Новый peer-файл
+> `std/collections/vec/views.nv` (folder-module `collections.vec`): `@split_at(i) -> (Self,Self)`
+> (два view, `requires 0<=i<=len`, OOB→panic, НЕ clamp); `@split_first()`/`@split_last() ->
+> Option[(T, Self)]` (голова/хвост + view, пусто→`None`); `@first_n(n)`/`@last_n(n) -> Self`
+> (префикс/суффикс, **CLAMP** `n>len`→весь, `n<=0`→пусто — «take up to N» никогда не сюрпризит);
+> `@as_slice() -> Self` (ro-view всего) + `mut @as_slice() -> mut Self` (мут-view через
+> **receiver-mut overload**, как `@as_ptr`/`mut @as_ptr` — НЕ имя `as_mut_slice`, D247/Plan 135).
+> Все возвращают `[]T`≡`Vec[T]`-views (zero-copy, `cap==len`); detach-on-resize подтверждён тестом
+> (`first_n→push` детачит, родитель не тронут). Тесты `plan153_4/views` (14 `test`-блоков:
+> split_at делит + invariant `len(l)+len(r)==len` + boundaries 0/len + write-through;
+> split_first/last non-empty + empty→None + single; first_n/last_n exact+clamp+empty;
+> mut as_slice write-through; detach) + негатив `plan153_4/split_at_oob_neg` (EXPECT_RUNTIME_PANIC).
+> Все PASS через релизный nova (C-codegen).
+>
+> **Codegen-фикс (без упрощений).** Return-type inference генерик-инстанс-методов (emit_c.rs
+> `infer_expr_c_type`, generic-type-instance fallback ~33073) НЕ резолвил `Self`, ВЛОЖЕННЫЙ в
+> композит (`(Self,Self)`, `Option[(T,Self)]`): `subst` нёс только generic-параметры (`T`), а
+> top-level-`Self` обрабатывался отдельным `.or_else`, который не рекурсировал в tuple/Option
+> элементы → локал `let (l,r)=v.split_at(i)` объявлялся с ГЕНЕРИК-tuple `Nova_Vec*` (vs mono
+> `Nova_Vec_int*` из callee) → C «incompatible tuple type». Фикс: `subst.push(("Self", mono-receiver))`
+> перед `apply_type_subst_to_ref` → вложенный `Self` резолвится. Аддитивно (резолвит там, где раньше
+> `None`); 0 регрессий (plan153_0/1/3/6, generics, basics, plan131/138/90_1 чисто; plan138_2 4-FAIL
+> идентичны baseline = pre-existing Vec-shadow E7310 + transient lld-link file-lock).
+>
+> **153.4-B 🔶 DEFERRED — `[M-153.4-chunks-windows-lazy]` (gated на Plan 153.2).** `@chunks`/
+> `@chunks_exact`/`@rchunks`/`@windows` — рекомендация плана = **ленивые** итераторы (без аллокации
+> внешнего Vec) → зависят от ленивой инфры 153.2 (другой worktree). НЕ реализованы наспех eager.
+>
+> **Критерии приёмки 153.4-A (все ✅).**
+> 1. Slice-поверхность построена на `[]T`-view модели (D238/D239 + Plan 96), **БЕЗ** нового
+>    `Slice`-типа — view = `Vec`-заголовок `cap==len`, same-type, zero-copy. ✅
+> 2. `@split_at` (контракт `0<=i<=len`, OOB→panic, инвариант `len(l)+len(r)==len`),
+>    `@split_first`/`@split_last` (пусто→None), `@first_n`/`@last_n` (clamp «до N»),
+>    `@as_slice` (ro) + `mut @as_slice` (write-through, recv-mut overload). ✅
+> 3. detach-on-resize подтверждён тестом (`first_n→push` детачит, родитель не тронут). ✅
+> 4. chunks/windows честно отложены ленивыми (`[M-153.4-chunks-windows-lazy]`, gated 153.2),
+>    НЕ реализованы наспех eager. ✅
+> 5. D262 зафиксирован (spec/decisions/03-syntax.md); доки обновлены (vec-internals.md
+>    «Slices & views» + module-layout `views.nv`; collections/vec-owned.md slice-таблица+пример). ✅
+> 6. Все запрошенные suite зелёные через релизный nova (C-codegen). ✅
+>
+> **Вердикт 153.4: 🟢 A ЗАКРЫТА, B отложена.** Eager zero-copy `[]T`-view поверхность готова
+> и зашиплена; B (ленивые chunks/windows) — gated на Plan 153.2 за `[M-153.4-chunks-windows-lazy]`.
+> Верификация (2026-06-14, релизный nova C-codegen, env `NOVA_GC_LIB_DIR`/`NOVA_GC_INCLUDE_DIR`
+> на main repo): **plan153_4 2/0, plan96 23/0, plan153_0 4/0, plan153_1 7/0, plan138 10/0,
+> basics 8/0 = 54 PASS / 0 FAIL**. 0 регрессий.
+
 ### 153.5 — Restructure-ops + оператор `+` `[D263, Q-vec-operator-plus, B]`
 `@concat(other) -> Vec[T]` + **оператор `+`** (`@plus`, `a + b` = новый Vec, как
 str `@plus`; Q-vec-operator-plus), `[][]T.flatten()`, `@rotate_left(n)`/
@@ -575,7 +624,7 @@ flat_map/…), 153.4-B (chunks/windows/mut-view), 153.5 (concat/rotate/drain).
 - **D259** (NEW) — Vec core API & capacity (swap/resize/cap-exact, reserve).
 - **D260** (NEW) — ленивый итератор + адаптеры (model + Iter/Next интеграция).
 - **D261** (NEW) — sort & search (stable/unstable, binary_search, dedup).
-- **D262** (NEW, минорный) — slice-op surface (split_at/chunks/windows) на `[]T`-view модели D238/Plan 96 (БЕЗ новых типов; подтверждает single-type).
+- **D262** (✅ IMPLEMENTED 2026-06-14, минорный) — slice-op surface (split_at/first_n/last_n/as_slice; chunks/windows lazy-deferred) на `[]T`-view модели D238/Plan 96 (БЕЗ новых типов; подтверждает single-type). Зафиксирован в spec/decisions/03-syntax.md#d262.
 - **D263** (NEW) — restructure-ops (concat/flatten/rotate/drain).
 - **D264** (NEW) — Vec-протоколы (`Hash` + FromIterator/collect).
 - **D239 AMEND/CONFIRM** — `[]T` чистый алиас завершён (Plan 138 Ф.5 закрыт).

@@ -410,6 +410,16 @@
   класс что pre-existing `empty.min()` → `Nova_Duration_method_min` коллизия в `plan91_fe4/neg`).
 
 ## Follow-up: Plan 153.4 (slices — value-record element typedef)
+- **`[M-153.4-chunks-windows-lazy]`** (planned, **gated на Plan 153.2**, home **Plan 153.4 / D262**):
+  `@chunks(n)` / `@chunks_exact(n)` / `@rchunks(n)` / `@windows(n)` — рекомендация плана = **ЛЕНИВЫЕ
+  итераторы** (Rust/Kotlin-стиль, БЕЗ аллокации внешнего `[][]T`-Vec), yield'ящие zero-copy `[]T`-views
+  на том же буфере. Зависят от ленивой итератор-инфраструктуры Plan 153.2 (`VecIter`/`Iter`/`Next` +
+  адаптер-протокол), которая идёт параллельно в другом worktree. НЕ реализованы наспех eager здесь
+  (eager-форма аллоцировала бы Vec-of-views и расходилась бы с ленивым каноном Q-iterator-laziness).
+  Eager-views БЕЗ внешней аллокации (`@split_at`/`@split_first`/`@split_last`/`@first_n`/`@last_n`/
+  `@as_slice`+`mut @as_slice`) ЗАКРЫТЫ в 153.4-A (`std/collections/vec/views.nv`). Закрытие этого
+  маркера = добавить 4 lazy-метода поверх 153.2-инфры (chunks → step-n iterator, windows → sliding,
+  rchunks → reverse-step). Pin: новые фикстуры `plan153_4/chunks*`/`windows*` при реализации. | Plan 153.2 | P2 |
 - **`[M-153.4-vec-value-record-field-access]`** (planned, P2, home **Plan 153.4 / Plan 96 H3**):
   slice-каст value-record (`ranges[1..3]` на `[]Range`) **ЗАКРЫТ** (emit_c.rs:19052 un-mangle
   `_p`→`*` для element-cast; передан агентом 152-sweep'а, был pre-existing, НЕ регрессия 152).

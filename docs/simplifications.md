@@ -36641,3 +36641,15 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 - [2026-06-14] codegen lib-test contract_opt_out fix (Plan 140.3 followup, e83c8914): unblocked the nova-codegen lib-test target (was E0063 x4). NOT a shortcut - Default::default() is the semantically-correct neutral (full enforce). Surfaced 33 pre-existing stale tests (let-removal drift) -> [M-codegen-libtest-stale-tests]; reported honestly as 770/33, not claimed green.
 
 - [2026-06-14] codegen lib-test stale-tests restored to green [M-codegen-libtest-stale-tests] CLOSED: 33 pre-existing stale unit tests (surfaced by the contract_opt_out unblock) updated to current language/compiler reality — NOT a shortcut. 26 parser::tests migrated Nova inputs `let`->`ro`/`mut` (Plan 114/D184), 2 lints prelude_shadow → `#no_prelude`/`#allow(shadow)` (Plan 107/D174), 5 sum_schema_registry → Option.unwrap_or Nova-body routing expectations (Plan 99). Zero production-code change; «без упрощений как для прода» — ассерты остались осмысленными, ничего не ослаблено/замаскировано. `cargo test --lib` 803/0 (был 770/33).
+[2026-06-14] Plan 153.4 (slices/views, D262, ветка plan-153.4-slices, commit `5ccccf72`): 153.4-A
+  (eager zero-copy `[]T`-views: split_at/split_first/split_last/first_n/last_n/as_slice + recv-mut
+  mut @as_slice) ЗАКРЫТА. **Осознанная отложка — 153.4-B `@chunks`/`@chunks_exact`/`@rchunks`/`@windows`
+  → `[M-153.4-chunks-windows-lazy]` (gated на Plan 153.2).** Рекомендация плана = ЛЕНИВЫЕ итераторы
+  (Rust/Kotlin, БЕЗ аллокации внешнего `[][]T`-Vec), yield'ящие zero-copy `[]T`-views — зависят от
+  ленивой итератор-инфры 153.2 (другой worktree). НЕ реализованы наспех eager: eager-форма
+  аллоцировала бы Vec-of-views и расходилась бы с ленивым каноном (Q-iterator-laziness) — это был бы
+  настоящий регресс дизайна, а не упрощение. НЕ упрощение core-153.4: eager-views БЕЗ внешней
+  аллокации (split/first_n/last_n/as_slice) реализованы полностью, контрактно (split_at OOB→panic,
+  инвариант len(l)+len(r)==len) и протестированы (plan153_4/views 14 блоков + split_at_oob_neg).
+  Документированная scope-граница (B = ленивый слой за 153.2), а не тихий tech-debt. Маркер заведён
+  в backlog-followups.md (P2, gated Plan 153.2). Приоритет P2.

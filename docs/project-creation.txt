@@ -38088,3 +38088,23 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   nova_tests/cgfix_fluent_tail_if/repro.nv 1/1 (4 позитива + 3 контроля) + plan152_4 13/13 + 0 новых
   регрессий (baseline сверен против merge-base 22aa4944). Коммиты ef6d570a (emit_if_expr+фикстура) +
   f9c6e372 (infer(Match) симметрия) + 0f0a65a8 (case.nv restore). D275 + Q-match-unit-arms-in-expr amend.
+
+[2026-06-14] Plan 153.4 — Слайсы и views на модели Plan 96 (D262, ветка plan-153.4-slices, impl-commit
+  5ccccf72). 153.4-A ЗАКРЫТА (eager zero-copy `[]T`-views, БЕЗ внешней аллокации); 153.4-B (chunks/windows)
+  отложена ленивой за `[M-153.4-chunks-windows-lazy]` (gated на Plan 153.2). Новый peer-файл folder-модуля
+  `std/collections/vec/views.nv` (collections.vec): `@split_at(i)->(Self,Self)` (контракт 0<=i<=len, OOB→panic,
+  НЕ clamp, инвариант len(l)+len(r)==len); `@split_first()`/`@split_last()->Option[(T,Self)]` (пусто→None);
+  `@first_n(n)`/`@last_n(n)->Self` (CLAMP «take up to N»); `@as_slice()->Self` (ro whole-view) + recv-mut
+  overload `mut @as_slice()->mut Self` (write-through, как `@as_ptr`/`mut @as_ptr`, НЕ имя as_mut_slice).
+  Все возвращают `[]T`≡`Vec[T]`-views того же типа (НЕ отдельный Slice — D-single-type Plan 96), zero-copy,
+  cap==len; detach-on-resize (Go-модель, GC-safe) подтверждён тестом (first_n→push детачит, родитель не
+  тронут). Codegen-фикс (без упрощений): return-type inference генерик-инстанс-методов (emit_c.rs
+  infer_expr_c_type, generic-type-instance fallback) НЕ резолвил `Self`, вложенный в композит ((Self,Self),
+  Option[(T,Self)]) — subst нёс только generic-параметры, top-level-Self обрабатывался отдельным .or_else без
+  рекурсии в tuple/Option элементы → локал `let (l,r)=v.split_at(i)` объявлялся с генерик-tuple Nova_Vec* (vs
+  mono Nova_Vec_int* из callee) → C «incompatible tuple type». Фикс: subst.push(("Self", mono-receiver)) перед
+  apply_type_subst_to_ref. Аддитивно, 0 регрессий. Доки: D262 (spec/decisions/03-syntax.md + index),
+  153-vec-production-model.md статус+критерии+вердикт, vec-internals.md «Slices & views» + module-layout
+  views.nv, collections/vec-owned.md slice-таблица+пример, backlog `[M-153.4-chunks-windows-lazy]`,
+  simplifications.md. Верификация (релизный nova C-codegen, env NOVA_GC_LIB_DIR/INCLUDE_DIR на main repo):
+  plan153_4 2/0, plan96 23/0, plan153_0 4/0, plan153_1 7/0, plan138 10/0, basics 8/0 = 54 PASS / 0 FAIL.
