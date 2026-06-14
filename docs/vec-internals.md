@@ -56,6 +56,7 @@ prelude-global** (`v.push(x)` works without an import).
 | `access.nv` | `@index`/`@get`/`@first`/`@last`/`@as_ptr` (read + `v[i]=val` write) |
 | `mutate.nv` | `push`/`pop`/`insert`/`splice`/`remove`/`swap_remove`/`clear`/`truncate`/`reverse` + bulk (`extend`/`append`/`retain`/`copy_from`/`copy_within`/`fill`/`append_zero`) |
 | `slice.nv` | `@index(Range)`/`@get(Range)` — zero-copy `[]T` views (Plan 96) |
+| `views.nv` | eager named views (Plan 153.4 / D262): `@split_at`/`@split_first`/`@split_last`/`@first_n`/`@last_n`/`@as_slice` (+ recv-mut `mut @as_slice`) |
 | `iter.nv` | `VecIter[T]` + `@iter()`/`@next()` (`Iter`/`Next`, D58) |
 | `protocols.nv` | `Equal`/`Compare`/`Clone`/`Display`/`Debug` |
 | *(future)* `sort.nv` | Plan 153.3 sort/search; `iter.nv` grows lazy adapters in Plan 153.2 |
@@ -85,6 +86,54 @@ pre-153.0 `collections.vec` module did. Plan 153.2 reworks these into **lazy**
 iterator adapters on `VecIter` (`iter().map().filter().collect()`, no
 intermediate allocations); whether the lazy layer can safely become
 prelude-global is revisited there ([M-153-vec-combinators-prelude-global]).
+
+## Slices & views (Plan 153.4 / D262)
+
+A **slice** in Nova is a zero-copy `[]T`-**view of the same type** — there is no
+separate `Slice[T]`/`&[T]` type (Plan 96 *D-single-type*; D238/D239). A view is
+just a `Vec` header `{ data: parent.data + start, len, cap: len }` pointing inside
+the parent's GC-tracked buffer, with `cap == len` (*D-cap-len*). Two surfaces
+produce views:
+
+- **`v[a..b]`** (`slice.nv`, `@index(Range)` / `@get(Range)`, Plan 96) — the
+  operator form.
+- **named view methods** (`views.nv`, Plan 153.4):
+
+  | Method | Returns | Bounds |
+  |---|---|---|
+  | `@split_at(i)` | `([]T, []T)` | `requires 0 <= i <= len` (OOB → panic, NOT clamp) |
+  | `@split_first()` | `Option[(T, []T)]` | empty → `None` |
+  | `@split_last()` | `Option[(T, []T)]` | empty → `None` |
+  | `@first_n(n)` | `[]T` | **clamps** (`n > len` → whole, `n <= 0` → empty) |
+  | `@last_n(n)` | `[]T` | **clamps** (same as `first_n`) |
+  | `@as_slice()` | `[]T` | read-only whole-view (the `Vec`-side analogue of `str.as_bytes()`) |
+  | `mut @as_slice()` | `mut []T` | write-through whole-view (recv-mut overload, like `mut @as_ptr`) |
+
+`@split_at` enforces a contract (a silent clamp would break the
+`len(left) + len(right) == len` invariant and hide a caller bug), whereas
+`first_n`/`last_n` clamp because "take up to N" should never surprise the caller
+(mirrors Rust `[..n.min(len)]`). The writable whole-view is the **receiver-mut
+overload** `mut @as_slice` (selected on a `mut`-bound receiver), **not** a
+separate `as_mut_slice` name — same accessor convention as `@as_ptr`/`mut @as_ptr`
+(D247 / Plan 135).
+
+### Detach-on-resize (Go-model, GC-safe)
+
+Because a view has `cap == len`, the first **reallocating** mutation on it
+(`push`/`reserve`/`insert` at `cap == len`) reallocs into a fresh buffer
+(`@realloc_to`, core.nv) and the view **silently detaches** — it never overwrites
+the parent's backing store. This removes the Go shared-backing footgun without a
+borrow-checker. Until that detach point, a `mut`-bound view writes *through* to
+the parent (`s[i] = x`, `for mut x in s`). The detach point is predictable
+because exact capacity is honoured (`with_capacity`/`@cap(n)`, Plan 153.1 — no
+pow2 rounding). The GC keeps the parent buffer alive while any view is reachable
+(`GC_all_interior_pointers`, Plan 138 Ф.2). An *owning* copy is `clone()` /
+`to_vec()`, never a view.
+
+`@chunks`/`@chunks_exact`/`@rchunks`/`@windows` are **lazy** iterators (Rust-like,
+no outer-`Vec` allocation), deferred under `[M-153.4-chunks-windows-lazy]` and
+gated on the Plan 153.2 lazy-iterator infrastructure — they are intentionally NOT
+implemented eagerly.
 
 ## Compare vs Equal
 
