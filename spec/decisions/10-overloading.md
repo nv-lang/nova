@@ -586,21 +586,36 @@ folder-модуля `collections.vec`). Закрывает **Q-vec-operator-plus
    Add-arm (тот эмитит голый `_method_plus(l,r)` без инстанцирования mono-тела → undefined symbol на
    линковке); `vec_method_call` регистрирует mono-инстанс первым.
 
-### Отложено
+### AMEND (2026-06-14, `plan-153.5-restructure` commits `1c323d0e` + `16753d23`): flatten реализован
 
-- **`[][]T.flatten() -> []T`** (`[M-153.5-flatten-nested-receiver]`, P2). Корректному `.flatten()`
-  нужен **вложенный generic-ресивер** `Vec[Vec[T]] @flatten()`, чтобы тело назвало внутренний `T`.
-  Обе принимаемые компилятором формы это не выражают: `Vec[Vec[T]]` — ПАРСЕР отвергает вложенный тип
-  в carrier-слоте (`parse_generic_decl_params` → `parse_ident`); `[][]T` — ПАРСИТСЯ, но монорфизатор
-  биндит `T` в непосредственный элемент (`Vec[int]`), не во внутренний (`int`) → неверный
-  return-тип (verified probe RUN-FAIL). Это cross-cutting фикс структурной унификации typevar для
-  вложенных ресиверов в парсере И монорфизаторе (весь `[]T`-method-dispatch stdlib идёт через путь) —
-  вне scope restructure-surface. Обход — flatten один уровень явно
-  (`for inner in nested { flat.append(inner) }`).
+`[][]T.flatten() -> []T` **больше НЕ отложен** — реализован вместе с фундаментом
+**вложенных generic-ресиверов произвольной глубины** (см. [D145 AMEND](02-types.md#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101),
+2026-06-14). Маркер `[M-153.5-flatten-nested-receiver]` **РАЗРЕШЁН**.
+
+| Метод | Сигнатура | Семантика |
+|---|---|---|
+| **flatten** | `Vec[Vec[T]] @flatten() -> Vec[T]` (≡ `[][]T @flatten() -> []T` под D239) | конкатенация внутренних рядов в один новый `Vec[T]`; pre-size `with_capacity(Σ inner.len())` + bulk `@append(inner)` на ряд (copy-fast-path, операнды нетронуты); пустые ряды/внешний — корректно |
+
+Реализация — Nova-body в
+[std/collections/vec/restructure.nv](../../std/collections/vec/restructure.nv):
+сперва суммирует все `inner.len()` для точной пре-аллокации `out`, затем bulk-копирует
+каждый ряд `out.append(inner)` (тот же `RawMem.copy` fast-path, что `@concat`/`@append`).
+Production-форма — **carrier** `Vec[Vec[T]] @flatten()` (совпадает с записью stdlib).
+
+**Что разблокировало (корень — D145 AMEND):** обе принимаемые формы ресивера раньше
+теряли вложенность — `Vec[Vec[T]]` ПАРСЕР отвергал в carrier-слоте, `[][]T` монорфизатор
+биндил `T` в *непосредственный* элемент (`Vec[int]`), не во *внутренний* (`int`). Фикс —
+**структурная унификация typevar для вложенных ресиверов на любой глубине** в ОБОИХ
+парсере (carrier-слот принимает `parse_type` + сбор free-typevars; slice-форма считает
+глубину `[]` и спускается до внутреннего `Named`) И монорфизаторе (рекурсивный
+`infer_type_param_binding` биндит receiver-typevar в element-of-element… до самого
+внутреннего, depth-agnostic). Cross-cutting: тот же `[]T`-method-dispatch путь, через
+который идут все slice-методы stdlib — flat `[]T` (depth 1) остался byte-identical.
 
 ### Связь
 
 - [D46](03-syntax.md#d46) — operator overloading через `@plus` (str-прецедент; этот D-блок
   распространяет на `Vec[T]`).
-- [D239](02-types.md#d239-t--синтаксический-псевдоним-vect) — `[]T ≡ Vec[T]` (insert_slice-аргумент).
-- Plan 153.1 mutate.nv — `@append`/`@splice` (in-place; restructure НЕ дублирует).
+- [D239](02-types.md#d239-t--синтаксический-псевдоним-vect) — `[]T ≡ Vec[T]` (insert_slice-аргумент; `Vec[Vec[T]] ≡ [][]T` для flatten).
+- [D145](02-types.md#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101) AMEND — вложенные generic-ресиверы произвольной глубины (фундамент `@flatten`).
+- Plan 153.1 mutate.nv — `@append`/`@splice` (in-place; restructure НЕ дублирует; `@flatten` переиспользует bulk `@append`).
