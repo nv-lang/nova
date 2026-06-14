@@ -1,0 +1,30 @@
+// Plan 143.2 [M-opt-leaf-preempt-entry-elision] — POSITIVE (entry-check ELIDED).
+//
+// `pure_leaf` makes NO calls at all (pure arithmetic), is not recursive, not
+// address-taken, has no loop → provably reaches no further safepoint of its
+// own, terminates in bounded straight-line code. The function-prologue
+// `nova_preempt_check();` MUST be ELIDED.
+//
+// Verify (run with --keep-artifacts) in positive_pure_leaf.c:
+//   * the body of `pure_leaf` contains `preempt-check elided` (the marker)
+//     and NO `nova_preempt_check();` as its first statement.
+
+module plan143_2.positive_pure_leaf
+
+// Provably-leaf: only arithmetic, no calls, no loop, not recursive.
+fn pure_leaf(x int) -> int => x * 3 + 7
+
+// Another pure leaf with a branch but still no calls.
+fn pure_branch(x int) -> int {
+    if x < 0 { 0 - x } else { x }
+}
+
+test "pure leaf computes" {
+    assert(pure_leaf(5) == 22)
+    assert(pure_leaf(0) == 7)
+}
+
+test "pure branch computes" {
+    assert(pure_branch(-4) == 4)
+    assert(pure_branch(9) == 9)
+}

@@ -947,6 +947,13 @@ pub struct CEmitter {
     /// allocated as `NovaValue_<type_name>*` instead of stack-init.
     /// Consumed (taken) immediately by emit_record_lit, restoring to None.
     pending_value_record_heap_promote: Option<String>,
+    /// Plan 143.2 [M-opt-leaf-preempt-entry-elision]: whole-program set of
+    /// FnKeys whose function-prologue `nova_preempt_check();` MUST be kept.
+    /// Computed once per module in `emit_module` (source-level call-graph
+    /// pre-pass, see `preempt_keep`). Consulted in `emit_fn` prologue: a fn
+    /// whose key is absent may ELIDE its entry-check (provably-leaf). Default
+    /// `populated()==false` → KEEP everything (unit-test / direct construction).
+    preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet,
 }
 
 /// D160 Plan 100.4.3: kind of a defer entry — determines which exit paths trigger it.
@@ -1218,6 +1225,9 @@ impl CEmitter {
             current_fn_id: None,
             promoted_value_record_locals: HashSet::new(),
             pending_value_record_heap_promote: None,
+            // Plan 143.2: default empty/unpopulated → KEEP everything until
+            // emit_module runs the pre-pass.
+            preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet::default(),
         }
     }
 
@@ -1626,6 +1636,32 @@ impl CEmitter {
         // (AllocKind::ValueHeapPromoted). Cheap: single AST walk; result
         // is empty (no allocations) если module has no value-records.
         self.escape_result = Some(crate::escape_analyze::analyze_module(module));
+
+        // Plan 143.2 [M-opt-leaf-preempt-entry-elision]: whole-program
+        // call-graph pre-pass computing which fns must KEEP their prologue
+        // preempt-check. Source-level over `module.items` (flat entry merge)
+        // PLUS every peer file's `items_here` (covers imported-module
+        // FnDecls). Conservative: any cycle/indirect/FFI/address-taken/
+        // unresolved callee => KEEP. Computed BEFORE the emit loop so
+        // `emit_fn` can consult it. Sound over monomorphization (KEEP status
+        // of a source template inherited by all instances).
+        {
+            let mut all_fns: Vec<&FnDecl> = Vec::new();
+            for item in &module.items {
+                if let Item::Fn(f) = item {
+                    all_fns.push(f);
+                }
+            }
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    if let Item::Fn(f) = item {
+                        all_fns.push(f);
+                    }
+                }
+            }
+            self.preempt_keep =
+                crate::codegen::preempt_keep::compute_preempt_keep_set(all_fns);
+        }
 
         // Plan 70.1: register imported-module prefix names (aliases + last-segments)
         // для emit_call Member dispatch rewrite. См. поле `imported_modules` doc.
@@ -7097,6 +7133,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
         self.line(&format!("static void {}(mco_coro* _co) {{", spawn_id));
         self.indent += 1;
+        // Plan 143.2: prologue safepoint — unconditional. This is a FIBER-ENTRY
+        // function reached indirectly via the scheduler; its body is user Nova
+        // code that may run straight-line work before the first loop/call. KEEP
+        // conservatively (no source FnDecl key for a spawn-body block).
+        self.emit_prologue_preempt_check_unconditional();
         // Plan 44.5 Layer 5: _c всегда нужен — entry function reads
         // _c->_nova_parent_scope для remote-fiber cleanup (decrement
         // pending_remote + signal_main). Раньше для empty-capture spawn
@@ -11067,6 +11108,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.indent = 0;
         self.line(&format!("static {} {}({}) {{", ret_c, mangled, params_s));
         self.indent += 1;
+        // Plan 143.2: prologue safepoint. Erased generic method body inherits
+        // the SOURCE template (`f`) KEEP-status — a recursive generic method
+        // keeps a safepoint in its erased form too.
+        self.emit_prologue_preempt_check(f);
         // Register nova_self only for instance methods
         let mut saved_array_elem_keys: Vec<String> = Vec::new();
         if is_instance {
@@ -13348,6 +13393,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.indent = 0;
         self.line(&format!("static {} {}({}) {{", ret_c, mono_name, params_str));
         self.indent += 1;
+        // Plan 143.2: prologue safepoint. The monomorphized instance inherits
+        // the KEEP-status of its SOURCE template (`fn_decl`), so a recursive
+        // generic method keeps a safepoint in every instantiation.
+        self.emit_prologue_preempt_check(fn_decl);
         // Register nova_self and params in var_types (только если instance method)
         let prev_self = if is_instance {
             self.var_types.insert("nova_self".to_string(), recv_c.clone())
@@ -14391,6 +14440,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.indent = 0;
         self.line(&format!("static {} {}({}) {{", ret_c, mono_name, params_str));
         self.indent += 1;
+        // Plan 143.2: prologue safepoint. The monomorphized instance inherits
+        // the KEEP-status of its SOURCE template (`fn_decl`), so a recursive
+        // generic free fn keeps a safepoint in every instantiation.
+        self.emit_prologue_preempt_check(fn_decl);
         // Register params in var_types with concrete C types
         let saved_var_types: Vec<(String, Option<String>)> = fn_decl.params.iter()
             .zip(&param_c_tys)
@@ -14550,6 +14603,10 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.indent = 0;
         self.line(&format!("static void* {}({}) {{", mangled, params_str));
         self.indent += 1;
+        // Plan 143.2: prologue safepoint. Erased generic free-fn body inherits
+        // the SOURCE template (`f`) KEEP-status — a recursive generic fn keeps
+        // a safepoint in its erased form too.
+        self.emit_prologue_preempt_check(f);
         // Register params with their concrete (or erased) types
         let saved: Vec<(String, Option<String>)> = f.params.iter().zip(&param_c_tys)
             .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
@@ -14792,6 +14849,42 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
     // generation для test scaffolding non-stdlib external fn — вводить через
     // effect-based mechanism.
 
+    // Plan 143.2 [M-opt-leaf-preempt-entry-elision]: emit the function-prologue
+    // preemption safepoint (Plan 44.7) — the first statement of every emitted
+    // Nova function — consulting the whole-program KEEP set. The check is
+    // ELIDED only on a function the pre-pass proved leaf (not on a call-graph
+    // cycle, no indirect/closure/fn-ptr call, no FFI/extern call, not
+    // address-taken). CONSERVATIVE: when the pre-pass never ran
+    // (`populated()==false`, e.g. a CEmitter built directly in a unit test) we
+    // KEEP unconditionally. Used by emit_fn AND by every on-demand emit path
+    // that lowers a *source* FnDecl (monomorphized / erased generic
+    // fn+method) — the source-template key is the same one the pre-pass
+    // registered, so KEEP-status is inherited by all instantiations (sound
+    // over monomorphization).
+    fn emit_prologue_preempt_check(&mut self, f: &FnDecl) {
+        let keep_preempt = !self.preempt_keep.populated()
+            || self
+                .preempt_keep
+                .must_keep(&crate::codegen::preempt_keep::fn_key(f));
+        if keep_preempt {
+            self.line("nova_preempt_check();");
+        } else {
+            self.line("/* preempt-check elided: provably-leaf (Plan 143.2) */");
+        }
+    }
+
+    // Plan 143.2: unconditional prologue safepoint for emitted code that has NO
+    // source-level FnDecl in the pre-pass universe (lambdas / closures /
+    // trailing-block bodies). These are reachable only through INDIRECT calls
+    // (a fn-pointer / closure value), which the pre-pass already forces the
+    // *caller* to KEEP — but the closure body itself is its own C function and
+    // must carry a safepoint too (a closure stored and re-invoked could form an
+    // unbounded cycle the source analysis cannot see). Conservative default
+    // per acceptance criterion #6: never elide an unproven case.
+    fn emit_prologue_preempt_check_unconditional(&mut self) {
+        self.line("nova_preempt_check();");
+    }
+
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
         // D82: external fn — Nova body отсутствует, реализация в nova_rt/.
         // Skip emit'инг полностью: dispatch на C-функцию делается в emit_call.
@@ -15017,7 +15110,18 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         // never raised. Together with the loop-backedge check this gives
         // observable Go-style preemption: a CPU-bound fiber can't starve
         // its peers even with no explicit runtime.yield().
-        self.line("nova_preempt_check();");
+        //
+        // Plan 143.2 [M-opt-leaf-preempt-entry-elision]: ELIDE this prologue
+        // check on provably-leaf functions. A fiber can run unbounded without
+        // yielding only via a loop (its OWN back-edge check is preserved
+        // separately, emit_loop_body_inline_ex) or via recursion (a call-graph
+        // cycle). The whole-program pre-pass (`preempt_keep`, computed in
+        // emit_module) marks a fn KEEP iff it is on a cycle, makes an
+        // indirect/closure/fn-ptr call, makes an FFI/extern call, or is
+        // address-taken. CONSERVATIVE: when the pre-pass did not run
+        // (`populated()==false`, e.g. direct CEmitter construction in unit
+        // tests) we KEEP unconditionally — never elide under doubt.
+        self.emit_prologue_preempt_check(f);
         let saved_expected = self.expected_record_type.clone();
         self.expected_record_type = Self::struct_name_from_c_type(&ret);
         // Plan 33.1 Ф.4 (D24): emit contracts.
@@ -20052,6 +20156,10 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
             self.indent = 0;
             self.line(&format!("static {} {}({}) {{", ret_c_ty, fn_name, body_param_list));
             self.indent += 1;
+            // Plan 143.2: prologue safepoint — unconditional. Trailing-block
+            // body is its own C function reached indirectly via the DSL fn; no
+            // source FnDecl key, so KEEP conservatively.
+            self.emit_prologue_preempt_check_unconditional();
             // If there are captures, extract env pointer and define macros so the body
             // can reference outer variables by name (matching how spawn bodies work).
             if let Some(ref env_name) = env_struct_name {
@@ -21028,17 +21136,15 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                         ));
                     }
                 }
-                // Plan 14 Ф.4: если obj — record и `method` это fn-typed поле
-                // (записано в record_field_fn_sigs), эмитим closure-call
-                // через NOVA_CLOS_CALL_* macro.
+                // Plan 14 Ф.4 / Plan 153.2: если obj — record и `method` это
+                // fn-typed поле, эмитим closure-call через NOVA_CLOS_CALL_*
+                // macro. `fn_field_call_sig` покрывает И concrete records
+                // (record_field_fn_sigs), И GENERIC types (lazy iterator
+                // адаптеры `priv f fn(T)->U`) — для последних param/ret
+                // резолвятся из template + current_type_subst, иначе `(@f)(x)`
+                // эмитился бы как невалидный `void*`-вызов.
                 {
-                    let obj_ty = self.infer_expr_c_type(obj);
-                    if let Some(record_name) = obj_ty
-                        .strip_prefix("Nova_")
-                        .map(|s| s.trim_end_matches('*').to_string())
-                    {
-                        let key = (record_name.clone(), method.clone());
-                        if let Some((param_tys, ret_ty)) = self.record_field_fn_sigs.get(&key).cloned() {
+                    if let Some((param_tys, ret_ty)) = self.fn_field_call_sig(obj, method) {
                             let o = self.emit_expr(obj)?;
                             let mut arg_strs = Vec::new();
                             for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
@@ -21069,7 +21175,6 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                     ))
                                 }
                             };
-                        }
                     }
                 }
                 // D38 array-static-method: `[]T.new()` / `[]T.with_capacity(n)`.
@@ -29854,6 +29959,10 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
         // Body function implementation
         self.line(&format!("static {} {}({}) {{", ret_c_ty, body_name, body_params_str));
         self.indent = 1;
+        // Plan 143.2: prologue safepoint — unconditional. A closure body is its
+        // own C function reachable only via an indirect call; no source FnDecl
+        // key, so KEEP conservatively (a re-invoked closure could cycle).
+        self.emit_prologue_preempt_check_unconditional();
         // Unpack env. Mut-captures: register `name → _env->name` in var_boxed
         // so ExprKind::Ident emits `(*_env->name)` — pointer-safe, no #define.
         // Immutable captures: local copy (no aliasing needed).
@@ -31934,6 +32043,104 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
         false
     }
 
+    /// Plan 153.2: C return-type of calling a fn-typed RECORD FIELD as
+    /// `obj.field(args)` / `(@field)(args)`. Returns `None` when `field` is not
+    /// a function-typed field of `obj`'s type (then the caller continues with
+    /// the normal method-call inference). Mirrors the emit-side closure-field
+    /// call routing (`record_field_fn_sigs`) so the inferred type matches what
+    /// is actually emitted — concrete records read the resolved return C-type
+    /// from `record_field_fn_sigs`; generic adapters resolve the field's
+    /// declared `fn(...)->R` return TypeRef from the type template and
+    /// substitute the active type params (`current_type_subst`).
+    /// Plan 153.2: full `(param_c_tys, ret_c_ty)` signature for calling a
+    /// fn-typed RECORD FIELD as `obj.field(args)`. The emit-side companion of
+    /// `fn_field_call_ret_c` — feeds the `NOVA_CLOS_CALL` routing so closure
+    /// fields of GENERIC types (the lazy iterator adapters: `priv f fn(T)->U`)
+    /// emit a real closure call instead of an invalid `void*` call. Concrete
+    /// records read the resolved sig straight from `record_field_fn_sigs`;
+    /// generic types resolve the declared `fn(P..)->R` from the type template
+    /// and substitute the active type params (`current_type_subst`) so the
+    /// param/return C-types are concrete at the call site.
+    fn fn_field_call_sig(&self, obj: &Expr, field: &str) -> Option<(Vec<String>, String)> {
+        let obj_ty = self.infer_expr_c_type(obj);
+        if obj_ty.is_empty() || obj_ty == "void*" {
+            return None;
+        }
+        let stripped = obj_ty.trim_start_matches("const ").trim();
+        let struct_name = stripped
+            .strip_prefix("Nova_")
+            .or_else(|| stripped.strip_prefix("NovaValue_"))
+            .unwrap_or(stripped)
+            .trim_end_matches('*')
+            .trim()
+            .to_string();
+        if struct_name.is_empty() {
+            return None;
+        }
+        let base_name: String = struct_name
+            .split("____")
+            .next()
+            .unwrap_or(&struct_name)
+            .to_string();
+        // Generic type: resolve the field's `fn(P..)->R` from the template and
+        // substitute the active type params — the `record_field_fn_sigs` entry
+        // (if any) carries void*-erased types, useless for the call cast.
+        if self.generic_types.contains(&base_name) {
+            if let Some(template) = self.generic_type_templates.get(&base_name) {
+                if let crate::ast::TypeDeclKind::Record(fields) = &template.kind {
+                    if let Some(fdecl) = fields.iter().find(|f| f.name == field) {
+                        if let crate::ast::TypeRef::Func {
+                            params, return_type, ..
+                        } = &fdecl.ty
+                        {
+                            let subst: Vec<(String, Option<String>)> = self
+                                .current_type_subst
+                                .iter()
+                                .map(|(k, v)| (k.clone(), Some(v.clone())))
+                                .collect();
+                            let mut ptys = Vec::with_capacity(params.len());
+                            for p in params {
+                                let c = Self::apply_type_subst_to_ref(p, &subst)
+                                    .or_else(|| self.type_ref_to_c(p).ok())?;
+                                ptys.push(c);
+                            }
+                            let ret = match return_type {
+                                Some(rt) => Self::apply_type_subst_to_ref(rt, &subst)
+                                    .or_else(|| self.type_ref_to_c(rt).ok())?,
+                                None => "nova_unit".to_string(),
+                            };
+                            return Some((ptys, ret));
+                        }
+                    }
+                }
+            }
+            return None;
+        }
+        // Concrete record: the resolved sig is recorded at emit time.
+        for key_name in [struct_name.as_str(), base_name.as_str()] {
+            if let Some(sig) = self
+                .record_field_fn_sigs
+                .get(&(key_name.to_string(), field.to_string()))
+            {
+                return Some(sig.clone());
+            }
+        }
+        None
+    }
+
+    /// Plan 153.2: C return-type of calling a fn-typed RECORD FIELD as
+    /// `obj.field(args)` / `(@field)(args)`. Returns `None` when `field` is not
+    /// a function-typed field of `obj`'s type (then the caller continues with
+    /// the normal method-call inference). Mirrors the emit-side closure-field
+    /// call routing (`record_field_fn_sigs`) so the inferred type matches what
+    /// is actually emitted — concrete records read the resolved return C-type
+    /// from `record_field_fn_sigs`; generic adapters resolve the field's
+    /// declared `fn(...)->R` return TypeRef from the type template and
+    /// substitute the active type params (`current_type_subst`).
+    fn fn_field_call_ret_c(&self, obj: &Expr, field: &str) -> Option<String> {
+        self.fn_field_call_sig(obj, field).map(|(_, ret)| ret)
+    }
+
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
         // D38 turbofish: type_args не меняют c-тип; делегируем в base.
         if let ExprKind::TurboFish { base, .. } = &expr.kind {
@@ -32472,6 +32679,25 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                                     return concrete_type;
                                 }
                                 return concrete_type;
+                            }
+                        }
+                    }
+                }
+                // Plan 153.2: a Call whose `func` is a fn-typed RECORD FIELD
+                // (`obj.f(x)` / `(@f)(x)`) yields the field's declared fn
+                // RETURN type — mirror the emit-side NOVA_CLOS_CALL routing
+                // (`record_field_fn_sigs`, ~emit_c.rs:21149). Without this the
+                // call result fell through to the `nova_int` default, which
+                // silently mistyped any non-int closure-field return and broke
+                // `if (@pred)(x)` (bool) — the load-bearing pattern for the lazy
+                // iterator adapters (map/filter/… store the closure in a field).
+                // Must run BEFORE the method-name lookups below: a fn-typed
+                // field is never a method, so a positive hit here is definitive.
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if !name.starts_with('@') {
+                        if let Some(ret_c) = self.fn_field_call_ret_c(obj, name) {
+                            if !ret_c.is_empty() && ret_c != "void*" {
+                                return ret_c;
                             }
                         }
                     }

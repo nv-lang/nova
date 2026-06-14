@@ -7756,14 +7756,29 @@ inline-gate); экзотические не-loop-var индексы (Z3-ариф
 - [D186](decisions/02-types.md#d186) — `#impl(P)` на типах (auto-derive opt-in).
 - `[M-154.1-required-conformance]` (backlog) — возможный переход к required.
 
-## Q-loop-opt-thresholds. Loop codegen opt — порог элизии + расширение safe-set (Plan 143 §2.A / D270) — 🟡 OPEN (minor, 2026-06-14)
+## Q-loop-opt-thresholds. Loop/leaf codegen opt — порог элизии + расширение safe-set + точность call-графа (Plan 143 §2.A/§2.B / D270/D271) — 🟡 OPEN (minor, 2026-06-14)
 
-Part A+B `[M-opt-preempt-strided-loop]` приземлены (D270, merge `7c047a1b`). Открытые design-вопросы
-(minor, НЕ блокеры — непокрытое всегда даёт корректный fallback на цикл):
+Part A+B `[M-opt-preempt-strided-loop]` (D270, merge `7c047a1b`) и `[M-opt-leaf-preempt-entry-elision]`
+(D271, ветка `plan-143-leaf-preempt-elision`) приземлены. Открытые design-вопросы (minor, НЕ блокеры —
+непокрытое всегда даёт корректный conservative fallback: KEEP / per-element цикл):
+
+**§A — Loop preempt-elision + copy-loop (D270):**
 1. **Порог preempt-elision (count ≤ 1024)** — захардкожен. Делать tunable (env/attr)? Какое значение
    оптимально (vectorization-win vs preempt-latency)? Снимется SIGURG'ом (variable-bound без порога).
 2. **Copy-loop safe-set** — сейчас только flat-POD элемент (`nova_*` / pointer `_p`). Расширить на
    value-record (`str`) и доказуемо-flat composite? Нужно per-T flatness-доказательство (slot-copy == value-copy).
 3. **Обобщить copy-loop lowering** за пределы `Vec[T]` (на `[]T`-views / raw `*mut T`)? Сейчас — только Vec.
 
-Связь: [D270](decisions/06-concurrency.md), Plan 143 §2.A, `[M-opt-preempt-strided-loop]` (SIGURG-часть open).
+**§B — Leaf entry-check elision (D271):**
+4. **Cross-module precision** — pre-pass видит entry `module.items` + импортируемые `peer_files`; callee из
+   модуля, чьё тело недоступно в эмит-юните, → conservative KEEP. Точнее: ahead-of-time экспорт per-fn
+   KEEP-флага в манифест (как `exports_consume_types`, D164) → cross-crate элизия резолвимых форвардеров.
+5. **Minimal-SCC-cut вместо KEEP-all-cycle-members** — сейчас ВСЕ члены рекурсивного цикла держат safepoint;
+   соундности достаточно ≥1 на цикл. Минимальный feedback-vertex-set (или просто 1 член по entry-точке)
+   разблокировал бы элизию остальных. Trade-off: сложность анализа vs выгода (циклы обычно короткие).
+6. **Synthesized-conversion arg-typing** — `str.from(int/f64)` не имеет `FnDecl` в AST → форвардер
+   `StringBuilder.append(f32)` держится в KEEP. Регистр synthesized-conversions с known-return-type снял бы
+   это без потери соундности (сейчас — корректный conservative-KEEP, не упрощение).
+
+Связь: [D270](decisions/06-concurrency.md)/[D271](decisions/06-concurrency.md), Plan 143 §2.A/§2.B,
+`[M-opt-preempt-strided-loop]` (SIGURG-часть open) / `[M-opt-leaf-preempt-entry-elision]` (✅ done).

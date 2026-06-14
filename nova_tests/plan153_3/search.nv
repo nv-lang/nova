@@ -1,24 +1,10 @@
 // Plan 153.3 — search & query (read-only): index_of/position/rposition,
 // is_sorted/is_sorted_by, binary_search/_by/_by_key.
 //
-// NB: binary_search returns Result[int, int]; asserted via `match` helpers
-// because structural `Result ==` is a pre-existing prelude gap (Ok(2)==Ok(2)
-// is false — Result degrades to reference identity, unlike Option) —
-// [M-153.3-result-equal-derive]. binary_search itself is correct.
+// binary_search returns Result[int, int]; asserted via direct `== Ok(i)` /
+// `== Err(i)` — structural `Result ==` against a bare Ok/Err literal of a
+// non-default E now works (Plan 153.3 #3, see result_eq_literal.nv).
 module plan153_3.search
-
-fn bs_ok(r Result[int, int], want int) -> bool {
-    match r {
-        Ok(i) => i == want,
-        Err(_) => false,
-    }
-}
-fn bs_err(r Result[int, int], want int) -> bool {
-    match r {
-        Ok(_) => false,
-        Err(i) => i == want,
-    }
-}
 
 test "index_of / position / rposition" {
     ro v = Vec[int].from([10, 20, 30, 20])
@@ -40,17 +26,17 @@ test "is_sorted / is_sorted_by" {
 
 test "binary_search found / insertion point" {
     ro v = Vec[int].from([1, 3, 5, 7])
-    assert(bs_ok(v.binary_search(5), 2))
-    assert(bs_ok(v.binary_search(1), 0))
-    assert(bs_ok(v.binary_search(7), 3))
-    assert(bs_err(v.binary_search(4), 2))
-    assert(bs_err(v.binary_search(0), 0))
-    assert(bs_err(v.binary_search(9), 4))
+    assert(v.binary_search(5) == Ok(2))
+    assert(v.binary_search(1) == Ok(0))
+    assert(v.binary_search(7) == Ok(3))
+    assert(v.binary_search(4) == Err(2))
+    assert(v.binary_search(0) == Err(0))
+    assert(v.binary_search(9) == Err(4))
 }
 
 test "binary_search_by / by_key" {
     ro v = Vec[int].from([1, 3, 5, 7])
-    assert(bs_ok(v.binary_search_by(|e| e - 5), 2))
-    assert(bs_err(v.binary_search_by(|e| e - 4), 2))
-    assert(bs_ok(v.binary_search_by_key(|e| e, 5), 2))
+    assert(v.binary_search_by(|e| e - 5) == Ok(2))
+    assert(v.binary_search_by(|e| e - 4) == Err(2))
+    assert(v.binary_search_by_key(|e| e, 5) == Ok(2))
 }

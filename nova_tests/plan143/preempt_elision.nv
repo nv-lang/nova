@@ -1,0 +1,55 @@
+// Plan 143.2 [M-opt-leaf-preempt-entry-elision] — verify the function-prologue
+// preempt-check is ELIDED on provably-leaf fns and KEPT on cyclic / indirect.
+//
+// Run with --keep-artifacts and grep the generated C:
+//   * `leaf_double` / `leaf_forwarder` bodies → "preempt-check elided"
+//   * `rec_self` / `mutual_a` / `mutual_b` / `indirect_caller` → "nova_preempt_check()"
+
+module plan143.preempt_elision
+
+// --- POSITIVE: provably-leaf, no calls, not address-taken → ELIDE ---
+fn pure_leaf(x int) -> int => x * 2 + 1
+
+// --- leaf_double IS address-taken below (used as value) → KEEP ---
+fn leaf_double(x int) -> int => x * 2
+
+// --- POSITIVE: leaf forwarder, single resolved direct callee, no cycle → ELIDE ---
+fn leaf_forwarder(x int) -> int => leaf_double(x) + 1
+
+// --- NEGATIVE: direct self-recursion → KEEP (self-loop) ---
+fn rec_self(n int) -> int {
+    if n <= 0 { 0 } else { rec_self(n - 1) + n }
+}
+
+// --- NEGATIVE: mutual recursion (SCC>1) → KEEP both ---
+fn mutual_a(n int) -> int {
+    if n <= 0 { 0 } else { mutual_b(n - 1) }
+}
+fn mutual_b(n int) -> int {
+    if n <= 0 { 1 } else { mutual_a(n - 1) }
+}
+
+// --- NEGATIVE: indirect/closure call → KEEP ---
+fn apply_twice(f fn(int) -> int, x int) -> int => f(f(x))
+fn indirect_caller(x int) -> int {
+    ro g = leaf_double
+    apply_twice(g, x)
+}
+
+test "leaf elision positive" {
+    assert(pure_leaf(3) == 7)
+    assert(leaf_double(3) == 6)
+    assert(leaf_forwarder(3) == 7)
+}
+
+test "recursion kept" {
+    assert(rec_self(4) == 10)
+    // a(3)->b(2)->a(1)->b(0)=1
+    assert(mutual_a(3) == 1)
+    // b(3)->a(2)->b(1)->a(0)=0
+    assert(mutual_b(3) == 0)
+}
+
+test "indirect kept" {
+    assert(indirect_caller(5) == 20)
+}

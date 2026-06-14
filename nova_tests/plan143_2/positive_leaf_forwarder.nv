@@ -1,0 +1,29 @@
+// Plan 143.2 [M-opt-leaf-preempt-entry-elision] — POSITIVE (entry-check ELIDED).
+//
+// `forward_once` is a trivial forwarder: a single straight-line call to a
+// statically-resolved free fn (`leaf_callee`), no loop, no recursion, not
+// address-taken. The call edge resolves and the callee is itself a pure leaf,
+// so neither participates in a cycle. Both `forward_once` and `leaf_callee`
+// MUST have their prologue `nova_preempt_check();` ELIDED.
+//
+// `forward_chain` forwards through `forward_once` — a longer acyclic chain;
+// still ELIDED (no cycle, all callees resolved).
+//
+// Verify in positive_leaf_forwarder.c: bodies of `leaf_callee`,
+// `forward_once`, `forward_chain` carry `preempt-check elided` and have NO
+// leading `nova_preempt_check();`.
+
+module plan143_2.positive_leaf_forwarder
+
+fn leaf_callee(x int) -> int => x * 2
+
+fn forward_once(x int) -> int => leaf_callee(x) + 1
+
+fn forward_chain(x int) -> int => forward_once(x) + forward_once(x)
+
+test "forwarder forwards" {
+    // leaf_callee(4)=8, +1 = 9
+    assert(forward_once(4) == 9)
+    // forward_once(4)=9, *2 = 18
+    assert(forward_chain(4) == 18)
+}
