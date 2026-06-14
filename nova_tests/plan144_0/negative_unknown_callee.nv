@@ -1,0 +1,35 @@
+// Plan 144.0 may-GC effect analysis — NEGATIVE (classified MayGC).
+//
+// `use_method` calls a method on a NON-self receiver value (`c.bump()`). The
+// receiver's static type is not source-evident in a whole-program pre-pass
+// that keys nodes by `recv_type::name::sig`, so the call could resolve to ANY
+// `*::bump` overload (recursion / allocation possible). The analysis cannot
+// prove the dynamic target NoGC → it seeds MayGC (Plan §3.2 — an unresolvable /
+// indirect callee defaults to top).
+//
+// `Counter @bump` is itself a pure scalar method (`@n - 1`) and IS a graph
+// node, so it is classified independently as NoGC — proving the MayGC verdict
+// on the CALLER is driven by the unresolvable call site, not by the callee.
+//
+// EXPECT (gc-effect-analyze --format json):
+//   * use_method               → "MayGC"  (non-self method call, unresolvable)
+//   * Counter::bump::           → "NoGC"   (pure scalar receiver method)
+
+module plan144_0.negative_unknown_callee
+
+type Counter {
+    n int
+}
+
+// Pure scalar receiver method — no calls, no alloc → NoGC.
+fn Counter @bump() -> int => @n - 1
+
+// Calls a method on a non-self receiver value → target not source-evident →
+// MayGC (conservative).
+fn use_method(c Counter) -> int => c.bump()
+
+test "non-self method call caller is may-gc" {
+    ro c = Counter { n: 10 }
+    assert(c.bump() == 9)
+    assert(use_method(c) == 9)
+}

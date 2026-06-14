@@ -1,0 +1,30 @@
+// Plan 144.0 may-GC effect analysis — NEGATIVE (classified MayGC).
+//
+// `add_via_c` calls an external (FFI) function `p144_c_add` (defined in
+// p144_ffi_shim.h, force-included via this package's nova.toml). A C callee's
+// may-GC effect is unknown — it could re-enter the Nova runtime on an
+// unanalyzed path and trigger a collection — so the caller is flagged
+// `makes_ffi` → MayGC (Plan §3.2 seed 3). The external decl `p144_c_add`
+// itself is NOT a graph node (externals are skipped), so it never appears in
+// the report; only its Nova caller is classified.
+//
+// `forward_ffi` calls `add_via_c` (a MayGC node) with no allocation of its own
+// → MayGC by propagation.
+//
+// EXPECT (gc-effect-analyze --format json): add_via_c, forward_ffi → both
+// "MayGC". (p144_c_add is external → absent from the function list.)
+
+module plan144_0.negative_ffi_call
+
+external fn p144_c_add(a int, b int) -> int
+
+// Calls FFI → makes_ffi → MayGC.
+fn add_via_c(x int, y int) -> int => p144_c_add(x, y)
+
+// Forwards into a MayGC callee → MayGC by propagation.
+fn forward_ffi(x int) -> int => add_via_c(x, x)
+
+test "ffi caller is may-gc" {
+    assert(add_via_c(3, 4) == 7)
+    assert(forward_ffi(10) == 20)
+}

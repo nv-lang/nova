@@ -1,0 +1,33 @@
+// Plan 144.0 may-GC effect analysis — NEGATIVE (classified MayGC).
+//
+// `run_op` receives a function VALUE (`op fn(int) -> int`) and CALLS it
+// (`op(x)`). The dynamic call target is not a statically-known FnDecl, so the
+// analysis cannot prove the callee NoGC → the node seeds MayGC (an indirect /
+// closure / fn-pointer invocation; Plan §3.2 seed 2 + 4). This is exactly the
+// H4 hole the conservative default closes: an indirect edge could reach an
+// allocator we never saw, so the only sound verdict is MayGC.
+//
+// `make_adder` builds a CLOSURE (`|y| y * k`) — closure creation heap-allocates
+// its env → MayGC seed too. `drive` passes that closure value into `run_op`;
+// it constructs the closure (alloc) AND forwards into the indirect `run_op`,
+// so it is doubly MayGC.
+//
+// EXPECT (gc-effect-analyze --format json): run_op, make_adder, drive → all
+// "MayGC".
+
+module plan144_0.negative_indirect_call
+
+// Indirect call through a fn-value parameter → MayGC (unknown target).
+fn run_op(op fn(int) -> int, x int) -> int => op(x)
+
+// Closure creation allocates env → MayGC.
+fn make_adder(k int) -> fn(int) -> int => |y| y * k
+
+// Builds a closure (alloc) and forwards through the indirect run_op.
+fn drive(x int, k int) -> int => run_op(make_adder(k), x)
+
+test "indirect call through fn value" {
+    ro triple = make_adder(3)
+    assert(run_op(triple, 4) == 12)
+    assert(drive(5, 2) == 10)
+}

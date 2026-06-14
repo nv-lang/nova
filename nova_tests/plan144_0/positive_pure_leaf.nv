@@ -1,0 +1,38 @@
+// Plan 144.0 may-GC effect analysis — POSITIVE (classified NoGC).
+//
+// `scale`, `clamp_low`, `parity` make NO calls and contain ONLY provably
+// non-allocating scalar operations: multiplication, subtraction, comparisons,
+// boolean ops, branch scaffolding and reads of in-scope params/locals. No
+// allocation seed fires, no edge leaves the node, so each is PROVEN NoGC
+// (lattice bottom).
+//
+// NB (soundness): the `+` operator is CONSERVATIVELY allocating at the
+// template level (it could be `str` concatenation, which buffers) — so these
+// pure-leaf fixtures deliberately avoid `+` and use `*` / `-` instead.
+//
+// EXPECT (gc-effect-analyze --format json): every function here → "effect":
+// "NoGC", "no_gc": true.
+
+module plan144_0.positive_pure_leaf
+
+// Pure leaf: only `*` and `-`, no calls.
+fn scale(x int) -> int => x * 3 - 7
+
+// Pure branch over comparisons — still no calls, no allocation.
+fn clamp_low(x int) -> int {
+    if x < 0 { 0 - x } else { x }
+}
+
+// Reads an in-scope local (NOT a unit-variant ctor) + scalar compare → NoGC.
+fn parity(n int) -> bool {
+    ro half = n - (n / 2 * 2)
+    half == 0
+}
+
+test "pure leaf computes" {
+    assert(scale(5) == 8)
+    assert(clamp_low(-4) == 4)
+    assert(clamp_low(9) == 9)
+    assert(parity(4))
+    assert(!parity(7))
+}
