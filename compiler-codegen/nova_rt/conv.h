@@ -526,7 +526,9 @@ static inline nova_str nova_fmt_radix_prefix(int alt, int base, int upper) {
     if (!alt) return (nova_str){ "", 0 };
     char buf[2];
     size_t n = 0;
-    if (base == 16)      { buf[n++] = '0'; buf[n++] = upper ? 'X' : 'x'; }
+    /* Rust semantics: the radix prefix is ALWAYS lowercase (0x/0o/0b) even for
+       uppercase hex `{:#X}` → "0xFF". `upper` affects only the digit body. */
+    if (base == 16)      { buf[n++] = '0'; buf[n++] = 'x'; }
     else if (base == 8)  { buf[n++] = '0'; buf[n++] = 'o'; }
     else if (base == 2)  { buf[n++] = '0'; buf[n++] = 'b'; }
     if (n == 0) return (nova_str){ "", 0 };

@@ -205,3 +205,23 @@ string ops):
 > Unicode case folding/mapping and locale collation remain Phase B (Plan 152.4.4 /
 > 152.5b). The core lenses above are ASCII-complete and byte/codepoint-correct
 > without any Unicode tables.
+
+## Interpolation & format specs
+
+Interpolation is `${expr}` (Display) / `${expr:?}` (Debug). A Rust-style format
+spec follows the colon — `${expr:[[fill]align][sign][#][0][width][.precision][type]}`
+(Plan 152.7-B, D258):
+
+```nova
+assert("${42:5}" == "   42")        // min width, right-aligned (numbers)
+assert("${42:<5}" == "42   ")       // left align
+assert("${42:*^7}" == "**42***")    // fill + center
+assert("${42:05}" == "00042")       // zero-pad
+assert("${255:x}" == "ff")          // hex; X=upper, b=binary, o=octal
+assert("${255:#x}" == "0xff")       // # alternate radix prefix (always lowercase)
+assert("${3.14159:.2}" == "3.14")   // precision (f64); for str = truncate
+```
+
+A malformed spec is a **compile error** (`E_FORMAT_SPEC_UNKNOWN` / `E_BAD_FORMAT_SPEC`),
+never a silent pass. (Generalizing the formatter to write into any `Write` sink —
+`@display(mut w Write)` — is roadmap, Plan 152.7.1.)
