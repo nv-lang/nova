@@ -1,6 +1,7 @@
 // Plan 115 Ф.1 / Plan 118 Ф.5.7 A23 — `null TYPE` literal hard-retracted
-// (D214 amend 2026-06-02). Migration: `Option[ptr]` с `None` для new code,
-// или `(0 as ptr)` mechanical replacement для existing.
+// (D214 amend 2026-06-02). Migration: `Option[*()]` с `None` для new code,
+// или `(0 as *())` mechanical replacement для existing (Plan 134 — `ptr`
+// builtin retired, `*()` = pointer-to-unit = `void*`).
 
 // EXPECT_COMPILE_ERROR E_NULL_PTR_RETRACTED_USE_OPTION
 
