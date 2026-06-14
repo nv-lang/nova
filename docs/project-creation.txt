@@ -37901,6 +37901,26 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   synthesized-conversion `str.from` — нет FnDecl → KEEP), sound над моно, никаких shortcut'ов. Остаток —
   Q-loop-opt-thresholds §B (cross-module precision, minimal-SCC-cut вместо KEEP-all). Ветка НЕ merged
   (финальный merge делает оператор).
+
+[2026-06-14] Plan 152.4.4 — Unicode case folding + case mapping (D253, Phase B завершение std/unicode).
+  fold_case/to_uppercase/to_lowercase(s)->str в opt-in std/unicode (locale-independent). Генератор
+  nova-codegen unicode расширен: parse_case_tables (CaseFolding C+F + SpecialCasing unconditional +
+  UnicodeData[12,13] + DerivedCoreProperties Cased/Case_Ignorable) → std/unicode/case_data.nv (1557 fold /
+  1460 lower / 1552 upper / 176 cased / 506 case-ign ranges). case.nv: fold_case (полное folding,
+  идемпотентно), to_uppercase (multi-cp: ß→SS, ﬁ→FI, ﬃ→FFI, ŉ→ʼN), to_lowercase + Final_Sigma context
+  (Σ→ς в конце слова / σ иначе, через Cased/Case_Ignorable, скип case-ignorable). Title-casing вынесен в
+  [M-152-word-boundaries] (зависит от UAX #29 word segmentation — другой модуль); locale (tr/az/lt) +
+  Turkic-fold исключены по дизайну. Acceptance (G0 двухслойно): breadth-conformance case_conformance.nv
+  полный 2981/2981 mapped codepoints out-of-band (коммит uniform-spread 1500) — проверяет парсер+lookup+
+  emission; independent UCD hand-oracle в case.nv (Turkic-excl I→i, field-index, 3-cp, Final_Sigma+case-
+  ignorable) — пиннит выборку. plan152_4 10/10 (7 pos incl case/case_conformance + 3 neg incl n_case_opt_in),
+  релизный nova+nova-codegen. 0 регрессий (str/basics/plan139 + только plan152_4 импортит std.unicode).
+  Adversarial-review (workflow, 4 агента + верификация): 0 production-дефектов, но 3 честные слабости
+  исправлены — uniform-spread выборка (была head U+0041..ABBF), independent oracle (breadth был
+  self-referential), точная формулировка G0. Codegen-баг попутно [M-codegen-fluent-tail-if-unify]
+  (fluent-@-хвост в if-ветке + unit-сосед → CC-FAIL; workaround helper'ами через Vec[int]). Закрывает
+  [M-152-case-fold]; Plan 152.4 (std/unicode) полностью реализован кроме title-casing. Ветка plan-152.
+
 [2026-06-14] Plan 140.4 — Proven-safe int-overflow check elision (D272, ветка plan-140-overflow-elide,
   worktree nova-p140, от main 73688ea3). Реализует отложенную «Plan 33.8 Ф.1.3». Always-on
   nova_int_checked_{add,sub,mul} (int overflow = panic, Plan 33.8/D13) элидируется когда Z3 доказывает
@@ -37949,3 +37969,36 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   отметки (H4-слайс закрыт рано) + backlog [M-144.0-may-gc-effect-analysis] (analysis done; O1 = Ф.2).
   Commits: 6276d729 (plan) + 60590d21 (анализ) + 13042ed8 (CLI) + b95f3854 (фикстуры) + b908acb2
   (review-фикс) + docs-коммит (этот). Ветка НЕ merged (финальный merge делает оператор).
+
+[2026-06-14] Plan 152.4.5 — word-сегментация (UAX #29) + to_titlecase (D253). Завершает std/unicode
+  кроме sentence-сегментации. str.@as_words()->WordsView (4-я линза, WB1-WB16: lookahead WB6/7/11/12 +
+  WB4 ignore + RI-parity) над word_data.nv (WordBreakProperty range-таблица). to_titlecase: первая
+  cased-буква слова через TITLE-маппинг (не upper — ǆ→ǅ) + lowercase остального с Final_Sigma. Генератор:
+  word_data.nv (1407 wb ranges) + TITLE в case_data.nv (1479, UnicodeData[14]+SpecialCasing). Acceptance G0:
+  полный WordBreakTest.txt 1826/1826 (content-checked, INDEPENDENT UCD-oracle) out-of-band; коммит spread 1500;
+  plan152_4 13/13. Adversarial-review (4 агента): 3 находки исправлены — count() учитывает idx, RI-parity O(n)
+  (была O(n²)), маркер sentence-boundaries в backlog. Codegen-баг [M-codegen-short-freefn-name-collision]
+  (wb→wbcat). Закрывает [M-152-word-boundaries]; sentence → [M-152-sentence-boundaries]. Ветка plan-152.
+
+[2026-06-14] Plan 152.7-B — формат-спеки в интерполяции (D258). Rust-style mini-language
+  ${expr:[[fill]align][sign][#][0][width][.precision][type]]} (база D229 — только :?). Реализация:
+  FormatSpec AST + parser + emit_c.rs + runtime conv.h (int/radix/pad/prefix/f64 body). negative hex =
+  two's-complement; alt-префикс всегда строчный (:#X→0xFF, как Rust). plan152_7 5/5 (t1 width/align,
+  t2 zero-pad/sign, t3 radix x/X/b/o+#, t4 precision + n_bad_format_spec). B2 (Write-sink) отложено →
+  152.7.1 [M-152.7-write-sink]. ВОССТАНОВЛЕНО после reboot: фоновый агент завис, его реализация уцелела
+  в worktree; сохранил checkpoint, проверил, починил баг #X-префикса (0X→0x), добавил neg+доки. Ветка
+  worktree-agent (merge в main отдельно).
+
+[2026-06-14] Interpreter disabled — `nova run` errors as unsupported (C-codegen only). Древовидный
+  интерпретатор отключён: `nova run` остаётся видимой CLI-командой, но при вызове печатает явное
+  сообщение «interpreter not currently supported» и направляет на `nova build` / `nova test` (единственный
+  поддерживаемый путь — Nova → C). Изменения: nova-cli/src/main.rs (run → error-stub, ad0251e8);
+  compiler-codegen/src/interp/mod.rs (module-note «currently unsupported»); удалены DEAD interp-тесты
+  снятого `nova` interpreter-крейта (run_interp_named.rs, spec_nova.rs/integration.rs interp-части,
+  tests/common хелперы); user-facing доки + www вычищены от `nova run` (README/.ru + examples +
+  сайт be06628); nova-cli доки (docs/nova-cli.md/.ru.md) выверены против реального CLI (2c8fb861).
+  Историю `nova run` в plans/spec/promts/project-creation НЕ скрабил (out of scope). Ветка
+  chore-disable-interp-nova-run, worktree nova-noninterp. Followup [M-interp-unsupported]: полное
+  удаление интерпретатора ЛИБО порт interp-only тестов на C-codegen; чистка tests/ integration.
+
+[2026-06-14] Plan 157 interpreter-UNSUPPORTED formalized: spec D274 (08-runtime) + open-question Q-interpreter-future + regression test nova-cli/tests/interp_unsupported.rs (negative `nova run` errors + positive `nova check` works, via release binary, 2/2 PASS). Acceptance criteria in plan; backlog [M-interp-unsupported].

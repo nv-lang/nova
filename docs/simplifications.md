@@ -36374,6 +36374,42 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   starvation, только недополученная оптимизация. Hardcode synthesized-conversion-знаний был бы ИМЕННО
   shortcut, маскирующим недоказанный случай как элидируемый → сознательно отвергнут. Расширения (cross-
   module манифест KEEP-флага, minimal-SCC-cut, synthesized-conversion-регистр) — Q-loop-opt-thresholds §B.
+
+- **Plan 152.4.4 — Unicode case folding + case mapping `fold_case`/`to_uppercase`/`to_lowercase` (2026-06-14, D253)**:
+  Locale-independent Unicode case (UAX / SpecialCasing) в opt-in `std/unicode`. `fold_case(s)` —
+  полное case folding (CaseFolding.txt status **C+F**, для caseless matching: Σ/σ/ς→σ, ß→"ss", Kelvin→k,
+  идемпотентно). `to_uppercase`/`to_lowercase(s)->str` — полное Unicode case mapping, multi-codepoint
+  (ß→SS, ﬁ→FI, ﬃ→FFI 3-cp, İ→"i"+◌̇, ŉ→ʼN) + **Final_Sigma** context (Σ→ς в конце слова / σ иначе, через
+  `Cased`/`Case_Ignorable` range-таблицы, скип case-ignorable). Данные: `nova-codegen unicode` теперь
+  эмитит `std/unicode/case_data.nv` — FOLD/LOWER/UPPER maps (`cp:m1,m2;..`) из CaseFolding C+F +
+  SpecialCasing **unconditional** + UnicodeData[12]=upper/[13]=lower, плюс CASED/CASE_IGNORABLE ranges из
+  DerivedCoreProperties. Lazy-static `ro` (как нормализация/graphemes). plan152_4 10/10.
+  **Исключено ПО ДИЗАЙНУ (не упрощение):** (a) locale tailoring — tr/az/lt SpecialCasing conditional +
+  Turkic fold status T (D253 §no-locale; locale-case = отдельная фича); (b) title-casing — определён над
+  UAX #29 word boundaries, которых ещё нет → вынесен в `[M-152-word-boundaries]` (зависит от другого
+  модуля). ASCII `transform.nv` `to_upper/lower` оставлены ASCII-only (Unicode-версии в opt-in std/unicode
+  — иначе таблицы попали бы в prelude, нарушив A6).
+  **G0 «без упрощений» — двухслойная проверка (честно про scope):** (1) breadth-conformance
+  `case_conformance.nv` — **полный 2981/2981 mapped codepoints** out-of-band PASS (коммит — **uniform-spread
+  1500**, охватывает ASCII…лигатуры FB00…supplementary plane). НО expected выводится из того же
+  `parse_case_tables` → проверяет рантайм **парсер+lookup+emission** (round-trip), НЕ **выборку** таблиц
+  (self-referential). (2) **Independent UCD hand-oracle** в `case.nv` (expected вручную из UCD-спеки) пиннит
+  именно выборку, которую breadth не ловит: Turkic/locale-исключение (I→i не ı; i→I не İ; İ→i̇), field-index
+  sentinels, 3-cp expansions, Final_Sigma с case-ignorable interleaving (’ U+2019). Этот двухслойный подход —
+  результат adversarial-review (4 агента): review нашёл, что одна breadth-конформность переоценивала G0
+  («2981/2981 = доказано» было завышено — оно про парсер, не про выборку) + что коммитнутая выборка была
+  **низким head'ом** (stride=1 при limit 1500/total 2981 → U+0041..U+ABBF, без лигатур/high-plane), а не
+  spread. Оба честно исправлены (uniform-spread + independent oracle + точная формулировка).
+  **Санкционированное упрощение — только РАЗМЕР коммитнутой фикстуры** (1500 spread вместо 2981; полнота
+  out-of-band, согласовано с автором), как у нормализации.
+  **Codegen-баг попутно (`[M-codegen-fluent-tail-if-unify]`):** fluent-метод (`-> @`: `StringBuilder.append`,
+  `Vec.push`) как хвост ветки `if`/`match` типизируется в C как `Builder*`/`Vec*`; при unit-соседе →
+  несовпадение типов C (CC-FAIL). `match` коэрсит (unit-арм доминирует), но вложенный `if` с обоими
+  fluent-хвостами — нет → сломал компиляцию ВСЕГО `std.unicode` (normalize/graphemes тоже, т.к. peer'ы).
+  Workaround (не codegen-fix): helper'ы (`single`/`fold_one`/`upper_one`/`lower_one`) возвращают `Vec[int]`,
+  `push`/`append` только внутри for-циклов — ни один хвост ветки не fluent. Настоящий fix (коэрсия
+  mismatched if/match-веток в unit в discard-позиции) — followup.
+
 [2026-06-14] Plan 140.4 (overflow-элизия, D272, ветка plan-140-overflow-elide): V1 покрывает binary-
   выражения int +/-/* (главный реальный кейс — loop/requires-bounded арифметика). Compound-assign (x += y,
   codegen AssignOp→nova_int_checked_*) ОТЛОЖЕН → [M-140.4-compound-assign-overflow-elision] (P3): таргеты
@@ -36405,3 +36441,66 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   callee-резолюция через manifest, str-interning-граница, более тонкая alloc-классификация) — все
   консервативны (теряют элизию, остаются соундны) → Q-may-gc-precision; браться имеет смысл лишь когда
   Ф.2 начнёт потреблять набор и профиль покажет доминирующие упущенные элизии.
+
+- **Plan 152.4.5 — word-сегментация (UAX #29) + `to_titlecase` (2026-06-14, D253)**:
+  Четвёртая линза `str.@as_words() -> WordsView` (UAX #29 word boundaries WB1-WB16) + `to_titlecase(s)`
+  в opt-in std/unicode — закрывает std/unicode кроме sentence-сегментации. Генератор `nova-codegen unicode`
+  расширен: `word_data.nv` (WB-категории range-таблица из WordBreakProperty.txt; ExtPict для WB3c reused из
+  grapheme_data) + TITLE-маппинг в `case_data.nv` (UnicodeData[14] с fallback на [12] + SpecialCasing title).
+  Алгоритм (words.nv): полный rule-cascade WB3..WB999 с **lookahead** (WB6/7/7b/7c/11/12 — next/prevprev base
+  через skip-ignorables) + **WB4 ignore-rule** (Extend/Format/ZWJ фолдятся в предыдущий base) + **RI-parity**
+  (WB15/16). `to_titlecase`: первая cased-буква слова через TITLE-маппинг (не upper — ǆ→ǅ), остальное lowercase
+  с Final_Sigma над оригинальными cps. WordsView (`value priv {buf, bounds, idx}`) материализует границы один
+  раз (as_words O(n) на создание, НЕ O(1) как as_chars/as_graphemes — задокументировано; word-правила требуют
+  lookahead).
+  **G0 «без упрощений»:** **полный WordBreakTest.txt 1826/1826** (content-checked) out-of-band PASS — и это
+  **INDEPENDENT** oracle (boundaries заданы в UCD-тест-файле, НЕ выводятся из генератора, в отличие от
+  case-breadth). Коммит — uniform-spread 1500. plan152_4 13/13 (9 pos + 4 neg). title≠upper пиннит hand-case
+  ǆ→ǅ. Sentence-сегментация исключена **по дизайну** (отдельный UAX #29 алгоритм SB1-SB11 → `[M-152-sentence-boundaries]`).
+  **Adversarial-review (4 агента + верификация) — 3 подтверждённые находки, ВСЕ исправлены:** (1) `WordsView.count()`
+  игнорировал `@idx` (возвращал total, не remaining — расходилось с CharsIter/GraphemesView) → фикс `b-1-@idx`;
+  (2) **O(n²)** в `wb_ri_run` (rescan RI-прогона на каждой позиции — нарушал claim «O(n)») → инкрементальная
+  RI-чётность `wb_ri_step` за один проход O(n) (как в graphemes); (3) маркер `[M-152-sentence-boundaries]`
+  упоминался в доках, но не был в backlog → добавлен. Sanctioned simplification — только размер фикстуры (1500
+  spread; полнота out-of-band).
+  **Codegen-баг попутно (`[M-codegen-short-freefn-name-collision]`):** 2-буквенное имя free-функции `wb` дало
+  каскад `undefined identifier wb` (коллизия с runtime-локалом `wb` в write_buffer.nv на C-уровне; спаны
+  указывали в peer-файлы из-за merged-буфера модуля). Workaround — renamed `wb`→`wbcat`. Настоящий fix
+  (mangling/scoping имён free-функций vs C-локалов) — followup.
+
+- **Plan 152.7-B — формат-спеки в интерполяции (Rust-style mini-language, 2026-06-14, D258)**:
+  `${expr:[[fill]align][sign][#][0][width][.precision][type]]}` — полный Rust-style формат-DSL
+  (база D229/Plan 91.14 поддерживала только `:?`). align/fill (`<`/`^`/`>` + fill-char), sign `+`,
+  alt `#` (radix-префикс), zero-pad `0`, width, `.precision` (f64 знаки / str усечение), type
+  (`x`/`X`/`b`/`o`/`?`). Реализация: AST `FormatSpec` (format_spec.rs) + parser + codegen (emit_c.rs) →
+  runtime conv.h (`nova_fmt_int_body`/`_radix_body`/`_pad`/`_radix_prefix`/`_f64_body`). Целые — nova_int
+  (64-bit), negative hex = two's-complement (`${-1:x}`→`ffffffffffffffff`, как Rust). G0 без упрощений:
+  полный Rust-style набор, не подмножество; plan152_7 5/5 (4 pos + 1 neg).
+  **Восстановление после reboot:** этот sub-plan делал фоновый агент, который завис (watchdog) на
+  дописывании тестов; его реализация (~972 строки) уцелела в worktree некоммитнутой. Я её сохранил
+  checkpoint-коммитом, проверил (4/4), нашёл+починил **1 баг**: `nova_fmt_radix_prefix` делал `0X` для
+  `:#X`, а Rust всегда строчный `0x` (`upper` влияет только на цифры) → fix `buf[n++]='x'`. Добавил
+  негативный тест + доки (D258, план, strings.md).
+  **Sanctioned scope:** реализован B1 (формат-спеки). **B2 (обобщение sink `@display(mut w Write)`) —
+  отложено по дизайну** (breaking: меняет сигнатуры всех `@display`/`@debug`) → Plan 152.7.1 /
+  `[M-152.7-write-sink]`. Не упрощение — отдельная breaking-задача.
+
+- **Interpreter disabled — `nova run` errors as unsupported (2026-06-14)**: древовидный
+  интерпретатор отключён; единственный поддерживаемый путь исполнения — Nova → C
+  (`nova build` / `nova test`). `nova run` СОХРАНЁН как видимая CLI-команда (не удалён из
+  справки), но при вызове печатает явное «interpreter not currently supported» и направляет
+  на C-codegen. Это НЕ упрощение реализации, а сознательная продуктовая политика: tree-walker
+  не поддерживается, поведение при вызове честное (loud error, не silent no-op). Сделано:
+  (a) `nova-cli/src/main.rs` — `run` → error-stub (не зовёт интерпретатор); (b)
+  `compiler-codegen/src/interp/mod.rs` — module-note «currently unsupported» в коде;
+  (c) удалены DEAD interp-тесты, ссылавшиеся на снятый `nova` interpreter-крейт
+  (`nova-cli/tests/run_interp_named.rs` + interp-части `compiler-codegen/tests/{spec_nova.rs,
+  integration.rs}` + `tests/common` хелперы); (d) user-facing доки + www site вычищены от
+  `nova run` (README/.ru + examples + сайт `be06628`); (e) nova-cli доки
+  (`docs/nova-cli.md`/.ru.md) выверены против реального CLI. Историческое упоминание `nova run`
+  в plans/spec/promts/scripts/nova_tests НЕ скрабилось (out of scope — historical fixture text).
+  Ветка `chore-disable-interp-nova-run` (worktree nova-noninterp). Residual →
+  `[M-interp-unsupported]`: полное удаление интерпретатора ЛИБО порт interp-only тестов на
+  C-codegen; чистка `tests/` integration-таргетов.
+
+- [2026-06-14] Plan 157 (interpreter UNSUPPORTED) formal artifacts: spec D274, Q-interpreter-future, regression test interp_unsupported.rs (neg+pos, release). `nova run` is a LOUD error (not a silent no-op) — a deliberate product boundary, not a shortcut.
