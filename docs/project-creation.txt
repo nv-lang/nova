@@ -37957,3 +37957,15 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   152.7.1 [M-152.7-write-sink]. ВОССТАНОВЛЕНО после reboot: фоновый агент завис, его реализация уцелела
   в worktree; сохранил checkpoint, проверил, починил баг #X-префикса (0X→0x), добавил neg+доки. Ветка
   worktree-agent (merge в main отдельно).
+
+[2026-06-14] Interpreter disabled — `nova run` errors as unsupported (C-codegen only). Древовидный
+  интерпретатор отключён: `nova run` остаётся видимой CLI-командой, но при вызове печатает явное
+  сообщение «interpreter not currently supported» и направляет на `nova build` / `nova test` (единственный
+  поддерживаемый путь — Nova → C). Изменения: nova-cli/src/main.rs (run → error-stub, ad0251e8);
+  compiler-codegen/src/interp/mod.rs (module-note «currently unsupported»); удалены DEAD interp-тесты
+  снятого `nova` interpreter-крейта (run_interp_named.rs, spec_nova.rs/integration.rs interp-части,
+  tests/common хелперы); user-facing доки + www вычищены от `nova run` (README/.ru + examples +
+  сайт be06628); nova-cli доки (docs/nova-cli.md/.ru.md) выверены против реального CLI (2c8fb861).
+  Историю `nova run` в plans/spec/promts/project-creation НЕ скрабил (out of scope). Ветка
+  chore-disable-interp-nova-run, worktree nova-noninterp. Followup [M-interp-unsupported]: полное
+  удаление интерпретатора ЛИБО порт interp-only тестов на C-codegen; чистка tests/ integration.

@@ -36462,3 +36462,21 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   **Sanctioned scope:** реализован B1 (формат-спеки). **B2 (обобщение sink `@display(mut w Write)`) —
   отложено по дизайну** (breaking: меняет сигнатуры всех `@display`/`@debug`) → Plan 152.7.1 /
   `[M-152.7-write-sink]`. Не упрощение — отдельная breaking-задача.
+
+- **Interpreter disabled — `nova run` errors as unsupported (2026-06-14)**: древовидный
+  интерпретатор отключён; единственный поддерживаемый путь исполнения — Nova → C
+  (`nova build` / `nova test`). `nova run` СОХРАНЁН как видимая CLI-команда (не удалён из
+  справки), но при вызове печатает явное «interpreter not currently supported» и направляет
+  на C-codegen. Это НЕ упрощение реализации, а сознательная продуктовая политика: tree-walker
+  не поддерживается, поведение при вызове честное (loud error, не silent no-op). Сделано:
+  (a) `nova-cli/src/main.rs` — `run` → error-stub (не зовёт интерпретатор); (b)
+  `compiler-codegen/src/interp/mod.rs` — module-note «currently unsupported» в коде;
+  (c) удалены DEAD interp-тесты, ссылавшиеся на снятый `nova` interpreter-крейт
+  (`nova-cli/tests/run_interp_named.rs` + interp-части `compiler-codegen/tests/{spec_nova.rs,
+  integration.rs}` + `tests/common` хелперы); (d) user-facing доки + www site вычищены от
+  `nova run` (README/.ru + examples + сайт `be06628`); (e) nova-cli доки
+  (`docs/nova-cli.md`/.ru.md) выверены против реального CLI. Историческое упоминание `nova run`
+  в plans/spec/promts/scripts/nova_tests НЕ скрабилось (out of scope — historical fixture text).
+  Ветка `chore-disable-interp-nova-run` (worktree nova-noninterp). Residual →
+  `[M-interp-unsupported]`: полное удаление интерпретатора ЛИБО порт interp-only тестов на
+  C-codegen; чистка `tests/` integration-таргетов.
