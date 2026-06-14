@@ -6,14 +6,14 @@ module plan138.t2_vec_get_some_none
 import std.collections.vec.{Vec}
 
 test "get in-bounds returns Some" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     assert(v.get(0) == Some(10))
     assert(v.get(1) == Some(20))
     assert(v.get(2) == Some(30))
 }
 
 test "get out-of-bounds returns None" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     assert(v.get(3) == None)
     assert(v.get(99) == None)
     assert(v.get(-1) == None)

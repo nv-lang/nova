@@ -16,11 +16,11 @@ import std.collections.vec.{Vec}
 
 test "flatten [[1,2],[3],[4,5]] -> [1,2,3,4,5]" {
     mut nested = Vec[Vec[int]].new()
-    nested.push(Vec[int].from([1, 2]))
-    nested.push(Vec[int].from([3]))
-    nested.push(Vec[int].from([4, 5]))
+    nested.push(Vec[int].of(1, 2))
+    nested.push(Vec[int].of(3))
+    nested.push(Vec[int].of(4, 5))
     ro flat = nested.flatten()
-    assert(flat.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    assert(flat.equal(Vec[int].of(1, 2, 3, 4, 5)))
     // outer + inner rows are untouched (flatten copies, never moves)
     assert(nested.len() == 3)
     ro row0 = nested[0]
@@ -29,12 +29,12 @@ test "flatten [[1,2],[3],[4,5]] -> [1,2,3,4,5]" {
 
 test "flatten with empty inner rows skips them" {
     mut nested = Vec[Vec[int]].new()
-    nested.push(Vec[int].from([7]))
+    nested.push(Vec[int].of(7))
     nested.push(Vec[int].new())
-    nested.push(Vec[int].from([8, 9]))
+    nested.push(Vec[int].of(8, 9))
     nested.push(Vec[int].new())
     ro flat = nested.flatten()
-    assert(flat.equal(Vec[int].from([7, 8, 9])))
+    assert(flat.equal(Vec[int].of(7, 8, 9)))
 }
 
 test "flatten of empty outer -> empty []" {
@@ -54,8 +54,8 @@ test "flatten where every inner row is empty -> empty" {
 
 test "flatten str elements [[\"a\"],[\"b\",\"c\"]] -> [\"a\",\"b\",\"c\"]" {
     mut nested = Vec[Vec[str]].new()
-    nested.push(Vec[str].from(["a"]))
-    nested.push(Vec[str].from(["b", "c"]))
+    nested.push(Vec[str].of("a"))
+    nested.push(Vec[str].of("b", "c"))
     ro flat = nested.flatten()
     assert(flat.len() == 3)
     assert(flat[0] == "a")
@@ -64,12 +64,12 @@ test "flatten str elements [[\"a\"],[\"b\",\"c\"]] -> [\"a\",\"b\",\"c\"]" {
 }
 
 test "double flatten Vec[Vec[Vec[int]]] -> Vec[int]" {
-    ro a = Vec[int].from([1, 2])
-    ro b = Vec[int].from([3])
+    ro a = Vec[int].of(1, 2)
+    ro b = Vec[int].of(3)
     mut l2x = Vec[Vec[int]].new()
     l2x.push(a)
     l2x.push(b)
-    ro c = Vec[int].from([4, 5])
+    ro c = Vec[int].of(4, 5)
     mut l2y = Vec[Vec[int]].new()
     l2y.push(c)
     mut l3 = Vec[Vec[Vec[int]]].new()
@@ -81,5 +81,5 @@ test "double flatten Vec[Vec[Vec[int]]] -> Vec[int]" {
     assert(mid.len() == 3)
     // second flatten: Vec[Vec[int]] -> Vec[int]
     ro flat = mid.flatten()
-    assert(flat.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    assert(flat.equal(Vec[int].of(1, 2, 3, 4, 5)))
 }

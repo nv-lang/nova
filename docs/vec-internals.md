@@ -171,12 +171,12 @@ of elements. All are Nova-body over bulk `RawMem.copy`.
 ### Concat and operator `+` (non-mutating join)
 
 ```nova
-ro a = Vec[int].from([1, 2, 3])
-ro b = Vec[int].from([4, 5])
+ro a = Vec[int].of(1, 2, 3)
+ro b = Vec[int].of(4, 5)
 ro c = a.concat(b)        // c == [1,2,3,4,5];  a, b untouched
 ro d = a + b              // d == [1,2,3,4,5];  `+` == @plus == @concat
-mut e = Vec[int].from([1, 2])
-e += Vec[int].from([3, 4]) // e == [1,2,3,4];  a += b  ==  a = a + b (fresh Vec)
+mut e = Vec[int].of(1, 2)
+e += Vec[int].of(3, 4)    // e == [1,2,3,4];  a += b  ==  a = a + b (fresh Vec)
 ```
 
 - `@concat(other) -> Vec[T]` allocates **exactly** `a.len() + b.len()` (`with_capacity`),
@@ -194,7 +194,7 @@ e += Vec[int].from([3, 4]) // e == [1,2,3,4];  a += b  ==  a = a + b (fresh Vec)
 ### Rotate (cyclic shift, in place)
 
 ```nova
-mut v = Vec[int].from([1, 2, 3, 4, 5])
+mut v = Vec[int].of(1, 2, 3, 4, 5)
 v.rotate_left(2)          // [3,4,5,1,2]
 v.rotate_right(2)         // [1,2,3,4,5]  (right by k == left by len-k)
 ```
@@ -207,7 +207,7 @@ are unchanged. Contract `requires n >= 0`. They return `@` for chaining.
 ### Drain (cut a range out, return it owned)
 
 ```nova
-mut v = Vec[int].from([1, 2, 3, 4, 5])
+mut v = Vec[int].of(1, 2, 3, 4, 5)
 ro cut = v.drain(1..4)    // cut == [2,3,4];  v == [1,5]
 ```
 
@@ -219,8 +219,8 @@ untouched). Contract `requires start>=0 && end>=start && end<=@len` (OOB / rever
 ### insert_slice (slice-flavoured bulk insert)
 
 ```nova
-mut v = Vec[int].from([1, 2, 5, 6])
-v.insert_slice(2, Vec[int].from([3, 4]))   // [1,2,3,4,5,6]
+mut v = Vec[int].of(1, 2, 5, 6)
+v.insert_slice(2, Vec[int].of(3, 4))   // [1,2,3,4,5,6]
 ```
 
 `mut @insert_slice(i, sl []T) -> @` inserts every element of `sl` at index `i` (`i == len`
@@ -232,7 +232,7 @@ Contract `requires 0 <= i && i <= @len`.
 ### flatten (concatenate the inner rows)
 
 ```nova
-ro nested = Vec[Vec[int]].from([[1, 2], [3], [4, 5]])
+ro nested = Vec[Vec[int]].of([1, 2], [3], [4, 5])
 ro flat = nested.flatten()    // [1, 2, 3, 4, 5]
 ```
 

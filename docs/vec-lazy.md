@@ -12,7 +12,7 @@ pulls elements through it, and it pulls only as many as it needs.
 ```nova
 import std.collections.vec_lazy
 
-let v = Vec[int].from([1, 2, 3, 4, 5, 6])
+let v = Vec[int].of(1, 2, 3, 4, 5, 6)
 let got = v.lazy().map(|x| x * 10).filter(|x| x > 25).collect()
 assert(got == [30, 40, 50, 60])
 ```
@@ -58,7 +58,7 @@ Nothing runs until a terminator drives the chain, and only the pulled elements
 are touched:
 
 ```nova
-let v = Vec[int].from([1, 2, 3, 4, 5])
+let v = Vec[int].of(1, 2, 3, 4, 5)
 
 // No terminator → no work. `map` never runs.
 let _pipeline = v.lazy().map(|x| x * 2).filter(|x| x > 0)

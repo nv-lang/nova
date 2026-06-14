@@ -6,14 +6,14 @@ module plan138.t1_vec_index_basic
 import std.collections.vec.{Vec}
 
 test "v[0] v[1] v[2] on Vec[int]" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     assert(v[0] == 10)
     assert(v[1] == 20)
     assert(v[2] == 30)
 }
 
 test "v[i] on Vec[str]" {
-    ro v = Vec[str].from(["hello", "world"])
+    ro v = Vec[str].of("hello", "world")
     assert(v[0] == "hello")
     assert(v[1] == "world")
 }

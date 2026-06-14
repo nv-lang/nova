@@ -5,30 +5,30 @@ module plan153_2.adapters
 import std.collections.vec_lazy
 
 test "map transforms every element" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     assert(v.lazy().map(|x| x * 10).collect() == [10, 20, 30])
 }
 
 test "map can change the element type (int -> str)" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     ro got = v.lazy().map(|x| str.from(x)).collect()
     assert(got == ["1", "2", "3"])
 }
 
 test "filter keeps only matching elements, preserving order" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     assert(v.lazy().filter(|x| x % 2 == 0).collect() == [2, 4, 6])
 }
 
 test "filter_map maps and drops in one pass" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     // keep evens, halve them
     ro got = v.lazy().filter_map(|x| if x % 2 == 0 { Some(x / 2) } else { None }).collect()
     assert(got == [1, 2])
 }
 
 test "enumerate pairs each element with its index" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     ro got = v.lazy().enumerate().collect()
     assert(got.len() == 3)
     assert(got[0] == (0, 10))
@@ -37,31 +37,31 @@ test "enumerate pairs each element with its index" {
 }
 
 test "take yields at most n elements" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     assert(v.lazy().take(3).collect() == [1, 2, 3])
 }
 
 test "take with n larger than length yields all" {
-    ro v = Vec[int].from([1, 2])
+    ro v = Vec[int].of(1, 2)
     assert(v.lazy().take(10).collect() == [1, 2])
 }
 
 test "take 0 yields nothing" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     assert(v.lazy().take(0).collect() == [])
 }
 
 test "skip discards the first n elements" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     assert(v.lazy().skip(2).collect() == [3, 4, 5])
 }
 
 test "skip past the end yields nothing" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     assert(v.lazy().skip(10).collect() == [])
 }
 
 test "empty vector yields nothing through any adapter" {
-    ro v = Vec[int].from([])
+    ro v = Vec[int].new()
     assert(v.lazy().map(|x| x + 1).filter(|x| x > 0).collect() == [])
 }

@@ -6,6 +6,6 @@ module neg.t_neg_vec_index_oob
 import std.collections.vec.{Vec}
 
 test "v[3] on length-3 vec panics" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     ro _ = v[3]
 }

@@ -17,29 +17,29 @@ module plan138_2.t10_vec_insert_single_vs_bulk_pos
 import std.collections.vec.{Vec}
 
 test "single insert — one element of type T (int)" {
-    mut v = Vec[int].from([1, 2, 4])
+    mut v = Vec[int].of(1, 2, 4)
     v.insert(2, 3)
-    assert(v.equal(Vec[int].from([1, 2, 3, 4])))
+    assert(v.equal(Vec[int].of(1, 2, 3, 4)))
 }
 
 test "bulk splice — a Vec[int] splices its contents (distinct from single)" {
-    mut v = Vec[int].from([1, 2, 4])
-    v.splice(2, Vec[int].from([3]))
+    mut v = Vec[int].of(1, 2, 4)
+    v.splice(2, Vec[int].of(3))
     // Splice of a 1-element Vec gives the SAME result as the single insert
     // above, but routes through @splice (a Vec[int] arg, not an int).
-    assert(v.equal(Vec[int].from([1, 2, 3, 4])))
+    assert(v.equal(Vec[int].of(1, 2, 3, 4)))
 }
 
 test "single insert vs bulk splice on Vec[int] — DISTINCT routing" {
     // single: insert the int 99 -> [1,99,2]
-    mut a = Vec[int].from([1, 2])
+    mut a = Vec[int].of(1, 2)
     a.insert(1, 99)
-    assert(a.equal(Vec[int].from([1, 99, 2])))
+    assert(a.equal(Vec[int].of(1, 99, 2)))
 
     // bulk: splice a 3-element Vec -> [1, 7,8,9, 2]
-    mut b = Vec[int].from([1, 2])
-    b.splice(1, Vec[int].from([7, 8, 9]))
-    assert(b.equal(Vec[int].from([1, 7, 8, 9, 2])))
+    mut b = Vec[int].of(1, 2)
+    b.splice(1, Vec[int].of(7, 8, 9))
+    assert(b.equal(Vec[int].of(1, 7, 8, 9, 2)))
 }
 
 test "Vec[Vec[int]] — single insert routes element-wise (len +1, not +N)" {
@@ -53,9 +53,9 @@ test "Vec[Vec[int]] — single insert routes element-wise (len +1, not +N)" {
     // is what Ф.0a fixes, and the C confirms an element-typed `Nova_Vec_int* v`
     // single-insert was emitted (no splice for this type).
     mut outer = Vec[Vec[int]].new()
-    outer.push(Vec[int].from([1, 1]))
+    outer.push(Vec[int].of(1, 1))
     ro before = outer.len()
-    ro inner = Vec[int].from([2, 2, 2])   // 3 elements — a splice would add 3
+    ro inner = Vec[int].of(2, 2, 2)   // 3 elements — a splice would add 3
     outer.insert(0, inner)
     assert(outer.len() == before + 1)     // +1 => single-element insert, not splice
 }

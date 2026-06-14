@@ -22,8 +22,8 @@ test "param-type overload (same arity, different types)" {
     assert(b.tag("abc") == 3)
 }
 test "Vec @cap getter/setter + fluent chain (return-type infer)" {
-    mut v = Vec[int].from([1, 2])
+    mut v = Vec[int].of(1, 2)
     v.cap(v.len() + 5).push(3)
     assert(v.cap() == 7 && v.len() == 3)
-    assert(v.equal(Vec[int].from([1, 2, 3])))
+    assert(v.equal(Vec[int].of(1, 2, 3)))
 }

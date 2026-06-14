@@ -23,13 +23,13 @@ test "methods resolve across folder peers (core/access/mutate/slice/protocols)" 
     assert(v.get(5) == None)      // access.nv @get
     ro w = v[0..2]                // slice.nv @index(Range) — zero-copy view
     assert(w.len() == 2 && w[0] == 10 && w[1] == 20)
-    ro v2 = Vec[int].from([10, 20, 30])
+    ro v2 = Vec[int].of(10, 20, 30)
     assert(v.equal(v2))           // protocols.nv @equal
 }
 
 test "[]T and Vec[int] are interchangeable (D239)" {
     ro lit []int = [1, 2, 3]
-    ro vec = Vec[int].from([1, 2, 3])   // inferred Vec[int]
+    ro vec = Vec[int].of(1, 2, 3)   // inferred Vec[int]
     assert(sum(lit) == 6)         // []T literal → []int param
     assert(sum(vec) == 6)         // Vec[int] → []int param (D239 alias)
     assert(lit.equal(vec))        // []T ≡ Vec[int]
@@ -39,8 +39,8 @@ test "[]T and Vec[int] are interchangeable (D239)" {
 }
 
 test "Vec[int] Compare is lexicographic (folder protocols.nv)" {
-    ro a = Vec[int].from([1, 2, 3])
-    ro b = Vec[int].from([1, 2, 4])
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(1, 2, 4)
     assert(a.compare(b) == -1)
     assert(a.compare(a) == 0)
 }

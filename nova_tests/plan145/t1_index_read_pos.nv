@@ -14,7 +14,7 @@ test "v[i] read on Vec[int] literal" {
 }
 
 test "v[i] read on Vec[int].from" {
-    ro v = Vec[int].from([100, 200, 300])
+    ro v = Vec[int].of(100, 200, 300)
     assert(v[0] == 100)
     assert(v[2] == 300)
 }

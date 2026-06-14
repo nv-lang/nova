@@ -12,6 +12,6 @@ module plan138_2.t11_vec_bulk_insert_oob_neg
 import std.collections.vec.{Vec}
 
 fn main() -> () {
-    mut dst = Vec[int].from([1, 2, 3])
-    dst.splice(4, Vec[int].from([10, 20]))  // len=3, i=4 -> out of bounds
+    mut dst = Vec[int].of(1, 2, 3)
+    dst.splice(4, Vec[int].of(10, 20))  // len=3, i=4 -> out of bounds
 }

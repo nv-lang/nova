@@ -69,7 +69,7 @@ test "[]Option[int] count Some elements via if-let" {
 
 test "Vec[Option[int]] and []Option[int] are the same type" {
     // []T is sugar for Vec[T]; a Vec[Option[int]] can be used wherever []Option[int] expected
-    ro src = Vec[Option[int]].from([Some(7), None, Some(9)])
+    ro src = Vec[Option[int]].of(Some(7), None, Some(9))
     ro v []Option[int] = src
     assert(v.len() == 3)
     assert(v[0] == Some(7))
