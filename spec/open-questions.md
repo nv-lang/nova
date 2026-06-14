@@ -645,6 +645,47 @@ cross-module / clone / interpolation-сайты доминируют в упущ
 
 ---
 
+## Q-gc-layout-precision. Точность per-type GC layout bitmaps (residual после Plan 144.1)
+
+**Контекст.** [D277](decisions/08-runtime.md#d277) ([Plan 144.1](../docs/plans/144.1-heap-layout-bitmaps.md))
+зафиксировал per-type pointer-offset bitmap'ы с дефолтом **«неизвестно → указатель»** (over-approximate)
+и пометкой `unresolved=true` для нерезолвящихся типов. Соундность закрыта (никогда не пропустить
+реальный GC-указатель). Остаётся **точность** — где консервативный анализ помечает слот как указатель
+(или весь тип unresolved), хотя реально слот скаляр / не-GC, раздувая будущую mark-работу Ф.5:
+
+1. **Closures env-bitmap.** Сейчас `fn(...)`-поле моделируется как ОДИН GC-указатель на closure-объект
+   (env — heap), а анонимный `protocol { }` / dyn — `void*` + флаг `unresolved` (макс-консервативно).
+   Точный per-capture env-bitmap (word0 = fn-ptr = НЕ-GC code-pointer; далее — по одному слоту на
+   capture с их GC-ностью) дал бы точную пометку env'а вместо «сканировать как один указатель».
+   Прецедент: Go `gcdata` на display-класс, JVM/.NET display-классы, MLton ([Plan 144 §7.6 Q10](../docs/plans/144-precise-gc-implementation.md#76)).
+   Гейтится на H5 (захват by-value boxing vs interior-in-frame) — Ф.0.
+2. **Generic / erased инстанциации.** Неразрешённый generic-слот / erased `nova_int`-boxed элемент /
+   cross-module тип, чей `TypeDecl` не во вселенной графа, → `unresolved` → весь объект сканируется
+   консервативно. Точнее было бы тянуть layout per-instantiation (как мономорфизация в codegen) или
+   через manifest/exports (родственно `exports_consume_types` [D164](decisions/02-types.md#d164)), чтобы
+   доказуемо-скалярные поля не раздували mark.
+3. **FFI-pointer edge-cases.** Raw `*T` / `*ro u8` классифицируется как НЕ-GC скаляр (указывает ВНЕ
+   GC-heap — корректно для нынешнего FFI-контракта, residual-note `[classify-raw-ptr]` в коде). Но
+   `*T` в *boxed* Nova-структуру (если такой паттерн появится через unsafe-мост) под non-moving
+   object-start lookup был бы безвреден как указатель — текущий skip консервативен в обратную сторону
+   и опирается на инвариант «raw-ptr не в nova_alloc-heap». Сверка с реальными FFI-emit-путями
+   уточнила бы границу.
+
+**Почему отложено.** Все три — улучшения **точности**, не соундности: каждый residual уже покрыт
+консервативно (over-approximate указатель / `unresolved` → лишняя mark-работа, остаёмся корректны).
+Браться имеет смысл только когда [Plan 144.5](../docs/plans/144.5-nonmoving-precise-gc-online.md) Ф.5
+начнёт **потреблять** bitmap'ы (точный mark-sweep) и измеримая доля false-retention / лишнего скана
+придётся на эти паттерны — иначе оптимизируем неиспользуемый артефакт.
+
+**Когда вернуться.** Вместе с Plan 144.5 (потребление bitmap'ов точным tracer'ом), если профиль
+покажет, что closures / generic-erased / FFI-границы доминируют в лишней mark-работе.
+
+**Связь.** [D277](decisions/08-runtime.md#d277), [D273](decisions/06-concurrency.md#d273) (sibling
+emit-nothing may-GC, [Q-may-gc-precision]), Plan 144 §7 (heap-сторона) / §7.6 (Q8/Q10/H1),
+[M-144.1-heap-bitmaps].
+
+---
+
 ## Q15. Enum с числовыми значениями ✅ ЗАКРЫТО ([D52](decisions/02-types.md#d52))
 
 [D52](decisions/02-types.md#d52) ввёл sum-варианты с числовыми
