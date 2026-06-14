@@ -37721,3 +37721,37 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   smoke; 4 «фейла» в plan138_2/plan125 — pre-existing, подтверждено на main-бинаре). Merge clean
   3-way с 153 structural-== (1cc82de5) — разные регионы emit_c.rs. 🟡 long-term остаётся SIGURG
   async-preempt (general для variable циклов) — cross-link Plan 144 §7.4 (общий async-yield).
+
+[2026-06-14] Plan 153.3 (sort & search) + структурное `==` для mono'd generic-sum/Result.
+  Триггер: 153.3 binary_search возвращает Result, а `result == Ok(x)` падал — раскопка показала
+  НЕ prelude-gap, а глубокий codegen-баг: `emit_field_eq` деградировал в pointer-identity для
+  mono'd generic-sum (legacy `sum_schemas` keyed generic-именем, mono'd-ключ отсутствует →
+  `Foo[int].A(1)==A(1)`→false) И для Result (`NovaRes_*` спец-ABI с typed-error-полями не матчит
+  `Nova_`-sum-тест → identity). Урок дисциплины: подтвердил гипотезы инспекцией сгенерённого C
+  (`((a)==(nova_make_...))` = identity, не tag+payload), изолировал кастомные sum vs Result (два
+  разных представления/бага). Фикс — 2 правки emit_c.rs (commit 1cc82de5, +157 строк):
+  (1) `reconstruct_mono_sum_schema(full_c_name)` реконструирует substituted-схему вариантов из
+  generic-шаблона (`generic_type_templates`) + recorded type-args (`generic_type_instance_info`),
+  подставляя bare-type-param payload'ы по позиции; ветка в emit_field_eq СТРОГО перед identity-
+  fallback (не регрессит рабочие sum). Тег mono'd generic-sum = ПОЛНЫЙ `Nova_<mono>` (эмпирически:
+  `NOVA_TAG_Nova_Foo____nova_int_A`), в отличие от non-generic (стрипнутый). (2) `NovaRes_`-ветка
+  в emit_field_eq + маршрутизация `==`/`!=` оператора → tag + Ok/Err payload через готовый
+  `novares_ok_err(c_ty)->(ok_c,err_c)`; теги generic `NOVA_TAG_Result_Ok/Err`. Верификация:
+  custom Foo[T]/Bar[T,E] (int/str, pos/neg variant+payload), Result==Result совпадающих типов
+  (int/int + int/str, Ok/Err), Option не задет. **Broad-регрессия** (workflow, 8 параллельных
+  батчей, 22 dir): ЧИСТА — все 4 «suspect»-фейла pre-existing/флак, не мой eq (f6=Option-мисдиспатч
+  на closure-return; plan90 30/1=флак, ре-ран 31/0; plan103_3 CC-FAIL=`Nova_never` effects + 2
+  race-TIMEOUT; plan153_1=мой str.len-фикстур D249, починен `83b83ec6`). Отложен `#3`
+  `[M-153-result-eq-literal-expected-type]`: `result == Ok(x)` non-default-E (E дефолтит str, не
+  унифицируется с LHS) — expected-type propagation в чекере (18k строк, 20 Binary-армов; глубоко,
+  узко; `Result[_,str]` уже ок; binary_search на `match`); guard НЕ добавлен (CC-FAIL громче
+  silent-wrong).
+  **153.3 API** (commits `cf95c423` search + `1d85edc3` sort/dedup/partition): 18 методов —
+  search (index_of/position/rposition/is_sorted[_by]/binary_search[_by][_by_key]), sort
+  (bottom-up STABLE merge sort: sort/sort_by/sort_by_key + 3 *_unstable alias-stable), reorder
+  (dedup/dedup_by/dedup_by_key/partition). Comparator'ы int (D183, нет Ordering). Чистые Nova-
+  замыкания (`|a,b| a.compare(b)`, `key(a).compare(key(b))` — делегирование де-рискнуто пробой) +
+  module `buf.data` idiom для merge-scratch. plan153_3 search 4/4 + sort 5/5 + dedup_partition
+  5/5; vec-sanity (plan153_0/1/6 + plan90/90_1) чист. Отложено: select_nth (quickselect,
+  `[M-153-select-nth]`), *_unstable in-place (`[M-153.3-sort-unstable-inplace]`). Закрытие в
+  плане 153 §153.3 (критерии приёмки) + simplifications.md + backlog.
