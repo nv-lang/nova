@@ -1,0 +1,249 @@
+// Plan 152.4.5 (D253): word-boundary segmentation (UAX #29) + `to_titlecase`.
+//
+// Opt-in `std.unicode` peer. `str.@as_words() -> WordsView` iterates UAX #29 word
+// segments (every inter-boundary piece — words, whitespace, punctuation). Unlike
+// `as_chars`/`as_graphemes` it is **O(n) to create** (the word rules need
+// lookahead + the WB4 ignore-rule, so boundaries are materialized once), not O(1).
+//
+// `to_titlecase(s)` titlecases the first cased char of each word and lowercases the
+// rest (with Final_Sigma context) — the Unicode-correct title-casing that needs
+// word boundaries.
+//
+// Reuses peer helpers: decode_at / is_ext_pict / range_lookup3 / parse_flat
+// (graphemes.nv); str_to_cps / cps_to_str (normalize.nv); is_cased / is_final_sigma
+// / single / lower_one / title_one / CAP_SIGMA / SMALL_SIGMA / SMALL_FINAL_SIGMA
+// (case.nv). Extended_Pictographic (WB3c) is shared from grapheme_data.nv.
+
+module std.unicode
+
+import std.collections.vec.{Vec}
+
+// ─── Word_Break category codes (MUST match nova-codegen unicode `wb_cat_code`) ───
+const WB_CR int = 1
+const WB_LF int = 2
+const WB_NEWLINE int = 3
+const WB_EXTEND int = 4
+const WB_ZWJ int = 5
+const WB_RI int = 6
+const WB_FORMAT int = 7
+const WB_KATAKANA int = 8
+const WB_HEBREW int = 9
+const WB_ALETTER int = 10
+const WB_SQ int = 11        // Single_Quote
+const WB_DQ int = 12        // Double_Quote
+const WB_MIDNUMLET int = 13
+const WB_MIDLETTER int = 14
+const WB_MIDNUM int = 15
+const WB_NUMERIC int = 16
+const WB_EXTENDNUMLET int = 17
+const WB_WSEGSPACE int = 18
+
+ro wb_flat Vec[int] = parse_flat(WB_DATA)
+fn wbcat(cp int) -> int => range_lookup3(wb_flat, cp)
+
+fn wb_ignorable(c int) -> bool => c == WB_EXTEND || c == WB_FORMAT || c == WB_ZWJ
+fn wb_ahletter(c int) -> bool => c == WB_ALETTER || c == WB_HEBREW
+fn wb_midnumletq(c int) -> bool => c == WB_MIDNUMLET || c == WB_SQ
+
+// ─── decode str → (codepoints, byte-offsets) ───
+// offs has cps.len()+1 entries: start byte of each cp, then byte_len at the end.
+fn wb_decode(s str) -> (Vec[int], Vec[int]) {
+    mut cps = Vec[int].with_capacity(s.byte_len())
+    mut offs = Vec[int].with_capacity(s.byte_len() + 1)
+    ro n = s.byte_len()
+    mut i = 0
+    while i < n {
+        ro (cp, step) = decode_at(s, i)
+        cps.push(cp)
+        offs.push(i)
+        i = i + step
+    }
+    offs.push(n)
+    (cps, offs)
+}
+
+// Incremental Regional_Indicator run-parity (WB15/16): fold one codepoint into the
+// running count of consecutive RI effective-bases. Ignorables (WB4) don't change the
+// run; a non-RI base resets it. O(1) per cp → O(n) overall (no backward rescan).
+fn wb_ri_step(c int, run int) -> int {
+    if c == WB_RI { run + 1 } else if wb_ignorable(c) { run } else { 0 }
+}
+
+// Is there a word boundary BEFORE cps[i] (between cps[i-1] and cps[i])? Applies the
+// UAX #29 rules WB3..WB999 in order (first match wins). WB4 (ignore Extend/Format/
+// ZWJ) is folded by skipping ignorables when computing the effective prev/next.
+fn wb_is_break(cps Vec[int], cats Vec[int], i int, ri_run int) -> bool {
+    ro n = cps.len()
+    ro p = cats[i - 1]   // immediate previous
+    ro c = cats[i]       // current
+    if p == WB_CR && c == WB_LF {
+        false                                                       // WB3
+    } else if p == WB_NEWLINE || p == WB_CR || p == WB_LF {
+        true                                                        // WB3a
+    } else if c == WB_NEWLINE || c == WB_CR || c == WB_LF {
+        true                                                        // WB3b
+    } else if p == WB_ZWJ && is_ext_pict(cps[i]) {
+        false                                                       // WB3c
+    } else if p == WB_WSEGSPACE && c == WB_WSEGSPACE {
+        false                                                       // WB3d
+    } else if wb_ignorable(c) {
+        false                                                       // WB4: Any × (Extend|Format|ZWJ)
+    } else {
+        // Effective previous base (skip trailing ignorables) — WB4 fold.
+        mut pbi = i - 1
+        while pbi > 0 && wb_ignorable(cats[pbi]) { pbi = pbi - 1 }
+        ro pcat = cats[pbi]
+        // Char before the prev base (WB7 / WB7c / WB11).
+        mut ppi = pbi - 1
+        while ppi > 0 && wb_ignorable(cats[ppi]) { ppi = ppi - 1 }
+        ro ppcat = if pbi > 0 { cats[ppi] } else { 0 }
+        // Next base after current (WB6 / WB7b / WB12).
+        mut nbi = i + 1
+        while nbi < n && wb_ignorable(cats[nbi]) { nbi = nbi + 1 }
+        ro ncat = if nbi < n { cats[nbi] } else { 0 }
+        if wb_ahletter(pcat) && wb_ahletter(c) {
+            false                                                   // WB5
+        } else if wb_ahletter(pcat) && (c == WB_MIDLETTER || wb_midnumletq(c)) && wb_ahletter(ncat) {
+            false                                                   // WB6
+        } else if (pcat == WB_MIDLETTER || wb_midnumletq(pcat)) && wb_ahletter(c) && wb_ahletter(ppcat) {
+            false                                                   // WB7
+        } else if pcat == WB_HEBREW && c == WB_SQ {
+            false                                                   // WB7a
+        } else if pcat == WB_HEBREW && c == WB_DQ && ncat == WB_HEBREW {
+            false                                                   // WB7b
+        } else if ppcat == WB_HEBREW && pcat == WB_DQ && c == WB_HEBREW {
+            false                                                   // WB7c
+        } else if pcat == WB_NUMERIC && c == WB_NUMERIC {
+            false                                                   // WB8
+        } else if wb_ahletter(pcat) && c == WB_NUMERIC {
+            false                                                   // WB9
+        } else if pcat == WB_NUMERIC && wb_ahletter(c) {
+            false                                                   // WB10
+        } else if (pcat == WB_MIDNUM || wb_midnumletq(pcat)) && c == WB_NUMERIC && ppcat == WB_NUMERIC {
+            false                                                   // WB11
+        } else if pcat == WB_NUMERIC && (c == WB_MIDNUM || wb_midnumletq(c)) && ncat == WB_NUMERIC {
+            false                                                   // WB12
+        } else if pcat == WB_KATAKANA && c == WB_KATAKANA {
+            false                                                   // WB13
+        } else if (wb_ahletter(pcat) || pcat == WB_NUMERIC || pcat == WB_KATAKANA || pcat == WB_EXTENDNUMLET) && c == WB_EXTENDNUMLET {
+            false                                                   // WB13a
+        } else if pcat == WB_EXTENDNUMLET && (wb_ahletter(c) || c == WB_NUMERIC || c == WB_KATAKANA) {
+            false                                                   // WB13b
+        } else if pcat == WB_RI && c == WB_RI && (ri_run % 2 == 1) {
+            false                                                   // WB15/16
+        } else {
+            true                                                    // WB999
+        }
+    }
+}
+
+// Word-start codepoint indices (0-based: 0, then every break position).
+fn wb_starts(cps Vec[int], cats Vec[int]) -> Vec[int] {
+    ro n = cps.len()
+    mut starts = Vec[int].with_capacity(n + 1)
+    if n == 0 {
+        starts
+    } else {
+        starts.push(0)
+        // ri_run = consecutive RI effective-bases ending at i-1 (WB15/16 parity),
+        // threaded forward in O(1) per step instead of a backward rescan.
+        mut ri_run = wb_ri_step(cats[0], 0)
+        mut i = 1
+        while i < n {
+            if wb_is_break(cps, cats, i, ri_run) { starts.push(i) }
+            ri_run = wb_ri_step(cats[i], ri_run)
+            i = i + 1
+        }
+        starts
+    }
+}
+
+fn wb_cats(cps Vec[int]) -> Vec[int] {
+    mut cats = Vec[int].with_capacity(cps.len())
+    for cp in cps { cats.push(wbcat(cp)) }
+    cats
+}
+
+// Word-boundary byte offsets: [start0, start1, …, byte_len]. Empty for "".
+fn word_boundaries(s str) -> Vec[int] {
+    ro (cps, offs) = wb_decode(s)
+    ro cats = wb_cats(cps)
+    ro starts = wb_starts(cps, cats)
+    mut bounds = Vec[int].with_capacity(starts.len() + 1)
+    if starts.len() == 0 {
+        bounds
+    } else {
+        for st in starts { bounds.push(offs[st]) }
+        bounds.push(offs[cps.len()])
+        bounds
+    }
+}
+
+// ─── WordsView — UAX #29 word-segment iterator ───
+export type WordsView value priv {
+    buf str
+    bounds Vec[int]   // byte offsets [s0,…,len]; len-1 == word count
+    idx int
+}
+
+fn WordsView.new(buf str) -> WordsView => { buf, bounds: word_boundaries(buf), idx: 0 }
+
+// `Next[str]`: the next word segment as a byte-slice of `buf`, or None when done.
+export fn WordsView mut @next() -> Option[str] {
+    if @idx + 1 >= @bounds.len() {
+        None
+    } else {
+        ro s = @buf[@bounds[@idx]..@bounds[@idx + 1]]
+        @idx = @idx + 1
+        Some(s)
+    }
+}
+
+export fn WordsView @iter() -> WordsView => @
+
+// Number of word segments remaining from the current position. O(1) (boundaries
+// precomputed). Mirrors CharsIter/GraphemesView count (remaining, not total).
+export fn WordsView @count() -> int {
+    ro b = @bounds.len()
+    if b == 0 { 0 } else { b - 1 - @idx }
+}
+
+export fn WordsView @is_empty() -> bool => @bounds.len() <= 1
+
+// ─── str lens ───
+// Word-segment iterator (UAX #29). O(n) to create (materializes boundaries).
+export fn str @as_words() -> WordsView => WordsView.new(@)
+
+// ─── to_titlecase ───
+/// Unicode title-casing (locale-independent): titlecase the first cased char of
+/// each UAX #29 word, lowercase the rest (with Final_Sigma context). E.g.
+/// "ﬁle ΟΔΟΣ" → "File Οδος".
+export fn to_titlecase(s str) -> str {
+    ro cps = str_to_cps(s)
+    ro n = cps.len()
+    ro cats = wb_cats(cps)
+    ro starts = wb_starts(cps, cats)
+    // is_start[i] == 1 ⟺ cp i begins a new word (reset the first-cased tracker).
+    mut is_start = Vec[int].with_capacity(n)
+    mut z = 0
+    while z < n { is_start.push(0) z = z + 1 }
+    for st in starts { is_start[st] = 1 }
+    mut out = Vec[int].with_capacity(n)
+    mut seen_cased = false
+    mut i = 0
+    while i < n {
+        ro cp = cps[i]
+        if is_start[i] == 1 { seen_cased = false }
+        ro mapped = if (!seen_cased) && is_cased(cp) {
+            title_one(cp)                                  // first cased char → titlecase
+        } else if cp == CAP_SIGMA {
+            single(if is_final_sigma(cps, i) { SMALL_FINAL_SIGMA } else { SMALL_SIGMA })
+        } else {
+            lower_one(cp)                                  // rest → lowercase
+        }
+        if is_cased(cp) { seen_cased = true }
+        for d in mapped { out.push(d) }
+        i = i + 1
+    }
+    cps_to_str(out)
+}
