@@ -9454,16 +9454,20 @@ impl Parser {
         let mut i = 0;
         while i < bytes.len() {
             let b = bytes[i];
-            if b == 0x01 {
-                // SOH sentinel: следующий байт — буквальный `$` (escape \$).
-                if i + 1 < bytes.len() {
-                    cur_lit.push(bytes[i + 1] as char);
-                    i += 2;
-                    continue;
-                } else {
-                    i += 1;
-                    continue;
-                }
+            // \$ sentinel: the lexer emits SOH (U+0001) + `$` for an escaped `${`.
+            // Treat 0x01 as the sentinel ONLY when the next byte is `$`. A bare
+            // U+0001 is a legitimate Control codepoint (e.g. from a `\u{1}` escape
+            // — common in UAX #29 grapheme test data); it must pass through to the
+            // normal codepoint handler below, not be mistaken for the sentinel
+            // (the old code pushed the *next* byte as a char and skipped 2, which
+            // desynced the cursor inside a following multibyte char → parser panic).
+            // The sentinel collides with content only for the astronomically rare
+            // literal `\u{1}` directly followed by a literal `$`; resolving that
+            // fully needs a non-content lexer marker (out of scope).
+            if b == 0x01 && i + 1 < bytes.len() && bytes[i + 1] == b'$' {
+                cur_lit.push('$');
+                i += 2;
+                continue;
             }
             if b == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
                 // ${expr} — flush литерала и парсим выражение.
