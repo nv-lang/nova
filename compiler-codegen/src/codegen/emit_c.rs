@@ -24373,6 +24373,32 @@ nv_panic(nova_str_from_cstr(\"str: slice splits a UTF-8 codepoint\")); \
                             safe, method_name, arg_strs.join(", ")
                         ));
                     }
+                    // Plan 154.1 [M-154.1-static-call-unresolved-loud]: a static-method
+                    // call `Prim.method(...)` on a PRIMITIVE type that reached this
+                    // fall-through is UNRESOLVED — every valid primitive static method /
+                    // intrinsic (`str.from`, `str.from_bytes_lossy`, …) is handled by an
+                    // earlier branch. Emitting `nova_fn_<prim>_<method>` here would
+                    // produce an undefined symbol → cryptic link-time error
+                    // (`undefined symbol: nova_fn_str_from_debug`). Fail LOUDLY at
+                    // compile time instead. Narrow to primitive receivers so module-
+                    // qualified free fns and user types (caught by is_known_type) are
+                    // untouched.
+                    const PRIMITIVE_TYPES: &[&str] = &[
+                        "str", "int", "bool", "char", "f64", "f32", "byte",
+                        "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64",
+                        "usize", "isize",
+                    ];
+                    if PRIMITIVE_TYPES.contains(&parts0) {
+                        return Err(format!(
+                            "[E_UNKNOWN_STATIC_METHOD] `{prim}.{m}(...)` — у примитива \
+                             `{prim}` нет статического метода `{m}`. Валидные \
+                             static-методы (напр. `str.from`, `str.from_bytes_lossy`) \
+                             резолвятся раньше; этот вызов не разрешён и стал бы \
+                             undefined-символом `nova_fn_{prim}_{m}` на линковке. \
+                             Опечатка или метод не существует.",
+                            prim = parts0, m = method_name,
+                        ));
+                    }
                     self.free_fn_c_name(&parts.join("_"))
                 } else {
                     self.free_fn_c_name(&parts.join("_"))

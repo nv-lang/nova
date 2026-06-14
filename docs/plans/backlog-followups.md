@@ -215,12 +215,14 @@
   generic-static-construction CC-FAIL — `(Box)[T];` течёт как сырой C в codegen.
   Всплыло в диагностической пробе 154.1 (НЕ связано с мис-диспатчем `.debug`).
   Generic-static-constructor codegen-gap; home — отдельный codegen-фикс.
-- **`[M-154.1-static-call-unresolved-loud]`** (planned, home **Plan 154.1 / followup**):
-  общий «неизвестная free-fn (напр. был `str.from_debug` → undefined
-  `nova_fn_str_from_debug`) → **compile-error** вместо link-time undefined symbol».
-  Расширение robustness на static-путь (`free_fn_c_name` fall-through
-  emit_c.rs:11129). Под Variant B конкретный `str.from_debug`-кейс мёртв, но класс
-  остаётся.
+- **`[M-154.1-static-call-unresolved-loud]`** ✅ **RESOLVED 2026-06-14**: `Prim.method(...)`
+  на примитиве, дошедший до fall-through emit_c.rs ~24376 (все валидные primitive
+  static-методы/интринсики резолвятся раньше) → `E_UNKNOWN_STATIC_METHOD` compile-error
+  вместо undefined-символа `nova_fn_<prim>_<method>` на линковке. Узко: только примитив-
+  ресиверы (модуль-qualified free-fn и user-типы не задеты). neg-тест
+  `plan154_1/neg_unknown_static_method`; broad regression 0 новых FAIL. **Остаток (не-primitive
+  путь):** общий случай «unknown free-fn в произвольном модуле» сложнее (fall-through
+  обслуживает legit runtime-builtin + bootstrap-без-peer_files D134) — не покрыт, низкий приоритет.
 - **`[M-154.1-required-conformance]`** → перенесён в **[Q37](../../spec/open-questions.md#q37-конформность-протоколов-opt-in-структурная-vs-required-номинальная--частично-2026-06-13-plan-1541--d268)** (открытый вопрос дизайна, не actionable-работа): opt-in (структурная) vs required (номинальная) конформность.
 - **`[M-154.1-f32-display-debug]`** ✅ **RESOLVED 2026-06-14**: f32 получил `#impl(Display)`/`#impl(Debug)`.
   conv.h `nova_f32_to_str`/`_to_debug_str` (widen→double + f64-форматтер) + `@append(f32)`
