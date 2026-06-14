@@ -36499,6 +36499,18 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   повсеместно. Фикс — зеркалирование emit-side static-call registration на inference-путь (TurboFish-Member
   branch ~32990; `infer_expr_c_type(obj)` вызывается dispatcher'ом ~22828 ДО block 5b) → инстанс
   регистрируется + worklist-queue'ится вовремя. +27 строк emit_c.rs (additive, single branch) + фикстура.
+[2026-06-14] Plan 134 (refinement-проход «ptr → *()», ветка plan-134): НЕ упрощения, но честные
+  границы/осознанно-оставленные хвосты. (1) Use-в-type-позиции `ptr`/`nova_ptr` ловится на `nova check`
+  (E_TYPE_UNKNOWN), но cast-VALIDITY (`*() as bool`/`str`/`f64`/`char`/narrow-int → E_PTR_CAST_INVALID_TARGET)
+  по-прежнему enforced на codegen-этапе, а не type-check — это легитимно: правило зависит от resolved
+  C-типов (src="*()" из nova_type_name_from_c("void*")), нет смысла дублировать в checker. Проверяется
+  fixture'ой plan115/t1_ptr_str_cast_neg (EXPECT_COMPILE_ERROR через полный pipeline). (2) В types/mod.rs
+  `cat_of_depth` оставлен dead-but-documented arm `"ptr" => TyCat::Ptr` (legacy-compat комментарий) — он
+  недостижим для валидных программ, т.к. walk_typeref reject'ит `ptr` раньше; оставлен намеренно как
+  defensive/transition-safety, не вычищен. (3) Регрессия plan118 37/3: 3 NPO-edge FAIL (Some((0 as *()))
+  под null-pointer-optimization) — pre-existing на main (identical к main-бинарю), территория Plan 118 NPO,
+  вне scope 134; НЕ маскируются, зафиксированы как honest known-issue. Core-фича (удаление ptr + миграция)
+  — без упрощений и заглушек.
 [2026-06-14] Plan 145 (MSVC codegen portability, ветка plan-145, НЕ merged): восстановлен MSVC (был
   сломан широко — регрессия после Plan 82 1049/16). КЛЮЧЕВОЕ: план называл 1 причину (indexing
   stmt-expr), реально MSVC ломали 4 НЕЗАВИСИМЫЕ проблемы каскадом (C2059→C2143→LNK2019→C2440),

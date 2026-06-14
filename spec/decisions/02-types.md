@@ -7162,8 +7162,10 @@ Box.SIZE                                    // ✗ E_GENERIC_CONST_REQUIRES_INST
 > `void*` in C). `*()` is the idiomatic expression of an opaque pointer in
 > the `*T` type system (Plan 118 D216) — no compiler special-case required.
 > Migration: `ptr` → `*()`; `0 as ptr` → `0 as *()`; `type X(ptr)` →
-> `type X(*)()`. Compiler emits `E_TYPE_REMOVED_PTR_USE_UNIT_PTR` on `ptr`
-> in type position.
+> `type X(*())`. `nova check` emits `E_TYPE_UNKNOWN` (`type `ptr` is removed —
+> use `*()` …`) on `ptr`/`nova_ptr` in type position, with a migration hint
+> (`type ptr = *()` user-level alias). A defensive codegen-time error mirrors
+> the same message if a use ever bypasses the checker.
 >
 > **Pointer types after Plan 134:**
 > - `*()` — opaque pointer (pointer to unit type = `void*` in C)
@@ -8088,6 +8090,12 @@ Rust precedent: fn() ≠ unsafe fn() — same model.
 Закрывает [M-118.1.5-unsafe-fn-pointer-type].
 
 ### §11. `ptr` redefine (D214 amend cross-ref)
+
+> ⚠️ **RETIRED by Plan 134 (2026-06-09)** — the `ptr` built-in name is fully
+> removed; there is no `type ptr Option[*unsafe ()]` builtin anymore. The
+> idiomatic opaque pointer is `*()` (pointer-to-unit = `void*`). `ptr`/`nova_ptr`
+> in type position → `E_TYPE_UNKNOWN` (use `*()`). See the D214 SUPERSEDED
+> banner. The note below is preserved for historical context only.
 
 ```nova
 type ptr Option[*unsafe ()]

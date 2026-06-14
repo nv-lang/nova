@@ -37964,6 +37964,23 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   [M-153.x-std-sort-consolidate] RESOLVED) + cf3951e2 (chained Vec[f32] turbofish-static return-inference,
   Bug B, [M-154.1-chained-vec-f32-method-misdispatch] FIXED — gap C registration timing).
 
+[2026-06-14] Plan 134 — Refinement-проход «убрать встроенный тип ptr → *()» (ветка plan-134, worktree
+  nova-p134, от c0f269dd). Ф.1–Ф.3 (typedef nova_ptr removed; *() → void*; cast-matrix; миграция
+  plan115/sync.nv/examples; spec D214) уже были merged в main ранее. Этот проход — ДОВОДКА: (1) `ptr`/
+  `nova_ptr` в type-позиции теперь ловится на этапе `nova check` (types/mod.rs walk_typeref guard →
+  E_TYPE_UNKNOWN + миграционный hint «use *(); для алиаса — type ptr = *()»), а НЕ откладывается до
+  codegen — раньше пользователь видел ошибку только на полной сборке; defensive codegen-time зеркало
+  (emit_c.rs/external_registry.rs) сохранено на случай обхода checker'а. (2) parser/mod.rs: `ptr` убран
+  из is_primitive_type для .method()-dispatch; сообщение E_NULL_PTR_RETRACTED_USE_OPTION мигрировано на
+  *(). (3) Fixture-полировка plan115 (ожидаемые строки ошибок) + plan134 cast-fixture. (4) Doc-финализация:
+  spec/02-types.md (E_TYPE_UNKNOWN канон + RETIRED-баннер §11 ptr-redefine), examples/ffi/README.md, doc-
+  комментарии sync.nv (OnceCell/Lazy/Condvar: *(()) → *(), typedef nova_ptr → void*), план CLOSED + A-134.a..h
+  с verify. Тесты (релизный nova+nova-codegen, clang): plan134 4/0 (neg ptr-removed + 3 pos: struct-field/
+  null/cast-matrix int·u64·i64), plan115 11/0, basics 8/0, plan103_5 20/0, plan91_12 9/0, plan103_4 25/0,
+  plan118_2 2/0, plan118_5 14/0, examples/ffi (check + ptr_basics test-build) PASS. Регрессия = 0 net-new
+  FAIL vs main-бинарь baseline: plan118 37/3 (3 NPO-edge Some((0 as *())) — pre-existing, вне scope 134),
+  syntax 47/7, plan62 29/7 (все FAIL identical к main, не связаны с ptr). Production-grade, без упрощений/
+  заглушек: остатки `ptr` в коде — только prose-комментарии и поле-имя в str{ptr,len}.
 [2026-06-14] Plan 145 — MSVC codegen portability: восстановление MSVC (ветка plan-145, worktree
   nova-p145, от main c0f269dd, НЕ merged). MSVC был сломан широко (регрессия после Plan 82 1049/16).
   КЛЮЧЕВОЙ ВЫВОД: план называл 1 причину (indexing stmt-expr), но при MSVC-валидации вскрылось 4

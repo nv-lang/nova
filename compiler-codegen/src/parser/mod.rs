@@ -7099,6 +7099,10 @@ impl Parser {
             TokenKind::Ident(ref n)
                 if n == "null"
                     && matches!(&self.peek_at(1).kind, TokenKind::Ident(ty)
+                        // Plan 134: `ptr` retained here so `null ptr` still gets
+                        // the dedicated retraction hint (steer to Option/None)
+                        // rather than a bare "undefined identifier"; the message
+                        // body migrates `ptr` → `*()`.
                         if ty == "ptr" || ty == "int" || ty == "i8" || ty == "i16"
                            || ty == "i32" || ty == "i64" || ty == "u8" || ty == "u16"
                            || ty == "u32" || ty == "u64" || ty == "uint" || ty == "f32"
@@ -7116,12 +7120,13 @@ impl Parser {
                         "[E_NULL_PTR_RETRACTED_USE_OPTION] `null {ty}` literal \
                          retracted (Plan 118 D214 amend 2026-06-02). После \
                          NPO codegen (Plan 118 Ф.5 A19/A21), `Option[*T]` и \
-                         `Option[ptr]` provide null-safety через type-system \
+                         `Option[*()]` provide null-safety через type-system \
                          (single-pointer layout NULL=None convention). \
-                         Migration: \
-                         (1) для existing `ptr` code: replace `null ptr` → \
-                             `(0 as ptr)` (mechanical, NULL=(void*)0); \
-                         (2) для new code: use `Option[ptr]` с `None` (type-safe).",
+                         Migration (Plan 134 — `ptr` builtin removed, opaque \
+                         pointer = `*()` = `void*`): \
+                         (1) для existing pointer code: replace `null *()` → \
+                             `(0 as *())` (mechanical, NULL=(void*)0); \
+                         (2) для new code: use `Option[*()]` с `None` (type-safe).",
                         ty = ty_name
                     ),
                     full_span,
@@ -7174,11 +7179,10 @@ impl Parser {
                     | "f32" | "f64" | "bool" | "char" | "str"
                     // Plan 76: `never` — bottom-тип, строчный встроенный примитив.
                     | "never"
-                    // Plan 115 D214: `ptr` — opaque pointer primitive type
-                    // (for FFI). Recognized в primitive position для
-                    // `ptr.method()` static dispatch (currently — no methods
-                    // defined в V1, но reserved для future ptr.MAX и подобных).
-                    | "ptr"
+                    // Plan 134: `ptr` builtin REMOVED — opaque pointer is now
+                    // `*()` (pointer-to-unit = void*). `ptr` no longer a
+                    // primitive type; use в type position → E_TYPE_UNKNOWN
+                    // (types/mod.rs walk_typeref guard).
                 );
                 if (starts_uppercase || is_primitive_type)
                     && matches!(self.peek().kind, TokenKind::Dot)
