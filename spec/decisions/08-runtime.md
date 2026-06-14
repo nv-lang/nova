@@ -7873,16 +7873,57 @@ the product against available virtual address space.
    nand/max → CAS-loop). Барьеры over-strong (full `_Interlocked*`) — sound для
    любого запрошенного порядка на x64 TSO.
 
-**Остаток (Plan 145.1, `[M-145-msvc-remaining-stmt-expr]`):** узкие codegen-конструкции,
-всё ещё несовместимые с cl.exe и пока оставленные stmt-expr (раскрылись после
-устранения главных блокеров): struct-element write по индексу (`vec_of_struct[i] = val`
-→ C2440 на присваивании struct-значения через `*(struct*)void_ptr`-lvalue),
-heap-box value-rvalue, Option-get composite repack, record-invariant wrap.
+**Остаток → РАЗРЕШЕНО (Plan 145.1 поверх 145.2-детерминизма, 2026-06-15):** три из
+четырёх узких stmt-expr-сайтов устранены портируемо — struct-element write по индексу
+(`vec_of_struct[i] = val` → теперь `memcpy`-в-слот вместо присваивания struct-значения
+через `*(struct*)void_ptr`-lvalue, снимает C2440), heap-box **примитива** в throw-как-
+выражении (→ `nova_box_value` + scalar compound literal), Option-get composite repack
+(→ `nova_npo_from_tagged_int` + compound literal). Каждый сайт закрыт co-located
+регресс-фикстурой (`nova_tests/plan145/t2_index_write_pos`,
+`nova_tests/plan145_2/throw_primitive_expr_pos`, `…/composite_get_option_pos`), которая
+сверяет наличие портируемого хелпера в `.c` и PASS на clang+MSVC. **Остаточный P3
+(`[M-145-msvc-remaining-stmt-expr]`):** только value-record throw-**как-выражение**
+(`x ?? throw SomeRecord{}`) — multi-field compound-literal не годится для member-init,
+rvalue в expression-контексте небезопасно хоистить; stmt-expr оставлен сознательно.
+Разблокировку обеспечил Plan 145.2 (детерминизм эмиссии — см. **D278**).
 
 > **Прецедент:** D-блок Plan 82 (compat-слой `nova_msvc_compat.h`). D276 обобщает
 > правило на ВЕСЬ генерируемый C, а не только runtime builtins.
 > **Конвенция для разработчиков** — также в [compiler-codegen/README.md](../../compiler-codegen/README.md)
 > §«MSVC-портируемость генерируемого C».
+
+## D278 (NEW) — Codegen emission must be deterministic (stable declaration order) (Plan 145.2)
+
+> **Решение:** Порядок эмиссии C-кода (деклараций типов/функций, NovaOpt-typedef'ов,
+> enqueue в mono-worklist) обязан быть **детерминированным** — стабильным между сборками
+> и прогонами на одной и той же Nova-программе. Эмиссия НЕ должна зависеть от порядка
+> итерации структур с недетерминированным обходом. Конкретно: коллекции `emit_c.rs`,
+> по которым итерируется генерация (`method_overloads`, `embed_fields`), используют
+> `BTreeMap` (отсортированный обход по ключу), а **не** `HashMap` (у Rust `RandomState` —
+> seed per-process, порядок рандомизирован).
+
+**Контекст.** Недетерминированный порядок обычно безвреден, но он **будил латентные
+order-зависимые баги prelude**, всплывавшие нерегулярно «через раз»: (A) init-order OOB
+(`array: index 0 out of bounds for length 0` — статик-инициализация читала ещё не
+заполненный массив), (B) `var_boxed` cross-function leak (CC-FAIL: `_box_<v>` для
+mut-capture замыкания просачивался между функциями → undeclared identifier). Та же
+программа давала разный `.c` между сборками → диагностика «bisect-by-rebuild» становилась
+ненадёжной (main 12/12 PASS, тот же source на другом бинаре 5/5 FAIL). Детерминизм —
+**предусловие воспроизводимости** (надёжный bisect/diff `.c`, кэш сборки, отладка
+codegen) и страховка от того, что эти классы багов снова начнут «будиться».
+
+**Правило для разработчиков.** Любая новая map/set в `emit_c.rs`, по которой
+**итерируется эмиссия** (а не только point-lookup), должна иметь детерминированный обход
+(`BTreeMap`/`BTreeSet` либо явная сортировка ключей перед итерацией). `HashMap`/`HashSet`
+допустимы только для чистого lookup, результат которого не влияет на порядок вывода.
+
+> **Остаток (benign, P3 `[M-codegen-emission-nondeterminism]`):** порядок объявления
+> `NovaOpt_<T>`-typedef'ов всё ещё зависит от первого касания (косметика — независимые
+> typedef'ы, на сборку не влияет); robust `var_boxed`-flush и топологический порядок
+> статик-инициализации prelude — отдельный hardening. Триггер-часть (то, что *будило*
+> баги) закрыта.
+> **Связь:** D278 — предусловие, снявшее блокер с остатка **D276** (Plan 145.1).
+
 ## D274 — Tree-walking interpreter currently UNSUPPORTED; C-codegen only (Plan 157)
 
 **Решение.** Древесный интерпретатор (`nova run`, модуль `compiler-codegen/src/interp/`)
