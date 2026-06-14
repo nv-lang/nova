@@ -37863,3 +37863,12 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   8 батчей). Это **частное** решение для binop-`==`; общий expected-type проход (overload `@into`,
   return-position) остаётся в Q-overload-result-type. Итог: 153.3 без упрощений — sort_unstable
   (heapsort), select_nth (introselect), result==literal — все три закрыты по-настоящему.
+
+[2026-06-14] Plan 154.1 f32-literal-coercion — прод-граница (commit bcf01137, обязательный критерий
+  «без упрощений»). При негативном тесте всплыло: `Vec[f32].from([f64var])` (f64-ПЕРЕМЕННАЯ, не
+  литерал) check проходил, но RUN давал тихий мусор (строил []f64 → реинтерпретация бит как f32).
+  Это footgun — переменная не должна молча сужаться f64→f32. Фикс: гард в try_emit_typed_vec_literal —
+  если elem_c=nova_f64 под nova_f32-hint (литералы уже коэрснуты в nova_f32 выше; сюда доходит только
+  не-литерал) → громкая E_ARRAY_ELEM_NARROW (D44/D54: narrowing не-литералов только через явный
+  `as f32`). Гард узкий (только []f64 в []f32-контексте). pos+neg: plan154_1 9/9
+  (neg_array_elem_narrow EXPECT_COMPILE_ERROR); broad regression 0 новых FAIL. D44 impl-note дополнен.
