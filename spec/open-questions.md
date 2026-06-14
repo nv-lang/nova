@@ -4121,17 +4121,19 @@ parser char-литералы **не поддерживает** — это бло
 > CI-guard (расхождение с UCD → fail). Прецедент: Rust `unicode-*` (codegen), Go
 > `maketables`. UCD-файлы в репозиторий НЕ коммитятся (объём); путь — `--ucd-dir`.
 >
-> **Реализовано полностью (152.4.1–152.4.4):**
+> **Реализовано полностью (152.4.1–152.4.6):**
 > | Выход | UCD-источники | Содержимое |
 > |---|---|---|
 > | `norm_data.nv` (152.4.1/2) | `UnicodeData.txt`, `CompositionExclusions.txt`, `DerivedNormalizationProps.txt` | NFD/NFKD full decomp, CCC, canonical composition |
 > | `grapheme_data.nv` (152.4.3) | `GraphemeBreakProperty.txt`, `emoji-data.txt`, `DerivedCoreProperties.txt` (InCB) | GCB / Extended_Pictographic / Indic_Conjunct_Break ranges |
 > | `case_data.nv` (152.4.4/5) | `CaseFolding.txt`, `SpecialCasing.txt`, `UnicodeData.txt[12,13,14]`, `DerivedCoreProperties.txt` (Cased/Case_Ignorable) | FOLD/LOWER/UPPER/TITLE maps + Cased/Case_Ignorable ranges |
 > | `word_data.nv` (152.4.5) | `WordBreakProperty.txt` (+ Extended_Pictographic reused) | Word_Break category ranges (WB1-WB16) |
+> | `sentence_data.nv` (152.4.6) | `SentenceBreakProperty.txt` | Sentence_Break category ranges (SB1-SB11), 14 категорий |
 >
 > Conformance (`--emit-conformance` → фикстуры plan152_4): `NormalizationTest.txt`
-> (UAX #15), `GraphemeBreakTest.txt` + `WordBreakTest.txt` (UAX #29, independent
-> oracles), case-mapping breadth (UCD-derived + independent hand-oracle для выборки).
+> (UAX #15), `GraphemeBreakTest.txt` + `WordBreakTest.txt` + `SentenceBreakTest.txt`
+> (UAX #29, independent oracles), case-mapping breadth (UCD-derived + independent
+> hand-oracle для выборки).
 > См. [D253](decisions/03-syntax.md#d253), [Plan 152.4](../docs/plans/152.4-std-unicode.md).
 
 ---

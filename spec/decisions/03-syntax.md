@@ -10014,9 +10014,9 @@ Unicode-данных `std/unicode` (Plan 152.4). См. [Plan 152.3](../../docs/p
 
 ---
 
-## D253. `std/unicode` — нормализация (UAX #15) + grapheme/word-сегментация (UAX #29) + case folding/mapping/title-casing
+## D253. `std/unicode` — нормализация (UAX #15) + grapheme/word/sentence-сегментация (UAX #29) + case folding/mapping/title-casing
 
-Added: 2026-06-14  Status: 152.4.1+152.4.2 (нормализация) + 152.4.3 (graphemes) + 152.4.4 (case folding/mapping) + 152.4.5 (word-сегментация + title-casing) IMPLEMENTED 2026-06-14; остаётся sentence-сегментация (`[M-152-sentence-boundaries]`) + collation (152.5b)
+Added: 2026-06-14  Status: 152.4.1+152.4.2 (нормализация) + 152.4.3 (graphemes) + 152.4.4 (case folding/mapping) + 152.4.5 (word-сегментация + title-casing) + 152.4.6 (sentence-сегментация) IMPLEMENTED 2026-06-14; остаётся collation (152.5b)
 
 Полная Unicode-нормализация — отдельный **opt-in** модуль `std/unicode` (модуль
 `std.unicode`, folder-module), импортируется явно; НЕ prelude (за размер таблиц
@@ -10025,8 +10025,8 @@ Added: 2026-06-14  Status: 152.4.1+152.4.2 (нормализация) + 152.4.3 
 
 ### Что в ядре vs библиотеке
 Ядро: байты, codepoint decode/encode, ASCII case/classification, byte-`Compare`.
-`std/unicode`: нормализация + grapheme-сегментация + case folding/mapping (здесь,
-реализовано); collation (152.5b) + title-casing (нужны word boundaries) — Phase B.
+`std/unicode`: нормализация + grapheme/word/sentence-сегментация + case
+folding/mapping/title-casing (здесь, реализовано); collation (152.5b) — Phase B.
 
 ### API (152.4.2, реализовано)
 Free-function форма (D253): **`normalize_nfc/nfd/nfkc/nfkd(s str) -> str`**.
@@ -10091,7 +10091,28 @@ ignore-rule ⇒ границы материализуются один раз), 
 Extended_Pictographic для WB3c переиспользуется из grapheme_data.nv).
 **`to_titlecase(s) -> str`** (locale-independent): титулкейс первой cased-буквы каждого
 слова (UAX #29) + lowercase остального (с Final_Sigma). Использует TITLE-маппинг
-(не upper — ǆ→ǅ, не Ǆ). Sentence-сегментация — `[M-152-sentence-boundaries]` (Phase B).
+(не upper — ǆ→ǅ, не Ǆ).
+
+### API sentence-сегментация (152.4.6, реализовано)
+Пятая линза `str.@as_sentences() -> SentencesView`: UAX #29 sentence boundaries
+(SB1-SB11 + SB998) — итерирует сегменты-предложения (предложение + хвостовой
+whitespace/терминатор). Как `as_words` — **O(n) на создание** (правила SB требуют
+SB5 ignore-rule (Extend/Format) + ATerm/STerm-контекст + SB8 forward-lookahead ⇒
+границы материализуются один раз). `SentencesView` (`value priv {buf, bounds, idx}`,
+как `WordsView`) реализует `Next[str]` + `iter`/`count` (remaining, позиционный)/
+`is_empty`. **Важно:** sentence-правила по умолчанию НЕ ломают (SB998 = ×) —
+противоположно grapheme/word (по умолчанию ломают). Данные:
+`std/unicode/sentence_data.nv` (SB-категории range-таблица из
+SentenceBreakProperty.txt: 14 категорий CR/LF/Extend/Sep/Format/Sp/Lower/Upper/
+OLetter/Numeric/ATerm/SContinue/STerm/Close).
+- **SB6** ATerm × Numeric (`3.4` — одно предложение); **SB7** (Upper|Lower) ATerm ×
+  Upper (`U.S.A`); **SB8** ATerm Close* Sp* × (¬…)* Lower (`resp. leaders` — строчная
+  буква после `.` подавляет разрыв ⇒ одно предложение); **SB8a** (STerm|ATerm) Close*
+  Sp* × (SContinue|STerm|ATerm); **SB9-SB11** — терминатор + Close*/Sp* + опц. ParaSep
+  ⇒ разрыв.
+- **По дизайну (не упрощение):** дефолтный UAX #29 без словаря аббревиатур —
+  `Mr. Smith` ломается после `Mr.` (заглавная `S` ⇒ SB8 не срабатывает, SB11 ломает),
+  как в эталонном `SentenceBreakTest.txt`. Это поведение UAX #29, не баг.
 
 ### Conformance
 - UAX #15: `NormalizationTest.txt` — фикстура
@@ -10106,12 +10127,15 @@ Extended_Pictographic для WB3c переиспользуется из grapheme
 - Word (152.4.5): `word_conformance.nv` — UAX #29 из `WordBreakTest.txt` (**полный
   1826/1826 content-checked verified out-of-band**; коммит — uniform-spread 1500).
   **Independent** UCD oracle (boundaries заданы в тест-файле, не выводятся из генератора).
-  Все — `nova-codegen unicode --emit-conformance`.
+- Sentence (152.4.6): `sentence_conformance.nv` — UAX #29 из `SentenceBreakTest.txt`
+  (**полный 512/512 content-checked**; коммит = весь тест-файл, т.к. < лимита 1500).
+  **Independent** UCD oracle (boundaries заданы в тест-файле). Все —
+  `nova-codegen unicode --emit-conformance`.
 
 См. [Plan 152.4](../../docs/plans/152.4-std-unicode.md), Q-unicode-data
-(open-questions.md). Phase B остаток: sentence-сегментация (`[M-152-sentence-boundaries]`),
-collation (152.5b). `[M-152-case-fold]` + `[M-152-word-boundaries]` ЗАКРЫТЫ.
-AMEND D250 §«линзы» — `as_graphemes` 3-я, `as_words` 4-я линза.
+(open-questions.md). Phase B остаток: collation (152.5b). `[M-152-case-fold]` +
+`[M-152-word-boundaries]` + `[M-152-sentence-boundaries]` ЗАКРЫТЫ.
+AMEND D250 §«линзы» — `as_graphemes` 3-я, `as_words` 4-я, `as_sentences` 5-я линза.
 
 ---
 
