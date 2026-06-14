@@ -1,0 +1,163 @@
+// std.collections.vec (sort) — Plan 153.3 sort family.
+//
+// Stable sort = bottom-up merge sort (O(n log n), O(n) scratch buffer). The
+// `*_unstable` variants currently alias the stable sort (correctness-first
+// MVP; a faster in-place introsort/pdqsort is a perf followup
+// [M-153.3-sort-unstable-inplace]). Comparators return int (<0 / 0 / >0);
+// there is no `Ordering` type (D183).
+#prelude(core, runtime, collections, protocols)
+module collections.vec
+
+// Internal driver: bottom-up STABLE merge sort by `cmp`. Not exported.
+// Equal elements keep input order (`cmp(a, b) <= 0` takes the left run first).
+fn Vec[T] mut @_msort(cmp fn(T, T) -> int) -> @ {
+    ro n = @len
+    if n < 2 {
+        return @
+    }
+    mut buf = Vec[T].with_capacity(n)
+    mut width = 1
+    while width < n {
+        buf.clear()
+        mut i = 0
+        while i < n {
+            mut mid = i + width
+            if mid > n { mid = n }
+            mut hi = i + width + width
+            if hi > n { hi = n }
+            mut a = i
+            mut b = mid
+            while a < mid && b < hi {
+                ro ea = unsafe { @data[a] }
+                ro eb = unsafe { @data[b] }
+                if cmp(ea, eb) <= 0 {
+                    buf.push(ea)
+                    a = a + 1
+                } else {
+                    buf.push(eb)
+                    b = b + 1
+                }
+            }
+            while a < mid {
+                ro ea = unsafe { @data[a] }
+                buf.push(ea)
+                a = a + 1
+            }
+            while b < hi {
+                ro eb = unsafe { @data[b] }
+                buf.push(eb)
+                b = b + 1
+            }
+            i = i + width + width
+        }
+        mut j = 0
+        while j < n {
+            ro bj = unsafe { buf.data[j] }
+            unsafe { @data[j] = bj }
+            j = j + 1
+        }
+        width = width + width
+    }
+    @
+}
+
+/// Sort in place ascending by the element's own `Compare` (stable). O(n log n).
+export fn Vec[T Compare] mut @sort() -> @ => @_msort(|a, b| a.compare(b))
+
+/// Sort in place by a custom comparator `cmp(a, b)` (`<0`/`0`/`>0`), stable.
+export fn Vec[T] mut @sort_by(cmp fn(T, T) -> int) -> @ => @_msort(cmp)
+
+/// Sort in place by a projected key, ordered by the key type's `Compare`, stable.
+export fn Vec[T] mut @sort_by_key[K Compare](key fn(T) -> K) -> @ => @_msort(|a, b| key(a).compare(key(b)))
+
+/// Unstable sort — currently aliases the stable merge sort (see file header).
+export fn Vec[T Compare] mut @sort_unstable() -> @ => @_msort(|a, b| a.compare(b))
+
+/// Unstable sort by comparator (aliases stable).
+export fn Vec[T] mut @sort_unstable_by(cmp fn(T, T) -> int) -> @ => @_msort(cmp)
+
+/// Unstable sort by key (aliases stable).
+export fn Vec[T] mut @sort_unstable_by_key[K Compare](key fn(T) -> K) -> @ => @_msort(|a, b| key(a).compare(key(b)))
+
+// ─── dedup + partition (Plan 153.3 reordering) ────────────────────────
+
+/// Remove CONSECUTIVE equal elements in place (each compared with the last
+/// kept via `==`), preserving order. O(n). Pair with `@sort()` to drop *all*
+/// duplicates (`v.sort().dedup()`). Returns `@`.
+export fn Vec[T] mut @dedup() -> @ {
+    if @len < 2 {
+        return @
+    }
+    mut write = 1
+    for read in 1..@len {
+        ro cur = unsafe { @data[read] }
+        ro prev = unsafe { @data[write - 1] }
+        if !(cur == prev) {
+            if write != read {
+                unsafe { @data[write] = cur }
+            }
+            write = write + 1
+        }
+    }
+    @len = write
+    @
+}
+
+/// Remove consecutive elements considered equal by `eq(prev, cur)`. O(n).
+export fn Vec[T] mut @dedup_by(eq fn(T, T) -> bool) -> @ {
+    if @len < 2 {
+        return @
+    }
+    mut write = 1
+    for read in 1..@len {
+        ro cur = unsafe { @data[read] }
+        ro prev = unsafe { @data[write - 1] }
+        if !eq(prev, cur) {
+            if write != read {
+                unsafe { @data[write] = cur }
+            }
+            write = write + 1
+        }
+    }
+    @len = write
+    @
+}
+
+/// Remove consecutive elements with equal projected key (`key(x)` via `==`). O(n).
+export fn Vec[T] mut @dedup_by_key[K Equal](key fn(T) -> K) -> @ {
+    if @len < 2 {
+        return @
+    }
+    mut write = 1
+    for read in 1..@len {
+        ro cur = unsafe { @data[read] }
+        ro prev = unsafe { @data[write - 1] }
+        ro kc = key(cur)
+        ro kp = key(prev)
+        if !(kc == kp) {
+            if write != read {
+                unsafe { @data[write] = cur }
+            }
+            write = write + 1
+        }
+    }
+    @len = write
+    @
+}
+
+/// Reorder in place so every element satisfying `pred` precedes those that do
+/// not; returns the partition point (the count of satisfying elements).
+/// UNSTABLE (swap-based; does not preserve relative order). O(n).
+export fn Vec[T] mut @partition(pred fn(T) -> bool) -> int {
+    mut i = 0
+    for j in 0..@len {
+        ro ej = unsafe { @data[j] }
+        if pred(ej) {
+            if i != j {
+                @swap(i, j)
+            }
+            i = i + 1
+        }
+    }
+    i
+}
