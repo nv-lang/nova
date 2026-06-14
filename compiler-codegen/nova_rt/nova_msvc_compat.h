@@ -65,6 +65,22 @@
 #define _Alignas(n) __declspec(align(n))
 #endif
 
+/* ── C11 _Static_assert fallback (MS permissive mode) ───────────
+ * _Static_assert — C11 keyword; в MSVC он доступен только под
+ * /std:c11+. Раннер компилит БЕЗ /std:c11 (та опция ломает MS-extension
+ * struct-cast'ы codegen'а, см. шапку), поэтому в permissive MS-режиме
+ * `_Static_assert` — undefined → C2143. Runtime использует его в
+ * fiber_arena.h (Plan 149, slot-count invariant). Map на классический
+ * negative-array-size трюк (работает в C89+); __COUNTER__ даёт уникальное
+ * имя typedef на каждое использование. Сообщение игнорируется (как и в
+ * negative-size трюке — диагностика будет «отрицательный размер массива»). */
+#ifndef _Static_assert
+#define NOVA_SA_CAT_(a, b) a##b
+#define NOVA_SA_CAT(a, b) NOVA_SA_CAT_(a, b)
+#define _Static_assert(cond, msg) \
+    typedef char NOVA_SA_CAT(nova_static_assert_, __COUNTER__)[(cond) ? 1 : -1]
+#endif
+
 /* ── Memory-ordering константы (имена GCC builtin'ов) ───────────── */
 #ifndef __ATOMIC_RELAXED
 #define __ATOMIC_RELAXED  0
