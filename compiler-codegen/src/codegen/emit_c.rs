@@ -15742,7 +15742,7 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
             return Ok(None);
         }
 
-        // --- Recognized: emit the overlap-safe bulk copy in place of the loop. ---
+        // --- Recognized: emit overlap-correct bulk copy in place of the loop. ---
         let dst_c = self.emit_expr(dst_obj)?;
         let src_c = self.emit_expr(src_obj)?;
         let lo_c = self.emit_expr(start)?;
@@ -15750,8 +15750,12 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         let vd = self.fresh_tmp();
         let vs = self.fresh_tmp();
         let vlo = self.fresh_tmp();
-        let vhi = self.fresh_tmp();
+        let vlast = self.fresh_tmp();
         let vn = self.fresh_tmp();
+        let vds = self.fresh_tmp();
+        let vss = self.fresh_tmp();
+        let vnb = self.fresh_tmp();
+        let vk = self.fresh_tmp();
         let tmp = self.fresh_tmp();
         self.line(&format!("nova_unit {};", tmp));
         self.line("{");
@@ -15759,29 +15763,53 @@ if (__builtin_expect(_ii < 0 || _ii >= _ai->len, 0)) nv_panic_index_oob(_ii, _ai
         self.line(&format!("{} {} = {};", dst_ty, vd, dst_c));
         self.line(&format!("{} {} = {};", src_ty, vs, src_c));
         self.line(&format!("nova_int {} = ({});", vlo, lo_c));
-        let hi_expr = if inclusive {
-            format!("({}) + 1", hi_c)
-        } else {
+        // `last` = highest index the per-element loop would touch. Formed WITHOUT
+        // `hi + 1` so an inclusive end == I64_MAX cannot signed-overflow (UB);
+        // the `+1` lives only in the count, computed after the bounds check has
+        // proven `last < len <= I64_MAX`.
+        let last_expr = if inclusive {
             format!("({})", hi_c)
+        } else {
+            format!("({}) - 1", hi_c)
         };
-        self.line(&format!("nova_int {} = {};", vhi, hi_expr));
-        self.line(&format!("nova_int {} = {} - {};", vn, vhi, vlo));
-        self.line(&format!("if ({} > 0) {{", vn));
+        self.line(&format!("nova_int {} = {};", vlast, last_expr));
+        self.line(&format!("if ({} >= {}) {{", vlast, vlo));
         self.indent += 1;
-        // Preserve per-element OOB-panic semantics (last accessed index = hi-1).
+        // Preserve the per-element OOB-panic (highest accessed index = `last`).
         self.line(&format!("if ({} < 0) nv_panic_index_oob({}, ({})->len);", vlo, vlo, vd));
         self.line(&format!(
-            "if ({} > ({})->len) nv_panic_index_oob({} - 1, ({})->len);",
-            vhi, vs, vhi, vs
+            "if ({} >= ({})->len) nv_panic_index_oob({}, ({})->len);",
+            vlast, vs, vlast, vs
         ));
         self.line(&format!(
-            "if ({} > ({})->len) nv_panic_index_oob({} - 1, ({})->len);",
-            vhi, vd, vhi, vd
+            "if ({} >= ({})->len) nv_panic_index_oob({}, ({})->len);",
+            vlast, vd, vlast, vd
         ));
+        self.line(&format!("nova_int {} = {} - {} + 1;", vn, vlast, vlo));
+        self.line(&format!("void* {} = (void*)(({})->data + {});", vds, vd, vlo));
+        self.line(&format!("void* {} = (void*)(({})->data + {});", vss, vs, vlo));
+        self.line(&format!("size_t {} = (size_t){} * sizeof(*({})->data);", vnb, vn, vd));
+        // The ascending per-element loop `dst[i]=src[i]` equals memmove EXCEPT
+        // under destructive forward overlap — dst strictly inside [src, src+n),
+        // reachable via writable offset-overlapping Vec views (`a=v[1..];
+        // b=v[0..]; a[i]=b[i]`), where the loop PROPAGATES. Fast-path memmove
+        // (vectorized, overlap-safe) when that cannot happen; otherwise fall
+        // back to the propagating ascending element copy to match the loop.
         self.line(&format!(
-            "memmove(({d})->data + {lo}, ({s})->data + {lo}, (size_t){n} * sizeof(*({d})->data));",
-            d = vd, s = vs, lo = vlo, n = vn
+            "if ((uintptr_t){d} <= (uintptr_t){s} || (uintptr_t){d} >= (uintptr_t){s} + {nb}) {{",
+            d = vds, s = vss, nb = vnb
         ));
+        self.indent += 1;
+        self.line(&format!("memmove({}, {}, {});", vds, vss, vnb));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line(&format!(
+            "for (nova_int {k} = 0; {k} < {n}; {k}++) ({d})->data[{lo} + {k}] = ({s})->data[{lo} + {k}];",
+            k = vk, n = vn, d = vd, s = vs, lo = vlo
+        ));
+        self.indent -= 1;
+        self.line("}");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
