@@ -249,7 +249,7 @@ export fn[I Next[T]] I mut @zcollect() -> Vec[T] {
 /// Drain the chain into a CALLER-PROVIDED, reusable buffer `out` (Stage 4,
 /// [M-153.2-collect-into]). APPENDS to `out` (does not clear it first).
 /// Amortizes to ZERO `nova_alloc` when `out` is reused across calls.
-export fn[I Next[T]] I mut @zcollect_into(out mut Vec[T]) -> () {
+export fn[I Next[T]] I mut @zcollect_into(mut out Vec[T]) -> () {
     mut go = true
     while go {
         match @next() {
