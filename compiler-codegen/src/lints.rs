@@ -1132,6 +1132,18 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
         }
         ExprKind::Call { func, args, trailing } => {
             collect_expr(func, out);
+            // Plan 159 Ф.4: when the callee is a `Member` selector, also record
+            // the method-call form `@method:<name>` so a *value-receiver* method
+            // call (`expr.foo()`) can be distinguished from a bare free-function
+            // call (`foo()`, which is `Ident`). The import resolver uses this to
+            // auto-inject `std.unicode` ONLY for char-Unicode *method* calls,
+            // never for the bare free-function form (the latter stays opt-in,
+            // pinned by plan152_3/n_char_unicode_opt_in.nv). Purely additive —
+            // `@method:` names never match an import path segment, so the
+            // unused-import lint over-approximation is unaffected.
+            if let ExprKind::Member { name, .. } = &func.kind {
+                out.insert(format!("@method:{}", name));
+            }
             for a in args {
                 collect_expr(a.expr(), out);
             }

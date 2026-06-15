@@ -60,6 +60,68 @@ fn preload_module_nv_prelude_attrs(entry_path: &Path) -> Vec<crate::ast::ModuleA
     }
 }
 
+/// Plan 159 Ф.4: char Unicode-aware method selectors hosted in `std.unicode`
+/// (`std/unicode/category.nv`, `char @<name>`). These are the ONLY providers of
+/// these selectors on a `char` receiver in the whole stdlib — verified by a
+/// stdlib-wide scan: no other type declares a method with any of these names
+/// (Plan 159 Ф.4 recon). So a syntactic appearance of `expr.<name>()` is an
+/// unambiguous signal that `std.unicode` bodies are needed, even when the user
+/// never wrote `import std.unicode`.
+///
+/// This list breaks the historic `[M-152.3b-char-methods-no-import]` blocker
+/// WITHOUT a `prelude → std.unicode` import (which would re-cycle through
+/// `std.collections → prelude` → stack overflow). Instead the import is injected
+/// into the *user's entry module* (the normal, cycle-free import path), and
+/// Plan 159 Ф.1 reachability DCE strips every table the program does not touch
+/// — so the no-import ergonomics cost nothing for programs that never call them.
+const CHAR_UNICODE_METHOD_SELECTORS: &[&str] = &[
+    "is_alphabetic",
+    "is_numeric",
+    "is_alphanumeric",
+    "is_whitespace",
+    "is_uppercase",
+    "is_lowercase",
+    "is_control",
+    "general_category",
+    "to_uppercase",
+    "to_lowercase",
+];
+
+/// Plan 159 Ф.4: decide whether `std.unicode` must be auto-injected into the
+/// entry module's import list. Returns true iff (a) some item references a
+/// char-Unicode method selector (syntactic over-approximation — collisions are
+/// impossible, see `CHAR_UNICODE_METHOD_SELECTORS`), AND (b) `std.unicode` is
+/// not already imported by the entry or one of its sibling peers.
+///
+/// G0-conservative: over-injection is harmless (Ф.1 DCE strips unused tables);
+/// under-injection would be a hard error (undefined symbol), so the scan errs
+/// toward injecting. Names are collected via the existing `collect_used_names`
+/// AST walk (lints.rs); the walk additionally tags value-receiver method calls
+/// `expr.foo()` as `@method:foo`, which is what this fn matches against (so the
+/// bare free-function form `foo()` does NOT trigger injection).
+fn needs_unicode_injection(entry_items: &[Item], sibling_items: &[&[Item]]) -> bool {
+    let mut used: HashSet<String> = HashSet::new();
+    crate::lints::collect_used_names(entry_items, &mut used);
+    for items in sibling_items {
+        crate::lints::collect_used_names(items, &mut used);
+    }
+    // Match ONLY the value-receiver method-call form `expr.<name>()`, recorded
+    // by lints::collect_expr as `@method:<name>` (Plan 159 Ф.4). The bare
+    // free-function form `<name>(...)` (recorded as a plain `Ident`) deliberately
+    // does NOT trigger injection — those free functions stay opt-in behind
+    // `import std.unicode` (pinned by plan152_3/n_char_unicode_opt_in.nv).
+    CHAR_UNICODE_METHOD_SELECTORS
+        .iter()
+        .any(|m| used.contains(&format!("@method:{}", m)))
+}
+
+/// True iff `imp` resolves to the `std.unicode` folder-module (either the
+/// folder itself or any of its peers, e.g. `std.unicode.category`). Used to
+/// avoid double-injecting when the user already imported it.
+fn import_targets_std_unicode(imp: &Import) -> bool {
+    imp.path.len() >= 2 && imp.path[0] == "std" && imp.path[1] == "unicode"
+}
+
 pub fn resolve_imports_inline(
     entry_path: &Path,
     module: &mut Module,
@@ -426,6 +488,48 @@ pub fn resolve_imports_inline_ex(
             import_work.push((imp.clone(), sib.path.clone(), 2 + si));
         }
     }
+
+    // Plan 159 Ф.4 — no-import char Unicode methods (closes
+    // `[M-152.3b-char-methods-no-import]`). If the entry-group references a
+    // char-Unicode method selector (`'A'.is_alphabetic()` etc.) but never
+    // imported `std.unicode`, inject that import here — into the *user* entry
+    // group, NOT the prelude facade. Injecting into the user group is the
+    // ordinary cycle-free path (the prelude→unicode→collections→prelude cycle
+    // is never entered). Bodies then merge normally; Plan 159 Ф.1 reachability
+    // DCE strips every Unicode table the program does not actually touch, so a
+    // program that never calls a char-Unicode method pays nothing. Skipped for
+    // `std.unicode` itself (its peers `module std.unicode`) to avoid self-import,
+    // and skipped when the user already imported `std.unicode` anywhere in the
+    // entry group.
+    {
+        let is_unicode_self = module.name.len() >= 2
+            && module.name[0] == "std"
+            && module.name[1] == "unicode";
+        let already_imports_unicode = module.imports.iter().any(import_targets_std_unicode)
+            || siblings
+                .iter()
+                .any(|s| s.module.imports.iter().any(import_targets_std_unicode));
+        if !is_unicode_self && !already_imports_unicode {
+            let sibling_items: Vec<&[Item]> =
+                siblings.iter().map(|s| s.module.items.as_slice()).collect();
+            if needs_unicode_injection(&module.items, &sibling_items) {
+                let inject = Import {
+                    path: vec!["std".into(), "unicode".into()],
+                    items: None,
+                    alias: None,
+                    is_export: false,
+                    span: crate::diag::Span::dummy(),
+                    doc_attrs: Vec::new(),
+                    anchor: crate::ast::ImportAnchor::Package,
+                };
+                // Acc index 0 (entry's own visible-name accumulator): the
+                // injected names behave exactly as if the entry had written
+                // the import itself.
+                import_work.push((inject, entry_path.to_path_buf(), 0));
+            }
+        }
+    }
+
     for imp in &prelude_imports {
         import_work.push((imp.clone(), entry_path.to_path_buf(), 1));
     }
