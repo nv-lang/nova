@@ -12752,7 +12752,7 @@ type C { mut p Inner }
     fn v7_6_refactor_value_record_is_not_ref() {
         let src = r#"
 module testmod.v7_6_value_record
-type Pt value { x f64  y f64 }
+type Pt value { x f64, y f64 }
 type C { mut p Pt }
 "#;
         let reg = build_test_registry(src);
