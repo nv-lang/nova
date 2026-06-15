@@ -8964,9 +8964,10 @@ Field's effective priv_field = first matching:
 
 #### §3 Access rules
 
-priv field access РАЗРЕШЁН только из:
-- Instance methods own type'а: `fn TypeX @method() { @priv_field }`
-- Static methods own type'а: `fn TypeX.factory(...) { ... }`
+priv field access РАЗРЕШЁН только из методов own type'а:
+- Instance methods: `fn TypeX @method() { @priv_field }`
+- Static methods: `fn TypeX.factory(...) { ... }`
+- **Cross-instance:** `fn TypeX @eq(other TypeX) -> bool => @f == other.f` — доступ к `priv` полям **другого экземпляра того же типа** разрешён внутри метода этого типа. `other` — параметр типа `TypeX`, метод принадлежит `TypeX` → privacy scope совпадает.
 
 priv field access ЗАПРЕЩЁН во всех других контекстах:
 - Read: `outside.priv_field` → E_PRIV_FIELD_READ
@@ -12329,7 +12330,7 @@ Module-private field (из type-level `priv` default, без explicit field `pri
 
 Type-private field (explicit `priv(type)` field, OR type-level `priv(type)` default):
 - **Same module, non-method:** read → `E_PRIV_FIELD_READ` (D220 error codes unchanged).
-- **Own-type method:** РАЗРЕШЁН.
+- **Own-type method:** РАЗРЕШЁН — включая cross-instance: `fn T @eq(other T) -> bool => @f == other.f` читает `other.f` внутри метода `T` (см. D220 §3).
 
 #### §4 Error codes
 
