@@ -4249,11 +4249,26 @@ impl Parser {
                 priv_field: field_priv,
                 visible_to,
             });
-            // запятая или newline
+            // Separator: comma (inline or multi-line) OR newline (multi-line
+            // only). Per D49 + D215 spec: on a SINGLE LINE, a comma is
+            // required between fields; a bare newline is accepted only when
+            // it actually appears. Without either, `{ x int y int }` would
+            // silently parse — now we reject it.
             if self.eat(&TokenKind::Comma).is_some() {
                 self.skip_newlines();
-            } else {
+            } else if matches!(
+                self.peek().kind,
+                TokenKind::Newline | TokenKind::Semicolon | TokenKind::RBrace
+            ) {
                 self.skip_newlines();
+            } else {
+                let sp = self.peek().span;
+                return Err(Diagnostic::new(
+                    "[E_RECORD_FIELD_MISSING_SEPARATOR] record fields on the same line must be \
+                     separated by a comma; add `,` after this field, or move the next field to \
+                     a new line",
+                    sp,
+                ));
             }
         }
         Ok((fields, assoc_consts))
