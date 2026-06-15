@@ -8,7 +8,7 @@ module plan139.t4_slice_not_nul_terminated
 
 import std.ffi.cstr.{CStr}
 
-external fn p139_cstr_strlen(c CStr) -> int
+extern "nova" fn p139_cstr_strlen(c CStr) -> int
 
 test "mid-buffer slice as_cstr terminates at slice len (no over-read)" {
     ro s = "hello world"

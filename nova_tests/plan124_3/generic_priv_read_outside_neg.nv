@@ -13,6 +13,6 @@ export type Stack[T] {
 export fn Stack[T].new(cap int) -> Stack[T] =>
     { len: 0, capacity: cap }
 
-// External fn — reads priv `len` на специализированной Stack[int].
+// extern "nova" fn — reads priv `len` на специализированной Stack[int].
 fn external_count(s Stack[int]) -> int =>
     s.len

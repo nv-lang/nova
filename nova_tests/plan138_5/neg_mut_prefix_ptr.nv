@@ -11,4 +11,4 @@ module plan138_5.neg_mut_prefix_ptr
 // Return position: in a PARAM, a post-name `mut` is eaten as binding-mut
 // (D6 legacy form), so we use return position to force the type-position
 // `mut *` arm and exercise E_POINTER_PREFIX_MODIFIER.
-external fn p() -> mut * int
+extern "nova" fn p() -> mut * int

@@ -21,8 +21,8 @@ type TypedBuffer {
 type TypedHandle(*TypedBuffer)
 
 // External fns mixing legacy ptr + typed *T — both should compile.
-external fn p118_legacy_fn(h LegacyHandle) -> i64
-external fn p118_typed_fn(h TypedHandle) -> i64
+extern "nova" fn p118_legacy_fn(h LegacyHandle) -> i64
+extern "nova" fn p118_typed_fn(h TypedHandle) -> i64
 
 test "legacy ptr + typed *T pattern coexist (Plan 115 D214 backward compat)" {
     assert(1 == 1)

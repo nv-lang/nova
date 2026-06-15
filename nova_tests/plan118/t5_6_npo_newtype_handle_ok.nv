@@ -16,8 +16,8 @@ module plan118.t5_6_npo_newtype_handle_ok
 // Canonical FFI pattern — opaque handle wrapping *() (Plan 115 D214).
 type SqHandle(*())
 
-external fn p118_open_sqlite(path str) -> Option[SqHandle]
-external fn p118_close_sqlite(h SqHandle) -> i64
+extern "nova" fn p118_open_sqlite(path str) -> Option[SqHandle]
+extern "nova" fn p118_close_sqlite(h SqHandle) -> i64
 
 test "Option[SqHandle] None type-checks via NPO newtype detection" {
     // Transparent typedef collapse: Option[SqHandle] === Option[*()]

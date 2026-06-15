@@ -16,12 +16,12 @@ type Acc {
 }
 
 // value-level uninit + readonly / mutable contract (order free)
-external fn p1(x unsafe ro int) -> ()
-external fn p2(x unsafe mut int) -> ()
+extern "nova" fn p1(x unsafe ro int) -> ()
+extern "nova" fn p2(x unsafe mut int) -> ()
 
 // postfix pointee-unsafe pointer forms (canonical, replacing `unsafe * …`)
-external fn p3(x *unsafe ro Acc) -> ()
-external fn p4(x *unsafe mut Acc) -> ()
+extern "nova" fn p3(x *unsafe ro Acc) -> ()
+extern "nova" fn p4(x *unsafe mut Acc) -> ()
 
 test "value-T safety order + postfix pointee-unsafe pointer accepted" {
     assert(1 == 1)

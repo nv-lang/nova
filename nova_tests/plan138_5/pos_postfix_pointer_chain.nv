@@ -11,8 +11,8 @@ type Node {
     id i64
 }
 
-external fn p_chain(x *mut *Node) -> ()
-external fn p_chain2(x **mut Node) -> ()
+extern "nova" fn p_chain(x *mut *Node) -> ()
+extern "nova" fn p_chain2(x **mut Node) -> ()
 
 test "postfix pointer chains parse + uniform 8-byte layout" {
     assert(size_of[*mut *Node]() == 8)

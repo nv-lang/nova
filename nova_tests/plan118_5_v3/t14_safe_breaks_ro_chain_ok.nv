@@ -11,4 +11,4 @@ type Acc {
     id i64
 }
 
-external fn t14_p(x * safe ro Acc) -> ()
+extern "nova" fn t14_p(x * safe ro Acc) -> ()

@@ -2,7 +2,7 @@
 //
 // Проверяет: #must_verify_module — все функции модуля MustVerify без явного #verify.
 // Любой unproven контракт → compile error.
-// #trusted external fn тестируется в parse-only тесте (external fn ограничен std.runtime.*).
+// #trusted extern "nova" fn тестируется в parse-only тесте (extern "nova" fn ограничен std.runtime.*).
 
 #must_verify_module
 module contracts.f13_module_strict_trusted

@@ -21,10 +21,10 @@ import std.runtime.raw_mem.{RawMem}
 // chain forms in param + return + field positions.
 type Chains { pp **int }
 
-external fn p147_chain_a(ptr1 **int) -> ()
-external fn p147_chain_b(ptr2 **mut int) -> ()
-external fn p147_chain_c(ptr3 *mut *int) -> ()
-external fn p147_chain_d(ptr4 *mut *mut int) -> ()
+extern "nova" fn p147_chain_a(ptr1 **int) -> ()
+extern "nova" fn p147_chain_b(ptr2 **mut int) -> ()
+extern "nova" fn p147_chain_c(ptr3 *mut *int) -> ()
+extern "nova" fn p147_chain_d(ptr4 *mut *mut int) -> ()
 
 fn main() -> () {
     unsafe {

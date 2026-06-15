@@ -1,4 +1,4 @@
-// Plan 115 Ф.2 T2.2 — external fn tuple-by-value return.
+// Plan 115 Ф.2 T2.2 — extern "nova" fn tuple-by-value return.
 //
 // Exercises tuple-return ABI lowering для external C functions:
 //   - 2-word tuple (*(), int) → register-return на Sys V AMD64,
@@ -13,18 +13,18 @@
 
 module plan115.t2_external_fn_tuple_ok
 
-external fn p115_make_pair(seed int) -> (*(), int)
-external fn p115_make_triple(seed int) -> (*(), int, int)
-external fn p115_ptr_to_int(p *()) -> int
+extern "nova" fn p115_make_pair(seed int) -> (*(), int)
+extern "nova" fn p115_make_triple(seed int) -> (*(), int, int)
+extern "nova" fn p115_ptr_to_int(p *()) -> int
 
-test "external fn returns 2-tuple (*(), int)" {
+test "extern nova fn returns 2-tuple (*(), int)" {
     ro (h, code) = p115_make_pair(42)
     ro h_int = p115_ptr_to_int(h)
     assert(h_int == 42 + 0x100)
     assert(code == 84)
 }
 
-test "external fn returns 3-tuple (*(), int, int)" {
+test "extern nova fn returns 3-tuple (*(), int, int)" {
     ro (h, a, b) = p115_make_triple(10)
     ro h_int = p115_ptr_to_int(h)
     assert(h_int == 10 + 0x200)
@@ -32,7 +32,7 @@ test "external fn returns 3-tuple (*(), int, int)" {
     assert(b == 1010)
 }
 
-test "external fn tuple result destructured multiple times" {
+test "extern nova fn tuple result destructured multiple times" {
     ro pair1 = p115_make_pair(1)
     ro pair2 = p115_make_pair(2)
     ro (h1, c1) = pair1

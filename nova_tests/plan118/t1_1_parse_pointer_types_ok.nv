@@ -17,19 +17,19 @@ type Acc {
     ro balance i64
 }
 
-// All modifier variants в external fn signatures (Plan 147: `*T` is the ro
+// All modifier variants в extern "nova" fn signatures (Plan 147: `*T` is the ro
 // canon; no separate `*ro T` form).
-external fn p118_take_ptr_default(p *Acc) -> i64
-external fn p118_take_ptr_ro(p *Acc) -> i64
-external fn p118_take_ptr_mut(p *mut Acc) -> i64
-external fn p118_take_ptr_unsafe(p *unsafe Acc) -> i64
+extern "nova" fn p118_take_ptr_default(p *Acc) -> i64
+extern "nova" fn p118_take_ptr_ro(p *Acc) -> i64
+extern "nova" fn p118_take_ptr_mut(p *mut Acc) -> i64
+extern "nova" fn p118_take_ptr_unsafe(p *unsafe Acc) -> i64
 
-external fn p118_return_ptr_default() -> *Acc
-external fn p118_return_ptr_ro() -> *Acc
-external fn p118_return_ptr_mut() -> *mut Acc
-external fn p118_return_ptr_unsafe() -> *unsafe Acc
+extern "nova" fn p118_return_ptr_default() -> *Acc
+extern "nova" fn p118_return_ptr_ro() -> *Acc
+extern "nova" fn p118_return_ptr_mut() -> *mut Acc
+extern "nova" fn p118_return_ptr_unsafe() -> *unsafe Acc
 
-test "typed pointer family parses + type-checks в external fn signatures" {
+test "typed pointer family parses + type-checks в extern nova fn signatures" {
     // Declarations alone exercise parser + type-checker. Runtime ops
     // (& / *) — landing в Ф.2-Ф.4 unsafe model.
     assert(1 == 1)

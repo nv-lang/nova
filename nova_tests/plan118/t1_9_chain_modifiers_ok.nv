@@ -12,14 +12,14 @@ type Acc {
 }
 
 // Pointer to ro Acc (pointee read-only = bare `*T`).
-external fn p118_chain_a(p *Acc) -> ()
+extern "nova" fn p118_chain_a(p *Acc) -> ()
 
 // Former `mut * ro Acc` (reassignable pointer to ro Acc). The pointer
 // reassignability is now binding-only, so as a *type* this is `*Acc`.
-external fn p118_chain_b(p *Acc) -> ()
+extern "nova" fn p118_chain_b(p *Acc) -> ()
 
 // Two-level chain: pointer-to-mut (pointer-to-ro Acc).
-external fn p118_chain_c(p *mut *Acc) -> ()
+extern "nova" fn p118_chain_c(p *mut *Acc) -> ()
 
 test "chained right-binding modifiers parse + typecheck" {
     assert(1 == 1)

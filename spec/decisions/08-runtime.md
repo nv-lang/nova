@@ -8142,3 +8142,56 @@ sum с per-variant bitmap'ами; nested value-record рекурсия; scalar-o
 (layout-id в заголовке объекта + точный tracer) — [Plan 144.5](../../docs/plans/144.5-nonmoving-precise-gc-online.md) Ф.5,
 маркер `[M-144.1-heap-bitmaps]`.
 
+---
+
+## D282 (NEW) — `extern "nova" fn` / `extern "C" fn` — двух-ABI синтаксис для FFI (Plan 91.12 Ф.-1)
+
+**Source:** Plan 91.12 Ф.-1, 2026-06-15. **Status:** ✅ ACTIVE.
+**Связь:** [D82](#d82-external-fn--функции-с-runtime-implementation), [D126](03-syntax.md#d126), [Plan 91.12](../../docs/plans/91.12-net-effect-and-hardening.md).
+
+### Мотивация
+
+`external fn` (D82) всегда добавляет `nova_fn_` prefix к C-имени — это правильно для
+runtime-функций (они живут в `nova_rt/*.h` под именем `nova_fn_<name>`), но неприемлемо для
+функций из сторонних C-библиотек, где нужен вызов `foo()` напрямую без оберток.
+
+Чтобы подключить любую C-библиотеку без дополнительных C-шимов, вводится `extern "C" fn`.
+
+### Синтаксис
+
+```
+ExternFnDecl ::= ['export'] ('extern' AbiStr | 'external') ['unsafe'] 'fn' FnSig
+AbiStr       ::= '"nova"' | '"C"'
+```
+
+- `extern "nova" fn foo()` — runtime fn; codegen генерирует вызов `nova_fn_foo`. Семантика
+  идентична старому `external fn`. Предназначен для функций в `nova_rt/*.h`.
+- `extern "C" fn bar()` — C library fn; codegen генерирует вызов `bar` (литеральное имя).
+  Предназначен для подключения функций из внешних C-библиотек без оберток.
+- `external fn` — legacy alias для `extern "nova" fn`, остаётся валидным.
+
+### Правила
+
+1. Обе формы — bodyless declaration (как `external fn`). Тело запрещено.
+2. Типы параметров должны быть C-нативными для `extern "C" fn`: `int`, `u8`-`u64`,
+   `bool`, `*T`, `*()`, `CStr` (`*u8`). Nova-generic типы (Option, Result, str) — ABI mismatch.
+3. `extern "C" fn` НЕ регистрируется в `ExternalRegistry` (не добавляет `nova_fn_` prefix
+   даже при module-mangling). Регистрируется в `CEmitter.c_literal_extern_fns`.
+4. `export extern "C" fn` — допустимо (экспортирует C-fn в Nova-модуль). Без `export` —
+   приватна для модуля (подходит для `ffi.nv`-слоя std/net).
+5. `unsafe` modifier валиден для обеих форм: `extern "C" unsafe fn memmove(...)`.
+
+### Реализация (Ф.-1)
+
+| Компонент | Изменение |
+|---|---|
+| `lexer/token.rs` | Добавлен `KwExtern` |
+| `lexer/mod.rs` | `"extern" => KwExtern` |
+| `ast/mod.rs` | `FnDecl.extern_abi: Option<String>` |
+| `parser/mod.rs` | `extern STRING fn` → `(is_external=true, extern_abi=Some(abi))` |
+| `codegen/external_registry.rs` | Pass 1+2: skip `extern_abi == Some("C")` |
+| `codegen/emit_c.rs` | `c_literal_extern_fns: HashSet<String>`, проверяется первым в `free_fn_c_name` |
+| `editors/*/` | `extern` добавлен в грамматики и syntax highlight |
+| `tests/syntax_highlight_conformance.rs` | `extern` добавлен в ACTIVE |
+| `std/**/*.nv` (136 файлов) | `external fn` → `extern "nova" fn` |
+

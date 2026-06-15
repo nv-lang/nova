@@ -13,7 +13,7 @@
 #no_prelude
 module plan138_2.t18_no_prelude_graceful_neg
 
-external fn panic(msg str) -> never
+extern "nova" fn panic(msg str) -> never
 
 fn check(cond bool, msg str) -> () {
     if !cond {

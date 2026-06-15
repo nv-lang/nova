@@ -12,4 +12,4 @@ type Acc {
     id i64
 }
 
-external fn t12_p() -> mut * mut Acc
+extern "nova" fn t12_p() -> mut * mut Acc

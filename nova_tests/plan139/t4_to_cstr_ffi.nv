@@ -9,8 +9,8 @@ module plan139.t4_to_cstr_ffi
 
 import std.ffi.cstr.{CStr}
 
-external fn p139_cstr_strlen(c CStr) -> int
-external fn p139_str_byte_sum(s str) -> int
+extern "nova" fn p139_cstr_strlen(c CStr) -> int
+extern "nova" fn p139_str_byte_sum(s str) -> int
 
 test "str -> CStr -> C strlen matches str byte length" {
     ro s = "hello"

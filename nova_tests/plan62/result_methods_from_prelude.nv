@@ -1,7 +1,7 @@
 // result_methods_from_prelude.nv — Plan 62.A follow-up + Plan 62.B.
 //
 // Verifies что Result methods, объявленные в std/prelude/core.nv
-// (`external fn Result[T, E] @method`), работают через registry path.
+// (`extern "nova" fn Result[T, E] @method`), работают через registry path.
 //
 // Coverage: все 9 declared methods. Plan 62.B (2026-05-20) разблокировал
 // unwrap/unwrap_or/unwrap_or_else/map/map_err — type-inference больше не

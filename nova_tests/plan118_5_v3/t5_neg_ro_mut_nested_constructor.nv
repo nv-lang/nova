@@ -20,4 +20,4 @@ type Acc {
     id i64
 }
 
-external fn p(x []ro mut Acc) -> ()
+extern "nova" fn p(x []ro mut Acc) -> ()

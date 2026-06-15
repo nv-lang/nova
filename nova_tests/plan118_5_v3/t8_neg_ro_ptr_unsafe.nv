@@ -9,4 +9,4 @@
 
 module plan118_5_v3.t8_neg_ro_ptr_unsafe
 
-external fn p(x ro * unsafe int) -> ()
+extern "nova" fn p(x ro * unsafe int) -> ()

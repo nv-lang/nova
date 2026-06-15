@@ -13,7 +13,7 @@ export type Stack[T] {
 export fn Stack[T].new(cap int) -> Stack[T] =>
     { len: 0, capacity: cap }
 
-// External fn — let-pattern destructure priv (Stack без generic args
+// extern "nova" fn — let-pattern destructure priv (Stack без generic args
 // в pattern — резолвится через scrutinee type).
 fn external_unpack(s Stack[int]) -> int {
     ro Stack { len, capacity: _ } = s

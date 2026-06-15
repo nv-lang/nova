@@ -11,12 +11,12 @@ type Acc {
     id i64
 }
 
-external fn p_default(p * Acc) -> ()
-external fn p_ro(p *Acc) -> ()
-external fn p_mut(p *mut Acc) -> ()
-external fn p_unsafe(p *unsafe Acc) -> ()
-external fn r_default() -> * Acc
-external fn r_mut() -> *mut Acc
+extern "nova" fn p_default(p * Acc) -> ()
+extern "nova" fn p_ro(p *Acc) -> ()
+extern "nova" fn p_mut(p *mut Acc) -> ()
+extern "nova" fn p_unsafe(p *unsafe Acc) -> ()
+extern "nova" fn r_default() -> * Acc
+extern "nova" fn r_mut() -> *mut Acc
 
 test "postfix pointee modifiers parse + typecheck" {
     assert(size_of[*mut Acc]() == 8)

@@ -9,12 +9,12 @@ type Buffer {
 }
 
 // nullable safe pointer (None = null, NPO → 8 bytes)
-external fn ffi_borrow(handle Option[*Buffer]) -> i64
+extern "nova" fn ffi_borrow(handle Option[*Buffer]) -> i64
 // FFI nullable-uninit: None = null, Some = non-null ptr to possibly-uninit
-external fn ffi_raw(handle Option[*unsafe Buffer]) -> i64
-external fn make_handle() -> Option[*Buffer]
+extern "nova" fn ffi_raw(handle Option[*unsafe Buffer]) -> i64
+extern "nova" fn make_handle() -> Option[*Buffer]
 
-// The external fn signatures above exercise the parser + typechecker for
+// The extern "nova" fn signatures above exercise the parser + typechecker for
 // Option[*T] / Option[*unsafe T]; size_of over an Option generic is a
 // separate (unrelated) const-fn-reflection feature, so we keep the runtime
 // body trivial.

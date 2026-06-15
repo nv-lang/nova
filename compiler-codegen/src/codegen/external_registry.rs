@@ -158,10 +158,11 @@ impl ExternalRegistry {
     /// генерация имён с правильным mangling'ом.
     pub fn from_module(module: &Module) -> Result<Self, String> {
         // Pass 1: подсчёт overload'ов per ключ.
+        // Skip `extern "C" fn` — они не идут в registry (literal C name, no nova_fn_ prefix).
         let mut overload_count: HashMap<(String, String), usize> = HashMap::new();
         for item in &module.items {
             if let Item::Fn(f) = item {
-                if !f.is_external { continue; }
+                if !f.is_external || f.extern_abi.as_deref() == Some("C") { continue; }
                 let recv_ty = f.receiver.as_ref().map(|r| r.type_name.clone()).unwrap_or_default();
                 let key = (recv_ty, f.name.clone());
                 *overload_count.entry(key).or_insert(0) += 1;
@@ -172,7 +173,10 @@ impl ExternalRegistry {
         let mut seen_types: std::collections::HashSet<String> = Default::default();
         for item in &module.items {
             let f = match item {
-                Item::Fn(f) if f.is_external => f,
+                // Plan 91.12 Ф.-1 (D282): `extern "C" fn` — literal C name,
+                // NOT registered in ExternalRegistry (no nova_fn_ prefix).
+                // Only `extern "nova" fn` and legacy `external fn` go through registry.
+                Item::Fn(f) if f.is_external && f.extern_abi.as_deref() != Some("C") => f,
                 _ => continue,
             };
             debug_assert!(matches!(&f.body, FnBody::External));

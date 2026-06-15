@@ -11,7 +11,7 @@
 
 module plan143_2.negative_ffi_call
 
-external fn p143_c_add(a int, b int) -> int
+extern "nova" fn p143_c_add(a int, b int) -> int
 
 // Calls FFI → KEEP.
 fn add_via_c(x int, y int) -> int => p143_c_add(x, y)

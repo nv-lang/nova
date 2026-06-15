@@ -5,7 +5,7 @@
 
 module plan118_5_v3.t7_neg_mut_wraps_unsafe
 
-external fn t7_p() -> mut unsafe int
+extern "nova" fn t7_p() -> mut unsafe int
 
 test "mut unsafe T value-T order now accepted (§V3.2 retired)" {
     assert(1 == 1)

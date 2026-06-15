@@ -7,4 +7,4 @@
 
 module plan118_5_v3.t15_safe_breaks_unsafe_chain_ok
 
-external fn t15_p(x * safe unsafe int) -> ()
+extern "nova" fn t15_p(x * safe unsafe int) -> ()

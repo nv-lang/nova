@@ -8,4 +8,4 @@
 
 module plan118_5_v3.t3_neg_mut_ro_value_type
 
-external fn p_str() -> mut ro str
+extern "nova" fn p_str() -> mut ro str

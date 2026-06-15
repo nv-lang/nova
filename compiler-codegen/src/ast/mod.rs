@@ -356,6 +356,11 @@ pub struct FnDecl {
     /// D82: external fn — реализована в nova_rt/*.h. Body отсутствует
     /// (FnBody::External). Только в std.runtime.* whitelisted.
     pub is_external: bool,
+    /// Plan 91.12 Ф.-1 (D282): ABI specifier from `extern "ABI" fn`.
+    /// `Some("nova")` → `nova_fn_` prefix (runtime function).
+    /// `Some("C")` → literal C name (external C library function).
+    /// `None` → legacy `external fn` syntax (treated as `"nova"`).
+    pub extern_abi: Option<String>,
     pub name: String,
     /// Receiver — для методов через `@`. None у свободных функций.
     pub receiver: Option<Receiver>,

@@ -12,7 +12,7 @@ export type Stack[T] {
 export fn Stack[T].new(cap int) -> Stack[T] =>
     { len: 0, capacity: cap }
 
-// External fn — direct write priv `len`.
+// extern "nova" fn — direct write priv `len`.
 fn external_reset(s Stack[int]) {
     s.len = 0
 }

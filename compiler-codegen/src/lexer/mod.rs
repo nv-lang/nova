@@ -597,6 +597,8 @@ impl<'a> Lexer<'a> {
             "use" => TokenKind::KwUse,
             "export" => TokenKind::KwExport,
             "external" => TokenKind::KwExternal,
+            // Plan 91.12 Ф.-1 (D282): `extern "nova" fn` / `extern "C" fn`.
+            "extern" => TokenKind::KwExtern,
             "fn" => TokenKind::KwFn,
             "type" => TokenKind::KwType,
             "effect" => TokenKind::KwEffect,

@@ -10,6 +10,6 @@ module plan147.c4_neg_star_ro_redundant
 
 type Acc { ro id i64 }
 
-external fn p147_take(p *ro Acc) -> i64
+extern "nova" fn p147_take(p *ro Acc) -> i64
 
 test "rejects *ro T" { assert(1 == 1) }

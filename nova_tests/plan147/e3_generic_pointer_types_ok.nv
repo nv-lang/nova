@@ -17,10 +17,10 @@ module plan147.e3_generic_pointer_types_ok
 
 type Acc { id i64 }
 
-external fn e3_vec_ro() -> Vec[*Acc]
-external fn e3_vec_mut() -> Vec[*mut Acc]
-external fn e3_opt_ro() -> Option[*Acc]
-external fn e3_opt_mut() -> Option[*mut Acc]
+extern "nova" fn e3_vec_ro() -> Vec[*Acc]
+extern "nova" fn e3_vec_mut() -> Vec[*mut Acc]
+extern "nova" fn e3_opt_ro() -> Option[*Acc]
+extern "nova" fn e3_opt_mut() -> Option[*mut Acc]
 
 fn main() -> () {
     // Option[*T] is NPO-eligible: None type-checks (null sentinel).

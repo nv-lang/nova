@@ -55,36 +55,36 @@ module std.bench
 /// Black-box barrier — предотвращает dead-code elimination в benchmarks.
 /// Аналог Criterion `hint::black_box`, Go `runtime.KeepAlive`. Zero runtime cost.
 #stable(since = "0.1")
-export external fn bench.opaque[T](v T) -> T
+export extern "nova" fn bench.opaque[T](v T) -> T
 
 /// Current iters_per_sample (adaptive sampling). Для manual batch-loops
 /// `for i in 0..bench.iterations()`. Вне measure-блока → 0.
 #stable(since = "0.1")
-export external fn bench.iterations() -> int
+export extern "nova" fn bench.iterations() -> int
 
 /// Reset sample timer к current. Для excludeить setup-код из timing window.
 /// Аналог Go `b.ResetTimer()`.
 #stable(since = "0.1")
-export external fn bench.reset_timer() -> ()
+export extern "nova" fn bench.reset_timer() -> ()
 
 /// Throughput annotation: bytes per iter. CLI вычисляет MB/s. Аналог Go `b.SetBytes`.
 #stable(since = "0.1")
-export external fn bench.bytes(n int) -> ()
+export extern "nova" fn bench.bytes(n int) -> ()
 
 /// Throughput annotation: elements per iter. CLI вычисляет elem/s. Аналог
 /// Criterion `Throughput::Elements`.
 #stable(since = "0.1")
-export external fn bench.elements(n int) -> ()
+export extern "nova" fn bench.elements(n int) -> ()
 
 /// Snapshot total allocs since program start. CLI считает per-iter
 /// alloc count = (post - pre) / total_iters.
 #stable(since = "0.1")
-export external fn bench.allocs() -> int
+export extern "nova" fn bench.allocs() -> int
 
 /// High-resolution monotonic timer в ns. libuv `uv_hrtime` под NOVA_USE_LIBUV,
 /// иначе platform-native (QPC / mach_absolute_time / CLOCK_MONOTONIC_RAW).
 #stable(since = "0.1")
-export external fn bench.now_ns() -> int
+export extern "nova" fn bench.now_ns() -> int
 
 /// Plan 57.G.5 — Custom metric value. Каждый вызов emits ONE sample;
 /// CLI aggregates все calls per-bench → JSON `custom_metrics[]` field
@@ -105,4 +105,4 @@ export external fn bench.now_ns() -> int
 ///       bench.metric("hits_per_sample", hits, "count")  // 1 call/sample
 ///   }
 #stable(since = "0.1")
-export external fn bench.metric(name str, value int, unit str) -> ()
+export extern "nova" fn bench.metric(name str, value int, unit str) -> ()

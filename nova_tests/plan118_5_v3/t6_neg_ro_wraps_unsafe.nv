@@ -7,7 +7,7 @@
 
 module plan118_5_v3.t6_neg_ro_wraps_unsafe
 
-external fn t6_p(x ro unsafe int) -> ()
+extern "nova" fn t6_p(x ro unsafe int) -> ()
 
 test "ro unsafe T value-T order now accepted (§V3.2 retired)" {
     assert(1 == 1)

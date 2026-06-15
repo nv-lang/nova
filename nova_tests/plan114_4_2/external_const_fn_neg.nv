@@ -4,4 +4,4 @@
 
 module plan114_4_2.external_const_fn_neg
 
-external fn bad(const a int) -> const int
+extern "nova" fn bad(const a int) -> const int
