@@ -40,8 +40,8 @@ test "grid[1][0] after push inner" {
 
 test "[][]int via Vec[int].from rows" {
     mut grid [][]int = []
-    grid.push(Vec[int].from([0, 1]))
-    grid.push(Vec[int].from([2, 3]))
+    grid.push(Vec[int].of(0, 1))
+    grid.push(Vec[int].of(2, 3))
     assert(grid[0][0] == 0)
     assert(grid[0][1] == 1)
     assert(grid[1][0] == 2)

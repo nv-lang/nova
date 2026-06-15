@@ -5,44 +5,44 @@ module plan153_2.chains
 import std.collections.vec_lazy
 
 test "map -> filter -> collect" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     assert(v.lazy().map(|x| x * 10).filter(|x| x > 25).collect() == [30, 40, 50, 60])
 }
 
 test "filter -> map -> collect (order matters)" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     assert(v.lazy().filter(|x| x % 2 == 0).map(|x| x + 100).collect() == [102, 104, 106])
 }
 
 test "skip -> take windows the middle" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6, 7, 8])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
     assert(v.lazy().skip(2).take(3).collect() == [3, 4, 5])
 }
 
 test "map -> filter -> fold" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     ro s = v.lazy().map(|x| x * x).filter(|x| x % 2 == 1).fold(0, |acc, x| acc + x)
     assert(s == 35)   // 1 + 9 + 25
 }
 
 test "filter -> count" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
     assert(v.lazy().filter(|x| x > 5).count() == 5)
 }
 
 test "map -> sum" {
-    ro v = Vec[int].from([1, 2, 3, 4])
+    ro v = Vec[int].of(1, 2, 3, 4)
     assert(v.lazy().map(|x| x * 2).sum(0) == 20)
 }
 
 test "filter_map -> collect" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     ro got = v.lazy().filter_map(|x| if x % 3 == 0 { Some(x * 10) } else { None }).collect()
     assert(got == [30, 60])
 }
 
 test "enumerate -> map -> collect (project index+value)" {
-    ro v = Vec[int].from([5, 6, 7, 8])
+    ro v = Vec[int].of(5, 6, 7, 8)
     // map collapses the (idx, val) tuple to a scalar in the SAME stage that
     // consumes it — the supported enumerate composition (a tuple-PRESERVING
     // adapter directly after enumerate is gated, [M-153.2-tuple-elem-adapter]).
@@ -51,13 +51,13 @@ test "enumerate -> map -> collect (project index+value)" {
 }
 
 test "take after map then any short-circuits" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     assert(v.lazy().map(|x| x + 1).take(3).any(|x| x == 3))
     assert(!v.lazy().map(|x| x + 1).take(2).any(|x| x == 4))
 }
 
 test "long chain map->filter->skip->take->collect" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
     ro got = v.lazy()
         .map(|x| x * 3)        // 3,6,9,12,15,18,21,24,27,30
         .filter(|x| x % 2 == 0) // 6,12,18,24,30

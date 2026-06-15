@@ -168,13 +168,20 @@ export fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self {
 /// wraps the `=> @data` body.
 export fn Vec[T] consume @into_raw() -> *mut T => @data
 
-/// Build a `Vec[T]` by copying every element of an iterable source.
+/// Build a `Vec[T]` by copying every element of an iterable source — a
+/// `clone`-like **conversion** of an existing collection.
 ///
-/// **Convention (Plan 153.1 / D259):** use `from` to convert an **existing**
-/// `[]T` / collection — `Vec[int].from(some_slice)`. For a **literal element
-/// list** prefer the variadic `Vec[T].of(a, b, c)`: `Vec[int].of(1, 2, 3)` reads
-/// cleaner than `from([1, 2, 3])`, which is redundant under D239 (a literal
-/// `[1, 2, 3]` is already a `Vec[int]`). `of` narrows too (`Vec[u8].of(1, 2, 3)`).
+/// **Convention (Plan 153.1 / [D259](../../../spec/decisions/02-types.md#d259-конструктор-конвенция-vect--of-для-литерала-from-для-конверсии-plan-1531)):**
+/// `from` is for converting an **existing** `[]T` / collection
+/// (`Vec[int].from(some_slice)`). For a **literal element list** use the variadic
+/// `Vec[T].of(a, b, c)` instead — `Vec[int].of(1, 2, 3)`, NOT `from([1, 2, 3])`.
+///
+/// `from([literal])` is a **redundant-clone anti-pattern**: under D239 the array
+/// literal `[1, 2, 3]` is *already* a `Vec[int]` (one allocation at the literal),
+/// so `from` copies it into a **second** buffer — two allocations for what
+/// `of(1, 2, 3)` does in one (it takes the elements directly). `from([])` is
+/// likewise just a slower `Vec[T].new()`. `of` narrows exactly like `from`
+/// (`Vec[u8].of(1, 2, 3)`), so prefer it for every literal.
 ///
 /// Plan 138.1 Ф.0.1: the source is annotated `[]T` (NOT a distinct built-in
 /// array param). After the D239 type-flip `[]T` ≡ `Vec[T]`, so this signature
@@ -191,27 +198,32 @@ export fn Vec[T] consume @into_raw() -> *mut T => @data
 export fn Vec[T].from(items []T) -> Self => Vec[T].with_capacity(items.len()).extend(items)
 // NOTE ([M-138-rawmem-bulk-ops], Plan 138.2): `from` is intentionally NOT
 // bulk-copied via `RawMem.copy_nonoverlapping`. The source `items` is supplied
-// by the caller and may carry a *different element C-width* than `T` — most
-// commonly `Vec[u8].from([1, 2, 3])`, where the array literal is built as a
-// `Vec[int]` (8-byte slots) and only narrowed to `u8` element-by-element. A
-// byte-wise memcpy would read the wrong bytes (`size_of[T]()` is the *target*
-// stride, not the source's). The `@extend` loop performs a per-element typed
-// assignment, which applies the implicit numeric conversion correctly. The
+// by the caller and may carry a *different element C-width* than `T` — e.g.
+// `Vec[u8].from(src)` where `src` is a `Vec[int]` (8-byte slots) narrowed to
+// `u8` element-by-element (and likewise `of(...)`, which routes through the same
+// `@extend` loop after collecting its variadic args). A byte-wise memcpy would
+// read the wrong bytes (`size_of[T]()` is the *target* stride, not the
+// source's). The `@extend` loop performs a per-element typed assignment, which
+// applies the implicit numeric conversion correctly. The
 // in-module same-`T` bulk ops (`@realloc_to`/`@append`/`@clone`/`@insert`/
 // `@remove`/`@copy_from`/`@copy_within`) have matching strides and stay bulk.
 
-/// Ergonomic variadic constructor: `Vec[int].of(1, 2, 3)`. The call-site
-/// variadic args are collected into a single `[]T` (= `Vec[T]`) value and
-/// returned zero-copy. Reads better than `from([literal])` (under D239 a
-/// literal `[1,2,3]` is already a `Vec[int]`, so `from([literal])` is
-/// redundant). `of()` with no args yields an empty `Vec[T]`.
+/// Ergonomic variadic constructor: `Vec[int].of(1, 2, 3)` — the **canonical**
+/// way to build a `Vec` from a literal element list (Plan 153.1 /
+/// [D259](../../../spec/decisions/02-types.md#d259-конструктор-конвенция-vect--of-для-литерала-from-для-конверсии-plan-1531)). The call-site variadic args
+/// are collected into a single `[]T` (= `Vec[T]`) value and returned **zero-copy**
+/// (one allocation). This is why it beats `from([1, 2, 3])`: under D239 the
+/// literal `[1, 2, 3]` is already a `Vec[int]`, so `from` would copy it into a
+/// second buffer (two allocations) for the same result. `of` narrows like `from`
+/// (`Vec[u8].of(1, 2, 3)`). `of()` with no args yields an empty `Vec[T]` (though
+/// `Vec[T].new()` reads better for the empty case).
 ///
 /// [M-153-vec-of-variadic-codegen] (resolved): user-defined generic-static
 /// variadic collection. The call-site packs `of(1,2,3)`'s args into a single
 /// collected `[]T` matching this body's `args` parameter — previously the raw
 /// args were passed straight through (`_static_of(1,2,3)` → "too many
-/// arguments"). `from` stays the element-narrowing (`Vec[u8].from([1,2,3])`) +
-/// iterable-materialiser path.
+/// arguments"). `from` remains the **conversion** path (copy an existing
+/// collection / narrow a width-differing source).
 export fn Vec[T].of(...args []T) -> Self => args
 
 // ──────────────────────────────────────────────────────────────────────────

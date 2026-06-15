@@ -1,0 +1,21 @@
+// Plan 145.1/145.2 regression guard — bare []str-литерал read + write.
+//
+// До фикса: (а) read `v[1]` будил prelude init-order OOB при «плохом» порядке
+// эмиссии (Plan 145.2 детерминизм); (б) write `v[0] = "x"` (struct-value элемент
+// nova_str) -> cl.exe C2440 на `*(struct*)void_ptr = v` (Plan 145.1 memcpy-в-слот).
+
+module plan145_2.str_array_literal_rw
+
+test "str array literal read + write through" {
+    mut v = ["a", "b", "c"]
+    assert(v[1] == "b")
+    v[0] = "x"
+    assert(v[0] == "x")
+    assert(v[2] == "c")
+}
+
+test "str array literal read-only" {
+    ro w = ["hello", "world"]
+    assert(w[0] == "hello")
+    assert(w[1] == "world")
+}

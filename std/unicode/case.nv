@@ -54,6 +54,12 @@ fn lower_one(cp int) -> Vec[int] {
 fn title_one(cp int) -> Vec[int] {
     match title_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
 }
+// Per-codepoint uppercase mapping → mapped sequence, or [cp] when unmapped
+// (symmetric with lower_one). Reused by char_to_uppercase (category.nv) for the
+// code-point-level case API. Multi-codepoint expansions apply (ß → [S, S]).
+fn upper_one(cp int) -> Vec[int] {
+    match upper_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
+}
 
 /// Full case folding (UCD CaseFolding status C+F) — for caseless matching.
 /// Idempotent on its own output. Multi-codepoint folds apply (ß → "ss").

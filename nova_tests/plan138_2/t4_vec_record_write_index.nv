@@ -27,7 +27,7 @@ test "Vec[Point] write-index via push-build, read back field" {
 }
 
 test "Vec[Point] write last element, length preserved" {
-    mut v = Vec[Point].from([Point { x: 1, y: 1 }, Point { x: 2, y: 2 }, Point { x: 3, y: 3 }])
+    mut v = Vec[Point].of(Point { x: 1, y: 1 }, Point { x: 2, y: 2 }, Point { x: 3, y: 3 })
     assert(v.len() == 3)
     v[2] = Point { x: 100, y: 200 }
     assert(v.len() == 3)

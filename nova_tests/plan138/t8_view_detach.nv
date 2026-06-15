@@ -6,7 +6,7 @@ module plan138.t8_view_detach
 import std.collections.vec.{Vec}
 
 test "push on range view detaches from parent" {
-    mut v = Vec[int].from([10, 20, 30, 40, 50])
+    mut v = Vec[int].of(10, 20, 30, 40, 50)
     mut view = v[1..3]
     assert(view.len() == 2)
     assert(view.get(0) == Some(20))
@@ -23,7 +23,7 @@ test "push on range view detaches from parent" {
 test "writes to view before push affect parent" {
     // Since view shares data pointer (no copy), writes through view DO affect parent
     // until view is grown (cap == len for views).
-    mut v = Vec[int].from([10, 20, 30, 40, 50])
+    mut v = Vec[int].of(10, 20, 30, 40, 50)
     mut view = v[1..3]
     // cap == len == 2, so write in-bounds goes through to parent's buffer
     view[0] = 999

@@ -13,6 +13,6 @@ fn slice_whole(v Vec[int]) -> int {
 }
 
 test "whole-slice bounds elided" {
-    ro v = Vec[int].from([10, 20, 30, 40])
+    ro v = Vec[int].of(10, 20, 30, 40)
     assert(slice_whole(v) == 4)
 }

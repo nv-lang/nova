@@ -28,12 +28,12 @@ export fn Vec[T] @copy_all() -> Vec[T] {
 }
 
 test "flat []T method still binds T = element (int)" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     assert(v.doubled_len() == 6)
 }
 
 test "flat Vec[T] method returns Vec[T] (int)" {
-    ro v = Vec[int].from([5, 6, 7])
+    ro v = Vec[int].of(5, 6, 7)
     ro c = v.copy_all()
     assert(c.len() == 3)
     assert(c[0] == 5)
@@ -41,7 +41,7 @@ test "flat Vec[T] method returns Vec[T] (int)" {
 }
 
 test "flat Vec[T] method returns Vec[T] (str)" {
-    ro v = Vec[str].from(["x", "y"])
+    ro v = Vec[str].of("x", "y")
     ro c = v.copy_all()
     assert(c.len() == 2)
     assert(c[0] == "x")

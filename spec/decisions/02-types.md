@@ -10638,6 +10638,11 @@ Records keep type-level priv flip (D220 §3.3.1 unaffected).
 
 ### D228 NEW — Value-record allocation contract (Plan 124.8 Ф.2/Ф.4)
 
+> **Extended by [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2)** (Plan 153.2, 2026-06-15): by-value
+> стек-codegen распространён с не-generic value-records на **generic**
+> `type X[T] value {…}` — каждый mono-инстанс = inline `NovaValue_<short>`,
+> passed/returned/copied by value, 0 `nova_alloc` для wrapper (зеркаля str-путь).
+>
 > Renumbered from D226 (2026-06-03) — D226 in main concurrently assigned
 > to «signed indexing convention» commit `8827f8ec132`. D227 taken by
 > «numeric literal inference» commit `41d4be096fa`. D228 next free.
@@ -11795,9 +11800,74 @@ v[1] = 99  // → v.@index(1, 99)   write-overload через MutIndex (D240)
 
 ---
 
+## D259. Конструктор-конвенция `Vec[T]` — `of` для литерала, `from` для конверсии (Plan 153.1)
+
+**Status:** ACTIVE (Plan 153.1, формализована 2026-06-14). **Depends on:**
+[D232](#d232-vect--nova-native-generic-growable-array) (`Vec[T]`),
+[D239](#d239-t--синтаксический-псевдоним-vect) (`[]T ≡ Vec[T]`).
+
+### Что
+
+Два конструктора `Vec[T]` несут **разные роли**, и их нельзя путать:
+
+- **`Vec[T].of(a, b, c)`** (вариадик) — построить вектор из **литерального списка
+  элементов**. Аналог Rust `vec![a, b, c]`.
+- **`Vec[T].from(coll)`** (`from(items []T)`) — **конвертировать существующую
+  коллекцию / слайс** в новый `Vec`. Аналог Rust `Vec::from(iter)` — это `clone`-подобная
+  копия.
+
+### Правило
+
+```nova
+// КАНОН
+Vec[int].of(1, 2, 3)          // литерал элементов → of (1 аллокация)
+Vec[int].of()                 // пустой → можно of(), но идиоматичнее Vec[int].new()
+Vec[int].new()                // пустой вектор
+Vec[int].from(existing_vec)   // конверсия существующей коллекции → from
+Vec[u8].of(1, 2, 3)           // of сужает так же, как from (args []T)
+
+// АНТИ-ПАТТЕРН
+Vec[int].from([1, 2, 3])      // ❌ избыточно: под D239 литерал [1,2,3] УЖЕ Vec[int],
+                              //    поэтому from его КОПИРУЕТ во второй буфер (2 аллокации).
+                              //    `of(1,2,3)` берёт элементы напрямую (1 аллокация).
+Vec[int].from([])             // ❌ → Vec[int].new()
+```
+
+- **`from([литерал])` — избыточный clone.** Под [D239](#d239-t--синтаксический-псевдоним-vect)
+  массив-литерал `[1, 2, 3]` сам по себе **уже** `Vec[int]` (одна аллокация в точке
+  литерала). `from` копирует его во второй буфер ⇒ две аллокации ради того же результата,
+  что `of(1, 2, 3)` даёт за одну. Поэтому `from([литерал])` — анти-паттерн; doc-comment
+  `from` (в `std/collections/vec/core.nv`) направляет на `of`.
+- **`from` — ТОЛЬКО для конверсии существующей коллекции** (`from(переменная)` /
+  `from(другой_слайс)`). Это легитимный `clone`-подобный путь и НЕ анти-паттерн.
+- **Когда тип выводится из контекста — просто `[a, b, c]`** (литерал = `Vec[T]`),
+  без `of`/`from`. `of`/`from` нужны лишь для inline-указания типа (return-position,
+  generic-контекст, когда контекст не выводит элементный тип).
+
+### Почему
+
+Cost-transparency (D135): идиома, которая выглядит как «построить вектор из этих
+элементов», должна стоить ровно одну аллокацию. `of(...)` это даёт; `from([...])` —
+скрыто удваивает. Разделение ролей убирает footgun и читается как Rust (`vec![]` vs
+`Vec::from(iter)`), Kotlin (`listOf` vs `toList`), Swift (`[a,b]` vs `Array(seq)`).
+
+### Связь
+
+- [D239](#d239-t--синтаксический-псевдоним-vect) — `[]T ≡ Vec[T]`; именно поэтому
+  литерал уже вектор и `from([литерал])` избыточен.
+- [D232](#d232-vect--nova-native-generic-growable-array) — `Vec[T]`-тип и его конструкторы.
+- Миграция тестов/stdlib `from([литерал])` → `of(...)` — Plan 153.1 sweep
+  (`[M-153.1-of-vs-from-sweep]`).
+
+---
+
 ## D260. Ленивый итератор `Vec[T]` — boxed-fluent адаптеры (Plan 153.2)
 
-**Status:** ACTIVE (Plan 153.2 Phase A, 2026-06-14). **Depends on:**
+**Status:** ACTIVE (Plan 153.2 Phase A, 2026-06-14). **Amended by
+[D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2)** (2026-06-15): `BoxIter[T]` помечен `value` →
+wrapper-рекорд лоуэрится by-value (0 heap-аллокаций обёртки, Stage 1); добавлен
+allocation-free generic-over-source sibling `collections.vec_iter_zc` (Stage 2).
+**Depends on:**
 [D232](#d232-vect--nova-native-generic-growable-array) (`Vec[T]`),
 [D239](#d239-t--синтаксический-псевдоним-vect) (`[]T ≡ Vec[T]`),
 [D58](03-syntax.md) (`Iter`/`Next` — `VecIter`). **Закрывает:**
@@ -11871,9 +11941,12 @@ commit `996ca01a`.)
 
 `zip`/`unzip`/`chain`/`flat_map`/`flatten`/`scan`/`inspect`/`step_by`/`take_while`/
 `skip_while`/`peekable`/`min_by[_key]`/`max_by[_key]`/`partition`/`chunk_by`/`into_iter`;
-мут-итерация `for mut x`/`mut @iter()` (Q-iter-mut write-through — отдельный путь);
-`collect`-target FromIterator (мост 153.6). Zero-cost generic-over-source апгрейд поверх
-boxed (монооморфный курсор-тип без бокса) — `[M-153.2-generic-over-source-zerocost]`.
+мут-итерация `for mut x`/`mut @iter()` (Q-iter-mut write-through — отдельный путь).
+**collect-target FromIterator — ✅ ЗАКРЫТ (Plan 153.6 / [D264](#d264-vec-протоколы-hash--fromiterator--collect-target-plan-1536)):**
+`@collect()->Vec` (default) + `@collect_set()->Set` (терминаторы) + `from`/`from_iter`/`@extend`
+(прочие таргеты/источники); статический generic-конструктор + tuple-`@collect_map` gated
+(`[M-153.6-collect-static-generic]`/`[M-153.6-collect-map-tuple-receiver]`).
+Zero-cost generic-over-source — **реализован Stage 2, см. [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2)** (`[M-153.2-generic-over-source-zerocost]` → 🟡 PARTIAL).
 Tuple-PRESERVING-адаптер сразу после `enumerate` — `[M-153.2-tuple-elem-adapter]`
 (residual `Option[<mono-tuple>]` closure-typing gap; схлопнуть tuple через `map`).
 
@@ -11885,3 +11958,248 @@ Tuple-PRESERVING-адаптер сразу после `enumerate` — `[M-153.2-
 - [Q-iterator-laziness](../open-questions.md) — закрыта (lazy = канон).
 - [Q-iter-mut](../open-questions.md) — Phase A закрывает терминаторами/адаптерами; мут-итерация — Phase B.
 - Plan 153.2 — план; `vec_seq.nv` / `vec_lazy.nv` — реализация.
+
+## D264. Vec-протоколы: `Hash` + FromIterator / collect-target (Plan 153.6)
+
+**Статус:** ✅ IMPLEMENTED — `Hash` (2026-06-13) + FromIterator/collect-target (2026-06-14).
+
+`Vec[T]` дополняет набор протоколов (`Equal`/`Compare`/`Clone`/`Display`/`Debug` —
+[D230 amend](#collections-vec--hashmap--set--element-wise-deep--conditional-bound))
+двумя возможностями: **content-`Hash`** и **FromIterator / collect-target** (мост к
+ленивому слою D260). Оба — под conditional-bound на `T` (Rust `impl<T: Hash> Hash for
+Vec<T>` / `impl<T> FromIterator<T> for Vec<T>`).
+
+### `Vec[T Hash] @hash() -> u64`
+
+Order- и length-sensitive content-hash (`protocols.nv`): FNV-1a (64-bit), сворачивает
+длину + per-element `@hash()` (`h = (h ^ x) * prime`). Consistency с `@equal`: равные
+Vec (равная длина + element-wise `==`) → равный hash (контракт `Hash`+`Equal`). u64-mul
+**врапается** (Nova-семантика = FNV mixing-шаг); offset-basis — **hex**-литерал (десятичная
+форма > `i64::MAX`). Делает `Vec[T: Hash]` сам `Hash` → элемент `HashSet`. (Вторая,
+equality-половина ключ-контракта `HashMap` — `[M-153.6-vec-hashmap-key-eq]`, pre-existing
+generic-key-dispatch gap; `@hash` готов.)
+
+### FromIterator / collect-target
+
+Nova **структурно**-типизирует итераторы ([D58](03-syntax.md): любой `mut @next() ->
+Option[T]` итерируем; `Next[T]`/`Iter[I]` — протоколы), поэтому FromIterator — **НЕ**
+отдельный enforced-протокол с одним методом, а **набор конструкторов/терминаторов**,
+строящих коллекцию из любого итератора. Канон:
+
+1. **Default collect-target → `Vec`** (ленивый слой D260): `BoxIter[T] mut @collect() ->
+   Vec[T]` — материализует pipeline в один проход, без промежуточного `Vec` на стадию.
+2. **`Set` collect-target:** `BoxIter[T Hash] mut @collect_set() -> Set[T]` (dedup; Rust
+   `iter.collect::<HashSet<_>>()`). Allocation-free над pipeline (pull + insert на лету).
+3. **Прочие таргеты — композицией над собранным `Vec`:** `Set[T].from_iter(it.collect())`,
+   `HashMap[K, V].from(pairs.collect())`. `Set.from_iter([]T)` и `HashMap.from([](K,V))`
+   уже принимают собранный `Vec` (под D239 `[]T ≡ Vec[T]`).
+4. **FromIterator из произвольного `Iter`-источника (без ленивой стадии):**
+   `Vec[T].new().extend(src)` — instance-метод `@extend[S Iter[T]]` (`mutate.nv`)
+   мономорфизируется корректно для любого `S` (Range/VecIter/Vec). Прямой call-site
+   идиом — НЕ требует обёртки.
+
+### Gated (compiler-gaps, не упрощение)
+
+- **`[M-153.6-collect-static-generic]`** — *статический* generic-конструктор
+  `Vec[T].from_iter[S Iter[T]](src S)` с for-in по `S` в теле **не компилируется**: bound
+  `S Iter[T]` не резолвится для for-in dispatch внутри **static** generic-метода (typevar
+  остаётся `Nova_S`). Тот же класс, что generic-method-dispatch-collapse (`@cap`/`@splice`).
+  Instance-`@extend` (#4) — рабочий обход. NEG-фикстура `collect_static_generic_neg`
+  лочит границу (`EXPECT_COMPILE_ERROR for-in: type 'S'`).
+- **`[M-153.6-collect-map-tuple-receiver]`** — прямой терминатор `BoxIter[(K, V)] mut
+  @collect_map() -> HashMap[K, V]` **не парсится**: receiver type-аргумент кортежем
+  (`BoxIter[(K, V)]`) отвергается парсером (`expected identifier, got '('`). HashMap
+  collect-target остаётся `HashMap.from(pipeline.collect())` (#3).
+
+### Зачем структурный набор, а не enforced-протокол
+
+Один enforced `FromIterator[T]`-протокол с методом-конструктором потребовал бы
+static-generic-method-dispatch (gated, см. выше). Структурный набор — это паритет Rust
+(`collect`/`FromIterator`/`extend`) при существующей инфре: `@collect`/`@collect_set`
+(терминаторы), `from`/`from_iter` (конструкторы из собранного), `@extend` (из источника).
+Cost-transparency сохраняется: ленивый путь без промежуточных аллокаций (D260), материализация
+именами `collect*`/`from*`/`extend`.
+
+### Связь
+
+- [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — ленивый слой;
+  `@collect`/`@collect_set` — его терминаторы.
+- [D58](03-syntax.md) — `Iter`/`Next` структурный duck-typing (основа FromIterator).
+- [D239](#d239-t--синтаксический-псевдоним-vect) — `[]T ≡ Vec[T]` (собранный `Vec` = `[]T`-аргумент `from_iter`).
+- [D230 amend](#collections-vec--hashmap--set--element-wise-deep--conditional-bound) — conditional-bound протоколы коллекций.
+- Plan 153.6 — план; `vec_lazy.nv` (`@collect_set`) / `protocols.nv` (`@hash`) / `set.nv` (`from_iter`) — реализация.
+---
+
+## D277. By-value мономорфизация generic value-records + generic-over-source zero-cost адаптеры (Plan 153.2 Ф.2)
+
+**Status:** ACTIVE (Plan 153.2 Stage 1 + Stage 2 + Stage 3 + Stage 4,
+2026-06-14/15). **Amends:** [D228](#d228) (value-record allocation contract —
+распространён на **generic** `type X[T] value {…}`),
+[D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)
+(lazy-итератор — добавлен allocation-free sibling-слой). **Зависит от:**
+[D226](#d226) (always-pointer receiver ABI), [D123](#d123-tuple-monomorphization)/
+[D216](#d216-generic-anonymous-tuple-monomorphization) (mono-инфраструктура).
+**Маркеры:** `[M-153.2-generic-over-source-zerocost]` → 🟡 PARTIAL (Stage 2 done),
+`[M-153.2-Z-closure-devirt]` → 🟡 PARTIAL (Stage 3 alloc-elimination done),
+`[M-153.2-Z-noalloc-terminator]` → ✅ DONE (Stage 4),
+`[M-153.2-closure-as-mono-type]` (P3 остаток — call-инлайн).
+
+### Контекст
+
+[D228](#d228) дал by-value стек-codegen для **не-generic** `value`-рекордов (6
+языковых типов: `str` + 5). [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)
+зашипил lazy-итератор по **boxed-fluent**-модели: `BoxIter[T]` — единый erased
+курсор, держащий `step`-thunk; адаптеры не аллоцируют **промежуточный Vec**, но
+сам wrapper-рекорд `BoxIter[T]` (как любой generic-рекорд) лоуэрился в **heap**
+(`nova_alloc(sizeof(Nova_BoxIter…))`, один на адаптер), плюс per-element fn-ptr
+индирекция через `step()`. Решение закрывает обе статьи накладных расходов в две
+композируемые стадии.
+
+### Stage 1 — by-value мономорфизация generic value-records
+
+`type X[T] value {…}` теперь лоуэрится **BY VALUE** для КАЖДОЙ конкретной
+mono-инстанции, зеркаля не-generic value-record-путь ([D228](#d228)) и str-путь
+([D26](08-runtime.md)). Mono-инстанс `X[int]` = inline-struct `NovaValue_<short>`
+(`<short>` = sanitized mono-имя), **передаётся/возвращается/копируется по
+значению**, **без `nova_alloc` для wrapper-рекорда**. Receiver-ABI — always-pointer
+([D226](#d226)): `NovaValue_<short>*` на стек-слот (`&obj` / hoist+`&temp`
+на call-site через `prepare_method_recv`), как у не-generic value-record.
+`BoxIter[T]` помечен `value` ([`std/collections/vec_lazy.nv`](../../std/collections/vec_lazy.nv)) —
+тот же fluent API D260, но теперь **0 wrapper-аллокаций**.
+
+**Codegen-контракт (обязателен — gate на `AllocKind::Value`, heap-generics не
+тронуты):**
+
+1. **`receiver_c_type`** value-generic-mono receiver → `NovaValue_<short>*`,
+   order-free относительно `type_aliases` (helpers `value_generic_mono_short` /
+   `value_aware_generic_c_type`).
+2. **generic-instance method-dispatch (block 5b)** маршрутит value-receiver
+   через `prepare_method_recv` → передача по адресу.
+3. **fn-typed-field вызов** `(@step)()` — accessor `.` vs `->` выбирается по
+   value-ness receiver'а (`(*nova_self).step`).
+4. **return-type inference** (`infer_mono_method_ret_with_args` + dispatch 5b +
+   overload-pool rt-strip) снимает `NovaValue_` ПЕРЕД `Nova_`, чтобы
+   `Nova_<rt>`-lookup в реестре попал (иначе method-level-generic-цепочка
+   `.map[U]` коллапсировала в `int`).
+
+### Stage 2 — generic-over-source zero-cost адаптеры
+
+Новый **sibling FILE-модуль** [`std/collections/vec_iter_zc.nv`](../../std/collections/vec_iter_zc.nv)
+(`module collections.vec_iter_zc`, opt-in import — тот же D145/leak-rationale, что
+у `vec_lazy`/`vec_seq`). Rust-style `Map<I,F>`/`Filter<I,P>`: каждый адаптер —
+**generic-over-source** `value`-рекорд (`MapIter[I,T,U]` / `FilterIter[I,T]` /
+`FilterMapIter[I,T,U]`), держащий upstream-итератор **INLINE** полем `src I` (НЕ
+boxed `step`-замыкание). `@next()` диспетчит `(@src).next()` **статически,
+мономорфизованно**. Цепочка `v.ziter().zmap(f).zfilter(p).zcollect()`
+мономорфизуется в ОДИН вложенный конкретный тип
+`FilterIter[MapIter[VecIter[int],int,int],int]`; каждый `next()` инлайнится до
+базового `VecIter.next()`. Вход — `Vec[T] @ziter()`; адаптеры zmap/zfilter/
+zfilter_map; per-type терминаторы zcollect/zfold/zcount/zsum/zfor_each/zany/zall/
+zfind.
+
+**Дополнительные codegen-фиксы (все gate на `AllocKind::Value`):**
+
+1. **`value_aware_subst_to_ref`** (новый `&self`-зеркало статического
+   `apply_type_subst_to_ref`): nested-generic-арг несёт `NovaValue_`-префикс →
+   worklist-enqueued mono-имя СОГЛАСУЕТСЯ с `type_ref_to_c`/field/type-decl именем
+   (иначе две расходящиеся инстанции → undefined-struct CC-FAIL).
+2. **`split_top_level_mono_args` + `mono_type_args_of`** (registry-backed,
+   depth-aware): наивный `args_str.split("__")` рвал nested generic-over-source
+   арг на 3 фрагмента, мис-биндя `I`/`T` → Vec[nova_int*] garbage. Применено в 3
+   split-сайтах.
+3. **`erased_type_ref_c`** — type-param-чек сделан РЕКУРСИВНЫМ
+   (`uses_any_type_param`) → erased-stub возвращает erased-base-pointer, не
+   placeholder-laden mono-имя.
+4. **`drain_generic_type_worklist`** placeholder-guard (value-GATED
+   `mangled_has_nested_placeholder`) — skip эмита value-mono, чьё by-value поле
+   ссылалось бы на undefined inner-placeholder struct, БЕЗ подавления нужного heap
+   `Vec[Slot[K,V]]` forward-typedef. **Регресс-урок:** over-eager ранняя версия
+   guard'а (НЕ value-gated) сломала 15 HashMap/value-record файлов (plan139 t3/
+   neg_t3, plan152_4 case/normalize/graphemes/sentences/words+conformance,
+   plan152_5 collation) — пойман baseline-бинарём @`0da18125`, FIXED гейтингом на
+   value-шаблон; все 15 восстановлены.
+
+### Stage 3 — devirtualizация capture-free замыканий (alloc-elimination)
+
+Замыкание БЕЗ свободных переменных (env = `{int _dummy}`) **stateless**: каждый
+инстанс байт-идентичен и тело-функция никогда не читает env. Вместо ДВУХ
+`nova_alloc` на каждый call-site (env-box + `NovaClos_xx`-box) эмитится ОДИН
+**file-scope static singleton** (`nova_lambda_N_clos_singleton` +
+`nova_lambda_N_env_singleton`) на closure-литерал, а call-site возвращает
+`(void*)(&singleton)`. Хирургическая правка — `emit_lambda`
+([`compiler-codegen/src/codegen/emit_c.rs`](../../compiler-codegen/src/codegen/emit_c.rs) ~31427),
+capture-free fast-path. **Соундно безусловно:** static-адрес immortal — может
+escape/store/outlive любой scope без dangling (Boehm видит его как root).
+Захватывающие замыкания (`free_vars ≠ ∅`) — heap-путь БЕЗ изменений (immutable
+by-value snapshot + mut by-ref box нужны per-instance, singleton нельзя шарить).
+Это **alloc-elimination** половина closure-devirt'а: сам per-element ВЫЗОВ
+`(@f)(x)` ещё идёт через `NOVA_CLOS_CALL` fn-ptr-макрос — true call-devirt =
+закладка env как конкретного type-param (`MapIter[I,T,U,F]`,
+`[M-153.2-closure-as-mono-type]`). Маркер `[M-153.2-Z-closure-devirt]` (P3,
+PARTIAL).
+
+### Stage 4 — alloc-free терминаторы + `collect_into`
+
+В `vec_iter_zc` добавлен терминатор `mut @zcollect_into(out mut Vec[T]) -> ()` на
+каждый адаптер (`MapIter`/`FilterIter`/`FilterMapIter`): тело = `zcollect`-drain
+МИНУС `Vec[U].new()` header-аллокация — пушит в **переданный** буфер `out`.
+**Семантика APPEND** (НЕ чистит `out`; для свежего sink caller делает
+`out.clear()` — `len=0`, буфер сохранён → амортизированный 0 аллокаций при
+переиспользовании). Возвращает `()` (буфер виден через caller-биндинг — `Vec[T]`
+heap-ref). Стриминг-терминаторы (`zfold`/`zsum`/`zcount`/`zfor_each`/`zany`/
+`zall`/`zfind`) уже alloc-free по конструкции (скаляр/bool/Option-аккумулятор, без
+out-Vec). Маркер `[M-153.2-Z-noalloc-terminator]` (✅ DONE).
+
+### Дизайн-решение: sibling, не замена
+
+`vec_iter_zc` — **НОВЫЙ sibling-модуль**, boxed-fluent `vec_lazy`/`BoxIter`
+**сохранён** как closure-fluent-альтернатива (единый erased курсор, единообразный
+`BoxIter[T]` на каждой стадии). `vec_iter_zc` — allocation-free сиблинг (один
+вложенный mono-тип на цепочку). Оба за раздельными explicit-import. Задокументировано
+в шапке `vec_iter_zc.nv`.
+
+### Измерено (канон `v.lazy/ziter().map().filter().collect()`)
+
+| | boxed-fluent `vec_lazy` | zero-cost `vec_iter_zc` |
+|---|---|---|
+| wrapper-record heap allocs (адаптер-цепочка) | **6 → 0** (Stage 1: by-value `NovaValue_<short>`) | 0 |
+| source-box (`_box_src`) | 9 | **0** (source inline полем `src I`) |
+| per-element `step()` fn-ptr индирекция | есть | **убрана** (статический dispatch) |
+| capture-free closure env/box (Stage 3) | **4→0** (collect) / **6→0** (fold) — static singleton | то же |
+| терминатор-тело (Stage 4) | — | **0 `nova_alloc`** (`collect_into`/`fold`/`sum`/`count`/`for_each`/`any`/`all`/`find`) |
+| остаточный heap | env ЗАХВАТЫВАЮЩИХ замыкания `f`/`pred` + `VecIter` source-курсор | то же — irreducible без closures-as-mono-types |
+
+Stage 1 verify: `grep nova_alloc(sizeof(Nova_BoxIter` = **0** во всех
+сгенерённых `plan153_2/*.c`; `NovaValue_BoxIter…` by-value struct — повсюду
+(adapters 89 / chains 98 / laziness 64 / terminators 74 вхождений).
+
+Stage 3 verify: `nova_alloc(sizeof(nova_lambda_N_env))` /
+`nova_alloc(sizeof(NovaClos…))` для capture-free замыканий = **0** (заменены
+file-scope static singleton); канон `zmap(f).zfilter(p).zcollect()` driver-тело
+closure-allocs **4 → 0**, та же цепочка `.zfold(0,…)` **6 → 0**.
+
+Stage 4 verify: все четыре мономорфизованных `…method_zcollect_into` тела = **0
+`nova_alloc`** (vs `zcollect` с `…_static_new()`); `zfold`/`zsum`/`zcount`/
+`zfor_each`/`zany`/`zall`/`zfind` мономорфизованные тела = **0 `nova_alloc`**
+каждый.
+
+### Остаток (честно)
+
+- **per-element ВЫЗОВ `f`/`pred` ещё fn-ptr-индирекция** (`void*` +
+  `NOVA_CLOS_CALL` на элемент) — Stage 3 убрал АЛЛОКАЦИЮ closure-env (capture-free
+  → singleton), но не сам вызов. Rust-style инлайн мэппера требует
+  **closures-as-mono-types** (env как конкретный type-param) — отдельный крупный
+  лифт. `[M-153.2-closure-as-mono-type]` (P3).
+- **захватывающие замыкания** всё ещё heap-env (per-instance; singleton нельзя
+  шарить — by-value snapshot / by-ref box нужны свежими).
+- **`VecIter` source-курсор** — heap-ref-type alloc на `.ziter()` (свойство
+  `VecIter[T]`, не замыкание; вне scope ступеней 3–4).
+- **`take`/`skip`/`enumerate`** (stateful / tuple-element) остаются на boxed
+  `vec_lazy` — порт = wiring, не новая compiler-способность.
+
+### Связь
+
+- [D228](#d228) — value-record allocation contract (распространён на generic).
+- [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — boxed-fluent lazy (0 wrapper-allocs via Stage 1; zero-cost sibling via Stage 2; capture-free closure devirt via Stage 3; alloc-free терминаторы + `collect_into` via Stage 4).
+- [D226](#d226) — always-pointer receiver ABI (mono value-receiver).
+- Plan 153.2 — план; `vec_lazy.nv` / `vec_iter_zc.nv` — реализация; `emit_c.rs::emit_lambda` — Stage 3 singleton.

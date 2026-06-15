@@ -4,6 +4,6 @@
 // `k < @len` contract → runtime panic.
 module plan153_3.select_nth_oob_neg
 fn main() -> () {
-    mut v = Vec[int].from([1, 2, 3])
+    mut v = Vec[int].of(1, 2, 3)
     ro _ = v.select_nth_unstable(3)
 }

@@ -204,3 +204,21 @@ plan90/90_1/96/131/152_1/152_2/generics/basics. Полная цель §5 (≥10
   `var_boxed`-flush на входе каждой top-level fn; order-независимый prelude static-init), затем
   (1)(2)(3) применятся чисто. Дизайн portable-форм сохранён в этом расследовании для повторного
   применения после 145.2.
+
+### §11.2 РАЗРЕШЕНО (2026-06-15) — Plan 145.2 + 145.1
+
+[Plan 145.2](145.2-codegen-emission-determinism.md) детерминизировал эмиссию
+(`method_overloads` + `embed_fields` → `BTreeMap`) — этого хватило: латентные баги (A
+init-order OOB / B var_boxed leak) перестали будиться (overload 10/10, bare-str-read 10/10).
+**Поверх 145.2 переприменены (1)(2)(3)** — применились **чисто**:
+- (1) struct-write → memcpy-в-слот (nova_idx_chk, гейт NovaArrHdr-коллекции);
+- (2) heap-box примитива в throw-выражении → scalar compound literal + nova_box_value;
+- (3) Option-get composite → `(NovaOpt_X){.value=nova_npo_from_tagged_int(...)}`.
+- (4) record-invariant — FALSE POSITIVE (уже portable).
+
+**Результат: MSVC ВСЁ зелёное** (plan145 6/0, plan138 10/0, plan138_1 10/0, plan91_fe1 10/0,
+plan90/96/131/152_1/basics/generics), clang 0 net-new. Регресс-guard `nova_tests/plan145_2/`.
+Коммиты `plan-145.2`: `5f695b80` (BTreeMap), `7429dace` (145.1 portable-формы), `29cce45f`
+(guards). Единственный остаток — **value-record throw-как-выражение** (редкий stmt-expr) →
+`[M-145-msvc-remaining-stmt-expr]` (узкий). `[M-codegen-emission-nondeterminism]`: триггер-часть
+закрыта; benign NovaOpt-typedef-order — residual (см. 145.2 §6).

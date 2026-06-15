@@ -34,8 +34,8 @@ export fn[T] [][]T @first_row() -> []T {
 }
 
 test "count_all over [[1,2],[3,4,5]] == 5 (slice [][]T, T=int)" {
-    ro a = Vec[int].from([1, 2])
-    ro b = Vec[int].from([3, 4, 5])
+    ro a = Vec[int].of(1, 2)
+    ro b = Vec[int].of(3, 4, 5)
     mut nested = Vec[Vec[int]].new()
     nested.push(a)
     nested.push(b)
@@ -43,8 +43,8 @@ test "count_all over [[1,2],[3,4,5]] == 5 (slice [][]T, T=int)" {
 }
 
 test "first_row returns the leading []T row (T=int)" {
-    ro a = Vec[int].from([10, 20])
-    ro b = Vec[int].from([30, 40, 50])
+    ro a = Vec[int].of(10, 20)
+    ro b = Vec[int].of(30, 40, 50)
     mut nested = Vec[Vec[int]].new()
     nested.push(a)
     nested.push(b)

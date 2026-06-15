@@ -1,0 +1,14 @@
+// combo_windows_slow.nv — Plan 156 slow-lane × OS-suffix combo fixture.
+// Canonical stem layout is `<core>[_<os>][_test][_slow]`, so `_slow` is
+// peeled first (slow-lane routing) leaving `combo_windows`, whose `_windows`
+// OS-suffix gates it to the Windows target. On Windows this file is:
+//   - SKIPPED by default (ends in `_slow`),
+//   - RUN under --include-slow (OS matches windows),
+//   - RUN under --slow-only.
+// On non-Windows targets the OS-suffix would exclude it even with slow enabled.
+
+module plan156.combo_windows_slow
+
+test "windows slow combo" {
+    assert(4 + 4 == 8)
+}

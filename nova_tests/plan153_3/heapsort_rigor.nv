@@ -16,19 +16,19 @@ test "unstable: reverse-sorted 20 -> ascending" {
 }
 
 test "unstable: all-equal stays" {
-    mut e = Vec[int].from([5, 5, 5, 5, 5])
+    mut e = Vec[int].of(5, 5, 5, 5, 5)
     e.sort_unstable()
-    assert(e.equal(Vec[int].from([5, 5, 5, 5, 5])))
+    assert(e.equal(Vec[int].of(5, 5, 5, 5, 5)))
 }
 
 test "unstable: already-sorted stays" {
-    mut s = Vec[int].from([1, 2, 3, 4, 5, 6, 7])
+    mut s = Vec[int].of(1, 2, 3, 4, 5, 6, 7)
     s.sort_unstable()
     assert(s.is_sorted() && s.len() == 7 && s[0] == 1 && s[6] == 7)
 }
 
 test "unstable matches stable on mixed input" {
-    mut a = Vec[int].from([7, 3, 7, 1, 9, 1, 3, 8, 2, 7, 0, 5])
+    mut a = Vec[int].of(7, 3, 7, 1, 9, 1, 3, 8, 2, 7, 0, 5)
     mut b = a.clone()
     a.sort()
     b.sort_unstable()
@@ -36,10 +36,10 @@ test "unstable matches stable on mixed input" {
 }
 
 test "unstable_by descending + by_key" {
-    mut v = Vec[int].from([4, 1, 7, 2, 9, 3])
+    mut v = Vec[int].of(4, 1, 7, 2, 9, 3)
     v.sort_unstable_by(|x, y| y - x)
-    assert(v.equal(Vec[int].from([9, 7, 4, 3, 2, 1])))
-    mut w = Vec[int].from([-5, 2, -1, 4, -3])
+    assert(v.equal(Vec[int].of(9, 7, 4, 3, 2, 1)))
+    mut w = Vec[int].of(-5, 2, -1, 4, -3)
     w.sort_unstable_by_key(|x| if x < 0 { 0 - x } else { x })
-    assert(w.equal(Vec[int].from([-1, 2, -3, 4, -5])))
+    assert(w.equal(Vec[int].of(-1, 2, -3, 4, -5)))
 }

@@ -90,6 +90,9 @@ enum Cmd {
         /// Part 0 целиком + stride-выборка Parts 1-5 (чанки по 500 на test).
         #[arg(long = "conformance-limit", default_value_t = 1500)]
         conformance_limit: usize,
+        /// Plan 156: ALSO emit full (uncapped) *_conformance_slow.nv slow-lane files.
+        #[arg(long = "conformance-full")]
+        conformance_full: bool,
         /// Не записывать; сравнить с существующим и упасть при несовпадении.
         #[arg(long = "check")]
         check: bool,
@@ -151,6 +154,12 @@ enum Cmd {
         /// Включить std/* файлы в прогон.
         #[arg(long = "include-stdlib")]
         include_stdlib: bool,
+        /// Plan 156: include *_slow.nv large/slow tests (default: skipped).
+        #[arg(long = "include-slow")]
+        include_slow: bool,
+        /// Plan 156: run ONLY *_slow.nv large/slow tests.
+        #[arg(long = "slow-only")]
+        slow_only: bool,
         /// Фильтр по display-name (substring).
         #[arg(long)]
         filter: Option<String>,
@@ -256,12 +265,12 @@ fn run() -> ExitCode {
         Cmd::EmitRuntimeStubs { root, check } =>
             cmd_emit_runtime_stubs(&root, check),
         Cmd::DumpRuntime => cmd_dump_runtime(),
-        Cmd::Unicode { ucd_dir, root, unicode_version, emit_conformance, conformance_limit, check } =>
-            cmd_unicode(&ucd_dir, &root, &unicode_version, emit_conformance, conformance_limit, check),
+        Cmd::Unicode { ucd_dir, root, unicode_version, emit_conformance, conformance_limit, conformance_full, check } =>
+            cmd_unicode(&ucd_dir, &root, &unicode_version, emit_conformance, conformance_limit, conformance_full, check),
         Cmd::TestBuild { file, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, display, keep_artifacts, timeout, gc, contracts } =>
             cmd_test_build(&file, &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), display.as_deref(), keep_artifacts, timeout, &gc, &contracts),
-        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed, retries, gc, contracts } =>
-            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts, timeout, jobs, &format, verbose, quiet, results_file.as_deref(), rerun_failed, retries, &gc, &contracts),
+        Cmd::TestAll { tests_dir, stdlib_dir, include_stdlib, include_slow, slow_only, filter, mode, toolchain, vcvars, clang, cg_include, rt_dir, tmp_dir, keep_artifacts, timeout, jobs, format, verbose, quiet, results_file, rerun_failed, retries, gc, contracts } =>
+            cmd_test_all(&tests_dir, &stdlib_dir, include_stdlib, include_slow, slow_only, filter.as_deref(), &mode, &toolchain, vcvars.as_deref(), clang.as_deref(), cg_include.as_deref(), rt_dir.as_deref(), tmp_dir.as_deref(), keep_artifacts, timeout, jobs, &format, verbose, quiet, results_file.as_deref(), rerun_failed, retries, &gc, &contracts),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -563,15 +572,35 @@ fn cmd_emit_runtime_stubs(root: &PathBuf, check: bool) -> Result<()> {
     Ok(())
 }
 
+/// Plan 156: derive the slow-lane sibling path for a conformance fixture, i.e.
+/// `<dir>/<kind>_conformance.nv` -> `<dir>/<kind>_conformance_slow.nv`.
+fn slow_conformance_path(fast: &Path) -> PathBuf {
+    let stem = fast
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = fast
+        .extension()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "nv".to_string());
+    let slow_name = format!("{}_slow.{}", stem, ext);
+    match fast.parent() {
+        Some(dir) => dir.join(slow_name),
+        None => PathBuf::from(slow_name),
+    }
+}
+
 /// Plan 152.4.1 (Q-unicode-data): generate `std/unicode/norm_data.nv` from the
 /// UCD. `--check` compares against the existing file and fails on diff (CI
 /// guard), mirroring `cmd_emit_runtime_stubs`.
+#[allow(clippy::too_many_arguments)]
 fn cmd_unicode(
     ucd_dir: &Path,
     root: &Path,
     version: &str,
     emit_conformance: bool,
     conformance_limit: usize,
+    conformance_full: bool,
     check: bool,
 ) -> Result<()> {
     use nova_codegen::codegen::unicode_data;
@@ -623,6 +652,17 @@ fn cmd_unicode(
     let srel = "std/unicode/sentence_data.nv";
     let sabs = root.join(srel);
     let sstats = format!("{} sb ranges", stables.len());
+    // Plan 152.3b: General_Category + Alphabetic/White_Space tables (UCD).
+    let cattables = unicode_data::parse_category_tables(ucd_dir)?;
+    let catcontent = unicode_data::render_category_data_nv(&cattables, version);
+    let catrel = "std/unicode/category_data.nv";
+    let catabs = root.join(catrel);
+    let catstats = format!(
+        "{} gc / {} alpha / {} white-space ranges",
+        cattables.gc.len(),
+        cattables.alpha.len(),
+        cattables.white_space.len()
+    );
     // Plan 152.5b: collation (UCA / DUCET, UTS #10). Needs allkeys.txt (UCA).
     // Skipped gracefully if allkeys.txt is absent so the 152.4 UCD-only flow
     // still works in dirs without the UCA data.
@@ -674,6 +714,50 @@ fn cmd_unicode(
     if emit_conformance && coll_data.is_some() {
         if let Ok(c) = unicode_data::render_collation_conformance_nv(ucd_dir, conformance_limit) {
             confs.push((c, root.join("nova_tests/plan152_5/collation_conformance.nv")));
+        }
+    }
+    // Plan 156: ALSO emit the FULL (uncapped) corpus as `<kind>_conformance_slow.nv`
+    // slow-lane files. Re-render each conformance kind with limit = usize::MAX, then
+    // rewrite the module declaration line (`...conformance` -> `...conformance_slow`)
+    // and the destination path (`_conformance.nv` -> `_conformance_slow.nv`). This
+    // reuses the exact same renderers (no renderer surgery / duplication).
+    if emit_conformance && conformance_full {
+        // (rendered-full-string, fast-path) for each kind being emitted.
+        let mut full: Vec<(String, std::path::PathBuf)> = vec![
+            (
+                unicode_data::render_conformance_nv(ucd_dir, usize::MAX)?,
+                root.join("nova_tests/plan152_4/normalization_conformance.nv"),
+            ),
+            (
+                unicode_data::render_grapheme_conformance_nv(ucd_dir, usize::MAX)?,
+                root.join("nova_tests/plan152_4/grapheme_conformance.nv"),
+            ),
+            (
+                unicode_data::render_case_conformance_nv(ucd_dir, usize::MAX)?,
+                root.join("nova_tests/plan152_4/case_conformance.nv"),
+            ),
+            (
+                unicode_data::render_word_conformance_nv(ucd_dir, usize::MAX)?,
+                root.join("nova_tests/plan152_4/word_conformance.nv"),
+            ),
+            (
+                unicode_data::render_sentence_conformance_nv(ucd_dir, usize::MAX)?,
+                root.join("nova_tests/plan152_4/sentence_conformance.nv"),
+            ),
+        ];
+        if coll_data.is_some() {
+            if let Ok(c) = unicode_data::render_collation_conformance_nv(ucd_dir, usize::MAX) {
+                full.push((c, root.join("nova_tests/plan152_5/collation_conformance.nv")));
+            }
+        }
+        for (content_full, fast_path) in full {
+            // Rewrite the single `module ...conformance` declaration line to append
+            // `_slow`. The substring `_conformance\n` appears exactly once in the
+            // generated output (the module line), so a 1-shot replacen is precise.
+            let slow_content = content_full.replacen("_conformance\n", "_conformance_slow\n", 1);
+            // Derive the sibling `_conformance_slow.nv` path from the fast path.
+            let slow_path = slow_conformance_path(&fast_path);
+            confs.push((slow_content, slow_path));
         }
     }
     if check {
@@ -731,6 +815,17 @@ fn cmd_unicode(
                 ));
             }
         }
+        {
+            let ex = std::fs::read_to_string(&catabs)
+                .map_err(|e| anyhow!("failed to read {}: {}", catabs.display(), e))?;
+            if norm(&ex) != norm(&catcontent) {
+                return Err(anyhow!(
+                    "{} diverges from UCD ({}).\n\
+                     Run `nova-codegen unicode --ucd-dir <UCD-dir>` to regenerate.",
+                    catrel, catstats
+                ));
+            }
+        }
         // Plan 152.5b: collation table (only if the UCA data was present).
         if let Some((cl_content, cl_stats, cl_abs, cl_rel)) = &coll_data {
             let ex = std::fs::read_to_string(cl_abs)
@@ -750,7 +845,7 @@ fn cmd_unicode(
                 return Err(anyhow!("{} diverges from UCD test data; regenerate.", p.display()));
             }
         }
-        print!("OK: {} ({}) + {} ({}) + {} ({}) + {} ({}) + {} ({})", rel, stats, grel, gstats, crel, cstats, wrel, wstats, srel, sstats);
+        print!("OK: {} ({}) + {} ({}) + {} ({}) + {} ({}) + {} ({}) + {} ({})", rel, stats, grel, gstats, crel, cstats, wrel, wstats, srel, sstats, catrel, catstats);
         if let Some((_, cl_stats, _, cl_rel)) = &coll_data {
             print!(" + {} ({})", cl_rel, cl_stats);
         }
@@ -775,6 +870,9 @@ fn cmd_unicode(
         std::fs::write(&sabs, &scontent)
             .map_err(|e| anyhow!("failed to write {}: {}", sabs.display(), e))?;
         println!("wrote {} ({}).", srel, sstats);
+        std::fs::write(&catabs, &catcontent)
+            .map_err(|e| anyhow!("failed to write {}: {}", catabs.display(), e))?;
+        println!("wrote {} ({}).", catrel, catstats);
         // Plan 152.5b: collation table (only if the UCA data was present).
         if let Some((cl_content, cl_stats, cl_abs, cl_rel)) = &coll_data {
             if let Some(parent) = cl_abs.parent() {
@@ -933,6 +1031,8 @@ fn cmd_test_all(
     tests_dir: &PathBuf,
     stdlib_dir: &PathBuf,
     include_stdlib: bool,
+    include_slow: bool,
+    slow_only: bool,
     filter: Option<&str>,
     mode: &str,
     toolchain: &str,
@@ -1007,6 +1107,13 @@ fn cmd_test_all(
         None
     };
     let gc_kind = test_runner::GcKind::parse(gc)?;
+    let slow_lane = if slow_only {
+        test_runner::SlowLane::Only
+    } else if include_slow {
+        test_runner::SlowLane::Include
+    } else {
+        test_runner::SlowLane::Exclude
+    };
     let opts = test_runner::TestAllOpts {
         tests_dir,
         stdlib_dir: stdlib_dir_opt,
@@ -1036,6 +1143,8 @@ fn cmd_test_all(
         // Plan 140 Ф.2 (D24 amend): `--contracts=off` → элидировать все
         // контракт-проверки на codegen для всех тестов прогона (legacy).
         contracts_off: contracts == "off",
+        // Plan 156: slow-lane selection (--include-slow / --slow-only).
+        slow_lane,
     };
     let summary = test_runner::run_all(opts)?;
     test_runner::print_summary(&summary, format);
