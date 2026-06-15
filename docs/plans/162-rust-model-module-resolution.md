@@ -6,7 +6,7 @@
 > **Supersedes:** Ф.4 Option-A хардкод (Plan 159) — `CHAR_UNICODE_METHOD_SELECTORS` + auto-инъекция `import std.unicode`.
 > **Зависит от:** `compiler-codegen/src/imports.rs` (резолвер), `lints.rs` (`collect_used_names`), prelude (`std/prelude/*`), method-resolution в checker/codegen, Plan 159 (DCE — остаётся в силе).
 > **Координируется с:** [Plan 163](163-import-export-glob-hygiene.md) (гигиена import/export), [Plan 159](159-reachability-codegen.md) (DCE).
-> **Расширяет модульную концепцию:** [Plan 42 — folder-modules](42-folder-modules.md) ([D29](../../spec/decisions/07-modules.md#d29-модули-и-импорты)) — этот план **амендит Rule A** «cycle detection по module-name»: межмодульные циклы становятся **разрешены** (как peer-циклы в Rule D), за счёт перехода резолвера на collect-signatures→lazy-bodies. Также смыкается с [Plan 81](81-module-resolution-hardening.md) (resolver hardening), [Plan 70.1](70.1-module-alias-resolution.md) (alias).
+> **Расширяет модульную концепцию (родословная):** [Plan 35 — cross-file resolve](35-cross-file-resolve.md) (фундамент резолвера) → [Plan 42 — folder-modules](42-folder-modules.md) ([D29](../../spec/decisions/07-modules.md#d29-модули-и-импорты), rev-1..rev-4) → **этот план (D29 rev-5)**. **Амендит Plan 42 Rule A** «cycle detection по module-name»: межмодульные циклы становятся **разрешены** (как peer-циклы в Rule D), за счёт перехода резолвера на collect-signatures→lazy-bodies. Также смыкается с [Plan 81](81-module-resolution-hardening.md) (resolver hardening), [Plan 70.1](70.1-module-alias-resolution.md) (alias).
 > **Research:** [docs/research/11-stdlib-method-resolution-reachability.md](../research/11-stdlib-method-resolution-reachability.md).
 
 ## Проблема (замерено/подтверждено)

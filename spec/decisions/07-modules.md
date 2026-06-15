@@ -653,6 +653,18 @@ LLM знает фиксированный список — «известная 
   `./` / `../` — package-scoped (резолв от директории импортирующего
   файла, строго в пределах своего пакета; `../` за корень пакета →
   compile error). Bare-путь остаётся абсолютным — фича аддитивна.
+- **rev-5 (📋 PLANNED, 2026-06-16)** — модель **не финальна**, продолжение:
+  - [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) — переход
+    резолвера на Rust-модель **collect-signatures→lazy-bodies**:
+    межмодульные **циклы разрешаются** (амендит [Plan 42](../../docs/plans/42-folder-modules.md)
+    Rule A «cycle detection»), method-resolution **«методы едут с типом»**
+    (inherent `@`-метод вызывается без import модуля метода — единообразно
+    std+user), char-методы переезжают в prelude, снятие Ф.4-хардкода
+    ([Plan 159](../../docs/plans/159-reachability-codegen.md)). Q-module-resolution-model.
+  - [Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) — гигиена
+    import/export: запрет glob-форм (`import m` / `export import m` без `.{}`),
+    оставить named + alias (продолжение Rule C / [Plan 42.09 re-export](../../docs/plans/42.09-re-export.md)).
+    Q-import-glob-hygiene.
 
 ---
 
