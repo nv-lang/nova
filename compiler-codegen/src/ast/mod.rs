@@ -917,6 +917,27 @@ impl std::fmt::Display for AllocKind {
     }
 }
 
+/// Plan 160 (D281): field-level default visibility for a type declaration.
+/// `Public`  — fields default to public (D47 behaviour; no modifier keyword).
+/// `Module`  — `priv` modifier (no qualifier): fields are visible within the
+///             same module (folder) but private outside (D281 §1 new design).
+/// `Private` — `priv(type)` modifier: fields are type-private only (accessible
+///             only from methods of the declaring type itself); explicit `pub`
+///             field modifier overrides to public (D220).
+/// Note: `priv(module)` is no longer valid — parser emits E_PRIV_QUALIFIER.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldDefaultVisibility {
+    Public,
+    Module,
+    Private,
+}
+
+impl Default for FieldDefaultVisibility {
+    fn default() -> Self {
+        FieldDefaultVisibility::Public
+    }
+}
+
 /// Plan 123 baseline-fix (2026-06-02): `Default` derive — see FnDecl.
 #[derive(Debug, Clone, Default)]
 pub struct TypeDecl {
@@ -954,12 +975,14 @@ pub struct TypeDecl {
     /// consume-param, record-field-move, или defer).
     /// Backward-compat: default false.
     pub consume: bool,
-    /// Plan 124 (D220): type-level default visibility flip.
-    /// `type X priv { ... }` syntax — fields default = priv для этого type'а;
-    /// explicit `pub` field modifier override priv default.
-    /// Без `priv` после имени type'а — fields default = pub (D47 unchanged).
-    /// Backward-compat: default false.
-    pub default_field_priv: bool,
+    /// Plan 124 (D220) / Plan 160 (D281): type-level default field visibility.
+    /// `Public`  — no modifier, fields default = pub (D47 unchanged).
+    /// `Private` — `priv` modifier, fields default = type-private; `pub` field
+    ///             overrides (D220).
+    /// `Module`  — `priv(module)` modifier, fields visible within same module
+    ///             (folder) but private outside (D281 §1).
+    /// Backward-compat: default Public.
+    pub field_default_visibility: FieldDefaultVisibility,
     /// Plan 124.8 (D226 NEW): allocation contract for record types.
     /// `Heap` (default) — `type X { ... }` GC-managed reference type.
     /// `Value` — `type X value { ... }` stack-allocated value type
@@ -1069,6 +1092,13 @@ pub struct NamedTupleField {
     /// accessible only из methods own type'а.
     /// Backward-compat: default false (= public).
     pub priv_field: bool,
+    /// Plan 160 (D281): true when `priv_field` was inherited from the
+    /// `priv` (no qualifier) type-level default (module-private, NOT an
+    /// explicit `priv` field modifier or `priv(type)` type-level default).
+    /// Checker uses this to emit E_FIELD_MODULE_PRIVATE (module-boundary)
+    /// instead of E_PRIV_FIELD_READ (type-boundary) и allow same-module access.
+    /// Backward-compat: default false.
+    pub priv_module_field: bool,
     /// Plan 124.6 (D225): `#visible_to(OtherType[, ...])` field-level
     /// friend declaration. Same semantics как RecordField.visible_to.
     /// Backward-compat: default empty Vec.
@@ -1109,12 +1139,19 @@ pub struct RecordField {
     /// - Pattern destructure: E_PRIV_FIELD_PATTERN
     ///
     /// Effective visibility = explicit `priv` modifier
-    ///                       OR inherited from `TypeDecl::default_field_priv`
+    ///                       OR inherited from `TypeDecl::field_default_visibility`
     ///                       OR (default) public.
     /// Explicit `pub` modifier overrides type-level priv default
     /// (priv_field stays false).
     /// Backward-compat: default false (= public; D47 MVP unchanged).
     pub priv_field: bool,
+    /// Plan 160 (D281): true when `priv_field` was inherited from the
+    /// `priv` (no qualifier) type-level default (module-private, NOT an
+    /// explicit `priv` field modifier or `priv(type)` type-level default).
+    /// Checker uses this to emit E_FIELD_MODULE_PRIVATE (module-boundary)
+    /// instead of E_PRIV_FIELD_READ (type-boundary) и allow same-module access.
+    /// Backward-compat: default false.
+    pub priv_module_field: bool,
     /// Plan 124.6 (D225): `#visible_to(OtherType[, ...])` field-level
     /// attribute — explicit friend declaration. Methods of listed
     /// types ALSO get priv access (besides own type). Empty = strict

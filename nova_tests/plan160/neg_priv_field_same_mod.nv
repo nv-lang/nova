@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_READ
+//
+// Plan 160 (D281): negative - priv(type) field in priv type not accessible from free fn.
+
+module plan160.neg_priv_field_same_mod
+
+type Wallet value priv {
+    balance f64
+    priv pin int
+}
+
+fn Wallet.new(b f64) -> Wallet => { balance: b, pin: 0 }
+
+// balance is module-private: OK.
+// pin is priv(type): E_PRIV_FIELD_READ.
+fn read_pin(w Wallet) -> int => w.pin

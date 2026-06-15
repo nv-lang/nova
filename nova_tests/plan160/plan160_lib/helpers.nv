@@ -1,0 +1,6 @@
+// Plan 160 (D281): second peer file -- module-level helpers.
+// Having 2 peers ensures nova treats plan160_lib/ as a folder-module.
+
+module plan160.plan160_lib
+
+fn job_internal_helper(id int) -> int => id + 0
