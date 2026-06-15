@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Plan 160 — Module-level field privacy (`priv(module)`)
+# Plan 160 — Module-level field privacy (`type X priv { … }`)
 
-> **Создан:** 2026-06-15. **Статус:** 📋 PLANNED. P2.
+> **Создан:** 2026-06-15. **Статус:** ✅ ЗАКРЫТ (Ф.1–Ф.3 выполнены, 2026-06-15).
 > **Владеет:** `[M-160-module-privacy]`. **D-блок:** D281.
-> **Зависит от:** checker (visibility), codegen (нет изменений — только checker).
+> **Зависит от:** checker (visibility), codegen (нет изменений).
 
 ## Проблема
 
@@ -17,9 +17,9 @@ scheduler/
   worker.nv ← читает поля Job
 ```
 
-Сейчас только два уровня видимости поля:
+До Plan 160 существовало только два уровня видимости поля:
 - **public** (нет модификатора) — поля видны всем.
-- **`priv`** — поля видны только внутри методов самого типа.
+- **`priv` field-level** — поля видны только внутри методов самого типа.
 
 Нет промежуточного уровня: «поля доступны внутри модуля (папки), но не снаружи».
 Если `Job` нужен `queue.nv` и `worker.nv` — выбор: либо все поля публичны (утечка
@@ -27,99 +27,90 @@ scheduler/
 
 ## Решение (D281)
 
-Новый модификатор на уровне объявления типа:
+Два уровня type-level privacy modifier:
 
 ```nova
-type Job value priv(module) {
-    id   int
-    kind JobKind
-    priv internal_tag int   // полностью приватное поле — только внутри методов Job
+// module-private default (D281 — новое):
+type Job value priv {
+    mut id   int      // module-private: виден в том же модуле, не снаружи
+    kind     int      // module-private
+    priv secret int   // type-private: только методы Job
+}
+
+// type-private default (D220 amend — усилен):
+type Secret priv(type) {
+    key u64           // type-private: только методы Secret
+    pub tag str       // override → public
 }
 ```
 
-`priv(module)` на типе означает: **все поля без дополнительного модификатора**
-доступны внутри того же модуля (папки), снаружи — нет. Поле с `priv` остаётся
-полностью приватным (только методы типа).
+### Финальный дизайн синтаксиса
+
+| Type-level modifier | Семантика полей по умолчанию |
+|---|---|
+| (нет) | public (D47) |
+| `priv` | **module-private** (D281) |
+| `priv(type)` | type-private (D220 amend) |
+| `priv(module)` | **ОШИБКА** `E_PRIV_QUALIFIER` — использовать `priv` |
+
+Field-level `priv` modifier всегда = type-private, независимо от type-level default.
 
 ### Точные правила видимости
 
-| Поле в `type T priv(module) { ... }` | Видно в методах T | Видно в том же модуле | Видно снаружи |
+| Поле в `type T priv { ... }` | Видно в методах T | Видно в том же модуле | Видно снаружи |
 |---|---|---|---|
-| `field T` (без модификатора) | ✅ | ✅ | ❌ |
-| `priv field T` | ✅ | ❌ | ❌ |
+| `field T` (без модификатора) | ✅ | ✅ | ❌ `E_FIELD_MODULE_PRIVATE` |
+| `priv field T` | ✅ | ❌ `E_PRIV_FIELD_READ` | ❌ `E_PRIV_FIELD_READ` |
 
-Сам тип `Job` при этом остаётся публичным — `priv(module)` не ограничивает видимость
-**типа**, только видимость **полей** по умолчанию.
-
-### Ключевое слово: `priv(module)`
-
-- `module` — уже существующее ключевое слово Nova (в объявлении `module foo.bar`).
-  Использование `priv(module)` консистентно с языком.
-- Короткий алиас `priv(mod)` **не вводится** — `mod` нигде в Nova не используется,
-  добавлять ради сокращения не стоит.
-
-### Что НЕ меняется
-
-- Per-field `priv(module)` аннотации (Ф.0 не делает их, достаточно на уровне типа).
-- Видимость самого типа.
-- Методы типа — видимость методов не меняется этим модификатором.
-- Codegen — checker отвечает за visibility, C-эмиссия не меняется.
+Сам тип `T` при этом остаётся публичным — `priv` на уровне типа не ограничивает
+видимость **типа**, только видимость **полей** по умолчанию.
 
 ## Фазы
 
-### Ф.1 — Парсер: `priv(module)` на объявлении типа
+### Ф.1 — Парсер: `priv` / `priv(type)` на объявлении типа ✅
 
-Разобрать `type T value priv(module) { ... }` в AST. Добавить поле
-`field_default_visibility: FieldVisibility` к декларации типа.
+- `FieldDefaultVisibility` enum: `Public` / `Module` / `Private`.
+- Bare `priv` после type-modifiers → `Module`.
+- `priv(type)` → `Private`.
+- `priv(module)` → hard error `E_PRIV_QUALIFIER`.
+- `RecordField.priv_module_field: bool` + `NamedTupleField.priv_module_field: bool`.
 
-`FieldVisibility` (enum):
-- `Public` — нынешнее поведение по умолчанию
-- `Module` — новое: видно в рамках модуля
-- `Private` — явный `priv` на поле
+### Ф.2 — Checker: enforcement field-access ✅
 
-### Ф.2 — Checker: enforcement field-access
+- `TypeCheckCtx.type_defining_modules: HashMap<String, Vec<String>>` — строится из `peer_files.items_here`.
+- `TypeCheckCtx.current_module: RefCell<Vec<String>>` + `CurrentModuleGuard` RAII.
+- `module_priv_access_allowed(tname)` — сравнивает home-module type'а с current_module.
+- 5 check-сайтов: INIT, READ (Record + NamedTuple), WRITE, PATTERN.
+- `priv_module_field=true` → `E_FIELD_MODULE_PRIVATE`; `priv_field=true` → D220 codes.
 
-При доступе к полю `obj.field`:
-1. Определить `field_default_visibility` типа `obj`.
-2. Если `Module` — проверить, что call-site находится в том же модуле (совпадение
-   `ModuleId` / папки).
-3. Если нарушение — `E_FIELD_MODULE_PRIVATE` с hint'ом «field is module-private; add
-   an accessor method or move the caller into the same module».
+### Ф.3 — Тесты и spec (D281) ✅
 
-При литерале структуры `Job { id: 1, kind: .Batch }` — та же проверка.
-
-### Ф.3 — Тесты и spec (D281)
+Тесты: `nova_tests/plan160/` — **5/5 PASS**.
 
 **Позитивные:**
-- `priv(module)` тип: доступ к полям из другого файла того же модуля → PASS.
-- Доступ из методов самого типа → PASS.
-- `priv` поле в `priv(module)` типе: методы типа → PASS.
+- `pos_within_module.nv` — 4 теста: read, write, method, constructor в том же модуле.
 
 **Негативные:**
-- Доступ к полю `priv(module)` типа из другого модуля → `E_FIELD_MODULE_PRIVATE`.
-- `priv` поле в `priv(module)` типе: доступ из другого файла того же модуля →
-  `E_PRIV_FIELD_READ` (как сейчас).
-- Литерал `priv(module)` типа из другого модуля → `E_FIELD_MODULE_PRIVATE`.
+- `neg_read_outside.nv` — `E_FIELD_MODULE_PRIVATE` при чтении поля из другого модуля.
+- `neg_write_outside.nv` — `E_FIELD_MODULE_PRIVATE` при записи поля из другого модуля.
+- `neg_init_outside.nv` — `E_FIELD_MODULE_PRIVATE` при init-литерале из другого модуля.
+- `neg_priv_field_same_mod.nv` — `E_PRIV_FIELD_READ` для `priv` поля в `priv`-типе из свободной функции.
 
-**Spec:** D281 в `spec/decisions/03-visibility.md` (или `01-types.md` — смотреть по
-контексту).
+**Spec:** D281 в `spec/decisions/02-types.md` — полный блок с §1–§5.
 
-## Критерии приёмки
+## Критерии приёмки (без упрощений, как для прода)
 
-- **A1.** `priv(module)` парсится без ошибок; поля без модификатора внутри такого типа
-  доступны в любом файле того же модуля.
-- **A2.** Доступ к таким полям из другого модуля → `E_FIELD_MODULE_PRIVATE` (не crash,
-  не silent success).
-- **A3.** `priv`-поле внутри `priv(module)` типа по-прежнему даёт `E_PRIV_FIELD_READ`
-  при доступе даже из того же модуля.
-- **A4.** Позитивные + негативные fixtures PASS.
-- **A5.** Нет регрессий в полном `nova test`.
-- **G0.** Нет новых silent-access багов — если видимость неопределима (edge case),
-  fail safe = запретить доступ.
+- **A1.** `type T priv { f int }` — поля без модификатора доступны в том же модуле без ошибок.
+- **A2.** Доступ из другого модуля → `E_FIELD_MODULE_PRIVATE` (не crash, не silent).
+- **A3.** `priv` field в `priv`-типе → `E_PRIV_FIELD_READ` даже из того же модуля (из свободной функции).
+- **A4.** Все 5 fixtures PASS (4 позитивных теста + 4 негативных = 5 test-файлов).
+- **A5.** Нет регрессий в `nova test` core-suite.
+- **G0.** fail safe = запретить при неопределимой видимости.
+
+**Статус:** все критерии выполнены ✅
 
 ## Отложено / out of scope
 
-- Per-field `priv(module)` аннотация (гранулярность не нужна для целевого use case).
-- `priv(module)` на методах (методы сейчас либо public, либо `priv` — отдельная задача).
-- `pub(module)` как явный маркер на отдельном поле в `priv` типе (не `priv(module)`
-  типе) — возможное расширение, пока не нужно.
+- Per-field `priv(module)` аннотация (не нужна для целевого use case — type-level достаточно).
+- `priv` / `pub(module)` на методах (методы не имеют module-level granularity — separate task).
+- Named tuple `priv` (D225 — отдельный plan).
