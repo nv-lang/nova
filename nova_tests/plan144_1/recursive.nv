@@ -6,9 +6,11 @@
 // marks its two boxed Tree-pointer payload slots. `nova check` accepts this.
 //
 // NB: a *record/value* field of a recursive heap type (e.g. `type H { t Tree }`)
-// makes the type-checker itself stack-overflow — a PRE-EXISTING checker bug,
-// not gc-layout-specific (nova check overflows too); tracked separately. This
-// fixture stays within what `nova check` accepts.
+// USED to make the type-checker itself stack-overflow — a PRE-EXISTING checker
+// bug, not gc-layout-specific (nova check overflowed too). FIXED via the
+// boxing-aware type-SIZE walk + recursion guards ([M-checker-recursive-type-
+// overflow]); the `type H { t Tree }` embed now `nova check`-passes and RUNS —
+// see nova_tests/plan144_checker/heap_embed_pos.nv.
 module plan144_1.recursive
 
 type Tree

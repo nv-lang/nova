@@ -1,0 +1,32 @@
+// EXPECT_COMPILE_ERROR size_of[T]()
+//
+// [M-checker-recursive-type-overflow] ROBUSTNESS (negative).
+//
+// A direct VALUE self-reference —
+//     type N value { next N }
+// — carries NO pointer indirection (a `value` record is inlined, `NovaValue_N`),
+// so it is GENUINELY infinite: there is no finite object layout. Before the fix
+// the const_fn_eval size walk had no recursion guard and INFINITE-RECURSED
+// (`N` → field `next: N` → `N` → ...), STACK-OVERFLOWING the whole compiler in
+// `nova check` / `build` / introspection.
+//
+// THE FIX threads a depth budget (MAX_TYPE_SIZE_DEPTH) through the size walk; a
+// runaway value self-cycle returns `None` instead of blowing the stack. `None`
+// is handled gracefully by every caller — here `size_of[N]()` surfaces it as a
+// clean compile diagnostic (E_CONST_FN_GENERIC_NEEDS_T_REFLECTION: the size of
+// `N` could not be reflected), NOT a stack overflow.
+//
+// INTENT: assert the compiler EXITS WITH A DIAGNOSTIC (nonzero) rather than
+// crashing. The bare type alone passes `nova check` (the size walk is only
+// forced on demand); `size_of[N]()` is what drives the layout computation that
+// used to overflow, so it is the load-bearing trigger here.
+
+module plan144_checker.value_self_ref_neg
+
+// Genuinely-infinite value self-cycle (no boxing). The fix must NOT crash on it.
+type N value { next N }
+
+// Forces the size walk that used to stack-overflow; now yields a clean error.
+const S = size_of[N]()
+
+fn main() -> int { S }
