@@ -653,7 +653,7 @@ mod tests {
     fn no_value_records_no_promotions() {
         let src = r#"
 module plan127_test.heap_only
-type Vec3 { x f64  y f64  z f64 }
+type Vec3 { x f64, y f64, z f64 }
 fn make() -> Vec3 =>
     { x: 1.0, y: 2.0, z: 3.0 }
 "#;

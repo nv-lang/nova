@@ -1,0 +1,25 @@
+// Q-infinite-value-type (D280 §4) — POSITIVE: a value record self-referencing
+// THROUGH a pointer `*T`. MUST `nova check` PASS — NO `E_INFINITE_TYPE`.
+//
+//     type PNode value { val int, next *PNode }
+//
+// A pointer `*PNode` is always 8 bytes — INDIRECTION, the textbook way to break
+// a containment cycle. The `next` field is a pointer leaf, NOT an inline
+// `PNode`, so the layout is FINITE. The detector's `TypeRef::Pointer` arm STOPs
+// (returns None), so it must NOT report `E_INFINITE_TYPE`.
+
+module plan144_inftype.pos_pointer_self
+
+type PNode value {
+    val  int
+    next *PNode
+}
+
+fn val_of(n PNode) -> int => n.val
+
+test "value record self-referencing through pointer — finite" {
+    // NULL pointer = `(0 as *T)` (the `null TYPE` literal was retracted, D214
+    // amend; NULL = (void*)0 in the C ABI).
+    ro n = PNode { val: 42, next: (0 as *PNode) }
+    assert(val_of(n) == 42)
+}

@@ -1,0 +1,26 @@
+// POSITIVE: fields on separate lines without commas — valid (newline = separator).
+// Also valid: newline AFTER comma (multi-line with trailing comma).
+module plan_parser_recsep.pos_newline_sep
+
+type Vec3 value {
+    x int
+    y int
+    z int
+}
+
+type Rect {
+    left int,
+    top int,
+    right int,
+    bottom int,
+}
+
+fn dot(a Vec3, b Vec3) -> int => a.x * b.x + a.y * b.y + a.z * b.z
+
+test "newline-separated and trailing-comma fields work correctly" {
+    ro a = Vec3 { x: 1, y: 2, z: 3 }
+    ro b = Vec3 { x: 4, y: 5, z: 6 }
+    assert(dot(a, b) == 32)
+    ro r = Rect { left: 0, top: 0, right: 10, bottom: 5 }
+    assert(r.right - r.left == 10)
+}

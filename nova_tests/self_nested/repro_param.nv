@@ -1,0 +1,64 @@
+// Positive case for [M-138.2-self-in-param]: `Self` as a TYPE-ARGUMENT inside
+// a nested generic in the PARAMETER position of a method on a generic value
+// type. Mirrors repro.nv but exercises the param side of the same Self→mono
+// substitution (both register_mono_method_instance fwd-decl and
+// emit_monomorphized_method body must produce the SAME value-aware mono for
+// the param, identical to the call-site argument's mono).
+//
+// `pair_with(g FiltIt[Self, U])` takes a `FiltIt` whose source is the full
+// receiver mono `MapIt[I, T, U]` (written `Self`). The arg the caller passes —
+// produced by `@flt` (which already returns `FiltIt[Self, U]`) — must have the
+// EXACT SAME mangled C type as the declared param, or C reports an incompatible
+// argument. This was the param-side companion of the return-side bug.
+module self_nested.repro_param
+
+import std.collections.vec.{Vec, VecIter}
+
+type MapIt[I, T, U] value { mut src I, priv f fn(T) -> U }
+type FiltIt[I, T] value { mut src I, priv pred fn(T) -> bool }
+
+fn MapIt[I Next[T], T, U] mut @next() -> Option[U] => match (@src).next() {
+    Some(x) => Some((@f)(x)),
+    None => None,
+}
+
+fn FiltIt[I Next[T], T] mut @next() -> Option[T] {
+    while true {
+        match (@src).next() {
+            Some(x) => { if (@pred)(x) { return Some(x) } },
+            None => return None,
+        }
+    }
+    None
+}
+
+fn VecIter[T] @m[U](f fn(T) -> U) -> MapIt[VecIter[T], T, U] => { src: @, f }
+
+// Returns FiltIt[Self, U] — Self = MapIt[I, T, U] (return-position Self).
+fn MapIt[I, T, U] @flt(pred fn(U) -> bool) -> FiltIt[Self, U] => { src: @, pred }
+
+// <-- Self in PARAM position, nested inside FiltIt[Self, U]. The arg `g` is the
+// FiltIt produced by `@flt`; we just drain it and ignore @ entirely. This makes
+// the param's declared mono and the passed arg's mono have to AGREE.
+fn MapIt[I Next[T], T, U] mut @pair_with(mut g FiltIt[Self, U]) -> Vec[U] => g.drain()
+
+fn FiltIt[I Next[T], T] mut @drain() -> Vec[T] {
+    mut out = Vec[T].new()
+    while true {
+        match @next() {
+            Some(x) => out.push(x),
+            None => return out,
+        }
+    }
+    out
+}
+
+test "Self-in-type-arg PARAM position nested generic" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    // Build a MapIt and the FiltIt[Self, U] that @pair_with expects, then pass
+    // the FiltIt to @pair_with on a fresh MapIt of the SAME mono type.
+    mut mapped = v.iter().m(|x| x * 10)
+    ro filt = v.iter().m(|x| x * 10).flt(|x| x > 25)
+    ro got = mapped.pair_with(filt)
+    assert(got == [30, 40, 50, 60])
+}

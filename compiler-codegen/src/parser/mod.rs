@@ -3419,7 +3419,7 @@ impl Parser {
         // модификатор получает rank по своему scope и автоматически попадает
         // в проверку монотонности (никаких произвольных синонимичных порядков).
         let mut consume_marker = false;
-        let mut default_field_priv = false;
+        let mut field_default_visibility = crate::ast::FieldDefaultVisibility::Public;
         let mut allocation = crate::ast::AllocKind::Heap;
         // (rank, lexeme, token-span) для каждого встреченного модификатора,
         // в порядке появления в исходнике.
@@ -3434,13 +3434,45 @@ impl Parser {
                 seen_mods.push((1, "consume", sp));
                 continue;
             }
-            if !default_field_priv
+            if matches!(field_default_visibility, crate::ast::FieldDefaultVisibility::Public)
                 && matches!(self.peek().kind, TokenKind::KwPriv)
             {
                 let sp = self.peek().span;
                 self.bump();
-                default_field_priv = true;
-                seen_mods.push((2, "priv", sp));
+                // Plan 160 (D281) new design:
+                //   `priv`        (no qualifier) → Module  (module-private)
+                //   `priv(type)`                 → Private (type-private only)
+                //   `priv(module)`               → error   (removed; use bare `priv`)
+                //   `priv(<other>)`              → error   (unknown qualifier)
+                if matches!(self.peek().kind, TokenKind::LParen) {
+                    self.bump(); // consume `(`
+                    if matches!(self.peek().kind, TokenKind::KwType) {
+                        self.bump(); // consume `type`
+                        self.expect(&TokenKind::RParen)?;
+                        field_default_visibility = crate::ast::FieldDefaultVisibility::Private;
+                        seen_mods.push((2, "priv(type)", sp));
+                    } else if matches!(self.peek().kind, TokenKind::KwModule) {
+                        let bad_sp = self.peek().span;
+                        return Err(crate::diag::Diagnostic::new(
+                            "[E_PRIV_QUALIFIER] `priv(module)` is no longer valid \
+                             (Plan 160 / D281 new design). Use bare `priv` for \
+                             module-private fields, or `priv(type)` for type-private.",
+                            bad_sp,
+                        ));
+                    } else {
+                        let bad_sp = self.peek().span;
+                        return Err(crate::diag::Diagnostic::new(
+                            "[E_PRIV_QUALIFIER] unknown qualifier inside `priv(…)`. \
+                             Valid forms: `priv` (module-private) or `priv(type)` \
+                             (type-private). See D281 (spec/decisions/02-types.md).",
+                            bad_sp,
+                        ));
+                    }
+                } else {
+                    // bare `priv` → module-private
+                    field_default_visibility = crate::ast::FieldDefaultVisibility::Module;
+                    seen_mods.push((2, "priv", sp));
+                }
                 continue;
             }
             // Plan 124.8: `value` — contextual keyword (Ident match,
@@ -3593,7 +3625,7 @@ impl Parser {
                 invariants: Vec::new(),
                 axioms: Vec::new(),
                 consume: consume_marker,
-                default_field_priv,
+                field_default_visibility,
                 allocation,
                 zero_on_move,
             });
@@ -3666,7 +3698,7 @@ impl Parser {
                     invariants: Vec::new(),
                     axioms: Vec::new(),
                     consume: false,
-                    default_field_priv: false,
+                    field_default_visibility: crate::ast::FieldDefaultVisibility::Public,
                     allocation: crate::ast::AllocKind::Heap,
                     impl_protocols: impl_protocols.clone(),
                     zero_on_move,
@@ -3713,7 +3745,7 @@ impl Parser {
             TokenKind::LBrace => {
                 self.bump();
                 // Plan 124 (D220): pass type-level default visibility to field parser.
-                let (fields, acs) = self.parse_record_fields_with_default(default_field_priv)?;
+                let (fields, acs) = self.parse_record_fields_with_default(field_default_visibility)?;
                 assoc_consts.extend(acs);
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Record(fields)
@@ -3729,10 +3761,10 @@ impl Parser {
             //
             // Plan 124.7 (D225): `type Vec3 priv (x f64, y f64, z f64)` —
             // type-level priv default flip для tuple form (extends D220
-            // record form). default_field_priv pass'ится в field parser.
+            // record form). field_default_visibility pass'ится в field parser.
             TokenKind::LParen if self.is_named_tuple_decl() => {
                 self.bump(); // consume `(`
-                let fields = self.parse_named_tuple_fields_with_default(default_field_priv)?;
+                let fields = self.parse_named_tuple_fields_with_default(field_default_visibility)?;
                 self.expect(&TokenKind::RParen)?;
                 TypeDeclKind::NamedTuple(fields)
             }
@@ -3793,7 +3825,7 @@ impl Parser {
             invariants,
             axioms: effect_axioms,
             consume: consume_marker,
-            default_field_priv,
+            field_default_visibility,
             allocation,
             impl_protocols,
             zero_on_move,
@@ -3863,10 +3895,10 @@ impl Parser {
     }
 
     /// Plan 120 (D215): parse `name1 T1, name2 T2, ...` inside `(...)`.
-    /// Backward-compat shim — calls parse_named_tuple_fields_with_default(false).
+    /// Backward-compat shim — calls parse_named_tuple_fields_with_default(Public).
     #[allow(dead_code)]
     fn parse_named_tuple_fields(&mut self) -> Result<Vec<NamedTupleField>, Diagnostic> {
-        self.parse_named_tuple_fields_with_default(false)
+        self.parse_named_tuple_fields_with_default(crate::ast::FieldDefaultVisibility::Public)
     }
 
     /// Plan 120 (D215) — base parser for named tuple fields.
@@ -3878,18 +3910,18 @@ impl Parser {
     /// - `mut`/`ro` per-field modifiers → `E_TUPLE_NO_PER_FIELD_MOD`
     ///   (mutability — binding-level only, как Rust).
     ///
-    /// `default_priv` parameter сохранён для backward-compat shim — но
-    /// после retract D225 всегда должен быть false (parser-level check).
+    /// `default_vis` parameter — type-level FieldDefaultVisibility. After
+    /// D225 retract, priv/priv(type) на tuples — error (tuples all-public).
     /// Called after consuming `(`. Stops before `)`.
-    fn parse_named_tuple_fields_with_default(&mut self, default_priv: bool) -> Result<Vec<NamedTupleField>, Diagnostic> {
+    fn parse_named_tuple_fields_with_default(&mut self, default_vis: crate::ast::FieldDefaultVisibility) -> Result<Vec<NamedTupleField>, Diagnostic> {
         let mut fields: Vec<NamedTupleField> = Vec::new();
-        // Plan 124.8: post-D225 retract, default_priv must always be false.
-        // If a caller passes true, that's a bug in caller (type-level priv flip
-        // для tuples retracted). Defensive assert — emit error if reached.
-        if default_priv {
+        // Plan 124.8: post-D225 retract, type-level priv/priv(type) not allowed для tuples.
+        // If a caller passes non-Public, that's a bug in caller (type-level priv flip
+        // для tuples retracted). Defensive check — emit error if reached.
+        if !matches!(default_vis, crate::ast::FieldDefaultVisibility::Public) {
             let sp = self.peek().span;
             return Err(Diagnostic::new(
-                "[E_TUPLE_NO_PRIV] type-level `priv` flip для named tuples retracted \
+                "[E_TUPLE_NO_PRIV] type-level `priv` / `priv(type)` flip для named tuples retracted \
                  в Plan 124.8 (D225 superseded). Tuples всегда all-public. Use \
                  `type X value priv { ... }` для stack-allocated record с priv (D226).",
                 sp,
@@ -3973,7 +4005,7 @@ impl Parser {
             let (name, _) = self.parse_ident()?;
             let ty = self.parse_type()?;
             let span = field_start.merge(ty.span());
-            fields.push(NamedTupleField { name, ty, span, priv_field, visible_to: Vec::new() });
+            fields.push(NamedTupleField { name, ty, span, priv_field, priv_module_field: false, visible_to: Vec::new() });
             // Plan 124.8 (D215 amend): allow trailing comma + multi-line.
             // After parsing field — expect either Comma or RParen.
             // If Comma: skip + skip_newlines → loop top will handle next
@@ -4009,15 +4041,15 @@ impl Parser {
     /// НЕ в instance layout, accessible через namespace `Type.NAME`.
     fn parse_record_fields(&mut self) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
         // Backward-compat shim: existing call sites still call без default_priv;
-        // default_priv = false (public default — D47 unchanged).
-        self.parse_record_fields_with_default(false)
+        // default = Public (D47 unchanged).
+        self.parse_record_fields_with_default(crate::ast::FieldDefaultVisibility::Public)
     }
 
-    /// Plan 124 (D220): parse record fields с type-level default visibility.
-    /// `default_priv` приходит из `type X priv { ... }` syntax (parse_type_decl
-    /// after type-level marker parsing); если `false` — fields default = public
+    /// Plan 124 (D220) / Plan 160 (D281): parse record fields с type-level default visibility.
+    /// `default_vis` приходит из `type X priv { ... }` / `type X priv(module) { ... }` syntax
+    /// (parse_type_decl after type-level marker parsing); Public = fields default = public
     /// (D47 unchanged). Field-level explicit `priv`/`pub` override default.
-    fn parse_record_fields_with_default(&mut self, default_priv: bool) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
+    fn parse_record_fields_with_default(&mut self, default_vis: crate::ast::FieldDefaultVisibility) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
         let mut fields = Vec::new();
         let mut assoc_consts = Vec::new();
         self.skip_newlines();
@@ -4146,9 +4178,31 @@ impl Parser {
             }
             // Suppress potential mut-warning for explicit_pub/explicit_priv re-eats.
             let _ = (&mut explicit_priv, &mut explicit_pub);
-            let field_priv = if explicit_priv { true }
-                             else if explicit_pub { false }
-                             else { default_priv };
+            // Plan 160 (D281) new design: resolve effective field privacy.
+            // Explicit `priv` field modifier → type-private (priv_module_field=false);
+            // explicit `pub` → public; neither → inherit from type-level
+            // FieldDefaultVisibility.
+            //   Module  (= type-level `priv`, no qualifier): implicit fields get
+            //           priv_field=true AND priv_module_field=true so checker emits
+            //           E_FIELD_MODULE_PRIVATE (allow same-module).
+            //   Private (= type-level `priv(type)`): implicit fields get
+            //           priv_field=true, priv_module_field=false → E_PRIV_FIELD_READ.
+            let field_priv = if explicit_priv {
+                true
+            } else if explicit_pub {
+                false
+            } else {
+                matches!(
+                    default_vis,
+                    crate::ast::FieldDefaultVisibility::Private
+                        | crate::ast::FieldDefaultVisibility::Module
+                )
+            };
+            // priv_module_field=true only for fields whose privacy comes from
+            // the `priv(module)` type-level default (not explicit `priv`).
+            let field_priv_module = !explicit_priv
+                && !explicit_pub
+                && matches!(default_vis, crate::ast::FieldDefaultVisibility::Module);
 
             let mut readonly = false;
             let mut mutable = false;
@@ -4247,13 +4301,29 @@ impl Parser {
                 span: name_span.merge(ty.span()),
                 consume: field_consume,
                 priv_field: field_priv,
+                priv_module_field: field_priv_module,
                 visible_to,
             });
-            // запятая или newline
+            // Separator: comma (inline or multi-line) OR newline (multi-line
+            // only). Per D49 + D215 spec: on a SINGLE LINE, a comma is
+            // required between fields; a bare newline is accepted only when
+            // it actually appears. Without either, `{ x int y int }` would
+            // silently parse — now we reject it.
             if self.eat(&TokenKind::Comma).is_some() {
                 self.skip_newlines();
-            } else {
+            } else if matches!(
+                self.peek().kind,
+                TokenKind::Newline | TokenKind::Semicolon | TokenKind::RBrace
+            ) {
                 self.skip_newlines();
+            } else {
+                let sp = self.peek().span;
+                return Err(Diagnostic::new(
+                    "[E_RECORD_FIELD_MISSING_SEPARATOR] record fields on the same line must be \
+                     separated by a comma; add `,` after this field, or move the next field to \
+                     a new line",
+                    sp,
+                ));
             }
         }
         Ok((fields, assoc_consts))

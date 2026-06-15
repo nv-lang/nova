@@ -1,0 +1,12 @@
+// POSITIVE: fields on the same line separated by commas — valid.
+module plan_parser_recsep.pos_comma_inline
+
+type Point value { x int, y int }
+type Color { r int, g int, b int }
+
+fn sum(p Point) -> int => p.x + p.y
+
+test "inline comma-separated fields parse and run correctly" {
+    ro p = Point { x: 3, y: 4 }
+    assert(sum(p) == 7)
+}

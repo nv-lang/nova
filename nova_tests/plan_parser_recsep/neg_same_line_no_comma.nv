@@ -1,0 +1,9 @@
+// NEGATIVE: record fields on the same line without a comma separator must be
+// rejected with E_RECORD_FIELD_MISSING_SEPARATOR. Per D49 + D215: newline is
+// the only separator without comma — on a single line a comma is required.
+// EXPECT_COMPILE_ERROR E_RECORD_FIELD_MISSING_SEPARATOR
+module plan_parser_recsep.neg_same_line_no_comma
+
+type Bad value { x int y int }
+
+fn f(b Bad) -> int => b.x

@@ -9574,11 +9574,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // C struct + 2 constructors (Notified/TimedOut) live there.
             // sum_schemas populated via 1a1b ExternalRegistry type_decls path.
             "WaitResult",
-            // Plan 83.12: net types pre-declared in nova_rt/net.h.
-            // C structs (Nova_SocketAddr, Nova_TcpListener, Nova_TcpStream,
-            // Nova_UdpSocket) live there; ExternalRegistry auto-registers
-            // receiver types + methods from std/net/{addr,tcp,udp}.nv.
-            "SocketAddr", "TcpListener", "TcpStream", "UdpSocket",
+            // Plan 91.12 (V2): SocketAddr/TcpListener/TcpStream/UdpSocket
+            // are now Nova value-records `{ priv handle int }`.
+            // Emitter generates NovaValue_SocketAddr etc. as { nova_int handle; }.
+            // NOT in RUNTIME_DEFINED_TYPES — let codegen emit them normally.
+            // (Plan 83.12 pre-declared Nova_* here; renamed to NovaRt_* in V2.)
             // Plan 103.9 (D174): consume guard types pre-declared in sync_primitives.h.
             // struct Nova_MutexGuard_s / Nova_ReadGuard_s / Nova_WriteGuard_s /
             // Nova_Permit_s / Nova_OnceGuard_s defined there (each has nova_int ptr field).
@@ -14183,6 +14183,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             type_subst.iter().cloned().collect(),
         );
         let prev_recv_for_ret = self.current_receiver_type.replace(recv_type.to_string());
+        // [M-138.2-self-in-param]: bind `Self` for nested type-arg `Self` so the
+        // FORWARD DECL matches the body (emit_monomorphized_method does the same).
+        // See the detailed rationale there. Both fwd-decl and body must produce
+        // the SAME value-aware mono or C reports conflicting types.
+        if recv_type.contains("____") {
+            let self_c = self.value_aware_generic_c_type(&format!("Nova_{}*", recv_type));
+            self.current_type_subst.entry("Self".to_string()).or_insert(self_c);
+        }
         // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
         let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
         let recv_c = self.receiver_c_type(recv_type, recv_mutable);
@@ -14259,6 +14267,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // (e.g. `other Self`, `-> Self`) резолвилось в concrete mono'd type.
         // Раньше set только перед ret_c — params получали Nova_Self fallback.
         let prev_recv_for_emit = self.current_receiver_type.replace(recv_type.to_string());
+        // [M-138.2-self-in-param]: bind `Self` so a nested type-arg `Self`
+        // (e.g. `-> FiltIt[Self, U]`, or `other Self` in a param) resolves to
+        // the SAME value-aware receiver mono the call-site uses (the call-site
+        // return-inference at emit_c.rs:34750-34754 binds `Self` to the mono
+        // pointer then value-aware-normalizes it). Without this, the nested
+        // `Self` misses `current_type_subst["Self"]` (type_ref_to_c:5265) and
+        // falls to the `"Self"` arm → `receiver_c_type` POINTER form, which
+        // adds a spurious trailing `*` → `_p` in the mangled type-arg → the
+        // method's emitted return/param mono diverges from the call-site temp
+        // → C "initializing ... from incompatible type". Only for generic
+        // mono instances (recv_type carries `____`); value_aware_generic_c_type
+        // leaves heap-generic / non-value forms unchanged (heap `-> Self` and
+        // primitive receivers are unaffected). `.or_insert` so any pre-existing
+        // `Self` binding (e.g. from type_subst) wins — no clobber.
+        if recv_type.contains("____") {
+            let self_c = self.value_aware_generic_c_type(&format!("Nova_{}*", recv_type));
+            self.current_type_subst.entry("Self".to_string()).or_insert(self_c);
+        }
         // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
         let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
         let recv_c = self.receiver_c_type(recv_type, recv_mutable);

@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR [E_INFINITE_TYPE]
+//
+// Q-infinite-value-type (D280 §4) — NEGATIVE: a value cycle that passes through
+// a NEWTYPE (transparent typedef, D214) on the inline path.
+//
+//     type Wrap(R)            // newtype — transparent, inlines its inner R
+//     type R value { w Wrap } // value record embedding the wrapper by value
+//
+// A tuple newtype is a transparent typedef: it inlines its single inner type
+// with no indirection (the size walk recurses the inner). So `R` inlines a
+// `Wrap`, which inlines an `R` — the value-containment cycle `R → w: Wrap →
+// (0): R → …` is infinite. The detector follows the newtype's inline edge and
+// finds the back-edge into `R`.
+//
+// INTENT: `nova check` EXITS NONZERO with `E_INFINITE_TYPE`.
+
+module plan144_inftype.neg_newtype_self
+
+type Wrap(R)
+
+type R value { w Wrap }

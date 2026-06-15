@@ -1,0 +1,26 @@
+# nova.toml — scoped FFI manifest for Plan 91.12 std/net V2 tests.
+#
+# Force-includes net_v2_guard.h (defines NOVA_NET_V2=1) before nova_rt.h
+# to suppress V1 NovaRes_*-returning declarations from net.h that conflict
+# with V2 codegen output (Nova_T* return types).
+#
+# Without this guard, when NOVA_USE_LIBUV is active nova_rt.h includes
+# main net.h which has V1 Nova_TcpListener_static_bind returning
+# NovaRes_nova_int_nova_str*, while V2 codegen emits static Nova_TcpListener*
+# for the same name — conflicting types error.
+
+[package]
+name = "plan91_12"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "Plan 91.12 std/net V2 algebraic-effects tests"
+
+[lib]
+src = "."
+
+[dependencies]
+
+[ffi]
+c_shims      = ["net_v2_guard.h"]
+include_dirs = []
+libs         = []

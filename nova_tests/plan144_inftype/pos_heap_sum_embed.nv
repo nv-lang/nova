@@ -1,0 +1,31 @@
+// Q-infinite-value-type (D280 §4) — POSITIVE: a value record embedding a
+// recursive HEAP sum. MUST `nova check` PASS — NO `E_INFINITE_TYPE`.
+//
+//     type Tree | Leaf | Node(int, Tree, Tree)   // sum → ALWAYS heap-boxed
+//     type H { t Tree }                           // t is a `Nova_Tree*` (8B)
+//
+// A sum type is ALWAYS heap-allocated, so a `Tree` value is a pointer
+// (`Nova_Tree*`). The recursive `Tree` payloads inside `Node` are pointer
+// leaves, and the `t` field of `H` is a pointer too — INDIRECTION breaks the
+// containment cycle at every step → the layout is FINITE. The detector's
+// boxing short-circuit (Sum → STOP) means it never reports `E_INFINITE_TYPE`
+// here. This is the canonical valid-recursive-heap case the detector must NOT
+// false-positive on.
+
+module plan144_inftype.pos_heap_sum_embed
+
+type Tree
+    | Leaf
+    | Node(int, Tree, Tree)
+
+type H { t Tree }
+
+fn sum(t Tree) -> int => match t {
+    Leaf          => 0
+    Node(v, l, r) => v + sum(l) + sum(r)
+}
+
+test "value record embedding recursive heap sum — finite, runs" {
+    ro h = H { t: Node(1, Node(2, Leaf, Leaf), Node(3, Leaf, Leaf)) }
+    assert(sum(h.t) == 6)
+}

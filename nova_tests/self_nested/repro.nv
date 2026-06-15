@@ -1,0 +1,50 @@
+// Repro: Self as a TYPE-ARGUMENT inside a nested generic in the return
+// position of a method on a generic type. Family [M-138.2-self-in-param].
+//
+// `flt` returns `FiltIt[Self, U]` where `Self` is the full receiver mono
+// `MapIt[I, T, U]`. The Self-version currently CC-FAILs because the temp
+// declared at the call-site and the method's return mono diverge in the
+// mangled Self-substitution.
+module self_nested.repro
+
+import std.collections.vec.{Vec, VecIter}
+
+type MapIt[I, T, U] value { mut src I, priv f fn(T) -> U }
+type FiltIt[I, T] value { mut src I, priv pred fn(T) -> bool }
+
+fn MapIt[I Next[T], T, U] mut @next() -> Option[U] => match (@src).next() {
+    Some(x) => Some((@f)(x)),
+    None => None,
+}
+
+fn FiltIt[I Next[T], T] mut @next() -> Option[T] {
+    while true {
+        match (@src).next() {
+            Some(x) => { if (@pred)(x) { return Some(x) } },
+            None => return None,
+        }
+    }
+    None
+}
+
+fn VecIter[T] @m[U](f fn(T) -> U) -> MapIt[VecIter[T], T, U] => { src: @, f }
+
+// <-- Self INSTEAD OF MapIt[I, T, U]
+fn MapIt[I, T, U] @flt(pred fn(U) -> bool) -> FiltIt[Self, U] => { src: @, pred }
+
+fn FiltIt[I Next[T], T] mut @drain() -> Vec[T] {
+    mut out = Vec[T].new()
+    while true {
+        match @next() {
+            Some(x) => out.push(x),
+            None => return out,
+        }
+    }
+    out
+}
+
+test "Self-in-type-arg nested generic" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro got = v.iter().m(|x| x * 10).flt(|x| x > 25).drain()
+    assert(got == [30, 40, 50, 60])
+}

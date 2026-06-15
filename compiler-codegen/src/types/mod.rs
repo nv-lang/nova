@@ -2110,6 +2110,18 @@ struct TypeCheckCtx<'a> {
     /// the user wrote on their own redeclared type — matching carrier arity —
     /// is kept).
     user_shadowed_generic_types: HashMap<String, usize>,
+    /// Plan 160 (D281) Ф.2: type name → declaring module name segments.
+    /// Built from `module.peer_files.items_here` in `build`. Used by
+    /// `module_priv_access_allowed` to compare with `current_module`.
+    /// Types imported from other modules retain the module name from which
+    /// they came (their type decl's module_name). Empty for types with
+    /// unknown origin (imported without peer_files → conservative = deny).
+    type_defining_modules: HashMap<String, Vec<String>>,
+    /// Plan 160 (D281) Ф.2: module name of the code currently being
+    /// checked — set to `module.name` at the start of `check_module`.
+    /// Used together with `type_defining_modules` for module-boundary
+    /// enforcement. Empty = no current module (conservative = deny).
+    current_module: std::cell::RefCell<Vec<String>>,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -2144,6 +2156,24 @@ struct PrivTestAccessGuard<'a, 'b> {
 impl<'a, 'b> Drop for PrivTestAccessGuard<'a, 'b> {
     fn drop(&mut self) {
         *self.ctx.current_fn_test_access.borrow_mut() = std::mem::take(&mut self.prev);
+    }
+}
+
+/// Plan 160 (D281) Ф.2: RAII guard для current_module в TypeCheckCtx.
+/// Restores previous module name on drop.
+struct CurrentModuleGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev: Vec<String>,
+}
+impl<'a, 'b> CurrentModuleGuard<'a, 'b> {
+    fn set(ctx: &'b TypeCheckCtx<'a>, module: Vec<String>) -> Self {
+        let prev = std::mem::replace(&mut *ctx.current_module.borrow_mut(), module);
+        CurrentModuleGuard { ctx, prev }
+    }
+}
+impl<'a, 'b> Drop for CurrentModuleGuard<'a, 'b> {
+    fn drop(&mut self) {
+        *self.ctx.current_module.borrow_mut() = std::mem::take(&mut self.prev);
     }
 }
 
@@ -2394,12 +2424,44 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
+        // Plan 160 (D281) Ф.2: build type_defining_modules — maps type name
+        // → the module_name of the peer_file that declared it. Used for
+        // module-boundary enforcement of `priv` (module-private) types.
+        // Only entry-peer-files contribute (imported modules bring in their
+        // types with a different module_name = their own path, which is the
+        // desired behaviour: cross-module access to those types is denied).
+        let mut type_defining_modules: HashMap<String, Vec<String>> = HashMap::new();
+        if module.peer_files.is_empty() {
+            // Single-file module: all items in module.items belong to module.name.
+            for item in &module.items {
+                if let Item::Type(td) = item {
+                    type_defining_modules
+                        .entry(td.name.clone())
+                        .or_insert_with(|| module.name.clone());
+                }
+            }
+        } else {
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    if let Item::Type(td) = item {
+                        // Record the module_name of the peer that owns this type.
+                        type_defining_modules
+                            .entry(td.name.clone())
+                            .or_insert_with(|| pf.module_name.clone());
+                    }
+                }
+            }
+        }
+
         TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
             in_const_fn: std::cell::Cell::new(false),
             current_recv_type: std::cell::RefCell::new(None),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
             ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
-            user_shadowed_generic_types }
+            user_shadowed_generic_types,
+            type_defining_modules,
+            current_module: std::cell::RefCell::new(Vec::new()),
+        }
     }
 
     /// Plan 126.2 Ф.1: synthesize + register auto-derive methods into
@@ -2492,6 +2554,10 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        // Plan 160 (D281) Ф.2: set current_module for module-boundary checks.
+        // Restored to empty Vec on scope exit via CurrentModuleGuard RAII.
+        let _module_guard = CurrentModuleGuard::set(self, module.name.clone());
+
         // Plan 91.9 (D186): verify `#impl(P1 + P2 + ...)` annotations.
         // Для каждого type T с impl_protocols, проверяем что:
         // 1. Каждый P в списке действительно protocol-тип (E_UNKNOWN_PROTOCOL).
@@ -3760,6 +3826,262 @@ impl<'a> TypeCheckCtx<'a> {
                 ));
             }
         }
+        // Q-infinite-value-type (D280 §4): genuinely-infinite VALUE types —
+        // a value record / named-tuple / newtype / alias whose layout transitively
+        // contains ITSELF through INLINE edges only (no pointer/heap/slice/Option
+        // indirection). Such a type has no finite object layout. The const_fn_eval
+        // size walk degrades gracefully (depth-guard → None, surfaced only when
+        // `size_of` forces it); this dedicated check reports it at type-check time.
+        self.check_infinite_type(td, errors);
+    }
+
+    /// Q-infinite-value-type (D280 §4): report an `E_INFINITE_TYPE` diagnostic
+    /// when this value type's layout transitively embeds itself through INLINE
+    /// edges only — i.e. there is a value-containment cycle with no
+    /// pointer/heap/slice/Option indirection to break it.
+    ///
+    /// The INLINE-vs-INDIRECTION classification MIRRORS
+    /// `const_fn_eval::type_size_or_align_resolved_d` (post-D280):
+    ///   - INLINE (recurse, can carry a cycle): a field whose named type is a
+    ///     VALUE record / named-tuple / newtype / alias-to-value; tuples;
+    ///     fixed-arrays of inline types; transparent `ro`/`mut`/`unsafe`
+    ///     wrappers over an inline type.
+    ///   - INDIRECTION (STOP — finite, breaks the cycle): a HEAP type (Sum is
+    ///     ALWAYS heap; a Record with `td.allocation.is_heap()`), a pointer
+    ///     `*T`, a slice `[]T`/Array, `str`, any generics-carrying Named
+    ///     (`Option[..]`/`Vec[..]`/`Wrapper[..]` — they box / are not inlined
+    ///     by the size walk), primitives, `Unit`, `Func`, `Protocol`.
+    ///
+    /// Detect with a DFS over the inline-containment graph keyed by type name,
+    /// with an on-path set (mirrors `type_is_consume_v`'s visited-set, except we
+    /// only follow inline edges and report on a back-edge into a node already on
+    /// the current path). Catches direct self-cycles (`type N value { next N }`)
+    /// and mutual cycles (`type A value { b B }` + `type B value { a A }`).
+    ///
+    /// Only types DECLARED in entry-peer files (the user's own source) are
+    /// reported — a cycle is reported once, on the decl currently being checked,
+    /// when the DFS starting at `td` revisits `td` itself. Reporting on the
+    /// entry node (rather than every node on the cycle) keeps the diagnostic
+    /// stable and avoids duplicate errors for mutual cycles (each peer reports
+    /// its own self-reaching path).
+    fn check_infinite_type(&self, td: &TypeDecl, errors: &mut Vec<Diagnostic>) {
+        // Only value records / named-tuples / newtypes / aliases can be the
+        // *subject* of a value-containment cycle. A heap record / sum boxes to a
+        // pointer and is never inlined into a field, so it can never close a
+        // cycle (it is an INDIRECTION boundary). Skip everything else fast.
+        let subject_inlineable = match &td.kind {
+            TypeDeclKind::Record(_) => !td.allocation.is_heap(),
+            TypeDeclKind::NamedTuple(_) | TypeDeclKind::Newtype(_) | TypeDeclKind::Alias(_) => true,
+            _ => false,
+        };
+        if !subject_inlineable {
+            return;
+        }
+        // Generic params of the decl under check — a bare param `T` is not a
+        // user type and cannot close a value cycle (mirrors the size walk, which
+        // has no entry for an unresolved param → None).
+        let mut gs: HashSet<String> = HashSet::new();
+        for g in &td.generics {
+            gs.insert(g.name.clone());
+        }
+        // DFS over the inline-containment graph starting at `td.name`. `on_path`
+        // is the set of type names currently on the DFS stack; a back-edge into
+        // a node on the path is a cycle. We only care whether the cycle passes
+        // through `td.name` (the subject) — if so, `td` is infinite.
+        let mut on_path: HashSet<String> = HashSet::new();
+        // The field whose type carries the back-edge to `td` — captured for the
+        // diagnostic span + message. `(field_label, field_ty)`.
+        let root = td.name.clone();
+        on_path.insert(root.clone());
+        for (label, field_ty, _path_segs) in Self::inline_fields_of(td) {
+            if let Some(offender_span) =
+                self.infinite_dfs(field_ty, &root, &mut on_path, &gs)
+            {
+                // Found a value-containment cycle reaching `td` through INLINE
+                // edges only. Report once, on the offending field of `td`.
+                let field_ty_str = Self::typeref_display(field_ty);
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_INFINITE_TYPE] value type `{name}` has infinite size: \
+                         field `{label}` of type `{fty}` contains `{name}` by value \
+                         (no pointer/heap indirection), so the layout recurses without \
+                         bound. Break the cycle with indirection: box it behind a sum \
+                         variant (sums are always heap), wrap the field in `Option[{fty}]`, \
+                         use a pointer `*{fty}`, or a slice `[]{fty}`.",
+                        name = td.name,
+                        label = label,
+                        fty = field_ty_str,
+                    ),
+                    offender_span,
+                ));
+                // One diagnostic per offending decl is enough — the first inline
+                // field that closes a cycle is the actionable site. (A type with
+                // several independent cyclic fields still gets reported via the
+                // first; fixing it re-runs the check.)
+                break;
+            }
+        }
+    }
+
+    /// Q-infinite-value-type: the INLINE-edge field list of a value-carrying
+    /// `TypeDecl` — the contained types that participate in the value layout.
+    /// Returns `(field_label, &TypeRef, ())` for each inline edge. Heap records
+    /// and sums are NOT subjects here (handled by the caller's gate), so this
+    /// only enumerates value Record / NamedTuple / Newtype / Alias contents.
+    fn inline_fields_of(td: &TypeDecl) -> Vec<(String, &TypeRef, ())> {
+        match &td.kind {
+            TypeDeclKind::Record(fields) => fields
+                .iter()
+                .map(|f| (f.name.clone(), &f.ty, ()))
+                .collect(),
+            TypeDeclKind::NamedTuple(fields) => fields
+                .iter()
+                .map(|f| (f.name.clone(), &f.ty, ()))
+                .collect(),
+            TypeDeclKind::Newtype(inner) => vec![("(0)".to_string(), inner, ())],
+            TypeDeclKind::Alias(inner) => vec![("(alias)".to_string(), inner, ())],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Q-infinite-value-type: DFS over the inline-containment graph from a single
+    /// field `TypeRef`. Returns `Some(span)` of the offending TypeRef if a value
+    /// cycle reaching `root` (through INLINE edges only) is found, else `None`.
+    /// `on_path` holds the type names currently on the DFS stack. `gs` is the set
+    /// of generic-param names of the root decl (bare params are STOP leaves).
+    ///
+    /// Classification mirrors `type_size_or_align_resolved_d` exactly: see the
+    /// per-`TypeRef` arms below. STOP arms return `None` (finite, breaks cycle);
+    /// INLINE arms recurse; reaching a Named that resolves to `root` (or any node
+    /// already on `on_path`, which transitively reaches `root`) is the cycle.
+    fn infinite_dfs(
+        &self,
+        t: &TypeRef,
+        root: &str,
+        on_path: &mut HashSet<String>,
+        gs: &HashSet<String>,
+    ) -> Option<Span> {
+        match t {
+            TypeRef::Named { path, generics, span } => {
+                // Mirror the size walk's inline Named arm gate exactly:
+                // ONLY `path.len() == 1 && generics.is_empty()` is inlined.
+                // A module-qualified path (len > 1) OR any non-empty generics
+                // (Option[..]/Vec[..]/Wrapper[..]) falls to the size walk's
+                // `_ => None` → INDIRECTION/finite here. STOP.
+                if path.len() != 1 || !generics.is_empty() {
+                    return None;
+                }
+                let name = &path[0];
+                // Bare generic-param of the root decl — not a user type. STOP.
+                if gs.contains(name) {
+                    return None;
+                }
+                // Primitives are finite leaves (and are NOT in self.types). STOP.
+                if Self::is_primitive_type_name(name) {
+                    return None;
+                }
+                // A back-edge into a node already on the DFS path → cycle. Every
+                // node on `on_path` transitively reaches `root` (the path was
+                // grown from `root`), so reaching any of them means `root` is on
+                // an inline cycle. Report at this field's span.
+                if on_path.contains(name) {
+                    return Some(*span);
+                }
+                // Resolve the named TypeDecl. Unresolvable → STOP (the size walk
+                // returns None there; a false positive would violate the
+                // zero-false-positive gate).
+                let td = match self.types.get(name).copied() {
+                    Some(td) => td,
+                    None => return None,
+                };
+                // BOXING short-circuit — the load-bearing branch. A Sum is ALWAYS
+                // heap; a Record is indirection iff `td.allocation.is_heap()`.
+                // Either way the reference is an 8-byte pointer leaf → finite,
+                // BREAKS the cycle. STOP. (Mirrors size walk lines 1147-1152.)
+                let boxed_to_pointer = matches!(&td.kind, TypeDeclKind::Sum(_))
+                    || (matches!(&td.kind, TypeDeclKind::Record(_)) && td.allocation.is_heap());
+                if boxed_to_pointer {
+                    return None;
+                }
+                // INLINE: value Record / NamedTuple / Newtype / Alias. Recurse
+                // into its contained types, with `name` pushed on the path.
+                on_path.insert(name.clone());
+                let mut found = None;
+                for (_label, field_ty, _seg) in Self::inline_fields_of(td) {
+                    if let Some(s) = self.infinite_dfs(field_ty, root, on_path, gs) {
+                        found = Some(s);
+                        break;
+                    }
+                }
+                on_path.remove(name);
+                found
+            }
+            // Tuples: INLINE of each element (size walk recurses each elem).
+            TypeRef::Tuple(elems, _) => {
+                for e in elems {
+                    if let Some(s) = self.infinite_dfs(e, root, on_path, gs) {
+                        return Some(s);
+                    }
+                }
+                None
+            }
+            // Fixed array `[n]T`: n inline copies of T → INLINE-recurse the elem
+            // regardless of n (even one inline copy closes a cycle).
+            TypeRef::FixedArray(_, elem, _) => self.infinite_dfs(elem, root, on_path, gs),
+            // Transparent wrappers — recurse inner, preserve its inline/indirection
+            // nature (`ro T`/`mut T`/`unsafe T`). The OUTER Pointer of `*ro T`
+            // etc. has already stopped before reaching these.
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _) => self.infinite_dfs(inner, root, on_path, gs),
+            // Pointer `*T` (any pointee) — always 8 bytes. INDIRECTION. STOP.
+            TypeRef::Pointer(_, _) => None,
+            // Slice `[]T` — 16-byte {ptr,len}. INDIRECTION. STOP.
+            TypeRef::Array(_, _) => None,
+            // Unit / Func / Protocol — finite leaves / existentials. STOP.
+            TypeRef::Unit(_) | TypeRef::Func { .. } | TypeRef::Protocol { .. } => None,
+        }
+    }
+
+    /// Q-infinite-value-type: primitive type names that are finite leaves and
+    /// are NOT present in `self.types` (mirrors the size walk's primitive table).
+    #[inline]
+    fn is_primitive_type_name(name: &str) -> bool {
+        matches!(
+            name,
+            "int" | "i64" | "u64" | "f64" | "i32" | "u32" | "f32" | "i16" | "u16"
+                | "i8" | "u8" | "uint" | "bool" | "char" | "str"
+        )
+    }
+
+    /// Q-infinite-value-type: compact display of a `TypeRef` for the diagnostic
+    /// message (`Option[Node]`, `*Node`, `[]Node`, `Node`). Best-effort — only
+    /// the common shapes; falls back to the leading segment name.
+    fn typeref_display(t: &TypeRef) -> String {
+        match t {
+            TypeRef::Named { path, generics, .. } => {
+                let base = path.join(".");
+                if generics.is_empty() {
+                    base
+                } else {
+                    let args: Vec<String> = generics.iter().map(Self::typeref_display).collect();
+                    format!("{}[{}]", base, args.join(", "))
+                }
+            }
+            TypeRef::Array(inner, _) => format!("[]{}", Self::typeref_display(inner)),
+            TypeRef::FixedArray(n, inner, _) => format!("[{}]{}", n, Self::typeref_display(inner)),
+            TypeRef::Pointer(inner, _) => format!("*{}", Self::typeref_display(inner)),
+            TypeRef::Readonly(inner, _) => format!("ro {}", Self::typeref_display(inner)),
+            TypeRef::Mut(inner, _) => format!("mut {}", Self::typeref_display(inner)),
+            TypeRef::Unsafe(inner, _) => format!("unsafe {}", Self::typeref_display(inner)),
+            TypeRef::Tuple(elems, _) => {
+                let parts: Vec<String> = elems.iter().map(Self::typeref_display).collect();
+                format!("({})", parts.join(", "))
+            }
+            TypeRef::Unit(_) => "()".to_string(),
+            TypeRef::Func { .. } => "fn(..)".to_string(),
+            TypeRef::Protocol { .. } => "<protocol>".to_string(),
+        }
     }
 
     /// Plan 91.12 V2 followup #3 (2026-06-02): thin wrapper над
@@ -4167,6 +4489,9 @@ impl<'a> TypeCheckCtx<'a> {
                                 let base_allowed = self.priv_access_allowed_base(last.as_str());
                                 if !base_allowed {
                                     let has_priv = rec_fields.iter().any(|fd| fd.priv_field);
+                                    // Plan 160 (D281) Ф.2: module access context.
+                                    let module_allowed = self.module_priv_access_allowed(last.as_str());
+                                    let has_type_priv = rec_fields.iter().any(|fd| fd.priv_field && !fd.priv_module_field);
                                     for f in fields {
                                         // Plan 124.2 (D221 §5): spread `...other` outside
                                         // type-method scope on a type WITH priv fields
@@ -4174,20 +4499,26 @@ impl<'a> TypeCheckCtx<'a> {
                                         // E_PRIV_FIELD_INIT_SPREAD.
                                         if f.is_spread {
                                             if has_priv {
-                                                errors.push(Diagnostic::new(
-                                                    format!(
-                                                        "[E_PRIV_FIELD_INIT_SPREAD] cannot use \
-                                                         spread `...` in record literal of `{}` \
-                                                         outside type-method scope: type has \
-                                                         private fields which would be \
-                                                         implicitly initialized via copy \
-                                                         (Plan 124 / D221 §5). Hint: use \
-                                                         factory method `{}.new(...)` or list \
-                                                         each public field explicitly.",
-                                                        last, last,
-                                                    ),
-                                                    f.span,
-                                                ));
+                                                // Plan 160 Ф.2: spread allowed within same
+                                                // module for module-priv-only types.
+                                                let has_module_priv_only = has_priv && !has_type_priv;
+                                                let spread_ok = has_module_priv_only && module_allowed;
+                                                if !spread_ok {
+                                                    errors.push(Diagnostic::new(
+                                                        format!(
+                                                            "[E_PRIV_FIELD_INIT_SPREAD] cannot use \
+                                                             spread `...` in record literal of `{}` \
+                                                             outside type-method scope: type has \
+                                                             private fields which would be \
+                                                             implicitly initialized via copy \
+                                                             (Plan 124 / D221 §5). Hint: use \
+                                                             factory method `{}.new(...)` or list \
+                                                             each public field explicitly.",
+                                                            last, last,
+                                                        ),
+                                                        f.span,
+                                                    ));
+                                                }
                                             }
                                             continue;
                                         }
@@ -4195,19 +4526,38 @@ impl<'a> TypeCheckCtx<'a> {
                                             if fdecl.priv_field
                                                 && !self.priv_field_access_allowed(last.as_str(), &fdecl.visible_to)
                                             {
-                                                errors.push(Diagnostic::new(
-                                                    format!(
-                                                        "[E_PRIV_FIELD_INIT] cannot \
-                                                         initialize private field `{}.{}` \
-                                                         via record literal outside type-\
-                                                         method scope. Field marked `priv` \
-                                                         (Plan 124 / D220). Hint: use \
-                                                         factory method like `{}.new(...)`, \
-                                                         or use `#test_access({})` on test fn.",
-                                                        last, f.name, last, last,
-                                                    ),
-                                                    f.span,
-                                                ));
+                                                // Plan 160 (D281) Ф.2: module-private init.
+                                                if fdecl.priv_module_field {
+                                                    if !self.module_priv_access_allowed(last.as_str()) {
+                                                        errors.push(Diagnostic::new(
+                                                            format!(
+                                                                "[E_FIELD_MODULE_PRIVATE] cannot \
+                                                                 initialize module-private field \
+                                                                 `{}.{}` via record literal from \
+                                                                 outside its module. Type declared \
+                                                                 with bare `priv` (Plan 160 / \
+                                                                 D281). Hint: use factory method \
+                                                                 `{}.new(...)`.",
+                                                                last, f.name, last,
+                                                            ),
+                                                            f.span,
+                                                        ));
+                                                    }
+                                                } else {
+                                                    errors.push(Diagnostic::new(
+                                                        format!(
+                                                            "[E_PRIV_FIELD_INIT] cannot \
+                                                             initialize private field `{}.{}` \
+                                                             via record literal outside type-\
+                                                             method scope. Field marked `priv` \
+                                                             (Plan 124 / D220). Hint: use \
+                                                             factory method like `{}.new(...)`, \
+                                                             or use `#test_access({})` on test fn.",
+                                                            last, f.name, last, last,
+                                                        ),
+                                                        f.span,
+                                                    ));
+                                                }
                                             }
                                         }
                                     }
@@ -5019,6 +5369,25 @@ impl<'a> TypeCheckCtx<'a> {
         false
     }
 
+    /// Plan 160 (D281) Ф.2: true when the caller is in the SAME module as
+    /// the type `tname` was declared in. Used for `priv` (module-private) boundary:
+    /// fields with `priv_module_field=true` are allowed within the module.
+    ///
+    /// Conservative (deny) when:
+    /// - `type_defining_modules` has no entry for `tname` (unknown origin),
+    /// - `current_module` is empty (no module context set),
+    /// - the modules differ.
+    fn module_priv_access_allowed(&self, tname: &str) -> bool {
+        let current = self.current_module.borrow();
+        if current.is_empty() {
+            return false;
+        }
+        match self.type_defining_modules.get(tname) {
+            Some(def_mod) => def_mod.as_slice() == current.as_slice(),
+            None => false,
+        }
+    }
+
     /// Combines `priv_access_allowed_base(tname)` с per-field visible_to:
     /// true if access allowed, considering field's friend list.
     fn priv_field_access_allowed(&self, tname: &str, visible_to: &[String]) -> bool {
@@ -5067,17 +5436,20 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 124.2 + 124.4 + 124.6 (D221+D222+D224): unified priv
                 // check (Record + NamedTuple). Per-field visible_to taken into
                 // account (Plan 124.6).
-                struct FieldMeta { name: String, priv_field: bool, visible_to: Vec<String>, ty: TypeRef }
+                // Plan 160 (D281) Ф.2: priv_module_field added for module-boundary.
+                struct FieldMeta { name: String, priv_field: bool, priv_module_field: bool, visible_to: Vec<String>, ty: TypeRef }
                 let metas: Vec<FieldMeta> = match &td.kind {
                     TypeDeclKind::Record(rec_fields) => rec_fields.iter().map(|f| FieldMeta {
                         name: f.name.clone(),
                         priv_field: f.priv_field,
+                        priv_module_field: f.priv_module_field,
                         visible_to: f.visible_to.clone(),
                         ty: f.ty.clone(),
                     }).collect(),
                     TypeDeclKind::NamedTuple(nt_fields) => nt_fields.iter().map(|f| FieldMeta {
                         name: f.name.clone(),
                         priv_field: f.priv_field,
+                        priv_module_field: f.priv_module_field,
                         visible_to: f.visible_to.clone(),
                         ty: f.ty.clone(),
                     }).collect(),
@@ -5090,19 +5462,36 @@ impl<'a> TypeCheckCtx<'a> {
                             if meta.priv_field
                                 && !self.priv_field_access_allowed(tname.as_str(), &meta.visible_to)
                             {
-                                errors.push(Diagnostic::new(
-                                    format!(
-                                        "[E_PRIV_FIELD_PATTERN] cannot destructure \
-                                         private field `{}.{}` в pattern outside type-\
-                                         method scope. Field marked `priv` (Plan 124 / \
-                                         D220/D221/D222). Hint: bind the value to a variable \
-                                         and access via public methods of `{}`, move \
-                                         destructure into a method of `{}`, or use \
-                                         `#test_access({})` (D225).",
-                                        tname, pf.name, tname, tname, tname,
-                                    ),
-                                    pf.span,
-                                ));
+                                // Plan 160 (D281) Ф.2: module-private pattern check.
+                                if meta.priv_module_field {
+                                    if !self.module_priv_access_allowed(tname.as_str()) {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_FIELD_MODULE_PRIVATE] cannot destructure \
+                                                 module-private field `{}.{}` in pattern from \
+                                                 outside its module. Type declared with \
+                                                 bare `priv` (Plan 160 / D281). Hint: use \
+                                                 public accessor methods of `{}`.",
+                                                tname, pf.name, tname,
+                                            ),
+                                            pf.span,
+                                        ));
+                                    }
+                                } else {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_PRIV_FIELD_PATTERN] cannot destructure \
+                                             private field `{}.{}` в pattern outside type-\
+                                             method scope. Field marked `priv` (Plan 124 / \
+                                             D220/D221/D222). Hint: bind the value to a variable \
+                                             and access via public methods of `{}`, move \
+                                             destructure into a method of `{}`, or use \
+                                             `#test_access({})` (D225).",
+                                            tname, pf.name, tname, tname, tname,
+                                        ),
+                                        pf.span,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -5525,18 +5914,39 @@ impl<'a> TypeCheckCtx<'a> {
                     if field.priv_field
                         && !self.priv_field_access_allowed(tname.as_str(), &field.visible_to)
                     {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_PRIV_FIELD_READ] cannot read private field \
-                                 `{}.{}` outside type-method scope. Field marked \
-                                 `priv` (Plan 124 / D220). Hint: add public \
-                                 getter method on `{}`, or move accessing code \
-                                 into a method of `{}`, or use `#test_access({})` \
-                                 на test fn (escape hatch — D224).",
-                                tname, name, tname, tname, tname,
-                            ),
-                            span,
-                        ));
+                        // Plan 160 (D281) Ф.2: distinguish module-private from
+                        // type-private. priv_module_field=true → Module default;
+                        // allow if same module, otherwise E_FIELD_MODULE_PRIVATE.
+                        if field.priv_module_field {
+                            if !self.module_priv_access_allowed(tname.as_str()) {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_FIELD_MODULE_PRIVATE] cannot read \
+                                         module-private field `{}.{}` from \
+                                         outside its module. Type declared with \
+                                         bare `priv` (Plan 160 / D281). \
+                                         Hint: add a public accessor method on \
+                                         `{}`, or move the caller into the same \
+                                         module.",
+                                        tname, name, tname,
+                                    ),
+                                    span,
+                                ));
+                            }
+                        } else {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_PRIV_FIELD_READ] cannot read private field \
+                                     `{}.{}` outside type-method scope. Field marked \
+                                     `priv` (Plan 124 / D220). Hint: add public \
+                                     getter method on `{}`, or move accessing code \
+                                     into a method of `{}`, or use `#test_access({})` \
+                                     на test fn (escape hatch — D224).",
+                                    tname, name, tname, tname, tname,
+                                ),
+                                span,
+                            ));
+                        }
                     }
                     return;
                 }
@@ -5621,18 +6031,36 @@ impl<'a> TypeCheckCtx<'a> {
                     if field.priv_field
                         && !self.priv_field_access_allowed(tname.as_str(), &field.visible_to)
                     {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_PRIV_FIELD_READ] cannot read private field \
-                                 `{}.{}` outside type-method scope. Named-tuple \
-                                 field marked `priv` (Plan 124 / D220 / D222). \
-                                 Hint: add public getter method on `{}`, move \
-                                 accessing code into a method of `{}`, или use \
-                                 `#test_access({})` на test fn (D225).",
-                                tname, name, tname, tname, tname,
-                            ),
-                            span,
-                        ));
+                        // Plan 160 (D281) Ф.2: module-private vs type-private.
+                        if field.priv_module_field {
+                            if !self.module_priv_access_allowed(tname.as_str()) {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_FIELD_MODULE_PRIVATE] cannot read \
+                                         module-private field `{}.{}` from \
+                                         outside its module. Named-tuple type \
+                                         declared with bare `priv` (Plan 160 / \
+                                         D281). Hint: add a public accessor \
+                                         method on `{}`.",
+                                        tname, name, tname,
+                                    ),
+                                    span,
+                                ));
+                            }
+                        } else {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_PRIV_FIELD_READ] cannot read private field \
+                                     `{}.{}` outside type-method scope. Named-tuple \
+                                     field marked `priv` (Plan 124 / D220 / D222). \
+                                     Hint: add public getter method on `{}`, move \
+                                     accessing code into a method of `{}`, или use \
+                                     `#test_access({})` на test fn (D225).",
+                                    tname, name, tname, tname, tname,
+                                ),
+                                span,
+                            ));
+                        }
                     }
                     return;
                 }
@@ -5741,17 +6169,34 @@ impl<'a> TypeCheckCtx<'a> {
                                 if fd.priv_field
                                     && !self.priv_field_access_allowed(name.as_str(), &fd.visible_to)
                                 {
-                                    errors.push(Diagnostic::new(
-                                        format!(
-                                            "[E_PRIV_FIELD_INIT] cannot initialize private \
-                                             field `{}.{}` via named-tuple constructor outside \
-                                             type-method scope. Field marked `priv` (Plan 124 / \
-                                             D220 / D222). Hint: use factory method like \
-                                             `{}.new(...)`, or use `#test_access({})` on test fn.",
-                                            name, field_name, name, name,
-                                        ),
-                                        arg_value.span,
-                                    ));
+                                    // Plan 160 (D281) Ф.2: module-private init.
+                                    if fd.priv_module_field {
+                                        if !self.module_priv_access_allowed(name.as_str()) {
+                                            errors.push(Diagnostic::new(
+                                                format!(
+                                                    "[E_FIELD_MODULE_PRIVATE] cannot initialize \
+                                                     module-private field `{}.{}` via named-tuple \
+                                                     constructor from outside its module. Type \
+                                                     declared with bare `priv` (Plan 160 / D281). \
+                                                     Hint: use factory method `{}.new(...)`.",
+                                                    name, field_name, name,
+                                                ),
+                                                arg_value.span,
+                                            ));
+                                        }
+                                    } else {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_PRIV_FIELD_INIT] cannot initialize private \
+                                                 field `{}.{}` via named-tuple constructor outside \
+                                                 type-method scope. Field marked `priv` (Plan 124 / \
+                                                 D220 / D222). Hint: use factory method like \
+                                                 `{}.new(...)`, or use `#test_access({})` on test fn.",
+                                                name, field_name, name, name,
+                                            ),
+                                            arg_value.span,
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -6805,22 +7250,39 @@ impl<'a> TypeCheckCtx<'a> {
                                     ));
                                 }
                                 // Plan 124 (D220) + 124.6 (D225): priv field WRITE check.
+                                // Plan 160 (D281) Ф.2: module-private write.
                                 if f.priv_field
                                     && !self.priv_field_access_allowed(tname, &f.visible_to)
                                 {
-                                    errors.push(Diagnostic::new(
-                                        format!(
-                                            "[E_PRIV_FIELD_WRITE] cannot write to private \
-                                             field `{}.{}` outside type-method scope. \
-                                             Field marked `priv` (Plan 124 / D220). \
-                                             Hint: add public mutator method on `{}` \
-                                             (e.g. `export fn {} mut @set_{}(v T)`), \
-                                             move accessing code into a method of `{}`, \
-                                             or use `#test_access({})` (D225).",
-                                            tname, field_name, tname, tname, field_name, tname, tname,
-                                        ),
-                                        target.span,
-                                    ));
+                                    if f.priv_module_field {
+                                        if !self.module_priv_access_allowed(tname) {
+                                            errors.push(Diagnostic::new(
+                                                format!(
+                                                    "[E_FIELD_MODULE_PRIVATE] cannot write to \
+                                                     module-private field `{}.{}` from outside \
+                                                     its module. Type declared with bare `priv` \
+                                                     (Plan 160 / D281). Hint: add a public mutator \
+                                                     method on `{}`.",
+                                                    tname, field_name, tname,
+                                                ),
+                                                target.span,
+                                            ));
+                                        }
+                                    } else {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_PRIV_FIELD_WRITE] cannot write to private \
+                                                 field `{}.{}` outside type-method scope. \
+                                                 Field marked `priv` (Plan 124 / D220). \
+                                                 Hint: add public mutator method on `{}` \
+                                                 (e.g. `export fn {} mut @set_{}(v T)`), \
+                                                 move accessing code into a method of `{}`, \
+                                                 or use `#test_access({})` (D225).",
+                                                tname, field_name, tname, tname, field_name, tname, tname,
+                                            ),
+                                            target.span,
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -20107,6 +20569,7 @@ mod named_tuple_ctor_infer_tests {
             },
             span: dummy_span(),
             priv_field: false,
+            priv_module_field: false,
             visible_to: Vec::new(),
         }).collect();
         TypeDecl {

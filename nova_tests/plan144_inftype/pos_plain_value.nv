@@ -1,0 +1,38 @@
+// Q-infinite-value-type (D280 §4) — POSITIVE: ordinary, non-recursive value
+// records / named-tuples / newtypes / tuples / fixed-arrays. MUST `nova check`
+// PASS — NO `E_INFINITE_TYPE`.
+//
+// None of these contain themselves by value, so there is no value-containment
+// cycle and the detector must stay silent. This is the broad "don't fire on
+// normal value types" sanity case: value record with scalar + nested-value +
+// tuple + fixed-array fields, a named tuple, and a scalar newtype — all finite,
+// none cyclic.
+
+module plan144_inftype.pos_plain_value
+
+type Point value { x int, y int }
+
+type Pixel value {
+    pos   Point        // nested value record — inline, but NOT cyclic
+    coord (int, int)   // tuple field — inline, finite
+    quad  [4]int       // fixed array of scalars — inline, finite
+}
+
+type Pair(int, int)    // named tuple
+
+type Meters(int)       // scalar newtype
+
+fn sum(p Pixel) -> int => p.pos.x + p.pos.y + p.quad[0]
+
+test "ordinary value records / tuples / arrays — finite" {
+    ro px = Pixel {
+        pos: Point { x: 1, y: 2 },
+        coord: (3, 4),
+        quad: [10, 0, 0, 0],
+    }
+    assert(sum(px) == 13)
+    ro pr = Pair(5, 6)
+    assert(pr.0 + pr.1 == 11)
+    ro m = Meters(100)
+    assert(m.0 == 100)
+}

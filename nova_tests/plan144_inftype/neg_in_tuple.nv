@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR [E_INFINITE_TYPE]
+//
+// Q-infinite-value-type (D280 §4) — NEGATIVE: a by-value self-reference nested
+// inside a TUPLE field.
+//
+//     type TupSelf value { pair (int, TupSelf) }
+//
+// A tuple is laid out INLINE (each element inline; the size walk recurses every
+// element), so embedding `TupSelf` inside the tuple `(int, TupSelf)` does NOT
+// introduce indirection — `TupSelf` still contains itself by value, infinitely.
+// The detector recurses into the tuple's elements and finds the back-edge into
+// `TupSelf`.
+//
+// INTENT: `nova check` EXITS NONZERO with `E_INFINITE_TYPE`.
+
+module plan144_inftype.neg_in_tuple
+
+type TupSelf value { pair (int, TupSelf) }
