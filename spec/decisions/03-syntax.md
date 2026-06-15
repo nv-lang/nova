@@ -3576,6 +3576,7 @@ for x in it { ... }                  // it.iter() → self → next() (trivial)
   range-выражение в существующем синтаксисе for-loop.
 - [08-runtime.md → D26](08-runtime.md#d26) — `Iter[T]`, `Range`,
   `RangeIter` в prelude.
+- [02-types.md → D282](02-types.md#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) — blanket methods на `Next[T]` implementors: `fn[I Next[T]] I @m` диспетчируется на любой `C` impl `Next[T]`; ≤1 impl инвариант (D282 §4). Cross-ref: D241+D242 (Plan 161 Ф.4).
 
 ### Открытые вопросы
 - **Reverse range** (`5..0` или `(0..5).reverse()`) — что значит
