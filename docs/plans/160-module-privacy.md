@@ -98,16 +98,19 @@ type Secret priv(type) {
 
 ### Ф.3 — Тесты и spec (D281) ✅
 
-Тесты: `nova_tests/plan160/` — **5/5 PASS**.
+Тесты: `nova_tests/plan160/` — **6/6 PASS** (6 fixture files, 7 subtests в pos_within_module).
 
 **Позитивные:**
-- `pos_within_module.nv` — 6 тестов: read, write, method, constructor в том же модуле, bare-priv field доступ из свободной fn, priv(type) field через метод.
+- `pos_within_module.nv` — 7 тестов: read, write, method, constructor в том же модуле, bare-priv field доступ из свободной fn, priv(type) field через метод, **pattern destructuring в том же модуле**.
 
 **Негативные:**
 - `neg_read_outside.nv` — `E_FIELD_MODULE_PRIVATE` при чтении поля из другого модуля.
 - `neg_write_outside.nv` — `E_FIELD_MODULE_PRIVATE` при записи поля из другого модуля.
 - `neg_init_outside.nv` — `E_FIELD_MODULE_PRIVATE` при init-литерале из другого модуля.
 - `neg_priv_field_same_mod.nv` — `E_PRIV_FIELD_READ` для `priv(type)` поля из свободной функции в том же модуле.
+- `neg_pattern_outside.nv` — `E_FIELD_MODULE_PRIVATE` при pattern destructuring `ro { id } = j` из другого модуля.
+
+**Codegen fix попутно:** smoke-test выявил баг в `pattern_bind_typed` (emit_c.rs) — для value-record (`NovaValue_X`) stripped `"Nova_"` prefix давал `"Value_X"`, не находил запись в `record_schemas`, падал в sum-variant путь с `->payload..field`. Фикс: приоритет `"NovaValue_"` prefix → правильное `"X"` → accessor `"."`. Коммит в emit_c.rs.
 
 **Spec:** D281 в `spec/decisions/02-types.md` — полный блок с §1–§5, обновлён для симметрии.
 
@@ -118,14 +121,15 @@ type Secret priv(type) {
 - **A3.** `priv(type)` field в любом типе → `E_PRIV_FIELD_READ` из свободной функции (даже в том же модуле). Только собственные методы типа могут читать.
 - **A4.** Симметрия: bare `priv` field-level = module-private (то же что type-level `priv`). Доступен из свободной fn в том же модуле без ошибок.
 - **A5.** `priv(type)` field-level = type-private. Недоступен из свободной fn в том же модуле.
-- **A6.** Все 5 fixtures PASS через release `nova.exe` и C-codegen.
+- **A6.** Все 6 fixtures PASS через release `nova.exe` и C-codegen.
 - **A7.** Нет регрессий в `nova test` core-suite.
+- **A8.** Pattern destructuring `ro { field } = t` в том же модуле — работает без ошибок. `ro { field } = t` из другого модуля → `E_FIELD_MODULE_PRIVATE` (не `E_PRIV_FIELD_PATTERN`).
 - **G0.** fail safe = запретить при неопределимой видимости.
+- **Без упрощений как для прода.** Все тесты — production-grade fixtures через release nova + C-codegen. Codegen баг с value-record pattern destructure исправлен как полноценный production fix, не workaround.
 
-**Статус:** все критерии выполнены ✅ (release nova, 5/5 PASS)
+**Статус:** все критерии выполнены ✅ (release nova, 6/6 PASS)
 
 ## Отложено / out of scope
 
-- `priv` / `pub(module)` на методах (методы не имеют module-level granularity — separate task).
-- Named tuple `priv` (D225 — отдельный plan).
-- `[M-160-pattern-match-module-priv]` — smoke-test для pattern-деструктуризации module-private поля (P2).
+- `priv` / `pub(module)` на методах (методы без `export` уже module-private; `priv(type)` на методе — отдельная задача в Q).
+- Named tuple `priv` (D225 — отложено до явной потребности).

@@ -12369,6 +12369,7 @@ Type-private field (explicit `priv(type)` field, OR type-level `priv(type)` defa
 5. **Layering:** `priv(type)` field внутри `type T priv {...}` остаётся type-private — `E_PRIV_FIELD_READ` даже в том же модуле из свободной функции. Bare `priv` field внутри `type T priv {...}` = module-private (accessible in same module free fn).
 6. **Public export:** type + его методы (возвращающие/принимающие T) публично экспортируются — клиентский модуль может использовать API без доступа к внутренним полям.
 7. **Regression:** `nova test` core-suite без новых FAIL.
+8. **Негатив-pattern:** `ro { f } = t` из другого модуля → `E_FIELD_MODULE_PRIVATE` (не `E_PRIV_FIELD_PATTERN`). **Позитив-pattern:** `ro { f } = t` в том же модуле — работает без ошибок.
 
 ### AST / Checker-реализация
 
