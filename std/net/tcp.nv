@@ -59,7 +59,7 @@ use std.net.addr
 ///
 /// Returns `Err(msg)` if the address is in use or otherwise unavailable.
 #stable(since = "0.1")
-export external fn TcpListener.bind(addr SocketAddr) -> Result[TcpListener, str]
+export extern "nova" fn TcpListener.bind(addr SocketAddr) -> Result[TcpListener, str]
 
 /// Accept the next incoming connection.
 ///
@@ -70,22 +70,22 @@ export external fn TcpListener.bind(addr SocketAddr) -> Result[TcpListener, str]
 /// **Cancel-safe:** if the scope is cancelled while parked in `accept`,
 /// the operation is aborted and the fiber throws "scope cancelled".
 #stable(since = "0.1")
-export external fn TcpListener mut @accept() -> Result[TcpStream, str]
+export extern "nova" fn TcpListener mut @accept() -> Result[TcpStream, str]
 
 /// Return the local port number this listener is bound to.
 #stable(since = "0.1")
-export external fn TcpListener @local_port() -> u16
+export extern "nova" fn TcpListener @local_port() -> u16
 
 /// Return the local socket address this listener is bound to.
 #stable(since = "0.1")
-export external fn TcpListener @local_addr() -> SocketAddr
+export extern "nova" fn TcpListener @local_addr() -> SocketAddr
 
 /// Close the listener. No new connections will be accepted.
 ///
 /// Idempotent: calling `close()` on an already-closed listener is safe.
 /// In-flight `accept()` callers will receive `Err("closed")`.
 #stable(since = "0.1")
-export external fn TcpListener mut @close()
+export extern "nova" fn TcpListener mut @close()
 
 // ─── TcpStream ───────────────────────────────────────────────────────────────
 
@@ -117,7 +117,7 @@ export external fn TcpListener mut @close()
 ///
 /// **Cancel-safe:** in-flight connect is aborted on scope cancel.
 #stable(since = "0.1")
-export external fn TcpStream.connect(addr SocketAddr) -> Result[TcpStream, str]
+export extern "nova" fn TcpStream.connect(addr SocketAddr) -> Result[TcpStream, str]
 
 /// Read up to `max_bytes` bytes from the stream.
 ///
@@ -128,7 +128,7 @@ export external fn TcpStream.connect(addr SocketAddr) -> Result[TcpStream, str]
 ///
 /// **Cancel-safe:** in-flight read is aborted on scope cancel.
 #stable(since = "0.1")
-export external fn TcpStream mut @read_bytes(max_bytes int) -> Result[str, str]
+export extern "nova" fn TcpStream mut @read_bytes(max_bytes int) -> Result[str, str]
 
 /// Write a string to the stream.
 ///
@@ -141,23 +141,23 @@ export external fn TcpStream mut @read_bytes(max_bytes int) -> Result[str, str]
 ///
 /// **Cancel-safe:** in-flight write is aborted on scope cancel.
 #stable(since = "0.1")
-export external fn TcpStream mut @write(data str) -> Result[int, str]
+export extern "nova" fn TcpStream mut @write(data str) -> Result[int, str]
 
 /// Return the local port of this stream.
 #stable(since = "0.1")
-export external fn TcpStream @local_port() -> u16
+export extern "nova" fn TcpStream @local_port() -> u16
 
 /// Return the remote (peer) port of this stream.
 #stable(since = "0.1")
-export external fn TcpStream @peer_port() -> u16
+export extern "nova" fn TcpStream @peer_port() -> u16
 
 /// Return the local address of this stream.
 #stable(since = "0.1")
-export external fn TcpStream @local_addr() -> SocketAddr
+export extern "nova" fn TcpStream @local_addr() -> SocketAddr
 
 /// Return the remote (peer) address of this stream.
 #stable(since = "0.1")
-export external fn TcpStream @peer_addr() -> SocketAddr
+export extern "nova" fn TcpStream @peer_addr() -> SocketAddr
 
 /// Close the stream and release all resources.
 ///
@@ -166,4 +166,4 @@ export external fn TcpStream @peer_addr() -> SocketAddr
 ///
 /// The TCP connection is closed with a FIN+ACK sequence.
 #stable(since = "0.1")
-export external fn TcpStream mut @close()
+export extern "nova" fn TcpStream mut @close()

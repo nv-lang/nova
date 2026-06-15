@@ -12,12 +12,12 @@ type Resource {
     ro id i64
 }
 
-// External fn returning nullable typed pointer — production-grade FFI
+// extern "nova" fn returning nullable typed pointer — production-grade FFI
 // pattern (malloc returns null on OOM).
-external fn p118_try_alloc(size i64) -> Option[*Resource]
+extern "nova" fn p118_try_alloc(size i64) -> Option[*Resource]
 
 // Option[*T] в parameter position.
-external fn p118_use_optional(p Option[*Resource]) -> i64
+extern "nova" fn p118_use_optional(p Option[*Resource]) -> i64
 
 // Option[*T] field в record.
 type Container {

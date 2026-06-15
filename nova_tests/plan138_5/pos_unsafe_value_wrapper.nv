@@ -9,8 +9,8 @@ type Acc {
     id i64
 }
 
-external fn p_unsafe_int(x unsafe int) -> ()
-external fn p_unsafe_acc(x unsafe Acc) -> ()
+extern "nova" fn p_unsafe_int(x unsafe int) -> ()
+extern "nova" fn p_unsafe_acc(x unsafe Acc) -> ()
 
 test "unsafe T value-wrapper transparent layout" {
     assert(size_of[unsafe int]() == 8)

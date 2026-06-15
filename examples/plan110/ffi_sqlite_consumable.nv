@@ -6,7 +6,7 @@
 //
 // Compile-only example: no SQLite library shipped в bootstrap, so the
 // fn body of c_close uses a stub. The pattern transfers 1:1 to a real
-// `external fn c_close(...)` against libsqlite3.so/.dll.
+// `extern "nova" fn c_close(...)` against libsqlite3.so/.dll.
 
 module plan110.ffi_sqlite_consumable
 
@@ -31,7 +31,7 @@ type IoError {
 
 // Production: this would be:
 //   #cancel_safe
-//   external fn sqlite3_close(handle int) -> int
+//   extern "nova" fn sqlite3_close(handle int) -> int
 // Bootstrap stub:
 fn close_handle(_handle int) -> int { 0 }
 

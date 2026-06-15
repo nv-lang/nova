@@ -7,4 +7,4 @@
 
 module plan138_5.neg_safe_retired_standalone
 
-external fn p(x safe int) -> ()
+extern "nova" fn p(x safe int) -> ()

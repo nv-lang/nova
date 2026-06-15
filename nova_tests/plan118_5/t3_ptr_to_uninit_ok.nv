@@ -15,9 +15,9 @@ type Buf {
     n i64
 }
 
-external fn p118_5_t3_a(p * unsafe Buf) -> ()
-external fn p118_5_t3_b(p *mut unsafe Buf) -> ()
-external fn p118_5_t3_c(p * unsafe * Buf) -> ()
+extern "nova" fn p118_5_t3_a(p * unsafe Buf) -> ()
+extern "nova" fn p118_5_t3_b(p *mut unsafe Buf) -> ()
+extern "nova" fn p118_5_t3_c(p * unsafe * Buf) -> ()
 
 test "parses pointer-to-uninit forms" {
     assert(1 == 1)

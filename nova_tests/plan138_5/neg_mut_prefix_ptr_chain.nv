@@ -17,4 +17,4 @@ type Node {
 
 // Return position to force the type-position `mut *` arm (a param post-name
 // `mut` is eaten as binding-mut per the D6 legacy form).
-external fn p() -> mut * *mut Node
+extern "nova" fn p() -> mut * *mut Node

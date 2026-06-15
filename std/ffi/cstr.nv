@@ -33,7 +33,7 @@ module std.ffi.cstr
 // an explicit prelude import would trip the R27 auto-import opt-out
 // (imports.rs) for EVERY module that imports cstr, stripping their
 // assert/print/... prelude. A local external-fn decl perturbs nothing.
-external fn panic(msg str) -> never
+extern "nova" fn panic(msg str) -> never
 
 // Plan 139 Ф.4 — D26 §3 Nul-termination resolution. Returns a `*u8` that is
 // GUARANTEED NUL-terminated at offset `s.len()`: zero-copy when the str's
@@ -86,7 +86,7 @@ export type CStr(*u8)
 
 // Embedded-NUL scan: @as_cstr() panics on the first byte==0 (an interior NUL
 // would silently truncate the C-string). `panic` is in scope via the
-// module-private `external fn panic` declared at the top of this module
+// module-private `extern "nova" fn panic` declared at the top of this module
 // (cstr.nv is ExternalRegistry-loaded and gets NO auto-prelude, so the prelude
 // `panic` is not visible here); codegen lowers it to `nv_panic` by name. The
 // earlier "panic needs an import which creates a cycle" deferral was wrong on

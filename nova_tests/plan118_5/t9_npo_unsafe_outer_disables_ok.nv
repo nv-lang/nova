@@ -16,10 +16,10 @@ type Acc {
     id i64
 }
 
-external fn p9_a() -> Option[* Acc]
-external fn p9_b() -> Option[*mut Acc]
-external fn p9_c() -> Option[*Acc]
-external fn p9_d() -> Option[*unsafe Acc]
+extern "nova" fn p9_a() -> Option[* Acc]
+extern "nova" fn p9_b() -> Option[*mut Acc]
+extern "nova" fn p9_c() -> Option[*Acc]
+extern "nova" fn p9_d() -> Option[*unsafe Acc]
 
 test "Option[*T] family compiles for all canonical postfix variants" {
     assert(1 == 1)

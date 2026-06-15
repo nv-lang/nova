@@ -3,11 +3,11 @@
 // Plan 115 D214 — minimal libsqlite3 binding sketch.
 //
 // V1 — example only (без real libsqlite3 link). Demonstrates structure of
-// external fn declarations + typed handle wrap + error mapping.
+// extern "nova" fn declarations + typed handle wrap + error mapping.
 // Real link integration в followup `[M-115-ffi-build-pipeline]`.
 //
 // Pattern:
-//   1. external fn declarations match C shim (см. docs/ffi-cookbook.md
+//   1. extern "nova" fn declarations match C shim (см. docs/ffi-cookbook.md
 //      §«Example 1 — libsqlite3 binding» для full C shim).
 //   2. Wrap raw *() returns в typed record handles.
 //   3. Multi-value return через tuple-by-value ABI (Plan 115 D214 §2).
@@ -34,13 +34,13 @@ type DbError
 // External declarations — sqlite3_ffi.h (см. cookbook).
 // V1: shim header нужен в compiler-codegen/nova_rt/ для actual link
 // (followup [M-115-ffi-build-pipeline] добавит user-side --c-shim CLI).
-external fn nova_fn_sqlite3_open(path str) -> (*(), int)
-external fn nova_fn_sqlite3_close(db *()) -> int
-external fn nova_fn_sqlite3_exec(db *(), sql str) -> int
-external fn nova_fn_sqlite3_prepare(db *(), sql str) -> (*(), int)
-external fn nova_fn_sqlite3_step(stmt *()) -> int
-external fn nova_fn_sqlite3_column_int(stmt *(), col int) -> int
-external fn nova_fn_sqlite3_finalize(stmt *()) -> int
+extern "nova" fn nova_fn_sqlite3_open(path str) -> (*(), int)
+extern "nova" fn nova_fn_sqlite3_close(db *()) -> int
+extern "nova" fn nova_fn_sqlite3_exec(db *(), sql str) -> int
+extern "nova" fn nova_fn_sqlite3_prepare(db *(), sql str) -> (*(), int)
+extern "nova" fn nova_fn_sqlite3_step(stmt *()) -> int
+extern "nova" fn nova_fn_sqlite3_column_int(stmt *(), col int) -> int
+extern "nova" fn nova_fn_sqlite3_finalize(stmt *()) -> int
 
 // Layer 2: typed wrappers.
 

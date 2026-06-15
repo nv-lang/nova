@@ -11,9 +11,9 @@ type Node {
     val i64
 }
 
-external fn p118_5_t2_a(p *mut *Node) -> ()
-external fn p118_5_t2_b(p **mut Node) -> ()
-external fn p118_5_t2_c(p *unsafe *Node) -> ()
+extern "nova" fn p118_5_t2_a(p *mut *Node) -> ()
+extern "nova" fn p118_5_t2_b(p **mut Node) -> ()
+extern "nova" fn p118_5_t2_c(p *unsafe *Node) -> ()
 
 test "parses multi-level canonical chains" {
     assert(1 == 1)

@@ -1273,23 +1273,53 @@ impl Parser {
         // Plan 62.D.bis (D126): `external` теперь также валиден перед `type`
         // (opaque type, реализация в runtime). См. spec/decisions/03-syntax.md
         // §D126 + types/mod.rs::check_module whitelist enforcement.
-        let is_external = self.eat(&TokenKind::KwExternal).is_some();
+        //
+        // Plan 91.12 Ф.-1 (D282): `extern "nova" fn` / `extern "C" fn` — new canonical
+        // FFI syntax. `external fn` kept as legacy alias (= `extern "nova" fn`).
+        let (is_external, extern_abi) = if self.eat(&TokenKind::KwExternal).is_some() {
+            (true, None::<String>)
+        } else if self.eat(&TokenKind::KwExtern).is_some() {
+            let abi_span = self.peek().span;
+            let abi = match &self.peek().kind.clone() {
+                TokenKind::Str(s) => {
+                    let s = s.clone();
+                    match s.as_str() {
+                        "nova" | "C" => { self.bump(); s }
+                        other => {
+                            return Err(Diagnostic::new(
+                                format!("unknown ABI `\"{}\"`; expected `\"nova\"` or `\"C\"`", other),
+                                abi_span,
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(Diagnostic::new(
+                        "expected ABI string `\"nova\"` or `\"C\"` after `extern`",
+                        abi_span,
+                    ));
+                }
+            };
+            (true, Some(abi))
+        } else {
+            (false, None)
+        };
         // Plan 118.1.7 (D2 amend): `external unsafe fn` — `unsafe` keyword
         // directly before `fn` as part of the fn type. Consumed here after
         // `external` so `external unsafe fn foo()` sets unsafe_kw = true.
         let mut unsafe_kw = false;
         if is_external {
-            // Allow `unsafe` keyword between `external` and `fn`.
+            // Allow `unsafe` keyword between `external`/`extern "ABI"` and `fn`.
             if matches!(self.peek().kind, TokenKind::KwUnsafe) {
                 unsafe_kw = true;
                 self.bump(); // unsafe
             }
-            // Только `fn` либо `type` допустимы после `external` (+ optional `unsafe`).
+            // Только `fn` либо `type` допустимы после `external`/`extern "ABI"` (+ optional `unsafe`).
             if !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwType) {
                 let span = self.peek().span;
                 return Err(Diagnostic::new(
                     format!(
-                        "`external` is only valid before `fn` or `type`, got {}",
+                        "`external`/`extern` is only valid before `fn` or `type`, got {}",
                         self.peek().kind.name()
                     ),
                     span,
@@ -1430,7 +1460,7 @@ impl Parser {
             ));
         }
         let parsed = match self.peek().kind {
-            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, blocking_attr, cancel_safe_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, extern_abi, realtime_attr, blocking_attr, cancel_safe_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
@@ -2564,7 +2594,7 @@ impl Parser {
 
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, impl_protocols: Vec<String>, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, extern_abi: Option<String>, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, impl_protocols: Vec<String>, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -2997,6 +3027,7 @@ impl Parser {
             doc_attrs,
             is_export,
             is_external,
+            extern_abi,
             name,
             receiver,
             generics: fn_generics,

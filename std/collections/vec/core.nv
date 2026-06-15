@@ -53,7 +53,7 @@ import std.runtime.raw_mem.{RawMem}
 // when its bodies are inlined cross-module, and a plain `import std.prelude.*`
 // would trip the R27 auto-import opt-out for every importer. A local
 // external-fn decl perturbs nothing; codegen lowers it to `nv_panic` by name.
-external fn panic(msg str) -> never
+extern "nova" fn panic(msg str) -> never
 
 // ──────────────────────────────────────────────────────────────────────────
 // Type

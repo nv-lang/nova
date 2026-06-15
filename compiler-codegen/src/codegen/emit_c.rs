@@ -416,6 +416,10 @@ pub struct CEmitter {
     /// и применяет mangling/type-mapping автоматически (вместо hard-coded
     /// таблиц). Загружается один раз в `CEmitter::new()`.
     pub external_registry: super::external_registry::ExternalRegistry,
+    /// Plan 91.12 Ф.-1 (D282): function names declared with `extern "C" fn`.
+    /// These resolve to their literal C name (no `nova_fn_` prefix).
+    /// Populated during emit_module from the user's module items.
+    c_literal_extern_fns: HashSet<String>,
     /// D39 / Plan 11 Ф.9: embed-поля per record-type.
     /// Key = wrapper type name; value = list of (field_name, embedded_type_name,
     /// is_anonymous). Используется для auto-proxy generation после AST-walk fn-items.
@@ -1080,6 +1084,7 @@ impl CEmitter {
             never_returning_methods: HashSet::new(),
             external_registry: super::external_registry::ExternalRegistry::load_builtins()
                 .expect("failed to load std/runtime/*.nv (Plan 13 Ф.8)"),
+            c_literal_extern_fns: HashSet::new(),
             embed_fields: BTreeMap::new(),
             all_methods: HashSet::new(),
             iter_returns: HashMap::new(),
@@ -1828,6 +1833,15 @@ impl CEmitter {
             Err(_) => {
                 // Type-checker emits a более user-friendly diagnostic для
                 // type-resolution issues — registry merge молча skip'ает.
+            }
+        }
+        // Plan 91.12 Ф.-1 (D282): collect `extern "C" fn` names — these are called
+        // with their literal C name (no nova_fn_ prefix, not in external_registry).
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                if f.is_external && f.extern_abi.as_deref() == Some("C") {
+                    self.c_literal_extern_fns.insert(f.name.clone());
+                }
             }
         }
         // Plan 115 D214: pre-register mono'd tuple instances для external fn
@@ -11533,6 +11547,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// синтетика (`nova_fn_main_impl`, closure-адаптеры `nova_fn_vi`
     /// и т.п.) сюда **не** идёт — она exempt.
     fn free_fn_c_name(&self, name: &str) -> String {
+        // Plan 91.12 Ф.-1 (D282): `extern "C" fn` — literal C name, no prefix.
+        // Check FIRST: c_literal_extern_fns takes priority over registry and module map.
+        if self.c_literal_extern_fns.contains(name) {
+            return name.to_string();
+        }
         // Plan 103.1 Ф.6: ExternalRegistry builtins (fence, etc.) always
         // use nova_fn_<name> — they live in nova_rt/*.h, not user modules.
         // Check BEFORE fn_module_map to prevent mangled names when test

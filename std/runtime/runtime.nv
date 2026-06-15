@@ -71,7 +71,7 @@ module runtime.runtime
 /// - `[runtime.maxprocs]` — целевое число workers
 /// - `[runtime.worker_count]` — фактически поднятые workers
 #stable(since = "0.1")
-export external fn runtime.init(n int) -> ()
+export extern "nova" fn runtime.init(n int) -> ()
 
 /// Graceful shutdown M:N runtime.
 ///
@@ -91,7 +91,7 @@ export external fn runtime.init(n int) -> ()
 /// - `[runtime.init]` — запустить runtime
 /// - `[runtime.is_initialized]` — проверить состояние
 #stable(since = "0.1")
-export external fn runtime.shutdown() -> ()
+export extern "nova" fn runtime.shutdown() -> ()
 
 /// Число currently running worker threads.
 ///
@@ -103,7 +103,7 @@ export external fn runtime.shutdown() -> ()
 /// - `[runtime.maxprocs]` — целевое (а не фактическое) число worker'ов
 /// - `[runtime.is_initialized]` — bool-проверка
 #stable(since = "0.1")
-export external fn runtime.worker_count() -> int
+export extern "nova" fn runtime.worker_count() -> int
 
 /// Целевое число worker-потоков (аналог Go `runtime.GOMAXPROCS(-1)`).
 ///
@@ -119,7 +119,7 @@ export external fn runtime.worker_count() -> int
 /// - `[runtime.worker_count]` — фактически поднятые worker'ы
 /// - `[runtime.init]` — запустить runtime
 #stable(since = "0.1")
-export external fn runtime.maxprocs() -> int
+export extern "nova" fn runtime.maxprocs() -> int
 
 /// Проверить, активен ли M:N runtime.
 ///
@@ -131,7 +131,7 @@ export external fn runtime.maxprocs() -> int
 /// - `[runtime.init]` — запустить runtime
 /// - `[runtime.worker_count]` — число workers
 #stable(since = "0.1")
-export external fn runtime.is_initialized() -> bool
+export extern "nova" fn runtime.is_initialized() -> bool
 
 /// Current worker ID (0..n_workers-1).
 ///
@@ -142,7 +142,7 @@ export external fn runtime.is_initialized() -> bool
 ///
 /// - `[runtime.worker_count]` — общее число workers
 #stable(since = "0.1")
-export external fn runtime.current_worker_id() -> int
+export extern "nova" fn runtime.current_worker_id() -> int
 
 /// Plan 83.4.5.2 Ф.2 (2026-05-23): Drain orphan fiber pool synchronously.
 ///
@@ -164,7 +164,7 @@ export external fn runtime.current_worker_id() -> int
 /// - `detach { body }` — D50 fire-and-forget spawn primitive.
 /// - `[supervised]` — structured-concurrency alternative с automatic join.
 #stable(since = "0.1")
-export external fn runtime.drain_orphans() -> ()
+export extern "nova" fn runtime.drain_orphans() -> ()
 
 /// Кооперативный yield — suspend текущего fiber, дать run другим.
 ///
@@ -179,4 +179,4 @@ export external fn runtime.drain_orphans() -> ()
 ///
 /// Выполняет cooperative context switch.
 #stable(since = "0.1")
-export external fn runtime.yield() -> ()
+export extern "nova" fn runtime.yield() -> ()

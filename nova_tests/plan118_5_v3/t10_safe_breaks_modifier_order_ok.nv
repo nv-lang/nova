@@ -8,4 +8,4 @@
 
 module plan118_5_v3.t10_safe_breaks_modifier_order_ok
 
-external fn t10_p(x * safe unsafe int) -> ()
+extern "nova" fn t10_p(x * safe unsafe int) -> ()

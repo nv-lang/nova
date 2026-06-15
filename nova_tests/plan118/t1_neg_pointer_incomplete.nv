@@ -5,6 +5,6 @@
 module plan118.t1_neg_pointer_incomplete
 
 // `*` без type after — parser fails recursive parse_type call.
-external fn p118_bad(p *) -> i64
+extern "nova" fn p118_bad(p *) -> i64
 
 test "rejects" { assert(1 == 1) }

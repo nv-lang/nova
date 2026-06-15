@@ -18,7 +18,7 @@ endif
 " Declarations
 " Plan 114 (D184): let/readonly retracted (now plain idents → compile error);
 " ro/mut/consume binding triad. Plan 97 (D142): handler retracted.
-syntax keyword novaDeclaration fn type alias effect protocol const module import export as use test external lemma
+syntax keyword novaDeclaration fn type alias effect protocol const module import export as use test external extern lemma
 
 " Storage / visibility / safety modifiers (D184, D220, D216)
 syntax keyword novaModifier ro mut consume priv pub unsafe

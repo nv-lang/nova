@@ -1,7 +1,7 @@
 // option_methods_from_prelude.nv — Plan 62.A follow-up.
 //
 // Verifies что Option methods, объявленные в std/prelude/core.nv
-// (`external fn Option[T] @method`), вызываются через registry-routed
+// (`extern "nova" fn Option[T] @method`), вызываются через registry-routed
 // dispatch и работают идентично previous hardcoded path.
 //
 // Coverage: 7 из 8 declared methods (исключая `or`, который deferred

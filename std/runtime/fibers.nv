@@ -54,7 +54,7 @@ module runtime.fibers
 /// - `[fibers.slot_count]` — число slot'ов
 /// - `[fibers.compact]` — принудительное возвращение physical pages
 #stable(since = "0.1")
-export external fn fibers.virtual_reserved() -> int
+export extern "nova" fn fibers.virtual_reserved() -> int
 
 /// Общее количество slot'ов в fiber arena (slot = 1 fiber stack).
 ///
@@ -66,7 +66,7 @@ export external fn fibers.virtual_reserved() -> int
 /// - `[fibers.slots_active]` — сколько из них сейчас занято
 /// - `[fibers.high_water]` — пиковое значение
 #stable(since = "0.1")
-export external fn fibers.slot_count() -> int
+export extern "nova" fn fibers.slot_count() -> int
 
 /// Количество currently-allocated slot'ов (активные fibers).
 ///
@@ -78,7 +78,7 @@ export external fn fibers.slot_count() -> int
 ///
 /// - `[fibers.high_water]` — peak concurrent slots
 #stable(since = "0.1")
-export external fn fibers.slots_active() -> int
+export extern "nova" fn fibers.slots_active() -> int
 
 /// Peak concurrent slot count с момента старта процесса.
 ///
@@ -90,7 +90,7 @@ export external fn fibers.slots_active() -> int
 /// - `[fibers.slot_count]` — общая ёмкость арены
 /// - `[fibers.slots_active]` — текущее значение
 #stable(since = "0.1")
-export external fn fibers.high_water() -> int
+export extern "nova" fn fibers.high_water() -> int
 
 /// Принудительно вернуть physical pages всех свободных slot'ов ОС.
 ///
@@ -107,4 +107,4 @@ export external fn fibers.high_water() -> int
 ///
 /// Системный вызов `madvise`/`MADV_DONTNEED` на Linux/macOS.
 #stable(since = "0.1")
-export external fn fibers.compact() -> ()
+export extern "nova" fn fibers.compact() -> ()

@@ -12,7 +12,7 @@ import std.prelude.core.{Result, Ok, Err}
 import std.collections.vec.{Vec}
 import std.runtime.raw_mem.{RawMem}
 
-external fn panic(msg str) -> never
+extern "nova" fn panic(msg str) -> never
 
 
 // Длина строки в БАЙТАХ. O(1). Plan 152.1 Ф.4 (D249): единственный length-метод
@@ -53,7 +53,7 @@ fn cp_to_char(cp int) -> char {
 // seed (nova_hash_seed_k0/k1, getrandom/BCryptGenRandom) НЕ экспонируется на
 // Nova-сторону; перенос в Nova = hash-flooding/DoS-регрессия HashMap. См.
 // nova_rt.h (nova_str_hash/nova_siphash13) + [M-139.1-hash-irreducible-crypto-seed].
-export external fn str @hash() -> u64
+export extern "nova" fn str @hash() -> u64
 
 // UTF-8 bytes как []u8 (allocating copy). D178: renamed from @bytes().
 // Plan 139 Ф.2: Nova-body — копирует байты из @as_bytes() (zero-copy view)
@@ -218,7 +218,7 @@ export fn str.from_bytes_lossy(ro bytes []u8) -> str {
 // Steal variant: consume []u8, zero-copy reuse data ptr when cap > len
 // (writes '\0' at data[len] in-place); falls back to alloc+copy if cap == len.
 // Caller must consume the source array — array unusable after call.
-// Plan 91.10: D163 `needs <Cap>` retracted, plain external fn syntax.
+// Plan 91.10: D163 `needs <Cap>` retracted, plain extern "nova" fn syntax.
 // Plan 139.2 Ф.2: Nova-body. Zero-copy reuse — when the source has spare
 // capacity (cap > len) the trailing slot can hold the NUL terminator, so the
 // buffer is reused in place (`data[len] = '\0'`) and wrapped as a str view over

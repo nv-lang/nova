@@ -22,7 +22,7 @@ export type User {
 export fn User.new(n str, a Address) -> User =>
     { name: n, addr: a }
 
-// External fn — outer `addr` public, но inner `zip` private.
+// extern "nova" fn — outer `addr` public, но inner `zip` private.
 fn external_nested(u User) -> str {
     ro User { addr: Address { zip, city: _ }, .. } = u
     zip

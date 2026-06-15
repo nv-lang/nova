@@ -6,4 +6,4 @@
 
 module plan138_5.neg_ro_prefix_ptr
 
-external fn p(x ro * int) -> ()
+extern "nova" fn p(x ro * int) -> ()

@@ -80,7 +80,7 @@ export type MemOrdering
 /// }
 /// ```
 #stable(since = "0.1")
-export external fn fence(ord MemOrdering)
+export extern "nova" fn fence(ord MemOrdering)
 
 // ─── AtomicInt ───────────────────────────────────────────────────
 
@@ -102,29 +102,29 @@ export external fn fence(ord MemOrdering)
 /// - `[AtomicBool]` — атомарный boolean
 /// - `[Mutex]` — fiber-aware mutex для non-atomic критических секций
 #stable(since = "0.1")
-export external fn AtomicInt.new(v int) -> Self
+export extern "nova" fn AtomicInt.new(v int) -> Self
 
 /// Загрузить текущее значение (acquire ordering).
 #stable(since = "0.1")
-export external fn AtomicInt @load() -> int
+export extern "nova" fn AtomicInt @load() -> int
 
 /// Записать новое значение (release ordering).
 #stable(since = "0.1")
-export external fn AtomicInt mut @store(v int)
+export extern "nova" fn AtomicInt mut @store(v int)
 
 /// Атомарно добавить `delta`, вернуть предыдущее значение (acq_rel).
 #stable(since = "0.1")
-export external fn AtomicInt mut @fetch_add(delta int) -> int
+export extern "nova" fn AtomicInt mut @fetch_add(delta int) -> int
 
 /// Атомарно вычесть `delta`, вернуть предыдущее значение (acq_rel).
 #stable(since = "0.1")
-export external fn AtomicInt mut @fetch_sub(delta int) -> int
+export extern "nova" fn AtomicInt mut @fetch_sub(delta int) -> int
 
 /// Compare-and-swap: если значение == `expected`, записать `desired`.
 ///
 /// Возвращает `true` при успехе. Использует acq_rel ordering.
 #stable(since = "0.1")
-export external fn AtomicInt mut @compare_exchange(expected int, desired int) -> bool
+export extern "nova" fn AtomicInt mut @compare_exchange(expected int, desired int) -> bool
 
 // ─── AtomicBool ──────────────────────────────────────────────────
 
@@ -138,27 +138,27 @@ export external fn AtomicInt mut @compare_exchange(expected int, desired int) ->
 /// - `[AtomicInt]` — атомарный integer
 /// - `[Once]` — barrier для exactly-once execution
 #stable(since = "0.1")
-export external fn AtomicBool.new(v bool) -> Self
+export extern "nova" fn AtomicBool.new(v bool) -> Self
 
 /// Загрузить текущее значение (acquire ordering).
 #stable(since = "0.1")
-export external fn AtomicBool @load() -> bool
+export extern "nova" fn AtomicBool @load() -> bool
 
 /// Записать новое значение (release ordering).
 #stable(since = "0.1")
-export external fn AtomicBool mut @store(v bool)
+export extern "nova" fn AtomicBool mut @store(v bool)
 
 /// Compare-and-swap: если значение == `expected`, записать `desired`.
 ///
 /// Возвращает `true` при успехе. Использует acq_rel ordering.
 #stable(since = "0.1")
-export external fn AtomicBool mut @compare_exchange(expected bool, desired bool) -> bool
+export extern "nova" fn AtomicBool mut @compare_exchange(expected bool, desired bool) -> bool
 
 /// Атомарно установить `v`, вернуть предыдущее значение (acq_rel).
 ///
 /// Полезен для one-shot ownership: `if !flag.swap(true) { /* first */ }`.
 #stable(since = "0.1")
-export external fn AtomicBool mut @swap(v bool) -> bool
+export extern "nova" fn AtomicBool mut @swap(v bool) -> bool
 
 // ─── Mutex ───────────────────────────────────────────────────────
 
@@ -181,25 +181,25 @@ export external fn AtomicBool mut @swap(v bool) -> bool
 /// - `[WaitGroup]` — ожидание завершения нескольких fiber'ов
 /// - `[Once]` — exactly-once execution barrier
 #stable(since = "0.1")
-export external fn Mutex.new() -> Self
+export extern "nova" fn Mutex.new() -> Self
 
 /// Захватить mutex. Паркует вызывающий fiber до освобождения.
 ///
 /// NOT reentrant — повторный вызов из того же fiber'а deadlock.
 #stable(since = "0.1")
-export external fn Mutex mut @lock()
+export extern "nova" fn Mutex mut @lock()
 
 /// Освободить mutex. Будит следующий ожидающий fiber, если есть.
 ///
 /// Должен вызываться только когда mutex захвачен данным fiber'ом.
 #stable(since = "0.1")
-export external fn Mutex mut @unlock()
+export extern "nova" fn Mutex mut @unlock()
 
 /// Попытаться захватить mutex без блокировки.
 ///
 /// Возвращает `true` если lock успешно захвачен, `false` если занят.
 #stable(since = "0.1")
-export external fn Mutex mut @try_lock() -> bool
+export extern "nova" fn Mutex mut @try_lock() -> bool
 
 // ─── WaitGroup ───────────────────────────────────────────────────
 
@@ -224,19 +224,19 @@ export external fn Mutex mut @try_lock() -> bool
 /// - `[Mutex]` — взаимное исключение
 /// - `[Once]` — exactly-once barrier
 #stable(since = "0.1")
-export external fn WaitGroup.new() -> Self
+export extern "nova" fn WaitGroup.new() -> Self
 
 /// Увеличить счётчик на `delta`. Вызывать перед spawn'ом workers.
 #stable(since = "0.1")
-export external fn WaitGroup mut @add(delta int)
+export extern "nova" fn WaitGroup mut @add(delta int)
 
 /// Уменьшить счётчик на 1. Будит все `wait()` если счётчик достиг 0.
 ///
 /// Не должен вызываться больше раз, чем суммарно было передано в `add()`.
 #stable(since = "0.1")
-export external fn WaitGroup mut @done()
+export extern "nova" fn WaitGroup mut @done()
 
 /// Парковать вызывающий fiber до достижения счётчиком нуля.
 #stable(since = "0.1")
-export external fn WaitGroup @wait()
+export extern "nova" fn WaitGroup @wait()
 

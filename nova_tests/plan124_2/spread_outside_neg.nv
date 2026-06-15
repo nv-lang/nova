@@ -16,7 +16,7 @@ export type Account {
 export fn Account.new(n str) -> Account =>
     { money: 0.0, name: n }
 
-// External fn — spread на Account с priv `money`.
+// extern "nova" fn — spread на Account с priv `money`.
 fn external_spread(orig Account, new_name str) -> Account {
     Account { ...orig, name: new_name }
 }

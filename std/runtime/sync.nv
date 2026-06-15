@@ -86,7 +86,7 @@ export type MemOrdering
 /// ```
 #realtime
 #stable(since = "0.1")
-export external fn fence(ord MemOrdering)
+export extern "nova" fn fence(ord MemOrdering)
 
 // ─── AtomicI64 ───────────────────────────────────────────────────
 
@@ -107,98 +107,98 @@ export external fn fence(ord MemOrdering)
 /// - `[MemOrdering]` — ordering parameter enum
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64.new(v i64) -> Self
+export extern "nova" fn AtomicI64.new(v i64) -> Self
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 @load(ord MemOrdering) -> i64
+export extern "nova" fn AtomicI64 @load(ord MemOrdering) -> i64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 @load() -> i64
+export extern "nova" fn AtomicI64 @load() -> i64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @store(v i64, ord MemOrdering)
+export extern "nova" fn AtomicI64 mut @store(v i64, ord MemOrdering)
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @store(v i64)
+export extern "nova" fn AtomicI64 mut @store(v i64)
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @swap(v i64, ord MemOrdering) -> i64
+export extern "nova" fn AtomicI64 mut @swap(v i64, ord MemOrdering) -> i64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @swap(v i64) -> i64
+export extern "nova" fn AtomicI64 mut @swap(v i64) -> i64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @compare_exchange(expected i64, desired i64, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicI64 mut @compare_exchange(expected i64, desired i64, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @compare_exchange(expected i64, desired i64) -> bool
+export extern "nova" fn AtomicI64 mut @compare_exchange(expected i64, desired i64) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64) -> bool
+export extern "nova" fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_add(v i64, ord MemOrdering) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_add(v i64, ord MemOrdering) -> i64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_add(v i64) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_add(v i64) -> i64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_sub(v i64, ord MemOrdering) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_sub(v i64, ord MemOrdering) -> i64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_sub(v i64) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_sub(v i64) -> i64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_or(v i64, ord MemOrdering) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_or(v i64, ord MemOrdering) -> i64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_or(v i64) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_or(v i64) -> i64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_and(v i64, ord MemOrdering) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_and(v i64, ord MemOrdering) -> i64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_and(v i64) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_and(v i64) -> i64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_xor(v i64, ord MemOrdering) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_xor(v i64, ord MemOrdering) -> i64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_xor(v i64) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_xor(v i64) -> i64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_max(v i64, ord MemOrdering) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_max(v i64, ord MemOrdering) -> i64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_max(v i64) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_max(v i64) -> i64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_min(v i64, ord MemOrdering) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_min(v i64, ord MemOrdering) -> i64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_min(v i64) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_min(v i64) -> i64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_nand(v i64, ord MemOrdering) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_nand(v i64, ord MemOrdering) -> i64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI64 mut @fetch_nand(v i64) -> i64
+export extern "nova" fn AtomicI64 mut @fetch_nand(v i64) -> i64
 
 // ─── AtomicI32 ───────────────────────────────────────────────────
 
@@ -208,98 +208,98 @@ export external fn AtomicI64 mut @fetch_nand(v i64) -> i64
 /// Wraparound: signed overflow — modular arithmetic.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32.new(v i32) -> Self
+export extern "nova" fn AtomicI32.new(v i32) -> Self
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 @load(ord MemOrdering) -> i32
+export extern "nova" fn AtomicI32 @load(ord MemOrdering) -> i32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 @load() -> i32
+export extern "nova" fn AtomicI32 @load() -> i32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @store(v i32, ord MemOrdering)
+export extern "nova" fn AtomicI32 mut @store(v i32, ord MemOrdering)
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @store(v i32)
+export extern "nova" fn AtomicI32 mut @store(v i32)
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @swap(v i32, ord MemOrdering) -> i32
+export extern "nova" fn AtomicI32 mut @swap(v i32, ord MemOrdering) -> i32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @swap(v i32) -> i32
+export extern "nova" fn AtomicI32 mut @swap(v i32) -> i32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @compare_exchange(expected i32, desired i32, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicI32 mut @compare_exchange(expected i32, desired i32, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @compare_exchange(expected i32, desired i32) -> bool
+export extern "nova" fn AtomicI32 mut @compare_exchange(expected i32, desired i32) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32) -> bool
+export extern "nova" fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_add(v i32, ord MemOrdering) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_add(v i32, ord MemOrdering) -> i32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_add(v i32) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_add(v i32) -> i32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_sub(v i32, ord MemOrdering) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_sub(v i32, ord MemOrdering) -> i32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_sub(v i32) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_sub(v i32) -> i32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_or(v i32, ord MemOrdering) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_or(v i32, ord MemOrdering) -> i32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_or(v i32) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_or(v i32) -> i32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_and(v i32, ord MemOrdering) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_and(v i32, ord MemOrdering) -> i32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_and(v i32) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_and(v i32) -> i32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_xor(v i32, ord MemOrdering) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_xor(v i32, ord MemOrdering) -> i32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_xor(v i32) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_xor(v i32) -> i32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_max(v i32, ord MemOrdering) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_max(v i32, ord MemOrdering) -> i32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_max(v i32) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_max(v i32) -> i32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_min(v i32, ord MemOrdering) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_min(v i32, ord MemOrdering) -> i32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_min(v i32) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_min(v i32) -> i32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_nand(v i32, ord MemOrdering) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_nand(v i32, ord MemOrdering) -> i32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI32 mut @fetch_nand(v i32) -> i32
+export extern "nova" fn AtomicI32 mut @fetch_nand(v i32) -> i32
 
 // ─── AtomicI16 ───────────────────────────────────────────────────
 
@@ -309,98 +309,98 @@ export external fn AtomicI32 mut @fetch_nand(v i32) -> i32
 /// Wraparound: signed overflow — modular arithmetic.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16.new(v i16) -> Self
+export extern "nova" fn AtomicI16.new(v i16) -> Self
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 @load(ord MemOrdering) -> i16
+export extern "nova" fn AtomicI16 @load(ord MemOrdering) -> i16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 @load() -> i16
+export extern "nova" fn AtomicI16 @load() -> i16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @store(v i16, ord MemOrdering)
+export extern "nova" fn AtomicI16 mut @store(v i16, ord MemOrdering)
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @store(v i16)
+export extern "nova" fn AtomicI16 mut @store(v i16)
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @swap(v i16, ord MemOrdering) -> i16
+export extern "nova" fn AtomicI16 mut @swap(v i16, ord MemOrdering) -> i16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @swap(v i16) -> i16
+export extern "nova" fn AtomicI16 mut @swap(v i16) -> i16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @compare_exchange(expected i16, desired i16, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicI16 mut @compare_exchange(expected i16, desired i16, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @compare_exchange(expected i16, desired i16) -> bool
+export extern "nova" fn AtomicI16 mut @compare_exchange(expected i16, desired i16) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16) -> bool
+export extern "nova" fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_add(v i16, ord MemOrdering) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_add(v i16, ord MemOrdering) -> i16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_add(v i16) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_add(v i16) -> i16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_sub(v i16, ord MemOrdering) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_sub(v i16, ord MemOrdering) -> i16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_sub(v i16) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_sub(v i16) -> i16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_or(v i16, ord MemOrdering) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_or(v i16, ord MemOrdering) -> i16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_or(v i16) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_or(v i16) -> i16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_and(v i16, ord MemOrdering) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_and(v i16, ord MemOrdering) -> i16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_and(v i16) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_and(v i16) -> i16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_xor(v i16, ord MemOrdering) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_xor(v i16, ord MemOrdering) -> i16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_xor(v i16) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_xor(v i16) -> i16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_max(v i16, ord MemOrdering) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_max(v i16, ord MemOrdering) -> i16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_max(v i16) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_max(v i16) -> i16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_min(v i16, ord MemOrdering) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_min(v i16, ord MemOrdering) -> i16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_min(v i16) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_min(v i16) -> i16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_nand(v i16, ord MemOrdering) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_nand(v i16, ord MemOrdering) -> i16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI16 mut @fetch_nand(v i16) -> i16
+export extern "nova" fn AtomicI16 mut @fetch_nand(v i16) -> i16
 
 // ─── AtomicI8 ────────────────────────────────────────────────────
 
@@ -410,98 +410,98 @@ export external fn AtomicI16 mut @fetch_nand(v i16) -> i16
 /// Wraparound: i8 [-128, 127]; overflow wraps modularly (D168).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8.new(v i8) -> Self
+export extern "nova" fn AtomicI8.new(v i8) -> Self
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 @load(ord MemOrdering) -> i8
+export extern "nova" fn AtomicI8 @load(ord MemOrdering) -> i8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 @load() -> i8
+export extern "nova" fn AtomicI8 @load() -> i8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @store(v i8, ord MemOrdering)
+export extern "nova" fn AtomicI8 mut @store(v i8, ord MemOrdering)
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @store(v i8)
+export extern "nova" fn AtomicI8 mut @store(v i8)
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @swap(v i8, ord MemOrdering) -> i8
+export extern "nova" fn AtomicI8 mut @swap(v i8, ord MemOrdering) -> i8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @swap(v i8) -> i8
+export extern "nova" fn AtomicI8 mut @swap(v i8) -> i8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @compare_exchange(expected i8, desired i8, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicI8 mut @compare_exchange(expected i8, desired i8, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @compare_exchange(expected i8, desired i8) -> bool
+export extern "nova" fn AtomicI8 mut @compare_exchange(expected i8, desired i8) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8) -> bool
+export extern "nova" fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_add(v i8, ord MemOrdering) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_add(v i8, ord MemOrdering) -> i8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_add(v i8) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_add(v i8) -> i8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_sub(v i8, ord MemOrdering) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_sub(v i8, ord MemOrdering) -> i8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_sub(v i8) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_sub(v i8) -> i8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_or(v i8, ord MemOrdering) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_or(v i8, ord MemOrdering) -> i8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_or(v i8) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_or(v i8) -> i8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_and(v i8, ord MemOrdering) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_and(v i8, ord MemOrdering) -> i8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_and(v i8) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_and(v i8) -> i8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_xor(v i8, ord MemOrdering) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_xor(v i8, ord MemOrdering) -> i8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_xor(v i8) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_xor(v i8) -> i8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_max(v i8, ord MemOrdering) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_max(v i8, ord MemOrdering) -> i8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_max(v i8) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_max(v i8) -> i8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_min(v i8, ord MemOrdering) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_min(v i8, ord MemOrdering) -> i8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_min(v i8) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_min(v i8) -> i8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_nand(v i8, ord MemOrdering) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_nand(v i8, ord MemOrdering) -> i8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicI8 mut @fetch_nand(v i8) -> i8
+export extern "nova" fn AtomicI8 mut @fetch_nand(v i8) -> i8
 
 // ─── AtomicU64 ───────────────────────────────────────────────────
 
@@ -511,98 +511,98 @@ export external fn AtomicI8 mut @fetch_nand(v i8) -> i8
 /// Wraparound: unsigned overflow wraps modularly (D168).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64.new(v u64) -> Self
+export extern "nova" fn AtomicU64.new(v u64) -> Self
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 @load(ord MemOrdering) -> u64
+export extern "nova" fn AtomicU64 @load(ord MemOrdering) -> u64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 @load() -> u64
+export extern "nova" fn AtomicU64 @load() -> u64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @store(v u64, ord MemOrdering)
+export extern "nova" fn AtomicU64 mut @store(v u64, ord MemOrdering)
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @store(v u64)
+export extern "nova" fn AtomicU64 mut @store(v u64)
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @swap(v u64, ord MemOrdering) -> u64
+export extern "nova" fn AtomicU64 mut @swap(v u64, ord MemOrdering) -> u64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @swap(v u64) -> u64
+export extern "nova" fn AtomicU64 mut @swap(v u64) -> u64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @compare_exchange(expected u64, desired u64, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicU64 mut @compare_exchange(expected u64, desired u64, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @compare_exchange(expected u64, desired u64) -> bool
+export extern "nova" fn AtomicU64 mut @compare_exchange(expected u64, desired u64) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64) -> bool
+export extern "nova" fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_add(v u64, ord MemOrdering) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_add(v u64, ord MemOrdering) -> u64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_add(v u64) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_add(v u64) -> u64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_sub(v u64, ord MemOrdering) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_sub(v u64, ord MemOrdering) -> u64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_sub(v u64) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_sub(v u64) -> u64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_or(v u64, ord MemOrdering) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_or(v u64, ord MemOrdering) -> u64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_or(v u64) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_or(v u64) -> u64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_and(v u64, ord MemOrdering) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_and(v u64, ord MemOrdering) -> u64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_and(v u64) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_and(v u64) -> u64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_xor(v u64, ord MemOrdering) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_xor(v u64, ord MemOrdering) -> u64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_xor(v u64) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_xor(v u64) -> u64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_max(v u64, ord MemOrdering) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_max(v u64, ord MemOrdering) -> u64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_max(v u64) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_max(v u64) -> u64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_min(v u64, ord MemOrdering) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_min(v u64, ord MemOrdering) -> u64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_min(v u64) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_min(v u64) -> u64
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_nand(v u64, ord MemOrdering) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_nand(v u64, ord MemOrdering) -> u64
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU64 mut @fetch_nand(v u64) -> u64
+export extern "nova" fn AtomicU64 mut @fetch_nand(v u64) -> u64
 
 // ─── AtomicU32 ───────────────────────────────────────────────────
 
@@ -612,98 +612,98 @@ export external fn AtomicU64 mut @fetch_nand(v u64) -> u64
 /// Wraparound: unsigned overflow wraps modularly (D168).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32.new(v u32) -> Self
+export extern "nova" fn AtomicU32.new(v u32) -> Self
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 @load(ord MemOrdering) -> u32
+export extern "nova" fn AtomicU32 @load(ord MemOrdering) -> u32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 @load() -> u32
+export extern "nova" fn AtomicU32 @load() -> u32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @store(v u32, ord MemOrdering)
+export extern "nova" fn AtomicU32 mut @store(v u32, ord MemOrdering)
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @store(v u32)
+export extern "nova" fn AtomicU32 mut @store(v u32)
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @swap(v u32, ord MemOrdering) -> u32
+export extern "nova" fn AtomicU32 mut @swap(v u32, ord MemOrdering) -> u32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @swap(v u32) -> u32
+export extern "nova" fn AtomicU32 mut @swap(v u32) -> u32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @compare_exchange(expected u32, desired u32, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicU32 mut @compare_exchange(expected u32, desired u32, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @compare_exchange(expected u32, desired u32) -> bool
+export extern "nova" fn AtomicU32 mut @compare_exchange(expected u32, desired u32) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32) -> bool
+export extern "nova" fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_add(v u32, ord MemOrdering) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_add(v u32, ord MemOrdering) -> u32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_add(v u32) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_add(v u32) -> u32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_sub(v u32, ord MemOrdering) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_sub(v u32, ord MemOrdering) -> u32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_sub(v u32) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_sub(v u32) -> u32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_or(v u32, ord MemOrdering) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_or(v u32, ord MemOrdering) -> u32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_or(v u32) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_or(v u32) -> u32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_and(v u32, ord MemOrdering) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_and(v u32, ord MemOrdering) -> u32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_and(v u32) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_and(v u32) -> u32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_xor(v u32, ord MemOrdering) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_xor(v u32, ord MemOrdering) -> u32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_xor(v u32) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_xor(v u32) -> u32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_max(v u32, ord MemOrdering) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_max(v u32, ord MemOrdering) -> u32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_max(v u32) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_max(v u32) -> u32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_min(v u32, ord MemOrdering) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_min(v u32, ord MemOrdering) -> u32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_min(v u32) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_min(v u32) -> u32
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_nand(v u32, ord MemOrdering) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_nand(v u32, ord MemOrdering) -> u32
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU32 mut @fetch_nand(v u32) -> u32
+export extern "nova" fn AtomicU32 mut @fetch_nand(v u32) -> u32
 
 // ─── AtomicU16 ───────────────────────────────────────────────────
 
@@ -713,98 +713,98 @@ export external fn AtomicU32 mut @fetch_nand(v u32) -> u32
 /// Wraparound: unsigned overflow wraps modularly (D168).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16.new(v u16) -> Self
+export extern "nova" fn AtomicU16.new(v u16) -> Self
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 @load(ord MemOrdering) -> u16
+export extern "nova" fn AtomicU16 @load(ord MemOrdering) -> u16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 @load() -> u16
+export extern "nova" fn AtomicU16 @load() -> u16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @store(v u16, ord MemOrdering)
+export extern "nova" fn AtomicU16 mut @store(v u16, ord MemOrdering)
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @store(v u16)
+export extern "nova" fn AtomicU16 mut @store(v u16)
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @swap(v u16, ord MemOrdering) -> u16
+export extern "nova" fn AtomicU16 mut @swap(v u16, ord MemOrdering) -> u16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @swap(v u16) -> u16
+export extern "nova" fn AtomicU16 mut @swap(v u16) -> u16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @compare_exchange(expected u16, desired u16, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicU16 mut @compare_exchange(expected u16, desired u16, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @compare_exchange(expected u16, desired u16) -> bool
+export extern "nova" fn AtomicU16 mut @compare_exchange(expected u16, desired u16) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16) -> bool
+export extern "nova" fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_add(v u16, ord MemOrdering) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_add(v u16, ord MemOrdering) -> u16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_add(v u16) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_add(v u16) -> u16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_sub(v u16, ord MemOrdering) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_sub(v u16, ord MemOrdering) -> u16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_sub(v u16) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_sub(v u16) -> u16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_or(v u16, ord MemOrdering) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_or(v u16, ord MemOrdering) -> u16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_or(v u16) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_or(v u16) -> u16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_and(v u16, ord MemOrdering) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_and(v u16, ord MemOrdering) -> u16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_and(v u16) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_and(v u16) -> u16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_xor(v u16, ord MemOrdering) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_xor(v u16, ord MemOrdering) -> u16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_xor(v u16) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_xor(v u16) -> u16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_max(v u16, ord MemOrdering) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_max(v u16, ord MemOrdering) -> u16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_max(v u16) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_max(v u16) -> u16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_min(v u16, ord MemOrdering) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_min(v u16, ord MemOrdering) -> u16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_min(v u16) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_min(v u16) -> u16
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_nand(v u16, ord MemOrdering) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_nand(v u16, ord MemOrdering) -> u16
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU16 mut @fetch_nand(v u16) -> u16
+export extern "nova" fn AtomicU16 mut @fetch_nand(v u16) -> u16
 
 // ─── AtomicU8 ────────────────────────────────────────────────────
 
@@ -814,98 +814,98 @@ export external fn AtomicU16 mut @fetch_nand(v u16) -> u16
 /// Wraparound: u8 [0, 255]; overflow wraps modularly (D168).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8.new(v u8) -> Self
+export extern "nova" fn AtomicU8.new(v u8) -> Self
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 @load(ord MemOrdering) -> u8
+export extern "nova" fn AtomicU8 @load(ord MemOrdering) -> u8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 @load() -> u8
+export extern "nova" fn AtomicU8 @load() -> u8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @store(v u8, ord MemOrdering)
+export extern "nova" fn AtomicU8 mut @store(v u8, ord MemOrdering)
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @store(v u8)
+export extern "nova" fn AtomicU8 mut @store(v u8)
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @swap(v u8, ord MemOrdering) -> u8
+export extern "nova" fn AtomicU8 mut @swap(v u8, ord MemOrdering) -> u8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @swap(v u8) -> u8
+export extern "nova" fn AtomicU8 mut @swap(v u8) -> u8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @compare_exchange(expected u8, desired u8, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicU8 mut @compare_exchange(expected u8, desired u8, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @compare_exchange(expected u8, desired u8) -> bool
+export extern "nova" fn AtomicU8 mut @compare_exchange(expected u8, desired u8) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8) -> bool
+export extern "nova" fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_add(v u8, ord MemOrdering) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_add(v u8, ord MemOrdering) -> u8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_add(v u8) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_add(v u8) -> u8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_sub(v u8, ord MemOrdering) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_sub(v u8, ord MemOrdering) -> u8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_sub(v u8) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_sub(v u8) -> u8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_or(v u8, ord MemOrdering) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_or(v u8, ord MemOrdering) -> u8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_or(v u8) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_or(v u8) -> u8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_and(v u8, ord MemOrdering) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_and(v u8, ord MemOrdering) -> u8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_and(v u8) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_and(v u8) -> u8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_xor(v u8, ord MemOrdering) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_xor(v u8, ord MemOrdering) -> u8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_xor(v u8) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_xor(v u8) -> u8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_max(v u8, ord MemOrdering) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_max(v u8, ord MemOrdering) -> u8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_max(v u8) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_max(v u8) -> u8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_min(v u8, ord MemOrdering) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_min(v u8, ord MemOrdering) -> u8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_min(v u8) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_min(v u8) -> u8
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_nand(v u8, ord MemOrdering) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_nand(v u8, ord MemOrdering) -> u8
 #realtime
 #stable(since = "0.1")
-export external fn AtomicU8 mut @fetch_nand(v u8) -> u8
+export extern "nova" fn AtomicU8 mut @fetch_nand(v u8) -> u8
 
 // ─── AtomicIsize ─────────────────────────────────────────────────
 
@@ -915,98 +915,98 @@ export external fn AtomicU8 mut @fetch_nand(v u8) -> u8
 /// Useful for signed indexes and offsets.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize.new(v int) -> Self
+export extern "nova" fn AtomicIsize.new(v int) -> Self
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize @load(ord MemOrdering) -> int
+export extern "nova" fn AtomicIsize @load(ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize @load() -> int
+export extern "nova" fn AtomicIsize @load() -> int
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @store(v int, ord MemOrdering)
+export extern "nova" fn AtomicIsize mut @store(v int, ord MemOrdering)
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @store(v int)
+export extern "nova" fn AtomicIsize mut @store(v int)
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @swap(v int, ord MemOrdering) -> int
+export extern "nova" fn AtomicIsize mut @swap(v int, ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @swap(v int) -> int
+export extern "nova" fn AtomicIsize mut @swap(v int) -> int
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @compare_exchange(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicIsize mut @compare_exchange(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @compare_exchange(expected int, desired int) -> bool
+export extern "nova" fn AtomicIsize mut @compare_exchange(expected int, desired int) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @compare_exchange_weak(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicIsize mut @compare_exchange_weak(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @compare_exchange_weak(expected int, desired int) -> bool
+export extern "nova" fn AtomicIsize mut @compare_exchange_weak(expected int, desired int) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_add(v int, ord MemOrdering) -> int
+export extern "nova" fn AtomicIsize mut @fetch_add(v int, ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_add(v int) -> int
+export extern "nova" fn AtomicIsize mut @fetch_add(v int) -> int
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_sub(v int, ord MemOrdering) -> int
+export extern "nova" fn AtomicIsize mut @fetch_sub(v int, ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_sub(v int) -> int
+export extern "nova" fn AtomicIsize mut @fetch_sub(v int) -> int
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_or(v int, ord MemOrdering) -> int
+export extern "nova" fn AtomicIsize mut @fetch_or(v int, ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_or(v int) -> int
+export extern "nova" fn AtomicIsize mut @fetch_or(v int) -> int
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_and(v int, ord MemOrdering) -> int
+export extern "nova" fn AtomicIsize mut @fetch_and(v int, ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_and(v int) -> int
+export extern "nova" fn AtomicIsize mut @fetch_and(v int) -> int
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_xor(v int, ord MemOrdering) -> int
+export extern "nova" fn AtomicIsize mut @fetch_xor(v int, ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_xor(v int) -> int
+export extern "nova" fn AtomicIsize mut @fetch_xor(v int) -> int
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_max(v int, ord MemOrdering) -> int
+export extern "nova" fn AtomicIsize mut @fetch_max(v int, ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_max(v int) -> int
+export extern "nova" fn AtomicIsize mut @fetch_max(v int) -> int
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_min(v int, ord MemOrdering) -> int
+export extern "nova" fn AtomicIsize mut @fetch_min(v int, ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_min(v int) -> int
+export extern "nova" fn AtomicIsize mut @fetch_min(v int) -> int
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_nand(v int, ord MemOrdering) -> int
+export extern "nova" fn AtomicIsize mut @fetch_nand(v int, ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export external fn AtomicIsize mut @fetch_nand(v int) -> int
+export extern "nova" fn AtomicIsize mut @fetch_nand(v int) -> int
 
 // ─── AtomicUsize ─────────────────────────────────────────────────
 
@@ -1016,98 +1016,98 @@ export external fn AtomicIsize mut @fetch_nand(v int) -> int
 /// Useful for array indexes, buffer sizes.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize.new(v uint) -> Self
+export extern "nova" fn AtomicUsize.new(v uint) -> Self
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize @load(ord MemOrdering) -> uint
+export extern "nova" fn AtomicUsize @load(ord MemOrdering) -> uint
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize @load() -> uint
+export extern "nova" fn AtomicUsize @load() -> uint
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @store(v uint, ord MemOrdering)
+export extern "nova" fn AtomicUsize mut @store(v uint, ord MemOrdering)
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @store(v uint)
+export extern "nova" fn AtomicUsize mut @store(v uint)
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @swap(v uint, ord MemOrdering) -> uint
+export extern "nova" fn AtomicUsize mut @swap(v uint, ord MemOrdering) -> uint
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @swap(v uint) -> uint
+export extern "nova" fn AtomicUsize mut @swap(v uint) -> uint
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @compare_exchange(expected uint, desired uint, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicUsize mut @compare_exchange(expected uint, desired uint, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @compare_exchange(expected uint, desired uint) -> bool
+export extern "nova" fn AtomicUsize mut @compare_exchange(expected uint, desired uint) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint) -> bool
+export extern "nova" fn AtomicUsize mut @compare_exchange_weak(expected uint, desired uint) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_add(v uint, ord MemOrdering) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_add(v uint, ord MemOrdering) -> uint
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_add(v uint) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_add(v uint) -> uint
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_sub(v uint, ord MemOrdering) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_sub(v uint, ord MemOrdering) -> uint
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_sub(v uint) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_sub(v uint) -> uint
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_or(v uint, ord MemOrdering) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_or(v uint, ord MemOrdering) -> uint
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_or(v uint) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_or(v uint) -> uint
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_and(v uint, ord MemOrdering) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_and(v uint, ord MemOrdering) -> uint
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_and(v uint) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_and(v uint) -> uint
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_xor(v uint, ord MemOrdering) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_xor(v uint, ord MemOrdering) -> uint
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_xor(v uint) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_xor(v uint) -> uint
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_max(v uint, ord MemOrdering) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_max(v uint, ord MemOrdering) -> uint
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_max(v uint) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_max(v uint) -> uint
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_min(v uint, ord MemOrdering) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_min(v uint, ord MemOrdering) -> uint
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_min(v uint) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_min(v uint) -> uint
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_nand(v uint, ord MemOrdering) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_nand(v uint, ord MemOrdering) -> uint
 #realtime
 #stable(since = "0.1")
-export external fn AtomicUsize mut @fetch_nand(v uint) -> uint
+export extern "nova" fn AtomicUsize mut @fetch_nand(v uint) -> uint
 
 // ─── AtomicInt ───────────────────────────────────────────────────
 
@@ -1130,34 +1130,34 @@ export external fn AtomicUsize mut @fetch_nand(v uint) -> uint
 /// - `[Mutex]` — fiber-aware mutex для non-atomic критических секций
 #realtime
 #stable(since = "0.1")
-export external fn AtomicInt.new(v int) -> Self
+export extern "nova" fn AtomicInt.new(v int) -> Self
 
 /// Загрузить текущее значение (acquire ordering).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicInt @load() -> int
+export extern "nova" fn AtomicInt @load() -> int
 
 /// Записать новое значение (release ordering).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicInt mut @store(v int)
+export extern "nova" fn AtomicInt mut @store(v int)
 
 /// Атомарно добавить `delta`, вернуть предыдущее значение (acq_rel).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicInt mut @fetch_add(delta int) -> int
+export extern "nova" fn AtomicInt mut @fetch_add(delta int) -> int
 
 /// Атомарно вычесть `delta`, вернуть предыдущее значение (acq_rel).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicInt mut @fetch_sub(delta int) -> int
+export extern "nova" fn AtomicInt mut @fetch_sub(delta int) -> int
 
 /// Compare-and-swap: если значение == `expected`, записать `desired`.
 ///
 /// Возвращает `true` при успехе. Использует acq_rel ordering.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicInt mut @compare_exchange(expected int, desired int) -> bool
+export extern "nova" fn AtomicInt mut @compare_exchange(expected int, desired int) -> bool
 
 // ─── AtomicBool ──────────────────────────────────────────────────
 
@@ -1177,83 +1177,83 @@ export external fn AtomicInt mut @compare_exchange(expected int, desired int) ->
 /// - `[MemOrdering]` — ordering parameter enum
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool.new(v bool) -> Self
+export extern "nova" fn AtomicBool.new(v bool) -> Self
 
 /// Загрузить текущее значение с explicit ordering.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool @load(ord MemOrdering) -> bool
+export extern "nova" fn AtomicBool @load(ord MemOrdering) -> bool
 /// Загрузить текущее значение (SeqCst ordering).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool @load() -> bool
+export extern "nova" fn AtomicBool @load() -> bool
 
 /// Записать новое значение с explicit ordering.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @store(v bool, ord MemOrdering)
+export extern "nova" fn AtomicBool mut @store(v bool, ord MemOrdering)
 /// Записать новое значение (SeqCst ordering).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @store(v bool)
+export extern "nova" fn AtomicBool mut @store(v bool)
 
 /// Compare-and-swap с explicit orderings.
 /// Возвращает `true` при успехе.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @compare_exchange(expected bool, desired bool, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicBool mut @compare_exchange(expected bool, desired bool, success MemOrdering, failure MemOrdering) -> bool
 /// Compare-and-swap (SeqCst/SeqCst ordering).
 /// Возвращает `true` при успехе.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @compare_exchange(expected bool, desired bool) -> bool
+export extern "nova" fn AtomicBool mut @compare_exchange(expected bool, desired bool) -> bool
 
 /// Compare-and-swap weak с explicit orderings. Может spuriously fail на ARM.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool, success MemOrdering, failure MemOrdering) -> bool
 /// Compare-and-swap weak (SeqCst/SeqCst ordering).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool) -> bool
+export extern "nova" fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool) -> bool
 
 /// Атомарно установить `v`, вернуть предыдущее значение с explicit ordering.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @swap(v bool, ord MemOrdering) -> bool
+export extern "nova" fn AtomicBool mut @swap(v bool, ord MemOrdering) -> bool
 /// Атомарно установить `v`, вернуть предыдущее значение (SeqCst ordering).
 ///
 /// Полезен для one-shot ownership: `if !flag.swap(true) { /* first */ }`.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @swap(v bool) -> bool
+export extern "nova" fn AtomicBool mut @swap(v bool) -> bool
 
 /// Атомарный bitwise-OR, returns previous value. With explicit ordering.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @fetch_or(v bool, ord MemOrdering) -> bool
+export extern "nova" fn AtomicBool mut @fetch_or(v bool, ord MemOrdering) -> bool
 /// Атомарный bitwise-OR, returns previous value (SeqCst ordering).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @fetch_or(v bool) -> bool
+export extern "nova" fn AtomicBool mut @fetch_or(v bool) -> bool
 
 /// Атомарный bitwise-AND, returns previous value. With explicit ordering.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @fetch_and(v bool, ord MemOrdering) -> bool
+export extern "nova" fn AtomicBool mut @fetch_and(v bool, ord MemOrdering) -> bool
 /// Атомарный bitwise-AND, returns previous value (SeqCst ordering).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @fetch_and(v bool) -> bool
+export extern "nova" fn AtomicBool mut @fetch_and(v bool) -> bool
 
 /// Атомарный bitwise-XOR, returns previous value. With explicit ordering.
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @fetch_xor(v bool, ord MemOrdering) -> bool
+export extern "nova" fn AtomicBool mut @fetch_xor(v bool, ord MemOrdering) -> bool
 /// Атомарный bitwise-XOR, returns previous value (SeqCst ordering).
 #realtime
 #stable(since = "0.1")
-export external fn AtomicBool mut @fetch_xor(v bool) -> bool
+export extern "nova" fn AtomicBool mut @fetch_xor(v bool) -> bool
 
 // ─── AtomicPtr ───────────────────────────────────────────────────
 
@@ -1275,45 +1275,45 @@ export external fn AtomicBool mut @fetch_xor(v bool) -> bool
 /// - `[MemOrdering]` — ordering enum
 #realtime
 #stable(since = "0.1")
-export external fn AtomicPtr.null() -> Self
+export extern "nova" fn AtomicPtr.null() -> Self
 #realtime
 #stable(since = "0.1")
-export external fn AtomicPtr.new(v int) -> Self
+export extern "nova" fn AtomicPtr.new(v int) -> Self
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicPtr @load(ord MemOrdering) -> int
+export extern "nova" fn AtomicPtr @load(ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export external fn AtomicPtr @load() -> int
+export extern "nova" fn AtomicPtr @load() -> int
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicPtr mut @store(v int, ord MemOrdering)
+export extern "nova" fn AtomicPtr mut @store(v int, ord MemOrdering)
 #realtime
 #stable(since = "0.1")
-export external fn AtomicPtr mut @store(v int)
+export extern "nova" fn AtomicPtr mut @store(v int)
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicPtr mut @swap(v int, ord MemOrdering) -> int
+export extern "nova" fn AtomicPtr mut @swap(v int, ord MemOrdering) -> int
 #realtime
 #stable(since = "0.1")
-export external fn AtomicPtr mut @swap(v int) -> int
+export extern "nova" fn AtomicPtr mut @swap(v int) -> int
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicPtr mut @compare_exchange(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicPtr mut @compare_exchange(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicPtr mut @compare_exchange(expected int, desired int) -> bool
+export extern "nova" fn AtomicPtr mut @compare_exchange(expected int, desired int) -> bool
 
 #realtime
 #stable(since = "0.1")
-export external fn AtomicPtr mut @compare_exchange_weak(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
+export extern "nova" fn AtomicPtr mut @compare_exchange_weak(expected int, desired int, success MemOrdering, failure MemOrdering) -> bool
 #realtime
 #stable(since = "0.1")
-export external fn AtomicPtr mut @compare_exchange_weak(expected int, desired int) -> bool
+export extern "nova" fn AtomicPtr mut @compare_exchange_weak(expected int, desired int) -> bool
 
 // ─── Plan 103.9 (D174): Consume guard types ──────────────────────
 //
@@ -1380,38 +1380,38 @@ export type OnceGuard consume { ptr int }
 /// Prefer `defer g.unlock()` over manual placement for panic-safety.
 #wakes
 #stable(since = "0.1")
-export external fn MutexGuard consume @unlock()
+export extern "nova" fn MutexGuard consume @unlock()
 
 /// Plan 110 D194 (Consumable[never]): on_exit calls unlock. Used by
 /// `consume g = mu.acquire() { body }` scope-block automatic cleanup.
 /// Infallible (never throws); same C impl as unlock.
 #wakes
 #stable(since = "0.1")
-export external fn MutexGuard consume @on_exit(_outcome ScopeOutcome) -> ()
+export extern "nova" fn MutexGuard consume @on_exit(_outcome ScopeOutcome) -> ()
 
 // ─── ReadGuard methods ───────────────────────────────────────────
 
 /// Release the read lock. The guard is consumed (single-use).
 #wakes
 #stable(since = "0.1")
-export external fn ReadGuard consume @unlock()
+export extern "nova" fn ReadGuard consume @unlock()
 
 /// Plan 110 D194 (Consumable[never]): on_exit calls unlock.
 #wakes
 #stable(since = "0.1")
-export external fn ReadGuard consume @on_exit(_outcome ScopeOutcome) -> ()
+export extern "nova" fn ReadGuard consume @on_exit(_outcome ScopeOutcome) -> ()
 
 // ─── WriteGuard methods ──────────────────────────────────────────
 
 /// Release the write lock. The guard is consumed (single-use).
 #wakes
 #stable(since = "0.1")
-export external fn WriteGuard consume @unlock()
+export extern "nova" fn WriteGuard consume @unlock()
 
 /// Plan 110 D194 (Consumable[never]): on_exit calls unlock.
 #wakes
 #stable(since = "0.1")
-export external fn WriteGuard consume @on_exit(_outcome ScopeOutcome) -> ()
+export extern "nova" fn WriteGuard consume @on_exit(_outcome ScopeOutcome) -> ()
 
 // ─── Permit methods ──────────────────────────────────────────────
 
@@ -1420,12 +1420,12 @@ export external fn WriteGuard consume @on_exit(_outcome ScopeOutcome) -> ()
 /// Wakes the next FIFO waiter if any are queued.
 #wakes
 #stable(since = "0.1")
-export external fn Permit consume @release()
+export extern "nova" fn Permit consume @release()
 
 /// Plan 110 D194 (Consumable[never]): on_exit calls release.
 #wakes
 #stable(since = "0.1")
-export external fn Permit consume @on_exit(_outcome ScopeOutcome) -> ()
+export extern "nova" fn Permit consume @on_exit(_outcome ScopeOutcome) -> ()
 
 // ─── OnceGuard methods ───────────────────────────────────────────
 
@@ -1434,7 +1434,7 @@ export external fn Permit consume @on_exit(_outcome ScopeOutcome) -> ()
 /// Wakes all parked waiters. They unblock and see `is_completed() == true`.
 #wakes
 #stable(since = "0.1")
-export external fn OnceGuard consume @commit()
+export extern "nova" fn OnceGuard consume @commit()
 
 /// Mark once body as failed → Once transitions to POISONED.
 ///
@@ -1442,7 +1442,7 @@ export external fn OnceGuard consume @commit()
 /// After abort, subsequent `try_start()` calls also panic.
 #wakes
 #stable(since = "0.1")
-export external fn OnceGuard consume @abort()
+export extern "nova" fn OnceGuard consume @abort()
 
 // ─── Mutex ───────────────────────────────────────────────────────
 
@@ -1466,7 +1466,7 @@ export external fn OnceGuard consume @abort()
 /// - `[Once]` — exactly-once execution barrier
 #realtime
 #stable(since = "0.1")
-export external fn Mutex.new() -> Self
+export extern "nova" fn Mutex.new() -> Self
 
 /// Захватить mutex. Паркует вызывающий fiber до освобождения.
 ///
@@ -1478,7 +1478,7 @@ export external fn Mutex.new() -> Self
 /// NOT reentrant — повторный вызов из того же fiber'а deadlock.
 #parks
 #stable(since = "0.1")
-export external fn Mutex mut @lock() -> MutexGuard consume
+export extern "nova" fn Mutex mut @lock() -> MutexGuard consume
 
 /// (Deprecated) Освободить mutex без guard.
 ///
@@ -1487,14 +1487,14 @@ export external fn Mutex mut @lock() -> MutexGuard consume
 #deprecated(since = "0.2", note = "use consume g = mu.lock(); defer g.unlock() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
-export external fn Mutex mut @unlock()
+export extern "nova" fn Mutex mut @unlock()
 
 /// Попытаться захватить mutex без блокировки.
 ///
 /// Возвращает `true` если lock успешно захвачен, `false` если занят.
 #realtime
 #stable(since = "0.1")
-export external fn Mutex mut @try_lock() -> bool
+export extern "nova" fn Mutex mut @try_lock() -> bool
 
 // ─── Mutex extensions (Plan 103.3) ───────────────────────────────
 
@@ -1507,7 +1507,7 @@ export external fn Mutex mut @try_lock() -> bool
 /// **PREFERRED PATTERN (M15):** используй `with_lock { }` вместо lock/unlock.
 #realtime
 #stable(since = "0.1")
-export external fn Mutex.new_unfair() -> Self
+export extern "nova" fn Mutex.new_unfair() -> Self
 
 /// Попытаться захватить mutex в течение timeout.
 ///
@@ -1532,7 +1532,7 @@ export external fn Mutex.new_unfair() -> Self
 /// compiler enforces via dedicated warning, not an error.
 #realtime
 #stable(since = "0.1")
-export external fn Mutex mut @try_lock_for(timeout Duration) -> bool
+export extern "nova" fn Mutex mut @try_lock_for(timeout Duration) -> bool
 
 /// Best-effort проверка состояния. НЕ для CAS-паттернов.
 ///
@@ -1540,7 +1540,7 @@ export external fn Mutex mut @try_lock_for(timeout Duration) -> bool
 /// Используй для observability (debugging, metrics), не для синхронизации.
 #realtime
 #stable(since = "0.1")
-export external fn Mutex @is_locked() -> bool
+export extern "nova" fn Mutex @is_locked() -> bool
 
 /// ПРЕДПОЧТИТЕЛЬНЫЙ ПАТТЕРН (M15). Захват + автоматическое освобождение
 /// через `defer` — unlock никогда не будет забыт даже при panic в body.
@@ -1598,7 +1598,7 @@ export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
 /// - `[ReentrantMutex]` — рекурсивный mutex
 #realtime
 #stable(since = "0.1")
-export external fn RwLock.new() -> Self
+export extern "nova" fn RwLock.new() -> Self
 
 /// Reader-priority opt-in. Читатели не блокируются ожидающими писателями.
 ///
@@ -1606,7 +1606,7 @@ export external fn RwLock.new() -> Self
 /// Используй только в read-heavy сценариях после бенчмарка.
 #realtime
 #stable(since = "0.1")
-export external fn RwLock.new_reader_priority() -> Self
+export extern "nova" fn RwLock.new_reader_priority() -> Self
 
 /// Захватить read lock. Паркует если активен или ожидает писатель (writer-priority).
 ///
@@ -1614,7 +1614,7 @@ export external fn RwLock.new_reader_priority() -> Self
 /// Old callers that discard the return value still compile.
 #parks
 #stable(since = "0.1")
-export external fn RwLock mut @read() -> ReadGuard consume
+export extern "nova" fn RwLock mut @read() -> ReadGuard consume
 
 /// (Deprecated) Освободить read lock без guard.
 ///
@@ -1622,17 +1622,17 @@ export external fn RwLock mut @read() -> ReadGuard consume
 #deprecated(since = "0.2", note = "use consume g = rw.read(); defer g.unlock() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
-export external fn RwLock mut @read_unlock()
+export extern "nova" fn RwLock mut @read_unlock()
 
 /// Попытаться захватить read lock без блокировки.
 #realtime
 #stable(since = "0.1")
-export external fn RwLock mut @try_read() -> bool
+export extern "nova" fn RwLock mut @try_read() -> bool
 
 /// Попытаться захватить read lock в течение timeout.
 #parks
 #stable(since = "0.1")
-export external fn RwLock mut @try_read_for(timeout Duration) -> bool
+export extern "nova" fn RwLock mut @try_read_for(timeout Duration) -> bool
 
 /// Захватить write lock. Ждёт завершения всех читателей и других писателей.
 ///
@@ -1640,7 +1640,7 @@ export external fn RwLock mut @try_read_for(timeout Duration) -> bool
 /// Old callers that discard the return value still compile.
 #parks
 #stable(since = "0.1")
-export external fn RwLock mut @write() -> WriteGuard consume
+export extern "nova" fn RwLock mut @write() -> WriteGuard consume
 
 /// (Deprecated) Освободить write lock без guard.
 ///
@@ -1648,27 +1648,27 @@ export external fn RwLock mut @write() -> WriteGuard consume
 #deprecated(since = "0.2", note = "use consume g = rw.write(); defer g.unlock() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
-export external fn RwLock mut @write_unlock()
+export extern "nova" fn RwLock mut @write_unlock()
 
 /// Попытаться захватить write lock без блокировки.
 #realtime
 #stable(since = "0.1")
-export external fn RwLock mut @try_write() -> bool
+export extern "nova" fn RwLock mut @try_write() -> bool
 
 /// Попытаться захватить write lock в течение timeout.
 #parks
 #stable(since = "0.1")
-export external fn RwLock mut @try_write_for(timeout Duration) -> bool
+export extern "nova" fn RwLock mut @try_write_for(timeout Duration) -> bool
 
 /// Текущее количество активных читателей. Best-effort.
 #realtime
 #stable(since = "0.1")
-export external fn RwLock @reader_count() -> int
+export extern "nova" fn RwLock @reader_count() -> int
 
 /// `true` если write lock активен. Best-effort.
 #realtime
 #stable(since = "0.1")
-export external fn RwLock @is_write_locked() -> bool
+export extern "nova" fn RwLock @is_write_locked() -> bool
 
 /// Read-захват с автоматическим освобождением через defer.
 ///
@@ -1719,34 +1719,34 @@ export fn RwLock mut @with_write[R](body fn() -> R) -> R {
 /// ```
 #realtime
 #stable(since = "0.1")
-export external fn ReentrantMutex.new() -> Self
+export extern "nova" fn ReentrantMutex.new() -> Self
 
 /// Захватить lock. Если тот же fiber — увеличить recursion count.
 #parks
 #stable(since = "0.1")
-export external fn ReentrantMutex mut @lock()
+export extern "nova" fn ReentrantMutex mut @lock()
 
 /// Освободить lock. Уменьшить count; release когда count = 0.
 ///
 /// Panic если вызван не из owner fiber или mutex не locked.
 #wakes
 #stable(since = "0.1")
-export external fn ReentrantMutex mut @unlock()
+export extern "nova" fn ReentrantMutex mut @unlock()
 
 /// Попытаться захватить без блокировки.
 #realtime
 #stable(since = "0.1")
-export external fn ReentrantMutex mut @try_lock() -> bool
+export extern "nova" fn ReentrantMutex mut @try_lock() -> bool
 
 /// Попытаться захватить в течение timeout.
 #parks
 #stable(since = "0.1")
-export external fn ReentrantMutex mut @try_lock_for(timeout Duration) -> bool
+export extern "nova" fn ReentrantMutex mut @try_lock_for(timeout Duration) -> bool
 
 /// Recursion depth для текущего fiber. 0 если не owner.
 #realtime
 #stable(since = "0.1")
-export external fn ReentrantMutex @lock_count() -> int
+export extern "nova" fn ReentrantMutex @lock_count() -> int
 
 /// Захват с автоматическим освобождением через defer.
 ///
@@ -1783,24 +1783,24 @@ export fn ReentrantMutex mut @with_lock[R](body fn() -> R) -> R {
 /// - `[Once]` — exactly-once barrier
 #realtime
 #stable(since = "0.1")
-export external fn WaitGroup.new() -> Self
+export extern "nova" fn WaitGroup.new() -> Self
 
 /// Увеличить счётчик на `delta`. Вызывать перед spawn'ом workers.
 #realtime
 #stable(since = "0.1")
-export external fn WaitGroup mut @add(delta int)
+export extern "nova" fn WaitGroup mut @add(delta int)
 
 /// Уменьшить счётчик на 1. Будит все `wait()` если счётчик достиг 0.
 ///
 /// Не должен вызываться больше раз, чем суммарно было передано в `add()`.
 #wakes
 #stable(since = "0.1")
-export external fn WaitGroup mut @done()
+export extern "nova" fn WaitGroup mut @done()
 
 /// Парковать вызывающий fiber до достижения счётчиком нуля.
 #parks
 #stable(since = "0.1")
-export external fn WaitGroup @wait()
+export extern "nova" fn WaitGroup @wait()
 
 // ─── OnceState ───────────────────────────────────────────────────
 
@@ -1842,7 +1842,7 @@ export type OnceState
 /// - `[Lazy]` — auto-init on first access
 #realtime
 #stable(since = "0.1")
-export external fn Once.new() -> Self
+export extern "nova" fn Once.new() -> Self
 
 /// Execute `body` exactly once across all concurrent callers.
 ///
@@ -1851,17 +1851,17 @@ export external fn Once.new() -> Self
 /// All waiters are woken on completion or panic.
 #parks
 #stable(since = "0.1")
-export external fn Once mut @call_once(body fn() -> ())
+export extern "nova" fn Once mut @call_once(body fn() -> ())
 
 /// Returns `true` if Once has successfully completed (state == Done).
 #realtime
 #stable(since = "0.1")
-export external fn Once @is_completed() -> bool
+export extern "nova" fn Once @is_completed() -> bool
 
 /// Returns the current state of the Once barrier.
 #realtime
 #stable(since = "0.1")
-export external fn Once @state() -> OnceState
+export extern "nova" fn Once @state() -> OnceState
 
 /// (Deprecated) Attempt to begin once execution.
 ///
@@ -1870,7 +1870,7 @@ export external fn Once @state() -> OnceState
 #deprecated(since = "0.1", note = "use call_once(fn) or try_start() instead (Plan 103.9 guard API)")
 #parks
 #stable(since = "0.1")
-export external fn Once mut @run() -> bool
+export extern "nova" fn Once mut @run() -> bool
 
 /// (Deprecated) Mark once body as complete.
 ///
@@ -1879,7 +1879,7 @@ export external fn Once mut @run() -> bool
 #deprecated(since = "0.1", note = "use OnceGuard.commit() via try_start() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
-export external fn Once mut @done()
+export extern "nova" fn Once mut @done()
 
 // ─── Once V2 guard API (Plan 103.9, D174) ────────────────────────
 
@@ -1889,7 +1889,7 @@ export external fn Once mut @done()
 /// whether to allocate an `OnceGuard`. Not for direct use — prefer `try_start()`.
 #parks
 #stable(since = "0.1")
-export external fn Once mut @try_start_won() -> bool
+export extern "nova" fn Once mut @try_start_won() -> bool
 
 /// (Internal) Allocate a `OnceGuard` referencing this `Once`.
 ///
@@ -1897,7 +1897,7 @@ export external fn Once mut @try_start_won() -> bool
 /// Not for direct use — the guard is opaque; call `.commit()` or `.abort()`.
 #realtime
 #stable(since = "0.1")
-export external fn Once mut @make_guard() -> OnceGuard consume
+export extern "nova" fn Once mut @make_guard() -> OnceGuard consume
 
 /// Attempt to start once initialization. Returns `Some(guard)` to the winning
 /// fiber; `None` to subsequent callers (who park until DONE or re-panic if POISONED).
@@ -1962,19 +1962,19 @@ export type OnceCell[T](*())
 /// Create an empty OnceCell.
 #realtime
 #stable(since = "0.1")
-export external fn OnceCell[T].new() -> Self
+export extern "nova" fn OnceCell[T].new() -> Self
 
 /// Get the value if initialized, or `None` if empty.
 #realtime
 #stable(since = "0.1")
-export external fn OnceCell[T] @get() -> Option[T]
+export extern "nova" fn OnceCell[T] @get() -> Option[T]
 
 /// Set the value if the cell is empty.
 ///
 /// Returns `true` on success, `false` if already initialized.
 #realtime
 #stable(since = "0.1")
-export external fn OnceCell[T] mut @set(v T) -> bool
+export extern "nova" fn OnceCell[T] mut @set(v T) -> bool
 
 /// Get the value, initializing with `init` if empty.
 ///
@@ -1982,7 +1982,7 @@ export external fn OnceCell[T] mut @set(v T) -> bool
 /// completes. On panic in `init`, cell stays empty (retry allowed).
 #parks
 #stable(since = "0.1")
-export external fn OnceCell[T] mut @get_or_init(init fn() -> T) -> T
+export extern "nova" fn OnceCell[T] mut @get_or_init(init fn() -> T) -> T
 
 /// Take the value out, leaving the cell empty.
 ///
@@ -1990,12 +1990,12 @@ export external fn OnceCell[T] mut @get_or_init(init fn() -> T) -> T
 /// After take(), the cell can be set or initialized again.
 #realtime
 #stable(since = "0.1")
-export external fn OnceCell[T] mut @take() -> Option[T]
+export extern "nova" fn OnceCell[T] mut @take() -> Option[T]
 
 /// Returns `true` if the cell has been initialized.
 #realtime
 #stable(since = "0.1")
-export external fn OnceCell[T] @is_initialized() -> bool
+export extern "nova" fn OnceCell[T] @is_initialized() -> bool
 
 // ─── Lazy[T] ─────────────────────────────────────────────────────
 
@@ -2027,7 +2027,7 @@ export type Lazy[T](*())
 /// Create a Lazy[T] with the given initializer closure.
 #realtime
 #stable(since = "0.1")
-export external fn Lazy[T].new(init fn() -> T) -> Self
+export extern "nova" fn Lazy[T].new(init fn() -> T) -> Self
 
 /// Force initialization and return the value.
 ///
@@ -2035,12 +2035,12 @@ export external fn Lazy[T].new(init fn() -> T) -> Self
 /// On panic in init, Lazy is poisoned; subsequent calls re-panic.
 #parks
 #stable(since = "0.1")
-export external fn Lazy[T] mut @force() -> T
+export extern "nova" fn Lazy[T] mut @force() -> T
 
 /// Returns `true` if the value has been successfully initialized.
 #realtime
 #stable(since = "0.1")
-export external fn Lazy[T] @is_forced() -> bool
+export extern "nova" fn Lazy[T] @is_forced() -> bool
 
 // ============================================================================
 // PLAN-103.4 COORDINATION PRIMITIVES (alphabetical, parallel-agent marker blocks)
@@ -2067,7 +2067,7 @@ export external fn Lazy[T] @is_forced() -> bool
 /// Allocated uncollectable (GC-race fix Plan 103.3 M6).
 #realtime
 #stable(since = "0.1")
-export external fn Barrier.new(parties int) -> Self
+export extern "nova" fn Barrier.new(parties int) -> Self
 
 /// Park until all `parties` fibers reach the barrier. Returns arrival index
 /// (0..parties-1). The last-arrival party gets index `parties-1`.
@@ -2075,7 +2075,7 @@ export external fn Barrier.new(parties int) -> Self
 /// Panics if the barrier is currently broken. Use `reset()` to repair.
 #parks
 #stable(since = "0.1")
-export external fn Barrier mut @wait() -> int
+export extern "nova" fn Barrier mut @wait() -> int
 
 /// Like `wait()` but the last-arrival fiber executes `action` before waking
 /// other waiters. Useful for cross-epoch state reset.
@@ -2084,27 +2084,27 @@ export external fn Barrier mut @wait() -> int
 /// are woken — they see its effects when they resume.
 #parks
 #stable(since = "0.1")
-export external fn Barrier mut @wait_with_action(action fn() -> ()) -> int
+export extern "nova" fn Barrier mut @wait_with_action(action fn() -> ()) -> int
 
 /// Like `wait()` but returns `None` if the timeout expires before all parties
 /// arrive. A timeout breaks the barrier — all current waiters are woken with
 /// broken state; future `wait()` calls panic until `reset()`.
 #parks
 #stable(since = "0.1")
-export external fn Barrier mut @wait_for(timeout Duration) -> Option[int]
+export extern "nova" fn Barrier mut @wait_for(timeout Duration) -> Option[int]
 
 /// Returns `true` if the barrier is currently broken.
 /// Best-effort (no mutex); state may change concurrently.
 #realtime
 #stable(since = "0.1")
-export external fn Barrier @is_broken() -> bool
+export extern "nova" fn Barrier @is_broken() -> bool
 
 /// Force-reset the barrier. All current waiters are woken with broken state
 /// (their `wait()` calls panic). Resets `arrived_count=0`, increments
 /// generation, clears `broken` flag — ready for fresh use.
 #wakes
 #stable(since = "0.1")
-export external fn Barrier mut @reset()
+export extern "nova" fn Barrier mut @reset()
 
 // === END PLAN-103.4 BARRIER ===
 
@@ -2171,7 +2171,7 @@ export type Condvar(*())
 /// Create a new `Condvar`.
 #realtime
 #stable(since = "0.1")
-export external fn Condvar.new() -> Self
+export extern "nova" fn Condvar.new() -> Self
 
 /// Atomically release `m` and park the fiber. Re-acquires `m` before
 /// returning. Spurious wakeup may occur — always use a predicate loop.
@@ -2181,21 +2181,21 @@ export external fn Condvar.new() -> Self
 /// Panics unconditionally if `m` is not locked.
 #parks
 #stable(since = "0.1")
-export external fn Condvar @wait(m mut Mutex)
+export extern "nova" fn Condvar @wait(m mut Mutex)
 
 /// ReentrantMutex overload: same semantics as `wait(Mutex)`, but
 /// releases ALL recursive lock levels on enter and re-acquires as
 /// count=1 on wake. W_REENTRANT_CONDVAR_RECOMMEND lint is emitted.
 #parks
 #stable(since = "0.1")
-export external fn Condvar @wait(m mut ReentrantMutex)
+export extern "nova" fn Condvar @wait(m mut ReentrantMutex)
 
 /// Wait with timeout. Atomically release `m`, park up to `timeout`,
 /// re-acquire `m` before return. Returns `WaitResult.Notified` if woken
 /// by notify, `WaitResult.TimedOut` if timeout expired.
 #parks
 #stable(since = "0.1")
-export external fn Condvar @wait_for(m mut Mutex, timeout Duration) -> WaitResult
+export extern "nova" fn Condvar @wait_for(m mut Mutex, timeout Duration) -> WaitResult
 
 /// Predicate-loop helper. Calls `wait(m)` in a loop until `predicate()`
 /// returns true. Handles spurious wakeup automatically.
@@ -2205,19 +2205,19 @@ export external fn Condvar @wait_for(m mut Mutex, timeout Duration) -> WaitResul
 /// ```
 #parks
 #stable(since = "0.1")
-export external fn Condvar @wait_until(m mut Mutex, predicate fn() -> bool)
+export extern "nova" fn Condvar @wait_until(m mut Mutex, predicate fn() -> bool)
 
 /// Wake one waiting fiber (FIFO — oldest waiter first).
 /// No-op if no waiters. Safe to call without holding the mutex.
 #wakes
 #stable(since = "0.1")
-export external fn Condvar mut @notify_one()
+export extern "nova" fn Condvar mut @notify_one()
 
 /// Wake all waiting fibers (FIFO order).
 /// Safe to call without holding the mutex.
 #wakes
 #stable(since = "0.1")
-export external fn Condvar mut @notify_all()
+export extern "nova" fn Condvar mut @notify_all()
 
 // === END PLAN-103.4 CONDVAR ===
 
@@ -2256,7 +2256,7 @@ export external fn Condvar mut @notify_all()
 /// - `[Barrier]` — N-party reusable rendezvous (Plan 103.4)
 #realtime
 #stable(since = "0.1")
-export external fn CountDownLatch.new(count int) -> Self
+export extern "nova" fn CountDownLatch.new(count int) -> Self
 
 /// Decrement count by 1. If count reaches 0, wakes all `await()` callers.
 ///
@@ -2264,7 +2264,7 @@ export external fn CountDownLatch.new(count int) -> Self
 /// This is by design (Java parity): the latch stays permanently open.
 #wakes
 #stable(since = "0.1")
-export external fn CountDownLatch mut @count_down()
+export extern "nova" fn CountDownLatch mut @count_down()
 
 /// Decrement count by `n` (saturating at 0). If count reaches 0, wakes all.
 ///
@@ -2272,7 +2272,7 @@ export external fn CountDownLatch mut @count_down()
 /// If `n <= 0`, no-op.
 #wakes
 #stable(since = "0.1")
-export external fn CountDownLatch mut @count_down_n(n int)
+export extern "nova" fn CountDownLatch mut @count_down_n(n int)
 
 /// Park until count reaches 0.
 ///
@@ -2281,7 +2281,7 @@ export external fn CountDownLatch mut @count_down_n(n int)
 /// count == 0.
 #parks
 #stable(since = "0.1")
-export external fn CountDownLatch @await()
+export extern "nova" fn CountDownLatch @await()
 
 /// Non-blocking check: returns `true` if count is already 0.
 ///
@@ -2289,7 +2289,7 @@ export external fn CountDownLatch @await()
 /// and the caller acting on the result.
 #realtime
 #stable(since = "0.1")
-export external fn CountDownLatch @try_await() -> bool
+export extern "nova" fn CountDownLatch @try_await() -> bool
 
 /// Park until count reaches 0 or timeout expires.
 ///
@@ -2298,14 +2298,14 @@ export external fn CountDownLatch @try_await() -> bool
 /// timeout <= 0 is equivalent to `try_await()`.
 #parks
 #stable(since = "0.1")
-export external fn CountDownLatch @try_await_for(timeout Duration) -> bool
+export extern "nova" fn CountDownLatch @try_await_for(timeout Duration) -> bool
 
 /// Best-effort current count. May be stale by the time the caller reads it.
 ///
 /// For observability (debugging, metrics) only — not for synchronization.
 #realtime
 #stable(since = "0.1")
-export external fn CountDownLatch @current_count() -> int
+export extern "nova" fn CountDownLatch @current_count() -> int
 
 // === END PLAN-103.4 COUNTDOWNLATCH ===
 
@@ -2338,7 +2338,7 @@ export external fn CountDownLatch @current_count() -> int
 /// - `[WaitGroup]` — count-down rendezvous
 #realtime
 #stable(since = "0.1")
-export external fn Semaphore.new(permits int) -> Self
+export extern "nova" fn Semaphore.new(permits int) -> Self
 
 /// Acquire 1 permit. Parks until a permit becomes available (FIFO order).
 ///
@@ -2349,7 +2349,7 @@ export external fn Semaphore.new(permits int) -> Self
 /// Forbidden inside `realtime { }` — may park the fiber.
 #parks
 #stable(since = "0.1")
-export external fn Semaphore mut @acquire() -> Permit consume
+export extern "nova" fn Semaphore mut @acquire() -> Permit consume
 
 /// (Deprecated) Release 1 permit without guard.
 ///
@@ -2359,14 +2359,14 @@ export external fn Semaphore mut @acquire() -> Permit consume
 #deprecated(since = "0.2", note = "use consume p = sem.acquire(); defer p.release() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
-export external fn Semaphore mut @release()
+export extern "nova" fn Semaphore mut @release()
 
 /// Try to acquire 1 permit without parking. Returns `true` if acquired.
 ///
 /// Only succeeds if permits > 0 AND no waiters are queued (FIFO fairness).
 #realtime
 #stable(since = "0.1")
-export external fn Semaphore mut @try_acquire() -> bool
+export extern "nova" fn Semaphore mut @try_acquire() -> bool
 
 /// Try to acquire 1 permit within `timeout`. Returns `true` if acquired.
 ///
@@ -2377,7 +2377,7 @@ export external fn Semaphore mut @try_acquire() -> bool
 /// Forbidden inside `realtime { }` — may park the fiber.
 #parks
 #stable(since = "0.1")
-export external fn Semaphore mut @try_acquire_for(timeout Duration) -> bool
+export extern "nova" fn Semaphore mut @try_acquire_for(timeout Duration) -> bool
 
 /// Best-effort query of available permit count. NOT for synchronization.
 ///
@@ -2385,7 +2385,7 @@ export external fn Semaphore mut @try_acquire_for(timeout Duration) -> bool
 /// Use for observability (metrics, debugging) only.
 #realtime
 #stable(since = "0.1")
-export external fn Semaphore @available_permits() -> int
+export extern "nova" fn Semaphore @available_permits() -> int
 
 /// Acquire `n` permits atomically. Parks until `n` permits available (FIFO).
 ///
@@ -2398,14 +2398,14 @@ export external fn Semaphore @available_permits() -> int
 /// Forbidden inside `realtime { }` — may park the fiber.
 #parks
 #stable(since = "0.1")
-export external fn Semaphore mut @acquire_n(n int)
+export extern "nova" fn Semaphore mut @acquire_n(n int)
 
 /// Release `n` permits atomically. Wakes FIFO waiters that can now be satisfied.
 ///
 /// Panics: `n < 1` → runtime panic (unconditional).
 #wakes
 #stable(since = "0.1")
-export external fn Semaphore mut @release_n(n int)
+export extern "nova" fn Semaphore mut @release_n(n int)
 
 /// PREFERRED PATTERN (M15): acquire + body + automatic release via defer.
 ///

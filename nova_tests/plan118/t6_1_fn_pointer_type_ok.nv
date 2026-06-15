@@ -9,14 +9,14 @@
 
 module plan118.t6_1_fn_pointer_type_ok
 
-// External fn declaring callback parameter — fn pointer type в signature.
-external fn p118_register_cb(cb *fn(i64) -> i64) -> i64
+// extern "nova" fn declaring callback parameter — fn pointer type в signature.
+extern "nova" fn p118_register_cb(cb *fn(i64) -> i64) -> i64
 
 // Multi-arg callback.
-external fn p118_register_pair_cb(cb *fn(i64, i64) -> i64) -> i64
+extern "nova" fn p118_register_pair_cb(cb *fn(i64, i64) -> i64) -> i64
 
 // Return type *fn(...) (less common but valid).
-external fn p118_get_default_cb() -> *fn(i64) -> i64
+extern "nova" fn p118_get_default_cb() -> *fn(i64) -> i64
 
 test "function pointer types parse + type-check" {
     assert(1 == 1)
