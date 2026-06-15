@@ -30947,12 +30947,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     .as_ref()
                     .and_then(|p| p.last().cloned())
                     .unwrap_or_else(|| {
-                        scr_ty
-                            .trim_end_matches('*')
-                            .trim()
-                            .strip_prefix("Nova_")
-                            .unwrap_or("")
-                            .to_string()
+                        let base = scr_ty.trim_end_matches('*').trim();
+                        // Value records use `NovaValue_X` prefix; heap records use `Nova_X*`.
+                        // Strip the right prefix so record_schemas lookup finds the entry.
+                        if let Some(n) = base.strip_prefix("NovaValue_") {
+                            n.to_string()
+                        } else {
+                            base.strip_prefix("Nova_").unwrap_or("").to_string()
+                        }
                     });
                 let is_plain_record = self.record_schemas.contains_key(&type_name_from_path);
                 let accessor = if Self::is_value_type(&scr_ty) { "." } else { "->" };

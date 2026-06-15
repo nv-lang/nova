@@ -55,3 +55,10 @@ test "priv(type) field accessible via own method" {
     ro p = Pin.new(1234)
     assert(p.code() == 1234)
 }
+
+test "priv fields pattern-destructurable within same module" {
+    ro c = Counter.new(42, true)
+    ro { count, overflow_flag } = c
+    assert(count == 42)
+    assert(overflow_flag == true)
+}
