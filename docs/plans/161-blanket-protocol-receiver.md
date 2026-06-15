@@ -1,11 +1,16 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 161 — Blanket protocol-receiver methods (`fn[I Next[T]] I @m`)
 
-> **Создан:** 2026-06-15.  **Статус:** 🔨 Ф.0✅ Ф.1✅ (Ф.2–Ф.5 открыты).
-> **Model:** Sonnet 4.6 (Ф.0–Ф.1 выполнены).
+> **Создан:** 2026-06-15.  **Статус:** ✅ CLOSED Ф.0-Ф.4 2026-06-15 (branch plan-161).
+> **Model:** Sonnet 4.6 (Ф.0–Ф.4 выполнены).
 > **Worktree:** `nova-p161`.
 > **Ветка:** `plan-161`.
 > **Эстимат:** ~3-5 dev-day (1 compiler gap + stdlib rework + spec).
+>
+> **ИТОГ:** Ф.0-Ф.4 CLOSED. Blanket dispatch (G-F) landed: `fn[I Next[T]] I @m` работает
+> для терминаторов с concrete return type. V1: 5 blanket методов в vec_iter_zc
+> (`@zfold`/`@zcount`/`@zfor_each`/`@zany`/`@zall`), 10/10 plan161 PASS. V2 followup:
+> параметрический return type T/Option[T]/Vec[T] → `[M-161-parametric-return]`.
 >
 > **Lineage:**
 > - **Plan 153.2** zero-cost lazy iterators (Phase A ✅) — мотивация; закрывает
