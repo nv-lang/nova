@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 162 — EnumerateIter: zero-cost enumerate adapter
 
-> **Создан:** 2026-06-16. **Статус:** ✅ CLOSED Ф.0-Ф.5 2026-06-16 (branch plan-162).
+> **Создан:** 2026-06-16. **Статус:** ✅ CLOSED+MERGED 2026-06-16 (merge `08a3db41`, branch plan-162).
 > **Model:** Sonnet 4.6.
 > **Worktree:** `nova-p162`.
 > **Ветка:** `plan-162`.
