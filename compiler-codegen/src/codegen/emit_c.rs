@@ -31423,6 +31423,54 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.indent = 0;
         self.line("}");
         self.line("");
+
+        // ── Plan 153.2-Z (STAGE 3): capture-free closure devirtualization ──
+        //
+        // A closure with NO free variables (env = `{int _dummy}`) is STATELESS:
+        // every instance is byte-identical, carries nothing, and the body fn
+        // never reads its env. Such a closure therefore need NOT be heap-boxed
+        // per call-site — it can be a single immortal file-scope SINGLETON.
+        //
+        // This drops BOTH per-call-site `nova_alloc`s (the env box AND the
+        // `NovaClos_xx` box) for every capture-free closure, unconditionally
+        // and SOUNDLY: the call site returns `(void*)&<singleton>`, a static
+        // address that lives for the whole program — it can escape, be stored
+        // in any heap struct, or outlive any scope without dangling. Boehm GC
+        // treats a non-heap (static) pointer as an immortal root, so it is
+        // valid everywhere a heap `nova_alloc` closure pointer was expected.
+        //
+        // Effect on the zero-cost iterator chain (`v.ziter().zmap(|x| x*3)
+        // .zfilter(|x| x%2==0).…`): the closure args passed to the adapter
+        // ctors as `void* f` are now static singletons — 0 alloc instead of
+        // 4 (collect) / 6 (fold). The macro fn-ptr indirection at `@next()`
+        // remains (true devirtualization-of-the-CALL is the heavier
+        // closures-as-mono-types lift, [M-153.2-closure-as-mono-type]); but
+        // the MEASURABLE residual heap — the closure env/box allocs — is gone.
+        //
+        // Captured closures (free_vars non-empty) keep the per-call-site heap
+        // path below unchanged: by-value immutable captures and by-ref mut
+        // captures both need a fresh per-instance env, so they cannot share a
+        // singleton.
+        let capture_free_singleton: Option<String> = if free_vars.is_empty() {
+            let env_singleton = format!("nova_lambda_{}_env_singleton", id);
+            let clos_singleton = format!("nova_lambda_{}_clos_singleton", id);
+            let fn_ty = Self::clos_fn_ty(&param_c_tys, &ret_c_ty);
+            // Emit the two file-scope statics into the lambda-impls buffer,
+            // AFTER the body fn (which `impl_str` already holds) so the
+            // initializer `&<env>` / `{<body>, &<env>}` is well-defined.
+            // The body fn forward-decl is flushed before all impls, so the
+            // body symbol is in scope for the static initializer.
+            let _ = writeln!(self.out, "static {} {} = {{ 0 }};", env_name, env_singleton);
+            let _ = writeln!(
+                self.out,
+                "static {} {} = {{ ({}){}, (void*)&{} }};",
+                clos_struct, clos_singleton, fn_ty, body_name, env_singleton,
+            );
+            Some(clos_singleton)
+        } else {
+            None
+        };
+
         let impl_str = std::mem::replace(&mut self.out, old_out);
         self.indent = old_indent;
         // Restore caller-scope var_boxed (lambda body used its own set of entries).
@@ -31441,6 +31489,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 Some(old) => { self.fn_param_sigs.insert(name, old); }
                 None => { self.fn_param_sigs.remove(&name); }
             }
+        }
+
+        // Capture-free fast path: return the address of the file-scope
+        // singleton — zero call-site allocation.
+        if let Some(clos_singleton) = capture_free_singleton {
+            return Ok(format!("(void*)(&{})", clos_singleton));
         }
 
         // At the call site: allocate env + NovaClos_XX struct.
