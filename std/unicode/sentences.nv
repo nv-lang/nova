@@ -209,7 +209,7 @@ fn sentence_boundaries(s str) -> Vec[int] {
 }
 
 // ─── SentencesView — UAX #29 sentence-segment iterator ───
-export type SentencesView value priv {
+export type SentencesView value priv(type) {
     buf str
     bounds Vec[int]   // byte offsets [s0,…,len]; len-1 == sentence count
     idx int

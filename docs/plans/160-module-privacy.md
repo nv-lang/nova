@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 160 — Module-level field privacy (`type X priv { … }`)
 
-> **Создан:** 2026-06-15. **Статус:** ✅ ЗАКРЫТ (Ф.1–Ф.3 выполнены, 2026-06-15).
+> **Создан:** 2026-06-15. **Статус:** ✅ ЗАКРЫТ (Ф.1–Ф.3 + Ф.4 симметрия, 2026-06-15).
 > **Владеет:** `[M-160-module-privacy]`. **D-блок:** D281.
 > **Зависит от:** checker (visibility), codegen (нет изменений).
 
@@ -46,21 +46,24 @@ type Secret priv(type) {
 
 ### Финальный дизайн синтаксиса
 
-| Type-level modifier | Семантика полей по умолчанию |
-|---|---|
-| (нет) | public (D47) |
-| `priv` | **module-private** (D281) |
-| `priv(type)` | type-private (D220 amend) |
-| `priv(module)` | **ОШИБКА** `E_PRIV_QUALIFIER` — использовать `priv` |
+**Симметричное правило:** `priv` работает одинаково на type-level и field-level (оба = module-private). `priv(type)` аналогично (оба = type-private).
 
-Field-level `priv` modifier всегда = type-private, независимо от type-level default.
+| Контекст | Значение |
+|---|---|
+| `type T priv { ... }` | поля по умолчанию module-private (D281) |
+| `type T priv(type) { ... }` | поля по умолчанию type-private (D220 amend) |
+| `priv field T` (field-level) | **module-private** (симметрично type-level) |
+| `priv(type) field T` (field-level) | type-private (симметрично type-level) |
+| `priv(module)` | **ОШИБКА** `E_PRIV_QUALIFIER` — использовать `priv` |
 
 ### Точные правила видимости
 
-| Поле в `type T priv { ... }` | Видно в методах T | Видно в том же модуле | Видно снаружи |
+| Поле | Видно в методах T | Видно в том же модуле | Видно снаружи |
 |---|---|---|---|
-| `field T` (без модификатора) | ✅ | ✅ | ❌ `E_FIELD_MODULE_PRIVATE` |
-| `priv field T` | ✅ | ❌ `E_PRIV_FIELD_READ` | ❌ `E_PRIV_FIELD_READ` |
+| `field T` в `type T priv { ... }` | ✅ | ✅ | ❌ `E_FIELD_MODULE_PRIVATE` |
+| `priv field T` (явный, любой тип) | ✅ | ✅ | ❌ `E_FIELD_MODULE_PRIVATE` |
+| `priv(type) field T` (явный) | ✅ | ❌ `E_PRIV_FIELD_READ` | ❌ `E_PRIV_FIELD_READ` |
+| `field T` в `type T priv(type) { ... }` | ✅ | ❌ `E_PRIV_FIELD_READ` | ❌ `E_PRIV_FIELD_READ` |
 
 Сам тип `T` при этом остаётся публичным — `priv` на уровне типа не ограничивает
 видимость **типа**, только видимость **полей** по умолчанию.
@@ -75,6 +78,16 @@ Field-level `priv` modifier всегда = type-private, независимо о
 - `priv(module)` → hard error `E_PRIV_QUALIFIER`.
 - `RecordField.priv_module_field: bool` + `NamedTupleField.priv_module_field: bool`.
 
+### Ф.4 — Симметрия field-level `priv` (addendum 2026-06-15) ✅
+
+Исходная реализация имела расхождение: field-level bare `priv` давал type-private (`priv_module_field=false`), тогда как type-level bare `priv` давал module-private. Исправлено для симметрии:
+
+- Field-level bare `priv` → `(priv_field=true, priv_module_field=true)` = **module-private**.
+- Field-level `priv(type)` → `(priv_field=true, priv_module_field=false)` = type-private.
+- Комбинирование: `priv f int` внутри `type T priv { ... }` — оба module-private (без конфликта).
+
+Коммит: `b87ffeef`. Merge: `818e6fea`.
+
 ### Ф.2 — Checker: enforcement field-access ✅
 
 - `TypeCheckCtx.type_defining_modules: HashMap<String, Vec<String>>` — строится из `peer_files.items_here`.
@@ -88,29 +101,31 @@ Field-level `priv` modifier всегда = type-private, независимо о
 Тесты: `nova_tests/plan160/` — **5/5 PASS**.
 
 **Позитивные:**
-- `pos_within_module.nv` — 4 теста: read, write, method, constructor в том же модуле.
+- `pos_within_module.nv` — 6 тестов: read, write, method, constructor в том же модуле, bare-priv field доступ из свободной fn, priv(type) field через метод.
 
 **Негативные:**
 - `neg_read_outside.nv` — `E_FIELD_MODULE_PRIVATE` при чтении поля из другого модуля.
 - `neg_write_outside.nv` — `E_FIELD_MODULE_PRIVATE` при записи поля из другого модуля.
 - `neg_init_outside.nv` — `E_FIELD_MODULE_PRIVATE` при init-литерале из другого модуля.
-- `neg_priv_field_same_mod.nv` — `E_PRIV_FIELD_READ` для `priv` поля в `priv`-типе из свободной функции.
+- `neg_priv_field_same_mod.nv` — `E_PRIV_FIELD_READ` для `priv(type)` поля из свободной функции в том же модуле.
 
-**Spec:** D281 в `spec/decisions/02-types.md` — полный блок с §1–§5.
+**Spec:** D281 в `spec/decisions/02-types.md` — полный блок с §1–§5, обновлён для симметрии.
 
 ## Критерии приёмки (без упрощений, как для прода)
 
-- **A1.** `type T priv { f int }` — поля без модификатора доступны в том же модуле без ошибок.
-- **A2.** Доступ из другого модуля → `E_FIELD_MODULE_PRIVATE` (не crash, не silent).
-- **A3.** `priv` field в `priv`-типе → `E_PRIV_FIELD_READ` даже из того же модуля (из свободной функции).
-- **A4.** Все 5 fixtures PASS (4 позитивных теста + 4 негативных = 5 test-файлов).
-- **A5.** Нет регрессий в `nova test` core-suite.
+- **A1.** `type T priv { f int }` — поля без модификатора доступны в том же модуле без ошибок (read, write, init, method).
+- **A2.** Доступ из другого модуля → `E_FIELD_MODULE_PRIVATE` (не crash, не silent). Все три сценария: read/write/init.
+- **A3.** `priv(type)` field в любом типе → `E_PRIV_FIELD_READ` из свободной функции (даже в том же модуле). Только собственные методы типа могут читать.
+- **A4.** Симметрия: bare `priv` field-level = module-private (то же что type-level `priv`). Доступен из свободной fn в том же модуле без ошибок.
+- **A5.** `priv(type)` field-level = type-private. Недоступен из свободной fn в том же модуле.
+- **A6.** Все 5 fixtures PASS через release `nova.exe` и C-codegen.
+- **A7.** Нет регрессий в `nova test` core-suite.
 - **G0.** fail safe = запретить при неопределимой видимости.
 
-**Статус:** все критерии выполнены ✅
+**Статус:** все критерии выполнены ✅ (release nova, 5/5 PASS)
 
 ## Отложено / out of scope
 
-- Per-field `priv(module)` аннотация (не нужна для целевого use case — type-level достаточно).
 - `priv` / `pub(module)` на методах (методы не имеют module-level granularity — separate task).
 - Named tuple `priv` (D225 — отдельный plan).
+- `[M-160-pattern-match-module-priv]` — smoke-test для pattern-деструктуризации module-private поля (P2).

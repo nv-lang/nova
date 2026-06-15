@@ -155,7 +155,7 @@ fn is_grapheme_break(prev int, cur int, gb11 bool, cur_ep bool, ri_count int, in
 }
 
 // ─── GraphemesView — the third lens ───
-export type GraphemesView value priv {
+export type GraphemesView value priv(type) {
     buf str    // borrows str (alias of the buffer; GC sees ptr through the field)
     pos int    // current byte offset into buf
 }
