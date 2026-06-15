@@ -109,6 +109,7 @@
 
 | Маркер | Суть | Home | Pri |
 |---|---|---|---|
+| `[M-161-blanket-receiver]` | 📋 **PLANNED ([Plan 161](161-blanket-protocol-receiver.md)).** Blanket protocol-receiver методы `fn[I Next[T]] I @m` — убирает O(N²) дубль chain-entry/терминаторов в `vec_iter_zc.nv`; codegen G-F (typevar-ресивер dispatch + bound-consult); инвариант ≤1 Next; D282 (новый). Закрывает `[M-153.2-generic-over-source-zerocost]` Stage 3. | Plan 161 | P2 |
 | `[M-combinators-completion]` | Добавить `find` (short-circuit→`Option[T]`), `flat_map` (nested comprehensions), `enumerate` (`(i,x)` идиома), `zip` (parallel iter); обобщить `sum`/`min`/`max` с `[]int`-only → generic `[]T` (Num/Comparable bound). НЕ нужны: `collect` (комбинаторы eager), `take`/`skip` (Index[Range] `xs[a..b]` покрывает), `reduce` (fold), `count` (filter+len). | new stdlib-combinators mini-план | P2 |
 | `[M-opt-iter-generic-combinators]` | Комбинаторы (map/filter/fold/any/all/…) generic над `Iter[I]`, не только `[]T`-ресивер → работают на Range/HashMap/custom без материализации в `[]T`. Главный рычаг comprehension-эргономики (Python-comprehension работает над любым iterable). | new stdlib-combinators mini-план | P2 |
 
