@@ -1,0 +1,37 @@
+// Test: blanket @bcount terminator — return type is just `int` (no T/U)
+module plan161.blanket_count
+
+import std.collections.vec.{Vec, VecIter}
+import std.prelude.collections.{Next}
+import std.collections.vec_iter_zc.{MapIter, FilterIter}
+
+// Blanket count — just counts elements, return type `int` has no type vars
+fn[I Next[T]] I mut @bcount() -> int {
+    mut n = 0
+    while true {
+        match @next() {
+            Some(_) => { n = n + 1 },
+            None => return n,
+        }
+    }
+    n
+}
+
+test "blanket bcount on VecIter" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    mut it = v.iter()
+    ro c = it.bcount()
+    assert(c == 5)
+}
+
+test "blanket bcount on FilterIter (via existing zfilter)" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro c = v.ziter().zfilter(|x| x % 2 == 0).bcount()
+    assert(c == 3)
+}
+
+test "blanket bcount on MapIter (via existing zmap)" {
+    ro v = Vec[int].from([1, 2, 3])
+    ro c = v.ziter().zmap(|x| x * 2).bcount()
+    assert(c == 3)
+}
