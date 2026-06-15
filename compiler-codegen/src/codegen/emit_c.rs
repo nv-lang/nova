@@ -35227,45 +35227,126 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 .map(|(_, fd)| fd.clone());
                             if let Some(fd) = blanket_fd {
                                 if let Some(ret_ty) = &fd.return_type {
-                                    if let Ok(raw_c) = self.type_ref_to_c(ret_ty) {
-                                        // Plan 161 V2 [M-161-parametric-return]: resolve
-                                        // inner typevars (e.g. T in Next[T]) in the raw
-                                        // C return type by inferring the proto method
-                                        // return on the concrete receiver, then applying
-                                        // string substitution.
+                                    // Plan 162 fix [M-162-tuple-parametric-return]:
+                                    // resolve inner typevars (e.g. T in `Next[T]`) BEFORE
+                                    // calling type_ref_to_c so that tuple return types like
+                                    // `Option[(int, T)]` produce a concrete mono'd C type
+                                    // (e.g. `NovaOpt__NovaTuple_2_8_nova_int_11__nova_int`)
+                                    // rather than the erased `NovaOpt__NovaTuple2`.
+                                    //
+                                    // The Plan 161 V2 string-substitution approach only
+                                    // works for pointer returns (`Nova_T*` / `Nova_T_p`
+                                    // patterns), but not for tuple returns: the TypeRef::Tuple
+                                    // arm of type_ref_to_c falls back to the legacy
+                                    // `_NovaTupleN` form when T is unresolved, discarding all
+                                    // T-information before string-substitution can apply.
+                                    //
+                                    // Fix: collect TV→elem bindings from protocol bounds
+                                    // first, install them in type_subst_overrides, then call
+                                    // type_ref_to_c. The Tuple arm sees T→nova_int via the
+                                    // overrides and emits the properly typed mono tuple.
+                                    // Restore overrides afterwards. String-subst below is
+                                    // kept as a fallback for pointer-return shapes.
+                                    let mut tv_elem_bindings: Vec<(String, String)> = Vec::new();
+                                    if let Some(first_g) = fd.generics.first() {
+                                        for bound in &first_g.bounds {
+                                            if let crate::ast::TypeRef::Named { path: bpath, generics: bgens, .. } = bound {
+                                                let proto_method = bpath.last()
+                                                    .map(|s| s.to_lowercase())
+                                                    .unwrap_or_default();
+                                                let recv_ptr = format!("Nova_{}*", rt);
+                                                if let Some(opt_ret) = self.infer_mono_method_ret_with_args(
+                                                    &recv_ptr, &proto_method, &[])
+                                                {
+                                                    let elem = opt_ret
+                                                        .strip_prefix("NovaOpt_")
+                                                        .unwrap_or(&opt_ret)
+                                                        .to_string();
+                                                    for bg in bgens {
+                                                        if let crate::ast::TypeRef::Named { path: gp, generics: gg, .. } = bg {
+                                                            if gg.is_empty() {
+                                                                if let Some(tv) = gp.last() {
+                                                                    if tv.len() <= 2 && tv.chars().all(|c| c.is_ascii_uppercase()) {
+                                                                        tv_elem_bindings.push((tv.clone(), elem.clone()));
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // Install bindings in type_subst_overrides so
+                                    // type_ref_to_c (and its Tuple arm) sees them.
+                                    let saved_overrides = if !tv_elem_bindings.is_empty() {
+                                        let mut overrides = self.type_subst_overrides.borrow_mut();
+                                        let saved: HashMap<String, String> = tv_elem_bindings.iter()
+                                            .map(|(tv, elem)| {
+                                                let prev = overrides.insert(tv.clone(), elem.clone());
+                                                (tv.clone(), prev.unwrap_or_default())
+                                            })
+                                            .collect();
+                                        drop(overrides);
+                                        Some(saved)
+                                    } else {
+                                        None
+                                    };
+                                    let type_ref_result = self.type_ref_to_c(ret_ty);
+                                    // Restore overrides.
+                                    if let Some(saved) = saved_overrides {
+                                        let mut overrides = self.type_subst_overrides.borrow_mut();
+                                        for (tv, prev) in &saved {
+                                            if prev.is_empty() {
+                                                overrides.remove(tv);
+                                            } else {
+                                                overrides.insert(tv.clone(), prev.clone());
+                                            }
+                                        }
+                                    }
+                                    if let Ok(raw_c) = type_ref_result {
+                                        // Plan 161 V2 [M-161-parametric-return]: string-subst
+                                        // fallback for pointer-return shapes (Nova_T* / Nova_T_p).
+                                        // For tuple returns the overrides above already produce
+                                        // the correct concrete C type in raw_c.
                                         let c = if let Some(first_g) = fd.generics.first() {
                                             let mut resolved = raw_c.clone();
-                                            for bound in &first_g.bounds {
-                                                if let crate::ast::TypeRef::Named { path: bpath, generics: bgens, .. } = bound {
-                                                    let proto_method = bpath.last()
-                                                        .map(|s| s.to_lowercase())
-                                                        .unwrap_or_default();
-                                                    let recv_ptr = format!("Nova_{}*", rt);
-                                                    if let Some(opt_ret) = self.infer_mono_method_ret_with_args(
-                                                        &recv_ptr, &proto_method, &[])
-                                                    {
-                                                        let elem = opt_ret
-                                                            .strip_prefix("NovaOpt_")
-                                                            .unwrap_or(&opt_ret)
-                                                            .to_string();
-                                                        let elem_mangled = Self::sanitize_c_for_ident(&elem);
-                                                        for bg in bgens {
-                                                            if let crate::ast::TypeRef::Named { path: gp, generics: gg, .. } = bg {
-                                                                if gg.is_empty() {
-                                                                    if let Some(tv) = gp.last() {
-                                                                        if tv.len() <= 2 && tv.chars().all(|c| c.is_ascii_uppercase()) {
-                                                                            // Replace mangled "Nova_<TV>_p" with concrete elem
-                                                                            // in the mangled part, and "Nova_<TV>*" in the suffix.
-                                                                            let tv_mangled = format!("Nova_{}_p", tv);
-                                                                            let tv_ptr = format!("Nova_{}*", tv);
-                                                                            let elem_ptr = if elem.ends_with('*') {
-                                                                                elem.clone()
-                                                                            } else {
-                                                                                elem.clone()
-                                                                            };
-                                                                            resolved = resolved
-                                                                                .replace(&tv_mangled, &elem_mangled)
-                                                                                .replace(&tv_ptr, &elem_ptr);
+                                            for (tv, elem) in &tv_elem_bindings {
+                                                let elem_mangled = Self::sanitize_c_for_ident(elem);
+                                                let tv_mangled = format!("Nova_{}_p", tv);
+                                                let tv_ptr = format!("Nova_{}*", tv);
+                                                resolved = resolved
+                                                    .replace(&tv_mangled, &elem_mangled)
+                                                    .replace(&tv_ptr, elem);
+                                            }
+                                            // Also substitute the first generic (I → concrete recv)
+                                            // via existing bound-based logic if not already done.
+                                            if tv_elem_bindings.is_empty() {
+                                                for bound in &first_g.bounds {
+                                                    if let crate::ast::TypeRef::Named { path: bpath, generics: bgens, .. } = bound {
+                                                        let proto_method = bpath.last()
+                                                            .map(|s| s.to_lowercase())
+                                                            .unwrap_or_default();
+                                                        let recv_ptr = format!("Nova_{}*", rt);
+                                                        if let Some(opt_ret) = self.infer_mono_method_ret_with_args(
+                                                            &recv_ptr, &proto_method, &[])
+                                                        {
+                                                            let elem = opt_ret
+                                                                .strip_prefix("NovaOpt_")
+                                                                .unwrap_or(&opt_ret)
+                                                                .to_string();
+                                                            let elem_mangled = Self::sanitize_c_for_ident(&elem);
+                                                            for bg in bgens {
+                                                                if let crate::ast::TypeRef::Named { path: gp, generics: gg, .. } = bg {
+                                                                    if gg.is_empty() {
+                                                                        if let Some(tv) = gp.last() {
+                                                                            if tv.len() <= 2 && tv.chars().all(|c| c.is_ascii_uppercase()) {
+                                                                                let tv_mangled2 = format!("Nova_{}_p", tv);
+                                                                                let tv_ptr2 = format!("Nova_{}*", tv);
+                                                                                resolved = resolved
+                                                                                    .replace(&tv_mangled2, &elem_mangled)
+                                                                                    .replace(&tv_ptr2, &elem);
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
@@ -35274,6 +35355,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                                     }
                                                 }
                                             }
+                                            let _ = first_g; // suppress unused warning
                                             resolved
                                         } else {
                                             raw_c
