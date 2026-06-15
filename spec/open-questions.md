@@ -8057,3 +8057,45 @@ value-поле `next` ссылается на сам `N` без указател
 ### Связь
 - [D280](decisions/08-runtime.md#d280) — heap-ссылка = pointer-size; boxing-aware size-walk + depth-guard.
 - `[M-checker-recursive-type-overflow]` (backlog, ✅ CLOSED) — robustness-фикс, оставивший этот residual.
+
+## Q-reach-dce-precision — точность reachability-codegen DCE: coarse-by-name method-DCE + полная lazy-module-resolution — 🟡 OPEN (minor, 2026-06-15)
+
+### Контекст (Plan 159, [D283](decisions/09-tooling.md#d283), `[M-reachability-codegen-dce]` Ф.1-core ✅)
+
+Plan 159 зашипил reachability-codegen (вариант A, Zig-модель): эмиссия в C только достижимого от `main`
+(free fns + `const`/`ro`-таблицы + методы), kill-switch `NOVA_REACH_DCE`. Замер 10606→2494 строк, G0
+консервативная корректность соблюдена. Два места намеренно оставлены менее точными, чем потенциальный
+идеал — оба **over-keep'ят** (никогда не over-prune'ят), поэтому это DX/оптимизация, НЕ корректность.
+
+### Открытые места
+
+1. **Method-DCE coarse-by-name.** Метод `T.m` режется только если **И** тип-имя `T`, **И** селектор `m`
+   недостижимы. Это пересечение по ИМЕНИ, не по точному (тип, метод)-ребру графа вызовов: если в коде
+   есть достижимый `A.foo()` и недостижимый-сам-по-себе `B.foo()`, селектор `foo` считается достижимым,
+   и `B.foo` over-keep'ится. Точная альтернатива — per-(тип,метод) reachability через настоящий
+   call-graph + monomorphization-collector (rustc-модель). Риск точного варианта — пропустить
+   codegen-injected (desugar) селектор и over-prune'нуть (G0-blocker). Текущий список засеянных desugar-
+   селекторов (for-iter/операторы/concat/index/string-interp) собран **регрессией** (concat нашёлся
+   только sweep'ом plan131), а не систематическим перечнем всех call-site-видов. `[M-159-method-pruning]`
+   (P3) — per-kind аудит редких инъекций (drop/finalizer, embed auto-proxy, closure-captured методы) +
+   фикстура на каждый вид.
+
+2. **Полная lazy-module-resolution.** Ф.4 (no-import char-методы) сделана **Option A** — import-резолвер
+   инжектит `import std.unicode` в entry-модуль при детекте char-method-call-селектора (cycle-free,
+   DCE затем срезает таблицы → zero-cost). Это НЕ полная ленивая загрузка/тайп-чек тел модулей при первой
+   ссылке на символ (что снимало бы цикл prelude↔unicode фундаментально и работало бы для произвольных
+   prelude-forward-declared builtin-методов, не только char-Unicode). `[M-159-lazy-module-resolution]`
+   (P3) — полный ленивый резолв, если Option A окажется узким.
+
+### Решение (для V1)
+
+Coarse-by-name method-DCE (over-keep на name-collision) + Option A для no-import. Оба корректны и финальны
+для V1 под G0; точные варианты — потенциальные следующие шаги (DX/размер), не для V1. Делать, если
+появится мотивирующий профиль (заметный over-keep на реальной программе) или фундаментальная нужда в
+ленивом резолве произвольных prelude-методов.
+
+### Связь
+- [D283](decisions/09-tooling.md#d283) — reachability-codegen policy (executable-срез / library-полнота / kill-switch / G0).
+- [docs/plans/159-reachability-codegen.md](../docs/plans/159-reachability-codegen.md) — план + замеры + «Статус по завершении».
+- `[M-159-method-pruning]` / `[M-159-lazy-module-resolution]` (backlog, P3) — точные варианты.
+- `[M-152.3b-char-methods-no-import]` (backlog, ✅ CLOSED через Ф.4 Option A).

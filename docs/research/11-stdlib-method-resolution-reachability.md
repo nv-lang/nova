@@ -55,3 +55,24 @@
 
 ## Источники
 Rust: doc.rust-lang.org/std/primitive.char (inherent, no import); github rust-lang/rust `library/core/src/char/methods.rs` + `library/core/src/unicode/unicode_data.rs` (генерённые таблицы, per-property static); rustc-dev-guide monomorph (collector от roots); `-C link-dead-code` (gc по умолчанию). Swift: stdlib `CharacterProperties.swift`, `dead_strip`/WMO. Zig: mitchellh.com/zig/sema (lazy Sema/AIR per referenced decl от entrypoint); `lib/std/ascii.zig` (`isAlphabetic(c: u8)`); ziglang.org/learn/overview (один compilation unit, lazy top-level). Go: pkg.go.dev/unicode (`IsLetter(r rune)`); `src/cmd/link/internal/ld/deadcode.go` (flood-fill); `src/unicode/tables.go` (генерённые RangeTable). Наши замеры — `nova-codegen test-build` + grep сгенерённого C (2026-06-15).
+
+---
+
+## Update 2026-06-15: реализовано как Plan 159 (вариант A)
+
+Рекомендация выше **реализована** — Plan 159 Ф.1–Ф.4 ([D283](../../spec/decisions/09-tooling.md#d283),
+ветка `plan-159-reachability-impl`). Вариант A (Zig-модель, lazy reachability codegen) зашиплен: codegen
+эмитит в C только достижимое от `main` (free fns + module-level `const` + `ro` lazy-static globals +
+методы), worklist-обход + засев непрямых/desugar-селекторов, kill-switch `NOVA_REACH_DCE` (unset/`!=0` ⇒
+ON default; `0` ⇒ байт-идентичное старое поведение). Library / no-`main` ⇒ DCE OFF (полнота API).
+
+**Замер на той же программе** (`import std.unicode.{is_alphabetic}` + вызов только `is_alphabetic`):
+сгенерённый C **10606 → 2494 строки** (~4.25×↓); `collate`/`normalize`/`GC_DATA` совпадений
+**37/9/2 → 0/0/0**; нужная `ALPHA_DATA` сохранена; программа компилируется + запускается + печатает
+корректно. Kill-switch A/B (`NOVA_REACH_DCE=0`) воспроизводит BEFORE точно (10606/37/9/2). Method-level
+DCE — **coarse-by-name** (type∧name intersection, over-keep на name-collision: G0 «никогда не отрезать
+достижимое»). Ф.4 (Option A: инъекция `import std.unicode` в entry-модуль при детекте char-method-call)
+закрыла no-import char-методы (`'Ω'.is_alphabetic()` без `import`) и сняла цикл prelude↔std.unicode без
+полной lazy-module-resolution. Вариант B (прекомпил std + `cc --gc-sections`) остаётся отложенным под
+скорость сборки. Остаток точности — `[M-159-method-pruning]` / `[M-159-lazy-module-resolution]` (P3,
+оба over-keep, не корректность; см. Q-reach-dce-precision).

@@ -1,10 +1,11 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 159 — Reachability-based codegen (dead-code elimination на эмиссии)
 
-> **Создан:** 2026-06-15. **Статус:** 📋 PLANNED (research-обоснован замерами). P2.
-> **Владеет:** `[M-reachability-codegen-dce]`. **Зависит от:** codegen (`emit_c.rs`), резолвер импортов.
+> **Создан:** 2026-06-15. **Реализован:** 2026-06-15. **Статус:** ✅ IMPLEMENTED (Ф.1–Ф.4 green; см. «Статус по завершении»). P2.
+> **Владеет:** `[M-reachability-codegen-dce]` (Ф.1 core ✅). **Зависит от:** codegen (`emit_c.rs`), резолвер импортов.
 > **Research:** [docs/research/11-stdlib-method-resolution-reachability.md](../research/11-stdlib-method-resolution-reachability.md).
-> **Разблокирует:** `[M-152.3b-char-methods-no-import]` (no-import char-методы), снятие цикла prelude↔std.unicode, opt-in-стоимость Unicode-таблиц.
+> **Spec:** [D283](../../spec/decisions/09-tooling.md#d283) (reachability-codegen policy).
+> **Разблокирует:** `[M-152.3b-char-methods-no-import]` ✅ CLOSED (no-import char-методы, Ф.4), снятие цикла prelude↔std.unicode, opt-in-стоимость Unicode-таблиц.
 
 ## Проблема (замерено 2026-06-15)
 Наш codegen **не делает анализа достижимости** — эмитит в C **всё** объявленное/импортированное:
@@ -56,3 +57,107 @@
 ## Связь / отложенное
 - **Вариант B** (прекомпил std в `.o`/`.a`-кэш + `cc --gc-sections`) — отдельная задача под **скорость сборки** (не корректность). Отложен: нужен стабильный C-ABI std + кэш-инвалидация + кросс-toolchain `--gc-sections`. Маркер при старте.
 - Чертежи: rustc monomorphization collector (обход от roots), Zig Sema/AIR (lazy per referenced decl).
+
+---
+
+## Статус по завершении (2026-06-15)
+
+✅ **IMPLEMENTED** на ветке `plan-159-reachability-impl` (worktree `nova-p159`); НЕ смёржено в main.
+Замеренная цель достигнута: программа, использующая лишь часть `std.unicode`, генерит **кратно меньше**
+C, при этом ничего достижимого не выпало (G0 консервативная корректность соблюдена).
+
+### Что зашипилось (вариант A, Zig-модель)
+
+Реализовано в `compiler-codegen/src/codegen/emit_c.rs` + `compiler-codegen/src/lints.rs`:
+
+1. **Kill-switch `NOVA_REACH_DCE`** (`reach_dce_enabled()`, читается один раз через `OnceLock`):
+   unset или `!= "0"` ⇒ НОВОЕ поведение (DCE ON, **default**); `"0"` ⇒ байт-идентичное старое поведение.
+2. **Единый reachable-set** — обобщил `compute_dead_free_fns` в `compute_dead_decls` →
+   `DeadDecls{dead_fns, dead_consts, dead_method_keys}`. Один общий worklist-обход покрывает:
+   - **free fns** (`receiver.is_none() && generics.is_empty() && body != External`);
+   - **module-level `const`** (`Item::Const` — гигантские unicode-таблицы `const *_DATA str = "…"`);
+   - **`ro` lazy-static globals** (`Item::Let`, single-name non-ghost).
+3. **«нет `main` ⇒ держим всё»-guard СОХРАНЁН** — библиотеки и негативные `EXPECT_CC_ERROR`-фикстуры
+   не режутся. В **executable** (есть `main`) под новой политикой `export`-free-fns **больше НЕ roots**
+   (у Nova нет C-ABI-экспорта; FFI-entry = только `is_external`). Таблицы держатся, **только** если их
+   читает достижимая функция/const.
+4. **Method-level DCE** (Ф.2) — метод `T.m` эмитится, только если **И** значение типа `T`
+   достижимо в коде, **И** селектор `m` вызван по имени (прямой вызов или protocol dynamic dispatch —
+   оба пишут `m` на call-site). Метод, который не может выполниться, дропается (тело + fwd-decl) через
+   `dead_method_keys`, считается монотонным fixpoint'ом. **Type∧name intersection** режет
+   collate/normalize/word/sentence/grapheme/case-таблицы, сохраняя `is_alphabetic → alpha_flat → ALPHA_DATA`.
+5. **Codegen-injected (desugar) селекторы** засеяны в `lints::collect_expr`, чтобы method-DCE их не
+   срезал (это G0-критично — пропуск = undefined-symbol C): for/parallel-for iteration (`next`/`iter`),
+   `==`/`!=`/`<`… (`equal`/`eq`/`compare`), str `+` (`concat`), `a[k]` (`index`),
+   string-interpolation `"…${x}…"` (StringBuilder `with_capacity`/`append`/`as_str` + `display`/`debug`/`from`).
+6. **Дженерики on-use** (Ф.3) — generic free fns не-кандидаты (`generics.is_empty()` гейтит и
+   `is_fn_candidate`, и `is_dead_method`), поэтому неинстанцированная комбинация просто никогда не
+   эмитится, а достижимая транзитивно — мономорфизируется и эмитится. Const, читаемый только из
+   generic-body, консервативно держится (generic-body refs = безусловные roots = over-keep). Логика
+   emit_c не менялась — только верификация + тесты.
+7. **No-import char-методы** (Ф.4, Option A) — import-резолвер детектит char-Unicode **method-call**
+   селектор (`expr.foo()`, отличён от bare-free-fn формы новым `@method:`-тегом в `collect_expr`) и
+   инжектит `import std.unicode` в **пользовательский entry-модуль** (НЕ в prelude-фасад) — обычный
+   cycle-free путь, цикл `prelude→unicode→collections→prelude` не входится. Ф.1 DCE затем срезает все
+   неиспользуемые таблицы → no-import стоит ноль для программ, не вызывающих эти методы. Bare
+   free-function вызовы (`general_category(0x41)`) остаются opt-in за `import`.
+
+### Замер (BEFORE → AFTER)
+
+Программа `nova_tests/_p159_measure/measure_partial_unicode.nv` — executable с `main`,
+`import std.unicode.{is_alphabetic}`, вызывает только `is_alphabetic(0x41)`:
+
+| метрика | BEFORE (DCE off / pre-159 baseline) | AFTER (DCE on, default) |
+|---|---|---|
+| строк C | **10606** | **2494** (~4.25×↓) |
+| `collate` | 37 | **0** |
+| `normalize` | 9 | **0** |
+| `GC_DATA` | 2 | **0** |
+| `ALPHA_DATA` (нужная) | 2 | **2** (сохранена) |
+| компиляция + запуск | PASS | PASS (печатает корректно) |
+
+**Kill-switch A/B:** `NOVA_REACH_DCE=0` воспроизводит BEFORE точно (10606 / 37 / 9 / 2) —
+байт-идентичное старое поведение подтверждено.
+
+### Per-phase outcome
+
+| Фаза | Статус | Итог |
+|---|---|---|
+| **Ф.1** — core reachability DCE (free fns + const/ro-таблицы) | ✅ green | 10606→2494; collate/normalize/GC_DATA → 0; ALPHA сохранена; kill-switch byte-identical |
+| **Ф.2** — method-level DCE (type∧name intersection) + desugar-селекторы | ✅ green | Method-DCE корректен и консервативен; найден+починен over-prune string-interpolation; per-area G0 zero NEW FAIL |
+| **Ф.3** — дженерик-инстансы on-use | ✅ green | Verify-only (логика emit_c не менялась); неинстанцированная комбинация не эмитится; транзитивный инстанс мономорфизируется |
+| **Ф.4** — no-import char-методы / снятие цикла | ✅ green (Option A) | `'A'.is_alphabetic()` без `import`; цикл не входится; стоит ноль (DCE срезает) |
+| **Ф.5** — тесты + замеры + close | ✅ | dce_tests 21/0; ~12 production-фикстур; broad regression sample zero NEW FAIL |
+
+### Критерии приёмки
+
+- **A1** (неиспользуемые функции, в т.ч. в импортированных peer'ах, не эмитятся) — ✅ MET.
+- **A2** (`ro`/const-таблицы только если достижим читатель; collate/normalize/GC_DATA отсутствуют) — ✅ MET (0/0/0).
+- **A3** (ноль «undefined symbol»/missing-emission регрессий — непрямые ссылки учтены) — ✅ MET
+  (per-area A/B vs `NOVA_REACH_DCE=0`: plan159 14/0, plan108_4 12/1≡OFF, plan99 9/0, plan100_4_4 13/0,
+  plan103_4 25/0, plan100_2 17/0, plan152_3 4/0, plan91 2/0; + parity на plan152_7/152_4/effects/
+  100_4_1/90_1/generics/138/136_1 — identical ON vs OFF).
+- **A4** (кратное падение строк C) — ✅ MET (~4.25×, 10606→2494).
+- **A5** (опц., Ф.4: цикл снят; `'Ω'.is_alphabetic()` без `import`) — ✅ MET.
+- **G0** («без упрощений как для прода» — консервативная корректность, никогда не отрезать достижимое;
+  все виды непрямых ссылок покрыты) — ✅ MET (любая коллизия имён over-keep'ит; desugar-селекторы
+  засеяны; method-body DCE консервативен — type∧name; over-keep допустим, over-prune = release-blocker).
+
+### Упрощения / остаток
+
+- **Method-DCE — coarse-by-name** (намеренно консервативно, НЕ упрощение прода): метод режется только
+  если **И** тип-имя, **И** селектор недостижимы — name-collision over-keep'ит. См.
+  `[M-159-method-pruning]` (P3) — точечная per-kind десугар-аудитория для редких codegen-injected
+  селекторов (drop/finalizer, embed auto-proxy, closure-captured методы).
+- **Ф.4 = Option A** (инъекция import в entry-модуль), а НЕ полноценная lazy-module-resolution.
+  Полная ленивая загрузка/тайп-чек тел модулей при первой ссылке — `[M-159-lazy-module-resolution]` (P3),
+  отложена (Option A закрыла эргономику cycle-free и zero-cost).
+- Pre-existing codegen-ограничения (НЕ DCE-баги, fail идентично под `NOVA_REACH_DCE=0`):
+  module-qualified free-fn вызовы (`u.is_alphabetic()`) эмитят alias в C; `const B = A + 1` не
+  поддержан codegen'ом; multi-hop free-fn→free-fn в standalone test-build; concrete-type `a[k]`
+  резолв-overload. Все четыре независимы от Plan 159.
+
+### Не сделано / merge
+
+Не смёржено в main (по политике задачи). `nova test` целиком (A3 на полном корпусе) — out-of-band
+(батчи >10 мин); проверено per-area A/B-сэмплом. `[M-reachability-codegen-dce]` Ф.1-core → DONE.
