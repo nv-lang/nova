@@ -10674,6 +10674,21 @@ Asymmetry с record `{}` form (which supports newline-as-separator)
 preserved: tuples требуют comma + optional newline после. Это
 intentional — tuples = compact pure-data form.
 
+### D215 amend — record `{}` same-line comma enforcement (2026-06-15)
+
+Record `{}` fields тоже поддерживали только «newline-as-separator» по D49, но при
+fields на **одной строке** без запятой (`type P value { x int y int }`) парсер
+молча принимал оба поля — баг (обе ветки if/else в `parse_record_fields_with_default`
+делали одинаковый `skip_newlines()`). Уточнение:
+
+- **Newline** — допустимый разделитель (multi-line record).
+- **Comma** — допустимый разделитель (inline или multi-line).
+- **Ни того ни другого** (next token — не Newline/Semicolon/RBrace) → **`E_RECORD_FIELD_MISSING_SEPARATOR`**.
+
+Иначе говоря: на одной строке запятая **обязательна**, как и в named-tuple `()`.
+Это унифицирует поведение обеих форм и закрывает парсер-баг.
+Применяется к обоим видам record (heap `type X {}` и value `type X value {}`).
+
 ### D222 amend (Plan 124.8 Ф.1)
 
 «Named tuple priv» portion **retract**: `priv`/`pub` на tuple field —
