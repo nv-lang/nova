@@ -151,6 +151,7 @@ export fn FilterIter[I, T] @zfilter_map[U](f fn(T) -> Option[U]) -> FilterMapIte
 
 export fn FilterMapIter[I, T, U] @zmap[V](f fn(U) -> V) -> MapIter[Self, U, V] => { src: @, f }
 export fn FilterMapIter[I, T, U] @zfilter(pred fn(U) -> bool) -> FilterIter[Self, U] => { src: @, pred }
+export fn FilterMapIter[I, T, U] @zfilter_map[V](f fn(U) -> Option[V]) -> FilterMapIter[Self, U, V] => { src: @, f }
 
 // ──────────────────────────────────────────────────────────────────────────
 // Terminators — drive the chain.
