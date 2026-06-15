@@ -506,9 +506,9 @@
 ## Follow-up: Plan 160 (module-level field privacy)
 
 - **`[M-160-per-field-priv-module]`** ✅ **CLOSED 2026-06-15** — field-level bare `priv` теперь = module-private (симметрично type-level; commit `b87ffeef`). `priv(type)` на field-level = type-private. Синтаксис симметричен полностью.
-- **`[M-160-methods-module-visibility]`** (P3, floating) — методы типа сейчас либо public; нет module-granularity. `fn T @internal_method()` видна всем. Потенциальное расширение: `priv fn T @m()` = module-private method (separate task).
-- **`[M-160-named-tuple-priv]`** (P3, floating) — D281 реализован только для record fields; named tuples (D225) пока не имеют module-private default. Расширить на type-level `priv` для named tuple fields.
-- **`[M-160-pattern-match-module-priv]`** (P2, floating) — деструктуризация `let { f, .. } = t` для module-private полей из другого модуля проверяется `E_FIELD_MODULE_PRIVATE`. Нужен smoke-test (пока не покрыт fixtures).
+- **`[M-160-methods-module-visibility]`** (Q, floating) — все методы без `export` сейчас module-private по умолчанию (не public). `priv(type)` на методе — потенциальное расширение (type-private method). Записано в Q; реализовать при явной потребности.
+- **`[M-160-named-tuple-priv]`** ✅ **DEFERRED (won't do, 2026-06-15)** — named tuples всегда с публичными полями; priv/priv(type) на tuple-fields откладывается до явной необходимости.
+- **`[M-160-pattern-match-module-priv]`** ✅ **CLOSED 2026-06-15** — smoke-test `ro { id } = j` из другого модуля → `E_FIELD_MODULE_PRIVATE`; `nova_tests/plan160/neg_pattern_outside.nv` 1/1 PASS. Чекер покрывал path (types/mod.rs:5470), теперь зафиксировано тестом.
 
 ## Конвенция
 - **Planned** маркер → Followups своего плана (+ индекс-строка здесь с home).
