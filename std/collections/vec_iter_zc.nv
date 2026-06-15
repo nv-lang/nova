@@ -157,22 +157,22 @@ export fn FilterMapIter[I, T, U] @zfilter(pred fn(U) -> bool) -> FilterIter[Self
 //
 // Plan 161 Ф.3 refactor: terminators that return a type with NO unresolved
 // type-var in the return position (int, bool, (), Acc) are written once as
-// blanket methods `fn[I Next[T]] I mut @zt…()`.  Terminators whose return
-// type contains the element type T directly (Vec[T], Option[T], T) or whose
-// parameter uses Vec[T] CANNOT be blanket yet (codegen does not substitute T
-// in return/param struct types for blanket methods — Plan 161 V2 followup).
-// Those remain per-adapter-type.
+// blanket methods `fn[I Next[T]] I mut @zt…()`.
 //
-// Blanket (O(1) definitions, N adapter types supported):
-//   @zfold[Acc]  — returns Acc (additional generic, resolved at call site)
-//   @zcount      — returns int
-//   @zfor_each   — returns ()
-//   @zany        — returns bool
-//   @zall        — returns bool
+// Plan 161 V2 [M-161-parametric-return]: terminators whose return type or
+// parameter type contains the element type T (Vec[T], Option[T], T) are
+// ALSO blanket now — codegen correctly substitutes T at mono time.
 //
-// Per-adapter-type (returns T / Vec[T] / Option[T]):
-//   @zcollect / @zcollect_into / @zsum / @zfind  — on MapIter + FilterIter
-//   @zcollect / @zcollect_into / @zsum            — on FilterMapIter
+// Blanket (O(1) definitions, all adapter types supported):
+//   @zfold[Acc]      — returns Acc (additional generic)
+//   @zcount          — returns int
+//   @zfor_each       — returns ()
+//   @zany            — returns bool
+//   @zall            — returns bool
+//   @zcollect        — returns Vec[T]   (Plan 161 V2)
+//   @zcollect_into   — param mut Vec[T] (Plan 161 V2)
+//   @zsum            — param/return T   (Plan 161 V2)
+//   @zfind           — returns Option[T](Plan 161 V2)
 // ──────────────────────────────────────────────────────────────────────────
 
 // ── blanket terminators (Plan 161 Ф.3) ───────────────────────────────────
@@ -229,66 +229,13 @@ export fn[I Next[T]] I mut @zall(pred fn(T) -> bool) -> bool {
     true
 }
 
-// ── per-adapter terminators (return T / Vec[T] / Option[T] — cannot blanket yet)
+// ── blanket parametric terminators (Plan 161 V2 [M-161-parametric-return]) ──
+// These cover MapIter, FilterIter, FilterMapIter (and any future adapter)
+// in a single definition. The codegen now substitutes T in Vec[T] / Option[T]
+// / T-params at monomorphization time.
 
-// ── on MapIter ──────────────────────────────────────────────────────────────
-
-export fn MapIter[I, T, U] mut @zcollect() -> Vec[U] {
-    mut out = Vec[U].new()
-    while true {
-        match @next() {
-            Some(x) => out.push(x),
-            None => return out,
-        }
-    }
-    out
-}
-
-/// Drain the chain into a CALLER-PROVIDED, reusable buffer `out` (Stage 4,
-/// [M-153.2-collect-into]). Unlike `zcollect`, NO result `Vec` is allocated —
-/// the body is byte-identical to `zcollect`'s drain loop minus the
-/// `Vec[U].new()` header allocation. Amortizes to ZERO `nova_alloc` when `out`
-/// is reused across calls (its backing buffer is retained; only the first
-/// fill, or a growth past the current capacity, allocates).
-///
-/// Semantics: APPENDS to `out` (does not clear it first). To reuse a dirty
-/// buffer as a fresh sink, the caller calls `out.clear()` (len = 0, buffer
-/// kept) before passing it in. Returns `()` — the filled buffer is observed
-/// through the caller's own `out` binding (`Vec[T]` is a heap reference type).
-export fn MapIter[I, T, U] mut @zcollect_into(out mut Vec[U]) -> () {
-    mut go = true
-    while go {
-        match @next() {
-            Some(x) => out.push(x),
-            None => { go = false },
-        }
-    }
-}
-
-export fn MapIter[I, T, U] mut @zsum(zero U) -> U {
-    mut acc = zero
-    while true {
-        match @next() {
-            Some(x) => { acc = acc + x },
-            None => return acc,
-        }
-    }
-    acc
-}
-
-export fn MapIter[I, T, U] mut @zfind(pred fn(U) -> bool) -> Option[U] {
-    while true {
-        match @next() {
-            Some(x) => { if pred(x) { return Some(x) } },
-            None => return None,
-        }
-    }
-    None
-}
-
-// ── on FilterIter ─────────────────────────────────────────────────────────
-
-export fn FilterIter[I, T] mut @zcollect() -> Vec[T] {
+/// Collect all elements into a new `Vec[T]`.
+export fn[I Next[T]] I mut @zcollect() -> Vec[T] {
     mut out = Vec[T].new()
     while true {
         match @next() {
@@ -299,9 +246,10 @@ export fn FilterIter[I, T] mut @zcollect() -> Vec[T] {
     out
 }
 
-/// Drain into a caller-provided reusable buffer `out` (Stage 4). APPENDS; no
-/// result `Vec` allocation. See `MapIter.zcollect_into` for the contract.
-export fn FilterIter[I, T] mut @zcollect_into(out mut Vec[T]) -> () {
+/// Drain the chain into a CALLER-PROVIDED, reusable buffer `out` (Stage 4,
+/// [M-153.2-collect-into]). APPENDS to `out` (does not clear it first).
+/// Amortizes to ZERO `nova_alloc` when `out` is reused across calls.
+export fn[I Next[T]] I mut @zcollect_into(out mut Vec[T]) -> () {
     mut go = true
     while go {
         match @next() {
@@ -311,7 +259,8 @@ export fn FilterIter[I, T] mut @zcollect_into(out mut Vec[T]) -> () {
     }
 }
 
-export fn FilterIter[I, T] mut @zsum(zero T) -> T {
+/// Sum all elements starting from `zero`. Requires `T` to support `+`.
+export fn[I Next[T]] I mut @zsum(zero T) -> T {
     mut acc = zero
     while true {
         match @next() {
@@ -322,7 +271,8 @@ export fn FilterIter[I, T] mut @zsum(zero T) -> T {
     acc
 }
 
-export fn FilterIter[I, T] mut @zfind(pred fn(T) -> bool) -> Option[T] {
+/// Return the first element satisfying `pred`, or `None`.
+export fn[I Next[T]] I mut @zfind(pred fn(T) -> bool) -> Option[T] {
     while true {
         match @next() {
             Some(x) => { if pred(x) { return Some(x) } },
@@ -330,42 +280,6 @@ export fn FilterIter[I, T] mut @zfind(pred fn(T) -> bool) -> Option[T] {
         }
     }
     None
-}
-
-// ── on FilterMapIter ──────────────────────────────────────────────────────
-
-export fn FilterMapIter[I, T, U] mut @zcollect() -> Vec[U] {
-    mut out = Vec[U].new()
-    while true {
-        match @next() {
-            Some(x) => out.push(x),
-            None => return out,
-        }
-    }
-    out
-}
-
-/// Drain into a caller-provided reusable buffer `out` (Stage 4). APPENDS; no
-/// result `Vec` allocation. See `MapIter.zcollect_into` for the contract.
-export fn FilterMapIter[I, T, U] mut @zcollect_into(out mut Vec[U]) -> () {
-    mut go = true
-    while go {
-        match @next() {
-            Some(x) => out.push(x),
-            None => { go = false },
-        }
-    }
-}
-
-export fn FilterMapIter[I, T, U] mut @zsum(zero U) -> U {
-    mut acc = zero
-    while true {
-        match @next() {
-            Some(x) => { acc = acc + x },
-            None => return acc,
-        }
-    }
-    acc
 }
 
 // ──────────────────────────────────────────────────────────────────────────
