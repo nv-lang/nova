@@ -37347,6 +37347,73 @@ mod dce_tests {
             );
         }
     }
+
+    // ─── Plan 159 Ф.3: generics-on-use × reachability DCE ────────────────────
+
+    #[test]
+    fn generic_free_fn_is_non_candidate_and_never_dead() {
+        // A generic free fn (`generics` non-empty) is NOT a fn-DCE candidate —
+        // it is emitted lazily per instantiation by the monomorphizer, so it
+        // must never appear in `dead_fns` regardless of how it is reached.
+        // Here `box_it` is reached only TRANSITIVELY (main → wrap → box_it),
+        // exactly the "generic reachable only transitively from main" case:
+        // it must survive (its [int] instance is monomorphized on use), while
+        // the un-instantiated `[str]` combination is simply never enqueued.
+        let d = decls_of(
+            "module t\n\
+             fn box_it[T](x T) -> T => x\n\
+             fn wrap(a int) -> int => box_it[int](a)\n\
+             fn main() -> int => wrap(3)\n",
+            true,
+        );
+        assert!(
+            !d.dead_fns.contains("box_it"),
+            "generic free fn is a non-candidate → never pruned by fn-DCE"
+        );
+        assert!(!d.dead_fns.contains("wrap"), "wrap is called by main → kept");
+    }
+
+    #[test]
+    fn const_read_only_inside_generic_body_is_kept() {
+        // Conservative correctness: a const table read ONLY from inside a
+        // generic free-fn body must be KEPT. A generic free fn is a
+        // non-candidate, so its referenced names are unconditional roots (the
+        // over-keep path) — the new const-DCE must not prune the table the
+        // monomorphized instance will read.
+        let d = decls_of(
+            "module t\n\
+             const LOOKUP int = 4242\n\
+             fn fetch[T](x T) -> int => LOOKUP\n\
+             fn main() -> int => fetch[int](0)\n",
+            true,
+        );
+        assert!(
+            !d.dead_consts.contains("LOOKUP"),
+            "const read by a (non-candidate) generic body is a root → kept"
+        );
+    }
+
+    #[test]
+    fn const_used_only_by_uninstantiated_generic_is_still_kept() {
+        // Even a const referenced only from a generic fn that is NEVER
+        // instantiated stays kept: generic-body refs are unconditional roots
+        // (we cannot cheaply tell at this stage whether a later mono pass will
+        // instantiate it). Over-keep — never over-prune (G0). The actual size
+        // win for generics comes from on-use monomorphization (the uninstantiated
+        // instance is simply never enqueued/emitted), not from const-DCE.
+        let d = decls_of(
+            "module t\n\
+             const NEVER_INST int = 999\n\
+             fn dormant[T](x T) -> int => NEVER_INST\n\
+             fn main() -> int => 0\n",
+            true,
+        );
+        assert!(
+            !d.dead_consts.contains("NEVER_INST"),
+            "generic-body const ref is a root even when the generic is never \
+             instantiated (conservative over-keep)"
+        );
+    }
 }
 
 #[cfg(test)]

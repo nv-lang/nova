@@ -1,0 +1,24 @@
+// Plan 159 Ф.3 POSITIVE — generic fn reachable only TRANSITIVELY from main is
+// still monomorphized + emitted. Generic free fns are *non-candidates* for the
+// new fn-DCE (is_fn_candidate requires generics.is_empty()), and their bodies
+// are emitted on demand by the monomorphizer when an instantiation is reached.
+// Here `box_it[T]` is never called by `main` directly — only through the free
+// fn `wrap`, which `main` calls. If Ф.3 monomorphization-on-use were broken by
+// the new DCE, the `box_it[int]` instance would be missing → undefined symbol
+// at link, or wrong output. The program compiling, running, and printing the
+// summed value proves the transitive generic instance survives.
+// EXPECT_STDOUT 30
+
+module plan159.f3_generic_transitive_from_main
+
+// Generic free fn — emitted lazily per instantiation by the monomorphizer.
+fn box_it[T](x T) -> T => x
+
+// Monomorphic free fn reachable from main; it is the ONLY caller of box_it.
+// box_it is therefore reachable only transitively (main → wrap → box_it[int]).
+fn wrap(a int, b int) -> int => box_it[int](a) + box_it[int](b)
+
+fn main() {
+    ro r = wrap(10, 20)
+    println("${r}")
+}
