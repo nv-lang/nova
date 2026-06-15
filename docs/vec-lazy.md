@@ -251,6 +251,17 @@ Each adapter is its **own generic-over-source `value` record** (`MapIter[I,T,U]`
 `FilterIter[MapIter[VecIter[int], int, int], int]`, and every `.next()` inlines
 down to the base `VecIter.next()` — no per-element function-pointer call.
 
+The adapter-on-adapter methods write their return type with **`Self`** as a
+*nested* generic type-argument — e.g. `MapIter[I,T,U] @zmap(...) -> MapIter[Self,U,V]`
+(where `Self ≡ MapIter[I,T,U]`, the receiver mono), and likewise
+`-> FilterIter[Self,U]` / `-> FilterMapIter[Self,U,V]`. This drops the repeated
+receiver-type in the re-nesting position; semantics are identical to spelling the
+receiver type in full. Compiler support for `Self` as a nested generic type-arg
+(return **and** param) on a value-generic mono landed 2026-06-15 — see
+[D66 → AMEND «Self как вложенный generic type-arg»](../spec/decisions/02-types.md#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols).
+(Chain-ENTRY `VecIter[T] @zmap -> MapIter[Self,T,U]` is **not** yet covered — the
+single-param `VecIter[T]` source stays explicit; `[M-138.2-self-in-param]`.)
+
 | | `vec_lazy` (`BoxIter`) | `vec_iter_zc` (Map/Filter) |
 |---|---|---|
 | wrapper record per adapter | 0 heap (by-value, D277 Stage 1) | 0 heap (by-value) |

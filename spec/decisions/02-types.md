@@ -3267,6 +3267,59 @@ practice'е `Self` оказался полезен также в:
 
 D66 убирает ограничение: `Self` валиден везде, где есть type-контекст.
 
+### AMEND (Plan «self-nested-generic», 2026-06-15) — `Self` как вложенный generic type-arg
+
+**Правило (расширение «generic-параметры наследуются», п.2 «Почему»).**
+`Self` валиден не только как самостоятельный return/param-тип, но и как
+**type-argument внутри другого Named generic** — в любой глубине вложения,
+в return- и в param-позиции:
+
+```nova
+type MapIter[I, T, U] value { src I, f fn(T) -> U }
+
+// Self как вложенный type-arg — receiver-mono наследуется в позицию I
+fn MapIter[I, T, U] @zmap(g fn(U) -> V) -> MapIter[Self, U, V] => ...
+//                                          ^^^^^^^^^^^^^^^^^^^^ Self ≡ MapIter[I,T,U]
+fn MapIter[I, T, U] @zfilter(p fn(U) -> bool) -> FilterIter[Self, U] => ...
+
+// и в param-позиции (симметрично)
+fn FilterIter[I, T] @combine(other FilterIter[Self, T]) -> ... => ...
+```
+
+Семантически `MapIter[Self, U, V]` ≡ `MapIter[MapIter[I,T,U], U, V]` —
+`Self` подставляется на тот **же mono-инстанс receiver'а**, что и в
+return-`-> Self`. Это устраняет повтор имени receiver-типа в
+adapter-on-adapter цепочках (zero-cost ленивые итераторы,
+`std/collections/vec_iter_zc.nv`).
+
+**Где было сломано (codegen, до фикса).** Call-site return-inference
+биндил `Self` value-aware (без trailing-`*`), но эмиссия метода
+(`register_mono_method_instance` fwd-decl + `emit_monomorphized_method`
+body) строила `current_type_subst` **только** из receiver-generics — без
+записи для `Self`. Вложенный `Self` промахивался мимо early-lookup
+`current_type_subst["Self"]` и падал в общий `"Self"`-арм
+`type_ref_to_c`, который даёт POINTER-форму (`Nova_X*`) → лишний trailing
+`*` → `_p` в mangle → C-имя mono на call-site ≠ имя в fwd-decl/body →
+forward-decl≠def. Это тот же класс рассинхрона, что
+[D182](#d182-self-в-return-type-static-methods--required-form-для-parametric-types)
+закрыл для голого `-> Self`.
+
+**Фикс.** В обоих emit-местах после установки `current_receiver_type`
+биндить `Self` → `value_aware_generic_c_type("Nova_{recv}*")` в
+`current_type_subst` (через `.entry().or_insert()` — no-clobber), guard
+`recv_type.contains("____")` (только mono-инстансы). `value_aware_*`
+оставляет heap-generic / non-value формы без изменений, поэтому top-level
+heap-generic `-> Self` (где `Self` — owned-by-caller heap-ref, не
+value-record) **не затронут**. Подробности маркера —
+[`docs/plans/backlog-followups.md` → `[M-138.2-self-in-param]`](../../docs/plans/backlog-followups.md).
+
+**Известное ограничение (НЕ покрыто фиксом).** `Self`, равный
+**single-param** generic-ресиверу (`VecIter[T]`), использованный как
+type-arg внутри **multi-param** адаптера (`MapIter[Self, T, U]`),
+по-прежнему мис-резолвит receiver (chain-ENTRY методы на `VecIter[T]`).
+Фикс покрывает `Self`, где ресивер — тот же adapter-family, который
+ре-вкладывается. См. ОСТАЁТСЯ в маркере.
+
 ---
 
 ## D72. Generic bounds через `[T Protocol]` — protocol как тип
