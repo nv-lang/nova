@@ -4176,8 +4176,18 @@ impl Parser {
                 } else {
                     explicit_priv = true;
                 }
+                // detect `priv pub` order — consume `pub` so conflict check fires
+                if matches!(self.peek().kind, TokenKind::KwPub) {
+                    self.bump();
+                    explicit_pub = true;
+                }
             } else {
                 explicit_pub = self.eat(&TokenKind::KwPub).is_some();
+                // detect `pub priv` order — consume `priv` so conflict check fires
+                if explicit_pub && matches!(self.peek().kind, TokenKind::KwPriv) {
+                    self.bump();
+                    explicit_priv = true;
+                }
             }
             if (explicit_priv || explicit_priv_type) && explicit_pub {
                 return Err(Diagnostic::new(
