@@ -193,19 +193,49 @@ down to the base `VecIter.next()` — no per-element function-pointer call.
 | source box (`_box_src`) per adapter | 1 heap | **0** (source held inline) |
 | `step` closure thunk per adapter | 1 heap (`NovaClosBase`) | **0** (static dispatch) |
 | per-element source indirection | fn-ptr call | **none** (inlined) |
-| residual heap | the user's `f`/`pred` closure env | the user's `f`/`pred` closure env |
+| capture-free `f`/`pred` closure env/box | 0 heap (D277 Stage 3 — static singleton) | 0 heap (static singleton) |
+| terminator body (`collect_into`/`fold`/`sum`/…) | — | **0 `nova_alloc`** (D277 Stage 4) |
+| residual heap | a *capturing* `f`/`pred`'s env + the `VecIter` source cursor | same |
 
 For the canonical `map().filter().collect()` chain this removes **6 adapter
-allocations and 9 source boxes**; the only heap left is the user's own `f`/`pred`
-closure environment (irreducible without closures-as-mono-types —
-`[M-153.2-closure-as-mono-type]`).
+allocations and 9 source boxes**. As of D277 **Stage 3**, a closure with **no
+captures** (the common `|x| x * 3` form) costs **0 heap** too — it is emitted as a
+file-scope static singleton instead of a per-call-site env-box + closure-box
+(measured: closure allocs `4 → 0` for the `.zmap().zfilter().zcollect()` chain,
+`6 → 0` with a `.zfold()`). The only heap left for an all-capture-free chain is the
+`VecIter` source cursor; a *capturing* closure still allocates its env per instance
+(irreducible without closures-as-mono-types — `[M-153.2-closure-as-mono-type]`), and
+the **call itself** is still a fn-ptr indirection (`[M-153.2-Z-closure-devirt]`).
+
+**Allocation summary** (canonical chain over a `Vec[int]`, measured in generated C):
+
+| chain | boxed `vec_lazy` | zero-cost `vec_iter_zc` | + Stage 3 devirt (`vec_iter_zc`) |
+|---|---|---|---|
+| `.map(f).filter(p).collect()` (capture-free `f`/`p`) | wrapper + source + step + closure heap | source/step **0**; closure env **4** | closure env **0** (singleton); result `Vec` only |
+| `.map(f).filter(p).collect_into(out)` | — | terminator body **0 `nova_alloc`** (Stage 4) | **0** + amortized **0** result (reuses `out`) |
+| `.map(f).filter(p).fold(0, g)` (capture-free) | closure heap | closure env **6** | closure env **0**; result scalar (**0**) |
 
 The two coexist behind separate explicit imports — `vec_iter_zc` is **not** a
 replacement. Reach for it on hot paths; `vec_lazy` stays the ergonomic
 single-cursor default. Entry is `v.ziter()`; adapters `zmap`/`zfilter`/
-`zfilter_map`; terminators `zcollect`/`zfold`/`zcount`/`zsum`/`zfor_each`/`zany`/
-`zall`/`zfind`. `take`/`skip`/`enumerate` (stateful / tuple-element) remain on
-boxed `vec_lazy` for now.
+`zfilter_map`; terminators `zcollect`/`zcollect_into`/`zfold`/`zcount`/`zsum`/
+`zfor_each`/`zany`/`zall`/`zfind`. `take`/`skip`/`enumerate` (stateful /
+tuple-element) remain on boxed `vec_lazy` for now.
+
+`zcollect_into(out)` is the **allocation-free** sink (D277 Stage 4): it drains the
+chain by **appending** into a caller-supplied reusable `Vec[T]` instead of
+allocating a fresh result. Its monomorphized body is `0 nova_alloc`. Clear the
+buffer first to use it as a fresh sink (`out.clear()` keeps the backing store, so a
+reused `out` amortizes to **zero** allocations):
+
+```nova
+mut out = Vec[int].new()
+for batch in batches {
+    out.clear()                                       // len=0, buffer kept
+    batch.ziter().zmap(|x| x * 2).zfilter(|x| x > 0).zcollect_into(out)
+    consume(out)                                      // reuse `out` next iteration
+}
+```
 
 ## See also
 

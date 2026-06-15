@@ -36753,14 +36753,18 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   (`receiver_ty`), т.к. `type_name` теряет глубину; структурный typevar-бинд обязан быть рекурсивным
   (innermost element), depth-agnostic, гейтнутым на nested — иначе ломает весь flat `[]T`-dispatch.
 
-### Plan 153.2 Ф.2 — zero-cost lazy-итератор: by-value mono generic value-records (Stage 1) + generic-over-source (Stage 2), 2026-06-14/15
+### Plan 153.2 Ф.2 — zero-cost lazy-итератор: by-value mono (Stage 1) + generic-over-source (Stage 2) + capture-free closure devirt (Stage 3) + alloc-free терминаторы/`collect_into` (Stage 4), 2026-06-14/15
 
 - **Где** — `compiler-codegen/src/codegen/emit_c.rs` (by-value mono machinery, всё gate на
-  `AllocKind::Value`); `std/collections/vec_lazy.nv:57` (`BoxIter[T]` помечен `value`); НОВЫЙ модуль
-  `std/collections/vec_iter_zc.nv` (`module collections.vec_iter_zc`, opt-in import). Commits
-  `0da18125` (Stage 1) + `515de574` (Stage 2) на ветке `plan-153.2-zerocost`. Spec — D277 NEW (amends
-  D228 «value-record allocation» + D260 «boxed-fluent lazy», depends D226). Доки — `vec-lazy.md`
-  (zero-cost-sibling секция + cost-таблица), `vec-internals.md` (two-lazy-shapes секция).
+  `AllocKind::Value`; Stage 3 — `emit_lambda` ~31427 capture-free fast-path); `std/collections/vec_lazy.nv:57`
+  (`BoxIter[T]` помечен `value`); НОВЫЙ модуль `std/collections/vec_iter_zc.nv`
+  (`module collections.vec_iter_zc`, opt-in import; Stage 4 — `zcollect_into` на каждом адаптере). Commits
+  `0da18125` (Stage 1) + `515de574` (Stage 2) + `bf95d93d` (Stage 4) + `44fca673` (Stage 3) на ветке
+  `plan-153.2-zerocost`. Spec — D277 NEW+AMEND (amends D228 «value-record allocation» + D260
+  «boxed-fluent lazy», depends D226). Доки — `vec-lazy.md` (zero-cost-sibling секция + cost-таблица +
+  alloc-summary), `vec-internals.md` (two-lazy-shapes секция + Stage 3/4), план 153-vec-production-model.md
+  (Stage 3/4 секции + критерии приёмки 153.2-Z). Маркеры — `[M-153.2-Z-closure-devirt]` (P3 PARTIAL),
+  `[M-153.2-Z-noalloc-terminator]` (✅ DONE).
 - **Что СДЕЛАНО (не упрощение — выполненная perf-работа):**
   - **Stage 1 — by-value мономорфизация generic value-records.** Монорфизатор научен лоуэрить
     generic `type X[T] value {…}` BY VALUE для каждого mono-инстанса (inline `NovaValue_<short>`,
@@ -36785,13 +36789,34 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
     depth-aware mono-args splitter (`split_top_level_mono_args`+`mono_type_args_of` — naive `split("__")`
     рвал вложенный generic-over-source арг); recursive `erased_type_ref_c` placeholder-check;
     value-gated nested-placeholder drain-guard.
+  - **Stage 3 — devirtualizация capture-free замыканий (alloc-elimination, commit `44fca673`).** Замыкание
+    БЕЗ свободных переменных (env=`{int _dummy}`) stateless → ОДИН file-scope static singleton
+    (`nova_lambda_N_clos_singleton`+`_env_singleton`) вместо ДВУХ `nova_alloc` на call-site (env-box +
+    `NovaClos_xx`-box); call-site возвращает `(void*)(&singleton)`. Хирургическая правка `emit_lambda`
+    (~31427). **Соундно безусловно:** static-адрес immortal (escape/store/outlive любой scope; Boehm =
+    root). Захватывающие замыкания (`free_vars≠∅`) — heap-путь БЕЗ изменений (per-instance env). **Замер
+    (release nova, C-codegen):** канон `zmap(\|x\| x*3).zfilter(\|x\| x%2==0).zcollect()` driver-тело
+    closure-allocs **4→0**; `.zfold(0,\|acc,x\| acc+x)` **6→0** — verified 0
+    `nova_alloc(sizeof(nova_lambda_N_env))`/`nova_alloc(sizeof(NovaClos…))` в `.c`.
+  - **Stage 4 — alloc-free терминаторы + `collect_into` (commit `bf95d93d`).** На каждый адаптер
+    (`MapIter`/`FilterIter`/`FilterMapIter`) добавлен `mut @zcollect_into(out mut Vec[T]) -> ()`: тело =
+    `zcollect`-drain МИНУС `Vec[U].new()` header-alloc — пушит в caller-buffer. **Семантика APPEND** (НЕ
+    чистит `out`; `out.clear()` для свежего sink → амортизированный 0 alloc). **Замер из C:** все четыре
+    мономорфизованных `…method_zcollect_into` тела = **0 `nova_alloc`** (vs `zcollect` с
+    `…_static_new()`); стриминг-терминаторы `zfold`/`zsum`/`zcount`/`zfor_each`/`zany`/`zall`/`zfind`
+    мономорфизованные тела = **0 `nova_alloc`** каждый. **Verdict:** `.fold(0,…)` result-alloc=0;
+    `.collect_into(out)` terminator-alloc=0.
 - **Что УПРОЩЕНО / остаток (честно):**
-  - **callback `f`/`pred` — всё ещё boxed-closure-поле** (`void*` + `NOVA_CLOS_CALL` на элемент) в ОБЕИХ
-    формах. Это последний box в цепочке после убирания record/source/step. Rust-style инлайн мэппера
-    требует **closures-as-mono-types** (env как конкретный type-param с запечённым env-типом) — отдельный
-    крупный лифт. `[M-153.2-closure-as-mono-type]` (P3). **Почему не сейчас:** Stage 1 убрал record-alloc,
-    Stage 2 — source-box+step-индирекцию; closures-as-mono-types — структурно бóльшая фича (capture-env
-    как type-param, не perf-патч одного сайта).
+  - **per-element ВЫЗОВ `f`/`pred` — всё ещё fn-ptr-индирекция** (`void*` + `NOVA_CLOS_CALL` на элемент) в
+    ОБЕИХ формах. Stage 3 убрал АЛЛОКАЦИЮ closure-env (capture-free → singleton), но НЕ сам вызов.
+    Rust-style инлайн мэппера требует **closures-as-mono-types** (env как конкретный type-param с
+    запечённым env-типом) — отдельный крупный лифт. `[M-153.2-closure-as-mono-type]` /
+    `[M-153.2-Z-closure-devirt]` (P3). **Почему не сейчас:** Stage 1 убрал record-alloc, Stage 2 —
+    source-box+step-индирекцию, Stage 3 — capture-free closure-env-alloc; closures-as-mono-types —
+    структурно бóльшая фича (capture-env как type-param, не perf-патч одного сайта).
+  - **захватывающие замыкания** всё ещё heap-env (per-instance; singleton нельзя шарить).
+  - **`VecIter` source-курсор** — heap-ref-type alloc на `.ziter()` (свойство `VecIter[T]`, не замыкание;
+    вне scope ступеней 3–4).
   - **`take`/`skip`/`enumerate`** (stateful / tuple-element адаптеры) — пока ТОЛЬКО на boxed `vec_lazy`,
     в `vec_iter_zc` НЕ портированы. **Почему не сейчас:** порт — wiring (тот же generic-over-source
     шаблон), не новая compiler-capability; за пределами канон-измерения `map/filter/collect`.
@@ -36804,10 +36829,12 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   `EnumerateIter[I]` value-рекорды по тому же шаблону + tuple-element resolve (`[M-153.2-tuple-elem-adapter]`).
 - **Приоритет** — остатки P3 (closure-box, take/skip/enumerate-порт); не блокируют, канон-цепочка
   `map/filter/collect` полностью allocation-free + indirection-free.
-- **Тесты / регрессии** — `plan153_2/` 4/4 (adapters/chains/laziness/terminators); широкая cross-suite
-  проверка по str/value-record/generic-heavy директориям (plan139 37/0, plan139_1 4/0, plan124_8 40/0,
-  plan147 30/30, plan108 5/0, plan88/99/100_1/138, plan48/59/62/101, plan153_3/5/5_nested) — **0 новых
-  регрессий** против baseline-бинаря на родителе `7562fcea` (все pre-existing FAIL'ы byte-identical).
+- **Тесты / регрессии** — `plan153_2/` 4/4 (adapters/chains/laziness/terminators) + `plan153_2_zc/` 2/2
+  (Stage 4: `collect_into` 7 кейсов, `streaming_terminators` 5 кейсов); широкая cross-suite проверка по
+  str/value-record/generic-heavy директориям (plan139 37/0, plan139_1 4/0, plan124_8 40/0, plan147 30/30,
+  plan108 5/0, plan88/99/100_1/138, plan48/59/62/101, plan153_3/5/5_nested) — **0 новых регрессий** против
+  baseline-бинаря (Stage 1/2 родитель `7562fcea`; Stage 3/4 baseline `bc4e02f5` — все наблюдаемые FAIL'ы
+  byte-identical, pre-existing на захватывающих замыканиях heap-путём ИЛИ без замыканий вовсе).
   **Регресс-урок:** over-eager ранняя версия drain-guard'а (НЕ value-gated) сломала 15 HashMap/
   value-record файлов (plan139 t3/neg_t3, plan152_4 case/normalize/graphemes/sentences/words+conformance,
   plan152_5 collation) — пойман baseline-бинарём @`0da18125`, FIXED гейтингом skip'а на value-шаблон;

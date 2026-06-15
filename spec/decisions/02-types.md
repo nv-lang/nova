@@ -11899,14 +11899,17 @@ Tuple-PRESERVING-адаптер сразу после `enumerate` — `[M-153.2-
 
 ## D277. By-value мономорфизация generic value-records + generic-over-source zero-cost адаптеры (Plan 153.2 Ф.2)
 
-**Status:** ACTIVE (Plan 153.2 Stage 1 + Stage 2, 2026-06-14/15). **Amends:**
-[D228](#d228) (value-record allocation contract — распространён на **generic**
-`type X[T] value {…}`), [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)
+**Status:** ACTIVE (Plan 153.2 Stage 1 + Stage 2 + Stage 3 + Stage 4,
+2026-06-14/15). **Amends:** [D228](#d228) (value-record allocation contract —
+распространён на **generic** `type X[T] value {…}`),
+[D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)
 (lazy-итератор — добавлен allocation-free sibling-слой). **Зависит от:**
 [D226](#d226) (always-pointer receiver ABI), [D123](#d123-tuple-monomorphization)/
 [D216](#d216-generic-anonymous-tuple-monomorphization) (mono-инфраструктура).
 **Маркеры:** `[M-153.2-generic-over-source-zerocost]` → 🟡 PARTIAL (Stage 2 done),
-`[M-153.2-closure-as-mono-type]` (P3 остаток).
+`[M-153.2-Z-closure-devirt]` → 🟡 PARTIAL (Stage 3 alloc-elimination done),
+`[M-153.2-Z-noalloc-terminator]` → ✅ DONE (Stage 4),
+`[M-153.2-closure-as-mono-type]` (P3 остаток — call-инлайн).
 
 ### Контекст
 
@@ -11983,6 +11986,37 @@ zfind.
    plan152_5 collation) — пойман baseline-бинарём @`0da18125`, FIXED гейтингом на
    value-шаблон; все 15 восстановлены.
 
+### Stage 3 — devirtualizация capture-free замыканий (alloc-elimination)
+
+Замыкание БЕЗ свободных переменных (env = `{int _dummy}`) **stateless**: каждый
+инстанс байт-идентичен и тело-функция никогда не читает env. Вместо ДВУХ
+`nova_alloc` на каждый call-site (env-box + `NovaClos_xx`-box) эмитится ОДИН
+**file-scope static singleton** (`nova_lambda_N_clos_singleton` +
+`nova_lambda_N_env_singleton`) на closure-литерал, а call-site возвращает
+`(void*)(&singleton)`. Хирургическая правка — `emit_lambda`
+([`compiler-codegen/src/codegen/emit_c.rs`](../../compiler-codegen/src/codegen/emit_c.rs) ~31427),
+capture-free fast-path. **Соундно безусловно:** static-адрес immortal — может
+escape/store/outlive любой scope без dangling (Boehm видит его как root).
+Захватывающие замыкания (`free_vars ≠ ∅`) — heap-путь БЕЗ изменений (immutable
+by-value snapshot + mut by-ref box нужны per-instance, singleton нельзя шарить).
+Это **alloc-elimination** половина closure-devirt'а: сам per-element ВЫЗОВ
+`(@f)(x)` ещё идёт через `NOVA_CLOS_CALL` fn-ptr-макрос — true call-devirt =
+закладка env как конкретного type-param (`MapIter[I,T,U,F]`,
+`[M-153.2-closure-as-mono-type]`). Маркер `[M-153.2-Z-closure-devirt]` (P3,
+PARTIAL).
+
+### Stage 4 — alloc-free терминаторы + `collect_into`
+
+В `vec_iter_zc` добавлен терминатор `mut @zcollect_into(out mut Vec[T]) -> ()` на
+каждый адаптер (`MapIter`/`FilterIter`/`FilterMapIter`): тело = `zcollect`-drain
+МИНУС `Vec[U].new()` header-аллокация — пушит в **переданный** буфер `out`.
+**Семантика APPEND** (НЕ чистит `out`; для свежего sink caller делает
+`out.clear()` — `len=0`, буфер сохранён → амортизированный 0 аллокаций при
+переиспользовании). Возвращает `()` (буфер виден через caller-биндинг — `Vec[T]`
+heap-ref). Стриминг-терминаторы (`zfold`/`zsum`/`zcount`/`zfor_each`/`zany`/
+`zall`/`zfind`) уже alloc-free по конструкции (скаляр/bool/Option-аккумулятор, без
+out-Vec). Маркер `[M-153.2-Z-noalloc-terminator]` (✅ DONE).
+
 ### Дизайн-решение: sibling, не замена
 
 `vec_iter_zc` — **НОВЫЙ sibling-модуль**, boxed-fluent `vec_lazy`/`BoxIter`
@@ -11998,24 +12032,41 @@ zfind.
 | wrapper-record heap allocs (адаптер-цепочка) | **6 → 0** (Stage 1: by-value `NovaValue_<short>`) | 0 |
 | source-box (`_box_src`) | 9 | **0** (source inline полем `src I`) |
 | per-element `step()` fn-ptr индирекция | есть | **убрана** (статический dispatch) |
-| остаточный heap | env замыкания `f`/`pred` (1 `NovaClosBase` + lambda-env на каждое замыкание) | то же — irreducible без closures-as-mono-types |
+| capture-free closure env/box (Stage 3) | **4→0** (collect) / **6→0** (fold) — static singleton | то же |
+| терминатор-тело (Stage 4) | — | **0 `nova_alloc`** (`collect_into`/`fold`/`sum`/`count`/`for_each`/`any`/`all`/`find`) |
+| остаточный heap | env ЗАХВАТЫВАЮЩИХ замыкания `f`/`pred` + `VecIter` source-курсор | то же — irreducible без closures-as-mono-types |
 
 Stage 1 verify: `grep nova_alloc(sizeof(Nova_BoxIter` = **0** во всех
 сгенерённых `plan153_2/*.c`; `NovaValue_BoxIter…` by-value struct — повсюду
 (adapters 89 / chains 98 / laziness 64 / terminators 74 вхождений).
 
+Stage 3 verify: `nova_alloc(sizeof(nova_lambda_N_env))` /
+`nova_alloc(sizeof(NovaClos…))` для capture-free замыканий = **0** (заменены
+file-scope static singleton); канон `zmap(f).zfilter(p).zcollect()` driver-тело
+closure-allocs **4 → 0**, та же цепочка `.zfold(0,…)` **6 → 0**.
+
+Stage 4 verify: все четыре мономорфизованных `…method_zcollect_into` тела = **0
+`nova_alloc`** (vs `zcollect` с `…_static_new()`); `zfold`/`zsum`/`zcount`/
+`zfor_each`/`zany`/`zall`/`zfind` мономорфизованные тела = **0 `nova_alloc`**
+каждый.
+
 ### Остаток (честно)
 
-- **callback `f`/`pred` ещё boxed-closure** (`void*` + `NOVA_CLOS_CALL` на
-  элемент). Rust-style инлайн мэппера требует **closures-as-mono-types** (env как
-  конкретный type-param) — отдельный крупный лифт. `[M-153.2-closure-as-mono-type]`
-  (P3).
+- **per-element ВЫЗОВ `f`/`pred` ещё fn-ptr-индирекция** (`void*` +
+  `NOVA_CLOS_CALL` на элемент) — Stage 3 убрал АЛЛОКАЦИЮ closure-env (capture-free
+  → singleton), но не сам вызов. Rust-style инлайн мэппера требует
+  **closures-as-mono-types** (env как конкретный type-param) — отдельный крупный
+  лифт. `[M-153.2-closure-as-mono-type]` (P3).
+- **захватывающие замыкания** всё ещё heap-env (per-instance; singleton нельзя
+  шарить — by-value snapshot / by-ref box нужны свежими).
+- **`VecIter` source-курсор** — heap-ref-type alloc на `.ziter()` (свойство
+  `VecIter[T]`, не замыкание; вне scope ступеней 3–4).
 - **`take`/`skip`/`enumerate`** (stateful / tuple-element) остаются на boxed
   `vec_lazy` — порт = wiring, не новая compiler-способность.
 
 ### Связь
 
 - [D228](#d228) — value-record allocation contract (распространён на generic).
-- [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — boxed-fluent lazy (now 0 wrapper-allocs via Stage 1; zero-cost sibling via Stage 2).
+- [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — boxed-fluent lazy (0 wrapper-allocs via Stage 1; zero-cost sibling via Stage 2; capture-free closure devirt via Stage 3; alloc-free терминаторы + `collect_into` via Stage 4).
 - [D226](#d226) — always-pointer receiver ABI (mono value-receiver).
-- Plan 153.2 — план; `vec_lazy.nv` / `vec_iter_zc.nv` — реализация.
+- Plan 153.2 — план; `vec_lazy.nv` / `vec_iter_zc.nv` — реализация; `emit_c.rs::emit_lambda` — Stage 3 singleton.

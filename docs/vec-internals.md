@@ -109,6 +109,8 @@ There are now **two** lazy surfaces, behind separate explicit imports:
 | wrapper record alloc | **0 heap** — `BoxIter` is `value`, by-value mono (D277 Stage 1) | **0 heap** — by-value mono |
 | source box (`_box_src`) | 1 heap per adapter | **0** (source inline) |
 | `step` thunk (`NovaClosBase`) | 1 heap per adapter | **0** (static dispatch) |
+| capture-free `f`/`pred` env/box | **0 heap** — static singleton (D277 Stage 3) | **0 heap** — static singleton |
+| terminator body alloc | (n/a — `collect` builds a `Vec`) | **0 `nova_alloc`** for `zcollect_into`/`zfold`/`zsum`/… (D277 Stage 4) |
 | API style | closure-fluent, ergonomic single cursor | Rust-style nested adapters, hot-path |
 
 **D277 Stage 1** (`BoxIter[T]` marked `value` in `vec_lazy.nv:57`) taught the
@@ -135,12 +137,35 @@ torn by `split("__")`; a recursive type-param check in `erased_type_ref_c`; and 
 non-gated early version regressed 15 HashMap/value-record files — gating it on
 value templates restored all 15).
 
-**Residual** (honest): the user's `f`/`pred` is still a boxed closure field
-(`void*` + `NOVA_CLOS_CALL` per element) in **both** shapes — Rust-style inline
-mapping needs closures-as-mono-types (`[M-153.2-closure-as-mono-type]`, P3).
-`take`/`skip`/`enumerate` (stateful / tuple-element adapters) remain on boxed
-`vec_lazy`. `vec_iter_zc` is a sibling, **not** a replacement — `vec_lazy` stays
-the ergonomic single-cursor default.
+**D277 Stage 3** (`emit_c.rs::emit_lambda` ~31427) devirtualizes **capture-free**
+closures: a closure with no free variables (env = `{int _dummy}`) is stateless and
+byte-identical everywhere, so it is emitted as ONE file-scope static singleton
+(`nova_lambda_N_clos_singleton` + `_env_singleton`) and the call site returns
+`(void*)&singleton` — sound unconditionally (a static address is immortal; Boehm
+treats it as a root). This drops the two per-call-site `nova_alloc`s (env box +
+closure box) for the common `|x| x * 3` form: measured `4 → 0` closure allocs for
+the `.zmap().zfilter().zcollect()` chain, `6 → 0` with a `.zfold()`. Capturing
+closures keep the per-instance heap env (a by-value snapshot or a by-ref box cannot
+share a singleton).
+
+**D277 Stage 4** adds the allocation-free terminator
+`mut @zcollect_into(out mut Vec[T]) -> ()` to each `vec_iter_zc` adapter: it is the
+`zcollect` drain loop minus the `Vec.new()` header allocation — it **appends** into
+a caller-supplied reusable buffer (semantics: it does NOT clear `out`; a caller
+`out.clear()` reuses the backing store, amortizing to zero allocations). Its
+monomorphized body, and those of the scalar/bool/Option streaming terminators
+(`zfold`/`zsum`/`zcount`/`zfor_each`/`zany`/`zall`/`zfind`), are each `0 nova_alloc`
+in the generated C.
+
+**Residual** (honest): after Stage 3 the *capture-free* `f`/`pred` costs no heap,
+but a **capturing** closure still allocates its env per instance, and the per-element
+**call** is still a `NOVA_CLOS_CALL` fn-ptr indirection in **both** shapes —
+Rust-style inline mapping needs closures-as-mono-types
+(`[M-153.2-closure-as-mono-type]` / `[M-153.2-Z-closure-devirt]`, P3). The
+`.ziter()` `VecIter` source cursor is a separate heap ref-type alloc (a property of
+`VecIter[T]`, not a closure). `take`/`skip`/`enumerate` (stateful / tuple-element
+adapters) remain on boxed `vec_lazy`. `vec_iter_zc` is a sibling, **not** a
+replacement — `vec_lazy` stays the ergonomic single-cursor default.
 
 ## Slices & views (Plan 153.4 / D262)
 
