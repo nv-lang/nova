@@ -8985,9 +8985,23 @@ priv field access ЗАПРЕЩЁН во всех других контекста
 - E_PRIV_FIELD_PROTOCOL (V4 deferred).
 - E_PRIV_TUPLE_POSITIONAL_ACCESS (V4 deferred).
 
-#### §5 No reflection backdoor
+#### §5 Семантика: организация, не security
 
-Nova не имеет reflection API → priv enforcement compile-time hard guarantee. Vs Java/Kotlin/C#/Swift которые имеют reflection bypass.
+`priv`/`priv(type)` — **организационный инструмент**, не security-барьер. Цель: защита от *случайного* обращения к деталям реализации, не от *намеренного*.
+
+Nova не ограничивает добавление методов на тип из любого модуля. Следствие: пользователь *намеренно* может написать:
+
+```nova
+fn Test @id() -> int => @id   // в любом модуле — легально
+```
+
+Это не считается «вскрытием» — это осознанный выбор пользователя. Nova — «публичное по умолчанию» (D47, validated в docs/research/06-field-visibility-go-kubernetes.md), и `priv(type)` означает «используй методы типа», а не «запрещено».
+
+Настоящая граница инкапсуляции — **модуль** (`priv` = module-private, D281): другой модуль не может случайно прочитать поле — только намеренно добавив метод.
+
+Аналог: Go `unexported` защищает от случайного обращения из другого пакета, но не является security-boundary.
+
+Nova не имеет reflection API → `priv` enforcement compile-time, без reflection-bypass (в отличие от Java/Kotlin/C#).
 
 #### §6 Composition
 
