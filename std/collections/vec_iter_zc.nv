@@ -200,11 +200,10 @@ export fn[I Next[T]] I mut @zcount() -> int {
 }
 
 export fn[I Next[T]] I mut @zfor_each(f fn(T) -> ()) -> () {
-    mut go = true
-    while go {
+    while true {
         match @next() {
-            Some(x) => { f(x) },
-            None => { go = false },
+            Some(x) => f(x),
+            None => { return },
         }
     }
 }
@@ -250,11 +249,10 @@ export fn[I Next[T]] I mut @zcollect() -> Vec[T] {
 /// [M-153.2-collect-into]). APPENDS to `out` (does not clear it first).
 /// Amortizes to ZERO `nova_alloc` when `out` is reused across calls.
 export fn[I Next[T]] I mut @zcollect_into(mut out Vec[T]) -> () {
-    mut go = true
-    while go {
+    while true {
         match @next() {
             Some(x) => out.push(x),
-            None => { go = false },
+            None => { return },
         }
     }
 }
