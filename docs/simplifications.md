@@ -18,13 +18,19 @@
 
 ---
 
-### Plan 161 Ф.0–Ф.1 — Blanket protocol-receiver Ф.0+Ф.1 (2026-06-15)
+### Plan 161 V2 — Blanket parametric-return T-subst (2026-06-16, ✅ CLOSED [M-161-parametric-return])
+
+- **Где** — `compiler-codegen/src/codegen/emit_c.rs` (2 точки: mono-dispatch type_subst bind + infer_expr_c_type string-subst), `std/collections/vec_iter_zc.nv` (blanket refactor), `nova_tests/plan161/` (+2 fixtures).
+- **Что сделано** — Blanket методы `fn[I Next[T]] I mut @m() -> Vec[T]` / `-> Option[T]` / `-> T` теперь корректно подставляют T в return/param типы при мономорфизации. Все 9 терминаторов в `vec_iter_zc` стали blanket (zcollect/zcollect_into/zsum/zfind → O(1) definition). plan161: 12/12 PASS.
+- **Остаток** — Ф.2 (checker E_DUPLICATE_PROTOCOL_IMPL, E_BLANKET_CONFLICT) — независимая задача.
+- **Приоритет** — L ([M-161-parametric-return] CLOSED; оставшийся Ф.2 — checker-only, не runtime).
+- **Коммиты** — `776447ab` (probe fixtures), `9065c637` (emit_c fix), `34a2fd4d` (vec_iter_zc blanket), merge `3ba2dacc`.
+
+### Plan 161 Ф.0–Ф.1 — Blanket protocol-receiver Ф.0+Ф.1 (2026-06-15, ✅ CLOSED)
 
 - **Где** — `compiler-codegen/src/codegen/emit_c.rs` (Fix A `receiver_c_type` ~line 10878, Fix B `infer_expr_c_type` ~line 34929), `nova_tests/plan161/` (6 фикстур).
-- **Что упрощено** — Реализованы только Fix A (pointer correction для heap struct typevar resolve) и Fix B (blanket fallback scan в infer_expr_c_type). Ф.2 (checker: E_DUPLICATE_PROTOCOL_IMPL, E_BLANKET_CONFLICT), Ф.3 (stdlib refactor vec_iter_zc O(N²)→O(N)), Ф.4 (spec D282 final) — отложены.
-- **Почему** — Базовый codegen gap (dispatch + return-type inference) закрыт минимальными точечными фиксами. Checker invariants и stdlib рефактор — независимые задачи следующих фаз.
-- **Как чинить** — Ф.2: добавить `impl_table` tracking в checker/mod.rs + `E_DUPLICATE_PROTOCOL_IMPL`; Ф.3: рефактор `std/collections/vec_iter_zc.nv`; Ф.4: финализировать D282.
-- **Приоритет** — M (Plan 161 Ф.2–Ф.5 открыты).
+- **Что сделано** — Fix A (pointer correction для heap struct typevar resolve) и Fix B (blanket fallback scan в infer_expr_c_type). Ф.3 (stdlib refactor vec_iter_zc O(N²)→O(N)) выполнен в Ф.3 separately; Ф.2 (checker) — открыт.
+- **Приоритет** — L (CLOSED; V2 followup выше).
 - **Коммиты** — `47d7a7fc` (Ф.0 fixtures), `7c6bb60b` (Ф.1 emit_c fixes).
 
 ### Plan 148 — Independent compiler cleanups (Ф.1–Ф.5, 2026-06-12, ✅ CLOSED, без новых упрощений)
