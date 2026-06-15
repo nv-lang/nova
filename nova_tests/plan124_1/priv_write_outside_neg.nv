@@ -5,7 +5,7 @@
 module plan124_1.priv_write_outside_neg
 
 export type Account {
-    priv mut money f64
+    priv(type) mut money f64
     ro name str
 }
 
