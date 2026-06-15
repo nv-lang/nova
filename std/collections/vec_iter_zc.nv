@@ -192,7 +192,7 @@ export fn[I Next[T]] I mut @zcount() -> int {
     mut n = 0
     while true {
         match @next() {
-            Some(_) => { n = n + 1 },
+            Some(_) => { n += 1 },
             None => return n,
         }
     }
@@ -262,7 +262,7 @@ export fn[I Next[T]] I mut @zsum(zero T) -> T {
     mut acc = zero
     while true {
         match @next() {
-            Some(x) => { acc = acc + x },
+            Some(x) => { acc += x },
             None => return acc,
         }
     }
