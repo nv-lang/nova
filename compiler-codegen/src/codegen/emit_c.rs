@@ -9334,11 +9334,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // C struct + 2 constructors (Notified/TimedOut) live there.
             // sum_schemas populated via 1a1b ExternalRegistry type_decls path.
             "WaitResult",
-            // Plan 83.12: net types pre-declared in nova_rt/net.h.
-            // C structs (Nova_SocketAddr, Nova_TcpListener, Nova_TcpStream,
-            // Nova_UdpSocket) live there; ExternalRegistry auto-registers
-            // receiver types + methods from std/net/{addr,tcp,udp}.nv.
-            "SocketAddr", "TcpListener", "TcpStream", "UdpSocket",
+            // Plan 91.12 (V2): SocketAddr/TcpListener/TcpStream/UdpSocket
+            // are now Nova value-records `{ priv handle int }`.
+            // Emitter generates NovaValue_SocketAddr etc. as { nova_int handle; }.
+            // NOT in RUNTIME_DEFINED_TYPES — let codegen emit them normally.
+            // (Plan 83.12 pre-declared Nova_* here; renamed to NovaRt_* in V2.)
             // Plan 103.9 (D174): consume guard types pre-declared in sync_primitives.h.
             // struct Nova_MutexGuard_s / Nova_ReadGuard_s / Nova_WriteGuard_s /
             // Nova_Permit_s / Nova_OnceGuard_s defined there (each has nova_int ptr field).

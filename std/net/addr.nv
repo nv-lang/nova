@@ -1,39 +1,37 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 83.12: std/net/addr.nv — socket address types.
+// Plan 91.12 Ф.3: std/net/addr.nv — SocketAddr public API (V2).
 //
-// SocketAddr: opaque IPv4/IPv6 socket address backed by `struct sockaddr_storage`.
-//   - loopback(port)    → 127.0.0.1:port (IPv4 loopback)
-//   - loopback_v6(port) → [::1]:port     (IPv6 loopback)
-//   - v4(a,b,c,d,port)  → explicit IPv4 dotted-quad
-//   - parse(s)          → parse "host:port" string
-//   - port()            → port number
-//   - host_str()        → host part as string
+// SocketAddr: IPv4/IPv6 socket address, stack-allocated value-record.
+// The `handle` field is an `int` (nova_int = intptr_t) holding a
+// NovaRt_SocketAddr* cast to integer.
 //
-// C backing: Nova_SocketAddr in net.h.
-// No `type SocketAddr` declaration here — ExternalRegistry registers it
-// as a receiver type from the `extern "nova" fn SocketAddr.*` declarations.
+// Constructors are pure (no effects). parse() throws Fail[NetError].
+// Accessor methods are pure (@port, @host_str, @is_v4, @is_v6, @to_str).
+//
+// C backing: socket_addr_* literal-name functions in net.h / net.c (Ф.0).
+// C handles allocated nova_alloc_uncollectable(); GC does not collect.
 
-module net.addr
+module std.net
 
-// ─── SocketAddr ───────────────────────────────────────────────────────────────
-
-/// Opaque IPv4/IPv6 socket address.
+/// IPv4/IPv6 socket address (host + port).
 ///
-/// Backed by `struct sockaddr_storage` in C — large enough for both
-/// IPv4 (`sockaddr_in`) and IPv6 (`sockaddr_in6`) addresses.
+/// Stack-allocated: contains exactly one integer field (a C pointer cast to int).
+/// Cheap to copy; two copies reference the same C-side NovaRt_SocketAddr.
 ///
 /// # Examples
 ///
 /// ```nova
-/// let addr4 = SocketAddr.loopback(8080)       // 127.0.0.1:8080
-/// let addr6 = SocketAddr.loopback_v6(8080)    // [::1]:8080
-/// let addr  = SocketAddr.v4(192, 168, 1, 1, 80)
-/// let parsed = SocketAddr.parse("127.0.0.1:9090")
+/// let a4 = SocketAddr.loopback(8080)       // 127.0.0.1:8080
+/// let a6 = SocketAddr.loopback_v6(8080)    // [::1]:8080
+/// let av = SocketAddr.v4(192, 168, 1, 1, 80)
+/// let ap = SocketAddr.from_str("127.0.0.1:9090").unwrap()
 /// ```
 ///
 /// # See Also
 ///
 /// - `[TcpListener.bind]`, `[TcpStream.connect]`, `[UdpSocket.bind]`
+#stable(since = "0.1")
+export type SocketAddr value { priv handle int }
 
 /// Create IPv4 loopback address 127.0.0.1:port.
 ///
@@ -41,11 +39,15 @@ module net.addr
 /// After `TcpListener.bind(SocketAddr.loopback(0))`, read the
 /// actual port via `listener.local_port()`.
 #stable(since = "0.1")
-export extern "nova" fn SocketAddr.loopback(port u16) -> SocketAddr
+export fn SocketAddr.loopback(port u16) -> SocketAddr {
+    SocketAddr { handle: socket_addr_loopback(port) }
+}
 
 /// Create IPv6 loopback address [::1]:port.
 #stable(since = "0.1")
-export extern "nova" fn SocketAddr.loopback_v6(port u16) -> SocketAddr
+export fn SocketAddr.loopback_v6(port u16) -> SocketAddr {
+    SocketAddr { handle: socket_addr_loopback_v6(port) }
+}
 
 /// Create IPv4 address from dotted-quad octets.
 ///
@@ -55,37 +57,45 @@ export extern "nova" fn SocketAddr.loopback_v6(port u16) -> SocketAddr
 /// let addr = SocketAddr.v4(127, 0, 0, 1, 80)  // 127.0.0.1:80
 /// ```
 #stable(since = "0.1")
-export extern "nova" fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr
+export fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr {
+    SocketAddr { handle: socket_addr_v4(a, b, c, d, port) }
+}
 
 /// Parse "host:port" string into a SocketAddr.
 ///
-/// Returns `Err(msg)` if the string is malformed or the host cannot be
-/// resolved. IPv6 literal addresses must be bracketed: `"[::1]:9090"`.
+/// Returns `Err(NetError.InvalidAddr(...))` if the string is malformed.
+/// IPv6 literal addresses must be bracketed: `"[::1]:9090"`.
 ///
-/// **V1 note:** DNS resolution is synchronous (uv_getaddrinfo on calling
-/// thread). Requires `Blocking` effect in the caller.
+/// **V1 note:** resolution is synchronous (OS gethostbyname equivalent).
 #stable(since = "0.1")
-export extern "nova" fn SocketAddr.parse(s str) -> Result[SocketAddr, str]
+export fn SocketAddr.from_str(s str) -> Result[SocketAddr, NetError] {
+    ro h = socket_addr_parse(s)
+    if h < 0 { Err(NetError.InvalidAddr(net_last_error())) }
+    else { Ok(SocketAddr { handle: h }) }
+}
 
 /// Get the port number.
 #stable(since = "0.1")
-export extern "nova" fn SocketAddr @port() -> u16
+export fn SocketAddr @port() -> u16 { socket_addr_port(@handle) }
 
 /// Get the host as a human-readable string.
 ///
-/// For IPv4: dotted-decimal notation ("127.0.0.1").
-/// For IPv6: compressed hex notation ("::1").
+/// For IPv4: dotted-decimal ("127.0.0.1"). For IPv6: compressed hex ("::1").
 #stable(since = "0.1")
-export extern "nova" fn SocketAddr @host_str() -> str
-
-/// Return `true` if this is an IPv6 address.
-#stable(since = "0.1")
-export extern "nova" fn SocketAddr @is_v6() -> bool
+export fn SocketAddr @host_str() -> str { socket_addr_host_str(@handle) }
 
 /// Return `true` if this is an IPv4 address.
 #stable(since = "0.1")
-export extern "nova" fn SocketAddr @is_v4() -> bool
+export fn SocketAddr @is_v4() -> bool { socket_addr_is_v4(@handle) }
+
+/// Return `true` if this is an IPv6 address.
+#stable(since = "0.1")
+export fn SocketAddr @is_v6() -> bool { socket_addr_is_v6(@handle) }
 
 /// Return a human-readable "host:port" string.
 #stable(since = "0.1")
-export extern "nova" fn SocketAddr @to_str() -> str
+export fn SocketAddr @to_str() -> str { socket_addr_to_str(@handle) }
+
+// Package-private factory: wrap a C handle (nova_int) into a SocketAddr.
+// Used by tcp.nv / udp.nv handlers which cannot access priv fields directly.
+fn SocketAddr._from_raw(h int) -> SocketAddr => { handle: h }
