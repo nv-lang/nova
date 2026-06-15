@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR [E_INFINITE_TYPE]
+//
+// Q-infinite-value-type (D280 §4) — NEGATIVE: a direct VALUE self-reference.
+//
+//     type N value { next N }
+//
+// A `value` record is laid out INLINE wherever it appears as a field
+// (`NovaValue_N`), with NO pointer indirection. So `N` containing a field of
+// type `N` by value is GENUINELY INFINITE — the layout recurses `N` → `next: N`
+// → `N` → … without bound; there is no finite object size.
+//
+// The dedicated detector (`check_infinite_type` in types/mod.rs) walks the
+// INLINE-containment graph and finds the back-edge `N → next → N`, emitting a
+// clear `E_INFINITE_TYPE` AT TYPE-CHECK TIME (no `size_of` needed to surface
+// it). The message names the type (`N`) + the offending field (`next`) and
+// suggests boxing via sum / Option / `*N` / `[]N`.
+//
+// INTENT: `nova check` EXITS NONZERO with `E_INFINITE_TYPE` on the bare decl.
+
+module plan144_inftype.neg_direct_self
+
+// Genuinely-infinite value self-cycle (no boxing). Reported at check time.
+type N value { next N }

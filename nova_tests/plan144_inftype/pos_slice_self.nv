@@ -1,0 +1,25 @@
+// Q-infinite-value-type (D280 §4) — POSITIVE: a value record self-referencing
+// THROUGH a slice `[]T`. MUST `nova check` PASS — NO `E_INFINITE_TYPE`.
+//
+//     type SNode value { val int, kids []SNode }
+//
+// A slice `[]SNode` is a {ptr,len} fat reference whose elements live on the heap
+// (emit_c lowers a Vec field to a single heap pointer) — INDIRECTION. The `kids`
+// field is NOT an inline `SNode`, so the layout is FINITE (contrast the
+// `neg_in_fixed_array.nv` negative, where `[4]SNode` IS inline). The detector's
+// `TypeRef::Array` (slice) arm STOPs (returns None), so it must NOT report
+// `E_INFINITE_TYPE`. This is the n-ary tree-via-slice shape.
+
+module plan144_inftype.pos_slice_self
+
+type SNode value {
+    val  int
+    kids []SNode
+}
+
+fn val_of(n SNode) -> int => n.val
+
+test "value record self-referencing through slice — finite" {
+    ro leaf = SNode { val: 5, kids: [] }
+    assert(val_of(leaf) == 5)
+}

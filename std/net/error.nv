@@ -11,7 +11,7 @@
 // All variants are added to RUNTIME_DEFINED_TYPES in emit_c.rs so that
 // codegen skips re-emitting the struct.
 
-module net.error
+module std.net
 
 /// Network error returned by TCP/UDP operations.
 ///

@@ -1,0 +1,46 @@
+# nova.toml — Q-infinite-value-type (D280 §4) `E_INFINITE_TYPE` fixtures.
+#
+# Drives the dedicated value-containment-cycle detector added in
+# `compiler-codegen/src/types/mod.rs` (`check_infinite_type` / `infinite_dfs`,
+# invoked from `check_type_decl`). The detector reports a clear `E_INFINITE_TYPE`
+# diagnostic AT TYPE-CHECK TIME for a genuinely-infinite VALUE type — one whose
+# layout transitively embeds itself through INLINE edges only, with NO
+# pointer/heap/slice/Option indirection to break the cycle.
+#
+# The inline-vs-indirection classification MIRRORS the const_fn_eval size walk
+# (`type_size_or_align_resolved`, post-D280):
+#   INLINE (carries a cycle): value record / named-tuple / newtype / alias-to-
+#     value; tuples; fixed-arrays of inline types.
+#   INDIRECTION (breaks the cycle → finite): a HEAP type (Sum is ALWAYS heap;
+#     a Record with `allocation.is_heap()`), a pointer `*T`, a slice `[]T`/Array,
+#     `str`, `Option[..]` (boxes), primitives.
+#
+# NEGATIVE fixtures (`EXPECT_COMPILE_ERROR [E_INFINITE_TYPE]`, nonzero exit):
+#   * neg_direct_self.nv      — direct value self-ref `type N value { next N }`.
+#   * neg_mutual_cycle.nv     — mutual value cycle A↔B (both decls in one file).
+#   * neg_in_tuple.nv         — value self-ref nested inside a TUPLE field.
+#   * neg_in_fixed_array.nv   — value self-ref nested inside a FIXED-ARRAY field.
+#   * neg_newtype_self.nv     — value-record reached via a newtype on the cycle.
+#
+# POSITIVE fixtures (`nova check` PASSES — NO `E_INFINITE_TYPE`):
+#   * pos_heap_sum_embed.nv   — `type H { t Tree }` with recursive heap sum Tree.
+#   * pos_option_list.nv      — linked list through `Option` (boxes → finite).
+#   * pos_pointer_self.nv     — value record self-ref THROUGH a pointer `*T`.
+#   * pos_slice_self.nv       — value record self-ref THROUGH a slice `[]T`.
+#   * pos_sum_list.nv         — linked list through a recursive sum (heap-boxed).
+#   * pos_plain_value.nv      — ordinary value records / tuples (no cycle).
+#
+# package name = "plan144_inftype" matches `module plan144_inftype.<file>`
+# (D78: package + src="." → module identity unchanged). Mirrors the sibling
+# `plan144_checker` / `plan144_1` convention.
+
+[package]
+name = "plan144_inftype"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "Q-infinite-value-type: E_INFINITE_TYPE neg (infinite value cycle) + pos (valid recursive heap)"
+
+[lib]
+src = "."
+
+[dependencies]

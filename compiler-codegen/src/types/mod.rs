@@ -3826,6 +3826,262 @@ impl<'a> TypeCheckCtx<'a> {
                 ));
             }
         }
+        // Q-infinite-value-type (D280 §4): genuinely-infinite VALUE types —
+        // a value record / named-tuple / newtype / alias whose layout transitively
+        // contains ITSELF through INLINE edges only (no pointer/heap/slice/Option
+        // indirection). Such a type has no finite object layout. The const_fn_eval
+        // size walk degrades gracefully (depth-guard → None, surfaced only when
+        // `size_of` forces it); this dedicated check reports it at type-check time.
+        self.check_infinite_type(td, errors);
+    }
+
+    /// Q-infinite-value-type (D280 §4): report an `E_INFINITE_TYPE` diagnostic
+    /// when this value type's layout transitively embeds itself through INLINE
+    /// edges only — i.e. there is a value-containment cycle with no
+    /// pointer/heap/slice/Option indirection to break it.
+    ///
+    /// The INLINE-vs-INDIRECTION classification MIRRORS
+    /// `const_fn_eval::type_size_or_align_resolved_d` (post-D280):
+    ///   - INLINE (recurse, can carry a cycle): a field whose named type is a
+    ///     VALUE record / named-tuple / newtype / alias-to-value; tuples;
+    ///     fixed-arrays of inline types; transparent `ro`/`mut`/`unsafe`
+    ///     wrappers over an inline type.
+    ///   - INDIRECTION (STOP — finite, breaks the cycle): a HEAP type (Sum is
+    ///     ALWAYS heap; a Record with `td.allocation.is_heap()`), a pointer
+    ///     `*T`, a slice `[]T`/Array, `str`, any generics-carrying Named
+    ///     (`Option[..]`/`Vec[..]`/`Wrapper[..]` — they box / are not inlined
+    ///     by the size walk), primitives, `Unit`, `Func`, `Protocol`.
+    ///
+    /// Detect with a DFS over the inline-containment graph keyed by type name,
+    /// with an on-path set (mirrors `type_is_consume_v`'s visited-set, except we
+    /// only follow inline edges and report on a back-edge into a node already on
+    /// the current path). Catches direct self-cycles (`type N value { next N }`)
+    /// and mutual cycles (`type A value { b B }` + `type B value { a A }`).
+    ///
+    /// Only types DECLARED in entry-peer files (the user's own source) are
+    /// reported — a cycle is reported once, on the decl currently being checked,
+    /// when the DFS starting at `td` revisits `td` itself. Reporting on the
+    /// entry node (rather than every node on the cycle) keeps the diagnostic
+    /// stable and avoids duplicate errors for mutual cycles (each peer reports
+    /// its own self-reaching path).
+    fn check_infinite_type(&self, td: &TypeDecl, errors: &mut Vec<Diagnostic>) {
+        // Only value records / named-tuples / newtypes / aliases can be the
+        // *subject* of a value-containment cycle. A heap record / sum boxes to a
+        // pointer and is never inlined into a field, so it can never close a
+        // cycle (it is an INDIRECTION boundary). Skip everything else fast.
+        let subject_inlineable = match &td.kind {
+            TypeDeclKind::Record(_) => !td.allocation.is_heap(),
+            TypeDeclKind::NamedTuple(_) | TypeDeclKind::Newtype(_) | TypeDeclKind::Alias(_) => true,
+            _ => false,
+        };
+        if !subject_inlineable {
+            return;
+        }
+        // Generic params of the decl under check — a bare param `T` is not a
+        // user type and cannot close a value cycle (mirrors the size walk, which
+        // has no entry for an unresolved param → None).
+        let mut gs: HashSet<String> = HashSet::new();
+        for g in &td.generics {
+            gs.insert(g.name.clone());
+        }
+        // DFS over the inline-containment graph starting at `td.name`. `on_path`
+        // is the set of type names currently on the DFS stack; a back-edge into
+        // a node on the path is a cycle. We only care whether the cycle passes
+        // through `td.name` (the subject) — if so, `td` is infinite.
+        let mut on_path: HashSet<String> = HashSet::new();
+        // The field whose type carries the back-edge to `td` — captured for the
+        // diagnostic span + message. `(field_label, field_ty)`.
+        let root = td.name.clone();
+        on_path.insert(root.clone());
+        for (label, field_ty, _path_segs) in Self::inline_fields_of(td) {
+            if let Some(offender_span) =
+                self.infinite_dfs(field_ty, &root, &mut on_path, &gs)
+            {
+                // Found a value-containment cycle reaching `td` through INLINE
+                // edges only. Report once, on the offending field of `td`.
+                let field_ty_str = Self::typeref_display(field_ty);
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_INFINITE_TYPE] value type `{name}` has infinite size: \
+                         field `{label}` of type `{fty}` contains `{name}` by value \
+                         (no pointer/heap indirection), so the layout recurses without \
+                         bound. Break the cycle with indirection: box it behind a sum \
+                         variant (sums are always heap), wrap the field in `Option[{fty}]`, \
+                         use a pointer `*{fty}`, or a slice `[]{fty}`.",
+                        name = td.name,
+                        label = label,
+                        fty = field_ty_str,
+                    ),
+                    offender_span,
+                ));
+                // One diagnostic per offending decl is enough — the first inline
+                // field that closes a cycle is the actionable site. (A type with
+                // several independent cyclic fields still gets reported via the
+                // first; fixing it re-runs the check.)
+                break;
+            }
+        }
+    }
+
+    /// Q-infinite-value-type: the INLINE-edge field list of a value-carrying
+    /// `TypeDecl` — the contained types that participate in the value layout.
+    /// Returns `(field_label, &TypeRef, ())` for each inline edge. Heap records
+    /// and sums are NOT subjects here (handled by the caller's gate), so this
+    /// only enumerates value Record / NamedTuple / Newtype / Alias contents.
+    fn inline_fields_of(td: &TypeDecl) -> Vec<(String, &TypeRef, ())> {
+        match &td.kind {
+            TypeDeclKind::Record(fields) => fields
+                .iter()
+                .map(|f| (f.name.clone(), &f.ty, ()))
+                .collect(),
+            TypeDeclKind::NamedTuple(fields) => fields
+                .iter()
+                .map(|f| (f.name.clone(), &f.ty, ()))
+                .collect(),
+            TypeDeclKind::Newtype(inner) => vec![("(0)".to_string(), inner, ())],
+            TypeDeclKind::Alias(inner) => vec![("(alias)".to_string(), inner, ())],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Q-infinite-value-type: DFS over the inline-containment graph from a single
+    /// field `TypeRef`. Returns `Some(span)` of the offending TypeRef if a value
+    /// cycle reaching `root` (through INLINE edges only) is found, else `None`.
+    /// `on_path` holds the type names currently on the DFS stack. `gs` is the set
+    /// of generic-param names of the root decl (bare params are STOP leaves).
+    ///
+    /// Classification mirrors `type_size_or_align_resolved_d` exactly: see the
+    /// per-`TypeRef` arms below. STOP arms return `None` (finite, breaks cycle);
+    /// INLINE arms recurse; reaching a Named that resolves to `root` (or any node
+    /// already on `on_path`, which transitively reaches `root`) is the cycle.
+    fn infinite_dfs(
+        &self,
+        t: &TypeRef,
+        root: &str,
+        on_path: &mut HashSet<String>,
+        gs: &HashSet<String>,
+    ) -> Option<Span> {
+        match t {
+            TypeRef::Named { path, generics, span } => {
+                // Mirror the size walk's inline Named arm gate exactly:
+                // ONLY `path.len() == 1 && generics.is_empty()` is inlined.
+                // A module-qualified path (len > 1) OR any non-empty generics
+                // (Option[..]/Vec[..]/Wrapper[..]) falls to the size walk's
+                // `_ => None` → INDIRECTION/finite here. STOP.
+                if path.len() != 1 || !generics.is_empty() {
+                    return None;
+                }
+                let name = &path[0];
+                // Bare generic-param of the root decl — not a user type. STOP.
+                if gs.contains(name) {
+                    return None;
+                }
+                // Primitives are finite leaves (and are NOT in self.types). STOP.
+                if Self::is_primitive_type_name(name) {
+                    return None;
+                }
+                // A back-edge into a node already on the DFS path → cycle. Every
+                // node on `on_path` transitively reaches `root` (the path was
+                // grown from `root`), so reaching any of them means `root` is on
+                // an inline cycle. Report at this field's span.
+                if on_path.contains(name) {
+                    return Some(*span);
+                }
+                // Resolve the named TypeDecl. Unresolvable → STOP (the size walk
+                // returns None there; a false positive would violate the
+                // zero-false-positive gate).
+                let td = match self.types.get(name).copied() {
+                    Some(td) => td,
+                    None => return None,
+                };
+                // BOXING short-circuit — the load-bearing branch. A Sum is ALWAYS
+                // heap; a Record is indirection iff `td.allocation.is_heap()`.
+                // Either way the reference is an 8-byte pointer leaf → finite,
+                // BREAKS the cycle. STOP. (Mirrors size walk lines 1147-1152.)
+                let boxed_to_pointer = matches!(&td.kind, TypeDeclKind::Sum(_))
+                    || (matches!(&td.kind, TypeDeclKind::Record(_)) && td.allocation.is_heap());
+                if boxed_to_pointer {
+                    return None;
+                }
+                // INLINE: value Record / NamedTuple / Newtype / Alias. Recurse
+                // into its contained types, with `name` pushed on the path.
+                on_path.insert(name.clone());
+                let mut found = None;
+                for (_label, field_ty, _seg) in Self::inline_fields_of(td) {
+                    if let Some(s) = self.infinite_dfs(field_ty, root, on_path, gs) {
+                        found = Some(s);
+                        break;
+                    }
+                }
+                on_path.remove(name);
+                found
+            }
+            // Tuples: INLINE of each element (size walk recurses each elem).
+            TypeRef::Tuple(elems, _) => {
+                for e in elems {
+                    if let Some(s) = self.infinite_dfs(e, root, on_path, gs) {
+                        return Some(s);
+                    }
+                }
+                None
+            }
+            // Fixed array `[n]T`: n inline copies of T → INLINE-recurse the elem
+            // regardless of n (even one inline copy closes a cycle).
+            TypeRef::FixedArray(_, elem, _) => self.infinite_dfs(elem, root, on_path, gs),
+            // Transparent wrappers — recurse inner, preserve its inline/indirection
+            // nature (`ro T`/`mut T`/`unsafe T`). The OUTER Pointer of `*ro T`
+            // etc. has already stopped before reaching these.
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _) => self.infinite_dfs(inner, root, on_path, gs),
+            // Pointer `*T` (any pointee) — always 8 bytes. INDIRECTION. STOP.
+            TypeRef::Pointer(_, _) => None,
+            // Slice `[]T` — 16-byte {ptr,len}. INDIRECTION. STOP.
+            TypeRef::Array(_, _) => None,
+            // Unit / Func / Protocol — finite leaves / existentials. STOP.
+            TypeRef::Unit(_) | TypeRef::Func { .. } | TypeRef::Protocol { .. } => None,
+        }
+    }
+
+    /// Q-infinite-value-type: primitive type names that are finite leaves and
+    /// are NOT present in `self.types` (mirrors the size walk's primitive table).
+    #[inline]
+    fn is_primitive_type_name(name: &str) -> bool {
+        matches!(
+            name,
+            "int" | "i64" | "u64" | "f64" | "i32" | "u32" | "f32" | "i16" | "u16"
+                | "i8" | "u8" | "uint" | "bool" | "char" | "str"
+        )
+    }
+
+    /// Q-infinite-value-type: compact display of a `TypeRef` for the diagnostic
+    /// message (`Option[Node]`, `*Node`, `[]Node`, `Node`). Best-effort — only
+    /// the common shapes; falls back to the leading segment name.
+    fn typeref_display(t: &TypeRef) -> String {
+        match t {
+            TypeRef::Named { path, generics, .. } => {
+                let base = path.join(".");
+                if generics.is_empty() {
+                    base
+                } else {
+                    let args: Vec<String> = generics.iter().map(Self::typeref_display).collect();
+                    format!("{}[{}]", base, args.join(", "))
+                }
+            }
+            TypeRef::Array(inner, _) => format!("[]{}", Self::typeref_display(inner)),
+            TypeRef::FixedArray(n, inner, _) => format!("[{}]{}", n, Self::typeref_display(inner)),
+            TypeRef::Pointer(inner, _) => format!("*{}", Self::typeref_display(inner)),
+            TypeRef::Readonly(inner, _) => format!("ro {}", Self::typeref_display(inner)),
+            TypeRef::Mut(inner, _) => format!("mut {}", Self::typeref_display(inner)),
+            TypeRef::Unsafe(inner, _) => format!("unsafe {}", Self::typeref_display(inner)),
+            TypeRef::Tuple(elems, _) => {
+                let parts: Vec<String> = elems.iter().map(Self::typeref_display).collect();
+                format!("({})", parts.join(", "))
+            }
+            TypeRef::Unit(_) => "()".to_string(),
+            TypeRef::Func { .. } => "fn(..)".to_string(),
+            TypeRef::Protocol { .. } => "<protocol>".to_string(),
+        }
     }
 
     /// Plan 91.12 V2 followup #3 (2026-06-02): thin wrapper над

@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR [E_INFINITE_TYPE]
+//
+// Q-infinite-value-type (D280 §4) — NEGATIVE: a MUTUAL value-containment cycle.
+//
+//     type A value { b B }
+//     type B value { a A }
+//
+// Neither field carries indirection — `A` inlines a `B`, `B` inlines an `A`, so
+// the combined layout recurses `A → b: B → a: A → …` without bound. The cycle
+// passes through two distinct value records (mutual recursion), not a single
+// self-reference, and the detector's DFS-with-on-path-set catches it the same
+// way: starting at `A`, it follows the inline edge into `B`, then `B`'s inline
+// edge back into `A` (already on the path) → cycle.
+//
+// Both decls live in ONE file so a single-file `nova check` resolves the peer
+// type. At least one of `A`/`B` MUST report `E_INFINITE_TYPE`.
+//
+// INTENT: `nova check` EXITS NONZERO with `E_INFINITE_TYPE`.
+
+module plan144_inftype.neg_mutual_cycle
+
+type A value { b B }
+
+type B value { a A }
