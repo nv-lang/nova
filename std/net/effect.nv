@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.12 Ф.2: std/net effect family — TcpNet / UdpNet / DnsNet.
+//
+// Effects provide a mockable dispatch point for network operations.
+// Concrete handlers: real_tcp_net() / real_udp_net() / real_dns_net()
+// (defined in tcp.nv / udp.nv / dns.nv respectively).
+//
+// Effect operations take/return public Nova value types (SocketAddr, etc.),
+// not raw C handles. Handlers unwrap/wrap .handle internally.
+//
+// All operations return Result[T, NetError] so error handling is explicit
+// and uniform at the call site. Blocking annotation lives on the public
+// API wrappers in tcp.nv / udp.nv, not on the effect operations themselves.
+//
+// D281: TcpNet/UdpNet/DnsNet effect family spec.
+
+module std.net
+
+// TcpNet -- TCP transport operations.
+//
+// All operations return Result[T, NetError].
+// Blocking operations (accept, connect, write) park the calling fiber;
+// the caller declares `Blocking` on the public API wrapper.
+#stable(since = "0.1")
+export type TcpNet effect {
+    bind(addr SocketAddr) -> Result[TcpListener, NetError]
+    accept(mut listener TcpListener) -> Result[TcpStream, NetError]
+    connect(addr SocketAddr) -> Result[TcpStream, NetError]
+    write(mut stream TcpStream, data str) -> Result[int, NetError]
+    close_stream(consume stream TcpStream) -> ()
+    close_listener(consume listener TcpListener) -> ()
+    // Socket options -- implemented in Ph.6; stubs in real_tcp_net for now.
+    set_nodelay(mut stream TcpStream, on bool) -> ()
+    set_keepalive(mut stream TcpStream, on bool) -> ()
+    set_reuse_address(mut listener TcpListener, on bool) -> ()
+}
+
+// UdpNet -- UDP datagram transport.
+//
+// recv_from returns Result[(data, sender), NetError] atomically.
+#stable(since = "0.1")
+export type UdpNet effect {
+    bind(addr SocketAddr) -> Result[UdpSocket, NetError]
+    send_to(mut sock UdpSocket, data str, addr SocketAddr) -> Result[int, NetError]
+    recv_from(mut sock UdpSocket, max int) -> Result[(str, SocketAddr), NetError]
+    close_socket(consume sock UdpSocket) -> ()
+}
+
+// DnsNet -- async DNS resolution. Implemented in Ph.5 (dns.nv).
+// Commented out until []SocketAddr Vec monomorphization is stable.
+// export type DnsNet effect {
+//     lookup(host str, port u16) -> []SocketAddr
+// }

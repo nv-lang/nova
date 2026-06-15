@@ -2041,6 +2041,13 @@ int nova_loop_defer_close(uv_loop_t* loop,
     }
 
     if (!q || !wake) {
+        /* Cooperative single-thread path: _main_wake not inited (no workers
+         * spawned), but the loop IS the main event loop — uv_close is safe
+         * because we are on the main thread and no cross-thread races exist. */
+        if (!_main_wake_inited && loop == nova_evloop()) {
+            uv_close(handle, close_cb);
+            return 0;
+        }
         /* Unknown loop — caller bug. Fall back to direct close as last resort
          * (best-effort; may be UB if cross-thread, but better than assert). */
         fprintf(stderr,

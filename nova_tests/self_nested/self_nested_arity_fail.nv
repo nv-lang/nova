@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR expects 3 type arguments
+//
+// NEGATIVE guard for [M-138.2-self-in-param] (Ф.6 / G-E, plan 138.4).
+//
+// The fix makes `Self` resolve as a nested type-argument of a host generic
+// (`-> MapIt[Self, U, V]`). This fixture proves the host generic STILL enforces
+// its arity even when `Self` is one of the arguments: `MapIt` takes 3 type args,
+// so `MapIt[Self]` (one arg) MUST be rejected — the Self-substitution does not
+// bypass arity checking. Error: [E7310] type `MapIt` expects 3 type arguments.
+module self_nested.self_nested_arity_fail
+
+type MapIt[I, T, U] value { mut src I, priv f fn(T) -> U }
+
+// `MapIt[Self]` — Self is fine, but MapIt needs 3 type args, given 1.
+fn MapIt[I, T, U] @bad() -> MapIt[Self] => @
+
+test "unreachable — codegen must fail before running" {
+    assert(true)
+}
