@@ -11487,6 +11487,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     }
                     // Same condition as emit_type_decl erased field → void* arm (lines 3666-3670)
                     if let TypeRef::Named { path, generics, .. } = &fld.ty {
+                        if path.len() == 1 && generics.is_empty() && type_params.contains(&path[0]) {
+                            // Plan 162 fix: bare type-param field (e.g. `src I` in
+                            // `EnumerateIter[I, T]`). In erased form this becomes `void*`,
+                            // and the erased body would call methods on that void* (e.g.
+                            // `@src.next()`) and produce wrong return-type casts.
+                            // Route to stub — the monomorphized path generates correct code.
+                            return true;
+                        }
                         path.len() >= 1
                         && !generics.is_empty()
                         && generics.iter().any(|g| Self::type_ref_uses_any_type_param(g, &type_params))

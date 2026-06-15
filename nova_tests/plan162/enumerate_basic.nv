@@ -1,0 +1,68 @@
+module plan162.enumerate_basic
+
+import std.collections.vec_iter_zc
+
+// ── core zenumerate tests ─────────────────────────────────────────────────────
+// All tests use patterns that work with the current codegen:
+// - zcount (direct terminator, works)
+// - zfilter (concrete method with explicit tuple param, works)
+// - ztake (concrete adapter, works)
+// Patterns that require tuple-type propagation to closure params
+// (zmap, zfold, zfor_each on EnumerateIter) are gated on a codegen fix.
+
+test "zenumerate on plain VecIter — zcount equals source length" {
+    ro v = Vec[int].from([10, 20, 30])
+    ro n = v.ziter().zenumerate().zcount()
+    assert(n == 3)
+}
+
+test "zenumerate on empty vec yields empty — zcount is 0" {
+    ro v = Vec[int].from([])
+    ro n = v.ziter().zenumerate().zcount()
+    assert(n == 0)
+}
+
+test "zenumerate after zmap — index restarts at 0, zcount correct" {
+    ro v = Vec[int].from([1, 2, 3])
+    // map then enumerate: still 3 pairs
+    ro n = v.ziter().zmap(|x| x * 10).zenumerate().zcount()
+    assert(n == 3)
+}
+
+test "zenumerate after zfilter — zcount reflects filtered stream" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro n = v.ziter().zfilter(|x| x % 2 == 0).zenumerate().zcount()
+    assert(n == 3)
+}
+
+test "zenumerate then zfilter on index — even-indexed pairs only" {
+    ro v = Vec[int].from([10, 20, 30, 40, 50])
+    ro n = v.ziter().zenumerate().zfilter(|p| p.0 % 2 == 0).zcount()
+    assert(n == 3)
+}
+
+test "zenumerate then zfilter on value — odd-valued pairs" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    // filter keeps pairs where value (p.1) is odd: (0,1),(2,3),(4,5)
+    ro n = v.ziter().zenumerate().zfilter(|p| p.1 % 2 == 1).zcount()
+    assert(n == 3)
+}
+
+test "zenumerate then ztake limits output" {
+    ro v = Vec[int].from([7, 8, 9, 10, 11])
+    ro n = v.ziter().zenumerate().ztake(3).zcount()
+    assert(n == 3)
+}
+
+test "zenumerate zcount works via blanket terminator — 4 elements" {
+    ro v = Vec[int].from([5, 6, 7, 8])
+    ro n = v.ziter().zenumerate().zcount()
+    assert(n == 4)
+}
+
+test "zenumerate filter then ztake chain" {
+    ro v = Vec[int].from([2, 4, 6, 8, 10, 12])
+    // filter evens (all), enumerate, take 3 → 3 pairs
+    ro n = v.ziter().zfilter(|x| x % 2 == 0).zenumerate().ztake(3).zcount()
+    assert(n == 3)
+}
