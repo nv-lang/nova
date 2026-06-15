@@ -2,8 +2,16 @@
 # Plan 124 — Private field visibility (`priv` modifier для records + named tuples)
 
 > **Создан 2026-06-01.**
-> **Status:** 🆕 PLANNED — roadmap-индекс. Декомпозирован на 7
-> sub-plan'ов (124.1-124.7) per §6 «split». Каждый sub-plan
+> **Status:** 🟡 ACTIVE — 124.1 landed (D220 core); sub-plans 124.2-124.7 in progress.
+>
+> **D220 Addendum (2026-06-15):**
+> - **§3 Cross-instance access:** `fn T @eq(other T) -> bool => @f == other.f` — доступ к `priv(type)` полям *другого экземпляра того же типа* разрешён внутри метода. Privacy scope = тип, не экземпляр. Зафиксировано в D220 §3 + тест `priv_cross_instance_ok.nv`.
+> - **§5 Priv = организация, не security:** `priv(type)` — организационный инструмент против случайного обращения. Намеренный accessor (`fn T @expose() -> int => @field`) легален. Настоящая граница — модуль (D281). Зафиксировано в D220 §5 + тест `priv_intentional_expose_ok.nv`.
+> - **E_PRIV_PUB_CONFLICT regression fix:** D281 symmetry fix сломал обнаружение `priv pub f` — давал "expected identifier" вместо E_PRIV_PUB_CONFLICT. Исправлено в парсере (commit `7df86dff`).
+> - **plan124_1 migration:** 4 neg-теста мигрированы `priv` → `priv(type)` (field-level bare `priv` теперь module-private по D281, в том же модуле доступно).
+> - **plan124_1: 12/12 PASS** (release nova + C-codegen).
+>
+> **Декомпозирован на 7 sub-plan'ов (124.1-124.7)** per §6 «split». Каждый sub-plan
 > independently shippable; release-train V1→V7 incremental.
 > **Приоритет:** P1 (V1 = 124.1 — foundational; closes major
 > OOP-grade gap; current Nova fields all-public — нет API boundary
