@@ -3419,7 +3419,7 @@ impl Parser {
         // модификатор получает rank по своему scope и автоматически попадает
         // в проверку монотонности (никаких произвольных синонимичных порядков).
         let mut consume_marker = false;
-        let mut default_field_priv = false;
+        let mut field_default_visibility = crate::ast::FieldDefaultVisibility::Public;
         let mut allocation = crate::ast::AllocKind::Heap;
         // (rank, lexeme, token-span) для каждого встреченного модификатора,
         // в порядке появления в исходнике.
@@ -3434,13 +3434,33 @@ impl Parser {
                 seen_mods.push((1, "consume", sp));
                 continue;
             }
-            if !default_field_priv
+            if matches!(field_default_visibility, crate::ast::FieldDefaultVisibility::Public)
                 && matches!(self.peek().kind, TokenKind::KwPriv)
             {
                 let sp = self.peek().span;
                 self.bump();
-                default_field_priv = true;
-                seen_mods.push((2, "priv", sp));
+                // Plan 160 (D281): `priv(module)` — module-level field visibility.
+                // Peek ahead: if `(` follows, consume `(module)` → Module variant;
+                // otherwise fall back to Private (priv без qualifier, D220).
+                if matches!(self.peek().kind, TokenKind::LParen) {
+                    self.bump(); // consume `(`
+                    if !matches!(self.peek().kind, TokenKind::KwModule) {
+                        let bad_sp = self.peek().span;
+                        return Err(crate::diag::Diagnostic::new(
+                            "[E_PRIV_QUALIFIER] expected `module` inside `priv(…)` \
+                             — the only supported qualifier is `priv(module)`. \
+                             See D281 (spec/decisions/02-types.md).",
+                            bad_sp,
+                        ));
+                    }
+                    self.bump(); // consume `module`
+                    self.expect(&TokenKind::RParen)?;
+                    field_default_visibility = crate::ast::FieldDefaultVisibility::Module;
+                    seen_mods.push((2, "priv(module)", sp));
+                } else {
+                    field_default_visibility = crate::ast::FieldDefaultVisibility::Private;
+                    seen_mods.push((2, "priv", sp));
+                }
                 continue;
             }
             // Plan 124.8: `value` — contextual keyword (Ident match,
@@ -3593,7 +3613,7 @@ impl Parser {
                 invariants: Vec::new(),
                 axioms: Vec::new(),
                 consume: consume_marker,
-                default_field_priv,
+                field_default_visibility,
                 allocation,
                 zero_on_move,
             });
@@ -3666,7 +3686,7 @@ impl Parser {
                     invariants: Vec::new(),
                     axioms: Vec::new(),
                     consume: false,
-                    default_field_priv: false,
+                    field_default_visibility: crate::ast::FieldDefaultVisibility::Public,
                     allocation: crate::ast::AllocKind::Heap,
                     impl_protocols: impl_protocols.clone(),
                     zero_on_move,
@@ -3713,7 +3733,7 @@ impl Parser {
             TokenKind::LBrace => {
                 self.bump();
                 // Plan 124 (D220): pass type-level default visibility to field parser.
-                let (fields, acs) = self.parse_record_fields_with_default(default_field_priv)?;
+                let (fields, acs) = self.parse_record_fields_with_default(field_default_visibility)?;
                 assoc_consts.extend(acs);
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Record(fields)
@@ -3729,10 +3749,10 @@ impl Parser {
             //
             // Plan 124.7 (D225): `type Vec3 priv (x f64, y f64, z f64)` —
             // type-level priv default flip для tuple form (extends D220
-            // record form). default_field_priv pass'ится в field parser.
+            // record form). field_default_visibility pass'ится в field parser.
             TokenKind::LParen if self.is_named_tuple_decl() => {
                 self.bump(); // consume `(`
-                let fields = self.parse_named_tuple_fields_with_default(default_field_priv)?;
+                let fields = self.parse_named_tuple_fields_with_default(field_default_visibility)?;
                 self.expect(&TokenKind::RParen)?;
                 TypeDeclKind::NamedTuple(fields)
             }
@@ -3793,7 +3813,7 @@ impl Parser {
             invariants,
             axioms: effect_axioms,
             consume: consume_marker,
-            default_field_priv,
+            field_default_visibility,
             allocation,
             impl_protocols,
             zero_on_move,
@@ -3863,10 +3883,10 @@ impl Parser {
     }
 
     /// Plan 120 (D215): parse `name1 T1, name2 T2, ...` inside `(...)`.
-    /// Backward-compat shim — calls parse_named_tuple_fields_with_default(false).
+    /// Backward-compat shim — calls parse_named_tuple_fields_with_default(Public).
     #[allow(dead_code)]
     fn parse_named_tuple_fields(&mut self) -> Result<Vec<NamedTupleField>, Diagnostic> {
-        self.parse_named_tuple_fields_with_default(false)
+        self.parse_named_tuple_fields_with_default(crate::ast::FieldDefaultVisibility::Public)
     }
 
     /// Plan 120 (D215) — base parser for named tuple fields.
@@ -3878,18 +3898,18 @@ impl Parser {
     /// - `mut`/`ro` per-field modifiers → `E_TUPLE_NO_PER_FIELD_MOD`
     ///   (mutability — binding-level only, как Rust).
     ///
-    /// `default_priv` parameter сохранён для backward-compat shim — но
-    /// после retract D225 всегда должен быть false (parser-level check).
+    /// `default_vis` parameter — type-level FieldDefaultVisibility. After
+    /// D225 retract, priv/priv(module) на tuples — error (tuples all-public).
     /// Called after consuming `(`. Stops before `)`.
-    fn parse_named_tuple_fields_with_default(&mut self, default_priv: bool) -> Result<Vec<NamedTupleField>, Diagnostic> {
+    fn parse_named_tuple_fields_with_default(&mut self, default_vis: crate::ast::FieldDefaultVisibility) -> Result<Vec<NamedTupleField>, Diagnostic> {
         let mut fields: Vec<NamedTupleField> = Vec::new();
-        // Plan 124.8: post-D225 retract, default_priv must always be false.
-        // If a caller passes true, that's a bug in caller (type-level priv flip
-        // для tuples retracted). Defensive assert — emit error if reached.
-        if default_priv {
+        // Plan 124.8: post-D225 retract, type-level priv/priv(module) not allowed для tuples.
+        // If a caller passes non-Public, that's a bug in caller (type-level priv flip
+        // для tuples retracted). Defensive check — emit error if reached.
+        if !matches!(default_vis, crate::ast::FieldDefaultVisibility::Public) {
             let sp = self.peek().span;
             return Err(Diagnostic::new(
-                "[E_TUPLE_NO_PRIV] type-level `priv` flip для named tuples retracted \
+                "[E_TUPLE_NO_PRIV] type-level `priv` / `priv(module)` flip для named tuples retracted \
                  в Plan 124.8 (D225 superseded). Tuples всегда all-public. Use \
                  `type X value priv { ... }` для stack-allocated record с priv (D226).",
                 sp,
@@ -4009,15 +4029,15 @@ impl Parser {
     /// НЕ в instance layout, accessible через namespace `Type.NAME`.
     fn parse_record_fields(&mut self) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
         // Backward-compat shim: existing call sites still call без default_priv;
-        // default_priv = false (public default — D47 unchanged).
-        self.parse_record_fields_with_default(false)
+        // default = Public (D47 unchanged).
+        self.parse_record_fields_with_default(crate::ast::FieldDefaultVisibility::Public)
     }
 
-    /// Plan 124 (D220): parse record fields с type-level default visibility.
-    /// `default_priv` приходит из `type X priv { ... }` syntax (parse_type_decl
-    /// after type-level marker parsing); если `false` — fields default = public
+    /// Plan 124 (D220) / Plan 160 (D281): parse record fields с type-level default visibility.
+    /// `default_vis` приходит из `type X priv { ... }` / `type X priv(module) { ... }` syntax
+    /// (parse_type_decl after type-level marker parsing); Public = fields default = public
     /// (D47 unchanged). Field-level explicit `priv`/`pub` override default.
-    fn parse_record_fields_with_default(&mut self, default_priv: bool) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
+    fn parse_record_fields_with_default(&mut self, default_vis: crate::ast::FieldDefaultVisibility) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
         let mut fields = Vec::new();
         let mut assoc_consts = Vec::new();
         self.skip_newlines();
@@ -4146,9 +4166,22 @@ impl Parser {
             }
             // Suppress potential mut-warning for explicit_pub/explicit_priv re-eats.
             let _ = (&mut explicit_priv, &mut explicit_pub);
-            let field_priv = if explicit_priv { true }
-                             else if explicit_pub { false }
-                             else { default_priv };
+            // Plan 160 (D281): resolve effective field privacy.
+            // Explicit `priv` → type-private; explicit `pub` → public;
+            // neither → inherit from type-level FieldDefaultVisibility.
+            // Module variant treated as type-private at field level for now
+            // (checker enforces module-boundary in Ф.2+).
+            let field_priv = if explicit_priv {
+                true
+            } else if explicit_pub {
+                false
+            } else {
+                matches!(
+                    default_vis,
+                    crate::ast::FieldDefaultVisibility::Private
+                        | crate::ast::FieldDefaultVisibility::Module
+                )
+            };
 
             let mut readonly = false;
             let mut mutable = false;
