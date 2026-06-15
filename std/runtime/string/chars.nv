@@ -21,7 +21,7 @@ import std.prelude.core.{Option, Some, None}
 // would invite the `for i in 0..len { at(i) }` = O(n²) footgun that we removed
 // from `str[i]` (invariant I2 "no hidden O(n)"). Mirrors Rust `str::chars()`.
 //
-// `value priv` (D250): the iterator holds `buf` (the source str, an alias of the
+// `value priv(type)` (D250, Plan 160 D281 amend): the iterator holds `buf` (the source str, an alias of the
 // same UTF-8 buffer — conservative GC sees `ptr` through the str field and keeps
 // the buffer alive) + `pos` (current byte offset). No priv-poking, no `unsafe`:
 // decoding reads bytes via the public zero-copy `buf.as_bytes()` view.
@@ -31,7 +31,7 @@ import std.prelude.core.{Option, Some, None}
 // needs (for-in `NovaValue_*` iterator-struct derivation + by-pointer `&it` for
 // `mut @next()`; value-record self-return deref for `@iter() => @`, which also
 // fixes `[M-138.2-vec-self-return]`).
-export type CharsIter value priv {
+export type CharsIter value priv(type) {
     buf str    // borrows str (alias of the buffer; GC sees ptr through the field)
     pos int    // current byte offset into buf
 }

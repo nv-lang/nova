@@ -170,7 +170,7 @@ export type Error {
 /// **Lang-item (Plan 139.1):** `str` — это полноценный Nova value-record,
 /// а не хардкод-примитив. Объявление здесь делает `str` источником правды
 /// для:
-///   - **privacy** (`priv` поля): `s.ptr` / `s.len` снаружи str-методов →
+///   - **privacy** (`priv(type)` поля): `s.ptr` / `s.len` снаружи str-методов →
 ///     `E_PRIV_FIELD_READ` (D220). Доступ к байтам — через публичные методы
 ///     (`@len`, `@byte_at`, `@as_bytes`), объявленные в `std/runtime/string.nv`.
 ///   - **field layout / sizeof** (16 байт на x64): `ptr` — backing UTF-8
@@ -190,7 +190,7 @@ export type Error {
 /// **Bootstrap (R1/R2):** доступен pre-method (str нужен в panic/interp до
 /// своих методов); literal-lowering зависит только от layout, не от методов.
 #stable(since = "0.1")
-type str value priv {
+type str value priv(type) {
     ptr *u8
     len int
 }

@@ -1,12 +1,12 @@
 // Plan 160 (D281): module exporting a priv type.
-// priv = module-private by default; explicit priv field = type-private.
+// priv = module-private by default; priv(type) field = type-private.
 
 module plan160.plan160_lib
 
 export type Job value priv {
     mut id   int
     kind     int
-    priv secret int
+    priv(type) secret int
 }
 
 export fn Job.new(id int, kind int) -> Job =>

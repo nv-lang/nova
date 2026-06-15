@@ -4145,64 +4145,69 @@ impl Parser {
             //
             // Conflict detection: both orders `priv pub` и `pub priv` — explicit
             // E_PRIV_PUB_CONFLICT error.
-            let mut explicit_priv = self.eat(&TokenKind::KwPriv).is_some();
-            let mut explicit_pub = self.eat(&TokenKind::KwPub).is_some();
-            if explicit_priv && explicit_pub {
-                return Err(Diagnostic::new(
-                    "[E_PRIV_PUB_CONFLICT] field cannot have both `priv` and `pub` \
-                     modifiers — these are mutually exclusive (Plan 124 / D220). \
-                     Choose one: `priv` (private to type-methods) OR `pub` (explicit \
-                     public; redundant без type-level `priv {}` flip).".to_string(),
-                    self.peek().span,
-                ));
-            }
-            // Также handle reverse order: `pub priv` — pub matched first,
-            // then priv. Re-check.
-            if explicit_pub && !explicit_priv {
-                if self.eat(&TokenKind::KwPriv).is_some() {
-                    return Err(Diagnostic::new(
-                        "[E_PRIV_PUB_CONFLICT] field cannot have both `pub` and `priv` \
-                         modifiers — these are mutually exclusive (Plan 124 / D220).".to_string(),
-                        self.peek().span,
-                    ));
+            // D281: field-level `priv` = module-private (same as type-level bare `priv`).
+            //       field-level `priv(type)` = type-private (only own methods).
+            //       field-level `pub` = public (overrides type-level default).
+            let mut explicit_priv = false;
+            let mut explicit_priv_type = false; // priv(type) = type-private
+            let mut explicit_pub = false;
+            if self.eat(&TokenKind::KwPriv).is_some() {
+                if matches!(self.peek().kind, TokenKind::LParen) {
+                    self.bump(); // consume `(`
+                    if matches!(self.peek().kind, TokenKind::KwType) {
+                        self.bump(); // consume `type`
+                        self.expect(&TokenKind::RParen)?;
+                        explicit_priv_type = true;
+                    } else if matches!(self.peek().kind, TokenKind::KwModule) {
+                        let bad_sp = self.peek().span;
+                        return Err(crate::diag::Diagnostic::new(
+                            "[E_PRIV_QUALIFIER] `priv(module)` is not a valid field modifier. \
+                             Use bare `priv` for module-private, or `priv(type)` for type-private.",
+                            bad_sp,
+                        ));
+                    } else {
+                        let bad_sp = self.peek().span;
+                        return Err(crate::diag::Diagnostic::new(
+                            "[E_PRIV_QUALIFIER] unknown qualifier inside `priv(…)`. \
+                             Valid forms: `priv` (module-private) or `priv(type)` (type-private).",
+                            bad_sp,
+                        ));
+                    }
+                } else {
+                    explicit_priv = true;
                 }
+            } else {
+                explicit_pub = self.eat(&TokenKind::KwPub).is_some();
             }
-            // Also `priv pub` — priv matched first then pub on next iteration
-            // (already handled by the second eat above). Sanity:
-            if explicit_priv && self.eat(&TokenKind::KwPub).is_some() {
+            if (explicit_priv || explicit_priv_type) && explicit_pub {
                 return Err(Diagnostic::new(
                     "[E_PRIV_PUB_CONFLICT] field cannot have both `priv` and `pub` \
                      modifiers — these are mutually exclusive (Plan 124 / D220).".to_string(),
                     self.peek().span,
                 ));
             }
-            // Suppress potential mut-warning for explicit_pub/explicit_priv re-eats.
-            let _ = (&mut explicit_priv, &mut explicit_pub);
-            // Plan 160 (D281) new design: resolve effective field privacy.
-            // Explicit `priv` field modifier → type-private (priv_module_field=false);
-            // explicit `pub` → public; neither → inherit from type-level
-            // FieldDefaultVisibility.
-            //   Module  (= type-level `priv`, no qualifier): implicit fields get
-            //           priv_field=true AND priv_module_field=true so checker emits
-            //           E_FIELD_MODULE_PRIVATE (allow same-module).
-            //   Private (= type-level `priv(type)`): implicit fields get
-            //           priv_field=true, priv_module_field=false → E_PRIV_FIELD_READ.
-            let field_priv = if explicit_priv {
-                true
+            // Suppress potential mut-warning.
+            let _ = (&mut explicit_priv, &mut explicit_priv_type, &mut explicit_pub);
+            // D281: resolve effective field privacy.
+            //   explicit `priv`       → module-private (priv_field=true, priv_module_field=true)
+            //   explicit `priv(type)` → type-private   (priv_field=true, priv_module_field=false)
+            //   explicit `pub`        → public          (priv_field=false, priv_module_field=false)
+            //   neither               → inherit from type-level FieldDefaultVisibility
+            let (field_priv, field_priv_module) = if explicit_priv {
+                (true, true)
+            } else if explicit_priv_type {
+                (true, false)
             } else if explicit_pub {
-                false
+                (false, false)
             } else {
-                matches!(
+                let is_priv = matches!(
                     default_vis,
                     crate::ast::FieldDefaultVisibility::Private
                         | crate::ast::FieldDefaultVisibility::Module
-                )
+                );
+                let is_module = matches!(default_vis, crate::ast::FieldDefaultVisibility::Module);
+                (is_priv, is_module)
             };
-            // priv_module_field=true only for fields whose privacy comes from
-            // the `priv(module)` type-level default (not explicit `priv`).
-            let field_priv_module = !explicit_priv
-                && !explicit_pub
-                && matches!(default_vis, crate::ast::FieldDefaultVisibility::Module);
 
             let mut readonly = false;
             let mut mutable = false;
