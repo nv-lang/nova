@@ -3439,26 +3439,38 @@ impl Parser {
             {
                 let sp = self.peek().span;
                 self.bump();
-                // Plan 160 (D281): `priv(module)` — module-level field visibility.
-                // Peek ahead: if `(` follows, consume `(module)` → Module variant;
-                // otherwise fall back to Private (priv без qualifier, D220).
+                // Plan 160 (D281) new design:
+                //   `priv`        (no qualifier) → Module  (module-private)
+                //   `priv(type)`                 → Private (type-private only)
+                //   `priv(module)`               → error   (removed; use bare `priv`)
+                //   `priv(<other>)`              → error   (unknown qualifier)
                 if matches!(self.peek().kind, TokenKind::LParen) {
                     self.bump(); // consume `(`
-                    if !matches!(self.peek().kind, TokenKind::KwModule) {
+                    if matches!(self.peek().kind, TokenKind::KwType) {
+                        self.bump(); // consume `type`
+                        self.expect(&TokenKind::RParen)?;
+                        field_default_visibility = crate::ast::FieldDefaultVisibility::Private;
+                        seen_mods.push((2, "priv(type)", sp));
+                    } else if matches!(self.peek().kind, TokenKind::KwModule) {
                         let bad_sp = self.peek().span;
                         return Err(crate::diag::Diagnostic::new(
-                            "[E_PRIV_QUALIFIER] expected `module` inside `priv(…)` \
-                             — the only supported qualifier is `priv(module)`. \
-                             See D281 (spec/decisions/02-types.md).",
+                            "[E_PRIV_QUALIFIER] `priv(module)` is no longer valid \
+                             (Plan 160 / D281 new design). Use bare `priv` for \
+                             module-private fields, or `priv(type)` for type-private.",
+                            bad_sp,
+                        ));
+                    } else {
+                        let bad_sp = self.peek().span;
+                        return Err(crate::diag::Diagnostic::new(
+                            "[E_PRIV_QUALIFIER] unknown qualifier inside `priv(…)`. \
+                             Valid forms: `priv` (module-private) or `priv(type)` \
+                             (type-private). See D281 (spec/decisions/02-types.md).",
                             bad_sp,
                         ));
                     }
-                    self.bump(); // consume `module`
-                    self.expect(&TokenKind::RParen)?;
-                    field_default_visibility = crate::ast::FieldDefaultVisibility::Module;
-                    seen_mods.push((2, "priv(module)", sp));
                 } else {
-                    field_default_visibility = crate::ast::FieldDefaultVisibility::Private;
+                    // bare `priv` → module-private
+                    field_default_visibility = crate::ast::FieldDefaultVisibility::Module;
                     seen_mods.push((2, "priv", sp));
                 }
                 continue;
@@ -3899,17 +3911,17 @@ impl Parser {
     ///   (mutability — binding-level only, как Rust).
     ///
     /// `default_vis` parameter — type-level FieldDefaultVisibility. After
-    /// D225 retract, priv/priv(module) на tuples — error (tuples all-public).
+    /// D225 retract, priv/priv(type) на tuples — error (tuples all-public).
     /// Called after consuming `(`. Stops before `)`.
     fn parse_named_tuple_fields_with_default(&mut self, default_vis: crate::ast::FieldDefaultVisibility) -> Result<Vec<NamedTupleField>, Diagnostic> {
         let mut fields: Vec<NamedTupleField> = Vec::new();
-        // Plan 124.8: post-D225 retract, type-level priv/priv(module) not allowed для tuples.
+        // Plan 124.8: post-D225 retract, type-level priv/priv(type) not allowed для tuples.
         // If a caller passes non-Public, that's a bug in caller (type-level priv flip
         // для tuples retracted). Defensive check — emit error if reached.
         if !matches!(default_vis, crate::ast::FieldDefaultVisibility::Public) {
             let sp = self.peek().span;
             return Err(Diagnostic::new(
-                "[E_TUPLE_NO_PRIV] type-level `priv` / `priv(module)` flip для named tuples retracted \
+                "[E_TUPLE_NO_PRIV] type-level `priv` / `priv(type)` flip для named tuples retracted \
                  в Plan 124.8 (D225 superseded). Tuples всегда all-public. Use \
                  `type X value priv { ... }` для stack-allocated record с priv (D226).",
                 sp,
@@ -4166,12 +4178,15 @@ impl Parser {
             }
             // Suppress potential mut-warning for explicit_pub/explicit_priv re-eats.
             let _ = (&mut explicit_priv, &mut explicit_pub);
-            // Plan 160 (D281): resolve effective field privacy.
-            // Explicit `priv` → type-private; explicit `pub` → public;
-            // neither → inherit from type-level FieldDefaultVisibility.
-            // Module variant: implicit fields get priv_field=true AND
-            // priv_module_field=true so checker can emit E_FIELD_MODULE_PRIVATE
-            // (allow same-module) instead of E_PRIV_FIELD_READ (type-only).
+            // Plan 160 (D281) new design: resolve effective field privacy.
+            // Explicit `priv` field modifier → type-private (priv_module_field=false);
+            // explicit `pub` → public; neither → inherit from type-level
+            // FieldDefaultVisibility.
+            //   Module  (= type-level `priv`, no qualifier): implicit fields get
+            //           priv_field=true AND priv_module_field=true so checker emits
+            //           E_FIELD_MODULE_PRIVATE (allow same-module).
+            //   Private (= type-level `priv(type)`): implicit fields get
+            //           priv_field=true, priv_module_field=false → E_PRIV_FIELD_READ.
             let field_priv = if explicit_priv {
                 true
             } else if explicit_pub {

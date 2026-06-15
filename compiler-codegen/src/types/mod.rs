@@ -2426,7 +2426,7 @@ impl<'a> TypeCheckCtx<'a> {
 
         // Plan 160 (D281) Ф.2: build type_defining_modules — maps type name
         // → the module_name of the peer_file that declared it. Used for
-        // module-boundary enforcement of `priv(module)` types.
+        // module-boundary enforcement of `priv` (module-private) types.
         // Only entry-peer-files contribute (imported modules bring in their
         // types with a different module_name = their own path, which is the
         // desired behaviour: cross-module access to those types is denied).
@@ -4535,7 +4535,7 @@ impl<'a> TypeCheckCtx<'a> {
                                                                  initialize module-private field \
                                                                  `{}.{}` via record literal from \
                                                                  outside its module. Type declared \
-                                                                 with `priv(module)` (Plan 160 / \
+                                                                 with bare `priv` (Plan 160 / \
                                                                  D281). Hint: use factory method \
                                                                  `{}.new(...)`.",
                                                                 last, f.name, last,
@@ -5370,7 +5370,7 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     /// Plan 160 (D281) Ф.2: true when the caller is in the SAME module as
-    /// the type `tname` was declared in. Used for `priv(module)` boundary:
+    /// the type `tname` was declared in. Used for `priv` (module-private) boundary:
     /// fields with `priv_module_field=true` are allowed within the module.
     ///
     /// Conservative (deny) when:
@@ -5470,7 +5470,7 @@ impl<'a> TypeCheckCtx<'a> {
                                                 "[E_FIELD_MODULE_PRIVATE] cannot destructure \
                                                  module-private field `{}.{}` in pattern from \
                                                  outside its module. Type declared with \
-                                                 `priv(module)` (Plan 160 / D281). Hint: use \
+                                                 bare `priv` (Plan 160 / D281). Hint: use \
                                                  public accessor methods of `{}`.",
                                                 tname, pf.name, tname,
                                             ),
@@ -5924,7 +5924,7 @@ impl<'a> TypeCheckCtx<'a> {
                                         "[E_FIELD_MODULE_PRIVATE] cannot read \
                                          module-private field `{}.{}` from \
                                          outside its module. Type declared with \
-                                         `priv(module)` (Plan 160 / D281). \
+                                         bare `priv` (Plan 160 / D281). \
                                          Hint: add a public accessor method on \
                                          `{}`, or move the caller into the same \
                                          module.",
@@ -6039,7 +6039,7 @@ impl<'a> TypeCheckCtx<'a> {
                                         "[E_FIELD_MODULE_PRIVATE] cannot read \
                                          module-private field `{}.{}` from \
                                          outside its module. Named-tuple type \
-                                         declared with `priv(module)` (Plan 160 / \
+                                         declared with bare `priv` (Plan 160 / \
                                          D281). Hint: add a public accessor \
                                          method on `{}`.",
                                         tname, name, tname,
@@ -6177,7 +6177,7 @@ impl<'a> TypeCheckCtx<'a> {
                                                     "[E_FIELD_MODULE_PRIVATE] cannot initialize \
                                                      module-private field `{}.{}` via named-tuple \
                                                      constructor from outside its module. Type \
-                                                     declared with `priv(module)` (Plan 160 / D281). \
+                                                     declared with bare `priv` (Plan 160 / D281). \
                                                      Hint: use factory method `{}.new(...)`.",
                                                     name, field_name, name,
                                                 ),
@@ -7260,7 +7260,7 @@ impl<'a> TypeCheckCtx<'a> {
                                                 format!(
                                                     "[E_FIELD_MODULE_PRIVATE] cannot write to \
                                                      module-private field `{}.{}` from outside \
-                                                     its module. Type declared with `priv(module)` \
+                                                     its module. Type declared with bare `priv` \
                                                      (Plan 160 / D281). Hint: add a public mutator \
                                                      method on `{}`.",
                                                     tname, field_name, tname,
