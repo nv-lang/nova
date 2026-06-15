@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+//
+// Plan 162 Ф.4: negative guard — EnumerateIter is a value-record iterator
+// adapter, not a mutable collection. Calling a mut method like push() on
+// a ro-bound EnumerateIter is rejected by the checker with E_LOCAL_NOT_MUT.
+// This confirms EnumerateIter cannot be confused with a mutable Vec.
+module plan162.enumerate_neg
+
+import std.collections.vec_iter_zc
+
+fn neg_push_on_ro_enumerate_iter() {
+    ro v = Vec[int].from([1, 2, 3])
+    ro it = v.ziter().zenumerate()
+    // ERROR: `it` is ro — calling a mut method is rejected
+    it.push(4)
+}
