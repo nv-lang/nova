@@ -76,8 +76,8 @@ export type TakeIter[I, T] value { mut src I, mut left int }
 /// Lazily skip the first `n` elements, then yield the rest.
 export type SkipIter[I, T] value { mut src I, mut to_skip int }
 
-// EnumerateIter deferred: tuple in blanket parametric return needs compiler fix
-// [M-153.2-enumerate-zc]
+/// Lazily pair each element with its 0-based index `(int, T)`.
+export type EnumerateIter[I, T] value { mut src I, mut i int }
 
 // ──────────────────────────────────────────────────────────────────────────
 // `next()` — static, monomorphized dispatch on the inline source
@@ -131,6 +131,17 @@ export fn SkipIter[I, T] mut @next() -> Option[T] {
     @src.next()
 }
 
+/// Advance: pull one from `src`, pair it with the current index counter.
+export fn EnumerateIter[I, T] mut @next() -> Option[(int, T)] {
+    match @src.next() {
+        Some(x) => {
+            ro idx = @i
+            @i += 1
+            Some((idx, x))
+        },
+        None => None,
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Entry bridge + chainable adapter methods
@@ -201,6 +212,26 @@ export fn SkipIter[I, T] @ztake(n int) -> TakeIter[Self, T] => { src: @, left: n
 export fn SkipIter[I, T] @zskip(n int) -> SkipIter[Self, T] => { src: @, to_skip: n }
 export fn SkipIter[I, T] @zmap[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
 export fn SkipIter[I, T] @zfilter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
+
+// ── @zenumerate — per adapter type ──────────────────────────────────────────
+//
+// Cannot be blanket because the return type names `EnumerateIter` explicitly.
+
+export fn VecIter[T] @zenumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
+export fn MapIter[I, T, U] @zenumerate() -> EnumerateIter[Self, U] => { src: @, i: 0 }
+export fn FilterIter[I, T] @zenumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
+export fn FilterMapIter[I, T, U] @zenumerate() -> EnumerateIter[Self, U] => { src: @, i: 0 }
+export fn TakeIter[I, T] @zenumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
+export fn SkipIter[I, T] @zenumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
+
+// ── chaining adapters ON `EnumerateIter` ────────────────────────────────────
+
+export fn EnumerateIter[I, T] @zmap[U](f fn((int, T)) -> U) -> MapIter[Self, (int, T), U] => { src: @, f }
+export fn EnumerateIter[I, T] @zfilter(pred fn((int, T)) -> bool) -> FilterIter[Self, (int, T)] => { src: @, pred }
+export fn EnumerateIter[I, T] @zfilter_map[U](f fn((int, T)) -> Option[U]) -> FilterMapIter[Self, (int, T), U] => { src: @, f }
+export fn EnumerateIter[I, T] @ztake(n int) -> TakeIter[Self, (int, T)] => { src: @, left: n }
+export fn EnumerateIter[I, T] @zskip(n int) -> SkipIter[Self, (int, T)] => { src: @, to_skip: n }
+export fn EnumerateIter[I, T] @zenumerate() -> EnumerateIter[Self, (int, T)] => { src: @, i: 0 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // Terminators — drive the chain.
