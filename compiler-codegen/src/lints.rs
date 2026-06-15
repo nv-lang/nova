@@ -1264,6 +1264,35 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
                     collect_expr(e, out);
                 }
             }
+            // Plan 159 Ф.2 (reachability-DCE soundness — indirect reference):
+            // string interpolation `"…${x}…"` desugars (emit_c.rs ~27288) to a
+            // `StringBuilder` pipeline whose method selectors are injected by
+            // codegen and never appear syntactically. The names below are the
+            // *Nova* method names (what `dead_method_keys` keys on) — NOT the
+            // mangled C names; the desugar lowers them to:
+            //   `with_capacity`  → Nova_StringBuilder_static_with_capacity
+            //                       (static method → `static_` C prefix)
+            //   `append`         → Nova_StringBuilder_method_append
+            //   `as_str`         → Nova_StringBuilder_consume_as_str
+            //                       (consume method → `consume_` C prefix)
+            // and, per interpolated value, the Display/Debug conversion methods
+            // `T.display` / `T.debug` (D229/D237) and the `str.from` /
+            // `str.from_debug` / `T.into` fallbacks. Without seeding these (and
+            // the `StringBuilder` receiver-type name) method-level DCE prunes the
+            // `StringBuilder` method bodies + forward decls, and codegen emits a
+            // call to an *undeclared* C function (C89 implicit-`int` declaration
+            // → the observed `nova_str` ← `int` type-mismatch / link error). All
+            // are method selectors → harmless over-approximation for the
+            // unused-import lint, and conservative (over-keep) for DCE.
+            out.insert("StringBuilder".to_string());
+            out.insert("with_capacity".to_string());
+            out.insert("append".to_string());
+            out.insert("as_str".to_string());
+            out.insert("display".to_string());
+            out.insert("debug".to_string());
+            out.insert("from".to_string());
+            out.insert("from_debug".to_string());
+            out.insert("into".to_string());
         }
         ExprKind::Lambda { body, .. } => collect_expr(body, out),
         ExprKind::ClosureLight { body, .. } => match body {

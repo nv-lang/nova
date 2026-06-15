@@ -37219,6 +37219,134 @@ mod dce_tests {
         assert!(d.dead_fns.contains("api"), "DCE on: exported-unreachable fn pruned");
         assert!(d.dead_fns.contains("truly_dead"), "DCE on: uncalled free fn pruned");
     }
+
+    // ─── Plan 159 Ф.2: method-level reachability ─────────────────────────────
+
+    fn dead_methods(src: &str, enabled: bool) -> std::collections::HashSet<(String, String)> {
+        let module = crate::parser::parse(src).expect("fixture parses");
+        compute_dead_decls_with(&module, enabled).dead_method_keys
+    }
+
+    #[test]
+    fn method_pruned_when_name_never_invoked() {
+        // `Widget` IS constructed (`Widget { … }` spells the type name) and
+        // `used` IS called → `used` survives. `unused`'s selector never appears
+        // anywhere reachable and does not collide with a live name → the method
+        // (type∧name intersection) does not fire → pruned. Its private callee
+        // `dead_helper` then has no live caller → also a dead free fn.
+        let src = "module t\n\
+             type Widget { n int }\n\
+             fn Widget @used() -> int => @n\n\
+             fn Widget @unused() -> int => @n + dead_helper()\n\
+             fn dead_helper() -> int => 9\n\
+             fn main() -> int => Widget { n: 1 }.used()\n";
+        let dm = dead_methods(src, true);
+        assert!(
+            dm.contains(&("Widget".to_string(), "unused".to_string())),
+            "method whose selector is never used in reachable code is pruned"
+        );
+        assert!(
+            !dm.contains(&("Widget".to_string(), "used".to_string())),
+            "method called by name on a constructed receiver is kept"
+        );
+        // And the method's exclusive callee is now a dead free fn.
+        let d = decls_of(src, true);
+        assert!(
+            d.dead_fns.contains("dead_helper"),
+            "callee reached only from a pruned method is itself dead"
+        );
+    }
+
+    #[test]
+    fn method_kept_when_type_and_name_both_reachable() {
+        // Both conditions met: `Widget` constructed AND `m` invoked → kept.
+        let dm = dead_methods(
+            "module t\n\
+             type Widget { n int }\n\
+             fn Widget @m() -> int => @n\n\
+             fn main() -> int => Widget { n: 1 }.m()\n",
+            true,
+        );
+        assert!(dm.is_empty(), "type∧name both reachable → method kept");
+    }
+
+    #[test]
+    fn method_dce_is_noop_when_disabled() {
+        // Kill-switch OFF (pre-159 policy): methods are emitted unconditionally,
+        // so the dead-method set is always empty regardless of reachability.
+        let dm = dead_methods(
+            "module t\n\
+             type Widget { n int }\n\
+             fn Widget @unused() -> int => @n\n\
+             fn main() -> int => 0\n",
+            false,
+        );
+        assert!(dm.is_empty(), "DCE off → no method-level pruning");
+    }
+
+    #[test]
+    fn method_dce_is_noop_in_library_mode() {
+        // No `main` → library → `no main → keep all` guard → empty dead sets,
+        // so an unreferenced method in a standalone library is retained.
+        let dm = dead_methods(
+            "module t\n\
+             type Widget { n int }\n\
+             fn Widget @unused() -> int => @n\n",
+            true,
+        );
+        assert!(dm.is_empty(), "library mode keeps every method");
+    }
+
+    #[test]
+    fn protocol_dispatch_keeps_method_via_selector() {
+        // INDIRECT REFERENCE: `greet` is invoked only on a protocol value
+        // (`g.greet()` where `g Greeter = Speaker{…}`), never directly on a
+        // `Speaker` receiver. The call site still writes `greet` as a `Member`
+        // selector (collected by `collect_used_names`), and boxing requires
+        // constructing `Speaker` (its name appears) → both reachable → the
+        // method that the emitted vtable thunk forwards to is kept.
+        let dm = dead_methods(
+            "module t\n\
+             type Greeter protocol { @greet() -> int }\n\
+             #impl(Greeter)\n\
+             type Speaker { base int }\n\
+             fn Speaker @greet() -> int => @base\n\
+             fn main() -> int => {\n\
+               ro sp = Speaker { base: 1 }\n\
+               mut g Greeter = sp\n\
+               g.greet()\n\
+             }\n",
+            true,
+        );
+        assert!(
+            !dm.contains(&("Speaker".to_string(), "greet".to_string())),
+            "method reached only via protocol dynamic dispatch must survive"
+        );
+    }
+
+    #[test]
+    fn interpolation_seeds_stringbuilder_methods() {
+        // Plan 159 Ф.2: string interpolation `"…${x}…"` desugars to a
+        // `StringBuilder` pipeline whose method selectors (`with_capacity`,
+        // `append`, `as_str`) are injected by codegen and never appear
+        // syntactically. `collect_used_names` must seed them (and the receiver
+        // type name) so method-DCE does not prune the StringBuilder bodies and
+        // leave codegen calling an undeclared C function.
+        use std::collections::HashSet;
+        let module = crate::parser::parse(
+            "module t\n\
+             fn main() -> () => println(\"v ${1}\")\n",
+        )
+        .expect("fixture parses");
+        let mut used: HashSet<String> = HashSet::new();
+        crate::lints::collect_used_names(&module.items, &mut used);
+        for name in ["StringBuilder", "with_capacity", "append", "as_str"] {
+            assert!(
+                used.contains(name),
+                "interpolation must seed `{name}` for reachability-DCE soundness"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
