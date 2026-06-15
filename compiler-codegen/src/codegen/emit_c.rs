@@ -199,64 +199,261 @@ pub fn with_result_category(c_type: &str) -> WithResultCategory {
 /// also keeps negative `EXPECT_CC_ERROR` fixtures intact — their
 /// erroneous, `main`-less function bodies must still reach the C compiler.
 fn compute_dead_free_fns(module: &Module) -> HashSet<String> {
-    let is_candidate = |f: &FnDecl| -> bool {
+    compute_dead_decls(module).dead_fns
+}
+
+/// Plan 159 Ф.1: kill-switch for reachability DCE.
+///
+/// `NOVA_REACH_DCE` unset or any value ≠ `"0"` → reachability DCE **enabled**
+/// (the new behaviour, default). Set to exactly `"0"` → **disabled**, byte-for-byte
+/// identical to the pre-159 output (export-as-root + consts/ro-globals emitted
+/// unconditionally). Read once via `OnceLock`.
+fn reach_dce_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        match std::env::var("NOVA_REACH_DCE") {
+            Ok(v) => v != "0",
+            Err(_) => true,
+        }
+    })
+}
+
+/// Result of the module-level reachability analysis (Plan 159 Ф.1).
+///
+/// `dead_fns` — monomorphic free-function names unreachable from any root
+/// (forward decl + body omitted). `dead_consts` — module-level `const` /
+/// `ro` lazy-static global names unreachable from any root (their giant
+/// `static` table definitions omitted). Both are the *complement* of one
+/// shared reachable set computed in a single closure, so const→fn, fn→const
+/// and const→const edges all resolve.
+#[derive(Default)]
+struct DeadDecls {
+    dead_fns: HashSet<String>,
+    dead_consts: HashSet<String>,
+    /// Plan 159 Ф.1: `(receiver_type, method_name)` pairs that can never run —
+    /// their receiver type is never constructed/named OR their name is never
+    /// invoked in reachable code (both are necessary for a method to execute).
+    /// Such a method's body + forward decl are omitted (otherwise they would
+    /// dangle on the pruned free fns / consts they call). Empty when DCE is
+    /// disabled or in library mode → the method gate is a no-op there.
+    dead_method_keys: HashSet<(String, String)>,
+}
+
+/// Plan 81 Ф.7.2 + Plan 159 Ф.1 — compiler-level reachability dead-code
+/// elimination over **free functions AND module-level consts / ro-globals**.
+///
+/// ## Roots & candidates
+/// - **Candidates** (prunable): monomorphic free fns (no receiver, no generics,
+///   not `External`); module-level `Item::Const`; and `ro` lazy-static
+///   `Item::Let` globals (single `Ident` / unit-`Variant` name, non-ghost —
+///   mirrors the emission gate at §1b1). A candidate is dropped only if it is
+///   unreachable from every root.
+/// - **Roots**: `main`; and every name referenced by a truly-unconditional item
+///   (generic fns, externals, tests, benches, type *declarations*). These items
+///   are always emitted, so anything they name must be kept.
+///   Consts/ro-globals are **no longer auto-roots** (Plan 159 Ф.1): a table is
+///   kept only if a reachable fn/const actually reads it.
+/// - **Methods** (`receiver.is_some()`) are emitted unconditionally (still out
+///   of scope for body-level method DCE in Ф.1), BUT their *referenced names*
+///   are anchored to their **receiver type's reachability** rather than being
+///   unconditional roots. A method `T.m()` can only ever be invoked on a value
+///   of type `T`; constructing such a value makes the name `T` appear in
+///   reachable code, so the receiver-type-name reaches the closure exactly when
+///   a live `T` can exist at runtime. Until `T` is reached, `m`'s callees are
+///   not anchored — this is what lets an executable that imports `std.unicode`
+///   but never names `Collator`/`Normalizer` drop the collate/normalize tables.
+///   Conservative: if `T` is named ANYWHERE reachable, ALL of `T`'s methods
+///   (and everything they call) are kept (over-keep, never over-prune).
+/// - **Exported free fns**: under the old policy (`NOVA_REACH_DCE=0`) an exported
+///   fn is a root (cross-module API surface). Under the new policy, in an
+///   **executable** (`has_main`) an exported Nova fn is *not* a root — Nova has
+///   no C-ABI export (FFI is Nova→C only via `is_external`/extern-abi), so an
+///   executable's exported fns are never linked externally and follow normal
+///   reachability. In library mode (no `main`) the whole module is kept anyway.
+///
+/// ## Soundness (G0 — conservative: over-keep, never over-prune)
+/// `collect_used_names` is a complete AST walk collecting bare `Ident` names
+/// and `Member` selectors. A candidate is *kept* whenever its name appears
+/// anywhere reachable — so a const/fn name that merely collides with a local,
+/// field, or overload is conservatively kept. Over-approximation is always
+/// toward keeping. Method-anchoring keys on the receiver type *name*; any
+/// syntactic appearance of that name (collision included) keeps the methods.
+///
+/// ## `no main` guard
+/// No `main` → not an executable (standalone library / `nova check` / negative
+/// `EXPECT_CC_ERROR` fixture) → nothing to anchor against → **keep everything**
+/// (empty dead sets). This guard is preserved verbatim from Plan 81.
+fn compute_dead_decls(module: &Module) -> DeadDecls {
+    let is_fn_candidate = |f: &FnDecl| -> bool {
         f.receiver.is_none()
             && f.generics.is_empty()
             && !matches!(f.body, crate::ast::FnBody::External)
     };
-    // No `main` → not an executable → nothing to anchor reachability to;
-    // keep every free function.
+    // Name of a `ro` lazy-static global candidate (mirrors §1b1 emission gate),
+    // or `None` if this `Let` is not a single-named non-ghost binding.
+    let let_candidate_name = |l: &LetDecl| -> Option<String> {
+        if l.is_ghost {
+            return None;
+        }
+        match &l.pattern {
+            Pattern::Ident { name, .. } => Some(name.clone()),
+            Pattern::Variant { path, kind: VariantPatternKind::Unit, .. }
+                if path.len() == 1 =>
+            {
+                Some(path[0].clone())
+            }
+            _ => None,
+        }
+    };
+
+    // No `main` → not an executable → keep everything.
     let has_main = module.items.iter().any(|it| {
         matches!(it, Item::Fn(f) if f.name == "main" && f.receiver.is_none())
     });
     if !has_main {
-        return HashSet::new();
+        return DeadDecls::default();
     }
-    let mut candidates: HashSet<String> = HashSet::new();
+
+    let enabled = reach_dce_enabled();
+
+    // Candidate name sets (kept separate so we can split the dead complement
+    // back into fns vs consts/globals at the end). Const + ro-global names
+    // are only candidates under the new policy.
+    let mut fn_candidates: HashSet<String> = HashSet::new();
+    let mut const_candidates: HashSet<String> = HashSet::new();
     for item in &module.items {
-        if let Item::Fn(f) = item {
-            if is_candidate(f) {
-                candidates.insert(f.name.clone());
+        match item {
+            Item::Fn(f) if is_fn_candidate(f) => {
+                fn_candidates.insert(f.name.clone());
             }
+            Item::Const(c) if enabled => {
+                const_candidates.insert(c.name.clone());
+            }
+            Item::Let(l) if enabled => {
+                if let Some(name) = let_candidate_name(l) {
+                    const_candidates.insert(name);
+                }
+            }
+            _ => {}
         }
     }
-    if candidates.is_empty() {
-        return HashSet::new();
+    if fn_candidates.is_empty() && const_candidates.is_empty() {
+        return DeadDecls::default();
     }
-    // refs_of[name] — names referenced by candidate free fn(s) `name`
-    // (overloads sharing a name are unioned — kept/dropped together).
+    // Union view for the closure membership test.
+    let is_candidate = |name: &str| -> bool {
+        fn_candidates.contains(name) || const_candidates.contains(name)
+    };
+
+    // refs_of[name] — names referenced by candidate decl `name` (overloads /
+    // same-named items are unioned — kept or dropped together).
     let mut refs_of: HashMap<String, HashSet<String>> = HashMap::new();
+    // Methods, keyed by `(receiver_type, method_name)` → union of names the
+    // method(s) reference. A method `T.m` can actually run only when BOTH a value
+    // of type `T` exists AND `m` is invoked by name:
+    //   * `T` reachable — `T` is constructed / named in reachable code (any
+    //     constructor / annotation / variant spells `T`);
+    //   * `m` reachable — `…​.m(…)` (direct OR protocol dynamic dispatch, which
+    //     also writes `m` at the call site) or `…​.m` taken as a fn value, both
+    //     collected by `collect_used_names` as a `Member` selector.
+    // We anchor a method's callees (and keep its body) iff its type AND its name
+    // are both reachable — the intersection. This is conservative (each
+    // condition is necessary for the method to ever run) yet precise enough to
+    // drop `char.is_uppercase`/`Collator.key` chains in a program that only
+    // calls free `is_alphabetic`, even though common names like `key` collide.
+    let mut methods: Vec<(String, String, HashSet<String>)> = Vec::new();
     // Worklist seed: `main` is always a root.
     let mut worklist: Vec<String> = vec!["main".to_string()];
     for item in &module.items {
         let mut refs: HashSet<String> = HashSet::new();
         crate::lints::collect_used_names(std::slice::from_ref(item), &mut refs);
         match item {
-            Item::Fn(f) if is_candidate(f) => {
-                if f.is_export {
-                    // Exported free fn — cross-module API surface → root.
+            Item::Fn(f) if is_fn_candidate(f) => {
+                if f.is_export && !enabled {
+                    // Old policy: exported free fn is a cross-module API root.
+                    // New policy in an executable: exported fns are NOT linked
+                    // externally (Nova has no C-ABI export) → follow normal
+                    // reachability, so do NOT seed as a root.
                     worklist.push(f.name.clone());
                 }
                 refs_of.entry(f.name.clone()).or_default().extend(refs);
             }
+            Item::Fn(f) if enabled && f.receiver.is_some() => {
+                // Method (monomorphic only — generic methods emit lazily via the
+                // mono worklist). Anchored to the type∧name intersection below.
+                if f.generics.is_empty() {
+                    let ty = f.receiver.as_ref().unwrap().type_name.clone();
+                    methods.push((ty, f.name.clone(), refs));
+                } else {
+                    // Generic method: leave its refs as unconditional roots (it
+                    // is emitted on demand by the monomorphizer; be conservative).
+                    worklist.extend(refs);
+                }
+            }
+            Item::Const(c) if enabled => {
+                refs_of.entry(c.name.clone()).or_default().extend(refs);
+            }
+            Item::Let(l) if enabled && let_candidate_name(l).is_some() => {
+                let name = let_candidate_name(l).unwrap();
+                refs_of.entry(name).or_default().extend(refs);
+            }
             _ => {
-                // Non-candidate item (method / generic fn / external /
-                // test / bench / const / type) is emitted unconditionally,
-                // so every name it references is a reachability root.
+                // Truly-unconditional item (method [old policy] / generic fn /
+                // external / test / bench / type decl — and, under the old
+                // policy, const / let) is emitted unconditionally, so every name
+                // it references is a reachability root.
                 worklist.extend(refs);
             }
         }
     }
+
+    // Closure over fn/const/global edges, with methods firing on the type∧name
+    // intersection. Because a fired method can make new type-names/method-names
+    // reachable, we re-run the name closure until no further method fires
+    // (monotone fixpoint — `reachable` only grows). `live_method` tracks which
+    // methods have already fired so each fires at most once.
     let mut reachable: HashSet<String> = HashSet::new();
-    while let Some(name) = worklist.pop() {
-        if !candidates.contains(&name) || !reachable.insert(name.clone()) {
-            continue;
+    let mut live_method = vec![false; methods.len()];
+    loop {
+        // Drain the name worklist to a fixpoint over fn/const/global edges.
+        while let Some(name) = worklist.pop() {
+            if !reachable.insert(name.clone()) {
+                continue;
+            }
+            if is_candidate(&name) {
+                if let Some(refs) = refs_of.get(&name) {
+                    worklist.extend(refs.iter().cloned());
+                }
+            }
         }
-        if let Some(refs) = refs_of.get(&name) {
-            worklist.extend(refs.iter().cloned());
+        // Fire any method whose receiver type AND name are now both reachable.
+        let mut fired = false;
+        for (i, (ty, name, refs)) in methods.iter().enumerate() {
+            if !live_method[i] && reachable.contains(ty) && reachable.contains(name) {
+                live_method[i] = true;
+                worklist.extend(refs.iter().cloned());
+                fired = true;
+            }
+        }
+        if !fired {
+            break;
         }
     }
-    candidates.difference(&reachable).cloned().collect()
+
+    // Dead methods: those that never fired (type or name unreachable).
+    let dead_method_keys: HashSet<(String, String)> = methods
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !live_method[*i])
+        .map(|(_, (ty, name, _))| (ty.clone(), name.clone()))
+        .collect();
+
+    DeadDecls {
+        dead_fns: fn_candidates.difference(&reachable).cloned().collect(),
+        dead_consts: const_candidates.difference(&reachable).cloned().collect(),
+        dead_method_keys,
+    }
 }
 
 pub struct CEmitter {
@@ -2725,15 +2922,37 @@ impl CEmitter {
             if !user_const_names.contains(&c.name) { return false; }
             !user_const_spans.contains(&(c.name.clone(), c.span))
         };
-        // Plan 81 Ф.7.2: compiler-level reachability DCE — monomorphic
-        // free functions unreachable from any root are not emitted (their
-        // forward decl + body are dropped from the `.c`).
-        let dead_free_fns = compute_dead_free_fns(module);
+        // Plan 81 Ф.7.2 + Plan 159 Ф.1: compiler-level reachability DCE —
+        // monomorphic free functions AND module-level consts / ro-globals
+        // unreachable from any root are not emitted (forward decl + body, or
+        // the giant `static` table definition, dropped from the `.c`). One
+        // shared reachable-set closure (const→fn, fn→const, const→const edges).
+        let DeadDecls {
+            dead_fns: dead_free_fns,
+            dead_consts,
+            dead_method_keys,
+        } = compute_dead_decls(module);
         let is_dead_free_fn = |f: &FnDecl| -> bool {
             f.receiver.is_none()
                 && f.generics.is_empty()
                 && !matches!(f.body, crate::ast::FnBody::External)
                 && dead_free_fns.contains(&f.name)
+        };
+        // Plan 159 Ф.1: a method that can never run (its receiver type is never
+        // constructed/named, OR its name is never invoked, in reachable code) is
+        // dropped (body + forward decl). Dropping it also removes its references
+        // to the free fns / consts that were pruned. Monomorphic methods only —
+        // generic methods emit lazily via the mono worklist, and
+        // `dead_method_keys` is empty when DCE is off / in library mode.
+        let is_dead_method = |f: &FnDecl| -> bool {
+            match &f.receiver {
+                Some(r) if f.generics.is_empty()
+                    && !matches!(f.body, crate::ast::FnBody::External) =>
+                {
+                    dead_method_keys.contains(&(r.type_name.clone(), f.name.clone()))
+                }
+                _ => false,
+            }
         };
 
         // 1. Type declarations first (structs/unions needed by fn signatures)
@@ -2767,6 +2986,11 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Const(c) = item {
                 if should_skip_const(c) { continue; }
+                // Plan 159 Ф.1: skip a const unreachable from any root (its
+                // giant `static` table — e.g. an unused Unicode data table —
+                // is omitted). `dead_consts` is empty when reachability DCE is
+                // disabled or in library mode, so this is a no-op there.
+                if dead_consts.contains(&c.name) { continue; }
                 self.emit_const_decl(c)?;
             }
         }
@@ -3264,6 +3488,12 @@ impl CEmitter {
                     _ => None,
                 };
                 if let Some(name) = name {
+                    // Plan 159 Ф.1: skip a `ro` lazy-static global unreachable
+                    // from any root. It is in `dead_consts` only when no
+                    // reachable fn/const names it, so no emitted read routes
+                    // through `nova_const_<name>()` — dropping its storage +
+                    // getter is safe. Empty (no-op) when DCE off / library mode.
+                    if dead_consts.contains(&name) { continue; }
                     let ty_c = if let Some(ty) = &l.ty {
                         self.type_ref_to_c(ty)?
                     } else {
@@ -3279,6 +3509,7 @@ impl CEmitter {
             if let Item::Fn(f) = item {
                 if should_skip_fn(f) { continue; } // Plan 62.D bis-1: D29 shadow
                 if is_dead_free_fn(f) { continue; } // Plan 81 Ф.7.2: DCE
+                if is_dead_method(f) { continue; }  // Plan 159 Ф.1: method DCE
                 self.emit_fn_forward_decl(f)?;
             }
         }
@@ -3310,6 +3541,7 @@ impl CEmitter {
             if let Item::Fn(f) = item {
                 if should_skip_fn(f) { continue; } // Plan 62.D bis-1: D29 shadow
                 if is_dead_free_fn(f) { continue; } // Plan 81 Ф.7.2: DCE
+                if is_dead_method(f) { continue; }  // Plan 159 Ф.1: method DCE
                 self.emit_fn(f)?;
             }
         }
@@ -36797,16 +37029,40 @@ mod dce_tests {
     }
 
     #[test]
-    fn exported_free_fn_is_a_root() {
-        // An exported free fn is cross-module API surface — kept even
-        // without a local caller.
+    fn exported_unreachable_free_fn_in_executable_is_dead() {
+        // Plan 159 Ф.1 (new default policy): in an EXECUTABLE (has `main`) an
+        // exported Nova fn is NOT a root — Nova has no C-ABI export (FFI is
+        // Nova→C only), so an executable's exported fns are never linked
+        // externally and follow normal reachability. `api` (and its only
+        // caller `helper_of_api`) are unreachable from `main` → dead.
         let dead = dead_of(
             "module t\n\
              export fn api() -> int => 1\n\
              fn helper_of_api() -> int => api()\n\
              fn main() -> int => 0\n",
         );
-        assert!(!dead.contains("api"), "exported fn is a root");
+        assert!(
+            dead.contains("api"),
+            "executable: exported-but-unreachable fn is dead (no C-ABI export)"
+        );
+        assert!(
+            dead.contains("helper_of_api"),
+            "only caller of `api` is itself unreachable from main → dead"
+        );
+    }
+
+    #[test]
+    fn exported_fn_in_library_mode_is_kept() {
+        // Companion: with NO `main` the module is a library — the `no main →
+        // keep all` guard fires and nothing is pruned, so the exported API
+        // surface (and everything else) is retained.
+        let dead = dead_of(
+            "module t\n\
+             export fn api() -> int => 1\n\
+             fn helper_of_api() -> int => api()\n",
+        );
+        assert!(dead.is_empty(), "library mode (no main) keeps every free fn");
+        assert!(!dead.contains("api"));
     }
 
     #[test]
