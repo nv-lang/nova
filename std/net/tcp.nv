@@ -1,169 +1,225 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 83.12: std/net/tcp.nv — async TCP listener and stream.
+// Plan 91.12 Ф.3: std/net/tcp.nv — TCP public API + real_tcp_net handler (V2).
 //
-// TcpListener: binds to an address and accepts incoming connections.
-// TcpStream:   represents a connected TCP stream (client or accepted).
+// Architecture (three layers):
+//   ffi.nv     — private C FFI (extern "C" fn, int handles, no export)
+//   effect.nv  — effect TcpNet declaration
+//   tcp.nv     — value types + public methods + real_tcp_net handler (this file)
 //
-// All blocking methods park the calling fiber and yield to the scheduler.
-// They are cancel-aware: if the enclosing supervised scope is cancelled,
-// the in-flight operation is cleaned up and the fiber throws "scope cancelled".
+// TcpListener: async TCP server socket (bind + accept loop).
+// TcpStream:   connected async TCP stream (connect + read + write).
 //
-// Thread-affinity: libuv handles are bound to the loop on which they were
-// created (nova_current_loop() at bind/connect time). Cross-thread close
-// (e.g. from cancel) is routed through NovaDeferredCloseQueue — see
-// compiler-codegen/nova_rt/eventloop.h §Plan 83.10.2.
+// Both are value-records with `priv handle int` (intptr_t = C pointer as int).
+// close() consumes. Public methods return Result[T, NetError].
 //
-// C backing: Nova_TcpListener / Nova_TcpStream in net.h.
-// No explicit `type TcpListener` / `type TcpStream` declarations here;
-// ExternalRegistry registers both as receiver types automatically.
+// C backing: tcp_listener_* / tcp_stream_* in net.h / net.c (Plan 91.12 Ф.0).
 
-module net.tcp
+module std.net
 
-use std.net.addr
+// ─── Value-record types ──────────────────────────────────────────────────────
 
-// ─── TcpListener ─────────────────────────────────────────────────────────────
-
-/// Async TCP listener. Binds to a local address and accepts connections.
+/// Async TCP listener (server socket).
 ///
 /// # Lifecycle
 ///
 /// ```nova
-/// let listener = TcpListener.bind(SocketAddr.loopback(0)).unwrap()
-/// let port = listener.local_port()
-/// let stream = listener.accept().unwrap()
-/// // ... use stream
-/// listener.close()
+/// with TcpNet = real_tcp_net() {
+///     mut listener = TcpListener.bind(SocketAddr.loopback(8080)).unwrap()
+///     let stream = listener.accept().unwrap()
+///     listener.close()
+/// }
 /// ```
 ///
 /// # Effects
 ///
-/// `bind` carries `[IO, Blocking]` — it issues system calls and may park.
-/// `accept` carries `[IO, Blocking]` — parks until a connection arrives.
-/// `close` carries `[IO]`.
-///
-/// # Cancel
-///
-/// An in-flight `accept()` is cancelled when the enclosing `supervised`
-/// scope receives a cancel signal. The handle is closed via the deferred-
-/// close queue (thread-safe; see Plan 83.10.2).
-///
-/// # See Also
-///
-/// - `[TcpStream.connect]` — client side
-/// - `[UdpSocket]` — datagram sockets
-
-/// Bind a TCP listener to the given address.
-///
-/// Passing `SocketAddr.loopback(0)` lets the OS choose a free port.
-/// Call `listener.local_port()` to discover the assigned port.
-///
-/// Returns `Err(msg)` if the address is in use or otherwise unavailable.
+/// `bind` carries `TcpNet`.
+/// `accept` carries `TcpNet Blocking`.
+/// `close` carries `TcpNet` (consume).
 #stable(since = "0.1")
-export extern "nova" fn TcpListener.bind(addr SocketAddr) -> Result[TcpListener, str]
-
-/// Accept the next incoming connection.
-///
-/// Parks the calling fiber until a client connects or an error occurs.
-/// Returns `Ok(stream)` where `stream` is the connected `TcpStream`.
-/// Returns `Err(msg)` if the listener is closed or an OS error occurred.
-///
-/// **Cancel-safe:** if the scope is cancelled while parked in `accept`,
-/// the operation is aborted and the fiber throws "scope cancelled".
-#stable(since = "0.1")
-export extern "nova" fn TcpListener mut @accept() -> Result[TcpStream, str]
-
-/// Return the local port number this listener is bound to.
-#stable(since = "0.1")
-export extern "nova" fn TcpListener @local_port() -> u16
-
-/// Return the local socket address this listener is bound to.
-#stable(since = "0.1")
-export extern "nova" fn TcpListener @local_addr() -> SocketAddr
-
-/// Close the listener. No new connections will be accepted.
-///
-/// Idempotent: calling `close()` on an already-closed listener is safe.
-/// In-flight `accept()` callers will receive `Err("closed")`.
-#stable(since = "0.1")
-export extern "nova" fn TcpListener mut @close()
-
-// ─── TcpStream ───────────────────────────────────────────────────────────────
+export type TcpListener value { priv handle int }
 
 /// Connected async TCP stream.
 ///
-/// Obtained from `TcpListener.accept()` (server side) or
-/// `TcpStream.connect(addr)` (client side).
+/// # Lifecycle
+///
+/// ```nova
+/// with TcpNet = real_tcp_net() {
+///     mut stream = TcpStream.connect(SocketAddr.loopback(8080)).unwrap()
+///     stream.write("hello").unwrap()
+///     stream.close()
+/// }
+/// ```
 ///
 /// # Effects
 ///
-/// `connect`, `read_bytes`, `write` carry `[IO, Blocking]`.
-/// `close` carries `[IO]`.
-///
-/// # Cancel
-///
-/// In-flight `connect`, `read_bytes`, or `write` operations are aborted
-/// when the enclosing `supervised` scope is cancelled. The TCP handle is
-/// closed via the deferred-close queue.
-///
-/// # See Also
-///
-/// - `[TcpListener]` — server-side listener
-
-/// Connect to a remote TCP address.
-///
-/// Parks the calling fiber until the TCP handshake completes.
-/// Returns `Ok(stream)` on success, `Err(msg)` if the connection
-/// failed (e.g. "connection refused", "no route to host").
-///
-/// **Cancel-safe:** in-flight connect is aborted on scope cancel.
+/// `connect` carries `TcpNet Blocking`.
+/// `write` carries `TcpNet Blocking`.
+/// `close` carries `TcpNet` (consume).
 #stable(since = "0.1")
-export extern "nova" fn TcpStream.connect(addr SocketAddr) -> Result[TcpStream, str]
+export type TcpStream value { priv handle int }
 
-/// Read up to `max_bytes` bytes from the stream.
+// ─── TcpListener public API ──────────────────────────────────────────────────
+
+/// Bind a TCP listener to the given address.
 ///
-/// Parks until data arrives, an error occurs, or the peer closes the
-/// connection (EOF). Returns `Ok(data)` where `data.byte_len() > 0`.
-/// Returns `Ok("")` on clean EOF (peer called `close()`/`shutdown()`).
-/// Returns `Err(msg)` on I/O error.
+/// Pass `SocketAddr.loopback(0)` to let the OS assign a free port;
+/// call `listener.local_port()` to discover the assigned port.
 ///
-/// **Cancel-safe:** in-flight read is aborted on scope cancel.
+/// Returns `Err(NetError.AddressInUse)` if the port is already bound.
 #stable(since = "0.1")
-export extern "nova" fn TcpStream mut @read_bytes(max_bytes int) -> Result[str, str]
+export fn TcpListener.bind(addr SocketAddr) TcpNet -> Result[TcpListener, NetError] {
+    TcpNet.bind(addr)
+}
 
-/// Write a string to the stream.
+/// Accept the next incoming connection (parks the calling fiber).
+///
+/// Cancel-safe: if the enclosing supervised scope is cancelled, the
+/// pending accept is cleaned up.
+#stable(since = "0.1")
+export fn TcpListener mut @accept() TcpNet Blocking -> Result[TcpStream, NetError] {
+    TcpNet.accept(@)
+}
+
+/// Return the local port this listener is bound to.
+#stable(since = "0.1")
+export fn TcpListener @local_port() -> u16 { tcp_listener_local_port(@handle) }
+
+/// Return the local address this listener is bound to.
+#stable(since = "0.1")
+export fn TcpListener @local_addr() -> SocketAddr {
+    SocketAddr._from_raw(tcp_listener_local_addr(@handle))
+}
+
+/// Set whether to reuse the local address (SO_REUSEADDR).
+#stable(since = "0.1")
+export fn TcpListener mut @set_reuse_address(on bool) TcpNet {
+    TcpNet.set_reuse_address(@, on)
+}
+
+/// Close the listener and release all resources (consume).
+#stable(since = "0.1")
+export fn TcpListener consume @close() TcpNet {
+    TcpNet.close_listener(@)
+}
+
+// ─── TcpStream public API ────────────────────────────────────────────────────
+
+/// Connect to a remote TCP address (parks until connected or error).
+#stable(since = "0.1")
+export fn TcpStream.connect(addr SocketAddr) TcpNet Blocking -> Result[TcpStream, NetError] {
+    TcpNet.connect(addr)
+}
+
+/// Write `data` to the stream (parks until written or error).
 ///
 /// Returns `Ok(n)` where `n` is the number of bytes written.
-/// Returns `Err(msg)` on I/O error (e.g. broken pipe, peer closed).
-///
-/// **V1 note:** `write` buffers the data and parks until the kernel
-/// has accepted all bytes (full write semantics). Partial writes are
-/// retried internally.
-///
-/// **Cancel-safe:** in-flight write is aborted on scope cancel.
 #stable(since = "0.1")
-export extern "nova" fn TcpStream mut @write(data str) -> Result[int, str]
+export fn TcpStream mut @write(data str) TcpNet Blocking -> Result[int, NetError] {
+    TcpNet.write(@, data)
+}
 
 /// Return the local port of this stream.
 #stable(since = "0.1")
-export extern "nova" fn TcpStream @local_port() -> u16
+export fn TcpStream @local_port() -> u16 { tcp_stream_local_port(@handle) }
 
-/// Return the remote (peer) port of this stream.
+/// Return the remote peer port of this stream.
 #stable(since = "0.1")
-export extern "nova" fn TcpStream @peer_port() -> u16
+export fn TcpStream @peer_port() -> u16 { tcp_stream_peer_port(@handle) }
 
 /// Return the local address of this stream.
 #stable(since = "0.1")
-export extern "nova" fn TcpStream @local_addr() -> SocketAddr
+export fn TcpStream @local_addr() -> SocketAddr {
+    SocketAddr._from_raw(tcp_stream_local_addr(@handle))
+}
 
-/// Return the remote (peer) address of this stream.
+/// Return the remote peer address of this stream.
 #stable(since = "0.1")
-export extern "nova" fn TcpStream @peer_addr() -> SocketAddr
+export fn TcpStream @peer_addr() -> SocketAddr {
+    SocketAddr._from_raw(tcp_stream_peer_addr(@handle))
+}
 
-/// Close the stream and release all resources.
-///
-/// Idempotent: calling `close()` on an already-closed stream is safe.
-/// In-flight reads/writes will receive `Err("closed")`.
-///
-/// The TCP connection is closed with a FIN+ACK sequence.
+/// Set TCP_NODELAY (disable Nagle's algorithm).
 #stable(since = "0.1")
-export extern "nova" fn TcpStream mut @close()
+export fn TcpStream mut @set_nodelay(on bool) TcpNet {
+    TcpNet.set_nodelay(@, on)
+}
+
+/// Set TCP keepalive.
+#stable(since = "0.1")
+export fn TcpStream mut @set_keepalive(on bool) TcpNet {
+    TcpNet.set_keepalive(@, on)
+}
+
+/// Close the stream and release all resources (consume).
+#stable(since = "0.1")
+export fn TcpStream consume @close() TcpNet {
+    TcpNet.close_stream(@)
+}
+
+// ─── Package-private factories ───────────────────────────────────────────────
+
+fn TcpListener._from_raw(h int) -> TcpListener => { handle: h }
+fn TcpStream._from_raw(h int) -> TcpStream => { handle: h }
+
+// ─── Error helpers ───────────────────────────────────────────────────────────
+
+fn net_error(msg str) -> NetError {
+    if msg.contains("connection refused") { NetError.ConnectionRefused }
+    else if msg.contains("address already in use") { NetError.AddressInUse }
+    else if msg.contains("address not available") { NetError.AddressNotAvailable }
+    else if msg.contains("connection reset") { NetError.BrokenPipe }
+    else if msg.contains("broken pipe") { NetError.BrokenPipe }
+    else if msg.contains("cancelled") { NetError.Cancelled }
+    else if msg.contains("timed out") { NetError.TimedOut }
+    else if msg.contains("not found") { NetError.NotFound }
+    else { NetError.IoError(msg) }
+}
+
+fn tcp_result_err() -> Result[TcpListener, NetError] {
+    Err(net_error(net_last_error()))
+}
+fn tcp_stream_result_err() -> Result[TcpStream, NetError] {
+    Err(net_error(net_last_error()))
+}
+fn tcp_write_result_err() -> Result[int, NetError] {
+    Err(net_error(net_last_error()))
+}
+
+// ─── real_tcp_net: concrete TcpNet handler ───────────────────────────────────
+
+/// Concrete TcpNet handler dispatching to libuv via C FFI.
+///
+/// Install at the root of your async program:
+/// ```nova
+/// with TcpNet = real_tcp_net() {
+///     // network code here
+/// }
+/// ```
+#stable(since = "0.1")
+export fn real_tcp_net() -> Effect[TcpNet] => effect TcpNet {
+    bind(addr) {
+        ro h = tcp_listener_bind(addr.handle)
+        if h < 0 { tcp_result_err() }
+        else { Ok(TcpListener._from_raw(h)) }
+    }
+    accept(listener) {
+        ro h = tcp_listener_accept(listener.handle)
+        if h < 0 { tcp_stream_result_err() }
+        else { Ok(TcpStream._from_raw(h)) }
+    }
+    connect(addr) {
+        ro h = tcp_stream_connect(addr.handle)
+        if h < 0 { tcp_stream_result_err() }
+        else { Ok(TcpStream._from_raw(h)) }
+    }
+    write(stream, data) {
+        ro n = tcp_stream_write(stream.handle, data)
+        if n < 0 { tcp_write_result_err() }
+        else { Ok(n) }
+    }
+    close_stream(stream) => tcp_stream_close(stream.handle)
+    close_listener(listener) => tcp_listener_close(listener.handle)
+    set_nodelay(stream, on) { }
+    set_keepalive(stream, on) { }
+    set_reuse_address(listener, on) { }
+}

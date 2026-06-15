@@ -1,0 +1,73 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.12 Ф.1: private C FFI layer for std/net.
+//
+// All declarations are module-private (no `export`).
+// C symbols called via literal name (Ф.-1 D282: `extern "C" fn`).
+// C side: compiler-codegen/nova_rt/net.h + net.c (Plan 91.12 Ф.0).
+//
+// ABI conventions:
+//   int (nova_int = intptr_t) — used for opaque C handles.
+//     - Constructors return the handle, or -1 on error (call net_last_error()).
+//     - Pass handles as `int` to accessors/mutators.
+//     - 0 is the null/invalid handle sentinel.
+//   str — nova_str {ptr,len}; C side copies to GC heap.
+//   u16/u8 — C native uint16_t/uint8_t.
+//   ()  — C nova_unit (1-byte struct); callers discard.
+//
+// Note: `int` is used for ALL handles here (SocketAddr, TcpListener, etc.)
+// Type safety is provided by the exported value-record wrappers (addr.nv, tcp.nv, udp.nv).
+
+module std.net
+
+// ─── SocketAddr ──────────────────────────────────────────────────────────────
+// Returns handle as int (intptr_t); -1 on error → call net_last_error().
+
+extern "C" fn socket_addr_loopback(port u16) -> int
+extern "C" fn socket_addr_loopback_v6(port u16) -> int
+extern "C" fn socket_addr_v4(a u8, b u8, c u8, d u8, port u16) -> int
+extern "C" fn socket_addr_parse(s str) -> int
+extern "C" fn socket_addr_port(addr int) -> u16
+extern "C" fn socket_addr_host_str(addr int) -> str
+extern "C" fn socket_addr_is_v4(addr int) -> bool
+extern "C" fn socket_addr_is_v6(addr int) -> bool
+extern "C" fn socket_addr_to_str(addr int) -> str
+
+// ─── TcpListener ─────────────────────────────────────────────────────────────
+
+// Returns handle (intptr_t) or -1 on error.
+extern "C" fn tcp_listener_bind(addr int) -> int
+extern "C" fn tcp_listener_accept(lst int) -> int
+extern "C" fn tcp_listener_local_port(lst int) -> u16
+extern "C" fn tcp_listener_local_addr(lst int) -> int
+extern "C" fn tcp_listener_close(lst int) -> ()
+
+// ─── TcpStream ───────────────────────────────────────────────────────────────
+
+// Returns handle (intptr_t) or -1 on error (connect).
+extern "C" fn tcp_stream_connect(addr int) -> int
+// Returns bytes written (>0) or -1 on error.
+extern "C" fn tcp_stream_write(s int, data str) -> int
+extern "C" fn tcp_stream_local_port(s int) -> u16
+extern "C" fn tcp_stream_peer_port(s int) -> u16
+extern "C" fn tcp_stream_local_addr(s int) -> int
+extern "C" fn tcp_stream_peer_addr(s int) -> int
+extern "C" fn tcp_stream_close(s int) -> ()
+
+// Thread-local last error; valid after any function returns < 0 or -1.
+extern "C" fn net_last_error() -> str
+
+// ─── UdpSocket ───────────────────────────────────────────────────────────────
+
+// Returns handle (intptr_t) or -1 on error.
+extern "C" fn udp_socket_bind(addr int) -> int
+// Returns 0 on success, -1 on error.
+extern "C" fn udp_socket_send_to(sock int, data str, addr int) -> int
+// Parks fiber; stores result in TLS. Returns 0=ok, -1=error.
+// Read results with udp_socket_recv_data() / udp_socket_recv_sender() immediately after.
+extern "C" fn udp_socket_recv_from(sock int, max int) -> int
+// TLS accessors — call immediately after a successful udp_socket_recv_from.
+extern "C" fn udp_socket_recv_data() -> str
+extern "C" fn udp_socket_recv_sender() -> int
+extern "C" fn udp_socket_local_port(sock int) -> u16
+extern "C" fn udp_socket_local_addr(sock int) -> int
+extern "C" fn udp_socket_close(sock int) -> ()
