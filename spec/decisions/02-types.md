@@ -12278,13 +12278,13 @@ D220 дал `priv` (field-level, только own-type) и `type X priv {...}` (
 export type Job value priv {   // module-private by default
     mut id   int               // module-private
     kind     int               // module-private
-    priv secret int            // type-private (stronger: only Job methods)
+    priv(type) secret int      // type-private (stronger: only Job methods)
 }
 ```
 
-`priv` без квалификатора на уровне типа = **module-private** (D281).  
-`priv(type)` на уровне типа = **type-private** (D220 «type-level flip», более строгий).  
-`priv` на поле (field-level) = **всегда type-private**, независимо от type-level default.  
+`priv` без квалификатора = **module-private** — на уровне типа (задаёт дефолт полей) и на уровне поля (задаёт видимость явно).  
+`priv(type)` = **type-private** — аналогично: на уровне типа (дефолт) и на уровне поля (явно).  
+Правило симметрично: `priv` ведёт себя **одинаково** на type-уровне и field-уровне.  
 `priv(module)` — **ОШИБКА** (`E_PRIV_QUALIFIER`); используй `priv` без квалификатора.
 
 ### Правило
@@ -12294,9 +12294,10 @@ export type Job value priv {   // module-private by default
 | Контекст | Effective visibility |
 |---|---|
 | Explicit `pub` field | public |
-| Explicit `priv` field | type-private |
-| Type-level `priv(type)` default | type-private |
-| Type-level `priv` default (без квалификатора) | **module-private** |
+| Explicit `priv` field | **module-private** |
+| Explicit `priv(type)` field | type-private |
+| Type-level `priv(type)` default, no explicit field modifier | type-private |
+| Type-level `priv` default, no explicit field modifier | **module-private** |
 | (ничего — D47 default) | public |
 
 #### §2 Module identity
@@ -12311,7 +12312,7 @@ Module-private field (из type-level `priv` default, без explicit field `pri
 - **Same module:** read / write / init / pattern — РАЗРЕШЕНЫ.
 - **Other module:** read → `E_FIELD_MODULE_PRIVATE`, write → `E_FIELD_MODULE_PRIVATE`, init → `E_FIELD_MODULE_PRIVATE`, pattern → `E_FIELD_MODULE_PRIVATE`.
 
-Type-private field (explicit `priv` field, OR type-level `priv(type)` default):
+Type-private field (explicit `priv(type)` field, OR type-level `priv(type)` default):
 - **Same module, non-method:** read → `E_PRIV_FIELD_READ` (D220 error codes unchanged).
 - **Own-type method:** РАЗРЕШЁН.
 
@@ -12332,14 +12333,14 @@ Type-private field (explicit `priv` field, OR type-level `priv(type)` default):
 2. **Негатив-read:** import T из другого модуля, `t.f` → `E_FIELD_MODULE_PRIVATE`.
 3. **Негатив-write:** `t.f = x` из другого модуля → `E_FIELD_MODULE_PRIVATE`.
 4. **Негатив-init:** `{ f: v }` конструктор из другого модуля → `E_FIELD_MODULE_PRIVATE`.
-5. **Layering:** `priv` field внутри `type T priv {...}` остаётся type-private — `E_PRIV_FIELD_READ` даже в том же модуле из свободной функции.
+5. **Layering:** `priv(type)` field внутри `type T priv {...}` остаётся type-private — `E_PRIV_FIELD_READ` даже в том же модуле из свободной функции. Bare `priv` field внутри `type T priv {...}` = module-private (accessible in same module free fn).
 6. **Public export:** type + его методы (возвращающие/принимающие T) публично экспортируются — клиентский модуль может использовать API без доступа к внутренним полям.
 7. **Regression:** `nova test` core-suite без новых FAIL.
 
 ### AST / Checker-реализация
 
 - `ast::FieldDefaultVisibility::Module` — новый вариант enum (наряду с `Public`, `Private`).
-- `RecordField.priv_module_field: bool` — true если поле получило module-private из type-level default (не из explicit `priv`).
+- `RecordField.priv_module_field: bool` — true если поле получило module-private (из type-level default ИЛИ из explicit `priv` field modifier).
 - `TypeCheckCtx.type_defining_modules: HashMap<String, Vec<String>>` — строится из `peer_files.items_here`.
 - `TypeCheckCtx.current_module: RefCell<Vec<String>>` — RAII `CurrentModuleGuard` при входе в `check_module`.
 - `module_priv_access_allowed(tname)` — compare maps.
