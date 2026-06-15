@@ -54,7 +54,6 @@
 use crate::ast::{
     RecordField, SumVariant, SumVariantKind, TypeDecl, TypeDeclKind, TypeRef,
 };
-use crate::const_fn_eval::type_size_or_align_resolved;
 use std::collections::{HashMap, HashSet};
 
 /// Width (bytes) of any heap pointer on the x64 ABI emit_c targets.  A
@@ -857,20 +856,16 @@ fn layout_of_sum(
         }
     }
 
-    // Cross-check the total against the canonical size-math; on any mismatch we
-    // KEEP our (emit-accurate) size but flag unresolved so a consumer is warned
-    // the model diverged from the size-math source.  For the common all-scalar
-    // / single-pointer variants the two agree exactly.
-    let math_size = sum_math_size(td, type_decls);
-    if let Some(ms) = math_size {
-        if ms as usize != size {
-            // Divergence is expected when a variant embeds a pointer-lowered
-            // field whose size-math width (slice/inline) differs from emit_c's
-            // 8-byte pointer; our `size` is the emit-accurate one.  We do NOT
-            // flag unresolved for that benign case — only record it implicitly
-            // by trusting emit. (Left intentionally non-fatal.)
-        }
-    }
+    // NOTE: `size` above is emit-accurate — it comes from the boxing-aware
+    // per-variant field walk, which treats heap-boxed record/sum/Vec fields as
+    // 8-byte pointers (so a recursive variant like `Node(Tree, Tree)` resolves
+    // its `Tree` fields to pointer-leaves and never recurses). A former
+    // cross-check against const_fn_eval's `type_size_or_align_resolved` was
+    // REMOVED: that size-math is boxing-UNAWARE — it inlines a field of the
+    // sum's own type instead of treating it as a boxed pointer — and therefore
+    // infinite-recurses → STACK OVERFLOW on ANY recursive sum type (e.g.
+    // `Tree = Leaf | Node(Tree, Tree)`), including valid ones that `nova check`
+    // accepts. The per-variant walk is the authoritative, recursion-safe source.
 
     LayoutInfo {
         size: Some(size),
@@ -881,17 +876,6 @@ fn layout_of_sum(
     }
 }
 
-/// Canonical size-math total for a sum decl (cross-check only).
-fn sum_math_size(td: &TypeDecl, type_decls: &HashMap<String, TypeDecl>) -> Option<i64> {
-    let tref = TypeRef::Named {
-        path: vec![td.name.clone()],
-        generics: vec![],
-        span: crate::diag::Span::default(),
-    };
-    let mut reg = type_decls.clone();
-    reg.insert(td.name.clone(), td.clone());
-    type_size_or_align_resolved(&tref, false, &reg)
-}
 
 // =============================================================================
 //                                 driver
@@ -937,6 +921,11 @@ pub fn compute_gc_layout(type_decls: &HashMap<String, TypeDecl>) -> GcLayoutMap 
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the tests still reference the const_fn_eval size-math (to assert the
+    // boxing-aware walk agrees on NON-recursive types); production code no longer
+    // calls it (see the removed sum cross-check — it infinite-recursed on
+    // recursive sums).
+    use crate::const_fn_eval::type_size_or_align_resolved;
     use crate::ast::*;
     use crate::diag::Span;
 
@@ -1243,6 +1232,37 @@ mod tests {
         let map = compute_gc_layout(&reg);
         let info = map.get("Shape").unwrap();
         assert_eq!(info.variants[1].pointer_offsets, vec![8, 24], "Seg: from@8 + to@24, n@16 scalar");
+    }
+
+    #[test]
+    fn recursive_sum_does_not_overflow() {
+        // type Tree { Leaf, Node(Tree, Tree) } — a VALID recursive sum (boxed).
+        // REGRESSION: computing its layout used to STACK-OVERFLOW via the (now
+        // removed) const_fn_eval size cross-check, which inlined the recursive
+        // `Tree` field instead of treating it as a boxed 8-byte pointer. The
+        // boxing-aware per-variant walk treats each `Tree` field as a pointer
+        // leaf, so this resolves without recursion. `nova check` accepts such a
+        // type, so gc-layout-analyze must not crash on it.
+        let tree = sum_decl(
+            "Tree",
+            vec![
+                unit_variant("Leaf"),
+                tuple_variant("Node", vec![ty("Tree"), ty("Tree")]),
+            ],
+        );
+        let reg = registry(vec![tree]);
+        let map = compute_gc_layout(&reg); // must NOT overflow
+        let info = map.get("Tree").expect("Tree must resolve");
+        assert_eq!(info.variants.len(), 2, "Leaf + Node");
+        assert!(
+            info.variants[0].pointer_offsets.is_empty(),
+            "Leaf has no payload → no pointers"
+        );
+        assert_eq!(
+            info.variants[1].pointer_offsets.len(),
+            2,
+            "Node(Tree, Tree): both recursive fields are boxed GC pointers"
+        );
     }
 
     /// `str` is queryable directly → ptr@0 marked, len@8 not.
