@@ -1,0 +1,31 @@
+// Plan 159 Ф.2 regression guard ([M-reachability-codegen-dce]).
+//
+// A `requires`/`ensures` contract message may interpolate runtime values
+// (`requires amount >= 0, "balance got ${amount}"`). That interpolation desugars
+// to an `InterpolatedStr` whose int→str converter + StringBuilder selectors are
+// emitted ONLY at the violation site — they never appear syntactically anywhere
+// else in this program. Under reachability method-DCE (this file has `main`, so
+// it is an executable and DCE is ON) the converter must still be emitted.
+//
+// Root cause this guards: `lints::collect_used_names` walked `Contract.expr` but
+// NOT `Contract.message_expr`, so method-DCE pruned the int→str converter and
+// codegen emitted `nova_str` ← `int` (CC-FAIL) at the check site. The fix walks
+// `message_expr` for both `Item::Fn` contracts (here) and `Item::Type`
+// invariants (see plan140_1/invariant_msg_interp_neg, which guards that path).
+//
+// Crucially NO other interpolation exists in this file: `println` below takes a
+// plain literal. So if the converter is wrongly pruned this CC-FAILs; if kept it
+// compiles and the contract fires, rendering the captured value -7.
+// EXPECT_RUNTIME_PANIC requires failed: balance got -7 (amount >= 0)
+
+module plan159.f2_contract_msg_interp_dce
+
+fn withdraw(amount int) -> int
+    requires amount >= 0, "balance got ${amount}"
+=> amount
+
+fn main() Io -> () {
+    ro r = withdraw(-7)
+    println("UNREACHABLE")
+    ro _ = r
+}

@@ -2966,8 +2966,13 @@ codegen не делал анализа достижимости и эмитил 
    `*_DATA`-таблицы) держатся **только** если их читает достижимая функция/const.
 4. **Непрямые ссылки** (критично для корректности): protocol dynamic-dispatch,
    замыкания/fn-указатели, `@`-методы, for/parallel-for iteration, операторы
-   (`==`/`+`/`[k]`), string-interpolation desugar — **все** засеиваются как
-   достижимые-по-имени (codegen-injected селекторы видны сборщику имён).
+   (`==`/`+`/`[k]`), string-interpolation desugar, **а также интерполяция в
+   сообщениях контрактов** (`requires`/`ensures`/`invariant <e>, "...${f}..."` —
+   `Contract.message_expr`, десугарится на сайте нарушения) — **все** засеиваются
+   как достижимые-по-имени (codegen-injected селекторы видны сборщику имён). Сборщик
+   `collect_used_names` обязан обходить эти позиции: `Item::Fn` контракты И
+   `Item::Type` инварианты включают `message_expr` (иначе method-DCE срежет int→str-
+   конвертер → `nova_str` ← `int` CC-FAIL; найдено полным регрессом Plan 159).
 5. **Method-level DCE** — метод `T.m` эмитится ⇔ достижимо значение типа `T` **И**
    селектор `m` вызван по имени (прямой/protocol). Монотонный fixpoint. Coarse-by-name:
    name-collision **over-keep'ит** (никогда не over-prune'ит).
