@@ -36799,6 +36799,93 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   **Урок:** под структурно-итераторной моделью «FromIterator» — это паттерн (`collect`/`from`/`extend`),
   а не trait; одна enforced-абстракция упёрлась бы в static-generic gap, набор поверх рабочей
   instance-инфры даёт полный паритет без компилятор-хирургии.
+### Plan 153.2 Ф.2 — zero-cost lazy-итератор: by-value mono (Stage 1) + generic-over-source (Stage 2) + capture-free closure devirt (Stage 3) + alloc-free терминаторы/`collect_into` (Stage 4), 2026-06-14/15
+
+- **Где** — `compiler-codegen/src/codegen/emit_c.rs` (by-value mono machinery, всё gate на
+  `AllocKind::Value`; Stage 3 — `emit_lambda` ~31427 capture-free fast-path); `std/collections/vec_lazy.nv:57`
+  (`BoxIter[T]` помечен `value`); НОВЫЙ модуль `std/collections/vec_iter_zc.nv`
+  (`module collections.vec_iter_zc`, opt-in import; Stage 4 — `zcollect_into` на каждом адаптере). Commits
+  `0da18125` (Stage 1) + `515de574` (Stage 2) + `bf95d93d` (Stage 4) + `44fca673` (Stage 3) на ветке
+  `plan-153.2-zerocost`. Spec — D277 NEW+AMEND (amends D228 «value-record allocation» + D260
+  «boxed-fluent lazy», depends D226). Доки — `vec-lazy.md` (zero-cost-sibling секция + cost-таблица +
+  alloc-summary), `vec-internals.md` (two-lazy-shapes секция + Stage 3/4), план 153-vec-production-model.md
+  (Stage 3/4 секции + критерии приёмки 153.2-Z). Маркеры — `[M-153.2-Z-closure-devirt]` (P3 PARTIAL),
+  `[M-153.2-Z-noalloc-terminator]` (✅ DONE).
+- **Что СДЕЛАНО (не упрощение — выполненная perf-работа):**
+  - **Stage 1 — by-value мономорфизация generic value-records.** Монорфизатор научен лоуэрить
+    generic `type X[T] value {…}` BY VALUE для каждого mono-инстанса (inline `NovaValue_<short>`,
+    passed/returned/copied по значению, БЕЗ `nova_alloc` для wrapper-рекорда — зеркало str/non-generic
+    value-record-пути D228). `BoxIter[T]` стал `value` → канон `v.lazy().map().filter().collect()`:
+    **5 → 0** wrapper-record heap-allocs (`grep nova_alloc(sizeof(Nova_BoxIter` = 0 во всех
+    сгенерённых `plan153_2/*.c`; by-value `NovaValue_BoxIter…` struct повсюду). Codegen-контракт:
+    `receiver_c_type` → `NovaValue_<short>*` (D226 always-ptr, order-free helpers
+    `value_generic_mono_short`/`value_aware_generic_c_type`); generic-instance dispatch (block 5b)
+    маршрутит value-receiver через `prepare_method_recv` (передача по адресу); fn-typed-field вызов
+    `(@step)()` — accessor `.` vs `->` по value-ness; return-inference (`infer_mono_method_ret_with_args`
+    + dispatch 5b + overload-pool rt-strip) снимает `NovaValue_` ПЕРЕД `Nova_`, чтобы `Nova_<rt>`-lookup
+    попал (иначе `.map[U]`-цепочка коллапсировала в `int`).
+  - **Stage 2 — generic-over-source zero-cost адаптеры.** Sibling-модуль `vec_iter_zc`: Rust-style
+    `MapIter[I,T,U]`/`FilterIter[I,T]`/`FilterMapIter[I,T,U]` — каждый generic-over-source `value`-рекорд,
+    держащий upstream INLINE полем `src I` (НЕ boxed `step`); `@next()` диспетчит `(@src).next()`
+    статически. Цепочка `v.ziter().zmap(f).zfilter(p).zcollect()` → один вложенный mono-тип
+    `FilterIter[MapIter[VecIter[int],int,int],int]`, `next()` инлайнится до `VecIter.next()`. Измерено:
+    per-adapter heap **3 → 0** (`nova_lambda_env`+`_box_src`+`NovaClosBase` step-thunk), source-box
+    `_box_src` **9 → 0**, per-element `step()` fn-ptr индирекция убрана. Доп. codegen-фиксы: value-aware
+    `apply_type_subst_to_ref`-зеркало (nested-arg `NovaValue_`-префикс → mono-имя согласуется);
+    depth-aware mono-args splitter (`split_top_level_mono_args`+`mono_type_args_of` — naive `split("__")`
+    рвал вложенный generic-over-source арг); recursive `erased_type_ref_c` placeholder-check;
+    value-gated nested-placeholder drain-guard.
+  - **Stage 3 — devirtualizация capture-free замыканий (alloc-elimination, commit `44fca673`).** Замыкание
+    БЕЗ свободных переменных (env=`{int _dummy}`) stateless → ОДИН file-scope static singleton
+    (`nova_lambda_N_clos_singleton`+`_env_singleton`) вместо ДВУХ `nova_alloc` на call-site (env-box +
+    `NovaClos_xx`-box); call-site возвращает `(void*)(&singleton)`. Хирургическая правка `emit_lambda`
+    (~31427). **Соундно безусловно:** static-адрес immortal (escape/store/outlive любой scope; Boehm =
+    root). Захватывающие замыкания (`free_vars≠∅`) — heap-путь БЕЗ изменений (per-instance env). **Замер
+    (release nova, C-codegen):** канон `zmap(\|x\| x*3).zfilter(\|x\| x%2==0).zcollect()` driver-тело
+    closure-allocs **4→0**; `.zfold(0,\|acc,x\| acc+x)` **6→0** — verified 0
+    `nova_alloc(sizeof(nova_lambda_N_env))`/`nova_alloc(sizeof(NovaClos…))` в `.c`.
+  - **Stage 4 — alloc-free терминаторы + `collect_into` (commit `bf95d93d`).** На каждый адаптер
+    (`MapIter`/`FilterIter`/`FilterMapIter`) добавлен `mut @zcollect_into(out mut Vec[T]) -> ()`: тело =
+    `zcollect`-drain МИНУС `Vec[U].new()` header-alloc — пушит в caller-buffer. **Семантика APPEND** (НЕ
+    чистит `out`; `out.clear()` для свежего sink → амортизированный 0 alloc). **Замер из C:** все четыре
+    мономорфизованных `…method_zcollect_into` тела = **0 `nova_alloc`** (vs `zcollect` с
+    `…_static_new()`); стриминг-терминаторы `zfold`/`zsum`/`zcount`/`zfor_each`/`zany`/`zall`/`zfind`
+    мономорфизованные тела = **0 `nova_alloc`** каждый. **Verdict:** `.fold(0,…)` result-alloc=0;
+    `.collect_into(out)` terminator-alloc=0.
+- **Что УПРОЩЕНО / остаток (честно):**
+  - **per-element ВЫЗОВ `f`/`pred` — всё ещё fn-ptr-индирекция** (`void*` + `NOVA_CLOS_CALL` на элемент) в
+    ОБЕИХ формах. Stage 3 убрал АЛЛОКАЦИЮ closure-env (capture-free → singleton), но НЕ сам вызов.
+    Rust-style инлайн мэппера требует **closures-as-mono-types** (env как конкретный type-param с
+    запечённым env-типом) — отдельный крупный лифт. `[M-153.2-closure-as-mono-type]` /
+    `[M-153.2-Z-closure-devirt]` (P3). **Почему не сейчас:** Stage 1 убрал record-alloc, Stage 2 —
+    source-box+step-индирекцию, Stage 3 — capture-free closure-env-alloc; closures-as-mono-types —
+    структурно бóльшая фича (capture-env как type-param, не perf-патч одного сайта).
+  - **захватывающие замыкания** всё ещё heap-env (per-instance; singleton нельзя шарить).
+  - **`VecIter` source-курсор** — heap-ref-type alloc на `.ziter()` (свойство `VecIter[T]`, не замыкание;
+    вне scope ступеней 3–4).
+  - **`take`/`skip`/`enumerate`** (stateful / tuple-element адаптеры) — пока ТОЛЬКО на boxed `vec_lazy`,
+    в `vec_iter_zc` НЕ портированы. **Почему не сейчас:** порт — wiring (тот же generic-over-source
+    шаблон), не новая compiler-capability; за пределами канон-измерения `map/filter/collect`.
+  - **Дизайн-решение sibling, НЕ замена:** boxed `vec_lazy` (`BoxIter`) СОХРАНЁН как closure-fluent
+    альтернатива (одна erased курсор-форма, единообразный `BoxIter[T]`). `vec_iter_zc` — allocation-free
+    сиблинг за отдельным opt-in import. Это НЕ упрощение, а сознательный two-surface дизайн.
+- **Как чинить остаток** — closures-as-mono-types: при мономорфизации замыкания печь env-тип в
+  type-param, заменить `void* f` + `NOVA_CLOS_CALL` на статический вызов конкретного env-struct (см.
+  `[M-153.2-closure-as-mono-type]`). take/skip/enumerate-порт — добавить `TakeIter[I]`/`SkipIter[I]`/
+  `EnumerateIter[I]` value-рекорды по тому же шаблону + tuple-element resolve (`[M-153.2-tuple-elem-adapter]`).
+- **Приоритет** — остатки P3 (closure-box, take/skip/enumerate-порт); не блокируют, канон-цепочка
+  `map/filter/collect` полностью allocation-free + indirection-free.
+- **Тесты / регрессии** — `plan153_2/` 4/4 (adapters/chains/laziness/terminators) + `plan153_2_zc/` 2/2
+  (Stage 4: `collect_into` 7 кейсов, `streaming_terminators` 5 кейсов); широкая cross-suite проверка по
+  str/value-record/generic-heavy директориям (plan139 37/0, plan139_1 4/0, plan124_8 40/0, plan147 30/30,
+  plan108 5/0, plan88/99/100_1/138, plan48/59/62/101, plan153_3/5/5_nested) — **0 новых регрессий** против
+  baseline-бинаря (Stage 1/2 родитель `7562fcea`; Stage 3/4 baseline `bc4e02f5` — все наблюдаемые FAIL'ы
+  byte-identical, pre-existing на захватывающих замыканиях heap-путём ИЛИ без замыканий вовсе).
+  **Регресс-урок:** over-eager ранняя версия drain-guard'а (НЕ value-gated) сломала 15 HashMap/
+  value-record файлов (plan139 t3/neg_t3, plan152_4 case/normalize/graphemes/sentences/words+conformance,
+  plan152_5 collation) — пойман baseline-бинарём @`0da18125`, FIXED гейтингом skip'а на value-шаблон;
+  все 15 восстановлены. **Урок:** любой новый drain/worklist-guard в монорфизаторе ОБЯЗАН быть gate'нут
+  на `AllocKind::Value`, иначе бьёт heap-generics (HashMap `Vec[Slot[K,V]]` forward-typedef carrier).
 [2026-06-15] Plan 145.2 (codegen emission determinism, ветка plan-145.2) + Plan 145.1 поверх него.
   КОРЕНЬ (из находки 145.1): эмиссия C зависела от порядка итерации Rust HashMap (RandomState,
   рандом per-process) → `.c` недетерминирован между сборками; это будило 2 ЛАТЕНТНЫХ order-зависимых
@@ -36823,3 +36910,20 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   свойство source; детерминизм надо чинить ПЕРВЫМ, чтобы баги стали воспроизводимы.
 - [2026-06-14] Plan 156 (slow-test lane, [M-test-runner-large-test-lane] CLOSED): the MECHANISM is COMPLETE with NO simplifications. The `_slow.nv` discovery suffix + `SlowLane{Exclude|Include|Only}` + `--include-slow`/`--slow-only` flags + the `--conformance-full` generator + spec D277 + Rust unit-tests + plan156 fixtures are all production-grade per AC A1-A5 (verified: default skips slow files with zero per-file I/O, flags run + compose with filters, `nova check <path>` on a slow file still works, suffix combines with OS/_test, generator is deterministic two-lane; release build green). The ONLY deferral is DATA-GATED, not a mechanism/algorithm shortcut: the full collation/sentence conformance corpora (CollationTest_SHIFTED 227800 pairs + sentence set) are not yet committed to the slow lane because the UCD source data (allkeys.txt/CollationTest) is absent from the repo. When the data is fetched, `nova-codegen unicode --conformance-full` populates `*_conformance_slow.nv` and the slow-gate proves G0. Tracked by [M-152-collation-full-conformance]. This is data availability, NOT a simplification of the algorithm or the lane mechanism. (Separately deferred by design: the `slow/` directory + `_slow.toml` sentinel for slow folder-modules -> [M-156-slow-subtree-dir], YAGNI.)
 - [2026-06-15] Plan 156 **rev-3 (storage)** — supersedes the "DATA-GATED / not yet committed" framing above. The full `*_conformance_slow.nv` corpora are deliberately **NOT committed**; they are **regenerated on-demand** from pinned UCD into a gitignored cache (`nova-codegen unicode --emit-conformance --conformance-full --ucd-dir <UCD>` → `nova test --slow-only`; empty cache → 0 tests = skip-never-fail). Rationale (cross-ecosystem research, docs/research/10-unicode-test-data-storage.md): Nova has a byte-identical deterministic generator, so committing ~23 MB (collation 15.5 MB + ~16 MB/Unicode-bump forever) buys nothing the generator doesn't already give; Go and CPython (both with generators) chose the same download/regenerate model — leanest repos. This is NOT a simplification (full corpus IS reachable, was proven generated at 227800/227800 in the Populate phase), but a storage/history-hygiene choice (user decision 2026-06-15). The Populate-committed 23 MB was dropped from plan-156 history via rebase BEFORE merge so it never enters main.
+- [2026-06-15] Plan 145.2/145.1 **аудит-добор** (ultracode-workflow проверил полноту дельверов):
+  3 пробела закрыты БЕЗ упрощений. (1) **D279** (spec/decisions/08-runtime.md; изначально D278,
+  перенумерован из-за коллизии с editors-D278 из main, занявшим номер раньше) — формализован
+  инвариант: эмиссия C детерминирована (стабильный порядок деклараций; новые map/set, по которым
+  итерируется генерация, обязаны иметь детерминированный обход — `BTreeMap`/сортировка, не `HashMap`);
+  D276 «Остаток» обновлён (3 из 4 stmt-expr-сайтов РАЗРЕШЕНЫ). (2)+(3) **site-targeted регресс-
+  фикстуры** для двух косвенно-покрытых сайтов Plan 145.1: `plan145_2/throw_primitive_expr_pos`
+  (site #2 heap-box примитива в `?? throw <int>` → `.c` содержит `nova_box_value(&(nova_int){…})`;
+  прежде ВСЕ throw-expr тесты бросали строки → nova_str comma-ветку, примитив не покрывался) и
+  `plan145_2/composite_get_option_pos` (site #3 int64-erased composite `.get(i)` → NPO; `.c` содержит
+  `nova_npo_from_tagged_int(nova_array_get_nova_int(…))`; прямой `[]Box` берёт типизированный
+  get-путь и НЕ подходит — нужно map-erased хранилище). Обе фикстуры проверены grep'ом на наличие
+  целевого хелпера в `.c` (не stmt-expr) + PASS на clang+MSVC через **релизные** nova-codegen и nova
+  CLI: plan145_2 4/0 (clang) + 4/0 (msvc), регресс plan145 6/0+6/0. Без упрощений (production-grade).
+- [2026-06-15] Plan 158 (test-runner worker stack, [M-codegen-conformance-stack-overflow]) — NO simplification. The codegen-overflow root cause was investigated to ground truth: `test-build` on the 8 MB main thread passes the same large conformance file (exit 0) → codegen depth is fine; ONLY `test-all` worker threads (thread::scope s.spawn, default ~2 MB stack) overflowed. Fix = worker `stack_size(64 MB)` — this IS the root, not a band-aid. The larger recursion→iteration codegen rewrite was deliberately REJECTED as disproportionate (it would solve a non-problem on a normal stack). Honest residual: 1 plan152_4 FAIL is a flaky `lld-link: cannot open output file` AV-race (Windows Defender), orthogonal, passes with `--retries`.
+- [2026-06-14] Plan 104.9 (syntax-highlighting keyword sync + conformance guard, D278) -- NO simplifications. (1) No silent half-fix: Zed's missing active keywords (unsafe/priv/pub/okdefer/interrupt) are documented inline in highlights.scm + tracked ([M-treesitter-grammar-keyword-bump]) as gated on the external tree-sitter-nova grammar, NOT pretended-absent. (2) The conformance test (compiler-codegen/tests/syntax_highlight_conformance.rs) is anchored to the LIVE lexer via lex() per word -- it does NOT compare against a hardcoded copy of the truth, so it cannot rot apart from the compiler. (3) Conscious cross-repo seam (NOT a correctness simplification): the website lives in a separate repo with no access to the Rust lexer, so it has its own node guard (check-highlight-keywords.mjs); both guards are real tests that fail on drift. The ideal -- generating the keyword lists FROM the lexer (single source, zero duplication) -- is open question Q38, deferred (needs an enumerable keyword API in the lexer, which today is only the match arms of lex_ident_or_keyword).
+- [2026-06-15] Plan 152.3b (Unicode-aware char methods, [M-152.3b-char-unicode] DONE): the MECHANISM is COMPLETE with NO simplifications. The char Unicode API (@is_alphabetic/@is_numeric/@is_alphanumeric/@is_whitespace/@is_uppercase/@is_lowercase/@is_control/@general_category/@to_uppercase/@to_lowercase) is 1:1 with the UCD 16.0 -- NOT an ASCII approximation: classification reads a real generated General_Category + Alphabetic + White_Space table (category_data.nv from UnicodeData/DerivedCoreProperties/PropList), is_numeric is derived from GC (Nd|Nl|No, exactly Rust char::is_numeric), and case mapping is full multi-code-point (ss/fi/dotted-i, Final_Sigma context-correct for a lone Sigma). The methods are opt-in under std.unicode (mirroring str @as_graphemes) -- a deliberate design boundary (A6: tables paid by importers), pinned by a negative compile-error fixture, NOT a shortcut. to_uppercase/to_lowercase return str (not an iterator like Rust ToUppercase) -- a recorded API decision (Q-char-case-return-type), justified (str is a cheap value-record, symmetry with string-level case), NOT a simplification. Verified plan152_3 4/0, plan152_4 16/0. The ONLY deferral is DATA-GATED / CI-infra, not a mechanism shortcut: the full per-code-point category conformance sweep (U+0000..U+10FFFF) is committed only as a sample in category_conformance.nv; the full sweep is the slow lane (Plan 156, regenerated on-demand from pinned UCD via nova-codegen unicode --conformance-full), exactly like collation/normalization, tracked by [M-152.3b-category-full-conformance]. The 1:1-with-UCD mechanism is fully implemented and proven; only the raw UCD sample for an automatic full sweep is absent from the repo by storage policy (Plan 156 rev-3). Side-fix [M-codegen-conformance-stack-overflow]: a 64 MiB test-worker stack (band-aid (a)) restores the regressed conformance lane; the iterative-codegen-lowering root fix remains a separate optional followup. Worktree nova-p152-3b, branch plan-152.3b.

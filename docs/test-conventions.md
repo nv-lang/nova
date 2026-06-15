@@ -33,6 +33,24 @@ Test-runner — [Plan 24](plans/24-cross-platform-test-runner.md) +
 sentences 512, collation 227800). Размер коммит-фикстуры регулируется
 `nova-codegen unicode --emit-conformance --conformance-limit <N>`.
 
+### Развилка: коммитить большой набор или регенерить? (для авторов/агентов)
+
+Любой большой/медленный тест помечается суффиксом **`_slow.nv`** (default `nova test`
+его пропускает; прогон `--include-slow`/`--slow-only`; нормировано [D277](../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
+А вот **хранить полный набор в git или нет** — зависит от того, регенерируем ли он:
+
+- **Регенерируемый** детерминированным генератором (напр. Unicode conformance из UCD):
+  полный `*_conformance_slow.nv` **НЕ коммитить** — он `gitignored` (`nova_tests/**/*_conformance_slow.nv`)
+  и **регенерируется on-demand** (`nova-codegen unicode --emit-conformance --conformance-full
+  --ucd-dir <UCD>` → `nova test --slow-only`; пустой кэш → 0 тестов = skip-never-fail). В git —
+  только малый fast-сэмпл `*_conformance.nv`. Причина: коммит регенерируемого build-output зря
+  раздувает историю навсегда (модель Go `-long`/CPython; обоснование —
+  [docs/research/10-unicode-test-data-storage.md](research/10-unicode-test-data-storage.md)).
+- **Нерегенерируемый** (ручной большой/медленный тест, генератора нет): **коммитить** как
+  `*_slow.nv` — это и есть «хранить в репо, но вне дефолт-регресса».
+- ❌ git-lfs / отдельная тест-репа / submodule — НЕ используем (хуже на exFAT/Windows,
+  непрецедентно для текстовых фикстур; см. research/10).
+
 > **Механизм** (lane для больших тестов вне дефолт-прогона) — **РЕАЛИЗОВАН**
 > ([Plan 156](plans/156-test-runner-slow-lane.md), `[M-test-runner-large-test-lane]`;
 > нормирован [D277](../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).

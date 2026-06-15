@@ -42,14 +42,30 @@ editors/
 Все подсветки синхронизированы с **компилятором** —
 [`compiler-codegen/src/lexer/mod.rs`](../compiler-codegen/src/lexer/mod.rs)
 функция `lex_ident_or_keyword`. Это **единственный авторитативный список**
-keyword'ов Nova. При добавлении нового keyword'а в lexer — обновляй все editor-plugin'ы:
+keyword'ов Nova ([D278](../spec/decisions/09-tooling.md#d278)). Различай три класса:
+**ACTIVE** (лексер даёт `Kw*`, валидно → подсвечивать), **RETIRED** (`let`/`readonly`/`safe`
+— `Kw*` только для ошибки удаления → НЕ подсвечивать), **не keyword** (`handler`,
+`and`/`or`/`not`, `race`/`with_timeout`/`cancel_scope`/`region` → лексер даёт `Ident`).
+
+При добавлении/удалении keyword'а в lexer — обновляй все editor-plugin'ы:
 
 | Файл | Что обновить |
 |---|---|
 | `vscode/syntaxes/nova.tmLanguage.json` | `repository.keywords.patterns` |
 | `vim/syntax/nova.vim` | секция `syntax keyword nova*` |
+| `zed/languages/nova/highlights.scm` | список `@keyword` (gated на грамматику tree-sitter-nova) |
 | `emacs/nova-mode.el` | константа `nova-keywords-*` |
-| `tree-sitter-nova/grammar.js` | keyword rules (отдельный репо) |
+| `tree-sitter-nova/grammar.js` | keyword rules (отдельный репо `github.com/nv-lang/tree-sitter-nova`) |
+| `www/site/public/js/nova-highlight.js` | `CTRL_KEYWORDS` / `DECL_KEYWORDS` (отдельный репо) |
+
+**Защита от дрейфа (автоматическая):**
+- `compiler-codegen/tests/syntax_highlight_conformance.rs` — `cargo test` лексит каждое
+  слово через живой `lex()` и проверяет VSCode/vim/Zed на фантомы + полноту.
+- `www/site/scripts/check-highlight-keywords.mjs` — `npm run check:highlight` (отдельный репо сайта).
+
+Открытый вопрос об авто-генерации этих списков из лексера —
+[Q38](../spec/open-questions.md#q38). tree-sitter-грамматика отстаёт от лексера →
+followup `[M-treesitter-grammar-keyword-bump]`.
 
 ## Не поддерживается (отдельные проекты)
 

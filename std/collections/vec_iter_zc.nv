@@ -1,0 +1,463 @@
+// std.collections.vec_iter_zc — ZERO-COST (generic-over-source) lazy iterator
+// adapters & terminators on `Vec[T]`.
+//
+// Plan 153.2 Ф.2 (D260, STAGE 2). The Rust-style `Map<I, F>` / `Filter<I, P>`
+// iterator design: each adapter is its OWN generic-over-source `value` record
+// that holds the upstream iterator INLINE (a field `src I`, not a boxed `step`
+// closure). `@next()` dispatches `(@src).next()` by STATIC, monomorphized call
+// — there is NO per-element function-pointer indirection and NO heap box of the
+// source. A chain `v.ziter().zmap(f).zfilter(p)` monomorphizes to a single
+// NESTED concrete type `FilterIter[MapIter[VecIter[int], int, int], int]`, and
+// every `.next()` inlines down to the base `VecIter.next()`.
+//
+// ── Relationship to the boxed-fluent `vec_lazy` (`BoxIter`)
+//
+// `vec_lazy.nv` (the `BoxIter[T] { step fn()->Option[T] }` layer) is RETAINED
+// unchanged. It is the closure-fluent surface: ONE erased cursor type, uniform
+// `BoxIter[T]` at every stage, at the cost of ~3 heap allocations PER adapter
+// (`nova_lambda_N_env` + a `_box_src` box of the captured source + a
+// `NovaClosBase`) plus a `step()` pointer call per element. This module is the
+// allocation-free alternative: ZERO heap allocations in the adapter chain
+// itself (only the user's `f`/`pred` closures still capture). The two coexist
+// behind separate explicit imports.
+//
+// ── Why a SEPARATE, explicitly-imported sibling FILE-module
+//
+// Same rationale as `vec_lazy` / `vec_seq`: a prelude-global generic-type
+// method whose body stores/forwards a CLOSURE (`f`/`pred`) leaks its method-
+// level generics and its callback params into every compilation unit's merged
+// body ([M-codegen-var-types-fn-scope] + D145). A unit with a top-level `fn f`
+// would collide. The adapters stay behind an opt-in
+// `import std.collections.vec_iter_zc`.
+//
+// ── ZERO-COST measurement (Plan 153.2 Ф.2)
+//
+// For `v.ziter().zmap(|x| x*10).zfilter(|x| x>25).zcollect()`:
+//   * adapter-record allocations : 0  (by-value `NovaValue_<…>` mono, Stage 1)
+//   * source-box (`_box_src`)     : 0  (source held inline as `src I`)
+//   * step-closure (`NovaClosBase`) for SOURCE threading : 0  (static dispatch)
+// The only residual heap is the user's `f`/`pred` closure env — a closure-as-
+// mono-type lift is out of scope for 153.2 ([M-153.2-closure-as-mono-type]).
+//
+// ── Coverage / known limits
+//
+// `T` flows through unchanged at `filter`; `zmap` retargets to `U`. The element
+// type and source type are both monomorphized, so each distinct chain shape is
+// its own concrete type (Rust-identical). The current surface threads the
+// PRIMITIVE chains exercised by the tests (`map`/`filter`/`collect`/
+// `collect_into`/`fold`/`sum`/`count`/`any`/`all`/`find`/`for_each`). The
+// streaming terminators (`fold`/`sum`/`count`/`any`/`all`/`find`/`for_each`)
+// and `collect_into` allocate NOTHING in the terminator body itself
+// (Stage 4); `collect`'s result `Vec` is the only A-set terminator that
+// allocates. Adapters whose ELEMENT is a
+// tuple (`enumerate`) and the `take`/`skip` stateful adapters are provided on
+// the boxed-fluent `vec_lazy` surface; porting them here is wiring, not new
+// compiler capability ([M-153.2-generic-over-source-zerocost]).
+
+module collections.vec_iter_zc
+
+import std.collections.vec.{Vec, VecIter}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Adapter types (generic-over-source `value` records — held inline, by value)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Lazily maps each `T` yielded by the inline upstream `src` through `f` to a
+/// `U`. `I` is the concrete upstream iterator type (baked into the mono name).
+export type MapIter[I, T, U] value { mut src I, priv f fn(T) -> U }
+
+/// Lazily keeps only the `T`s for which `pred` holds, pulling from the inline
+/// upstream `src`.
+export type FilterIter[I, T] value { mut src I, priv pred fn(T) -> bool }
+
+/// Lazily map-and-filter: `f` returns `Some(u)` to yield, `None` to skip.
+export type FilterMapIter[I, T, U] value { mut src I, priv f fn(T) -> Option[U] }
+
+// ──────────────────────────────────────────────────────────────────────────
+// `next()` — static, monomorphized dispatch on the inline source
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Advance: pull one from `src`, map through `f`.
+export fn MapIter[I, T, U] mut @next() -> Option[U] => match (@src).next() {
+    Some(x) => Some((@f)(x)),
+    None => None,
+}
+
+/// Advance: pull from `src` until `pred` holds (or the source is exhausted).
+export fn FilterIter[I, T] mut @next() -> Option[T] {
+    while true {
+        match (@src).next() {
+            Some(x) => { if (@pred)(x) { return Some(x) } },
+            None => return None,
+        }
+    }
+    None
+}
+
+/// Advance: pull from `src`, applying `f`; skip `None`, yield `Some(u)`.
+export fn FilterMapIter[I, T, U] mut @next() -> Option[U] {
+    while true {
+        match (@src).next() {
+            Some(x) => match (@f)(x) {
+                Some(u) => return Some(u),
+                None => {},
+            },
+            None => return None,
+        }
+    }
+    None
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Entry bridge + chainable adapter methods
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Begin a zero-cost, allocation-free iterator pipeline over the vector.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_iter_zc
+/// let v = Vec[int].from([1, 2, 3, 4])
+/// let got = v.ziter().zmap(|x| x * 2).zfilter(|x| x > 4).zcollect()
+/// assert(got == [6, 8])
+/// ```
+export fn Vec[T] @ziter() -> VecIter[T] => @iter()
+
+// ── adapters ON a `VecIter[T]` source (chain entry) ─────────────────────────
+
+/// Lazily apply `f` to each element of the vector iterator.
+export fn VecIter[T] @zmap[U](f fn(T) -> U) -> MapIter[VecIter[T], T, U] => { src: @, f }
+
+/// Lazily keep only elements for which `pred` holds.
+export fn VecIter[T] @zfilter(pred fn(T) -> bool) -> FilterIter[VecIter[T], T] => { src: @, pred }
+
+/// Lazily map-and-filter the vector iterator.
+export fn VecIter[T] @zfilter_map[U](f fn(T) -> Option[U]) -> FilterMapIter[VecIter[T], T, U] => { src: @, f }
+
+// ── adapters ON a `MapIter` source (continue the chain) ─────────────────────
+
+export fn MapIter[I, T, U] @zmap[V](f fn(U) -> V) -> MapIter[MapIter[I, T, U], U, V] => { src: @, f }
+export fn MapIter[I, T, U] @zfilter(pred fn(U) -> bool) -> FilterIter[MapIter[I, T, U], U] => { src: @, pred }
+export fn MapIter[I, T, U] @zfilter_map[V](f fn(U) -> Option[V]) -> FilterMapIter[MapIter[I, T, U], U, V] => { src: @, f }
+
+// ── adapters ON a `FilterIter` source (continue the chain) ──────────────────
+
+export fn FilterIter[I, T] @zmap[U](f fn(T) -> U) -> MapIter[FilterIter[I, T], T, U] => { src: @, f }
+export fn FilterIter[I, T] @zfilter(pred fn(T) -> bool) -> FilterIter[FilterIter[I, T], T] => { src: @, pred }
+export fn FilterIter[I, T] @zfilter_map[U](f fn(T) -> Option[U]) -> FilterMapIter[FilterIter[I, T], T, U] => { src: @, f }
+
+// ── adapters ON a `FilterMapIter` source (continue the chain) ───────────────
+
+export fn FilterMapIter[I, T, U] @zmap[V](f fn(U) -> V) -> MapIter[FilterMapIter[I, T, U], U, V] => { src: @, f }
+export fn FilterMapIter[I, T, U] @zfilter(pred fn(U) -> bool) -> FilterIter[FilterMapIter[I, T, U], U] => { src: @, pred }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Terminators — drive the chain. One per adapter type (no `Next[T]`-generic
+// terminator: a monomorphized terminator per receiver type keeps every call
+// statically dispatched and inlinable, the whole point of the zero-cost layer).
+// ──────────────────────────────────────────────────────────────────────────
+
+// ── on MapIter ──────────────────────────────────────────────────────────────
+
+export fn MapIter[I, T, U] mut @zcollect() -> Vec[U] {
+    mut out = Vec[U].new()
+    while true {
+        match @next() {
+            Some(x) => out.push(x),
+            None => return out,
+        }
+    }
+    out
+}
+
+/// Drain the chain into a CALLER-PROVIDED, reusable buffer `out` (Stage 4,
+/// [M-153.2-collect-into]). Unlike `zcollect`, NO result `Vec` is allocated —
+/// the body is byte-identical to `zcollect`'s drain loop minus the
+/// `Vec[U].new()` header allocation. Amortizes to ZERO `nova_alloc` when `out`
+/// is reused across calls (its backing buffer is retained; only the first
+/// fill, or a growth past the current capacity, allocates).
+///
+/// Semantics: APPENDS to `out` (does not clear it first). To reuse a dirty
+/// buffer as a fresh sink, the caller calls `out.clear()` (len = 0, buffer
+/// kept) before passing it in. Returns `()` — the filled buffer is observed
+/// through the caller's own `out` binding (`Vec[T]` is a heap reference type).
+export fn MapIter[I, T, U] mut @zcollect_into(out mut Vec[U]) -> () {
+    mut go = true
+    while go {
+        match @next() {
+            Some(x) => out.push(x),
+            None => { go = false },
+        }
+    }
+}
+
+export fn MapIter[I, T, U] mut @zfold[Acc](init Acc, f fn(Acc, U) -> Acc) -> Acc {
+    mut acc = init
+    while true {
+        match @next() {
+            Some(x) => { acc = f(acc, x) },
+            None => return acc,
+        }
+    }
+    acc
+}
+
+export fn MapIter[I, T, U] mut @zcount() -> int {
+    mut n = 0
+    while true {
+        match @next() {
+            Some(_) => { n = n + 1 },
+            None => return n,
+        }
+    }
+    n
+}
+
+export fn MapIter[I, T, U] mut @zsum(zero U) -> U {
+    mut acc = zero
+    while true {
+        match @next() {
+            Some(x) => { acc = acc + x },
+            None => return acc,
+        }
+    }
+    acc
+}
+
+export fn MapIter[I, T, U] mut @zfor_each(f fn(U) -> ()) -> () {
+    mut go = true
+    while go {
+        match @next() {
+            Some(x) => { f(x) },
+            None => { go = false },
+        }
+    }
+}
+
+export fn MapIter[I, T, U] mut @zany(pred fn(U) -> bool) -> bool {
+    while true {
+        match @next() {
+            Some(x) => { if pred(x) { return true } },
+            None => return false,
+        }
+    }
+    false
+}
+
+export fn MapIter[I, T, U] mut @zall(pred fn(U) -> bool) -> bool {
+    while true {
+        match @next() {
+            Some(x) => { if !pred(x) { return false } },
+            None => return true,
+        }
+    }
+    true
+}
+
+export fn MapIter[I, T, U] mut @zfind(pred fn(U) -> bool) -> Option[U] {
+    while true {
+        match @next() {
+            Some(x) => { if pred(x) { return Some(x) } },
+            None => return None,
+        }
+    }
+    None
+}
+
+// ── on FilterIter ─────────────────────────────────────────────────────────
+
+export fn FilterIter[I, T] mut @zcollect() -> Vec[T] {
+    mut out = Vec[T].new()
+    while true {
+        match @next() {
+            Some(x) => out.push(x),
+            None => return out,
+        }
+    }
+    out
+}
+
+/// Drain into a caller-provided reusable buffer `out` (Stage 4). APPENDS; no
+/// result `Vec` allocation. See `MapIter.zcollect_into` for the contract.
+export fn FilterIter[I, T] mut @zcollect_into(out mut Vec[T]) -> () {
+    mut go = true
+    while go {
+        match @next() {
+            Some(x) => out.push(x),
+            None => { go = false },
+        }
+    }
+}
+
+export fn FilterIter[I, T] mut @zfold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
+    mut acc = init
+    while true {
+        match @next() {
+            Some(x) => { acc = f(acc, x) },
+            None => return acc,
+        }
+    }
+    acc
+}
+
+export fn FilterIter[I, T] mut @zcount() -> int {
+    mut n = 0
+    while true {
+        match @next() {
+            Some(_) => { n = n + 1 },
+            None => return n,
+        }
+    }
+    n
+}
+
+export fn FilterIter[I, T] mut @zsum(zero T) -> T {
+    mut acc = zero
+    while true {
+        match @next() {
+            Some(x) => { acc = acc + x },
+            None => return acc,
+        }
+    }
+    acc
+}
+
+export fn FilterIter[I, T] mut @zfor_each(f fn(T) -> ()) -> () {
+    mut go = true
+    while go {
+        match @next() {
+            Some(x) => { f(x) },
+            None => { go = false },
+        }
+    }
+}
+
+export fn FilterIter[I, T] mut @zany(pred fn(T) -> bool) -> bool {
+    while true {
+        match @next() {
+            Some(x) => { if pred(x) { return true } },
+            None => return false,
+        }
+    }
+    false
+}
+
+export fn FilterIter[I, T] mut @zall(pred fn(T) -> bool) -> bool {
+    while true {
+        match @next() {
+            Some(x) => { if !pred(x) { return false } },
+            None => return true,
+        }
+    }
+    true
+}
+
+export fn FilterIter[I, T] mut @zfind(pred fn(T) -> bool) -> Option[T] {
+    while true {
+        match @next() {
+            Some(x) => { if pred(x) { return Some(x) } },
+            None => return None,
+        }
+    }
+    None
+}
+
+// ── on FilterMapIter ──────────────────────────────────────────────────────
+
+export fn FilterMapIter[I, T, U] mut @zcollect() -> Vec[U] {
+    mut out = Vec[U].new()
+    while true {
+        match @next() {
+            Some(x) => out.push(x),
+            None => return out,
+        }
+    }
+    out
+}
+
+/// Drain into a caller-provided reusable buffer `out` (Stage 4). APPENDS; no
+/// result `Vec` allocation. See `MapIter.zcollect_into` for the contract.
+export fn FilterMapIter[I, T, U] mut @zcollect_into(out mut Vec[U]) -> () {
+    mut go = true
+    while go {
+        match @next() {
+            Some(x) => out.push(x),
+            None => { go = false },
+        }
+    }
+}
+
+export fn FilterMapIter[I, T, U] mut @zfold[Acc](init Acc, f fn(Acc, U) -> Acc) -> Acc {
+    mut acc = init
+    while true {
+        match @next() {
+            Some(x) => { acc = f(acc, x) },
+            None => return acc,
+        }
+    }
+    acc
+}
+
+export fn FilterMapIter[I, T, U] mut @zcount() -> int {
+    mut n = 0
+    while true {
+        match @next() {
+            Some(_) => { n = n + 1 },
+            None => return n,
+        }
+    }
+    n
+}
+
+export fn FilterMapIter[I, T, U] mut @zsum(zero U) -> U {
+    mut acc = zero
+    while true {
+        match @next() {
+            Some(x) => { acc = acc + x },
+            None => return acc,
+        }
+    }
+    acc
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tests (smoke — confirms the zero-cost chain composes & drives correctly)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "zc map -> filter -> collect" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro got = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zcollect()
+    assert(got == [30, 40, 50, 60])
+}
+
+test "zc filter -> map -> collect (order matters)" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro got = v.ziter().zfilter(|x| x % 2 == 0).zmap(|x| x + 100).zcollect()
+    assert(got == [102, 104, 106])
+}
+
+test "zc map -> filter -> fold" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro s = v.ziter().zmap(|x| x * x).zfilter(|x| x % 2 == 1).zfold(0, |acc, x| acc + x)
+    assert(s == 35)   // 1 + 9 + 25
+}
+
+test "zc filter -> count / map -> sum" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    assert(v.ziter().zfilter(|x| x > 5).zcount() == 5)
+    assert(v.ziter().zmap(|x| x * 2).zsum(0) == 110)
+}
+
+test "zc filter_map -> collect" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro got = v.ziter().zfilter_map(|x| if x % 3 == 0 { Some(x * 10) } else { None }).zcollect()
+    assert(got == [30, 60])
+}
+
+test "zc map -> filter -> any / all / find" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    assert(v.ziter().zmap(|x| x + 1).zfilter(|x| x > 3).zany(|x| x == 5))
+    assert(v.ziter().zmap(|x| x * 2).zfilter(|x| x > 0).zall(|x| x % 2 == 0))
+    ro f = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zfind(|x| x == 40)
+    assert(f.unwrap_or(0) == 40)
+}

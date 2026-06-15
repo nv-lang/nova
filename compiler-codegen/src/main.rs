@@ -652,6 +652,17 @@ fn cmd_unicode(
     let srel = "std/unicode/sentence_data.nv";
     let sabs = root.join(srel);
     let sstats = format!("{} sb ranges", stables.len());
+    // Plan 152.3b: General_Category + Alphabetic/White_Space tables (UCD).
+    let cattables = unicode_data::parse_category_tables(ucd_dir)?;
+    let catcontent = unicode_data::render_category_data_nv(&cattables, version);
+    let catrel = "std/unicode/category_data.nv";
+    let catabs = root.join(catrel);
+    let catstats = format!(
+        "{} gc / {} alpha / {} white-space ranges",
+        cattables.gc.len(),
+        cattables.alpha.len(),
+        cattables.white_space.len()
+    );
     // Plan 152.5b: collation (UCA / DUCET, UTS #10). Needs allkeys.txt (UCA).
     // Skipped gracefully if allkeys.txt is absent so the 152.4 UCD-only flow
     // still works in dirs without the UCA data.
@@ -804,6 +815,17 @@ fn cmd_unicode(
                 ));
             }
         }
+        {
+            let ex = std::fs::read_to_string(&catabs)
+                .map_err(|e| anyhow!("failed to read {}: {}", catabs.display(), e))?;
+            if norm(&ex) != norm(&catcontent) {
+                return Err(anyhow!(
+                    "{} diverges from UCD ({}).\n\
+                     Run `nova-codegen unicode --ucd-dir <UCD-dir>` to regenerate.",
+                    catrel, catstats
+                ));
+            }
+        }
         // Plan 152.5b: collation table (only if the UCA data was present).
         if let Some((cl_content, cl_stats, cl_abs, cl_rel)) = &coll_data {
             let ex = std::fs::read_to_string(cl_abs)
@@ -823,7 +845,7 @@ fn cmd_unicode(
                 return Err(anyhow!("{} diverges from UCD test data; regenerate.", p.display()));
             }
         }
-        print!("OK: {} ({}) + {} ({}) + {} ({}) + {} ({}) + {} ({})", rel, stats, grel, gstats, crel, cstats, wrel, wstats, srel, sstats);
+        print!("OK: {} ({}) + {} ({}) + {} ({}) + {} ({}) + {} ({}) + {} ({})", rel, stats, grel, gstats, crel, cstats, wrel, wstats, srel, sstats, catrel, catstats);
         if let Some((_, cl_stats, _, cl_rel)) = &coll_data {
             print!(" + {} ({})", cl_rel, cl_stats);
         }
@@ -848,6 +870,9 @@ fn cmd_unicode(
         std::fs::write(&sabs, &scontent)
             .map_err(|e| anyhow!("failed to write {}: {}", sabs.display(), e))?;
         println!("wrote {} ({}).", srel, sstats);
+        std::fs::write(&catabs, &catcontent)
+            .map_err(|e| anyhow!("failed to write {}: {}", catabs.display(), e))?;
+        println!("wrote {} ({}).", catrel, catstats);
         // Plan 152.5b: collation table (only if the UCA data was present).
         if let Some((cl_content, cl_stats, cl_abs, cl_rel)) = &coll_data {
             if let Some(parent) = cl_abs.parent() {
