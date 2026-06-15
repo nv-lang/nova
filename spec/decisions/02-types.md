@@ -34,6 +34,7 @@
 | [D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee) | Три оси мутабельности (L1 binding / L2 view / L3 pointee); restores `*T ≡ *ro T` universally; `E_REDUNDANT_POINTER_RO` (Plan 147) | active |
 | [D281](#d281-module-level-field-privacy--type-x-priv---plan-160) | Module-level field privacy `type X priv { … }` — bare `priv` = module-private (Plan 160, D281) | active |
 | [D282](#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) | Blanket protocol-receiver methods `fn[I Next[T]] I @m` — typevar-ресивер + bound-dispatch (Plan 161, G-F) | active |
+| [D284](#d284-enumerateiter--zero-cost-enumerate-adapter-plan-162) | `EnumerateIter[I, T]` — zero-cost enumerate adapter; per-type `@zenumerate()` dispatch; tuple parametric return (Plan 162) | active |
 
 ---
 
@@ -12406,3 +12407,34 @@ Type-private field (explicit `priv(type)` field, OR type-level `priv(type)` defa
 **§6 Ограничения V1.** Работает для методов с конкретными или fully-resolved возвращаемыми типами. Параметрические возвращаемые типы `T`, `Option[T]`, `Vec[T]` — V2 (`[M-161-parametric-return]`). Один bound-уровень (`I Proto[…]`); цепные bounds — V2. Ресивер должен быть typevar, не конкретный тип.
 
 **Реализовано в.** `std/collections/vec_iter_zc.nv`: `@zfold`, `@zcount`, `@zfor_each`, `@zany`, `@zall` — blanket на `Next[T]` (5 терминаторов, concrete return type). Перевод 12 per-adapter → 5 blanket деклараций (O(N²) → O(N)).
+
+## D284 — EnumerateIter — zero-cost enumerate adapter (Plan 162)
+
+**Status:** ACTIVE (Plan 162 Ф.0-Ф.5, 2026-06-16). **Зависит от:** [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) (value-record mono / generic-over-source), [D282](#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) (blanket protocol-receiver для терминаторов), [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) (lazy-iterator layer). **Маркер:** `[M-153.2-enumerate-zc]` → ✅ CLOSED Plan 162; `[M-153.2-tuple-elem-adapter]` OPEN (chained adapter сразу после enumerate гейтнут на closure-type propagation). **Было:** `[M-153.2-enumerate-zc]` (enumerate deferred из Plan 153.2, было в boxed `vec_lazy`).
+
+**§1 Синтаксис.** `EnumerateIter[I, T]` — zero-cost value-record adapter:
+```nova
+export type EnumerateIter[I, T] value { mut src I, mut i int }
+```
+Поля: `src I` — источник (inline by-value, статически диспетчится), `i int` — текущий индекс (стартует с 0). Результат `@next()` — `Option[(int, T)]`; `Some((i, elem))` на каждый `Some` у источника, `None` транзитивно. Реализует `Next[(int, T)]` → совместим с blanket-терминаторами D282 (`@zcount`, `@zfold`, `@zfor_each`, `@zany`, `@zall`, `@zfind`, `@zsum`).
+
+**§2 Диспетч (`@zenumerate`).** Метод `@zenumerate()` объявлен **per-type** (не blanket), потому что возвращаемый тип явно называет `EnumerateIter` (не параметрический конкретный тип в смысле D282 §6):
+```nova
+export fn VecIter[T]          @zenumerate() -> EnumerateIter[Self, T]         => { src: @, i: 0 }
+export fn MapIter[I, T, U]    @zenumerate() -> EnumerateIter[Self, U]         => { src: @, i: 0 }
+export fn FilterIter[I, T]    @zenumerate() -> EnumerateIter[Self, T]         => { src: @, i: 0 }
+export fn FilterMapIter[I,T,U]@zenumerate() -> EnumerateIter[Self, U]         => { src: @, i: 0 }
+export fn TakeIter[I, T]      @zenumerate() -> EnumerateIter[Self, T]         => { src: @, i: 0 }
+export fn SkipIter[I, T]      @zenumerate() -> EnumerateIter[Self, T]         => { src: @, i: 0 }
+```
+`Self` — mono-ресивер (D66 §«Self как вложенный generic type-arg»). Каждый adapter-тип регистрирует собственный `@zenumerate`. Не может быть blanket, потому что тело конструирует `EnumerateIter[Self, _]` — return-тип содержит конкретное имя адаптера, не generic typevar, раскрываемый из протокола-bound.
+
+**§3 Мономорфизация (tuple parametric return).** `@next()` возвращает `Option[(int, T)]`. Компилятор разрешает тип кортежа (plan162 fix, `emit_c.rs`): перед вызовом `type_ref_to_c` для `Option[(int, T)]` биндинги type-variable из protocol-bound (`I Next[T]` → T = elem-тип источника) устанавливаются в `type_subst_overrides`. Arm `Tuple` в `type_ref_to_c` получает `T` уже разрешённым → эмитит типизированный mono'd struct (`NovaTuple_2_8_nova_int_11__nova_int` для `int`), не erased `_NovaTuple2`. Без этого фикса T оставался нераспознанным → fallback на erased legacy-форму → CC-FAIL при использовании `.0`/`.1` полей.
+
+**§4 Инвариант (счётчик i).** `i` стартует с 0. Инкрементируется ровно на 1 при каждом `Some`-ответе источника (пропуски на `None` не считаются — `EnumerateIter.@next()` прозрачно прокидывает `None`, не инкрементируя). Это соответствует `enumerate()` в Rust/Python: индекс = порядковый номер доставленного элемента, непрерывно с 0.
+
+**§5 Ограничения V1.** (a) Нет blanket `@zenumerate` — return-тип называет `EnumerateIter` конкретно (contra D282 §6). Добавление нового adapter-типа требует явного `@zenumerate`. (b) Tuple-PRESERVING chained adapter сразу после `enumerate` (`enumerate().filter(..)` когда элемент остаётся `(int,T)`) гейтнут на closure-type-propagation codegen fix → `[M-153.2-tuple-elem-adapter]`; workaround: `enumerate().map(|p| ...)` (Map схлопывает кортеж). (c) `EnumerateIter` был deferred из Plan 153.2 (маркер `[M-153.2-enumerate-zc]` в boxed `vec_lazy`) — зашиплен в Plan 162.
+
+**Кросс-ссылки:** [D282](#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) (blanket-receiver, гейтирует терминаторы на EnumerateIter), [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) (boxed lazy layer — предшественник), [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) (generic-over-source model — база для EnumerateIter).
+
+**Реализовано в.** `std/collections/vec_iter_zc.nv`: `EnumerateIter[I,T]` value-record + `@next()` + chaining methods + 6 per-type `@zenumerate()` adapters. `compiler-codegen/src/codegen/emit_c.rs`: tuple parametric T-subst fix в blanket `infer_type_refs_for_blanket`. Тесты: `nova_tests/plan162/` (9 basic + 8 chain + neg). D284 NEW.
