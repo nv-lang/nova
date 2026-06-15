@@ -1090,6 +1090,12 @@ pub struct NamedTupleField {
     /// accessible only из methods own type'а.
     /// Backward-compat: default false (= public).
     pub priv_field: bool,
+    /// Plan 160 (D281): true when `priv_field` was inherited from
+    /// `priv(module)` type-level default (NOT an explicit `priv` modifier).
+    /// Checker uses this to emit E_FIELD_MODULE_PRIVATE (module-boundary)
+    /// instead of E_PRIV_FIELD_READ (type-boundary) и allow same-module access.
+    /// Backward-compat: default false.
+    pub priv_module_field: bool,
     /// Plan 124.6 (D225): `#visible_to(OtherType[, ...])` field-level
     /// friend declaration. Same semantics как RecordField.visible_to.
     /// Backward-compat: default empty Vec.
@@ -1136,6 +1142,12 @@ pub struct RecordField {
     /// (priv_field stays false).
     /// Backward-compat: default false (= public; D47 MVP unchanged).
     pub priv_field: bool,
+    /// Plan 160 (D281): true when `priv_field` was inherited from
+    /// `priv(module)` type-level default (NOT an explicit `priv` modifier).
+    /// Checker uses this to emit E_FIELD_MODULE_PRIVATE (module-boundary)
+    /// instead of E_PRIV_FIELD_READ (type-boundary) и allow same-module access.
+    /// Backward-compat: default false.
+    pub priv_module_field: bool,
     /// Plan 124.6 (D225): `#visible_to(OtherType[, ...])` field-level
     /// attribute — explicit friend declaration. Methods of listed
     /// types ALSO get priv access (besides own type). Empty = strict

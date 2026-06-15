@@ -2110,6 +2110,18 @@ struct TypeCheckCtx<'a> {
     /// the user wrote on their own redeclared type — matching carrier arity —
     /// is kept).
     user_shadowed_generic_types: HashMap<String, usize>,
+    /// Plan 160 (D281) Ф.2: type name → declaring module name segments.
+    /// Built from `module.peer_files.items_here` in `build`. Used by
+    /// `module_priv_access_allowed` to compare with `current_module`.
+    /// Types imported from other modules retain the module name from which
+    /// they came (their type decl's module_name). Empty for types with
+    /// unknown origin (imported without peer_files → conservative = deny).
+    type_defining_modules: HashMap<String, Vec<String>>,
+    /// Plan 160 (D281) Ф.2: module name of the code currently being
+    /// checked — set to `module.name` at the start of `check_module`.
+    /// Used together with `type_defining_modules` for module-boundary
+    /// enforcement. Empty = no current module (conservative = deny).
+    current_module: std::cell::RefCell<Vec<String>>,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -2144,6 +2156,24 @@ struct PrivTestAccessGuard<'a, 'b> {
 impl<'a, 'b> Drop for PrivTestAccessGuard<'a, 'b> {
     fn drop(&mut self) {
         *self.ctx.current_fn_test_access.borrow_mut() = std::mem::take(&mut self.prev);
+    }
+}
+
+/// Plan 160 (D281) Ф.2: RAII guard для current_module в TypeCheckCtx.
+/// Restores previous module name on drop.
+struct CurrentModuleGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev: Vec<String>,
+}
+impl<'a, 'b> CurrentModuleGuard<'a, 'b> {
+    fn set(ctx: &'b TypeCheckCtx<'a>, module: Vec<String>) -> Self {
+        let prev = std::mem::replace(&mut *ctx.current_module.borrow_mut(), module);
+        CurrentModuleGuard { ctx, prev }
+    }
+}
+impl<'a, 'b> Drop for CurrentModuleGuard<'a, 'b> {
+    fn drop(&mut self) {
+        *self.ctx.current_module.borrow_mut() = std::mem::take(&mut self.prev);
     }
 }
 
@@ -2394,12 +2424,44 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
+        // Plan 160 (D281) Ф.2: build type_defining_modules — maps type name
+        // → the module_name of the peer_file that declared it. Used for
+        // module-boundary enforcement of `priv(module)` types.
+        // Only entry-peer-files contribute (imported modules bring in their
+        // types with a different module_name = their own path, which is the
+        // desired behaviour: cross-module access to those types is denied).
+        let mut type_defining_modules: HashMap<String, Vec<String>> = HashMap::new();
+        if module.peer_files.is_empty() {
+            // Single-file module: all items in module.items belong to module.name.
+            for item in &module.items {
+                if let Item::Type(td) = item {
+                    type_defining_modules
+                        .entry(td.name.clone())
+                        .or_insert_with(|| module.name.clone());
+                }
+            }
+        } else {
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    if let Item::Type(td) = item {
+                        // Record the module_name of the peer that owns this type.
+                        type_defining_modules
+                            .entry(td.name.clone())
+                            .or_insert_with(|| pf.module_name.clone());
+                    }
+                }
+            }
+        }
+
         TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
             in_const_fn: std::cell::Cell::new(false),
             current_recv_type: std::cell::RefCell::new(None),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
             ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
-            user_shadowed_generic_types }
+            user_shadowed_generic_types,
+            type_defining_modules,
+            current_module: std::cell::RefCell::new(Vec::new()),
+        }
     }
 
     /// Plan 126.2 Ф.1: synthesize + register auto-derive methods into
@@ -2492,6 +2554,10 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        // Plan 160 (D281) Ф.2: set current_module for module-boundary checks.
+        // Restored to empty Vec on scope exit via CurrentModuleGuard RAII.
+        let _module_guard = CurrentModuleGuard::set(self, module.name.clone());
+
         // Plan 91.9 (D186): verify `#impl(P1 + P2 + ...)` annotations.
         // Для каждого type T с impl_protocols, проверяем что:
         // 1. Каждый P в списке действительно protocol-тип (E_UNKNOWN_PROTOCOL).
@@ -4167,6 +4233,9 @@ impl<'a> TypeCheckCtx<'a> {
                                 let base_allowed = self.priv_access_allowed_base(last.as_str());
                                 if !base_allowed {
                                     let has_priv = rec_fields.iter().any(|fd| fd.priv_field);
+                                    // Plan 160 (D281) Ф.2: module access context.
+                                    let module_allowed = self.module_priv_access_allowed(last.as_str());
+                                    let has_type_priv = rec_fields.iter().any(|fd| fd.priv_field && !fd.priv_module_field);
                                     for f in fields {
                                         // Plan 124.2 (D221 §5): spread `...other` outside
                                         // type-method scope on a type WITH priv fields
@@ -4174,20 +4243,26 @@ impl<'a> TypeCheckCtx<'a> {
                                         // E_PRIV_FIELD_INIT_SPREAD.
                                         if f.is_spread {
                                             if has_priv {
-                                                errors.push(Diagnostic::new(
-                                                    format!(
-                                                        "[E_PRIV_FIELD_INIT_SPREAD] cannot use \
-                                                         spread `...` in record literal of `{}` \
-                                                         outside type-method scope: type has \
-                                                         private fields which would be \
-                                                         implicitly initialized via copy \
-                                                         (Plan 124 / D221 §5). Hint: use \
-                                                         factory method `{}.new(...)` or list \
-                                                         each public field explicitly.",
-                                                        last, last,
-                                                    ),
-                                                    f.span,
-                                                ));
+                                                // Plan 160 Ф.2: spread allowed within same
+                                                // module for module-priv-only types.
+                                                let has_module_priv_only = has_priv && !has_type_priv;
+                                                let spread_ok = has_module_priv_only && module_allowed;
+                                                if !spread_ok {
+                                                    errors.push(Diagnostic::new(
+                                                        format!(
+                                                            "[E_PRIV_FIELD_INIT_SPREAD] cannot use \
+                                                             spread `...` in record literal of `{}` \
+                                                             outside type-method scope: type has \
+                                                             private fields which would be \
+                                                             implicitly initialized via copy \
+                                                             (Plan 124 / D221 §5). Hint: use \
+                                                             factory method `{}.new(...)` or list \
+                                                             each public field explicitly.",
+                                                            last, last,
+                                                        ),
+                                                        f.span,
+                                                    ));
+                                                }
                                             }
                                             continue;
                                         }
@@ -4195,19 +4270,38 @@ impl<'a> TypeCheckCtx<'a> {
                                             if fdecl.priv_field
                                                 && !self.priv_field_access_allowed(last.as_str(), &fdecl.visible_to)
                                             {
-                                                errors.push(Diagnostic::new(
-                                                    format!(
-                                                        "[E_PRIV_FIELD_INIT] cannot \
-                                                         initialize private field `{}.{}` \
-                                                         via record literal outside type-\
-                                                         method scope. Field marked `priv` \
-                                                         (Plan 124 / D220). Hint: use \
-                                                         factory method like `{}.new(...)`, \
-                                                         or use `#test_access({})` on test fn.",
-                                                        last, f.name, last, last,
-                                                    ),
-                                                    f.span,
-                                                ));
+                                                // Plan 160 (D281) Ф.2: module-private init.
+                                                if fdecl.priv_module_field {
+                                                    if !self.module_priv_access_allowed(last.as_str()) {
+                                                        errors.push(Diagnostic::new(
+                                                            format!(
+                                                                "[E_FIELD_MODULE_PRIVATE] cannot \
+                                                                 initialize module-private field \
+                                                                 `{}.{}` via record literal from \
+                                                                 outside its module. Type declared \
+                                                                 with `priv(module)` (Plan 160 / \
+                                                                 D281). Hint: use factory method \
+                                                                 `{}.new(...)`.",
+                                                                last, f.name, last,
+                                                            ),
+                                                            f.span,
+                                                        ));
+                                                    }
+                                                } else {
+                                                    errors.push(Diagnostic::new(
+                                                        format!(
+                                                            "[E_PRIV_FIELD_INIT] cannot \
+                                                             initialize private field `{}.{}` \
+                                                             via record literal outside type-\
+                                                             method scope. Field marked `priv` \
+                                                             (Plan 124 / D220). Hint: use \
+                                                             factory method like `{}.new(...)`, \
+                                                             or use `#test_access({})` on test fn.",
+                                                            last, f.name, last, last,
+                                                        ),
+                                                        f.span,
+                                                    ));
+                                                }
                                             }
                                         }
                                     }
@@ -5019,6 +5113,25 @@ impl<'a> TypeCheckCtx<'a> {
         false
     }
 
+    /// Plan 160 (D281) Ф.2: true when the caller is in the SAME module as
+    /// the type `tname` was declared in. Used for `priv(module)` boundary:
+    /// fields with `priv_module_field=true` are allowed within the module.
+    ///
+    /// Conservative (deny) when:
+    /// - `type_defining_modules` has no entry for `tname` (unknown origin),
+    /// - `current_module` is empty (no module context set),
+    /// - the modules differ.
+    fn module_priv_access_allowed(&self, tname: &str) -> bool {
+        let current = self.current_module.borrow();
+        if current.is_empty() {
+            return false;
+        }
+        match self.type_defining_modules.get(tname) {
+            Some(def_mod) => def_mod.as_slice() == current.as_slice(),
+            None => false,
+        }
+    }
+
     /// Combines `priv_access_allowed_base(tname)` с per-field visible_to:
     /// true if access allowed, considering field's friend list.
     fn priv_field_access_allowed(&self, tname: &str, visible_to: &[String]) -> bool {
@@ -5067,17 +5180,20 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 124.2 + 124.4 + 124.6 (D221+D222+D224): unified priv
                 // check (Record + NamedTuple). Per-field visible_to taken into
                 // account (Plan 124.6).
-                struct FieldMeta { name: String, priv_field: bool, visible_to: Vec<String>, ty: TypeRef }
+                // Plan 160 (D281) Ф.2: priv_module_field added for module-boundary.
+                struct FieldMeta { name: String, priv_field: bool, priv_module_field: bool, visible_to: Vec<String>, ty: TypeRef }
                 let metas: Vec<FieldMeta> = match &td.kind {
                     TypeDeclKind::Record(rec_fields) => rec_fields.iter().map(|f| FieldMeta {
                         name: f.name.clone(),
                         priv_field: f.priv_field,
+                        priv_module_field: f.priv_module_field,
                         visible_to: f.visible_to.clone(),
                         ty: f.ty.clone(),
                     }).collect(),
                     TypeDeclKind::NamedTuple(nt_fields) => nt_fields.iter().map(|f| FieldMeta {
                         name: f.name.clone(),
                         priv_field: f.priv_field,
+                        priv_module_field: f.priv_module_field,
                         visible_to: f.visible_to.clone(),
                         ty: f.ty.clone(),
                     }).collect(),
@@ -5090,19 +5206,36 @@ impl<'a> TypeCheckCtx<'a> {
                             if meta.priv_field
                                 && !self.priv_field_access_allowed(tname.as_str(), &meta.visible_to)
                             {
-                                errors.push(Diagnostic::new(
-                                    format!(
-                                        "[E_PRIV_FIELD_PATTERN] cannot destructure \
-                                         private field `{}.{}` в pattern outside type-\
-                                         method scope. Field marked `priv` (Plan 124 / \
-                                         D220/D221/D222). Hint: bind the value to a variable \
-                                         and access via public methods of `{}`, move \
-                                         destructure into a method of `{}`, or use \
-                                         `#test_access({})` (D225).",
-                                        tname, pf.name, tname, tname, tname,
-                                    ),
-                                    pf.span,
-                                ));
+                                // Plan 160 (D281) Ф.2: module-private pattern check.
+                                if meta.priv_module_field {
+                                    if !self.module_priv_access_allowed(tname.as_str()) {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_FIELD_MODULE_PRIVATE] cannot destructure \
+                                                 module-private field `{}.{}` in pattern from \
+                                                 outside its module. Type declared with \
+                                                 `priv(module)` (Plan 160 / D281). Hint: use \
+                                                 public accessor methods of `{}`.",
+                                                tname, pf.name, tname,
+                                            ),
+                                            pf.span,
+                                        ));
+                                    }
+                                } else {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_PRIV_FIELD_PATTERN] cannot destructure \
+                                             private field `{}.{}` в pattern outside type-\
+                                             method scope. Field marked `priv` (Plan 124 / \
+                                             D220/D221/D222). Hint: bind the value to a variable \
+                                             and access via public methods of `{}`, move \
+                                             destructure into a method of `{}`, or use \
+                                             `#test_access({})` (D225).",
+                                            tname, pf.name, tname, tname, tname,
+                                        ),
+                                        pf.span,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -5525,18 +5658,39 @@ impl<'a> TypeCheckCtx<'a> {
                     if field.priv_field
                         && !self.priv_field_access_allowed(tname.as_str(), &field.visible_to)
                     {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_PRIV_FIELD_READ] cannot read private field \
-                                 `{}.{}` outside type-method scope. Field marked \
-                                 `priv` (Plan 124 / D220). Hint: add public \
-                                 getter method on `{}`, or move accessing code \
-                                 into a method of `{}`, or use `#test_access({})` \
-                                 на test fn (escape hatch — D224).",
-                                tname, name, tname, tname, tname,
-                            ),
-                            span,
-                        ));
+                        // Plan 160 (D281) Ф.2: distinguish module-private from
+                        // type-private. priv_module_field=true → Module default;
+                        // allow if same module, otherwise E_FIELD_MODULE_PRIVATE.
+                        if field.priv_module_field {
+                            if !self.module_priv_access_allowed(tname.as_str()) {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_FIELD_MODULE_PRIVATE] cannot read \
+                                         module-private field `{}.{}` from \
+                                         outside its module. Type declared with \
+                                         `priv(module)` (Plan 160 / D281). \
+                                         Hint: add a public accessor method on \
+                                         `{}`, or move the caller into the same \
+                                         module.",
+                                        tname, name, tname,
+                                    ),
+                                    span,
+                                ));
+                            }
+                        } else {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_PRIV_FIELD_READ] cannot read private field \
+                                     `{}.{}` outside type-method scope. Field marked \
+                                     `priv` (Plan 124 / D220). Hint: add public \
+                                     getter method on `{}`, or move accessing code \
+                                     into a method of `{}`, or use `#test_access({})` \
+                                     на test fn (escape hatch — D224).",
+                                    tname, name, tname, tname, tname,
+                                ),
+                                span,
+                            ));
+                        }
                     }
                     return;
                 }
@@ -5621,18 +5775,36 @@ impl<'a> TypeCheckCtx<'a> {
                     if field.priv_field
                         && !self.priv_field_access_allowed(tname.as_str(), &field.visible_to)
                     {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_PRIV_FIELD_READ] cannot read private field \
-                                 `{}.{}` outside type-method scope. Named-tuple \
-                                 field marked `priv` (Plan 124 / D220 / D222). \
-                                 Hint: add public getter method on `{}`, move \
-                                 accessing code into a method of `{}`, или use \
-                                 `#test_access({})` на test fn (D225).",
-                                tname, name, tname, tname, tname,
-                            ),
-                            span,
-                        ));
+                        // Plan 160 (D281) Ф.2: module-private vs type-private.
+                        if field.priv_module_field {
+                            if !self.module_priv_access_allowed(tname.as_str()) {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_FIELD_MODULE_PRIVATE] cannot read \
+                                         module-private field `{}.{}` from \
+                                         outside its module. Named-tuple type \
+                                         declared with `priv(module)` (Plan 160 / \
+                                         D281). Hint: add a public accessor \
+                                         method on `{}`.",
+                                        tname, name, tname,
+                                    ),
+                                    span,
+                                ));
+                            }
+                        } else {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_PRIV_FIELD_READ] cannot read private field \
+                                     `{}.{}` outside type-method scope. Named-tuple \
+                                     field marked `priv` (Plan 124 / D220 / D222). \
+                                     Hint: add public getter method on `{}`, move \
+                                     accessing code into a method of `{}`, или use \
+                                     `#test_access({})` на test fn (D225).",
+                                    tname, name, tname, tname, tname,
+                                ),
+                                span,
+                            ));
+                        }
                     }
                     return;
                 }
@@ -5741,17 +5913,34 @@ impl<'a> TypeCheckCtx<'a> {
                                 if fd.priv_field
                                     && !self.priv_field_access_allowed(name.as_str(), &fd.visible_to)
                                 {
-                                    errors.push(Diagnostic::new(
-                                        format!(
-                                            "[E_PRIV_FIELD_INIT] cannot initialize private \
-                                             field `{}.{}` via named-tuple constructor outside \
-                                             type-method scope. Field marked `priv` (Plan 124 / \
-                                             D220 / D222). Hint: use factory method like \
-                                             `{}.new(...)`, or use `#test_access({})` on test fn.",
-                                            name, field_name, name, name,
-                                        ),
-                                        arg_value.span,
-                                    ));
+                                    // Plan 160 (D281) Ф.2: module-private init.
+                                    if fd.priv_module_field {
+                                        if !self.module_priv_access_allowed(name.as_str()) {
+                                            errors.push(Diagnostic::new(
+                                                format!(
+                                                    "[E_FIELD_MODULE_PRIVATE] cannot initialize \
+                                                     module-private field `{}.{}` via named-tuple \
+                                                     constructor from outside its module. Type \
+                                                     declared with `priv(module)` (Plan 160 / D281). \
+                                                     Hint: use factory method `{}.new(...)`.",
+                                                    name, field_name, name,
+                                                ),
+                                                arg_value.span,
+                                            ));
+                                        }
+                                    } else {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_PRIV_FIELD_INIT] cannot initialize private \
+                                                 field `{}.{}` via named-tuple constructor outside \
+                                                 type-method scope. Field marked `priv` (Plan 124 / \
+                                                 D220 / D222). Hint: use factory method like \
+                                                 `{}.new(...)`, or use `#test_access({})` on test fn.",
+                                                name, field_name, name, name,
+                                            ),
+                                            arg_value.span,
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -6805,22 +6994,39 @@ impl<'a> TypeCheckCtx<'a> {
                                     ));
                                 }
                                 // Plan 124 (D220) + 124.6 (D225): priv field WRITE check.
+                                // Plan 160 (D281) Ф.2: module-private write.
                                 if f.priv_field
                                     && !self.priv_field_access_allowed(tname, &f.visible_to)
                                 {
-                                    errors.push(Diagnostic::new(
-                                        format!(
-                                            "[E_PRIV_FIELD_WRITE] cannot write to private \
-                                             field `{}.{}` outside type-method scope. \
-                                             Field marked `priv` (Plan 124 / D220). \
-                                             Hint: add public mutator method on `{}` \
-                                             (e.g. `export fn {} mut @set_{}(v T)`), \
-                                             move accessing code into a method of `{}`, \
-                                             or use `#test_access({})` (D225).",
-                                            tname, field_name, tname, tname, field_name, tname, tname,
-                                        ),
-                                        target.span,
-                                    ));
+                                    if f.priv_module_field {
+                                        if !self.module_priv_access_allowed(tname) {
+                                            errors.push(Diagnostic::new(
+                                                format!(
+                                                    "[E_FIELD_MODULE_PRIVATE] cannot write to \
+                                                     module-private field `{}.{}` from outside \
+                                                     its module. Type declared with `priv(module)` \
+                                                     (Plan 160 / D281). Hint: add a public mutator \
+                                                     method on `{}`.",
+                                                    tname, field_name, tname,
+                                                ),
+                                                target.span,
+                                            ));
+                                        }
+                                    } else {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_PRIV_FIELD_WRITE] cannot write to private \
+                                                 field `{}.{}` outside type-method scope. \
+                                                 Field marked `priv` (Plan 124 / D220). \
+                                                 Hint: add public mutator method on `{}` \
+                                                 (e.g. `export fn {} mut @set_{}(v T)`), \
+                                                 move accessing code into a method of `{}`, \
+                                                 or use `#test_access({})` (D225).",
+                                                tname, field_name, tname, tname, field_name, tname, tname,
+                                            ),
+                                            target.span,
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -20107,6 +20313,7 @@ mod named_tuple_ctor_infer_tests {
             },
             span: dummy_span(),
             priv_field: false,
+            priv_module_field: false,
             visible_to: Vec::new(),
         }).collect();
         TypeDecl {

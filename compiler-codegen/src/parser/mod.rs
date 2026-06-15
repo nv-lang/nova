@@ -3993,7 +3993,7 @@ impl Parser {
             let (name, _) = self.parse_ident()?;
             let ty = self.parse_type()?;
             let span = field_start.merge(ty.span());
-            fields.push(NamedTupleField { name, ty, span, priv_field, visible_to: Vec::new() });
+            fields.push(NamedTupleField { name, ty, span, priv_field, priv_module_field: false, visible_to: Vec::new() });
             // Plan 124.8 (D215 amend): allow trailing comma + multi-line.
             // After parsing field — expect either Comma or RParen.
             // If Comma: skip + skip_newlines → loop top will handle next
@@ -4169,8 +4169,9 @@ impl Parser {
             // Plan 160 (D281): resolve effective field privacy.
             // Explicit `priv` → type-private; explicit `pub` → public;
             // neither → inherit from type-level FieldDefaultVisibility.
-            // Module variant treated as type-private at field level for now
-            // (checker enforces module-boundary in Ф.2+).
+            // Module variant: implicit fields get priv_field=true AND
+            // priv_module_field=true so checker can emit E_FIELD_MODULE_PRIVATE
+            // (allow same-module) instead of E_PRIV_FIELD_READ (type-only).
             let field_priv = if explicit_priv {
                 true
             } else if explicit_pub {
@@ -4182,6 +4183,11 @@ impl Parser {
                         | crate::ast::FieldDefaultVisibility::Module
                 )
             };
+            // priv_module_field=true only for fields whose privacy comes from
+            // the `priv(module)` type-level default (not explicit `priv`).
+            let field_priv_module = !explicit_priv
+                && !explicit_pub
+                && matches!(default_vis, crate::ast::FieldDefaultVisibility::Module);
 
             let mut readonly = false;
             let mut mutable = false;
@@ -4280,6 +4286,7 @@ impl Parser {
                 span: name_span.merge(ty.span()),
                 consume: field_consume,
                 priv_field: field_priv,
+                priv_module_field: field_priv_module,
                 visible_to,
             });
             // запятая или newline
