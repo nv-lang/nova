@@ -32,6 +32,8 @@
 | [D183](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) | Canonical comparison protocols + default method bodies (Plan 91.8a) | active |
 | ~~flip-scan-draft~~ | Pointer mutability — running-current flip-scan (Plan 147; **RETRACTED 2026-06-12** → D246) | retracted |
 | [D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee) | Три оси мутабельности (L1 binding / L2 view / L3 pointee); restores `*T ≡ *ro T` universally; `E_REDUNDANT_POINTER_RO` (Plan 147) | active |
+| [D281](#d281-module-level-field-privacy--type-x-priv---plan-160) | Module-level field privacy `type X priv { … }` — bare `priv` = module-private (Plan 160, D281) | active |
+| [D282](#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) | Blanket protocol-receiver methods `fn[I Next[T]] I @m` — typevar-ресивер + bound-dispatch (Plan 161, G-F) | active |
 
 ---
 
@@ -12286,6 +12288,7 @@ Stage 4 verify: все четыре мономорфизованных `…metho
 - [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — boxed-fluent lazy (0 wrapper-allocs via Stage 1; zero-cost sibling via Stage 2; capture-free closure devirt via Stage 3; alloc-free терминаторы + `collect_into` via Stage 4).
 - [D226](#d226) — always-pointer receiver ABI (mono value-receiver).
 - Plan 153.2 — план; `vec_lazy.nv` / `vec_iter_zc.nv` — реализация; `emit_c.rs::emit_lambda` — Stage 3 singleton.
+- Cross-ref: [D282](#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) — blanket methods on `Next[T]` implementors (терминаторы blanket).
 
 ---
 
@@ -12382,3 +12385,23 @@ Type-private field (explicit `priv(type)` field, OR type-level `priv(type)` defa
 - [D78](07-modules.md#d78) — module-path enforcement (defines module identity).
 - [D47](07-modules.md#d47) — default-public baseline (unchanged).
 - Plan 160 — план реализации.
+
+---
+
+## D282 — Blanket protocol-receiver methods (Plan 161, 2026-06-15)
+
+**Status:** ACTIVE (Plan 161 Ф.0-Ф.4, 2026-06-15). **Amends:** [D241](03-syntax.md#d241) (добавлен §3 «≤1 impl, cross-ref D282»). **Зависит от:** [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) (generic bounds), [D119](#d119-method-level-type-parameters-в-generic-methods) (method-level type params), [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) (D277/vec_iter_zc). **Маркеры:** `[M-161-blanket-receiver]` → ✅ Ф.0-Ф.4 CLOSED; `[M-161-parametric-return]` (V2 followup).
+
+**§1 Синтаксис.** `fn[I Proto[T₁,…,Tₙ]] I @name[U₁,…](params) -> R { body }` — blanket-объявление: `I` — typevar-ресивер, `Proto[…]` — bound. `T₁,…,Tₙ` выводятся из bound (не нужно объявлять явно). Запись `fn[…]` (glued, без пробела) = prefixed-generic header (уже разобрана парсером).
+
+**§2 Диспетч.** При вызове `expr.name(args)`, где тип `expr` — конкретный `C`, реализующий `Proto[…]`: blanket-метод виден на `C`, typevar `I` биндится в `C`. Конкретный метод (`method_table[C]`) всегда имеет приоритет над blanket.
+
+**§3 Мономорфизация.** Mono-key = `(C, name, extra_type_args)`. Тело компилируется как обычный generic-метод с заполненным `I`. Внутри тела `I` = конкретный `C`, typevar'ы из bound (`T`) = конкретные типы из impl-записи `C`.
+
+**§4 Инвариант (≤1 impl).** Тип не может реализовывать `Next[T]` для двух разных `T` одновременно. Нарушение = `E_DUPLICATE_PROTOCOL_IMPL`.
+
+**§5 Область действия.** Blanket-метод виден в модуле где объявлен + его importers (те же правила видимости, что у обычных методов). Конфликт двух blanket-методов с одним именем на одном протоколе = `E_BLANKET_CONFLICT`.
+
+**§6 Ограничения V1.** Работает для методов с конкретными или fully-resolved возвращаемыми типами. Параметрические возвращаемые типы `T`, `Option[T]`, `Vec[T]` — V2 (`[M-161-parametric-return]`). Один bound-уровень (`I Proto[…]`); цепные bounds — V2. Ресивер должен быть typevar, не конкретный тип.
+
+**Реализовано в.** `std/collections/vec_iter_zc.nv`: `@zfold`, `@zcount`, `@zfor_each`, `@zany`, `@zall` — blanket на `Next[T]` (5 терминаторов, concrete return type). Перевод 12 per-adapter → 5 blanket деклараций (O(N²) → O(N)).

@@ -57,6 +57,7 @@
 module collections.vec_iter_zc
 
 import std.collections.vec.{Vec, VecIter}
+import std.prelude.collections.{Next}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Adapter types (generic-over-source `value` records — held inline, by value)
@@ -152,10 +153,83 @@ export fn FilterMapIter[I, T, U] @zmap[V](f fn(U) -> V) -> MapIter[Self, U, V] =
 export fn FilterMapIter[I, T, U] @zfilter(pred fn(U) -> bool) -> FilterIter[Self, U] => { src: @, pred }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Terminators — drive the chain. One per adapter type (no `Next[T]`-generic
-// terminator: a monomorphized terminator per receiver type keeps every call
-// statically dispatched and inlinable, the whole point of the zero-cost layer).
+// Terminators — drive the chain.
+//
+// Plan 161 Ф.3 refactor: terminators that return a type with NO unresolved
+// type-var in the return position (int, bool, (), Acc) are written once as
+// blanket methods `fn[I Next[T]] I mut @zt…()`.  Terminators whose return
+// type contains the element type T directly (Vec[T], Option[T], T) or whose
+// parameter uses Vec[T] CANNOT be blanket yet (codegen does not substitute T
+// in return/param struct types for blanket methods — Plan 161 V2 followup).
+// Those remain per-adapter-type.
+//
+// Blanket (O(1) definitions, N adapter types supported):
+//   @zfold[Acc]  — returns Acc (additional generic, resolved at call site)
+//   @zcount      — returns int
+//   @zfor_each   — returns ()
+//   @zany        — returns bool
+//   @zall        — returns bool
+//
+// Per-adapter-type (returns T / Vec[T] / Option[T]):
+//   @zcollect / @zcollect_into / @zsum / @zfind  — on MapIter + FilterIter
+//   @zcollect / @zcollect_into / @zsum            — on FilterMapIter
 // ──────────────────────────────────────────────────────────────────────────
+
+// ── blanket terminators (Plan 161 Ф.3) ───────────────────────────────────
+
+export fn[I Next[T]] I mut @zfold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
+    mut acc = init
+    while true {
+        match @next() {
+            Some(x) => { acc = f(acc, x) },
+            None => return acc,
+        }
+    }
+    acc
+}
+
+export fn[I Next[T]] I mut @zcount() -> int {
+    mut n = 0
+    while true {
+        match @next() {
+            Some(_) => { n = n + 1 },
+            None => return n,
+        }
+    }
+    n
+}
+
+export fn[I Next[T]] I mut @zfor_each(f fn(T) -> ()) -> () {
+    mut go = true
+    while go {
+        match @next() {
+            Some(x) => { f(x) },
+            None => { go = false },
+        }
+    }
+}
+
+export fn[I Next[T]] I mut @zany(pred fn(T) -> bool) -> bool {
+    while true {
+        match @next() {
+            Some(x) => { if pred(x) { return true } },
+            None => return false,
+        }
+    }
+    false
+}
+
+export fn[I Next[T]] I mut @zall(pred fn(T) -> bool) -> bool {
+    while true {
+        match @next() {
+            Some(x) => { if !pred(x) { return false } },
+            None => return true,
+        }
+    }
+    true
+}
+
+// ── per-adapter terminators (return T / Vec[T] / Option[T] — cannot blanket yet)
 
 // ── on MapIter ──────────────────────────────────────────────────────────────
 
@@ -191,28 +265,6 @@ export fn MapIter[I, T, U] mut @zcollect_into(out mut Vec[U]) -> () {
     }
 }
 
-export fn MapIter[I, T, U] mut @zfold[Acc](init Acc, f fn(Acc, U) -> Acc) -> Acc {
-    mut acc = init
-    while true {
-        match @next() {
-            Some(x) => { acc = f(acc, x) },
-            None => return acc,
-        }
-    }
-    acc
-}
-
-export fn MapIter[I, T, U] mut @zcount() -> int {
-    mut n = 0
-    while true {
-        match @next() {
-            Some(_) => { n = n + 1 },
-            None => return n,
-        }
-    }
-    n
-}
-
 export fn MapIter[I, T, U] mut @zsum(zero U) -> U {
     mut acc = zero
     while true {
@@ -222,36 +274,6 @@ export fn MapIter[I, T, U] mut @zsum(zero U) -> U {
         }
     }
     acc
-}
-
-export fn MapIter[I, T, U] mut @zfor_each(f fn(U) -> ()) -> () {
-    mut go = true
-    while go {
-        match @next() {
-            Some(x) => { f(x) },
-            None => { go = false },
-        }
-    }
-}
-
-export fn MapIter[I, T, U] mut @zany(pred fn(U) -> bool) -> bool {
-    while true {
-        match @next() {
-            Some(x) => { if pred(x) { return true } },
-            None => return false,
-        }
-    }
-    false
-}
-
-export fn MapIter[I, T, U] mut @zall(pred fn(U) -> bool) -> bool {
-    while true {
-        match @next() {
-            Some(x) => { if !pred(x) { return false } },
-            None => return true,
-        }
-    }
-    true
 }
 
 export fn MapIter[I, T, U] mut @zfind(pred fn(U) -> bool) -> Option[U] {
@@ -289,28 +311,6 @@ export fn FilterIter[I, T] mut @zcollect_into(out mut Vec[T]) -> () {
     }
 }
 
-export fn FilterIter[I, T] mut @zfold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
-    mut acc = init
-    while true {
-        match @next() {
-            Some(x) => { acc = f(acc, x) },
-            None => return acc,
-        }
-    }
-    acc
-}
-
-export fn FilterIter[I, T] mut @zcount() -> int {
-    mut n = 0
-    while true {
-        match @next() {
-            Some(_) => { n = n + 1 },
-            None => return n,
-        }
-    }
-    n
-}
-
 export fn FilterIter[I, T] mut @zsum(zero T) -> T {
     mut acc = zero
     while true {
@@ -320,36 +320,6 @@ export fn FilterIter[I, T] mut @zsum(zero T) -> T {
         }
     }
     acc
-}
-
-export fn FilterIter[I, T] mut @zfor_each(f fn(T) -> ()) -> () {
-    mut go = true
-    while go {
-        match @next() {
-            Some(x) => { f(x) },
-            None => { go = false },
-        }
-    }
-}
-
-export fn FilterIter[I, T] mut @zany(pred fn(T) -> bool) -> bool {
-    while true {
-        match @next() {
-            Some(x) => { if pred(x) { return true } },
-            None => return false,
-        }
-    }
-    false
-}
-
-export fn FilterIter[I, T] mut @zall(pred fn(T) -> bool) -> bool {
-    while true {
-        match @next() {
-            Some(x) => { if !pred(x) { return false } },
-            None => return true,
-        }
-    }
-    true
 }
 
 export fn FilterIter[I, T] mut @zfind(pred fn(T) -> bool) -> Option[T] {
@@ -385,28 +355,6 @@ export fn FilterMapIter[I, T, U] mut @zcollect_into(out mut Vec[U]) -> () {
             None => { go = false },
         }
     }
-}
-
-export fn FilterMapIter[I, T, U] mut @zfold[Acc](init Acc, f fn(Acc, U) -> Acc) -> Acc {
-    mut acc = init
-    while true {
-        match @next() {
-            Some(x) => { acc = f(acc, x) },
-            None => return acc,
-        }
-    }
-    acc
-}
-
-export fn FilterMapIter[I, T, U] mut @zcount() -> int {
-    mut n = 0
-    while true {
-        match @next() {
-            Some(_) => { n = n + 1 },
-            None => return n,
-        }
-    }
-    n
 }
 
 export fn FilterMapIter[I, T, U] mut @zsum(zero U) -> U {

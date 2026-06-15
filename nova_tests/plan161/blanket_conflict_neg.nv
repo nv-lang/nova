@@ -1,0 +1,7 @@
+// EXPECT_COMPILE_ERROR duplicate definition
+module plan161.blanket_conflict_neg
+
+import std.prelude.collections.{Next}
+
+fn[I Next[T]] I mut @take_first() -> Option[T] { @next() }
+fn[I Next[T]] I mut @take_first() -> Option[T] { @next() }
