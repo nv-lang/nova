@@ -8095,7 +8095,8 @@ Plan 159 зашипил reachability-codegen (вариант A, Zig-модель
 Coarse-by-name method-DCE (over-keep на name-collision) + Option A для no-import. Оба корректны и финальны
 для V1 под G0; точные варианты — потенциальные следующие шаги (DX/размер), не для V1. Делать, если
 появится мотивирующий профиль (заметный over-keep на реальной программе) или фундаментальная нужда в
-ленивом резолве произвольных prelude-методов.
+ленивом резолве произвольных prelude-методов. **2026-06-16: §2 (lazy-module-resolution) ПРОМОУТ в
+[Plan 162](../docs/plans/162-rust-model-module-resolution.md) — см. Q-module-resolution-model.**
 
 ### Связь
 - [D283](decisions/09-tooling.md#d283) — reachability-codegen policy (executable-срез / library-полнота / kill-switch / G0).
@@ -8103,3 +8104,43 @@ Coarse-by-name method-DCE (over-keep на name-collision) + Option A для no-i
 - `[M-159-method-pruning]` / `[M-159-lazy-module-resolution]` (backlog, P3) — точные варианты.
 - `[M-152.3b-char-methods-no-import]` (backlog, ✅ CLOSED через Ф.4 Option A).
 - `[M-checker-recursive-type-overflow]` (backlog, ✅ CLOSED) — robustness-фикс, оставивший этот residual (теперь закрыт).
+
+## Q-module-resolution-model — Rust-модель резолва: ленивый резолв + «методы едут с типом» + extension-policy — 🟡 OPEN (2026-06-16)
+
+### Контекст ([Plan 162](../docs/plans/162-rust-model-module-resolution.md), промоут `[M-159-lazy-module-resolution]`)
+Текущий резолвер — жадный рекурсивный inline-merge → межмодульные циклы падают стеком (`prelude→std.unicode→std.collections→prelude`). Из-за этого no-import char-методы сделаны хардкодом (Plan 159 Ф.4: список имён + auto-инъекция). Plan 162 переводит на Rust-модель: collect-signatures-first → lazy-bodies (циклы безвредны, амендит [Plan 42](../docs/plans/42-folder-modules.md) Rule A), method resolution по типу получателя (inherent `@`-метод без import, единообразно std+user), char-методы → prelude, Ф.4-хардкод снят.
+
+### Решено
+- Направление — **Rust-модель** (подтверждено в обсуждении 2026-06-16): методы едут с типом; источник истины — `.nv`, не хардкод.
+- `import` нужен только для **имён** (типы, свободные функции); **методы** импорта не требуют (резолв по типу значения).
+- Модуль попадает в сборку через import **в точке, где тип называют/создают** (один раз), а не там, где зовут метод; std/prelude всегда в сборке (встроены).
+
+### Открытое — extension-method policy
+Когда `@`-метод объявлен в **другом** модуле, чем чужой тип-получатель:
+1. **Rust-strict (рекомендуется):** inherent (тот же модуль, что тип) = без import; extension (другой модуль) = **требует import** этого модуля. Защита от «спуки-методов»; ambiguity (два extension-`foo` на один тип) = явная ошибка.
+2. **Swift/Kotlin (extension повсюду):** любой `@`-метод виден без import. Эргономично, но «откуда метод» + конфликты — известная боль.
+
+Рекомендация: **(1) Rust-strict**. char заработает без import потому, что его базовые методы **переедут в prelude рядом с char** (станут inherent), а не потому что std особенный.
+
+### Связь
+- [Plan 162](../docs/plans/162-rust-model-module-resolution.md), [Plan 42 Rule A/D](../docs/plans/42-folder-modules.md), [Plan 159](../docs/plans/159-reachability-codegen.md) (DCE делает char-в-prelude бесплатным).
+- `[M-159-lazy-module-resolution]` (P2, → Plan 162), `[M-152.3b-char-methods-no-import]` (Ф.4 Option-A хардкод — superseded этим планом).
+
+## Q-import-glob-hygiene — запрет glob-форм import/export: ban `import m` vs redefine-as-qualified — 🟡 OPEN (2026-06-16)
+
+### Контекст ([Plan 163](../docs/plans/163-import-export-glob-hygiene.md), `[M-import-glob-forbid]`)
+`import` = inline-merge. Токена `*` нет, но whole-формы функционально glob/barrel: `import m` (без `.{}`/`as`) = unqualified glob; `export import m` (без `.{}`) = barrel (неконтролируемый публичный API). В коде все `export import` именованные, но грамматика whole-форму допускает.
+
+### Решено
+- `export import m` (whole) → **запретить** `E_REEXPORT_GLOB` (нулевая миграция; barrel-дыра).
+- Named (`m.{a,b}`) + alias (`m as x`) + prelude (именованный re-export) — **оставить**.
+- Не банить фичи целиком (re-export нужен для prelude/фасадов).
+
+### Открытое — что делать с `import m` (whole, unqualified)
+1. **(a) Запрет** `E_IMPORT_GLOB` → миграция ~60 whole-импортов в named/alias. Быстрый front-end guard, не зависит от Plan 162.
+2. **(b) Переопределить** `import m` в qualified namespace (`m.foo`, как Go/Python); `import m.{...}` — выборочное без префикса. Эргономичнее, без `as`-шума, но это семантика резолвера → согласовать с [Plan 162](../docs/plans/162-rust-model-module-resolution.md) Ф.1.
+
+Рекомендация: **(b)**, если Plan 162 в работе (мейнстрим, меньше миграции); иначе **(a)** как быстрый guard. Финал — после старта 162.
+
+### Связь
+- [Plan 163](../docs/plans/163-import-export-glob-hygiene.md), [Plan 162](../docs/plans/162-rust-model-module-resolution.md) Ф.2, [Plan 42 Rule C / 42.09 re-export](../docs/plans/42-folder-modules.md).

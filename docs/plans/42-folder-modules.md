@@ -9,6 +9,14 @@
 > мигрирована (42.A → 42.10, 42.B → [Plan 45](45-nova-doc.md)). Финальный
 > audit (Plan 42.17) закрыл doc drift, dead code, Rule H, слабые тесты.
 >
+> **Эволюция модели (2026-06-16):** дальнейшее развитие модульной концепции вынесено в
+> два отдельных плана: [Plan 162](162-rust-model-module-resolution.md) — переход на
+> Rust-модель резолва (collect-signatures→lazy-bodies; **амендит Rule A** — межмодульные
+> циклы разрешаются; «методы едут с типом» — inherent `@`-метод без import; снятие
+> Ф.4-хардкода из Plan 159); [Plan 163](163-import-export-glob-hygiene.md) — гигиена
+> import/export (запрет glob-форм `import m` / `export import m`, продолжение Rule C +
+> [42.09 re-export](42.09-re-export.md)).
+>
 > Реализует [D29 rev-2](../../spec/decisions/07-modules.md#d29-модули-и-импорты):
 > модуль может быть либо single-file (`X.nv`), либо folder (`X/` с одним
 > или несколькими `.nv` файлами как peers, share namespace).
