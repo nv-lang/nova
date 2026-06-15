@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 161 — Blanket protocol-receiver methods (`fn[I Next[T]] I @m`)
 
-> **Создан:** 2026-06-15.  **Статус:** 📋 proposed.
-> **Model:** Opus + Thinking ON (новый codegen-механизм в emit_c.rs).
-> **Worktree:** `nova-p161` (создать при старте).
+> **Создан:** 2026-06-15.  **Статус:** 🔨 Ф.0✅ Ф.1✅ (Ф.2–Ф.5 открыты).
+> **Model:** Sonnet 4.6 (Ф.0–Ф.1 выполнены).
+> **Worktree:** `nova-p161`.
 > **Ветка:** `plan-161`.
 > **Эстимат:** ~3-5 dev-day (1 compiler gap + stdlib rework + spec).
 >

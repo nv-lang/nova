@@ -18,6 +18,15 @@
 
 ---
 
+### Plan 161 Ф.0–Ф.1 — Blanket protocol-receiver Ф.0+Ф.1 (2026-06-15)
+
+- **Где** — `compiler-codegen/src/codegen/emit_c.rs` (Fix A `receiver_c_type` ~line 10878, Fix B `infer_expr_c_type` ~line 34929), `nova_tests/plan161/` (6 фикстур).
+- **Что упрощено** — Реализованы только Fix A (pointer correction для heap struct typevar resolve) и Fix B (blanket fallback scan в infer_expr_c_type). Ф.2 (checker: E_DUPLICATE_PROTOCOL_IMPL, E_BLANKET_CONFLICT), Ф.3 (stdlib refactor vec_iter_zc O(N²)→O(N)), Ф.4 (spec D282 final) — отложены.
+- **Почему** — Базовый codegen gap (dispatch + return-type inference) закрыт минимальными точечными фиксами. Checker invariants и stdlib рефактор — независимые задачи следующих фаз.
+- **Как чинить** — Ф.2: добавить `impl_table` tracking в checker/mod.rs + `E_DUPLICATE_PROTOCOL_IMPL`; Ф.3: рефактор `std/collections/vec_iter_zc.nv`; Ф.4: финализировать D282.
+- **Приоритет** — M (Plan 161 Ф.2–Ф.5 открыты).
+- **Коммиты** — `47d7a7fc` (Ф.0 fixtures), `7c6bb60b` (Ф.1 emit_c fixes).
+
 ### Plan 148 — Independent compiler cleanups (Ф.1–Ф.5, 2026-06-12, ✅ CLOSED, без новых упрощений)
 
 - **Где** — `compiler-codegen/src/parser/mod.rs` (Ф.1 modifier-order),
