@@ -10870,8 +10870,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // Plan 101.1: bare typevar receiver (`fn[T] T @method`) —
                 // resolve T via current_type_subst при mono-emission.
                 // Без этого receiver_c_type("T") → "Nova_T*" (placeholder).
+                // Plan 161: blanket protocol-receiver methods (`fn[I Next[T]] I @m`):
+                // when the substituted C type is a heap struct (`Nova_X` without `*`),
+                // add `*` so the function signature is `Nova_X* nova_self` (pointer),
+                // not `Nova_X nova_self` (value). Struct receivers are always passed
+                // by pointer in Nova's C backend.
                 if other.len() <= 2 && other.chars().all(|c| c.is_ascii_uppercase()) {
                     if let Some(c_ty) = self.current_type_subst.get(other) {
+                        // Heap struct (`Nova_X`) must become a pointer (`Nova_X*`).
+                        if c_ty.starts_with("Nova_") && !c_ty.ends_with('*') {
+                            return format!("{}*", c_ty);
+                        }
                         return c_ty.clone();
                     }
                 }
@@ -34912,6 +34921,39 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                             {
                                                 return ret;
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Plan 161: blanket protocol-receiver fallback.
+                        // `fn[I Next[T]] I @m()` is registered in mono_method_decls
+                        // under key ("I", "m"), not under the concrete type
+                        // ("VecIter____nova_int", "m"). When the method_overloads and
+                        // generic_type_instance_info lookups above both miss for the
+                        // concrete receiver type, scan mono_method_decls for a bare
+                        // typevar (1-2 uppercase letters) entry matching the method
+                        // name, and use type_ref_to_c on its return type (with T
+                        // unresolved → erased to NovaOpt_nova_int via existing erasure
+                        // path — consistent with the actual forward-decl signature).
+                        // Only fires for generic-mono receiver types (containing "____")
+                        // so primitive and erased receivers stay on their existing paths.
+                        if rt.contains("____") {
+                            let mn_ref: &str = &mn;
+                            let blanket_fd = self.mono_method_decls.iter()
+                                .find(|((tvname, mname), fd)| {
+                                    mname == mn_ref
+                                    && tvname.len() <= 2
+                                    && tvname.chars().all(|c| c.is_ascii_uppercase())
+                                    && !fd.generics.is_empty()
+                                    && fd.generics.iter().any(|g| !g.bounds.is_empty())
+                                })
+                                .map(|(_, fd)| fd.clone());
+                            if let Some(fd) = blanket_fd {
+                                if let Some(ret_ty) = &fd.return_type {
+                                    if let Ok(c) = self.type_ref_to_c(ret_ty) {
+                                        if !c.is_empty() && c != "void*" {
+                                            return c;
                                         }
                                     }
                                 }
