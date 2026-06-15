@@ -25126,6 +25126,40 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 let mut type_subst: Vec<(String, String)> = Vec::new();
                                 if let Some(first_g) = fn_decl.generics.first() {
                                     type_subst.push((first_g.name.clone(), concrete_t.clone()));
+                                    // Plan 161 V2 [M-161-parametric-return]: bind inner
+                                    // typevars from protocol bounds.
+                                    // For `fn[I Next[T]] I @m`, the first generic `I` has
+                                    // bound `Next[T]`. Bind the inner typevar `T` to the
+                                    // element type by inferring `@next()` return on the
+                                    // concrete receiver and stripping the `NovaOpt_` wrapper.
+                                    for bound in &first_g.bounds {
+                                        if let crate::ast::TypeRef::Named { path: bpath, generics: bgens, .. } = bound {
+                                            let proto_method = bpath.last()
+                                                .map(|s| s.to_lowercase())
+                                                .unwrap_or_default();
+                                            if let Some(opt_ret) = self.infer_mono_method_ret_with_args(
+                                                &obj_ty, &proto_method, &[])
+                                            {
+                                                // opt_ret = "NovaOpt_<elem>" for Next[T].
+                                                // Strip the Option wrapper to get the concrete elem.
+                                                let elem = opt_ret
+                                                    .strip_prefix("NovaOpt_")
+                                                    .unwrap_or(&opt_ret)
+                                                    .to_string();
+                                                for bg in bgens {
+                                                    if let crate::ast::TypeRef::Named { path: gp, generics: gg, .. } = bg {
+                                                        if gg.is_empty() {
+                                                            if let Some(tv) = gp.last() {
+                                                                if tv.len() <= 2 && tv.chars().all(|c| c.is_ascii_uppercase()) {
+                                                                    type_subst.push((tv.clone(), elem.clone()));
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 let mono_name = format!("Nova_{}_method_{}", concrete_t, method);
                                 let recv_type = type_name.clone();
@@ -34951,7 +34985,57 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 .map(|(_, fd)| fd.clone());
                             if let Some(fd) = blanket_fd {
                                 if let Some(ret_ty) = &fd.return_type {
-                                    if let Ok(c) = self.type_ref_to_c(ret_ty) {
+                                    if let Ok(raw_c) = self.type_ref_to_c(ret_ty) {
+                                        // Plan 161 V2 [M-161-parametric-return]: resolve
+                                        // inner typevars (e.g. T in Next[T]) in the raw
+                                        // C return type by inferring the proto method
+                                        // return on the concrete receiver, then applying
+                                        // string substitution.
+                                        let c = if let Some(first_g) = fd.generics.first() {
+                                            let mut resolved = raw_c.clone();
+                                            for bound in &first_g.bounds {
+                                                if let crate::ast::TypeRef::Named { path: bpath, generics: bgens, .. } = bound {
+                                                    let proto_method = bpath.last()
+                                                        .map(|s| s.to_lowercase())
+                                                        .unwrap_or_default();
+                                                    let recv_ptr = format!("Nova_{}*", rt);
+                                                    if let Some(opt_ret) = self.infer_mono_method_ret_with_args(
+                                                        &recv_ptr, &proto_method, &[])
+                                                    {
+                                                        let elem = opt_ret
+                                                            .strip_prefix("NovaOpt_")
+                                                            .unwrap_or(&opt_ret)
+                                                            .to_string();
+                                                        let elem_mangled = Self::sanitize_c_for_ident(&elem);
+                                                        for bg in bgens {
+                                                            if let crate::ast::TypeRef::Named { path: gp, generics: gg, .. } = bg {
+                                                                if gg.is_empty() {
+                                                                    if let Some(tv) = gp.last() {
+                                                                        if tv.len() <= 2 && tv.chars().all(|c| c.is_ascii_uppercase()) {
+                                                                            // Replace mangled "Nova_<TV>_p" with concrete elem
+                                                                            // in the mangled part, and "Nova_<TV>*" in the suffix.
+                                                                            let tv_mangled = format!("Nova_{}_p", tv);
+                                                                            let tv_ptr = format!("Nova_{}*", tv);
+                                                                            let elem_ptr = if elem.ends_with('*') {
+                                                                                elem.clone()
+                                                                            } else {
+                                                                                elem.clone()
+                                                                            };
+                                                                            resolved = resolved
+                                                                                .replace(&tv_mangled, &elem_mangled)
+                                                                                .replace(&tv_ptr, &elem_ptr);
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            resolved
+                                        } else {
+                                            raw_c
+                                        };
                                         if !c.is_empty() && c != "void*" {
                                             return c;
                                         }
