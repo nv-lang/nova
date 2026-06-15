@@ -8142,3 +8142,50 @@ sum с per-variant bitmap'ами; nested value-record рекурсия; scalar-o
 (layout-id в заголовке объекта + точный tracer) — [Plan 144.5](../../docs/plans/144.5-nonmoving-precise-gc-online.md) Ф.5,
 маркер `[M-144.1-heap-bitmaps]`.
 
+## D280 (NEW) — Ссылка на heap-тип BY VALUE = pointer-size (8 байт), не inline object-size
+
+> **Создан:** 2026-06-15 (branch `fix-checker-recursive-type-overflow`, commits `219be59a`+`1245ef68`,
+> маркер `[M-checker-recursive-type-overflow]`). Фиксирует **layout-семантику, которую `emit_c` уже
+> эмитит**, но которую type-size-калькулятор раньше игнорировал → stack-overflow на рекурсивных типах.
+> Уточняет/амендит layout-инвариант, на который опирается [D277 §3](#d277-new--per-type-gc-pointer-offset-bitmaps-plan-1441-аналитическая-половина-ф1-emit-nothing)
+> (канонический size-walk `const_fn_eval::type_size_or_align_resolved`); пойнтер-инвариант — [D216 §1](02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo).
+
+### 1. Правило
+
+`emit_c` лоуэрит **heap-аллоцируемый** пользовательский тип (`AllocKind::Heap` record / **любой** sum)
+в указатель `Nova_X*` **везде, где он встречается как значение / поле / переменная** (поле, аргумент,
+локал, элемент). Поэтому **ссылка** на такой тип занимает **pointer-size = 8 байт** (align 8, x64 ABI),
+а **НЕ** inline-размер объекта. Inline object-size (байты ВНУТРИ heap-аллокации) релевантен лишь как
+**top-level subject** layout'а (что и считает GC-bitmap [D277]).
+
+`size_of[heapT]()` / `align_of[heapT]()` теперь возвращают **8 / 8** — это **корректное
+reference-semantics-значение** (переменная heap-типа есть `Nova_X*`), emit-accurate. Для **value**-типов
+(`type T value { … }` record / named-tuple / newtype / alias) ничего не меняется — они инлайнятся, и
+size остаётся inline object-size.
+
+### 2. Почему это и эмиссия, и устранение overflow
+
+Раз ссылка на heap-тип — указательный лист (8 байт), **рекурсивный heap-тип конечен**:
+`type Tree | Leaf | Node(int, Tree, Tree)` + `type H { t Tree }` — поле `t` есть `Nova_Tree*`, рекурсии
+по layout нет. Boxing-неосознающий size-walk раньше инлайнил object-size поля `Tree` → бесконечный
+спуск `Tree → Node-payload → Tree → …` → **stack-overflow в `nova check` / `build` / каждом
+introspection-инструменте** (`gc-effect-analyze`, `gc-layout-analyze`). Boxing-aware short-circuit на
+pointer-size **одновременно** emit-точен и убирает overflow на ВАЛИДНЫХ рекурсивных heap-типах.
+
+### 3. Soundness / blast radius
+
+`type_size_or_align_resolved` бэкает `size_of`/`align_of`; после фикса `size_of[heapT] = 8`. Это
+reference-semantics-корректно (никакого ослабления). Genuinely-infinite **value**-self-cycle
+(`type N value { next N }` — без указательной индирекции, инлайнится) обрабатывается **depth-budget'ом**
+(`MAX_TYPE_SIZE_DEPTH = 128`) в внутреннем хелпере: walk возвращает `None` вместо overflow; каждый
+вызывающий деградирует мягко (никакого краша). Public-сигнатура `type_size_or_align_resolved`
+сохранена. Реализация — `compiler-codegen/src/const_fn_eval.rs` (boxing-aware Named-арм + depth-helper) +
+visited-set guard в `types::type_is_consume`. **Без упрощений как для прода**: layout-точно (совпадает с
+`emit_c`), soundness-first (no crash; `size_of` корректен), без маскировки.
+
+### 4. Остаток
+
+Dedicated `E_INFINITE_TYPE`-диагностика для genuinely-infinite value-типов НЕ реализована — `None`
+сёрфейсится как generic `E_CONST_FN_GENERIC_NEEDS_T_REFLECTION` (no-crash гарантирован) —
+[Q-infinite-value-type](../open-questions.md#q-infinite-value-type).
+
