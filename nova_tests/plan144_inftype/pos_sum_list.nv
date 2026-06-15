@@ -1,0 +1,26 @@
+// Q-infinite-value-type (D280 §4) — POSITIVE: a linked list built directly from
+// a recursive SUM (heap-boxed). MUST `nova check` PASS — NO `E_INFINITE_TYPE`.
+//
+//     type List | Nil | Cons(int, List)
+//
+// A sum is ALWAYS heap-allocated, so the `List` payload inside `Cons` is a
+// `Nova_List*` pointer leaf — INDIRECTION, finite. The detector never treats a
+// Sum as an inline subject (the caller gate skips non-value subjects, and the
+// boxing short-circuit STOPs on a Sum reference), so it must NOT report
+// `E_INFINITE_TYPE`. Mirrors `nova_tests/basics/recursion.nv`'s `Tree`.
+
+module plan144_inftype.pos_sum_list
+
+type List
+    | Nil
+    | Cons(int, List)
+
+fn len(l List) -> int => match l {
+    Nil           => 0
+    Cons(_, rest) => 1 + len(rest)
+}
+
+test "recursive sum linked list — finite, runs" {
+    ro l = Cons(1, Cons(2, Cons(3, Nil)))
+    assert(len(l) == 3)
+}
