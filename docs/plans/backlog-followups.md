@@ -502,9 +502,9 @@
 
 ## Follow-up: Plan 160 (module-level field privacy)
 
-- **`[M-160-per-field-priv-module]`** (P3, floating) — per-field `priv` аннотация для отдельного поля в иначе-public типе: `type T { priv(module) f int }`. Текущий D281 — только type-level default. Полезно для исключений.
-- **`[M-160-methods-module-visibility]`** (P3, floating) — методы типа сейчас либо public, либо (в будущем) `priv`; нет module-granularity. `fn T @internal_method()` видна всем. Потенциальное расширение: `priv(module) fn T @m()` (separate task).
-- **`[M-160-named-tuple-priv]`** (P3, floating) — D281 реализован только для record fields; named tuples (D225) пока не имеют module-private default. Расширить `NamedTupleField.priv_module_field` на type-level priv аналогично D220/D225.
+- **`[M-160-per-field-priv-module]`** ✅ **CLOSED 2026-06-15** — field-level bare `priv` теперь = module-private (симметрично type-level; commit `b87ffeef`). `priv(type)` на field-level = type-private. Синтаксис симметричен полностью.
+- **`[M-160-methods-module-visibility]`** (P3, floating) — методы типа сейчас либо public; нет module-granularity. `fn T @internal_method()` видна всем. Потенциальное расширение: `priv fn T @m()` = module-private method (separate task).
+- **`[M-160-named-tuple-priv]`** (P3, floating) — D281 реализован только для record fields; named tuples (D225) пока не имеют module-private default. Расширить на type-level `priv` для named tuple fields.
 - **`[M-160-pattern-match-module-priv]`** (P2, floating) — деструктуризация `let { f, .. } = t` для module-private полей из другого модуля проверяется `E_FIELD_MODULE_PRIVATE`. Нужен smoke-test (пока не покрыт fixtures).
 
 ## Конвенция
