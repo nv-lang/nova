@@ -1,11 +1,19 @@
 // Plan 114.4.4 V4.6 M1 POSITIVE: size_of/align_of для user-defined records.
 // Closes [M-114.4.4-trampoline-named-types] (record variant).
+//
+// [M-checker-recursive-type-overflow] (2026-06-15): `size_of[T]()` is now
+// BOXING-aware — a reference to a HEAP record is a `Nova_T*` (8 bytes), so
+// `size_of[heapRecord]()` resolves to the pointer size, not the inline struct
+// layout. To keep covering the INLINE struct-layout math (the path this
+// fixture was written for), these records are declared `value` (D226) — value
+// records are carried inline (`NovaValue_T`), so their `size_of` is the inline
+// object size and the original 16/12/0 assertions stay valid AND meaningful.
 
 module plan114_4_4.size_of_record_ok
 
-type Point { x int, y int }
-type Mixed { a i8, b i32, c bool }
-type Empty {}
+type Point value { x int, y int }
+type Mixed value { a i8, b i32, c bool }
+type Empty value {}
 
 // Point: 2 × i64 = 16, align 8.
 const SIZE_POINT = size_of[Point]()

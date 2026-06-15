@@ -12385,6 +12385,26 @@ impl LinearityRegistry {
     /// Bootstrap: generic-param без bound → false (silent-ignore;
     /// 100.2 закроет через `[T consume]`).
     fn type_is_consume(&self, t: &TypeRef, module: &Module) -> bool {
+        // [M-checker-recursive-type-overflow]: the field-walk below follows
+        // named-type references, which form a CYCLE for a recursive type
+        // (`type Tree | Leaf | Node(int, Tree, Tree)`, or an invalid value
+        // self-cycle `type N value { next N }`). Without a guard the recursion
+        // never terminates → stack overflow during `nova check`. Thread a
+        // visited-set keyed by the named type currently being resolved; a
+        // re-entry returns `false` (consume-ness cannot be "introduced" by a
+        // back-edge — the field that closes the cycle is already being checked,
+        // and a genuine consume field elsewhere is still discovered on its own
+        // forward edge). Public signature unchanged.
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        self.type_is_consume_v(t, module, &mut visited)
+    }
+
+    fn type_is_consume_v(
+        &self,
+        t: &TypeRef,
+        module: &Module,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> bool {
         match t {
             TypeRef::Named { path, generics, .. } => {
                 // Direct consume-type.
@@ -12393,38 +12413,46 @@ impl LinearityRegistry {
                     return true;
                 }
                 // Generic wrap: Option[Transaction], Box[Tx], Wrapper[T].
-                if generics.iter().any(|a| self.type_is_consume(a, module)) {
+                if generics.iter().any(|a| self.type_is_consume_v(a, module, visited)) {
                     return true;
                 }
-                // Record/sum lookup: own fields consume-typed?
-                for item in &module.items {
-                    if let Item::Type(td) = item {
-                        if td.name == name {
-                            return match &td.kind {
-                                TypeDeclKind::Record(fields) =>
-                                    fields.iter().any(|f|
-                                        f.consume || self.type_is_consume(&f.ty, module)),
-                                TypeDeclKind::Sum(variants) =>
-                                    variants.iter().any(|v|
-                                        match &v.kind {
-                                            SumVariantKind::Tuple(payloads) =>
-                                                payloads.iter().any(|p|
-                                                    self.type_is_consume(p, module)),
-                                            SumVariantKind::Record(fields) =>
-                                                fields.iter().any(|f|
-                                                    f.consume || self.type_is_consume(&f.ty, module)),
-                                            SumVariantKind::Unit => false,
-                                        }),
-                                _ => false,
-                            };
+                // Record/sum lookup: own fields consume-typed? Guard against
+                // recursive named-type cycles (see type_is_consume doc above).
+                if !visited.insert(name.clone()) {
+                    return false;
+                }
+                let result = (|| {
+                    for item in &module.items {
+                        if let Item::Type(td) = item {
+                            if td.name == name {
+                                return match &td.kind {
+                                    TypeDeclKind::Record(fields) =>
+                                        fields.iter().any(|f|
+                                            f.consume || self.type_is_consume_v(&f.ty, module, visited)),
+                                    TypeDeclKind::Sum(variants) =>
+                                        variants.iter().any(|v|
+                                            match &v.kind {
+                                                SumVariantKind::Tuple(payloads) =>
+                                                    payloads.iter().any(|p|
+                                                        self.type_is_consume_v(p, module, visited)),
+                                                SumVariantKind::Record(fields) =>
+                                                    fields.iter().any(|f|
+                                                        f.consume || self.type_is_consume_v(&f.ty, module, visited)),
+                                                SumVariantKind::Unit => false,
+                                            }),
+                                    _ => false,
+                                };
+                            }
                         }
                     }
-                }
-                false
+                    false
+                })();
+                visited.remove(&name);
+                result
             }
             TypeRef::Tuple(elems, _) =>
-                elems.iter().any(|e| self.type_is_consume(e, module)),
-            TypeRef::Array(inner, _) => self.type_is_consume(inner, module),
+                elems.iter().any(|e| self.type_is_consume_v(e, module, visited)),
+            TypeRef::Array(inner, _) => self.type_is_consume_v(inner, module, visited),
             // Generic-param без bound — bootstrap silent-ignore.
             _ => false,
         }

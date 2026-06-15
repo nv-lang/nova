@@ -1016,8 +1016,20 @@ mod tests {
         assert_eq!(info.align, Some(8));
         assert!(!info.unresolved);
         // Cross-check against the canonical size-math.
+        // [M-checker-recursive-type-overflow]: `type_size_or_align_resolved`
+        // is now BOXING-aware — a reference to a HEAP record (`Point`, no
+        // `value` kw) is a `Nova_Point*` (8 bytes, reference semantics), which
+        // is what `size_of[Point]()` and every field/var occurrence resolves
+        // to. `compute_gc_layout` reports the INLINE OBJECT size (16) because
+        // `Point` is the TOP-LEVEL subject of the bitmap (the bytes inside the
+        // heap allocation). These two quantities legitimately differ for a heap
+        // type (object size vs reference size); they coincide only for value
+        // types. So the cross-check now asserts the size-math yields the
+        // pointer size, NOT the inline object size.
         let math = type_size_or_align_resolved(&ty("Point"), false, &reg).unwrap();
-        assert_eq!(info.size, Some(math as usize));
+        assert_eq!(math, 8, "heap record reference is a Nova_Point* (8 bytes)");
+        let align_math = type_size_or_align_resolved(&ty("Point"), true, &reg).unwrap();
+        assert_eq!(align_math, 8, "heap record pointer align is 8");
     }
 
     /// Record with mixed scalar + boxed-record field → bitmap = the boxed
@@ -1185,8 +1197,19 @@ mod tests {
         assert_eq!(cons.pointer_offsets, vec![8], "Cons(Box): boxed ptr at payload base 8");
 
         // Size cross-check vs the canonical size-math.
+        // [M-checker-recursive-type-overflow]: sum types are ALWAYS heap-boxed
+        // (`Nova_Node*`), so `type_size_or_align_resolved` is now boxing-aware
+        // and returns the pointer size (8) for a `Node` reference — what
+        // `size_of[Node]()` and every field/var occurrence resolves to. The gc
+        // bitmap `info.size` is the INLINE union object size (16) for the
+        // top-level subject. Those differ for a heap type by design (object vs
+        // reference size); pre-fix the size-math inlined the recursive `Box`
+        // field and infinite-recursed (the very bug this guards). Assert the
+        // size-math now yields pointer size.
         let math = type_size_or_align_resolved(&ty("Node"), false, &reg).unwrap();
-        assert_eq!(info.size, Some(math as usize));
+        assert_eq!(math, 8, "heap sum reference is a Nova_Node* (8 bytes)");
+        let align_math = type_size_or_align_resolved(&ty("Node"), true, &reg).unwrap();
+        assert_eq!(align_math, 8, "heap sum pointer align is 8");
     }
 
     /// Sum variant with a str payload → recursed str.ptr at payload base.
