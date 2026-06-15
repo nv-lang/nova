@@ -285,6 +285,16 @@ struct DeadDecls {
 /// `EXPECT_CC_ERROR` fixture) → nothing to anchor against → **keep everything**
 /// (empty dead sets). This guard is preserved verbatim from Plan 81.
 fn compute_dead_decls(module: &Module) -> DeadDecls {
+    compute_dead_decls_with(module, reach_dce_enabled())
+}
+
+/// Plan 159 Ф.1: testable core of [`compute_dead_decls`] with the reachability-DCE
+/// flag passed explicitly (the public wrapper reads it from the process-global
+/// `NOVA_REACH_DCE` kill-switch via a `OnceLock`, which a unit test cannot toggle
+/// between cases). `enabled = false` reproduces the pre-159 policy byte-for-byte:
+/// consts / `ro`-globals are not candidates (never pruned), exported free fns are
+/// roots, and no method-body DCE.
+fn compute_dead_decls_with(module: &Module, enabled: bool) -> DeadDecls {
     let is_fn_candidate = |f: &FnDecl| -> bool {
         f.receiver.is_none()
             && f.generics.is_empty()
@@ -314,8 +324,6 @@ fn compute_dead_decls(module: &Module) -> DeadDecls {
     if !has_main {
         return DeadDecls::default();
     }
-
-    let enabled = reach_dce_enabled();
 
     // Candidate name sets (kept separate so we can split the dead complement
     // back into fns vs consts/globals at the end). Const + ro-global names
@@ -36986,12 +36994,20 @@ mod mangle_tests {
 
 #[cfg(test)]
 mod dce_tests {
-    //! Plan 81 Ф.7.2: unit-тесты reachability-DCE для свободных функций.
-    use super::compute_dead_free_fns;
+    //! Plan 81 Ф.7.2 + Plan 159 Ф.1: unit-тесты reachability-DCE для свободных
+    //! функций И module-level const / `ro`-globals.
+    use super::{compute_dead_decls_with, compute_dead_free_fns, DeadDecls};
 
     fn dead_of(src: &str) -> std::collections::HashSet<String> {
         let module = crate::parser::parse(src).expect("fixture parses");
         compute_dead_free_fns(&module)
+    }
+
+    /// Plan 159 Ф.1: run the testable DCE core with the reachability flag passed
+    /// explicitly (the kill-switch `OnceLock` cannot be toggled between cases).
+    fn decls_of(src: &str, enabled: bool) -> DeadDecls {
+        let module = crate::parser::parse(src).expect("fixture parses");
+        compute_dead_decls_with(&module, enabled)
     }
 
     #[test]
@@ -37078,6 +37094,130 @@ mod dce_tests {
             !dead.contains("target"),
             "callee referenced via `mod.target()` must stay reachable"
         );
+    }
+
+    // ─── Plan 159 Ф.1: const / `ro`-global reachability ──────────────────────
+
+    #[test]
+    fn const_dead_when_unreferenced_in_executable() {
+        // An executable (`has main`) that never names a module-level const →
+        // the const is unreachable → pruned (its giant `static` table dropped).
+        let d = decls_of(
+            "module t\n\
+             const USED int = 1\n\
+             const UNUSED int = 2\n\
+             fn main() -> int => USED\n",
+            true,
+        );
+        assert!(d.dead_consts.contains("UNUSED"), "no root names UNUSED → dead");
+        assert!(!d.dead_consts.contains("USED"), "USED is read by main → kept");
+    }
+
+    #[test]
+    fn const_kept_when_referenced_transitively() {
+        // const reached only through a free-fn call chain from main: the
+        // fn→const edge keeps it. (main → reader → reads BASE.)
+        let d = decls_of(
+            "module t\n\
+             const BASE int = 4242\n\
+             fn reader() -> int => BASE\n\
+             fn main() -> int => reader()\n",
+            true,
+        );
+        assert!(!d.dead_consts.contains("BASE"), "BASE read by reachable reader() → kept");
+        assert!(!d.dead_fns.contains("reader"), "reader called by main → kept");
+    }
+
+    #[test]
+    fn ro_global_dead_when_unreferenced_in_executable() {
+        // `ro` lazy-static globals are candidates too (the real `std.unicode`
+        // table shape `ro TABLE = build(DATA)`). Unreferenced → pruned.
+        let d = decls_of(
+            "module t\n\
+             ro LIVE int = 10\n\
+             ro DEAD int = 20\n\
+             fn main() -> int => LIVE\n",
+            true,
+        );
+        assert!(d.dead_consts.contains("DEAD"), "no root names DEAD ro-global → dead");
+        assert!(!d.dead_consts.contains("LIVE"), "LIVE read by main → kept");
+    }
+
+    #[test]
+    fn export_not_root_in_executable() {
+        // New default policy: in an executable an exported Nova fn is NOT a root
+        // (no C-ABI export) → follows normal reachability → dead if unreachable.
+        let d = decls_of(
+            "module t\n\
+             export fn api() -> int => 1\n\
+             fn main() -> int => 0\n",
+            true,
+        );
+        assert!(
+            d.dead_fns.contains("api"),
+            "executable: exported-but-unreachable fn is dead (no C-ABI export)"
+        );
+    }
+
+    #[test]
+    fn export_kept_in_library() {
+        // No `main` → library → `no main → keep all` guard fires → empty dead
+        // sets, regardless of the flag. The exported API surface is retained.
+        let d = decls_of(
+            "module t\n\
+             export fn api() -> int => helper()\n\
+             fn helper() -> int => 1\n",
+            true,
+        );
+        assert!(d.dead_fns.is_empty(), "library mode keeps every fn");
+        assert!(d.dead_consts.is_empty(), "library mode keeps every const");
+    }
+
+    #[test]
+    fn kill_switch_disabled_prunes_nothing_new() {
+        // With reachability DCE disabled (`NOVA_REACH_DCE=0` → enabled=false)
+        // the pre-159 policy holds: consts / ro-globals are NOT candidates (never
+        // pruned), and an exported fn is a root. So an unreferenced const stays,
+        // and an unreachable exported fn stays — only the Plan 81 dead-free-fn
+        // behaviour (unexported, uncalled) remains.
+        let d = decls_of(
+            "module t\n\
+             const UNUSED int = 2\n\
+             ro UNUSED_RO int = 3\n\
+             export fn api() -> int => 1\n\
+             fn truly_dead() -> int => 9\n\
+             fn main() -> int => 0\n",
+            false,
+        );
+        assert!(d.dead_consts.is_empty(), "DCE off: consts/ro-globals never pruned");
+        assert!(
+            !d.dead_fns.contains("api"),
+            "DCE off: exported fn is a root → kept"
+        );
+        assert!(
+            d.dead_fns.contains("truly_dead"),
+            "DCE off: Plan 81 baseline still prunes an unexported, uncalled free fn"
+        );
+    }
+
+    #[test]
+    fn kill_switch_enabled_prunes_const_and_export() {
+        // Companion to the above: SAME source, flag ON → const + ro-global +
+        // exported-unreachable fn are all pruned. Proves the flag is the only
+        // difference (A/B equivalence of the kill-switch).
+        let d = decls_of(
+            "module t\n\
+             const UNUSED int = 2\n\
+             ro UNUSED_RO int = 3\n\
+             export fn api() -> int => 1\n\
+             fn truly_dead() -> int => 9\n\
+             fn main() -> int => 0\n",
+            true,
+        );
+        assert!(d.dead_consts.contains("UNUSED"), "DCE on: unreferenced const pruned");
+        assert!(d.dead_consts.contains("UNUSED_RO"), "DCE on: unreferenced ro-global pruned");
+        assert!(d.dead_fns.contains("api"), "DCE on: exported-unreachable fn pruned");
+        assert!(d.dead_fns.contains("truly_dead"), "DCE on: uncalled free fn pruned");
     }
 }
 

@@ -1,0 +1,15 @@
+// Plan 159 Ф.1 over-prune hunt: `a + b` on `str` desugars to
+// `Nova_str_method_concat(a, b)` (emit_c.rs ~19190, D-R4). The `concat` selector
+// is injected by the `+` lowering and never appears syntactically, so without
+// seeding it the reachability closure prunes `str.concat` — and `nova_print_str`
+// then receives the implicit-int return of an undeclared C function (the exact
+// `passing 'int' to parameter of incompatible type 'nova_str'` regression seen
+// in plan131/vec_iter_pos). `str.concat` must stay reachable.
+// EXPECT_STDOUT a+b+c
+
+module plan159.hunt_str_concat_operator
+
+fn main() {
+    ro s = "a" + "+" + "b" + "+" + "c"
+    println(s)
+}

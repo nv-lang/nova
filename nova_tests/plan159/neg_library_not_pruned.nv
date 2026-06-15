@@ -1,0 +1,26 @@
+// Plan 159 Ф.1 NEGATIVE (guard regression): a `main`-less module is a LIBRARY,
+// not an executable — there is no entry point to anchor reachability against, so
+// the "no main → keep everything" guard fires and NOTHING is pruned, even free
+// functions with no live caller (`unreachable_helper`, reached only by the
+// exported `api`, which is itself never called here).
+//
+// We cannot link a library (no `main`), so the test asserts the ONLY missing
+// symbol is `nova_fn_main_impl`. Crucially it must NOT be a pruned helper: if
+// reachability DCE had (wrongly) run in library mode, `unreachable_helper` would
+// be dropped and the link error would name IT instead. Codegen succeeding and
+// emitting every helper is the proof of non-pruning. (The complementary unit
+// test `exported_fn_in_library_mode_is_kept` asserts the empty dead-set
+// directly.)
+// EXPECT_CC_ERROR nova_fn_main_impl
+
+module plan159.neg_library_not_pruned
+
+// No live caller anywhere in this module — kept only because library mode
+// disables pruning entirely.
+fn unreachable_helper() -> int {
+    424242
+}
+
+export fn api() -> int {
+    unreachable_helper()
+}

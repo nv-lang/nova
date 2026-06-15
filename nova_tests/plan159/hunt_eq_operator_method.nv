@@ -1,0 +1,27 @@
+// Plan 159 Ф.1 over-prune hunt: `a == b` on a user type that implements `Equal`
+// desugars to `Nova_T_method_equal(a, b)` (emit_c.rs ~12212). The `equal`
+// selector is injected by codegen, never written syntactically. The method
+// `Pair.equal` must stay reachable, otherwise codegen calls an undeclared fn.
+// EXPECT_STDOUT eqop ok
+
+module plan159.hunt_eq_operator_method
+
+import std.prelude.protocols.{Equal}
+
+type Pair {
+    a int
+    b int
+}
+
+fn Pair @equal(other Pair) -> bool => @a == other.a && @b == other.b
+
+fn main() {
+    ro x = Pair { a: 1, b: 2 }
+    ro y = Pair { a: 1, b: 2 }
+    ro z = Pair { a: 9, b: 9 }
+    if (x == y) && !(x == z) {
+        println("eqop ok")
+    } else {
+        println("FAIL")
+    }
+}

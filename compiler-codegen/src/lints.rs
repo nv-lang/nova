@@ -1150,6 +1150,21 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
         ExprKind::Binary { left, right, .. } => {
             collect_expr(left, out);
             collect_expr(right, out);
+            // Plan 159 Ф.1 (reachability-DCE soundness): binary operators on a
+            // user/`str` type desugar to magic methods, whose selectors emit_c.rs
+            // injects and which never appear syntactically:
+            //   `==`/`!=`  → `Nova_T_method_equal`/`_eq` (D237 Equal / str `@eq`)
+            //   `<`/`<=`/`>`/`>=` → `_compare` (Compare / str `@compare`)
+            //   `+` (on str) → `Nova_str_method_concat` (D-R4, emit_c.rs ~19190)
+            // Without seeding them the reachability closure prunes
+            // `str.concat`/`str.eq`/`T.compare`… and codegen calls an undeclared
+            // C function (implicit-int return → type-mismatch / link error).
+            // Seed all conservatively. (Harmless over-approx for the
+            // unused-import lint — these are method selectors.)
+            out.insert("equal".to_string());
+            out.insert("eq".to_string());
+            out.insert("compare".to_string());
+            out.insert("concat".to_string());
         }
         ExprKind::Unary { operand, .. } => collect_expr(operand, out),
         ExprKind::Try(i) | ExprKind::Bang(i) => collect_expr(i, out),
@@ -1170,6 +1185,13 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
         ExprKind::Index { obj, index } => {
             collect_expr(obj, out);
             collect_expr(index, out);
+            // Plan 159 Ф.1 (reachability-DCE soundness): `a[k]` (and `a[k] = v`)
+            // desugars to the `Index`/`MutIndex` magic method `a.@index(k[, v])`
+            // (D240). The `index` selector is injected by the desugar and never
+            // appears syntactically, so seed it so the reachability closure does
+            // not prune a concrete type's `@index` body. (Harmless over-approx
+            // for the unused-import lint — `index` is a method selector.)
+            out.insert("index".to_string());
         }
         ExprKind::If { cond, then, else_ } => {
             collect_expr(cond, out);
@@ -1262,10 +1284,27 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
         ExprKind::ParallelFor { iter, body, .. } => {
             collect_expr(iter, out);
             collect_block(body, out);
+            // Plan 159 Ф.1: parallel-for also drives the iteration protocol —
+            // see the `For` arm below for the rationale.
+            out.insert("next".to_string());
+            out.insert("iter".to_string());
         }
         ExprKind::For { iter, body, .. } => {
             collect_expr(iter, out);
             collect_block(body, out);
+            // Plan 159 Ф.1 (reachability-DCE soundness): `for x in it { … }`
+            // desugars to the iteration protocol — codegen calls `it.iter()`
+            // (when `it` is not already an iterator) and then `.next()` in a
+            // loop. Those method selectors are injected by the desugar and
+            // never appear syntactically, so without seeding them here the
+            // reachability closure would prune `Iter.next` / `Iter.iter`
+            // (e.g. `CharsIter.next`, reached only via `for c in s.as_chars()`)
+            // and emit a call to an undeclared C function. Conservatively mark
+            // both protocol names used wherever a `for` loop is reachable.
+            // (Harmless over-approximation for the unused-import lint: these are
+            // method selectors, not importable free names.)
+            out.insert("next".to_string());
+            out.insert("iter".to_string());
         }
         ExprKind::While { cond, body, .. } => {
             collect_expr(cond, out);

@@ -1,0 +1,12 @@
+// Plan 159 Ф.1 end-to-end: normalize_nfc() must produce correct output,
+// proving the normalization (norm_data) tables are kept when reachable.
+// e + COMBINING ACUTE (U+0065 U+0301) composes to é (U+00E9).
+// EXPECT_STDOUT é
+
+module plan159.e2e_normalize
+
+import std.unicode.{normalize_nfc}
+
+fn main() {
+    println(normalize_nfc("e\u{301}"))
+}

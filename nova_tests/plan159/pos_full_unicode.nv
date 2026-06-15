@@ -1,0 +1,24 @@
+// Plan 159 Ф.1 POSITIVE (correctness completeness): an executable that exercises
+// EVERY major std.unicode table family — general_category (GC), collate_compare
+// (DUCET), normalize_nfc (decomp/compose), as_words (UAX #29 word boundaries),
+// to_titlecase (case mapping). Reachability DCE must keep ALL of these tables;
+// correct output proves none was wrongly pruned (G0 conservative-correctness).
+// EXPECT_STDOUT full ok
+
+module plan159.pos_full_unicode
+
+import std.unicode.{general_category, collate_compare, normalize_nfc, WordsView, to_titlecase, is_uppercase, is_numeric, Lu, Nd}
+
+fn main() {
+    ro cat_ok = general_category(0x41) == Lu && general_category(0x35) == Nd
+    ro coll_ok = collate_compare("apple", "banana") < 0 && collate_compare("same", "same") == 0
+    ro norm_ok = normalize_nfc("e\u{301}") == "\u{e9}"          // e + acute -> é
+    ro words_ok = "Hello, world".as_words().count() == 4         // Hello | , | space | world
+    ro title_ok = to_titlecase("hello world") == "Hello World"
+    ro pred_ok = is_uppercase(0x41) && is_numeric(0x35)
+    if cat_ok && coll_ok && norm_ok && words_ok && title_ok && pred_ok {
+        println("full ok")
+    } else {
+        println("FAIL")
+    }
+}

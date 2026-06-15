@@ -1,0 +1,22 @@
+// Plan 159 Ф.1 end-to-end: general_category() must produce correct results,
+// proving the category (GC) tables it reads are kept under DCE.
+// 'A' (U+0041) is Lu; '5' (U+0035) is Nd. We compare against the canonical
+// gc-code ints (Lu == GC_LU == 1, Nd == GC_ND == 9) via is_uppercase/is_numeric
+// to keep output deterministic without depending on enum stringification.
+// EXPECT_STDOUT A=upper 5=num ok
+
+module plan159.e2e_general_category
+
+import std.unicode.{general_category, is_uppercase, is_numeric, Lu, Nd}
+
+fn main() {
+    ro a_is_lu = general_category(0x41) == Lu
+    ro five_is_nd = general_category(0x35) == Nd
+    ro a_upper = is_uppercase(0x41)
+    ro five_num = is_numeric(0x35)
+    if a_is_lu && five_is_nd && a_upper && five_num {
+        println("A=upper 5=num ok")
+    } else {
+        println("FAIL")
+    }
+}

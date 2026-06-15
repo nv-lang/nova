@@ -1,0 +1,23 @@
+// Plan 159 Ф.1 POSITIVE: an executable that imports `std.unicode` but calls only
+// the `is_alphabetic` predicate. Under reachability DCE the collate / normalize /
+// word / sentence / grapheme / case tables (none of which `is_alphabetic` reads)
+// are pruned, while the ALPHA classification table it DOES read is kept — proven
+// by the program compiling, running, and printing the correct result.
+//
+// This is the measured headline case (10606 → ~2000 lines of C). The size win is
+// verified out-of-band (grep collate/normalize/GC_DATA == 0); here we assert the
+// behaviour is preserved.
+// EXPECT_STDOUT partial ok
+
+module plan159.pos_partial_unicode
+
+import std.unicode.{is_alphabetic}
+
+fn main() {
+    if is_alphabetic(0x41) && is_alphabetic(0x3A9) && !is_alphabetic(0x40) {
+        // 'A' (Lu) and 'Ω' U+03A9 (Lu) are alphabetic; '@' (Po) is not.
+        println("partial ok")
+    } else {
+        println("FAIL")
+    }
+}

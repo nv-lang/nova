@@ -1,0 +1,20 @@
+// Plan 159 Ф.1 end-to-end: collate_compare() must produce correct ordering,
+// proving the collation (collate_data) tables are kept when reachable.
+// UCA root order: "apple" < "banana" → negative; "b" > "a" → positive;
+// equal strings → 0.
+// EXPECT_STDOUT collate ok
+
+module plan159.e2e_collate
+
+import std.unicode.{collate_compare}
+
+fn main() {
+    ro lt = collate_compare("apple", "banana") < 0
+    ro gt = collate_compare("b", "a") > 0
+    ro eq = collate_compare("same", "same") == 0
+    if lt && gt && eq {
+        println("collate ok")
+    } else {
+        println("FAIL")
+    }
+}
