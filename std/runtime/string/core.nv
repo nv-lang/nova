@@ -293,7 +293,7 @@ export fn str @to_chars() -> []char {
 // -1/0/1). Метод вызываем напрямую (`s.compare(t)`) и Compare-протоколом
 // (`@compare(o) == 0` synthesis, D178). Plan 152.5a D-R4: ОПЕРАТОРЫ
 // `<`/`<=`/`>`/`>=` теперь синтезируются из `@compare` (emit_c.rs nova_str BinOp
-// arm → `Nova_str_method_compare(l,r) OP 0`), `==`/`!=` из `@eq`, `+` из `@concat`
+// arm → `Nova_str_method_compare(l,r) OP 0`), `==`/`!=` из `@equal`, `+` из `@concat`
 // — хардкод C `nova_str_lt`/`eq`/`concat` в operator-lowering снят. Закрывает
 // `[M-139.1-operator-lowered-methods]`.
 export fn str @compare(other str) -> int {
@@ -313,13 +313,13 @@ export fn str @compare(other str) -> int {
     0
 }
 
-// Content equality (Plan 152.5a D-R4). Backs the `==`/`!=` operators (emit_c.rs
-// nova_str BinOp arm → `Nova_str_method_eq`) and the `Equal` protocol, replacing
-// the retired C `nova_str_eq`. Length-first short-circuit (unequal length ⇒ not
-// equal, O(1)) then RawMem.compare (= memcmp) over the bytes — perf-parity with
-// the C form (which did the same length-check + memcmp). `@ptr`/`other.ptr` are
+// Content equality (Plan 152.5a D-R4, Plan 91.8b). Backs the `==`/`!=` operators
+// (emit_c.rs nova_str BinOp arm → `Nova_str_method_equal`) and the `Equal` protocol,
+// replacing the retired C `nova_str_eq`. Length-first short-circuit (unequal length
+// ⇒ not equal, O(1)) then RawMem.compare (= memcmp) over the bytes — perf-parity
+// with the C form (which did the same length-check + memcmp). `@ptr`/`other.ptr` are
 // priv `*ro u8` (type-method privacy, str's home module).
-export fn str @eq(other str) -> bool {
+export fn str @equal(other str) -> bool {
     ro n = @byte_len()
     if n != other.byte_len() { return false }
     unsafe { RawMem.compare(@ptr, other.ptr, n) == 0 }
