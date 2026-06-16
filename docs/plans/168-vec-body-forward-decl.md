@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Plan 167 — Vec generic forward-decl missing for body-only instantiations (D300)
+# Plan 168 — Vec generic forward-decl missing for body-only instantiations (D300)
 
 > **Создан:** 2026-06-17. **Статус:** 📋 PLANNED. **P1**; ~0.5 dd, Sonnet 4.6.
 >
@@ -69,7 +69,7 @@ Item::Fn(f) => {
     if let Some(r) = &f.return_type {
         Self::collect_array_elem_typerefs(r, acc);
     }
-    // Plan 167: scan fn body for Vec[T] local vars
+    // Plan 168: scan fn body for Vec[T] local vars
     Self::collect_array_elem_typerefs_in_body(&f.body, acc);
 }
 ```
@@ -99,9 +99,9 @@ Item::Fn(f) => {
 
 ### Ф.0 — Probe: минимальный репро-тест
 
-Создать `nova_tests/plan167/vec_u32_body.nv`:
+Создать `nova_tests/plan168/vec_u32_body.nv`:
 ```nova
-module plan167.vec_u32_body
+module plan168.vec_u32_body
 test "Vec[u32] local var" {
     mut v = Vec[u32].with_capacity(4)
     v.push(1 as u32)
@@ -128,7 +128,7 @@ mono-pass и не генерируют Vec-local vars без сигнатурн�
 
 ### Ф.2 — Verify
 
-1. `nova test nova_tests/plan167` → ранее CC-FAIL → теперь PASS.
+1. `nova test nova_tests/plan168` → ранее CC-FAIL → теперь PASS.
 2. `nova test nova_tests/plan153_1` → 0 CC-FAIL (было 9).
 3. Полный регресс: 0 новых FAIL.
 
@@ -143,17 +143,17 @@ mono-pass и не генерируют Vec-local vars без сигнатурн�
 
 | # | Критерий |
 |---|---|
-| AC1 | `nova test nova_tests/plan167` — PASS (pos: Vec[u32] local var) |
+| AC1 | `nova test nova_tests/plan168` — PASS (pos: Vec[u32] local var) |
 | AC2 | `nova test nova_tests/plan153_1` — 0 CC-FAIL (было 9) |
 | AC3 | 0 новых FAIL в полном регрессе |
-| AC4 | Тест `nova_tests/plan167/vec_u8_body.nv` — PASS (профилактика Vec[u8]) |
+| AC4 | Тест `nova_tests/plan168/vec_u8_body.nv` — PASS (профилактика Vec[u8]) |
 | AC5 | Без упрощений как для прода |
 
 ---
 
 ## 4. D300 (spec)
 
-**D300 — Vec generic forward-decl completeness: body-site scan (Plan 167, 2026-06-17)**
+**D300 — Vec generic forward-decl completeness: body-site scan (Plan 168, 2026-06-17)**
 
 Pre-pass `collect_array_elem_typerefs` расширен на тела функций (Let-аннотации +
 TurboFish вызовы). Гарантирует, что `typedef struct Nova_Vec____<elem> ...;` в
