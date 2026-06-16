@@ -558,3 +558,9 @@
 - ~~**`[M-91.13-real-dns-integration-test]`**~~ ✅ **CLOSED 2026-06-16** — `net_v2_dns_real_slow.nv` добавлен (`_slow` suffix, `NOVA_SLOW_TESTS=1` opt-in); `assert(r.is_ok())` с реальным `localhost` resolver.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
+
+## Follow-up: Plan 104.3 (Completion provider)
+
+- **[M-104.3-method-type-inference]** — V2: integrate with compiler-codegen resolve_symbol_at() (needs Plan 104.2 first) for full type-driven method completion. Currently: text-heuristic. Priority: M.
+- **[M-104.3-import-manifest-walk]** — V2: dynamic import path from manifest + workspace module index (needs Plan 104.4 workspace symbols). Currently: hardcoded 27 std modules. Priority: L.
+- **[M-104.3-resolve-provider]** — V2: completionItem/resolve handler for lazy documentation/detail loading. Currently: inline (resolve_provider=false). Priority: L.
