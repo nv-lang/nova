@@ -1,6 +1,6 @@
 module plan162.enumerate_basic
 
-import std.collections.vec_iter
+import std.collections.vec_iter as vec_iter
 
 // ── core enumerate tests ──────────────────────────────────────────────────────
 // All tests use patterns that work with the current codegen:

@@ -1,5 +1,5 @@
 module plan162.enumerate_collect
-import std.collections.vec_iter
+import std.collections.vec_iter as vec_iter
 
 test "enumerate collect basic" {
     ro v = Vec[int].of(10, 20, 30)
