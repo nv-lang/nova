@@ -527,10 +527,11 @@
 - **Floating** (нет плана) → здесь полностью.
 - Закрыл → убрал строку (история в simplifications.md). Держим только живое.
 
-## Follow-up: Plan 91.12 / 91.13 (std/net V2 algebraic effects + bytes-FFI + DNS)
+## Follow-up: Plan 91.12 / 91.13 (std/net V2 algebraic effects + bytes-FFI + DNS + consume value types)
 
-- ~~**`[M-91.12-bytes-ffi]`**~~ ✅ **CLOSED 2026-06-16** — `str @as_ptr() -> *u8` добавлен (`std/runtime/string/core.nv`); DNS handler использует `host.as_ptr()` + `host.byte_len()`. Коммит `0da6c435`.
-- ~~**`[M-91.12-async-dns]`**~~ ✅ **CLOSED 2026-06-16** — DnsNet раскомментирован (`std/net/effect.nv`), `real_dns_net()` реализован (`std/net/dns.nv`), C-side `dns_lookup`/`dns_addr_at` через `uv_getaddrinfo` + TLS (`compiler-codegen/nova_rt/net.c`). 19/19 PASS. Коммит `0da6c435`.
-- **`[M-91.13-dns-iter-boxing]`** — `[]SocketAddr` хранится как `NovaArray_nova_int*` (боксированные `NovaValue_SocketAddr*`); for-in по результату DNS возвращает `nova_int` а не typed `SocketAddr`. Нужно: (a) register real elem type при boxing в push; (b) deref в for-in. V2.1 followup кодогена.
+- ~~**`[M-91.12-bytes-ffi]`**~~ ✅ **CLOSED 2026-06-16** — `str @as_ptr() -> *u8` добавлен (`std/runtime/string/core.nv`); DNS handler использует `host.as_ptr()` + `host.byte_len()`. D294. Тест: `net_v2_str_as_ptr_ok` 5/0 PASS.
+- ~~**`[M-91.12-async-dns]`**~~ ✅ **CLOSED 2026-06-16** — DnsNet раскомментирован (`std/net/effect.nv`), `real_dns_net()` реализован (`std/net/dns.nv`), C-side `dns_lookup`/`dns_addr_at` через `uv_getaddrinfo` + TLS (`compiler-codegen/nova_rt/net.c`). D295. `SocketAddr.lookup()` wrapper обходит vtable type-erasure. Тест: `net_v2_dns_smoke` 6/0 PASS. 21/0 plan91_12 PASS.
+- **`[M-91.13-dns-iter-boxing]`** — `DnsNet.lookup` возвращает только ПЕРВЫЙ addr (V1). `[]SocketAddr` в vtable Ok slot erases тип до `nova_int`; multi-address API заблокировано. Нужно: (a) non-erased Ok type в vtable; или (b) отдельный effect op `lookup_addrs_count`/`lookup_addr_at(i)`. P2.
+- **`[M-91.13-real-dns-integration-test]`** — `real_dns_net()` не тестируется в CI (сетевая зависимость). Opt-in slow test suite. P3.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.

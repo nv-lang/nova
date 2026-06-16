@@ -5824,3 +5824,84 @@ has been removed — parser now fully supports `@`-prefix.
 - [D186 amend](02-types.md#d186--impip1--p2---opt-in-annotation-для-protocols) —
   `#impl(P)` annotation now checks receiver_mut in addition to method signature.
 - Plan 108.1/108.2/108.3 — consistency story (default-ro everywhere).
+
+---
+
+## D295 (NEW) — `DnsNet` effect — async DNS resolution (Plan 91.12 Ф.9, 2026-06-16)
+
+**Source:** Plan 91.12 Ф.9, 2026-06-16. **Status:** ✅ ACTIVE (V1).
+**Связь:** [D291](04-effects.md#d291), [D292](02-types.md#d292), [D294](08-runtime.md#d294), [Plan 91.12](../../docs/plans/91.12-net-effect-and-hardening.md).
+
+### Мотивация
+
+`TcpNet.connect` и `UdpSocket` принимают `SocketAddr` — числовой IP-адрес. Для подключения
+по имени хоста (`"example.com"`) необходима DNS-резолюция. В runtime она асинхронна
+(`uv_getaddrinfo` через libuv callback); она должна паркировать fiber, а не блокировать поток.
+
+### Декларация
+
+```nova
+// std/net/effect.nv
+#stable(since = "0.1")
+export type DnsNet effect {
+    lookup(host str, port u16) -> Result[SocketAddr, NetError]
+}
+```
+
+### Публичный API
+
+```nova
+// std/net/dns.nv
+#stable(since = "0.1")
+export fn SocketAddr.lookup(host str, port u16) DnsNet -> Result[SocketAddr, NetError] {
+    DnsNet.lookup(host, port)
+}
+```
+
+Wrapper необходим: прямой вызов `DnsNet.lookup` через vtable erases `Ok` тип до `nova_int`;
+`SocketAddr.lookup` возвращает правильно типизированный `Result[SocketAddr, NetError]`.
+
+### Реализации
+
+| Функция | Описание |
+|---|---|
+| `real_dns_net()` | Конкретный handler: `dns_lookup(host.as_ptr(), host.byte_len(), port)` → `uv_getaddrinfo` → fiber park → resume → `Ok(SocketAddr._from_raw(dns_addr_at(0)))` |
+| `mock_dns_net()` | Mock handler: всегда `Ok(SocketAddr._from_raw(socket_addr_loopback(0)))` |
+
+### Семантика V1
+
+- Возвращает **первый** разрешённый адрес (достаточно для `TcpStream.connect`).
+- Запрашивает OS resolver → блокирующий вызов внутри libuv thread pool.
+- Паркует вызывающий fiber; другие fiber'ы продолжают выполнение.
+- Вызов без `DnsNet` effect в области видимости — compile error.
+
+### C runtime (`compiler-codegen/nova_rt/net.c`)
+
+```c
+typedef struct {
+    nova_coro*  fiber;
+    nova_int    count;    // число результатов; <0 = ошибка
+    void*       addrs[8]; // first 8 resolved addresses (TLS)
+} NovaDnsReq;
+
+static __thread void* _net_dns_addrs[8];
+static __thread int   _net_dns_count;
+
+static void _dns_getaddrinfo_cb(uv_getaddrinfo_t* req, int status, ...);
+
+nova_int dns_lookup(const uint8_t* host, nova_int host_len, uint16_t port);
+nova_int dns_addr_at(nova_int i);
+```
+
+### Ограничения V1 / Deferrals
+
+| Маркер | Описание |
+|---|---|
+| [M-91.13-dns-iter-boxing] | `[]SocketAddr` в vtable Ok erases тип; multi-address API deferred |
+| [M-91.13-real-dns-integration-test] | `real_dns_net()` не покрыт CI (сетевая зависимость) |
+
+### Тесты
+
+- `nova_tests/plan91_12/net_v2_dns_smoke.nv` — 6 тестов (4 pos + 2 neg), все PASS.
+  - Pos: mock_dns_net lookup → `Ok` + `is_v4()` + `port == 0` + multi-call + loop.
+  - Neg: custom fail-mock → `Err(ConnectionRefused)` / `Err(NotFound)` preserved.

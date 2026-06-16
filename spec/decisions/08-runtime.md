@@ -8241,3 +8241,46 @@ AbiStr       ::= '"nova"' | '"C"'
 | `tests/syntax_highlight_conformance.rs` | `extern` добавлен в ACTIVE |
 | `std/**/*.nv` (136 файлов) | `external fn` → `extern "nova" fn` |
 
+---
+
+## D294 (NEW) — `str @as_ptr() -> *u8` — bytes-FFI bridge (Plan 91.12 Ф.9, 2026-06-16)
+
+**Source:** Plan 91.12 Ф.9, 2026-06-16. **Status:** ✅ ACTIVE.
+**Связь:** [D26](#d26-базовая-stdlib-и-prelude), [D247](02-types.md#d247), [Plan 91.12](../../docs/plans/91.12-net-effect-and-hardening.md).
+
+### Мотивация
+
+`extern "C" fn` FFI-функции, принимающие строки, ожидают пару `(const uint8_t*, int64_t)`:
+первый байт + длина. До D294 Nova-код должен был хранить указатель вручную (доступ к приватному
+`@ptr` снаружи модуля невозможен).
+
+### Спецификация
+
+```nova
+// std/runtime/string/core.nv — модуль std.runtime.string
+export fn str @as_ptr() -> *u8 => @ptr
+```
+
+Семантика:
+- Возвращает указатель на первый байт строковых данных (идентичен `@ptr` внутри модуля).
+- Тип возврата `*u8` = `*ro u8` (read-only pointer; запись через него — UB).
+- Для пустой строки возвращает implementation-defined non-null pointer (статический sentinel).
+- Пара `(s.as_ptr(), s.byte_len())` полностью описывает сырой буфер строки без выделений.
+- Прямой аналог Rust `str::as_ptr() -> *const u8`.
+
+### Типичное использование
+
+```nova
+// В ffi.nv (std.net):
+extern "C" fn dns_lookup(host_ptr *u8, host_len int, port u16) -> int
+
+// В dns.nv:
+ro count = dns_lookup(host.as_ptr(), host.byte_len(), port)
+```
+
+### Ограничения
+
+- Указатель действителен пока строка жива (scope строки не должен завершаться раньше FFI-вызова).
+- GC не перемещает строки (intern table — статический, heap-allocated строки неперемещаемы).
+- Арифметика по указателю в Nova не поддерживается; как сырой адрес используется через `as int`.
+

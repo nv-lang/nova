@@ -28,14 +28,15 @@
 
 ---
 
-### Plan 91.13 — str @as_ptr + DnsNet + consume value net types (2026-06-16)
+### Plan 91.12 Ф.9 — str @as_ptr + DnsNet V1 + consume value net types (2026-06-16)
 
 - **Где** — `std/runtime/string/core.nv`, `std/net/{effect,ffi,dns,tcp,udp,mock}.nv`, `compiler-codegen/nova_rt/net.{h,c}`, `compiler-codegen/src/codegen/emit_c.rs`.
-- **Что сделано** — (1) `str @as_ptr() -> *u8`: Nova body `=> @ptr`, используется в DNS handler для bytes-FFI. (2) `DnsNet` effect раскомментирован; `real_dns_net()` реализован через `uv_getaddrinfo` + park/wake; TLS `_net_dns_addrs[]` для возврата результатов. (3) `TcpListener`/`TcpStream`/`UdpSocket` стали `consume value` (было просто `value`). (4) Codegen fix: boxing `NovaValue_*` в `nova_int` slot при `push` (аналог boxing `nova_str*`).
-- **Упрощение** — `[]SocketAddr` хранится как `NovaArray_nova_int*` (боксированные `NovaValue_SocketAddr*`). `for addr in addrs` возвращает `nova_int`, не typed `SocketAddr` — деref нужен вручную через `[M-91.13-dns-iter-boxing]`. V2.1 followup.
-- **Почему** — inline-storage для value-record в массивах (NovaArray_NovaValue_X) не реализовано (V2.1 TODO в emit_c.rs 9506). Boxing — минимальный fix без переработки array ABI.
-- **Как чинить** — реализовать inline-storage или register real elem type в `array_element_types` при boxing и deref в for-in. Маркер `[M-91.13-dns-iter-boxing]`.
-- **Приоритет** — M (блокирует удобное использование `[]SocketAddr`).
+- **Что сделано** — (1) `str @as_ptr() -> *u8`: Nova body `=> @ptr`, используется в DNS handler для bytes-FFI. D294. (2) `DnsNet` effect; `real_dns_net()` реализован через `uv_getaddrinfo` + park/wake; TLS `_net_dns_addrs[]`. `SocketAddr.lookup()` wrapper обходит vtable type-erasure. D295. (3) `TcpListener`/`TcpStream`/`UdpSocket` стали `consume value` (было просто `value`). (4) Codegen fix: boxing `NovaValue_*` в `nova_int` slot при `push`. Тесты: 21/0 PASS.
+- **Упрощение 1** — `DnsNet.lookup` возвращает только **первый** адрес. `[]SocketAddr` через effect vtable OK-slot erases тип до `nova_int`; multi-address deferred `[M-91.13-dns-iter-boxing]`.
+- **Упрощение 2** — `real_dns_net()` не тестируется в CI (сетевая зависимость) `[M-91.13-real-dns-integration-test]`.
+- **Почему** — inline-storage для value-record в массивах (NovaArray_NovaValue_X) не реализовано. Boxing — минимальный fix без переработки array ABI.
+- **Как чинить** — реализовать inline-storage или register real elem type в `array_element_types`. Маркер `[M-91.13-dns-iter-boxing]`.
+- **Приоритет** — M (dns-iter-boxing); L (real-dns-integration-test).
 
 ---
 
