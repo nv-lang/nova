@@ -1156,13 +1156,11 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
         }
         ExprKind::Call { func, args, trailing } => {
             collect_expr(func, out);
-            // Plan 159 Ф.4: when the callee is a `Member` selector, also record
-            // the method-call form `@method:<name>` so a *value-receiver* method
-            // call (`expr.foo()`) can be distinguished from a bare free-function
-            // call (`foo()`, which is `Ident`). The import resolver uses this to
-            // auto-inject `std.unicode` ONLY for char-Unicode *method* calls,
-            // never for the bare free-function form (the latter stays opt-in,
-            // pinned by plan152_3/n_char_unicode_opt_in.nv). Purely additive —
+            // Plan 159 Ф.4 / Plan 162 Ф.4: when the callee is a `Member` selector,
+            // also record the method-call form `@method:<name>` so a *value-receiver*
+            // method call (`expr.foo()`) can be distinguished from a bare free-function
+            // call (`foo()`, which is `Ident`). Used by reachability DCE (Plan 159 Ф.1)
+            // to keep method-body symbols alive. Purely additive —
             // `@method:` names never match an import path segment, so the
             // unused-import lint over-approximation is unaffected.
             if let ExprKind::Member { name, .. } = &func.kind {
@@ -2665,7 +2663,9 @@ mod tests {
 
     #[test]
     fn no_warning_on_whole_module_import() {
-        // Whole-module import не линтуется — открытый набор bare-имён.
+        // Whole-module import не линтуется как unused-import — lint pass
+        // не выполняет резолв имён. Ошибка E_IMPORT_GLOB эмитируется
+        // type-checker'ом (Plan 163 Ф.2), не lint pass'ом.
         let m = parse("module foo\nimport bar\nfn run() -> int => 0\n");
         let ws = lint_module(&m);
         assert!(!ws.iter().any(|w| w.rule == "unused-import"));

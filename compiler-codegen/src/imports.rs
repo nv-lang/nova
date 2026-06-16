@@ -12,7 +12,7 @@ use crate::ast::{Import, Item, Module, PeerFile};
 use crate::diag::{byte_to_line_col, FileId, MAIN_FILE_ID};
 use crate::parser;
 use anyhow::{anyhow, Result};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Plan 35 Ф.1 MVP: cross-file resolve через inline AST expansion.
@@ -60,68 +60,6 @@ fn preload_module_nv_prelude_attrs(entry_path: &Path) -> Vec<crate::ast::ModuleA
     }
 }
 
-/// Plan 159 Ф.4: char Unicode-aware method selectors hosted in `std.unicode`
-/// (`std/unicode/category.nv`, `char @<name>`). These are the ONLY providers of
-/// these selectors on a `char` receiver in the whole stdlib — verified by a
-/// stdlib-wide scan: no other type declares a method with any of these names
-/// (Plan 159 Ф.4 recon). So a syntactic appearance of `expr.<name>()` is an
-/// unambiguous signal that `std.unicode` bodies are needed, even when the user
-/// never wrote `import std.unicode`.
-///
-/// This list breaks the historic `[M-152.3b-char-methods-no-import]` blocker
-/// WITHOUT a `prelude → std.unicode` import (which would re-cycle through
-/// `std.collections → prelude` → stack overflow). Instead the import is injected
-/// into the *user's entry module* (the normal, cycle-free import path), and
-/// Plan 159 Ф.1 reachability DCE strips every table the program does not touch
-/// — so the no-import ergonomics cost nothing for programs that never call them.
-const CHAR_UNICODE_METHOD_SELECTORS: &[&str] = &[
-    "is_alphabetic",
-    "is_numeric",
-    "is_alphanumeric",
-    "is_whitespace",
-    "is_uppercase",
-    "is_lowercase",
-    "is_control",
-    "general_category",
-    "to_uppercase",
-    "to_lowercase",
-];
-
-/// Plan 159 Ф.4: decide whether `std.unicode` must be auto-injected into the
-/// entry module's import list. Returns true iff (a) some item references a
-/// char-Unicode method selector (syntactic over-approximation — collisions are
-/// impossible, see `CHAR_UNICODE_METHOD_SELECTORS`), AND (b) `std.unicode` is
-/// not already imported by the entry or one of its sibling peers.
-///
-/// G0-conservative: over-injection is harmless (Ф.1 DCE strips unused tables);
-/// under-injection would be a hard error (undefined symbol), so the scan errs
-/// toward injecting. Names are collected via the existing `collect_used_names`
-/// AST walk (lints.rs); the walk additionally tags value-receiver method calls
-/// `expr.foo()` as `@method:foo`, which is what this fn matches against (so the
-/// bare free-function form `foo()` does NOT trigger injection).
-fn needs_unicode_injection(entry_items: &[Item], sibling_items: &[&[Item]]) -> bool {
-    let mut used: HashSet<String> = HashSet::new();
-    crate::lints::collect_used_names(entry_items, &mut used);
-    for items in sibling_items {
-        crate::lints::collect_used_names(items, &mut used);
-    }
-    // Match ONLY the value-receiver method-call form `expr.<name>()`, recorded
-    // by lints::collect_expr as `@method:<name>` (Plan 159 Ф.4). The bare
-    // free-function form `<name>(...)` (recorded as a plain `Ident`) deliberately
-    // does NOT trigger injection — those free functions stay opt-in behind
-    // `import std.unicode` (pinned by plan152_3/n_char_unicode_opt_in.nv).
-    CHAR_UNICODE_METHOD_SELECTORS
-        .iter()
-        .any(|m| used.contains(&format!("@method:{}", m)))
-}
-
-/// True iff `imp` resolves to the `std.unicode` folder-module (either the
-/// folder itself or any of its peers, e.g. `std.unicode.category`). Used to
-/// avoid double-injecting when the user already imported it.
-fn import_targets_std_unicode(imp: &Import) -> bool {
-    imp.path.len() >= 2 && imp.path[0] == "std" && imp.path[1] == "unicode"
-}
-
 pub fn resolve_imports_inline(
     entry_path: &Path,
     module: &mut Module,
@@ -145,7 +83,11 @@ pub fn resolve_imports_inline_ex(
     let entry_dir = entry_path.parent().unwrap_or(repo).to_path_buf();
     // Plan 42.14 Ф.3 ([M11]): cycle detection keyed by declared module
     // name (Vec<String>), не canonical PathBuf — symlink-safe.
-    let mut visited: HashSet<Vec<String>> = HashSet::new();
+    // Plan 162 Ф.4: visited is now a map from module_key → exported_names.
+    // When a module is dedup-skipped (already in visited), we still populate
+    // visible_acc from the cached exported_names so that explicit `import X`
+    // in user code works even if X was already loaded via prelude.
+    let mut visited: HashMap<Vec<String>, Vec<String>> = HashMap::new();
 
     let mut merged_items: Vec<Item> = Vec::new();
 
@@ -489,46 +431,12 @@ pub fn resolve_imports_inline_ex(
         }
     }
 
-    // Plan 159 Ф.4 — no-import char Unicode methods (closes
-    // `[M-152.3b-char-methods-no-import]`). If the entry-group references a
-    // char-Unicode method selector (`'A'.is_alphabetic()` etc.) but never
-    // imported `std.unicode`, inject that import here — into the *user* entry
-    // group, NOT the prelude facade. Injecting into the user group is the
-    // ordinary cycle-free path (the prelude→unicode→collections→prelude cycle
-    // is never entered). Bodies then merge normally; Plan 159 Ф.1 reachability
-    // DCE strips every Unicode table the program does not actually touch, so a
-    // program that never calls a char-Unicode method pays nothing. Skipped for
-    // `std.unicode` itself (its peers `module std.unicode`) to avoid self-import,
-    // and skipped when the user already imported `std.unicode` anywhere in the
-    // entry group.
-    {
-        let is_unicode_self = module.name.len() >= 2
-            && module.name[0] == "std"
-            && module.name[1] == "unicode";
-        let already_imports_unicode = module.imports.iter().any(import_targets_std_unicode)
-            || siblings
-                .iter()
-                .any(|s| s.module.imports.iter().any(import_targets_std_unicode));
-        if !is_unicode_self && !already_imports_unicode {
-            let sibling_items: Vec<&[Item]> =
-                siblings.iter().map(|s| s.module.items.as_slice()).collect();
-            if needs_unicode_injection(&module.items, &sibling_items) {
-                let inject = Import {
-                    path: vec!["std".into(), "unicode".into()],
-                    items: None,
-                    alias: None,
-                    is_export: false,
-                    span: crate::diag::Span::dummy(),
-                    doc_attrs: Vec::new(),
-                    anchor: crate::ast::ImportAnchor::Package,
-                };
-                // Acc index 0 (entry's own visible-name accumulator): the
-                // injected names behave exactly as if the entry had written
-                // the import itself.
-                import_work.push((inject, entry_path.to_path_buf(), 0));
-            }
-        }
-    }
+    // Plan 162 Ф.4: char Unicode methods are now part of std.prelude.core
+    // (core.nv imports std.unicode and re-hosts the 10 char @methods). No
+    // auto-injection of std.unicode is needed anymore — the methods are
+    // available to every module via the prelude auto-import. The Plan 159
+    // Ф.4 CHAR_UNICODE_METHOD_SELECTORS hardcode and needs_unicode_injection /
+    // import_targets_std_unicode helpers have been removed.
 
     for imp in &prelude_imports {
         import_work.push((imp.clone(), entry_path.to_path_buf(), 1));
@@ -595,8 +503,10 @@ pub fn resolve_imports_inline_ex(
     }
 
     // Entry done — promote из in_progress → visited.
+    // Plan 162 Ф.4: entry's exports not cached (entry is never dedup'd as
+    // an import by others in the same resolve call — it's the root module).
     in_progress.remove(&entry_key);
-    visited.insert(entry_key);
+    visited.insert(entry_key, vec![]);
     import_chain.pop();
 
     // Prepend merged items: imported сначала, потом user code (entry +
@@ -640,7 +550,7 @@ fn resolve_one(
     entry_dir: &Path,
     repo: &Path,
     stdlib_dir: &Path,
-    visited: &mut HashSet<Vec<String>>,
+    visited: &mut HashMap<Vec<String>, Vec<String>>,
     in_progress: &mut HashSet<Vec<String>>,
     import_chain: &mut Vec<Vec<String>>,
     merged_items: &mut Vec<Item>,
@@ -1002,24 +912,48 @@ fn resolve_one(
             vec![canon.to_string_lossy().to_string()]
         });
 
-    // D29: cycle = module_key уже в in_progress.
+    // Plan 162 Ф.2: cycle guard — когда модуль уже находится в стеке
+    // DFS (in_progress), это цикл импортов. Вместо stack-overflow или
+    // ошибки — ранний возврат Ok(()), позволяя циклу завершиться с теми
+    // декларациями, которые уже собраны. Это «collect-first» guard:
+    // сигнатуры уже в merged_items (из предыдущих итераций); тела
+    // разрешаются после полного сбора. Межмодульные циклы разрешены
+    // (D29 rev-5, Plan 162), как peer-циклы в Rule D (Plan 42).
+    //
+    // Предыдущее поведение (Plan 35 Ф.1 / D29 pre-rev5): Err("import cycle
+    // detected") — оставлено ниже в виде legacy-комментария; удалить
+    // можно после Ф.3 (method-resolution-by-type) когда cycle-semantics
+    // полностью valидированы через тесты.
     if in_progress.contains(&module_key) {
-        let mut chain_display: Vec<String> = import_chain.iter()
-            .map(|p| p.join("."))
-            .collect();
-        chain_display.push(imp.path.join("."));
-        return Err(anyhow!(
-            "import cycle detected:\n  {}",
-            chain_display.join(" → ")));
+        // Plan 162 Ф.2: cycle detected → early Ok(()) (cycle guard).
+        // Позволяем циклу разрешиться: декларации уже собраны.
+        return Ok(());
     }
 
-    // Closed-set: diamond-dep dedup. Silent skip.
-    if visited.contains(&module_key) {
+    // Closed-set: diamond-dep dedup. When a module is already in visited
+    // (items already merged into merged_items), skip the recursive resolve
+    // to avoid duplicating items. However, still populate visible_acc with
+    // the module's exported names filtered by this import's selector — this
+    // is needed when user code has an explicit `import X` and X was already
+    // loaded transitively (e.g. via prelude.core importing std.unicode).
+    // Plan 162 Ф.4: fixes regression where std.unicode free functions
+    // (is_alphabetic etc.) were invisible to explicit user imports because
+    // prelude.core had already added std.unicode to visited.
+    if let Some(module_exports) = visited.get(&module_key) {
+        for exported_name in module_exports {
+            if import_selects(imp, exported_name) {
+                visible_acc.insert(exported_name.clone());
+            }
+        }
         return Ok(());
     }
 
     in_progress.insert(module_key.clone());
     import_chain.push(imp.path.clone());
+
+    // Plan 162 Ф.4: collect all exportable names from this module (across
+    // all peers) to cache in visited map. Used by the dedup path above.
+    let mut module_exports_cache: Vec<String> = Vec::new();
 
     // Plan 42 Ф.2: parse все peer files в alphabetical order (правило B).
     // Для each peer:
@@ -1218,8 +1152,13 @@ fn resolve_one(
                     // Plan 42.15: selective filter (`import X.{A}`) применяется
                     // поверх visibility. Матч по оригинальному item_name;
                     // в scope кладётся final_name (renamed при alias).
-                    if (!module_has_exports || is_export) && import_selects(imp, &item_name) {
-                        visible_acc.insert(final_name);
+                    if !module_has_exports || is_export {
+                        // Plan 162 Ф.4: cache exportable names (unfiltered)
+                        // for the dedup path in visited map.
+                        module_exports_cache.push(item_name.clone());
+                        if import_selects(imp, &item_name) {
+                            visible_acc.insert(final_name);
+                        }
                     }
                 }
                 (Item::Let(_), Some(_)) => {
@@ -1242,8 +1181,10 @@ fn resolve_one(
     // Plan 42.14 Ф.3: pop in_progress + chain; promote module_key в
     // closed-set. Все peers folder-module share один module_key (declared
     // name) — diamond-dep dedup работает естественно.
+    // Plan 162 Ф.4: store collected exportable names alongside the key so
+    // dedup-skipped imports can still populate visible_acc.
     in_progress.remove(&module_key);
-    visited.insert(module_key);
+    visited.insert(module_key, module_exports_cache);
     import_chain.pop();
     Ok(())
 }

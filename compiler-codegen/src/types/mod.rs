@@ -204,6 +204,69 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         }
     }
 
+    // Plan 163 Ф.1 (D282): E_REEXPORT_GLOB — запрет whole-module re-export.
+    // `export import m` без `.{}` селектора = неконтролируемый barrel-реэкспорт;
+    // гигиена поверхности имён требует явного именованного списка.
+    // Разрешены: `export import m.{a, b}` (named). Forbidden: `export import m`.
+    // Нулевая миграция: все 39 существующих `export import` уже именованные.
+    //
+    // Plan 163 Ф.2 (D282): E_IMPORT_GLOB — запрет whole-module import без alias.
+    // `import m` без `.{}` селектора и без `as alias` = неконтролируемый glob;
+    // загрязняет пространство имён неизвестным набором bare-имён.
+    // Разрешены: `import m.{a, b}` (named), `import m as m` (qualified namespace).
+    // Forbidden: `import m` (без selectors и без alias).
+    // Exemption: prelude auto-imports (`std.prelude.*`) — служебный путь компилятора.
+    //
+    // Источник импортов: если peer_files заполнен (после resolve_imports_inline),
+    // используем pf.imports каждого peer'а — они охватывают и entry и siblings.
+    // Fallback на module.imports если peer_files пуст (legacy single-file без resolve).
+    {
+        let peer_imports_iter: Box<dyn Iterator<Item = &Import>> =
+            if module.peer_files.is_empty() {
+                Box::new(module.imports.iter())
+            } else {
+                Box::new(module.peer_files.iter().flat_map(|pf| pf.imports.iter()))
+            };
+        for imp in peer_imports_iter {
+            if imp.is_export && imp.items.is_none() && imp.alias.is_none() {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_REEXPORT_GLOB] `export import {}` re-exports the entire module \
+                         without a name selector — this is a barrel re-export (Plan 163 / D282). \
+                         Hint: use `export import {}.{{name1, name2}}` to re-export specific names.",
+                        imp.path.join("."),
+                        imp.path.join("."),
+                    ),
+                    imp.span,
+                ));
+            }
+            // Plan 163 Ф.2: E_IMPORT_GLOB — bare whole-module import (no .{} and no as).
+            // Prelude auto-imports (std.prelude.*) are exempt — compiler-internal.
+            let is_prelude_auto = imp.path.first().map(String::as_str) == Some("std")
+                && imp.path.get(1).map(String::as_str) == Some("prelude");
+            if !imp.is_export
+                && imp.items.is_none()
+                && imp.alias.is_none()
+                && !is_prelude_auto
+            {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_IMPORT_GLOB] `import {}` imports the entire module without a \
+                         name selector — this brings an uncontrolled set of names into scope \
+                         (Plan 163 / D282). \
+                         Hint: use `import {}.{{name1, name2}}` to import specific names, \
+                         or `import {} as {}` to import as a qualified namespace.",
+                        imp.path.join("."),
+                        imp.path.join("."),
+                        imp.path.join("."),
+                        imp.path.last().cloned().unwrap_or_default(),
+                    ),
+                    imp.span,
+                ));
+            }
+        }
+    }
+
     // Plan 62.D bis-1 (2026-05-18, D29 W_PRELUDE_SHADOW basic):
     // Determine which items in `module.items` came from imports (vs the
     // user's own entry file) — these are conflict candidates for D29 lint
@@ -2071,6 +2134,12 @@ struct TypeCheckCtx<'a> {
     /// сегмент пути import'а) — для резолва module-qualified вызовов
     /// `alias.func(...)`.
     imported_modules: HashSet<String>,
+    /// Plan 162 Ф.5: last-segments/aliases of modules imported DIRECTLY by
+    /// entry-module peer files (is_entry_module = true). Excludes transitive
+    /// imports from imported-module peers. Used for extension method policy:
+    /// an extension method is accessible iff its declaring module's last-segment
+    /// or alias is in this set.
+    entry_imported_modules: HashSet<String>,
     /// Plan 114.4.2 (D199): const fn names в текущем модуле — для
     /// scope-local Stmt::Const RHS validation (calls к const fn разрешены).
     const_fn_names: HashSet<String>,
@@ -2122,6 +2191,18 @@ struct TypeCheckCtx<'a> {
     /// Used together with `type_defining_modules` for module-boundary
     /// enforcement. Empty = no current module (conservative = deny).
     current_module: std::cell::RefCell<Vec<String>>,
+    /// Plan 162 Ф.3: global TypeMethodMap — type_name → method_name →
+    /// list of module_names (Vec<String>) that declared this method.
+    /// Built from `module.peer_files[*].items_here` in `build`.
+    /// Inherent method: method declared in the SAME module as its type T
+    ///   (type_method_map[T][m] ∩ type_defining_modules[T] ≠ ∅).
+    /// Extension method: method declared in a DIFFERENT module from T.
+    /// Used by `is_inherent_method` to decide resolution priority.
+    type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>>,
+    /// Plan 162 Ф.5: FileIds of entry-module peer files (is_entry_module=true).
+    /// Extension method policy only fires for call sites in entry-module files.
+    /// Prevents false positives from type-checking imported stdlib method bodies.
+    entry_file_ids: HashSet<crate::diag::FileId>,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -2328,6 +2409,36 @@ impl<'a> TypeCheckCtx<'a> {
             collect(&pf.imports);
         }
         drop(collect);
+
+        // Plan 162 Ф.5: entry_imported_modules — last-segments/aliases of
+        // modules imported DIRECTLY by entry-module peer files only.
+        // Excludes transitive imports from imported-module peers, so that
+        // extension method policy can distinguish "explicitly imported" from
+        // "transitively pulled in".
+        let mut entry_imported_modules: HashSet<String> = HashSet::new();
+        // Plan 162 Ф.5: entry_file_ids — FileIds of entry-module peer files.
+        // Extension method policy only fires for call sites in these files.
+        let mut entry_file_ids: HashSet<crate::diag::FileId> = HashSet::new();
+        {
+            let mut collect_entry = |imports: &[Import]| {
+                for imp in imports {
+                    if let Some(a) = &imp.alias {
+                        entry_imported_modules.insert(a.clone());
+                    }
+                    if let Some(last) = imp.path.last() {
+                        entry_imported_modules.insert(last.clone());
+                    }
+                }
+            };
+            collect_entry(&module.imports);
+            for pf in &module.peer_files {
+                if pf.is_entry_module {
+                    collect_entry(&pf.imports);
+                    entry_file_ids.insert(pf.file_id);
+                }
+            }
+        }
+
         // Plan 114.4.2 D199 + Plan 114.4.3 Ф.5 V2: precompute const fn names
         // для scope-local const validation. Includes const fn declarations
         // AND const fn aliases (`const ALIAS = const_fn_name` form).
@@ -2453,7 +2564,61 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
-        TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
+        // Plan 162 Ф.3: build type_method_map — maps
+        // type_name → method_name → Vec<module_name> (all modules
+        // that declare this method on this receiver type).
+        //
+        // Scans all peer_files (both entry-peers and imported-module
+        // peers) to attribute each @method declaration to its source
+        // module. When peer_files is empty (legacy/fallback case),
+        // scans module.items and attributes everything to module.name.
+        //
+        // Together with type_defining_modules this enables:
+        //   is_inherent = type_method_map[T][m] ∩ {type_defining_modules[T]} ≠ ∅
+        let mut type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>> =
+            HashMap::new();
+        if module.peer_files.is_empty() {
+            // Single-file / no peer attribution: attribute all @methods
+            // to module.name (the entry module). This is conservative:
+            // inherent == all methods when there's only one module.
+            for item in &module.items {
+                if let Item::Fn(f) = item {
+                    if let Some(recv) = &f.receiver {
+                        type_method_map
+                            .entry(recv.type_name.clone())
+                            .or_default()
+                            .entry(f.name.clone())
+                            .or_default()
+                            .push(module.name.clone());
+                    }
+                }
+            }
+        } else {
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    if let Item::Fn(f) = item {
+                        if let Some(recv) = &f.receiver {
+                            let module_list = type_method_map
+                                .entry(recv.type_name.clone())
+                                .or_default()
+                                .entry(f.name.clone())
+                                .or_default();
+                            // Only push if this module isn't already in the list
+                            // (avoids duplicate entries from sibling peers of
+                            // the same module that share module_name).
+                            if !module_list.contains(&pf.module_name) {
+                                module_list.push(pf.module_name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules,
+            entry_imported_modules,
+            entry_file_ids,
+            const_fn_names,
             in_const_fn: std::cell::Cell::new(false),
             current_recv_type: std::cell::RefCell::new(None),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
@@ -2461,6 +2626,7 @@ impl<'a> TypeCheckCtx<'a> {
             user_shadowed_generic_types,
             type_defining_modules,
             current_module: std::cell::RefCell::new(Vec::new()),
+            type_method_map,
         }
     }
 
@@ -5388,6 +5554,165 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// Plan 162 Ф.3: returns true iff `method_name` on type `type_name` is an
+    /// **inherent** method — i.e. declared in the SAME module as `type_name`.
+    ///
+    /// Inherent: `type_method_map[type_name][method_name]` contains at least
+    /// one module_name equal to `type_defining_modules[type_name]`.
+    ///
+    /// Extension: method declared in a DIFFERENT module (no overlap).
+    ///
+    /// Returns false (treated as extension / unknown) when:
+    /// - type_name not in type_defining_modules (unknown origin),
+    /// - method_name not in type_method_map[type_name],
+    /// - no module_name in the method list matches the type's defining module.
+    fn is_inherent_method(&self, type_name: &str, method_name: &str) -> bool {
+        let Some(type_module) = self.type_defining_modules.get(type_name) else {
+            return false;
+        };
+        let Some(type_methods) = self.type_method_map.get(type_name) else {
+            return false;
+        };
+        let Some(method_modules) = type_methods.get(method_name) else {
+            return false;
+        };
+        method_modules.iter().any(|m| m == type_module)
+    }
+
+    /// Plan 162 Ф.5: extension method policy enforcement.
+    ///
+    /// Called when a method `method_name` IS found in `method_table` for type
+    /// `type_name`. Emits:
+    ///   - `[E_EXTENSION_METHOD_NEEDS_IMPORT]` if the method is a pure extension
+    ///     (declared in a DIFFERENT module than the type) and no declaring module
+    ///     is imported in the current file.
+    ///   - `[E_METHOD_AMBIGUOUS]` if two or more extension modules providing this
+    ///     method are both imported.
+    ///
+    /// Conservative (no error) when:
+    ///   - `type_defining_modules` has no entry for the type (unknown origin),
+    ///   - `type_method_map` has no entry for the method (synthetic / no attribution),
+    ///   - at least one declaring module equals the type's defining module (inherent),
+    ///   - exactly one extension module is imported.
+    fn check_extension_method_policy(
+        &self,
+        type_name: &str,
+        method_name: &str,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        // Extension method policy only fires for call sites in ENTRY-MODULE
+        // peer files. Checking imported module bodies (stdlib methods calling
+        // other stdlib methods) would cause false positives because transitive
+        // method bodies are not "user code" — their imports are not in scope.
+        // Conservative: if entry_file_ids is empty (single-file legacy, no
+        // peer_files), skip.
+        if !self.entry_file_ids.is_empty() && !self.entry_file_ids.contains(&span.file_id) {
+            return;
+        }
+        // Conservative: if we can't determine the type's defining module, allow.
+        let Some(type_module) = self.type_defining_modules.get(type_name) else {
+            return;
+        };
+        // Extension method policy only applies to USER-DEFINED types.
+        // Stdlib types (str, int, bool, Option, etc.) have methods spread
+        // across multiple prelude/runtime modules — these are all part of the
+        // standard library and implicitly available without explicit import.
+        // Skip the check if the type's defining module starts with "std",
+        // "prelude", or "runtime" (all stdlib conventional prefixes).
+        // Additionally treat any method whose declaring module also starts
+        // with "std"/"prelude"/"runtime" as inherent (see partition below).
+        let is_stdlib_module = |m: &Vec<String>| {
+            matches!(m.first().map(|s| s.as_str()), Some("std") | Some("prelude") | Some("runtime"))
+        };
+        if is_stdlib_module(type_module) {
+            return;
+        }
+        let Some(type_methods) = self.type_method_map.get(type_name) else {
+            return; // no method attribution — could be synthetic; allow
+        };
+        // Methods are stored in type_method_map with their original AST name,
+        // which includes the leading '@' for instance methods (e.g. "@doubled").
+        // The call-site `method_name` arrives WITHOUT '@' (plain "doubled").
+        // Try both the bare name and the '@'-prefixed form.
+        let bare_name = method_name.trim_start_matches('@');
+        let at_name = format!("@{bare_name}");
+        let method_modules = type_methods
+            .get(bare_name)
+            .or_else(|| type_methods.get(at_name.as_str()));
+        let Some(method_modules) = method_modules else {
+            return; // method not in type_method_map — synthetic or compiler-generated; allow
+        };
+
+        // Partition into inherent (same module as type) and extension (different).
+        // A method whose declaring module equals the type's defining module is
+        // INHERENT. A method from a DIFFERENT module is EXTENSION.
+        // Additional rule: a method from ANY stdlib module ("std", "prelude",
+        // "runtime" first-segment) is treated as inherent regardless of exact
+        // module match — stdlib methods are always implicitly available.
+        let mut extension_modules: Vec<&Vec<String>> = Vec::new();
+        let mut has_inherent = false;
+        for mod_name in method_modules {
+            if mod_name == type_module || is_stdlib_module(mod_name) {
+                has_inherent = true;
+            } else {
+                extension_modules.push(mod_name);
+            }
+        }
+
+        // Inherent methods are always accessible when the type is in scope.
+        if has_inherent {
+            return;
+        }
+
+        // Pure extension: check which extension modules are imported.
+        if extension_modules.is_empty() {
+            return; // no attribution — allow
+        }
+
+        // Check import status by last segment of module path (or alias).
+        // Use entry_imported_modules (direct imports of entry-module files only)
+        // to exclude transitive imports from non-entry peers.
+        let imported_ext: Vec<&Vec<String>> = extension_modules
+            .iter()
+            .filter(|m| {
+                m.last().map_or(false, |last| self.entry_imported_modules.contains(last.as_str()))
+            })
+            .cloned()
+            .collect();
+
+        if imported_ext.is_empty() {
+            // No extension module imported — require explicit import.
+            let hint = extension_modules[0].last().map(|s| s.as_str()).unwrap_or("?");
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_EXTENSION_METHOD_NEEDS_IMPORT] extension method `{}.{}()` \
+                     requires the defining module to be imported. \
+                     Hint: add `import ...{{{}}}` or import the module \
+                     that declares this extension method.",
+                    type_name, bare_name, hint,
+                ),
+                span,
+            ));
+        } else if imported_ext.len() > 1 {
+            // Multiple extension modules imported — ambiguous.
+            let mod_names: Vec<String> = imported_ext
+                .iter()
+                .map(|m| m.join("."))
+                .collect();
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_METHOD_AMBIGUOUS] extension method `{}.{}()` is ambiguous: \
+                     defined in multiple imported modules ({}). \
+                     Hint: import only one extension module that provides this method.",
+                    type_name, bare_name, mod_names.join(", "),
+                ),
+                span,
+            ));
+        }
+        // Exactly one extension module imported — OK, no error.
+    }
+
     /// Combines `priv_access_allowed_base(tname)` с per-field visible_to:
     /// true if access allowed, considering field's friend list.
     fn priv_field_access_allowed(&self, tname: &str, visible_to: &[String]) -> bool {
@@ -5905,6 +6230,9 @@ impl<'a> TypeCheckCtx<'a> {
                     m.keys().any(|k| k.trim_start_matches('@') == name)
                 });
                 if has_same_name_method {
+                    // Plan 162 Ф.5: extension method policy — check even for
+                    // method/field same-name early return (e.g. str.len() case).
+                    self.check_extension_method_policy(tname, name, span, errors);
                     return;
                 }
                 if let Some(field) = fields.iter().find(|f| f.name == name) {
@@ -5955,9 +6283,11 @@ impl<'a> TypeCheckCtx<'a> {
                     m.keys().any(|k| k.trim_start_matches('@') == name)
                 });
                 if has_method {
+                    // Plan 162 Ф.5: extension method policy.
+                    self.check_extension_method_policy(tname, name, span, errors);
                     return;
                 }
-                // `into` / `try_into` синтезируются компилятором из `From` /
+                // `into` / `try_into` синтексируются компилятором из `From` /
                 // `TryFrom` (D73/D77) — их нет в method_table, но они валидны
                 // для любого типа-источника конверсии.
                 if matches!(name, "into" | "try_into") {
@@ -6068,6 +6398,8 @@ impl<'a> TypeCheckCtx<'a> {
                     m.keys().any(|k| k.trim_start_matches('@') == name)
                 });
                 if has_method {
+                    // Plan 162 Ф.5: extension method policy.
+                    self.check_extension_method_policy(tname, name, span, errors);
                     return;
                 }
                 if matches!(name, "into" | "try_into") {
@@ -6101,6 +6433,8 @@ impl<'a> TypeCheckCtx<'a> {
                         m.keys().any(|k| k.trim_start_matches('@') == name)
                     });
                     if has_method {
+                        // Plan 162 Ф.5: extension method policy.
+                        self.check_extension_method_policy(tname, name, span, errors);
                         return;
                     }
                     if matches!(name, "into" | "try_into") {
@@ -8101,6 +8435,12 @@ struct BoundCtx<'a> {
     /// отличить `let Color.Red { x } = obj` (refutable, error) от
     /// `let Pair { x, y } = p` (irrefutable record).
     sum_variant_names: std::collections::HashSet<String>,
+    /// Plan 162 Ф.3: type name -> declaring module name segments.
+    /// Mirrors TypeCheckCtx.type_defining_modules; built from peer_files.
+    type_defining_modules: HashMap<String, Vec<String>>,
+    /// Plan 162 Ф.3: TypeMethodMap - type_name -> method_name ->
+    /// list of module_names that declared this method.
+    type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>>,
 }
 
 impl<'a> BoundCtx<'a> {
@@ -8190,7 +8530,61 @@ impl<'a> BoundCtx<'a> {
             protocol_specs.insert(name.clone(), out);
         }
 
-        BoundCtx { protocol_specs, effect_decls, fn_decls, method_table, sum_variant_names }
+        // Plan 162 Ф.3: build type_defining_modules and type_method_map for BoundCtx.
+        // Same logic as TypeCheckCtx.build; BoundCtx needs them for is_inherent_method
+        // used in resolve_instance_method.
+        let mut type_defining_modules: HashMap<String, Vec<String>> = HashMap::new();
+        let mut type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>> = HashMap::new();
+        if module.peer_files.is_empty() {
+            for item in &module.items {
+                match item {
+                    Item::Type(td) => {
+                        type_defining_modules.entry(td.name.clone()).or_insert_with(|| module.name.clone());
+                    }
+                    Item::Fn(f) => {
+                        if let Some(recv) = &f.receiver {
+                            let module_list = type_method_map.entry(recv.type_name.clone()).or_default().entry(f.name.clone()).or_default();
+                            if !module_list.contains(&module.name) { module_list.push(module.name.clone()); }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    match item {
+                        Item::Type(td) => {
+                            type_defining_modules.entry(td.name.clone()).or_insert_with(|| pf.module_name.clone());
+                        }
+                        Item::Fn(f) => {
+                            if let Some(recv) = &f.receiver {
+                                let module_list = type_method_map.entry(recv.type_name.clone()).or_default().entry(f.name.clone()).or_default();
+                                if !module_list.contains(&pf.module_name) { module_list.push(pf.module_name.clone()); }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        BoundCtx { protocol_specs, effect_decls, fn_decls, method_table, sum_variant_names, type_defining_modules, type_method_map }
+    }
+
+    /// Plan 162 Ф.3: returns true iff method_name on type type_name is inherent
+    /// (declared in the same module as the type).
+    fn is_inherent_method(&self, type_name: &str, method_name: &str) -> bool {
+        let Some(type_module) = self.type_defining_modules.get(type_name) else {
+            return false;
+        };
+        let Some(type_methods) = self.type_method_map.get(type_name) else {
+            return false;
+        };
+        let Some(method_modules) = type_methods.get(method_name) else {
+            return false;
+        };
+        method_modules.iter().any(|m| m == type_module)
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -9216,11 +9610,42 @@ impl<'a> BoundCtx<'a> {
         arg_count_hint: usize,
     ) -> Option<&FnDecl> {
         // Попытка 1: receiver-type inference.
+        // Plan 162 Ф.3: когда тип receiver'а известен, сначала проверяем
+        // наследуемые (inherent) методы — методы, объявленные в том же модуле
+        // что и тип T. Inherent методы доступны без явного import модуля-метода:
+        // при импорте типа T все его inherent методы автоматически доступны
+        // (они слиты в merged module.items). Это позволяет вызывать foo.greet()
+        // даже если пользователь импортировал только тип Foo, а не модуль методов.
         if let Some(recv_ty) = Self::infer_arg_ty(obj, scope) {
             if let TypeRef::Named { path, .. } = &recv_ty {
                 if path.len() == 1 {
-                    if let Some(methods) = self.method_table.get(&path[0]) {
+                    let type_name = &path[0];
+                    if let Some(methods) = self.method_table.get(type_name) {
                         if let Some(overloads) = methods.get(method_name) {
+                            // Plan 162 Ф.3: prefer inherent overloads over
+                            // extension overloads when receiver type is known.
+                            // Inherent = declared in same module as the type.
+                            let inherent: Vec<&&FnDecl> = overloads
+                                .iter()
+                                .filter(|f| {
+                                    self.is_inherent_method(type_name, &f.name)
+                                })
+                                .collect();
+                            let candidates = if !inherent.is_empty() {
+                                &inherent[..] as &[&&FnDecl]
+                            } else {
+                                // All overloads (extension or unknown origin).
+                                // Wrap to match type; use slice of all overloads.
+                                // SAFETY: overloads is Vec<&FnDecl>; inherent is
+                                // empty so fall back to non-inherent branch below.
+                                &[][..]
+                            };
+                            if let [single] = candidates {
+                                return Some(single);
+                            }
+                            // Either 0 inherent (all extension) or >1 inherent
+                            // (overloaded inherent). Fall through to non-inherent
+                            // single-overload path.
                             if let [single] = overloads.as_slice() {
                                 return Some(single);
                             }
@@ -9234,17 +9659,36 @@ impl<'a> BoundCtx<'a> {
         // Plan 109: фильтр по arity предотвращает ложные "expected 0, got N"
         // когда builtin-метод ([]T::push и т.п.) отсутствует в method_table,
         // но пользовательский тип случайно имеет метод с тем же именем.
+        // Plan 162 Ф.3: в name-only поиске inherent-методы приоритетны при
+        // неоднозначности (два типа → один inherent → один extension).
+        let mut found_inherent: Option<&FnDecl> = None;
         let mut found: Option<&FnDecl> = None;
+        let mut ambiguous_inherent = false;
         let mut ambiguous = false;
-        for methods in self.method_table.values() {
+        for (type_name, methods) in &self.method_table {
             if let Some(overloads) = methods.get(method_name) {
                 for f in overloads {
                     if f.params.len() != arg_count_hint { continue; }
-                    if found.is_some() {
-                        ambiguous = true;
+                    let inherent = self.is_inherent_method(type_name, &f.name);
+                    if inherent {
+                        if found_inherent.is_some() {
+                            ambiguous_inherent = true;
+                        }
+                        found_inherent = Some(f);
+                    } else {
+                        if found.is_some() {
+                            ambiguous = true;
+                        }
+                        found = Some(f);
                     }
-                    found = Some(f);
                 }
+            }
+        }
+        // Return inherent if unambiguous; otherwise fall back to extension if
+        // unambiguous; otherwise return None (ambiguous → codegen resolves).
+        if !ambiguous_inherent {
+            if let Some(f) = found_inherent {
+                return Some(f);
             }
         }
         if ambiguous { return None; }
