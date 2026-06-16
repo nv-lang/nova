@@ -1,0 +1,41 @@
+// Plan 124.6 — positive: #pub_to(Friend) on type declaration grants friend
+// type access to all priv(type) fields of that type (D224 §4 rule-4).
+module plan124_6.pos_pub_to_single
+
+#pub_to(Bank)
+export type Account {
+    pub owner str
+    priv(type) mut balance f64
+    priv(type) mut txn_count int
+}
+
+export type Bank {
+    pub name str
+}
+
+export fn Account.new(owner str) -> Account =>
+    { owner, balance: 0.0, txn_count: 0 }
+
+export fn Account mut @deposit(amount f64) {
+    @balance = @balance + amount
+    @txn_count = @txn_count + 1
+}
+
+export fn Bank.new(name str) -> Bank =>
+    { name }
+
+// Bank method can read all priv(type) fields of Account via #pub_to(Bank).
+export fn Bank @audit(a Account) -> f64 =>
+    a.balance
+
+export fn Bank @tx_count(a Account) -> int =>
+    a.txn_count
+
+test "Plan 124.6: #pub_to(Bank) grants Bank access to Account priv(type) fields" {
+    mut a = Account.new("carol")
+    a.deposit(500.0)
+    a.deposit(250.0)
+    ro b = Bank.new("FirstBank")
+    assert(b.audit(a) == 750.0)
+    assert(b.tx_count(a) == 2)
+}

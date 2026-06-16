@@ -1260,7 +1260,7 @@ impl Parser {
         // Помечает str-keyed map-тип для D55 map-coercion (`{field: v}`).
         // Парсится ПЕРЕД `export` (консистентно с `#cfg`) и только перед
         // `type`. Контекстный разбор после `#` (не keyword).
-        let (type_attrs, impl_protocols, zero_on_move_attr) = self.parse_type_attrs()?;
+        let (type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr) = self.parse_type_attrs()?;
 
         // Plan 110.7.3.a: pre-parse #cancel_safe здесь чтобы canonical
         // form `#cancel_safe\nexternal fn ...` работала (attribute может
@@ -1399,8 +1399,18 @@ impl Parser {
         } else {
             realtime_attr
         };
+        // Plan 124.6 (D225): `#test_access(T)` may appear before `test "..." { }`.
+        // If contract_attrs only has test_access_for set (everything else default),
+        // also allow `test` as the next token. Other contract attrs still require fn/external.
+        let contract_attrs_only_test_access = !contract_attrs.test_access_for.is_empty()
+            && {
+                let mut tmp = contract_attrs.clone();
+                tmp.test_access_for = Vec::new();
+                tmp.is_empty()
+            };
         if !contract_attrs.is_empty()
             && !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwExternal | TokenKind::KwUnsafe)
+            && !(contract_attrs_only_test_access && matches!(self.peek().kind, TokenKind::KwTest))
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
@@ -1438,12 +1448,13 @@ impl Parser {
         // Plan 52 Ф.1: `#from_fields` валиден только перед `type`-декларацией.
         // Plan 124.8 [M-124.8-zero-on-move]: `#zero_on_move` — также только
         // перед `type`.
-        if (!type_attrs.is_empty() || zero_on_move_attr)
+        // Plan 124.6 (D225): `#pub_to(...)` — также только перед `type`.
+        if (!type_attrs.is_empty() || zero_on_move_attr || !pub_to_attr.is_empty())
             && !matches!(self.peek().kind, TokenKind::KwType)
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "`#from_fields` / `#from_pairs` / `#zero_on_move` are only valid before `type`",
+                "`#from_fields` / `#from_pairs` / `#zero_on_move` / `#pub_to` are only valid before `type`",
                 span,
             ));
         }
@@ -1461,7 +1472,7 @@ impl Parser {
         }
         let parsed = match self.peek().kind {
             TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, extern_abi, realtime_attr, blocking_attr, cancel_safe_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
-            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
                     // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
@@ -1522,7 +1533,19 @@ impl Parser {
                         d.span
                     );
                 }
-                Item::Test(self.parse_test_decl()?)
+                // Plan 124.6 (D225): optional `#test_access(TypeA, ...)` before test block.
+                // Two paths:
+                // 1. `#test_access` was already consumed by parse_contract_attrs() above
+                //    (the validation gate now allows this when next token is `test`) —
+                //    use contract_attrs.test_access_for directly.
+                // 2. `#test_access` was NOT consumed (e.g. not recognised — shouldn't
+                //    happen now) — fall back to parse_test_access_attr() for safety.
+                let test_access = if !contract_attrs.test_access_for.is_empty() {
+                    contract_attrs.test_access_for.clone()
+                } else {
+                    self.parse_test_access_attr()?
+                };
+                Item::Test(self.parse_test_decl(test_access)?)
             }
             // Plan 57: контекстный `bench` ident. Распознаём как bench-decl
             // только если за ним идёт string-literal: `bench "name" { ... }`.
@@ -2265,16 +2288,20 @@ impl Parser {
     /// - `#impl(Name1 + Name2 + ...)` — opt-in protocol implementation
     ///   list. Verification: каждый Name должен быть protocol-типом
     ///   и type должен предоставить все методы. Gates bare-call synthesis.
+    /// - `#pub_to(TypeA, TypeB, ...)` — Plan 124.6 (D225): selective
+    ///   friend visibility; listed types get private-field read access.
     ///
-    /// Returns `(attrs, impl_protocols, zero_on_move)`.
+    /// Returns `(attrs, impl_protocols, zero_on_move, pub_to)`.
     fn parse_type_attrs(&mut self)
-        -> Result<(Vec<crate::ast::TypeAttr>, Vec<String>, bool), Diagnostic>
+        -> Result<(Vec<crate::ast::TypeAttr>, Vec<String>, bool, Vec<String>), Diagnostic>
     {
         let mut attrs = Vec::new();
         let mut impl_protocols: Vec<String> = Vec::new();
         // Plan 124.8 [M-124.8-zero-on-move] (2026-06-03): `#zero_on_move`
         // attribute opts a type into memset-zero-on-consume codegen.
         let mut zero_on_move: bool = false;
+        // Plan 124.6 (D225): `#pub_to(TypeA, TypeB, ...)` — selective friend visibility.
+        let mut pub_to: Vec<String> = Vec::new();
         loop {
             if !matches!(self.peek().kind, TokenKind::Hash) {
                 break;
@@ -2364,11 +2391,66 @@ impl Parser {
                     self.bump(); // zero_on_move
                     zero_on_move = true;
                 }
+                "pub_to" => {
+                    // Plan 124.6 (D225): `#pub_to(TypeA, TypeB, ...)` — selective
+                    // friend visibility. The listed types get private-field read
+                    // access to this type (as if they were in the same module).
+                    if !pub_to.is_empty() {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `#pub_to` attribute — use a single \
+                             `#pub_to(TypeA, TypeB, ...)` with all friend types",
+                            span,
+                        ));
+                    }
+                    self.bump(); // #
+                    self.bump(); // pub_to
+                    if !matches!(self.peek().kind, TokenKind::LParen) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#pub_to requires a list: `#pub_to(TypeX, TypeY, ...)`",
+                            span,
+                        ));
+                    }
+                    self.bump(); // (
+                    let mut names: Vec<String> = Vec::new();
+                    loop {
+                        match self.peek().kind.clone() {
+                            TokenKind::Ident(n) => {
+                                names.push(n);
+                                self.bump();
+                            }
+                            TokenKind::RParen => break,
+                            _ => {
+                                let sp = self.peek().span;
+                                return Err(Diagnostic::new(
+                                    "expected type identifier or `)` in #pub_to(...)",
+                                    sp,
+                                ));
+                            }
+                        }
+                        if matches!(self.peek().kind, TokenKind::Comma) {
+                            self.bump();
+                            self.skip_newlines();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.expect(&TokenKind::RParen)?;
+                    if names.is_empty() {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#pub_to requires at least one type: `#pub_to(TypeX, ...)`",
+                            sp,
+                        ));
+                    }
+                    pub_to = names;
+                }
                 _ => break,
             }
             self.skip_newlines();
         }
-        Ok((attrs, impl_protocols, zero_on_move))
+        Ok((attrs, impl_protocols, zero_on_move, pub_to))
     }
 
     /// Plan 33.1 (D24): парсит блок `requires <expr>` / `ensures <expr>`
@@ -3373,7 +3455,7 @@ impl Parser {
 
     // ─── type declarations ───────────────────────────────────────────────
 
-    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, zero_on_move: bool, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
+    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, zero_on_move: bool, pub_to: Vec<String>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwType)?;
         let (name, name_span) = self.parse_ident()?;
@@ -3628,6 +3710,7 @@ impl Parser {
                 field_default_visibility,
                 allocation,
                 zero_on_move,
+                pub_to: pub_to.clone(),
             });
         }
         // Silence unused warning when is_external is false; name_span used только в Opaque branch.
@@ -3702,6 +3785,7 @@ impl Parser {
                     allocation: crate::ast::AllocKind::Heap,
                     impl_protocols: impl_protocols.clone(),
                     zero_on_move,
+                    pub_to: pub_to.clone(),
                 });
             }
         }
@@ -3829,6 +3913,7 @@ impl Parser {
             allocation,
             impl_protocols,
             zero_on_move,
+            pub_to,
         })
     }
 
@@ -5137,7 +5222,64 @@ impl Parser {
         })
     }
 
-    fn parse_test_decl(&mut self) -> Result<TestDecl, Diagnostic> {
+    /// Plan 124.6 (D225): parse optional `#test_access(TypeA, TypeB, ...)` attribute
+    /// that may appear immediately before a `test "name" { ... }` block.
+    /// Returns the list of type names (empty if attribute is absent).
+    fn parse_test_access_attr(&mut self) -> Result<Vec<String>, Diagnostic> {
+        // Look for `# test_access` (Hash followed by Ident("test_access")).
+        if !matches!(self.peek().kind, TokenKind::Hash) {
+            return Ok(Vec::new());
+        }
+        match &self.peek_at(1).kind {
+            TokenKind::Ident(n) if n == "test_access" => {}
+            _ => return Ok(Vec::new()),
+        }
+        self.bump(); // #
+        self.bump(); // test_access
+        if !matches!(self.peek().kind, TokenKind::LParen) {
+            let span = self.peek().span;
+            return Err(Diagnostic::new(
+                "#test_access requires a list: `#test_access(TypeX, TypeY, ...)`",
+                span,
+            ));
+        }
+        self.bump(); // (
+        let mut names: Vec<String> = Vec::new();
+        loop {
+            match self.peek().kind.clone() {
+                TokenKind::Ident(n) => {
+                    names.push(n);
+                    self.bump();
+                }
+                TokenKind::RParen => break,
+                _ => {
+                    let sp = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "expected type identifier or `)` in #test_access(...)",
+                        sp,
+                    ));
+                }
+            }
+            if matches!(self.peek().kind, TokenKind::Comma) {
+                self.bump();
+                self.skip_newlines();
+            } else {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RParen)?;
+        if names.is_empty() {
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                "#test_access requires at least one type: `#test_access(TypeX, ...)`",
+                sp,
+            ));
+        }
+        self.skip_newlines();
+        Ok(names)
+    }
+
+    fn parse_test_decl(&mut self, test_access: Vec<String>) -> Result<TestDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwTest)?;
         let name = match &self.peek().kind {
@@ -5159,6 +5301,7 @@ impl Parser {
             name,
             body,
             span: start.merge(body_span),
+            test_access,
         })
     }
 
