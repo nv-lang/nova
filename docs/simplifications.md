@@ -37062,9 +37062,10 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 
 - [2026-06-16] Plan 152.8 (nova_char uint32_t + Vec[u32] unicode) — NO simplifications; production-grade. Layer 1: Vec[int]→Vec[u32] in 7 std/unicode files (normalize.nv, case.nv, category.nv, graphemes.nv, words.nv, sentences.nv, collate.nv); 88 type occurrences. Layer 2: nova_char typedef int64_t→uint32_t (D128 AMEND Plan 152.8): nova_rt.h, array.h comment, gc_layout.rs char_size (8,8)→(4,4) + test renamed, emit_c.rs U-suffix for char literals + nova_char in is_typed_int_c_ty + emit_typed_int_literal. Tests: 5 Layer-1 positives (t1-t5, unicode functions) + 1 Layer-2 positive (t6, char u32 properties/hash/compare) = 6/6 PASS plan152_8; 9/9 PASS plan152_7 (0 regressions). Spec: D128 AMEND in spec/decisions/02-types.md + 08-runtime.md. Marker [M-152-unicode-codepoint-u32] CLOSED. Branch plan-152.8. Commits: c659fe97 (Layer 1) + 11730ca5 (Layer 1 tests) + 08171fdc (Layer 2).
 
-## Plan 118.6 — Safe &x model (2026-06-16)
-- &x safe для всех типов: escape analysis + heap-promote при escape
-- unsafe { &x } = сырой стек-указатель для FFI
-- addr_of / addr_of_mut удалены → E_ADDR_OF_REMOVED с fixit &x
-- Escape analysis расширен на примитивы (ранее только value-records)
-- Heap-promote — compile-time статическое решение в точке объявления
+### Plan 104.3 (Completion provider, 2026-06-16) — V1 simplifications
+
+- **[S-104.3-1]** Method-dot type inference: text heuristic (pattern-match on let/mut/param lines), NOT full TypeCheckCtx integration. Where: completion.rs infer_type_of_expr(). Why: TypeCheckCtx internals are not exposed as a public API with cursor-position lookup; implementing it would require a new `resolve_symbol_at` API in compiler-codegen (planned for Plan 104.2). How to fix: add `pub fn resolve_symbol_at(module, pos)` in compiler-codegen and use it in completion. Priority: M (method completion works for typed params and common naming conventions).
+- **[S-104.3-2]** Import path: hardcoded std module tree (27 modules). Where: completion.rs STD_MODULES. Why: no manifest-walk API at workspace level yet. How to fix: Plan 104.4 workspace symbols will build a module index; completion can use that. Priority: L (std modules don't change often).
+- **[S-104.3-3]** completionItem/resolve: not implemented (resolve_provider=false). Where: server.rs CompletionOptions. Why: all detail is inline in the initial response; LSP resolve is a bandwidth optimization for very large item lists. How to fix: add lazy resolver handler in V2. Priority: L (not needed for typical Nova files).
+
+Tests: 39 unit + 13 integration = 52 completion-specific + 167 total nova-lsp tests PASS.

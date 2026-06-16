@@ -17,6 +17,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use crate::compiler::{check_file, check_workspace, run_with_large_stack};
+use crate::completion;
 use crate::diagnostic_mapping::to_lsp;
 use crate::goto_definition::compute_goto_definition;
 use crate::hover::compute_hover;
@@ -256,8 +257,20 @@ impl LanguageServer for Backend {
                         },
                     ),
                 ),
+                // Plan 104.3: completion provider — keywords, identifiers, methods, imports.
+                // Trigger chars: "." (method), " " (keyword/ident), ":" (type annotation).
+                completion_provider: Some(CompletionOptions {
+                    trigger_characters: Some(vec![
+                        ".".to_string(),
+                        " ".to_string(),
+                        ":".to_string(),
+                    ]),
+                    resolve_provider: Some(false), // [S-104.3-3] lazy resolve deferred V2
+                    work_done_progress_options: Default::default(),
+                    completion_item: None,
+                    all_commit_characters: None,
+                }),
                 // Future capabilities (uncomment as sub-plans land):
-                // 104.3: completion_provider
                 // 104.4: document_symbol_provider, workspace_symbol_provider
                 // 104.6: rename_provider, document_formatting_provider
                 ..Default::default()
@@ -369,6 +382,57 @@ impl LanguageServer for Backend {
 
         // Clear diagnostics in the editor (LSP convention: empty list on close).
         self.publish_empty_diagnostics(uri).await;
+    }
+
+    /// Plan 104.3: textDocument/completion handler.
+    ///
+    /// Computes context-aware completions for the cursor position:
+    /// - Keyword + snippet completions (context: top-level / fn-body / type-body)
+    /// - In-scope identifier completions (scope walk)
+    /// - Method-dot completions (type-driven after `.`)
+    /// - Import path completions (`import std.*`)
+    ///
+    /// Performance: ≤200ms target (runs in run_with_large_stack).
+    /// Cancellation: if document changed since request, returns empty (LSP re-requests).
+    async fn completion(
+        &self,
+        params: CompletionParams,
+    ) -> Result<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri.clone();
+        let pos = params.text_document_position.position;
+
+        // Get document text.
+        let src = match self.state.docs.get(&uri) {
+            Some(doc) => doc.text.to_string(),
+            None => {
+                tracing::warn!(uri = %uri, "completion: document not in cache");
+                return Ok(None);
+            }
+        };
+
+        // Convert LSP position (line, character UTF-16) to byte offset.
+        let offset = match lsp_position_to_byte_offset(&src, pos) {
+            Some(o) => o,
+            None => {
+                tracing::warn!(uri = %uri, pos = ?pos, "completion: position out of range");
+                return Ok(None);
+            }
+        };
+
+        tracing::debug!(uri = %uri, line = pos.line, char = pos.character, offset, "completion request");
+
+        // Run completion synchronously in large-stack thread (compiler API uses recursion).
+        let src_clone = src.clone();
+        let items = run_with_large_stack(move || {
+            completion::completion_for(&src_clone, offset)
+        });
+
+        if items.is_empty() {
+            return Ok(None);
+        }
+
+        tracing::debug!(uri = %uri, count = items.len(), "completion: returning items");
+        Ok(Some(CompletionResponse::Array(items)))
     }
 
     /// Plan 114 Ф.7.2: code_action — quick-fix providers.
@@ -1000,4 +1064,63 @@ fn plan114_fix_readonly(
     _range: Range,
 ) -> Option<String> {
     Some("ro".to_string())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan 104.3 — Position conversion helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Convert an LSP Position (line, character in UTF-16 units) to a byte offset
+/// in the UTF-8 source text.
+///
+/// LSP positions use UTF-16 code unit counts. For ASCII content (most Nova
+/// source), UTF-16 character count == UTF-8 character count == byte count.
+/// For multi-byte chars we walk line-by-line to find the exact byte offset.
+fn lsp_position_to_byte_offset(src: &str, pos: Position) -> Option<usize> {
+    let target_line = pos.line as usize;
+    let target_char = pos.character as usize; // UTF-16 units
+
+    // Find the byte offset of the start of target_line.
+    let line_start = if target_line == 0 {
+        0
+    } else {
+        let mut current_line = 0usize;
+        let mut found = None;
+        for (i, ch) in src.char_indices() {
+            if ch == '\n' {
+                current_line += 1;
+                if current_line == target_line {
+                    found = Some(i + 1);
+                    break;
+                }
+            }
+        }
+        match found {
+            Some(o) => o,
+            None => return Some(src.len()),
+        }
+    };
+
+    // Walk UTF-16 units along the target line.
+    byte_offset_on_line(src, line_start, target_char)
+}
+
+/// Walk UTF-16 units from `line_start` byte offset by `utf16_col` units
+/// and return the byte offset.
+fn byte_offset_on_line(src: &str, line_start: usize, utf16_col: usize) -> Option<usize> {
+    let rest = src.get(line_start..)?;
+    let mut utf16_count = 0usize;
+    let mut byte_pos = line_start;
+    for ch in rest.chars() {
+        if ch == '\n' {
+            break;
+        }
+        if utf16_count >= utf16_col {
+            return Some(byte_pos);
+        }
+        // Each char takes 1 or 2 UTF-16 units (surrogate pairs for > U+FFFF).
+        utf16_count += if (ch as u32) > 0xFFFF { 2 } else { 1 };
+        byte_pos += ch.len_utf8();
+    }
+    Some(byte_pos.min(src.len()))
 }
