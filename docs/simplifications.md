@@ -36608,6 +36608,9 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   отложено по дизайну** (breaking: меняет сигнатуры всех `@display`/`@debug`) → Plan 152.7.1 /
   `[M-152.7-write-sink]`. Не упрощение — отдельная breaking-задача.
 
+- **Plan 152.7.1 (Write-sink) 2026-06-16 — no simplifications; full Write protocol, static monomorphization at StringBuilder call-site, all Display/Debug impls migrated, production-grade.**
+  `protocol Write { mut @write_str(s str) -> () }` — тонкий sink-интерфейс; `Display`/`Debug` принимают `mut w Write` (не `sb StringBuilder`). `StringBuilder` реализует `Write`. Кодогенерация: статическая мономорфизация `Write`→`Nova_StringBuilder*` (vtable отсутствует, нулевая overhead). Breaking: все `@display`/`@debug` сигнатуры изменены. Все встроенные impl (`int`/`f64`/`f32`/`bool`/`char`/`str`/`Vec`) + auto-derive мигрированы. plan152_7 t6/t7/t8 PASS; plan137/plan91_14/plan126_2/plan154_1 0 регрессий.
+
 - **Interpreter disabled — `nova run` errors as unsupported (2026-06-14)**: древовидный
   интерпретатор отключён; единственный поддерживаемый путь исполнения — Nova → C
   (`nova build` / `nova test`). `nova run` СОХРАНЁН как видимая CLI-команда (не удалён из
