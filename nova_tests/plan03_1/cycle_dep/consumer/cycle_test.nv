@@ -1,12 +1,11 @@
-// Plan 03.1 Ф.3 NEGATIVE — межпакетный цикл зависимостей A→B→A:
-// `amod` (cyc_a_pkg) → `bmod` (cyc_b_pkg) → `amod` (cyc_a_pkg).
-// Cycle detection — по declared module name, не по пути, поэтому
-// межпакетный цикл ловится тем же механизмом, что и внутрипакетный.
-// EXPECT_COMPILE_ERROR import cycle
+// Plan 162 Ф.2 (D29 rev-5): cross-package cycles are now ALLOWED.
+// Previously Plan 03.1 Ф.3 enforced cycle detection for inter-package cycles.
+// With Plan 162 Ф.2 cycle guard, the resolver returns Ok(()) on the back-edge:
+// amod→bmod→amod → guard fires → Ok(()). a_val=1 is defined independently.
 module consumer.cycle_test
 
 import cyc_a_pkg.amod.{a_val}
 
-test "unreachable" {
-    assert(true)
+test "cross-package cycle A-B-A allowed (Plan 162 Ф.2)" {
+    assert(a_val == 1)
 }
