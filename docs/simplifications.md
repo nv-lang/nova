@@ -26,6 +26,13 @@
 - **D-блоки** — D288 (E_REEXPORT_GLOB), D289 (E_IMPORT_GLOB option a). Q-import-glob-hygiene RESOLVED.
 - **Приоритет** — L (CLOSED).
 
+### Plan 162.2 — sig_table compile-path wiring (2026-06-16, ✅ CLOSED [M-162.2-sig-table-wiring])
+
+- **Где** — `nova-cli/src/main.rs` (вызов `collect_all_signatures` + `build_with_sig_table`); `compiler-codegen/src/types/mod.rs` (`is_known_fn` как fallback в fn call resolution); `spec/decisions/07-modules.md` (D293).
+- **Что сделано** — `collect_all_signatures()` подключена в продакшн compile path до `TypeCheckCtx`. `is_known_fn()` используется в fn call resolution, `#[allow(dead_code)]` снят. Two-pass resolver полностью замкнут. 4/4 PASS (план162_2).
+- **D-блоки** — D293 (sig_table compile-path wiring). Маркер [M-162.2-sig-table-wiring] CLOSED.
+- **Приоритет** — L (CLOSED).
+
 ### Plan 162 Ф.1-Ф.5 — Rust-модель module-resolution (2026-06-16, ✅ CLOSED [M-159-lazy-module-resolution])
 
 - **Где** — `compiler-codegen/src/imports.rs` (cycle guard + TypeMethodMap); `compiler-codegen/src/types/mod.rs` (TypeMethodMap + E_EXTENSION_METHOD_NEEDS_IMPORT); `std/prelude/core.nv` (10 char Unicode-методов + import std.unicode); `std/unicode/category.nv` (методы убраны); ~100 файлов std/ + nova_tests/ (migration).

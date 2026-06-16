@@ -780,6 +780,29 @@ ModuleSigTable   { modules: HashMap<Vec<String>, ModuleSignatures> }
 
 ---
 
+## D293. sig_table compile-path wiring — collect_all_signatures + is_known_fn в продакшн-пути
+
+**Статус:** принято, реализовано ([Plan 162.2](../../docs/plans/162.2-sig-table-wiring.md), 2026-06-16).
+
+**Контекст.** Plan 162.1 (D292) создал инфраструктуру `ModuleSigTable` + `collect_all_signatures()` + `is_known_fn()`, но они не были подключены к продакшн compile path: `TypeCheckCtx::build()` использовал пустую `ModuleSigTable::new()`, а `is_known_fn()` была помечена `#[allow(dead_code)]`.
+
+**Решение.** Замкнуть two-pass resolver в продакшн compile path:
+
+1. **`collect_all_signatures()` вызывается до `TypeCheckCtx`** — в точке сборки `TypeCheckCtx` (`build` call site в `nova-cli/src/main.rs` или `compiler-codegen/src/main.rs`) теперь сначала вызывается `collect_all_signatures(entry_path, lib_paths, ...)` → `ModuleSigTable`, затем `TypeCheckCtx::build_with_sig_table(module, sig_table)`. Fallback: если `collect_all_signatures` возвращает `Err` — используется `ModuleSigTable::new()` (backward compat).
+
+2. **`is_known_fn()` — живой код в fn call resolution** — в `types/mod.rs` в месте резолва вызова функции добавлен fallback: если локальный lookup не находит имя → `self.is_known_fn(name)` проверяет `sig_table`. Убран `#[allow(dead_code)]`. Смысл: cross-module fn из транзитивных импортов не вызывает false-negative ошибку.
+
+**Следствие.** Two-pass resolver замкнут: сигнатуры всех транзитивно-достижимых модулей собраны до typecheck тел. `TypeCheckCtx` видит cross-module функции через `sig_table` даже если соответствующий модуль ещё не inline-merge'нут.
+
+**Перф-стоимость:** overhead `collect_all_signatures` ≤15% vs baseline (пустая sig_table). Фактически — порядка ~1.5% (согласно D292).
+
+### Связь
+- [D291](#d291-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — архитектурный принцип.
+- [D292](#d292-modulesigtable--two-pass-resolver-collect_all_signatures--inline-merge) — инфраструктура (ModuleSigTable).
+- [Plan 162.2](../../docs/plans/162.2-sig-table-wiring.md) — реализация.
+
+---
+
 ## D47. Видимость деклараций
 
 ### Что
