@@ -732,20 +732,24 @@ LLM знает фиксированный список — «известная 
 
 ---
 
-## D289. E_IMPORT_GLOB — whole-module import without alias forbidden (option a)
+## D289. `import m` — last-segment qualified namespace (option b amend)
 
-**Статус:** принято, реализовано ([Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.2+Ф.3, 2026-06-16).
+**Статус:** принято, реализовано V1 (option a: запрет E_IMPORT_GLOB, Plan 163, 2026-06-16); **AMENDED** (option b: last-segment qualified namespace, 2026-06-16).
 
-**Контекст.** `import m` без `.{}` и без `as alias` = unqualified glob: тащит все публичные имена m без префикса, неконтролируемо (функционально `use m::*`). Два варианта: (a) запрет E_IMPORT_GLOB; (b) переопределить в qualified namespace.
+**Контекст.** `import m` без `.{}` и без `as alias`. Два варианта: (a) запрет E_IMPORT_GLOB; (b) переопределить в qualified namespace — `import vec_iter` вводит имя `vec_iter` в scope, доступ только через `vec_iter.Foo`.
 
-**Решение.** **Вариант (a): E_IMPORT_GLOB** — добавлен в `check_module`. Условие: `!is_export && items=None && alias=None && !is_prelude_auto`. Hint: «используйте `import m.{name1, name2}` или `import m as m`». **Prelude auto-imports** (путь начинается с `std.prelude`) освобождены. ~100 файлов в `nova_tests/` + `std/` мигрированы на `import X as X` форму.
+**Решение V1 (option a, Plan 163).** `E_IMPORT_GLOB` запрет. ~100 файлов мигрированы на `import X as X`.
 
-**Обоснование.** Вариант (a) как быстрый front-end guard; не зависит от Plan 162. Мейнстрим (вариант b) требует семантического изменения резолвера — отложен. Q-import-glob-hygiene → RESOLVED (2026-06-16): выбран вариант (a).
+**Amend (option b, 2026-06-16).** `E_IMPORT_GLOB` **убран**. `import m` без `as` легален — последний сегмент пути становится именем в scope (уже реализовано в `imported_modules` Plan 81 Ф.2: `path.last()` вставляется безусловно). Это вариант (b) — Go/Python-стиль, без «as-шума». `import vec_iter` = `vec_iter.EnumerateIter`, `import std.collections.vec_iter` = `vec_iter.EnumerateIter`. Prelude auto-imports по-прежнему освобождены.
+
+**E_REDUNDANT_IMPORT_ALIAS (новый).** `import a.b.YYY as YYY` (alias == last segment) → `E_REDUNDANT_IMPORT_ALIAS`: alias совпадает с default-именем, писать `import a.b.YYY`. Условие: `alias.is_some() && items.is_none() && alias == path.last()`. ~123 файла мигрированы `import X as X` → `import X`.
+
+**Обоснование amend.** `imported_modules` уже хранит `path.last()` безусловно (Plan 81 Ф.2). Убрать `E_IMPORT_GLOB` — это признать уже реализованную семантику. `import X as X` = явный verbal noise без пользы. Запрет вынуждает писать шум там, где язык уже понимает `import X`.
 
 ### Связь
-- [D288](#d288-e_reexport_glob--whole-module-export-import-forbidden) — симметричный для re-export.
-- [Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.2+Ф.3.
-- Q-import-glob-hygiene → RESOLVED 2026-06-16: вариант (a).
+- [D288](#d288-e_reexport_glob--whole-module-export-import-forbidden) — симметричный для re-export (остаётся в силе).
+- [Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.2+Ф.3 (V1) + Amend (option b, 2026-06-16).
+- Q-import-glob-hygiene → RESOLVED 2026-06-16: вариант (b) (amend от option a).
 
 ## D290. ModuleSigTable — two-pass resolver (collect_all_signatures + inline-merge)
 
