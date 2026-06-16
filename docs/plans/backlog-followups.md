@@ -530,10 +530,7 @@
 
 ## Follow-up: Plan 91.12 (std/net V2 algebraic effects)
 
-- **`[M-91.12-read-impl]`** — `TcpStream.read()` в `real_tcp_net` не реализован (panic). Требует буфер + async read через libuv. → Plan 91.13.
-- **`[M-91.12-socket-opts-real]`** — `set_nodelay/set_keepalive/set_reuse_address` — stubs в `real_tcp_net` (Ф.6). → Plan 91.13.
 - **`[M-91.12-bytes-ffi]`** — `str` → `[]u8` в FFI (бинарные данные). → Plan 91.13.
 - **`[M-91.12-async-dns]`** — DnsNet / Ф.5 (async uv_getaddrinfo). → Plan 91.13.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
-- **`[M-91.12-spec-d-blocks]`** — Ф.8: записать D280 (Net C FFI pattern), D281 (TcpNet/UdpNet/DnsNet effect family), обновить D282 (tuple return для parse). → Ф.8.
