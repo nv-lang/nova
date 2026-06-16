@@ -1,0 +1,9 @@
+module plan153_2.flat_map_basic
+
+import std.collections.vec_lazy
+
+test "flat_map basic" {
+    ro v = Vec[int].of(1, 2, 3)
+    mut it = v.lazy().flat_map(|x| Vec[int].of(x, x * 10).lazy())
+    assert(it.next() == Some(1))
+}

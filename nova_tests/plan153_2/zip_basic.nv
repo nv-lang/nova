@@ -1,0 +1,31 @@
+module plan153_2.zip_basic
+
+import std.collections.vec_lazy
+
+test "zip two equal-length vecs" {
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(10, 20, 30)
+    ro got = a.lazy().zip(b.lazy()).collect()
+    assert(got == [(1, 10), (2, 20), (3, 30)])
+}
+
+test "zip truncates to shorter" {
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(10, 20)
+    ro got = a.lazy().zip(b.lazy()).collect()
+    assert(got == [(1, 10), (2, 20)])
+}
+
+test "zip with empty" {
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of()
+    ro got = a.lazy().zip(b.lazy()).collect()
+    assert(got == [])
+}
+
+test "zip count" {
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(10, 20, 30)
+    ro n = a.lazy().zip(b.lazy()).count()
+    assert(n == 3)
+}
