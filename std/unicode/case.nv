@@ -115,6 +115,17 @@ export fn to_lowercase(s str) -> str {
     cps_to_str(out)
 }
 
+/// Unicode full-case-fold equality for `str` (opt-in, requires `import std.unicode`).
+/// Handles multi-codepoint folds: "STRASSE".eq_ignore_case("straße") == true.
+/// For ASCII-only input prefer `eq_ignore_ascii_case` (no table overhead).
+export fn str @eq_ignore_case(other str) -> bool => fold_case(@) == fold_case(other)
+
+/// Unicode full-case-fold equality for `char` (opt-in, requires `import std.unicode`).
+/// Converts each codepoint to a one-char str, then delegates to `fold_case`.
+/// For ASCII-only input prefer `char.eq_ignore_ascii_case` (no table overhead).
+export fn char @eq_ignore_case(other char) -> bool =>
+    fold_case(str.from(@)) == fold_case(str.from(other))
+
 // Final_Sigma (UAX / SpecialCasing): the Σ at index `i` lowercases to ς iff it is
 // preceded by (a cased char, then zero+ case-ignorable) AND NOT followed by
 // (zero+ case-ignorable, then a cased char).
