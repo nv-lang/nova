@@ -747,6 +747,37 @@ LLM знает фиксированный список — «известная 
 - [Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.2+Ф.3.
 - Q-import-glob-hygiene → RESOLVED 2026-06-16: вариант (a).
 
+## D290. ModuleSigTable — two-pass resolver (collect_all_signatures + inline-merge)
+
+**Статус:** принято, реализовано ([Plan 162.1](../../docs/plans/162.1-resolver-split-lazy-bodies.md), 2026-06-16).
+
+**Контекст.** Plan 162 Ф.1 добавил cycle guard в `resolve_imports_inline`, но резолвер по-прежнему жадный: любой `import X` сразу inline-merge'ит X (включая тела функций). `TypeCheckCtx` строился только из merge'нутых `module.items` — без знания о сигнатурах транзитивно-достижимых, но ещё не merge'нутых модулей.
+
+**Решение.** Двухпроходная инфраструктура:
+
+1. **`collect_all_signatures(entry_path, ...) → ModuleSigTable`** — рекурсивно обходит транзитивные импорты entry; парсит каждый файл; собирает только декларации (`Item::Type`, `Item::Fn` сигнатуры, `Item::Const`) без тел. Использует `visited/in_progress` guard (Plan 162 Ф.1). Никакого typecheck тел.
+
+2. **`TypeCheckCtx.sig_table: ModuleSigTable`** — поле, дополняющее `module.items` знанием о cross-module типах и функциях. Доступно через `build_with_sig_table(module, sig_table)`. Дефолтный `build(module)` инициализирует пустую таблицу — backward compat, нет I/O.
+
+3. **`is_known_type(name) → bool`** и **`is_known_fn(name) → bool`** на `TypeCheckCtx` — проверяют как локальные таблицы (`self.types` / `self.fn_decls`), так и `sig_table` через `find_type_modules` / `find_fn_modules`.
+
+**Структуры данных:**
+
+```
+FnSig          { name: String, params: Vec<ParamSig>, ret: TypeRef, effects: Vec<String> }
+ModuleSignatures { types: Vec<TypeDecl>, fns: Vec<FnSig>, consts: Vec<ConstDecl>, module_name: Vec<String> }
+ModuleSigTable   { modules: HashMap<Vec<String>, ModuleSignatures> }
+```
+
+**Семантика:** `sig_table` — дополнительный источник истины для cross-module типов/функций; не заменяет inline-merge для тел (backward compat 100%); используется `verify_impl_protocols` и будущими вызовами в Ф.3+.
+
+**Перф-стоимость:** collect_all_signatures overhead **~1.5%** vs baseline (в рамках критерия ≤10%).
+
+### Связь
+- [D285](#d285-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — архитектурный принцип collect-signatures-first.
+- [Plan 162.1](../../docs/plans/162.1-resolver-split-lazy-bodies.md) — реализация.
+- [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.1 — родительский план.
+
 ---
 
 ## D47. Видимость деклараций

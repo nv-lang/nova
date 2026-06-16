@@ -42,7 +42,7 @@
 
 ## Фазы
 
-- **Ф.1 — Раскол резолвера на collect-signatures / resolve-bodies.** Рефакторинг `resolve_imports_inline*`: отделить сбор сигнатур всех in-build модулей от резолва тел. Foundational; без смены пользовательской семантики (existing DAG-код компилируется как раньше).
+- **Ф.1 — Раскол резолвера на collect-signatures / resolve-bodies.** Рефакторинг `resolve_imports_inline*`: отделить сбор сигнатур всех in-build модулей от резолва тел. Foundational; без смены пользовательской семантики (existing DAG-код компилируется как раньше). **Sub-план: [Plan 162.1](162.1-resolver-split-lazy-bodies.md) ✅ CLOSED (2026-06-16)** — `ModuleSigTable` + `collect_all_signatures` + `TypeCheckCtx.sig_table` + `is_known_type`/`is_known_fn` lazy helpers; 4/4 тестов PASS; overhead 1.5%; D290.
 - **Ф.2 — Поддержка циклов модулей.** Снять stack-overflow на цикле (collect до bodies). Тест: prelude↔unicode-style цикл компилируется.
 - **Ф.3 — Method-resolution-by-type.** Построить `type→methods`; `x.foo()` резолвится по типу `x` без import. Гейт inherent vs extension.
 - **Ф.4 — Char-методы в prelude + снятие Ф.4-хардкода.** Перенести базовые `char @`-методы в prelude/core (рядом с `char`); удалить `CHAR_UNICODE_METHOD_SELECTORS` + `needs_unicode_injection` + блок инъекции (+ `@method:`-тег, если осиротел); таблицы остаются в `std.unicode` под DCE. Проверить: `'Ω'.is_alphabetic()` без import работает через **общий** механизм, не спецкейс.
