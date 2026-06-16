@@ -194,31 +194,28 @@ fn check_module_impl(
                     }
                 }
             }
-            // Plan 62.D.bis (D126) + Plan 100.5 (D163) + Plan 91.12 V2 retract
-            // (2026-06-01):
-            //   - `external type X` без `consume` (plain opaque) — RETRACTED.
-            //     Hard error [E_EXTERNAL_TYPE_RETRACTED]. Все 5 stdlib типов
-            //     мигрированы (WriteBuffer/ReadBuffer → pure Nova, V1;
-            //     OnceCell[T]/Lazy[T]/Condvar → `type X[T](ptr)`, V2). Любая
-            //     попытка объявить новый plain external type — error с
-            //     migration hint на tuple-newtype паттерн (Plan 115 D214).
-            //   - `external type X consume` (D163 FFI opaque consume-types) —
-            //     by-design allowed (FFI resource handles типа `File consume`).
+            // D126 (Plan 62.D.bis) + D163 (Plan 100.5) both fully retracted:
+            //   - `external type X` — RETRACTED (E_EXTERNAL_TYPE_RETRACTED). Migration: `type X(ptr)`.
+            //   - `external type X consume` — RETRACTED (D163 removed). Migration: `type X value { priv handle int }`.
+            //   - `external fn` — RETRACTED (E_EXTERNAL_FN_RETRACTED) in parser. Use `extern "nova" fn`.
             if let Item::Type(td) = item {
-                if matches!(td.kind, TypeDeclKind::Opaque) && !td.consume {
-                    errors.push(Diagnostic::new(
+                if matches!(td.kind, TypeDeclKind::Opaque) {
+                    let hint = if td.consume {
                         format!(
-                            "[E_EXTERNAL_TYPE_RETRACTED] `external type` (D126) retracted by Plan 91.12 V2 \
-                             (2026-06-01). Replace `external type {name}` with `type {name}(ptr)` \
-                             (tuple-newtype opaque-handle pattern, Plan 115 D214). C runtime backing \
-                             preserved через `external fn` методы — ABI unchanged. \
-                             Migration guide: docs/migration/d126-to-tuple-newtype.md. \
-                             For FFI opaque consume-types оставайся на `external type {name} consume` \
-                             (D163, supported).",
+                            "[E_EXTERNAL_TYPE_RETRACTED] `external type {name} consume` (D163) retracted. \
+                             Use: `type {name} value consume {{ priv handle int }}` (D241 canonical order: value consume priv). \
+                             Add cleanup method: `fn {name} consume @close() -> () {{ ... }}`.",
                             name = td.name
-                        ),
-                        td.span,
-                    ));
+                        )
+                    } else {
+                        format!(
+                            "[E_EXTERNAL_TYPE_RETRACTED] `external type {name}` (D126) retracted. \
+                             Use tuple-newtype: `type {name}(ptr)` (Plan 115 D214). \
+                             Migration guide: docs/migration/d126-to-tuple-newtype.md.",
+                            name = td.name
+                        )
+                    };
+                    errors.push(Diagnostic::new(hint, td.span));
                 }
             }
         }
@@ -260,30 +257,10 @@ fn check_module_impl(
                     imp.span,
                 ));
             }
-            // Plan 163 Ф.2: E_IMPORT_GLOB — bare whole-module import (no .{} and no as).
-            // Prelude auto-imports (std.prelude.*) are exempt — compiler-internal.
-            let is_prelude_auto = imp.path.first().map(String::as_str) == Some("std")
-                && imp.path.get(1).map(String::as_str) == Some("prelude");
-            if !imp.is_export
-                && imp.items.is_none()
-                && imp.alias.is_none()
-                && !is_prelude_auto
-            {
-                errors.push(Diagnostic::new(
-                    format!(
-                        "[E_IMPORT_GLOB] `import {}` imports the entire module without a \
-                         name selector — this brings an uncontrolled set of names into scope \
-                         (Plan 163 / D282). \
-                         Hint: use `import {}.{{name1, name2}}` to import specific names, \
-                         or `import {} as {}` to import as a qualified namespace.",
-                        imp.path.join("."),
-                        imp.path.join("."),
-                        imp.path.join("."),
-                        imp.path.last().cloned().unwrap_or_default(),
-                    ),
-                    imp.span,
-                ));
-            }
+            // D289 amend: `import m` without `.{}` or `as` is legal — last segment
+            // becomes the qualified namespace name (import vec_iter → vec_iter.Foo).
+            // imported_modules already inserts path.last() unconditionally (Plan 81 Ф.2).
+            // E_IMPORT_GLOB removed; only E_REEXPORT_GLOB (export form) remains.
         }
     }
 

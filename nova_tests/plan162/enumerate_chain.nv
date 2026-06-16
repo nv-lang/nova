@@ -1,6 +1,6 @@
 module plan162.enumerate_chain
 
-import std.collections.vec_iter as vec_iter
+import std.collections.vec_iter
 
 // ── chain tests: adapters before enumerate + terminators after ───────────────
 
