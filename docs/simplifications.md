@@ -21,10 +21,10 @@
 ### Plan 153 Phase B — step_by / chain / zip / flat_map + scalar @min/@max (2026-06-16)
 
 - **Где** — `std/collections/vec_lazy.nv`, `std/collections/vec_iter.nv`, `std/runtime/defaults.nv`.
-- **Что сделано** — (1) `[M-153-scalar-min-max]` CLOSED: `@min(other)`/`@max(other)` на всех числовых типах (`int`/u8…u64/i8…i64/f32/f64). Тест: `plan153_1/scalar_min_max`. (2) `step_by` на `BoxIter` (vec_lazy) + zero-cost `StepByIter` (vec_iter). (3) `chain` на `BoxIter`. (4) `zip` реализован, но тесты gated `[M-153.2-tuple-elem-adapter]`. (5) `flat_map` реализован, тесты gated `[M-153.2-flat-map-inner-option]`. Тесты: `plan153_2/phase_b_lazy`, `plan153_2_zc/step_by_zc`.
-- **Упрощение** — `zip` и `flat_map` реализованы без тестов из-за closure-typing gaps. `zip` возвращает `BoxIter[(A,B)]` — collect не работает из-за `[M-153.2-tuple-elem-adapter]`. `flat_map` с `Option[BoxIter[U]]` — mut-match gap `[M-153.2-flat-map-inner-option]`.
-- **Как чинить** — closure mono-type lift (`[M-153.2-closure-as-mono-type]`) закроет обе проблемы.
-- **Приоритет** — M (zip/flat_map, blocked compiler); L (scalar min/max CLOSED).
+- **Что сделано** — (1) `[M-153-scalar-min-max]` CLOSED. (2) `step_by` + `chain` CLOSED. (3) `zip` CLOSED (`[M-153.2-tuple-elem-adapter]` FIXED: receiver typevar alias binding в emit_c dispatch). (4) `flat_map` CLOSED (`[M-153.2-flat-map-inner-option]` FIXED: VR typedef ordering via `novaopt_vr_typedefs_buf`). Тесты: `plan153_2/` 9/9 PASS. Коммит `d505c0e5`.
+- **Упрощение** — ~~`zip` и `flat_map` реализованы без тестов из-за closure-typing gaps.~~ ЗАКРЫТО — оба фикса в codegen, тесты зелёные.
+- **Как чинить** — ✅ ЗАКРЫТО.
+- **Приоритет** — ✅ ЗАКРЫТО (2026-06-16).
 
 ---
 

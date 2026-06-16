@@ -415,26 +415,17 @@
   конкретного type-param с запечённым env-типом (closures-as-mono-types). Это отдельный
   крупный лифт поверх Stage 2 (Stage 1 убрал record-alloc, Stage 2 — source-box + step-
   индирекцию, этот маркер — последний closure-box).
-- **`[M-153.2-tuple-elem-adapter]`** (🟡 **OPEN — zip still blocked**, P2, home **Plan 153.2**):
-  The enumerate tuple-PRESERVING adapter gap (the original issue) was closed by Plan 162/164
-  (table entry line 70 above). However `zip` (which also yields `(A,B)` tuples as `BoxIter[(A,B)]`)
-  exposes two related compiler bugs that remain unfixed (investigated 2026-06-16):
-  (1) `zip(...).collect()` → CODEGEN-FAIL `E_PRIMITIVE_NO_PROTOCOL_METHOD` — tuple `(A,B)` lacks
-  `@next()` dispatch needed for `collect`'s internal drain loop (collect attempts to iterate the
-  tuple element itself rather than the outer BoxIter). (2) `zip(...).count()` → CODEGEN-FAIL
-  `cannot infer type arg B for BoxIter.zip` — type inference for the second type param of `zip`
-  fails at the call-site when no explicit annotation is provided. Root: codegen does not propagate
-  the `(A,B)` tuple mono-type through the BoxIter wrapper correctly. Workaround: use
-  `zip(...).map(|p| p.0 + p.1)` to collapse tuple before terminating. Fix requires extending
-  `infer_expr_c_type` to handle generic-tuple type arguments inside BoxIter receiver.
-- **`[M-153.2-flat-map-inner-option]`** (🟡 **OPEN — not fixed**, 2026-06-16, P2, home **Plan 153.2**):
-  `flat_map(f fn(T)->BoxIter[U])` реализован (vec_lazy.nv). Investigation 2026-06-16 confirmed
-  CODEGEN-FAIL on `plan153_2/flat_map_basic`: `cannot infer method-level type argument U for
-  BoxIter____nova_int.flat_map — appears in param f (#0)`. The compiler cannot propagate the
-  `U` type argument from the closure return type `BoxIter[U]` back to the `flat_map` method-level
-  generic. Same class as `[M-153.2-tuple-elem-adapter]` — closure-body `Option[complex-type]`
-  typing gap. No tests written (CC-FAIL, tests would fail). Фикс: closure-return target-type
-  propagation для `Option[record]` + method-level generic inference from closure parameter type.
+- **`[M-153.2-tuple-elem-adapter]`** ✅ **CLOSED 2026-06-16 (commit `d505c0e5`)**.
+  Root: generic method dispatch built `type_subst={T:nova_int, B:nova_int}` for `BoxIter[A] @zip[B]`
+  but return type `BoxIter[(A,B)]` referenced local alias `A` absent from subst → `type_ref_to_c(Tuple[A,B])`
+  fell to erased `_NovaTuple2` → CC-FAIL type mismatch. Fix: in non-nested receiver dispatch path, after
+  tmpl.generics bind, structurally bind receiver_ty local typevars via `infer_type_param_binding`, adding
+  NEW names only. Tests: `plan153_2/zip_basic` + `plan153_2/zip_min` PASS (9/9 plan153_2 total).
+- **`[M-153.2-flat-map-inner-option]`** ✅ **CLOSED 2026-06-16 (commit `d505c0e5`)**.
+  Root: NovaOpt typedef for `BoxIter[T]` payload (NovaValue_ by-value) was emitted before the generic
+  struct body it referenced → CC-FAIL "field has incomplete type". Fix: new `novaopt_vr_typedefs_buf`
+  spliced after `/*__GENERIC_TYPE_DEFS__*/` marker; VR-payload routing in `register_novaopt_decl`/
+  `register_novaopt_decl_forced`. Test: `plan153_2/flat_map_basic` PASS.
 - **`[M-153.2-requires-cc-fail]`** (🟡 **OPEN — compiler bug, workaround committed**, 2026-06-16,
   P2, home **Plan 153.2**): `requires` contract on a method returning `BoxIter[T]` (a value-record)
   causes codegen to emit `return 0` instead of a zero-initialized struct → CC-FAIL from C compiler
@@ -446,11 +437,11 @@
   value-record will CC-FAIL in a `fn main` harness. Фикс: в codegen contract-enforcement path
   emit `return (ReturnType){0}` (C99 zero-initializer) instead of bare `return 0` when the
   return type is a value-record (check `value_record_names.contains`).
-- **`[M-153.2-iter-phase-b]`** 🟡 **PARTIAL (2026-06-16, коммит `bd330c07`)**:
-  - ✅ **`step_by(n)`**: BoxIter (vec_lazy) + zero-cost `StepByIter` (vec_iter). Contract `requires n > 0`. Тесты: `plan153_2/phase_b_lazy` + `plan153_2_zc/step_by_zc` PASS. Негативы: `step_by_zero_neg` PASS.
+- **`[M-153.2-iter-phase-b]`** ✅ **CLOSED (2026-06-16, коммит `d505c0e5`)**:
+  - ✅ **`step_by(n)`**: BoxIter (vec_lazy) + zero-cost `StepByIter` (vec_iter). Contract `requires n > 0`. Тесты: `plan153_2/phase_b_lazy` + `plan153_2_zc/step_by_zc` PASS.
   - ✅ **`chain(other)`**: BoxIter (vec_lazy). Тест: `plan153_2/phase_b_lazy` PASS.
-  - 🟡 **`zip`**: реализован в vec_lazy.nv (`BoxIter[(A,B)]`). Тесты GATED: `[M-153.2-tuple-elem-adapter]` (closure `Option[(A,B)]` typing gap).
-  - 🟡 **`flat_map`**: реализован в vec_lazy.nv. Тесты GATED: `[M-153.2-flat-map-inner-option]` (`Option[BoxIter[U]]` mut-match closure gap).
+  - ✅ **`zip`**: реализован + тесты `plan153_2/zip_basic` + `plan153_2/zip_min` PASS. Блокер `[M-153.2-tuple-elem-adapter]` ЗАКРЫТ.
+  - ✅ **`flat_map`**: реализован + тест `plan153_2/flat_map_basic` PASS. Блокер `[M-153.2-flat-map-inner-option]` ЗАКРЫТ.
   - ❌ Остаток: `unzip`/`flatten`/`scan`/`inspect`/`take_while`/`skip_while`/`peekable`/`min_by[_key]`/`max_by[_key]`/`partition`/`chunk_by`/`into_iter` + мут-итерация `for mut x` (Q-iter-mut).
   `FromIterator`/collect-target ✅ закрыт (Plan 153.6 / D264).
   Phase A (map/filter/filter_map/enumerate/take/skip + 13 терминаторов + `@collect_set`)
