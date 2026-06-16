@@ -8,8 +8,10 @@
 pub mod compiler;
 pub mod debouncer;
 pub mod diagnostic_mapping;
+pub mod format;
 pub mod incremental;
 pub mod perf;
+pub mod rename;
 pub mod semantic_tokens_delta;
 pub mod server;
 pub mod state;
