@@ -4544,8 +4544,16 @@ CI gate fails если added counts превышают baseline без updates.
 
 ## D128. `char` distinct from `int` в codegen mono'd generics
 
-**Решение.** Тип `char` имеет собственный C-typedef `nova_char` (alias
-над `int64_t`, same underlying storage как `nova_int`, но distinct C
+**AMEND (Plan 152.8, 2026-06-16).** `nova_char` переведён с `int64_t` на
+`uint32_t`. Codepoints fit in 21 bits (U+0000..U+10FFFF); `uint32_t` —
+естественный unsigned type (как Rust `char` ABI). ABI cost минимален:
+`nova_char`-поля в structs layout'ятся как 4-byte, Box-pointer смещается
+с 8 на 8 (4-byte char + 4-byte padding → align 8). GC layout обновлён:
+`char_size = (4, 4)` (было `(8, 8)`). Char-literal суффикс: `U` вместо
+`LL`; is_typed_int_c_ty / emit_typed_int_literal включают `nova_char`.
+
+**Решение (исходное, Plan 70.3).** Тип `char` имеет собственный C-typedef
+`nova_char` (alias над `int64_t` → **`uint32_t` D128 AMEND**), distinct C
 identifier). Generic mono mangling использует `nova_char` separately от
 `nova_int`, поэтому `Option[char]` и `Option[int]` производят разные
 C-типы `NovaOpt_nova_char` vs `NovaOpt_nova_int` — структурно
@@ -4571,18 +4579,24 @@ unusual в C-level collapse. D128 закрывает регрессию.
 
 **Implementation (Plan 70.3 Ф.1-Ф.2).**
 
-1. **Typedef:** `typedef int64_t nova_char;` в `compiler-codegen/nova_rt/nova_rt.h`
-   — zero ABI cost (same storage layout как `nova_int`).
+1. **Typedef:** `typedef int64_t nova_char;` → **`typedef uint32_t nova_char;`
+   (D128 AMEND Plan 152.8)** в `compiler-codegen/nova_rt/nova_rt.h`.
 2. **Codegen mapping:** `type_ref_to_c "char" => "nova_char"` (was
    `"nova_int"`) в `emit_c.rs` и `external_registry.rs` (двойная sync).
 3. **Array element:** `[]char → NovaArray_nova_char*` (separate
    instantiation parallel `NovaArray_nova_int*`).
 4. **Option element:** `NovaOpt_nova_char` typedef + constructors +
    `nova_opt_eq_nova_char` helper.
-5. **CharLit emission:** `'x' → ((nova_char)<codepoint>LL)` (was `(nova_int)`).
+5. **CharLit emission:** `'x' → ((nova_char)<codepoint>U)` (was `LL`; D128
+   AMEND Plan 152.8 — uint32_t requires U-suffix).
 6. **infer_expr_c_type:** `CharLit => "nova_char"` (was `"nova_int"`).
 7. **Runtime fn signatures:** `nova_str_char_at` updated return
    `NovaOpt_nova_char` (was `NovaOpt_nova_int`).
+
+**GC layout (D128 AMEND Plan 152.8).** `char_size = (4, 4)` (was `(8, 8)`).
+In a struct with a `char` field followed by a Box pointer: char occupies
+4 bytes + 4-byte pad → Box at offset 8. `gc_layout.rs::prim_emit("char") =>
+Some((4, 4))`.
 
 **Backward compat.** В `emit_binary_op` special-case для
 `Nova_StringBuilder* + char` accepts **обе** `nova_char` AND `nova_int`
@@ -4591,9 +4605,10 @@ existing test binaries reference legacy form. After full migration of
 existing generated C (regen test fixtures), `nova_int` branch может
 быть удалён.
 
-**ABI cost.** Zero. `nova_char` is `typedef int64_t` — same size,
-same alignment, same wire-format. Only difference — C type identifier
-для compiler-level distinction.
+**ABI cost.** Minimal. `nova_char` is `typedef uint32_t` — 4 bytes vs 8
+bytes. Struct layout changes where `char` is followed by a pointer (padding
+shrinks from 0 to 4 bytes). GC scanner updated. C type identifier remains
+distinct from `nova_int`.
 
 **Acceptance criteria.**
 - [x] Ф.1 codegen mapping switch (`emit_c.rs` + `external_registry.rs`)
@@ -4606,6 +4621,7 @@ same alignment, same wire-format. Only difference — C type identifier
 
 **Реализовано:** [Plan 70.3](../../docs/plans/70.3-char-int-mono-distinction.md)
   — Ф.0-Ф.5 closed 2026-05-19.
+  **D128 AMEND (Plan 152.8)** — nova_char int64_t→uint32_t, 2026-06-16.
 
 **Связь:**
 - D26 — Q-string-indexing (char = codepoint convention)
@@ -12154,13 +12170,27 @@ silent CC-FAIL / drain-0 / segfault), зафиксированных как ко
 (Лифт mono×closures — register_generic_instances_in_typeref + closure-capture в loop-arms,
 commit `996ca01a`.)
 
-### Phase B — частично реализована (2026-06-16, амендмент D260)
+### Phase B — ✅ ЗАКРЫТА (2026-06-16, амендмент D260)
+
+**Критерии приёмки Phase B (все выполнены):**
+- G-B1. `zip` возвращает правильные пары; останавливается на более коротком операнде.
+- G-B2. `flat_map` корректно обрабатывает пустой внешний итератор, пустые внутренние
+  итераторы и смешанные пустые/непустые внутренние.
+- G-B3. Все адаптеры компилируются через C-codegen без CC-FAIL — без упрощений как для прода.
+- G-B4. 0 новых регрессий по blast-radius (plan153_0/138/139/147/165/91_12).
 
 **Реализовано:**
 - ✅ **`step_by(n int)`** (BoxIter, `vec_lazy.nv`) + zero-cost `StepByIter[I,T]` (`vec_iter.nv`): yield каждый n-й элемент. Contract `n > 0` (requires). Тест: `plan153_2/phase_b_lazy` + `plan153_2_zc/step_by_zc`.
 - ✅ **`chain(other BoxIter[T])`** (BoxIter): дренирует self, затем other. Тест: `plan153_2/phase_b_lazy`.
-- 🟡 **`zip(other BoxIter[B])`** (BoxIter): реализован, возвращает `BoxIter[(A,B)]`. Тесты GATED `[M-153.2-tuple-elem-adapter]` (closure-typing для `Option[(A,B)]` в chain).
-- 🟡 **`flat_map(f fn(T)->BoxIter[U])`** (BoxIter): реализован. Тесты GATED `[M-153.2-flat-map-inner-option]` (`Option[BoxIter[U]]` mut-match gap в closure).
+- ✅ **`zip(other BoxIter[B])`** (BoxIter): возвращает `BoxIter[(A,B)]`, останавливается когда
+  любой из операндов исчерпан. Codegen-фикс: receiver typevar alias `A` (`fn BoxIter[A] @zip[B]`)
+  теперь биндится в `type_subst` при dispatch — tuple return `(A,B)` резолвируется в mono
+  `_NovaTuple_2_8_nova_int_8_nova_int` вместо erased `_NovaTuple2`.
+  Тесты: `plan153_2/zip_basic` (9 pos), `plan153_2/zip_neg` (3 neg), `plan153_2/zip_min`.
+- ✅ **`flat_map(f fn(T)->BoxIter[U])`** (BoxIter): дренирует каждый inner-итератор, возвращённый
+  `f`. Codegen-фикс: `NovaOpt` typedef для `BoxIter[T]` payload (NovaValue_ by-value) теперь
+  эмитируется ПОСЛЕ generic struct body через `novaopt_vr_typedefs_buf`.
+  Тесты: `plan153_2/flat_map_basic` (7 pos), `plan153_2/flat_map_neg` (4 neg).
 
 **Остаток Phase B (не реализован):**
 `unzip`/`flatten`/`scan`/`inspect`/`take_while`/`skip_while`/`peekable`/

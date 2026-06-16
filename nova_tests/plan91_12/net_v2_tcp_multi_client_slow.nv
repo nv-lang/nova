@@ -1,0 +1,191 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.12 — interesting Net tests: multi-round TCP patterns.
+//
+// Tagged _slow: uses real OS networking + multiple concurrent fibers.
+// Run with: nova test --slow-only nova_tests\plan91_12
+//
+// Tests:
+//   (1) Multi-round: same connection, write → read → write → read (3 rounds).
+//   (2) Sequential: same listener, 3 short connect+write+close in a row.
+//   (3) Address inspection: local_addr / peer_addr / port values after connect.
+
+module plan91_12.net_v2_tcp_multi_client_slow
+
+import std.net.{SocketAddr, TcpListener, TcpStream, real_tcp_net, real_addr_net}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 1: multi-round exchange — server echoes 3 messages in a single connection.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test "TCP loopback: 3 rounds on same connection" {
+    with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+        mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+            Ok(l) => l
+            Err(_) => panic("bind failed")
+        }
+        ro port = lst.local_port()
+
+        supervised {
+            spawn {
+                mut srv = match lst.accept() {
+                    Ok(s) => s, Err(_) => panic("accept")
+                }
+                // round 0
+                ro rd0 = srv.read(64)
+                assert(rd0.is_ok())
+                ro m0 = match rd0 { Ok(s) => s, Err(_) => panic("srv r0") }
+                assert(m0 == "ping0")
+                assert(srv.write("pong0").is_ok())
+                // round 1
+                ro rd1 = srv.read(64)
+                assert(rd1.is_ok())
+                ro m1 = match rd1 { Ok(s) => s, Err(_) => panic("srv r1") }
+                assert(m1 == "ping1")
+                assert(srv.write("pong1").is_ok())
+                // round 2
+                ro rd2 = srv.read(64)
+                assert(rd2.is_ok())
+                ro m2 = match rd2 { Ok(s) => s, Err(_) => panic("srv r2") }
+                assert(m2 == "ping2")
+                assert(srv.write("pong2").is_ok())
+                srv.close()
+            }
+
+            spawn {
+                mut conn = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(s) => s, Err(_) => panic("connect")
+                }
+                assert(conn.write("ping0").is_ok())
+                ro r0 = conn.read(64)
+                assert(r0.is_ok())
+                ro d0 = match r0 { Ok(s) => s, Err(_) => panic("cli r0") }
+                assert(d0 == "pong0")
+
+                assert(conn.write("ping1").is_ok())
+                ro r1 = conn.read(64)
+                assert(r1.is_ok())
+                ro d1 = match r1 { Ok(s) => s, Err(_) => panic("cli r1") }
+                assert(d1 == "pong1")
+
+                assert(conn.write("ping2").is_ok())
+                ro r2 = conn.read(64)
+                assert(r2.is_ok())
+                ro d2 = match r2 { Ok(s) => s, Err(_) => panic("cli r2") }
+                assert(d2 == "pong2")
+
+                conn.close()
+            }
+        }
+
+        lst.close()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 2: 3 sequential connections on same listener.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test "TCP loopback: 3 sequential connections on same listener" {
+    with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+        mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+            Ok(l) => l
+            Err(_) => panic("bind failed")
+        }
+        ro port = lst.local_port()
+
+        supervised {
+            // Server: accept 3 short connections.
+            spawn {
+                // connection 0
+                mut s0 = match lst.accept() { Ok(s) => s, Err(_) => panic("a0") }
+                ro rd0 = s0.read(64)
+                assert(rd0.is_ok())
+                ro data0 = match rd0 { Ok(s) => s, Err(_) => panic("rd0") }
+                assert(data0 == "msg0")
+                s0.close()
+                // connection 1
+                mut s1 = match lst.accept() { Ok(s) => s, Err(_) => panic("a1") }
+                ro rd1 = s1.read(64)
+                assert(rd1.is_ok())
+                ro data1 = match rd1 { Ok(s) => s, Err(_) => panic("rd1") }
+                assert(data1 == "msg1")
+                s1.close()
+                // connection 2
+                mut s2 = match lst.accept() { Ok(s) => s, Err(_) => panic("a2") }
+                ro rd2 = s2.read(64)
+                assert(rd2.is_ok())
+                ro data2 = match rd2 { Ok(s) => s, Err(_) => panic("rd2") }
+                assert(data2 == "msg2")
+                s2.close()
+            }
+
+            // Client: 3 sequential short connections.
+            spawn {
+                mut c0 = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(s) => s, Err(_) => panic("c0")
+                }
+                assert(c0.write("msg0").is_ok())
+                c0.close()
+
+                mut c1 = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(s) => s, Err(_) => panic("c1")
+                }
+                assert(c1.write("msg1").is_ok())
+                c1.close()
+
+                mut c2 = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(s) => s, Err(_) => panic("c2")
+                }
+                assert(c2.write("msg2").is_ok())
+                c2.close()
+            }
+        }
+
+        lst.close()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 3: address inspection after connect.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test "TCP loopback: address inspection and socket options" {
+    with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+        mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+            Ok(l) => l
+            Err(_) => panic("bind failed")
+        }
+        ro port = lst.local_port()
+        ro lst_addr = lst.local_addr()
+        assert(lst_addr.is_v4())
+        assert(lst_addr.port() == port)
+
+        supervised {
+            spawn {
+                mut srv = match lst.accept() {
+                    Ok(s) => s, Err(_) => panic("accept")
+                }
+                srv.set_nodelay(true)
+                srv.set_keepalive(false)
+                srv.close()
+            }
+
+            spawn {
+                mut conn = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(s) => s, Err(_) => panic("connect")
+                }
+                conn.set_nodelay(true)
+                conn.set_keepalive(true)
+                ro la = conn.local_addr()
+                ro pa = conn.peer_addr()
+                assert(la.is_v4())
+                assert(pa.is_v4())
+                assert(pa.port() == port)
+                assert(conn.local_port() != conn.peer_port())
+                conn.close()
+            }
+        }
+
+        lst.close()
+    }
+}

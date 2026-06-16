@@ -1,0 +1,42 @@
+// Plan 152.8 Layer 1 (Vec[u32] migration) — T5: Unicode category after migration.
+// category functions take int (codepoint); char methods require `import std.unicode`.
+module plan152_8.t5_category_ok
+
+import std.unicode
+import std.unicode.{is_alphabetic, is_numeric, is_uppercase, is_lowercase, is_whitespace, is_alphanumeric}
+
+test "is_alphabetic: basic" {
+    assert(is_alphabetic(0x41))    // 'A' U+0041
+    assert(is_alphabetic(0x3A9))   // 'Ω' U+03A9 Greek capital
+    assert(is_alphabetic(0x4E16))  // '世' U+4E16 CJK
+    assert(!is_alphabetic(0x35))   // '5' digit
+    assert(!is_alphabetic(0x40))   // '@' punctuation
+}
+
+test "is_numeric: basic" {
+    assert(is_numeric(0x35))       // '5' U+0035
+    assert(is_numeric(0x663))      // '٣' Arabic-Indic digit U+0663
+    assert(!is_numeric(0x41))      // 'A' letter
+}
+
+test "is_uppercase / is_lowercase: basic" {
+    assert(is_uppercase(0x41))     // 'A'
+    assert(!is_uppercase(0x61))    // 'a'
+    assert(is_lowercase(0x61))     // 'a'
+    assert(!is_lowercase(0x41))    // 'A'
+}
+
+test "is_whitespace: basic" {
+    assert(is_whitespace(0x20))    // space
+    assert(is_whitespace(0xA0))    // NO-BREAK SPACE
+    assert(!is_whitespace(0x41))   // 'A'
+}
+
+test "char methods require std.unicode import" {
+    assert('A'.is_alphabetic())
+    assert('5'.is_numeric())
+    assert('A'.is_uppercase())
+    assert('a'.is_lowercase())
+    assert(' '.is_whitespace())
+    assert(!('@').is_alphabetic())
+}

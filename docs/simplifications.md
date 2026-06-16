@@ -18,13 +18,22 @@
 
 ---
 
+### Plan 104.2 — hover/goto-def/sighelp V1 simplifications (2026-06-16)
+
+- **Где** — `nova-lsp/src/symbol.rs`, `nova-lsp/src/goto_definition.rs`, `nova-lsp/src/signature_help.rs`.
+- **Что упрощено** — (1) `[M-104.2-cross-file-goto]` — goto-definition V1 single-file only: always returns Location in same URI, does not resolve imports across module graph. (2) `[M-104.2-symbol-cache]` — no symbol cache: `resolve_symbol_at` parses and walks AST on every hover/goto request. Acceptable for V1 (<10ms per request on typical files). (3) `[M-104.2-protocol-method-hover]` — protocol method bodies not separately resolved; they fall through to the fn-level match. (4) `[M-104.2-signature-type-dispatch]` — signature help does name-only lookup, not type-driven method dispatch: `obj.foo(` finds all fns + methods named `foo` regardless of receiver type.
+- **Как чинить** — (1) cross-file: workspace import graph + multi-file module cache in Plan 104.4. (2) cache: dashmap<Uri, (Module, version)> in WorkspaceState after 104.3. (3) protocol: add ProtocolDecl variant to SymbolInfo. (4) type dispatch: resolve obj-type from TypeCheckCtx then filter by receiver — Plan 104.3 completion work covers same path.
+- **Приоритет** — M (cross-file goto, most user-visible); L (cache, symbol-cache, type-dispatch — not painful V1).
+
+---
+
 ### Plan 153 Phase B — step_by / chain / zip / flat_map + scalar @min/@max (2026-06-16)
 
 - **Где** — `std/collections/vec_lazy.nv`, `std/collections/vec_iter.nv`, `std/runtime/defaults.nv`.
-- **Что сделано** — (1) `[M-153-scalar-min-max]` CLOSED: `@min(other)`/`@max(other)` на всех числовых типах (`int`/u8…u64/i8…i64/f32/f64). Тест: `plan153_1/scalar_min_max`. (2) `step_by` на `BoxIter` (vec_lazy) + zero-cost `StepByIter` (vec_iter). (3) `chain` на `BoxIter`. (4) `zip` реализован, но тесты gated `[M-153.2-tuple-elem-adapter]`. (5) `flat_map` реализован, тесты gated `[M-153.2-flat-map-inner-option]`. Тесты: `plan153_2/phase_b_lazy`, `plan153_2_zc/step_by_zc`.
-- **Упрощение** — `zip` и `flat_map` реализованы без тестов из-за closure-typing gaps. `zip` возвращает `BoxIter[(A,B)]` — collect не работает из-за `[M-153.2-tuple-elem-adapter]`. `flat_map` с `Option[BoxIter[U]]` — mut-match gap `[M-153.2-flat-map-inner-option]`.
-- **Как чинить** — closure mono-type lift (`[M-153.2-closure-as-mono-type]`) закроет обе проблемы.
-- **Приоритет** — M (zip/flat_map, blocked compiler); L (scalar min/max CLOSED).
+- **Что сделано** — (1) `[M-153-scalar-min-max]` CLOSED. (2) `step_by` + `chain` CLOSED. (3) `zip` CLOSED (`[M-153.2-tuple-elem-adapter]` FIXED: receiver typevar alias binding в emit_c dispatch). (4) `flat_map` CLOSED (`[M-153.2-flat-map-inner-option]` FIXED: VR typedef ordering via `novaopt_vr_typedefs_buf`). Тесты: `plan153_2/` 25 тестов PASS (zip_basic 9pos + zip_neg 3neg + zip_min 1 + flat_map_basic 7pos + flat_map_neg 4neg + step_by_zero_neg 1). D260 Phase B ЗАКРЫТА. Коммиты `d505c0e5`, `542a3db8`, `00b494d6`, `0e539ef3`, `8cf1d23a`.
+- **Упрощение** — ~~`zip` и `flat_map` реализованы без тестов из-за closure-typing gaps.~~ ЗАКРЫТО — оба фикса в codegen, тесты зелёные.
+- **Как чинить** — ✅ ЗАКРЫТО.
+- **Приоритет** — ✅ ЗАКРЫТО (2026-06-16).
 
 ---
 
@@ -37050,6 +37059,8 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 - [2026-06-16] Plan 153.2 Phase B bug investigation (zip/flat_map/requires-CC-FAIL) — three compiler bugs confirmed open, no fixes landed. (1) [M-153.2-tuple-elem-adapter] (zip): zip yields BoxIter[(A,B)]; two failures: collect() → E_PRIMITIVE_NO_PROTOCOL_METHOD (tuple lacks @next dispatch); count() → cannot infer type arg B. Fix: infer_expr_c_type must propagate generic-tuple type through BoxIter. (2) [M-153.2-flat-map-inner-option]: flat_map CODEGEN-FAIL "cannot infer method-level type argument U for BoxIter____nova_int.flat_map" — U not backpropagated from closure return type BoxIter[U]. (3) [M-153.2-requires-cc-fail]: requires contract on value-record-returning method emits `return 0` instead of zero-init struct → CC-FAIL from C compiler. Workaround committed 78e75f5b (test block avoids fn main form). Markers updated in backlog-followups.md. No tests written (all CC-FAIL). Regression check: plan153_2 12/1 (flat_map_basic pre-existing), plan153_0 4/0, basics 8/0, generics 7/0, plan131 26/2 (vec_mutate_pos pre-existing) — 0 new regressions.
 
 - [2026-06-16] README.md статусы планов — административный коммит f5179299. Синхронизация ~40 планов с реальным состоянием. Никаких упрощений и никакой новой функциональности — pure docs update.
+
+- [2026-06-16] Plan 152.8 (nova_char uint32_t + Vec[u32] unicode) — NO simplifications; production-grade. Layer 1: Vec[int]→Vec[u32] in 7 std/unicode files (normalize.nv, case.nv, category.nv, graphemes.nv, words.nv, sentences.nv, collate.nv); 88 type occurrences. Layer 2: nova_char typedef int64_t→uint32_t (D128 AMEND Plan 152.8): nova_rt.h, array.h comment, gc_layout.rs char_size (8,8)→(4,4) + test renamed, emit_c.rs U-suffix for char literals + nova_char in is_typed_int_c_ty + emit_typed_int_literal. Tests: 5 Layer-1 positives (t1-t5, unicode functions) + 1 Layer-2 positive (t6, char u32 properties/hash/compare) = 6/6 PASS plan152_8; 9/9 PASS plan152_7 (0 regressions). Spec: D128 AMEND in spec/decisions/02-types.md + 08-runtime.md. Marker [M-152-unicode-codepoint-u32] CLOSED. Branch plan-152.8. Commits: c659fe97 (Layer 1) + 11730ca5 (Layer 1 tests) + 08171fdc (Layer 2).
 
 ## Plan 118.6 — Safe &x model (2026-06-16)
 - &x safe для всех типов: escape analysis + heap-promote при escape

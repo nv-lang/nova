@@ -904,6 +904,11 @@ pub struct CEmitter {
     /// Interior mutability: используется из `&self`-методов
     /// (type_ref_to_c, infer_expr_c_type).
     novaopt_typedefs_buf: std::cell::RefCell<String>,
+    /// [M-153.2-flat-map-inner-option]: NovaOpt typedefs where the payload is a
+    /// value-record (NovaValue_… by-value, needs complete struct before use in
+    /// field decl). Spliced at /*__NOVAOPT_VR_TYPEDEFS__*/ which is placed AFTER
+    /// /*__GENERIC_TYPE_DEFS__*/ so the struct body is always defined first.
+    novaopt_vr_typedefs_buf: std::cell::RefCell<String>,
     /// Set sanitized-имён NovaOpt_<X> которые уже эмитированы в
     /// `novaopt_typedefs_buf` (для dedup'а). Pre-populated в `new()`
     /// из `NOVA_ARRAY_DECL` списка в `nova_rt/array.h` — runtime их
@@ -1367,6 +1372,7 @@ impl CEmitter {
             // Для прочих — typedef эмитится в novaopt_typedefs_buf и
             // splice'ится через маркер /*__NOVAOPT_TYPEDEFS__*/.
             novaopt_typedefs_buf: std::cell::RefCell::new(String::new()),
+            novaopt_vr_typedefs_buf: std::cell::RefCell::new(String::new()),
             novaopt_decls_seen: {
                 let mut s = std::collections::HashSet::new();
                 s.insert("nova_int".to_string());
@@ -3491,6 +3497,12 @@ impl CEmitter {
 
         // Plan 48 Ф.3: placeholder for generic type instance definitions (filled after drain).
         self.line("/*__GENERIC_TYPE_DEFS__*/");
+        // [M-153.2-flat-map-inner-option]: NovaOpt typedefs for value-record
+        // payloads (NovaValue_… by-value) must come AFTER the generic-type-defs
+        // splice so that the struct body is complete before NovaOpt uses it in a
+        // field declaration. Pointer payloads (Nova_X*) only need a forward-typedef
+        // and stay in __NOVAOPT_TYPEDEFS__ which is earlier in the file.
+        self.line("/*__NOVAOPT_VR_TYPEDEFS__*/");
 
         // 1b1-moved. Plan 152.4 (D199 ro-runtime side): module-level
         // `ro NAME = EXPR` — a lazy-static global. The strict const/ro partition
@@ -3840,6 +3852,18 @@ impl CEmitter {
         // Plan 48 Ф.3: splice generic type instance definitions
         let generic_type_defs = std::mem::take(&mut self.generic_type_defs_buf);
         self.out = self.out.replace("/*__GENERIC_TYPE_DEFS__*/", &generic_type_defs);
+        // [M-153.2-flat-map-inner-option]: splice value-record NovaOpt typedefs
+        // (placed AFTER __GENERIC_TYPE_DEFS__ so struct bodies are complete).
+        let vr_typedefs = self.novaopt_vr_typedefs_buf.borrow().clone();
+        let vr_replacement = if vr_typedefs.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "/* [M-153.2]: NovaOpt typedefs for value-record payloads — \
+                 after generic struct bodies */\n{}",
+                vr_typedefs)
+        };
+        self.out = self.out.replace("/*__NOVAOPT_VR_TYPEDEFS__*/", &vr_replacement);
         // Plan 48: splice monomorphized fn forward declarations
         let mono_fwd = self.mono_fwd_decls.clone();
         self.out = self.out.replace("/*__MONO_FWD_DECLS__*/", &mono_fwd);
@@ -4566,7 +4590,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn emit_typed_int_literal(n: i64, ty_c: &str) -> String {
         match ty_c {
             // Plan 70.4 Ф.4: nova_byte = typedef uint8_t — same U-suffix treatment.
-            "nova_byte" | "uint8_t" | "uint16_t" | "uint32_t" => {
+            // Plan 152.8: nova_char = typedef uint32_t — also unsigned.
+            "nova_char" | "nova_byte" | "uint8_t" | "uint16_t" | "uint32_t" => {
                 // Unsigned 32-bit и меньше: U-suffix + cast к точному типу.
                 // n хранится как i64; для отрицательных значений или > i32::MAX
                 // используем явное приведение через хеш-bit-pattern.
@@ -4767,7 +4792,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // Plan 152.7.1 (D258 AMEND): `Write` is special-cased in
             // `type_ref_to_c` to map to `Nova_StringBuilder*` (a concrete C
             // type), so it must NOT be treated as an erased protocol variable
-            // — doing so would cause E7201 on every `w.write_str(s)` call.
+            // — doing so would cause E7201 on every `w.write(s)` call.
             if name == "Write" { return None; }
             if self.protocol_types.contains(name) {
                 return Some(name.clone());
@@ -11045,7 +11070,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             TypeRef::FixedArray(_, inner, _) => {
                 Self::collect_array_elem_typerefs(inner, out);
             }
-            TypeRef::Named { generics, .. } => {
+            TypeRef::Named { path, generics, .. } => {
+                // Plan 152.8: `Vec[T]` written as a Named generic (not `[]T` sugar)
+                // must also trigger a forward-decl for the Vec mono instance.
+                // Push the element TypeRef just like the Array arm does.
+                if path.last().map(|s| s == "Vec").unwrap_or(false) {
+                    if let Some(elem) = generics.first() {
+                        if !matches!(elem, TypeRef::Func { .. }) {
+                            out.push(elem.clone());
+                            // Recurse to handle nested Vec[Vec[T]] etc.
+                            Self::collect_array_elem_typerefs(elem, out);
+                        }
+                    }
+                }
                 for g in generics { Self::collect_array_elem_typerefs(g, out); }
             }
             TypeRef::Tuple(items, _) => {
@@ -13970,10 +14007,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     "i64" => "int64_t",
                     // Plan 133: uint = nova_uint (uintptr_t), u64 = uint64_t (fixed).
                     "uint" => "nova_uint",
+                    "u64" => "uint64_t",
                     "f64" => "nova_f64",
+                    "f32" => "nova_f32",
                     "bool" => "nova_bool",
                     "str" => "nova_str",
-                    "u8" => "nova_byte",
+                    "u8" | "byte" => "nova_byte",
+                    // Plan 152.8: fixed-width integer primitives missing from this list
+                    // caused Vec[u32] to be mangled as Nova_Vec____Nova_u32_p instead of
+                    // Nova_Vec____uint32_t (inconsistent with type_ref_to_c which has full list).
+                    "u32" => "uint32_t",
+                    "u16" => "uint16_t",
+                    "i8" => "int8_t",
+                    "i16" => "int16_t",
+                    "i32" => "int32_t",
+                    "char" => "nova_char",
                     // Plan 133: usize/isize removed — not matched here.
                     _ => return None,
                 };
@@ -14053,6 +14101,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // and other containers без heap boxing.
                 // Caller responsible для registering struct emit via
                 // mono_tuple_instances (use `register_tuples_in_typeref` helper).
+                //
                 let mut elem_cs: Vec<String> = Vec::with_capacity(elems.len());
                 for e in elems {
                     let c = Self::apply_type_subst_to_ref(e, subst)?;
@@ -14109,8 +14158,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     "bool"          => "nova_bool".to_string(),
                     "f64"           => "nova_f64".to_string(),
                     "f32"           => "nova_f32".to_string(),
-                    "u8"  => "nova_byte".to_string(),
+                    "u8" | "byte"   => "nova_byte".to_string(),
                     "unit"          => "nova_unit".to_string(),
+                    // Plan 152.8: fixed-width and other primitive types missing from
+                    // simple_type_ref_to_c caused Vec[u32] (and Vec[u16]/Vec[i32]/etc.)
+                    // to mangle as Nova_Vec____Nova_u32_p* in infer_expr_c_type's
+                    // TurboFish branch (line ~34900). Mirrors type_ref_to_c primitives.
+                    "u32"           => "uint32_t".to_string(),
+                    "u16"           => "uint16_t".to_string(),
+                    "u64"           => "uint64_t".to_string(),
+                    "uint"          => "nova_uint".to_string(),
+                    "i8"            => "int8_t".to_string(),
+                    "i16"           => "int16_t".to_string(),
+                    "i32"           => "int32_t".to_string(),
+                    "char"          => "nova_char".to_string(),
+                    "never"         => "nova_int".to_string(),
                     other           => format!("Nova_{}*", other),
                 }
             }
@@ -18132,7 +18194,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     }
                 }
                 let tgt = self.emit_expr(target)?;
-                let val = self.emit_expr(value)?;
+                // [M-153.2-flat-map-inner-option]: use target type to correctly
+                // resolve type-directed literals on the RHS (e.g. `inner = None`
+                // when `inner: Option[BoxIter[U]]` — plain emit_expr emits
+                // `(NovaOpt_nova_int){None}` regardless of the LHS type).
+                let lhs_ty = self.infer_expr_c_type(target);
+                let val = if *op == AssignOp::Assign
+                    && lhs_ty.starts_with("NovaOpt_")
+                    && lhs_ty != "NovaOpt_nova_int"
+                {
+                    self.emit_expr_with_target_type(value, &lhs_ty)?
+                } else {
+                    self.emit_expr(value)?
+                };
                 // Plan 33.8 Ф.6.1: знаковая `int` compound-арифметика
                 // (`+=`/`-=`/`*=`) — checked, паника при переполнении (как и
                 // обычные `+`/`-`/`*`, Ф.1.2). Через lvalue-указатель, чтобы
@@ -18990,8 +19064,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
             ExprKind::IntLit(n)   => Ok(format!("((nova_int){}LL)", n)),
-            // Plan 70.3: char literal cast к distinct `nova_char` typedef.
-            ExprKind::CharLit(cp) => Ok(format!("((nova_char){}LL)", cp)),
+            // Plan 70.3/152.8: char literal cast к distinct `nova_char` typedef (uint32_t).
+            ExprKind::CharLit(cp) => Ok(format!("((nova_char){}U)", cp)),
             ExprKind::FloatLit(f) => {
                 // f.to_string() для 1e20 даёт "100000000000000000000" (без точки/exp)
                 // — это integer-литерал в C, переполняет u64. Принудительно
@@ -25126,6 +25200,33 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                                 {
                                                     slot.1 = c;
                                                 } else {
+                                                    type_subst.push((n, c));
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // [M-153.2-tuple-elem-adapter]: flat generic
+                                        // receiver with LOCAL typevar aliases (e.g.
+                                        // `BoxIter[A] @zip[B]` where receiver uses `A`
+                                        // but tmpl.generics uses `T`). The shallow
+                                        // template bind above put `T=nova_int` in
+                                        // type_subst, but the return type `BoxIter[(A,B)]`
+                                        // references `A`. Structurally bind `A` from
+                                        // the concrete receiver C-type so `A` is
+                                        // available in `type_ref_to_c` when
+                                        // `register_mono_method_instance` resolves the
+                                        // return type. Only add NEW names (don't
+                                        // override the template binding for `T`).
+                                        let recv_concrete_c = format!("Nova_{}*", rt_trimmed);
+                                        let mut recv_vars: Vec<String> = Vec::new();
+                                        Self::collect_receiver_typevars(recv_ty, &mut recv_vars);
+                                        let mut pend: Vec<(String, Option<String>)> = recv_vars
+                                            .into_iter().map(|n| (n, None)).collect();
+                                        self.infer_type_param_binding(
+                                            recv_ty, &recv_concrete_c, &mut pend);
+                                        for (n, c) in pend {
+                                            if let Some(c) = c {
+                                                if !type_subst.iter().any(|(sn, _)| sn == &n) {
                                                     type_subst.push((n, c));
                                                 }
                                             }
@@ -32507,9 +32608,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// Возвращает Fn(c_function_name) или BinOp(c_operator).
     fn prim_builtin_method(c_ty: &str, method: &str) -> Option<PrimBuiltin> {
         match (c_ty, method) {
-            // hash — C-функция. Plan 85.4: `nova_char` == int64 (Plan 70.3
-            // typedef) → nova_int_hash. Без этой ветки `char.hash()` не
-            // находил builtin и mis-dispatch'ился на user-метод `hash`
+            // hash — C-функция. Plan 85.4 / D128 AMEND (Plan 152.8): `nova_char`
+            // == uint32_t → nova_int_hash (widened). Без этой ветки `char.hash()`
+            // не находил builtin и mis-dispatch'ился на user-метод `hash`
             // (segfault: nova_char передавался как receiver-pointer).
             ("nova_int" | "nova_char",  "hash") => Some(PrimBuiltin::Fn("nova_int_hash")),
             ("nova_bool", "hash") => Some(PrimBuiltin::Fn("nova_bool_hash")),
@@ -33224,6 +33325,25 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
             }
         }
+        // [M-153.2-flat-map-inner-option]: value-record payloads — route to VR
+        // buffer (same logic as register_novaopt_decl path above).
+        if c_ty.contains("____") && c_ty.starts_with("NovaValue_") {
+            self.novaopt_value_types.borrow_mut()
+                .insert(sanitized.to_string(), c_ty.to_string());
+            let cmp_body_vr = "a.value == b.value".to_string(); // force_npo path
+            let line_vr = format!(
+                "typedef struct NovaOpt_{sani} {{ {cty} value; }} NovaOpt_{sani};\n",
+                sani = sanitized, cty = c_ty);
+            let eq_fn_vr = format!(
+                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                 \x20   return {cmp};\n\
+                 }}\n",
+                sani = sanitized, cmp = cmp_body_vr);
+            let mut vrbuf = self.novaopt_vr_typedefs_buf.borrow_mut();
+            vrbuf.push_str(&line_vr);
+            vrbuf.push_str(&eq_fn_vr);
+            return;
+        }
         self.novaopt_value_types.borrow_mut()
             .insert(sanitized.to_string(), c_ty.to_string());
         let line = if force_npo {
@@ -33295,6 +33415,33 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     buf.push_str(&fwd);
                 }
             }
+        }
+        // [M-153.2-flat-map-inner-option]: value-record payload (NovaValue_…,
+        // no trailing '*'). A C struct field with incomplete type is rejected by
+        // the C compiler even with a forward-typedef. Route the entire NovaOpt
+        // typedef (and its eq fn) for value-record payloads to
+        // novaopt_vr_typedefs_buf, which is spliced at __NOVAOPT_VR_TYPEDEFS__
+        // — a marker placed AFTER __GENERIC_TYPE_DEFS__. By that point the
+        // struct body is always complete so `{ int tag; NovaValue_… value; }`
+        // compiles without "field has incomplete type".
+        if c_ty.contains("____") && c_ty.starts_with("NovaValue_") {
+            self.novaopt_value_types.borrow_mut()
+                .insert(sanitized.to_string(), c_ty.to_string());
+            let cmp_body2 = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
+            let line2 = format!(
+                "typedef struct NovaOpt_{sani} {{ int tag; {cty} value; }} NovaOpt_{sani};\n",
+                sani = sanitized, cty = c_ty);
+            let eq_fn2 = format!(
+                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                 \x20   if (a.tag != b.tag) return 0;\n\
+                 \x20   if (a.tag == 0) return 1;\n\
+                 \x20   return {cmp};\n\
+                 }}\n",
+                sani = sanitized, cmp = cmp_body2);
+            let mut vrbuf = self.novaopt_vr_typedefs_buf.borrow_mut();
+            vrbuf.push_str(&line2);
+            vrbuf.push_str(&eq_fn2);
+            return;
         }
         // Plan 54 Ф.9: запомнить реальный c_ty для recovery в
         // pattern_bind_typed (sanitized id ≠ c_ty для pointer types).
@@ -33911,7 +34058,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t" |
             "int8_t" | "int16_t" | "int32_t" |
             // Plan 70.4 Ф.4: nova_byte = typedef uint8_t — treat as typed 8-bit unsigned.
-            "nova_byte"
+            "nova_byte" |
+            // Plan 152.8: nova_char = typedef uint32_t — treat as typed 32-bit unsigned.
+            "nova_char"
         )
     }
 
@@ -35410,6 +35559,72 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                                         }
                                                     }
                                                 }
+                                            }
+                                        }
+                                        // [M-153.2-tuple-elem-adapter]: bind receiver type-vars
+                                        // used in the RETURN TYPE under their method-local
+                                        // names. Example: `fn BoxIter[A] @zip[B] -> BoxIter[(A,B)]`
+                                        // — subst from tmpl.generics uses template name "T";
+                                        // the method aliases it as "A" in `receiver_ty = BoxIter[A]`.
+                                        // Without this, `A` stays unbound in `value_aware_subst_
+                                        // to_ref(BoxIter[(A,B)], {T:int, B:int})` → returns None.
+                                        // Bind by matching receiver_ty structurally vs concrete c-type.
+                                        if let Some(recv_ty_ref) = method_decl.receiver.as_ref()
+                                            .and_then(|r| r.receiver_ty.as_ref())
+                                        {
+                                            let receiver_c = format!("Nova_{}*", rt);
+                                            let mut recv_vars: Vec<String> = Vec::new();
+                                            Self::collect_receiver_typevars(recv_ty_ref, &mut recv_vars);
+                                            let mut recv_pending: Vec<(String, Option<String>)> =
+                                                recv_vars.into_iter().map(|n| (n, None)).collect();
+                                            self.infer_type_param_binding(
+                                                recv_ty_ref, &receiver_c, &mut recv_pending);
+                                            for (n, c) in recv_pending {
+                                                if let Some(c) = c {
+                                                    if !subst.iter().any(|(sn, sv)|
+                                                        sn == &n && sv.is_some()) {
+                                                        if let Some(slot) = subst.iter_mut()
+                                                            .find(|(sn, _)| sn == &n) {
+                                                            slot.1 = Some(c);
+                                                        } else {
+                                                            subst.push((n, Some(c)));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        // [M-153.2-tuple-elem-adapter]: bind method-level
+                                        // type params (e.g. `[B]` in `zip[B]`) from
+                                        // the call arguments. Without this, subst only
+                                        // has receiver-level params (A from BoxIter[A])
+                                        // and the return type `BoxIter[(A,B)]` cannot be
+                                        // fully resolved — B stays unbound, `value_aware_
+                                        // subst_to_ref` returns None, and the call falls
+                                        // through to the `nova_int` default which then
+                                        // dispatches `count()` on the wrong type.
+                                        for method_gen in &method_decl.generics {
+                                            if subst.iter().any(|(n, _)| n == &method_gen.name) {
+                                                continue; // already bound from receiver
+                                            }
+                                            // Infer from the first param whose declared type
+                                            // mentions this type var. `zip[B](other BoxIter[B])`:
+                                            // walk params, try infer_type_param_binding(param_ty, arg_c, ..).
+                                            let mut pending: Vec<(String, Option<String>)> =
+                                                vec![(method_gen.name.clone(), None)];
+                                            'arg_search: for (param, call_arg) in
+                                                method_decl.params.iter().zip(args.iter())
+                                            {
+                                                let arg_c = self.infer_expr_c_type(call_arg.expr());
+                                                self.infer_type_param_binding(
+                                                    &param.ty, &arg_c, &mut pending);
+                                                if pending[0].1.is_some() {
+                                                    break 'arg_search;
+                                                }
+                                            }
+                                            if let Some(bound_c) = pending.into_iter().next()
+                                                .and_then(|(_, c)| c)
+                                            {
+                                                subst.push((method_gen.name.clone(), Some(bound_c)));
                                             }
                                         }
                                         if let Some(ret_ty) = &method_decl.return_type {

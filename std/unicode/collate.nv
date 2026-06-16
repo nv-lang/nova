@@ -67,8 +67,8 @@ fn parse_collate_contractions(data str) -> HashMap[int, str] {
 }
 
 // IMPLICIT_DATA "lo,hi,base,kind;.." -> flat [lo,hi,base,kind, ..] (sorted by lo).
-fn parse_implicit(data str) -> Vec[int] {
-    mut out = Vec[int].with_capacity(128)
+fn parse_implicit(data str) -> Vec[u32] {
+    mut out = Vec[u32].with_capacity(128)
     for entry in data.split(";") {
         for f in entry.split(",") {
             ro v = hex(f)
@@ -80,14 +80,14 @@ fn parse_implicit(data str) -> Vec[int] {
 
 ro collate_single_map HashMap[int, str] = parse_collate_single(SINGLE_DATA)
 ro collate_contraction_map HashMap[int, str] = parse_collate_contractions(CONTRACTION_DATA)
-ro implicit_flat Vec[int] = parse_implicit(IMPLICIT_DATA)
+ro implicit_flat Vec[u32] = parse_implicit(IMPLICIT_DATA)
 
 // ── collation-element parsing ──
 // One CE is encoded "[*]P.S.T". We unpack it into 4 ints appended to `acc`:
 //   [variable(0/1), primary, secondary, tertiary]
 // so the whole CE stream is a flat Vec[int] of quadruples (avoids a struct/tuple
 // HashMap value — see [M-hashmap-tuple-key-mono]).
-fn push_one_ce(mut acc Vec[int], ce str) -> int {
+fn push_one_ce(mut acc Vec[u32], ce str) -> int {
     mut variable = 0
     mut body = ce
     match ce.strip_prefix("*") {
@@ -110,7 +110,7 @@ fn push_one_ce(mut acc Vec[int], ce str) -> int {
 }
 
 // Parse a "ce|ce|.." CE list into flat quadruples appended to `acc`.
-fn push_ce_list(mut acc Vec[int], ces str) {
+fn push_ce_list(mut acc Vec[u32], ces str) {
     for ce in ces.split("|") { push_one_ce(acc, ce) }
 }
 
@@ -120,7 +120,7 @@ fn push_ce_list(mut acc Vec[int], ces str) {
 // kind 0 (Han/default): AAAA = base + (cp >> 15), BBBB = (cp & 0x7fff) | 0x8000.
 // kind 1 (siniform):    AAAA = base,              BBBB = (cp - lo) | 0x8000.
 // Codepoints in no implicit range fall back to base 0xFBC0, kind 0.
-fn push_implicit(mut acc Vec[int], cp int) {
+fn push_implicit(mut acc Vec[u32], cp int) {
     mut base = 0xFBC0
     mut kind = 0
     mut lo = 0
@@ -159,7 +159,7 @@ fn push_implicit(mut acc Vec[int], cp int) {
 
 // ── contraction lookup helpers (variants keyed by first cp; "rest=ces#..") ──
 
-fn cp_seq_eq(a Vec[int], b Vec[int]) -> bool {
+fn cp_seq_eq(a Vec[u32], b Vec[u32]) -> bool {
     if a.len() != b.len() {
         false
     } else {
@@ -174,7 +174,7 @@ fn cp_seq_eq(a Vec[int], b Vec[int]) -> bool {
 }
 
 // `pre` is a strict prefix of `full`?
-fn cp_seq_is_prefix(pre Vec[int], full Vec[int]) -> bool {
+fn cp_seq_is_prefix(pre Vec[u32], full Vec[u32]) -> bool {
     if pre.len() >= full.len() {
         false
     } else {
@@ -190,7 +190,7 @@ fn cp_seq_is_prefix(pre Vec[int], full Vec[int]) -> bool {
 
 // Exact contraction match: does `first` have a variant whose tail == `tail`?
 // Returns its CE string. (No early break — iterate all variants, keep last hit.)
-fn contraction_lookup(first int, tail Vec[int]) -> Option[str] {
+fn contraction_lookup(first int, tail Vec[u32]) -> Option[str] {
     mut found Option[str] = None
     match collate_contraction_map.get(first) {
         Some(variants) => {
@@ -209,7 +209,7 @@ fn contraction_lookup(first int, tail Vec[int]) -> Option[str] {
 }
 
 // Is `tail` a strict prefix of some longer variant tail of `first`? (keep extending)
-fn contraction_has_longer(first int, tail Vec[int]) -> bool {
+fn contraction_has_longer(first int, tail Vec[u32]) -> bool {
     match collate_contraction_map.get(first) {
         Some(variants) => {
             mut yes = false
@@ -227,8 +227,8 @@ fn contraction_has_longer(first int, tail Vec[int]) -> bool {
     }
 }
 
-fn cp_seq_push(src Vec[int], x int) -> Vec[int] {
-    mut out = Vec[int].with_capacity(src.len() + 1)
+fn cp_seq_push(src Vec[u32], x u32) -> Vec[u32] {
+    mut out = Vec[u32].with_capacity(src.len() + 1)
     for v in src { out.push(v) }
     out.push(x)
     out
@@ -240,7 +240,7 @@ fn cp_seq_push(src Vec[int], x int) -> Vec[int] {
 // `used` marks already-consumed indices (read-only here). Returns the chosen CE
 // string (None ⇒ caller emits implicit weights) + the list of consumed indices
 // (always includes `i`).
-fn s21_match(cps Vec[int], used Vec[int], i int) -> (Option[str], Vec[int]) {
+fn s21_match(cps Vec[u32], used Vec[int], i int) -> (Option[str], Vec[int]) {
     ro n = cps.len()
     ro first = cps[i]
     mut best_ces = collate_single_map.get(first)   // longest exact so far = `first` alone
@@ -248,7 +248,7 @@ fn s21_match(cps Vec[int], used Vec[int], i int) -> (Option[str], Vec[int]) {
     best_consumed.push(i)
     match collate_contraction_map.get(first) {
         Some(_) => {
-            mut cur_tail = Vec[int].with_capacity(4)     // matched tail cps (after first)
+            mut cur_tail = Vec[u32].with_capacity(4)     // matched tail cps (after first)
             mut cur_consumed = Vec[int].with_capacity(4) // their indices (in order)
             mut prev_ccc = 0
             mut j = i + 1
@@ -309,13 +309,13 @@ fn with_base(i int, consumed Vec[int]) -> Vec[int] {
 
 // Map the NFD-normalized codepoints of `s` to the flat collation-element stream
 // (quadruples [variable, primary, secondary, tertiary]). Applies UCA S2.1.
-fn collation_elements(s str) -> Vec[int] {
+fn collation_elements(s str) -> Vec[u32] {
     ro cps = str_to_cps(normalize_nfd(s))
     ro n = cps.len()
     mut used = Vec[int].with_capacity(n)
     mut z = 0
     while z < n { used.push(0) z = z + 1 }
-    mut acc = Vec[int].with_capacity(n * 8)
+    mut acc = Vec[u32].with_capacity(n * 8)
     mut i = 0
     while i < n {
         if used[i] == 1 {
@@ -347,18 +347,18 @@ fn collation_elements(s str) -> Vec[int] {
 //            [ all L3>0 tertiaries ] 0 [ all L4 quaternaries ].
 // (Zero weights are skipped at each level; the 0 separators keep levels apart so
 // a shorter run at level N always sorts before a longer one — standard UCA.)
-const L4_MAX int = 0xFFFF
+const L4_MAX u32 = 0xFFFF
 
 /// Build the UCA sort key for `s` as a `[]int` of 16-bit weights (Shifted variant).
 /// `compare`/`eq` byte-compare these keys. Caching a precomputed key for repeated
 /// comparisons (e.g. sorting) avoids re-normalizing per comparison.
-export fn collate_sort_key(s str) -> Vec[int] {
+export fn collate_sort_key(s str) -> Vec[u32] {
     ro ce = collation_elements(s)
     ro m = ce.len() / 4
-    mut prim = Vec[int].with_capacity(m + 1)
-    mut sec = Vec[int].with_capacity(m + 1)
-    mut tert = Vec[int].with_capacity(m + 1)
-    mut quat = Vec[int].with_capacity(m + 1)
+    mut prim = Vec[u32].with_capacity(m + 1)
+    mut sec = Vec[u32].with_capacity(m + 1)
+    mut tert = Vec[u32].with_capacity(m + 1)
+    mut quat = Vec[u32].with_capacity(m + 1)
     mut after_variable = false
     mut j = 0
     while j < m {
@@ -391,7 +391,7 @@ export fn collate_sort_key(s str) -> Vec[int] {
         }
         j = j + 1
     }
-    mut key = Vec[int].with_capacity(prim.len() + sec.len() + tert.len() + quat.len() + 4)
+    mut key = Vec[u32].with_capacity(prim.len() + sec.len() + tert.len() + quat.len() + 4)
     for w in prim { key.push(w) }
     key.push(0)
     for w in sec { key.push(w) }
@@ -403,7 +403,7 @@ export fn collate_sort_key(s str) -> Vec[int] {
 }
 
 // Lexicographic compare of two weight keys: -1 / 0 / +1 (D183 int convention).
-fn compare_keys(a Vec[int], b Vec[int]) -> int {
+fn compare_keys(a Vec[u32], b Vec[u32]) -> int {
     ro na = a.len()
     ro nb = b.len()
     ro n = if na < nb { na } else { nb }
@@ -459,6 +459,6 @@ export fn Collator.root() -> Collator => { strength: STRENGTH_QUATERNARY }
 
 export fn Collator @order(a str, b str) -> int => collate_compare(a, b)
 
-export fn Collator @key(s str) -> Vec[int] => collate_sort_key(s)
+export fn Collator @key(s str) -> Vec[u32] => collate_sort_key(s)
 
 export fn Collator @same(a str, b str) -> bool => collate_eq(a, b)

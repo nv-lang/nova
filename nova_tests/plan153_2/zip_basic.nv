@@ -1,0 +1,66 @@
+module plan153_2.zip_basic
+
+import std.collections.vec_lazy
+
+test "zip two equal-length vecs" {
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(10, 20, 30)
+    ro got = a.lazy().zip(b.lazy()).collect()
+    assert(got == [(1, 10), (2, 20), (3, 30)])
+}
+
+test "zip truncates to shorter — left longer" {
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(10, 20)
+    ro got = a.lazy().zip(b.lazy()).collect()
+    assert(got == [(1, 10), (2, 20)])
+}
+
+test "zip truncates to shorter — right longer" {
+    ro a = Vec[int].of(1, 2)
+    ro b = Vec[int].of(10, 20, 30)
+    ro got = a.lazy().zip(b.lazy()).collect()
+    assert(got == [(1, 10), (2, 20)])
+}
+
+test "zip with empty left" {
+    ro a = Vec[int].of()
+    ro b = Vec[int].of(10, 20, 30)
+    ro got = a.lazy().zip(b.lazy()).collect()
+    assert(got == [])
+}
+
+test "zip with empty right" {
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of()
+    ro got = a.lazy().zip(b.lazy()).collect()
+    assert(got == [])
+}
+
+test "zip both empty" {
+    ro a = Vec[int].of()
+    ro b = Vec[int].of()
+    ro got = a.lazy().zip(b.lazy()).collect()
+    assert(got == [])
+}
+
+test "zip count" {
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(10, 20, 30)
+    ro n = a.lazy().zip(b.lazy()).count()
+    assert(n == 3)
+}
+
+test "zip then map sum of pair" {
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(10, 20, 30)
+    ro got = a.lazy().zip(b.lazy()).map(|p| p.0 + p.1).collect()
+    assert(got == [11, 22, 33])
+}
+
+test "zip single-element" {
+    ro a = Vec[int].of(42)
+    ro b = Vec[int].of(100)
+    ro got = a.lazy().zip(b.lazy()).collect()
+    assert(got == [(42, 100)])
+}

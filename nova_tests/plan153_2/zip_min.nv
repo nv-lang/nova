@@ -1,0 +1,10 @@
+module plan153_2.zip_min
+
+import std.collections.vec_lazy
+
+test "zip count" {
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(10, 20, 30)
+    ro n = a.lazy().zip(b.lazy()).count()
+    assert(n == 3)
+}
