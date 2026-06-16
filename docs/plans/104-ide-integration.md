@@ -39,8 +39,8 @@ Plan 104 — закрывает все четыре + переводит ред�
 | 104.2 | Hover + goto-definition + signature help | Symbol resolution, type rendering, doc-comment surfacing (D104/D105) | ✅ ЗАКРЫТ 2026-06-16 |
 | 104.3 | Completion (keywords + identifiers + methods + imports) | Scope-aware, type-driven (after `.`), import suggestions, snippets | ✅ ЗАКРЫТ 2026-06-16 — 52 completion tests PASS, branch plan-104-3 |
 | 104.4 | Document/workspace symbols + find-references | Outline panel, Ctrl+Shift+O, Shift+F12 | ✅ ЗАКРЫТ 2026-06-16 |
-| 104.5 | Code actions + quick-fixes (Plan 100 + Plan 101 + general) | ~25 error codes → machine-applicable fixes; auto-import; organize imports | ~5 dev-day |
-| 104.6 | Rename + format-on-save | Cross-file rename, `nova fmt` integration | ~4 dev-day |
+| 104.5 | Code actions + quick-fixes (Plan 100 + Plan 101 + general) | ~25 error codes → machine-applicable fixes; auto-import; organize imports | ✅ ЗАКРЫТ 2026-06-16 — 25 fixes, 95/95 PASS, D296 spec |
+| 104.6 | Rename + format-on-save | Cross-file rename, `nova fmt` integration | ✅ ЗАКРЫТ 2026-06-16 — 98/98 PASS, D297 spec |
 | 104.7 | Tree-sitter grammar (`tree-sitter-nova` repo) | Grammar, queries (highlights/folds/indents/injections), Helix/Zed/Neovim distribution | ~3 dev-day | ✅ **ЗАКРЫТ 2026-05-25** v0.1.0 — 84/84 fixtures, 5 query files |
 | 104.8 | Editor packaging + distribution docs | VSCode extension (TypeScript client), nvim-lspconfig PR, Helix/Zed configs, install docs | ~3 dev-day | ✅ **ЗАКРЫТ 2026-05-26** — VSCode 7/7 PASS, Helix/Zed TOML valid, editors/INSTALL.md |
 | 104.9 | Close-out: integration tests + marker closure + release notes | E2E test top-3 editors, Plan 100.8 markers ✅, Plan 101 LSP marker ✅ | ~2 dev-day |
@@ -259,19 +259,27 @@ General (5+):
 
 **✅ ЗАКРЫТ 2026-06-16** — 25 quick-fixes реализованы в `nova-lsp/src/code_actions.rs`; D296 spec (§1-6); 95/95 unit tests PASS; error-code extraction в `diagnostic_mapping`; dispatches on `diag.code`; closes Plan 100.8 Ф.2 + Plan 101 LSP marker. Branch `plan-104-5`.
 
-### 104.6 — Rename + format-on-save — ~4 dev-day
+### 104.6 — Rename + format-on-save — ✅ ЗАКРЫТ 2026-06-16
 
-**Out:**
-- `rename` handler — cross-file. Reuse find-references + replace.
-- `prepareRename` — validate cursor position (only on identifiers).
-- `formatting` / `rangeFormatting` — invoke `nova fmt` (existing CLI command from Plan 01) on file → return text edits.
+**Out (реализовано):**
+- `nova-lsp/src/rename.rs`: `prepare_rename` (cursor validation), `compute_rename` (cross-file
+  word-boundary scan + [[link]] doc-comment update + D296 atomic post-rename type-check).
+- `nova-lsp/src/format.rs`: `format_document` (nova fmt via temp file, graceful if not found),
+  `format_range` (whole-file then clip), `on_type_format` (auto-indent \n, dedent }).
+- `nova-lsp/src/server.rs`: 5 new handlers + ServerCapabilities updated (rename_provider with
+  prepare_provider=true, document_formatting_provider, document_range_formatting_provider,
+  document_on_type_formatting_provider).
+- `spec/decisions/09-tooling.md`: D296 LSP Rename Atomicity Contract.
 
-**Edge cases for rename:**
-- Symbol used in another module (через import) — must update all usages.
-- Receiver shadowing — `fn Foo @bar()` — rename `bar` should NOT touch other `bar` methods.
-- Generic params — `fn f[T](...)` rename `T` → `U` only in scope.
+**V1 simplifications:**
+- Rename uses regex-based word-boundary scan (not full symbol-table). Full symbol resolution V2.
+- `nova fmt` is a whole-file formatter; rangeFormatting clips the result to the requested range.
+- onTypeFormatting handles only `\n` and `}` in V1.
 
-**Acceptance:** F2 на функции → rename, все usages updates; save файла → форматирование применилось.
+**Acceptance:** ✅ `cargo test -p nova-lsp --release` → 98/98 PASS;
+prepareRename returns RangeWithPlaceholder for identifiers; rename rejects conflicts via atomic
+check (D296); formatting invokes nova fmt gracefully; onTypeFormatting inserts indent on newline.
+[Sub-plan: 104.6-rename-format.md]
 
 ### 104.7 — Tree-sitter grammar — ✅ ЗАКРЫТ 2026-05-25
 

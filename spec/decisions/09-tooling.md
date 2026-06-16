@@ -20,6 +20,7 @@
 | [D257](#d257-vec-index-bounds-как-элидируемый-контракт) | Vec `@index` bounds как элидируемый контракт |
 | [D277](#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv) | Test-discovery skip/route-конвенции — `fixtures/`, OS-суффикс, `_slow.nv` |
 | [D278](#d278-editor-syntax-highlighting-keyword-set-must-track-the-lexer) | Editor syntax-highlighting keyword set MUST track the lexer (conformance-тест) |
+| [D296](#d296--lsp-rename-atomicity-contract-plan-1046-2026-06-16) | LSP Rename Atomicity Contract — prepare/collect/atomic-check, WorkspaceEdit.documentChanges |
 
 ---
 
@@ -3102,3 +3103,68 @@ V2: wire `Diagnostic.suggestion` → CodeAction edit directly for full accuracy.
 - `[M-104.5-multi-edit-rename]` — rename fixes (E_PREFIX_SHADOWS_NAMED_TYPE) should
   update all usages in scope, not just the declaration.
 - `[M-104.5-organize-imports]` — sort+deduplicate import list.
+
+---
+
+## D297. LSP Rename Atomicity Contract (Plan 104.6, 2026-06-16)
+
+> **Status:** ✅ IMPLEMENTED — `nova-lsp` Plan 104.6 (branch `plan-104-6`).
+> Note: Plan 104.6 initially labelled this D296, but D296 was taken by Plan 104.5 CodeAction spec. Renumbered D297 at merge.
+
+### Контекст
+
+LSP `textDocument/rename` — cross-file операция с высоким риском введения ошибок.
+Простая замена текста может: (a) привести к конфликту имён, (b) сломать импорты,
+(c) переименовать перегруженные методы от чужих типов.
+
+### Решение — Atomic Rename Contract
+
+Rename в nova-lsp выполняется в три атомарных фазы:
+
+**Фаза 1 — Prepare** (`textDocument/prepareRename`):
+- Cursor position → identifier validation.
+- Допустимые цели: только идентификаторы (не ключевые слова, не строковые литералы,
+  не комментарии, не пробелы).
+- Возвращает `PrepareRenameResponse::RangeWithPlaceholder { range, placeholder }`.
+- Ошибка `InvalidParams (-32602)` при недопустимой позиции.
+
+**Фаза 2 — Collect** (`textDocument/rename`, step 1):
+- Regex-like word-boundary scan всех open documents + workspace files на диске.
+- Обновляет doc-comment `[[old_name]]` ссылки → `[[new_name]]`.
+- Строит `WorkspaceEdit.documentChanges` (массив `TextDocumentEdit`) — formат с
+  `OptionalVersionedTextDocumentIdentifier` для version tracking.
+- **НЕ** изменяет файлы сразу — только строит план правок.
+
+**Фаза 3 — Atomic Check** (`textDocument/rename`, step 2):
+- Применяет правки к in-memory копиям каждого изменённого файла.
+- Запускает `check_source_inner` (parse + type-check) на каждой копии.
+- Если хотя бы один файл не проходит check → **вся rename операция отклоняется**
+  с `ResponseError { code: -32803, message: "rename rejected: post-rename type errors in <uri>: <diags>" }`.
+- Это предотвращает введение `E_UNDECLARED`, name-collision errors и других регрессий.
+
+### Scoping rules (V1)
+
+- Generic params `[T]` — scope guard через word-boundary match в пределах файла.
+  Full per-position symbol resolution (точная scope границa) — V2.
+- Receiver methods — word-boundary match обновляет все вхождения в файле.
+  Точное ограничение по типу receiver — V2 (требует API типчекера).
+
+### New name validation
+
+Новое имя `new_name` должно быть валидным идентификатором Nova:
+- Не пустое.
+- Начинается с буквы или `_` (не с цифры).
+- Состоит только из `is_alphanumeric() || '_'`.
+- Не является зарезервированным ключевым словом Nova.
+
+### WorkspaceEdit format
+
+Используется `documentChanges: DocumentChanges::Edits(Vec<TextDocumentEdit>)` —
+версионированный формат, совместимый с `workspace.workspaceEdit.documentChanges`
+client capability. **Не** используется устаревший `changes: HashMap<Url, Vec<TextEdit>>`.
+
+### Связь
+
+- `nova-lsp/src/rename.rs` — реализация.
+- `nova-lsp/src/server.rs` — `prepare_rename` + `rename` handlers.
+- Plan 104.6 sub-plan file: `docs/plans/104.6-rename-format.md`.

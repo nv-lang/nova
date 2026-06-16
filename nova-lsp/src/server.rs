@@ -8,6 +8,7 @@
 //! Plan 104.1.Ф.6: multi-file workspace recheck on every didChange.
 //! Plan 104.4: documentSymbol, workspaceSymbol, references handlers.
 //! Plan 104.5: code_action — ≥25 quick-fixes via compute_code_actions.
+//! Plan 104.6: rename + format-on-save handlers.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -22,9 +23,11 @@ use crate::code_actions::compute_code_actions;
 use crate::compiler::{check_file, check_workspace, run_with_large_stack};
 use crate::completion;
 use crate::diagnostic_mapping::to_lsp;
+use crate::format::{format_document, format_range, on_type_format};
 use crate::goto_definition::compute_goto_definition;
 use crate::hover::compute_hover;
 use crate::incremental::apply_changes;
+use crate::rename::{prepare_rename, RenameDoc, compute_rename};
 use crate::semantic_tokens_delta::{build_delta_response, SemanticTokensSnapshot};
 use crate::signature_help::compute_signature_help;
 use crate::state::{ParsedFile, WorkspaceState};
@@ -285,8 +288,17 @@ impl LanguageServer for Backend {
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
-                // Future capabilities (uncomment as sub-plans land):
-                // 104.6: rename_provider, document_formatting_provider
+                // Plan 104.6: rename + format-on-save.
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
+                document_formatting_provider: Some(OneOf::Left(true)),
+                document_range_formatting_provider: Some(OneOf::Left(true)),
+                document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
+                    first_trigger_character: "\n".to_string(),
+                    more_trigger_character: Some(vec!["}".to_string()]),
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -415,6 +427,162 @@ impl LanguageServer for Backend {
 
         // Clear diagnostics in the editor (LSP convention: empty list on close).
         self.publish_empty_diagnostics(uri).await;
+    }
+
+    // ── Plan 104.6: Rename + Format-on-save ─────────────────────────────────
+
+    /// `textDocument/prepareRename` — validate that the cursor is on a
+    /// renameable identifier and return the current word span.
+    ///
+    /// Returns an error if the cursor is on a keyword, comment, string literal,
+    /// or whitespace.
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        let uri = params.text_document.uri.clone();
+        let pos = params.position;
+
+        let Some(doc) = self.state.docs.get(&uri) else {
+            return Err(tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::InvalidParams,
+                message: "document not open".into(),
+                data: None,
+            });
+        };
+        let text = doc.text.to_string();
+        drop(doc);
+
+        let response = run_with_large_stack(move || prepare_rename(&text, pos))?;
+        Ok(Some(response))
+    }
+
+    /// `textDocument/rename` — cross-file rename with atomic post-check.
+    ///
+    /// Returns a `WorkspaceEdit` with `documentChanges` if rename is valid.
+    /// Returns an error if the new name is invalid or post-rename type-check
+    /// introduces errors (D296 atomic rename contract).
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let uri = params.text_document_position.text_document.uri.clone();
+        let new_name = params.new_name.clone();
+
+        // Collect all open documents.
+        let mut docs: Vec<RenameDoc> = Vec::new();
+        for entry in self.state.docs.iter() {
+            docs.push(RenameDoc {
+                uri: entry.key().clone(),
+                text: entry.value().text.to_string(),
+                version: Some(entry.value().version),
+            });
+        }
+
+        // Also collect workspace files not currently open.
+        if let Some(root) = self.state.workspace_root() {
+            let open_uris: std::collections::HashSet<_> =
+                self.state.docs.iter().map(|e| e.key().clone()).collect();
+
+            if let Ok(nv_files) = collect_nv_files_for_rename(&root) {
+                for path in nv_files {
+                    if let Some(file_uri) = tower_lsp::lsp_types::Url::from_file_path(&path).ok() {
+                        if !open_uris.contains(&file_uri) {
+                            if let Ok(text) = std::fs::read_to_string(&path) {
+                                docs.push(RenameDoc {
+                                    uri: file_uri,
+                                    text,
+                                    version: None,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Find old_name: extract word at cursor in the primary doc.
+        let old_name = {
+            let Some(doc) = self.state.docs.get(&uri) else {
+                return Err(tower_lsp::jsonrpc::Error {
+                    code: tower_lsp::jsonrpc::ErrorCode::InvalidParams,
+                    message: "document not open".into(),
+                    data: None,
+                });
+            };
+            let text = doc.text.to_string();
+            drop(doc);
+            let pos = params.text_document_position.position;
+            let line_starts = crate::rename::compute_line_starts(&text);
+            let line_idx = pos.line as usize;
+            let line_start = line_starts.get(line_idx).copied().unwrap_or(0);
+            // Convert UTF-16 col to byte offset (simplified: ASCII lines).
+            let col_byte = pos.character as usize;
+            let byte_off = line_start + col_byte;
+            let (ws, we) = crate::rename::word_at(&text, byte_off);
+            if ws == we {
+                return Err(tower_lsp::jsonrpc::Error {
+                    code: tower_lsp::jsonrpc::ErrorCode::InvalidParams,
+                    message: "cursor is not on an identifier".into(),
+                    data: None,
+                });
+            }
+            text[ws..we].to_string()
+        };
+
+        tracing::info!(old_name = %old_name, new_name = %new_name, "rename requested");
+
+        let edit = run_with_large_stack(move || compute_rename(&docs, &old_name, &new_name))?;
+        Ok(Some(edit))
+    }
+
+    /// `textDocument/formatting` — invoke `nova fmt` and return text edits.
+    async fn formatting(
+        &self,
+        params: DocumentFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri.clone();
+        let Some(doc) = self.state.docs.get(&uri) else {
+            return Ok(None);
+        };
+        let text = doc.text.to_string();
+        drop(doc);
+
+        let edits = run_with_large_stack(move || format_document(&text, None));
+        Ok(Some(edits))
+    }
+
+    /// `textDocument/rangeFormatting` — format only a range.
+    async fn range_formatting(
+        &self,
+        params: DocumentRangeFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri.clone();
+        let range = params.range;
+        let Some(doc) = self.state.docs.get(&uri) else {
+            return Ok(None);
+        };
+        let text = doc.text.to_string();
+        drop(doc);
+
+        let edits = run_with_large_stack(move || format_range(&text, range, None));
+        Ok(Some(edits))
+    }
+
+    /// `textDocument/onTypeFormatting` — auto-indent/close on trigger characters.
+    async fn on_type_formatting(
+        &self,
+        params: DocumentOnTypeFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document_position.text_document.uri.clone();
+        let pos = params.text_document_position.position;
+        let trigger = params.ch.clone();
+
+        let Some(doc) = self.state.docs.get(&uri) else {
+            return Ok(None);
+        };
+        let text = doc.text.to_string();
+        drop(doc);
+
+        let edits = run_with_large_stack(move || on_type_format(&text, pos, &trigger));
+        Ok(Some(edits))
     }
 
     /// Plan 104.3: textDocument/completion handler.
@@ -1272,4 +1440,32 @@ fn find_decl_location(uri: &Url, src: &str, symbol_name: &str) -> Option<Locatio
     let (start, end) = occs.into_iter().next()?;
     let range = crate::diagnostic_mapping::span_to_range(&rope, start, end);
     Some(Location { uri: uri.clone(), range })
+}
+
+/// Plan 104.6: collect .nv files under `root` for cross-file rename.
+///
+/// Excludes `target/` and hidden directories.
+fn collect_nv_files_for_rename(root: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut files = Vec::new();
+    collect_nv_files_rec(root, &mut files);
+    Ok(files)
+}
+
+fn collect_nv_files_rec(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name == "target" || name.starts_with('.') {
+                continue;
+            }
+            collect_nv_files_rec(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("nv") {
+            out.push(path);
+        }
+    }
 }

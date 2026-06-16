@@ -127,7 +127,9 @@ fn check_source(src: &str) -> Vec<Diagnostic> {
 }
 
 /// The actual parse + type-check pipeline (no panic catching).
-fn check_source_inner(src: &str) -> Vec<Diagnostic> {
+///
+/// Public so that `rename.rs` can use it for the atomic post-rename check.
+pub fn check_source_inner(src: &str) -> Vec<Diagnostic> {
     // Step 1: parse
     let module = match nova_codegen::parser::parse(src) {
         Ok(m) => m,
