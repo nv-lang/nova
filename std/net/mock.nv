@@ -38,8 +38,8 @@ export fn mock_tcp_net() -> Effect[TcpNet] => effect TcpNet {
     connect(_addr)         => Ok(TcpStream._from_raw(CTcpStream(3 as *())))
     write(_stream, data)   => Ok(data.len())
     read(_stream, _max)    => Ok("mock-reply")
-    close_stream(_stream)  {}
-    close_listener(_lst)   {}
+    close_stream(stream)   { ro _ = stream }
+    close_listener(lst)    { ro _ = lst }
     listener_local_port(_lst)         => 4242
     listener_local_addr(_lst)         => SocketAddr._from_raw(socket_addr_loopback(4242))
     stream_local_port(_s)             => 5050
@@ -62,7 +62,7 @@ export fn mock_udp_net() -> Effect[UdpNet] => effect UdpNet {
     bind(_addr)                    => Ok(UdpSocket._from_raw(CUdpSocket(10 as *())))
     send_to(_sock, data, _addr)    => Ok(data.len())
     recv_from(_sock, _max)         => Ok(("", SocketAddr._from_raw(socket_addr_loopback(0))))
-    close_socket(_sock)            {}
+    close_socket(sock)             { ro _ = sock }
     socket_local_port(_sock)       => 7070
     socket_local_addr(_sock)       => SocketAddr._from_raw(socket_addr_loopback(7070))
 }

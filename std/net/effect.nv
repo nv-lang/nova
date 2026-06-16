@@ -73,8 +73,10 @@ export type AddrNet effect {
     to_str(addr SocketAddr) -> str
 }
 
-// DnsNet -- async DNS resolution. Implemented in Ph.5 (dns.nv).
-// Commented out until []SocketAddr Vec monomorphization is stable.
-// export type DnsNet effect {
-//     lookup(host str, port u16) -> []SocketAddr
-// }
+// DnsNet -- async DNS resolution. Implemented in dns.nv.
+// Parking via uv_getaddrinfo callback (nova_rt/net.c dns_lookup).
+// D293: DnsNet effect family spec.
+#stable(since = "0.1")
+export type DnsNet effect {
+    lookup(host str, port u16) -> Result[[]SocketAddr, NetError]
+}

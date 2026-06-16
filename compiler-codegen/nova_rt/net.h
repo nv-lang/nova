@@ -258,6 +258,28 @@ uint16_t            udp_socket_local_port(NovaRt_UdpSocket* s);
 NovaRt_SocketAddr*  udp_socket_local_addr(NovaRt_UdpSocket* s);
 nova_unit           udp_socket_close(NovaRt_UdpSocket* s);
 
+/* ─── DNS ─────────────────────────────────────────────────────────── */
+
+/* dns_lookup: resolve "host" to a list of SocketAddr for the given port.
+ * Blocking (parks fiber via uv_getaddrinfo callback).
+ * Returns count of addresses written into *out_addrs (GC-heap array).
+ * Returns -1 on error; call net_last_error() for the message.
+ *
+ * Nova ffi.nv wraps this as:
+ *   extern "C" fn dns_lookup(host *u8, host_len int, port u16, out_addrs *()) -> int
+ * On success Nova reads out_addrs[0..count-1] as CSocketAddr handles. */
+/* dns_lookup: park fiber, call uv_getaddrinfo.
+ * Returns count (≥1) on success; dns_last_addrs() returns the GC-heap array.
+ * Returns -1 on error; net_last_error() returns the message.
+ * The two TLS accessors are cooperative-safe: no Blocking call may interleave
+ * between dns_lookup() returning and dns_last_addrs()/dns_addr_at() reads. */
+nova_int            dns_lookup(const uint8_t* host, nova_int host_len,
+                               uint16_t port);
+
+/* dns_addr_at: read the i-th SocketAddr from the last dns_lookup result.
+ * Returns the pointer cast to nova_int (intptr_t) — matches CSocketAddr ABI. */
+nova_int            dns_addr_at(nova_int i);
+
 #ifdef __cplusplus
 }
 #endif

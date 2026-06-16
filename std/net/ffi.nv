@@ -74,3 +74,12 @@ extern "C" fn udp_socket_recv_sender() -> CSocketAddr
 extern "C" fn udp_socket_local_port(sock CUdpSocket) -> u16
 extern "C" fn udp_socket_local_addr(sock CUdpSocket) -> CSocketAddr
 extern "C" fn udp_socket_close(sock CUdpSocket) -> ()
+
+// ─── DNS ──────────────────────────────────────────────────────────────────────
+
+// dns_lookup: resolve host to SocketAddr list for port (parks fiber).
+// Returns count (≥1) on success; read addrs via dns_addr_at(i).
+// Returns -1 on error; call net_last_error().
+extern "C" fn dns_lookup(host_ptr *u8, host_len int, port u16) -> int
+// dns_addr_at: read i-th CSocketAddr from the last dns_lookup result (TLS).
+extern "C" fn dns_addr_at(i int) -> CSocketAddr

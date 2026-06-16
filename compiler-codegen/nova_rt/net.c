@@ -1171,3 +1171,133 @@ nova_unit udp_socket_close(NovaRt_UdpSocket* s) {
     NovaRt_UdpSocket_method_close(s);
     return NOVA_UNIT;
 }
+
+/* ─── DNS ─────────────────────────────────────────────────────────────── */
+
+typedef struct {
+    uv_getaddrinfo_t    req;
+    NovaFiberQueue*     scope;
+    int                 slot;
+    int                 status;      /* uv error code or 0 */
+    struct addrinfo*    res;         /* libuv-owned result list */
+} NovaDnsReq;
+
+static void _dns_getaddrinfo_cb(uv_getaddrinfo_t* req, int status,
+                                struct addrinfo* res) {
+    NovaDnsReq* dr = (NovaDnsReq*)req->data;
+    dr->status = status;
+    dr->res    = res;
+    NovaFiberQueue* sc = dr->scope;
+    int             sl = dr->slot;
+    dr->scope = NULL;
+    nova_sched_wake(sc, sl);
+}
+
+static NovaStopMode _dns_stop_cb(void* handle) {
+    NovaDnsReq* dr = (NovaDnsReq*)handle;
+    /* uv_getaddrinfo can't be cancelled mid-flight without closing the loop.
+     * We set a sentinel and the fiber detects cancel on resume. */
+    (void)dr;
+    return NOVA_STOP_ASYNC;
+}
+
+/* TLS: last dns_lookup result array — cooperative-safe (read immediately after call). */
+#if defined(_MSC_VER)
+  static __declspec(thread) NovaRt_SocketAddr** _net_dns_addrs;
+#else
+  static __thread NovaRt_SocketAddr** _net_dns_addrs;
+#endif
+
+nova_int dns_lookup(const uint8_t* host_ptr, nova_int host_len, uint16_t port) {
+    NovaRt_SocketAddr** out_addrs = NULL;
+    /* Build NUL-terminated host string. */
+    char* host = (char*)malloc((size_t)host_len + 1);
+    if (!host) { _net_store_err(_nova_net_cstr("OOM")); return -1; }
+    memcpy(host, host_ptr, (size_t)host_len);
+    host[host_len] = '\0';
+
+    char port_str[8];
+    snprintf(port_str, sizeof(port_str), "%u", (unsigned)port);
+
+    uv_loop_t* loop = nova_current_loop();
+    NovaFiberQueue* scope = _nova_active_scope;
+    int slot = _nova_active_slot;
+    if (!scope) {
+        free(host);
+        fprintf(stderr, "nova/net: dns_lookup outside scope\n");
+        abort();
+    }
+
+    NovaFiberQueue* cancel_sc = _nova_net_cancel_scope(scope);
+    if (nova_abool_load(&cancel_sc->cancel_requested)) {
+        free(host);
+        _net_store_err(_nova_net_cstr("cancelled"));
+        return -1;
+    }
+
+    NovaDnsReq* dr = (NovaDnsReq*)nova_alloc(sizeof(NovaDnsReq));
+    memset(dr, 0, sizeof(*dr));
+    dr->req.data = dr;
+    dr->scope    = scope;
+    dr->slot     = slot;
+
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    int rc = uv_getaddrinfo(loop, &dr->req, _dns_getaddrinfo_cb,
+                            host, port_str, &hints);
+    free(host);
+    if (rc != 0) {
+        _net_store_err(_nova_net_uv_err(rc));
+        return -1;
+    }
+
+    nova_sched_register_pending(scope, slot, dr, _dns_stop_cb);
+    nova_sched_park(scope, slot);
+    nova_sched_unregister_pending(scope, slot);
+
+    if (nova_abool_load(&cancel_sc->cancel_requested)) {
+        if (dr->res) uv_freeaddrinfo(dr->res);
+        _net_store_err(_nova_net_cstr("cancelled"));
+        return -1;
+    }
+
+    if (dr->status != 0) {
+        if (dr->res) uv_freeaddrinfo(dr->res);
+        _net_store_err(_nova_net_uv_err(dr->status));
+        return -1;
+    }
+
+    /* Count results. */
+    nova_int count = 0;
+    for (struct addrinfo* ai = dr->res; ai != NULL; ai = ai->ai_next) {
+        if (ai->ai_family == AF_INET || ai->ai_family == AF_INET6) count++;
+    }
+    if (count == 0) {
+        uv_freeaddrinfo(dr->res);
+        _net_store_err(_nova_net_cstr("no addresses"));
+        return -1;
+    }
+
+    /* Allocate array of SocketAddr* on the GC heap. */
+    NovaRt_SocketAddr** arr = (NovaRt_SocketAddr**)
+        nova_alloc(sizeof(NovaRt_SocketAddr*) * (size_t)count);
+    nova_int i = 0;
+    for (struct addrinfo* ai = dr->res; ai != NULL; ai = ai->ai_next) {
+        if (ai->ai_family != AF_INET && ai->ai_family != AF_INET6) continue;
+        struct sockaddr_storage ss;
+        memset(&ss, 0, sizeof(ss));
+        memcpy(&ss, ai->ai_addr, ai->ai_addrlen);
+        arr[i++] = _nova_addr_from_storage(&ss);
+    }
+    uv_freeaddrinfo(dr->res);
+
+    _net_dns_addrs = arr;
+    return count;
+}
+
+nova_int dns_addr_at(nova_int i) {
+    return (nova_int)(intptr_t)_net_dns_addrs[i];
+}

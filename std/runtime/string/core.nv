@@ -89,6 +89,12 @@ export fn str @as_bytes() -> ro []u8 {
     Vec[u8].from_raw_parts(@ptr, @byte_len(), @byte_len())
 }
 
+// Raw pointer to the first byte of the UTF-8 data (like Rust `str::as_ptr`).
+// The pointer is valid for @byte_len() bytes. Caller must not write through it
+// (str buffer is immutable, D176 R8) and must not retain past the str lifetime.
+// Primarily for `extern "C" fn` FFI that takes `const uint8_t* / size_t` pair.
+export fn str @as_ptr() -> *u8 => @ptr
+
 // Module-private: is the byte at `b` a UTF-8 continuation byte (0b10xxxxxx)?
 fn is_cont(b int) -> bool => (b & 0xC0) == 0x80
 

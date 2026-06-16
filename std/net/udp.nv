@@ -38,7 +38,7 @@ module std.net
 /// be fragmented or dropped. `send_to` returns `Err(...)` if the datagram
 /// exceeds the system's maximum allowed size.
 #stable(since = "0.1")
-export type UdpSocket value { priv handle CUdpSocket }
+export type UdpSocket consume value { priv handle CUdpSocket }
 
 /// Bind a UDP socket to the given address.
 ///
@@ -124,7 +124,11 @@ export fn real_udp_net() -> Effect[UdpNet] => effect UdpNet {
         if udp_socket_recv_from(sock.handle, max) < 0 { udp_recv_result_err() }
         else { _udp_recv_ok(udp_socket_recv_data(), SocketAddr._from_raw(udp_socket_recv_sender())) }
     }
-    close_socket(sock) => udp_socket_close(sock.handle)
+    close_socket(sock) {
+        ro h = sock.handle
+        ro _ = sock
+        udp_socket_close(h)
+    }
     socket_local_port(sock) => udp_socket_local_port(sock.handle)
     socket_local_addr(sock) => SocketAddr._from_raw(udp_socket_local_addr(sock.handle))
 }

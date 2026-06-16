@@ -37,7 +37,7 @@ module std.net
 /// `accept` carries `TcpNet Blocking`.
 /// `close` carries `TcpNet` (consume).
 #stable(since = "0.1")
-export type TcpListener value { priv handle CTcpListener }
+export type TcpListener consume value { priv handle CTcpListener }
 
 /// Connected async TCP stream.
 ///
@@ -57,7 +57,7 @@ export type TcpListener value { priv handle CTcpListener }
 /// `write` carries `TcpNet Blocking`.
 /// `close` carries `TcpNet` (consume).
 #stable(since = "0.1")
-export type TcpStream value { priv handle CTcpStream }
+export type TcpStream consume value { priv handle CTcpStream }
 
 // ─── TcpListener public API ──────────────────────────────────────────────────
 
@@ -242,8 +242,16 @@ export fn real_tcp_net() -> Effect[TcpNet] => effect TcpNet {
         if n < 0 { tcp_read_result_err() }
         else { _tcp_read_ok(tcp_stream_read_data()) }
     }
-    close_stream(stream) => tcp_stream_close(stream.handle)
-    close_listener(listener) => tcp_listener_close(listener.handle)
+    close_stream(stream) {
+        ro h = stream.handle
+        ro _ = stream
+        tcp_stream_close(h)
+    }
+    close_listener(listener) {
+        ro h = listener.handle
+        ro _ = listener
+        tcp_listener_close(h)
+    }
     listener_local_port(listener) => tcp_listener_local_port(listener.handle)
     listener_local_addr(listener) => SocketAddr._from_raw(tcp_listener_local_addr(listener.handle))
     stream_local_port(stream) => tcp_stream_local_port(stream.handle)
