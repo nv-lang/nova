@@ -1,0 +1,8 @@
+// EXPECT_COMPILE_ERROR E_IMPORT_GLOB
+//
+// Plan 163 Ф.2 (D282): negative — bare whole-module import without .{} selector
+// or `as` alias triggers E_IMPORT_GLOB.
+
+module plan163.f3_import_glob_neg
+
+import nova_tests.plan163.plan163_lib

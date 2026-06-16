@@ -1,0 +1,4 @@
+// Plan 163 (D282): second peer file for plan163_lib folder-module.
+// Having 2 peers ensures nova treats plan163_lib/ as a folder-module.
+
+module plan163.plan163_lib

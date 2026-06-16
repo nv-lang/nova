@@ -1,0 +1,10 @@
+// Plan 163 Ф.2 (D282): positive — `import m as alias` is allowed (qualified namespace).
+// Qualified access via alias.func() is the idiomatic form.
+
+module plan163.f4_import_as_pos
+
+import nova_tests.plan163.plan163_lib as lib
+
+test "import as alias compiles and qualified call works" {
+    assert(lib.greet() == 42)
+}
