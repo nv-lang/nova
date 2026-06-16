@@ -140,12 +140,9 @@ export type StepRangeIter value {
 /// }
 /// ```
 #stable(since = "0.1")
-export fn Range @step_by(step int) Fail[OverflowError] -> StepRangeIter {
-    if step <= 0 {
-        throw OverflowError { msg: "Range.step_by: step must be positive, got ${step}" }
-    }
-    StepRangeIter { @end, step, _cur: @start }
-}
+export fn Range @step_by(step int) -> StepRangeIter
+    requires step > 0
+    => { @end, step, _cur: @start }
 
 export fn StepRangeIter mut @next() -> Option[int] {
     if @_cur >= @end { return None }
@@ -344,20 +341,13 @@ test "step_by step >= end-start gives single element" {
     assert(count == 1)                      // только начальный 0
 }
 
-test "step_by zero step throws" {
-    ro r = with Fail[OverflowError] = |e| interrupt None {
-        ro it = (0..10).step_by(0)
-        Some(it)
-    }
-    assert(r == None)
-}
-
-test "step_by negative step throws" {
-    ro r = with Fail[OverflowError] = |e| interrupt None {
-        ro it = (0..10).step_by(-1)
-        Some(it)
-    }
-    assert(r == None)
+test "step_by step=1 yields every element" {
+    mut it = (0..4).step_by(1)
+    assert(it.next() == Some(0))
+    assert(it.next() == Some(1))
+    assert(it.next() == Some(2))
+    assert(it.next() == Some(3))
+    assert(it.next() == None)
 }
 
 
