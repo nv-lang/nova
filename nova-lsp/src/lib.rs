@@ -18,3 +18,4 @@ pub mod server;
 pub mod signature_help;
 pub mod state;
 pub mod symbol;
+pub mod symbols;

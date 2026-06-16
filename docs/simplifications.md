@@ -27,6 +27,17 @@
 
 ---
 
+### Plan 104.4 — documentSymbol + workspaceSymbol + references V1 (2026-06-16, ✅ CLOSED)
+
+- **Где** — `nova-lsp/src/symbols.rs`, `nova-lsp/src/server.rs`, `nova-lsp/tests/symbols_references.rs`.
+- **Что сделано** — `textDocument/documentSymbol`: AST-walker по `Module.items`; two-pass — first pass collects TypeDecl into index, second pass nests FnDecl методы под receiver type. Cache per-URI (`DashMap<Url, Arc<Vec<DocumentSymbol>>>`), инвалидируется при didChange/didOpen. `workspace/symbol`: per-file index (`DashMap<Url, Vec<WorkspaceSymbolEntry>>`), обновляется инкрементально; substring + case-insensitive поиск; top-100 pagination. `textDocument/references`: word-boundary scan по всем open + disk `.nv` файлам; `includeDeclaration` option. Capabilities: `documentSymbolProvider`, `workspaceSymbolProvider`, `referencesProvider`. Тесты: 86 lib unit tests + 15 integration tests; всё PASS.
+- **Упрощение** — `[M-104.4-refs-incremental-index]`: references scan = full filesystem per-request (V2: incremental index gated на type-checker integration). `[M-104.4-workspace-symbol-fuzzy]`: substring V1 (V2: fuzzy ranking). `[M-104.4-cross-file-method-nesting]`: methods вложены под type только в пределах одного файла по receiver-name matching (V2: cross-file resolver).
+- **Как чинить** — V2 после Plan 104.2 (type-checker resolver API для cross-file resolution) + Plan 104.6 (rename reuses references).
+- **D-блоки** — нет новых D-блоков; реализует capability из Plan 104 architecture §104.4.
+- **Приоритет** — L (CLOSED; markers M-104.4-* open V2 tasks).
+
+---
+
 ### Plan 153 Phase B — step_by / chain / zip / flat_map + scalar @min/@max (2026-06-16)
 
 - **Где** — `std/collections/vec_lazy.nv`, `std/collections/vec_iter.nv`, `std/runtime/defaults.nv`.

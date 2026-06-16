@@ -14,6 +14,7 @@ use tower_lsp::lsp_types::Url;
 
 use crate::debouncer::Debouncer;
 use crate::semantic_tokens_delta::SemanticTokensSnapshot;
+use crate::symbols::{DocumentSymbolCache, WorkspaceIndex};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data model
@@ -75,6 +76,15 @@ pub struct WorkspaceState {
     /// monotonic integer). Гарантирует client'у что old result_ids не
     /// будут случайно reused при wrap-around.
     pub semantic_tokens_counter: AtomicU64,
+
+    /// Plan 104.4: per-URI document symbol cache.
+    /// Invalidated on `didChange`/`didOpen`.  Populated lazily on first
+    /// `textDocument/documentSymbol` request after each edit.
+    pub document_symbol_cache: DocumentSymbolCache,
+
+    /// Plan 104.4: project-wide symbol index for `workspace/symbol`.
+    /// Updated incrementally: per-file re-index on `didChange`/`didOpen`.
+    pub workspace_index: WorkspaceIndex,
 }
 
 impl Default for WorkspaceState {
@@ -85,6 +95,8 @@ impl Default for WorkspaceState {
             workspace_root: Mutex::new(None),
             semantic_tokens_cache: DashMap::new(),
             semantic_tokens_counter: AtomicU64::new(0),
+            document_symbol_cache: DocumentSymbolCache::default(),
+            workspace_index: WorkspaceIndex::default(),
         }
     }
 }

@@ -6,6 +6,7 @@
 //! Plan 104.1.Ф.4: TextDocumentSyncKind::Incremental — apply range edits.
 //! Plan 104.1.Ф.5: publishDiagnostics — debounced background recompile.
 //! Plan 104.1.Ф.6: multi-file workspace recheck on every didChange.
+//! Plan 104.4: documentSymbol, workspaceSymbol, references handlers.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -25,6 +26,10 @@ use crate::incremental::apply_changes;
 use crate::semantic_tokens_delta::{build_delta_response, SemanticTokensSnapshot};
 use crate::signature_help::compute_signature_help;
 use crate::state::{ParsedFile, WorkspaceState};
+use crate::symbols::{
+    collect_nv_files, compute_document_symbols, entries_to_workspace_symbols,
+    find_references, symbol_at_position,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Backend
@@ -270,8 +275,11 @@ impl LanguageServer for Backend {
                     completion_item: None,
                     all_commit_characters: None,
                 }),
+                // Plan 104.4: document symbols, workspace symbols, references.
+                document_symbol_provider: Some(OneOf::Left(true)),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
                 // Future capabilities (uncomment as sub-plans land):
-                // 104.4: document_symbol_provider, workspace_symbol_provider
                 // 104.6: rename_provider, document_formatting_provider
                 ..Default::default()
             },
@@ -315,8 +323,15 @@ impl LanguageServer for Backend {
             );
         }
 
-        self.state.docs.insert(uri.clone(), ParsedFile { text, version });
+        self.state.docs.insert(uri.clone(), ParsedFile { text: text.clone(), version });
         tracing::debug!(uri = %uri, version, "document opened and cached");
+
+        // Plan 104.4: invalidate document symbol cache + update workspace index.
+        self.state.document_symbol_cache.invalidate(&uri);
+        {
+            let src = text.to_string();
+            self.state.workspace_index.index_file(uri.clone(), &src);
+        }
 
         // Immediate recheck on open (no debounce — user just opened the file).
         self.schedule_recheck(uri, version);
@@ -361,6 +376,14 @@ impl LanguageServer for Backend {
             }
         }
 
+        // Plan 104.4: invalidate document symbol cache + re-index workspace symbols.
+        self.state.document_symbol_cache.invalidate(&uri);
+        if let Some(doc) = self.state.docs.get(&uri) {
+            let src = doc.text.to_string();
+            drop(doc);
+            self.state.workspace_index.index_file(uri.clone(), &src);
+        }
+
         // Debounced recheck — coalesces rapid edits.
         self.schedule_recheck(uri, version);
     }
@@ -378,6 +401,10 @@ impl LanguageServer for Backend {
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
         self.state.docs.remove(&uri);
+        // Plan 104.4: evict from symbol caches.
+        self.state.document_symbol_cache.invalidate(&uri);
+        // Note: we do NOT remove from workspace_index on close — the file still
+        // exists on disk; its symbols remain searchable (consistent with gopls).
         tracing::debug!(uri = %uri, "document closed and evicted from cache");
 
         // Clear diagnostics in the editor (LSP convention: empty list on close).
@@ -433,6 +460,163 @@ impl LanguageServer for Backend {
 
         tracing::debug!(uri = %uri, count = items.len(), "completion: returning items");
         Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    // ── Plan 104.4: symbols + references ─────────────────────────────────────
+
+    /// `textDocument/documentSymbol` — outline for VSCode sidebar.
+    ///
+    /// Returns a hierarchical `DocumentSymbol` list: functions, types (with
+    /// nested fields/variants/protocol-methods), tests, consts, lets.
+    /// Methods are nested under their receiver type when declared in the same
+    /// file.  Falls back to empty list on parse failure (graceful).
+    ///
+    /// Cache per-URI, invalidated on `didChange`/`didOpen`.
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = params.text_document.uri.clone();
+
+        // Check cache first.
+        if let Some(cached) = self.state.document_symbol_cache.get(&uri) {
+            let list = (*cached).clone();
+            return Ok(if list.is_empty() {
+                None
+            } else {
+                Some(DocumentSymbolResponse::Nested(list))
+            });
+        }
+
+        // Compute symbols (parse only — no typecheck, ≤50ms).
+        let src = match self.state.docs.get(&uri) {
+            Some(doc) => doc.text.to_string(),
+            None => return Ok(None),
+        };
+
+        let symbols = run_with_large_stack(move || compute_document_symbols(&src));
+
+        // Populate cache.
+        self.state.document_symbol_cache.insert(uri, symbols.clone());
+
+        Ok(if symbols.is_empty() {
+            None
+        } else {
+            Some(DocumentSymbolResponse::Nested(symbols))
+        })
+    }
+
+    /// `workspace/symbol` — Ctrl+T project-wide symbol search.
+    ///
+    /// Substring + case-insensitive matching against the workspace index.
+    /// Returns at most 100 results.  Empty query returns up to 100 symbols
+    /// from any file.
+    ///
+    /// Index is built incrementally on `didOpen`/`didChange`; initial scan of
+    /// the workspace root happens at first `documentSymbol` request or when the
+    /// index is empty.
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> Result<Option<Vec<SymbolInformation>>> {
+        let query = &params.query;
+        const LIMIT: usize = 100;
+
+        // Guard: very long queries never match anything useful.
+        if query.len() > 1000 {
+            return Ok(None);
+        }
+
+        // If workspace index is empty and we have a root, do a one-shot scan.
+        if self.state.workspace_index.file_count() == 0 {
+            if let Some(root) = self.state.workspace_root() {
+                let files = collect_nv_files(&root);
+                for (uri, src) in &files {
+                    self.state.workspace_index.index_file(uri.clone(), src);
+                }
+            }
+        }
+
+        let entries = self.state.workspace_index.search(query, LIMIT);
+        let symbols = entries_to_workspace_symbols(entries);
+
+        Ok(if symbols.is_empty() { None } else { Some(symbols) })
+    }
+
+    /// `textDocument/references` — Shift+F12 find all usages.
+    ///
+    /// V1 strategy: extract symbol name at cursor position via word-boundary
+    /// scan, then scan all `.nv` files in the workspace for that name.
+    /// `includeDeclaration` is honoured by comparing each match against the
+    /// cursor position's span.
+    ///
+    /// Performance: full workspace scan per-request, ≤1s for typical projects
+    /// (<100 files).  Incremental index is V2.
+    async fn references(
+        &self,
+        params: ReferenceParams,
+    ) -> Result<Option<Vec<Location>>> {
+        let uri = params.text_document_position.text_document.uri.clone();
+        let position = params.text_document_position.position;
+        let include_decl = params.context.include_declaration;
+
+        // Get text for the file under cursor.
+        let src = match self.state.docs.get(&uri) {
+            Some(doc) => doc.text.to_string(),
+            None => return Ok(None),
+        };
+
+        // Extract identifier at position.
+        let symbol_name = match symbol_at_position(&src, position) {
+            Some(name) => name,
+            None => return Ok(None),
+        };
+
+        tracing::debug!(symbol = %symbol_name, "references: scanning workspace");
+
+        // Collect all .nv files to scan.
+        let mut files: Vec<(Url, String)> = Vec::new();
+
+        // Add all open documents (may have unsaved edits).
+        for entry in self.state.docs.iter() {
+            files.push((entry.key().clone(), entry.value().text.to_string()));
+        }
+
+        // If workspace root is set, also scan disk files not in open docs.
+        if let Some(root) = self.state.workspace_root() {
+            let disk_files = collect_nv_files(&root);
+            let open_uris: std::collections::HashSet<Url> =
+                files.iter().map(|(u, _)| u.clone()).collect();
+            for (file_uri, text) in disk_files {
+                if !open_uris.contains(&file_uri) {
+                    files.push((file_uri, text));
+                }
+            }
+        }
+
+        // Compute declaration location (heuristic: first occurrence in source file).
+        let declaration_loc = {
+            let decl_src = src.clone();
+            let decl_uri = uri.clone();
+            let decl_name = symbol_name.clone();
+            run_with_large_stack(move || {
+                find_decl_location(&decl_uri, &decl_src, &decl_name)
+            })
+        };
+
+        let symbol_name_clone = symbol_name.clone();
+        let locs = run_with_large_stack(move || {
+            find_references(
+                &symbol_name_clone,
+                &files,
+                declaration_loc.as_ref(),
+                include_decl,
+            )
+        });
+
+        tracing::debug!(count = locs.len(), symbol = %symbol_name, "references: found");
+
+        Ok(if locs.is_empty() { None } else { Some(locs) })
     }
 
     /// Plan 114 Ф.7.2: code_action — quick-fix providers.
@@ -1123,4 +1307,18 @@ fn byte_offset_on_line(src: &str, line_start: usize, utf16_col: usize) -> Option
         byte_pos += ch.len_utf8();
     }
     Some(byte_pos.min(src.len()))
+}
+
+/// Plan 104.4: find the declaration `Location` of `symbol_name` in `src`.
+///
+/// Uses the first word-boundary occurrence of the name as a heuristic.
+/// This is sufficient for `includeDeclaration` filtering in V1; a proper
+/// implementation would use type-check resolution (V2).
+fn find_decl_location(uri: &Url, src: &str, symbol_name: &str) -> Option<Location> {
+    use crate::symbols::find_word_occurrences;
+    let rope = ropey::Rope::from_str(src);
+    let occs = find_word_occurrences(src, symbol_name);
+    let (start, end) = occs.into_iter().next()?;
+    let range = crate::diagnostic_mapping::span_to_range(&rope, start, end);
+    Some(Location { uri: uri.clone(), range })
 }

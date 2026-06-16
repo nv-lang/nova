@@ -553,5 +553,48 @@
 - ~~**`[M-91.13-real-dns-integration-test]`**~~ ✅ **CLOSED 2026-06-16** — `net_v2_dns_real_slow.nv` добавлен (`_slow` suffix, `NOVA_SLOW_TESTS=1` opt-in); `assert(r.is_ok())` с реальным `localhost` resolver.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
+- **`[M-91.14-tcp-split]`** — TcpStream consume делает невозможным concurrent read+write из двух файберов. Нужны `TcpReadHalf`/`TcpWriteHalf` по образцу UDP split (Plan 166 / D296). → Plan 91.14.
+
+## Plan 167 — std/net API polish (followup компаративного ревью 2026-06-17)
+
+Сравнительный анализ Nova Net API vs Go/Rust/TS/Kotlin/Java выявил следующие пункты (источник: сессия 2026-06-17).
+
+**Справка о `Blocking`:** `Blocking` — builtin-капабилити языка (D50, 06-concurrency.md §D50). Нет `.nv`-объявления `type Blocking effect { ... }`. Синтаксис `blocking { ... }` — ключевое слово компилятора; в сигнатуре `fn foo() Blocking -> ...` означает "тело использует `blocking { }`". В Net API `Blocking` НЕ несёт семантику "паркует файбер" — паркуют сами libuv-callbacks через park/wake. `Blocking` в net-сигнатурах (`TcpNet Blocking`) технически избыточен, но документирует намерение. Возможно стоит пересмотреть — отдельный вопрос.
+
+### P1 — Критические (до публичного релиза)
+
+| Маркер | Суть | Приоритет |
+|---|---|---|
+| `[M-167-write-all]` | Нет `TcpStream @write_all(data str) -> Result[(), NetError]`. `write()` возвращает `int` (bytes written) — TCP может записать частично. Каждый пользовательский код без цикла = скрытая потеря данных. `write_all` должен быть основным методом для большинства случаев. | P1 |
+| `[M-167-eof-semantics]` | `TcpStream @read()` возвращает `Ok("")` на EOF — неотличимо от успешного пустого чтения. Добавить `NetError.Eof` и возвращать `Err(NetError.Eof)` на graceful close. Аналог Go `io.EOF`. | P1 |
+| `[M-167-neterror-to-str]` | `NetError` не имеет `@to_str() -> str`. `IoError(str)` несёт строку, но достать без exhaustive match нельзя. Ошибка, которую нельзя напечатать = бесполезна в логах. | P1 |
+| `[M-167-host-str-rename]` | `SocketAddr @host_str()` — нестандартное имя (нет ни в одном языке). `_str` суффикс = тип протекает в имя метода. Переименовать в `@ip() -> str` (Rust: `.ip()`, Deno: `.hostname`). | P1 |
+
+### P2 — Важные дополнения
+
+| Маркер | Суть | Приоритет |
+|---|---|---|
+| `[M-167-permission-denied]` | Добавить `NetError.PermissionDenied` — EACCES при bind на порт <1024 без root. Сейчас падает в `IoError(str)`. | P2 |
+| `[M-167-connection-reset]` | Добавить `NetError.ConnectionReset` — TCP RST от peer. Отличается от `Closed` (локальное закрытие). Сейчас падает в `IoError(str)`. | P2 |
+| `[M-167-connect-timeout]` | `TcpStream.connect()` к недостижимому хосту блокирует ~2 мин. Если fiber cancellation через `supervised {}` это решает — нужен пример в доках. Если нет — добавить `connect_timeout(addr, ms int)`. | P2 |
+| `[M-167-read-bytes]` | `TcpStream @read(max int) -> Result[str, NetError]` блокирует реализацию бинарных протоколов (protobuf, TLS, HTTP/2). Добавить `@read_bytes(max int) -> Result[[]u8, NetError]`. Гейт: `[]u8` как полноценный тип в Nova. | P2 |
+| `[M-167-effect-prefix-consistency]` | В `TcpNet` effect смешаны два стиля: operation-first (`close_stream`, `close_listener`) и type-first (`listener_local_port`, `stream_local_port`). В `UdpNet` аналогично (`close_socket` vs `socket_local_port`). Стандартизировать на type-first везде: `stream_close`, `listener_close`, `socket_close`. | P2 |
+
+### P3 — Полезно иметь
+
+| Маркер | Суть | Приоритет |
+|---|---|---|
+| `[M-167-read-exact]` | `TcpStream @read_exact(n int) -> Result[str, NetError]` — для fixed-length framing в бинарных протоколах. | P3 |
+| `[M-167-shutdown-write]` | `TcpStream @shutdown_write() -> Result[(), NetError]` — half-close (отправить FIN, продолжать читать). Нужен для HTTP/1.0 и некоторых RPC паттернов. | P3 |
+| `[M-167-so-reuseport]` | `TcpListener @set_reuse_port(on bool)` — `SO_REUSEPORT` (несколько сокетов на одном порту для load-balancing). Отличается от `SO_REUSEADDR`. | P3 |
+| `[M-167-udp-multicast]` | `UdpSocket @set_broadcast(on bool)` / `@join_multicast(addr)` — LAN discovery, mDNS, SSDP. | P3 |
 
 [M-118.6-tuple-field-escape] tuple field chain-root tracking — &tuple.N escape analysis.
+## Follow-up: Plan 104.4 (documentSymbol + workspaceSymbol + references)
+
+✅ **CLOSED 2026-06-16** — branch `plan-104-4`, commit `8b3e1903`; 86+15 PASS.
+
+Open V1 markers (gated on type-checker resolver API in Plan 104.2):
+- **`[M-104.4-refs-incremental-index]`** — references scan is full filesystem per-request (V2: incremental index). Гейт: type-checker integration (Plan 104.2).
+- **`[M-104.4-workspace-symbol-fuzzy]`** — workspace/symbol uses substring V1 (V2: fuzzy ranking / prefix scoring). Independent of type-checker.
+- **`[M-104.4-cross-file-method-nesting]`** — documentSymbol nests methods under type only within same file via receiver name match (V2: cross-file resolver needs Plan 104.2 symbol resolution API).
