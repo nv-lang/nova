@@ -1,0 +1,15 @@
+// Plan 106: negative — guard references a variable that is not defined anywhere.
+// EXPECT_COMPILE_ERROR: undefined
+
+module plan106.neg_guard_unknown_var
+
+fn lookup(n int) -> Option {
+    if n > 0 { return Some(n) }
+    None
+}
+
+test "unknown var in guard" {
+    if Some(x) = lookup(5) && y > 0 {  // y is not defined
+        assert(x == 5)
+    }
+}

@@ -1352,7 +1352,7 @@ binding управляет «можно ли модифицировать **пе
 
 Синтаксис `if pattern = expr { ... }` и `while pattern = expr { ... }`
 — pattern matching прямо в условии с локальным binding в scope блока.
-Несколько условий через запятую (Plan 106).
+Guard-условие через `&&` (Plan 106, D34 amend 2026-06-17).
 
 Pattern grammar **унифицирована** с match-arm patterns: те же правила
 (`mut` inside `Some(mut x)`, bare = immutable) работают в обеих позициях.
@@ -1374,10 +1374,10 @@ if ro user = compute_user() { use(user) }              // ✓ explicit ro
 if mut counter = init() { counter += 1; … }            // ✓ explicit mut
 if user = compute_user() { ... }                       // ✗ E_AMBIGUOUS_IDENT_PATTERN
 
-// Chains (Plan 106)
-if Some(user) = lookup(id), user.is_active {
-    process(user)
-}
+// Guard через && (Plan 106, D34 amend 2026-06-17)
+if Some(x) = cache.get(key) && x > 5 { use(x) }
+if ro Some(user) = db.find(id) && user.is_active { process(user) }
+while Some(item) = queue.pop() && item.valid { handle(item) }
 
 // else-if
 if Some(a) = lookup_a() {
@@ -1398,22 +1398,26 @@ if Some(a) = lookup_a() {
 3. **`consume` запрещён** в conditions — `E_CONSUME_IN_CONDITION`.
 4. **Outer `mut` удалён** — `if mut Some(x)` → use `if Some(mut x)`
    (mut moves inside pattern). Единое правило с match.
-5. **Chains** (Plan 106) переиспользуют тот же `if_cond`.
+5. **Guard-выражение**: после scrutinee допустимо `&&` + bool-expr;
+   биндинги паттерна видны в guard. Аналог Rust let-chains (RFC 2497),
+   выбрано `&&` вместо запятой (Swift) за очевидность семантики и
+   знакомость Rust-аудитории.
 6. **`else if`** — корректно для всех форм.
 
 Грамматика:
 
 ```
-if-expr      := "if" if-cond ("," if-cond)* block ("else" (if-expr | block))?
-while-expr   := "while" if-cond ("," if-cond)* block
-if-cond      := cond-pattern "=" expr | expr
+if-expr    := "if" if-cond block ("else" (if-expr | block))?
+while-expr := "while" if-cond block
+if-cond    := cond-pattern "=" expr ("&&" expr)?  // guard: && expr после scrutinee
+            | expr
 cond-pattern := ("ro" | "mut") IDENT type_opt
               | constructor-pattern         // Some(...) / None / etc.
               | tuple-pattern               // (a, b)
               | record-pattern              // { name, age }
 ```
 
-Скоуп: связанные имена доступны **только в теле блока**.
+Скоуп: связанные имена доступны **в guard-выражении и в теле блока**.
 
 `?` работает: `if Some(user) = Db.find(id)? { ... }` пробрасывает ошибку
 наверх; внутрь блока заходим только при успехе.
@@ -1426,6 +1430,7 @@ cond-pattern := ("ro" | "mut") IDENT type_opt
 3. **Footgun protection** — identifier-pattern требует keyword'а
    (Plan 114 D184 §«identifier-pattern protection»).
 4. **Условные циклы** — итерация пока паттерн совпадает.
+5. **Guard `&&`** — «получить и проверить» без вложенного `if`.
 
 ### Что отвергнуто
 
@@ -1436,6 +1441,8 @@ cond-pattern := ("ro" | "mut") IDENT type_opt
   unified pattern grammar с match arms.
 - **Outer `mut` в pattern position** (`if mut Some(x)`) — Plan 114
   retracted; mut goes inside pattern (`if Some(mut x)`).
+- **Запятая-chain (Swift-стиль)** — отвергнута в пользу `&&` (Plan 106);
+  amend 2026-06-17: добавлен `&&` guard; запятая-chain отвергнута.
 
 ### Связь
 - [D33](#d33-три-оси-immutability--romutconsume--const--per-field-freeze) — `ro`/`mut` binding mutability.

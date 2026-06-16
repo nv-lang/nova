@@ -11582,12 +11582,15 @@ impl NameResCtx {
                     }
                 }
             }
-            ExprKind::IfLet { pattern, scrutinee, then, else_ } => {
+            ExprKind::IfLet { pattern, scrutinee, guard, then, else_ } => {
                 self.walk_expr(scrutinee, file_id, scope, errors);
-                // Pattern-bindings — в scope только для then-branch.
+                // Pattern-bindings — в scope для guard и then-branch.
                 let mut bindings: HashSet<String> = HashSet::new();
                 self.collect_pattern_bindings(pattern, &mut bindings);
                 scope.push(bindings);
+                if let Some(g) = guard {
+                    self.walk_expr(g, file_id, scope, errors);
+                }
                 self.walk_block(then, file_id, scope, errors);
                 scope.pop();
                 if let Some(eb) = else_ {
@@ -17079,12 +17082,14 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             consume_walk_expr(ctx, cond, errors);
             consume_walk_if(ctx, then, else_, errors);
         }
-        ExprKind::IfLet { pattern, scrutinee, then, else_ } => {
+        ExprKind::IfLet { pattern, scrutinee, guard, then, else_ } => {
             consume_walk_expr(ctx, scrutinee, errors);
             let saved = ctx.states.clone();
             let mut names = Vec::new();
             consume_pattern_names(pattern, &mut names);
             for n in &names { ctx.declare(n, None); }
+            // Plan 106: guard sees pattern bindings.
+            if let Some(g) = guard { consume_walk_expr(ctx, g, errors); }
             consume_walk_block(ctx, then, errors);
             let then_states = ctx.states.clone();
             ctx.states = saved.clone();

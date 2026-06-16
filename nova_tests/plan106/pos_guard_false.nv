@@ -1,0 +1,13 @@
+// Plan 106: guard evaluates to false — body must not execute.
+// Positive: guard condition fails, body skipped.
+
+module plan106.pos_guard_false
+
+test "guard false skips body" {
+    ro opt = Some(3)
+    mut ran = false
+    if Some(x) = opt && x > 10 {
+        ran = true
+    }
+    assert(!ran)
+}

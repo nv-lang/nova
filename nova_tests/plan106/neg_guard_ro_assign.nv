@@ -1,0 +1,13 @@
+// Plan 106: negative — reassigning a ro binding inside a guard body is an error.
+// The outer `ro opt` is bound read-only; assigning to it in the guard body
+// must produce E_LOCAL_NOT_MUT.
+// EXPECT_COMPILE_ERROR: E_LOCAL_NOT_MUT
+
+module plan106.neg_guard_ro_assign
+
+test "cannot reassign ro binding in guard body" {
+    ro opt = Some(5)
+    if Some(x) = opt && x > 0 {
+        opt = Some(10)  // opt is ro, reassignment must fail
+    }
+}

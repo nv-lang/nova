@@ -8442,7 +8442,15 @@ impl Parser {
             self.bump();
             let pattern = self.parse_pattern()?;
             self.expect(&TokenKind::Eq)?;
-            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+            // Plan 106: parse scrutinee stopping before `&&` (parse_eq level)
+            // so that `&&` is available for the optional guard clause.
+            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_eq())?;
+            let guard = if matches!(self.peek().kind, TokenKind::AmpAmp) {
+                self.bump();
+                Some(Box::new(self.with_no_struct_or_trailing(|p| p.parse_expr())?))
+            } else {
+                None
+            };
             let then = self.parse_block()?;
             let else_ = self.parse_optional_else()?;
             let end = then.span;
@@ -8450,6 +8458,7 @@ impl Parser {
                 ExprKind::IfLet {
                     pattern,
                     scrutinee: Box::new(scrutinee),
+                    guard,
                     then,
                     else_,
                 },
@@ -8463,7 +8472,14 @@ impl Parser {
             self.bump();
             let pattern = self.parse_pattern()?;
             self.expect(&TokenKind::Eq)?;
-            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+            // Plan 106: parse scrutinee stopping before `&&` (parse_eq level).
+            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_eq())?;
+            let guard = if matches!(self.peek().kind, TokenKind::AmpAmp) {
+                self.bump();
+                Some(Box::new(self.with_no_struct_or_trailing(|p| p.parse_expr())?))
+            } else {
+                None
+            };
             let then = self.parse_block()?;
             let else_ = self.parse_optional_else()?;
             let end = then.span;
@@ -8471,6 +8487,7 @@ impl Parser {
                 ExprKind::IfLet {
                     pattern,
                     scrutinee: Box::new(scrutinee),
+                    guard,
                     then,
                     else_,
                 },
@@ -8500,7 +8517,14 @@ impl Parser {
                 // assignment-в-condition).
                 if Self::is_structural_pattern(&pattern) {
                     self.expect(&TokenKind::Eq)?;
-                    let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+                    // Plan 106: parse scrutinee stopping before `&&` (parse_eq level).
+                    let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_eq())?;
+                    let guard = if matches!(self.peek().kind, TokenKind::AmpAmp) {
+                        self.bump();
+                        Some(Box::new(self.with_no_struct_or_trailing(|p| p.parse_expr())?))
+                    } else {
+                        None
+                    };
                     let then = self.parse_block()?;
                     let else_ = self.parse_optional_else()?;
                     let end = then.span;
@@ -8508,6 +8532,7 @@ impl Parser {
                         ExprKind::IfLet {
                             pattern,
                             scrutinee: Box::new(scrutinee),
+                            guard,
                             then,
                             else_,
                         },
@@ -8748,13 +8773,21 @@ impl Parser {
             self.bump();
             let pattern = self.parse_pattern()?;
             self.expect(&TokenKind::Eq)?;
-            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+            // Plan 106: parse scrutinee stopping before `&&` (parse_eq level).
+            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_eq())?;
+            let guard = if matches!(self.peek().kind, TokenKind::AmpAmp) {
+                self.bump();
+                Some(Box::new(self.with_no_struct_or_trailing(|p| p.parse_expr())?))
+            } else {
+                None
+            };
             let body = self.parse_block()?;
             let end = body.span;
             return Ok(Expr::new(
                 ExprKind::WhileLet {
                     pattern,
                     scrutinee: Box::new(scrutinee),
+                    guard,
                     body,
                     invariants: vec![],
                     decreases: None,
@@ -8767,13 +8800,21 @@ impl Parser {
             self.bump();
             let pattern = self.parse_pattern()?;
             self.expect(&TokenKind::Eq)?;
-            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+            // Plan 106: parse scrutinee stopping before `&&` (parse_eq level).
+            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_eq())?;
+            let guard = if matches!(self.peek().kind, TokenKind::AmpAmp) {
+                self.bump();
+                Some(Box::new(self.with_no_struct_or_trailing(|p| p.parse_expr())?))
+            } else {
+                None
+            };
             let body = self.parse_block()?;
             let end = body.span;
             return Ok(Expr::new(
                 ExprKind::WhileLet {
                     pattern,
                     scrutinee: Box::new(scrutinee),
+                    guard,
                     body,
                     invariants: vec![],
                     decreases: None,
@@ -8794,13 +8835,21 @@ impl Parser {
             if matches!(self.peek().kind, TokenKind::Eq) {
                 if Self::is_structural_pattern(&pattern) {
                     self.expect(&TokenKind::Eq)?;
-                    let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_expr())?;
+                    // Plan 106: parse scrutinee stopping before `&&` (parse_eq level).
+                    let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_eq())?;
+                    let guard = if matches!(self.peek().kind, TokenKind::AmpAmp) {
+                        self.bump();
+                        Some(Box::new(self.with_no_struct_or_trailing(|p| p.parse_expr())?))
+                    } else {
+                        None
+                    };
                     let body = self.parse_block()?;
                     let end = body.span;
                     return Ok(Expr::new(
                         ExprKind::WhileLet {
                             pattern,
                             scrutinee: Box::new(scrutinee),
+                            guard,
                             body,
                             invariants: vec![],
                             decreases: None,

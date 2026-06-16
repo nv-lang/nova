@@ -1,0 +1,47 @@
+// Plan 106: guard через `&&` в if/while pattern-binding.
+// Позитивные тесты: guard с доступом к переменным из pattern.
+
+module plan106.guard_ok_basic
+
+fn lookup(n int) -> Option {
+    if n > 0 { return Some(n) }
+    None
+}
+
+test "if Some(x) = opt && x > 0 — guard passes" {
+    ro v = if Some(n) = lookup(5) && n > 3 {
+        n
+    } else {
+        -1
+    }
+    assert(v == 5)
+}
+
+test "if Some(x) = opt && x > 0 — guard fails, else branch" {
+    ro v = if Some(n) = lookup(5) && n > 10 {
+        n
+    } else {
+        -1
+    }
+    assert(v == -1)
+}
+
+test "if Some(x) = opt && x > 0 — pattern fails (None)" {
+    ro v = if Some(n) = lookup(-1) && n > 0 {
+        n
+    } else {
+        99
+    }
+    assert(v == 99)
+}
+
+test "while Some(x) = q.pop() && x != 0 — guard filters" {
+    // Queue: [1, 0, 2] — stop when 0 is popped
+    mut q = [2, 0, 1]
+    mut sum = 0
+    // q.pop() returns last element first: 1, then 0 (guard fails → break)
+    while Some(item) = q.pop() && item != 0 {
+        sum = sum + item
+    }
+    assert(sum == 1)
+}

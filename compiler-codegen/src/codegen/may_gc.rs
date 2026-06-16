@@ -747,10 +747,13 @@ impl<'a> Analyzer<'a> {
                 self.walk_block(cur, recv, scope, then);
                 self.walk_else(cur, recv, scope, else_);
             }
-            ExprKind::IfLet { pattern, scrutinee, then, else_ } => {
+            ExprKind::IfLet { pattern, scrutinee, guard, then, else_ } => {
                 self.walk_expr(cur, recv, scope, scrutinee);
                 let mark = scope.enter();
                 bind_pattern(scope, pattern);
+                if let Some(g) = guard {
+                    self.walk_expr(cur, recv, scope, g);
+                }
                 self.walk_block(cur, recv, scope, then);
                 scope.exit(mark);
                 self.walk_else(cur, recv, scope, else_);
@@ -793,10 +796,13 @@ impl<'a> Analyzer<'a> {
                     self.walk_expr(cur, recv, scope, d);
                 }
             }
-            ExprKind::WhileLet { pattern, scrutinee, body, invariants, decreases } => {
+            ExprKind::WhileLet { pattern, scrutinee, guard, body, invariants, decreases } => {
                 self.walk_expr(cur, recv, scope, scrutinee);
                 let mark = scope.enter();
                 bind_pattern(scope, pattern);
+                if let Some(g) = guard {
+                    self.walk_expr(cur, recv, scope, g);
+                }
                 self.walk_block(cur, recv, scope, body);
                 for inv in invariants {
                     self.walk_expr(cur, recv, scope, inv);

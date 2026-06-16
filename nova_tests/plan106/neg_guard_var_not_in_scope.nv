@@ -1,0 +1,10 @@
+// Plan 106: negative — pattern-binding in if-guard is scoped to the if body.
+// Accessing the bound variable after the if block is a compile error.
+// EXPECT_COMPILE_ERROR: undefined
+
+module plan106.neg_guard_var_not_in_scope
+
+test "binding not visible after if" {
+    if Some(x) = Some(5) && x > 0 { }
+    assert(x == 5)  // x not accessible here
+}

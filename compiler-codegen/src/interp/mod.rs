@@ -637,12 +637,24 @@ impl Interpreter {
             ExprKind::IfLet {
                 pattern,
                 scrutinee,
+                guard,
                 then,
                 else_,
             } => {
                 let v = self.eval_expr_value(scrutinee, env)?;
                 let local = Env::new_child(env);
-                if self.match_pattern(pattern, &v, &local) {
+                let pattern_matched = self.match_pattern(pattern, &v, &local);
+                // Plan 106: guard evaluated with pattern bindings in scope.
+                let guard_passed = if pattern_matched {
+                    if let Some(g) = guard {
+                        self.eval_expr_value(g, &local)?.truthy()
+                    } else {
+                        true
+                    }
+                } else {
+                    false
+                };
+                if guard_passed {
                     self.exec_block_flow(then, &local)
                 } else if let Some(else_branch) = else_ {
                     match else_branch {
@@ -695,6 +707,7 @@ impl Interpreter {
             ExprKind::WhileLet {
                 pattern,
                 scrutinee,
+                guard,
                 body,
                 ..
             } => loop {
@@ -702,6 +715,13 @@ impl Interpreter {
                 let local = Env::new_child(env);
                 if !self.match_pattern(pattern, &v, &local) {
                     break Ok(Flow::Value(Value::Unit));
+                }
+                // Plan 106: guard — evaluated with pattern bindings in scope.
+                if let Some(g) = guard {
+                    let gv = self.eval_expr_value(g, &local)?;
+                    if !gv.truthy() {
+                        break Ok(Flow::Value(Value::Unit));
+                    }
                 }
                 match self.exec_block_flow(body, &local)? {
                     Flow::Break => break Ok(Flow::Value(Value::Unit)),

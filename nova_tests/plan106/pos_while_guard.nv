@@ -1,0 +1,15 @@
+// Plan 106: while with pattern-binding guard — loop stops when guard fails.
+// Adapted: uses pop() because the pattern binding must come first in the condition.
+// pop() returns Some(element) while vec non-empty, then None.
+
+module plan106.pos_while_guard
+
+test "while Some with guard stops on negative" {
+    // pop() returns last element first: 10, 20, then -1 which fails guard
+    mut q = [-1, 20, 10]
+    mut sum = 0
+    while Some(v) = q.pop() && v >= 0 {
+        sum += v
+    }
+    assert(sum == 30)
+}

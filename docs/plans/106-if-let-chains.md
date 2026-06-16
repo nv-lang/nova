@@ -1,14 +1,20 @@
 \ SPDX-License-Identifier: MIT OR Apache-2.0
 # Plan 106 — `if let`/`while let` chains через запятую (let-chains)
 
-> **Создан:** 2026-05-27. **Статус:** 📋 proposed, **P2**.
+> **Создан:** 2026-05-27. **Статус:** ✅ CLOSED 2026-06-17.
 > **Источник:** drift discovery 2026-05-27 — spec задокументировал
 > chain-форму, parser падает с `expected '{', got ','`.
-> **Spec:** [03-syntax.md:1163-1182](../../spec/decisions/03-syntax.md#L1163-L1182)
-> (грамматика `if-expr := "if" if-cond ("," if-cond)* block`),
-> [syntax.md:771](../../spec/syntax.md#L771).
+> **Spec:** [03-syntax.md D34](../../spec/decisions/03-syntax.md#d34-pattern-bind-в-ifwhile-conditions--unified-grammar-с-match-arms)
+> (D34 amend 2026-06-17: `&&` guard добавлен).
 > **Зависит от:** ничего (изолированный фикс, симметричный
 > [Plan 105](105-sum-type-explicit-base.md)).
+
+## Что реализовано
+
+- `&&` guard в `if`/`while` pattern-bind: `if Some(x) = expr && guard { body }`
+- Биндинги паттерна видны в guard-выражении
+- Guard type-checked как `bool`
+- 7 pos + 3 neg тестов (`nova_tests/plan106/`)
 
 ---
 
