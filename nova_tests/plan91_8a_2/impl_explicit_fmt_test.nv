@@ -7,10 +7,10 @@ module plan91_8a_2.impl_explicit_fmt_test
 #impl(Display)
 type Tag { name str }
 
-fn Tag @display(mut sb StringBuilder) -> () {
-    sb.append("Tag(")
-    sb.append(@name)
-    sb.append(")")
+fn Tag @display(mut w Write) -> () {
+    w.write_str("Tag(")
+    w.write_str(@name)
+    w.write_str(")")
 }
 
 test "verified #impl(Display) with explicit @display" {

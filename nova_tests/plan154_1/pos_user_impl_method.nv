@@ -1,16 +1,17 @@
 // Plan 154.1 (D268): method-level #impl(P) opt-in — binds protocol to the
 // receiver type + checks the signature. Structural conformance unchanged.
+// Plan 152.7.1 (D258 AMEND): migrated to Write sink — @display(mut w Write).
 module plan154_1.pos_user_impl_method
 
 type Point { x int, y int }
 
 #impl(Display)
-fn Point @display(mut sb StringBuilder) -> () {
-    sb.append("Point(")
-    sb.append(@x)
-    sb.append(", ")
-    sb.append(@y)
-    sb.append(")")
+fn Point @display(mut w Write) -> () {
+    w.write_str("Point(")
+    w.write_str(str.from(@x))
+    w.write_str(", ")
+    w.write_str(str.from(@y))
+    w.write_str(")")
 }
 
 test "user #impl(Display) on a method works" {

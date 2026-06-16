@@ -1,7 +1,7 @@
-// Plan 126.2 Р¤.3 вЂ” RUNTIME POS p5:
-// `#impl(Display)` auto-derive synthesizes `@display(sb) -> ()` producing
+// Plan 126.2 Ph.3 - RUNTIME POS p5:
+// `#impl(Display)` auto-derive synthesizes `@display(w Write) -> ()` producing
 // `TypeName { field: value, ... }`. Verify rendered string via StringBuilder.
-// AC-126.2.7.
+// AC-126.2.7. Plan 152.7.1 (D258 AMEND): migrated v.fmt(sb) -> v.display(sb).
 module plan126_2.p5_printable_runtime_ok
 
 #impl(Display)
@@ -11,9 +11,9 @@ type Vec3 {
     z int
 }
 
-test "auto-derived fmt renders TypeName { fields }" {
+test "auto-derived display renders TypeName fields" {
     ro v = Vec3 { x: 1, y: 2, z: 3 }
     consume sb = StringBuilder.new()
-    v.fmt(sb)
+    v.display(sb)
     assert(sb.as_str() == "Vec3 { x: 1, y: 2, z: 3 }")
 }

@@ -4759,6 +4759,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn extract_protocol_type_name(&self, ty: &TypeRef) -> Option<String> {
         if let TypeRef::Named { path, .. } = ty {
             let name = path.last()?;
+            // Plan 152.7.1 (D258 AMEND): `Write` is special-cased in
+            // `type_ref_to_c` to map to `Nova_StringBuilder*` (a concrete C
+            // type), so it must NOT be treated as an erased protocol variable
+            // — doing so would cause E7201 on every `w.write_str(s)` call.
+            if name == "Write" { return None; }
             if self.protocol_types.contains(name) {
                 return Some(name.clone());
             }
@@ -5691,6 +5696,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // cancellation handle. C-тип — NovaCancelToken* (без
                     // подчёркивания Nova_ — это runtime-struct, не Nova-record).
                     "CancelToken" => Ok("NovaCancelToken*".into()),
+                    // Plan 152.7.1 (D258 AMEND): Write — sink protocol for Display/Debug.
+                    // Decouples @display/@debug from concrete StringBuilder. At the C level
+                    // Write always lowers to Nova_StringBuilder* (V1 — StringBuilder is
+                    // the only Write implementor used by the interp-string codegen path).
+                    // Future: when WriteBuffer display is needed, add a write_to_buffer
+                    // thunk and update the codegen to pass a thin wrapper.
+                    "Write" => Ok("Nova_StringBuilder*".into()),
                     _ => {
                         // Plan 62.E (`std/prelude/collections.nv`) + merge fix
                         // 2026-05-19: generic protocol declarations (e.g. `Iter[T]`,
@@ -13562,10 +13574,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // concrete_c = "Nova_<base>____<arg1>__<arg2>...*"
                     // (mangled через compute_generic_type_c_name). Lookup в
                     // generic_type_instance_info → (base, type_args_c).
+                    // Plan 153.2 [M-153.2-flat-map-inner-option]: value-generic
+                    // types (BoxIter[U]) have surface type `NovaValue_<short>`
+                    // (no trailing `*`, no `Nova_` prefix) but
+                    // generic_type_instance_info keys on `Nova_<short>`.
+                    // Normalize before lookup so BoxIter[U] in return position
+                    // of a closure (`f fn(T)->BoxIter[U]`) correctly binds U.
                     _ => {
                         let stripped = concrete_c.trim_end_matches('*').trim();
+                        let lookup_key = stripped
+                            .strip_prefix("NovaValue_")
+                            .map(|s| format!("Nova_{}", s))
+                            .unwrap_or_else(|| stripped.to_string());
                         let instance_info = self.generic_type_instance_info.borrow();
-                        if let Some((base, type_args)) = instance_info.get(stripped) {
+                        if let Some((base, type_args)) = instance_info.get(lookup_key.as_str()) {
                             // Sanity: base должен соответствовать
                             // nova_name (защита от cross-type match'а
                             // при коллизии mangled-имени).

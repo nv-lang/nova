@@ -785,12 +785,13 @@ fn synth_compare_record_body(fields: &[DerivedField]) -> FnBody {
     FnBody::Block(block_with_trailing(stmts, ex(ExprKind::IntLit(0))))
 }
 
-/// Synthesize `@display(sb StringBuilder) -> ()` — memberwise format.
+/// Synthesize `@display(w Write) -> ()` — memberwise format.
 /// D237: renamed from synthesize_fmt (Printable → Display, @fmt → @display).
+/// Plan 152.7.1 (D258 AMEND): param changed from `sb StringBuilder` to `w Write`.
 ///
 /// Output form: `TypeName { f1: <display_f1>, f2: <display_f2> }`.
-/// Empty type-body → `sb.append("TypeName")`.
-/// Sum-type → V1 placeholder (appends type name).
+/// Empty type-body → `w.write_str("TypeName")`.
+/// Sum-type → V1 placeholder (writes type name).
 pub fn synthesize_display<Q: DeriveQuery>(
     _ctx: &mut AutoDeriveCtx<'_, Q>,
     type_decl: &TypeDecl,
@@ -811,18 +812,19 @@ pub fn synthesize_display<Q: DeriveQuery>(
     Ok(make_synth_method(
         &type_decl.name,
         "display",
-        vec![make_param("sb", type_ref_named("StringBuilder"))],
+        vec![make_param("w", type_ref_named("Write"))],
         Some(TypeRef::Unit(span_dummy())),
         body,
     ))
 }
 
-/// Synthesize `@debug(sb StringBuilder) -> ()` — memberwise debug format.
+/// Synthesize `@debug(w Write) -> ()` — memberwise debug format.
 /// D237: renamed from synthesize_debug_fmt (DebugPrintable → Debug, @debug_fmt → @debug).
+/// Plan 152.7.1 (D258 AMEND): param changed from `sb StringBuilder` to `w Write`.
 ///
 /// Output form: `TypeName { f1: <debug_f1>, f2: <debug_f2> }`.
-/// Empty type-body → `sb.append("TypeName")`.
-/// Sum-type → V1 placeholder (appends type name).
+/// Empty type-body → `w.write_str("TypeName")`.
+/// Sum-type → V1 placeholder (writes type name).
 pub fn synthesize_debug<Q: DeriveQuery>(
     _ctx: &mut AutoDeriveCtx<'_, Q>,
     type_decl: &TypeDecl,
@@ -843,7 +845,7 @@ pub fn synthesize_debug<Q: DeriveQuery>(
     Ok(make_synth_method(
         &type_decl.name,
         "debug",
-        vec![make_param("sb", type_ref_named("StringBuilder"))],
+        vec![make_param("w", type_ref_named("Write"))],
         Some(TypeRef::Unit(span_dummy())),
         body,
     ))
@@ -852,8 +854,8 @@ pub fn synthesize_debug<Q: DeriveQuery>(
 fn simple_display_block(type_name: &str) -> Block {
     Block {
         stmts: vec![Stmt::Expr(member_call(
-            ident("sb"),
-            "append",
+            ident("w"),
+            "write_str",
             vec![ex(ExprKind::StrLit(type_name.to_string()))],
         ))],
         trailing: None,
@@ -866,15 +868,15 @@ fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody
     let mut stmts: Vec<Stmt> = Vec::new();
     if fields.is_empty() {
         stmts.push(Stmt::Expr(member_call(
-            ident("sb"),
-            "append",
+            ident("w"),
+            "write_str",
             vec![ex(ExprKind::StrLit(type_name.to_string()))],
         )));
     } else {
-        // sb.append("TypeName { ")
+        // w.write_str("TypeName { ")
         stmts.push(Stmt::Expr(member_call(
-            ident("sb"),
-            "append",
+            ident("w"),
+            "write_str",
             vec![ex(ExprKind::StrLit(format!("{} {{ ", type_name)))],
         )));
         for (i, f) in fields.iter().enumerate() {
@@ -884,16 +886,16 @@ fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody
                 format!(", {}: ", f.name)
             };
             stmts.push(Stmt::Expr(member_call(
-                ident("sb"),
-                "append",
+                ident("w"),
+                "write_str",
                 vec![ex(ExprKind::StrLit(prefix))],
             )));
             if is_primitive_field(&f.ty) {
                 // Primitive field: no `.display()` method on scalars — route via
-                // `sb.append(str.from(@field))` (Display path).
+                // `w.write_str(str.from(@field))` (Display path).
                 stmts.push(Stmt::Expr(member_call(
-                    ident("sb"),
-                    "append",
+                    ident("w"),
+                    "write_str",
                     vec![member_call(ident("str"), "from", vec![self_field(&f.name)])],
                 )));
             } else {
@@ -901,13 +903,13 @@ fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody
                 stmts.push(Stmt::Expr(member_call(
                     self_field(&f.name),
                     "display",
-                    vec![ident("sb")],
+                    vec![ident("w")],
                 )));
             }
         }
         stmts.push(Stmt::Expr(member_call(
-            ident("sb"),
-            "append",
+            ident("w"),
+            "write_str",
             vec![ex(ExprKind::StrLit(" }".to_string()))],
         )));
     }
@@ -923,14 +925,14 @@ fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
     let mut stmts: Vec<Stmt> = Vec::new();
     if fields.is_empty() {
         stmts.push(Stmt::Expr(member_call(
-            ident("sb"),
-            "append",
+            ident("w"),
+            "write_str",
             vec![ex(ExprKind::StrLit(type_name.to_string()))],
         )));
     } else {
         stmts.push(Stmt::Expr(member_call(
-            ident("sb"),
-            "append",
+            ident("w"),
+            "write_str",
             vec![ex(ExprKind::StrLit(format!("{} {{ ", type_name)))],
         )));
         for (i, f) in fields.iter().enumerate() {
@@ -940,15 +942,15 @@ fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
                 format!(", {}: ", f.name)
             };
             stmts.push(Stmt::Expr(member_call(
-                ident("sb"),
-                "append",
+                ident("w"),
+                "write_str",
                 vec![ex(ExprKind::StrLit(prefix))],
             )));
             if is_primitive_field(&f.ty) {
                 // Primitive field: route via str.from_debug
                 stmts.push(Stmt::Expr(member_call(
-                    ident("sb"),
-                    "append",
+                    ident("w"),
+                    "write_str",
                     vec![member_call(ident("str"), "from_debug", vec![self_field(&f.name)])],
                 )));
             } else {
@@ -956,13 +958,13 @@ fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
                 stmts.push(Stmt::Expr(member_call(
                     self_field(&f.name),
                     "debug",
-                    vec![ident("sb")],
+                    vec![ident("w")],
                 )));
             }
         }
         stmts.push(Stmt::Expr(member_call(
-            ident("sb"),
-            "append",
+            ident("w"),
+            "write_str",
             vec![ex(ExprKind::StrLit(" }".to_string()))],
         )));
     }
