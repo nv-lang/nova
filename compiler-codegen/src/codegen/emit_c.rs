@@ -4561,7 +4561,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn emit_typed_int_literal(n: i64, ty_c: &str) -> String {
         match ty_c {
             // Plan 70.4 Ф.4: nova_byte = typedef uint8_t — same U-suffix treatment.
-            "nova_byte" | "uint8_t" | "uint16_t" | "uint32_t" => {
+            // Plan 152.8: nova_char = typedef uint32_t — also unsigned.
+            "nova_char" | "nova_byte" | "uint8_t" | "uint16_t" | "uint32_t" => {
                 // Unsigned 32-bit и меньше: U-suffix + cast к точному типу.
                 // n хранится как i64; для отрицательных значений или > i32::MAX
                 // используем явное приведение через хеш-bit-pattern.
@@ -18993,8 +18994,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
             ExprKind::IntLit(n)   => Ok(format!("((nova_int){}LL)", n)),
-            // Plan 70.3: char literal cast к distinct `nova_char` typedef.
-            ExprKind::CharLit(cp) => Ok(format!("((nova_char){}LL)", cp)),
+            // Plan 70.3/152.8: char literal cast к distinct `nova_char` typedef (uint32_t).
+            ExprKind::CharLit(cp) => Ok(format!("((nova_char){}U)", cp)),
             ExprKind::FloatLit(f) => {
                 // f.to_string() для 1e20 даёт "100000000000000000000" (без точки/exp)
                 // — это integer-литерал в C, переполняет u64. Принудительно
@@ -32505,9 +32506,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// Возвращает Fn(c_function_name) или BinOp(c_operator).
     fn prim_builtin_method(c_ty: &str, method: &str) -> Option<PrimBuiltin> {
         match (c_ty, method) {
-            // hash — C-функция. Plan 85.4: `nova_char` == int64 (Plan 70.3
-            // typedef) → nova_int_hash. Без этой ветки `char.hash()` не
-            // находил builtin и mis-dispatch'ился на user-метод `hash`
+            // hash — C-функция. Plan 85.4 / D128 AMEND (Plan 152.8): `nova_char`
+            // == uint32_t → nova_int_hash (widened). Без этой ветки `char.hash()`
+            // не находил builtin и mis-dispatch'ился на user-метод `hash`
             // (segfault: nova_char передавался как receiver-pointer).
             ("nova_int" | "nova_char",  "hash") => Some(PrimBuiltin::Fn("nova_int_hash")),
             ("nova_bool", "hash") => Some(PrimBuiltin::Fn("nova_bool_hash")),
@@ -33909,7 +33910,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t" |
             "int8_t" | "int16_t" | "int32_t" |
             // Plan 70.4 Ф.4: nova_byte = typedef uint8_t — treat as typed 8-bit unsigned.
-            "nova_byte"
+            "nova_byte" |
+            // Plan 152.8: nova_char = typedef uint32_t — treat as typed 32-bit unsigned.
+            "nova_char"
         )
     }
 

@@ -16,13 +16,13 @@
 /* ---- Primitive types ---- */
 typedef intptr_t  nova_int;   /* int  — signed address-sized (Go C-era intgo, Plan 133) */
 typedef uintptr_t nova_uint;  /* uint — unsigned address-sized (Plan 133) */
-/* Plan 70.3: distinct typedef для char — same underlying int64_t storage,
- * но distinct C type для generic mangling. Без этого `Option[char]` и
- * `Option[int]` оба mangle'ятся в `NovaOpt_nova_int` → silent type collapse
- * в mono'd generic instances (см. docs/plans/70.3-char-int-mono-distinction.md).
- * Zero ABI cost — typedef alias, не отдельный type. Compiler-side mangling
- * generates distinct `Nova*_nova_char` vs `Nova*_nova_int` C-names. */
-typedef int64_t  nova_char;
+/* Plan 70.3: distinct typedef для char — uint32_t (Plan 152.8 D128 AMEND).
+ * Codepoints fit in 21 bits (U+0000..U+10FFFF); uint32_t is the natural
+ * unsigned type matching Rust's `char` ABI. Distinct from nova_int so that
+ * `Option[char]` and `Option[int]` mangle to different C names:
+ * `NovaOpt_nova_char` vs `NovaOpt_nova_int` (no silent type collapse).
+ * Zero ABI cost — typedef alias, не отдельный type. */
+typedef uint32_t nova_char;
 typedef double   nova_f64;
 typedef float    nova_f32;
 typedef bool     nova_bool;
