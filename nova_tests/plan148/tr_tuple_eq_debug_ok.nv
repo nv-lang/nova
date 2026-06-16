@@ -18,16 +18,16 @@ type Row {
     data (str, f64, bool)
 }
 
-fn Row @debug(mut sb StringBuilder) -> () {
-    sb.append("Row(")
-    sb.append(str.from(@id))
-    sb.append(", ")
-    sb.append(@data.0)
-    sb.append(", ")
-    sb.append(str.from(@data.1))
-    sb.append(", ")
-    sb.append(if @data.2 { "true" } else { "false" })
-    sb.append(")")
+fn Row @debug(mut w Write) -> () {
+    w.write_str("Row(")
+    w.write_str(str.from(@id))
+    w.write_str(", ")
+    w.write_str(@data.0)
+    w.write_str(", ")
+    w.write_str(str.from(@data.1))
+    w.write_str(", ")
+    w.write_str(if @data.2 { "true" } else { "false" })
+    w.write_str(")")
 }
 
 test "heterogeneous tuple eq — per-element typed compare" {

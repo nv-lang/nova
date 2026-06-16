@@ -301,16 +301,26 @@ export type Clone protocol {
 // Plan 152.7.1 (D258 AMEND) — Write sink protocol
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Write sink — protocol for Display/Debug output (Plan 152.7.1, D258 AMEND).
-/// Decouples formatting from concrete StringBuilder: @display/@debug write
-/// to `Write` instead of `StringBuilder` directly.
+/// Sink protocol for text output — decouples Display/Debug from concrete
+/// StringBuilder (Plan 152.7.1, D258 AMEND).
 ///
-/// At the C level, `Write` is always lowered to `Nova_StringBuilder*` (V1).
-/// Future implementors (WriteBuffer, file sinks) will route through thin
-/// thunks without changing Display/Debug signatures.
+/// Implementors: `StringBuilder` (str sink), `WriteBuffer` (byte sink, via
+/// UTF-8 pass-through). At the C ABI level Write currently lowers to
+/// `Nova_StringBuilder*` (V1; vtable upgrade is a future followup).
 ///
-/// Any type providing `mut @write_str(s str) -> ()` satisfies this protocol.
-/// StringBuilder implements Write via its `@write_str` method.
+/// Precedents: Rust `fmt::Write`, Go `io.Writer`, Java `Appendable`.
+///
+/// # Examples
+///
+/// ```nova
+/// // StringBuilder satisfies Write:
+/// consume sb = StringBuilder.new()
+/// sb.write_str("hello")
+///
+/// // WriteBuffer satisfies Write:
+/// mut wb = WriteBuffer.new()
+/// wb.write_str("world")
+/// ```
 #stable(since = "0.1")
 export type Write protocol {
     mut @write_str(s str) -> ()
@@ -322,10 +332,11 @@ export type Write protocol {
 
 /// Форматирование в строку (для println, str.from, etc).
 /// D237 rename: Display → Display, @display → @display.
-/// Plan 152.7.1 (D258 AMEND): param changed from `sb StringBuilder` to `w Write`.
+/// D258 AMEND (Plan 152.7.1): sink parameter changed from `StringBuilder`
+/// to `Write` protocol — decouples Display from concrete string sink.
 ///
-/// Метод `@display(w Write)` пишет representation в Write sink (at the C level
-/// — Nova_StringBuilder*). Возвращает `()`; вся работа — побочный effect на `w`.
+/// Метод `@display(w)` пишет representation в любой `Write` sink.
+/// Возвращает `()`; вся работа — побочный effect на `w`.
 ///
 /// # Examples
 ///
@@ -353,7 +364,8 @@ export type Display protocol {
 
 /// Protocol для отладочного представления — sibling к Display (D229; D237 rename).
 /// D237 rename: Debug → Debug, @debug → @debug.
-/// Plan 152.7.1 (D258 AMEND): param changed from `sb StringBuilder` to `w Write`.
+/// D258 AMEND (Plan 152.7.1): sink parameter changed from `StringBuilder`
+/// to `Write` protocol.
 ///
 /// **Distinction от Display:**
 /// - `Display.@display` — user-facing display (e.g., `Point(1, 2)`, `"hello"`).
@@ -372,7 +384,7 @@ export type Display protocol {
 /// ```nova
 /// type Point { x int, y int }
 /// // Auto-synthesized:
-/// //   @debug(w) := w.write_str(str.from_debug(@))
+/// //   @debug(w) := w.write_str("Point { x: ${@x:?}, y: ${@y:?} }")
 ///
 /// ro p = Point { x: 1, y: 2 }
 /// println("p = ${p:?}")  // "p = Point { x: 1, y: 2 }"
@@ -559,9 +571,6 @@ export type MutIndex[K, V] protocol {
 // the f64 formatter; `@append(f32)` casts to f64; interp-map routes `${f32}`
 // directly to conv.h. Numeric debug == display (no escaping).
 
-// Plan 152.7.1 (D258 AMEND): all primitive @display/@debug migrated to Write sink.
-// `w.write_str(str.from(@))` instead of `sb.append(@)` — same C-level call
-// since Write lowers to Nova_StringBuilder* and write_str calls _method_append.
 #impl(Display)
 fn int @display(mut w Write) -> () { w.write_str(str.from(@)) }
 #impl(Debug)

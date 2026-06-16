@@ -11908,6 +11908,69 @@ C-макросы `fmin`/`fmax` (нет специальной NaN-семанти
 
 ---
 
+## D258. Write-sink протокол — декаплинг Display/Debug от StringBuilder (Plan 152.7.1)
+
+**Status:** CLOSED 2026-06-16 (Plan 152.7.1, commits `a313926b` + `3d0e30fa`).
+**Depends on:** [D183](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) (`Display`/`Debug` протоколы),
+[D229](#d229) (`Debug` протокол), Plan 137 (protocol naming convention).
+**Amends:** D183 (`@display` sig), D229 (`@debug` sig). **Breaking:** да.
+
+### Решение
+
+Вводится тонкий sink-протокол `Write`, от которого зависят `Display` и `Debug`:
+
+```nova
+protocol Write {
+    mut @write_str(s str) -> ()
+}
+
+protocol Display {
+    @display(mut w Write) -> ()
+}
+
+protocol Debug {
+    @debug(mut w Write) -> ()
+}
+```
+
+`StringBuilder` реализует `Write` через `@write_str`, делегируя в `@buf.append(s)`:
+
+```nova
+fn StringBuilder @write_str(s str) -> () {
+    @buf.append(s)
+}
+```
+
+### Кодогенерация (статическая мономорфизация)
+
+`Write` в C-кодогене **статически мономорфизируется** в `Nova_StringBuilder*` — vtable
+отсутствует, нулевая overhead. Интерполяция `"${x}"` всегда монтирует `StringBuilder`
+как единственный sink-тип на данном этапе.
+
+- `type_ref_to_c`: `"Write"` → `"Nova_StringBuilder*"`
+- `extract_protocol_type_name`: bypass для `"Write"` → не эмитит `E7201`
+
+### Мигрированные реализации
+
+Все встроенные `@display`/`@debug` impl переведены с `sb StringBuilder` на `w Write`:
+`int`, `f64`, `f32`, `bool`, `char`, `str` (в `std/prelude/protocols.nv`),
+`Vec[T]` (в `std/collections/vec/protocols.nv`), auto-derive синтезируемые методы.
+
+### Прецеденты
+
+- **Rust:** `fmt::Write` (`write_str`), `Display::fmt(&self, f: &mut Formatter)` — не в `String`.
+- **Go:** `io.Writer` (`Write([]byte)`) — `Fprintf`/`Fprintln` принимают `io.Writer`.
+- **Java:** `Appendable` (`append(CharSequence)`) — базовый sink для `StringBuilder`/`Writer`.
+
+### Связь
+
+- [D183](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) — `Display` протокол (amended: `sb`→`w Write`).
+- D229 — `Debug` протокол (amended: `sb`→`w Write`).
+- Plan 152.7.1 — план; Plan 137 — источник `Display`/`Debug`; `StringBuilder` — единственный concrete-sink в codegen.
+- `[M-152.7-write-sink]` — CLOSED 2026-06-16.
+
+---
+
 ## D259. Конструктор-конвенция `Vec[T]` — `of` для литерала, `from` для конверсии (Plan 153.1)
 
 **Status:** ACTIVE (Plan 153.1, формализована 2026-06-14). **Depends on:**

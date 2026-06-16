@@ -1,10 +1,9 @@
-// std.collections.vec (protocols) — Equal / Compare / Clone / Hash / Display / Debug.
+// std.collections.vec (protocols) — Equal / Clone / Display / Debug.
 //
-// `Vec[T Equal]` → Equal, `Vec[T Compare]` → Compare (lexicographic,
-// element-wise), `Vec[T Clone]` → Clone (deep/recursive, D230),
-// `Vec[T Hash]` → Hash (Plan 153.6), `Vec[T Display]` → Display,
-// `Vec[T Debug]` → Debug. Bounds on `T` are conditional (space-separated,
-// no colon — Nova syntax).
+// `Vec[T: Equal]` → Equal, `Vec[T: Compare]` → Compare (lexicographic,
+// element-wise), `Vec[T: Clone]` → Clone (deep/recursive, D230),
+// `Vec[T: Display]` → Display, `Vec[T: Debug]` → Debug. Bounds on `T` are
+// conditional (Rust `impl<T: Ord> Ord for Vec<T>`). Hash is added in Plan 153.6.
 #prelude(core, runtime, collections, protocols)
 module collections.vec
 
@@ -22,9 +21,9 @@ module collections.vec
 /// # Examples
 ///
 /// ```nova
-/// ro a = Vec[int].of(1, 2, 3)
-/// ro b = Vec[int].of(1, 2, 3)
-/// ro c = Vec[int].of(1, 2, 4)
+/// let a = Vec[int].from([1, 2, 3])
+/// let b = Vec[int].from([1, 2, 3])
+/// let c = Vec[int].from([1, 2, 4])
 /// assert(a.equal(b))
 /// assert(!a.equal(c))
 /// ```
@@ -68,9 +67,9 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
 /// # Examples
 ///
 /// ```nova
-/// ro a = Vec[int].of(1, 2, 3)
-/// ro b = Vec[int].of(1, 2, 4)
-/// ro c = Vec[int].of(1, 2)
+/// let a = Vec[int].from([1, 2, 3])
+/// let b = Vec[int].from([1, 2, 4])
+/// let c = Vec[int].from([1, 2])
 /// assert(a.compare(b) == -1)   // 3 < 4 at index 2
 /// assert(a.compare(c) == 1)    // a longer, common prefix equal
 /// assert(a.compare(a) == 0)
@@ -109,8 +108,8 @@ export fn Vec[T Compare] @compare(other Vec[T]) -> int {
 /// # Examples
 ///
 /// ```nova
-/// ro a = Vec[int].of(1, 2, 3)
-/// mut b = a.clone()
+/// let a = Vec[int].from([1, 2, 3])
+/// let mut b = a.clone()
 /// b.push(4)
 /// assert(a.len() == 3)   // original unchanged
 /// assert(b.len() == 4)
@@ -141,8 +140,8 @@ export fn Vec[T Clone] @clone() -> Self {
 /// # Examples
 ///
 /// ```nova
-/// ro a = Vec[int].of(1, 2, 3)
-/// ro b = Vec[int].of(1, 2, 3)
+/// let a = Vec[int].from([1, 2, 3])
+/// let b = Vec[int].from([1, 2, 3])
 /// assert(a.hash() == b.hash())
 /// ```
 export fn Vec[T Hash] @hash() -> u64 {
@@ -166,12 +165,11 @@ export fn Vec[T Hash] @hash() -> u64 {
 ///
 /// Format: `Vec[e0, e1, ..., eN-1]` where each element is formatted via
 /// `elem.display(w)` directly (no intermediate string allocation).
-/// Plan 152.7.1 (D258 AMEND): param changed from `sb StringBuilder` to `w Write`.
 ///
 /// # Examples
 ///
 /// ```nova
-/// ro v = Vec[int].of(1, 2, 3)
+/// let v = Vec[int].from([1, 2, 3])
 /// consume sb = StringBuilder.new()
 /// v.display(sb)
 /// assert(sb.as_str() == "Vec[1, 2, 3]")
@@ -188,7 +186,6 @@ export fn Vec[T Display] @display(mut w Write) -> () {
 /// Append a debug representation of `self` to `w`.
 ///
 /// Provided so that `${v:?}` interp-string syntax works for `Vec[T]`.
-/// Plan 152.7.1 (D258 AMEND): param changed from `sb StringBuilder` to `w Write`.
 export fn Vec[T Debug] @debug(mut w Write) -> () {
     w.write_str("Vec[")
     for i in 0..@len {
