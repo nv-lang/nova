@@ -1,0 +1,21 @@
+// Plan 162 Ф.5: positive — an inherent method (declared in the SAME module
+// as its type) is accessible without importing the extension module.
+// Widget is imported from plan162_ext_type. The @value() method is declared
+// in the same module as Widget (plan162.plan162_ext_type) = inherent.
+// No import of any extension module needed.
+
+module plan162.f6_inherent_no_import_pos
+
+import nova_tests.plan162.plan162_ext_type.{Widget}
+
+test "inherent method accessible via type import alone" {
+    ro w = Widget.new(42)
+    assert(w.value() == 42)
+}
+
+test "inherent method works with different values" {
+    ro a = Widget.new(0)
+    ro b = Widget.new(100)
+    assert(a.value() == 0)
+    assert(b.value() == 100)
+}

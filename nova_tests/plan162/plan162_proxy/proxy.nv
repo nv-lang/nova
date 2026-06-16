@@ -1,0 +1,12 @@
+// Plan 162 Ф.5: proxy module.
+// Imports both the Widget type AND the extension method module.
+// Used in f4_extension_needs_import_neg.nv to set up a scenario where
+// @doubled() is transitively in scope but plan162_ext_methods is not
+// a direct import of the consumer.
+
+module plan162.plan162_proxy
+
+import nova_tests.plan162.plan162_ext_type.{Widget}
+import nova_tests.plan162.plan162_ext_methods as plan162_ext_methods
+
+export fn Widget.create(v int) -> Widget => Widget.new(v)

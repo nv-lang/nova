@@ -1,0 +1,14 @@
+// Plan 162 Ф.5: type home module.
+// Declares Widget with its INHERENT method @value() (same module as type).
+// Used by extension tests to verify inherent vs extension distinction.
+
+module plan162.plan162_ext_type
+
+export type Widget {
+    val int
+}
+
+export fn Widget.new(v int) -> Widget => { val: v }
+
+// Inherent method: declared in SAME module as Widget.
+export fn Widget @value() -> int => @val
