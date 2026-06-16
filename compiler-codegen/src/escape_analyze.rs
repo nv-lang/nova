@@ -193,11 +193,28 @@ struct EscapeCtx<'a> {
     promoted: HashSet<String>,
 }
 
+/// True if `type_name` is a primitive scalar type that may need heap
+/// promotion when its address escapes (e.g. `let x int = 5; return &x`).
+/// Does NOT include "str" — str is a heap-record in Nova.
+fn is_primitive_for_escape(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "int" | "uint"
+        | "i8" | "i16" | "i32" | "i64"
+        | "u8" | "u16" | "u32" | "u64"
+        | "f32" | "f64"
+        | "bool" | "char"
+    )
+}
+
 #[derive(Default)]
 struct Scope {
     /// Locals declared in this scope that are bound to a value-record type.
     /// Key: binding name; value: source TypeDecl name (informational).
     value_record_locals: HashMap<String, String>,
+    /// Locals declared in this scope that are bound to a primitive scalar type.
+    /// Key: binding name; value: primitive type name (e.g. "int", "f64").
+    primitive_locals: HashMap<String, String>,
 }
 
 impl<'a> EscapeCtx<'a> {
@@ -226,9 +243,28 @@ impl<'a> EscapeCtx<'a> {
         }
     }
 
+    /// True if `name` is currently bound to a primitive-scalar local.
+    fn lookup_primitive_local(&self, name: &str) -> Option<&str> {
+        for s in self.scopes.iter().rev() {
+            if let Some(tname) = s.primitive_locals.get(name) {
+                return Some(tname.as_str());
+            }
+        }
+        None
+    }
+
+    fn register_primitive_local(&mut self, binding: &str, type_name: &str) {
+        if let Some(top) = self.scopes.last_mut() {
+            top.primitive_locals.insert(binding.to_string(), type_name.to_string());
+        }
+    }
+
     /// Mark `name` as promoted (escape detected).
+    /// Accepts both value-record locals AND primitive-scalar locals.
     fn mark_promoted(&mut self, name: &str) {
-        if self.lookup_value_record_local(name).is_some() {
+        if self.lookup_value_record_local(name).is_some()
+            || self.lookup_primitive_local(name).is_some()
+        {
             self.promoted.insert(name.to_string());
         }
     }
@@ -297,6 +333,14 @@ impl<'a> EscapeCtx<'a> {
                         .or_else(|| self.infer_value_record_from_expr(&decl.value));
                     if let Some(type_name) = resolved {
                         self.register_value_record_local(name, &type_name);
+                    } else if let Some(prim_name) = decl.ty.as_ref().and_then(|t| {
+                        if let TypeRef::Named { path, .. } = t {
+                            path.last().and_then(|n| {
+                                if is_primitive_for_escape(n) { Some(n.clone()) } else { None }
+                            })
+                        } else { None }
+                    }) {
+                        self.register_primitive_local(name, &prim_name);
                     }
                 }
             }
@@ -586,19 +630,7 @@ impl<'a> EscapeCtx<'a> {
                     self.walk_match_arm_body(&arm.body, /*escape=*/ true);
                 }
             }
-            // Plan 118.1 closeout: `addr_of(IDENT)` / `addr_of_mut(IDENT)`
-            // desugar to UnOp::AddrOf по rewriter pass; but the source-level
-            // call form is what we see in pre-rewriter AST. Treat as escape
-            // promoter when arg is a bare Ident referring to a value-record
-            // local.
-            ExprKind::Call { func, args, .. } => {
-                if let ExprKind::Ident(fname) = &func.kind {
-                    if (fname == "addr_of" || fname == "addr_of_mut") && args.len() == 1 {
-                        if let ExprKind::Ident(name) = &args[0].expr().kind {
-                            self.mark_promoted(name);
-                        }
-                    }
-                }
+            ExprKind::Call { .. } => {
                 // Non-escape recursion into general call (args have their own
                 // escape walk inside walk_expr Call arm).
                 self.walk_expr(e);

@@ -1172,6 +1172,10 @@ pub struct CEmitter {
     /// Keyed by binding NAME (within current fn scope). Cleared at fn-
     /// emit boundary.
     promoted_value_record_locals: HashSet<String>,
+    /// Plan 118 Ф.1: primitive-scalar locals whose address escapes — promoted
+    /// to heap (`Type* name = nova_alloc(sizeof(Type)); *name = val`).
+    /// Cleared/restored at fn-emit boundary like promoted_value_record_locals.
+    promoted_primitive_locals: HashSet<String>,
     /// Plan 127 Ф.3: transient signal set by emit_stmt Stmt::Let RIGHT
     /// BEFORE calling emit_expr (which routes to emit_record_lit).
     /// If `Some(type_name)`, the imminent record literal must be heap-
@@ -1459,6 +1463,7 @@ impl CEmitter {
             escape_result: None,
             current_fn_id: None,
             promoted_value_record_locals: HashSet::new(),
+            promoted_primitive_locals: HashSet::new(),
             pending_value_record_heap_promote: None,
             // Plan 143.2: default empty/unpopulated → KEEP everything until
             // emit_module runs the pre-pass.
@@ -16320,6 +16325,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             f.name.clone()
         });
         let prev_promoted_locals = std::mem::take(&mut self.promoted_value_record_locals);
+        let prev_promoted_prim_locals = std::mem::take(&mut self.promoted_primitive_locals);
         // emit body — collect into _nova_result if ensures present
         // Plan 140.3: ensures gated INDEPENDENTLY from requires (has_contracts) —
         // `#unchecked(requires)` must NOT also drop ensures, and vice-versa.
@@ -16395,6 +16401,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // Plan 127 Ф.3: restore prev fn-id + promoted-locals after fn body.
         self.current_fn_id = prev_fn_id;
         self.promoted_value_record_locals = prev_promoted_locals;
+        self.promoted_primitive_locals = prev_promoted_prim_locals;
         self.expected_record_type = saved_expected;
         // Plan 72 P0: restore protocol_vars after fn body (clear param-registered entries).
         self.protocol_vars = saved_protocol_vars_fn;
@@ -17511,6 +17518,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         }
                     }
                 }
+                // Plan 118 Ф.1: primitive-scalar escape promotion.
+                // Detect BEFORE emit_expr: if promoted and NOT a value-record,
+                // override ty_c to pointer, emit alloc+assign after val is known.
+                let primitive_heap_promoted = if let (Some(fn_id), Some(esc)) =
+                    (self.current_fn_id.as_ref(), self.escape_result.as_ref())
+                {
+                    esc.is_promoted(fn_id, &binding)
+                        && !self.promoted_value_record_locals.contains(&binding)
+                        && !ty_c.ends_with('*')  // not already a pointer type
+                        && !ty_c.starts_with("NovaValue_")
+                        && !ty_c.starts_with("Nova")  // primitive C types don't start with Nova
+                } else {
+                    false
+                };
                 let val = self.emit_expr_with_target_type(&decl.value, &ty_c)?;
                 // Plan 127 Ф.3: clear the transient signal на случай если
                 // emit_record_lit не consumed его (defensive — emit_record_lit
@@ -17724,6 +17745,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             box_c_type, binding, val, vtable_instance
                         ));
                     }
+                } else if primitive_heap_promoted {
+                    // Plan 118 Ф.1: heap-promote primitive local.
+                    // Emit: `C_ty* name = (C_ty*)nova_alloc(sizeof(C_ty));`
+                    //        `*name = val;`
+                    self.promoted_primitive_locals.insert(binding.clone());
+                    let ptr_ty = format!("{}*", ty_c);
+                    self.var_types.insert(binding.clone(), ptr_ty.clone());
+                    self.line(&format!(
+                        "{}* {} = ({}*)nova_alloc(sizeof({}));",
+                        ty_c, binding, ty_c, ty_c
+                    ));
+                    self.line(&format!("*{} = {};", binding, val));
                 } else if is_hoisted {
                     self.line(&format!("{} = {};", binding, val));
                 } else {
@@ -19776,6 +19809,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if let UnOp::AddrOf = op {
                     if let ExprKind::Ident(name) = &operand.kind {
                         if self.promoted_value_record_locals.contains(name) {
+                            return Ok(name.clone());
+                        }
+                        // Plan 118 Ф.1: primitive-scalar heap-promoted locals.
+                        // The binding is already a pointer; return it directly.
+                        if self.promoted_primitive_locals.contains(name) {
                             return Ok(name.clone());
                         }
                     }
