@@ -2370,13 +2370,26 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
     // Plan 35 sub-plan 35.A R27: prelude auto-import работает даже когда
     // user не делает explicit import — поэтому вызываем resolve_imports_inline
     // безусловно (resolver сам auto-добавит prelude если файл существует).
-    if let Some(repo) = find_repo_root_from(path) {
-        let stdlib_dir = repo.join("std");
-        let _t = crate::perf_timer::PerfTimer::new("imports-resolve");
-        // Plan 42 правило F: test mode = include `*_test.nv` peers.
-        crate::imports::resolve_imports_inline_ex(path, &mut module, &repo, &stdlib_dir, true)
-            .map_err(|e| format!("import resolution: {}", e))?;
-    }
+    // Plan 162.2 Ф.2: collect cross-module signatures before type-check so
+    // that is_known_type / is_known_fn can answer cross-module questions during
+    // check_module_with_sig_table (suppresses false E_UNKNOWN_PROTOCOL /
+    // E_BOUND_UNKNOWN / E7401 for symbols from transitively imported modules).
+    let sig_table_opt: Option<crate::imports::ModuleSigTable> =
+        if let Some(repo) = find_repo_root_from(path) {
+            let stdlib_dir = repo.join("std");
+            let _t = crate::perf_timer::PerfTimer::new("imports-resolve");
+            // Plan 42 правило F: test mode = include `*_test.nv` peers.
+            crate::imports::resolve_imports_inline_ex(path, &mut module, &repo, &stdlib_dir, true)
+                .map_err(|e| format!("import resolution: {}", e))?;
+            // Collect signatures AFTER imports are resolved so all imported
+            // items are present in module.imports for the sig-walk.
+            Some(
+                crate::imports::collect_all_signatures(path, &module, &repo, &stdlib_dir)
+                    .unwrap_or_else(|_| crate::imports::ModuleSigTable::new()),
+            )
+        } else {
+            None
+        };
 
     // Plan 140 Ф.3 (D24 amend): capture ModuleEnv. `check_module` runs the
     // VerificationPipeline (types/mod.rs `env.proven_contracts = report.proven`)
@@ -2384,9 +2397,14 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
     // zero-cost elision. Previously the env was discarded → proven set empty
     // on the test-build path → proven contracts were NOT elided (R4: pipeline
     // ran but proven was never wired to the emitter).
+    // Plan 162.2 Ф.2: use check_module_with_sig_table when sig_table available.
     let module_env = {
         let _t = crate::perf_timer::PerfTimer::new("type-check");
-        types::check_module(&module).map_err(|errs| {
+        match sig_table_opt {
+            Some(sig_table) => types::check_module_with_sig_table(&module, sig_table),
+            None => types::check_module(&module),
+        }
+        .map_err(|errs| {
             errs.iter()
                 .map(|d| d.render(src, &path.to_string_lossy()))
                 .collect::<Vec<_>>()
