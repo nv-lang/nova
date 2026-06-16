@@ -11040,7 +11040,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             TypeRef::FixedArray(_, inner, _) => {
                 Self::collect_array_elem_typerefs(inner, out);
             }
-            TypeRef::Named { generics, .. } => {
+            TypeRef::Named { path, generics, .. } => {
+                // Plan 152.8: `Vec[T]` written as a Named generic (not `[]T` sugar)
+                // must also trigger a forward-decl for the Vec mono instance.
+                // Push the element TypeRef just like the Array arm does.
+                if path.last().map(|s| s == "Vec").unwrap_or(false) {
+                    if let Some(elem) = generics.first() {
+                        if !matches!(elem, TypeRef::Func { .. }) {
+                            out.push(elem.clone());
+                            // Recurse to handle nested Vec[Vec[T]] etc.
+                            Self::collect_array_elem_typerefs(elem, out);
+                        }
+                    }
+                }
                 for g in generics { Self::collect_array_elem_typerefs(g, out); }
             }
             TypeRef::Tuple(items, _) => {
@@ -13965,10 +13977,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     "i64" => "int64_t",
                     // Plan 133: uint = nova_uint (uintptr_t), u64 = uint64_t (fixed).
                     "uint" => "nova_uint",
+                    "u64" => "uint64_t",
                     "f64" => "nova_f64",
+                    "f32" => "nova_f32",
                     "bool" => "nova_bool",
                     "str" => "nova_str",
-                    "u8" => "nova_byte",
+                    "u8" | "byte" => "nova_byte",
+                    // Plan 152.8: fixed-width integer primitives missing from this list
+                    // caused Vec[u32] to be mangled as Nova_Vec____Nova_u32_p instead of
+                    // Nova_Vec____uint32_t (inconsistent with type_ref_to_c which has full list).
+                    "u32" => "uint32_t",
+                    "u16" => "uint16_t",
+                    "i8" => "int8_t",
+                    "i16" => "int16_t",
+                    "i32" => "int32_t",
+                    "char" => "nova_char",
                     // Plan 133: usize/isize removed — not matched here.
                     _ => return None,
                 };
@@ -14104,8 +14127,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     "bool"          => "nova_bool".to_string(),
                     "f64"           => "nova_f64".to_string(),
                     "f32"           => "nova_f32".to_string(),
-                    "u8"  => "nova_byte".to_string(),
+                    "u8" | "byte"   => "nova_byte".to_string(),
                     "unit"          => "nova_unit".to_string(),
+                    // Plan 152.8: fixed-width and other primitive types missing from
+                    // simple_type_ref_to_c caused Vec[u32] (and Vec[u16]/Vec[i32]/etc.)
+                    // to mangle as Nova_Vec____Nova_u32_p* in infer_expr_c_type's
+                    // TurboFish branch (line ~34900). Mirrors type_ref_to_c primitives.
+                    "u32"           => "uint32_t".to_string(),
+                    "u16"           => "uint16_t".to_string(),
+                    "u64"           => "uint64_t".to_string(),
+                    "uint"          => "nova_uint".to_string(),
+                    "i8"            => "int8_t".to_string(),
+                    "i16"           => "int16_t".to_string(),
+                    "i32"           => "int32_t".to_string(),
+                    "char"          => "nova_char".to_string(),
+                    "never"         => "nova_int".to_string(),
                     other           => format!("Nova_{}*", other),
                 }
             }
