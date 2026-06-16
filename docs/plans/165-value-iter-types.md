@@ -102,6 +102,82 @@ export type ReverseRangeIter value { ... }
 
 ---
 
+## Ф.3 — step_by: Fail[OverflowError] → requires контракт + copy-тесты
+
+**Коммиты:** `f957d018` · `4d1ef9df`
+
+### Мотивация
+
+`Range.step_by(step int)` изначально объявлен с `Fail[OverflowError]` — семантически
+неверно: `step <= 0` это нарушение контракта (программная ошибка), а не recoverable
+runtime-ошибка. `Fail` предназначен для ожидаемых ошибок (IO, parse), которые caller
+должен обработать. Невалидный аргумент — нарушение precondition.
+
+**Проблема с Fail:** `_nova_throw_typed_void` — символ runtime, нужный линкеру при
+любом вызове Fail-функции, даже если Fail не срабатывает. В standalone тест-харнессе
+этот символ недоступен → тесты с `step_by` не линкуются.
+
+### Изменения
+
+`std/collections/range.nv`:
+
+```nova
+// До:
+export fn Range @step_by(step int) Fail[OverflowError] -> StepRangeIter {
+    if step <= 0 { throw OverflowError { msg: "..." } }
+    StepRangeIter { @end, step, _cur: @start }
+}
+
+// После:
+export fn Range @step_by(step int) -> StepRangeIter
+    requires step > 0
+    => { @end, step, _cur: @start }
+```
+
+`requires step > 0` — compile-time контракт (D24); при Z3 backend проверяется
+статически; без Z3 — runtime panic при нарушении (D81 always-on assertion).
+
+### Copy-тесты StepRangeIter/ReverseRangeIter
+
+После снятия Fail с `step_by` стало возможным добавить copy-тесты прямо в `range.nv`
+(standalone тест `step_by(2)` теперь линкуется):
+
+```nova
+test "StepRangeIter copy by value — independent cursors" { ... }
+test "ReverseRangeIter copy by value — independent cursors" { ... }
+```
+
+Тесты проверяют что value-copy StepRangeIter/ReverseRangeIter даёт независимые курсоры.
+
+**Acceptance criteria (A165.3.x):**
+
+- A165.3.1: `step_by` не имеет `Fail` эффекта — вызов без `with Fail` в standalone тесте компилируется и линкуется.
+- A165.3.2: `requires step > 0` присутствует как compile-time контракт (D24).
+- A165.3.3: StepRangeIter и ReverseRangeIter copy-тесты в `range.nv` проходят в полном `nova test`.
+- A165.3.4: «без упрощений как для прода» — нет `Fail` там где нужен контракт.
+
+---
+
+## Ф.4 — Fix: external fn → extern "nova" fn в stdlib (D282)
+
+**Коммит:** `a5d4a30b`
+
+D282 (Plan 91.12) убрал синтаксис `external fn` — нужно `extern "nova" fn` или
+`extern "C" fn`. `std/runtime/raw_mem.nv` и `std/ffi/cstr.nv` содержали старый синтаксис
+→ CC-FAIL внутри embedded stdlib (internal panic компилятора при попытке парсить
+`raw_mem.nv` из embedded ресурса).
+
+`std/runtime/raw_mem.nv` — 7 функций (`RawMem.copy`, `copy_nonoverlapping`, `fill`,
+`compare`, `alloc`, `alloc_uncollectable`, `free_uncollectable`).
+`std/ffi/cstr.nv` — 1 функция (`nova_str_terminated_ptr`).
+
+**Acceptance criteria (A165.4.x):**
+
+- A165.4.1: `nova test nova_tests/plan_value_iter` — 4/4 PASS (raw_mem не ломает prelude import chain).
+- A165.4.2: `nova check std/runtime/raw_mem.nv` не выдаёт `E_EXTERNAL_FN_RETRACTED`.
+
+---
+
 ## Followups
 
 | Маркер | Описание | Приоритет |
@@ -115,3 +191,5 @@ export type ReverseRangeIter value { ... }
 
 **D290** — добавлен в `spec/decisions/02-types.md`:
 Iterator types объявлены как value-record.
+
+**D282** (Plan 91.12) — `external fn` синтаксис убран; `extern "nova" fn` / `extern "C" fn`.
