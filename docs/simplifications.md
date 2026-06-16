@@ -37093,14 +37093,18 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 
 Tests: 39 unit + 13 integration = 52 completion-specific + 167 total nova-lsp tests PASS.
 
-## Plan 118.6 — Safe &x model (2026-06-16)
+## Plan 118.6 — Safe &x model (2026-06-17, ЗАКРЫТ)
 - &x safe для всех типов (value-record + primitives) без unsafe{}: escape analysis + heap-promote при escape
 - unsafe { &x } = сырой стек-указатель без promote (FFI паттерн)
 - Heap-promote — compile-time статическое решение в точке объявления (не рантайм-копирование)
 - &x.field → весь корневой биндинг промоутится целиком (не поле отдельно)
 - addr_of() / addr_of_mut() удалены → E_ADDR_OF_REMOVED с fix-it "&x"
 - Escape analysis расширен на примитивы (ранее только value-records с AllocKind::Value)
-- V1 deferred: tuple field chain-root tracking [M-118.6-tuple-field-escape]
+- mut биндинг → *mut T auto; ro биндинг → *T auto (тип из биндинга, не явного addr_of_mut)
+- D216 §4 AMEND: E_UNSAFE_REQUIRED больше не срабатывает на AddrOf (только на Deref + unsafe fn calls)
+- [M-118.1-addr-of-mut-deref-ptr-mut] CLOSED by Plan 118.6 — addr_of_mut retired; &x mut-inference covers this
+- [M-118.1-addr-of-chains-checktime] CLOSED — addr_of retired; &x chain-check runs at check-time
+- 15/15 plan118_6 PASS. Merge: a47ba61b
 
 ### Plan 104.6 (Rename + Format-on-save, 2026-06-16) — V1 simplifications
 
