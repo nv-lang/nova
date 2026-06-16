@@ -554,7 +554,7 @@
 
 - ~~**`[M-91.12-bytes-ffi]`**~~ ✅ **CLOSED 2026-06-16** — `str @as_ptr() -> *u8` добавлен (`std/runtime/string/core.nv`); DNS handler использует `host.as_ptr()` + `host.byte_len()`. D294. Тест: `net_v2_str_as_ptr_ok` 5/0 PASS.
 - ~~**`[M-91.12-async-dns]`**~~ ✅ **CLOSED 2026-06-16** — DnsNet раскомментирован (`std/net/effect.nv`), `real_dns_net()` реализован (`std/net/dns.nv`), C-side `dns_lookup`/`dns_addr_at` через `uv_getaddrinfo` + TLS (`compiler-codegen/nova_rt/net.c`). D295. `SocketAddr.lookup()` wrapper обходит vtable type-erasure. Тест: `net_v2_dns_smoke` 6/0 PASS. 21/0 plan91_12 PASS.
-- **`[M-91.13-dns-iter-boxing]`** — `DnsNet.lookup` возвращает только ПЕРВЫЙ addr (V1). `[]SocketAddr` в vtable Ok slot erases тип до `nova_int`; multi-address API заблокировано. Нужно: (a) non-erased Ok type в vtable; или (b) отдельный effect op `lookup_addrs_count`/`lookup_addr_at(i)`. P2.
-- **`[M-91.13-real-dns-integration-test]`** — `real_dns_net()` не тестируется в CI (сетевая зависимость). Opt-in slow test suite. P3.
+- ~~**`[M-91.13-dns-iter-boxing]`**~~ ✅ **CLOSED 2026-06-16** — `is_generic_stub_c` fix (`&& !name.contains("____")`) + DnsNet V2 `[]SocketAddr` API. Vtable erasure устранена; `real_dns_net()` строит Vec через `dns_addr_at(0..count)`; `mock_dns_net()` возвращает `Ok([loopback(0)])`. 21/0 plan91_12 PASS.
+- ~~**`[M-91.13-real-dns-integration-test]`**~~ ✅ **CLOSED 2026-06-16** — `net_v2_dns_real_slow.nv` добавлен (`_slow` suffix, `NOVA_SLOW_TESTS=1` opt-in); `assert(r.is_ok())` с реальным `localhost` resolver.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
