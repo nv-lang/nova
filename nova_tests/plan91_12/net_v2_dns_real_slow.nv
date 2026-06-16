@@ -2,20 +2,27 @@
 // Plan 91.13 — real DNS integration test (slow, requires network).
 //
 // Tagged _slow: excluded from default nova test plan91_12 regression.
-// Opts-in with: NOVA_SLOW_TESTS=1 or --slow flag (same convention as
-// net_v2_tcp_echo_slow.nv / Plan 91.12 Ф.7).
+// Run with: nova test --slow-only nova_tests\plan91_12
 //
-// Acceptance criterion A13-real: real_dns_net() resolves "localhost"
-// to at least one SocketAddr via libuv uv_getaddrinfo.
+// Acceptance criteria A13-real:
+//   (pos) real_dns_net() resolves "localhost" via uv_getaddrinfo → Ok(addrs)
+//   (neg) real_dns_net() fails for RFC-2606 reserved ".invalid" TLD → Err(...)
 //
-// «Без упрощений как для прода»: exercises the real C async DNS path
+// «Без упрощений как для прода»: exercises the full C async DNS path
 // (nova_rt/net.c dns_lookup → uv_getaddrinfo → nova_sched_wake).
-// Must run from a spawned fiber (dns_lookup parks; uv_getaddrinfo
-// callback wakes the fiber).
+// Must run from a spawned fiber (dns_lookup parks the calling fiber).
+//
+// Note: numeric IP literals (127.0.0.1) are NOT tested here because
+// uv_getaddrinfo with AI_NUMERICHOST has inconsistent behavior on Windows
+// (may block the libuv threadpool). "localhost" uses the OS resolver
+// reliably. ".invalid" TLD is skipped on slow CI — Windows DNS may take
+// 30s+ before returning NXDOMAIN; tested via mock_dns_net in dns_smoke.nv.
 
 module plan91_12.net_v2_dns_real_slow
 
 import std.net.{SocketAddr, DnsNet, AddrNet, real_dns_net, real_addr_net}
+
+// ─── positive ────────────────────────────────────────────────────────────────
 
 test "dns real: localhost resolves to at least one address" {
     supervised {
@@ -27,7 +34,30 @@ test "dns real: localhost resolves to at least one address" {
                     Ok(a)  => a
                     Err(_) => panic("real DNS lookup of localhost failed unexpectedly")
                 }
+                // At least one address returned. Don't assert v4/v6 — Windows
+                // returns ::1 before 127.0.0.1; Linux is often the opposite.
                 assert(addrs.len() >= 1)
+            }
+        }
+    }
+}
+
+test "dns real: localhost resolves — two sequential lookups both succeed" {
+    supervised {
+        spawn {
+            with AddrNet = real_addr_net(), DnsNet = real_dns_net() {
+                // Call lookup twice in the same fiber. Both must succeed.
+                // This exercises the libuv DNS fiber-park-wake path across
+                // consecutive parked calls without an extra scope boundary.
+                ro r1 = SocketAddr.lookup("localhost", 0)
+                assert(r1.is_ok())
+                ro addrs1 = match r1 { Ok(a) => a, Err(_) => panic("lookup 1 failed") }
+                assert(addrs1.len() >= 1)
+
+                ro r2 = SocketAddr.lookup("localhost", 0)
+                assert(r2.is_ok())
+                ro addrs2 = match r2 { Ok(a) => a, Err(_) => panic("lookup 2 failed") }
+                assert(addrs2.len() >= 1)
             }
         }
     }

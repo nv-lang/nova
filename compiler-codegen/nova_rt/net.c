@@ -900,15 +900,25 @@ NovaRes_nova_int_nova_str* NovaRt_UdpSocket_method_recv_from(
     nova_sched_park(scope, slot);
     nova_sched_unregister_pending(scope, slot);
 
-    if (sock->recv_buf) { free(sock->recv_buf); sock->recv_buf = NULL; }
+    /* recv_buf was allocated by _udp_alloc_cb during the park — do NOT free it
+     * here; the data is still needed for the memcpy below.  Error paths free it
+     * before returning. */
 
-    if (nova_abool_load(&cancel_sc->cancel_requested)) return _NET_ERR("cancelled");
-    if (nova_aint_load(&sock->stage) == NOVA_NET_STAGE_CLOSED)
+    if (nova_abool_load(&cancel_sc->cancel_requested)) {
+        if (sock->recv_buf) { free(sock->recv_buf); sock->recv_buf = NULL; }
+        return _NET_ERR("cancelled");
+    }
+    if (nova_aint_load(&sock->stage) == NOVA_NET_STAGE_CLOSED) {
+        if (sock->recv_buf) { free(sock->recv_buf); sock->recv_buf = NULL; }
         return _NET_ERR("socket closed");
+    }
     nova_aint_store(&sock->stage, NOVA_NET_STAGE_IDLE);
-    if (sock->recv_error.len > 0) return nova_make_Result_Err(sock->recv_error);
+    if (sock->recv_error.len > 0) {
+        if (sock->recv_buf) { free(sock->recv_buf); sock->recv_buf = NULL; }
+        return nova_make_Result_Err(sock->recv_error);
+    }
 
-    /* Build result string. */
+    /* Build result string from the recv_buf filled by _udp_alloc_cb / _udp_recv_cb. */
     char* heap = (char*)nova_alloc(sock->recv_len + 1);
     if (sock->recv_buf) memcpy(heap, sock->recv_buf, sock->recv_len);
     heap[sock->recv_len] = '\0';

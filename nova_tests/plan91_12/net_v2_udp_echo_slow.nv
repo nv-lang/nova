@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.12 — interesting Net tests: UDP patterns.
+//
+// Tagged _slow: uses real OS networking.
+// Run with: nova test --slow-only nova_tests\plan91_12
+//
+// Each test uses a SINGLE fiber (same pattern as net_v2_udp_smoke.nv) to
+// avoid the send_to/recv_from recv_scope sharing constraint: all socket
+// operations on a socket must be sequential in ONE fiber.
+//
+// Tests:
+//   (1) Bidirectional: A→B then B→A (both in one fiber, sequential).
+//   (2) Datagram boundary: 3 sends → 3 distinct recvs with correct sizes.
+//   (3) Multi-round echo: same sender, multiple sends, each recv confirms payload.
+
+module plan91_12.net_v2_udp_echo_slow
+
+import std.net.{SocketAddr, UdpSocket, real_udp_net, real_addr_net}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 1: Bidirectional exchange — A sends to B, then B sends to A.
+//
+// Not just A→B one-way: both sockets send AND receive.
+// All operations run in a single fiber to avoid the recv_scope TLS conflict.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test "UDP loopback: bidirectional — A→B then B→A" {
+    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+        supervised {
+            spawn {
+                mut a = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                    Ok(s) => s, Err(_) => panic("bind a")
+                }
+                mut b = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                    Ok(s) => s, Err(_) => panic("bind b")
+                }
+                ro port_a = a.local_port()
+                ro port_b = b.local_port()
+
+                // A sends to B.
+                assert(a.send_to("hello_from_a", SocketAddr.loopback(port_b)).is_ok())
+                ro r1 = b.recv_from(512)
+                assert(r1.is_ok())
+                ro (d1, sender1) = match r1 { Ok(t) => t, Err(_) => panic("b recv") }
+                assert(d1 == "hello_from_a")
+                assert(sender1.port() == port_a)
+
+                // B sends back to A.
+                assert(b.send_to("hello_from_b", SocketAddr.loopback(port_a)).is_ok())
+                ro r2 = a.recv_from(512)
+                assert(r2.is_ok())
+                ro (d2, sender2) = match r2 { Ok(t) => t, Err(_) => panic("a recv") }
+                assert(d2 == "hello_from_b")
+                assert(sender2.port() == port_b)
+
+                a.close()
+                b.close()
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 2: Datagram boundary preservation.
+//
+// 3 separate sends arrive as 3 separate recvs — datagrams don't merge.
+// This is the key UDP property distinguishing it from TCP streams.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test "UDP loopback: datagram boundary — 3 sends = 3 distinct recvs" {
+    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+        supervised {
+            spawn {
+                mut sender = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                    Ok(s) => s, Err(_) => panic("bind sender")
+                }
+                mut receiver = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                    Ok(s) => s, Err(_) => panic("bind receiver")
+                }
+                ro r_port = receiver.local_port()
+                ro dest = SocketAddr.loopback(r_port)
+
+                // Send 3 datagrams with different sizes.
+                assert(sender.send_to("X", dest).is_ok())
+                assert(sender.send_to("YY", dest).is_ok())
+                assert(sender.send_to("ZZZ", dest).is_ok())
+
+                // Each recv yields exactly one datagram — no merging.
+                ro r1 = receiver.recv_from(512)
+                assert(r1.is_ok())
+                ro (d1, _) = match r1 { Ok(t) => t, Err(_) => panic("recv1") }
+                assert(d1 == "X")
+                assert(d1.len() == 1)
+
+                ro r2 = receiver.recv_from(512)
+                assert(r2.is_ok())
+                ro (d2, _) = match r2 { Ok(t) => t, Err(_) => panic("recv2") }
+                assert(d2 == "YY")
+                assert(d2.len() == 2)
+
+                ro r3 = receiver.recv_from(512)
+                assert(r3.is_ok())
+                ro (d3, _) = match r3 { Ok(t) => t, Err(_) => panic("recv3") }
+                assert(d3 == "ZZZ")
+                assert(d3.len() == 3)
+
+                sender.close()
+                receiver.close()
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test 3: Multi-round sequential exchange.
+//
+// Same pair of sockets, send then recv, 4 times in a row.
+// Verifies that sequential park+wake cycles on the same sockets work correctly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test "UDP loopback: multi-round sequential send-recv" {
+    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+        supervised {
+            spawn {
+                mut a = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                    Ok(s) => s, Err(_) => panic("bind a")
+                }
+                mut b = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                    Ok(s) => s, Err(_) => panic("bind b")
+                }
+                ro port_b = b.local_port()
+                ro dest = SocketAddr.loopback(port_b)
+
+                // 4 sequential send → recv pairs.
+                assert(a.send_to("round0", dest).is_ok())
+                ro rr0 = b.recv_from(512)
+                assert(rr0.is_ok())
+                ro (msg0, _) = match rr0 { Ok(t) => t, Err(_) => panic("r0") }
+                assert(msg0 == "round0")
+
+                assert(a.send_to("round1", dest).is_ok())
+                ro rr1 = b.recv_from(512)
+                assert(rr1.is_ok())
+                ro (msg1, _) = match rr1 { Ok(t) => t, Err(_) => panic("r1") }
+                assert(msg1 == "round1")
+
+                assert(a.send_to("round2", dest).is_ok())
+                ro rr2 = b.recv_from(512)
+                assert(rr2.is_ok())
+                ro (msg2, _) = match rr2 { Ok(t) => t, Err(_) => panic("r2") }
+                assert(msg2 == "round2")
+
+                assert(a.send_to("round3", dest).is_ok())
+                ro rr3 = b.recv_from(512)
+                assert(rr3.is_ok())
+                ro (msg3, _) = match rr3 { Ok(t) => t, Err(_) => panic("r3") }
+                assert(msg3 == "round3")
+
+                a.close()
+                b.close()
+            }
+        }
+    }
+}
