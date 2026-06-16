@@ -12655,8 +12655,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 .unwrap_or("")
                 .trim_end_matches('*')
                 .to_string();
-            // (1) user/derived @equal then @eq (D237 Equal.equal / Plan 126).
-            for method_name in &["equal", "eq"] {
+            // (1) user/derived @equal (D237 Equal.equal / Plan 126).
+            for method_name in &["equal"] {
                 let key = (type_name.clone(), method_name.to_string());
                 if let Some(sigs) = self.method_overloads.get(&key) {
                     if let Some(sig) = sigs
@@ -19741,8 +19741,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // perf-parity with the old C forms. Closes
                     // [M-139.1-operator-lowered-methods].
                     return match op {
-                        BinOp::Eq  => Ok(format!("(Nova_str_method_eq({}, {}))", l, r)),
-                        BinOp::Neq => Ok(format!("(!Nova_str_method_eq({}, {}))", l, r)),
+                        BinOp::Eq  => Ok(format!("(Nova_str_method_equal({}, {}))", l, r)),
+                        BinOp::Neq => Ok(format!("(!Nova_str_method_equal({}, {}))", l, r)),
                         BinOp::Add => Ok(format!("(Nova_str_method_concat({}, {}))", l, r)),
                         BinOp::Lt  => Ok(format!("((Nova_str_method_compare({}, {})) < 0)", l, r)),
                         BinOp::Le  => Ok(format!("((Nova_str_method_compare({}, {})) <= 0)", l, r)),
@@ -20061,14 +20061,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         }
                     }
                     // D46 (Plan 85.4): `==` / `!=` на типе с user-defined
-                    // `@eq` → dispatch на метод, НЕ на tag-сравнение. Без
+                    // `@equal` → dispatch на метод, НЕ на tag-сравнение. Без
                     // этого record-типы (у них нет `->tag`) давали невалидный
-                    // C, а sum-типы с кастомным `@eq` его игнорировали.
+                    // C, а sum-типы с кастомным `@equal` его игнорировали.
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
-                        // Plan 91.8a.2 part 3 (D183 amendment): try @equal first (D237),
-                        // then legacy @eq (для compatibility),
-                        // then synthesis via @compare.
-                        for method_name in &["equal", "eq"] {
+                        // Plan 91.8b: @equal (D237 Equal protocol). @eq legacy removed.
+                        for method_name in &["equal"] {
                             let key = (type_name_sum.clone(), method_name.to_string());
                             if let Some(sigs) = self.method_overloads.get(&key) {
                                 if let Some(sig) = sigs.iter()
@@ -20083,7 +20081,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 }
                             }
                         }
-                        // Synthesis через @compare если type не имеет @equal/@eq но имеет @compare.
+                        // Synthesis через @compare если type не имеет @equal но имеет @compare.
                         // Equal.equal default body = @compare(other) == 0 (D237).
                         let has_compare = self.all_methods
                             .contains(&(type_name_sum.clone(), "compare".to_string()));
@@ -33290,8 +33288,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// инфер'ились как `nova_bool` для strict bool-check'а в `if`.
     fn str_method_ret_type(method: &str) -> Option<&'static str> {
         match method {
-            "starts_with" | "ends_with" | "contains" | "eq"
-            | "lt" | "le" | "gt" | "ge"
+            "starts_with" | "ends_with" | "contains" | "equal"
             | "is_empty"  // Plan 60 / D117
                 => Some("nova_bool"),
             "to_upper" | "to_lower" | "trim" | "slice" | "concat"
@@ -33366,9 +33363,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // concat: MIGRATED to Nova-body (Plan 139.2 Ф.3) — falls through to
             // Nova_str_method_concat. No entry here. (The `+` operator still
             // lowers directly to C nova_str_concat via the BinOp path.)
-            // Plan 152.5a D-R4: eq/lt/le/gt/ge removed — method-form `s.eq(t)` etc.
-            // fall through to the Nova-body dispatch (Nova_str_method_eq /
-            // _compare-synthesized). Operators reroute to the same Nova bodies
+            // Plan 152.5a D-R4 / Plan 91.8b: eq/lt/le/gt/ge removed — method-form
+            // `s.equal(t)` falls through to the Nova-body dispatch
+            // (Nova_str_method_equal). Operators reroute to the same Nova bodies
             // (BinOp nova_str arm). Only @hash stays C (irreducible crypto-seed).
             "hash"        => Some("nova_str_hash"),
             "len"         => Some("nova_str_byte_len"),   // Plan 108 D26 rev: len = bytes O(1).
@@ -37226,8 +37223,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // Когда receiver — generic-bound (Hashable/Comparable/etc.), fallback
                     // на global fn_ret_<m> может выбрать stale int — нужны явные whitelist'ы.
                     match method.as_str() {
-                        // Equality / ordering — Hashable / Comparable bounds.
-                        "eq" | "ne" | "lt" | "le" | "gt" | "ge" => return "nova_bool".into(),
+                        // Equality — Equal protocol (@equal → nova_bool). Plan 91.8b.
+                        "equal" => return "nova_bool".into(),
                         // Predicates на values.
                         "is_zero" | "is_positive" | "is_negative" | "is_nan"
                             | "is_finite" | "is_infinite" => return "nova_bool".into(),

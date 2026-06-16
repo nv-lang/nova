@@ -19427,15 +19427,16 @@ impl MapLitCtx {
         if self.fn_generics.contains(name) {
             return;
         }
-        // Известный именованный тип — требует `hash` + `eq`.
+        // Известный именованный тип — требует `hash` + `equal` (D237 Equal protocol).
         if self.known_types.contains(name) {
             let methods = self.type_methods.get(name);
             let has_hash = methods.map(|m| m.contains("hash")).unwrap_or(false);
-            let has_eq = methods.map(|m| m.contains("eq")).unwrap_or(false);
+            // Plan 91.8b: @eq removed; Equal protocol uses @equal.
+            let has_eq = methods.map(|m| m.contains("equal")).unwrap_or(false);
             if !has_hash || !has_eq {
                 let mut missing = Vec::new();
                 if !has_hash { missing.push("`hash() -> u64`"); }
-                if !has_eq { missing.push("`eq(other) -> bool`"); }
+                if !has_eq { missing.push("`equal(other Self) -> bool`"); }
                 errors.push(Diagnostic::new(
                     format!(
                         "key type `{}` does not implement `Hashable` — a map key \

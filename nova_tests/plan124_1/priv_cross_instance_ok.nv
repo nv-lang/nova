@@ -9,7 +9,7 @@ type Point value priv(type) {
 
 fn Point.new(x int, y int) -> Point => { x, y }
 
-fn Point @eq(other Point) -> bool => @x == other.x && @y == other.y
+fn Point @equal(other Point) -> bool => @x == other.x && @y == other.y
 
 fn Point @dist_sq(other Point) -> int {
     ro dx = @x - other.x
@@ -20,13 +20,13 @@ fn Point @dist_sq(other Point) -> int {
 test "cross-instance: eq same" {
     ro a = Point.new(3, 4)
     ro b = Point.new(3, 4)
-    assert(a.eq(b) == true)
+    assert(a.equal(b) == true)
 }
 
 test "cross-instance: eq different" {
     ro a = Point.new(1, 2)
     ro b = Point.new(9, 9)
-    assert(a.eq(b) == false)
+    assert(a.equal(b) == false)
 }
 
 test "cross-instance: dist_sq 3-4-5" {
