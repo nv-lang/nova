@@ -18,6 +18,15 @@
 
 ---
 
+### Plan 104.2 — hover/goto-def/sighelp V1 simplifications (2026-06-16)
+
+- **Где** — `nova-lsp/src/symbol.rs`, `nova-lsp/src/goto_definition.rs`, `nova-lsp/src/signature_help.rs`.
+- **Что упрощено** — (1) `[M-104.2-cross-file-goto]` — goto-definition V1 single-file only: always returns Location in same URI, does not resolve imports across module graph. (2) `[M-104.2-symbol-cache]` — no symbol cache: `resolve_symbol_at` parses and walks AST on every hover/goto request. Acceptable for V1 (<10ms per request on typical files). (3) `[M-104.2-protocol-method-hover]` — protocol method bodies not separately resolved; they fall through to the fn-level match. (4) `[M-104.2-signature-type-dispatch]` — signature help does name-only lookup, not type-driven method dispatch: `obj.foo(` finds all fns + methods named `foo` regardless of receiver type.
+- **Как чинить** — (1) cross-file: workspace import graph + multi-file module cache in Plan 104.4. (2) cache: dashmap<Uri, (Module, version)> in WorkspaceState after 104.3. (3) protocol: add ProtocolDecl variant to SymbolInfo. (4) type dispatch: resolve obj-type from TypeCheckCtx then filter by receiver — Plan 104.3 completion work covers same path.
+- **Приоритет** — M (cross-file goto, most user-visible); L (cache, symbol-cache, type-dispatch — not painful V1).
+
+---
+
 ### Plan 153 Phase B — step_by / chain / zip / flat_map + scalar @min/@max (2026-06-16)
 
 - **Где** — `std/collections/vec_lazy.nv`, `std/collections/vec_iter.nv`, `std/runtime/defaults.nv`.
