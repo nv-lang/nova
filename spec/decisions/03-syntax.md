@@ -1015,6 +1015,25 @@ default = public. Convention `_prefix` для conventionally-private
 
 Test-имена — строки естественного языка: `test "insert and get" { ... }`.
 
+#### Длина имени типа: минимум 2 символа (D30 §naming, Plan 167)
+
+**Запрещены однобуквенные имена типов** (`type T`, `type S`, `type K`, ...).
+
+Таблица в D30 закрепляет `T`, `K`, `V`, `E`, ... как конвенцию для
+generic-параметров (`fn[T] ...`). Если объявить `type T { ... }`, компилятор
+не может отличить «named type T» от «typevar T» в generic context —
+это источник `E_PREFIX_SHADOWS_NAMED_TYPE`. Запрет однобуквенных имён
+делает пространства имён непересекающимися.
+
+```nova
+type T { ... }       // ✗ E_TYPE_NAME_TOO_SHORT — переименуй в TVal, TNode, ...
+type S { ... }       // ✗ E_TYPE_NAME_TOO_SHORT
+type Db effect { }   // ✓ — 2 символа
+type Ok { }          // ✓ — 2 символа
+```
+
+**Error:** `E_TYPE_NAME_TOO_SHORT` (Plan 167, D30 §naming).
+
 ### Почему
 
 1. **Одно правило без исключений** для акронимов — программисту и LLM
