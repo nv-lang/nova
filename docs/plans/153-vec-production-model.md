@@ -2,8 +2,8 @@
 # Plan 153 (umbrella) — Production-grade `Vec[T]` / `[]T`: API-паритет, итераторы, слайсы
 
 > **Создан:** 2026-06-13.  **Статус:** 🟡 **IN PROGRESS** — **153.0 ✅ ЗАКРЫТ** (2026-06-13,
-> branch `plan-153`, commit `2a5df8e4`; см. «Статус 153.0» ниже); **153.1 🟡 ЧАСТИЧНО**
-> (core API + fluent ✅, консолидация отложена); **153.2 ✅ ЗАКРЫТ (Phase A)** (ленивые
+> branch `plan-153`, commit `2a5df8e4`; см. «Статус 153.0» ниже); **153.1 ✅ ЗАКРЫТ**
+> (core API + fluent + AsSlice[T] D299, 2026-06-17); **153.2 ✅ ЗАКРЫТ (Phase A)** (ленивые
 > итераторы, `plan-153.2-mono-closures`, commits `996ca01a`+`caf56226`, D260); **153.3
 > ✅ ЗАКРЫТ** (sort/search); **153.4 ✅ ЗАКРЫТ ЦЕЛИКОМ** (A: eager slices `5ccccf72`; B: lazy
 > chunks/windows `37884153`, D262 IMPLEMENTED ЦЕЛИКОМ);
@@ -382,17 +382,20 @@ remove/index/get/first/last/clear/truncate/reverse/fill).
 > `v.cap(10)` мис-резолвится в 0-арг геттер ("too many arguments"), generic-method-overload-
 > collapse ([M-138.2-generic-method-overload-mono], та же причина, что держит `@splice` ≠
 > `@insert`). Distinct `@cap_to` маршрутизируется чисто → `[M-153.1-cap-setter-overload]`.
-> (2) **Консолидация `append`/`extend` ОТЛОЖЕНА** (`[M-153.1-append-extend-consolidation]`):
-> один `append` (concrete bulk + generic Iter overload) блокирован тем же overload-collapse;
-> вдобавок generic-`append` (`for x in items {@push(x)}`) **ломает self-append** `v.append(v)`
-> (рост во время итерации — bulk-версия снапшотит длину). Оставлены раздельно: `@append(Vec[T])`
-> bulk+self-safe, `@extend[S Iter[T]]` generic.
+> (2) **`[M-153.1-append-extend-consolidation]` ✅ ЗАКРЫТ 2026-06-17** через `AsSlice[T]`
+> protocol (D299): вместо overload-collapse consolidation, `@append` обобщён до
+> `@append[S AsSlice[T]](other S)`. `AsSlice[T]` (в `std/prelude/protocols.nv`) — протокол
+> с двумя методами `@as_ptr() -> *T` и `@len() -> int`; `Vec[T]` реализует его через
+> `#impl(AsSlice[T])` на `@as_ptr()`. Таким образом `v.append(vec)`, `v.append(slice_view)`,
+> `v.append(v)` (self-append, safe via memmove — регионы `[0,m)` и `[@len,@len+m)`
+> непересекаются) — всё через один метод. `@extend[S Iter[T]]` сохранён для нон-contiguous
+> источников. (spec D299, `std/collections/vec/mutate.nv`)
 >
 > **Verify.** Blast-radius (plan90_1/plan90/plan131/plan138_2/plan128/plan153_0/plan153_1/
 > contracts/basics/generics/plan62) — 0 НОВЫХ FAIL (plan131 27/1 = pre-existing vec_debug,
 > чинит 154.1). std vec/*.nv читаются с диска → правки без ребилда компилятора.
 >
-> **Открытые маркеры:** `[M-153.1-cap-setter-overload]`, `[M-153.1-append-extend-consolidation]` (gated на codegen overload-resolver). ~~`[M-153-scalar-min-max]`~~ ✅ CLOSED. D259 spec — частичный (core API без overload-формы сеттера/консолидации).
+> **Открытые маркеры:** `[M-153.1-cap-setter-overload]` (gated на codegen overload-resolver). ~~`[M-153-scalar-min-max]`~~ ✅ CLOSED. ~~`[M-153.1-append-extend-consolidation]`~~ ✅ CLOSED via D299. D259 spec — частичный (core API без overload-формы сеттера).
 
 ### 153.2 — Ленивый итератор + адаптеры `[D260, Q-iterator-laziness, Q-iter-mut, A/B]`
 **Главный лифт.** Ленивые адаптеры на `VecIter` (Iter/Next, D241/D242). Полный набор

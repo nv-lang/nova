@@ -260,22 +260,21 @@ export fn Vec[T] mut @extend[S Iter[T]](items S) -> @ {
 // until the generic-method param-type substitution lands in codegen.
 
 /// Copy every element of `other` onto the end of `self`; `other` is left
-/// **unchanged**. This is the fast bulk Vec→Vec path (`RawMem.copy`); `@extend`
-/// is the generic `Iter` version. Copy, **not** move — matches
-/// `StringBuilder.@append` and the cross-language `append`/`addAll` convention
-/// (Python/Swift/Java); a move-merge that empties `other` is intentionally not
-/// offered (footgun: silently destroys the argument). (D141.)
-export fn Vec[T] mut @append(other Vec[T]) -> @ {
+/// **unchanged**. Accepts any contiguous buffer implementing `AsSlice[T]`
+/// (D299) — `Vec[T]`, `[]T`, or any custom type with `@as_ptr`+`@len`.
+/// Uses `RawMem.copy` (memmove) for the bulk transfer; `@extend` is the
+/// generic `Iter` version for non-contiguous sources. Copy, **not** move —
+/// matches `StringBuilder.@append` and the cross-language `append`/`addAll`
+/// convention (Python/Swift/Java); a move-merge that empties `other` is
+/// intentionally not offered (footgun: silently destroys the argument). (D141, D299.)
+export fn Vec[T] mut @append[S AsSlice[T]](other S) -> @ {
     ro m = other.len()
     if m > 0 {
         @reserve(m)
-        // Bulk-copy `other`'s elements onto the end of `self` in one shot.
-        // `RawMem.copy` (memmove) is used rather than `copy_nonoverlapping` so a
-        // self-append (`v.append(v)`) — where `other.data == @data` after the
-        // reserve — is still correct (the `[0,m)` and `[len,len+m)` regions are
-        // distinct, but memmove is robust to any layout).
+        // memmove so self-append (`v.append(v)`) stays correct: after reserve
+        // other.as_ptr() may equal @data, but [0,m) and [len,len+m) are distinct.
         unsafe {
-            RawMem.copy(other.data as *u8, (@data + @len) as *mut u8, m * size_of[T]())
+            RawMem.copy(other.as_ptr() as *u8, (@data + @len) as *mut u8, m * size_of[T]())
         }
         @len = @len + m
     }

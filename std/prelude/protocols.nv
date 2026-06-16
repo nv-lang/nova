@@ -537,6 +537,33 @@ export type MutIndex[K, V] protocol {
 
 
 // ──────────────────────────────────────────────────────────────────────────
+// D299 — AsSlice[T] protocol (Plan 153.1, 2026-06-17)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Raw contiguous-buffer protocol: a type that exposes a pointer + length
+/// pair suitable for bulk `RawMem.copy` operations.
+///
+/// Implemented by `Vec[T]` (and `[]T` = same type). Allows `@append` and
+/// similar bulk-copy methods to accept any contiguous source without
+/// per-element iteration.
+///
+/// # D299 (spec/decisions/02-types.md)
+///
+/// # Examples
+///
+/// ```nova
+/// mut a = Vec[int].of(1, 2, 3)
+/// ro b = Vec[int].of(4, 5)
+/// a.append(b)           // Vec[T] implements AsSlice[T]
+/// assert(a == [1, 2, 3, 4, 5])
+/// ```
+#stable(since = "0.1")
+export type AsSlice[T] protocol {
+    @as_ptr() -> *T
+    @len() -> int
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Plan 154.1 (D269) — concrete Display + Debug for primitive scalars
 // ──────────────────────────────────────────────────────────────────────────
 //

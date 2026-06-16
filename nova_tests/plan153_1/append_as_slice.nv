@@ -1,0 +1,43 @@
+module plan153_1.append_as_slice
+
+test "append vec to vec" {
+    mut a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(4, 5)
+    a.append(b)
+    assert(a == [1, 2, 3, 4, 5])
+}
+
+test "append empty vec to non-empty" {
+    mut a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of()
+    a.append(b)
+    assert(a == [1, 2, 3])
+}
+
+test "append non-empty vec to empty" {
+    mut a = Vec[int].of()
+    ro b = Vec[int].of(1, 2, 3)
+    a.append(b)
+    assert(a == [1, 2, 3])
+}
+
+test "append both empty" {
+    mut a = Vec[int].of()
+    ro b = Vec[int].of()
+    a.append(b)
+    assert(a == [])
+}
+
+test "append self — memmove keeps [0,m) and [len,len+m) disjoint" {
+    mut a = Vec[int].of(1, 2, 3)
+    a.append(a)
+    assert(a == [1, 2, 3, 1, 2, 3])
+}
+
+test "append slice view" {
+    mut a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(0, 4, 5, 6, 99)
+    ro s = b[1..4]
+    a.append(s)
+    assert(a == [1, 2, 3, 4, 5, 6])
+}

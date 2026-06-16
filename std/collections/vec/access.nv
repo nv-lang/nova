@@ -261,13 +261,16 @@ export fn Vec[T] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -> Result
 /// The recv-mut companion `mut @as_ptr() -> *mut T` (below) yields a writable
 /// `*mut T` when called on a `mut`-bound receiver (Plan 138.4 recv-mut
 /// overload dispatch).
+// Vec[T] implements AsSlice[T] (D299): exposes @as_ptr() + @len() pair for
+// bulk RawMem.copy operations (used by @append).
+#impl(AsSlice[T])
 export fn Vec[T] @as_ptr() -> *T => @data
 
 /// Raw mutable pointer to the element buffer — the writable recv-mut overload
 /// of `@as_ptr`. Selected when the receiver is `mut`-bound; yields `*mut T`
 /// (ABI `T*`) so a `p.write(v)` / `*p = v` store is permitted under `unsafe`.
 ///
-/// SAFE to call; same dereference-needs-unsafe and realloc-invalidation /
+/// SAFE to call; same dereference-needs-unsafe and reachability-invalidation /
 /// empty-`Vec` caveats as the `ro` overload above.
 export fn Vec[T] mut @as_ptr() -> *mut T => @data
 

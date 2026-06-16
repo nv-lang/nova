@@ -340,12 +340,11 @@
   кандидаты-сигнатуры в hint). Surfaced при закрытии `[M-138.2-generic-method-overload-mono]`
   (dispatch для МАТЧАЩИХ overload'ов починен; no-match-диагностика — отдельный type-check слой).
   `EXPECT_COMPILE_ERROR` (Nova-codegen) сейчас не ловит этот кейс (codegen «успешен», падает clang).
-- **`[M-153.1-append-extend-consolidation]`** (planned, home **Plan 153.1 / D259**): план
-  хотел один `append` (concrete Vec bulk + generic Iter overload), `extend` убрать.
-  Заблокировано тем же overload-collapse + у generic-`append` (`for x in items {@push(x)}`)
-  self-append footgun (`v.append(v)` растёт во время итерации; bulk-версия снапшотит длину).
-  Оставлены раздельно: `@append(Vec[T])` (bulk, self-safe) + `@extend[S Iter[T]]` (generic).
-  Консолидировать, когда overload-mono + self-alias-safe generic append.
+- **`[M-153.1-append-extend-consolidation]`** ✅ **CLOSED 2026-06-17** via `AsSlice[T]` protocol
+  (D299). Решение: не overload-collapse, а generic bound — `@append[S AsSlice[T]](other S)`.
+  `AsSlice[T]` в `std/prelude/protocols.nv` = `@as_ptr() -> *T` + `@len() -> int`; `Vec[T]`
+  реализует через `#impl(AsSlice[T])` на `@as_ptr`. Self-append safe (memmove, непересекающиеся
+  регионы). `@extend[S Iter[T]]` сохранён для нон-contiguous источников. Spec D299.
 - **`[M-153-scalar-min-max]`** ✅ **CLOSED 2026-06-16.** `@min(other)`/`@max(other)` реализованы через Nova-body if/else (без C-макросов `max`/`min`) на всех 12 числовых типах в `std/runtime/defaults.nv`. Тест `plan153_1/scalar_min_max` PASS (release nova). Коммит `782a8e36`.
 - **`[M-153.1-of-vs-from-sweep]`** (planned, P3, churn): конструктор-конвенция формализована
   (план 153.1 / D259 + док `from` в core.nv направляет на `of`): литералы → `Vec[T].of(a,b,c)`,
@@ -586,17 +585,17 @@
 | `[M-91.15-permission-denied]` | Добавить `NetError.PermissionDenied` — EACCES при bind на порт <1024 без root. Сейчас падает в `IoError(str)`. | P2 |
 | `[M-91.15-connection-reset]` | Добавить `NetError.ConnectionReset` — TCP RST от peer. Отличается от `Closed` (локальное закрытие). Сейчас падает в `IoError(str)`. | P2 |
 | `[M-91.15-connect-timeout]` | `TcpStream.connect()` к недостижимому хосту блокирует ~2 мин. Если fiber cancellation через `supervised {}` это решает — нужен пример в доках. Если нет — добавить `connect_timeout(addr, ms int)`. | P2 |
-| `[M-167-read-bytes]` | `TcpStream @read(max int) -> Result[str, NetError]` блокирует реализацию бинарных протоколов (protobuf, TLS, HTTP/2). Добавить `@read_bytes(max int) -> Result[[]u8, NetError]`. Гейт: `[]u8` как полноценный тип в Nova. | P2 |
-| `[M-167-effect-prefix-consistency]` | В `TcpNet` effect смешаны два стиля: operation-first (`close_stream`, `close_listener`) и type-first (`listener_local_port`, `stream_local_port`). В `UdpNet` аналогично (`close_socket` vs `socket_local_port`). Стандартизировать на type-first везде: `stream_close`, `listener_close`, `socket_close`. | P2 |
+| `[M-91.15-read-bytes]` | `TcpStream @read(max int) -> Result[str, NetError]` блокирует реализацию бинарных протоколов (protobuf, TLS, HTTP/2). Добавить `@read_bytes(max int) -> Result[[]u8, NetError]`. Гейт: `[]u8` как полноценный тип в Nova. | P2 |
+| `[M-91.15-effect-prefix-consistency]` | В `TcpNet` effect смешаны два стиля: operation-first (`close_stream`, `close_listener`) и type-first (`listener_local_port`, `stream_local_port`). В `UdpNet` аналогично (`close_socket` vs `socket_local_port`). Стандартизировать на type-first везде: `stream_close`, `listener_close`, `socket_close`. | P2 |
 
 ### P3 — Полезно иметь
 
 | Маркер | Суть | Приоритет |
 |---|---|---|
-| `[M-167-read-exact]` | `TcpStream @read_exact(n int) -> Result[str, NetError]` — для fixed-length framing в бинарных протоколах. | P3 |
-| `[M-167-shutdown-write]` | `TcpStream @shutdown_write() -> Result[(), NetError]` — half-close (отправить FIN, продолжать читать). Нужен для HTTP/1.0 и некоторых RPC паттернов. | P3 |
-| `[M-167-so-reuseport]` | `TcpListener @set_reuse_port(on bool)` — `SO_REUSEPORT` (несколько сокетов на одном порту для load-balancing). Отличается от `SO_REUSEADDR`. | P3 |
-| `[M-167-udp-multicast]` | `UdpSocket @set_broadcast(on bool)` / `@join_multicast(addr)` — LAN discovery, mDNS, SSDP. | P3 |
+| `[M-91.15-read-exact]` | `TcpStream @read_exact(n int) -> Result[str, NetError]` — для fixed-length framing в бинарных протоколах. | P3 |
+| `[M-91.15-shutdown-write]` | `TcpStream @shutdown_write() -> Result[(), NetError]` — half-close (отправить FIN, продолжать читать). Нужен для HTTP/1.0 и некоторых RPC паттернов. | P3 |
+| `[M-91.15-so-reuseport]` | `TcpListener @set_reuse_port(on bool)` — `SO_REUSEPORT` (несколько сокетов на одном порту для load-balancing). Отличается от `SO_REUSEADDR`. | P3 |
+| `[M-91.15-udp-multicast]` | `UdpSocket @set_broadcast(on bool)` / `@join_multicast(addr)` — LAN discovery, mDNS, SSDP. | P3 |
 
 [M-118.6-tuple-field-escape] tuple field chain-root tracking — &tuple.N escape analysis.
 ## Follow-up: Plan 104.4 (documentSymbol + workspaceSymbol + references)

@@ -12686,3 +12686,55 @@ export fn TcpListener.bind(addr SocketAddr) TcpNet -> Result[TcpListener, NetErr
 ### Реализовано в
 
 `std/net/ffi.nv` (Ф.1), `std/net/tcp.nv` (Ф.3), `std/net/udp.nv` (Ф.4). Тесты: `nova_tests/plan91_12/` (19/19 PASS). D292 NEW.
+
+---
+
+## D299 — `AsSlice[T]` protocol: contiguous-buffer abstraction (Plan 153.1, 2026-06-17)
+
+**Source:** Plan 153.1 `[M-153.1-append-extend-consolidation]`, 2026-06-17. **Status:** ✅ ACTIVE.
+**Связь:** [D141](02-types.md#d141) (`@extend` / bulk-copy family), [D238](02-types.md#d238) (`@index` protocol).
+
+### Мотивация
+
+`Vec[T] @append(other Vec[T])` принимал только конкретный `Vec[T]`. Чтобы `@append` мог принять и slice-view (`[]T` = тот же тип `Vec[T]` с интерьерным указателем), и любой пользовательский contiguous-буфер, вводится protocol `AsSlice[T]` с двумя методами: `@as_ptr() -> *T` и `@len() -> int`.
+
+### Спецификация
+
+```nova
+// std/prelude/protocols.nv
+export type AsSlice[T] protocol {
+    @as_ptr() -> *T
+    @len() -> int
+}
+```
+
+`Vec[T]` реализует `AsSlice[T]` через `#impl(AsSlice[T])` на `@as_ptr()`. Это покрывает и `[]T` (алиас `Vec[T]`), включая slice-views (`v[a..b]`).
+
+`@append` переписан с конкретного аргумента на generic bound:
+
+```nova
+// std/collections/vec/mutate.nv
+export fn Vec[T] mut @append[S AsSlice[T]](other S) -> @ {
+    ro m = other.len()
+    if m > 0 {
+        @reserve(m)
+        unsafe {
+            RawMem.copy(other.as_ptr() as *u8, (@data + @len) as *mut u8, m * size_of[T]())
+        }
+        @len = @len + m
+    }
+    @
+}
+```
+
+`RawMem.copy` (memmove) корректен для self-append: после `@reserve` регионы `[0, m)` и `[@len, @len+m)` не пересекаются.
+
+### Правила
+
+- Реализующий тип должен гарантировать, что `@as_ptr()` возвращает указатель на непрерывный буфер из не менее `@len()` живых элементов.
+- Дереференс `@as_ptr()` вне `unsafe { }` запрещён (как у `Vec[T] @as_ptr`).
+- `@extend` (итерация через `Iter`) остаётся для не-contiguous источников.
+
+### Реализовано в
+
+`std/prelude/protocols.nv` (protocol declaration), `std/collections/vec/access.nv` (`#impl(AsSlice[T])` на `Vec[T] @as_ptr`), `std/collections/vec/mutate.nv` (обновлённый `@append`). Тесты: `nova_tests/plan153_1/append_as_slice.nv` (6 кейсов: vec→vec, пустые случаи, self-append, slice view). D299 NEW.
