@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 163 — Гигиена import/export: запрет glob-форм (named + alias only)
 
-> **Создан:** 2026-06-16. **Статус:** 📋 PLANNED. P3 (мелкий, шипится независимо).
-> **Владеет:** `[M-import-glob-forbid]` (новый).
+> **Создан:** 2026-06-16. **Статус:** ✅ CLOSED (2026-06-16). P3 (мелкий, шипится независимо).
+> **Владеет:** `[M-import-glob-forbid]` (CLOSED).
 > **Часть модульной концепции:** [Plan 42 — folder-modules](42-folder-modules.md) ([D29](../../spec/decisions/07-modules.md#d29-модули-и-импорты)) — уточняет **Rule C** «per-file imports remain per-file scope» и [42.09 re-export](42.09-re-export.md) / [42.04 per-file imports scope](42.04-per-file-imports-scope.md): запрещает «всё-подряд»-формы импорта/реэкспорта.
 > **Координируется с:** [Plan 162](162-rust-model-module-resolution.md) (Rust-модель резолва — опция «бэр `import m` → qualified» из Ф.2 ниже согласуется с резолвером 162).
 > **Research:** [docs/research/11-stdlib-method-resolution-reachability.md](../research/11-stdlib-method-resolution-reachability.md) (раздел про barrel/`pub use`).
@@ -58,8 +58,22 @@ G0-инвариант: **не банить фичи целиком** (re-export 
 
 - Amend [D29](../../spec/decisions/07-modules.md#d29-модули-и-импорты) / [Plan 42](42-folder-modules.md) Rule C: «whole-module unqualified import и whole-module re-export запрещены; разрешены named (`.{}`) и alias (`as`)». Зафиксировать выбор Ф.2 (a vs b).
 
+## Статус по завершении (2026-06-16)
+
+Все фазы Ф.1-Ф.3 РЕАЛИЗОВАНЫ. Ключевые изменения:
+
+- **Ф.1** (`compiler-codegen/src/types/mod.rs`): `E_REEXPORT_GLOB` — `export import m` без `.{}` → ошибка. Нулевая миграция (все 39 `export import` в коде уже именованные).
+- **Ф.2** (`compiler-codegen/src/types/mod.rs`): `E_IMPORT_GLOB` — `import m` без `.{}`/`as` → ошибка. Вариант **(a) запрет**. Prelude auto-imports освобождены от проверки. 
+- **Ф.3** — миграция: ~100 файлов в std/ + nova_tests/ (bare `import X` → `import X as X`).
+
+**Тесты:** `nova_tests/plan163/` — 5 fixtures: reexport_glob_neg ✅, import_glob_neg ✅, named_import_pos ✅, alias_import_pos ✅, named_reexport_pos ✅. plan163 PASS 5/0.
+
+**D-блоки:** D288 (`E_REEXPORT_GLOB`), D289 (`E_IMPORT_GLOB`, option a).
+
+**Q-import-glob-hygiene:** RESOLVED (option a = запрет).
+
 ## Связь / отложенное
 
-- **Plan 162** — если делается раньше/параллельно, вариант (b) (qualified `import m`) встраивается в новый резолвер естественно; иначе (a) — быстрый front-end guard.
+- **Plan 162** — принята параллельно. Вариант (b) (qualified `import m`) НЕ выбран — использован (a) запрет как простейший и корректный front-end guard.
 - **Plan 42.09 / 42.04** — это их прямое продолжение (re-export / per-file import scope).
 - tree-shaking-аспект barrel — **уже** закрыт Plan 159 (DCE); этот план — про **поверхность имён** и компайл-тайм, не про мёртвый код.

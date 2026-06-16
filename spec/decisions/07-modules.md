@@ -653,18 +653,99 @@ LLM знает фиксированный список — «известная 
   `./` / `../` — package-scoped (резолв от директории импортирующего
   файла, строго в пределах своего пакета; `../` за корень пакета →
   compile error). Bare-путь остаётся абсолютным — фича аддитивна.
-- **rev-5 (📋 PLANNED, 2026-06-16)** — модель **не финальна**, продолжение:
+- **rev-5 (✅ IMPLEMENTED, 2026-06-16)** — Plan 162+163 реализованы:
   - [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) — переход
-    резолвера на Rust-модель **collect-signatures→lazy-bodies**:
-    межмодульные **циклы разрешаются** (амендит [Plan 42](../../docs/plans/42-folder-modules.md)
-    Rule A «cycle detection»), method-resolution **«методы едут с типом»**
-    (inherent `@`-метод вызывается без import модуля метода — единообразно
-    std+user), char-методы переезжают в prelude, снятие Ф.4-хардкода
-    ([Plan 159](../../docs/plans/159-reachability-codegen.md)). Q-module-resolution-model.
+    резолвера на Rust-модель: межмодульные **циклы разрешаются** (D285),
+    `TypeMethodMap` — глобальная карта методов (D286), политика extension-методов
+    Rust-strict (D287), char-методы переехали в prelude, снят Ф.4-хардкод.
+    Q-module-resolution-model → RESOLVED.
   - [Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) — гигиена
-    import/export: запрет glob-форм (`import m` / `export import m` без `.{}`),
-    оставить named + alias (продолжение Rule C / [Plan 42.09 re-export](../../docs/plans/42.09-re-export.md)).
-    Q-import-glob-hygiene.
+    import/export: `E_REEXPORT_GLOB` (D288) + `E_IMPORT_GLOB` (D289),
+    ~100 файлов мигрированы на `import X as X` / `import X.{a,b}`.
+    Q-import-glob-hygiene → RESOLVED.
+
+---
+
+## D285. Module resolution — collect-signatures-first, lazy bodies; cross-module cycles allowed
+
+**Статус:** принято, реализовано ([Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.1+Ф.2, 2026-06-16).
+
+**Контекст.** До Plan 162 резолвер был жадным: `import X` = inline-merge тел X прямо сейчас, рекурсивно. Любой цикл → stack overflow. Это породило хардкод Ф.4 (Plan 159) для char-методов и запрещало cycles между модулями.
+
+**Решение.** Visited-set стал `HashMap<Vec<String>, Vec<String>>` (module_key → exported_names). При re-entry (цикл в DFS: `in_progress.contains(&module_key)`) — ранний `return Ok(())` вместо `Err("cycle detected")`. Декларации уже собраны к этому моменту; тела резолвятся lazily. Cross-module cycles разрешены (как peer-циклы в Plan 42 Rule D). **Amended Plan 42 Rule A** (cycle-detection заменена cycle-guard).
+
+**Следствие.** Prelude/core.nv может импортировать std.unicode (цикл `prelude.core → std.unicode → std.collections.vec → prelude.core` → guard → Ok(())); char-методы теперь в prelude без stack overflow.
+
+### Связь
+- [D29](#d29-модули-и-импорты) rev-5 — данная запись амендит Rule A.
+- [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.1+Ф.2.
+- [Plan 42](../../docs/plans/42-folder-modules.md) Rule D (peer-cycles, аналог).
+
+---
+
+## D286. TypeMethodMap — глобальная карта inherent-методов; вызов без import
+
+**Статус:** принято, реализовано ([Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.3, 2026-06-16).
+
+**Контекст.** До Plan 162 метод `T @m()` из модуля M был доступен только если пользователь писал `import M`. Это противоречило Rust/Swift модели, где inherent-методы приезжают с типом.
+
+**Решение.** `TypeCheckCtx` строит `type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>>` — карту `type_name → method_name → [declaring_modules]`. При вызове `x.m()` (тип x = T): метод ищется в `type_method_map[T][m]`. Inherent-метод (declaring_module ∩ type_defining_modules[T] ≠ ∅) вызывается без import. Extension-метод (из другого модуля) — по политике D287.
+
+**Следствие.** char Unicode-методы (is_alphabetic, is_whitespace, …) перенесены из `std/unicode/category.nv` в `std/prelude/core.nv` и стали inherent — вызываются без `import std.unicode`. `CHAR_UNICODE_METHOD_SELECTORS` + `needs_unicode_injection` удалены из компилятора.
+
+### Связь
+- [D29](#d29-модули-и-импорты), [D286](#d286-typemethodmap--глобальная-карта-inherent-методов-вызов-без-import).
+- [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.3+Ф.4.
+- [D285](#d285-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — фундамент (cycle-guard позволяет prelude импортировать unicode).
+
+---
+
+## D287. Extension method policy — Rust-strict: extension methods require explicit import
+
+**Статус:** принято, реализовано ([Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.5, 2026-06-16).
+
+**Контекст.** «Методы едут с типом» (D286) рождает вопрос: что делать с extension-методами (метод на ЧУЖОМ типе из другого модуля)? Swift/Kotlin позволяют всем extension без import; Rust требует импорта trait.
+
+**Решение.** **Rust-strict**: inherent (declaring_module ∈ type_defining_modules[T]) = без import; extension (другой модуль) = **требует явного import**. При нарушении — `E_EXTENSION_METHOD_NEEDS_IMPORT`. Реализован в `TypeCheckCtx::check_method_call` с `entry_imported_modules` (только entry-модуль user-кода; stdlib peer-файлы exempt).
+
+**Обоснование.** Защита от «spooky methods» (непредсказуемый источник метода при поиске по всем зависимостям). Ambiguity (два extension-`foo` на один тип) = явная ошибка (Q-module-resolution-model resolved). char методы не требуют import, потому что переехали в prelude → стали inherent, а не потому что std особенный.
+
+### Связь
+- [D286](#d286-typemethodmap--глобальная-карта-inherent-методов-вызов-без-import) — inherent vs extension различие.
+- [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.5.
+- Q-module-resolution-model → RESOLVED (2026-06-16): Rust-strict выбран.
+
+---
+
+## D288. E_REEXPORT_GLOB — whole-module export import forbidden
+
+**Статус:** принято, реализовано ([Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.1, 2026-06-16).
+
+**Контекст.** `export import m` без `.{}` — barrel re-export: неконтролируемый публичный API наружу (скрытая поверхность, semver-ломкость). В коде все 39 `export import` уже именованные, но грамматика whole-форму допускала.
+
+**Решение.** Диагностика `E_REEXPORT_GLOB` в `check_module` (`compiler-codegen/src/types/mod.rs`): для каждого `Import` с `is_export=true && items=None && alias=None` → ошибка с hint «используйте `export import m.{name1, name2}`». **Нулевая миграция** — в corpus'е таких не было.
+
+### Связь
+- [D29](#d29-модули-и-импорты) — re-export синтаксис.
+- [Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.1.
+- [D289](#d289-e_import_glob-или-qualified-namespace-выбор-a) — симметричный запрет для bare import.
+
+---
+
+## D289. E_IMPORT_GLOB — whole-module import without alias forbidden (option a)
+
+**Статус:** принято, реализовано ([Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.2+Ф.3, 2026-06-16).
+
+**Контекст.** `import m` без `.{}` и без `as alias` = unqualified glob: тащит все публичные имена m без префикса, неконтролируемо (функционально `use m::*`). Два варианта: (a) запрет E_IMPORT_GLOB; (b) переопределить в qualified namespace.
+
+**Решение.** **Вариант (a): E_IMPORT_GLOB** — добавлен в `check_module`. Условие: `!is_export && items=None && alias=None && !is_prelude_auto`. Hint: «используйте `import m.{name1, name2}` или `import m as m`». **Prelude auto-imports** (путь начинается с `std.prelude`) освобождены. ~100 файлов в `nova_tests/` + `std/` мигрированы на `import X as X` форму.
+
+**Обоснование.** Вариант (a) как быстрый front-end guard; не зависит от Plan 162. Мейнстрим (вариант b) требует семантического изменения резолвера — отложен. Q-import-glob-hygiene → RESOLVED (2026-06-16): выбран вариант (a).
+
+### Связь
+- [D288](#d288-e_reexport_glob--whole-module-export-import-forbidden) — симметричный для re-export.
+- [Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.2+Ф.3.
+- Q-import-glob-hygiene → RESOLVED 2026-06-16: вариант (a).
 
 ---
 

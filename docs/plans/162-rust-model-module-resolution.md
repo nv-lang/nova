@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 162 — Rust-модель резолва: ленивый резолв модулей + «методы едут с типом» + снятие Ф.4-хардкода
 
-> **Создан:** 2026-06-16. **Статус:** 📋 PLANNED. P2 (архитектурный; разблокирует эргономику и убирает долг).
+> **Создан:** 2026-06-16. **Статус:** ✅ CLOSED (2026-06-16). P2 (архитектурный; разблокирует эргономику и убирает долг).
 > **Владеет:** `[M-159-lazy-module-resolution]` (промоут из followup в полноценный план).
 > **Supersedes:** Ф.4 Option-A хардкод (Plan 159) — `CHAR_UNICODE_METHOD_SELECTORS` + auto-инъекция `import std.unicode`.
 > **Зависит от:** `compiler-codegen/src/imports.rs` (резолвер), `lints.rs` (`collect_used_names`), prelude (`std/prelude/*`), method-resolution в checker/codegen, Plan 159 (DCE — остаётся в силе).
@@ -47,7 +47,20 @@
 - **Ф.3 — Method-resolution-by-type.** Построить `type→methods`; `x.foo()` резолвится по типу `x` без import. Гейт inherent vs extension.
 - **Ф.4 — Char-методы в prelude + снятие Ф.4-хардкода.** Перенести базовые `char @`-методы в prelude/core (рядом с `char`); удалить `CHAR_UNICODE_METHOD_SELECTORS` + `needs_unicode_injection` + блок инъекции (+ `@method:`-тег, если осиротел); таблицы остаются в `std.unicode` под DCE. Проверить: `'Ω'.is_alphabetic()` без import работает через **общий** механизм, не спецкейс.
 - **Ф.5 — Политика extension-методов** (`Q-module-resolution-model`): enforcement (`E_EXTENSION_METHOD_NEEDS_IMPORT` или решение по Q) + диагностика ambiguity (два extension-`foo` на один тип из разных модулей).
-- **Ф.6 — Тесты + замер компайл-тайма + миграция + close.**
+- **Ф.6 — Тесты + замер компайл-тайма + миграция + close.** ✅ CLOSED
+
+## Статус по завершении (2026-06-16)
+
+Все фазы Ф.1-Ф.5 РЕАЛИЗОВАНЫ. Ключевые изменения:
+
+- **Ф.1+Ф.2** (`compiler-codegen/src/imports.rs`): `visited: HashSet → HashMap<Vec<String>, Vec<String>>`; cycle guard `in_progress.contains(&module_key) → return Ok(())`. Цикл `prelude.core → std.unicode → ... → prelude.core` компилируется.
+- **Ф.3** (`compiler-codegen/src/types/mod.rs`): `TypeCheckCtx.type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>>` — строится из `peer_files[*].items_here`. Inherent-методы вызываются без import.
+- **Ф.4** (`std/prelude/core.nv`, `std/unicode/category.nv`): 10 `char @`-методов перенесены из category.nv в core.nv; `CHAR_UNICODE_METHOD_SELECTORS` + `needs_unicode_injection` + блок инъекции удалены из imports.rs; `import std.unicode as unicode` в core.nv использует cycle guard.
+- **Ф.5** (`compiler-codegen/src/types/mod.rs`): `entry_imported_modules: HashSet<String>` + `entry_file_ids: HashSet<FileId>` + `E_EXTENSION_METHOD_NEEDS_IMPORT`. Extension-метод из неимпортированного модуля → ошибка.
+
+**Тесты:** `nova_tests/plan162/` — 6 fixtures: f1_cycle_basic ✅, f2_method_by_type ✅, f3_char_no_import ✅, f4_extension_needs_import_neg ✅, f5_extension_with_import_pos ✅, f6_inherent_no_import_pos ✅. plan162 PASS 6/0.
+
+**Регресс:** нулевой рост FAIL в plan162, plan163, plan108, plan139, plan91 batch-тестах. ~100 файлов мигрированы (import X as X). [M-159-lazy-module-resolution] CLOSED.
 
 ## Тесты (через релизный nova & компилятор)
 

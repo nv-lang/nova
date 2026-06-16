@@ -18,6 +18,23 @@
 
 ---
 
+### Plan 163 Ф.1-Ф.3 — import/export glob hygiene (2026-06-16, ✅ CLOSED [M-import-glob-forbid])
+
+- **Где** — `compiler-codegen/src/types/mod.rs` (E_REEXPORT_GLOB + E_IMPORT_GLOB checks); ~100 файлов std/ + nova_tests/ (import-migration).
+- **Что сделано** — `E_REEXPORT_GLOB`: `export import m` без `.{}` → ошибка (нулевая миграция). `E_IMPORT_GLOB`: `import m` без `.{}`/`as` → ошибка (вариант a: запрет, НЕ qualified-redesign). ~100 файлов мигрированы `import X` → `import X as X`. plan163 5/0 PASS.
+- **Выбор** — вариант (a) запрет, а не (b) qualified `import m → m.foo`. Вариант (a) проще и не требует изменений резолвера (Plan 162 уже делает резолвер-рефакторинг).
+- **D-блоки** — D288 (E_REEXPORT_GLOB), D289 (E_IMPORT_GLOB option a). Q-import-glob-hygiene RESOLVED.
+- **Приоритет** — L (CLOSED).
+
+### Plan 162 Ф.1-Ф.5 — Rust-модель module-resolution (2026-06-16, ✅ CLOSED [M-159-lazy-module-resolution])
+
+- **Где** — `compiler-codegen/src/imports.rs` (cycle guard + TypeMethodMap); `compiler-codegen/src/types/mod.rs` (TypeMethodMap + E_EXTENSION_METHOD_NEEDS_IMPORT); `std/prelude/core.nv` (10 char Unicode-методов + import std.unicode); `std/unicode/category.nv` (методы убраны); ~100 файлов std/ + nova_tests/ (migration).
+- **Что сделано** — Cycle guard: `in_progress.contains(&module_key) → return Ok(())` вместо stack-overflow. TypeMethodMap: inherent методы вызываются без import (нет хардкода имён). Char Unicode-методы в `std/prelude/core.nv` — общий механизм. `CHAR_UNICODE_METHOD_SELECTORS` + `needs_unicode_injection` удалены из компилятора. Extension-методы из неимпортированных модулей → `E_EXTENSION_METHOD_NEEDS_IMPORT`. plan162 6/0 PASS.
+- **Ограничения** — TypeMethodMap = emit-time (не checker-time); extension-policy может потребовать уточнения при ambiguity двух extension-методов на одном типе. Codegen-only, не semantic type-checking.
+- **D-блоки** — D285 (cycle guard), D286 (TypeMethodMap), D287 (extension policy). Q-module-resolution-model RESOLVED.
+- **Коммиты** — в ветке `plan-162-module-resolution`; 7 коммитов.
+- **Приоритет** — L (CLOSED).
+
 ### Plan 161 V2 — Blanket parametric-return T-subst (2026-06-16, ✅ CLOSED [M-161-parametric-return])
 
 - **Где** — `compiler-codegen/src/codegen/emit_c.rs` (2 точки: mono-dispatch type_subst bind + infer_expr_c_type string-subst), `std/collections/vec_iter_zc.nv` (blanket refactor), `nova_tests/plan161/` (+2 fixtures).
