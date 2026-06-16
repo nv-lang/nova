@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::diag::Span;
+use crate::parser::impl_spec_base_name;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, BTreeMap};
 use std::fmt::Write as FmtWrite;

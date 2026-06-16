@@ -85,12 +85,14 @@ export type EnumerateIter[I, T] value { mut src I, mut i int }
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Advance: pull one from `src`, map through `f`.
+#impl(Next[U])
 export fn MapIter[I, T, U] mut @next() -> Option[U] => match @src.next() {
     Some(x) => Some((@f)(x)),
     None => None,
 }
 
 /// Advance: pull from `src` until `pred` holds (or the source is exhausted).
+#impl(Next[T])
 export fn FilterIter[I, T] mut @next() -> Option[T] {
     while true {
         match @src.next() {
@@ -102,6 +104,7 @@ export fn FilterIter[I, T] mut @next() -> Option[T] {
 }
 
 /// Advance: pull from `src`, applying `f`; skip `None`, yield `Some(u)`.
+#impl(Next[U])
 export fn FilterMapIter[I, T, U] mut @next() -> Option[U] {
     while true {
         match @src.next() {
@@ -115,12 +118,14 @@ export fn FilterMapIter[I, T, U] mut @next() -> Option[U] {
     None
 }
 
+#impl(Next[T])
 export fn TakeIter[I, T] mut @next() -> Option[T] {
     if @left <= 0 { return None }
     @left -= 1
     @src.next()
 }
 
+#impl(Next[T])
 export fn SkipIter[I, T] mut @next() -> Option[T] {
     while @to_skip > 0 {
         @to_skip -= 1
@@ -133,6 +138,7 @@ export fn SkipIter[I, T] mut @next() -> Option[T] {
 }
 
 /// Advance: pull one from `src`, pair it with the current index counter.
+#impl(Next[(int,T)])
 export fn EnumerateIter[I, T] mut @next() -> Option[(int, T)] {
     match @src.next() {
         Some(x) => {
