@@ -340,11 +340,12 @@
   кандидаты-сигнатуры в hint). Surfaced при закрытии `[M-138.2-generic-method-overload-mono]`
   (dispatch для МАТЧАЩИХ overload'ов починен; no-match-диагностика — отдельный type-check слой).
   `EXPECT_COMPILE_ERROR` (Nova-codegen) сейчас не ловит этот кейс (codegen «успешен», падает clang).
-- **`[M-153.1-append-extend-consolidation]`** ✅ **CLOSED 2026-06-17** via `AsSlice[T]` protocol
-  (D299). Решение: не overload-collapse, а generic bound — `@append[S AsSlice[T]](other S)`.
-  `AsSlice[T]` в `std/prelude/protocols.nv` = `@as_ptr() -> *T` + `@len() -> int`; `Vec[T]`
-  реализует через `#impl(AsSlice[T])` на `@as_ptr`. Self-append safe (memmove, непересекающиеся
-  регионы). `@extend[S Iter[T]]` сохранён для нон-contiguous источников. Spec D299.
+- **`[M-153.1-append-extend-consolidation]`** (planned, home **Plan 153.1 / D259**): план
+  хотел один `append` (concrete Vec bulk + generic Iter overload), `extend` убрать.
+  Заблокировано тем же overload-collapse + у generic-`append` (`for x in items {@push(x)}`)
+  self-append footgun (`v.append(v)` растёт во время итерации; bulk-версия снапшотит длину).
+  Оставлены раздельно: `@append(Vec[T])` (bulk, self-safe) + `@extend[S Iter[T]]` (generic).
+  Консолидировать, когда overload-mono + self-alias-safe generic append.
 - **`[M-153-scalar-min-max]`** ✅ **CLOSED 2026-06-16.** `@min(other)`/`@max(other)` реализованы через Nova-body if/else (без C-макросов `max`/`min`) на всех 12 числовых типах в `std/runtime/defaults.nv`. Тест `plan153_1/scalar_min_max` PASS (release nova). Коммит `782a8e36`.
 - **`[M-153.1-of-vs-from-sweep]`** (planned, P3, churn): конструктор-конвенция формализована
   (план 153.1 / D259 + док `from` в core.nv направляет на `of`): литералы → `Vec[T].of(a,b,c)`,
@@ -550,75 +551,11 @@
 - ~~**`[M-91.12-async-dns]`**~~ ✅ **CLOSED 2026-06-16** — DnsNet раскомментирован (`std/net/effect.nv`), `real_dns_net()` реализован (`std/net/dns.nv`), C-side `dns_lookup`/`dns_addr_at` через `uv_getaddrinfo` + TLS (`compiler-codegen/nova_rt/net.c`). D295. `SocketAddr.lookup()` wrapper обходит vtable type-erasure. Тест: `net_v2_dns_smoke` 6/0 PASS. 21/0 plan91_12 PASS.
 - ~~**`[M-91.13-dns-iter-boxing]`**~~ ✅ **CLOSED 2026-06-16** — `is_generic_stub_c` fix (`&& !name.contains("____")`) + DnsNet V2 `[]SocketAddr` API. Vtable erasure устранена; `real_dns_net()` строит Vec через `dns_addr_at(0..count)`; `mock_dns_net()` возвращает `Ok([loopback(0)])`. 21/0 plan91_12 PASS.
 - ~~**`[M-91.13-real-dns-integration-test]`**~~ ✅ **CLOSED 2026-06-16** — `net_v2_dns_real_slow.nv` добавлен (`_slow` suffix, `NOVA_SLOW_TESTS=1` opt-in); `assert(r.is_ok())` с реальным `localhost` resolver.
-- ~~**`[M-net-udp-send-toctou]`**~~ ✅ **CLOSED 2026-06-17** — send_to TOCTOU: `recv_scope` выставлялся ПОСЛЕ `uv_udp_send`; на Windows loopback callback срабатывал синхронно → файбер паркуется без пробуждения. Fix: отдельные поля `send_scope`/`send_slot`; выставляются ДО `uv_udp_send`. Plan 166.
-- ~~**`[M-net-udp-split]`**~~ ✅ **CLOSED 2026-06-17** — UDP socket split: `UdpSendHalf` + `UdpRecvHalf` consume value types; `UdpSocket.split()` → два half; atomic refcount на C-хендл; оба half обязаны быть закрыты. D298 Plan 166. Тесты: `net_v2_udp_two_fiber_slow` + `net_v2_udp_split_slow` PASS.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
-- **`[M-91.16-tcp-split]`** — TcpStream consume делает невозможным concurrent read+write из двух файберов. Нужны `TcpReadHalf`/`TcpWriteHalf` по образцу UDP split (Plan 166 / D296). → Plan 91.16.
-- **`[M-91.12-split-halves]`** (TCP) — TcpReader/TcpWriter consume-split для concurrent r/w — OPEN. → Plan 91.16.
 
-## Plan 91.16 — TCP split: TcpReadHalf + TcpWriteHalf
+## Follow-up: Plan 106 (if/while && guard)
 
-По образцу UDP split (Plan 166 / D296). `TcpStream consume @split() -> (TcpReadHalf, TcpWriteHalf)`. Atomic refcount на C-handle, оба half — consume value. → см. маркер `[M-91.16-tcp-split]`.
-
-## Plan 91.17 — std/net API polish (followup компаративного ревью 2026-06-17)
-
-Сравнительный анализ Nova Net API vs Go/Rust/TS/Kotlin/Java выявил следующие пункты (источник: сессия 2026-06-17).
-
-**Контекст:** `blocking { }` и эффект `Blocking` в сигнатурах — **retracted** в Plan 113 (D172, 2026-05-29), заменены на `#blocking fn`. Оба в спеке отозваны, но парсер/компилятор ещё поддерживают для совместимости.
-
-### P0 — Удалить retracted фичу (blocking {} / Blocking)
-
-| Маркер | Суть | Приоритет |
-|---|---|---|
-| `[M-91.15-remove-blocking]` | Удалить `blocking { }` из компилятора и `Blocking` из сигнатур. **Компилятор:** убрать `ExprKind::Blocking`, `KwBlocking` (или превратить в ошибку), `blocking_body_active`, проверку `declared_effects.contains("Blocking")`, `"Blocking"` из `realtime_suspend_effect`. **std/net:** убрать `Blocking` из 6 сигнатур в tcp.nv и udp.nv, обновить комментарии в effect.nv. **Тесты:** удалить `nova_tests/negative_capability/blocking_*.nv` (4 файла), скорректировать `plan83_10/`, `plan100_4_2/defer_err_blocking_in_body.nv`. **NB:** `#blocking fn` (атрибут) остаётся — трогать не нужно. | P0 |
-
-### P1 — Критические (до публичного релиза)
-
-| Маркер | Суть | Приоритет |
-|---|---|---|
-| `[M-91.15-write-all]` | Нет `TcpStream @write_all(data str) -> Result[(), NetError]`. `write()` возвращает `int` (bytes written) — TCP может записать частично. Каждый пользовательский код без цикла = скрытая потеря данных. `write_all` должен быть основным методом для большинства случаев. | P1 |
-| `[M-91.15-eof-semantics]` | `TcpStream @read()` возвращает `Ok("")` на EOF — неотличимо от успешного пустого чтения. Добавить `NetError.Eof` и возвращать `Err(NetError.Eof)` на graceful close. Аналог Go `io.EOF`. | P1 |
-| `[M-91.15-neterror-to-str]` | `NetError` не имеет `@to_str() -> str`. `IoError(str)` несёт строку, но достать без exhaustive match нельзя. Ошибка, которую нельзя напечатать = бесполезна в логах. | P1 |
-| `[M-91.15-host-str-rename]` | `SocketAddr @host_str()` — нестандартное имя (нет ни в одном языке). `_str` суффикс = тип протекает в имя метода. Переименовать в `@ip() -> str` (Rust: `.ip()`, Deno: `.hostname`). | P1 |
-
-### P2 — Важные дополнения
-
-| Маркер | Суть | Приоритет |
-|---|---|---|
-| `[M-91.15-permission-denied]` | Добавить `NetError.PermissionDenied` — EACCES при bind на порт <1024 без root. Сейчас падает в `IoError(str)`. | P2 |
-| `[M-91.15-connection-reset]` | Добавить `NetError.ConnectionReset` — TCP RST от peer. Отличается от `Closed` (локальное закрытие). Сейчас падает в `IoError(str)`. | P2 |
-| `[M-91.15-connect-timeout]` | `TcpStream.connect()` к недостижимому хосту блокирует ~2 мин. Если fiber cancellation через `supervised {}` это решает — нужен пример в доках. Если нет — добавить `connect_timeout(addr, ms int)`. | P2 |
-| `[M-91.15-read-bytes]` | `TcpStream @read(max int) -> Result[str, NetError]` блокирует реализацию бинарных протоколов (protobuf, TLS, HTTP/2). Добавить `@read_bytes(max int) -> Result[[]u8, NetError]`. Гейт: `[]u8` как полноценный тип в Nova. | P2 |
-| `[M-91.15-effect-prefix-consistency]` | В `TcpNet` effect смешаны два стиля: operation-first (`close_stream`, `close_listener`) и type-first (`listener_local_port`, `stream_local_port`). В `UdpNet` аналогично (`close_socket` vs `socket_local_port`). Стандартизировать на type-first везде: `stream_close`, `listener_close`, `socket_close`. | P2 |
-
-### P3 — Полезно иметь
-
-| Маркер | Суть | Приоритет |
-|---|---|---|
-| `[M-91.15-read-exact]` | `TcpStream @read_exact(n int) -> Result[str, NetError]` — для fixed-length framing в бинарных протоколах. | P3 |
-| `[M-91.15-shutdown-write]` | `TcpStream @shutdown_write() -> Result[(), NetError]` — half-close (отправить FIN, продолжать читать). Нужен для HTTP/1.0 и некоторых RPC паттернов. | P3 |
-| `[M-91.15-so-reuseport]` | `TcpListener @set_reuse_port(on bool)` — `SO_REUSEPORT` (несколько сокетов на одном порту для load-balancing). Отличается от `SO_REUSEADDR`. | P3 |
-| `[M-91.15-udp-multicast]` | `UdpSocket @set_broadcast(on bool)` / `@join_multicast(addr)` — LAN discovery, mDNS, SSDP. | P3 |
-
-[M-118.6-tuple-field-escape] tuple field chain-root tracking — &tuple.N escape analysis.
-## Follow-up: Plan 104.4 (documentSymbol + workspaceSymbol + references)
-
-✅ **CLOSED 2026-06-16** — branch `plan-104-4`, commit `8b3e1903`; 86+15 PASS.
-
-Open V1 markers (gated on type-checker resolver API in Plan 104.2):
-- **`[M-104.4-refs-incremental-index]`** — references scan is full filesystem per-request (V2: incremental index). Гейт: type-checker integration (Plan 104.2).
-- **`[M-104.4-workspace-symbol-fuzzy]`** — workspace/symbol uses substring V1 (V2: fuzzy ranking / prefix scoring). Independent of type-checker.
-- **`[M-104.4-cross-file-method-nesting]`** — documentSymbol nests methods under type only within same file via receiver name match (V2: cross-file resolver needs Plan 104.2 symbol resolution API).
-
-## Follow-up: Plan 104.5 (LSP Code Actions / Quick-fixes V1)
-
-- **`[M-104.5-suggestion-field-wiring]`** (P2, home **Plan 104.5**) — `Suggestion` struct field в compiler diagnostic не propagated в LSP yet; code_actions.rs парсит сам из message text. Когда compiler добавит machine-readable `Suggestion` поле в DiagnosticResult, LSP should consume it directly without re-parsing. → Plan 104.x или Plan 101 V3.
-- **`[M-104.5-multi-edit-rename]`** (P3, home **Plan 104.5**) — fix handlers currently produce single-span TextEdit; multi-edit (e.g., rename generic `T` → `T1` across all occurrences in fn signature + body) требует cross-span edits и range-finder в source. V2 с Plan 104.6 (rename).
-- **`[M-104.5-organize-imports]`** (P3, home **Plan 104.5**) — `source.organizeImports` action kind advertised but not yet implemented (no-op body); V2 после Plan 104.3/104.6 когда symbol index доступен для dead-import detection.
-
-## Follow-up: Plan 104.6 (Rename + Format-on-save)
-
-- **`[M-104.6-symbol-table-rename]`** (P3) — V1 rename uses regex word-boundary scan across all files; does not distinguish `foo` declared in different scopes. V2: expose `resolve_symbol_at(module, pos) -> Option<Symbol>` from `compiler-codegen` for per-position symbol resolution; use it to restrict rename to the exact declaration + its references only.
-- **`[M-104.6-nova-fmt-stdin]`** (P3) — Current `format_document` writes to a temp file. If `nova fmt` adds `--stdin` support, switch to piped stdin to avoid I/O overhead.
-- **`[M-104.6-ontypeformat-more-triggers]`** (P4) — Add `,` and `;` triggers for onTypeFormatting (auto-space after comma etc.).
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-106-if-guard]` | ✅ CLOSED 2026-06-17. && guard в if/while pattern-bind. | Plan 106 | ✅ done |

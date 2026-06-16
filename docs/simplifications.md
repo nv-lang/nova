@@ -1,18 +1,6 @@
 ﻿# Упрощения и отложенные доработки
 
 Живой список осознанных упрощений, сделанных в ходе разработки.
-
----
-
-### Plan 104.5 — LSP Code Actions / Quick-fixes V1 (2026-06-16, ✅ CLOSED)
-
-- **Где** — `nova-lsp/src/code_actions.rs`, `nova-lsp/src/diagnostic_mapping.rs`.
-- **Что сделано** — 25 quick-fix handlers: 8 Plan-101 (generic types) + 7 Plan-100 (consume/mut) + 7 general + 3 auto-import. Error-code extraction (`[E_CODE]` → `Diagnostic.code`). D296 spec.
-- **Упрощение 1** — `[M-104.5-suggestion-field-wiring]`: V1 компутирует edit из diagnostic range (re-scan source), а не из `Diagnostic.suggestion.span`. V2: wire `suggestion.span` напрямую для точности.
-- **Упрощение 2** — `[M-104.5-multi-edit-rename]`: E_PREFIX_SHADOWS_NAMED_TYPE меняет только объявление, не все usages. V2: cross-scope rename через find-references (Plan 104.6).
-- **Упрощение 3** — `[M-104.5-organize-imports]`: Source.organizeImports кинд объявлен, но sort+dedup не реализован. V2.
-- **Как чинить** — V2 закрывает все 3 маркера после реализации Plan 104.6 (rename/find-refs).
-- **Приоритет** — L (V1 достаточен для производительной работы).
 Каждое упрощение попадает сюда в момент принятия решения — чтобы не потерять контекст.
 
 > **Принцип** (см. [`project-philosophy.md`](project-philosophy.md)): Nova не в
@@ -27,26 +15,6 @@
 - **Почему** — trade-off на момент принятия.
 - **Как чинить** — краткий план.
 - **Приоритет** — L / M / H.
-
----
-
-### Plan 104.2 — hover/goto-def/sighelp V1 simplifications (2026-06-16)
-
-- **Где** — `nova-lsp/src/symbol.rs`, `nova-lsp/src/goto_definition.rs`, `nova-lsp/src/signature_help.rs`.
-- **Что упрощено** — (1) `[M-104.2-cross-file-goto]` — goto-definition V1 single-file only: always returns Location in same URI, does not resolve imports across module graph. (2) `[M-104.2-symbol-cache]` — no symbol cache: `resolve_symbol_at` parses and walks AST on every hover/goto request. Acceptable for V1 (<10ms per request on typical files). (3) `[M-104.2-protocol-method-hover]` — protocol method bodies not separately resolved; they fall through to the fn-level match. (4) `[M-104.2-signature-type-dispatch]` — signature help does name-only lookup, not type-driven method dispatch: `obj.foo(` finds all fns + methods named `foo` regardless of receiver type.
-- **Как чинить** — (1) cross-file: workspace import graph + multi-file module cache in Plan 104.4. (2) cache: dashmap<Uri, (Module, version)> in WorkspaceState after 104.3. (3) protocol: add ProtocolDecl variant to SymbolInfo. (4) type dispatch: resolve obj-type from TypeCheckCtx then filter by receiver — Plan 104.3 completion work covers same path.
-- **Приоритет** — M (cross-file goto, most user-visible); L (cache, symbol-cache, type-dispatch — not painful V1).
-
----
-
-### Plan 104.4 — documentSymbol + workspaceSymbol + references V1 (2026-06-16, ✅ CLOSED)
-
-- **Где** — `nova-lsp/src/symbols.rs`, `nova-lsp/src/server.rs`, `nova-lsp/tests/symbols_references.rs`.
-- **Что сделано** — `textDocument/documentSymbol`: AST-walker по `Module.items`; two-pass — first pass collects TypeDecl into index, second pass nests FnDecl методы под receiver type. Cache per-URI (`DashMap<Url, Arc<Vec<DocumentSymbol>>>`), инвалидируется при didChange/didOpen. `workspace/symbol`: per-file index (`DashMap<Url, Vec<WorkspaceSymbolEntry>>`), обновляется инкрементально; substring + case-insensitive поиск; top-100 pagination. `textDocument/references`: word-boundary scan по всем open + disk `.nv` файлам; `includeDeclaration` option. Capabilities: `documentSymbolProvider`, `workspaceSymbolProvider`, `referencesProvider`. Тесты: 86 lib unit tests + 15 integration tests; всё PASS.
-- **Упрощение** — `[M-104.4-refs-incremental-index]`: references scan = full filesystem per-request (V2: incremental index gated на type-checker integration). `[M-104.4-workspace-symbol-fuzzy]`: substring V1 (V2: fuzzy ranking). `[M-104.4-cross-file-method-nesting]`: methods вложены под type только в пределах одного файла по receiver-name matching (V2: cross-file resolver).
-- **Как чинить** — V2 после Plan 104.2 (type-checker resolver API для cross-file resolution) + Plan 104.6 (rename reuses references).
-- **D-блоки** — нет новых D-блоков; реализует capability из Plan 104 architecture §104.4.
-- **Приоритет** — L (CLOSED; markers M-104.4-* open V2 tasks).
 
 ---
 
@@ -37085,31 +37053,5 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 
 - [2026-06-16] Plan 152.8 (nova_char uint32_t + Vec[u32] unicode) — NO simplifications; production-grade. Layer 1: Vec[int]→Vec[u32] in 7 std/unicode files (normalize.nv, case.nv, category.nv, graphemes.nv, words.nv, sentences.nv, collate.nv); 88 type occurrences. Layer 2: nova_char typedef int64_t→uint32_t (D128 AMEND Plan 152.8): nova_rt.h, array.h comment, gc_layout.rs char_size (8,8)→(4,4) + test renamed, emit_c.rs U-suffix for char literals + nova_char in is_typed_int_c_ty + emit_typed_int_literal. Tests: 5 Layer-1 positives (t1-t5, unicode functions) + 1 Layer-2 positive (t6, char u32 properties/hash/compare) = 6/6 PASS plan152_8; 9/9 PASS plan152_7 (0 regressions). Spec: D128 AMEND in spec/decisions/02-types.md + 08-runtime.md. Marker [M-152-unicode-codepoint-u32] CLOSED. Branch plan-152.8. Commits: c659fe97 (Layer 1) + 11730ca5 (Layer 1 tests) + 08171fdc (Layer 2).
 
-### Plan 104.3 (Completion provider, 2026-06-16) — V1 simplifications
-
-- **[S-104.3-1]** Method-dot type inference: text heuristic (pattern-match on let/mut/param lines), NOT full TypeCheckCtx integration. Where: completion.rs infer_type_of_expr(). Why: TypeCheckCtx internals are not exposed as a public API with cursor-position lookup; implementing it would require a new `resolve_symbol_at` API in compiler-codegen (planned for Plan 104.2). How to fix: add `pub fn resolve_symbol_at(module, pos)` in compiler-codegen and use it in completion. Priority: M (method completion works for typed params and common naming conventions).
-- **[S-104.3-2]** Import path: hardcoded std module tree (27 modules). Where: completion.rs STD_MODULES. Why: no manifest-walk API at workspace level yet. How to fix: Plan 104.4 workspace symbols will build a module index; completion can use that. Priority: L (std modules don't change often).
-- **[S-104.3-3]** completionItem/resolve: not implemented (resolve_provider=false). Where: server.rs CompletionOptions. Why: all detail is inline in the initial response; LSP resolve is a bandwidth optimization for very large item lists. How to fix: add lazy resolver handler in V2. Priority: L (not needed for typical Nova files).
-
-Tests: 39 unit + 13 integration = 52 completion-specific + 167 total nova-lsp tests PASS.
-
-## Plan 118.6 — Safe &x model (2026-06-17, ЗАКРЫТ)
-- &x safe для всех типов (value-record + primitives) без unsafe{}: escape analysis + heap-promote при escape
-- unsafe { &x } = сырой стек-указатель без promote (FFI паттерн)
-- Heap-promote — compile-time статическое решение в точке объявления (не рантайм-копирование)
-- &x.field → весь корневой биндинг промоутится целиком (не поле отдельно)
-- addr_of() / addr_of_mut() удалены → E_ADDR_OF_REMOVED с fix-it "&x"
-- Escape analysis расширен на примитивы (ранее только value-records с AllocKind::Value)
-- mut биндинг → *mut T auto; ro биндинг → *T auto (тип из биндинга, не явного addr_of_mut)
-- D216 §4 AMEND: E_UNSAFE_REQUIRED больше не срабатывает на AddrOf (только на Deref + unsafe fn calls)
-- [M-118.1-addr-of-mut-deref-ptr-mut] CLOSED by Plan 118.6 — addr_of_mut retired; &x mut-inference covers this
-- [M-118.1-addr-of-chains-checktime] CLOSED — addr_of retired; &x chain-check runs at check-time
-- 15/15 plan118_6 PASS. Merge: a47ba61b
-
-### Plan 104.6 (Rename + Format-on-save, 2026-06-16) — V1 simplifications
-
-- [2026-06-17] Plan 166: net.c send_to TOCTOU fix + UDP socket split — NO simplifications; production-grade. TOCTOU fix: separate send_scope/send_slot fields added to NovaRt_UdpSocket; send_scope set BEFORE uv_udp_send (was after); _udp_send_cb uses send_scope (was recv_scope); nova_sched_register_pending + _udp_send_stop_cb added for cancellation safety. UDP split: UdpSendHalf + UdpRecvHalf consume value types in std/net/udp.nv; UdpSocket.split() consumes socket → two halves; send half uses send_scope/send_slot (concurrent-safe with recv); recv half uses recv_scope/recv_slot; atomic refcount (volatile int32_t) on NovaRt_UdpSocket; last close() actually closes OS socket. Three new UdpNet effect ops: split_socket/close_send_half/close_recv_half in std/net/effect.nv; real_udp_net() + mock.nv updated. D298 spec (04-effects.md). Tests: net_v2_udp_two_fiber_slow + net_v2_udp_split_slow (nova_tests/plan91_12) all PASS. [M-net-udp-send-toctou] CLOSED. [M-net-udp-split] CLOSED.
-
-- [2026-06-17] Plan 153.1 follow-up — AsSlice[T] protocol D299 (append-extend consolidation). [M-153.1-append-extend-consolidation] CLOSED via protocol generalization: `@append[S AsSlice[T]](other S)` instead of overload collapse. No simplifications — production-grade: RawMem.copy (memmove) ensures self-append safety; @extend[S Iter[T]] preserved for non-contiguous sources; nova check PASS on all 3 modified files. D299 spec written. nova_tests/plan153_1/append_as_slice.nv: 6 test cases (check PASS). Commit a1c20e63.
-
-- [2026-06-16] Plan 104.6 (Rename + Format-on-save, nova-lsp, branch plan-104-6) — V1 simplifications documented. (1) Rename occurrence scan is regex-based word-boundary match (NOT full symbol-table from type-checker). Consequence: renames `foo` wherever it appears as a whole-word token, even if declared in different scopes (e.g. two local vars named `foo` in different functions). Full per-position symbol resolution requires compiler API extension for cross-file per-position symbol lookup — deferred to V2 [M-104.6-symbol-table-rename]. (2) rangeFormatting V1 formats the whole file via `nova fmt` then clips the returned edit to the requested range (nova fmt is a whole-file formatter with no range option). (3) onTypeFormatting handles only `\n` (auto-indent) and `}` (dedent) in V1. Comma, semicolon, and other triggers are no-ops. (4) Atomic post-rename type-check uses `check_source_inner` (parse + type-check); if the compiler is unavailable or panics (caught by `check_source_inner` via catch_unwind), the rename is permitted without validation. (5) Generic param scope guard is file-local word-boundary (not per-typevar scope boundary). Genuine scope-limited rename (only within the typevar's declaring fn/type) deferred to V2.
+- [2026-06-17] Plan 106: && guard — без упрощений. Полный scope-pipelining (биндинги
+паттерна видны в guard), type-check guard как bool, codegen корректный.
