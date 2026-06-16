@@ -38520,3 +38520,6 @@ emit_c.rs: U-suffix для char literals; nova_char в is_typed_int_c_ty + emit_
   Проверка в check_type_decl(): td.name.chars().count() == 1 → error.
   Мигрировано 37 файлов nova_tests/. plan118_1_addr_chains: 12/12 PASS (было 9/12).
   plan167: N/N PASS. [M-single-letter-type-ban] CLOSED.
+
+[2026-06-17] nova-lsp: E_ADDR_OF_REMOVED quick-fix — Plan 118.6 followup. Replaced dead E_ADDR_OF_MUT_REQUIRES_MUT_BINDING handler with fix_addr_of_removed: parses ddr_of(expr) / ddr_of_mut(expr) from diagnostic range, replaces with &expr. Release build OK.
+[2026-06-17] fix(plan123_1): loop_iteration_ok.nv — renamed type Iter→IterData (E_BOUND_NOT_PROTOCOL prelude conflict; Plan 165 added Iter as prelude protocol). BOM corruption from PowerShell Set-Content fixed via [System.IO.File]::WriteAllText with UTF8NoBOM. PASS. Added [M-prelude-name-shadow-hint] to backlog.
