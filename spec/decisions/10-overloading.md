@@ -8,6 +8,7 @@ static-функций на типе.
 | # | Решение |
 |---|---|
 | [D84](#d84-перегрузка-функций-и-методов-четыре-оси-резолв-по-самому-специфичному-матчу) | Перегрузка функций и методов: четыре оси, резолв по самому специфичному матчу |
+| [D285](#d285--receiver-compatibility-rule--blanket-dispatch-priority-plan-164-ф3) | Receiver-compatibility rule: blanket dispatch приоритизирует по receiver-совместимости |
 
 Связанные решения в других файлах:
 - [D46](03-syntax.md#d46) — operator overloading через `@plus`/`@times` (частный случай по receiver).
@@ -619,3 +620,30 @@ Production-форма — **carrier** `Vec[Vec[T]] @flatten()` (совпадае
 - [D239](02-types.md#d239-t--синтаксический-псевдоним-vect) — `[]T ≡ Vec[T]` (insert_slice-аргумент; `Vec[Vec[T]] ≡ [][]T` для flatten).
 - [D145](02-types.md#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101) AMEND — вложенные generic-ресиверы произвольной глубины (фундамент `@flatten`).
 - Plan 153.1 mutate.nv — `@append`/`@splice` (in-place; restructure НЕ дублирует; `@flatten` переиспользует bulk `@append`).
+
+---
+
+## D285 — Receiver-compatibility rule — blanket dispatch priority (Plan 164 Ф.3)
+
+**Status:** ACTIVE (Plan 164 Ф.3, 2026-06-16). **Зависит от:** [D282](02-types.md#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) (blanket protocol-receiver), [D84](#d84-перегрузка-функций-и-методов-четыре-оси-резолв-по-самому-специфичному-матчу) (dispatch priority). **Маркеры:** `[M-codegen-blanket-generic-param-order]` ✅ CLOSED Plan 164 Ф.2; `[M-153.2-drop-z-prefix]` ✅ CLOSED Plan 164 Ф.4; `[M-impl-attr-generic-protocol]` ✅ CLOSED Plan 164 Ф.1.
+
+**§1 Проблема (root cause).** До Plan 164 Ф.3 codegen при резолве метода по имени применял стратегию «last-wins» из `method_receivers` (HashMap, один FnDecl на ключ `(type, name)`). При наличии конкретного метода с тем же именем на несовпадающем типе (напр., `CharsIter.count()` из `std/strings`) он побеждал над blanket-методом `fn[I Next[T]] I @count()` для `FilterIter` — потому что конкретный регистрировался позже и перезаписывал запись. Результат: `FilterIter.count()` диспетчился в `CharsIter.count()` → CC-FAIL.
+
+**§2 Правило (receiver-compatibility).** При резолве вызова `recv.method(args)`:
+1. Ищется **конкретный** метод с точным совпадением receiver-типа (`method_receivers[base_type]` или `method_overloads`). Если найден — используется. Конкретный метод всегда приоритетнее blanket (D84 §«по receiver-типу»).
+2. Если конкретный не найден — ищется **blanket**-метод (typevar-ресивер, bound = протокол). Receiver считается совместимым, если его тип зарегистрирован в `type_impl_protocols[base_type]` для соответствующего протокола.
+3. **Concrete метод на НЕСОВПАДАЮЩЕМ типе не может победить blanket на СОВМЕСТИМОМ типе.** «Несовпадение» = base_type в `method_receivers` не совпадает с actual receiver.
+
+**§3 Алгоритм (codegen, Plan 164 Ф.3).** Перед lookup в `method_receivers` (last-wins single-key fallback):
+1. Извлечь base-type из `obj_ty` (strip `Nova_`/`NovaValue_` prefix, `*`, часть до первого `____`).
+2. Если не примитив → сканировать `mono_method_decls` по имени метода, найти blanket-FnDecl (typevar-key длиной ≤2 символов, all-uppercase).
+3. Проверить, что все bounds blanket-fn удовлетворены: для каждого bound `Proto` проверить `type_impl_protocols[base_type]` через `impl_spec_base_name`.
+4. Если все bounds OK → диспетчить через blanket (bind receiver typevar → concrete type). Иначе — продолжить в fallback.
+
+**§4 Приоритет impl-протоколов.** `type_impl_protocols[T]` пополняется из атрибута `#impl(P[U])` на декларации метода (Plan 164 Ф.1, `impl_spec_args_text`). Наличие записи = декларация намерения разработчика; отсутствие = тип не участвует в blanket для данного протокола.
+
+**§5 Ограничения V1.** (a) Алгоритм §3 сканирует `mono_method_decls` O(N) по имени — достаточно для текущего масштаба. (b) Только один blanket-кандидат per-name per-receiver предполагается (конфликт двух blanket = `E_BLANKET_CONFLICT`, D282 §5). (c) Receiver-type с несколькими `#impl` протоколами корректен — каждый bound проверяется независимо.
+
+**Кросс-ссылки:** [D282](02-types.md#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) (blanket-receiver dispatch), [D84](#d84-перегрузка-функций-и-методов-четыре-оси-резолв-по-самому-специфичному-матчу) §1 (concrete > blanket приоритет по receiver-типу), [D268](#d268-method-coherence-extension--да-override-чужого-метода--e_method_redefinition) (method coherence — запрет override чужого метода).
+
+**Реализовано в.** `compiler-codegen/src/codegen/emit_c.rs` (~line 25289): блок receiver-compatibility dispatch (Plan 164 Ф.3, commit `af33bc76`). `compiler-codegen/src/parser/mod.rs`: `impl_spec_base_name()` / `impl_spec_args_text()` helpers (commit `3846a976`). `compiler-codegen/src/types/mod.rs`: `verify_impl_protocols` + `check_signature_match_with_subst` + `normalize_type_str` (commit `3846a976`). `std/collections/vec_iter_zc.nv`: `#impl(Next[T/U])` annotations на adapter `@next()` методах; `VecIter[T]` `@next()` также annotated (commit `70079788`). Тесты: `nova_tests/plan164/` (6/6 PASS).
