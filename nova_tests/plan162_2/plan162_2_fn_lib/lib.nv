@@ -1,0 +1,11 @@
+// Plan 162.2 Ф.4: helper library module.
+// Declares standalone exported functions used by f2_fn_via_sig_pos.nv
+// to verify that sig_table enables cross-module fn lookup.
+
+module plan162_2.plan162_2_fn_lib
+
+export fn add(a int, b int) -> int => a + b
+
+export fn multiply(a int, b int) -> int => a * b
+
+export fn greet(name str) -> str => "hello " + name
