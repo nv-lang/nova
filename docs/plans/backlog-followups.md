@@ -558,3 +558,9 @@
 - ~~**`[M-91.13-real-dns-integration-test]`**~~ ✅ **CLOSED 2026-06-16** — `net_v2_dns_real_slow.nv` добавлен (`_slow` suffix, `NOVA_SLOW_TESTS=1` opt-in); `assert(r.is_ok())` с реальным `localhost` resolver.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
+
+## Follow-up: Plan 104.6 (Rename + Format-on-save)
+
+- **`[M-104.6-symbol-table-rename]`** (P3) — V1 rename uses regex word-boundary scan across all files; does not distinguish `foo` declared in different scopes. V2: expose `resolve_symbol_at(module, pos) -> Option<Symbol>` from `compiler-codegen` for per-position symbol resolution; use it to restrict rename to the exact declaration + its references only.
+- **`[M-104.6-nova-fmt-stdin]`** (P3) — Current `format_document` writes to a temp file. If `nova fmt` adds `--stdin` support, switch to piped stdin to avoid I/O overhead.
+- **`[M-104.6-ontypeformat-more-triggers]`** (P4) — Add `,` and `;` triggers for onTypeFormatting (auto-space after comma etc.).

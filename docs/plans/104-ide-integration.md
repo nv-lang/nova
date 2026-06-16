@@ -255,19 +255,27 @@ General (5+):
 
 **Acceptance:** VSCode 💡 лампочка на каждом из ≥25 error codes; click → код исправляется автоматически.
 
-### 104.6 — Rename + format-on-save — ~4 dev-day
+### 104.6 — Rename + format-on-save — ✅ ЗАКРЫТ 2026-06-16
 
-**Out:**
-- `rename` handler — cross-file. Reuse find-references + replace.
-- `prepareRename` — validate cursor position (only on identifiers).
-- `formatting` / `rangeFormatting` — invoke `nova fmt` (existing CLI command from Plan 01) on file → return text edits.
+**Out (реализовано):**
+- `nova-lsp/src/rename.rs`: `prepare_rename` (cursor validation), `compute_rename` (cross-file
+  word-boundary scan + [[link]] doc-comment update + D296 atomic post-rename type-check).
+- `nova-lsp/src/format.rs`: `format_document` (nova fmt via temp file, graceful if not found),
+  `format_range` (whole-file then clip), `on_type_format` (auto-indent \n, dedent }).
+- `nova-lsp/src/server.rs`: 5 new handlers + ServerCapabilities updated (rename_provider with
+  prepare_provider=true, document_formatting_provider, document_range_formatting_provider,
+  document_on_type_formatting_provider).
+- `spec/decisions/09-tooling.md`: D296 LSP Rename Atomicity Contract.
 
-**Edge cases for rename:**
-- Symbol used in another module (через import) — must update all usages.
-- Receiver shadowing — `fn Foo @bar()` — rename `bar` should NOT touch other `bar` methods.
-- Generic params — `fn f[T](...)` rename `T` → `U` only in scope.
+**V1 simplifications:**
+- Rename uses regex-based word-boundary scan (not full symbol-table). Full symbol resolution V2.
+- `nova fmt` is a whole-file formatter; rangeFormatting clips the result to the requested range.
+- onTypeFormatting handles only `\n` and `}` in V1.
 
-**Acceptance:** F2 на функции → rename, все usages updates; save файла → форматирование применилось.
+**Acceptance:** ✅ `cargo test -p nova-lsp --release` → 98/98 PASS;
+prepareRename returns RangeWithPlaceholder for identifiers; rename rejects conflicts via atomic
+check (D296); formatting invokes nova fmt gracefully; onTypeFormatting inserts indent on newline.
+[Sub-plan: 104.6-rename-format.md]
 
 ### 104.7 — Tree-sitter grammar — ✅ ЗАКРЫТ 2026-05-25
 
