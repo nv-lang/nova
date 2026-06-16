@@ -56,7 +56,7 @@ use std.net.addr
 /// Passing `SocketAddr.loopback(0)` lets the OS assign a free port.
 /// Call `sock.local_port()` to discover the assigned port.
 #stable(since = "0.1")
-export external fn UdpSocket.bind(addr SocketAddr) -> Result[UdpSocket, str]
+export extern "nova" fn UdpSocket.bind(addr SocketAddr) -> Result[UdpSocket, str]
 
 /// Send a datagram to the specified address.
 ///
@@ -65,7 +65,7 @@ export external fn UdpSocket.bind(addr SocketAddr) -> Result[UdpSocket, str]
 ///
 /// Non-blocking under most conditions (kernel buffers the data).
 #stable(since = "0.1")
-export external fn UdpSocket mut @send_to(data str, addr SocketAddr) -> Result[int, str]
+export extern "nova" fn UdpSocket mut @send_to(data str, addr SocketAddr) -> Result[int, str]
 
 /// Receive the next datagram, up to `max_bytes` bytes.
 ///
@@ -79,25 +79,25 @@ export external fn UdpSocket mut @send_to(data str, addr SocketAddr) -> Result[i
 /// To also retrieve the sender's address, call `last_sender()` immediately
 /// after a successful `recv_from()`.
 #stable(since = "0.1")
-export external fn UdpSocket mut @recv_from(max_bytes int) -> Result[str, str]
+export extern "nova" fn UdpSocket mut @recv_from(max_bytes int) -> Result[str, str]
 
 /// Return the address of the sender of the most recently received datagram.
 ///
 /// Only valid immediately after a successful `recv_from()` call.
 /// Returns a loopback address if no datagram has been received yet.
 #stable(since = "0.1")
-export external fn UdpSocket @last_sender() -> SocketAddr
+export extern "nova" fn UdpSocket @last_sender() -> SocketAddr
 
 /// Return the local port this socket is bound to.
 #stable(since = "0.1")
-export external fn UdpSocket @local_port() -> u16
+export extern "nova" fn UdpSocket @local_port() -> u16
 
 /// Return the local address this socket is bound to.
 #stable(since = "0.1")
-export external fn UdpSocket @local_addr() -> SocketAddr
+export extern "nova" fn UdpSocket @local_addr() -> SocketAddr
 
 /// Close the socket and release all resources.
 ///
 /// Idempotent: closing an already-closed socket is safe.
 #stable(since = "0.1")
-export external fn UdpSocket mut @close()
+export extern "nova" fn UdpSocket mut @close()

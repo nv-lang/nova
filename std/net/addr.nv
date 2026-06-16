@@ -41,11 +41,11 @@ module net.addr
 /// After `TcpListener.bind(SocketAddr.loopback(0))`, read the
 /// actual port via `listener.local_port()`.
 #stable(since = "0.1")
-export external fn SocketAddr.loopback(port u16) -> SocketAddr
+export extern "nova" fn SocketAddr.loopback(port u16) -> SocketAddr
 
 /// Create IPv6 loopback address [::1]:port.
 #stable(since = "0.1")
-export external fn SocketAddr.loopback_v6(port u16) -> SocketAddr
+export extern "nova" fn SocketAddr.loopback_v6(port u16) -> SocketAddr
 
 /// Create IPv4 address from dotted-quad octets.
 ///
@@ -55,7 +55,7 @@ export external fn SocketAddr.loopback_v6(port u16) -> SocketAddr
 /// let addr = SocketAddr.v4(127, 0, 0, 1, 80)  // 127.0.0.1:80
 /// ```
 #stable(since = "0.1")
-export external fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr
+export extern "nova" fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr
 
 /// Parse "host:port" string into a SocketAddr.
 ///
@@ -65,27 +65,27 @@ export external fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr
 /// **V1 note:** DNS resolution is synchronous (uv_getaddrinfo on calling
 /// thread). Requires `Blocking` effect in the caller.
 #stable(since = "0.1")
-export external fn SocketAddr.parse(s str) -> Result[SocketAddr, str]
+export extern "nova" fn SocketAddr.parse(s str) -> Result[SocketAddr, str]
 
 /// Get the port number.
 #stable(since = "0.1")
-export external fn SocketAddr @port() -> u16
+export extern "nova" fn SocketAddr @port() -> u16
 
 /// Get the host as a human-readable string.
 ///
 /// For IPv4: dotted-decimal notation ("127.0.0.1").
 /// For IPv6: compressed hex notation ("::1").
 #stable(since = "0.1")
-export external fn SocketAddr @host_str() -> str
+export extern "nova" fn SocketAddr @host_str() -> str
 
 /// Return `true` if this is an IPv6 address.
 #stable(since = "0.1")
-export external fn SocketAddr @is_v6() -> bool
+export extern "nova" fn SocketAddr @is_v6() -> bool
 
 /// Return `true` if this is an IPv4 address.
 #stable(since = "0.1")
-export external fn SocketAddr @is_v4() -> bool
+export extern "nova" fn SocketAddr @is_v4() -> bool
 
 /// Return a human-readable "host:port" string.
 #stable(since = "0.1")
-export external fn SocketAddr @to_str() -> str
+export extern "nova" fn SocketAddr @to_str() -> str

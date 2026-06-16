@@ -243,7 +243,7 @@ fn Option[T] @is_none() -> bool => match @ { Some(_) => false, None => true }
 /// + `Nova_Fail_fail((nova_str){.ptr="called unwrap on None", ...})`.
 /// Точечный effect `Fail[Error]` зашит в codegen — message hard-coded.
 #stable(since = "0.1")
-external fn Option[T] @unwrap() Fail[Error] -> T
+extern "nova" fn Option[T] @unwrap() Fail[Error] -> T
 
 /// Возвращает значение или `default` если None.
 ///
@@ -342,7 +342,7 @@ fn Result[T, E] @is_err() -> bool => match @ { Ok(_) => false, Err(_) => true }
 /// **Bootstrap**: inline emit (`<inline>` sentinel). Tag-check + при Err
 /// прокидывает `Fail[E]` с error payload.
 #stable(since = "0.1")
-external fn Result[T, E] @unwrap() Fail[E] -> T
+extern "nova" fn Result[T, E] @unwrap() Fail[E] -> T
 
 /// Возвращает Ok-значение или `default` если Err.
 ///

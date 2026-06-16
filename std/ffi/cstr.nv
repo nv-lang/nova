@@ -33,7 +33,7 @@ module std.ffi.cstr
 // an explicit prelude import would trip the R27 auto-import opt-out
 // (imports.rs) for EVERY module that imports cstr, stripping their
 // assert/print/... prelude. A local external-fn decl perturbs nothing.
-external fn panic(msg str) -> never
+extern "nova" fn panic(msg str) -> never
 
 // Plan 139 Ф.4 — D26 §3 Nul-termination resolution. Returns a `*u8` that is
 // GUARANTEED NUL-terminated at offset `s.len()`: zero-copy when the str's

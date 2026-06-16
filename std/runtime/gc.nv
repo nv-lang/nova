@@ -71,7 +71,7 @@ module runtime.gc
 /// - `[gc.live_count]` — приблизительное число live-объектов
 /// - `[gc.alloc_count]` — монотонный счётчик аллокаций
 #stable(since = "0.1")
-export external fn gc.heap_size() -> int
+export extern "nova" fn gc.heap_size() -> int
 
 /// Приблизительное число живых объектов.
 ///
@@ -84,7 +84,7 @@ export external fn gc.heap_size() -> int
 /// - `[gc.alloc_count]` — монотонный счётчик
 /// - `[gc.collect]` — принудительный сбор
 #stable(since = "0.1")
-export external fn gc.live_count() -> int
+export extern "nova" fn gc.live_count() -> int
 
 /// Монотонный счётчик аллокаций с момента старта или `gc.reset_stats()`.
 ///
@@ -99,7 +99,7 @@ export external fn gc.live_count() -> int
 /// assert(gc.alloc_count() > 0)
 /// ```
 #stable(since = "0.1")
-export external fn gc.alloc_count() -> int
+export extern "nova" fn gc.alloc_count() -> int
 
 /// Принудительный сбор мусора.
 ///
@@ -111,14 +111,14 @@ export external fn gc.alloc_count() -> int
 ///
 /// Под Boehm выполняет full mark-sweep GC-цикл.
 #stable(since = "0.1")
-export external fn gc.collect() -> ()
+export extern "nova" fn gc.collect() -> ()
 
 /// Сбросить счётчики аллокаций (`alloc_count` → 0).
 ///
 /// Используется для per-test isolation. GC stats самого Boehm не
 /// сбрасываются — Boehm не поддерживает reset на runtime-уровне.
 #stable(since = "0.1")
-export external fn gc.reset_stats() -> ()
+export extern "nova" fn gc.reset_stats() -> ()
 
 /// Длительность последнего GC-цикла в наносекундах.
 ///
@@ -130,4 +130,4 @@ export external fn gc.reset_stats() -> ()
 ///
 /// - `[gc.collect]` — принудительный сбор
 #stable(since = "0.1")
-export external fn gc.last_pause_ns() -> int
+export extern "nova" fn gc.last_pause_ns() -> int

@@ -12,7 +12,7 @@ import std.prelude.core.{Result, Ok, Err}
 import std.collections.vec.{Vec}
 import std.runtime.raw_mem.{RawMem}
 
-external fn panic(msg str) -> never
+extern "nova" fn panic(msg str) -> never
 
 
 // Длина строки в БАЙТАХ. O(1). Plan 152.1 Ф.4 (D249): единственный length-метод
@@ -53,7 +53,7 @@ fn cp_to_char(cp int) -> char {
 // seed (nova_hash_seed_k0/k1, getrandom/BCryptGenRandom) НЕ экспонируется на
 // Nova-сторону; перенос в Nova = hash-flooding/DoS-регрессия HashMap. См.
 // nova_rt.h (nova_str_hash/nova_siphash13) + [M-139.1-hash-irreducible-crypto-seed].
-export external fn str @hash() -> u64
+export extern "nova" fn str @hash() -> u64
 
 // UTF-8 bytes как []u8 (allocating copy). D178: renamed from @bytes().
 // Plan 139 Ф.2: Nova-body — копирует байты из @as_bytes() (zero-copy view)

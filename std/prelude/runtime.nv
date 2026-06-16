@@ -73,7 +73,7 @@ module prelude.runtime
 /// (`?? panic(...)`, `if cond { v } else { panic(...) }`). `-> never`
 /// сигнатура позволяет panic быть веткой без значения.
 #stable(since = "0.1")
-external fn panic(msg str) -> never
+extern "nova" fn panic(msg str) -> never
 
 /// Аварийное завершение всего процесса с exit-code и сообщением. D13
 /// «три уровня катастрофы» — НЕ перехватывается handler'ом.
@@ -85,7 +85,7 @@ external fn panic(msg str) -> never
 /// special-case (emit_c.rs:11128) эмитит `(nv_exit(code, msg), (nova_int)0LL)` —
 /// тот же comma-expression паттерн что и panic.
 #stable(since = "0.1")
-external fn exit(code int, msg str) -> never
+extern "nova" fn exit(code int, msg str) -> never
 
 /// Marker для логически недостижимого кода. Срабатывает только если
 /// invariant нарушен — компилятор сам не может доказать недостижимость
@@ -136,9 +136,9 @@ fn unreachable(reason str) -> never => panic("unreachable: ${reason}")
 /// (runtime-интерполяция динамического сообщения — followup
 /// `[M-140.1-message-interpolation]`).
 #stable(since = "0.1")
-external fn assert(cond bool) -> ()
+extern "nova" fn assert(cond bool) -> ()
 #stable(since = "0.1")
-external fn assert(cond bool, msg str) -> ()
+extern "nova" fn assert(cond bool, msg str) -> ()
 
 /// Debug-only проверка. По D81: в release-сборке должна быть no-op.
 /// В bootstrap'е (single build-mode) эмитится идентично assert;
@@ -151,9 +151,9 @@ external fn assert(cond bool, msg str) -> ()
 /// для опционального msg (Plan 140.1 Ф.2). Обе arity-форм (1-arg / 2-arg)
 /// — D84 arity overload, см. assert.
 #stable(since = "0.1")
-external fn debug_assert(cond bool) -> ()
+extern "nova" fn debug_assert(cond bool) -> ()
 #stable(since = "0.1")
-external fn debug_assert(cond bool, msg str) -> ()
+extern "nova" fn debug_assert(cond bool, msg str) -> ()
 
 /// Печать всех аргументов в stdout без разделителя и без trailing newline.
 /// D26 canonical signature: D69 variadic + `[]any` принимает heterogeneous
@@ -176,7 +176,7 @@ external fn debug_assert(cond bool, msg str) -> ()
 /// print("a=", 1, " b=", true) // → "a=1 b=true"
 /// ```
 #stable(since = "0.1")
-external fn print(...items []any) -> ()
+extern "nova" fn print(...items []any) -> ()
 
 /// Печать всех аргументов в stdout + trailing newline ('\n'). Идентично
 /// `print(...)`, плюс `nova_print_newline()` в конце.
@@ -191,4 +191,4 @@ external fn print(...items []any) -> ()
 /// println("count=", n, " total=", sum)              // mixed-type ok
 /// ```
 #stable(since = "0.1")
-external fn println(...items []any) -> ()
+extern "nova" fn println(...items []any) -> ()
