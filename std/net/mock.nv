@@ -92,10 +92,10 @@ export fn mock_addr_net() -> Effect[AddrNet] => effect AddrNet {
 
 /// In-memory DnsNet handler for unit-testing.
 ///
-/// - lookup always succeeds, returning a single loopback address on port 0.
+/// - lookup always succeeds, returning a Vec containing one loopback SocketAddr at port 0.
 /// - Use with `with DnsNet = mock_dns_net()` in tests that exercise DNS-aware code
 ///   without a real network or system resolver.
 #stable(since = "0.1")
 export fn mock_dns_net() -> Effect[DnsNet] => effect DnsNet {
-    lookup(_host, _port) => Ok(SocketAddr._from_raw(socket_addr_loopback(0)))
+    lookup(_host, _port) => Ok([SocketAddr._from_raw(socket_addr_loopback(0))])
 }

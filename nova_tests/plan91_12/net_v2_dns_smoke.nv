@@ -2,10 +2,10 @@
 // Plan 91.13 — DnsNet effect smoke tests.
 //
 // Acceptance criteria A13-dns:
-//   (1) mock_dns_net() always succeeds — returns a v4 SocketAddr.
+//   (1) mock_dns_net() always succeeds — returns Result[[]SocketAddr, NetError].
 //   (2) DnsNet is mockable: SocketAddr.lookup dispatches through effect vtable.
 //   (3) Negative: a mock that always fails → is_err() + NetError variant preserved.
-//   (4) SocketAddr.lookup API compiles; returns Result[SocketAddr, NetError].
+//   (4) SocketAddr.lookup API compiles; returns Result[[]SocketAddr, NetError].
 //   (5) «без упрощений как для прода»: real_dns_net() is proven separately by net.h
 //       C impl; mock is used here to avoid network dependency in CI.
 //
@@ -21,11 +21,12 @@ test "dns mock: lookup succeeds and returns v4 SocketAddr" {
     with AddrNet = mock_addr_net(), DnsNet = mock_dns_net() {
         ro r = SocketAddr.lookup("localhost", 80)
         assert(r.is_ok())
-        ro addr = match r {
+        ro addrs = match r {
             Ok(a)  => a
             Err(_) => panic("lookup failed")
         }
-        assert(addr.is_v4())
+        assert(addrs.len() >= 1)
+        assert(addrs[0].is_v4())
     }
 }
 
@@ -33,12 +34,13 @@ test "dns mock: lookup returns port 0 (loopback address with port 0)" {
     with AddrNet = mock_addr_net(), DnsNet = mock_dns_net() {
         ro r = SocketAddr.lookup("example.com", 443)
         assert(r.is_ok())
-        ro addr = match r {
+        ro addrs = match r {
             Ok(a)  => a
             Err(_) => panic("lookup failed")
         }
         // mock_dns_net always returns socket_addr_loopback(0)
-        assert(addr.port() == 0)
+        assert(addrs.len() >= 1)
+        assert(addrs[0].port() == 0)
     }
 }
 

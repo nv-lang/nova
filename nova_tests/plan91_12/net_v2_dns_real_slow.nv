@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.13 — real DNS integration test (slow, requires network).
+//
+// Tagged _slow: excluded from default nova test plan91_12 regression.
+// Opts-in with: NOVA_SLOW_TESTS=1 or --slow flag (same convention as
+// net_v2_tcp_echo_slow.nv / Plan 91.12 Ф.7).
+//
+// Acceptance criterion A13-real: real_dns_net() resolves "localhost"
+// to at least one SocketAddr via libuv uv_getaddrinfo.
+//
+// «Без упрощений как для прода»: exercises the real C async DNS path
+// (nova_rt/net.c dns_lookup → uv_getaddrinfo → nova_sched_wake).
+// Must run from a spawned fiber (dns_lookup parks; uv_getaddrinfo
+// callback wakes the fiber).
+
+module plan91_12.net_v2_dns_real_slow
+
+import std.net.{SocketAddr, DnsNet, AddrNet, real_dns_net, real_addr_net}
+
+test "dns real: localhost resolves to at least one address" {
+    supervised {
+        spawn {
+            with AddrNet = real_addr_net(), DnsNet = real_dns_net() {
+                ro r = SocketAddr.lookup("localhost", 80)
+                assert(r.is_ok())
+                ro addrs = match r {
+                    Ok(a)  => a
+                    Err(_) => panic("real DNS lookup of localhost failed unexpectedly")
+                }
+                assert(addrs.len() >= 1)
+            }
+        }
+    }
+}

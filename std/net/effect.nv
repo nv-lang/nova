@@ -77,10 +77,11 @@ export type AddrNet effect {
 // Parking via uv_getaddrinfo callback (nova_rt/net.c dns_lookup).
 // D295: DnsNet effect family spec.
 //
-// V1 API: lookup returns the *first* resolved SocketAddr (sufficient for
-// most connect use-cases). Multi-address iteration deferred to V2
-// ([M-91.13-dns-iter-boxing] — []SocketAddr in vtable erases Ok type).
+// V2 API: lookup returns ALL resolved addresses as []SocketAddr.
+// The vtable Ok-type erasure fix (Plan 91.13, emit_c.rs is_generic_stub_c)
+// enables Result[[]SocketAddr, NetError] to flow through the vtable without
+// being erased to nova_int. V1 single-address limitation is resolved.
 #stable(since = "0.1")
 export type DnsNet effect {
-    lookup(host str, port u16) -> Result[SocketAddr, NetError]
+    lookup(host str, port u16) -> Result[[]SocketAddr, NetError]
 }
