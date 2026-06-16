@@ -13,3 +13,4 @@ pub mod perf;
 pub mod semantic_tokens_delta;
 pub mod server;
 pub mod state;
+pub mod symbols;
