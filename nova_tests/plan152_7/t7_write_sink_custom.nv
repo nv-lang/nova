@@ -8,11 +8,11 @@ module plan152_7.t7_write_sink_custom
 type Point { x int, y int }
 
 fn Point @display(mut w Write) -> () {
-    w.write_str("(")
-    w.write_str(str.from(@x))
-    w.write_str(", ")
-    w.write_str(str.from(@y))
-    w.write_str(")")
+    w.write("(")
+    w.write(str.from(@x))
+    w.write(", ")
+    w.write(str.from(@y))
+    w.write(")")
 }
 
 test "custom @display writes to Write sink directly" {
@@ -41,10 +41,10 @@ test "nested: display delegates to sub-type display" {
     ro p1 = Point { x: 1, y: 1 }
     ro p2 = Point { x: 9, y: 9 }
     consume sb = StringBuilder.new()
-    sb.write_str("[")
+    sb.write("[")
     p1.display(sb)
-    sb.write_str(" -> ")
+    sb.write(" -> ")
     p2.display(sb)
-    sb.write_str("]")
+    sb.write("]")
     assert(sb.as_str() == "[(1, 1) -> (9, 9)]")
 }

@@ -175,22 +175,22 @@ export fn Vec[T Hash] @hash() -> u64 {
 /// assert(sb.as_str() == "Vec[1, 2, 3]")
 /// ```
 export fn Vec[T Display] @display(mut w Write) -> () {
-    w.write_str("Vec[")
+    w.write("Vec[")
     for i in 0..@len {
-        if i > 0 { w.write_str(", ") }
+        if i > 0 { w.write(", ") }
         unsafe { @data[i] }.display(w)
     }
-    w.write_str("]")
+    w.write("]")
 }
 
 /// Append a debug representation of `self` to `w`.
 ///
 /// Provided so that `${v:?}` interp-string syntax works for `Vec[T]`.
 export fn Vec[T Debug] @debug(mut w Write) -> () {
-    w.write_str("Vec[")
+    w.write("Vec[")
     for i in 0..@len {
-        if i > 0 { w.write_str(", ") }
+        if i > 0 { w.write(", ") }
         unsafe { @data[i] }.debug(w)
     }
-    w.write_str("]")
+    w.write("]")
 }

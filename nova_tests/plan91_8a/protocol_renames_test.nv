@@ -65,9 +65,9 @@ fn min_money[T Compare](a T, b T) -> T =>
 
 type Buffer { data str }
 fn Buffer @display(mut w Write) -> () {
-    w.write_str("Buffer(")
-    w.write_str(@data)
-    w.write_str(")")
+    w.write("Buffer(")
+    w.write(@data)
+    w.write(")")
 }
 
 test "Display.fmt вЂ” StringBuilder formatting" {

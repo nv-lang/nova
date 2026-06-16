@@ -5,27 +5,27 @@ module plan91_14.t12_pos_3_level_nested
 
 type Inner { v int }
 fn Inner @debug(mut w Write) -> () {
-    w.write_str("Inner { v: ")
-    w.write_str(str.from(@v))
-    w.write_str(" }")
+    w.write("Inner { v: ")
+    w.write(str.from(@v))
+    w.write(" }")
 }
 
 type Middle { id int, inner Inner }
 fn Middle @debug(mut w Write) -> () {
-    w.write_str("Middle { id: ")
-    w.write_str(str.from(@id))
-    w.write_str(", inner: ")
+    w.write("Middle { id: ")
+    w.write(str.from(@id))
+    w.write(", inner: ")
     @inner.debug(w)
-    w.write_str(" }")
+    w.write(" }")
 }
 
 type Outer { label str, middle Middle }
 fn Outer @debug(mut w Write) -> () {
-    w.write_str("Outer { label: \"")
-    w.write_str(@label)
-    w.write_str("\", middle: ")
+    w.write("Outer { label: \"")
+    w.write(@label)
+    w.write("\", middle: ")
     @middle.debug(w)
-    w.write_str(" }")
+    w.write(" }")
 }
 
 test "3-level nested struct debug" {

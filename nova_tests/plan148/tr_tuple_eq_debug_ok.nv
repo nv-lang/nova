@@ -19,15 +19,15 @@ type Row {
 }
 
 fn Row @debug(mut w Write) -> () {
-    w.write_str("Row(")
-    w.write_str(str.from(@id))
-    w.write_str(", ")
-    w.write_str(@data.0)
-    w.write_str(", ")
-    w.write_str(str.from(@data.1))
-    w.write_str(", ")
-    w.write_str(if @data.2 { "true" } else { "false" })
-    w.write_str(")")
+    w.write("Row(")
+    w.write(str.from(@id))
+    w.write(", ")
+    w.write(@data.0)
+    w.write(", ")
+    w.write(str.from(@data.1))
+    w.write(", ")
+    w.write(if @data.2 { "true" } else { "false" })
+    w.write(")")
 }
 
 test "heterogeneous tuple eq — per-element typed compare" {

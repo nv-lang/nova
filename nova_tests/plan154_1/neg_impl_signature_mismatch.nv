@@ -6,6 +6,6 @@ module plan154_1.neg_impl_signature_mismatch
 type Point { x int }
 
 #impl(Display)
-fn Point @display(mut w Write, extra int) -> () { w.write_str("x") }
+fn Point @display(mut w Write, extra int) -> () { w.write("x") }
 
 fn main() -> () {}

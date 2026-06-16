@@ -20,11 +20,11 @@ fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 #impl(Display)
 type Point { x int, y int }
 fn Point @display(mut w Write) -> () {
-    w.write_str("Point(")
-    w.write_str(str.from(@x))
-    w.write_str(", ")
-    w.write_str(str.from(@y))
-    w.write_str(")")
+    w.write("Point(")
+    w.write(str.from(@x))
+    w.write(", ")
+    w.write(str.from(@y))
+    w.write(")")
 }
 
 test "\"${m}\" with fn str.from(Money) overload" {

@@ -157,7 +157,7 @@ export fn StringBuilder mut @truncate(len int) -> @ { @buf.truncate(len); @ }
 // Plan 152.7.1 (D258 AMEND) — Write protocol implementation.
 // Delegates to @buf.append directly (same UTF-8 bytes path as @append(s str)).
 // Returns () — satisfies Write protocol contract.
-export fn StringBuilder mut @write_str(s str) -> () { @buf.append(s.as_bytes()) }
+export fn StringBuilder mut @write(s str) -> () { @buf.append(s.as_bytes()) }
 
 // ─── Consume ───
 

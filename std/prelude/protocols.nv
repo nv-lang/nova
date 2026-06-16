@@ -315,15 +315,15 @@ export type Clone protocol {
 /// ```nova
 /// // StringBuilder satisfies Write:
 /// consume sb = StringBuilder.new()
-/// sb.write_str("hello")
+/// sb.write("hello")
 ///
 /// // WriteBuffer satisfies Write:
 /// mut wb = WriteBuffer.new()
-/// wb.write_str("world")
+/// wb.write("world")
 /// ```
 #stable(since = "0.1")
 export type Write protocol {
-    mut @write_str(s str) -> ()
+    mut @write(s str) -> ()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -343,11 +343,11 @@ export type Write protocol {
 /// ```nova
 /// type Point { x int, y int }
 /// fn Point @display(mut w Write) -> () {
-///     w.write_str("Point(")
-///     w.write_str(str.from(@x))
-///     w.write_str(", ")
-///     w.write_str(str.from(@y))
-///     w.write_str(")")
+///     w.write("Point(")
+///     w.write(str.from(@x))
+///     w.write(", ")
+///     w.write(str.from(@y))
+///     w.write(")")
 /// }
 /// ```
 /// Plan 91.8a.2 (D183 amendment): default body использует `str.from(@)`
@@ -357,7 +357,7 @@ export type Write protocol {
 #stable(since = "0.1")
 export type Display protocol {
     @display(mut w Write) {
-        w.write_str(str.from(@))
+        w.write(str.from(@))
     }
 }
 
@@ -384,7 +384,7 @@ export type Display protocol {
 /// ```nova
 /// type Point { x int, y int }
 /// // Auto-synthesized:
-/// //   @debug(w) := w.write_str("Point { x: ${@x:?}, y: ${@y:?} }")
+/// //   @debug(w) := w.write("Point { x: ${@x:?}, y: ${@y:?} }")
 ///
 /// ro p = Point { x: 1, y: 2 }
 /// println("p = ${p:?}")  // "p = Point { x: 1, y: 2 }"
@@ -394,17 +394,17 @@ export type Display protocol {
 ///
 /// ```nova
 /// fn Point @debug(mut w Write) -> () {
-///     w.write_str("Point(")
-///     w.write_str(str.from(@x))
-///     w.write_str(", ")
-///     w.write_str(str.from(@y))
-///     w.write_str(")")
+///     w.write("Point(")
+///     w.write(str.from(@x))
+///     w.write(", ")
+///     w.write(str.from(@y))
+///     w.write(")")
 /// }
 /// ```
 #stable(since = "0.1")
 export type Debug protocol {
     @debug(mut w Write) {
-        w.write_str(str.from_debug(@))
+        w.write(str.from_debug(@))
     }
 }
 
@@ -572,31 +572,31 @@ export type MutIndex[K, V] protocol {
 // directly to conv.h. Numeric debug == display (no escaping).
 
 #impl(Display)
-fn int @display(mut w Write) -> () { w.write_str(str.from(@)) }
+fn int @display(mut w Write) -> () { w.write(str.from(@)) }
 #impl(Debug)
-fn int @debug(mut w Write) -> () { w.write_str(str.from(@)) }
+fn int @debug(mut w Write) -> () { w.write(str.from(@)) }
 
 #impl(Display)
-fn f64 @display(mut w Write) -> () { w.write_str(str.from(@)) }
+fn f64 @display(mut w Write) -> () { w.write(str.from(@)) }
 #impl(Debug)
-fn f64 @debug(mut w Write) -> () { w.write_str(str.from(@)) }
+fn f64 @debug(mut w Write) -> () { w.write(str.from(@)) }
 
 #impl(Display)
-fn f32 @display(mut w Write) -> () { w.write_str(str.from(@ as f64)) }
+fn f32 @display(mut w Write) -> () { w.write(str.from(@ as f64)) }
 #impl(Debug)
-fn f32 @debug(mut w Write) -> () { w.write_str(str.from(@ as f64)) }
+fn f32 @debug(mut w Write) -> () { w.write(str.from(@ as f64)) }
 
 #impl(Display)
-fn bool @display(mut w Write) -> () { w.write_str(str.from(@)) }
+fn bool @display(mut w Write) -> () { w.write(str.from(@)) }
 #impl(Debug)
-fn bool @debug(mut w Write) -> () { w.write_str(str.from(@)) }
+fn bool @debug(mut w Write) -> () { w.write(str.from(@)) }
 
 #impl(Display)
-fn char @display(mut w Write) -> () { w.write_str(str.from(@)) }
+fn char @display(mut w Write) -> () { w.write(str.from(@)) }
 #impl(Debug)
-fn char @debug(mut w Write) -> () { w.write_str("${@:?}") }
+fn char @debug(mut w Write) -> () { w.write("${@:?}") }
 
 #impl(Display)
-fn str @display(mut w Write) -> () { w.write_str(@) }
+fn str @display(mut w Write) -> () { w.write(@) }
 #impl(Debug)
-fn str @debug(mut w Write) -> () { w.write_str("${@:?}") }
+fn str @debug(mut w Write) -> () { w.write("${@:?}") }

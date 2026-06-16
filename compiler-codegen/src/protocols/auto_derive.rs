@@ -855,7 +855,7 @@ fn simple_display_block(type_name: &str) -> Block {
     Block {
         stmts: vec![Stmt::Expr(member_call(
             ident("w"),
-            "write_str",
+            "write",
             vec![ex(ExprKind::StrLit(type_name.to_string()))],
         ))],
         trailing: None,
@@ -869,14 +869,14 @@ fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody
     if fields.is_empty() {
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
-            "write_str",
+            "write",
             vec![ex(ExprKind::StrLit(type_name.to_string()))],
         )));
     } else {
         // w.write_str("TypeName { ")
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
-            "write_str",
+            "write",
             vec![ex(ExprKind::StrLit(format!("{} {{ ", type_name)))],
         )));
         for (i, f) in fields.iter().enumerate() {
@@ -909,7 +909,7 @@ fn synth_display_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody
         }
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
-            "write_str",
+            "write",
             vec![ex(ExprKind::StrLit(" }".to_string()))],
         )));
     }
@@ -926,13 +926,13 @@ fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
     if fields.is_empty() {
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
-            "write_str",
+            "write",
             vec![ex(ExprKind::StrLit(type_name.to_string()))],
         )));
     } else {
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
-            "write_str",
+            "write",
             vec![ex(ExprKind::StrLit(format!("{} {{ ", type_name)))],
         )));
         for (i, f) in fields.iter().enumerate() {
@@ -964,7 +964,7 @@ fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
         }
         stmts.push(Stmt::Expr(member_call(
             ident("w"),
-            "write_str",
+            "write",
             vec![ex(ExprKind::StrLit(" }".to_string()))],
         )));
     }

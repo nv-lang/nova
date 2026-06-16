@@ -10,11 +10,11 @@ module comparison.display
 type Point { x int, y int }
 
 fn Point @display(mut w Write) -> () {
-    w.write_str("(")
-    w.write_str(str.from(@x))
-    w.write_str(", ")
-    w.write_str(str.from(@y))
-    w.write_str(")")
+    w.write("(")
+    w.write(str.from(@x))
+    w.write(", ")
+    w.write(str.from(@y))
+    w.write(")")
 }
 
 
@@ -46,11 +46,11 @@ test "Point @display — в непустой буфер дописывает" {
 type Segment { a Point, b Point }
 
 fn Segment @display(mut w Write) -> () {
-    w.write_str("[")
+    w.write("[")
     @a.display(w)
-    w.write_str(" -> ")
+    w.write(" -> ")
     @b.display(w)
-    w.write_str("]")
+    w.write("]")
 }
 
 test "вложенный Display — Segment делегирует Point.fmt" {

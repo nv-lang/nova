@@ -8,11 +8,11 @@ type Pair {
 }
 
 fn Pair @debug(mut w Write) -> () {
-    w.write_str("Pair { a: ")
-    w.write_str(str.from(@a))
-    w.write_str(", b: ")
-    w.write_str(str.from(@b))
-    w.write_str(" }")
+    w.write("Pair { a: ")
+    w.write(str.from(@a))
+    w.write(", b: ")
+    w.write(str.from(@b))
+    w.write(" }")
 }
 
 test "Debug @debug works in :? interpolation" {

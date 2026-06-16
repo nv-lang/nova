@@ -12,11 +12,11 @@ type Point {
 }
 
 fn Point @debug(mut w Write) -> () {
-    w.write_str("Point { x: ")
-    w.write_str(str.from(@x))
-    w.write_str(", y: ")
-    w.write_str(str.from(@y))
-    w.write_str(" }")
+    w.write("Point { x: ")
+    w.write(str.from(@x))
+    w.write(", y: ")
+    w.write(str.from(@y))
+    w.write(" }")
 }
 
 type Container {
@@ -25,11 +25,11 @@ type Container {
 }
 
 fn Container @debug(mut w Write) -> () {
-    w.write_str("Container { label: \"")
-    w.write_str(@label)
-    w.write_str("\", origin: ")
+    w.write("Container { label: \"")
+    w.write(@label)
+    w.write("\", origin: ")
     @origin.debug(w)
-    w.write_str(" }")
+    w.write(" }")
 }
 
 test "nested struct debug recursion" {

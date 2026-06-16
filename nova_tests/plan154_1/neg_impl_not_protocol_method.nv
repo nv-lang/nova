@@ -6,6 +6,6 @@ module plan154_1.neg_impl_not_protocol_method
 type Point { x int }
 
 #impl(Debug)
-fn Point @display(mut w Write) -> () { w.write_str("x") }
+fn Point @display(mut w Write) -> () { w.write("x") }
 
 fn main() -> () {}

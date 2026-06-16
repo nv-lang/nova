@@ -31,9 +31,9 @@ test "str @display writes to Write sink" {
 test "multiple display calls accumulate in same sink" {
     consume sb = StringBuilder.new()
     1.display(sb)
-    sb.write_str(", ")
+    sb.write(", ")
     2.display(sb)
-    sb.write_str(", ")
+    sb.write(", ")
     3.display(sb)
     assert(sb.as_str() == "1, 2, 3")
 }

@@ -8,9 +8,9 @@ module plan91_8a_2.impl_explicit_fmt_test
 type Tag { name str }
 
 fn Tag @display(mut w Write) -> () {
-    w.write_str("Tag(")
-    w.write_str(@name)
-    w.write_str(")")
+    w.write("Tag(")
+    w.write(@name)
+    w.write(")")
 }
 
 test "verified #impl(Display) with explicit @display" {
