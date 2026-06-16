@@ -15,7 +15,7 @@ module collections.vec
 /// record and keeps the buffer alive. Concurrent mutation of the originating
 /// `Vec` during iteration is *not* checked — the caller is responsible for
 /// not pushing/removing while iterating.
-export type VecIter[T] {
+export type VecIter[T] value {
     priv data *mut T
     priv mut idx int
     priv len int

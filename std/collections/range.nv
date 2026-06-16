@@ -53,9 +53,9 @@ module collections.range
 /// - `[Range.step_by]` — итерация с шагом
 /// - `[Range.reverse]` — обратная итерация
 // [M-138-range-value] Plan 138 Ф.0.3: перевести на value record после Ф.0.1 sweep.
-// Цель: export type Range value { ro start int; ro end int }  — stack, 16 bytes.
+// Цель: export type Range { ro start int; ro end int }  — stack, 16 bytes.
 #stable(since = "0.1")
-export type Range {
+export type Range value {
     ro start int
     ro end   int      // half-open: end НЕ включён
 }
@@ -93,7 +93,7 @@ export fn Range @contains(x int) -> bool =>
 
 // Структурно совместим с `Iter[int]` (D58 prelude) — есть метод
 // `mut next() -> Option[int]`. Никаких `impl Iter for ...`-блоков.
-export type RangeIter {
+export type RangeIter value {
     ro end int
     mut _cur     int
 }
@@ -124,7 +124,7 @@ export fn RangeIter @iter() -> RangeIter => @
 //
 // Семантика: yield'ит start, start+step, start+2*step, ... пока < end.
 
-export type StepRangeIter {
+export type StepRangeIter value {
     ro end  int
     ro step int                       // должен быть > 0
     mut _cur      int
@@ -164,7 +164,7 @@ export fn StepRangeIter @iter() -> StepRangeIter => @
 // Альтернатива C-style `for(i=n-1; i>=0; i--)` — отвергнут D82.
 // Yield'ит end-1, end-2, ..., start.
 
-export type ReverseRangeIter {
+export type ReverseRangeIter value {
     ro start int
     mut _cur       int                      // internal: следующее значение для выдачи
                                             // (decremented после каждого next)
