@@ -1,0 +1,26 @@
+// Plan 162.2 Ф.2: positive — sig_table is wired into the compile path.
+//
+// Verifies that the collect_all_signatures → check_module_with_sig_table
+// wiring introduced in Ф.2 does not break a simple standalone program.
+// A fn main-equivalent test that exercises basic arithmetic and variables.
+//
+// Regression guard: must compile and pass (CC-PASS).
+
+module plan162_2.f1_sig_table_wired_pos
+
+test "sig_table wired: basic arithmetic compiles and executes" {
+    ro x = 6
+    ro y = 7
+    assert(x * y == 42)
+}
+
+test "sig_table wired: string equality" {
+    ro s = "hello"
+    assert(s == "hello")
+}
+
+test "sig_table wired: conditional branching" {
+    ro n = 10
+    ro result = if n > 5 { 1 } else { 0 }
+    assert(result == 1)
+}

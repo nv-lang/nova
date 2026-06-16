@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 162.2 Ф.2: negative — calling a completely unknown function must
+// still be rejected by the type-checker even after sig_table wiring.
+// The sig_table only helps with types/fns that ARE declared in imported
+// modules; a truly unknown name (no import, no declaration) must still
+// produce an "undefined identifier" error.
+
+module plan162_2.f3_unknown_fn_neg
+
+test "calling unknown fn is rejected" {
+    ro result = completely_unknown_function_xyz(1, 2, 3)
+    assert(result == 0)
+}
