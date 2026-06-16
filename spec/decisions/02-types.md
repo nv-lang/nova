@@ -12124,13 +12124,27 @@ silent CC-FAIL / drain-0 / segfault), зафиксированных как ко
 (Лифт mono×closures — register_generic_instances_in_typeref + closure-capture в loop-arms,
 commit `996ca01a`.)
 
-### Phase B — частично реализована (2026-06-16, амендмент D260)
+### Phase B — ✅ ЗАКРЫТА (2026-06-16, амендмент D260)
+
+**Критерии приёмки Phase B (все выполнены):**
+- G-B1. `zip` возвращает правильные пары; останавливается на более коротком операнде.
+- G-B2. `flat_map` корректно обрабатывает пустой внешний итератор, пустые внутренние
+  итераторы и смешанные пустые/непустые внутренние.
+- G-B3. Все адаптеры компилируются через C-codegen без CC-FAIL — без упрощений как для прода.
+- G-B4. 0 новых регрессий по blast-radius (plan153_0/138/139/147/165/91_12).
 
 **Реализовано:**
 - ✅ **`step_by(n int)`** (BoxIter, `vec_lazy.nv`) + zero-cost `StepByIter[I,T]` (`vec_iter.nv`): yield каждый n-й элемент. Contract `n > 0` (requires). Тест: `plan153_2/phase_b_lazy` + `plan153_2_zc/step_by_zc`.
 - ✅ **`chain(other BoxIter[T])`** (BoxIter): дренирует self, затем other. Тест: `plan153_2/phase_b_lazy`.
-- 🟡 **`zip(other BoxIter[B])`** (BoxIter): реализован, возвращает `BoxIter[(A,B)]`. Тесты GATED `[M-153.2-tuple-elem-adapter]` (closure-typing для `Option[(A,B)]` в chain).
-- 🟡 **`flat_map(f fn(T)->BoxIter[U])`** (BoxIter): реализован. Тесты GATED `[M-153.2-flat-map-inner-option]` (`Option[BoxIter[U]]` mut-match gap в closure).
+- ✅ **`zip(other BoxIter[B])`** (BoxIter): возвращает `BoxIter[(A,B)]`, останавливается когда
+  любой из операндов исчерпан. Codegen-фикс: receiver typevar alias `A` (`fn BoxIter[A] @zip[B]`)
+  теперь биндится в `type_subst` при dispatch — tuple return `(A,B)` резолвируется в mono
+  `_NovaTuple_2_8_nova_int_8_nova_int` вместо erased `_NovaTuple2`.
+  Тесты: `plan153_2/zip_basic` (9 pos), `plan153_2/zip_neg` (3 neg), `plan153_2/zip_min`.
+- ✅ **`flat_map(f fn(T)->BoxIter[U])`** (BoxIter): дренирует каждый inner-итератор, возвращённый
+  `f`. Codegen-фикс: `NovaOpt` typedef для `BoxIter[T]` payload (NovaValue_ by-value) теперь
+  эмитируется ПОСЛЕ generic struct body через `novaopt_vr_typedefs_buf`.
+  Тесты: `plan153_2/flat_map_basic` (7 pos), `plan153_2/flat_map_neg` (4 neg).
 
 **Остаток Phase B (не реализован):**
 `unzip`/`flatten`/`scan`/`inspect`/`take_while`/`skip_while`/`peekable`/
