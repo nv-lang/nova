@@ -37069,3 +37069,12 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 - **[S-104.3-3]** completionItem/resolve: not implemented (resolve_provider=false). Where: server.rs CompletionOptions. Why: all detail is inline in the initial response; LSP resolve is a bandwidth optimization for very large item lists. How to fix: add lazy resolver handler in V2. Priority: L (not needed for typical Nova files).
 
 Tests: 39 unit + 13 integration = 52 completion-specific + 167 total nova-lsp tests PASS.
+
+## Plan 118.6 — Safe &x model (2026-06-16)
+- &x safe для всех типов (value-record + primitives) без unsafe{}: escape analysis + heap-promote при escape
+- unsafe { &x } = сырой стек-указатель без promote (FFI паттерн)
+- Heap-promote — compile-time статическое решение в точке объявления (не рантайм-копирование)
+- &x.field → весь корневой биндинг промоутится целиком (не поле отдельно)
+- addr_of() / addr_of_mut() удалены → E_ADDR_OF_REMOVED с fix-it "&x"
+- Escape analysis расширен на примитивы (ранее только value-records с AllocKind::Value)
+- V1 deferred: tuple field chain-root tracking [M-118.6-tuple-field-escape]
