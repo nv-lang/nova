@@ -1,0 +1,29 @@
+// Plan 162.1 Step 3: positive — cross-module fn call resolved via sig_table.
+//
+// Module p162_1_mod_a exports type Foo and fn make_foo / fn foo_value.
+// This test imports them and verifies the values are correct.
+// After Step 3 integration, TypeCheckCtx is built with the sig_table
+// so is_known_type("Foo") and is_known_fn("make_foo") return true
+// even in the lazy-resolution scenario where module.items is not yet
+// fully merged (checked via check_module_with_sig_table).
+//
+// As a positive regression guard: this test must compile and pass.
+
+module plan162_1.f1_sig_table_known_pos
+
+import nova_tests.plan162_1.p162_1_mod_a.{Foo, make_foo, foo_value}
+
+test "sig_table: make_foo constructs Foo with correct value" {
+    ro f = make_foo(42)
+    assert(foo_value(f) == 42)
+}
+
+test "sig_table: make_foo zero value" {
+    ro f = make_foo(0)
+    assert(foo_value(f) == 0)
+}
+
+test "sig_table: make_foo negative value" {
+    ro f = make_foo(-7)
+    assert(foo_value(f) == -7)
+}

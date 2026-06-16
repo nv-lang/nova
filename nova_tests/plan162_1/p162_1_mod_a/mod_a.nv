@@ -1,0 +1,12 @@
+// Plan 162.1 Step 3: helper module A for sig_table tests.
+// Exports type Foo and fn make_foo used by f1 and f2 tests.
+
+module plan162_1.p162_1_mod_a
+
+export type Foo {
+    value int
+}
+
+export fn make_foo(v int) -> Foo => { value: v }
+
+export fn foo_value(f Foo) -> int => f.value

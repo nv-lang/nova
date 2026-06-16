@@ -1,0 +1,2 @@
+# Plan 162.1 Step 3: helper module B for cycle body dep test.
+# walk_nv skips this directory — used only as fixture by f2 test.
