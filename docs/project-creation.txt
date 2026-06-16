@@ -38492,3 +38492,5 @@ Vec[int] сохранены: offs/bounds/starts (byte offsets), cats (category c
 Layer 2 (D128 AMEND): nova_char typedef int64_t→uint32_t. GC layout char_size (8,8)→(4,4).
 emit_c.rs: U-suffix для char literals; nova_char в is_typed_int_c_ty + emit_typed_int_literal.
 6/6 PASS plan152_8 + 9/9 PASS plan152_7. Merge 92b8c1b9. D128 AMEND в 02-types.md + 08-runtime.md.
+
+[2026-06-17] Plan 153.2 Phase B FULLY CLOSED -- 25 edge-case tests + D260 + plan doc. zip_basic 9pos, zip_neg 3neg, flat_map_basic 7pos, flat_map_neg 4neg, step_by_zero_neg 1 = 25 total PASS. D260 Phase B GATED->CLOSED G-B1..G-B4. 153-compiler-bugs-phase-b.md rewritten. Bug 3 (requires+VR return 0) does not reproduce. Commits: 00b494d6 (tests) 0e539ef3 (D260) 8cf1d23a (plan).
