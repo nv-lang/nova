@@ -13,23 +13,23 @@ module plan153_2_zc.collect_into
 import std.collections.vec_iter_zc
 
 test "zcollect_into appends MapIter->FilterIter chain into a fresh buffer" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     mut out = Vec[int].new()
     v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zcollect_into(out)
     assert(out == [30, 40, 50, 60])
 }
 
 test "zcollect_into is APPEND, not replace (dirty buffer accumulates)" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
-    mut out = Vec[int].from([7, 8])      // pre-existing contents
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+    mut out = Vec[int].of(7, 8)      // pre-existing contents
     v.ziter().zfilter(|x| x % 2 == 0).zcollect_into(out)
     // 7, 8 preserved; evens appended after them.
     assert(out == [7, 8, 2, 4, 6])
 }
 
 test "clear + reuse the SAME buffer across calls (amortized zero-alloc)" {
-    ro a = Vec[int].from([1, 2, 3, 4, 5])
-    ro b = Vec[int].from([10, 20, 30])
+    ro a = Vec[int].of(1, 2, 3, 4, 5)
+    ro b = Vec[int].of(10, 20, 30)
     mut buf = Vec[int].new()
 
     // First fill.
@@ -48,14 +48,14 @@ test "clear + reuse the SAME buffer across calls (amortized zero-alloc)" {
 }
 
 test "zcollect_into on FilterMapIter drains map-and-filter" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8, 9)
     mut out = Vec[int].new()
     v.ziter().zfilter_map(|x| if x % 3 == 0 { Some(x + 1) } else { None }).zcollect_into(out)
     assert(out == [4, 7, 10])
 }
 
 test "zcollect_into agrees with zcollect element-for-element" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6, 7, 8])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
     ro collected = v.ziter().zmap(|x| x * 3).zfilter(|x| x > 9).zcollect()
     mut into = Vec[int].new()
     v.ziter().zmap(|x| x * 3).zfilter(|x| x > 9).zcollect_into(into)
@@ -63,8 +63,8 @@ test "zcollect_into agrees with zcollect element-for-element" {
 }
 
 test "zcollect_into of an empty result leaves the buffer untouched" {
-    ro v = Vec[int].from([1, 2, 3])
-    mut out = Vec[int].from([99])
+    ro v = Vec[int].of(1, 2, 3)
+    mut out = Vec[int].of(99)
     v.ziter().zfilter(|x| x > 100).zcollect_into(out)
     assert(out == [99])
 }

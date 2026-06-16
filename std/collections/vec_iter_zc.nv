@@ -53,6 +53,7 @@
 module collections.vec_iter_zc
 
 import std.collections.vec.{Vec, VecIter}
+import std.collections.set.{Set}
 import std.prelude.collections.{Next}
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -152,7 +153,7 @@ export fn EnumerateIter[I, T] mut @next() -> Option[(int, T)] {
 /// # Examples
 /// ```nova
 /// import std.collections.vec_iter_zc
-/// let v = Vec[int].from([1, 2, 3, 4])
+/// let v = Vec[int].of(1, 2, 3, 4)
 /// let got = v.ziter().zmap(|x| x * 2).zfilter(|x| x > 4).zcollect()
 /// assert(got == [6, 8])
 /// ```
@@ -433,42 +434,54 @@ export fn[I Next[T]] I mut @zlast() -> Option[T] {
     result
 }
 
+/// Drain into a fresh `Set[T]`, deduplicating elements. Requires `T Hash`.
+export fn[I Next[T], T Hash] I mut @zcollect_set() -> Set[T] {
+    mut out = Set[T].new()
+    while true {
+        match @next() {
+            Some(x) => out.insert(x),
+            None => return out,
+        }
+    }
+    out
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Tests (smoke — confirms the zero-cost chain composes & drives correctly)
 // ──────────────────────────────────────────────────────────────────────────
 
 test "zc map -> filter -> collect" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     ro got = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zcollect()
     assert(got == [30, 40, 50, 60])
 }
 
 test "zc filter -> map -> collect (order matters)" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     ro got = v.ziter().zfilter(|x| x % 2 == 0).zmap(|x| x + 100).zcollect()
     assert(got == [102, 104, 106])
 }
 
 test "zc map -> filter -> fold" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     ro s = v.ziter().zmap(|x| x * x).zfilter(|x| x % 2 == 1).zfold(0, |acc, x| acc + x)
     assert(s == 35)   // 1 + 9 + 25
 }
 
 test "zc filter -> count / map -> sum" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
     assert(v.ziter().zfilter(|x| x > 5).zcount() == 5)
     assert(v.ziter().zmap(|x| x * 2).zsum(0) == 110)
 }
 
 test "zc filter_map -> collect" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     ro got = v.ziter().zfilter_map(|x| if x % 3 == 0 { Some(x * 10) } else { None }).zcollect()
     assert(got == [30, 60])
 }
 
 test "zc map -> filter -> any / all / find" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     assert(v.ziter().zmap(|x| x + 1).zfilter(|x| x > 3).zany(|x| x == 5))
     assert(v.ziter().zmap(|x| x * 2).zfilter(|x| x > 0).zall(|x| x % 2 == 0))
     ro f = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zfind(|x| x == 40)

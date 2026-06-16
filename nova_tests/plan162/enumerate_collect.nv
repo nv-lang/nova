@@ -2,7 +2,7 @@ module plan162.enumerate_collect
 import std.collections.vec_iter_zc
 
 test "zenumerate collect basic" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     ro got = v.ziter().zenumerate().zcollect()
     assert(got.len() == 3)
     // verify first pair
@@ -11,7 +11,7 @@ test "zenumerate collect basic" {
 }
 
 test "zenumerate collect after filter" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     ro got = v.ziter().zfilter(|x| x % 2 == 0).zenumerate().zcollect()
     assert(got.len() == 2)
     ro p0 = got[0]
@@ -22,7 +22,7 @@ test "zenumerate collect after filter" {
 
 test "zenumerate zcount via zfind early termination" {
     // Verify that enumerating works for indexing into pair elements
-    ro v = Vec[int].from([10, 20, 30, 40])
+    ro v = Vec[int].of(10, 20, 30, 40)
     ro got = v.ziter().zenumerate().zcollect()
     assert(got.len() == 4)
     // Use indexing to check second pair

@@ -5,41 +5,41 @@ import std.collections.vec_iter_zc
 // ── chain tests: adapters before zenumerate + terminators after ──────────────
 
 test "map -> enumerate -> zcount" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     ro n = v.ziter().zmap(|x| x * 10).zenumerate().zcount()
     assert(n == 5)
 }
 
 test "filter -> enumerate -> zcount" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     // filter evens, then enumerate — 3 pairs
     ro n = v.ziter().zfilter(|x| x % 2 == 0).zenumerate().zcount()
     assert(n == 3)
 }
 
 test "filter -> enumerate -> zfilter on index -> zcount" {
-    ro v = Vec[int].from([10, 20, 30, 40, 50, 60])
+    ro v = Vec[int].of(10, 20, 30, 40, 50, 60)
     // filter evens (all), enumerate, keep even-indexed pairs: (0,10),(2,30),(4,50)
     ro n = v.ziter().zfilter(|x| x % 2 == 0).zenumerate().zfilter(|p| p.0 % 2 == 0).zcount()
     assert(n == 3)
 }
 
 test "filter -> enumerate -> ztake -> zcount" {
-    ro v = Vec[int].from([2, 4, 6, 8, 10])
+    ro v = Vec[int].of(2, 4, 6, 8, 10)
     // filter evens (all), enumerate, take 3 — 3 pairs
     ro n = v.ziter().zfilter(|x| x % 2 == 0).zenumerate().ztake(3).zcount()
     assert(n == 3)
 }
 
 test "map -> enumerate -> zfilter on value -> zcount" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     // map x*2 → [2,4,6,8,10], enumerate, keep pairs where value > 5: (2,6),(3,8),(4,10)
     ro n = v.ziter().zmap(|x| x * 2).zenumerate().zfilter(|p| p.1 > 5).zcount()
     assert(n == 3)
 }
 
 test "map -> enumerate -> ztake -> zfilter -> zcount" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6, 7, 8])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
     // map x+10, enumerate, take 5, filter odd index: (1,12),(3,14),(4 skipped after 3)
     // take 5: pairs (0,11),(1,12),(2,13),(3,14),(4,15)
     // filter odd index: (1,12),(3,14) => 2
@@ -48,7 +48,7 @@ test "map -> enumerate -> ztake -> zfilter -> zcount" {
 }
 
 test "enumerate -> zfilter -> ztake chain" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
     // enumerate, filter even-indexed: (0,1),(2,3),(4,5),(6,7),(8,9)
     // take 3: (0,1),(2,3),(4,5)
     ro n = v.ziter().zenumerate().zfilter(|p| p.0 % 2 == 0).ztake(3).zcount()
@@ -56,7 +56,7 @@ test "enumerate -> zfilter -> ztake chain" {
 }
 
 test "enumerate -> zfilter on both index and value -> zcount" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     // enumerate: (0,1),(1,2),(2,3),(3,4),(4,5),(5,6)
     // keep where index > 1 AND value > 3: (2,?),(3,4),(4,5),(5,6)
     // value>3: (3,4),(4,5),(5,6) with index>1: all three have index>1 → 3

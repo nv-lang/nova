@@ -5,25 +5,25 @@ import std.collections.vec_iter_zc
 // ── ztake ────────────────────────────────────────────────────────────────────
 
 test "ztake limits VecIter" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     ro got = v.ziter().ztake(3).zcollect()
     assert(got == [1, 2, 3])
 }
 
 test "ztake after zmap" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     ro got = v.ziter().zmap(|x| x * 10).ztake(2).zcollect()
     assert(got == [10, 20])
 }
 
 test "ztake zero yields empty" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     ro got = v.ziter().ztake(0).zcollect()
     assert(got == [])
 }
 
 test "ztake more than length yields all" {
-    ro v = Vec[int].from([1, 2])
+    ro v = Vec[int].of(1, 2)
     ro got = v.ziter().ztake(10).zcollect()
     assert(got == [1, 2])
 }
@@ -31,19 +31,19 @@ test "ztake more than length yields all" {
 // ── zskip ────────────────────────────────────────────────────────────────────
 
 test "zskip skips first n" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     ro got = v.ziter().zskip(2).zcollect()
     assert(got == [3, 4, 5])
 }
 
 test "zskip after zfilter" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     ro got = v.ziter().zfilter(|x| x % 2 == 0).zskip(1).zcollect()
     assert(got == [4, 6])
 }
 
 test "zskip all yields empty" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     ro got = v.ziter().zskip(10).zcollect()
     assert(got == [])
 }
@@ -51,7 +51,7 @@ test "zskip all yields empty" {
 // ── ztake + zskip chained ────────────────────────────────────────────────────
 
 test "zskip then ztake — sliding window" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6, 7, 8])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
     ro got = v.ziter().zskip(2).ztake(4).zcollect()
     assert(got == [3, 4, 5, 6])
 }
@@ -59,69 +59,69 @@ test "zskip then ztake — sliding window" {
 // ── zreduce ──────────────────────────────────────────────────────────────────
 
 test "zreduce sums via fold" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     ro r = v.ziter().zreduce(|a, b| a + b)
     assert(r == Some(15))
 }
 
 test "zreduce on single element" {
-    ro v = Vec[int].from([42])
+    ro v = Vec[int].of(42)
     assert(v.ziter().zreduce(|a, b| a + b) == Some(42))
 }
 
 test "zreduce on empty is None" {
-    ro v = Vec[int].from([])
+    ro v = Vec[int].new()
     assert(v.ziter().zreduce(|a, b| a + b) == None)
 }
 
 // ── zmin / zmax ──────────────────────────────────────────────────────────────
 
 test "zmin finds minimum" {
-    ro v = Vec[int].from([3, 1, 4, 1, 5, 9, 2, 6])
+    ro v = Vec[int].of(3, 1, 4, 1, 5, 9, 2, 6)
     assert(v.ziter().zmin() == Some(1))
 }
 
 test "zmax finds maximum" {
-    ro v = Vec[int].from([3, 1, 4, 1, 5, 9, 2, 6])
+    ro v = Vec[int].of(3, 1, 4, 1, 5, 9, 2, 6)
     assert(v.ziter().zmax() == Some(9))
 }
 
 test "zmin on empty is None" {
-    ro v = Vec[int].from([])
+    ro v = Vec[int].new()
     assert(v.ziter().zmin() == None)
 }
 
 // ── znth ─────────────────────────────────────────────────────────────────────
 
 test "znth returns 0-based element" {
-    ro v = Vec[int].from([10, 20, 30, 40])
+    ro v = Vec[int].of(10, 20, 30, 40)
     assert(v.ziter().znth(0) == Some(10))
     assert(v.ziter().znth(2) == Some(30))
 }
 
 test "znth out of bounds is None" {
-    ro v = Vec[int].from([1, 2])
+    ro v = Vec[int].of(1, 2)
     assert(v.ziter().znth(5) == None)
 }
 
 test "znth after zmap" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     assert(v.ziter().zmap(|x| x * 100).znth(3) == Some(400))
 }
 
 // ── zlast ────────────────────────────────────────────────────────────────────
 
 test "zlast returns last element" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     assert(v.ziter().zlast() == Some(5))
 }
 
 test "zlast on empty is None" {
-    ro v = Vec[int].from([])
+    ro v = Vec[int].new()
     assert(v.ziter().zlast() == None)
 }
 
 test "zlast after zfilter" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     assert(v.ziter().zfilter(|x| x % 2 == 0).zlast() == Some(6))
 }

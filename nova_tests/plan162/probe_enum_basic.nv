@@ -9,7 +9,7 @@ fn[I Next[T]] I mut @zenumerate_probe() -> Option[(int, T)] {
 }
 
 test "tuple parametric return in blanket method" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     mut it = v.iter()
     ro r = it.zenumerate_probe()
     assert(r == Some((0, 10)))
