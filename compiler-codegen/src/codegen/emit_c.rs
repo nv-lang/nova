@@ -476,6 +476,12 @@ pub struct CEmitter {
     /// чтобы `NovaOpt_Nova_T_p { Nova_T* value; }` не падал с
     /// `unknown type name 'Nova_T'`. Fills'ится pre-pass'ом в emit_module.
     user_type_fwd_decls: String,
+    /// Plan 91.12 fix: value-record struct definitions (complete bodies, not
+    /// just forward typedefs). Must appear BEFORE /*__MONO_TUPLE_TYPEDEFS__*/
+    /// because tuples may carry value-records by value (complete type required).
+    /// Written by emit_value_record_type into this buffer; spliced at
+    /// /*__VALUE_RECORD_DEFS__*/.
+    value_record_defs_buf: String,
     /// File-scope lambda implementations (structs + function bodies). Flushed before fn definitions.
     lambda_impls: String,
     indent: usize,
@@ -1255,6 +1261,7 @@ impl CEmitter {
             deferred_impls: String::new(),
             lambda_forward_decls: String::new(),
             user_type_fwd_decls: String::new(),
+            value_record_defs_buf: String::new(),
             lambda_impls: String::new(),
             indent: 0,
             tmp_counter: 0,
@@ -2317,6 +2324,14 @@ impl CEmitter {
                         if matches!(t.allocation, AllocKind::Value) {
                             self.user_type_fwd_decls.push_str(&format!(
                                 "typedef struct NovaValue_{0} NovaValue_{0};\n", t.name));
+                            // Pre-register type_alias so type_ref_to_c returns
+                            // the correct value type (not Nova_X*) when called
+                            // from emit_effect_type or other pre-body passes that
+                            // run before emit_value_record_type fills the alias.
+                            self.type_aliases.insert(
+                                t.name.clone(),
+                                format!("NovaValue_{}", t.name));
+                            self.value_record_names.insert(t.name.clone());
                         } else {
                             self.user_type_fwd_decls.push_str(&format!(
                                 "typedef struct Nova_{0} Nova_{0};\n", t.name));
@@ -3761,6 +3776,15 @@ impl CEmitter {
         };
         self.out = self.out.replace("/*__USER_TYPE_FWD_DECLS__*/", &user_fwd_replacement);
 
+        // Plan 91.12 fix: splice value-record struct definitions BEFORE tuples.
+        let vr_defs = std::mem::take(&mut self.value_record_defs_buf);
+        let vr_replacement = if vr_defs.is_empty() {
+            String::new()
+        } else {
+            format!("/* Value-record struct definitions (complete, before tuple typedefs): */\n{}", vr_defs)
+        };
+        self.out = self.out.replace("/*__VALUE_RECORD_DEFS__*/", &vr_replacement);
+
         // Plan 14 Ф.1: splice NovaOpt_<T> typedefs в позицию маркера.
         // К этому моменту все type_ref_to_c-вызовы (включая в bodies)
         // отработали и заполнили novaopt_typedefs_buf в правильном
@@ -4350,12 +4374,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // в finalize per-E vtable + TLS slot + throw entry для each registered
         // E type (через `per_e_fail_types`).
         self.line("/*__PER_E_FAIL_DECLS__*/");
+        // Plan 91.12 fix: complete value-record struct definitions (NovaValue_X
+        // bodies). Placed BEFORE /*__MONO_TUPLE_TYPEDEFS__*/ so that tuples
+        // carrying value-records by value see a complete type (not just the
+        // forward typedef). Spliced from value_record_defs_buf in finalize.
+        self.line("/*__VALUE_RECORD_DEFS__*/");
         // Plan 59: mono'd tuple struct typedefs — splice marker; replaced
         // в finalize. Layout: typedef struct { T1 f0; T2 f1; ... }
         // _NovaTuple____<T1>__<T2>__...;. Real types (e.g. nova_str, не
         // nova_int slot) — fit структуры >8 байт. Placed ПОСЛЕ user-type
         // fwd decls — tuple elements могут быть `Nova_X*` (pointer), которым
-        // достаточно incomplete typedef.
+        // достаточно incomplete typedef. Value-record elements (NovaValue_X
+        // by-value) require complete type — handled by __VALUE_RECORD_DEFS__.
         //
         // Plan 97.1 Ф.3 (D142): для tuple'ов содержащих `NovaBox_<Proto>`
         // (protocol-литералы capability-split factory) — NovaBox typedef'ы
@@ -5684,9 +5714,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                             return Ok("void*".into());
                         }
-                        // Check if it's a type alias — return the aliased type directly (no *)
-                        if let Some(aliased_c) = self.type_aliases.get(&name).cloned() {
-                            return Ok(aliased_c);
+                        // Check if it's a type alias — return the aliased type directly (no *).
+                        // Guard: skip the alias when the type is referenced WITH type arguments
+                        // AND the base name is a known generic template (e.g. `VecIter[int]`
+                        // where `VecIter -> NovaValue_VecIter` lives in type_aliases as the
+                        // erased-stub alias). Returning the erased alias here would bypass the
+                        // monomorphization path below and produce `NovaValue_VecIter` instead of
+                        // the correctly-mangled `NovaValue_VecIter____nova_int`. Non-generic
+                        // aliases (newtypes, pointer typedefs, named tuples) always arrive with
+                        // empty `generics`, so the guard has no effect on them.
+                        let is_generic_template_with_args = !generics.is_empty()
+                            && self.generic_type_templates.contains_key(&name);
+                        if !is_generic_template_with_args {
+                            if let Some(aliased_c) = self.type_aliases.get(&name).cloned() {
+                                return Ok(aliased_c);
+                            }
                         }
                         // Plan 48 Ф.3: if this is a generic type with concrete type args,
                         // compute mangled name and enqueue instance emission.
@@ -9960,7 +10002,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     return Ok(());
                 }
                 let inner_c = self.type_ref_to_c(inner)?;
-                self.line(&format!("typedef {} Nova_{};", inner_c, t.name));
+                // Emit into user_type_fwd_decls (spliced before value-record defs
+                // and tuple typedefs) so that value-record fields of newtype can
+                // reference this typedef without forward-declaration issues.
+                self.user_type_fwd_decls.push_str(&format!(
+                    "typedef {} Nova_{};\n", inner_c, t.name));
                 // Newtypes are typedef'd scalars — use inner type directly (no pointer indirection)
                 self.type_aliases.insert(t.name.clone(), inner_c);
             }
@@ -10258,6 +10304,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// `is_value_type` уже distinguishes `NovaValue_` prefix.
     fn emit_value_record_type(&mut self, name: &str, fields: &[RecordField]) -> Result<(), String> {
         let mut schema = HashMap::new();
+        // Redirect output to value_record_defs_buf so the complete struct
+        // definition is spliced BEFORE /*__MONO_TUPLE_TYPEDEFS__*/ in the
+        // final file. Tuples may carry value-records by value and require a
+        // complete (not forward-declared) type at that point.
+        let saved_out = std::mem::take(&mut self.out);
         self.line(&format!("typedef struct NovaValue_{0} NovaValue_{0};", name));
         self.line(&format!("struct NovaValue_{} {{", name));
         self.indent += 1;
@@ -10293,6 +10344,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.indent -= 1;
         self.line("};");
         self.line("");
+        let struct_def = std::mem::replace(&mut self.out, saved_out);
+        self.value_record_defs_buf.push_str(&struct_def);
         self.record_schemas.insert(name.to_string(), schema);
         // Value-type alias: Named{Vec3} → "NovaValue_Vec3" (no pointer).
         self.type_aliases.insert(name.to_string(), format!("NovaValue_{}", name));
