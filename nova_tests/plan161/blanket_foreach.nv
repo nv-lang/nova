@@ -3,7 +3,7 @@ module plan161.blanket_foreach
 
 import std.collections.vec.{Vec}
 import std.prelude.collections.{Next}
-import std.collections.vec_iter_zc.{MapIter}
+import std.collections.vec_iter.{MapIter}
 
 fn[I Next[T]] I mut @bfor_each(f fn(T) -> ()) -> () {
     mut go = true
@@ -18,6 +18,6 @@ fn[I Next[T]] I mut @bfor_each(f fn(T) -> ()) -> () {
 test "blanket bfor_each on MapIter" {
     ro v = Vec[int].of(1, 2, 3)
     mut sum = 0
-    v.ziter().zmap(|x| x * 2).bfor_each(|x| { sum = sum + x })
+    v.iter().map(|x| x * 2).bfor_each(|x| { sum = sum + x })
     assert(sum == 12) // 2+4+6
 }

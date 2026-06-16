@@ -1,8 +1,8 @@
-// Plan 153.2-Z (Stage 4, D277) — `zcollect_into(out mut Vec[T])` terminator on
+// Plan 153.2-Z (Stage 4, D277) — `collect_into(out mut Vec[T])` terminator on
 // the zero-cost generic-over-source adapters. Drains the chain into a
 // CALLER-PROVIDED, reusable buffer instead of allocating a fresh result `Vec`.
 //
-// Semantics under test (documented in std/collections/vec_iter_zc.nv):
+// Semantics under test (documented in std/collections/vec_iter.nv):
 //   * APPENDS to `out` — does NOT clear it first.
 //   * To reuse a dirty buffer as a fresh sink, the caller `out.clear()`s it
 //     (len = 0, backing buffer retained) before passing it in.
@@ -10,19 +10,19 @@
 //     `out` binding (`Vec[T]` is a heap reference type).
 module plan153_2_zc.collect_into
 
-import std.collections.vec_iter_zc
+import std.collections.vec_iter
 
-test "zcollect_into appends MapIter->FilterIter chain into a fresh buffer" {
+test "collect_into appends MapIter->FilterIter chain into a fresh buffer" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     mut out = Vec[int].new()
-    v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zcollect_into(out)
+    v.iter().map(|x| x * 10).filter(|x| x > 25).collect_into(out)
     assert(out == [30, 40, 50, 60])
 }
 
-test "zcollect_into is APPEND, not replace (dirty buffer accumulates)" {
+test "collect_into is APPEND, not replace (dirty buffer accumulates)" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     mut out = Vec[int].of(7, 8)      // pre-existing contents
-    v.ziter().zfilter(|x| x % 2 == 0).zcollect_into(out)
+    v.iter().filter(|x| x % 2 == 0).collect_into(out)
     // 7, 8 preserved; evens appended after them.
     assert(out == [7, 8, 2, 4, 6])
 }
@@ -33,38 +33,38 @@ test "clear + reuse the SAME buffer across calls (amortized zero-alloc)" {
     mut buf = Vec[int].new()
 
     // First fill.
-    a.ziter().zmap(|x| x * 2).zcollect_into(buf)
+    a.iter().map(|x| x * 2).collect_into(buf)
     assert(buf == [2, 4, 6, 8, 10])
 
     // Reuse: clear (keeps capacity) then refill from a different source.
     buf.clear()
-    b.ziter().zfilter(|x| x >= 20).zcollect_into(buf)
+    b.iter().filter(|x| x >= 20).collect_into(buf)
     assert(buf == [20, 30])
 
     // Reuse again with a filter_map chain.
     buf.clear()
-    a.ziter().zfilter_map(|x| if x % 2 == 1 { Some(x * 100) } else { None }).zcollect_into(buf)
+    a.iter().filter_map(|x| if x % 2 == 1 { Some(x * 100) } else { None }).collect_into(buf)
     assert(buf == [100, 300, 500])
 }
 
-test "zcollect_into on FilterMapIter drains map-and-filter" {
+test "collect_into on FilterMapIter drains map-and-filter" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8, 9)
     mut out = Vec[int].new()
-    v.ziter().zfilter_map(|x| if x % 3 == 0 { Some(x + 1) } else { None }).zcollect_into(out)
+    v.iter().filter_map(|x| if x % 3 == 0 { Some(x + 1) } else { None }).collect_into(out)
     assert(out == [4, 7, 10])
 }
 
-test "zcollect_into agrees with zcollect element-for-element" {
+test "collect_into agrees with collect element-for-element" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
-    ro collected = v.ziter().zmap(|x| x * 3).zfilter(|x| x > 9).zcollect()
+    ro collected = v.iter().map(|x| x * 3).filter(|x| x > 9).collect()
     mut into = Vec[int].new()
-    v.ziter().zmap(|x| x * 3).zfilter(|x| x > 9).zcollect_into(into)
+    v.iter().map(|x| x * 3).filter(|x| x > 9).collect_into(into)
     assert(into == collected)
 }
 
-test "zcollect_into of an empty result leaves the buffer untouched" {
+test "collect_into of an empty result leaves the buffer untouched" {
     ro v = Vec[int].of(1, 2, 3)
     mut out = Vec[int].of(99)
-    v.ziter().zfilter(|x| x > 100).zcollect_into(out)
+    v.iter().filter(|x| x > 100).collect_into(out)
     assert(out == [99])
 }

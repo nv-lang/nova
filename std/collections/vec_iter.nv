@@ -1,4 +1,4 @@
-// std.collections.vec_iter_zc — ZERO-COST (generic-over-source) lazy iterator
+// std.collections.vec_iter — ZERO-COST (generic-over-source) lazy iterator
 // adapters & terminators on `Vec[T]`.
 //
 // Plan 153.2 Ф.2 (D260, STAGE 2). The Rust-style `Map<I, F>` / `Filter<I, P>`
@@ -6,7 +6,7 @@
 // that holds the upstream iterator INLINE (a field `src I`, not a boxed `step`
 // closure). `@next()` dispatches `(@src).next()` by STATIC, monomorphized call
 // — there is NO per-element function-pointer indirection and NO heap box of the
-// source. A chain `v.ziter().zmap(f).zfilter(p)` monomorphizes to a single
+// source. A chain `v.iter().map(f).filter(p)` monomorphizes to a single
 // NESTED concrete type `FilterIter[MapIter[VecIter[int], int, int], int]`, and
 // every `.next()` inlines down to the base `VecIter.next()`.
 //
@@ -28,11 +28,11 @@
 // level generics and its callback params into every compilation unit's merged
 // body ([M-codegen-var-types-fn-scope] + D145). A unit with a top-level `fn f`
 // would collide. The adapters stay behind an opt-in
-// `import std.collections.vec_iter_zc`.
+// `import std.collections.vec_iter`.
 //
 // ── ZERO-COST measurement (Plan 153.2 Ф.2)
 //
-// For `v.ziter().zmap(|x| x*10).zfilter(|x| x>25).zcollect()`:
+// For `v.iter().map(|x| x*10).filter(|x| x>25).collect()`:
 //   * adapter-record allocations : 0  (by-value `NovaValue_<…>` mono, Stage 1)
 //   * source-box (`_box_src`)     : 0  (source held inline as `src I`)
 //   * step-closure (`NovaClosBase`) for SOURCE threading : 0  (static dispatch)
@@ -41,7 +41,7 @@
 //
 // ── Coverage / known limits
 //
-// `T` flows through unchanged at `filter`; `zmap` retargets to `U`. The element
+// `T` flows through unchanged at `filter`; `map` retargets to `U`. The element
 // type and source type are both monomorphized, so each distinct chain shape is
 // its own concrete type (Rust-identical). The current surface covers:
 // adapters: map / filter / filter_map / take / skip / enumerate
@@ -50,7 +50,7 @@
 // `enumerate` yields `(int, T)` pairs via `EnumerateIter`; `take`/`skip` are
 // stateful adapters with an inline counter field.
 
-module collections.vec_iter_zc
+module collections.vec_iter
 
 import std.collections.vec.{Vec, VecIter}
 import std.collections.set.{Set}
@@ -154,118 +154,107 @@ export fn EnumerateIter[I, T] mut @next() -> Option[(int, T)] {
 // Entry bridge + chainable adapter methods
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Begin a zero-cost, allocation-free iterator pipeline over the vector.
-///
-/// # Examples
-/// ```nova
-/// import std.collections.vec_iter_zc
-/// let v = Vec[int].of(1, 2, 3, 4)
-/// let got = v.ziter().zmap(|x| x * 2).zfilter(|x| x > 4).zcollect()
-/// assert(got == [6, 8])
-/// ```
-export fn Vec[T] @ziter() -> VecIter[T] => @iter()
-
 // ── adapters ON a `VecIter[T]` source (chain entry) ─────────────────────────
 
 /// Lazily apply `f` to each element of the vector iterator.
-export fn VecIter[T] @zmap[U](f fn(T) -> U) -> MapIter[VecIter[T], T, U] => { src: @, f }
+export fn VecIter[T] @map[U](f fn(T) -> U) -> MapIter[VecIter[T], T, U] => { src: @, f }
 
 /// Lazily keep only elements for which `pred` holds.
-export fn VecIter[T] @zfilter(pred fn(T) -> bool) -> FilterIter[VecIter[T], T] => { src: @, pred }
+export fn VecIter[T] @filter(pred fn(T) -> bool) -> FilterIter[VecIter[T], T] => { src: @, pred }
 
 /// Lazily map-and-filter the vector iterator.
-export fn VecIter[T] @zfilter_map[U](f fn(T) -> Option[U]) -> FilterMapIter[VecIter[T], T, U] => { src: @, f }
+export fn VecIter[T] @filter_map[U](f fn(T) -> Option[U]) -> FilterMapIter[VecIter[T], T, U] => { src: @, f }
 
 // ── adapters ON a `MapIter` source (continue the chain) ─────────────────────
 
-export fn MapIter[I, T, U] @zmap[V](f fn(U) -> V) -> MapIter[Self, U, V] => { src: @, f }
-export fn MapIter[I, T, U] @zfilter(pred fn(U) -> bool) -> FilterIter[Self, U] => { src: @, pred }
-export fn MapIter[I, T, U] @zfilter_map[V](f fn(U) -> Option[V]) -> FilterMapIter[Self, U, V] => { src: @, f }
+export fn MapIter[I, T, U] @map[V](f fn(U) -> V) -> MapIter[Self, U, V] => { src: @, f }
+export fn MapIter[I, T, U] @filter(pred fn(U) -> bool) -> FilterIter[Self, U] => { src: @, pred }
+export fn MapIter[I, T, U] @filter_map[V](f fn(U) -> Option[V]) -> FilterMapIter[Self, U, V] => { src: @, f }
 
 // ── adapters ON a `FilterIter` source (continue the chain) ──────────────────
 
-export fn FilterIter[I, T] @zmap[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
-export fn FilterIter[I, T] @zfilter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
-export fn FilterIter[I, T] @zfilter_map[U](f fn(T) -> Option[U]) -> FilterMapIter[Self, T, U] => { src: @, f }
+export fn FilterIter[I, T] @map[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
+export fn FilterIter[I, T] @filter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
+export fn FilterIter[I, T] @filter_map[U](f fn(T) -> Option[U]) -> FilterMapIter[Self, T, U] => { src: @, f }
 
 // ── adapters ON a `FilterMapIter` source (continue the chain) ───────────────
 
-export fn FilterMapIter[I, T, U] @zmap[V](f fn(U) -> V) -> MapIter[Self, U, V] => { src: @, f }
-export fn FilterMapIter[I, T, U] @zfilter(pred fn(U) -> bool) -> FilterIter[Self, U] => { src: @, pred }
+export fn FilterMapIter[I, T, U] @map[V](f fn(U) -> V) -> MapIter[Self, U, V] => { src: @, f }
+export fn FilterMapIter[I, T, U] @filter(pred fn(U) -> bool) -> FilterIter[Self, U] => { src: @, pred }
 
-// ── @ztake / @zskip / @zenumerate — per adapter type ────────────────────────
+// ── @take / @skip / @enumerate — per adapter type ────────────────────────────
 //
 // These cannot be blanket (return type contains the concrete adapter name),
 // so one definition per source type is required.
 
-export fn VecIter[T] @ztake(n int) -> TakeIter[Self, T] => { src: @, left: n }
-export fn VecIter[T] @zskip(n int) -> SkipIter[Self, T] => { src: @, to_skip: n }
+export fn VecIter[T] @take(n int) -> TakeIter[Self, T] => { src: @, left: n }
+export fn VecIter[T] @skip(n int) -> SkipIter[Self, T] => { src: @, to_skip: n }
 
-export fn MapIter[I, T, U] @ztake(n int) -> TakeIter[Self, U] => { src: @, left: n }
-export fn MapIter[I, T, U] @zskip(n int) -> SkipIter[Self, U] => { src: @, to_skip: n }
+export fn MapIter[I, T, U] @take(n int) -> TakeIter[Self, U] => { src: @, left: n }
+export fn MapIter[I, T, U] @skip(n int) -> SkipIter[Self, U] => { src: @, to_skip: n }
 
-export fn FilterIter[I, T] @ztake(n int) -> TakeIter[Self, T] => { src: @, left: n }
-export fn FilterIter[I, T] @zskip(n int) -> SkipIter[Self, T] => { src: @, to_skip: n }
+export fn FilterIter[I, T] @take(n int) -> TakeIter[Self, T] => { src: @, left: n }
+export fn FilterIter[I, T] @skip(n int) -> SkipIter[Self, T] => { src: @, to_skip: n }
 
-export fn FilterMapIter[I, T, U] @ztake(n int) -> TakeIter[Self, U] => { src: @, left: n }
-export fn FilterMapIter[I, T, U] @zskip(n int) -> SkipIter[Self, U] => { src: @, to_skip: n }
+export fn FilterMapIter[I, T, U] @take(n int) -> TakeIter[Self, U] => { src: @, left: n }
+export fn FilterMapIter[I, T, U] @skip(n int) -> SkipIter[Self, U] => { src: @, to_skip: n }
 
-export fn TakeIter[I, T] @ztake(n int) -> TakeIter[Self, T] => { src: @, left: n }
-export fn TakeIter[I, T] @zskip(n int) -> SkipIter[Self, T] => { src: @, to_skip: n }
-export fn TakeIter[I, T] @zmap[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
-export fn TakeIter[I, T] @zfilter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
+export fn TakeIter[I, T] @take(n int) -> TakeIter[Self, T] => { src: @, left: n }
+export fn TakeIter[I, T] @skip(n int) -> SkipIter[Self, T] => { src: @, to_skip: n }
+export fn TakeIter[I, T] @map[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
+export fn TakeIter[I, T] @filter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
 
-export fn SkipIter[I, T] @ztake(n int) -> TakeIter[Self, T] => { src: @, left: n }
-export fn SkipIter[I, T] @zskip(n int) -> SkipIter[Self, T] => { src: @, to_skip: n }
-export fn SkipIter[I, T] @zmap[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
-export fn SkipIter[I, T] @zfilter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
+export fn SkipIter[I, T] @take(n int) -> TakeIter[Self, T] => { src: @, left: n }
+export fn SkipIter[I, T] @skip(n int) -> SkipIter[Self, T] => { src: @, to_skip: n }
+export fn SkipIter[I, T] @map[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
+export fn SkipIter[I, T] @filter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
 
-// ── @zenumerate — per adapter type ──────────────────────────────────────────
+// ── @enumerate — per adapter type ──────────────────────────────────────────
 //
 // Cannot be blanket because the return type names `EnumerateIter` explicitly.
 
-export fn VecIter[T] @zenumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
-export fn MapIter[I, T, U] @zenumerate() -> EnumerateIter[Self, U] => { src: @, i: 0 }
-export fn FilterIter[I, T] @zenumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
-export fn FilterMapIter[I, T, U] @zenumerate() -> EnumerateIter[Self, U] => { src: @, i: 0 }
-export fn TakeIter[I, T] @zenumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
-export fn SkipIter[I, T] @zenumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
+export fn VecIter[T] @enumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
+export fn MapIter[I, T, U] @enumerate() -> EnumerateIter[Self, U] => { src: @, i: 0 }
+export fn FilterIter[I, T] @enumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
+export fn FilterMapIter[I, T, U] @enumerate() -> EnumerateIter[Self, U] => { src: @, i: 0 }
+export fn TakeIter[I, T] @enumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
+export fn SkipIter[I, T] @enumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
 
 // ── chaining adapters ON `EnumerateIter` ────────────────────────────────────
 
-export fn EnumerateIter[I, T] @zmap[U](f fn((int, T)) -> U) -> MapIter[Self, (int, T), U] => { src: @, f }
-export fn EnumerateIter[I, T] @zfilter(pred fn((int, T)) -> bool) -> FilterIter[Self, (int, T)] => { src: @, pred }
-export fn EnumerateIter[I, T] @zfilter_map[U](f fn((int, T)) -> Option[U]) -> FilterMapIter[Self, (int, T), U] => { src: @, f }
-export fn EnumerateIter[I, T] @ztake(n int) -> TakeIter[Self, (int, T)] => { src: @, left: n }
-export fn EnumerateIter[I, T] @zskip(n int) -> SkipIter[Self, (int, T)] => { src: @, to_skip: n }
-export fn EnumerateIter[I, T] @zenumerate() -> EnumerateIter[Self, (int, T)] => { src: @, i: 0 }
+export fn EnumerateIter[I, T] @map[U](f fn((int, T)) -> U) -> MapIter[Self, (int, T), U] => { src: @, f }
+export fn EnumerateIter[I, T] @filter(pred fn((int, T)) -> bool) -> FilterIter[Self, (int, T)] => { src: @, pred }
+export fn EnumerateIter[I, T] @filter_map[U](f fn((int, T)) -> Option[U]) -> FilterMapIter[Self, (int, T), U] => { src: @, f }
+export fn EnumerateIter[I, T] @take(n int) -> TakeIter[Self, (int, T)] => { src: @, left: n }
+export fn EnumerateIter[I, T] @skip(n int) -> SkipIter[Self, (int, T)] => { src: @, to_skip: n }
+export fn EnumerateIter[I, T] @enumerate() -> EnumerateIter[Self, (int, T)] => { src: @, i: 0 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // Terminators — drive the chain.
 //
 // Plan 161 Ф.3 refactor: terminators that return a type with NO unresolved
 // type-var in the return position (int, bool, (), Acc) are written once as
-// blanket methods `fn[I Next[T]] I mut @zt…()`.
+// blanket methods `fn[I Next[T]] I mut @t…()`.
 //
 // Plan 161 V2 [M-161-parametric-return]: terminators whose return type or
 // parameter type contains the element type T (Vec[T], Option[T], T) are
 // ALSO blanket now — codegen correctly substitutes T at mono time.
 //
 // Blanket (O(1) definitions, all adapter types supported):
-//   @zfold[Acc]      — returns Acc (additional generic)
-//   @zcount          — returns int
-//   @zfor_each       — returns ()
-//   @zany            — returns bool
-//   @zall            — returns bool
-//   @zcollect        — returns Vec[T]   (Plan 161 V2)
-//   @zcollect_into   — param mut Vec[T] (Plan 161 V2)
-//   @zsum            — param/return T   (Plan 161 V2)
-//   @zfind           — returns Option[T](Plan 161 V2)
+//   @fold[Acc]      — returns Acc (additional generic)
+//   @count          — returns int
+//   @for_each       — returns ()
+//   @any            — returns bool
+//   @all            — returns bool
+//   @collect        — returns Vec[T]   (Plan 161 V2)
+//   @collect_into   — param mut Vec[T] (Plan 161 V2)
+//   @sum            — param/return T   (Plan 161 V2)
+//   @find           — returns Option[T](Plan 161 V2)
 // ──────────────────────────────────────────────────────────────────────────
 
 // ── blanket terminators (Plan 161 Ф.3) ───────────────────────────────────
 
-export fn[I Next[T]] I mut @zfold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
+export fn[I Next[T]] I mut @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
     mut acc = init
     while true {
         match @next() {
@@ -276,7 +265,7 @@ export fn[I Next[T]] I mut @zfold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
     acc
 }
 
-export fn[I Next[T]] I mut @zcount() -> int {
+export fn[I Next[T]] I mut @count() -> int {
     mut n = 0
     while true {
         match @next() {
@@ -287,7 +276,7 @@ export fn[I Next[T]] I mut @zcount() -> int {
     n
 }
 
-export fn[I Next[T]] I mut @zfor_each(f fn(T) -> ()) -> () {
+export fn[I Next[T]] I mut @for_each(f fn(T) -> ()) -> () {
     while true {
         match @next() {
             Some(x) => f(x),
@@ -296,7 +285,7 @@ export fn[I Next[T]] I mut @zfor_each(f fn(T) -> ()) -> () {
     }
 }
 
-export fn[I Next[T]] I mut @zany(pred fn(T) -> bool) -> bool {
+export fn[I Next[T]] I mut @any(pred fn(T) -> bool) -> bool {
     while true {
         match @next() {
             Some(x) => { if pred(x) { return true } },
@@ -306,7 +295,7 @@ export fn[I Next[T]] I mut @zany(pred fn(T) -> bool) -> bool {
     false
 }
 
-export fn[I Next[T]] I mut @zall(pred fn(T) -> bool) -> bool {
+export fn[I Next[T]] I mut @all(pred fn(T) -> bool) -> bool {
     while true {
         match @next() {
             Some(x) => { if !pred(x) { return false } },
@@ -322,7 +311,7 @@ export fn[I Next[T]] I mut @zall(pred fn(T) -> bool) -> bool {
 // / T-params at monomorphization time.
 
 /// Collect all elements into a new `Vec[T]`.
-export fn[I Next[T]] I mut @zcollect() -> Vec[T] {
+export fn[I Next[T]] I mut @collect() -> Vec[T] {
     mut out = Vec[T].new()
     while true {
         match @next() {
@@ -336,7 +325,7 @@ export fn[I Next[T]] I mut @zcollect() -> Vec[T] {
 /// Drain the chain into a CALLER-PROVIDED, reusable buffer `out` (Stage 4,
 /// [M-153.2-collect-into]). APPENDS to `out` (does not clear it first).
 /// Amortizes to ZERO `nova_alloc` when `out` is reused across calls.
-export fn[I Next[T]] I mut @zcollect_into(mut out Vec[T]) -> () {
+export fn[I Next[T]] I mut @collect_into(mut out Vec[T]) -> () {
     while true {
         match @next() {
             Some(x) => out.push(x),
@@ -346,7 +335,7 @@ export fn[I Next[T]] I mut @zcollect_into(mut out Vec[T]) -> () {
 }
 
 /// Sum all elements starting from `zero`. Requires `T` to support `+`.
-export fn[I Next[T]] I mut @zsum(zero T) -> T {
+export fn[I Next[T]] I mut @sum(zero T) -> T {
     mut acc = zero
     while true {
         match @next() {
@@ -358,7 +347,7 @@ export fn[I Next[T]] I mut @zsum(zero T) -> T {
 }
 
 /// Return the first element satisfying `pred`, or `None`.
-export fn[I Next[T]] I mut @zfind(pred fn(T) -> bool) -> Option[T] {
+export fn[I Next[T]] I mut @find(pred fn(T) -> bool) -> Option[T] {
     while true {
         match @next() {
             Some(x) => { if pred(x) { return Some(x) } },
@@ -369,7 +358,7 @@ export fn[I Next[T]] I mut @zfind(pred fn(T) -> bool) -> Option[T] {
 }
 
 /// Reduce without a seed: `None` when empty, else fold from the first element.
-export fn[I Next[T]] I mut @zreduce(f fn(T, T) -> T) -> Option[T] {
+export fn[I Next[T]] I mut @reduce(f fn(T, T) -> T) -> Option[T] {
     mut acc = match @next() {
         Some(first) => first,
         None => return None,
@@ -384,7 +373,7 @@ export fn[I Next[T]] I mut @zreduce(f fn(T, T) -> T) -> Option[T] {
 }
 
 /// Smallest element by `T`'s `Compare`, or `None` if empty.
-export fn[I Next[T], T Compare] I mut @zmin() -> Option[T] {
+export fn[I Next[T], T Compare] I mut @min() -> Option[T] {
     mut best = match @next() {
         Some(first) => first,
         None => return None,
@@ -399,7 +388,7 @@ export fn[I Next[T], T Compare] I mut @zmin() -> Option[T] {
 }
 
 /// Largest element by `T`'s `Compare`, or `None` if empty.
-export fn[I Next[T], T Compare] I mut @zmax() -> Option[T] {
+export fn[I Next[T], T Compare] I mut @max() -> Option[T] {
     mut best = match @next() {
         Some(first) => first,
         None => return None,
@@ -414,7 +403,7 @@ export fn[I Next[T], T Compare] I mut @zmax() -> Option[T] {
 }
 
 /// 0-based `n`-th element (consumes first `n`), or `None`.
-export fn[I Next[T]] I mut @znth(n int) -> Option[T] {
+export fn[I Next[T]] I mut @nth(n int) -> Option[T] {
     mut k = n
     while true {
         match @next() {
@@ -429,7 +418,7 @@ export fn[I Next[T]] I mut @znth(n int) -> Option[T] {
 }
 
 /// Last element, or `None` if empty (drains the iterator).
-export fn[I Next[T]] I mut @zlast() -> Option[T] {
+export fn[I Next[T]] I mut @last() -> Option[T] {
     mut result Option[T] = None
     while true {
         match @next() {
@@ -441,7 +430,7 @@ export fn[I Next[T]] I mut @zlast() -> Option[T] {
 }
 
 /// Drain into a fresh `Set[T]`, deduplicating elements. Requires `T Hash`.
-export fn[I Next[T], T Hash] I mut @zcollect_set() -> Set[T] {
+export fn[I Next[T], T Hash] I mut @collect_set() -> Set[T] {
     mut out = Set[T].new()
     while true {
         match @next() {
@@ -458,38 +447,38 @@ export fn[I Next[T], T Hash] I mut @zcollect_set() -> Set[T] {
 
 test "zc map -> filter -> collect" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
-    ro got = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zcollect()
+    ro got = v.iter().map(|x| x * 10).filter(|x| x > 25).collect()
     assert(got == [30, 40, 50, 60])
 }
 
 test "zc filter -> map -> collect (order matters)" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
-    ro got = v.ziter().zfilter(|x| x % 2 == 0).zmap(|x| x + 100).zcollect()
+    ro got = v.iter().filter(|x| x % 2 == 0).map(|x| x + 100).collect()
     assert(got == [102, 104, 106])
 }
 
 test "zc map -> filter -> fold" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)
-    ro s = v.ziter().zmap(|x| x * x).zfilter(|x| x % 2 == 1).zfold(0, |acc, x| acc + x)
+    ro s = v.iter().map(|x| x * x).filter(|x| x % 2 == 1).fold(0, |acc, x| acc + x)
     assert(s == 35)   // 1 + 9 + 25
 }
 
 test "zc filter -> count / map -> sum" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-    assert(v.ziter().zfilter(|x| x > 5).zcount() == 5)
-    assert(v.ziter().zmap(|x| x * 2).zsum(0) == 110)
+    assert(v.iter().filter(|x| x > 5).count() == 5)
+    assert(v.iter().map(|x| x * 2).sum(0) == 110)
 }
 
 test "zc filter_map -> collect" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
-    ro got = v.ziter().zfilter_map(|x| if x % 3 == 0 { Some(x * 10) } else { None }).zcollect()
+    ro got = v.iter().filter_map(|x| if x % 3 == 0 { Some(x * 10) } else { None }).collect()
     assert(got == [30, 60])
 }
 
 test "zc map -> filter -> any / all / find" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
-    assert(v.ziter().zmap(|x| x + 1).zfilter(|x| x > 3).zany(|x| x == 5))
-    assert(v.ziter().zmap(|x| x * 2).zfilter(|x| x > 0).zall(|x| x % 2 == 0))
-    ro f = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zfind(|x| x == 40)
+    assert(v.iter().map(|x| x + 1).filter(|x| x > 3).any(|x| x == 5))
+    assert(v.iter().map(|x| x * 2).filter(|x| x > 0).all(|x| x % 2 == 0))
+    ro f = v.iter().map(|x| x * 10).filter(|x| x > 25).find(|x| x == 40)
     assert(f.unwrap_or(0) == 40)
 }

@@ -1,31 +1,31 @@
 module plan153_2_zc.collect_set
 
-import std.collections.vec_iter_zc
+import std.collections.vec_iter
 import std.collections.set.{Set}
 
-test "zcollect_set dedups elements" {
+test "collect_set dedups elements" {
     ro v = Vec[int].of(1, 2, 2, 3, 3, 3)
-    ro s = v.ziter().zcollect_set()
+    ro s = v.iter().collect_set()
     assert(s.len() == 3)
     assert(s.contains(1))
     assert(s.contains(2))
     assert(s.contains(3))
 }
 
-test "zcollect_set after zmap" {
+test "collect_set after map" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
-    ro s = v.ziter().zmap(|x| x % 3).zcollect_set()
+    ro s = v.iter().map(|x| x % 3).collect_set()
     assert(s.len() == 3)   // 0, 1, 2
 }
 
-test "zcollect_set after zfilter" {
+test "collect_set after filter" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
-    ro s = v.ziter().zfilter(|x| x % 2 == 0).zcollect_set()
+    ro s = v.iter().filter(|x| x % 2 == 0).collect_set()
     assert(s.len() == 4)   // 2, 4, 6, 8
 }
 
-test "zcollect_set on empty yields empty set" {
+test "collect_set on empty yields empty set" {
     ro v = Vec[int].of()
-    ro s = v.ziter().zcollect_set()
+    ro s = v.iter().collect_set()
     assert(s.len() == 0)
 }

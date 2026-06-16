@@ -3,7 +3,7 @@ module plan161.blanket_count
 
 import std.collections.vec.{Vec, VecIter}
 import std.prelude.collections.{Next}
-import std.collections.vec_iter_zc.{MapIter, FilterIter}
+import std.collections.vec_iter.{MapIter, FilterIter}
 
 // Blanket count — just counts elements, return type `int` has no type vars
 fn[I Next[T]] I mut @bcount() -> int {
@@ -24,14 +24,14 @@ test "blanket bcount on VecIter" {
     assert(c == 5)
 }
 
-test "blanket bcount on FilterIter (via existing zfilter)" {
+test "blanket bcount on FilterIter (via existing filter)" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
-    ro c = v.ziter().zfilter(|x| x % 2 == 0).bcount()
+    ro c = v.iter().filter(|x| x % 2 == 0).bcount()
     assert(c == 3)
 }
 
-test "blanket bcount on MapIter (via existing zmap)" {
+test "blanket bcount on MapIter (via existing map)" {
     ro v = Vec[int].of(1, 2, 3)
-    ro c = v.ziter().zmap(|x| x * 2).bcount()
+    ro c = v.iter().map(|x| x * 2).bcount()
     assert(c == 3)
 }

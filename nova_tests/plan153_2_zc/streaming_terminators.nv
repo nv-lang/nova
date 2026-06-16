@@ -8,35 +8,35 @@
 // `nova_alloc` to prove the fold/sum/... terminator bodies are alloc-free.
 module plan153_2_zc.streaming_terminators
 
-import std.collections.vec_iter_zc
+import std.collections.vec_iter
 
 test "fold is an alloc-free scalar terminator" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)
-    ro s = v.ziter().zmap(|x| x * x).zfilter(|x| x % 2 == 1).zfold(0, |acc, x| acc + x)
+    ro s = v.iter().map(|x| x * x).filter(|x| x % 2 == 1).fold(0, |acc, x| acc + x)
     assert(s == 35)   // 1 + 9 + 25
 }
 
 test "sum is an alloc-free scalar terminator" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
-    assert(v.ziter().zmap(|x| x * 2).zsum(0) == 42)
+    assert(v.iter().map(|x| x * 2).sum(0) == 42)
 }
 
 test "count is an alloc-free scalar terminator" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-    assert(v.ziter().zfilter(|x| x > 5).zcount() == 5)
+    assert(v.iter().filter(|x| x > 5).count() == 5)
 }
 
 test "for_each is an alloc-free side-effecting terminator" {
     ro v = Vec[int].of(1, 2, 3, 4)
     mut total = 0
-    v.ziter().zmap(|x| x + 1).zfor_each(|x| { total += x })
+    v.iter().map(|x| x + 1).for_each(|x| { total += x })
     assert(total == 14)   // 2 + 3 + 4 + 5
 }
 
 test "any / all / find are alloc-free short-circuit terminators" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
-    assert(v.ziter().zmap(|x| x + 1).zfilter(|x| x > 3).zany(|x| x == 5))
-    assert(v.ziter().zmap(|x| x * 2).zfilter(|x| x > 0).zall(|x| x % 2 == 0))
-    ro f = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zfind(|x| x == 40)
+    assert(v.iter().map(|x| x + 1).filter(|x| x > 3).any(|x| x == 5))
+    assert(v.iter().map(|x| x * 2).filter(|x| x > 0).all(|x| x % 2 == 0))
+    ro f = v.iter().map(|x| x * 10).filter(|x| x > 25).find(|x| x == 40)
     assert(f.unwrap_or(0) == 40)
 }

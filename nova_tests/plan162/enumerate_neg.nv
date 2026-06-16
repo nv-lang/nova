@@ -6,11 +6,11 @@
 // This confirms EnumerateIter cannot be confused with a mutable Vec.
 module plan162.enumerate_neg
 
-import std.collections.vec_iter_zc
+import std.collections.vec_iter
 
 fn neg_push_on_ro_enumerate_iter() {
     ro v = Vec[int].of(1, 2, 3)
-    ro it = v.ziter().zenumerate()
+    ro it = v.iter().enumerate()
     // ERROR: `it` is ro — calling a mut method is rejected
     it.push(4)
 }
