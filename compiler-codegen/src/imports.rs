@@ -15,6 +15,319 @@ use anyhow::{anyhow, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+// ─── Plan 162.1 Step 1: ModuleSigTable ───────────────────────────────────────
+
+/// A single function signature extracted from a module during signature-only
+/// collection pass (Plan 162.1). Contains only the name and owning module;
+/// body and type information are intentionally omitted — this is a lightweight
+/// pre-pass data structure used for disambiguation before full resolve.
+#[derive(Debug, Clone)]
+pub struct FnSig {
+    /// The function name as declared (`fn foo`) — not mangled.
+    pub name: String,
+    /// The declared module path that owns this function (e.g. `["std", "net"]`).
+    pub module_name: Vec<String>,
+}
+
+/// Signatures collected from a single module during the signature-only pass.
+/// Populated by [`collect_module_signatures_from_items`] and stored in
+/// [`ModuleSigTable`].
+#[derive(Debug, Clone)]
+pub struct ModuleSignatures {
+    /// Names of all `type` declarations in this module.
+    pub type_names: Vec<String>,
+    /// All `fn` declarations in this module (name + owning module).
+    pub fn_sigs: Vec<FnSig>,
+    /// The declared module path (same as the key in [`ModuleSigTable`]).
+    pub module_name: Vec<String>,
+}
+
+/// Cross-module signature table built by [`collect_all_signatures`].
+///
+/// Maps declared module name (`Vec<String>`) to [`ModuleSignatures`].
+/// The table is populated by a signature-only pre-pass that walks the same
+/// import graph as [`resolve_imports_inline_ex`] but does not merge items or
+/// mutate the [`Module`]. Callers can use [`ModuleSigTable::find_fn_modules`]
+/// / [`ModuleSigTable::find_type_modules`] to answer "which module(s) define
+/// symbol X?" before committing to a full resolve.
+#[derive(Debug, Default, Clone)]
+pub struct ModuleSigTable {
+    table: HashMap<Vec<String>, ModuleSignatures>,
+}
+
+impl ModuleSigTable {
+    /// Create an empty table.
+    pub fn new() -> Self {
+        Self { table: HashMap::new() }
+    }
+
+    /// Insert or replace the signatures for a module.
+    pub fn insert(&mut self, sigs: ModuleSignatures) {
+        self.table.insert(sigs.module_name.clone(), sigs);
+    }
+
+    /// Return all modules that declare a function named `fn_name`.
+    /// Returns an empty vec if no module declares it.
+    pub fn find_fn_modules(&self, fn_name: &str) -> Vec<&ModuleSignatures> {
+        self.table
+            .values()
+            .filter(|sigs| sigs.fn_sigs.iter().any(|f| f.name == fn_name))
+            .collect()
+    }
+
+    /// Return all modules that declare a type named `type_name`.
+    /// Returns an empty vec if no module declares it.
+    pub fn find_type_modules(&self, type_name: &str) -> Vec<&ModuleSignatures> {
+        self.table
+            .values()
+            .filter(|sigs| sigs.type_names.iter().any(|t| t == type_name))
+            .collect()
+    }
+
+    /// Iterate over all module signatures in the table.
+    pub fn iter(&self) -> impl Iterator<Item = (&Vec<String>, &ModuleSignatures)> {
+        self.table.iter()
+    }
+
+    /// Number of modules in the table.
+    pub fn len(&self) -> usize {
+        self.table.len()
+    }
+
+    /// True if the table has no entries.
+    pub fn is_empty(&self) -> bool {
+        self.table.is_empty()
+    }
+}
+
+/// Extract [`ModuleSignatures`] from a parsed item list.
+///
+/// Only `Item::Type` and `Item::Fn` items contribute to the signature table;
+/// `Item::Const`, `Item::Let`, `Item::Test`, etc. are skipped because they
+/// are not needed for cross-module disambiguation in Plan 162.
+pub fn collect_module_signatures_from_items(
+    items: &[Item],
+    module_name: Vec<String>,
+) -> ModuleSignatures {
+    let mut type_names = Vec::new();
+    let mut fn_sigs = Vec::new();
+    for item in items {
+        match item {
+            Item::Type(t) => {
+                type_names.push(t.name.clone());
+            }
+            Item::Fn(f) => {
+                fn_sigs.push(FnSig {
+                    name: f.name.clone(),
+                    module_name: module_name.clone(),
+                });
+            }
+            _ => {}
+        }
+    }
+    ModuleSignatures { type_names, fn_sigs, module_name }
+}
+
+/// Signature-only pre-pass over the full import graph.
+///
+/// Walks the same import graph as [`resolve_imports_inline_ex`] (same path
+/// resolution rules, same cycle detection, same peer-file expansion) but
+/// instead of merging items into the [`Module`], it only parses each file and
+/// extracts [`ModuleSignatures`] into a [`ModuleSigTable`].
+///
+/// The [`Module`] is **not mutated** — this function is a pure read-only scan.
+/// Call this before [`resolve_imports_inline_ex`] to obtain a lookup table
+/// that can answer "which module defines symbol X?" cheaply.
+///
+/// # Errors
+/// Returns an error only for hard I/O or parse failures. Cycle detection
+/// uses the same early-return guard as the main resolver (cycles are allowed
+/// per D29 rev-5).
+pub fn collect_all_signatures(
+    entry_path: &Path,
+    module: &Module,
+    repo: &Path,
+    stdlib_dir: &Path,
+) -> Result<ModuleSigTable> {
+    let entry_dir = entry_path.parent().unwrap_or(repo).to_path_buf();
+    let mut table = ModuleSigTable::new();
+    let mut visited: HashSet<Vec<String>> = HashSet::new();
+    let mut in_progress: HashSet<Vec<String>> = HashSet::new();
+
+    // Seed the table with the entry module's own items.
+    let entry_sigs = collect_module_signatures_from_items(&module.items, module.name.clone());
+    table.insert(entry_sigs);
+
+    // Build import work-list from the entry module's declared imports.
+    let mut import_work: Vec<(Import, PathBuf)> = Vec::new();
+    for imp in &module.imports {
+        import_work.push((imp.clone(), entry_path.to_path_buf()));
+    }
+
+    // Add prelude import using the same heuristic as resolve_imports_inline_ex
+    // (simple default: look for std/prelude.nv in stdlib_dir).
+    let is_prelude_self = crate::manifest::is_prelude_self_module(&module.name);
+    let has_no_prelude = module
+        .attrs
+        .iter()
+        .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::NoPrelude));
+    if !is_prelude_self && !has_no_prelude {
+        let prelude_path = stdlib_dir.join("prelude.nv");
+        if prelude_path.exists() && prelude_path.is_file() {
+            import_work.push((
+                Import {
+                    path: vec!["std".into(), "prelude".into()],
+                    items: None,
+                    alias: None,
+                    is_export: false,
+                    span: crate::diag::Span::dummy(),
+                    doc_attrs: Vec::new(),
+                    anchor: crate::ast::ImportAnchor::Package,
+                },
+                entry_path.to_path_buf(),
+            ));
+        }
+    }
+
+    // Mark entry as in-progress so transitive re-imports of entry early-return.
+    in_progress.insert(module.name.clone());
+
+    for (imp, importer) in &import_work {
+        collect_sigs_one(
+            imp,
+            importer,
+            &entry_dir,
+            repo,
+            stdlib_dir,
+            &mut table,
+            &mut visited,
+            &mut in_progress,
+        );
+    }
+
+    in_progress.remove(&module.name);
+    visited.insert(module.name.clone());
+
+    Ok(table)
+}
+
+/// Recursive helper for [`collect_all_signatures`].
+///
+/// Resolves a single import to its peer files, parses each peer, extracts
+/// signatures, and recurses into transitive imports. Does NOT mutate any
+/// `Module` — only writes to `table`, `visited`, and `in_progress`.
+///
+/// Errors are silently swallowed (soft-fail): a signature-only pass is
+/// best-effort; hard errors will surface again during the full resolve.
+fn collect_sigs_one(
+    imp: &Import,
+    importer_path: &Path,
+    entry_dir: &Path,
+    repo: &Path,
+    stdlib_dir: &Path,
+    table: &mut ModuleSigTable,
+    visited: &mut HashSet<Vec<String>>,
+    in_progress: &mut HashSet<Vec<String>>,
+) {
+    // Resolve relative import root (mirrors resolve_one logic).
+    let rel_root: Option<PathBuf> = match &imp.anchor {
+        crate::ast::ImportAnchor::Package => None,
+        crate::ast::ImportAnchor::Relative { up } => {
+            let base = match importer_path.parent() {
+                Some(b) => b,
+                None => return,
+            };
+            let mut dir = base.to_path_buf();
+            for _ in 0..*up {
+                match dir.parent() {
+                    Some(p) => dir = p.to_path_buf(),
+                    None => return,
+                }
+            }
+            Some(dir)
+        }
+    };
+
+    // Resolve dep root (mirrors resolve_one; errors are soft-fail).
+    let dep_root: Option<PathBuf> = if rel_root.is_some() || imp.path.is_empty() {
+        None
+    } else {
+        match lookup_dependency(importer_path, &imp.path[0]) {
+            DepLookup::PathDep(root) if imp.path.len() >= 2 => Some(root),
+            _ => None,
+        }
+    };
+
+    let resolved_paths = match resolve_module_paths(
+        &imp.path,
+        entry_dir,
+        repo,
+        stdlib_dir,
+        false,
+        rel_root.as_deref(),
+        dep_root.as_deref(),
+    ) {
+        Ok(p) => p,
+        Err(_) => return, // soft-fail
+    };
+
+    if resolved_paths.is_empty() {
+        return;
+    }
+
+    // Determine module key from the first peer file.
+    let first_path = &resolved_paths[0];
+    let module_key: Vec<String> = read_module_decl(first_path).unwrap_or_else(|| {
+        let canon = first_path.canonicalize().unwrap_or_else(|_| first_path.clone());
+        vec![canon.to_string_lossy().to_string()]
+    });
+
+    // Cycle guard and dedup.
+    if in_progress.contains(&module_key) || visited.contains(&module_key) {
+        return;
+    }
+
+    in_progress.insert(module_key.clone());
+
+    for peer_path in &resolved_paths {
+        let peer_src = match std::fs::read_to_string(peer_path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let peer_module = match crate::parser::parse(&peer_src) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if !cfg_active(&peer_module) {
+            continue;
+        }
+
+        // Extract and insert signatures for this peer.
+        let peer_sigs =
+            collect_module_signatures_from_items(&peer_module.items, peer_module.name.clone());
+        table.insert(peer_sigs);
+
+        // Recurse into this peer's transitive imports.
+        for sub in &peer_module.imports {
+            collect_sigs_one(
+                sub,
+                peer_path,
+                entry_dir,
+                repo,
+                stdlib_dir,
+                table,
+                visited,
+                in_progress,
+            );
+        }
+    }
+
+    in_progress.remove(&module_key);
+    visited.insert(module_key);
+}
+
+// ─── End Plan 162.1 Step 1 ───────────────────────────────────────────────────
+
 /// Plan 35 Ф.1 MVP: cross-file resolve через inline AST expansion.
 ///
 /// Walks `module.imports` recursively (BFS), loads each imported `.nv` file,

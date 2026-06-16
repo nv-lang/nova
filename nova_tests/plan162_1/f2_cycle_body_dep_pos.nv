@@ -1,0 +1,35 @@
+// Plan 162.1 Step 3: positive — body-level cross-module dependency.
+//
+// Module p162_1_mod_b imports Foo from p162_1_mod_a and uses it in fn bar().
+// This test imports bar from p162_1_mod_b and Foo/make_foo from p162_1_mod_a,
+// creating a transitive dependency chain A→B where B's body uses A's type.
+//
+// In the future lazy-resolution scenario (Plan 162.1 full split), this
+// creates a body-level dep: A→B→A (if A's body also uses B). For now the
+// test validates the current inline-merge path compiles correctly and that
+// bar() returns the expected result.
+//
+// Regression guard: compile + execute must pass.
+
+module plan162_1.f2_cycle_body_dep_pos
+
+import nova_tests.plan162_1.p162_1_mod_a.{Foo, make_foo, foo_value}
+import nova_tests.plan162_1.p162_1_mod_b.{bar}
+
+test "body dep: bar wraps make_foo value + 1" {
+    assert(bar(10) == 11)
+}
+
+test "body dep: bar with zero" {
+    assert(bar(0) == 1)
+}
+
+test "body dep: bar with large value" {
+    assert(bar(99) == 100)
+}
+
+test "body dep: Foo and bar are independently usable" {
+    ro f = make_foo(5)
+    assert(foo_value(f) == 5)
+    assert(bar(5) == 6)
+}

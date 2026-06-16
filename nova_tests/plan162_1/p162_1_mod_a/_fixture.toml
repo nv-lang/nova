@@ -1,0 +1,2 @@
+# Plan 162.1 Step 3: helper module for sig_table tests.
+# walk_nv skips this directory — used only as fixture by f1/f2 tests.
