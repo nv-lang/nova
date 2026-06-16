@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.12 Ф.7 — positive: mock TcpNet handler (no real network).
+//
+// Full path: D:\Sources\nv-lang\nova-p91-12\nova_tests\plan91_12\net_v2_mock_tcp.nv
+//
+// Acceptance A6: mock TcpNet — all operations served by in-memory stub;
+// verifies that the effect abstraction is genuine (no hard-coded real net calls).
+
+module plan91_12.net_v2_mock_tcp
+
+import std.net.{SocketAddr, TcpListener, TcpStream, real_addr_net, mock_tcp_net, mock_addr_net}
+
+test "mock TcpNet: bind returns ok + local_port 4242" {
+    with AddrNet = mock_addr_net(), TcpNet = mock_tcp_net() {
+        ro r = TcpListener.bind(SocketAddr.loopback(0))
+        assert(r.is_ok())
+        mut lst = match r { Ok(l) => l, Err(_) => panic("unexpected err") }
+        assert(lst.local_port() == 4242)
+        lst.close()
+    }
+}
+
+test "mock TcpNet: connect + write returns byte count" {
+    supervised {
+        with AddrNet = mock_addr_net(), TcpNet = mock_tcp_net() {
+            ro r = TcpStream.connect(SocketAddr.loopback(9999))
+            assert(r.is_ok())
+            mut stream = match r { Ok(s) => s, Err(_) => panic("unexpected err") }
+            ro wr = stream.write("hello")
+            assert(wr.is_ok())
+            ro n = match wr { Ok(n) => n, Err(_) => panic("write err") }
+            assert(n == 5)
+            stream.close()
+        }
+    }
+}
+
+test "mock TcpNet: peer_port and local_port" {
+    supervised {
+        with AddrNet = mock_addr_net(), TcpNet = mock_tcp_net() {
+            mut stream = match TcpStream.connect(SocketAddr.loopback(0)) {
+                Ok(s) => s, Err(_) => panic("connect err")
+            }
+            assert(stream.local_port() == 5050)
+            assert(stream.peer_port() == 6060)
+            stream.close()
+        }
+    }
+}
+
+test "mock TcpNet: accept after bind" {
+    supervised {
+        with AddrNet = mock_addr_net(), TcpNet = mock_tcp_net() {
+            mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                Ok(l) => l, Err(_) => panic("bind err")
+            }
+            mut stream = match lst.accept() {
+                Ok(s) => s, Err(_) => panic("accept err")
+            }
+            stream.close()
+            lst.close()
+        }
+    }
+}

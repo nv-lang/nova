@@ -1,0 +1,134 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.12 Ф.7 — slow positive: real TCP send+receive over loopback.
+//
+// Full path: D:\Sources\nv-lang\nova-p91-12\nova_tests\plan91_12\net_v2_tcp_echo_slow.nv
+//
+// Acceptance A7: real loopback TCP bind→accept→connect→write→read round-trip.
+//
+// Pattern (from udp_smoke): with handlers OUTSIDE supervised; ALL blocking
+// ops (accept/connect/write/read) in spawn fibers — supervised body itself
+// runs at slot=-1 and must not call nova_sched_park.
+//
+// Tagged _slow: requires real OS networking + fiber scheduling; runs ~1-3s.
+// Excluded from fast regression baseline (SlowLane::Exclude for *_slow.nv).
+// Run individually:
+//   nova test --filter plan91_12/net_v2_tcp_echo_slow
+
+module plan91_12.net_v2_tcp_echo_slow
+
+import std.net.{SocketAddr, TcpListener, TcpStream, real_tcp_net, real_addr_net}
+
+test "real loopback: client write + server read round-trip" {
+    with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+        mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+            Ok(l) => l
+            Err(_) => panic("bind failed")
+        }
+        ro port = lst.local_port()
+        assert(port > 0)
+
+        supervised {
+            // Client fiber: connect, write, read reply.
+            spawn {
+                mut conn = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(s) => s
+                    Err(_) => panic("connect failed")
+                }
+                ro wr = conn.write("hello world")
+                assert(wr.is_ok())
+                ro n = match wr { Ok(n) => n, Err(_) => panic("write err") }
+                assert(n == 11)
+                ro rd = conn.read(64)
+                assert(rd.is_ok())
+                ro reply = match rd { Ok(s) => s, Err(_) => panic("read err") }
+                assert(reply == "echo: hello world")
+                conn.close()
+            }
+
+            // Server fiber: accept, read what client sent, echo it back.
+            spawn {
+                mut srv = match lst.accept() {
+                    Ok(s) => s
+                    Err(_) => panic("accept failed")
+                }
+                ro incoming = srv.read(64)
+                assert(incoming.is_ok())
+                ro msg = match incoming { Ok(s) => s, Err(_) => panic("server read err") }
+                assert(msg == "hello world")
+                ro wr = srv.write("echo: " + msg)
+                assert(wr.is_ok())
+                srv.close()
+            }
+        }
+
+        lst.close()
+    }
+}
+
+test "real loopback: bind + connect + write bytes-counted" {
+    with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+        mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+            Ok(l) => l
+            Err(e) => panic("bind failed")
+        }
+        ro port = lst.local_port()
+        assert(port > 0)
+
+        supervised {
+            // Client fiber: connect and write.
+            spawn {
+                mut conn = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(s) => s
+                    Err(_) => panic("connect failed")
+                }
+                ro wr = conn.write("ping")
+                assert(wr.is_ok())
+                ro n = match wr { Ok(n) => n, Err(_) => panic("write err") }
+                assert(n == 4)
+                conn.close()
+            }
+
+            // Server fiber: accept, check peer_port, close.
+            spawn {
+                mut server_conn = match lst.accept() {
+                    Ok(s) => s
+                    Err(_) => panic("accept failed")
+                }
+                assert(server_conn.peer_port() > 0)
+                server_conn.close()
+            }
+        }
+
+        lst.close()
+    }
+}
+
+test "real loopback: bind on used port → Err(AddressInUse)" {
+    supervised {
+        with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+            mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                Ok(l) => l
+                Err(_) => panic("bind failed")
+            }
+            ro port = lst.local_port()
+            ro r2 = TcpListener.bind(SocketAddr.loopback(port))
+            assert(r2.is_err())
+            lst.close()
+        }
+    }
+}
+
+test "real loopback: local_addr is_v4 + correct port" {
+    supervised {
+        with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+            mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                Ok(l) => l
+                Err(_) => panic("bind failed")
+            }
+            ro addr = lst.local_addr()
+            assert(addr.is_v4())
+            assert(addr.port() == lst.local_port())
+            lst.close()
+        }
+    }
+}
