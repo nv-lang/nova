@@ -62,7 +62,7 @@ export import std.prelude.runtime.{panic, exit, unreachable, assert, debug_asser
 // `int.new() => 0`, `bool.new() => false`, `f64.new() => 0.0`, etc.
 // см. std/runtime/defaults.nv. Static methods на primitives — type-resolver
 // видит их через method_table; auto-import делает доступными без явного import.
-import std.runtime.defaults
+import std.runtime.defaults as defaults
 
 // Plan 62.C / 62.C.bis: re-export error types из std.prelude.errors.
 // RuntimeError (6 variants) + ReadBufferError (1 variant) +

@@ -10,7 +10,7 @@
 //
 // Использование:
 //
-//   import std.runtime.fibers
+//   import std.runtime.fibers as fibers
 //
 //   let v = fibers.virtual_reserved()  // bytes reserved via mmap
 //   let s = fibers.slot_count()         // total slots

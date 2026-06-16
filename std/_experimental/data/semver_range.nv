@@ -18,7 +18,7 @@
 module data.semver_range
 
 // Plan 35 Ф.1: cross-file resolve. Version тип определён в std.data.semver.
-import std.data.semver
+import std.data.semver as semver
 
 
 /// Один comparator в version requirement (`>=1.2.3`, `<2.0.0`, `=1.0.0`).

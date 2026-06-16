@@ -84,7 +84,7 @@ export fn box_iter[T](it VecIter[T]) -> BoxIter[T] {
 ///
 /// # Examples
 /// ```nova
-/// import std.collections.vec_lazy
+/// import std.collections.vec_lazy as vec_lazy
 /// let v = Vec[int].from([1, 2, 3, 4])
 /// let got = v.lazy().map(|x| x * 2).filter(|x| x > 4).collect()
 /// assert(got == [6, 8])
@@ -227,7 +227,7 @@ export fn BoxIter[T] @skip(n int) -> BoxIter[T] {
 ///
 /// # Examples
 /// ```nova
-/// import std.collections.vec_lazy
+/// import std.collections.vec_lazy as vec_lazy
 /// let v = Vec[int].of(1, 2, 3, 4, 5)
 /// let cs = v.chunks(2).collect()        // [][]T view list
 /// assert(cs.len() == 3)
@@ -259,7 +259,7 @@ export fn Vec[T] @chunks(n int) -> BoxIter[Self]
 ///
 /// # Examples
 /// ```nova
-/// import std.collections.vec_lazy
+/// import std.collections.vec_lazy as vec_lazy
 /// let v = Vec[int].of(1, 2, 3, 4, 5)
 /// let cs = v.chunks_exact(2).collect()
 /// assert(cs.len() == 2)                  // the trailing [5] is dropped
@@ -291,7 +291,7 @@ export fn Vec[T] @chunks_exact(n int) -> BoxIter[Self]
 ///
 /// # Examples
 /// ```nova
-/// import std.collections.vec_lazy
+/// import std.collections.vec_lazy as vec_lazy
 /// let v = Vec[int].of(1, 2, 3, 4, 5)
 /// let cs = v.rchunks(2).collect()
 /// assert(cs[0].equal(Vec[int].of(4, 5)))   // tail first
@@ -323,7 +323,7 @@ export fn Vec[T] @rchunks(n int) -> BoxIter[Self]
 ///
 /// # Examples
 /// ```nova
-/// import std.collections.vec_lazy
+/// import std.collections.vec_lazy as vec_lazy
 /// let v = Vec[int].of(1, 2, 3, 4)
 /// let ws = v.windows(2).collect()
 /// assert(ws.len() == 3)
@@ -379,7 +379,7 @@ export fn BoxIter[T] mut @collect() -> Vec[T] {
 ///
 /// # Examples
 /// ```nova
-/// import std.collections.vec_lazy
+/// import std.collections.vec_lazy as vec_lazy
 /// let v = Vec[int].from([1, 2, 2, 3, 3, 3])
 /// let s = v.lazy().collect_set()
 /// assert(s.len() == 3)

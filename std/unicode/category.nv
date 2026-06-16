@@ -162,18 +162,9 @@ export fn char_to_uppercase(cp int) -> str => cps_to_str(upper_one(cp))
 /// `lower_one`.
 export fn char_to_lowercase(cp int) -> str => cps_to_str(lower_one(cp))
 
-// ─── char Unicode-aware methods (Plan 152.3b, D252 Phase B) ───
-// Opt-in char-receiver sugar for the code-point predicates above — available only
-// under `import std.unicode` (same opt-in pattern as `str @as_graphemes` in
-// graphemes.nv), so the table cost is paid only by importers, NOT the prelude.
-// 1:1 with the UCD; semantics == Rust `char`.
-export fn char @is_alphabetic() -> bool => is_alphabetic(@ as int)
-export fn char @is_numeric() -> bool => is_numeric(@ as int)
-export fn char @is_alphanumeric() -> bool => is_alphanumeric(@ as int)
-export fn char @is_whitespace() -> bool => is_whitespace(@ as int)
-export fn char @is_uppercase() -> bool => is_uppercase(@ as int)
-export fn char @is_lowercase() -> bool => is_lowercase(@ as int)
-export fn char @is_control() -> bool => is_control(@ as int)
-export fn char @general_category() -> GeneralCategory => general_category(@ as int)
-export fn char @to_uppercase() -> str => char_to_uppercase(@ as int)
-export fn char @to_lowercase() -> str => char_to_lowercase(@ as int)
+// ─── char Unicode-aware methods (Plan 162 Ф.4) ───
+// Moved to std/prelude/core.nv — now part of the prelude, available without
+// `import std.unicode`. The free-function predicates (is_alphabetic, etc.) and
+// the char_to_uppercase / char_to_lowercase helpers remain here.
+// The char @method declarations reference these free functions from core.nv
+// via the `import std.unicode` that core.nv holds.
