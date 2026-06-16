@@ -1,0 +1,14 @@
+// Plan 167 Ф.4 NEG T7 — single-char sum type name → E_TYPE_NAME_TOO_SHORT.
+//
+// type A | Foo | Bar — sum type with name length 1 → must be rejected.
+//
+// EXPECT_COMPILE_ERROR E_TYPE_NAME_TOO_SHORT
+
+module plan167.t7_neg_single_char_sum
+
+type A | Foo | Bar
+
+test "single-char sum type name — E_TYPE_NAME_TOO_SHORT" {
+    ro v = A.Foo
+    assert(v == A.Foo)
+}
