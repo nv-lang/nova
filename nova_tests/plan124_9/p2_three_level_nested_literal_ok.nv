@@ -1,22 +1,22 @@
-// Plan 124.9 Ф.2 — positive: 3-level nested record literal.
-// Each level allocates its own declared field type (B, C).
+﻿// Plan 124.9 Р¤.2 вЂ” positive: 3-level nested record literal.
+// Each level allocates its own declared field type (Bv, Cv).
 module plan124_9.p2_three_level_nested_literal_ok
 
-type C {
+type Cv {
     mut x int
 }
 
-type B {
-    mut c C
+type Bv {
+    mut Cv Cv
 }
 
-type A {
-    mut b B
+type Av {
+    mut Bv Bv
 }
 
 test "3-level nested record literal" {
-    mut a = A { b: B { c: C { x: 1 } } }
-    assert(a.b.c.x == 1)
-    a.b.c.x = 99
-    assert(a.b.c.x == 99)
+    mut Av = Av { Bv: Bv { Cv: Cv { x: 1 } } }
+    assert(Av.Bv.Cv.x == 1)
+    Av.Bv.Cv.x = 99
+    assert(Av.Bv.Cv.x == 99)
 }

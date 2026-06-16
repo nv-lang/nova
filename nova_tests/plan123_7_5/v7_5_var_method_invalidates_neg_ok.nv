@@ -1,19 +1,19 @@
-// Plan 123.7.5 (V7.5, 2026-06-04): NEGATIVE — V7.5 doesn't relax for
+﻿// Plan 123.7.5 (V7.5, 2026-06-04): NEGATIVE вЂ” V7.5 doesn't relax for
 // non-@F-receiver method calls. `var.method()` (local-variable
 // receiver) still conservatively invalidates. Semantic preservation
-// проверяется.
+// РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ.
 
 module plan123_7_5.v7_5_var_method_invalidates_neg_ok
 
-type C {
+type Cv {
     mut n int
 }
 
-fn C.new() -> C => { n: 3 }
+fn Cv.new() -> Cv => { n: 3 }
 
-fn C mut @do(mut v []int) -> int {
+fn Cv mut @do(mut v []int) -> int {
     ro a = @n
-    // var.push() — non-self receiver, V7.5 не applicable.
+    // var.push() вЂ” non-self receiver, V7.5 РЅРµ applicable.
     // V1.1 splits @n cache here; pre-call @n cache valid; post-call
     // re-read.
     v.push(99)
@@ -22,9 +22,9 @@ fn C mut @do(mut v []int) -> int {
 }
 
 test "V7.5: var.method() still invalidates, semantic preserved" {
-    mut c = C.new()
+    mut Cv = Cv.new()
     mut v = []int.new()
-    ro r = c.do(v)
+    ro r = Cv.do(v)
     assert(r == 6)
     assert(v.len() == 1)
 }

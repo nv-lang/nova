@@ -2,7 +2,7 @@
 // recursive HEAP sum. MUST `nova check` PASS — NO `E_INFINITE_TYPE`.
 //
 //     type Tree | Leaf | Node(int, Tree, Tree)   // sum → ALWAYS heap-boxed
-//     type H { t Tree }                           // t is a `Nova_Tree*` (8B)
+//     type Hv { t Tree }                           // t is a `Nova_Tree*` (8B)
 //
 // A sum type is ALWAYS heap-allocated, so a `Tree` value is a pointer
 // (`Nova_Tree*`). The recursive `Tree` payloads inside `Node` are pointer
@@ -18,7 +18,7 @@ type Tree
     | Leaf
     | Node(int, Tree, Tree)
 
-type H { t Tree }
+type Hv { t Tree }
 
 fn sum(t Tree) -> int => match t {
     Leaf          => 0
@@ -26,6 +26,6 @@ fn sum(t Tree) -> int => match t {
 }
 
 test "value record embedding recursive heap sum — finite, runs" {
-    ro h = H { t: Node(1, Node(2, Leaf, Leaf), Node(3, Leaf, Leaf)) }
+    ro h = Hv { t: Node(1, Node(2, Leaf, Leaf), Node(3, Leaf, Leaf)) }
     assert(sum(h.t) == 6)
 }

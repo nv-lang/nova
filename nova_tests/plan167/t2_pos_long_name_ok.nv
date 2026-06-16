@@ -1,0 +1,14 @@
+// Plan 167 Ф.4 POS T2 — multi-char type name is accepted.
+//
+// type MyNode { x int } — name length 6 → no E_TYPE_NAME_TOO_SHORT.
+
+module plan167.t2_pos_long_name_ok
+
+type MyNode {
+    x int
+}
+
+test "long record name — OK" {
+    ro n = MyNode { x: 7 }
+    assert(n.x == 7)
+}

@@ -1,41 +1,41 @@
-// Plan 128.2 Ф.2 P4 — deep member chain mut binding + mut method = OK.
+﻿// Plan 128.2 Р¤.2 P4 вЂ” deep member chain mut binding + mut method = OK.
 //
-// `mut a: A; a.b.c.d.mut_m()` — chain depth 4, root binding `mut`, все
+// `mut Av: Av; Av.Bv.Cv.Dv.mut_m()` вЂ” chain depth 4, root binding `mut`, РІСЃРµ
 // intermediate fields `mut`. Chain-walking helper recursively walks
-// до root Ident.
+// РґРѕ root Ident.
 
 module plan128_2.p4_deep_chain_mut_ok
 
-type D {
+type Dv {
     mut value int
 }
 
-fn D.new() -> Self => { value: 0 }
+fn Dv.new() -> Self => { value: 0 }
 
-fn D mut @set(v int) -> () {
+fn Dv mut @set(v int) -> () {
     @value = v
 }
 
-type C {
-    mut d D
+type Cv {
+    mut Dv Dv
 }
 
-fn C.new() -> Self => { d: D.new() }
+fn Cv.new() -> Self => { Dv: Dv.new() }
 
-type B {
-    mut c C
+type Bv {
+    mut Cv Cv
 }
 
-fn B.new() -> Self => { c: C.new() }
+fn Bv.new() -> Self => { Cv: Cv.new() }
 
-type A {
-    mut b B
+type Av {
+    mut Bv Bv
 }
 
-fn A.new() -> Self => { b: B.new() }
+fn Av.new() -> Self => { Bv: Bv.new() }
 
-test "deep chain mut binding + mut method — OK" {
-    mut a = A.new()
-    a.b.c.d.set(99)
-    assert(a.b.c.d.value == 99)
+test "deep chain mut binding + mut method вЂ” OK" {
+    mut Av = Av.new()
+    Av.Bv.Cv.Dv.set(99)
+    assert(Av.Bv.Cv.Dv.value == 99)
 }

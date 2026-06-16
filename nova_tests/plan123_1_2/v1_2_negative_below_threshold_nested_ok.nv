@@ -1,16 +1,16 @@
-// Plan 123.1.2 (V1.2, 2026-06-04): NEGATIVE — nested region с reads <
-// threshold не cached. Semantic preservation проверена для cold path.
+﻿// Plan 123.1.2 (V1.2, 2026-06-04): NEGATIVE вЂ” nested region СЃ reads <
+// threshold РЅРµ cached. Semantic preservation РїСЂРѕРІРµСЂРµРЅР° РґР»СЏ cold path.
 
 module plan123_1_2.v1_2_negative_below_threshold_nested_ok
 
-type C { mut x int }
+type Cv { mut x int }
 
-fn C.new() -> C => { x: 1 }
+fn Cv.new() -> Cv => { x: 1 }
 
-fn C mut @almost(cond bool) -> int {
+fn Cv mut @almost(cond bool) -> int {
     if cond {
         @x = 99
-        // Только 1 read — V1.2 не должен cached.
+        // РўРѕР»СЊРєРѕ 1 read вЂ” V1.2 РЅРµ РґРѕР»Р¶РµРЅ cached.
         ro a = @x
         a
     } else {
@@ -19,10 +19,10 @@ fn C mut @almost(cond bool) -> int {
 }
 
 test "V1.2: nested below-threshold not cached, semantic ok" {
-    mut c = C.new()
-    ro r = c.almost(true)
+    mut Cv = Cv.new()
+    ro r = Cv.almost(true)
     assert(r == 99)
-    mut c2 = C.new()
+    mut c2 = Cv.new()
     ro r2 = c2.almost(false)
     assert(r2 == 0)
 }

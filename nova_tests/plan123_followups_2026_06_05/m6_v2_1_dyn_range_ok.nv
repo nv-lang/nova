@@ -1,18 +1,18 @@
-// Plan 123 V*.followups 2026-06-05 marker 6 — V2.1 dynamic loop count.
+﻿// Plan 123 V*.followups 2026-06-05 marker 6 вЂ” V2.1 dynamic loop count.
 // Closes [M-123.2.1-dynamic-loop-count].
 // Positive: literal `0..N` exclusive range gives precise iter weight
 // (vs env default 8). Semantic preservation verified through known sum.
 
 module plan123_followups_2026_06_05.m6_v2_1_dyn_range_ok
 
-type C {
+type Cv {
     mut y int
 }
 
-fn C.new(init int) -> C => { y: init }
+fn Cv.new(init int) -> Cv => { y: init }
 
-fn C mut @sum_range_5() -> int {
-    // Range expr `0..5` — literal bound 5 parsed via parse_loop_iter_count.
+fn Cv mut @sum_range_5() -> int {
+    // Range expr `0..5` вЂ” literal bound 5 parsed via parse_loop_iter_count.
     mut acc = 0
     for i in 0..5 {
         acc = acc + @y
@@ -20,8 +20,8 @@ fn C mut @sum_range_5() -> int {
     acc
 }
 
-fn C mut @sum_range_inclusive_3() -> int {
-    // Range expr `1..=3` — literal inclusive, 3 iterations (1,2,3).
+fn Cv mut @sum_range_inclusive_3() -> int {
+    // Range expr `1..=3` вЂ” literal inclusive, 3 iterations (1,2,3).
     mut acc = 0
     for i in 1..=3 {
         acc = acc + @y
@@ -29,14 +29,14 @@ fn C mut @sum_range_inclusive_3() -> int {
     acc
 }
 
-test "V2.1 dyn 0..5 exclusive: 5 iters × y" {
-    mut c = C.new(2)
-    ro r = c.sum_range_5()
+test "V2.1 dyn 0..5 exclusive: 5 iters Г— y" {
+    mut Cv = Cv.new(2)
+    ro r = Cv.sum_range_5()
     assert(r == 10)
 }
 
-test "V2.1 dyn 1..=3 inclusive: 3 iters × y" {
-    mut c = C.new(7)
-    ro r = c.sum_range_inclusive_3()
+test "V2.1 dyn 1..=3 inclusive: 3 iters Г— y" {
+    mut Cv = Cv.new(7)
+    ro r = Cv.sum_range_inclusive_3()
     assert(r == 21)
 }

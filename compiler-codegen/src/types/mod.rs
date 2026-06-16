@@ -3988,6 +3988,23 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     fn check_type_decl(&self, td: &TypeDecl, errors: &mut Vec<Diagnostic>) {
+        // Plan 167: single-letter type names forbidden (D30 amend).
+        // Generic parameters are conventionally single-letter (T, S, K, V) — naming
+        // conflict with type S causes E_PREFIX_SHADOWS_NAMED_TYPE. Ban type names
+        // of length 1 to make the namespaces non-overlapping.
+        if td.name.chars().count() == 1 {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_TYPE_NAME_TOO_SHORT] type name `{name}` is a single character — \
+                     must be at least 2 characters (Plan 167, D30 §naming). \
+                     Rename to a descriptive PascalCase name, e.g. `{name}Val`, \
+                     `{name}Node`, `{name}Item`. \
+                     Single-letter names conflict with generic parameters by convention.",
+                    name = td.name
+                ),
+                td.span,
+            ));
+        }
         let mut gs: HashSet<String> = HashSet::new();
         for g in &td.generics {
             gs.insert(g.name.clone());

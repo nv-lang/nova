@@ -1,0 +1,15 @@
+// Plan 167 Ф.4 POS T3 — single-letter generic parameter is NOT banned.
+//
+// fn[T] foo(x T) -> T — generic param T (1 char) is fine; ban applies
+// only to TypeDecl names, not to generic parameter names.
+
+module plan167.t3_pos_two_char_generic_ok
+
+fn[T] identity(x T) -> T {
+    x
+}
+
+test "single-letter generic param — OK" {
+    assert(identity(10) == 10)
+    assert(identity(true) == true)
+}

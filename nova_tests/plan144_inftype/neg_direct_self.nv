@@ -2,7 +2,7 @@
 //
 // Q-infinite-value-type (D280 §4) — NEGATIVE: a direct VALUE self-reference.
 //
-//     type N value { next N }
+//     type Nv value { next Nv }
 //
 // A `value` record is laid out INLINE wherever it appears as a field
 // (`NovaValue_N`), with NO pointer indirection. So `N` containing a field of
@@ -20,4 +20,4 @@
 module plan144_inftype.neg_direct_self
 
 // Genuinely-infinite value self-cycle (no boxing). Reported at check time.
-type N value { next N }
+type Nv value { next Nv }
