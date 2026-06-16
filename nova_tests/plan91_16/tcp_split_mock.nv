@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.16 — positive (mock): split a mock stream, exercise both halves.
+//
+// No real network: mock_tcp_net()'s split yields stub halves; read returns
+// "mock-reply", write returns the byte count. Validates the split API surface
+// compiles and dispatches through the TcpNet effect.
+
+module plan91_16.tcp_split_mock
+
+import std.net.{SocketAddr, TcpStream, mock_tcp_net, mock_addr_net}
+
+test "split mock stream → read half + write half" {
+    with AddrNet = mock_addr_net(), TcpNet = mock_tcp_net() {
+        supervised {
+            spawn {
+                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c
+                    Err(_) => panic("connect")
+                }
+                mut (rdh, wrh) = s.split()
+
+                ro w1 = wrh.write("hello")
+                assert(w1.is_ok())
+                ro nbytes = match w1 { Ok(c) => c, Err(_) => -1 }
+                assert(nbytes == 5)
+                assert(wrh.write_all("world").is_ok())
+
+                ro got = rdh.read(64)
+                assert(got.is_ok())
+                ro msg = match got { Ok(payload) => payload, Err(_) => "" }
+                assert(msg == "mock-reply")
+
+                rdh.close()
+                wrh.close()
+            }
+        }
+    }
+}

@@ -28,6 +28,7 @@ export type TcpNet effect {
     accept(listener TcpListener) -> Result[TcpStream, NetError]
     connect(addr SocketAddr) -> Result[TcpStream, NetError]
     write(stream TcpStream, data str) -> Result[int, NetError]
+    write_all(stream TcpStream, data str) -> Result[(), NetError]
     read(stream TcpStream, max int) -> Result[str, NetError]
     close_stream(stream TcpStream) -> ()
     close_listener(listener TcpListener) -> ()
@@ -41,6 +42,24 @@ export type TcpNet effect {
     set_nodelay(stream TcpStream, on bool) -> ()
     set_keepalive(stream TcpStream, on bool) -> ()
     set_reuse_address(listener TcpListener, on bool) -> ()
+
+    // ── Plan 91.16 / D300: TcpStream split into read + write halves ──
+    // split_stream consumes the stream and yields two halves that may be used
+    // concurrently from separate fibers (independent C-side park slots).
+    split_stream(stream TcpStream) -> (TcpReadHalf, TcpWriteHalf)
+    read_half_read(half TcpReadHalf, max int) -> Result[str, NetError]
+    read_half_close(half TcpReadHalf) -> ()
+    read_half_local_port(half TcpReadHalf) -> u16
+    read_half_peer_port(half TcpReadHalf) -> u16
+    read_half_local_addr(half TcpReadHalf) -> SocketAddr
+    read_half_peer_addr(half TcpReadHalf) -> SocketAddr
+    write_half_write(half TcpWriteHalf, data str) -> Result[int, NetError]
+    write_half_write_all(half TcpWriteHalf, data str) -> Result[(), NetError]
+    write_half_close(half TcpWriteHalf) -> ()
+    write_half_local_port(half TcpWriteHalf) -> u16
+    write_half_peer_port(half TcpWriteHalf) -> u16
+    write_half_local_addr(half TcpWriteHalf) -> SocketAddr
+    write_half_peer_addr(half TcpWriteHalf) -> SocketAddr
 }
 
 // UdpNet -- UDP datagram transport.

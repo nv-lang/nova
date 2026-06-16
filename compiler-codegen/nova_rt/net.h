@@ -88,18 +88,27 @@ typedef struct NovaRt_TcpListener {
 
 /* ─── NovaRt_TcpStream ───────────────────────────────────────────────── */
 
-/* One pending operation at a time (connect/read_bytes/write). The
- * same scope/slot fields are reused across operations; callers must
- * serialise. */
+/* Before split (Plan 91.16): one pending operation at a time
+ * (connect/read_bytes/write). connect and the un-split read/write all use the
+ * shared op_scope/op_slot pair.
+ *
+ * After split() (Plan 91.16 / D300): the stream is owned by a TcpReadHalf and a
+ * TcpWriteHalf which may run concurrently in two different fibers. To avoid the
+ * two halves clobbering each other's park bookkeeping, the read path uses
+ * read_scope/read_slot and the write path uses write_scope/write_slot. The
+ * legacy op_scope/op_slot pair stays in use for connect and for the un-split
+ * TcpStream.read/.write methods (those callers serialise, so reusing one pair
+ * is safe). split_refcount counts live halves (2 → 1 → 0); the underlying
+ * handle is uv_close'd only when the last half closes. */
 typedef struct NovaRt_TcpStream {
     uv_tcp_t        handle;            /* must be first */
     uv_loop_t*      loop;              /* owning loop */
     nova_atomic_int stage;             /* NovaNetStage */
 
-    /* Pending operation (connect / read_bytes / write): */
+    /* Pending operation (connect / un-split read_bytes / un-split write): */
     NovaFiberQueue* op_scope;          /* NULL when idle */
     int             op_slot;
-    nova_str        op_error;          /* set on failure */
+    nova_str        op_error;          /* set on failure (un-split + connect) */
 
     /* connect_req (reusable for single connect): */
     uv_connect_t    connect_req;
@@ -114,7 +123,22 @@ typedef struct NovaRt_TcpStream {
     uv_write_t      write_req;
     char*           write_buf;         /* copy of user data (malloc'd) */
     ssize_t         write_len;         /* bytes written on success */
+
+    /* ── Plan 91.16 split: independent read/write park slots ── */
+    NovaFiberQueue* read_scope;        /* read-half park slot (NULL = idle) */
+    int             read_slot;
+    nova_str        read_op_error;     /* set by read_cb on the split path */
+    NovaFiberQueue* write_scope;       /* write-half park slot (NULL = idle) */
+    int             write_slot;
+    nova_str        write_op_error;    /* set by write_cb on the split path */
+    volatile int32_t split_refcount;   /* live half count: 0 (un-split) / 2 / 1 */
 } NovaRt_TcpStream;
+
+/* ── Plan 91.16: TcpReadHalf / TcpWriteHalf ──
+ * Both halves wrap the SAME NovaRt_TcpStream*. Nova sees CTcpReadHalf /
+ * CTcpWriteHalf as opaque newtypes over *() carrying this pointer. */
+typedef struct NovaRt_TcpReadHalf  { NovaRt_TcpStream* stream; } NovaRt_TcpReadHalf;
+typedef struct NovaRt_TcpWriteHalf { NovaRt_TcpStream* stream; } NovaRt_TcpWriteHalf;
 
 /* ─── NovaRt_UdpSocket ───────────────────────────────────────────────── */
 
@@ -237,6 +261,7 @@ nova_unit           tcp_listener_close(NovaRt_TcpListener* lst);
 
 NovaRt_TcpStream*   tcp_stream_connect(NovaRt_SocketAddr* addr);  /* NULL on error */
 nova_int            tcp_stream_write(NovaRt_TcpStream* s, nova_str data);  /* bytes or -1 */
+nova_int            tcp_stream_write_all(NovaRt_TcpStream* s, nova_str data); /* total bytes or -1 */
 nova_int            tcp_stream_read_bytes(NovaRt_TcpStream* s, nova_int max); /* bytes (0=EOF), -1=error */
 nova_str            tcp_stream_read_data(void);  /* TLS: data from last tcp_stream_read_bytes */
 uint16_t            tcp_stream_local_port(NovaRt_TcpStream* s);
@@ -248,6 +273,35 @@ nova_unit           tcp_stream_set_keepalive(NovaRt_TcpStream* s, nova_bool on);
 nova_unit           tcp_stream_close(NovaRt_TcpStream* s);
 nova_unit           tcp_listener_set_reuse_address(NovaRt_TcpListener* lst, nova_bool on); /* SO_REUSEADDR */
 nova_str            net_last_error(void);  /* thread-local; valid after NULL/-1 return */
+
+/* ─── Plan 91.16: TcpStream.split() → (TcpReadHalf, TcpWriteHalf) (D300) ──── */
+/*
+ * tcp_stream_split: set split_refcount=2 and return the SAME underlying handle
+ * as both half handles (read half and write half wrap the same pointer). The
+ * caller consumes the TcpStream so the un-split methods can no longer touch it.
+ *
+ * The read half parks on read_scope/read_slot; the write half parks on
+ * write_scope/write_slot — fully independent, so a server fiber may read while
+ * another fiber writes on the same connection without TOCTOU corruption.
+ *
+ * Each half's close() decrements split_refcount; uv_close fires only when the
+ * count reaches 0 (last half closed). Closing the same half twice is prevented
+ * at the Nova level (consume types).
+ */
+NovaRt_TcpStream*   tcp_stream_split(NovaRt_TcpStream* s);  /* sets refcount=2, returns same handle */
+nova_int            tcp_read_half_read(NovaRt_TcpStream* s, nova_int max); /* bytes (0=EOF), -1=error */
+nova_int            tcp_write_half_write(NovaRt_TcpStream* s, nova_str data); /* bytes or -1 */
+nova_int            tcp_write_half_write_all(NovaRt_TcpStream* s, nova_str data); /* total bytes or -1 */
+nova_unit           tcp_read_half_close(NovaRt_TcpStream* s);
+nova_unit           tcp_write_half_close(NovaRt_TcpStream* s);
+uint16_t            tcp_read_half_local_port(NovaRt_TcpStream* s);
+uint16_t            tcp_read_half_peer_port(NovaRt_TcpStream* s);
+NovaRt_SocketAddr*  tcp_read_half_local_addr(NovaRt_TcpStream* s);
+NovaRt_SocketAddr*  tcp_read_half_peer_addr(NovaRt_TcpStream* s);
+uint16_t            tcp_write_half_local_port(NovaRt_TcpStream* s);
+uint16_t            tcp_write_half_peer_port(NovaRt_TcpStream* s);
+NovaRt_SocketAddr*  tcp_write_half_local_addr(NovaRt_TcpStream* s);
+NovaRt_SocketAddr*  tcp_write_half_peer_addr(NovaRt_TcpStream* s);
 
 NovaRt_UdpSocket*   udp_socket_bind(NovaRt_SocketAddr* addr);     /* NULL on error */
 nova_int            udp_socket_send_to(NovaRt_UdpSocket* s, nova_str data, NovaRt_SocketAddr* addr);

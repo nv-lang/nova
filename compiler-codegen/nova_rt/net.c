@@ -50,6 +50,15 @@ static inline nova_str _nova_net_uv_err(int rc) {
 #define _NET_ERR(msg)   nova_make_Result_Err(_nova_net_cstr(msg))
 #define _NET_ERR_UV(rc) nova_make_Result_Err(_nova_net_uv_err(rc))
 
+/* Forward decls (Plan 91.16: split read/write paths defined before the
+ * literal-name section where these live). */
+static void _net_store_err(nova_str s);
+#if defined(_MSC_VER)
+  static __declspec(thread) nova_str _net_tcp_read_data;
+#else
+  static __thread nova_str _net_tcp_read_data;
+#endif
+
 /* ─── Park/wake helpers ────────────────────────────────────────────── */
 
 /* Get the parent supervised scope for cancel_requested checks.
@@ -501,6 +510,19 @@ static void _tcp_stream_close_cb(uv_handle_t* h) {
         s->op_scope = NULL;
         nova_sched_wake(sc, sl);
     }
+    /* Plan 91.16: wake any parked split halves so they unwind with "closed". */
+    if (s->read_scope) {
+        NovaFiberQueue* sc = s->read_scope;
+        int sl = s->read_slot;
+        s->read_scope = NULL;
+        nova_sched_wake(sc, sl);
+    }
+    if (s->write_scope) {
+        NovaFiberQueue* sc = s->write_scope;
+        int sl = s->write_slot;
+        s->write_scope = NULL;
+        nova_sched_wake(sc, sl);
+    }
 }
 
 /* alloc_cb: libuv asks us for a buffer to read into.
@@ -723,6 +745,203 @@ nova_unit NovaRt_TcpStream_method_close(NovaRt_TcpStream* s) {
     }
     return NOVA_UNIT;
 }
+
+/* ─── Plan 91.16: TcpStream split — TcpReadHalf / TcpWriteHalf ─────────────
+ *
+ * Both halves wrap the same NovaRt_TcpStream*. The read path parks on
+ * read_scope/read_slot, the write path on write_scope/write_slot, so the two
+ * halves may run concurrently in different fibers without clobbering each
+ * other's bookkeeping (the connect-era op_scope/op_slot pair is unused after
+ * split — connect already completed). */
+
+/* Split read callbacks: store result in read_op_error and wake read_scope. */
+static void _tcp_split_alloc_cb(uv_handle_t* h, size_t suggested, uv_buf_t* buf) {
+    NovaRt_TcpStream* s = (NovaRt_TcpStream*)h->data;
+    size_t cap = s->read_max > 0 ? (size_t)s->read_max : suggested;
+    if (cap > 65536) cap = 65536;
+    char* mem = (char*)malloc(cap);
+    if (!mem) { buf->base = NULL; buf->len = 0; return; }
+    s->read_buf = mem;
+    buf->base = mem;
+    buf->len  = cap;
+}
+
+static void _tcp_split_read_cb(uv_stream_t* stream, ssize_t nread,
+                               const uv_buf_t* buf_unused) {
+    (void)buf_unused;
+    NovaRt_TcpStream* s = (NovaRt_TcpStream*)stream->data;
+    uv_read_stop(stream);
+    if (nread == UV_EOF) {
+        s->read_len = 0;
+        s->is_eof   = 1;
+        s->read_op_error = (nova_str){ .ptr = NULL, .len = 0 };
+    } else if (nread < 0) {
+        s->read_len = 0;
+        s->read_op_error = _nova_net_uv_err((int)nread);
+    } else {
+        s->read_len = nread;
+        s->read_op_error = (nova_str){ .ptr = NULL, .len = 0 };
+    }
+    NovaFiberQueue* sc = s->read_scope;
+    int sl = s->read_slot;
+    s->read_scope = NULL;
+    if (sc) nova_sched_wake(sc, sl);
+}
+
+/* Split write callback: store result in write_op_error and wake write_scope. */
+static void _tcp_split_write_cb(uv_write_t* req, int status) {
+    NovaRt_TcpStream* s = (NovaRt_TcpStream*)req->data;
+    if (status < 0) {
+        s->write_op_error = _nova_net_uv_err(status);
+        s->write_len = 0;
+    } else {
+        s->write_op_error = (nova_str){ .ptr = NULL, .len = 0 };
+    }
+    NovaFiberQueue* sc = s->write_scope;
+    int sl = s->write_slot;
+    s->write_scope = NULL;
+    if (sc) nova_sched_wake(sc, sl);
+}
+
+/* tcp_stream_split: mark refcount=2, hand back the same handle for both halves. */
+NovaRt_TcpStream* tcp_stream_split(NovaRt_TcpStream* s) {
+    __atomic_store_n(&s->split_refcount, 2, __ATOMIC_RELEASE);
+    return s;
+}
+
+/* Read up to max_bytes via the split read half. Returns bytes (0=EOF), -1=error.
+ * On success the data is in tcp_stream_read_data() TLS (same slot as un-split). */
+nova_int tcp_read_half_read(NovaRt_TcpStream* s, nova_int max) {
+    int32_t st = nova_aint_load(&s->stage);
+    if (st == NOVA_NET_STAGE_CLOSED)  { _net_store_err(_nova_net_cstr("stream closed")); return -1; }
+    if (st == NOVA_NET_STAGE_CLOSING) { _net_store_err(_nova_net_cstr("stream closing")); return -1; }
+
+    NovaFiberQueue* scope = _nova_active_scope;
+    int slot = _nova_active_slot;
+    if (!scope) { fprintf(stderr, "nova/net: read_half outside scope\n"); abort(); }
+
+    NovaFiberQueue* cancel_sc = _nova_net_cancel_scope(scope);
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { _net_store_err(_nova_net_cstr("cancelled")); return -1; }
+
+    s->read_max = (int)(max > 0 ? max : 4096);
+    s->read_len = 0;
+    s->is_eof   = 0;
+    if (s->read_buf) { free(s->read_buf); s->read_buf = NULL; }
+    s->read_op_error = (nova_str){ .ptr = NULL, .len = 0 };
+
+    int rc = uv_read_start((uv_stream_t*)&s->handle, _tcp_split_alloc_cb, _tcp_split_read_cb);
+    if (rc != 0) { _net_store_err(_nova_net_uv_err(rc)); return -1; }
+
+    s->read_scope = scope;
+    s->read_slot  = slot;
+    nova_sched_register_pending(scope, slot, s, _tcp_stream_op_stop_cb);
+    nova_sched_park(scope, slot);
+    nova_sched_unregister_pending(scope, slot);
+
+    if (nova_abool_load(&cancel_sc->cancel_requested)) {
+        if (s->read_buf) { free(s->read_buf); s->read_buf = NULL; }
+        _net_store_err(_nova_net_cstr("cancelled"));
+        return -1;
+    }
+    if (nova_aint_load(&s->stage) == NOVA_NET_STAGE_CLOSED) {
+        if (s->read_buf) { free(s->read_buf); s->read_buf = NULL; }
+        _net_store_err(_nova_net_cstr("stream closed"));
+        return -1;
+    }
+    if (s->read_op_error.len > 0) {
+        if (s->read_buf) { free(s->read_buf); s->read_buf = NULL; }
+        _net_store_err(s->read_op_error);
+        return -1;
+    }
+
+    if (s->read_len == 0) {
+        /* EOF: empty string. */
+        if (s->read_buf) { free(s->read_buf); s->read_buf = NULL; }
+        _net_tcp_read_data = (nova_str){ .ptr = NULL, .len = 0 };
+        return 0;
+    }
+    char* heap = (char*)nova_alloc(s->read_len + 1);
+    memcpy(heap, s->read_buf, s->read_len);
+    heap[s->read_len] = '\0';
+    free(s->read_buf);
+    s->read_buf = NULL;
+    _net_tcp_read_data = (nova_str){ .ptr = (const uint8_t*)heap, .len = (nova_int)s->read_len };
+    return (nova_int)s->read_len;
+}
+
+/* Write data via the split write half. Returns bytes written or -1 on error. */
+nova_int tcp_write_half_write(NovaRt_TcpStream* s, nova_str data) {
+    int32_t st = nova_aint_load(&s->stage);
+    if (st == NOVA_NET_STAGE_CLOSED)  { _net_store_err(_nova_net_cstr("stream closed")); return -1; }
+    if (st == NOVA_NET_STAGE_CLOSING) { _net_store_err(_nova_net_cstr("stream closing")); return -1; }
+
+    NovaFiberQueue* scope = _nova_active_scope;
+    int slot = _nova_active_slot;
+    if (!scope) { fprintf(stderr, "nova/net: write_half outside scope\n"); abort(); }
+
+    NovaFiberQueue* cancel_sc = _nova_net_cancel_scope(scope);
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { _net_store_err(_nova_net_cstr("cancelled")); return -1; }
+
+    if (data.len == 0) return 0;
+
+    if (s->write_buf) { free(s->write_buf); s->write_buf = NULL; }
+    s->write_buf = (char*)malloc(data.len);
+    if (!s->write_buf) { _net_store_err(_nova_net_cstr("OOM")); return -1; }
+    memcpy(s->write_buf, data.ptr, data.len);
+    s->write_len = (ssize_t)data.len;
+
+    uv_buf_t ubuf = uv_buf_init(s->write_buf, (unsigned int)data.len);
+    s->write_req.data = s;
+    s->write_op_error = (nova_str){ .ptr = NULL, .len = 0 };
+
+    int rc = uv_write(&s->write_req, (uv_stream_t*)&s->handle, &ubuf, 1, _tcp_split_write_cb);
+    if (rc != 0) { free(s->write_buf); s->write_buf = NULL; _net_store_err(_nova_net_uv_err(rc)); return -1; }
+
+    s->write_scope = scope;
+    s->write_slot  = slot;
+    nova_sched_register_pending(scope, slot, s, _tcp_stream_op_stop_cb);
+    nova_sched_park(scope, slot);
+    nova_sched_unregister_pending(scope, slot);
+
+    if (s->write_buf) { free(s->write_buf); s->write_buf = NULL; }
+
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { _net_store_err(_nova_net_cstr("cancelled")); return -1; }
+    if (nova_aint_load(&s->stage) == NOVA_NET_STAGE_CLOSED) { _net_store_err(_nova_net_cstr("stream closed")); return -1; }
+    if (s->write_op_error.len > 0) { _net_store_err(s->write_op_error); return -1; }
+    return (nova_int)s->write_len;
+}
+
+/* Decrement the split refcount; uv_close only when the last half closes. */
+static void _tcp_half_close(NovaRt_TcpStream* s) {
+    int32_t left = __atomic_sub_fetch(&s->split_refcount, 1, __ATOMIC_ACQ_REL);
+    if (left > 0) return;  /* the other half is still live */
+    int32_t expected = NOVA_NET_STAGE_IDLE;
+    if (__atomic_compare_exchange_n(
+            (volatile int32_t*)&s->stage,
+            &expected, NOVA_NET_STAGE_CLOSING,
+            0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+    {
+        nova_loop_defer_close(s->loop, (uv_handle_t*)&s->handle, _tcp_stream_close_cb);
+    }
+}
+
+/* write_all: libuv's uv_write queues the WHOLE buffer, so a single call writes
+ * all bytes or errors. Returns total bytes written (== data.len) or -1. */
+nova_int tcp_write_half_write_all(NovaRt_TcpStream* s, nova_str data) {
+    return tcp_write_half_write(s, data);
+}
+
+nova_unit tcp_read_half_close(NovaRt_TcpStream* s)  { _tcp_half_close(s); return NOVA_UNIT; }
+nova_unit tcp_write_half_close(NovaRt_TcpStream* s) { _tcp_half_close(s); return NOVA_UNIT; }
+
+uint16_t           tcp_read_half_local_port(NovaRt_TcpStream* s)  { return NovaRt_TcpStream_method_local_port(s); }
+uint16_t           tcp_read_half_peer_port(NovaRt_TcpStream* s)   { return NovaRt_TcpStream_method_peer_port(s); }
+NovaRt_SocketAddr* tcp_read_half_local_addr(NovaRt_TcpStream* s)  { return NovaRt_TcpStream_method_local_addr(s); }
+NovaRt_SocketAddr* tcp_read_half_peer_addr(NovaRt_TcpStream* s)   { return NovaRt_TcpStream_method_peer_addr(s); }
+uint16_t           tcp_write_half_local_port(NovaRt_TcpStream* s) { return NovaRt_TcpStream_method_local_port(s); }
+uint16_t           tcp_write_half_peer_port(NovaRt_TcpStream* s)  { return NovaRt_TcpStream_method_peer_port(s); }
+NovaRt_SocketAddr* tcp_write_half_local_addr(NovaRt_TcpStream* s) { return NovaRt_TcpStream_method_local_addr(s); }
+NovaRt_SocketAddr* tcp_write_half_peer_addr(NovaRt_TcpStream* s)  { return NovaRt_TcpStream_method_peer_addr(s); }
 
 /* ─── NovaRt_UdpSocket ───────────────────────────────────────────────── */
 
@@ -1064,14 +1283,9 @@ nova_unit tcp_listener_close(NovaRt_TcpListener* lst) {
 
 /* ─── TcpStream ────────────────────────────────────────────────────────── */
 
-/* TLS buffer for tcp_stream_read_bytes result.
- * Safe: Nova fibers are cooperative — no other fiber runs between
- * tcp_stream_read_bytes() return and the tcp_stream_read_data() read. */
-#if defined(_MSC_VER)
-  static __declspec(thread) nova_str _net_tcp_read_data;
-#else
-  static __thread nova_str _net_tcp_read_data;
-#endif
+/* TLS buffer _net_tcp_read_data declared near the top of this file (Plan 91.16
+ * forward-decl). Safe: Nova fibers are cooperative — no other fiber runs
+ * between tcp_stream_read_bytes() return and the tcp_stream_read_data() read. */
 
 NovaRt_TcpStream* tcp_stream_connect(NovaRt_SocketAddr* addr) {
     NovaRes_nova_int_nova_str* r = NovaRt_TcpStream_static_connect(addr);
@@ -1084,6 +1298,11 @@ nova_int tcp_stream_write(NovaRt_TcpStream* s, nova_str data) {
     if (r->tag == NOVA_TAG_Result_Ok) return r->payload.Ok._0;
     _net_store_err(r->payload.Err._0);
     return -1;
+}
+/* write_all: uv_write queues the whole buffer → same as write. Returns
+ * total bytes written (== data byte len) or -1 on error. */
+nova_int tcp_stream_write_all(NovaRt_TcpStream* s, nova_str data) {
+    return tcp_stream_write(s, data);
 }
 uint16_t tcp_stream_local_port(NovaRt_TcpStream* s) {
     return NovaRt_TcpStream_method_local_port(s);

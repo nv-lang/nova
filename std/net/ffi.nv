@@ -48,6 +48,7 @@ extern "C" fn tcp_listener_close(lst CTcpListener) -> ()
 
 extern "C" fn tcp_stream_connect(addr CSocketAddr) -> CTcpStream
 extern "C" fn tcp_stream_write(s CTcpStream, data str) -> int
+extern "C" fn tcp_stream_write_all(s CTcpStream, data str) -> int
 // Read up to max bytes. Returns bytes read (0=EOF, -1=error); data in tcp_stream_read_data().
 extern "C" fn tcp_stream_read_bytes(s CTcpStream, max int) -> int
 extern "C" fn tcp_stream_read_data() -> str
@@ -59,6 +60,25 @@ extern "C" fn tcp_stream_set_nodelay(s CTcpStream, on bool) -> ()
 extern "C" fn tcp_stream_set_keepalive(s CTcpStream, on bool) -> ()
 extern "C" fn tcp_stream_close(s CTcpStream) -> ()
 extern "C" fn tcp_listener_set_reuse_address(lst CTcpListener, on bool) -> ()
+
+// ─── TcpStream split (Plan 91.16 / D300) ───────────────────────────────────────
+// Both halves carry the SAME CTcpStream handle (shared NovaRt_TcpStream*).
+// Read half parks on read_scope/read_slot, write half on write_scope/write_slot.
+
+extern "C" fn tcp_stream_split(s CTcpStream) -> CTcpStream
+extern "C" fn tcp_read_half_read(s CTcpStream, max int) -> int   // bytes (0=EOF), -1=error
+extern "C" fn tcp_write_half_write(s CTcpStream, data str) -> int // bytes or -1
+extern "C" fn tcp_write_half_write_all(s CTcpStream, data str) -> int // total bytes or -1
+extern "C" fn tcp_read_half_close(s CTcpStream) -> ()
+extern "C" fn tcp_write_half_close(s CTcpStream) -> ()
+extern "C" fn tcp_read_half_local_port(s CTcpStream) -> u16
+extern "C" fn tcp_read_half_peer_port(s CTcpStream) -> u16
+extern "C" fn tcp_read_half_local_addr(s CTcpStream) -> CSocketAddr
+extern "C" fn tcp_read_half_peer_addr(s CTcpStream) -> CSocketAddr
+extern "C" fn tcp_write_half_local_port(s CTcpStream) -> u16
+extern "C" fn tcp_write_half_peer_port(s CTcpStream) -> u16
+extern "C" fn tcp_write_half_local_addr(s CTcpStream) -> CSocketAddr
+extern "C" fn tcp_write_half_peer_addr(s CTcpStream) -> CSocketAddr
 
 // Thread-local last error; valid after any null/error return.
 extern "C" fn net_last_error() -> str

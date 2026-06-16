@@ -1,0 +1,22 @@
+# nova.toml — scoped FFI manifest for Plan 91.16 TcpStream split tests.
+#
+# Force-includes net_v2_guard.h (defines NOVA_NET_V2=1) before nova_rt.h
+# to suppress V1 NovaRes_*-returning declarations from net.h that conflict
+# with V2 codegen output (Nova_T* return types), and to alias overloaded
+# method call-site names to their definition names.
+
+[package]
+name = "plan91_16"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "Plan 91.16 TcpStream split → TcpReadHalf/TcpWriteHalf tests"
+
+[lib]
+src = "."
+
+[dependencies]
+
+[ffi]
+c_shims      = ["net_v2_guard.h"]
+include_dirs = []
+libs         = []

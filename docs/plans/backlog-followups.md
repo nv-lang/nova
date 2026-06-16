@@ -554,12 +554,13 @@
 - ~~**`[M-net-udp-split]`**~~ ✅ **CLOSED 2026-06-17** — UDP socket split: `UdpSendHalf` + `UdpRecvHalf` consume value types; `UdpSocket.split()` → два half; atomic refcount на C-хендл; оба half обязаны быть закрыты. D298 Plan 166. Тесты: `net_v2_udp_two_fiber_slow` + `net_v2_udp_split_slow` PASS.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
-- **`[M-91.16-tcp-split]`** — TcpStream consume делает невозможным concurrent read+write из двух файберов. Нужны `TcpReadHalf`/`TcpWriteHalf` по образцу UDP split (Plan 166 / D296). → Plan 91.16.
-- **`[M-91.12-split-halves]`** (TCP) — TcpReader/TcpWriter consume-split для concurrent r/w — OPEN. → Plan 91.16.
+- **`[M-91.16-tcp-split]`** — ✅ CLOSED 2026-06-17 (Plan 91.16, D301). `TcpReadHalf`/`TcpWriteHalf` consume-split реализован: независимые C-side park-слоты (`read_scope`/`read_slot` vs `write_scope`/`write_slot`), atomic `split_refcount` на C-handle, mock + real-network тесты PASS.
+- **`[M-91.12-split-halves]`** (TCP) — ✅ CLOSED 2026-06-17 (Plan 91.16, D301). См. выше.
+- **`[M-91.16-tuple-consume-binding]`** — consume-tracking не пробрасывается через tuple-destructuring: `consume (rd, wr) = s.split()` → parse error («unexpected `consume`»), а `mut (rd, wr)` не отслеживается на double-consume. → double-close одной из split-половин НЕ ловится компилятором (refcount защищает на runtime). Нужна поддержка `consume`-binding на tuple-pattern в парсере + consume-checker. → Future Plan. (тот же класс, что `[M-91.12-double-close-static]`.)
 
-## Plan 91.16 — TCP split: TcpReadHalf + TcpWriteHalf
+## Plan 91.16 — TCP split: TcpReadHalf + TcpWriteHalf ✅ CLOSED 2026-06-17
 
-По образцу UDP split (Plan 166 / D296). `TcpStream consume @split() -> (TcpReadHalf, TcpWriteHalf)`. Atomic refcount на C-handle, оба half — consume value. → см. маркер `[M-91.16-tcp-split]`.
+По образцу UDP split (Plan 166 / D298). `TcpStream consume @split() -> (TcpReadHalf, TcpWriteHalf)`. Atomic refcount (`split_refcount`) на C-handle, оба half — consume value, независимые park-слоты для concurrent r/w. Также добавлен `TcpStream @write_all` + `TcpWriteHalf @write_all` (закрывает `[M-91.15-write-all]`). Spec: D301. Тесты: `nova_tests/plan91_16/` (mock + `_slow` real-network + stream-after-split neg). → маркер `[M-91.16-tcp-split]` CLOSED.
 
 ## Plan 91.17 — std/net API polish (followup компаративного ревью 2026-06-17)
 
