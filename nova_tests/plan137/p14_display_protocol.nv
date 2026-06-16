@@ -7,12 +7,12 @@ type Point {
     y int
 }
 
-fn Point @display(mut sb StringBuilder) -> () {
-    sb.append("Point(")
-    sb.append(str.from(@x))
-    sb.append(", ")
-    sb.append(str.from(@y))
-    sb.append(")")
+fn Point @display(mut w Write) -> () {
+    w.write_str("Point(")
+    w.write_str(str.from(@x))
+    w.write_str(", ")
+    w.write_str(str.from(@y))
+    w.write_str(")")
 }
 
 test "Display @display works in interpolation" {

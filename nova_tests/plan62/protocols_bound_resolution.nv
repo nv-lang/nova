@@ -157,12 +157,12 @@ test "Into[X] bound вЂ” explicit @into impl СЂРµР·РѕР»РІРёС�
 // std/runtime/string_builder.nv). `str.from(int)` РґР»СЏ int в†’ str.
 type Pair { x int, y int }
 
-export fn Pair @display(mut sb StringBuilder) -> () {
-    sb.append("(")
-    sb.append(str.from(@x))
-    sb.append(", ")
-    sb.append(str.from(@y))
-    sb.append(")")
+export fn Pair @display(mut w Write) -> () {
+    w.write_str("(")
+    w.write_str(str.from(@x))
+    w.write_str(", ")
+    w.write_str(str.from(@y))
+    w.write_str(")")
 }
 
 // Generic fn СЃ Display bound вЂ” caller-side РїСЂРѕРІРµСЂРєР° eligibility.
@@ -171,7 +171,7 @@ export fn Pair @display(mut sb StringBuilder) -> () {
 // СЂР°Р·СЂРµС€Р°РµС‚ mutating receiver С‡РµСЂРµР· `mut @method`).
 fn fmt_to_string[T Display](v T) -> str {
     consume sb = StringBuilder.new()
-    v.fmt(sb)
+    v.display(sb)
     sb.as_str()
 }
 

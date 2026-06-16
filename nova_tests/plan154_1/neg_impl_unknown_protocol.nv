@@ -6,6 +6,6 @@ module plan154_1.neg_impl_unknown_protocol
 type Point { x int }
 
 #impl(NotAProtocol)
-fn Point @display(mut sb StringBuilder) -> () { sb.append("x") }
+fn Point @display(mut w Write) -> () { w.write_str("x") }
 
 fn main() -> () {}

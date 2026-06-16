@@ -7,12 +7,12 @@ type Pair {
     b int
 }
 
-fn Pair @debug(mut sb StringBuilder) -> () {
-    sb.append("Pair { a: ")
-    sb.append(str.from(@a))
-    sb.append(", b: ")
-    sb.append(str.from(@b))
-    sb.append(" }")
+fn Pair @debug(mut w Write) -> () {
+    w.write_str("Pair { a: ")
+    w.write_str(str.from(@a))
+    w.write_str(", b: ")
+    w.write_str(str.from(@b))
+    w.write_str(" }")
 }
 
 test "Debug @debug works in :? interpolation" {

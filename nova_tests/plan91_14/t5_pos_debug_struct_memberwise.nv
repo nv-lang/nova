@@ -29,12 +29,12 @@ type Point {
 
 // Manual @debug impl вЂ” explicit, matches Rust derive(Debug) shape.
 // sb requires `mut` per D176 вЂ” caller mutates StringBuilder.
-fn Point @debug(mut sb StringBuilder) -> () {
-    sb.append("Point { x: ")
-    sb.append(str.from(@x))
-    sb.append(", y: ")
-    sb.append(str.from(@y))
-    sb.append(" }")
+fn Point @debug(mut w Write) -> () {
+    w.write_str("Point { x: ")
+    w.write_str(str.from(@x))
+    w.write_str(", y: ")
+    w.write_str(str.from(@y))
+    w.write_str(" }")
 }
 
 test "user type with manual @debug" {
