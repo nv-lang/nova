@@ -1,0 +1,45 @@
+// Plan 164 Ф.3 — znth on FilterIter returns correct Option[int].
+//
+// Regression guard: blanket `fn[I Next[T]] I mut @znth(n int)` must dispatch
+// to the FilterIter receiver correctly, consuming the first n matching elements
+// and returning the (n+1)-th.
+module plan164.blanket_no_collision_nth
+
+import std.collections.vec_iter_zc
+
+test "znth on VecIter" {
+    ro v = Vec[int].of(10, 20, 30, 40, 50)
+    assert(v.ziter().znth(0) == Some(10))
+    assert(v.ziter().znth(2) == Some(30))
+    assert(v.ziter().znth(4) == Some(50))
+}
+
+test "znth on FilterIter returns correct indexed element" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
+    // FilterIter yields: 2, 4, 6, 8 — znth(1) = 4, znth(3) = 8
+    ro r0 = v.ziter().zfilter(|x| x % 2 == 0).znth(0)
+    ro r1 = v.ziter().zfilter(|x| x % 2 == 0).znth(1)
+    ro r3 = v.ziter().zfilter(|x| x % 2 == 0).znth(3)
+    assert(r0 == Some(2))
+    assert(r1 == Some(4))
+    assert(r3 == Some(8))
+}
+
+test "znth out of range on FilterIter returns None" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro r = v.ziter().zfilter(|x| x % 2 == 0).znth(10)
+    assert(r == None)
+}
+
+test "znth on empty FilterIter returns None" {
+    ro v = Vec[int].of(1, 3, 5)
+    ro r = v.ziter().zfilter(|x| x % 2 == 0).znth(0)
+    assert(r == None)
+}
+
+test "znth after zmap on FilterIter" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+    // zmap(*10) → MapIter; zfilter(>25) keeps 30,40,50,60; znth(2) = 50
+    ro r = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).znth(2)
+    assert(r == Some(50))
+}

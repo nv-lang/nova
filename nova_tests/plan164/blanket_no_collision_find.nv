@@ -1,0 +1,39 @@
+// Plan 164 Ф.3 — zfind on FilterIter returns correct Option[int].
+//
+// Regression guard: blanket `fn[I Next[T]] I mut @zfind(pred fn(T)->bool)` must
+// dispatch to the FilterIter receiver, not to any concrete type registered last
+// in method_receivers.
+module plan164.blanket_no_collision_find
+
+import std.collections.vec_iter_zc
+
+test "zfind on VecIter" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    assert(v.ziter().zfind(|x| x > 3) == Some(4))
+}
+
+test "zfind on FilterIter finds first match" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
+    // FilterIter passes only even elements; zfind finds first > 4 among those.
+    ro r = v.ziter().zfilter(|x| x % 2 == 0).zfind(|x| x > 4)
+    assert(r == Some(6))
+}
+
+test "zfind on FilterIter no match returns None" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro r = v.ziter().zfilter(|x| x % 2 == 0).zfind(|x| x > 100)
+    assert(r == None)
+}
+
+test "zfind on empty FilterIter returns None" {
+    ro v = Vec[int].of(1, 3, 5)
+    ro r = v.ziter().zfilter(|x| x % 2 == 0).zfind(|x| x > 0)
+    assert(r == None)
+}
+
+test "zfind after zmap on FilterIter" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    // MapIter → FilterIter → zfind (three adapter types chained)
+    ro r = v.ziter().zmap(|x| x * 3).zfilter(|x| x > 6).zfind(|x| x < 15)
+    assert(r == Some(9))
+}

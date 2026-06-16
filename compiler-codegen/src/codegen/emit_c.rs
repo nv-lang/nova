@@ -25286,6 +25286,142 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         }
                     }
                 }
+
+                // Plan 164 Ф.3: protocol-aware blanket dispatch.
+                // Before falling into the single-key method_receivers fallback (last-wins),
+                // check whether any bare-typevar blanket in mono_method_decls matches this
+                // call site better than the registered concrete type would.
+                //
+                // Scenario: FilterIter[I,T] @next() is annotated #impl(Next[T]).  A blanket
+                // `fn[I Next[T], T] I mut @count()` is registered under ("I", "count") in
+                // mono_method_decls. BUT method_receivers["count"] = ("CharsIter", true) because
+                // CharsIter also has a concrete @count and was scanned last. Without this guard
+                // the fallback emits `Nova_CharsIter_method_count(filter_iter_obj)` — wrong type.
+                //
+                // Fix: when the receiver's base type (e.g. "FilterIter") implements the required
+                // protocol (e.g. "Next" from `type_impl_protocols`) AND there is a blanket
+                // mono_method_decls entry for this method, dispatch via the blanket instead.
+                {
+                    let recv_obj_ty = self.infer_expr_c_type(obj);
+                    // Extract base type name: "FilterIter____..." → "FilterIter"
+                    let recv_stripped = Self::strip_recv_c_prefix(&recv_obj_ty);
+                    let recv_base: &str = recv_stripped
+                        .find("____")
+                        .map(|i| &recv_stripped[..i])
+                        .unwrap_or(&recv_stripped);
+                    // Only apply when receiver is a generic-mono type (has ____) or is a
+                    // concrete non-primitive type that could implement a protocol.
+                    // Skip primitives — they have their own dispatch above.
+                    let recv_is_candidate = !recv_base.is_empty()
+                        && !matches!(recv_base,
+                            "nova_int" | "nova_bool" | "nova_char" | "nova_str"
+                            | "nova_f32" | "nova_f64" | "int" | "bool" | "char"
+                            | "str" | "f32" | "f64" | "void")
+                        && !recv_base.starts_with("nova_");
+                    if recv_is_candidate {
+                        // Find all bare-typevar blanket entries for this method name.
+                        let blanket_key_opt: Option<(String, String)> = self.mono_method_decls
+                            .keys()
+                            .find(|(tvname, mname)| {
+                                mname == method
+                                    && tvname.len() <= 2
+                                    && tvname.chars().all(|c| c.is_ascii_uppercase())
+                            })
+                            .cloned();
+                        if let Some(blanket_key) = blanket_key_opt {
+                            if let Some(fn_decl) = self.mono_method_decls.get(&blanket_key).cloned() {
+                                // Check: does the receiver's protocol set satisfy the
+                                // blanket's receiver typevar bounds?
+                                let tvname = &blanket_key.0;
+                                let recv_g_opt = fn_decl.generics.iter()
+                                    .find(|g| &g.name == tvname);
+                                let protocols_match = if let Some(recv_g) = recv_g_opt {
+                                    if recv_g.bounds.is_empty() {
+                                        // Unconstrained blanket — always applies.
+                                        true
+                                    } else {
+                                        // Check each bound: receiver must implement that protocol.
+                                        let recv_impls = self.type_impl_protocols.get(recv_base);
+                                        recv_g.bounds.iter().all(|bound| {
+                                            if let crate::ast::TypeRef::Named { path, .. } = bound {
+                                                if let Some(proto) = path.last() {
+                                                    // type_impl_protocols stores specs like "Next[T]";
+                                                    // use impl_spec_base_name to compare bare names.
+                                                    recv_impls.map(|set| set.iter().any(|s|
+                                                        impl_spec_base_name(s) == proto.as_str()
+                                                    )).unwrap_or(false)
+                                                } else { false }
+                                            } else { false }
+                                        })
+                                    }
+                                } else {
+                                    false
+                                };
+                                if protocols_match {
+                                    // Dispatch via blanket — same logic as bare-typevar path below
+                                    // (lines ~25365+). Inline it here because we identified the
+                                    // right fn_decl and tvname without going through method_receivers.
+                                    let concrete_t = recv_obj_ty.trim_end_matches('*').trim().to_string();
+                                    if !concrete_t.is_empty() && concrete_t != "void" {
+                                        let recv_g = fn_decl.generics.iter()
+                                            .find(|g| &g.name == tvname)
+                                            .or_else(|| fn_decl.generics.first());
+                                        if let Some(recv_g) = recv_g {
+                                            let mut type_subst: Vec<(String, String)> = Vec::new();
+                                            type_subst.push((recv_g.name.clone(), concrete_t.clone()));
+                                            // Bind inner typevars from protocol bounds (e.g. T in Next[T]).
+                                            for bound in &recv_g.bounds {
+                                                if let crate::ast::TypeRef::Named {
+                                                    path: bpath, generics: bgens, ..
+                                                } = bound {
+                                                    let proto_method = bpath.last()
+                                                        .map(|s| s.to_lowercase())
+                                                        .unwrap_or_default();
+                                                    if let Some(opt_ret) =
+                                                        self.infer_mono_method_ret_with_args(
+                                                            &recv_obj_ty, &proto_method, &[])
+                                                    {
+                                                        let elem = opt_ret
+                                                            .strip_prefix("NovaOpt_")
+                                                            .unwrap_or(&opt_ret)
+                                                            .to_string();
+                                                        for bg in bgens {
+                                                            if let crate::ast::TypeRef::Named {
+                                                                path: gp, generics: gg, ..
+                                                            } = bg {
+                                                                if gg.is_empty() {
+                                                                    if let Some(tv) = gp.last() {
+                                                                        if tv.len() <= 2
+                                                                            && tv.chars().all(|c|
+                                                                                c.is_ascii_uppercase())
+                                                                        {
+                                                                            type_subst.push((tv.clone(), elem.clone()));
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            let mono_name = format!("Nova_{}_method_{}", concrete_t, method);
+                                            let recv_type_key = tvname.clone();
+                                            self.register_mono_method_instance(
+                                                &fn_decl, type_subst, &mono_name, &recv_type_key);
+                                            let obj_c = self.emit_expr(obj)?;
+                                            let mut arg_strs = vec![obj_c];
+                                            for a in args {
+                                                arg_strs.push(self.emit_expr(a.expr())?);
+                                            }
+                                            return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if let Some((type_name, is_instance)) = self.method_receivers.get(method).cloned() {
                     // Plan 82 followup (2026-05-23, fail-loudly): single-key
                     // method_receivers — last-wins fallback. Для STATIC-метода

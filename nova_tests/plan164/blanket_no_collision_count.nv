@@ -1,0 +1,38 @@
+// Plan 164 Ф.3 — blanket dispatch must not mis-route to a concrete method
+// registered on a different type.
+//
+// Without the Ф.3 fix, `method_receivers["zcount"] = ("I", true)` would be the
+// only registered entry for `zcount`, so FilterIter.zcount() already routed
+// correctly through the bare-typevar path. This test is a regression guard:
+// confirms that zcount works on the FilterIter adapter type produced by zfilter.
+module plan164.blanket_no_collision_count
+
+import std.collections.vec_iter_zc
+
+test "zcount on VecIter" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    assert(v.ziter().zcount() == 5)
+}
+
+test "zcount on FilterIter counts matching elements" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
+    ro n = v.ziter().zfilter(|x| x > 4).zcount()
+    assert(n == 4)
+}
+
+test "zcount on FilterIter all-pass" {
+    ro v = Vec[int].of(10, 20, 30)
+    assert(v.ziter().zfilter(|x| x > 0).zcount() == 3)
+}
+
+test "zcount on FilterIter all-fail yields 0" {
+    ro v = Vec[int].of(1, 2, 3)
+    assert(v.ziter().zfilter(|x| x > 100).zcount() == 0)
+}
+
+test "zcount after zmap on FilterIter" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+    // zmap → MapIter, then zfilter → FilterIter, then zcount → blanket
+    ro n = v.ziter().zmap(|x| x * 2).zfilter(|x| x > 6).zcount()
+    assert(n == 3)
+}
