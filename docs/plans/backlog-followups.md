@@ -518,9 +518,16 @@
 ## Follow-up: Plan 160 (module-level field privacy)
 
 - **`[M-160-per-field-priv-module]`** ✅ **CLOSED 2026-06-15** — field-level bare `priv` теперь = module-private (симметрично type-level; commit `b87ffeef`). `priv(type)` на field-level = type-private. Синтаксис симметричен полностью.
-- **`[M-160-methods-module-visibility]`** (Q, floating) — все методы без `export` сейчас module-private по умолчанию (не public). `priv(type)` на методе — потенциальное расширение (type-private method). Записано в Q; реализовать при явной потребности.
+- **`[M-160-methods-module-visibility]`** (Q, floating) — все методы без `export` сейчас module-private по умолчанию (не public). `priv(type)` на методе — потенциальное расширение (type-private method). → [Q-method-type-private](../../spec/open-questions.md#q-method-type-private) (добавлено 2026-06-16); реализовать при явной потребности.
 - **`[M-160-named-tuple-priv]`** ✅ **DEFERRED (won't do, 2026-06-15)** — named tuples всегда с публичными полями; priv/priv(type) на tuple-fields откладывается до явной необходимости.
 - **`[M-160-pattern-match-module-priv]`** ✅ **CLOSED 2026-06-15** — smoke-test `ro { id } = j` из другого модуля → `E_FIELD_MODULE_PRIVATE`; `nova_tests/plan160/neg_pattern_outside.nv` 1/1 PASS. Чекер покрывал path (types/mod.rs:5470), теперь зафиксировано тестом.
+
+## Follow-up: Plan 124.6 (escape hatches — implicit test access + `#[test_access]` + `#[pub_to]`)
+
+✅ **CLOSED 2026-06-16** — D224 AMENDED; design изменён от fn-level/field-level к test-block-level + type-level; 15/15 PASS; merge `ea1bc7c7`.
+
+Нет открытых маркеров. Потенциальный followup при необходимости:
+- `#[pub_to]` per-field гранулярность (сейчас type-level = все `priv(type)` поля сразу)
 
 ## Конвенция
 - **Planned** маркер → Followups своего плана (+ индекс-строка здесь с home).
