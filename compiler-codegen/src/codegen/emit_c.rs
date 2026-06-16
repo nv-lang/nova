@@ -25373,15 +25373,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             let concrete_t = obj_ty.trim_end_matches('*').trim().to_string();
                             if !concrete_t.is_empty() && concrete_t != "void" {
                                 let mut type_subst: Vec<(String, String)> = Vec::new();
-                                if let Some(first_g) = fn_decl.generics.first() {
-                                    type_subst.push((first_g.name.clone(), concrete_t.clone()));
+                                // Plan 164 fix: find the generic whose name matches the
+                                // RECEIVER typevar (`type_name`), not blindly use first().
+                                // `fn[T Compare, I Next[T]] I mut @zmin()` has `I` as
+                                // the receiver but `T` as generics[0] — taking first()
+                                // would bind T→concrete_t and leave I unresolved, producing
+                                // wrong mono names and broken codegen.
+                                let recv_g = fn_decl.generics.iter()
+                                    .find(|g| g.name == type_name)
+                                    .or_else(|| fn_decl.generics.first());
+                                if let Some(recv_g) = recv_g {
+                                    type_subst.push((recv_g.name.clone(), concrete_t.clone()));
                                     // Plan 161 V2 [M-161-parametric-return]: bind inner
                                     // typevars from protocol bounds.
-                                    // For `fn[I Next[T]] I @m`, the first generic `I` has
+                                    // For `fn[I Next[T]] I @m`, the receiver generic `I` has
                                     // bound `Next[T]`. Bind the inner typevar `T` to the
                                     // element type by inferring `@next()` return on the
                                     // concrete receiver and stripping the `NovaOpt_` wrapper.
-                                    for bound in &first_g.bounds {
+                                    for bound in &recv_g.bounds {
                                         if let crate::ast::TypeRef::Named { path: bpath, generics: bgens, .. } = bound {
                                             let proto_method = bpath.last()
                                                 .map(|s| s.to_lowercase())
@@ -35233,8 +35242,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     && !fd.generics.is_empty()
                                     && fd.generics.iter().any(|g| !g.bounds.is_empty())
                                 })
-                                .map(|(_, fd)| fd.clone());
-                            if let Some(fd) = blanket_fd {
+                                // Plan 164 fix: capture tvname alongside fd so we can
+                                // look up the RECEIVER generic by name (not by position).
+                                .map(|((tvname, _), fd)| (tvname.clone(), fd.clone()));
+                            if let Some((blanket_tvname, fd)) = blanket_fd {
                                 if let Some(ret_ty) = &fd.return_type {
                                     // Plan 162 fix [M-162-tuple-parametric-return]:
                                     // resolve inner typevars (e.g. T in `Next[T]`) BEFORE
@@ -35257,8 +35268,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     // Restore overrides afterwards. String-subst below is
                                     // kept as a fallback for pointer-return shapes.
                                     let mut tv_elem_bindings: Vec<(String, String)> = Vec::new();
-                                    if let Some(first_g) = fd.generics.first() {
-                                        for bound in &first_g.bounds {
+                                    // Plan 164 fix: find the receiver generic by name
+                                    // (blanket_tvname), not by position (first()). When the
+                                    // blanket fn is declared as `fn[T Compare, I Next[T]]`,
+                                    // the receiver is `I` but generics[0] is `T`. Using first()
+                                    // would expand T's bounds (Compare→compare) instead of
+                                    // I's bounds (Next[T]→next), failing to bind the elem TV.
+                                    let recv_g_ref = fd.generics.iter()
+                                        .find(|g| g.name == blanket_tvname)
+                                        .or_else(|| fd.generics.first());
+                                    if let Some(recv_g) = recv_g_ref {
+                                        for bound in &recv_g.bounds {
                                             if let crate::ast::TypeRef::Named { path: bpath, generics: bgens, .. } = bound {
                                                 let proto_method = bpath.last()
                                                     .map(|s| s.to_lowercase())
@@ -35318,7 +35338,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                         // fallback for pointer-return shapes (Nova_T* / Nova_T_p).
                                         // For tuple returns the overrides above already produce
                                         // the correct concrete C type in raw_c.
-                                        let c = if let Some(first_g) = fd.generics.first() {
+                                        // Plan 164 fix: use blanket_tvname to find the
+                                        // receiver generic for string-subst fallback too.
+                                        let recv_g_str = fd.generics.iter()
+                                            .find(|g| g.name == blanket_tvname)
+                                            .or_else(|| fd.generics.first());
+                                        let c = if let Some(recv_g_s) = recv_g_str {
                                             let mut resolved = raw_c.clone();
                                             for (tv, elem) in &tv_elem_bindings {
                                                 let elem_mangled = Self::sanitize_c_for_ident(elem);
@@ -35328,10 +35353,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                                     .replace(&tv_mangled, &elem_mangled)
                                                     .replace(&tv_ptr, elem);
                                             }
-                                            // Also substitute the first generic (I → concrete recv)
+                                            // Also substitute the receiver generic (I → concrete recv)
                                             // via existing bound-based logic if not already done.
                                             if tv_elem_bindings.is_empty() {
-                                                for bound in &first_g.bounds {
+                                                for bound in &recv_g_s.bounds {
                                                     if let crate::ast::TypeRef::Named { path: bpath, generics: bgens, .. } = bound {
                                                         let proto_method = bpath.last()
                                                             .map(|s| s.to_lowercase())
@@ -35364,7 +35389,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                                     }
                                                 }
                                             }
-                                            let _ = first_g; // suppress unused warning
+                                            let _ = recv_g_s; // suppress unused warning
                                             resolved
                                         } else {
                                             raw_c
