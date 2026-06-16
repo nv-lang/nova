@@ -1,0 +1,13 @@
+// Plan 106: regression — if/while without a guard must still compile and run.
+// Positive: both `if Some(x) = ...` and `if ro y = ...` without guard work.
+
+module plan106.pos_no_guard_still_works
+
+test "if without guard still works" {
+    if Some(x) = Some(5) {
+        assert(x == 5)
+    }
+    if ro y = true {
+        assert(y)
+    }
+}

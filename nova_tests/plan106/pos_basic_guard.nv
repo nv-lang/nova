@@ -1,0 +1,11 @@
+// Plan 106: basic guard — if Some(x) = opt && x > threshold
+// Positive: guard passes, body executes.
+
+module plan106.pos_basic_guard
+
+test "Some with guard" {
+    ro opt Option[int] = Some(7)
+    if Some(x) = opt && x > 5 {
+        assert(x == 7)
+    }
+}

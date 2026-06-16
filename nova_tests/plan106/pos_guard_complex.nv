@@ -1,0 +1,12 @@
+// Plan 106: chained && in guard — multiple conditions after pattern binding.
+// Positive: pattern binds n, then two conditions must both hold.
+
+module plan106.pos_guard_complex
+
+fn parse(s str) -> Option[int] => Some(42)
+
+test "complex guard expression" {
+    if Some(n) = parse("42") && n > 0 && n < 100 {
+        assert(n == 42)
+    }
+}

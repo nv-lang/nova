@@ -37052,3 +37052,6 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 - [2026-06-16] README.md статусы планов — административный коммит f5179299. Синхронизация ~40 планов с реальным состоянием. Никаких упрощений и никакой новой функциональности — pure docs update.
 
 - [2026-06-16] Plan 152.8 (nova_char uint32_t + Vec[u32] unicode) — NO simplifications; production-grade. Layer 1: Vec[int]→Vec[u32] in 7 std/unicode files (normalize.nv, case.nv, category.nv, graphemes.nv, words.nv, sentences.nv, collate.nv); 88 type occurrences. Layer 2: nova_char typedef int64_t→uint32_t (D128 AMEND Plan 152.8): nova_rt.h, array.h comment, gc_layout.rs char_size (8,8)→(4,4) + test renamed, emit_c.rs U-suffix for char literals + nova_char in is_typed_int_c_ty + emit_typed_int_literal. Tests: 5 Layer-1 positives (t1-t5, unicode functions) + 1 Layer-2 positive (t6, char u32 properties/hash/compare) = 6/6 PASS plan152_8; 9/9 PASS plan152_7 (0 regressions). Spec: D128 AMEND in spec/decisions/02-types.md + 08-runtime.md. Marker [M-152-unicode-codepoint-u32] CLOSED. Branch plan-152.8. Commits: c659fe97 (Layer 1) + 11730ca5 (Layer 1 tests) + 08171fdc (Layer 2).
+
+- [2026-06-17] Plan 106: && guard — без упрощений. Полный scope-pipelining (биндинги
+паттерна видны в guard), type-check guard как bool, codegen корректный.

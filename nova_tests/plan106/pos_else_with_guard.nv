@@ -1,0 +1,14 @@
+// Plan 106: else branch is taken when guard fails (pattern matches but condition false).
+// Positive: pattern matches Some(3), guard x > 10 fails → else runs.
+
+module plan106.pos_else_with_guard
+
+test "else branch when guard fails" {
+    mut result = "none"
+    if Some(x) = Some(3) && x > 10 {
+        result = "big"
+    } else {
+        result = "small"
+    }
+    assert(result == "small")
+}

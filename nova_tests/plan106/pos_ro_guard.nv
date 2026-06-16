@@ -1,0 +1,14 @@
+// Plan 106: if ro pattern-binding with guard on a field.
+// Positive: user-defined value type, guard tests a field.
+
+module plan106.pos_ro_guard
+
+type User value { name str, age int }
+
+fn find() -> Option[User] => Some(User { name: "alice", age: 30 })
+
+test "if ro with guard on field" {
+    if ro Some(u) = find() && u.age >= 18 {
+        assert(u.name == "alice")
+    }
+}
