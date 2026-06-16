@@ -1,0 +1,118 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.12 — UDP two-fiber patterns: concurrent send and recv.
+//
+// Tests:
+//   (1) Two-fiber echo: server and client each use their own socket,
+//       two concurrent fibers exchange a datagram.
+//   (2) Two-fiber multi-round: 3 datagrams exchanged concurrently.
+//   (3) Concurrent recv-first: receiver parks before sender sends.
+//
+// Tagged _slow: real OS networking + concurrent fibers.
+
+module plan91_12.net_v2_udp_two_fiber_slow
+
+import std.net.{SocketAddr, UdpSocket, real_udp_net, real_addr_net}
+
+test "UDP two fibers: server recv+reply, client send+recv" {
+    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+        mut server = match UdpSocket.bind(SocketAddr.loopback(0)) {
+            Ok(s) => s, Err(_) => panic("server bind")
+        }
+        mut client = match UdpSocket.bind(SocketAddr.loopback(0)) {
+            Ok(s) => s, Err(_) => panic("client bind")
+        }
+        ro server_port = server.local_port()
+
+        supervised {
+            spawn {
+                ro rr = server.recv_from(512)
+                assert(rr.is_ok())
+                ro (data, sender) = match rr { Ok(t) => t, Err(_) => panic("srv recv") }
+                assert(data == "hello")
+                assert(server.send_to("world", sender).is_ok())
+                server.close()
+            }
+
+            spawn {
+                assert(client.send_to("hello", SocketAddr.loopback(server_port)).is_ok())
+                ro rr = client.recv_from(512)
+                assert(rr.is_ok())
+                ro (reply, _) = match rr { Ok(t) => t, Err(_) => panic("cli recv") }
+                assert(reply == "world")
+                client.close()
+            }
+        }
+    }
+}
+
+test "UDP two fibers: multi-round — client sends 3, server recvs 3" {
+    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+        mut server = match UdpSocket.bind(SocketAddr.loopback(0)) {
+            Ok(s) => s, Err(_) => panic("server bind")
+        }
+        mut client = match UdpSocket.bind(SocketAddr.loopback(0)) {
+            Ok(s) => s, Err(_) => panic("client bind")
+        }
+        ro server_port = server.local_port()
+
+        supervised {
+            spawn {
+                // Server: recv 3 datagrams sequentially.
+                ro r1 = server.recv_from(512)
+                assert(r1.is_ok())
+                ro (d1, _) = match r1 { Ok(t) => t, Err(_) => panic("srv r1") }
+                assert(d1 == "msg0")
+
+                ro r2 = server.recv_from(512)
+                assert(r2.is_ok())
+                ro (d2, _) = match r2 { Ok(t) => t, Err(_) => panic("srv r2") }
+                assert(d2 == "msg1")
+
+                ro r3 = server.recv_from(512)
+                assert(r3.is_ok())
+                ro (d3, _) = match r3 { Ok(t) => t, Err(_) => panic("srv r3") }
+                assert(d3 == "msg2")
+
+                server.close()
+            }
+
+            spawn {
+                // Client: send 3 datagrams.
+                ro dest = SocketAddr.loopback(server_port)
+                assert(client.send_to("msg0", dest).is_ok())
+                assert(client.send_to("msg1", dest).is_ok())
+                assert(client.send_to("msg2", dest).is_ok())
+                client.close()
+            }
+        }
+    }
+}
+
+test "UDP two fibers: recv parks before send" {
+    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+        mut receiver = match UdpSocket.bind(SocketAddr.loopback(0)) {
+            Ok(s) => s, Err(_) => panic("recv bind")
+        }
+        mut sender = match UdpSocket.bind(SocketAddr.loopback(0)) {
+            Ok(s) => s, Err(_) => panic("send bind")
+        }
+        ro recv_port = receiver.local_port()
+
+        supervised {
+            spawn {
+                // Receiver parks first — will be woken when datagram arrives.
+                ro rr = receiver.recv_from(512)
+                assert(rr.is_ok())
+                ro (data, _) = match rr { Ok(t) => t, Err(_) => panic("recv") }
+                assert(data == "ping")
+                receiver.close()
+            }
+
+            spawn {
+                // Sender: send to the parked receiver.
+                assert(sender.send_to("ping", SocketAddr.loopback(recv_port)).is_ok())
+                sender.close()
+            }
+        }
+    }
+}
