@@ -4,12 +4,12 @@ module plan124_6.test_access_multiple_types_ok
 
 export type Account {
     ro name str
-    priv mut balance f64
+    priv(type) mut balance f64
 }
 
 export type Vault {
     ro id str
-    priv mut amount f64
+    priv(type) mut amount f64
 }
 
 export fn Account.new(n str) -> Account =>

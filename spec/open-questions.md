@@ -8142,3 +8142,33 @@ Coarse-by-name method-DCE (over-keep на name-collision) + Option A для no-i
 - [Plan 163](../docs/plans/163-import-export-glob-hygiene.md) — реализация. [D288](#d288)/[D289](#d289) — spec.
 - [Plan 162](../docs/plans/162-rust-model-module-resolution.md), [Plan 42 Rule C / 42.09 re-export](../docs/plans/42-folder-modules.md).
 - `[M-import-glob-forbid]` → ✅ CLOSED (Plan 163).
+
+## Q-method-type-private — `priv(type)` на методах: type-private method — 🟡 OPEN (2026-06-16)
+
+### Контекст (`[M-160-methods-module-visibility]`)
+
+Все методы без `export` сейчас module-private по умолчанию (D5/Plan 35). Поле `priv(type)` = type-private (только методы самого типа). Симметрично ли сделать **method-level** `priv(type)` — метод видим только другим методам того же типа?
+
+```nova
+export type Account {
+    priv(type) fn @verify_balance() -> bool { ... }  // видно только методам Account?
+}
+```
+
+### Что уже решено
+
+- `priv` (bare) на поле = module-private (D281, Plan 160).
+- `priv(type)` на поле = type-private (D220, Plan 124.1).
+- `priv(type)` на методе = **пока не поддерживается** (синтаксис не разбирается).
+- Методы без `export` = module-private (видны в пределах папки-модуля).
+
+### Открытое
+
+1. **Нужен ли `priv(type)` на методах?** Use-case: вспомогательный метод, который не должен вызываться даже другими файлами того же модуля.
+2. **Синтаксис:** `priv(type) fn @helper()` или `fn priv(type) @helper()`?
+3. **Vs. module-private по умолчанию**: module-private уже достаточно строгий для большинства случаев.
+
+Рекомендация: реализовать при явной потребности (module-private достаточно). Следить за user feedback.
+
+### Связь
+- [D220](decisions/02-types.md#d220) (priv(type) семантика поля), [D281](decisions/02-types.md#d281) (module-level type privacy), [Plan 124.1](../docs/plans/124-priv-field-visibility.md).

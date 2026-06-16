@@ -1,13 +1,13 @@
 module plan161.blanket_deep
 
 import std.collections.vec.{Vec}
-import std.collections.vec_iter_zc as vec_iter_zc
+import std.collections.vec_iter
 
 test "blanket chain depth 3" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
-    ro r = v.ziter()
-        .zmap(|x| x * 2)
-        .zfilter(|x| x > 4)
-        .zcollect()
-    assert(r == Vec[int].from([6, 8, 10, 12]))
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+    ro r = v.iter()
+        .map(|x| x * 2)
+        .filter(|x| x > 4)
+        .collect()
+    assert(r == Vec[int].of(6, 8, 10, 12))
 }

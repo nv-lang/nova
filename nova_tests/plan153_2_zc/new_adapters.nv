@@ -1,0 +1,127 @@
+module plan153_2_zc.new_adapters
+
+import std.collections.vec_iter
+
+// ── take ─────────────────────────────────────────────────────────────────────
+
+test "take limits VecIter" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro got = v.iter().take(3).collect()
+    assert(got == [1, 2, 3])
+}
+
+test "take after map" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro got = v.iter().map(|x| x * 10).take(2).collect()
+    assert(got == [10, 20])
+}
+
+test "take zero yields empty" {
+    ro v = Vec[int].of(1, 2, 3)
+    ro got = v.iter().take(0).collect()
+    assert(got == [])
+}
+
+test "take more than length yields all" {
+    ro v = Vec[int].of(1, 2)
+    ro got = v.iter().take(10).collect()
+    assert(got == [1, 2])
+}
+
+// ── skip ─────────────────────────────────────────────────────────────────────
+
+test "skip skips first n" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro got = v.iter().skip(2).collect()
+    assert(got == [3, 4, 5])
+}
+
+test "skip after filter" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+    ro got = v.iter().filter(|x| x % 2 == 0).skip(1).collect()
+    assert(got == [4, 6])
+}
+
+test "skip all yields empty" {
+    ro v = Vec[int].of(1, 2, 3)
+    ro got = v.iter().skip(10).collect()
+    assert(got == [])
+}
+
+// ── take + skip chained ──────────────────────────────────────────────────────
+
+test "skip then take — sliding window" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
+    ro got = v.iter().skip(2).take(4).collect()
+    assert(got == [3, 4, 5, 6])
+}
+
+// ── reduce ────────────────────────────────────────────────────────────────────
+
+test "reduce sums via fold" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro r = v.iter().reduce(|a, b| a + b)
+    assert(r == Some(15))
+}
+
+test "reduce on single element" {
+    ro v = Vec[int].of(42)
+    assert(v.iter().reduce(|a, b| a + b) == Some(42))
+}
+
+test "reduce on empty is None" {
+    ro v = Vec[int].new()
+    assert(v.iter().reduce(|a, b| a + b) == None)
+}
+
+// ── min / max ─────────────────────────────────────────────────────────────────
+
+test "min finds minimum" {
+    ro v = Vec[int].of(3, 1, 4, 1, 5, 9, 2, 6)
+    assert(v.iter().min() == Some(1))
+}
+
+test "max finds maximum" {
+    ro v = Vec[int].of(3, 1, 4, 1, 5, 9, 2, 6)
+    assert(v.iter().max() == Some(9))
+}
+
+test "min on empty is None" {
+    ro v = Vec[int].new()
+    assert(v.iter().min() == None)
+}
+
+// ── nth ──────────────────────────────────────────────────────────────────────
+
+test "nth returns 0-based element" {
+    ro v = Vec[int].of(10, 20, 30, 40)
+    assert(v.iter().nth(0) == Some(10))
+    assert(v.iter().nth(2) == Some(30))
+}
+
+test "nth out of bounds is None" {
+    ro v = Vec[int].of(1, 2)
+    assert(v.iter().nth(5) == None)
+}
+
+test "nth after map" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    assert(v.iter().map(|x| x * 100).nth(3) == Some(400))
+}
+
+// ── last ──────────────────────────────────────────────────────────────────────
+
+test "last returns last element" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    assert(v.iter().last() == Some(5))
+}
+
+test "last on empty is None" {
+    ro v = Vec[int].new()
+    assert(v.iter().last() == None)
+}
+
+test "last after filter" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+    assert(v.iter().filter(|x| x % 2 == 0).last() == Some(6))
+}

@@ -1,0 +1,68 @@
+module plan162.enumerate_basic
+
+import std.collections.vec_iter
+
+// ── core enumerate tests ──────────────────────────────────────────────────────
+// All tests use patterns that work with the current codegen:
+// - count (direct terminator, works)
+// - filter (concrete method with explicit tuple param, works)
+// - take (concrete adapter, works)
+// Patterns that require tuple-type propagation to closure params
+// (map, fold, for_each on EnumerateIter) are gated on a codegen fix.
+
+test "enumerate on plain VecIter — count equals source length" {
+    ro v = Vec[int].of(10, 20, 30)
+    ro n = v.iter().enumerate().count()
+    assert(n == 3)
+}
+
+test "enumerate on empty vec yields empty — count is 0" {
+    ro v = Vec[int].new()
+    ro n = v.iter().enumerate().count()
+    assert(n == 0)
+}
+
+test "enumerate after map — index restarts at 0, count correct" {
+    ro v = Vec[int].of(1, 2, 3)
+    // map then enumerate: still 3 pairs
+    ro n = v.iter().map(|x| x * 10).enumerate().count()
+    assert(n == 3)
+}
+
+test "enumerate after filter — count reflects filtered stream" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+    ro n = v.iter().filter(|x| x % 2 == 0).enumerate().count()
+    assert(n == 3)
+}
+
+test "enumerate then filter on index — even-indexed pairs only" {
+    ro v = Vec[int].of(10, 20, 30, 40, 50)
+    ro n = v.iter().enumerate().filter(|p| p.0 % 2 == 0).count()
+    assert(n == 3)
+}
+
+test "enumerate then filter on value — odd-valued pairs" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    // filter keeps pairs where value (p.1) is odd: (0,1),(2,3),(4,5)
+    ro n = v.iter().enumerate().filter(|p| p.1 % 2 == 1).count()
+    assert(n == 3)
+}
+
+test "enumerate then take limits output" {
+    ro v = Vec[int].of(7, 8, 9, 10, 11)
+    ro n = v.iter().enumerate().take(3).count()
+    assert(n == 3)
+}
+
+test "enumerate count works via blanket terminator — 4 elements" {
+    ro v = Vec[int].of(5, 6, 7, 8)
+    ro n = v.iter().enumerate().count()
+    assert(n == 4)
+}
+
+test "enumerate filter then take chain" {
+    ro v = Vec[int].of(2, 4, 6, 8, 10, 12)
+    // filter evens (all), enumerate, take 3 → 3 pairs
+    ro n = v.iter().filter(|x| x % 2 == 0).enumerate().take(3).count()
+    assert(n == 3)
+}

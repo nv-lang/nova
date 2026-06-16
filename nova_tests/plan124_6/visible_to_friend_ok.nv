@@ -4,7 +4,7 @@ module plan124_6.visible_to_friend_ok
 
 export type Account {
     ro name str
-    #visible_to(Bank) priv mut balance f64
+    #visible_to(Bank) priv(type) mut balance f64
 }
 
 export type Bank {

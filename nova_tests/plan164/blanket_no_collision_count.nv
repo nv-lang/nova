@@ -1,0 +1,38 @@
+// Plan 164 Ф.3 — blanket dispatch must not mis-route to a concrete method
+// registered on a different type.
+//
+// Without the Ф.3 fix, `method_receivers["count"] = ("I", true)` would be the
+// only registered entry for `count`, so FilterIter.count() already routed
+// correctly through the bare-typevar path. This test is a regression guard:
+// confirms that count works on the FilterIter adapter type produced by filter.
+module plan164.blanket_no_collision_count
+
+import std.collections.vec_iter
+
+test "count on VecIter" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    assert(v.iter().count() == 5)
+}
+
+test "count on FilterIter counts matching elements" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
+    ro n = v.iter().filter(|x| x > 4).count()
+    assert(n == 4)
+}
+
+test "count on FilterIter all-pass" {
+    ro v = Vec[int].of(10, 20, 30)
+    assert(v.iter().filter(|x| x > 0).count() == 3)
+}
+
+test "count on FilterIter all-fail yields 0" {
+    ro v = Vec[int].of(1, 2, 3)
+    assert(v.iter().filter(|x| x > 100).count() == 0)
+}
+
+test "count after map on FilterIter" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+    // map → MapIter, then filter → FilterIter, then count → blanket
+    ro n = v.iter().map(|x| x * 2).filter(|x| x > 6).count()
+    assert(n == 3)
+}

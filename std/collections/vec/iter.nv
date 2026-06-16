@@ -34,6 +34,7 @@ export fn Vec[T] @iter() -> VecIter[T] =>
 
 /// Advance the iterator. Returns `Some(T)` while elements remain, `None`
 /// once the vector is exhausted (subsequent calls keep returning `None`).
+#impl(Next[T])
 export fn VecIter[T] mut @next() -> Option[T] {
     if @idx >= @len { return None }
     ro v = unsafe { @data[@idx] }

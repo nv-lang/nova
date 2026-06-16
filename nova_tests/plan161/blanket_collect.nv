@@ -17,8 +17,8 @@ fn[I Next[T]] I mut @bcollect() -> Vec[T] {
 }
 
 test "blanket collect on VecIter" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     mut it = v.iter()
     ro r = it.bcollect()
-    assert(r == Vec[int].from([1, 2, 3]))
+    assert(r == Vec[int].of(1, 2, 3))
 }
