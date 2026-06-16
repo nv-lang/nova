@@ -187,6 +187,39 @@ assert(to_lowercase("ΟΔΟΣ") == "οδος")               // final Σ → ς,
   **Final_Sigma** context rule (Greek Σ → ς word-finally, σ otherwise). No locale
   tailoring (Turkic/Lithuanian).
 
+### Code-point (`char`) classification & case
+
+The `char` type's ASCII methods (`is_ascii_alphabetic`, `to_digit`, `len_utf8`, … —
+prelude, table-free) get Unicode-aware peers under `import std.unicode`. They are
+**1:1 with the UCD** (not an ASCII approximation) and match Rust `char`:
+
+```nova
+import std.unicode
+
+assert('Ω'.is_alphabetic())          // U+03A9 GREEK CAPITAL OMEGA (Lu)
+assert('٣'.is_numeric())             // U+0663 ARABIC-INDIC DIGIT THREE (Nd)
+assert('½'.is_numeric())             // U+00BD VULGAR FRACTION (No)
+assert('\u{A0}'.is_whitespace())     // NO-BREAK SPACE (Zs)
+assert('A'.general_category() == Lu) // import std.unicode.{Lu}
+assert('ß'.to_uppercase() == "SS")   // multi-code-point → str (not one char)
+assert('ﬁ'.to_uppercase() == "FI")   // ligature ﬁ → "FI"
+```
+
+- `@is_alphabetic` / `@is_numeric` / `@is_alphanumeric` / `@is_whitespace` /
+  `@is_uppercase` / `@is_lowercase` / `@is_control` — binary predicates over the UCD.
+- `@general_category() -> GeneralCategory` — the UCD General_Category (TR44, 30 values
+  `Lu`…`Cn`); `Cn` (not assigned) for any code point absent from the UCD.
+- `@to_uppercase() -> str` / `@to_lowercase() -> str` — full per-code-point case
+  mapping. They return **`str`** (not a single `char`) because one code point can map
+  to several (ß → `"SS"`, İ → `"i"` + ◌̇). Final_Sigma is a string-level rule, so a lone
+  Σ lowercases to σ (the context-free answer).
+
+These delegate to the `std/unicode` code-point tables (`category_data.nv`:
+General_Category + Alphabetic + White_Space from UCD 16.0) and to the case maps
+(`case_data.nv`). Like the lenses above, they are **opt-in** — without
+`import std.unicode` the Unicode classification is not in scope (the ASCII-core `char`
+methods stay prelude-available).
+
 ### Word segmentation & title-casing (UAX #29)
 
 `str.@as_words() -> WordsView` is the fourth lens — iterate UAX #29 word segments
@@ -286,6 +319,8 @@ string ops):
 | word lens | `str.as_words() -> WordsView` | `import std.unicode`; UAX #29; O(n) create |
 | normalization | `normalize_nfc/nfd/nfkc/nfkd(s)` | `import std.unicode`; UAX #15 |
 | case fold / map / title | `fold_case`/`to_uppercase`/`to_lowercase`/`to_titlecase(s)` | `import std.unicode` |
+| char classification (Unicode) | `c.is_alphabetic`/`is_numeric`/`is_whitespace`/`general_category` | `import std.unicode`; 1:1 UCD |
+| char case (Unicode) | `c.to_uppercase()`/`to_lowercase() -> str` | `import std.unicode`; multi-cp |
 | slice | `str[a..b]` / `str.get(a..b)` | byte-range, zero-copy |
 | search | `find`/`rfind`/`contains`/`starts_with`/`ends_with` | byte offsets |
 | split/trim/replace/pad/repeat/concat | `transform`/`search` | see std/runtime/string/ |

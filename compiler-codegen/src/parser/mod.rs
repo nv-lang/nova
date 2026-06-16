@@ -96,6 +96,13 @@ pub struct Parser {
     /// type position (`mut * T`) → forbidden if it wraps a pointer
     /// (`E_POINTER_PREFIX_MODIFIER`).
     pointee_ctx: bool,
+    /// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: the structured
+    /// carrier slot TypeRefs collected by the most recent CARRIER-mode
+    /// `parse_generic_decl_params_inner(true)` call. For `Vec[Vec[T]]` this is
+    /// `[Named{Vec,[Named T]}]`; for the flat `Vec[T]` it is `[Named T]`. Read
+    /// immediately afterwards in `parse_fn` to build the structured receiver
+    /// type (`Receiver.receiver_ty`); never persists across fn declarations.
+    last_carrier_slot_types: Vec<TypeRef>,
 }
 
 /// **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** build the
@@ -178,6 +185,7 @@ impl Parser {
             src,
             warnings: Vec::new(),
             pointee_ctx: false,
+            last_carrier_slot_types: Vec::new(),
         }
     }
 
@@ -2582,22 +2590,34 @@ impl Parser {
         // Plan 15 (D72): generic-параметры в форме declaration (с optional
         // bound) до момента disambiguation между receiver и free fn.
         let mut generics_first_decl: Vec<GenericParam> = Vec::new();
+        // Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: the FULL
+        // structured receiver type (`Array(Array(Named T))` for `[][]T`,
+        // `Named{Vec,[Named{Vec,[Named T]}]}` for `Vec[Vec[T]]`) so the
+        // monomorphizer can bind a receiver typevar at ANY nesting depth.
+        let mut receiver_structured_ty: Option<TypeRef> = None;
         if matches!(self.peek().kind, TokenKind::LBracket)
             && matches!(self.peek_at(1).kind, TokenKind::RBracket)
         {
             let lb = self.bump().span;
             self.bump(); // ]
-            // Парсим element-type. Обычно это `T` (generic param).
+            // Парсим element-type. Для `[]T` это `T` (Named); для НЕСКОЛЬКИХ
+            // уровней (`[][]T`, `[][][]T`, …) `parse_type` рекурсивно строит
+            // `Array(Array(...Named T))` — внутренние `[]` уже потреблены этим
+            // вызовом. Plan 153.5: сохраняем ПОЛНУЮ структуру + считаем глубину.
             let elem_ty = self.parse_type()?;
             let elem_span = elem_ty.span();
-            // Сохраняем generic-параметр как fn_generics, а type_name = "[]T".
-            // Bootstrap-codegen видит receiver_type "[]T" и ищет методы на "[]"-типе.
-            let elem_name = match &elem_ty {
-                TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
-                _ => "T".into(),
-            };
-            first_ident = format!("[]{}", elem_name);
-            first_span = lb.merge(elem_span);
+            // Full structured receiver type = outer Array wrapping whatever
+            // `parse_type` produced (which already nests every inner `[]`).
+            let full_span = lb.merge(elem_span);
+            let full_ty = TypeRef::Array(Box::new(elem_ty.clone()), full_span);
+            // Сохраняем generic-параметр как fn_generics, а type_name = "[]T"
+            // (или "[][]T", … по глубине). Bootstrap-codegen видит receiver_type
+            // и ищет методы на "[]"-типе. Plan 153.5: depth-aware — count every
+            // `Array` level, descend to the innermost `Named` for the typevar name.
+            let (depth, elem_name) = Self::slice_receiver_depth_and_inner(&full_ty);
+            first_ident = format!("{}{}", "[]".repeat(depth), elem_name);
+            first_span = full_span;
+            receiver_structured_ty = Some(full_ty);
         } else {
             // Сначала парсим первый идентификатор. Это либо имя fn, либо
             // имя receiver-типа.
@@ -2610,7 +2630,27 @@ impl Parser {
                 // (free fn — `fn name[T Hashable]`) либо instantiation
                 // (receiver — `fn TypeName[T] @method`). Парсим как
                 // declaration-form (с optional bound), потом disambiguation.
-                generics_first_decl = self.parse_generic_decl_params()?;
+                // Plan 153.5 (D263): carrier-position — a slot may be a NESTED
+                // type (`Vec[Vec[T]]`). Detection (`Ident[`) only fires for
+                // genuine receiver carriers; free-fn `[T Bound = D]` slots never
+                // match, so this is safe to enable before the receiver/free-fn
+                // disambiguation below.
+                generics_first_decl = self.parse_generic_decl_params_inner(true)?;
+                // Plan 153.5: build the structured carrier receiver type
+                // `Named{path:[first_ident], generics:[slot types]}` from the
+                // carrier slots (captured before any method-extra-generics parse
+                // below overwrites `last_carrier_slot_types`). Only meaningful if
+                // this turns out to be a receiver — harmless if it's a free fn
+                // (then `receiver_structured_ty` is simply ignored).
+                let carrier_slots = std::mem::take(&mut self.last_carrier_slot_types);
+                if !carrier_slots.is_empty() {
+                    let slots_span = carrier_slots.last().map(|t| t.span()).unwrap_or(sp);
+                    receiver_structured_ty = Some(TypeRef::Named {
+                        path: vec![first_ident.clone()],
+                        generics: carrier_slots,
+                        span: sp.merge(slots_span),
+                    });
+                }
             }
         }
 
@@ -2664,6 +2704,9 @@ impl Parser {
                 type_name: first_ident.clone(),
                 generics: recv_generics,
                 carrier_bounds,
+                // Plan 153.5 (D263): structured receiver type for depth-agnostic
+                // monomorphizer typevar binding (`[][]T`, `Vec[Vec[T]]`, …).
+                receiver_ty: receiver_structured_ty.take(),
                 kind,
                 mutable: receiver_mut,
                 consume: receiver_consume,
@@ -5706,11 +5749,73 @@ impl Parser {
     /// Forward-references проверяются ниже type-checker'ом
     /// (текущий список параметров доступен только слева направо).
     fn parse_generic_decl_params(&mut self) -> Result<Vec<GenericParam>, Diagnostic> {
+        self.parse_generic_decl_params_inner(false)
+    }
+
+    /// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: variant that, in
+    /// CARRIER/receiver position (`in_carrier_position = true`), permits a
+    /// NESTED type slot (`Vec[Vec[T]]` → slot `Vec[T]`) — not just a bare
+    /// typevar name. Detection: a carrier slot whose first ident is IMMEDIATELY
+    /// followed by `[` is a nested generic type (`Ident[...]`); the WHOLE slot
+    /// is then parsed with `parse_type` and EVERY free typevar appearing inside
+    /// it is collected as a `GenericParam` (recursively, any depth). Bare-ident
+    /// + bound (`T Printable`) and bare typevar (`T`) slots keep the legacy
+    /// path unchanged, so free-fn `[T Bound = D]` parsing is untouched (the
+    /// non-carrier mode never takes the nested branch).
+    fn parse_generic_decl_params_inner(
+        &mut self,
+        in_carrier_position: bool,
+    ) -> Result<Vec<GenericParam>, Diagnostic> {
         self.expect(&TokenKind::LBracket)?;
         let mut params = Vec::new();
+        // Plan 153.5: structured carrier slot TypeRefs, parallel to `params`'
+        // logical slots (one per `,`-separated slot). Populated only in carrier
+        // mode; read back via `last_carrier_slot_types`.
+        let mut slot_types: Vec<TypeRef> = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBracket) {
+            // Plan 153.5: carrier-position NESTED type slot. A slot of the form
+            // `Ident[` (ident immediately followed by `[`) is a nested generic
+            // type (`Vec[T]`, `Vec[Vec[T]]`, …), NOT a bare typevar-with-bound.
+            // Parse the whole slot as a type and harvest its free typevars.
+            if in_carrier_position
+                && matches!(self.peek().kind, TokenKind::Ident(_))
+                && matches!(self.peek_at(1).kind, TokenKind::LBracket)
+            {
+                let slot_ty = self.parse_type()?;
+                let mut tvars: Vec<(String, Span)> = Vec::new();
+                Self::collect_free_typevars(&slot_ty, &mut tvars);
+                for (tv, tv_span) in tvars {
+                    // Dedup: a typevar may textually appear once per nested slot;
+                    // the same name across slots collapses to one GenericParam.
+                    if !params.iter().any(|p: &GenericParam| p.name == tv) {
+                        params.push(GenericParam {
+                            name: tv,
+                            bounds: Vec::new(),
+                            default: None,
+                            consume_bound: false,
+                            span: tv_span,
+                        });
+                    }
+                }
+                slot_types.push(slot_ty);
+                if self.eat(&TokenKind::Comma).is_none() {
+                    break;
+                }
+                self.skip_newlines();
+                continue;
+            }
             let (name, name_span) = self.parse_ident()?;
+            // Plan 153.5: record the structured slot type for carrier mode. A
+            // bare-ident slot (`T`, optionally with a bound) is `Named{[name]}`
+            // — the bound is orthogonal to the receiver shape.
+            if in_carrier_position {
+                slot_types.push(TypeRef::Named {
+                    path: vec![name.clone()],
+                    generics: Vec::new(),
+                    span: name_span,
+                });
+            }
 
             // Plan 100.2 (D156): `[T consume]` — consume-bound marker.
             // Consumes the `consume` keyword token; mutually exclusive with
@@ -5789,7 +5894,92 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::RBracket)?;
+        // Plan 153.5: publish the structured carrier slots for `parse_fn` to
+        // build `Receiver.receiver_ty`. Non-carrier mode leaves it empty.
+        self.last_carrier_slot_types = if in_carrier_position {
+            slot_types
+        } else {
+            Vec::new()
+        };
         Ok(params)
+    }
+
+    /// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: a name is a free
+    /// typevar (in carrier/receiver position) iff it is a short all-uppercase
+    /// single-segment identifier (`T`, `U`, `K`, `V`, `E`, `TT`, …). Matches the
+    /// existing convention used by the type-checker (`types/mod.rs`: carrier
+    /// typevar detection `len <= 2 && all ascii-uppercase`).
+    fn ident_is_typevar(name: &str) -> bool {
+        !name.is_empty()
+            && name.len() <= 2
+            && name.chars().all(|c| c.is_ascii_uppercase())
+    }
+
+    /// Plan 153.5 (D263): recursively collect every FREE typevar appearing in a
+    /// parsed type, in first-seen order (no dups), as `(name, span)`. Walks
+    /// Named (recursing into its generics), Array, FixedArray, Tuple, Func
+    /// (params + effects + return), Option/Result (which are Named), and the
+    /// transparent wrappers Readonly/Mut/Unsafe/Pointer. Used to harvest the
+    /// typevars a nested carrier slot (`Vec[Vec[T]]`) introduces, at any depth.
+    fn collect_free_typevars(ty: &TypeRef, out: &mut Vec<(String, Span)>) {
+        match ty {
+            TypeRef::Named { path, generics, span } => {
+                if path.len() == 1 && generics.is_empty() && Self::ident_is_typevar(&path[0]) {
+                    if !out.iter().any(|(n, _)| n == &path[0]) {
+                        out.push((path[0].clone(), *span));
+                    }
+                }
+                for g in generics {
+                    Self::collect_free_typevars(g, out);
+                }
+            }
+            TypeRef::Array(inner, _) => Self::collect_free_typevars(inner, out),
+            TypeRef::FixedArray(_, inner, _) => Self::collect_free_typevars(inner, out),
+            TypeRef::Tuple(items, _) => {
+                for it in items {
+                    Self::collect_free_typevars(it, out);
+                }
+            }
+            TypeRef::Func { params, effects, return_type, .. } => {
+                for p in params {
+                    Self::collect_free_typevars(p, out);
+                }
+                for e in effects {
+                    Self::collect_free_typevars(e, out);
+                }
+                if let Some(rt) = return_type {
+                    Self::collect_free_typevars(rt, out);
+                }
+            }
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Pointer(inner, _) => Self::collect_free_typevars(inner, out),
+            TypeRef::Protocol { .. } | TypeRef::Unit(_) => {}
+        }
+    }
+
+    /// Plan 153.5 (D263): for a slice-spelled receiver type `Array(Array(...
+    /// Named))` (`[]T`, `[][]T`, `[][][]T`, …) return `(depth, innermost_name)`
+    /// where `depth` counts the `Array` levels and `innermost_name` is the name
+    /// of the innermost `Named` (the element/typevar). Falls back to depth 1 +
+    /// "T" if the innermost is not a single Named (e.g. a tuple element), which
+    /// preserves the legacy `"[]T"` receiver string for the unusual shape.
+    fn slice_receiver_depth_and_inner(ty: &TypeRef) -> (usize, String) {
+        let mut depth = 0usize;
+        let mut cur = ty;
+        loop {
+            match cur {
+                TypeRef::Array(inner, _) => {
+                    depth += 1;
+                    cur = inner;
+                }
+                TypeRef::Named { path, .. } if path.len() == 1 => {
+                    return (depth.max(1), path[0].clone());
+                }
+                _ => return (depth.max(1), "T".to_string()),
+            }
+        }
     }
 
     /// Plan 15 (D72): convert `Vec<GenericParam>` → `Vec<TypeRef>` для
@@ -6909,6 +7099,10 @@ impl Parser {
             TokenKind::Ident(ref n)
                 if n == "null"
                     && matches!(&self.peek_at(1).kind, TokenKind::Ident(ty)
+                        // Plan 134: `ptr` retained here so `null ptr` still gets
+                        // the dedicated retraction hint (steer to Option/None)
+                        // rather than a bare "undefined identifier"; the message
+                        // body migrates `ptr` → `*()`.
                         if ty == "ptr" || ty == "int" || ty == "i8" || ty == "i16"
                            || ty == "i32" || ty == "i64" || ty == "u8" || ty == "u16"
                            || ty == "u32" || ty == "u64" || ty == "uint" || ty == "f32"
@@ -6926,12 +7120,13 @@ impl Parser {
                         "[E_NULL_PTR_RETRACTED_USE_OPTION] `null {ty}` literal \
                          retracted (Plan 118 D214 amend 2026-06-02). После \
                          NPO codegen (Plan 118 Ф.5 A19/A21), `Option[*T]` и \
-                         `Option[ptr]` provide null-safety через type-system \
+                         `Option[*()]` provide null-safety через type-system \
                          (single-pointer layout NULL=None convention). \
-                         Migration: \
-                         (1) для existing `ptr` code: replace `null ptr` → \
-                             `(0 as ptr)` (mechanical, NULL=(void*)0); \
-                         (2) для new code: use `Option[ptr]` с `None` (type-safe).",
+                         Migration (Plan 134 — `ptr` builtin removed, opaque \
+                         pointer = `*()` = `void*`): \
+                         (1) для existing pointer code: replace `null *()` → \
+                             `(0 as *())` (mechanical, NULL=(void*)0); \
+                         (2) для new code: use `Option[*()]` с `None` (type-safe).",
                         ty = ty_name
                     ),
                     full_span,
@@ -6984,11 +7179,10 @@ impl Parser {
                     | "f32" | "f64" | "bool" | "char" | "str"
                     // Plan 76: `never` — bottom-тип, строчный встроенный примитив.
                     | "never"
-                    // Plan 115 D214: `ptr` — opaque pointer primitive type
-                    // (for FFI). Recognized в primitive position для
-                    // `ptr.method()` static dispatch (currently — no methods
-                    // defined в V1, но reserved для future ptr.MAX и подобных).
-                    | "ptr"
+                    // Plan 134: `ptr` builtin REMOVED — opaque pointer is now
+                    // `*()` (pointer-to-unit = void*). `ptr` no longer a
+                    // primitive type; use в type position → E_TYPE_UNKNOWN
+                    // (types/mod.rs walk_typeref guard).
                 );
                 if (starts_uppercase || is_primitive_type)
                     && matches!(self.peek().kind, TokenKind::Dot)

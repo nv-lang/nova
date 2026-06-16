@@ -6023,6 +6023,11 @@ Codepoint-indexed (как существующий `nova_str_slice` метод).
 > 101.5 partial). Plan 101.1 codegen для non-int mono-dispatch —
 > marker [M-fn-prefix-int-only-mono] ✅ RESOLVED (Plan 101 Group I, vec_map_int_str fix).
 >
+> **AMEND (2026-06-14, Plan 153.5):** вложенные generic-ресиверы произвольной глубины
+> (`fn[T] [][]T @m` / `fn[T] Vec[Vec[T]] @m` — structural typevar-bind в самый
+> внутренний элемент, depth-agnostic) — см. секцию «AMEND … вложенные generic-ресиверы»
+> ниже. Разблокировало `@flatten` (D263); закрыло `[M-153.5-flatten-nested-receiver]`.
+>
 > **Реализовано (Plan 101.1–101.4 + 101.2):**
 > - **101.1** ✅ — Parser `fn[T] ReceiverType @method` + 5 disambiguation
 >   error codes (E_UNDECLARED_TYPEVAR_IN_RECEIVER, E_BARE_TYPEVAR_NEEDS_PREFIX,
@@ -6251,6 +6256,80 @@ protocol composition = decl-time method-set union. Разные scopes,
 fn[T] (T, T) @duplicate(a T) -> (T, T) => (a, a)   // T дважды → один T
 fn[T] [][]T @flatten() -> []T => ...                // T в receiver и return — один T
 ```
+
+### AMEND (2026-06-14, Plan 153.5 commit `1c323d0e`): вложенные generic-ресиверы произвольной глубины
+
+`fn[T]`-typevar в receiver-position теперь связывается **структурной унификацией на
+ЛЮБОЙ глубине вложенности** — не только на верхнем уровне элемента. Это закрывает дыру,
+из-за которой `[][]T @flatten()` (= carrier-форма `Vec[Vec[T]] @flatten()` под
+[D239](#d239-t--синтаксический-псевдоним-vect)) не работал: тело должно назвать
+**внутренний** `T`, а компилятор биндил его в *непосредственный* элемент.
+
+**Корень (обе формы записи теряли вложенность до фикса):**
+- **Carrier** `Vec[Vec[T]]` — ПАРСЕР отвергал вложенный тип в carrier-слоте
+  (`parse_generic_decl_params` ждал `parse_ident` на каждый слот → «expected `]`, got
+  identifier»).
+- **Slice** `[][]T` — ПАРСИЛСЯ, но монорфизатор биндил receiver-typevar `T` в
+  *непосредственный* элемент (`Vec[int]`), не во *внутренний* (`int`) — вложенность
+  `[][]T` схлопывалась в один `"[]T"`-ресивер → тело строило `out []T == Vec[Vec[int]]`,
+  возвращало неверный тип (verified probe RUN-FAIL, mono'd `out` =
+  `Nova_Vec____Nova_Vec____nova_int_p`).
+
+**Правило (после AMEND):**
+- **Обе формы записи приняты и эквивалентны** под D239: `fn[T] Vec[Vec[T]] @m` ≡
+  `fn[T] [][]T @m`. Парсер несёт полный структурированный тип ресивера в
+  `Receiver.receiver_ty` (`type_name` его flatten'ит в `"[][]T"` и теряет глубину —
+  поэтому нужен отдельный структурный слот).
+- **Receiver-typevar биндится в самый внутренний элемент**, рекурсивно (depth-agnostic):
+  для `Vec[Vec[T]]`/`[][]T` `T = element-of-element`; для `Vec[Vec[Vec[T]]]`/`[][][]T`
+  `T` = element третьего уровня; и так далее. Унификация — структурная (по форме типа),
+  не one-level-hardcoded.
+- **Свободные typevar'ы collect'ятся рекурсивно** из вложенного carrier-слота для
+  проверки `E_UNUSED_PREFIX_TYPEVAR` (typevar объявлен в `fn[T]`, но не упомянут в
+  ресивере → ошибка) — собираются из `receiver_ty`, а не из flatten'енного имени.
+- **`E_UNDECLARED_TYPEVAR_IN_RECEIVER` сохраняется** для `fn []T @m` / `fn [][]T @m`
+  **без** `fn[T]`-префикса (scope-typevar НЕ сидится из `receiver_ty` — это намеренно,
+  иначе ошибка маскировалась бы; см. checker-заметку).
+
+```nova
+fn[T] [][]T @flatten() -> []T => ...                // T = innermost (depth 2) — РАБОТАЕТ
+fn[T] Vec[Vec[T]] @flatten() -> Vec[T] => ...       // carrier-форма, ≡ выше под D239
+fn[T] [][][]T @deep_count() -> int => ...           // depth 3 — T = innermost
+fn[T] [][]T @first_row() -> []T => ...              // вложенный-типизированный return
+```
+
+**Реализация (depth-agnostic, без one-level-hardcoding):**
+- **AST** — `Receiver.receiver_ty: Option<TypeRef>` несёт полный структурированный тип
+  вложенного ресивера (единственное место, где глубина переживает — `type_name`
+  flatten'ит в `"[][]T"`).
+- **Parser** — slice `[][]T`: счёт глубины `Array` + спуск до внутреннего `Named` →
+  строит `Array(Array(Named T))`. Carrier `Vec[Vec[T]]`: новый разбор принимает
+  ВЛОЖЕННЫЙ `parse_type` в слоте (детект `Ident[`) + рекурсивный сбор free-typevars;
+  структурные слоты сворачиваются в `receiver_ty`. Free-fn `[T Bound=D]`-разбор не
+  тронут.
+- **Mono** — переиспользован существующий рекурсивный `infer_type_param_binding` для
+  структурного бинда receiver-typevar (Array-арм также снимает mono-форму `Vec____`,
+  восстанавливая элемент через `generic_type_instance_info`); override применён на ВСЕХ
+  путях, биндящих receiver-typevar (emit-dispatch carrier + `[]T`-sentinel slice +
+  call-site return-inference). Depth-aware sentinel-ключи `"[]"*N+"T"` заменили
+  hardcoded `"[]T"`. **Flat `[]T` (depth 1) остался byte-identical** (legacy
+  `NovaArray_`-путь); override гейтится `receiver_ty_is_nested` — только для реально
+  вложенных ресиверов.
+- **Checker** — вложенные typevar'ы из `receiver_ty` собираются в `referenced`-множество
+  для `E_UNUSED_PREFIX_TYPEVAR`; scope `gs` **НЕ** сидится из `receiver_ty` (сохраняет
+  `E_UNDECLARED_TYPEVAR_IN_RECEIVER` — verified, что seed был бы регрессией).
+
+**Cross-cutting заметка.** Это путь, через который идут ВСЕ `[]T`-методы stdlib (slice-
+dispatch). Изменение специально гейтнуто на genuinely-nested ресиверы → flat-случай
+неизменен. См. [D263 AMEND](10-overloading.md#d263-vec-restructure-ops--оператор---plus--concat)
+(`@flatten` использует этот фундамент).
+
+**Известное ортогональное ограничение (pre-existing, вне scope):** slice-форма
+`fn[T] [][]T -> []T`, чьё тело **строит** свежий `Vec[T].new()`, упирается в
+pre-existing erased-base-body лимит, который ЛОМАЕТ и flat `fn[T] []T` с `Vec[T].new()`
+на baseline (`expected struct 'Vec____Nova_T_p'`). Production-flatten — CARRIER-форма
+`Vec[Vec[T]] @flatten` (как все stdlib), работает полностью; slice-form nested-receiver
+binding доказан отдельно (`@count_all`/`@first_row`).
 
 ### Backward-compat
 
@@ -7083,8 +7162,10 @@ Box.SIZE                                    // ✗ E_GENERIC_CONST_REQUIRES_INST
 > `void*` in C). `*()` is the idiomatic expression of an opaque pointer in
 > the `*T` type system (Plan 118 D216) — no compiler special-case required.
 > Migration: `ptr` → `*()`; `0 as ptr` → `0 as *()`; `type X(ptr)` →
-> `type X(*)()`. Compiler emits `E_TYPE_REMOVED_PTR_USE_UNIT_PTR` on `ptr`
-> in type position.
+> `type X(*())`. `nova check` emits `E_TYPE_UNKNOWN` (`type `ptr` is removed —
+> use `*()` …`) on `ptr`/`nova_ptr` in type position, with a migration hint
+> (`type ptr = *()` user-level alias). A defensive codegen-time error mirrors
+> the same message if a use ever bypasses the checker.
 >
 > **Pointer types after Plan 134:**
 > - `*()` — opaque pointer (pointer to unit type = `void*` in C)
@@ -8009,6 +8090,12 @@ Rust precedent: fn() ≠ unsafe fn() — same model.
 Закрывает [M-118.1.5-unsafe-fn-pointer-type].
 
 ### §11. `ptr` redefine (D214 amend cross-ref)
+
+> ⚠️ **RETIRED by Plan 134 (2026-06-09)** — the `ptr` built-in name is fully
+> removed; there is no `type ptr Option[*unsafe ()]` builtin anymore. The
+> idiomatic opaque pointer is `*()` (pointer-to-unit = `void*`). `ptr`/`nova_ptr`
+> in type position → `E_TYPE_UNKNOWN` (use `*()`). See the D214 SUPERSEDED
+> banner. The note below is preserved for historical context only.
 
 ```nova
 type ptr Option[*unsafe ()]
@@ -11705,3 +11792,96 @@ v[1] = 99  // → v.@index(1, 99)   write-overload через MutIndex (D240)
 - [Q35](../open-questions.md) — резолвит. `[M-140-bounds-as-contract]` — разблокирует (`requires 0 <= i && i < @len`).
 - **Отложено (сознательно):** Python-style chaining (`a<b<c` ≡ `a<b && b<c`) — НЕ добавляем; если будет
   спрос — отдельное предложение в будущем.
+
+---
+
+## D260. Ленивый итератор `Vec[T]` — boxed-fluent адаптеры (Plan 153.2)
+
+**Status:** ACTIVE (Plan 153.2 Phase A, 2026-06-14). **Depends on:**
+[D232](#d232-vect--nova-native-generic-growable-array) (`Vec[T]`),
+[D239](#d239-t--синтаксический-псевдоним-vect) (`[]T ≡ Vec[T]`),
+[D58](03-syntax.md) (`Iter`/`Next` — `VecIter`). **Закрывает:**
+[Q-iterator-laziness](../open-questions.md), [Q-iter-mut](../open-questions.md) (Phase A).
+
+### Решение
+
+Ленивый итератор `Vec[T]` реализован по **boxed-fluent**-модели. Канон лени — этос
+cost-transparency (D135): цепочка `v.lazy().map(f).filter(p).collect()` **не делает
+промежуточных аллокаций**; каждый адаптер оборачивает upstream-`step`-замыкание и тянет
+по одному элементу на запрос; цепочку приводит в движение только терминатор.
+
+```nova
+type BoxIter[T] { priv step fn() -> Option[T] }      // boxed-курсор
+fn Vec[T] @lazy() -> BoxIter[T]                       // вход (мост VecIter→BoxIter)
+fn BoxIter[T] @map[U](f fn(T) -> U) -> BoxIter[U]     // адаптер → новый BoxIter
+fn BoxIter[T] mut @collect() -> Vec[T]               // терминатор драйвит цепочку
+```
+
+- **`BoxIter[T]`** держит единственный `step`-thunk: `Some(x)` (следующий элемент) /
+  `None` (исчерпан). Адаптеры строят новые `BoxIter` обёрткой `step`; **ничего не
+  выполняется**, пока терминатор не потянет.
+- **Вход** `v.lazy()` мостит `VecIter[T]`→`BoxIter[T]` (free-fn `box_iter[T]`,
+  захватывающий курсор). `[]T` тождественно `Vec[T]` (D239) → `lazy()` есть и на слайсе.
+- **Адаптеры** (lazy, возвращают новый `BoxIter`, без аллокации): `map`/`filter`/
+  `filter_map`/`enumerate`/`take`/`skip` (Phase A). Каждый копирует receiver
+  (`mut src = @`) в свежее захватывающее замыкание → цепочка **реентерабельна** на
+  терминатор-вызов и не мутирует BoxIter вызывающего, пока терминатор её не сдренит.
+- **Терминаторы** (драйвят/коротят): `collect`/`fold`/`reduce`/`count`/`sum(zero T)`/
+  `any`/`all`/`find`/`for_each`/`min`/`max`/`nth`/`last` (Phase A). `min`/`max` — на
+  `[T Compare]`; `sum(zero T)` — аддитивная идентичность вместо числового протокола.
+
+### Модульное размещение
+
+`BoxIter`/адаптеры/терминаторы — в sibling **FILE-модуле**
+[`std/collections/vec_lazy.nv`](../../std/collections/vec_lazy.nv) (`module
+collections.vec_lazy`), доступном через `import std.collections.vec_lazy`, **НЕ** внутри
+prelude folder-модуля `collections.vec`. Причина та же, что у eager `vec_seq` (D239
+status-note): prelude-global generic-type-метод с CLOSURE-телом утекает свои method-level
+generics (`[U]`/`[Acc]`) и callback-параметры (`f`/`pred`) в merged-body КАЖДОГО юнита →
+коллизия с top-level `fn f`/`type Acc` ([M-codegen-var-types-fn-scope] + D145). Адаптеры
+closure-dense → opt-in import.
+
+### Eager `vec_seq` сосуществует
+
+Eager `collections.vec_seq` (`v.map(f) -> new Vec`, материализует каждый шаг) **оставлен
+без изменений** как переходный eager-surface. Lazy — канонический allocation-free путь
+(Q-iterator-laziness); оба за раздельными explicit-import (eager НЕ переписан в сахар над
+lazy, чтобы не навязывать lazy-import eager-пользователям).
+
+### Codegen-инварианты (обязательны для мономорфизации closure-несущих методов)
+
+Реализация потребовала фиксов в `compiler-codegen/src/codegen/emit_c.rs` (без них —
+silent CC-FAIL / drain-0 / segfault), зафиксированных как контракт:
+
+1. **mut-capture box-реестр (`var_boxed`) флашится per-test** (`emit_test`) — box
+   `_box_<name>` не должен утекать между C-функциями тестов.
+2. **`Stmt::Return` эмитит значение с типом возврата функции как target** — голый
+   `return None` в mono-замыкании резолвится в `NovaOpt_<mono>`, не erased
+   `NovaOpt_nova_int`.
+3. **`infer_expr_c_type` регистрирует generic-инстанс типа-возврата**, когда generic
+   free-fn ИЛИ метод generic-типа возвращает generic-инстанс (`box_vec[int](it) ->
+   BoxIter[int]`, `Vec[T] @lazy() -> BoxIter[T]`) — иначе `.method()` на временном
+   промахивается мимо generic-instance dispatch-path (block 5b) и попадает в erased
+   NULL-stub.
+
+(Лифт mono×closures — register_generic_instances_in_typeref + closure-capture в loop-arms,
+commit `996ca01a`.)
+
+### Отложено (Phase B — НЕ упрощение, заявленный B-набор)
+
+`zip`/`unzip`/`chain`/`flat_map`/`flatten`/`scan`/`inspect`/`step_by`/`take_while`/
+`skip_while`/`peekable`/`min_by[_key]`/`max_by[_key]`/`partition`/`chunk_by`/`into_iter`;
+мут-итерация `for mut x`/`mut @iter()` (Q-iter-mut write-through — отдельный путь);
+`collect`-target FromIterator (мост 153.6). Zero-cost generic-over-source апгрейд поверх
+boxed (монооморфный курсор-тип без бокса) — `[M-153.2-generic-over-source-zerocost]`.
+Tuple-PRESERVING-адаптер сразу после `enumerate` — `[M-153.2-tuple-elem-adapter]`
+(residual `Option[<mono-tuple>]` closure-typing gap; схлопнуть tuple через `map`).
+
+### Связь
+
+- [D232](#d232-vect--nova-native-generic-growable-array) — `Vec[T]`; [D239](#d239-t--синтаксический-псевдоним-vect) — `[]T ≡ Vec[T]`.
+- [D58](03-syntax.md) — `Iter`/`Next` (`VecIter` — upstream-источник для `lazy()`).
+- [D135](01-philosophy.md) — cost-transparency (no hidden O(n)) — обоснование лени.
+- [Q-iterator-laziness](../open-questions.md) — закрыта (lazy = канон).
+- [Q-iter-mut](../open-questions.md) — Phase A закрывает терминаторами/адаптерами; мут-итерация — Phase B.
+- Plan 153.2 — план; `vec_seq.nv` / `vec_lazy.nv` — реализация.

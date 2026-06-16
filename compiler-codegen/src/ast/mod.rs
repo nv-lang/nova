@@ -671,6 +671,19 @@ pub struct Receiver {
     /// Bounds declared in carrier brackets: `fn Vec[T Printable] @m()`.
     /// Stored for future enforcement; currently informational only.
     pub carrier_bounds: Vec<GenericParam>,
+    /// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: the FULL
+    /// structured receiver type, preserved so the monomorphizer can bind a
+    /// receiver typevar at ANY nesting depth via structural unification.
+    ///
+    /// For a flat receiver (`[]T`, `Vec[T]`, bare `T`) this carries the same
+    /// info `type_name` + `generics` already encode and the legacy flat path
+    /// is used; for a NESTED receiver (`[][]T` → `Array(Array(Named T))`,
+    /// `Vec[Vec[T]]` → `Named{Vec,[Named{Vec,[Named T]}]}`) it is the only
+    /// place the inner nesting survives — `type_name` flattens to `"[][]T"`
+    /// (the slice spelling) and `generics` only records the carrier free
+    /// typevars, neither of which preserves the structural depth.
+    /// `None` for non-generic receivers / when no structured form was built.
+    pub receiver_ty: Option<TypeRef>,
     pub kind: ReceiverKind,
     pub mutable: bool,             // `fn Type mut @method`
     /// Plan 73 (D131): `fn Type consume @method` — consuming receiver.

@@ -1,0 +1,82 @@
+// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver] — depth-3 nested
+// generic CARRIER receiver. Proves the structural typevar unification is
+// RECURSIVE / depth-agnostic (no per-level hardcoding): `T` binds to the
+// innermost element across THREE levels of nesting.
+//
+//   `@flatten_deep` on `Vec[Vec[Vec[T]]]` returns `Vec[T]` — `T` = int (depth 3).
+//   `@flatten_one`  on `Vec[Vec[Vec[T]]]` returns `Vec[Vec[T]]` — one level off,
+//                    so `T` = int but the result element is `Vec[T]` (depth-2
+//                    typed return), exercising a nested-typed RETURN as well.
+
+module plan153_5_nested.flatten_depth3
+
+import std.collections.vec.{Vec}
+
+// Flatten all three levels into a single `Vec[T]` (T = innermost element).
+export fn Vec[Vec[Vec[T]]] @flatten_deep() -> Vec[T] {
+    mut out = Vec[T].new()
+    for mid in @ {
+        for inner in mid {
+            for x in inner {
+                out.push(x)
+            }
+        }
+    }
+    out
+}
+
+// Flatten just the OUTER level: `Vec[Vec[Vec[T]]]` -> `Vec[Vec[T]]`.
+export fn Vec[Vec[Vec[T]]] @flatten_one() -> Vec[Vec[T]] {
+    mut out = Vec[Vec[T]].new()
+    for mid in @ {
+        for inner in mid {
+            out.push(inner)
+        }
+    }
+    out
+}
+
+test "flatten_deep depth-3 -> flat Vec[int] (T = innermost int)" {
+    ro a = Vec[int].from([1, 2])
+    ro b = Vec[int].from([3])
+    mut l2x = Vec[Vec[int]].new()
+    l2x.push(a)
+    l2x.push(b)
+    ro c = Vec[int].from([4, 5])
+    mut l2y = Vec[Vec[int]].new()
+    l2y.push(c)
+    mut l3 = Vec[Vec[Vec[int]]].new()
+    l3.push(l2x)
+    l3.push(l2y)
+
+    ro flat = l3.flatten_deep()
+    assert(flat.len() == 5)
+    assert(flat[0] == 1)
+    assert(flat[1] == 2)
+    assert(flat[2] == 3)
+    assert(flat[3] == 4)
+    assert(flat[4] == 5)
+}
+
+test "flatten_one depth-3 -> Vec[Vec[int]] (nested-typed return)" {
+    ro a = Vec[int].from([10, 20])
+    ro b = Vec[int].from([30])
+    mut l2x = Vec[Vec[int]].new()
+    l2x.push(a)
+    l2x.push(b)
+    ro c = Vec[int].from([40, 50, 60])
+    mut l2y = Vec[Vec[int]].new()
+    l2y.push(c)
+    mut l3 = Vec[Vec[Vec[int]]].new()
+    l3.push(l2x)
+    l3.push(l2y)
+
+    ro rows = l3.flatten_one()
+    assert(rows.len() == 3)
+    ro r0 = rows[0]
+    ro r2 = rows[2]
+    assert(r0.len() == 2)
+    assert(r0[0] == 10)
+    assert(r2.len() == 3)
+    assert(r2[2] == 60)
+}

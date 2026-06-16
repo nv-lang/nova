@@ -7873,16 +7873,61 @@ the product against available virtual address space.
    nand/max → CAS-loop). Барьеры over-strong (full `_Interlocked*`) — sound для
    любого запрошенного порядка на x64 TSO.
 
-**Остаток (Plan 145.1, `[M-145-msvc-remaining-stmt-expr]`):** узкие codegen-конструкции,
-всё ещё несовместимые с cl.exe и пока оставленные stmt-expr (раскрылись после
-устранения главных блокеров): struct-element write по индексу (`vec_of_struct[i] = val`
-→ C2440 на присваивании struct-значения через `*(struct*)void_ptr`-lvalue),
-heap-box value-rvalue, Option-get composite repack, record-invariant wrap.
+**Остаток → РАЗРЕШЕНО (Plan 145.1 поверх 145.2-детерминизма, 2026-06-15):** три из
+четырёх узких stmt-expr-сайтов устранены портируемо — struct-element write по индексу
+(`vec_of_struct[i] = val` → теперь `memcpy`-в-слот вместо присваивания struct-значения
+через `*(struct*)void_ptr`-lvalue, снимает C2440), heap-box **примитива** в throw-как-
+выражении (→ `nova_box_value` + scalar compound literal), Option-get composite repack
+(→ `nova_npo_from_tagged_int` + compound literal). Каждый сайт закрыт co-located
+регресс-фикстурой (`nova_tests/plan145/t2_index_write_pos`,
+`nova_tests/plan145_2/throw_primitive_expr_pos`, `…/composite_get_option_pos`), которая
+сверяет наличие портируемого хелпера в `.c` и PASS на clang+MSVC. **Остаточный P3
+(`[M-145-msvc-remaining-stmt-expr]`):** только value-record throw-**как-выражение**
+(`x ?? throw SomeRecord{}`) — multi-field compound-literal не годится для member-init,
+rvalue в expression-контексте небезопасно хоистить; stmt-expr оставлен сознательно.
+Разблокировку обеспечил Plan 145.2 (детерминизм эмиссии — см. **D279**).
 
 > **Прецедент:** D-блок Plan 82 (compat-слой `nova_msvc_compat.h`). D276 обобщает
 > правило на ВЕСЬ генерируемый C, а не только runtime builtins.
 > **Конвенция для разработчиков** — также в [compiler-codegen/README.md](../../compiler-codegen/README.md)
 > §«MSVC-портируемость генерируемого C».
+
+## D279 (NEW) — Codegen emission must be deterministic (stable declaration order) (Plan 145.2)
+
+<!-- D-номер: изначально выбран D278, перенумерован в D279 из-за параллельной коллизии
+     с D278 (Editor highlighting↔lexer, 09-tooling.md), который смёржился в main раньше. -->
+
+
+> **Решение:** Порядок эмиссии C-кода (деклараций типов/функций, NovaOpt-typedef'ов,
+> enqueue в mono-worklist) обязан быть **детерминированным** — стабильным между сборками
+> и прогонами на одной и той же Nova-программе. Эмиссия НЕ должна зависеть от порядка
+> итерации структур с недетерминированным обходом. Конкретно: коллекции `emit_c.rs`,
+> по которым итерируется генерация (`method_overloads`, `embed_fields`), используют
+> `BTreeMap` (отсортированный обход по ключу), а **не** `HashMap` (у Rust `RandomState` —
+> seed per-process, порядок рандомизирован).
+
+**Контекст.** Недетерминированный порядок обычно безвреден, но он **будил латентные
+order-зависимые баги prelude**, всплывавшие нерегулярно «через раз»: (A) init-order OOB
+(`array: index 0 out of bounds for length 0` — статик-инициализация читала ещё не
+заполненный массив), (B) `var_boxed` cross-function leak (CC-FAIL: `_box_<v>` для
+mut-capture замыкания просачивался между функциями → undeclared identifier). Та же
+программа давала разный `.c` между сборками → диагностика «bisect-by-rebuild» становилась
+ненадёжной (main 12/12 PASS, тот же source на другом бинаре 5/5 FAIL). Детерминизм —
+**предусловие воспроизводимости** (надёжный bisect/diff `.c`, кэш сборки, отладка
+codegen) и страховка от того, что эти классы багов снова начнут «будиться».
+
+**Правило для разработчиков.** Любая новая map/set в `emit_c.rs`, по которой
+**итерируется эмиссия** (а не только point-lookup), должна иметь детерминированный обход
+(`BTreeMap`/`BTreeSet` либо явная сортировка ключей перед итерацией). `HashMap`/`HashSet`
+допустимы только для чистого lookup, результат которого не влияет на порядок вывода.
+
+> **Остаток (benign, P3 `[M-codegen-emission-nondeterminism]`):** порядок объявления
+> `NovaOpt_<T>`-typedef'ов всё ещё зависит от первого касания (косметика — независимые
+> typedef'ы, на сборку не влияет); robust `var_boxed`-flush и топологический порядок
+> статик-инициализации prelude — отдельный hardening. Триггер-часть (то, что *будило*
+> баги) закрыта.
+> **Связь:** D279 — предусловие, снявшее блокер с остатка **D276** (Plan 145.1).
+
 ## D274 — Tree-walking interpreter currently UNSUPPORTED; C-codegen only (Plan 157)
 
 **Решение.** Древесный интерпретатор (`nova run`, модуль `compiler-codegen/src/interp/`)
@@ -7892,12 +7937,19 @@ heap-box value-rvalue, Option-get composite repack, record-invariant wrap.
 - `nova run` остаётся **видимой** подкомандой CLI (discoverability), но при вызове
   немедленно завершается с ошибкой и подсказкой `nova build <file>` / `nova test`
   (exit ≠ 0; help помечен `[UNSUPPORTED]`). Сознательная **громкая** граница, не тихий no-op.
+- **Внутренний dev-бинарник `nova-codegen`** тоже застаблен (2026-06-14): его команды
+  `run` и `test-interp` больше не конструируют `interp::Interpreter`, а немедленно
+  ошибаются (exit ≠ 0) с указанием на C-codegen (`nova-codegen compile`, `nova test`);
+  doc-строки clap помечены `[UNSUPPORTED]`. Прочие команды (`compile`, `check`,
+  `test-build`, …) работают. То же громкое поведение, что и у `nova run`.
 - Модуль `interp/` сохранён «для справки» (помечен `//!`-нотой), но из пайплайна исключён.
   Мёртвые interpreter-тесты (`integration.rs`, `spec_nova.rs`, `run_interp_named.rs`,
   `common/mod.rs`) удалены — они ссылались на изъятый библиотечный крейт `nova`.
 - Регресс-защита контракта — `nova-cli/tests/interp_unsupported.rs` (negative: `nova run`
-  ошибается + указывает на C-codegen; positive: `nova check` работает), прогон через
-  релизный бинарник.
+  ошибается + указывает на C-codegen; positive: `nova check` работает) и
+  `compiler-codegen/tests/interp_tool_unsupported.rs` (negative: `nova-codegen run` /
+  `test-interp` ошибаются; positive: `nova-codegen compile` работает), прогон через
+  релизные бинарники.
 
 **Почему.** Интерпретатор расходился с C-семантикой и тормозил разработку; единый
 C-codegen-путь — единственный поддерживаемый и тестируемый. «пока» намеренно: возможна
@@ -7905,4 +7957,93 @@ C-codegen-путь — единственный поддерживаемый и 
 
 Связь: [Plan 157](../../docs/plans/157-interpreter-unsupported.md),
 [open-questions Q-interpreter-future](../open-questions.md), маркер `[M-interp-unsupported]`.
+## D275 (NEW). Codegen: `if`/`match`-выражение коэрсится в `unit`, когда одна ветка `unit` (паритет if↔match)
+
+**Source:** ветка `plan-cgfix-fluent-tail-if` (2026-06-14).
+**Status:** ✅ ACTIVE 2026-06-14.
+**Closes:** `[M-codegen-fluent-tail-if-unify]`.
+**Связь:** [D132](03-syntax.md#d132---fluent-return-метод-возвращает-receiver) (`-> @` fluent-return), [D55](02-types.md#d55) (match с unit-веткой → стиль), [D217 amend Plan 123.4.4](#d217-amend-plan-1234-4--codegen-fluent-chain-root-temp-pre-pass), [Q-match-unit-arms-in-expr](../open-questions.md#q-match-unit-arms-in-expr).
+
+### 1. Что фиксируется (codegen-семантика)
+
+Когда `if`/`match`-выражение стоит в **statement/discard-позиции** и одна из
+его ветвей даёт реальное value-`T` (например fluent-хвост `-> @`: `v.push(cp)`
+типа `Nova_Vec*`), а **другая, не-расходящаяся** ветка даёт `nova_unit`, типы
+ветвей C-несовместимы. В этом случае всё `if`/`match`-выражение коэрсится в
+`unit` — значения отбрасываются (`_nv_if = NOVA_UNIT; (void)(<push>);`), а не
+эмитится `tmp(Vec*) = NOVA_UNIT;` (несовпадение типов C → CC-FAIL).
+
+Это **паритет двух конструкций**: `emit_match` уже имел unit-доминирование
+(`[M-91.13]` — unit-арм «доминирует» над value-армами в discard-позиции).
+`emit_if_expr` этой симметрии не имел → `if { out.push(..) } else { match {…} }`
+не компилировался. D275 распространяет правило на `if` **и** выравнивает
+inference с emit.
+
+### 2. Правила
+
+1. **Симметрия ветвей `if`.** Тип + расходимость считаются одинаково для
+   then- и else-ветки (для `ElseBranch::Block` и `ElseBranch::If`). Fluent-хвост
+   может быть в любой из двух — обе стороны проверяются.
+2. **Unit-доминирование (gated).** Если выбранный (divergence-aware) тип
+   `chosen != nova_unit`, но **другая не-расходящаяся** ветка даёт `nova_unit`
+   — всё выражение → `nova_unit`. Гейт `chosen != nova_unit` оставляет обычный
+   value-typed `if c {1} else {2}` нетронутым.
+3. **Расходимость приоритетнее unit (Plan 125 сохранён).** Расходящийся сосед
+   (`return`/`throw`/`panic`) **НЕ** форсит unit — это поведение divergence-aware
+   выбора ветки из Plan 125 и оно сохраняется (unit-доминирование смотрит только
+   на **не-расходящиеся** ветки).
+4. **infer↔emit симметрия для `match`.** `infer_expr_c_type(Match)` применяет то
+   же правило «есть не-расходящаяся unit-арм → весь match `nova_unit`», что и
+   `emit_match`. Раньше inference возвращал тип не-unit арм'ы (`Vec*`), пока emit
+   эмитил `nova_unit` → enclosing `if`/assign объявлял temp `Vec*` и присваивал в
+   него `nova_unit` → CC-FAIL. Теперь inference и emission согласованы.
+
+### 3. Почему это корректно
+
+В discard-позиции значение `if`/`match` отбрасывается — выбор «common type»
+между несовместимыми ветвями семантически не наблюдаем. Эффекты обеих ветвей
+(мутации fluent-хвоста, side-effecty unit-statements) выполняются как и прежде;
+коэрсится только тип результата. Downstream emit (`emit_block_into`/
+`emit_assign_typed`) уже обрабатывает `ty == "nova_unit"` — новых путей не
+требуется.
+
+### 4. Где в коде
+
+`compiler-codegen/src/codegen/emit_c.rs`:
+- `emit_if_expr` (объявлена ~line 25853; fallback ~25905-25923) —
+  symmetric `(else_diverges, else_ty)` + gated unit-доминирование.
+- `infer_expr_c_type(Match)` (~line 34643) — `any_unit_arm` →
+  `nova_unit`, зеркало `emit_match` `[M-91.13]` (~27249-27259).
+
+### 5. Эффект на std
+
+Снят workaround в `std/unicode/case.nv`: per-codepoint мэппинги больше не
+обязаны прятать `push` в for-циклах через `Vec[int]`-возвращающие helper'ы.
+Восстановлен прямой fluent-стиль: `single` → `Vec[int].with_capacity(1).push(cp)`;
+`fold_case`/`to_uppercase`/`to_lowercase` — `match`/`if` с fluent `out.push(cp)`
+в одной ветке и unit-сиблингом в другой (в т.ч. Final_Sigma-путь
+`if { out.push(..) } else { match {…} }`).
+
+### 6. Acceptance (G0 «без упрощений» — реальный prod-стиль, не воркэраунд)
+
+- **CFI-1** Fluent `Vec.push`-хвост в then, unit else → компилится, `if`=unit ✅
+- **CFI-2** Зеркало — fluent-хвост в else, unit then ✅
+- **CFI-3** No-else (`if c { v.push(1) }`) ✅
+- **CFI-4** Nested `if` с fluent-хвостами внутри + unit outer-сиблинг ✅
+- **Контроли (не должны меняться):** `if c {1} else {2}` остаётся `int`;
+  str-`if` остаётся str; nested value-`if` остаётся str ✅
+- Фикстура `nova_tests/cgfix_fluent_tail_if/repro.nv` 1/1 PASS.
+- Directly-touched suite `plan152_4` (std.unicode) **13/13** PASS с прямым
+  fluent-стилем в `case.nv` (workaround убран — критерий приёмки выполнен).
+- 0 новых регрессий (baseline сверен против merge-base `22aa4944`; наборы FAIL
+  идентичны — все pre-existing).
+
+### 7. Граница / followups
+
+Покрыт **discard-позиционный** случай (значение отбрасывается). Случай, когда
+несовместимые fluent-vs-unit ветви стоят в **value-position** (результат
+действительно нужен с не-unit типом) — это пользовательская type-ошибка, не
+codegen-баг; type-checker должен её ловить (родственно
+[Q-match-unit-arms-in-expr](../open-questions.md#q-match-unit-arms-in-expr)).
+D275 чинит именно codegen-mismatch в statement-позиции.
 

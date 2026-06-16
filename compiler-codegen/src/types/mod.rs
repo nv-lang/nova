@@ -3405,6 +3405,16 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
+            // Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: a NESTED
+            // CARRIER receiver (`Vec[Vec[T]]`) declares its typevars in the
+            // carrier brackets; they land in `r.generics` (as `Named{T}`) and so
+            // are already in scope via the loop above. A NESTED SLICE receiver
+            // (`fn[T] [][]T`) declares `T` via the `fn[T]` prefix (already in
+            // `fd.generics` → `gs`). The structured `r.receiver_ty` is therefore
+            // NOT used to seed `gs`: doing so would mask the
+            // `E_UNDECLARED_TYPEVAR_IN_RECEIVER` diagnostic for an UNdeclared
+            // slice typevar (`fn []T @m` without a `fn[T]` prefix), which is the
+            // whole point of that check.
         }
         // Plan 101.1 B1 (Ф.2 E_UNDECLARED_TYPEVAR_IN_RECEIVER):
         // Detect `fn []T @method` где T — single-uppercase letter без
@@ -3468,6 +3478,13 @@ impl<'a> TypeCheckCtx<'a> {
                     if elem.len() <= 2 && elem.chars().all(|c| c.is_ascii_uppercase()) {
                         referenced.insert(elem.to_string());
                     }
+                }
+                // Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: a NESTED
+                // receiver (`[][]T`, `Vec[Vec[T]]`) references its typevars only
+                // through the structured `receiver_ty` — collect them so a
+                // legitimately-used nested typevar is not flagged unused.
+                if let Some(rty) = &r.receiver_ty {
+                    Self::collect_named_idents(rty, &mut referenced);
                 }
                 // Collect from params.
                 for p in &fd.params {
@@ -3779,6 +3796,22 @@ impl<'a> TypeCheckCtx<'a> {
                 // NovaOpt_X struct, не pointer).
                 // generic-параметр в scope — абстрактное имя, не тип.
                 if gs.contains(name) {
+                    return;
+                }
+                // Plan 134: встроенный тип `ptr` (и его C-имя `nova_ptr`) удалён.
+                // `*()` (pointer-to-unit → `void*`) — канонический opaque-pointer.
+                // Ловим использование на этапе `nova check` (не откладываем до
+                // codegen): даём понятную миграционную ошибку с подсказкой.
+                // A-134.a / Plan 134 Ф.1.7.
+                if name == "ptr" || name == "nova_ptr" {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TYPE_UNKNOWN] type `{name}` is removed — use `*()` \
+                             (pointer-to-unit = `void*`) instead (Plan 134). \
+                             For a short alias write `type ptr = *()` in your own code.",
+                        ),
+                        *span,
+                    ));
                     return;
                 }
                 if arity_exempt(name) {
@@ -19808,6 +19841,7 @@ mod primitive_mut_method_tests {
             type_name: type_name.to_string(),
             generics: Vec::new(),
             carrier_bounds: Vec::new(),
+            receiver_ty: None,
             kind,
             mutable,
             consume: false,
@@ -20358,6 +20392,7 @@ mod named_tuple_ctor_infer_tests {
                 type_name: "P".to_string(),
                 generics: vec![],
                 carrier_bounds: vec![],
+                receiver_ty: None,
                 kind: ReceiverKind::Instance,
                 mutable: false,
                 consume: false,

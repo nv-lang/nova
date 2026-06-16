@@ -1,0 +1,9 @@
+// lane_normal.nv — Plan 156 slow-lane fixture: a NORMAL test.
+// No `_slow` suffix → runs by default and under --include-slow,
+// but is EXCLUDED under --slow-only.
+
+module plan156.lane_normal
+
+test "normal test runs by default" {
+    assert(1 + 1 == 2)
+}

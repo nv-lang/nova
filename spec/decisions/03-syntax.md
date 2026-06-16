@@ -41,6 +41,7 @@
 | [D239](#d239-t-сахар-над-vect) | `[]T` как сахар над `Vec[T]` — type alias, literal desugaring, migration |
 | [D240](#d240-mutindexk-v-protocol---akey--val-magic) | `MutIndex[K, V]` protocol: `mut @index(key K, val V)` — magic для `a[key] = val` |
 | [D241](#d241-канонический-порядок-модификаторов-type-декларации-scope-adjacency) | Канонический порядок type-модификаторов (scope-adjacency): `value priv` канон, order-independence запрещён |
+| [D262](#d262-slice-op-surface-на-t-view-модели-без-нового-типа) | Slice-op surface (`split_at`/`first_n`/`last_n`/`as_slice`/chunks/windows) на `[]T`-view модели — БЕЗ нового `Slice`-типа |
 
 ---
 
@@ -9874,6 +9875,89 @@ Added: 2026-06-11  Status: IMPLEMENTED 2026-06-12 (Plan 148 Ф.1; enforcement в
 
 ---
 
+## D262. Slice-op surface на `[]T`-view модели — без нового типа
+
+> **Минорное решение (Plan 153.4).** Фиксирует, что весь slice-операционный
+> поверхностный API (`split_at`/`split_first`/`split_last`/`first_n`/`last_n`/
+> `as_slice` + ленивые `chunks`/`windows`) строится **на уже принятой**
+> `[]T`-view модели D238/D239 + Plan 96 (D-single-type, D-cap-len) и **НЕ
+> вводит** отдельный `Slice[T]`-тип. Новых типов/протоколов нет — это
+> подтверждение едино-типной модели + конкретная сигнатурная поверхность.
+
+### Что
+
+Slice-операции (разбиение, префикс/суффикс, whole-view) на `Vec[T]` возвращают
+**view того же типа** `[]T ≡ Vec[T]` (`{ data: @data + start, len, cap: len }`,
+`cap == len`), указывающий внутрь того же GC-tracked буфера. Нет `Slice[T]`,
+нет `&[T]`, нет borrow-lifetime — view это просто `Vec`-заголовок (D238 уже
+зафиксировал это для `v[a..b]`; D262 распространяет на named-методы).
+
+| Метод | Сигнатура | Контракт |
+|---|---|---|
+| `@split_at(i)` | `-> (Self, Self)` | `requires 0 <= i <= len` (OOB → panic, НЕ clamp) |
+| `@split_first()` | `-> Option[(T, Self)]` | пусто → `None` |
+| `@split_last()` | `-> Option[(T, Self)]` | пусто → `None` |
+| `@first_n(n)` | `-> Self` | **CLAMP** (`n>len`→весь, `n<=0`→пусто) |
+| `@last_n(n)` | `-> Self` | **CLAMP** (как `first_n`) |
+| `@as_slice()` | `-> Self` | ro whole-view (`Vec`-side аналог `str.as_bytes()`) |
+| `mut @as_slice()` | `-> mut Self` | write-through whole-view (recv-mut overload) |
+| `@chunks`/`@chunks_exact`/`@rchunks`/`@windows` | LAZY iterator | DEFERRED (`[M-153.4-chunks-windows-lazy]`, gated Plan 153.2) |
+
+### Семантика
+
+- **Same-type, zero-copy.** Каждый view алиасит родительский буфер; никакой
+  внешней аллокации. Owning-копия — `clone()`/`to_vec()`, никогда не view.
+- **`split_at` — контракт (panic), `first_n`/`last_n` — clamp.** `split_at`
+  обязан держать инвариант `len(left) + len(right) == len`; silent clamp скрыл
+  бы баг вызывающего и сломал инвариант → `requires`-violation panic. У `first_n`/
+  `last_n` семантика «взять до N» — clamp естественен (зеркало Rust `[..n.min(len)]`),
+  не сюрпризит «не больше n».
+- **Mut-view через receiver-mut overload.** `mut @as_slice()` выбирается на
+  `mut`-bound получателе и даёт write-through view; имя — `as_slice` (overload по
+  получателю, как `@as_ptr`/`mut @as_ptr`), **НЕ** `as_mut_slice` (D247 / Plan 135
+  accessor-конвенция).
+- **Detach-on-resize (D238/Plan 96, Go-модель GC-safe).** View имеет `cap == len`,
+  поэтому первая *реаллоцирующая* мутация (`push`/`reserve`/`insert` при `cap==len`)
+  уезжает в свежий буфер и view **молча детачится** — родительский backing не
+  перезаписывается (Go shared-backing footgun устранён без borrow-checker).
+  До точки detach mut-view пишет сквозь в родителя. Точка detach предсказуема
+  через точную ёмкость (`with_capacity`/`@cap(n)`, 153.1 — без pow2-округления).
+
+### Почему
+
+- **Никакого нового типа.** `[]T ≡ Vec[T]` (D239) + `Index[Range, Vec[T]]` (D238)
+  уже выражают slice; named slice-методы — лишь эргономика поверх той же модели.
+  Отдельный `Slice[T]` потребовал бы borrow-lifetime инфраструктуры, которой в
+  Nova нет и не нужно (detach-on-resize заменяет borrow-checker).
+- **Eager без внешней аллокации сейчас, lazy chunks/windows — позже.**
+  `split_at`/`first_n`/… возвращают view'ы БЕЗ аллокации (просто заголовки), их
+  можно отдать eager. `chunks`/`windows` в eager-форме аллоцировали бы
+  `[][]T`-Vec — это расходится с ленивым каноном (Q-iterator-laziness), поэтому
+  они ленивые и gated на инфру Plan 153.2.
+
+### Что отвергнуто
+
+- **Отдельный `Slice[T]` / `&[T]` тип** — избыточен на single-type модели Plan 96;
+  view это `Vec`-заголовок с `cap == len`.
+- **`as_mut_slice` как отдельное имя** — мут-view = receiver-mut overload `@as_slice`
+  (D247/Plan 135), одно имя, диспатч по mut-получателю.
+- **Eager `chunks`/`windows` → `[][]T`** — аллоцировал бы внешний Vec, расходится
+  с ленивым каноном; отложены ленивыми (`[M-153.4-chunks-windows-lazy]`).
+
+### Связь
+
+- D238 — `Index[K, V]`; `v[a..b]` через `Index[Range, Vec[T]]` (та же view-модель)
+- D239 — `[]T ≡ Vec[T]` (нет отдельного slice-типа)
+- D247 / Plan 135 — accessor-конвенция: мут-вариант = receiver-mut overload (`mut @as_ptr`)
+- Plan 96 — D-single-type (`[]T`-view того же типа) + D-cap-len + detach-on-resize
+- Plan 153.4 — реализация (`std/collections/vec/views.nv`)
+- `[M-153.4-chunks-windows-lazy]` (backlog) — ленивые chunks/windows, gated Plan 153.2
+
+Added: 2026-06-14  Status: IMPLEMENTED 2026-06-14 (Plan 153.4-A; eager-views в
+`std/collections/vec/views.nv`; chunks/windows DEFERRED `[M-153.4-chunks-windows-lazy]`)
+
+---
+
 ## D249. Строковая координатная модель: линзы вместо плоских методов
 
 Added: 2026-06-13  Status: IMPLEMENTED 2026-06-13 (Plan 152.1 Ф.1/Ф.4)
@@ -9983,7 +10067,7 @@ strip/split возвращают **zero-copy** sub-views (`@[a..b]`).
 
 ## D252. `char`-тип API — классификация / case / digit
 
-Added: 2026-06-13  Status: 152.3a (ASCII) IMPLEMENTED 2026-06-13 (Plan 152.3a); 152.3b (Unicode) — Phase B
+Added: 2026-06-13  Status: 152.3a (ASCII) IMPLEMENTED 2026-06-13 (Plan 152.3a); 152.3b (Unicode) IMPLEMENTED 2026-06-15 (Plan 152.3b)
 
 `char` (u32 codepoint) получает прод-API уровня Rust `char` / Java `Character` / Go
 `unicode`. **Двухуровнево:** ASCII-core (в ядре, без таблиц) + Unicode-aware (делегат
@@ -10005,12 +10089,42 @@ order), ноль Unicode-таблиц; семантика == Rust `char::is_asci
 
 Ad-hoc `is_digit`/`is_hexdigit` (json.nv) консолидированы на эти методы.
 
-### 152.3b — Unicode-aware (Фаза B, делегат 152.4)
+### 152.3b — Unicode-aware (Фаза B, IMPLEMENTED — делегат в std.unicode)
 
-`@is_alphabetic`/`@is_numeric`/`@is_alphanumeric`/`@is_whitespace`/`@is_uppercase`/
-`@is_lowercase`/`@is_control`/`@general_category()`; `@to_uppercase()`/`@to_lowercase()`
-(multi-codepoint — ß→ss, ﬁ→FI → возвращают последовательность, не один char). Зависят от
-Unicode-данных `std/unicode` (Plan 152.4). См. [Plan 152.3](../../docs/plans/152.3-char-type-api.md).
+**Opt-in** char-методы (доступны ТОЛЬКО под `import std.unicode`, как `str
+@as_graphemes` — за размер таблиц платит импортирующий, НЕ prelude). Реализованы в
+[`std/unicode/category.nv`](../../std/unicode/category.nv) char-receiver-обёртками над
+code-point-предикатами того же модуля; 1:1 с UCD 16.0, семантика == Rust `char`:
+
+- `@is_alphabetic` / `@is_numeric` / `@is_alphanumeric` / `@is_whitespace` /
+  `@is_uppercase` / `@is_lowercase` / `@is_control` — бинарные предикаты.
+- `@general_category() -> GeneralCategory` — UCD General_Category (TR44 Table 12),
+  все 30 значений (`Lu|Ll|Lt|Lm|Lo|Mn|Mc|Me|Nd|Nl|No|Pc|Pd|Ps|Pe|Pi|Pf|Po|Sm|Sc|Sk|
+  So|Zs|Zl|Zp|Cc|Cf|Cs|Co|Cn`); `Cn` (not assigned) — дефолт для code point'а вне
+  `UnicodeData.txt`. Объявлен как `export type GeneralCategory` в `category.nv`.
+- `@to_uppercase() -> str` / `@to_lowercase() -> str` — полное per-code-point
+  case-mapping, возвращают **`str`** (НЕ один `char`): результат может быть
+  multi-code-point (ß→`"SS"`, ﬁ→`"FI"`, İ→`"i"`+◌̇). `CharsView` НЕ существует; возврат
+  `str` — финальное решение (см. ниже). Final_Sigma — string-level контекст-правило,
+  поэтому одиночная Σ (U+03A3) lowercase'ится в σ (non-final form) — корректный
+  context-free ответ. Переиспользует `upper_one`/`lower_one` из `case.nv` (152.4.4).
+
+**Делегация (под капотом).** Предикаты делегируют в `std.unicode` code-point-функции
+(`general_category`/`is_alphabetic`/`is_numeric`/…), которые читают новую таблицу
+[`std/unicode/category_data.nv`](../../std/unicode/category_data.nv): General_Category
+(`UnicodeData.txt` поле 2) + бинарные `Alphabetic` (DerivedCoreProperties.txt) и
+`White_Space` (PropList.txt) из UCD 16.0. `is_numeric` выводится из GC (Nd|Nl|No, как
+Rust), отдельной таблицы не требует. Таблица сгенерирована build-time-инструментом
+`nova-codegen unicode` (range-таблицы binary-search, как `word_data.nv`); `--check` —
+CI-guard. Char-методы остаются **вне prelude**: программа без `import std.unicode` их
+не видит (pin'ит negative-фикстура).
+
+**`@to_uppercase()` возврат `str`, НЕ итератор.** Возможные формы возврата были `str`
+(материализованный) vs `CharsView`/итератор (как Rust `char::to_uppercase()` →
+`ToUppercase: Iterator<Item=char>`). Решение — **`str`**: (1) `CharsView` для char-case
+в Nova не существует и не нужен (расширение 1–3 cp — крошечное), (2) симметрия со
+string-level `to_uppercase(s) -> str` (case.nv), (3) `str` напрямую конкатенируется/
+сравнивается без сбора. См. [Plan 152.3](../../docs/plans/152.3-char-type-api.md).
 
 ---
 

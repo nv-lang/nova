@@ -1,0 +1,49 @@
+// Regression guard for the operator-`+` dispatch change made alongside
+// `[][]T @flatten()` ([M-153.5-flatten-nested-receiver]): the `Vec + Vec`
+// concat operator (and `+=`) must keep dispatching to `Vec.@plus` (= @concat),
+// while `data + n` pointer arithmetic inside a `Vec[Vec[T]]` no longer
+// mis-dispatches to `@plus`. This fixture re-checks the user-facing `Vec + Vec`
+// surface; flatten itself is covered by flatten.nv.
+
+module plan153_5.flatten_plus_guard
+
+import std.collections.vec.{Vec}
+
+test "Vec + Vec concat still dispatches to @plus" {
+    ro a = Vec[int].from([1, 2, 3])
+    ro b = Vec[int].from([4, 5])
+    ro c = a + b
+    assert(c.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    // operands unchanged (concat builds a new Vec)
+    assert(a.len() == 3)
+    assert(b.len() == 2)
+}
+
+test "Vec += appends a fresh concat" {
+    mut a = Vec[int].from([1, 2])
+    a += Vec[int].from([3, 4])
+    assert(a.equal(Vec[int].from([1, 2, 3, 4])))
+}
+
+test "str + str concat unaffected" {
+    ro s = "foo" + "bar"
+    assert(s == "foobar")
+}
+
+test "double flatten Vec[Vec[Vec[int]]] -> Vec[int]" {
+    ro a = Vec[int].from([1, 2])
+    ro b = Vec[int].from([3])
+    mut l2x = Vec[Vec[int]].new()
+    l2x.push(a)
+    l2x.push(b)
+    ro c = Vec[int].from([4, 5])
+    mut l2y = Vec[Vec[int]].new()
+    l2y.push(c)
+    mut l3 = Vec[Vec[Vec[int]]].new()
+    l3.push(l2x)
+    l3.push(l2y)
+    ro mid = l3.flatten()
+    assert(mid.len() == 3)
+    ro flat = mid.flatten()
+    assert(flat.equal(Vec[int].from([1, 2, 3, 4, 5])))
+}

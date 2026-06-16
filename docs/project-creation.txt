@@ -21711,7 +21711,7 @@ Merge: f79d4f28b5b; branch plan-100-2-generic-propagation → main.
 **Что сделано:**
 Plan 83.13 — research-only deliverable по precise GC decision для Nova
 (Boehm replacement strategy). Написан документ
-`docs/research/precise-gc-decision-2026.md` (5801 слов, 8 разделов).
+`docs/research/09-precise-gc-decision-2026.md` (5801 слов, 8 разделов).
 Создан worktree `nova-p83-13` (branch `plan-83-13`) от `github/plan-83-5`.
 Проведён обширный research: прочитаны 9 internal plan docs + Nova runtime
 source files (alloc_boehm.c, alloc.h, fiber_arena_win.c, fibers.h,
@@ -21749,7 +21749,7 @@ prototype, performance microbench против Boehm baseline.
    изменится.
 
 **Files modified:**
-- docs/research/precise-gc-decision-2026.md — новый файл (5801 слов).
+- docs/research/09-precise-gc-decision-2026.md — новый файл (5801 слов).
 - docs/plans/README.md — row 83.13 ✅ V1 RESEARCH DELIVERED.
 - docs/simplifications.md — entry [M-83.13-precise-gc-research-v1].
 - docs/project-creation.txt — этот блок.
@@ -37938,7 +37938,49 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
   (OE1-OE5, вкл. 2 runtime-panic neg) + регрессии contracts 314/0, plan140 51/0, basics 8/0, Trivial
   1/0/4skip (OE6/OE7). 0 регрессий, soundness неизменна. D272 + D24/04-effects/open-questions amend +
   contracts.md/.ru + README + backlog (marker CLOSED).
+[2026-06-14] Plan 153.2 — Ленивый итератор Vec[T]/[]T (D260, Phase A; branch plan-153.2-mono-closures,
+  commits 996ca01a лифт + caf56226 ленивый слой). Boxed-fluent модель: BoxIter[T] { priv step fn() ->
+  Option[T] }; вход v.lazy() мостит VecIter→BoxIter; адаптеры map/filter/filter_map/enumerate/take/skip →
+  новый BoxIter (оборачивают upstream step); терминаторы collect/fold/reduce/count/sum/any/all/find/for_each/
+  min/max/nth/last тянут цепочку. Промежуточных аллокаций НЕТ (pull, по одному элементу — доказано
+  инструментацией plan153_2/laziness: счётчик считает только протянутые; take/find/any/all/nth коротят).
+  Реентерабельность — каждый адаптер копирует receiver (mut src = @) в свежее замыкание. Модуль — sibling
+  FILE-module std/collections/vec_lazy.nv (collections.vec_lazy), explicit-import, НЕ prelude folder
+  collections.vec (closure-dense идентификаторы [U]/[Acc]/f/pred засоряли бы каждый юнит — [M-codegen-var-
+  types-fn-scope]/D145, как vec_seq.nv). Eager vec_seq оставлен без изменений (lazy = канон, Q-iterator-
+  laziness; eager НЕ сахар над lazy — чтобы не навязывать lazy-import). THREE codegen-фикса (emit_c.rs, релиз
+  пересобран): (1) per-test flush var_boxed в emit_test (box _box_<name> утекал между тестами → CC-FAIL);
+  (2) Stmt::Return эмитит value с return-type как target (голый return None → NovaOpt_<mono>, не erased
+  NovaOpt_nova_int); (3) infer_expr_c_type регистрирует generic-инстанс return-type для generic free-fn /
+  метода generic-типа возвращающего generic-инстанс (иначе .method() на временном → erased NULL-stub,
+  drain 0/segfault). Лифт mono×closures (996ca01a): gap A register_generic_instances_in_typeref + gap B
+  closure-capture в loop-arms, 7/7 пробников. plan153_2 4/4, 0 регрессий (baseline main 82ada7ac). Отложено
+  Phase B (НЕ упрощение): zip/chain/flat_map/flatten/scan/step_by/take_while/skip_while/peekable/min_by/max_by/
+  partition/chunk_by/into_iter + for mut x / mut @iter (Q-iter-mut) + FromIterator/collect-target →
+  [M-153.2-iter-phase-b]; zero-cost generic-over-source (un-boxed) → [M-153.2-generic-over-source-zerocost];
+  tuple-preserving после enumerate → [M-153.2-tuple-elem-adapter]. D260 (02-types) + Q-iterator-laziness/
+  Q-iter-mut (open-questions) + docs/vec-lazy.md + vec-internals.md + backlog + план §153.2-статус.
+  Bug-фиксы той же ветки: ffc5d28f (std.sort binary_search консолидация под D239, Bug A,
+  [M-153.x-std-sort-consolidate] RESOLVED) + cf3951e2 (chained Vec[f32] turbofish-static return-inference,
+  Bug B, [M-154.1-chained-vec-f32-method-misdispatch] FIXED — gap C registration timing).
 
+[2026-06-14] Plan 134 — Refinement-проход «убрать встроенный тип ptr → *()» (ветка plan-134, worktree
+  nova-p134, от c0f269dd). Ф.1–Ф.3 (typedef nova_ptr removed; *() → void*; cast-matrix; миграция
+  plan115/sync.nv/examples; spec D214) уже были merged в main ранее. Этот проход — ДОВОДКА: (1) `ptr`/
+  `nova_ptr` в type-позиции теперь ловится на этапе `nova check` (types/mod.rs walk_typeref guard →
+  E_TYPE_UNKNOWN + миграционный hint «use *(); для алиаса — type ptr = *()»), а НЕ откладывается до
+  codegen — раньше пользователь видел ошибку только на полной сборке; defensive codegen-time зеркало
+  (emit_c.rs/external_registry.rs) сохранено на случай обхода checker'а. (2) parser/mod.rs: `ptr` убран
+  из is_primitive_type для .method()-dispatch; сообщение E_NULL_PTR_RETRACTED_USE_OPTION мигрировано на
+  *(). (3) Fixture-полировка plan115 (ожидаемые строки ошибок) + plan134 cast-fixture. (4) Doc-финализация:
+  spec/02-types.md (E_TYPE_UNKNOWN канон + RETIRED-баннер §11 ptr-redefine), examples/ffi/README.md, doc-
+  комментарии sync.nv (OnceCell/Lazy/Condvar: *(()) → *(), typedef nova_ptr → void*), план CLOSED + A-134.a..h
+  с verify. Тесты (релизный nova+nova-codegen, clang): plan134 4/0 (neg ptr-removed + 3 pos: struct-field/
+  null/cast-matrix int·u64·i64), plan115 11/0, basics 8/0, plan103_5 20/0, plan91_12 9/0, plan103_4 25/0,
+  plan118_2 2/0, plan118_5 14/0, examples/ffi (check + ptr_basics test-build) PASS. Регрессия = 0 net-new
+  FAIL vs main-бинарь baseline: plan118 37/3 (3 NPO-edge Some((0 as *())) — pre-existing, вне scope 134),
+  syntax 47/7, plan62 29/7 (все FAIL identical к main, не связаны с ptr). Production-grade, без упрощений/
+  заглушек: остатки `ptr` в коде — только prose-комментарии и поле-имя в str{ptr,len}.
 [2026-06-14] Plan 145 — MSVC codegen portability: восстановление MSVC (ветка plan-145, worktree
   nova-p145, от main c0f269dd, НЕ merged). MSVC был сломан широко (регрессия после Plan 82 1049/16).
   КЛЮЧЕВОЙ ВЫВОД: план называл 1 причину (indexing stmt-expr), но при MSVC-валидации вскрылось 4
@@ -38046,3 +38088,166 @@ Plan 154.1 (opt-in #impl-конформность + конкретные Display
 [2026-06-14] codegen lib-test fix (Plan 140.3 followup, merged e83c8914): Plan 140.3 added Module.contract_opt_out but 4 test-only Module{} initializers were missed -> cargo test -p nova-codegen --lib failed E0063 x4, blocking the WHOLE nova-codegen lib-test target (release binary unaffected). Fix: contract_opt_out: Default::default() (full enforce). The fix unblocked the target and REVEALED 33 pre-existing stale unit tests (26 parser::tests with removed `let` syntax from Plan 114/D184 + 5 sum_schema_registry + 2 lints prelude_shadow) that never ran while the target was broken -> new marker [M-codegen-libtest-stale-tests]. Honest 770/33.
 
 [2026-06-14] codegen lib-test stale-tests fix [M-codegen-libtest-stale-tests] CLOSED: the contract_opt_out fix (above) unblocked the nova-codegen lib-test target and surfaced 33 pre-existing stale unit tests that never ran while the target was broken. Updated ONLY the stale tests (zero production-code change): 26 parser::tests::* migrated Nova source inputs `let`->`ro`/`mut` (Plan 114/D184 removed `let`; the Rust `let` in the test harness itself was kept, only the Nova string literals migrated); 2 lints::tests::prelude_shadow::* migrated to `#no_prelude` / `#allow(shadow)` line attributes (Plan 107/D174 removed inline clauses); 5 codegen::sum_schema_registry::tests::* updated routing expectations for Option.unwrap_or (Nova-body migration, Plan 99). "bez uproshcheniy kak dlya proda": assertions kept meaningful, nothing masked. Final: cargo test --lib GREEN 803 passed / 0 failed (was 770/33).
+
+[2026-06-14] Q-interpreter-future RESOLVED: internal dev binary nova-codegen interpreter entry points stubbed as UNSUPPORTED, mirroring the user-facing nova run stub (Plan 157 / D274). The `run` and `test-interp` handlers no longer construct interp::Interpreter; they now error out loudly (clear message + nonzero exit) pointing at C codegen (nova-codegen compile / nova test); clap doc-strings marked [UNSUPPORTED] (commit 0d7116f4). Other commands (compile/check/test-build/...) keep working. docs/nova-codegen.{md,ru.md} aligned (same commit): run/test-interp marked UNSUPPORTED, interp/ described as kept-for-reference-not-wired. Regression compiler-codegen/tests/interp_tool_unsupported.rs (commit a4e26525): negative (run + test-interp error) + positive (compile works) = 3/3 PASS via release binary; cargo build --release green. interp/ module KEPT for reference (NOT deleted), consistent with "poka ne podderzhivaem" / D274; full removal of the module deliberately DEFERRED (sole residual, [M-interp-unsupported]). Acceptance criteria met: loud nonzero-exit error (not a silent no-op), compile/check still work, neg+pos test green via the compiler, "bez uproshcheniy kak dlya proda". Branch chore-disable-interp-codegen-tool, worktree nova-interp2.
+[2026-06-14] Codegen: if/match-выражение коэрсится в unit когда одна ветка unit (D275, ветка
+  plan-cgfix-fluent-tail-if). Закрывает [M-codegen-fluent-tail-if-unify]. Fluent `-> @`-хвост (Vec.push,
+  типа Vec*) как хвост ветки if/match рядом с не-расходящимся unit-сиблингом в discard-позиции →
+  tmp(Vec*) = NOVA_UNIT (C-несовпадение) → CC-FAIL, ломало компиляцию всего std.unicode (folder-module:
+  один if в case.nv валил normalize/graphemes/words как peer'ы). emit_match уже коэрсил (unit-доминирование
+  [M-91.13]), emit_if_expr — нет. Fix (compiler-codegen/src/codegen/emit_c.rs): (1) emit_if_expr (~25905) —
+  симметричный (else_diverges, else_ty) для обеих форм else + gated unit-доминирование (gated на
+  chosen!=nova_unit и не-расходящийся сиблинг → Plan 125 divergence-выбор сохранён; симметрично — fluent в
+  then ИЛИ else); (2) infer_expr_c_type(Match) (~34643) — то же any-unit-arm→nova_unit, что и emit_match
+  (infer↔emit симметрия; иначе if {out.push} else {match} рассинхрон Vec* vs unit → CC-FAIL в to_lowercase).
+  Workaround УБРАН из std/unicode/case.nv (восстановлен прямой prod fluent-стиль: single→
+  Vec[int].with_capacity(1).push(cp); fold_case/to_uppercase — match с fluent None-армом; to_lowercase
+  Final_Sigma — if {push} else {match}; удалены fold_one/upper_one. Остаток single/lower_one/title_one —
+  peer-shared API для words.nv, НЕ воркэраунд). Критерий «без упрощений как для прода» выполнен. Acceptance:
+  nova_tests/cgfix_fluent_tail_if/repro.nv 1/1 (4 позитива + 3 контроля) + plan152_4 13/13 + 0 новых
+  регрессий (baseline сверен против merge-base 22aa4944). Коммиты ef6d570a (emit_if_expr+фикстура) +
+  f9c6e372 (infer(Match) симметрия) + 0f0a65a8 (case.nv restore). D275 + Q-match-unit-arms-in-expr amend.
+
+[2026-06-14] Plan 153.4 — Слайсы и views на модели Plan 96 (D262, ветка plan-153.4-slices, impl-commit
+  5ccccf72). 153.4-A ЗАКРЫТА (eager zero-copy `[]T`-views, БЕЗ внешней аллокации); 153.4-B (chunks/windows)
+  отложена ленивой за `[M-153.4-chunks-windows-lazy]` (gated на Plan 153.2). Новый peer-файл folder-модуля
+  `std/collections/vec/views.nv` (collections.vec): `@split_at(i)->(Self,Self)` (контракт 0<=i<=len, OOB→panic,
+  НЕ clamp, инвариант len(l)+len(r)==len); `@split_first()`/`@split_last()->Option[(T,Self)]` (пусто→None);
+  `@first_n(n)`/`@last_n(n)->Self` (CLAMP «take up to N»); `@as_slice()->Self` (ro whole-view) + recv-mut
+  overload `mut @as_slice()->mut Self` (write-through, как `@as_ptr`/`mut @as_ptr`, НЕ имя as_mut_slice).
+  Все возвращают `[]T`≡`Vec[T]`-views того же типа (НЕ отдельный Slice — D-single-type Plan 96), zero-copy,
+  cap==len; detach-on-resize (Go-модель, GC-safe) подтверждён тестом (first_n→push детачит, родитель не
+  тронут). Codegen-фикс (без упрощений): return-type inference генерик-инстанс-методов (emit_c.rs
+  infer_expr_c_type, generic-type-instance fallback) НЕ резолвил `Self`, вложенный в композит ((Self,Self),
+  Option[(T,Self)]) — subst нёс только generic-параметры, top-level-Self обрабатывался отдельным .or_else без
+  рекурсии в tuple/Option элементы → локал `let (l,r)=v.split_at(i)` объявлялся с генерик-tuple Nova_Vec* (vs
+  mono Nova_Vec_int* из callee) → C «incompatible tuple type». Фикс: subst.push(("Self", mono-receiver)) перед
+  apply_type_subst_to_ref. Аддитивно, 0 регрессий. Доки: D262 (spec/decisions/03-syntax.md + index),
+  153-vec-production-model.md статус+критерии+вердикт, vec-internals.md «Slices & views» + module-layout
+  views.nv, collections/vec-owned.md slice-таблица+пример, backlog `[M-153.4-chunks-windows-lazy]`,
+  simplifications.md. Верификация (релизный nova C-codegen, env NOVA_GC_LIB_DIR/INCLUDE_DIR на main repo):
+  plan153_4 2/0, plan96 23/0, plan153_0 4/0, plan153_1 7/0, plan138 10/0, basics 8/0 = 54 PASS / 0 FAIL.
+
+=== Plan 153.5 - Vec restructure-ops + operator `+` (D263, 2026-06-14) ===
+
+Branch plan-153.5-restructure, commit e8f700e4. Adds std/collections/vec/restructure.nv
+(co-equal file of folder-module collections.vec), Nova-body over bulk RawMem.copy:
+  - @concat(other) -> Vec[T]: non-mutating join (one exact alloc + two bulk copies;
+    operands untouched).
+  - operator `+` (@plus => @concat): a + b is a NEW Vec (mirrors str @plus, D46);
+    a += b lowers to a = a + b (fresh concat Vec) - to grow in place use a.append(b).
+  - mut @rotate_left(n)/@rotate_right(n) -> @: cyclic in-place shift (n mod len,
+    overlap-safe, O(len), right == left by len-k). requires n >= 0.
+  - mut @drain(range) -> Vec[T]: cut [start,end) out, return removed run owned;
+    suffix shifted down, self shortened. requires start>=0 && end>=start && end<=len.
+  - mut @insert_slice(i, sl []T) -> @: insert a slice at i (delegates to @splice
+    under D239 []T == Vec[T]). requires 0<=i && i<=len.
+Codegen (emit_c.rs, +68): operator `+`/`+=` lowering for overloaded-add types - BinOp::Add
+on Vec[T] routes through vec_method_call("plus", ..) before the generic sum-pointer arm
+(registers the mono instance first); a += b desugared to Binary{Add} (raw C a += b illegal
+on a struct/pointer operand). Minimal-targeted; does NOT touch struct-tag / protocol-resolve
+/ prelude / Option-arg paths.
+
+DEFERRED (honestly, NOT a simplification of what shipped) - [M-153.5-flatten-nested-receiver],
+P2: [][]T.flatten() needs a nested generic receiver Vec[Vec[T]] @flatten() so the body can
+name the innermost T. Blocked by two real compiler limits: parser rejects a nested type in
+the carrier slot, and the [][]T receiver form binds T to the immediate element (Vec[int])
+not the innermost (int) -> wrong return type (verified probe RUN-FAIL). A correct fix is
+structural typevar unification for nested receivers in BOTH parser and monomorphizer (the
+whole []T-method-dispatch path) - out of scope for the restructure surface. Workaround in
+docs: flatten one level explicitly via bulk @append.
+
+Spec/docs: D263 (spec/decisions/10-overloading.md), Q-vec-operator-plus CLOSED
+(spec/open-questions.md), docs/vec-internals.md restructure section + module-layout table,
+plan 153 status block, backlog marker, simplifications.md.
+
+Tests (release nova, C-codegen): plan153_5 5/5 (restructure POS - non-mutation concat/+,
++= append, rotate inversion+identity, drain cut+empty, insert_slice mid+end; NEG runtime-panic
+drain_oob / drain_reversed / insert_slice_oob / rotate_negative). 0 regressions from 153.5
+(7 suites: plan153_5 5/5, plan90 9/9, plan90_1 21/21, plan153_0 4/4, plan153_1 7/7, basics 8/8,
+plan62 29/7). The 7 plan62 FAILs are PRE-EXISTING (prelude/module/protocol struct-tag,
+orthogonal to restructure-ops) - proven by a baseline binary built at parent commit c0f269dd
+in a temp worktree: IDENTICAL 29/7, same test names and error categories (temp worktree removed
++ pruned).
+
+----------------------------------------------------------------------------------------------------
+Plan 153.5 followup (2026-06-14, branch plan-153.5-restructure, commits 1c323d0e parser+mono +
+16753d23 flatten): [][]T.flatten() RESOLVED -- marker [M-153.5-flatten-nested-receiver] CLOSED.
+
+The deferred flatten is now implemented together with its enabler: nested generic method receivers
+at ARBITRARY depth. Vec[Vec[T]] @flatten() -> Vec[T] (production carrier form, == [][]T @flatten()
+-> []T under D239) in std/collections/vec/restructure.nv: pre-size out = with_capacity(sum of
+inner.len()) then bulk out.append(inner) per row (RawMem.copy fast path; operands untouched; empty
+rows/outer handled).
+
+Root cause (both halves, a deep cross-cutting compiler fix, NOT a workaround): (1) the PARSER
+rejected the carrier Vec[Vec[T]] ("expected ] got identifier") and collapsed [][]T -> "[]T";
+(2) the MONOMORPHIZER bound the receiver typevar T to the IMMEDIATE element (Vec[int]) not the
+INNERMOST (int) -> wrong return type Vec[Vec[int]] + segfault on element indexing. Fix (recursive,
+depth-agnostic, no one-level hardcoding): AST Receiver.receiver_ty carries the full structured
+receiver type (type_name flattens to "[][]T" and loses depth); parser accepts a nested parse_type
+in the carrier slot + recursive free-typevar collection, and counts [] depth + descends to the
+innermost Named for the slice form; monomorphizer reuses the recursive infer_type_param_binding
+(bind T = innermost element at any depth) on ALL receiver-typevar-bind paths + depth-aware sentinel
+keys "[]"*N+"T". Flat []T (depth 1) stays byte-identical (legacy NovaArray_ path); override gated to
+genuinely nested receivers. Checker collects nested typevars for E_UNUSED_PREFIX_TYPEVAR but does
+NOT seed the scope from receiver_ty (keeps E_UNDECLARED_TYPEVAR_IN_RECEIVER). Side compiler bug
+fixed: @data + @len on a Vec[Vec[T]] (data = *mut Vec[T] -> single Nova_Vec____*) mis-dispatched
+ptr+int into the pointee @plus(=@concat) -> segfault; emit_c.rs Add arm now requires BOTH operands
+to be the matching record/Vec value type, ptr+int falls through to typed pointer arithmetic.
+
+Sanctioned orthogonal pre-existing remainder (out of scope): the slice form fn[T] [][]T -> []T whose
+body BUILDS a fresh Vec[T].new() hits a pre-existing erased-base-body limit that ALSO breaks flat
+fn[T] []T with Vec[T].new() on baseline. Production flatten is the CARRIER form (matches all stdlib)
+and works fully; slice-form nested receiver binding is proven separately (count_all/first_row).
+
+Spec/docs: D145 AMEND (spec/decisions/02-types.md -- nested generic receivers, depth-agnostic
+structural typevar bind) + D263 AMEND (spec/decisions/10-overloading.md -- flatten no longer
+deferred); plan 153 status block (flatten implemented, marker closed); backlog marker -> done;
+docs/vec-internals.md flatten section + nested-receiver note; simplifications.md resolution entry.
+
+Tests (release nova, C-codegen): plan153_5_nested 4/4 (flatten_depth2 int+str, flatten_depth3
+depth>=3 + nested-typed return, slice_nested count_all/first_row, control_flat flat unchanged) +
+plan153_5/flatten ([[1,2],[3],[4,5]] -> [1,2,3,4,5], empty rows/outer, str, double-flatten
+Vec[Vec[Vec[int]]]) + flatten_plus_guard (operator + guard). 0 NEW regressions across the broad
+slice/vec/generic-dispatch watch (plan90/90_1/96/138/138_2/147/153_0/1/3, basics, generics);
+plan62/syntax FAIL sets byte-for-byte identical to a baseline binary at parent c5865ba0 in a temp
+worktree (incl. the highest-risk iterator/method-dispatch tests). Temp worktree removed cleanly.
+
+[2026-06-15] Plan 145.2 — Codegen emission determinism (ветка plan-145.2). Из находки Plan 145.1:
+  эмиссия C недетерминирована (порядок итерации Rust HashMap, RandomState рандом per-process) → `.c`
+  разный между сборками, что будило 2 латентных order-зависимых бага prelude — (A) init-order
+  static-init OOB, (B) var_boxed closure-box cross-function leak. main стабилен лишь по «удаче»
+  порядка; portable-фиксы Plan 145.1 перебрасывали в «плохой» порядок → flaky (это и блокировало 145.1).
+  Investigation-workflow (4 агента) дал карту: критичны method_overloads (эмиссия embed-proxies +
+  enqueue mono-worklist) + embed_fields. ФИКС: HashMap→BTreeMap (сортированная детерминированная
+  итерация; ключи Ord; drop-in). Этого хватило — латентные баги перестали будиться (overload 10/10,
+  bare-str-read 10/10; clang 0 net-new). РАЗБЛОКИРОВАЛ Plan 145.1: поверх детерминизма переприменены
+  3 portable-формы (struct-write memcpy-в-слот; heap-box-примитива scalar compound literal; Option-get
+  composite compound-literal+nova_npo_from_tagged_int) — применились ЧИСТО. ИТОГ MSVC: ВСЁ зелёное
+  (plan145 6/0, plan138 10/0, plan138_1 10/0, plan91_fe1 10/0, plan90/96/131/152_1/basics/generics);
+  clang 0 net-new. Коммиты plan-145.2: 5f695b80 (BTreeMap) + 7429dace (145.1 portable) + 29cce45f
+  (guards plan145_2) + 16ee0a3f (docs). Остаток: value-record throw-выражение (узкий stmt-expr) +
+  benign NovaOpt-typedef-order non-det (косметика) → P3. Метод-урок: при недетерминизме эмиссии бисект
+  по пересборкам обманчив; детерминизм чинить первым. Investigation через ultracode-workflow.
+[2026-06-14] Plan 156 -- slow-test lane: large tests in the repo, out of the default regression ([M-test-runner-large-test-lane] CLOSED). REQUIREMENT (author): the default `nova test`/CI must stay fast in BOTH compilation AND execution; full conformance corpora (collation 227800, normalization, words, ...) must live in the repo but NOT run by default. Mechanism (rev-2, suffix-only, ~discovery-level, no simplifications): per-file suffix `_slow.nv` (mirror of the `_windows.nv`/`_test`/`_module.nv` family) resolved at DISCOVERY -- a `*_slow.nv` file is never read on a default run (read_dir gives only the dirent name -> zero per-file I/O). `is_slow_file_stem(stem)->ends_with("_slow")`; `walk_nv` -> `walk_nv_filtered(root,out,lane)`; suffix-peel in canonical order (`_module` whole-skip -> `_slow` -> `_test` -> OS-suffix on core_stem). `SlowLane{Exclude(default)|Include|Only}` on `TestAllOpts`; clap flags `--include-slow`/`--slow-only` (Exclude = default-skip like Rust `#[ignore]`; Only = dedicated CI job). Generator `nova-codegen unicode --conformance-full` writes `*_conformance_slow.nv` (limit=usize::MAX -> whole corpus, renderers chunk by 500). Rust discovery unit-tests `plan156_slow_lane_tests` + `nova_tests/plan156/` fixtures. Spec D277 (09-tooling.md) normalizes ALL test-discovery skip/route conventions (fixtures/, OS-suffix, _module.nv, _slow.nv + peel order); `docs/test-conventions.md` flipped to IMPLEMENTED. Verified: AC A1-A5 (default skips, flags run + compose with --filter/--skip, `nova check <path>` on a slow file still works, suffix combines with OS/_test, generator deterministic two-lane), release build green, discovery unit-tests PASS. DATA-GATED (NOT a mechanism simplification): full collation/sentence corpora population (CollationTest_SHIFTED 227800 pairs) is not yet committed -- needs UCD data (allkeys.txt/CollationTest) absent from the repo; tracked by [M-152-collation-full-conformance]. Deferred (out-of-scope rev-2): the `slow/` directory + `_slow.toml` sentinel for slow folder-modules -> [M-156-slow-subtree-dir] (YAGNI). Worktree nova-p156, branch plan-156.
+
+[2026-06-15] Plan 156 rev-3 (storage decision) -- supersedes the "DATA-GATED / not yet committed" note above. After a cross-ecosystem research workflow (Go/Rust/TS-Node/Kotlin-Java/ICU/CPython, web-verified -> docs/research/10-unicode-test-data-storage.md), decided (user) to NOT commit the full `*_conformance_slow.nv` corpora. The Populate phase had fetched UCD 16.0 over the network and committed all 6 corpora (~23 MB incl. collation 227800/227800, 16.2 MB) on plan-156 -- these were DROPPED from history via `git rebase --onto` (removing the Populate commit) BEFORE merge so they never enter main's permanent history. New contract: full corpora are gitignored (`nova_tests/**/*_conformance_slow.nv`) and REGENERATED ON-DEMAND from pinned UCD (`nova-codegen unicode --emit-conformance --conformance-full --ucd-dir <UCD>` -> gitignored cache -> `nova test --slow-only`; empty cache -> 0 tests = skip-never-fail). Only the fast `*_conformance.nv` sample (~1.6 MB) stays committed. Rationale: Nova has a byte-identical deterministic generator, so committing ~23 MB (+~16 MB/Unicode-bump forever, collation lines don't delta-compress) buys nothing over the generator; Go and CPython (both with generators) chose the same model -> leanest repos. NOT a simplification (full corpus proven generable), a history-hygiene choice. git-lfs / separate-repo / submodule all rejected for this solo + ~16-worktree + exFAT/Windows profile (see research doc). Docs reconciled: Plan 156 doc (rev-3 section), docs/test-conventions.md, spec D277 example, .gitignore, backlog [M-test-runner-large-test-lane]/[M-152-collation-full-conformance]. Worktree nova-p156, branch plan-156.
+
+[2026-06-15] Plan 145.2/145.1 аудит-добор -- ultracode-workflow (4 Explore-агента) проверил полноту
+дельверов (spec/D/Q, доки+критерии, тесты pos/neg, логи); 3 реальных пробела закрыты production-grade.
+(1) D279 (08-runtime.md): инвариант детерминизма эмиссии C формализован (стабильный порядок деклараций;
+правило для разработчиков -- итерируемые map/set в emit_c.rs -> BTreeMap/сортировка, не HashMap); D276
+"Остаток" обновлён (struct-write + heap-box-примитив + Option-get composite -> РАЗРЕШЕНЫ, остался лишь
+value-record-throw-expr P3). [D-номер 278->279: коллизия с editors-D278 из main, занявшим номер раньше]
+(2)+(3) site-targeted регресс-фикстуры plan145_2/throw_primitive_expr_pos
+(site #2: nova_box_value в `?? throw <int>`) и plan145_2/composite_get_option_pos (site #3:
+nova_npo_from_tagged_int в map-erased composite .get) -- прежде эти два сайта покрывались только
+косвенно (примитив-throw -- нигде; все throw-expr тесты бросали строки). Каждая фикстура сверяет
+наличие портируемого хелпера в .c (grep, не stmt-expr) + PASS clang+MSVC через РЕЛИЗНЫЕ nova-codegen
+и nova CLI (plan145_2 4/0+4/0, plan145 6/0+6/0). Worktree nova-p145, ветка plan-145.2.
+
+[2026-06-15] Plan 158 -- test-runner worker-thread stack ([M-codegen-conformance-stack-overflow] FIXED). nova-codegen test-all overflowed the worker-thread stack (exit 127) on large conformance fixtures (normalization_conformance ~6000 asserts in one block). Root (investigated, first diagnosis was wrong): NOT recursive codegen -- the SAME file via `test-build` (8 MB main thread) passes exit 0; only `test-all` worker threads (std::thread::scope `s.spawn`, default ~2 MB stack) overflowed. Regression in delta 2eb59b04..b0095867 (153.x codegen got slightly deeper/heavier on the stack). Fix: `Builder::new().stack_size(64*1024*1024).spawn_scoped(s, …)` in test_runner.rs (~3 lines) -- this IS the root (codegen depth is fine on a normal stack), NOT a band-aid. recursion->iteration rewrite considered + REJECTED (disproportionate regression risk for pathology beyond 64 MB depth). Verified release binary: normalization_conformance via test-all PASS (was exit 127); basics 8/0; plan152_4 15/1 where the 1 FAIL = flaky `lld-link: cannot open output file` (Windows Defender AV-race, orthogonal, passes with --retries). Branch plan-cgstack, worktree nova-p156. Plan 158.
+
+[2026-06-14] Plan 104.9 -- syntax-highlighting keyword sync + conformance guard (umbrella Plan 104 editor tooling, D278). User reported the highlighting had gone stale. Root: the editor highlighters keep manual copies of the keyword list and had drifted from the lexer (compiler-codegen/src/lexer/mod.rs, lex_ident_or_keyword = single source of truth). They highlighted RETIRED let/readonly/safe + handler (plain ident since D142) + never-keywords race/with_timeout/cancel_scope/region + logical and/or/not (Nova uses &&/||/!), and were MISSING current unsafe/priv/pub/blocking/errdefer/okdefer/lemma/consume/ro/byte. Clarified for the user: ro and unsafe are NOT removed -- they are the current canonical keywords (ro replaced readonly in D184, unsafe from D216); the truly removed ones are let/readonly/safe/handler. Synced the regex highlighters: VSCode tmLanguage + vim syntax + www nova-highlight.js (commits ad55a91d nova + 28b00c6 www). Zed highlights.scm: safe cleanup (and/or/not removed from keyword.operator); completeness gated on the EXTERNAL grammar github.com/nv-lang/tree-sitter-nova v0.1.0 (adding tokens the grammar lacks breaks query compilation) -> [M-treesitter-grammar-keyword-bump], documented inline + in backlog. PRODUCTION-GRADE guard (no simplifications): compiler-codegen/tests/syntax_highlight_conformance.rs lexes every word through the LIVE lex() (anchored to the compiler -> cannot rot independently) and checks VSCode/vim for phantoms+completeness, Zed for phantoms -- 8/8 PASS. Website (separate repo) has its own node guard www/site/scripts/check-highlight-keywords.mjs (npm run check:highlight) -- OK, 49 keywords. Tests via release compiler: pos nova_tests/plan104_9 (current keywords compile/run; former keywords usable as identifiers) 2/2 PASS; existing removed-keyword negatives still error (plan114/plan138_5: removed_neg 5/5 + neg_safe_retired 2/2). Docs: spec D278 + Q38 (auto-generate keyword lists from the lexer? open) + editors/README source-of-truth section rewritten + plan 104.9. Direct commits on main (small tooling fix).
+[2026-06-15] Plan 152.3b -- Unicode-aware `char` methods (Phase B of D252, char-type API). The ASCII-core char methods (152.3a: is_ascii_*, to_digit, len_utf8 -- prelude, table-free) gain UCD 1:1 peers under the opt-in std.unicode module. SHIPPED (B1-B6): (B1) the nova-codegen unicode generator now emits a NEW table std/unicode/category_data.nv -- General_Category (UnicodeData.txt field 2, all 30 categories Lu..Cn), plus binary Alphabetic (DerivedCoreProperties.txt) and White_Space (PropList.txt) from UCD 16.0, as binary-search range tables like word_data.nv; is_numeric is derived from GC (Nd|Nl|No, like Rust) so it needs no separate table. (B2) std/unicode/category.nv: export type GeneralCategory (30 variants, Cn = default for any unassigned code point); general_category(cp)->GeneralCategory; predicates is_alphabetic/is_numeric/is_alphanumeric/is_whitespace/is_uppercase(Lu)/is_lowercase(Ll)/is_control(Cc); per-cp char_to_uppercase/char_to_lowercase(cp)->str (wrap upper_one/lower_one from case.nv). (B3) char-receiver methods @is_alphabetic/@is_numeric/@is_alphanumeric/@is_whitespace/@is_uppercase/@is_lowercase/@is_control/@general_category()->GeneralCategory/@to_uppercase()/@to_lowercase()->str -- placed in category.nv (NOT defaults.nv/prelude): OPT-IN like str @as_graphemes, so the table cost is paid only by importers; placing them in the prelude was rejected (pulls std.unicode into every program + breaks GeneralCategory enum emission). to_uppercase/to_lowercase return str, not a single char, because one code point can map to several (ss/fi/dotted-i); Final_Sigma is string-level so a lone Sigma lowercases to the non-final sigma (the correct context-free answer). (B5) tests plan152_3/char_unicode.nv (pos+neg: Greek/CJK/Arabic-digit/Roman-numeral/vulgar-fraction classification, NBSP/LINE-SEP whitespace, ss/fi/dotted-i/lone-sigma case, general_category==Lu/Nd; neg @/digit not alphabetic, LF/NUL control) + n_char_unicode_opt_in.nv (EXPECT_COMPILE_ERROR -- not in scope without import std.unicode) + category_conformance.nv (sampled). (B6) D252 Unicode part -> IMPLEMENTED; Q-char-case-return-type resolved (str vs iterator -> str, with rationale); docs/strings.md new "Code-point (char) classification & case" section. Verified (release nova, C-codegen): test-all --tests-dir nova_tests/plan152_3 = PASS 4 / FAIL 0; plan152_4 restored to 16/0. AC A4(B) (1:1 UCD, multi-cp case) + A5 (no new FAIL) met. Side-fix: each test worker now gets a 64 MiB stack (spawn_scoped Builder, test_runner.rs) -- closes the pre-existing main regression [M-codegen-conformance-stack-overflow] where codegen-lowering of large *_conformance.nv overflowed the default 2 MiB worker stack. Honest data-gate (NOT a mechanism simplification): full per-code-point category conformance is committed only as a sample; the full sweep is slow-lane (Plan 156, regenerated on-demand from pinned UCD), like collation/normalization -- tracked [M-152.3b-category-full-conformance]. Worktree nova-p152-3b, branch plan-152.3b.

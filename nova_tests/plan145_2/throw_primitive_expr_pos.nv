@@ -1,0 +1,38 @@
+// Plan 145.1 / 145.2 regression — site #2: heap-box of a PRIMITIVE in
+// throw-AS-EXPRESSION (MSVC C2059 fix).
+//
+// `opt ?? throw <int>` desugars to a C ternary, so `throw <int>` lands in
+// EXPRESSION position → ExprKind::Throw with a primitive (non-str, non-ptr)
+// payload. The portable form must emit
+//   `nova_box_value(&(nova_int){ (99LL) }, sizeof(nova_int))`
+// (a scalar compound literal + memcpy), NOT a GNU statement-expression
+// `({ ...; })` which cl.exe rejects with C2059. See emit_c.rs ExprKind::Throw
+// (`is_primitive` branch) and array.h `nova_box_value`.
+//
+// All other throw-as-expression fixtures (syntax/throw_in_expression.nv) throw
+// STRINGS, which take the `val_ty == "nova_str"` comma-expression branch — so
+// this is the ONLY coverage of the primitive heap-box path.
+module plan145_2.throw_primitive_expr_pos
+
+fn unwrap_or_fail(opt Option[int]) Fail[int] -> int {
+    // `?? throw 99` → ternary `opt is Some ? value : throw 99`; the RHS is a
+    // primitive throw in expression position → nova_box_value path.
+    ro v = opt ?? throw 99
+    v * 2
+}
+
+test "?? throw <primitive> — None branch boxes + throws int payload" {
+    ro result = with Fail[int] = |e| interrupt e + 1 {
+        unwrap_or_fail(None)
+    }
+    // throw 99 → handler: 99 + 1 = 100.
+    assert(result == 100)
+}
+
+test "?? throw <primitive> — Some branch short-circuits (no throw)" {
+    ro result = with Fail[int] = |e| interrupt e + 1 {
+        unwrap_or_fail(Some(21))
+    }
+    // Some(21) → 21 * 2 = 42; throw not evaluated.
+    assert(result == 42)
+}

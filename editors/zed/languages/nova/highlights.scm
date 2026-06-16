@@ -5,6 +5,12 @@
 
 ; Note: "break" and "continue" are named nodes, not anonymous tokens.
 ; All other keywords below are anonymous tokens accessible in queries.
+;
+; Source-of-truth for keywords: compiler-codegen/src/lexer/mod.rs.
+; GAP: `unsafe` (D216), `priv`/`pub` (D220), `okdefer` (D160), `interrupt`
+; are current keywords but NOT yet tokenized by tree-sitter-nova v0.1.0.
+; Adding them here would fail query compilation until the grammar is bumped
+; (github.com/nv-lang/tree-sitter-nova). Tracked as a follow-up.
 [
   "module" "import" "use" "export" "external"
   "fn" "type" "effect" "alias"
@@ -22,8 +28,9 @@
 (break_statement) @keyword
 (continue_statement) @keyword
 
-; Keyword operators (word-form)
-["as" "is" "not" "or" "and"] @keyword.operator
+; Keyword operators (word-form). Nova uses `&&`/`||`/`!` for logical ops —
+; `and`/`or`/`not` are NOT keywords (removed). `as`/`is` remain.
+["as" "is"] @keyword.operator
 
 ; Boolean literals
 (bool_literal) @boolean

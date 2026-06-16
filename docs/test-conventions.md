@@ -33,13 +33,46 @@ Test-runner — [Plan 24](plans/24-cross-platform-test-runner.md) +
 sentences 512, collation 227800). Размер коммит-фикстуры регулируется
 `nova-codegen unicode --emit-conformance --conformance-limit <N>`.
 
-> **Механизм** (lane для больших тестов вне дефолт-прогона) — дизайн готов
-> ([Plan 156](plans/156-test-runner-slow-lane.md), `[M-test-runner-large-test-lane]`):
-> конвенция (rev-2 suffix-only) — **per-file суффикс `_slow.nv`** (зеркало семейства
-> `_windows.nv`/`_test`; skip на этапе discovery в `walk_nv` → файл-корпус не читается),
-> который `nova-codegen test-all` скипает по умолчанию; прогон через `--include-slow` /
-> `--slow-only`. Полные наборы коммитятся как `*_conformance_slow.nv`. До реализации
-> большой набор не коммитится в обычный путь, а регенерится out-of-band.
+### Развилка: коммитить большой набор или регенерить? (для авторов/агентов)
+
+Любой большой/медленный тест помечается суффиксом **`_slow.nv`** (default `nova test`
+его пропускает; прогон `--include-slow`/`--slow-only`; нормировано [D277](../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
+А вот **хранить полный набор в git или нет** — зависит от того, регенерируем ли он:
+
+- **Регенерируемый** детерминированным генератором (напр. Unicode conformance из UCD):
+  полный `*_conformance_slow.nv` **НЕ коммитить** — он `gitignored` (`nova_tests/**/*_conformance_slow.nv`)
+  и **регенерируется on-demand** (`nova-codegen unicode --emit-conformance --conformance-full
+  --ucd-dir <UCD>` → `nova test --slow-only`; пустой кэш → 0 тестов = skip-never-fail). В git —
+  только малый fast-сэмпл `*_conformance.nv`. Причина: коммит регенерируемого build-output зря
+  раздувает историю навсегда (модель Go `-long`/CPython; обоснование —
+  [docs/research/10-unicode-test-data-storage.md](research/10-unicode-test-data-storage.md)).
+- **Нерегенерируемый** (ручной большой/медленный тест, генератора нет): **коммитить** как
+  `*_slow.nv` — это и есть «хранить в репо, но вне дефолт-регресса».
+- ❌ git-lfs / отдельная тест-репа / submodule — НЕ используем (хуже на exFAT/Windows,
+  непрецедентно для текстовых фикстур; см. research/10).
+
+> **Механизм** (lane для больших тестов вне дефолт-прогона) — **РЕАЛИЗОВАН**
+> ([Plan 156](plans/156-test-runner-slow-lane.md), `[M-test-runner-large-test-lane]`;
+> нормирован [D277](../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
+> Конвенция (rev-2 suffix-only) — **per-file суффикс `_slow.nv`** (зеркало семейства
+> `_windows.nv`/`_test`; skip на этапе discovery в `walk_nv` → файл-корпус **не
+> читается**, нулевой per-file I/O). **Дефолтный `nova test` (`nova-codegen test-all`)
+> такие файлы пропускает.** Прогон — через флаги:
+>
+> - `--include-slow` — обычные тесты **И** `*_slow.nv` (merge-gate / nightly);
+> - `--slow-only` — **только** `*_slow.nv` (выделенная CI-job, доказательство G0).
+>
+> Суффикс комбинируется с прочими (`foo_conformance_slow.nv`, `bar_windows_slow.nv`
+> гейтится и по OS, и по slow — `_slow` снимается ДО OS-проверки).
+>
+> **Хранение полных наборов (rev-3):** `*_conformance_slow.nv` **НЕ коммитятся** —
+> **регенерируются on-demand** из pinned UCD в gitignored-кэш (`nova-codegen unicode
+> --emit-conformance --conformance-full --ucd-dir <UCD>`), затем `nova test --slow-only`.
+> Коммитится только fast-сэмпл `*_conformance.nv`. Если кэш пуст — `--slow-only` находит 0
+> тестов (skip-never-fail). Модель Go/CPython; обоснование —
+> [docs/research/10-unicode-test-data-storage.md](research/10-unicode-test-data-storage.md).
+> Отложен (`[M-156-slow-subtree-dir]`) лишь каталог-вариант `slow/` + сентинел `_slow.toml`
+> для медленных folder-module — добавится аддитивно, когда появится первый такой тест.
 
 ---
 
@@ -485,6 +518,9 @@ Nova ближе к Rust/Swift/Go — comment-маркер на уровне test
 ---
 
 ## Fixture directories (Plan 55 Ф.8, 2026-05-16)
+
+> Нормативная спецификация discovery-конвенций (skip-каталоги + per-file суффиксы) —
+> [D277 в spec/decisions/09-tooling.md](../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv).
 
 Не каждый `.nv` файл в `nova_tests/` — это runnable test. Иногда нужны
 **input fixtures** для tooling (Plan 45 `nova doc` ingestion samples,

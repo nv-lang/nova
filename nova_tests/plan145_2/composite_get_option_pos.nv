@@ -1,0 +1,55 @@
+// Plan 145.1 regression — site #3: array `.get(i)` on an int64-slot-ERASED
+// COMPOSITE array returns Option via NPO (null-pointer-optimization).
+//
+// When a composite array is produced by a generic map (`[]int → []Box`), the
+// elements are stored int64-slot-erased (a `Nova_Box*` boxed into the int slot
+// + the real element C-type carried in the `array_element_types` side-channel).
+// `arr.get(i)` then returns a TAGGED NovaOpt_nova_int that must be repackaged
+// into the consumer's `NovaOpt_<sani>` (NPO layout: single pointer field,
+// NULL = None). The portable form emits
+//   `(NovaOpt_..){ .value = (Nova_Box*)nova_npo_from_tagged_int(nova_array_get_nova_int(..)) }`
+// (compound literal + array.h helper), NOT a GNU statement-expression that
+// cl.exe rejects with C2059. See emit_c.rs `"get"` arm (`elem_ty == "nova_int"`
+// + composite-pointer branch) and array.h `nova_npo_from_tagged_int`.
+//
+// (Incidentally exercised by plan91_fe1/composite_array_map_pos.nv too; this is
+// the co-located 145.x regression guard for the MSVC-portable emission. A
+// directly-typed `[]Box` instead takes the typed-storage get path and is NOT a
+// substitute — only the map-erased storage hits the NPO repackaging.)
+module plan145_2.composite_get_option_pos
+
+type Box {
+    n i64
+}
+
+// Generic map: []T → []U. Produces the int64-slot-erased storage that routes
+// `.get(i)` through the NPO repackaging path (site #3).
+fn[T] []T @map_box[U](f fn(T) -> U) -> []U {
+    mut out []U = []U.with_capacity(@len())
+    for x in @ {
+        out.push(f(x))
+    }
+    out
+}
+
+test "mapped []composite .get(i) → Option via NPO; Some reads field back" {
+    ro v []int = [10, 20]
+    ro ws = v.map_box(|x| Box { n: x })
+    match ws.get(1) {
+        Some(b) => assert(b.n == 20)
+        None    => assert(false, "expected Some")
+    }
+    match ws.get(0) {
+        Some(b) => assert(b.n == 10)
+        None    => assert(false, "expected Some")
+    }
+}
+
+test "mapped []composite .get(oob) → None" {
+    ro v []int = [1, 2]
+    ro ws = v.map_box(|x| Box { n: x })
+    match ws.get(5) {
+        Some(_) => assert(false, "expected None")
+        None    => assert(true)
+    }
+}

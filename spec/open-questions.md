@@ -4170,6 +4170,27 @@ parser char-литералы **не поддерживает** — это бло
 
 ---
 
+## Q-char-case-return-type. Что возвращает `char.@to_uppercase()` — `str` или итератор? ✅ ЗАКРЫТО (2026-06-15, Plan 152.3b / D252)
+
+> **РЕШЕНИЕ: `str` (материализованный), НЕ итератор.**
+> Per-code-point case-mapping может давать НЕСКОЛЬКО code point'ов (ß→`"SS"`, ﬁ→`"FI"`,
+> İ→`"i"`+◌̇), значит возврат — последовательность, не один `char`. Развилка форм:
+>
+> 1. **`str`** — материализованная строка из 1–3 code point'ов.
+> 2. **Итератор / `CharsView`** — как Rust `char::to_uppercase() -> ToUppercase:
+>    Iterator<Item=char>` (lazy, без аллокации для 1-cp случая).
+>
+> Выбран **`str`** по трём причинам: (1) `CharsView` для char-case в Nova не существует
+> и не нужен — расширение ограничено 1–3 cp (крошечное), lazy-выигрыш нулевой; (2)
+> симметрия со string-level `to_uppercase(s) -> str` (case.nv, 152.4.4) — одна ментальная
+> модель; (3) `str` напрямую конкатенируется/сравнивается (`'ß'.to_uppercase() == "SS"`)
+> без промежуточного `collect`. Прецедент противоположного выбора (Rust-итератор) обоснован
+> у Rust отсутствием выделенного короткого-строкового типа в `core`; у Nova `str` —
+> value-record, дешёвый. См. [D252](decisions/03-syntax.md#d252),
+> [Plan 152.3](../docs/plans/152.3-char-type-api.md).
+
+---
+
 ## Q-cstring. Гарантия nul-termination для `nova_str.ptr`
 
 ✅ **ЗАКРЫТО 2026-06-03** — Plan 118.1 / D26 amend
@@ -4821,12 +4842,23 @@ match-arms и:
 - Либо в type-checker'е требовать всем arm'ам совпадающий не-unit
   тип, если match в expr-position (более строгая семантика).
 
-**Status.** Не закрыто. Workaround достаточен для bootstrap, но
-ограничивает идиоматический Nova-код. После полного codegen rewrite
-(Plan 02) — закрыть.
+**Status.** Не закрыто (этот конкретный void-statement-arm симптом). Workaround
+достаточен для bootstrap, но ограничивает идиоматический Nova-код. После
+полного codegen rewrite (Plan 02) — закрыть.
+
+**Родственный кейс — ЗАКРЫТ (D275, 2026-06-14).** Зеркальная проблема —
+**value-ветка (fluent `-> @`-хвост, типа `Vec*`) рядом с unit-сиблингом** в
+discard-позиции — была codegen-mismatch'ем (объявлялся `tmp(Vec*) =
+NOVA_UNIT;` → CC-FAIL). `emit_match` это коэрсил (unit-доминирование `[M-91.13]`),
+а `emit_if_expr` нет. [D275](decisions/08-runtime.md#d275)
+распространил unit-коэрс на `if` и выровнял `infer_expr_c_type(Match)` с emit
+(`[M-codegen-fluent-tail-if-unify]` закрыт; workaround в `std/unicode/case.nv`
+убран). Это другой симптом (value-vs-unit, не void-statement-arm), но та же
+семейная зона «unit в expr-position match/if».
 
 **Связь:** Plan 02 (codegen-c-backend), [D19](decisions/03-syntax.md#d19)
-(match-arms `=>`), Q-pattern-mut (ниже — связанное ограничение).
+(match-arms `=>`), [D275](decisions/08-runtime.md#d275)
+(if↔match unit-коэрс паритет), Q-pattern-mut (ниже — связанное ограничение).
 
 ---
 
@@ -7711,12 +7743,86 @@ checker (`bool`/`unit` relational-операнд → `E_RELATIONAL_OPERAND_NOT_O
 (type-checker coercion fix). Pin: `nova_tests/plan153_0/neg/vec_explicit_annotation_to_slice_neg`.
 
 ### Связанное (Plan 153)
-- `Q-iterator-laziness` / `Q-iter-mut` / `Q-vec-operator-plus` / `Q-slice-view` — закрыты
-  записями в плане [153](plans/153-vec-production-model.md) §4; реализация в 153.2/153.4/153.5.
-  Переносятся сюда по мере закрытия их sub-планов.
+- `Q-iterator-laziness` / `Q-iter-mut` — ✅ закрыты по факту реализацией (153.2, ниже).
+  `Q-vec-operator-plus` — ✅ ЗАКРЫТО (153.5, отдельная запись ниже).
+  `Q-slice-view` — закрыт записью в плане [153](plans/153-vec-production-model.md) §4
+  (реализация в 153.4). Переносятся сюда по мере закрытия их sub-планов.
 - Отклонение 153.0: eager-комбинаторы вынесены в `collections.vec_seq` (не prelude-global) —
   иначе их идентификаторы засоряют каждый юнит. См. план §«Статус 153.0» +
   `[M-153-vec-combinators-prelude-global]`.
+
+## Q-iterator-laziness — eager `[]T.map` vs ленивый итератор (Plan 153.2)
+
+**Контекст.** До 153.2 `[]T.map(f) -> []U` материализовал на каждом шаге (O(n)
+промежуточных аллокаций на цепочке); `VecIter` умел только `next()`. Вопрос: ленивый
+итератор (Rust `iter()`+adapters / Kotlin Sequence / Java Stream) — канон, и что делать
+с eager-комбинаторами?
+
+**✅ ЗАКРЫТО 2026-06-14 — Plan 153.2 Phase A** (`plan-153.2-mono-closures`, commits
+`996ca01a` лифт + `caf56226` ленивый слой; [D260](decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)):
+
+- **Ленивые адаптеры — КАНОН** (этос cost-transparency, D135). Реализованы по
+  **boxed-fluent**-модели: `BoxIter[T] { priv step fn() -> Option[T] }`, вход `v.lazy()`
+  мостит `VecIter`→`BoxIter`, адаптеры fluent-методы → новый `BoxIter`, терминаторы тянут
+  цепочку. **Промежуточных аллокаций нет** (pull, по одному элементу) — доказано
+  инструментацией (`plan153_2/laziness`: счётчик считает только протянутые элементы,
+  `take`/`find`/`any`/`all`/`nth` коротят). A-набор: `map`/`filter`/`filter_map`/
+  `enumerate`/`take`/`skip` + `collect`/`fold`/`reduce`/`count`/`sum`/`any`/`all`/`find`/
+  `for_each`/`min`/`max`/`nth`/`last`.
+- **Eager `[]T.map` — НЕ deprecated, НЕ переписан в сахар.** Eager
+  `collections.vec_seq` оставлен без изменений как переходный eager-surface; lazy
+  (`collections.vec_lazy`) — канонический allocation-free путь. Оба за раздельными
+  explicit-import. Eager НЕ выражен сахаром над lazy сознательно — чтобы не навязывать
+  lazy-import eager-пользователям, и потому что prelude-global closure-несущий метод
+  засоряет каждый юнит (тот же scope-leak, что держит `vec_seq` вне prelude;
+  `[M-153-vec-combinators-prelude-global]`).
+- **Phase B** (заявленный полный набор) отложен за маркерами — `zip`/`chain`/`flat_map`/
+  `flatten`/`scan`/`step_by`/`take_while`/… + `into_iter`. Это roadmap, НЕ упрощение.
+
+### Связанное
+- [D260](decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — модель + codegen-инварианты.
+- `[M-153.2-generic-over-source-zerocost]` — zero-cost (un-boxed) апгрейд поверх boxed.
+- `[M-153.2-tuple-elem-adapter]` — tuple-PRESERVING-адаптер после `enumerate`.
+
+## Q-iter-mut — мутабельная итерация `Vec[T]` (Plan 153.2)
+
+**Контекст.** Нужна ли мутабельная итерация (`iter_mut` в Rust, индексами в Kotlin) и в
+каком виде? Имя `iter_mut` или receiver-mut overload?
+
+**✅ ЗАКРЫТО (дизайн) — Plan 153.2.** Мутабельная итерация — через **`for mut x in v`**
+(write-through в буфер) + **`mut @iter()`** (receiver-mut overload `@iter`, **НЕ** имя
+`iter_mut`). Семантика как мут-view (`mut []T`): write ок (write-through в буфер мастера),
+рост → detach (Plan 96 модель). Согласуется с accessor receiver-mut конвенцией (Plan 135,
+`@as_ptr`/`mut @as_ptr`).
+
+**Реализация — Phase B.** В Phase-A-слое (`vec_lazy.nv`) реализованы read-only ленивые
+адаптеры/терминаторы; write-through `for mut x` / `mut @iter()` — отдельный codegen-путь
+(lvalue write-back в буфер), приземляется в Phase B вместе с остальным B-набором.
+Дизайн-решение зафиксировано (имя НЕ `iter_mut`, а receiver-mut overload).
+
+### Связанное
+- [D260](decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — ленивый итератор (read-side).
+- Plan 96 / Plan 135 — мут-view `mut []T` write-through + receiver-mut accessor-конвенция.
+## Q-vec-operator-plus — оператор `+` для `Vec[T]` (Plan 153.5)
+
+**Контекст.** Нужен ли `Vec[T]` оператор `+`, и какая у него семантика — мутирующая
+(растит левый операнд, как `append`) или non-mutating (новый Vec)?
+
+**✅ ЗАКРЫТО 2026-06-14 — Plan 153.5** (`plan-153.5-restructure` commit `e8f700e4`,
+[D263](decisions/10-overloading.md#d263-vec-restructure-ops--оператор---plus--concat)):
+- **`a + b` = НОВЫЙ `Vec[T]`** — `Vec[T] @plus(other) -> Vec[T] => @concat(other)`
+  (как str `@plus`, [D46](decisions/03-syntax.md#d46)). Операнды **не мутируются**
+  (как Kotlin/Python/Ruby `+`). Прецедент выбран осознанно: `+` на коллекции = чистая
+  конкатенация, не сайд-эффект.
+- **`a += b` ≡ `a = a + b`** (свежий concat-Vec) — НЕ in-place append. Единая семантика
+  оператора (compound-assign лоуэрится через тот же `@plus`). Рост левого операнда in place
+  остаётся за явным `a.append(b)` (mutate.nv) — две разные операции, два разных имени
+  (инвариант I4 плана: один слой = одна семантика).
+- **Codegen** (`emit_c.rs`): operator-lowering `+`/`+=` маршрутизируется в Nova-body `@plus`
+  через `vec_method_call` (регистрирует mono-инстанс перед эмиссией) + десугаринг `+=` →
+  `Binary{Add}` (сырой C `a += b` на struct/pointer-операнде нелегален).
+- Тесты `plan153_5/restructure` (POS: non-mutation `+`/concat, `+=` append) — релизный nova
+  C-codegen, 5/5 PASS.
 ## Q36. Scope call-site instantiation для `@field`-контрактов (Plan 140.2, D256/D257) — ✅ ЗАКРЫТО (2026-06-13)
 
 **Вопрос:** при поддержке `@field` в контрактах ([D256](decisions/09-tooling.md#d256-field--method-self-access-в-контрактах)) —
@@ -7825,18 +7931,59 @@ Part A+B `[M-opt-preempt-strided-loop]` (D270, merge `7c047a1b`) и `[M-opt-leaf
 Связь: [D270](decisions/06-concurrency.md)/[D271](decisions/06-concurrency.md), Plan 143 §2.A/§2.B,
 `[M-opt-preempt-strided-loop]` (SIGURG-часть open) / `[M-opt-leaf-preempt-entry-elision]` (✅ done).
 
-## Q-interpreter-future — судьба древесного интерпретатора
+## Q-interpreter-future — судьба древесного интерпретатора — ✅ RESOLVED (2026-06-14)
 
 Интерпретатор (`nova run`) сделан UNSUPPORTED ([D274](decisions/08-runtime.md), Plan 157):
 команда громко ошибается, мёртвые interp-тесты удалены, модуль `interp/` оставлен «для
-справки». Открыто:
-1. **Полная вырезка vs сохранение.** Удалить `interp/` целиком ЛИБО держать как
-   reference / будущий REPL? Сейчас — сохранён, из сборки-контракта исключён.
-2. **Внутренний dev-инструмент `nova-codegen run` / `test-interp`** тоже гоняет интерпретатор
-   и НЕ застаблен этой задачей (только user-facing `nova run`). Привести к тому же
-   «unsupported»-поведению?
-3. **`docs/nova-codegen.md`/`.ru.md`** всё ещё описывают `nova-codegen run`/`test-interp`
-   как рабочие (на сайте codegen-страница уже помечена unsupported) — нестыковка.
+справки». Резолюция трёх открытых пунктов:
+
+1. **Полная вырезка vs сохранение.** Решено **сохранить** `interp/` «для справки»
+   (consistent с «пока не поддерживаем» / D274); из сборки-контракта исключён. Полное
+   удаление модуля **сознательно ОТЛОЖЕНО** (не отменено) — единственный residual.
+2. **Внутренний dev-инструмент `nova-codegen run` / `test-interp`** — ✅ застаблен
+   (2026-06-14): handlers больше не конструируют `interp::Interpreter`, а громко ошибаются
+   (exit ≠ 0) с указанием на C-codegen; clap doc-строки помечены `[UNSUPPORTED]`. Регресс:
+   `compiler-codegen/tests/interp_tool_unsupported.rs` (neg run/test-interp + pos compile).
+3. **`docs/nova-codegen.md`/`.ru.md`** — ✅ выверены: `run`/`test-interp` помечены
+   `[UNSUPPORTED]`, `interp/` в дереве описан как «kept for reference, не подключён».
+
+**Residual (не блокирует закрытие):** возможное полное удаление модуля `interp/` ЛИБО его
+оживление как будущий REPL — см. `[M-interp-unsupported]`. «пока» намеренно открытое.
 
 Связь: [D274](decisions/08-runtime.md), [Plan 157](../docs/plans/157-interpreter-unsupported.md),
 `[M-interp-unsupported]`.
+
+## Q38. Генерация keyword-списков хайлайтеров из лексера vs ручная поддержка — 🟡 OPEN (2026-06-14, Plan 104.9 / D278)
+
+### Контекст
+
+[D278](decisions/09-tooling.md#d278) зафиксировал: лексер
+(`compiler-codegen/src/lexer/mod.rs`) — единственный источник истины для множества
+keyword'ов, а хайлайтеры (VSCode/vim/Zed/Helix/Neovim/сайт) — производные. Сейчас
+каждый хайлайтер держит **ручную копию** списка, а от дрейфа защищает
+conformance-тест (`syntax_highlight_conformance.rs` дёргает живой `lex()`) + node-guard
+сайта. Это ловит рассинхрон, но:
+
+- дублирует «правду» в N артефактах (+ авторитетный список в самом тесте);
+- при добавлении нового keyword'а в лексер тест НЕ упадёт автоматически, пока его не
+  добавят в ACTIVE-список теста (residual, прикрыт чеклистом в `editors/README.md`).
+
+### Открытое место
+
+Генерировать keyword-списки **из** лексера (codegen-шаг: `nova-codegen emit-highlight`
+или build-script, пишущий keyword-секции VSCode/vim/scm/JS из enumerable-набора
+лексера) — единый источник, ноль дублирования, новый keyword автоматически попадает
+во все хайлайтеры. Минусы: нужен enumerable keyword-API в лексере (сейчас набор
+выражен только `match`-арми в `lex_ident_or_keyword`); генерируемые файлы vs
+ handcrafted (scope-категории VSCode/цвета — не выводятся из лексера автоматически,
+keyword'ы — лишь часть грамматики); cross-repo доставка в сайт.
+
+### Решение (для V1)
+
+Ручная поддержка + conformance-guard (Plan 104.9 / D278). Авто-генерация — потенциальный
+следующий шаг, не для V1.
+
+### Связь
+- [D278](decisions/09-tooling.md#d278) — source-of-truth + conformance-тест (решение V1).
+- [docs/plans/104.9-syntax-highlight-keyword-sync.md](../docs/plans/104.9-syntax-highlight-keyword-sync.md).
+- `[M-treesitter-grammar-keyword-bump]` (backlog) — связанный followup по tree-sitter-грамматике.
