@@ -38497,3 +38497,5 @@ emit_c.rs: U-suffix для char literals; nova_char в is_typed_int_c_ty + emit_
 [2026-06-17] Plan 106 CLOSED: && guard в if/while pattern-bind (D34 amend).
 Синтаксис: if Some(x) = expr && guard { body }. Биндинги паттерна видны в guard.
 7 pos + 3 neg тестов. Выбрано && вместо запятой (Swift) — Rust-паритет + очевидность.
+
+[2026-06-17] tree-sitter-nova v0.3.0 — grammar sync with current Nova syntax. Added: privacy_modifier (priv/priv(type) Plan160 D281), type_modifier (value Plan148), pointer_type (*T/*ro/*mut Plan147), extern "nova"/"C" fn (Plan91.12 D282). Removed: errdefer/okdefer (D189 retracted), external keyword. Helix auto-pairs: added ' and ` for char literals and tagged strings. Corpus: 89 pos + 4 neg = 93/93 PASS. Nova compiler integration tests: 5/5 PASS (nova_tests/plan104_7_grammar/). Commits: b641f6e (auto-pairs) + 857ca6c (grammar v0.3.0).

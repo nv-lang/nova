@@ -37055,3 +37055,5 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 
 - [2026-06-17] Plan 106: && guard — без упрощений. Полный scope-pipelining (биндинги
 паттерна видны в guard), type-check guard как bool, codegen корректный.
+
+- [2026-06-17] tree-sitter-nova v0.3.0: pointer_type `*T` — V1 парсит без валидации mutability семантики (это в checker Nova, не в grammar). Corpus тесты проверяют парсинг, не семантику. Negative corpus тесты (test/corpus/negatives.txt) покрывают: priv(module) invalid form, extern fn без ABI, priv priv дубликат, priv(type) в field.

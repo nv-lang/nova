@@ -305,6 +305,56 @@ See [RELEASE_NOTES](https://github.com/nv-lang/tree-sitter-nova/blob/main/RELEAS
 
 **Acceptance:** Helix opens `.nv` file → syntax highlighting + folding работает; Zed extension marketplace показывает Nova.
 
+---
+
+#### v0.2.0 (2026-05-25): ro/mut/consume keyword refresh (Plan 114 D184)
+
+- `ro`/`mut`/`consume` keywords added to KEYWORDS list (replaces `let`/`readonly` which were retracted).
+- 5 new corpus fixtures for binding syntax, while-let, for-mut patterns.
+- All 89 corpus PASS.
+
+---
+
+#### v0.3.0 (2026-06-17): Grammar sync with current Nova syntax
+
+**Commits:** `b641f6e` (dist/helix auto-pairs) + `857ca6c` (grammar v0.3.0).
+
+**Added:**
+- `privacy_modifier` rule — `priv` (module-private) / `priv(type)` (type-private). Plan 160 D281.
+- `type_modifier` rule — `value` (stack-allocated value type). Plan 148 D241.
+- `pointer_type` rule — `*T`, `*ro T`, `*mut T` (raw pointer with optional mutability). Plan 147 D246.
+- `extern "nova"/"C" fn` — ABI string parsed as `string_literal` before `fn`. Plan 91.12 D282.
+- `priv`/`pub`/`extern` added to KEYWORDS.
+- Helix `dist/helix/languages.toml` auto-pairs: `'` → `'` and `` ` `` → `` ` `` (char literals + tagged strings).
+
+**Removed:**
+- `errdefer`/`okdefer` keywords — retracted per Plan 110 D189 (only `defer` remains).
+- `external fn` syntax — replaced by `extern "nova" fn` (Plan 91.12 D282).
+
+**Corpus tests:** 89 → 93 PASS (4 new negative fixtures in `test/corpus/negatives.txt`).
+
+**Nova compiler integration tests:** `nova_tests/plan104_7_grammar/` — 5/5 PASS.
+- `pos_priv_type_basic.nv` — `type T value priv { ... }` compiles, module-level access works.
+- `pos_priv_field_basic.nv` — `priv`/`pub` field modifiers, intra-module access.
+- `pos_extern_c_fn.nv` — `extern "C" fn malloc/strlen` declarations + callable.
+- `pos_pointer_type.nv` — `*u8`, `*mut T` in fn signatures and record fields.
+- `neg_priv_field_access.nv` — `priv` field access from outside → E_FIELD_MODULE_PRIVATE.
+
+**Acceptance criteria (без упрощений как для прода):**
+- Grammar: 93/93 corpus PASS (89 positives + 4 negatives).
+- `priv`/`priv(type)` `privacy_modifier` — correctly parsed and highlighted.
+- `value` `type_modifier` — correctly parsed.
+- `*T`/`*ro T`/`*mut T` `pointer_type` — parsed without ERROR nodes in valid contexts.
+- `extern "C"/"nova" fn` — ABI string parsed as `string_literal`.
+- `errdefer`/`okdefer`/`external` removed from grammar (no longer emit tokens).
+- Helix auto-pairs include `'` and `` ` ``.
+- Negatives: ERROR nodes generated for `priv(module)`, `extern fn` (no ABI), `priv priv` duplicate.
+- Nova compiler tests: 5/5 PASS (positive + negative coverage).
+
+**Markers:**
+- `[M-104.7-query-update-priv]` ✅ CLOSED 2026-06-17 — `highlights.scm` updated: `priv`/`pub`/`extern` highlighted as keywords.
+- `[M-104.7-v4-keywords]` OPEN — future KEYWORDS additions when Nova adds new keywords to lexer.
+
 ### 104.8 — Editor packaging + distribution — ~3 dev-day ✅ ЗАКРЫТ 2026-05-26
 
 **Out (реализовано):**

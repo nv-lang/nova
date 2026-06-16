@@ -562,3 +562,10 @@
 | Маркер | Статус | Home | Действие |
 |---|---|---|---|
 | `[M-106-if-guard]` | ✅ CLOSED 2026-06-17. && guard в if/while pattern-bind. | Plan 106 | ✅ done |
+
+## Follow-up: tree-sitter-nova (grammar sync)
+
+| Маркер | Статус | Действие |
+|---|---|---|
+| `[M-104.7-v4-keywords]` | OPEN | Будущие keywords → grammar update при добавлении в lexer |
+| `[M-104.7-query-update-priv]` | ✅ CLOSED 2026-06-17 | highlights.scm updated — priv/pub/extern highlighted |
