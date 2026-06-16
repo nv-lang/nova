@@ -1,0 +1,22 @@
+module plan168.vec_u8_body
+
+test "Vec[u8] local var — body-only instantiation" {
+    mut v = Vec[u8].with_capacity(4)
+    v.push(1 as u8)
+    v.push(255 as u8)
+    assert(v.len() == 2)
+    assert(v[0] == 1 as u8)
+    assert(v[1] == 255 as u8)
+}
+
+test "Vec[u8] append bytes" {
+    mut a = Vec[u8].new()
+    mut b = Vec[u8].new()
+    a.push(10 as u8)
+    b.push(20 as u8)
+    b.push(30 as u8)
+    a.append(b)
+    assert(a.len() == 3)
+    assert(a[0] == 10 as u8)
+    assert(a[1] == 20 as u8)
+}
