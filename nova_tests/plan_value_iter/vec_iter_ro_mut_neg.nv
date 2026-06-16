@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+//
+// Plan 165 — negative guard: VecIter[T] is a value-record.
+// A `ro` binding of VecIter[T] cannot be reassigned (E_LOCAL_NOT_MUT).
+// This confirms VecIter is a first-class value type with binding-level protection.
+module plan_value_iter.vec_iter_ro_mut_neg
+
+fn neg_ro_veciter_reassign() {
+    ro v = Vec[int].of(1, 2, 3)
+    ro it = v.iter()
+    ro it2 = v.iter()
+    // ERROR: `it` is ro — cannot reassign a ro binding
+    it = it2
+}

@@ -1,0 +1,69 @@
+// Plan 165 — Range and RangeIter as value types: positive tests.
+//
+// Verifies that Range and RangeIter are value records with copy semantics.
+// Range contains only int fields → pure stack allocation, zero malloc.
+//
+// NOTE: Tests using Range.step_by() / .reverse() (Fail-effect methods, standalone
+// linker issue with nova_throw_typed_void) live in std/collections/range.nv
+// built-in tests. This file focuses on value copy semantics only.
+module plan_value_iter.range_value_pos
+
+test "Range is value — copy semantics, pass by value" {
+    ro r = 0..5
+    ro r2 = r              // copy — r2 is independent
+    assert(r.start == 0)
+    assert(r2.start == 0)
+    assert(r.len() == 5)
+    assert(r2.len() == 5)
+}
+
+test "Range copy — same len after copy" {
+    ro r = 0..5
+    ro r2 = r       // copy by value
+    // Both copies are independent; iterating one does not affect the other
+    mut s1 = 0
+    for x in r  { s1 += x }
+    mut s2 = 0
+    for x in r2 { s2 += x }
+    assert(s1 == 10)
+    assert(s2 == 10)
+}
+
+test "RangeIter copy by value — independent cursors" {
+    ro r = 1..5
+    mut it = r.iter()
+    ro _a = it.next()          // advance to idx=2
+    mut it2 = it               // copy by value — it2 shares same cursor position
+    assert(_a == Some(1))
+    assert(it2.next() == Some(2))
+    assert(it2.next() == Some(3))
+    assert(it2.next() == Some(4))
+    assert(it2.next() == None)
+    // original `it` still at position 2 (independent copy)
+    assert(it.next() == Some(2))
+}
+
+test "RangeIter exhausted returns None stably" {
+    mut it = (0..2).iter()
+    assert(it.next() == Some(0))
+    assert(it.next() == Some(1))
+    assert(it.next() == None)
+    assert(it.next() == None)
+}
+
+test "Range for-loop — sum 0..100" {
+    mut total = 0
+    for x in 0..100 {
+        total += x
+    }
+    assert(total == 4950)       // sum 0..99 = 99*100/2
+}
+
+test "Range for-loop inclusive" {
+    mut total = 0
+    for x in 1..=10 {
+        total += x
+    }
+    assert(total == 55)
+}
+
