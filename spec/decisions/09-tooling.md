@@ -3019,3 +3019,86 @@ desugar-селекторов + `@method:`-тег (Ф.4). Все гейты **no-
 - [docs/research/11-stdlib-method-resolution-reachability.md](../../docs/research/11-stdlib-method-resolution-reachability.md) — кросс-языковой research (import ⊥ unused-elimination; вариант A vs B).
 - [D174](07-modules.md#d174) — const-shadow gate (`should_skip_const`), смежный const-эмиссионный путь.
 - `[M-reachability-codegen-dce]` (Ф.1 core ✅ DONE), `[M-159-method-pruning]` (P3, coarse-by-name per-kind аудит), `[M-159-lazy-module-resolution]` (P3), `[M-152.3b-char-methods-no-import]` (✅ CLOSED через Ф.4).
+
+
+## D296. CodeAction machine-applicable contract (Plan 104.5)
+
+> **Added 2026-06-16, Plan 104.5.**
+> Extends D102 (Suggestion API) — defines the LSP layer contract for quick-fixes.
+
+### §1 Error code extraction
+
+Nova diagnostic messages embed a machine-readable error code as a `[E_CODE]` prefix:
+
+```
+[E_LOCAL_NOT_MUT] binding `x` is not marked `mut` — call chain requires mutation
+```
+
+The LSP adapter (`diagnostic_mapping::to_lsp`) extracts this prefix and sets:
+```
+Diagnostic.code = Some(NumberOrString::String("E_LOCAL_NOT_MUT"))
+```
+
+This enables:
+1. Editor lightbulb filtering (only show bulb when `code` matches a known fix).
+2. `textDocument/codeAction` dispatch via exact code-string match.
+
+**Extraction rule:** message starts with `[E_<UPPERCASE_ALPHANUMERIC_UNDERSCORE>]`.
+Non-matching prefixes (e.g., `[NOTE]`) produce `code = None`.
+
+### §2 CodeAction kinds
+
+| Applicability | LSP `kind` | `isPreferred` |
+|---|---|---|
+| MachineApplicable | `QuickFix` | `true` |
+| MaybeIncorrect | `QuickFix` | `false` |
+| HasPlaceholders (note) | `QuickFix` | `false`, `edit = null` |
+| Refactor (rename) | `Refactor` | `false` |
+| Organize imports | `Source.organizeImports` | `true` |
+
+### §3 Performance budget
+
+- `textDocument/codeAction` handler ≤ 100ms total.
+- Per-fix computation: O(n) source-scan on the diagnostic line only. No re-compilation.
+- `compute_code_actions` is called synchronously (no spawn_blocking) — all fixes are text-only.
+
+### §4 V1 coverage (≥25 fixes)
+
+**104.5.2 — Plan 101 (8 fixes):**
+`E_UNDECLARED_TYPEVAR_IN_RECEIVER`, `E_BARE_TYPEVAR_NEEDS_PREFIX`, `E_DUPLICATE_GENERIC_DECL`,
+`E_PREFIX_SHADOWS_NAMED_TYPE`, `E_UNUSED_PREFIX_TYPEVAR`, `E_BOUND_UNKNOWN`,
+`E_BOUND_NOT_PROTOCOL`, `E_PROTOCOL_EMBED_UNKNOWN`.
+
+**104.5.3 — Plan 100 (7 fixes):**
+`E_CONSUME_KEYWORD_MISSING`, `E_LOCAL_NOT_MUT`, `E_PARAM_NOT_MUT`,
+`E_ADDR_OF_MUT_REQUIRES_MUT_BINDING`, `E_REDUNDANT_POINTER_RO`,
+`E_REDUNDANT_TYPE_MODIFIER`, `E_REDUNDANT_IMPORT_ALIAS`.
+
+**104.5.4 — General (7 fixes):**
+`E_PROTOCOL_EMBED_NOT_PROTOCOL`, `E_PROTOCOL_EMBED_CYCLE`, `E_PROTOCOL_EMBED_DUPLICATE`,
+`E_PROTOCOL_EMBED_NOT_NAMED`, `E_EXTENSION_METHOD_NEEDS_IMPORT`,
+`E_KW_REMOVED_LET`, `E_KW_REMOVED_READONLY`.
+
+**104.5.5 — Auto-import (3 fixes):**
+`E_TYPE_UNKNOWN` (known stdlib types), `E_BOUND_UNKNOWN` (stdlib protocols),
+`E_AUTO_DERIVE_UNKNOWN_PROTOCOL` (Levenshtein suggestion).
+
+**Total: 25 fixes** (meets ≥25 production requirement).
+
+### §5 Suggestion vs CodeAction relationship
+
+`Diagnostic.suggestion` (compiler-codegen D102 `Suggestion` struct) carries machine-applicable
+edits at the compiler level. In LSP:
+- `suggestion.span + replacement` → converted to `TextEdit { range, new_text }`.
+- `suggestion.applicability` → `CodeAction.is_preferred`.
+
+V1: most fixes recompute the edit from the diagnostic range (no compiler Suggestion field used).
+V2: wire `Diagnostic.suggestion` → CodeAction edit directly for full accuracy.
+
+### §6 Deferred (V2)
+
+- `[M-104.5-suggestion-field-wiring]` — use `Diagnostic.suggestion.span` for edit range
+  instead of re-scanning source text.
+- `[M-104.5-multi-edit-rename]` — rename fixes (E_PREFIX_SHADOWS_NAMED_TYPE) should
+  update all usages in scope, not just the declaration.
+- `[M-104.5-organize-imports]` — sort+deduplicate import list.

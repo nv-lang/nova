@@ -598,3 +598,9 @@ Open V1 markers (gated on type-checker resolver API in Plan 104.2):
 - **`[M-104.4-refs-incremental-index]`** — references scan is full filesystem per-request (V2: incremental index). Гейт: type-checker integration (Plan 104.2).
 - **`[M-104.4-workspace-symbol-fuzzy]`** — workspace/symbol uses substring V1 (V2: fuzzy ranking / prefix scoring). Independent of type-checker.
 - **`[M-104.4-cross-file-method-nesting]`** — documentSymbol nests methods under type only within same file via receiver name match (V2: cross-file resolver needs Plan 104.2 symbol resolution API).
+
+## Follow-up: Plan 104.5 (LSP Code Actions / Quick-fixes V1)
+
+- **`[M-104.5-suggestion-field-wiring]`** (P2, home **Plan 104.5**) — `Suggestion` struct field в compiler diagnostic не propagated в LSP yet; code_actions.rs парсит сам из message text. Когда compiler добавит machine-readable `Suggestion` поле в DiagnosticResult, LSP should consume it directly without re-parsing. → Plan 104.x или Plan 101 V3.
+- **`[M-104.5-multi-edit-rename]`** (P3, home **Plan 104.5**) — fix handlers currently produce single-span TextEdit; multi-edit (e.g., rename generic `T` → `T1` across all occurrences in fn signature + body) требует cross-span edits и range-finder в source. V2 с Plan 104.6 (rename).
+- **`[M-104.5-organize-imports]`** (P3, home **Plan 104.5**) — `source.organizeImports` action kind advertised but not yet implemented (no-op body); V2 после Plan 104.3/104.6 когда symbol index доступен для dead-import detection.

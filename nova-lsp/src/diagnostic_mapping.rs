@@ -1,13 +1,14 @@
 //! Mapping nova_codegen diagnostics → lsp_types::Diagnostic.
 //!
 //! Plan 104.1.Ф.2: full implementation.
+//! Plan 104.5.1: extract `[E_CODE]` prefix → set `Diagnostic.code` for code-action dispatch.
 //! UTF-16 position conversion via ropey.
 
 use nova_codegen::diag::Diagnostic as NovaDiag;
 use ropey::Rope;
 use tower_lsp::lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location,
-    Position, Range, Url,
+    NumberOrString, Position, Range, Url,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -44,16 +45,55 @@ pub fn to_lsp(d: &NovaDiag, rope: &Rope, file_uri: &Url) -> Diagnostic {
 
     let related_information = if related.is_empty() { None } else { Some(related) };
 
+    // Plan 104.5.1: extract `[E_CODE]` from the start of the message.
+    // Nova diagnostic messages have the pattern "[E_SOME_CODE] human readable text".
+    // We extract the code and set it on `Diagnostic.code` so the LSP client can
+    // use it for code-action dispatch (lightbulb filtering).
+    let code = extract_error_code(&d.message);
+
     Diagnostic {
         range,
         severity: Some(DiagnosticSeverity::ERROR),
-        code: None,
+        code,
         code_description: None,
         source: Some("nova".to_string()),
         message: d.message.clone(),
         related_information,
         tags: None,
         data: None,
+    }
+}
+
+/// Extract an LSP diagnostic code from a Nova diagnostic message.
+///
+/// Nova diagnostic messages follow the pattern `[E_SOME_CODE] human readable ...`.
+/// This function parses the `[E_...]` prefix and returns it as an LSP
+/// `NumberOrString::String`.  Returns `None` if the message does not start
+/// with a `[E_` prefix.
+///
+/// # Examples
+///
+/// ```
+/// use nova_lsp::diagnostic_mapping::extract_error_code;
+/// use tower_lsp::lsp_types::NumberOrString;
+///
+/// let code = extract_error_code("[E_LOCAL_NOT_MUT] binding `x` is not mutable");
+/// assert_eq!(code, Some(NumberOrString::String("E_LOCAL_NOT_MUT".to_string())));
+///
+/// let none = extract_error_code("some error without code");
+/// assert_eq!(none, None);
+/// ```
+pub fn extract_error_code(message: &str) -> Option<NumberOrString> {
+    // Fast path: message must start with '['
+    let rest = message.strip_prefix('[')?;
+    // Find closing ']'
+    let end = rest.find(']')?;
+    let code = &rest[..end];
+    // Must start with 'E_' and contain only uppercase letters, digits, underscores
+    if code.starts_with("E_") && code.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+        Some(NumberOrString::String(code.to_string()))
+    } else {
+        None
     }
 }
 
@@ -362,5 +402,53 @@ mod tests {
         let rope = Rope::from_str(src);
         let b = position_to_byte_offset(&rope, 0, 4); // col 4 = after emoji
         assert_eq!(b, 6, "emoji byte offset after surrogate pair mismatch");
+    }
+
+    // ── Plan 104.5.1: extract_error_code tests ───────────────────────────────
+
+    #[test]
+    fn ec_pos1_extracts_code_from_nova_message() {
+        let msg = "[E_LOCAL_NOT_MUT] binding `x` is not mutable";
+        let code = extract_error_code(msg);
+        assert_eq!(code, Some(NumberOrString::String("E_LOCAL_NOT_MUT".to_string())));
+    }
+
+    #[test]
+    fn ec_pos2_extracts_plan101_code() {
+        let msg = "[E_UNDECLARED_TYPEVAR_IN_RECEIVER] `fn []T @foo` — T not declared";
+        let code = extract_error_code(msg);
+        assert_eq!(code, Some(NumberOrString::String("E_UNDECLARED_TYPEVAR_IN_RECEIVER".to_string())));
+    }
+
+    #[test]
+    fn ec_pos3_extracts_kw_removed_code() {
+        let msg = "[E_KW_REMOVED_LET] `let` has been removed; use `ro` or `mut`";
+        let code = extract_error_code(msg);
+        assert_eq!(code, Some(NumberOrString::String("E_KW_REMOVED_LET".to_string())));
+    }
+
+    #[test]
+    fn ec_neg1_returns_none_for_untagged_message() {
+        let msg = "unexpected token at position 3";
+        let code = extract_error_code(msg);
+        assert_eq!(code, None);
+    }
+
+    #[test]
+    fn ec_neg2_returns_none_for_non_error_bracket() {
+        let msg = "[NOTE] something happened";
+        let code = extract_error_code(msg);
+        assert_eq!(code, None, "non-E_ prefix should not be extracted");
+    }
+
+    #[test]
+    fn ec_pos4_to_lsp_sets_code_field() {
+        use nova_codegen::diag::{Diagnostic as NovaDiag, Span};
+        let msg = "[E_PARAM_NOT_MUT] parameter `x` must be mut";
+        let d = NovaDiag::new(msg, Span::new(0, 5));
+        let rope = Rope::from_str("fn f(x int) => ()");
+        let uri = Url::parse("file:///test.nv").unwrap();
+        let lsp = to_lsp(&d, &rope, &uri);
+        assert_eq!(lsp.code, Some(NumberOrString::String("E_PARAM_NOT_MUT".to_string())));
     }
 }
