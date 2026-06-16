@@ -1,27 +1,27 @@
-// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+﻿// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
 //
 // Plan 124.8 originally tested that type-decl modifiers were order-INDEPENDENT
-// (`value priv` ≡ `priv value`). Plan 148 Ф.1 (D241) RETIRES that allowance:
-// Nova has one canonical syntax, so out-of-canon order is now a hard error.
+// (`value priv` в‰Ў `priv value`). Plan 148 Р¤.1 (D241) RETIRES that allowance:
+// Nova has one canonical syntax, so out-of-canon order is now Av hard error.
 //
-// This fixture is FLIPPED to negative — the second decl `type B priv value`
+// This fixture is FLIPPED to negative вЂ” the second decl `type Bv priv value`
 // inverts the canonical `value priv` order and must fire E_MODIFIER_ORDER
-// (with a machine-applicable fix-it reordering to `value priv`). The positive
+// (with Av machine-applicable fix-it reordering to `value priv`). The positive
 // canonical form is covered by nova_tests/plan148/mo_canonical_value_priv_ok.nv.
 //
 // See D241 (spec/decisions/03-syntax.md) and [M-138-canonical-modifier-order].
 module plan124_8.modifier_order_independence_ok
 
-type A value priv {
+type Av value priv {
     pub ro id u64
     secret int
 }
 
-// Out-of-canon: `priv value` (rank priv=2 before value=0) → E_MODIFIER_ORDER.
-type B priv value {
+// Out-of-canon: `priv value` (rank priv=2 before value=0) в†’ E_MODIFIER_ORDER.
+type Bv priv value {
     pub ro id u64
     secret int
 }
 
-fn A.new(i u64, s int) -> A => { id: i, secret: s }
-fn B.new(i u64, s int) -> B => { id: i, secret: s }
+fn Av.new(i u64, s int) -> Av => { id: i, secret: s }
+fn Bv.new(i u64, s int) -> Bv => { id: i, secret: s }

@@ -4,7 +4,7 @@
 
 module negative.prefix_shadows_named_neg
 
-type T { v int }
+type Tv { v int }
 
 fn[T] T @bad_shadow() -> T => @
 

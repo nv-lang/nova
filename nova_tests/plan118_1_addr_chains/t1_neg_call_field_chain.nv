@@ -2,12 +2,12 @@
 // EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
 module plan118_1_addr_chains.t1_neg_call_field_chain
 
-type S {
+type Sv {
     ro v i64
 }
 
-fn make() -> S {
-    ro s = S { v: 1 }
+fn make() -> Sv {
+    ro s = Sv { v: 1 }
     s
 }
 

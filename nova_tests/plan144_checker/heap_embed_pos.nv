@@ -5,7 +5,7 @@
 // Named user type's object size with NO recursion guard and NO boxing-awareness.
 // A record embedding a recursive HEAP sum —
 //     type Tree | Leaf | Node(int, Tree, Tree)
-//     type H { t Tree }
+//     type Hv { t Tree }
 // — therefore infinite-recursed (Tree → Node payload → Tree → ...) and STACK-
 // OVERFLOWED in `nova check` / `build` / every introspection tool.
 //
@@ -30,10 +30,10 @@ type Tree
 
 // Record embedding the recursive heap sum. `t` is a `Nova_Tree*` (8 bytes) in
 // the emitted C — this is the line that used to overflow the checker.
-type H { t Tree }
+type Hv { t Tree }
 
-fn build() -> H {
-    H { t: Node(1, Node(2, Leaf, Leaf), Node(3, Leaf, Leaf)) }
+fn build() -> Hv {
+    Hv { t: Node(1, Node(2, Leaf, Leaf), Node(3, Leaf, Leaf)) }
 }
 
 fn sum(t Tree) -> int => match t {
@@ -44,8 +44,8 @@ fn sum(t Tree) -> int => match t {
 // size_of/align_of are emit-accurate REFERENCE sizes (heap types lower to a
 // pointer): H holds one Tree-pointer field → 8 bytes, align 8; a Tree reference
 // is itself a pointer → 8 bytes.
-const SIZE_H    = size_of[H]()
-const ALIGN_H   = align_of[H]()
+const SIZE_H    = size_of[Hv]()
+const ALIGN_H   = align_of[Hv]()
 const SIZE_TREE = size_of[Tree]()
 
 test "record embedding recursive heap sum — no overflow, runs" {

@@ -6,8 +6,8 @@
 
 module plan123_4_3.v43_no_deep_prefix_three_distinct_chains_ok
 
-type L { ro x int, ro y int, ro z int }
-type Mid { ro c L, ro d L, ro e L }
+type Lv { ro x int, ro y int, ro z int }
+type Mid { ro c Lv, ro d Lv, ro e Lv }
 type Inn { ro b Mid }
 type Out { ro a Inn }
 
@@ -20,9 +20,9 @@ fn Out @sum_all() -> int {
 
 fn Out.new() -> Out {
     Out { a: Inn { b: Mid {
-        c: L { x: 1, y: 0, z: 0 },
-        d: L { x: 0, y: 10, z: 0 },
-        e: L { x: 0, y: 0, z: 100 },
+        c: Lv { x: 1, y: 0, z: 0 },
+        d: Lv { x: 0, y: 10, z: 0 },
+        e: Lv { x: 0, y: 0, z: 100 },
     } } }
 }
 

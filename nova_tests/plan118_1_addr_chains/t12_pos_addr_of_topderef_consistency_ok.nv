@@ -3,12 +3,12 @@
 // (addr_of removed in Plan 118.6 — use & syntax directly.)
 module plan118_1_addr_chains.t12_pos_addr_of_topderef_consistency_ok
 
-type S {
+type Sv {
     ro v i64
 }
 
 test "addr_of(*p) and &(*p) are both accepted (top-level deref symmetry)" {
-    ro s = S { v: 5 }
+    ro s = Sv { v: 5 }
     unsafe {
         ro ps = &s
         ro a = &(*ps)
