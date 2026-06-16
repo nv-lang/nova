@@ -1,6 +1,6 @@
-// Plan 118.1 [M-118.1-addr-of-chains] — addr_of(local.a.b): a nested field
-// chain rooted in a named local is a valid lvalue → accepted (proves the
-// walker does NOT over-reject genuine field paths).
+// Plan 118.1 [M-118.1-addr-of-chains] — &(local.a.b): a nested field
+// chain rooted in a named local is a valid lvalue → accepted.
+// (addr_of removed in Plan 118.6 — use & syntax directly.)
 module plan118_1_addr_chains.t5_pos_nested_field_chain_ok
 
 type Inner {
@@ -14,7 +14,7 @@ type Outer {
 test "addr_of of a nested field chain rooted in a named local is accepted" {
     ro o = Outer { inner: Inner { z: 7 } }
     unsafe {
-        ro p = addr_of(o.inner.z)
+        ro p = &o.inner.z
         assert(p.read() == 7)
     }
 }

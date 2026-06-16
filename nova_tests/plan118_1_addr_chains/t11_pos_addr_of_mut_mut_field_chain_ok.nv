@@ -1,6 +1,6 @@
-// Plan 118.1 [M-118.1-addr-of-chains] — addr_of_mut(s.field) on a `mut s`
-// binding is accepted (the mut-binding requirement now walks the field chain to
-// its root; the ACCEPT side, complementing the t4 reject side).
+// Plan 118.1 [M-118.1-addr-of-chains] — &(s.field) on a `mut s` binding
+// is accepted.
+// (addr_of_mut removed in Plan 118.6 — use & syntax directly.)
 module plan118_1_addr_chains.t11_pos_addr_of_mut_mut_field_chain_ok
 
 type S {
@@ -10,7 +10,7 @@ type S {
 test "addr_of_mut on a field of a mut binding is accepted" {
     mut s = S { v: 1 }
     unsafe {
-        ro p = addr_of_mut(s.v)
+        ro p = &s.v
         assert(p.read() == 1)
     }
 }

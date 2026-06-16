@@ -1,14 +1,12 @@
-// Plan 118.1 [M-118.1-addr-of-chains] — addr_of_mut(ro_struct.field): the
-// mut-binding requirement applies to the ROOT of the field chain, not just a
-// bare Ident. `ro s` → taking a *mut into its field is rejected.
-// EXPECT_COMPILE_ERROR E_ADDR_OF_MUT_REQUIRES_MUT_BINDING
+// Plan 118.6 — addr_of_mut() removed → E_ADDR_OF_REMOVED.
+// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
 module plan118_1_addr_chains.t4_neg_addr_of_mut_ro_field
 
 type S {
     v i64
 }
 
-test "addr_of_mut on a field of a ro binding requires mut" {
+test "addr_of_mut removed — ro field case gives E_ADDR_OF_REMOVED" {
     ro s = S { v: 1 }
     unsafe {
         ro p = addr_of_mut(s.v)

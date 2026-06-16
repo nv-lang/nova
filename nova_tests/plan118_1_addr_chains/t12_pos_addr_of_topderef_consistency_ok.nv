@@ -1,9 +1,6 @@
 // Plan 118.1 [M-118.1-addr-of-chains] — TOP-LEVEL deref consistency: both
-// `addr_of(*p)` (intrinsic path, const_fn_eval) and `&(*p)` (parser path) root
-// in `p` (a named lvalue) and must BOTH be accepted. Regression-locks the fix
-// that routes the whole addr_of operand through the shared chain-root walker
-// (previously `addr_of(*p)` wrongly hit E_ADDR_OF_NON_LVALUE while `&(*p)` was
-// accepted — an asymmetry, since addr_of desugars to this very UnOp::AddrOf).
+// `&(*p)` forms root in `p` (a named lvalue) and must be accepted.
+// (addr_of removed in Plan 118.6 — use & syntax directly.)
 module plan118_1_addr_chains.t12_pos_addr_of_topderef_consistency_ok
 
 type S {
@@ -13,8 +10,8 @@ type S {
 test "addr_of(*p) and &(*p) are both accepted (top-level deref symmetry)" {
     ro s = S { v: 5 }
     unsafe {
-        ro ps = addr_of(s)
-        ro a = addr_of(*ps)
+        ro ps = &s
+        ro a = &(*ps)
         ro b = &(*ps)
         assert(a.v == 5)
         assert(b.v == 5)

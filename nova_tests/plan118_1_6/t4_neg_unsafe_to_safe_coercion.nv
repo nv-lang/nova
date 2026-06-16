@@ -13,8 +13,8 @@ unsafe fn risky_id(x i64) -> i64 {
 }
 
 test "rejects coercing unsafe fn → *fn (safe) pointer binding" {
-    // addr_of(unsafe fn) yields *unsafe fn(...). LHS *fn(i64) -> i64
+    // &(unsafe fn) yields *unsafe fn(...). LHS *fn(i64) -> i64
     // (safe) — silent safety-bit drop. Must error.
-    ro p *fn(i64) -> i64 = unsafe { addr_of(risky_id) }
+    ro p *fn(i64) -> i64 = unsafe { &risky_id }
     assert(true)
 }

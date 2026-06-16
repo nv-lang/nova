@@ -1,6 +1,5 @@
-// Plan 118.1 [M-118.1-addr-of-chains] — addr_of(call().field): a field path
-// rooted in a call result is an rvalue temporary → dangling pointer. Rejected.
-// EXPECT_COMPILE_ERROR E_ADDR_OF_NON_LVALUE
+// Plan 118.6 — addr_of() removed → E_ADDR_OF_REMOVED.
+// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
 module plan118_1_addr_chains.t1_neg_call_field_chain
 
 type S {
@@ -12,7 +11,7 @@ fn make() -> S {
     s
 }
 
-test "addr_of of a field on a call result is rejected" {
+test "addr_of removed — call-rooted field chain gives E_ADDR_OF_REMOVED" {
     unsafe {
         ro p = addr_of(make().v)
     }

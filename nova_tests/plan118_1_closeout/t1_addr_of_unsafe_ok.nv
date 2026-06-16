@@ -1,14 +1,14 @@
-// Plan 118.1 closeout T1 — addr_of(local int) inside unsafe.
+// Plan 118.1 closeout T1 — &local int inside unsafe.
 //
-// Per design: addr_of[T](x ro T) -> *T builtin, desugars к UnOp::AddrOf
-// (`&x`). Read-only — no mut binding required. Inside unsafe context.
+// Per design: `&x` takes address of x. Inside unsafe context.
+// (addr_of removed in Plan 118.6 — use & syntax directly.)
 
 module plan118_1_closeout.t1_addr_of_unsafe_ok
 
 test "addr_of(int) inside unsafe" {
     ro x = 42
     unsafe {
-        ro p = addr_of(x)
+        ro p = &x
         assert(p.read() == 42)
     }
 }

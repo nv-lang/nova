@@ -1,5 +1,5 @@
-// Plan 118.1 closeout T7 NEG — addr_of inside #realtime fn → E_REALTIME_POINTER_OP.
-// EXPECT_COMPILE_ERROR E_REALTIME_POINTER_OP
+// Plan 118.6 T7 NEG — addr_of() removed → E_ADDR_OF_REMOVED.
+// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
 module plan118_1_closeout.t7_neg_addr_of_realtime
 #realtime fn handler() -> () {
     ro x = 42
@@ -7,6 +7,6 @@ module plan118_1_closeout.t7_neg_addr_of_realtime
         ro p = addr_of(x)
     }
 }
-test "addr_of в #realtime rejected" {
+test "addr_of removed — realtime case also gives E_ADDR_OF_REMOVED" {
     handler()
 }

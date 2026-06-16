@@ -2465,132 +2465,17 @@ fn walk_expr(
                 }
             }
         }
-        // Plan 118.1 closeout (2026-06-05): `addr_of(IDENT)` / `addr_of_mut(IDENT)`
-        // intrinsics — desugar к `&IDENT` (UnOp::AddrOf). Unsafe/realtime/
-        // mut-binding gating уже эмитировались pre-rewrite в UnsafeCtx /
-        // ConsumeCtx (closer к user-source AST). Здесь только syntactic
-        // lvalue validation + actual rewrite.
+        // Plan 118.6: `addr_of` / `addr_of_mut` removed — use `&x` instead.
         if let ExprKind::Ident(n) = &func.kind {
             if (n == "addr_of" || n == "addr_of_mut") && args.len() == 1 {
-                let arg_expr = match &args[0] {
-                    crate::ast::CallArg::Item(ae) => ae.clone(),
-                    other => {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_ADDR_OF_NON_LVALUE] `{}` accepts only positional \
-                                 lvalue argument (Ident / Member / field access). \
-                                 Named/spread args не addressable.",
-                                n,
-                            ),
-                            other.expr().span,
-                        ));
-                        return;
-                    }
-                };
-                // Lvalue validation — mirror parser/mod.rs:5965-5984 для
-                // bare `&value`. Literals не addressable; RecordLit без
-                // named binding banned; arr[i] banned (D216 §15).
-                match &arg_expr.kind {
-                    ExprKind::IntLit(_) | ExprKind::FloatLit(_)
-                    | ExprKind::BoolLit(_) | ExprKind::CharLit(_)
-                    | ExprKind::StrLit(_) => {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_AMP_LITERAL] `{}(<literal>)` forbidden \
-                                 (Plan 118 D216 §15) — literals (числа, строки, \
-                                 bools, chars) не addressable; они не имеют stable \
-                                 storage. Bind в named local: `ro x = 42; ro p = {}(x)`.",
-                                n, n,
-                            ),
-                            arg_expr.span,
-                        ));
-                        return;
-                    }
-                    ExprKind::RecordLit { .. } => {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_AMP_RECORD_LITERAL] `{}(Record {{ ... }})` без named \
-                                 binding запрещён (Plan 118 D216 §4 amend). Required \
-                                 pattern: `ro acc = Record {{ ... }}; ro p = {}(acc)`.",
-                                n, n,
-                            ),
-                            arg_expr.span,
-                        ));
-                        return;
-                    }
-                    ExprKind::Index { .. } => {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_ARRAY_INDEX_PTR_BANNED] `{}(arr[i])` forbidden \
-                                 (Plan 118 D216 §15) — array buffer может resize \
-                                 (`.push`) или relocate via GC compaction; pointer \
-                                 становится dangling.",
-                                n,
-                            ),
-                            arg_expr.span,
-                        ));
-                        return;
-                    }
-                    // Everything else — Ident / SelfAccess (named lvalue roots),
-                    // Member field-access chains, `(*p)` derefs, and turbofish —
-                    // is routed through the shared chain-root walker, IDENTICALLY
-                    // to the bare `&value` parser path (Plan 118.1
-                    // [M-118.1-addr-of-chains]). A chain is addressable only if
-                    // its ROOT is a named lvalue; reject if it roots in a call
-                    // result / arithmetic (dangling temporary) or passes through
-                    // an array index (unstable buffer, D216 §15). Routing the
-                    // WHOLE operand (incl. top-level `(*p)` / turbofish) keeps
-                    // `addr_of(*p)` and `&(*p)` consistent.
-                    _ => {
-                        match crate::ast::addr_of_chain_root(&arg_expr.kind) {
-                            crate::ast::AddrChainRoot::Lvalue(_) => {
-                                // ok — fall through to rewrite.
-                            }
-                            crate::ast::AddrChainRoot::IndexInChain => {
-                                errors.push(Diagnostic::new(
-                                    format!(
-                                        "[E_ARRAY_INDEX_PTR_BANNED] `{}(...arr[i]...)` forbidden \
-                                         (Plan 118 D216 §15) — a field path through an array index \
-                                         has an unstable base (buffer resize via `.push` / GC \
-                                         compaction) → dangling pointer. Bind the element to a \
-                                         named local first.",
-                                        n,
-                                    ),
-                                    arg_expr.span,
-                                ));
-                                return;
-                            }
-                            crate::ast::AddrChainRoot::Rvalue => {
-                                errors.push(Diagnostic::new(
-                                    format!(
-                                        "[E_ADDR_OF_NON_LVALUE] `{}(...)` requires an lvalue — a \
-                                         named binding, field access, self, or a deref of one. \
-                                         Rvalue operands (call results, arithmetic, …) are \
-                                         temporaries, so the pointer would dangle. Bind the base in \
-                                         a named local first.",
-                                        n,
-                                    ),
-                                    arg_expr.span,
-                                ));
-                                return;
-                            }
-                        }
-                    }
-                }
-                // Rewrite to `&arg_expr` (UnOp::AddrOf). Type inference dictates
-                // *T vs *mut T — `addr_of_mut` тут не оборачиваем в As cast,
-                // mutability карьерится через `mut <binding>` per D216 (V1
-                // simplification: bare AddrOf, semantic mut-ness живёт в Nova
-                // binding mut-bit). Recurse через walk_expr на operand уже не
-                // нужен — walk_children отрабатывал ДО этого rewrite.
-                let span = e.span;
-                *e = Expr {
-                    kind: ExprKind::Unary {
-                        op: crate::ast::UnOp::AddrOf,
-                        operand: Box::new(arg_expr),
-                    },
-                    span,
-                };
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_ADDR_OF_REMOVED] `{}(x)` is removed (Plan 118.6, D216 §4). \
+                         Use `&x` instead.",
+                        n,
+                    ),
+                    func.span,
+                ));
                 return;
             }
         }
