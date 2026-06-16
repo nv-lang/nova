@@ -183,6 +183,112 @@ export fn BoxIter[T] @skip(n int) -> BoxIter[T] {
     } }
 }
 
+/// Lazily yield every `n`-th element (1-indexed: first, 1+n, 1+2n, …).
+/// `n = 1` is the identity (yields all). `n = 0` is a caller bug — asserted.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let v = Vec[int].of(1, 2, 3, 4, 5, 6)
+/// assert(v.lazy().step_by(2).collect() == [1, 3, 5])
+/// ```
+export fn BoxIter[T] @step_by(n int) -> BoxIter[T]
+    requires n > 0
+{
+    mut src = @
+    mut first = true
+    mut to_skip = n - 1
+    { step: || {
+        if first {
+            first = false
+            return src.next()
+        }
+        mut i = to_skip
+        while i > 0 {
+            i = i - 1
+            match src.next() {
+                Some(_) => {},
+                None => return None,
+            }
+        }
+        src.next()
+    } }
+}
+
+/// Lazily zip two iterators into `(A, B)` pairs — stops when either is exhausted.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let a = Vec[int].of(1, 2, 3)
+/// let b = Vec[str].of("a", "b", "c")
+/// let pairs = a.lazy().zip(b.lazy()).collect()
+/// assert(pairs.len() == 3)
+/// ```
+export fn BoxIter[A] @zip[B](mut other BoxIter[B]) -> BoxIter[(A, B)] {
+    mut src = @
+    { step: || match src.next() {
+        Some(a) => match other.next() {
+            Some(b) => Some((a, b)),
+            None => None,
+        },
+        None => None,
+    } }
+}
+
+/// Lazily concatenate two `BoxIter[T]` iterators — drains `self` then `other`.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let a = Vec[int].of(1, 2)
+/// let b = Vec[int].of(3, 4)
+/// assert(a.lazy().chain(b.lazy()).collect() == [1, 2, 3, 4])
+/// ```
+export fn BoxIter[T] @chain(mut other BoxIter[T]) -> BoxIter[T] {
+    mut src = @
+    mut first_done = false
+    { step: || {
+        if !first_done {
+            match src.next() {
+                Some(x) => return Some(x),
+                None => { first_done = true },
+            }
+        }
+        other.next()
+    } }
+}
+
+/// Lazily map each `T` to a `BoxIter[U]` via `f`, then flatten — yields all
+/// elements of the inner iterator before moving to the next outer element.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let v = Vec[int].of(1, 2, 3)
+/// let got = v.lazy().flat_map(|x| Vec[int].of(x, x * 10).lazy()).collect()
+/// assert(got == [1, 10, 2, 20, 3, 30])
+/// ```
+export fn BoxIter[T] @flat_map[U](f fn(T) -> BoxIter[U]) -> BoxIter[U] {
+    mut src = @
+    mut inner Option[BoxIter[U]] = None
+    { step: || {
+        while true {
+            match inner {
+                Some(mut it) => match it.next() {
+                    Some(u) => return Some(u),
+                    None => { inner = None },
+                },
+                None => match src.next() {
+                    Some(x) => { inner = Some(f(x)) },
+                    None => return None,
+                },
+            }
+        }
+        None
+    } }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Slice-view iterators — chunks / chunks_exact / rchunks / windows (Plan 153.4)
 // ──────────────────────────────────────────────────────────────────────────

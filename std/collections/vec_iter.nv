@@ -44,7 +44,7 @@
 // `T` flows through unchanged at `filter`; `map` retargets to `U`. The element
 // type and source type are both monomorphized, so each distinct chain shape is
 // its own concrete type (Rust-identical). The current surface covers:
-// adapters: map / filter / filter_map / take / skip / enumerate
+// adapters: map / filter / filter_map / take / skip / enumerate / step_by
 // terminators: collect / collect_into / fold / sum / count / any / all /
 //              find / for_each / reduce / min / max / nth / last / collect_set
 //
@@ -216,6 +216,43 @@ export fn SkipIter[I, T] @take(n int) -> TakeIter[Self, T] => { src: @, left: n 
 export fn SkipIter[I, T] @skip(n int) -> SkipIter[Self, T] => { src: @, to_skip: n }
 export fn SkipIter[I, T] @map[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
 export fn SkipIter[I, T] @filter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
+
+// ── @step_by — yields every n-th element (zero-cost, inline counter) ────────
+//
+// `StepByIter` holds the upstream inline (no box); the skip loop is a direct
+// static `@src.next()` call — zero indirection per element.
+
+/// Lazily yield every `n`-th element (first, 1+n, 1+2n, …). `n > 0` required.
+export type StepByIter[I, T] value { mut src I, priv step int, mut first bool, mut rem int }
+
+#impl(Next[T])
+export fn StepByIter[I, T] mut @next() -> Option[T] {
+    if @first {
+        @first = false
+        return @src.next()
+    }
+    mut i = @rem
+    while i > 0 {
+        i -= 1
+        match @src.next() {
+            Some(_) => {},
+            None => return None,
+        }
+    }
+    @src.next()
+}
+
+export fn VecIter[T]         @step_by(n int) -> StepByIter[Self, T] => { src: @, step: n, first: true, rem: n - 1 }
+export fn MapIter[I, T, U]   @step_by(n int) -> StepByIter[Self, U] => { src: @, step: n, first: true, rem: n - 1 }
+export fn FilterIter[I, T]   @step_by(n int) -> StepByIter[Self, T] => { src: @, step: n, first: true, rem: n - 1 }
+export fn TakeIter[I, T]     @step_by(n int) -> StepByIter[Self, T] => { src: @, step: n, first: true, rem: n - 1 }
+export fn SkipIter[I, T]     @step_by(n int) -> StepByIter[Self, T] => { src: @, step: n, first: true, rem: n - 1 }
+
+export fn StepByIter[I, T] @take(n int)  -> TakeIter[Self, T]    => { src: @, left: n }
+export fn StepByIter[I, T] @skip(n int)  -> SkipIter[Self, T]    => { src: @, to_skip: n }
+export fn StepByIter[I, T] @map[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
+export fn StepByIter[I, T] @filter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
+export fn StepByIter[I, T] @enumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
 
 // ── @enumerate — per adapter type ──────────────────────────────────────────
 //
