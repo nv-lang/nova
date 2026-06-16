@@ -17,6 +17,16 @@ referenced from plan docs and simplifications.md.
 
 ---
 
+## Name shadowing diagnostics
+
+- **[M-prelude-name-shadow-hint]** Улучшить диагностику когда пользовательский тип называется так же как prelude-протокол.
+  Сейчас: `type Iter { ... }` в модуле + использование в generic bound → `E_BOUND_NOT_PROTOCOL` (технически верно, но неясно почему).
+  Хотим: hint «type name `Iter` shadows prelude protocol `Iter` — rename your type or use a qualified path».
+  Реализация: в check_bound_ref, если bound-name резолвится в user TypeDecl (не Protocol) И в prelude есть Protocol с тем же именем — добавить hint к E_BOUND_NOT_PROTOCOL.
+  Priority: M.
+
+---
+
 ## Plan 118.6 — Safe &x model
 
 - **[M-118.6-tuple-field-escape]** `&tuple.N` (tuple field by index) escape analysis chain-root tracking.
