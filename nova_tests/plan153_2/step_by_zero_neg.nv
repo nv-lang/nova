@@ -6,7 +6,7 @@ module plan153_2.step_by_zero_neg
 
 import std.collections.vec_lazy
 
-fn main() -> () {
+test "step_by zero panics" {
     ro v = Vec[int].of(1, 2, 3)
-    ro _ = v.lazy().step_by(0).collect()
+    v.lazy().step_by(0).for_each(|_| {})
 }
