@@ -11217,15 +11217,6 @@ impl NameResCtx {
             // без `import std.runtime.sync`. Dispatch: ExternalRegistry
             // → nova_fn_fence (free_fn_c_name ExternalRegistry-first path).
             "fence",
-            // Plan 118.1 closeout (2026-06-05): `addr_of` / `addr_of_mut`
-            // builtins — explicit pointer-creation intrinsics. Rewriter
-            // (const_fn_eval.rs) desugars `addr_of(x)` / `addr_of_mut(x)`
-            // к `&x` (UnOp::AddrOf). Listed here so type-checker
-            // не флагает «undefined identifier» pre-rewrite. Unsafe-context
-            // + realtime-ban + mut-binding checks эмитятся pre-rewrite
-            // в UnsafeCtx и ConsumeCtx (closer к user-source AST).
-            "addr_of",
-            "addr_of_mut",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -11528,6 +11519,26 @@ impl NameResCtx {
             }
 
             ExprKind::Call { func, args, trailing } => {
+                // Plan 118.6 Ф.3: addr_of/addr_of_mut removed — emit
+                // E_ADDR_OF_REMOVED before undefined-identifier fires.
+                if let ExprKind::Ident(n) = &func.kind {
+                    if (n == "addr_of" || n == "addr_of_mut") && args.len() == 1 {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_ADDR_OF_REMOVED] `{}(x)` is removed (Plan 118.6, D216 §4). \
+                                 Use `&x` instead.",
+                                n,
+                            ),
+                            func.span,
+                        ));
+                        // Still walk the argument to catch errors inside it.
+                        self.walk_expr(args[0].expr(), file_id, scope, errors);
+                        if let Some(t) = trailing {
+                            self.walk_trailing(t, file_id, scope, errors);
+                        }
+                        return;
+                    }
+                }
                 // Special-case: если func — bare Ident, может быть
                 // variant-constructor (`Square(5)`) — top_level.contains.
                 // is_known покрывает оба варианта (fn + variant).
@@ -11937,10 +11948,6 @@ impl NameResCtx {
         // const fn names recognized без registration. Replaced литералом
         // в rewriter pass (const_fn_eval.rs).
         if name == "size_of" || name == "align_of" { return true; }
-        // Plan 118.1 closeout: addr_of / addr_of_mut — pointer-creation
-        // intrinsics, rewriter-desugared к UnOp::AddrOf. Recognized
-        // here so type-checker pre-rewrite не флагает «undefined».
-        if name == "addr_of" || name == "addr_of_mut" { return true; }
         if self.builtins.contains(name) { return true; }
         // Plan 42.15 Rule C: declarations module-group этого peer'а
         // (peers одного folder-module делят declarations namespace).
@@ -16923,41 +16930,6 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 }
                 // Free-fn call: f(args).
                 ExprKind::Ident(fname) => {
-                    // Plan 118.1 closeout (2026-06-05): `addr_of_mut(IDENT)`
-                    // requires `mut` binding на IDENT. addr_of (read-only) — no check.
-                    // Shape detection: callee == Ident("addr_of_mut") AND
-                    // args[0] is bare Ident. Lookup в param_mut + local_mut;
-                    // missing/false → E_ADDR_OF_MUT_REQUIRES_MUT_BINDING.
-                    if fname == "addr_of_mut" && args.len() == 1 {
-                        // Plan 118.1 [M-118.1-addr-of-chains]: enforce the mut
-                        // binding on the ROOT of a pure value field-access chain,
-                        // not just a bare Ident — `addr_of_mut(s.field)` must
-                        // require `mut s` (otherwise a *mut into readonly
-                        // storage). Deref/index/self roots → None, so the check is
-                        // skipped: `addr_of_mut((*p).f)` is NOT yet gated on `p`
-                        // being a `*mut`/mut-bound pointer (V1 accepted gap — the
-                        // desugar is a bare UnOp::AddrOf with no *mut cast;
-                        // tracked for a follow-up), and array-index roots are
-                        // already banned upstream (E_ARRAY_INDEX_PTR_BANNED).
-                        if let Some(target) =
-                            crate::ast::addr_of_mut_root_ident(&args[0].expr().kind)
-                        {
-                            let is_mut = ctx.param_mut.get(target).copied()
-                                .or_else(|| ctx.local_mut.get(target).copied())
-                                .unwrap_or(false);
-                            if !is_mut {
-                                errors.push(Diagnostic::new(
-                                    format!(
-                                        "[E_ADDR_OF_MUT_REQUIRES_MUT_BINDING] `addr_of_mut({})` \
-                                         requires mut binding; hint: declare `mut {}` to enable \
-                                         mutation through pointer.",
-                                        target, target,
-                                    ),
-                                    e.span,
-                                ));
-                            }
-                        }
-                    }
                     // Plan 100.3 (D157): view-borrow semantics for free-fn calls.
                     // consume_obligations var passed to NON-consume param = view-borrow → OK.
                     // Rvalue (call returning consume-type) passed to view-param → D133-consume-rvalue-in-view.
@@ -20433,8 +20405,7 @@ struct UnsafeCtx {
     ///
     /// Registration sources:
     ///   - `let x: *unsafe fn(...) = ...` (type annotation has unsafe-fn-ptr shape);
-    ///   - `let x = addr_of(unsafe_fn_name)` (RHS resolves к #unsafe fn ident);
-    ///   - `let x = &unsafe_fn_name` (same — UnOp::AddrOf shape);
+    ///   - `let x = &unsafe_fn_name` (UnOp::AddrOf shape);
     ///   - fn params типа `*unsafe fn(...)` (params binding registration).
     unsafe_fn_ptr_vars: Vec<HashSet<String>>,
     /// **Plan 118.5 V2 [M-118.5-arg-coerce-unsafe] (2026-06-04):** when true,
@@ -20499,24 +20470,15 @@ impl UnsafeCtx {
     /// **Plan 118.1.6 (2026-06-08):** detect whether the RHS expression of
     /// a `let` binding evaluates к `*unsafe fn(...)` value. Conservative —
     /// fires when syntactic shape is one of:
-    ///   - `addr_of(IDENT)` где IDENT ∈ self.unsafe_fns (Call form);
     ///   - `&IDENT` где IDENT ∈ self.unsafe_fns (UnOp::AddrOf form);
     ///   - bare Ident name ∈ self.unsafe_fn_ptr_vars (forwarding through
     ///     another let-binding или fn param).
-    /// Block trailing-expression inherits (handles `unsafe { addr_of(uf) }`).
+    /// Block trailing-expression inherits (handles `unsafe { &uf }`).
     fn expr_produces_unsafe_fn_ptr(&self, e: &Expr) -> bool {
         use crate::ast::{ExprKind, UnOp};
         match &e.kind {
             ExprKind::Unary { op: UnOp::AddrOf, operand } => {
                 matches!(&operand.kind, ExprKind::Ident(n) if self.unsafe_fns.contains(n))
-            }
-            ExprKind::Call { func, args, .. } if args.len() == 1 => {
-                let is_addr_of = matches!(
-                    &func.kind,
-                    ExprKind::Ident(n) if n == "addr_of" || n == "addr_of_mut"
-                );
-                if !is_addr_of { return false; }
-                matches!(&args[0].expr().kind, ExprKind::Ident(n) if self.unsafe_fns.contains(n))
             }
             ExprKind::Ident(name) => self.is_unsafe_fn_ptr_var(name),
             ExprKind::Block(b) => b.trailing.as_ref()
@@ -20547,13 +20509,6 @@ impl UnsafeCtx {
                     | crate::ast::TypeRef::Mut(_, _)
                     | crate::ast::TypeRef::Unsafe(_, _)
             ),
-            // Plan 118.1 closeout (2026-06-05): addr_of / addr_of_mut builtin
-            // calls — syntactically equivalent к `&value` (rewriter-desugar
-            // к UnOp::AddrOf). Recognized here so `let p = addr_of(v)` correctly
-            // registers `p` в ptr_vars frame (UnsafeCtx walk_stmt::Let path).
-            ExprKind::Call { func, args, .. } if args.len() == 1 => {
-                matches!(&func.kind, ExprKind::Ident(n) if n == "addr_of" || n == "addr_of_mut")
-            }
             ExprKind::Ident(name) => self.ptr_vars.iter().rev().any(|f| f.contains(name)),
             // Block-trailing inheritance: `unsafe { &x }` / nested block.
             // Empty trailing => not a pointer (unit-typed).
@@ -20582,7 +20537,7 @@ impl UnsafeCtx {
                 // diagnostic. Match только simple-ident pattern (no destructure).
                 // Two registration sources:
                 //   (a) RHS expression is syntactically a typed pointer
-                //       (&v, *p, e as *T, addr_of(v), Ident in ptr_vars, block
+                //       (&v, *p, e as *T, Ident in ptr_vars, block
                 //       trailing к pointer shape).
                 //   (b) Type annotation is a pointer type (TypeRef::Pointer /
                 //       Mut / Unsafe чей strip_modifiers → Pointer). Covers the
@@ -20686,16 +20641,7 @@ impl UnsafeCtx {
             // Plan 118 D216 §8 ENFORCEMENT POINT: AddrOf / Deref require
             // unsafe context (block с is_unsafe = true OR enclosing #unsafe fn).
             ExprKind::Unary { op: UnOp::AddrOf, operand } => {
-                if self.depth == 0 {
-                    errors.push(Diagnostic::new(
-                        "[E_UNSAFE_REQUIRED] `&value` pointer creation \
-                         requires unsafe context (Plan 118 D216 §8). Wrap \
-                         expression в `unsafe { ... }` block, или mark \
-                         enclosing fn `#unsafe`. D2 amend: unsafe is \
-                         syntactic sugar над built-in effect handler.".to_string(),
-                        e.span,
-                    ));
-                }
+                // Ф.2: &x is safe — no E_UNSAFE_REQUIRED for AddrOf.
                 // Plan 118 A33: pointer ops banned в #realtime fn body
                 // (D216 §20, D172 cross-ref) — deref может GC trigger,
                 // & may allocate via auto-promote.
@@ -20771,46 +20717,6 @@ impl UnsafeCtx {
                 self.walk_expr(right, errors);
             }
             ExprKind::Call { func, args, .. } => {
-                // Plan 118.1 closeout (2026-06-05): addr_of / addr_of_mut
-                // intrinsics — must be gated identical to bare `&value`
-                // (UnOp::AddrOf arm). These desugar в rewriter-pass к
-                // UnOp::AddrOf, но enforcement здесь чтобы:
-                //   (1) unsafe-fns lookup пропустить (intrinsics, не fn calls);
-                //   (2) span указывал на пользовательский Ident("addr_of(…)"),
-                //       а не на post-rewrite UnOp.
-                if let ExprKind::Ident(fname) = &func.kind {
-                    if (fname == "addr_of" || fname == "addr_of_mut") && args.len() == 1 {
-                        if self.depth == 0 {
-                            errors.push(Diagnostic::new(
-                                format!(
-                                    "[E_UNSAFE_REQUIRED] `{}` pointer creation \
-                                     requires unsafe context (Plan 118 D216 §8). \
-                                     Wrap expression в `unsafe {{ ... }}` block, \
-                                     или mark enclosing fn `#unsafe`.",
-                                    fname,
-                                ),
-                                e.span,
-                            ));
-                        }
-                        if self.in_realtime {
-                            errors.push(Diagnostic::new(
-                                format!(
-                                    "[E_REALTIME_POINTER_OP] `{}` pointer creation \
-                                     forbidden в `#realtime fn` body (Plan 118 D216 §20 \
-                                     + Plan 113 D172). `&` может trigger heap allocation \
-                                     via escape-analysis auto-promote — violates \
-                                     realtime no-GC-pause guarantee.",
-                                    fname,
-                                ),
-                                e.span,
-                            ));
-                        }
-                        // Walk arg expression — recurse into operand. Skip
-                        // unsafe_fns lookup (these are intrinsics, not fn calls).
-                        self.walk_expr(args[0].expr(), errors);
-                        return;
-                    }
-                }
                 // Plan 118 A11 enforcement: detect call к #unsafe fn outside
                 // unsafe context. Callee identification:
                 //   - Ident (free fn) — lookup в unsafe_fns

@@ -1,0 +1,15 @@
+// Plan 118.6 Ф.5 POS T3 — mut binding automatically produces *mut int pointer.
+//
+// Per D216 §4: ro binding → *T (readonly pointer), mut binding → *mut T.
+// No unsafe needed for AddrOf after Plan 118.6 Ф.2.
+
+module plan118_6.t3_pos_mut_binding_ptr_mut
+
+test "mut binding &y gives *mut int — write + read" {
+    mut y = 42
+    ro p = &y
+    unsafe {
+        p.write(100)
+        assert(p.read() == 100)
+    }
+}
