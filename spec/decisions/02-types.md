@@ -35,6 +35,7 @@
 | [D281](#d281-module-level-field-privacy--type-x-priv---plan-160) | Module-level field privacy `type X priv { … }` — bare `priv` = module-private (Plan 160, D281) | active |
 | [D282](#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) | Blanket protocol-receiver methods `fn[I Next[T]] I @m` — typevar-ресивер + bound-dispatch (Plan 161, G-F) | active |
 | [D284](#d284-enumerateiter--zero-cost-enumerate-adapter-plan-162) | `EnumerateIter[I, T]` — zero-cost enumerate adapter; per-type `@zenumerate()` dispatch; tuple parametric return (Plan 162) | active |
+| [D290](#d290--value-record-iterator-types-plan-165-2026-06-16) | Iterator value-records: `VecIter[T] value` (GC-pointer fields covered by fiber arena) + `Range`/`RangeIter`/`StepRangeIter`/`ReverseRangeIter value` (int-only, pure stack) — zero malloc in adapter chain (Plan 165) | active |
 
 ---
 
@@ -12438,3 +12439,34 @@ export fn SkipIter[I, T]      @zenumerate() -> EnumerateIter[Self, T]         =>
 **Кросс-ссылки:** [D282](#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) (blanket-receiver, гейтирует терминаторы на EnumerateIter), [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) (boxed lazy layer — предшественник), [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) (generic-over-source model — база для EnumerateIter).
 
 **Реализовано в.** `std/collections/vec_iter_zc.nv`: `EnumerateIter[I,T]` value-record + `@next()` + chaining methods + 6 per-type `@zenumerate()` adapters. `compiler-codegen/src/codegen/emit_c.rs`: tuple parametric T-subst fix в blanket `infer_type_refs_for_blanket`. Тесты: `nova_tests/plan162/` (9 basic + 8 chain + neg). D284 NEW.
+
+## D290 — Value-record iterator types (Plan 165, 2026-06-16)
+
+**Status:** ACTIVE (Plan 165, 2026-06-16). **Зависит от:** [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) (generic value-record mono), [D215](#d215-named-tuple-fields--valuereference-allocation-contract) (value/reference allocation contract), [D228](#d228) (fiber-arena GC root coverage для value-record с GC-pointer полями). **Маркеры:** `[M-codegen-value-type-generic-forward-decl]` ✅ CLOSED для `VecIter`/`Range*Iter` (Plan 165 Ф.1).
+
+**§1 Правило.** Iterator-тип объявляется как `value` (stack-allocated), если выполняется **одно из** условий:
+
+(a) Тип содержит только примитивные поля (`int`, `u8`, `bool`, `f64`, и т.д.) без GC-managed указателей → stack-аллокация безопасна без каких-либо оговорок.
+
+(b) Тип содержит GC-pointer-поля, но является **cursor'ом** (итерационным состоянием над уже существующей структурой данных), не новым владельцем памяти → fiber arena автоматически корнирует value-record со ссылочными полями (D228 §escape), поэтому GC-безопасность сохраняется.
+
+**§2 Типы (Plan 165).** Применено к:
+
+- `VecIter[T] value` (`std/collections/vec/iter.nv`) — содержит `Vec[T]` (GC-pointer-ссылка); cursor-тип, правило (b). Stack-slot + fiber-arena root.
+- `Range value`, `RangeIter value`, `StepRangeIter value`, `ReverseRangeIter value` (`std/collections/range.nv`) — содержат только `int`-поля; правило (a). Чистый stack, zero GC involvement.
+
+**§3 Эффект на производительность.** `for x in v { }` компилируется в `VecIter[T]` на стеке — malloc отсутствует. Цепочка `0..n` (`Range` → `RangeIter`) — два `int64_t` на стеке. Adapter-цепочка zero-cost iterators (Plan 153.2 / D260 / D277) остаётся нулём аллокаций при нулевой escape (стековый инлайнинг адаптеров).
+
+**§4 Codegen инварианты (Ф.1 fix, коммит `1f92f106`).** Generic value-тип `type X[T] value { … }` при мономорфизации:
+
+- Forward declaration должна содержать полное mono-имя: `typedef struct NovaValue_X____nova_int NovaValue_X____nova_int;` (не `NovaValue_X`).
+- Несоответствие forward-declaration и struct definition → CC-FAIL «incomplete return type». Исправлено: `emit_forward_decl_for_generic_value_type` передаёт mono-имя в полной форме.
+- `field_cache.rs` предикат примитивного листа включает `"never"` (строчные).
+
+**§5 Конвенция для новых iterator-типов.** При добавлении нового iterator-адаптера (`type FooIter[…] { … }`):
+
+1. Если поля — только примитивы или ссылки на **уже живущие** GC-объекты (cursor-semantics) → объявить `value`.
+2. Если адаптер **создаёт** новую GC-память (например, буферизующий адаптер) → оставить heap-record.
+3. Проверить, что forward declaration генерируется с полным mono-именем (см. §4).
+
+**Реализовано в.** `std/collections/vec/iter.nv` (VecIter value), `std/collections/range.nv` (Range/RangeIter/StepRangeIter/ReverseRangeIter value), `compiler-codegen/src/codegen/emit_c.rs` (generic value forward-decl fix), `compiler-codegen/src/field_cache.rs` (`"never"` лист).
