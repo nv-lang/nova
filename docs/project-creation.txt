@@ -38520,3 +38520,5 @@ emit_c.rs: U-suffix для char literals; nova_char в is_typed_int_c_ty + emit_
   Проверка в check_type_decl(): td.name.chars().count() == 1 → error.
   Мигрировано 37 файлов nova_tests/. plan118_1_addr_chains: 12/12 PASS (было 9/12).
   plan167: N/N PASS. [M-single-letter-type-ban] CLOSED.
+
+[2026-06-17] Plan 91.8b CLOSED — удаление legacy operator-dispatch методов @eq/@lt/@le/@gt/@ge. Компилятор (emit_c.rs): убраны fallback'и ["equal", "eq"] → только ["equal"]; для < > <= >= только @compare (no lt/le/gt/ge dispatch для user types). std/runtime/string/core.nv: str @eq переименован в @equal. 4 тестовых файла мигрированы: generic_bounds.nv, generic_record_mono.nv, priv_cross_instance_ok.nv, f6_pure_bound_protocols.nv. Новые тесты: nova_tests/plan91_8b/ 6 fixtures (4 pos + 2 neg). Spec: D46 обновлён, D184 добавлен. Branch: plan-91.8b-remove-old-ops.

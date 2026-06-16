@@ -569,3 +569,8 @@
 |---|---|---|
 | `[M-104.7-v4-keywords]` | OPEN | Будущие keywords → grammar update при добавлении в lexer |
 | `[M-104.7-query-update-priv]` | ✅ CLOSED 2026-06-17 | highlights.scm updated — priv/pub/extern highlighted |
+## Follow-up: Plan 91.8b (remove @eq/@lt/@le/@gt/@ge)
+
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-91.8b-remove-old-ops]` | ✅ CLOSED 2026-06-17. @eq/@lt/@le/@gt/@ge удалены из компилятора и std. | Plan 91.8b | ✅ done |

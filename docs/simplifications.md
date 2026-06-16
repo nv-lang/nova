@@ -37092,3 +37092,5 @@ Tests: 39 unit + 13 integration = 52 completion-specific + 167 total nova-lsp te
 - Проверка в check_type_decl() types/mod.rs
 - Мотивация: generic-параметры конвенционально однобуквенные → конфликт с type S
 - 37 тестовых файлов мигрировано, plan118_1_addr_chains: 12/12 PASS
+
+- [2026-06-17] Plan 91.8b: удаление @eq/@lt/@le/@gt/@ge — без упрощений, продакшн-грейд. Полное удаление fallback'ов из компилятора (не deprecated, а hard-remove). @equal/@compare — единственный путь для user types. Примитивы int/f64/char — builtin C-диспатч без изменений.
