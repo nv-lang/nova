@@ -131,11 +131,15 @@
 |---|---|---|---|
 | `[M-116-openssl-backend]` | Опц. OpenSSL TLS 1.0/1.1 handler (rustls = default); Plan 116 не начат (PLANNED). | plan-116 Followups | P2 |
 | `[M-91.fe5-math-time-conformance]` | math (sqrt/ln) есть; Instant/Duration time-API conformance pending. | plan-91 Followups | P2 |
-| `[M-ide-integration-deferred]` | Production LSP (completion/refs/rename/format) 104.3–104.6 не построены (104.2 hover/goto/sighelp ✅ ЗАКРЫТ 2026-06-16; 104.7 tree-sitter закрыт). | plan-104 Followups | P2 |
-| `[M-104.2-cross-file-goto]` | goto-definition V1 single-file; cross-file resolution через workspace import graph deferred → Plan 104.4. | plan-104.2 Followups | P2 |
-| `[M-104.2-symbol-cache]` | Каждый hover/goto re-parses файл; dashmap symbol cache deferred (plan 104.3 workspace-кэш). | plan-104.2 Followups | P3 |
+| `[M-ide-integration-deferred]` | ✅ **CLOSED 2026-06-17 (Plan 104 ВСЕ sub-plans 104.0–104.9).** Production LSP полностью построен: completion/refs/rename/format/code-actions/symbols/tree-sitter/editor-packaging/close-out. 268 tests PASS. | plan-104 Followups | ✅ done |
+| `[M-104.2-cross-file-goto]` | goto-definition V1 single-file; cross-file resolution через workspace import graph deferred. `[M-104.4-refs-incremental-index]` также open. | plan-104.2 Followups | P3 |
+| `[M-104.2-symbol-cache]` | Каждый hover/goto re-parses файл; dashmap symbol cache deferred. | plan-104.2 Followups | P3 |
 | `[M-104.2-protocol-method-hover]` | Hover на protocol-method bodies не отдельно резолвится; SymbolInfo::ProtocolMethod deferred. | plan-104.2 Followups | P3 |
-| `[M-104.2-signature-type-dispatch]` | Signature help: overload выбирается по имени, не типу receiver; type-driven dispatch → Plan 104.3. | plan-104.2 Followups | P2 |
+| `[M-104.2-signature-type-dispatch]` | Signature help: overload выбирается по имени, не типу receiver; type-driven dispatch V2. | plan-104.2 Followups | P3 |
+| `[M-104.9-dynamic-method-completion]` | Completion items — статические таблицы в completion.rs; V2: запрашивать методы через compiler API. | plan-104.9 Followups | P3 |
+| `[M-104.5-suggestion-field-wiring]` | CodeAction edit range: re-scan источника вместо compiler Suggestion.span. V2: wire напрямую. | plan-104.5 Followups | P3 |
+| `[M-104.5-multi-edit-rename]` | E_PREFIX_SHADOWS_NAMED_TYPE: переименовать все вхождения, не только объявление. | plan-104.5 Followups | P3 |
+| `[M-104.5-organize-imports]` | Sort+deduplicate import list (Source.organizeImports action). | plan-104.5 Followups | P3 |
 | `[M-treesitter-grammar-keyword-bump]` | **OPEN (2026-06-14).** tree-sitter-nova грамматика (github.com/nv-lang/tree-sitter-nova v0.1.0) отстаёт от лексера: anonymous-токены `unsafe` (D216), `priv`/`pub` (D220), `okdefer` (D160), `interrupt` НЕ определены в грамматике → Zed/Helix/Neovim `highlights.scm` не могут их подсветить (добавление в `.scm` без бампа грамматики ломает компиляцию query). Также грамматика, вероятно, ещё содержит retired `let`/`readonly`/`and`/`or`/`not`. **Regex-хайлайтеры (VSCode/vim/www) синхронизированы с лексером** (Plan 104.9, [D278](../../spec/decisions/09-tooling.md#d278); commits `ad55a91d` nova + `28b00c6` www) и защищены conformance-тестом `compiler-codegen/tests/syntax_highlight_conformance.rs` (8/8). Нужно: бампнуть грамматику (добавить/убрать токены+правила) → новый rev → обновить `editors/helix/languages.toml` `rev` + `editors/zed/languages/nova/highlights.scm` `@keyword` (тогда conformance-тест проверит и полноту Zed, а не только фантомы). Source-of-truth: `compiler-codegen/src/lexer/mod.rs`. | plan-104 Followups | P3 |
 | `[M-118.1-addr-of-mut-deref-ptr-mut]` | ✅ **CLOSED (Plan 118.6, 2026-06-17):** `addr_of_mut` retired → `E_ADDR_OF_REMOVED`; `&x` на mut-биндинге автоматически даёт `*mut T`. | plan-118.1 Followups | ✅ done |
 | `[M-118.1-addr-of-chains-checktime]` | ✅ **CLOSED (Plan 118.6, 2026-06-17):** `addr_of` retired → `E_ADDR_OF_REMOVED`; `&x.field` chain-check выполняется at check-time через escape analysis. | plan-118.1 Followups | ✅ done |
@@ -562,6 +566,14 @@
 | Маркер | Статус | Home | Действие |
 |---|---|---|---|
 | `[M-106-if-guard]` | ✅ CLOSED 2026-06-17. && guard в if/while pattern-bind. | Plan 106 | ✅ done |
+
+## Follow-up: Plan 104.9 (nova-lsp language-sync + close-out)
+
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-104.9-completion-language-sync]` | ✅ CLOSED 2026-06-17. completion.rs/code_actions.rs синхронизированы с языком. | Plan 104.9 | ✅ done |
+| `[M-104.9-dynamic-method-completion]` | OPEN P3. Completion — статические таблицы. V2: запрашивать методы через compiler API. | plan-104.9 Followups | P3 |
+| `[M-104.5-suggestion-field-wiring]` | OPEN P3. CodeAction edit — re-scan vs compiler Suggestion.span. | plan-104.5 Followups | P3 |
 
 ## Follow-up: tree-sitter-nova (grammar sync)
 

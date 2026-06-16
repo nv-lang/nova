@@ -3072,7 +3072,7 @@ Non-matching prefixes (e.g., `[NOTE]`) produce `code = None`.
 
 **104.5.3 — Plan 100 (7 fixes):**
 `E_CONSUME_KEYWORD_MISSING`, `E_LOCAL_NOT_MUT`, `E_PARAM_NOT_MUT`,
-`E_ADDR_OF_MUT_REQUIRES_MUT_BINDING`, `E_REDUNDANT_POINTER_RO`,
+`E_ADDR_OF_REMOVED` (Plan 118.6 rename from `E_ADDR_OF_MUT_REQUIRES_MUT_BINDING`), `E_REDUNDANT_POINTER_RO`,
 `E_REDUNDANT_TYPE_MODIFIER`, `E_REDUNDANT_IMPORT_ALIAS`.
 
 **104.5.4 — General (7 fixes):**
@@ -3084,7 +3084,30 @@ Non-matching prefixes (e.g., `[NOTE]`) produce `code = None`.
 `E_TYPE_UNKNOWN` (known stdlib types), `E_BOUND_UNKNOWN` (stdlib protocols),
 `E_AUTO_DERIVE_UNKNOWN_PROTOCOL` (Levenshtein suggestion).
 
-**Total: 25 fixes** (meets ≥25 production requirement).
+**104.5.6 — Protocol impl fixes (7 fixes, added 2026-06-17):**
+`E_METHOD_REDEFINITION`, `E_IMPL_UNKNOWN_PROTOCOL` (suggest import for known stdlib protocols),
+`E_IMPL_NOT_A_PROTOCOL_METHOD`, `E_IMPL_SIGNATURE_MISMATCH`, `E_PRIMITIVE_NO_PROTOCOL_METHOD`,
+`E_BLANKET_CONFLICT`, `E_DUPLICATE_PROTOCOL_IMPL`.
+
+**104.5.7 — Field/type fixes (2 fixes, added 2026-06-17):**
+`E_FIELD_MODULE_PRIVATE` (guidance note), `E_TYPE_NAME_TOO_SHORT` (guidance note).
+
+**104.5.8 — String operation fixes (2 fixes, added 2026-06-17):**
+`E_STR_NO_LEN` (MachineApplicable: replace `.len` → `.byte_len()`),
+`E_STR_NO_INT_INDEX` (guidance note).
+
+**104.5.9 — Comparison chain fixes (2 fixes, added 2026-06-17):**
+`E_CMP_CHAIN_UNSUPPORTED` (guidance note — use `&&`),
+`E_RELATIONAL_OPERAND_NOT_ORDERED` (suggest import `Ordered` protocol).
+
+**Total: 39 fixes** (initial ≥25 met; extended to 39 across all nova-lsp language-sync work).
+
+**Note on `E_STR_NO_LEN` fix applicability:**
+The `fix_str_no_len` handler scans the diagnostic range for the pattern `.len` and replaces
+it with `.byte_len()`. This is `MachineApplicable` (`is_preferred = true`) because `byte_len()`
+is the direct equivalent for ASCII strings, and the overwhelming majority of `.len` usages
+intend byte-length. For Unicode-aware char-count, the compiler diagnostic message directs
+the user to `as_chars().count()` (O(n)) — the fix does not attempt this substitution.
 
 ### §5 Suggestion vs CodeAction relationship
 

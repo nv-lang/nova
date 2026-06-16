@@ -18,6 +18,16 @@
 
 ---
 
+### Plan 104.9 — nova-lsp language-sync: completion + quick-fixes (2026-06-17, ✅ CLOSED [M-104.9-completion-language-sync])
+
+- **Где** — `nova-lsp/src/completion.rs`, `nova-lsp/src/code_actions.rs`, `nova-lsp/tests/completion.rs`.
+- **Что сделано** — Полная синхронизация nova-lsp с актуальной поверхностью языка после ~50 изменений (Планы 114/133/139/147/152/160/161 и др.). (1) `completion.rs`: `let` удалён из всех keyword-списков → `ro`/`mut`/`extern`/`priv`/`reveal`/`value`; добавлен `while-let` сниппет; `collect_let_bindings` сканирует `ro`/`mut`; `float`/`usize`/`Map` удалены из prelude_items → добавлены `f64`/`f32`/`HashMap`/`Set`; `int_methods()` = только `min/max/compare`; `float_methods()` → `f64_methods()` с полным math.nv API; `str_methods()`: `len` → `byte_len()`, `chars()` → `as_chars()`, `split_lines()` → `lines()`, `to_int()` → `parse_int()`; `vec_methods()`: `iter()->VecIter[T]` (не `iterator()`), `lazy()`, `chunks()`, `append`, `flatten`, etc. (2) `code_actions.rs`: добавлены группы 104.5.6 (7 protocol-impl fixes), 104.5.7 (2 field/type fixes), 104.5.8 (2 str fixes: `E_STR_NO_LEN` → `.byte_len()` MachineApplicable), 104.5.9 (2 comparison fixes); `E_ADDR_OF_MUT_REQUIRES_MUT_BINDING` → `E_ADDR_OF_REMOVED` (Plan 118.6 followup). (3) Тесты: 255 unit + 13 integration tests PASS; `nova_tests/plan104_9/` 10/10 PASS через release compiler.
+- **Что было упрощено** (в V1): completion.rs не имел механизма обновления при изменениях языка → hardcoded списки устарели. Теперь синхронизированы, но всё ещё статические.
+- **Как чинить** (V2): dynamic completion — запрашивать методы через compiler API вместо статических таблиц. `[M-104.9-dynamic-method-completion]` для V2.
+- **Приоритет** — L (CLOSED 2026-06-17).
+
+---
+
 ### Plan 153 Phase B — step_by / chain / zip / flat_map + scalar @min/@max (2026-06-16)
 
 - **Где** — `std/collections/vec_lazy.nv`, `std/collections/vec_iter.nv`, `std/runtime/defaults.nv`.
