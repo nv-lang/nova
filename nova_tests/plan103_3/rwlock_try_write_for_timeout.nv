@@ -4,7 +4,7 @@
 
 module plan103_3.rwlock_try_write_for_timeout
 
-import std.time.duration
+import std.time.duration as duration
 
 test "try_write_for times out while reader holds lock" {
     mut rw = RwLock.new()

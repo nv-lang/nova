@@ -4,7 +4,7 @@
 
 module plan65.f12_g_close_at_elapsed_since
 
-import std.time.duration
+import std.time.duration as duration
 
 test "Monotonic.elapsed_since returns positive Duration" {
     ro t1 = Monotonic.now()

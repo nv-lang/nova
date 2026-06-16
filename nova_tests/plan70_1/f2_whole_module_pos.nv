@@ -4,7 +4,7 @@
 
 module plan70_1.f2_whole_module_pos
 
-import nova_tests.plan70_1.helper_mod
+import nova_tests.plan70_1.helper_mod as helper_mod
 
 test "whole-module import: helper_mod.add_one(int)" {
     ro r = helper_mod.add_one(41)

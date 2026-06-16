@@ -7,7 +7,7 @@
 
 module plan103_3.mutex_try_lock_for_timeout
 
-import std.time.duration
+import std.time.duration as duration
 
 test "try_lock_for times out when mutex already held" {
     mut mu = Mutex.new()

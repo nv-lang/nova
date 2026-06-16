@@ -2,7 +2,7 @@
 // any / all / find / for_each / min / max / nth / last.
 module plan153_2.terminators
 
-import std.collections.vec_lazy
+import std.collections.vec_lazy as vec_lazy
 
 test "collect drains into a Vec" {
     ro v = Vec[int].of(1, 2, 3)

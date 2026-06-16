@@ -18,7 +18,7 @@
 
 module plan65.f10_select_cancel_propagation
 
-import std.time.duration
+import std.time.duration as duration
 
 const TIMEOUT_MS i64 = 5000
 const SLACK_MS   i64 = 1500

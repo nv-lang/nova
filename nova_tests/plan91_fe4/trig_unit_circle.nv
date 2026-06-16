@@ -12,7 +12,7 @@
 
 module plan91_fe4.trig_unit_circle
 
-import std.runtime.math
+import std.runtime.math as math
 
 test "unit-circle anchors: sin(0), cos(0), sin(PI/2), cos(PI)" {
     ro pi = f64.PI

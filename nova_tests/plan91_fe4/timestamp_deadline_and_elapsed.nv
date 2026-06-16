@@ -13,7 +13,7 @@
 // deterministic without needing the ambient `Time` effect.
 module plan91_fe4.timestamp_deadline_and_elapsed
 
-import std.time.duration
+import std.time.duration as duration
 
 
 // A request arrives, gets a deadline, completes within budget; we measure

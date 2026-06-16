@@ -10,7 +10,7 @@
 
 module plan65.f6_huge_duration
 
-import std.time.duration
+import std.time.duration as duration
 
 test "Duration.from_days(10_000) allocates timer without panic" {
     ro huge = Duration.from_days(10_000)

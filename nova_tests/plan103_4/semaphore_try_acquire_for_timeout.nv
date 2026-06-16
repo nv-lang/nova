@@ -9,7 +9,7 @@
 
 module plan103_4.semaphore_try_acquire_for_timeout
 
-import std.time.duration
+import std.time.duration as duration
 
 test "try_acquire_for times out when no permits available" {
     // Zero permits: any acquire blocks immediately

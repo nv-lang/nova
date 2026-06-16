@@ -7,7 +7,7 @@
 
 module plan103_4.condvar_wait_for_timeout
 
-import std.time.duration
+import std.time.duration as duration
 
 test "wait_for times out when no notify arrives" {
     mut mu = Mutex.new()

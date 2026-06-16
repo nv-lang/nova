@@ -3,9 +3,9 @@
 // (None on empty, search miss, NaN/Inf guards, signed-duration classification).
 module neg.edge_and_error_paths
 
-import std.sort
-import std.time.duration
-import std.runtime.math
+import std.sort as sort
+import std.time.duration as duration
+import std.runtime.math as math
 
 test "sort: empty and miss return None / empty aggregates" {
     mut empty []int = []

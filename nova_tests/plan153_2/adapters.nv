@@ -2,7 +2,7 @@
 // take / skip. Each adapter returns a new BoxIter; collect drives the chain.
 module plan153_2.adapters
 
-import std.collections.vec_lazy
+import std.collections.vec_lazy as vec_lazy
 
 test "map transforms every element" {
     ro v = Vec[int].of(1, 2, 3)

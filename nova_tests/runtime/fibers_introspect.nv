@@ -5,7 +5,7 @@
 
 module runtime.fibers_introspect
 
-import std.runtime.fibers
+import std.runtime.fibers as fibers
 
 test "fibers.virtual_reserved: возвращает int >= 0" {
     ro v = fibers.virtual_reserved()

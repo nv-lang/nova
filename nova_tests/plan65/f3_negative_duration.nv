@@ -6,7 +6,7 @@
 
 module plan65.f3_negative_duration
 
-import std.time.duration
+import std.time.duration as duration
 
 fn main() -> () {
     ro neg = Duration.from_nanos(-1)

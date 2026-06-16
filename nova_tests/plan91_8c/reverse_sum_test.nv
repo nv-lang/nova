@@ -1,6 +1,6 @@
 module plan91_8c.reverse_sum_test
 
-import std.sort
+import std.sort as sort
 
 // Plan 91.8c part 5: reverse_of (generic) + sum/product (для []int).
 

@@ -4,7 +4,7 @@
 
 module runtime.runtime_init
 
-import std.runtime.runtime
+import std.runtime.runtime as runtime
 
 test "runtime.worker_count: 0 до init" {
     // Если runtime не инициализирован — worker_count = 0

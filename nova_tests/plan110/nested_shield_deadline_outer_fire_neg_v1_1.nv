@@ -27,7 +27,7 @@
 
 module plan110.nested_shield_deadline_outer_fire_neg_v1_1
 
-import std.prelude.errors
+import std.prelude.errors as errors
 
 type InnerRes2 { ro id int }
 fn InnerRes2.new(id int) -> InnerRes2 => { id }

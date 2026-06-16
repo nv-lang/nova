@@ -18,7 +18,7 @@
 
 module plan65.f8_mock_time_advance
 
-import std.time.duration
+import std.time.duration as duration
 
 test "close_after delegates to mock Time handler — sleep is invoked" {
     mut sleep_calls = 0

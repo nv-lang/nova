@@ -2,7 +2,7 @@
 
 module plan103_3.mutex_try_lock_for_success
 
-import std.time.duration
+import std.time.duration as duration
 
 test "try_lock_for succeeds immediately on free mutex" {
     mut mu = Mutex.new()

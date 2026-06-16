@@ -5,7 +5,7 @@
 
 module plan118_1.t7_rawmem_copy_from_overlap_ok
 
-import std.runtime.raw_mem
+import std.runtime.raw_mem as raw_mem
 
 test "RawMem.copy forward overlap shifts correctly" {
     // buf = [1, 2, 3, 4, 5]

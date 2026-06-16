@@ -3,7 +3,7 @@
 // Plan 153.4 — negative: chunks_exact(n) with n == 0 violates `n > 0` → panic.
 module plan153_4.chunks_exact_zero_neg
 
-import std.collections.vec_lazy
+import std.collections.vec_lazy as vec_lazy
 
 fn main() -> () {
     ro v = Vec[int].of(1, 2, 3)

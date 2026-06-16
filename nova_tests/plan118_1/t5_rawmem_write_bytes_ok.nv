@@ -5,7 +5,7 @@
 
 module plan118_1.t5_rawmem_write_bytes_ok
 
-import std.runtime.raw_mem
+import std.runtime.raw_mem as raw_mem
 
 test "RawMem.fill writes a byte-pattern across the buffer" {
     mut a []u8 = [0, 0, 0, 0]

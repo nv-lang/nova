@@ -3,7 +3,7 @@
 // All float comparisons use a tolerance window (never == on floats).
 module plan91_fe4.logarithm_and_exponential
 
-import std.runtime.math
+import std.runtime.math as math
 
 // Tolerance helper inlined per-assert: |a - b| < eps.
 

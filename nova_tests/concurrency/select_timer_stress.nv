@@ -16,7 +16,7 @@
 
 module concurrency.select_timer_stress
 
-import std.time.duration
+import std.time.duration as duration
 
 test "500 iter select cleanup stress" {
     mut wins = 0

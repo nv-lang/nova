@@ -1,6 +1,6 @@
 // Plan 91 Ф.1 conformance: chained combinators.
 module plan91_fe1.vec_chain_pos
-import std.collections.vec_seq
+import std.collections.vec_seq as vec_seq
 
 test "filter then map" {
     ro xs = [1, 2, 3, 4, 5, 6]

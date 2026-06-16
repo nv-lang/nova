@@ -9,8 +9,8 @@
 // keep compiling. See plan-91 Ф.4 closure.
 module plan91_fe4.sort_duration_handler_guard
 
-import std.sort
-import std.time.duration
+import std.sort as sort
+import std.time.duration as duration
 
 test "sort and duration coexist in one compilation unit" {
     // sort path — emits the `i`-local fns that polluted var_types

@@ -4,7 +4,7 @@
 
 module plan65.f4_zero_duration
 
-import std.time.duration
+import std.time.duration as duration
 
 test "zero Duration produces an already-closed reader" {
     // NOTE: use Duration.from_nanos(0) rather than the Duration.ZERO const —

@@ -5,7 +5,7 @@
 // clamp it between bounds — exercising neg/abs/is_*/times/div/min/max/ZERO.
 module plan91_fe4.duration_signed_and_scale
 
-import std.time.duration
+import std.time.duration as duration
 
 test "signed drift: neg / predicates / abs round-trip" {
     // A tick fired 250ms before its target → drift is "early" = negative.

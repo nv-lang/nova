@@ -4,7 +4,7 @@
 
 module plan118_1.t4_rawmem_fill_ok
 
-import std.runtime.raw_mem
+import std.runtime.raw_mem as raw_mem
 
 test "RawMem.fill writes byte-pattern across buffer" {
     mut buf []u8 = [0, 0, 0, 0, 0]

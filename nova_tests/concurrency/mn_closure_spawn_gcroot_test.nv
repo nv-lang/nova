@@ -18,7 +18,7 @@
 
 module concurrency.mn_closure_spawn_gcroot_test
 
-import std.concurrency.cancellation
+import std.concurrency.cancellation as cancellation
 
 
 // Non-generic mirror of within[int]: a closure-param spawn-body whose only live

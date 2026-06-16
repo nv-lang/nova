@@ -7,7 +7,7 @@
 // plus the human-readable rendering.
 module plan91_fe4.duration_budget_pipeline
 
-import std.time.duration
+import std.time.duration as duration
 
 test "multi-phase budget compose + decompose + totals + render" {
     // Three phases of a build/deploy pipeline, each natural in its own unit.

@@ -5,7 +5,7 @@
 
 module plan103_6.realtime_mutex_try_lock_for_neg
 
-import std.time.duration
+import std.time.duration as duration
 
 #realtime fn _rt_try_lock_for(m mut Mutex) -> bool {
     m.try_lock_for(Duration.from_millis(50))

@@ -2,7 +2,7 @@
 // sort + binary_search property: every element found at its sorted index.
 module plan91_fe5.sort_realistic
 
-import std.sort
+import std.sort as sort
 
 test "sort and binary_search every element" {
     mut xs = [5, 3, 8, 1, 9, 2, 7, 4, 6]

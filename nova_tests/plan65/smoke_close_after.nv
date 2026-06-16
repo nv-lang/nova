@@ -2,7 +2,7 @@
 
 module plan65.smoke_close_after
 
-import std.time.duration
+import std.time.duration as duration
 
 test "ChanReader.close_after(Duration.from_millis(10)) compiles and fires" {
     mut fired = false

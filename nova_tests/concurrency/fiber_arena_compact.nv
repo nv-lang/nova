@@ -10,7 +10,7 @@
 
 module concurrency.fiber_arena_compact
 
-import std.time.duration
+import std.time.duration as duration
 
 test "fibers.compact() callable" {
     // Burst → quiescence → compact().

@@ -6,7 +6,7 @@
 // source length regardless of `take`/`find`/`any`/`nth` short-circuiting.
 module plan153_2.laziness
 
-import std.collections.vec_lazy
+import std.collections.vec_lazy as vec_lazy
 
 test "building a pipeline performs NO work (no terminator)" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)

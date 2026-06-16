@@ -1,6 +1,6 @@
 // Plan 91 Ф.1 NEGATIVE: empty/edge behaviour of vec combinators.
 module neg.vec_edge_paths
-import std.collections.vec_seq
+import std.collections.vec_seq as vec_seq
 
 test "empty array: first/last None, any false, all vacuous true" {
     ro empty []int = []
