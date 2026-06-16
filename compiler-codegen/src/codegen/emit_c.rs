@@ -34173,7 +34173,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 && !self.generic_types.contains(name)
                 // Plan 100.5 (D163): opaque FFI consume types are concrete —
                 // `Nova_File*` must NOT be treated as a generic stub.
-                && !self.opaque_ffi_types.contains(name);
+                && !self.opaque_ffi_types.contains(name)
+                // Plan 91.13 (D295 V2): monomorphized generic instances carry
+                // `____` in their mangled name (e.g. `Vec____NovaValue_SocketAddr`)
+                // and are always concrete — never an unresolved type-param stub.
+                // Without this guard, `Result[[]SocketAddr, NetError]` falls to
+                // the erased `NovaRes_nova_int_nova_str*` fallback.
+                && !name.contains("____");
         }
         false
     }
