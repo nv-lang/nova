@@ -7857,46 +7857,86 @@ Canonical Rust grammar.
 
 ### §4. `&value` operator + escape analysis с auto-promote
 
-- `&value` creates `*ro T` or `*mut T` (по контексту binding) — **в unsafe context**
-- Stack values (primitives, tuples) auto-promoted в heap если pointer escapes
-  scope (return / closure / heap-field store / fn arg)
-- Records (heap references) — `&record` creates pointer на reference.
-  Result C type: `Nova_Record**` (double-pointer because record уже
-  Nova_Record* в C ABI). Used primarily для FFI out-params:
-  `external fn try_init(out *Acc) -> i64` — C side fills `*out`.
-- **`&Record { ... }` literal без named binding forbidden** —
-  `E_AMP_RECORD_LITERAL`. Anonymous-local auto-promote from temporary
-  слишком implicit для production-grade reader clarity. Required pattern:
-  ```nova
-  // ❌ implicit anonymous local
-  ro p = &Acc { name: "Piter" }
-  // ✓  explicit named local
-  ro acc = Acc { name: "Piter" }
-  ro p = &acc
-  ```
-- GC-friendly семантика (vs Rust lifetimes — у нас GC + auto-promote)
-- Conservative V1: promote если ANY uncertainty; precise inlining followup
-  `[M-118-escape-precise]`
+> ⚠️ **D216 §4 AMEND (Plan 118.6, 2026-06-16):** `&x` is now **safe** (no
+> `unsafe {}` required) for all types including primitives. `addr_of()` /
+> `addr_of_mut()` retired → `E_ADDR_OF_REMOVED`. Escape analysis extended to
+> primitives (previously only records). See amendment block at end of §4.
 
-**D32 amend rationale:** `&value` это **typed pointer construction**, не Rust
-borrow. Safety через escape analysis + auto-promote + unsafe gating (не
-lifetime checker). См. D32 amend note.
+**Safe pointer creation (no `unsafe {}` required, Plan 118.6+):**
 
-#### addr_of / addr_of_mut builtins (Plan 118.1 Ф.3 closeout, 2026-06-05)
-
-`addr_of(x)` / `addr_of_mut(x)` — Zig-style builtin function aliases для `&x` (UnOp::AddrOf).
-Identical codegen path; rewriter-desugared в const_fn_eval pass. Use when explicit
-function-call syntax preferred over operator syntax (FFI patterns where addr_of(buf)
-reads more clearly than &buf).
-
-**Signatures:**
 ```nova
-fn addr_of[T](x T) -> *T          // read-only pointer creation
-fn addr_of_mut[T](x T) -> *T      // requires `mut <x>` binding
+ro p = &x       // *ro T  — safe; heap-promote if &x escapes function scope
+ro p = &y       // *mut T if y is mut binding, otherwise *ro T
 ```
 
+**Raw stack pointer (unsafe required):**
+
+```nova
+unsafe { ro p = &x }   // no heap-promote; raw stack address; programmer's responsibility
+```
+
+**Field address:**
+
+```nova
+ro p = &x.field  // chain root (x) is promoted to heap if pointer escapes scope;
+                 // whole binding moves to heap, NOT individual field.
+```
+
+**Heap-promote semantics:**
+- Compile-time static escape analysis decision (not runtime).
+- `x` starts on stack; promoted to heap at its declaration point if address
+  escapes function scope (return / closure / heap-field store / fn arg).
+- Conservative V1: promote if ANY uncertainty. Precise inlining followup:
+  `[M-118-escape-precise]`.
+- Primitives (`int`, `bool`, `f64`, etc.) now subject to same escape analysis
+  as records (Plan 118.6 extension).
+
+**Records (heap references):** `&record` creates pointer to the reference.
+Result C type: `Nova_Record**` (double-pointer because record is already
+`Nova_Record*` in C ABI). Used primarily for FFI out-params:
+`external fn try_init(out *Acc) -> i64` — C side fills `*out`.
+
+**`&Record { ... }` literal без named binding forbidden** —
+`E_AMP_RECORD_LITERAL`. Anonymous-local auto-promote from temporary
+слишком implicit для production-grade reader clarity. Required pattern:
+```nova
+// ❌ implicit anonymous local
+ro p = &Acc { name: "Piter" }
+// ✓  explicit named local
+ro acc = Acc { name: "Piter" }
+ro p = &acc
+```
+
+**D32 amend rationale:** `&value` — typed pointer construction, не Rust
+borrow. Safety через escape analysis + auto-promote (не lifetime checker).
+До Plan 118.6 дополнительно требовал `unsafe {}` block; amend снимает это
+требование для safe-promote path. Raw stack pointer остаётся `unsafe`.
+
+> **D216 §4 AMEND (Plan 118.6, 2026-06-16):**
+> - `&x` safe for all types (no `unsafe {}` for the promote path).
+> - `addr_of(x)` / `addr_of_mut(x)` retired → `E_ADDR_OF_REMOVED`. Use `&x`
+>   instead.
+> - Escape analysis extended to primitives.
+> - `E_UNSAFE_REQUIRED` is NOT triggered by AddrOf starting Plan 118.6
+>   (only by Deref `*expr` and unsafe fn calls).
+
+#### addr_of / addr_of_mut builtins (Plan 118.1 Ф.3 closeout, 2026-06-05) — RETIRED Plan 118.6
+
+~~`addr_of(x)` / `addr_of_mut(x)`~~ — **RETIRED Plan 118.6 (2026-06-16).**
+Use `&x` instead. Calling `addr_of(x)` or `addr_of_mut(x)` now emits
+`E_ADDR_OF_REMOVED`. History preserved below for reference.
+
+> **Historical (Plan 118.1 Ф.3, 2026-06-05 — Plan 118.5):** Zig-style builtin
+> function aliases для `&x` (UnOp::AddrOf). Identical codegen path;
+> rewriter-desugared в const_fn_eval pass. Used when explicit function-call
+> syntax preferred over operator syntax (FFI patterns).
+>
+> Retired in Plan 118.6 — `&x` is now safe and universally preferred.
+> `E_ADDR_OF_REMOVED` fires on any remaining call site.
+
 **Enforcement (same as UnOp::AddrOf):**
-- E_UNSAFE_REQUIRED — outside unsafe {} block
+- ~~E_UNSAFE_REQUIRED — outside unsafe {} block~~ (AddrOf no longer triggers
+  this; only Deref and unsafe fn calls do, starting Plan 118.6)
 - E_REALTIME_POINTER_OP — inside #realtime fn
 - E_AMP_LITERAL / E_AMP_RECORD_LITERAL — invalid lvalues (literal / record literal)
 - E_ARRAY_INDEX_PTR_BANNED — operand is, or its field-access chain passes through,
@@ -8374,10 +8414,13 @@ Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova
 ### Diagnostic codes (new)
 
 **Errors:**
-- `E_UNSAFE_REQUIRED` — pointer op (`&value` AddrOf / `*expr` Deref) outside
+- `E_UNSAFE_REQUIRED` — pointer op (`*expr` Deref / unsafe fn call) outside
   unsafe context (block.is_unsafe = false AND not в `unsafe fn` body).
   Active enforcement через `check_unsafe_context_in_module` walker pass с
-  depth counter — D216 §8 V1 ENFORCED 2026-06-02
+  depth counter — D216 §8 V1 ENFORCED 2026-06-02.
+  **Plan 118.6 amend (2026-06-16):** `&x` AddrOf (safe promote path) no longer
+  triggers `E_UNSAFE_REQUIRED`. Only raw stack `unsafe { &x }` and Deref/unsafe
+  fn calls remain gated.
 - `E_UNSAFE_CALL_REQUIRES_WRAP` — calling `unsafe fn` без `unsafe { }`
   wrap. Active enforcement через `check_unsafe_context_in_module` walker
   с pre-collected unsafe_fns: HashSet<String>. D216 §9 V1 ENFORCED
@@ -8415,6 +8458,9 @@ Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova
 - `E_ADDR_OF_MUT_REQUIRES_MUT_BINDING` — `addr_of_mut` applied к ro binding
   (let без `mut`, ro parameter, ro field). Mirrors `E_PARAM_NOT_MUT` /
   `E_LOCAL_NOT_MUT` pattern (D108.1 / D108.2). Plan 118.1 closeout 2026-06-05.
+- `E_ADDR_OF_REMOVED` — `addr_of()` / `addr_of_mut()` called after retirement
+  (Plan 118.6 D216 §4, 2026-06-16). Use `&x` instead. Both functions are
+  removed from prelude; any surviving call site raises this error.
 - `E_PTR_NO_DISPLAY_USE_DEBUG_STR` — `"${p}"`
 - `E_VARARG_NOT_SUPPORTED` — vararg FFI call
 - `E_CAST_RAW_FN_TO_CLOSURE` — `*fn → fn` cast outside unsafe
