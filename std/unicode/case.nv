@@ -41,30 +41,30 @@ const SMALL_FINAL_SIGMA int = 0x3C2
 
 // Single-codepoint sequence (identity mapping). Fluent self-return tail —
 // `with_capacity(1).push(cp)` returns the `Vec` (`@`), the natural one-liner.
-fn single(cp int) -> Vec[int] => Vec[int].with_capacity(1).push(cp)
+fn single(cp int) -> Vec[u32] => Vec[u32].with_capacity(1).push(cp)
 
 // Per-codepoint table lookup → mapped sequence, or [cp] when unmapped. Used by
 // `to_lowercase` here and by `to_titlecase` (words.nv); the `Some` arm decodes
 // the packed mapping, the `None` arm is the identity codepoint.
-fn lower_one(cp int) -> Vec[int] {
+fn lower_one(cp int) -> Vec[u32] {
     match lower_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
 }
 // Per-codepoint titlecase mapping (used by `to_titlecase` in words.nv for the
 // first cased char of each word; rest of the word goes through lower_one).
-fn title_one(cp int) -> Vec[int] {
+fn title_one(cp int) -> Vec[u32] {
     match title_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
 }
 // Per-codepoint uppercase mapping → mapped sequence, or [cp] when unmapped
 // (symmetric with lower_one). Reused by char_to_uppercase (category.nv) for the
 // code-point-level case API. Multi-codepoint expansions apply (ß → [S, S]).
-fn upper_one(cp int) -> Vec[int] {
+fn upper_one(cp int) -> Vec[u32] {
     match upper_map.get(cp) { Some(seq) => parse_cp_list(seq), None => single(cp) }
 }
 
 /// Full case folding (UCD CaseFolding status C+F) — for caseless matching.
 /// Idempotent on its own output. Multi-codepoint folds apply (ß → "ss").
 export fn fold_case(s str) -> str {
-    mut out = Vec[int].with_capacity(s.byte_len())
+    mut out = Vec[u32].with_capacity(s.byte_len())
     for c in s.as_chars() {
         // `None` arm is a fluent `out.push(..)` tail (typed `Vec*`); the `Some`
         // arm yields unit — the `match` coerces to unit in statement position
@@ -80,7 +80,7 @@ export fn fold_case(s str) -> str {
 /// Full Unicode uppercase (locale-independent). Multi-codepoint expansions apply
 /// (ß → "SS", ﬁ → "FI", ﬀ → "FF", ŉ → "ʼN", …). No Turkic/Lithuanian tailoring.
 export fn to_uppercase(s str) -> str {
-    mut out = Vec[int].with_capacity(s.byte_len())
+    mut out = Vec[u32].with_capacity(s.byte_len())
     for c in s.as_chars() {
         match upper_map.get(c as int) {
             Some(seq) => { for d in parse_cp_list(seq) { out.push(d) } }
@@ -96,7 +96,7 @@ export fn to_uppercase(s str) -> str {
 export fn to_lowercase(s str) -> str {
     ro cps = str_to_cps(s)
     ro n = cps.len()
-    mut out = Vec[int].with_capacity(n)
+    mut out = Vec[u32].with_capacity(n)
     mut i = 0
     while i < n {
         ro cp = cps[i]
@@ -129,7 +129,7 @@ export fn char @eq_ignore_case(other char) -> bool =>
 // Final_Sigma (UAX / SpecialCasing): the Σ at index `i` lowercases to ς iff it is
 // preceded by (a cased char, then zero+ case-ignorable) AND NOT followed by
 // (zero+ case-ignorable, then a cased char).
-fn is_final_sigma(cps Vec[int], i int) -> bool {
+fn is_final_sigma(cps Vec[u32], i int) -> bool {
     // before: a cased char must precede (skipping case-ignorable runs).
     mut j = i - 1
     mut before_cased = false

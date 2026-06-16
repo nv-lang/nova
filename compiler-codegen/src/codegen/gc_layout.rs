@@ -198,15 +198,14 @@ fn align_up(n: usize, align: usize) -> usize {
 }
 
 /// Names of built-in primitive SCALAR types (non-GC, fixed C layout).  `char`
-/// is here but is sized 8 (emitted `nova_char` = `int64_t`), see `prim_emit`.
+/// is sized 4 (emitted `nova_char` = `uint32_t`, D128 AMEND Plan 152.8), see `prim_emit`.
 fn prim_emit(name: &str) -> Option<(usize, usize)> {
-    // (emitted size, align) — matches emit_c's C typedefs, NOT necessarily the
-    // size-math table (char diverges: math=4, emit=8).
+    // (emitted size, align) — matches emit_c's C typedefs.
     match name {
         "int" | "i64" | "u64" | "f64" | "uint" => Some((8, 8)),
-        // `char` → nova_char = typedef int64_t → 8 bytes (emit_c.rs:5279,
-        // nova_rt.h:25).  Scalar, but its emitted width is 8 not 4.
-        "char" => Some((8, 8)),
+        // `char` → nova_char = typedef uint32_t → 4 bytes (D128 AMEND, Plan 152.8,
+        // nova_rt.h:25).  Scalar, 4 bytes like Rust char / Go rune.
+        "char" => Some((4, 4)),
         "i32" | "u32" | "f32" => Some((4, 4)),
         "i16" | "u16" => Some((2, 2)),
         "i8" | "u8" | "bool" => Some((1, 1)),
@@ -1323,12 +1322,12 @@ mod tests {
         assert_eq!(info.size, Some(16));
     }
 
-    /// Char field is a SCALAR but sized 8 (nova_char = int64) — verify it shifts
-    /// the following GC field's offset to 8, not 4.
+    /// Char field is a SCALAR sized 4 (nova_char = uint32_t, D128 AMEND Plan 152.8).
+    /// Verify the following GC field's offset is 8 (4-byte char + 4-byte padding → align 8).
     #[test]
-    fn char_is_scalar_but_eight_bytes() {
+    fn char_is_scalar_four_bytes() {
         // type WithChar { c char, b Box }
-        // c@0 (8, scalar), b@8 (ptr) → {8}  (NOT {4})
+        // c@0 (4, scalar), padding@4 (4), b@8 (ptr) → {8}
         let boxd = record_decl("Box", AllocKind::Heap, vec![rfield("a", ty("int"))]);
         let wc = record_decl(
             "WithChar",
@@ -1338,7 +1337,7 @@ mod tests {
         let reg = registry(vec![boxd, wc]);
         let map = compute_gc_layout(&reg);
         let info = map.get("WithChar").unwrap();
-        assert_eq!(info.pointer_offsets, vec![8], "char is 8 bytes (nova_char=int64) → Box at offset 8");
+        assert_eq!(info.pointer_offsets, vec![8], "char is 4 bytes (nova_char=uint32_t) → padding to align 8 → Box at offset 8");
         assert_eq!(info.size, Some(16));
     }
 

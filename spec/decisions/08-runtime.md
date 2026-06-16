@@ -8098,7 +8098,7 @@ dyn·protocol-объект / boxed `Option`·`Result`. **НЕ-указатель
 per-field-offset'ы вдоль идентичного pad-then-place цикла. Три расхождения math↔emit примирены
 сайзингом поля по его **эмитимому** C-представлению: `[N]T` FIELD → один heap-указатель
 (`NovaArray_T*`), не N inline-элементов; `[]T` FIELD → один 8-байт `Nova_Vec*`, не 16-байт slice;
-`char` → `nova_char` = `typedef int64_t` (8 байт, скаляр), не 4.
+`char` → `nova_char` = `typedef uint32_t` (4 байт, скаляр; **D128 AMEND Plan 152.8** — было `int64_t` 8 байт).
 
 ### 4. Консервативное направление (soundness-инвариант)
 

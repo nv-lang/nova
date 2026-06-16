@@ -4585,7 +4585,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn emit_typed_int_literal(n: i64, ty_c: &str) -> String {
         match ty_c {
             // Plan 70.4 Ф.4: nova_byte = typedef uint8_t — same U-suffix treatment.
-            "nova_byte" | "uint8_t" | "uint16_t" | "uint32_t" => {
+            // Plan 152.8: nova_char = typedef uint32_t — also unsigned.
+            "nova_char" | "nova_byte" | "uint8_t" | "uint16_t" | "uint32_t" => {
                 // Unsigned 32-bit и меньше: U-suffix + cast к точному типу.
                 // n хранится как i64; для отрицательных значений или > i32::MAX
                 // используем явное приведение через хеш-bit-pattern.
@@ -11064,7 +11065,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             TypeRef::FixedArray(_, inner, _) => {
                 Self::collect_array_elem_typerefs(inner, out);
             }
-            TypeRef::Named { generics, .. } => {
+            TypeRef::Named { path, generics, .. } => {
+                // Plan 152.8: `Vec[T]` written as a Named generic (not `[]T` sugar)
+                // must also trigger a forward-decl for the Vec mono instance.
+                // Push the element TypeRef just like the Array arm does.
+                if path.last().map(|s| s == "Vec").unwrap_or(false) {
+                    if let Some(elem) = generics.first() {
+                        if !matches!(elem, TypeRef::Func { .. }) {
+                            out.push(elem.clone());
+                            // Recurse to handle nested Vec[Vec[T]] etc.
+                            Self::collect_array_elem_typerefs(elem, out);
+                        }
+                    }
+                }
                 for g in generics { Self::collect_array_elem_typerefs(g, out); }
             }
             TypeRef::Tuple(items, _) => {
@@ -13989,10 +14002,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     "i64" => "int64_t",
                     // Plan 133: uint = nova_uint (uintptr_t), u64 = uint64_t (fixed).
                     "uint" => "nova_uint",
+                    "u64" => "uint64_t",
                     "f64" => "nova_f64",
+                    "f32" => "nova_f32",
                     "bool" => "nova_bool",
                     "str" => "nova_str",
-                    "u8" => "nova_byte",
+                    "u8" | "byte" => "nova_byte",
+                    // Plan 152.8: fixed-width integer primitives missing from this list
+                    // caused Vec[u32] to be mangled as Nova_Vec____Nova_u32_p instead of
+                    // Nova_Vec____uint32_t (inconsistent with type_ref_to_c which has full list).
+                    "u32" => "uint32_t",
+                    "u16" => "uint16_t",
+                    "i8" => "int8_t",
+                    "i16" => "int16_t",
+                    "i32" => "int32_t",
+                    "char" => "nova_char",
                     // Plan 133: usize/isize removed — not matched here.
                     _ => return None,
                 };
@@ -14129,8 +14153,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     "bool"          => "nova_bool".to_string(),
                     "f64"           => "nova_f64".to_string(),
                     "f32"           => "nova_f32".to_string(),
-                    "u8"  => "nova_byte".to_string(),
+                    "u8" | "byte"   => "nova_byte".to_string(),
                     "unit"          => "nova_unit".to_string(),
+                    // Plan 152.8: fixed-width and other primitive types missing from
+                    // simple_type_ref_to_c caused Vec[u32] (and Vec[u16]/Vec[i32]/etc.)
+                    // to mangle as Nova_Vec____Nova_u32_p* in infer_expr_c_type's
+                    // TurboFish branch (line ~34900). Mirrors type_ref_to_c primitives.
+                    "u32"           => "uint32_t".to_string(),
+                    "u16"           => "uint16_t".to_string(),
+                    "u64"           => "uint64_t".to_string(),
+                    "uint"          => "nova_uint".to_string(),
+                    "i8"            => "int8_t".to_string(),
+                    "i16"           => "int16_t".to_string(),
+                    "i32"           => "int32_t".to_string(),
+                    "char"          => "nova_char".to_string(),
+                    "never"         => "nova_int".to_string(),
                     other           => format!("Nova_{}*", other),
                 }
             }
@@ -18994,8 +19031,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
             ExprKind::IntLit(n)   => Ok(format!("((nova_int){}LL)", n)),
-            // Plan 70.3: char literal cast к distinct `nova_char` typedef.
-            ExprKind::CharLit(cp) => Ok(format!("((nova_char){}LL)", cp)),
+            // Plan 70.3/152.8: char literal cast к distinct `nova_char` typedef (uint32_t).
+            ExprKind::CharLit(cp) => Ok(format!("((nova_char){}U)", cp)),
             ExprKind::FloatLit(f) => {
                 // f.to_string() для 1e20 даёт "100000000000000000000" (без точки/exp)
                 // — это integer-литерал в C, переполняет u64. Принудительно
@@ -32533,9 +32570,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// Возвращает Fn(c_function_name) или BinOp(c_operator).
     fn prim_builtin_method(c_ty: &str, method: &str) -> Option<PrimBuiltin> {
         match (c_ty, method) {
-            // hash — C-функция. Plan 85.4: `nova_char` == int64 (Plan 70.3
-            // typedef) → nova_int_hash. Без этой ветки `char.hash()` не
-            // находил builtin и mis-dispatch'ился на user-метод `hash`
+            // hash — C-функция. Plan 85.4 / D128 AMEND (Plan 152.8): `nova_char`
+            // == uint32_t → nova_int_hash (widened). Без этой ветки `char.hash()`
+            // не находил builtin и mis-dispatch'ился на user-метод `hash`
             // (segfault: nova_char передавался как receiver-pointer).
             ("nova_int" | "nova_char",  "hash") => Some(PrimBuiltin::Fn("nova_int_hash")),
             ("nova_bool", "hash") => Some(PrimBuiltin::Fn("nova_bool_hash")),
@@ -33983,7 +34020,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t" |
             "int8_t" | "int16_t" | "int32_t" |
             // Plan 70.4 Ф.4: nova_byte = typedef uint8_t — treat as typed 8-bit unsigned.
-            "nova_byte"
+            "nova_byte" |
+            // Plan 152.8: nova_char = typedef uint32_t — treat as typed 32-bit unsigned.
+            "nova_char"
         )
     }
 

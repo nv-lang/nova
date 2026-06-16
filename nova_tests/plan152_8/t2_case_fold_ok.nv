@@ -1,0 +1,29 @@
+// Plan 152.8 Layer 1 (Vec[u32] migration) — T2: case folding after migration.
+module plan152_8.t2_case_fold_ok
+
+import std.unicode.{fold_case, to_uppercase, to_lowercase}
+
+test "fold_case: ASCII upper to lower" {
+    assert(fold_case("HELLO") == "hello")
+    assert(fold_case("Hello, World!") == "hello, world!")
+}
+
+test "fold_case: German sharp-s expands to ss" {
+    assert(fold_case("stra\u{df}e") == "strasse")
+    assert(fold_case("STRASSE") == "strasse")
+}
+
+test "fold_case: Greek sigma variants normalize" {
+    assert(fold_case("\u{3a3}") == "\u{3c3}")  // Σ -> σ
+    assert(fold_case("\u{3c2}") == "\u{3c3}")  // ς -> σ
+}
+
+test "to_uppercase: basic" {
+    assert(to_uppercase("hello") == "HELLO")
+    assert(to_uppercase("stra\u{df}e") == "STRASSE")  // ß → SS
+}
+
+test "to_lowercase: basic" {
+    assert(to_lowercase("HELLO") == "hello")
+    assert(to_lowercase("\u{391}\u{392}\u{393}") == "\u{3b1}\u{3b2}\u{3b3}")  // ΑΒΓ → αβγ
+}

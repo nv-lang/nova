@@ -71,9 +71,9 @@ export type GeneralCategory
 // ─── lazy-static range tables (built once on first touch) ───
 // GC_DATA: (lo,hi,code) triples (stride 3) → range_lookup3. ALPHA_DATA / WS_DATA:
 // (lo,hi) pairs (stride 2) → in_ranges2. All sorted by lo (binary search).
-ro gc_flat Vec[int] = parse_flat(GC_DATA)
-ro alpha_flat Vec[int] = parse_flat(ALPHA_DATA)
-ro ws_flat Vec[int] = parse_flat(WS_DATA)
+ro gc_flat Vec[u32] = parse_flat(GC_DATA)
+ro alpha_flat Vec[u32] = parse_flat(ALPHA_DATA)
+ro ws_flat Vec[u32] = parse_flat(WS_DATA)
 
 // Raw General_Category code (1..=30) of `cp`; 30 (`Cn`) when absent from GC_DATA
 // (range_lookup3 returns 0 for "not found", which we map to the Cn default).

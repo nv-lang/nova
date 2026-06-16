@@ -239,9 +239,9 @@
 NOVA_ARRAY_DECL(nova_int)
 NOVA_ARRAY_IMPL(nova_int)
 
-/* Plan 70.3: nova_char distinct typedef над int64_t — same storage
- * как nova_int, но distinct C type для generic mono mangling.
- * Prevents Option[char]↔Option[int] structural collapse. */
+/* Plan 70.3 / 152.8: nova_char distinct typedef = uint32_t (D128 AMEND).
+ * Codepoints fit in 21 bits; uint32_t is the natural type. Distinct C type
+ * prevents Option[char]↔Option[int] structural collapse in mono mangling. */
 NOVA_ARRAY_DECL(nova_char)
 NOVA_ARRAY_IMPL(nova_char)
 
