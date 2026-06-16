@@ -1,6 +1,18 @@
 ﻿# Упрощения и отложенные доработки
 
 Живой список осознанных упрощений, сделанных в ходе разработки.
+
+---
+
+### Plan 104.5 — LSP Code Actions / Quick-fixes V1 (2026-06-16, ✅ CLOSED)
+
+- **Где** — `nova-lsp/src/code_actions.rs`, `nova-lsp/src/diagnostic_mapping.rs`.
+- **Что сделано** — 25 quick-fix handlers: 8 Plan-101 (generic types) + 7 Plan-100 (consume/mut) + 7 general + 3 auto-import. Error-code extraction (`[E_CODE]` → `Diagnostic.code`). D296 spec.
+- **Упрощение 1** — `[M-104.5-suggestion-field-wiring]`: V1 компутирует edit из diagnostic range (re-scan source), а не из `Diagnostic.suggestion.span`. V2: wire `suggestion.span` напрямую для точности.
+- **Упрощение 2** — `[M-104.5-multi-edit-rename]`: E_PREFIX_SHADOWS_NAMED_TYPE меняет только объявление, не все usages. V2: cross-scope rename через find-references (Plan 104.6).
+- **Упрощение 3** — `[M-104.5-organize-imports]`: Source.organizeImports кинд объявлен, но sort+dedup не реализован. V2.
+- **Как чинить** — V2 закрывает все 3 маркера после реализации Plan 104.6 (rename/find-refs).
+- **Приоритет** — L (V1 достаточен для производительной работы).
 Каждое упрощение попадает сюда в момент принятия решения — чтобы не потерять контекст.
 
 > **Принцип** (см. [`project-philosophy.md`](project-philosophy.md)): Nova не в

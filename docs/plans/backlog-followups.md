@@ -558,3 +558,9 @@
 - ~~**`[M-91.13-real-dns-integration-test]`**~~ ✅ **CLOSED 2026-06-16** — `net_v2_dns_real_slow.nv` добавлен (`_slow` suffix, `NOVA_SLOW_TESTS=1` opt-in); `assert(r.is_ok())` с реальным `localhost` resolver.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
+
+## Follow-up: Plan 104.5 (LSP Code Actions / Quick-fixes V1)
+
+- **`[M-104.5-suggestion-field-wiring]`** (P2, home **Plan 104.5**) — `Suggestion` struct field в compiler diagnostic не propagated в LSP yet; code_actions.rs парсит сам из message text. Когда compiler добавит machine-readable `Suggestion` поле в DiagnosticResult, LSP should consume it directly without re-parsing. → Plan 104.x или Plan 101 V3.
+- **`[M-104.5-multi-edit-rename]`** (P3, home **Plan 104.5**) — fix handlers currently produce single-span TextEdit; multi-edit (e.g., rename generic `T` → `T1` across all occurrences in fn signature + body) требует cross-span edits и range-finder в source. V2 с Plan 104.6 (rename).
+- **`[M-104.5-organize-imports]`** (P3, home **Plan 104.5**) — `source.organizeImports` action kind advertised but not yet implemented (no-op body); V2 после Plan 104.3/104.6 когда symbol index доступен для dead-import detection.

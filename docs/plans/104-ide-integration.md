@@ -255,6 +255,8 @@ General (5+):
 
 **Acceptance:** VSCode 💡 лампочка на каждом из ≥25 error codes; click → код исправляется автоматически.
 
+**✅ ЗАКРЫТ 2026-06-16** — 25 quick-fixes реализованы в `nova-lsp/src/code_actions.rs`; D296 spec (§1-6); 95/95 unit tests PASS; error-code extraction в `diagnostic_mapping`; dispatches on `diag.code`; closes Plan 100.8 Ф.2 + Plan 101 LSP marker. Branch `plan-104-5`.
+
 ### 104.6 — Rename + format-on-save — ~4 dev-day
 
 **Out:**
