@@ -7,6 +7,7 @@
 
 use crate::ast::*;
 use crate::diag::{Diagnostic, FileId, MAIN_FILE_ID, Span};
+use crate::parser::{impl_spec_base_name, impl_spec_args_text};
 use std::collections::{HashMap, HashSet};
 
 /// Очень упрощённая система типов для bootstrap'а.
@@ -6393,9 +6394,11 @@ impl<'a> TypeCheckCtx<'a> {
 
     fn verify_impl_protocols(&self, td: &TypeDecl, errors: &mut Vec<Diagnostic>) {
         for proto_name in &td.impl_protocols {
+            // Plan 164 Ф.1: proto_name may be "Next[T]" — extract bare name for lookups.
+            let proto_base = impl_spec_base_name(proto_name);
             // Plan 137 (D237): check for renamed protocols first, emit helpful message.
             if let Some((_, new_name)) = Self::RENAMED_PROTOCOLS.iter()
-                .find(|(old, _)| *old == proto_name.as_str())
+                .find(|(old, _)| *old == proto_base)
             {
                 errors.push(Diagnostic::new(
                     format!(
@@ -6407,7 +6410,7 @@ impl<'a> TypeCheckCtx<'a> {
                 ));
                 continue;
             }
-            let proto_decl = match self.types.get(proto_name.as_str()) {
+            let proto_decl = match self.types.get(proto_base) {
                 Some(td) => td,
                 None => {
                     errors.push(Diagnostic::new(
@@ -6451,8 +6454,39 @@ impl<'a> TypeCheckCtx<'a> {
             // method AND нет default body — пытаемся synthesize. Synth-success
             // → method считается satisfied (не добавляется в `missing`).
             // Synth-error → emit E_AUTO_DERIVE_* diagnostic.
+            // Plan 164 Ф.1: build a generic substitution map from the impl-spec
+            // args, e.g. "Next[U]" → {"T": "U"} (proto param → impl arg).
+            // Used in check_signature_match_with_subst below.
+            let proto_arg_subst: Vec<(String, String)> = {
+                let args_text = impl_spec_args_text(proto_name);
+                if args_text.is_empty() || proto_decl.generics.is_empty() {
+                    vec![]
+                } else {
+                    // Strip outer `[` and `]` and split by `,` at depth 0.
+                    let inner = &args_text[1..args_text.len().saturating_sub(1)];
+                    let mut parts: Vec<String> = Vec::new();
+                    let mut depth = 0usize;
+                    let mut cur = String::new();
+                    for ch in inner.chars() {
+                        match ch {
+                            '[' | '(' => { depth += 1; cur.push(ch); }
+                            ']' | ')' => { depth -= 1; cur.push(ch); }
+                            ',' if depth == 0 => {
+                                parts.push(cur.trim().to_string());
+                                cur = String::new();
+                            }
+                            _ => { cur.push(ch); }
+                        }
+                    }
+                    if !cur.trim().is_empty() { parts.push(cur.trim().to_string()); }
+                    proto_decl.generics.iter()
+                        .zip(parts.iter())
+                        .map(|(gp, arg)| (gp.name.clone(), arg.clone()))
+                        .collect()
+                }
+            };
             let is_auto_derivable =
-                crate::protocols::auto_derive::is_builtin_protocol(proto_name);
+                crate::protocols::auto_derive::is_builtin_protocol(proto_base);
             let mut auto_derive_errors: Vec<crate::protocols::auto_derive::DeriveError> = Vec::new();
             for m in proto_methods {
                 let has_explicit = self.t_provides_method(&td.name, &m.name);
@@ -6464,7 +6498,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if has_explicit {
                     // Compare signature. Find T's fn for method name.
                     if let Some(t_method) = self.find_method_decl(&td.name, &m.name) {
-                        if let Some(reason) = check_signature_match(t_method, m) {
+                        if let Some(reason) = check_signature_match_with_subst(t_method, m, &proto_arg_subst) {
                             wrong_sig.push((
                                 m.name.clone(),
                                 render_method_sig(&m.name, &m.params, &m.return_type),
@@ -6472,7 +6506,7 @@ impl<'a> TypeCheckCtx<'a> {
                             ));
                         }
                         // Plan 108.4 Ф.2: receiver mutability match check.
-                        if let Some(recv_err) = check_receiver_mut_match(t_method, m, proto_name, &td.name) {
+                        if let Some(recv_err) = check_receiver_mut_match(t_method, m, proto_base, &td.name) {
                             wrong_recv.push(recv_err);
                         }
                     }
@@ -6482,13 +6516,13 @@ impl<'a> TypeCheckCtx<'a> {
                     if is_auto_derivable {
                         // Match method name к protocol's expected method.
                         let expected_method =
-                            crate::protocols::auto_derive::builtin_protocol_method(proto_name);
+                            crate::protocols::auto_derive::builtin_protocol_method(proto_base);
                         if expected_method.map_or(false, |em| em == m.name.as_str()) {
                             let bridge = self.as_derive_query();
                             let mut derive_ctx =
                                 crate::protocols::auto_derive::AutoDeriveCtx::new(&bridge);
                             match crate::protocols::auto_derive::synthesize_method(
-                                &mut derive_ctx, td, proto_name,
+                                &mut derive_ctx, td, proto_base,
                             ) {
                                 Ok(_fn_decl) => {
                                     // Synthesis succeeded — method satisfied via auto-derive.
@@ -6593,9 +6627,11 @@ impl<'a> TypeCheckCtx<'a> {
             }
         };
         for proto_name in &fd.impl_protocols {
+            // Plan 164 Ф.1: proto_name may be "Next[U]" — extract bare name for lookups.
+            let proto_base = impl_spec_base_name(proto_name);
             // Plan 137 (D237): renamed protocols — helpful redirect.
             if let Some((_, new_name)) = Self::RENAMED_PROTOCOLS.iter()
-                .find(|(old, _)| *old == proto_name.as_str())
+                .find(|(old, _)| *old == proto_base)
             {
                 errors.push(Diagnostic::new(
                     format!(
@@ -6607,7 +6643,7 @@ impl<'a> TypeCheckCtx<'a> {
                 ));
                 continue;
             }
-            let proto_decl = match self.types.get(proto_name.as_str()) {
+            let proto_decl = match self.types.get(proto_base) {
                 Some(td) => td,
                 None => {
                     errors.push(Diagnostic::new(
@@ -6615,7 +6651,7 @@ impl<'a> TypeCheckCtx<'a> {
                             "[E_IMPL_UNKNOWN_PROTOCOL] method `{} @{}` has `#impl({})` but \
                              `{}` is not a known type. Did you forget to import it, or \
                              misspell the protocol name?",
-                            recv.type_name, fd.name, proto_name, proto_name,
+                            recv.type_name, fd.name, proto_name, proto_base,
                         ),
                         fd.span,
                     ));
@@ -6630,11 +6666,40 @@ impl<'a> TypeCheckCtx<'a> {
                             "[E_IMPL_UNKNOWN_PROTOCOL] method `{} @{}` has `#impl({})` but \
                              `{}` is not a protocol — it's a different kind of type. \
                              `#impl(...)` only accepts protocol names.",
-                            recv.type_name, fd.name, proto_name, proto_name,
+                            recv.type_name, fd.name, proto_name, proto_base,
                         ),
                         fd.span,
                     ));
                     continue;
+                }
+            };
+            // Plan 164 Ф.1: build a generic substitution map from the impl-spec args,
+            // e.g. "Next[U]" → {"T": "U"} (proto generic param → impl type arg name).
+            let proto_arg_subst: Vec<(String, String)> = {
+                let args_text = impl_spec_args_text(proto_name);
+                if args_text.is_empty() || proto_decl.generics.is_empty() {
+                    vec![]
+                } else {
+                    let inner = &args_text[1..args_text.len().saturating_sub(1)];
+                    let mut parts: Vec<String> = Vec::new();
+                    let mut depth = 0usize;
+                    let mut cur = String::new();
+                    for ch in inner.chars() {
+                        match ch {
+                            '[' | '(' => { depth += 1; cur.push(ch); }
+                            ']' | ')' => { depth -= 1; cur.push(ch); }
+                            ',' if depth == 0 => {
+                                parts.push(cur.trim().to_string());
+                                cur = String::new();
+                            }
+                            _ => { cur.push(ch); }
+                        }
+                    }
+                    if !cur.trim().is_empty() { parts.push(cur.trim().to_string()); }
+                    proto_decl.generics.iter()
+                        .zip(parts.iter())
+                        .map(|(gp, arg)| (gp.name.clone(), arg.clone()))
+                        .collect()
                 }
             };
             // `@m` must be one of P's declared methods.
@@ -6650,22 +6715,22 @@ impl<'a> TypeCheckCtx<'a> {
                             "[E_IMPL_NOT_A_PROTOCOL_METHOD] method `@{}` is not declared by \
                              protocol `{}`. `{}` declares: {}. Did you mean one of those, \
                              or a different protocol in `#impl(...)`?",
-                            fd.name, proto_name, proto_name, avail,
+                            fd.name, proto_base, proto_base, avail,
                         ),
                         fd.span,
                     ));
                     continue;
                 }
             };
-            // Signature: params + return type, modulo `Self` ↔ T.
-            if let Some(reason) = check_signature_match(fd, proto_method) {
+            // Signature: params + return type, modulo `Self` ↔ T and generic subst.
+            if let Some(reason) = check_signature_match_with_subst(fd, proto_method, &proto_arg_subst) {
                 errors.push(Diagnostic::new(
                     format!(
                         "[E_IMPL_SIGNATURE_MISMATCH] method `{} @{}` has `#impl({})` but its \
                          signature does not match protocol `{}`'s `@{}`. Expected: `{}`. {}\n  \
                          note: protocol method signatures must match exactly (arity, param \
                          types, return type — modulo Self ↔ {}).",
-                        recv.type_name, fd.name, proto_name, proto_name, fd.name,
+                        recv.type_name, fd.name, proto_name, proto_base, fd.name,
                         render_method_sig(&proto_method.name, &proto_method.params, &proto_method.return_type),
                         reason, recv.type_name,
                     ),
@@ -6675,7 +6740,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Receiver mutability (ro / mut / consume) must match P's `@m`.
             if let Some((_, code, proto_qual, fix)) =
-                check_receiver_mut_match(fd, proto_method, proto_name, &recv.type_name)
+                check_receiver_mut_match(fd, proto_method, proto_base, &recv.type_name)
             {
                 errors.push(Diagnostic::new(
                     format!(
@@ -6697,8 +6762,10 @@ impl<'a> TypeCheckCtx<'a> {
         // opt-in. Only protocols в T's impl_protocols list considered.
         // Без `#impl` — bare call к default-body-synthesized method даёт
         // E7320 normally (opt-in nominal layer над structural protocols).
+        // Plan 164 Ф.1: impl_protocols may contain "Next[U]" — extract bare names
+        // for the opted_in set which is compared against self.types keys (bare names).
         let opted_in: HashSet<&str> = self.types.get(tname)
-            .map(|td| td.impl_protocols.iter().map(String::as_str).collect())
+            .map(|td| td.impl_protocols.iter().map(|s| impl_spec_base_name(s)).collect())
             .unwrap_or_default();
         for (proto_name, td) in &self.types {
             if !opted_in.contains(proto_name.as_str()) {
@@ -11388,6 +11455,154 @@ fn check_signature_match(
             "return type: T returns `{}`, protocol expects `{}`",
             t_ret.map(render_type_ref).unwrap_or_else(|| "()".into()),
             p_ret.map(render_type_ref).unwrap_or_else(|| "()".into()),
+        )),
+    }
+    None
+}
+
+/// Plan 164 Ф.1: apply a generic substitution map to a TypeRef string.
+///
+/// `subst` maps protocol generic param names to their impl counterparts,
+/// e.g. [("T", "U")]. We operate on `render_type_ref` strings for simplicity:
+/// replace whole-word occurrences of each proto param with the impl arg.
+fn apply_subst_to_type_str(s: &str, subst: &[(String, String)]) -> String {
+    let mut result = s.to_string();
+    for (proto_param, impl_arg) in subst {
+        // Replace whole-word occurrences: surrounded by non-ident chars.
+        let mut out = String::new();
+        let mut i = 0;
+        let bytes = result.as_bytes();
+        while i < bytes.len() {
+            let is_ident_start = |b: u8| b.is_ascii_alphabetic() || b == b'_';
+            if bytes[i..].starts_with(proto_param.as_bytes()) {
+                let end = i + proto_param.len();
+                let before_ok = i == 0 || !is_ident_start(bytes[i - 1]);
+                let after_ok = end >= bytes.len() || !is_ident_start(bytes[end]);
+                if before_ok && after_ok {
+                    out.push_str(impl_arg);
+                    i = end;
+                    continue;
+                }
+            }
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        result = out;
+    }
+    result
+}
+
+/// Plan 164 Ф.1: normalize a rendered type string for whitespace-insensitive
+/// comparison. Removes spaces immediately after `,`, `[`, `(` and before `]`,
+/// `)` so that `render_type_ref`-produced `"(int, T)"` and the raw-source
+/// `"(int,T)"` compare equal.
+fn normalize_type_str(s: &str) -> String {
+    // Replace all whitespace sequences with a single space, then strip spaces
+    // adjacent to punctuation characters in type positions.
+    let mut out = String::with_capacity(s.len());
+    let mut prev_was_punct = false;
+    for ch in s.chars() {
+        if ch.is_whitespace() {
+            // Suppress space if the previous non-space char was a punctuation
+            // or if we haven't started yet; we'll decide once we see the next
+            // non-space char.
+            if !prev_was_punct && !out.is_empty() {
+                out.push(' '); // tentative space
+            }
+            // Mark: the tentative space may get removed if next char is punct.
+        } else {
+            let is_punct = matches!(ch, '[' | ']' | '(' | ')' | ',');
+            if is_punct {
+                // Remove any trailing space we just added.
+                if out.ends_with(' ') {
+                    out.pop();
+                }
+                out.push(ch);
+                prev_was_punct = true;
+            } else {
+                // If the previous char was a closing punct and we have a space,
+                // the space is valid (e.g. "Option[T]" vs method names).
+                prev_was_punct = false;
+                out.push(ch);
+            }
+        }
+    }
+    // Trailing spaces.
+    while out.ends_with(' ') { out.pop(); }
+    out
+}
+
+/// Plan 164 Ф.1: signature match with optional generic substitution.
+///
+/// Like `check_signature_match` but applies `subst` to the protocol method's
+/// types before comparison. If `subst` is empty, falls back to the original
+/// behaviour (for backward compat with non-generic `#impl(Display)`).
+fn check_signature_match_with_subst(
+    t_method: &FnDecl,
+    proto_method: &crate::ast::EffectMethod,
+    subst: &[(String, String)],
+) -> Option<String> {
+    if subst.is_empty() {
+        return check_signature_match(t_method, proto_method);
+    }
+    if t_method.params.len() != proto_method.params.len() {
+        return Some(format!(
+            "arity mismatch: T's `{}` has {} param(s), protocol expects {}",
+            t_method.name, t_method.params.len(), proto_method.params.len(),
+        ));
+    }
+    let recv_name = t_method.receiver.as_ref()
+        .map(|r| r.type_name.as_str()).unwrap_or("");
+    for (tp, pp) in t_method.params.iter().zip(proto_method.params.iter()) {
+        let tt_str = render_type_ref(&tp.ty);
+        let pt_str = apply_subst_to_type_str(&render_type_ref(&pp.ty), subst);
+        // Plan 164 Ф.1: normalize whitespace before comparing — render produces
+        // "( int, T )" with spaces; raw-source subst may produce "(int,T)".
+        let tt_norm = normalize_type_str(&tt_str);
+        let pt_norm = normalize_type_str(&pt_str);
+        // Also accept Self ↔ recv_name equivalence.
+        if tt_norm != pt_norm {
+            let pt_self = pt_str == "Self" && tt_str == recv_name;
+            let tt_self = tt_str == "Self" && pt_str == recv_name;
+            if !pt_self && !tt_self {
+                return Some(format!(
+                    "param `{}`: T has `{}`, protocol expects `{}`",
+                    tp.name, tt_str, pt_str,
+                ));
+            }
+        }
+    }
+    let t_ret = t_method.return_type.as_ref();
+    let p_ret = proto_method.return_type.as_ref();
+    let is_unit_or_none = |r: Option<&TypeRef>| -> bool {
+        matches!(r, None | Some(TypeRef::Unit(_)))
+    };
+    if is_unit_or_none(t_ret) && is_unit_or_none(p_ret) {
+        return None;
+    }
+    match (t_ret, p_ret) {
+        (Some(a), Some(b)) => {
+            let a_str = render_type_ref(a);
+            let b_str = apply_subst_to_type_str(&render_type_ref(b), subst);
+            // Plan 164 Ф.1: normalize before comparison — tuple types with spaces.
+            let a_norm = normalize_type_str(&a_str);
+            let b_norm = normalize_type_str(&b_str);
+            if a_norm != b_norm {
+                let b_self = b_str == "Self" && a_str == recv_name;
+                let a_self = a_str == "Self" && b_str == recv_name;
+                if !b_self && !a_self {
+                    return Some(format!(
+                        "return type: T returns `{}`, protocol expects `{}`",
+                        a_str, b_str,
+                    ));
+                }
+            }
+        }
+        _ => return Some(format!(
+            "return type: T returns `{}`, protocol expects `{}`",
+            t_ret.map(render_type_ref).unwrap_or_else(|| "()".into()),
+            p_ret.as_ref().map(|b| apply_subst_to_type_str(&render_type_ref(b), subst))
+                .unwrap_or_else(|| "()".into()),
         )),
     }
     None

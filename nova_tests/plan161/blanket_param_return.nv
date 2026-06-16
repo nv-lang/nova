@@ -4,7 +4,7 @@ module plan161.blanket_param_return
 
 import std.collections.vec.{Vec, VecIter}
 import std.prelude.collections.{Next}
-import std.collections.vec_iter_zc.{FilterIter}
+import std.collections.vec_iter.{FilterIter}
 
 // ── Vec[T] return ──────────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ test "blanket collect Vec[T] on VecIter" {
 
 test "blanket collect Vec[T] on FilterIter" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)
-    ro r = v.ziter().zfilter(|x| x % 2 == 1).bcollect2()
+    ro r = v.iter().filter(|x| x % 2 == 1).bcollect2()
     assert(r == Vec[int].of(1, 3, 5))
 }
 

@@ -1,0 +1,20 @@
+// Plan 164 Ф.1: positive — #impl(Next[T]) parses and checks correctly.
+// A simple countdown iterator declared with #impl(Next[int]).
+module plan164.impl_attr_generic_pos
+
+type Countdown value { mut n int }
+
+#impl(Next[int])
+fn Countdown mut @next() -> Option[int] {
+    if @n <= 0 { return None }
+    @n -= 1
+    Some(@n)
+}
+
+test "#impl(Next[T]) parses on method with generic protocol arg" {
+    mut c = Countdown { n: 3 }
+    assert(c.next() == Some(2))
+    assert(c.next() == Some(1))
+    assert(c.next() == Some(0))
+    assert(c.next() == None)
+}

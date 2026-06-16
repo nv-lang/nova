@@ -1,127 +1,127 @@
 module plan153_2_zc.new_adapters
 
-import std.collections.vec_iter_zc
+import std.collections.vec_iter
 
-// ── ztake ────────────────────────────────────────────────────────────────────
+// ── take ─────────────────────────────────────────────────────────────────────
 
-test "ztake limits VecIter" {
+test "take limits VecIter" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)
-    ro got = v.ziter().ztake(3).zcollect()
+    ro got = v.iter().take(3).collect()
     assert(got == [1, 2, 3])
 }
 
-test "ztake after zmap" {
+test "take after map" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)
-    ro got = v.ziter().zmap(|x| x * 10).ztake(2).zcollect()
+    ro got = v.iter().map(|x| x * 10).take(2).collect()
     assert(got == [10, 20])
 }
 
-test "ztake zero yields empty" {
+test "take zero yields empty" {
     ro v = Vec[int].of(1, 2, 3)
-    ro got = v.ziter().ztake(0).zcollect()
+    ro got = v.iter().take(0).collect()
     assert(got == [])
 }
 
-test "ztake more than length yields all" {
+test "take more than length yields all" {
     ro v = Vec[int].of(1, 2)
-    ro got = v.ziter().ztake(10).zcollect()
+    ro got = v.iter().take(10).collect()
     assert(got == [1, 2])
 }
 
-// ── zskip ────────────────────────────────────────────────────────────────────
+// ── skip ─────────────────────────────────────────────────────────────────────
 
-test "zskip skips first n" {
+test "skip skips first n" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)
-    ro got = v.ziter().zskip(2).zcollect()
+    ro got = v.iter().skip(2).collect()
     assert(got == [3, 4, 5])
 }
 
-test "zskip after zfilter" {
+test "skip after filter" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
-    ro got = v.ziter().zfilter(|x| x % 2 == 0).zskip(1).zcollect()
+    ro got = v.iter().filter(|x| x % 2 == 0).skip(1).collect()
     assert(got == [4, 6])
 }
 
-test "zskip all yields empty" {
+test "skip all yields empty" {
     ro v = Vec[int].of(1, 2, 3)
-    ro got = v.ziter().zskip(10).zcollect()
+    ro got = v.iter().skip(10).collect()
     assert(got == [])
 }
 
-// ── ztake + zskip chained ────────────────────────────────────────────────────
+// ── take + skip chained ──────────────────────────────────────────────────────
 
-test "zskip then ztake — sliding window" {
+test "skip then take — sliding window" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
-    ro got = v.ziter().zskip(2).ztake(4).zcollect()
+    ro got = v.iter().skip(2).take(4).collect()
     assert(got == [3, 4, 5, 6])
 }
 
-// ── zreduce ──────────────────────────────────────────────────────────────────
+// ── reduce ────────────────────────────────────────────────────────────────────
 
-test "zreduce sums via fold" {
+test "reduce sums via fold" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)
-    ro r = v.ziter().zreduce(|a, b| a + b)
+    ro r = v.iter().reduce(|a, b| a + b)
     assert(r == Some(15))
 }
 
-test "zreduce on single element" {
+test "reduce on single element" {
     ro v = Vec[int].of(42)
-    assert(v.ziter().zreduce(|a, b| a + b) == Some(42))
+    assert(v.iter().reduce(|a, b| a + b) == Some(42))
 }
 
-test "zreduce on empty is None" {
+test "reduce on empty is None" {
     ro v = Vec[int].new()
-    assert(v.ziter().zreduce(|a, b| a + b) == None)
+    assert(v.iter().reduce(|a, b| a + b) == None)
 }
 
-// ── zmin / zmax ──────────────────────────────────────────────────────────────
+// ── min / max ─────────────────────────────────────────────────────────────────
 
-test "zmin finds minimum" {
+test "min finds minimum" {
     ro v = Vec[int].of(3, 1, 4, 1, 5, 9, 2, 6)
-    assert(v.ziter().zmin() == Some(1))
+    assert(v.iter().min() == Some(1))
 }
 
-test "zmax finds maximum" {
+test "max finds maximum" {
     ro v = Vec[int].of(3, 1, 4, 1, 5, 9, 2, 6)
-    assert(v.ziter().zmax() == Some(9))
+    assert(v.iter().max() == Some(9))
 }
 
-test "zmin on empty is None" {
+test "min on empty is None" {
     ro v = Vec[int].new()
-    assert(v.ziter().zmin() == None)
+    assert(v.iter().min() == None)
 }
 
-// ── znth ─────────────────────────────────────────────────────────────────────
+// ── nth ──────────────────────────────────────────────────────────────────────
 
-test "znth returns 0-based element" {
+test "nth returns 0-based element" {
     ro v = Vec[int].of(10, 20, 30, 40)
-    assert(v.ziter().znth(0) == Some(10))
-    assert(v.ziter().znth(2) == Some(30))
+    assert(v.iter().nth(0) == Some(10))
+    assert(v.iter().nth(2) == Some(30))
 }
 
-test "znth out of bounds is None" {
+test "nth out of bounds is None" {
     ro v = Vec[int].of(1, 2)
-    assert(v.ziter().znth(5) == None)
+    assert(v.iter().nth(5) == None)
 }
 
-test "znth after zmap" {
+test "nth after map" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)
-    assert(v.ziter().zmap(|x| x * 100).znth(3) == Some(400))
+    assert(v.iter().map(|x| x * 100).nth(3) == Some(400))
 }
 
-// ── zlast ────────────────────────────────────────────────────────────────────
+// ── last ──────────────────────────────────────────────────────────────────────
 
-test "zlast returns last element" {
+test "last returns last element" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)
-    assert(v.ziter().zlast() == Some(5))
+    assert(v.iter().last() == Some(5))
 }
 
-test "zlast on empty is None" {
+test "last on empty is None" {
     ro v = Vec[int].new()
-    assert(v.ziter().zlast() == None)
+    assert(v.iter().last() == None)
 }
 
-test "zlast after zfilter" {
+test "last after filter" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
-    assert(v.ziter().zfilter(|x| x % 2 == 0).zlast() == Some(6))
+    assert(v.iter().filter(|x| x % 2 == 0).last() == Some(6))
 }

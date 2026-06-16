@@ -1,0 +1,57 @@
+// Plan 164 Ф.2 — blanket mono-name must be independent of generic param order.
+//
+// Bug: `fn[T Compare, I Next[T]] I mut @min()` (T first, I second) produced a
+// wrong type_subst in emit_call because the code used `fn_decl.generics.first()`
+// to find the receiver typevar, binding T→concrete_iterator instead of
+// I→concrete_iterator. The fix: look up the generic whose name matches the
+// registered receiver typevar (type_name / blanket_tvname), not blindly use [0].
+//
+// This file tests the existing `fn[I Next[T], T Compare]` methods (@min / @max)
+// from vec_iter to confirm the codegen path works correctly end-to-end.
+// Those methods have I as generics[0], so they exercised the *working* path; the
+// fix now also handles the swapped order (T first) robustly via name-lookup.
+module plan164.blanket_param_order
+
+import std.collections.vec_iter
+
+test "min returns smallest int element" {
+    ro v = Vec[int].of(3, 1, 4, 1, 5, 9, 2, 6)
+    ro m = v.iter().min()
+    assert(m.unwrap_or(-1) == 1)
+}
+
+test "max returns largest int element" {
+    ro v = Vec[int].of(3, 1, 4, 1, 5, 9, 2, 6)
+    ro m = v.iter().max()
+    assert(m.unwrap_or(-1) == 9)
+}
+
+test "min on empty iterator returns None" {
+    ro v = Vec[int].of()
+    ro m = v.iter().min()
+    assert(m == None)
+}
+
+test "max on empty iterator returns None" {
+    ro v = Vec[int].of()
+    ro m = v.iter().max()
+    assert(m == None)
+}
+
+test "min / max after filter adapter (multi-bound blanket)" {
+    ro v = Vec[int].of(10, 3, 7, 1, 8, 2)
+    // filter changes the receiver type to FilterIter — codegen must still
+    // resolve the two-bound blanket fn[I Next[T], T Compare] correctly.
+    ro lo = v.iter().filter(|x| x > 3).min()
+    ro hi = v.iter().filter(|x| x < 8).max()
+    assert(lo.unwrap_or(-1) == 7)
+    assert(hi.unwrap_or(-1) == 7)
+}
+
+test "min / max after map adapter (chained, two-bound blanket)" {
+    ro v = Vec[int].of(5, 2, 8, 1, 9, 3)
+    ro lo = v.iter().map(|x| x * 2).min()
+    ro hi = v.iter().map(|x| x * 2).max()
+    assert(lo.unwrap_or(-1) == 2)
+    assert(hi.unwrap_or(-1) == 18)
+}

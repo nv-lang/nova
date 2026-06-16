@@ -8,6 +8,30 @@ use crate::ast::*;
 use crate::diag::{Diagnostic, Span};
 use crate::lexer::{Token, TokenKind};
 
+/// Plan 164 Ф.1 (D268 amend): helper — extract the bare protocol name from
+/// an impl-spec string that may carry generic args, e.g.:
+///   "Next"       → "Next"
+///   "Next[T]"    → "Next"
+///   "Next[(int,T)]" → "Next"
+/// Used wherever impl_protocols entries are looked up in self.types (keyed by
+/// bare name) or compared against protocol_method_registry keys.
+pub fn impl_spec_base_name(spec: &str) -> &str {
+    match spec.find('[') {
+        Some(idx) => &spec[..idx],
+        None => spec,
+    }
+}
+
+/// Plan 164 Ф.1: extract the raw bracket suffix from an impl-spec string,
+/// e.g. "Next[U]" → "[U]", "Next" → "". Used by the checker to build the
+/// generic substitution map (proto generic → impl generic).
+pub fn impl_spec_args_text(spec: &str) -> &str {
+    match spec.find('[') {
+        Some(idx) => &spec[idx..],
+        None => "",
+    }
+}
+
 /// Plan 33.1 (D24): contract-related атрибуты, собранные перед `fn`.
 ///
 /// Передаются из `parse_item` в `parse_fn`. По умолчанию — все поля
@@ -2337,20 +2361,70 @@ impl Parser {
                 }
                 "impl" => {
                     // Plan 91.9 (D186): #impl(P1 + P2 + ...) opt-in list.
+                    // Plan 164 Ф.1: protocol names may carry generic args,
+                    // e.g. #impl(Next[T]) or #impl(Next[(int,T)]).
+                    // We parse the bare Ident, then capture any optional
+                    // bracketed argument list `[…]` (with nesting) as the
+                    // raw source text, and store the full spec like "Next[U]"
+                    // in impl_protocols. Consumers that need a bare name
+                    // (e.g. self.types.get) use impl_spec_base_name() to
+                    // strip the bracket suffix.
                     self.bump(); // #
                     self.bump(); // impl
                     self.expect(&TokenKind::LParen)?;
                     let mut names: Vec<String> = Vec::new();
                     loop {
                         let (n, _sp) = self.parse_ident()?;
-                        if names.contains(&n) {
+                        // Capture optional generic args `[T]` / `[T, U]` / `[(int,T)]`
+                        // as raw source text and append to the name.
+                        let full_spec = if matches!(self.peek().kind, TokenKind::LBracket) {
+                            let bracket_start = self.peek().span.start;
+                            let mut depth = 1usize;
+                            self.bump(); // consume `[`
+                            while depth > 0 {
+                                match self.peek().kind {
+                                    TokenKind::LBracket => { depth += 1; self.bump(); }
+                                    TokenKind::RBracket => { depth -= 1; self.bump(); }
+                                    TokenKind::Eof => {
+                                        let span = self.peek().span;
+                                        return Err(Diagnostic::new(
+                                            "unterminated `[` in #impl protocol argument",
+                                            span,
+                                        ));
+                                    }
+                                    _ => { self.bump(); }
+                                }
+                            }
+                            // After the loop, pos points just past the closing `]`.
+                            // The closing `]` was the last bumped token; peek is now
+                            // the token AFTER it. We need the span of the token just
+                            // consumed (peek_at(-1) isn't available), so we use the
+                            // already-advanced src slice: the bracket group is
+                            // src[bracket_start .. end_of_last_consumed_token.end].
+                            // Use tokens[pos-1].span.end as the end.
+                            let bracket_end = if self.pos > 0 {
+                                self.tokens[self.pos - 1].span.end
+                            } else {
+                                bracket_start
+                            };
+                            let bracket_text = self.src
+                                .get(bracket_start..bracket_end)
+                                .unwrap_or("")
+                                .to_string();
+                            format!("{}{}", n, bracket_text)
+                        } else {
+                            n.clone()
+                        };
+                        // Duplicate check uses the bare name so #impl(Next[T]+Next[U])
+                        // is caught as duplicate "Next".
+                        if names.iter().any(|x| impl_spec_base_name(x) == n.as_str()) {
                             let span = self.peek().span;
                             return Err(Diagnostic::new(
                                 format!("duplicate protocol `{}` в #impl list", n),
                                 span,
                             ));
                         }
-                        names.push(n);
+                        names.push(full_spec);
                         if self.eat(&TokenKind::Plus).is_some() {
                             continue;
                         }
