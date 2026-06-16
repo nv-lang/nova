@@ -43,7 +43,7 @@ extern "nova" fn panic(msg str) -> never
 // the irreducible C primitive — not expressible on the `ro []u8` view (cap==len)
 // nor without an allocator. C impl: `nova_fn_nova_str_terminated_ptr`
 // (nova_rt.h). Marked unsafe: yields a raw pointer.
-external unsafe fn nova_str_terminated_ptr(s str) -> *u8
+extern "nova" unsafe fn nova_str_terminated_ptr(s str) -> *u8
 
 /// Opaque C-string handle. Wraps raw `*u8` pointer; instances must
 /// satisfy null-terminator invariant: `ptr[strlen(ptr)] == '\0'`.
