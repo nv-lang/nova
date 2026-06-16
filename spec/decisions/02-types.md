@@ -12470,3 +12470,51 @@ export fn SkipIter[I, T]      @zenumerate() -> EnumerateIter[Self, T]         =>
 3. Проверить, что forward declaration генерируется с полным mono-именем (см. §4).
 
 **Реализовано в.** `std/collections/vec/iter.nv` (VecIter value), `std/collections/range.nv` (Range/RangeIter/StepRangeIter/ReverseRangeIter value), `compiler-codegen/src/codegen/emit_c.rs` (generic value forward-decl fix), `compiler-codegen/src/field_cache.rs` (`"never"` лист).
+
+---
+
+## D292 — Net C FFI pattern: opaque handles + value-record wrapping (Plan 91.12)
+
+**Source:** Plan 91.12 Ф.0–Ф.4, 2026-06-16. **Status:** ✅ ACTIVE.
+**Связь:** [D214](02-types.md#d214), [D282](08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-abi-синтаксис-для-ffi-plan-9112-ф-1) (`extern "C" fn`), [D291](04-effects.md#d291--tcpnetupdpnetdnsnet-effect-family-plan-9112).
+
+### Паттерн
+
+Стандартный способ обёртки C-библиотечного ресурса в Nova (используется в `std/net`, типичен для `std.ffi`-слоя):
+
+**Шаг 1. Opaque handle** (D214 §newtype): `type CX(*())` — newtype над `*()` (void*). Даёт типобезопасность на FFI-границе без раскрытия внутренней C-структуры. Nova не может перепутать `CTcpListener` и `CUdpSocket`.
+
+```nova
+type CTcpListener(*())
+type CTcpStream(*())
+type CUdpSocket(*())
+```
+
+**Шаг 2. Приватный FFI-слой** (`ffi.nv`, без `export`): все `extern "C" fn` — module-private. Именование: `<resource>_<action>` (snake_case, без Nova-префиксов). C-side принимает typed handle pointer, возвращает новый handle (NULL = error) или числовой результат.
+
+```nova
+extern "C" fn tcp_listener_bind(addr CSocketAddr) -> CTcpListener  // NULL on error
+extern "C" fn tcp_stream_write(s CTcpStream, data str) -> int       // bytes or -1
+```
+
+**Шаг 3. Публичный value-record**: `export type TcpListener value { priv handle CTcpListener }`. `priv` делает `handle` module-private (Plan 160 D281). Публичные методы делегируют в эффект (не в C напрямую).
+
+```nova
+export type TcpListener value { priv handle CTcpListener }
+export fn TcpListener.bind(addr SocketAddr) TcpNet -> Result[TcpListener, NetError] {
+    TcpNet.bind(addr)
+}
+```
+
+**Шаг 4. Эффект-handler**: `real_tcp_net()` — конкретный `Effect[TcpNet]` (D291), содержит прямые вызовы C FFI. Тесты заменяют handler на mock без изменения кода пользователя.
+
+### Инварианты
+
+- FFI-функции НЕ экспортируются из модуля (`export` запрещён на `extern "C" fn` в `ffi.nv`-слое).
+- Конструктор public-типа через `_from_raw(h CX)` — package-private factory.
+- Опасный `close()` — `consume @close()`: потребляет тип, предотвращает double-close.
+- Ошибки: null/отрицательный результат + TLS `net_last_error()` (cooperative-safe: нет yielding между C-вызовом и чтением ошибки).
+
+### Реализовано в
+
+`std/net/ffi.nv` (Ф.1), `std/net/tcp.nv` (Ф.3), `std/net/udp.nv` (Ф.4). Тесты: `nova_tests/plan91_12/` (19/19 PASS). D292 NEW.
