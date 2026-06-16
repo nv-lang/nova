@@ -3,38 +3,57 @@
 //
 // Architecture:
 //   ffi.nv    — dns_lookup / dns_addr_at extern "C" fn declarations
-//   effect.nv — DnsNet effect declaration (D293)
+//   effect.nv — DnsNet effect declaration (D295)
 //   dns.nv    — real_dns_net() handler (this file)
 //
 // dns_lookup parks the calling fiber via uv_getaddrinfo callback (net.c).
-// Results are stored in a thread-local array; dns_addr_at(i) reads elements.
-// Cooperative-safe: no Blocking call may interleave between dns_lookup() and
-// the dns_addr_at() reads (same fiber, no yield point between them).
+// Results are stored in a thread-local array; dns_addr_at(0) reads the first
+// resolved address. V1 returns the first SocketAddr only — multi-address
+// iteration deferred to V2 ([M-91.13-dns-iter-boxing]).
 //
-// D293: DnsNet effect family spec.
+// D295: DnsNet effect family spec.
 
 module std.net
 
 /// Concrete DnsNet handler dispatching to libuv uv_getaddrinfo.
 ///
-/// Must be used from a spawn fiber (DNS resolution parks the calling fiber).
+/// Parks the calling fiber until the OS resolver returns (async, non-blocking
+/// to other fibers). Returns the first resolved `SocketAddr` or `Err` on
+/// failure. Must be invoked from a spawned fiber.
 ///
 /// # Example
 ///
 /// ```nova
-/// import std.net.{SocketAddr, real_dns_net, real_addr_net}
+/// import std.net.{SocketAddr, DnsNet, real_dns_net}
 ///
 /// supervised {
 ///     spawn {
 ///         with DnsNet = real_dns_net() {
 ///             match DnsNet.lookup("example.com", 80) {
-///                 Ok(addrs) => { /* use addrs[0] */ }
-///                 Err(e)    => { /* handle error */ }
+///                 Ok(addr) => { /* connect to addr */ }
+///                 Err(e)   => { /* handle error */ }
 ///             }
 ///         }
 ///     }
 /// }
 /// ```
+/// Resolve a hostname and port to a SocketAddr using the ambient DnsNet effect.
+///
+/// Returns the first resolved address, or `Err(NetError....)` on failure.
+/// Parks the calling fiber until resolution completes (requires a spawned fiber).
+///
+/// # Example
+///
+/// ```nova
+/// with DnsNet = real_dns_net() {
+///     ro addr = SocketAddr.lookup("example.com", 80).unwrap()
+/// }
+/// ```
+#stable(since = "0.1")
+export fn SocketAddr.lookup(host str, port u16) DnsNet -> Result[SocketAddr, NetError] {
+    DnsNet.lookup(host, port)
+}
+
 #stable(since = "0.1")
 export fn real_dns_net() -> Effect[DnsNet] => effect DnsNet {
     lookup(host, port) {
@@ -42,13 +61,7 @@ export fn real_dns_net() -> Effect[DnsNet] => effect DnsNet {
         if count < 0 {
             Err(net_error(net_last_error()))
         } else {
-            mut addrs = []SocketAddr.with_capacity(count)
-            mut i = 0
-            while i < count {
-                addrs.push(SocketAddr._from_raw(dns_addr_at(i)))
-                i = i + 1
-            }
-            Ok(addrs)
+            Ok(SocketAddr._from_raw(dns_addr_at(0)))
         }
     }
 }

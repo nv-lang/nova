@@ -8,6 +8,7 @@
 //   mock_tcp_net()  — TcpNet handler that never touches real sockets.
 //   mock_udp_net()  — UdpNet handler that never touches real sockets.
 //   mock_addr_net() — AddrNet handler with static loopback responses.
+//   mock_dns_net()  — DnsNet handler returning a static loopback address.
 
 module std.net
 
@@ -87,4 +88,14 @@ export fn mock_addr_net() -> Effect[AddrNet] => effect AddrNet {
     is_v4(addr)            => socket_addr_is_v4(addr.handle)
     is_v6(addr)            => socket_addr_is_v6(addr.handle)
     to_str(addr)           => socket_addr_to_str(addr.handle)
+}
+
+/// In-memory DnsNet handler for unit-testing.
+///
+/// - lookup always succeeds, returning a single loopback address on port 0.
+/// - Use with `with DnsNet = mock_dns_net()` in tests that exercise DNS-aware code
+///   without a real network or system resolver.
+#stable(since = "0.1")
+export fn mock_dns_net() -> Effect[DnsNet] => effect DnsNet {
+    lookup(_host, _port) => Ok(SocketAddr._from_raw(socket_addr_loopback(0)))
 }

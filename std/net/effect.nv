@@ -75,8 +75,12 @@ export type AddrNet effect {
 
 // DnsNet -- async DNS resolution. Implemented in dns.nv.
 // Parking via uv_getaddrinfo callback (nova_rt/net.c dns_lookup).
-// D293: DnsNet effect family spec.
+// D295: DnsNet effect family spec.
+//
+// V1 API: lookup returns the *first* resolved SocketAddr (sufficient for
+// most connect use-cases). Multi-address iteration deferred to V2
+// ([M-91.13-dns-iter-boxing] — []SocketAddr in vtable erases Ok type).
 #stable(since = "0.1")
 export type DnsNet effect {
-    lookup(host str, port u16) -> Result[[]SocketAddr, NetError]
+    lookup(host str, port u16) -> Result[SocketAddr, NetError]
 }
