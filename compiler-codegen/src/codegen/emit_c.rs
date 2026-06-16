@@ -24028,6 +24028,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     if let ExprKind::Ident(arr_name) = &obj.kind {
                                         self.str_box_arrays.insert(arr_name.clone());
                                     }
+                                } else if arg_ty.starts_with("NovaValue_") {
+                                    // Box inline value-record as heap pointer stored as nova_int
+                                    // ([]NovaValue_X currently uses nova_int slot — V2.1 followup).
+                                    let vtmp = self.fresh_tmp();
+                                    self.line(&format!("{at}* {v} = ({at}*)nova_alloc(sizeof({at}));", at = arg_ty, v = vtmp));
+                                    self.line(&format!("*{} = {};", vtmp, arg_c));
+                                    self.line(&format!("nova_array_push_nova_int({}, (nova_int)(intptr_t)({}));", obj_c, vtmp));
                                 } else if arg_ty == "void*" {
                                     // Erased generic value: store pointer as nova_int
                                     self.line(&format!("nova_array_push_nova_int({}, (nova_int)(intptr_t)({}));", obj_c, arg_c));
