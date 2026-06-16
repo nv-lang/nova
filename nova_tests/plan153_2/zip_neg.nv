@@ -1,0 +1,32 @@
+// Negative / boundary tests for zip.
+// These verify that zip correctly STOPS (returns None) when either
+// side is exhausted — not a panic, just correct early-exit semantics.
+
+module plan153_2.zip_neg
+
+import std.collections.vec_lazy
+
+test "zip stops at shorter left — next returns None after end" {
+    ro a = Vec[int].of(1)
+    ro b = Vec[int].of(10, 20)
+    mut it = a.lazy().zip(b.lazy())
+    assert(it.next() == Some((1, 10)))
+    assert(it.next() == None)
+    // calling next after None is safe (stays None)
+    assert(it.next() == None)
+}
+
+test "zip stops at shorter right — next returns None after end" {
+    ro a = Vec[int].of(1, 2)
+    ro b = Vec[int].of(10)
+    mut it = a.lazy().zip(b.lazy())
+    assert(it.next() == Some((1, 10)))
+    assert(it.next() == None)
+}
+
+test "zip empty — first next is None" {
+    ro a = Vec[int].of()
+    ro b = Vec[int].of(1, 2, 3)
+    mut it = a.lazy().zip(b.lazy())
+    assert(it.next() == None)
+}
