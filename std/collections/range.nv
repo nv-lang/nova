@@ -393,3 +393,23 @@ test "reverse via for-loop" {
     }
     assert(collected == [3, 2, 1])
 }
+
+test "StepRangeIter copy by value — independent cursors" {
+    mut it = (0..10).step_by(2)
+    ro _a = it.next()
+    mut it2 = it
+    assert(_a == Some(0))
+    assert(it2.next() == Some(2))
+    assert(it2.next() == Some(4))
+    assert(it.next() == Some(2))
+}
+
+test "ReverseRangeIter copy by value — independent cursors" {
+    mut it = (1..=4).reverse()
+    ro _a = it.next()
+    mut it2 = it
+    assert(_a == Some(4))
+    assert(it2.next() == Some(3))
+    assert(it2.next() == Some(2))
+    assert(it.next() == Some(3))
+}
