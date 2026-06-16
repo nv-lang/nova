@@ -528,9 +528,10 @@
 - **Floating** (нет плана) → здесь полностью.
 - Закрыл → убрал строку (история в simplifications.md). Держим только живое.
 
-## Follow-up: Plan 91.12 (std/net V2 algebraic effects)
+## Follow-up: Plan 91.12 / 91.13 (std/net V2 algebraic effects + bytes-FFI + DNS)
 
-- **`[M-91.12-bytes-ffi]`** — `str` → `[]u8` в FFI (бинарные данные). → Plan 91.13.
-- **`[M-91.12-async-dns]`** — DnsNet / Ф.5 (async uv_getaddrinfo). → Plan 91.13.
+- ~~**`[M-91.12-bytes-ffi]`**~~ ✅ **CLOSED 2026-06-16** — `str @as_ptr() -> *u8` добавлен (`std/runtime/string/core.nv`); DNS handler использует `host.as_ptr()` + `host.byte_len()`. Коммит `0da6c435`.
+- ~~**`[M-91.12-async-dns]`**~~ ✅ **CLOSED 2026-06-16** — DnsNet раскомментирован (`std/net/effect.nv`), `real_dns_net()` реализован (`std/net/dns.nv`), C-side `dns_lookup`/`dns_addr_at` через `uv_getaddrinfo` + TLS (`compiler-codegen/nova_rt/net.c`). 19/19 PASS. Коммит `0da6c435`.
+- **`[M-91.13-dns-iter-boxing]`** — `[]SocketAddr` хранится как `NovaArray_nova_int*` (боксированные `NovaValue_SocketAddr*`); for-in по результату DNS возвращает `nova_int` а не typed `SocketAddr`. Нужно: (a) register real elem type при boxing в push; (b) deref в for-in. V2.1 followup кодогена.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.

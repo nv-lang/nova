@@ -18,6 +18,17 @@
 
 ---
 
+### Plan 91.13 — str @as_ptr + DnsNet + consume value net types (2026-06-16)
+
+- **Где** — `std/runtime/string/core.nv`, `std/net/{effect,ffi,dns,tcp,udp,mock}.nv`, `compiler-codegen/nova_rt/net.{h,c}`, `compiler-codegen/src/codegen/emit_c.rs`.
+- **Что сделано** — (1) `str @as_ptr() -> *u8`: Nova body `=> @ptr`, используется в DNS handler для bytes-FFI. (2) `DnsNet` effect раскомментирован; `real_dns_net()` реализован через `uv_getaddrinfo` + park/wake; TLS `_net_dns_addrs[]` для возврата результатов. (3) `TcpListener`/`TcpStream`/`UdpSocket` стали `consume value` (было просто `value`). (4) Codegen fix: boxing `NovaValue_*` в `nova_int` slot при `push` (аналог boxing `nova_str*`).
+- **Упрощение** — `[]SocketAddr` хранится как `NovaArray_nova_int*` (боксированные `NovaValue_SocketAddr*`). `for addr in addrs` возвращает `nova_int`, не typed `SocketAddr` — деref нужен вручную через `[M-91.13-dns-iter-boxing]`. V2.1 followup.
+- **Почему** — inline-storage для value-record в массивах (NovaArray_NovaValue_X) не реализовано (V2.1 TODO в emit_c.rs 9506). Boxing — минимальный fix без переработки array ABI.
+- **Как чинить** — реализовать inline-storage или register real elem type в `array_element_types` при boxing и deref в for-in. Маркер `[M-91.13-dns-iter-boxing]`.
+- **Приоритет** — M (блокирует удобное использование `[]SocketAddr`).
+
+---
+
 ### Plan 163 Ф.1-Ф.3 — import/export glob hygiene (2026-06-16, ✅ CLOSED [M-import-glob-forbid])
 
 - **Где** — `compiler-codegen/src/types/mod.rs` (E_REEXPORT_GLOB + E_IMPORT_GLOB checks); ~100 файлов std/ + nova_tests/ (import-migration).
