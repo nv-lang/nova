@@ -7,7 +7,7 @@ referenced from plan docs and simplifications.md.
 
 ## Single-letter type names — E_TYPE_NAME_TOO_SHORT
 
-- **[M-single-letter-type-ban]** Запретить `type X { ... }` где имя типа длиной 1 символ.
+- **[M-single-letter-type-ban]** CLOSED Plan 167. Запретить `type X { ... }` где имя типа длиной 1 символ.
   Мотивация: однобуквенные имена конфликтуют с generic-параметрами (`fn[S Iter[T]]` vs `type S`),
   вызывая E_PREFIX_SHADOWS_NAMED_TYPE. Haskell решает регистром (type vars строчные), Nova
   решает запретом однобуквенных типов — generic-параметры остаются однобуквенными по конвенции.
