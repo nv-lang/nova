@@ -20100,11 +20100,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     } else {
                         e.clone()
                     };
-                    self.line(&format!(
-                        "Nova_Range* {} = (Nova_Range*)nova_alloc(sizeof(Nova_Range));",
-                        tmp));
-                    self.line(&format!("{}->start = {};", tmp, s));
-                    self.line(&format!("{}->end = {};", tmp, end_expr));
+                    if self.value_record_names.contains("Range") {
+                        // Range is a value-record: stack-allocate.
+                        self.line(&format!("NovaValue_Range {};", tmp));
+                        self.line(&format!("{}.start = {};", tmp, s));
+                        self.line(&format!("{}.end = {};", tmp, end_expr));
+                        self.var_types.insert(tmp.clone(), "NovaValue_Range".into());
+                    } else {
+                        self.line(&format!(
+                            "Nova_Range* {} = (Nova_Range*)nova_alloc(sizeof(Nova_Range));",
+                            tmp));
+                        self.line(&format!("{}->start = {};", tmp, s));
+                        self.line(&format!("{}->end = {};", tmp, end_expr));
+                        self.var_types.insert(tmp.clone(), "Nova_Range*".into());
+                    }
                     Ok(tmp)
                 } else {
                     let _ = inclusive;
@@ -37042,7 +37051,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // `ExprKind::Range` pattern до infer call'а.
             ExprKind::Range { .. } => {
                 if self.record_schemas.contains_key("Range") {
-                    "Nova_Range*".into()
+                    if self.value_record_names.contains("Range") {
+                        "NovaValue_Range".into()
+                    } else {
+                        "Nova_Range*".into()
+                    }
                 } else {
                     "nova_int".into()
                 }
