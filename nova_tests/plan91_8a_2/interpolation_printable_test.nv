@@ -16,14 +16,15 @@ fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
 
 // Point has explicit @display — `#impl(Display)` not required (type-checker
 // finds method directly без synthesis). Annotation добавлен для verification.
+// Plan 152.7.1 (D258 AMEND): migrated to Write sink — @display(mut w Write).
 #impl(Display)
 type Point { x int, y int }
-fn Point @display(mut sb StringBuilder) -> () {
-    sb.append("Point(")
-    sb.append(str.from(@x))
-    sb.append(", ")
-    sb.append(str.from(@y))
-    sb.append(")")
+fn Point @display(mut w Write) -> () {
+    w.write_str("Point(")
+    w.write_str(str.from(@x))
+    w.write_str(", ")
+    w.write_str(str.from(@y))
+    w.write_str(")")
 }
 
 test "\"${m}\" with fn str.from(Money) overload" {

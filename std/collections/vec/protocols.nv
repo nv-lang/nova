@@ -161,10 +161,10 @@ export fn Vec[T Hash] @hash() -> u64 {
 
 // ─── Display / Debug ───────────────────────────────────────────
 
-/// Append a human-readable representation of `self` to `sb`.
+/// Append a human-readable representation of `self` to `w`.
 ///
 /// Format: `Vec[e0, e1, ..., eN-1]` where each element is formatted via
-/// `elem.display(sb)` directly (no intermediate string allocation).
+/// `elem.display(w)` directly (no intermediate string allocation).
 ///
 /// # Examples
 ///
@@ -174,23 +174,23 @@ export fn Vec[T Hash] @hash() -> u64 {
 /// v.display(sb)
 /// assert(sb.as_str() == "Vec[1, 2, 3]")
 /// ```
-export fn Vec[T Display] @display(mut sb StringBuilder) -> () {
-    sb.append("Vec[")
+export fn Vec[T Display] @display(mut w Write) -> () {
+    w.write_str("Vec[")
     for i in 0..@len {
-        if i > 0 { sb.append(", ") }
-        unsafe { @data[i] }.display(sb)
+        if i > 0 { w.write_str(", ") }
+        unsafe { @data[i] }.display(w)
     }
-    sb.append("]")
+    w.write_str("]")
 }
 
-/// Append a debug representation of `self` to `sb`.
+/// Append a debug representation of `self` to `w`.
 ///
 /// Provided so that `${v:?}` interp-string syntax works for `Vec[T]`.
-export fn Vec[T Debug] @debug(mut sb StringBuilder) -> () {
-    sb.append("Vec[")
+export fn Vec[T Debug] @debug(mut w Write) -> () {
+    w.write_str("Vec[")
     for i in 0..@len {
-        if i > 0 { sb.append(", ") }
-        unsafe { @data[i] }.debug(sb)
+        if i > 0 { w.write_str(", ") }
+        unsafe { @data[i] }.debug(w)
     }
-    sb.append("]")
+    w.write_str("]")
 }

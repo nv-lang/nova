@@ -4470,6 +4470,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn extract_protocol_type_name(&self, ty: &TypeRef) -> Option<String> {
         if let TypeRef::Named { path, .. } = ty {
             let name = path.last()?;
+            // Plan 152.7.1 (D258 AMEND): `Write` is special-cased in
+            // `type_ref_to_c` to map to `Nova_StringBuilder*` (a concrete C
+            // type), so it must NOT be treated as an erased protocol variable
+            // — doing so would cause E7201 on every `w.write_str(s)` call.
+            if name == "Write" { return None; }
             if self.protocol_types.contains(name) {
                 return Some(name.clone());
             }
@@ -5402,6 +5407,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // cancellation handle. C-тип — NovaCancelToken* (без
                     // подчёркивания Nova_ — это runtime-struct, не Nova-record).
                     "CancelToken" => Ok("NovaCancelToken*".into()),
+                    // Plan 152.7.1 (D258 AMEND): Write — sink protocol for Display/Debug.
+                    // Decouples @display/@debug from concrete StringBuilder. At the C level
+                    // Write always lowers to Nova_StringBuilder* (V1 — StringBuilder is
+                    // the only Write implementor used by the interp-string codegen path).
+                    // Future: when WriteBuffer display is needed, add a write_to_buffer
+                    // thunk and update the codegen to pass a thin wrapper.
+                    "Write" => Ok("Nova_StringBuilder*".into()),
                     _ => {
                         // Plan 62.E (`std/prelude/collections.nv`) + merge fix
                         // 2026-05-19: generic protocol declarations (e.g. `Iter[T]`,

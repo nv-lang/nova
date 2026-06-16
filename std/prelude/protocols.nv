@@ -298,27 +298,56 @@ export type Clone protocol {
 
 
 // ──────────────────────────────────────────────────────────────────────────
+// Plan 152.7.1 (D258 AMEND) — Write sink protocol
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Sink protocol for text output — decouples Display/Debug from concrete
+/// StringBuilder (Plan 152.7.1, D258 AMEND).
+///
+/// Implementors: `StringBuilder` (str sink), `WriteBuffer` (byte sink, via
+/// UTF-8 pass-through). At the C ABI level Write currently lowers to
+/// `Nova_StringBuilder*` (V1; vtable upgrade is a future followup).
+///
+/// Precedents: Rust `fmt::Write`, Go `io.Writer`, Java `Appendable`.
+///
+/// # Examples
+///
+/// ```nova
+/// // StringBuilder satisfies Write:
+/// consume sb = StringBuilder.new()
+/// sb.write_str("hello")
+///
+/// // WriteBuffer satisfies Write:
+/// mut wb = WriteBuffer.new()
+/// wb.write_str("world")
+/// ```
+#stable(since = "0.1")
+export type Write protocol {
+    mut @write_str(s str) -> ()
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Plan 137 (D237) — Display + Debug protocols (renamed from Display/Debug)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Форматирование в строку (для println, str.from, etc).
 /// D237 rename: Display → Display, @display → @display.
+/// D258 AMEND (Plan 152.7.1): sink parameter changed from `StringBuilder`
+/// to `Write` protocol — decouples Display from concrete string sink.
 ///
-/// Метод `@display(sb)` пишет representation в `StringBuilder` (opaque runtime
-/// type — hardcoded в type-checker builtins HashSet до Plan 62.D.bis
-/// канонизации через `external type` D-block). Возвращает `()`; вся
-/// работа — побочный effect на `sb`.
+/// Метод `@display(w)` пишет representation в любой `Write` sink.
+/// Возвращает `()`; вся работа — побочный effect на `w`.
 ///
 /// # Examples
 ///
 /// ```nova
 /// type Point { x int, y int }
-/// fn Point @display(mut sb StringBuilder) -> () {
-///     sb.append("Point(")
-///     sb.append_int(@x)
-///     sb.append(", ")
-///     sb.append_int(@y)
-///     sb.append(")")
+/// fn Point @display(mut w Write) -> () {
+///     w.write_str("Point(")
+///     w.write_str(str.from(@x))
+///     w.write_str(", ")
+///     w.write_str(str.from(@y))
+///     w.write_str(")")
 /// }
 /// ```
 /// Plan 91.8a.2 (D183 amendment): default body использует `str.from(@)`
@@ -327,14 +356,16 @@ export type Clone protocol {
 /// string), либо предоставляет `fn str.from(MyType) -> str` overload.
 #stable(since = "0.1")
 export type Display protocol {
-    @display(mut sb StringBuilder) {
-        sb.append(str.from(@))
+    @display(mut w Write) {
+        w.write_str(str.from(@))
     }
 }
 
 
 /// Protocol для отладочного представления — sibling к Display (D229; D237 rename).
 /// D237 rename: Debug → Debug, @debug → @debug.
+/// D258 AMEND (Plan 152.7.1): sink parameter changed from `StringBuilder`
+/// to `Write` protocol.
 ///
 /// **Distinction от Display:**
 /// - `Display.@display` — user-facing display (e.g., `Point(1, 2)`, `"hello"`).
@@ -353,7 +384,7 @@ export type Display protocol {
 /// ```nova
 /// type Point { x int, y int }
 /// // Auto-synthesized:
-/// //   @debug(sb) := sb.append("Point { x: ${@x:?}, y: ${@y:?} }")
+/// //   @debug(w) := w.write_str("Point { x: ${@x:?}, y: ${@y:?} }")
 ///
 /// ro p = Point { x: 1, y: 2 }
 /// println("p = ${p:?}")  // "p = Point { x: 1, y: 2 }"
@@ -362,18 +393,18 @@ export type Display protocol {
 /// Manual impl (override default):
 ///
 /// ```nova
-/// fn Point @debug(mut sb StringBuilder) -> () {
-///     sb.append("Point(")
-///     sb.append_int(@x)
-///     sb.append(", ")
-///     sb.append_int(@y)
-///     sb.append(")")
+/// fn Point @debug(mut w Write) -> () {
+///     w.write_str("Point(")
+///     w.write_str(str.from(@x))
+///     w.write_str(", ")
+///     w.write_str(str.from(@y))
+///     w.write_str(")")
 /// }
 /// ```
 #stable(since = "0.1")
 export type Debug protocol {
-    @debug(mut sb StringBuilder) {
-        sb.append(str.from_debug(@))
+    @debug(mut w Write) {
+        w.write_str(str.from_debug(@))
     }
 }
 
@@ -541,31 +572,31 @@ export type MutIndex[K, V] protocol {
 // directly to conv.h. Numeric debug == display (no escaping).
 
 #impl(Display)
-fn int @display(mut sb StringBuilder) -> () { sb.append(@) }
+fn int @display(mut w Write) -> () { w.write_str(str.from(@)) }
 #impl(Debug)
-fn int @debug(mut sb StringBuilder) -> () { sb.append(@) }
+fn int @debug(mut w Write) -> () { w.write_str(str.from(@)) }
 
 #impl(Display)
-fn f64 @display(mut sb StringBuilder) -> () { sb.append(@) }
+fn f64 @display(mut w Write) -> () { w.write_str(str.from(@)) }
 #impl(Debug)
-fn f64 @debug(mut sb StringBuilder) -> () { sb.append(@) }
+fn f64 @debug(mut w Write) -> () { w.write_str(str.from(@)) }
 
 #impl(Display)
-fn f32 @display(mut sb StringBuilder) -> () { sb.append(@) }
+fn f32 @display(mut w Write) -> () { w.write_str(str.from(@ as f64)) }
 #impl(Debug)
-fn f32 @debug(mut sb StringBuilder) -> () { sb.append(@) }
+fn f32 @debug(mut w Write) -> () { w.write_str(str.from(@ as f64)) }
 
 #impl(Display)
-fn bool @display(mut sb StringBuilder) -> () { sb.append(@) }
+fn bool @display(mut w Write) -> () { w.write_str(str.from(@)) }
 #impl(Debug)
-fn bool @debug(mut sb StringBuilder) -> () { sb.append(@) }
+fn bool @debug(mut w Write) -> () { w.write_str(str.from(@)) }
 
 #impl(Display)
-fn char @display(mut sb StringBuilder) -> () { sb.append(@) }
+fn char @display(mut w Write) -> () { w.write_str(str.from(@)) }
 #impl(Debug)
-fn char @debug(mut sb StringBuilder) -> () { sb.append("${@:?}") }
+fn char @debug(mut w Write) -> () { w.write_str("${@:?}") }
 
 #impl(Display)
-fn str @display(mut sb StringBuilder) -> () { sb.append(@) }
+fn str @display(mut w Write) -> () { w.write_str(@) }
 #impl(Debug)
-fn str @debug(mut sb StringBuilder) -> () { sb.append("${@:?}") }
+fn str @debug(mut w Write) -> () { w.write_str("${@:?}") }
