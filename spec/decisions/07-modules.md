@@ -655,7 +655,7 @@ LLM знает фиксированный список — «известная 
   compile error). Bare-путь остаётся абсолютным — фича аддитивна.
 - **rev-5 (✅ IMPLEMENTED, 2026-06-16)** — Plan 162+163 реализованы:
   - [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) — переход
-    резолвера на Rust-модель: межмодульные **циклы разрешаются** (D285),
+    резолвера на Rust-модель: межмодульные **циклы разрешаются** (D291),
     `TypeMethodMap` — глобальная карта методов (D286), политика extension-методов
     Rust-strict (D287), char-методы переехали в prelude, снят Ф.4-хардкод.
     Q-module-resolution-model → RESOLVED.
@@ -666,7 +666,7 @@ LLM знает фиксированный список — «известная 
 
 ---
 
-## D285. Module resolution — collect-signatures-first, lazy bodies; cross-module cycles allowed
+## D291. Module resolution — collect-signatures-first, lazy bodies; cross-module cycles allowed
 
 **Статус:** принято, реализовано ([Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.1+Ф.2, 2026-06-16).
 
@@ -696,7 +696,7 @@ LLM знает фиксированный список — «известная 
 ### Связь
 - [D29](#d29-модули-и-импорты), [D286](#d286-typemethodmap--глобальная-карта-inherent-методов-вызов-без-import).
 - [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.3+Ф.4.
-- [D285](#d285-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — фундамент (cycle-guard позволяет prelude импортировать unicode).
+- [D291](#d291-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — фундамент (cycle-guard позволяет prelude импортировать unicode).
 
 ---
 
@@ -747,7 +747,7 @@ LLM знает фиксированный список — «известная 
 - [Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.2+Ф.3.
 - Q-import-glob-hygiene → RESOLVED 2026-06-16: вариант (a).
 
-## D290. ModuleSigTable — two-pass resolver (collect_all_signatures + inline-merge)
+## D292. ModuleSigTable — two-pass resolver (collect_all_signatures + inline-merge)
 
 **Статус:** принято, реализовано ([Plan 162.1](../../docs/plans/162.1-resolver-split-lazy-bodies.md), 2026-06-16).
 
@@ -774,7 +774,7 @@ ModuleSigTable   { modules: HashMap<Vec<String>, ModuleSignatures> }
 **Перф-стоимость:** collect_all_signatures overhead **~1.5%** vs baseline (в рамках критерия ≤10%).
 
 ### Связь
-- [D285](#d285-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — архитектурный принцип collect-signatures-first.
+- [D291](#d291-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — архитектурный принцип collect-signatures-first.
 - [Plan 162.1](../../docs/plans/162.1-resolver-split-lazy-bodies.md) — реализация.
 - [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.1 — родительский план.
 
