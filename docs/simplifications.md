@@ -21,7 +21,7 @@
 ### Plan 153 Phase B — step_by / chain / zip / flat_map + scalar @min/@max (2026-06-16)
 
 - **Где** — `std/collections/vec_lazy.nv`, `std/collections/vec_iter.nv`, `std/runtime/defaults.nv`.
-- **Что сделано** — (1) `[M-153-scalar-min-max]` CLOSED. (2) `step_by` + `chain` CLOSED. (3) `zip` CLOSED (`[M-153.2-tuple-elem-adapter]` FIXED: receiver typevar alias binding в emit_c dispatch). (4) `flat_map` CLOSED (`[M-153.2-flat-map-inner-option]` FIXED: VR typedef ordering via `novaopt_vr_typedefs_buf`). Тесты: `plan153_2/` 9/9 PASS. Коммит `d505c0e5`.
+- **Что сделано** — (1) `[M-153-scalar-min-max]` CLOSED. (2) `step_by` + `chain` CLOSED. (3) `zip` CLOSED (`[M-153.2-tuple-elem-adapter]` FIXED: receiver typevar alias binding в emit_c dispatch). (4) `flat_map` CLOSED (`[M-153.2-flat-map-inner-option]` FIXED: VR typedef ordering via `novaopt_vr_typedefs_buf`). Тесты: `plan153_2/` 25 тестов PASS (zip_basic 9pos + zip_neg 3neg + zip_min 1 + flat_map_basic 7pos + flat_map_neg 4neg + step_by_zero_neg 1). D260 Phase B ЗАКРЫТА. Коммиты `d505c0e5`, `542a3db8`, `00b494d6`, `0e539ef3`, `8cf1d23a`.
 - **Упрощение** — ~~`zip` и `flat_map` реализованы без тестов из-за closure-typing gaps.~~ ЗАКРЫТО — оба фикса в codegen, тесты зелёные.
 - **Как чинить** — ✅ ЗАКРЫТО.
 - **Приоритет** — ✅ ЗАКРЫТО (2026-06-16).
