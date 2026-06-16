@@ -87,6 +87,25 @@ pub struct ModuleEnv {
 /// для bootstrap'а этого достаточно: интерпретатор ловит ошибки типов в
 /// runtime через match-mismatch и method-not-found.
 pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
+    check_module_impl(module, None)
+}
+
+/// Internal implementation shared by [`check_module`] and
+/// [`check_module_with_sig_table`].  `sig_table` is `None` in the
+/// default (no-I/O) path and `Some(table)` when the caller has
+/// already collected cross-module signatures.
+///
+/// Plan 162.1 Step 3: the `sig_table` is threaded into:
+/// - `TypeCheckCtx::build_with_sig_table` → `is_known_type` /
+///   `is_known_fn` used in `verify_impl_protocols` to suppress false
+///   `E_UNKNOWN_PROTOCOL` when the protocol is from a transitively
+///   imported module not yet inline-merged.
+/// - `check_protocol_embeds` → suppresses `E_PROTOCOL_EMBED_UNKNOWN`.
+/// - `check_generic_bound_declarations` → suppresses `E_BOUND_UNKNOWN`.
+fn check_module_impl(
+    module: &Module,
+    sig_table: Option<&crate::imports::ModuleSigTable>,
+) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let mut env = ModuleEnv::default();
     let mut errors = Vec::new();
     let mut names: HashSet<String> = HashSet::new();
@@ -590,7 +609,7 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // signature collision при flatten'е. Запускается ДО BoundCtx::build
     // чтобы errors на cycle не превращались в infinite recursion внутри
     // flatten_dfs (хотя у flatten_dfs есть `seen`-guard — safety belt).
-    check_protocol_embeds(module, &mut errors);
+    check_protocol_embeds(module, sig_table, &mut errors);
 
     // Plan 101.3 (D145 Ред. 5): generic-bound declaration validation —
     // каждое имя bound'а в `[T A + B]` должно быть объявленным protocol'ом
@@ -598,7 +617,7 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // bound-resolve был permissive (silent skip unknown) — Plan 101 делает
     // strict. Pre-Plan 101 tests, ссылающиеся на неизвестные bound'ы,
     // должны их объявить или удалить.
-    check_generic_bound_declarations(module, &mut errors);
+    check_generic_bound_declarations(module, sig_table, &mut errors);
 
     let bound_ctx = BoundCtx::build(module);
     bound_ctx.check_module(module, &mut errors);
@@ -729,7 +748,13 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // (in the caller) so it outlives `TypeCheckCtx`, allowing synthesized
     // methods to be registered in `method_table` as `&'a FnDecl`.
     let synth_arena = FnDeclArena::new();
-    let type_check_ctx = TypeCheckCtx::build(module, &synth_arena);
+    // Plan 162.1 Step 3: when a sig_table is available, use
+    // build_with_sig_table so that is_known_type / is_known_fn
+    // can consult cross-module signatures during type-checking.
+    let type_check_ctx = match sig_table {
+        Some(st) => TypeCheckCtx::build_with_sig_table(module, &synth_arena, st.clone()),
+        None => TypeCheckCtx::build(module, &synth_arena),
+    };
     type_check_ctx.check_module(module, &mut errors);
 
     // **Plan 118.5 V3 Ф.2 / D216 V3 §V3.1 (2026-06-04):** ro+mut conflict
@@ -902,6 +927,31 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         Err(errors)
     }
 }
+
+// Plan 162.1 Step 3: public entry-point that feeds a pre-built
+// `ModuleSigTable` into the type-checker.  Callers that have already
+// run `crate::imports::collect_all_signatures` can pass the resulting
+// table here so that cross-module symbol lookups in the type-checker
+// use the sig-table instead of only consulting `module.items`.
+//
+// Concretely, the sig_table suppresses false-positive
+// `E_UNKNOWN_PROTOCOL` / `E_PROTOCOL_EMBED_UNKNOWN` / `E_BOUND_UNKNOWN`
+// errors when the referenced type is declared in a transitively
+// imported module that has been captured in the signature pre-pass
+// but whose items may not yet be inline-merged into `module.items`
+// (the lazy-resolution scenario described in Plan 162.1 Step 3).
+//
+// The existing `check_module` is kept as the zero-arg entry-point
+// (backward-compatible); it uses an empty sig_table so that all
+// existing checks fire normally.
+pub fn check_module_with_sig_table(
+    module: &Module,
+    sig_table: crate::imports::ModuleSigTable,
+) -> Result<ModuleEnv, Vec<Diagnostic>> {
+    check_module_impl(module, Some(&sig_table))
+}
+
+// ─── internal shared core ────────────────────────────────────────────────────
 
 // ============================================================================
 // Plan 79: type-checker hardening — «no silent fallback» на уровне типов.
@@ -2217,6 +2267,12 @@ struct TypeCheckCtx<'a> {
     /// Built in `build` from `TypeDecl.pub_to`. A `current_recv_type` that
     /// appears in `type_pub_to[tname]` gets priv-field access to `tname`.
     type_pub_to: HashMap<String, Vec<String>>,
+    /// Plan 162.1 Step 2: cross-module signature table — maps declared module
+    /// name to the set of type names and fn names it exports. Built lazily by
+    /// `build_with_sig_table`; empty in the default `build` path (no I/O at
+    /// type-check time). Used by `is_known_type` / `is_known_fn` to answer
+    /// "does any imported module define symbol X?" without a full resolve.
+    sig_table: crate::imports::ModuleSigTable,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -2682,7 +2738,46 @@ impl<'a> TypeCheckCtx<'a> {
             in_test_block: std::cell::Cell::new(false),
             test_block_test_access: std::cell::RefCell::new(Vec::new()),
             type_pub_to,
+            // Plan 162.1 Step 2: default build uses empty sig_table; callers
+            // that need cross-module symbol lookup call build_with_sig_table.
+            sig_table: crate::imports::ModuleSigTable::new(),
         }
+    }
+
+    /// Plan 162.1 Step 2: variant of `build` that pre-populates the
+    /// cross-module signature table. Callers that have already run
+    /// `collect_all_signatures` pass the resulting `ModuleSigTable` here so
+    /// that `is_known_type` / `is_known_fn` can answer cross-module questions
+    /// during type-checking without additional I/O.
+    #[allow(dead_code)]
+    fn build_with_sig_table(
+        module: &'a Module,
+        synth_arena: &'a FnDeclArena,
+        sig_table: crate::imports::ModuleSigTable,
+    ) -> Self {
+        let mut ctx = Self::build(module, synth_arena);
+        ctx.sig_table = sig_table;
+        ctx
+    }
+
+    /// Plan 162.1 Step 2: returns `true` if `name` is a known type in either:
+    /// (a) the merged `module.items` (types already resolved into this module),
+    /// or (b) any module in the cross-module `sig_table`.
+    /// Used for disambiguation before full resolution (Step 3).
+    fn is_known_type(&self, name: &str) -> bool {
+        self.types.contains_key(name)
+            || !self.sig_table.find_type_modules(name).is_empty()
+    }
+
+    /// Plan 162.1 Step 2: returns `true` if `name` is a known free function in
+    /// either:
+    /// (a) `fn_decls` (free functions already merged into this module),
+    /// or (b) any module in the cross-module `sig_table`.
+    /// Used for disambiguation before full resolution.
+    #[allow(dead_code)]
+    fn is_known_fn(&self, name: &str) -> bool {
+        self.fn_decls.contains_key(name)
+            || !self.sig_table.find_fn_modules(name).is_empty()
     }
 
     /// Plan 126.2 Ф.1: synthesize + register auto-derive methods into
@@ -6747,6 +6842,18 @@ impl<'a> TypeCheckCtx<'a> {
             let proto_decl = match self.types.get(proto_base) {
                 Some(td) => td,
                 None => {
+                    // Plan 162.1 Step 3: suppress E_UNKNOWN_PROTOCOL when the
+                    // protocol is known via the cross-module sig_table.  In the
+                    // lazy-resolution scenario the protocol may be from a
+                    // transitively-imported module not yet inline-merged into
+                    // module.items.  is_known_type checks both self.types (local)
+                    // and self.sig_table (cross-module).
+                    if self.is_known_type(proto_base) {
+                        // Known via sig_table — skip full verification for now.
+                        // (Full check would require fetching the protocol decl
+                        // from the sig_table, which is a Step 4 / lazy-body task.)
+                        continue;
+                    }
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_UNKNOWN_PROTOCOL] type `{}` has `#impl({})` but \
@@ -8270,7 +8377,14 @@ fn arity_diag(name: &str, info: &ArityInfo, actual: usize, span: Span) -> Diagno
 ///      (или direct + embedded). Разрешено если строго совпадают; иначе
 ///      ambiguity, должна быть resolved direct-override'ом (V1 — error;
 ///      override-механизм — V2/D145 Ред. 6).
-fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
+/// `sig_table` — optional cross-module signature table (Plan 162.1 Step 3).
+/// When present, `E_PROTOCOL_EMBED_UNKNOWN` is suppressed for type names that
+/// are declared in a transitively-imported module captured in the sig_table.
+fn check_protocol_embeds(
+    module: &Module,
+    sig_table: Option<&crate::imports::ModuleSigTable>,
+    errors: &mut Vec<Diagnostic>,
+) {
     use std::collections::{HashMap, HashSet};
     // Collect protocol declarations + map of all type names → kind hint.
     let mut proto_map: HashMap<String, (&Vec<EffectMethod>, &Vec<TypeRef>, Span)> = HashMap::new();
@@ -8323,15 +8437,25 @@ fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
             }
             match type_kinds.get(emb_name) {
                 None => {
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "[E_PROTOCOL_EMBED_UNKNOWN] unknown type `{}` in \
-                             `use {}` (protocol `{}` body) — type not declared \
-                             in module or via import",
-                            emb_name, emb_name, proto_name
-                        ),
-                        *emb_span,
-                    ));
+                    // Plan 162.1 Step 3: suppress E_PROTOCOL_EMBED_UNKNOWN
+                    // when the type is known via the cross-module sig_table.
+                    // This handles the lazy-resolution scenario where a
+                    // transitively imported module's types are not yet
+                    // inline-merged into module.items.
+                    let known_via_sig_table = sig_table
+                        .map(|st| !st.find_type_modules(emb_name).is_empty())
+                        .unwrap_or(false);
+                    if !known_via_sig_table {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_PROTOCOL_EMBED_UNKNOWN] unknown type `{}` in \
+                                 `use {}` (protocol `{}` body) — type not declared \
+                                 in module or via import",
+                                emb_name, emb_name, proto_name
+                            ),
+                            *emb_span,
+                        ));
+                    }
                 }
                 Some(&"protocol") => { /* OK */ }
                 Some(other) => {
@@ -8478,7 +8602,15 @@ fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
 /// TryFrom/TryInto), либо primitive-имя (Q-representation-bound future).
 /// Если имя — record/sum/effect → error E_BOUND_NOT_PROTOCOL.
 /// Если имя вообще unknown → error E_BOUND_UNKNOWN.
-fn check_generic_bound_declarations(module: &Module, errors: &mut Vec<Diagnostic>) {
+///
+/// `sig_table` — optional cross-module signature table (Plan 162.1 Step 3).
+/// When present, `E_BOUND_UNKNOWN` is suppressed for type names that are
+/// declared in a transitively-imported module captured in the sig_table.
+fn check_generic_bound_declarations(
+    module: &Module,
+    sig_table: Option<&crate::imports::ModuleSigTable>,
+    errors: &mut Vec<Diagnostic>,
+) {
     use std::collections::HashMap;
     // Карта известных type-имён → kind hint.
     let mut type_kinds: HashMap<String, &'static str> = HashMap::new();
@@ -8533,15 +8665,22 @@ fn check_generic_bound_declarations(module: &Module, errors: &mut Vec<Diagnostic
                 ));
             }
             None => {
-                errors.push(Diagnostic::new(
-                    format!(
-                        "[E_BOUND_UNKNOWN] unknown type `{}` used as generic bound — \
-                         not a declared protocol, stdlib alias, or primitive. \
-                         Did you forget to declare/import it?",
-                        name
-                    ),
-                    *span,
-                ));
+                // Plan 162.1 Step 3: suppress E_BOUND_UNKNOWN when the type
+                // is known via the cross-module sig_table (lazy resolution).
+                let known_via_sig_table = sig_table
+                    .map(|st| !st.find_type_modules(name).is_empty())
+                    .unwrap_or(false);
+                if !known_via_sig_table {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_BOUND_UNKNOWN] unknown type `{}` used as generic bound — \
+                             not a declared protocol, stdlib alias, or primitive. \
+                             Did you forget to declare/import it?",
+                            name
+                        ),
+                        *span,
+                    ));
+                }
             }
         }
     };
