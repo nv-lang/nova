@@ -431,6 +431,14 @@
   ✅ закрыт (Plan 153.6 / D264 — `@collect`/`@collect_set` + `from`/`from_iter`/`@extend`).
   Phase A (map/filter/filter_map/enumerate/take/skip + 13 терминаторов + `@collect_set`)
   закрыта и протестирована (`plan153_2/` 4/4, `plan153_6/collect_target` 12/12).
+- **`[M-153.2-drop-z-prefix]`** (planned, P2, home **Plan 153.2**): убрать `z`-префикс
+  (`@zmap`→`@map`, `@zfilter`→`@filter`, `@zcollect`→`@collect` и т.д.) и переименовать
+  `vec_iter_zc.nv`→`vec_iter.nv`. Механически сделано (2026-06-16), но **заблокировано**
+  compiler-багом `[M-codegen-blanket-generic-param-order]` / method-resolution: blanket-метод
+  `@count` на `FilterIter[...]` резолвится в `CharsIter.count()` (из str-модуля) — name-lookup
+  не различает receiver-типы при выборе concrete-vs-blanket. `z`-префикс — текущий workaround.
+  Fix: compiler должен при резолве метода предпочитать реализацию на точном receiver-типе
+  (или его blanket-bound) над concrete-методом на несовпадающем типе.
 
 ## Follow-up: Plan 153.3 (sort & search)
 - **`[M-153.3-sort-unstable-inplace]`** ✅ **RESOLVED** (commit `468bccf5`): `@sort_unstable[_by]
