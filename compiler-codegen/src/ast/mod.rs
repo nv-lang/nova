@@ -1010,6 +1010,11 @@ pub struct TypeDecl {
     /// не участвующих в consume-flow — no-op (flag сохраняется).
     /// Backward-compat: default false.
     pub zero_on_move: bool,
+    /// Plan 124.6 (D225): `#pub_to(TypeA, TypeB, ...)` — selective friend visibility.
+    /// The type's private fields are readable from the bodies of the listed types
+    /// (as if those types were in the same module). Empty Vec = no extra grants
+    /// (backward-compat default).
+    pub pub_to: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1350,6 +1355,11 @@ pub struct TestDecl {
     pub name: String,
     pub body: Block,
     pub span: Span,
+    /// Plan 124.6 (D225): `#test_access(TypeA, TypeB, ...)` before a `test` block.
+    /// The test body gets private-field read access to the listed types,
+    /// mirroring the same attribute on `fn` (but applied at the item level
+    /// so it doesn't require wrapping the test body in a helper fn).
+    pub test_access: Vec<String>,
 }
 
 /// Plan 57: benchmark declaration.

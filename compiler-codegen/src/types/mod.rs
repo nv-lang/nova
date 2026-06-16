@@ -2122,6 +2122,19 @@ struct TypeCheckCtx<'a> {
     /// Used together with `type_defining_modules` for module-boundary
     /// enforcement. Empty = no current module (conservative = deny).
     current_module: std::cell::RefCell<Vec<String>>,
+    /// Plan 124.6 (D224 §4): true when the checker is inside a `test "…" { }`
+    /// block body. Controls rule-2 (implicit test grant — same-module access)
+    /// and rule-3 (explicit `test_access` list check on the TestDecl itself).
+    /// Set/cleared via `TestBlockGuard` RAII on `Item::Test` entry/exit.
+    in_test_block: std::cell::Cell<bool>,
+    /// Plan 124.6 (D224 §4): the `test_access` list from the *current* test
+    /// block (populated from `TestDecl.test_access`). Non-empty only when
+    /// `in_test_block` is true. Cleared on exit via `TestBlockGuard`.
+    test_block_test_access: std::cell::RefCell<Vec<String>>,
+    /// Plan 124.6 (D224 §4 rule-4): type name → pub_to friend list.
+    /// Built in `build` from `TypeDecl.pub_to`. A `current_recv_type` that
+    /// appears in `type_pub_to[tname]` gets priv-field access to `tname`.
+    type_pub_to: HashMap<String, Vec<String>>,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -2174,6 +2187,28 @@ impl<'a, 'b> CurrentModuleGuard<'a, 'b> {
 impl<'a, 'b> Drop for CurrentModuleGuard<'a, 'b> {
     fn drop(&mut self) {
         *self.ctx.current_module.borrow_mut() = std::mem::take(&mut self.prev);
+    }
+}
+
+/// Plan 124.6 (D224 §4): RAII guard для in_test_block + test_block_test_access
+/// в TypeCheckCtx. Set to (true, access_list) on entry; restored on drop.
+struct TestBlockGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev_in_test: bool,
+    prev_access: Vec<String>,
+}
+impl<'a, 'b> TestBlockGuard<'a, 'b> {
+    fn enter(ctx: &'b TypeCheckCtx<'a>, access: Vec<String>) -> Self {
+        let prev_in_test = ctx.in_test_block.get();
+        ctx.in_test_block.set(true);
+        let prev_access = std::mem::replace(&mut *ctx.test_block_test_access.borrow_mut(), access);
+        TestBlockGuard { ctx, prev_in_test, prev_access }
+    }
+}
+impl<'a, 'b> Drop for TestBlockGuard<'a, 'b> {
+    fn drop(&mut self) {
+        self.ctx.in_test_block.set(self.prev_in_test);
+        *self.ctx.test_block_test_access.borrow_mut() = std::mem::take(&mut self.prev_access);
     }
 }
 
@@ -2453,6 +2488,22 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
+        // Plan 124.6 (D224 §4 rule-4): build type_pub_to — maps type name
+        // → its `pub_to` friend list (from TypeDecl.pub_to). A type that
+        // appears as a receiver (current_recv_type) and is in the list gets
+        // priv-field access. Merges across all items (single- + multi-file).
+        let mut type_pub_to: HashMap<String, Vec<String>> = HashMap::new();
+        for item in &module.items {
+            if let Item::Type(td) = item {
+                if !td.pub_to.is_empty() {
+                    type_pub_to
+                        .entry(td.name.clone())
+                        .or_default()
+                        .extend(td.pub_to.iter().cloned());
+                }
+            }
+        }
+
         TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
             in_const_fn: std::cell::Cell::new(false),
             current_recv_type: std::cell::RefCell::new(None),
@@ -2461,6 +2512,9 @@ impl<'a> TypeCheckCtx<'a> {
             user_shadowed_generic_types,
             type_defining_modules,
             current_module: std::cell::RefCell::new(Vec::new()),
+            in_test_block: std::cell::Cell::new(false),
+            test_block_test_access: std::cell::RefCell::new(Vec::new()),
+            type_pub_to,
         }
     }
 
@@ -2701,6 +2755,11 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
                 Item::Test(t) => {
+                    // Plan 124.6 (D224 §4): set test-block context so that
+                    // priv_access_allowed_base applies rules 2 + 3 (same-module
+                    // implicit grant + explicit test_access list). Guard
+                    // restores previous state on drop.
+                    let _tb_guard = TestBlockGuard::enter(self, t.test_access.clone());
                     let empty = HashSet::new();
                     self.walk_block(&t.body, &empty, errors);
                 }
@@ -2731,6 +2790,10 @@ impl<'a> TypeCheckCtx<'a> {
                     self.f1_check_fn(fd, errors)
                 }
                 Item::Test(t) => {
+                    // Plan 124.6 (D224 §4): propagate test-block context into
+                    // the f1 assignability pass too (handles priv record-init
+                    // and write checks that fire from f1_check_assign_let).
+                    let _tb_guard = TestBlockGuard::enter(self, t.test_access.clone());
                     let gs: HashSet<String> = HashSet::new();
                     let mut scope: HashMap<String, TypeRef> = HashMap::new();
                     self.f1_block(&t.body, &gs, &mut scope, errors);
@@ -5344,28 +5407,63 @@ impl<'a> TypeCheckCtx<'a> {
     // E_PRIV_FIELD_PATTERN per priv field. Recurses into sub-patterns
     // (nested destructure) using the corresponding RecordField type.
     //
-    /// Plan 124.6 (D225): unified priv access predicate. Returns true if
-    /// current fn body has priv access ко `tname` (т.е. может читать/писать/
-    /// init/destructure priv-помеченные fields этого type'а).
+    /// Plan 124.6 (D224 §4): unified priv access predicate. Returns true if
+    /// current fn body has priv access to `tname` (i.e. may read/write/
+    /// init/destructure priv-marked fields of that type).
     ///
-    /// Allowed когда:
-    /// 1. current_recv_type == tname (canonical type-method scope), OR
-    /// 2. tname ∈ current_fn_test_access (escape hatch — `#test_access(tname)`),
-    ///    OR
-    /// 3. current_recv_type ∈ field.visible_to (friend declaration —
-    ///    `#visible_to(curr_recv)` on the specific field).
+    /// D224 §4 combined predicate — allowed when ANY of:
+    /// 1. current_recv_type == tname  — canonical type-method scope (D220).
+    /// 2. in_test_block && same_module(current_module, type_defining_modules[tname])
+    ///    — implicit test grant: any test block in the same module may access
+    ///    priv fields of types declared in that module (D224 §4 rule-2).
+    /// 3. in_test_block && tname ∈ test_block_test_access
+    ///    — explicit `test "…" #test_access(T) { }` grant (D224 §4 rule-3).
+    /// 4. current_recv_type ∈ type_pub_to[tname]
+    ///    — type-level friend via `#pub_to(FriendType)` on the type decl
+    ///    (D224 §4 rule-4). Per-field visible_to (rule for individual fields)
+    ///    is handled at call sites via `priv_field_access_allowed`.
     ///
-    /// Visible_to per-field check requires field-level context (handled at
-    /// call sites because field.visible_to is field-specific, not type-wide).
-    /// This helper covers (1) и (2); call sites combine with (3).
+    /// Legacy fn-level escape hatch (`#test_access(T)` on an `fn` decl,
+    /// from current_fn_test_access) is also preserved as a sub-case of
+    /// rule-3 for backward compat with D225.
     fn priv_access_allowed_base(&self, tname: &str) -> bool {
+        // Rule 1: inside the type's own method body.
         let current_recv = self.current_recv_type.borrow();
         if current_recv.as_deref() == Some(tname) {
             return true;
         }
+
+        // Rule 2 + 3 (test-block rules).
+        if self.in_test_block.get() {
+            // Rule 2: implicit same-module grant inside a test block.
+            let current_mod = self.current_module.borrow();
+            if !current_mod.is_empty() {
+                if let Some(def_mod) = self.type_defining_modules.get(tname) {
+                    if def_mod.as_slice() == current_mod.as_slice() {
+                        return true;
+                    }
+                }
+            }
+            // Rule 3a: explicit test_access list on the TestDecl itself.
+            if self.test_block_test_access.borrow().iter().any(|t| t == tname) {
+                return true;
+            }
+        }
+
+        // Rule 3b (legacy): fn-level #test_access(T) escape hatch (D225).
         if self.current_fn_test_access.borrow().iter().any(|t| t == tname) {
             return true;
         }
+
+        // Rule 4: type-level friend (`#pub_to(FriendType)` on tname's TypeDecl).
+        if let Some(cur) = current_recv.as_deref() {
+            if let Some(pub_to) = self.type_pub_to.get(tname) {
+                if pub_to.iter().any(|f| f == cur) {
+                    return true;
+                }
+            }
+        }
+
         false
     }
 
