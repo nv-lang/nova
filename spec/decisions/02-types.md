@@ -11825,6 +11825,27 @@ v[1] = 99  // → v.@index(1, 99)   write-overload через MutIndex (D240)
 - Строковый слой (`nova_str_to_bytes`, `nova_str_to_chars`, `split`,
   `string_builder.h`) — мигрирует на `Nova_Vec____nova_byte*`
 
+### §2. Scalar min/max методы на числовых типах (D239 amend, 2026-06-16)
+
+**Added:** [M-153-scalar-min-max] CLOSED (2026-06-16). Скалярные методы сравнения
+нужны для shrink-to-min идиомы (Vec capacity management) и `@min`/`@max`-терминаторов
+lazy-итератора (D260). Реализованы в [`std/runtime/defaults.nv`](../../std/runtime/defaults.nv).
+
+```nova
+// Все числовые типы: int / u8 u16 u32 u64 uint / i8 i16 i32 i64 / f32 f64
+(5).max(3)    // → 5
+(5).min(3)    // → 3
+(10).min(20).min(5)  // → 5  (chaining)
+
+// Сигнатура (int; аналогично для u8…f64 с Self):
+fn int @min(other int) -> int
+fn int @max(other int) -> int
+```
+
+**Семантика:** равенство → возвращается `@` (левый операнд). Для `f32`/`f64` не используются
+C-макросы `fmin`/`fmax` (нет специальной NaN-семантики — `NaN` не меньше и не больше ничего,
+результат детерминирован через `<`/`>`). **Не** протокол — встроенные методы-примитивы, как `@compare`.
+
 ### Связь
 
 - [D232](#d232-vect--nova-native-generic-growable-array) — `Vec[T]` — backing тип для `[]T`
@@ -12024,11 +12045,19 @@ silent CC-FAIL / drain-0 / segfault), зафиксированных как ко
 (Лифт mono×closures — register_generic_instances_in_typeref + closure-capture в loop-arms,
 commit `996ca01a`.)
 
-### Отложено (Phase B — НЕ упрощение, заявленный B-набор)
+### Phase B — частично реализована (2026-06-16, амендмент D260)
 
-`zip`/`unzip`/`chain`/`flat_map`/`flatten`/`scan`/`inspect`/`step_by`/`take_while`/
-`skip_while`/`peekable`/`min_by[_key]`/`max_by[_key]`/`partition`/`chunk_by`/`into_iter`;
+**Реализовано:**
+- ✅ **`step_by(n int)`** (BoxIter, `vec_lazy.nv`) + zero-cost `StepByIter[I,T]` (`vec_iter.nv`): yield каждый n-й элемент. Contract `n > 0` (requires). Тест: `plan153_2/phase_b_lazy` + `plan153_2_zc/step_by_zc`.
+- ✅ **`chain(other BoxIter[T])`** (BoxIter): дренирует self, затем other. Тест: `plan153_2/phase_b_lazy`.
+- 🟡 **`zip(other BoxIter[B])`** (BoxIter): реализован, возвращает `BoxIter[(A,B)]`. Тесты GATED `[M-153.2-tuple-elem-adapter]` (closure-typing для `Option[(A,B)]` в chain).
+- 🟡 **`flat_map(f fn(T)->BoxIter[U])`** (BoxIter): реализован. Тесты GATED `[M-153.2-flat-map-inner-option]` (`Option[BoxIter[U]]` mut-match gap в closure).
+
+**Остаток Phase B (не реализован):**
+`unzip`/`flatten`/`scan`/`inspect`/`take_while`/`skip_while`/`peekable`/
+`min_by[_key]`/`max_by[_key]`/`partition`/`chunk_by`/`into_iter`;
 мут-итерация `for mut x`/`mut @iter()` (Q-iter-mut write-through — отдельный путь).
+
 **collect-target FromIterator — ✅ ЗАКРЫТ (Plan 153.6 / [D264](#d264-vec-протоколы-hash--fromiterator--collect-target-plan-1536)):**
 `@collect()->Vec` (default) + `@collect_set()->Set` (терминаторы) + `from`/`from_iter`/`@extend`
 (прочие таргеты/источники); статический generic-конструктор + tuple-`@collect_map` gated

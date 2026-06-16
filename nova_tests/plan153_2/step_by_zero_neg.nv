@@ -1,0 +1,12 @@
+// EXPECT_RUNTIME_PANIC requires
+//
+// BoxIter step_by(0) violates `requires n > 0` contract — runtime panic.
+
+module plan153_2.step_by_zero_neg
+
+import std.collections.vec_lazy
+
+fn main() -> () {
+    ro v = Vec[int].of(1, 2, 3)
+    ro _ = v.lazy().step_by(0).collect()
+}

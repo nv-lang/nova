@@ -242,11 +242,21 @@ export fn StepByIter[I, T] mut @next() -> Option[T] {
     @src.next()
 }
 
-export fn VecIter[T]         @step_by(n int) -> StepByIter[Self, T] => { src: @, step: n, first: true, rem: n - 1 }
-export fn MapIter[I, T, U]   @step_by(n int) -> StepByIter[Self, U] => { src: @, step: n, first: true, rem: n - 1 }
-export fn FilterIter[I, T]   @step_by(n int) -> StepByIter[Self, T] => { src: @, step: n, first: true, rem: n - 1 }
-export fn TakeIter[I, T]     @step_by(n int) -> StepByIter[Self, T] => { src: @, step: n, first: true, rem: n - 1 }
-export fn SkipIter[I, T]     @step_by(n int) -> StepByIter[Self, T] => { src: @, step: n, first: true, rem: n - 1 }
+export fn VecIter[T]         @step_by(n int) -> StepByIter[Self, T]
+    requires n > 0
+    => { src: @, step: n, first: true, rem: n - 1 }
+export fn MapIter[I, T, U]   @step_by(n int) -> StepByIter[Self, U]
+    requires n > 0
+    => { src: @, step: n, first: true, rem: n - 1 }
+export fn FilterIter[I, T]   @step_by(n int) -> StepByIter[Self, T]
+    requires n > 0
+    => { src: @, step: n, first: true, rem: n - 1 }
+export fn TakeIter[I, T]     @step_by(n int) -> StepByIter[Self, T]
+    requires n > 0
+    => { src: @, step: n, first: true, rem: n - 1 }
+export fn SkipIter[I, T]     @step_by(n int) -> StepByIter[Self, T]
+    requires n > 0
+    => { src: @, step: n, first: true, rem: n - 1 }
 
 export fn StepByIter[I, T] @take(n int)  -> TakeIter[Self, T]    => { src: @, left: n }
 export fn StepByIter[I, T] @skip(n int)  -> SkipIter[Self, T]    => { src: @, to_skip: n }
