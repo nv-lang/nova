@@ -1293,14 +1293,24 @@ impl Parser {
         let pre_cancel_safe = self.parse_cancel_safe_attr();
 
         let is_export = self.eat(&TokenKind::KwExport).is_some();
-        // D82: `external` modifier — между `export` и `fn`.
-        // Plan 62.D.bis (D126): `external` теперь также валиден перед `type`
-        // (opaque type, реализация в runtime). См. spec/decisions/03-syntax.md
-        // §D126 + types/mod.rs::check_module whitelist enforcement.
-        //
-        // Plan 91.12 Ф.-1 (D282): `extern "nova" fn` / `extern "C" fn` — new canonical
-        // FFI syntax. `external fn` kept as legacy alias (= `extern "nova" fn`).
+        // Plan 91.12 Ф.-1 (D282): `extern "nova" fn` / `extern "C" fn` — canonical FFI syntax.
+        // `external fn` keyword retracted (E_EXTERNAL_FN_RETRACTED): use `extern "nova" fn`.
+        // `external type X` retracted (E_EXTERNAL_TYPE_RETRACTED); types/mod.rs enforces this.
         let (is_external, extern_abi) = if self.eat(&TokenKind::KwExternal).is_some() {
+            // `external type X` — let parse proceed; types/mod.rs emits E_EXTERNAL_TYPE_RETRACTED.
+            // `external fn` — hard error here.
+            let after_span = self.peek().span;
+            let is_fn_next = matches!(self.peek().kind, TokenKind::KwFn)
+                || (matches!(self.peek().kind, TokenKind::KwUnsafe)
+                    && matches!(self.peek_at(1).kind, TokenKind::KwFn));
+            if is_fn_next {
+                return Err(Diagnostic::new(
+                    "[E_EXTERNAL_FN_RETRACTED] `external fn` syntax was removed (D282, Plan 91.12). \
+                     Use `extern \"nova\" fn` for runtime-backed functions, \
+                     or `extern \"C\" fn` for literal C symbol names.",
+                    after_span,
+                ));
+            }
             (true, None::<String>)
         } else if self.eat(&TokenKind::KwExtern).is_some() {
             let abi_span = self.peek().span;
@@ -1433,31 +1443,18 @@ impl Parser {
                 tmp.is_empty()
             };
         if !contract_attrs.is_empty()
-            && !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwExternal | TokenKind::KwUnsafe)
+            && !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwExtern | TokenKind::KwUnsafe)
             && !(contract_attrs_only_test_access && matches!(self.peek().kind, TokenKind::KwTest))
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "contract attributes (`#verify` / `#unverified` / `#verify_timeout` / `#pure` / `#trusted`) are only valid before `fn` or `external fn`",
+                "contract attributes (`#verify` / `#unverified` / `#verify_timeout` / `#pure` / `#trusted`) are only valid before `fn` or `extern \"nova\" fn`",
                 span,
             ));
         }
-        // Plan 33.3 Ф.13: #trusted external fn — парсим `external` здесь,
-        // если contract_attrs содержат #trusted.
-        // Note: `contract_attrs.unsafe_attr` can no longer be set by parse_contract_attrs
-        // (Plan 118.1.7: `#unsafe` is now a hard error E_UNSAFE_ATTR_DEPRECATED).
-        let is_external = if contract_attrs.is_trusted
-            && matches!(self.peek().kind, TokenKind::KwExternal)
-        {
-            self.bump(); // external
-            if !matches!(self.peek().kind, TokenKind::KwFn) {
-                let span = self.peek().span;
-                return Err(Diagnostic::new("`external` is only valid before `fn`", span));
-            }
-            true
-        } else {
-            is_external
-        };
+        // `#trusted external fn` form removed — use `#trusted extern "nova" fn` instead.
+        // `extern "nova"` is already consumed above (before contract_attrs), so `is_external`
+        // is already correct here. No special case needed.
         // Plan 118.1.7 (D2 amend): `unsafe fn` keyword syntax — `unsafe` keyword
         // directly before `fn` (non-external path). Consumed here so plain
         // `unsafe fn foo()` sets unsafe_kw = true.
@@ -3560,16 +3557,15 @@ impl Parser {
         // (Ident("value") в этой позиции; backward compat для variables/fields
         // named `value`). Composable с consume/priv в любом порядке.
         //
-        // Plan 148 Ф.1 (D241): canonical type-modifier order — `value priv`
-        // (более общо: `value consume priv`), отсортировано по **scope** от
-        // широкого к узкому (type-level allocation → type-level ownership →
-        // field-default visibility). «One canonical syntax» Nova запрещает
-        // order-independence: out-of-canon порядок → `E_MODIFIER_ORDER` с
-        // машинно-применимым fix-it «переставь в канон».
+        // Plan 148 Ф.1 (D241): canonical type-modifier order — `consume value priv`,
+        // отсортировано по Rust-like ownership > representation > visibility.
+        // «One canonical syntax» Nova запрещает order-independence:
+        // out-of-canon порядок → `E_MODIFIER_ORDER` с машинно-применимым
+        // fix-it «переставь в канон».
         //
         // Каждому модификатору присвоен canonical rank:
-        //   `value`   → 0  (аллокация/представление всего типа)
-        //   `consume` → 1  (must-consume обязательство всего типа)
+        //   `consume` → 0  (must-consume обязательство — ownership первично)
+        //   `value`   → 1  (аллокация/представление — representation вторично)
         //   `priv`    → 2  (дефолт видимости полей в `{…}` — вплотную к `{`)
         // Правило обобщается на любые будущие type-модификаторы: новый
         // модификатор получает rank по своему scope и автоматически попадает
@@ -3587,7 +3583,7 @@ impl Parser {
                 let sp = self.peek().span;
                 self.bump();
                 consume_marker = true;
-                seen_mods.push((1, "consume", sp));
+                seen_mods.push((0, "consume", sp));
                 continue;
             }
             if matches!(field_default_visibility, crate::ast::FieldDefaultVisibility::Public)
@@ -3639,7 +3635,7 @@ impl Parser {
                 let sp = self.peek().span;
                 self.bump();
                 allocation = crate::ast::AllocKind::Value;
-                seen_mods.push((0, "value", sp));
+                seen_mods.push((1, "value", sp));
                 continue;
             }
             break;
@@ -3676,11 +3672,11 @@ impl Parser {
                     format!(
                         "[E_MODIFIER_ORDER] type-declaration modifiers `{}` are \
                          out of canonical order — Nova has one canonical syntax \
-                         (no order-independence). Canonical order is by scope, \
-                         widest to narrowest: type-level representation (`value`) \
-                         → type-level ownership (`consume`) → field-default \
-                         visibility (`priv`). Reorder to `{}`. See D241 \
-                         (spec/decisions/03-syntax.md).",
+                         (no order-independence). Canonical order is ownership → \
+                         representation → visibility: type-level ownership \
+                         (`consume`) → type-level representation (`value`) → \
+                         field-default visibility (`priv`). Reorder to `{}`. \
+                         See D241 (spec/decisions/03-syntax.md).",
                         got_str, canon_str,
                     ),
                     region,

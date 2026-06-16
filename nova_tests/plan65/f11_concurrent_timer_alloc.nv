@@ -15,7 +15,7 @@
 
 module plan65.f11_concurrent_timer_alloc
 
-import std.time.duration as duration
+import std.time.duration
 
 const TIMERS_PER_FIBER int = 100
 const N_FIBERS int = 10

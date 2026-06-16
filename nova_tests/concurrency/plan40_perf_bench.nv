@@ -16,7 +16,7 @@
 
 module concurrency.plan40_perf_bench
 
-import std.time.duration as duration
+import std.time.duration
 
 
 test "perf: select dispatch throughput — 1000 iterations × 4-arm" {

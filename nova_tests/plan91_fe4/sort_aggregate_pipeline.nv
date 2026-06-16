@@ -8,7 +8,7 @@
 // score using binary_search on an ascending copy.
 module plan91_fe4.sort_aggregate_pipeline
 
-import std.sort as sort
+import std.sort
 
 test "leaderboard ranking + aggregate pipeline" {
     // Raw, unsorted match scores.

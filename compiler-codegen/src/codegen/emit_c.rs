@@ -1863,6 +1863,10 @@ impl CEmitter {
         // Plan 14 std-fix: SRC-комментарии теперь управляются отдельно
         // от наличия source (source нужен для line:col в ошибках).
         if !self.annotation_enabled { return; }
+        // Only annotate spans from the main (user) file. Spans from stdlib/
+        // imported modules carry a different file_id and their byte offsets
+        // are meaningless against annotation_source (the user file's text).
+        if span.file_id != crate::diag::MAIN_FILE_ID { return; }
         let Some(src) = self.annotation_source.clone() else { return; };
         let snippet = src
             .get(span.start..span.end)

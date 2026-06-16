@@ -1,6 +1,6 @@
 // Plan 91 Ф.1 conformance: fold with int/str/bool accumulators (non-int Acc = THE FIX).
 module plan91_fe1.vec_fold_pos
-import std.collections.vec_seq as vec_seq
+import std.collections.vec_seq
 
 test "fold int accumulator (sum/product)" {
     ro xs = [1, 2, 3, 4]

@@ -14,7 +14,7 @@
 
 module plan65.f12_b_assign_mono_to_ts_neg
 
-import std.time.duration as duration
+import std.time.duration
 
 test "documented gap: monotonic-to-timestamp assign currently silent" {
     // This compiles + runs today. When strict-annotation lands, this

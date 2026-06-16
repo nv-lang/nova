@@ -4,6 +4,6 @@
 
 module negative_capability.folder_cycle_setup.modB
 
-import nova_tests.negative_capability.folder_cycle_setup.modA as modA
+import nova_tests.negative_capability.folder_cycle_setup.modA
 
 export const B_VAL int = 20

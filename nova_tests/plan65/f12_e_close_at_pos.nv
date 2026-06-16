@@ -3,7 +3,7 @@
 
 module plan65.f12_e_close_at_pos
 
-import std.time.duration as duration
+import std.time.duration
 
 test "close_at future deadline — fires after delta" {
     supervised {

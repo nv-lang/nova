@@ -50,6 +50,14 @@ typedef enum {
     NOVA_NET_STAGE_CLOSED  = 3,  /* close_cb has fired */
 } NovaNetStage;
 
+/* ─── NetAddrResult: error codes for address parsing ──────────────── */
+
+typedef enum {
+    NET_ADDR_OK           = 0,
+    NET_ADDR_INVALID_ADDR = 1,  /* malformed host or missing port separator */
+    NET_ADDR_INVALID_PORT = 2,  /* port out of range 1-65535 */
+} NetAddrResult;
+
 /* ─── NovaRt_SocketAddr ──────────────────────────────────────────────── */
 
 /* Opaque IPv4/IPv6 socket address. Large enough for both families.
@@ -136,8 +144,11 @@ NovaRt_SocketAddr* NovaRt_SocketAddr_static_loopback_v6(uint16_t port);
 NovaRt_SocketAddr* NovaRt_SocketAddr_static_v4(uint8_t a, uint8_t b,
                                             uint8_t c, uint8_t d,
                                             uint16_t port);
-NovaRes_nova_int_nova_str*
-    NovaRt_SocketAddr_static_parse(nova_str s);
+/* Parse NUL-terminated "host:port" string into addr (must be pre-allocated).
+ * Returns NET_ADDR_OK on success; addr->storage is populated.
+ * On error the storage is undefined; caller must not use addr. */
+NetAddrResult
+    NovaRt_SocketAddr_static_parse(const char* s, NovaRt_SocketAddr* addr);
 uint16_t  NovaRt_SocketAddr_method_port(NovaRt_SocketAddr* addr);
 nova_str  NovaRt_SocketAddr_method_host_str(NovaRt_SocketAddr* addr);
 nova_bool NovaRt_SocketAddr_method_is_v4(NovaRt_SocketAddr* addr);
@@ -184,48 +195,68 @@ nova_unit        NovaRt_UdpSocket_method_close(NovaRt_UdpSocket* sock);
 
 /* ─── Plan 91.12 Ф.0: literal-name entry-points (Nova extern "C" fn) ──── */
 /*
- * Handle ABI: all C handles (NovaRt_SocketAddr*, etc.) are passed and returned
- * as nova_int (= intptr_t).  Constructors return (nova_int)ptr or -1 on error.
- * Error message: call net_last_error() after any -1 return.
+ * Handle ABI: all C handles are passed and returned as their typed pointer
+ * (NovaRt_SocketAddr*, NovaRt_TcpListener*, etc.). Constructors return the
+ * pointer or NULL on error. Error message: call net_last_error() after any
+ * NULL return. Numeric results (bytes written, recv status) use nova_int.
+ *
+ * Nova sees these as CSocketAddr(*()) / CTcpListener(*()) etc. — opaque
+ * newtypes over void* — which is ABI-compatible with typed C pointers.
  *
  * udp_socket_recv_from uses TLS: stores data+sender in thread-local buffers
  * for Nova to read via udp_socket_recv_data() / udp_socket_recv_sender()
  * immediately after (no intervening Blocking call → cooperative-safe).
  */
 
-nova_int         socket_addr_loopback(uint16_t port);
-nova_int         socket_addr_loopback_v6(uint16_t port);
-nova_int         socket_addr_v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port);
-nova_int         socket_addr_parse(nova_str s);    /* -1 on parse error */
-uint16_t         socket_addr_port(nova_int addr);
-nova_str         socket_addr_host_str(nova_int addr);
-nova_bool        socket_addr_is_v4(nova_int addr);
-nova_bool        socket_addr_is_v6(nova_int addr);
-nova_str         socket_addr_to_str(nova_int addr);
+/* Tuple return type for socket_addr_parse: Nova (int, CSocketAddr).
+ * CSocketAddr is a newtype over *() — codegen erases it to nova_int.
+ * So the ABI tuple is { nova_int f0 (code); nova_int f1 (handle as intptr) }.
+ * This matches the codegen-emitted _NovaTuple2 typedef exactly. */
+#ifndef NOVA_TUPLE_TYPEDEF__NovaTuple2
+#define NOVA_TUPLE_TYPEDEF__NovaTuple2
+typedef struct { nova_int f0; nova_int f1; } _NovaTuple2;
+#endif
 
-nova_int         tcp_listener_bind(nova_int addr);   /* -1 on error */
-nova_int         tcp_listener_accept(nova_int lst);  /* -1 on error */
-uint16_t         tcp_listener_local_port(nova_int lst);
-nova_int         tcp_listener_local_addr(nova_int lst);
-nova_unit        tcp_listener_close(nova_int lst);
+NovaRt_SocketAddr*  socket_addr_loopback(uint16_t port);
+NovaRt_SocketAddr*  socket_addr_loopback_v6(uint16_t port);
+NovaRt_SocketAddr*  socket_addr_v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port);
+/* Parse "host:port". Returns (code, handle-as-intptr):
+ * f0=code (0=OK, 1=INVALID_ADDR, 2=INVALID_PORT), f1=NovaRt_SocketAddr* cast to nova_int. */
+_NovaTuple2         socket_addr_parse(nova_str s);
+uint16_t            socket_addr_port(NovaRt_SocketAddr* addr);
+nova_str            socket_addr_host_str(NovaRt_SocketAddr* addr);
+nova_bool           socket_addr_is_v4(NovaRt_SocketAddr* addr);
+nova_bool           socket_addr_is_v6(NovaRt_SocketAddr* addr);
+nova_str            socket_addr_to_str(NovaRt_SocketAddr* addr);
 
-nova_int         tcp_stream_connect(nova_int addr);  /* -1 on error */
-nova_int         tcp_stream_write(nova_int s, nova_str data);  /* bytes or -1 */
-uint16_t         tcp_stream_local_port(nova_int s);
-uint16_t         tcp_stream_peer_port(nova_int s);
-nova_int         tcp_stream_local_addr(nova_int s);
-nova_int         tcp_stream_peer_addr(nova_int s);
-nova_unit        tcp_stream_close(nova_int s);
-nova_str         net_last_error(void);  /* thread-local; valid after -1 return */
+NovaRt_TcpListener* tcp_listener_bind(NovaRt_SocketAddr* addr);   /* NULL on error */
+NovaRt_TcpStream*   tcp_listener_accept(NovaRt_TcpListener* lst); /* NULL on error */
+uint16_t            tcp_listener_local_port(NovaRt_TcpListener* lst);
+NovaRt_SocketAddr*  tcp_listener_local_addr(NovaRt_TcpListener* lst);
+nova_unit           tcp_listener_close(NovaRt_TcpListener* lst);
 
-nova_int         udp_socket_bind(nova_int addr);     /* -1 on error */
-nova_int         udp_socket_send_to(nova_int s, nova_str data, nova_int addr); /* 0 or -1 */
-nova_int         udp_socket_recv_from(nova_int s, nova_int max);               /* 0 or -1 */
-nova_str         udp_socket_recv_data(void);    /* TLS: data from last recv_from */
-nova_int         udp_socket_recv_sender(void);  /* TLS: sender from last recv_from */
-uint16_t         udp_socket_local_port(nova_int s);
-nova_int         udp_socket_local_addr(nova_int s);
-nova_unit        udp_socket_close(nova_int s);
+NovaRt_TcpStream*   tcp_stream_connect(NovaRt_SocketAddr* addr);  /* NULL on error */
+nova_int            tcp_stream_write(NovaRt_TcpStream* s, nova_str data);  /* bytes or -1 */
+nova_int            tcp_stream_read_bytes(NovaRt_TcpStream* s, nova_int max); /* bytes (0=EOF), -1=error */
+nova_str            tcp_stream_read_data(void);  /* TLS: data from last tcp_stream_read_bytes */
+uint16_t            tcp_stream_local_port(NovaRt_TcpStream* s);
+uint16_t            tcp_stream_peer_port(NovaRt_TcpStream* s);
+NovaRt_SocketAddr*  tcp_stream_local_addr(NovaRt_TcpStream* s);
+NovaRt_SocketAddr*  tcp_stream_peer_addr(NovaRt_TcpStream* s);
+nova_unit           tcp_stream_set_nodelay(NovaRt_TcpStream* s, nova_bool on);    /* TCP_NODELAY */
+nova_unit           tcp_stream_set_keepalive(NovaRt_TcpStream* s, nova_bool on);  /* SO_KEEPALIVE */
+nova_unit           tcp_stream_close(NovaRt_TcpStream* s);
+nova_unit           tcp_listener_set_reuse_address(NovaRt_TcpListener* lst, nova_bool on); /* SO_REUSEADDR */
+nova_str            net_last_error(void);  /* thread-local; valid after NULL/-1 return */
+
+NovaRt_UdpSocket*   udp_socket_bind(NovaRt_SocketAddr* addr);     /* NULL on error */
+nova_int            udp_socket_send_to(NovaRt_UdpSocket* s, nova_str data, NovaRt_SocketAddr* addr);
+nova_int            udp_socket_recv_from(NovaRt_UdpSocket* s, nova_int max); /* 0 or -1 */
+nova_str            udp_socket_recv_data(void);    /* TLS: data from last recv_from */
+NovaRt_SocketAddr*  udp_socket_recv_sender(void);  /* TLS: sender from last recv_from */
+uint16_t            udp_socket_local_port(NovaRt_UdpSocket* s);
+NovaRt_SocketAddr*  udp_socket_local_addr(NovaRt_UdpSocket* s);
+nova_unit           udp_socket_close(NovaRt_UdpSocket* s);
 
 #ifdef __cplusplus
 }

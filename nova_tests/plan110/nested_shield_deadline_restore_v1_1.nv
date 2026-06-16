@@ -23,7 +23,7 @@
 
 module plan110.nested_shield_deadline_restore_v1_1
 
-import std.prelude.errors as errors
+import std.prelude.errors
 
 type InnerRes { ro id int }
 fn InnerRes.new(id int) -> InnerRes => { id }

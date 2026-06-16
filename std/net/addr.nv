@@ -2,51 +2,49 @@
 // Plan 91.12 Ф.3: std/net/addr.nv — SocketAddr public API (V2).
 //
 // SocketAddr: IPv4/IPv6 socket address, stack-allocated value-record.
-// The `handle` field is an `int` (nova_int = intptr_t) holding a
-// NovaRt_SocketAddr* cast to integer.
+// The `handle` field is a CSocketAddr (= void*) holding a NovaRt_SocketAddr*.
 //
-// Constructors are pure (no effects). parse() throws Fail[NetError].
-// Accessor methods are pure (@port, @host_str, @is_v4, @is_v6, @to_str).
+// All operations route through AddrNet effect — never call C FFI directly.
+// real_addr_net() provides the concrete handler backed by net.h / net.c (Ф.0).
 //
-// C backing: socket_addr_* literal-name functions in net.h / net.c (Ф.0).
 // C handles allocated nova_alloc_uncollectable(); GC does not collect.
 
 module std.net
 
 /// IPv4/IPv6 socket address (host + port).
 ///
-/// Stack-allocated: contains exactly one integer field (a C pointer cast to int).
+/// Stack-allocated: contains exactly one field (a C pointer).
 /// Cheap to copy; two copies reference the same C-side NovaRt_SocketAddr.
 ///
 /// # Examples
 ///
 /// ```nova
-/// let a4 = SocketAddr.loopback(8080)       // 127.0.0.1:8080
-/// let a6 = SocketAddr.loopback_v6(8080)    // [::1]:8080
-/// let av = SocketAddr.v4(192, 168, 1, 1, 80)
-/// let ap = SocketAddr.from_str("127.0.0.1:9090").unwrap()
+/// with AddrNet = real_addr_net() {
+///     let a4 = SocketAddr.loopback(8080)       // 127.0.0.1:8080
+///     let a6 = SocketAddr.loopback_v6(8080)    // [::1]:8080
+///     let av = SocketAddr.v4(192, 168, 1, 1, 80)
+///     let ap = SocketAddr.from_str("127.0.0.1:9090").unwrap()
+/// }
 /// ```
 ///
 /// # See Also
 ///
 /// - `[TcpListener.bind]`, `[TcpStream.connect]`, `[UdpSocket.bind]`
 #stable(since = "0.1")
-export type SocketAddr value { priv handle int }
+export type SocketAddr value { priv handle CSocketAddr }
 
 /// Create IPv4 loopback address 127.0.0.1:port.
 ///
 /// Passing `port = 0` asks the OS to choose an available port.
-/// After `TcpListener.bind(SocketAddr.loopback(0))`, read the
-/// actual port via `listener.local_port()`.
 #stable(since = "0.1")
-export fn SocketAddr.loopback(port u16) -> SocketAddr {
-    SocketAddr { handle: socket_addr_loopback(port) }
+export fn SocketAddr.loopback(port u16) AddrNet -> SocketAddr {
+    AddrNet.loopback(port)
 }
 
 /// Create IPv6 loopback address [::1]:port.
 #stable(since = "0.1")
-export fn SocketAddr.loopback_v6(port u16) -> SocketAddr {
-    SocketAddr { handle: socket_addr_loopback_v6(port) }
+export fn SocketAddr.loopback_v6(port u16) AddrNet -> SocketAddr {
+    AddrNet.loopback_v6(port)
 }
 
 /// Create IPv4 address from dotted-quad octets.
@@ -57,8 +55,8 @@ export fn SocketAddr.loopback_v6(port u16) -> SocketAddr {
 /// let addr = SocketAddr.v4(127, 0, 0, 1, 80)  // 127.0.0.1:80
 /// ```
 #stable(since = "0.1")
-export fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr {
-    SocketAddr { handle: socket_addr_v4(a, b, c, d, port) }
+export fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) AddrNet -> SocketAddr {
+    AddrNet.v4(a, b, c, d, port)
 }
 
 /// Parse "host:port" string into a SocketAddr.
@@ -68,34 +66,61 @@ export fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr {
 ///
 /// **V1 note:** resolution is synchronous (OS gethostbyname equivalent).
 #stable(since = "0.1")
-export fn SocketAddr.from_str(s str) -> Result[SocketAddr, NetError] {
-    ro h = socket_addr_parse(s)
-    if h < 0 { Err(NetError.InvalidAddr(net_last_error())) }
-    else { Ok(SocketAddr { handle: h }) }
+export fn SocketAddr.from_str(s str) AddrNet -> Result[SocketAddr, NetError] {
+    AddrNet.from_str(s)
 }
 
 /// Get the port number.
 #stable(since = "0.1")
-export fn SocketAddr @port() -> u16 { socket_addr_port(@handle) }
+export fn SocketAddr @port() AddrNet -> u16 { AddrNet.port(@) }
 
 /// Get the host as a human-readable string.
 ///
 /// For IPv4: dotted-decimal ("127.0.0.1"). For IPv6: compressed hex ("::1").
 #stable(since = "0.1")
-export fn SocketAddr @host_str() -> str { socket_addr_host_str(@handle) }
+export fn SocketAddr @host_str() AddrNet -> str { AddrNet.host_str(@) }
 
 /// Return `true` if this is an IPv4 address.
 #stable(since = "0.1")
-export fn SocketAddr @is_v4() -> bool { socket_addr_is_v4(@handle) }
+export fn SocketAddr @is_v4() AddrNet -> bool { AddrNet.is_v4(@) }
 
 /// Return `true` if this is an IPv6 address.
 #stable(since = "0.1")
-export fn SocketAddr @is_v6() -> bool { socket_addr_is_v6(@handle) }
+export fn SocketAddr @is_v6() AddrNet -> bool { AddrNet.is_v6(@) }
 
 /// Return a human-readable "host:port" string.
 #stable(since = "0.1")
-export fn SocketAddr @to_str() -> str { socket_addr_to_str(@handle) }
+export fn SocketAddr @to_str() AddrNet -> str { AddrNet.to_str(@) }
 
-// Package-private factory: wrap a C handle (nova_int) into a SocketAddr.
+// Package-private factory: wrap a CSocketAddr into a SocketAddr.
 // Used by tcp.nv / udp.nv handlers which cannot access priv fields directly.
-fn SocketAddr._from_raw(h int) -> SocketAddr => { handle: h }
+fn SocketAddr._from_raw(h CSocketAddr) -> SocketAddr => { handle: h }
+
+// ─── real_addr_net: concrete AddrNet handler ─────────────────────────────────
+
+/// Concrete AddrNet handler dispatching to C FFI (net.h socket_addr_*).
+///
+/// Install alongside real_tcp_net / real_udp_net:
+/// ```nova
+/// with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+///     let addr = SocketAddr.loopback(8080)
+///     // ...
+/// }
+/// ```
+#stable(since = "0.1")
+export fn real_addr_net() -> Effect[AddrNet] => effect AddrNet {
+    loopback(port) => SocketAddr._from_raw(socket_addr_loopback(port))
+    loopback_v6(port) => SocketAddr._from_raw(socket_addr_loopback_v6(port))
+    v4(a, b, c, d, port) => SocketAddr._from_raw(socket_addr_v4(a, b, c, d, port))
+    from_str(s) {
+        ro (code, handle) = socket_addr_parse(s)
+        if code == 2 { Err(NetError.InvalidPort) }
+        else if code != 0 { Err(NetError.InvalidAddr(s)) }
+        else { Ok(SocketAddr._from_raw(handle)) }
+    }
+    port(addr) => socket_addr_port(addr.handle)
+    host_str(addr) => socket_addr_host_str(addr.handle)
+    is_v4(addr) => socket_addr_is_v4(addr.handle)
+    is_v6(addr) => socket_addr_is_v6(addr.handle)
+    to_str(addr) => socket_addr_to_str(addr.handle)
+}

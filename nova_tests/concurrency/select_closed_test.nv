@@ -7,7 +7,7 @@
 
 module concurrency.select_closed_test
 
-import std.time.duration as duration
+import std.time.duration
 
 // ================================================================
 // SECTION 1: Wildcard arm при наличии данных и при закрытом канале

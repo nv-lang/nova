@@ -3,7 +3,7 @@
 // Plan 153.4 — negative: rchunks(n) with n == 0 violates `n > 0` → panic.
 module plan153_4.rchunks_zero_neg
 
-import std.collections.vec_lazy as vec_lazy
+import std.collections.vec_lazy
 
 fn main() -> () {
     ro v = Vec[int].of(1, 2, 3)

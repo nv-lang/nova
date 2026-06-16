@@ -6,7 +6,7 @@
 // Vec directly from any `Iter` source is `Vec[T].new().extend(src)`.
 module plan153_6.collect_target
 
-import std.collections.vec_lazy as vec_lazy
+import std.collections.vec_lazy
 import std.collections.set.{Set}
 import std.collections.hashmap.{HashMap}
 

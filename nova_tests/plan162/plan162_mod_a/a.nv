@@ -5,6 +5,6 @@
 
 module plan162.plan162_mod_a
 
-import nova_tests.plan162.plan162_mod_b as plan162_mod_b
+import nova_tests.plan162.plan162_mod_b
 
 export const A_VAL int = 10

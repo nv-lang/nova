@@ -18,7 +18,7 @@
 
 module concurrency.select_timer_cleanup
 
-import std.time.duration as duration
+import std.time.duration
 
 test "Time.after cleanup: 50 quick wins не оставляют висящих таймеров" {
     mut wins = 0

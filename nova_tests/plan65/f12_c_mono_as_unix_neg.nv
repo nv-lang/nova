@@ -13,7 +13,7 @@
 
 module plan65.f12_c_mono_as_unix_neg
 
-import std.time.duration as duration
+import std.time.duration
 
 test "documented gap: m.as_unix_secs() compiles silently (wrong dispatch)" {
     ro m = Monotonic.now()

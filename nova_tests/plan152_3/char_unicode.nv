@@ -5,7 +5,7 @@
 // prelude). The ASCII-core methods (char_ascii.nv) need no import.
 module plan152_3.char_unicode
 
-import std.unicode as unicode
+import std.unicode
 import std.unicode.{Lu, Nd}
 
 test "is_* Unicode predicates (positive)" {

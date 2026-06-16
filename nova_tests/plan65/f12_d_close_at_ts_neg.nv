@@ -3,7 +3,7 @@
 
 module plan65.f12_d_close_at_ts_neg
 
-import std.time.duration as duration
+import std.time.duration
 
 fn main() -> () {
     ro ts = Timestamp.from_unix_secs(2000)

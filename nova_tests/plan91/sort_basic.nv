@@ -8,7 +8,7 @@
 // gated on the `[]int.new()→Vec` codegen fix, [M-153.x-array-new-not-vec]).
 module plan91.sort_basic
 
-import std.sort as sort
+import std.sort
 
 test "sort: empty array no-op" {
     mut xs []int = []

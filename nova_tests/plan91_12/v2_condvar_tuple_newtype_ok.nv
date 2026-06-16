@@ -6,7 +6,7 @@
 
 module plan91_12.v2_condvar_tuple_newtype_ok
 
-import std.time.duration as duration
+import std.time.duration
 
 test "Condvar: new + notify_one no-op (no waiters)" {
     mut cv = Condvar.new()

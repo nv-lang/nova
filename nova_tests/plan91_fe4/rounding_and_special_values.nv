@@ -3,7 +3,7 @@
 // Rounding results are integer-valued floats; compared with a tolerance window.
 module plan91_fe4.rounding_and_special_values
 
-import std.runtime.math as math
+import std.runtime.math
 
 test "rounding family: ceil / floor / round / trunc / cbrt / abs" {
     ro c = (2.3).ceil() - 3.0

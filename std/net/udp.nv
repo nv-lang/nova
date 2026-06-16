@@ -12,6 +12,7 @@
 //
 // All blocking operations park the calling fiber (cancel-safe).
 // close() consumes the socket to prevent double-close.
+// All operations route through UdpNet effect — never call C FFI directly.
 //
 // C backing: udp_socket_* literal-name functions in net.h / net.c (Plan 91.12 Ф.0).
 
@@ -37,7 +38,7 @@ module std.net
 /// be fragmented or dropped. `send_to` returns `Err(...)` if the datagram
 /// exceeds the system's maximum allowed size.
 #stable(since = "0.1")
-export type UdpSocket value { priv handle int }
+export type UdpSocket value { priv handle CUdpSocket }
 
 /// Bind a UDP socket to the given address.
 ///
@@ -68,12 +69,14 @@ export fn UdpSocket mut @recv_from(max int) UdpNet Blocking -> Result[(str, Sock
 
 /// Return the local port this socket is bound to.
 #stable(since = "0.1")
-export fn UdpSocket @local_port() -> u16 { udp_socket_local_port(@handle) }
+export fn UdpSocket @local_port() UdpNet -> u16 {
+    UdpNet.socket_local_port(@)
+}
 
 /// Return the local address this socket is bound to.
 #stable(since = "0.1")
-export fn UdpSocket @local_addr() -> SocketAddr {
-    SocketAddr._from_raw(udp_socket_local_addr(@handle))
+export fn UdpSocket @local_addr() UdpNet -> SocketAddr {
+    UdpNet.socket_local_addr(@)
 }
 
 /// Close the socket and release all resources (consume).
@@ -84,7 +87,7 @@ export fn UdpSocket consume @close() UdpNet {
 
 // ─── Package-private factories ───────────────────────────────────────────────
 
-fn UdpSocket._from_raw(h int) -> UdpSocket => { handle: h }
+fn UdpSocket._from_raw(h CUdpSocket) -> UdpSocket => { handle: h }
 
 // Workaround for codegen tuple-return inference in effect handler body.
 fn _udp_recv_result(data str, addr SocketAddr) -> (str, SocketAddr) => (data, addr)
@@ -109,7 +112,7 @@ fn udp_recv_result_err() -> Result[(str, SocketAddr), NetError] {
 export fn real_udp_net() -> Effect[UdpNet] => effect UdpNet {
     bind(addr) {
         ro h = udp_socket_bind(addr.handle)
-        if h < 0 { udp_result_err() }
+        if (0 as *()) == h { udp_result_err() }
         else { Ok(UdpSocket._from_raw(h)) }
     }
     send_to(sock, data, addr) {
@@ -122,4 +125,6 @@ export fn real_udp_net() -> Effect[UdpNet] => effect UdpNet {
         else { _udp_recv_ok(udp_socket_recv_data(), SocketAddr._from_raw(udp_socket_recv_sender())) }
     }
     close_socket(sock) => udp_socket_close(sock.handle)
+    socket_local_port(sock) => udp_socket_local_port(sock.handle)
+    socket_local_addr(sock) => SocketAddr._from_raw(udp_socket_local_addr(sock.handle))
 }

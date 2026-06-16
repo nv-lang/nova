@@ -1,6 +1,6 @@
 // Plan 91 Ф.1 conformance: vec combinators (map/filter/any/all/first/last).
 module plan91_fe1.vec_combinators_pos
-import std.collections.vec_seq as vec_seq
+import std.collections.vec_seq
 
 test "map same-type and type-change" {
     ro xs = [1, 2, 3, 4]

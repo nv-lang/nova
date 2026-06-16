@@ -9,7 +9,7 @@
 
 module concurrency.plan40_channel_hardening
 
-import std.time.duration as duration
+import std.time.duration
 
 
 // ────────────────────────────────────────────────────────────────────

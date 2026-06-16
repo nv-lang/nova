@@ -18,7 +18,7 @@
 
 module concurrency.cancellation_test
 
-import std.concurrency.cancellation as cancellation
+import std.concurrency.cancellation
 
 
 // ──────────────────────────────────────────────────────────────────────────

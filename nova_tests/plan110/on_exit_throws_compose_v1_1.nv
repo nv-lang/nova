@@ -15,7 +15,7 @@
 
 module plan110.on_exit_throws_compose_v1_1
 
-import std.prelude.errors as errors
+import std.prelude.errors
 
 type ComposingResource { ro id int }
 fn ComposingResource.new(id int) -> ComposingResource => { id }

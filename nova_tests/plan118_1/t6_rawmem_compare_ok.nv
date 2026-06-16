@@ -5,7 +5,7 @@
 
 module plan118_1.t6_rawmem_compare_ok
 
-import std.runtime.raw_mem as raw_mem
+import std.runtime.raw_mem
 
 test "RawMem.compare returns 0 for equal buffers" {
     ro a []u8 = [1, 2, 3, 4]

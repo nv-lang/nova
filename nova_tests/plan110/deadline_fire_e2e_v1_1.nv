@@ -20,7 +20,7 @@
 
 module plan110.deadline_fire_e2e_v1_1
 
-import std.prelude.errors as errors
+import std.prelude.errors
 
 type SlowCleanup { ro id int }
 

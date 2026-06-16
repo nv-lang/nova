@@ -25,7 +25,7 @@
 
 module plan110.on_exit_throws_nested_deadline_restored_v1_1
 
-import std.prelude.errors as errors
+import std.prelude.errors
 
 type InnerThrowingFast { ro id int }
 fn InnerThrowingFast.new(id int) -> InnerThrowingFast => { id }

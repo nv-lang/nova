@@ -5,7 +5,7 @@
 
 module runtime.gc_introspect
 
-import std.runtime.gc as gc
+import std.runtime.gc
 
 test "gc.heap_size: возвращает int >= 0" {
     ro h = gc.heap_size()

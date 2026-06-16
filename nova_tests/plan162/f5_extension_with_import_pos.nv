@@ -8,7 +8,7 @@
 module plan162.f5_extension_with_import_pos
 
 import nova_tests.plan162.plan162_ext_type.{Widget}
-import nova_tests.plan162.plan162_ext_methods as plan162_ext_methods
+import nova_tests.plan162.plan162_ext_methods
 
 test "extension method available when module is imported" {
     ro w = Widget.new(5)

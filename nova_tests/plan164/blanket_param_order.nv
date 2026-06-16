@@ -12,7 +12,7 @@
 // fix now also handles the swapped order (T first) robustly via name-lookup.
 module plan164.blanket_param_order
 
-import std.collections.vec_iter as vec_iter
+import std.collections.vec_iter
 
 test "min returns smallest int element" {
     ro v = Vec[int].of(3, 1, 4, 1, 5, 9, 2, 6)

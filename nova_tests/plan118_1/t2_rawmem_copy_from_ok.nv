@@ -6,7 +6,7 @@
 
 module plan118_1.t2_rawmem_copy_from_ok
 
-import std.runtime.raw_mem as raw_mem
+import std.runtime.raw_mem
 
 test "RawMem.copy copies bytes between buffers" {
     ro src []u8 = [11, 22, 33, 44, 55]

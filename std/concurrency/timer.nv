@@ -11,7 +11,7 @@
 
 module concurrency.timer
 
-import std.time.duration as duration
+import std.time.duration
 
 
 /// Create a one-shot `ChanReader[()]` that closes after `d` elapses.

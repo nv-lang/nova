@@ -1,6 +1,6 @@
 // Plan 148 Ф.1 (D241) — positive: canonical `consume priv` order accepted.
 //
-// Generalization to ALL modifiers: consume (rank 1) precedes priv (rank 2),
+// Generalization to ALL modifiers: consume (rank 0) precedes priv (rank 2),
 // so `consume priv` is canonical and must parse + work. This is the positive
 // counterpart to the mo_neg_priv_consume negative.
 module plan148.mo_consume_priv_ok

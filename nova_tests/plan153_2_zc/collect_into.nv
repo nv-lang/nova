@@ -10,7 +10,7 @@
 //     `out` binding (`Vec[T]` is a heap reference type).
 module plan153_2_zc.collect_into
 
-import std.collections.vec_iter as vec_iter
+import std.collections.vec_iter
 
 test "collect_into appends MapIter->FilterIter chain into a fresh buffer" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)

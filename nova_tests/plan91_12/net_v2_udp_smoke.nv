@@ -6,11 +6,11 @@
 
 module plan91_12.net_v2_udp_smoke
 
-import std.net.{SocketAddr, UdpSocket, real_udp_net}
+import std.net.{SocketAddr, UdpSocket, real_udp_net, real_addr_net}
 
 test "V2 UdpSocket bind returns ok" {
     supervised {
-        with UdpNet = real_udp_net() {
+        with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
             ro r = UdpSocket.bind(SocketAddr.loopback(0))
             assert(r.is_ok())
             mut sock = match r { Ok(s) => s, Err(_) => panic("bind failed") }
@@ -22,7 +22,7 @@ test "V2 UdpSocket bind returns ok" {
 
 test "V2 UdpSocket local_addr is_v4" {
     supervised {
-        with UdpNet = real_udp_net() {
+        with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
             ro r = UdpSocket.bind(SocketAddr.loopback(0))
             mut sock = match r { Ok(s) => s, Err(_) => panic("bind failed") }
             ro addr = sock.local_addr()
@@ -33,10 +33,9 @@ test "V2 UdpSocket local_addr is_v4" {
 }
 
 test "V2 UdpSocket send_to and recv_from loopback" {
-    // with UdpNet outside supervised so the handler is live when fibers run.
-    // spawn required: send_to/recv_from park the fiber; inline body
-    // (main thread, slot=-1) cannot call nova_sched_park.
-    with UdpNet = real_udp_net() {
+    // with handlers outside supervised so they are live when fibers run.
+    // spawn required: send_to/recv_from park the fiber.
+    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
         supervised {
             spawn {
                 // Bind two sockets; send from a to b; recv on b.

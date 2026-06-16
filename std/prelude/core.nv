@@ -75,7 +75,7 @@ module prelude.core
 // is handled by Plan 162 Ф.2 cycle guard (returns Ok(()) on re-entry).
 // `GeneralCategory` and the free predicates (is_alphabetic etc.) come from
 // std.unicode and are usable in the char @method bodies below.
-import std.unicode as unicode
+import std.unicode
 
 // ──────────────────────────────────────────────────────────────────────────
 // Sum types

@@ -11,7 +11,7 @@
 
 module plan65.f11a_timer_metrics
 
-import std.time.duration as duration
+import std.time.duration
 
 test "Time.timer_alloc_total increments on each close_after alloc" {
     ro before = Time.timer_alloc_total()

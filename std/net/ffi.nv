@@ -5,69 +5,72 @@
 // C symbols called via literal name (Ф.-1 D282: `extern "C" fn`).
 // C side: compiler-codegen/nova_rt/net.h + net.c (Plan 91.12 Ф.0).
 //
-// ABI conventions:
-//   int (nova_int = intptr_t) — used for opaque C handles.
-//     - Constructors return the handle, or -1 on error (call net_last_error()).
-//     - Pass handles as `int` to accessors/mutators.
-//     - 0 is the null/invalid handle sentinel.
-//   str — nova_str {ptr,len}; C side copies to GC heap.
-//   u16/u8 — C native uint16_t/uint8_t.
-//   ()  — C nova_unit (1-byte struct); callers discard.
+// Opaque handle types (D214): CSocketAddr / CTcpListener / CTcpStream /
+// CUdpSocket are newtypes over *() (= void*). This gives type safety at
+// the FFI boundary — Nova cannot confuse a CTcpListener for a CSocketAddr.
 //
-// Note: `int` is used for ALL handles here (SocketAddr, TcpListener, etc.)
-// Type safety is provided by the exported value-record wrappers (addr.nv, tcp.nv, udp.nv).
+// Handle ABI: constructors return the pointer or null ptr on error.
+// Error message: call net_last_error() after any null return.
+// Numeric results (bytes written, recv status) use int.
 
 module std.net
 
-// ─── SocketAddr ──────────────────────────────────────────────────────────────
-// Returns handle as int (intptr_t); -1 on error → call net_last_error().
+// ─── Opaque handle types ──────────────────────────────────────────────────────
 
-extern "C" fn socket_addr_loopback(port u16) -> int
-extern "C" fn socket_addr_loopback_v6(port u16) -> int
-extern "C" fn socket_addr_v4(a u8, b u8, c u8, d u8, port u16) -> int
-extern "C" fn socket_addr_parse(s str) -> int
-extern "C" fn socket_addr_port(addr int) -> u16
-extern "C" fn socket_addr_host_str(addr int) -> str
-extern "C" fn socket_addr_is_v4(addr int) -> bool
-extern "C" fn socket_addr_is_v6(addr int) -> bool
-extern "C" fn socket_addr_to_str(addr int) -> str
+type CSocketAddr(*())
+type CTcpListener(*())
+type CTcpStream(*())
+type CUdpSocket(*())
 
-// ─── TcpListener ─────────────────────────────────────────────────────────────
+// ─── SocketAddr ───────────────────────────────────────────────────────────────
 
-// Returns handle (intptr_t) or -1 on error.
-extern "C" fn tcp_listener_bind(addr int) -> int
-extern "C" fn tcp_listener_accept(lst int) -> int
-extern "C" fn tcp_listener_local_port(lst int) -> u16
-extern "C" fn tcp_listener_local_addr(lst int) -> int
-extern "C" fn tcp_listener_close(lst int) -> ()
+extern "C" fn socket_addr_loopback(port u16) -> CSocketAddr
+extern "C" fn socket_addr_loopback_v6(port u16) -> CSocketAddr
+extern "C" fn socket_addr_v4(a u8, b u8, c u8, d u8, port u16) -> CSocketAddr
+// Returns (code, handle): code=0 OK, 1=INVALID_ADDR, 2=INVALID_PORT.
+// handle is valid CSocketAddr on success, null on error.
+extern "C" fn socket_addr_parse(s str) -> (int, CSocketAddr)
+extern "C" fn socket_addr_port(addr CSocketAddr) -> u16
+extern "C" fn socket_addr_host_str(addr CSocketAddr) -> str
+extern "C" fn socket_addr_is_v4(addr CSocketAddr) -> bool
+extern "C" fn socket_addr_is_v6(addr CSocketAddr) -> bool
+extern "C" fn socket_addr_to_str(addr CSocketAddr) -> str
 
-// ─── TcpStream ───────────────────────────────────────────────────────────────
+// ─── TcpListener ──────────────────────────────────────────────────────────────
 
-// Returns handle (intptr_t) or -1 on error (connect).
-extern "C" fn tcp_stream_connect(addr int) -> int
-// Returns bytes written (>0) or -1 on error.
-extern "C" fn tcp_stream_write(s int, data str) -> int
-extern "C" fn tcp_stream_local_port(s int) -> u16
-extern "C" fn tcp_stream_peer_port(s int) -> u16
-extern "C" fn tcp_stream_local_addr(s int) -> int
-extern "C" fn tcp_stream_peer_addr(s int) -> int
-extern "C" fn tcp_stream_close(s int) -> ()
+extern "C" fn tcp_listener_bind(addr CSocketAddr) -> CTcpListener
+extern "C" fn tcp_listener_accept(lst CTcpListener) -> CTcpStream
+extern "C" fn tcp_listener_local_port(lst CTcpListener) -> u16
+extern "C" fn tcp_listener_local_addr(lst CTcpListener) -> CSocketAddr
+extern "C" fn tcp_listener_close(lst CTcpListener) -> ()
 
-// Thread-local last error; valid after any function returns < 0 or -1.
+// ─── TcpStream ────────────────────────────────────────────────────────────────
+
+extern "C" fn tcp_stream_connect(addr CSocketAddr) -> CTcpStream
+extern "C" fn tcp_stream_write(s CTcpStream, data str) -> int
+// Read up to max bytes. Returns bytes read (0=EOF, -1=error); data in tcp_stream_read_data().
+extern "C" fn tcp_stream_read_bytes(s CTcpStream, max int) -> int
+extern "C" fn tcp_stream_read_data() -> str
+extern "C" fn tcp_stream_local_port(s CTcpStream) -> u16
+extern "C" fn tcp_stream_peer_port(s CTcpStream) -> u16
+extern "C" fn tcp_stream_local_addr(s CTcpStream) -> CSocketAddr
+extern "C" fn tcp_stream_peer_addr(s CTcpStream) -> CSocketAddr
+extern "C" fn tcp_stream_set_nodelay(s CTcpStream, on bool) -> ()
+extern "C" fn tcp_stream_set_keepalive(s CTcpStream, on bool) -> ()
+extern "C" fn tcp_stream_close(s CTcpStream) -> ()
+extern "C" fn tcp_listener_set_reuse_address(lst CTcpListener, on bool) -> ()
+
+// Thread-local last error; valid after any null/error return.
 extern "C" fn net_last_error() -> str
 
-// ─── UdpSocket ───────────────────────────────────────────────────────────────
+// ─── UdpSocket ────────────────────────────────────────────────────────────────
 
-// Returns handle (intptr_t) or -1 on error.
-extern "C" fn udp_socket_bind(addr int) -> int
-// Returns 0 on success, -1 on error.
-extern "C" fn udp_socket_send_to(sock int, data str, addr int) -> int
-// Parks fiber; stores result in TLS. Returns 0=ok, -1=error.
-// Read results with udp_socket_recv_data() / udp_socket_recv_sender() immediately after.
-extern "C" fn udp_socket_recv_from(sock int, max int) -> int
+extern "C" fn udp_socket_bind(addr CSocketAddr) -> CUdpSocket
+extern "C" fn udp_socket_send_to(sock CUdpSocket, data str, addr CSocketAddr) -> int
+extern "C" fn udp_socket_recv_from(sock CUdpSocket, max int) -> int
 // TLS accessors — call immediately after a successful udp_socket_recv_from.
 extern "C" fn udp_socket_recv_data() -> str
-extern "C" fn udp_socket_recv_sender() -> int
-extern "C" fn udp_socket_local_port(sock int) -> u16
-extern "C" fn udp_socket_local_addr(sock int) -> int
-extern "C" fn udp_socket_close(sock int) -> ()
+extern "C" fn udp_socket_recv_sender() -> CSocketAddr
+extern "C" fn udp_socket_local_port(sock CUdpSocket) -> u16
+extern "C" fn udp_socket_local_addr(sock CUdpSocket) -> CSocketAddr
+extern "C" fn udp_socket_close(sock CUdpSocket) -> ()

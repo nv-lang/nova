@@ -1,9 +1,9 @@
-// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+// Plan 148 Ф.1 (D241 amend) — positive: `consume value` is the canonical order.
 //
-// Plan 148 Ф.1 (D241) — negative: `consume value` is out of canonical order.
-//
-// value (rank 0) must precede consume (rank 1). `consume value` inverts them
-// → E_MODIFIER_ORDER, fix-it "reorder to `value consume`".
+// D241 revised (Plan 91.12): ownership → representation → visibility.
+//   consume (rank 0) precedes value (rank 1) — canonical.
+// Previously this was a negative test (old order value→consume); flipped when
+// D241 was updated to Rust-like ordering.
 module plan148.mo_neg_consume_value
 
 type Token consume value {
@@ -11,3 +11,8 @@ type Token consume value {
 }
 
 fn Token consume @use() -> () { () }
+
+test "consume value canonical order accepted" {
+    ro _ = Token { id: 1 }.use()
+    assert(true)
+}

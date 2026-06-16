@@ -2,15 +2,16 @@
 // Plan 91.12 Ф.3: std/net/tcp.nv — TCP public API + real_tcp_net handler (V2).
 //
 // Architecture (three layers):
-//   ffi.nv     — private C FFI (extern "C" fn, int handles, no export)
+//   ffi.nv     — private C FFI (extern "C" fn, opaque handles, no export)
 //   effect.nv  — effect TcpNet declaration
 //   tcp.nv     — value types + public methods + real_tcp_net handler (this file)
 //
 // TcpListener: async TCP server socket (bind + accept loop).
 // TcpStream:   connected async TCP stream (connect + read + write).
 //
-// Both are value-records with `priv handle int` (intptr_t = C pointer as int).
+// Both are value-records with `priv handle CTcpListener/CTcpStream` (void* C pointer).
 // close() consumes. Public methods return Result[T, NetError].
+// All operations route through TcpNet effect — never call C FFI directly.
 //
 // C backing: tcp_listener_* / tcp_stream_* in net.h / net.c (Plan 91.12 Ф.0).
 
@@ -36,7 +37,7 @@ module std.net
 /// `accept` carries `TcpNet Blocking`.
 /// `close` carries `TcpNet` (consume).
 #stable(since = "0.1")
-export type TcpListener value { priv handle int }
+export type TcpListener value { priv handle CTcpListener }
 
 /// Connected async TCP stream.
 ///
@@ -56,7 +57,7 @@ export type TcpListener value { priv handle int }
 /// `write` carries `TcpNet Blocking`.
 /// `close` carries `TcpNet` (consume).
 #stable(since = "0.1")
-export type TcpStream value { priv handle int }
+export type TcpStream value { priv handle CTcpStream }
 
 // ─── TcpListener public API ──────────────────────────────────────────────────
 
@@ -82,12 +83,14 @@ export fn TcpListener mut @accept() TcpNet Blocking -> Result[TcpStream, NetErro
 
 /// Return the local port this listener is bound to.
 #stable(since = "0.1")
-export fn TcpListener @local_port() -> u16 { tcp_listener_local_port(@handle) }
+export fn TcpListener @local_port() TcpNet -> u16 {
+    TcpNet.listener_local_port(@)
+}
 
 /// Return the local address this listener is bound to.
 #stable(since = "0.1")
-export fn TcpListener @local_addr() -> SocketAddr {
-    SocketAddr._from_raw(tcp_listener_local_addr(@handle))
+export fn TcpListener @local_addr() TcpNet -> SocketAddr {
+    TcpNet.listener_local_addr(@)
 }
 
 /// Set whether to reuse the local address (SO_REUSEADDR).
@@ -118,24 +121,37 @@ export fn TcpStream mut @write(data str) TcpNet Blocking -> Result[int, NetError
     TcpNet.write(@, data)
 }
 
+/// Read up to `max` bytes from the stream (parks until data or EOF).
+///
+/// Returns `Ok(data)` where `data` is the received bytes.
+/// `Ok("")` signals EOF (the remote side closed the connection).
+#stable(since = "0.1")
+export fn TcpStream mut @read(max int) TcpNet Blocking -> Result[str, NetError] {
+    TcpNet.read(@, max)
+}
+
 /// Return the local port of this stream.
 #stable(since = "0.1")
-export fn TcpStream @local_port() -> u16 { tcp_stream_local_port(@handle) }
+export fn TcpStream @local_port() TcpNet -> u16 {
+    TcpNet.stream_local_port(@)
+}
 
 /// Return the remote peer port of this stream.
 #stable(since = "0.1")
-export fn TcpStream @peer_port() -> u16 { tcp_stream_peer_port(@handle) }
+export fn TcpStream @peer_port() TcpNet -> u16 {
+    TcpNet.stream_peer_port(@)
+}
 
 /// Return the local address of this stream.
 #stable(since = "0.1")
-export fn TcpStream @local_addr() -> SocketAddr {
-    SocketAddr._from_raw(tcp_stream_local_addr(@handle))
+export fn TcpStream @local_addr() TcpNet -> SocketAddr {
+    TcpNet.stream_local_addr(@)
 }
 
 /// Return the remote peer address of this stream.
 #stable(since = "0.1")
-export fn TcpStream @peer_addr() -> SocketAddr {
-    SocketAddr._from_raw(tcp_stream_peer_addr(@handle))
+export fn TcpStream @peer_addr() TcpNet -> SocketAddr {
+    TcpNet.stream_peer_addr(@)
 }
 
 /// Set TCP_NODELAY (disable Nagle's algorithm).
@@ -158,8 +174,8 @@ export fn TcpStream consume @close() TcpNet {
 
 // ─── Package-private factories ───────────────────────────────────────────────
 
-fn TcpListener._from_raw(h int) -> TcpListener => { handle: h }
-fn TcpStream._from_raw(h int) -> TcpStream => { handle: h }
+fn TcpListener._from_raw(h CTcpListener) -> TcpListener => { handle: h }
+fn TcpStream._from_raw(h CTcpStream) -> TcpStream => { handle: h }
 
 // ─── Error helpers ───────────────────────────────────────────────────────────
 
@@ -184,6 +200,10 @@ fn tcp_stream_result_err() -> Result[TcpStream, NetError] {
 fn tcp_write_result_err() -> Result[int, NetError] {
     Err(net_error(net_last_error()))
 }
+fn tcp_read_result_err() -> Result[str, NetError] {
+    Err(net_error(net_last_error()))
+}
+fn _tcp_read_ok(data str) -> Result[str, NetError] => Ok(data)
 
 // ─── real_tcp_net: concrete TcpNet handler ───────────────────────────────────
 
@@ -199,17 +219,17 @@ fn tcp_write_result_err() -> Result[int, NetError] {
 export fn real_tcp_net() -> Effect[TcpNet] => effect TcpNet {
     bind(addr) {
         ro h = tcp_listener_bind(addr.handle)
-        if h < 0 { tcp_result_err() }
+        if (0 as *()) == h { tcp_result_err() }
         else { Ok(TcpListener._from_raw(h)) }
     }
     accept(listener) {
         ro h = tcp_listener_accept(listener.handle)
-        if h < 0 { tcp_stream_result_err() }
+        if (0 as *()) == h { tcp_stream_result_err() }
         else { Ok(TcpStream._from_raw(h)) }
     }
     connect(addr) {
         ro h = tcp_stream_connect(addr.handle)
-        if h < 0 { tcp_stream_result_err() }
+        if (0 as *()) == h { tcp_stream_result_err() }
         else { Ok(TcpStream._from_raw(h)) }
     }
     write(stream, data) {
@@ -217,9 +237,20 @@ export fn real_tcp_net() -> Effect[TcpNet] => effect TcpNet {
         if n < 0 { tcp_write_result_err() }
         else { Ok(n) }
     }
+    read(stream, max) {
+        ro n = tcp_stream_read_bytes(stream.handle, max)
+        if n < 0 { tcp_read_result_err() }
+        else { _tcp_read_ok(tcp_stream_read_data()) }
+    }
     close_stream(stream) => tcp_stream_close(stream.handle)
     close_listener(listener) => tcp_listener_close(listener.handle)
-    set_nodelay(stream, on) { }
-    set_keepalive(stream, on) { }
-    set_reuse_address(listener, on) { }
+    listener_local_port(listener) => tcp_listener_local_port(listener.handle)
+    listener_local_addr(listener) => SocketAddr._from_raw(tcp_listener_local_addr(listener.handle))
+    stream_local_port(stream) => tcp_stream_local_port(stream.handle)
+    stream_peer_port(stream) => tcp_stream_peer_port(stream.handle)
+    stream_local_addr(stream) => SocketAddr._from_raw(tcp_stream_local_addr(stream.handle))
+    stream_peer_addr(stream) => SocketAddr._from_raw(tcp_stream_peer_addr(stream.handle))
+    set_nodelay(stream, on) => tcp_stream_set_nodelay(stream.handle, on)
+    set_keepalive(stream, on) => tcp_stream_set_keepalive(stream.handle, on)
+    set_reuse_address(listener, on) => tcp_listener_set_reuse_address(listener.handle, on)
 }

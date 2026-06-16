@@ -7,6 +7,6 @@
 module plan162.plan162_proxy
 
 import nova_tests.plan162.plan162_ext_type.{Widget}
-import nova_tests.plan162.plan162_ext_methods as plan162_ext_methods
+import nova_tests.plan162.plan162_ext_methods
 
 export fn Widget.create(v int) -> Widget => Widget.new(v)

@@ -5,7 +5,7 @@
 
 module plan118_4.t4_ptr_roundtrip_ok
 
-import std.runtime.raw_mem as raw_mem
+import std.runtime.raw_mem
 
 test "write then read recovers value" {
     mut buf []i32 = [0]

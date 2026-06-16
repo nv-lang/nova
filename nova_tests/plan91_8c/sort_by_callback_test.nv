@@ -1,6 +1,6 @@
 module plan91_8c.sort_by_callback_test
 
-import std.sort as sort
+import std.sort
 
 // Plan 91.8c (D185): generic sort_by_of с custom comparator callback.
 

@@ -9,7 +9,7 @@
 
 module plan103_4.barrier_n_party_rendezvous
 
-import std.time.duration as duration
+import std.time.duration
 
 test "8 fibers all pass barrier simultaneously" {
     ro n = 8

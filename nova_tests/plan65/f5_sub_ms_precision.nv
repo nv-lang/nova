@@ -6,7 +6,7 @@
 
 module plan65.f5_sub_ms_precision
 
-import std.time.duration as duration
+import std.time.duration
 
 test "500_000 ns Duration triggers at least 1ms delay" {
     mut elapsed_ok = false

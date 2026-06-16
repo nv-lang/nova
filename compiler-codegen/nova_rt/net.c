@@ -104,40 +104,37 @@ NovaRt_SocketAddr* NovaRt_SocketAddr_static_v4(uint8_t a, uint8_t b,
     return addr;
 }
 
-NovaRes_nova_int_nova_str* NovaRt_SocketAddr_static_parse(nova_str s) {
-    /* Copy to NUL-terminated buffer. */
-    char* buf = (char*)malloc(s.len + 1);
-    if (!buf) return _NET_ERR("OOM");
-    memcpy(buf, s.ptr, s.len);
-    buf[s.len] = '\0';
+NetAddrResult NovaRt_SocketAddr_static_parse(const char* s, NovaRt_SocketAddr* addr) {
+    char* buf = (char*)alloca(strlen(s) + 1);
+    strcpy(buf, s);
 
-    /* Try IPv4 first: "host:port". Find last ':'. */
     char* colon = strrchr(buf, ':');
-    if (!colon) { free(buf); return _NET_ERR("invalid addr: no port"); }
+    if (!colon) return NET_ADDR_INVALID_ADDR;
 
     int port_n = atoi(colon + 1);
-    if (port_n <= 0 || port_n > 65535) {
-        free(buf); return _NET_ERR("invalid port");
-    }
+    if (port_n <= 0 || port_n > 65535) return NET_ADDR_INVALID_PORT;
     *colon = '\0';
 
-    NovaRt_SocketAddr* addr = _nova_alloc_addr();
-    /* Try IPv4. */
-    if (uv_ip4_addr(buf, port_n, (struct sockaddr_in*)&addr->storage) == 0) {
-        free(buf); return _NET_OK(addr);
-    }
-    /* Try IPv6 (strip brackets if "[::1]"). */
+    if (uv_ip4_addr(buf, port_n, (struct sockaddr_in*)&addr->storage) == 0)
+        return NET_ADDR_OK;
+
     char* host = buf;
     if (host[0] == '[') {
         host++;
         char* rbrace = strchr(host, ']');
         if (rbrace) *rbrace = '\0';
     }
-    if (uv_ip6_addr(host, port_n, (struct sockaddr_in6*)&addr->storage) == 0) {
-        free(buf); return _NET_OK(addr);
+    if (uv_ip6_addr(host, port_n, (struct sockaddr_in6*)&addr->storage) == 0)
+        return NET_ADDR_OK;
+
+    return NET_ADDR_INVALID_ADDR;
+}
+
+static const char* _net_addr_result_msg(NetAddrResult r) {
+    switch (r) {
+        case NET_ADDR_INVALID_PORT: return "invalid port";
+        default:                    return "invalid address";
     }
-    free(buf);
-    return _NET_ERR("invalid address");
 }
 
 uint16_t NovaRt_SocketAddr_method_port(NovaRt_SocketAddr* addr) {
@@ -993,90 +990,135 @@ nova_str net_last_error(void) {
 
 /* ─── SocketAddr ───────────────────────────────────────────────────────── */
 
-nova_int socket_addr_loopback(uint16_t port) {
-    return (nova_int)NovaRt_SocketAddr_static_loopback(port);
+NovaRt_SocketAddr* socket_addr_loopback(uint16_t port) {
+    return NovaRt_SocketAddr_static_loopback(port);
 }
-nova_int socket_addr_loopback_v6(uint16_t port) {
-    return (nova_int)NovaRt_SocketAddr_static_loopback_v6(port);
+NovaRt_SocketAddr* socket_addr_loopback_v6(uint16_t port) {
+    return NovaRt_SocketAddr_static_loopback_v6(port);
 }
-nova_int socket_addr_v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port) {
-    return (nova_int)NovaRt_SocketAddr_static_v4(a, b, c, d, port);
+NovaRt_SocketAddr* socket_addr_v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port) {
+    return NovaRt_SocketAddr_static_v4(a, b, c, d, port);
 }
-nova_int socket_addr_parse(nova_str s) {
-    NovaRes_nova_int_nova_str* r = NovaRt_SocketAddr_static_parse(s);
-    if (r->tag == NOVA_TAG_Result_Ok) return r->payload.Ok._0;  /* already (intptr_t)ptr */
-    _net_store_err(r->payload.Err._0);
-    return -1;
+_NovaTuple2 socket_addr_parse(nova_str s) {
+    char* buf = (char*)alloca(s.len + 1);
+    memcpy(buf, s.ptr, s.len);
+    buf[s.len] = '\0';
+
+    _NovaTuple2 r;
+    NovaRt_SocketAddr* addr = _nova_alloc_addr();
+    NetAddrResult code = NovaRt_SocketAddr_static_parse(buf, addr);
+    r.f0 = (nova_int)code;
+    r.f1 = (nova_int)(intptr_t)((code == NET_ADDR_OK) ? addr : NULL);
+    return r;
 }
-uint16_t socket_addr_port(nova_int addr) {
-    return NovaRt_SocketAddr_method_port((NovaRt_SocketAddr*)addr);
+uint16_t socket_addr_port(NovaRt_SocketAddr* addr) {
+    return NovaRt_SocketAddr_method_port(addr);
 }
-nova_str socket_addr_host_str(nova_int addr) {
-    return NovaRt_SocketAddr_method_host_str((NovaRt_SocketAddr*)addr);
+nova_str socket_addr_host_str(NovaRt_SocketAddr* addr) {
+    return NovaRt_SocketAddr_method_host_str(addr);
 }
-nova_bool socket_addr_is_v4(nova_int addr) {
-    return NovaRt_SocketAddr_method_is_v4((NovaRt_SocketAddr*)addr);
+nova_bool socket_addr_is_v4(NovaRt_SocketAddr* addr) {
+    return NovaRt_SocketAddr_method_is_v4(addr);
 }
-nova_bool socket_addr_is_v6(nova_int addr) {
-    return NovaRt_SocketAddr_method_is_v6((NovaRt_SocketAddr*)addr);
+nova_bool socket_addr_is_v6(NovaRt_SocketAddr* addr) {
+    return NovaRt_SocketAddr_method_is_v6(addr);
 }
-nova_str socket_addr_to_str(nova_int addr) {
-    return NovaRt_SocketAddr_method_to_str((NovaRt_SocketAddr*)addr);
+nova_str socket_addr_to_str(NovaRt_SocketAddr* addr) {
+    return NovaRt_SocketAddr_method_to_str(addr);
 }
 
 /* ─── TcpListener ──────────────────────────────────────────────────────── */
 
-nova_int tcp_listener_bind(nova_int addr) {
-    NovaRes_nova_int_nova_str* r = NovaRt_TcpListener_static_bind((NovaRt_SocketAddr*)addr);
-    if (r->tag == NOVA_TAG_Result_Ok) return r->payload.Ok._0;
+NovaRt_TcpListener* tcp_listener_bind(NovaRt_SocketAddr* addr) {
+    NovaRes_nova_int_nova_str* r = NovaRt_TcpListener_static_bind(addr);
+    if (r->tag == NOVA_TAG_Result_Ok) return (NovaRt_TcpListener*)(intptr_t)r->payload.Ok._0;
     _net_store_err(r->payload.Err._0);
-    return -1;
+    return NULL;
 }
-nova_int tcp_listener_accept(nova_int lst) {
-    NovaRes_nova_int_nova_str* r = NovaRt_TcpListener_method_accept((NovaRt_TcpListener*)lst);
-    if (r->tag == NOVA_TAG_Result_Ok) return r->payload.Ok._0;
+NovaRt_TcpStream* tcp_listener_accept(NovaRt_TcpListener* lst) {
+    NovaRes_nova_int_nova_str* r = NovaRt_TcpListener_method_accept(lst);
+    if (r->tag == NOVA_TAG_Result_Ok) return (NovaRt_TcpStream*)(intptr_t)r->payload.Ok._0;
     _net_store_err(r->payload.Err._0);
-    return -1;
+    return NULL;
 }
-uint16_t tcp_listener_local_port(nova_int lst) {
-    return NovaRt_TcpListener_method_local_port((NovaRt_TcpListener*)lst);
+uint16_t tcp_listener_local_port(NovaRt_TcpListener* lst) {
+    return NovaRt_TcpListener_method_local_port(lst);
 }
-nova_int tcp_listener_local_addr(nova_int lst) {
-    return (nova_int)NovaRt_TcpListener_method_local_addr((NovaRt_TcpListener*)lst);
+NovaRt_SocketAddr* tcp_listener_local_addr(NovaRt_TcpListener* lst) {
+    return NovaRt_TcpListener_method_local_addr(lst);
 }
-nova_unit tcp_listener_close(nova_int lst) {
-    NovaRt_TcpListener_method_close((NovaRt_TcpListener*)lst);
+nova_unit tcp_listener_close(NovaRt_TcpListener* lst) {
+    NovaRt_TcpListener_method_close(lst);
     return NOVA_UNIT;
 }
 
 /* ─── TcpStream ────────────────────────────────────────────────────────── */
 
-nova_int tcp_stream_connect(nova_int addr) {
-    NovaRes_nova_int_nova_str* r = NovaRt_TcpStream_static_connect((NovaRt_SocketAddr*)addr);
+/* TLS buffer for tcp_stream_read_bytes result.
+ * Safe: Nova fibers are cooperative — no other fiber runs between
+ * tcp_stream_read_bytes() return and the tcp_stream_read_data() read. */
+#if defined(_MSC_VER)
+  static __declspec(thread) nova_str _net_tcp_read_data;
+#else
+  static __thread nova_str _net_tcp_read_data;
+#endif
+
+NovaRt_TcpStream* tcp_stream_connect(NovaRt_SocketAddr* addr) {
+    NovaRes_nova_int_nova_str* r = NovaRt_TcpStream_static_connect(addr);
+    if (r->tag == NOVA_TAG_Result_Ok) return (NovaRt_TcpStream*)(intptr_t)r->payload.Ok._0;
+    _net_store_err(r->payload.Err._0);
+    return NULL;
+}
+nova_int tcp_stream_write(NovaRt_TcpStream* s, nova_str data) {
+    NovaRes_nova_int_nova_str* r = NovaRt_TcpStream_method_write(s, data);
     if (r->tag == NOVA_TAG_Result_Ok) return r->payload.Ok._0;
     _net_store_err(r->payload.Err._0);
     return -1;
 }
-nova_int tcp_stream_write(nova_int s, nova_str data) {
-    NovaRes_nova_int_nova_str* r = NovaRt_TcpStream_method_write((NovaRt_TcpStream*)s, data);
-    if (r->tag == NOVA_TAG_Result_Ok) return r->payload.Ok._0;
-    _net_store_err(r->payload.Err._0);
-    return -1;
+uint16_t tcp_stream_local_port(NovaRt_TcpStream* s) {
+    return NovaRt_TcpStream_method_local_port(s);
 }
-uint16_t tcp_stream_local_port(nova_int s) {
-    return NovaRt_TcpStream_method_local_port((NovaRt_TcpStream*)s);
+uint16_t tcp_stream_peer_port(NovaRt_TcpStream* s) {
+    return NovaRt_TcpStream_method_peer_port(s);
 }
-uint16_t tcp_stream_peer_port(nova_int s) {
-    return NovaRt_TcpStream_method_peer_port((NovaRt_TcpStream*)s);
+NovaRt_SocketAddr* tcp_stream_local_addr(NovaRt_TcpStream* s) {
+    return NovaRt_TcpStream_method_local_addr(s);
 }
-nova_int tcp_stream_local_addr(nova_int s) {
-    return (nova_int)NovaRt_TcpStream_method_local_addr((NovaRt_TcpStream*)s);
+NovaRt_SocketAddr* tcp_stream_peer_addr(NovaRt_TcpStream* s) {
+    return NovaRt_TcpStream_method_peer_addr(s);
 }
-nova_int tcp_stream_peer_addr(nova_int s) {
-    return (nova_int)NovaRt_TcpStream_method_peer_addr((NovaRt_TcpStream*)s);
+nova_unit tcp_stream_close(NovaRt_TcpStream* s) {
+    NovaRt_TcpStream_method_close(s);
+    return NOVA_UNIT;
 }
-nova_unit tcp_stream_close(nova_int s) {
-    NovaRt_TcpStream_method_close((NovaRt_TcpStream*)s);
+/* Read up to max_bytes from stream. Returns bytes read (0 = EOF, -1 = error).
+ * On success the data is in tcp_stream_read_data() TLS slot. */
+nova_int tcp_stream_read_bytes(NovaRt_TcpStream* s, nova_int max) {
+    NovaRes_nova_int_nova_str* r = NovaRt_TcpStream_method_read_bytes(s, max);
+    if (r->tag != NOVA_TAG_Result_Ok) {
+        _net_store_err(r->payload.Err._0);
+        return -1;
+    }
+    nova_int payload = r->payload.Ok._0;
+    if (payload == 0) {
+        /* EOF: empty string. */
+        _net_tcp_read_data = (nova_str){ .ptr = NULL, .len = 0 };
+    } else {
+        _net_tcp_read_data = *(nova_str*)(intptr_t)payload;
+    }
+    return (nova_int)_net_tcp_read_data.len;
+}
+nova_str tcp_stream_read_data(void) { return _net_tcp_read_data; }
+nova_unit tcp_stream_set_nodelay(NovaRt_TcpStream* s, nova_bool on) {
+    uv_tcp_nodelay(&s->handle, on ? 1 : 0);
+    return NOVA_UNIT;
+}
+nova_unit tcp_stream_set_keepalive(NovaRt_TcpStream* s, nova_bool on) {
+    uv_tcp_keepalive(&s->handle, on ? 1 : 0, 60);
+    return NOVA_UNIT;
+}
+nova_unit tcp_listener_set_reuse_address(NovaRt_TcpListener* lst, nova_bool on) {
+    (void)lst; (void)on;  /* libuv sets SO_REUSEADDR by default at bind */
     return NOVA_UNIT;
 }
 
@@ -1086,48 +1128,46 @@ nova_unit tcp_stream_close(nova_int s) {
  * Safe: Nova fibers are cooperative — no other fiber runs between
  * udp_socket_recv_from() return and the recv_data/recv_sender reads. */
 #if defined(_MSC_VER)
-  static __declspec(thread) nova_str _net_recv_data;
-  static __declspec(thread) nova_int _net_recv_sender;
+  static __declspec(thread) nova_str        _net_recv_data;
+  static __declspec(thread) NovaRt_SocketAddr* _net_recv_sender;
 #else
-  static __thread nova_str _net_recv_data;
-  static __thread nova_int _net_recv_sender;
+  static __thread nova_str        _net_recv_data;
+  static __thread NovaRt_SocketAddr* _net_recv_sender;
 #endif
 
-nova_int udp_socket_bind(nova_int addr) {
-    NovaRes_nova_int_nova_str* r = NovaRt_UdpSocket_static_bind((NovaRt_SocketAddr*)addr);
-    if (r->tag == NOVA_TAG_Result_Ok) return r->payload.Ok._0;
+NovaRt_UdpSocket* udp_socket_bind(NovaRt_SocketAddr* addr) {
+    NovaRes_nova_int_nova_str* r = NovaRt_UdpSocket_static_bind(addr);
+    if (r->tag == NOVA_TAG_Result_Ok) return (NovaRt_UdpSocket*)(intptr_t)r->payload.Ok._0;
     _net_store_err(r->payload.Err._0);
-    return -1;
+    return NULL;
 }
-nova_int udp_socket_send_to(nova_int s, nova_str data, nova_int addr) {
-    NovaRes_nova_int_nova_str* r = NovaRt_UdpSocket_method_send_to(
-        (NovaRt_UdpSocket*)s, data, (NovaRt_SocketAddr*)addr);
+nova_int udp_socket_send_to(NovaRt_UdpSocket* s, nova_str data, NovaRt_SocketAddr* addr) {
+    NovaRes_nova_int_nova_str* r = NovaRt_UdpSocket_method_send_to(s, data, addr);
     if (r->tag == NOVA_TAG_Result_Ok) return 0;
     _net_store_err(r->payload.Err._0);
     return -1;
 }
-nova_int udp_socket_recv_from(nova_int s, nova_int max) {
-    NovaRt_UdpSocket* sock = (NovaRt_UdpSocket*)s;
-    NovaRes_nova_int_nova_str* r = NovaRt_UdpSocket_method_recv_from(sock, max);
+nova_int udp_socket_recv_from(NovaRt_UdpSocket* s, nova_int max) {
+    NovaRes_nova_int_nova_str* r = NovaRt_UdpSocket_method_recv_from(s, max);
     if (r->tag != NOVA_TAG_Result_Ok) {
         _net_store_err(r->payload.Err._0);
         return -1;
     }
     _net_recv_data = *(nova_str*)(intptr_t)r->payload.Ok._0;
-    _net_recv_sender = sock->last_sender_valid
-        ? (nova_int)_nova_addr_from_storage(&sock->last_sender_storage)
-        : (nova_int)NovaRt_SocketAddr_static_loopback(0);
+    _net_recv_sender = s->last_sender_valid
+        ? _nova_addr_from_storage(&s->last_sender_storage)
+        : NovaRt_SocketAddr_static_loopback(0);
     return 0;
 }
-nova_str  udp_socket_recv_data(void)   { return _net_recv_data; }
-nova_int  udp_socket_recv_sender(void) { return _net_recv_sender; }
-uint16_t udp_socket_local_port(nova_int s) {
-    return NovaRt_UdpSocket_method_local_port((NovaRt_UdpSocket*)s);
+nova_str           udp_socket_recv_data(void)   { return _net_recv_data; }
+NovaRt_SocketAddr* udp_socket_recv_sender(void) { return _net_recv_sender; }
+uint16_t udp_socket_local_port(NovaRt_UdpSocket* s) {
+    return NovaRt_UdpSocket_method_local_port(s);
 }
-nova_int udp_socket_local_addr(nova_int s) {
-    return (nova_int)NovaRt_UdpSocket_method_local_addr((NovaRt_UdpSocket*)s);
+NovaRt_SocketAddr* udp_socket_local_addr(NovaRt_UdpSocket* s) {
+    return NovaRt_UdpSocket_method_local_addr(s);
 }
-nova_unit udp_socket_close(nova_int s) {
-    NovaRt_UdpSocket_method_close((NovaRt_UdpSocket*)s);
+nova_unit udp_socket_close(NovaRt_UdpSocket* s) {
+    NovaRt_UdpSocket_method_close(s);
     return NOVA_UNIT;
 }

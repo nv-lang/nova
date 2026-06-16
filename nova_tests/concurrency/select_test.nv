@@ -10,7 +10,7 @@
 
 module concurrency.select_test
 
-import std.time.duration as duration
+import std.time.duration
 
 // ================================================================
 // SECTION 1: single recv arm

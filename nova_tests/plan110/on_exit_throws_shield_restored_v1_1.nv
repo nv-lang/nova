@@ -23,7 +23,7 @@
 
 module plan110.on_exit_throws_shield_restored_v1_1
 
-import std.prelude.errors as errors
+import std.prelude.errors
 
 type InnerThrowing { ro id int }
 fn InnerThrowing.new(id int) -> InnerThrowing => { id }

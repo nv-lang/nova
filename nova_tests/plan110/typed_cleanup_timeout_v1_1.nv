@@ -16,7 +16,7 @@
 
 module plan110.typed_cleanup_timeout_v1_1
 
-import std.prelude.errors as errors
+import std.prelude.errors
 
 type Resource { ro id int }
 fn Resource.new(id int) -> Resource => { id }

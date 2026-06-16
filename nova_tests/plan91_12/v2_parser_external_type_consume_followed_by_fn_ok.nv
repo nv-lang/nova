@@ -1,39 +1,30 @@
-// Plan 91.12 V2 followup [M-91.12-parser-body-detect-heuristic] —
-// positive test для parser fix (2026-06-01).
+// EXPECT_COMPILE_ERROR E_EXTERNAL_TYPE_RETRACTED
 //
-// Раньше parser body-detect эвристика была overly aggressive: после
-// `external type X` любой следующий token (ident/LBracket/fn/Amp) на
-// next line treat'ился как newtype body → false-positive error
-// "external type cannot have a newtype-style body" даже если это
-// legitimate next module-level declaration.
+// D163 (`external type X consume`) fully retracted.
 //
-// Fix: parser теперь fix'ировал saw_newline_before_body перед
-// skip_newlines(); is_body_start триггерится ТОЛЬКО на same-line
-// (no newline separator) ident/LBracket/fn/Amp. После newline — это
-// next decl, parser продолжает нормально.
+// Previously this tested that `external type X consume` followed by fn/test/const
+// parses correctly. Now `external type X consume` is retracted — any declaration
+// gives E_EXTERNAL_TYPE_RETRACTED.
 //
-// Этот fixture demonstrates: `external type X consume` followed by
-// `fn`/`test`/etc на следующих строках compiles cleanly.
+// (Parser body-detect fix from [M-91.12-parser-body-detect-heuristic] remains valid
+//  and is tested implicitly: the error fires at type-check, not parser.)
 
 module plan91_12.v2_parser_external_type_consume_followed_by_fn_ok
 
 external type FileResource consume
 
-// fn после external type — parser теперь не treat'ит как body.
 fn helper() -> int => 42
 
 external type SocketResource consume
 
-// test после external type — same OK.
-test "parser accepts external type X consume followed by fn/test" {
+test "external type X consume is retracted" {
     assert(helper() == 42)
 }
 
 external type DatabaseHandle consume
 
-// const после external type — same.
 const ANSWER = 42
 
-test "parser accepts external type X consume followed by const" {
+test "parser accepts decls after external type but checker rejects it" {
     assert(ANSWER == 42)
 }

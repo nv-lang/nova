@@ -1,8 +1,8 @@
 // Plan 148 Ф.1 (D241) — positive: canonical `value priv` order accepted.
 //
-// Canonical type-modifier order is by scope, widest→narrowest:
-//   value (type-level representation) → priv (field-default visibility).
-// `value priv` is the one canonical syntax (A2 in the plan).
+// Canonical type-modifier order is ownership → representation → visibility:
+//   value (rank 1, type-level representation) → priv (rank 2, field-default visibility).
+// `value priv` remains canonical (consume absent, value < priv).
 module plan148.mo_canonical_value_priv_ok
 
 type Point value priv {

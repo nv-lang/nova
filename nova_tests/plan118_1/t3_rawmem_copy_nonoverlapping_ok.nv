@@ -4,7 +4,7 @@
 
 module plan118_1.t3_rawmem_copy_nonoverlapping_ok
 
-import std.runtime.raw_mem as raw_mem
+import std.runtime.raw_mem
 
 test "RawMem.copy_nonoverlapping copies bytes between distinct buffers" {
     ro src []u8 = [100, 101, 102, 103]

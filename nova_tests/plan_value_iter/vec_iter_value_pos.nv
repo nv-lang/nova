@@ -4,7 +4,7 @@
 // independent cursors, and that for-loops over Vec work without malloc.
 module plan_value_iter.vec_iter_value_pos
 
-import std.collections.vec_iter as vec_iter
+import std.collections.vec_iter
 
 test "VecIter copy by value — independent cursors" {
     ro v = Vec[int].of(1, 2, 3)

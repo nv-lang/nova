@@ -7,7 +7,7 @@
 
 module plan73.binding_cross_module_consume_neg
 
-import std.runtime.sync as sync
+import std.runtime.sync
 
 test "let X = mu.lock() (cross-module consume-type) → E_CONSUME_KEYWORD_MISSING" {
     mut mu = Mutex.new()

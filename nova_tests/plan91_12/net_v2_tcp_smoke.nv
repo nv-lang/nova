@@ -8,11 +8,11 @@
 
 module plan91_12.net_v2_tcp_smoke
 
-import std.net.{SocketAddr, TcpListener, real_tcp_net}
+import std.net.{SocketAddr, TcpListener, real_tcp_net, real_addr_net}
 
 test "V2 TcpListener bind returns ok" {
     supervised {
-        with TcpNet = real_tcp_net() {
+        with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
             ro bind_result = TcpListener.bind(SocketAddr.loopback(0))
             assert(bind_result.is_ok())
             mut lst = match bind_result { Ok(l) => l, Err(_) => panic("bind failed") }
@@ -24,7 +24,7 @@ test "V2 TcpListener bind returns ok" {
 
 test "V2 TcpListener.local_addr is_v4" {
     supervised {
-        with TcpNet = real_tcp_net() {
+        with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
             ro r = TcpListener.bind(SocketAddr.loopback(0))
             assert(r.is_ok())
             mut lst = match r { Ok(l) => l, Err(_) => panic("bind failed") }
@@ -37,7 +37,7 @@ test "V2 TcpListener.local_addr is_v4" {
 
 test "V2 TcpListener.bind on used port returns Err" {
     supervised {
-        with TcpNet = real_tcp_net() {
+        with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
             ro r = TcpListener.bind(SocketAddr.loopback(0))
             mut lst = match r { Ok(l) => l, Err(_) => panic("bind failed") }
             ro port = lst.local_port()

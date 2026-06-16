@@ -10,7 +10,7 @@
 
 module plan91_fe4.geometry_distance_and_angle
 
-import std.runtime.math as math
+import std.runtime.math
 
 test "Euclidean distance: sqrt(dx^2+dy^2) agrees with hypot within 1e-9" {
     // Two points P1=(1.0, 2.0), P2=(4.0, 6.0) → dx=3, dy=4 → dist=5.

@@ -9,7 +9,7 @@
 
 module syntax.step_by_cross_file
 
-import std.collections.range as range
+import std.collections.range
 
 test "step_by(2) every other via import std" {
     mut sum = 0

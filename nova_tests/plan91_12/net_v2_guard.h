@@ -1,38 +1,27 @@
-/* Plan 91.12: V2 net guard + literal-name FFI forward declarations.
+/* Plan 91.12: V2 net guard + literal-name FFI shims.
  *
- * Force-included BEFORE nova_rt/nova_rt.h via nova.toml [ffi] c_shims.
- *
- * Two jobs:
- *   1. Pull in worktree net.h FIRST so its include-guard (NOVA_RT_NET_H)
- *      fires and main repo net.h is skipped when nova_rt.h later tries
- *      to #include "net.h".  Worktree net.h has NovaRt_* (not Nova_*)
- *      struct names — no conflict with V2 codegen output.
- *   2. Define NOVA_NET_V2=1 so the remaining #ifndef NOVA_NET_V2 guard
- *      in main net.h also suppresses any V1 declarations that slip through
- *      (belt + suspenders).
- *
- * V2 value-record proxy structs (Nova_T { intptr_t handle; }) are defined
- * below so codegen-emitted `->handle` accesses compile correctly with the
- * handle-ABI types defined here instead of the uv-heavy V1 definitions. */
+ * Force-included BEFORE nova_rt.h via nova.toml [ffi] c_shims.
+ * nova_rt.h already includes net.h with V2 entry-points (post-merge),
+ * so this file only provides:
+ *   1. NOVA_NET_V2=1 signal (V2 algebraic-effect API in use).
+ *   2. Forward declarations for NovaValue_* proxy structs.
+ *   3. Macro aliases bridging codegen call-site names to definition names. */
 
 #pragma once
 
-/* Belt: force worktree net.h first — sets NOVA_RT_NET_H guard,
- * blocking main repo net.h later when nova_rt.h runs #include "net.h". */
-#include "D:/Sources/nv-lang/nova-p91-12/compiler-codegen/nova_rt/net.h"
-
-/* Suspenders: also define NOVA_NET_V2 to suppress any residual V1 decls. */
+/* V2 API signal — consumed by any code that still guards on this. */
 #ifndef NOVA_NET_V2
 #define NOVA_NET_V2 1
 #endif
 
 /* V2 net value-record proxy structs.
- * Layout: single intptr_t field `handle` = cast-to-int C pointer.
- * These replace the V1 uv-heavy structs from main net.h. */
-typedef struct Nova_SocketAddr  { intptr_t handle; } Nova_SocketAddr;
-typedef struct Nova_TcpListener { intptr_t handle; } Nova_TcpListener;
-typedef struct Nova_TcpStream   { intptr_t handle; } Nova_TcpStream;
-typedef struct Nova_UdpSocket   { intptr_t handle; } Nova_UdpSocket;
+ * Codegen emits NovaValue_<T> for value-records and defines them in the TU.
+ * We only need forward declarations here so that net.h entry-point signatures
+ * using void* (CSocketAddr etc.) compile before codegen defines the structs. */
+struct NovaValue_SocketAddr;
+struct NovaValue_TcpListener;
+struct NovaValue_TcpStream;
+struct NovaValue_UdpSocket;
 
 /* Alias Nova_T_static_Variant(data) → nova_make_T_Variant(data).
  * Codegen emits Nova_NetError_static_IoError/InvalidAddr calls but does

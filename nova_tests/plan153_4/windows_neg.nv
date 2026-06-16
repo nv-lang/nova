@@ -4,7 +4,7 @@
 // → runtime panic.
 module plan153_4.windows_neg
 
-import std.collections.vec_lazy as vec_lazy
+import std.collections.vec_lazy
 
 fn main() -> () {
     ro v = Vec[int].of(1, 2, 3)

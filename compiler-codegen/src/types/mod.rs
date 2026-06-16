@@ -203,7 +203,7 @@ fn check_module_impl(
                     let hint = if td.consume {
                         format!(
                             "[E_EXTERNAL_TYPE_RETRACTED] `external type {name} consume` (D163) retracted. \
-                             Use: `type {name} value consume {{ priv handle int }}` (D241 canonical order: value consume priv). \
+                             Use: `type {name} consume value {{ priv handle int }}` (D241 canonical order: consume value priv). \
                              Add cleanup method: `fn {name} consume @close() -> () {{ ... }}`.",
                             name = td.name
                         )
@@ -261,6 +261,28 @@ fn check_module_impl(
             // becomes the qualified namespace name (import vec_iter → vec_iter.Foo).
             // imported_modules already inserts path.last() unconditionally (Plan 81 Ф.2).
             // E_IMPORT_GLOB removed; only E_REEXPORT_GLOB (export form) remains.
+            //
+            // E_REDUNDANT_IMPORT_ALIAS: `import a.b.YYY as YYY` is forbidden —
+            // alias equals last segment, which is the default; just write `import a.b.YYY`.
+            if let Some(alias) = &imp.alias {
+                if imp.items.is_none() {
+                    if let Some(last) = imp.path.last() {
+                        if alias == last {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_REDUNDANT_IMPORT_ALIAS] `import {} as {}` — alias \
+                                     matches the last path segment, which is the default. \
+                                     Write `import {}` instead.",
+                                    imp.path.join("."),
+                                    alias,
+                                    imp.path.join("."),
+                                ),
+                                imp.span,
+                            ));
+                        }
+                    }
+                }
+            }
         }
     }
 

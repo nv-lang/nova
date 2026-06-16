@@ -5,7 +5,7 @@
 // exact-drop, reverse order, overlapping windows, empty / single / oversize n.
 module plan153_4.chunks_windows
 
-import std.collections.vec_lazy as vec_lazy
+import std.collections.vec_lazy
 
 // ── chunks: non-overlapping, last chunk may be short ───────────────────────
 

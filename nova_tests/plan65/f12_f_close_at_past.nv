@@ -3,7 +3,7 @@
 
 module plan65.f12_f_close_at_past
 
-import std.time.duration as duration
+import std.time.duration
 
 test "close_at past deadline — already-closed, immediate None" {
     supervised {
