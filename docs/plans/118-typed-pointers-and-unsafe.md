@@ -1,9 +1,9 @@
-<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+﻿<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 118 — Typed pointers (`*T` family) + unsafe model (core)
 
 > **Создан 2026-05-31. Ревизия 2026-06-01** (production-grade scope + декомпозиция
 > на Plan 118 семейство по итогам обсуждения).
-> **Статус:** 🟡 PARTIAL — V1 core landed (2026-06-01–09); `*T`/NPO/unsafe/volatile/right-binding ✅; deferred: addr_of! macros, cstr literal, AtomicPtr[T] generic, Debug fmt. 37/40 plan118 PASS.
+> **Статус:** 🟡 PARTIAL — V1 core + `addr_of` + `as_cstr` + `AtomicPtr` + `Debug` landed (2026-06-01–09); 37/40 plan118 PASS (3 pre-existing runtime). Deferred: `addr_of!` macro syntax, `cstr"..."` literal, `AtomicPtr[T]` generic refactor — текущие реализации через `int`-proxy или функции.
 > **Приоритет:** P1 — **language addition** для production-grade FFI и
 > низкоуровневых сценариев. Plan 115 V1 (`ptr` + tuple FFI + opaque handle
 > pattern) разблокировал базовый FFI; type-system не различает куда смотрит
