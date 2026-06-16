@@ -3,7 +3,7 @@
 
 > **Создан 2026-05-31. Ревизия 2026-06-01** (production-grade scope + декомпозиция
 > на Plan 118 семейство по итогам обсуждения).
-> **Статус:** 🆕 PLANNED (revised).
+> **Статус:** 🟡 PARTIAL — V1 core landed (2026-06-01–09); `*T`/NPO/unsafe/volatile/right-binding ✅; deferred: addr_of! macros, cstr literal, AtomicPtr[T] generic, Debug fmt. 37/40 plan118 PASS.
 > **Приоритет:** P1 — **language addition** для production-grade FFI и
 > низкоуровневых сценариев. Plan 115 V1 (`ptr` + tuple FFI + opaque handle
 > pattern) разблокировал базовый FFI; type-system не различает куда смотрит
