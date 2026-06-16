@@ -558,3 +558,12 @@
 - ~~**`[M-91.13-real-dns-integration-test]`**~~ ✅ **CLOSED 2026-06-16** — `net_v2_dns_real_slow.nv` добавлен (`_slow` suffix, `NOVA_SLOW_TESTS=1` opt-in); `assert(r.is_ok())` с реальным `localhost` resolver.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
+
+## Follow-up: Plan 104.4 (documentSymbol + workspaceSymbol + references)
+
+✅ **CLOSED 2026-06-16** — branch `plan-104-4`, commit `8b3e1903`; 86+15 PASS.
+
+Open V1 markers (gated on type-checker resolver API in Plan 104.2):
+- **`[M-104.4-refs-incremental-index]`** — references scan is full filesystem per-request (V2: incremental index). Гейт: type-checker integration (Plan 104.2).
+- **`[M-104.4-workspace-symbol-fuzzy]`** — workspace/symbol uses substring V1 (V2: fuzzy ranking / prefix scoring). Independent of type-checker.
+- **`[M-104.4-cross-file-method-nesting]`** — documentSymbol nests methods under type only within same file via receiver name match (V2: cross-file resolver needs Plan 104.2 symbol resolution API).
