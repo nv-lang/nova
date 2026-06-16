@@ -12747,3 +12747,39 @@ export fn Vec[T] mut @append[S AsSlice[T]](other S) -> @ {
 ### Реализовано в
 
 `std/prelude/protocols.nv` (protocol declaration), `std/collections/vec/access.nv` (`#impl(AsSlice[T])` на `Vec[T] @as_ptr`), `std/collections/vec/mutate.nv` (обновлённый `@append`). Тесты: `nova_tests/plan153_1/append_as_slice.nv` (6 кейсов: vec→vec, пустые случаи, self-append, slice view). D299 NEW.
+
+## D300 — Vec generic forward-decl: body-site scan + tuple-elem fwd-decl (Plan 168, 2026-06-17)
+
+**Проблема:** `Vec[u32]` в теле функции (локальная переменная, TurboFish-конструктор)
+генерировал C-тип `Nova_Vec____Nova_u32_p` (через generic stub path),
+тогда как в сигнатурах и полях тот же тип даёт `Nova_Vec____uint32_t`.
+Pre-pass `collect_array_elem_typerefs` не заходил в тела функций →
+`typedef struct Nova_Vec____Nova_u32_p Nova_Vec____Nova_u32_p;` отсутствовал в
+глобальном preamble → CC-FAIL «unknown type name» в tuple typedefs.
+
+**Два исправления:**
+
+1. **Body scan** (`emit_c.rs`): добавлены `collect_array_elem_typerefs_in_fnbody`,
+   `collect_array_elem_typerefs_in_block`, `collect_array_elem_typerefs_in_stmt`,
+   `collect_array_elem_typerefs_in_expr`. `scan_item` для `Item::Fn` теперь вызывает
+   `collect_array_elem_typerefs_in_fnbody(&f.body, acc)`.
+   При нахождении `ExprKind::TurboFish { base: Ident("Vec"), type_args }` — напрямую
+   добавляет type_args как Vec elem TypeRefs.
+
+2. **Tuple-elem fwd-decl** (`emit_c.rs`, строки ~3915): перед splice `MONO_TUPLE_TYPEDEFS`
+   проходит по всем mono'd tuple instances, и для каждого pointer-field вида `Nova_...__...*`
+   (mono'd instance = содержит `__`) добавляет `typedef struct X X;` в начало `tuple_decls`.
+   Это обеспечивает forward-decl для `Nova_Vec____Nova_u32_p` и любых аналогичных типов,
+   которые появляются в tuple field-types до своего полного struct-определения.
+
+**Результат:** `nova_tests/plan168` 2/2 PASS; `nova_tests/plan153_1` 8/9 PASS
+(1 pre-existing CODEGEN-FAIL `resize_with_free_fn_shadow` — не связан с fix'ом).
+
+**Инварианты:**
+- `Nova_Vec____<elem>` — полная struct-definition эмитируется в `generic_type_defs_buf`
+  (до fn-definitions, via marker splice)
+- `typedef struct Nova_Vec____<elem> Nova_Vec____<elem>;` — в `user_type_fwd_decls`
+  (до tuple typedefs, via marker splice)
+- Tuple typedef может ссылаться на `Nova_Vec____<elem>*` как incomplete pointer — OK по C99
+
+D300 NEW.

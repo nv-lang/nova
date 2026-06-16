@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 168 — Vec generic forward-decl missing for body-only instantiations (D300)
 
-> **Создан:** 2026-06-17. **Статус:** 📋 PLANNED. **P1**; ~0.5 dd, Sonnet 4.6.
+> **Создан:** 2026-06-17. **Статус:** ✅ CLOSED 2026-06-17. **P1**; Sonnet 4.6.
 >
 > **Симптом:** `CC-FAIL: unknown type name 'Nova_Vec____Nova_u32_p'` в `plan153_1/*`,
 > `plan118_6/t8_neg_addr_of_mut_removed`. Все 9 тестов plan153_1 падают на clang-стадии,

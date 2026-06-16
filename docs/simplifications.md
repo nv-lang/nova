@@ -37092,3 +37092,14 @@ Tests: 39 unit + 13 integration = 52 completion-specific + 167 total nova-lsp te
 - Проверка в check_type_decl() types/mod.rs
 - Мотивация: generic-параметры конвенционально однобуквенные → конфликт с type S
 - 37 тестовых файлов мигрировано, plan118_1_addr_chains: 12/12 PASS
+
+## Plan 168 — Vec generic forward-decl: body-site scan + tuple-elem fwd-decl (2026-06-17)
+- CC-FAIL fix: `Nova_Vec____Nova_u32_p` — `unknown type name` в tuple typedefs
+- Root cause: pre-pass `collect_array_elem_typerefs` не сканировал тела функций;
+  `Vec[u32]` в body (локальные переменные/TurboFish) получал тип `Nova_Vec____Nova_u32_p`
+  (через generic stub path при `current_type_subst={u32→Nova_u32*}`), без forward-decl в global scope
+- Fix 1: добавлены `collect_array_elem_typerefs_in_fnbody/block/stmt/expr` — body scan при pre-pass
+- Fix 2: перед splice `MONO_TUPLE_TYPEDEFS` добавляем `typedef struct X X;` для любого
+  `Nova_...__...*` pointer-elem в tuple fields, если он ещё не в `user_type_fwd_decls`
+- plan168: 2/2 PASS; plan153_1: 8/9 PASS (1 pre-existing CODEGEN-FAIL); plan118_6: 15/15 PASS
+- D300 spec NEW
