@@ -1,0 +1,12 @@
+module plan91_8b.pos_equal_dispatch
+
+type Tag { name str }
+fn Tag @equal(other Tag) -> bool => @name == other.name
+
+test "equal dispatch: == != via @equal" {
+    ro t1 = Tag { name: "foo" }
+    ro t2 = Tag { name: "foo" }
+    ro t3 = Tag { name: "bar" }
+    assert(t1 == t2)
+    assert(t1 != t3)
+}

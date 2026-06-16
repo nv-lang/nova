@@ -1,0 +1,10 @@
+module plan91_8b.pos_str_equal
+
+test "str == dispatches via @equal" {
+    ro a = "hello"
+    ro b = "hello"
+    ro c = "world"
+    assert(a == b)
+    assert(a != c)
+    assert("" == "")
+}

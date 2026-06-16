@@ -1,0 +1,12 @@
+module plan91_8b.pos_primitive_ops
+
+test "primitive operators unaffected" {
+    assert(1 < 2)
+    assert(3 > 2)
+    assert(2 <= 2)
+    assert(2 >= 2)
+    assert(1 == 1)
+    assert(1 != 2)
+    assert(true == true)
+    assert(false != true)
+}

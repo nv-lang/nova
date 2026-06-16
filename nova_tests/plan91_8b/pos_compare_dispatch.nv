@@ -1,0 +1,15 @@
+module plan91_8b.pos_compare_dispatch
+
+type Score { val int }
+fn Score @compare(other Score) -> int => @val - other.val
+
+test "compare dispatch: < > == via @compare" {
+    ro a = Score { val: 3 }
+    ro b = Score { val: 5 }
+    assert(a < b)
+    assert(b > a)
+    assert(a <= a)
+    assert(b >= b)
+    assert(a == a)
+    assert(a != b)
+}
