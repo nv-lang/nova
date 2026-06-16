@@ -551,32 +551,41 @@
 - ~~**`[M-91.12-async-dns]`**~~ ✅ **CLOSED 2026-06-16** — DnsNet раскомментирован (`std/net/effect.nv`), `real_dns_net()` реализован (`std/net/dns.nv`), C-side `dns_lookup`/`dns_addr_at` через `uv_getaddrinfo` + TLS (`compiler-codegen/nova_rt/net.c`). D295. `SocketAddr.lookup()` wrapper обходит vtable type-erasure. Тест: `net_v2_dns_smoke` 6/0 PASS. 21/0 plan91_12 PASS.
 - ~~**`[M-91.13-dns-iter-boxing]`**~~ ✅ **CLOSED 2026-06-16** — `is_generic_stub_c` fix (`&& !name.contains("____")`) + DnsNet V2 `[]SocketAddr` API. Vtable erasure устранена; `real_dns_net()` строит Vec через `dns_addr_at(0..count)`; `mock_dns_net()` возвращает `Ok([loopback(0)])`. 21/0 plan91_12 PASS.
 - ~~**`[M-91.13-real-dns-integration-test]`**~~ ✅ **CLOSED 2026-06-16** — `net_v2_dns_real_slow.nv` добавлен (`_slow` suffix, `NOVA_SLOW_TESTS=1` opt-in); `assert(r.is_ok())` с реальным `localhost` resolver.
+- ~~**`[M-net-udp-send-toctou]`**~~ ✅ **CLOSED 2026-06-17** — send_to TOCTOU: `recv_scope` выставлялся ПОСЛЕ `uv_udp_send`; на Windows loopback callback срабатывал синхронно → файбер паркуется без пробуждения. Fix: отдельные поля `send_scope`/`send_slot`; выставляются ДО `uv_udp_send`. Plan 166.
+- ~~**`[M-net-udp-split]`**~~ ✅ **CLOSED 2026-06-17** — UDP socket split: `UdpSendHalf` + `UdpRecvHalf` consume value types; `UdpSocket.split()` → два half; atomic refcount на C-хендл; оба half обязаны быть закрыты. D298 Plan 166. Тесты: `net_v2_udp_two_fiber_slow` + `net_v2_udp_split_slow` PASS.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
-- **`[M-91.14-tcp-split]`** — TcpStream consume делает невозможным concurrent read+write из двух файберов. Нужны `TcpReadHalf`/`TcpWriteHalf` по образцу UDP split (Plan 166 / D296). → Plan 91.14.
+- **`[M-91.14-tcp-split]`** — TcpStream consume делает невозможным concurrent read+write из двух файберов. Нужны `TcpReadHalf`/`TcpWriteHalf` по образцу UDP split (Plan 166 / D298). → Plan 91.14.
+- **`[M-91.12-split-halves]`** (TCP) — TcpReader/TcpWriter consume-split для concurrent r/w — OPEN, отличается от UDP split (Plan 166). → Plan 91.14.
 
-## Plan 167 — std/net API polish (followup компаративного ревью 2026-06-17)
+## Plan 91.15 — std/net API polish (followup компаративного ревью 2026-06-17)
 
 Сравнительный анализ Nova Net API vs Go/Rust/TS/Kotlin/Java выявил следующие пункты (источник: сессия 2026-06-17).
 
-**Справка о `Blocking`:** `Blocking` — builtin-капабилити языка (D50, 06-concurrency.md §D50). Нет `.nv`-объявления `type Blocking effect { ... }`. Синтаксис `blocking { ... }` — ключевое слово компилятора; в сигнатуре `fn foo() Blocking -> ...` означает "тело использует `blocking { }`". В Net API `Blocking` НЕ несёт семантику "паркует файбер" — паркуют сами libuv-callbacks через park/wake. `Blocking` в net-сигнатурах (`TcpNet Blocking`) технически избыточен, но документирует намерение. Возможно стоит пересмотреть — отдельный вопрос.
+**Контекст:** `blocking { }` и эффект `Blocking` в сигнатурах — **retracted** в Plan 113 (D172, 2026-05-29), заменены на `#blocking fn`. Оба в спеке отозваны, но парсер/компилятор ещё поддерживают для совместимости.
+
+### P0 — Удалить retracted фичу (blocking {} / Blocking)
+
+| Маркер | Суть | Приоритет |
+|---|---|---|
+| `[M-91.15-remove-blocking]` | Удалить `blocking { }` из компилятора и `Blocking` из сигнатур. **Компилятор:** убрать `ExprKind::Blocking`, `KwBlocking` (или превратить в ошибку), `blocking_body_active`, проверку `declared_effects.contains("Blocking")`, `"Blocking"` из `realtime_suspend_effect`. **std/net:** убрать `Blocking` из 6 сигнатур в tcp.nv и udp.nv, обновить комментарии в effect.nv. **Тесты:** удалить `nova_tests/negative_capability/blocking_*.nv` (4 файла), скорректировать `plan83_10/`, `plan100_4_2/defer_err_blocking_in_body.nv`. **NB:** `#blocking fn` (атрибут) остаётся — трогать не нужно. | P0 |
 
 ### P1 — Критические (до публичного релиза)
 
 | Маркер | Суть | Приоритет |
 |---|---|---|
-| `[M-167-write-all]` | Нет `TcpStream @write_all(data str) -> Result[(), NetError]`. `write()` возвращает `int` (bytes written) — TCP может записать частично. Каждый пользовательский код без цикла = скрытая потеря данных. `write_all` должен быть основным методом для большинства случаев. | P1 |
-| `[M-167-eof-semantics]` | `TcpStream @read()` возвращает `Ok("")` на EOF — неотличимо от успешного пустого чтения. Добавить `NetError.Eof` и возвращать `Err(NetError.Eof)` на graceful close. Аналог Go `io.EOF`. | P1 |
-| `[M-167-neterror-to-str]` | `NetError` не имеет `@to_str() -> str`. `IoError(str)` несёт строку, но достать без exhaustive match нельзя. Ошибка, которую нельзя напечатать = бесполезна в логах. | P1 |
-| `[M-167-host-str-rename]` | `SocketAddr @host_str()` — нестандартное имя (нет ни в одном языке). `_str` суффикс = тип протекает в имя метода. Переименовать в `@ip() -> str` (Rust: `.ip()`, Deno: `.hostname`). | P1 |
+| `[M-91.15-write-all]` | Нет `TcpStream @write_all(data str) -> Result[(), NetError]`. `write()` возвращает `int` (bytes written) — TCP может записать частично. Каждый пользовательский код без цикла = скрытая потеря данных. `write_all` должен быть основным методом для большинства случаев. | P1 |
+| `[M-91.15-eof-semantics]` | `TcpStream @read()` возвращает `Ok("")` на EOF — неотличимо от успешного пустого чтения. Добавить `NetError.Eof` и возвращать `Err(NetError.Eof)` на graceful close. Аналог Go `io.EOF`. | P1 |
+| `[M-91.15-neterror-to-str]` | `NetError` не имеет `@to_str() -> str`. `IoError(str)` несёт строку, но достать без exhaustive match нельзя. Ошибка, которую нельзя напечатать = бесполезна в логах. | P1 |
+| `[M-91.15-host-str-rename]` | `SocketAddr @host_str()` — нестандартное имя (нет ни в одном языке). `_str` суффикс = тип протекает в имя метода. Переименовать в `@ip() -> str` (Rust: `.ip()`, Deno: `.hostname`). | P1 |
 
 ### P2 — Важные дополнения
 
 | Маркер | Суть | Приоритет |
 |---|---|---|
-| `[M-167-permission-denied]` | Добавить `NetError.PermissionDenied` — EACCES при bind на порт <1024 без root. Сейчас падает в `IoError(str)`. | P2 |
-| `[M-167-connection-reset]` | Добавить `NetError.ConnectionReset` — TCP RST от peer. Отличается от `Closed` (локальное закрытие). Сейчас падает в `IoError(str)`. | P2 |
-| `[M-167-connect-timeout]` | `TcpStream.connect()` к недостижимому хосту блокирует ~2 мин. Если fiber cancellation через `supervised {}` это решает — нужен пример в доках. Если нет — добавить `connect_timeout(addr, ms int)`. | P2 |
+| `[M-91.15-permission-denied]` | Добавить `NetError.PermissionDenied` — EACCES при bind на порт <1024 без root. Сейчас падает в `IoError(str)`. | P2 |
+| `[M-91.15-connection-reset]` | Добавить `NetError.ConnectionReset` — TCP RST от peer. Отличается от `Closed` (локальное закрытие). Сейчас падает в `IoError(str)`. | P2 |
+| `[M-91.15-connect-timeout]` | `TcpStream.connect()` к недостижимому хосту блокирует ~2 мин. Если fiber cancellation через `supervised {}` это решает — нужен пример в доках. Если нет — добавить `connect_timeout(addr, ms int)`. | P2 |
 | `[M-167-read-bytes]` | `TcpStream @read(max int) -> Result[str, NetError]` блокирует реализацию бинарных протоколов (protobuf, TLS, HTTP/2). Добавить `@read_bytes(max int) -> Result[[]u8, NetError]`. Гейт: `[]u8` как полноценный тип в Nova. | P2 |
 | `[M-167-effect-prefix-consistency]` | В `TcpNet` effect смешаны два стиля: operation-first (`close_stream`, `close_listener`) и type-first (`listener_local_port`, `stream_local_port`). В `UdpNet` аналогично (`close_socket` vs `socket_local_port`). Стандартизировать на type-first везде: `stream_close`, `listener_close`, `socket_close`. | P2 |
 

@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.12 — UDP advanced patterns: port stability, send-only, fan-out.
+//
+// Tests:
+//   (1) local_port is stable across multiple send_to calls (single fiber)
+//   (2) Send-only pattern: socket used only for send_to, recv never called
+//   (3) Fan-out: one sender sends to two distinct receivers (concurrent fibers)
+//
+// Tagged _slow: real OS networking.
+//
+// Note: each socket is owned by exactly one fiber to avoid recv_scope TLS races.
+// The fan-out test gives each receiver its own socket (no sharing across fibers).
+
+module plan91_12.net_v2_udp_split_slow
+
+import std.net.{SocketAddr, UdpSocket, real_udp_net, real_addr_net}
+
+test "UDP local_port: stable across multiple send_to calls" {
+    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+        supervised {
+            spawn {
+                mut sock = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                    Ok(s) => s, Err(_) => panic("bind")
+                }
+                mut receiver = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                    Ok(s) => s, Err(_) => panic("recv bind")
+                }
+                ro port_before = sock.local_port()
+                ro r_port = receiver.local_port()
+                ro dest = SocketAddr.loopback(r_port)
+
+                // Send 3 times — port must not change.
+                assert(sock.send_to("a", dest).is_ok())
+                assert(sock.local_port() == port_before)
+                assert(sock.send_to("b", dest).is_ok())
+                assert(sock.local_port() == port_before)
+                assert(sock.send_to("c", dest).is_ok())
+                assert(sock.local_port() == port_before)
+
+                // Drain receiver.
+                ro r1 = receiver.recv_from(16)
+                assert(r1.is_ok())
+                ro r2 = receiver.recv_from(16)
+                assert(r2.is_ok())
+                ro r3 = receiver.recv_from(16)
+                assert(r3.is_ok())
+
+                sock.close()
+                receiver.close()
+            }
+        }
+    }
+}
+
+test "UDP send-only pattern: socket never calls recv_from" {
+    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+        supervised {
+            spawn {
+                mut sink = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                    Ok(s) => s, Err(_) => panic("sink bind")
+                }
+                mut sender = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                    Ok(s) => s, Err(_) => panic("sender bind")
+                }
+                ro sink_port = sink.local_port()
+
+                // Send-only: sender never calls recv_from.
+                assert(sender.send_to("one", SocketAddr.loopback(sink_port)).is_ok())
+                assert(sender.send_to("two", SocketAddr.loopback(sink_port)).is_ok())
+                assert(sender.send_to("three", SocketAddr.loopback(sink_port)).is_ok())
+                sender.close()
+
+                // Drain sink to verify all 3 arrived.
+                ro r1 = sink.recv_from(16)
+                assert(r1.is_ok())
+                ro (msg1, _) = match r1 { Ok(t) => t, Err(_) => panic("r1") }
+                assert(msg1 == "one")
+
+                ro r2 = sink.recv_from(16)
+                assert(r2.is_ok())
+                ro (msg2, _) = match r2 { Ok(t) => t, Err(_) => panic("r2") }
+                assert(msg2 == "two")
+
+                ro r3 = sink.recv_from(16)
+                assert(r3.is_ok())
+                ro (msg3, _) = match r3 { Ok(t) => t, Err(_) => panic("r3") }
+                assert(msg3 == "three")
+
+                sink.close()
+            }
+        }
+    }
+}
+
+test "UDP fan-out: sender → two receivers in separate fibers" {
+    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+        mut recv_a = match UdpSocket.bind(SocketAddr.loopback(0)) {
+            Ok(s) => s, Err(_) => panic("recv_a bind")
+        }
+        mut recv_b = match UdpSocket.bind(SocketAddr.loopback(0)) {
+            Ok(s) => s, Err(_) => panic("recv_b bind")
+        }
+        mut sender = match UdpSocket.bind(SocketAddr.loopback(0)) {
+            Ok(s) => s, Err(_) => panic("sender bind")
+        }
+        ro port_a = recv_a.local_port()
+        ro port_b = recv_b.local_port()
+
+        supervised {
+            spawn {
+                // Fiber A: owns recv_a, parks waiting for "to_a".
+                ro rr = recv_a.recv_from(512)
+                assert(rr.is_ok())
+                ro (data, _) = match rr { Ok(t) => t, Err(_) => panic("recv_a") }
+                assert(data == "to_a")
+                recv_a.close()
+            }
+
+            spawn {
+                // Fiber B: owns recv_b, parks waiting for "to_b".
+                ro rr = recv_b.recv_from(512)
+                assert(rr.is_ok())
+                ro (data, _) = match rr { Ok(t) => t, Err(_) => panic("recv_b") }
+                assert(data == "to_b")
+                recv_b.close()
+            }
+
+            spawn {
+                // Sender: fan-out — sends to both receivers.
+                assert(sender.send_to("to_a", SocketAddr.loopback(port_a)).is_ok())
+                assert(sender.send_to("to_b", SocketAddr.loopback(port_b)).is_ok())
+                sender.close()
+            }
+        }
+    }
+}

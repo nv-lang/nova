@@ -5925,3 +5925,74 @@ Vec-array-арме (line 5850) и Option-арме. Result-арм был един
 |---|---|
 | [M-91.13-dns-iter-boxing] | ✅ CLOSED 2026-06-16 — is_generic_stub_c fix + DnsNet V2 []SocketAddr |
 | [M-91.13-real-dns-integration-test] | ✅ CLOSED 2026-06-16 — net_v2_dns_real_slow.nv (_slow, opt-in) |
+
+## D298 — UDP Socket Split: `UdpSendHalf` + `UdpRecvHalf` (Plan 166, 2026-06-17)
+
+**Source:** Plan 166, 2026-06-17. **Status:** ✅ ACTIVE.
+**Связь:** [D291](04-effects.md#d291), [D292](02-types.md#d292), [Plan 91.12](../../docs/plans/91.12-net-effect-and-hardening.md), [Plan 166](../../docs/plans/plan166-udp-split.md).
+
+### Мотивация
+
+`UdpSocket` требовал все операции в одном файбере — `send_to` и `recv_from`
+делили одни поля `recv_scope`/`recv_slot`. Это исключало паттерн «сервер-loop»:
+один файбер принимает датаграммы, другой одновременно отправляет ответы.
+
+Кроме того, в `send_to` существовал TOCTOU-баг: `recv_scope` выставлялся
+ПОСЛЕ вызова `uv_udp_send`. На Windows loopback callback'может сработать
+синхронно до выставления `recv_scope` → файбер паркуется без пробуждения (TIMEOUT).
+
+### Часть 1: TOCTOU-фикс (`send_to`)
+
+- Добавлены отдельные поля `send_scope` + `send_slot` в `NovaRt_UdpSocket`
+  (параллельно `recv_scope`/`recv_slot`)
+- `send_to` выставляет `send_scope`/`send_slot` **до** вызова `uv_udp_send`
+- Добавлен `_udp_send_stop_cb` для корректной поддержки cancellation
+- `_udp_send_cb` использует `send_scope`/`send_slot` (не `recv_scope`/`recv_slot`)
+
+### Часть 2: UDP Socket Split
+
+```nova
+export type UdpSendHalf consume value { priv handle CUdpSocket }
+export type UdpRecvHalf consume value { priv handle CUdpSocket }
+
+export fn UdpSocket consume @split() -> (UdpSendHalf, UdpRecvHalf)
+
+// UdpSendHalf: только операции отправки
+export fn UdpSendHalf mut @send_to(data str, addr SocketAddr) UdpNet Blocking -> Result[int, NetError]
+export fn UdpSendHalf consume @close() UdpNet -> ()
+
+// UdpRecvHalf: только операции приёма
+export fn UdpRecvHalf mut @recv_from(max int) UdpNet Blocking -> Result[(str, SocketAddr), NetError]
+export fn UdpRecvHalf mut @local_port() UdpNet -> u16
+export fn UdpRecvHalf mut @local_addr() UdpNet -> SocketAddr
+export fn UdpRecvHalf consume @close() UdpNet -> ()
+```
+
+### Контракт конкурентности
+
+- `UdpSendHalf` использует `send_scope`/`send_slot` — безопасно с concurrent recv
+- `UdpRecvHalf` использует `recv_scope`/`recv_slot` — безопасно с concurrent send
+- Один файбер на half — внутри каждого half операции последовательны
+- Два файбера могут одновременно использовать send_half и recv_half
+
+### Семантика владения / close
+
+- `UdpSocket.split()` потребляет сокет и возвращает два consume-значения
+- Оба half ДОЛЖНЫ быть закрыты (enforced через consume type system компилятора)
+- Close использует atomic refcount: последний close фактически закрывает OS-сокет
+- `UdpSocket` без split: refcount=1, `close()` работает как прежде
+
+### Три новых операции `UdpNet` effect
+
+```nova
+split_socket(handle CUdpSocket) -> (CUdpSocket, CUdpSocket)
+close_send_half(handle CUdpSocket) -> ()
+close_recv_half(handle CUdpSocket) -> ()
+```
+
+### Негативные случаи (проверяются компилятором)
+
+- Использование `UdpSocket` после `split()` → consume violation (moved value)
+- `UdpSendHalf.recv_from` → type error (нет такого метода)
+- `UdpRecvHalf.send_to` → type error (нет такого метода)
+- Незакрытый half → consume violation (consume value must be used)

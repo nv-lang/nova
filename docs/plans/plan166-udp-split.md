@@ -1,0 +1,140 @@
+# Plan 166 — net.c send_to TOCTOU fix + UDP socket split
+
+**Status:** ✅ CLOSED 2026-06-17  
+**D-блоки:** D298  
+**Зависит от:** Plan 91.12 ✅ (std/net V2 algebraic effects, UdpSocket)
+
+---
+
+## Мотивация
+
+После Plan 91.12 UDP-сокеты работали только в однофайберном режиме — `send_to` и
+`recv_from` делили поля `recv_scope`/`recv_slot` в `NovaRt_UdpSocket`. Это
+исключало паттерн «сервер-loop»: один файбер принимает датаграммы, другой
+одновременно отправляет ответы.
+
+Кроме того, тест `net_v2_udp_two_fiber_slow` завершался TIMEOUT на 100 992мс.
+Расследование вскрыло TOCTOU-баг в `NovaRt_UdpSocket_method_send_to`:
+поле `recv_scope` выставлялось **после** вызова `uv_udp_send`. На Windows loopback
+callback может сработать синхронно — до выставления `recv_scope` → wake пропускается
+→ файбер паркуется навсегда.
+
+---
+
+## Ф.1 — TOCTOU fix (send_to)
+
+**Файл:** `compiler-codegen/nova_rt/net.c`
+
+**Проблема.** `NovaRt_UdpSocket_method_send_to` сохранял `scope`/`slot` в
+`recv_scope`/`recv_slot` ПОСЛЕ вызова `uv_udp_send`. `_udp_send_cb` использовал
+те же `recv_scope`/`recv_slot` — конфликт с параллельным `recv_from`.
+
+**Исправление:**
+
+1. Добавлены отдельные поля `send_scope`/`send_slot` в `NovaRt_UdpSocket`
+   (параллельно `recv_scope`/`recv_slot`).
+2. `send_to` захватывает `scope`/`slot` в `send_scope`/`send_slot` **до**
+   вызова `uv_udp_send`.
+3. Добавлен `nova_sched_register_pending` для поддержки cancellation.
+4. `_udp_send_cb` использует `send_scope`/`send_slot`.
+5. Добавлен `_udp_send_stop_cb` для корректной отмены send_to.
+
+**Acceptance criteria:**
+
+- A166.1.1: `net_v2_udp_two_fiber_slow` завершается без TIMEOUT.
+- A166.1.2: Однофайберный `send_to` работает как прежде.
+- A166.1.3: Cancellation send_to через `_udp_send_stop_cb` не вызывает crash.
+
+---
+
+## Ф.2 — UDP Socket Split
+
+**Файлы:** `std/net/udp.nv`, `std/net/effect.nv`, `std/net/mock.nv`, `compiler-codegen/nova_rt/net.c`, `compiler-codegen/nova_rt/net.h`
+
+### Новые типы (`std/net/udp.nv`)
+
+```nova
+export type UdpSendHalf consume value { priv handle CUdpSocket }
+export type UdpRecvHalf consume value { priv handle CUdpSocket }
+```
+
+### Новый метод (`UdpSocket.split`)
+
+```nova
+export fn UdpSocket consume @split() -> (UdpSendHalf, UdpRecvHalf)
+```
+
+Потребляет сокет, возвращает два consume-значения. Оба обязаны быть закрыты.
+
+### Методы UdpSendHalf
+
+```nova
+export fn UdpSendHalf mut @send_to(data str, addr SocketAddr) UdpNet Blocking -> Result[int, NetError]
+export fn UdpSendHalf consume @close() UdpNet -> ()
+```
+
+### Методы UdpRecvHalf
+
+```nova
+export fn UdpRecvHalf mut @recv_from(max int) UdpNet Blocking -> Result[(str, SocketAddr), NetError]
+export fn UdpRecvHalf mut @local_port() UdpNet -> u16
+export fn UdpRecvHalf mut @local_addr() UdpNet -> SocketAddr
+export fn UdpRecvHalf consume @close() UdpNet -> ()
+```
+
+### Три новых операции `UdpNet` effect (`std/net/effect.nv`)
+
+```nova
+split_socket(handle CUdpSocket) -> (CUdpSocket, CUdpSocket)
+close_send_half(handle CUdpSocket) -> ()
+close_recv_half(handle CUdpSocket) -> ()
+```
+
+### Atomic refcount (`compiler-codegen/nova_rt/net.c`)
+
+Поле `volatile int32_t send_refcount` добавлено в `NovaRt_UdpSocket`:
+
+- `UdpSocket` без split: `refcount=1`, `close()` работает как прежде.
+- После `split()`: `refcount=2`; каждый `close_send_half`/`close_recv_half`
+  декрементирует; при `refcount==0` закрывается OS-сокет.
+
+C-функции: `split`, `send_half_close`, `recv_half_close`, `send_half_send_to`.
+
+### mock.nv
+
+`mock_udp_net()` обновлён со stub-реализациями для трёх новых операций
+(`split_socket`, `close_send_half`, `close_recv_half`).
+
+**Acceptance criteria:**
+
+- A166.2.1: `UdpSocket.split()` принимается checker'ом; после split — нельзя использовать исходный сокет.
+- A166.2.2: `UdpSendHalf` и `UdpRecvHalf` могут использоваться из двух разных файберов одновременно.
+- A166.2.3: Оба half должны быть закрыты — незакрытый half даёт consume violation.
+- A166.2.4: `net_v2_udp_split_slow` проходит.
+- A166.2.5: Стандартный `UdpSocket` без split работает как прежде.
+
+---
+
+## Тесты
+
+| Тест | Директория | Статус |
+|---|---|---|
+| `net_v2_udp_two_fiber_slow` | `nova_tests/plan91_12/` | ✅ PASS |
+| `net_v2_udp_split_slow` | `nova_tests/plan91_12/` | ✅ PASS |
+| Прочие `plan91_12` | `nova_tests/plan91_12/` | ✅ 21/21 PASS (без регрессий) |
+
+---
+
+## Spec
+
+**D298** — добавлен в `spec/decisions/04-effects.md`:
+UDP Socket Split: UdpSendHalf + UdpRecvHalf consume value types + TOCTOU fix.
+
+---
+
+## Followups
+
+| Маркер | Описание | Приоритет |
+|---|---|---|
+| `[M-91.14-tcp-split]` | TcpReadHalf/TcpWriteHalf — аналог UDP split для TcpStream | P2 open → Plan 91.14 |
+| `[M-91.12-double-close-static]` | Double-close через effect-dispatch не ловится checker'ом для mut-binding | P3 open |
