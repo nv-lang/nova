@@ -5,90 +5,90 @@ module plan153_2.terminators
 import std.collections.vec_lazy
 
 test "collect drains into a Vec" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     assert(v.lazy().collect() == [1, 2, 3])
 }
 
 test "fold threads an accumulator" {
-    ro v = Vec[int].from([1, 2, 3, 4])
+    ro v = Vec[int].of(1, 2, 3, 4)
     assert(v.lazy().fold(0, |acc, x| acc + x) == 10)
     assert(v.lazy().fold(1, |acc, x| acc * x) == 24)
 }
 
 test "fold can change the accumulator type (int -> str)" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     ro joined = v.lazy().fold("", |acc, x| acc + str.from(x))
     assert(joined == "123")
 }
 
 test "reduce without seed; None on empty" {
-    ro v = Vec[int].from([3, 1, 4, 1, 5])
+    ro v = Vec[int].of(3, 1, 4, 1, 5)
     assert(v.lazy().reduce(|a, b| a + b) == Some(14))
-    ro e = Vec[int].from([])
+    ro e = Vec[int].new()
     assert(e.lazy().reduce(|a, b| a + b) == None)
 }
 
 test "count drains and counts" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     assert(v.lazy().count() == 5)
-    assert(Vec[int].from([]).lazy().count() == 0)
+    assert(Vec[int].new().lazy().count() == 0)
 }
 
 test "count after filter counts survivors only" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     assert(v.lazy().filter(|x| x % 2 == 0).count() == 3)
 }
 
 test "sum adds from the zero seed" {
-    ro v = Vec[int].from([1, 2, 3, 4])
+    ro v = Vec[int].of(1, 2, 3, 4)
     assert(v.lazy().sum(0) == 10)
-    assert(Vec[int].from([]).lazy().sum(0) == 0)
+    assert(Vec[int].new().lazy().sum(0) == 0)
 }
 
 test "any short-circuits on first match" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     assert(v.lazy().any(|x| x > 2))
     assert(!v.lazy().any(|x| x > 10))
-    assert(!Vec[int].from([]).lazy().any(|x| x > 0))
+    assert(!Vec[int].new().lazy().any(|x| x > 0))
 }
 
 test "all is vacuously true on empty, false on first miss" {
-    ro v = Vec[int].from([2, 4, 6])
+    ro v = Vec[int].of(2, 4, 6)
     assert(v.lazy().all(|x| x % 2 == 0))
     assert(!v.lazy().all(|x| x > 2))
-    assert(Vec[int].from([]).lazy().all(|x| x > 0))
+    assert(Vec[int].new().lazy().all(|x| x > 0))
 }
 
 test "find returns first match or None" {
-    ro v = Vec[int].from([1, 2, 3, 4])
+    ro v = Vec[int].of(1, 2, 3, 4)
     assert(v.lazy().find(|x| x > 2) == Some(3))
     assert(v.lazy().find(|x| x > 100) == None)
 }
 
 test "for_each runs the side effect on every element" {
-    ro v = Vec[int].from([1, 2, 3, 4])
+    ro v = Vec[int].of(1, 2, 3, 4)
     mut total = 0
     v.lazy().for_each(|x| { total += x })
     assert(total == 10)
 }
 
 test "min / max over the element's own Compare" {
-    ro v = Vec[int].from([3, 1, 4, 1, 5, 9, 2, 6])
+    ro v = Vec[int].of(3, 1, 4, 1, 5, 9, 2, 6)
     assert(v.lazy().min() == Some(1))
     assert(v.lazy().max() == Some(9))
-    assert(Vec[int].from([]).lazy().min() == None)
-    assert(Vec[int].from([]).lazy().max() == None)
+    assert(Vec[int].new().lazy().min() == None)
+    assert(Vec[int].new().lazy().max() == None)
 }
 
 test "nth returns the 0-based n-th element" {
-    ro v = Vec[int].from([10, 20, 30, 40])
+    ro v = Vec[int].of(10, 20, 30, 40)
     assert(v.lazy().nth(0) == Some(10))
     assert(v.lazy().nth(2) == Some(30))
     assert(v.lazy().nth(4) == None)
 }
 
 test "last returns the final element or None" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     assert(v.lazy().last() == Some(3))
-    assert(Vec[int].from([]).lazy().last() == None)
+    assert(Vec[int].new().lazy().last() == None)
 }

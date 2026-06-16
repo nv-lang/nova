@@ -3576,6 +3576,7 @@ for x in it { ... }                  // it.iter() → self → next() (trivial)
   range-выражение в существующем синтаксисе for-loop.
 - [08-runtime.md → D26](08-runtime.md#d26) — `Iter[T]`, `Range`,
   `RangeIter` в prelude.
+- [02-types.md → D282](02-types.md#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) — blanket methods на `Next[T]` implementors: `fn[I Next[T]] I @m` диспетчируется на любой `C` impl `Next[T]`; ≤1 impl инвариант (D282 §4). Cross-ref: D241+D242 (Plan 161 Ф.4).
 
 ### Открытые вопросы
 - **Reverse range** (`5..0` или `(0..5).reverse()`) — что значит
@@ -9901,7 +9902,7 @@ Slice-операции (разбиение, префикс/суффикс, whole
 | `@last_n(n)` | `-> Self` | **CLAMP** (как `first_n`) |
 | `@as_slice()` | `-> Self` | ro whole-view (`Vec`-side аналог `str.as_bytes()`) |
 | `mut @as_slice()` | `-> mut Self` | write-through whole-view (recv-mut overload) |
-| `@chunks`/`@chunks_exact`/`@rchunks`/`@windows` | LAZY iterator | DEFERRED (`[M-153.4-chunks-windows-lazy]`, gated Plan 153.2) |
+| `@chunks(n)`/`@chunks_exact(n)`/`@rchunks(n)`/`@windows(n)` | `-> BoxIter[Self]` (LAZY, yield `[]T`-view'ы) | `requires n > 0`; в `std/collections/vec_lazy.nv` (Plan 153.4-B, ✅ IMPLEMENTED) |
 
 ### Семантика
 
@@ -9929,11 +9930,13 @@ Slice-операции (разбиение, префикс/суффикс, whole
   уже выражают slice; named slice-методы — лишь эргономика поверх той же модели.
   Отдельный `Slice[T]` потребовал бы borrow-lifetime инфраструктуры, которой в
   Nova нет и не нужно (detach-on-resize заменяет borrow-checker).
-- **Eager без внешней аллокации сейчас, lazy chunks/windows — позже.**
+- **Eager без внешней аллокации для view-заголовков, lazy для chunks/windows.**
   `split_at`/`first_n`/… возвращают view'ы БЕЗ аллокации (просто заголовки), их
-  можно отдать eager. `chunks`/`windows` в eager-форме аллоцировали бы
-  `[][]T`-Vec — это расходится с ленивым каноном (Q-iterator-laziness), поэтому
-  они ленивые и gated на инфру Plan 153.2.
+  отдаём eager. `chunks`/`windows` в eager-форме аллоцировали бы `[][]T`-Vec — это
+  расходится с ленивым каноном (Q-iterator-laziness), поэтому они **ленивые**
+  итераторы `-> BoxIter[Self]` поверх инфры Plan 153.2 (Plan 153.4-B, реализованы
+  в `std/collections/vec_lazy.nv`): `collect()` материализует `[][]T` только по
+  требованию, `chunks(n).map/fold/count/for_each` — без внешней аллокации вовсе.
 
 ### Что отвергнуто
 
@@ -9942,7 +9945,7 @@ Slice-операции (разбиение, префикс/суффикс, whole
 - **`as_mut_slice` как отдельное имя** — мут-view = receiver-mut overload `@as_slice`
   (D247/Plan 135), одно имя, диспатч по mut-получателю.
 - **Eager `chunks`/`windows` → `[][]T`** — аллоцировал бы внешний Vec, расходится
-  с ленивым каноном; отложены ленивыми (`[M-153.4-chunks-windows-lazy]`).
+  с ленивым каноном; реализованы ленивыми `-> BoxIter[Self]` (Plan 153.4-B).
 
 ### Связь
 
@@ -9950,11 +9953,14 @@ Slice-операции (разбиение, префикс/суффикс, whole
 - D239 — `[]T ≡ Vec[T]` (нет отдельного slice-типа)
 - D247 / Plan 135 — accessor-конвенция: мут-вариант = receiver-mut overload (`mut @as_ptr`)
 - Plan 96 — D-single-type (`[]T`-view того же типа) + D-cap-len + detach-on-resize
-- Plan 153.4 — реализация (`std/collections/vec/views.nv`)
-- `[M-153.4-chunks-windows-lazy]` (backlog) — ленивые chunks/windows, gated Plan 153.2
+- Plan 153.4-A — eager view-заголовки (`std/collections/vec/views.nv`)
+- Plan 153.4-B — ленивые `chunks`/`chunks_exact`/`rchunks`/`windows` `-> BoxIter[Self]`
+  (`std/collections/vec_lazy.nv`, поверх Plan 153.2); `[M-153.4-chunks-windows-lazy]` ✅ CLOSED
+- D260 / Plan 153.2 — `BoxIter[T]` ленивая итератор-инфра (база для chunks/windows)
 
-Added: 2026-06-14  Status: IMPLEMENTED 2026-06-14 (Plan 153.4-A; eager-views в
-`std/collections/vec/views.nv`; chunks/windows DEFERRED `[M-153.4-chunks-windows-lazy]`)
+Added: 2026-06-14  Status: ✅ IMPLEMENTED ЦЕЛИКОМ (Plan 153.4-A eager-views
+`std/collections/vec/views.nv`, 2026-06-14; Plan 153.4-B lazy chunks/chunks_exact/
+rchunks/windows `std/collections/vec_lazy.nv`, 2026-06-15)
 
 ---
 

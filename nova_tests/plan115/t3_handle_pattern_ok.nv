@@ -13,7 +13,7 @@ type SqHandle(*())
 type PngHandle(*())
 type CurlHandle(*())
 
-external fn p115_int_to_ptr(value int) -> *()
+extern "nova" fn p115_int_to_ptr(value int) -> *()
 
 test "tuple newtype — constructor + .0 destructure" {
     ro raw = p115_int_to_ptr(42)

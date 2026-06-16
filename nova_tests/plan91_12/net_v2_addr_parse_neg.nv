@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.12 Ф.7 — negative: SocketAddr.from_str rejects malformed inputs.
+//
+// Acceptance A-addr-neg-1: invalid host:port → Err(NetError.InvalidAddr)
+// Acceptance A-addr-neg-2: port out of range → Err(NetError.InvalidPort)
+
+module plan91_12.net_v2_addr_parse_neg
+
+import std.net.{SocketAddr, NetError, real_addr_net}
+
+test "from_str: missing port → Err(InvalidAddr)" {
+    with AddrNet = real_addr_net() {
+        ro r = SocketAddr.from_str("127.0.0.1")
+        assert(r.is_err())
+        match r {
+            Err(NetError.InvalidAddr(_)) => {}
+            _ => assert(false)
+        }
+    }
+}
+
+test "from_str: empty string → Err" {
+    with AddrNet = real_addr_net() {
+        ro r = SocketAddr.from_str("")
+        assert(r.is_err())
+    }
+}
+
+test "from_str: port 0 → Err(InvalidPort)" {
+    with AddrNet = real_addr_net() {
+        ro r = SocketAddr.from_str("127.0.0.1:0")
+        assert(r.is_err())
+        match r {
+            Err(NetError.InvalidPort) => {}
+            _ => assert(false)
+        }
+    }
+}
+
+test "from_str: port 99999 → Err(InvalidPort)" {
+    with AddrNet = real_addr_net() {
+        ro r = SocketAddr.from_str("127.0.0.1:99999")
+        assert(r.is_err())
+        match r {
+            Err(NetError.InvalidPort) => {}
+            _ => assert(false)
+        }
+    }
+}
+
+test "from_str: valid addr → Ok" {
+    with AddrNet = real_addr_net() {
+        ro r = SocketAddr.from_str("127.0.0.1:8080")
+        assert(r.is_ok())
+        ro addr = match r { Ok(a) => a, Err(_) => panic("unexpected err") }
+        assert(addr.port() == 8080)
+        assert(addr.is_v4())
+    }
+}

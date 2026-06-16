@@ -1,17 +1,16 @@
-// Plan 100.5 (D163): `external type X consume` is now ALLOWED.
+// EXPECT_COMPILE_ERROR E_EXTERNAL_TYPE_RETRACTED
 //
-// Previously rejected in Plan 100.1 because opaque types were incompatible
-// with field-aware consume flow analysis. Plan 100.5 (D163) introduces
-// opaque consume types as an FFI mechanism — the `_nv_handle` field is
-// synthetic, and consume tracking is done at the type level (not field level).
+// D163 (`external type X consume`) fully retracted.
 //
-// This test verifies that the parser and type-checker accept the declaration.
+// Originally Plan 100.1 rejected `external type X consume` as invalid.
+// Plan 100.5 (D163) then allowed it as an FFI opaque consume-type mechanism.
+// Now D163 is retracted: `external type X consume` gives E_EXTERNAL_TYPE_RETRACTED.
+// Migration: `type X value { priv handle int }` + consume @close().
 
 module parser.parser_err_external_consume
 
-// ✅ external + consume is valid under Plan 100.5 (D163).
 external type OpaqueHandle consume
 
-test "external consume — now allowed under D163" {
-    // Declaration accepted — no parse or type-check error.
+test "external type X consume is retracted (E_EXTERNAL_TYPE_RETRACTED)" {
+    // Declaration rejected — type-check error fires before this executes.
 }

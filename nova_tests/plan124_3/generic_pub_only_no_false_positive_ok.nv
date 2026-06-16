@@ -14,7 +14,7 @@ export type Holder[T] {
 export fn Holder[T].new(v T, n int) -> Holder[T] =>
     { value: v, count: n }
 
-// External fn — accesses public fields в Member position.
+// extern "nova" fn — accesses public fields в Member position.
 fn show_count(h Holder[int]) -> int =>
     h.count
 

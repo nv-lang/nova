@@ -1081,7 +1081,37 @@ pub fn type_size_or_align_resolved(
     is_align: bool,
     type_decls: &HashMap<String, crate::ast::TypeDecl>,
 ) -> Option<i64> {
+    type_size_or_align_resolved_d(t, is_align, type_decls, 0)
+}
+
+/// Recursion-depth budget for the type-SIZE/ALIGN walk.  The walk is BOXING-
+/// aware (heap user types short-circuit to pointer-size, see below), so a
+/// VALID recursive heap type (`type H { t Tree }` with `Tree` a heap sum) is
+/// already finite.  This budget only fires on an INVALID *value* self-cycle
+/// (`type N value { next N }`), which carries no pointer indirection and is
+/// genuinely infinite — there the walk bails to `None` instead of blowing the
+/// stack.  `None` is handled gracefully by every caller (size_of/align_of
+/// resolution and the gc cross-checks), so the checker never crashes.
+/// Mirrors the const-fn evaluator's `MAX_EVAL_DEPTH` defensive pattern.
+const MAX_TYPE_SIZE_DEPTH: usize = 128;
+
+/// Internal depth-threaded core of [`type_size_or_align_resolved`].  The public
+/// fn calls this with `depth == 0`; every recursive descent (Tuple/FixedArray/
+/// field/variant/Newtype/Alias/Mut/Unsafe/Readonly) threads `depth + 1`.  When
+/// `depth` exceeds [`MAX_TYPE_SIZE_DEPTH`] the walk returns `None` (see budget
+/// rationale above).
+fn type_size_or_align_resolved_d(
+    t: &crate::ast::TypeRef,
+    is_align: bool,
+    type_decls: &HashMap<String, crate::ast::TypeDecl>,
+    depth: usize,
+) -> Option<i64> {
     use crate::ast::TypeRef;
+    if depth > MAX_TYPE_SIZE_DEPTH {
+        // Runaway value self-recursion (no pointer indirection) — bail to None
+        // rather than overflow the stack. Callers degrade gracefully.
+        return None;
+    }
     match t {
         TypeRef::Named { path, generics, .. }
             if generics.is_empty() && path.len() == 1 =>
@@ -1103,7 +1133,24 @@ pub fn type_size_or_align_resolved(
             }
             // Plan 114.4.4 V4.6 M1: lookup в TypeDecl registry.
             let td = type_decls.get(name)?;
-            type_decl_size_or_align(td, is_align, type_decls)
+            // [M-checker-recursive-type-overflow]: BOXING-aware short-circuit.
+            // emit_c lowers a HEAP user type (record/sum) to an 8-byte pointer
+            // `Nova_X*` wherever it appears as a value/field (type_ref_to_c
+            // fallback). So a `Tree`/`H` reference occupies a pointer (8), NOT
+            // the inline object — which is BOTH emit-accurate AND makes a
+            // recursive heap type finite (the recursive field is a pointer
+            // leaf, no infinite descent). Mirrors gc_layout.rs's
+            // `classify_named_decl`: heap records & all sums → PTR_SIZE/ALIGN.
+            // Only VALUE records / named-tuples / newtypes / aliases fall
+            // through to the INLINE `type_decl_size_or_align` computation.
+            use crate::ast::TypeDeclKind;
+            let boxed_to_pointer = matches!(&td.kind, TypeDeclKind::Sum(_))
+                || (matches!(&td.kind, TypeDeclKind::Record(_)) && td.allocation.is_heap());
+            if boxed_to_pointer {
+                // x64 pointer: size == align == 8 (matches `Nova_X*`).
+                return Some(8);
+            }
+            type_decl_size_or_align(td, is_align, type_decls, depth + 1)
         }
         TypeRef::Tuple(elems, _) => {
             // C struct-style layout: elements в порядке с natural alignment,
@@ -1111,8 +1158,8 @@ pub fn type_size_or_align_resolved(
             let mut max_align: i64 = 1;
             let mut size: i64 = 0;
             for e in elems {
-                let elem_size = type_size_or_align_resolved(e, false, type_decls)?;
-                let elem_align = type_size_or_align_resolved(e, true, type_decls)?;
+                let elem_size = type_size_or_align_resolved_d(e, false, type_decls, depth + 1)?;
+                let elem_align = type_size_or_align_resolved_d(e, true, type_decls, depth + 1)?;
                 if elem_align < 1 { return None; }
                 if elem_align > max_align { max_align = elem_align; }
                 // Pad current size up to elem alignment.
@@ -1128,8 +1175,8 @@ pub fn type_size_or_align_resolved(
             Some(if is_align { max_align } else { size })
         }
         TypeRef::FixedArray(n, elem, _) => {
-            let elem_size = type_size_or_align_resolved(elem, false, type_decls)?;
-            let elem_align = type_size_or_align_resolved(elem, true, type_decls)?;
+            let elem_size = type_size_or_align_resolved_d(elem, false, type_decls, depth + 1)?;
+            let elem_align = type_size_or_align_resolved_d(elem, true, type_decls, depth + 1)?;
             if is_align { Some(elem_align) } else { Some((*n as i64) * elem_size) }
         }
         TypeRef::Array(_, _) => {
@@ -1139,7 +1186,7 @@ pub fn type_size_or_align_resolved(
         TypeRef::Unit(_) => {
             Some(if is_align { 1 } else { 0 })
         }
-        TypeRef::Readonly(inner, _) => type_size_or_align_resolved(inner, is_align, type_decls),
+        TypeRef::Readonly(inner, _) => type_size_or_align_resolved_d(inner, is_align, type_decls, depth + 1),
         // **Plan 118.1 Ф.2.3 / Plan 118.5 V2 (2026-06-04):** typed pointer
         // family (`*T`) has uniform pointer layout — 8 bytes / 8 align on
         // x64 ABI (matches nova_rt). Regardless of pointee type. Per D216
@@ -1153,17 +1200,20 @@ pub fn type_size_or_align_resolved(
         // = 8 bytes (same as int). Matches §V2.3 zero-cost wrapper invariant.
         TypeRef::Pointer(_, _) => Some(8),
         TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
-            type_size_or_align_resolved(inner, is_align, type_decls)
+            type_size_or_align_resolved_d(inner, is_align, type_decls, depth + 1)
         }
         _ => None,
     }
 }
 
 /// Plan 114.4.4 V4.6 M1: compute layout for a user-defined TypeDecl.
+/// `depth` threaded from [`type_size_or_align_resolved_d`] for the value
+/// self-recursion guard ([M-checker-recursive-type-overflow]).
 fn type_decl_size_or_align(
     td: &crate::ast::TypeDecl,
     is_align: bool,
     type_decls: &HashMap<String, crate::ast::TypeDecl>,
+    depth: usize,
 ) -> Option<i64> {
     use crate::ast::TypeDeclKind;
     match &td.kind {
@@ -1172,8 +1222,8 @@ fn type_decl_size_or_align(
             let mut max_align: i64 = 1;
             let mut size: i64 = 0;
             for f in fields {
-                let fs = type_size_or_align_resolved(&f.ty, false, type_decls)?;
-                let fa = type_size_or_align_resolved(&f.ty, true, type_decls)?;
+                let fs = type_size_or_align_resolved_d(&f.ty, false, type_decls, depth + 1)?;
+                let fa = type_size_or_align_resolved_d(&f.ty, true, type_decls, depth + 1)?;
                 if fa < 1 { return None; }
                 if fa > max_align { max_align = fa; }
                 let rem = size % fa;
@@ -1191,8 +1241,8 @@ fn type_decl_size_or_align(
             let mut max_align: i64 = 1;
             let mut size: i64 = 0;
             for f in fields {
-                let fs = type_size_or_align_resolved(&f.ty, false, type_decls)?;
-                let fa = type_size_or_align_resolved(&f.ty, true, type_decls)?;
+                let fs = type_size_or_align_resolved_d(&f.ty, false, type_decls, depth + 1)?;
+                let fa = type_size_or_align_resolved_d(&f.ty, true, type_decls, depth + 1)?;
                 if fa < 1 { return None; }
                 if fa > max_align { max_align = fa; }
                 let rem = size % fa;
@@ -1208,12 +1258,16 @@ fn type_decl_size_or_align(
         TypeDeclKind::Sum(variants) => {
             // Tagged union: tag (i32 = 4, align 4) + max variant payload.
             // Each variant payload determined by its payload kind.
+            // NOTE: in the boxing-aware caller a Sum reference is short-
+            // circuited to pointer-size (8) BEFORE reaching here, so this
+            // INLINE sum layout is only computed when explicitly asked for the
+            // object layout (it is never reached via the recursive Named arm).
             let tag_size: i64 = 4;
             let tag_align: i64 = 4;
             let mut max_payload_size: i64 = 0;
             let mut max_payload_align: i64 = 1;
             for v in variants {
-                let (vsize, valign) = sum_variant_layout(v, type_decls)?;
+                let (vsize, valign) = sum_variant_layout(v, type_decls, depth + 1)?;
                 if vsize > max_payload_size { max_payload_size = vsize; }
                 if valign > max_payload_align { max_payload_align = valign; }
             }
@@ -1232,8 +1286,8 @@ fn type_decl_size_or_align(
             }
             Some(if is_align { max_align } else { size })
         }
-        TypeDeclKind::Newtype(inner) => type_size_or_align_resolved(inner, is_align, type_decls),
-        TypeDeclKind::Alias(inner) => type_size_or_align_resolved(inner, is_align, type_decls),
+        TypeDeclKind::Newtype(inner) => type_size_or_align_resolved_d(inner, is_align, type_decls, depth + 1),
+        TypeDeclKind::Alias(inner) => type_size_or_align_resolved_d(inner, is_align, type_decls, depth + 1),
         TypeDeclKind::Opaque
         | TypeDeclKind::Effect(_)
         | TypeDeclKind::Protocol { .. } => None, // no concrete layout.
@@ -1241,9 +1295,11 @@ fn type_decl_size_or_align(
 }
 
 /// Plan 114.4.4 V4.6 M1: compute (size, align) for one sum variant's payload.
+/// `depth` threaded for the value self-recursion guard.
 fn sum_variant_layout(
     v: &crate::ast::SumVariant,
     type_decls: &HashMap<String, crate::ast::TypeDecl>,
+    depth: usize,
 ) -> Option<(i64, i64)> {
     use crate::ast::SumVariantKind;
     match &v.kind {
@@ -1253,8 +1309,8 @@ fn sum_variant_layout(
             let mut max_align: i64 = 1;
             let mut size: i64 = 0;
             for t in types {
-                let fs = type_size_or_align_resolved(t, false, type_decls)?;
-                let fa = type_size_or_align_resolved(t, true, type_decls)?;
+                let fs = type_size_or_align_resolved_d(t, false, type_decls, depth + 1)?;
+                let fa = type_size_or_align_resolved_d(t, true, type_decls, depth + 1)?;
                 if fa < 1 { return None; }
                 if fa > max_align { max_align = fa; }
                 let rem = size % fa;
@@ -1271,8 +1327,8 @@ fn sum_variant_layout(
             let mut max_align: i64 = 1;
             let mut size: i64 = 0;
             for f in fields {
-                let fs = type_size_or_align_resolved(&f.ty, false, type_decls)?;
-                let fa = type_size_or_align_resolved(&f.ty, true, type_decls)?;
+                let fs = type_size_or_align_resolved_d(&f.ty, false, type_decls, depth + 1)?;
+                let fa = type_size_or_align_resolved_d(&f.ty, true, type_decls, depth + 1)?;
                 if fa < 1 { return None; }
                 if fa > max_align { max_align = fa; }
                 let rem = size % fa;

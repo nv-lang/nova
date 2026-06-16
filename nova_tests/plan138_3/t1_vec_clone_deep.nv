@@ -42,7 +42,7 @@ test "Vec[Point].clone — buffer independence: pushing to clone does not grow o
 }
 
 test "Vec[int].clone — value element type, independent length and elements" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     mut c = v.clone()
     assert(c.len() == 3)
     assert(c[0] == 1)

@@ -1,7 +1,7 @@
 // std/text.nv — text utilities supplementing std.runtime.string (Plan 91 Ф.2).
 //
 // Этот module добавляет high-level text utilities, которые не входят в
-// runtime_registry (бывшие external fn в std.runtime.string), но
+// runtime_registry (бывшие extern "nova" fn в std.runtime.string), но
 // необходимы для realistic CLI/data-utility use-cases в 0.1 release.
 //
 // MVP surface (Plan 91 §Scope):

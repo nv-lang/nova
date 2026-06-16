@@ -60,6 +60,10 @@ pub enum TokenKind {
     /// D82: external fn — runtime-implemented в nova_rt/*.h.
     /// Только в std.runtime.* whitelisted namespace.
     KwExternal,
+    /// Plan 91.12 Ф.-1 (D282): `extern "nova" fn` / `extern "C" fn` syntax.
+    /// Replaces `external fn` as the canonical FFI declaration keyword.
+    /// `external fn` kept as legacy alias during transition.
+    KwExtern,
     KwFn,
     KwType,
     KwProtocol,
@@ -234,6 +238,7 @@ impl TokenKind {
             TokenKind::KwUse => "`use`",
             TokenKind::KwExport => "`export`",
             TokenKind::KwExternal => "`external`",
+            TokenKind::KwExtern => "`extern`",
             TokenKind::KwFn => "`fn`",
             TokenKind::KwType => "`type`",
             TokenKind::KwProtocol => "`protocol`",

@@ -1,0 +1,2 @@
+# Plan 162 Ф.3: helper library module for f2_method_by_type test.
+# walk_nv skips this directory — used only as a library by f2_method_by_type.nv.

@@ -20,9 +20,13 @@
 // owning copy is `clone()` / `to_vec()`, never a view.
 //
 // `@chunks`/`@chunks_exact`/`@rchunks`/`@windows` are LAZY iterators (Rust-like,
-// no outer-`Vec` allocation) and depend on the lazy-iterator infrastructure of
-// Plan 153.2 — they are deferred under [M-153.4-chunks-windows-lazy] (gated on
-// 153.2) and intentionally NOT implemented eagerly here.
+// no outer-`Vec` allocation) that yield `[]T` views over this same buffer. They
+// live in the explicitly-imported lazy module `std/collections/vec_lazy.nv`
+// (closure-dense bodies → generics-leak, like every adapter) rather than this
+// prelude `vec/` folder — see that file's "Slice-view iterators" section
+// (Plan 153.4-B, [M-153.4-chunks-windows-lazy], built on the Plan 153.2 lazy
+// infra). They are intentionally NOT eager here (an eager form would allocate a
+// `Vec`-of-views and diverge from the Q-iterator-laziness canon).
 #prelude(core, runtime, collections, protocols)
 module collections.vec
 

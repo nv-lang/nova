@@ -5,7 +5,7 @@ module plan140_2.b_index_direct_call_pos
 import std.collections.vec.{Vec}
 
 test "direct @index call in-bounds" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     assert(v.index(0) == 10)
     assert(v.index(2) == 30)
 }

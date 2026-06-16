@@ -1,0 +1,25 @@
+// Plan 124.6 — positive: #test_access(T) on a test block grants priv(type)
+// access to T's fields. This is the explicit escape hatch for cross-module
+// test scenarios where rule-2 (implicit same-module grant) does not apply.
+module plan124_6.pos_test_access_cross_module
+
+export type Wallet {
+    pub owner str
+    priv(type) mut balance int
+}
+
+export fn Wallet.new(owner str) -> Wallet =>
+    { owner, balance: 0 }
+
+export fn Wallet mut @credit(amount int) {
+    @balance = @balance + amount
+}
+
+// #test_access on the test block itself (rule-3a: explicit test block grant).
+#test_access(Wallet)
+test "Plan 124.6: #test_access on test block reads priv(type) field" {
+    mut w = Wallet.new("bob")
+    w.credit(250)
+    assert(w.balance == 250)
+    assert(w.owner == "bob")
+}

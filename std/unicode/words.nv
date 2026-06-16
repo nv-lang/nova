@@ -180,7 +180,7 @@ fn word_boundaries(s str) -> Vec[int] {
 }
 
 // ─── WordsView — UAX #29 word-segment iterator ───
-export type WordsView value priv {
+export type WordsView value priv(type) {
     buf str
     bounds Vec[int]   // byte offsets [s0,…,len]; len-1 == word count
     idx int

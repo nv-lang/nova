@@ -15,7 +15,7 @@ module smoke_test
 
 // ─── Imports ──────────────────────────────────────────────────────────────────
 
-import std.io
+import std.io as io
 
 // ─── Basic function with return type ─────────────────────────────────────────
 

@@ -1,0 +1,9 @@
+// Plan 163 (D282): positive -- named re-export export import m.{name} is allowed.
+
+module plan163.f2_named_reexport_pos
+
+export import nova_tests.plan163.plan163_lib.{greet}
+
+test "named re-export compiles and resolves" {
+    assert(greet() == 42)
+}

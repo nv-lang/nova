@@ -12,13 +12,13 @@ type Acc {
 }
 
 // mut binding + ro value-type — pre-name mut + type-level ro.
-external fn t17_p1(mut x ro int) -> ()
+extern "nova" fn t17_p1(mut x ro int) -> ()
 
 // mut binding + ro value-type (str).
-external fn t17_p2(mut x ro str) -> ()
+extern "nova" fn t17_p2(mut x ro str) -> ()
 
 // mut binding + ro reference-type (Acc).
-external fn t17_p3(mut x ro Acc) -> ()
+extern "nova" fn t17_p3(mut x ro Acc) -> ()
 
 test "mut x ro T binding form allowed regardless of T storage class" {
     assert(1 == 1)

@@ -8,6 +8,30 @@ use crate::ast::*;
 use crate::diag::{Diagnostic, Span};
 use crate::lexer::{Token, TokenKind};
 
+/// Plan 164 Ф.1 (D268 amend): helper — extract the bare protocol name from
+/// an impl-spec string that may carry generic args, e.g.:
+///   "Next"       → "Next"
+///   "Next[T]"    → "Next"
+///   "Next[(int,T)]" → "Next"
+/// Used wherever impl_protocols entries are looked up in self.types (keyed by
+/// bare name) or compared against protocol_method_registry keys.
+pub fn impl_spec_base_name(spec: &str) -> &str {
+    match spec.find('[') {
+        Some(idx) => &spec[..idx],
+        None => spec,
+    }
+}
+
+/// Plan 164 Ф.1: extract the raw bracket suffix from an impl-spec string,
+/// e.g. "Next[U]" → "[U]", "Next" → "". Used by the checker to build the
+/// generic substitution map (proto generic → impl generic).
+pub fn impl_spec_args_text(spec: &str) -> &str {
+    match spec.find('[') {
+        Some(idx) => &spec[idx..],
+        None => "",
+    }
+}
+
 /// Plan 33.1 (D24): contract-related атрибуты, собранные перед `fn`.
 ///
 /// Передаются из `parse_item` в `parse_fn`. По умолчанию — все поля
@@ -1260,7 +1284,7 @@ impl Parser {
         // Помечает str-keyed map-тип для D55 map-coercion (`{field: v}`).
         // Парсится ПЕРЕД `export` (консистентно с `#cfg`) и только перед
         // `type`. Контекстный разбор после `#` (не keyword).
-        let (type_attrs, impl_protocols, zero_on_move_attr) = self.parse_type_attrs()?;
+        let (type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr) = self.parse_type_attrs()?;
 
         // Plan 110.7.3.a: pre-parse #cancel_safe здесь чтобы canonical
         // form `#cancel_safe\nexternal fn ...` работала (attribute может
@@ -1269,27 +1293,67 @@ impl Parser {
         let pre_cancel_safe = self.parse_cancel_safe_attr();
 
         let is_export = self.eat(&TokenKind::KwExport).is_some();
-        // D82: `external` modifier — между `export` и `fn`.
-        // Plan 62.D.bis (D126): `external` теперь также валиден перед `type`
-        // (opaque type, реализация в runtime). См. spec/decisions/03-syntax.md
-        // §D126 + types/mod.rs::check_module whitelist enforcement.
-        let is_external = self.eat(&TokenKind::KwExternal).is_some();
+        // Plan 91.12 Ф.-1 (D282): `extern "nova" fn` / `extern "C" fn` — canonical FFI syntax.
+        // `external fn` keyword retracted (E_EXTERNAL_FN_RETRACTED): use `extern "nova" fn`.
+        // `external type X` retracted (E_EXTERNAL_TYPE_RETRACTED); types/mod.rs enforces this.
+        let (is_external, extern_abi) = if self.eat(&TokenKind::KwExternal).is_some() {
+            // `external type X` — let parse proceed; types/mod.rs emits E_EXTERNAL_TYPE_RETRACTED.
+            // `external fn` — hard error here.
+            let after_span = self.peek().span;
+            let is_fn_next = matches!(self.peek().kind, TokenKind::KwFn)
+                || (matches!(self.peek().kind, TokenKind::KwUnsafe)
+                    && matches!(self.peek_at(1).kind, TokenKind::KwFn));
+            if is_fn_next {
+                return Err(Diagnostic::new(
+                    "[E_EXTERNAL_FN_RETRACTED] `external fn` syntax was removed (D282, Plan 91.12). \
+                     Use `extern \"nova\" fn` for runtime-backed functions, \
+                     or `extern \"C\" fn` for literal C symbol names.",
+                    after_span,
+                ));
+            }
+            (true, None::<String>)
+        } else if self.eat(&TokenKind::KwExtern).is_some() {
+            let abi_span = self.peek().span;
+            let abi = match &self.peek().kind.clone() {
+                TokenKind::Str(s) => {
+                    let s = s.clone();
+                    match s.as_str() {
+                        "nova" | "C" => { self.bump(); s }
+                        other => {
+                            return Err(Diagnostic::new(
+                                format!("unknown ABI `\"{}\"`; expected `\"nova\"` or `\"C\"`", other),
+                                abi_span,
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(Diagnostic::new(
+                        "expected ABI string `\"nova\"` or `\"C\"` after `extern`",
+                        abi_span,
+                    ));
+                }
+            };
+            (true, Some(abi))
+        } else {
+            (false, None)
+        };
         // Plan 118.1.7 (D2 amend): `external unsafe fn` — `unsafe` keyword
         // directly before `fn` as part of the fn type. Consumed here after
         // `external` so `external unsafe fn foo()` sets unsafe_kw = true.
         let mut unsafe_kw = false;
         if is_external {
-            // Allow `unsafe` keyword between `external` and `fn`.
+            // Allow `unsafe` keyword between `external`/`extern "ABI"` and `fn`.
             if matches!(self.peek().kind, TokenKind::KwUnsafe) {
                 unsafe_kw = true;
                 self.bump(); // unsafe
             }
-            // Только `fn` либо `type` допустимы после `external` (+ optional `unsafe`).
+            // Только `fn` либо `type` допустимы после `external`/`extern "ABI"` (+ optional `unsafe`).
             if !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwType) {
                 let span = self.peek().span;
                 return Err(Diagnostic::new(
                     format!(
-                        "`external` is only valid before `fn` or `type`, got {}",
+                        "`external`/`extern` is only valid before `fn` or `type`, got {}",
                         self.peek().kind.name()
                     ),
                     span,
@@ -1369,31 +1433,28 @@ impl Parser {
         } else {
             realtime_attr
         };
+        // Plan 124.6 (D225): `#test_access(T)` may appear before `test "..." { }`.
+        // If contract_attrs only has test_access_for set (everything else default),
+        // also allow `test` as the next token. Other contract attrs still require fn/external.
+        let contract_attrs_only_test_access = !contract_attrs.test_access_for.is_empty()
+            && {
+                let mut tmp = contract_attrs.clone();
+                tmp.test_access_for = Vec::new();
+                tmp.is_empty()
+            };
         if !contract_attrs.is_empty()
-            && !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwExternal | TokenKind::KwUnsafe)
+            && !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwExtern | TokenKind::KwUnsafe)
+            && !(contract_attrs_only_test_access && matches!(self.peek().kind, TokenKind::KwTest))
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "contract attributes (`#verify` / `#unverified` / `#verify_timeout` / `#pure` / `#trusted`) are only valid before `fn` or `external fn`",
+                "contract attributes (`#verify` / `#unverified` / `#verify_timeout` / `#pure` / `#trusted`) are only valid before `fn` or `extern \"nova\" fn`",
                 span,
             ));
         }
-        // Plan 33.3 Ф.13: #trusted external fn — парсим `external` здесь,
-        // если contract_attrs содержат #trusted.
-        // Note: `contract_attrs.unsafe_attr` can no longer be set by parse_contract_attrs
-        // (Plan 118.1.7: `#unsafe` is now a hard error E_UNSAFE_ATTR_DEPRECATED).
-        let is_external = if contract_attrs.is_trusted
-            && matches!(self.peek().kind, TokenKind::KwExternal)
-        {
-            self.bump(); // external
-            if !matches!(self.peek().kind, TokenKind::KwFn) {
-                let span = self.peek().span;
-                return Err(Diagnostic::new("`external` is only valid before `fn`", span));
-            }
-            true
-        } else {
-            is_external
-        };
+        // `#trusted external fn` form removed — use `#trusted extern "nova" fn` instead.
+        // `extern "nova"` is already consumed above (before contract_attrs), so `is_external`
+        // is already correct here. No special case needed.
         // Plan 118.1.7 (D2 amend): `unsafe fn` keyword syntax — `unsafe` keyword
         // directly before `fn` (non-external path). Consumed here so plain
         // `unsafe fn foo()` sets unsafe_kw = true.
@@ -1408,12 +1469,13 @@ impl Parser {
         // Plan 52 Ф.1: `#from_fields` валиден только перед `type`-декларацией.
         // Plan 124.8 [M-124.8-zero-on-move]: `#zero_on_move` — также только
         // перед `type`.
-        if (!type_attrs.is_empty() || zero_on_move_attr)
+        // Plan 124.6 (D225): `#pub_to(...)` — также только перед `type`.
+        if (!type_attrs.is_empty() || zero_on_move_attr || !pub_to_attr.is_empty())
             && !matches!(self.peek().kind, TokenKind::KwType)
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "`#from_fields` / `#from_pairs` / `#zero_on_move` are only valid before `type`",
+                "`#from_fields` / `#from_pairs` / `#zero_on_move` / `#pub_to` are only valid before `type`",
                 span,
             ));
         }
@@ -1430,8 +1492,8 @@ impl Parser {
             ));
         }
         let parsed = match self.peek().kind {
-            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, realtime_attr, blocking_attr, cancel_safe_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
-            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, extern_abi, realtime_attr, blocking_attr, cancel_safe_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, pending_doc.clone(), pending_doc_attrs.clone())?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
                     // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
@@ -1492,7 +1554,19 @@ impl Parser {
                         d.span
                     );
                 }
-                Item::Test(self.parse_test_decl()?)
+                // Plan 124.6 (D225): optional `#test_access(TypeA, ...)` before test block.
+                // Two paths:
+                // 1. `#test_access` was already consumed by parse_contract_attrs() above
+                //    (the validation gate now allows this when next token is `test`) —
+                //    use contract_attrs.test_access_for directly.
+                // 2. `#test_access` was NOT consumed (e.g. not recognised — shouldn't
+                //    happen now) — fall back to parse_test_access_attr() for safety.
+                let test_access = if !contract_attrs.test_access_for.is_empty() {
+                    contract_attrs.test_access_for.clone()
+                } else {
+                    self.parse_test_access_attr()?
+                };
+                Item::Test(self.parse_test_decl(test_access)?)
             }
             // Plan 57: контекстный `bench` ident. Распознаём как bench-decl
             // только если за ним идёт string-literal: `bench "name" { ... }`.
@@ -2235,16 +2309,20 @@ impl Parser {
     /// - `#impl(Name1 + Name2 + ...)` — opt-in protocol implementation
     ///   list. Verification: каждый Name должен быть protocol-типом
     ///   и type должен предоставить все методы. Gates bare-call synthesis.
+    /// - `#pub_to(TypeA, TypeB, ...)` — Plan 124.6 (D225): selective
+    ///   friend visibility; listed types get private-field read access.
     ///
-    /// Returns `(attrs, impl_protocols, zero_on_move)`.
+    /// Returns `(attrs, impl_protocols, zero_on_move, pub_to)`.
     fn parse_type_attrs(&mut self)
-        -> Result<(Vec<crate::ast::TypeAttr>, Vec<String>, bool), Diagnostic>
+        -> Result<(Vec<crate::ast::TypeAttr>, Vec<String>, bool, Vec<String>), Diagnostic>
     {
         let mut attrs = Vec::new();
         let mut impl_protocols: Vec<String> = Vec::new();
         // Plan 124.8 [M-124.8-zero-on-move] (2026-06-03): `#zero_on_move`
         // attribute opts a type into memset-zero-on-consume codegen.
         let mut zero_on_move: bool = false;
+        // Plan 124.6 (D225): `#pub_to(TypeA, TypeB, ...)` — selective friend visibility.
+        let mut pub_to: Vec<String> = Vec::new();
         loop {
             if !matches!(self.peek().kind, TokenKind::Hash) {
                 break;
@@ -2280,20 +2358,70 @@ impl Parser {
                 }
                 "impl" => {
                     // Plan 91.9 (D186): #impl(P1 + P2 + ...) opt-in list.
+                    // Plan 164 Ф.1: protocol names may carry generic args,
+                    // e.g. #impl(Next[T]) or #impl(Next[(int,T)]).
+                    // We parse the bare Ident, then capture any optional
+                    // bracketed argument list `[…]` (with nesting) as the
+                    // raw source text, and store the full spec like "Next[U]"
+                    // in impl_protocols. Consumers that need a bare name
+                    // (e.g. self.types.get) use impl_spec_base_name() to
+                    // strip the bracket suffix.
                     self.bump(); // #
                     self.bump(); // impl
                     self.expect(&TokenKind::LParen)?;
                     let mut names: Vec<String> = Vec::new();
                     loop {
                         let (n, _sp) = self.parse_ident()?;
-                        if names.contains(&n) {
+                        // Capture optional generic args `[T]` / `[T, U]` / `[(int,T)]`
+                        // as raw source text and append to the name.
+                        let full_spec = if matches!(self.peek().kind, TokenKind::LBracket) {
+                            let bracket_start = self.peek().span.start;
+                            let mut depth = 1usize;
+                            self.bump(); // consume `[`
+                            while depth > 0 {
+                                match self.peek().kind {
+                                    TokenKind::LBracket => { depth += 1; self.bump(); }
+                                    TokenKind::RBracket => { depth -= 1; self.bump(); }
+                                    TokenKind::Eof => {
+                                        let span = self.peek().span;
+                                        return Err(Diagnostic::new(
+                                            "unterminated `[` in #impl protocol argument",
+                                            span,
+                                        ));
+                                    }
+                                    _ => { self.bump(); }
+                                }
+                            }
+                            // After the loop, pos points just past the closing `]`.
+                            // The closing `]` was the last bumped token; peek is now
+                            // the token AFTER it. We need the span of the token just
+                            // consumed (peek_at(-1) isn't available), so we use the
+                            // already-advanced src slice: the bracket group is
+                            // src[bracket_start .. end_of_last_consumed_token.end].
+                            // Use tokens[pos-1].span.end as the end.
+                            let bracket_end = if self.pos > 0 {
+                                self.tokens[self.pos - 1].span.end
+                            } else {
+                                bracket_start
+                            };
+                            let bracket_text = self.src
+                                .get(bracket_start..bracket_end)
+                                .unwrap_or("")
+                                .to_string();
+                            format!("{}{}", n, bracket_text)
+                        } else {
+                            n.clone()
+                        };
+                        // Duplicate check uses the bare name so #impl(Next[T]+Next[U])
+                        // is caught as duplicate "Next".
+                        if names.iter().any(|x| impl_spec_base_name(x) == n.as_str()) {
                             let span = self.peek().span;
                             return Err(Diagnostic::new(
                                 format!("duplicate protocol `{}` в #impl list", n),
                                 span,
                             ));
                         }
-                        names.push(n);
+                        names.push(full_spec);
                         if self.eat(&TokenKind::Plus).is_some() {
                             continue;
                         }
@@ -2334,11 +2462,66 @@ impl Parser {
                     self.bump(); // zero_on_move
                     zero_on_move = true;
                 }
+                "pub_to" => {
+                    // Plan 124.6 (D225): `#pub_to(TypeA, TypeB, ...)` — selective
+                    // friend visibility. The listed types get private-field read
+                    // access to this type (as if they were in the same module).
+                    if !pub_to.is_empty() {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `#pub_to` attribute — use a single \
+                             `#pub_to(TypeA, TypeB, ...)` with all friend types",
+                            span,
+                        ));
+                    }
+                    self.bump(); // #
+                    self.bump(); // pub_to
+                    if !matches!(self.peek().kind, TokenKind::LParen) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#pub_to requires a list: `#pub_to(TypeX, TypeY, ...)`",
+                            span,
+                        ));
+                    }
+                    self.bump(); // (
+                    let mut names: Vec<String> = Vec::new();
+                    loop {
+                        match self.peek().kind.clone() {
+                            TokenKind::Ident(n) => {
+                                names.push(n);
+                                self.bump();
+                            }
+                            TokenKind::RParen => break,
+                            _ => {
+                                let sp = self.peek().span;
+                                return Err(Diagnostic::new(
+                                    "expected type identifier or `)` in #pub_to(...)",
+                                    sp,
+                                ));
+                            }
+                        }
+                        if matches!(self.peek().kind, TokenKind::Comma) {
+                            self.bump();
+                            self.skip_newlines();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.expect(&TokenKind::RParen)?;
+                    if names.is_empty() {
+                        let sp = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "#pub_to requires at least one type: `#pub_to(TypeX, ...)`",
+                            sp,
+                        ));
+                    }
+                    pub_to = names;
+                }
                 _ => break,
             }
             self.skip_newlines();
         }
-        Ok((attrs, impl_protocols, zero_on_move))
+        Ok((attrs, impl_protocols, zero_on_move, pub_to))
     }
 
     /// Plan 33.1 (D24): парсит блок `requires <expr>` / `ensures <expr>`
@@ -2564,7 +2747,7 @@ impl Parser {
 
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, impl_protocols: Vec<String>, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, extern_abi: Option<String>, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, impl_protocols: Vec<String>, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -2997,6 +3180,7 @@ impl Parser {
             doc_attrs,
             is_export,
             is_external,
+            extern_abi,
             name,
             receiver,
             generics: fn_generics,
@@ -3342,7 +3526,7 @@ impl Parser {
 
     // ─── type declarations ───────────────────────────────────────────────
 
-    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, zero_on_move: bool, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
+    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, zero_on_move: bool, pub_to: Vec<String>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwType)?;
         let (name, name_span) = self.parse_ident()?;
@@ -3373,22 +3557,21 @@ impl Parser {
         // (Ident("value") в этой позиции; backward compat для variables/fields
         // named `value`). Composable с consume/priv в любом порядке.
         //
-        // Plan 148 Ф.1 (D241): canonical type-modifier order — `value priv`
-        // (более общо: `value consume priv`), отсортировано по **scope** от
-        // широкого к узкому (type-level allocation → type-level ownership →
-        // field-default visibility). «One canonical syntax» Nova запрещает
-        // order-independence: out-of-canon порядок → `E_MODIFIER_ORDER` с
-        // машинно-применимым fix-it «переставь в канон».
+        // Plan 148 Ф.1 (D241): canonical type-modifier order — `consume value priv`,
+        // отсортировано по Rust-like ownership > representation > visibility.
+        // «One canonical syntax» Nova запрещает order-independence:
+        // out-of-canon порядок → `E_MODIFIER_ORDER` с машинно-применимым
+        // fix-it «переставь в канон».
         //
         // Каждому модификатору присвоен canonical rank:
-        //   `value`   → 0  (аллокация/представление всего типа)
-        //   `consume` → 1  (must-consume обязательство всего типа)
+        //   `consume` → 0  (must-consume обязательство — ownership первично)
+        //   `value`   → 1  (аллокация/представление — representation вторично)
         //   `priv`    → 2  (дефолт видимости полей в `{…}` — вплотную к `{`)
         // Правило обобщается на любые будущие type-модификаторы: новый
         // модификатор получает rank по своему scope и автоматически попадает
         // в проверку монотонности (никаких произвольных синонимичных порядков).
         let mut consume_marker = false;
-        let mut default_field_priv = false;
+        let mut field_default_visibility = crate::ast::FieldDefaultVisibility::Public;
         let mut allocation = crate::ast::AllocKind::Heap;
         // (rank, lexeme, token-span) для каждого встреченного модификатора,
         // в порядке появления в исходнике.
@@ -3400,16 +3583,48 @@ impl Parser {
                 let sp = self.peek().span;
                 self.bump();
                 consume_marker = true;
-                seen_mods.push((1, "consume", sp));
+                seen_mods.push((0, "consume", sp));
                 continue;
             }
-            if !default_field_priv
+            if matches!(field_default_visibility, crate::ast::FieldDefaultVisibility::Public)
                 && matches!(self.peek().kind, TokenKind::KwPriv)
             {
                 let sp = self.peek().span;
                 self.bump();
-                default_field_priv = true;
-                seen_mods.push((2, "priv", sp));
+                // Plan 160 (D281) new design:
+                //   `priv`        (no qualifier) → Module  (module-private)
+                //   `priv(type)`                 → Private (type-private only)
+                //   `priv(module)`               → error   (removed; use bare `priv`)
+                //   `priv(<other>)`              → error   (unknown qualifier)
+                if matches!(self.peek().kind, TokenKind::LParen) {
+                    self.bump(); // consume `(`
+                    if matches!(self.peek().kind, TokenKind::KwType) {
+                        self.bump(); // consume `type`
+                        self.expect(&TokenKind::RParen)?;
+                        field_default_visibility = crate::ast::FieldDefaultVisibility::Private;
+                        seen_mods.push((2, "priv(type)", sp));
+                    } else if matches!(self.peek().kind, TokenKind::KwModule) {
+                        let bad_sp = self.peek().span;
+                        return Err(crate::diag::Diagnostic::new(
+                            "[E_PRIV_QUALIFIER] `priv(module)` is no longer valid \
+                             (Plan 160 / D281 new design). Use bare `priv` for \
+                             module-private fields, or `priv(type)` for type-private.",
+                            bad_sp,
+                        ));
+                    } else {
+                        let bad_sp = self.peek().span;
+                        return Err(crate::diag::Diagnostic::new(
+                            "[E_PRIV_QUALIFIER] unknown qualifier inside `priv(…)`. \
+                             Valid forms: `priv` (module-private) or `priv(type)` \
+                             (type-private). See D281 (spec/decisions/02-types.md).",
+                            bad_sp,
+                        ));
+                    }
+                } else {
+                    // bare `priv` → module-private
+                    field_default_visibility = crate::ast::FieldDefaultVisibility::Module;
+                    seen_mods.push((2, "priv", sp));
+                }
                 continue;
             }
             // Plan 124.8: `value` — contextual keyword (Ident match,
@@ -3420,7 +3635,7 @@ impl Parser {
                 let sp = self.peek().span;
                 self.bump();
                 allocation = crate::ast::AllocKind::Value;
-                seen_mods.push((0, "value", sp));
+                seen_mods.push((1, "value", sp));
                 continue;
             }
             break;
@@ -3457,11 +3672,11 @@ impl Parser {
                     format!(
                         "[E_MODIFIER_ORDER] type-declaration modifiers `{}` are \
                          out of canonical order — Nova has one canonical syntax \
-                         (no order-independence). Canonical order is by scope, \
-                         widest to narrowest: type-level representation (`value`) \
-                         → type-level ownership (`consume`) → field-default \
-                         visibility (`priv`). Reorder to `{}`. See D241 \
-                         (spec/decisions/03-syntax.md).",
+                         (no order-independence). Canonical order is ownership → \
+                         representation → visibility: type-level ownership \
+                         (`consume`) → type-level representation (`value`) → \
+                         field-default visibility (`priv`). Reorder to `{}`. \
+                         See D241 (spec/decisions/03-syntax.md).",
                         got_str, canon_str,
                     ),
                     region,
@@ -3562,9 +3777,10 @@ impl Parser {
                 invariants: Vec::new(),
                 axioms: Vec::new(),
                 consume: consume_marker,
-                default_field_priv,
+                field_default_visibility,
                 allocation,
                 zero_on_move,
+                pub_to: pub_to.clone(),
             });
         }
         // Silence unused warning when is_external is false; name_span used только в Opaque branch.
@@ -3635,10 +3851,11 @@ impl Parser {
                     invariants: Vec::new(),
                     axioms: Vec::new(),
                     consume: false,
-                    default_field_priv: false,
+                    field_default_visibility: crate::ast::FieldDefaultVisibility::Public,
                     allocation: crate::ast::AllocKind::Heap,
                     impl_protocols: impl_protocols.clone(),
                     zero_on_move,
+                    pub_to: pub_to.clone(),
                 });
             }
         }
@@ -3682,7 +3899,7 @@ impl Parser {
             TokenKind::LBrace => {
                 self.bump();
                 // Plan 124 (D220): pass type-level default visibility to field parser.
-                let (fields, acs) = self.parse_record_fields_with_default(default_field_priv)?;
+                let (fields, acs) = self.parse_record_fields_with_default(field_default_visibility)?;
                 assoc_consts.extend(acs);
                 self.expect(&TokenKind::RBrace)?;
                 TypeDeclKind::Record(fields)
@@ -3698,10 +3915,10 @@ impl Parser {
             //
             // Plan 124.7 (D225): `type Vec3 priv (x f64, y f64, z f64)` —
             // type-level priv default flip для tuple form (extends D220
-            // record form). default_field_priv pass'ится в field parser.
+            // record form). field_default_visibility pass'ится в field parser.
             TokenKind::LParen if self.is_named_tuple_decl() => {
                 self.bump(); // consume `(`
-                let fields = self.parse_named_tuple_fields_with_default(default_field_priv)?;
+                let fields = self.parse_named_tuple_fields_with_default(field_default_visibility)?;
                 self.expect(&TokenKind::RParen)?;
                 TypeDeclKind::NamedTuple(fields)
             }
@@ -3762,10 +3979,11 @@ impl Parser {
             invariants,
             axioms: effect_axioms,
             consume: consume_marker,
-            default_field_priv,
+            field_default_visibility,
             allocation,
             impl_protocols,
             zero_on_move,
+            pub_to,
         })
     }
 
@@ -3832,10 +4050,10 @@ impl Parser {
     }
 
     /// Plan 120 (D215): parse `name1 T1, name2 T2, ...` inside `(...)`.
-    /// Backward-compat shim — calls parse_named_tuple_fields_with_default(false).
+    /// Backward-compat shim — calls parse_named_tuple_fields_with_default(Public).
     #[allow(dead_code)]
     fn parse_named_tuple_fields(&mut self) -> Result<Vec<NamedTupleField>, Diagnostic> {
-        self.parse_named_tuple_fields_with_default(false)
+        self.parse_named_tuple_fields_with_default(crate::ast::FieldDefaultVisibility::Public)
     }
 
     /// Plan 120 (D215) — base parser for named tuple fields.
@@ -3847,18 +4065,18 @@ impl Parser {
     /// - `mut`/`ro` per-field modifiers → `E_TUPLE_NO_PER_FIELD_MOD`
     ///   (mutability — binding-level only, как Rust).
     ///
-    /// `default_priv` parameter сохранён для backward-compat shim — но
-    /// после retract D225 всегда должен быть false (parser-level check).
+    /// `default_vis` parameter — type-level FieldDefaultVisibility. After
+    /// D225 retract, priv/priv(type) на tuples — error (tuples all-public).
     /// Called after consuming `(`. Stops before `)`.
-    fn parse_named_tuple_fields_with_default(&mut self, default_priv: bool) -> Result<Vec<NamedTupleField>, Diagnostic> {
+    fn parse_named_tuple_fields_with_default(&mut self, default_vis: crate::ast::FieldDefaultVisibility) -> Result<Vec<NamedTupleField>, Diagnostic> {
         let mut fields: Vec<NamedTupleField> = Vec::new();
-        // Plan 124.8: post-D225 retract, default_priv must always be false.
-        // If a caller passes true, that's a bug in caller (type-level priv flip
-        // для tuples retracted). Defensive assert — emit error if reached.
-        if default_priv {
+        // Plan 124.8: post-D225 retract, type-level priv/priv(type) not allowed для tuples.
+        // If a caller passes non-Public, that's a bug in caller (type-level priv flip
+        // для tuples retracted). Defensive check — emit error if reached.
+        if !matches!(default_vis, crate::ast::FieldDefaultVisibility::Public) {
             let sp = self.peek().span;
             return Err(Diagnostic::new(
-                "[E_TUPLE_NO_PRIV] type-level `priv` flip для named tuples retracted \
+                "[E_TUPLE_NO_PRIV] type-level `priv` / `priv(type)` flip для named tuples retracted \
                  в Plan 124.8 (D225 superseded). Tuples всегда all-public. Use \
                  `type X value priv { ... }` для stack-allocated record с priv (D226).",
                 sp,
@@ -3942,7 +4160,7 @@ impl Parser {
             let (name, _) = self.parse_ident()?;
             let ty = self.parse_type()?;
             let span = field_start.merge(ty.span());
-            fields.push(NamedTupleField { name, ty, span, priv_field, visible_to: Vec::new() });
+            fields.push(NamedTupleField { name, ty, span, priv_field, priv_module_field: false, visible_to: Vec::new() });
             // Plan 124.8 (D215 amend): allow trailing comma + multi-line.
             // After parsing field — expect either Comma or RParen.
             // If Comma: skip + skip_newlines → loop top will handle next
@@ -3978,15 +4196,15 @@ impl Parser {
     /// НЕ в instance layout, accessible через namespace `Type.NAME`.
     fn parse_record_fields(&mut self) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
         // Backward-compat shim: existing call sites still call без default_priv;
-        // default_priv = false (public default — D47 unchanged).
-        self.parse_record_fields_with_default(false)
+        // default = Public (D47 unchanged).
+        self.parse_record_fields_with_default(crate::ast::FieldDefaultVisibility::Public)
     }
 
-    /// Plan 124 (D220): parse record fields с type-level default visibility.
-    /// `default_priv` приходит из `type X priv { ... }` syntax (parse_type_decl
-    /// after type-level marker parsing); если `false` — fields default = public
+    /// Plan 124 (D220) / Plan 160 (D281): parse record fields с type-level default visibility.
+    /// `default_vis` приходит из `type X priv { ... }` / `type X priv(module) { ... }` syntax
+    /// (parse_type_decl after type-level marker parsing); Public = fields default = public
     /// (D47 unchanged). Field-level explicit `priv`/`pub` override default.
-    fn parse_record_fields_with_default(&mut self, default_priv: bool) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
+    fn parse_record_fields_with_default(&mut self, default_vis: crate::ast::FieldDefaultVisibility) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
         let mut fields = Vec::new();
         let mut assoc_consts = Vec::new();
         self.skip_newlines();
@@ -4082,42 +4300,79 @@ impl Parser {
             //
             // Conflict detection: both orders `priv pub` и `pub priv` — explicit
             // E_PRIV_PUB_CONFLICT error.
-            let mut explicit_priv = self.eat(&TokenKind::KwPriv).is_some();
-            let mut explicit_pub = self.eat(&TokenKind::KwPub).is_some();
-            if explicit_priv && explicit_pub {
-                return Err(Diagnostic::new(
-                    "[E_PRIV_PUB_CONFLICT] field cannot have both `priv` and `pub` \
-                     modifiers — these are mutually exclusive (Plan 124 / D220). \
-                     Choose one: `priv` (private to type-methods) OR `pub` (explicit \
-                     public; redundant без type-level `priv {}` flip).".to_string(),
-                    self.peek().span,
-                ));
-            }
-            // Также handle reverse order: `pub priv` — pub matched first,
-            // then priv. Re-check.
-            if explicit_pub && !explicit_priv {
-                if self.eat(&TokenKind::KwPriv).is_some() {
-                    return Err(Diagnostic::new(
-                        "[E_PRIV_PUB_CONFLICT] field cannot have both `pub` and `priv` \
-                         modifiers — these are mutually exclusive (Plan 124 / D220).".to_string(),
-                        self.peek().span,
-                    ));
+            // D281: field-level `priv` = module-private (same as type-level bare `priv`).
+            //       field-level `priv(type)` = type-private (only own methods).
+            //       field-level `pub` = public (overrides type-level default).
+            let mut explicit_priv = false;
+            let mut explicit_priv_type = false; // priv(type) = type-private
+            let mut explicit_pub = false;
+            if self.eat(&TokenKind::KwPriv).is_some() {
+                if matches!(self.peek().kind, TokenKind::LParen) {
+                    self.bump(); // consume `(`
+                    if matches!(self.peek().kind, TokenKind::KwType) {
+                        self.bump(); // consume `type`
+                        self.expect(&TokenKind::RParen)?;
+                        explicit_priv_type = true;
+                    } else if matches!(self.peek().kind, TokenKind::KwModule) {
+                        let bad_sp = self.peek().span;
+                        return Err(crate::diag::Diagnostic::new(
+                            "[E_PRIV_QUALIFIER] `priv(module)` is not a valid field modifier. \
+                             Use bare `priv` for module-private, or `priv(type)` for type-private.",
+                            bad_sp,
+                        ));
+                    } else {
+                        let bad_sp = self.peek().span;
+                        return Err(crate::diag::Diagnostic::new(
+                            "[E_PRIV_QUALIFIER] unknown qualifier inside `priv(…)`. \
+                             Valid forms: `priv` (module-private) or `priv(type)` (type-private).",
+                            bad_sp,
+                        ));
+                    }
+                } else {
+                    explicit_priv = true;
+                }
+                // detect `priv pub` order — consume `pub` so conflict check fires
+                if matches!(self.peek().kind, TokenKind::KwPub) {
+                    self.bump();
+                    explicit_pub = true;
+                }
+            } else {
+                explicit_pub = self.eat(&TokenKind::KwPub).is_some();
+                // detect `pub priv` order — consume `priv` so conflict check fires
+                if explicit_pub && matches!(self.peek().kind, TokenKind::KwPriv) {
+                    self.bump();
+                    explicit_priv = true;
                 }
             }
-            // Also `priv pub` — priv matched first then pub on next iteration
-            // (already handled by the second eat above). Sanity:
-            if explicit_priv && self.eat(&TokenKind::KwPub).is_some() {
+            if (explicit_priv || explicit_priv_type) && explicit_pub {
                 return Err(Diagnostic::new(
                     "[E_PRIV_PUB_CONFLICT] field cannot have both `priv` and `pub` \
                      modifiers — these are mutually exclusive (Plan 124 / D220).".to_string(),
                     self.peek().span,
                 ));
             }
-            // Suppress potential mut-warning for explicit_pub/explicit_priv re-eats.
-            let _ = (&mut explicit_priv, &mut explicit_pub);
-            let field_priv = if explicit_priv { true }
-                             else if explicit_pub { false }
-                             else { default_priv };
+            // Suppress potential mut-warning.
+            let _ = (&mut explicit_priv, &mut explicit_priv_type, &mut explicit_pub);
+            // D281: resolve effective field privacy.
+            //   explicit `priv`       → module-private (priv_field=true, priv_module_field=true)
+            //   explicit `priv(type)` → type-private   (priv_field=true, priv_module_field=false)
+            //   explicit `pub`        → public          (priv_field=false, priv_module_field=false)
+            //   neither               → inherit from type-level FieldDefaultVisibility
+            let (field_priv, field_priv_module) = if explicit_priv {
+                (true, true)
+            } else if explicit_priv_type {
+                (true, false)
+            } else if explicit_pub {
+                (false, false)
+            } else {
+                let is_priv = matches!(
+                    default_vis,
+                    crate::ast::FieldDefaultVisibility::Private
+                        | crate::ast::FieldDefaultVisibility::Module
+                );
+                let is_module = matches!(default_vis, crate::ast::FieldDefaultVisibility::Module);
+                (is_priv, is_module)
+            };
 
             let mut readonly = false;
             let mut mutable = false;
@@ -4216,13 +4471,29 @@ impl Parser {
                 span: name_span.merge(ty.span()),
                 consume: field_consume,
                 priv_field: field_priv,
+                priv_module_field: field_priv_module,
                 visible_to,
             });
-            // запятая или newline
+            // Separator: comma (inline or multi-line) OR newline (multi-line
+            // only). Per D49 + D215 spec: on a SINGLE LINE, a comma is
+            // required between fields; a bare newline is accepted only when
+            // it actually appears. Without either, `{ x int y int }` would
+            // silently parse — now we reject it.
             if self.eat(&TokenKind::Comma).is_some() {
                 self.skip_newlines();
-            } else {
+            } else if matches!(
+                self.peek().kind,
+                TokenKind::Newline | TokenKind::Semicolon | TokenKind::RBrace
+            ) {
                 self.skip_newlines();
+            } else {
+                let sp = self.peek().span;
+                return Err(Diagnostic::new(
+                    "[E_RECORD_FIELD_MISSING_SEPARATOR] record fields on the same line must be \
+                     separated by a comma; add `,` after this field, or move the next field to \
+                     a new line",
+                    sp,
+                ));
             }
         }
         Ok((fields, assoc_consts))
@@ -5021,7 +5292,64 @@ impl Parser {
         })
     }
 
-    fn parse_test_decl(&mut self) -> Result<TestDecl, Diagnostic> {
+    /// Plan 124.6 (D225): parse optional `#test_access(TypeA, TypeB, ...)` attribute
+    /// that may appear immediately before a `test "name" { ... }` block.
+    /// Returns the list of type names (empty if attribute is absent).
+    fn parse_test_access_attr(&mut self) -> Result<Vec<String>, Diagnostic> {
+        // Look for `# test_access` (Hash followed by Ident("test_access")).
+        if !matches!(self.peek().kind, TokenKind::Hash) {
+            return Ok(Vec::new());
+        }
+        match &self.peek_at(1).kind {
+            TokenKind::Ident(n) if n == "test_access" => {}
+            _ => return Ok(Vec::new()),
+        }
+        self.bump(); // #
+        self.bump(); // test_access
+        if !matches!(self.peek().kind, TokenKind::LParen) {
+            let span = self.peek().span;
+            return Err(Diagnostic::new(
+                "#test_access requires a list: `#test_access(TypeX, TypeY, ...)`",
+                span,
+            ));
+        }
+        self.bump(); // (
+        let mut names: Vec<String> = Vec::new();
+        loop {
+            match self.peek().kind.clone() {
+                TokenKind::Ident(n) => {
+                    names.push(n);
+                    self.bump();
+                }
+                TokenKind::RParen => break,
+                _ => {
+                    let sp = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "expected type identifier or `)` in #test_access(...)",
+                        sp,
+                    ));
+                }
+            }
+            if matches!(self.peek().kind, TokenKind::Comma) {
+                self.bump();
+                self.skip_newlines();
+            } else {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RParen)?;
+        if names.is_empty() {
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                "#test_access requires at least one type: `#test_access(TypeX, ...)`",
+                sp,
+            ));
+        }
+        self.skip_newlines();
+        Ok(names)
+    }
+
+    fn parse_test_decl(&mut self, test_access: Vec<String>) -> Result<TestDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwTest)?;
         let name = match &self.peek().kind {
@@ -5043,6 +5371,7 @@ impl Parser {
             name,
             body,
             span: start.merge(body_span),
+            test_access,
         })
     }
 

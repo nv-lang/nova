@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.12 Ф.7 — positive: real TCP send + receive round-trip.
+//
+// Full path: D:\Sources\nv-lang\nova-p91-12\nova_tests\plan91_12\net_v2_tcp_read_write.nv
+//
+// Acceptance A8: client writes "hello world" → server reads it → server echoes
+// "echo: hello world" back → client reads the echo. Full TcpStream.read() e2e.
+//
+// Pattern (from udp_smoke): with handlers OUTSIDE supervised; ALL blocking
+// ops (accept/connect/write/read) in spawn fibers — supervised body itself
+// runs at slot=-1 and must not call nova_sched_park.
+
+module plan91_12.net_v2_tcp_read_write
+
+import std.net.{SocketAddr, TcpListener, TcpStream, real_tcp_net, real_addr_net}
+
+test "TCP loopback: client write + server read + echo + client reads reply" {
+    with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+        mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+            Ok(l) => l
+            Err(_) => panic("bind failed")
+        }
+        ro port = lst.local_port()
+        assert(port > 0)
+
+        supervised {
+            // Server fiber: accept, read "hello world", echo it back.
+            spawn {
+                mut srv = match lst.accept() {
+                    Ok(s) => s
+                    Err(_) => panic("accept failed")
+                }
+                ro incoming = srv.read(64)
+                assert(incoming.is_ok())
+                ro msg = match incoming { Ok(s) => s, Err(_) => panic("server read err") }
+                assert(msg == "hello world")
+                ro reply_wr = srv.write("echo: " + msg)
+                assert(reply_wr.is_ok())
+                srv.close()
+            }
+
+            // Client fiber: connect, write, read the echo reply.
+            spawn {
+                mut conn = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(s) => s
+                    Err(_) => panic("connect failed")
+                }
+                ro wr = conn.write("hello world")
+                assert(wr.is_ok())
+                ro n = match wr { Ok(n) => n, Err(_) => panic("write err") }
+                assert(n == 11)
+                ro rd = conn.read(64)
+                assert(rd.is_ok())
+                ro reply = match rd { Ok(s) => s, Err(_) => panic("read err") }
+                assert(reply == "echo: hello world")
+                conn.close()
+            }
+        }
+
+        lst.close()
+    }
+}

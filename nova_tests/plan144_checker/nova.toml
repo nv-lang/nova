@@ -1,0 +1,32 @@
+# nova.toml — [M-checker-recursive-type-overflow] regression fixtures.
+#
+# Drives the boxing-aware type-SIZE/ALIGN walk + recursion guards in
+# `compiler-codegen/src/const_fn_eval.rs` (`type_size_or_align_resolved` and the
+# depth-threaded `type_decl_size_or_align` / `sum_variant_layout`), which back
+# `size_of[T]()` / `align_of[T]()` and the gc layout/effect cross-checks.
+#
+# Two cases:
+#   * heap_embed_pos.nv  — POSITIVE: a record embedding a recursive HEAP sum
+#     (`type H { t Tree }` with `Tree | Leaf | Node(int, Tree, Tree)`). The
+#     boxing-aware short-circuit makes the recursive field a `Nova_Tree*`
+#     (8-byte pointer leaf), so the type is finite — `nova check` PASSES and the
+#     C-codegen path RUNS (size assertions hold). Runnable (`test` block).
+#   * value_self_ref_neg.nv — ROBUSTNESS: a direct VALUE self-cycle
+#     (`type N value { next N }`). No pointer indirection → genuinely infinite;
+#     the depth guard returns `None` instead of overflowing the stack, surfacing
+#     as a clean compile diagnostic (NOT a crash). `EXPECT_COMPILE_ERROR`.
+#
+# package name = "plan144_checker" matches `module plan144_checker.<file>`
+# (D78: package + src="." → module identity unchanged). Mirrors the sibling
+# `plan144_1` / `plan114_4_4` convention.
+
+[package]
+name = "plan144_checker"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "[M-checker-recursive-type-overflow] regression: recursive heap-type embed (pos) + value self-ref no-crash (neg)"
+
+[lib]
+src = "."
+
+[dependencies]

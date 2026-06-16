@@ -1,0 +1,36 @@
+// Plan 162 Ф.3: TypeMethodMap — inherent method resolution test.
+//
+// Tests that a user-defined type's inherent @methods are available
+// cross-module even when the consumer imports ONLY the type
+// (selective import `{Counter}`), NOT the method declarations explicitly.
+//
+// With Plan 162 Ф.3, the TypeMethodMap records for each (type, method)
+// which module declared the method. When the method's declaring module
+// equals the type's declaring module, it is "inherent" and always
+// accessible when the type is accessible — no separate method import needed.
+//
+// This test imports Counter type selectively and calls its inherent
+// @get and @doubled methods.
+
+module plan162.f2_method_by_type
+
+import nova_tests.plan162.plan162_type_lib.{Counter}
+
+test "inherent method @get accessible via type import" {
+    ro c = Counter.new(42)
+    assert(c.get() == 42)
+}
+
+test "inherent method @doubled accessible via type import" {
+    ro c = Counter.new(5)
+    assert(c.doubled() == 10)
+}
+
+test "inherent methods work with different values" {
+    ro a = Counter.new(0)
+    ro b = Counter.new(100)
+    assert(a.get() == 0)
+    assert(b.get() == 100)
+    assert(a.doubled() == 0)
+    assert(b.doubled() == 200)
+}

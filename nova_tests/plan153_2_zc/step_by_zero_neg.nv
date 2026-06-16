@@ -1,0 +1,12 @@
+// EXPECT_RUNTIME_PANIC requires
+//
+// Zero-cost StepByIter: step_by(0) violates `requires n > 0` — runtime panic.
+
+module plan153_2_zc.step_by_zero_neg
+
+import std.collections.vec_iter
+
+fn main() -> () {
+    ro v = Vec[int].of(1, 2, 3)
+    ro _ = v.iter().step_by(0).collect()
+}

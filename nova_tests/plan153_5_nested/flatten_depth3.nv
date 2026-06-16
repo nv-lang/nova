@@ -37,12 +37,12 @@ export fn Vec[Vec[Vec[T]]] @flatten_one() -> Vec[Vec[T]] {
 }
 
 test "flatten_deep depth-3 -> flat Vec[int] (T = innermost int)" {
-    ro a = Vec[int].from([1, 2])
-    ro b = Vec[int].from([3])
+    ro a = Vec[int].of(1, 2)
+    ro b = Vec[int].of(3)
     mut l2x = Vec[Vec[int]].new()
     l2x.push(a)
     l2x.push(b)
-    ro c = Vec[int].from([4, 5])
+    ro c = Vec[int].of(4, 5)
     mut l2y = Vec[Vec[int]].new()
     l2y.push(c)
     mut l3 = Vec[Vec[Vec[int]]].new()
@@ -59,12 +59,12 @@ test "flatten_deep depth-3 -> flat Vec[int] (T = innermost int)" {
 }
 
 test "flatten_one depth-3 -> Vec[Vec[int]] (nested-typed return)" {
-    ro a = Vec[int].from([10, 20])
-    ro b = Vec[int].from([30])
+    ro a = Vec[int].of(10, 20)
+    ro b = Vec[int].of(30)
     mut l2x = Vec[Vec[int]].new()
     l2x.push(a)
     l2x.push(b)
-    ro c = Vec[int].from([40, 50, 60])
+    ro c = Vec[int].of(40, 50, 60)
     mut l2y = Vec[Vec[int]].new()
     l2y.push(c)
     mut l3 = Vec[Vec[Vec[int]]].new()

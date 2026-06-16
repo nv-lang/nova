@@ -11,7 +11,7 @@
 
 module plan118.t5_5_npo_option_ptr_ok
 
-external fn p118_try_alloc_raw(size i64) -> Option[*()]
+extern "nova" fn p118_try_alloc_raw(size i64) -> Option[*()]
 
 test "Option[*()] None type-checks via NPO" {
     ro p Option[*()] = None

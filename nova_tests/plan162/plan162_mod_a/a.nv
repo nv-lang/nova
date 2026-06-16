@@ -1,0 +1,10 @@
+// Plan 162 Ф.2: cycle guard test — module A in a A↔B cycle.
+// A imports B (and B imports A). With the cycle guard (Plan 162 Ф.2),
+// this compiles without stack overflow or error.
+// A_VAL is independent of B — no runtime dependency on B_VAL here.
+
+module plan162.plan162_mod_a
+
+import nova_tests.plan162.plan162_mod_b
+
+export const A_VAL int = 10

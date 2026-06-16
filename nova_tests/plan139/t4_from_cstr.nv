@@ -7,7 +7,7 @@
 // compiler-codegen/nova_rt/plan115_ffi_test.h.
 module plan139.t4_from_cstr
 
-external fn p139_make_str() -> str
+extern "nova" fn p139_make_str() -> str
 
 test "from_cstr: C-returned str has correct bytes and length" {
     ro s = p139_make_str()

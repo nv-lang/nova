@@ -1,0 +1,20 @@
+// Plan 162 Ф.3: helper library module.
+// Declares type Counter with inherent @methods.
+// Used by f2_method_by_type.nv to test that inherent methods are
+// accessible cross-module without separately importing the method module.
+
+module plan162.plan162_type_lib
+
+export type Counter {
+    value int
+}
+
+// Inherent method: declared in the same module as type Counter.
+// Returns the current value.
+export fn Counter @get() -> int => @value
+
+// Inherent method: returns value doubled.
+export fn Counter @doubled() -> int => @value * 2
+
+// Constructor function.
+export fn Counter.new(v int) -> Counter => { value: v }

@@ -8,4 +8,4 @@
 
 module plan138_5.neg_ro_prefix_ptr_return
 
-external fn p() -> ro * int
+extern "nova" fn p() -> ro * int

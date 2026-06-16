@@ -1,0 +1,17 @@
+// Plan 159 Ф.1 end-to-end: as_words() (UAX #29 word segmentation) must produce
+// correct segments, proving the word-boundary (word_data) tables are kept.
+// "Hello, world" → Hello | "," | " " | world  (4 tokens).
+// EXPECT_STDOUT words=4 ok
+
+module plan159.e2e_words
+
+import std.unicode.{WordsView}
+
+fn main() {
+    ro n = "Hello, world".as_words().count()
+    if n == 4 {
+        println("words=4 ok")
+    } else {
+        println("FAIL")
+    }
+}

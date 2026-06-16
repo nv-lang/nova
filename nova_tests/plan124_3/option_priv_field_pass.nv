@@ -18,7 +18,7 @@ export fn Account.new(n str) -> Account =>
 export fn Account @balance() -> f64 =>
     @money
 
-// External fn — passes Account через Option, accesses public balance().
+// extern "nova" fn — passes Account через Option, accesses public balance().
 fn check_account(a Account) -> f64 =>
     a.balance()
 

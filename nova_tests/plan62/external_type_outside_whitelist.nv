@@ -13,8 +13,8 @@
 //   теперь — hard error [E_EXTERNAL_TYPE_RETRACTED] для ВСЕХ модулей
 //   (включая stdlib).
 //
-// **D163 (FFI opaque consume-types) сохраняется:** `external type X consume`
-// разрешено везде для FFI resource handles (File, Mutex и т.д.).
+// Both `external type X` and `external type X consume` are fully retracted.
+// Migration: `type X(ptr)` for plain opaque; `type X value { priv handle int }` for consume.
 //
 // Этот файл пытается declare `external type FooBar` (без consume) —
 // ожидается hard error E_EXTERNAL_TYPE_RETRACTED с migration hint

@@ -1,8 +1,9 @@
-// modB peer 1 — импортирует modA → замыкает cycle.
+// Plan 162 Ф.2: folder-module cycle test — modB peer 1.
+// Imports modA (which imports modB → cycle back-edge).
+// B_VAL is independent of A_VAL — no runtime dependency on modA here.
 
-module modB.one
+module negative_capability.folder_cycle_setup.modB
 
-import nova_tests.negative_capability.folder_cycle_setup.modA.{a_extra}
+import nova_tests.negative_capability.folder_cycle_setup.modA
 
-export fn b_val() -> int =>
-    a_extra() + 1
+export const B_VAL int = 20

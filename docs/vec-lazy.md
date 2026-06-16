@@ -2,7 +2,8 @@
 # Lazy iterators over `Vec[T]` / `[]T`
 
 > **Audience:** Nova users. **Spec:** [D260](../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)
-> (lazy iterator model), [D239](../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
+> (lazy iterator model), [D277](../spec/decisions/02-types.md#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2)
+> (by-value `BoxIter` + zero-cost `vec_iter_zc`), [D239](../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
 > (`[]T ≡ Vec[T]`). **Internals:** [`vec-internals.md`](vec-internals.md). Plan 153.2.
 
 A lazy iterator processes a vector **one element at a time, on demand**, with **no
@@ -12,7 +13,7 @@ pulls elements through it, and it pulls only as many as it needs.
 ```nova
 import std.collections.vec_lazy
 
-let v = Vec[int].from([1, 2, 3, 4, 5, 6])
+let v = Vec[int].of(1, 2, 3, 4, 5, 6)
 let got = v.lazy().map(|x| x * 10).filter(|x| x > 25).collect()
 assert(got == [30, 40, 50, 60])
 ```
@@ -58,7 +59,7 @@ Nothing runs until a terminator drives the chain, and only the pulled elements
 are touched:
 
 ```nova
-let v = Vec[int].from([1, 2, 3, 4, 5])
+let v = Vec[int].of(1, 2, 3, 4, 5)
 
 // No terminator → no work. `map` never runs.
 let _pipeline = v.lazy().map(|x| x * 2).filter(|x| x > 0)
@@ -89,11 +90,40 @@ let hit = v.lazy().map(|x| x).find(|x| x == 3)            // Some(3), map ran 3�
 | `take` | `@take(n int) -> BoxIter[T]` | at most the first `n` |
 | `skip` | `@skip(n int) -> BoxIter[T]` | all but the first `n` |
 
+### Slice-view iterators (lazy `[]T`-view producers — Plan 153.4)
+
+Instance methods on `Vec[T]` (not on `BoxIter`) that split the vector into a lazy
+iterator of **zero-copy `[]T` views** (`Vec[T]` headers with `cap == len`, sharing
+the parent buffer like `v[a..b]`). No outer `Vec[Vec[T]]` is allocated up front —
+each `step` pull builds one sub-range view on demand (Rust `slice::chunks` /
+`windows`). Each `requires n > 0` (a zero/negative size panics, no clamp). Drive
+them with any terminator: `v.chunks(n).collect()` materialises the `[][]T` only on
+demand, `v.windows(n).map(|w| …)` / `.fold` / `.count` never allocate the outer
+`Vec` at all.
+
+| Adapter | Signature | Yields |
+|---|---|---|
+| `chunks` | `@chunks(n int) -> BoxIter[[]T]` | non-overlapping chunks of `n`; **last chunk short** |
+| `chunks_exact` | `@chunks_exact(n int) -> BoxIter[[]T]` | full chunks of `n` only; **short tail dropped** |
+| `rchunks` | `@rchunks(n int) -> BoxIter[[]T]` | chunks from the end (yielded back-to-front); **leading chunk short** |
+| `windows` | `@windows(n int) -> BoxIter[[]T]` | overlapping width-`n` views (`n-1` shared); `n > len` → empty |
+
+```nova
+let v = Vec[int].of(1, 2, 3, 4, 5)
+assert(v.chunks(2).collect().len() == 3)             // [1,2] [3,4] [5]
+assert(v.chunks_exact(2).collect().len() == 2)       // [1,2] [3,4] (drops [5])
+assert(v.windows(2).collect().len() == 4)            // [1,2] [2,3] [3,4] [4,5]
+// lazy — no Vec[Vec[int]] ever allocated:
+let pair_sums = v.windows(2).map(|w| w[0] + w[1]).collect()
+assert(pair_sums == [3, 5, 7, 9])
+```
+
 ### Terminators (drive the chain / short-circuit)
 
 | Terminator | Signature | Result |
 |---|---|---|
-| `collect` | `mut @collect() -> Vec[T]` | drain into a fresh `Vec` |
+| `collect` | `mut @collect() -> Vec[T]` | drain into a fresh `Vec` (default collect-target) |
+| `collect_set` | `[T Hash] mut @collect_set() -> Set[T]` | drain into a `Set` (dedup) |
 | `fold` | `mut @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc` | left fold |
 | `reduce` | `mut @reduce(f fn(T, T) -> T) -> Option[T]` | fold from first; `None` if empty |
 | `count` | `mut @count() -> int` | number of remaining elements |
@@ -143,6 +173,41 @@ let found = v.lazy().find(|x| x > 100)
 let early = v.lazy().map(|x| x + 1).take(3).any(|x| x == 3)
 ```
 
+## FromIterator / collect-target (Plan 153.6, D264)
+
+Materialise a pipeline (or any iterator source) into a chosen collection.
+
+```nova
+import std.collections.vec_lazy
+import std.collections.set.{Set}
+import std.collections.hashmap.{HashMap}
+
+// Default target — Vec
+let v = src.lazy().map(|x| x * 2).collect()
+
+// Set target — dedup (Rust `iter.collect::<HashSet<_>>()`)
+let s = src.lazy().filter(|x| x > 0).collect_set()
+
+// HashMap target — collect pairs, then `from`
+let m = HashMap[int, int].from(src.lazy().map(|x| (x, x * x)).collect())
+
+// Set target (alternative) — collect a Vec, then `from_iter`
+let s2 = Set[int].from_iter(src.lazy().collect())
+
+// Build a Vec from ANY Iter source directly (no lazy stage) — `@extend`
+let from_range = Vec[int].new().extend(0..5)        // [0, 1, 2, 3, 4]
+let from_vec   = Vec[int].new().extend(other_vec)   // copy
+```
+
+Nova types iterators **structurally** ([D58]): any `mut @next() -> Option[T]` is
+iterable, so FromIterator is a *set* of constructors/terminators rather than one
+enforced single-method protocol — `@collect`/`@collect_set` (terminators),
+`from`/`from_iter` (constructors from a collected `Vec`), `@extend` (build from a
+source). Gated (compiler gaps, not simplifications): a *static* generic
+`Vec[T].from_iter[S Iter[T]]` constructor (`[M-153.6-collect-static-generic]` — use
+`Vec[T].new().extend(src)`) and a tuple-element `@collect_map()` terminator
+(`[M-153.6-collect-map-tuple-receiver]` — use `HashMap.from(pairs.collect())`).
+
 ## Known limits (Phase A)
 
 - **`enumerate` then a tuple-preserving adapter.** `enumerate().map(|p| ...)` (the
@@ -154,15 +219,107 @@ let early = v.lazy().map(|x| x + 1).take(3).any(|x| x == 3)
 - **Phase B adapters not yet present** (roadmap, not a simplification):
   `zip`/`unzip`/`chain`/`flat_map`/`flatten`/`scan`/`inspect`/`step_by`/
   `take_while`/`skip_while`/`peekable`/`min_by[_key]`/`max_by[_key]`/`partition`/
-  `chunk_by`/`into_iter`, plus mutable iteration (`for mut x` / `mut @iter()`) and
-  `FromIterator`/`collect`-into-arbitrary-target.
-- **Cost.** The current model boxes each `step` closure (a heap thunk per adapter).
-  A zero-cost, fully-monomorphized generic-over-source variant is a planned perf
-  upgrade (`[M-153.2-generic-over-source-zerocost]`); it does not change the API.
+  `chunk_by`/`into_iter`, plus mutable iteration (`for mut x` / `mut @iter()`).
+  (`FromIterator`/collect-target is done — see D264.)
+- **Cost.** `BoxIter[T]` is now a `value` record (D277 Stage 1), so the **wrapper
+  record itself costs zero heap allocations** — a `v.lazy().map().filter().collect()`
+  chain went from 5 `BoxIter` heap boxes to **0**, passed by value on the stack.
+  What remains boxed in this model is the per-adapter **`step` closure** (a heap
+  thunk + a box of the captured source, plus a `step()` pointer call per element).
+  For an allocation-free *and* indirection-free chain, use the zero-cost
+  generic-over-source sibling — see below.
+
+## Zero-cost sibling — `collections.vec_iter_zc`
+
+`vec_lazy`/`BoxIter` is the **closure-fluent** surface: one erased cursor type,
+uniform `BoxIter[T]` at every stage, at the cost of a boxed `step` per adapter.
+For hot paths there is an **allocation-free, indirection-free** sibling module:
+
+```nova
+import std.collections.vec_iter_zc
+
+let v = Vec[int].from([1, 2, 3, 4, 5, 6])
+let got = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zcollect()
+assert(got == [30, 40, 50, 60])
+```
+
+Each adapter is its **own generic-over-source `value` record** (`MapIter[I,T,U]` /
+`FilterIter[I,T]` / `FilterMapIter[I,T,U]`) that holds the upstream iterator
+**inline** as a field `src I` — not a boxed `step` closure. `@next()` calls
+`(@src).next()` by a **static, monomorphized** dispatch, so a chain
+`v.ziter().zmap(f).zfilter(p)` monomorphizes to a *single* nested concrete type
+`FilterIter[MapIter[VecIter[int], int, int], int]`, and every `.next()` inlines
+down to the base `VecIter.next()` — no per-element function-pointer call.
+
+The adapter-on-adapter methods write their return type with **`Self`** as a
+*nested* generic type-argument — e.g. `MapIter[I,T,U] @zmap(...) -> MapIter[Self,U,V]`
+(where `Self ≡ MapIter[I,T,U]`, the receiver mono), and likewise
+`-> FilterIter[Self,U]` / `-> FilterMapIter[Self,U,V]`. This drops the repeated
+receiver-type in the re-nesting position; semantics are identical to spelling the
+receiver type in full. Compiler support for `Self` as a nested generic type-arg
+(return **and** param) on a value-generic mono landed 2026-06-15 — see
+[D66 → AMEND «Self как вложенный generic type-arg»](../spec/decisions/02-types.md#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols).
+(Chain-ENTRY `VecIter[T] @zmap -> MapIter[Self,T,U]` is **not** yet covered — the
+single-param `VecIter[T]` source stays explicit; `[M-138.2-self-in-param]`.)
+
+| | `vec_lazy` (`BoxIter`) | `vec_iter_zc` (Map/Filter) |
+|---|---|---|
+| wrapper record per adapter | 0 heap (by-value, D277 Stage 1) | 0 heap (by-value) |
+| source box (`_box_src`) per adapter | 1 heap | **0** (source held inline) |
+| `step` closure thunk per adapter | 1 heap (`NovaClosBase`) | **0** (static dispatch) |
+| per-element source indirection | fn-ptr call | **none** (inlined) |
+| capture-free `f`/`pred` closure env/box | 0 heap (D277 Stage 3 — static singleton) | 0 heap (static singleton) |
+| terminator body (`collect_into`/`fold`/`sum`/…) | — | **0 `nova_alloc`** (D277 Stage 4) |
+| residual heap | a *capturing* `f`/`pred`'s env + the `VecIter` source cursor | same |
+
+For the canonical `map().filter().collect()` chain this removes **6 adapter
+allocations and 9 source boxes**. As of D277 **Stage 3**, a closure with **no
+captures** (the common `|x| x * 3` form) costs **0 heap** too — it is emitted as a
+file-scope static singleton instead of a per-call-site env-box + closure-box
+(measured: closure allocs `4 → 0` for the `.zmap().zfilter().zcollect()` chain,
+`6 → 0` with a `.zfold()`). The only heap left for an all-capture-free chain is the
+`VecIter` source cursor; a *capturing* closure still allocates its env per instance
+(irreducible without closures-as-mono-types — `[M-153.2-closure-as-mono-type]`), and
+the **call itself** is still a fn-ptr indirection (`[M-153.2-Z-closure-devirt]`).
+
+**Allocation summary** (canonical chain over a `Vec[int]`, measured in generated C):
+
+| chain | boxed `vec_lazy` | zero-cost `vec_iter_zc` | + Stage 3 devirt (`vec_iter_zc`) |
+|---|---|---|---|
+| `.map(f).filter(p).collect()` (capture-free `f`/`p`) | wrapper + source + step + closure heap | source/step **0**; closure env **4** | closure env **0** (singleton); result `Vec` only |
+| `.map(f).filter(p).collect_into(out)` | — | terminator body **0 `nova_alloc`** (Stage 4) | **0** + amortized **0** result (reuses `out`) |
+| `.map(f).filter(p).fold(0, g)` (capture-free) | closure heap | closure env **6** | closure env **0**; result scalar (**0**) |
+
+The two coexist behind separate explicit imports — `vec_iter_zc` is **not** a
+replacement. Reach for it on hot paths; `vec_lazy` stays the ergonomic
+single-cursor default. Entry is `v.ziter()`; adapters `zmap`/`zfilter`/
+`zfilter_map`; terminators `zcollect`/`zcollect_into`/`zfold`/`zcount`/`zsum`/
+`zfor_each`/`zany`/`zall`/`zfind`. `take`/`skip`/`enumerate` (stateful /
+tuple-element) remain on boxed `vec_lazy` for now.
+
+`zcollect_into(out)` is the **allocation-free** sink (D277 Stage 4): it drains the
+chain by **appending** into a caller-supplied reusable `Vec[T]` instead of
+allocating a fresh result. Its monomorphized body is `0 nova_alloc`. Clear the
+buffer first to use it as a fresh sink (`out.clear()` keeps the backing store, so a
+reused `out` amortizes to **zero** allocations):
+
+```nova
+mut out = Vec[int].new()
+for batch in batches {
+    out.clear()                                       // len=0, buffer kept
+    batch.ziter().zmap(|x| x * 2).zfilter(|x| x > 0).zcollect_into(out)
+    consume(out)                                      // reuse `out` next iteration
+}
+```
 
 ## See also
 
 - [`vec-internals.md`](vec-internals.md) — module layout, the boxed-fluent shape,
-  Compare/Equal.
-- [D260](../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — the decision record.
+  the zero-cost generic-over-source sibling, Compare/Equal.
+- [D260](../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — boxed-fluent decision record.
+- [D264](../spec/decisions/02-types.md#d264-vec-протоколы-hash--fromiterator--collect-target-plan-1536) — Hash + FromIterator / collect-target.
+- [D277](../spec/decisions/02-types.md#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) — by-value `BoxIter` monomorphization + the zero-cost `vec_iter_zc` sibling.
+- [D58]: ../spec/decisions/03-syntax.md — `Iter`/`Next` structural iteration.
 - [Q-iterator-laziness](../spec/open-questions.md) — why lazy is the canon.
+
+[D58]: ../spec/decisions/03-syntax.md

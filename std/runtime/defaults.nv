@@ -145,3 +145,33 @@ export fn f64 @compare(other Self) -> int =>
 
 // bool ordering — false < true (canonical Boolean order).
 export fn bool @compare(other Self) -> int => (@ as int) - (other as int)
+
+// min / max — scalar value comparison ([M-153-scalar-min-max], D239 §2).
+// Returns the smaller / larger of the two values.
+export fn int @min(other int) -> int => if @ < other { @ } else { other }
+export fn int @max(other int) -> int => if @ > other { @ } else { other }
+
+export fn u8  @min(other Self) -> Self => if @ < other { @ } else { other }
+export fn u8  @max(other Self) -> Self => if @ > other { @ } else { other }
+export fn u16 @min(other Self) -> Self => if @ < other { @ } else { other }
+export fn u16 @max(other Self) -> Self => if @ > other { @ } else { other }
+export fn u32 @min(other Self) -> Self => if @ < other { @ } else { other }
+export fn u32 @max(other Self) -> Self => if @ > other { @ } else { other }
+export fn u64 @min(other Self) -> Self => if @ < other { @ } else { other }
+export fn u64 @max(other Self) -> Self => if @ > other { @ } else { other }
+export fn uint @min(other Self) -> Self => if @ < other { @ } else { other }
+export fn uint @max(other Self) -> Self => if @ > other { @ } else { other }
+
+export fn i8  @min(other Self) -> Self => if @ < other { @ } else { other }
+export fn i8  @max(other Self) -> Self => if @ > other { @ } else { other }
+export fn i16 @min(other Self) -> Self => if @ < other { @ } else { other }
+export fn i16 @max(other Self) -> Self => if @ > other { @ } else { other }
+export fn i32 @min(other Self) -> Self => if @ < other { @ } else { other }
+export fn i32 @max(other Self) -> Self => if @ > other { @ } else { other }
+export fn i64 @min(other Self) -> Self => if @ < other { @ } else { other }
+export fn i64 @max(other Self) -> Self => if @ > other { @ } else { other }
+
+export fn f32 @min(other Self) -> Self => if @ < other { @ } else { other }
+export fn f32 @max(other Self) -> Self => if @ > other { @ } else { other }
+export fn f64 @min(other Self) -> Self => if @ < other { @ } else { other }
+export fn f64 @max(other Self) -> Self => if @ > other { @ } else { other }

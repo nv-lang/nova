@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR [E_INFINITE_TYPE]
+//
+// Q-infinite-value-type (D280 §4) — NEGATIVE: a by-value self-reference nested
+// inside a FIXED-ARRAY field.
+//
+//     type FA value { kids [4]FA }
+//
+// A fixed array `[N]T` is N INLINE copies of `T` (the size walk multiplies the
+// element size by N). Even a single inline copy of `FA` inside `FA` closes the
+// value-containment cycle — `FA` contains `FA` by value, infinitely. (A slice
+// `[]FA`, by contrast, is a heap-pointer leaf and WOULD break the cycle — that
+// is the `pos_slice_self.nv` positive.) The detector recurses into the
+// fixed-array element regardless of N.
+//
+// INTENT: `nova check` EXITS NONZERO with `E_INFINITE_TYPE`.
+
+module plan144_inftype.neg_in_fixed_array
+
+type FA value { kids [4]FA }

@@ -12,27 +12,27 @@ module plan138_2.t9_vec_bulk_append_parity_pos
 import std.collections.vec.{Vec}
 
 test "append — basic bulk copy onto tail, source intact" {
-    mut dst = Vec[int].from([1, 2, 3])
-    mut src = Vec[int].from([4, 5, 6])
+    mut dst = Vec[int].of(1, 2, 3)
+    mut src = Vec[int].of(4, 5, 6)
     dst.append(src)
-    assert(dst.equal(Vec[int].from([1, 2, 3, 4, 5, 6])))
+    assert(dst.equal(Vec[int].of(1, 2, 3, 4, 5, 6)))
     // `@append` is a COPY (D141): `src` is left UNCHANGED, not emptied.
     assert(src.len() == 3)
-    assert(src.equal(Vec[int].from([4, 5, 6])))
+    assert(src.equal(Vec[int].of(4, 5, 6)))
 }
 
 test "append — empty source is a no-op" {
-    mut dst = Vec[int].from([1, 2])
+    mut dst = Vec[int].of(1, 2)
     mut src = Vec[int].new()
     dst.append(src)
-    assert(dst.equal(Vec[int].from([1, 2])))
+    assert(dst.equal(Vec[int].of(1, 2)))
 }
 
 test "append — into empty destination" {
     mut dst = Vec[int].new()
-    mut src = Vec[int].from([9, 8, 7])
+    mut src = Vec[int].of(9, 8, 7)
     dst.append(src)
-    assert(dst.equal(Vec[int].from([9, 8, 7])))
+    assert(dst.equal(Vec[int].of(9, 8, 7)))
 }
 
 test "append — amortised growth across many bulk appends" {
@@ -40,7 +40,7 @@ test "append — amortised growth across many bulk appends" {
     // remain exactly the concatenation — proves growth+memmove parity.
     mut dst = Vec[int].new()
     for _ in 0..50 {
-        mut chunk = Vec[int].from([1, 2, 3, 4])
+        mut chunk = Vec[int].of(1, 2, 3, 4)
         dst.append(chunk)
     }
     assert(dst.len() == 200)

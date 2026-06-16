@@ -1,0 +1,23 @@
+// Plan 159 Ф.3 POSITIVE — generics monomorphize ON USE; an un-instantiated
+// generic combination is never drained from the mono worklist, so it is never
+// emitted at all (verified out-of-band: the generated C contains a `box_it`
+// instance mangled for `int` but NONE mangled for `str`). The new fn/const/
+// method DCE does not touch generic free fns (they are non-candidates), so the
+// used `[int]` instance is still emitted and the program runs.
+//
+// Here `box_it[int]` is instantiated (from main) but `box_it[str]` is NOT —
+// `box_it[str]` is never referenced anywhere, so it is not monomorphized. The
+// program compiling, running and printing the sum proves the used instance
+// survives the interaction with reachability DCE.
+// EXPECT_STDOUT 12
+
+module plan159.f3_generic_mono_on_use
+
+fn box_it[T](x T) -> T => x
+
+fn main() {
+    // Only the [int] instantiation is reached; [str] is never named anywhere.
+    ro a = box_it[int](5)
+    ro b = box_it[int](7)
+    println("${a + b}")
+}

@@ -39,6 +39,19 @@
 //   adapters : fn BoxIter[T] @map[U](..) -> BoxIter[U]   // return a new BoxIter
 //   terminators : fn BoxIter[T] mut @collect() -> Vec[T] // drive the chain
 //
+// ── FromIterator / collect-target (Plan 153.6, D264)
+//
+// `@collect()` is the default collect-target (`-> Vec[T]`); `@collect_set()` is
+// the `Set[T]` collect-target (dedup, `[T Hash]`). Other targets compose over
+// `@collect()`: hand the collected `Vec` to that collection's `from`/`from_iter`
+// constructor — `HashMap[K,V].from(pairs.lazy()…​.collect())`,
+// `Set[T].from_iter(v.lazy()…​.collect())`. Building a `Vec` directly from an
+// arbitrary `Iter` source (no lazy stage) is `Vec[T].new().extend(src)` (the
+// `@extend[S Iter[T]]` instance method, mutate.nv). A *static* generic
+// `Vec[T].from_iter[S Iter[T]]` constructor and a tuple-element `@collect_map()`
+// terminator are gated on a compiler gap — see `[M-153.6-collect-static-generic]`
+// and `[M-153.6-collect-map-tuple-receiver]`.
+//
 // Each adapter copies the receiver (`mut src = @`) into a fresh capturing
 // closure, so the pipeline is re-entrant per terminator call and never mutates
 // the caller's BoxIter in place until a terminator drains it.
@@ -46,6 +59,7 @@
 module collections.vec_lazy
 
 import std.collections.vec.{Vec, VecIter}
+import std.collections.set.{Set}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Core type + entry bridge
@@ -54,7 +68,7 @@ import std.collections.vec.{Vec, VecIter}
 /// A boxed, lazy iterator over `T`. Holds a single `step` thunk that yields the
 /// next element (`Some`) or signals exhaustion (`None`). Adapters build new
 /// `BoxIter`s by wrapping `step`; nothing runs until a terminator pulls.
-export type BoxIter[T] { priv step fn() -> Option[T] }
+export type BoxIter[T] value { priv step fn() -> Option[T] }
 
 /// Advance the lazy iterator by one element.
 export fn BoxIter[T] mut @next() -> Option[T] => (@step)()
@@ -70,7 +84,7 @@ export fn box_iter[T](it VecIter[T]) -> BoxIter[T] {
 ///
 /// # Examples
 /// ```nova
-/// import std.collections.vec_lazy
+/// import std.collections.vec_lazy as vec_lazy
 /// let v = Vec[int].from([1, 2, 3, 4])
 /// let got = v.lazy().map(|x| x * 2).filter(|x| x > 4).collect()
 /// assert(got == [6, 8])
@@ -169,16 +183,318 @@ export fn BoxIter[T] @skip(n int) -> BoxIter[T] {
     } }
 }
 
+/// Lazily yield every `n`-th element (1-indexed: first, 1+n, 1+2n, …).
+/// `n = 1` is the identity (yields all). `n = 0` is a caller bug — asserted.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let v = Vec[int].of(1, 2, 3, 4, 5, 6)
+/// assert(v.lazy().step_by(2).collect() == [1, 3, 5])
+/// ```
+export fn BoxIter[T] @step_by(n int) -> BoxIter[T]
+    requires n > 0
+{
+    mut src = @
+    mut first = true
+    mut to_skip = n - 1
+    { step: || {
+        if first {
+            first = false
+            return src.next()
+        }
+        mut i = to_skip
+        while i > 0 {
+            i = i - 1
+            match src.next() {
+                Some(_) => {},
+                None => return None,
+            }
+        }
+        src.next()
+    } }
+}
+
+/// Lazily zip two iterators into `(A, B)` pairs — stops when either is exhausted.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let a = Vec[int].of(1, 2, 3)
+/// let b = Vec[str].of("a", "b", "c")
+/// let pairs = a.lazy().zip(b.lazy()).collect()
+/// assert(pairs.len() == 3)
+/// ```
+export fn BoxIter[A] @zip[B](mut other BoxIter[B]) -> BoxIter[(A, B)] {
+    mut src = @
+    { step: || match src.next() {
+        Some(a) => match other.next() {
+            Some(b) => Some((a, b)),
+            None => None,
+        },
+        None => None,
+    } }
+}
+
+/// Lazily concatenate two `BoxIter[T]` iterators — drains `self` then `other`.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let a = Vec[int].of(1, 2)
+/// let b = Vec[int].of(3, 4)
+/// assert(a.lazy().chain(b.lazy()).collect() == [1, 2, 3, 4])
+/// ```
+export fn BoxIter[T] @chain(mut other BoxIter[T]) -> BoxIter[T] {
+    mut src = @
+    mut first_done = false
+    { step: || {
+        if !first_done {
+            match src.next() {
+                Some(x) => return Some(x),
+                None => { first_done = true },
+            }
+        }
+        other.next()
+    } }
+}
+
+/// Lazily map each `T` to a `BoxIter[U]` via `f`, then flatten — yields all
+/// elements of the inner iterator before moving to the next outer element.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy
+/// let v = Vec[int].of(1, 2, 3)
+/// let got = v.lazy().flat_map(|x| Vec[int].of(x, x * 10).lazy()).collect()
+/// assert(got == [1, 10, 2, 20, 3, 30])
+/// ```
+export fn BoxIter[T] @flat_map[U](f fn(T) -> BoxIter[U]) -> BoxIter[U] {
+    mut src = @
+    mut inner Option[BoxIter[U]] = None
+    { step: || {
+        while true {
+            match inner {
+                Some(mut it) => match it.next() {
+                    Some(u) => return Some(u),
+                    None => { inner = None },
+                },
+                None => match src.next() {
+                    Some(x) => { inner = Some(f(x)) },
+                    None => return None,
+                },
+            }
+        }
+        None
+    } }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Slice-view iterators — chunks / chunks_exact / rchunks / windows (Plan 153.4)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// These are the LAZY half of the Plan 153.4 slice surface (`[M-153.4-chunks-
+// windows-lazy]`, D262). Each is an instance method on `Vec[T]` (not on
+// `BoxIter`) that returns a `BoxIter[Vec[T]]` — a lazy iterator whose every
+// yielded element is a **zero-copy `[]T` view** (`Vec[T]` header with
+// `cap == len`) over the SAME backing buffer (Plan 96 D-single-type / D238),
+// exactly like `v[a..b]` (slice.nv). No outer `Vec[Vec[T]]` is allocated up
+// front (the Rust `slice::chunks`/`windows` model): each `step` pull builds one
+// sub-range view on demand. Drive the chain with any terminator —
+// `v.chunks(n).collect()` materialises the `[][]T` only when asked, and
+// `v.chunks(n).map(|w| w.len())` / `.for_each(...)` never allocate the outer
+// `Vec` at all.
+//
+// They live HERE in the explicitly-imported lazy module (not the prelude `vec/`
+// folder) for the same reason as every other adapter: the bodies store a
+// capturing closure (the `step` thunk), and a prelude-global generic-type method
+// whose body forwards a closure leaks its generics into every compilation unit
+// ([M-codegen-var-types-fn-scope] + D145). Keeping them behind `import
+// std.collections.vec_lazy` confines that to opt-in users.
+//
+// Contract `n > 0` (a `requires`, enforced as a runtime panic at the call): a
+// zero or negative window/chunk size is a caller bug, not a clamp — a silent
+// clamp would hide it and there is no sensible "0-wide" view to yield.
+//
+// The early-exhaustion path returns a `None` bound to an explicitly-typed local
+// (`ro done Option[Self] = None`) rather than a bare `return None`: a bare `None`
+// in a closure body whose element type is the *concrete* `Vec[T]` view (not a
+// free generic flowing from the receiver) would otherwise be monomorphised to a
+// default `Option[<elem>]` and mismatch the `BoxIter[Self]` step's return type
+// (the closure-typing gap behind `[M-153.2-tuple-elem-adapter]`). Annotating the
+// local pins it to `Option[Self]`.
+
+/// Lazily split into non-overlapping `[]T` chunks of `n` elements, left to right
+/// — the last chunk is SHORT (`len % n` elements) when `n` does not divide
+/// evenly. Each yielded chunk is a zero-copy view (`cap == len`) over the same
+/// buffer; no outer `Vec` is allocated until a terminator runs.
+///
+/// Contract `n > 0`.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy as vec_lazy
+/// let v = Vec[int].of(1, 2, 3, 4, 5)
+/// let cs = v.chunks(2).collect()        // [][]T view list
+/// assert(cs.len() == 3)
+/// assert(cs[0].equal(Vec[int].of(1, 2)) && cs[2].equal(Vec[int].of(5)))
+/// ```
+export fn Vec[T] @chunks(n int) -> BoxIter[Self]
+    requires n > 0
+{
+    mut src = @
+    mut i = 0
+    ro total = @len()
+    { step: || {
+        if i >= total {
+            ro done Option[Self] = None
+            return done
+        }
+        ro end = if i + n < total { i + n } else { total }
+        ro w = src[i..end]
+        i = i + n
+        Some(w)
+    } }
+}
+
+/// Lazily split into non-overlapping `[]T` chunks of EXACTLY `n` elements — any
+/// short trailing remainder (`len % n` elements) is DROPPED (Rust
+/// `slice::chunks_exact`). Every yielded chunk is a zero-copy view of length `n`.
+///
+/// Contract `n > 0`. Use `@chunks` to keep the short tail.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy as vec_lazy
+/// let v = Vec[int].of(1, 2, 3, 4, 5)
+/// let cs = v.chunks_exact(2).collect()
+/// assert(cs.len() == 2)                  // the trailing [5] is dropped
+/// assert(cs[1].equal(Vec[int].of(3, 4)))
+/// ```
+export fn Vec[T] @chunks_exact(n int) -> BoxIter[Self]
+    requires n > 0
+{
+    mut src = @
+    mut i = 0
+    ro total = @len()
+    { step: || {
+        if i + n > total {
+            ro done Option[Self] = None
+            return done
+        }
+        ro w = src[i..(i + n)]
+        i = i + n
+        Some(w)
+    } }
+}
+
+/// Lazily split into non-overlapping `[]T` chunks of `n` elements, RIGHT to left
+/// (from the end) — the LAST yielded chunk (the leading one) is short when `n`
+/// does not divide `len`. The chunks are yielded back-to-front: the final `n`
+/// elements first. Each is a zero-copy view (Rust `slice::rchunks`).
+///
+/// Contract `n > 0`.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy as vec_lazy
+/// let v = Vec[int].of(1, 2, 3, 4, 5)
+/// let cs = v.rchunks(2).collect()
+/// assert(cs[0].equal(Vec[int].of(4, 5)))   // tail first
+/// assert(cs[2].equal(Vec[int].of(1)))      // short leading chunk last
+/// ```
+export fn Vec[T] @rchunks(n int) -> BoxIter[Self]
+    requires n > 0
+{
+    mut src = @
+    mut end = @len()
+    { step: || {
+        if end <= 0 {
+            ro done Option[Self] = None
+            return done
+        }
+        ro start = if end - n > 0 { end - n } else { 0 }
+        ro w = src[start..end]
+        end = start
+        Some(w)
+    } }
+}
+
+/// Lazily yield all OVERLAPPING `[]T` windows of width `n` — consecutive views
+/// `[0, n)`, `[1, n+1)`, … `[len-n, len)`, each sharing `n - 1` elements with the
+/// next (Rust `slice::windows`). When `n > len` nothing is yielded. Each window
+/// is a zero-copy view; no outer `Vec` is allocated until a terminator runs.
+///
+/// Contract `n > 0`.
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy as vec_lazy
+/// let v = Vec[int].of(1, 2, 3, 4)
+/// let ws = v.windows(2).collect()
+/// assert(ws.len() == 3)
+/// assert(ws[0].equal(Vec[int].of(1, 2)) && ws[2].equal(Vec[int].of(3, 4)))
+/// ```
+export fn Vec[T] @windows(n int) -> BoxIter[Self]
+    requires n > 0
+{
+    mut src = @
+    mut i = 0
+    ro total = @len()
+    { step: || {
+        if i + n > total {
+            ro done Option[Self] = None
+            return done
+        }
+        ro w = src[i..(i + n)]
+        i = i + 1
+        Some(w)
+    } }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Terminators (drive the chain to completion / short-circuit)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Drain the iterator into a fresh `Vec[T]`.
+/// Drain the iterator into a fresh `Vec[T]` — the default collect-target.
+///
+/// This is the lazy half of the **FromIterator / collect-target** bridge
+/// (Plan 153.6 / D264): a whole pipeline materialises here, in one pass, with
+/// no intermediate `Vec` per stage. To target a *different* collection, either
+/// use a typed terminator (`@collect_set()` below) or hand the collected `Vec`
+/// to that collection's `from`/`from_iter` constructor —
+/// `HashMap[K, V].from(pairs.lazy().map(|x| (x, x*x)).collect())`,
+/// `Set[T].from_iter(v.lazy().filter(p).collect())`.
 export fn BoxIter[T] mut @collect() -> Vec[T] {
     mut out = Vec[T].new()
     while true {
         match @next() {
             Some(x) => out.push(x),
+            None => return out,
+        }
+    }
+    out
+}
+
+/// Drain the iterator into a fresh `Set[T]`, deduplicating elements — the
+/// `Set` collect-target (Rust `iter.collect::<HashSet<_>>()`).
+///
+/// `[T Hash]` because `Set` (a `HashMap[T, ()]`) keys on the element. Equal
+/// elements collapse to one; iteration order is unspecified. Allocation-free
+/// over the pipeline (pulls one element at a time, inserts on the fly).
+///
+/// # Examples
+/// ```nova
+/// import std.collections.vec_lazy as vec_lazy
+/// let v = Vec[int].from([1, 2, 2, 3, 3, 3])
+/// let s = v.lazy().collect_set()
+/// assert(s.len() == 3)
+/// ```
+export fn BoxIter[T Hash] mut @collect_set() -> Set[T] {
+    mut out = Set[T].new()
+    while true {
+        match @next() {
+            Some(x) => { out.insert(x) },
             None => return out,
         }
     }
@@ -356,4 +672,27 @@ test "lazy fold / count / sum" {
     assert(v.lazy().fold(0, |acc, x| acc + x) == 10)
     assert(v.lazy().count() == 4)
     assert(v.lazy().sum(0) == 10)
+}
+
+test "lazy collect_set dedups (Set collect-target)" {
+    ro v = Vec[int].from([1, 2, 2, 3, 3, 3])
+    ro s = v.lazy().collect_set()
+    assert(s.len() == 3)
+    assert(s.contains(2))
+}
+
+test "lazy chunks — non-overlapping, short last chunk" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro cs = v.chunks(2).collect()
+    assert(cs.len() == 3)
+    assert(cs[0].equal(Vec[int].of(1, 2)))
+    assert(cs[2].equal(Vec[int].of(5)))
+}
+
+test "lazy windows — overlapping width-n views" {
+    ro v = Vec[int].of(1, 2, 3, 4)
+    ro ws = v.windows(2).collect()
+    assert(ws.len() == 3)
+    assert(ws[0].equal(Vec[int].of(1, 2)))
+    assert(ws[2].equal(Vec[int].of(3, 4)))
 }

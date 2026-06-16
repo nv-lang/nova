@@ -1,0 +1,27 @@
+// Q-infinite-value-type (D280 §4) — POSITIVE: a linked list whose recursive
+// back-reference goes through `Option`. MUST `nova check` PASS — NO
+// `E_INFINITE_TYPE`.
+//
+//     type Cons value { head int, tail Option[Cons] }
+//
+// `Option[Cons]` is a generics-carrying Named — it BOXES its payload and is NOT
+// inlined by the size walk (the inline Named arm requires `generics.is_empty()`;
+// any non-empty generics fall through to indirection/finite). So the `tail`
+// field is a pointer-ish boxed leaf, NOT an inline `Cons` — INDIRECTION breaks
+// the cycle → FINITE. The detector's Named arm STOPs on any non-empty generics,
+// so it must NOT report `E_INFINITE_TYPE`. This is the idiomatic finite
+// recursive value type and the detector must accept it.
+
+module plan144_inftype.pos_option_list
+
+type Cons value {
+    head int
+    tail Option[Cons]
+}
+
+fn head_of(c Cons) -> int => c.head
+
+test "value record self-referencing through Option — finite" {
+    ro single = Cons { head: 7, tail: None }
+    assert(head_of(single) == 7)
+}

@@ -15,7 +15,7 @@ module collections.vec
 /// record and keeps the buffer alive. Concurrent mutation of the originating
 /// `Vec` during iteration is *not* checked — the caller is responsible for
 /// not pushing/removing while iterating.
-export type VecIter[T] {
+export type VecIter[T] value {
     priv data *mut T
     priv mut idx int
     priv len int
@@ -34,6 +34,7 @@ export fn Vec[T] @iter() -> VecIter[T] =>
 
 /// Advance the iterator. Returns `Some(T)` while elements remain, `None`
 /// once the vector is exhausted (subsequent calls keep returning `None`).
+#impl(Next[T])
 export fn VecIter[T] mut @next() -> Option[T] {
     if @idx >= @len { return None }
     ro v = unsafe { @data[@idx] }

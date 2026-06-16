@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.12 Ф.7: std/net/mock.nv — in-memory mock handlers for testing.
+//
+// Lives in `module std.net` (same module as tcp.nv/udp.nv/addr.nv) so it
+// can access priv fields and _from_raw factories without exposing them.
+//
+// Exports:
+//   mock_tcp_net()  — TcpNet handler that never touches real sockets.
+//   mock_udp_net()  — UdpNet handler that never touches real sockets.
+//   mock_addr_net() — AddrNet handler with static loopback responses.
+//   mock_dns_net()  — DnsNet handler returning a static loopback address.
+
+module std.net
+
+/// In-memory TcpNet handler for unit-testing Nova code that depends on TcpNet.
+///
+/// - bind / connect / accept always succeed (return stub handles).
+/// - write returns the byte count of the input data.
+/// - local_port returns 4242, peer_port returns 6060.
+/// - All options are no-ops.
+///
+/// # Example
+///
+/// ```nova
+/// import std.net.{SocketAddr, TcpStream, mock_tcp_net, mock_addr_net}
+///
+/// test "write echo without network" {
+///     with AddrNet = mock_addr_net(), TcpNet = mock_tcp_net() {
+///         mut s = TcpStream.connect(SocketAddr.loopback(0)).unwrap()
+///         assert(s.write("hi").unwrap() == 2)
+///         s.close()
+///     }
+/// }
+/// ```
+#stable(since = "0.1")
+export fn mock_tcp_net() -> Effect[TcpNet] => effect TcpNet {
+    bind(_addr)            => Ok(TcpListener._from_raw(CTcpListener(1 as *())))
+    accept(_lst)           => Ok(TcpStream._from_raw(CTcpStream(2 as *())))
+    connect(_addr)         => Ok(TcpStream._from_raw(CTcpStream(3 as *())))
+    write(_stream, data)   => Ok(data.len())
+    read(_stream, _max)    => Ok("mock-reply")
+    close_stream(stream)   { ro _ = stream }
+    close_listener(lst)    { ro _ = lst }
+    listener_local_port(_lst)         => 4242
+    listener_local_addr(_lst)         => SocketAddr._from_raw(socket_addr_loopback(4242))
+    stream_local_port(_s)             => 5050
+    stream_peer_port(_s)              => 6060
+    stream_local_addr(_s)             => SocketAddr._from_raw(socket_addr_loopback(5050))
+    stream_peer_addr(_s)              => SocketAddr._from_raw(socket_addr_loopback(6060))
+    set_nodelay(_s, _on)              {}
+    set_keepalive(_s, _on)            {}
+    set_reuse_address(_lst, _on)      {}
+}
+
+/// In-memory UdpNet handler for unit-testing.
+///
+/// - bind always succeeds.
+/// - send_to returns the byte count of the data.
+/// - recv_from returns ("", loopback(0)) immediately.
+/// - local_port returns 7070.
+#stable(since = "0.1")
+export fn mock_udp_net() -> Effect[UdpNet] => effect UdpNet {
+    bind(_addr)                    => Ok(UdpSocket._from_raw(CUdpSocket(10 as *())))
+    send_to(_sock, data, _addr)    => Ok(data.len())
+    recv_from(_sock, _max)         => Ok(("", SocketAddr._from_raw(socket_addr_loopback(0))))
+    close_socket(sock)             { ro _ = sock }
+    socket_local_port(_sock)       => 7070
+    socket_local_addr(_sock)       => SocketAddr._from_raw(socket_addr_loopback(7070))
+}
+
+/// In-memory AddrNet handler for unit-testing.
+///
+/// - loopback(port) returns a SocketAddr backed by socket_addr_loopback(port).
+/// - from_str parses via real C (addr parsing is pure, no I/O).
+#stable(since = "0.1")
+export fn mock_addr_net() -> Effect[AddrNet] => effect AddrNet {
+    loopback(port)         => SocketAddr._from_raw(socket_addr_loopback(port))
+    loopback_v6(port)      => SocketAddr._from_raw(socket_addr_loopback_v6(port))
+    v4(a, b, c, d, port)  => SocketAddr._from_raw(socket_addr_v4(a, b, c, d, port))
+    from_str(s) {
+        ro (code, handle) = socket_addr_parse(s)
+        if code == 2 { Err(NetError.InvalidPort) }
+        else if code != 0 { Err(NetError.InvalidAddr(s)) }
+        else { Ok(SocketAddr._from_raw(handle)) }
+    }
+    port(addr)             => socket_addr_port(addr.handle)
+    host_str(addr)         => socket_addr_host_str(addr.handle)
+    is_v4(addr)            => socket_addr_is_v4(addr.handle)
+    is_v6(addr)            => socket_addr_is_v6(addr.handle)
+    to_str(addr)           => socket_addr_to_str(addr.handle)
+}
+
+/// In-memory DnsNet handler for unit-testing.
+///
+/// - lookup always succeeds, returning a single loopback address on port 0.
+/// - Use with `with DnsNet = mock_dns_net()` in tests that exercise DNS-aware code
+///   without a real network or system resolver.
+#stable(since = "0.1")
+export fn mock_dns_net() -> Effect[DnsNet] => effect DnsNet {
+    lookup(_host, _port) => Ok(SocketAddr._from_raw(socket_addr_loopback(0)))
+}

@@ -8,4 +8,4 @@
 
 module plan138_5.neg_safe_retired_in_ptr
 
-external fn p(x * safe int) -> ()
+extern "nova" fn p(x * safe int) -> ()

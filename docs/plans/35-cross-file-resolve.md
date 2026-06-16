@@ -12,6 +12,12 @@
 > (2026-05-21): visibility enforcement (R26), 35.B cache/incremental,
 > 35.C cross-file generic bounds, 35.D mangling + DCE, FileId
 > propagation. Эти фичи будут доработаны там, не в этом плане.
+>
+> **🔗 Эволюция резолвера (не финал):** этот план + [Plan 42 — folder-modules](42-folder-modules.md)
+> (D29, модульная концепция) — фундамент. Дальнейшее развитие модели резолва:
+> [Plan 162](162-rust-model-module-resolution.md) — переход на Rust-модель
+> collect-signatures→lazy-bodies (межмодульные циклы разрешаются, «методы едут с типом»);
+> [Plan 163](163-import-export-glob-hygiene.md) — гигиена import/export (запрет glob-форм).
 
 ---
 

@@ -311,7 +311,22 @@ fn cmd_check(path: &PathBuf, explain_cache: bool) -> Result<()> {
         )
     })?;
     check_module_path(path, &module)?;
-    nova_codegen::types::check_module(&module).map_err(|errs| {
+    // Plan 162.2 Ф.2: collect cross-module signatures before type-check so
+    // that is_known_type / is_known_fn can suppress false-positive diagnostics
+    // for symbols from transitively imported modules.
+    {
+        let sig_table = nova_codegen::test_runner::find_repo_root_from(path)
+            .map(|repo| {
+                let stdlib_dir = repo.join("std");
+                nova_codegen::imports::collect_all_signatures(path, &module, &repo, &stdlib_dir)
+                    .unwrap_or_else(|_| nova_codegen::imports::ModuleSigTable::new())
+            });
+        match sig_table {
+            Some(st) => nova_codegen::types::check_module_with_sig_table(&module, st),
+            None => nova_codegen::types::check_module(&module),
+        }
+    }
+    .map_err(|errs| {
         let messages: Vec<String> = errs
             .iter()
             .map(|d| d.render(&src, &path.to_string_lossy()))
@@ -408,7 +423,22 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
         anyhow!("{}", d.render(&src, &path.to_string_lossy()))
     })?;
     check_module_path(path, &module)?;
-    let module_env = nova_codegen::types::check_module(&module).map_err(|errs| {
+    // Plan 162.2 Ф.2: collect cross-module signatures before type-check so
+    // that is_known_type / is_known_fn can suppress false-positive diagnostics
+    // for symbols from transitively imported modules.
+    let module_env = {
+        let sig_table = nova_codegen::test_runner::find_repo_root_from(path)
+            .map(|repo| {
+                let stdlib_dir = repo.join("std");
+                nova_codegen::imports::collect_all_signatures(path, &module, &repo, &stdlib_dir)
+                    .unwrap_or_else(|_| nova_codegen::imports::ModuleSigTable::new())
+            });
+        match sig_table {
+            Some(st) => nova_codegen::types::check_module_with_sig_table(&module, st),
+            None => nova_codegen::types::check_module(&module),
+        }
+    }
+    .map_err(|errs| {
         let messages: Vec<String> = errs
             .iter()
             .map(|d| d.render(&src, &path.to_string_lossy()))

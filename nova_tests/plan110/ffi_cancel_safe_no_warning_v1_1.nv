@@ -4,7 +4,7 @@
 // W_FFI_CANCEL_UNSAFE does NOT fire on plain Nova fns called from on_exit
 // (lint targets external fns only, not plain Nova). Negative cases для
 // external fns are tested via Rust unit tests cancel_unsafe_tests::* in
-// compiler-codegen/src/lints.rs (external fn restricted to std.runtime.*
+// compiler-codegen/src/lints.rs (extern "nova" fn restricted to std.runtime.*
 // per D82 — cannot be used in user fixtures).
 
 module plan110.ffi_cancel_safe_no_warning_v1_1

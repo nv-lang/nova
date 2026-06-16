@@ -1,0 +1,52 @@
+// Plan 144.1 — GC pointer-offset bitmap: sum type → PER-VARIANT bitmaps keyed
+// by tag; the tag field itself is scalar and never marked.
+//
+// Per-variant precision is the crux: a union-over-variants bitmap would scan
+// the `Count(int)` payload as if it were a pointer when the LIVE variant is
+// actually `Count` → false retention. The pass keys each bitmap by the variant
+// tag so an inactive variant's scalar is never mis-scanned.
+//
+// Emitted C layout (emit_c::emit_sum_type):
+//   struct { Nova_Node_Tag tag@0 (C enum, 4 bytes); union payload@8 }
+//   payload base = align_up(4, max_payload_align=8) = 8.
+//
+//   Leaf       (unit)        → []           (no payload)
+//   Count(int) (scalar)      → []           (int@8 is SCALAR — per-variant precision!)
+//   Cons(Box)  (heap record) → [8]          (Nova_Box* at payload base 8)
+//   Seg { from Box, n int, to Box } (record variant):
+//       from@8 (ptr), n@16 (scalar), to@24 (ptr) → [8, 24]
+//
+// EXPECT (gc-layout-analyze --format json) for type Node:
+//   pointer_offsets [] (top-level — offsets live per-variant)
+//   variants:
+//     [0] Leaf  → []
+//     [1] Count → []         (scalar payload NOT scanned)
+//     [2] Cons  → [8]
+//     [3] Seg   → [8, 24]
+//   Box → size 8, pointer_offsets []
+
+module plan144_1.sum_per_variant
+
+type Box { a int }
+
+type Node
+    | Leaf
+    | Count(int)
+    | Cons(Box)
+    | Seg { from Box, n int, to Box }
+
+fn node_kind(node Node) -> int => match node {
+    Leaf       => 0
+    Count(_)   => 1
+    Cons(_)    => 2
+    Seg { .. } => 3
+}
+
+test "sum per-variant constructs and matches" {
+    ro b1 = Box { a: 1 }
+    ro b2 = Box { a: 2 }
+    assert(node_kind(Leaf) == 0)
+    assert(node_kind(Count(7)) == 1)
+    assert(node_kind(Cons(b1)) == 2)
+    assert(node_kind(Seg { from: b1, n: 5, to: b2 }) == 3)
+}

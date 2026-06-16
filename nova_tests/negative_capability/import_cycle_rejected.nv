@@ -1,14 +1,14 @@
-// EXPECT_COMPILE_ERROR import cycle detected
-//
-// Plan 35 Ф.1 cycle detection (spec D29): импортные циклы запрещены.
-// Этот файл импортирует cycle_a → cycle_a импортирует cycle_b →
-// cycle_b импортирует cycle_a → цикл. Resolver DFS должен detect'ить
-// и эмитить error «import cycle detected: ... → ... → ...».
+// Plan 162 Ф.2 (D29 rev-5): cross-module cycles are now ALLOWED.
+// Previously Plan 35 Ф.1 / D29 (pre-rev5) required cycle detection:
+// import cycle_a → cycle_a imports cycle_b → cycle_b imports cycle_a.
+// With Plan 162 Ф.2, the cycle guard returns Ok(()) on the back-edge,
+// so A_VAL from cycle_a is accessible. Renamed from import_cycle_rejected
+// to document the policy change (negative → positive).
 
 module negative_capability.import_cycle_rejected
 
 import nova_tests.modules.cycle_a.{A_VAL}
 
-test "cycle A → B → A detected (negative)" {
+test "cycle A → B → A allowed (Plan 162 Ф.2 cycle guard)" {
     assert(A_VAL == 1)
 }

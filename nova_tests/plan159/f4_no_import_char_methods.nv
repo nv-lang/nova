@@ -1,0 +1,54 @@
+// Plan 159 Ф.4 — char Unicode methods WITHOUT `import std.unicode`.
+// Closes [M-152.3b-char-methods-no-import]: `'A'.is_alphabetic()` and the
+// sibling char-receiver predicates now resolve with NO explicit import — the
+// resolver injects `std.unicode` into the entry group when it sees a
+// char-Unicode method selector, and Plan 159 Ф.1 reachability DCE strips every
+// table the program never touches. This file deliberately writes NO
+// `import std.unicode` line; if injection regressed it would CODEGEN-FAIL
+// ("if condition must be bool") or link-fail with an undefined symbol.
+//
+// Covers: ASCII + non-ASCII code points, a true and a false case per predicate,
+// and the str-returning case mappings (which pull a different table family).
+// EXPECT_STDOUT no-import char methods ok
+
+module plan159.f4_no_import_char_methods
+
+fn main() {
+    // Latin 'A' (U+0041): alphabetic, uppercase, not numeric, not whitespace.
+    ro a = 'A'
+    // Greek 'Ω' (U+03A9): alphabetic + uppercase, non-ASCII (proves it is the
+    // real UCD table, not an ASCII approximation).
+    ro omega = 'Ω'
+    // Digit '7' (U+0037): numeric + alphanumeric, not alphabetic.
+    ro d = '7'
+    // Space (U+0020): whitespace, not alphabetic.
+    ro sp = ' '
+    // Lowercase 'a' (U+0061): lowercase.
+    ro lo = 'a'
+
+    ro c1 = a.is_alphabetic()
+    ro c2 = omega.is_alphabetic()
+    ro c3 = a.is_uppercase()
+    ro c4 = omega.is_uppercase()
+    ro c5 = d.is_numeric()
+    ro c6 = d.is_alphanumeric()
+    ro c7 = a.is_alphanumeric()
+    ro c8 = sp.is_whitespace()
+    ro c9 = lo.is_lowercase()
+    // Negative cases.
+    ro n1 = d.is_alphabetic()
+    ro n2 = sp.is_alphabetic()
+    ro n3 = a.is_lowercase()
+    ro n4 = a.is_numeric()
+    // str-returning case mapping (pulls upper/lower data, also via no import).
+    ro up = lo.to_uppercase()
+    ro dn = a.to_lowercase()
+
+    if c1 && c2 && c3 && c4 && c5 && c6 && c7 && c8 && c9
+        && !n1 && !n2 && !n3 && !n4
+        && up == "A" && dn == "a" {
+        println("no-import char methods ok")
+    } else {
+        println("FAIL")
+    }
+}

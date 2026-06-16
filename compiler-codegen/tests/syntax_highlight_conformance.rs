@@ -26,7 +26,7 @@ use std::path::PathBuf;
 /// Mirror of the `match` arms in `lex_ident_or_keyword` (verified by
 /// `active_keywords_are_lexed_as_keywords`).
 const ACTIVE: &[&str] = &[
-    "module", "import", "use", "export", "external",
+    "module", "import", "use", "export", "external", "extern",
     "fn", "type", "effect", "alias", "protocol",
     "const", "mut", "consume", "ro", "priv", "pub", "unsafe",
     "if", "else", "match", "for", "while", "loop", "in", "return", "break", "continue",

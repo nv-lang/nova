@@ -1,0 +1,23 @@
+// Plan 159 Ф.1 over-prune hunt: transitive global→const edge (the real
+// `std.unicode` table shape: `ro TABLE = build(RAW_DATA)`). `main` reads the
+// `ro` global TABLE; TABLE's initializer reads the `const` RAW. The
+// global→const edge must keep RAW alive even though `main` never names RAW
+// directly. If the edge were missing, RAW's `static` definition would be
+// pruned and TABLE's initializer would reference an undeclared identifier.
+// EXPECT_STDOUT 300
+
+module plan159.hunt_const_to_const
+
+const RAW int = 300
+
+// `ro` lazy-static global whose initializer reads the const RAW (a fn call to
+// keep the init in a context codegen supports — mirrors `ro m = parse(DATA)`).
+ro TABLE int = identity(RAW)
+
+fn identity(x int) -> int {
+    x
+}
+
+fn main() {
+    println(TABLE)
+}

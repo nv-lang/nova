@@ -10,4 +10,4 @@
 
 module plan118_5_v3.t2_neg_ro_mut_value_type
 
-external fn p_int(x ro mut int) -> ()
+extern "nova" fn p_int(x ro mut int) -> ()

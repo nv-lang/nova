@@ -1,0 +1,23 @@
+// Plan 144.1 regression: gc-layout-analyze must NOT stack-overflow on a VALID
+// recursive sum type. `Tree` is boxed, so a `Tree` field is an 8-byte pointer
+// leaf (not inline recursion). A former const_fn_eval size cross-check inlined
+// the recursive field and infinite-recursed — REMOVED (see gc_layout.rs).
+// Expected: Tree (sum, per-variant) resolves without overflow; the Node variant
+// marks its two boxed Tree-pointer payload slots. `nova check` accepts this.
+//
+// NB: a *record/value* field of a recursive heap type (e.g. `type H { t Tree }`)
+// USED to make the type-checker itself stack-overflow — a PRE-EXISTING checker
+// bug, not gc-layout-specific (nova check overflowed too). FIXED via the
+// boxing-aware type-SIZE walk + recursion guards ([M-checker-recursive-type-
+// overflow]); the `type H { t Tree }` embed now `nova check`-passes and RUNS —
+// see nova_tests/plan144_checker/heap_embed_pos.nv.
+module plan144_1.recursive
+
+type Tree
+    | Leaf
+    | Node(int, Tree, Tree)
+
+fn tree_sum(t Tree) -> int => match t {
+    Leaf          => 0
+    Node(v, l, r) => v + tree_sum(l) + tree_sum(r)
+}

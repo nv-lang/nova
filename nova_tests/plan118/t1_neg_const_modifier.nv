@@ -12,6 +12,6 @@ type Acc {
     ro id i64
 }
 
-external fn p118_take(p *const Acc) -> i64
+extern "nova" fn p118_take(p *const Acc) -> i64
 
 test "rejects" { assert(1 == 1) }

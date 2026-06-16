@@ -1,0 +1,32 @@
+module plan162.enumerate_collect
+import std.collections.vec_iter
+
+test "enumerate collect basic" {
+    ro v = Vec[int].of(10, 20, 30)
+    ro got = v.iter().enumerate().collect()
+    assert(got.len() == 3)
+    // verify first pair
+    ro p0 = got[0]
+    assert(p0.0 == 0 && p0.1 == 10)
+}
+
+test "enumerate collect after filter" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro got = v.iter().filter(|x| x % 2 == 0).enumerate().collect()
+    assert(got.len() == 2)
+    ro p0 = got[0]
+    assert(p0.0 == 0 && p0.1 == 2)
+    ro p1 = got[1]
+    assert(p1.0 == 1 && p1.1 == 4)
+}
+
+test "enumerate count via find early termination" {
+    // Verify that enumerating works for indexing into pair elements
+    ro v = Vec[int].of(10, 20, 30, 40)
+    ro got = v.iter().enumerate().collect()
+    assert(got.len() == 4)
+    // Use indexing to check second pair
+    ro p2 = got[2]
+    assert(p2.0 == 2)
+    assert(p2.1 == 30)
+}

@@ -7,6 +7,7 @@
 
 use crate::ast::*;
 use crate::diag::{Diagnostic, FileId, MAIN_FILE_ID, Span};
+use crate::parser::{impl_spec_base_name, impl_spec_args_text};
 use std::collections::{HashMap, HashSet};
 
 /// Очень упрощённая система типов для bootstrap'а.
@@ -86,6 +87,25 @@ pub struct ModuleEnv {
 /// для bootstrap'а этого достаточно: интерпретатор ловит ошибки типов в
 /// runtime через match-mismatch и method-not-found.
 pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
+    check_module_impl(module, None)
+}
+
+/// Internal implementation shared by [`check_module`] and
+/// [`check_module_with_sig_table`].  `sig_table` is `None` in the
+/// default (no-I/O) path and `Some(table)` when the caller has
+/// already collected cross-module signatures.
+///
+/// Plan 162.1 Step 3: the `sig_table` is threaded into:
+/// - `TypeCheckCtx::build_with_sig_table` → `is_known_type` /
+///   `is_known_fn` used in `verify_impl_protocols` to suppress false
+///   `E_UNKNOWN_PROTOCOL` when the protocol is from a transitively
+///   imported module not yet inline-merged.
+/// - `check_protocol_embeds` → suppresses `E_PROTOCOL_EMBED_UNKNOWN`.
+/// - `check_generic_bound_declarations` → suppresses `E_BOUND_UNKNOWN`.
+fn check_module_impl(
+    module: &Module,
+    sig_table: Option<&crate::imports::ModuleSigTable>,
+) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let mut env = ModuleEnv::default();
     let mut errors = Vec::new();
     let mut names: HashSet<String> = HashSet::new();
@@ -174,31 +194,93 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
                     }
                 }
             }
-            // Plan 62.D.bis (D126) + Plan 100.5 (D163) + Plan 91.12 V2 retract
-            // (2026-06-01):
-            //   - `external type X` без `consume` (plain opaque) — RETRACTED.
-            //     Hard error [E_EXTERNAL_TYPE_RETRACTED]. Все 5 stdlib типов
-            //     мигрированы (WriteBuffer/ReadBuffer → pure Nova, V1;
-            //     OnceCell[T]/Lazy[T]/Condvar → `type X[T](ptr)`, V2). Любая
-            //     попытка объявить новый plain external type — error с
-            //     migration hint на tuple-newtype паттерн (Plan 115 D214).
-            //   - `external type X consume` (D163 FFI opaque consume-types) —
-            //     by-design allowed (FFI resource handles типа `File consume`).
+            // D126 (Plan 62.D.bis) + D163 (Plan 100.5) both fully retracted:
+            //   - `external type X` — RETRACTED (E_EXTERNAL_TYPE_RETRACTED). Migration: `type X(ptr)`.
+            //   - `external type X consume` — RETRACTED (D163 removed). Migration: `type X value { priv handle int }`.
+            //   - `external fn` — RETRACTED (E_EXTERNAL_FN_RETRACTED) in parser. Use `extern "nova" fn`.
             if let Item::Type(td) = item {
-                if matches!(td.kind, TypeDeclKind::Opaque) && !td.consume {
-                    errors.push(Diagnostic::new(
+                if matches!(td.kind, TypeDeclKind::Opaque) {
+                    let hint = if td.consume {
                         format!(
-                            "[E_EXTERNAL_TYPE_RETRACTED] `external type` (D126) retracted by Plan 91.12 V2 \
-                             (2026-06-01). Replace `external type {name}` with `type {name}(ptr)` \
-                             (tuple-newtype opaque-handle pattern, Plan 115 D214). C runtime backing \
-                             preserved через `external fn` методы — ABI unchanged. \
-                             Migration guide: docs/migration/d126-to-tuple-newtype.md. \
-                             For FFI opaque consume-types оставайся на `external type {name} consume` \
-                             (D163, supported).",
+                            "[E_EXTERNAL_TYPE_RETRACTED] `external type {name} consume` (D163) retracted. \
+                             Use: `type {name} consume value {{ priv handle int }}` (D241 canonical order: consume value priv). \
+                             Add cleanup method: `fn {name} consume @close() -> () {{ ... }}`.",
                             name = td.name
-                        ),
-                        td.span,
-                    ));
+                        )
+                    } else {
+                        format!(
+                            "[E_EXTERNAL_TYPE_RETRACTED] `external type {name}` (D126) retracted. \
+                             Use tuple-newtype: `type {name}(ptr)` (Plan 115 D214). \
+                             Migration guide: docs/migration/d126-to-tuple-newtype.md.",
+                            name = td.name
+                        )
+                    };
+                    errors.push(Diagnostic::new(hint, td.span));
+                }
+            }
+        }
+    }
+
+    // Plan 163 Ф.1 (D282): E_REEXPORT_GLOB — запрет whole-module re-export.
+    // `export import m` без `.{}` селектора = неконтролируемый barrel-реэкспорт;
+    // гигиена поверхности имён требует явного именованного списка.
+    // Разрешены: `export import m.{a, b}` (named). Forbidden: `export import m`.
+    // Нулевая миграция: все 39 существующих `export import` уже именованные.
+    //
+    // Plan 163 Ф.2 (D282): E_IMPORT_GLOB — запрет whole-module import без alias.
+    // `import m` без `.{}` селектора и без `as alias` = неконтролируемый glob;
+    // загрязняет пространство имён неизвестным набором bare-имён.
+    // Разрешены: `import m.{a, b}` (named), `import m as m` (qualified namespace).
+    // Forbidden: `import m` (без selectors и без alias).
+    // Exemption: prelude auto-imports (`std.prelude.*`) — служебный путь компилятора.
+    //
+    // Источник импортов: если peer_files заполнен (после resolve_imports_inline),
+    // используем pf.imports каждого peer'а — они охватывают и entry и siblings.
+    // Fallback на module.imports если peer_files пуст (legacy single-file без resolve).
+    {
+        let peer_imports_iter: Box<dyn Iterator<Item = &Import>> =
+            if module.peer_files.is_empty() {
+                Box::new(module.imports.iter())
+            } else {
+                Box::new(module.peer_files.iter().flat_map(|pf| pf.imports.iter()))
+            };
+        for imp in peer_imports_iter {
+            if imp.is_export && imp.items.is_none() && imp.alias.is_none() {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_REEXPORT_GLOB] `export import {}` re-exports the entire module \
+                         without a name selector — this is a barrel re-export (Plan 163 / D282). \
+                         Hint: use `export import {}.{{name1, name2}}` to re-export specific names.",
+                        imp.path.join("."),
+                        imp.path.join("."),
+                    ),
+                    imp.span,
+                ));
+            }
+            // D289 amend: `import m` without `.{}` or `as` is legal — last segment
+            // becomes the qualified namespace name (import vec_iter → vec_iter.Foo).
+            // imported_modules already inserts path.last() unconditionally (Plan 81 Ф.2).
+            // E_IMPORT_GLOB removed; only E_REEXPORT_GLOB (export form) remains.
+            //
+            // E_REDUNDANT_IMPORT_ALIAS: `import a.b.YYY as YYY` is forbidden —
+            // alias equals last segment, which is the default; just write `import a.b.YYY`.
+            if let Some(alias) = &imp.alias {
+                if imp.items.is_none() {
+                    if let Some(last) = imp.path.last() {
+                        if alias == last {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_REDUNDANT_IMPORT_ALIAS] `import {} as {}` — alias \
+                                     matches the last path segment, which is the default. \
+                                     Write `import {}` instead.",
+                                    imp.path.join("."),
+                                    alias,
+                                    imp.path.join("."),
+                                ),
+                                imp.span,
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -526,7 +608,7 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // signature collision при flatten'е. Запускается ДО BoundCtx::build
     // чтобы errors на cycle не превращались в infinite recursion внутри
     // flatten_dfs (хотя у flatten_dfs есть `seen`-guard — safety belt).
-    check_protocol_embeds(module, &mut errors);
+    check_protocol_embeds(module, sig_table, &mut errors);
 
     // Plan 101.3 (D145 Ред. 5): generic-bound declaration validation —
     // каждое имя bound'а в `[T A + B]` должно быть объявленным protocol'ом
@@ -534,7 +616,7 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // bound-resolve был permissive (silent skip unknown) — Plan 101 делает
     // strict. Pre-Plan 101 tests, ссылающиеся на неизвестные bound'ы,
     // должны их объявить или удалить.
-    check_generic_bound_declarations(module, &mut errors);
+    check_generic_bound_declarations(module, sig_table, &mut errors);
 
     let bound_ctx = BoundCtx::build(module);
     bound_ctx.check_module(module, &mut errors);
@@ -665,7 +747,13 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
     // (in the caller) so it outlives `TypeCheckCtx`, allowing synthesized
     // methods to be registered in `method_table` as `&'a FnDecl`.
     let synth_arena = FnDeclArena::new();
-    let type_check_ctx = TypeCheckCtx::build(module, &synth_arena);
+    // Plan 162.1 Step 3: when a sig_table is available, use
+    // build_with_sig_table so that is_known_type / is_known_fn
+    // can consult cross-module signatures during type-checking.
+    let type_check_ctx = match sig_table {
+        Some(st) => TypeCheckCtx::build_with_sig_table(module, &synth_arena, st.clone()),
+        None => TypeCheckCtx::build(module, &synth_arena),
+    };
     type_check_ctx.check_module(module, &mut errors);
 
     // **Plan 118.5 V3 Ф.2 / D216 V3 §V3.1 (2026-06-04):** ro+mut conflict
@@ -838,6 +926,31 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
         Err(errors)
     }
 }
+
+// Plan 162.1 Step 3: public entry-point that feeds a pre-built
+// `ModuleSigTable` into the type-checker.  Callers that have already
+// run `crate::imports::collect_all_signatures` can pass the resulting
+// table here so that cross-module symbol lookups in the type-checker
+// use the sig-table instead of only consulting `module.items`.
+//
+// Concretely, the sig_table suppresses false-positive
+// `E_UNKNOWN_PROTOCOL` / `E_PROTOCOL_EMBED_UNKNOWN` / `E_BOUND_UNKNOWN`
+// errors when the referenced type is declared in a transitively
+// imported module that has been captured in the signature pre-pass
+// but whose items may not yet be inline-merged into `module.items`
+// (the lazy-resolution scenario described in Plan 162.1 Step 3).
+//
+// The existing `check_module` is kept as the zero-arg entry-point
+// (backward-compatible); it uses an empty sig_table so that all
+// existing checks fire normally.
+pub fn check_module_with_sig_table(
+    module: &Module,
+    sig_table: crate::imports::ModuleSigTable,
+) -> Result<ModuleEnv, Vec<Diagnostic>> {
+    check_module_impl(module, Some(&sig_table))
+}
+
+// ─── internal shared core ────────────────────────────────────────────────────
 
 // ============================================================================
 // Plan 79: type-checker hardening — «no silent fallback» на уровне типов.
@@ -2071,6 +2184,12 @@ struct TypeCheckCtx<'a> {
     /// сегмент пути import'а) — для резолва module-qualified вызовов
     /// `alias.func(...)`.
     imported_modules: HashSet<String>,
+    /// Plan 162 Ф.5: last-segments/aliases of modules imported DIRECTLY by
+    /// entry-module peer files (is_entry_module = true). Excludes transitive
+    /// imports from imported-module peers. Used for extension method policy:
+    /// an extension method is accessible iff its declaring module's last-segment
+    /// or alias is in this set.
+    entry_imported_modules: HashSet<String>,
     /// Plan 114.4.2 (D199): const fn names в текущем модуле — для
     /// scope-local Stmt::Const RHS validation (calls к const fn разрешены).
     const_fn_names: HashSet<String>,
@@ -2110,6 +2229,49 @@ struct TypeCheckCtx<'a> {
     /// the user wrote on their own redeclared type — matching carrier arity —
     /// is kept).
     user_shadowed_generic_types: HashMap<String, usize>,
+    /// Plan 160 (D281) Ф.2: type name → declaring module name segments.
+    /// Built from `module.peer_files.items_here` in `build`. Used by
+    /// `module_priv_access_allowed` to compare with `current_module`.
+    /// Types imported from other modules retain the module name from which
+    /// they came (their type decl's module_name). Empty for types with
+    /// unknown origin (imported without peer_files → conservative = deny).
+    type_defining_modules: HashMap<String, Vec<String>>,
+    /// Plan 160 (D281) Ф.2: module name of the code currently being
+    /// checked — set to `module.name` at the start of `check_module`.
+    /// Used together with `type_defining_modules` for module-boundary
+    /// enforcement. Empty = no current module (conservative = deny).
+    current_module: std::cell::RefCell<Vec<String>>,
+    /// Plan 162 Ф.3: global TypeMethodMap — type_name → method_name →
+    /// list of module_names (Vec<String>) that declared this method.
+    /// Built from `module.peer_files[*].items_here` in `build`.
+    /// Inherent method: method declared in the SAME module as its type T
+    ///   (type_method_map[T][m] ∩ type_defining_modules[T] ≠ ∅).
+    /// Extension method: method declared in a DIFFERENT module from T.
+    /// Used by `is_inherent_method` to decide resolution priority.
+    type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>>,
+    /// Plan 162 Ф.5: FileIds of entry-module peer files (is_entry_module=true).
+    /// Extension method policy only fires for call sites in entry-module files.
+    /// Prevents false positives from type-checking imported stdlib method bodies.
+    entry_file_ids: HashSet<crate::diag::FileId>,
+    /// Plan 124.6 (D224 §4): true when the checker is inside a `test "…" { }`
+    /// block body. Controls rule-2 (implicit test grant — same-module access)
+    /// and rule-3 (explicit `test_access` list check on the TestDecl itself).
+    /// Set/cleared via `TestBlockGuard` RAII on `Item::Test` entry/exit.
+    in_test_block: std::cell::Cell<bool>,
+    /// Plan 124.6 (D224 §4): the `test_access` list from the *current* test
+    /// block (populated from `TestDecl.test_access`). Non-empty only when
+    /// `in_test_block` is true. Cleared on exit via `TestBlockGuard`.
+    test_block_test_access: std::cell::RefCell<Vec<String>>,
+    /// Plan 124.6 (D224 §4 rule-4): type name → pub_to friend list.
+    /// Built in `build` from `TypeDecl.pub_to`. A `current_recv_type` that
+    /// appears in `type_pub_to[tname]` gets priv-field access to `tname`.
+    type_pub_to: HashMap<String, Vec<String>>,
+    /// Plan 162.1 Step 2: cross-module signature table — maps declared module
+    /// name to the set of type names and fn names it exports. Built lazily by
+    /// `build_with_sig_table`; empty in the default `build` path (no I/O at
+    /// type-check time). Used by `is_known_type` / `is_known_fn` to answer
+    /// "does any imported module define symbol X?" without a full resolve.
+    sig_table: crate::imports::ModuleSigTable,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -2144,6 +2306,46 @@ struct PrivTestAccessGuard<'a, 'b> {
 impl<'a, 'b> Drop for PrivTestAccessGuard<'a, 'b> {
     fn drop(&mut self) {
         *self.ctx.current_fn_test_access.borrow_mut() = std::mem::take(&mut self.prev);
+    }
+}
+
+/// Plan 160 (D281) Ф.2: RAII guard для current_module в TypeCheckCtx.
+/// Restores previous module name on drop.
+struct CurrentModuleGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev: Vec<String>,
+}
+impl<'a, 'b> CurrentModuleGuard<'a, 'b> {
+    fn set(ctx: &'b TypeCheckCtx<'a>, module: Vec<String>) -> Self {
+        let prev = std::mem::replace(&mut *ctx.current_module.borrow_mut(), module);
+        CurrentModuleGuard { ctx, prev }
+    }
+}
+impl<'a, 'b> Drop for CurrentModuleGuard<'a, 'b> {
+    fn drop(&mut self) {
+        *self.ctx.current_module.borrow_mut() = std::mem::take(&mut self.prev);
+    }
+}
+
+/// Plan 124.6 (D224 §4): RAII guard для in_test_block + test_block_test_access
+/// в TypeCheckCtx. Set to (true, access_list) on entry; restored on drop.
+struct TestBlockGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev_in_test: bool,
+    prev_access: Vec<String>,
+}
+impl<'a, 'b> TestBlockGuard<'a, 'b> {
+    fn enter(ctx: &'b TypeCheckCtx<'a>, access: Vec<String>) -> Self {
+        let prev_in_test = ctx.in_test_block.get();
+        ctx.in_test_block.set(true);
+        let prev_access = std::mem::replace(&mut *ctx.test_block_test_access.borrow_mut(), access);
+        TestBlockGuard { ctx, prev_in_test, prev_access }
+    }
+}
+impl<'a, 'b> Drop for TestBlockGuard<'a, 'b> {
+    fn drop(&mut self) {
+        self.ctx.in_test_block.set(self.prev_in_test);
+        *self.ctx.test_block_test_access.borrow_mut() = std::mem::take(&mut self.prev_access);
     }
 }
 
@@ -2298,6 +2500,36 @@ impl<'a> TypeCheckCtx<'a> {
             collect(&pf.imports);
         }
         drop(collect);
+
+        // Plan 162 Ф.5: entry_imported_modules — last-segments/aliases of
+        // modules imported DIRECTLY by entry-module peer files only.
+        // Excludes transitive imports from imported-module peers, so that
+        // extension method policy can distinguish "explicitly imported" from
+        // "transitively pulled in".
+        let mut entry_imported_modules: HashSet<String> = HashSet::new();
+        // Plan 162 Ф.5: entry_file_ids — FileIds of entry-module peer files.
+        // Extension method policy only fires for call sites in these files.
+        let mut entry_file_ids: HashSet<crate::diag::FileId> = HashSet::new();
+        {
+            let mut collect_entry = |imports: &[Import]| {
+                for imp in imports {
+                    if let Some(a) = &imp.alias {
+                        entry_imported_modules.insert(a.clone());
+                    }
+                    if let Some(last) = imp.path.last() {
+                        entry_imported_modules.insert(last.clone());
+                    }
+                }
+            };
+            collect_entry(&module.imports);
+            for pf in &module.peer_files {
+                if pf.is_entry_module {
+                    collect_entry(&pf.imports);
+                    entry_file_ids.insert(pf.file_id);
+                }
+            }
+        }
+
         // Plan 114.4.2 D199 + Plan 114.4.3 Ф.5 V2: precompute const fn names
         // для scope-local const validation. Includes const fn declarations
         // AND const fn aliases (`const ALIAS = const_fn_name` form).
@@ -2394,12 +2626,155 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
-        TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules, const_fn_names,
+        // Plan 160 (D281) Ф.2: build type_defining_modules — maps type name
+        // → the module_name of the peer_file that declared it. Used for
+        // module-boundary enforcement of `priv` (module-private) types.
+        // Only entry-peer-files contribute (imported modules bring in their
+        // types with a different module_name = their own path, which is the
+        // desired behaviour: cross-module access to those types is denied).
+        let mut type_defining_modules: HashMap<String, Vec<String>> = HashMap::new();
+        if module.peer_files.is_empty() {
+            // Single-file module: all items in module.items belong to module.name.
+            for item in &module.items {
+                if let Item::Type(td) = item {
+                    type_defining_modules
+                        .entry(td.name.clone())
+                        .or_insert_with(|| module.name.clone());
+                }
+            }
+        } else {
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    if let Item::Type(td) = item {
+                        // Record the module_name of the peer that owns this type.
+                        type_defining_modules
+                            .entry(td.name.clone())
+                            .or_insert_with(|| pf.module_name.clone());
+                    }
+                }
+            }
+        }
+
+        // Plan 162 Ф.3: build type_method_map — maps
+        // type_name → method_name → Vec<module_name> (all modules
+        // that declare this method on this receiver type).
+        //
+        // Scans all peer_files (both entry-peers and imported-module
+        // peers) to attribute each @method declaration to its source
+        // module. When peer_files is empty (legacy/fallback case),
+        // scans module.items and attributes everything to module.name.
+        //
+        // Together with type_defining_modules this enables:
+        //   is_inherent = type_method_map[T][m] ∩ {type_defining_modules[T]} ≠ ∅
+        let mut type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>> =
+            HashMap::new();
+        if module.peer_files.is_empty() {
+            // Single-file / no peer attribution: attribute all @methods
+            // to module.name (the entry module). This is conservative:
+            // inherent == all methods when there's only one module.
+            for item in &module.items {
+                if let Item::Fn(f) = item {
+                    if let Some(recv) = &f.receiver {
+                        type_method_map
+                            .entry(recv.type_name.clone())
+                            .or_default()
+                            .entry(f.name.clone())
+                            .or_default()
+                            .push(module.name.clone());
+                    }
+                }
+            }
+        } else {
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    if let Item::Fn(f) = item {
+                        if let Some(recv) = &f.receiver {
+                            let module_list = type_method_map
+                                .entry(recv.type_name.clone())
+                                .or_default()
+                                .entry(f.name.clone())
+                                .or_default();
+                            // Only push if this module isn't already in the list
+                            // (avoids duplicate entries from sibling peers of
+                            // the same module that share module_name).
+                            if !module_list.contains(&pf.module_name) {
+                                module_list.push(pf.module_name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Plan 124.6 (D224 §4 rule-4): build type_pub_to — maps type name
+        // → its `pub_to` friend list (from TypeDecl.pub_to). A type that
+        // appears as a receiver (current_recv_type) and is in the list gets
+        // priv-field access. Merges across all items (single- + multi-file).
+        let mut type_pub_to: HashMap<String, Vec<String>> = HashMap::new();
+        for item in &module.items {
+            if let Item::Type(td) = item {
+                if !td.pub_to.is_empty() {
+                    type_pub_to
+                        .entry(td.name.clone())
+                        .or_default()
+                        .extend(td.pub_to.iter().cloned());
+                }
+            }
+        }
+
+        TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules,
+            entry_imported_modules,
+            entry_file_ids,
+            const_fn_names,
             in_const_fn: std::cell::Cell::new(false),
             current_recv_type: std::cell::RefCell::new(None),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
             ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
-            user_shadowed_generic_types }
+            user_shadowed_generic_types,
+            type_defining_modules,
+            current_module: std::cell::RefCell::new(Vec::new()),
+            type_method_map,
+            in_test_block: std::cell::Cell::new(false),
+            test_block_test_access: std::cell::RefCell::new(Vec::new()),
+            type_pub_to,
+            // Plan 162.1 Step 2: default build uses empty sig_table; callers
+            // that need cross-module symbol lookup call build_with_sig_table.
+            sig_table: crate::imports::ModuleSigTable::new(),
+        }
+    }
+
+    /// Plan 162.1 Step 2: variant of `build` that pre-populates the
+    /// cross-module signature table. Callers that have already run
+    /// `collect_all_signatures` pass the resulting `ModuleSigTable` here so
+    /// that `is_known_type` / `is_known_fn` can answer cross-module questions
+    /// during type-checking without additional I/O.
+    fn build_with_sig_table(
+        module: &'a Module,
+        synth_arena: &'a FnDeclArena,
+        sig_table: crate::imports::ModuleSigTable,
+    ) -> Self {
+        let mut ctx = Self::build(module, synth_arena);
+        ctx.sig_table = sig_table;
+        ctx
+    }
+
+    /// Plan 162.1 Step 2: returns `true` if `name` is a known type in either:
+    /// (a) the merged `module.items` (types already resolved into this module),
+    /// or (b) any module in the cross-module `sig_table`.
+    /// Used for disambiguation before full resolution (Step 3).
+    fn is_known_type(&self, name: &str) -> bool {
+        self.types.contains_key(name)
+            || !self.sig_table.find_type_modules(name).is_empty()
+    }
+
+    /// Plan 162.1 Step 2: returns `true` if `name` is a known free function in
+    /// either:
+    /// (a) `fn_decls` (free functions already merged into this module),
+    /// or (b) any module in the cross-module `sig_table`.
+    /// Used for disambiguation before full resolution.
+    fn is_known_fn(&self, name: &str) -> bool {
+        self.fn_decls.contains_key(name)
+            || !self.sig_table.find_fn_modules(name).is_empty()
     }
 
     /// Plan 126.2 Ф.1: synthesize + register auto-derive methods into
@@ -2492,6 +2867,10 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+        // Plan 160 (D281) Ф.2: set current_module for module-boundary checks.
+        // Restored to empty Vec on scope exit via CurrentModuleGuard RAII.
+        let _module_guard = CurrentModuleGuard::set(self, module.name.clone());
+
         // Plan 91.9 (D186): verify `#impl(P1 + P2 + ...)` annotations.
         // Для каждого type T с impl_protocols, проверяем что:
         // 1. Каждый P в списке действительно protocol-тип (E_UNKNOWN_PROTOCOL).
@@ -2635,6 +3014,11 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
                 Item::Test(t) => {
+                    // Plan 124.6 (D224 §4): set test-block context so that
+                    // priv_access_allowed_base applies rules 2 + 3 (same-module
+                    // implicit grant + explicit test_access list). Guard
+                    // restores previous state on drop.
+                    let _tb_guard = TestBlockGuard::enter(self, t.test_access.clone());
                     let empty = HashSet::new();
                     self.walk_block(&t.body, &empty, errors);
                 }
@@ -2665,6 +3049,10 @@ impl<'a> TypeCheckCtx<'a> {
                     self.f1_check_fn(fd, errors)
                 }
                 Item::Test(t) => {
+                    // Plan 124.6 (D224 §4): propagate test-block context into
+                    // the f1 assignability pass too (handles priv record-init
+                    // and write checks that fire from f1_check_assign_let).
+                    let _tb_guard = TestBlockGuard::enter(self, t.test_access.clone());
                     let gs: HashSet<String> = HashSet::new();
                     let mut scope: HashMap<String, TypeRef> = HashMap::new();
                     self.f1_block(&t.body, &gs, &mut scope, errors);
@@ -3760,6 +4148,262 @@ impl<'a> TypeCheckCtx<'a> {
                 ));
             }
         }
+        // Q-infinite-value-type (D280 §4): genuinely-infinite VALUE types —
+        // a value record / named-tuple / newtype / alias whose layout transitively
+        // contains ITSELF through INLINE edges only (no pointer/heap/slice/Option
+        // indirection). Such a type has no finite object layout. The const_fn_eval
+        // size walk degrades gracefully (depth-guard → None, surfaced only when
+        // `size_of` forces it); this dedicated check reports it at type-check time.
+        self.check_infinite_type(td, errors);
+    }
+
+    /// Q-infinite-value-type (D280 §4): report an `E_INFINITE_TYPE` diagnostic
+    /// when this value type's layout transitively embeds itself through INLINE
+    /// edges only — i.e. there is a value-containment cycle with no
+    /// pointer/heap/slice/Option indirection to break it.
+    ///
+    /// The INLINE-vs-INDIRECTION classification MIRRORS
+    /// `const_fn_eval::type_size_or_align_resolved_d` (post-D280):
+    ///   - INLINE (recurse, can carry a cycle): a field whose named type is a
+    ///     VALUE record / named-tuple / newtype / alias-to-value; tuples;
+    ///     fixed-arrays of inline types; transparent `ro`/`mut`/`unsafe`
+    ///     wrappers over an inline type.
+    ///   - INDIRECTION (STOP — finite, breaks the cycle): a HEAP type (Sum is
+    ///     ALWAYS heap; a Record with `td.allocation.is_heap()`), a pointer
+    ///     `*T`, a slice `[]T`/Array, `str`, any generics-carrying Named
+    ///     (`Option[..]`/`Vec[..]`/`Wrapper[..]` — they box / are not inlined
+    ///     by the size walk), primitives, `Unit`, `Func`, `Protocol`.
+    ///
+    /// Detect with a DFS over the inline-containment graph keyed by type name,
+    /// with an on-path set (mirrors `type_is_consume_v`'s visited-set, except we
+    /// only follow inline edges and report on a back-edge into a node already on
+    /// the current path). Catches direct self-cycles (`type N value { next N }`)
+    /// and mutual cycles (`type A value { b B }` + `type B value { a A }`).
+    ///
+    /// Only types DECLARED in entry-peer files (the user's own source) are
+    /// reported — a cycle is reported once, on the decl currently being checked,
+    /// when the DFS starting at `td` revisits `td` itself. Reporting on the
+    /// entry node (rather than every node on the cycle) keeps the diagnostic
+    /// stable and avoids duplicate errors for mutual cycles (each peer reports
+    /// its own self-reaching path).
+    fn check_infinite_type(&self, td: &TypeDecl, errors: &mut Vec<Diagnostic>) {
+        // Only value records / named-tuples / newtypes / aliases can be the
+        // *subject* of a value-containment cycle. A heap record / sum boxes to a
+        // pointer and is never inlined into a field, so it can never close a
+        // cycle (it is an INDIRECTION boundary). Skip everything else fast.
+        let subject_inlineable = match &td.kind {
+            TypeDeclKind::Record(_) => !td.allocation.is_heap(),
+            TypeDeclKind::NamedTuple(_) | TypeDeclKind::Newtype(_) | TypeDeclKind::Alias(_) => true,
+            _ => false,
+        };
+        if !subject_inlineable {
+            return;
+        }
+        // Generic params of the decl under check — a bare param `T` is not a
+        // user type and cannot close a value cycle (mirrors the size walk, which
+        // has no entry for an unresolved param → None).
+        let mut gs: HashSet<String> = HashSet::new();
+        for g in &td.generics {
+            gs.insert(g.name.clone());
+        }
+        // DFS over the inline-containment graph starting at `td.name`. `on_path`
+        // is the set of type names currently on the DFS stack; a back-edge into
+        // a node on the path is a cycle. We only care whether the cycle passes
+        // through `td.name` (the subject) — if so, `td` is infinite.
+        let mut on_path: HashSet<String> = HashSet::new();
+        // The field whose type carries the back-edge to `td` — captured for the
+        // diagnostic span + message. `(field_label, field_ty)`.
+        let root = td.name.clone();
+        on_path.insert(root.clone());
+        for (label, field_ty, _path_segs) in Self::inline_fields_of(td) {
+            if let Some(offender_span) =
+                self.infinite_dfs(field_ty, &root, &mut on_path, &gs)
+            {
+                // Found a value-containment cycle reaching `td` through INLINE
+                // edges only. Report once, on the offending field of `td`.
+                let field_ty_str = Self::typeref_display(field_ty);
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_INFINITE_TYPE] value type `{name}` has infinite size: \
+                         field `{label}` of type `{fty}` contains `{name}` by value \
+                         (no pointer/heap indirection), so the layout recurses without \
+                         bound. Break the cycle with indirection: box it behind a sum \
+                         variant (sums are always heap), wrap the field in `Option[{fty}]`, \
+                         use a pointer `*{fty}`, or a slice `[]{fty}`.",
+                        name = td.name,
+                        label = label,
+                        fty = field_ty_str,
+                    ),
+                    offender_span,
+                ));
+                // One diagnostic per offending decl is enough — the first inline
+                // field that closes a cycle is the actionable site. (A type with
+                // several independent cyclic fields still gets reported via the
+                // first; fixing it re-runs the check.)
+                break;
+            }
+        }
+    }
+
+    /// Q-infinite-value-type: the INLINE-edge field list of a value-carrying
+    /// `TypeDecl` — the contained types that participate in the value layout.
+    /// Returns `(field_label, &TypeRef, ())` for each inline edge. Heap records
+    /// and sums are NOT subjects here (handled by the caller's gate), so this
+    /// only enumerates value Record / NamedTuple / Newtype / Alias contents.
+    fn inline_fields_of(td: &TypeDecl) -> Vec<(String, &TypeRef, ())> {
+        match &td.kind {
+            TypeDeclKind::Record(fields) => fields
+                .iter()
+                .map(|f| (f.name.clone(), &f.ty, ()))
+                .collect(),
+            TypeDeclKind::NamedTuple(fields) => fields
+                .iter()
+                .map(|f| (f.name.clone(), &f.ty, ()))
+                .collect(),
+            TypeDeclKind::Newtype(inner) => vec![("(0)".to_string(), inner, ())],
+            TypeDeclKind::Alias(inner) => vec![("(alias)".to_string(), inner, ())],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Q-infinite-value-type: DFS over the inline-containment graph from a single
+    /// field `TypeRef`. Returns `Some(span)` of the offending TypeRef if a value
+    /// cycle reaching `root` (through INLINE edges only) is found, else `None`.
+    /// `on_path` holds the type names currently on the DFS stack. `gs` is the set
+    /// of generic-param names of the root decl (bare params are STOP leaves).
+    ///
+    /// Classification mirrors `type_size_or_align_resolved_d` exactly: see the
+    /// per-`TypeRef` arms below. STOP arms return `None` (finite, breaks cycle);
+    /// INLINE arms recurse; reaching a Named that resolves to `root` (or any node
+    /// already on `on_path`, which transitively reaches `root`) is the cycle.
+    fn infinite_dfs(
+        &self,
+        t: &TypeRef,
+        root: &str,
+        on_path: &mut HashSet<String>,
+        gs: &HashSet<String>,
+    ) -> Option<Span> {
+        match t {
+            TypeRef::Named { path, generics, span } => {
+                // Mirror the size walk's inline Named arm gate exactly:
+                // ONLY `path.len() == 1 && generics.is_empty()` is inlined.
+                // A module-qualified path (len > 1) OR any non-empty generics
+                // (Option[..]/Vec[..]/Wrapper[..]) falls to the size walk's
+                // `_ => None` → INDIRECTION/finite here. STOP.
+                if path.len() != 1 || !generics.is_empty() {
+                    return None;
+                }
+                let name = &path[0];
+                // Bare generic-param of the root decl — not a user type. STOP.
+                if gs.contains(name) {
+                    return None;
+                }
+                // Primitives are finite leaves (and are NOT in self.types). STOP.
+                if Self::is_primitive_type_name(name) {
+                    return None;
+                }
+                // A back-edge into a node already on the DFS path → cycle. Every
+                // node on `on_path` transitively reaches `root` (the path was
+                // grown from `root`), so reaching any of them means `root` is on
+                // an inline cycle. Report at this field's span.
+                if on_path.contains(name) {
+                    return Some(*span);
+                }
+                // Resolve the named TypeDecl. Unresolvable → STOP (the size walk
+                // returns None there; a false positive would violate the
+                // zero-false-positive gate).
+                let td = match self.types.get(name).copied() {
+                    Some(td) => td,
+                    None => return None,
+                };
+                // BOXING short-circuit — the load-bearing branch. A Sum is ALWAYS
+                // heap; a Record is indirection iff `td.allocation.is_heap()`.
+                // Either way the reference is an 8-byte pointer leaf → finite,
+                // BREAKS the cycle. STOP. (Mirrors size walk lines 1147-1152.)
+                let boxed_to_pointer = matches!(&td.kind, TypeDeclKind::Sum(_))
+                    || (matches!(&td.kind, TypeDeclKind::Record(_)) && td.allocation.is_heap());
+                if boxed_to_pointer {
+                    return None;
+                }
+                // INLINE: value Record / NamedTuple / Newtype / Alias. Recurse
+                // into its contained types, with `name` pushed on the path.
+                on_path.insert(name.clone());
+                let mut found = None;
+                for (_label, field_ty, _seg) in Self::inline_fields_of(td) {
+                    if let Some(s) = self.infinite_dfs(field_ty, root, on_path, gs) {
+                        found = Some(s);
+                        break;
+                    }
+                }
+                on_path.remove(name);
+                found
+            }
+            // Tuples: INLINE of each element (size walk recurses each elem).
+            TypeRef::Tuple(elems, _) => {
+                for e in elems {
+                    if let Some(s) = self.infinite_dfs(e, root, on_path, gs) {
+                        return Some(s);
+                    }
+                }
+                None
+            }
+            // Fixed array `[n]T`: n inline copies of T → INLINE-recurse the elem
+            // regardless of n (even one inline copy closes a cycle).
+            TypeRef::FixedArray(_, elem, _) => self.infinite_dfs(elem, root, on_path, gs),
+            // Transparent wrappers — recurse inner, preserve its inline/indirection
+            // nature (`ro T`/`mut T`/`unsafe T`). The OUTER Pointer of `*ro T`
+            // etc. has already stopped before reaching these.
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _) => self.infinite_dfs(inner, root, on_path, gs),
+            // Pointer `*T` (any pointee) — always 8 bytes. INDIRECTION. STOP.
+            TypeRef::Pointer(_, _) => None,
+            // Slice `[]T` — 16-byte {ptr,len}. INDIRECTION. STOP.
+            TypeRef::Array(_, _) => None,
+            // Unit / Func / Protocol — finite leaves / existentials. STOP.
+            TypeRef::Unit(_) | TypeRef::Func { .. } | TypeRef::Protocol { .. } => None,
+        }
+    }
+
+    /// Q-infinite-value-type: primitive type names that are finite leaves and
+    /// are NOT present in `self.types` (mirrors the size walk's primitive table).
+    #[inline]
+    fn is_primitive_type_name(name: &str) -> bool {
+        matches!(
+            name,
+            "int" | "i64" | "u64" | "f64" | "i32" | "u32" | "f32" | "i16" | "u16"
+                | "i8" | "u8" | "uint" | "bool" | "char" | "str"
+        )
+    }
+
+    /// Q-infinite-value-type: compact display of a `TypeRef` for the diagnostic
+    /// message (`Option[Node]`, `*Node`, `[]Node`, `Node`). Best-effort — only
+    /// the common shapes; falls back to the leading segment name.
+    fn typeref_display(t: &TypeRef) -> String {
+        match t {
+            TypeRef::Named { path, generics, .. } => {
+                let base = path.join(".");
+                if generics.is_empty() {
+                    base
+                } else {
+                    let args: Vec<String> = generics.iter().map(Self::typeref_display).collect();
+                    format!("{}[{}]", base, args.join(", "))
+                }
+            }
+            TypeRef::Array(inner, _) => format!("[]{}", Self::typeref_display(inner)),
+            TypeRef::FixedArray(n, inner, _) => format!("[{}]{}", n, Self::typeref_display(inner)),
+            TypeRef::Pointer(inner, _) => format!("*{}", Self::typeref_display(inner)),
+            TypeRef::Readonly(inner, _) => format!("ro {}", Self::typeref_display(inner)),
+            TypeRef::Mut(inner, _) => format!("mut {}", Self::typeref_display(inner)),
+            TypeRef::Unsafe(inner, _) => format!("unsafe {}", Self::typeref_display(inner)),
+            TypeRef::Tuple(elems, _) => {
+                let parts: Vec<String> = elems.iter().map(Self::typeref_display).collect();
+                format!("({})", parts.join(", "))
+            }
+            TypeRef::Unit(_) => "()".to_string(),
+            TypeRef::Func { .. } => "fn(..)".to_string(),
+            TypeRef::Protocol { .. } => "<protocol>".to_string(),
+        }
     }
 
     /// Plan 91.12 V2 followup #3 (2026-06-02): thin wrapper над
@@ -4167,6 +4811,9 @@ impl<'a> TypeCheckCtx<'a> {
                                 let base_allowed = self.priv_access_allowed_base(last.as_str());
                                 if !base_allowed {
                                     let has_priv = rec_fields.iter().any(|fd| fd.priv_field);
+                                    // Plan 160 (D281) Ф.2: module access context.
+                                    let module_allowed = self.module_priv_access_allowed(last.as_str());
+                                    let has_type_priv = rec_fields.iter().any(|fd| fd.priv_field && !fd.priv_module_field);
                                     for f in fields {
                                         // Plan 124.2 (D221 §5): spread `...other` outside
                                         // type-method scope on a type WITH priv fields
@@ -4174,20 +4821,26 @@ impl<'a> TypeCheckCtx<'a> {
                                         // E_PRIV_FIELD_INIT_SPREAD.
                                         if f.is_spread {
                                             if has_priv {
-                                                errors.push(Diagnostic::new(
-                                                    format!(
-                                                        "[E_PRIV_FIELD_INIT_SPREAD] cannot use \
-                                                         spread `...` in record literal of `{}` \
-                                                         outside type-method scope: type has \
-                                                         private fields which would be \
-                                                         implicitly initialized via copy \
-                                                         (Plan 124 / D221 §5). Hint: use \
-                                                         factory method `{}.new(...)` or list \
-                                                         each public field explicitly.",
-                                                        last, last,
-                                                    ),
-                                                    f.span,
-                                                ));
+                                                // Plan 160 Ф.2: spread allowed within same
+                                                // module for module-priv-only types.
+                                                let has_module_priv_only = has_priv && !has_type_priv;
+                                                let spread_ok = has_module_priv_only && module_allowed;
+                                                if !spread_ok {
+                                                    errors.push(Diagnostic::new(
+                                                        format!(
+                                                            "[E_PRIV_FIELD_INIT_SPREAD] cannot use \
+                                                             spread `...` in record literal of `{}` \
+                                                             outside type-method scope: type has \
+                                                             private fields which would be \
+                                                             implicitly initialized via copy \
+                                                             (Plan 124 / D221 §5). Hint: use \
+                                                             factory method `{}.new(...)` or list \
+                                                             each public field explicitly.",
+                                                            last, last,
+                                                        ),
+                                                        f.span,
+                                                    ));
+                                                }
                                             }
                                             continue;
                                         }
@@ -4195,19 +4848,38 @@ impl<'a> TypeCheckCtx<'a> {
                                             if fdecl.priv_field
                                                 && !self.priv_field_access_allowed(last.as_str(), &fdecl.visible_to)
                                             {
-                                                errors.push(Diagnostic::new(
-                                                    format!(
-                                                        "[E_PRIV_FIELD_INIT] cannot \
-                                                         initialize private field `{}.{}` \
-                                                         via record literal outside type-\
-                                                         method scope. Field marked `priv` \
-                                                         (Plan 124 / D220). Hint: use \
-                                                         factory method like `{}.new(...)`, \
-                                                         or use `#test_access({})` on test fn.",
-                                                        last, f.name, last, last,
-                                                    ),
-                                                    f.span,
-                                                ));
+                                                // Plan 160 (D281) Ф.2: module-private init.
+                                                if fdecl.priv_module_field {
+                                                    if !self.module_priv_access_allowed(last.as_str()) {
+                                                        errors.push(Diagnostic::new(
+                                                            format!(
+                                                                "[E_FIELD_MODULE_PRIVATE] cannot \
+                                                                 initialize module-private field \
+                                                                 `{}.{}` via record literal from \
+                                                                 outside its module. Type declared \
+                                                                 with bare `priv` (Plan 160 / \
+                                                                 D281). Hint: use factory method \
+                                                                 `{}.new(...)`.",
+                                                                last, f.name, last,
+                                                            ),
+                                                            f.span,
+                                                        ));
+                                                    }
+                                                } else {
+                                                    errors.push(Diagnostic::new(
+                                                        format!(
+                                                            "[E_PRIV_FIELD_INIT] cannot \
+                                                             initialize private field `{}.{}` \
+                                                             via record literal outside type-\
+                                                             method scope. Field marked `priv` \
+                                                             (Plan 124 / D220). Hint: use \
+                                                             factory method like `{}.new(...)`, \
+                                                             or use `#test_access({})` on test fn.",
+                                                            last, f.name, last, last,
+                                                        ),
+                                                        f.span,
+                                                    ));
+                                                }
                                             }
                                         }
                                     }
@@ -4994,29 +5666,242 @@ impl<'a> TypeCheckCtx<'a> {
     // E_PRIV_FIELD_PATTERN per priv field. Recurses into sub-patterns
     // (nested destructure) using the corresponding RecordField type.
     //
-    /// Plan 124.6 (D225): unified priv access predicate. Returns true if
-    /// current fn body has priv access ко `tname` (т.е. может читать/писать/
-    /// init/destructure priv-помеченные fields этого type'а).
+    /// Plan 124.6 (D224 §4): unified priv access predicate. Returns true if
+    /// current fn body has priv access to `tname` (i.e. may read/write/
+    /// init/destructure priv-marked fields of that type).
     ///
-    /// Allowed когда:
-    /// 1. current_recv_type == tname (canonical type-method scope), OR
-    /// 2. tname ∈ current_fn_test_access (escape hatch — `#test_access(tname)`),
-    ///    OR
-    /// 3. current_recv_type ∈ field.visible_to (friend declaration —
-    ///    `#visible_to(curr_recv)` on the specific field).
+    /// D224 §4 combined predicate — allowed when ANY of:
+    /// 1. current_recv_type == tname  — canonical type-method scope (D220).
+    /// 2. in_test_block && same_module(current_module, type_defining_modules[tname])
+    ///    — implicit test grant: any test block in the same module may access
+    ///    priv fields of types declared in that module (D224 §4 rule-2).
+    /// 3. in_test_block && tname ∈ test_block_test_access
+    ///    — explicit `test "…" #test_access(T) { }` grant (D224 §4 rule-3).
+    /// 4. current_recv_type ∈ type_pub_to[tname]
+    ///    — type-level friend via `#pub_to(FriendType)` on the type decl
+    ///    (D224 §4 rule-4). Per-field visible_to (rule for individual fields)
+    ///    is handled at call sites via `priv_field_access_allowed`.
     ///
-    /// Visible_to per-field check requires field-level context (handled at
-    /// call sites because field.visible_to is field-specific, not type-wide).
-    /// This helper covers (1) и (2); call sites combine with (3).
+    /// Legacy fn-level escape hatch (`#test_access(T)` on an `fn` decl,
+    /// from current_fn_test_access) is also preserved as a sub-case of
+    /// rule-3 for backward compat with D225.
     fn priv_access_allowed_base(&self, tname: &str) -> bool {
+        // Rule 1: inside the type's own method body.
         let current_recv = self.current_recv_type.borrow();
         if current_recv.as_deref() == Some(tname) {
             return true;
         }
+
+        // Rule 2 + 3 (test-block rules).
+        if self.in_test_block.get() {
+            // Rule 2: implicit same-module grant inside a test block.
+            let current_mod = self.current_module.borrow();
+            if !current_mod.is_empty() {
+                if let Some(def_mod) = self.type_defining_modules.get(tname) {
+                    if def_mod.as_slice() == current_mod.as_slice() {
+                        return true;
+                    }
+                }
+            }
+            // Rule 3a: explicit test_access list on the TestDecl itself.
+            if self.test_block_test_access.borrow().iter().any(|t| t == tname) {
+                return true;
+            }
+        }
+
+        // Rule 3b (legacy): fn-level #test_access(T) escape hatch (D225).
         if self.current_fn_test_access.borrow().iter().any(|t| t == tname) {
             return true;
         }
+
+        // Rule 4: type-level friend (`#pub_to(FriendType)` on tname's TypeDecl).
+        if let Some(cur) = current_recv.as_deref() {
+            if let Some(pub_to) = self.type_pub_to.get(tname) {
+                if pub_to.iter().any(|f| f == cur) {
+                    return true;
+                }
+            }
+        }
+
         false
+    }
+
+    /// Plan 160 (D281) Ф.2: true when the caller is in the SAME module as
+    /// the type `tname` was declared in. Used for `priv` (module-private) boundary:
+    /// fields with `priv_module_field=true` are allowed within the module.
+    ///
+    /// Conservative (deny) when:
+    /// - `type_defining_modules` has no entry for `tname` (unknown origin),
+    /// - `current_module` is empty (no module context set),
+    /// - the modules differ.
+    fn module_priv_access_allowed(&self, tname: &str) -> bool {
+        let current = self.current_module.borrow();
+        if current.is_empty() {
+            return false;
+        }
+        match self.type_defining_modules.get(tname) {
+            Some(def_mod) => def_mod.as_slice() == current.as_slice(),
+            None => false,
+        }
+    }
+
+    /// Plan 162 Ф.3: returns true iff `method_name` on type `type_name` is an
+    /// **inherent** method — i.e. declared in the SAME module as `type_name`.
+    ///
+    /// Inherent: `type_method_map[type_name][method_name]` contains at least
+    /// one module_name equal to `type_defining_modules[type_name]`.
+    ///
+    /// Extension: method declared in a DIFFERENT module (no overlap).
+    ///
+    /// Returns false (treated as extension / unknown) when:
+    /// - type_name not in type_defining_modules (unknown origin),
+    /// - method_name not in type_method_map[type_name],
+    /// - no module_name in the method list matches the type's defining module.
+    fn is_inherent_method(&self, type_name: &str, method_name: &str) -> bool {
+        let Some(type_module) = self.type_defining_modules.get(type_name) else {
+            return false;
+        };
+        let Some(type_methods) = self.type_method_map.get(type_name) else {
+            return false;
+        };
+        let Some(method_modules) = type_methods.get(method_name) else {
+            return false;
+        };
+        method_modules.iter().any(|m| m == type_module)
+    }
+
+    /// Plan 162 Ф.5: extension method policy enforcement.
+    ///
+    /// Called when a method `method_name` IS found in `method_table` for type
+    /// `type_name`. Emits:
+    ///   - `[E_EXTENSION_METHOD_NEEDS_IMPORT]` if the method is a pure extension
+    ///     (declared in a DIFFERENT module than the type) and no declaring module
+    ///     is imported in the current file.
+    ///   - `[E_METHOD_AMBIGUOUS]` if two or more extension modules providing this
+    ///     method are both imported.
+    ///
+    /// Conservative (no error) when:
+    ///   - `type_defining_modules` has no entry for the type (unknown origin),
+    ///   - `type_method_map` has no entry for the method (synthetic / no attribution),
+    ///   - at least one declaring module equals the type's defining module (inherent),
+    ///   - exactly one extension module is imported.
+    fn check_extension_method_policy(
+        &self,
+        type_name: &str,
+        method_name: &str,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        // Extension method policy only fires for call sites in ENTRY-MODULE
+        // peer files. Checking imported module bodies (stdlib methods calling
+        // other stdlib methods) would cause false positives because transitive
+        // method bodies are not "user code" — their imports are not in scope.
+        // Conservative: if entry_file_ids is empty (single-file legacy, no
+        // peer_files), skip.
+        if !self.entry_file_ids.is_empty() && !self.entry_file_ids.contains(&span.file_id) {
+            return;
+        }
+        // Conservative: if we can't determine the type's defining module, allow.
+        let Some(type_module) = self.type_defining_modules.get(type_name) else {
+            return;
+        };
+        // Extension method policy only applies to USER-DEFINED types.
+        // Stdlib types (str, int, bool, Option, etc.) have methods spread
+        // across multiple prelude/runtime modules — these are all part of the
+        // standard library and implicitly available without explicit import.
+        // Skip the check if the type's defining module starts with "std",
+        // "prelude", or "runtime" (all stdlib conventional prefixes).
+        // Additionally treat any method whose declaring module also starts
+        // with "std"/"prelude"/"runtime" as inherent (see partition below).
+        let is_stdlib_module = |m: &Vec<String>| {
+            matches!(m.first().map(|s| s.as_str()), Some("std") | Some("prelude") | Some("runtime"))
+        };
+        if is_stdlib_module(type_module) {
+            return;
+        }
+        let Some(type_methods) = self.type_method_map.get(type_name) else {
+            return; // no method attribution — could be synthetic; allow
+        };
+        // Methods are stored in type_method_map with their original AST name,
+        // which includes the leading '@' for instance methods (e.g. "@doubled").
+        // The call-site `method_name` arrives WITHOUT '@' (plain "doubled").
+        // Try both the bare name and the '@'-prefixed form.
+        let bare_name = method_name.trim_start_matches('@');
+        let at_name = format!("@{bare_name}");
+        let method_modules = type_methods
+            .get(bare_name)
+            .or_else(|| type_methods.get(at_name.as_str()));
+        let Some(method_modules) = method_modules else {
+            return; // method not in type_method_map — synthetic or compiler-generated; allow
+        };
+
+        // Partition into inherent (same module as type) and extension (different).
+        // A method whose declaring module equals the type's defining module is
+        // INHERENT. A method from a DIFFERENT module is EXTENSION.
+        // Additional rule: a method from ANY stdlib module ("std", "prelude",
+        // "runtime" first-segment) is treated as inherent regardless of exact
+        // module match — stdlib methods are always implicitly available.
+        let mut extension_modules: Vec<&Vec<String>> = Vec::new();
+        let mut has_inherent = false;
+        for mod_name in method_modules {
+            if mod_name == type_module || is_stdlib_module(mod_name) {
+                has_inherent = true;
+            } else {
+                extension_modules.push(mod_name);
+            }
+        }
+
+        // Inherent methods are always accessible when the type is in scope.
+        if has_inherent {
+            return;
+        }
+
+        // Pure extension: check which extension modules are imported.
+        if extension_modules.is_empty() {
+            return; // no attribution — allow
+        }
+
+        // Check import status by last segment of module path (or alias).
+        // Use entry_imported_modules (direct imports of entry-module files only)
+        // to exclude transitive imports from non-entry peers.
+        let imported_ext: Vec<&Vec<String>> = extension_modules
+            .iter()
+            .filter(|m| {
+                m.last().map_or(false, |last| self.entry_imported_modules.contains(last.as_str()))
+            })
+            .cloned()
+            .collect();
+
+        if imported_ext.is_empty() {
+            // No extension module imported — require explicit import.
+            let hint = extension_modules[0].last().map(|s| s.as_str()).unwrap_or("?");
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_EXTENSION_METHOD_NEEDS_IMPORT] extension method `{}.{}()` \
+                     requires the defining module to be imported. \
+                     Hint: add `import ...{{{}}}` or import the module \
+                     that declares this extension method.",
+                    type_name, bare_name, hint,
+                ),
+                span,
+            ));
+        } else if imported_ext.len() > 1 {
+            // Multiple extension modules imported — ambiguous.
+            let mod_names: Vec<String> = imported_ext
+                .iter()
+                .map(|m| m.join("."))
+                .collect();
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_METHOD_AMBIGUOUS] extension method `{}.{}()` is ambiguous: \
+                     defined in multiple imported modules ({}). \
+                     Hint: import only one extension module that provides this method.",
+                    type_name, bare_name, mod_names.join(", "),
+                ),
+                span,
+            ));
+        }
+        // Exactly one extension module imported — OK, no error.
     }
 
     /// Combines `priv_access_allowed_base(tname)` с per-field visible_to:
@@ -5067,17 +5952,20 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 124.2 + 124.4 + 124.6 (D221+D222+D224): unified priv
                 // check (Record + NamedTuple). Per-field visible_to taken into
                 // account (Plan 124.6).
-                struct FieldMeta { name: String, priv_field: bool, visible_to: Vec<String>, ty: TypeRef }
+                // Plan 160 (D281) Ф.2: priv_module_field added for module-boundary.
+                struct FieldMeta { name: String, priv_field: bool, priv_module_field: bool, visible_to: Vec<String>, ty: TypeRef }
                 let metas: Vec<FieldMeta> = match &td.kind {
                     TypeDeclKind::Record(rec_fields) => rec_fields.iter().map(|f| FieldMeta {
                         name: f.name.clone(),
                         priv_field: f.priv_field,
+                        priv_module_field: f.priv_module_field,
                         visible_to: f.visible_to.clone(),
                         ty: f.ty.clone(),
                     }).collect(),
                     TypeDeclKind::NamedTuple(nt_fields) => nt_fields.iter().map(|f| FieldMeta {
                         name: f.name.clone(),
                         priv_field: f.priv_field,
+                        priv_module_field: f.priv_module_field,
                         visible_to: f.visible_to.clone(),
                         ty: f.ty.clone(),
                     }).collect(),
@@ -5090,19 +5978,36 @@ impl<'a> TypeCheckCtx<'a> {
                             if meta.priv_field
                                 && !self.priv_field_access_allowed(tname.as_str(), &meta.visible_to)
                             {
-                                errors.push(Diagnostic::new(
-                                    format!(
-                                        "[E_PRIV_FIELD_PATTERN] cannot destructure \
-                                         private field `{}.{}` в pattern outside type-\
-                                         method scope. Field marked `priv` (Plan 124 / \
-                                         D220/D221/D222). Hint: bind the value to a variable \
-                                         and access via public methods of `{}`, move \
-                                         destructure into a method of `{}`, or use \
-                                         `#test_access({})` (D225).",
-                                        tname, pf.name, tname, tname, tname,
-                                    ),
-                                    pf.span,
-                                ));
+                                // Plan 160 (D281) Ф.2: module-private pattern check.
+                                if meta.priv_module_field {
+                                    if !self.module_priv_access_allowed(tname.as_str()) {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_FIELD_MODULE_PRIVATE] cannot destructure \
+                                                 module-private field `{}.{}` in pattern from \
+                                                 outside its module. Type declared with \
+                                                 bare `priv` (Plan 160 / D281). Hint: use \
+                                                 public accessor methods of `{}`.",
+                                                tname, pf.name, tname,
+                                            ),
+                                            pf.span,
+                                        ));
+                                    }
+                                } else {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_PRIV_FIELD_PATTERN] cannot destructure \
+                                             private field `{}.{}` в pattern outside type-\
+                                             method scope. Field marked `priv` (Plan 124 / \
+                                             D220/D221/D222). Hint: bind the value to a variable \
+                                             and access via public methods of `{}`, move \
+                                             destructure into a method of `{}`, or use \
+                                             `#test_access({})` (D225).",
+                                            tname, pf.name, tname, tname, tname,
+                                        ),
+                                        pf.span,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -5321,6 +6226,13 @@ impl<'a> TypeCheckCtx<'a> {
                         _ => return,
                     },
                     None => {
+                        // Plan 162.2 Ф.3: cross-module fn known via sig_table —
+                        // suppress false-positive E7401 for functions that live in
+                        // a transitively imported module captured during the
+                        // signature pre-pass but not yet merged into fn_decls.
+                        if self.is_known_fn(name) {
+                            return;
+                        }
                         errors.push(Diagnostic::new(
                             format!(
                                 "[E7401] no function `{}` in module `{}`",
@@ -5516,6 +6428,9 @@ impl<'a> TypeCheckCtx<'a> {
                     m.keys().any(|k| k.trim_start_matches('@') == name)
                 });
                 if has_same_name_method {
+                    // Plan 162 Ф.5: extension method policy — check even for
+                    // method/field same-name early return (e.g. str.len() case).
+                    self.check_extension_method_policy(tname, name, span, errors);
                     return;
                 }
                 if let Some(field) = fields.iter().find(|f| f.name == name) {
@@ -5525,18 +6440,39 @@ impl<'a> TypeCheckCtx<'a> {
                     if field.priv_field
                         && !self.priv_field_access_allowed(tname.as_str(), &field.visible_to)
                     {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_PRIV_FIELD_READ] cannot read private field \
-                                 `{}.{}` outside type-method scope. Field marked \
-                                 `priv` (Plan 124 / D220). Hint: add public \
-                                 getter method on `{}`, or move accessing code \
-                                 into a method of `{}`, or use `#test_access({})` \
-                                 на test fn (escape hatch — D224).",
-                                tname, name, tname, tname, tname,
-                            ),
-                            span,
-                        ));
+                        // Plan 160 (D281) Ф.2: distinguish module-private from
+                        // type-private. priv_module_field=true → Module default;
+                        // allow if same module, otherwise E_FIELD_MODULE_PRIVATE.
+                        if field.priv_module_field {
+                            if !self.module_priv_access_allowed(tname.as_str()) {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_FIELD_MODULE_PRIVATE] cannot read \
+                                         module-private field `{}.{}` from \
+                                         outside its module. Type declared with \
+                                         bare `priv` (Plan 160 / D281). \
+                                         Hint: add a public accessor method on \
+                                         `{}`, or move the caller into the same \
+                                         module.",
+                                        tname, name, tname,
+                                    ),
+                                    span,
+                                ));
+                            }
+                        } else {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_PRIV_FIELD_READ] cannot read private field \
+                                     `{}.{}` outside type-method scope. Field marked \
+                                     `priv` (Plan 124 / D220). Hint: add public \
+                                     getter method on `{}`, or move accessing code \
+                                     into a method of `{}`, or use `#test_access({})` \
+                                     на test fn (escape hatch — D224).",
+                                    tname, name, tname, tname, tname,
+                                ),
+                                span,
+                            ));
+                        }
                     }
                     return;
                 }
@@ -5545,9 +6481,11 @@ impl<'a> TypeCheckCtx<'a> {
                     m.keys().any(|k| k.trim_start_matches('@') == name)
                 });
                 if has_method {
+                    // Plan 162 Ф.5: extension method policy.
+                    self.check_extension_method_policy(tname, name, span, errors);
                     return;
                 }
-                // `into` / `try_into` синтезируются компилятором из `From` /
+                // `into` / `try_into` синтексируются компилятором из `From` /
                 // `TryFrom` (D73/D77) — их нет в method_table, но они валидны
                 // для любого типа-источника конверсии.
                 if matches!(name, "into" | "try_into") {
@@ -5621,18 +6559,36 @@ impl<'a> TypeCheckCtx<'a> {
                     if field.priv_field
                         && !self.priv_field_access_allowed(tname.as_str(), &field.visible_to)
                     {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_PRIV_FIELD_READ] cannot read private field \
-                                 `{}.{}` outside type-method scope. Named-tuple \
-                                 field marked `priv` (Plan 124 / D220 / D222). \
-                                 Hint: add public getter method on `{}`, move \
-                                 accessing code into a method of `{}`, или use \
-                                 `#test_access({})` на test fn (D225).",
-                                tname, name, tname, tname, tname,
-                            ),
-                            span,
-                        ));
+                        // Plan 160 (D281) Ф.2: module-private vs type-private.
+                        if field.priv_module_field {
+                            if !self.module_priv_access_allowed(tname.as_str()) {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_FIELD_MODULE_PRIVATE] cannot read \
+                                         module-private field `{}.{}` from \
+                                         outside its module. Named-tuple type \
+                                         declared with bare `priv` (Plan 160 / \
+                                         D281). Hint: add a public accessor \
+                                         method on `{}`.",
+                                        tname, name, tname,
+                                    ),
+                                    span,
+                                ));
+                            }
+                        } else {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_PRIV_FIELD_READ] cannot read private field \
+                                     `{}.{}` outside type-method scope. Named-tuple \
+                                     field marked `priv` (Plan 124 / D220 / D222). \
+                                     Hint: add public getter method on `{}`, move \
+                                     accessing code into a method of `{}`, или use \
+                                     `#test_access({})` на test fn (D225).",
+                                    tname, name, tname, tname, tname,
+                                ),
+                                span,
+                            ));
+                        }
                     }
                     return;
                 }
@@ -5640,6 +6596,8 @@ impl<'a> TypeCheckCtx<'a> {
                     m.keys().any(|k| k.trim_start_matches('@') == name)
                 });
                 if has_method {
+                    // Plan 162 Ф.5: extension method policy.
+                    self.check_extension_method_policy(tname, name, span, errors);
                     return;
                 }
                 if matches!(name, "into" | "try_into") {
@@ -5673,6 +6631,8 @@ impl<'a> TypeCheckCtx<'a> {
                         m.keys().any(|k| k.trim_start_matches('@') == name)
                     });
                     if has_method {
+                        // Plan 162 Ф.5: extension method policy.
+                        self.check_extension_method_policy(tname, name, span, errors);
                         return;
                     }
                     if matches!(name, "into" | "try_into") {
@@ -5741,17 +6701,34 @@ impl<'a> TypeCheckCtx<'a> {
                                 if fd.priv_field
                                     && !self.priv_field_access_allowed(name.as_str(), &fd.visible_to)
                                 {
-                                    errors.push(Diagnostic::new(
-                                        format!(
-                                            "[E_PRIV_FIELD_INIT] cannot initialize private \
-                                             field `{}.{}` via named-tuple constructor outside \
-                                             type-method scope. Field marked `priv` (Plan 124 / \
-                                             D220 / D222). Hint: use factory method like \
-                                             `{}.new(...)`, or use `#test_access({})` on test fn.",
-                                            name, field_name, name, name,
-                                        ),
-                                        arg_value.span,
-                                    ));
+                                    // Plan 160 (D281) Ф.2: module-private init.
+                                    if fd.priv_module_field {
+                                        if !self.module_priv_access_allowed(name.as_str()) {
+                                            errors.push(Diagnostic::new(
+                                                format!(
+                                                    "[E_FIELD_MODULE_PRIVATE] cannot initialize \
+                                                     module-private field `{}.{}` via named-tuple \
+                                                     constructor from outside its module. Type \
+                                                     declared with bare `priv` (Plan 160 / D281). \
+                                                     Hint: use factory method `{}.new(...)`.",
+                                                    name, field_name, name,
+                                                ),
+                                                arg_value.span,
+                                            ));
+                                        }
+                                    } else {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_PRIV_FIELD_INIT] cannot initialize private \
+                                                 field `{}.{}` via named-tuple constructor outside \
+                                                 type-method scope. Field marked `priv` (Plan 124 / \
+                                                 D220 / D222). Hint: use factory method like \
+                                                 `{}.new(...)`, or use `#test_access({})` on test fn.",
+                                                name, field_name, name, name,
+                                            ),
+                                            arg_value.span,
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -5850,9 +6827,11 @@ impl<'a> TypeCheckCtx<'a> {
 
     fn verify_impl_protocols(&self, td: &TypeDecl, errors: &mut Vec<Diagnostic>) {
         for proto_name in &td.impl_protocols {
+            // Plan 164 Ф.1: proto_name may be "Next[T]" — extract bare name for lookups.
+            let proto_base = impl_spec_base_name(proto_name);
             // Plan 137 (D237): check for renamed protocols first, emit helpful message.
             if let Some((_, new_name)) = Self::RENAMED_PROTOCOLS.iter()
-                .find(|(old, _)| *old == proto_name.as_str())
+                .find(|(old, _)| *old == proto_base)
             {
                 errors.push(Diagnostic::new(
                     format!(
@@ -5864,9 +6843,21 @@ impl<'a> TypeCheckCtx<'a> {
                 ));
                 continue;
             }
-            let proto_decl = match self.types.get(proto_name.as_str()) {
+            let proto_decl = match self.types.get(proto_base) {
                 Some(td) => td,
                 None => {
+                    // Plan 162.1 Step 3: suppress E_UNKNOWN_PROTOCOL when the
+                    // protocol is known via the cross-module sig_table.  In the
+                    // lazy-resolution scenario the protocol may be from a
+                    // transitively-imported module not yet inline-merged into
+                    // module.items.  is_known_type checks both self.types (local)
+                    // and self.sig_table (cross-module).
+                    if self.is_known_type(proto_base) {
+                        // Known via sig_table — skip full verification for now.
+                        // (Full check would require fetching the protocol decl
+                        // from the sig_table, which is a Step 4 / lazy-body task.)
+                        continue;
+                    }
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_UNKNOWN_PROTOCOL] type `{}` has `#impl({})` but \
@@ -5908,8 +6899,39 @@ impl<'a> TypeCheckCtx<'a> {
             // method AND нет default body — пытаемся synthesize. Synth-success
             // → method считается satisfied (не добавляется в `missing`).
             // Synth-error → emit E_AUTO_DERIVE_* diagnostic.
+            // Plan 164 Ф.1: build a generic substitution map from the impl-spec
+            // args, e.g. "Next[U]" → {"T": "U"} (proto param → impl arg).
+            // Used in check_signature_match_with_subst below.
+            let proto_arg_subst: Vec<(String, String)> = {
+                let args_text = impl_spec_args_text(proto_name);
+                if args_text.is_empty() || proto_decl.generics.is_empty() {
+                    vec![]
+                } else {
+                    // Strip outer `[` and `]` and split by `,` at depth 0.
+                    let inner = &args_text[1..args_text.len().saturating_sub(1)];
+                    let mut parts: Vec<String> = Vec::new();
+                    let mut depth = 0usize;
+                    let mut cur = String::new();
+                    for ch in inner.chars() {
+                        match ch {
+                            '[' | '(' => { depth += 1; cur.push(ch); }
+                            ']' | ')' => { depth -= 1; cur.push(ch); }
+                            ',' if depth == 0 => {
+                                parts.push(cur.trim().to_string());
+                                cur = String::new();
+                            }
+                            _ => { cur.push(ch); }
+                        }
+                    }
+                    if !cur.trim().is_empty() { parts.push(cur.trim().to_string()); }
+                    proto_decl.generics.iter()
+                        .zip(parts.iter())
+                        .map(|(gp, arg)| (gp.name.clone(), arg.clone()))
+                        .collect()
+                }
+            };
             let is_auto_derivable =
-                crate::protocols::auto_derive::is_builtin_protocol(proto_name);
+                crate::protocols::auto_derive::is_builtin_protocol(proto_base);
             let mut auto_derive_errors: Vec<crate::protocols::auto_derive::DeriveError> = Vec::new();
             for m in proto_methods {
                 let has_explicit = self.t_provides_method(&td.name, &m.name);
@@ -5921,7 +6943,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if has_explicit {
                     // Compare signature. Find T's fn for method name.
                     if let Some(t_method) = self.find_method_decl(&td.name, &m.name) {
-                        if let Some(reason) = check_signature_match(t_method, m) {
+                        if let Some(reason) = check_signature_match_with_subst(t_method, m, &proto_arg_subst) {
                             wrong_sig.push((
                                 m.name.clone(),
                                 render_method_sig(&m.name, &m.params, &m.return_type),
@@ -5929,7 +6951,7 @@ impl<'a> TypeCheckCtx<'a> {
                             ));
                         }
                         // Plan 108.4 Ф.2: receiver mutability match check.
-                        if let Some(recv_err) = check_receiver_mut_match(t_method, m, proto_name, &td.name) {
+                        if let Some(recv_err) = check_receiver_mut_match(t_method, m, proto_base, &td.name) {
                             wrong_recv.push(recv_err);
                         }
                     }
@@ -5939,13 +6961,13 @@ impl<'a> TypeCheckCtx<'a> {
                     if is_auto_derivable {
                         // Match method name к protocol's expected method.
                         let expected_method =
-                            crate::protocols::auto_derive::builtin_protocol_method(proto_name);
+                            crate::protocols::auto_derive::builtin_protocol_method(proto_base);
                         if expected_method.map_or(false, |em| em == m.name.as_str()) {
                             let bridge = self.as_derive_query();
                             let mut derive_ctx =
                                 crate::protocols::auto_derive::AutoDeriveCtx::new(&bridge);
                             match crate::protocols::auto_derive::synthesize_method(
-                                &mut derive_ctx, td, proto_name,
+                                &mut derive_ctx, td, proto_base,
                             ) {
                                 Ok(_fn_decl) => {
                                     // Synthesis succeeded — method satisfied via auto-derive.
@@ -6050,9 +7072,11 @@ impl<'a> TypeCheckCtx<'a> {
             }
         };
         for proto_name in &fd.impl_protocols {
+            // Plan 164 Ф.1: proto_name may be "Next[U]" — extract bare name for lookups.
+            let proto_base = impl_spec_base_name(proto_name);
             // Plan 137 (D237): renamed protocols — helpful redirect.
             if let Some((_, new_name)) = Self::RENAMED_PROTOCOLS.iter()
-                .find(|(old, _)| *old == proto_name.as_str())
+                .find(|(old, _)| *old == proto_base)
             {
                 errors.push(Diagnostic::new(
                     format!(
@@ -6064,7 +7088,7 @@ impl<'a> TypeCheckCtx<'a> {
                 ));
                 continue;
             }
-            let proto_decl = match self.types.get(proto_name.as_str()) {
+            let proto_decl = match self.types.get(proto_base) {
                 Some(td) => td,
                 None => {
                     errors.push(Diagnostic::new(
@@ -6072,7 +7096,7 @@ impl<'a> TypeCheckCtx<'a> {
                             "[E_IMPL_UNKNOWN_PROTOCOL] method `{} @{}` has `#impl({})` but \
                              `{}` is not a known type. Did you forget to import it, or \
                              misspell the protocol name?",
-                            recv.type_name, fd.name, proto_name, proto_name,
+                            recv.type_name, fd.name, proto_name, proto_base,
                         ),
                         fd.span,
                     ));
@@ -6087,11 +7111,40 @@ impl<'a> TypeCheckCtx<'a> {
                             "[E_IMPL_UNKNOWN_PROTOCOL] method `{} @{}` has `#impl({})` but \
                              `{}` is not a protocol — it's a different kind of type. \
                              `#impl(...)` only accepts protocol names.",
-                            recv.type_name, fd.name, proto_name, proto_name,
+                            recv.type_name, fd.name, proto_name, proto_base,
                         ),
                         fd.span,
                     ));
                     continue;
+                }
+            };
+            // Plan 164 Ф.1: build a generic substitution map from the impl-spec args,
+            // e.g. "Next[U]" → {"T": "U"} (proto generic param → impl type arg name).
+            let proto_arg_subst: Vec<(String, String)> = {
+                let args_text = impl_spec_args_text(proto_name);
+                if args_text.is_empty() || proto_decl.generics.is_empty() {
+                    vec![]
+                } else {
+                    let inner = &args_text[1..args_text.len().saturating_sub(1)];
+                    let mut parts: Vec<String> = Vec::new();
+                    let mut depth = 0usize;
+                    let mut cur = String::new();
+                    for ch in inner.chars() {
+                        match ch {
+                            '[' | '(' => { depth += 1; cur.push(ch); }
+                            ']' | ')' => { depth -= 1; cur.push(ch); }
+                            ',' if depth == 0 => {
+                                parts.push(cur.trim().to_string());
+                                cur = String::new();
+                            }
+                            _ => { cur.push(ch); }
+                        }
+                    }
+                    if !cur.trim().is_empty() { parts.push(cur.trim().to_string()); }
+                    proto_decl.generics.iter()
+                        .zip(parts.iter())
+                        .map(|(gp, arg)| (gp.name.clone(), arg.clone()))
+                        .collect()
                 }
             };
             // `@m` must be one of P's declared methods.
@@ -6107,22 +7160,22 @@ impl<'a> TypeCheckCtx<'a> {
                             "[E_IMPL_NOT_A_PROTOCOL_METHOD] method `@{}` is not declared by \
                              protocol `{}`. `{}` declares: {}. Did you mean one of those, \
                              or a different protocol in `#impl(...)`?",
-                            fd.name, proto_name, proto_name, avail,
+                            fd.name, proto_base, proto_base, avail,
                         ),
                         fd.span,
                     ));
                     continue;
                 }
             };
-            // Signature: params + return type, modulo `Self` ↔ T.
-            if let Some(reason) = check_signature_match(fd, proto_method) {
+            // Signature: params + return type, modulo `Self` ↔ T and generic subst.
+            if let Some(reason) = check_signature_match_with_subst(fd, proto_method, &proto_arg_subst) {
                 errors.push(Diagnostic::new(
                     format!(
                         "[E_IMPL_SIGNATURE_MISMATCH] method `{} @{}` has `#impl({})` but its \
                          signature does not match protocol `{}`'s `@{}`. Expected: `{}`. {}\n  \
                          note: protocol method signatures must match exactly (arity, param \
                          types, return type — modulo Self ↔ {}).",
-                        recv.type_name, fd.name, proto_name, proto_name, fd.name,
+                        recv.type_name, fd.name, proto_name, proto_base, fd.name,
                         render_method_sig(&proto_method.name, &proto_method.params, &proto_method.return_type),
                         reason, recv.type_name,
                     ),
@@ -6132,7 +7185,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Receiver mutability (ro / mut / consume) must match P's `@m`.
             if let Some((_, code, proto_qual, fix)) =
-                check_receiver_mut_match(fd, proto_method, proto_name, &recv.type_name)
+                check_receiver_mut_match(fd, proto_method, proto_base, &recv.type_name)
             {
                 errors.push(Diagnostic::new(
                     format!(
@@ -6154,8 +7207,10 @@ impl<'a> TypeCheckCtx<'a> {
         // opt-in. Only protocols в T's impl_protocols list considered.
         // Без `#impl` — bare call к default-body-synthesized method даёт
         // E7320 normally (opt-in nominal layer над structural protocols).
+        // Plan 164 Ф.1: impl_protocols may contain "Next[U]" — extract bare names
+        // for the opted_in set which is compared against self.types keys (bare names).
         let opted_in: HashSet<&str> = self.types.get(tname)
-            .map(|td| td.impl_protocols.iter().map(String::as_str).collect())
+            .map(|td| td.impl_protocols.iter().map(|s| impl_spec_base_name(s)).collect())
             .unwrap_or_default();
         for (proto_name, td) in &self.types {
             if !opted_in.contains(proto_name.as_str()) {
@@ -6805,22 +7860,39 @@ impl<'a> TypeCheckCtx<'a> {
                                     ));
                                 }
                                 // Plan 124 (D220) + 124.6 (D225): priv field WRITE check.
+                                // Plan 160 (D281) Ф.2: module-private write.
                                 if f.priv_field
                                     && !self.priv_field_access_allowed(tname, &f.visible_to)
                                 {
-                                    errors.push(Diagnostic::new(
-                                        format!(
-                                            "[E_PRIV_FIELD_WRITE] cannot write to private \
-                                             field `{}.{}` outside type-method scope. \
-                                             Field marked `priv` (Plan 124 / D220). \
-                                             Hint: add public mutator method on `{}` \
-                                             (e.g. `export fn {} mut @set_{}(v T)`), \
-                                             move accessing code into a method of `{}`, \
-                                             or use `#test_access({})` (D225).",
-                                            tname, field_name, tname, tname, field_name, tname, tname,
-                                        ),
-                                        target.span,
-                                    ));
+                                    if f.priv_module_field {
+                                        if !self.module_priv_access_allowed(tname) {
+                                            errors.push(Diagnostic::new(
+                                                format!(
+                                                    "[E_FIELD_MODULE_PRIVATE] cannot write to \
+                                                     module-private field `{}.{}` from outside \
+                                                     its module. Type declared with bare `priv` \
+                                                     (Plan 160 / D281). Hint: add a public mutator \
+                                                     method on `{}`.",
+                                                    tname, field_name, tname,
+                                                ),
+                                                target.span,
+                                            ));
+                                        }
+                                    } else {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_PRIV_FIELD_WRITE] cannot write to private \
+                                                 field `{}.{}` outside type-method scope. \
+                                                 Field marked `priv` (Plan 124 / D220). \
+                                                 Hint: add public mutator method on `{}` \
+                                                 (e.g. `export fn {} mut @set_{}(v T)`), \
+                                                 move accessing code into a method of `{}`, \
+                                                 or use `#test_access({})` (D225).",
+                                                tname, field_name, tname, tname, field_name, tname, tname,
+                                            ),
+                                            target.span,
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -7309,7 +8381,14 @@ fn arity_diag(name: &str, info: &ArityInfo, actual: usize, span: Span) -> Diagno
 ///      (или direct + embedded). Разрешено если строго совпадают; иначе
 ///      ambiguity, должна быть resolved direct-override'ом (V1 — error;
 ///      override-механизм — V2/D145 Ред. 6).
-fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
+/// `sig_table` — optional cross-module signature table (Plan 162.1 Step 3).
+/// When present, `E_PROTOCOL_EMBED_UNKNOWN` is suppressed for type names that
+/// are declared in a transitively-imported module captured in the sig_table.
+fn check_protocol_embeds(
+    module: &Module,
+    sig_table: Option<&crate::imports::ModuleSigTable>,
+    errors: &mut Vec<Diagnostic>,
+) {
     use std::collections::{HashMap, HashSet};
     // Collect protocol declarations + map of all type names → kind hint.
     let mut proto_map: HashMap<String, (&Vec<EffectMethod>, &Vec<TypeRef>, Span)> = HashMap::new();
@@ -7362,15 +8441,25 @@ fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
             }
             match type_kinds.get(emb_name) {
                 None => {
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "[E_PROTOCOL_EMBED_UNKNOWN] unknown type `{}` in \
-                             `use {}` (protocol `{}` body) — type not declared \
-                             in module or via import",
-                            emb_name, emb_name, proto_name
-                        ),
-                        *emb_span,
-                    ));
+                    // Plan 162.1 Step 3: suppress E_PROTOCOL_EMBED_UNKNOWN
+                    // when the type is known via the cross-module sig_table.
+                    // This handles the lazy-resolution scenario where a
+                    // transitively imported module's types are not yet
+                    // inline-merged into module.items.
+                    let known_via_sig_table = sig_table
+                        .map(|st| !st.find_type_modules(emb_name).is_empty())
+                        .unwrap_or(false);
+                    if !known_via_sig_table {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_PROTOCOL_EMBED_UNKNOWN] unknown type `{}` in \
+                                 `use {}` (protocol `{}` body) — type not declared \
+                                 in module or via import",
+                                emb_name, emb_name, proto_name
+                            ),
+                            *emb_span,
+                        ));
+                    }
                 }
                 Some(&"protocol") => { /* OK */ }
                 Some(other) => {
@@ -7517,7 +8606,15 @@ fn check_protocol_embeds(module: &Module, errors: &mut Vec<Diagnostic>) {
 /// TryFrom/TryInto), либо primitive-имя (Q-representation-bound future).
 /// Если имя — record/sum/effect → error E_BOUND_NOT_PROTOCOL.
 /// Если имя вообще unknown → error E_BOUND_UNKNOWN.
-fn check_generic_bound_declarations(module: &Module, errors: &mut Vec<Diagnostic>) {
+///
+/// `sig_table` — optional cross-module signature table (Plan 162.1 Step 3).
+/// When present, `E_BOUND_UNKNOWN` is suppressed for type names that are
+/// declared in a transitively-imported module captured in the sig_table.
+fn check_generic_bound_declarations(
+    module: &Module,
+    sig_table: Option<&crate::imports::ModuleSigTable>,
+    errors: &mut Vec<Diagnostic>,
+) {
     use std::collections::HashMap;
     // Карта известных type-имён → kind hint.
     let mut type_kinds: HashMap<String, &'static str> = HashMap::new();
@@ -7572,15 +8669,22 @@ fn check_generic_bound_declarations(module: &Module, errors: &mut Vec<Diagnostic
                 ));
             }
             None => {
-                errors.push(Diagnostic::new(
-                    format!(
-                        "[E_BOUND_UNKNOWN] unknown type `{}` used as generic bound — \
-                         not a declared protocol, stdlib alias, or primitive. \
-                         Did you forget to declare/import it?",
-                        name
-                    ),
-                    *span,
-                ));
+                // Plan 162.1 Step 3: suppress E_BOUND_UNKNOWN when the type
+                // is known via the cross-module sig_table (lazy resolution).
+                let known_via_sig_table = sig_table
+                    .map(|st| !st.find_type_modules(name).is_empty())
+                    .unwrap_or(false);
+                if !known_via_sig_table {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_BOUND_UNKNOWN] unknown type `{}` used as generic bound — \
+                             not a declared protocol, stdlib alias, or primitive. \
+                             Did you forget to declare/import it?",
+                            name
+                        ),
+                        *span,
+                    ));
+                }
             }
         }
     };
@@ -7639,6 +8743,12 @@ struct BoundCtx<'a> {
     /// отличить `let Color.Red { x } = obj` (refutable, error) от
     /// `let Pair { x, y } = p` (irrefutable record).
     sum_variant_names: std::collections::HashSet<String>,
+    /// Plan 162 Ф.3: type name -> declaring module name segments.
+    /// Mirrors TypeCheckCtx.type_defining_modules; built from peer_files.
+    type_defining_modules: HashMap<String, Vec<String>>,
+    /// Plan 162 Ф.3: TypeMethodMap - type_name -> method_name ->
+    /// list of module_names that declared this method.
+    type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>>,
 }
 
 impl<'a> BoundCtx<'a> {
@@ -7728,7 +8838,61 @@ impl<'a> BoundCtx<'a> {
             protocol_specs.insert(name.clone(), out);
         }
 
-        BoundCtx { protocol_specs, effect_decls, fn_decls, method_table, sum_variant_names }
+        // Plan 162 Ф.3: build type_defining_modules and type_method_map for BoundCtx.
+        // Same logic as TypeCheckCtx.build; BoundCtx needs them for is_inherent_method
+        // used in resolve_instance_method.
+        let mut type_defining_modules: HashMap<String, Vec<String>> = HashMap::new();
+        let mut type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>> = HashMap::new();
+        if module.peer_files.is_empty() {
+            for item in &module.items {
+                match item {
+                    Item::Type(td) => {
+                        type_defining_modules.entry(td.name.clone()).or_insert_with(|| module.name.clone());
+                    }
+                    Item::Fn(f) => {
+                        if let Some(recv) = &f.receiver {
+                            let module_list = type_method_map.entry(recv.type_name.clone()).or_default().entry(f.name.clone()).or_default();
+                            if !module_list.contains(&module.name) { module_list.push(module.name.clone()); }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    match item {
+                        Item::Type(td) => {
+                            type_defining_modules.entry(td.name.clone()).or_insert_with(|| pf.module_name.clone());
+                        }
+                        Item::Fn(f) => {
+                            if let Some(recv) = &f.receiver {
+                                let module_list = type_method_map.entry(recv.type_name.clone()).or_default().entry(f.name.clone()).or_default();
+                                if !module_list.contains(&pf.module_name) { module_list.push(pf.module_name.clone()); }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        BoundCtx { protocol_specs, effect_decls, fn_decls, method_table, sum_variant_names, type_defining_modules, type_method_map }
+    }
+
+    /// Plan 162 Ф.3: returns true iff method_name on type type_name is inherent
+    /// (declared in the same module as the type).
+    fn is_inherent_method(&self, type_name: &str, method_name: &str) -> bool {
+        let Some(type_module) = self.type_defining_modules.get(type_name) else {
+            return false;
+        };
+        let Some(type_methods) = self.type_method_map.get(type_name) else {
+            return false;
+        };
+        let Some(method_modules) = type_methods.get(method_name) else {
+            return false;
+        };
+        method_modules.iter().any(|m| m == type_module)
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -8754,11 +9918,42 @@ impl<'a> BoundCtx<'a> {
         arg_count_hint: usize,
     ) -> Option<&FnDecl> {
         // Попытка 1: receiver-type inference.
+        // Plan 162 Ф.3: когда тип receiver'а известен, сначала проверяем
+        // наследуемые (inherent) методы — методы, объявленные в том же модуле
+        // что и тип T. Inherent методы доступны без явного import модуля-метода:
+        // при импорте типа T все его inherent методы автоматически доступны
+        // (они слиты в merged module.items). Это позволяет вызывать foo.greet()
+        // даже если пользователь импортировал только тип Foo, а не модуль методов.
         if let Some(recv_ty) = Self::infer_arg_ty(obj, scope) {
             if let TypeRef::Named { path, .. } = &recv_ty {
                 if path.len() == 1 {
-                    if let Some(methods) = self.method_table.get(&path[0]) {
+                    let type_name = &path[0];
+                    if let Some(methods) = self.method_table.get(type_name) {
                         if let Some(overloads) = methods.get(method_name) {
+                            // Plan 162 Ф.3: prefer inherent overloads over
+                            // extension overloads when receiver type is known.
+                            // Inherent = declared in same module as the type.
+                            let inherent: Vec<&&FnDecl> = overloads
+                                .iter()
+                                .filter(|f| {
+                                    self.is_inherent_method(type_name, &f.name)
+                                })
+                                .collect();
+                            let candidates = if !inherent.is_empty() {
+                                &inherent[..] as &[&&FnDecl]
+                            } else {
+                                // All overloads (extension or unknown origin).
+                                // Wrap to match type; use slice of all overloads.
+                                // SAFETY: overloads is Vec<&FnDecl>; inherent is
+                                // empty so fall back to non-inherent branch below.
+                                &[][..]
+                            };
+                            if let [single] = candidates {
+                                return Some(single);
+                            }
+                            // Either 0 inherent (all extension) or >1 inherent
+                            // (overloaded inherent). Fall through to non-inherent
+                            // single-overload path.
                             if let [single] = overloads.as_slice() {
                                 return Some(single);
                             }
@@ -8772,17 +9967,36 @@ impl<'a> BoundCtx<'a> {
         // Plan 109: фильтр по arity предотвращает ложные "expected 0, got N"
         // когда builtin-метод ([]T::push и т.п.) отсутствует в method_table,
         // но пользовательский тип случайно имеет метод с тем же именем.
+        // Plan 162 Ф.3: в name-only поиске inherent-методы приоритетны при
+        // неоднозначности (два типа → один inherent → один extension).
+        let mut found_inherent: Option<&FnDecl> = None;
         let mut found: Option<&FnDecl> = None;
+        let mut ambiguous_inherent = false;
         let mut ambiguous = false;
-        for methods in self.method_table.values() {
+        for (type_name, methods) in &self.method_table {
             if let Some(overloads) = methods.get(method_name) {
                 for f in overloads {
                     if f.params.len() != arg_count_hint { continue; }
-                    if found.is_some() {
-                        ambiguous = true;
+                    let inherent = self.is_inherent_method(type_name, &f.name);
+                    if inherent {
+                        if found_inherent.is_some() {
+                            ambiguous_inherent = true;
+                        }
+                        found_inherent = Some(f);
+                    } else {
+                        if found.is_some() {
+                            ambiguous = true;
+                        }
+                        found = Some(f);
                     }
-                    found = Some(f);
                 }
+            }
+        }
+        // Return inherent if unambiguous; otherwise fall back to extension if
+        // unambiguous; otherwise return None (ambiguous → codegen resolves).
+        if !ambiguous_inherent {
+            if let Some(f) = found_inherent {
+                return Some(f);
             }
         }
         if ambiguous { return None; }
@@ -10833,6 +12047,154 @@ fn check_signature_match(
     None
 }
 
+/// Plan 164 Ф.1: apply a generic substitution map to a TypeRef string.
+///
+/// `subst` maps protocol generic param names to their impl counterparts,
+/// e.g. [("T", "U")]. We operate on `render_type_ref` strings for simplicity:
+/// replace whole-word occurrences of each proto param with the impl arg.
+fn apply_subst_to_type_str(s: &str, subst: &[(String, String)]) -> String {
+    let mut result = s.to_string();
+    for (proto_param, impl_arg) in subst {
+        // Replace whole-word occurrences: surrounded by non-ident chars.
+        let mut out = String::new();
+        let mut i = 0;
+        let bytes = result.as_bytes();
+        while i < bytes.len() {
+            let is_ident_start = |b: u8| b.is_ascii_alphabetic() || b == b'_';
+            if bytes[i..].starts_with(proto_param.as_bytes()) {
+                let end = i + proto_param.len();
+                let before_ok = i == 0 || !is_ident_start(bytes[i - 1]);
+                let after_ok = end >= bytes.len() || !is_ident_start(bytes[end]);
+                if before_ok && after_ok {
+                    out.push_str(impl_arg);
+                    i = end;
+                    continue;
+                }
+            }
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        result = out;
+    }
+    result
+}
+
+/// Plan 164 Ф.1: normalize a rendered type string for whitespace-insensitive
+/// comparison. Removes spaces immediately after `,`, `[`, `(` and before `]`,
+/// `)` so that `render_type_ref`-produced `"(int, T)"` and the raw-source
+/// `"(int,T)"` compare equal.
+fn normalize_type_str(s: &str) -> String {
+    // Replace all whitespace sequences with a single space, then strip spaces
+    // adjacent to punctuation characters in type positions.
+    let mut out = String::with_capacity(s.len());
+    let mut prev_was_punct = false;
+    for ch in s.chars() {
+        if ch.is_whitespace() {
+            // Suppress space if the previous non-space char was a punctuation
+            // or if we haven't started yet; we'll decide once we see the next
+            // non-space char.
+            if !prev_was_punct && !out.is_empty() {
+                out.push(' '); // tentative space
+            }
+            // Mark: the tentative space may get removed if next char is punct.
+        } else {
+            let is_punct = matches!(ch, '[' | ']' | '(' | ')' | ',');
+            if is_punct {
+                // Remove any trailing space we just added.
+                if out.ends_with(' ') {
+                    out.pop();
+                }
+                out.push(ch);
+                prev_was_punct = true;
+            } else {
+                // If the previous char was a closing punct and we have a space,
+                // the space is valid (e.g. "Option[T]" vs method names).
+                prev_was_punct = false;
+                out.push(ch);
+            }
+        }
+    }
+    // Trailing spaces.
+    while out.ends_with(' ') { out.pop(); }
+    out
+}
+
+/// Plan 164 Ф.1: signature match with optional generic substitution.
+///
+/// Like `check_signature_match` but applies `subst` to the protocol method's
+/// types before comparison. If `subst` is empty, falls back to the original
+/// behaviour (for backward compat with non-generic `#impl(Display)`).
+fn check_signature_match_with_subst(
+    t_method: &FnDecl,
+    proto_method: &crate::ast::EffectMethod,
+    subst: &[(String, String)],
+) -> Option<String> {
+    if subst.is_empty() {
+        return check_signature_match(t_method, proto_method);
+    }
+    if t_method.params.len() != proto_method.params.len() {
+        return Some(format!(
+            "arity mismatch: T's `{}` has {} param(s), protocol expects {}",
+            t_method.name, t_method.params.len(), proto_method.params.len(),
+        ));
+    }
+    let recv_name = t_method.receiver.as_ref()
+        .map(|r| r.type_name.as_str()).unwrap_or("");
+    for (tp, pp) in t_method.params.iter().zip(proto_method.params.iter()) {
+        let tt_str = render_type_ref(&tp.ty);
+        let pt_str = apply_subst_to_type_str(&render_type_ref(&pp.ty), subst);
+        // Plan 164 Ф.1: normalize whitespace before comparing — render produces
+        // "( int, T )" with spaces; raw-source subst may produce "(int,T)".
+        let tt_norm = normalize_type_str(&tt_str);
+        let pt_norm = normalize_type_str(&pt_str);
+        // Also accept Self ↔ recv_name equivalence.
+        if tt_norm != pt_norm {
+            let pt_self = pt_str == "Self" && tt_str == recv_name;
+            let tt_self = tt_str == "Self" && pt_str == recv_name;
+            if !pt_self && !tt_self {
+                return Some(format!(
+                    "param `{}`: T has `{}`, protocol expects `{}`",
+                    tp.name, tt_str, pt_str,
+                ));
+            }
+        }
+    }
+    let t_ret = t_method.return_type.as_ref();
+    let p_ret = proto_method.return_type.as_ref();
+    let is_unit_or_none = |r: Option<&TypeRef>| -> bool {
+        matches!(r, None | Some(TypeRef::Unit(_)))
+    };
+    if is_unit_or_none(t_ret) && is_unit_or_none(p_ret) {
+        return None;
+    }
+    match (t_ret, p_ret) {
+        (Some(a), Some(b)) => {
+            let a_str = render_type_ref(a);
+            let b_str = apply_subst_to_type_str(&render_type_ref(b), subst);
+            // Plan 164 Ф.1: normalize before comparison — tuple types with spaces.
+            let a_norm = normalize_type_str(&a_str);
+            let b_norm = normalize_type_str(&b_str);
+            if a_norm != b_norm {
+                let b_self = b_str == "Self" && a_str == recv_name;
+                let a_self = a_str == "Self" && b_str == recv_name;
+                if !b_self && !a_self {
+                    return Some(format!(
+                        "return type: T returns `{}`, protocol expects `{}`",
+                        a_str, b_str,
+                    ));
+                }
+            }
+        }
+        _ => return Some(format!(
+            "return type: T returns `{}`, protocol expects `{}`",
+            t_ret.map(render_type_ref).unwrap_or_else(|| "()".into()),
+            p_ret.as_ref().map(|b| apply_subst_to_type_str(&render_type_ref(b), subst))
+                .unwrap_or_else(|| "()".into()),
+        )),
+    }
+    None
+}
+
 /// Plan 108.4 Ф.2: Check receiver-mutability match between T's implementation method
 /// and the protocol's method declaration.
 ///
@@ -12385,6 +13747,26 @@ impl LinearityRegistry {
     /// Bootstrap: generic-param без bound → false (silent-ignore;
     /// 100.2 закроет через `[T consume]`).
     fn type_is_consume(&self, t: &TypeRef, module: &Module) -> bool {
+        // [M-checker-recursive-type-overflow]: the field-walk below follows
+        // named-type references, which form a CYCLE for a recursive type
+        // (`type Tree | Leaf | Node(int, Tree, Tree)`, or an invalid value
+        // self-cycle `type N value { next N }`). Without a guard the recursion
+        // never terminates → stack overflow during `nova check`. Thread a
+        // visited-set keyed by the named type currently being resolved; a
+        // re-entry returns `false` (consume-ness cannot be "introduced" by a
+        // back-edge — the field that closes the cycle is already being checked,
+        // and a genuine consume field elsewhere is still discovered on its own
+        // forward edge). Public signature unchanged.
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        self.type_is_consume_v(t, module, &mut visited)
+    }
+
+    fn type_is_consume_v(
+        &self,
+        t: &TypeRef,
+        module: &Module,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> bool {
         match t {
             TypeRef::Named { path, generics, .. } => {
                 // Direct consume-type.
@@ -12393,38 +13775,46 @@ impl LinearityRegistry {
                     return true;
                 }
                 // Generic wrap: Option[Transaction], Box[Tx], Wrapper[T].
-                if generics.iter().any(|a| self.type_is_consume(a, module)) {
+                if generics.iter().any(|a| self.type_is_consume_v(a, module, visited)) {
                     return true;
                 }
-                // Record/sum lookup: own fields consume-typed?
-                for item in &module.items {
-                    if let Item::Type(td) = item {
-                        if td.name == name {
-                            return match &td.kind {
-                                TypeDeclKind::Record(fields) =>
-                                    fields.iter().any(|f|
-                                        f.consume || self.type_is_consume(&f.ty, module)),
-                                TypeDeclKind::Sum(variants) =>
-                                    variants.iter().any(|v|
-                                        match &v.kind {
-                                            SumVariantKind::Tuple(payloads) =>
-                                                payloads.iter().any(|p|
-                                                    self.type_is_consume(p, module)),
-                                            SumVariantKind::Record(fields) =>
-                                                fields.iter().any(|f|
-                                                    f.consume || self.type_is_consume(&f.ty, module)),
-                                            SumVariantKind::Unit => false,
-                                        }),
-                                _ => false,
-                            };
+                // Record/sum lookup: own fields consume-typed? Guard against
+                // recursive named-type cycles (see type_is_consume doc above).
+                if !visited.insert(name.clone()) {
+                    return false;
+                }
+                let result = (|| {
+                    for item in &module.items {
+                        if let Item::Type(td) = item {
+                            if td.name == name {
+                                return match &td.kind {
+                                    TypeDeclKind::Record(fields) =>
+                                        fields.iter().any(|f|
+                                            f.consume || self.type_is_consume_v(&f.ty, module, visited)),
+                                    TypeDeclKind::Sum(variants) =>
+                                        variants.iter().any(|v|
+                                            match &v.kind {
+                                                SumVariantKind::Tuple(payloads) =>
+                                                    payloads.iter().any(|p|
+                                                        self.type_is_consume_v(p, module, visited)),
+                                                SumVariantKind::Record(fields) =>
+                                                    fields.iter().any(|f|
+                                                        f.consume || self.type_is_consume_v(&f.ty, module, visited)),
+                                                SumVariantKind::Unit => false,
+                                            }),
+                                    _ => false,
+                                };
+                            }
                         }
                     }
-                }
-                false
+                    false
+                })();
+                visited.remove(&name);
+                result
             }
             TypeRef::Tuple(elems, _) =>
-                elems.iter().any(|e| self.type_is_consume(e, module)),
-            TypeRef::Array(inner, _) => self.type_is_consume(inner, module),
+                elems.iter().any(|e| self.type_is_consume_v(e, module, visited)),
+            TypeRef::Array(inner, _) => self.type_is_consume_v(inner, module, visited),
             // Generic-param без bound — bootstrap silent-ignore.
             _ => false,
         }
@@ -20079,6 +21469,7 @@ mod named_tuple_ctor_infer_tests {
             },
             span: dummy_span(),
             priv_field: false,
+            priv_module_field: false,
             visible_to: Vec::new(),
         }).collect();
         TypeDecl {

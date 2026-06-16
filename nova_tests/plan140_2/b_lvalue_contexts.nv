@@ -10,7 +10,7 @@ import std.collections.vec.{Vec}
 type Point { x int, y int }
 
 test "v[i].field = x — lvalue field write through index" {
-    mut v = Vec[Point].from([Point { x: 1, y: 2 }, Point { x: 3, y: 4 }])
+    mut v = Vec[Point].of(Point { x: 1, y: 2 }, Point { x: 3, y: 4 })
     v[0].x = 99
     v[1].y = v[1].y + 100
     assert(v[0].x == 99)
@@ -20,12 +20,12 @@ test "v[i].field = x — lvalue field write through index" {
 }
 
 test "v[i].field read (rvalue member through index)" {
-    ro v = Vec[Point].from([Point { x: 10, y: 20 }, Point { x: 30, y: 40 }])
+    ro v = Vec[Point].of(Point { x: 10, y: 20 }, Point { x: 30, y: 40 })
     assert(v[0].x + v[1].y == 50)
 }
 
 test "v[i] whole-element write still works" {
-    mut v = Vec[Point].from([Point { x: 1, y: 1 }, Point { x: 2, y: 2 }])
+    mut v = Vec[Point].of(Point { x: 1, y: 1 }, Point { x: 2, y: 2 })
     v[1] = Point { x: 7, y: 8 }
     assert(v[1].x == 7)
     assert(v[1].y == 8)

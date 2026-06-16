@@ -1,0 +1,33 @@
+// Plan 159 Ф.2 POSITIVE (method-level DCE): a method whose NAME is never invoked
+// in reachable code is pruned, even though its receiver type IS constructed.
+//
+// `Widget` is constructed and `used_method` is called → `used_method` (and the
+// const it reads) survive. `unused_method` is never called by name anywhere, and
+// its name does not collide with any reachable selector → method-DCE drops its
+// body + forward decl. Its private callee `dead_helper_549283` is consequently
+// unreachable too and dropped.
+//
+// G0 is one-directional here: over-keeping `unused_method` would still be CORRECT
+// (just larger C). The size win is asserted out-of-band by the test harness
+// (grep for the mangled body == 0). Here we assert behaviour is preserved: the
+// program compiles, runs, and prints the result of the USED method.
+// EXPECT_STDOUT used 7
+
+module plan159.f2_unreferenced_method_pruned
+
+type Widget {
+    n int
+}
+
+fn Widget @used_method() -> int => @n
+
+// Never called by name on any reachable path → method-DCE prunes it.
+fn Widget @unused_method() -> int => @n + dead_helper_549283()
+
+// Sole caller is the pruned method → itself unreachable → pruned.
+fn dead_helper_549283() -> int => 424242
+
+fn main() {
+    ro w = Widget { n: 7 }
+    println("used ${w.used_method()}")
+}

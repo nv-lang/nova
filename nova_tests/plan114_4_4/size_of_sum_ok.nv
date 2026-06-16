@@ -1,12 +1,22 @@
 // Plan 114.4.4 V4.6 M1 POSITIVE: size_of/align_of для user-defined sum types.
+//
+// [M-checker-recursive-type-overflow] (2026-06-15): `size_of[T]()` is now
+// BOXING-aware. Sum types are ALWAYS heap-boxed — a `Color`/`Shape` value is a
+// `Nova_X*` (the emitted C lowers every sum reference to a pointer; the inline
+// `struct Nova_X { tag; union }` lives behind that pointer). So `size_of[sum]()`
+// resolves to the POINTER/reference size (8), NOT the inline tagged-union size.
+// This is BOTH emit-accurate (matches `Nova_X*`) and what makes recursive sums
+// finite (`type Tree | Leaf | Node(int, Tree, Tree)` no longer infinite-recurses
+// in the size-math). The old assertions encoded the inline union layout (4/24),
+// which is the object size behind the box — not the value/`size_of` of a sum
+// reference. Updated to the pointer size with align 8.
 
 module plan114_4_4.size_of_sum_ok
 
-// Unit-only sum: tag (4 bytes, align 4) + max payload (0) + tail pad = 4.
+// Unit-only sum, heap-boxed → reference is Nova_Color* = 8 bytes, align 8.
 type Color | Red | Green | Blue
 
-// Mixed sum: max payload = (int,int) = 16 bytes align 8.
-// Layout: tag(4) + pad(4 to align 8) + payload(16) + tail-pad(0) = 24.
+// Mixed sum, heap-boxed → reference is Nova_Shape* = 8 bytes, align 8.
 type Shape | None | Point(int) | Line(int, int)
 
 const SIZE_COLOR = size_of[Color]()
@@ -16,11 +26,10 @@ const SIZE_SHAPE = size_of[Shape]()
 const ALIGN_SHAPE = align_of[Shape]()
 
 test "size_of for user sum types" {
-    // Color: 4 / 4 — all unit variants.
-    assert(SIZE_COLOR == 4)
-    assert(ALIGN_COLOR == 4)
+    // Sums are heap-boxed (`Nova_X*`): size_of = pointer size 8, align 8.
+    assert(SIZE_COLOR == 8)
+    assert(ALIGN_COLOR == 8)
 
-    // Shape: tag (4) + pad (4) + max-variant (int, int) = 16 = 24, align 8.
-    assert(SIZE_SHAPE == 24)
+    assert(SIZE_SHAPE == 8)
     assert(ALIGN_SHAPE == 8)
 }

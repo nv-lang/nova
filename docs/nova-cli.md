@@ -1117,6 +1117,7 @@ nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]
 |---|---|---|
 | `NOVA_CODEGEN` | (reserved) | Override path to `nova-codegen` binary |
 | `NOVA_MONO_DEPTH` | `build`, `test`, `test-build`, `bench` | Monomorphization-instantiation depth limit (default 500) |
+| `NOVA_REACH_DCE` | `build`, `test`, `test-build` | Reachability-codegen DCE ([Plan 159](plans/159-reachability-codegen.md), [D283](decisions/09-tooling.md#d283)). Unset / `≠0` → **ON** (default): emit to C only declarations reachable from `main`. `=0` → **OFF**: byte-identical pre-159 behavior (emit everything) — escape hatch for over-prune diagnosis |
 | `NOVA_HOME` | `add`, `build` (git deps) | Root for the git dependency cache; default `~/.nova` (cache under `<NOVA_HOME>/git`) |
 | `NOVA_OFFLINE` | `add`, `build` (git deps) | `=1` → forbid network (clone/fetch); build only from the existing cache |
 | `NOVA_SMT_BACKEND` | `contracts` | SMT backend (`trivial`, `z3`) |

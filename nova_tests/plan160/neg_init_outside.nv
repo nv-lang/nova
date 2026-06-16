@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E_FIELD_MODULE_PRIVATE
+//
+// Plan 160 (D281): negative -- initialising module-private fields via
+// record literal from outside the type's module => E_FIELD_MODULE_PRIVATE.
+
+module plan160.neg_init_outside
+
+import nova_tests.plan160.plan160_lib.{Job}
+
+fn make_job() -> Job => { id: 1, kind: 2, secret: 0 }

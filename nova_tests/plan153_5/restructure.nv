@@ -4,53 +4,53 @@
 module plan153_5.restructure
 
 test "concat builds a new Vec, operands untouched" {
-    ro a = Vec[int].from([1, 2, 3])
-    ro b = Vec[int].from([4, 5])
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(4, 5)
     ro c = a.concat(b)
-    assert(c.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    assert(c.equal(Vec[int].of(1, 2, 3, 4, 5)))
     assert(a.len() == 3)
     assert(b.len() == 2)
-    assert(a.equal(Vec[int].from([1, 2, 3])))
-    assert(b.equal(Vec[int].from([4, 5])))
+    assert(a.equal(Vec[int].of(1, 2, 3)))
+    assert(b.equal(Vec[int].of(4, 5)))
 }
 
 test "concat with empty operand" {
-    ro a = Vec[int].from([1, 2])
+    ro a = Vec[int].of(1, 2)
     ro empty = Vec[int].new()
-    assert(a.concat(empty).equal(Vec[int].from([1, 2])))
-    assert(empty.concat(a).equal(Vec[int].from([1, 2])))
+    assert(a.concat(empty).equal(Vec[int].of(1, 2)))
+    assert(empty.concat(a).equal(Vec[int].of(1, 2)))
     assert(empty.concat(empty).len() == 0)
 }
 
 test "operator + is concat (new Vec, no mutation)" {
-    ro a = Vec[int].from([1, 2, 3])
-    ro b = Vec[int].from([4, 5, 6])
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(4, 5, 6)
     ro c = a + b
-    assert(c.equal(Vec[int].from([1, 2, 3, 4, 5, 6])))
+    assert(c.equal(Vec[int].of(1, 2, 3, 4, 5, 6)))
     // operands unchanged
-    assert(a.equal(Vec[int].from([1, 2, 3])))
-    assert(b.equal(Vec[int].from([4, 5, 6])))
+    assert(a.equal(Vec[int].of(1, 2, 3)))
+    assert(b.equal(Vec[int].of(4, 5, 6)))
 }
 
 test "operator + chains" {
-    ro a = Vec[int].from([1])
-    ro b = Vec[int].from([2])
-    ro c = Vec[int].from([3])
+    ro a = Vec[int].of(1)
+    ro b = Vec[int].of(2)
+    ro c = Vec[int].of(3)
     ro abc = a + b + c
-    assert(abc.equal(Vec[int].from([1, 2, 3])))
+    assert(abc.equal(Vec[int].of(1, 2, 3)))
 }
 
 test "operator += (compound) yields concat" {
-    mut a = Vec[int].from([1, 2])
-    a += Vec[int].from([3, 4])
-    assert(a.equal(Vec[int].from([1, 2, 3, 4])))
+    mut a = Vec[int].of(1, 2)
+    a += Vec[int].of(3, 4)
+    assert(a.equal(Vec[int].of(1, 2, 3, 4)))
     a += Vec[int].new()
-    assert(a.equal(Vec[int].from([1, 2, 3, 4])))
+    assert(a.equal(Vec[int].of(1, 2, 3, 4)))
 }
 
 test "concat with record element type (typed, not memcmp)" {
-    ro a = Vec[str].from(["a", "b"])
-    ro b = Vec[str].from(["c"])
+    ro a = Vec[str].of("a", "b")
+    ro b = Vec[str].of("c")
     ro c = a + b
     assert(c.len() == 3)
     assert(c[0] == "a")
@@ -58,112 +58,112 @@ test "concat with record element type (typed, not memcmp)" {
 }
 
 test "rotate_left" {
-    mut v = Vec[int].from([1, 2, 3, 4, 5])
+    mut v = Vec[int].of(1, 2, 3, 4, 5)
     v.rotate_left(2)
-    assert(v.equal(Vec[int].from([3, 4, 5, 1, 2])))
+    assert(v.equal(Vec[int].of(3, 4, 5, 1, 2)))
 }
 
 test "rotate_right" {
-    mut v = Vec[int].from([1, 2, 3, 4, 5])
+    mut v = Vec[int].of(1, 2, 3, 4, 5)
     v.rotate_right(2)
-    assert(v.equal(Vec[int].from([4, 5, 1, 2, 3])))
+    assert(v.equal(Vec[int].of(4, 5, 1, 2, 3)))
 }
 
 test "rotate_left then rotate_right is identity" {
-    mut v = Vec[int].from([10, 20, 30, 40])
+    mut v = Vec[int].of(10, 20, 30, 40)
     v.rotate_left(3)
     v.rotate_right(3)
-    assert(v.equal(Vec[int].from([10, 20, 30, 40])))
+    assert(v.equal(Vec[int].of(10, 20, 30, 40)))
 }
 
 test "rotate n mod len (full + multi-turn) is identity" {
-    mut v = Vec[int].from([1, 2, 3])
+    mut v = Vec[int].of(1, 2, 3)
     v.rotate_left(3)
-    assert(v.equal(Vec[int].from([1, 2, 3])))
+    assert(v.equal(Vec[int].of(1, 2, 3)))
     v.rotate_left(6)
-    assert(v.equal(Vec[int].from([1, 2, 3])))
+    assert(v.equal(Vec[int].of(1, 2, 3)))
     v.rotate_right(9)
-    assert(v.equal(Vec[int].from([1, 2, 3])))
+    assert(v.equal(Vec[int].of(1, 2, 3)))
 }
 
 test "rotate empty / single is no-op" {
     mut e = Vec[int].new()
     e.rotate_left(1)
     assert(e.len() == 0)
-    mut s = Vec[int].from([42])
+    mut s = Vec[int].of(42)
     s.rotate_left(5)
-    assert(s.equal(Vec[int].from([42])))
+    assert(s.equal(Vec[int].of(42)))
     s.rotate_right(2)
-    assert(s.equal(Vec[int].from([42])))
+    assert(s.equal(Vec[int].of(42)))
 }
 
 test "rotate_left fluent chain" {
-    mut v = Vec[int].from([1, 2, 3, 4])
+    mut v = Vec[int].of(1, 2, 3, 4)
     v.rotate_left(1).push(99)
-    assert(v.equal(Vec[int].from([2, 3, 4, 1, 99])))
+    assert(v.equal(Vec[int].of(2, 3, 4, 1, 99)))
 }
 
 test "drain returns the cut run + shortens receiver" {
-    mut v = Vec[int].from([1, 2, 3, 4, 5])
+    mut v = Vec[int].of(1, 2, 3, 4, 5)
     ro cut = v.drain(1..4)
-    assert(cut.equal(Vec[int].from([2, 3, 4])))
-    assert(v.equal(Vec[int].from([1, 5])))
+    assert(cut.equal(Vec[int].of(2, 3, 4)))
+    assert(v.equal(Vec[int].of(1, 5)))
 }
 
 test "drain empty range" {
-    mut v = Vec[int].from([7, 8, 9])
+    mut v = Vec[int].of(7, 8, 9)
     ro none = v.drain(1..1)
     assert(none.len() == 0)
-    assert(v.equal(Vec[int].from([7, 8, 9])))
+    assert(v.equal(Vec[int].of(7, 8, 9)))
 }
 
 test "drain whole vector" {
-    mut v = Vec[int].from([1, 2, 3])
+    mut v = Vec[int].of(1, 2, 3)
     ro all = v.drain(0..3)
-    assert(all.equal(Vec[int].from([1, 2, 3])))
+    assert(all.equal(Vec[int].of(1, 2, 3)))
     assert(v.len() == 0)
 }
 
 test "drain prefix / suffix" {
-    mut a = Vec[int].from([1, 2, 3, 4])
+    mut a = Vec[int].of(1, 2, 3, 4)
     ro pre = a.drain(0..2)
-    assert(pre.equal(Vec[int].from([1, 2])))
-    assert(a.equal(Vec[int].from([3, 4])))
+    assert(pre.equal(Vec[int].of(1, 2)))
+    assert(a.equal(Vec[int].of(3, 4)))
 
-    mut b = Vec[int].from([1, 2, 3, 4])
+    mut b = Vec[int].of(1, 2, 3, 4)
     ro suf = b.drain(2..4)
-    assert(suf.equal(Vec[int].from([3, 4])))
-    assert(b.equal(Vec[int].from([1, 2])))
+    assert(suf.equal(Vec[int].of(3, 4)))
+    assert(b.equal(Vec[int].of(1, 2)))
 }
 
 test "insert_slice in the middle" {
-    mut v = Vec[int].from([1, 2, 5, 6])
-    v.insert_slice(2, Vec[int].from([3, 4]))
-    assert(v.equal(Vec[int].from([1, 2, 3, 4, 5, 6])))
+    mut v = Vec[int].of(1, 2, 5, 6)
+    v.insert_slice(2, Vec[int].of(3, 4))
+    assert(v.equal(Vec[int].of(1, 2, 3, 4, 5, 6)))
 }
 
 test "insert_slice at end == append" {
-    mut v = Vec[int].from([1, 2])
-    v.insert_slice(2, Vec[int].from([3, 4]))
-    assert(v.equal(Vec[int].from([1, 2, 3, 4])))
+    mut v = Vec[int].of(1, 2)
+    v.insert_slice(2, Vec[int].of(3, 4))
+    assert(v.equal(Vec[int].of(1, 2, 3, 4)))
 }
 
 test "insert_slice at front" {
-    mut v = Vec[int].from([3, 4])
-    v.insert_slice(0, Vec[int].from([1, 2]))
-    assert(v.equal(Vec[int].from([1, 2, 3, 4])))
+    mut v = Vec[int].of(3, 4)
+    v.insert_slice(0, Vec[int].of(1, 2))
+    assert(v.equal(Vec[int].of(1, 2, 3, 4)))
 }
 
 test "insert_slice empty slice is no-op" {
-    mut v = Vec[int].from([1, 2, 3])
+    mut v = Vec[int].of(1, 2, 3)
     v.insert_slice(1, Vec[int].new())
-    assert(v.equal(Vec[int].from([1, 2, 3])))
+    assert(v.equal(Vec[int].of(1, 2, 3)))
 }
 
 test "insert_slice fluent chain" {
-    mut v = Vec[int].from([1, 4])
-    v.insert_slice(1, Vec[int].from([2, 3])).push(5)
-    assert(v.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    mut v = Vec[int].of(1, 4)
+    v.insert_slice(1, Vec[int].of(2, 3)).push(5)
+    assert(v.equal(Vec[int].of(1, 2, 3, 4, 5)))
 }
 
 // `flatten` ([][]T -> []T) is DEFERRED to [M-153.5-flatten-nested-receiver]
@@ -171,12 +171,12 @@ test "insert_slice fluent chain" {
 // supported). The one-level explicit form below is the documented workaround.
 test "flatten workaround — explicit append loop" {
     mut nested = Vec[Vec[int]].new()
-    nested.push(Vec[int].from([1, 2]))
-    nested.push(Vec[int].from([3]))
-    nested.push(Vec[int].from([4, 5]))
+    nested.push(Vec[int].of(1, 2))
+    nested.push(Vec[int].of(3))
+    nested.push(Vec[int].of(4, 5))
     mut flat = Vec[int].new()
     for inner in nested {
         flat.append(inner)
     }
-    assert(flat.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    assert(flat.equal(Vec[int].of(1, 2, 3, 4, 5)))
 }

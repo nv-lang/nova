@@ -13,7 +13,7 @@ type Acc {
     ro balance i64
 }
 
-// V1 demo через record-as-ptr cast (without external fn shim). Verifies
+// V1 demo через record-as-ptr cast (without extern "nova" fn shim). Verifies
 // codegen emits (*p)->field for *T где T = record.
 test "p.field auto-deref для typed pointer to record (codegen-level)" {
     ro acc = Acc { id: 42, balance: 100 }

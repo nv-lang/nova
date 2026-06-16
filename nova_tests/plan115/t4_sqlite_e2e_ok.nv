@@ -20,14 +20,14 @@ const SQLITE_OK   int = 0
 const SQLITE_ROW  int = 100
 const SQLITE_DONE int = 101
 
-// ─── External fn declarations ────────────────────────────────────
-external fn mini_sqlite_open(path str) -> (*(), int)
-external fn mini_sqlite_exec(db *(), sql str) -> int
-external fn mini_sqlite_prepare(db *(), sql str) -> (*(), int)
-external fn mini_sqlite_step(stmt *()) -> int
-external fn mini_sqlite_column_int(stmt *(), col int) -> int
-external fn mini_sqlite_finalize(stmt *()) -> int
-external fn mini_sqlite_close(db *()) -> int
+// ─── extern "nova" fn declarations ────────────────────────────────────
+extern "nova" fn mini_sqlite_open(path str) -> (*(), int)
+extern "nova" fn mini_sqlite_exec(db *(), sql str) -> int
+extern "nova" fn mini_sqlite_prepare(db *(), sql str) -> (*(), int)
+extern "nova" fn mini_sqlite_step(stmt *()) -> int
+extern "nova" fn mini_sqlite_column_int(stmt *(), col int) -> int
+extern "nova" fn mini_sqlite_finalize(stmt *()) -> int
+extern "nova" fn mini_sqlite_close(db *()) -> int
 
 // ─── Tests ────────────────────────────────────────────────────────
 

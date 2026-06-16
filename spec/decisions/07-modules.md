@@ -653,6 +653,157 @@ LLM знает фиксированный список — «известная 
   `./` / `../` — package-scoped (резолв от директории импортирующего
   файла, строго в пределах своего пакета; `../` за корень пакета →
   compile error). Bare-путь остаётся абсолютным — фича аддитивна.
+- **rev-5 (✅ IMPLEMENTED, 2026-06-16)** — Plan 162+163 реализованы:
+  - [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) — переход
+    резолвера на Rust-модель: межмодульные **циклы разрешаются** (D291),
+    `TypeMethodMap` — глобальная карта методов (D286), политика extension-методов
+    Rust-strict (D287), char-методы переехали в prelude, снят Ф.4-хардкод.
+    Q-module-resolution-model → RESOLVED.
+  - [Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) — гигиена
+    import/export: `E_REEXPORT_GLOB` (D288) + `E_IMPORT_GLOB` (D289),
+    ~100 файлов мигрированы на `import X as X` / `import X.{a,b}`.
+    Q-import-glob-hygiene → RESOLVED.
+
+---
+
+## D291. Module resolution — collect-signatures-first, lazy bodies; cross-module cycles allowed
+
+**Статус:** принято, реализовано ([Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.1+Ф.2, 2026-06-16).
+
+**Контекст.** До Plan 162 резолвер был жадным: `import X` = inline-merge тел X прямо сейчас, рекурсивно. Любой цикл → stack overflow. Это породило хардкод Ф.4 (Plan 159) для char-методов и запрещало cycles между модулями.
+
+**Решение.** Visited-set стал `HashMap<Vec<String>, Vec<String>>` (module_key → exported_names). При re-entry (цикл в DFS: `in_progress.contains(&module_key)`) — ранний `return Ok(())` вместо `Err("cycle detected")`. Декларации уже собраны к этому моменту; тела резолвятся lazily. Cross-module cycles разрешены (как peer-циклы в Plan 42 Rule D). **Amended Plan 42 Rule A** (cycle-detection заменена cycle-guard).
+
+**Следствие.** Prelude/core.nv может импортировать std.unicode (цикл `prelude.core → std.unicode → std.collections.vec → prelude.core` → guard → Ok(())); char-методы теперь в prelude без stack overflow.
+
+### Связь
+- [D29](#d29-модули-и-импорты) rev-5 — данная запись амендит Rule A.
+- [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.1+Ф.2.
+- [Plan 42](../../docs/plans/42-folder-modules.md) Rule D (peer-cycles, аналог).
+
+---
+
+## D286. TypeMethodMap — глобальная карта inherent-методов; вызов без import
+
+**Статус:** принято, реализовано ([Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.3, 2026-06-16).
+
+**Контекст.** До Plan 162 метод `T @m()` из модуля M был доступен только если пользователь писал `import M`. Это противоречило Rust/Swift модели, где inherent-методы приезжают с типом.
+
+**Решение.** `TypeCheckCtx` строит `type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>>` — карту `type_name → method_name → [declaring_modules]`. При вызове `x.m()` (тип x = T): метод ищется в `type_method_map[T][m]`. Inherent-метод (declaring_module ∩ type_defining_modules[T] ≠ ∅) вызывается без import. Extension-метод (из другого модуля) — по политике D287.
+
+**Следствие.** char Unicode-методы (is_alphabetic, is_whitespace, …) перенесены из `std/unicode/category.nv` в `std/prelude/core.nv` и стали inherent — вызываются без `import std.unicode`. `CHAR_UNICODE_METHOD_SELECTORS` + `needs_unicode_injection` удалены из компилятора.
+
+### Связь
+- [D29](#d29-модули-и-импорты), [D286](#d286-typemethodmap--глобальная-карта-inherent-методов-вызов-без-import).
+- [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.3+Ф.4.
+- [D291](#d291-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — фундамент (cycle-guard позволяет prelude импортировать unicode).
+
+---
+
+## D287. Extension method policy — Rust-strict: extension methods require explicit import
+
+**Статус:** принято, реализовано ([Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.5, 2026-06-16).
+
+**Контекст.** «Методы едут с типом» (D286) рождает вопрос: что делать с extension-методами (метод на ЧУЖОМ типе из другого модуля)? Swift/Kotlin позволяют всем extension без import; Rust требует импорта trait.
+
+**Решение.** **Rust-strict**: inherent (declaring_module ∈ type_defining_modules[T]) = без import; extension (другой модуль) = **требует явного import**. При нарушении — `E_EXTENSION_METHOD_NEEDS_IMPORT`. Реализован в `TypeCheckCtx::check_method_call` с `entry_imported_modules` (только entry-модуль user-кода; stdlib peer-файлы exempt).
+
+**Обоснование.** Защита от «spooky methods» (непредсказуемый источник метода при поиске по всем зависимостям). Ambiguity (два extension-`foo` на один тип) = явная ошибка (Q-module-resolution-model resolved). char методы не требуют import, потому что переехали в prelude → стали inherent, а не потому что std особенный.
+
+### Связь
+- [D286](#d286-typemethodmap--глобальная-карта-inherent-методов-вызов-без-import) — inherent vs extension различие.
+- [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.5.
+- Q-module-resolution-model → RESOLVED (2026-06-16): Rust-strict выбран.
+
+---
+
+## D288. E_REEXPORT_GLOB — whole-module export import forbidden
+
+**Статус:** принято, реализовано ([Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.1, 2026-06-16).
+
+**Контекст.** `export import m` без `.{}` — barrel re-export: неконтролируемый публичный API наружу (скрытая поверхность, semver-ломкость). В коде все 39 `export import` уже именованные, но грамматика whole-форму допускала.
+
+**Решение.** Диагностика `E_REEXPORT_GLOB` в `check_module` (`compiler-codegen/src/types/mod.rs`): для каждого `Import` с `is_export=true && items=None && alias=None` → ошибка с hint «используйте `export import m.{name1, name2}`». **Нулевая миграция** — в corpus'е таких не было.
+
+### Связь
+- [D29](#d29-модули-и-импорты) — re-export синтаксис.
+- [Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.1.
+- [D289](#d289-e_import_glob-или-qualified-namespace-выбор-a) — симметричный запрет для bare import.
+
+---
+
+## D289. `import m` — last-segment qualified namespace (option b amend)
+
+**Статус:** принято, реализовано V1 (option a: запрет E_IMPORT_GLOB, Plan 163, 2026-06-16); **AMENDED** (option b: last-segment qualified namespace, 2026-06-16).
+
+**Контекст.** `import m` без `.{}` и без `as alias`. Два варианта: (a) запрет E_IMPORT_GLOB; (b) переопределить в qualified namespace — `import vec_iter` вводит имя `vec_iter` в scope, доступ только через `vec_iter.Foo`.
+
+**Решение V1 (option a, Plan 163).** `E_IMPORT_GLOB` запрет. ~100 файлов мигрированы на `import X as X`.
+
+**Amend (option b, 2026-06-16).** `E_IMPORT_GLOB` **убран**. `import m` без `as` легален — последний сегмент пути становится именем в scope (уже реализовано в `imported_modules` Plan 81 Ф.2: `path.last()` вставляется безусловно). Это вариант (b) — Go/Python-стиль, без «as-шума». `import vec_iter` = `vec_iter.EnumerateIter`, `import std.collections.vec_iter` = `vec_iter.EnumerateIter`. Prelude auto-imports по-прежнему освобождены.
+
+**E_REDUNDANT_IMPORT_ALIAS (новый).** `import a.b.YYY as YYY` (alias == last segment) → `E_REDUNDANT_IMPORT_ALIAS`: alias совпадает с default-именем, писать `import a.b.YYY`. Условие: `alias.is_some() && items.is_none() && alias == path.last()`. ~123 файла мигрированы `import X as X` → `import X`.
+
+**Обоснование amend.** `imported_modules` уже хранит `path.last()` безусловно (Plan 81 Ф.2). Убрать `E_IMPORT_GLOB` — это признать уже реализованную семантику. `import X as X` = явный verbal noise без пользы. Запрет вынуждает писать шум там, где язык уже понимает `import X`.
+
+### Связь
+- [D288](#d288-e_reexport_glob--whole-module-export-import-forbidden) — симметричный для re-export (остаётся в силе).
+- [Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.2+Ф.3 (V1) + Amend (option b, 2026-06-16).
+- Q-import-glob-hygiene → RESOLVED 2026-06-16: вариант (b) (amend от option a).
+
+## D292. ModuleSigTable — two-pass resolver (collect_all_signatures + inline-merge)
+
+**Статус:** принято, реализовано ([Plan 162.1](../../docs/plans/162.1-resolver-split-lazy-bodies.md), 2026-06-16).
+
+**Контекст.** Plan 162 Ф.1 добавил cycle guard в `resolve_imports_inline`, но резолвер по-прежнему жадный: любой `import X` сразу inline-merge'ит X (включая тела функций). `TypeCheckCtx` строился только из merge'нутых `module.items` — без знания о сигнатурах транзитивно-достижимых, но ещё не merge'нутых модулей.
+
+**Решение.** Двухпроходная инфраструктура:
+
+1. **`collect_all_signatures(entry_path, ...) → ModuleSigTable`** — рекурсивно обходит транзитивные импорты entry; парсит каждый файл; собирает только декларации (`Item::Type`, `Item::Fn` сигнатуры, `Item::Const`) без тел. Использует `visited/in_progress` guard (Plan 162 Ф.1). Никакого typecheck тел.
+
+2. **`TypeCheckCtx.sig_table: ModuleSigTable`** — поле, дополняющее `module.items` знанием о cross-module типах и функциях. Доступно через `build_with_sig_table(module, sig_table)`. Дефолтный `build(module)` инициализирует пустую таблицу — backward compat, нет I/O.
+
+3. **`is_known_type(name) → bool`** и **`is_known_fn(name) → bool`** на `TypeCheckCtx` — проверяют как локальные таблицы (`self.types` / `self.fn_decls`), так и `sig_table` через `find_type_modules` / `find_fn_modules`.
+
+**Структуры данных:**
+
+```
+FnSig          { name: String, params: Vec<ParamSig>, ret: TypeRef, effects: Vec<String> }
+ModuleSignatures { types: Vec<TypeDecl>, fns: Vec<FnSig>, consts: Vec<ConstDecl>, module_name: Vec<String> }
+ModuleSigTable   { modules: HashMap<Vec<String>, ModuleSignatures> }
+```
+
+**Семантика:** `sig_table` — дополнительный источник истины для cross-module типов/функций; не заменяет inline-merge для тел (backward compat 100%); используется `verify_impl_protocols` и будущими вызовами в Ф.3+.
+
+**Перф-стоимость:** collect_all_signatures overhead **~1.5%** vs baseline (в рамках критерия ≤10%).
+
+### Связь
+- [D291](#d291-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — архитектурный принцип collect-signatures-first.
+- [Plan 162.1](../../docs/plans/162.1-resolver-split-lazy-bodies.md) — реализация.
+- [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.1 — родительский план.
+
+---
+
+## D293. sig_table compile-path wiring — collect_all_signatures + is_known_fn в продакшн-пути
+
+**Статус:** принято, реализовано ([Plan 162.2](../../docs/plans/162.2-sig-table-wiring.md), 2026-06-16).
+
+**Контекст.** Plan 162.1 (D292) создал инфраструктуру `ModuleSigTable` + `collect_all_signatures()` + `is_known_fn()`, но они не были подключены к продакшн compile path: `TypeCheckCtx::build()` использовал пустую `ModuleSigTable::new()`, а `is_known_fn()` была помечена `#[allow(dead_code)]`.
+
+**Решение.** Замкнуть two-pass resolver в продакшн compile path:
+
+1. **`collect_all_signatures()` вызывается до `TypeCheckCtx`** — в точке сборки `TypeCheckCtx` (`build` call site в `nova-cli/src/main.rs` или `compiler-codegen/src/main.rs`) теперь сначала вызывается `collect_all_signatures(entry_path, lib_paths, ...)` → `ModuleSigTable`, затем `TypeCheckCtx::build_with_sig_table(module, sig_table)`. Fallback: если `collect_all_signatures` возвращает `Err` — используется `ModuleSigTable::new()` (backward compat).
+
+2. **`is_known_fn()` — живой код в fn call resolution** — в `types/mod.rs` в месте резолва вызова функции добавлен fallback: если локальный lookup не находит имя → `self.is_known_fn(name)` проверяет `sig_table`. Убран `#[allow(dead_code)]`. Смысл: cross-module fn из транзитивных импортов не вызывает false-negative ошибку.
+
+**Следствие.** Two-pass resolver замкнут: сигнатуры всех транзитивно-достижимых модулей собраны до typecheck тел. `TypeCheckCtx` видит cross-module функции через `sig_table` даже если соответствующий модуль ещё не inline-merge'нут.
+
+**Перф-стоимость:** overhead `collect_all_signatures` ≤15% vs baseline (пустая sig_table). Фактически — порядка ~1.5% (согласно D292).
+
+### Связь
+- [D291](#d291-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — архитектурный принцип.
+- [D292](#d292-modulesigtable--two-pass-resolver-collect_all_signatures--inline-merge) — инфраструктура (ModuleSigTable).
+- [Plan 162.2](../../docs/plans/162.2-sig-table-wiring.md) — реализация.
 
 ---
 

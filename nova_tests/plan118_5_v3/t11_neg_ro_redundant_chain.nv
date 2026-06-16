@@ -14,4 +14,4 @@ type Acc {
     id i64
 }
 
-external fn p(x ro * Acc) -> ()
+extern "nova" fn p(x ro * Acc) -> ()

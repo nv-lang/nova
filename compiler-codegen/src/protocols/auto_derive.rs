@@ -1364,6 +1364,7 @@ mod tests {
                     ty: type_ref_named("int"),
                     span: Span::dummy(),
                     priv_field: false,
+                    priv_module_field: false,
                     visible_to: vec![],
                 },
                 NamedTupleField {
@@ -1371,6 +1372,7 @@ mod tests {
                     ty: type_ref_named("int"),
                     span: Span::dummy(),
                     priv_field: false,
+                    priv_module_field: false,
                     visible_to: vec![],
                 },
             ]),
@@ -1620,6 +1622,7 @@ mod tests {
                     ty: type_ref_named("int"),
                     span: Span::dummy(),
                     priv_field: false,
+                    priv_module_field: false,
                     visible_to: vec![],
                 },
                 NamedTupleField {
@@ -1627,6 +1630,7 @@ mod tests {
                     ty: type_ref_named("int"),
                     span: Span::dummy(),
                     priv_field: false,
+                    priv_module_field: false,
                     visible_to: vec![],
                 },
             ]),

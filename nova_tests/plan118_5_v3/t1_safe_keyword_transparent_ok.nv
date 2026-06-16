@@ -8,4 +8,4 @@
 
 module plan118_5_v3.t1_safe_keyword_transparent_ok
 
-external fn p1(x safe int) -> ()
+extern "nova" fn p1(x safe int) -> ()

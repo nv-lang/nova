@@ -1,0 +1,20 @@
+// Plan 159 Ф.1 over-prune hunt: a const (BASE) reached ONLY through a call from
+// `main` (main → reader() → reads BASE) must NOT be pruned. If the fn→const edge
+// were missing, this would drop BASE (link error) or print the wrong value.
+// (A single hop: deeper free-fn→free-fn chains hit an unrelated pre-existing
+// resolver quirk in standalone-file builds, so the load-bearing fn→const edge
+// is exercised at one hop.)
+// EXPECT_STDOUT 4242
+
+module plan159.hunt_const_via_callchain
+
+const BASE int = 4242
+
+fn reader() -> int {
+    BASE
+}
+
+fn main() {
+    ro v = reader()
+    println(v)
+}

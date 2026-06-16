@@ -1,0 +1,22 @@
+# nova.toml — Plan 144.1 GC pointer-offset bitmap fixtures.
+#
+# Drives the EMIT-NOTHING per-type pointer-offset bitmap pass
+# (`compiler-codegen/src/codegen/gc_layout.rs`) through its introspection CLI
+# `nova gc-layout-analyze <path> --format json`, plus `nova check` to prove no
+# front-end regression. Pure-source fixtures — no FFI, no allocator hooks: the
+# pass is compile-time analytical only and writes NOTHING into generated C.
+#
+# package name = "plan144_1" matches `module plan144_1.<file>` (D78: package +
+# src="." → module identity unchanged). Mirrors the sibling `plan144_0`
+# may-GC suite convention.
+
+[package]
+name = "plan144_1"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+description = "Plan 144.1 GC pointer-offset bitmap fixtures (record/sum/nested/scalar-only/heap)"
+
+[lib]
+src = "."
+
+[dependencies]

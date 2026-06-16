@@ -1,19 +1,22 @@
-// EXPECT_COMPILE_ERROR import cycle
-//
-// Plan 42.08 Ф.1: folder-module cycle detection (Rule A).
-//
-// folder_cycle_setup/modA/ импортирует folder_cycle_setup/modB/.
-// folder_cycle_setup/modB/ импортирует folder_cycle_setup/modA/.
-// Rule A: cycle detection by module-name должна ловить это.
-//
-// Существующий import_cycle_rejected.nv тестирует single-file modules.
-// Этот тест покрывает folder ↔ folder cycle.
+// Plan 162 Ф.2 (D29 rev-5): folder-module cycles are now ALLOWED.
+// Previously Plan 42.08 Ф.1 enforced cycle detection (Rule A).
+// With Plan 162 Ф.2 cycle guard, the resolver returns Ok(()) on the
+// back-edge: modA imports modB → modB imports modA → guard → Ok(()).
+// A_VAL (from modA) and B_VAL (from modB) are accessible because:
+// - modB is fully processed before the guard fires on modA's back-edge
+// - modA is fully processed after modB is done
+// No cross-module DATA dependencies in this test (each module's values
+// are independent) — the cycle is purely a module-graph cycle.
 
 module negative_capability.folder_cycle_between_modules
 
-import nova_tests.negative_capability.folder_cycle_setup.modA.{a_val}
+import nova_tests.negative_capability.folder_cycle_setup.modA.{A_VAL}
+import nova_tests.negative_capability.folder_cycle_setup.modB.{B_VAL}
 
-test "folder-module cycle rejected" {
-    ro _v = a_val()
-    assert(true)
+test "folder-module cycle A-B compiles (Plan 162 Ф.2)" {
+    assert(A_VAL == 10)
+}
+
+test "folder-module cycle: B_VAL accessible" {
+    assert(B_VAL == 20)
 }

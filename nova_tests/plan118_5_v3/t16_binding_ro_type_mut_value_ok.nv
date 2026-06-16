@@ -12,13 +12,13 @@ type Acc {
 }
 
 // ro binding + mut value-type (int) — должен работать.
-external fn t16_p1(ro x mut int) -> ()
+extern "nova" fn t16_p1(ro x mut int) -> ()
 
 // ro binding + mut value-type (str) — должен работать.
-external fn t16_p2(ro x mut str) -> ()
+extern "nova" fn t16_p2(ro x mut str) -> ()
 
 // ro binding + mut reference-type (Acc) — должен работать.
-external fn t16_p3(ro x mut Acc) -> ()
+extern "nova" fn t16_p3(ro x mut Acc) -> ()
 
 test "ro x mut T binding form allowed regardless of T storage class" {
     assert(1 == 1)

@@ -1,0 +1,26 @@
+// Plan 162.2 Ф.2: regression guard — cross-module fn call resolved via sig_table.
+//
+// Copied from plan162_1/f1_sig_table_known_pos.nv to act as a regression guard
+// for the Ф.2 compile-path wiring. If sig_table is properly wired in the
+// compile path, this test must continue to compile and pass unchanged.
+//
+// Regression guard: must compile and pass (CC-PASS).
+
+module plan162_2.f4_regression_pos
+
+import nova_tests.plan162_1.p162_1_mod_a.{Foo, make_foo, foo_value}
+
+test "sig_table: make_foo constructs Foo with correct value" {
+    ro f = make_foo(42)
+    assert(foo_value(f) == 42)
+}
+
+test "sig_table: make_foo zero value" {
+    ro f = make_foo(0)
+    assert(foo_value(f) == 0)
+}
+
+test "sig_table: make_foo negative value" {
+    ro f = make_foo(-7)
+    assert(foo_value(f) == -7)
+}

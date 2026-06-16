@@ -1,0 +1,11 @@
+// Plan 162 Ф.5: extension method module.
+// Declares extension method @doubled() on Widget in a DIFFERENT module
+// than where Widget is defined (plan162.plan162_ext_type).
+// This is a pure extension method — requires explicit import to call.
+
+module plan162.plan162_ext_methods
+
+import nova_tests.plan162.plan162_ext_type.{Widget}
+
+// Extension method: declared in a DIFFERENT module from Widget.
+export fn Widget @doubled() -> int => @val * 2

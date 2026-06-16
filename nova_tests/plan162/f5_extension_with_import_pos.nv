@@ -1,0 +1,21 @@
+// Plan 162 Ф.5: positive — calling an extension method WITH the defining
+// module imported is OK (no E_EXTENSION_METHOD_NEEDS_IMPORT).
+//
+// Widget is imported from plan162_ext_type. The extension @doubled() method
+// is from plan162_ext_methods which IS explicitly imported here.
+// Therefore w.doubled() must succeed.
+
+module plan162.f5_extension_with_import_pos
+
+import nova_tests.plan162.plan162_ext_type.{Widget}
+import nova_tests.plan162.plan162_ext_methods
+
+test "extension method available when module is imported" {
+    ro w = Widget.new(5)
+    assert(w.doubled() == 10)
+}
+
+test "inherent method still available" {
+    ro w = Widget.new(7)
+    assert(w.value() == 7)
+}

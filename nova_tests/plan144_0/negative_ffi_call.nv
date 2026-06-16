@@ -16,7 +16,7 @@
 
 module plan144_0.negative_ffi_call
 
-external fn p144_c_add(a int, b int) -> int
+extern "nova" fn p144_c_add(a int, b int) -> int
 
 // Calls FFI → makes_ffi → MayGC.
 fn add_via_c(x int, y int) -> int => p144_c_add(x, y)

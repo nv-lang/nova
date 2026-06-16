@@ -1,0 +1,40 @@
+// Plan 159 Ф.2 over-prune hunt (INDIRECT REFERENCE — protocol dynamic dispatch):
+// `Speaker.speak` is NEVER called directly by name on a `Speaker` value. It is
+// reached ONLY through a protocol box: `mut s Greeter = Speaker{...}` coerces the
+// concrete value into a fat pointer + vtable, and `s.greet()` dispatches through
+// the vtable thunk `_thunk_Greeter_greet__Speaker`, which forwards to
+// `Nova_Speaker_method_greet`. If method-level DCE pruned `Speaker.greet` the
+// emitted vtable thunk would reference an undeclared C function (link error).
+//
+// G0: method reached via protocol dispatch MUST survive. The program compiling,
+// running, and printing "dispatch ok" proves the method (and its callee chain)
+// was kept.
+// EXPECT_STDOUT dispatch ok
+
+module plan159.f2_protocol_dispatch_method_survives
+
+type Greeter protocol {
+    @greet() -> int
+}
+
+#impl(Greeter)
+type Speaker {
+    base int
+}
+
+// Reached only via the vtable thunk — `greet` is never written on a `Speaker`
+// receiver directly anywhere in this module (only on a `Greeter` protocol var).
+fn Speaker @greet() -> int => @base + helper_for_greet()
+
+// Transitive callee of a dispatch-only method: must also survive.
+fn helper_for_greet() -> int => 1
+
+fn main() {
+    ro sp = Speaker { base: 41 }
+    mut g Greeter = sp        // box into protocol → emits vtable for (Greeter, Speaker)
+    if g.greet() == 42 {      // dynamic dispatch through the thunk
+        println("dispatch ok")
+    } else {
+        println("FAIL")
+    }
+}

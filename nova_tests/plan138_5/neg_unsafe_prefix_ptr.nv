@@ -8,4 +8,4 @@
 
 module plan138_5.neg_unsafe_prefix_ptr
 
-external fn p(x unsafe * int) -> ()
+extern "nova" fn p(x unsafe * int) -> ()

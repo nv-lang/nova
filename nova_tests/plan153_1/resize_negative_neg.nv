@@ -3,6 +3,6 @@
 // Plan 153.1 — негатив: @resize(n,v) с n < 0 → контракт `n >= 0` паника.
 module plan153_1.resize_negative_neg
 fn main() -> () {
-    mut v = Vec[int].from([1, 2, 3])
+    mut v = Vec[int].of(1, 2, 3)
     v.resize(-1, 0)
 }

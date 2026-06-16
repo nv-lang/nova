@@ -1,0 +1,68 @@
+// Plan 165 — VecIter[T] value-record positive tests.
+//
+// Verifies that VecIter[T] behaves as a value type: copied by value,
+// independent cursors, and that for-loops over Vec work without malloc.
+module plan_value_iter.vec_iter_value_pos
+
+import std.collections.vec_iter
+
+test "VecIter copy by value — independent cursors" {
+    ro v = Vec[int].of(1, 2, 3)
+    mut it = v.iter()
+    ro _first = it.next()       // advances it to idx=1
+    mut it2 = it                // copy by value — it2 starts at idx=1
+    assert(_first == Some(1))
+    assert(it2.next() == Some(2))   // it2 is independent copy
+    assert(it2.next() == Some(3))
+    assert(it2.next() == None)
+}
+
+test "VecIter passed to function by value — caller cursor unchanged" {
+    ro v = Vec[int].of(10, 20, 30)
+    mut it = v.iter()
+    ro _n = it.next()           // caller advances to idx=1
+    mut it2 = it                // copy
+    // drain it2 fully
+    assert(it2.next() == Some(20))
+    assert(it2.next() == Some(30))
+    assert(it2.next() == None)
+    // original `it` is still at idx=1, unaffected
+    assert(it.next() == Some(20))
+}
+
+test "VecIter for-loop over Vec[int]" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    mut total = 0
+    for x in v {
+        total += x
+    }
+    assert(total == 15)
+}
+
+test "VecIter for-loop over Vec[str]" {
+    ro v = Vec[str].of("a", "b", "c")
+    mut count = 0
+    for _ in v {
+        count += 1
+    }
+    assert(count == 3)
+}
+
+test "VecIter exhausted iterator returns None stably" {
+    ro v = Vec[int].of(42)
+    mut it = v.iter()
+    assert(it.next() == Some(42))
+    assert(it.next() == None)
+    assert(it.next() == None)   // stable None after exhaustion
+}
+
+test "VecIter on empty vec — first next is None" {
+    ro v = Vec[int].new()
+    mut it = v.iter()
+    assert(it.next() == None)
+}
+
+test "VecIter count via zero-cost chain" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    assert(v.iter().count() == 5)
+}

@@ -8,9 +8,9 @@ module plan139.t4_ffi_roundtrip
 
 import std.ffi.cstr.{CStr}
 
-external fn p139_make_str() -> str
-external fn p139_str_byte_sum(s str) -> int
-external fn p139_cstr_strlen(c CStr) -> int
+extern "nova" fn p139_make_str() -> str
+extern "nova" fn p139_str_byte_sum(s str) -> int
+extern "nova" fn p139_cstr_strlen(c CStr) -> int
 
 test "C->str->C byte-sum round-trip" {
     ro s = p139_make_str()                 // "hello world" from C rodata

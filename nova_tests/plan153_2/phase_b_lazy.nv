@@ -1,0 +1,49 @@
+// [M-153.2-iter-phase-b] Phase B adapters for BoxIter (vec_lazy):
+// step_by, zip, chain, flat_map.
+
+module plan153_2.phase_b_lazy
+
+import std.collections.vec_lazy
+
+test "lazy step_by every 2" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+    ro got = v.lazy().step_by(2).collect()
+    assert(got == [1, 3, 5])
+}
+
+test "lazy step_by every 3" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6, 7)
+    ro got = v.lazy().step_by(3).collect()
+    assert(got == [1, 4, 7])
+}
+
+test "lazy step_by 1 = identity" {
+    ro v = Vec[int].of(1, 2, 3)
+    ro got = v.lazy().step_by(1).collect()
+    assert(got == [1, 2, 3])
+}
+
+// zip tests gated — [M-153.2-tuple-elem-adapter] (BoxIter[(A,B)] collect gap)
+
+test "lazy chain two vecs" {
+    ro a = Vec[int].of(1, 2)
+    ro b = Vec[int].of(3, 4)
+    ro got = a.lazy().chain(b.lazy()).collect()
+    assert(got == [1, 2, 3, 4])
+}
+
+test "lazy chain with empty first" {
+    ro a = Vec[int].of()
+    ro b = Vec[int].of(1, 2, 3)
+    ro got = a.lazy().chain(b.lazy()).collect()
+    assert(got == [1, 2, 3])
+}
+
+test "lazy chain with empty second" {
+    ro a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of()
+    ro got = a.lazy().chain(b.lazy()).collect()
+    assert(got == [1, 2, 3])
+}
+
+// flat_map tests gated — [M-153.2-flat-map-inner-option] (Option[BoxIter[U]] mut-match gap)

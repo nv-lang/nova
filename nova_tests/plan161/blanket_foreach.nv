@@ -1,0 +1,23 @@
+// Test: blanket @bfor_each (return `()`, T appears only in callback)
+module plan161.blanket_foreach
+
+import std.collections.vec.{Vec}
+import std.prelude.collections.{Next}
+import std.collections.vec_iter.{MapIter}
+
+fn[I Next[T]] I mut @bfor_each(f fn(T) -> ()) -> () {
+    mut go = true
+    while go {
+        match @next() {
+            Some(x) => { f(x) },
+            None => { go = false },
+        }
+    }
+}
+
+test "blanket bfor_each on MapIter" {
+    ro v = Vec[int].of(1, 2, 3)
+    mut sum = 0
+    v.iter().map(|x| x * 2).bfor_each(|x| { sum = sum + x })
+    assert(sum == 12) // 2+4+6
+}

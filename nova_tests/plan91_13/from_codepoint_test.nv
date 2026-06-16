@@ -7,7 +7,7 @@
 // already validated cp range (e.g. JSON parser checks hex digits ⊆ [0,
 // 0x10FFFF]) — нужен прямой "known-valid" path.
 //
-// Fix: explicit `str.from_codepoint(int) -> str` external fn в
+// Fix: explicit `str.from_codepoint(int) -> str` extern "nova" fn в
 // std/runtime/char.nv. Same runtime backing as `str.from(char)` —
 // Nova_str_static_from_char (via alias Nova_str_static_from_codepoint).
 

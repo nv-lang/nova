@@ -1,0 +1,62 @@
+// [M-checker-recursive-type-overflow] POSITIVE regression.
+//
+// Before the boxing-aware fix, the const_fn_eval type-SIZE walk
+// (`type_size_or_align_resolved` → `type_decl_size_or_align`) ALWAYS inlined a
+// Named user type's object size with NO recursion guard and NO boxing-awareness.
+// A record embedding a recursive HEAP sum —
+//     type Tree | Leaf | Node(int, Tree, Tree)
+//     type H { t Tree }
+// — therefore infinite-recursed (Tree → Node payload → Tree → ...) and STACK-
+// OVERFLOWED in `nova check` / `build` / every introspection tool.
+//
+// THE FIX (emit-accurate): emit_c lowers a HEAP user type to a pointer `Nova_X*`
+// wherever it appears as a value/field, so a `Tree` field occupies 8 bytes (a
+// pointer), NOT the inline object — which makes the type FINITE. The size walk
+// now short-circuits a heap reference to pointer-size (8), mirroring
+// gc_layout.rs's `classify_field` + `td.allocation.is_heap()`.
+//
+// This fixture proves the valid case: `nova check` PASSES, the C-codegen path
+// RUNS, and `size_of`/`align_of` resolve to the reference (pointer) sizes that
+// match the emitted C (`H` holds a `Nova_Tree*`).
+
+module plan144_checker.heap_embed_pos
+
+// Recursive heap sum (same shape as nova_tests/basics/recursion.nv). Heap-boxed:
+// a `Tree` value is a `Nova_Tree*`; the recursive `Tree` payloads are pointer
+// leaves, so the type is finite.
+type Tree
+    | Leaf
+    | Node(int, Tree, Tree)
+
+// Record embedding the recursive heap sum. `t` is a `Nova_Tree*` (8 bytes) in
+// the emitted C — this is the line that used to overflow the checker.
+type H { t Tree }
+
+fn build() -> H {
+    H { t: Node(1, Node(2, Leaf, Leaf), Node(3, Leaf, Leaf)) }
+}
+
+fn sum(t Tree) -> int => match t {
+    Leaf          => 0
+    Node(v, l, r) => v + sum(l) + sum(r)
+}
+
+// size_of/align_of are emit-accurate REFERENCE sizes (heap types lower to a
+// pointer): H holds one Tree-pointer field → 8 bytes, align 8; a Tree reference
+// is itself a pointer → 8 bytes.
+const SIZE_H    = size_of[H]()
+const ALIGN_H   = align_of[H]()
+const SIZE_TREE = size_of[Tree]()
+
+test "record embedding recursive heap sum — no overflow, runs" {
+    ro h = build()
+    assert(sum(h.t) == 6)
+}
+
+test "size_of/align_of are pointer-size for heap embed" {
+    // H = { t: Nova_Tree* } → one 8-byte pointer field.
+    assert(SIZE_H == 8)
+    assert(ALIGN_H == 8)
+    // A Tree reference is a heap pointer.
+    assert(SIZE_TREE == 8)
+}

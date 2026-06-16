@@ -1,0 +1,64 @@
+// Plan 160 (D281): positive -- priv (module-private) fields accessible
+// within the same single-file module.
+// Tests: read, write, method access from own-type method, and priv(type) access.
+
+module plan160.pos_within_module
+
+type Counter value priv {
+    mut count int
+    priv overflow_flag bool   // bare priv = module-private (same as type-level default)
+}
+
+type Pin value {
+    priv(type) code int   // type-private: only Pin methods
+}
+
+fn Counter.new(n int, ov bool) -> Counter => { count: n, overflow_flag: ov }
+fn Counter @count() -> int => @count
+fn Counter @overflow() -> bool => @overflow_flag
+
+fn Pin.new(c int) -> Pin => { code: c }
+fn Pin @code() -> int => @code
+
+fn read_count(c Counter) -> int => c.count
+
+test "priv field readable within same module" {
+    ro c = Counter.new(0, false)
+    assert(c.count == 0)
+    assert(read_count(c) == 0)
+}
+
+test "priv field writable within same module" {
+    mut c = Counter.new(0, false)
+    c.count = 5
+    assert(c.count == 5)
+    c.count = c.count + 1
+    assert(c.count == 6)
+}
+
+test "priv record literal usable within same module" {
+    ro c = Counter.new(42, false)
+    assert(c.count == 42)
+}
+
+test "type-private field accessible from own method" {
+    ro c = Counter.new(0, true)
+    assert(c.overflow() == true)
+}
+
+test "priv field (module-private) accessible from free fn in same module" {
+    ro c = Counter.new(0, true)
+    assert(c.overflow_flag == true)
+}
+
+test "priv(type) field accessible via own method" {
+    ro p = Pin.new(1234)
+    assert(p.code() == 1234)
+}
+
+test "priv fields pattern-destructurable within same module" {
+    ro c = Counter.new(42, true)
+    ro { count, overflow_flag } = c
+    assert(count == 42)
+    assert(overflow_flag == true)
+}

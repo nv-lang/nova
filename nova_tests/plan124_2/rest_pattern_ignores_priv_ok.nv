@@ -13,7 +13,7 @@ export type Account {
 export fn Account.new(n str) -> Account =>
     { money: 0.0, name: n }
 
-// External fn — `..` НЕ binds priv field. OK.
+// extern "nova" fn — `..` НЕ binds priv field. OK.
 fn show_name(acc Account) -> str {
     ro Account { name, .. } = acc
     name

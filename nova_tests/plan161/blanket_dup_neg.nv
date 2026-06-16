@@ -1,0 +1,30 @@
+module plan161.blanket_dup_neg
+
+import std.prelude.collections.{Next}
+import std.collections.vec.{Vec}
+
+// Verify that a type implementing Next[T] works with our blanket dispatch
+// (positive test, not a negative test — duplicate detection is a separate concern)
+type Counter value { mut cur int, end int }
+
+fn Counter mut @next() -> Option[int] {
+    if @cur >= @end { return None }
+    ro v = @cur
+    @cur = @cur + 1
+    Some(v)
+}
+
+test "Counter implements Next[int]" {
+    mut c = Counter { cur: 0, end: 3 }
+    ro r0 = c.next()
+    ro r1 = c.next()
+    ro r2 = c.next()
+    ro r3 = c.next()
+    assert(r0.is_some())
+    assert(r0.unwrap_or(-1) == 0)
+    assert(r1.is_some())
+    assert(r1.unwrap_or(-1) == 1)
+    assert(r2.is_some())
+    assert(r2.unwrap_or(-1) == 2)
+    assert(r3.is_none())
+}

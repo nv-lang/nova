@@ -43,7 +43,7 @@ extern "nova" fn panic(msg str) -> never
 // the irreducible C primitive — not expressible on the `ro []u8` view (cap==len)
 // nor without an allocator. C impl: `nova_fn_nova_str_terminated_ptr`
 // (nova_rt.h). Marked unsafe: yields a raw pointer.
-external unsafe fn nova_str_terminated_ptr(s str) -> *u8
+extern "nova" unsafe fn nova_str_terminated_ptr(s str) -> *u8
 
 /// Opaque C-string handle. Wraps raw `*u8` pointer; instances must
 /// satisfy null-terminator invariant: `ptr[strlen(ptr)] == '\0'`.
@@ -86,7 +86,7 @@ export type CStr(*u8)
 
 // Embedded-NUL scan: @as_cstr() panics on the first byte==0 (an interior NUL
 // would silently truncate the C-string). `panic` is in scope via the
-// module-private `external fn panic` declared at the top of this module
+// module-private `extern "nova" fn panic` declared at the top of this module
 // (cstr.nv is ExternalRegistry-loaded and gets NO auto-prelude, so the prelude
 // `panic` is not visible here); codegen lowers it to `nv_panic` by name. The
 // earlier "panic needs an import which creates a cycle" deferral was wrong on

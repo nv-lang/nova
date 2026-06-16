@@ -2,12 +2,12 @@
 //
 // Plan 33.2 Ф.7 (D24): composition разрешён только для #pure функций.
 // Ф.3 (Plan 33.5): SCC inference авто-определяет pure fn'ы, поэтому
-// fn без @pure, которая вызывает external fn — остаётся non-pure через SCC.
+// fn без @pure, которая вызывает extern "nova" fn — остаётся non-pure через SCC.
 
 module contracts.typecheck_composition
 
 // external body → non-pure по определению.
-external fn side_effect(x int) -> int
+extern "nova" fn side_effect(x int) -> int
 
 // Вызывает external → SCC делает impure_helper non-pure.
 fn impure_helper(x int) -> int => side_effect(x)

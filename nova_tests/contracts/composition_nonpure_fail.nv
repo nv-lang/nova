@@ -1,12 +1,12 @@
 // EXPECT_COMPILE_ERROR calling user function `impure_helper` in contracts requires `#pure` attribute
 //
 // Plan 33.2 Ф.7 + Plan 33.5 Ф.3: SCC inference авто-определяет pure fn'ы,
-// но fn вызывающая external fn — non-pure через SCC (external = non-pure).
+// но fn вызывающая extern "nova" fn — non-pure через SCC (external = non-pure).
 
 module contracts.composition_nonpure_fail
 
 // external body → non-pure по определению.
-external fn io_write(x int) -> bool
+extern "nova" fn io_write(x int) -> bool
 
 // Вызывает external → SCC делает impure_helper non-pure.
 fn impure_helper(x int) -> bool => io_write(x)

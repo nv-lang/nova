@@ -1,0 +1,13 @@
+// D282 — positive: `extern "nova" fn` is the canonical runtime-fn syntax.
+//
+// Verifies that `extern "nova" fn` compiles and is usable in place of the
+// retracted `external fn` keyword.
+
+module plan91_12.v2_extern_nova_fn_ok
+
+extern "nova" fn Nova_intrinsic_unreachable() -> never
+
+test "extern nova fn declaration accepted" {
+    // Just declaring the fn is enough — type-check + codegen accept it.
+    assert(true)
+}

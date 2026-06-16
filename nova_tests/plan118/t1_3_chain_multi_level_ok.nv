@@ -13,15 +13,15 @@ type Node {
 }
 
 // Two-level chain — mut/ro mixed (pointee-mut postfix per level; ro = bare `*`).
-external fn p118_chain_mut_ro(pp *mut *Node) -> i64
-external fn p118_chain_ro_mut(pp **mut Node) -> i64
+extern "nova" fn p118_chain_mut_ro(pp *mut *Node) -> i64
+extern "nova" fn p118_chain_ro_mut(pp **mut Node) -> i64
 
 // Three-level form collapses to two levels here (outer/inner pointee-mut
 // expressed postfix at each `*`).
-external fn p118_chain_triple(ppp *mut *Node) -> i64
+extern "nova" fn p118_chain_triple(ppp *mut *Node) -> i64
 
 // Chain в return position.
-external fn p118_return_chain() -> *mut *Node
+extern "nova" fn p118_return_chain() -> *mut *Node
 
 test "multi-level pointer chains parse + type-check" {
     assert(1 == 1)

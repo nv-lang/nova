@@ -1,0 +1,24 @@
+// Probe fixture for [M-161-parametric-return]:
+// blanket method with Vec[T] return type (T must be substituted at mono).
+module plan161.blanket_collect
+
+import std.collections.vec.{Vec, VecIter}
+import std.prelude.collections.{Next}
+
+fn[I Next[T]] I mut @bcollect() -> Vec[T] {
+    mut out = Vec[T].new()
+    while true {
+        match @next() {
+            Some(x) => out.push(x),
+            None => return out,
+        }
+    }
+    out
+}
+
+test "blanket collect on VecIter" {
+    ro v = Vec[int].of(1, 2, 3)
+    mut it = v.iter()
+    ro r = it.bcollect()
+    assert(r == Vec[int].of(1, 2, 3))
+}

@@ -450,7 +450,7 @@ fn is_primitive_leaf(leaf: &str) -> bool {
         | "i8" | "i16" | "i32" | "i64"
         | "u8" | "u16" | "u32" | "u64"
         | "f32" | "f64"
-        | "bool" | "char" | "Never"
+        | "bool" | "char" | "never"
     )
 }
 
@@ -1648,10 +1648,25 @@ fn collect_writes_expr(
 ) {
     // Detect self-method calls — `@<method>(args)` Call where func is
     // Member{SelfAccess, name}. Add (recv_type, method) к callees.
+    //
+    // Also detect `@field.method(args)` — Call where func is
+    // Member{Member{SelfAccess, field_name}, method_name}. Calling any method
+    // on a self-field is a potential mutation of that field (specifically for
+    // `mut`-receiver methods on value-type fields, the call mutates the field
+    // slot in place). Add `field_name` to the writes set so that the field
+    // cache does NOT cache `@field` across such calls — otherwise the cached
+    // copy is mutated, not the real struct slot, causing a silent no-op and
+    // possible infinite loop (e.g. `@src.next()` in `SkipIter.next()`).
     if let ExprKind::Call { func, args, trailing } = &e.kind {
         if let ExprKind::Member { obj, name } = &func.kind {
             if matches!(obj.kind, ExprKind::SelfAccess) {
                 callees.insert((recv_type.to_string(), name.clone()));
+            }
+            // `@field.method(args)` — method called on a self-field.
+            // Conservatively mark `field` as written so the field cache
+            // treats this call as a barrier for any `@field` cache.
+            if let Some(field_name) = match_self_field(obj) {
+                writes.insert(field_name.to_string());
             }
         }
         // Continue recurse.
@@ -2249,7 +2264,30 @@ fn register_items(items: &[Item], reg: &mut FieldRegistry, type_kinds: &TypeKind
                         // field. Walks Newtype/Alias chains, distinguishes
                         // heap-record vs value-record (D228), covers user
                         // generic wrappers via registry lookup.
-                        if is_reference_type_ref(&f.ty, type_kinds) {
+                        //
+                        // V7.6 follow-up (generic-param guard): if the
+                        // field's declared type is a bare generic type
+                        // parameter (e.g. `mut src I` where `I` is in
+                        // `type SkipIter[I, T] value { mut src I, ... }`),
+                        // do NOT mark it as ref-typed. After monomorphization,
+                        // the param may be instantiated with a value-record
+                        // (e.g. `VecIter[int]`), whose mut-methods mutate
+                        // the slot in place. The old `None => true`
+                        // (conservative-stable) path in `classify_named_leaf`
+                        // incorrectly treated bare type-params as stable,
+                        // causing the field-cache to create `_at_src` copies
+                        // and never advance the underlying iterator slot.
+                        let is_generic_param_field =
+                            if let TypeRef::Named { path, generics, .. } = &f.ty {
+                                generics.is_empty()
+                                    && path.len() == 1
+                                    && t.generics.iter().any(|gp| gp.name == path[0])
+                            } else {
+                                false
+                            };
+                        if !is_generic_param_field
+                            && is_reference_type_ref(&f.ty, type_kinds)
+                        {
                             reg.ref_typed.insert((t.name.clone(), f.name.clone()));
                         }
                         // Plan 123.7.6 follow-up (method-realloc-flag,
@@ -12752,7 +12790,7 @@ type C { mut p Inner }
     fn v7_6_refactor_value_record_is_not_ref() {
         let src = r#"
 module testmod.v7_6_value_record
-type Pt value { x f64  y f64 }
+type Pt value { x f64, y f64 }
 type C { mut p Pt }
 "#;
         let reg = build_test_registry(src);

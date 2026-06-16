@@ -8,4 +8,4 @@
 
 module plan118_5_v3.t13_neg_unsafe_redundant_chain
 
-external fn p(x unsafe * unsafe int) -> ()
+extern "nova" fn p(x unsafe * unsafe int) -> ()

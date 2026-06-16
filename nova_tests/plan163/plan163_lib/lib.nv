@@ -1,0 +1,5 @@
+// Plan 163 (D282): helper library for re-export glob hygiene tests.
+
+module plan163.plan163_lib
+
+export fn greet() -> int => 42

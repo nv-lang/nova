@@ -16,8 +16,8 @@ type Acc {
     id i64
 }
 
-external fn p_acc(x ro mut Acc) -> ()
-external fn p_acc2(y mut ro Acc) -> ()
+extern "nova" fn p_acc(x ro mut Acc) -> ()
+extern "nova" fn p_acc2(y mut ro Acc) -> ()
 
 test "ro+mut combination on reference type at binding position OK" {
     assert(1 == 1)

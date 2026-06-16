@@ -1,10 +1,20 @@
-// EXPECT_COMPILE_ERROR import cycle detected
-//
-// Plan 35 Ф.1 cycle detection helper — module B.
-// Замыкает цикл: A → B → A. Сам file как тест → expected compile error.
+// Plan 162 Ф.2: cycle guard — module B in A↔B cross-module cycle.
+// Previously expected EXPECT_COMPILE_ERROR (Plan 35 Ф.1 / D29 pre-rev5).
+// Plan 162 Ф.2 (D29 rev-5) makes cross-module cycles allowed: the resolver
+// returns Ok(()) on the back-edge instead of Err. Cycle B closes A→B→A.
+// When processed standalone: B imports A; A is in_progress → guard fires
+// → Ok(()); B's own B_VAL is always available regardless.
 
 module modules.cycle_b
 
 import nova_tests.modules.cycle_a.{A_VAL}
 
 export const B_VAL int = 2
+
+test "cycle_b: B_VAL is 2 (cycle compiles, Plan 162 Ф.2)" {
+    assert(B_VAL == 2)
+}
+
+test "cycle_b: A_VAL from cycle_a is accessible" {
+    assert(A_VAL == 1)
+}

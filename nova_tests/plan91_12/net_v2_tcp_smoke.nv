@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.12 Ф.7: std/net V2 TCP bind smoke.
+//
+// V2 bind() returns Result[TcpListener, NetError].
+// Use `match r { Ok(v) => v, Err(_) => panic(...) }` to extract values —
+// unwrap() is unavailable for Result[T, NetError] (Fail[NetError] not set up
+// in test context; use is_ok() + match instead).
+
+module plan91_12.net_v2_tcp_smoke
+
+import std.net.{SocketAddr, TcpListener, real_tcp_net, real_addr_net}
+
+test "V2 TcpListener bind returns ok" {
+    supervised {
+        with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+            ro bind_result = TcpListener.bind(SocketAddr.loopback(0))
+            assert(bind_result.is_ok())
+            mut lst = match bind_result { Ok(l) => l, Err(_) => panic("bind failed") }
+            assert(lst.local_port() > 0)
+            lst.close()
+        }
+    }
+}
+
+test "V2 TcpListener.local_addr is_v4" {
+    supervised {
+        with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+            ro r = TcpListener.bind(SocketAddr.loopback(0))
+            assert(r.is_ok())
+            mut lst = match r { Ok(l) => l, Err(_) => panic("bind failed") }
+            ro addr = lst.local_addr()
+            assert(addr.is_v4())
+            lst.close()
+        }
+    }
+}
+
+test "V2 TcpListener.bind on used port returns Err" {
+    supervised {
+        with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+            ro r = TcpListener.bind(SocketAddr.loopback(0))
+            mut lst = match r { Ok(l) => l, Err(_) => panic("bind failed") }
+            ro port = lst.local_port()
+            ro lst2_r = TcpListener.bind(SocketAddr.loopback(port))
+            assert(lst2_r.is_err())
+            lst.close()
+        }
+    }
+}

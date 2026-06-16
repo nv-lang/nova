@@ -1,0 +1,42 @@
+// Control for [M-138.2-self-in-param] fix: confirm the new `Self`→value-aware
+// mono binding (added in register_mono_method_instance / emit_monomorphized_
+// method) does NOT break the ordinary top-level `-> Self` chains on a HEAP
+// generic.
+//
+// The fix binds `Self` into `current_type_subst` to the value-AWARE receiver
+// mono before computing param/return C types, so a NESTED type-arg `Self`
+// (`-> FiltIt[Self, U]`, repro.nv; `g FiltIt[Self, U]`, repro_param.nv) gets the
+// same mangled mono as the call-site. The binding is computed via
+// `value_aware_generic_c_type`, which leaves HEAP-generic mono pointer forms
+// UNCHANGED — so a top-level `-> Self` on a heap generic (Vec[T].new / .from /
+// .with_capacity, all declared `-> Self`) keeps its pointer ABI and still
+// works. This fixture exercises exactly those heap `-> Self` chains as the
+// no-regression guard.
+//
+// NB: top-level `-> Self` / `-> @` / `other Self` on a *value* record (Pt /
+// Box[int] direct construction) is independently CC-FAIL on the BASELINE
+// compiler (verified) — a pre-existing value-record Self ABI limitation,
+// unrelated to this nested-type-arg fix and so not asserted here. The
+// nested-Self value-generic surface IS covered (and passes) by repro.nv
+// (return position) and repro_param.nv (param position).
+module self_nested.repro_control
+
+import std.collections.vec.{Vec}
+
+test "heap generic top-level -> Self chains stay correct (control)" {
+    // Vec[T].new() / .with_capacity(n) / .from([..]) are all declared `-> Self`.
+    mut v = Vec[int].new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    assert(v.len() == 3)
+
+    ro w = Vec[int].from([10, 20, 30])
+    assert(w.len() == 3)
+    assert(w == [10, 20, 30])
+
+    mut c = Vec[int].with_capacity(8)
+    c.push(99)
+    assert(c.len() == 1)
+    assert(c == [99])
+}

@@ -1,6 +1,5 @@
-// modB peer 2 — нужен для folder-module detection.
+// Plan 162 Ф.2: folder-module cycle test — modB peer 2.
 
-module modB.two
+module negative_capability.folder_cycle_setup.modB
 
-export fn b_extra() -> int =>
-    200
+export const B_EXTRA int = 200

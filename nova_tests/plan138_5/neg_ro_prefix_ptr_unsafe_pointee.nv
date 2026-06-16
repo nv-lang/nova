@@ -8,4 +8,4 @@
 
 module plan138_5.neg_ro_prefix_ptr_unsafe_pointee
 
-external fn p(x ro * unsafe int) -> ()
+extern "nova" fn p(x ro * unsafe int) -> ()

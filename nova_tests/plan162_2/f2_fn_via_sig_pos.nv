@@ -1,0 +1,29 @@
+// Plan 162.2 Ф.4: positive — cross-module fn lookup via sig_table.
+//
+// Module B (this file) imports standalone functions from module A
+// (plan162_2_fn_lib) and calls them. This verifies that the sig_table
+// wiring (collect_all_signatures → build_with_sig_table) correctly
+// propagates cross-module function signatures so that fn calls resolve
+// and codegen succeeds.
+//
+// If sig_table lookup is broken, the compiler would fail to resolve
+// add/multiply/greet as cross-module fns.
+
+module plan162_2.f2_fn_via_sig_pos
+
+import nova_tests.plan162_2.plan162_2_fn_lib.{add, multiply, greet}
+
+test "cross-module fn add compiles and returns correct result" {
+    ro result = add(3, 4)
+    assert(result == 7)
+}
+
+test "cross-module fn multiply compiles and returns correct result" {
+    ro result = multiply(6, 7)
+    assert(result == 42)
+}
+
+test "cross-module fn greet returns concatenated string" {
+    ro result = greet("world")
+    assert(result == "hello world")
+}

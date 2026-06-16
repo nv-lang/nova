@@ -4,7 +4,7 @@
 module plan153_4.views
 
 test "as_slice — ro whole view aliases the buffer" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     ro s = v.as_slice()
     assert(s.len() == 3)
     assert(s.cap() == s.len())
@@ -13,16 +13,16 @@ test "as_slice — ro whole view aliases the buffer" {
 }
 
 test "mut as_slice — element writes go through to the parent" {
-    mut v = Vec[int].from([1, 2, 3, 4])
+    mut v = Vec[int].of(1, 2, 3, 4)
     mut s = v.as_slice()
     s[0] = 99
     s[3] = 77
     assert(v[0] == 99 && v[3] == 77)
-    assert(v.equal(Vec[int].from([99, 2, 3, 77])))
+    assert(v.equal(Vec[int].of(99, 2, 3, 77)))
 }
 
 test "split_at — divides correctly, len(l)+len(r)==len" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     ro (l, r) = v.split_at(2)
     assert(l.len() == 2 && r.len() == 3)
     assert(l.len() + r.len() == v.len())
@@ -31,7 +31,7 @@ test "split_at — divides correctly, len(l)+len(r)==len" {
 }
 
 test "split_at — boundaries 0 and len" {
-    ro v = Vec[int].from([7, 8, 9])
+    ro v = Vec[int].of(7, 8, 9)
     ro (l0, r0) = v.split_at(0)
     assert(l0.len() == 0 && r0.len() == 3 && r0[0] == 7)
     ro (l3, r3) = v.split_at(3)
@@ -39,15 +39,15 @@ test "split_at — boundaries 0 and len" {
 }
 
 test "split_at — write-through on mut left/right halves" {
-    mut v = Vec[int].from([1, 2, 3, 4])
+    mut v = Vec[int].of(1, 2, 3, 4)
     mut (l, r) = v.split_at(2)
     l[0] = 10
     r[1] = 40
-    assert(v.equal(Vec[int].from([10, 2, 3, 40])))
+    assert(v.equal(Vec[int].of(10, 2, 3, 40)))
 }
 
 test "split_first — non-empty head + tail view" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     match v.split_first() {
         Some((h, t)) => {
             assert(h == 10)
@@ -58,7 +58,7 @@ test "split_first — non-empty head + tail view" {
 }
 
 test "split_last — non-empty last + init view" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     match v.split_last() {
         Some((last, init)) => {
             assert(last == 30)
@@ -75,7 +75,7 @@ test "split_first / split_last — empty -> None" {
 }
 
 test "split_first — single element -> empty tail" {
-    ro v = Vec[int].from([42])
+    ro v = Vec[int].of(42)
     match v.split_first() {
         Some((h, t)) => { assert(h == 42 && t.len() == 0) }
         None => { assert(false) }
@@ -83,8 +83,8 @@ test "split_first — single element -> empty tail" {
 }
 
 test "first_n — exact and clamp" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
-    assert(v.first_n(3).equal(Vec[int].from([1, 2, 3])))
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    assert(v.first_n(3).equal(Vec[int].of(1, 2, 3)))
     assert(v.first_n(5).equal(v))
     assert(v.first_n(99).len() == 5)
     assert(v.first_n(0).len() == 0)
@@ -92,8 +92,8 @@ test "first_n — exact and clamp" {
 }
 
 test "last_n — exact and clamp" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
-    assert(v.last_n(2).equal(Vec[int].from([4, 5])))
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    assert(v.last_n(2).equal(Vec[int].of(4, 5)))
     assert(v.last_n(5).equal(v))
     assert(v.last_n(99).len() == 5)
     assert(v.last_n(0).len() == 0)
@@ -101,20 +101,20 @@ test "last_n — exact and clamp" {
 }
 
 test "view detach-on-resize — push detaches, parent untouched" {
-    mut v = Vec[int].from([1, 2, 3])
+    mut v = Vec[int].of(1, 2, 3)
     mut head = v.first_n(2)
     assert(head.cap() == head.len())
     head.push(99)
-    assert(head.equal(Vec[int].from([1, 2, 99])))
+    assert(head.equal(Vec[int].of(1, 2, 99)))
     // parent buffer NOT overwritten by the detached view's growth.
-    assert(v.equal(Vec[int].from([1, 2, 3])))
+    assert(v.equal(Vec[int].of(1, 2, 3)))
 }
 
 test "split_at views detach independently from parent" {
-    mut v = Vec[int].from([1, 2, 3, 4])
+    mut v = Vec[int].of(1, 2, 3, 4)
     mut (l, r) = v.split_at(2)
     r.push(100)
     // r (cap==len) reallocated → detached; parent untouched.
-    assert(r.equal(Vec[int].from([3, 4, 100])))
-    assert(v.equal(Vec[int].from([1, 2, 3, 4])))
+    assert(r.equal(Vec[int].of(3, 4, 100)))
+    assert(v.equal(Vec[int].of(1, 2, 3, 4)))
 }

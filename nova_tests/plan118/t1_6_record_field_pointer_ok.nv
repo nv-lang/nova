@@ -21,9 +21,9 @@ type BufferSession {
     ro byte_count i64
 }
 
-// External fn принимает handle и возвращает по tuple-newtype convention.
-external fn p118_buffer_open(size i64) -> BufferHandle
-external fn p118_buffer_close(h BufferHandle) -> i64
+// extern "nova" fn принимает handle и возвращает по tuple-newtype convention.
+extern "nova" fn p118_buffer_open(size i64) -> BufferHandle
+extern "nova" fn p118_buffer_close(h BufferHandle) -> i64
 
 test "tuple newtype + record form pointers parse + type-check" {
     assert(1 == 1)

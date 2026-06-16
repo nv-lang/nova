@@ -1,0 +1,21 @@
+// Plan 159 Ф.3 POSITIVE (conservative correctness) — a const table read ONLY
+// from inside a generic free-fn body must be KEPT. Generic free fns are
+// non-candidates for fn-DCE; their referenced names (here the const `LOOKUP`)
+// are unconditional reachability roots (the over-keep path). So even though
+// `LOOKUP` is never named outside the generic body, the new const-DCE must not
+// prune it — otherwise the monomorphized instance would read a dropped table.
+// The program compiling, running and printing the looked-up value proves the
+// const survived alongside the generic instance.
+// EXPECT_STDOUT 4242
+
+module plan159.f3_generic_body_const_kept
+
+const LOOKUP int = 4242
+
+// Generic free fn whose body is the ONLY reader of LOOKUP.
+fn fetch[T](x T) -> int => LOOKUP
+
+fn main() {
+    ro r = fetch[int](0)
+    println("${r}")
+}

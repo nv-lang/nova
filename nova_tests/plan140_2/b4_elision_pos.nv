@@ -18,6 +18,6 @@ fn sum_all(v Vec[int]) -> int {
 }
 
 test "sum via (elided) index access" {
-    ro v = Vec[int].from([10, 20, 30, 40])
+    ro v = Vec[int].of(10, 20, 30, 40)
     assert(sum_all(v) == 100)
 }

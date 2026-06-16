@@ -1,6 +1,5 @@
-// modA peer 2 — нужен чтобы папка считалась folder-module (≥2 peers).
+// Plan 162 Ф.2: folder-module cycle test — modA peer 2.
 
-module modA.two
+module negative_capability.folder_cycle_setup.modA
 
-export fn a_extra() -> int =>
-    100
+export const A_EXTRA int = 100

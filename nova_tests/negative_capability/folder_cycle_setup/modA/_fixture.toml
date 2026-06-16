@@ -1,0 +1,2 @@
+# Plan 162 Ф.2: helper module for folder cycle test.
+# walk_nv skips this directory — files are imported by folder_cycle_between_modules.nv.

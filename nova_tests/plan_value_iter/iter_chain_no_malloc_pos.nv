@@ -1,0 +1,10 @@
+// Plan 165 — Zero-cost iterator chain regression guard.
+module plan_value_iter.iter_chain_no_malloc_pos
+
+import std.collections.vec_iter
+
+test "filter collect" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+    ro got = v.iter().filter(|x| x % 2 == 0).collect()
+    assert(got == [2, 4, 6])
+}

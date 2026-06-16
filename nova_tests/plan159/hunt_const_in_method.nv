@@ -1,0 +1,19 @@
+// Plan 159 Ф.1 over-prune hunt: a const read ONLY inside a method that is
+// invoked from `main`. The method fires (its receiver type Widget AND its name
+// `value` are both reachable), so its callee const SCALE must be kept.
+// EXPECT_STDOUT 150
+
+module plan159.hunt_const_in_method
+
+const SCALE int = 50
+
+type Widget value {
+    n int
+}
+
+fn Widget @value() -> int => @n * SCALE
+
+fn main() {
+    ro w = Widget { n: 3 }
+    println(w.value())
+}

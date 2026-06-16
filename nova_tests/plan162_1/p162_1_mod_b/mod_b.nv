@@ -1,0 +1,11 @@
+// Plan 162.1 Step 3: helper module B for cycle body dep test.
+// Imports type Foo from mod_a and wraps it. Creates a body-level dep A→B→A.
+
+module plan162_1.p162_1_mod_b
+
+import nova_tests.plan162_1.p162_1_mod_a.{Foo, make_foo}
+
+export fn bar(v int) -> int {
+    ro f = make_foo(v)
+    f.value + 1
+}

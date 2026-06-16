@@ -1,0 +1,2 @@
+# Plan 162 Ф.2: helper module for cycle test.
+# walk_nv skips this directory — used only as cycle participant by f1_cycle_basic.nv.

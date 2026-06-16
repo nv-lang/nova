@@ -1,13 +1,19 @@
-// EXPECT_COMPILE_ERROR import cycle detected
-//
-// Plan 35 Ф.1 cycle detection helper — module A.
-// Имеет cycle dependency A → B → A. Сам file компилируется как тест
-// (test_runner walk_nv подхватывает все .nv) → ожидается compile error
-// «import cycle detected». Также используется как helper для
-// negative_capability/import_cycle_rejected.nv (импортирует A).
+// Plan 162 Ф.2: cycle guard — module A in A↔B cross-module cycle.
+// Previously expected EXPECT_COMPILE_ERROR (Plan 35 Ф.1 / D29 pre-rev5).
+// Plan 162 Ф.2 (D29 rev-5) makes cross-module cycles allowed: the resolver
+// returns Ok(()) on the back-edge instead of Err. This module now compiles
+// successfully. Used as helper for negative_capability/import_cycle_rejected.nv.
 
 module modules.cycle_a
 
 import nova_tests.modules.cycle_b.{B_VAL}
 
 export const A_VAL int = 1
+
+test "cycle_a: A_VAL is 1 (cycle compiles, Plan 162 Ф.2)" {
+    assert(A_VAL == 1)
+}
+
+test "cycle_a: B_VAL from cycle_b is accessible" {
+    assert(B_VAL == 2)
+}

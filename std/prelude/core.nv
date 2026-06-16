@@ -70,6 +70,12 @@
 
 module prelude.core
 
+// Plan 162 Ф.4: char Unicode-aware methods moved here from std.unicode.category.
+// The cycle prelude.core → std.unicode → std.collections.vec → prelude.core
+// is handled by Plan 162 Ф.2 cycle guard (returns Ok(()) on re-entry).
+// `GeneralCategory` and the free predicates (is_alphabetic etc.) come from
+// std.unicode and are usable in the char @method bodies below.
+import std.unicode
 
 // ──────────────────────────────────────────────────────────────────────────
 // Sum types
@@ -170,7 +176,7 @@ export type Error {
 /// **Lang-item (Plan 139.1):** `str` — это полноценный Nova value-record,
 /// а не хардкод-примитив. Объявление здесь делает `str` источником правды
 /// для:
-///   - **privacy** (`priv` поля): `s.ptr` / `s.len` снаружи str-методов →
+///   - **privacy** (`priv(type)` поля): `s.ptr` / `s.len` снаружи str-методов →
 ///     `E_PRIV_FIELD_READ` (D220). Доступ к байтам — через публичные методы
 ///     (`@len`, `@byte_at`, `@as_bytes`), объявленные в `std/runtime/string.nv`.
 ///   - **field layout / sizeof** (16 байт на x64): `ptr` — backing UTF-8
@@ -190,7 +196,7 @@ export type Error {
 /// **Bootstrap (R1/R2):** доступен pre-method (str нужен в panic/interp до
 /// своих методов); literal-lowering зависит только от layout, не от методов.
 #stable(since = "0.1")
-type str value priv {
+type str value priv(type) {
     ptr *u8
     len int
 }
@@ -393,3 +399,47 @@ fn Result[T, E] @ok() -> Option[T] => match @ { Ok(v) => Some(v), Err(_) => None
 /// mono'd Nova-body эмитит правильный `NovaOpt_<E>` напрямую.
 #stable(since = "0.1")
 fn Result[T, E] @err() -> Option[E] => match @ { Ok(_) => None, Err(e) => Some(e) }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// char Unicode-aware methods (Plan 162 Ф.4)
+// Moved from std/unicode/category.nv. Bodies delegate to the code-point
+// predicates in std.unicode (imported above). No explicit `import std.unicode as unicode`
+// required by the user — these are part of the prelude.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Unicode Alphabetic property (UCD `Alphabetic` derived core property).
+/// Broader than `Lu|Ll|Lt`: includes `Lm|Lo|Nl` and Other_Alphabetic marks.
+/// Equivalent to `std.unicode.is_alphabetic(@ as int)`.
+export fn char @is_alphabetic() -> bool => is_alphabetic(@ as int)
+
+/// Numeric: General_Category ∈ {Nd, Nl, No}.
+/// Matches Rust `char::is_numeric` — derived from UCD GC, not ASCII-only.
+export fn char @is_numeric() -> bool => is_numeric(@ as int)
+
+/// Alphanumeric: alphabetic OR numeric.
+export fn char @is_alphanumeric() -> bool => is_alphanumeric(@ as int)
+
+/// White_Space (UCD `White_Space` binary property from PropList.txt).
+export fn char @is_whitespace() -> bool => is_whitespace(@ as int)
+
+/// Uppercase letter: General_Category == Lu.
+export fn char @is_uppercase() -> bool => is_uppercase(@ as int)
+
+/// Lowercase letter: General_Category == Ll.
+export fn char @is_lowercase() -> bool => is_lowercase(@ as int)
+
+/// Control character: General_Category == Cc.
+export fn char @is_control() -> bool => is_control(@ as int)
+
+/// UCD General_Category of this code point. Returns `Cn` (not assigned)
+/// for unassigned/reserved/noncharacter code points.
+export fn char @general_category() -> GeneralCategory => general_category(@ as int)
+
+/// Full uppercase mapping of a single code point, as a str.
+/// Multi-code-point expansions apply (ß → "SS", ﬁ → "FI"); no locale tailoring.
+export fn char @to_uppercase() -> str => char_to_uppercase(@ as int)
+
+/// Full lowercase mapping of a single code point, as a str.
+/// Final_Sigma is a string-level context rule; a lone Σ lowercases to σ.
+export fn char @to_lowercase() -> str => char_to_lowercase(@ as int)

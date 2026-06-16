@@ -1,0 +1,10 @@
+// D289 amend: bare `import m` (no .{} or as) is now legal — last segment
+// becomes the qualified namespace name. This was previously E_IMPORT_GLOB.
+
+module plan163.f3_import_glob_neg
+
+import nova_tests.plan163.plan163_lib
+
+test "bare import introduces last-segment as qualified name" {
+    assert(plan163_lib.greet() == 42)
+}

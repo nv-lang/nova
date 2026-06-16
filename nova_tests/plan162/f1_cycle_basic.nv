@@ -1,0 +1,21 @@
+// Plan 162 Ф.2: basic cross-module cycle guard positive test.
+//
+// Imports plan162_mod_a which imports plan162_mod_b which imports
+// plan162_mod_a (cycle A↔B). With the Plan 162 Ф.2 cycle guard,
+// the resolver returns Ok(()) on cycle instead of Err — no stack
+// overflow, no error. A_VAL (from mod_a) is available because mod_a
+// is fully processed; B_VAL (from mod_b) is also available because
+// mod_b is processed before the cycle guard fires on the back-edge.
+
+module plan162.f1_cycle_basic
+
+import nova_tests.plan162.plan162_mod_a.{A_VAL}
+import nova_tests.plan162.plan162_mod_b.{B_VAL}
+
+test "cycle A-B compiles and A_VAL is accessible" {
+    assert(A_VAL == 10)
+}
+
+test "cycle A-B compiles and B_VAL is accessible" {
+    assert(B_VAL == 20)
+}

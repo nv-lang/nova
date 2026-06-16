@@ -1,0 +1,33 @@
+// Plan 162.1 Step 4: positive — transitive sig_table lookup.
+//
+// This test imports only from p162_1_mod_b (which itself imports p162_1_mod_a).
+// The sig_table built by collect_all_signatures must contain type Foo and
+// fn make_foo from mod_a even though this file does not directly import mod_a.
+//
+// The test validates the transitive reachability of the sig_table:
+//   f4 imports mod_b (bar)
+//   mod_b imports mod_a (Foo, make_foo)
+//   → Foo and make_foo must appear in the sig_table populated during
+//     collect_all_signatures and be accessible to the type-checker.
+//
+// Regression guard: compile + execute must pass.
+
+module plan162_1.f4_transitive_sig_pos
+
+import nova_tests.plan162_1.p162_1_mod_a.{Foo, make_foo, foo_value}
+import nova_tests.plan162_1.p162_1_mod_b.{bar}
+
+test "transitive sig: Foo is reachable via transitive import" {
+    ro f = make_foo(10)
+    assert(foo_value(f) == 10)
+}
+
+test "transitive sig: bar chains through mod_a transitively" {
+    assert(bar(3) == 4)
+}
+
+test "transitive sig: zero case through transitive chain" {
+    ro f = make_foo(0)
+    assert(foo_value(f) == 0)
+    assert(bar(0) == 1)
+}

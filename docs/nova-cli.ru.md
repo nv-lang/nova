@@ -1115,6 +1115,7 @@ nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]
 |---|---|---|
 | `NOVA_CODEGEN` | (зарезервировано) | Override пути к `nova-codegen` binary |
 | `NOVA_MONO_DEPTH` | `build`, `test`, `test-build`, `bench` | Лимит monomorphization-инстанциаций (default 500) |
+| `NOVA_REACH_DCE` | `build`, `test`, `test-build` | Reachability-codegen DCE ([Plan 159](plans/159-reachability-codegen.md), [D283](decisions/09-tooling.md#d283)). Не задана / `≠0` → **ON** (default): в C эмитится только достижимое от `main`. `=0` → **OFF**: байт-идентичное до-159 поведение (эмитить всё) — escape hatch для диагностики over-prune |
 | `NOVA_HOME` | `add`, `build` (git-deps) | Корень кэша git-зависимостей; default `~/.nova` (кэш в `<NOVA_HOME>/git`) |
 | `NOVA_OFFLINE` | `add`, `build` (git-deps) | `=1` → запрет сети (clone/fetch); сборка только из готового кэша |
 | `NOVA_SMT_BACKEND` | `contracts` | SMT-backend (`trivial`, `z3`) |

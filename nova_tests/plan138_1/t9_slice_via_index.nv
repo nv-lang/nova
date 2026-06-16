@@ -7,7 +7,7 @@ module plan138_1.t9_slice_via_index
 import std.collections.vec.{Vec}
 
 test "v[1..3] zero-copy 2-element view" {
-    ro v = Vec[int].from([10, 20, 30, 40, 50])
+    ro v = Vec[int].of(10, 20, 30, 40, 50)
     ro view = v[1..3]
     assert(view.len() == 2)
     assert(view.get(0) == Some(20))
@@ -15,7 +15,7 @@ test "v[1..3] zero-copy 2-element view" {
 }
 
 test "v[..] full-range view shares parent buffer" {
-    mut v = Vec[int].from([1, 2, 3, 4])
+    mut v = Vec[int].of(1, 2, 3, 4)
     ro full = v[..]
     assert(full.len() == 4)
     assert(full.get(0) == Some(1))
@@ -26,7 +26,7 @@ test "v[..] full-range view shares parent buffer" {
 }
 
 test "clone() produces independent owned copy" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     mut copy = v.clone()
     copy.push(40)
     // original is unaffected
@@ -37,7 +37,7 @@ test "clone() produces independent owned copy" {
 }
 
 test "write through v[a..b] view affects parent before push-detach" {
-    mut v = Vec[int].from([10, 20, 30, 40, 50])
+    mut v = Vec[int].of(10, 20, 30, 40, 50)
     mut view = v[1..3]
     // view.cap == view.len == 2; write at view[0] goes to v's buffer slot 1
     view[0] = 999
@@ -54,7 +54,7 @@ test "write through v[a..b] view affects parent before push-detach" {
 }
 
 test "v[..] view length equals parent length" {
-    ro v = Vec[int].from([7, 8, 9])
+    ro v = Vec[int].of(7, 8, 9)
     ro full = v[..]
     assert(full.len() == v.len())
     assert(full.get(0) == Some(7))
@@ -62,7 +62,7 @@ test "v[..] view length equals parent length" {
 }
 
 test "clone() then mutate original does not affect copy" {
-    mut v = Vec[int].from([1, 2, 3])
+    mut v = Vec[int].of(1, 2, 3)
     ro copy = v.clone()
     v[0] = 100
     // copy is independent — still sees original value

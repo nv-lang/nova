@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.13 — DnsNet effect smoke tests.
+//
+// Acceptance criteria A13-dns:
+//   (1) mock_dns_net() always succeeds — returns a v4 SocketAddr.
+//   (2) DnsNet is mockable: SocketAddr.lookup dispatches through effect vtable.
+//   (3) Negative: a mock that always fails → is_err() + NetError variant preserved.
+//   (4) SocketAddr.lookup API compiles; returns Result[SocketAddr, NetError].
+//   (5) «без упрощений как для прода»: real_dns_net() is proven separately by net.h
+//       C impl; mock is used here to avoid network dependency in CI.
+//
+// D295: DnsNet effect family spec.
+
+module plan91_12.net_v2_dns_smoke
+
+import std.net.{SocketAddr, DnsNet, AddrNet, NetError, mock_dns_net, mock_addr_net}
+
+// ─── positive ────────────────────────────────────────────────────────────────
+
+test "dns mock: lookup succeeds and returns v4 SocketAddr" {
+    with AddrNet = mock_addr_net(), DnsNet = mock_dns_net() {
+        ro r = SocketAddr.lookup("localhost", 80)
+        assert(r.is_ok())
+        ro addr = match r {
+            Ok(a)  => a
+            Err(_) => panic("lookup failed")
+        }
+        assert(addr.is_v4())
+    }
+}
+
+test "dns mock: lookup returns port 0 (loopback address with port 0)" {
+    with AddrNet = mock_addr_net(), DnsNet = mock_dns_net() {
+        ro r = SocketAddr.lookup("example.com", 443)
+        assert(r.is_ok())
+        ro addr = match r {
+            Ok(a)  => a
+            Err(_) => panic("lookup failed")
+        }
+        // mock_dns_net always returns socket_addr_loopback(0)
+        assert(addr.port() == 0)
+    }
+}
+
+test "dns mock: lookup with arbitrary hostname always resolves" {
+    with AddrNet = mock_addr_net(), DnsNet = mock_dns_net() {
+        ro r1 = SocketAddr.lookup("google.com", 80)
+        ro r2 = SocketAddr.lookup("127.0.0.1", 8080)
+        assert(r1.is_ok())
+        assert(r2.is_ok())
+    }
+}
+
+test "dns mock: multiple independent lookups" {
+    with AddrNet = mock_addr_net(), DnsNet = mock_dns_net() {
+        mut i = 0
+        while i < 5 {
+            ro r = SocketAddr.lookup("host", 1234)
+            assert(r.is_ok())
+            i = i + 1
+        }
+    }
+}
+
+// ─── negative ────────────────────────────────────────────────────────────────
+
+test "dns negative: custom mock that always fails returns Err" {
+    ro fail_dns = effect DnsNet {
+        lookup(_host, _port) => Err(NetError.ConnectionRefused)
+    }
+    with AddrNet = mock_addr_net(), DnsNet = fail_dns {
+        ro r = SocketAddr.lookup("localhost", 80)
+        assert(r.is_err())
+        ro err = match r {
+            Ok(_)  => panic("expected Err")
+            Err(e) => e
+        }
+        assert(match err { NetError.ConnectionRefused => true, _ => false })
+    }
+}
+
+test "dns negative: effect must be installed (not effect is a compile constraint, tested via separate fixture)" {
+    // The DnsNet constraint is enforced at compile time.
+    // This test verifies that different error variants are matchable.
+    ro fail_dns = effect DnsNet {
+        lookup(_host, _port) => Err(NetError.NotFound)
+    }
+    with AddrNet = mock_addr_net(), DnsNet = fail_dns {
+        ro r = SocketAddr.lookup("bad-host", 80)
+        assert(r.is_err())
+        ro err = match r {
+            Ok(_)  => panic("expected Err")
+            Err(e) => e
+        }
+        assert(match err { NetError.NotFound => true, _ => false })
+    }
+}

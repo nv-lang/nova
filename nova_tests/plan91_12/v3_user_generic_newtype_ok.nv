@@ -25,7 +25,7 @@ module plan91_12.v3_user_generic_newtype_ok
 type MyHandle[T](*())
 type MultiParam[T, U](*())
 
-external fn p115_int_to_ptr(value int) -> *()
+extern "nova" fn p115_int_to_ptr(value int) -> *()
 
 test "generic newtype — construct + .0 для int" {
     ro raw = p115_int_to_ptr(42)

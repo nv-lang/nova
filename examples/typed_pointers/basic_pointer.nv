@@ -25,35 +25,35 @@ type Buffer {
 }
 
 // Readonly pointer parameters (default).
-external fn read_buffer(buf * Buffer) -> i64
+extern "nova" fn read_buffer(buf * Buffer) -> i64
 
 // Pointer to mutable Buffer for FFI out-params (pointee-mut postfix).
-external fn fill_buffer(buf *mut Buffer, value i64) -> i64
+extern "nova" fn fill_buffer(buf *mut Buffer, value i64) -> i64
 
 // Possibly-null pointer (e.g. after arithmetic): nullable via Option[*T].
-external fn buffer_at_offset(buf Option[*Buffer], idx i64) -> i64
+extern "nova" fn buffer_at_offset(buf Option[*Buffer], idx i64) -> i64
 
 // Returning typed pointer.
-external fn allocate_buffer(size i64) -> * Buffer
+extern "nova" fn allocate_buffer(size i64) -> * Buffer
 
 // ─── FFI / nullable / uninit patterns (final model) ─────────────────────
 //
 // FFI borrow pattern: a possibly-null handle to a valid Buffer. The C
 // `Buffer*` (nullable) maps to `Option[*Buffer]` — None = null, Some = a
 // non-null pointer whose pointee is a regular (safe) Buffer.
-external fn ffi_borrow_buffer(handle Option[*Buffer]) -> i64
+extern "nova" fn ffi_borrow_buffer(handle Option[*Buffer]) -> i64
 
 // Readonly view pattern: pointer to a readonly Buffer. The bare `*Buffer` IS
 // the readonly-pointee canon (`*T ≡ *ro T` per Plan 147 / D246; an explicit
 // `*ro Buffer` is a hard error E_REDUNDANT_POINTER_RO). The pointer variable's
 // reassignability is the bind site's concern (`ro`/`mut` name), not the type.
-external fn observe_readonly_view(view *Buffer) -> i64
+extern "nova" fn observe_readonly_view(view *Buffer) -> i64
 
 // Opaque-handle pattern: pointer to possibly-uninit storage — `*unsafe
 // Buffer` is a valid (non-null) pointer whose pointee may be uninitialized
 // (e.g. raw allocator output before init). Validity of the pointee is
 // asserted on deref inside `unsafe { }`.
-external fn raw_alloc_slot(slot *unsafe Buffer) -> ()
+extern "nova" fn raw_alloc_slot(slot *unsafe Buffer) -> ()
 
 test "typed pointer family — declarations parse + type-check" {
     // V1 limit: pointer creation (&) + deref (*) + auto-deref require

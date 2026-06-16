@@ -2,8 +2,16 @@
 # Plan 124 — Private field visibility (`priv` modifier для records + named tuples)
 
 > **Создан 2026-06-01.**
-> **Status:** 🆕 PLANNED — roadmap-индекс. Декомпозирован на 7
-> sub-plan'ов (124.1-124.7) per §6 «split». Каждый sub-plan
+> **Status:** 🟡 ACTIVE — 124.1 landed (D220 core); sub-plans 124.2-124.7 in progress.
+>
+> **D220 Addendum (2026-06-15):**
+> - **§3 Cross-instance access:** `fn T @eq(other T) -> bool => @f == other.f` — доступ к `priv(type)` полям *другого экземпляра того же типа* разрешён внутри метода. Privacy scope = тип, не экземпляр. Зафиксировано в D220 §3 + тест `priv_cross_instance_ok.nv`.
+> - **§5 Priv = организация, не security:** `priv(type)` — организационный инструмент против случайного обращения. Намеренный accessor (`fn T @expose() -> int => @field`) легален. Настоящая граница — модуль (D281). Зафиксировано в D220 §5 + тест `priv_intentional_expose_ok.nv`.
+> - **E_PRIV_PUB_CONFLICT regression fix:** D281 symmetry fix сломал обнаружение `priv pub f` — давал "expected identifier" вместо E_PRIV_PUB_CONFLICT. Исправлено в парсере (commit `7df86dff`).
+> - **plan124_1 migration:** 4 neg-теста мигрированы `priv` → `priv(type)` (field-level bare `priv` теперь module-private по D281, в том же модуле доступно).
+> - **plan124_1: 12/12 PASS** (release nova + C-codegen).
+>
+> **Декомпозирован на 7 sub-plan'ов (124.1-124.7)** per §6 «split». Каждый sub-plan
 > independently shippable; release-train V1→V7 incremental.
 > **Приоритет:** P1 (V1 = 124.1 — foundational; closes major
 > OOP-grade gap; current Nova fields all-public — нет API boundary
@@ -1024,7 +1032,7 @@ Check open-questions.md для существующих Q'ов:
 | 124.3 Generics | 🟢 **CLOSED 2026-06-02** — uniform enforcement on Generic[T] types verified (10/10 plan124_3); D220 §G1 amend |
 | 124.4 Tuple + protocol | 🟢 **CLOSED 2026-06-02** — NamedTupleField priv parsing + 3 checker hooks + protocol impl boundary §3 (D222 NEW); 10/10 plan124_4 PASS |
 | 124.5 nova doc + LSP | 🟢 **CLOSED 2026-06-02** — nova doc strip_private filter per-field + render priv keyword + JSON priv_field emit + docs/field-visibility-guide.md; LSP hover/completion forward-ref Plan 104.2/104.3 |
-| 124.6 Test access + visible_to | 🟢 **CLOSED 2026-06-02** — `#test_access(TypeX...)` fn attr + `#visible_to(TypeY...)` field attr + unified `priv_field_access_allowed` predicate (D224 NEW; **renumbered from D223 → D224 after collision с Plan 123 IPA D223**); 7/7 plan124_6 PASS |
+| 124.6 Test access + pub_to | 🟢 **AMENDED+CLOSED 2026-06-16** — design changed from fn-level `#test_access` + field-level `#visible_to` → (1) implicit same-module test access (test block in same folder), (2) `#[test_access(T)]` before `test "…" {}` block for cross-module opt-in, (3) `#[pub_to(Y,Z)]` on TypeDecl for type-level friend access; `TestBlockGuard` RAII + `type_pub_to` map in checker; 15 fixtures (9 pos + 6 neg); 7 pre-existing fixtures migrated to `priv(type)`; A6.1-A6.8 all ✅; 15/15 PASS |
 | 124.7 Type-level priv flip (named tuples) | 🟢 **CLOSED 2026-06-02** — `type X priv (...)` symmetric extension D220 §3.3.1 на named tuple form (D225 NEW; **renumbered from D224 → D225 after collision с Plan 123 IPA D223**); parser shim parse_named_tuple_fields_with_default; 8/8 plan124_7 PASS |
 | **Umbrella** | ✅ **FULLY CLOSED 2026-06-02** — все 7 sub-plans 124.1-124.7 ✅; D220+D221+D222+D224+D225 spec corpus complete (D223 = Plan 123 IPA, not Plan 124); production-grade per-field privacy in Nova match-or-exceeds Go/Rust/TS/Java/Swift/C# на 14 capabilities + 3 Nova-only superior axes |
 

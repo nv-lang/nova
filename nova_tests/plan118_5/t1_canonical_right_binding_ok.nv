@@ -13,10 +13,10 @@ type Acc {
     id i64
 }
 
-external fn p118_5_t1_a(p * Acc) -> ()
-external fn p118_5_t1_b(p *Acc) -> ()
-external fn p118_5_t1_c(p *mut Acc) -> ()
-external fn p118_5_t1_d(p *unsafe Acc) -> ()
+extern "nova" fn p118_5_t1_a(p * Acc) -> ()
+extern "nova" fn p118_5_t1_b(p *Acc) -> ()
+extern "nova" fn p118_5_t1_c(p *mut Acc) -> ()
+extern "nova" fn p118_5_t1_d(p *unsafe Acc) -> ()
 
 test "parses canonical right-binding forms" {
     assert(1 == 1)
