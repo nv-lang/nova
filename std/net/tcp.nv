@@ -34,7 +34,7 @@ module std.net
 /// # Effects
 ///
 /// `bind` carries `TcpNet`.
-/// `accept` carries `TcpNet Blocking`.
+/// `accept` carries `TcpNet` (parks the fiber via the effect handler).
 /// `close` carries `TcpNet` (consume).
 #stable(since = "0.1")
 export type TcpListener consume value { priv handle CTcpListener }
@@ -53,8 +53,8 @@ export type TcpListener consume value { priv handle CTcpListener }
 ///
 /// # Effects
 ///
-/// `connect` carries `TcpNet Blocking`.
-/// `write` carries `TcpNet Blocking`.
+/// `connect` carries `TcpNet` (parks the fiber via the effect handler).
+/// `write` carries `TcpNet` (parks the fiber via the effect handler).
 /// `close` carries `TcpNet` (consume).
 #stable(since = "0.1")
 export type TcpStream consume value { priv handle CTcpStream }
@@ -68,7 +68,7 @@ export type TcpStream consume value { priv handle CTcpStream }
 ///
 /// # Effects
 ///
-/// `read` carries `TcpNet Blocking`.
+/// `read` carries `TcpNet` (parks the fiber via the effect handler).
 /// `close` carries `TcpNet` (consume).
 #stable(since = "0.1")
 export type TcpReadHalf consume value { priv handle CTcpStream }
@@ -80,7 +80,7 @@ export type TcpReadHalf consume value { priv handle CTcpStream }
 ///
 /// # Effects
 ///
-/// `write` / `write_all` carry `TcpNet Blocking`.
+/// `write` / `write_all` carry `TcpNet` (park the fiber via the effect handler).
 /// `close` carries `TcpNet` (consume).
 #stable(since = "0.1")
 export type TcpWriteHalf consume value { priv handle CTcpStream }
@@ -103,7 +103,7 @@ export fn TcpListener.bind(addr SocketAddr) TcpNet -> Result[TcpListener, NetErr
 /// Cancel-safe: if the enclosing supervised scope is cancelled, the
 /// pending accept is cleaned up.
 #stable(since = "0.1")
-export fn TcpListener mut @accept() TcpNet Blocking -> Result[TcpStream, NetError] {
+export fn TcpListener mut @accept() TcpNet -> Result[TcpStream, NetError] {
     TcpNet.accept(@)
 }
 
@@ -135,7 +135,7 @@ export fn TcpListener consume @close() TcpNet {
 
 /// Connect to a remote TCP address (parks until connected or error).
 #stable(since = "0.1")
-export fn TcpStream.connect(addr SocketAddr) TcpNet Blocking -> Result[TcpStream, NetError] {
+export fn TcpStream.connect(addr SocketAddr) TcpNet -> Result[TcpStream, NetError] {
     TcpNet.connect(addr)
 }
 
@@ -143,7 +143,7 @@ export fn TcpStream.connect(addr SocketAddr) TcpNet Blocking -> Result[TcpStream
 ///
 /// Returns `Ok(n)` where `n` is the number of bytes written.
 #stable(since = "0.1")
-export fn TcpStream mut @write(data str) TcpNet Blocking -> Result[int, NetError] {
+export fn TcpStream mut @write(data str) TcpNet -> Result[int, NetError] {
     TcpNet.write(@, data)
 }
 
@@ -152,7 +152,7 @@ export fn TcpStream mut @write(data str) TcpNet Blocking -> Result[int, NetError
 /// Returns `Ok(data)` where `data` is the received bytes.
 /// `Ok("")` signals EOF (the remote side closed the connection).
 #stable(since = "0.1")
-export fn TcpStream mut @read(max int) TcpNet Blocking -> Result[str, NetError] {
+export fn TcpStream mut @read(max int) TcpNet -> Result[str, NetError] {
     TcpNet.read(@, max)
 }
 
@@ -197,7 +197,7 @@ export fn TcpStream mut @set_keepalive(on bool) TcpNet {
 /// Unlike `write`, which may return after a partial write, `write_all` retries
 /// until every byte is written or an error occurs.
 #stable(since = "0.1")
-export fn TcpStream mut @write_all(data str) TcpNet Blocking -> Result[(), NetError] {
+export fn TcpStream mut @write_all(data str) TcpNet -> Result[(), NetError] {
     TcpNet.write_all(@, data)
 }
 
@@ -232,7 +232,7 @@ export fn TcpStream consume @split() TcpNet -> (TcpReadHalf, TcpWriteHalf) {
 ///
 /// `Ok("")` signals EOF (the remote side closed the connection).
 #stable(since = "0.1")
-export fn TcpReadHalf mut @read(max int) TcpNet Blocking -> Result[str, NetError] {
+export fn TcpReadHalf mut @read(max int) TcpNet -> Result[str, NetError] {
     TcpNet.read_half_read(@, max)
 }
 
@@ -273,13 +273,13 @@ export fn TcpReadHalf consume @close() TcpNet {
 ///
 /// Returns `Ok(n)` where `n` is the number of bytes written.
 #stable(since = "0.1")
-export fn TcpWriteHalf mut @write(data str) TcpNet Blocking -> Result[int, NetError] {
+export fn TcpWriteHalf mut @write(data str) TcpNet -> Result[int, NetError] {
     TcpNet.write_half_write(@, data)
 }
 
 /// Write the entire `data` to the write half, looping until all bytes are sent.
 #stable(since = "0.1")
-export fn TcpWriteHalf mut @write_all(data str) TcpNet Blocking -> Result[(), NetError] {
+export fn TcpWriteHalf mut @write_all(data str) TcpNet -> Result[(), NetError] {
     TcpNet.write_half_write_all(@, data)
 }
 

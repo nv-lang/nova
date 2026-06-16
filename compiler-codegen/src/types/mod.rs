@@ -10236,7 +10236,7 @@ fn pattern_simple_name(p: &Pattern) -> Option<String> {
 /// `realtime { ... }` блоков (D64). Эти эффекты по семантике могут
 /// приостановить fiber'а в production-runtime'е.
 fn realtime_suspend_effect(name: &str) -> bool {
-    matches!(name, "Net" | "Fs" | "Db" | "Time" | "Blocking")
+    matches!(name, "Net" | "Fs" | "Db" | "Time")
 }
 
 /// Plan 83.3 Ф.6: эффекты, запрещённые в теле `blocking { }`. Тело
@@ -10657,47 +10657,13 @@ impl<'a> CapabilityCtx<'a> {
             ExprKind::Spawn(body) => self.walk_expr(body, state, errors),
             ExprKind::Detach(body) => self.walk_block(body, state, errors),
             ExprKind::Blocking(body) => {
-                // Plan 83.3 (D50): `blocking { }` — leaf-блокирующая работа,
-                // уводится в libuv threadpool, suspend'ит fiber.
-                // (1) Запрещён внутри `realtime { }` (D64): suspend-эффект
-                //     `Blocking` есть в realtime_suspend_effect-списке.
-                if state.realtime_active {
-                    errors.push(Diagnostic::new(
-                        "cannot use `blocking { ... }` inside `realtime` block (D64): \
-                         blocking work suspends the fiber while it is offloaded to the \
-                         libuv threadpool. Hint: realtime guarantees no suspension — \
-                         move the `blocking` block out of the `realtime` block."
-                            .to_string(),
-                        e.span,
-                    ));
-                }
-                // (2) Требует эффект `Blocking` в сигнатуре enclosing-функции
-                //     (как `detach` → `Detach` по D50). У `test`-блоков
-                //     declared_effects пуст → `blocking` должен быть обёрнут
-                //     в `fn ... Blocking -> ...`.
-                if !state.declared_effects.contains("Blocking") {
-                    errors.push(Diagnostic::new(
-                        "`blocking { ... }` requires the `Blocking` effect declared in the \
-                         enclosing function's signature (D50). Fix: add `Blocking` to the \
-                         effect list — `fn name(...) Blocking -> ...`."
-                            .to_string(),
-                        e.span,
-                    ));
-                }
-                // (3) Plan 83.3 Ф.6: тело исполняется на libuv-threadpool-
-                //     потоке (не fiber, не GC-registered) → проверяем как
-                //     nogc (запрет alloc-вызовов) + бан suspend-эффектов
-                //     Net/Fs/Db/Time. V1 leaf-контракт (D50 §4) становится
-                //     enforced'ным. Отдельный флаг blocking_body_active —
-                //     НЕ realtime_active, иначе вложенный `blocking`
-                //     отвергался бы как «blocking внутри realtime».
-                let prev_blk = state.blocking_body_active;
-                let prev_nogc = state.realtime_nogc;
-                state.blocking_body_active = true;
-                state.realtime_nogc = true;
+                // Plan 91.15 (D172): the `blocking { }` block-form was retracted
+                // by Plan 113. The parser now rejects `blocking { ... }` outright
+                // (parser::parse_blocking → `[D172-block-form-removed]`), so this
+                // AST arm is unreachable in practice. The variant is retained only
+                // to keep the AST enum stable; walk the body defensively without
+                // requiring the removed `Blocking` effect.
                 self.walk_block(body, state, errors);
-                state.blocking_body_active = prev_blk;
-                state.realtime_nogc = prev_nogc;
             }
             ExprKind::Supervised { body, cancel } => {
                 if let Some(c) = cancel { self.walk_expr(c, state, errors); }
@@ -11193,9 +11159,6 @@ impl NameResCtx {
             "Fail",
             // Detach effect-type для detach {} expression (D50).
             "Detach",
-            // Plan 83.3: Blocking effect-type для blocking {} expression
-            // (D50) — увод leaf-блокирующей работы в libuv threadpool.
-            "Blocking",
             // CancelToken — caller-owned cancellation handle (D75 revised,
             // Plan 47). Builtin type: `CancelToken.new()` конструктор +
             // тип параметра `cancel CancelToken`. Методы (cancel/is_cancelled/
