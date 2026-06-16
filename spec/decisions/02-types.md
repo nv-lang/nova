@@ -7654,6 +7654,11 @@ deref, arithmetic banned by default).
 > (Ф.0 + Ф.1.5 + Ф.2 scaffold + Ф.3 + Ф.3.2 + Ф.3.3 + Ф.3.5 + Ф.4 partial +
 > Ф.5 partial + Ф.6 partial — 13 acceptance criteria closed).
 >
+> **D216 §4 AMEND (Plan 118.6, 2026-06-17):** `&x` safe for all types (no
+> `unsafe {}` required for promote path). `addr_of()` / `addr_of_mut()` retired
+> → `E_ADDR_OF_REMOVED`. `mut` binding → `*mut T` auto; `ro` binding → `*T`
+> auto. Escape analysis extended to primitives. 15/15 tests PASS.
+>
 > Enforced diagnostics (V1):
 >   - `E_UNSAFE_REQUIRED` (D216 §8) — A8 ✅ commit 5c0d2c975ce
 >   - `E_UNSAFE_CALL_REQUIRES_WRAP` (D216 §9) — A11 ✅ commit abd4be4603b
@@ -7663,6 +7668,7 @@ deref, arithmetic banned by default).
 >   - `E_INVALID_POINTER_MODIFIER` (D216 §1) — commit 6d6a18a2ab7
 >   - `E_AMP_LITERAL` / `E_AMP_RECORD_LITERAL` / `E_ARRAY_INDEX_PTR_BANNED`
 >     (D216 §4 amend + §15) — commits d9d3084ed69 + 986fdb04c0d + 7d61617bcf8
+>   - `E_ADDR_OF_REMOVED` (D216 §4 amend, Plan 118.6) — `addr_of` / `addr_of_mut` retired
 >
 > Remaining Session 4+ work (V1.1):
 >   - Ф.4 full auto-deref codegen integration (A12-A17)
@@ -7972,14 +7978,17 @@ Use `&x` instead. Calling `addr_of(x)` or `addr_of_mut(x)` now emits
   `mut`; the mut-check also walks the field-chain root (`addr_of_mut(s.field)`
   requires `mut s`), not just a bare Ident (NEW).
 
-**Known V1 gaps (2026-06-08 followups):** (1) `addr_of_mut((*p).field)` is not yet
+**Known V1 gaps (2026-06-08 followups):** ~~(1) `addr_of_mut((*p).field)` is not yet
 gated on `p` being `*mut`/mut-bound — the mut-check skips deref roots and the
-desugar is a bare `UnOp::AddrOf` with no `*mut` cast ([M-118.1-addr-of-mut-deref-ptr-mut]).
-(2) The `addr_of(...)` intrinsic chain-check runs in the const-fn rewrite pass, so
-`nova check`/LSP does not surface it (the bare-`&` operator path is check-time)
-([M-118.1-addr-of-chains-checktime]).
+desugar is a bare `UnOp::AddrOf` with no `*mut` cast~~ **CLOSED Plan 118.6** —
+`addr_of_mut` retired; `&x` with mut binding auto-infers `*mut T`.
+(2) ~~The `addr_of(...)` intrinsic chain-check runs in the const-fn rewrite pass, so
+`nova check`/LSP does not surface it~~ **MOOT** — `addr_of` retired Plan 118.6;
+`&x` chain-check runs at check-time.
+([M-118.1-addr-of-chains-checktime] — closed by retirement).
 
 Closes [M-118.1-addr-of-macros] (was: «add addr_of! macro» — macro framework not shipped, builtin-fn alternative landed).
+Closes [M-118.1-addr-of-mut-deref-ptr-mut] (Plan 118.6 — `addr_of_mut` retired; `&x` mut-inference covers this).
 
 ### §5. Auto-deref
 
