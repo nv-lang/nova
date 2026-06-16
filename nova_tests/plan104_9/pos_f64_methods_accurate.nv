@@ -1,0 +1,41 @@
+// Plan 104.9 pos: f64 methods that nova-lsp completion now surfaces accurately.
+// (float is gone — f64 is the primary floating-point type since Plan 139.)
+module plan104_9.pos_f64_methods_accurate
+
+test "f64 abs" {
+    ro x f64 = -3.14
+    assert(x.abs() > 0.0)
+}
+
+test "f64 floor ceil round" {
+    ro x f64 = 3.7
+    assert(x.floor() == 3.0)
+    assert(x.ceil() == 4.0)
+    assert(x.round() == 4.0)
+}
+
+test "f64 sqrt" {
+    ro x f64 = 9.0
+    assert(x.sqrt() == 3.0)
+}
+
+test "f64 min max" {
+    ro a f64 = 2.0
+    ro b f64 = 5.0
+    assert(a.min(b) == 2.0)
+    assert(a.max(b) == 5.0)
+}
+
+test "f64 is_nan is_infinite" {
+    ro x f64 = 1.0
+    assert(!x.is_nan())
+    assert(!x.is_infinite())
+}
+
+test "f64 compare" {
+    ro a f64 = 1.0
+    ro b f64 = 2.0
+    assert(a.compare(b) < 0)
+    assert(b.compare(a) > 0)
+    assert(a.compare(a) == 0)
+}

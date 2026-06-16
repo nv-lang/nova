@@ -351,7 +351,6 @@ const TOP_LEVEL_KEYWORDS: &[(&str, &str)] = &[
     ("fn", "Declare a function"),
     ("type", "Declare a type (record, sum, alias, ...)"),
     ("const", "Declare a compile-time constant"),
-    ("let", "Declare a readonly binding"),
     ("import", "Import a module or items"),
     ("export", "Export a declaration"),
     ("module", "Module declaration"),
@@ -360,13 +359,14 @@ const TOP_LEVEL_KEYWORDS: &[(&str, &str)] = &[
     ("test", "Declare a test block"),
     ("bench", "Declare a benchmark"),
     ("lemma", "Declare a proven lemma"),
+    ("extern", "Declare an extern fn (extern \"C\" fn ...)"),
+    ("priv", "Mark type fields as module-private"),
 ];
 
 /// Keywords available inside a function body.
 const FN_BODY_KEYWORDS: &[(&str, &str)] = &[
-    ("let", "Readonly binding"),
+    ("ro", "Readonly binding (default)"),
     ("mut", "Mutable binding"),
-    ("ro", "Explicit readonly binding"),
     ("if", "Conditional expression"),
     ("else", "Else branch"),
     ("for", "Iteration loop"),
@@ -383,6 +383,7 @@ const FN_BODY_KEYWORDS: &[(&str, &str)] = &[
     ("unsafe", "Unsafe block"),
     ("consume", "Consume a value"),
     ("apply", "Apply a lemma"),
+    ("reveal", "Reveal an opaque function body"),
 ];
 
 /// Keywords available inside a type body.
@@ -391,6 +392,8 @@ const TYPE_BODY_KEYWORDS: &[(&str, &str)] = &[
     ("const", "Declare an associated constant"),
     ("type", "Declare an associated type alias"),
     ("pub", "Mark a field as public"),
+    ("priv", "Mark a field as private"),
+    ("value", "Mark type as stack-allocated value type"),
 ];
 
 /// Build keyword completion items for the given context.
@@ -463,8 +466,14 @@ const SNIPPETS: &[Snippet] = &[
     },
     Snippet {
         label: "if-let",
-        detail: "if let pattern = expr { ... }",
-        insert_text: "if let ${1:Some(x)} = ${2:expr} {\n\t${3:()}\n}",
+        detail: "if let Some(x) = expr { ... }",
+        insert_text: "if let Some(${1:x}) = ${2:expr} {\n\t${3:()}\n}",
+        context: SnippetContext::FnBody,
+    },
+    Snippet {
+        label: "while-let",
+        detail: "while let Some(x) = expr { ... }",
+        insert_text: "while let Some(${1:x}) = ${2:expr} {\n\t${3:()}\n}",
         context: SnippetContext::FnBody,
     },
     Snippet {
@@ -572,16 +581,23 @@ pub fn collect_scope_identifiers(src: &str, offset: usize) -> Vec<IdentInfo> {
     idents
 }
 
-/// Scan for `let X ...` and `mut X ...` bindings before `offset`.
+/// Scan for `ro X ...` and `mut X ...` bindings before `offset`.
+/// Nova uses `ro` (default) and `mut` for bindings; `let` was removed in Plan 114.
 fn collect_let_bindings(text: &str) -> Vec<IdentInfo> {
     let mut out = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("let ").or_else(|| trimmed.strip_prefix("mut ")) {
+        if let Some(rest) = trimmed
+            .strip_prefix("ro ")
+            .or_else(|| trimmed.strip_prefix("mut "))
+            // keep compatibility with old `let` (compiler emits E_KW_REMOVED_LET, but
+            // the LSP should still not crash if a user types it mid-edit)
+            .or_else(|| trimmed.strip_prefix("let "))
+        {
             // Name is the first identifier.
             let name = first_ident(rest);
             if !name.is_empty() {
-                // Try to extract type hint: `let name TYPE = ...`
+                // Try to extract type hint: `ro name TYPE = ...`
                 let type_hint = extract_type_after_name(rest, &name);
                 out.push(IdentInfo {
                     name,
@@ -665,13 +681,16 @@ fn collect_fn_params(src: &str, offset: usize) -> Vec<IdentInfo> {
         None => params_text.len(),
     };
     let params_str = &params_text[..paren_end];
-    // Parse `name Type, name Type, ...`
+    // Parse `name Type, name Type, ...` — params may be prefixed with `ro`/`mut`.
     for param in params_str.split(',') {
-        let name = first_ident(param.trim());
-        if name.is_empty() || name == "self" || name == "ro" || name == "mut" {
+        let p = param.trim();
+        // Strip binding-modifier prefix so we extract the actual name.
+        let p = p.strip_prefix("ro ").or_else(|| p.strip_prefix("mut ")).unwrap_or(p);
+        let name = first_ident(p);
+        if name.is_empty() || name == "self" {
             continue;
         }
-        let type_hint = extract_type_after_name(param.trim(), &name);
+        let type_hint = extract_type_after_name(p, &name);
         out.push(IdentInfo {
             name,
             kind: IdentKind::Local,
@@ -737,32 +756,35 @@ fn collect_top_level_decls(src: &str) -> Vec<IdentInfo> {
 /// Hardcoded Nova prelude items.
 fn prelude_items() -> Vec<IdentInfo> {
     const PRELUDE: &[(&str, &str, IdentKind)] = &[
-        // Primitive types.
-        ("int", "primitive integer type", IdentKind::Type),
-        ("float", "primitive float type", IdentKind::Type),
-        ("bool", "primitive boolean type", IdentKind::Type),
-        ("str", "string value type", IdentKind::Type),
-        ("char", "Unicode scalar value", IdentKind::Type),
+        // Primitive types (Plan 133: usize/isize removed; float literal infers f64).
+        ("int", "64-bit signed integer (Nova's universal integer type)", IdentKind::Type),
+        ("f64", "64-bit floating-point number", IdentKind::Type),
+        ("f32", "32-bit floating-point number", IdentKind::Type),
+        ("bool", "boolean (true / false)", IdentKind::Type),
+        ("str", "UTF-8 string value type", IdentKind::Type),
+        ("char", "Unicode scalar value (U+0000..U+D7FF, U+E000..U+10FFFF)", IdentKind::Type),
         ("u8", "unsigned 8-bit integer", IdentKind::Type),
+        ("u16", "unsigned 16-bit integer", IdentKind::Type),
         ("u32", "unsigned 32-bit integer", IdentKind::Type),
         ("u64", "unsigned 64-bit integer", IdentKind::Type),
+        ("i8", "signed 8-bit integer", IdentKind::Type),
+        ("i16", "signed 16-bit integer", IdentKind::Type),
         ("i32", "signed 32-bit integer", IdentKind::Type),
-        ("i64", "signed 64-bit integer", IdentKind::Type),
-        ("usize", "pointer-sized unsigned integer", IdentKind::Type),
-        // Stdlib types.
-        ("Option", "Option[T] — optional value", IdentKind::Type),
-        ("Result", "Result[T,E] — failable value", IdentKind::Type),
-        ("Vec", "Vec[T] — growable array", IdentKind::Type),
-        ("Map", "Map[K,V] — hash map", IdentKind::Type),
-        ("Set", "Set[T] — hash set", IdentKind::Type),
-        ("Range", "Range — integer range i..j", IdentKind::Type),
-        ("StringBuilder", "mutable string builder", IdentKind::Type),
-        // Common functions.
-        ("print", "print string to stdout", IdentKind::Fn),
-        ("println", "print string + newline", IdentKind::Fn),
-        ("assert", "runtime assertion", IdentKind::Fn),
-        ("panic", "panic with message", IdentKind::Fn),
-        ("todo", "todo placeholder (panics)", IdentKind::Fn),
+        ("i64", "signed 64-bit integer (alias of int)", IdentKind::Type),
+        // Stdlib types from prelude (std/prelude/core.nv, std/prelude/collections.nv).
+        ("Option", "Option[T] — Some(T) | None", IdentKind::Type),
+        ("Result", "Result[T, E] — Ok(T) | Err(E)", IdentKind::Type),
+        ("Vec", "Vec[T] — owned growable array ([]T is a sugar alias)", IdentKind::Type),
+        ("HashMap", "HashMap[K, V] — hash map (import std.collections.hashmap)", IdentKind::Type),
+        ("Set", "Set[T] — hash set (import std.collections.set)", IdentKind::Type),
+        ("Range", "Range — integer range a..b", IdentKind::Type),
+        ("StringBuilder", "mutable UTF-8 string builder", IdentKind::Type),
+        // Common prelude functions/values.
+        ("print", "print(s str) — write to stdout without newline", IdentKind::Fn),
+        ("println", "println(s str) — write to stdout with newline", IdentKind::Fn),
+        ("assert", "assert(cond bool, msg str) — runtime assertion", IdentKind::Fn),
+        ("panic", "panic(msg str) — abort with message", IdentKind::Fn),
+        ("todo", "todo() — panic with 'not yet implemented'", IdentKind::Fn),
         // Boolean literals.
         ("true", "boolean true", IdentKind::Const),
         ("false", "boolean false", IdentKind::Const),
@@ -821,123 +843,207 @@ impl MethodInfo {
 }
 
 /// Methods available on `int`.
+/// Source: std/runtime/defaults.nv + std/time/duration.nv (time-related not listed here).
 fn int_methods() -> Vec<MethodInfo> {
     vec![
-        MethodInfo::new("abs", "() -> int", "Absolute value"),
         MethodInfo::new("min", "(other int) -> int", "Minimum of two ints"),
         MethodInfo::new("max", "(other int) -> int", "Maximum of two ints"),
-        MethodInfo::new("clamp", "(lo int, hi int) -> int", "Clamp value in range"),
-        MethodInfo::new("to_str", "() -> str", "Convert int to string"),
-        MethodInfo::new("as_float", "() -> float", "Convert to float"),
-        MethodInfo::new("pow", "(exp int) -> int", "Integer power"),
-        MethodInfo::new("is_positive", "() -> bool", "True if > 0"),
-        MethodInfo::new("is_negative", "() -> bool", "True if < 0"),
-        MethodInfo::new("is_zero", "() -> bool", "True if == 0"),
+        MethodInfo::new("compare", "(other int) -> int", "Three-way comparison (-1/0/1)"),
+        // str.from(n) is the idiomatic int→str conversion in Nova
+        // (no direct @to_str on int); listed here for discoverability.
     ]
 }
 
-/// Methods available on `float`.
-fn float_methods() -> Vec<MethodInfo> {
+/// Methods available on `f64` (and `f32`).
+/// Source: std/runtime/math.nv + std/runtime/defaults.nv.
+fn f64_methods() -> Vec<MethodInfo> {
     vec![
-        MethodInfo::new("abs", "() -> float", "Absolute value"),
-        MethodInfo::new("floor", "() -> float", "Floor"),
-        MethodInfo::new("ceil", "() -> float", "Ceiling"),
-        MethodInfo::new("round", "() -> float", "Round to nearest"),
-        MethodInfo::new("sqrt", "() -> float", "Square root"),
-        MethodInfo::new("to_str", "() -> str", "Convert float to string"),
+        MethodInfo::new("abs", "() -> f64", "Absolute value"),
+        MethodInfo::new("floor", "() -> f64", "Floor (round toward -∞)"),
+        MethodInfo::new("ceil", "() -> f64", "Ceiling (round toward +∞)"),
+        MethodInfo::new("round", "() -> f64", "Round to nearest integer"),
+        MethodInfo::new("trunc", "() -> f64", "Truncate toward zero"),
+        MethodInfo::new("sqrt", "() -> f64", "Square root"),
+        MethodInfo::new("sin", "() -> f64", "Sine"),
+        MethodInfo::new("cos", "() -> f64", "Cosine"),
+        MethodInfo::new("tan", "() -> f64", "Tangent"),
+        MethodInfo::new("ln", "() -> f64", "Natural logarithm"),
+        MethodInfo::new("log2", "() -> f64", "Base-2 logarithm"),
+        MethodInfo::new("exp", "() -> f64", "e^self"),
         MethodInfo::new("is_nan", "() -> bool", "True if NaN"),
-        MethodInfo::new("is_infinite", "() -> bool", "True if infinite"),
-        MethodInfo::new("min", "(other float) -> float", "Minimum"),
-        MethodInfo::new("max", "(other float) -> float", "Maximum"),
+        MethodInfo::new("is_infinite", "() -> bool", "True if ±infinity"),
+        MethodInfo::new("min", "(other f64) -> f64", "Minimum"),
+        MethodInfo::new("max", "(other f64) -> f64", "Maximum"),
+        MethodInfo::new("compare", "(other f64) -> int", "Three-way comparison"),
     ]
 }
 
 /// Methods available on `str`.
+/// Source: std/runtime/string/{core,search,transform,slice,parse,chars}.nv (Plan 152).
 fn str_methods() -> Vec<MethodInfo> {
     vec![
-        MethodInfo::new("len", "() -> int", "Byte length"),
-        MethodInfo::new("is_empty", "() -> bool", "True if empty"),
-        MethodInfo::new("contains", "(sub str) -> bool", "Substring check"),
-        MethodInfo::new("starts_with", "(prefix str) -> bool", "Prefix check"),
-        MethodInfo::new("ends_with", "(suffix str) -> bool", "Suffix check"),
-        MethodInfo::new("to_upper", "() -> str", "Uppercase"),
-        MethodInfo::new("to_lower", "() -> str", "Lowercase"),
-        MethodInfo::new("trim", "() -> str", "Trim whitespace"),
-        MethodInfo::new("trim_start", "() -> str", "Trim left whitespace"),
-        MethodInfo::new("trim_end", "() -> str", "Trim right whitespace"),
-        MethodInfo::new("split", "(sep str) -> []str", "Split by separator"),
-        MethodInfo::new("split_lines", "() -> []str", "Split into lines"),
-        MethodInfo::new("replace", "(from str, to str) -> str", "Replace substring"),
-        MethodInfo::new("find", "(sub str) -> Option[int]", "Find substring index"),
-        MethodInfo::new("as_bytes", "() -> []u8", "Get bytes"),
-        MethodInfo::new("chars", "() -> []char", "Get chars"),
-        MethodInfo::new("to_int", "() -> Option[int]", "Parse as int"),
-        MethodInfo::new("to_float", "() -> Option[float]", "Parse as float"),
-        MethodInfo::new("repeat", "(n int) -> str", "Repeat n times"),
+        // core.nv
+        MethodInfo::new("byte_len", "() -> int", "Byte length (O(1)). Note: str[i] is a codepoint, not a byte."),
+        MethodInfo::new("is_empty", "() -> bool", "True if byte_len() == 0"),
+        MethodInfo::new("as_bytes", "() -> ro []u8", "Zero-copy byte view (O(1))"),
+        MethodInfo::new("as_ptr", "() -> *u8", "Raw pointer to UTF-8 data"),
+        MethodInfo::new("to_bytes", "() -> []u8", "Owned copy of bytes"),
+        MethodInfo::new("to_chars", "() -> []char", "Collect all codepoints into Vec[char] (O(n))"),
+        MethodInfo::new("equal", "(other str) -> bool", "Byte-equality"),
+        MethodInfo::new("compare", "(other str) -> int", "Lexicographic comparison"),
+        MethodInfo::new("is_char_boundary", "(idx int) -> bool", "True if byte idx is a codepoint boundary"),
+        MethodInfo::new("eq_ignore_ascii_case", "(other str) -> bool", "Case-insensitive ASCII equality"),
+        // chars.nv — lazy iterator lens
+        MethodInfo::new("as_chars", "() -> CharsIter", "Lazy codepoint iterator (call .collect() for Vec[char])"),
+        MethodInfo::new("iter", "() -> CharsIter", "Alias for as_chars()"),
+        // search.nv
+        MethodInfo::new("starts_with", "(prefix str) -> bool", "Byte-prefix check"),
+        MethodInfo::new("ends_with", "(suffix str) -> bool", "Byte-suffix check"),
+        MethodInfo::new("contains", "(needle str) -> bool", "Substring check"),
+        MethodInfo::new("find", "(needle str) -> Option[int]", "Byte offset of first occurrence"),
+        MethodInfo::new("rfind", "(needle str) -> Option[int]", "Byte offset of last occurrence"),
+        MethodInfo::new("split", "(sep str) -> ro []str", "Split by separator (byte-coordinated)"),
+        MethodInfo::new("splitn", "(n int, sep str) -> ro []str", "Split at most n times"),
+        MethodInfo::new("rsplit", "(sep str) -> ro []str", "Split from right"),
+        MethodInfo::new("split_once", "(sep str) -> Option[(str, str)]", "Split at first separator"),
+        MethodInfo::new("split_whitespace", "() -> ro []str", "Split on ASCII whitespace"),
+        MethodInfo::new("lines", "() -> ro []str", "Split on newlines"),
+        MethodInfo::new("match_indices", "(needle str) -> []int", "All byte offsets of needle"),
+        // transform.nv
+        MethodInfo::new("trim", "() -> str", "Trim ASCII whitespace from both ends"),
+        MethodInfo::new("trim_start", "() -> str", "Trim ASCII whitespace from start"),
+        MethodInfo::new("trim_end", "() -> str", "Trim ASCII whitespace from end"),
+        MethodInfo::new("trim_start_matches", "(c char) -> str", "Trim leading occurrences of char"),
+        MethodInfo::new("trim_end_matches", "(c char) -> str", "Trim trailing occurrences of char"),
+        MethodInfo::new("strip_prefix", "(prefix str) -> Option[str]", "Remove prefix if present"),
+        MethodInfo::new("strip_suffix", "(suffix str) -> Option[str]", "Remove suffix if present"),
+        MethodInfo::new("to_lower", "() -> str", "ASCII lowercase"),
+        MethodInfo::new("to_upper", "() -> str", "ASCII uppercase"),
+        MethodInfo::new("replace", "(from str, to str) -> str", "Replace all occurrences"),
+        MethodInfo::new("replacen", "(from str, to str, n int) -> str", "Replace at most n occurrences"),
+        MethodInfo::new("repeat", "(n int) -> str", "Repeat string n times"),
+        MethodInfo::new("pad_left", "(width int, fill char) -> str", "Pad to width on left"),
+        MethodInfo::new("pad_right", "(width int, fill char) -> str", "Pad to width on right"),
+        MethodInfo::new("pad_center", "(width int, fill char) -> str", "Center-pad to width"),
+        MethodInfo::new("concat", "(other str) -> str", "Concatenate (also via `+` operator)"),
+        // slice.nv — indexing with Range (byte-coordinated)
+        MethodInfo::new("get", "(r Range) -> Option[str]", "Byte-range slice (bounds-safe)"),
+        // parse.nv
+        MethodInfo::new("parse_int", "(radix int = 10) -> Option[int]", "Parse as integer"),
+        MethodInfo::new("try_parse_int", "(radix int = 10) -> Result[int, ParseIntError]", "Parse as integer (detailed error)"),
     ]
 }
 
-/// Methods available on `[]T` (Vec).
+/// Methods available on `Vec[T]` / `[]T`.
+/// Source: std/collections/vec/{core,access,mutate,sort,restructure,views,slice}.nv
+/// and std/collections/{vec_seq,vec_lazy,vec_iter}.nv (Plan 153).
+///
+/// Mutable methods (require `mut` receiver) are marked with `mut`.
 fn vec_methods() -> Vec<MethodInfo> {
     vec![
+        // Read-only access (core.nv / access.nv)
         MethodInfo::new("len", "() -> int", "Number of elements"),
-        MethodInfo::new("is_empty", "() -> bool", "True if empty"),
-        MethodInfo::new("push", "(item T) -> ()", "Append element"),
-        MethodInfo::new("pop", "() -> Option[T]", "Remove and return last"),
-        MethodInfo::new("get", "(i int) -> Option[T]", "Get by index (bounds-checked)"),
-        MethodInfo::new("first", "() -> Option[T]", "First element"),
-        MethodInfo::new("last", "() -> Option[T]", "Last element"),
-        MethodInfo::new("contains", "(item T) -> bool", "Membership test"),
-        MethodInfo::new("index_of", "(item T) -> Option[int]", "First index of item"),
-        MethodInfo::new("reverse", "() -> ()", "Reverse in place"),
-        MethodInfo::new("sort", "() -> ()", "Sort in place"),
-        MethodInfo::new("map", "(f fn(T)->U) -> []U", "Map over elements"),
-        MethodInfo::new("filter", "(f fn(T)->bool) -> []T", "Filter elements"),
-        MethodInfo::new("flat_map", "(f fn(T)->[]U) -> []U", "Flat-map"),
-        MethodInfo::new("fold", "(init A, f fn(A,T)->A) -> A", "Fold/reduce"),
-        MethodInfo::new("any", "(f fn(T)->bool) -> bool", "True if any matches"),
-        MethodInfo::new("all", "(f fn(T)->bool) -> bool", "True if all match"),
-        MethodInfo::new("count", "(f fn(T)->bool) -> int", "Count matches"),
-        MethodInfo::new("find", "(f fn(T)->bool) -> Option[T]", "First match"),
-        MethodInfo::new("extend", "(other []T) -> ()", "Extend with another vec"),
-        MethodInfo::new("clear", "() -> ()", "Remove all elements"),
-        MethodInfo::new("clone", "() -> []T", "Deep clone"),
+        MethodInfo::new("cap", "() -> int", "Current allocated capacity"),
+        MethodInfo::new("is_empty", "() -> bool", "True if len() == 0"),
+        MethodInfo::new("get", "(i int) -> Option[T]", "Bounds-safe element access"),
+        MethodInfo::new("first", "() -> Option[T]", "First element or None"),
+        MethodInfo::new("last", "() -> Option[T]", "Last element or None"),
+        MethodInfo::new("contains", "(v T) -> bool", "Linear membership check"),
+        MethodInfo::new("index_of", "(v T) -> Option[int]", "First index of value"),
+        MethodInfo::new("position", "(pred fn(T)->bool) -> Option[int]", "First index satisfying predicate"),
+        MethodInfo::new("binary_search_by", "(cmp fn(T)->int) -> Result[int,int]", "Binary search"),
+        MethodInfo::new("as_ptr", "() -> *T", "Raw read-only pointer to data"),
+        // Slices / views (views.nv / slice.nv)
+        MethodInfo::new("as_slice", "() -> Vec[T]", "Immutable slice view"),
+        MethodInfo::new("split_at", "(i int) -> (Vec[T], Vec[T])", "Split into two slices at index"),
+        MethodInfo::new("split_first", "() -> Option[(T, Vec[T])]", "Head and tail"),
+        MethodInfo::new("split_last", "() -> Option[(Vec[T], T)]", "Init and last"),
+        MethodInfo::new("first_n", "(n int) -> Vec[T]", "First n elements"),
+        MethodInfo::new("last_n", "(n int) -> Vec[T]", "Last n elements"),
+        MethodInfo::new("get", "(r Range) -> Option[Vec[T]]", "Bounds-safe range slice"),
+        // Mutation (mutate.nv) — all require `mut` receiver
+        MethodInfo::new("push", "mut (v T) -> @", "Append element (fluent, returns self)"),
+        MethodInfo::new("pop", "mut () -> Option[T]", "Remove and return last element"),
+        MethodInfo::new("insert", "mut (i int, v T) -> @", "Insert element at index"),
+        MethodInfo::new("remove", "mut (i int) -> T", "Remove and return element at index"),
+        MethodInfo::new("swap_remove", "mut (i int) -> T", "O(1) remove (replaces with last)"),
+        MethodInfo::new("clear", "mut () -> @", "Remove all elements (keep capacity)"),
+        MethodInfo::new("truncate", "mut (n int) -> @", "Shorten to n elements"),
+        MethodInfo::new("reverse", "mut () -> @", "Reverse in-place"),
+        MethodInfo::new("swap", "mut (i int, j int) -> @", "Swap two elements"),
+        MethodInfo::new("resize", "mut (n int, v T) -> @", "Resize, filling with v"),
+        MethodInfo::new("append", "mut (other S) -> @", "Append all elements from other (copies)"),
+        MethodInfo::new("extend", "mut (items S) -> @", "Extend from any Iter[T]"),
+        MethodInfo::new("retain", "mut (pred fn(T)->bool) -> @", "Keep only elements matching predicate"),
+        MethodInfo::new("fill", "mut (v T) -> @", "Fill all slots with value"),
+        MethodInfo::new("reserve", "mut (additional int) -> @", "Ensure capacity for at least N more elements"),
+        // Sort (sort.nv) — all require `mut` receiver
+        MethodInfo::new("sort", "mut [T Compare] () -> @", "Stable sort by Compare"),
+        MethodInfo::new("sort_by", "mut (cmp fn(T,T)->int) -> @", "Stable sort with custom comparator"),
+        MethodInfo::new("sort_unstable", "mut [T Compare] () -> @", "Unstable sort (faster, less memory)"),
+        MethodInfo::new("dedup", "mut () -> @", "Remove consecutive duplicates"),
+        MethodInfo::new("partition", "mut (pred fn(T)->bool) -> int", "Partition by predicate, return split index"),
+        // Restructure (restructure.nv)
+        MethodInfo::new("concat", "(other Vec[T]) -> Vec[T]", "Concatenate (new allocation, also via `+`)"),
+        MethodInfo::new("flatten", "() -> Vec[T]", "Flatten Vec[Vec[T]] into Vec[T]"),
+        MethodInfo::new("rotate_left", "mut (n int) -> @", "Cyclic shift left by n"),
+        MethodInfo::new("rotate_right", "mut (n int) -> @", "Cyclic shift right by n"),
+        MethodInfo::new("drain", "mut (range Range) -> Vec[T]", "Remove and return a range of elements"),
+        MethodInfo::new("insert_slice", "mut (i int, sl []T) -> @", "Insert slice at position"),
+        // Iterator adapters (vec_seq.nv — eager on Vec directly)
+        MethodInfo::new("map", "[U] (f fn(T)->U) -> []U", "Eager map (new Vec)"),
+        MethodInfo::new("filter", "(pred fn(T)->bool) -> []T", "Eager filter (new Vec)"),
+        MethodInfo::new("fold", "[Acc] (init Acc, f fn(Acc,T)->Acc) -> Acc", "Left fold"),
+        MethodInfo::new("any", "(pred fn(T)->bool) -> bool", "True if any element matches"),
+        MethodInfo::new("all", "(pred fn(T)->bool) -> bool", "True if all elements match"),
+        // Lazy iterator (vec_lazy.nv / vec_iter.nv — zero-alloc adapters)
+        MethodInfo::new("iter", "() -> VecIter[T]", "Lazy iterator (chain .map()/.filter()/.collect())"),
+        MethodInfo::new("lazy", "() -> BoxIter[T]", "Boxed lazy iterator"),
+        MethodInfo::new("chunks", "(n int) -> BoxIter[Vec[T]]", "Lazy chunks of size n"),
+        MethodInfo::new("windows", "(n int) -> BoxIter[Vec[T]]", "Sliding windows of size n"),
+        // Protocols
+        MethodInfo::new("equal", "(other Vec[T]) -> bool", "Element-wise equality"),
+        MethodInfo::new("as_slice", "() -> Vec[T]", "AsSlice[T] protocol implementation"),
     ]
 }
 
 /// Methods available on `bool`.
+/// Source: std/prelude/protocols.nv (Display/Debug via display()/debug()).
 fn bool_methods() -> Vec<MethodInfo> {
     vec![
-        MethodInfo::new("to_str", "() -> str", "Convert to string"),
-        MethodInfo::new("not", "() -> bool", "Logical negation"),
+        MethodInfo::new("compare", "(other bool) -> int", "Three-way comparison"),
+        // display/debug are protocol methods; str.from(b) is idiomatic bool→str
     ]
 }
 
 /// Methods available on `Option[T]`.
+/// Source: std/prelude/core.nv.
 fn option_methods() -> Vec<MethodInfo> {
     vec![
-        MethodInfo::new("is_some", "() -> bool", "True if Some"),
+        MethodInfo::new("is_some", "() -> bool", "True if Some(_)"),
         MethodInfo::new("is_none", "() -> bool", "True if None"),
-        MethodInfo::new("unwrap", "() -> T", "Unwrap or panic"),
-        MethodInfo::new("unwrap_or", "(default T) -> T", "Unwrap or default"),
-        MethodInfo::new("map", "(f fn(T)->U) -> Option[U]", "Map over value"),
-        MethodInfo::new("and_then", "(f fn(T)->Option[U]) -> Option[U]", "Flat-map"),
-        MethodInfo::new("or_else", "(f fn()->Option[T]) -> Option[T]", "Alternative"),
-        MethodInfo::new("ok_or", "(err E) -> Result[T,E]", "Convert to Result"),
+        MethodInfo::new("unwrap", "() Fail[Error] -> T", "Unwrap or panic (uses Fail effect)"),
+        MethodInfo::new("unwrap_or", "(default_v T) -> T", "Unwrap or return default"),
+        MethodInfo::new("unwrap_or_else", "(default_fn fn()->T) -> T", "Unwrap or call closure"),
+        MethodInfo::new("map", "[U] (map_fn fn(T)->U) -> Option[U]", "Map Some value"),
+        MethodInfo::new("ok_or", "[E] (err E) -> Result[T,E]", "Convert to Result"),
+        MethodInfo::new("or", "(other Option[T]) -> Option[T]", "Return self if Some, else other"),
     ]
 }
 
-/// Methods available on `Result[T,E]`.
+/// Methods available on `Result[T, E]`.
+/// Source: std/prelude/core.nv.
 fn result_methods() -> Vec<MethodInfo> {
     vec![
-        MethodInfo::new("is_ok", "() -> bool", "True if Ok"),
-        MethodInfo::new("is_err", "() -> bool", "True if Err"),
-        MethodInfo::new("unwrap", "() -> T", "Unwrap Ok or panic"),
-        MethodInfo::new("unwrap_err", "() -> E", "Unwrap Err or panic"),
-        MethodInfo::new("ok", "() -> Option[T]", "Convert Ok to Option"),
-        MethodInfo::new("err", "() -> Option[E]", "Convert Err to Option"),
-        MethodInfo::new("map", "(f fn(T)->U) -> Result[U,E]", "Map Ok value"),
-        MethodInfo::new("map_err", "(f fn(E)->F) -> Result[T,F]", "Map Err value"),
+        MethodInfo::new("is_ok", "() -> bool", "True if Ok(_)"),
+        MethodInfo::new("is_err", "() -> bool", "True if Err(_)"),
+        MethodInfo::new("unwrap", "() Fail[E] -> T", "Unwrap Ok or propagate Err (uses Fail effect)"),
+        MethodInfo::new("unwrap_or", "(default_v T) -> T", "Unwrap Ok or return default"),
+        MethodInfo::new("unwrap_or_else", "(default_fn fn(E)->T) -> T", "Unwrap Ok or call closure with Err"),
+        MethodInfo::new("ok", "() -> Option[T]", "Convert Ok to Some, Err to None"),
+        MethodInfo::new("err", "() -> Option[E]", "Convert Err to Some, Ok to None"),
+        MethodInfo::new("map", "[U] (map_fn fn(T)->U) -> Result[U,E]", "Map Ok value"),
+        MethodInfo::new("map_err", "[F] (err_fn fn(E)->F) -> Result[T,F]", "Map Err value"),
     ]
 }
 
@@ -945,11 +1051,12 @@ fn result_methods() -> Vec<MethodInfo> {
 ///
 /// V1: text-pattern heuristic. Returns the type name or None.
 fn infer_type_of_expr(obj_text: &str, src: &str) -> Option<String> {
-    // Check let/mut bindings to find the type annotation.
+    // Check ro/mut bindings to find the type annotation.
     for line in src.lines() {
         let t = line.trim();
-        // Pattern: `let name TYPE = ...` or `let name: TYPE = ...`
-        for prefix in &["let ", "mut ", "ro "] {
+        // Pattern: `ro name TYPE = ...` / `mut name TYPE = ...`
+        // Also tolerate old `let` that the user might still be typing.
+        for prefix in &["ro ", "mut ", "let "] {
             if let Some(rest) = t.strip_prefix(prefix) {
                 let name = first_ident(rest);
                 if name == obj_text {
@@ -959,15 +1066,16 @@ fn infer_type_of_expr(obj_text: &str, src: &str) -> Option<String> {
                 }
             }
         }
-        // Pattern: fn param `name Type,`
+        // Pattern: fn param `name Type,` — possibly prefixed with ro/mut.
         if t.contains('(') && t.contains(obj_text) {
-            // Search within parameter list.
             if let Some(paren_start) = t.find('(') {
                 let params = &t[paren_start + 1..];
                 for param in params.split(',') {
-                    let pname = first_ident(param.trim());
+                    let p = param.trim();
+                    let p = p.strip_prefix("ro ").or_else(|| p.strip_prefix("mut ")).unwrap_or(p);
+                    let pname = first_ident(p);
                     if pname == obj_text {
-                        if let Some(ty) = extract_type_after_name(param.trim(), &pname) {
+                        if let Some(ty) = extract_type_after_name(p, &pname) {
                             return Some(ty);
                         }
                     }
@@ -976,29 +1084,34 @@ fn infer_type_of_expr(obj_text: &str, src: &str) -> Option<String> {
         }
     }
 
-    // Heuristic: if obj_text looks like a vec/array (has `_vec`, `_list`, `items`, `elems`),
-    // assume `[]T`.
+    // Naming-convention heuristics.
     let lower = obj_text.to_lowercase();
-    if lower.contains("vec") || lower.contains("list") || lower.ends_with('s')
-        || lower.contains("items") || lower.contains("elems")
-    {
-        // Don't over-eagerly match short names like "xs" though.
-        if lower.ends_with("_vec") || lower.ends_with("_list") || lower == "items" || lower == "elems" {
-            return Some("Vec".to_string());
-        }
+    // Vec / slice heuristics.
+    if lower.ends_with("_vec") || lower.ends_with("_list") || lower == "items" || lower == "elems" {
+        return Some("Vec".to_string());
     }
-    // Heuristic: common naming conventions.
-    if lower.contains("name") || lower.contains("msg") || lower.contains("text") || lower.contains("str") || lower.contains("label") {
+    // str heuristics.
+    if lower.contains("name") || lower.contains("msg") || lower.contains("text")
+        || lower.contains("label") || lower.ends_with("_str") || lower == "s"
+    {
         return Some("str".to_string());
     }
-    if lower.contains("count") || lower.contains("index") || lower.contains("len") || lower.contains("size") {
+    // int heuristics.
+    if lower.contains("count") || lower.contains("index") || lower.contains("len")
+        || lower.contains("size") || lower.contains("idx") || lower == "n" || lower == "i"
+    {
         return Some("int".to_string());
     }
-    if lower == "ok" || lower == "result" || lower == "res" {
-        return Some("Result".to_string());
+    // f64 heuristics.
+    if lower.contains("ratio") || lower.contains("factor") || lower.ends_with("_f64") {
+        return Some("f64".to_string());
     }
+    // Option / Result heuristics.
     if lower == "opt" || lower == "maybe" {
         return Some("Option".to_string());
+    }
+    if lower == "result" || lower == "res" {
+        return Some("Result".to_string());
     }
 
     None
@@ -1007,10 +1120,14 @@ fn infer_type_of_expr(obj_text: &str, src: &str) -> Option<String> {
 /// Get methods for a given type name.
 pub fn methods_for_type(ty: &str) -> Vec<MethodInfo> {
     match ty {
-        "int" | "i32" | "i64" | "u8" | "u32" | "u64" | "usize" => int_methods(),
-        "float" | "f32" | "f64" => float_methods(),
-        "str" | "String" => str_methods(),
+        // int family — only `int` is the canonical Nova integer type.
+        // i32/i64/u8/u32/u64 share the same method set (min/max/compare).
+        "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" => int_methods(),
+        // float family — f64 is the canonical Nova float type (float literal infers f64).
+        "f64" | "f32" => f64_methods(),
+        "str" => str_methods(),
         "bool" => bool_methods(),
+        // Vec[T] and []T sugar alias.
         t if t.starts_with("Vec") || t.starts_with("[]") => vec_methods(),
         "Option" => option_methods(),
         "Result" => result_methods(),
@@ -1037,9 +1154,10 @@ pub fn method_items(src: &str, offset: usize) -> Vec<CompletionItem> {
     let ty = infer_type_of_expr(&obj_text, src).unwrap_or_default();
 
     let methods = if ty.is_empty() {
-        // Unknown type: return all common methods.
+        // Unknown type: return union of the most common method sets.
         let mut all = vec![];
         all.extend(int_methods());
+        all.extend(f64_methods());
         all.extend(str_methods());
         all.extend(vec_methods());
         all
@@ -1279,16 +1397,19 @@ mod tests {
         assert!(has_label(&items, "module"), "module missing");
     }
 
-    /// kw_pos2: fn-body keywords include `let`, `if`, `for`, `match`.
+    /// kw_pos2: fn-body keywords include `ro`, `mut`, `if`, `for`, `match`.
+    /// Note: `let` was removed in Nova Plan 114 — it is NOT in fn-body keywords.
     #[test]
     fn kw_pos2_fn_body_keywords() {
         let ctx = CompletionContext::FnBody;
         let items = keyword_items(&ctx);
-        assert!(has_label(&items, "let"), "let missing from fn-body keywords");
+        assert!(has_label(&items, "ro"), "ro missing from fn-body keywords");
+        assert!(has_label(&items, "mut"), "mut missing from fn-body keywords");
         assert!(has_label(&items, "if"), "if missing");
         assert!(has_label(&items, "for"), "for missing");
         assert!(has_label(&items, "match"), "match missing");
         assert!(has_label(&items, "return"), "return missing");
+        assert!(!has_label(&items, "let"), "let must NOT appear — removed in Plan 114");
     }
 
     /// kw_pos3: type-body keywords include `fn`, `const`, `pub`.
@@ -1359,9 +1480,9 @@ module test.m
 fn add(a int, b int) -> int => a + b
 
 fn main() -> () {
-    let x int = 5
-    mut y float = 3.14
-    let result int = add(x, 1)
+    ro x int = 5
+    mut y f64 = 3.14
+    ro result int = add(x, 1)
 }
 "#;
 
@@ -1414,14 +1535,15 @@ fn main() -> () {
     /// id_pos5: completion_for returns CompletionItems with labels matching idents.
     #[test]
     fn id_pos5_completion_for_fn_body() {
-        let src = "module t\nfn f() -> () {\n    let myvar int = 1\n    ";
+        let src = "module t\nfn f() -> () {\n    ro myvar int = 1\n    ";
         let offset = src.len();
         let items = completion_for(src, offset);
         assert!(
             has_label(&items, "myvar"),
             "myvar should appear in completion"
         );
-        assert!(has_label(&items, "let"), "let keyword should appear");
+        assert!(has_label(&items, "ro"), "ro keyword should appear");
+        assert!(!has_label(&items, "let"), "let must NOT appear — removed in Plan 114");
     }
 
     /// id_neg1: empty source returns prelude + no panic.
@@ -1447,21 +1569,27 @@ fn main() -> () {
     /// md_pos1: `x.` with int type yields int methods.
     #[test]
     fn md_pos1_int_methods() {
-        let src = "module t\nfn f() -> () {\n    let x int = 5\n    x.";
+        let src = "module t\nfn f() -> () {\n    ro x int = 5\n    x.";
         let items = method_items(src, src.len());
-        assert!(has_label(&items, "abs"), "abs should be in int methods");
-        assert!(has_label(&items, "to_str"), "to_str should be in int methods");
         assert!(has_label(&items, "min"), "min should be in int methods");
+        assert!(has_label(&items, "max"), "max should be in int methods");
+        assert!(has_label(&items, "compare"), "compare should be in int methods");
     }
 
     /// md_pos2: `s.` with str type yields str methods.
     #[test]
     fn md_pos2_str_methods() {
-        let src = "module t\nfn f() -> () {\n    let s str = \"\"\n    s.";
+        let src = "module t\nfn f() -> () {\n    ro s str = \"\"\n    s.";
         let items = method_items(src, src.len());
-        assert!(has_label(&items, "len"), "len in str methods");
+        assert!(has_label(&items, "byte_len"), "byte_len in str methods");
         assert!(has_label(&items, "contains"), "contains in str methods");
         assert!(has_label(&items, "to_upper"), "to_upper in str methods");
+        assert!(has_label(&items, "as_bytes"), "as_bytes in str methods");
+        assert!(has_label(&items, "as_chars"), "as_chars in str methods");
+        assert!(has_label(&items, "lines"), "lines in str methods");
+        assert!(!has_label(&items, "len"), "len removed — use byte_len()");
+        assert!(!has_label(&items, "chars"), "chars removed — use as_chars()");
+        assert!(!has_label(&items, "split_lines"), "split_lines removed — use lines()");
     }
 
     /// md_pos3: `v.` with Vec type yields vec methods.
@@ -1471,13 +1599,17 @@ fn main() -> () {
         let items = method_items(src, src.len());
         assert!(has_label(&items, "len"), "len in vec methods");
         assert!(has_label(&items, "push"), "push in vec methods");
+        assert!(has_label(&items, "iter"), "iter in vec methods");
         assert!(has_label(&items, "map"), "map in vec methods");
+        assert!(has_label(&items, "append"), "append in vec methods");
+        assert!(!has_label(&items, "extend") || has_label(&items, "extend"),
+            "extend exists (via Iter[T]) — this assertion is informational");
     }
 
     /// md_pos4: method items have METHOD kind.
     #[test]
     fn md_pos4_method_kind() {
-        let src = "module t\nfn f() -> () {\n    let n int = 0\n    n.";
+        let src = "module t\nfn f() -> () {\n    ro n int = 0\n    n.";
         let items = method_items(src, src.len());
         for item in &items {
             assert_eq!(item.kind, Some(CompletionItemKind::METHOD));
@@ -1487,7 +1619,7 @@ fn main() -> () {
     /// md_pos5: method items have non-empty detail.
     #[test]
     fn md_pos5_method_detail() {
-        let src = "module t\nfn f() -> () {\n    let s str = \"\"\n    s.";
+        let src = "module t\nfn f() -> () {\n    ro s str = \"\"\n    s.";
         let items = method_items(src, src.len());
         assert!(!items.is_empty(), "str methods expected");
         for item in &items {
@@ -1498,7 +1630,7 @@ fn main() -> () {
     /// md_pos6: detect_context returns MethodDot for `x.`.
     #[test]
     fn md_pos6_context_detection_method_dot() {
-        let src = "module t\nfn f() -> () {\n    let x int = 5\n    x.";
+        let src = "module t\nfn f() -> () {\n    ro x int = 5\n    x.";
         let ctx = detect_context(src, src.len());
         assert!(
             matches!(ctx, Some(CompletionContext::MethodDot { .. })),
@@ -1510,7 +1642,7 @@ fn main() -> () {
     /// md_pos7: user-defined receiver method appears in completions.
     #[test]
     fn md_pos7_user_defined_method() {
-        let src = "module t\nfn Foo @greet(self) -> str => \"hello\"\nfn f() -> () {\n    let x Foo = Foo {}\n    x.";
+        let src = "module t\nfn Foo @greet() -> str => \"hello\"\nfn f() -> () {\n    ro x Foo = Foo {}\n    x.";
         let items = method_items(src, src.len());
         assert!(
             has_label(&items, "greet"),
@@ -1518,19 +1650,21 @@ fn main() -> () {
         );
     }
 
-    /// md_pos8: float type yields float methods.
+    /// md_pos8: f64 type yields f64 methods (sqrt, floor, abs, ...).
     #[test]
-    fn md_pos8_float_methods() {
-        let src = "module t\nfn f() -> () {\n    let v float = 1.0\n    v.";
+    fn md_pos8_f64_methods() {
+        let src = "module t\nfn f() -> () {\n    ro v f64 = 1.0\n    v.";
         let items = method_items(src, src.len());
-        assert!(has_label(&items, "sqrt"), "sqrt in float methods");
-        assert!(has_label(&items, "floor"), "floor in float methods");
+        assert!(has_label(&items, "sqrt"), "sqrt in f64 methods");
+        assert!(has_label(&items, "floor"), "floor in f64 methods");
+        assert!(has_label(&items, "abs"), "abs in f64 methods");
+        assert!(has_label(&items, "is_nan"), "is_nan in f64 methods");
     }
 
     /// md_neg1: no dot → method_items returns empty.
     #[test]
     fn md_neg1_no_dot_returns_empty() {
-        let src = "module t\nfn f() -> () {\n    let x int = 5\n    x";
+        let src = "module t\nfn f() -> () {\n    ro x int = 5\n    x";
         let items = method_items(src, src.len());
         assert!(items.is_empty(), "no dot should return empty method completions");
     }
@@ -1546,7 +1680,7 @@ fn main() -> () {
     /// md_edge1: cursor in string → no completions.
     #[test]
     fn md_edge1_cursor_in_string_no_completions() {
-        let src = "module t\nfn f() -> () {\n    let s str = \"x.";
+        let src = "module t\nfn f() -> () {\n    ro s str = \"x.";
         let items = completion_for(src, src.len());
         assert!(items.is_empty(), "cursor in string should yield no completions");
     }
@@ -1554,7 +1688,7 @@ fn main() -> () {
     /// md_edge2: number before dot (3.) is NOT a method call.
     #[test]
     fn md_edge2_number_dot_not_method_call() {
-        let src = "module t\nfn f() -> () {\n    let x = 3.";
+        let src = "module t\nfn f() -> () {\n    ro x = 3.";
         // If we put cursor right after "3.", context should be FnBody or MethodDot
         // but the detect_method_dot heuristic should NOT return numeric as obj_text.
         let ctx = detect_context(src, src.len());
@@ -1631,7 +1765,7 @@ fn main() -> () {
     /// rank_pos1: local binding sorts before module fn.
     #[test]
     fn rank_pos1_local_before_module() {
-        let src = "module t\nfn myFn() -> () {}\nfn f() -> () {\n    let myVar int = 1\n    m";
+        let src = "module t\nfn myFn() -> () {}\nfn f() -> () {\n    ro myVar int = 1\n    m";
         let items = completion_for(src, src.len());
         let myvar_sort = items.iter()
             .find(|i| i.label == "myVar")
@@ -1673,19 +1807,20 @@ fn main() -> () {
     /// rank_pos3: keyword sorts after identifier.
     #[test]
     fn rank_pos3_ident_before_keyword() {
-        let src = "module t\nfn f() -> () {\n    let mylocal int = 1\n    ";
+        let src = "module t\nfn f() -> () {\n    ro mylocal int = 1\n    ";
         let items = completion_for(src, src.len());
         let local_sort = items.iter()
             .find(|i| i.label == "mylocal")
             .and_then(|i| i.sort_text.as_deref())
             .unwrap_or("zz");
+        // `ro` is the fn-body binding keyword (replaces removed `let`)
         let kw_sort = items.iter()
-            .find(|i| i.label == "let")
+            .find(|i| i.label == "ro")
             .and_then(|i| i.sort_text.as_deref())
             .unwrap_or("aa");
         assert!(
             local_sort < kw_sort,
-            "local mylocal ({}) should sort before keyword let ({})",
+            "local mylocal ({}) should sort before keyword ro ({})",
             local_sort,
             kw_sort
         );
@@ -1733,7 +1868,7 @@ fn main() -> () {
     /// is_in_string test.
     #[test]
     fn ctx_string_detection() {
-        let src = r#"let s str = "hello"#;
+        let src = r#"ro s str = "hello"#;
         assert!(is_in_string(src, src.len()), "cursor inside string literal");
         assert!(!is_in_string(src, 5), "cursor before string is not in string");
     }

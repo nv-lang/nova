@@ -1,0 +1,26 @@
+// Plan 104.9 pos: int methods that nova-lsp completion now surfaces accurately.
+// Verifies min/max/compare — abs/to_str no longer appear (removed in Nova).
+module plan104_9.pos_int_methods_accurate
+
+test "int.min returns smaller value" {
+    ro a = 5
+    ro b = 3
+    assert(a.min(b) == 3)
+    assert(b.min(a) == 3)
+}
+
+test "int.max returns larger value" {
+    ro a = 5
+    ro b = 3
+    assert(a.max(b) == 5)
+    assert(b.max(a) == 5)
+}
+
+test "int.compare returns ordering" {
+    ro a = 5
+    ro b = 3
+    ro c = 5
+    assert(a.compare(b) > 0)
+    assert(b.compare(a) < 0)
+    assert(a.compare(c) == 0)
+}
