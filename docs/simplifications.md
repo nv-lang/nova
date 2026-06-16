@@ -37050,3 +37050,10 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 - [2026-06-16] Plan 153.2 Phase B bug investigation (zip/flat_map/requires-CC-FAIL) — three compiler bugs confirmed open, no fixes landed. (1) [M-153.2-tuple-elem-adapter] (zip): zip yields BoxIter[(A,B)]; two failures: collect() → E_PRIMITIVE_NO_PROTOCOL_METHOD (tuple lacks @next dispatch); count() → cannot infer type arg B. Fix: infer_expr_c_type must propagate generic-tuple type through BoxIter. (2) [M-153.2-flat-map-inner-option]: flat_map CODEGEN-FAIL "cannot infer method-level type argument U for BoxIter____nova_int.flat_map" — U not backpropagated from closure return type BoxIter[U]. (3) [M-153.2-requires-cc-fail]: requires contract on value-record-returning method emits `return 0` instead of zero-init struct → CC-FAIL from C compiler. Workaround committed 78e75f5b (test block avoids fn main form). Markers updated in backlog-followups.md. No tests written (all CC-FAIL). Regression check: plan153_2 12/1 (flat_map_basic pre-existing), plan153_0 4/0, basics 8/0, generics 7/0, plan131 26/2 (vec_mutate_pos pre-existing) — 0 new regressions.
 
 - [2026-06-16] README.md статусы планов — административный коммит f5179299. Синхронизация ~40 планов с реальным состоянием. Никаких упрощений и никакой новой функциональности — pure docs update.
+
+## Plan 118.6 — Safe &x model (2026-06-16)
+- &x safe для всех типов: escape analysis + heap-promote при escape
+- unsafe { &x } = сырой стек-указатель для FFI
+- addr_of / addr_of_mut удалены → E_ADDR_OF_REMOVED с fixit &x
+- Escape analysis расширен на примитивы (ранее только value-records)
+- Heap-promote — compile-time статическое решение в точке объявления

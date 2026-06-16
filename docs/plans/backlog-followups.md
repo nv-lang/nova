@@ -558,3 +558,5 @@
 - ~~**`[M-91.13-real-dns-integration-test]`**~~ ✅ **CLOSED 2026-06-16** — `net_v2_dns_real_slow.nv` добавлен (`_slow` suffix, `NOVA_SLOW_TESTS=1` opt-in); `assert(r.is_ok())` с реальным `localhost` resolver.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
+
+[M-118.6-tuple-field-escape] tuple field chain-root tracking — &tuple.N escape analysis.
