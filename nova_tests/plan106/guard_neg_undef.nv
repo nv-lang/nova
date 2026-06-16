@@ -1,0 +1,15 @@
+// Plan 106: guard с undefined identifier — должен давать ошибку.
+// EXPECT_COMPILE_ERROR undefined identifier
+
+module plan106.guard_neg_undef
+
+fn lookup(n int) -> Option {
+    if n > 0 { return Some(n) }
+    None
+}
+
+test "guard references undefined variable y" {
+    if Some(x) = lookup(5) && y > 0 {
+        ()
+    }
+}

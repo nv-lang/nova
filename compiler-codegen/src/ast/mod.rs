@@ -2153,9 +2153,12 @@ pub enum ExprKind {
         else_: Option<ElseBranch>,
     },
     /// `if let pattern = expr { ... }` — D34
+    /// Optional guard: `if Some(x) = expr && guard_expr { ... }`
     IfLet {
         pattern: Pattern,
         scrutinee: Box<Expr>,
+        /// Guard expression after `&&`; bindings from `pattern` are in scope.
+        guard: Option<Box<Expr>>,
         then: Block,
         else_: Option<ElseBranch>,
     },
@@ -2198,9 +2201,12 @@ pub enum ExprKind {
         decreases: Option<Box<Expr>>,
     },
     /// `while let pattern = expr { ... }` — D34
+    /// Optional guard: `while Some(x) = expr && guard_expr { ... }`
     WhileLet {
         pattern: Pattern,
         scrutinee: Box<Expr>,
+        /// Guard expression after `&&`; bindings from `pattern` are in scope.
+        guard: Option<Box<Expr>>,
         body: Block,
         /// Plan 33.4 D.0.3: loop invariants.
         invariants: Vec<Expr>,

@@ -1,0 +1,4 @@
+[package]
+name = "plan106"
+version = "0.1.0"
+nova-version = "0.5"

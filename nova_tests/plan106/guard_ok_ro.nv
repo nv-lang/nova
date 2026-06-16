@@ -1,0 +1,42 @@
+// Plan 106: guard через `&&` в if/while pattern-binding с user-defined types.
+
+module plan106.guard_ok_ro
+
+type User {
+    id int,
+    active bool,
+}
+
+fn make_user(id int, active bool) -> User => { id, active }
+
+fn find(id int) -> Option[User] {
+    if id > 0 { return Some(make_user(id, id != 99)) }
+    None
+}
+
+test "if Some(user) = find(id) && user.active — active user" {
+    ro result = if Some(user) = find(1) && user.active {
+        user.id
+    } else {
+        -1
+    }
+    assert(result == 1)
+}
+
+test "if Some(user) = find(id) && user.active — inactive user (id=99)" {
+    ro result = if Some(user) = find(99) && user.active {
+        user.id
+    } else {
+        -1
+    }
+    assert(result == -1)
+}
+
+test "if Some(user) = find(0) — None case with guard" {
+    ro result = if Some(user) = find(0) && user.active {
+        user.id
+    } else {
+        -1
+    }
+    assert(result == -1)
+}

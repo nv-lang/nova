@@ -21289,9 +21289,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     Ok(format!("({})[{}]", o, i))
                 }
             }
-            ExprKind::IfLet { pattern, scrutinee, then, else_ } => {
-                // Desugar: if let Pat = expr { then } else { else_ }
-                // → evaluate scrutinee, check pattern cond, bind, run then or else_
+            ExprKind::IfLet { pattern, scrutinee, guard, then, else_ } => {
+                // Desugar: if let Pat = expr [&& guard] { then } else { else_ }
+                // → evaluate scrutinee, check pattern cond, bind, [check guard,] run then or else_
                 let scr = self.emit_expr(scrutinee)?;
                 let scr_ty = self.infer_expr_c_type(scrutinee);
                 let scr_tmp = self.fresh_tmp_named("scr");
@@ -21324,70 +21324,146 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let result_tmp = self.fresh_tmp_named("if_let");
                 self.line(&format!("{} {};", result_ty, result_tmp));
 
-                let cond = self.pattern_cond(pattern, &scr_tmp)?;
-                self.line(&format!("if ({}) {{", cond));
-                self.indent += 1;
-                self.pattern_bind_typed(pattern, &scr_tmp)?;
-                let then_block_id = self.enter_defer_scope(then, false);
-                for stmt in &then.stmts { self.emit_stmt(stmt)?; }
-                if let Some(trailing) = &then.trailing {
-                    // Plan 125: divergent-trailing → side-effect only.
-                    if self.expr_diverges_125(trailing) {
-                        let v = self.emit_expr(trailing)?;
-                        self.line(&format!("(void)({});", v));
-                    } else {
-                        let v = self.emit_expr(trailing)?;
-                        self.line(&format!("{} = {};", result_tmp, v));
+                // Plan 106: guard codegen.
+                // Without guard: standard if/else on pattern match.
+                // With guard: when guard fails, fall through to else branch.
+                // Strategy with guard:
+                //   if (pattern_cond) {
+                //     bind_vars;
+                //     if (guard) { then_body; goto _done_LABEL; }
+                //   }
+                //   // pattern failed OR guard failed → else
+                //   else_body;
+                //   _done_LABEL:;
+                if let Some(guard_expr) = guard {
+                    let done_label = self.fresh_tmp_named("iflet_done");
+
+                    let cond = self.pattern_cond(pattern, &scr_tmp)?;
+                    self.line(&format!("if ({}) {{", cond));
+                    self.indent += 1;
+                    // Bind pattern vars BEFORE inferring guard type so that
+                    // member accesses like `user.active` resolve correctly.
+                    self.pattern_bind_typed(pattern, &scr_tmp)?;
+                    // Plan 106: bool-check guard after pattern binds are in var_types.
+                    let guard_ty = self.infer_expr_c_type(guard_expr);
+                    self.check_bool_condition_at(&guard_ty, "if-let guard", guard_expr.span)?;
+                    let guard_c = self.emit_expr(guard_expr)?;
+                    self.line(&format!("if ({}) {{", guard_c));
+                    self.indent += 1;
+                    // then body (guard passed)
+                    let then_block_id = self.enter_defer_scope(then, false);
+                    for stmt in &then.stmts { self.emit_stmt(stmt)?; }
+                    if let Some(trailing) = &then.trailing {
+                        if self.expr_diverges_125(trailing) {
+                            let v = self.emit_expr(trailing)?;
+                            self.line(&format!("(void)({});", v));
+                        } else {
+                            let v = self.emit_expr(trailing)?;
+                            self.line(&format!("{} = {};", result_tmp, v));
+                        }
                     }
-                }
-                self.leave_defer_scope(then_block_id);
-                self.indent -= 1;
-                match else_ {
-                    Some(ElseBranch::Block(b)) => {
-                        self.line("} else {");
-                        self.indent += 1;
-                        // Plan 20 Ф.4/Ф.8: else-branch body — defer scope.
-                        // Trailing value присваивается ПОСЛЕ defer cleanup
-                        // (defer body не должен влиять на результат branch).
-                        let block_id = self.enter_defer_scope(b, false);
-                        for stmt in &b.stmts { self.emit_stmt(stmt)?; }
-                        if let Some(trailing) = &b.trailing {
-                            // Plan 125: same divergent-trailing guard.
-                            if self.expr_diverges_125(trailing) {
-                                let v = self.emit_expr(trailing)?;
+                    self.leave_defer_scope(then_block_id);
+                    self.line(&format!("goto {};", done_label));
+                    self.indent -= 1;
+                    self.line("}"); // close guard if
+                    self.indent -= 1;
+                    self.line("}"); // close pattern if
+
+                    // else branch: runs when pattern fails OR guard fails
+                    match else_ {
+                        Some(ElseBranch::Block(b)) => {
+                            let block_id = self.enter_defer_scope(b, false);
+                            for stmt in &b.stmts { self.emit_stmt(stmt)?; }
+                            if let Some(trailing) = &b.trailing {
+                                if self.expr_diverges_125(trailing) {
+                                    let v = self.emit_expr(trailing)?;
+                                    self.line(&format!("(void)({});", v));
+                                } else {
+                                    let v = self.emit_expr(trailing)?;
+                                    self.line(&format!("{} = {};", result_tmp, v));
+                                }
+                            }
+                            self.leave_defer_scope(block_id);
+                        }
+                        Some(ElseBranch::If(e)) => {
+                            if self.expr_diverges_125(e) {
+                                let v = self.emit_expr(e)?;
                                 self.line(&format!("(void)({});", v));
                             } else {
-                                let v = self.emit_expr(trailing)?;
+                                let v = self.emit_expr(e)?;
                                 self.line(&format!("{} = {};", result_tmp, v));
                             }
                         }
-                        self.leave_defer_scope(block_id);
-                        self.indent -= 1;
-                        self.line("}");
+                        None => {}
                     }
-                    Some(ElseBranch::If(e)) => {
-                        self.line("} else {");
-                        self.indent += 1;
-                        // Plan 125: divergent else-if direct expression.
-                        if self.expr_diverges_125(e) {
-                            let v = self.emit_expr(e)?;
+                    self.line(&format!("{}:;", done_label));
+                } else {
+                    // No guard: standard if/else on pattern match.
+                    let cond = self.pattern_cond(pattern, &scr_tmp)?;
+                    self.line(&format!("if ({}) {{", cond));
+                    self.indent += 1;
+                    self.pattern_bind_typed(pattern, &scr_tmp)?;
+                    let then_block_id = self.enter_defer_scope(then, false);
+                    for stmt in &then.stmts { self.emit_stmt(stmt)?; }
+                    if let Some(trailing) = &then.trailing {
+                        // Plan 125: divergent-trailing → side-effect only.
+                        if self.expr_diverges_125(trailing) {
+                            let v = self.emit_expr(trailing)?;
                             self.line(&format!("(void)({});", v));
                         } else {
-                            let v = self.emit_expr(e)?;
+                            let v = self.emit_expr(trailing)?;
                             self.line(&format!("{} = {};", result_tmp, v));
                         }
-                        self.indent -= 1;
-                        self.line("}");
                     }
-                    None => {
-                        self.line("}");
+                    self.leave_defer_scope(then_block_id);
+                    self.indent -= 1;
+                    match else_ {
+                        Some(ElseBranch::Block(b)) => {
+                            self.line("} else {");
+                            self.indent += 1;
+                            // Plan 20 Ф.4/Ф.8: else-branch body — defer scope.
+                            // Trailing value присваивается ПОСЛЕ defer cleanup
+                            // (defer body не должен влиять на результат branch).
+                            let block_id = self.enter_defer_scope(b, false);
+                            for stmt in &b.stmts { self.emit_stmt(stmt)?; }
+                            if let Some(trailing) = &b.trailing {
+                                // Plan 125: same divergent-trailing guard.
+                                if self.expr_diverges_125(trailing) {
+                                    let v = self.emit_expr(trailing)?;
+                                    self.line(&format!("(void)({});", v));
+                                } else {
+                                    let v = self.emit_expr(trailing)?;
+                                    self.line(&format!("{} = {};", result_tmp, v));
+                                }
+                            }
+                            self.leave_defer_scope(block_id);
+                            self.indent -= 1;
+                            self.line("}");
+                        }
+                        Some(ElseBranch::If(e)) => {
+                            self.line("} else {");
+                            self.indent += 1;
+                            // Plan 125: divergent else-if direct expression.
+                            if self.expr_diverges_125(e) {
+                                let v = self.emit_expr(e)?;
+                                self.line(&format!("(void)({});", v));
+                            } else {
+                                let v = self.emit_expr(e)?;
+                                self.line(&format!("{} = {};", result_tmp, v));
+                            }
+                            self.indent -= 1;
+                            self.line("}");
+                        }
+                        None => {
+                            self.line("}");
+                        }
                     }
                 }
                 Ok(result_tmp)
             }
-            ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
-                // while let Pat = expr { body }
-                // → loop: evaluate scrutinee, if pattern matches bind and run body, else break
+            ExprKind::WhileLet { pattern, scrutinee, guard, body, .. } => {
+                // while let Pat = expr [&& guard] { body }
+                // → loop: evaluate scrutinee, if pattern matches bind [and check guard,] run body, else break
                 let loop_tmp = self.fresh_tmp_named("while_let");
                 self.line(&format!("nova_unit {};", loop_tmp));
                 self.line("while (1) {");
@@ -21403,6 +21479,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let cond = self.pattern_cond(pattern, &scr_tmp)?;
                 self.line(&format!("if (!({cond})) break;"));
                 self.pattern_bind_typed(pattern, &scr_tmp)?;
+                // Plan 106: guard — evaluated with pattern bindings in scope.
+                // When guard fails, break the loop (pattern matched but guard didn't).
+                if let Some(guard_expr) = guard {
+                    let guard_ty = self.infer_expr_c_type(guard_expr);
+                    self.check_bool_condition_at(&guard_ty, "while-let guard", guard_expr.span)?;
+                    let guard_c = self.emit_expr(guard_expr)?;
+                    self.line(&format!("if (!({guard_c})) break;"));
+                }
                 // Plan 20 Ф.4/Ф.8: defer внутри while-let body на каждой итерации.
                 self.emit_loop_body_inline(body)?;
                 self.indent -= 1;
@@ -31732,7 +31816,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 Self::collect_truly_free_idents_block(body, bound, out);
                 for n in added { bound.remove(&n); }
             }
-            ExprKind::WhileLet { pattern, scrutinee, body, .. } => {
+            ExprKind::WhileLet { pattern, scrutinee, guard, body, .. } => {
                 // scrutinee evaluated before the pattern binds.
                 Self::collect_truly_free_idents(scrutinee, bound, out);
                 let mut pat_binds: HashSet<String> = HashSet::new();
@@ -31740,10 +31824,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let added: Vec<String> = pat_binds.iter()
                     .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
                     .collect();
+                // guard sees the pattern bindings.
+                if let Some(g) = guard {
+                    Self::collect_truly_free_idents(g, bound, out);
+                }
                 Self::collect_truly_free_idents_block(body, bound, out);
                 for n in added { bound.remove(&n); }
             }
-            ExprKind::IfLet { pattern, scrutinee, then, else_ } => {
+            ExprKind::IfLet { pattern, scrutinee, guard, then, else_ } => {
                 // scrutinee evaluated before the pattern binds.
                 Self::collect_truly_free_idents(scrutinee, bound, out);
                 let mut pat_binds: HashSet<String> = HashSet::new();
@@ -31751,6 +31839,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let added: Vec<String> = pat_binds.iter()
                     .filter_map(|n| if bound.insert(n.clone()) { Some(n.clone()) } else { None })
                     .collect();
+                // guard sees the pattern bindings.
+                if let Some(g) = guard {
+                    Self::collect_truly_free_idents(g, bound, out);
+                }
                 Self::collect_truly_free_idents_block(then, bound, out);
                 for n in added { bound.remove(&n); }
                 // else branch does NOT see the pattern bindings.
