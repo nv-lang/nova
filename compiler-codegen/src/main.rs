@@ -1041,7 +1041,8 @@ fn cmd_test_build(
         // контракт-проверки на codegen (legacy zero-cost). Default enforce.
         contracts_off: contracts == "off",
     };
-    let status = test_runner::run_one(&opts);
+    let mut _split: (u128, u128) = (0, 0);
+    let status = test_runner::run_one(&opts, &mut _split);
     let label = status.label();
     let detail = status.detail();
     if detail.is_empty() {
