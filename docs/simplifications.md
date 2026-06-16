@@ -32,11 +32,15 @@
 
 - **Где** — `std/runtime/string/core.nv`, `std/net/{effect,ffi,dns,tcp,udp,mock}.nv`, `compiler-codegen/nova_rt/net.{h,c}`, `compiler-codegen/src/codegen/emit_c.rs`.
 - **Что сделано** — (1) `str @as_ptr() -> *u8`: Nova body `=> @ptr`, используется в DNS handler для bytes-FFI. D294. (2) `DnsNet` effect; `real_dns_net()` реализован через `uv_getaddrinfo` + park/wake; TLS `_net_dns_addrs[]`. `SocketAddr.lookup()` wrapper обходит vtable type-erasure. D295. (3) `TcpListener`/`TcpStream`/`UdpSocket` стали `consume value` (было просто `value`). (4) Codegen fix: boxing `NovaValue_*` в `nova_int` slot при `push`. Тесты: 21/0 PASS.
-- **Упрощение 1** — `DnsNet.lookup` возвращает только **первый** адрес. `[]SocketAddr` через effect vtable OK-slot erases тип до `nova_int`; multi-address deferred `[M-91.13-dns-iter-boxing]`.
-- **Упрощение 2** — `real_dns_net()` не тестируется в CI (сетевая зависимость) `[M-91.13-real-dns-integration-test]`.
-- **Почему** — inline-storage для value-record в массивах (NovaArray_NovaValue_X) не реализовано. Boxing — минимальный fix без переработки array ABI.
-- **Как чинить** — реализовать inline-storage или register real elem type в `array_element_types`. Маркер `[M-91.13-dns-iter-boxing]`.
-- **Приоритет** — M (dns-iter-boxing); L (real-dns-integration-test).
+- ~~**Упрощение 1**~~ ✅ **`[M-91.13-dns-iter-boxing]` CLOSED 2026-06-16** — Fix: `is_generic_stub_c` в `emit_c.rs` + DnsNet V2 `[]SocketAddr` API. Vtable type-erasure устранена: `&& !name.contains("____")` в `is_generic_stub_c`; монорфизованные generic-инстансы (`Nova_Vec____NovaValue_SocketAddr*`) больше не классифицируются как stubs. `DnsNet.lookup` теперь возвращает `Result[[]SocketAddr, NetError]`.
+- ~~**Упрощение 2**~~ ✅ **`[M-91.13-real-dns-integration-test]` CLOSED 2026-06-16** — `net_v2_dns_real_slow.nv` добавлен (`_slow` suffix, `NOVA_SLOW_TESTS=1` opt-in). `assert(r.is_ok())` с реальным `localhost` resolver.
+
+### Plan 91.13 — DNS vtable erasure fix + DnsNet V2 multi-address API (2026-06-16, ✅ CLOSED)
+
+- **Где** — `compiler-codegen/src/codegen/emit_c.rs` (is_generic_stub_c), `std/net/{effect,dns,mock}.nv`, `nova_tests/plan91_12/`.
+- **Что сделано** — (1) Codegen fix: `is_generic_stub_c` добавлена проверка `&& !name.contains("____")` — монорфизованные generic-инстансы больше не ошибочно классифицируются как stubs, OK-тип в Result-арме vtable не erases в `nova_int`. (2) DnsNet V2: `lookup` возвращает `Result[[]SocketAddr, NetError]`; `real_dns_net()` строит Vec через `dns_addr_at(0..count)`; `mock_dns_net()` возвращает `Ok([loopback(0)])`; `SocketAddr.lookup` wrapper обновлён. (3) Тесты: `net_v2_dns_smoke.nv` обновлён (Vec API: `addrs[0].is_v4()`, `addrs.len()`); `net_v2_dns_real_slow.nv` добавлен (opt-in, `_slow`). D295 AMENDED (V2). 21/0 plan91_12 PASS.
+- **`[M-91.13-dns-iter-boxing]`** ✅ CLOSED — vtable erasure устранена одной строкой; V2 multi-address API реализован полностью.
+- **`[M-91.13-real-dns-integration-test]`** ✅ CLOSED — `net_v2_dns_real_slow.nv` (real DNS, opt-in).
 
 ---
 
