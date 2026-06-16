@@ -1,4 +1,3 @@
-﻿<<<<<<< HEAD
 
 ﻿����� 14 sessions (�.25 > �.33) Plan 45 close on ~98%. ��� user-facing
 features implemented � production-grade test coverage.
