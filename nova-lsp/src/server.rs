@@ -18,8 +18,11 @@ use tower_lsp::{Client, LanguageServer};
 
 use crate::compiler::{check_file, check_workspace, run_with_large_stack};
 use crate::diagnostic_mapping::to_lsp;
+use crate::goto_definition::compute_goto_definition;
+use crate::hover::compute_hover;
 use crate::incremental::apply_changes;
 use crate::semantic_tokens_delta::{build_delta_response, SemanticTokensSnapshot};
+use crate::signature_help::compute_signature_help;
 use crate::state::{ParsedFile, WorkspaceState};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,6 +224,14 @@ impl LanguageServer for Backend {
                     resolve_provider: Some(false),
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                // Plan 104.2: goto-definition handler.
+                definition_provider: Some(OneOf::Left(true)),
+                // Plan 104.2: signature-help for function/method calls.
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    retrigger_characters: Some(vec![",".to_string()]),
+                    work_done_progress_options: Default::default(),
+                }),
                 // Plan 123.5.2 (V5.2, 2026-06-02): semantic tokens
                 // for `@<field>` reads that field_cache analysis decides
                 // to CSE/cache. Colors them differently from plain
@@ -461,7 +472,15 @@ impl LanguageServer for Backend {
         Ok(lenses)
     }
 
-    /// Plan 123.5.1 (V5.1): hover на `@field` показывает cache info.
+    /// Plan 104.2: hover handler — symbol type + doc-comment.
+    ///
+    /// Priority:
+    /// 1. Symbol hover (Plan 104.2): resolves fn/type/var/import and renders
+    ///    type + doc-comment in a `nova` fenced code block.
+    /// 2. Field-cache hover (Plan 123.5.1): for `@field` accesses that the
+    ///    field_cache analyzer would cache — shows cache classification.
+    ///
+    /// If neither returns a result, returns `Ok(None)`.
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let pos = params.text_document_position_params.position;
         let uri = params.text_document_position_params.text_document.uri.clone();
@@ -469,8 +488,54 @@ impl LanguageServer for Backend {
         let src = doc.text.to_string();
         drop(doc);
 
-        let hover = run_with_large_stack(move || compute_field_cache_hover(&src, pos));
-        Ok(hover)
+        // Plan 104.2: primary symbol hover.
+        let src2 = src.clone();
+        let symbol_hover = run_with_large_stack(move || compute_hover(&src2, pos));
+        if symbol_hover.is_some() {
+            return Ok(symbol_hover);
+        }
+
+        // Plan 123.5.1 fallback: field-cache hover for @field accesses.
+        let field_hover = run_with_large_stack(move || compute_field_cache_hover(&src, pos));
+        Ok(field_hover)
+    }
+
+    /// Plan 104.2: goto-definition handler.
+    ///
+    /// V1 scope: single-file only. Cross-file via workspace graph — V2
+    /// ([M-104.2-cross-file-goto]).
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let pos = params.text_document_position_params.position;
+        let uri = params.text_document_position_params.text_document.uri.clone();
+        let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
+        let src = doc.text.to_string();
+        drop(doc);
+
+        let uri_clone = uri.clone();
+        let location = run_with_large_stack(move || {
+            compute_goto_definition(&src, pos, &uri_clone)
+        });
+        Ok(location.map(GotoDefinitionResponse::Scalar))
+    }
+
+    /// Plan 104.2: signature-help handler.
+    ///
+    /// Triggered by `(` and `,` (per server capabilities).
+    async fn signature_help(
+        &self,
+        params: SignatureHelpParams,
+    ) -> Result<Option<SignatureHelp>> {
+        let pos = params.text_document_position_params.position;
+        let uri = params.text_document_position_params.text_document.uri.clone();
+        let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
+        let src = doc.text.to_string();
+        drop(doc);
+
+        let help = run_with_large_stack(move || compute_signature_help(&src, pos));
+        Ok(help)
     }
 
     /// Plan 123.5.2 (V5.2, 2026-06-02): semantic tokens for cached
