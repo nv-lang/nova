@@ -554,10 +554,14 @@
 - ~~**`[M-net-udp-split]`**~~ ✅ **CLOSED 2026-06-17** — UDP socket split: `UdpSendHalf` + `UdpRecvHalf` consume value types; `UdpSocket.split()` → два half; atomic refcount на C-хендл; оба half обязаны быть закрыты. D298 Plan 166. Тесты: `net_v2_udp_two_fiber_slow` + `net_v2_udp_split_slow` PASS.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
-- **`[M-91.14-tcp-split]`** — TcpStream consume делает невозможным concurrent read+write из двух файберов. Нужны `TcpReadHalf`/`TcpWriteHalf` по образцу UDP split (Plan 166 / D298). → Plan 91.14.
-- **`[M-91.12-split-halves]`** (TCP) — TcpReader/TcpWriter consume-split для concurrent r/w — OPEN, отличается от UDP split (Plan 166). → Plan 91.14.
+- **`[M-91.16-tcp-split]`** — TcpStream consume делает невозможным concurrent read+write из двух файберов. Нужны `TcpReadHalf`/`TcpWriteHalf` по образцу UDP split (Plan 166 / D296). → Plan 91.16.
+- **`[M-91.12-split-halves]`** (TCP) — TcpReader/TcpWriter consume-split для concurrent r/w — OPEN. → Plan 91.16.
 
-## Plan 91.15 — std/net API polish (followup компаративного ревью 2026-06-17)
+## Plan 91.16 — TCP split: TcpReadHalf + TcpWriteHalf
+
+По образцу UDP split (Plan 166 / D296). `TcpStream consume @split() -> (TcpReadHalf, TcpWriteHalf)`. Atomic refcount на C-handle, оба half — consume value. → см. маркер `[M-91.16-tcp-split]`.
+
+## Plan 91.17 — std/net API polish (followup компаративного ревью 2026-06-17)
 
 Сравнительный анализ Nova Net API vs Go/Rust/TS/Kotlin/Java выявил следующие пункты (источник: сессия 2026-06-17).
 
