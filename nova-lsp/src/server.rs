@@ -6,6 +6,7 @@
 //! Plan 104.1.Ф.4: TextDocumentSyncKind::Incremental — apply range edits.
 //! Plan 104.1.Ф.5: publishDiagnostics — debounced background recompile.
 //! Plan 104.1.Ф.6: multi-file workspace recheck on every didChange.
+//! Plan 104.5: code_action — ≥25 quick-fixes via compute_code_actions.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -16,6 +17,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
+use crate::code_actions::compute_code_actions;
 use crate::compiler::{check_file, check_workspace, run_with_large_stack};
 use crate::diagnostic_mapping::to_lsp;
 use crate::incremental::apply_changes;
@@ -205,11 +207,15 @@ impl LanguageServer for Backend {
                         })),
                     },
                 )),
-                // Plan 114 Ф.7.2: code_action_provider — quick-fix
-                // для E_KW_REMOVED_LET / E_KW_REMOVED_READONLY.
+                // Plan 104.5: code_action_provider — ≥25 quick-fixes
+                // (extends Plan 114 Ф.7.2 E_KW_REMOVED_LET / E_KW_REMOVED_READONLY).
                 code_action_provider: Some(CodeActionProviderCapability::Options(
                     CodeActionOptions {
-                        code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+                        code_action_kinds: Some(vec![
+                            CodeActionKind::QUICKFIX,
+                            CodeActionKind::REFACTOR,
+                            CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                        ]),
                         resolve_provider: Some(false),
                         work_done_progress_options: Default::default(),
                     },
@@ -360,12 +366,16 @@ impl LanguageServer for Backend {
         self.publish_empty_diagnostics(uri).await;
     }
 
-    /// Plan 114 Ф.7.2: code_action — quick-fix providers.
+    /// Plan 104.5: code_action — ≥25 quick-fix providers.
     ///
-    /// Сейчас поддерживается:
-    /// - `E_KW_REMOVED_LET` → replace `let X = …` → `ro X = …`,
-    ///   `let mut X = …` → `mut X = …`.
-    /// - `E_KW_REMOVED_READONLY` → replace `readonly` → `ro` в field/type/param.
+    /// Dispatches to `compute_code_actions` (code_actions.rs) for all
+    /// diagnostics in `params.context.diagnostics`.  Supports:
+    /// - Plan 101 generic errors (8 fixes)
+    /// - Plan 100 consume/mutability errors (7 fixes)
+    /// - General fixes: protocol-embed, kw-removed, extension imports (7 fixes)
+    /// - Auto-import suggestions (3 fixes)
+    ///
+    /// Also includes Plan 123.5.3 diagnostic-independent actions (pure annotation).
     async fn code_action(
         &self,
         params: CodeActionParams,
@@ -373,9 +383,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let mut actions: Vec<CodeActionOrCommand> = Vec::new();
 
-        // Plan 123.5.3 (V5.3, 2026-06-02): suggest "Add #pure
-        // annotation" when invocation range overlaps an
-        // analytically-pure method. Diagnostic-independent.
+        // ── Plan 123.5.3: #pure annotation suggestions (diagnostic-independent) ─
         if let Some(doc) = self.state.docs.get(&uri) {
             let src = doc.text.to_string();
             drop(doc);
@@ -411,41 +419,20 @@ impl LanguageServer for Backend {
             }
         }
 
-        for diag in params.context.diagnostics.iter() {
-            if let Some(NumberOrString::String(code)) = &diag.code {
-                let (label, replacement) = match code.as_str() {
-                    "E_KW_REMOVED_LET" => (
-                        "Plan 114: change `let` → `ro` / `mut`",
-                        plan114_fix_let(&self.state, &uri, diag.range),
-                    ),
-                    "E_KW_REMOVED_READONLY" => (
-                        "Plan 114: change `readonly` → `ro`",
-                        plan114_fix_readonly(&self.state, &uri, diag.range),
-                    ),
-                    _ => continue,
-                };
-                let Some(new_text) = replacement else { continue };
-                let mut changes = std::collections::HashMap::new();
-                changes.insert(
-                    uri.clone(),
-                    vec![TextEdit { range: diag.range, new_text }],
-                );
-                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                    title: label.to_string(),
-                    kind: Some(CodeActionKind::QUICKFIX),
-                    diagnostics: Some(vec![diag.clone()]),
-                    edit: Some(WorkspaceEdit {
-                        changes: Some(changes),
-                        document_changes: None,
-                        change_annotations: None,
-                    }),
-                    command: None,
-                    is_preferred: Some(true),
-                    disabled: None,
-                    data: None,
-                }));
-            }
+        // ── Plan 104.5: compute_code_actions for all diagnostics ──────────────
+        if !params.context.diagnostics.is_empty() {
+            let src = self.state.docs.get(&uri).map(|d| d.text.to_string())
+                .unwrap_or_default();
+            let rope = ropey::Rope::from_str(&src);
+            let ca = compute_code_actions(
+                &uri,
+                &src,
+                &rope,
+                &params.context.diagnostics,
+            );
+            actions.extend(ca);
         }
+
         Ok(if actions.is_empty() { None } else { Some(actions) })
     }
 
@@ -899,40 +886,5 @@ fn position_to_byte_offset(src: &str, pos: Position) -> Option<usize> {
     None
 }
 
-/// Plan 114 Ф.7.2 helper: read the `let`-keyword span (range от LSP-диагностики
-/// должен указывать на сам keyword) и подставить `ro` или `mut` в зависимости
-/// от следующего за ним токена. Если open-document отсутствует или range
-/// out-of-bounds — возвращаем `None`.
-fn plan114_fix_let(
-    state: &Arc<WorkspaceState>,
-    uri: &Url,
-    range: Range,
-) -> Option<String> {
-    let doc = state.docs.get(uri)?;
-    let rope = &doc.text;
-    // LSP range is UTF-16; convert to char-offset for ropey via line+char.
-    let line_idx = range.start.line as usize;
-    let line_end_idx = range.end.line as usize;
-    if line_idx >= rope.len_lines() || line_end_idx >= rope.len_lines() {
-        return None;
-    }
-    // Extract context after the `let` keyword on the same line.
-    let line = rope.line(line_idx).to_string();
-    let after_let_col = (range.end.character as usize).min(line.len());
-    let tail = line[after_let_col..].trim_start();
-    // `let mut X = …` → `mut`; `let X = …` → `ro`.
-    if tail.starts_with("mut") {
-        Some("mut".to_string())
-    } else {
-        Some("ro".to_string())
-    }
-}
-
-/// Plan 114 Ф.7.2: `readonly` → `ro` всегда (canonical rename).
-fn plan114_fix_readonly(
-    _state: &Arc<WorkspaceState>,
-    _uri: &Url,
-    _range: Range,
-) -> Option<String> {
-    Some("ro".to_string())
-}
+// Plan 114 Ф.7.2 helpers (plan114_fix_let, plan114_fix_readonly) have been
+// superseded by Plan 104.5 compute_code_actions (code_actions.rs).

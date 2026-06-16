@@ -5,6 +5,7 @@
 //!
 //! The binary entry point is `src/main.rs`.
 
+pub mod code_actions;
 pub mod compiler;
 pub mod debouncer;
 pub mod diagnostic_mapping;
