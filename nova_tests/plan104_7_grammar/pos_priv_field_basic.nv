@@ -1,0 +1,37 @@
+// Plan 104.7 (tree-sitter-nova v0.3.0) — positive: record field `priv`/`pub` modifiers.
+//
+// Tests that `priv` and `pub` field visibility modifiers (Plan 160 D281) compile correctly.
+// Grammar rule: `record_field` with optional `pub`/`priv` modifier.
+// Within the same module: priv fields are readable and writable directly.
+
+module plan104_7_grammar.pos_priv_field_basic
+
+type Pair {
+    priv x int
+    pub y int
+}
+
+fn Pair.new(x int, y int) -> Pair => { x, y }
+fn Pair @x() -> int => @x
+fn Pair @y() -> int => @y
+
+test "pub field directly accessible in any module" {
+    ro p = Pair.new(1, 2)
+    assert(p.y == 2)
+}
+
+test "priv field accessible within same module" {
+    ro p = Pair.new(10, 20)
+    assert(p.x == 10)
+}
+
+test "priv field via method accessor" {
+    ro p = Pair.new(3, 4)
+    assert(p.x() == 3)
+    assert(p.y() == 4)
+}
+
+test "both fields sum correctly" {
+    ro p = Pair.new(5, 7)
+    assert(p.x + p.y == 12)
+}
