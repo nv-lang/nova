@@ -123,6 +123,7 @@
 | `[M-114.4.4-let-destructure]` | `let (a,b)=`/record destructure в const-fn body не поддержан (`E_CONST_FN_PATTERN_NOT_SUPPORTED`). | plan-114 Followups | P2 |
 | `[M-115-newtype-multiarg-constructor]` | Multi-arg newtype `type X(A,B)` не поддержан (single-arg-only в emit_c). | plan-115 Followups | P2 |
 | `[M-generic-param-bound-with-constraint]` | **Feature:** `fn[I Next[T Hash]]` — bound на параметре протокола (`T Hash` внутри `Next[T]`). Сейчас `T Hash` в позиции generic-аргумента (`TypeRef`) не является синтаксически валидным — аргументы протокола это `Vec<TypeRef>`, не `Vec<GenericParam>`. Workaround: два параметра `fn[I Next[T], T Hash]` с workaround-порядком (см. `[M-codegen-blanket-generic-param-order]`). Желаемый синтаксис позволил бы выражать constraint в одном параметре и не зависеть от порядка. | floating / language | P2 |
+| `[M-impl-attr-generic-protocol]` | **Feature:** `#impl(Next[T])` — parametric protocol в атрибуте `#impl(...)`. Сейчас парсер принимает только простое имя (`#impl(Display)`), `#impl(Next[U])` → `expected ')' got '['`. Нужно для явной декларации что `MapIter @next()` реализует `Next[U]`, `FilterIter @next()` реализует `Next[T]` и т.д. — документирование намерений + потенциальный input для method-resolution. Разблокирует `[M-153.2-drop-z-prefix]` если resolver научится использовать `#impl`-регистрацию при blanket-dispatch. | floating / language | P2 |
 
 ## P2 — Concurrency / Backend / Tooling / Stdlib
 
