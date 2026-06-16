@@ -33,7 +33,7 @@ const SB_SCONTINUE int = 12
 const SB_STERM int = 13
 const SB_CLOSE int = 14
 
-ro sb_flat Vec[int] = parse_flat(SB_DATA)
+ro sb_flat Vec[u32] = parse_flat(SB_DATA)
 fn sbcat(cp int) -> int => range_lookup3(sb_flat, cp)
 
 // SB5 ignore-set: Extend | Format are "absorbed" into the preceding base.
@@ -77,8 +77,8 @@ fn sb_sb8_has_lower(cats Vec[int], start int, n int) -> bool {
 
 // ─── decode str → (codepoints, byte-offsets) ───
 // offs has cps.len()+1 entries: start byte of each cp, then byte_len at the end.
-fn sb_decode(s str) -> (Vec[int], Vec[int]) {
-    mut cps = Vec[int].with_capacity(s.byte_len())
+fn sb_decode(s str) -> (Vec[u32], Vec[int]) {
+    mut cps = Vec[u32].with_capacity(s.byte_len())
     mut offs = Vec[int].with_capacity(s.byte_len() + 1)
     ro n = s.byte_len()
     mut i = 0
@@ -92,7 +92,7 @@ fn sb_decode(s str) -> (Vec[int], Vec[int]) {
     (cps, offs)
 }
 
-fn sb_cats(cps Vec[int]) -> Vec[int] {
+fn sb_cats(cps Vec[u32]) -> Vec[int] {
     mut cats = Vec[int].with_capacity(cps.len())
     for cp in cps { cats.push(sbcat(cp)) }
     cats
@@ -107,7 +107,7 @@ fn sb_cats(cps Vec[int]) -> Vec[int] {
 //           1 = in the Sp* tail (Close no longer allowed; a Close ends the ctx)
 // Extend/Format (SB5) are transparent: they neither change `term/phase` nor the
 // effective previous base used by the rule cascade.
-fn sb_starts(cps Vec[int], cats Vec[int]) -> Vec[int] {
+fn sb_starts(cps Vec[u32], cats Vec[int]) -> Vec[int] {
     ro n = cps.len()
     mut starts = Vec[int].with_capacity(n + 1)
     if n == 0 {

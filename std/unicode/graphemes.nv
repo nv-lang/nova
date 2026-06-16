@@ -34,8 +34,8 @@ const GCB_LVT int = 13
 // Flat int arrays: GCB stride 3 (lo,hi,cat), ExtPict stride 2 (lo,hi); both
 // sorted by lo (binary search). `hex` is shared from the `std.unicode` peer
 // normalize.nv (folder-module peers share declarations).
-fn parse_flat(data str) -> Vec[int] {
-    mut out = Vec[int].with_capacity(1024)
+fn parse_flat(data str) -> Vec[u32] {
+    mut out = Vec[u32].with_capacity(1024)
     for entry in data.split(";") {
         for f in entry.split(",") {
             ro v = hex(f)
@@ -45,11 +45,11 @@ fn parse_flat(data str) -> Vec[int] {
     out
 }
 
-ro gcb_flat Vec[int] = parse_flat(GCB_DATA)
-ro extpict_flat Vec[int] = parse_flat(EXTPICT_DATA)
+ro gcb_flat Vec[u32] = parse_flat(GCB_DATA)
+ro extpict_flat Vec[u32] = parse_flat(EXTPICT_DATA)
 
 // Binary search over sorted (lo,hi,cat) triples; returns cat or 0 (Other).
-fn range_lookup3(t Vec[int], cp int) -> int {
+fn range_lookup3(t Vec[u32], cp int) -> int {
     ro count = t.len() / 3
     mut lo = 0
     mut hi = count - 1
@@ -71,7 +71,7 @@ fn range_lookup3(t Vec[int], cp int) -> int {
 }
 
 // Binary search over sorted (lo,hi) pairs; membership test.
-fn in_ranges2(t Vec[int], cp int) -> bool {
+fn in_ranges2(t Vec[u32], cp int) -> bool {
     ro count = t.len() / 2
     mut lo = 0
     mut hi = count - 1
@@ -99,7 +99,7 @@ fn is_ext_pict(cp int) -> bool => in_ranges2(extpict_flat, cp)
 const INCB_CONSONANT int = 1
 const INCB_EXTEND int = 2
 const INCB_LINKER int = 3
-ro incb_flat Vec[int] = parse_flat(INCB_DATA)
+ro incb_flat Vec[u32] = parse_flat(INCB_DATA)
 fn incb_of(cp int) -> int => range_lookup3(incb_flat, cp)
 
 // UTF-8 decode at byte offset `i`: returns (codepoint, byte_step). R-UTF8 (D26)

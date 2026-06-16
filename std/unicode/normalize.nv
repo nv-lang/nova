@@ -41,8 +41,8 @@ fn hex(s str) -> int {
 }
 
 // "d1,d2,d3" (comma-separated hex) -> [d1, d2, d3].
-fn parse_cp_list(s str) -> Vec[int] {
-    mut out = Vec[int].with_capacity(4)
+fn parse_cp_list(s str) -> Vec[u32] {
+    mut out = Vec[u32].with_capacity(4)
     for part in s.split(",") {
         ro cp = hex(part)
         if cp >= 0 { out.push(cp) }
@@ -127,21 +127,21 @@ fn is_hangul_syllable(cp int) -> bool {
 }
 
 // ---- codepoint <-> str ----
-fn str_to_cps(s str) -> Vec[int] {
-    mut out = Vec[int].with_capacity(s.byte_len())
+fn str_to_cps(s str) -> Vec[u32] {
+    mut out = Vec[u32].with_capacity(s.byte_len())
     for c in s.as_chars() { out.push(c as int) }
     out
 }
 
-fn cps_to_str(cps Vec[int]) -> str {
+fn cps_to_str(cps Vec[u32]) -> str {
     consume sb = StringBuilder.with_capacity(cps.len() * 2)
     for cp in cps { sb.append(str.from_codepoint(cp)) }
     sb.as_str()
 }
 
 // ---- decomposition ----
-fn decompose(cps Vec[int], compat bool) -> Vec[int] {
-    mut out = Vec[int].with_capacity(cps.len() * 2)
+fn decompose(cps Vec[u32], compat bool) -> Vec[u32] {
+    mut out = Vec[u32].with_capacity(cps.len() * 2)
     for cp in cps {
         if is_hangul_syllable(cp) {
             ro si = cp - SBASE
@@ -162,8 +162,8 @@ fn decompose(cps Vec[int], compat bool) -> Vec[int] {
 // ---- canonical ordering (stable insertion sort by combining class) ----
 // Starters (ccc == 0) act as barriers: a combining mark is never reordered past
 // a starter, and equal-class marks keep their input order (stability).
-fn canonical_order(arr Vec[int]) -> Vec[int] {
-    mut a = Vec[int].with_capacity(arr.len())
+fn canonical_order(arr Vec[u32]) -> Vec[u32] {
+    mut a = Vec[u32].with_capacity(arr.len())
     for x in arr { a.push(x) }
     ro n = a.len()
     mut i = 1
@@ -202,9 +202,9 @@ fn compose_pair(a int, b int) -> int {
 // Canonical composition (UAX #15): walk the canonically-ordered sequence, folding
 // each combining mark into the last starter when a primary composite exists and
 // the mark is not blocked (no equal/greater class mark intervenes).
-fn compose(cps Vec[int]) -> Vec[int] {
+fn compose(cps Vec[u32]) -> Vec[u32] {
     ro n = cps.len()
-    mut out = Vec[int].with_capacity(n)
+    mut out = Vec[u32].with_capacity(n)
     if n == 0 {
         out
     } else {
