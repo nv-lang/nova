@@ -10,9 +10,10 @@ type Token consume value {
     id int
 }
 
-fn Token consume @use() -> () { () }
+fn Token consume @close() -> () { () }
 
 test "consume value canonical order accepted" {
-    ro _ = Token { id: 1 }.use()
+    consume t = Token { id: 1 }
+    t.close()
     assert(true)
 }
