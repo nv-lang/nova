@@ -480,6 +480,12 @@ enum Cmd {
         /// via env var NOVA_MONO_DEPTH.
         #[arg(long = "mono-depth", value_name = "N")]
         mono_depth: Option<usize>,
+        /// Plan 156: include *_slow.nv tests in addition to normal tests.
+        #[arg(long = "include-slow")]
+        include_slow: bool,
+        /// Plan 156: run ONLY *_slow.nv tests, skipping all normal tests.
+        #[arg(long = "slow-only")]
+        slow_only: bool,
     },
     /// Build and run a single Nova test file (used by IDE / CI for one-shot debug).
     #[command(name = "test-build")]
@@ -4307,6 +4313,8 @@ fn cmd_test(
     shuffle: Option<Option<u64>>,
     skip: &[String],
     mono_depth: Option<usize>,
+    include_slow: bool,
+    slow_only: bool,
 ) -> Result<()> {
     if timeout_secs == 0 {
         return Err(usage_err("--timeout must be >= 1 second"));
@@ -4463,8 +4471,14 @@ fn cmd_test(
         // Plan 140 Ф.2 (D24 amend): `nova test` enforce'ит контракты по
         // умолчанию (тесты проверяют поведение enforce-with-elision).
         contracts_off: false,
-        // Plan 156: default `nova test` skips *_slow.nv large/slow tests.
-        slow_lane: test_runner::SlowLane::Exclude,
+        // Plan 156: slow-lane selection via --include-slow / --slow-only.
+        slow_lane: if slow_only {
+            test_runner::SlowLane::Only
+        } else if include_slow {
+            test_runner::SlowLane::Include
+        } else {
+            test_runner::SlowLane::Exclude
+        },
     };
 
     // Plan 57.D.1: optionally aggregate PerfTimer markers across all
@@ -5530,6 +5544,7 @@ fn run() -> ExitCode {
             verbose, quiet, results_file, rerun_failed, retries,
             include_stdlib, keep_artifacts, gc,
             list, filter_from, shuffle, skip, mono_depth,
+            include_slow, slow_only,
         } => cmd_test(
             path.as_deref(),
             filter.as_deref(),
@@ -5553,6 +5568,8 @@ fn run() -> ExitCode {
             shuffle,
             &skip,
             mono_depth,
+            include_slow,
+            slow_only,
         ),
         Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts, gc, mono_depth } => cmd_test_build(
             &file,
