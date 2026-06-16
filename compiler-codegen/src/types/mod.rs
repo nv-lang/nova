@@ -2748,7 +2748,6 @@ impl<'a> TypeCheckCtx<'a> {
     /// `collect_all_signatures` pass the resulting `ModuleSigTable` here so
     /// that `is_known_type` / `is_known_fn` can answer cross-module questions
     /// during type-checking without additional I/O.
-    #[allow(dead_code)]
     fn build_with_sig_table(
         module: &'a Module,
         synth_arena: &'a FnDeclArena,
@@ -2773,7 +2772,6 @@ impl<'a> TypeCheckCtx<'a> {
     /// (a) `fn_decls` (free functions already merged into this module),
     /// or (b) any module in the cross-module `sig_table`.
     /// Used for disambiguation before full resolution.
-    #[allow(dead_code)]
     fn is_known_fn(&self, name: &str) -> bool {
         self.fn_decls.contains_key(name)
             || !self.sig_table.find_fn_modules(name).is_empty()
@@ -6228,6 +6226,13 @@ impl<'a> TypeCheckCtx<'a> {
                         _ => return,
                     },
                     None => {
+                        // Plan 162.2 Ф.3: cross-module fn known via sig_table —
+                        // suppress false-positive E7401 for functions that live in
+                        // a transitively imported module captured during the
+                        // signature pre-pass but not yet merged into fn_decls.
+                        if self.is_known_fn(name) {
+                            return;
+                        }
                         errors.push(Diagnostic::new(
                             format!(
                                 "[E7401] no function `{}` in module `{}`",

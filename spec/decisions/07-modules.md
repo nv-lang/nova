@@ -655,7 +655,7 @@ LLM знает фиксированный список — «известная 
   compile error). Bare-путь остаётся абсолютным — фича аддитивна.
 - **rev-5 (✅ IMPLEMENTED, 2026-06-16)** — Plan 162+163 реализованы:
   - [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) — переход
-    резолвера на Rust-модель: межмодульные **циклы разрешаются** (D285),
+    резолвера на Rust-модель: межмодульные **циклы разрешаются** (D291),
     `TypeMethodMap` — глобальная карта методов (D286), политика extension-методов
     Rust-strict (D287), char-методы переехали в prelude, снят Ф.4-хардкод.
     Q-module-resolution-model → RESOLVED.
@@ -666,7 +666,7 @@ LLM знает фиксированный список — «известная 
 
 ---
 
-## D285. Module resolution — collect-signatures-first, lazy bodies; cross-module cycles allowed
+## D291. Module resolution — collect-signatures-first, lazy bodies; cross-module cycles allowed
 
 **Статус:** принято, реализовано ([Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.1+Ф.2, 2026-06-16).
 
@@ -696,7 +696,7 @@ LLM знает фиксированный список — «известная 
 ### Связь
 - [D29](#d29-модули-и-импорты), [D286](#d286-typemethodmap--глобальная-карта-inherent-методов-вызов-без-import).
 - [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.3+Ф.4.
-- [D285](#d285-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — фундамент (cycle-guard позволяет prelude импортировать unicode).
+- [D291](#d291-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — фундамент (cycle-guard позволяет prelude импортировать unicode).
 
 ---
 
@@ -751,7 +751,7 @@ LLM знает фиксированный список — «известная 
 - [Plan 163](../../docs/plans/163-import-export-glob-hygiene.md) Ф.2+Ф.3 (V1) + Amend (option b, 2026-06-16).
 - Q-import-glob-hygiene → RESOLVED 2026-06-16: вариант (b) (amend от option a).
 
-## D290. ModuleSigTable — two-pass resolver (collect_all_signatures + inline-merge)
+## D292. ModuleSigTable — two-pass resolver (collect_all_signatures + inline-merge)
 
 **Статус:** принято, реализовано ([Plan 162.1](../../docs/plans/162.1-resolver-split-lazy-bodies.md), 2026-06-16).
 
@@ -778,9 +778,32 @@ ModuleSigTable   { modules: HashMap<Vec<String>, ModuleSignatures> }
 **Перф-стоимость:** collect_all_signatures overhead **~1.5%** vs baseline (в рамках критерия ≤10%).
 
 ### Связь
-- [D285](#d285-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — архитектурный принцип collect-signatures-first.
+- [D291](#d291-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — архитектурный принцип collect-signatures-first.
 - [Plan 162.1](../../docs/plans/162.1-resolver-split-lazy-bodies.md) — реализация.
 - [Plan 162](../../docs/plans/162-rust-model-module-resolution.md) Ф.1 — родительский план.
+
+---
+
+## D293. sig_table compile-path wiring — collect_all_signatures + is_known_fn в продакшн-пути
+
+**Статус:** принято, реализовано ([Plan 162.2](../../docs/plans/162.2-sig-table-wiring.md), 2026-06-16).
+
+**Контекст.** Plan 162.1 (D292) создал инфраструктуру `ModuleSigTable` + `collect_all_signatures()` + `is_known_fn()`, но они не были подключены к продакшн compile path: `TypeCheckCtx::build()` использовал пустую `ModuleSigTable::new()`, а `is_known_fn()` была помечена `#[allow(dead_code)]`.
+
+**Решение.** Замкнуть two-pass resolver в продакшн compile path:
+
+1. **`collect_all_signatures()` вызывается до `TypeCheckCtx`** — в точке сборки `TypeCheckCtx` (`build` call site в `nova-cli/src/main.rs` или `compiler-codegen/src/main.rs`) теперь сначала вызывается `collect_all_signatures(entry_path, lib_paths, ...)` → `ModuleSigTable`, затем `TypeCheckCtx::build_with_sig_table(module, sig_table)`. Fallback: если `collect_all_signatures` возвращает `Err` — используется `ModuleSigTable::new()` (backward compat).
+
+2. **`is_known_fn()` — живой код в fn call resolution** — в `types/mod.rs` в месте резолва вызова функции добавлен fallback: если локальный lookup не находит имя → `self.is_known_fn(name)` проверяет `sig_table`. Убран `#[allow(dead_code)]`. Смысл: cross-module fn из транзитивных импортов не вызывает false-negative ошибку.
+
+**Следствие.** Two-pass resolver замкнут: сигнатуры всех транзитивно-достижимых модулей собраны до typecheck тел. `TypeCheckCtx` видит cross-module функции через `sig_table` даже если соответствующий модуль ещё не inline-merge'нут.
+
+**Перф-стоимость:** overhead `collect_all_signatures` ≤15% vs baseline (пустая sig_table). Фактически — порядка ~1.5% (согласно D292).
+
+### Связь
+- [D291](#d291-module-resolution--collect-signatures-first-lazy-bodies-cross-module-cycles-allowed) — архитектурный принцип.
+- [D292](#d292-modulesigtable--two-pass-resolver-collect_all_signatures--inline-merge) — инфраструктура (ModuleSigTable).
+- [Plan 162.2](../../docs/plans/162.2-sig-table-wiring.md) — реализация.
 
 ---
 

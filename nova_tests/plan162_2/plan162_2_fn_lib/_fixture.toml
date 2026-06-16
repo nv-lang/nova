@@ -1,0 +1,2 @@
+# Plan 162.2 Ф.4: helper library module for f2_fn_via_sig_pos test.
+# walk_nv skips this directory — used only as a library by f2_fn_via_sig_pos.nv.
