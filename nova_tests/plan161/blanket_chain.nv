@@ -1,7 +1,7 @@
 module plan161.blanket_chain
 
 import std.collections.vec.{Vec}
-import std.collections.vec_iter
+import std.collections.vec_iter as vec_iter
 
 test "blanket chain through map" {
     ro v = Vec[int].of(1, 2, 3)

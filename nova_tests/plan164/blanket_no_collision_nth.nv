@@ -5,7 +5,7 @@
 // and returning the (n+1)-th.
 module plan164.blanket_no_collision_nth
 
-import std.collections.vec_iter
+import std.collections.vec_iter as vec_iter
 
 test "nth on VecIter" {
     ro v = Vec[int].of(10, 20, 30, 40, 50)

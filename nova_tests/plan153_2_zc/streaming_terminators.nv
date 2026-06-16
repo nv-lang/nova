@@ -8,7 +8,7 @@
 // `nova_alloc` to prove the fold/sum/... terminator bodies are alloc-free.
 module plan153_2_zc.streaming_terminators
 
-import std.collections.vec_iter
+import std.collections.vec_iter as vec_iter
 
 test "fold is an alloc-free scalar terminator" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)

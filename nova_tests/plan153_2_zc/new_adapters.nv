@@ -1,6 +1,6 @@
 module plan153_2_zc.new_adapters
 
-import std.collections.vec_iter
+import std.collections.vec_iter as vec_iter
 
 // ── take ─────────────────────────────────────────────────────────────────────
 

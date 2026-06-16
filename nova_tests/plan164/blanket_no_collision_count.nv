@@ -7,7 +7,7 @@
 // confirms that count works on the FilterIter adapter type produced by filter.
 module plan164.blanket_no_collision_count
 
-import std.collections.vec_iter
+import std.collections.vec_iter as vec_iter
 
 test "count on VecIter" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)

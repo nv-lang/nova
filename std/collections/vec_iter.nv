@@ -46,7 +46,15 @@
 // its own concrete type (Rust-identical). The current surface covers:
 // adapters: map / filter / filter_map / take / skip / enumerate
 // terminators: collect / collect_into / fold / sum / count / any / all /
-//              find / for_each / reduce / min / max / nth / last
+//              find / for_each / reduce / min / max / nth / last / collect_set
+//
+// ── Comparison: iterator entry point
+//
+// Nova  : v.iter().map(…)   — explicit cursor (same as Rust)
+// Rust  : v.iter().map(…)   — explicit cursor; .into_iter()/.iter_mut() variants
+// Swift : v.map(…)          — methods directly on Array; lazy via v.lazy.map(…)
+// Kotlin: v.map(…)          — extension fns on Iterable; lazy via v.asSequence().map(…)
+// Java  : v.stream().map(…) — explicit stream cursor, similar to Nova/Rust
 // `enumerate` yields `(int, T)` pairs via `EnumerateIter`; `take`/`skip` are
 // stateful adapters with an inline counter field.
 

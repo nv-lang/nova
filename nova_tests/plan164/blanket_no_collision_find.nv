@@ -5,7 +5,7 @@
 // in method_receivers.
 module plan164.blanket_no_collision_find
 
-import std.collections.vec_iter
+import std.collections.vec_iter as vec_iter
 
 test "find on VecIter" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)
