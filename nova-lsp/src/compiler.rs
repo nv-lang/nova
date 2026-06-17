@@ -20,6 +20,7 @@
 use std::path::{Path, PathBuf};
 
 use nova_codegen::diag::{Diagnostic, Span};
+use nova_codegen::test_runner::find_repo_root_from;
 use tower_lsp::lsp_types::Url;
 
 use crate::perf::PerfTimer;
@@ -51,8 +52,9 @@ pub struct CheckResult {
 pub fn check_file(uri: &Url, text: &str) -> CheckResult {
     let source = text.to_string();
     let source_clone = source.clone();
+    let path = uri.to_file_path().ok();
     let t = PerfTimer::start("check_file");
-    let diagnostics = run_with_large_stack(move || check_source(&source_clone));
+    let diagnostics = run_with_large_stack(move || check_source(&source_clone, path.as_deref()));
     t.finish();
     CheckResult { file_uri: uri.clone(), diagnostics, source }
 }
@@ -89,7 +91,8 @@ pub fn check_workspace(workspace_root: &Path) -> Vec<CheckResult> {
         };
 
         let source_clone = source.clone();
-        let diagnostics = run_with_large_stack(move || check_source(&source_clone));
+        let path_clone = path.clone();
+        let diagnostics = run_with_large_stack(move || check_source(&source_clone, Some(&path_clone)));
         results.push(CheckResult { file_uri: uri, diagnostics, source });
     }
 
@@ -105,12 +108,14 @@ pub fn check_workspace(workspace_root: &Path) -> Vec<CheckResult> {
 ///
 /// Wraps the whole pipeline in `catch_unwind`; on panic returns a synthetic
 /// `InternalError` diagnostic.
-fn check_source(src: &str) -> Vec<Diagnostic> {
+fn check_source(src: &str, path: Option<&Path>) -> Vec<Diagnostic> {
     // Wrap in AssertUnwindSafe because Diagnostic / Module are not UnwindSafe.
     // This is acceptable: we only read the panic value (discarded) and return
     // a fixed synthetic diagnostic — we never re-use any poisoned state.
+    let src_owned = src.to_string();
+    let path_owned = path.map(|p| p.to_path_buf());
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        check_source_inner(src)
+        check_source_inner(&src_owned, path_owned.as_deref())
     }));
 
     match result {
@@ -129,14 +134,24 @@ fn check_source(src: &str) -> Vec<Diagnostic> {
 /// The actual parse + type-check pipeline (no panic catching).
 ///
 /// Public so that `rename.rs` can use it for the atomic post-rename check.
-pub fn check_source_inner(src: &str) -> Vec<Diagnostic> {
+pub fn check_source_inner(src: &str, path: Option<&Path>) -> Vec<Diagnostic> {
     // Step 1: parse
-    let module = match nova_codegen::parser::parse(src) {
+    let mut module = match nova_codegen::parser::parse(src) {
         Ok(m) => m,
         Err(diag) => return vec![diag],
     };
 
-    // Step 2: type-check
+    // Step 2: resolve imports (prelude + cross-file), same as cmd_check.
+    if let Some(p) = path {
+        if let Some(repo) = find_repo_root_from(p) {
+            let stdlib_dir = repo.join("std");
+            let _ = nova_codegen::imports::resolve_imports_inline(
+                p, &mut module, &repo, &stdlib_dir,
+            );
+        }
+    }
+
+    // Step 3: type-check
     match nova_codegen::types::check_module(&module) {
         Ok(_) => vec![],
         Err(diags) => diags,
