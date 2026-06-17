@@ -8,7 +8,7 @@
 // Plan 83.10: standalone PASS. Под jobs=16 [M-83.9-arena-pressure-1M]
 // applies — relaxed budget.
 
-module plan83_10.gc_no_leak_armed_spawn
+module nova_tests.plan83_10
 
 test "spawn workload → collect → heap bounded" {
     gc.collect()

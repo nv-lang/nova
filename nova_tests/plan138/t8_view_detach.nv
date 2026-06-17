@@ -1,7 +1,7 @@
 // Plan 138 Ф.4 — t8: v[1..3].push(99) → silent detach, original unchanged
 // A3: push on view → realloc → silent detach from parent
 
-module plan138.t8_view_detach
+module nova_tests.plan138
 
 import std.collections.vec.{Vec}
 

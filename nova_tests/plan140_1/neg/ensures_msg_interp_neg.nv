@@ -1,0 +1,17 @@
+// Plan 140.3 ([M-140.1-message-interpolation]): an `ensures` message may
+// interpolate runtime values too — `${result}` captures the RETURN value. The
+// codegen rewrites `result` → the collected `_nova_result` C var inside the
+// message build (mirror of the condition's substitute_result_var). At -1 the
+// postcondition `result > 0` is violated, so the message renders the value.
+// EXPECT_RUNTIME_PANIC ensures failed: result was -1 (result > 0)
+
+module neg.ensures_msg_interp_neg
+
+fn must_return_positive() -> int
+    ensures result > 0, "result was ${result}"
+=> -1
+
+test "interpolated ensures message captures the return value" {
+    ro r = must_return_positive()
+    assert(r == -1)
+}

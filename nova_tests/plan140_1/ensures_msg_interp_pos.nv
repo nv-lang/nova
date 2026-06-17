@@ -1,7 +1,7 @@
 // Plan 140.3: a SATISFIED interpolated `ensures` message runs clean (the message
 // is built lazily, only on a postcondition violation — never here).
 
-module plan140_1.ensures_msg_interp_pos
+module nova_tests.plan140_1
 
 fn must_return_positive() -> int
     ensures result > 0, "result was ${result}"

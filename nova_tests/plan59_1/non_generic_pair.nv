@@ -1,5 +1,5 @@
 // Plan 59.1 — non-generic baseline: existing case must continue работать.
-module plan59_1.non_generic_pair
+module nova_tests.plan59_1
 
 fn make_pair() -> (int, str) => (42, "x")
 

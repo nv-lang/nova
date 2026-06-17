@@ -3,7 +3,7 @@
 // Plan 55 Ф.1 — GC stress test для `[]fn` closure storage.
 // Fast: 1000 closures × 5 циклов (reduced from 50 cycles).
 
-module plan55.f1_closure_array_gc_stress
+module nova_tests.plan55
 
 
 fn run_one() -> int {

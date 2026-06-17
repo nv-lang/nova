@@ -1,6 +1,6 @@
 // Plan 139 Ф.1 — to_lower/to_upper migrated to Nova-body (ASCII case, alloc
 // via []u8 + str.from_bytes_unchecked). Non-ASCII bytes pass through unchanged.
-module plan139.t1_case
+module nova_tests.plan139
 
 test "to_lower ascii" {
     assert("AbC".to_lower() == "abc")

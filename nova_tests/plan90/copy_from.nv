@@ -1,6 +1,6 @@
 // Plan 90 Ф.4.3 — []T.copy_from: memcpy distinct-срезов.
 
-module plan90.copy_from
+module nova_tests.plan90
 
 
 test "copy_from — полное копирование" {

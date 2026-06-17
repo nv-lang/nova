@@ -2,7 +2,7 @@
 // `(a, b) = (b, 1)` — R0=b reads L1, R1=1 is independent.
 // Verifies conservative tmp allocation for the dependent rhs element.
 
-module plan136.t4_partial_dep
+module nova_tests.plan136
 
 test "partial dependency: a gets old b, b gets constant" {
     mut a = 5

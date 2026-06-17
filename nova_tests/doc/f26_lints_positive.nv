@@ -3,7 +3,7 @@
 // Lints — это warnings level, не блокируют compile. Doc-tooling `nova doc --check`
 // эмитит их, но nova test просто проверяет что код компилируется.
 
-module doc.f26_lints_positive
+module nova_tests.doc
 
 /// Returns the absolute value of x.
 ///

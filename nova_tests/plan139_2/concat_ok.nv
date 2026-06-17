@@ -6,7 +6,7 @@
 // `+` operator lowers separately to C nova_str_concat (option (b)) — both
 // must agree on result content.
 
-module plan139_2.concat_ok
+module nova_tests.plan139_2
 
 test "concat: basic ASCII" {
     ro a = "foo"

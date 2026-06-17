@@ -1,6 +1,6 @@
 // Plan 55 Ф.5 — nested map literals inferring type chain.
 
-module plan55.f5_nested_map_infer
+module nova_tests.plan55
 
 import std.collections.hashmap.{HashMap}
 

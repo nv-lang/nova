@@ -3,7 +3,7 @@
 // write_f32_le/be, write_f64_le/be — 4 метода. Проверка длины
 // записанного и round-trip через ReadBuffer (Fail-form read).
 
-module buffers.write_floats
+module nova_tests.buffers
 
 
 // ── длина записи ───────────────────────────────────────────────────

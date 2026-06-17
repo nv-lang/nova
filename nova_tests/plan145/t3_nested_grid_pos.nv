@@ -2,7 +2,7 @@
 // `grid[r][c]` упражняет двойную индексацию; `grid[i].push(..)` проверяет, что
 // результат `v[i]` остаётся lvalue (метод-ресивер) после миграции на хелпер.
 
-module plan145.t3_nested_grid_pos
+module nova_tests.plan145
 
 import std.collections.vec.{Vec}
 

@@ -1,0 +1,20 @@
+// Plan 131 Р¤.4 вЂ” Vec[T] Clone: deep copy, original unchanged.
+// EXPECT_OUTPUT: 3
+// 1
+
+module neg.vec_clone_pos
+
+import std.collections.vec.{Vec}
+
+fn main() -> () {
+    ro original = Vec[int].of(1, 2, 3)
+    mut cloned = original.clone()
+    // pop one element from the clone
+    cloned.pop()
+    // original should still have 3 elements
+    println(original.len())
+    // clone now has 2 elements but we pop once more to verify independence
+    cloned.pop()
+    cloned.pop()
+    println(cloned.len())
+}

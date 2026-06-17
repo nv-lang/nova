@@ -1,7 +1,7 @@
 // Plan 91 Ф.4 conformance: f64 logarithms + exponentials, realistic scenario.
 // Information-theory / scientific computations with ln/log2/log10/exp/exp2.
 // All float comparisons use a tolerance window (never == on floats).
-module plan91_fe4.logarithm_and_exponential
+module nova_tests.plan91_fe4
 
 import std.runtime.math
 

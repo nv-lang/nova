@@ -1,7 +1,7 @@
 // Plan 124.3 — positive: generic Stack[T] с priv mut len + items array.
 // Methods access priv через @len — recv tracking name-based, generic
 // param ignored.
-module plan124_3.generic_stack_inside_ok
+module nova_tests.plan124_3
 
 export type Stack[T] {
     priv mut len int

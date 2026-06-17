@@ -3,7 +3,7 @@
 // Синтаксис Nova: `type Email str` (без `=`, без `newtype` keyword).
 // Unwrap через `as UnderlyingType` (не `.0` — codegen не поддерживает).
 
-module doc.f23_newtype_positive
+module nova_tests.doc
 
 /// User ID — newtype over int for type safety.
 export type UserId int

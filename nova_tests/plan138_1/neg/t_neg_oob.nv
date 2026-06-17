@@ -1,0 +1,11 @@
+// Plan 138.1 Ф.4 NEG — []Point OOB index panics (typed-storage path)
+// EXPECT_RUNTIME_PANIC array: index
+
+module neg.t_neg_oob
+
+type Point { x int, y int }
+
+test "[]Point v[3] on length-3 vec panics" {
+    ro v []Point = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }, Point { x: 5, y: 6 }]
+    ro _ = v[3]
+}

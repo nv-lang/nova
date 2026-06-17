@@ -1,0 +1,15 @@
+// EXPECT_RUNTIME_PANIC requires failed
+//
+// Plan 90.1 — негатив: bulk insert (splice) — index > len → panic.
+// D141 amend: valid range [0, len]; len+1 → panic.
+// Plan 138.2 Ф.0-final: under the universal `[]T` ≡ `Vec[T]` flip the bulk
+// `insert(i, array)` op is the Vec `@splice(i, other)` method; single-element
+// `@insert(i, v)` is a distinct overload. Migrated accordingly.
+
+module neg.insert_oob_above_len_neg
+
+fn main() -> () {
+    mut dst []int = [1, 2, 3]
+    ro src []int = [10, 20]
+    dst.splice(4, src)  // len=3, i=4 → out of bounds
+}

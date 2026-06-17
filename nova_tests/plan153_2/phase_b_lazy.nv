@@ -1,7 +1,7 @@
 // [M-153.2-iter-phase-b] Phase B adapters for BoxIter (vec_lazy):
 // step_by, zip, chain, flat_map.
 
-module plan153_2.phase_b_lazy
+module nova_tests.plan153_2
 
 import std.collections.vec_lazy
 

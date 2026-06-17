@@ -7,7 +7,7 @@
 // emit_call intercepts TurboFish{base:Member}, stashes the type-args, recurses
 // on the Member base, and resolve_method_level_subst seeds the slots — the
 // turbofish form lands on the same mono as the inferred form.
-module plan91_fe1.method_turbofish_pos
+module nova_tests.plan91_fe1
 
 fn[T] []T @mymap[U](f fn(T) -> U) -> []U {
     mut out []U = []U.with_capacity(@len())

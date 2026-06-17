@@ -4,7 +4,7 @@
 // До фикса: const-decl с generic-типом (HashMap[K,V]) эмитился ДО
 // mono pass → C-compiler не знает Nova_HashMap____nova_str__nova_int.
 // Fix: forward-declare mono'd struct-name перед const-decl emit.
-module map_literals.positive_const_map
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

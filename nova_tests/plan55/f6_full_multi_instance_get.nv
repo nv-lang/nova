@@ -2,7 +2,7 @@
 // Verify: Pattern::Record extraction (Slot.Occupied { value }) корректно
 // типизирует match arms для каждого mono'd instance.
 
-module plan55.f6_full_multi_instance_get
+module nova_tests.plan55
 
 import std.collections.hashmap.{HashMap}
 

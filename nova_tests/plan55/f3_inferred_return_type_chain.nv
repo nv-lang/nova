@@ -2,7 +2,7 @@
 // Тестирует что caller правильно типизирует chain'd calls когда
 // inner methods НЕ имеют explicit `-> T`.
 
-module plan55.f3_inferred_return_type_chain
+module nova_tests.plan55
 
 
 type Box {

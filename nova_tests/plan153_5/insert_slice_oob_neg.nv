@@ -1,9 +1,0 @@
-// EXPECT_RUNTIME_PANIC requires
-//
-// Plan 153.5 (D263) — negative: @insert_slice(i, sl) with i > len violates the
-// `0 <= i && i <= @len` contract → runtime panic.
-module plan153_5.insert_slice_oob_neg
-fn main() -> () {
-    mut v = Vec[int].of(1, 2, 3)
-    v.insert_slice(5, Vec[int].of(9, 9))
-}

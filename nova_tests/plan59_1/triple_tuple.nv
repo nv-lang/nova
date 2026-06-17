@@ -1,5 +1,5 @@
 // Plan 59.1 — arity 3 mono'd tuple.
-module plan59_1.triple_tuple
+module nova_tests.plan59_1
 
 fn[T] triple(v T) -> (T, T, T) => (v, v, v)
 

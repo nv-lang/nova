@@ -2,7 +2,7 @@
 // Позитивный тест: функции со ссылками [OtherFn] в doc-comments
 // работают в runtime; doc pipeline резолвит links (cargo-тесты).
 
-module doc.f23_links_positive
+module nova_tests.doc
 
 /// Base computation. See [transform] for a higher-level version.
 export fn compute(x int) -> int => x * 3

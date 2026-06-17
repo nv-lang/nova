@@ -11,7 +11,7 @@
 // completion compute `elapsed = completed - arrived` and `remaining =
 // deadline - completed`. All values are explicit Timestamps so the test is
 // deterministic without needing the ambient `Time` effect.
-module plan91_fe4.timestamp_deadline_and_elapsed
+module nova_tests.plan91_fe4
 
 import std.time.duration
 

@@ -13,7 +13,7 @@
 //
 // Полная проверка против collision-attack — отдельный benchmark
 // (см. docs/plans/52-hashmap-literals.md Ф.22).
-module map_literals.positive_siphash_smoke
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

@@ -15,7 +15,7 @@
 // ENV NOVA_AUTOARM=0
 // EXPECT_TIMEOUT_MS 15000
 
-module plan83_11.driver_cancel_edge
+module nova_tests.plan83_11
 
 test "cancel after sleeper already finished — no-op, no hang" {
     // Первый fiber завершается естественно (~5ms), cancel прилетает позже,

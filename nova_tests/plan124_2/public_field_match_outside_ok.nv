@@ -1,6 +1,6 @@
 // Plan 124.2 — positive: match arm на public field outside type-method
 // scope — OK (no priv concern).
-module plan124_2.public_field_match_outside_ok
+module nova_tests.plan124_2
 
 export type Account {
     priv mut money f64

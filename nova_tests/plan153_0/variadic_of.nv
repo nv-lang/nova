@@ -2,7 +2,7 @@
 // constructor `Vec[T].of(...args []T)`. Call-site variadic collection packs
 // `of(1,2,3)` args into a single `[]T` (= Vec[T]) value matching the body's
 // collected parameter. Exercises the std `Vec[T].of` (std/collections/vec/core).
-module plan153_0.variadic_of
+module nova_tests.plan153_0
 import std.collections.vec.{Vec}
 
 test "variadic of: int, multiple args" {

@@ -1,6 +1,6 @@
 // Plan 124.6 — positive: test block in same module gets implicit priv(type)
 // access (D224 §2 rule-2). No #test_access needed — same module grant.
-module plan124_6.pos_implicit_same_module
+module nova_tests.plan124_6
 
 export type Counter {
     pub label str

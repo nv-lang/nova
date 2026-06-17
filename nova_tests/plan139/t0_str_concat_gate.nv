@@ -1,5 +1,5 @@
 // Plan 139 Ф.0 — GATE: trivial str literal + concat + println (A0.1)
-module plan139.t0_str_concat_gate
+module nova_tests.plan139
 
 test "str literal, concat, byte-len via value-record lowering" {
     ro s = "abc"

@@ -1,4 +1,4 @@
-module plan11_followup.f10_hashmap_self_restored_positive
+module nova_tests.plan11_followup
 
 // Plan 11 Follow-up / Sprint Ф.36.1: HashMap.new + .with_capacity переписаны
 // с `-> Self`/`Self.X()` после compiler fix 57b2cb1. .from() оставлен с

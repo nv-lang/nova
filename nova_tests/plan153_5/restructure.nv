@@ -1,7 +1,7 @@
 // Plan 153.5 (D263) — restructure-ops positive tests:
 // concat / operator + (non-mutating) / rotate_left / rotate_right / drain /
 // insert_slice. `+=` is the in-place compound form (lowers to `a = a + b`).
-module plan153_5.restructure
+module nova_tests.plan153_5
 
 test "concat builds a new Vec, operands untouched" {
     ro a = Vec[int].of(1, 2, 3)

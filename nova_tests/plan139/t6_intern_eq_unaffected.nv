@@ -3,7 +3,7 @@
 // equal (content-eq, NOT pointer-eq). Interning shares pointers only across
 // identical literals; built strings get distinct buffers — content-eq bridges
 // both, so interning stays invisible.
-module plan139.t6_intern_eq_unaffected
+module nova_tests.plan139
 
 test "interned literal == built string (content-eq survives interning)" {
     ro lit = "abc"

@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_INIT
+//
+// Plan 139.2 Ф.3 — negative: the str construction used by @concat is
+// module-private.
+//
+// The migrated `@concat` builds its result by allocating a fresh []u8 and
+// wrapping the owned buffer as a `str { ptr, len }` value-record (via
+// str.from_bytes_unchecked → str.alloc_copy). That `str{...}` record literal
+// is sound ONLY inside a str type-method (receiver `str` ⇒
+// `current_recv_type == "str"` ⇒ type-based priv access, Plan 139.1/D220).
+// From OUTSIDE the str module, forging the concat result by hand — building a
+// raw (ptr, len) buffer and aliasing it as a str — fires E_PRIV_FIELD_INIT
+// (`str.ptr` / `str.len` are `priv`). This keeps `@concat` (and the other
+// producers) the ONLY sanctioned way to build a str from two operands, so the
+// D26 §3 NUL / content-eq / hash invariants cannot be bypassed by user code.
+module neg.neg_concat_forge_result_outside
+
+fn forge_concat(p *u8, n int) -> str {
+    // priv-field init via record literal outside str-module → E_PRIV_FIELD_INIT.
+    str { ptr: p, len: n }
+}

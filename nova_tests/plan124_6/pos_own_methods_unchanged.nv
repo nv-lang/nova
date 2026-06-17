@@ -1,6 +1,6 @@
 // Plan 124.6 — positive: own type methods still access priv(type) fields
 // (rule-1 unchanged — canonical type-method scope, D220). Regression guard.
-module plan124_6.pos_own_methods_unchanged
+module nova_tests.plan124_6
 
 export type Stack {
     pub label str

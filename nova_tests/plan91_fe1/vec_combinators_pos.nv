@@ -1,5 +1,5 @@
 // Plan 91 Ф.1 conformance: vec combinators (map/filter/any/all/first/last).
-module plan91_fe1.vec_combinators_pos
+module nova_tests.plan91_fe1
 import std.collections.vec_seq
 
 test "map same-type and type-change" {

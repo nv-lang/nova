@@ -2,7 +2,7 @@
 //
 // new() / with_capacity(n) / from([]u8) / @len / @capacity / @clone.
 
-module buffers.write_constructors
+module nova_tests.buffers
 
 
 // ── new ────────────────────────────────────────────────────────────

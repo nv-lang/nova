@@ -2,7 +2,7 @@
 // До фикса: codegen treats [] as array → CC-FAIL.
 // Fix: annotate_module конвертит empty ArrayLit с expected
 // #from_pairs тип в empty MapLit → with_capacity(0).
-module map_literals.positive_empty_in_map_position
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

@@ -2,7 +2,7 @@
 // B3: []Option[int] stores typed (no int-erasure); [i] returns exact Option[int].
 // []T is sugar for Vec[T] — declarations use [] syntax, indexing returns sum type.
 
-module plan138_1.t1_vec_of_option
+module nova_tests.plan138_1
 
 import std.collections.vec.{Vec}
 

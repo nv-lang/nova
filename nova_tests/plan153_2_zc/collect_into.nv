@@ -8,7 +8,7 @@
 //     (len = 0, backing buffer retained) before passing it in.
 //   * Returns `()`; the filled buffer is observed through the caller's own
 //     `out` binding (`Vec[T]` is a heap reference type).
-module plan153_2_zc.collect_into
+module nova_tests.plan153_2_zc
 
 import std.collections.vec_iter
 

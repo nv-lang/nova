@@ -3,7 +3,7 @@
 // `BoxIter[Vec[T]]` over the same backing buffer; `collect()` materialises the
 // `[][]T` only on demand. Positive coverage: even/odd splitting, short remainder,
 // exact-drop, reverse order, overlapping windows, empty / single / oversize n.
-module plan153_4.chunks_windows
+module nova_tests.plan153_4
 
 import std.collections.vec_lazy
 

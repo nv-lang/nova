@@ -10,7 +10,7 @@
 //
 // All float comparisons use a tolerance window (never `==` on floats).
 
-module plan91_fe4.trig_unit_circle
+module nova_tests.plan91_fe4
 
 import std.runtime.math
 

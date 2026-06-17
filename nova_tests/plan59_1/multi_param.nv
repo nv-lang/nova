@@ -1,5 +1,5 @@
 // Plan 59.1 A3 — multi-param: fn[T, U] pair(a T, b U) -> (T, U).
-module plan59_1.multi_param
+module nova_tests.plan59_1
 
 fn[T, U] pair(a T, b U) -> (T, U) => (a, b)
 

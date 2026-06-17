@@ -3,7 +3,7 @@
 // the emitted `if (!(cond)) { ... }` block — so a passing call pays zero
 // interpolation cost and does not panic.
 
-module plan140_1.contract_msg_interp_pos
+module nova_tests.plan140_1
 
 fn must_be_positive(x int) -> int
     requires x > 0, "got ${x}"

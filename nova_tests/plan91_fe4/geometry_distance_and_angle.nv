@@ -8,7 +8,7 @@
 //
 // All float comparisons use a tolerance window (never `==` on floats).
 
-module plan91_fe4.geometry_distance_and_angle
+module nova_tests.plan91_fe4
 
 import std.runtime.math
 

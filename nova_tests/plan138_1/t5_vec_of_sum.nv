@@ -3,7 +3,7 @@
 // (pointer-semantic sum), not int64-erased slots.  Match on element must see
 // the exact Ok/Err payload without corruption.
 
-module plan138_1.t5_vec_of_sum
+module nova_tests.plan138_1
 
 test "[]Result[int,str] — match on element extracts Ok value" {
     ro rs []Result[int, str] = [Ok(1), Err("oops"), Ok(3), Ok(8)]

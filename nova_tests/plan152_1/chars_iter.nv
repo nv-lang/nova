@@ -1,7 +1,7 @@
 // Plan 152.1 Ф.3 (D250): CharsIter — codepoint decoding lens. as_chars() yields a
 // stream (Next[char]+Iter), NOT a collection: count()/nth() O(n), no Index[int].
 // for c in s decodes codepoints (D58 amend, str @iter() => @as_chars()).
-module plan152_1.chars_iter
+module nova_tests.plan152_1
 
 test "as_chars().count(): ASCII + multibyte (codepoints, not bytes)" {
     assert("hello".as_chars().count() == 5)

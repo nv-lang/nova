@@ -1,0 +1,13 @@
+// EXPECT_RUNTIME_PANIC Vec: slice
+//
+// Plan 96 Ф.4 — негатив: arr[0..100] где len==3 → panic.
+// D-neg-panic: OOB → детерминированный panic (D13), не clamp.
+// D239 ([]T≡Vec): сообщение паники `Vec: slice ... out of bounds for length N`
+// (было `array: slice`). Директива выровнена под новый текст.
+
+module neg.neg_slice_oob_to
+
+fn main() -> () {
+    mut arr = [1, 2, 3]
+    ro _ = arr[0..100]
+}

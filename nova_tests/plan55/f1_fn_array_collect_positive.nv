@@ -8,7 +8,7 @@
 // Параллель Rust: `fn collect<T>(fns: Vec<Box<dyn Fn() -> T>>) -> Vec<T>`.
 // В обоих языках работает естественно. Nova должна — не хуже.
 
-module plan55.f1_fn_array_collect_positive
+module nova_tests.plan55
 
 
 fn collect_int(fns []fn() -> int) -> []int {

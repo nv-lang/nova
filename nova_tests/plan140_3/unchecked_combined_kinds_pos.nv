@@ -3,7 +3,7 @@
 // and `ensures result > 100` are violated, but both are elided, so the call
 // runs clean (no panic). Proves the comma-separated kind list works.
 
-module plan140_3.unchecked_combined_kinds_pos
+module nova_tests.plan140_3
 
 #unchecked(requires, ensures)
 fn f(x int) -> int

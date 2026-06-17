@@ -3,7 +3,7 @@
 // relative to its target). The drift can be negative (early) or positive
 // (late). We normalize the sign, classify it, scale a budget up/down, and
 // clamp it between bounds — exercising neg/abs/is_*/times/div/min/max/ZERO.
-module plan91_fe4.duration_signed_and_scale
+module nova_tests.plan91_fe4
 
 import std.time.duration
 

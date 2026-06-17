@@ -1,7 +1,7 @@
 // Plan 96 Ф.2 — regression: closed-form Range (a..b, a..=b) работает
 // без изменений после AST-миграции Option<Box<Expr>>.
 
-module plan96.range_closed_unchanged
+module nova_tests.plan96
 
 test "exclusive range in for-loop" {
     mut sum = 0

@@ -4,7 +4,7 @@
 // Uses single-param generic (multi-param Pair[A, B] explicit init
 // has bootstrap parser limit — anonymous literal {first: a, second: b}
 // inferred from return type works в static method).
-module plan124_3.generic_pub_only_no_false_positive_ok
+module nova_tests.plan124_3
 
 export type Holder[T] {
     ro value T

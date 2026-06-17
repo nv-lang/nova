@@ -1,7 +1,7 @@
 // Plan 153.4 (D262) — eager zero-copy `[]T`-views: split_at / split_first /
 // split_last / first_n / last_n / as_slice (ro) + mut as_slice (write-through).
 // All views are the SAME `[]T` ≡ Vec[T] type (Plan 96 D-single-type), cap==len.
-module plan153_4.views
+module nova_tests.plan153_4
 
 test "as_slice — ro whole view aliases the buffer" {
     ro v = Vec[int].of(1, 2, 3)

@@ -4,7 +4,7 @@
 // For sampled consecutive pairs assert collate_compare(prev, cur) <= 0
 // (D183: comparison returns int -1/0/+1, not an Ordering sum-type).
 // Coverage: uniform spread = 1500 of 227800 consecutive pairs.
-module plan152_5.collation_conformance
+module nova_tests.plan152_5
 
 import std.unicode.{collate_compare}
 

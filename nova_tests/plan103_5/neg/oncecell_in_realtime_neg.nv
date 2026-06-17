@@ -1,0 +1,15 @@
+// Plan 103.5 — OnceCell.get_or_init is banned inside #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
+//
+// EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
+
+module neg.oncecell_in_realtime_neg
+
+#realtime fn _rt_check_oncecell_get_or_init(cell mut OnceCell[int]) -> int {
+    cell.get_or_init() { 42 }
+}
+
+test "OnceCell.get_or_init banned in #realtime fn" {
+    mut cell = OnceCell[int].new()
+    ro _ = _rt_check_oncecell_get_or_init(cell)
+}

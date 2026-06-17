@@ -1,6 +1,6 @@
 // Plan 131 Ф.3 — bulk operations: extend/append/retain.
 
-module plan131.vec_bulk_pos
+module nova_tests.plan131
 
 import std.collections.vec.{Vec}
 

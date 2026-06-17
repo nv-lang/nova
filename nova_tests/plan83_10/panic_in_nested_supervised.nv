@@ -13,7 +13,7 @@
 // Plan 83.10.3 (2026-05-26): FIX — cooperative resume on worker thread.
 // NOVA_AUTOARM=0 directive removed; passes armed after nested cooperative resume.
 
-module plan83_10.panic_in_nested_supervised
+module nova_tests.plan83_10
 
 test "inner supervised panic — outer scope survives" {
     mut inner_caught = false

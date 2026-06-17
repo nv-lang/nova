@@ -2,7 +2,7 @@
 // `{ name }` shorthand = `{ name: name }` — значение это переменная
 // `name` в scope (D52 record-literal field-punning, унифицированно
 // с map-coercion).
-module map_literals.positive_record_punning
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

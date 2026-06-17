@@ -2,7 +2,7 @@
 // with their natural typed C representation (NovaOpt_nova_int), NOT
 // int64-slot erasure. Proves typed pointer storage for sum/value elements.
 
-module plan131.vec_option_elem_pos
+module nova_tests.plan131
 
 import std.collections.vec.{Vec}
 

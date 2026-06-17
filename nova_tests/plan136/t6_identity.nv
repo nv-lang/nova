@@ -2,7 +2,7 @@
 // Each rhs reads its own lhs (self-dependency). Values should remain unchanged.
 // Verifies that the conservative tmp strategy handles self-dep correctly.
 
-module plan136.t6_identity
+module nova_tests.plan136
 
 test "identity assignment leaves values unchanged" {
     mut a = 7

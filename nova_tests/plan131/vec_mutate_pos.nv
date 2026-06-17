@@ -1,6 +1,6 @@
 // Plan 131 Ф.3 — mutation: insert/remove/swap_remove/reverse/truncate.
 
-module plan131.vec_mutate_pos
+module nova_tests.plan131
 
 import std.collections.vec.{Vec}
 

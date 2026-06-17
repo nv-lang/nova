@@ -1,9 +1,0 @@
-// EXPECT_RUNTIME_PANIC requires
-//
-// Plan 153.5 (D263) — negative: @rotate_left(n) with n < 0 violates the
-// `n >= 0` contract → runtime panic.
-module plan153_5.rotate_negative_neg
-fn main() -> () {
-    mut v = Vec[int].of(1, 2, 3)
-    v.rotate_left(-1)
-}

@@ -2,7 +2,7 @@
 // Verifies that flat_map correctly handles exhaustion, empty inner
 // iterators, and that next() after None stays None.
 
-module plan153_2.flat_map_neg
+module nova_tests.plan153_2
 
 import std.collections.vec_lazy
 

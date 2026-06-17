@@ -2,7 +2,7 @@
 // B3: []T with tuple element type stores typed (no int-erasure on str field).
 // Exercises: push tuples, index via [i], destructure tuple binding, .get().
 
-module plan138_1.t4_vec_of_tuple
+module nova_tests.plan138_1
 
 // `[]T` resolves to `Vec[T]` only when the `Vec` template is reachable in the
 // compilation unit (D239 flip is gated on `generic_type_templates["Vec"]`).

@@ -1,4 +1,4 @@
-module map_literals.positive_record_str_bool
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

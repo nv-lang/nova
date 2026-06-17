@@ -2,7 +2,7 @@
 // Позитивный тест: функции с #deprecated attr парсятся, компилируются,
 // doc pipeline видит until поле (тестируем через runtime поведение).
 
-module doc.f23_deprecation_positive
+module nova_tests.doc
 
 /// Old API — use new_api instead.
 #deprecated(since = "0.5", note = "use new_compute instead", until = "0.7")

@@ -1,6 +1,6 @@
 // Plan 139 Ф.1 — char_at migrated to Nova-body (UTF-8 decode cursor, codepoint
 // indexed; cp_to_char helper). None on OOB. Semantics identical to nova_str_char_at.
-module plan139.t1_char_at_utf8
+module nova_tests.plan139
 
 test "char_at ascii" {
     assert("abc".as_chars().nth(0) == Some('a'))

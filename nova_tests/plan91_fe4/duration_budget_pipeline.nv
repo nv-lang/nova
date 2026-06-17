@@ -5,7 +5,7 @@
 // composes them with `.plus()`, then decomposes the result with `.parts()`
 // for display and cross-checks the flat `.as_millis()` / `.as_secs()` totals
 // plus the human-readable rendering.
-module plan91_fe4.duration_budget_pipeline
+module nova_tests.plan91_fe4
 
 import std.time.duration
 

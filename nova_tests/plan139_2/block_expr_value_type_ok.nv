@@ -12,7 +12,7 @@
 // block's own let-bindings before inferring the trailing type.
 // EXPECT: all PASS (pre-fix: SEGV / RUN-FAIL).
 
-module plan139_2.block_expr_value_type_ok
+module nova_tests.plan139_2
 
 test "block-expr int value + ==" {
     ro v = { ro a = 10

@@ -2,7 +2,7 @@
 // These verify that zip correctly STOPS (returns None) when either
 // side is exhausted — not a panic, just correct early-exit semantics.
 
-module plan153_2.zip_neg
+module nova_tests.plan153_2
 
 import std.collections.vec_lazy
 

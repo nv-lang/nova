@@ -1,6 +1,6 @@
 // Plan 139 Ф.2 — str.to_chars() Nova-body (UTF-8 decode cursor over @as_bytes view).
 // to_chars -> []char (one element per codepoint).
-module plan139.t2_to_chars
+module nova_tests.plan139
 
 test "to_chars ascii" {
     ro cs = "abc".to_chars()

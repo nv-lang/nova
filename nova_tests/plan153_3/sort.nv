@@ -1,5 +1,5 @@
 // Plan 153.3 — sort family: sort/sort_by/sort_by_key + unstable variants.
-module plan153_3.sort
+module nova_tests.plan153_3
 
 test "sort ascending + larger" {
     mut v = Vec[int].of(3, 1, 2, 5, 4)

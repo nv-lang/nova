@@ -1,6 +1,6 @@
 // Plan 152.1 Ф.2 (D249): @find / @rfind возвращают БАЙТОВЫЙ offset (композируется
 // с s[k..]). Для не-ASCII byte-offset ≠ cp-offset — это и проверяем.
-module plan152_1.find_byte_offset
+module nova_tests.plan152_1
 
 test "find: ASCII byte-offset (== cp-offset)" {
     assert("hello".find("llo") == Some(2))

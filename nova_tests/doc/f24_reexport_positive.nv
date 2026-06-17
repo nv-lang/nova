@@ -2,7 +2,7 @@
 // Позитивный тест — функции, доступные через export import, работают корректно.
 // Синтаксис export import и #doc(inline) / #doc(no_inline) не ломает компиляцию.
 
-module doc.f24_reexport_positive
+module nova_tests.doc
 
 /// Умножение с накоплением.
 export fn mul_add(a int, b int, c int) -> int => a * b + c

@@ -3,7 +3,7 @@
 // `unsafe { @ptr[i] }`. Returns the UTF-8 byte at byte-index i (O(1)).
 // Identical semantics to the retired C nova_str_byte_at.
 
-module plan139_2.byte_at_ok
+module nova_tests.plan139_2
 
 test "byte_at: ASCII bytes" {
     ro s = "ABC"

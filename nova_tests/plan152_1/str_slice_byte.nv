@@ -1,7 +1,7 @@
 // Plan 152.1 Ф.1b (D249): `str[a..b]` is a BYTE-range zero-copy slice (the ONLY
 // valid `str[..]` form after the int-index ban) — was codepoint-indexed, which
 // broke non-ASCII `split` (it slices on byte offsets). Range index — allowed.
-module plan152_1.str_slice_byte
+module nova_tests.plan152_1
 
 test "str byte-range slice (literal Range index)" {
     ro s = "hello"

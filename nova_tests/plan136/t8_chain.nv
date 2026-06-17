@@ -2,7 +2,7 @@
 // Two separate tuple assigns, each correct independently.
 // Verifies that sequential tuple assigns compose correctly.
 
-module plan136.t8_chain
+module nova_tests.plan136
 
 test "sequential tuple assigns" {
     mut a = 0

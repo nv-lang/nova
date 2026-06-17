@@ -1,6 +1,6 @@
 // Plan 131 Ф.3 — capacity management: with_capacity/reserve/cap.
 
-module plan131.vec_capacity_pos
+module nova_tests.plan131
 
 import std.collections.vec.{Vec}
 

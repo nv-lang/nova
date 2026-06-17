@@ -4,7 +4,7 @@
 // line numbers резолвятся корректно для `[src]` linking.
 // Runtime behavior — независимая проверка.
 
-module doc.f25_source_url_positive
+module nova_tests.doc
 
 /// Top-of-file function — line ~10.
 export fn first_fn(x int) -> int => x + 1

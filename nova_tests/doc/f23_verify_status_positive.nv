@@ -2,7 +2,7 @@
 // Позитивные тесты: функции с контрактами, которые SMT доказывает
 // (или которые корректно выполняются в runtime).
 
-module doc.f23_verify_status_positive
+module nova_tests.doc
 
 /// Increment, guaranteed > input.
 export fn inc(x int) -> int

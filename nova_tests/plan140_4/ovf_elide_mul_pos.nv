@@ -4,7 +4,7 @@
 // `nova_int_checked_mul` элидируется. Неограниченный `a*b` (без фактов) остался бы
 // проверяемым (Z3 → Unknown → консервативно чек, см. ovf_unbounded_panic_neg-аналог).
 // Корректность инвариантна к элизии.
-module plan140_4.ovf_elide_mul_pos
+module nova_tests.plan140_4
 
 fn mul_sum() -> int {
     mut total = 0

@@ -1,7 +1,7 @@
 // Plan 45 Ф.22.6 + Ф.23: doc_alias attrs парсятся и не ломают runtime.
 // Позитивный тест: функции с #doc_alias работают нормально.
 
-module doc.f23_doc_aliases_positive
+module nova_tests.doc
 
 /// Compute absolute value.
 #doc_alias("abs", "magnitude")

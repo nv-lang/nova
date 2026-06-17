@@ -1,4 +1,4 @@
-module plan11_followup.f11_stringbuilder_new_methods_positive
+module nova_tests.plan11_followup
 
 // Sprint F.36 / commit 414b9bf: добавлены 4 non-consuming методы StringBuilder:
 // starts_with / ends_with / is_empty / peek. Раньше единственный способ

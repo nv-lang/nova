@@ -1,5 +1,5 @@
 // Plan 59.1 Ф.0 — repro CC-FAIL для generic anonymous tuple в return.
-module plan59_1.repro_dup_T
+module nova_tests.plan59_1
 
 fn[T] dup(v T) -> (T, T) => (v, v)
 

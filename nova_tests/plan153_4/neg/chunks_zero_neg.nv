@@ -1,0 +1,12 @@
+// EXPECT_RUNTIME_PANIC requires
+//
+// Plan 153.4 — negative: chunks(n) with n == 0 violates the `n > 0` contract
+// → runtime panic (no clamp, no infinite empty iterator).
+module neg.chunks_zero_neg
+
+import std.collections.vec_lazy
+
+fn main() -> () {
+    ro v = Vec[int].of(1, 2, 3)
+    ro _ = v.chunks(0).collect()
+}

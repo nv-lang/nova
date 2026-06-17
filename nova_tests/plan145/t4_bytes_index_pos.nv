@@ -1,7 +1,7 @@
 // Plan 145 — t4: `as_bytes()[i]` — NovaArray-путь индексации (emit_bchk_array_access).
 // Проверяет миграцию 1D-хелпера на portable nova_idx_chk для байтового слоя строки.
 
-module plan145.t4_bytes_index_pos
+module nova_tests.plan145
 
 test "as_bytes()[i] reads bytes" {
     ro s = "ABC"

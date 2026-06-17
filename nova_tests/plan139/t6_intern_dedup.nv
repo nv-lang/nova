@@ -3,7 +3,7 @@
 // length, and equality, regardless of the shared-buffer optimization.
 // (Single-buffer emission is verified separately via emitted-C inspection;
 // this fixture proves interning is semantically transparent at runtime.)
-module plan139.t6_intern_dedup
+module nova_tests.plan139
 
 fn make() -> str {
     return "abc"

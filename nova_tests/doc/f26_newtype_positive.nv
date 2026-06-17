@@ -3,7 +3,7 @@
 // Через doc-pipeline (НЕ через nova test): JSON output должен показывать
 // kind: "newtype", не "alias". Здесь проверяем что Nova compile + runtime ok.
 
-module doc.f26_newtype_positive
+module nova_tests.doc
 
 /// Email — newtype над str для type safety.
 export type Email str

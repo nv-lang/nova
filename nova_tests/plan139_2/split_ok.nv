@@ -5,7 +5,7 @@
 //   - empty sep → single-element array holding the whole string,
 //   - N non-overlapping matches → N+1 segments (trailing tail always emitted).
 
-module plan139_2.split_ok
+module nova_tests.plan139_2
 
 test "split: basic ASCII, 3 parts" {
     ro parts = "a,b,c".split(",")

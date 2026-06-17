@@ -1,5 +1,5 @@
 // Plan 91 Ф.1 conformance: HashMap mixed types + core ops.
-module plan91_fe1.hashmap_pos
+module nova_tests.plan91_fe1
 import std.collections.hashmap.{HashMap}
 
 test "str->int build, get, contains, remove" {

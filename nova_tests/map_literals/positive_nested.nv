@@ -10,7 +10,7 @@
 // Bottom-up порядок desugar'а: сначала children, потом сам узел —
 // поэтому в момент построения outer-block внутренний MapLit уже
 // заменён на Block (с другим _mN).
-module map_literals.positive_nested
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

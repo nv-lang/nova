@@ -5,7 +5,7 @@
 // mis-dispatches to `@plus`. This fixture re-checks the user-facing `Vec + Vec`
 // surface; flatten itself is covered by flatten.nv.
 
-module plan153_5.flatten_plus_guard
+module nova_tests.plan153_5
 
 import std.collections.vec.{Vec}
 

@@ -4,7 +4,7 @@
 // caller that selectively imports `{Vec}` must see methods from EVERY peer.
 // Also confirms `[]T` ≡ `Vec[T]` interchangeability (D239).
 
-module plan153_0.vec_folder_module_pos
+module nova_tests.plan153_0
 
 import std.collections.vec.{Vec}
 

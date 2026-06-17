@@ -6,7 +6,7 @@
 // fixture fails if a future change accidentally retires the C operator path
 // without a joint operator+method migration.
 
-module plan139_2.operator_str_ok
+module nova_tests.plan139_2
 
 test "operator +: basic concatenation" {
     ro r = "foo" + "bar"

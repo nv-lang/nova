@@ -1,0 +1,15 @@
+// Plan 140.3 ([M-140-contract-levels]) NEG: `#unchecked(...)` accepts only the
+// three contract kinds `requires` / `ensures` / `invariant`. Any other token is
+// a clear compile error (E_UNCHECKED_KIND) — not silently ignored.
+// EXPECT_COMPILE_ERROR E_UNCHECKED_KIND
+
+module neg.unchecked_bad_kind_neg
+
+#unchecked(precondition)
+fn f(x int) -> int
+    requires x > 0
+=> x
+
+test "unreachable — file must not compile" {
+    assert(f(1) == 1)
+}

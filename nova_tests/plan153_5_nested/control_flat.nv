@@ -4,7 +4,7 @@
 // CARRIER form `fn Vec[T] @m` are exercised here; their `T` binds to the
 // immediate element (= innermost, since depth is 1), exactly as before.
 
-module plan153_5_nested.control_flat
+module nova_tests.plan153_5_nested
 
 import std.collections.vec.{Vec}
 

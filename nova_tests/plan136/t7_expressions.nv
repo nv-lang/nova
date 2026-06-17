@@ -2,7 +2,7 @@
 // `(x, y) = (1+2, 3*4)` — rhs contain arithmetic expressions.
 // rhs do not depend on lhs, so no temps are needed.
 
-module plan136.t7_expressions
+module nova_tests.plan136
 
 test "rhs are arithmetic expressions" {
     mut x = 0

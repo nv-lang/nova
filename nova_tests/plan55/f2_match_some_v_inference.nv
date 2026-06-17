@@ -7,7 +7,7 @@
 //
 // Параллель Rust/Swift: exhaustive type inference, `v` всегда T.
 
-module plan55.f2_match_some_v_inference
+module nova_tests.plan55
 
 
 fn unwrap_or_int(opt Option[int], fallback int) -> int {

@@ -1,6 +1,6 @@
 // Plan 169 Ф.6: verify fast-path timing — simple compute, no IO.
 // This test should have low run_ms (< 500ms) relative to compile_ms.
-module plan169.t1_timing_fields
+module nova_tests.plan169
 
 test "fast compute — sum 0..1000" {
     mut sum = 0

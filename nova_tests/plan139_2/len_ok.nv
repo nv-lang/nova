@@ -3,7 +3,7 @@
 // type-method privacy). Returns byte length O(1) (D26: str.len = bytes).
 // Identical semantics to the retired C nova_str_byte_len.
 
-module plan139_2.len_ok
+module nova_tests.plan139_2
 
 test "len: empty string is 0" {
     assert("".byte_len() == 0)

@@ -1,7 +1,7 @@
 // Plan 139 Ф.1 — concat/+ REMAIN C (nova_str_concat): the `+` operator lowers
 // DIRECTLY to nova_str_concat in BinOp codegen, so the method alone cannot
 // retire it. Regression guard: concat + `+` operator stay correct.
-module plan139.t1_concat
+module nova_tests.plan139
 
 test "concat method" {
     assert("ab".concat("cd") == "abcd")

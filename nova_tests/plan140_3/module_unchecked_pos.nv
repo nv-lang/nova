@@ -4,7 +4,7 @@
 // (Bare `#unchecked` = all kinds; here it covers the requires below.)
 
 #unchecked
-module plan140_3.module_unchecked_pos
+module nova_tests.plan140_3
 
 fn must_be_positive(x int) -> int
     requires x > 0

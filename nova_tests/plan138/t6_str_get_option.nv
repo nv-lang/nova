@@ -3,7 +3,7 @@
 // The safe i-th codepoint is `s.as_chars().nth(i) -> Option[char]` (O(n)) — also
 // None on OOB / negative, so the semantics carry over exactly.
 
-module plan138.t6_str_get_option
+module nova_tests.plan138
 
 test "as_chars().nth in-bounds returns Some" {
     ro s = "abc"

@@ -1,4 +1,4 @@
-module plan11_followup.f1_self_return_type_generic_instance_positive
+module nova_tests.plan11_followup
 
 // Plan 11 Follow-up (commit 57b2cb1): `-> Self` в generic instance method
 // должно резолвиться в concrete mono'd type, не emit'ить Nova_Self.

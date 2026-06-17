@@ -5,7 +5,7 @@
 // `--contracts=off` тоже — пруф контракт-независим). Аккумулятор `total` безграничен
 // ⇒ его `total + pair` чек остаётся. Корректность инвариантна к элизии (тест
 // проходит и на Trivial). C-инспекция подтверждает элизию (см. план OE1).
-module plan140_4.ovf_elide_loop_pos
+module nova_tests.plan140_4
 
 fn nested_sum() -> int {
     mut total = 0

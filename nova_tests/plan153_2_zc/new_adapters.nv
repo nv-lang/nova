@@ -1,4 +1,4 @@
-module plan153_2_zc.new_adapters
+module nova_tests.plan153_2_zc
 
 import std.collections.vec_iter
 

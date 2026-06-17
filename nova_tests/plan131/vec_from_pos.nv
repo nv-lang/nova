@@ -1,7 +1,7 @@
 // Plan 131 Ф.3 — conversion: Vec[T].from(iterable source).
 // Plan 138.1 Ф.0.1a: as_slice removed; equality checked via @equal (`.equal`).
 
-module plan131.vec_from_pos
+module nova_tests.plan131
 
 import std.collections.vec.{Vec}
 

@@ -6,7 +6,7 @@
 // sharing (R14): all occurrences observe identical, unchanging bytes, and
 // derived strings (to_upper etc.) allocate fresh buffers without touching
 // the shared interned buffer.
-module plan139.neg_t6_intern_no_aliasing_bug
+module nova_tests.plan139
 
 test "shared interned buffer is never mutated through any binding" {
     ro a = "shared"

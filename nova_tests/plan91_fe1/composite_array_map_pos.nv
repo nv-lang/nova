@@ -12,7 +12,7 @@
 //
 // Covered: map int→record, map int→sum, filter over a composite receiver
 // (predicate reads element fields), chained map, and all three read idioms.
-module plan91_fe1.composite_array_map_pos
+module nova_tests.plan91_fe1
 
 type Wrap {
     n i64

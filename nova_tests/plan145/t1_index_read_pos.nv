@@ -2,7 +2,7 @@
 // Покрывает Vec inline-путь индексации (emit_c.rs ~19929) после миграции
 // со stmt-expr на portable `nova_idx_chk`.
 
-module plan145.t1_index_read_pos
+module nova_tests.plan145
 
 import std.collections.vec.{Vec}
 

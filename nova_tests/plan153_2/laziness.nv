@@ -4,7 +4,7 @@
 // closure) and assert the counter reflects ONLY the elements actually drained —
 // not the whole source. If the layer were eager, the counters would equal the
 // source length regardless of `take`/`find`/`any`/`nth` short-circuiting.
-module plan153_2.laziness
+module nova_tests.plan153_2
 
 import std.collections.vec_lazy
 

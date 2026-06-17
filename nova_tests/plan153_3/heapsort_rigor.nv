@@ -1,6 +1,6 @@
 // Plan 153.3 — heapsort (sort_unstable) correctness on non-trivial inputs:
 // reverse-sorted (worst for naive quicksort), all-equal, already-sorted.
-module plan153_3.heapsort_rigor
+module nova_tests.plan153_3
 
 test "unstable: reverse-sorted 20 -> ascending" {
     mut v = Vec[int].new()

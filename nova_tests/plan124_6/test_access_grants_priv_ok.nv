@@ -1,6 +1,6 @@
 // Plan 124.6 — positive: #test_access(TypeX) attribute grants priv-field
 // access fn body для test purposes.
-module plan124_6.test_access_grants_priv_ok
+module nova_tests.plan124_6
 
 export type Account {
     ro name str

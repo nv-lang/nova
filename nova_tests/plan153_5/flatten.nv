@@ -10,7 +10,7 @@
 // flattens one level per call, so a double `.flatten().flatten()` produces a
 // flat `Vec[int]`.
 
-module plan153_5.flatten
+module nova_tests.plan153_5
 
 import std.collections.vec.{Vec}
 

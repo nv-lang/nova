@@ -1,7 +1,7 @@
 // Plan 139 Ф.3 (neg) — different bytes are NOT equal (content-eq is strict).
 // Behavioral negative: proves str eq never falsely reports equality for
 // distinct content (and never relies on pointer coincidence the other way).
-module plan139.neg_t3_ne_different_bytes
+module nova_tests.plan139
 
 test "single byte difference -> not equal" {
     assert("ab" != "ac", "ab != ac")

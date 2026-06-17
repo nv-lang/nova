@@ -2,7 +2,7 @@
 // Insert with a BUILT key (concat -> fresh buffer), look up with a LITERAL key
 // (rodata buffer). Distinct pointers; must hit because the HashMap key path
 // uses nova_str_hash + nova_str_eq (content), not pointer identity.
-module plan139.t3_hashmap_str_key
+module nova_tests.plan139
 import std.collections.hashmap.{HashMap}
 
 test "insert built key, lookup literal key -> hit" {

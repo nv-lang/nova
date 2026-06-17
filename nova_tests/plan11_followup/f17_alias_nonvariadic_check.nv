@@ -1,4 +1,4 @@
-module plan11_followup.f17_alias_nonvariadic_check
+module nova_tests.plan11_followup
 
 // Diagnostic: проверка что alias-import работает для НЕ variadic методов.
 // Если этот тест PASS — alias resolution в principle работает, проблема

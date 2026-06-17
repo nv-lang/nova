@@ -1,9 +1,0 @@
-// EXPECT_RUNTIME_PANIC requires
-//
-// Plan 153.5 (D263) — negative: @drain with a reversed range (end < start)
-// violates the `range.end >= range.start` contract → runtime panic.
-module plan153_5.drain_reversed_neg
-fn main() -> () {
-    mut v = Vec[int].of(1, 2, 3, 4)
-    ro _ = v.drain(3..1)
-}

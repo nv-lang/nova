@@ -14,7 +14,7 @@
 //
 // EXPECT_TIMEOUT_MS 30000
 
-module plan103_4.condvar_wait_until_predicate
+module nova_tests.plan103_4
 
 test "wait_until returns only when predicate becomes true" {
     mut mu = Mutex.new()

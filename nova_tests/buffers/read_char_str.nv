@@ -3,7 +3,7 @@
 // read_char / try_read_char / read_str(n) / try_read_str(n).
 // n у read_str — количество codepoint'ов. Невалидный UTF-8 → Err.
 
-module buffers.read_char_str
+module nova_tests.buffers
 
 
 // ── read_char (Fail-form) ──────────────────────────────────────────

@@ -1,4 +1,4 @@
-module plan11_followup.f7_assert_in_match_arm_positive
+module nova_tests.plan11_followup
 
 // Plan 11 Follow-up (commit a37a4b9): `assert(cond)` в expression position
 // (match arm body) должен compile через comma-operator wrap

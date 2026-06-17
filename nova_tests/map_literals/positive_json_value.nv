@@ -4,7 +4,7 @@
 //
 // Каждое значение оборачивается в variant через sum-coercion;
 // имена полей становятся строковыми ключами через map-coercion.
-module map_literals.positive_json_value
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

@@ -1,4 +1,4 @@
-module plan11_followup.f14_hashmap_clone_filter_positive
+module nova_tests.plan11_followup
 
 // Sprint F.36 / commit d5d2996: HashMap internal fields переименованы в
 // _prefix (_buckets/_count/_tombstones) для encapsulation. Plus clone/filter

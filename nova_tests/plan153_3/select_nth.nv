@@ -1,5 +1,5 @@
 // Plan 153.3 — select_nth_unstable (introselect): k-th order statistic.
-module plan153_3.select_nth
+module nova_tests.plan153_3
 
 test "select_nth k-th smallest + partition invariant" {
     mut v = Vec[int].of(7, 3, 9, 1, 5, 2, 8)

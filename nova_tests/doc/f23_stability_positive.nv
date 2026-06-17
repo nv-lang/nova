@@ -2,7 +2,7 @@
 // Позитивный тест: функции с stability attrs работают корректно в runtime.
 // MD renderer показывает feature/note поля (tested via cargo doc tests).
 
-module doc.f23_stability_positive
+module nova_tests.doc
 
 /// Stable public API.
 #stable(since = "1.0")

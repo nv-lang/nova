@@ -8,7 +8,7 @@
 //
 // ALLOC_REQUIRES boehm
 
-module plan83_10.supervised_drain_completeness
+module nova_tests.plan83_10
 
 test "parallel-for 500 — every slot unique correct" {
     ro xs = parallel for i in 0..500 { i + 100 }

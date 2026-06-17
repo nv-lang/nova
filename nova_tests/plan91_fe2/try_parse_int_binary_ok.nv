@@ -1,4 +1,4 @@
-module plan91_fe2.try_parse_int_binary_ok
+module nova_tests.plan91_fe2
 
 import std.runtime.string.{ParseIntError}
 

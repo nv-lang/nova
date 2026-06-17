@@ -1,6 +1,6 @@
 // Plan 169 Ф.6: fast variant example — reduced N for quick CI.
 // Full test (large N): t2_fast_variant_slow.nv
-module plan169.t2_fast_variant
+module nova_tests.plan169
 
 test "fast variant: 100 iterations" {
     mut sum = 0

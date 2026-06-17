@@ -4,7 +4,7 @@
 // CStr would make C strlen over-read into the parent. as_cstr() detects this
 // (`ptr[len] != 0`) and falls back to a fresh len+1 NUL-terminated copy, so
 // strlen sees exactly the slice length.
-module plan139.t4_slice_not_nul_terminated
+module nova_tests.plan139
 
 import std.ffi.cstr.{CStr}
 

@@ -2,7 +2,7 @@
 // Позитивный тест: функции с effects корректно работают.
 // Правильный синтаксис Nova effects: без `fn` keyword в effect body.
 
-module doc.f23_effects_positive
+module nova_tests.doc
 
 type Logger effect {
     log(msg str) -> ()

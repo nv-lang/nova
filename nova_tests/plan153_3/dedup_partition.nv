@@ -1,5 +1,5 @@
 // Plan 153.3 — dedup (consecutive) + partition (in-place reorder).
-module plan153_3.dedup_partition
+module nova_tests.plan153_3
 
 test "dedup consecutive only" {
     mut v = Vec[int].of(1, 1, 2, 3, 3, 3, 1)

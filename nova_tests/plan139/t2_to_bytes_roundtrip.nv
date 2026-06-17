@@ -1,6 +1,6 @@
 // Plan 139 Ф.2 — str.to_bytes() Nova-body (copy from @as_bytes view) round-trip.
 // to_bytes -> []u8 (owned copy) -> from_bytes_unchecked -> equal original.
-module plan139.t2_to_bytes_roundtrip
+module nova_tests.plan139
 
 test "to_bytes ascii length + content" {
     ro s = "hello"

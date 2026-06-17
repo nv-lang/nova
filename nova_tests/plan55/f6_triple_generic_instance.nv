@@ -1,6 +1,6 @@
 // Plan 55 Ф.6 — 3 instances одного generic type в одной fn.
 
-module plan55.f6_triple_generic_instance
+module nova_tests.plan55
 
 
 fn id[T](x T) -> T => x

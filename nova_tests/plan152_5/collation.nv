@@ -4,7 +4,7 @@
 // human-meaningful ordering properties that the (sampled) CollationTest oracle
 // also covers, plus a few that are easy to read. collate_compare returns int
 // (-1/0/+1, D183), NOT an Ordering sum-type.
-module plan152_5.collation
+module nova_tests.plan152_5
 
 import std.unicode.{collate_compare, collate_sort_key, collate_eq, Collator}
 

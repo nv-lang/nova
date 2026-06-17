@@ -8,7 +8,7 @@
 // как @clone() будет добавлен в stdlib (после fix mono-pass), этот
 // тест должен продолжать работать без регрессий.
 
-module plan55.f4_hashmap_clone_method
+module nova_tests.plan55
 
 import std.collections.hashmap.{HashMap}
 

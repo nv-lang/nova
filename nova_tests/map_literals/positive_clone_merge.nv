@@ -4,7 +4,7 @@
 // name-collision) + 56 (@clone unlock) + 59 Ф.7.2 (idiomatic refactor).
 // Раньше hashmap.nv помечал @clone/@merge_from как DEFERRED — устарело.
 // Этот файл фиксирует рабочее поведение регрессионно.
-module map_literals.positive_clone_merge
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

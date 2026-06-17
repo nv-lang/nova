@@ -1,4 +1,4 @@
-module plan11_followup.f12_variadic_str_array_positive
+module nova_tests.plan11_followup
 
 // Sprint F.36 / commit c10adcc: variadic call для не-int element types
 // (str/bool/f64/byte/struct ptrs). Pre-fix emit_array_lit infer'ил element

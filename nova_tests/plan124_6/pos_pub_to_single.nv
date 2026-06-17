@@ -1,6 +1,6 @@
 // Plan 124.6 — positive: #pub_to(Friend) on type declaration grants friend
 // type access to all priv(type) fields of that type (D224 §4 rule-4).
-module plan124_6.pos_pub_to_single
+module nova_tests.plan124_6
 
 #pub_to(Bank)
 export type Account {

@@ -4,7 +4,7 @@
 // путь: тест проходит (exit 0), ошибка наблюдается через is_err().
 // Fail-form OOB (бросает ReadBufferError) — см. neg_read_oob.nv.
 
-module buffers.read_oob
+module nova_tests.buffers
 
 
 // ── try_read_byte / bytes OOB ──────────────────────────────────────

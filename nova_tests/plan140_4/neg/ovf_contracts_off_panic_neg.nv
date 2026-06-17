@@ -1,0 +1,20 @@
+// EXPECT_RUNTIME_PANIC integer overflow
+// CONTRACTS off
+// REQUIRES_SMT_BACKEND z3
+// Plan 140.4 OE3 NEG (soundness boundary): `a+b` доказуемо in-range ТОЛЬКО через
+// `requires`. Под `// CONTRACTS off` requires НЕ enforced ⇒ contract-based элизия
+// снимается ⇒ `nova_int_checked_add` ОСТАЁТСЯ. Вызов с int.MAX (нарушает requires,
+// но он не проверяется при off) ⇒ overflow-чек срабатывает ⇒ паника. Доказывает,
+// что contract-based сайты НЕ элидируются при снятых контрактах (always-safe —
+// элидировались бы; этот сайт contract-based).
+// SOUNDNESS_REGRESSION
+module neg.ovf_contracts_off_panic_neg
+
+fn bounded_add(a int, b int) -> int
+    requires 0 <= a && a <= 1000
+    requires 0 <= b && b <= 1000
+=> a + b
+
+test "contract-based overflow check kept under contracts=off" {
+    ro _ = bounded_add(int.MAX, 1)
+}

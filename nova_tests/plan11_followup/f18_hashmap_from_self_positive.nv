@@ -1,4 +1,4 @@
-module plan11_followup.f18_hashmap_from_self_positive
+module nova_tests.plan11_followup
 
 // Plan 63 Bug D / Fix D regression test:
 // `HashMap[K, V].from(pairs)` с `-> Self` return type должен dispatch'иться

@@ -1,6 +1,6 @@
 // Plan 153.2 (D260) — lazy adapters: map / filter / filter_map / enumerate /
 // take / skip. Each adapter returns a new BoxIter; collect drives the chain.
-module plan153_2.adapters
+module nova_tests.plan153_2
 
 import std.collections.vec_lazy
 

@@ -1,4 +1,4 @@
-module plan11_followup.f19_self_factory_simple_positive
+module nova_tests.plan11_followup
 
 // Plan 63 diagnostic: проверка `-> Self` dispatch без tuple-параметров
 // (только scalar types). Если PASS — D73 dispatch ОК, проблема в Bug D

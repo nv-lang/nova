@@ -2,7 +2,7 @@
 // Позитивный тест — #hide_doc, #stable, #doc(alias=...) не ломают
 // компиляцию и runtime поведение функций остаётся корректным.
 
-module doc.f24_doc_attrs_positive
+module nova_tests.doc
 
 /// Публичная стабильная функция.
 #stable(since = "1.0")

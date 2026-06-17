@@ -1,7 +1,7 @@
 // Plan 124.3 — positive: outside scope access к public field generic
 // type'а — OK. Verifies no false-positive на public fields в generic
 // контексте.
-module plan124_3.generic_public_field_outside_ok
+module nova_tests.plan124_3
 
 export type Buffer[T] {
     priv mut size int

@@ -12,7 +12,7 @@
 //
 // Renamed semantics (file kept for history): asserts the no-op behaviour.
 
-module plan90_1.reserve_negative_extra_neg
+module nova_tests.plan90_1
 
 test "reserve(-1) is a harmless no-op (Vec lenient contract)" {
     mut arr []int = [1, 2, 3]

@@ -1,6 +1,6 @@
 // [M-153.2-iter-phase-b] Zero-cost step_by (StepByIter, vec_iter).
 
-module plan153_2_zc.step_by_zc
+module nova_tests.plan153_2_zc
 
 import std.collections.vec_iter
 

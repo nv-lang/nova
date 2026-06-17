@@ -4,7 +4,7 @@
 // (@as_ptr/@len/@cap) and builds an owned, NUL-terminated str (or zero-copy
 // reuse for steal). Round-trip with @to_bytes / @as_bytes must be byte-exact.
 
-module plan139_2.from_bytes_ok
+module nova_tests.plan139_2
 
 test "from_bytes_unchecked: round-trip ASCII" {
     ro bytes = "hello".to_bytes()

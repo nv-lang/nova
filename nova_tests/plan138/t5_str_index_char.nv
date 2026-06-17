@@ -4,7 +4,7 @@
 // the `as_chars()` lens: `s.as_chars().nth(i) -> Option[char]` (O(n), explicit).
 // The compile-error for `s[i]` lives in plan152_1/n_str_int_index.
 
-module plan138.t5_str_index_char
+module nova_tests.plan138
 
 test "as_chars().nth(i): i-th codepoint" {
     ro s = "abc"

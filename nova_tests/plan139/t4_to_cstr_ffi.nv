@@ -5,7 +5,7 @@
 // ABI; the C fn runs strlen. This works because the D26 null-term invariant
 // guarantees a full (non-sliced) str's buffer is NUL-terminated, so strlen
 // terminates exactly at .len. Shim: nova_fn_p139_cstr_strlen.
-module plan139.t4_to_cstr_ffi
+module nova_tests.plan139
 
 import std.ffi.cstr.{CStr}
 

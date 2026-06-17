@@ -1,7 +1,7 @@
 // Plan 138 Ф.4 — t1: v[i] basic indexing on Vec[T]
 // A1: v[i] → T, panics on OOB
 
-module plan138.t1_vec_index_basic
+module nova_tests.plan138
 
 import std.collections.vec.{Vec}
 

@@ -1,5 +1,5 @@
 // Plan 91 Ф.1 conformance: Set int/str + algebra.
-module plan91_fe1.set_pos
+module nova_tests.plan91_fe1
 import std.collections.set.{Set}
 
 test "Set[int] dedup + ops" {

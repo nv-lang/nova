@@ -2,7 +2,7 @@
 // NOTE: Nova-body returns an allocated copy (former C returned a zero-copy
 // view); content semantics identical. View-form deferred to lang-item @ptr
 // ([M-139-f0-lang-item-decl]).
-module plan139.t1_trim
+module nova_tests.plan139
 
 test "trim spaces" {
     assert("  hi  ".trim() == "hi")

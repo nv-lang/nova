@@ -1,6 +1,6 @@
 // Plan 124.2 — positive: record literal spread `...other` ВНУТРИ
 // type-method scope разрешён (recv = Account, has_priv allowed).
-module plan124_2.spread_inside_method_ok
+module nova_tests.plan124_2
 
 export type Account {
     priv mut money f64

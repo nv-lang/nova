@@ -1,7 +1,7 @@
 // Plan 124.2 — positive: for-loop с простым binding'ом + public field
 // access — outside any type scope, OK. Demonstrates that for-loop on
 // public-only types passes priv checks (no false-positive).
-module plan124_2.for_pattern_public_outside_ok
+module nova_tests.plan124_2
 
 export type Point {
     ro x f64

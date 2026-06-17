@@ -1,4 +1,4 @@
-module plan153_2.zip_basic
+module nova_tests.plan153_2
 
 import std.collections.vec_lazy
 

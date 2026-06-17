@@ -1,0 +1,19 @@
+// EXPECT_RUNTIME_PANIC f9_invariant_msg_violation.nv:13: invariant failed: balance must stay non-negative (balance >= 0)
+//
+// Plan 140.1 Ф.2/Ф.3 (D24 amend), acceptance F3+F7: a record `invariant` WITH a
+// custom message, when violated at construction, aborts with
+// `<file>:<line>: invariant failed: <msg> (<expr>)`. Exercises the message path
+// for the invariant kind. The LOC points at the invariant clause's source line.
+
+module neg.f9_invariant_msg_violation
+
+type Account {
+    balance int
+}
+    invariant balance >= 0, "balance must stay non-negative"
+
+fn main() Io -> () {
+    ro bad = Account { balance: -100 }
+    println("UNREACHABLE")
+    ro _ = bad
+}

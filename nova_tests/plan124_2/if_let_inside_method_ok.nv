@@ -1,6 +1,6 @@
 // Plan 124.2 — positive: if-let pattern на priv field внутри
 // static method body — OK (recv = Account).
-module plan124_2.if_let_inside_method_ok
+module nova_tests.plan124_2
 
 export type Account {
     priv mut money f64

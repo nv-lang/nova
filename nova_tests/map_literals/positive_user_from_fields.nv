@@ -5,7 +5,7 @@
 // Сейчас expected — это HashMap (stdlib has #from_fields). Negative
 // test проверяет что без attribute coercion НЕ работает; этот test
 // проверяет что С attribute coercion ИДЁТ через generic path.
-module map_literals.positive_user_from_fields
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

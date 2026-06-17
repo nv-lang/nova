@@ -4,7 +4,7 @@
 //   str → CStr → C : as_cstr() + p139_cstr_strlen (NUL-terminated, D26 §3).
 // Closes the loop: a C-origin str behaves identically to a literal through
 // every conversion direction.
-module plan139.t4_ffi_roundtrip
+module nova_tests.plan139
 
 import std.ffi.cstr.{CStr}
 

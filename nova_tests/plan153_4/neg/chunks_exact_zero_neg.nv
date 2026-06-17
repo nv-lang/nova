@@ -1,0 +1,11 @@
+// EXPECT_RUNTIME_PANIC requires
+//
+// Plan 153.4 — negative: chunks_exact(n) with n == 0 violates `n > 0` → panic.
+module neg.chunks_exact_zero_neg
+
+import std.collections.vec_lazy
+
+fn main() -> () {
+    ro v = Vec[int].of(1, 2, 3)
+    ro _ = v.chunks_exact(0).collect()
+}

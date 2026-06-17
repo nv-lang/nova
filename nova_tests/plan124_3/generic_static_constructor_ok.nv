@@ -5,7 +5,7 @@
 // Note: explicit-type generic record literal `Stack[T] { ... }`
 // has parser limit; anonymous `{ ... }` form (inferred from
 // `-> Stack[T]` return) — supported и canonical.
-module plan124_3.generic_static_constructor_ok
+module nova_tests.plan124_3
 
 export type Stack[T] {
     priv mut len int

@@ -3,7 +3,7 @@
 //
 // eq_ignore_ascii_case: byte-compares non-ASCII literally (no folding).
 // eq_ignore_case:       full Unicode case-fold (handles É/é, ß/ss, …).
-module plan152_5.n_eq_ignore_case_ascii_boundary
+module nova_tests.plan152_5
 
 import std.unicode.{eq_ignore_case}
 

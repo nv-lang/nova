@@ -2,7 +2,7 @@
 // Plan 152.1 Ф.2 (D249): find/rfind теперь возвращают BYTE offsets (композируются
 // с s[k..]); для ASCII byte-offset == прежний cp-offset (тесты ниже не меняются),
 // для не-ASCII — byte-offset (UTF-8 тест мигрирован).
-module plan139.t1_find_rfind
+module nova_tests.plan139
 
 test "find basic" {
     assert("hello".find("l") == Some(2))

@@ -1,7 +1,7 @@
 // Plan 139 Ф.3 — hash/eq consistency: equal strings (by content) hash equal.
 // str.@hash is FNV/SipHash over the bytes (nova_str_hash), so two byte-equal
 // strings from distinct buffers must produce the same hash.
-module plan139.t3_hash_eq_consistency
+module nova_tests.plan139
 
 test "equal strings have equal hash (distinct buffers)" {
     ro a = "hello"

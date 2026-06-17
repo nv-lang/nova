@@ -1,5 +1,5 @@
 // Plan 52 Ф.7 positive: [k: v] map-литерал — HashMap[int, str].
-module map_literals.positive_int_str
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

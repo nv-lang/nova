@@ -1,4 +1,4 @@
-module plan11_followup.f16_path_alias_variadic_positive
+module nova_tests.plan11_followup
 
 // Plan 63 Bug B / Fix B regression test:
 // при `import X as p`, variadic flag должен пройти через alias.

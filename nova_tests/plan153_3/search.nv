@@ -4,7 +4,7 @@
 // binary_search returns Result[int, int]; asserted via direct `== Ok(i)` /
 // `== Err(i)` — structural `Result ==` against a bare Ok/Err literal of a
 // non-default E now works (Plan 153.3 #3, see result_eq_literal.nv).
-module plan153_3.search
+module nova_tests.plan153_3
 
 test "index_of / position / rposition" {
     ro v = Vec[int].of(10, 20, 30, 20)

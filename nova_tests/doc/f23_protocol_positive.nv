@@ -3,7 +3,7 @@
 // Doc pipeline (cargo) найдёт implementors при workspace scan.
 // Синтаксис protocol: без `fn` в body; методы: `fn Type @method()`.
 
-module doc.f23_protocol_positive
+module nova_tests.doc
 
 /// Describable protocol — types with string description.
 export type Describable protocol {

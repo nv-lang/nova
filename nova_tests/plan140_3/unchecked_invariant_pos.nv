@@ -3,7 +3,7 @@
 // (`balance = -5` vs `invariant balance >= 0`) therefore does NOT panic.
 
 #unchecked(invariant)
-module plan140_3.unchecked_invariant_pos
+module nova_tests.plan140_3
 
 type Account {
     balance int

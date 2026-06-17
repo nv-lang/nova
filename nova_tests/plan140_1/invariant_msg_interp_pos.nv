@@ -2,7 +2,7 @@
 // interpolated message is never built. Confirms the invariant interp path does
 // not perturb the passing construction.
 
-module plan140_1.invariant_msg_interp_pos
+module nova_tests.plan140_1
 
 type Account {
     balance int

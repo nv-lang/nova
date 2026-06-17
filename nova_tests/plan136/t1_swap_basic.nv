@@ -2,7 +2,7 @@
 // `(a, b) = (b, a)` — rhs evaluated fully before any assignment.
 // Verifies A1: swap executes correctly.
 
-module plan136.t1_swap_basic
+module nova_tests.plan136
 
 test "swap two ints" {
     mut a = 10

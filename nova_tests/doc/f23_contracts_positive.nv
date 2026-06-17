@@ -2,7 +2,7 @@
 // Позитивный тест — функции с requires/ensures корректно выполняются
 // при валидных входах. Doc pipeline обязан видеть ContractDoc в Signature.
 
-module doc.f23_contracts_positive
+module nova_tests.doc
 
 /// Returns absolute value.
 /// requires: x can be any int

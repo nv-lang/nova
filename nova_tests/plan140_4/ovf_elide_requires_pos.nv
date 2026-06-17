@@ -3,7 +3,7 @@
 // операнда ⇒ `a + b ∈ [0, 2000]` доказывается Z3 ⇒ `nova_int_checked_add`
 // элидируется (при `--contracts=enforce`). Под `--contracts=off` чек вернулся бы
 // (см. ovf_contracts_off_panic_neg). Корректность инвариантна к элизии.
-module plan140_4.ovf_elide_requires_pos
+module nova_tests.plan140_4
 
 fn bounded_add(a int, b int) -> int
     requires 0 <= a && a <= 1000

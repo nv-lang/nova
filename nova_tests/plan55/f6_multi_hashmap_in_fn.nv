@@ -1,7 +1,7 @@
 // Plan 55 Ф.6 — multi-instance HashMap в одной fn (упрощённый).
 // 2 HashMap'а с разными K,V в одной fn. До fix'а: instance leak в mono.
 
-module plan55.f6_multi_hashmap_in_fn
+module nova_tests.plan55
 
 import std.collections.hashmap.{HashMap}
 

@@ -2,7 +2,7 @@
 // Write-путь (C-блок, не stmt-expr) не должен регрессировать после миграции
 // read-индексации. Проверяем write-through на Vec[int]/Vec[str].
 
-module plan145.t2_index_write_pos
+module nova_tests.plan145
 
 import std.collections.vec.{Vec}
 

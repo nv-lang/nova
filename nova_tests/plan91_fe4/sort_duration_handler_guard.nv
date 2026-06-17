@@ -7,7 +7,7 @@
 // `i` was then wrongly captured by emit_handler_lit. None of the per-module
 // fe4 fixtures import BOTH, so this file is the dedicated guard — it must
 // keep compiling. See plan-91 Ф.4 closure.
-module plan91_fe4.sort_duration_handler_guard
+module nova_tests.plan91_fe4
 
 import std.sort
 import std.time.duration

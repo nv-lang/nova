@@ -1,7 +1,7 @@
 // Plan 90 followup — []T.append_zero(n): extend by N zero-init elements.
 // Полиморфно по T (memset на любом T, не только single-byte как fill fast-path).
 
-module plan90.append_zero
+module nova_tests.plan90
 
 
 test "append_zero — []u8 расширение" {

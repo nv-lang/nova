@@ -7,7 +7,7 @@
 // Simple cancel without Time.sleep works — no timer handle cleanup needed.
 // (test runs under armed M:N default — Plan 83.10 fix)
 
-module plan83_10.cancel_race_no_orphan_state
+module nova_tests.plan83_10
 
 test "1K cancel cycles — no orphan state, no hang" {
     mut i = 0

@@ -2,7 +2,7 @@
 // then push fills it; verify len and element values via []T sugar.
 // Tests: B2 ([]T sugar → Vec[T]), Ф.2 empty-literal path.
 
-module plan138_1.t6_empty_literal
+module nova_tests.plan138_1
 
 test "empty literal [] then push two ints" {
     mut v []int = []

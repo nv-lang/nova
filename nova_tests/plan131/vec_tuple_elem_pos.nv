@@ -8,7 +8,7 @@
 // pointers → stored via typed `*mut Pair` = `Nova_Pair**`), which fully
 // exercises the multi-field-per-element storage path.
 
-module plan131.vec_tuple_elem_pos
+module nova_tests.plan131
 
 import std.collections.vec.{Vec}
 

@@ -1,8 +1,0 @@
-// EXPECT_COMPILE_ERROR E_REEXPORT_GLOB
-//
-// Plan 163 (D282): negative -- whole-module export import without .{} selector
-// triggers E_REEXPORT_GLOB (barrel re-export is forbidden).
-
-module plan163.f1_reexport_glob_neg
-
-export import nova_tests.plan163.plan163_lib

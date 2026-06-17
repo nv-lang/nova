@@ -1,7 +1,7 @@
 // Plan 138 Ф.4 — t2: v.get(i) → Option[T], safe access
 // A2: v.get(i) → Option[T]
 
-module plan138.t2_vec_get_some_none
+module nova_tests.plan138
 
 import std.collections.vec.{Vec}
 

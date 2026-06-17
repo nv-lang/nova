@@ -7,7 +7,7 @@
 // После литерала обычные @insert/@get/@remove операции должны
 // продолжать работать — @insert_new не должен оставить мапу в
 // inconsistent state. Этот тест проверяет post-literal операции.
-module map_literals.positive_insert_new_correctness
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

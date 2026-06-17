@@ -1,6 +1,6 @@
 // Plan 124.6 — positive: #pub_to(Y, Z) multiple friends on type declaration.
 // Both listed types get priv(type) field access (D224 §4 rule-4).
-module plan124_6.pos_pub_to_multi
+module nova_tests.plan124_6
 
 #pub_to(Auditor, Regulator)
 export type Account {

@@ -2,7 +2,7 @@
 // A → B → C generic chain, каждый mono'd с разным subst, должен корректно
 // emit'иться. До fix'а: current_fn_return_ty leak'ал между level'ями.
 
-module plan55.f4_generic_helper_chain
+module nova_tests.plan55
 
 
 fn level_a[T](x T) -> T => level_b(x)

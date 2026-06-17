@@ -3,7 +3,7 @@
 // doc-test modifiers) НЕ блокируют компиляцию. Они только diagnostic
 // signal для автора. Runtime behavior функций — корректный.
 
-module doc.f25_doc_warnings_positive
+module nova_tests.doc
 
 /// Function with malformed #[deprecated] attr in description.
 ///

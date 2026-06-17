@@ -1,6 +1,6 @@
 // Plan 124.2 — positive: record spread на type WITHOUT priv fields,
 // outside any type scope — OK (no priv concern).
-module plan124_2.spread_no_priv_outside_ok
+module nova_tests.plan124_2
 
 // Все public — нет priv → spread allowed везде.
 export type Point {

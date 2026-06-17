@@ -1,6 +1,6 @@
 // Plan 52 Ф.16: `let mut m = [k:v]` без аннотации — inferred K/V из values.
 // Type-hinted rebinding в desugar решает Block-trailing inference issue.
-module map_literals.positive_infer
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

@@ -1,0 +1,16 @@
+// Plan 139 Ф.4 NEG — the scan-free FFI escape hatch is unsafe and cannot be
+// invoked without an explicit `unsafe { ... }` opt-in. `as_cstr_unchecked()`
+// (an `unsafe fn` — it skips the embedded-NUL scan and hands a raw pointer to
+// C) must be wrapped; the safe `as_cstr()` is the only no-opt-in path. This is
+// the FFI-boundary unsafe gate (Plan 118 D216 §9): no effect propagation, the
+// caller must opt in at the call site.
+// EXPECT_COMPILE_ERROR E_UNSAFE_CALL_REQUIRES_WRAP
+module neg.neg_t4_raw_ptr_to_ffi_unsafe
+
+import std.ffi.cstr.{CStr}
+
+test "as_cstr_unchecked without unsafe block is rejected" {
+    ro s = "hello"
+    ro c = s.as_cstr_unchecked()   // unsafe fn — needs unsafe { ... }
+    assert(s.byte_len() == 5)
+}

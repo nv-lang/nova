@@ -9,7 +9,7 @@
 //
 // EXPECT_TIMEOUT_MS 10000
 
-module plan83_11.driver_cancel_sleep_basic
+module nova_tests.plan83_11
 
 test "cancel+sleep: parked fiber woken by cancel in < 500ms" {
     ro tok = CancelToken.new()

@@ -1,4 +1,4 @@
-module plan11_followup.f5_self_literal_in_body_positive
+module nova_tests.plan11_followup
 
 // Plan 11 Follow-up: `Self.method()` + factory pattern в non-generic type.
 //

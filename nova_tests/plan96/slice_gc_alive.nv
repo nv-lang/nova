@@ -3,7 +3,7 @@
 // только через view; GC.collect() не освобождает; view продолжает
 // читаться корректно.
 
-module plan96.slice_gc_alive
+module nova_tests.plan96
 
 fn make_view_only() -> []int {
     mut arr = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]

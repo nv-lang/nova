@@ -1,7 +1,7 @@
 // Plan 138.1 Ф.4 — t2: []Point (record element type)
 // B3: []Record stores typed; [i] = val → index_set; field access on element.
 
-module plan138_1.t2_vec_of_record
+module nova_tests.plan138_1
 
 type Point { x int, y int }
 

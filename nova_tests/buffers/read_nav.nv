@@ -2,7 +2,7 @@
 //
 // from([]u8) / @position / @remaining / @has_remaining / @remaining_bytes.
 
-module buffers.read_nav
+module nova_tests.buffers
 
 
 // ── from + начальное состояние ─────────────────────────────────────

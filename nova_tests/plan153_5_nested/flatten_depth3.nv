@@ -8,7 +8,7 @@
 //                    so `T` = int but the result element is `Vec[T]` (depth-2
 //                    typed return), exercising a nested-typed RETURN as well.
 
-module plan153_5_nested.flatten_depth3
+module nova_tests.plan153_5_nested
 
 import std.collections.vec.{Vec}
 

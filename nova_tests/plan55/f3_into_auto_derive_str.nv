@@ -8,7 +8,7 @@
 // После Ф.3: codegen infer'ит return type из body expression — Rust/Swift
 // паритет (там тоже implicit return).
 
-module plan55.f3_into_auto_derive_str
+module nova_tests.plan55
 
 
 type Color {

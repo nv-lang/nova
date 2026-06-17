@@ -1,7 +1,7 @@
 // Plan 124.3 — positive: generic type `Stack[T]` с priv field — методы
 // получают priv access; recv tracking = "Stack" (name only, generic
 // param ignored).
-module plan124_3.generic_priv_inside_method_ok
+module nova_tests.plan124_3
 
 export type IntStack {
     priv mut top int

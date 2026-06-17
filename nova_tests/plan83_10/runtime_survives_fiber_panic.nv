@@ -7,7 +7,7 @@
 // Plan 83.10 fix (2026-05-25): [M-83.10-armed-user-throw-routing]
 // resolved — typed throw payload propagates atomically.
 
-module plan83_10.runtime_survives_fiber_panic
+module nova_tests.plan83_10
 
 test "runtime survives panic, subsequent supervised works" {
     mut first_caught = false

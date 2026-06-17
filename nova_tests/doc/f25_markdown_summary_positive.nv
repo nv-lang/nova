@@ -3,7 +3,7 @@
 // (URLs, decimals, abbreviations, fenced blocks, version strings)
 // корректно парсятся и runtime поведение нормальное.
 
-module doc.f25_markdown_summary_positive
+module nova_tests.doc
 
 /// Computes 3.14 * radius squared for circle area.
 ///

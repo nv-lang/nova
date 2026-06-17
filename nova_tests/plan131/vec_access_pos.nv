@@ -1,6 +1,6 @@
 // Plan 131 Ф.3 — access: get/first/last (Some/None cases) + in-place set.
 
-module plan131.vec_access_pos
+module nova_tests.plan131
 
 import std.collections.vec.{Vec}
 

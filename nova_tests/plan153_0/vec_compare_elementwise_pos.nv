@@ -6,7 +6,7 @@
 // memcmp would treat `-1` (0xFF..) as GREATER than `1` (0x01..) — sign inverted.
 // Element-wise `(-1).compare(1) == -1` is correct (−1 < 1).
 
-module plan153_0.vec_compare_elementwise_pos
+module nova_tests.plan153_0
 
 import std.collections.vec.{Vec}
 

@@ -1,6 +1,6 @@
 // Plan 90 Ф.4.5 — []T.fill: заполнение значением.
 
-module plan90.fill
+module nova_tests.plan90
 
 
 test "fill — заполнение значением" {

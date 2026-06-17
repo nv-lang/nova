@@ -1,7 +1,7 @@
 // Plan 55 Ф.4 — nested mono subst (outer + inner generic, тот же T).
 // Verify: outer subst[T=int] остаётся виден при entry inner.
 
-module plan55.f4_nested_mono_subst
+module nova_tests.plan55
 
 
 fn inner[T](x T) -> T => x

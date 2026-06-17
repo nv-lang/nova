@@ -1,7 +1,7 @@
 // Plan 131 Ф.3 — Vec[Vec[int]] (nested). The outer Vec stores inner Vec[int]
 // values (each a record → heap pointer) via typed `*mut Vec[int]` storage.
 
-module plan131.vec_nested_pos
+module nova_tests.plan131
 
 import std.collections.vec.{Vec}
 

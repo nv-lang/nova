@@ -5,7 +5,7 @@
 // iterator C-type ("for-in: cannot resolve iterator type ... 'void*'"). The
 // signature now takes a concrete `[]T` (mirroring HashMap.from([](K,V))) —
 // for-in over a generic []T mono param is a fully working codegen path.
-module plan91_fe1.set_from_iter_pos
+module nova_tests.plan91_fe1
 
 import std.collections.set.{Set}
 

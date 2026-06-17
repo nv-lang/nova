@@ -1,6 +1,6 @@
 // Plan 152.5b (D254): eq_ignore_case — Unicode full-case-fold equality for str and char.
 // Opt-in: requires `import std.unicode`.
-module plan152_5.t5_eq_ignore_case
+module nova_tests.plan152_5
 
 import std.unicode.{eq_ignore_case}
 

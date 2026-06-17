@@ -6,7 +6,7 @@
 // routes here; comparison OPERATORS lower separately to C nova_str_lt/…
 // (option (b)) — both must agree on ordering.
 
-module plan139_2.compare_ok
+module nova_tests.plan139_2
 
 test "compare: equal strings → 0" {
     assert("abc".compare("abc") == 0)

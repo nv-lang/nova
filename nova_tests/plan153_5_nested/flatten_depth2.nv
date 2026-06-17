@@ -15,7 +15,7 @@
 // stdlib method (the production `@flatten` is covered by nova_tests/plan153_5/
 // flatten.nv).
 
-module plan153_5_nested.flatten_depth2
+module nova_tests.plan153_5_nested
 
 import std.collections.vec.{Vec}
 

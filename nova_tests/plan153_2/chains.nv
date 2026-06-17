@@ -1,6 +1,6 @@
 // Plan 153.2 (D260) — multi-stage fluent chains. Confirms adapters compose and
 // every terminator drives a chained pipeline correctly.
-module plan153_2.chains
+module nova_tests.plan153_2
 
 import std.collections.vec_lazy
 

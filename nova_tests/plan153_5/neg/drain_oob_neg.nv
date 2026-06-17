@@ -1,0 +1,9 @@
+// EXPECT_RUNTIME_PANIC requires
+//
+// Plan 153.5 (D263) — negative: @drain(range) with range.end > len violates the
+// `range.end <= @len` contract → runtime panic.
+module neg.drain_oob_neg
+fn main() -> () {
+    mut v = Vec[int].of(1, 2, 3)
+    ro _ = v.drain(1..5)
+}

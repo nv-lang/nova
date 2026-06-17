@@ -1,7 +1,7 @@
 // Plan 131 Ф.3 — stress growth: push 1000 elements, verify len + correctness
 // across many reallocations (×2 strategy from initial cap 8).
 
-module plan131.vec_grow_pos
+module nova_tests.plan131
 
 import std.collections.vec.{Vec}
 

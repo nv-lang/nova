@@ -2,7 +2,7 @@
 // Content-hash-based symbol names (FNV-1a) must stay unique across a large set
 // of distinct literals; repeats must dedup. The build succeeding (no duplicate
 // C symbol definition) is itself the key assertion (R15: no symbol collision).
-module plan139.t6_intern_large
+module nova_tests.plan139
 
 test "many distinct literals + repeats compile and behave correctly" {
     ro l0 = "alpha"

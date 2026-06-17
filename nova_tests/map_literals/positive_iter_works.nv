@@ -8,7 +8,7 @@
 // Это страховка: если кто-то сделает breaking change в hashmap.nv
 // (например, скип Empty/Tombstone слотов в @get — что нарушит
 // инвариант), тест отловит. Iteration order policy = correctness check.
-module map_literals.positive_iter_works
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

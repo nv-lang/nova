@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR D172-block-form-removed
+//
+// Plan 91.15 (D172): the `blocking { }` block-form was retracted by Plan 113
+// and the `Blocking` effect removed from the compiler entirely. Any use of the
+// block-form is a parse error (`[D172-block-form-removed]`) regardless of the
+// enclosing function's effects. Use a `#blocking fn` instead.
+//
+// (Previously this fixture exercised the Plan 83.3 leaf-contract ban on async
+// I/O effects inside a `blocking { }` body; that contract no longer exists.)
+
+module neg.cancel_token_wrong_type_compile_error
+
+fn blocking_with_time_violates() Time -> int {
+    mut r = 0
+    blocking {
+        Time.sleep(0)
+        r = 42
+    }
+    r
+}

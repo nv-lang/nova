@@ -1,6 +1,6 @@
 // Plan 139 Ф.0 — A0.1: str is a `value` type → copy semantics. Passing a
 // str to a fn and rebinding the local does NOT affect the caller's binding.
-module plan139.t0_str_pass_byvalue
+module nova_tests.plan139
 
 fn rebind_local(s str) -> int {
     // local rebinding (copy of the 16-byte value-record handle)

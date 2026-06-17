@@ -2,7 +2,7 @@
 // `@index(r Range)` carries a `requires` bounds CONTRACT (140.2); `@get(r Range)`
 // is the safe (None-on-OOB / None-on-codepoint-split) counterpart. Both build the
 // view via the inline `@[a..b]` byte-slice.
-module plan152_1.str_slice_methods
+module nova_tests.plan152_1
 
 test "get(Range): safe byte-range slice -> Some" {
     ro s = "héllo"            // h(0) é(1,2) l(3) l(4) o(5), byte_len=6

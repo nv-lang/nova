@@ -1,0 +1,9 @@
+// EXPECT_RUNTIME_PANIC requires
+//
+// Plan 153.4 — negative: split_at(i) with i > len violates the
+// `0 <= i && i <= @len` contract → runtime panic (no clamp).
+module neg.split_at_oob_neg
+fn main() -> () {
+    ro v = Vec[int].of(1, 2, 3)
+    ro _ = v.split_at(4)
+}

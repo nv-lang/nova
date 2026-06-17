@@ -1,0 +1,17 @@
+// EXPECT_RUNTIME_PANIC out of bounds
+//
+// Plan 139.2 Ф.1 — негатив: @byte_at с index >= len панику́ет.
+//
+// @byte_at — Nova-body: raw priv-pointer index НЕ bounds-check'ается
+// компилятором (unsafe), поэтому метод сам делает guard `i >= @len()`
+// → panic("str.byte_at: index out of bounds"). Идентично бывшему C
+// nova_str_byte_at (nova_rt.h:122). Escape до runtime-panic требует
+// main-flow (unhandled panic внутри `test`-блока перехватывается
+// harness'ом как FAIL, а не process-abort).
+
+module neg.byte_at_oob_high
+
+fn main() -> () {
+    ro s = "abc"
+    ro _ = s.as_bytes()[3]          // ← OOB: len == 3, valid indices 0..2
+}

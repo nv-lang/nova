@@ -5,7 +5,7 @@
 // the returned 16-byte value carries a `const uint8_t*` into rodata + the
 // correct byte length (D26: len = bytes). Shim: nova_fn_p139_make_str in
 // compiler-codegen/nova_rt/plan115_ffi_test.h.
-module plan139.t4_from_cstr
+module nova_tests.plan139
 
 extern "nova" fn p139_make_str() -> str
 

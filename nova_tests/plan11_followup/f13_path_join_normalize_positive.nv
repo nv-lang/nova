@@ -1,4 +1,4 @@
-module plan11_followup.f13_path_join_normalize_positive
+module nova_tests.plan11_followup
 
 // Sprint F.36: Path.join fixed (removed dead branch с consume-after-use)
 // + Path.normalize workaround (let _ = stack.pop()).

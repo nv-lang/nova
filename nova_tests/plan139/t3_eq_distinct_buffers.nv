@@ -4,7 +4,7 @@
 // WRONG. str MUST override with content-eq (nova_str_eq = len && memcmp).
 // This fixture builds strings whose bytes are equal but whose backing buffers
 // are distinct allocations, and asserts they compare equal.
-module plan139.t3_eq_distinct_buffers
+module nova_tests.plan139
 
 test "built string equals literal with same bytes (distinct buffers)" {
     // "ab" + "" allocates a fresh concat buffer; the literal "ab" is rodata.

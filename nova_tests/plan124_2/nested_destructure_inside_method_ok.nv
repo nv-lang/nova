@@ -1,7 +1,7 @@
 // Plan 124.2 — positive: nested destructure через priv-containing inner
 // type ВНУТРИ Address's static method scope — recv = Address,
 // priv access allowed in nested pattern descent.
-module plan124_2.nested_destructure_inside_method_ok
+module nova_tests.plan124_2
 
 export type Address {
     priv mut zip str

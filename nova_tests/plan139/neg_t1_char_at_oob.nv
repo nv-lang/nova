@@ -1,7 +1,7 @@
 // Plan 139 Ф.1 — char_at OOB contract: out-of-range codepoint index returns
 // None (SAFE, no panic), unlike byte_at which panics. This is the negative
 // boundary fixture for the Nova-body char_at migration.
-module plan139.neg_t1_char_at_oob
+module nova_tests.plan139
 
 test "char_at past end is None" {
     assert("abc".as_chars().nth(3) == None)

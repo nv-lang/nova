@@ -1,4 +1,4 @@
-module plan11_followup.f2_self_method_static_dispatch_positive
+module nova_tests.plan11_followup
 
 // Plan 11 Follow-up: Self.method() в static fn'е generic типа должен
 // dispatch'иться в правильный mono'd Nova_<Recv>_static_<method>, не

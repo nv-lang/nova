@@ -2,7 +2,7 @@
 // Позитивный тест: items с #hide_doc работают нормально,
 // только из doc-output они исключаются (проверяется cargo-тестами).
 
-module doc.f23_hide_doc_attr_positive
+module nova_tests.doc
 
 /// Public exported function — visible in docs.
 export fn public_api(x int) -> int => x * 2

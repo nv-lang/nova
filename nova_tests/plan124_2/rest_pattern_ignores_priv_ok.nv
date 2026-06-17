@@ -3,7 +3,7 @@
 //
 // Pattern { name, .. } outside Account methods — binds public `name`,
 // игнорирует priv `money` через `..`.
-module plan124_2.rest_pattern_ignores_priv_ok
+module nova_tests.plan124_2
 
 export type Account {
     priv mut money f64

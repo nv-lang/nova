@@ -1,7 +1,7 @@
 // Plan 139 Ф.2 NEG — as_bytes() returns a readonly view (ro []u8); mutating it
 // must be a compile error. Proves the str buffer immutability contract (R8):
 // to_bytes (Nova-body) reads through this ro view but never mutates it.
-module plan139.neg_t2_as_bytes_mutate
+module nova_tests.plan139
 
 test "as_bytes view is readonly — push forbidden" {
     ro s = "abc"

@@ -1,4 +1,4 @@
-module plan11_followup.f3_self_method_instance_dispatch_positive
+module nova_tests.plan11_followup
 
 // Plan 11 Follow-up: Self.method() внутри instance method (с @self)
 // должен резолвиться к статическому method того же type'а.

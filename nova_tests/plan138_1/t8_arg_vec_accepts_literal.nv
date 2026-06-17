@@ -1,7 +1,7 @@
 // Plan 138.1 Ф.4 — t8: []T == Vec[T] (B1/A8)
 // fn f(a []int) accepts [1,2,3] literal and Vec[int].from([4,5]).
 
-module plan138_1.t8_arg_vec_accepts_literal
+module nova_tests.plan138_1
 
 import std.collections.vec.{Vec}
 

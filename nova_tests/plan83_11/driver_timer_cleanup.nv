@@ -9,7 +9,7 @@
 //
 // EXPECT_TIMEOUT_MS 15000
 
-module plan83_11.driver_timer_cleanup
+module nova_tests.plan83_11
 
 test "N fibers sleep concurrently — all complete, no stall" {
     // Проверяет что N параллельных sleep корректно завершаются

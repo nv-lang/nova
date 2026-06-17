@@ -10,7 +10,7 @@
 // Здесь определяем MyBag — простой wrapper над int counter (не
 // настоящая мапа), но с правильной сигнатурой методов. Литерал
 // должен десугариться через MyBag.with_capacity + insert_new.
-module map_literals.positive_user_from_pairs_with_methods
+module nova_tests.map_literals
 
 #from_pairs
 type MyBag[K, V] {

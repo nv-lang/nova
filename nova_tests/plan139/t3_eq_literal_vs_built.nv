@@ -1,5 +1,5 @@
 // Plan 139 Ф.3 — literal vs built equality (content), and ordering consistency.
-module plan139.t3_eq_literal_vs_built
+module nova_tests.plan139
 
 test "literal == concat(method)" {
     ro built = "ab".concat("c")

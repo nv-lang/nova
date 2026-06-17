@@ -1,5 +1,5 @@
 // Plan 152.5a (D254): comparison core — byte-Ord (@compare) + eq_ignore_ascii_case.
-module plan152_5.comparison
+module nova_tests.plan152_5
 
 test "str eq_ignore_ascii_case (ASCII only)" {
     assert("Foo".eq_ignore_ascii_case("foo"))

@@ -4,7 +4,7 @@
 // в DocItem уже есть, но parser его не fills — это покрывает cargo
 // integration tests. Здесь — runtime behavior существующих capabilities.
 
-module doc.f26_capabilities_positive
+module nova_tests.doc
 
 /// Pure function — без side effects.
 export fn square(x int) -> int => x * x

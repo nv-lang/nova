@@ -1,5 +1,5 @@
 // Plan 59.1 — positional field access .0 / .1 на mono'd tuple.
-module plan59_1.field_access
+module nova_tests.plan59_1
 
 fn[T] dup(v T) -> (T, T) => (v, v)
 

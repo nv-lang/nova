@@ -1,7 +1,7 @@
 // Plan 139 Ф.3 (neg) — different-byte keys do NOT collide-match in a str-keyed
 // HashMap. Behavioral negative: lookup with a key whose bytes differ from any
 // inserted key must MISS (None), proving content-eq gates membership.
-module plan139.neg_t3_hashmap_miss
+module nova_tests.plan139
 import std.collections.hashmap.{HashMap}
 
 test "lookup absent content key misses" {

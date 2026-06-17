@@ -13,7 +13,7 @@
 //  `fn[T] []…` form — orthogonal to nested-receiver binding; the production
 //  flatten is the carrier form `Vec[Vec[T]] @flatten`, see flatten_depth2.nv.)
 
-module plan153_5_nested.slice_nested
+module nova_tests.plan153_5_nested
 
 import std.collections.vec.{Vec}
 

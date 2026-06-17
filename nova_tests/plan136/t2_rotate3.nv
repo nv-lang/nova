@@ -2,7 +2,7 @@
 // `(a, b, c) = (b, c, a)` — rotate-left by one position.
 // Verifies that 3-tuple lhs/rhs works correctly.
 
-module plan136.t2_rotate3
+module nova_tests.plan136
 
 test "rotate three ints left" {
     mut a = 1

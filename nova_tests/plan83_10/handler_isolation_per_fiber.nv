@@ -9,7 +9,7 @@
 // handler interaction scenarios).
 // (test runs under armed M:N default — Plan 83.10 fix)
 
-module plan83_10.handler_isolation_per_fiber
+module nova_tests.plan83_10
 
 fn helper_h_100() Time -> int {
     with Time = effect Time {

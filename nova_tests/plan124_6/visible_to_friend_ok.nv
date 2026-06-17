@@ -1,6 +1,6 @@
 // Plan 124.6 — positive: #visible_to(TypeY) field-level attribute —
 // methods TypeY get priv access к marked field.
-module plan124_6.visible_to_friend_ok
+module nova_tests.plan124_6
 
 export type Account {
     ro name str

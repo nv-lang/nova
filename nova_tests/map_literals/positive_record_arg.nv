@@ -1,6 +1,6 @@
 // Plan 52 Ф.10 + Ф.3a: {field: v} в argument-position.
 // `configure({width: 80})` — flagship для Ф.3a (D55 caller-side).
-module map_literals.positive_record_arg
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

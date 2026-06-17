@@ -1,0 +1,30 @@
+// EXPECT_STDOUT ok
+//
+// Plan 140.1 Ф.3, acceptance F4 (back-compat): contracts and asserts WITHOUT a
+// message keep their original semantics — when they hold, nothing is printed
+// and the program runs normally. The message is purely optional; omitting it is
+// the unchanged pre-140.1 form (only the violation TEXT got shorter, not the
+// behaviour). Here every contract/assert holds, so we reach the `ok` print.
+
+module neg.f7_backcompat_no_message
+
+type Box {
+    n int
+}
+    invariant n >= 0
+
+fn twice(x int) -> int
+    requires x >= 0
+    ensures result >= x
+=> x + x
+
+fn main() Io -> () {
+    ro b = Box { n: 5 }
+    ro r = twice(b.n)
+    assert(r == 10)
+    if r == 10 {
+        println("ok")
+    } else {
+        println("bad")
+    }
+}

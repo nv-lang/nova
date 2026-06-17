@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_CONTRACT_MESSAGE_NOT_STRING
+//
+// Plan 140.1 Ф.1 (D24 amend), acceptance F5: the contract-message position
+// `requires <expr>, <here>` accepts ONLY a string literal. A non-string-literal
+// (here an integer `42`) after the comma is rejected at parse time with
+// `E_CONTRACT_MESSAGE_NOT_STRING`. This prevents accidental misuse (e.g. passing
+// the wrong contract clause or an expression where a literal message is meant).
+
+module neg.f5_message_not_string_neg
+
+fn needs_positive(x int) -> int
+    requires x > 0, 42
+=> x * 2
+
+fn main() Io -> () {
+    ro _ = needs_positive(3)
+    println("unreachable")
+}

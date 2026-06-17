@@ -2,7 +2,7 @@
 // are heap pointers (Nova_Point*); the Vec stores them via `*mut Point`
 // (Nova_Point** buffer) — typed, not erased.
 
-module plan131.vec_record_elem_pos
+module nova_tests.plan131
 
 import std.collections.vec.{Vec}
 

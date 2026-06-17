@@ -6,7 +6,7 @@
 // boundaries, compute aggregate stats (total via sum, a small
 // multiplicative weight via product), and finally look players up by
 // score using binary_search on an ascending copy.
-module plan91_fe4.sort_aggregate_pipeline
+module nova_tests.plan91_fe4
 
 import std.sort
 

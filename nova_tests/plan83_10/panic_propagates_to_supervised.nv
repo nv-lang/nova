@@ -9,7 +9,7 @@
 // re-throws через nova_throw_typed для USER_TYPED kind. Test runs
 // under armed M:N default.
 
-module plan83_10.panic_propagates_to_supervised
+module nova_tests.plan83_10
 
 test "spawn body USER throw propagates до with Fail handler" {
     mut caught = false

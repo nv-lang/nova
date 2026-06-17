@@ -1,6 +1,6 @@
 // Plan 139 Ф.1 — char_len migrated to Nova-body (count non-continuation bytes
 // via @as_bytes). len() = bytes (D26), char_len() = codepoints.
-module plan139.t1_char_len_utf8
+module nova_tests.plan139
 
 test "ascii char_len == byte len" {
     assert("abc".as_chars().count() == 3)

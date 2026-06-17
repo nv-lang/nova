@@ -1,6 +1,6 @@
 // Plan 124.6 — positive: #test_access(TypeA, TypeB) grants access к
 // нескольким types одновременно.
-module plan124_6.test_access_multiple_types_ok
+module nova_tests.plan124_6
 
 export type Account {
     ro name str

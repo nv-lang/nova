@@ -3,7 +3,7 @@
 // runtime ведут себя корректно. Mutation operators применяются к:
 // `>` ↔ `>=`, `<` ↔ `<=`, `==` ↔ `!=`, drop `requires`.
 
-module doc.f25_mutation_contracts_positive
+module nova_tests.doc
 
 /// Boundary `> 0` — mutator gt-to-ge генерирует `>= 0`.
 ///

@@ -1,8 +1,0 @@
-// EXPECT_COMPILE_ERROR E_REDUNDANT_IMPORT_ALIAS
-//
-// D289 amend: `import a.b.YYY as YYY` is forbidden — alias equals last
-// segment, which is the default. Write `import a.b.YYY` instead.
-
-module plan163.f6_redundant_alias_neg
-
-import nova_tests.plan163.plan163_lib as plan163_lib

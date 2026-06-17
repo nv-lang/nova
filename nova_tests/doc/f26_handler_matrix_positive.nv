@@ -4,7 +4,7 @@
 // populate'ит Effect.handlers — это проверяется cargo integration tests.
 // Здесь — runtime correctness handlers.
 
-module doc.f26_handler_matrix_positive
+module nova_tests.doc
 
 /// Counter effect — simple state.
 export type Counter effect {

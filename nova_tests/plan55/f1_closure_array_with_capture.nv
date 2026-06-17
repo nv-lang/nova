@@ -7,7 +7,7 @@
 // Параллель Rust: `vec![Box::new(move || n + 1), ...]` — captures move'аются
 // в env замыкания. У нас то же — NovaClos_X*.env хранит copies.
 
-module plan55.f1_closure_array_with_capture
+module nova_tests.plan55
 
 
 fn run_all(fns []fn() -> int) -> []int {

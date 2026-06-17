@@ -3,7 +3,7 @@
 // Реализовано Plan 55 (spread-инфраструктура: parser/desugar/annotator,
 // `6c1fe6465f8`) + Plan 56 (codegen). Раньше — [M-52-spread-not-supported].
 // Этот файл фиксирует рабочее поведение регрессионно.
-module map_literals.positive_spread
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

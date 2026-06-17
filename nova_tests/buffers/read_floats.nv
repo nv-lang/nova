@@ -4,7 +4,7 @@
 // (is_ok на достаточных данных, is_err на коротком буфере) для
 // f32/f64 LE+BE.
 
-module buffers.read_floats
+module nova_tests.buffers
 
 
 // ── Fail-form: точные round-trip значения ─────────────────────────

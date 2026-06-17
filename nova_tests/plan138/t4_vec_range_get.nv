@@ -1,7 +1,7 @@
 // Plan 138 Ф.4 — t4: v[i..j] range slices + view semantics
 // Extended range slice tests
 
-module plan138.t4_vec_range_get
+module nova_tests.plan138
 
 import std.collections.vec.{Vec}
 

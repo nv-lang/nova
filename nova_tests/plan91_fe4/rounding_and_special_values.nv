@@ -1,7 +1,7 @@
 // Plan 91 Ф.4 conformance: f64 rounding family + special-value predicates.
 // Realistic quantization + numeric-guard scenario.
 // Rounding results are integer-valued floats; compared with a tolerance window.
-module plan91_fe4.rounding_and_special_values
+module nova_tests.plan91_fe4
 
 import std.runtime.math
 

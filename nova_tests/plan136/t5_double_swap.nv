@@ -2,7 +2,7 @@
 // `(a, b, c, d) = (b, a, d, c)` — two independent swaps in one statement.
 // Initial: 1 2 3 4. After: 2 1 4 3.
 
-module plan136.t5_double_swap
+module nova_tests.plan136
 
 test "double swap: two pairs exchanged" {
     mut a = 1

@@ -1,0 +1,20 @@
+// Plan 131 Ф.4 — Vec[T] Iterable: for-in iteration.
+// EXPECT_OUTPUT: 1
+// 2
+// 3
+// total=6
+
+module neg.vec_iter_pos
+
+import std.collections.vec.{Vec}
+
+fn main() -> () {
+    mut v = Vec[int].new()
+    v.push(1); v.push(2); v.push(3)
+    mut total = 0
+    for x in v {
+        println(x)
+        total = total + x
+    }
+    println("total=" + str.from(total))
+}

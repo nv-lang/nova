@@ -2,7 +2,7 @@
 //
 // write_zero(n) / write_bytes(src) / write_char(c) + Unicode + str.
 
-module buffers.write_misc
+module nova_tests.buffers
 
 
 // ── write_zero ─────────────────────────────────────────────────────

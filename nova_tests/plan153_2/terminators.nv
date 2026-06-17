@@ -1,6 +1,6 @@
 // Plan 153.2 (D260) — lazy terminators: collect / fold / reduce / count / sum /
 // any / all / find / for_each / min / max / nth / last.
-module plan153_2.terminators
+module nova_tests.plan153_2
 
 import std.collections.vec_lazy
 

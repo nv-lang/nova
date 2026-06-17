@@ -15,7 +15,7 @@
 // Этот тест проверяет контракт **через десугаринг** (не прямой вызов
 // with_capacity). Если бы Ф.13 fix или Ф.7 turbofish сломали proxy,
 // rehash триггерился бы и @capacity() менялась.
-module map_literals.positive_with_capacity_boundary
+module nova_tests.map_literals
 
 import std.collections.hashmap.{HashMap}
 

@@ -1,0 +1,9 @@
+// EXPECT_RUNTIME_PANIC requires
+//
+// Plan 153.3 — negative: select_nth_unstable(k) with k >= len violates the
+// `k < @len` contract → runtime panic.
+module neg.select_nth_oob_neg
+fn main() -> () {
+    mut v = Vec[int].of(1, 2, 3)
+    ro _ = v.select_nth_unstable(3)
+}

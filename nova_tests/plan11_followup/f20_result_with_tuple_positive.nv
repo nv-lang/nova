@@ -1,4 +1,4 @@
-module plan11_followup.f20_result_with_tuple_positive
+module nova_tests.plan11_followup
 
 // Plan 63 Bug F / Fix F [M-result-erased-no-mono] regression test:
 // Result[(T, U), E] — Result с tuple внутри Ok. Раньше Nova_Result*

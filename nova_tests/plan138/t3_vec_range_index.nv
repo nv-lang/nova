@@ -1,7 +1,7 @@
 // Plan 138 Ф.4 — t3: v[from..to] → zero-copy view
 // A3: v[2..5] → Vec[T] zero-copy view; push on view → detach, original unchanged
 
-module plan138.t3_vec_range_index
+module nova_tests.plan138
 
 import std.collections.vec.{Vec}
 

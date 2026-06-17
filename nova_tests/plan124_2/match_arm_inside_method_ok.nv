@@ -1,6 +1,6 @@
 // Plan 124.2 — positive: match arm pattern на priv field внутри
 // instance method body. Recv = Account → priv field PATTERN allowed.
-module plan124_2.match_arm_inside_method_ok
+module nova_tests.plan124_2
 
 export type Account {
     priv mut money f64

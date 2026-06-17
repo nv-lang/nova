@@ -1,6 +1,6 @@
 // Plan 139 Ф.1 — starts_with/ends_with/contains migrated to Nova-body
 // (byte-compare via @as_bytes). Semantics identical to former nova_str_*.
-module plan139.t1_starts_ends_contains
+module nova_tests.plan139
 
 test "starts_with basic" {
     assert("hello".starts_with("he"))

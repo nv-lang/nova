@@ -2,7 +2,7 @@
 // Позитивный тест — функции, для которых assert() в infer_contracts doc-tests
 // определяют контракты, реально удовлетворяют этим контрактам в runtime.
 
-module doc.f24_infer_contracts_positive
+module nova_tests.doc
 
 /// Возвращает абсолютное значение.
 ///

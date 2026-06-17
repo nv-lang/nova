@@ -5,7 +5,7 @@
 // Coverage: Account access через public method `balance()` после
 // извлечения из Option — priv `money` остаётся защищён, no false-
 // positive из generic wrapper context.
-module plan124_3.option_priv_field_pass
+module nova_tests.plan124_3
 
 export type Account {
     priv mut money f64

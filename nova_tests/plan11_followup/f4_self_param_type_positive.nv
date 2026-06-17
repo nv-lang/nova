@@ -1,4 +1,4 @@
-module plan11_followup.f4_self_param_type_positive
+module nova_tests.plan11_followup
 
 // Plan 11 Follow-up: Self в **param type** (`other Self`) должен резолвиться
 // в Nova_<Recv>* — pre-fix эмитил Nova_Self* (unknown type).

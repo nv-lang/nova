@@ -1,7 +1,7 @@
 // Plan 138.1 Ф.4 — t3: [][]int (nested vector element type)
 // B3: [][]int stores typed (no pointer-stomp); grid[1][0] → int; push inner.
 
-module plan138_1.t3_nested_vec
+module nova_tests.plan138_1
 
 import std.collections.vec.{Vec}
 
