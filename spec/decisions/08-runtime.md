@@ -2247,13 +2247,13 @@ ro n = magnitude.abs()
 | Экспонента / лог | `@exp()`, `@ln()`, `@log10()`, `@log2()`, `@log(base f64)` |
 | Норма / расстояние | `@abs()`, `@hypot(other f64)` |
 | Округление | `@floor()`, `@ceil()`, `@round()`, `@trunc()`, `@fract()` |
-| Знак / минимум | `@signum()`, `@min(other f64)`, `@max(other f64)` |
+| Знак / минимум | `@signum()`, `@min(other f64)`, `@max(other f64)`, `@clamp(lo f64, hi f64)` |
 | Предикаты | `@is_finite()`, `@is_nan()`, `@is_infinite()` |
 
 Аналогичный набор на `int` (где математически осмысленно):
 `@abs()`, `@pow(n int)`, `@signum()`, `@min(other)`, `@max(other)`,
-`@is_negative()`, `@is_positive()`. Тригонометрия и логарифмы — только
-на float-типах.
+`@clamp(lo int, hi int)`, `@is_negative()`, `@is_positive()`. Тригонометрия
+и логарифмы — только на float-типах.
 
 #### Static-функции на типе (не методы)
 

@@ -5423,8 +5423,7 @@ Nova **превосходит Rust** на одной оси — backward-compat:
 > - Parser `needs` clause (hard error w/ migration hint).
 > - `check_external_fn_needs_caps` (D163-missing-cap diagnostic).
 > - `emit_d163_external_stub` (C codegen стаб generator).
-> - `FnDecl.needs_caps` AST field — сохранён как always-empty, удаление
->   followup `[M-91.10-remove-needs-caps-field]`.
+> - `FnDecl.needs_caps` AST field — удалён (Plan 91.15 Ф.5, `[M-91.10-remove-needs-caps-field]` ✅).
 > - Test fixtures `nova_tests/plan100_5/external_*` (6 files) и
 >   `nova_tests/plan100_7/{file_open_read_close,mutex_lock_release,
 >   socket_listen_accept}.nv` (3 files).
@@ -11197,21 +11196,21 @@ V2.1 closes 3 [M-124.8-*] markers landed 2026-06-03:
 ```nova
 #stable(since = "0.1")
 export type Debug protocol {
-    @debug(sb StringBuilder) -> ()
+    @debug(mut w Write) -> ()
+    // D258 AMEND: parameter renamed sb→w, type StringBuilder→Write (decoupled sink).
     // NO default body в protocol decl. Compiler synthesizes per-type
-    // via hybrid strategy (см. «Default body synthesis» ниже):
-    //   - Primitives: shortcut к `str.from_debug(@)` C-primitive
-    //   - User types: memberwise iteration через все fields (incl. private)
+    // via inject_synthesized_methods (auto_derive.rs) for #impl(Debug) types.
 }
 ```
 
 **Метод name = `@debug`** (НЕ `@display`) — avoid collision с D183 Display.@display. Distinct method names enable both protocols on same type simultaneously.
 
 **Hybrid default body strategy** (Plan 91.14 design decision #1, user-confirmed 2026-06-05):
-- Protocol decl ships БЕЗ default body — explicit synthesis в codegen.
-- Primitives (i*/u*/f*/bool/char/byte/str/ptr): codegen emits direct `str.from_debug(@)` C-primitive call.
-- User types (records, sums, tuples): codegen synthesizes memberwise iteration (incl. private fields per design decision #3).
-- This avoids the «default body fails for structs» problem (single-line shortcut couldn't handle nested types) while preserving zero-friction implicit synthesis.
+- Protocol decl ships БЕЗ default body — explicit synthesis через `inject_synthesized_methods` (auto_derive.rs) для `#impl(Debug)` типов.
+- Primitives (int/f64/f32/bool/char/str): explicit `@debug` bodies в `std/prelude/protocols.nv`; routes через `@field.debug(w)` в synthesized method bodies.
+- User types (records): `#impl(Debug)` → `inject_synthesized_methods` appends synthesized `Item::Fn` to AST → codegen sees it as ordinary method.
+- `Option[T Debug]` и `Result[T Debug, E Debug]`: explicit Nova-body в `std/prelude/core.nv`; codegen dispatches via DeclaredBody в string interpolation path (Plan 91.15 Ф.2).
+- Known limitation: checker does not validate field Debug bounds at `#impl(Debug)` synthesis time — missing bound produces CC-FAIL, not E_BOUND_MISSING.
 
 #### Format spec syntax
 
@@ -11220,25 +11219,20 @@ Inside Nova interp-string `${expr:SPEC}`:
 - `${expr:?}` — calls Debug.@debug (NEW)
 - `${expr:foo}` — E_FORMAT_SPEC_UNKNOWN (foundation, extensions per [M-91.14-format-dsl-extensions])
 
-#### Default body synthesis
+#### Default body synthesis (#impl(Debug))
 
-Когда user type X не implements Debug manually:
-1. Compiler synthesizes memberwise body iterating fields:
-   ```nova
-   @debug(sb StringBuilder) -> () :=
-       sb.append("X { ")
-       sb.append("field1: "); @field1.debug_fmt(sb)
-       sb.append(", field2: "); @field2.debug_fmt(sb)
-       sb.append(" }")
-   ```
-2. Recursive — каждое field вызывает .debug_fmt() — все fields must impl Debug (otherwise E_DEBUG_PRINTABLE_NOT_IMPLEMENTED).
-3. Primitives ship default impl via `str.from_debug` primitives (C function):
-   - i64/i32/etc → "-42"
-   - f64/f32 → "3.14" (round-trip format)
+Когда user type X помечен `#impl(Debug)`:
+1. `inject_synthesized_methods` (auto_derive.rs) синтезирует `fn X @debug(mut w Write) -> ()` и append'ит в `module.items` перед codegen.
+2. Body: `w.write("X { "); w.write_str("field1: "); @field1.debug(w); w.write(", field2: "); @field2.debug(w); w.write(" }")`.
+3. Все поля (primitive и record) — через `@field.debug(w)`. Primitives имеют @debug в `std/prelude/protocols.nv`.
+4. Known limitation: checker не проверяет Debug bounds у полей при синтезе. Отсутствие @debug у поля даёт CC-FAIL, не checker error.
+
+Primitives (int/f64/f32/bool/char/str) — explicit @debug в `std/prelude/protocols.nv`:
+   - int → decimal string (`str.from(@)`)
+   - f64/f32 → float string
    - bool → "true"/"false"
-   - char → "'A'" с escape rules
-   - str → "\"hello\\n\"" (quoted с escape rules)
-   - byte/u8 → "42u8" (with type suffix)
+   - char → `"${@:?}"` (quoted with escapes)
+   - str → `"${@:?}"` (quoted with escapes)
 
 #### Error codes registered
 
