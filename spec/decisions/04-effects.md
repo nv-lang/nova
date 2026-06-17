@@ -6023,10 +6023,12 @@ export type TcpWriteHalf consume value { priv handle CTcpStream }
 export fn TcpStream consume @split() TcpNet -> (TcpReadHalf, TcpWriteHalf)
 
 // Дополнительно: write_all на самом TcpStream (loop до полной записи).
-export fn TcpStream mut @write_all(data str) TcpNet Blocking -> Result[(), NetError]
+// NB: эффект `Blocking` отозван (Plan 91.15 P0, D172 завершение) — все
+// сетевые операции несут только `TcpNet`; suspend/offload — внутри handler'а.
+export fn TcpStream mut @write_all(data str) TcpNet -> Result[(), NetError]
 
 // TcpReadHalf: только чтение + интроспекция адресов.
-export fn TcpReadHalf mut @read(max int) TcpNet Blocking -> Result[str, NetError]
+export fn TcpReadHalf mut @read(max int) TcpNet -> Result[str, NetError]
 export fn TcpReadHalf @local_port() TcpNet -> u16
 export fn TcpReadHalf @peer_port() TcpNet -> u16
 export fn TcpReadHalf @local_addr() TcpNet -> SocketAddr
@@ -6034,8 +6036,8 @@ export fn TcpReadHalf @peer_addr() TcpNet -> SocketAddr
 export fn TcpReadHalf consume @close() TcpNet -> ()
 
 // TcpWriteHalf: только запись + интроспекция адресов.
-export fn TcpWriteHalf mut @write(data str) TcpNet Blocking -> Result[int, NetError]
-export fn TcpWriteHalf mut @write_all(data str) TcpNet Blocking -> Result[(), NetError]
+export fn TcpWriteHalf mut @write(data str) TcpNet -> Result[int, NetError]
+export fn TcpWriteHalf mut @write_all(data str) TcpNet -> Result[(), NetError]
 export fn TcpWriteHalf @local_port() TcpNet -> u16
 export fn TcpWriteHalf @peer_port() TcpNet -> u16
 export fn TcpWriteHalf @local_addr() TcpNet -> SocketAddr
