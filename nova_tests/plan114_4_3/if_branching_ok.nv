@@ -1,6 +1,6 @@
 // Plan 114.4.3 T4.1 positive: if-else в const fn body.
 
-module plan114_4_3.if_branching_ok
+module nova_tests.plan114_4_3
 
 fn pick_max(const a int, const b int) -> const int =>
     if a > b { a } else { b }

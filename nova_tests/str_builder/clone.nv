@@ -3,7 +3,7 @@
 // @clone() создаёт независимую копию (deep copy buffer). Мутация
 // клона не влияет на оригинал и наоборот.
 
-module str_builder.clone
+module nova_tests.str_builder
 
 
 test "clone — мутация клона не влияет на оригинал" {

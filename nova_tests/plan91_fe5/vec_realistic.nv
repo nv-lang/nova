@@ -1,6 +1,6 @@
 // Plan 91 Ф.5 conformance: Vec realistic use-cases.
 // build → filter → accumulate workflow.
-module plan91_fe5.vec_realistic
+module nova_tests.plan91_fe5
 
 import std.runtime.string.{ParseIntError}
 

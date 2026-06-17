@@ -4,7 +4,7 @@
 // Site 9031, 9034 (array-of-fn) — separate test (trips pre-existing
 // Nova limitation array-of-fn dispatch, не Plan 70 scope).
 
-module plan70.f4_let_fn_binding_pos
+module nova_tests.plan70
 
 test "lambda с ro-annotation -> fn(int)->int (sites 9160/9165/9169)" {
     ro f fn(int) -> int = |x| x * 2

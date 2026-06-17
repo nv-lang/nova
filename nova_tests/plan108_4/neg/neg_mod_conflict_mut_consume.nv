@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_PROTO_METHOD_MOD_CONFLICT
+// Plan 108.4 Ф.4: NEG — protocol `mut consume @foo()` → E_PROTO_METHOD_MOD_CONFLICT
+// mut and consume are mutually exclusive receiver qualifiers.
+
+#no_prelude
+module neg.neg_mod_conflict_mut_consume
+
+type Conflict protocol {
+    // Both mut and consume — invalid combination.
+    mut consume @foo()
+}

@@ -1,0 +1,14 @@
+// Plan 115 Ф.1 NEG-T1.5 — *() arithmetic banned.
+
+// EXPECT_COMPILE_ERROR E_PTR_ARITHMETIC_BANNED
+
+module neg.t1_ptr_arithmetic_neg
+
+test "*() + int is banned" {
+    ro p *() = (0 as *())
+    ro q *() = (p as u64 + 1) as *()   // OK через cast
+    // Прямая арифметика на *() — error:
+    ro bad = p + 1
+    assert(q != (0 as *()))
+    assert(bad != (0 as *()))
+}

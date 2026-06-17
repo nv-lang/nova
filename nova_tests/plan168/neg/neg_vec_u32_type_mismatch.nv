@@ -1,0 +1,11 @@
+// Plan 168 negative: pushing an int literal into Vec[u32] without cast
+// must fail at compile time — type mismatch int vs u32.
+//
+// EXPECT_COMPILE_ERROR
+
+module neg.neg_vec_u32_type_mismatch
+
+test "Vec[u32] push int without cast — type error" {
+    mut v = Vec[u32].new()
+    v.push(42)    // E_TYPE_MISMATCH: int is not u32
+}

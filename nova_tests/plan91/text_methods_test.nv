@@ -4,7 +4,7 @@
 // Positive tests: basic functionality.
 // Negative tests: invalid inputs, edge cases.
 
-module plan91.text_methods_test
+module nova_tests.plan91
 
 test "str repeat" {
     assert("ab".repeat(3) == "ababab")

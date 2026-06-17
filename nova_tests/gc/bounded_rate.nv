@@ -7,7 +7,7 @@
 // heap остаётся bounded. Тест не проверяет фактическое освобождение
 // (GC_gcollect нет в Nova API), но доказывает что процесс завершается.
 
-module gc.bounded_rate
+module nova_tests.gc
 
 test "100k string allocs — process does not OOM" {
     Mem.reset()

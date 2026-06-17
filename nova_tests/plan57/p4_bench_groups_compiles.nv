@@ -1,5 +1,5 @@
 // Plan 57.B.5: group/case sub-benchmarks DSL compiles.
-module plan57.p4_bench_groups_compiles
+module nova_tests.plan57
 
 bench "grouped" {
     group "int" {

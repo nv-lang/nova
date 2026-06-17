@@ -5,7 +5,7 @@
 // only registered entry for `count`, so FilterIter.count() already routed
 // correctly through the bare-typevar path. This test is a regression guard:
 // confirms that count works on the FilterIter adapter type produced by filter.
-module plan164.blanket_no_collision_count
+module nova_tests.plan164
 
 import std.collections.vec_iter
 

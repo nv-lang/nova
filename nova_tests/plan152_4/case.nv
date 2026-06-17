@@ -3,7 +3,7 @@
 // literals are written as \u{..} escapes so the expected sigma form (σ vs ς) is
 // unambiguous in source.
 
-module plan152_4.case
+module nova_tests.plan152_4
 
 import std.unicode.{fold_case, to_uppercase, to_lowercase}
 

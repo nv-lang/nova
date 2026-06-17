@@ -2,7 +2,7 @@
 // Р РµРєСѓСЂСЃРёРІРЅС‹Р№ auto-derive вЂ” Outer СЃРѕРґРµСЂР¶РёС‚ Inner, РѕР±Р° `#impl(Equal)`.
 // Verify field-eligibility: Inner satisfies в†’ Outer synthesis succeeds.
 // AC-126.7 (nested levels).
-module plan126.p07_nested_records_ok
+module nova_tests.plan126
 
 #impl(Equal)
 type Inner1 {

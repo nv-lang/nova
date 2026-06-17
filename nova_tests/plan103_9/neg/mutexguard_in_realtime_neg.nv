@@ -1,0 +1,18 @@
+// Plan 103.9 — MutexGuard not consumed in #realtime fn → D133 compile error.
+// Plan 113 migration: realtime { } → #realtime fn.
+//
+// Note: E_REALTIME_PARKS (lock() #parks forbidden in realtime) is also present
+// but D133-not-consumed fires first in the compiler's check order.
+//
+// EXPECT_COMPILE_ERROR D133
+
+module neg.mutexguard_in_realtime_neg
+
+#realtime fn _rt_check_guard_unconsumed(mu mut Mutex) {
+    consume _g = mu.lock()   // D133: _g not consumed at scope exit
+}
+
+test "MutexGuard not consumed in #realtime fn → D133 compile error" {
+    mut mu = Mutex.new()
+    _rt_check_guard_unconsumed(mu)
+}

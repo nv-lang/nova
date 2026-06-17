@@ -2,7 +2,7 @@
 // (a,b,c,d,e)=(b,c,d,e,a) — one 5-cycle, needs only 1 tmp.
 // A7: large single cycle uses exactly 1 tmp (Knuth algorithm).
 
-module plan136_1.t6_rotate5_1tmp
+module nova_tests.plan136_1
 
 test "rotate5 left: 1,2,3,4,5 -> 2,3,4,5,1" {
     mut a = 1

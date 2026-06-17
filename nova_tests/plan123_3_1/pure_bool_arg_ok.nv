@@ -1,6 +1,6 @@
 // Plan 123.3.1 T1.3: pure method с bool literal arg cached.
 
-module plan123_3_1.pure_bool_arg_ok
+module nova_tests.plan123_3_1
 
 type Setting {
     ro on int

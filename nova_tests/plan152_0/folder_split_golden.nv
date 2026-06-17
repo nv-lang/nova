@@ -3,7 +3,7 @@
 //   resolve without explicit import (folder-split conforms D29; str-resolve from .nv).
 // A0.5: golden byte-equivalence for the buffer-refactored methods (trim/concat/to_bytes).
 // A0.6: StringBuilder and str.concat give identical results (shared Vec[u8] buffer).
-module plan152_0.folder_split_golden
+module nova_tests.plan152_0
 
 test "core submodule: byte_len / as_bytes / is_empty / compare" {
     ro s = "héllo"

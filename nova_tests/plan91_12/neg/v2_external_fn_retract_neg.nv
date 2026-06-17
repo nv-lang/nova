@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_EXTERNAL_FN_RETRACTED
+//
+// `external fn` keyword retracted (D282, Plan 91.12).
+// Use `extern "nova" fn` for runtime-backed functions.
+
+module neg.v2_external_fn_retract_neg
+
+external fn Nova_intrinsic_unreachable() -> never
+
+test "external fn is retracted" {
+    assert(true)
+}

@@ -1,9 +1,0 @@
-// Plan 104.9 neg: `let` is no longer a keyword (Plan 114).
-// nova-lsp completion correctly does NOT suggest `let`.
-// EXPECT_COMPILE_ERROR [E_KW_REMOVED_LET]
-module plan104_9.neg_let_keyword_removed
-
-test "let is not a keyword" {
-    let x = 42
-    assert(x == 42)
-}

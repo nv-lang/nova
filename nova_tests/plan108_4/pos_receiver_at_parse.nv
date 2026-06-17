@@ -1,7 +1,7 @@
 // Plan 108.4 Р¤.1: protocol method declarations require explicit receiver prefix.
 // This fixture verifies the parser accepts `@`, `mut @`, `consume @`, and `.` forms.
 
-module plan108_4.pos_receiver_at_parse
+module nova_tests.plan108_4
 
 // Read-only receiver (default instance method).
 type Hashable108 protocol {

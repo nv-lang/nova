@@ -3,7 +3,7 @@
 // согласовано с arr[a..b]). До Plan 96.1 был метод @slice с clamp;
 // удалён в пользу bracket'а (Plan 96.1 Ф.4).
 
-module str.slice_oob
+module nova_tests.str
 
 test "slice normal range" {
     assert("hello"[0..3] == "hel")

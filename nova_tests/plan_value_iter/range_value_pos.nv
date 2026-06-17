@@ -6,7 +6,7 @@
 // NOTE: Tests using Range.step_by() / .reverse() (Fail-effect methods, standalone
 // linker issue with nova_throw_typed_void) live in std/collections/range.nv
 // built-in tests. This file focuses on value copy semantics only.
-module plan_value_iter.range_value_pos
+module nova_tests.plan_value_iter
 
 test "Range is value — copy semantics, pass by value" {
     ro r = 0..5

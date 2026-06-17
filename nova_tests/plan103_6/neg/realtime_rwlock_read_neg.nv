@@ -1,0 +1,16 @@
+// Plan 103.6 — RwLock.read is #parks; forbidden in #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
+//
+// EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
+
+module neg.realtime_rwlock_read_neg
+
+#realtime fn _rt_check_rwlock_read(rw mut RwLock) {
+    rw.read()
+}
+
+test "RwLock.read banned in #realtime fn" {
+    mut rw = RwLock.new()
+    _rt_check_rwlock_read(rw)
+    rw.read_unlock()
+}

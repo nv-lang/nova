@@ -1,5 +1,5 @@
 // Test: blanket @bfold — Acc is separate generic, init/return is Acc
-module plan161.blanket_fold
+module nova_tests.plan161
 
 import std.collections.vec.{Vec}
 import std.prelude.collections.{Next}

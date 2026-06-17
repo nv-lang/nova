@@ -18,7 +18,7 @@
 // This test intentionally exercises M:N armed scheduling — AUTOARM=0 would
 // mask the bug (cooperative mode always runs on main thread where TLS matches).
 
-module plan83_10_4.tls_handler_per_fiber_armed
+module nova_tests.plan83_10_4
 
 // ================================================================
 // SECTION 1: Different handlers in different fibers — armed M:N

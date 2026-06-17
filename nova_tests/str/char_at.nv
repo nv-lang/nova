@@ -1,7 +1,7 @@
 // char_at.nv — Plan 75 Ф.1
 // @char_at: ASCII, кириллица, emoji — позитивные случаи, in-bounds.
 
-module str.char_at
+module nova_tests.str
 
 test "char_at: first ASCII char" {
     assert("abc".as_chars().nth(0) == Some('a'))

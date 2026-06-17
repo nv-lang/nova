@@ -2,7 +2,7 @@
 // from_bytes_lossy: replaces invalid UTF-8 with U+FFFD (replacement char, 3 bytes).
 // from_bytes_unchecked: no validation, O(n) copy; caller guarantees valid UTF-8.
 
-module str.from_bytes_series
+module nova_tests.str
 
 test "from_bytes_unchecked ASCII round-trip" {
     ro s = "hello"

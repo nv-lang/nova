@@ -2,7 +2,7 @@
 // D142; `race`/`region`/`with_timeout`/`cancel_scope` which never were keywords;
 // `and`/`or`/`not` — Nova uses `&&`/`||`/`!`) are plain identifiers. Prove it: the
 // lexer yields `Ident`, so they are usable as binding names.
-module plan104_9.pos_former_keywords_are_identifiers
+module nova_tests.plan104_9
 
 test "former / non keywords usable as identifiers" {
     ro handler = 1

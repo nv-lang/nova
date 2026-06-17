@@ -3,7 +3,7 @@
 // Plan 138.2 [M-138-rawmem-dedup-fill]: the `write_bytes` alias was removed
 // (identical memset dupe of `fill`); this fixture now exercises `fill` alone.
 
-module plan118_1.t5_rawmem_write_bytes_ok
+module nova_tests.plan118_1
 
 import std.runtime.raw_mem
 

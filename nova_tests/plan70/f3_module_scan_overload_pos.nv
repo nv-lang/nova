@@ -2,7 +2,7 @@
 // POSITIVE — module-scan overload registration: concrete free fn + методы
 // с concrete types компилируются.
 
-module plan70.f3_module_scan_overload_pos
+module nova_tests.plan70
 
 type Counter {
     value int

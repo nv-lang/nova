@@ -9,7 +9,7 @@
 // ALLOC_REQUIRES boehm
 // Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
 
-module plan83_7.runnext_displaced_to_deque
+module nova_tests.plan83_7
 
 test "consecutive wakes — both fibers run, no loss" {
     ro n = 100

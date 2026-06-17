@@ -1,0 +1,9 @@
+// Plan 104.9 neg: `usize` type was removed from Nova (Plan 133).
+// nova-lsp completion correctly does NOT suggest `usize` — use `int` instead.
+// EXPECT_COMPILE_ERROR usize
+module neg.neg_int_abs_removed
+
+test "usize type does not exist" {
+    ro x usize = 42
+    assert(x > 0)
+}

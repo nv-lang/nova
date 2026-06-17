@@ -9,7 +9,7 @@
 //
 // ALLOC_REQUIRES boehm
 
-module plan83_6.spawn_pool_correctness
+module nova_tests.plan83_6
 
 test "parallel for 100 — per-slot values correct (pool exercised)" {
     ro n = 100

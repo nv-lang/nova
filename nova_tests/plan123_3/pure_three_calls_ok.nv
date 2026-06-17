@@ -1,6 +1,6 @@
 // Plan 123.3 T1.6: three calls of pure method → single cached.
 
-module plan123_3.pure_three_calls_ok
+module nova_tests.plan123_3
 
 type Sum {
     ro a int

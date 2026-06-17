@@ -8,7 +8,7 @@
 //              (D228 stack mode — proven path для @methods).
 // Покрывает интеракцию двух codegen path'ов без зависимости от
 // future method-on-promoted-pointer codegen (out of scope для 127.1).
-module plan127_1.p3_value_promoted_method_call_chained_ok
+module nova_tests.plan127_1
 
 type Vec3 value {
     x f64

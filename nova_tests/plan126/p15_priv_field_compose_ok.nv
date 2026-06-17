@@ -1,7 +1,7 @@
 // Plan 126 вЂ” POS F15:
 // `priv` field СЃРѕРІРјРµСЃС‚РёРј СЃ auto-derive вЂ” synthesizer = type-method scope.
 // AC-126.13 (composability СЃ priv).
-module plan126.p15_priv_field_compose_ok
+module nova_tests.plan126
 
 #impl(Equal)
 type Secret {

@@ -7,7 +7,7 @@
 //
 // ALLOC_REQUIRES boehm
 
-module plan83_6.spawn_pool_overflow_bounded
+module nova_tests.plan83_6
 
 test "pool overflow N=2000 — heap bounded" {
     gc.collect()

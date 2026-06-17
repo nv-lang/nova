@@ -4,7 +4,7 @@
 // Nova-body `=> match @ { Some(v) => v, None => default }`,
 // мономорфизируется через MethodRouting::DeclaredBody с тем же C-именем.
 
-module plan95bis.option_unwrap_or_migrated
+module nova_tests.plan95bis
 
 type User { id int, name str }
 

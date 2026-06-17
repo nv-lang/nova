@@ -1,7 +1,7 @@
 // conversions_positive.nv — Plan 75 Ф.3
 // str.from(char/int/bool) Ok-ветки. Round-trip bytes.
 
-module str.conversions_positive
+module nova_tests.str
 
 test "str.from ASCII char" {
     assert(str.from('A') == "A")

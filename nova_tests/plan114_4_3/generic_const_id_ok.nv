@@ -1,6 +1,6 @@
 // Plan 114.4.3 Ф.4 T4.4 positive: generic const fn — T-independent body.
 
-module plan114_4_3.generic_const_id_ok
+module nova_tests.plan114_4_3
 
 fn[T] noop(const x int) -> const int => x
 

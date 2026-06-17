@@ -21,7 +21,7 @@
 // (the documented gap — would FAIL under the shallow form because the clone
 // shares the element pointers).
 
-module plan138_3.t2_map_set_clone
+module nova_tests.plan138_3
 
 import std.collections.hashmap.{HashMap}
 import std.collections.set.{Set}

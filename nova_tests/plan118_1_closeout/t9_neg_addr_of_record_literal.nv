@@ -1,9 +1,0 @@
-// Plan 118.6 T9 NEG — addr_of() removed → E_ADDR_OF_REMOVED.
-// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
-module plan118_1_closeout.t9_neg_addr_of_record_literal
-type Acc { id i64 }
-test "addr_of removed — record literal case also gives E_ADDR_OF_REMOVED" {
-    unsafe {
-        ro p = addr_of(Acc { id: 1 })
-    }
-}

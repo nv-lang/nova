@@ -2,7 +2,7 @@
 // All self-dependencies: zero cycles, 0 tmps needed.
 // A4: identity assignment leaves every variable unchanged.
 
-module plan136_1.t4_identity_0tmp
+module nova_tests.plan136_1
 
 test "identity 2-tuple: 5 and 7 unchanged" {
     mut a = 5

@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_FIELD_MODULE_PRIVATE
+//
+// Plan 104.7 (tree-sitter-nova v0.3.0) — negative: `priv` field access from
+// outside the defining module => E_FIELD_MODULE_PRIVATE.
+//
+// The grammar.js `record_field` rule correctly parses `priv IDENT TYPE`.
+// The Nova compiler enforces module-privacy at the checker level.
+// This test confirms the integration: grammar parses, checker rejects.
+
+module neg.neg_priv_field_access
+
+import nova_tests.plan160.plan160_lib.{Job}
+
+fn try_read_priv_field(j Job) -> int => j.id

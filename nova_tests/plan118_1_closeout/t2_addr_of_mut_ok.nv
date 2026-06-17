@@ -3,7 +3,7 @@
 // Per design: `&x` on a mut binding produces a pointer.
 // (addr_of_mut removed in Plan 118.6 — use & syntax directly.)
 
-module plan118_1_closeout.t2_addr_of_mut_ok
+module nova_tests.plan118_1_closeout
 
 test "addr_of_mut produces valid pointer to mut binding" {
     mut x = 42

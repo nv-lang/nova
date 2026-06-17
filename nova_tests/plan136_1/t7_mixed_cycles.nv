@@ -2,7 +2,7 @@
 // (a,b,c,d,e)=(b,a,d,e,c): two independent cycles, each needs 1 tmp.
 // A7+A3: mixed cycle decomposition — a 2-cycle and a 3-cycle.
 
-module plan136_1.t7_mixed_cycles
+module nova_tests.plan136_1
 
 test "swap ab and rotate cde: 1,2,10,20,30 -> 2,1,20,30,10" {
     mut a = 1

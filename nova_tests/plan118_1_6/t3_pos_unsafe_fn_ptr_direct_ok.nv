@@ -3,7 +3,7 @@
 // Bare unsafe fn name yields *unsafe fn(...) — matches binding annotation
 // exactly. Indirect call must wrap в unsafe { }.
 
-module plan118_1_6.t3_pos_unsafe_fn_ptr_direct_ok
+module nova_tests.plan118_1_6
 
 unsafe fn risky(x i64) -> i64 {
     x + 100

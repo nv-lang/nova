@@ -1,7 +1,7 @@
 // Plan 104.9 pos: str methods that nova-lsp completion now surfaces accurately.
 // Verifies byte_len() (not len), as_chars(), lines(), parse_int() — all compiling.
 // Tests: "без упрощений как для прода"
-module plan104_9.pos_str_methods_accurate
+module nova_tests.plan104_9
 
 test "byte_len returns byte count not char count" {
     ro s = "hello"

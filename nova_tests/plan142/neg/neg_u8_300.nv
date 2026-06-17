@@ -1,0 +1,9 @@
+// Plan 142 (D227 Rule 3) NEG — decimal literal above u8.MAX → hard error.
+// EXPECT_COMPILE_ERROR [E_LIT_OUT_OF_RANGE] 300 > u8.MAX (255)
+
+module neg.neg_u8_300
+
+test "u8 = 300 is out of range" {
+    ro a u8 = 300
+    assert(a == 255)
+}

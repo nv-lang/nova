@@ -1,7 +1,7 @@
 // Plan 126 вЂ” POS F08:
 // 3-level СЂРµРєСѓСЂСЃРёРІРЅС‹Р№ auto-derive вЂ” Level1 в†’ Level2 в†’ Level3.
 // AC-126.7 (3+ levels).
-module plan126.p08_nested_3level_ok
+module nova_tests.plan126
 
 #impl(Clone)
 type L3 {

@@ -1,6 +1,6 @@
 // Plan 123.3 T1.1: @<pure_method>() called 2+ times → cached.
 
-module plan123_3.pure_self_method_ok
+module nova_tests.plan123_3
 
 type Vec3 {
     ro x int

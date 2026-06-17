@@ -2,7 +2,7 @@
 // prove via the compiler that they are real by compiling and running a program
 // that uses them. Negatives for the REMOVED keywords (let/readonly/safe) live in
 // plan114/ and plan138_5/.
-module plan104_9.pos_current_keywords_compile
+module nova_tests.plan104_9
 
 const LIMIT = 3
 

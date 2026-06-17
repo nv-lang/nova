@@ -3,7 +3,7 @@
 // Покрывает: new(), with_capacity(0/1/100), from(str), from(char).
 // Включая edge cases: пустая строка, ASCII char, Cyrillic char.
 
-module str_builder.constructors
+module nova_tests.str_builder
 
 
 // ── new() ──────────────────────────────────────────────────────────

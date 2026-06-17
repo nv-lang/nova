@@ -1,7 +1,7 @@
 // Plan 123.7.5 (V7.5, 2026-06-04): multiple sibling field caches
 // все survive across @arr.push().
 
-module plan123_7_5.v7_5_multiple_siblings_ok
+module nova_tests.plan123_7_5
 
 type Tracker {
     mut count int

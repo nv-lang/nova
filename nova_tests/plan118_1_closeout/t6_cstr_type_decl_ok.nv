@@ -8,7 +8,7 @@
 // V1 verified: import resolves, type usable в extern "nova" fn signatures
 // (FFI-compatible — ABI = *u8).
 
-module plan118_1_closeout.t6_cstr_type_decl_ok
+module nova_tests.plan118_1_closeout
 
 import std.ffi.cstr.{CStr}
 

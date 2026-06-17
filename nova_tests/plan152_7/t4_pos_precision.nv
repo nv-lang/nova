@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 152.7-B (D258) POS T4 — precision (`.N`): float decimal places +
 // string truncation, combined with width / align / sign.
-module plan152_7.t4_pos_precision
+module nova_tests.plan152_7
 
 test "float precision 2" {
     assert("${3.14159:.2}" == "3.14")

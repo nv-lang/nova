@@ -1,0 +1,30 @@
+// EXPECT_COMPILE_ERROR E_EXTERNAL_TYPE_RETRACTED
+//
+// D163 (`external type X consume`) fully retracted.
+//
+// Previously this tested that `external type X consume` followed by fn/test/const
+// parses correctly. Now `external type X consume` is retracted — any declaration
+// gives E_EXTERNAL_TYPE_RETRACTED.
+//
+// (Parser body-detect fix from [M-91.12-parser-body-detect-heuristic] remains valid
+//  and is tested implicitly: the error fires at type-check, not parser.)
+
+module neg.v2_parser_external_type_consume_followed_by_fn_ok
+
+external type FileResource consume
+
+fn helper() -> int => 42
+
+external type SocketResource consume
+
+test "external type X consume is retracted" {
+    assert(helper() == 42)
+}
+
+external type DatabaseHandle consume
+
+const ANSWER = 42
+
+test "parser accepts decls after external type but checker rejects it" {
+    assert(ANSWER == 42)
+}

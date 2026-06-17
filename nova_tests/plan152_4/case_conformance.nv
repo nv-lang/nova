@@ -6,7 +6,7 @@
 //   -> validates the runtime PARSER+lookup+emission, not table selection; the
 //   no-locale SELECTION is pinned by the hand-typed oracle in case.nv.
 // Coverage: uniform spread = 1500 of 2981 mapped codepoints (low ASCII .. supplementary).
-module plan152_4.case_conformance
+module nova_tests.plan152_4
 
 import std.unicode.{fold_case, to_uppercase, to_lowercase, to_titlecase}
 

@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_IMPL_NOT_A_PROTOCOL_METHOD
+//
+// Plan 154.1 (D268): #impl(Debug) on @display — @display is not declared by Debug.
+module neg.neg_impl_not_protocol_method
+
+type Point { x int }
+
+#impl(Debug)
+fn Point @display(mut w Write) -> () { w.write("x") }
+
+fn main() -> () {}

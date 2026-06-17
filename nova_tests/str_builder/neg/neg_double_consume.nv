@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 85.1 Ф.3 — негатив: двойной consume @into().
+//
+// Второй вызов consume-метода `@into()` на уже потреблённом
+// StringBuilder — use-after-consume (D131).
+
+module neg.neg_double_consume
+
+test "двойной into — use-after-consume" {
+    mut sb = StringBuilder.from("data")
+    ro _ = sb.into()                 // первый consume
+    ro _ = sb.into()                 // ← ОШИБКА D131
+}

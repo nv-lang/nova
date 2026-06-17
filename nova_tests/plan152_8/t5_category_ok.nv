@@ -1,6 +1,6 @@
 // Plan 152.8 Layer 1 (Vec[u32] migration) — T5: Unicode category after migration.
 // category functions take int (codepoint); char methods require `import std.unicode`.
-module plan152_8.t5_category_ok
+module nova_tests.plan152_8
 
 import std.unicode
 import std.unicode.{is_alphabetic, is_numeric, is_uppercase, is_lowercase, is_whitespace, is_alphanumeric}

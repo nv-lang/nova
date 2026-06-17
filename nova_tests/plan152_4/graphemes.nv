@@ -1,7 +1,7 @@
 // Plan 152.4.3: grapheme-cluster segmentation (UAX #29) — `as_graphemes()` lens.
 // Hand-picked cases: combining marks, regional-indicator flags, ZWJ emoji,
 // Hangul jamo, CR-LF. Bulk UAX #29 conformance — separate generated fixture.
-module plan152_4.graphemes
+module nova_tests.plan152_4
 
 import std.unicode.{GraphemesView}
 

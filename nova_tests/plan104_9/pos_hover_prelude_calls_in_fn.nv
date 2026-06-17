@@ -1,6 +1,6 @@
 // Plan 104.2 (body-walk hover): prelude functions called inside fn bodies
 // compile and run — hover walks fn bodies to resolve identifiers.
-module plan104_9.pos_hover_prelude_calls_in_fn
+module nova_tests.plan104_9
 
 fn check_range(lo int, hi int, val int) -> bool {
     ro r = lo..hi

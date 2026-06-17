@@ -1,7 +1,7 @@
 // Plan 108.4 Ф.2: positive tests — receiver mutability matches protocol declarations.
 // Verifies that correct receiver mutability (mut/ro/consume) compiles and runs without errors.
 
-module plan108_4.pos_recv_mut_match
+module nova_tests.plan108_4
 
 // Protocol with mut receiver method.
 type Iter108 protocol {

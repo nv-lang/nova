@@ -2,7 +2,7 @@
 // UAX #29 grapheme conformance from GraphemeBreakTest.txt: assert
 // `as_graphemes()` yields the expected cluster sequence (content-checked).
 // Coverage: stride-1 sample = 1093 of 1093 test lines.
-module plan152_4.grapheme_conformance
+module nova_tests.plan152_4
 
 import std.unicode.{GraphemesView}
 

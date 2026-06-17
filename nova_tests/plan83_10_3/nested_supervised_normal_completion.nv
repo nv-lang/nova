@@ -4,7 +4,7 @@
 // completes correctly without TIMEOUT when cooperative resume is active.
 // All fibers run and accumulate into total via spawn captures.
 
-module plan83_10_3.nested_supervised_normal_completion
+module nova_tests.plan83_10_3
 
 test "nested supervised completes without errors" {
     mut total = 0

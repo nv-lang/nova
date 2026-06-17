@@ -1,6 +1,6 @@
 // Plan 164 Ф.1: positive — #impl(Next[T]) parses and checks correctly.
 // A simple countdown iterator declared with #impl(Next[int]).
-module plan164.impl_attr_generic_pos
+module nova_tests.plan164
 
 type Countdown value { mut n int }
 

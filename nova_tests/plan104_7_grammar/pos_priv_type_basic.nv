@@ -4,7 +4,7 @@
 // (Plan 160 D281) — the same syntax covered by grammar.js `privacy_modifier` rule.
 // This is the canonical form: `type T priv { fields }` = module-private.
 
-module plan104_7_grammar.pos_priv_type_basic
+module nova_tests.plan104_7_grammar
 
 type Counter value priv {
     mut count int

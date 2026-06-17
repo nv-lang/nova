@@ -1,0 +1,14 @@
+// Plan 115 Ф.1 — `*() as str` запрещён (E_PTR_CAST_INVALID_TARGET).
+
+// EXPECT_COMPILE_ERROR E_PTR_CAST_INVALID_TARGET
+
+module neg.t1_ptr_str_cast_neg
+
+test "*() as str is banned" {
+    ro p *() = (0 as *())
+    // The `as str` cast itself must be rejected (E_PTR_CAST_INVALID_TARGET);
+    // we never reach a use of `bad`. (Plan 152/D249 retired `str.len`, so the
+    // previous `bad.len` probe masked the cast-ban error with E_STR_NO_LEN.)
+    ro bad str = p as str
+    assert(bad == "")
+}

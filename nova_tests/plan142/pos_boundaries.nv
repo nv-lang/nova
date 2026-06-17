@@ -1,7 +1,7 @@
 // Plan 142 (D227 Rule 2/3) POS — boundary values for all 8 sized-int types
 // compile and run. MIN/MAX exactly in range must NOT error.
 
-module plan142.pos_boundaries
+module nova_tests.plan142
 
 test "u8 boundaries 0 and 255" {
     ro lo u8 = 0

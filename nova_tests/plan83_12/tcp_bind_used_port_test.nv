@@ -6,7 +6,7 @@
 //
 // Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
 
-module plan83_12.tcp_bind_used_port_test
+module nova_tests.plan83_12
 
 test "TcpListener: bind to already-used port → Err" {
     ro lst1_r = TcpListener.bind(SocketAddr.loopback(0))

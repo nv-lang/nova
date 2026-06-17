@@ -4,7 +4,7 @@
 // @byte_len() — размер в UTF-8 байтах, O(1).
 // @capacity() — allocated capacity в байтах, >= byte_len.
 
-module str_builder.metrics
+module nova_tests.str_builder
 
 
 // ── @len codepoints vs @byte_len bytes ────────────────────────────

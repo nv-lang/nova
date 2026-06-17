@@ -1,7 +1,7 @@
 // Plan 108.4 Ф.4: POS — protocol consume @close() + impl consume @close() → OK
 // Verifies that a consuming receiver in protocol and impl both match.
 
-module plan108_4.pos_consume_close_match
+module nova_tests.plan108_4
 
 type Closeable108 protocol {
     consume @close() -> int

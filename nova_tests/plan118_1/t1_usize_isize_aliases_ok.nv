@@ -9,7 +9,7 @@
 //   - Arithmetic + comparison работают
 //   - Cast `int` / `int as int` OK
 
-module plan118_1.t1_usize_isize_aliases_ok
+module nova_tests.plan118_1
 
 test "int is u64 alias — arithmetic" {
     ro a int = 1024

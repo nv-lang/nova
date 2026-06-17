@@ -4,7 +4,7 @@
 // Grammar rule: `record_field` with optional `pub`/`priv` modifier.
 // Within the same module: priv fields are readable and writable directly.
 
-module plan104_7_grammar.pos_priv_field_basic
+module nova_tests.plan104_7_grammar
 
 type Pair {
     priv x int

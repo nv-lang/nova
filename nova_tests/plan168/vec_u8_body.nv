@@ -1,4 +1,4 @@
-module plan168.vec_u8_body
+module nova_tests.plan168
 
 test "Vec[u8] local var — body-only instantiation" {
     mut v = Vec[u8].with_capacity(4)

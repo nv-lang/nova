@@ -1,6 +1,6 @@
 // Plan 91 Ф.5 conformance: sort and binary_search realistic use-cases.
 // sort + binary_search property: every element found at its sorted index.
-module plan91_fe5.sort_realistic
+module nova_tests.plan91_fe5
 
 import std.sort
 

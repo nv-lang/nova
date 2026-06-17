@@ -3,7 +3,7 @@
 // Wrapping call в unsafe block satisfies E_UNSAFE_CALL_REQUIRES_WRAP
 // для indirect call через *unsafe fn pointer. Counterpart к T6 NEG.
 
-module plan118_1_6.t7_pos_call_unsafe_ptr_inside_unsafe_ok
+module nova_tests.plan118_1_6
 
 unsafe fn risky_dec(x i64) -> i64 {
     x - 1

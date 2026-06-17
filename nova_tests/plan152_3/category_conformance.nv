@@ -5,7 +5,7 @@
 // table selection, not just its parser. Pinned Unicode 16.0.
 // Sampled fast lane: 1499 code points (curated edge cases + uniform spread).
 
-module plan152_3.category_conformance
+module nova_tests.plan152_3
 
 import std.unicode.{general_category, is_alphabetic, is_whitespace, is_numeric}
 import std.unicode.{Lu, Ll, Lt, Lm, Lo, Mn, Mc, Me, Nd, Nl, No, Pd, Ps, Pe, Pi, Pf, Po, Sm, Sc, Sk, So, Zs, Zl, Zp, Cc, Cf, Cs, Co, Cn}

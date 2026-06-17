@@ -2,7 +2,7 @@
 // Verifies that the default read-only receiver (bare @ prefix) works in both
 // protocol declaration and implementation.
 
-module plan108_4.pos_default_ro_match
+module nova_tests.plan108_4
 
 type Sized108 protocol {
     @len() -> int

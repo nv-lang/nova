@@ -4,7 +4,7 @@
 // эмиссии (Plan 145.2 детерминизм); (б) write `v[0] = "x"` (struct-value элемент
 // nova_str) -> cl.exe C2440 на `*(struct*)void_ptr = v` (Plan 145.1 memcpy-в-слот).
 
-module plan145_2.str_array_literal_rw
+module nova_tests.plan145_2
 
 test "str array literal read + write through" {
     mut v = ["a", "b", "c"]

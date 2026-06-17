@@ -1,6 +1,6 @@
 // Plan 91 Ф.5 conformance: text/string realistic use-cases.
 // CSV-like parsing with split + try_parse_int.
-module plan91_fe5.text_realistic
+module nova_tests.plan91_fe5
 
 import std.runtime.string.{ParseIntError}
 

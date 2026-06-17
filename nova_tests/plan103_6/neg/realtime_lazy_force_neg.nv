@@ -1,0 +1,15 @@
+// Plan 103.6 — Lazy.force is #parks; forbidden in #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
+//
+// EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
+
+module neg.realtime_lazy_force_neg
+
+#realtime fn _rt_check_lazy_force(lz mut Lazy[int]) -> int {
+    lz.force()
+}
+
+test "Lazy.force banned in #realtime fn" {
+    ro lz = Lazy[int].new() { 99 }
+    ro _ = _rt_check_lazy_force(lz)
+}

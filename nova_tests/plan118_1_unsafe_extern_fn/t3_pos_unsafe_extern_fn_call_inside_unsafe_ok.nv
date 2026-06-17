@@ -10,7 +10,7 @@
 //   * caller MUST wrap call в unsafe {} block
 //   * inside unsafe — call passes E_UNSAFE_CALL_REQUIRES_WRAP check
 
-module plan118_1_unsafe_extern_fn.t3_pos_unsafe_extern_fn_call_inside_unsafe_ok
+module nova_tests.plan118_1_unsafe_extern_fn
 
 import std.ffi.cstr.{CStr}
 

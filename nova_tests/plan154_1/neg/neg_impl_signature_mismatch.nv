@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_IMPL_SIGNATURE_MISMATCH
+//
+// Plan 154.1 (D268): #impl(Display) with wrong signature (extra param).
+module neg.neg_impl_signature_mismatch
+
+type Point { x int }
+
+#impl(Display)
+fn Point @display(mut w Write, extra int) -> () { w.write("x") }
+
+fn main() -> () {}

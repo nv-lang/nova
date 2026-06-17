@@ -2,7 +2,7 @@
 // Decomposed into two 2-cycles: (a<->b) and (c<->d). Each needs 1 tmp.
 // A3: two independent 2-cycles in a single tuple assign.
 
-module plan136_1.t3_double_swap
+module nova_tests.plan136_1
 
 test "double swap: 1,2,3,4 -> 2,1,4,3" {
     mut a = 1

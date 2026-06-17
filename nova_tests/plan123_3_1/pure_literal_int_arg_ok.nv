@@ -1,6 +1,6 @@
 // Plan 123.3.1 T1.1: pure method с literal int arg cached.
 
-module plan123_3_1.pure_literal_int_arg_ok
+module nova_tests.plan123_3_1
 
 type Vec {
     ro x int

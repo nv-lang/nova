@@ -9,7 +9,7 @@
 // Only malloc is called at runtime; strlen is declared but not called
 // (declaration-only test for the void-input form).
 
-module plan104_7_grammar.pos_extern_c_fn
+module nova_tests.plan104_7_grammar
 
 extern "C" fn malloc(size int) -> *u8
 extern "C" fn strlen(s *u8) -> int

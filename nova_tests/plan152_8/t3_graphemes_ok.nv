@@ -1,5 +1,5 @@
 // Plan 152.8 Layer 1 (Vec[u32] migration) — T3: grapheme segmentation after migration.
-module plan152_8.t3_graphemes_ok
+module nova_tests.plan152_8
 
 import std.unicode.{GraphemesView}
 

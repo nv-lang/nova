@@ -1,0 +1,10 @@
+// Plan 134 NEG — builtin `ptr` type is removed; use `*()` instead.
+//
+// EXPECT_COMPILE_ERROR ptr` is removed
+
+module neg.t1_ptr_removed_neg
+
+fn main() -> () {
+    ro p ptr = (0 as ptr)
+    println(p)
+}

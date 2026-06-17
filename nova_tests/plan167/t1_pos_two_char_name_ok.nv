@@ -2,7 +2,7 @@
 //
 // type Sv { x int } — name length 2 → no E_TYPE_NAME_TOO_SHORT.
 
-module plan167.t1_pos_two_char_name_ok
+module nova_tests.plan167
 
 type Sv {
     x int

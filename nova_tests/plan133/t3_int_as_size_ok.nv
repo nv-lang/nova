@@ -3,7 +3,7 @@
 // Verifies that `int` (= intptr_t, address-sized) can be used everywhere
 // usize/isize were previously used: array length, byte counts, offsets.
 
-module plan133.t3_int_as_size_ok
+module nova_tests.plan133
 
 test "int for byte count arithmetic" {
     ro n int = 4

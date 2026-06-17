@@ -3,7 +3,7 @@
 // Verifies that a user type implementing @display(mut w Write) correctly
 // writes to a StringBuilder passed as a Write sink, and that string
 // interpolation "${p}" routes through the same @display method.
-module plan152_7.t7_write_sink_custom
+module nova_tests.plan152_7
 
 type Point { x int, y int }
 

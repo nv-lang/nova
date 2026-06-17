@@ -1,0 +1,10 @@
+// Plan 133 NEG — `usize` type is removed; use `int` instead.
+//
+// EXPECT_COMPILE_ERROR usize` is removed
+
+module neg.t1_usize_removed_neg
+
+fn main() -> () {
+    ro x usize = 5
+    println(x)
+}

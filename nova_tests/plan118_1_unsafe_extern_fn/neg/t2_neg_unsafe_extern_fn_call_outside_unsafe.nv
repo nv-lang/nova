@@ -1,0 +1,12 @@
+// Plan 118.1.5 T2 NEG — call к external unsafe fn без unsafe {} wrap rejected.
+// D2 amend / D216 §9 enforcement: same call-site rules as unsafe Nova fn.
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_CALL_REQUIRES_WRAP
+
+module neg.t2_neg_unsafe_extern_fn_call_outside_unsafe
+
+export external unsafe fn risky_extern(x int) -> ()
+
+test "calling external unsafe fn without unsafe wrap rejected" {
+    risky_extern(42)
+}

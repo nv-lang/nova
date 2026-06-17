@@ -3,7 +3,7 @@
 // ${char-literal} работало всегда (CharLit detection).
 // ${char-variable} — фикс Plan 75: добавлен case "nova_char" в emit_interpolated_str.
 
-module str.interpolation_char
+module nova_tests.str
 
 test "char literal ASCII in interpolation" {
     assert("c=${'A'}" == "c=A")

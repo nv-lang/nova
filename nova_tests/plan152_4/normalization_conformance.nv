@@ -3,7 +3,7 @@
 //   c1=source c2=NFC c3=NFD c4=NFKC c5=NFKD
 // assert NFC(c1)==c2, NFD(c1)==c3, NFKC(c1)==c4, NFKD(c1)==c5.
 // Coverage: Part 0 in full (45) + stride-13 sample of Parts 1-5 = 1500 of 19965 data lines.
-module plan152_4.normalization_conformance
+module nova_tests.plan152_4
 
 import std.unicode.{normalize_nfc, normalize_nfd, normalize_nfkc, normalize_nfkd}
 

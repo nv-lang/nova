@@ -10,7 +10,7 @@
 // from vec_iter to confirm the codegen path works correctly end-to-end.
 // Those methods have I as generics[0], so they exercised the *working* path; the
 // fix now also handles the swapped order (T first) robustly via name-lookup.
-module plan164.blanket_param_order
+module nova_tests.plan164
 
 import std.collections.vec_iter
 

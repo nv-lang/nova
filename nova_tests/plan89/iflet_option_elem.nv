@@ -5,7 +5,7 @@
 // (`.tag` на указателе `NovaOpt_T*`). Фикс Ф.1: emit_for деболксит
 // value-sum элемент в значение.
 
-module plan89.iflet_option_elem
+module nova_tests.plan89
 
 
 test "for-in []Option + if ro Some" {

@@ -1,6 +1,6 @@
 // Plan 123.3 T-NEG.3: pure methods with args → V3 skip (V3.1 enhance).
 
-module plan123_3.neg_pure_with_args_skip_ok
+module nova_tests.plan123_3
 
 type Calc {
     ro base int

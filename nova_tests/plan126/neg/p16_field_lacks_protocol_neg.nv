@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
+//
+// Plan 126 вЂ” NEG F16:
+// Field `inner` (С‚РёРї `BareInner`) РЅРµ implement Equal вЂ” derive fails.
+// AC-126.9.
+module neg.p16_field_lacks_protocol_neg
+
+type BareInner {
+    n int
+}
+
+#impl(Equal)
+type WrapBare {
+    inner BareInner
+}
+
+test "field lacks protocol fails compile" {
+    ro w = WrapBare { inner: BareInner { n: 0 } }
+    assert(w.inner.n == 0)
+}

@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_PROTO_IMPL_MUT_FOR_RO
+// Plan 108.4 Р¤.2: protocol declares `@hash()` (ro), impl uses mut receiver.
+
+#no_prelude
+module neg.neg_mut_for_ro
+
+type Hash protocol {
+    @hash() -> u64
+}
+
+#impl(Hash)
+type MyId { id u64 }
+
+// mut receiver вЂ” mismatch: protocol requires ro
+fn MyId mut @hash() -> u64 => @id

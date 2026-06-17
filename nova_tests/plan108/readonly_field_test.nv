@@ -1,7 +1,7 @@
 // Plan 108 Ф.1: D175 readonly field enforcement tests.
 // Positive tests — readonly fields can be read, non-readonly can be assigned.
 
-module plan108.readonly_field_test
+module nova_tests.plan108
 
 type Account {
     ro id u64

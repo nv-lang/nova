@@ -1,7 +1,7 @@
 // Plan 108.4 Ф.4: POS — protocol @hash() (ro default) + impl @hash() → OK
 // Verifies that a read-only receiver (default @ prefix) compiles and runs.
 
-module plan108_4.pos_ro_hash_match
+module nova_tests.plan108_4
 
 type Hashable108h protocol {
     @hash() -> u64

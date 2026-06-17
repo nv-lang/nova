@@ -4,7 +4,7 @@
 // Mirrors plan115 t1_ptr_casts_ok but framed as a Plan 134 regression guard
 // confirming `*()` works now that the `ptr` builtin is removed.
 
-module plan134.t4_unit_ptr_cast_ok
+module nova_tests.plan134
 
 test "int to *() and back" {
     ro original int = 42

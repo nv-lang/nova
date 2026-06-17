@@ -1,6 +1,6 @@
 // Plan 114.4.3 T4.1 positive: nested if-else (sign function).
 
-module plan114_4_3.nested_if_ok
+module nova_tests.plan114_4_3
 
 fn sign(const x int) -> const int =>
     if x == 0 { 0 } else if x > 0 { 1 } else { -1 }

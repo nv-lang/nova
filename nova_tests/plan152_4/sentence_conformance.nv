@@ -2,7 +2,7 @@
 // UAX #29 sentence conformance from SentenceBreakTest.txt: assert
 // `as_sentences()` yields the expected segment sequence (content-checked).
 // Coverage: uniform spread = 512 of 512 test lines.
-module plan152_4.sentence_conformance
+module nova_tests.plan152_4
 
 import std.unicode.{SentencesView}
 

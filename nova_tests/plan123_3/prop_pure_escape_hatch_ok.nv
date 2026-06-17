@@ -1,7 +1,7 @@
 // Plan 123.3 T-PROP.2: escape hatch — semantic equivalence under
 // NOVA_FIELD_CACHE_PURE=0.
 
-module plan123_3.prop_pure_escape_hatch_ok
+module nova_tests.plan123_3
 
 type Polynomial {
     ro coeff int

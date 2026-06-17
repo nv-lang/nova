@@ -1,0 +1,13 @@
+// Plan 118.6 T4 NEG — addr_of_mut() removed → E_ADDR_OF_REMOVED.
+//
+// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
+
+module neg.t4_neg_addr_of_mut_on_ro_binding
+
+test "addr_of_mut removed — use & syntax" {
+    ro x = 42
+    unsafe {
+        ro p = addr_of_mut(x)
+        p.write(100)
+    }
+}

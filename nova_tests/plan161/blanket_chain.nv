@@ -1,4 +1,4 @@
-module plan161.blanket_chain
+module nova_tests.plan161
 
 import std.collections.vec.{Vec}
 import std.collections.vec_iter

@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E_IMPL_NOT_PROTOCOL
+//
+// Plan 126 — NEG F21:
+// `#impl(P)` где P — не protocol (это просто record) → E_UNKNOWN_PROTOCOL
+// (D186 baseline). Auto-derive integration preserves этот guard.
+// AC-126.9 defence-in-depth.
+module neg.p21_unsupported_kind_neg
+
+type NotAProtocol {
+    payload int
+}
+
+#impl(NotAProtocol)
+type WantsImpl {
+    n int
+}
+
+test "non-protocol in #impl fails" {
+    ro w = WantsImpl { n: 0 }
+    assert(w.n == 0)
+}

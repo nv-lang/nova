@@ -1,4 +1,4 @@
-module plan153_6.hash
+module nova_tests.plan153_6
 test "equal vecs hash equal" {
     ro a = Vec[int].of(1, 2, 3)
     ro b = Vec[int].of(1, 2, 3)

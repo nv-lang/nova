@@ -4,7 +4,7 @@
 //
 // A-118.1.7.f: addr_of unsafe fn propagates safety bit to fn-ptr type.
 
-module plan118_1_7.t5_pos_unsafe_fn_ptr_type_propagation
+module nova_tests.plan118_1_7
 
 unsafe fn triple(x i64) -> i64 {
     x * 3

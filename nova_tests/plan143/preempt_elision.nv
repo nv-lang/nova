@@ -5,7 +5,7 @@
 //   * `leaf_double` / `leaf_forwarder` bodies → "preempt-check elided"
 //   * `rec_self` / `mutual_a` / `mutual_b` / `indirect_caller` → "nova_preempt_check()"
 
-module plan143.preempt_elision
+module nova_tests.plan143
 
 // --- POSITIVE: provably-leaf, no calls, not address-taken → ELIDE ---
 fn pure_leaf(x int) -> int => x * 2 + 1

@@ -1,0 +1,12 @@
+// Plan 118.6 T5 NEG — addr_of() removed → E_ADDR_OF_REMOVED.
+//
+// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
+
+module neg.t5_neg_addr_of_literal
+
+test "addr_of removed — literal case also gives E_ADDR_OF_REMOVED" {
+    unsafe {
+        ro p = addr_of(42)
+        assert(p.read() == 42)
+    }
+}

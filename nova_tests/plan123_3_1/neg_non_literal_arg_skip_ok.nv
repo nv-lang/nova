@@ -1,7 +1,7 @@
 // Plan 123.3.1 T-NEG.1: non-literal arg (variable) → V3.1 skips
 // caching (would require runtime equality check).
 
-module plan123_3_1.neg_non_literal_arg_skip_ok
+module nova_tests.plan123_3_1
 
 type Calc {
     ro factor int

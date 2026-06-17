@@ -2,7 +2,7 @@
 //
 // type MyNode { x int } — name length 6 → no E_TYPE_NAME_TOO_SHORT.
 
-module plan167.t2_pos_long_name_ok
+module nova_tests.plan167
 
 type MyNode {
     x int

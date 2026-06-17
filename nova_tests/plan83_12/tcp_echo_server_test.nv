@@ -7,7 +7,7 @@
 // ENV NOVA_AUTOARM=0
 // EXPECT_TIMEOUT_MS 30000
 
-module plan83_12.tcp_echo_server_test
+module nova_tests.plan83_12
 
 test "TCP echo: server + client round-trip" {
     // Bind to OS-assigned port (port 0 → OS picks a free port).

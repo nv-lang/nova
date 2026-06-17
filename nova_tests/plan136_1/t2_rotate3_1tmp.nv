@@ -2,7 +2,7 @@
 // Single 3-cycle needs 1 tmp in cycle-decomp.
 // A2: rotate-left and rotate-right.
 
-module plan136_1.t2_rotate3_1tmp
+module nova_tests.plan136_1
 
 test "rotate left 1,2,3 -> a=2,b=3,c=1" {
     mut a = 1

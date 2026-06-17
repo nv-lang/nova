@@ -1,6 +1,6 @@
 // Plan 123.3 T1.5: pure-call cache composes с D217 ro field cache.
 
-module plan123_3.pure_with_ro_fields_composition_ok
+module nova_tests.plan123_3
 
 type Box {
     ro a int

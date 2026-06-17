@@ -1,7 +1,7 @@
 // Plan 126 вЂ” POS F14:
 // Multi-protocol + mut field combinator вЂ” auto-derive composes СЃ D33 mut.
 // AC-126.13 (composability СЃ mut field modifier).
-module plan126.p14_value_record_ok
+module nova_tests.plan126
 
 #impl(Hash + Equal)
 type Vector {

@@ -2,7 +2,7 @@
 // compile and run — hover should resolve these to their declarations.
 // This validates that assert/println/etc. are syntactically reachable inside
 // test bodies (the same AST paths the body-walker traverses).
-module plan104_9.pos_hover_prelude_calls_in_test
+module nova_tests.plan104_9
 
 test "assert in test body resolves via body-walk" {
     ro x = 42

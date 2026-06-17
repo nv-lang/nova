@@ -7,7 +7,7 @@
 //
 // ALLOC_REQUIRES boehm
 
-module plan83_7.runnext_shutdown_drain
+module nova_tests.plan83_7
 
 test "spawn 500 — all fibers complete (runnext drain on shutdown)" {
     ro xs = parallel for i in 0..500 { i }

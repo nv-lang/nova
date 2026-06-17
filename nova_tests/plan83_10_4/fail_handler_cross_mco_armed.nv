@@ -17,7 +17,7 @@
 //   6. After all fibers drain, nova_supervised_run re-issues nova_interrupt(v)
 //      on main-flow where with-frame is reachable.
 
-module plan83_10_4.fail_handler_cross_mco_armed
+module nova_tests.plan83_10_4
 
 fn do_throw(msg str) -> int {
     throw msg

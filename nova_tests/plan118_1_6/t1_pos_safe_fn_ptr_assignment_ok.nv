@@ -4,7 +4,7 @@
 // `*fn(...) -> Ret` at let-binding. Indirect call позволен в safe context
 // (safe ptr → safe call-site).
 
-module plan118_1_6.t1_pos_safe_fn_ptr_assignment_ok
+module nova_tests.plan118_1_6
 
 fn safe_get() -> i64 {
     42

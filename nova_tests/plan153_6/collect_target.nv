@@ -4,7 +4,7 @@
 // collection. `@collect()` (default) → Vec; `@collect_set()` → Set (dedup);
 // other targets compose over a collected Vec via `from`/`from_iter`. Building a
 // Vec directly from any `Iter` source is `Vec[T].new().extend(src)`.
-module plan153_6.collect_target
+module nova_tests.plan153_6
 
 import std.collections.vec_lazy
 import std.collections.set.{Set}

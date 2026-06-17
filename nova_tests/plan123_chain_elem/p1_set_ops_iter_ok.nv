@@ -12,7 +12,7 @@
 //  - `.contains()` / `.len()` на результате компилируются и дают верный ответ;
 //  - всё проходит через release `nova test` (codegen → clang → run).
 
-module plan123_chain_elem.p1_set_ops_iter_ok
+module nova_tests.plan123_chain_elem
 
 import std.collections.set.{Set}
 

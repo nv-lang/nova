@@ -1,7 +1,7 @@
 // Plan 108.4 Ф.4: POS — #impl(P) with correct receiver mutability → OK
 // Tests that #impl annotation with matching mut/ro/consume receivers works.
 
-module plan108_4.pos_impl_annotation_match
+module nova_tests.plan108_4
 
 type Growable108g protocol {
     mut @push(x int)

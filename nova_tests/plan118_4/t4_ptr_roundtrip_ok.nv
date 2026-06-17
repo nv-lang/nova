@@ -3,7 +3,7 @@
 // Verifies typed read/write composes correctly с byte-level RawMem
 // operations и c view-pointers.
 
-module plan118_4.t4_ptr_roundtrip_ok
+module nova_tests.plan118_4
 
 import std.runtime.raw_mem
 

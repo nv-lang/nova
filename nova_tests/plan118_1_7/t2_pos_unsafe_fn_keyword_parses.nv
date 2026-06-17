@@ -5,7 +5,7 @@
 // A-118.1.7.b: `external unsafe fn foo()` parses, unsafe_attr=true.
 // A-118.1.7.c: call inside `unsafe {}` — accepted.
 
-module plan118_1_7.t2_pos_unsafe_fn_keyword_parses
+module nova_tests.plan118_1_7
 
 // Nova unsafe fn — keyword syntax (Plan 118.1.7).
 unsafe fn add_unsafe(a i64, b i64) -> i64 {

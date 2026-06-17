@@ -1,4 +1,4 @@
-module plan91_8a.default_body_parsed_test
+module nova_tests.plan91_8a
 
 // Plan 91.8a (D183): default body РІ protocol-decl РїР°СЂСЃРёС‚СЃСЏ.
 // Codegen synthesis РґР»СЏ defaults вЂ” followup 91.8a.2.

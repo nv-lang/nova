@@ -12,7 +12,7 @@
 //   - Forward typedef для mono'd struct при `register_novaopt_decl` —
 //     иначе NovaOpt typedef references undeclared struct.
 
-module plan48_1.option_hashmap_cross_module
+module nova_tests.plan48_1
 
 import std.collections.hashmap.{HashMap}
 

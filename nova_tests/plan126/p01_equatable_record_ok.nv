@@ -1,7 +1,7 @@
 // Plan 126 (D109 amend, D230) вЂ” POS F01:
 // `#impl(Equal)` РЅР° record СЃ primitive fields в†’ auto-derive @equal.
 // AC-126.2.
-module plan126.p01_equatable_record_ok
+module nova_tests.plan126
 
 #impl(Equal)
 type Vec3 {

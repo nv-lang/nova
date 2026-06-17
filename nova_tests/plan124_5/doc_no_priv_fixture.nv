@@ -1,6 +1,6 @@
 // Plan 124.5 — doc fixture: type without any priv fields — all
 // fields shown by default (backward compat sanity).
-module plan124_5.doc_no_priv_fixture
+module nova_tests.plan124_5
 
 /// Simple Point type, all fields public.
 export type Point {

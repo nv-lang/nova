@@ -4,7 +4,7 @@
 // Bare safe fn assigned к *unsafe fn(...) binding — allowed (caller
 // obligations strictly increase: callsite must wrap в unsafe { }).
 
-module plan118_1_6.t2_pos_safe_to_unsafe_coercion_ok
+module nova_tests.plan118_1_6
 
 fn safe_id(x i64) -> i64 {
     x

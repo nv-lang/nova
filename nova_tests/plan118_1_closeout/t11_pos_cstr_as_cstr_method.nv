@@ -3,7 +3,7 @@
 // Per D26 invariant: full Nova str ALWAYS has ptr[len]=='\0'. as_cstr()
 // returns CStr wrapping bytes.as_ptr() — direct buffer reference.
 
-module plan118_1_closeout.t11_pos_cstr_as_cstr_method
+module nova_tests.plan118_1_closeout
 
 import std.ffi.cstr.{CStr}
 

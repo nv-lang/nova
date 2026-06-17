@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_EXTERNAL_TYPE_RETRACTED
+//
+// Plan 91.12 Ф.7 — negative: `external type` is retracted (Plan 91.12 D126-retract).
+//
+// Full path: D:\Sources\nv-lang\nova-p91-12\nova_tests\plan91_12\net_v2_ffi_type_direct_neg.nv
+//
+// Acceptance A-neg-extern-type: attempting to declare an `external type`
+// in user code → E_EXTERNAL_TYPE_RETRACTED. Users must use `type X(*())`.
+
+module neg.net_v2_ffi_type_direct_neg
+
+external type RawHandle

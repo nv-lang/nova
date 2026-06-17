@@ -8,7 +8,7 @@
 // ENV NOVA_AUTOARM=0
 // EXPECT_TIMEOUT_MS 30000
 
-module plan83_12.tcp_cancel_accept_test
+module nova_tests.plan83_12
 
 test "TcpListener: cancel in-flight accept — exits cleanly" {
     ro lst_r = TcpListener.bind(SocketAddr.loopback(0))

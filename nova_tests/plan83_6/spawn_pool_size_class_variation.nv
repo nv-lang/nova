@@ -12,7 +12,7 @@
 //
 // ALLOC_REQUIRES boehm
 
-module plan83_6.spawn_pool_size_class_variation
+module nova_tests.plan83_6
 
 test "varied ctx sizes — small ctx routing correct" {
     // Small: 1 capture → 64B class.

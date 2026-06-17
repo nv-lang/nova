@@ -1,7 +1,7 @@
 // Plan 124.5 — doc fixture: priv field hidden by default, shown with
 // --include-private. Verified through `nova doc` invocations (manual
 // e2e check during Plan 124.5 closure).
-module plan124_5.doc_priv_fixture
+module nova_tests.plan124_5
 
 /// Account holds user balance.
 export type Account {

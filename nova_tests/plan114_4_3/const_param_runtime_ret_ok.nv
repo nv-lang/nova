@@ -1,7 +1,7 @@
 // Plan 114.4.3 Ф.3 T4.3 positive: all-const params + runtime return.
 // `[M-114.4.2-runtime-return]` покрывается mixed-args automatically.
 
-module plan114_4_3.const_param_runtime_ret_ok
+module nova_tests.plan114_4_3
 
 fn label(const tag int) -> int => tag * 1000
 

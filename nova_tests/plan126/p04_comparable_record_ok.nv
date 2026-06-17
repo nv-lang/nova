@@ -1,7 +1,7 @@
 // Plan 126 вЂ” POS F04:
 // `#impl(Compare)` РЅР° record в†’ auto-derive @compare() (lexicographic).
 // AC-126.5.
-module plan126.p04_comparable_record_ok
+module nova_tests.plan126
 
 #impl(Compare)
 type Money {

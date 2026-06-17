@@ -1,5 +1,5 @@
 // Plan 152.3a (D252): char ASCII-core API. Rust char::is_ascii_*/to_digit parity.
-module plan152_3.char_ascii
+module nova_tests.plan152_3
 
 test "is_ascii_* predicates" {
     assert('A'.is_ascii())

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 152.7-B (D258) POS T3 — radix types: x / X (hex), b (binary), o (octal),
 // with `#` alternate prefix (0x / 0b / 0o) and width/zero-pad interaction.
-module plan152_7.t3_pos_radix
+module nova_tests.plan152_7
 
 test "lower hex" {
     assert("${255:x}" == "ff")

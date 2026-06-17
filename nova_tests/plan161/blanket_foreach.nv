@@ -1,5 +1,5 @@
 // Test: blanket @bfor_each (return `()`, T appears only in callback)
-module plan161.blanket_foreach
+module nova_tests.plan161
 
 import std.collections.vec.{Vec}
 import std.prelude.collections.{Next}

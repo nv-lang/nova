@@ -2,7 +2,7 @@
 // Plan 152.7-B (D258) POS T2 — zero-pad (`0`) + sign (`+`).
 //
 // Zero-pad is sign-aware: zeros go BETWEEN the sign/prefix and the digits.
-module plan152_7.t2_pos_zero_pad_sign
+module nova_tests.plan152_7
 
 test "zero pad positive" {
     assert("${42:05}" == "00042")

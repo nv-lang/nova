@@ -1,5 +1,5 @@
 // Plan 152.2 Ф.1 (D251): split-family — byte-scans, zero-copy views.
-module plan152_2.split_family
+module nova_tests.plan152_2
 
 test "splitn: at most n parts, last is remainder" {
     ro p = "a,b,c,d".splitn(2, ",")

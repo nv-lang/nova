@@ -1,6 +1,6 @@
-﻿// Plan 123.3 T1.4: single call в†’ no cache (below threshold).
+// Plan 123.3 T1.4: single call в†’ no cache (below threshold).
 
-module plan123_3.pure_threshold_one_skip_ok
+module nova_tests.plan123_3
 
 type Xv {
     ro v int

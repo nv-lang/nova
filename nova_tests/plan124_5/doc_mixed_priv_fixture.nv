@@ -1,7 +1,7 @@
 // Plan 124.5 — doc fixture: mixed priv + public field type — default
 // shows только public, --include-private shows all (verified via
 // manual nova doc invocations during 124.5 closure).
-module plan124_5.doc_mixed_priv_fixture
+module nova_tests.plan124_5
 
 /// Bank account aggregating balance and metadata.
 export type BankAccount {

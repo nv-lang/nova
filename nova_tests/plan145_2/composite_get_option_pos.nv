@@ -16,7 +16,7 @@
 // the co-located 145.x regression guard for the MSVC-portable emission. A
 // directly-typed `[]Box` instead takes the typed-storage get path and is NOT a
 // substitute — only the map-erased storage hits the NPO repackaging.)
-module plan145_2.composite_get_option_pos
+module nova_tests.plan145_2
 
 type Box {
     n i64

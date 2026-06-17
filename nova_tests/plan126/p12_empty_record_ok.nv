@@ -1,7 +1,7 @@
 // Plan 126 вЂ” POS F12:
 // Single-field record + `#impl(Equal)` вЂ” minimal field-count synth.
 // AC-126.2 minimal case.
-module plan126.p12_empty_record_ok
+module nova_tests.plan126
 
 #impl(Equal)
 type Marker {

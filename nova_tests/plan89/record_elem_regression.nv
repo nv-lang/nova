@@ -7,7 +7,7 @@
 // попадают и НЕ должны разбоксовываться. Этот тест ловит ошибочный
 // разбокс genuine-pointer элементов.
 
-module plan89.record_elem_regression
+module nova_tests.plan89
 
 
 type Point { x int, y int }

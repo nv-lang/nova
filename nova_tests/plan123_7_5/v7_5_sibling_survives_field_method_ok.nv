@@ -8,7 +8,7 @@
 // Semantic preservation проверяется: cached + uncached paths
 // produce identical results.
 
-module plan123_7_5.v7_5_sibling_survives_field_method_ok
+module nova_tests.plan123_7_5
 
 type Buf {
     mut count int

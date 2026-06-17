@@ -1,6 +1,6 @@
 // Plan 108 Ф.3: str.as_bytes() zero-copy readonly []u8 view.
 
-module plan108.str_as_bytes_test
+module nova_tests.plan108
 
 test "str.as_bytes: basic byte values" {
     ro s = "hello"

@@ -1,7 +1,7 @@
 // char_at_oob.nv — Plan 75 Ф.1
 // @char_at OOB: индекс за пределами строки → None.
 
-module str.char_at_oob
+module nova_tests.str
 
 test "char_at: empty string returns None" {
     assert("".as_chars().nth(0) == None)

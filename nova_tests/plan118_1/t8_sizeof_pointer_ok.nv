@@ -7,7 +7,7 @@
 // canon `*T` (`*T ≡ *ro T`; explicit `*ro T` is a hard error per Plan 147 /
 // D246, migrated here).
 
-module plan118_1.t8_sizeof_pointer_ok
+module nova_tests.plan118_1
 
 type Acc {
     id i64

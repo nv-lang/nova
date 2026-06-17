@@ -3,7 +3,7 @@
 //
 // A-118.1.7.d: pointer deref inside unsafe fn body — checker accepts.
 
-module plan118_1_7.t1_pos_unsafe_fn_body_implicit_context
+module nova_tests.plan118_1_7
 
 // unsafe fn body is implicitly an unsafe context — *p and &x are allowed
 // without an explicit `unsafe {}` block inside.

@@ -1,5 +1,5 @@
 // Plan 152.2 Ф.2 (D251): trim / trim_matches / strip — zero-copy views.
-module plan152_2.trim_strip
+module nova_tests.plan152_2
 
 test "trim / trim_start / trim_end (ASCII whitespace)" {
     assert("  hi  ".trim() == "hi")

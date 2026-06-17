@@ -6,7 +6,7 @@
 //
 // Имя файла — `consume_test` (не `consume`): `consume` — keyword (D131).
 
-module str_builder.consume_test
+module nova_tests.str_builder
 
 
 test "into — ASCII content" {

@@ -3,7 +3,7 @@
 // var_types-зарегистрированных локалов корректно обрабатывает >1 field
 // access в одном test-блоке, и infer_expr_c_type::Member strip
 // `NovaValue_` prefix работает для всех 4 типов полей подряд.
-module plan127_1.p2_value_promoted_chained_field_access_ok
+module nova_tests.plan127_1
 
 type Quad value {
     a f64

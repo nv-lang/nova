@@ -17,7 +17,7 @@
 // (that is the documented gap — would FAIL under the shallow form because the
 // clone shares the element `Point` pointers).
 
-module plan138_3.t1_vec_clone_deep
+module nova_tests.plan138_3
 
 import std.collections.vec.{Vec}
 

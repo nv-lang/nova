@@ -1,5 +1,5 @@
 // Plan 57 MVP/57.C.2: bench.* namespace + gc.last_pause_ns callable.
-module plan57.p2_bench_namespace_callable
+module nova_tests.plan57
 
 test "bench.opaque identity на int" {
     ro v = bench.opaque(42)

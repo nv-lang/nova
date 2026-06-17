@@ -1,7 +1,7 @@
 // Plan 142 (D227 Rule 1) POS — bare literal in default `int` context (no sized
 // coercion) is NOT range-checked: int = i64 holds 3_000_000_000 fine.
 
-module plan142.pos_wide_int
+module nova_tests.plan142
 
 fn take_int(n int) -> int => n
 

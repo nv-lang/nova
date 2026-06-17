@@ -6,7 +6,7 @@
 //
 // Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
 
-module plan83_12.tcp_socket_addr_test
+module nova_tests.plan83_12
 
 test "SocketAddr.loopback — port number preserved" {
     ro addr = SocketAddr.loopback(8080)

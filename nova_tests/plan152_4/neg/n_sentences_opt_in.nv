@@ -1,0 +1,11 @@
+// Plan 152.4.6 (criterion): sentence segmentation is part of the OPT-IN
+// std.unicode module — NOT in the prelude. Without `import std.unicode`,
+// `as_sentences` is not in scope: the program must not silently compile.
+//
+// EXPECT_COMPILE_ERROR no field or method `as_sentences`
+module neg.n_sentences_opt_in
+
+test "as_sentences is undefined without import std.unicode" {
+    ro x = "Hi. Bye.".as_sentences().count()
+    assert(x == 2)
+}

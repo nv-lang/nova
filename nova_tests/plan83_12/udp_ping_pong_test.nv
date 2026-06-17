@@ -7,7 +7,7 @@
 // ENV NOVA_AUTOARM=0
 // EXPECT_TIMEOUT_MS 30000
 
-module plan83_12.udp_ping_pong_test
+module nova_tests.plan83_12
 
 test "UDP: bind, send_to, recv_from — is_ok" {
     // Bind receiver on OS port.

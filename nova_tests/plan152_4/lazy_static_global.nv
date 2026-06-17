@@ -9,7 +9,7 @@
 // This is the storage mechanism for the Unicode normalization tables
 // (152.4.1/152.4.2): a multi-hundred-KB embedded table string is parsed into a
 // HashMap once, lazily, on first normalization call.
-module plan152_4.lazy_static_global
+module nova_tests.plan152_4
 
 import std.collections.hashmap.{HashMap}
 

@@ -4,7 +4,7 @@
 // + RawMem.copy. Mirror Plan 90 D141 []T.copy_from semantics
 // (overlap-safe memmove).
 
-module plan118_1.t2_rawmem_copy_from_ok
+module nova_tests.plan118_1
 
 import std.runtime.raw_mem
 

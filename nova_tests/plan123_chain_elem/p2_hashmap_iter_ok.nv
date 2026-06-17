@@ -11,7 +11,7 @@
 //    резолвится через template+subst в кэш-temp binding);
 //  - агрегаты по итерации дают верный результат под release nova.
 
-module plan123_chain_elem.p2_hashmap_iter_ok
+module nova_tests.plan123_chain_elem
 
 import std.collections.hashmap.{HashMap}
 

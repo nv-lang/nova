@@ -1,4 +1,4 @@
-module plan161.blanket_basic
+module nova_tests.plan161
 
 import std.collections.vec.{Vec, VecIter}
 import std.prelude.collections.{Next}

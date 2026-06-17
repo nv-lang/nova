@@ -2,7 +2,7 @@
 //
 // Tests typed pointer read on u8/i32/i64.
 
-module plan118_4.t1_ptr_read_ok
+module nova_tests.plan118_4
 
 test "*ro u8 read returns first byte" {
     ro buf []u8 = [42, 100, 200]

@@ -10,7 +10,7 @@
 // would either silently degrade (still PASS by coincidence) or
 // regression-trip the IpaCtx::call_invalidates_field path.
 
-module plan123_7_2.v72_explicit_ipa_threading_ok
+module nova_tests.plan123_7_2
 
 type Box {
     mut counter int

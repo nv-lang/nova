@@ -2,7 +2,7 @@
 //
 // Verifies that @display on primitive types (int, f64, bool, str) writes
 // correctly to a StringBuilder passed as a Write sink.
-module plan152_7.t6_write_sink_str
+module nova_tests.plan152_7
 
 test "int @display writes to Write sink" {
     consume sb = StringBuilder.new()

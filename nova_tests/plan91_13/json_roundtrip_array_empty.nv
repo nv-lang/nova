@@ -4,7 +4,7 @@
 // Empty-array edge: format_array должен не оставить trailing comma,
 // parser должен принять `[]` как `Array([])` (не throw).
 
-module plan91_13.json_roundtrip_array_empty
+module nova_tests.plan91_13
 
 import std.encoding.json.{JsonValue, Json}
 

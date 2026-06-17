@@ -2,7 +2,7 @@
 // UAX #29 word conformance from WordBreakTest.txt: assert `as_words()`
 // yields the expected segment sequence (content-checked).
 // Coverage: uniform spread = 1500 of 1826 test lines.
-module plan152_4.word_conformance
+module nova_tests.plan152_4
 
 import std.unicode.{WordsView}
 

@@ -7,7 +7,7 @@
 // Используем match (а не `==`) чтобы не требовать nova_opt_eq_<T>
 // runtime helper.
 
-module generics.p48_none_in_mono_body
+module nova_tests.generics
 
 
 // `result` объявлен с Option[T]; None initializer должен матчиться target типу.

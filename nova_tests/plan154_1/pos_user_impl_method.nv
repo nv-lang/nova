@@ -1,7 +1,7 @@
 // Plan 154.1 (D268): method-level #impl(P) opt-in — binds protocol to the
 // receiver type + checks the signature. Structural conformance unchanged.
 // Plan 152.7.1 (D258 AMEND): migrated to Write sink — @display(mut w Write).
-module plan154_1.pos_user_impl_method
+module nova_tests.plan154_1
 
 type Point { x int, y int }
 

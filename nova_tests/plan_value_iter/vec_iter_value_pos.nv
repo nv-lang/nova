@@ -2,7 +2,7 @@
 //
 // Verifies that VecIter[T] behaves as a value type: copied by value,
 // independent cursors, and that for-loops over Vec work without malloc.
-module plan_value_iter.vec_iter_value_pos
+module nova_tests.plan_value_iter
 
 import std.collections.vec_iter
 

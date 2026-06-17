@@ -1,0 +1,14 @@
+// Plan 167 Ф.4 NEG T6 — single-char newtype name → E_TYPE_NAME_TOO_SHORT.
+//
+// type N int — newtype with name length 1 → must be rejected.
+//
+// EXPECT_COMPILE_ERROR E_TYPE_NAME_TOO_SHORT
+
+module neg.t6_neg_single_char_newtype
+
+type N int
+
+test "single-char newtype name — E_TYPE_NAME_TOO_SHORT" {
+    ro n = N(5)
+    assert(n == N(5))
+}

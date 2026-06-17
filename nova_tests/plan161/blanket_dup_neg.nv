@@ -1,4 +1,4 @@
-module plan161.blanket_dup_neg
+module nova_tests.plan161
 
 import std.prelude.collections.{Next}
 import std.collections.vec.{Vec}

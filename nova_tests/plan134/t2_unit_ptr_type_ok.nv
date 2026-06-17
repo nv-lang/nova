@@ -3,7 +3,7 @@
 // Verifies that *() replaces the removed `ptr` builtin as the canonical
 // opaque pointer type: usable in type declarations, structs, and assignments.
 
-module plan134.t2_unit_ptr_type_ok
+module nova_tests.plan134
 
 type Handle { ro value *() }
 

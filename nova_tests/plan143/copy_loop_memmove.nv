@@ -6,7 +6,7 @@
 // The codegen effect (memmove emitted; loop gone) is asserted by grepping the
 // emitted C in closure verification. These tests pin the SEMANTICS.
 
-module plan143.copy_loop_memmove
+module nova_tests.plan143
 
 import std.collections.vec.{Vec}
 

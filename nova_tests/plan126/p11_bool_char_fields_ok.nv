@@ -1,7 +1,7 @@
 // Plan 126 вЂ” POS F11:
 // bool / char fields eligible (РІСЃРµ primitives auto-derivable).
 // AC-126.2.
-module plan126.p11_bool_char_fields_ok
+module nova_tests.plan126
 
 #impl(Hash)
 type Flag {

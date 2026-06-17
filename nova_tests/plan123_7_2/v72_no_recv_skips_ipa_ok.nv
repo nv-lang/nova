@@ -3,7 +3,7 @@
 // fns, so IPA is correctly skipped (no panic, falls back to V1
 // conservative). Must compile + run identically to V7.1 behavior.
 
-module plan123_7_2.v72_no_recv_skips_ipa_ok
+module nova_tests.plan123_7_2
 
 type Counter {
     mut n int

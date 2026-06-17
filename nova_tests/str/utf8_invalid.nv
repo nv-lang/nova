@@ -4,7 +4,7 @@
 // Реализация: Nova_str_static_try_from_bytes в nova_rt/string_builder.h
 // вызывает _nova_validate_utf8; при ошибке → Err("invalid UTF-8 byte sequence").
 
-module str.utf8_invalid
+module nova_tests.str
 
 test "lone continuation byte is invalid UTF-8" {
     // 0x80 сам по себе — continuation byte без leading byte: invalid.

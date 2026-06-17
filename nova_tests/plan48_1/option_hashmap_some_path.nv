@@ -4,7 +4,7 @@
 // Verifies что mono'd NovaOpt_<HashMap>* correctly emit'ит Some
 // constructor + match destructuring access HashMap methods.
 
-module plan48_1.option_hashmap_some_path
+module nova_tests.plan48_1
 
 import std.collections.hashmap.{HashMap}
 

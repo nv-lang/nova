@@ -1,7 +1,7 @@
 // Plan 108.4 Ф.4: POS — protocol mut @next() + impl mut @next() → OK
 // Verifies that a custom iterator with mutable receiver compiles and runs.
 
-module plan108_4.pos_mut_next_match
+module nova_tests.plan108_4
 
 type CounterIter protocol {
     mut @next() -> Option[int]

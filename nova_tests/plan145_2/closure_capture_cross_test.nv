@@ -5,7 +5,7 @@
 // порядка эмиссии будил var_boxed cross-function leak: `_box_x` объявлялся в одной
 // test-функции и использовался в другой -> CC-FAIL `use of undeclared identifier`.
 
-module plan145_2.closure_capture_cross_test
+module nova_tests.plan145_2
 
 test "A: closure captures mut x" {
     mut x = 5

@@ -1,0 +1,10 @@
+// Plan 152.7-B (D258): a malformed format spec must be a COMPILE error, never a
+// silent pass. Pins the diagnostic boundary of the format mini-language.
+//
+// EXPECT_COMPILE_ERROR E_FORMAT_SPEC_UNKNOWN
+module neg.n_bad_format_spec
+
+test "unknown format type is a compile error" {
+    ro x = "${255:q}"   // `q` is not a valid type (x/X/b/o/?)
+    assert(x == "")
+}

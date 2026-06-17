@@ -3,7 +3,7 @@
 // delegate to the `std.unicode` code-point tables (category.nv) and are available
 // only under `import std.unicode` (the table cost is paid by importers, not the
 // prelude). The ASCII-core methods (char_ascii.nv) need no import.
-module plan152_3.char_unicode
+module nova_tests.plan152_3
 
 import std.unicode
 import std.unicode.{Lu, Nd}

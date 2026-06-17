@@ -1,7 +1,7 @@
 // Plan 152.8 Layer 2 POS T6 — nova_char = uint32_t (D128 AMEND).
 // Verifies: char values round-trip through store/load, char.hash() works,
 // max codepoint U+10FFFF is representable, char comparison ordering.
-module plan152_8.t6_char_u32_ok
+module nova_tests.plan152_8
 
 test "char stores and loads correctly" {
     ro a = 'A'

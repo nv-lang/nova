@@ -3,7 +3,7 @@
 // Кириллица, CJK и emoji во всех методах: byte_len > len для
 // многобайтных, starts_with/ends_with на codepoint-границах.
 
-module str_builder.unicode
+module nova_tests.str_builder
 
 
 test "Cyrillic — byte_len вдвое больше len" {

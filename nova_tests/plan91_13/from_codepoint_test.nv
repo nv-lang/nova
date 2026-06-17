@@ -11,7 +11,7 @@
 // std/runtime/char.nv. Same runtime backing as `str.from(char)` —
 // Nova_str_static_from_char (via alias Nova_str_static_from_codepoint).
 
-module plan91_13.from_codepoint_test
+module nova_tests.plan91_13
 
 test "ASCII codepoint" {
     ro s = str.from_codepoint(65)  // 'A'

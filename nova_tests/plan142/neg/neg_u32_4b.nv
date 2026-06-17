@@ -1,0 +1,10 @@
+// Plan 142 (D227 Rule 3) NEG — 4294967296 exceeds u32.MAX (4294967295) → hard error.
+// (value < i64.MAX so it reaches the range-check, not the lexer.)
+// EXPECT_COMPILE_ERROR [E_LIT_OUT_OF_RANGE] 4294967296 > u32.MAX (4294967295)
+
+module neg.neg_u32_4b
+
+test "u32 = 4294967296 is out of range" {
+    ro a u32 = 4294967296
+    assert(a == 0)
+}

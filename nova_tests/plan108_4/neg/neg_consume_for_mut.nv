@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_PROTO_IMPL_CONSUME_FOR_MUT
+// Plan 108.4 Ф.2: protocol declares `mut @push()`, impl uses consume receiver.
+
+#no_prelude
+module neg.neg_consume_for_mut
+
+type Growable protocol {
+    mut @push(x int)
+}
+
+#impl(Growable)
+type Bag { size int }
+
+// consume receiver — mismatch: protocol requires mut
+fn Bag consume @push(x int) { }

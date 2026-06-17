@@ -1,6 +1,6 @@
 // Probe: record types — multi-line форма работает с commas OR newlines.
 // Baseline для comparison с named tuple parsing asymmetry.
-module syntax_probe.record_multiline_ok
+module nova_tests.syntax_probe
 
 // Form 1: comma separator
 type Point2 {

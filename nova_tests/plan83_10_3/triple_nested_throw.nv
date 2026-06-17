@@ -3,7 +3,7 @@
 // Tests 3-level deep nested supervised scopes with throw propagation.
 // Verifies cooperative resume works at each nesting depth.
 
-module plan83_10_3.triple_nested_throw
+module nova_tests.plan83_10_3
 
 test "triple nested throw — outermost handler catches" {
     mut caught = false

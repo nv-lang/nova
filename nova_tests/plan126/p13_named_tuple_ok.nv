@@ -1,7 +1,7 @@
 // Plan 126 вЂ” POS F13:
 // NamedTuple (Plan 120 D215) auto-derive Equal.
 // AC-126.12.
-module plan126.p13_named_tuple_ok
+module nova_tests.plan126
 
 #impl(Equal)
 type Pair(left int, right int)

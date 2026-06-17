@@ -4,7 +4,7 @@
 // Verifies that the result is compatible with int and can be used in
 // multiplication / comparison without usize/isize.
 
-module plan133.t4_int_size_of_ok
+module nova_tests.plan133
 
 const S_I64 = size_of[i64]()
 const S_I32 = size_of[i32]()

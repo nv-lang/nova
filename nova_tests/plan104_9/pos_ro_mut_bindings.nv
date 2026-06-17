@@ -1,6 +1,6 @@
 // Plan 104.9 pos: ro/mut binding syntax (not let) as surfaced by nova-lsp completion.
 // Verifies that ro/mut are valid binding keywords across all contexts.
-module plan104_9.pos_ro_mut_bindings
+module nova_tests.plan104_9
 
 fn identity(x int) -> int => x
 

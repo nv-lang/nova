@@ -12,7 +12,7 @@
 // All other throw-as-expression fixtures (syntax/throw_in_expression.nv) throw
 // STRINGS, which take the `val_ty == "nova_str"` comma-expression branch — so
 // this is the ONLY coverage of the primitive heap-box path.
-module plan145_2.throw_primitive_expr_pos
+module nova_tests.plan145_2
 
 fn unwrap_or_fail(opt Option[int]) Fail[int] -> int {
     // `?? throw 99` → ternary `opt is Some ? value : throw 99`; the RHS is a

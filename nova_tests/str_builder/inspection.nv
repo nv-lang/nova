@@ -3,7 +3,7 @@
 // @starts_with(prefix) / @ends_with(suffix) / @is_empty() / @peek()
 // — все non-consuming: append после них продолжает работать.
 
-module str_builder.inspection
+module nova_tests.str_builder
 
 
 // ── @is_empty ──────────────────────────────────────────────────────

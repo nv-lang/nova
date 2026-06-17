@@ -2,7 +2,7 @@
 // cases covering canonical/compatibility decomposition, composition, canonical
 // ordering of combining marks, Hangul algorithmic decomp/comp, and idempotence.
 // Bulk UAX #15 conformance (NormalizationTest.txt) is a separate fixture.
-module plan152_4.normalize
+module nova_tests.plan152_4
 
 import std.unicode.{normalize_nfc, normalize_nfd, normalize_nfkc, normalize_nfkd, UNICODE_VERSION}
 

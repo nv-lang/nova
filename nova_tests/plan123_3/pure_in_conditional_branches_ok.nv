@@ -1,6 +1,6 @@
 // Plan 123.3 T1.7: pure-call cache survives conditional branches.
 
-module plan123_3.pure_in_conditional_branches_ok
+module nova_tests.plan123_3
 
 type Interval {
     ro lo int

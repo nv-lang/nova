@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
+//
+// Plan 126 вЂ” NEG F20:
+// Display auto-derive вЂ” field type РЅРµ Display в†’ error.
+// AC-126.9.
+module neg.p20_printable_field_lacks_neg
+
+type RawY {
+    raw int
+}
+
+#impl(Display)
+type NeedsFmt {
+    body RawY
+}
+
+test "Display field lacks protocol fails" {
+    ro f = NeedsFmt { body: RawY { raw: 0 } }
+    assert(f.body.raw == 0)
+}

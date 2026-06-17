@@ -1,7 +1,7 @@
 // split_edge.nv — Plan 75 Ф.2
 // split edge cases: соседние разделители, sep не найден, крайние позиции.
 
-module str.split_edge
+module nova_tests.str
 
 test "split: basic multi-part" {
     ro parts = "a,b,c".split(",")

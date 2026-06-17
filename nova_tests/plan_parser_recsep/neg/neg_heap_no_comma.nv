@@ -1,0 +1,7 @@
+// NEGATIVE: same constraint applies to heap (non-value) records.
+// EXPECT_COMPILE_ERROR E_RECORD_FIELD_MISSING_SEPARATOR
+module neg.neg_heap_no_comma
+
+type Bad { x int y int }
+
+fn f(b Bad) -> int => b.x

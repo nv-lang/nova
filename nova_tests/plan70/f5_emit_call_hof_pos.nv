@@ -1,7 +1,7 @@
 // Plan 70 PhaseA2 sites в emit_call.
 // POSITIVE — HOF calls с fn-typed params, generic + mono dispatch.
 
-module plan70.f5_emit_call_hof_pos
+module nova_tests.plan70
 
 fn twice(f fn(int) -> int, x int) -> int => f(f(x))
 

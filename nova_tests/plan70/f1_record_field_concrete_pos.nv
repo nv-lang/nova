@@ -6,7 +6,7 @@
 // После strict: concrete fields идут через успешный type_ref_to_c
 // (нет fail случая в этом сценарии), pos-path работает identical.
 
-module plan70.f1_record_field_concrete_pos
+module nova_tests.plan70
 
 type Box[T] {
     value T          // type-param field — handled by void* arm, не fallback

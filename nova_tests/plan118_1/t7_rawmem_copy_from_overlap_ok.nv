@@ -3,7 +3,7 @@
 // memmove must produce correct results even when src/dst overlap.
 // Tests shifting elements forward в same buffer (classic overlap case).
 
-module plan118_1.t7_rawmem_copy_from_overlap_ok
+module nova_tests.plan118_1
 
 import std.runtime.raw_mem
 

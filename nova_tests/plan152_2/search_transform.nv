@@ -1,5 +1,5 @@
 // Plan 152.2 Ф.3 (D251): match_indices/matches/is_char_boundary + replacen + pad.
-module plan152_2.search_transform
+module nova_tests.plan152_2
 
 test "match_indices: byte-offsets of non-overlapping matches" {
     ro idx = "abXabXab".match_indices("X")

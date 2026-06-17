@@ -2,7 +2,7 @@
 // addr-of-promoted local (D228). Reproduce точный паттерн bug'а из t3:
 // локал `v` shadow'ит NO primitive token, но codegen Member→Path-fallback
 // должен выбрать `->` (NovaValue_X*) а не точку или underscore-join.
-module plan127_1.p1_value_promoted_single_field_access_ok
+module nova_tests.plan127_1
 
 type ValueRecord value {
     x f64

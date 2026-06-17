@@ -1,6 +1,6 @@
 // Probe fixture for [M-161-parametric-return]: blanket methods with parametric
 // return types: Vec[T], Option[T], and identity T return.
-module plan161.blanket_param_return
+module nova_tests.plan161
 
 import std.collections.vec.{Vec, VecIter}
 import std.prelude.collections.{Next}

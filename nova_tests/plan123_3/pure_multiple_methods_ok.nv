@@ -1,6 +1,6 @@
 // Plan 123.3 T1.3: multiple pure methods cached independently.
 
-module plan123_3.pure_multiple_methods_ok
+module nova_tests.plan123_3
 
 type Stat {
     ro n int

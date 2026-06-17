@@ -1,7 +1,7 @@
 // Plan 154.1 (D269): concrete Display/Debug for primitives + Vec[primitive]
 // + typed StringBuilder @append overloads. Closes the vec_debug_pos
 // primitive-element mis-dispatch.
-module plan154_1.pos_primitive_display_debug
+module nova_tests.plan154_1
 
 import std.collections.vec.{Vec}
 

@@ -2,7 +2,7 @@
 // constructor Box[T].new — the `(Box)[T];` raw-C leak surfaced in a 154.1 probe
 // is no longer reproducible (resolved by plan-153.1 generic-static codegen fixes
 // f7f56f0f / 3d9a7361 / 8d493e5a). This locks the construction paths.
-module plan154_1.pos_box_generic_static_ctor
+module nova_tests.plan154_1
 
 type Box[T] { val T }
 fn Box[T].new(v T) -> Self => { val: v }

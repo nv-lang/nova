@@ -1,6 +1,6 @@
 // Plan 108 Ф.2: D176 readonly T type modifier — positive tests.
 
-module plan108.readonly_type_test
+module nova_tests.plan108
 
 // Function accepting readonly []u8
 fn sum_bytes(data ro []u8) -> int {

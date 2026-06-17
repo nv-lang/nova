@@ -1,7 +1,7 @@
 // Plan 126 вЂ” POS F10:
 // `str` field eligible РґР»СЏ auto-derive Equal (primitive).
 // AC-126.2 вЂ” primitive str.
-module plan126.p10_string_field_ok
+module nova_tests.plan126
 
 #impl(Equal)
 type Person {

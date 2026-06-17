@@ -2,7 +2,7 @@
 //
 // Tests faster non-overlap variant. Distinct buffers, no overlap.
 
-module plan118_1.t3_rawmem_copy_nonoverlapping_ok
+module nova_tests.plan118_1
 
 import std.runtime.raw_mem
 

@@ -3,7 +3,7 @@
 // Покрывает: @append(str), @append(char) ASCII/Unicode/emoji,
 // @plus(str)/@plus(char), chaining, пустой append.
 
-module str_builder.append_ops
+module nova_tests.str_builder
 
 
 // ── @append(str) ───────────────────────────────────────────────────

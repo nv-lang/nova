@@ -3,7 +3,7 @@
 // Verifies normalized -1/0/+1 result (libc memcmp returns
 // implementation-defined non-zero; Nova normalizes for portability).
 
-module plan118_1.t6_rawmem_compare_ok
+module nova_tests.plan118_1
 
 import std.runtime.raw_mem
 

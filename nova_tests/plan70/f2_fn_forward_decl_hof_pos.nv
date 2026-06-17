@@ -1,7 +1,7 @@
 // Plan 70 PhaseA1.2 sites 4819, 4820, 4829, 4838, 4841 in emit_fn_forward_decl.
 // POSITIVE — fn-returning-fn (HOF) signature lowering + free fn с fn-typed params.
 
-module plan70.f2_fn_forward_decl_hof_pos
+module nova_tests.plan70
 
 // Site 4829: free fn с concrete params — user_fn_sigs registration path
 fn add(x int, y int) -> int => x + y

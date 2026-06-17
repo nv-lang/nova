@@ -3,7 +3,7 @@
 // Regression guard: blanket `fn[I Next[T]] I mut @find(pred fn(T)->bool)` must
 // dispatch to the FilterIter receiver, not to any concrete type registered last
 // in method_receivers.
-module plan164.blanket_no_collision_find
+module nova_tests.plan164
 
 import std.collections.vec_iter
 

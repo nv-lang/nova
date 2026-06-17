@@ -1,7 +1,7 @@
 // Plan 126 вЂ” POS F02:
 // `#impl(Hash)` РЅР° record в†’ auto-derive @hash().
 // AC-126.3.
-module plan126.p02_hashable_record_ok
+module nova_tests.plan126
 
 #impl(Hash)
 type UserId {

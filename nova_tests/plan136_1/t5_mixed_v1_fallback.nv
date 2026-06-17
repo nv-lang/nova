@@ -3,7 +3,7 @@
 // (x,y)=(42,77): both rhs are literals, fully independent.
 // A5: verify fallback path for non-pure-permutation assignments.
 
-module plan136_1.t5_mixed_v1_fallback
+module nova_tests.plan136_1
 
 test "mixed: a=b+1, b=0 from a=10,b=5" {
     mut a = 10

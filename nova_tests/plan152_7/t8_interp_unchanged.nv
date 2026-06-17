@@ -2,7 +2,7 @@
 //
 // Verifies that "${expr}" interpolation still works correctly for all primitive
 // types after the Display/Debug protocol migrated from StringBuilder to Write.
-module plan152_7.t8_interp_unchanged
+module nova_tests.plan152_7
 
 test "int interpolation" {
     assert("${42}" == "42")

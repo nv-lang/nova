@@ -1,7 +1,7 @@
 // Plan 123.3 T-PROP.1: semantic equivalence — pure method results
 // invariant per call regardless of caching.
 
-module plan123_3.prop_pure_semantic_ok
+module nova_tests.plan123_3
 
 type Pair {
     ro a int

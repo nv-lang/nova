@@ -7,7 +7,7 @@
 // C in the closure verification (const loop body: no preempt-check; variable
 // loop body: preempt-check present).
 
-module plan143.preempt_loop_skip
+module nova_tests.plan143
 
 test "const-small range loop result correct (preempt-check skipped)" {
     mut s = 0

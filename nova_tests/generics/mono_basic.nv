@@ -1,4 +1,4 @@
-module generics.mono_basic
+module nova_tests.generics
 
 fn identity[T](x T) -> T { x }
 

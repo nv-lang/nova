@@ -1,5 +1,5 @@
 // Plan 57 MVP: bench "name" { measure { ... } } compiles cleanly.
-module plan57.p1_bench_basic_compiles
+module nova_tests.plan57
 
 bench "smoke-noop" {
     measure {

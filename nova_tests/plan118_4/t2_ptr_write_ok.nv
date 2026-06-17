@@ -2,7 +2,7 @@
 //
 // Tests typed pointer write на u8/i32/i64.
 
-module plan118_4.t2_ptr_write_ok
+module nova_tests.plan118_4
 
 test "*mut u8 write stores byte at slot 0" {
     mut buf []u8 = [0, 0, 0]

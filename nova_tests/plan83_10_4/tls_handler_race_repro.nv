@@ -9,7 +9,7 @@
 //
 // This is intentionally run WITHOUT AUTOARM=0 to exercise full M:N scheduling.
 
-module plan83_10_4.tls_handler_race_repro
+module nova_tests.plan83_10_4
 
 fn handler_value(v int) -> int {
     with Time = effect Time {

@@ -6,7 +6,7 @@
 // the old `Option[int]`. `@sort` / `@sort_by` / `@min` / `@max` still come from
 // `std.sort` (concrete `[]int` ops; the prelude eager-min/max counterpart is
 // gated on the `[]int.new()→Vec` codegen fix, [M-153.x-array-new-not-vec]).
-module plan91.sort_basic
+module nova_tests.plan91
 
 import std.sort
 

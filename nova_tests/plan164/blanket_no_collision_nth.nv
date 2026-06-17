@@ -3,7 +3,7 @@
 // Regression guard: blanket `fn[I Next[T]] I mut @nth(n int)` must dispatch
 // to the FilterIter receiver correctly, consuming the first n matching elements
 // and returning the (n+1)-th.
-module plan164.blanket_no_collision_nth
+module nova_tests.plan164
 
 import std.collections.vec_iter
 

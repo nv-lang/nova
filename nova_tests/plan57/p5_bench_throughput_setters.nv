@@ -1,5 +1,5 @@
 // Plan 57 MVP: bench.bytes / bench.elements setters callable.
-module plan57.p5_bench_throughput_setters
+module nova_tests.plan57
 
 bench "bytes-throughput" {
     measure {

@@ -1,7 +1,7 @@
 // Plan 152.4.5 (D253): word segmentation (UAX #29) + to_titlecase — hand-authored
 // semantic cases (full WordBreakTest breadth lives in word_conformance.nv).
 
-module plan152_4.words
+module nova_tests.plan152_4
 
 import std.unicode.{WordsView, to_titlecase}
 

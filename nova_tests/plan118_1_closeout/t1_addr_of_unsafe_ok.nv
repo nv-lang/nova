@@ -3,7 +3,7 @@
 // Per design: `&x` takes address of x. Inside unsafe context.
 // (addr_of removed in Plan 118.6 — use & syntax directly.)
 
-module plan118_1_closeout.t1_addr_of_unsafe_ok
+module nova_tests.plan118_1_closeout
 
 test "addr_of(int) inside unsafe" {
     ro x = 42

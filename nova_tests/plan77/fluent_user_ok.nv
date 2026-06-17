@@ -2,7 +2,7 @@
 // `mut @method() -> @` — тело завершается `@` (вернуть receiver);
 // chaining работает.
 
-module plan77.fluent_user_ok
+module nova_tests.plan77
 
 type Counter { mut n int }
 

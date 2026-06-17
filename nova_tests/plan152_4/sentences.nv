@@ -6,7 +6,7 @@
 // observable consequences (each matched against the official SentenceBreakTest
 // behaviour for the same codepoints).
 
-module plan152_4.sentences
+module nova_tests.plan152_4
 
 import std.unicode.{SentencesView}
 

@@ -3,7 +3,7 @@
 // Verifies that `(0 as *())` is the canonical null pointer literal,
 // equality comparison works, and a fn accepting *() handles it correctly.
 
-module plan134.t3_null_unit_ptr_ok
+module nova_tests.plan134
 
 fn is_null_ptr(p *()) -> bool {
     p == (0 as *())

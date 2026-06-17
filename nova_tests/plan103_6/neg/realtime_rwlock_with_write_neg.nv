@@ -1,0 +1,16 @@
+// Plan 103.6 — RwLock.write is #parks; forbidden in #realtime fn.
+// Plan 113 migration: realtime { } → #realtime fn.
+//
+// EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
+
+module neg.realtime_rwlock_with_write_neg
+
+#realtime fn _rt_check_rwlock_write(rw mut RwLock) {
+    rw.write()
+    rw.write_unlock()
+}
+
+test "RwLock.write banned in #realtime fn" {
+    mut rw = RwLock.new()
+    _rt_check_rwlock_write(rw)
+}

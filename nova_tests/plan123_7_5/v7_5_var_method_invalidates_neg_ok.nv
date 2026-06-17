@@ -1,9 +1,9 @@
-﻿// Plan 123.7.5 (V7.5, 2026-06-04): NEGATIVE вЂ” V7.5 doesn't relax for
+// Plan 123.7.5 (V7.5, 2026-06-04): NEGATIVE вЂ” V7.5 doesn't relax for
 // non-@F-receiver method calls. `var.method()` (local-variable
 // receiver) still conservatively invalidates. Semantic preservation
 // РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ.
 
-module plan123_7_5.v7_5_var_method_invalidates_neg_ok
+module nova_tests.plan123_7_5
 
 type Cv {
     mut n int

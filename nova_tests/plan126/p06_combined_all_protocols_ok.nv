@@ -1,7 +1,7 @@
 // Plan 126 вЂ” POS F06:
 // Combined auto-derive вЂ” РІСЃРµ 5 built-in РїСЂРѕС‚РѕРєРѕР»РѕРІ РѕРґРЅРѕРІСЂРµРјРµРЅРЅРѕ.
 // AC-126.2 + 126.3 + 126.4 + 126.5 + 126.6.
-module plan126.p06_combined_all_protocols_ok
+module nova_tests.plan126
 
 #impl(Equal + Hash + Clone + Compare + Display)
 type Quad {

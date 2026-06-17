@@ -1,7 +1,7 @@
 // Plan 104.9 pos: prelude types that nova-lsp completion now surfaces accurately.
 // Verifies int/f64/f32/bool/str/Option/Result/Vec/HashMap work as expected.
 // (float/usize/Map removed from completion — Plan 114/133.)
-module plan104_9.pos_prelude_types_accurate
+module nova_tests.plan104_9
 
 import std.collections.hashmap.{HashMap}
 

@@ -3,7 +3,7 @@
 //
 // Rust-style `${expr:[[fill]align][width]}`:
 //   default (numbers right-align), `<` left, `>` right, `^` center, fill char.
-module plan152_7.t1_pos_width_align
+module nova_tests.plan152_7
 
 test "int width default (right-align)" {
     assert("${42:5}" == "   42")

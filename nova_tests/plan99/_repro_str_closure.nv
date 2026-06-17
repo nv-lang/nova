@@ -2,7 +2,7 @@
 // Closure body emit fails to substitute T-param type — defaults к nova_int.
 // Option[str].map(|s| s.byte_len()) emits closure as (nova_int s).
 
-module plan99._repro_str_closure
+module nova_tests.plan99
 
 test "Option[str].map closure str→int" {
     ro a Option[str] = Some("hello")

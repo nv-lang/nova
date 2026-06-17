@@ -1,7 +1,7 @@
 // Plan 114 (D184): pattern-bind в if condition — drop outer `let`,
 // unified pattern grammar (constructor / identifier с ro/mut).
 
-module plan114.if_pattern_ok
+module nova_tests.plan114
 
 fn lookup(n int) -> Option {
     if n > 0 { return Some(n * 100) }

@@ -3,7 +3,7 @@
 // Verifies basic encode-then-decode + decode-then-encode equivalence
 // for null/bool/num/str values.
 
-module plan91_13.json_roundtrip_primitives
+module nova_tests.plan91_13
 
 import std.encoding.json.{JsonValue, Json}
 

@@ -1,5 +1,5 @@
 // Plan 152.8 Layer 1 (Vec[u32] migration) — T1: NFC normalization after migration.
-module plan152_8.t1_normalize_nfc_ok
+module nova_tests.plan152_8
 
 import std.unicode.{normalize_nfc, normalize_nfd}
 

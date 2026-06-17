@@ -1,6 +1,6 @@
 // Plan 114.4.3 T4.1 positive: match с literal patterns + wildcard.
 
-module plan114_4_3.match_literal_ok
+module nova_tests.plan114_4_3
 
 fn weekday_to_int(const day str) -> const int =>
     match day {

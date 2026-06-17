@@ -1,6 +1,6 @@
 // Plan 154.1 [M-154.1-f32-display-debug]: f32 Display/Debug parity with other
 // primitives — direct, interp, and Vec[f32].
-module plan154_1.pos_f32_display_debug
+module nova_tests.plan154_1
 
 import std.collections.vec.{Vec}
 

@@ -1,4 +1,4 @@
-module plan91_7.array_new_test
+module nova_tests.plan91_7
 
 // Plan 91.7 Part D: []T.new() и []T.with_capacity(n) canonical default.
 

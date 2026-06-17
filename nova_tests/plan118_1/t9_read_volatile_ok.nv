@@ -7,7 +7,7 @@
 //
 // Closes [M-118.1-volatile-ops] read half.
 
-module plan118_1.t9_read_volatile_ok
+module nova_tests.plan118_1
 
 test "read_volatile from u8 pointer" {
     ro buf []u8 = [42, 100]

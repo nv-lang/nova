@@ -2,7 +2,7 @@
 //
 // Tests byte-pattern fill at *mut u8 dst.
 
-module plan118_1.t4_rawmem_fill_ok
+module nova_tests.plan118_1
 
 import std.runtime.raw_mem
 

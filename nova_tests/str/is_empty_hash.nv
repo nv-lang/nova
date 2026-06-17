@@ -1,7 +1,7 @@
 // is_empty_hash.nv — Plan 75 Ф.1
 // @is_empty: добавлен в string.nv (Plan 75). @hash: FNV-1a determinism.
 
-module str.is_empty_hash
+module nova_tests.str
 
 test "is_empty: empty string returns true" {
     assert("".is_empty())
