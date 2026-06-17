@@ -28,8 +28,9 @@ use tracing_subscriber::EnvFilter;
     long_about = None,
 )]
 struct Args {
-    // V1: no positional arguments — LSP communicates via stdio.
-    // Planned: --workspace-root <path> for multi-root workspaces (Plan 104.1).
+    /// Accepted but ignored — LSP always communicates via stdio.
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    stdio: bool,
 }
 
 #[tokio::main]
