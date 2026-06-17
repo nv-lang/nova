@@ -50,6 +50,35 @@ referenced from plan docs and simplifications.md.
 
 ---
 
+## Plan 147 — Three-axis mutability (D246)
+
+- **[M-147-ro-binding-index-freeze]** `ro a []int` → `a[i] = x` должен давать ошибку по P7
+  («голый `ro r` = freeze, весь owned-граф»), но сейчас **разрешается**.
+  Корень: `check_target_readonly` ветка `ExprKind::Index` проверяет только `tr.is_readonly()`,
+  но не `ro_binding_names`. Для `ExprKind::Member` `is_through_ro_binding` есть — для Index нет.
+  ВАЖНО: `a[i]=x` для `[]T` codegen-inlined (`Stmt::Assign + ExprKind::Index`), НЕ диспатчится
+  через `mut @index` метод (vec/access.nv:53-54) — поэтому `mut_methods` реестр не помогает.
+  Баг актуален сейчас для `[]T` + после Plan 121 для `[N]T`.
+  Fix: добавить `is_through_ro_binding(obj)` в Index-ветку `check_target_readonly` + oracle-тест.
+  Priority: M.
+
+- **[M-147-ro-ro-redundant-binding]** Следующие формы должны давать `E_REDUNDANT_TYPE_MODIFIER`
+  (D246 «Канон синтаксиса»), но сейчас принимаются без ошибки:
+  - `ro a ro T` — явный `ro` на binding + явный `ro T` на типе
+  - `func(a ro T)` — параметр ro по умолчанию (D176) + явный `ro T` на типе
+  - `mut a mut T` — `mut` binding + явный `mut T` (тип без модификатора уже mutable)
+  - `func(mut a mut T)` — то же для параметра
+  Fix: в checker при let/param — если (binding ro явно или по умолчанию) И тип явно `ro T` →
+  `E_REDUNDANT_TYPE_MODIFIER`; если binding mut И тип явно `mut T` → то же.
+  Priority: M.
+
+- **[M-147-param-index-freeze]** `func(a []int)` → параметр ro-binding по умолчанию (D176);
+  `a[i] = x` внутри fn должен давать ошибку — codegen-inlined путь, не через `mut @index`.
+  Связан с [M-147-ro-binding-index-freeze] — один и тот же фикс в Index-ветке `check_target_readonly`.
+  Priority: M.
+
+---
+
 ## Plan 168 — Vec generic fwd-decl (D300)
 
 - **[M-168-resize-with-free-fn-shadow]** `plan153_1/resize_with_free_fn_shadow` — pre-existing CODEGEN-FAIL: `undefined identifier f` when a module-level free fn `f` clashes with closure param `f` inside Vec.resize_with/fill_with. Not caused by Plan 168. Requires fix in name resolution (closure param scope should shadow outer free fn). Priority: M.

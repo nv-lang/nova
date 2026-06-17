@@ -98,3 +98,8 @@ fn process(buf [256]u8) { ... }  // passed by copy (large arrays → consider &[
 - **Plan 118** (typed pointers) — `*T` и `&[N]T` reference to stack array;
   Plan 121 V1 может landed до Plan 118 если не нужен `&[N]T`.
 - **Plan 120** ✅ — foundation для stack value type semantics.
+- **Plan 147** ✅ (D246, 3-axis mutability) — при реализации `[N]T` нужно учесть:
+  `a[i] = x` лоуэрится в прямое C-присваивание (нет MutIndex protocol как у `[]T`),
+  поэтому checker должен блокировать его на ro-binding через `ro_binding_names`
+  (Index-ветка `check_target_readonly`). См. `[M-147-ro-binding-index-freeze]` и
+  `[M-147-param-index-freeze]` в backlog-followups.md.

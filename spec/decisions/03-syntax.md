@@ -6935,6 +6935,8 @@ fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
 
 ## D184. Keyword refresh: `ro`/`mut`/`consume` bindings, `const` narrowed + generalized, no `let`, `readonly` → `ro`
 
+> 📌 **Полная модель мутабельности — [D246](02-types.md#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee)** (3 оси: L1 binding / L2 content-view / L3 pointee). Этот D-блок описывает только **синтаксис binding-ключевых слов (`ro`/`mut`/`consume`) и переименование `readonly` → `ro`**. Для семантики, дефолтов и error-кодов читай D246.
+
 > **Статус:** 🆕 draft (Plan 114 Ф.0; финализируется в Ф.8).
 
 ### Что

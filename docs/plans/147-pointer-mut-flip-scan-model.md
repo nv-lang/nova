@@ -114,6 +114,54 @@ binding — пишешь явно `ro`/`mut`; **параметр** ro (D176); **
 
 ---
 
+## Ф.7 — Followup: checker enforcement gaps (📋 PLANNED)
+
+Три маркера выявлены 2026-06-17 при анализе mutability-модели. Спека D246 уже обновлена
+(баннеры в D175/D176/D184; явные redundant-правила; асимметрия L2 vs L3 дефолтов). Нужна реализация в checker.
+
+### Ф.7.1 — ro-binding index-freeze [M-147-ro-binding-index-freeze]
+
+**Проблема:** `ro a []int` → `a[i] = x` разрешается. `check_target_readonly` ветка
+`ExprKind::Index` проверяет только `tr.is_readonly()` (L2 тип), но не `ro_binding_names` (L1 binding).
+Для `ExprKind::Member` `is_through_ro_binding` есть — для Index отсутствует.
+`a[i]=x` для `[]T` codegen-inlined (`Stmt::Assign + ExprKind::Index`), не диспатчится через
+`mut @index` метод → `mut_methods` реестр не помогает.
+
+**Fix:** в `check_target_readonly` ветка `ExprKind::Index` добавить:
+```rust
+if self.is_through_ro_binding(obj) {
+    errors.push(E_READONLY_CONTENT ...)
+}
+```
+Аналогично как в `ExprKind::Member` строка 7878.
+
+**Затронуто:** локалы (`ro a []int`) + параметры (`func(a []int)` — ro binding по умолчанию).
+Для `[N]T` (Plan 121, PLANNED) — тот же фикс автоматически покрывает.
+
+### Ф.7.2 — redundant type modifier [M-147-ro-ro-redundant-binding]
+
+**Проблема:** следующие формы принимаются без ошибки, должны давать `E_REDUNDANT_TYPE_MODIFIER`:
+- `ro a ro T` — явный `ro` на binding + явный `ro T` на типе
+- `func(a ro T)` — параметр ro по умолчанию (D176) + явный `ro T`
+- `mut a mut T` — content mutable по умолчанию, явный `mut T` избыточен
+- `func(mut a mut T)` — то же для параметра
+
+**Fix:** в checker при обработке let/param — проверить комбинацию binding-modifier + type-modifier:
+- binding ro (явно или param-default) + тип явно `ro T` → `E_REDUNDANT_TYPE_MODIFIER`
+- binding mut + тип явно `mut T` → `E_REDUNDANT_TYPE_MODIFIER`
+
+### Ф.7.3 — oracle расширение
+
+Добавить тесты в `nova_tests/plan147/` покрывающие:
+- `ro a []int` → `a[i] = x` → `E_READONLY_CONTENT` (neg)
+- `func(a []int)` → `a[i] = x` → `E_READONLY_CONTENT` (neg)
+- `ro a ro []int` → `E_REDUNDANT_TYPE_MODIFIER` (neg)
+- `func(a ro []int)` → `E_REDUNDANT_TYPE_MODIFIER` (neg)
+- `mut a mut []int` → `E_REDUNDANT_TYPE_MODIFIER` (neg)
+- `mut a []int` → `a[i] = x` → ✅ (pos)
+
+---
+
 ## ✅ CLOSE (2026-06-12) — phase outcomes + acceptance audit
 
 **Baseline:** `0fddd8fed25`. **HEAD:** `3d5c8cf93b4`. **Branch:** `plan-138.1` (НЕ смёржен в main; pushed для ревью).
@@ -158,3 +206,10 @@ nova-private discussion-log: `871119db31` (Ф.2-3), `1feeb569c6` (Ф.4), + close
 - `[M-ptr-cast-reinterpret-unsafe]` — **учтён в coercion** D246: `*mut→*T` авто-сужение, `*T→*mut T` ❌; ОСТАЁТСЯ OPEN (P2) для reinterpret-каста `*T→*U` (смена pointee-типа = align/aliasing UB — требует `unsafe`/`E_PTR_CAST_REINTERPRET`); это отдельная ось от ro-laundering, которую D246 уже закрывает через `E_READONLY_COERCE`-аналог.
 - `[M-139-f0-lang-item-decl]` — **РАЗГЕЙЧЕНО**: str-поле `ptr *u8` легально под восстановленным `*T≡*ro T` (bare `*u8` = ro-pointee canon; `*ro u8` был бы `E_REDUNDANT_POINTER_RO`). Остаётся lang-item checker-инфра (Plan 139 followup).
 - flip-scan-маркеры удалены/переформулированы (`[M-138.5-right-binding-migration]` — postfix-модель landed).
+- **[M-147-ro-binding-index-freeze]** OPEN — `ro a []int` → `a[i]=x` разрешается (баг).
+  Index-ветка `check_target_readonly` не проверяет `ro_binding_names`. `a[i]=x` codegen-inlined,
+  не через `mut @index` метод → `mut_methods` реестр не помогает. Актуально для `[]T` сейчас
+  + `[N]T` после Plan 121. Детали в backlog-followups.md.
+- **[M-147-ro-ro-redundant-binding]** OPEN — `ro a ro T`, `func(a ro T)`, `mut a mut T`,
+  `func(mut a mut T)` не дают `E_REDUNDANT_TYPE_MODIFIER`. Детали в backlog-followups.md.
+- **[M-147-param-index-freeze]** OPEN — `func(a []int)` → `a[i]=x` разрешается (ro param, codegen-inlined). Связан с [M-147-ro-binding-index-freeze].

@@ -2824,6 +2824,8 @@ p = &w                     // ✗ existing E_REBIND — p ro binding
 
 ## D175. `ro field` — полный freeze (амендмент D36)
 
+> 📌 **Полная модель мутабельности — [D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee)** (3 оси: L1 binding / L2 content-view / L3 pointee). Этот D-блок описывает только **L2: freeze поля через `ro field`**. Для общей картины, дефолтов и error-кодов читай D246.
+
 > ⚠️ **См. D216 V3 §V3.1** (Plan 118.5 V3, 2026-06-04/05) для storage-class-aware rules о `ro` + `mut` adjacency: type-form `ro mut T` запрещён на value-T (E_MUTABILITY_CONFLICT_VALUE_TYPE), binding-form `ro x mut T` allowed regardless of T storage class (Ф.6 relaxation).
 
 > Status: active (Plan 108, 2026-05-28); amended Plan 114 D184 (2026-05-31):
@@ -2866,6 +2868,8 @@ acc.tags.items.push("x")      // E_READONLY_FIELD (транзитивно)
 ---
 
 ## D176. `ro T` — тип-модификатор
+
+> 📌 **Полная модель мутабельности — [D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee)** (3 оси: L1 binding / L2 content-view / L3 pointee). Этот D-блок описывает только **L2: `ro T` как type-modifier + параметры ro по умолчанию**. Для общей картины, дефолтов и error-кодов читай D246.
 
 > ⚠️ **См. D216 V3 §V3.1** (Plan 118.5 V3, 2026-06-04/05) для storage-class-aware rules о `ro` + `mut` adjacency: type-form `ro mut T` запрещён на value-T (E_MUTABILITY_CONFLICT_VALUE_TYPE), binding-form `ro x mut T` allowed regardless of T storage class (Ф.6 relaxation).
 
@@ -8878,7 +8882,15 @@ pointer-mut в типе vs pointee-mut), особенно в return-позици
 - **`mut *T` / `ro *T` (prefix перед `*`) → `E_POINTER_PREFIX_MODIFIER`**
   (модификатор на `*` запрещён; reassign = L1 binding).
 - `ro T`/`mut T` (перед типом value/record) = L2 content-view. `ro x ro T` /
-  `*ro ro T` → `E_REDUNDANT_TYPE_MODIFIER`.
+  `*ro ro T` → `E_REDUNDANT_TYPE_MODIFIER`. **`mut x mut T` → `E_REDUNDANT_TYPE_MODIFIER`**
+  (тип без модификатора уже mutable по умолчанию; явный `mut T` при `mut`-binding избыточен).
+  Аналогично для параметра: `func(mut a mut T)` → `E_REDUNDANT_TYPE_MODIFIER`.
+- **Параметр: binding ro по умолчанию (D176) → явный `ro T` на типе избыточен.**
+  `func(a ro T)` ≡ `func(ro a ro T)` → **`E_REDUNDANT_TYPE_MODIFIER`** (fix-it: убери `ro` с типа,
+  используй `func(a T)` или `func(ro a T)`). Исключение: `func(mut a ro T)` — валидно
+  (явный `mut` на binding снимает ro-default; `ro T` на типе = L2 freeze, не redundant).
+- **Параметр `*T`: `func(a *T)` — pointee уже ro по умолчанию (L3 дефолт).** Явный
+  `func(a *ro T)` → **`E_REDUNDANT_POINTER_RO`** (то же что в любой другой позиции).
 - `**T ≡ *(*T)`, дефолт ro вниз; mut-уровни — явный `*mut` на нужном уровне
   (`*mut *T`, `**mut T`, `*mut *ro …` нельзя — `*ro` redundant).
 - **`*T ≡ *ro T` УНИВЕРСАЛЬНО** — во ВСЕХ позициях. НЕТ наследования pointee-mut от
@@ -8889,6 +8901,11 @@ pointer-mut в типе vs pointee-mut), особенно в return-позици
 binding — пишешь явно `ro`/`mut`; **параметр** ro (D176); **return** mut-binding у
 caller'а (D184 — свойство binding, не значения); **pointee** ro (`*T`); **поле**
 mutable-у-mut-binding (D175).
+
+**Асимметрия L2 vs L3:** тип value/record без модификатора (`T`) — **content mutable по умолчанию**
+(L2; заморозка = явный `ro T`). Указатель без модификатора (`*T`) — **pointee ro по умолчанию**
+(L3; запись = явный `*mut T`). Разные дефолты намеренны: value-тип — твой, владеешь, пишешь;
+указатель — чужая/aliased память, по умолчанию не пишешь.
 
 ### 10 принципов (P1-P10)
 
