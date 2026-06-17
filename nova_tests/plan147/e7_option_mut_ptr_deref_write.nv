@@ -1,0 +1,15 @@
+// Plan 147 — Option[*mut T]: Some(p) → *p=v компилируется и работает в runtime.
+// EXPECT_OUTPUT: ok
+
+module plan147.e7_option_mut_ptr_deref_write
+
+fn main() -> () {
+    mut x i64 = 42
+    ro opt Option[*mut i64] = Some(&x)
+    match opt {
+        Some(p) => unsafe { *p = 99 }
+        None => assert(false)
+    }
+    assert(x == 99)
+    println("ok")
+}

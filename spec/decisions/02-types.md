@@ -9002,9 +9002,14 @@ co-handle'ам; `ro` = это имя не пишет).
 `*a=v`❌ · `-> *ro T`: ❌ `E_REDUNDANT_POINTER_RO`.
 
 **E. Generic/Option/cast:** `Vec[*T]`: `*v[i]=x`❌ (L3 элемента) · `Vec[*mut T]`:
-`*v[i]=x`✅ · `Option[*mut T]`: `Some(p)→*p=v`✅ · `x as *mut T; ro a=x`: `a=y`❌
+`*v[i]=x`✅¹ · `Option[*mut T]`: `Some(p)→*p=v`✅ · `x as *mut T; ro a=x`: `a=y`❌
 `*a=v`✅ (из типа) · `mut a=x`: ✅/✅ · vr`{p *mut T}`→`ro v`: `v.p=q`❌
 `unsafe{*v.p=w}`✅ · `str{ptr *u8,len int}`: `s.ptr=q`❌, буфер ro.
+
+> ¹ `Vec[*mut T]: *v[i]=x` — семантически верно (тип элемента `*mut T`), но
+> **codegen не реализован**: `Vec.new()` для pointer-element-type возвращает NULL
+> (generic-заглушка). Граница `[M-147-generic-element-deref-write]`, P2.
+> `Option[*mut T]: Some(p)→*p=v` работает (проверено e7_option_mut_ptr_deref_write).
 
 ### Error codes
 
