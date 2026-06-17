@@ -655,3 +655,11 @@ Open V1 markers (gated on type-checker resolver API in Plan 104.2):
 | Маркер | Статус | Home | Действие |
 |---|---|---|---|
 | `[M-91.8b-remove-old-ops]` | ✅ CLOSED 2026-06-17. @eq/@lt/@le/@gt/@ge удалены из компилятора и std. | Plan 91.8b | ✅ done |
+
+## Follow-up: Plan 91.14 (Debug protocol + format spec)
+
+| Маркер | Статус | Действие |
+|---|---|---|
+| `[M-91.14-sum-debug-variants]` | OPEN | Sum-type debug V1 outputs type name; extend `synthesize_debug` for per-variant output |
+| `[M-91.14-str-from-debug-walker]` | OPEN | `default_body_calls_satisfy_for` doesn't check `str.from_debug`; add check |
+| `[M-91.14-format-dsl-extensions]` | OPEN | Future format-spec extensions: `:hex`, `:.3`, `:pad-N` |

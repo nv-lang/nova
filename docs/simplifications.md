@@ -18,6 +18,19 @@
 
 ---
 
+### Plan 91.14 — Debug protocol (2026-06-17, ✅ CLOSED)
+
+- **Где** — `std/prelude/protocols.nv` (Debug protocol), `std/prelude/core.nv` (Option/Result @debug), `std/collections/vec/protocols.nv` (Vec @debug), `compiler-codegen/src/protocols/auto_derive.rs` (synthesize_debug), `compiler-codegen/src/ast/format_spec.rs` (FormatSpec::Debug).
+- **Что сделано** — Debug protocol + `${expr:?}` interpolation + `#impl(Debug)` auto-derive. 21/21 PASS.
+- **Упрощения:**
+  1. **Sum-type debug V1** — outputs type name only (`"Color"` for all Color variants). Full per-variant synthesis (`"Color::Blue(42)"`) → `[M-91.14-sum-debug-variants]`.
+  2. **str.from_debug walker** — `default_body_calls_satisfy_for` does not check `str.from_debug` (only `str.from`), so `#impl(Debug)` with a non-Debug field silently passes type-check. → `[M-91.14-str-from-debug-walker]`.
+  3. **None as Option[UserStruct]** — produces CC-FAIL due to C struct cast mismatch (`NovaOpt_nova_int` cast to `NovaOpt_Nova_X_p`). Workaround: avoid `None as Option[UserRecord]`. → known pre-existing limitation.
+- **Как чинить** — sum-type variants: extend `synthesize_debug` to emit per-variant match; str.from_debug walker: add `str.from_debug` check in `walk_default_body_expr`.
+- **Приоритет** — L (followups deferred).
+
+---
+
 ### Plan 104.9 — nova-lsp language-sync: completion + quick-fixes (2026-06-17, ✅ CLOSED [M-104.9-completion-language-sync])
 
 - **Где** — `nova-lsp/src/completion.rs`, `nova-lsp/src/code_actions.rs`, `nova-lsp/tests/completion.rs`.
