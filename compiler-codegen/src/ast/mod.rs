@@ -1108,6 +1108,12 @@ pub struct NamedTupleField {
     /// friend declaration. Same semantics как RecordField.visible_to.
     /// Backward-compat: default empty Vec.
     pub visible_to: Vec<String>,
+    /// D215 amend (Plan 91.8b follow-up): optional default value `= expr`.
+    /// When `Some`, the field may be omitted at the constructor call site;
+    /// the default expression is emitted in place of the missing argument.
+    /// Fields with defaults must come after fields without defaults.
+    /// Backward-compat: default None (= required field).
+    pub default: Option<Expr>,
 }
 
 /// Plan 123 baseline-fix (2026-06-02): `Default` derive — see FnDecl.
