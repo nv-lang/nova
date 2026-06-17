@@ -3,7 +3,7 @@
 // f(args) { body } — блок-аргумент за () вызова. Это НЕ лямбда (лямбда —
 // строго `=> expr`), а самостоятельная грамматика.
 
-module basics.trailing_block
+module nova_tests.basics
 
 fn run(body fn() -> int) -> int => body()
 

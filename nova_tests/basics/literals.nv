@@ -1,6 +1,6 @@
 // 01_literals.nv — числовые/строковые/булевые литералы (D44)
 
-module basics.literals
+module nova_tests.basics
 
 test "int decimal" {
     assert(42 == 42)

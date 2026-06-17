@@ -1,22 +1,11 @@
 // 05_functions.nv — fn, expression-body, block-body, recursion, closures
 
-module basics.functions
+module nova_tests.basics
 
 // Expression-body (D40)
 fn double(x int) -> int => x * 2
 
 fn square(x int) -> int => x * x
-
-// Block-body
-fn factorial(n int) -> int {
-    if n <= 1 { return 1 }
-    n * factorial(n - 1)
-}
-
-fn fib(n int) -> int {
-    if n < 2 { return n }
-    fib(n - 1) + fib(n - 2)
-}
 
 // Multiple parameters
 fn add(a int, b int, c int) -> int => a + b + c

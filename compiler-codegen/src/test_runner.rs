@@ -3423,7 +3423,17 @@ pub fn walk_nv_filtered(root: &Path, out: &mut Vec<PathBuf>, lane: SlowLane) -> 
         }
     }
     let is_folder_module = direct_nv.len() >= 2 && is_folder_module_dir(&direct_nv);
-    if !is_folder_module {
+    if is_folder_module {
+        // Plan 169 Ф.8: folder-module с test-блоками → один compile unit.
+        // Первый файл (по алфавиту) — entry; resolver подтянет остальных peers
+        // через resolve_imports_inline_ex (include_test_peers=true).
+        // Folder-module без test-блоков — библиотека, пропускаем как раньше.
+        if folder_module_has_tests(&direct_nv) {
+            let mut sorted = direct_nv;
+            sorted.sort();
+            out.push(sorted.into_iter().next().unwrap());
+        }
+    } else {
         // Каждый файл — standalone test entry.
         for p in direct_nv {
             out.push(p);
@@ -3459,6 +3469,17 @@ fn is_folder_module_dir(files: &[PathBuf]) -> bool {
     }
     let first = &decls[0];
     decls.iter().all(|d| d == first)
+}
+
+/// Plan 169 Ф.8: хотя бы один peer содержит `test "` блок?
+/// Читаем тела файлов — вызывается только для подтверждённых folder-module
+/// (is_folder_module_dir уже прошёл), поэтому I/O здесь оправдан.
+fn folder_module_has_tests(files: &[PathBuf]) -> bool {
+    files.iter().any(|f| {
+        std::fs::read_to_string(f)
+            .map(|s| s.contains("test \""))
+            .unwrap_or(false)
+    })
 }
 
 /// Сборка display-name для теста на основе path + base.

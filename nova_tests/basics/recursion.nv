@@ -1,6 +1,6 @@
 // 24_recursion.nv — рекурсивные функции и рекурсивные sum-типы.
 
-module basics.recursion
+module nova_tests.basics
 
 fn fib(n int) -> int {
     if n < 2 { n }

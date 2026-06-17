@@ -1,6 +1,6 @@
 // 17_tuples.nv — кортежи
 
-module basics.tuples
+module nova_tests.basics
 
 test "tuple literal" {
     ro t = (1, 2, 3)
