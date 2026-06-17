@@ -8889,7 +8889,7 @@ pointer-mut в типе vs pointee-mut), особенно в return-позици
   Аналогично для параметра: `func(mut a mut T)` → `E_REDUNDANT_TYPE_MODIFIER`.
 - **Параметр: binding ro по умолчанию (D176) → явный `ro T` на типе избыточен.**
   `func(a ro T)` ≡ `func(ro a ro T)` → **`E_REDUNDANT_TYPE_MODIFIER`** (fix-it: убери `ro` с типа,
-  используй `func(a T)` или `func(ro a T)`). Исключение: `func(mut a ro T)` — валидно
+  используй `func(a T)`). Исключение: `func(mut a ro T)` — валидно
   (явный `mut` на binding снимает ro-default; `ro T` на типе = L2 freeze, не redundant).
 - **Параметр `*T`: `func(a *T)` — pointee уже ro по умолчанию (L3 дефолт).** Явный
   `func(a *ro T)` → **`E_REDUNDANT_POINTER_RO`** (то же что в любой другой позиции).
