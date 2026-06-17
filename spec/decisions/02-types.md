@@ -8924,11 +8924,13 @@ mutable-у-mut-binding (D175).
 
 **Параметры (`ro` по умолчанию, D176):**
 
-| Форма | `.field`/`[i]` write |
-|---|---|
-| `v T` ≡ `ro v T` | ❌ (P7 freeze) |
-| `mut v T` | ✅ |
-| `mut v ro T` | ❌ (L2 freeze) |
+| Форма | `v = x` | `.field`/`[i]` write |
+|---|---|---|
+| `v T` ≡ `ro v T` | ❌ E_LOCAL_NOT_MUT | ❌ E_READONLY_CONTENT |
+| `mut v T` | ✅ | ✅ |
+| `mut v ro T` | ✅ | ❌ E_READONLY_CONTENT |
+
+`v = x` внутри fn — reassign локальной копии binding'а (не виден снаружи).
 
 **Указатели (L3 из типа):**
 
