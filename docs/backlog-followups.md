@@ -47,4 +47,4 @@ referenced from plan docs and simplifications.md.
 
 ## Plan 91.8b — operator-dispatch cleanup
 
-- **[M-91.8b-precompiled-c-rebuild]** Plan 91.8b renamed `str @eq → @equal` in core.nv but did NOT regenerate precompiled std/collections/*.c files. `Nova_str_method_eq` is still referenced in vec_seq.c/set.c/hashmap.c → CC-FAIL in pos_equal_dispatch + pos_str_equal (plan91_8b). Fix: rebuild std precompiled .c files after `str @eq → @equal` rename, or regenerate them via `nova build-std`. Priority: H.
+- **[M-91.8b-precompiled-c-rebuild]** CLOSED 2026-06-17. Root cause: emit_c.rs void* str-comparison path (lines 19695-19696) still emitted `Nova_str_method_eq` (old name) after Plan 91.8b renamed `@eq → @equal`. Fix: update those 2 lines to `Nova_str_method_equal`. The precompiled `.c` files in std/collections/ are NOT linked during test builds — they are stale cached artifacts that are not referenced in any build path. 6/6 plan91_8b PASS after fix.

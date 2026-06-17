@@ -37114,4 +37114,4 @@ Tests: 39 unit + 13 integration = 52 completion-specific + 167 total nova-lsp te
   `Nova_...__...*` pointer-elem в tuple fields, если он ещё не в `user_type_fwd_decls`
 - plan168: 2/2 PASS; plan153_1: 8/9 PASS (1 pre-existing CODEGEN-FAIL); plan118_6: 15/15 PASS
 - D300 spec NEW
-- [2026-06-17] Plan 91.8b: удаление @eq/@lt/@le/@gt/@ge — без упрощений, продакшн-грейд. Полное удаление fallback'ов из компилятора (не deprecated, а hard-remove). @equal/@compare — единственный путь для user types. Примитивы int/f64/char — builtin C-диспатч без изменений.
+- [2026-06-17] Plan 91.8b: удаление @eq/@lt/@le/@gt/@ge — без упрощений, продакшн-грейд. Полное удаление fallback'ов из компилятора (не deprecated, а hard-remove). @equal/@compare — единственный путь для user types. Примитивы int/f64/char — builtin C-диспатч без изменений. Followup: emit_c void* path (строки 19695-19696) использовал Nova_str_method_eq → исправлено на Nova_str_method_equal (6079de6e). Precompiled std/collections/*.c не участвуют в build path.
