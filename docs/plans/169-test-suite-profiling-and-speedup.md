@@ -289,8 +289,8 @@ if is_folder_module {
 - ✅ A8.2: Пилот `basics/` — 8 файлов → 1 compile unit, все тесты PASS.
 - ✅ A8.3: 92 eligible dirs конвертированы; 170 EXPECT_COMPILE_ERROR файлов перенесены в `neg/`. 67 dirs с конфликтами имён — оставлены как есть (followup: Ф.8.next).
 - ✅ A8.4: 259 PASS / 0 FAIL по 85 затронутым dirs; 0 регрессий.
-- ⬜ A8.5: Ещё не измерено (требует --results-file по всему suite).
-- ⬜ A8.6: D298 update ещё не сделан.
+- ✅ A8.5: Статическая оценка CU: до Ф.8 ~2812 CU → после ~2416 CU (-396, -14%). Cat-A (54 dirs) -389 CU + basics/ пилот -7 CU. Потенциал Cat-B (51 dirs, ~434 CU) оставлен как followup.
+- ✅ A8.6: D298 обновлён в `spec/decisions/09-tooling.md` (commit 1e20cf94) — folder-module test layout таблица.
 
 ### Итог Ф.8 (2026-06-17)
 
@@ -315,3 +315,34 @@ if is_folder_module {
 - Compiler Bug A (`e5945c24`): `export fn T @m() => expr` без explicit return type → codegen генерировал `nova_unit`. Фикс в `emit_c.rs`: field_cache коэрсирует `FnBody::Expr` → `FnBody::Block(stmts=[], trailing=e)` до codegen; расширены обе ветки matching.
 - Compiler Bug B (`a4cb7f4d`): `collect_pattern_bindings` проверял `all_decls.contains(name)` включая snake_case fn-имена — for-loop bindings с именем свободной функции (`inner`) не регистрировались. Фикс: только `builtins` + PascalCase = variant-like.
 - Финал plan55: **19 PASS, 0 FAIL**.
+
+---
+
+### [M-169-cat-b-folder-module] Cat-B consolidation followup
+
+**Потенциал: ~434 CU экономия** (51 dirs с 1-8 name conflicts).
+
+Стратегия: auto-prefix конфликтующих top-level имён → `<FileStem><Name>`.
+Например: `Counter` в `axiom_with_binders_positive.nv` → `AxiomWithBindersPositiveCounter`.
+
+**Топ-11 dirs по выигрышу:**
+| dir | pos files | conflicts |
+|-----|-----------|-----------|
+| plan124_8 | 27 | Account, Vec3, Vec2, Secret... |
+| plan62 | 27 | Counter, make_some, PRELUDE_VERSION... |
+| plan59 | 25 | sum_pair, parse_int, parse_bool, make_pair |
+| plan118 | 22 | Acc |
+| types | 21 | UserId, classify, Pair, Box... |
+| runtime | 18 | Celsius, UserId, Fahrenheit, Counter... |
+| plan138_2 | 17 | Point, Vec, Bag |
+| plan97 | 16 | Logger, Celsius, Box, Doc... |
+| plan73 | 14 | Token, Box |
+| plan65 | 13 | TIMEOUT_MS, SLACK_MS |
+| plan127 | 12 | Triple, Vec3, Box, Point |
+
+**Ограничения:**
+- Имена `Vec`, `Box` могут быть stdlib-refs — требует проверки перед rename.
+- `fn main` файлы = standalone (не включать в folder-module).
+- contracts/ (226 pos, 29 conflicts) и concurrency/ (115 pos, 13 conflicts) — отдельный подход: потенциал ~339 CU, но `type X effect` конфликты несовместимы в одном namespace.
+
+**Статус: OPEN** — не реализован в Ф.8.
