@@ -743,10 +743,13 @@ Gaps closed: **160/160** (85 v3 + 75 v4), with clear MVP boundary.
 
 **Результат:**
 ```sh
-nova test                        # только nova_tests/ (дефолт)
-nova test std                    # только std/
-nova test std nova_tests         # оба вместе
-nova test std mylib/job.nv       # std + один файл
+nova test                            # только nova_tests/ (дефолт)
+nova test std                        # только std/
+nova test std nova_tests             # две директории
+nova test std nova_tests/basics      # директория + поддиректория
+nova test std/collections/hashmap.nv # один файл
+nova test std mylib/job.nv           # директория + файл
+nova test a.nv b.nv std              # несколько файлов + директория
 ```
 
-Display name: `std/collections/hashmap`, `nova_tests/basics/literals`, `mylib/job`.
+Display name от cwd: `std/collections/hashmap`, `nova_tests/basics/literals`, `mylib/job`.
