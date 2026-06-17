@@ -402,6 +402,58 @@ fn Result[T, E] @err() -> Option[E] => match @ { Ok(_) => None, Err(e) => Some(e
 
 
 // ──────────────────────────────────────────────────────────────────────────
+// Option[T] / Result[T,E] — Debug impl (Plan 91.15 Ф.2)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Debug representation for Option[T]: `Some(value)` or `None`.
+/// Requires `[T Debug]` — propagates the bound to the inner value.
+///
+/// # Examples
+///
+/// ```nova
+/// assert("${Some(42):?}" == "Some(42)")
+/// assert("${None:?}" == "None")
+/// assert("${Some("hi"):?}" == "Some(\"hi\")")
+/// ```
+#impl(Debug)
+fn Option[T Debug] @debug(mut w Write) -> () {
+    match @ {
+        Some(v) => {
+            w.write("Some(")
+            v.debug(w)
+            w.write(")")
+        }
+        None => w.write("None")
+    }
+}
+
+/// Debug representation for Result[T,E]: `Ok(value)` or `Err(error)`.
+/// Requires `[T Debug, E Debug]`.
+///
+/// # Examples
+///
+/// ```nova
+/// assert("${Ok(1):?}" == "Ok(1)")
+/// assert("${Err("oops"):?}" == "Err(\"oops\")")
+/// ```
+#impl(Debug)
+fn Result[T Debug, E Debug] @debug(mut w Write) -> () {
+    match @ {
+        Ok(v) => {
+            w.write("Ok(")
+            v.debug(w)
+            w.write(")")
+        }
+        Err(e) => {
+            w.write("Err(")
+            e.debug(w)
+            w.write(")")
+        }
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
 // char Unicode-aware methods (Plan 162 Ф.4)
 // Moved from std/unicode/category.nv. Bodies delegate to the code-point
 // predicates in std.unicode (imported above). No explicit `import std.unicode as unicode`

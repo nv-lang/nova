@@ -19692,8 +19692,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if concrete_ty == "nova_str" {
                         // Plan 152.5a D-R4: Nova-body @eq (see the nova_str BinOp arm below).
                         return match op {
-                            BinOp::Eq  => Ok(format!("(Nova_str_method_equal(*(nova_str*)({}), {}))", void_side, concrete_side)),
-                            BinOp::Neq => Ok(format!("(!Nova_str_method_equal(*(nova_str*)({}), {}))", void_side, concrete_side)),
+                            BinOp::Eq  => Ok(format!("(Nova_str_method_eq(*(nova_str*)({}), {}))", void_side, concrete_side)),
+                            BinOp::Neq => Ok(format!("(!Nova_str_method_eq(*(nova_str*)({}), {}))", void_side, concrete_side)),
                             _ => Ok("(0)".into()),
                         };
                     } else if concrete_ty == "nova_int" || concrete_ty == "nova_bool"
@@ -28239,6 +28239,87 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             sb, v,
                         ));
                         continue;
+                    }
+                    // Plan 91.15 Ф.2: builtin sum type (Option/Result) @debug/@display
+                    // dispatch via DeclaredBody routing — same mechanism as method call
+                    // path (lines ~23245). Must precede the all_methods lookup because
+                    // `all_methods` is keyed by "Option"/"Result" but arg_ty is
+                    // "NovaOpt_<T>" / "NovaRes_<n>" — the lookup would always miss.
+                    if !matches!(e.kind, ExprKind::CharLit(_)) {
+                        let sum_result: Option<String> = if arg_ty.starts_with("NovaOpt_") {
+                            let elem_ty = arg_ty.strip_prefix("NovaOpt_")
+                                .unwrap_or("nova_int")
+                                .trim_end_matches('*')
+                                .trim()
+                                .to_string();
+                            let routing = self.sum_schema_registry
+                                .lookup_method_routing("Option", method_name)
+                                .cloned();
+                            if let Some(super::sum_schema_registry::MethodRouting::DeclaredBody {
+                                has_nova_body: true,
+                            }) = routing {
+                                let fn_decl = self.generic_type_methods
+                                    .get("Option")
+                                    .and_then(|ms| ms.iter().find(|m| m.name == method_name))
+                                    .cloned();
+                                if let Some(fn_decl) = fn_decl {
+                                    let real_t = self.novaopt_value_types.borrow()
+                                        .get(&elem_ty)
+                                        .cloned()
+                                        .unwrap_or_else(|| elem_ty.clone());
+                                    let param_names = self.builtin_sum_type_params
+                                        .get("Option").cloned().unwrap_or_default();
+                                    if !param_names.is_empty() {
+                                        let type_subst: Vec<(String, String)> =
+                                            vec![(param_names[0].clone(), real_t.clone())];
+                                        let mono_name = format!(
+                                            "Nova_Option_method_{}_{}",
+                                            method_name, elem_ty);
+                                        self.register_mono_method_instance(
+                                            &fn_decl, type_subst, &mono_name, "Option");
+                                        Some(mono_name)
+                                    } else { None }
+                                } else { None }
+                            } else { None }
+                        } else if Self::is_result_like(&arg_ty) {
+                            let routing = self.sum_schema_registry
+                                .lookup_method_routing("Result", method_name)
+                                .cloned();
+                            if let Some(super::sum_schema_registry::MethodRouting::DeclaredBody {
+                                has_nova_body: true,
+                            }) = routing {
+                                let fn_decl = self.generic_type_methods
+                                    .get("Result")
+                                    .and_then(|ms| ms.iter().find(|m| m.name == method_name))
+                                    .cloned();
+                                if let Some(fn_decl) = fn_decl {
+                                    let (ok_c, err_c) = self.novares_ok_err(&arg_ty)
+                                        .unwrap_or_else(|| (
+                                            "nova_int".to_string(),
+                                            "nova_str".to_string(),
+                                        ));
+                                    let param_names = self.builtin_sum_type_params
+                                        .get("Result").cloned().unwrap_or_default();
+                                    if param_names.len() >= 2 {
+                                        let type_subst: Vec<(String, String)> = vec![
+                                            (param_names[0].clone(), ok_c.clone()),
+                                            (param_names[1].clone(), err_c.clone()),
+                                        ];
+                                        let suffix = Self::novares_name(&ok_c, &err_c);
+                                        let mono_name = format!(
+                                            "Nova_Result_method_{}_{}",
+                                            method_name, suffix);
+                                        self.register_mono_method_instance(
+                                            &fn_decl, type_subst, &mono_name, "Result");
+                                        Some(mono_name)
+                                    } else { None }
+                                } else { None }
+                            } else { None }
+                        } else { None };
+                        if let Some(fn_name) = sum_result {
+                            self.line(&format!("{}({}, {});", fn_name, v, sb));
+                            continue;
+                        }
                     }
                     // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
                     // unified Display.display routing для user types (D237).
