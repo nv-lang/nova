@@ -3125,14 +3125,17 @@ impl CEmitter {
                             &e,
                         ))?,
                         // Plan 55 Ф.3: для `=> expr` body инфирим из выражения
-                        // (call-site нужен правильный type до emit_fn). Для Block —
-                        // оставляем nova_unit (Block без `-> T` имеет side-effect
-                        // semantics, return type irrelevant и infer на module-scan
-                        // даёт stale значения т.к. var_types ещё не заполнен).
-                        None => match &f.body {
-                            FnBody::Expr(_) => self.return_type_c(f)
-                                .unwrap_or_else(|_| "nova_unit".into()),
-                            _ => "nova_unit".into(),
+                        // (call-site нужен правильный type до emit_fn).
+                        // field_cache coerces FnBody::Expr → FnBody::Block(stmts=[],trailing=e)
+                        // BEFORE codegen sees AST — match both forms.
+                        None => {
+                            let is_expr_like = matches!(&f.body, FnBody::Expr(_))
+                                || matches!(&f.body, FnBody::Block(b) if b.stmts.is_empty());
+                            if is_expr_like {
+                                self.return_type_c(f).unwrap_or_else(|_| "nova_unit".into())
+                            } else {
+                                "nova_unit".into()
+                            }
                         },
                     };
                     // Sentinel-key: пустая строка вместо receiver-type.
@@ -3260,19 +3263,38 @@ impl CEmitter {
                             &format!("method `{}.{}` return type", recv.type_name, f.name),
                             &e,
                         ))?,
-                        None => match &f.body {
-                            // D215: restore current_receiver_type around return_type_c so
-                            // that SelfAccess in `=> expr` bodies (e.g. `=> @re`) can derive
-                            // the correct named-tuple C-type during the fwd-decl scan pass,
-                            // where var_types["nova_self"] is not yet populated.
-                            FnBody::Expr(_) => {
+                        None => {
+                            // Plan 55 Ф.3 + field_cache fix: match both FnBody::Expr AND
+                            // FnBody::Block(stmts=[], trailing=Some) — the latter is the
+                            // field_cache (Plan 123.1) coercion of a `=> expr` body.
+                            // D215: restore current_receiver_type + pre-populate
+                            // var_types["nova_self"] around return_type_c so that
+                            // SelfAccess in `=> expr` bodies (e.g. `=> @n`) can derive
+                            // the correct field C-type during the fwd-decl scan pass.
+                            let is_expr_like = matches!(&f.body, FnBody::Expr(_))
+                                || matches!(&f.body, FnBody::Block(b) if b.stmts.is_empty());
+                            if is_expr_like && matches!(recv.kind, ReceiverKind::Instance) {
+                                let prev_recv_for_ret = self.current_receiver_type.replace(recv.type_name.clone());
+                                let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
+                                let prev_nova_self = self.var_types.insert("nova_self".into(), recv_c);
+                                let ret = self.return_type_c(f)
+                                    .unwrap_or_else(|_| "nova_unit".into());
+                                self.current_receiver_type = prev_recv_for_ret;
+                                match prev_nova_self {
+                                    Some(prev) => { self.var_types.insert("nova_self".into(), prev); }
+                                    None => { self.var_types.remove("nova_self"); }
+                                }
+                                ret
+                            } else if is_expr_like {
+                                // Static receiver or no receiver: just set receiver type.
                                 let prev_recv_for_ret = self.current_receiver_type.replace(recv.type_name.clone());
                                 let ret = self.return_type_c(f)
                                     .unwrap_or_else(|_| "nova_unit".into());
                                 self.current_receiver_type = prev_recv_for_ret;
                                 ret
+                            } else {
+                                "nova_unit".into()
                             }
-                            _ => "nova_unit".into(),
                         },
                     };
                     // For array extension methods, use the C-identifier form as the key so that
@@ -6133,21 +6155,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // из выражения. Раньше всегда возвращали nova_unit → CC-FAIL в callers
             // ожидающих real type (e.g. str.from(d.@as_secs_f64()) внутри Duration).
             None => {
-                // Plan 55 Ф.3: только для `=> expr` body — infer из выражения.
-                // Block body без аннотации сохраняет старое поведение nova_unit:
-                // (a) infer на forward-decl/register pass'е стрэйл (var_types
-                //     ещё не заполнен), (b) Block обычно имеет side-effect
-                //     semantics в stdlib (Channel.close, mut.insert, и т.п.).
-                match &f.body {
-                    FnBody::Expr(e) => {
-                        let t = self.infer_expr_c_type(e);
-                        if t.is_empty() || t == "void*" {
-                            Ok("nova_unit".into())
-                        } else {
-                            Ok(t)
-                        }
+                // Plan 55 Ф.3: для `=> expr` body — infer из выражения.
+                // field_cache (Plan 123.1) coerces FnBody::Expr → FnBody::Block(stmts=[],trailing=e)
+                // BEFORE codegen sees the AST. Treat that coerced form the same as FnBody::Expr.
+                // Block body с stmts сохраняет старое поведение nova_unit:
+                // (a) Block обычно имеет side-effect semantics в stdlib (Channel.close, mut.insert, и т.п.).
+                let expr_opt: Option<&Expr> = match &f.body {
+                    FnBody::Expr(e) => Some(e),
+                    // field_cache coercion: empty stmts + trailing = was originally FnBody::Expr.
+                    FnBody::Block(b) if b.stmts.is_empty() => b.trailing.as_deref(),
+                    _ => None,
+                };
+                if let Some(e) = expr_opt {
+                    let t = self.infer_expr_c_type(e);
+                    if t.is_empty() || t == "void*" {
+                        Ok("nova_unit".into())
+                    } else {
+                        Ok(t)
                     }
-                    FnBody::Block(_) | FnBody::External => Ok("nova_unit".into()),
+                } else {
+                    Ok("nova_unit".into())
                 }
             }
         }
