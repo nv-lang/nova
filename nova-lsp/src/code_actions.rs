@@ -80,7 +80,7 @@ pub fn compute_code_actions(
             "E_CONSUME_KEYWORD_MISSING"          => fix_consume_keyword_missing(uri, src, rope, diag),
             "E_LOCAL_NOT_MUT"                    => fix_local_not_mut(uri, src, rope, diag),
             "E_PARAM_NOT_MUT"                    => fix_param_not_mut(uri, src, rope, diag),
-            "E_ADDR_OF_MUT_REQUIRES_MUT_BINDING" => fix_addr_of_mut(uri, src, rope, diag),
+            "E_ADDR_OF_REMOVED"                  => fix_addr_of_removed(uri, src, rope, diag),
             "E_REDUNDANT_POINTER_RO"             => fix_redundant_pointer_ro(uri, src, rope, diag),
             "E_REDUNDANT_TYPE_MODIFIER"          => fix_redundant_type_modifier(uri, src, rope, diag),
             "E_REDUNDANT_IMPORT_ALIAS"           => fix_redundant_import_alias(uri, src, rope, diag),
@@ -95,6 +95,23 @@ pub fn compute_code_actions(
             // ── 104.5.5: Auto-import / suggest-import ─────────────────────────
             "E_TYPE_UNKNOWN"                 => fix_type_unknown(uri, src, rope, diag),
             "E_AUTO_DERIVE_UNKNOWN_PROTOCOL" => fix_auto_derive_unknown_protocol(uri, src, rope, diag),
+            // ── 104.5.6: Protocol impl fixes ──────────────────────────────────
+            "E_METHOD_REDEFINITION"          => fix_method_redefinition(diag),
+            "E_IMPL_UNKNOWN_PROTOCOL"        => fix_impl_unknown_protocol(uri, diag),
+            "E_IMPL_NOT_A_PROTOCOL_METHOD"   => fix_impl_not_a_protocol_method(diag),
+            "E_IMPL_SIGNATURE_MISMATCH"      => fix_impl_signature_mismatch(diag),
+            "E_PRIMITIVE_NO_PROTOCOL_METHOD" => fix_primitive_no_protocol_method(diag),
+            "E_BLANKET_CONFLICT"             => fix_blanket_conflict(diag),
+            "E_DUPLICATE_PROTOCOL_IMPL"      => fix_duplicate_protocol_impl(diag),
+            // ── 104.5.7: Field/type fixes ─────────────────────────────────────
+            "E_FIELD_MODULE_PRIVATE"         => fix_field_module_private(diag),
+            "E_TYPE_NAME_TOO_SHORT"          => fix_type_name_too_short(diag),
+            // ── 104.5.8: String operation fixes ──────────────────────────────
+            "E_STR_NO_LEN"                   => fix_str_no_len(uri, src, rope, diag),
+            "E_STR_NO_INT_INDEX"             => fix_str_no_int_index(diag),
+            // ── 104.5.9: Comparison chain fixes ──────────────────────────────
+            "E_CMP_CHAIN_UNSUPPORTED"        => fix_cmp_chain_unsupported(diag),
+            "E_RELATIONAL_OPERAND_NOT_ORDERED" => fix_relational_operand_not_ordered(uri, diag),
             _ => None,
         };
 
@@ -604,22 +621,31 @@ fn fix_param_not_mut(
     ))
 }
 
-/// Fix 12: E_ADDR_OF_MUT_REQUIRES_MUT_BINDING — add `mut` to binding.
-fn fix_addr_of_mut(
+/// Fix 12: E_ADDR_OF_REMOVED — replace addr_of(x)/addr_of_mut(x) with &x (Plan 118.6).
+fn fix_addr_of_removed(
     uri: &tower_lsp::lsp_types::Url,
     src: &str,
     rope: &Rope,
     diag: &Diagnostic,
 ) -> Option<CodeAction> {
-    let (start_byte, _) = range_to_byte_offsets(rope, diag.range);
-    let insert_pos = byte_to_lsp_position(src, start_byte);
-    let edit = insert_edit(uri, insert_pos, "mut ".to_string());
+    let (start_byte, end_byte) = range_to_byte_offsets(rope, diag.range);
+    let call_text = src.get(start_byte..end_byte)?;
+    // Match addr_of(expr) or addr_of_mut(expr) — strip wrapper, keep inner expr
+    let inner = if let Some(rest) = call_text.strip_prefix("addr_of_mut(") {
+        rest.strip_suffix(')')?
+    } else if let Some(rest) = call_text.strip_prefix("addr_of(") {
+        rest.strip_suffix(')')?
+    } else {
+        return None;
+    };
+    let replacement = format!("&{inner}");
+    let edit = single_edit(uri, diag.range, replacement);
     Some(make_action(
-        "Add `mut` to binding (required for `addr_of_mut`)",
+        "Replace with `&expr` (addr_of/addr_of_mut retired — Plan 118.6)",
         CodeActionKind::QUICKFIX,
         edit,
         diag,
-        false, // MaybeIncorrect
+        false,
     ))
 }
 
@@ -905,6 +931,181 @@ fn fix_auto_derive_unknown_protocol(
         &format!("Unknown protocol `{}` — did you mean `{}`? Available: {}", bad, best, known.join(", ")),
         diag,
     ))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 104.5.6: Protocol impl fixes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Fix: E_METHOD_REDEFINITION — note that a method is defined more than once.
+fn fix_method_redefinition(diag: &Diagnostic) -> Option<CodeAction> {
+    Some(make_note_action(
+        "Method defined more than once — remove or rename the duplicate definition",
+        diag,
+    ))
+}
+
+/// Fix: E_IMPL_UNKNOWN_PROTOCOL — suggest import for known stdlib protocols.
+fn fix_impl_unknown_protocol(
+    uri: &tower_lsp::lsp_types::Url,
+    diag: &Diagnostic,
+) -> Option<CodeAction> {
+    let name = extract_backtick_token(&diag.message, "unknown protocol `")?
+        .trim_end_matches('`')
+        .to_string();
+    if let Some(import_path) = known_stdlib_protocol_import(&name) {
+        let pos = Position { line: 0, character: 0 };
+        let edit = insert_edit(uri, pos, format!("import {}.{{{}}}\n", import_path, name));
+        Some(make_action(
+            &format!("Add `import {}.{{{}}}` for unknown protocol `{}`", import_path, name, name),
+            CodeActionKind::QUICKFIX,
+            edit,
+            diag,
+            false,
+        ))
+    } else {
+        Some(make_note_action(
+            &format!("Protocol `{}` not found — check the import path or spelling", name),
+            diag,
+        ))
+    }
+}
+
+/// Fix: E_IMPL_NOT_A_PROTOCOL_METHOD — note that the method is not part of the protocol.
+fn fix_impl_not_a_protocol_method(diag: &Diagnostic) -> Option<CodeAction> {
+    Some(make_note_action(
+        "Method is not declared in the protocol — remove it or declare it in the protocol",
+        diag,
+    ))
+}
+
+/// Fix: E_IMPL_SIGNATURE_MISMATCH — note about required signature.
+fn fix_impl_signature_mismatch(diag: &Diagnostic) -> Option<CodeAction> {
+    Some(make_note_action(
+        "Implementation signature does not match the protocol declaration — adjust parameters or return type",
+        diag,
+    ))
+}
+
+/// Fix: E_PRIMITIVE_NO_PROTOCOL_METHOD — note that primitives cannot have protocol methods.
+fn fix_primitive_no_protocol_method(diag: &Diagnostic) -> Option<CodeAction> {
+    Some(make_note_action(
+        "Primitive types do not support custom protocol method implementations",
+        diag,
+    ))
+}
+
+/// Fix: E_BLANKET_CONFLICT — note that two blanket impls conflict.
+fn fix_blanket_conflict(diag: &Diagnostic) -> Option<CodeAction> {
+    Some(make_note_action(
+        "Blanket protocol implementations conflict — add a more specific impl or remove one blanket impl",
+        diag,
+    ))
+}
+
+/// Fix: E_DUPLICATE_PROTOCOL_IMPL — note that the protocol is implemented twice.
+fn fix_duplicate_protocol_impl(diag: &Diagnostic) -> Option<CodeAction> {
+    Some(make_note_action(
+        "Protocol already implemented for this type — remove the duplicate `impl` block",
+        diag,
+    ))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 104.5.7: Field/type fixes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Fix: E_FIELD_MODULE_PRIVATE — note that accessing a private field requires being in the same module.
+fn fix_field_module_private(diag: &Diagnostic) -> Option<CodeAction> {
+    Some(make_note_action(
+        "Field is `priv` (module-private) — move the access to the same module or expose via a method",
+        diag,
+    ))
+}
+
+/// Fix: E_TYPE_NAME_TOO_SHORT — note that type names must be at least 2 characters.
+fn fix_type_name_too_short(diag: &Diagnostic) -> Option<CodeAction> {
+    Some(make_note_action(
+        "Type names must be at least 2 characters — rename to a descriptive multi-character name",
+        diag,
+    ))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 104.5.8: String operation fixes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Fix: E_STR_NO_LEN — replace `.len` with `.byte_len()`.
+fn fix_str_no_len(
+    uri: &tower_lsp::lsp_types::Url,
+    src: &str,
+    rope: &Rope,
+    diag: &Diagnostic,
+) -> Option<CodeAction> {
+    let (start_byte, end_byte) = range_to_byte_offsets(rope, diag.range);
+    if start_byte >= end_byte { return None; }
+    let snippet = src.get(start_byte..end_byte)?;
+    if snippet.contains("len") {
+        let edit = single_edit(uri, diag.range, "byte_len()".to_string());
+        Some(make_action(
+            "Replace `.len` → `.byte_len()` (str has no `len` field — use `byte_len()` method)",
+            CodeActionKind::QUICKFIX,
+            edit,
+            diag,
+            true,
+        ))
+    } else {
+        Some(make_note_action(
+            "str has no `len` field — use `.byte_len()` for byte count or `.as_chars().count()` for character count",
+            diag,
+        ))
+    }
+}
+
+/// Fix: E_STR_NO_INT_INDEX — note that str cannot be indexed by int.
+fn fix_str_no_int_index(diag: &Diagnostic) -> Option<CodeAction> {
+    Some(make_note_action(
+        "str does not support integer indexing — use `.get(start..end)` for byte slices or `.as_chars()` for character iteration",
+        diag,
+    ))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 104.5.9: Comparison chain fixes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Fix: E_CMP_CHAIN_UNSUPPORTED — note that chained comparisons are not supported.
+fn fix_cmp_chain_unsupported(diag: &Diagnostic) -> Option<CodeAction> {
+    Some(make_note_action(
+        "Chained comparisons like `a < b < c` are not supported — rewrite as `a < b && b < c`",
+        diag,
+    ))
+}
+
+/// Fix: E_RELATIONAL_OPERAND_NOT_ORDERED — note that the type must implement Ordered.
+fn fix_relational_operand_not_ordered(
+    uri: &tower_lsp::lsp_types::Url,
+    diag: &Diagnostic,
+) -> Option<CodeAction> {
+    let type_name = extract_backtick_token(&diag.message, "type `")
+        .map(|s| s.trim_end_matches('`').to_string());
+
+    if let Some(name) = type_name {
+        let pos = Position { line: 0, character: 0 };
+        let edit = insert_edit(uri, pos, "import std.prelude.{Ordered}\n".to_string());
+        Some(make_action(
+            &format!("Add `Ordered` bound to `{}` or import std.prelude.{{Ordered}}", name),
+            CodeActionKind::QUICKFIX,
+            edit,
+            diag,
+            false,
+        ))
+    } else {
+        Some(make_note_action(
+            "Operand type does not implement `Ordered` — add `use Ordered` to the protocol or add an `Ordered` bound",
+            diag,
+        ))
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1406,6 +1607,123 @@ mod tests {
         if let tower_lsp::lsp_types::CodeActionOrCommand::CodeAction(ca) = &actions[0] {
             assert!(ca.title.contains("Available"), "should list available protocols");
         }
+    }
+
+    // ── 104.5.6: Protocol impl fixes ──────────────────────────────────────
+
+    /// pos_proto_1: E_METHOD_REDEFINITION → note action.
+    #[test]
+    fn pos_proto_1_method_redefinition_note() {
+        let src = "fn Foo @bar() => ()\nfn Foo @bar() => ()\n";
+        let rope = Rope::from_str(src);
+        let msg = "[E_METHOD_REDEFINITION] method `bar/0` on `Foo` already defined";
+        let diag = make_diag_with_code("E_METHOD_REDEFINITION", msg, 1, 0, 5);
+        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        assert!(!actions.is_empty(), "should produce a note action");
+    }
+
+    /// pos_proto_2: E_IMPL_UNKNOWN_PROTOCOL for known stdlib protocol → suggests import.
+    #[test]
+    fn pos_proto_2_impl_unknown_known_protocol_import() {
+        let src = "impl Hashable for Foo {}\n";
+        let rope = Rope::from_str(src);
+        let msg = "[E_IMPL_UNKNOWN_PROTOCOL] unknown protocol `Hashable`";
+        let diag = make_diag_with_code("E_IMPL_UNKNOWN_PROTOCOL", msg, 0, 5, 13);
+        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        assert!(!actions.is_empty());
+    }
+
+    /// pos_proto_3: E_DUPLICATE_PROTOCOL_IMPL → note action.
+    #[test]
+    fn pos_proto_3_duplicate_protocol_impl_note() {
+        let src = "impl Hashable for Foo {}\nimpl Hashable for Foo {}\n";
+        let rope = Rope::from_str(src);
+        let msg = "[E_DUPLICATE_PROTOCOL_IMPL] `Hashable` already implemented for `Foo`";
+        let diag = make_diag_with_code("E_DUPLICATE_PROTOCOL_IMPL", msg, 1, 0, 5);
+        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        assert!(!actions.is_empty());
+    }
+
+    // ── 104.5.7: Field/type fixes ──────────────────────────────────────────
+
+    /// pos_field_1: E_FIELD_MODULE_PRIVATE → note action.
+    #[test]
+    fn pos_field_1_field_module_private_note() {
+        let src = "ro x = thing.secret_field\n";
+        let rope = Rope::from_str(src);
+        let msg = "[E_FIELD_MODULE_PRIVATE] field `secret_field` is module-private (priv)";
+        let diag = make_diag_with_code("E_FIELD_MODULE_PRIVATE", msg, 0, 13, 25);
+        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        assert!(!actions.is_empty());
+    }
+
+    /// pos_field_2: E_TYPE_NAME_TOO_SHORT → note action.
+    #[test]
+    fn pos_field_2_type_name_too_short_note() {
+        let src = "type X {}\n";
+        let rope = Rope::from_str(src);
+        let msg = "[E_TYPE_NAME_TOO_SHORT] type name `X` is too short (min 2 chars)";
+        let diag = make_diag_with_code("E_TYPE_NAME_TOO_SHORT", msg, 0, 5, 6);
+        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        assert!(!actions.is_empty());
+    }
+
+    // ── 104.5.8: String fixes ──────────────────────────────────────────────
+
+    /// pos_str_1: E_STR_NO_LEN with `len` in range → produces edit replacing with byte_len().
+    #[test]
+    fn pos_str_1_str_no_len_produces_edit() {
+        let src = "ro n = s.len\n";
+        let rope = Rope::from_str(src);
+        let msg = "[E_STR_NO_LEN] `str` has no `len` field; use `.byte_len()`";
+        let diag = make_diag_with_code("E_STR_NO_LEN", msg, 0, 9, 12);
+        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        assert!(!actions.is_empty());
+        if let tower_lsp::lsp_types::CodeActionOrCommand::CodeAction(ca) = &actions[0] {
+            if let Some(edit) = &ca.edit {
+                if let Some(changes) = &edit.changes {
+                    let new_texts: Vec<_> = changes.values()
+                        .flat_map(|v| v.iter().map(|e| e.new_text.as_str()))
+                        .collect();
+                    assert!(new_texts.contains(&"byte_len()"), "should replace with byte_len()");
+                }
+            }
+        }
+    }
+
+    /// pos_str_2: E_STR_NO_INT_INDEX → note action.
+    #[test]
+    fn pos_str_2_str_no_int_index_note() {
+        let src = "ro c = s[0]\n";
+        let rope = Rope::from_str(src);
+        let msg = "[E_STR_NO_INT_INDEX] `str` does not support integer indexing";
+        let diag = make_diag_with_code("E_STR_NO_INT_INDEX", msg, 0, 7, 10);
+        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        assert!(!actions.is_empty());
+    }
+
+    // ── 104.5.9: Comparison fixes ─────────────────────────────────────────
+
+    /// pos_cmp_1: E_CMP_CHAIN_UNSUPPORTED → note action.
+    #[test]
+    fn pos_cmp_1_cmp_chain_note() {
+        let src = "ro ok = a < b < c\n";
+        let rope = Rope::from_str(src);
+        let msg = "[E_CMP_CHAIN_UNSUPPORTED] chained comparison `a < b < c` not supported";
+        let diag = make_diag_with_code("E_CMP_CHAIN_UNSUPPORTED", msg, 0, 8, 17);
+        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        assert!(!actions.is_empty());
+    }
+
+    /// pos_cmp_2: E_RELATIONAL_OPERAND_NOT_ORDERED → suggests Ordered.
+    #[test]
+    fn pos_cmp_2_relational_operand_not_ordered() {
+        let src = "ro x = a < b\n";
+        let rope = Rope::from_str(src);
+        let msg = "[E_RELATIONAL_OPERAND_NOT_ORDERED] type `Foo` does not implement `Ordered`";
+        let diag = make_diag_with_code("E_RELATIONAL_OPERAND_NOT_ORDERED", msg, 0, 7, 12);
+        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        assert!(!actions.is_empty());
     }
 
     // ── Message parsing helpers ────────────────────────────────────────────

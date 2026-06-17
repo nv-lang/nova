@@ -1,0 +1,31 @@
+// Plan 104.7 (tree-sitter-nova v0.3.0) — positive: `type T priv { ... }` syntax.
+//
+// Tests that the Nova compiler correctly handles module-private type declarations
+// (Plan 160 D281) — the same syntax covered by grammar.js `privacy_modifier` rule.
+// This is the canonical form: `type T priv { fields }` = module-private.
+
+module plan104_7_grammar.pos_priv_type_basic
+
+type Counter value priv {
+    mut count int
+}
+
+fn Counter.new(n int) -> Counter => { count: n }
+fn Counter @count() -> int => @count
+fn Counter mut @inc() { @count = @count + 1 }
+
+test "priv type declaration compiles and is accessible within module" {
+    ro c = Counter.new(0)
+    assert(c.count() == 0)
+}
+
+test "priv type mutation via method works within module" {
+    mut c = Counter.new(10)
+    c.inc()
+    assert(c.count() == 11)
+}
+
+test "priv field directly readable within same module" {
+    ro c = Counter.new(42)
+    assert(c.count == 42)
+}

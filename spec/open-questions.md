@@ -8172,3 +8172,51 @@ export type Account {
 
 ### Связь
 - [D220](decisions/02-types.md#d220) (priv(type) семантика поля), [D281](decisions/02-types.md#d281) (module-level type privacy), [Plan 124.1](../docs/plans/124-priv-field-visibility.md).
+
+## Q-if-let-chain-multi — множественные let-паттерны через `&&` в if/while — 🟡 OPEN (2026-06-17)
+
+### Контекст (Plan 106, D34)
+
+Plan 106 реализовал `&&` guard-условие после одного паттерна:
+
+```nova
+if Some(x) = expr && x > 5 { }         // ✅ реализовано
+while Some(item) = q.pop() && item.valid { }  // ✅ реализовано
+```
+
+Следующий шаг — множественные let-паттерны через `&&` (Rust let-chains RFC 2497):
+
+```nova
+if Some(x) = get_x() && Some(y) = get_y(x) && x + y > 10 { }
+//           ^^^^^^^^^^^^^^^^^  второй let в chain — НЕ реализовано
+```
+
+### Проблема реализации
+
+Текущий AST: `ExprKind::IfLet { pattern, scrutinee, guard: Option<Expr>, ... }` — один паттерн + опциональный guard.
+
+Для chain нужно: `Vec<IfCond>` где `IfCond = LetBind(pattern, scrutinee) | BoolExpr(Expr)`.
+
+Это требует:
+1. Новый `enum IfCond` в ast/mod.rs
+2. Замена `IfLet`/`WhileLet` на унифицированные `If { conds: Vec<IfCond> }` / `While { conds: Vec<IfCond> }`
+3. Обновление всех call-sites (parser, types, emit_c, may_gc, interp)
+4. Scope semantics: `cond[i]` видит биндинги `cond[0..i-1]`
+
+Трудоёмкость: ~1-2 dev-day, изолированная задача.
+
+### Открытое
+
+1. **Нужно ли?** Workaround — вложенные `if`:
+   ```nova
+   if Some(x) = get_x() {
+       if Some(y) = get_y(x) && x + y > 10 { }
+   }
+   ```
+   Менее идиоматично, но читаемо.
+2. **Приоритет:** низкий — guard (Plan 106) покрывает 90% use-cases.
+
+### Связь
+- [D34](decisions/03-syntax.md#d34) — grammar `if-cond`
+- [Plan 106](../docs/plans/106-if-let-chains.md) — реализованный `&&` guard
+- Rust [RFC 2497 let-chains](https://rust-lang.github.io/rfcs/2497-if-let-chains.html) — stable 1.64

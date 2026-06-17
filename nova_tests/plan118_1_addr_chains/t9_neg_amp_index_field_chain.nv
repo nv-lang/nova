@@ -4,12 +4,12 @@
 // EXPECT_COMPILE_ERROR E_ARRAY_INDEX_PTR_BANNED
 module plan118_1_addr_chains.t9_neg_amp_index_field_chain
 
-type S {
+type Sv {
     ro v i64
 }
 
 test "bare & of a field reached through an array index is rejected" {
-    ro arr = [S { v: 10 }, S { v: 20 }]
+    ro arr = [Sv { v: 10 }, Sv { v: 20 }]
     unsafe {
         ro p = &arr[0].v
     }

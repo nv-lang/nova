@@ -24,9 +24,9 @@
 module plan144_checker.value_self_ref_neg
 
 // Genuinely-infinite value self-cycle (no boxing). The fix must NOT crash on it.
-type N value { next N }
+type Nv value { next Nv }
 
 // Forces the size walk that used to stack-overflow; now yields a clean error.
-const S = size_of[N]()
+const S = size_of[Nv]()
 
 fn main() -> int { S }

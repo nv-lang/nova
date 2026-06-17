@@ -1,0 +1,14 @@
+// Plan 167 Ф.4 POS T1 — 2-char type name is accepted.
+//
+// type Sv { x int } — name length 2 → no E_TYPE_NAME_TOO_SHORT.
+
+module plan167.t1_pos_two_char_name_ok
+
+type Sv {
+    x int
+}
+
+test "2-char record name — OK" {
+    ro s = Sv { x: 42 }
+    assert(s.x == 42)
+}

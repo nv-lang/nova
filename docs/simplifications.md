@@ -1,18 +1,6 @@
 ﻿# Упрощения и отложенные доработки
 
 Живой список осознанных упрощений, сделанных в ходе разработки.
-
----
-
-### Plan 104.5 — LSP Code Actions / Quick-fixes V1 (2026-06-16, ✅ CLOSED)
-
-- **Где** — `nova-lsp/src/code_actions.rs`, `nova-lsp/src/diagnostic_mapping.rs`.
-- **Что сделано** — 25 quick-fix handlers: 8 Plan-101 (generic types) + 7 Plan-100 (consume/mut) + 7 general + 3 auto-import. Error-code extraction (`[E_CODE]` → `Diagnostic.code`). D296 spec.
-- **Упрощение 1** — `[M-104.5-suggestion-field-wiring]`: V1 компутирует edit из diagnostic range (re-scan source), а не из `Diagnostic.suggestion.span`. V2: wire `suggestion.span` напрямую для точности.
-- **Упрощение 2** — `[M-104.5-multi-edit-rename]`: E_PREFIX_SHADOWS_NAMED_TYPE меняет только объявление, не все usages. V2: cross-scope rename через find-references (Plan 104.6).
-- **Упрощение 3** — `[M-104.5-organize-imports]`: Source.organizeImports кинд объявлен, но sort+dedup не реализован. V2.
-- **Как чинить** — V2 закрывает все 3 маркера после реализации Plan 104.6 (rename/find-refs).
-- **Приоритет** — L (V1 достаточен для производительной работы).
 Каждое упрощение попадает сюда в момент принятия решения — чтобы не потерять контекст.
 
 > **Принцип** (см. [`project-philosophy.md`](project-philosophy.md)): Nova не в
@@ -34,7 +22,7 @@
 
 - **Где** — `std/net/tcp.nv`, `std/net/effect.nv`, `std/net/ffi.nv`, `std/net/mock.nv`, `compiler-codegen/nova_rt/net.h`, `compiler-codegen/nova_rt/net.c`.
 - **Что сделано** — `TcpStream.split() -> (TcpReadHalf, TcpWriteHalf)` — consume value types для параллельного r/w одного соединения из двух файберов. C runtime: `NovaRt_TcpStream` получил независимые слоты `read_scope`/`read_slot`/`read_op_error` и `write_scope`/`write_slot`/`write_op_error` + `volatile int32_t split_refcount`. Новые типы `NovaRt_TcpReadHalf`/`NovaRt_TcpWriteHalf`. `TcpNet` расширен: `split_stream` + 14 `read_half_*`/`write_half_*` ops + `write_all`. `mock.nv` покрывает все новые arms. D301. Тесты: 3/3 PASS.
-- **Что упрощено** (V1): (1) `write_all` реализован на C, не через Nova-loop — vtable OK-type erasure ломала Nova-level `while` (`nova_str` вместо `Nova_NetError_p` в ветке `Err`); libuv `uv_write` атомарно ставит весь буфер. (2) Только 1 negative-тест: `consume (rd, wr) = s.split()` отклоняет parser; double-close-of-half и read-after-close-of-half не выразимы как compile-time ошибки в V1 — runtime refcount защищает. Followup `[M-91.16-tuple-consume-binding]`.
+- **Что упрощено** (V1): (1) `write_all` реализован на C, не через Nova-loop — vtable OK-type erasure ломала Nova-level `while`; libuv `uv_write` атомарно ставит весь буфер. (2) double-close-of-half не выразимо как compile-time ошибка — runtime refcount защищает. Followup `[M-91.16-tuple-consume-binding]`.
 - **Как чинить** — `[M-91.16-tuple-consume-binding]`: добавить tuple-destructure в consume-tracking checker.
 - **Приоритет** — L (CLOSED 2026-06-17).
 
@@ -43,31 +31,10 @@
 ### Plan 91.15 — std/net API polish (2026-06-17, ✅ CLOSED)
 
 - **Где** — `std/net/error.nv`, `std/net/tcp.nv`, `std/net/effect.nv`, `compiler-codegen/nova_rt/net.c`, `compiler-codegen/nova_rt/net.h`, `compiler-codegen/src/types/mod.rs`.
-- **Что сделано** — P0: `Blocking` эффект убран из всех сигнатур `TcpNet`/`UdpNet`; из `realtime_suspend_effect()` и builtin-effect registry компилятора; `ExprKind::Blocking` checker-арм коллапсирован (парсер уже отклоняет `blocking{}` с `[D172-block-form-removed]`). P1/P2: `NetError.Eof` (TCP peer close), `NetError @to_str()` (14 вариантов), `SocketAddr.ip()` (rename от `host_str()`), `write_all()` на `TcpStream`/`TcpWriteHalf`. `NetError.PermissionDenied` (UV_EACCES), `NetError.ConnectionReset` (UV_ECONNRESET); нормализация строк в `_nova_net_uv_err()`. D302. Тесты: 7/7 PASS.
-- **Что упрощено** (V1): (1) `match`-on-`NetError`-literal в тестах → CC-FAIL (vtable erasure, pre-existing V2-net лимит) — тесты используют `to_str()`-путь. (2) Именование эффект-операций задокументировано, но не переименовывалось. (3) `negative_capability/blocking_*.nv` сохранены: Plan 113 мигрировал их ожидать `D172-block-form-removed` → дают retraction-покрытие.
-- **Отложено (P3)** — `[M-91.15-read-exact]`, `[M-91.15-shutdown-write]`, `[M-91.15-so-reuseport]`, `[M-91.15-udp-multicast]`, `[M-91.15-connect-timeout]`, `[M-91.15-read-bytes]`.
-- **Как чинить** — каждый P3-маркер имеет отдельный followup.
+- **Что сделано** — P0: `Blocking` эффект убран из всех сигнатур `TcpNet`/`UdpNet` + compiler registry. P1/P2: `NetError.Eof`, `@to_str()`, `SocketAddr.ip()`, `write_all()`, `PermissionDenied`, `ConnectionReset`. D302. Тесты: 7/7 PASS.
+- **Что упрощено** (V1): (1) `match`-on-`NetError`-literal в тестах → CC-FAIL (vtable erasure, pre-existing) — тесты используют `to_str()`-путь. (2) Именование ops задокументировано, не переименовывалось.
+- **Отложено (P3)** — `[M-91.15-read-exact]`, `[M-91.15-shutdown-write]`, `[M-91.15-connect-timeout]`.
 - **Приоритет** — L (CLOSED 2026-06-17).
-
----
-
-### Plan 104.2 — hover/goto-def/sighelp V1 simplifications (2026-06-16)
-
-- **Где** — `nova-lsp/src/symbol.rs`, `nova-lsp/src/goto_definition.rs`, `nova-lsp/src/signature_help.rs`.
-- **Что упрощено** — (1) `[M-104.2-cross-file-goto]` — goto-definition V1 single-file only: always returns Location in same URI, does not resolve imports across module graph. (2) `[M-104.2-symbol-cache]` — no symbol cache: `resolve_symbol_at` parses and walks AST on every hover/goto request. Acceptable for V1 (<10ms per request on typical files). (3) `[M-104.2-protocol-method-hover]` — protocol method bodies not separately resolved; they fall through to the fn-level match. (4) `[M-104.2-signature-type-dispatch]` — signature help does name-only lookup, not type-driven method dispatch: `obj.foo(` finds all fns + methods named `foo` regardless of receiver type.
-- **Как чинить** — (1) cross-file: workspace import graph + multi-file module cache in Plan 104.4. (2) cache: dashmap<Uri, (Module, version)> in WorkspaceState after 104.3. (3) protocol: add ProtocolDecl variant to SymbolInfo. (4) type dispatch: resolve obj-type from TypeCheckCtx then filter by receiver — Plan 104.3 completion work covers same path.
-- **Приоритет** — M (cross-file goto, most user-visible); L (cache, symbol-cache, type-dispatch — not painful V1).
-
----
-
-### Plan 104.4 — documentSymbol + workspaceSymbol + references V1 (2026-06-16, ✅ CLOSED)
-
-- **Где** — `nova-lsp/src/symbols.rs`, `nova-lsp/src/server.rs`, `nova-lsp/tests/symbols_references.rs`.
-- **Что сделано** — `textDocument/documentSymbol`: AST-walker по `Module.items`; two-pass — first pass collects TypeDecl into index, second pass nests FnDecl методы под receiver type. Cache per-URI (`DashMap<Url, Arc<Vec<DocumentSymbol>>>`), инвалидируется при didChange/didOpen. `workspace/symbol`: per-file index (`DashMap<Url, Vec<WorkspaceSymbolEntry>>`), обновляется инкрементально; substring + case-insensitive поиск; top-100 pagination. `textDocument/references`: word-boundary scan по всем open + disk `.nv` файлам; `includeDeclaration` option. Capabilities: `documentSymbolProvider`, `workspaceSymbolProvider`, `referencesProvider`. Тесты: 86 lib unit tests + 15 integration tests; всё PASS.
-- **Упрощение** — `[M-104.4-refs-incremental-index]`: references scan = full filesystem per-request (V2: incremental index gated на type-checker integration). `[M-104.4-workspace-symbol-fuzzy]`: substring V1 (V2: fuzzy ranking). `[M-104.4-cross-file-method-nesting]`: methods вложены под type только в пределах одного файла по receiver-name matching (V2: cross-file resolver).
-- **Как чинить** — V2 после Plan 104.2 (type-checker resolver API для cross-file resolution) + Plan 104.6 (rename reuses references).
-- **D-блоки** — нет новых D-блоков; реализует capability из Plan 104 architecture §104.4.
-- **Приоритет** — L (CLOSED; markers M-104.4-* open V2 tasks).
 
 ---
 
@@ -37106,6 +37073,11 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
 
 - [2026-06-16] Plan 152.8 (nova_char uint32_t + Vec[u32] unicode) — NO simplifications; production-grade. Layer 1: Vec[int]→Vec[u32] in 7 std/unicode files (normalize.nv, case.nv, category.nv, graphemes.nv, words.nv, sentences.nv, collate.nv); 88 type occurrences. Layer 2: nova_char typedef int64_t→uint32_t (D128 AMEND Plan 152.8): nova_rt.h, array.h comment, gc_layout.rs char_size (8,8)→(4,4) + test renamed, emit_c.rs U-suffix for char literals + nova_char in is_typed_int_c_ty + emit_typed_int_literal. Tests: 5 Layer-1 positives (t1-t5, unicode functions) + 1 Layer-2 positive (t6, char u32 properties/hash/compare) = 6/6 PASS plan152_8; 9/9 PASS plan152_7 (0 regressions). Spec: D128 AMEND in spec/decisions/02-types.md + 08-runtime.md. Marker [M-152-unicode-codepoint-u32] CLOSED. Branch plan-152.8. Commits: c659fe97 (Layer 1) + 11730ca5 (Layer 1 tests) + 08171fdc (Layer 2).
 
+- [2026-06-17] Plan 106: && guard — без упрощений. Полный scope-pipelining (биндинги
+паттерна видны в guard), type-check guard как bool, codegen корректный.
+
+- [2026-06-17] tree-sitter-nova v0.3.0: pointer_type `*T` — V1 парсит без валидации mutability семантики (это в checker Nova, не в grammar). Corpus тесты проверяют парсинг, не семантику. Negative corpus тесты (test/corpus/negatives.txt) покрывают: priv(module) invalid form, extern fn без ABI, priv priv дубликат, priv(type) в field.
+
 ### Plan 104.3 (Completion provider, 2026-06-16) — V1 simplifications
 
 - **[S-104.3-1]** Method-dot type inference: text heuristic (pattern-match on let/mut/param lines), NOT full TypeCheckCtx integration. Where: completion.rs infer_type_of_expr(). Why: TypeCheckCtx internals are not exposed as a public API with cursor-position lookup; implementing it would require a new `resolve_symbol_at` API in compiler-codegen (planned for Plan 104.2). How to fix: add `pub fn resolve_symbol_at(module, pos)` in compiler-codegen and use it in completion. Priority: M (method completion works for typed params and common naming conventions).
@@ -37135,4 +37107,32 @@ Tests: 39 unit + 13 integration = 52 completion-specific + 167 total nova-lsp te
 
 - [2026-06-16] Plan 104.6 (Rename + Format-on-save, nova-lsp, branch plan-104-6) — V1 simplifications documented. (1) Rename occurrence scan is regex-based word-boundary match (NOT full symbol-table from type-checker). Consequence: renames `foo` wherever it appears as a whole-word token, even if declared in different scopes (e.g. two local vars named `foo` in different functions). Full per-position symbol resolution requires compiler API extension for cross-file per-position symbol lookup — deferred to V2 [M-104.6-symbol-table-rename]. (2) rangeFormatting V1 formats the whole file via `nova fmt` then clips the returned edit to the requested range (nova fmt is a whole-file formatter with no range option). (3) onTypeFormatting handles only `\n` (auto-indent) and `}` (dedent) in V1. Comma, semicolon, and other triggers are no-ops. (4) Atomic post-rename type-check uses `check_source_inner` (parse + type-check); if the compiler is unavailable or panics (caught by `check_source_inner` via catch_unwind), the rename is permitted without validation. (5) Generic param scope guard is file-local word-boundary (not per-typevar scope boundary). Genuine scope-limited rename (only within the typevar's declaring fn/type) deferred to V2.
 
-- [2026-06-17] Plan 91.10 (retract D163 needs<Cap>, branch plan-91-net, ✅ CLOSED) — one deliberate simplification kept. D163 `needs <Cap>` capability clause removed from parser (hard error + migration hint), checker (`check_external_fn_needs_caps` deleted), codegen (`needs_caps.is_empty()` branching removed). Simplification: `FnDecl.needs_caps: Vec<String>` AST field is **kept always-empty** rather than removed, to avoid churning ~10 construction sites in sum_schema_registry + parser. The field is dead (parser always emits `vec![]`, checker no-ops `let _ = fd.needs_caps`, codegen ignores it). Removal is deferred followup [M-91.10-remove-needs-caps-field]. Rationale for the retract itself (not a simplification, a design correction): capability == effect-without-operations, so D163 duplicated the effect system; stdlib amnesty (`is_stdlib_runtime_module`) gutted any security guarantee; coarse Fs/Sys/Net granularity is security theatre. Future capability gating, if needed, should be a formal effect declaration ([M-91.10-fs-net-effects-formal]). Plan 100.5/100.7 capability-fixture revisit deferred to [M-91.10-revisit-plan100-5-7]. D163 marked RETRACTED in spec/decisions/02-types.md + README index. Tests: plan100_7 2/0, plan100_1 22/1 (pre-existing prelude Write-collision FAIL, unrelated), plan91_12 21/0, plan91_15 6/0, plan91_16 2/0. Commit 656aa967.
+## Plan 167 — E_TYPE_NAME_TOO_SHORT (2026-06-17)
+- Запрет однобуквенных type-имён: type S → E_TYPE_NAME_TOO_SHORT
+- Проверка в check_type_decl() types/mod.rs
+- Мотивация: generic-параметры конвенционально однобуквенные → конфликт с type S
+- 37 тестовых файлов мигрировано, plan118_1_addr_chains: 12/12 PASS
+
+## Plan 168 — Vec generic forward-decl: body-site scan + tuple-elem fwd-decl (2026-06-17)
+- CC-FAIL fix: `Nova_Vec____Nova_u32_p` — `unknown type name` в tuple typedefs
+- Root cause: pre-pass `collect_array_elem_typerefs` не сканировал тела функций;
+  `Vec[u32]` в body (локальные переменные/TurboFish) получал тип `Nova_Vec____Nova_u32_p`
+  (через generic stub path при `current_type_subst={u32→Nova_u32*}`), без forward-decl в global scope
+- Fix 1: добавлены `collect_array_elem_typerefs_in_fnbody/block/stmt/expr` — body scan при pre-pass
+- Fix 2: перед splice `MONO_TUPLE_TYPEDEFS` добавляем `typedef struct X X;` для любого
+  `Nova_...__...*` pointer-elem в tuple fields, если он ещё не в `user_type_fwd_decls`
+- plan168: 2/2 PASS; plan153_1: 8/9 PASS (1 pre-existing CODEGEN-FAIL); plan118_6: 15/15 PASS
+- D300 spec NEW
+
+## Plan 169 — Test-suite profiling + speedup (2026-06-17)
+
+**Реализовано:**
+- compile_ms/run_ms split в TestResult + --results-file JSON (backward-compat)
+- Timing profile: 260 тестов, median 36.7s, p90 47.5s (compile 96%)
+- 24 файла → _slow.nv; 4 fast variants (gc_bench/stress_high_freq/closure_gc_stress/clone_gc_stress)
+- D278 spec: бюджет ≤120s CI, пороги total≥3s/run≥2s/compile≥500ms
+- plan169/ фикстуры: 3/3 PASS (t1+t2 default, t2_slow slow-lane)
+
+**Упрощений нет:** производственная реализация.
+**Followup:** [M-169-timing-report-regression-gate] P3 — CI gate no test > 3s.
+- [2026-06-17] Plan 91.8b: удаление @eq/@lt/@le/@gt/@ge — без упрощений, продакшн-грейд. Полное удаление fallback'ов из компилятора (не deprecated, а hard-remove). @equal/@compare — единственный путь для user types. Примитивы int/f64/char — builtin C-диспатч без изменений. Followup: emit_c void* path (строки 19695-19696) использовал Nova_str_method_eq → исправлено на Nova_str_method_equal (6079de6e). Precompiled std/collections/*.c не участвуют в build path.

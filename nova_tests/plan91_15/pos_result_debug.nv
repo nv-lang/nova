@@ -1,0 +1,17 @@
+// Plan 91.15 Ф.2 POS — Result[T,E] @debug impl
+module plan91_15.pos_result_debug
+
+test "Ok(int) debug" {
+    ro r = Ok(1) as Result[int, str]
+    assert("${r:?}" == "Ok(1)")
+}
+
+test "Err(str) debug" {
+    ro r = Err("oops") as Result[int, str]
+    assert("${r:?}" == "Err(\"oops\")")
+}
+
+test "Ok(str) debug" {
+    ro r = Ok("yes") as Result[str, str]
+    assert("${r:?}" == "Ok(\"yes\")")
+}

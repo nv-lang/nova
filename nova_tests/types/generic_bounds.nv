@@ -23,7 +23,7 @@ module types.generic_bounds
 
 type GbHashable protocol {
     @hash() -> u64
-    @eq(other Self) -> bool
+    @equal(other Self) -> bool
 }
 
 
@@ -43,7 +43,7 @@ type GbUser {
 export fn GbUser @hash() -> u64 => @id
 
 
-export fn GbUser @eq(other GbUser) -> bool => @id == other.id
+export fn GbUser @equal(other GbUser) -> bool => @id == other.id
 
 
 export fn GbUser @count() -> int => @id as int
@@ -132,7 +132,7 @@ type GbValue {
 export fn GbKey @hash() -> u64 => @raw
 
 
-export fn GbKey @eq(other GbKey) -> bool => @raw == other.raw
+export fn GbKey @equal(other GbKey) -> bool => @raw == other.raw
 
 
 export fn GbValue @from_key(k GbKey) -> GbValue => { derived: k.raw }

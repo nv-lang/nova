@@ -1015,6 +1015,25 @@ default = public. Convention `_prefix` для conventionally-private
 
 Test-имена — строки естественного языка: `test "insert and get" { ... }`.
 
+#### Длина имени типа: минимум 2 символа (D30 §naming, Plan 167)
+
+**Запрещены однобуквенные имена типов** (`type T`, `type S`, `type K`, ...).
+
+Таблица в D30 закрепляет `T`, `K`, `V`, `E`, ... как конвенцию для
+generic-параметров (`fn[T] ...`). Если объявить `type T { ... }`, компилятор
+не может отличить «named type T» от «typevar T» в generic context —
+это источник `E_PREFIX_SHADOWS_NAMED_TYPE`. Запрет однобуквенных имён
+делает пространства имён непересекающимися.
+
+```nova
+type T { ... }       // ✗ E_TYPE_NAME_TOO_SHORT — переименуй в TVal, TNode, ...
+type S { ... }       // ✗ E_TYPE_NAME_TOO_SHORT
+type Db effect { }   // ✓ — 2 символа
+type Ok { }          // ✓ — 2 символа
+```
+
+**Error:** `E_TYPE_NAME_TOO_SHORT` (Plan 167, D30 §naming).
+
 ### Почему
 
 1. **Одно правило без исключений** для акронимов — программисту и LLM
@@ -2565,15 +2584,15 @@ Mapping:
 | `a % b` | `@rem(b)` | свободный |
 | `a \| b`, `a & b`, `a ^ b` | `@or` / `@and` / `@xor` | свободный |
 | `a << n`, `a >> n` | `@shl` / `@shr` | свободный |
-| `a == b`, `a != b` | `@eq(b)` (`!=` выводится) | `bool` |
-| `a < b`, `<=`, `>`, `>=` | `@lt` / `@le` / `@gt` / `@ge` | `bool` |
+| `a == b`, `a != b` | `@equal(b)` через протокол `Equal` (`!=` выводится) | `bool` |
+| `a < b`, `<=`, `>`, `>=` | `@compare(b)` через протокол `Compare` (< 0, > 0, == 0) | `bool` |
 | `!a` | `@not()` | обычно `bool` или `Self` |
 | `a[i]` (read), `a[i] = v` | `@get(i)` / `@set(i, v)` | свободный / `()` |
 
 Правила:
 1. **Только методы инстанса** — привязка к первому операнду.
 2. **`&&`, `||` не перегружаются** — short-circuit предсказуем.
-3. **`!=` выводится из `@eq`** — отдельно объявлять не надо.
+3. **`!=` выводится из `@equal`** — отдельно объявлять не надо.
 4. **Custom-операторы запрещены** (`:+`, `>>=` и т.п.) — фиксированный
    набор символов.
 5. **Никаких protocol/trait** — структурное соответствие по имени.
@@ -2588,6 +2607,9 @@ fn Vector @times(s f64) -> Vector =>     // умножение на скаляр
 fn Vector @times(other Vector) -> f64 => // dot product
     @x * other.x + @y * other.y
 ```
+
+> **Примечание (Plan 91.8b, 2026-06-17):** `@eq`/`@lt`/`@le`/`@gt`/`@ge` — УДАЛЕНЫ как operator-dispatch имена.
+> Используй `Equal.@equal` / `Compare.@compare`. Подробнее: [D184](#d184-operator-dispatch-via-protocols--замена-magic-methods-plan-918b).
 
 ### Почему
 
@@ -2609,7 +2631,7 @@ fn Vector @times(other Vector) -> f64 => // dot product
   receiver-методам (`@plus`/`@times`) однозначнее: компилятор знает,
   где искать реализацию.
 - **Перегрузка `&&`/`||`** — нарушает short-circuit.
-- **Auto-derive `@eq`/`@lt`** — отдельный механизм, не часть D46.
+- **Auto-derive `@equal`/`@compare`** — отдельный механизм, не часть D46 (см. D184).
 
 ### Связь
 - [D35](#d35-методы-инстанса-через--self-отменён) — те же `@`-методы.
@@ -2620,6 +2642,36 @@ fn Vector @times(other Vector) -> f64 => // dot product
 ### Эволюция
 Закрывает Q16 (bitflags): `type Permission(int)` с `@or`/`@and`/`@not`
 для `|`/`&`/`!`.
+
+---
+
+## D184. Operator dispatch via protocols — замена magic methods (Plan 91.8b)
+
+> Status: active (2026-06-17, Plan 91.8b).
+
+### Что
+
+Операторы сравнения диспатчятся через протоколы:
+
+| Оператор | Диспатч | Требование |
+|---|---|---|
+| `a == b` | `a.@equal(b)` | тип реализует `Equal` |
+| `a != b` | `!a.@equal(b)` | тип реализует `Equal` |
+| `a < b` | `a.@compare(b) < 0` | тип реализует `Compare` |
+| `a <= b` | `a.@compare(b) <= 0` | тип реализует `Compare` |
+| `a > b` | `a.@compare(b) > 0` | тип реализует `Compare` |
+| `a >= b` | `a.@compare(b) >= 0` | тип реализует `Compare` |
+
+Примитивы (`int`, `bool`, `f64`, `char`) — встроенный C-диспатч, без вызова метода.
+
+### Что удалено
+
+`@eq`, `@lt`, `@le`, `@gt`, `@ge` как operator-dispatch имена — удалены из компилятора (Plan 91.8b).
+
+### Связь
+- [D46](#d46-перегрузка-операторов-через--методы) — operator overloading base
+- [D109](02-types.md#d109) — Equal/Compare протоколы
+- [Plan 91.8b](../../docs/plans/91.8b-operator-dispatch-protocols.md)
 
 ---
 

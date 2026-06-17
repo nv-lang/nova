@@ -1,0 +1,71 @@
+// Plan 104.9 pos: str methods that nova-lsp completion now surfaces accurately.
+// Verifies byte_len() (not len), as_chars(), lines(), parse_int() — all compiling.
+// Tests: "без упрощений как для прода"
+module plan104_9.pos_str_methods_accurate
+
+test "byte_len returns byte count not char count" {
+    ro s = "hello"
+    assert(s.byte_len() == 5)
+    ro unicode = "Привет"
+    assert(unicode.byte_len() == 12)
+    assert(unicode.byte_len() > 0)
+}
+
+test "as_chars iterates codepoints" {
+    ro s = "abc"
+    mut count = 0
+    for c in s.as_chars() {
+        count = count + 1
+    }
+    assert(count == 3)
+}
+
+test "lines iterates lines" {
+    ro s = "a\nb\nc"
+    mut count = 0
+    for _ in s.lines() {
+        count = count + 1
+    }
+    assert(count == 3)
+}
+
+test "starts_with and ends_with" {
+    ro s = "hello world"
+    assert(s.starts_with("hello"))
+    assert(s.ends_with("world"))
+    assert(!s.starts_with("world"))
+}
+
+test "to_upper and to_lower" {
+    ro s = "Hello"
+    assert(s.to_lower() == "hello")
+    assert(s.to_upper() == "HELLO")
+}
+
+test "trim removes whitespace" {
+    ro s = "  hello  "
+    assert(s.trim() == "hello")
+    assert(s.trim_start() == "hello  ")
+    assert(s.trim_end() == "  hello")
+}
+
+test "contains and find" {
+    ro s = "hello world"
+    assert(s.contains("world"))
+    ro idx = s.find("world")
+    assert(idx.is_some())
+}
+
+test "split produces parts" {
+    ro s = "a,b,c"
+    mut count = 0
+    for _ in s.split(",") {
+        count = count + 1
+    }
+    assert(count == 3)
+}
+
+test "repeat builds repeated string" {
+    ro s = "ab"
+    assert(s.repeat(3) == "ababab")
+}

@@ -164,8 +164,6 @@ fn check_module_impl(
                     // Verification: D214 §«Layered FFI pattern». Future
                     // `[M-115-ffi-build-pipeline]` formalizes shim linking
                     // CLI.
-                    let _ = fd.needs_caps; // backward-compat field, всегда empty.
-
                     // Plan 118 (D216 §20): `external fn ... Fail -> ...` —
                     // E_EXTERNAL_FN_FAIL_EFFECT. C ABI не propagates Nova
                     // exception machinery; Fail effect crossing FFI boundary
@@ -3988,6 +3986,23 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     fn check_type_decl(&self, td: &TypeDecl, errors: &mut Vec<Diagnostic>) {
+        // Plan 167: single-letter type names forbidden (D30 amend).
+        // Generic parameters are conventionally single-letter (T, S, K, V) — naming
+        // conflict with type S causes E_PREFIX_SHADOWS_NAMED_TYPE. Ban type names
+        // of length 1 to make the namespaces non-overlapping.
+        if td.name.chars().count() == 1 {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_TYPE_NAME_TOO_SHORT] type name `{name}` is a single character — \
+                     must be at least 2 characters (Plan 167, D30 §naming). \
+                     Rename to a descriptive PascalCase name, e.g. `{name}Val`, \
+                     `{name}Node`, `{name}Item`. \
+                     Single-letter names conflict with generic parameters by convention.",
+                    name = td.name
+                ),
+                td.span,
+            ));
+        }
         let mut gs: HashSet<String> = HashSet::new();
         for g in &td.generics {
             gs.insert(g.name.clone());
@@ -19373,15 +19388,16 @@ impl MapLitCtx {
         if self.fn_generics.contains(name) {
             return;
         }
-        // Известный именованный тип — требует `hash` + `eq`.
+        // Известный именованный тип — требует `hash` + `equal` (D237 Equal protocol).
         if self.known_types.contains(name) {
             let methods = self.type_methods.get(name);
             let has_hash = methods.map(|m| m.contains("hash")).unwrap_or(false);
-            let has_eq = methods.map(|m| m.contains("eq")).unwrap_or(false);
+            // Plan 91.8b: @eq removed; Equal protocol uses @equal.
+            let has_eq = methods.map(|m| m.contains("equal")).unwrap_or(false);
             if !has_hash || !has_eq {
                 let mut missing = Vec::new();
                 if !has_hash { missing.push("`hash() -> u64`"); }
-                if !has_eq { missing.push("`eq(other) -> bool`"); }
+                if !has_eq { missing.push("`equal(other Self) -> bool`"); }
                 errors.push(Diagnostic::new(
                     format!(
                         "key type `{}` does not implement `Hashable` — a map key \

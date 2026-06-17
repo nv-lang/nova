@@ -1,15 +1,7 @@
+// Fast variant — reduced parameters. Full test: f1_closure_array_gc_stress_slow.nv
+//
 // Plan 55 Ф.1 — GC stress test для `[]fn` closure storage.
-//
-// 1000 closures × 50 циклов. Каждая итерация: создать массив, прогнать.
-// После — gc.collect(). Heap не должен расти линейно — closures
-// должны быть собраны.
-//
-// Acceptance: heap_size в конце ≤ 4× от baseline после первого reset.
-// (4× — широкий margin, чтобы избежать flaky на разных GC backend'ах;
-// linear leak дал бы 50×.)
-//
-// На malloc-backend: gc.heap_size() возвращает 0 (honest sentinel) →
-// тест проходит тривиально. Реальный GC-test — под boehm.
+// Fast: 1000 closures × 5 циклов (reduced from 50 cycles).
 
 module plan55.f1_closure_array_gc_stress
 
@@ -27,22 +19,22 @@ fn run_one() -> int {
 }
 
 
-test "1000 closures × 50 циклов — heap bounded" {
+test "1000 closures × 5 циклов — heap bounded [fast]" {
+    // Fast variant: 5 cycles instead of 50 (1/10th).
     // Warm-up + reset
     ro _ = run_one()
     gc.collect()
     gc.reset_stats()
     ro baseline = gc.heap_size()
 
-    for _ in 0..50 {
+    for _ in 0..5 {
         ro _ = run_one()
     }
     gc.collect()
     ro after = gc.heap_size()
 
-    // Bounded growth: малок-backend (baseline=0) → after=0 (всегда trivial).
-    // Boehm — позволяем рост × 4 (closure'ы могут оставаться в roots
-    // короткое время между gc.collect()).
+    // Bounded growth: malloc-backend (baseline=0) → after=0 (always trivial).
+    // Boehm — позволяем рост × 4.
     ro upper = if baseline == 0 { 8 * 1024 * 1024 } else { baseline * 4 }
     assert(after <= upper)
 }

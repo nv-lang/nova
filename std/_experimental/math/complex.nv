@@ -23,8 +23,8 @@
 //   - D35 instance-методы через `fn Type @method`.
 //   - D45 для простых геттеров `-> T` опускаем; для арифметики оставляем
 //     явно (документация stdlib API).
-//   - D46 operator overloading через `@plus`, `@times`, `@neg`, `@eq`.
-//     `!=` выводится из `@eq` автоматически.
+//   - D46/D184 operator overloading через `@plus`, `@times`, `@neg`, `@equal`.
+//     `!=` выводится из `@equal` автоматически.
 //   - D55 record-coercion: literal `{ re: 1.0, im: 2.0 }` в позиции
 //     `Self` подставится сам.
 //   - D66 `Self` в return type — DRY, без повтора имени Complex.
@@ -240,7 +240,7 @@ export fn Complex @is_nan() => @re.is_nan() || @im.is_nan()
 
 /// Strict equality (`==`) — exact bit-equal обеих компонент. Для FP лучше [`approx_eq`].
 #stable(since = "0.1")
-export fn Complex @eq(other Complex) =>
+export fn Complex @equal(other Complex) -> bool =>
     @re == other.re && @im == other.im
 
 /// Approximate equality: `|z - other| < tol`. Use for FP comparisons.
@@ -412,7 +412,7 @@ test "constructors: new / from / from_imag / from_polar" {
 
     // Та же конверсия через .into() — тип цели из аннотации (D73 авто-Into).
     ro r2 Complex = (5.0).into()
-    assert(r2.eq(r))
+    assert(r2== r)
 }
 
 test "addition: commutative and associative" {
@@ -422,13 +422,13 @@ test "addition: commutative and associative" {
 
     ro ab = a + b
     ro ba = b + a
-    assert(ab.eq(ba))                       // a+b == b+a
+    assert(ab== ba)                       // a+b == b+a
     assert(ab.re == 4.0)
     assert(ab.im == 6.0)
 
     ro abc1 = (a + b) + c
     ro abc2 = a + (b + c)
-    assert(abc1.eq(abc2))                   // ассоциативность
+    assert(abc1== abc2)                   // ассоциативность
 }
 
 test "negation and subtraction" {
@@ -447,7 +447,7 @@ test "negation and subtraction" {
 
 test "multiplication: i * i == -1" {
     ro i_sq = I * I
-    assert(i_sq.eq(-ONE))                   // основное свойство мнимой единицы
+    assert(i_sq== -ONE)                   // основное свойство мнимой единицы
 
     ro z = Complex.new(2.0, 3.0)
     ro zi = z * I
@@ -537,10 +537,10 @@ test "into[str]: формат для разных случаев" {
 
 test "extension method j(): мнимая единица" {
     ro z1 = 2.0.j()
-    assert(z1.eq(Complex.from_imag(2.0)))
+    assert(z1== Complex.from_imag(2.0))
 
     ro z2 = 3.j()
-    assert(z2.eq(Complex.from_imag(3.0)))
+    assert(z2== Complex.from_imag(3.0))
 
     // Композиция через D73 (для действительной части) + j() (для мнимой):
     //   `Complex.from(2) + 3.j()` или `(2).into() + 3.j()`

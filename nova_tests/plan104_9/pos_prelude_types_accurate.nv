@@ -1,0 +1,58 @@
+// Plan 104.9 pos: prelude types that nova-lsp completion now surfaces accurately.
+// Verifies int/f64/f32/bool/str/Option/Result/Vec/HashMap work as expected.
+// (float/usize/Map removed from completion — Plan 114/133.)
+module plan104_9.pos_prelude_types_accurate
+
+import std.collections.hashmap.{HashMap}
+
+test "int type available" {
+    ro x int = 42
+    assert(x > 0)
+}
+
+test "f64 type available (not float)" {
+    ro x f64 = 3.14
+    assert(x > 3.0)
+}
+
+test "f32 type available" {
+    ro x f32 = 1.5
+    assert(x > 1.0)
+}
+
+test "bool type available" {
+    ro b bool = true
+    assert(b)
+}
+
+test "str type available" {
+    ro s str = "hello"
+    assert(s.byte_len() > 0)
+}
+
+test "Option type available" {
+    ro o Option[int] = Some(42)
+    assert(o.is_some())
+    ro n Option[int] = None
+    assert(n.is_none())
+}
+
+test "Result type available" {
+    ro r Result[int, str] = Ok(42)
+    assert(r.is_ok())
+    ro e Result[int, str] = Err("fail")
+    assert(e.is_err())
+}
+
+test "Vec type available" {
+    mut v Vec[int] = Vec[int].new()
+    v.push(1)
+    v.push(2)
+    assert(v.len() == 2)
+}
+
+test "HashMap type available" {
+    mut m = HashMap[str, int].new()
+    m.insert("a", 1)
+    assert(m.get("a").is_some())
+}

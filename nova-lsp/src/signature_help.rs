@@ -259,8 +259,8 @@ mod tests {
     fn pos4_method_signature() {
         let src = concat!(
             "module basics.lsp\n",
-            "type Vec2 {\n x float\n y float\n}\n",
-            "fn Vec2 @dot(other Vec2) -> float => @x * other.x + @y * other.y\n",
+            "type Vec2 {\n x f64\n y f64\n}\n",
+            "fn Vec2 @dot(other Vec2) -> f64 => @x * other.x + @y * other.y\n",
             "fn main() => ()"
         );
         let h = compute_signature_help(src, pos(6, 13));

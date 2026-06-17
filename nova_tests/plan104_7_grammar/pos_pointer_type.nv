@@ -1,0 +1,39 @@
+// Plan 104.7 (tree-sitter-nova v0.3.0) — positive: pointer type syntax.
+//
+// Tests that `*T`, `*ro T`, and `*mut T` type expressions parse and
+// type-check correctly (Plan 147 D246). Grammar rule: `pointer_type`.
+// Mirrors the tree-sitter corpus fixture for pointer_type.
+//
+// Under D246: `*T` ≡ `*ro T` (read-only pointee); `*mut T` = writable pointee.
+// NOTE: `*ro T` emits E_REDUNDANT_POINTER_RO since Plan 147 Ф.1; only `*T` is
+// canonical for the ro form. This test uses only `*T` and `*mut T`.
+
+module plan104_7_grammar.pos_pointer_type
+
+// *T in extern "nova" fn signature (parse + type-check, no runtime op)
+extern "nova" fn p104_7_identity_ptr(p *u8) -> *u8
+
+// *mut T in extern "nova" fn signature
+extern "nova" fn p104_7_write_ptr(p *mut u8, val u8)
+
+// pointer type in a record field
+type PtrHolder {
+    raw *u8
+}
+
+test "pointer type in extern nova fn signatures compiles" {
+    // Declarations alone exercise parser + type-checker.
+    assert(true)
+}
+
+test "pointer type in record field compiles" {
+    // PtrHolder type declaration with *u8 field accepted by type-checker.
+    assert(true)
+}
+
+test "star-u8 pointer from str.as_ptr()" {
+    ro s = "hello"
+    ro p = s.as_ptr()
+    ro p_int = p as int
+    assert(p_int != 0)
+}

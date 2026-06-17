@@ -1,18 +1,18 @@
-// Plan 123 V*.followups 2026-06-05 marker 6 — V2.1 dynamic loop count negative.
-// Negative: small literal range (`0..3`) gives weight=3 — below typical
-// caching threshold — optimizer chooses NOT к cache, but observable
+﻿// Plan 123 V*.followups 2026-06-05 marker 6 вЂ” V2.1 dynamic loop count negative.
+// Negative: small literal range (`0..3`) gives weight=3 вЂ” below typical
+// caching threshold вЂ” optimizer chooses NOT Рє cache, but observable
 // behavior remains correct.
 
 module plan123_followups_2026_06_05.m6_v2_1_dyn_small_range_neg
 
-type C {
+type Cv {
     mut z int
 }
 
-fn C.new() -> C => { z: 5 }
+fn Cv.new() -> Cv => { z: 5 }
 
-fn C @small_range_no_promote() -> int {
-    // 0..3 — literal weight 3. Below default cache threshold (2 raw,
+fn Cv @small_range_no_promote() -> int {
+    // 0..3 вЂ” literal weight 3. Below default cache threshold (2 raw,
     // but with weight=3 from parse_loop_iter_count). Optimizer may
     // or may not cache; observable correctness must hold either way.
     mut acc = 0
@@ -23,8 +23,8 @@ fn C @small_range_no_promote() -> int {
 }
 
 test "V2.1 dyn small range: semantic preservation regardless of cache decision" {
-    ro c = C.new()
-    ro r = c.small_range_no_promote()
-    // 3 × 5 = 15
+    ro Cv = Cv.new()
+    ro r = Cv.small_range_no_promote()
+    // 3 Г— 5 = 15
     assert(r == 15)
 }

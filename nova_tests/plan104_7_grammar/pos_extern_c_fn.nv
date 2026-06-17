@@ -1,0 +1,28 @@
+// Plan 104.7 (tree-sitter-nova v0.3.0) — positive: `extern "C" fn` declaration.
+//
+// Tests that the Nova compiler accepts `extern "C" fn` ABI declarations
+// (Plan 91.12 D282). Grammar rule: `fn_declaration` with optional
+// `extern STRING_LITERAL fn` prefix.
+//
+// Uses libc malloc (returns *u8) and strlen (takes *u8, returns int) as
+// real C FFI targets available on all platforms via libc.
+// Only malloc is called at runtime; strlen is declared but not called
+// (declaration-only test for the void-input form).
+
+module plan104_7_grammar.pos_extern_c_fn
+
+extern "C" fn malloc(size int) -> *u8
+extern "C" fn strlen(s *u8) -> int
+
+test "extern C fn declaration compiles" {
+    // Both declarations accepted by parser and type-checker.
+    assert(true)
+}
+
+test "extern C fn malloc callable, returns non-null pointer" {
+    unsafe {
+        ro p = malloc(16)
+        ro p_int = p as int
+        assert(p_int != 0)
+    }
+}

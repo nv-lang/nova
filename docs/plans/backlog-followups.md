@@ -131,12 +131,19 @@
 |---|---|---|---|
 | `[M-116-openssl-backend]` | Опц. OpenSSL TLS 1.0/1.1 handler (rustls = default); Plan 116 не начат (PLANNED). | plan-116 Followups | P2 |
 | `[M-91.fe5-math-time-conformance]` | math (sqrt/ln) есть; Instant/Duration time-API conformance pending. | plan-91 Followups | P2 |
-| `[M-ide-integration-deferred]` | Production LSP (completion/refs/rename/format) 104.3–104.6 не построены (104.2 hover/goto/sighelp ✅ ЗАКРЫТ 2026-06-16; 104.7 tree-sitter закрыт). | plan-104 Followups | P2 |
-| `[M-104.2-cross-file-goto]` | goto-definition V1 single-file; cross-file resolution через workspace import graph deferred → Plan 104.4. | plan-104.2 Followups | P2 |
-| `[M-104.2-symbol-cache]` | Каждый hover/goto re-parses файл; dashmap symbol cache deferred (plan 104.3 workspace-кэш). | plan-104.2 Followups | P3 |
+| `[M-ide-integration-deferred]` | ✅ **CLOSED 2026-06-17 (Plan 104 ВСЕ sub-plans 104.0–104.9).** Production LSP полностью построен: completion/refs/rename/format/code-actions/symbols/tree-sitter/editor-packaging/close-out. 268 tests PASS. | plan-104 Followups | ✅ done |
+| `[M-104.2-cross-file-goto]` | goto-definition V1 single-file; cross-file resolution через workspace import graph deferred. `[M-104.4-refs-incremental-index]` также open. | plan-104.2 Followups | P3 |
+| `[M-104.2-symbol-cache]` | Каждый hover/goto re-parses файл; dashmap symbol cache deferred. | plan-104.2 Followups | P3 |
 | `[M-104.2-protocol-method-hover]` | Hover на protocol-method bodies не отдельно резолвится; SymbolInfo::ProtocolMethod deferred. | plan-104.2 Followups | P3 |
-| `[M-104.2-signature-type-dispatch]` | Signature help: overload выбирается по имени, не типу receiver; type-driven dispatch → Plan 104.3. | plan-104.2 Followups | P2 |
+| `[M-104.2-signature-type-dispatch]` | Signature help: overload выбирается по имени, не типу receiver; type-driven dispatch V2. | plan-104.2 Followups | P3 |
+| `[M-104.9-dynamic-method-completion]` | Completion items — статические таблицы в completion.rs; V2: запрашивать методы через compiler API. | plan-104.9 Followups | P3 |
+| `[M-104.5-suggestion-field-wiring]` | CodeAction edit range: re-scan источника вместо compiler Suggestion.span. V2: wire напрямую. | plan-104.5 Followups | P3 |
+| `[M-104.5-multi-edit-rename]` | E_PREFIX_SHADOWS_NAMED_TYPE: переименовать все вхождения, не только объявление. | plan-104.5 Followups | P3 |
+| `[M-104.5-organize-imports]` | Sort+deduplicate import list (Source.organizeImports action). | plan-104.5 Followups | P3 |
 | `[M-treesitter-grammar-keyword-bump]` | **OPEN (2026-06-14).** tree-sitter-nova грамматика (github.com/nv-lang/tree-sitter-nova v0.1.0) отстаёт от лексера: anonymous-токены `unsafe` (D216), `priv`/`pub` (D220), `okdefer` (D160), `interrupt` НЕ определены в грамматике → Zed/Helix/Neovim `highlights.scm` не могут их подсветить (добавление в `.scm` без бампа грамматики ломает компиляцию query). Также грамматика, вероятно, ещё содержит retired `let`/`readonly`/`and`/`or`/`not`. **Regex-хайлайтеры (VSCode/vim/www) синхронизированы с лексером** (Plan 104.9, [D278](../../spec/decisions/09-tooling.md#d278); commits `ad55a91d` nova + `28b00c6` www) и защищены conformance-тестом `compiler-codegen/tests/syntax_highlight_conformance.rs` (8/8). Нужно: бампнуть грамматику (добавить/убрать токены+правила) → новый rev → обновить `editors/helix/languages.toml` `rev` + `editors/zed/languages/nova/highlights.scm` `@keyword` (тогда conformance-тест проверит и полноту Zed, а не только фантомы). Source-of-truth: `compiler-codegen/src/lexer/mod.rs`. | plan-104 Followups | P3 |
+| `[M-118.1-addr-of-mut-deref-ptr-mut]` | ✅ **CLOSED (Plan 118.6, 2026-06-17):** `addr_of_mut` retired → `E_ADDR_OF_REMOVED`; `&x` на mut-биндинге автоматически даёт `*mut T`. | plan-118.1 Followups | ✅ done |
+| `[M-118.1-addr-of-chains-checktime]` | ✅ **CLOSED (Plan 118.6, 2026-06-17):** `addr_of` retired → `E_ADDR_OF_REMOVED`; `&x.field` chain-check выполняется at check-time через escape analysis. | plan-118.1 Followups | ✅ done |
+| `[M-118.6-tuple-field-escape]` | tuple field chain-root tracking — `&tuple.N` escape analysis. Escape analysis отслеживает корень для value-records и примитивов; кортежные поля (`tuple.0`, `tuple.N`) требуют отдельного chain-root-tracking в escape_analyze.rs. | plan-118.6 Followups | P3 |
 | `[M-118.1-ffi-perf-bench]` | memcpy/memmove bench harness для FFI intrinsics не построен (сами intrinsics landed). | plan-118.1 Followups | P2 |
 | `[M-test-runner-large-test-lane]` | ✅ **DONE (Plan 156, suffix-only механизм, 2026-06-14).** ТРЕБОВАНИЕ выполнено: дефолтный `nova test`/CI быстрый (компиляция И выполнение). Lane реализован как **per-file суффикс `_slow.nv`** (зеркало `_windows.nv`/`_test`/`_module.nv`): skip на этапе discovery в `walk_nv_filtered` → нулевой per-file I/O (содержимое не читается), `SlowLane{Exclude(default)\|Include\|Only}` + clap-флаги `--include-slow`/`--slow-only`; Rust unit-тесты discovery (`plan156_slow_lane_tests`); plan156 фикстуры; генератор `nova-codegen unicode --conformance-full` пишет `*_conformance_slow.nv` (без cap). Нормировано [D277](../../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv). **rev-3 (2026-06-15):** полные `*_conformance_slow.nv` корпуса **НЕ коммитятся** — gitignored, **регенерируются on-demand** из pinned UCD (модель Go/CPython; cross-eco research → `docs/research/10-unicode-test-data-storage.md`); коммитится только fast-сэмпл. Populate-фаза workflow доказала полную генерацию (UCD 16.0 докачан, collation 227800/227800 сгенерён, sentence/word/grapheme прогнаны `--slow-only`=PASS), затем файлы выкинуты из истории (rebase-drop ДО мержа). Каталог-вариант `slow/`+сентинел отложен → `[M-156-slow-subtree-dir]`. CI slow-gate (регген+`--slow-only`) → `[M-152-collation-full-conformance]`. См. `docs/plans/156-test-runner-slow-lane.md`. | Plan 156 | ✅ DONE |
 | `[M-codegen-conformance-stack-overflow]` | ✅ **FIXED 2026-06-15 (Plan 158, ветка plan-cgstack).** `nova-codegen test-all` падал **`thread has overflowed its stack`** (exit 127) на больших conformance-фикстурах (`normalization_conformance`, ~6000 asserts). **Корень (разведка):** НЕ рекурсивный codegen — тот же файл через `test-build` (главный поток, 8 МБ стек) **проходит exit 0**; падали только **worker-потоки** test-all (`thread::scope` `s.spawn` с дефолтным ~2 МБ стеком). Регрессия дельты `2eb59b04..b0095867` (153.x codegen стал чуть глубже/тяжелее по стеку). **Fix:** `Builder::new().stack_size(64 MB).spawn_scoped(s, …)` в `test_runner.rs` (НЕ band-aid — codegen-глубина нормальна на обычном стеке, недосайзен был только worker-стек). Верифицировано релизным бинарём: `normalization_conformance` через test-all → PASS (был 127); plan152_4 15/1 где 1 = flaky `lld-link: cannot open output file` (AV-гонка, не регрессия, уходит с `--retries`). recursion→iteration рассмотрен и отклонён (огромный риск ради патологии >64МБ-глубины). См. docs/plans/158-test-runner-worker-stack.md. | Plan 158 | ✅ DONE |
@@ -177,6 +184,7 @@
 
 | Маркер | Суть | Home | Pri |
 |---|---|---|---|
+| `[M-169-timing-report-regression-gate]` | ✅ **CLOSED**: `--max-test-ms N` флаг — тесты превышающие порог → список + exit 3. | Plan 169 | ✅ done |
 | `[M-118.1-typed-pointer-cookbook]` | docs/typed-pointers.md cookbook не написан (есть только Plan 115 FFI cookbook). | plan-118.1 Followups | P3 |
 | `[M-118.1.7-extern-block]` | `extern "C" { unsafe fn … }` block-сахар (gated на multi-ABI); сейчас individual `external unsafe fn`. | plan-118.1 Followups | P3 |
 | `[M-D227-alias-newtype-range]` | D227 range-check НЕ покрывает alias/newtype над sized-int (`assignable()` чекает только direct Named + Readonly/Mut/Unsafe; резолв alias-имени требует `self.types`, недоступного на free-fn coercion-сайте). | plan-142 Scoped open-questions | P3 |
@@ -340,11 +348,12 @@
   кандидаты-сигнатуры в hint). Surfaced при закрытии `[M-138.2-generic-method-overload-mono]`
   (dispatch для МАТЧАЩИХ overload'ов починен; no-match-диагностика — отдельный type-check слой).
   `EXPECT_COMPILE_ERROR` (Nova-codegen) сейчас не ловит этот кейс (codegen «успешен», падает clang).
-- **`[M-153.1-append-extend-consolidation]`** ✅ **CLOSED 2026-06-17** via `AsSlice[T]` protocol
-  (D299). Решение: не overload-collapse, а generic bound — `@append[S AsSlice[T]](other S)`.
-  `AsSlice[T]` в `std/prelude/protocols.nv` = `@as_ptr() -> *T` + `@len() -> int`; `Vec[T]`
-  реализует через `#impl(AsSlice[T])` на `@as_ptr`. Self-append safe (memmove, непересекающиеся
-  регионы). `@extend[S Iter[T]]` сохранён для нон-contiguous источников. Spec D299.
+- **`[M-153.1-append-extend-consolidation]`** (planned, home **Plan 153.1 / D259**): план
+  хотел один `append` (concrete Vec bulk + generic Iter overload), `extend` убрать.
+  Заблокировано тем же overload-collapse + у generic-`append` (`for x in items {@push(x)}`)
+  self-append footgun (`v.append(v)` растёт во время итерации; bulk-версия снапшотит длину).
+  Оставлены раздельно: `@append(Vec[T])` (bulk, self-safe) + `@extend[S Iter[T]]` (generic).
+  Консолидировать, когда overload-mono + self-alias-safe generic append.
 - **`[M-153-scalar-min-max]`** ✅ **CLOSED 2026-06-16.** `@min(other)`/`@max(other)` реализованы через Nova-body if/else (без C-макросов `max`/`min`) на всех 12 числовых типах в `std/runtime/defaults.nv`. Тест `plan153_1/scalar_min_max` PASS (release nova). Коммит `782a8e36`.
 - **`[M-153.1-of-vs-from-sweep]`** (planned, P3, churn): конструктор-конвенция формализована
   (план 153.1 / D259 + док `from` в core.nv направляет на `of`): литералы → `Vec[T].of(a,b,c)`,
@@ -550,8 +559,6 @@
 - ~~**`[M-91.12-async-dns]`**~~ ✅ **CLOSED 2026-06-16** — DnsNet раскомментирован (`std/net/effect.nv`), `real_dns_net()` реализован (`std/net/dns.nv`), C-side `dns_lookup`/`dns_addr_at` через `uv_getaddrinfo` + TLS (`compiler-codegen/nova_rt/net.c`). D295. `SocketAddr.lookup()` wrapper обходит vtable type-erasure. Тест: `net_v2_dns_smoke` 6/0 PASS. 21/0 plan91_12 PASS.
 - ~~**`[M-91.13-dns-iter-boxing]`**~~ ✅ **CLOSED 2026-06-16** — `is_generic_stub_c` fix (`&& !name.contains("____")`) + DnsNet V2 `[]SocketAddr` API. Vtable erasure устранена; `real_dns_net()` строит Vec через `dns_addr_at(0..count)`; `mock_dns_net()` возвращает `Ok([loopback(0)])`. 21/0 plan91_12 PASS.
 - ~~**`[M-91.13-real-dns-integration-test]`**~~ ✅ **CLOSED 2026-06-16** — `net_v2_dns_real_slow.nv` добавлен (`_slow` suffix, `NOVA_SLOW_TESTS=1` opt-in); `assert(r.is_ok())` с реальным `localhost` resolver.
-- ~~**`[M-net-udp-send-toctou]`**~~ ✅ **CLOSED 2026-06-17** — send_to TOCTOU: `recv_scope` выставлялся ПОСЛЕ `uv_udp_send`; на Windows loopback callback срабатывал синхронно → файбер паркуется без пробуждения. Fix: отдельные поля `send_scope`/`send_slot`; выставляются ДО `uv_udp_send`. Plan 166.
-- ~~**`[M-net-udp-split]`**~~ ✅ **CLOSED 2026-06-17** — UDP socket split: `UdpSendHalf` + `UdpRecvHalf` consume value types; `UdpSocket.split()` → два half; atomic refcount на C-хендл; оба half обязаны быть закрыты. D298 Plan 166. Тесты: `net_v2_udp_two_fiber_slow` + `net_v2_udp_split_slow` PASS.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
 - **`[M-91.16-tcp-split]`** — ✅ CLOSED 2026-06-17 (Plan 91.16, D301). `TcpReadHalf`/`TcpWriteHalf` consume-split реализован: независимые C-side park-слоты (`read_scope`/`read_slot` vs `write_scope`/`write_slot`), atomic `split_refcount` на C-handle, mock + real-network тесты PASS.
@@ -600,6 +607,21 @@
 | `[M-91.15-udp-multicast]` | OPEN P3. UDP multicast join/leave API. | plan-91.15 Followups | P3 |
 
 [M-118.6-tuple-field-escape] tuple field chain-root tracking — &tuple.N escape analysis.
+
+## Follow-up: Plan 106 (if/while && guard)
+
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-106-if-guard]` | ✅ CLOSED 2026-06-17. && guard в if/while pattern-bind. | Plan 106 | ✅ done |
+
+## Follow-up: Plan 104.9 (nova-lsp language-sync + close-out)
+
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-104.9-completion-language-sync]` | ✅ CLOSED 2026-06-17. completion.rs/code_actions.rs синхронизированы с языком. | Plan 104.9 | ✅ done |
+| `[M-104.9-dynamic-method-completion]` | OPEN P3. Completion — статические таблицы. V2: запрашивать методы через compiler API. | plan-104.9 Followups | P3 |
+| `[M-104.5-suggestion-field-wiring]` | OPEN P3. CodeAction edit — re-scan vs compiler Suggestion.span. | plan-104.5 Followups | P3 |
+
 ## Follow-up: Plan 104.4 (documentSymbol + workspaceSymbol + references)
 
 ✅ **CLOSED 2026-06-16** — branch `plan-104-4`, commit `8b3e1903`; 86+15 PASS.
@@ -620,3 +642,16 @@ Open V1 markers (gated on type-checker resolver API in Plan 104.2):
 - **`[M-104.6-symbol-table-rename]`** (P3) — V1 rename uses regex word-boundary scan across all files; does not distinguish `foo` declared in different scopes. V2: expose `resolve_symbol_at(module, pos) -> Option<Symbol>` from `compiler-codegen` for per-position symbol resolution; use it to restrict rename to the exact declaration + its references only.
 - **`[M-104.6-nova-fmt-stdin]`** (P3) — Current `format_document` writes to a temp file. If `nova fmt` adds `--stdin` support, switch to piped stdin to avoid I/O overhead.
 - **`[M-104.6-ontypeformat-more-triggers]`** (P4) — Add `,` and `;` triggers for onTypeFormatting (auto-space after comma etc.).
+
+## Follow-up: tree-sitter-nova (grammar sync)
+
+| Маркер | Статус | Действие |
+|---|---|---|
+| `[M-104.7-v4-keywords]` | OPEN | Будущие keywords → grammar update при добавлении в lexer |
+| `[M-104.7-query-update-priv]` | ✅ CLOSED 2026-06-17 | highlights.scm updated — priv/pub/extern highlighted |
+
+## Follow-up: Plan 91.8b (remove @eq/@lt/@le/@gt/@ge)
+
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-91.8b-remove-old-ops]` | ✅ CLOSED 2026-06-17. @eq/@lt/@le/@gt/@ge удалены из компилятора и std. | Plan 91.8b | ✅ done |

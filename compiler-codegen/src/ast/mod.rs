@@ -448,9 +448,6 @@ pub struct FnDecl {
     /// None = no annotation (conservative: treated as Parks in realtime context).
     /// Stored in ExternalDecl for O(1) lookup during emit_call.
     pub sync_class: Option<SyncClass>,
-    /// D163 retracted (Plan 91.10) — always empty, kept for minimal churn.
-    /// Remove: [M-91.10-remove-needs-caps-field]
-    pub needs_caps: Vec<String>,
     /// Plan 118 (D216 §9, D2 amend): `#unsafe` attribute on fn declaration.
     /// Body implicitly в unsafe context (pointer ops без unsafe{} wrap).
     /// Callers must `unsafe { ... }` wrap the call (E_UNSAFE_CALL_REQUIRES_WRAP

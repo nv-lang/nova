@@ -5,12 +5,12 @@
 // EXPECT_COMPILE_ERROR E_ADDR_OF_NON_LVALUE
 module plan118_1_addr_chains.t8_neg_amp_call_field_chain
 
-type S {
+type Sv {
     ro v i64
 }
 
-fn make() -> S {
-    ro s = S { v: 1 }
+fn make() -> Sv {
+    ro s = Sv { v: 1 }
     s
 }
 

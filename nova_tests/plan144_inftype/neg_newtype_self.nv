@@ -16,6 +16,6 @@
 
 module plan144_inftype.neg_newtype_self
 
-type Wrap(R)
+type Wrap(Rv)
 
-type R value { w Wrap }
+type Rv value { w Wrap }
