@@ -47,4 +47,13 @@ referenced from plan docs and simplifications.md.
 
 ## Plan 91.8b — operator-dispatch cleanup
 
-- **[M-91.8b-precompiled-c-rebuild]** Plan 91.8b renamed `str @eq → @equal` in core.nv but did NOT regenerate precompiled std/collections/*.c files. `Nova_str_method_eq` is still referenced in vec_seq.c/set.c/hashmap.c → CC-FAIL in pos_equal_dispatch + pos_str_equal (plan91_8b). Fix: rebuild std precompiled .c files after `str @eq → @equal` rename, or regenerate them via `nova build-std`. Priority: H.
+- **[M-91.8b-precompiled-c-rebuild]** ✅ CLOSED (Plan 91.15, 2026-06-17) — plan91_8b 6/6 PASS.
+- **[M-91.15-hashmap-precompiled-eq]** `std/collections/hashmap.c` (precompiled) still uses `k.eq(key)` struct-member syntax instead of `Nova_str_method_equal`. CC-FAIL on map_literals tests with str keys. Fix: regenerate hashmap.c via `nova build-std` after Plan 91.8b @eq→@equal rename. Priority: M.
+
+---
+
+## Plan 91.15 — std API tuning
+
+- **[M-91.10-remove-needs-caps-field]** ✅ CLOSED (Plan 91.15 Ф.5, 2026-06-17) — FnDecl.needs_caps removed from AST.
+- **[M-91.14-option-result-debug]** ✅ CLOSED (Plan 91.15 Ф.2, 2026-06-17) — Option/Result @debug work via DeclaredBody interp dispatch.
+- **[M-91.14-derive-debug]** ✅ CLOSED (Plan 91.15 Ф.3, 2026-06-17) — `#impl(Debug)` auto-derive works for record types. known-limit: checker does not validate field Debug bounds at synthesis time.

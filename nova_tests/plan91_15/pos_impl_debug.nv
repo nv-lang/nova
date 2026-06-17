@@ -1,0 +1,22 @@
+module plan91_15.pos_impl_debug
+
+#impl(Debug)
+type Point { x int, y int }
+
+#impl(Debug)
+type Named { name str, score int }
+
+test "Point debug" {
+    ro p = Point { x: 1, y: 2 }
+    assert("${p:?}" == "Point { x: 1, y: 2 }")
+}
+
+test "Point debug zero" {
+    ro p = Point { x: 0, y: 0 }
+    assert("${p:?}" == "Point { x: 0, y: 0 }")
+}
+
+test "Named debug with str field" {
+    ro n = Named { name: "hello", score: 42 }
+    assert("${n:?}" == "Named { name: \"hello\", score: 42 }")
+}
