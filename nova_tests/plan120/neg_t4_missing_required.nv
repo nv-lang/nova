@@ -1,0 +1,11 @@
+// Plan 120 (D215 amend): negative — required field (no default) must be provided.
+// EXPECT_COMPILE_ERROR E_TUPLE_CONSTRUCT_ARITY_MISMATCH
+
+module plan120.neg_t4_missing_required
+
+type Rect(x f64, y f64, width f64 = 100.0, height f64 = 50.0)
+
+test "missing required field is a compile error" {
+    ro r = Rect(x: 1.0)    // y is required, no default
+    assert(r.x == 1.0)
+}

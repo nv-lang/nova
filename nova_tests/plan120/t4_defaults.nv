@@ -1,0 +1,63 @@
+// Plan 120 (D215 amend): T4 — named tuple fields with default values.
+
+module plan120.t4_defaults
+
+// Simple type with all-default fields
+type Complex(re f64 = 0.0, im f64 = 0.0)
+
+// Mixed: some fields have defaults, some don't
+type Rect(x f64, y f64, width f64 = 100.0, height f64 = 50.0)
+
+// Default referencing a module-level constant
+const DEFAULT_SCALE f64 = 1.0
+type Transform(tx f64 = 0.0, ty f64 = 0.0, scale f64 = DEFAULT_SCALE)
+
+test "all defaults omitted" {
+    ro z = Complex()
+    assert(z.re == 0.0)
+    assert(z.im == 0.0)
+}
+
+test "partial override: re only" {
+    ro z = Complex(re: 3.0)
+    assert(z.re == 3.0)
+    assert(z.im == 0.0)
+}
+
+test "partial override: im only" {
+    ro z = Complex(im: 2.0)
+    assert(z.re == 0.0)
+    assert(z.im == 2.0)
+}
+
+test "all fields provided" {
+    ro z = Complex(re: 1.0, im: 2.0)
+    assert(z.re == 1.0)
+    assert(z.im == 2.0)
+}
+
+test "mixed required and default: all defaults omitted" {
+    ro r = Rect(x: 10.0, y: 20.0)
+    assert(r.x == 10.0)
+    assert(r.y == 20.0)
+    assert(r.width == 100.0)
+    assert(r.height == 50.0)
+}
+
+test "mixed required and default: override width" {
+    ro r = Rect(x: 0.0, y: 0.0, width: 200.0)
+    assert(r.width == 200.0)
+    assert(r.height == 50.0)
+}
+
+test "default references module-level const" {
+    ro t = Transform()
+    assert(t.scale == 1.0)
+    assert(t.tx == 0.0)
+}
+
+test "default const override" {
+    ro t = Transform(scale: 2.5)
+    assert(t.scale == 2.5)
+    assert(t.tx == 0.0)
+}
