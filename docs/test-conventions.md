@@ -106,8 +106,10 @@ Nova поддерживает два равноправных места для 
 
 | Место | Что тестирует | Как запускать |
 |---|---|---|
-| `std/**/*.nv` (inline) | Внутренние инварианты модуля, приватные детали реализации | `nova test --include-stdlib` |
+| `std/**/*.nv` (inline) | Внутренние инварианты модуля, приватные детали реализации | `nova test std` (только std) или `nova test --include-stdlib` (std + nova_tests вместе) |
 | `nova_tests/<тема>/` | Публичный контракт снаружи, интеграция с другими модулями | `nova test` |
+
+`nova test std` и `nova test --include-stdlib` — **не одно и то же**: первый запускает только `std/` как tests_dir; второй запускает `nova_tests/` + `std/` вместе. Для проверки inline std-тестов в изоляции используй `nova test std`.
 
 **Inline тесты в std** — предпочтительный способ для unit-тестов самого модуля. `test "..."` блоки живут рядом с реализацией, не дрейфуют, могут тестировать приватные детали. Module path файла не меняется (`module collections.hashmap`). Пример: `std/collections/hashmap.nv`, `std/time/duration.nv`.
 
