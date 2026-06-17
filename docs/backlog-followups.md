@@ -24,3 +24,16 @@ referenced from plan docs and simplifications.md.
   correctly promote the parent tuple. Verify and extend escape_analyze.rs if needed.
   Priority: M.
 
+
+---
+
+## D215 amend — Named tuple field defaults
+
+- **[M-D215-defaults-handler-lambda-type]** `infer_handler_interrupt_ty` не может вывести тип
+  lambda-параметра `e` в паттерне `with Fail[E] = |e| interrupt Some(e) { ... None }`.
+  Корень: `infer_expr_c_type(Lambda(...))` не знает тип `e` без binding annotation или
+  type-propagation от `Fail[E]` окружающего контекста. Следствие: `Some(e)` → `NovaOpt_nova_int`
+  вместо `NovaOpt_ParseComplexError` → match на `Option[ParseComplexError]` падает.
+  Тест в `std/_experimental/math/complex.nv` закомментирован.
+  Fix: propagate Fail-binding type через context при выводе типа handler-lambda параметров.
+  Priority: M (нужен для любого non-trivial Fail-bound error handler).
