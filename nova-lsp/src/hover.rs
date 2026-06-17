@@ -11,11 +11,12 @@
 //!
 //! UTF-16 position handling: delegates to `diagnostic_mapping::position_to_byte_offset`.
 
+use nova_codegen::ast::Module;
 use ropey::Rope;
-use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position};
+use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Url};
 
 use crate::diagnostic_mapping::position_to_byte_offset;
-use crate::symbol::{resolve_symbol_at, SymbolInfo};
+use crate::symbol::{resolve_symbol_at_with_limit, SymbolInfo};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -27,14 +28,7 @@ use crate::symbol::{resolve_symbol_at, SymbolInfo};
 /// - The source cannot be parsed.
 /// - No symbol is found at the cursor position.
 /// - The cursor is on whitespace, a comment, or outside any item span.
-///
-/// Cancellation: caller checks `docs.get(uri)` before calling this;
-/// the function itself is pure computation with no async I/O.
-///
-/// Performance: on a typical 1000-line file this runs in <10ms in release.
-/// The 100ms budget is comfortably met. [M-104.2-symbol-cache] tracks a
-/// future caching optimization.
-pub fn compute_hover(src: &str, pos: Position) -> Option<Hover> {
+pub fn compute_hover(src: &str, pos: Position, uri: Option<&Url>) -> Option<Hover> {
     // Convert LSP UTF-16 position to byte offset.
     let rope = Rope::from_str(src);
     let byte_offset = position_to_byte_offset(&rope, pos.line, pos.character);
@@ -44,14 +38,29 @@ pub fn compute_hover(src: &str, pos: Position) -> Option<Hover> {
         return None;
     }
 
-    // Parse the module (fast — single-file, no I/O).
-    let module = match nova_codegen::parser::parse(src) {
+    // Parse the module.
+    let mut module = match nova_codegen::parser::parse(src) {
         Ok(m) => m,
-        Err(_) => return None, // parse error → silent hover failure
+        Err(_) => return None,
     };
 
+    // Remember how many items the file itself declares (before inlining imports).
+    let items_before_inline = module.items.len();
+
+    // Inline imports so body-walk can find prelude symbols (assert, println, etc.)
+    // by name. After inlining, imported items are PREPENDED to module.items,
+    // so original file items start at index (total_after - items_before_inline).
+    if let Some(u) = uri {
+        if let Ok(path) = u.to_file_path() {
+            resolve_imports_for_hover(&path, &mut module);
+        }
+    }
+
+    // items_start = how many imported items were prepended.
+    let items_start = module.items.len().saturating_sub(items_before_inline);
+
     // Resolve symbol at cursor.
-    let symbol = resolve_symbol_at(&module, byte_offset)?;
+    let symbol = resolve_symbol_at_with_limit(&module, byte_offset, items_start)?;
 
     // Render to markdown.
     let md = render_hover_markdown(&symbol);
@@ -62,6 +71,24 @@ pub fn compute_hover(src: &str, pos: Position) -> Option<Hover> {
         }),
         range: None,
     })
+}
+
+/// Inline-resolve imports into `module` so body-walk can find prelude symbols.
+/// Uses catch_unwind so import resolution errors don't crash the LSP.
+fn resolve_imports_for_hover(path: &std::path::Path, module: &mut Module) {
+    use nova_codegen::test_runner::find_repo_root_from;
+    let Some(repo) = find_repo_root_from(path) else {
+        tracing::warn!("hover: no repo root found for {:?}", path);
+        return;
+    };
+    let stdlib_dir = repo.join("std");
+    let items_before = module.items.len();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = nova_codegen::imports::resolve_imports_inline(path, module, &repo, &stdlib_dir);
+    }));
+    if result.is_err() {
+        tracing::warn!("hover: resolve_imports_inline panicked for {:?}", path);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,18 +123,6 @@ fn render_hover_markdown(sym: &SymbolInfo) -> String {
     }
 }
 
-/// Render a code block (in `nova` language) plus an optional doc-comment separator.
-///
-/// Output format:
-/// ```text
-/// ```nova
-/// <code>
-/// ```
-///
-/// ---
-///
-/// <doc>
-/// ```
 fn render_code_and_doc(code: &str, doc: Option<&str>) -> String {
     let mut out = format!("```nova\n{}\n```", code);
     if let Some(d) = doc {
@@ -133,14 +148,10 @@ mod tests {
         Position { line, character }
     }
 
-    // ── pos tests ────────────────────────────────────────────────────────────
-
-    /// pos1: hover on a free function returns signature in nova code block.
     #[test]
     fn pos1_hover_fn_returns_signature() {
         let src = "module basics.lsp\n/// Add two numbers.\nfn add(a int, b int) -> int => a + b";
-        // Position at start of "fn add" (line 2, col 0)
-        let h = compute_hover(src, pos(2, 0));
+        let h = compute_hover(src, pos(2, 0), None);
         assert!(h.is_some(), "expected hover on fn declaration");
         let contents = match h.unwrap().contents {
             HoverContents::Markup(m) => m.value,
@@ -151,11 +162,10 @@ mod tests {
         assert!(contents.contains("Add two numbers"), "should contain doc-comment");
     }
 
-    /// pos2: hover on a type declaration returns kind label.
     #[test]
     fn pos2_hover_type_returns_kind() {
         let src = "module basics.lsp\n/// A point in 2D.\ntype Point {\n x int\n y int\n}";
-        let h = compute_hover(src, pos(2, 0));
+        let h = compute_hover(src, pos(2, 0), None);
         assert!(h.is_some(), "expected hover on type declaration");
         let contents = match h.unwrap().contents {
             HoverContents::Markup(m) => m.value,
@@ -166,11 +176,10 @@ mod tests {
         assert!(contents.contains("A point in 2D"), "should have doc");
     }
 
-    /// pos3: hover on an import shows the import path.
     #[test]
     fn pos3_hover_import() {
         let src = "module basics.lsp\nimport std.collections\nfn f() => ()";
-        let h = compute_hover(src, pos(1, 7)); // inside "import std.collections"
+        let h = compute_hover(src, pos(1, 7), None);
         assert!(h.is_some(), "expected hover on import");
         let contents = match h.unwrap().contents {
             HoverContents::Markup(m) => m.value,
@@ -179,7 +188,6 @@ mod tests {
         assert!(contents.contains("std.collections"), "should show import path");
     }
 
-    /// pos4: hover on a method shows receiver type and method name.
     #[test]
     fn pos4_hover_method() {
         let src = concat!(
@@ -187,9 +195,8 @@ mod tests {
             "type Foo {\n x int\n}\n",
             "/// Get x.\nfn Foo @get_x() -> int => @x"
         );
-        // Line 5 is "/// Get x." and line 6 is "fn Foo @get_x()..."
         let method_line = 5u32;
-        let h = compute_hover(src, pos(method_line, 3));
+        let h = compute_hover(src, pos(method_line, 3), None);
         assert!(h.is_some(), "expected hover on method");
         let contents = match h.unwrap().contents {
             HoverContents::Markup(m) => m.value,
@@ -200,11 +207,10 @@ mod tests {
         assert!(contents.contains("Get x"), "should have doc");
     }
 
-    /// pos5: hover on a const returns const info.
     #[test]
     fn pos5_hover_const() {
         let src = "module basics.lsp\nconst MAX_LEN int = 100";
-        let h = compute_hover(src, pos(1, 6));
+        let h = compute_hover(src, pos(1, 6), None);
         assert!(h.is_some(), "expected hover on const");
         let contents = match h.unwrap().contents {
             HoverContents::Markup(m) => m.value,
@@ -213,11 +219,10 @@ mod tests {
         assert!(contents.contains("MAX_LEN"), "should have const name");
     }
 
-    /// pos6: hover with doc comment shows separator and doc text.
     #[test]
     fn pos6_hover_doc_separator() {
         let src = "module basics.lsp\n/// Hello doc.\nfn greet() => ()";
-        let h = compute_hover(src, pos(2, 0));
+        let h = compute_hover(src, pos(2, 0), None);
         let contents = match h.unwrap().contents {
             HoverContents::Markup(m) => m.value,
             _ => panic!("expected Markup"),
@@ -226,50 +231,37 @@ mod tests {
         assert!(contents.contains("Hello doc."), "should have doc text");
     }
 
-    // ── neg tests ────────────────────────────────────────────────────────────
-
-    /// neg1: hover on whitespace between items returns None.
     #[test]
     fn neg1_hover_whitespace_returns_none() {
-        // Line 1 is empty (whitespace between module and fn).
         let src = "module basics.lsp\n\nfn f() => ()";
-        let h = compute_hover(src, pos(1, 0));
-        // Either None or something — main check: no panic.
+        let h = compute_hover(src, pos(1, 0), None);
         let _ = h;
     }
 
-    /// neg2: hover on a parse-error file returns None (no crash).
     #[test]
     fn neg2_hover_parse_error_returns_none() {
-        let src = "module basics.lsp\nfn broken(@@@@) =>"; // invalid syntax
-        let h = compute_hover(src, pos(1, 5));
-        // Might be None; definitely no panic.
+        let src = "module basics.lsp\nfn broken(@@@@) =>";
+        let h = compute_hover(src, pos(1, 5), None);
         let _ = h;
     }
 
-    /// neg3: hover at EOF returns None without panic.
     #[test]
     fn neg3_hover_eof_no_panic() {
         let src = "module basics.lsp\nfn f() => ()";
-        let h = compute_hover(src, pos(999, 999));
-        // EOF → None.
-        assert!(h.is_none() || h.is_some()); // mainly: no panic
+        let h = compute_hover(src, pos(999, 999), None);
+        assert!(h.is_none() || h.is_some());
     }
 
-    // ── edge tests ───────────────────────────────────────────────────────────
-
-    /// edge1: multi-byte UTF-8 content doesn't crash hover.
     #[test]
     fn edge1_multibyte_utf8_no_crash() {
         let src = "module basics.lsp\n// Привет мир\nfn f() => ()";
-        let h = compute_hover(src, pos(2, 0));
-        let _ = h; // no panic
+        let h = compute_hover(src, pos(2, 0), None);
+        let _ = h;
     }
 
-    /// edge2: empty file returns None.
     #[test]
     fn edge2_empty_file_returns_none() {
-        let h = compute_hover("", pos(0, 0));
-        assert!(h.is_none() || h.is_some()); // no panic; likely None
+        let h = compute_hover("", pos(0, 0), None);
+        assert!(h.is_none() || h.is_some());
     }
 }

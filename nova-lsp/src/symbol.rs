@@ -7,8 +7,9 @@
 //! (deferred to Plan 104.4 / [M-104.2-cross-file-goto]).
 
 use nova_codegen::ast::{
-    FnDecl, Item, Module, Param, Pattern, Receiver, ReceiverKind,
-    TypeDeclKind, TypeRef,
+    Block, Expr, ExprKind, FnBody, FnDecl, Item, MatchArmBody,
+    Module, Param, Pattern, Receiver, ReceiverKind,
+    Stmt, TypeDeclKind, TypeRef,
 };
 use nova_codegen::diag::Span;
 
@@ -269,6 +270,23 @@ fn pattern_name(p: &Pattern) -> Option<&str> {
 ///
 /// [M-104.2-local-var-resolution]: local variable types via body walk — V2.
 pub fn resolve_symbol_at(module: &Module, byte_offset: usize) -> Option<SymbolInfo> {
+    // No inlining: all items are original, so items_start = 0 (skip nothing).
+    resolve_symbol_at_with_limit(module, byte_offset, 0)
+}
+
+/// Resolve a symbol at `byte_offset` in `module`.
+///
+/// After `resolve_imports_inline`, imported items are **prepended** to
+/// `module.items` (see imports.rs line ~829: `new_items.append(&mut module.items)`).
+/// So the original file's items start at index `items_start` (= number of
+/// imported items inserted), not at 0.
+///
+/// - Span-match is restricted to `module.items[items_start..]` (original items
+///   only — inlined items have spans from other files).
+/// - Body-walk is also restricted to `items[items_start..]`.
+/// - Name lookup (to resolve the found ident) searches ALL items so prelude
+///   symbols like `assert` are found.
+pub fn resolve_symbol_at_with_limit(module: &Module, byte_offset: usize, items_start: usize) -> Option<SymbolInfo> {
     // Check imports first (they appear early in the file).
     for import in &module.imports {
         if span_contains(import.span, byte_offset) {
@@ -280,9 +298,17 @@ pub fn resolve_symbol_at(module: &Module, byte_offset: usize) -> Option<SymbolIn
         }
     }
 
-    // Walk top-level items.
-    for item in &module.items {
+    // Span-match only original items (not inlined ones that have foreign spans).
+    for item in module.items.iter().skip(items_start) {
         if let Some(info) = resolve_item(item, byte_offset) {
+            return Some(info);
+        }
+    }
+
+    // Fallback: body-walk original items to find ident name at cursor,
+    // then look it up by name across ALL items (including inlined prelude).
+    if let Some(ident_name) = find_ident_in_bodies_from(module, byte_offset, items_start) {
+        if let Some(info) = lookup_decl_by_name(module, &ident_name) {
             return Some(info);
         }
     }
@@ -363,6 +389,269 @@ fn resolve_item(item: &Item, byte_offset: usize) -> Option<SymbolInfo> {
         }
         Item::Test(_) | Item::Bench(_) | Item::Lemma(_) => None,
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Body walker — find identifier name at byte offset inside fn/test bodies
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Try to find the ident/Path name at `offset` inside any fn/test body in `module`.
+/// Returns the name string if found, or None.
+pub fn find_ident_in_bodies(module: &Module, offset: usize) -> Option<String> {
+    find_ident_in_bodies_from(module, offset, 0)
+}
+
+/// Walk only `module.items[items_start..]` (original file items, skipping inlined imports).
+pub fn find_ident_in_bodies_from(module: &Module, offset: usize, items_start: usize) -> Option<String> {
+    for item in module.items.iter().skip(items_start) {
+        match item {
+            Item::Fn(fd) => {
+                if !span_contains(fd.span, offset) {
+                    continue;
+                }
+                if let Some(name) = find_ident_in_fn_body(fd, offset) {
+                    return Some(name);
+                }
+            }
+            Item::Test(td) => {
+                if span_contains(td.span, offset) {
+                    if let Some(name) = find_ident_in_block(&td.body, offset) {
+                        return Some(name);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_ident_in_fn_body(fd: &FnDecl, offset: usize) -> Option<String> {
+    match &fd.body {
+        FnBody::Block(block) => find_ident_in_block(block, offset),
+        FnBody::Expr(e) => find_ident_in_expr(e, offset),
+        FnBody::External => None,
+    }
+}
+
+fn find_ident_in_block(block: &Block, offset: usize) -> Option<String> {
+    for stmt in &block.stmts {
+        if let Some(n) = find_ident_in_stmt(stmt, offset) {
+            return Some(n);
+        }
+    }
+    if let Some(trailing) = &block.trailing {
+        find_ident_in_expr(trailing.as_ref(), offset)
+    } else {
+        None
+    }
+}
+
+fn find_ident_in_stmt(stmt: &Stmt, offset: usize) -> Option<String> {
+    match stmt {
+        Stmt::Let(ld) => find_ident_in_expr(&ld.value, offset),
+        Stmt::Const(cd) => find_ident_in_expr(&cd.value, offset),
+        Stmt::Expr(e) => find_ident_in_expr(e, offset),
+        Stmt::Assign { target, value, .. } => {
+            find_ident_in_expr(target, offset)
+                .or_else(|| find_ident_in_expr(value, offset))
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().find_map(|e| find_ident_in_expr(e, offset))
+                .or_else(|| rhs.iter().find_map(|e| find_ident_in_expr(e, offset)))
+        }
+        Stmt::Return { value, .. } => {
+            value.as_ref().and_then(|e| find_ident_in_expr(e, offset))
+        }
+        Stmt::Throw { value, .. } => find_ident_in_expr(value, offset),
+        Stmt::Defer { body, .. }
+        | Stmt::ErrDefer { body, .. }
+        | Stmt::OkDefer { body, .. } => find_ident_in_expr(body, offset),
+        Stmt::DeferWithResult { body, .. } => find_ident_in_expr(body, offset),
+        Stmt::ConsumeScope { init, body, .. } => {
+            find_ident_in_expr(init, offset)
+                .or_else(|| find_ident_in_block(body, offset))
+        }
+        Stmt::AssertStatic { expr, .. }
+        | Stmt::Assume { expr, .. } => find_ident_in_expr(expr, offset),
+        Stmt::Apply { args, .. } => args.iter().find_map(|a| find_ident_in_expr(a, offset)),
+        Stmt::Calc { steps, .. } => steps.iter().find_map(|s| {
+            find_ident_in_expr(&s.expr, offset)
+        }),
+        Stmt::Break(_) | Stmt::Continue(_) => None,
+        _ => None,
+    }
+}
+
+fn find_ident_in_expr(expr: &Expr, offset: usize) -> Option<String> {
+    if !span_contains(expr.span, offset) {
+        return None;
+    }
+    match &expr.kind {
+        ExprKind::Ident(name) => Some(name.clone()),
+        ExprKind::Path(parts) => Some(parts.last()?.clone()),
+        ExprKind::Call { func, args, .. } => {
+            find_ident_in_expr(func, offset)
+                .or_else(|| args.iter().find_map(|a| find_ident_in_expr(a.expr(), offset)))
+        }
+        ExprKind::Member { obj, .. } => find_ident_in_expr(obj, offset),
+        ExprKind::Index { obj, index } => {
+            find_ident_in_expr(obj, offset)
+                .or_else(|| find_ident_in_expr(index, offset))
+        }
+        ExprKind::Binary { left, right, .. } => {
+            find_ident_in_expr(left, offset)
+                .or_else(|| find_ident_in_expr(right, offset))
+        }
+        ExprKind::Unary { operand, .. } => find_ident_in_expr(operand, offset),
+        ExprKind::If { cond, then, else_, .. } => {
+            find_ident_in_expr(cond, offset)
+                .or_else(|| find_ident_in_block(then, offset))
+                .or_else(|| else_.as_ref().and_then(|e| match e {
+                    nova_codegen::ast::ElseBranch::Block(b) => find_ident_in_block(b, offset),
+                    nova_codegen::ast::ElseBranch::If(expr) => find_ident_in_expr(expr, offset),
+                }))
+        }
+        ExprKind::IfLet { scrutinee, then, else_, guard, .. } => {
+            find_ident_in_expr(scrutinee, offset)
+                .or_else(|| guard.as_ref().and_then(|g| find_ident_in_expr(g, offset)))
+                .or_else(|| find_ident_in_block(then, offset))
+                .or_else(|| else_.as_ref().and_then(|e| match e {
+                    nova_codegen::ast::ElseBranch::Block(b) => find_ident_in_block(b, offset),
+                    nova_codegen::ast::ElseBranch::If(expr) => find_ident_in_expr(expr, offset),
+                }))
+        }
+        ExprKind::While { cond, body, .. } => {
+            find_ident_in_expr(cond, offset)
+                .or_else(|| find_ident_in_block(body, offset))
+        }
+        ExprKind::For { iter, body, .. } => {
+            find_ident_in_expr(iter, offset)
+                .or_else(|| find_ident_in_block(body, offset))
+        }
+        ExprKind::Block(block) => find_ident_in_block(block, offset),
+        ExprKind::Match { scrutinee, arms, .. } => {
+            find_ident_in_expr(scrutinee, offset)
+                .or_else(|| arms.iter().find_map(|arm| {
+                    arm.guard.as_ref().and_then(|g| find_ident_in_expr(g, offset))
+                        .or_else(|| match &arm.body {
+                            MatchArmBody::Expr(e) => find_ident_in_expr(e, offset),
+                            MatchArmBody::Block(b) => find_ident_in_block(b, offset),
+                        })
+                }))
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            fields.iter().find_map(|f| {
+                f.value.as_ref().and_then(|v| find_ident_in_expr(v, offset))
+            })
+        }
+        ExprKind::ArrayLit(elems) => {
+            elems.iter().find_map(|e| match e {
+                nova_codegen::ast::ArrayElem::Item(expr) => find_ident_in_expr(expr, offset),
+                nova_codegen::ast::ArrayElem::Spread(expr) => find_ident_in_expr(expr, offset),
+            })
+        }
+        ExprKind::TupleLit(elems) => {
+            elems.iter().find_map(|e| find_ident_in_expr(e, offset))
+        }
+        ExprKind::ClosureLight { body, .. } => match body {
+            nova_codegen::ast::ClosureBody::Expr(e) => find_ident_in_expr(e, offset),
+            nova_codegen::ast::ClosureBody::Block(b) => find_ident_in_block(b, offset),
+        },
+        ExprKind::ClosureFull(sig_body) => match &sig_body.body {
+            FnBody::Block(b) => find_ident_in_block(b, offset),
+            FnBody::Expr(e) => find_ident_in_expr(e, offset),
+            FnBody::External => None,
+        },
+        ExprKind::TurboFish { base, .. } => find_ident_in_expr(base, offset),
+        ExprKind::WhileLet { scrutinee, body, guard, .. } => {
+            find_ident_in_expr(scrutinee, offset)
+                .or_else(|| guard.as_ref().and_then(|g| find_ident_in_expr(g, offset)))
+                .or_else(|| find_ident_in_block(body, offset))
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Blocking(body) => find_ident_in_block(body, offset),
+        ExprKind::Supervised { body, cancel, .. } => {
+            find_ident_in_block(body, offset)
+                .or_else(|| cancel.as_ref().and_then(|c| find_ident_in_expr(c, offset)))
+        }
+        ExprKind::Forall { range, body, .. } => {
+            find_ident_in_expr(range, offset)
+                .or_else(|| find_ident_in_expr(body, offset))
+        }
+        ExprKind::Try(inner) | ExprKind::Bang(inner) => find_ident_in_expr(inner, offset),
+        ExprKind::Spawn(inner) | ExprKind::Throw(inner) => find_ident_in_expr(inner, offset),
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => find_ident_in_expr(inner, offset),
+        ExprKind::Coalesce(a, b) => {
+            find_ident_in_expr(a, offset).or_else(|| find_ident_in_expr(b, offset))
+        }
+        ExprKind::Range { start, end, .. } => {
+            start.as_ref().and_then(|e| find_ident_in_expr(e, offset))
+                .or_else(|| end.as_ref().and_then(|e| find_ident_in_expr(e, offset)))
+        }
+        ExprKind::Exists { range, body, .. } => {
+            find_ident_in_expr(range, offset).or_else(|| find_ident_in_expr(body, offset))
+        }
+        _ => None,
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lookup by name (for hover fallback + signature help)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Look up a declaration by name in `module` items. Returns the first match.
+/// Used as a fallback when body-walk finds an ident name but no span matches.
+pub fn lookup_decl_by_name(module: &Module, name: &str) -> Option<SymbolInfo> {
+    for item in &module.items {
+        match item {
+            Item::Fn(fd) if fd.name == name => {
+                return Some(match &fd.receiver {
+                    None => SymbolInfo::FnDecl {
+                        name: fd.name.clone(),
+                        signature: format_fn_signature(fd),
+                        doc: extract_doc(&fd.doc),
+                        span: fd.span,
+                    },
+                    Some(recv) => SymbolInfo::MethodDecl {
+                        receiver_type: format_receiver_type(recv),
+                        name: fd.name.clone(),
+                        signature: format_method_signature(fd, recv),
+                        doc: extract_doc(&fd.doc),
+                        span: fd.span,
+                    },
+                });
+            }
+            Item::Type(td) if td.name == name => {
+                let kind_label = match &td.kind {
+                    TypeDeclKind::Record(_) => "record",
+                    TypeDeclKind::Sum(_) => "sum",
+                    TypeDeclKind::Effect(_) => "effect",
+                    TypeDeclKind::Protocol { .. } => "protocol",
+                    TypeDeclKind::Newtype(_) => "newtype",
+                    TypeDeclKind::Alias(_) => "alias",
+                    TypeDeclKind::NamedTuple(_) => "named-tuple",
+                    TypeDeclKind::Opaque => "opaque",
+                };
+                return Some(SymbolInfo::TypeDecl {
+                    name: td.name.clone(),
+                    kind_label: kind_label.to_string(),
+                    doc: extract_doc(&td.doc),
+                    span: td.span,
+                });
+            }
+            Item::Const(cd) if cd.name == name => {
+                let ty_text = cd.ty.as_ref().map(format_type_ref).unwrap_or_else(|| "_".to_string());
+                return Some(SymbolInfo::ConstDecl {
+                    name: cd.name.clone(),
+                    ty_text,
+                    span: cd.span,
+                    doc: extract_doc(&cd.doc),
+                });
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

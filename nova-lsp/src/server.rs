@@ -893,13 +893,27 @@ impl LanguageServer for Backend {
 
         // Plan 104.2: primary symbol hover.
         let src2 = src.clone();
-        let symbol_hover = run_with_large_stack(move || compute_hover(&src2, pos));
+        let uri2 = uri.clone();
+        let symbol_hover = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_large_stack(move || compute_hover(&src2, pos, Some(&uri2)))
+        })) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::warn!("hover panicked: {:?}", e.downcast_ref::<&str>().unwrap_or(&"?"));
+                None
+            }
+        };
         if symbol_hover.is_some() {
             return Ok(symbol_hover);
         }
 
         // Plan 123.5.1 fallback: field-cache hover for @field accesses.
-        let field_hover = run_with_large_stack(move || compute_field_cache_hover(&src, pos));
+        let field_hover = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_large_stack(move || compute_field_cache_hover(&src, pos))
+        })) {
+            Ok(h) => h,
+            Err(_) => None,
+        };
         Ok(field_hover)
     }
 
