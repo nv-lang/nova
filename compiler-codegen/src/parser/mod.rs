@@ -3116,11 +3116,9 @@ impl Parser {
         }
 
         // Plan 91.10 (D163 RETRACTED 2026-05-30): `needs <Cap>` clause удалён.
-        // Capability tracking via отдельный syntax — redundant с effect system
-        // (Plan 33). Если в будущем нужен capability gating — использовать
-        // formal effect declarations (`type Fs effect { ... }`) с handler'ами.
-        // Parser отвергает `needs <Cap>` hard-error'ом с migration hint.
-        let needs_caps: Vec<String> = if is_external {
+        // Plan 91.15 Ф.5: needs_caps field removed from AST — hard-error on
+        // `needs <Cap>` syntax retained so existing .nv files get a clear message.
+        if is_external {
             let saved_pos = self.pos;
             self.skip_newlines();
             if matches!(&self.peek().kind, TokenKind::Ident(n) if n == "needs") {
@@ -3137,13 +3135,8 @@ impl Parser {
                     needs_span,
                 ));
             }
-            // Not a needs clause — restore position. needs_caps всегда empty
-            // (поле сохранено в AST для backward-compat — удаление followup).
             self.pos = saved_pos;
-            vec![]
-        } else {
-            vec![]
-        };
+        }
 
         // Тело: `=> expr` или `{ block }`. Для `external fn` — тело
         // отсутствует (D82); следующий токен должен быть Newline/Eof.
@@ -3213,8 +3206,6 @@ impl Parser {
             fuel: contract_attrs.fuel,
             no_overflow: contract_attrs.no_overflow,
             sync_class: contract_attrs.sync_class,
-            // Plan 100.5 (D163): capability requirements for external fn.
-            needs_caps,
             // Plan 118.1.7 (D2 amend): `unsafe fn` keyword syntax. unsafe_attr
             // is set via contract_attrs.unsafe_attr by parse_item when `unsafe`
             // keyword is consumed before `fn`. Type-checker enforcement
