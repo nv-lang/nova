@@ -7,7 +7,7 @@
 //! (deferred to Plan 104.4 / [M-104.2-cross-file-goto]).
 
 use nova_codegen::ast::{
-    FnDecl, Item, Module, Param, Pattern, Receiver, ReceiverKind,
+    FnDecl, Item, Module, NamedTupleField, Param, Pattern, Receiver, ReceiverKind,
     TypeDeclKind, TypeRef,
 };
 use nova_codegen::diag::Span;
@@ -41,6 +41,8 @@ pub enum SymbolInfo {
         name: String,
         /// Kind label: "record", "sum", "protocol", "effect", "newtype", "alias", …
         kind_label: String,
+        /// Full signature for types that benefit from it (e.g. named tuples show fields).
+        signature: Option<String>,
         doc: Option<String>,
         span: Span,
     },
@@ -136,6 +138,27 @@ pub fn format_type_ref(ty: &TypeRef) -> String {
             format!("protocol {{ {} method(s) }}", methods.len())
         }
     }
+}
+
+/// Format a named tuple type as its full Nova declaration signature.
+///
+/// Fields with defaults show `= …` placeholder since AST `Expr` doesn't
+/// have a lossless source-text representation in the LSP layer.
+///
+/// Example: `type Complex(re f64 = …, im f64 = …)`
+fn format_named_tuple_sig(name: &str, fields: &[NamedTupleField]) -> String {
+    let parts: Vec<String> = fields
+        .iter()
+        .map(|f| {
+            let ty = format_type_ref(&f.ty);
+            if f.default.is_some() {
+                format!("{} {} = …", f.name, ty)
+            } else {
+                format!("{} {}", f.name, ty)
+            }
+        })
+        .collect();
+    format!("type {}({})", name, parts.join(", "))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -316,19 +339,22 @@ fn resolve_item(item: &Item, byte_offset: usize) -> Option<SymbolInfo> {
             if !span_contains(td.span, byte_offset) {
                 return None;
             }
-            let kind_label = match &td.kind {
-                TypeDeclKind::Record(_) => "record",
-                TypeDeclKind::Sum(_) => "sum",
-                TypeDeclKind::Effect(_) => "effect",
-                TypeDeclKind::Protocol { .. } => "protocol",
-                TypeDeclKind::Newtype(_) => "newtype",
-                TypeDeclKind::Alias(_) => "alias",
-                TypeDeclKind::NamedTuple(_) => "named-tuple",
-                TypeDeclKind::Opaque => "opaque",
+            let (kind_label, signature) = match &td.kind {
+                TypeDeclKind::Record(_) => ("record", None),
+                TypeDeclKind::Sum(_) => ("sum", None),
+                TypeDeclKind::Effect(_) => ("effect", None),
+                TypeDeclKind::Protocol { .. } => ("protocol", None),
+                TypeDeclKind::Newtype(_) => ("newtype", None),
+                TypeDeclKind::Alias(_) => ("alias", None),
+                TypeDeclKind::NamedTuple(fields) => {
+                    ("named-tuple", Some(format_named_tuple_sig(&td.name, fields)))
+                }
+                TypeDeclKind::Opaque => ("opaque", None),
             };
             Some(SymbolInfo::TypeDecl {
                 name: td.name.clone(),
                 kind_label: kind_label.to_string(),
+                signature,
                 doc: extract_doc(&td.doc),
                 span: td.span,
             })

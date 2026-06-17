@@ -4150,8 +4150,17 @@ impl Parser {
             }
             let (name, _) = self.parse_ident()?;
             let ty = self.parse_type()?;
-            let span = field_start.merge(ty.span());
-            fields.push(NamedTupleField { name, ty, span, priv_field, priv_module_field: false, visible_to: Vec::new() });
+            // D215 amend: optional `= expr` default value for named tuple field.
+            // Parsed like function param defaults (D102 Plan 46).
+            let default = if matches!(self.peek().kind, TokenKind::Eq) {
+                self.bump(); // consume `=`
+                Some(self.with_no_struct_or_trailing(|p| p.parse_expr())?)
+            } else {
+                None
+            };
+            let span_end = default.as_ref().map(|e| e.span).unwrap_or_else(|| ty.span());
+            let span = field_start.merge(span_end);
+            fields.push(NamedTupleField { name, ty, span, priv_field, priv_module_field: false, visible_to: Vec::new(), default });
             // Plan 124.8 (D215 amend): allow trailing comma + multi-line.
             // After parsing field — expect either Comma or RParen.
             // If Comma: skip + skip_newlines → loop top will handle next

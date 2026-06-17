@@ -10778,6 +10778,91 @@ fields на **одной строке** без запятой (`type P value { x
 Это унифицирует поведение обеих форм и закрывает парсер-баг.
 Применяется к обоим видам record (heap `type X {}` и value `type X value {}`).
 
+### D215 amend — named tuple field defaults (2026-06-17)
+
+Поля named tuple могут иметь **значение по умолчанию** (default value):
+
+```nova
+type Complex(re f64 = 0.0, im f64 = 0.0)
+type Rect(x f64, y f64, width f64 = 100.0, height f64 = 50.0)
+const DEFAULT_SCALE f64 = 1.0
+type Transform(tx f64 = 0.0, ty f64 = 0.0, scale f64 = DEFAULT_SCALE)
+```
+
+Конструктор может опускать любое подмножество полей с дефолтами:
+
+```nova
+ro z  = Complex()               // re=0.0, im=0.0
+ro z2 = Complex(re: 3.0)        // im=0.0
+ro r  = Rect(x: 1.0, y: 2.0)   // width=100.0, height=50.0
+ro t  = Transform(scale: 2.5)   // tx=0.0, ty=0.0
+```
+
+#### Grammar (extends D215 original)
+
+```ebnf
+named_field  ::= IDENT type ("=" expr)?
+```
+
+До этого amend `named_field ::= IDENT type` — без optional default. Совместимость с существующим кодом: дефолты additive.
+
+#### Семантика
+
+- **Required field** (без `= expr`) — обязателен в каждом вызове конструктора.
+- **Optional field** (с `= expr`) — можно опустить; absent → default expression
+  инжектируется на call-site в declaration order.
+- Порядок полей в declaration не ограничен: required и optional могут чередоваться
+  (хотя рекомендуется ставить optional в конце).
+- Default expression вычисляется **на call-site** (не хранится и не кэшируется);
+  может ссылаться на module-level constants, literals, fn-calls.
+
+#### Arity check (amend E_TUPLE_CONSTRUCT_ARITY_MISMATCH)
+
+Проверка min/max arity вместо точного совпадения:
+
+- `min_arity` = количество required-полей (без дефолта)
+- `max_arity` = общее количество полей
+- Provided-field count ∉ [min_arity, max_arity] → `E_TUPLE_CONSTRUCT_ARITY_MISMATCH`
+
+#### AST (compiler-codegen/src/ast/mod.rs)
+
+```rust
+pub struct NamedTupleField {
+    pub name: Ident,
+    pub ty:   TypeRef,
+    pub default: Option<Box<Expr>>,   // NEW
+}
+```
+
+#### Checker (types/mod.rs)
+
+`named_tuple_field_defaults: HashMap<String, Vec<(String, Expr)>>` —
+ключ = bare type name, value = список `(field_name, default_expr)`.
+Заполняется в step 1 (type-decl scan).
+При вызове конструктора — missing optional полей → default expr инжектируется
+в reconstructed arg list.
+
+#### Codegen (emit_c.rs)
+
+Default expressions инжектируются на call-site в `emit_tuple_construct`.
+C-struct initializer включает все поля в declaration order.
+
+#### Acceptance criteria
+
+| # | Критерий | Status |
+|---|---|---|
+| AC-1 | `type X(f T = expr)` принимается парсером | ✅ |
+| AC-2 | Mixed required+optional fields в одном типе | ✅ |
+| AC-3 | `X()` when all fields have defaults | ✅ |
+| AC-4 | Partial override `X(a: v)` — remaining defaults injected | ✅ |
+| AC-5 | Missing required field → E_TUPLE_CONSTRUCT_ARITY_MISMATCH | ✅ |
+| AC-6 | Default references module-level constant | ✅ |
+| AC-7 | `std/_experimental/math/complex.nv` migrated to named tuple | ✅ |
+| AC-8 | «без упрощений как для прода» — production-grade, no stubs | ✅ |
+| AC-9 | plan120 12/12 PASS (t4_defaults×8, t5_defaults_methods×4, neg_t4×1, neg_t5×1) | ✅ |
+
+Реализация: [Plan 120 D215-amend](../../docs/plans/120-named-tuples-and-allocation-contract.md#d215-amend--named-tuple-field-defaults-2026-06-17).
+
 ### D222 amend (Plan 124.8 Ф.1)
 
 «Named tuple priv» portion **retract**: `priv`/`pub` на tuple field —
