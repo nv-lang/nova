@@ -22,6 +22,7 @@
 | [D278](#d278-editor-syntax-highlighting-keyword-set-must-track-the-lexer) | Editor syntax-highlighting keyword set MUST track the lexer (conformance-тест) |
 | [D296](#d296--lsp-rename-atomicity-contract-plan-1046-2026-06-16) | LSP Rename Atomicity Contract — prepare/collect/atomic-check, WorkspaceEdit.documentChanges |
 | [D298](#d298--test-suite-time-budget) | Test-suite time budget — бюджет `nova test` + пороги переноса в `_slow` |
+| [D303](#d303--lsp-hover-inside-fn--test-bodies-items_start-pattern) | LSP hover inside fn/test bodies — `items_start` pattern, prepend semantics |
 
 ---
 
@@ -3237,3 +3238,73 @@ client capability. **Не** используется устаревший `chang
 - `nova-lsp/src/rename.rs` — реализация.
 - `nova-lsp/src/server.rs` — `prepare_rename` + `rename` handlers.
 - Plan 104.6 sub-plan file: `docs/plans/104.6-rename-format.md`.
+
+---
+
+## D303. LSP hover inside fn/test bodies — `items_start` pattern
+
+> **NEW (Plan 104.2 Ф.7, 2026-06-17)**
+
+### Проблема
+
+LSP hover не работал внутри тел функций и тестов: наведение на `assert`,
+`println`, вызовы prelude-функций — всегда возвращало `None`.
+
+Корневая причина — **semantics of `resolve_imports_inline`**:
+функция **prepend**-ает импортированные элементы в `module.items`, а не appended.
+Из-за этого оригинальные элементы файла смещаются: если файл объявлял N items,
+после inline-импортов они начинаются с индекса `items_start = total_after - N`.
+Старый код использовал `.take(original_len)` при поиске — он захватывал только
+импортированные элементы (с чужими file-spans), а не элементы исходного файла.
+
+### Решение: `items_start` pattern
+
+```
+items_before_inline = module.items.len()       // до inlining
+resolve_imports_for_hover(path, &mut module)   // prepend-ает импорты
+items_start = module.items.len() - items_before_inline  // сколько prepended
+```
+
+**Три правила:**
+
+1. **Span-match** (поиск по позиции курсора в file-spans): обходить только
+   `module.items[items_start..]` (оригинальные элементы файла). Иначе импортированные
+   элементы со span'ами из чужих файлов ложно матчат курсор.
+
+2. **Body-walk** (поиск идентификатора внутри тела fn/test): тоже начинать с
+   `items_start` — чужие тела не принадлежат текущему файлу.
+
+3. **Name-lookup** (поиск декларации по имени после body-walk нашёл идентификатор):
+   обходить **все** `module.items` — prelude-функция может быть в prepend-зоне
+   (индексы 0..items_start), и её нужно найти.
+
+### `resolve_symbol_at_with_limit` API
+
+```rust
+pub fn resolve_symbol_at_with_limit(
+    module: &Module,
+    byte_offset: usize,
+    items_start: usize,   // skip count: how many prepended import items to skip
+) -> Option<SymbolInfo>;
+```
+
+- Span-match: `module.items.iter().skip(items_start)`
+- Body-walk: `find_ident_in_bodies_from(module, byte_offset, items_start)` — `.skip(items_start)`
+- Name-lookup: `lookup_decl_by_name(module, &name)` — iterates **all** items
+
+Для hover **без** URI (unit-тесты без реального файла) передаётся `items_start=0`
+через `resolve_symbol_at(module, byte_offset)` — `resolve_imports_for_hover` не вызывается.
+
+### Защита от паники
+
+`resolve_imports_for_hover` оборачивает вызов в `std::panic::catch_unwind` —
+import resolution может паниковать при malformed файлах. Паника не должна
+крашить LSP-сервер.
+
+### Связь
+
+- `nova-lsp/src/hover.rs` — `compute_hover`, `resolve_imports_for_hover`
+- `nova-lsp/src/symbol.rs` — `resolve_symbol_at_with_limit`, `find_ident_in_bodies_from`, `lookup_decl_by_name`
+- `nova_tests/plan104_9/pos_hover_prelude_calls_in_test.nv` — fixture
+- `nova_tests/plan104_9/pos_hover_prelude_calls_in_fn.nv` — fixture
+- Plan 104.2 Ф.7 sub-plan file: `docs/plans/104.2-hover-goto-sigp.md`
