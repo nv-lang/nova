@@ -112,7 +112,7 @@ fn render_hover_markdown(sym: &SymbolInfo) -> String {
         }
         SymbolInfo::LocalVar { name, ty_text, is_mut, doc, .. } => {
             let prefix = if *is_mut { "mut" } else { "ro" };
-            let code = format!("{} {}: {}", prefix, name, ty_text);
+            let code = format!("{} {} {}", prefix, name, ty_text);
             render_code_and_doc(&code, doc.as_deref())
         }
         SymbolInfo::ConstDecl { name, ty_text, doc, .. } => {
