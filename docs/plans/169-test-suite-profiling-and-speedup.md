@@ -1,6 +1,6 @@
 # Plan 169 — Test-suite profiling + speedup
 
-> **Создан:** 2026-06-17. **Статус:** ✅ ЗАКРЫТ 2026-06-17.
+> **Создан:** 2026-06-17. **Статус:** ✅ ЗАКРЫТ 2026-06-17 (followups closed 2026-06-17).
 > **Worktree:** `nova-p169` (branch `plan-169-test-profiling`).
 > **Spec:** D298 (spec/decisions/09-tooling.md — тест-конвенции `_slow`, бюджет CI).
 
@@ -91,3 +91,17 @@
 - ✅ A8: Все системные находки: compile dominates 96% (нет actionable issue, документировано в profile).
 
 Merged → main через merge(plan-169).
+
+### Followup-фиксы (2026-06-17)
+
+**[M-169-timing-report-regression-gate] ✅ CLOSED** — `nova test --max-test-ms N`:
+- Флаг добавлен в `nova-cli/src/main.rs` + `TestAllOpts` в `test_runner.rs`.
+- После прогона: тесты превысившие N ms → список + `exit 3`.
+- `N=0` (default) — отключено (backward-compat).
+- Commit: `a61199a5`.
+
+**plan55 4→0 FAIL** — три бага исправлены:
+- `f1_closure_array_gc_stress_slow.nv` дублировал module name → исправлен (`plan55.f1_closure_array_gc_stress_slow`).
+- Compiler Bug A (`e5945c24`): `export fn T @m() => expr` без explicit return type → codegen генерировал `nova_unit`. Фикс в `emit_c.rs`: field_cache коэрсирует `FnBody::Expr` → `FnBody::Block(stmts=[], trailing=e)` до codegen; расширены обе ветки matching.
+- Compiler Bug B (`a4cb7f4d`): `collect_pattern_bindings` проверял `all_decls.contains(name)` включая snake_case fn-имена — for-loop bindings с именем свободной функции (`inner`) не регистрировались. Фикс: только `builtins` + PascalCase = variant-like.
+- Финал plan55: **19 PASS, 0 FAIL**.

@@ -11913,8 +11913,12 @@ impl NameResCtx {
                 // это variant-pattern, не binding (D52 семантика
                 // pattern-matching). Также Capitalized-имена в bootstrap
                 // — это всегда type/variant (cross-file), не binding.
+                // Plan 55 fix: all_decls contains free function names (lowercase)
+                // which must NOT block for-loop bindings like `for inner in @`.
+                // Only treat as variant-like if it's a builtin OR capitalized
+                // (Nova convention: variants/types are always PascalCase,
+                // free functions are snake_case).
                 let is_variant_like = self.builtins.contains(name)
-                    || self.all_decls.contains(name)
                     || name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
                 if !is_variant_like {
                     out.insert(name.clone());
