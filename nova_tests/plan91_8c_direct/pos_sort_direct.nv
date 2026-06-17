@@ -1,0 +1,160 @@
+module plan91_8c_direct.pos_sort_direct
+
+// Plan 91.8c fix M-91.8c-direct-index-method:
+// sort_of variant using @[i].compare(@[j]) directly — element-vs-element
+// without any intermediate binding. Tests both SelfAccess arms simultaneously
+// (both the left @[i] and right @[j] element type resolution).
+
+#impl(Compare)
+type Pair {
+    key int
+    order int
+}
+
+fn Pair @compare(other Pair) -> int {
+    ro by_key = @key - other.key
+    if by_key != 0 { return by_key }
+    @order - other.order
+}
+
+// Sort using @[i].compare(@[j]) directly for both receiver and arg.
+fn[T Compare] []T mut @sort_pairwise_direct() -> @ {
+    ro n = @len()
+    mut i = 1
+    while i < n {
+        mut j = i
+        while j > 0 && @[j - 1].compare(@[j]) > 0 {
+            ro tmp = @[j - 1]
+            @[j - 1] = @[j]
+            @[j] = tmp
+            j = j - 1
+        }
+        i = i + 1
+    }
+    @
+}
+
+// Find the maximum using @[i].compare(max_val) > 0 where max_val comes
+// from another @[best] — but stored in a local first to avoid double-indexing.
+fn[T Compare] []T @max_direct() -> Option[T] {
+    ro n = @len()
+    if n == 0 { return None }
+    mut best = @[0]
+    mut i = 1
+    while i < n {
+        if @[i].compare(best) > 0 { best = @[i] }
+        i = i + 1
+    }
+    Some(best)
+}
+
+// Find index of minimum using @[i].compare(@[min_idx...]) via stored binding.
+fn[T Compare] []T @min_idx_direct() -> Option[int] {
+    ro n = @len()
+    if n == 0 { return None }
+    mut min_i = 0
+    mut i = 1
+    while i < n {
+        ro v = @[min_i]
+        if @[i].compare(v) < 0 { min_i = i }
+        i = i + 1
+    }
+    Some(min_i)
+}
+
+test "sort_pairwise_direct []int ascending" {
+    mut xs []int = [5, 2, 8, 1, 9, 3]
+    xs.sort_pairwise_direct()
+    assert(xs[0] == 1)
+    assert(xs[1] == 2)
+    assert(xs[2] == 3)
+    assert(xs[3] == 5)
+    assert(xs[4] == 8)
+    assert(xs[5] == 9)
+}
+
+test "sort_pairwise_direct []int single" {
+    mut xs []int = [7]
+    xs.sort_pairwise_direct()
+    assert(xs[0] == 7)
+}
+
+test "sort_pairwise_direct []int empty" {
+    mut xs []int = []
+    xs.sort_pairwise_direct()
+    assert(xs.len() == 0)
+}
+
+test "sort_pairwise_direct []str" {
+    mut xs []str = ["cherry", "apple", "mango"]
+    xs.sort_pairwise_direct()
+    assert(xs[0] == "apple")
+    assert(xs[1] == "cherry")
+    assert(xs[2] == "mango")
+}
+
+test "sort_pairwise_direct []Pair multi-key stable" {
+    mut ps []Pair = [
+        Pair { key: 2, order: 0 },
+        Pair { key: 1, order: 0 },
+        Pair { key: 2, order: 1 },
+        Pair { key: 1, order: 1 },
+    ]
+    ps.sort_pairwise_direct()
+    assert(ps[0].key == 1)
+    assert(ps[0].order == 0)
+    assert(ps[1].key == 1)
+    assert(ps[1].order == 1)
+    assert(ps[2].key == 2)
+    assert(ps[2].order == 0)
+    assert(ps[3].key == 2)
+    assert(ps[3].order == 1)
+}
+
+test "max_direct []int" {
+    ro xs []int = [3, 1, 4, 1, 5, 9, 2, 6]
+    match xs.max_direct() {
+        Some(v) => assert(v == 9)
+        None    => assert(false)
+    }
+}
+
+test "max_direct []str" {
+    ro xs []str = ["apple", "zebra", "mango"]
+    match xs.max_direct() {
+        Some(s) => assert(s == "zebra")
+        None    => assert(false)
+    }
+}
+
+test "max_direct empty" {
+    ro xs []int = []
+    match xs.max_direct() {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "min_idx_direct []int" {
+    ro xs []int = [3, 1, 4, 1, 5]
+    match xs.min_idx_direct() {
+        Some(idx) => assert(idx == 1)
+        None      => assert(false)
+    }
+}
+
+test "min_idx_direct []str" {
+    ro xs []str = ["mango", "apple", "cherry"]
+    match xs.min_idx_direct() {
+        Some(idx) => assert(idx == 1)
+        None      => assert(false)
+    }
+}
+
+test "min_idx_direct empty" {
+    ro xs []int = []
+    match xs.min_idx_direct() {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}

@@ -1,0 +1,62 @@
+module plan91_8c.neg_direct_baseline
+
+// Plan 91.8c bug: @[j].compare(key) in generic []T method body should work
+// the same as: { mut _tmp = @[j]; _tmp.compare(key) }
+//
+// Bug: compute_array_elem_type_for_obj has no SelfAccess arm, so @[j] in a
+// generic []T method body falls through to the NovaArray_ path and strips
+// the trailing '*' from the element type (Nova_Point* -> Nova_Point), making
+// method dispatch fail to find any overload for .compare().
+//
+// This test exercises @[j].compare(key) directly (without intermediate binding).
+
+#impl(Compare)
+type Point {
+    x int
+    y int
+}
+
+fn Point @compare(other Point) -> int {
+    if @x != other.x { return @x - other.x }
+    @y - other.y
+}
+
+// Generic binary search that uses @[mid].compare(target) directly (no intermediate var).
+fn[T Compare] []T @direct_binary_search(target T) -> Option[int] {
+    mut lo = 0
+    mut hi = @len() - 1
+    while lo <= hi {
+        ro mid = (lo + hi) / 2
+        ro cmp = @[mid].compare(target)
+        if cmp == 0 { return Some(mid) }
+        if cmp < 0 { lo = mid + 1 }
+        else       { hi = mid - 1 }
+    }
+    None
+}
+
+test "direct @[mid].compare(target) for []int" {
+    mut xs []int = [1, 3, 5, 7, 9]
+    match xs.direct_binary_search(5) {
+        Some(idx) => assert(idx == 2)
+        None      => assert(false)
+    }
+    match xs.direct_binary_search(4) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "direct @[mid].compare(target) for []Point" {
+    mut pts []Point = [Point { x: 1, y: 0 }, Point { x: 3, y: 0 }, Point { x: 5, y: 0 }]
+    ro target = Point { x: 3, y: 0 }
+    match pts.direct_binary_search(target) {
+        Some(idx) => assert(idx == 1)
+        None      => assert(false)
+    }
+    ro missing = Point { x: 4, y: 0 }
+    match pts.direct_binary_search(missing) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}

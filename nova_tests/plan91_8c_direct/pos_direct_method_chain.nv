@@ -1,0 +1,116 @@
+module plan91_8c_direct.pos_direct_method_chain
+
+import std.sort
+
+// Plan 91.8c fix M-91.8c-direct-index-method:
+// []str method calling @[j].byte_len() / @[j].is_empty() directly without
+// intermediate binding, exercising the str receiver path in the fix.
+// Also tests chained: @[i].compare(@[j]) element-vs-element comparison.
+
+// Custom linear search using @[i].byte_len() directly — exercises str element type.
+fn []str @shortest_str() -> Option[str] {
+    ro n = @len()
+    if n == 0 { return None }
+    mut best = @[0]
+    mut i = 1
+    while i < n {
+        if @[i].byte_len() < best.byte_len() { best = @[i] }
+        i = i + 1
+    }
+    Some(best)
+}
+
+// count non-empty strings using @[i].is_empty() directly
+fn []str @count_nonempty() -> int {
+    ro n = @len()
+    mut count = 0
+    mut i = 0
+    while i < n {
+        if !@[i].is_empty() { count = count + 1 }
+        i = i + 1
+    }
+    count
+}
+
+// Generic [T Compare] — compare two elements directly: @[i].compare(@[j]).
+// This exercises element-vs-element direct dispatch (both args via @[]).
+fn[T Compare] []T @is_sorted_direct() -> bool {
+    ro n = @len()
+    if n <= 1 { return true }
+    mut i = 0
+    while i < n - 1 {
+        ro cmp = @[i].compare(@[i + 1])
+        if cmp > 0 { return false }
+        i = i + 1
+    }
+    true
+}
+
+test "shortest_str picks shortest" {
+    ro xs []str = ["hello", "hi", "world", "a"]
+    match xs.shortest_str() {
+        Some(s) => assert(s == "a")
+        None    => assert(false)
+    }
+}
+
+test "shortest_str single element" {
+    ro xs []str = ["only"]
+    match xs.shortest_str() {
+        Some(s) => assert(s == "only")
+        None    => assert(false)
+    }
+}
+
+test "shortest_str empty array" {
+    ro xs []str = []
+    match xs.shortest_str() {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "count_nonempty basic" {
+    ro xs []str = ["a", "", "b", "", "c"]
+    assert(xs.count_nonempty() == 3)
+}
+
+test "count_nonempty all empty" {
+    ro xs []str = ["", "", ""]
+    assert(xs.count_nonempty() == 0)
+}
+
+test "count_nonempty none empty" {
+    ro xs []str = ["alpha", "beta"]
+    assert(xs.count_nonempty() == 2)
+}
+
+test "is_sorted_direct []int sorted" {
+    ro xs []int = [1, 2, 3, 4, 5]
+    assert(xs.is_sorted_direct())
+}
+
+test "is_sorted_direct []int unsorted" {
+    ro xs []int = [1, 3, 2, 4, 5]
+    assert(!xs.is_sorted_direct())
+}
+
+test "is_sorted_direct []str sorted" {
+    ro xs []str = ["apple", "banana", "cherry"]
+    assert(xs.is_sorted_direct())
+}
+
+test "is_sorted_direct []str unsorted" {
+    ro xs []str = ["banana", "apple", "cherry"]
+    assert(!xs.is_sorted_direct())
+}
+
+test "is_sorted_direct single element" {
+    ro xs []int = [42]
+    assert(xs.is_sorted_direct())
+}
+
+test "is_sorted_direct empty" {
+    ro xs []int = []
+    assert(xs.is_sorted_direct())
+}

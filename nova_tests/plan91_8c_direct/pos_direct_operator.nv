@@ -1,0 +1,112 @@
+module plan91_8c_direct.pos_direct_operator
+
+import std.sort
+
+// Plan 91.8c fix M-91.8c-direct-index-method: regression guard.
+// @[j] > key and @[j] < key in generic [T Compare] context must still work.
+// These operators are synthesized from @compare, which requires the element
+// type to be resolved — the same SelfAccess fix that enables .compare() also
+// enables synthesized operator dispatch on @[j].
+
+// Insertion sort using @[j] > key operator directly (no intermediate binding).
+// Regression guard: the sort.nv sort_of uses intermediate `cur = @[j]` binding.
+// This variant exercises @[j] > key without cur — reproducing the exact bug pattern.
+fn[T Compare] []T mut @sort_direct() -> @ {
+    ro n = @len()
+    mut i = 1
+    while i < n {
+        ro key = @[i]
+        mut j = i - 1
+        while j >= 0 && @[j] > key {
+            @[j + 1] = @[j]
+            j = j - 1
+        }
+        @[j + 1] = key
+        i = i + 1
+    }
+    @
+}
+
+// Count elements less than a key using @[i] < key directly.
+fn[T Compare] []T @count_less_direct(key T) -> int {
+    ro n = @len()
+    mut count = 0
+    mut i = 0
+    while i < n {
+        if @[i] < key { count = count + 1 }
+        i = i + 1
+    }
+    count
+}
+
+test "sort_direct []int descending to ascending" {
+    mut xs []int = [9, 7, 5, 3, 1]
+    xs.sort_direct()
+    assert(xs[0] == 1)
+    assert(xs[1] == 3)
+    assert(xs[2] == 5)
+    assert(xs[3] == 7)
+    assert(xs[4] == 9)
+}
+
+test "sort_direct []int already sorted" {
+    mut xs []int = [1, 2, 3, 4, 5]
+    xs.sort_direct()
+    assert(xs[0] == 1)
+    assert(xs[4] == 5)
+}
+
+test "sort_direct []int random order" {
+    mut xs []int = [3, 1, 4, 1, 5, 9, 2, 6]
+    xs.sort_direct()
+    assert(xs[0] == 1)
+    assert(xs[1] == 1)
+    assert(xs[2] == 2)
+    assert(xs[3] == 3)
+    assert(xs[4] == 4)
+    assert(xs[5] == 5)
+    assert(xs[6] == 6)
+    assert(xs[7] == 9)
+}
+
+test "sort_direct []str alphabetical" {
+    mut xs []str = ["zebra", "apple", "mango", "cherry"]
+    xs.sort_direct()
+    assert(xs[0] == "apple")
+    assert(xs[1] == "cherry")
+    assert(xs[2] == "mango")
+    assert(xs[3] == "zebra")
+}
+
+test "sort_direct []int single element" {
+    mut xs []int = [42]
+    xs.sort_direct()
+    assert(xs[0] == 42)
+}
+
+test "sort_direct []int empty" {
+    mut xs []int = []
+    xs.sort_direct()
+    assert(xs.len() == 0)
+}
+
+test "count_less_direct []int" {
+    ro xs []int = [1, 5, 3, 8, 2, 7]
+    assert(xs.count_less_direct(5) == 3)
+}
+
+test "count_less_direct []int none less" {
+    ro xs []int = [5, 6, 7]
+    assert(xs.count_less_direct(5) == 0)
+}
+
+test "count_less_direct []int all less" {
+    ro xs []int = [1, 2, 3]
+    assert(xs.count_less_direct(10) == 3)
+}
+
+test "count_less_direct []str" {
+    ro xs []str = ["apple", "zebra", "mango", "banana"]
+    // "apple" < "cherry" and "banana" < "cherry"
+    assert(xs.count_less_direct("cherry") == 2)
+}
