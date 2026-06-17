@@ -1,0 +1,23 @@
+// Plan 104.2 (body-walk hover): prelude functions called inside fn bodies
+// compile and run — hover walks fn bodies to resolve identifiers.
+module plan104_9.pos_hover_prelude_calls_in_fn
+
+fn check_range(lo int, hi int, val int) -> bool {
+    ro r = lo..hi
+    // assert is called inside a fn body — body-walker must find it
+    assert(r.start == lo)
+    assert(r.end == hi)
+    return val >= lo && val < hi
+}
+
+fn uses_str_prelude(s str) -> int {
+    // str methods called inside fn body
+    assert(s.byte_len() >= 0)
+    return s.byte_len()
+}
+
+test "fn body prelude calls compile and run" {
+    assert(check_range(0, 5, 3))
+    assert(!check_range(0, 5, 7))
+    assert(uses_str_prelude("hi") == 2)
+}

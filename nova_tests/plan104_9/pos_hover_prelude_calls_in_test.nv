@@ -1,0 +1,34 @@
+// Plan 104.2 (body-walk hover): prelude functions called inside test bodies
+// compile and run — hover should resolve these to their declarations.
+// This validates that assert/println/etc. are syntactically reachable inside
+// test bodies (the same AST paths the body-walker traverses).
+module plan104_9.pos_hover_prelude_calls_in_test
+
+test "assert in test body resolves via body-walk" {
+    ro x = 42
+    assert(x == 42)
+    assert(x > 0)
+    assert(x != 0)
+}
+
+test "nested calls in test body" {
+    ro s = "hello"
+    assert(s.byte_len() == 5)
+    assert(s.starts_with("he"))
+    assert(s.ends_with("lo"))
+}
+
+test "assert in if-branch" {
+    ro n = 7
+    if n > 0 {
+        assert(n > 0)
+    }
+}
+
+test "assert in for loop body" {
+    mut sum = 0
+    for i in 0..3 {
+        sum = sum + i
+    }
+    assert(sum == 3)
+}
