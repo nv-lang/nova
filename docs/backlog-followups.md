@@ -47,4 +47,13 @@ referenced from plan docs and simplifications.md.
 
 ## Plan 91.8b — operator-dispatch cleanup
 
-- **[M-91.8b-precompiled-c-rebuild]** CLOSED 2026-06-17. Root cause: emit_c.rs void* str-comparison path (lines 19695-19696) still emitted `Nova_str_method_eq` (old name) after Plan 91.8b renamed `@eq → @equal`. Fix: update those 2 lines to `Nova_str_method_equal`. The precompiled `.c` files in std/collections/ are NOT linked during test builds — they are stale cached artifacts that are not referenced in any build path. 6/6 plan91_8b PASS after fix.
+- **[M-91.8b-precompiled-c-rebuild]** ✅ CLOSED (Plan 91.15, 2026-06-17) — plan91_8b 6/6 PASS.
+- **[M-91.15-hashmap-precompiled-eq]** `std/collections/hashmap.c` (precompiled) still uses `k.eq(key)` struct-member syntax instead of `Nova_str_method_equal`. CC-FAIL on map_literals tests with str keys. Fix: regenerate hashmap.c via `nova build-std` after Plan 91.8b @eq→@equal rename. Priority: M.
+
+---
+
+## Plan 91.15 — std API tuning
+
+- **[M-91.10-remove-needs-caps-field]** ✅ CLOSED (Plan 91.15 Ф.5, 2026-06-17) — FnDecl.needs_caps removed from AST.
+- **[M-91.14-option-result-debug]** ✅ CLOSED (Plan 91.15 Ф.2, 2026-06-17) — Option/Result @debug work via DeclaredBody interp dispatch.
+- **[M-91.14-derive-debug]** `#impl(Debug)` auto-derive deferred from Plan 91.15. Requires checker-side synthesis of @debug body for record/value/sum types. Blocked on Plan 126 (#impl framework). Priority: M.
