@@ -1,0 +1,51 @@
+module plan91_8c.pos_sort_str
+
+import std.sort
+
+// Plan 91.8c (D185): sort_of для []str — строки satisfying Compare через str.compare.
+
+test "sort_of []str alphabetically" {
+    mut xs []str = ["zebra", "apple", "mango", "cherry"]
+    xs.sort_of()
+    assert(xs[0] == "apple")
+    assert(xs[1] == "cherry")
+    assert(xs[2] == "mango")
+    assert(xs[3] == "zebra")
+}
+
+test "sort_of []str already sorted — stable" {
+    mut xs []str = ["alpha", "beta", "gamma"]
+    xs.sort_of()
+    assert(xs[0] == "alpha")
+    assert(xs[1] == "beta")
+    assert(xs[2] == "gamma")
+}
+
+test "sort_of []str reverse sorted" {
+    mut xs []str = ["zebra", "mango", "apple"]
+    xs.sort_of()
+    assert(xs[0] == "apple")
+    assert(xs[1] == "mango")
+    assert(xs[2] == "zebra")
+}
+
+test "sort_of []str single element" {
+    mut xs []str = ["solo"]
+    xs.sort_of()
+    assert(xs[0] == "solo")
+}
+
+test "sort_of []str empty" {
+    mut xs []str = []
+    xs.sort_of()
+    assert(xs.len() == 0)
+}
+
+test "sort_of []str with equal elements — stable" {
+    mut xs []str = ["b", "a", "b", "a"]
+    xs.sort_of()
+    assert(xs[0] == "a")
+    assert(xs[1] == "a")
+    assert(xs[2] == "b")
+    assert(xs[3] == "b")
+}

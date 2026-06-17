@@ -1,0 +1,69 @@
+module plan91_8c.pos_min_max_by
+
+import std.sort
+
+// Plan 91.8c (D185): min_by_of/max_by_of с comparator callback — T без Compare bound.
+
+test "min_by_of []str по длине" {
+    ro words []str = ["apple", "kiwi", "banana", "fig"]
+    match words.min_by_of(|a, b| a.len() - b.len()) {
+        Some(w) => assert(w == "fig")
+        None    => assert(false)
+    }
+}
+
+test "max_by_of []str по длине" {
+    ro words []str = ["apple", "kiwi", "banana", "fig"]
+    match words.max_by_of(|a, b| a.len() - b.len()) {
+        Some(w) => assert(w == "banana")
+        None    => assert(false)
+    }
+}
+
+test "min_by_of []int по абсолютному значению" {
+    ro xs []int = [-5, 1, -3, 2, -4]
+    match xs.min_by_of(|a, b| {
+        ro aa = if a < 0 { -a } else { a }
+        ro bb = if b < 0 { -b } else { b }
+        aa - bb
+    }) {
+        Some(v) => assert(v == 1)
+        None    => assert(false)
+    }
+}
+
+test "max_by_of []int по абсолютному значению" {
+    ro xs []int = [-5, 1, -3, 2, -4]
+    match xs.max_by_of(|a, b| {
+        ro aa = if a < 0 { -a } else { a }
+        ro bb = if b < 0 { -b } else { b }
+        aa - bb
+    }) {
+        Some(v) => assert(v == -5)
+        None    => assert(false)
+    }
+}
+
+test "min_by_of empty — None" {
+    ro empty []int = []
+    match empty.min_by_of(|a, b| a - b) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "max_by_of empty — None" {
+    ro empty []int = []
+    match empty.max_by_of(|a, b| a - b) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "min_by_of single element" {
+    ro xs []int = [42]
+    match xs.min_by_of(|a, b| a - b) {
+        Some(v) => assert(v == 42)
+        None    => assert(false)
+    }
+}

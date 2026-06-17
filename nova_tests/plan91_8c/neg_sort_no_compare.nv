@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR does not satisfy `Compare` bound
+module plan91_8c.neg_sort_no_compare
+
+import std.sort
+
+// Plan 91.8c (D185): sort_of на типе без Compare — compile error.
+
+type Vector3 {
+    x f64
+    y f64
+    z f64
+}
+
+// Vector3 не implements @compare — no linear order by design.
+
+test "sort_of on type without Compare is compile error" {
+    mut vs []Vector3 = [
+        Vector3 { x: 1.0, y: 2.0, z: 3.0 },
+        Vector3 { x: 0.0, y: 1.0, z: 0.0 },
+    ]
+    vs.sort_of()
+}
