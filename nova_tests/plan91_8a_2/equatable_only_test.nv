@@ -1,20 +1,20 @@
-module plan91_8a_2.equatable_only_test
+module nova_tests.plan91_8a_2
 
 // Plan 91.8a.2 part 3: type только Equal (no @compare) satisfies
 // Equal bound через explicit @equal. Default body fallback не
 // требуется — explicit method takes precedence.
 
-type Vector3 { x int, y int, z int }
+type Vector32 { x int, y int, z int }
 
-fn Vector3 @equal(other Self) -> bool =>
+fn Vector32 @equal(other Self) -> bool =>
     @x == other.x && @y == other.y && @z == other.z
 
-fn check_eq[T Equal](a T, b T) -> bool => a.equal(b)
+fn check_eq2[T Equal](a T, b T) -> bool => a.equal(b)
 
-test "Vector3 без @compare satisfies Equal bound (explicit @equal)" {
-    ro v1 = Vector3 { x: 1, y: 2, z: 3 }
-    ro v2 = Vector3 { x: 1, y: 2, z: 3 }
-    ro v3 = Vector3 { x: 4, y: 5, z: 6 }
-    assert(check_eq(v1, v2))
-    assert(!check_eq(v1, v3))
+test "Vector32 без @compare satisfies Equal bound (explicit @equal)" {
+    ro v1 = Vector32 { x: 1, y: 2, z: 3 }
+    ro v2 = Vector32 { x: 1, y: 2, z: 3 }
+    ro v3 = Vector32 { x: 4, y: 5, z: 6 }
+    assert(check_eq2(v1, v2))
+    assert(!check_eq2(v1, v3))
 }

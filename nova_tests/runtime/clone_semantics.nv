@@ -8,17 +8,17 @@
 // Эти тесты — regression-фиксаторы, чтобы случайный switch на
 // auto-derived deep clone не прошёл незамеченным.
 
-module runtime.clone_semantics
+module nova_tests.runtime
 
 
 // === 1. Shallow @clone для record: примитивные поля копируются ===
 
-type Counter { mut value int }
+type Counter2 { mut value int }
 
-fn Counter @clone() -> Self => { @value }
+fn Counter2 @clone() -> Self => { @value }
 
 test "shallow @clone — примитивные поля независимы" {
-    mut a = Counter { value: 10 }
+    mut a = Counter2 { value: 10 }
     mut b = a.clone()
     a.value = 99
     assert(a.value == 99)
@@ -29,13 +29,13 @@ test "shallow @clone — примитивные поля независимы" {
 // === 2. Shallow @clone для nested record — share managed ref ===
 
 type Inner { mut x int }
-type Outer { inner Inner, label str }
+type Outer2 { inner Inner, label str }
 
-fn Outer @clone() -> Self => { @inner, @label }
+fn Outer2 @clone() -> Self => { @inner, @label }
 
 test "shallow @clone — nested record share'ится по ссылке" {
     ro nested = Inner { x: 1 }
-    mut a = Outer { inner: nested, label: "a" }
+    mut a = Outer2 { inner: nested, label: "a" }
     mut b = a.clone()
     a.inner.x = 42
     // shallow: a.inner и b.inner — одна managed-reference,

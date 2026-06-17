@@ -8,7 +8,7 @@
 //   - Cross-type БЕЗ `A.from(B)`: compile-error с suggestion (positive
 //     test — отдельный negative file потребуется).
 
-module concurrency.cancel_cross_type_cascade_test
+module nova_tests.concurrency
 
 
 // Two user types для cross-type cascade. ChildErr.from(ParentErr) определяет

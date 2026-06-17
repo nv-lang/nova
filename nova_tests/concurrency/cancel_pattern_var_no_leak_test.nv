@@ -5,7 +5,7 @@
 // inference upирался в stale bool, тест 2 fail'ил.
 // После fix — каждый test имеет clean var_types.
 
-module concurrency.cancel_pattern_var_no_leak_test
+module nova_tests.concurrency
 
 
 test "pattern v bool — does not leak" {

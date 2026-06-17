@@ -1,6 +1,6 @@
 // Plan 125 Ф.4: рекурсивная композиция — match arm body содержит вложенный if.
 
-module plan125.nested_if_throws_in_match
+module nova_tests.plan125
 
 type Tier | Low | Mid | Hi
 

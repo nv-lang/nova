@@ -1,6 +1,6 @@
 // Plan 114.4.4 Ф.4 positive: tuple destructuring pattern в const fn match.
 
-module plan114_4_4.pattern_tuple_ok
+module nova_tests.plan114_4_4
 
 fn classify(const x int, const y int) -> const int =>
     match (x, y) {

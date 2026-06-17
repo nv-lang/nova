@@ -9,7 +9,7 @@
 // ENV NOVA_MAXPROCS=1
 // EXPECT_STDERR exceeds max
 
-module concurrency.plan149_max_clamp
+module nova_tests.concurrency
 
 test "max above SLOT_COUNT_MAX: clamped, fibers still spawn" {
     mut total = 0

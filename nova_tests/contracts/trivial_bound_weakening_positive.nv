@@ -1,7 +1,7 @@
 // Ф.15.2 (Plan 33.6): bounds propagation — `x >= 0 ⊢ x >= -1`.
 // Trivial weakening работает: если known L_known >= L_goal, ensures trivially true.
 
-module contracts.trivial_bound_weakening_positive
+module nova_tests.contracts
 
 #verify
 fn weak_lower(x int) -> int

@@ -1,5 +1,5 @@
 // Plan 124.1 — positive: priv field read внутри instance method body — OK.
-module plan124_1.priv_read_inside_method_ok
+module nova_tests.plan124_1
 
 export type Account {
     priv mut money f64

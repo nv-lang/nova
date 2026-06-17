@@ -2,7 +2,7 @@
 // `#impl(Clone)` auto-derive synthesizes `@clone() -> Self` (deep copy).
 // Clone equals original; mutating the clone leaves original unchanged.
 // AC-126.2.4.
-module plan126_2.p3_cloneable_runtime_ok
+module nova_tests.plan126_2
 
 #impl(Clone + Equal)
 type Point2 {

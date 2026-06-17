@@ -6,29 +6,29 @@
 // Ф.1 and covered in T12b/T14b; this fixture keeps the rebind pattern
 // as regression guard для the explicit extract-mutate-write flow.
 
-module plan128.t14_named_tuple_in_record_ok
+module nova_tests.plan128
 
-type Vec3(x f64, y f64, z f64)
+type Vec313(x f64, y f64, z f64)
 
-fn Vec3 @sum() -> f64 =>
+fn Vec313 @sum() -> f64 =>
     @x + @y + @z
 
-fn Vec3 mut @set_x(v f64) -> () {
+fn Vec313 mut @set_x(v f64) -> () {
     @x = v
 }
 
-type Body {
-    mut v Vec3
+type Body4 {
+    mut v Vec313
     mass f64
 }
 
-fn Body.new() -> Self => {
-    v: Vec3(x: 1.0, y: 2.0, z: 3.0),
+fn Body4.new() -> Self => {
+    v: Vec313(x: 1.0, y: 2.0, z: 3.0),
     mass: 10.0,
 }
 
 test "record member named tuple — direct field access" {
-    ro b = Body.new()
+    ro b = Body4.new()
     assert(b.v.x == 1.0)
     assert(b.v.y == 2.0)
     assert(b.v.z == 3.0)
@@ -36,12 +36,12 @@ test "record member named tuple — direct field access" {
 }
 
 test "record member named tuple — ro method via projection" {
-    ro b = Body.new()
+    ro b = Body4.new()
     assert(b.v.sum() == 6.0)
 }
 
 test "record member named tuple — mutate via extract-rebind-writeback" {
-    mut b = Body.new()
+    mut b = Body4.new()
     mut v = b.v
     v.set_x(99.0)
     b.v = v

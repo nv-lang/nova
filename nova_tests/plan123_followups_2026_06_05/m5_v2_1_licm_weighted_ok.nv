@@ -4,15 +4,15 @@
 // via `count_field_reads_in_block_weighted`. Semantic preservation
 // verified through observed sum.
 
-module plan123_followups_2026_06_05.m5_v2_1_licm_weighted_ok
+module nova_tests.plan123_followups_2026_06_05
 
-type Cv {
+type Cv6 {
     mut x int
 }
 
-fn Cv.new(init int) -> Cv => { x: init }
+fn Cv6.new(init int) -> Cv6 => { x: init }
 
-fn Cv mut @sum_nested(n int, m int) -> int {
+fn Cv6 mut @sum_nested(n int, m int) -> int {
     // V2.1 LICM weighted: nested while bodies inflate read count.
     mut acc = 0
     mut i = 0
@@ -28,10 +28,10 @@ fn Cv mut @sum_nested(n int, m int) -> int {
 }
 
 test "V2.1 LICM weighted: nested-loop accumulation preserves semantics" {
-    mut Cv = Cv.new(7)
+    mut Cv6 = Cv6.new(7)
     // 3 outer Г— 4 inner Г— 7 = 84
-    ro r = Cv.sum_nested(3, 4)
+    ro r = Cv6.sum_nested(3, 4)
     assert(r == 84)
     // @x unchanged.
-    assert(Cv.x == 7)
+    assert(Cv6.x == 7)
 }

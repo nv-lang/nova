@@ -1,6 +1,6 @@
 // Ф.17.2 (Plan 33.6): TrivialBackend addition bounds — `x>=0, y>=0 ⊢ x+y >= 0`.
 
-module contracts.trivial_addition_bounds_positive
+module nova_tests.contracts
 
 #verify
 fn sum_non_neg(x int, y int) -> int

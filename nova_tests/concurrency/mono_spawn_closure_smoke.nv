@@ -13,7 +13,7 @@
 //     forward declaration → undefined symbol на стадии C-codegen.
 //     Фикс пушит fwd-decl в mono_fwd_decls когда current_type_subst не пуст.
 
-module concurrency.mono_spawn_closure_smoke
+module nova_tests.concurrency
 
 
 // Generic функция с closure-param, спавнит body в supervised scope.

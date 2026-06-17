@@ -1,9 +1,9 @@
 // Ф.24.1 (Plan 33.6): loop в fn с contracts без invariant → W2402 hint.
 // EXPECT_COMPILE_WARNING W2402
 
-module contracts.loop_no_invariant_w2402
+module nova_tests.contracts
 
-fn count_down(n int) -> int
+fn count_down4(n int) -> int
     requires n >= 0
 {
     mut i = n

@@ -13,7 +13,7 @@
 // ENV NOVA_MAXPROCS=1
 // EXPECT_STDERR invalid NOVA_FIBER_STACK
 
-module concurrency.plan149_garbage_env
+module nova_tests.concurrency
 
 test "garbage NOVA_FIBER_STACK: program still runs with default" {
     mut total = 0

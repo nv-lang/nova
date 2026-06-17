@@ -3,7 +3,7 @@
 // Под TrivialBackend reflexive `result == old(x)` доказывается:
 // `_old_x == x`, `result == x` → `result == _old_x`.
 
-module contracts.v4_old_frame_positive
+module nova_tests.contracts
 
 fn identity_with_old(x int) -> int
     ensures result == old(x)

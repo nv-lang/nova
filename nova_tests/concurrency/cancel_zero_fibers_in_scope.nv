@@ -16,7 +16,7 @@
 // Plan 83.11 не должен ломать happy-path пустого scope (если join-loop
 // ошибочно ждёт driver event'а вместо «zero children → ready», zero-fibers
 // scope зависнет навсегда).
-module concurrency.cancel_zero_fibers_in_scope
+module nova_tests.concurrency
 
 
 // ──────────────────────────────────────────────────────────────────────────

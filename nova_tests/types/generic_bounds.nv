@@ -12,7 +12,7 @@
 // Negative tests (compile-error РїСЂРё non-satisfied bound) вЂ” РѕС‚РґРµР»СЊРЅС‹Р№
 // С„Р°Р№Р» `tmp_*.nv`, РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ РІСЂСѓС‡РЅСѓСЋ С‡РµСЂРµР· `nova-codegen check`.
 
-module types.generic_bounds
+module nova_tests.types
 
 
 // Plan 15 D53 strict: protocol/effect СЂР°Р·РґРµР»РµРЅС‹ РІ AST. Codegen СЌРјРёС‚РёС‚

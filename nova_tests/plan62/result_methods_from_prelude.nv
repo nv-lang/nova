@@ -12,7 +12,7 @@
 // `r.unwrap_or(0) == 42` эмитился как `->tag`-сравнение вместо
 // value-equality (CC-FAIL).
 
-module plan62.result_methods_from_prelude
+module nova_tests.plan62
 
 // ────────────────────────────────────────────────────────────────────
 // is_ok / is_err — direct trampolines.

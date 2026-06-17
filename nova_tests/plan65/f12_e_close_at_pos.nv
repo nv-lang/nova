@@ -1,7 +1,7 @@
 // Plan 65 R18 / Ф.12.5: ChanReader.close_at(Monotonic) — positive case.
 // Future Monotonic deadline produces a channel that closes after delta.
 
-module plan65.f12_e_close_at_pos
+module nova_tests.plan65
 
 import std.time.duration
 

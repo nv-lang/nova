@@ -3,19 +3,19 @@
 // Plan 110.1.1 (D188) + Plan 110.1.4.a: `consume X TYPE = init() { body }`
 // scope-block с явной type annotation. Acceptance A110.1.1.a.
 
-module plan110.parse_consume_scope_with_type_annot
+module nova_tests.plan110
 
-type DummyRes {
+type DummyRes3 {
     ro id int
 }
 
-fn DummyRes.new(id int) -> DummyRes => { id }
+fn DummyRes3.new(id int) -> DummyRes3 => { id }
 
-fn DummyRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn DummyRes3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 fn use_with_annot() -> int {
     mut result = 0
-    consume r DummyRes = DummyRes.new(7) {
+    consume r DummyRes3 = DummyRes3.new(7) {
         result = r.id
     }
     result

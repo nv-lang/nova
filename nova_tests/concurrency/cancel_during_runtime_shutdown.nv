@@ -30,7 +30,7 @@
 //
 // Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
 
-module concurrency.cancel_during_runtime_shutdown
+module nova_tests.concurrency
 
 test "cancel + immediate shutdown — parked fibers cancelled, runtime drains cleanly" {
     runtime.init(2)

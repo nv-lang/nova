@@ -1,11 +1,11 @@
 // Plan 125.2 [M-125-loop-no-break-divergence]: match-arm с `loop {}` — divergent.
 // Остальные ветки контрибутируют тип. Тип match = str.
 
-module plan125_2.loop_inf_in_match_arm
+module nova_tests.plan125_2
 
-type Tag | Lo | Hi | Stuck
+type Tag1 | Lo | Hi | Stuck
 
-fn label(t Tag) -> str {
+fn label(t Tag1) -> str {
     match t {
         Lo    => "low"
         Hi    => "high"
@@ -14,9 +14,9 @@ fn label(t Tag) -> str {
 }
 
 test "match-arm loop-inf: Lo picks low" {
-    assert(label(Tag.Lo) == "low")
+    assert(label(Tag1.Lo) == "low")
 }
 
 test "match-arm loop-inf: Hi picks high" {
-    assert(label(Tag.Hi) == "high")
+    assert(label(Tag1.Hi) == "high")
 }

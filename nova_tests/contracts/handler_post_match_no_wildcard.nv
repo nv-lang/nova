@@ -3,7 +3,7 @@
 // (См. handler_post_match_const_positive — та же V2 extract_match_assignments
 //  работа. Gated на `z3v2` до реализации Plan 33.5 Ф.6 V2.)
 
-module contracts.handler_post_match_no_wildcard
+module nova_tests.contracts
 
 type BoolSetter effect {
     SetFlag(v bool)

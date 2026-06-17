@@ -1,53 +1,53 @@
 // Plan 137 (D237) — auto-derive with new protocol names.
 // Tests #impl(Hash), #impl(Equal), #impl(Clone), #impl(Compare), #impl(Display).
 
-module plan137.auto_derive
+module nova_tests.plan137
 
 
 #impl(Equal + Hash + Compare + Clone)
-type Score { value int }
+type Score1 { value int }
 
 
 test "auto-derive Equal — equal values" {
-    ro a = Score { value: 42 }
-    ro b = Score { value: 42 }
+    ro a = Score1 { value: 42 }
+    ro b = Score1 { value: 42 }
     assert(a == b)
 }
 
 test "auto-derive Equal — different values" {
-    ro a = Score { value: 1 }
-    ro b = Score { value: 2 }
+    ro a = Score1 { value: 1 }
+    ro b = Score1 { value: 2 }
     assert(a != b)
 }
 
 test "auto-derive Hash — determinism" {
-    ro a = Score { value: 100 }
+    ro a = Score1 { value: 100 }
     assert(a.hash() == a.hash())
 }
 
 test "auto-derive Hash — equal values have equal hash" {
-    ro a = Score { value: 7 }
-    ro b = Score { value: 7 }
+    ro a = Score1 { value: 7 }
+    ro b = Score1 { value: 7 }
     assert(a.hash() == b.hash())
 }
 
 test "auto-derive Compare — ordering" {
-    ro a = Score { value: 10 }
-    ro b = Score { value: 20 }
+    ro a = Score1 { value: 10 }
+    ro b = Score1 { value: 20 }
     assert(a.compare(b) < 0)
     assert(b.compare(a) > 0)
     assert(a.compare(a) == 0)
 }
 
 test "auto-derive Compare — operators" {
-    ro a = Score { value: 5 }
-    ro b = Score { value: 10 }
+    ro a = Score1 { value: 5 }
+    ro b = Score1 { value: 10 }
     assert(a < b)
     assert(b > a)
 }
 
 test "auto-derive Clone — deep copy" {
-    ro a = Score { value: 99 }
+    ro a = Score1 { value: 99 }
     ro b = a.clone()
     assert(a == b)
 }

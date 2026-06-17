@@ -3,24 +3,24 @@
 // Закрывает Plan 15 [P-15-anon-protocol-bound]: bound `[T protocol { ... }]`
 // без отдельного `type X protocol {...}`-объявления.
 
-module plan97.pos_anon_protocol_bound
+module nova_tests.plan97
 
 
-type Box {
+type Box2 {
     value int
 }
 
-fn Box @show() -> str => "Box(${@value})"
+fn Box2 @show() -> str => "Box2(${@value})"
 
 
-// `T` ограничен inline-protocol'ом `{ show() -> str }`. `Box` структурно
+// `T` ограничен inline-protocol'ом `{ show() -> str }`. `Box2` структурно
 // удовлетворяет. Type-checker должен принять. Bare-форма (без `@`) —
 // в protocol-теле метод всегда instance (D53 Plan 17 Ф.1).
 fn print_one[T protocol { @show() -> str }](x T) -> str => x.show()
 
 
 test "inline-protocol bound удовлетворён структурно" {
-    ro b = Box { value: 7 }
+    ro b = Box2 { value: 7 }
     ro s = print_one(b)
-    assert(s == "Box(7)")
+    assert(s == "Box2(7)")
 }

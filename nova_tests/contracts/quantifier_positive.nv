@@ -1,4 +1,4 @@
-module contracts.quantifier_positive
+module nova_tests.contracts
 
 // D.1.3: forall/exists quantifier expressions in contracts.
 // TrivialBackend не reasoning'ует над forall'ами (возвращает Unknown),

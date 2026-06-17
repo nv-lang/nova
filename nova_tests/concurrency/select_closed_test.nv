@@ -5,7 +5,7 @@
 // но не различает Some(v) от None (closed) в dispatch — это
 // намеренное упрощение bootstrap (None-arm планируется отдельно).
 
-module concurrency.select_closed_test
+module nova_tests.concurrency
 
 import std.time.duration
 

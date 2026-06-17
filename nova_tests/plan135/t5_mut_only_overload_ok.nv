@@ -2,19 +2,19 @@
 // Works fine — single overload, no dispatch ambiguity.
 // Verifies A-135.e.
 
-module plan135.t5_mut_only_overload_ok
+module nova_tests.plan135
 
-type Tank { priv mut volume int }
+type Tank5 { priv mut volume int }
 
-fn Tank.new(v int) -> Self => { volume: v }
+fn Tank5.new(v int) -> Self => { volume: v }
 
 // Only the mut overload exists — no ro counterpart.
-fn Tank mut @fill(amount int) { @volume = @volume + amount }
-fn Tank mut @drain(amount int) { @volume = @volume - amount }
-fn Tank @level() -> int => @volume
+fn Tank5 mut @fill(amount int) { @volume = @volume + amount }
+fn Tank5 mut @drain(amount int) { @volume = @volume - amount }
+fn Tank5 @level() -> int => @volume
 
 test "mut binding calls single mut overload" {
-    mut t = Tank.new(0)
+    mut t = Tank5.new(0)
     t.fill(50)
     t.fill(30)
     t.drain(20)

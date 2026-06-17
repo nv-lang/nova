@@ -1,6 +1,6 @@
 // Ф.1.1 (Plan 33.6): ghost var в ensures — spec position, OK.
 
-module contracts.ghost_in_ensures_positive
+module nova_tests.contracts
 
 #verify
 fn abs_with_ghost(x int) -> int

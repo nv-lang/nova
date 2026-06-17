@@ -8,7 +8,7 @@
 //
 // Платформы без arena — compact() no-op.
 
-module concurrency.fiber_arena_compact
+module nova_tests.concurrency
 
 import std.time.duration
 

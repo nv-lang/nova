@@ -3,7 +3,7 @@
 // Покрытие сценариев, которые Go/Rust/Zig обычно тестируют отдельно
 // и которые могут breakate в простой реализации.
 
-module syntax.defer_advanced
+module nova_tests.syntax
 
 
 // ───── (A) Eager argument evaluation: defer fn(captured_value) ─────

@@ -1,4 +1,4 @@
-module plan91_8a_2.bare_call_synthesis_test
+module nova_tests.plan91_8a_2
 
 // Plan 91.8a.2 followup: bare-call synthesis (без [T Protocol] bound).
 // Type T satisfies Equal/Display через default body — прямой вызов
@@ -6,40 +6,40 @@ module plan91_8a_2.bare_call_synthesis_test
 
 // Equal.equals via @compare default body — bare call.
 #impl(Equal)
-type Score { value int }
-fn Score @compare(other Self) -> int =>
+type Score2 { value int }
+fn Score2 @compare(other Self) -> int =>
     if @value < other.value { -1 }
     else if @value > other.value { 1 }
     else { 0 }
 
-test "bare call: m.equal(other) для Score (только @compare)" {
-    ro a = Score { value: 10 }
-    ro b = Score { value: 10 }
-    ro c = Score { value: 99 }
+test "bare call: m.equal(other) для Score2 (только @compare)" {
+    ro a = Score2 { value: 10 }
+    ro b = Score2 { value: 10 }
+    ro c = Score2 { value: 99 }
     assert(a.equal(b))
     assert(!a.equal(c))
 }
 
 // Display.fmt via str.from(T) overload — bare call.
 #impl(Display)
-type Money { cents int }
-fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
+type Money1 { cents int }
+fn str.from(m Money1) -> str => "Money1(" + str.from(m.cents) + ")"
 
-test "bare call: m.display(sb) для Money (через fn str.from)" {
-    ro m = Money { cents: 500 }
+test "bare call: m.display(sb) для Money1 (через fn str.from)" {
+    ro m = Money1 { cents: 500 }
     consume sb = StringBuilder.new()
     m.display(sb)
-    assert(sb.as_str() == "Money(500)")
+    assert(sb.as_str() == "Money1(500)")
 }
 
 // Display.fmt via @into → str chain — bare call.
 #impl(Display)
-type Coin { value int }
-fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
+type Coin2 { value int }
+fn Coin2 @into() -> str => "Coin2(" + str.from(@value) + ")"
 
-test "bare call: c.display(sb) для Coin (через @into)" {
-    ro c = Coin { value: 7 }
+test "bare call: c.display(sb) для Coin2 (через @into)" {
+    ro c = Coin2 { value: 7 }
     consume sb = StringBuilder.new()
     c.display(sb)
-    assert(sb.as_str() == "Coin(7)")
+    assert(sb.as_str() == "Coin2(7)")
 }

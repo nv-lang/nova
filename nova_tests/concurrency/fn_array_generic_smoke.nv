@@ -9,7 +9,7 @@
 // 3. Generic-fn с TWO turbofish params (T+E) пока codegen-fragile;
 //    тестируем только single-T path.
 
-module concurrency.fn_array_generic_smoke
+module nova_tests.concurrency
 
 
 // Single-T generic-fn, consume []fn->T, return concrete int. Покрывает

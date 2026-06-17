@@ -1,4 +1,4 @@
-module plan91_8a_2.coercion_test
+module nova_tests.plan91_8a_2
 
 // Plan 91.8a.2 followup: protocol coercion via vtable + virtual dispatch.
 // `let x Display = m` → fat pointer; `x.display(sb)` → virtual dispatch
@@ -9,31 +9,31 @@ module plan91_8a_2.coercion_test
 // [M-91.8a.2-vtable-self-in-param]: requires lowering Self-typed params
 // to void* в vtable struct + thunk cast + call-site unwrap.
 
-type Money { cents int }
-fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
+type Money4 { cents int }
+fn str.from(m Money4) -> str => "Money4(" + str.from(m.cents) + ")"
 
-type Coin { value int }
-fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
+type Coin4 { value int }
+fn Coin4 @into() -> str => "Coin4(" + str.from(@value) + ")"
 
-test "Money coerced to Display via str.from, virtual fmt() call" {
-    ro m = Money { cents: 99 }
+test "Money4 coerced to Display via str.from, virtual fmt() call" {
+    ro m = Money4 { cents: 99 }
     ro x Display = m
     consume sb = StringBuilder.new()
     x.display(sb)
-    assert(sb.as_str() == "Money(99)")
+    assert(sb.as_str() == "Money4(99)")
 }
 
-test "Coin coerced to Display via @into, virtual fmt() call" {
-    ro c = Coin { value: 5 }
+test "Coin4 coerced to Display via @into, virtual fmt() call" {
+    ro c = Coin4 { value: 5 }
     ro x Display = c
     consume sb = StringBuilder.new()
     x.display(sb)
-    assert(sb.as_str() == "Coin(5)")
+    assert(sb.as_str() == "Coin4(5)")
 }
 
 test "multiple Display values composed in same StringBuilder" {
-    ro m = Money { cents: 10 }
-    ro c = Coin { value: 3 }
+    ro m = Money4 { cents: 10 }
+    ro c = Coin4 { value: 3 }
     ro xm Display = m
     ro xc Display = c
     consume sb = StringBuilder.new()
@@ -42,5 +42,5 @@ test "multiple Display values composed in same StringBuilder" {
     sb.append(", ")
     xc.display(sb)
     sb.append("]")
-    assert(sb.as_str() == "[Money(10), Coin(3)]")
+    assert(sb.as_str() == "[Money4(10), Coin4(3)]")
 }

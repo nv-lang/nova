@@ -1,6 +1,6 @@
 // Ф.54 (test pack): positive integration — несколько фич Ф.29-Ф.53 вместе.
 
-module contracts.f54_integration_positive
+module nova_tests.contracts
 
 // Использует: Ф.41.1 algebraic cancel + Ф.51.1 square nonneg.
 #verify

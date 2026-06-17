@@ -10,24 +10,24 @@
 // V1 scope: parse + type-check declarations only. Pointer ops (deref,
 // `&value`, auto-deref) — landing в Ф.2-Ф.4 unsafe model.
 
-module plan118.t1_1_parse_pointer_types_ok
+module nova_tests.plan118
 
-type Acc {
+type Acc1 {
     ro id i64
     ro balance i64
 }
 
 // All modifier variants в extern "nova" fn signatures (Plan 147: `*T` is the ro
 // canon; no separate `*ro T` form).
-extern "nova" fn p118_take_ptr_default(p *Acc) -> i64
-extern "nova" fn p118_take_ptr_ro(p *Acc) -> i64
-extern "nova" fn p118_take_ptr_mut(p *mut Acc) -> i64
-extern "nova" fn p118_take_ptr_unsafe(p *unsafe Acc) -> i64
+extern "nova" fn p118_take_ptr_default(p *Acc1) -> i64
+extern "nova" fn p118_take_ptr_ro(p *Acc1) -> i64
+extern "nova" fn p118_take_ptr_mut(p *mut Acc1) -> i64
+extern "nova" fn p118_take_ptr_unsafe(p *unsafe Acc1) -> i64
 
-extern "nova" fn p118_return_ptr_default() -> *Acc
-extern "nova" fn p118_return_ptr_ro() -> *Acc
-extern "nova" fn p118_return_ptr_mut() -> *mut Acc
-extern "nova" fn p118_return_ptr_unsafe() -> *unsafe Acc
+extern "nova" fn p118_return_ptr_default() -> *Acc1
+extern "nova" fn p118_return_ptr_ro() -> *Acc1
+extern "nova" fn p118_return_ptr_mut() -> *mut Acc1
+extern "nova" fn p118_return_ptr_unsafe() -> *unsafe Acc1
 
 test "typed pointer family parses + type-checks в extern nova fn signatures" {
     // Declarations alone exercise parser + type-checker. Runtime ops

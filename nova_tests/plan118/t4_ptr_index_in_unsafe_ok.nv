@@ -11,7 +11,7 @@
 //   3. Nested unsafe — ptr[i] at depth > 1 — still allowed.
 //   4. unsafe fn body — ptr[i] without explicit unsafe { } wrap.
 
-module plan118.t4_ptr_index_in_unsafe_ok
+module nova_tests.plan118
 
 import std.runtime.raw_mem.{RawMem}
 

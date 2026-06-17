@@ -5,7 +5,7 @@
 // append_zero / compare. These were NovaArray C-builtins (Plan 90.1); they are
 // now Nova-body methods on Vec[T] (std/collections/vec_owned.nv).
 
-module plan138_2.t1_vec_bulk_parity
+module nova_tests.plan138_2
 
 import std.collections.vec.{Vec}
 

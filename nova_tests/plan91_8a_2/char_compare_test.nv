@@ -1,4 +1,4 @@
-module plan91_8a_2.char_compare_test
+module nova_tests.plan91_8a_2
 
 // Plan 91.8a.2 part 3 followup: char comparison operators.
 // char codepoint-based ordering: <, <=, >, >= должны работать natively.

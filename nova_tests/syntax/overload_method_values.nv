@@ -4,33 +4,33 @@
 // Replaced by lambdas that capture the receiver.
 // Unbound `Type.@method as fn(Type, ...)` still works.
 
-module syntax.overload_method_values
+module nova_tests.syntax
 
-type Buf { items []int }
+type Buf4 { items []int }
 
-fn Buf.new() -> Self => { items: [] }
+fn Buf4.new() -> Self => { items: [] }
 
 // Два overload'а — по типу аргумента.
-fn Buf mut @push(n int) -> int => @items.len()
-fn Buf mut @push(b bool) -> int => if b { 1 } else { 0 }
+fn Buf4 mut @push(n int) -> int => @items.len()
+fn Buf4 mut @push(b bool) -> int => if b { 1 } else { 0 }
 
 test "Ф.5: bound method value via closure-full (int overload)" {
-    mut buf = Buf.new()
+    mut buf = Buf4.new()
     ro f = fn(n int) -> int => buf.push(n)
     ro r = f(42)
     assert(r == 0)   // empty before push (наша заглушка возвращает len без push)
 }
 
 test "Ф.5: bound method value via closure-full (bool overload)" {
-    mut buf = Buf.new()
+    mut buf = Buf4.new()
     ro g = fn(b bool) -> int => buf.push(b)
     ro r = g(true)
     assert(r == 1)
 }
 
 test "Ф.5: unbound disambiguation" {
-    mut buf = Buf.new()
-    ro h = Buf.@push as fn(Buf, int) -> int
+    mut buf = Buf4.new()
+    ro h = Buf4.@push as fn(Buf4, int) -> int
     ro r = h(buf, 10)
     assert(r == 0)
 }

@@ -3,7 +3,7 @@
 // never (Ф.3) → assignable(never, ReturnT) → Ok (Ф.1). Codegen target-typed
 // dummy ([M-125-codegen-never-cast] CLOSED).
 
-module plan125_1.never_in_return_position
+module nova_tests.plan125_1
 
 fn must_pos(n int) Fail -> int {
     if n > 0 {

@@ -24,19 +24,19 @@
 // truly deferred) lives в Plan 110.6.5 «Racing cancels stress» which
 // is gated on this sub-sub-sub being live.
 
-module plan110.shield_basic_mask_t3_1
+module nova_tests.plan110
 
-type Counter {
+type Counter3 {
     ro id int
 }
 
-fn Counter.new(id int) -> Counter => { id }
+fn Counter3.new(id int) -> Counter3 => { id }
 
-fn Counter consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn Counter3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 fn use_single() -> int {
     mut sum = 0
-    consume c = Counter.new(7) {
+    consume c = Counter3.new(7) {
         sum = sum + c.id
     }
     sum
@@ -44,9 +44,9 @@ fn use_single() -> int {
 
 fn use_nested() -> int {
     mut sum = 0
-    consume outer = Counter.new(10) {
+    consume outer = Counter3.new(10) {
         sum = sum + outer.id
-        consume inner = Counter.new(3) {
+        consume inner = Counter3.new(3) {
             sum = sum + inner.id
         }
     }

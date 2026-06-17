@@ -1,7 +1,7 @@
 // Ф.37.2 (Plan 33.6): TrivialBackend var-mul strict negative product (mixed strict signs).
 // `requires a >= 1; requires b <= -1; ensures (a * b) < 0` — strict mixed.
 
-module contracts.f37_var_mul_strict_negative
+module nova_tests.contracts
 
 #verify
 fn pos_neg_strict(a int, b int) -> int

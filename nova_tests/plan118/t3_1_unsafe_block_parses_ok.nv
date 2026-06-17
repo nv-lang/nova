@@ -6,7 +6,7 @@
 // enforcement (Ф.3.5 E_UNSAFE_REQUIRED для pointer ops vне unsafe) —
 // followup phase work.
 
-module plan118.t3_1_unsafe_block_parses_ok
+module nova_tests.plan118
 
 test "unsafe block parses + evaluates to last expression" {
     ro x = unsafe {

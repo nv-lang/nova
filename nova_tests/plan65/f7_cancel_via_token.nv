@@ -27,17 +27,17 @@
 // Plan 83.4.5.8 (2026-05-24): directive RESTORED — test inherently
 // cooperative-dependent (ordering / handler-scoping / timing semantics).
 // Plan 83.10.1 (2026-05-26): STILL NEEDED — RUN-FAIL armed: "tok.cancel()
-// closes a pending close_after timer" — elapsed exceeds SLACK_MS. Under armed
+// closes a pending close_after timer" — elapsed exceeds SLACK_MS2. Under armed
 // M:N cleanup_cbs not processed before uv_run advances clock.
 // Root cause: [M-83.10.1-armed-cancel-timer-hang].
 // (ENV NOVA_AUTOARM=0 directive applied at top of file — parser 30-line window.)
 
-module plan65.f7_cancel_via_token
+module nova_tests.plan65
 
 import std.time.duration
 
-const TIMEOUT_MS i64 = 5000
-const SLACK_MS   i64 = 1500
+const TIMEOUT_MS2 i64 = 5000
+const SLACK_MS2   i64 = 1500
 
 test "tok.cancel() closes a pending close_after timer (no leak)" {
     ro tok = CancelToken.new()
@@ -47,7 +47,7 @@ test "tok.cancel() closes a pending close_after timer (no leak)" {
     } {
         supervised(cancel: tok) {
             spawn {
-                ro t = ChanReader.close_after(Duration.from_millis(TIMEOUT_MS))
+                ro t = ChanReader.close_after(Duration.from_millis(TIMEOUT_MS2))
                 // recv blocks until the timer fires or until our cancel
                 // closes the writer end of the channel.
                 ro v = t.recv()
@@ -62,7 +62,7 @@ test "tok.cancel() closes a pending close_after timer (no leak)" {
         }
     }
     ro elapsed = Time.now() - t0
-    // If cancel did NOT close the timer, elapsed >= TIMEOUT_MS.
+    // If cancel did NOT close the timer, elapsed >= TIMEOUT_MS2.
     // With cancel, elapsed ≈ 50 ms + scope-drain time.
-    assert(elapsed < SLACK_MS)
+    assert(elapsed < SLACK_MS2)
 }

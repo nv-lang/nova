@@ -5,7 +5,7 @@
 // — heterogeneous (str, int) (Fix F+ via fn_result_ok_inner_types)
 // — homogeneous (int, int)
 
-module plan59.f19_tuple_in_result
+module nova_tests.plan59
 
 
 fn parse_kv(s str) -> Result[(str, int), str] {

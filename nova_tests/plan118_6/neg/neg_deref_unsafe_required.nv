@@ -1,0 +1,10 @@
+// Plan 118.6 — *p outside unsafe block → E_UNSAFE_REQUIRED (deref stays unsafe).
+// EXPECT_COMPILE_ERROR E_UNSAFE_REQUIRED
+
+module neg.neg_deref_unsafe_required
+
+fn bad() {
+    ro x = 42
+    ro p = &x
+    ro _ = *p  // E_UNSAFE_REQUIRED — deref is still unsafe
+}

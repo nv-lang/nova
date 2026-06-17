@@ -6,7 +6,7 @@
 //   3) `throw <expr>` desugar в `Fail[E].fail(expr)` работает идентично,
 //   4) handler `with Fail[E] = |e| ...` ловит typed payload.
 
-module plan62.fail_effect_from_prelude
+module nova_tests.plan62
 
 // Auto-import std.prelude → re-export std.prelude.effects.{Fail}.
 // `Fail` доступен по single-element path без explicit import (D26).

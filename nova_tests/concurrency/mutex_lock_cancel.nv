@@ -19,12 +19,12 @@
 // External stress: run via `tools/stress_bisect.sh nova_tests/concurrency/mutex_lock_cancel.nv 30`.
 // Per Plan 83.11 §8 stress convention: ONE test body, the harness repeats
 // the .exe invocation 30× to detect stochastic SEGV/hang/UAF.
-module concurrency.mutex_lock_cancel
+module nova_tests.concurrency
 
 // Generous slack for CI; cancel should wake parked waiter within ~30ms of
 // the cancel call, well under the 500ms ceiling. The 10_000ms sleep is the
 // "would-hang" baseline if cancel routing to parked lock is broken.
-const SLACK_MS int = 500
+const SLACK_MS1 int = 500
 
 test "mutex.lock() parked waiter wakes on cancel — not blocked by holder" {
     ro tok = CancelToken.new()
@@ -60,8 +60,8 @@ test "mutex.lock() parked waiter wakes on cancel — not blocked by holder" {
 
     ro elapsed = Time.now() - t0
     // Cancel arrived at ~50ms; waking both fibers + scope drain should
-    // complete well within SLACK_MS. If the parked mutex waiter is NOT
+    // complete well within SLACK_MS1. If the parked mutex waiter is NOT
     // cancel-routed, elapsed approaches 10_000ms.
-    assert(elapsed < 50 + SLACK_MS)
+    assert(elapsed < 50 + SLACK_MS1)
     assert(tok.is_cancelled())
 }

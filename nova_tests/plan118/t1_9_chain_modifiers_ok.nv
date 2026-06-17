@@ -5,21 +5,21 @@
 // property. The ro pointee is the bare canon `*T` (`*T ≡ *ro T`; explicit
 // `*ro T` is a hard error E_REDUNDANT_POINTER_RO, migrated here).
 
-module plan118.t1_9_chain_modifiers_ok
+module nova_tests.plan118
 
-type Acc {
+type Acc2 {
     ro id i64
 }
 
-// Pointer to ro Acc (pointee read-only = bare `*T`).
-extern "nova" fn p118_chain_a(p *Acc) -> ()
+// Pointer to ro Acc2 (pointee read-only = bare `*T`).
+extern "nova" fn p118_chain_a(p *Acc2) -> ()
 
-// Former `mut * ro Acc` (reassignable pointer to ro Acc). The pointer
-// reassignability is now binding-only, so as a *type* this is `*Acc`.
-extern "nova" fn p118_chain_b(p *Acc) -> ()
+// Former `mut * ro Acc2` (reassignable pointer to ro Acc2). The pointer
+// reassignability is now binding-only, so as a *type* this is `*Acc2`.
+extern "nova" fn p118_chain_b(p *Acc2) -> ()
 
-// Two-level chain: pointer-to-mut (pointer-to-ro Acc).
-extern "nova" fn p118_chain_c(p *mut *Acc) -> ()
+// Two-level chain: pointer-to-mut (pointer-to-ro Acc2).
+extern "nova" fn p118_chain_c(p *mut *Acc2) -> ()
 
 test "chained right-binding modifiers parse + typecheck" {
     assert(1 == 1)

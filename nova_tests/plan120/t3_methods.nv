@@ -1,38 +1,38 @@
 // Plan 120 (D215): T3 — methods on named tuples.
 
-module plan120.t3_methods
+module nova_tests.plan120
 
-type Vec3(x f64, y f64, z f64)
+type Vec35(x f64, y f64, z f64)
 
-fn Vec3 @dot(other Vec3) -> f64 =>
+fn Vec35 @dot(other Vec35) -> f64 =>
     @x * other.x + @y * other.y + @z * other.z
 
-fn Vec3 @scale(s f64) -> Vec3 =>
-    Vec3(x: @x * s, y: @y * s, z: @z * s)
+fn Vec35 @scale(s f64) -> Vec35 =>
+    Vec35(x: @x * s, y: @y * s, z: @z * s)
 
-fn Vec3 @add(other Vec3) -> Vec3 =>
-    Vec3(x: @x + other.x, y: @y + other.y, z: @z + other.z)
+fn Vec35 @add(other Vec35) -> Vec35 =>
+    Vec35(x: @x + other.x, y: @y + other.y, z: @z + other.z)
 
-test "Vec3 dot product" {
-    ro a = Vec3(x: 1.0, y: 0.0, z: 0.0)
-    ro b = Vec3(x: 0.0, y: 1.0, z: 0.0)
+test "Vec35 dot product" {
+    ro a = Vec35(x: 1.0, y: 0.0, z: 0.0)
+    ro b = Vec35(x: 0.0, y: 1.0, z: 0.0)
     assert(a.dot(b) == 0.0)
-    ro c = Vec3(x: 1.0, y: 2.0, z: 3.0)
-    ro d = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    ro c = Vec35(x: 1.0, y: 2.0, z: 3.0)
+    ro d = Vec35(x: 1.0, y: 2.0, z: 3.0)
     assert(c.dot(d) == 14.0)
 }
 
-test "Vec3 scale" {
-    ro v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+test "Vec35 scale" {
+    ro v = Vec35(x: 1.0, y: 2.0, z: 3.0)
     ro scaled = v.scale(2.0)
     assert(scaled.x == 2.0)
     assert(scaled.y == 4.0)
     assert(scaled.z == 6.0)
 }
 
-test "Vec3 add" {
-    ro a = Vec3(x: 1.0, y: 2.0, z: 3.0)
-    ro b = Vec3(x: 4.0, y: 5.0, z: 6.0)
+test "Vec35 add" {
+    ro a = Vec35(x: 1.0, y: 2.0, z: 3.0)
+    ro b = Vec35(x: 4.0, y: 5.0, z: 6.0)
     ro sum = a.add(b)
     assert(sum.x == 5.0)
     assert(sum.y == 7.0)

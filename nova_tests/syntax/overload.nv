@@ -6,7 +6,7 @@
 // Strict matching, no implicit conversions.
 // Free-functions overload не разрешён (только для methods).
 
-module syntax.overload
+module nova_tests.syntax
 
 
 // ─── 1. Static overload по типу аргумента ───
@@ -198,23 +198,23 @@ test "overload с разными return типами по типу arg" {
 
 // ─── 8. Multi-arg overload ───
 
-type Pair {
+type Pair3 {
     a int
     b int
 }
 
-export fn Pair.new() -> Pair =>
+export fn Pair3.new() -> Pair3 =>
     { a: 0, b: 0 }
 
-export fn Pair @set(x int, y int) -> Pair =>
+export fn Pair3 @set(x int, y int) -> Pair3 =>
     { a: x, b: y }
 
-export fn Pair @set(x str, y int) -> Pair =>
+export fn Pair3 @set(x str, y int) -> Pair3 =>
     { a: 0, b: y }                  // ignores str x
 
 
 test "overload по first arg type" {
-    mut p0 = Pair.new()
+    mut p0 = Pair3.new()
     ro p1 = p0.set(3, 4)                // (int, int) → both
     assert(p1.a == 3)
     assert(p1.b == 4)

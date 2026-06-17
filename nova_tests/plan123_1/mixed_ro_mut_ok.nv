@@ -1,14 +1,14 @@
 // Plan 123.1 T2.4: type с both ro и mut fields → ro full-body cache +
 // mut first-region cache в одном теле.
 
-module plan123_1.mixed_ro_mut_ok
+module nova_tests.plan123_1
 
-type Config {
+type Config3 {
     ro factor int
     mut counter int
 }
 
-fn Config mut @tick() -> int {
+fn Config3 mut @tick() -> int {
     // ro @factor — accessed 4 times → full-body cache.
     // mut @counter — 2 reads prefix → first-region cache; @counter = ...
     // → boundary; reads after stay direct.
@@ -17,12 +17,12 @@ fn Config mut @tick() -> int {
     @factor * @counter + pre
 }
 
-fn Config.new(f int, c int) -> Config {
-    Config { factor: f, counter: c }
+fn Config3.new(f int, c int) -> Config3 {
+    Config3 { factor: f, counter: c }
 }
 
 test "mixed ro+mut caching" {
-    mut cfg = Config.new(3, 7)
+    mut cfg = Config3.new(3, 7)
     ro r = cfg.tick()
     // pre = 3+3+7+7 = 20; counter = 7+1=8; return 3*8 + 20 = 44.
     assert(r == 44)

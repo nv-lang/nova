@@ -1,6 +1,6 @@
 // Ф.19.1 (Plan 33.6): TrivialBackend modulus bounds — `x % 10 >= 0`.
 
-module contracts.trivial_modulus_bounds_positive
+module nova_tests.contracts
 
 #verify
 fn mod_non_neg(x int) -> int

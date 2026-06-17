@@ -1,4 +1,4 @@
-module plan61.repro_silent_ub_throw_typed
+module nova_tests.plan61
 
 // Plan 61 Ф.0 repro: Silent UB #1 — throw user-error становится garbage.
 //
@@ -11,7 +11,7 @@ module plan61.repro_silent_ub_throw_typed
 
 export type ParseError | Bad(str) | EOF
 
-fn raise() Fail[ParseError] -> int {
+fn raise2() Fail[ParseError] -> int {
     throw Bad("expected digit")
 }
 
@@ -20,7 +20,7 @@ test "throw ParseError carries typed payload" {
         Bad(detail) => detail
         EOF         => "eof"
     }) {
-        ro _ = raise()
+        ro _ = raise2()
         "unreachable"
     }
     // До Plan 61 — silent garbage. После Plan 61 — passes.

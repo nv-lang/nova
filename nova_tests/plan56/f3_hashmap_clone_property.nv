@@ -3,7 +3,7 @@
 // independence (mutation copy не влияет original), iteration order
 // stability.
 
-module plan56.f3_hashmap_clone_property
+module nova_tests.plan56
 
 import std.collections.hashmap.{HashMap}
 

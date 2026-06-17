@@ -1,4 +1,4 @@
-module plan91_8a_2.printable_fmt_synthesis_test
+module nova_tests.plan91_8a_2
 
 // Plan 91.8a.2 followup: Display.fmt default body synthesis (MVP).
 // Type T без explicit @display но с `fn str.from(T) -> str` overload или
@@ -8,40 +8,40 @@ module plan91_8a_2.printable_fmt_synthesis_test
 // Mirror of the Equal.equals MVP synthesis pattern.
 
 #impl(Display)
-type Money { cents int }
+type Money9 { cents int }
 
 // Path 1: `fn str.from(T)` overload — canonical D183.
-fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
+fn str.from(m Money9) -> str => "Money9(" + str.from(m.cents) + ")"
 
 // Path 2 (separate type): `fn T @into() -> str` — D73 conversion.
 #impl(Display)
-type Coin { value int }
-fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
+type Coin14 { value int }
+fn Coin14 @into() -> str => "Coin14(" + str.from(@value) + ")"
 
 // Generic bound — body calls .display() которое synthesized из default body.
 fn show[T Display](x T, sb StringBuilder) -> () => x.display(sb)
 
-test "Money satisfies Display bound via str.from(T) overload" {
-    ro m = Money { cents: 1250 }
+test "Money9 satisfies Display bound via str.from(T) overload" {
+    ro m = Money9 { cents: 1250 }
     consume sb = StringBuilder.new()
     show(m, sb)
-    assert(sb.as_str() == "Money(1250)")
+    assert(sb.as_str() == "Money9(1250)")
 }
 
-test "Coin satisfies Display bound via @into → str chain" {
-    ro c = Coin { value: 7 }
+test "Coin14 satisfies Display bound via @into → str chain" {
+    ro c = Coin14 { value: 7 }
     consume sb = StringBuilder.new()
     show(c, sb)
-    assert(sb.as_str() == "Coin(7)")
+    assert(sb.as_str() == "Coin14(7)")
 }
 
 test "synthesized fmt composable with explicit appends" {
-    ro m1 = Money { cents: 100 }
-    ro m2 = Money { cents: 250 }
+    ro m1 = Money9 { cents: 100 }
+    ro m2 = Money9 { cents: 250 }
     consume sb = StringBuilder.new()
     sb.append("first=")
     show(m1, sb)
     sb.append(", second=")
     show(m2, sb)
-    assert(sb.as_str() == "first=Money(100), second=Money(250)")
+    assert(sb.as_str() == "first=Money9(100), second=Money9(250)")
 }

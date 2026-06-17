@@ -6,7 +6,7 @@
 module nova_tests.plan55
 
 
-fn run_one() -> int {
+fn run_one1() -> int {
     mut arr []fn() -> int = []
     for i in 0..1000 {
         arr.push(|| i + 1)
@@ -22,13 +22,13 @@ fn run_one() -> int {
 test "1000 closures × 5 циклов — heap bounded [fast]" {
     // Fast variant: 5 cycles instead of 50 (1/10th).
     // Warm-up + reset
-    ro _ = run_one()
+    ro _ = run_one1()
     gc.collect()
     gc.reset_stats()
     ro baseline = gc.heap_size()
 
     for _ in 0..5 {
-        ro _ = run_one()
+        ro _ = run_one1()
     }
     gc.collect()
     ro after = gc.heap_size()

@@ -7,9 +7,9 @@
 // That file tests alloc_count/free_count directly; this file tests
 // observable value correctness from the Nova side.
 
-module concurrency.deep_gc
+module nova_tests.concurrency
 
-type Point {
+type Point1 {
     x int
     y int
 }
@@ -25,13 +25,13 @@ type Triple {
     c int
 }
 
-fn make_point(x int, y int) -> Point => { x, y }
+fn make_point(x int, y int) -> Point1 => { x, y }
 fn make_box(val int, depth int) -> Box => { val, depth }
 fn make_triple(a int, b int, c int) -> Triple => { a, b, c }
 
 // ---- helpers ----
 
-fn sum_range(n int) -> int {
+fn sum_range1(n int) -> int {
     // 1+2+...+n = n*(n+1)/2
     mut acc = 0
     mut i = 1

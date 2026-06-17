@@ -9,7 +9,7 @@
 // Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
 // cancel_resource_cb now executes reliably before scope exit under armed M:N.
 
-module plan65.f11a_timer_metrics
+module nova_tests.plan65
 
 import std.time.duration
 

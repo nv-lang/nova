@@ -14,7 +14,7 @@
 // ENV NOVA_MAX_FIBERS=20000
 // ENV NOVA_MAXPROCS=1
 
-module plan149.pos_max_fibers_roundup
+module nova_tests.plan149
 
 test "NOVA_MAX_FIBERS=20000 (rounds to 20032): 400 fibers spawn + sum" {
     mut total = 0

@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14): distance non-negative.
 // V1: TrivialBackend square nonneg (Ф.51.1) — без strict для composite expr.
 
-module contracts.f56_distance_nonneg
+module nova_tests.contracts
 
 // Distance squared всегда non-negative.
 #verify

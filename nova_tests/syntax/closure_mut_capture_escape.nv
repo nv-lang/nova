@@ -8,7 +8,7 @@
 // (nova_alloc box), caller читает/пишет через #define, closure хранит
 // указатель на box — safe при escape.
 
-module syntax.closure_mut_capture_escape
+module nova_tests.syntax
 
 
 // ─── Case 1: closure escapes fn scope (classic dangling-ptr case) ────
@@ -32,7 +32,7 @@ test "escaped closure с mut-capture считает корректно" {
 
 // ─── Case 2: два closure'а захватывают одну mut переменную ───────────
 
-fn make_pair() -> (fn() -> int, fn() -> int) {
+fn make_pair1() -> (fn() -> int, fn() -> int) {
     mut n = 0
     ro inc = || { n += 1; n }
     ro get = || n
@@ -40,7 +40,7 @@ fn make_pair() -> (fn() -> int, fn() -> int) {
 }
 
 test "два closure'а разделяют один mut-box" {
-    ro pair = make_pair()
+    ro pair = make_pair1()
     ro inc = pair.0
     ro get = pair.1
     // Оба closure'а должны видеть одно значение через shared box.

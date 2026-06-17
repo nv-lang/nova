@@ -7,7 +7,7 @@
 //
 // Decls в std/runtime/string.nv. Routing — общее правило в codegen для BinOp::Add (D46).
 
-module runtime.plus_operator
+module nova_tests.runtime
 
 
 // ================================================================

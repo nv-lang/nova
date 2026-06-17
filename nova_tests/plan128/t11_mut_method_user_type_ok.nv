@@ -4,30 +4,30 @@
 // Coverage: Ф.3 diagnostic must NOT misfire on user-defined types
 // (no `value`, no positional/named tuple syntax) — only primitives.
 
-module plan128.t11_mut_method_user_type_ok
+module nova_tests.plan128
 
-type Wallet {
+type Wallet6 {
     mut balance int
     mut tx_count int
 }
 
-fn Wallet.new() -> Self => { balance: 0, tx_count: 0 }
+fn Wallet6.new() -> Self => { balance: 0, tx_count: 0 }
 
-fn Wallet mut @deposit(amount int) -> () {
+fn Wallet6 mut @deposit(amount int) -> () {
     @balance = @balance + amount
     @tx_count = @tx_count + 1
 }
 
-fn Wallet mut @withdraw(amount int) -> () {
+fn Wallet6 mut @withdraw(amount int) -> () {
     @balance = @balance - amount
     @tx_count = @tx_count + 1
 }
 
-fn Wallet @balance_of() -> int => @balance
-fn Wallet @count() -> int => @tx_count
+fn Wallet6 @balance_of() -> int => @balance
+fn Wallet6 @count() -> int => @tx_count
 
 test "user heap record mut method — deposit + withdraw flow" {
-    mut w = Wallet.new()
+    mut w = Wallet6.new()
     w.deposit(100)
     w.deposit(50)
     w.withdraw(30)
@@ -36,7 +36,7 @@ test "user heap record mut method — deposit + withdraw flow" {
 }
 
 test "user heap record mut method — empty cycle" {
-    mut w = Wallet.new()
+    mut w = Wallet6.new()
     assert(w.balance_of() == 0)
     assert(w.count() == 0)
 }

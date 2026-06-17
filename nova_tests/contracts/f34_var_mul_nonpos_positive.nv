@@ -1,7 +1,7 @@
 // Ф.34.2 (Plan 33.6): TrivialBackend VarA * VarB <= 0 для mixed signs.
 // `requires a >= 0; requires b <= 0; ensures (a * b) <= 0`.
 
-module contracts.f34_var_mul_nonpos_positive
+module nova_tests.contracts
 
 #verify
 fn pos_times_neg(a int, b int) -> int

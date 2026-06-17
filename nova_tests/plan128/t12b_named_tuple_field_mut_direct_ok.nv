@@ -7,32 +7,32 @@
 // is now recognised as an addressable lvalue, callee writes
 // `nova_self->x = v` land in the original slot.
 
-module plan128.t12b_named_tuple_field_mut_direct_ok
+module nova_tests.plan128
 
-type Vec3(x f64, y f64, z f64)
+type Vec36(x f64, y f64, z f64)
 
-fn Vec3 mut @set_x(v f64) -> () {
+fn Vec36 mut @set_x(v f64) -> () {
     @x = v
 }
 
-fn Vec3 mut @scale_inplace(k f64) -> () {
+fn Vec36 mut @scale_inplace(k f64) -> () {
     @x = @x * k
     @y = @y * k
     @z = @z * k
 }
 
-type Body {
-    mut v Vec3
+type Body2 {
+    mut v Vec36
     mass f64
 }
 
-fn Body.new() -> Self => {
-    v: Vec3(x: 1.0, y: 2.0, z: 3.0),
+fn Body2.new() -> Self => {
+    v: Vec36(x: 1.0, y: 2.0, z: 3.0),
     mass: 10.0,
 }
 
 test "record.field.mut_method() — direct chain, no extract-rebind" {
-    mut b = Body.new()
+    mut b = Body2.new()
     b.v.set_x(99.0)
     assert(b.v.x == 99.0)
     assert(b.v.y == 2.0)
@@ -41,7 +41,7 @@ test "record.field.mut_method() — direct chain, no extract-rebind" {
 }
 
 test "record.field.scale_inplace() — direct chain" {
-    mut b = Body.new()
+    mut b = Body2.new()
     b.v.scale_inplace(2.0)
     assert(b.v.x == 2.0)
     assert(b.v.y == 4.0)
@@ -49,7 +49,7 @@ test "record.field.scale_inplace() — direct chain" {
 }
 
 test "interleaved direct field write + chained mut method" {
-    mut b = Body.new()
+    mut b = Body2.new()
     b.v.set_x(10.0)
     b.v.scale_inplace(3.0)
     assert(b.v.x == 30.0)

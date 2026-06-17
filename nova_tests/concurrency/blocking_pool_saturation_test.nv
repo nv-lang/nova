@@ -6,7 +6,7 @@
 // libuv queues excess uv_work_t. Checks: saturation degrades gracefully
 // (queue, not deadlock) — all fibers complete with correct results.
 
-module concurrency.blocking_pool_saturation_test
+module nova_tests.concurrency
 
 // leaf CPU work: increments acc upto times, returns upto.
 #blocking fn _busy_work(upto int) -> int {
@@ -19,7 +19,7 @@ module concurrency.blocking_pool_saturation_test
     acc
 }
 
-fn busy(upto int) -> int {
+fn busy2(upto int) -> int {
     _busy_work(upto)
 }
 
@@ -27,12 +27,12 @@ test "blocking: pool saturation — offloads > pool size, graceful queue" {
     mut total = 0
     supervised {
         // 6 fibers, pool of 2 threads → 4 queued.
-        spawn { ro r = busy(40000); total = total + r }
-        spawn { ro r = busy(40000); total = total + r }
-        spawn { ro r = busy(40000); total = total + r }
-        spawn { ro r = busy(40000); total = total + r }
-        spawn { ro r = busy(40000); total = total + r }
-        spawn { ro r = busy(40000); total = total + r }
+        spawn { ro r = busy2(40000); total = total + r }
+        spawn { ro r = busy2(40000); total = total + r }
+        spawn { ro r = busy2(40000); total = total + r }
+        spawn { ro r = busy2(40000); total = total + r }
+        spawn { ro r = busy2(40000); total = total + r }
+        spawn { ro r = busy2(40000); total = total + r }
     }
     assert(total == 240000)
 }
@@ -40,11 +40,11 @@ test "blocking: pool saturation — offloads > pool size, graceful queue" {
 test "blocking: saturation with mixed work sizes" {
     mut total = 0
     supervised {
-        spawn { ro r = busy(10000); total = total + r }
-        spawn { ro r = busy(20000); total = total + r }
-        spawn { ro r = busy(30000); total = total + r }
-        spawn { ro r = busy(40000); total = total + r }
-        spawn { ro r = busy(50000); total = total + r }
+        spawn { ro r = busy2(10000); total = total + r }
+        spawn { ro r = busy2(20000); total = total + r }
+        spawn { ro r = busy2(30000); total = total + r }
+        spawn { ro r = busy2(40000); total = total + r }
+        spawn { ro r = busy2(50000); total = total + r }
     }
     assert(total == 150000)
 }

@@ -1,4 +1,4 @@
-module plan61.repro_silent_ub_result_bang
+module nova_tests.plan61
 
 // Plan 61 Ф.4 repro: Silent UB #2 — `expr!!` на Err бросает payload.
 //
@@ -11,13 +11,13 @@ module plan61.repro_silent_ub_result_bang
 // не Plan 61. Bootstrap-stage Result hardcoded на (Ok int, Err nova_str)
 // (см. spec/decisions/08-runtime.md#d26 Bootstrap-ограничения §354-357).
 
-fn try_connect() -> Result[int, str] {
+fn try_connect2() -> Result[int, str] {
     Err("ConnFailed:127.0.0.1:5432")
 }
 
 test "result!! carries Err payload" {
     ro host = with Fail = |e| interrupt e {
-        ro _ = try_connect()!!
+        ro _ = try_connect2()!!
         "unreachable"
     }
     // До Plan 61 Ф.4 — `host == "Result::Err"` (placeholder garbage).

@@ -4,7 +4,7 @@
 // this module's `fn f(x int)` instead of the local closure param, raising a
 // spurious "обязательный параметр `x` не передан". A local binding shadows a
 // module free function of the same name.
-module plan153_1.resize_with_free_fn_shadow
+module nova_tests.plan153_1
 
 import std.collections.vec.{Vec}
 

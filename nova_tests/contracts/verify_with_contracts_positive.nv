@@ -1,6 +1,6 @@
 // Ф.27.1 positive (Plan 33.6): `#verify` с contracts → no W2402 noop.
 
-module contracts.verify_with_contracts_positive
+module nova_tests.contracts
 
 #verify
 fn checked(x int) -> int

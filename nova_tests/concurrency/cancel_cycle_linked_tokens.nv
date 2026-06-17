@@ -24,7 +24,7 @@
 //
 // EXPECT_TIMEOUT_MS 30000
 
-module concurrency.cancel_cycle_linked_tokens
+module nova_tests.concurrency
 
 
 // ──────────────────────────────────────────────────────────────────────────

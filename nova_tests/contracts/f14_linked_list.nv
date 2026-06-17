@@ -1,7 +1,7 @@
 // Plan 33.3 Ф.14: Dafny-parity test 6 — Linked list reversal invariant.
 // Моделируем через length counter (без указателей в SMT).
 
-module contracts.f14_linked_list
+module nova_tests.contracts
 
 // Длина списка сохраняется при reversal.
 #verify

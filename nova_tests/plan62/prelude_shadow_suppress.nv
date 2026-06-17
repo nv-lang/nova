@@ -13,12 +13,12 @@
 // to `#allow(shadow)` before `module` declaration.
 
 #allow(shadow)
-module plan62.prelude_shadow_suppress
+module nova_tests.plan62
 
-// PRELUDE_VERSION shadow'ит prelude const. С `#allow(shadow)`
+// PRELUDE_VERSION1 shadow'ит prelude const. С `#allow(shadow)`
 // attr — никакого warning'а; user-decl wins silently.
-const PRELUDE_VERSION int = 99
+const PRELUDE_VERSION1 int = 99
 
-test "suppress: user shadow PRELUDE_VERSION wins, no warning" {
-    assert(PRELUDE_VERSION == 99)
+test "suppress: user shadow PRELUDE_VERSION1 wins, no warning" {
+    assert(PRELUDE_VERSION1 == 99)
 }

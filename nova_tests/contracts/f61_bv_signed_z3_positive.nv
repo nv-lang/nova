@@ -4,7 +4,7 @@
 // операторы (bvslt/bvsle/bvsdiv). Знаковость берётся из SortRef::BitVec.signed.
 // Для signed-типа `-1 < 0` истинно (для unsigned было бы false: 0xFF > 0).
 
-module contracts.f61_bv_signed_z3_positive
+module nova_tests.contracts
 
 // i32 параметр: signed comparison. `x <= x` тривиально true для bvsle.
 #verify

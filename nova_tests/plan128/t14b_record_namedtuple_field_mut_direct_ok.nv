@@ -6,46 +6,46 @@
 // `&(outer->inner->v)` для arbitrarily deep projections. Validates the
 // helper handles >2 levels cleanly.
 
-module plan128.t14b_record_namedtuple_field_mut_direct_ok
+module nova_tests.plan128
 
-type Vec3(x f64, y f64, z f64)
+type Vec317(x f64, y f64, z f64)
 
-fn Vec3 mut @set_x(v f64) -> () {
+fn Vec317 mut @set_x(v f64) -> () {
     @x = v
 }
 
-fn Vec3 mut @set_y(v f64) -> () {
+fn Vec317 mut @set_y(v f64) -> () {
     @y = v
 }
 
-fn Vec3 mut @scale_inplace(k f64) -> () {
+fn Vec317 mut @scale_inplace(k f64) -> () {
     @x = @x * k
     @y = @y * k
     @z = @z * k
 }
 
-type Body {
-    mut v Vec3
+type Body6 {
+    mut v Vec317
     mass f64
 }
 
-fn Body.new(x f64, y f64, z f64, m f64) -> Self => {
-    v: Vec3(x: x, y: y, z: z),
+fn Body6.new(x f64, y f64, z f64, m f64) -> Self => {
+    v: Vec317(x: x, y: y, z: z),
     mass: m,
 }
 
-type World {
-    mut body Body
+type World2 {
+    mut body Body6
     g f64
 }
 
-fn World.new() -> Self => {
-    body: Body.new(1.0, 2.0, 3.0, 10.0),
+fn World2.new() -> Self => {
+    body: Body6.new(1.0, 2.0, 3.0, 10.0),
     g: 9.8,
 }
 
 test "record.record.namedtuple.mut_method — 3-level chain" {
-    mut w = World.new()
+    mut w = World2.new()
     w.body.v.set_x(100.0)
     assert(w.body.v.x == 100.0)
     assert(w.body.v.y == 2.0)
@@ -55,7 +55,7 @@ test "record.record.namedtuple.mut_method — 3-level chain" {
 }
 
 test "record.record.namedtuple.scale_inplace — 3-level chain" {
-    mut w = World.new()
+    mut w = World2.new()
     w.body.v.scale_inplace(2.0)
     assert(w.body.v.x == 2.0)
     assert(w.body.v.y == 4.0)
@@ -63,7 +63,7 @@ test "record.record.namedtuple.scale_inplace — 3-level chain" {
 }
 
 test "interleaved 3-level chained mut methods" {
-    mut w = World.new()
+    mut w = World2.new()
     w.body.v.set_x(10.0)
     w.body.v.set_y(20.0)
     w.body.v.scale_inplace(2.0)

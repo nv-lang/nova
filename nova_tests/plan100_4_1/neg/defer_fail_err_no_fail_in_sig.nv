@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR D158
+//
+// Plan 100.4.1 (D158): defer body имеет Fail[E] effect, но enclosing
+// fn-sig не объявил Fail[E] → compile error.
+//
+// Force'ит explicit visibility cleanup-fail в API.
+
+module neg.defer_fail_err_no_fail_in_sig
+
+type CommitErr { msg str }
+
+fn commit() Fail[CommitErr] -> () {
+    throw CommitErr { msg: "x" }
+}
+
+// ❌ fn-sig без Fail[E].
+fn process() -> () {                            // ← no Fail в sig
+    // ОШИБКА D158-defer-fail-not-in-sig: defer body имеет Fail[CommitErr],
+    // но enclosing fn не declares Fail. Suggest: add `Fail[CommitErr]` к sig.
+    defer { commit() }
+}
+
+test "defer fail без Fail в sig — error" {
+    process()
+}

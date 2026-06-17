@@ -9,7 +9,7 @@
 //
 // Uses extern "nova" fn returning Option[*u8] — standard malloc-style pattern.
 
-module plan118.t5_2_npo_some_none_construction_ok
+module nova_tests.plan118
 
 // extern "nova" fn returning nullable pointer (FFI ABI = single pointer NULL = None).
 extern "nova" fn p118_try_alloc_u8(size i64) -> Option[*u8]

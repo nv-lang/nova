@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14 Dafny-port): factorial с invariants.
 // Классика: factorial(n) >= 1 для n >= 0.
 
-module contracts.f55_factorial_invariant
+module nova_tests.contracts
 
 // Factorial — non-zero для n >= 0 (через bounds reasoning).
 // Body computes iteratively, contract заявляет positivity.

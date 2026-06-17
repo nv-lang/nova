@@ -1,7 +1,7 @@
 // Compound-assign операторы: +=, -=, *=, /= на let-mut и @field.
 // Также проверка ??= (null-coalescing assign) для Option.
 
-module syntax.compound_assign
+module nova_tests.syntax
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -39,28 +39,28 @@ test "+= в цикле — аккумулятор" {
 // 2. На @field self-поле в методе (Plan 12: compound-assign на @field)
 // ──────────────────────────────────────────────────────────────────────────
 
-type Counter {
+type Counter7 {
     mut value int
 }
 
-fn Counter.new() -> Self => { value: 0 }
+fn Counter7.new() -> Self => { value: 0 }
 
-fn Counter mut @inc() -> () {
+fn Counter7 mut @inc() -> () {
     @value += 1
 }
 
-fn Counter mut @add(n int) -> () {
+fn Counter7 mut @add(n int) -> () {
     @value += n
 }
 
-fn Counter mut @reset() -> () {
+fn Counter7 mut @reset() -> () {
     @value = 0
 }
 
-fn Counter @get() -> int => @value
+fn Counter7 @get() -> int => @value
 
 test "@field += 1 на self-поле" {
-    mut c = Counter.new()
+    mut c = Counter7.new()
     c.inc()
     assert(c.get() == 1)
     c.inc()
@@ -69,44 +69,44 @@ test "@field += 1 на self-поле" {
 }
 
 test "@field += n на self-поле" {
-    mut c = Counter.new()
+    mut c = Counter7.new()
     c.add(10)
     c.add(20)
     c.add(5)
     assert(c.get() == 35)
 }
 
-type State {
+type State6 {
     mut x int
     mut y int
     mut count int
 }
 
-fn State.new() -> Self => { x: 0, y: 0, count: 0 }
+fn State6.new() -> Self => { x: 0, y: 0, count: 0 }
 
-fn State mut @move(dx int, dy int) -> () {
+fn State6 mut @move(dx int, dy int) -> () {
     @x += dx
     @y += dy
     @count += 1
 }
 
-fn State mut @decay() -> () {
+fn State6 mut @decay() -> () {
     @x -= 1
     @y -= 1
 }
 
-fn State mut @scale(factor int) -> () {
+fn State6 mut @scale(factor int) -> () {
     @x *= factor
     @y *= factor
 }
 
-fn State mut @halve() -> () {
+fn State6 mut @halve() -> () {
     @x /= 2
     @y /= 2
 }
 
 test "несколько @field-compound в одном методе" {
-    mut s = State.new()
+    mut s = State6.new()
     s.move(10, 20)
     assert(s.x == 10)
     assert(s.y == 20)
@@ -118,7 +118,7 @@ test "несколько @field-compound в одном методе" {
 }
 
 test "@field -=, @field *=, @field /= в методе" {
-    mut s = State.new()
+    mut s = State6.new()
     s.move(20, 30)
     s.decay()
     assert(s.x == 19)

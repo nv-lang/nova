@@ -14,7 +14,7 @@
 // run + watch task manager / RSS на Windows). Test полагается on absence
 // of regression: with cleanup hook, mem stays stable.
 
-module concurrency.ctx_pins_scope_cleanup_loop
+module nova_tests.concurrency
 
 test "100 supervised scopes × 500 fibers — ctx_pins cleanup verified by completion" {
     mut total_cancelled = 0

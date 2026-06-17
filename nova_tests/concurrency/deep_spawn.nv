@@ -8,9 +8,9 @@
 // That file tests stack addresses, yield/resume ordering, fib(30), etc.
 // This file tests the observable Nova semantics built on top of that runtime.
 
-module concurrency.deep_spawn
+module nova_tests.concurrency
 
-type Counter {
+type Counter1 {
     val int
 }
 
@@ -19,7 +19,7 @@ type Stage {
     output int
 }
 
-fn make_counter(val int) -> Counter => { val }
+fn make_counter1(val int) -> Counter1 => { val }
 fn make_stage(input int, output int) -> Stage => { input, output }
 
 fn fib(n int) -> int {
@@ -35,7 +35,7 @@ fn fib(n int) -> int {
     a
 }
 
-fn sum_range(n int) -> int {
+fn sum_range2(n int) -> int {
     mut acc = 0
     mut i = 1
     while i <= n {
@@ -147,7 +147,7 @@ test "supervised: two fibers capture same mutable var, both mutations apply" {
 test "supervised: captures result of function call" {
     ro n = 10
     mut r = 0
-    supervised { spawn { r = sum_range(n) } }   // 55
+    supervised { spawn { r = sum_range2(n) } }   // 55
     assert(r == 55)
 }
 
@@ -312,10 +312,10 @@ test "spawn: fib(25) via mut capture" {
     assert(r == 75025)
 }
 
-test "spawn: sum_range(1000) via mut capture" {
+test "spawn: sum_range2(1000) via mut capture" {
     ro n = 1000
     mut r = 0
-    supervised { spawn { r = sum_range(n) } }
+    supervised { spawn { r = sum_range2(n) } }
     assert(r == 500500)
 }
 
@@ -358,14 +358,14 @@ test "spawn: alternating add/multiply pattern" {
 // ================================================================
 
 test "spawn: record field accessed via mut capture" {
-    ro c = make_counter(42)
+    ro c = make_counter1(42)
     mut r = 0
     supervised { spawn { r = c.val * 2 } }
     assert(r == 84)
 }
 
 test "spawn: int captured from record before spawn" {
-    ro c = make_counter(100)
+    ro c = make_counter1(100)
     ro cap = c.val
     mut result = 0
     supervised { spawn { result = cap + 1 } }

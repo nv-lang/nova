@@ -21,27 +21,27 @@
 // Outer continues body for ~50ms (well over inner budget, well under outer
 // budget). Outer must NOT throw CleanupTimeoutError — pre-fix it would.
 
-module plan110.nested_shield_deadline_restore_v1_1
+module nova_tests.plan110
 
 import std.prelude.errors
 
-type InnerRes { ro id int }
-fn InnerRes.new(id int) -> InnerRes => { id }
+type InnerRes4 { ro id int }
+fn InnerRes4.new(id int) -> InnerRes4 => { id }
 // Inner с tiny budget 5ms.
-fn InnerRes @exit_timeout_ms() -> int => 5
-fn InnerRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn InnerRes4 @exit_timeout_ms() -> int => 5
+fn InnerRes4 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
-type OuterRes { ro id int }
-fn OuterRes.new(id int) -> OuterRes => { id }
+type OuterRes4 { ro id int }
+fn OuterRes4.new(id int) -> OuterRes4 => { id }
 // Outer с realistic budget 1000ms.
-fn OuterRes @exit_timeout_ms() -> int => 1000
-fn OuterRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn OuterRes4 @exit_timeout_ms() -> int => 1000
+fn OuterRes4 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 fn run_nested() -> int {
     mut result = 0
-    consume outer = OuterRes.new(100) {
+    consume outer = OuterRes4.new(100) {
         // Inner shield enters + exits cleanly (well within 5ms budget).
-        consume inner = InnerRes.new(1) {
+        consume inner = InnerRes4.new(1) {
             result = inner.id
         }
         // Inner deadline pre-fix would still be active here.

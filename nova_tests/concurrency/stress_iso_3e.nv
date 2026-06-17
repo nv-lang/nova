@@ -1,7 +1,7 @@
 // stress_iso_3e.nv — Plan 83.10.5 Ф.A.1 diagnostic isolate
 // Exact clone of cancel_latency_bench test 2 — should pass if bench test 2 passes.
 // Used to verify [M-83.10.4-iso-cancel-startup-race] under diagnostic counters.
-module concurrency.stress_iso_3e
+module nova_tests.concurrency
 
 test "99+1 fibers sleep(10000), cancel(30ms) — STALE-slot stress" {
     ro tok = CancelToken.new()

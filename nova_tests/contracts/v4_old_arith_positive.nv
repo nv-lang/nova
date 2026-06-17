@@ -2,7 +2,7 @@
 // Frame axiom `_old_x == x` для non-modifies params + Z3-стyle reasoning
 // доказывают результат через TrivialBackend (когда выражение тривиально reflexive).
 
-module contracts.v4_old_arith_positive
+module nova_tests.contracts
 
 // `old(x) + old(y)` reduces to `x + y` под frame axiom.
 fn add_arith(x int, y int) -> int

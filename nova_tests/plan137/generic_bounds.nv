@@ -1,7 +1,7 @@
 // Plan 137 (D237) — generic bounds with new protocol names.
 // Tests [T Hash], [T Equal], [T Display], [T Compare], [T Clone].
 
-module plan137.generic_bounds
+module nova_tests.plan137
 
 
 fn[T Hash] hash_of(x T) -> u64 => x.hash()

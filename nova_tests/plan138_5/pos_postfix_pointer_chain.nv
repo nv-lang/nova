@@ -5,7 +5,7 @@
 // The ro pointee is the bare canon `*T` (`*T ≡ *ro T` per Plan 147 / D246;
 // explicit `*ro T` is a hard error, migrated here).
 
-module plan138_5.pos_postfix_pointer_chain
+module nova_tests.plan138_5
 
 type Node {
     id i64

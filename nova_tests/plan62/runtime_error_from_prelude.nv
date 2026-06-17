@@ -12,7 +12,7 @@
 // destructuring (см. nova_tests/runtime/error_runtime_error.nv §63-64
 // — assignment-style match ломается на nova_assert-void mismatch).
 
-module plan62.runtime_error_from_prelude
+module nova_tests.plan62
 
 
 // ─── RuntimeError variants (через Prelude) ───────────────────────────

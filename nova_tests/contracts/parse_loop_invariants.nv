@@ -3,10 +3,10 @@
 // Сейчас в trivial backend invariants/decreases — no-op (SMT verify
 // loops ждёт Z3 backend). Тест проверяет что синтаксис принят парсером.
 
-module contracts.parse_loop_invariants
+module nova_tests.contracts
 
 #unverified
-fn sum_to(n int) -> int
+fn sum_to2(n int) -> int
     requires n >= 0
 {
     mut s = 0
@@ -52,7 +52,7 @@ fn loop_with_decreases(n int) -> int
 }
 
 test "loop invariants + decreases parse" {
-    assert(sum_to(5) == 0 + 1 + 2 + 3 + 4)
+    assert(sum_to2(5) == 0 + 1 + 2 + 3 + 4)
     assert(count_array([10, 20, 30]) == 3)
     assert(loop_with_decreases(3) == 3 + 2 + 1)
 }

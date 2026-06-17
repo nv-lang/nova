@@ -11,7 +11,7 @@
 // - assume/ghost let внутри block-body не encode'ируется (только => expr).
 // - Arrays в SMT — Ф.11.
 
-module contracts.f10_binary_search_z3
+module nova_tests.contracts
 
 // forall в ensures: LIA sum.
 #verify

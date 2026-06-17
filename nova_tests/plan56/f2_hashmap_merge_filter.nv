@@ -2,7 +2,7 @@
 // Используют public keys()/get() API — обход cross-instance .buckets
 // field access typing issue.
 
-module plan56.f2_hashmap_merge_filter
+module nova_tests.plan56
 
 import std.collections.hashmap.{HashMap}
 

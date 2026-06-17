@@ -9,7 +9,7 @@
 //
 // C ABI: T* (transparent). Read of an unsafe-T binding requires unsafe block.
 
-module plan118_5.t3_ptr_to_uninit_ok
+module nova_tests.plan118_5
 
 type Buf {
     n i64

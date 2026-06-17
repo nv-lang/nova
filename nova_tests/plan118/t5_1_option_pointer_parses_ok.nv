@@ -6,7 +6,7 @@
 // optimization landing в Ф.5 proper codegen work (closes
 // [M-115-null-ptr-to-option-after-npo]).
 
-module plan118.t5_1_option_pointer_parses_ok
+module nova_tests.plan118
 
 type Resource {
     ro id i64

@@ -19,7 +19,7 @@
 // работает unchanged. См. spec/decisions/03-syntax.md §D126 +
 // docs/plans/62.D.bis-opaque-types-and-external-type-d-block.md.
 
-module plan62.opaque_types_from_prelude
+module nova_tests.plan62
 
 
 test "StringBuilder visible через prelude (no explicit import)" {

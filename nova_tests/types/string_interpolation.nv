@@ -6,7 +6,7 @@
 //
 // Escape `\${` сохраняет буквальный `${` в строке.
 
-module types.string_interpolation
+module nova_tests.types
 
 test "interpolation of int" {
     ro n = 42

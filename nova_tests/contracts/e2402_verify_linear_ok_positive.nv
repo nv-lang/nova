@@ -1,17 +1,17 @@
 // Ф.1.3 (Plan 33.6): #verify handler с линейным action body + статическим axiom → OK.
 // V1 static axiom verification (без post()) поддерживается TrivialBackend.
 
-module contracts.e2402_verify_linear_ok_positive
+module nova_tests.contracts
 
-type Flag effect {
+type Flag2 effect {
     #pure enabled() -> bool
     axiom always_false() => enabled() == false
 }
 
 test "static axiom verification под #verify компилируется" {
-    with #verify Flag = effect Flag {
+    with #verify Flag2 = effect Flag2 {
         enabled() => false
     } {
-        assert(Flag.enabled() == false)
+        assert(Flag2.enabled() == false)
     }
 }

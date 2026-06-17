@@ -4,7 +4,7 @@
 // implement Consumable[never] — `consume g = mu.acquire() { body }`
 // scope-block работает с auto-release on exit.
 
-module plan110.stdlib_mutex_consumable
+module nova_tests.plan110
 
 fn use_mutex() -> int {
     mut mu = Mutex.new()

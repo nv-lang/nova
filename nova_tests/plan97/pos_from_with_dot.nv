@@ -5,32 +5,32 @@
 // Проверяем: реализация компилируется, вызов работает, Into[U]
 // auto-derive продолжает работать.
 
-module plan97.pos_from_with_dot
+module nova_tests.plan97
 
 
 type Fahrenheit {
     value f64
 }
 
-type Celsius {
+type Celsius2 {
     value f64
 }
 
-// From[Fahrenheit] для Celsius — реализация через D35 static.
-fn Celsius.from(f Fahrenheit) -> Celsius =>
+// From[Fahrenheit] для Celsius2 — реализация через D35 static.
+fn Celsius2.from(f Fahrenheit) -> Celsius2 =>
     { value: (f.value - 32.0) * 5.0 / 9.0 }
 
 
-test "From[Fahrenheit] для Celsius — прямой Celsius.from(f) работает" {
+test "From[Fahrenheit] для Celsius2 — прямой Celsius2.from(f) работает" {
     ro f = Fahrenheit { value: 212.0 }
-    ro c = Celsius.from(f)
+    ro c = Celsius2.from(f)
     // 212F = 100C
     assert(c.value > 99.9 && c.value < 100.1)
 }
 
-test "Into[Celsius] auto-derive из From[Fahrenheit]" {
+test "Into[Celsius2] auto-derive из From[Fahrenheit]" {
     ro f = Fahrenheit { value: 32.0 }
-    ro c Celsius = f.into()
+    ro c Celsius2 = f.into()
     // 32F = 0C
     assert(c.value > -0.01 && c.value < 0.01)
 }

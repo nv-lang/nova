@@ -10,7 +10,7 @@
 // parent scope), inner defer body должен fire на выходе из inner
 // defer scope. То есть scope-cascade двухуровневый.
 
-module syntax.defer_nested_in_body
+module nova_tests.syntax
 
 
 // ───── defer внутри block внутри defer body ─────

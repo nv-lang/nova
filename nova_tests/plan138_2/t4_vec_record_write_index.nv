@@ -1,24 +1,24 @@
-// Plan 138.2 C3 — t4: Vec-of-record write-index `v[i] = Point{...}`.
+// Plan 138.2 C3 — t4: Vec-of-record write-index `v[i] = Point3{...}`.
 //
 // Regression guard for the `_p` typedef bug: writing a RECORD element through
-// the MutIndex magic on a `Vec[Point]` used to emit a cast to the NON-EXISTENT
-// typedef `(Nova_Point_p)(tmp)` (the `*` of the `Point*` element was encoded as
+// the MutIndex magic on a `Vec[Point3]` used to emit a cast to the NON-EXISTENT
+// typedef `(Nova_Point_p)(tmp)` (the `*` of the `Point3*` element was encoded as
 // `_p` in the mangle `Nova_Vec____Nova_Point_p`, and the naive
 // `trim_end_matches('*')` left it untouched). The write path now recovers the
 // element C type from the instance registry (or de-sanitizes `_p` -> `*`), so
 // the cast is the real `Nova_Point*`.
 
-module plan138_2.t4_vec_record_write_index
+module nova_tests.plan138_2
 
 import std.collections.vec.{Vec}
 
-type Point { x int, y int }
+type Point3 { x int, y int }
 
-test "Vec[Point] write-index via push-build, read back field" {
-    mut v = Vec[Point].new()
-    v.push(Point { x: 10, y: 20 })
-    v.push(Point { x: 30, y: 40 })
-    v[0] = Point { x: 99, y: 88 }
+test "Vec[Point3] write-index via push-build, read back field" {
+    mut v = Vec[Point3].new()
+    v.push(Point3 { x: 10, y: 20 })
+    v.push(Point3 { x: 30, y: 40 })
+    v[0] = Point3 { x: 99, y: 88 }
     assert(v[0].x == 99)
     assert(v[0].y == 88)
     // other element unchanged
@@ -26,10 +26,10 @@ test "Vec[Point] write-index via push-build, read back field" {
     assert(v[1].y == 40)
 }
 
-test "Vec[Point] write last element, length preserved" {
-    mut v = Vec[Point].of(Point { x: 1, y: 1 }, Point { x: 2, y: 2 }, Point { x: 3, y: 3 })
+test "Vec[Point3] write last element, length preserved" {
+    mut v = Vec[Point3].of(Point3 { x: 1, y: 1 }, Point3 { x: 2, y: 2 }, Point3 { x: 3, y: 3 })
     assert(v.len() == 3)
-    v[2] = Point { x: 100, y: 200 }
+    v[2] = Point3 { x: 100, y: 200 }
     assert(v.len() == 3)
     assert(v[2].x == 100)
     assert(v[2].y == 200)

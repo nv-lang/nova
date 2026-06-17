@@ -1,10 +1,10 @@
 // Ф.50.2 (Plan 33.6): readability hint for 5+ OR-disjuncts.
 // EXPECT_COMPILE_WARNING W2402
 
-module contracts.f50_long_disjunction_w2402
+module nova_tests.contracts
 
 #verify
-fn classify(x int) -> int
+fn classify1(x int) -> int
     requires x == 1 || x == 2 || x == 3 || x == 4 || x == 5
     ensures result == x
 {

@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14): buffer index safety invariants.
 // Канонический safety-critical pattern: index в bounds.
 
-module contracts.f56_buffer_index_safety
+module nova_tests.contracts
 
 // Index within [0, capacity-1] → preserve via passthrough.
 #verify

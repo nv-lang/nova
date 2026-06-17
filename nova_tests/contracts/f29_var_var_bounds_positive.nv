@@ -2,7 +2,7 @@
 // `requires a >= 10; requires b <= 5` ⊢ `ensures result >= 0` (a-b >= 10-5 = 5 >= 0).
 // Дополнительно: `ensures result > 0` тоже тривиально (5 > 0).
 
-module contracts.f29_var_var_bounds_positive
+module nova_tests.contracts
 
 // Проверяем что a-b >= 0 при a>=10, b<=5 (через subtraction check: lower(a)-upper(b)=5>=0).
 #verify

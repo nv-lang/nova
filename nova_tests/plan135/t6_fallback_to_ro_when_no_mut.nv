@@ -2,22 +2,22 @@
 // The dispatch must gracefully fall back to the ro overload (no error).
 // Verifies A-135.e: single overload works for any receiver.
 
-module plan135.t6_fallback_to_ro_when_no_mut
+module nova_tests.plan135
 
-type Probe { priv mut n int }
+type Probe3 { priv mut n int }
 
-fn Probe.new(v int) -> Self => { n: v }
+fn Probe3.new(v int) -> Self => { n: v }
 
 // Only ro overload — no mut counterpart.
-fn Probe @inspect() -> int => @n
+fn Probe3 @inspect() -> int => @n
 
 test "mut binding falls back to ro overload when no mut overload exists" {
-    mut p = Probe.new(77)
+    mut p = Probe3.new(77)
     // Calling inspect() on a mut binding — should use ro overload gracefully.
     assert(p.inspect() == 77)
 }
 
 test "ro binding also works with single ro overload" {
-    ro p = Probe.new(33)
+    ro p = Probe3.new(33)
     assert(p.inspect() == 33)
 }

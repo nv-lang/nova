@@ -1,6 +1,6 @@
 // Ф.28.2 (Plan 33.6): TrivialBackend double negation `0 - (0 - X)` → X.
 
-module contracts.trivial_double_negation_positive
+module nova_tests.contracts
 
 #verify
 fn dbl_neg(x int) -> int

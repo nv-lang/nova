@@ -2,7 +2,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_bit_manipulation
+module nova_tests.contracts
 
 // Power of two check: n > 0 && (n & (n-1)) == 0.
 // Моделируем через mod: 2^k % 2 == 0 для k >= 1.

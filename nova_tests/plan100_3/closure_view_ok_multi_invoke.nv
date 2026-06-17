@@ -1,15 +1,15 @@
 // Plan 100.3 (D157): view-closure (FnMut/Fn analog) — multiple invokes OK.
 
-module plan100_3.closure_view_ok_multi_invoke
+module nova_tests.plan100_3
 
-type Transaction consume {
+type Transaction4 consume {
     id int,
 }
 
-fn Transaction consume @commit() -> () { () }
+fn Transaction4 consume @commit() -> () { () }
 
 test "view-closure — multiple invokes" {
-    consume tx = Transaction { id: 10 }
+    consume tx = Transaction4 { id: 10 }
     ro logger = || println(tx.id)              // view-capture (no consume в body)
     logger()                                     // ✅ OK
     logger()                                     // ✅ OK, multi-invoke

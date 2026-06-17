@@ -2,7 +2,7 @@
 // nullable-uninit is `Option[*unsafe T]`. This replaces the retired prefix
 // `unsafe * T` form for "nullable pointer".
 
-module plan138_5.pos_option_nullable
+module nova_tests.plan138_5
 
 type Buffer {
     n i64

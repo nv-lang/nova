@@ -18,7 +18,7 @@
 // (test runs under armed M:N default — Plan 83.10 fix)
 
 
-module concurrency.cancel_semantics_test
+module nova_tests.concurrency
 
 
 // ──────────────────────────────────────────────────────────────────────────

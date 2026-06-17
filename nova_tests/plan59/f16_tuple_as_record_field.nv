@@ -3,7 +3,7 @@
 // для record field declarations + emit user-type fwd decls + mono tuple
 // typedefs preamble order (см. Phase 5 fix f3).
 
-module plan59.f16_tuple_as_record_field
+module nova_tests.plan59
 
 
 type Coord {

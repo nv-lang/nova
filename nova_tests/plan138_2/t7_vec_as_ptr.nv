@@ -12,7 +12,7 @@
 //   - `@as_ptr() -> *T`        on a `ro`-bound receiver  (read-only buffer ptr)
 //   - `mut @as_ptr() -> *mut T` on a `mut`-bound receiver (writable buffer ptr)
 
-module plan138_2.t7_vec_as_ptr
+module nova_tests.plan138_2
 
 import std.collections.vec.{Vec}
 

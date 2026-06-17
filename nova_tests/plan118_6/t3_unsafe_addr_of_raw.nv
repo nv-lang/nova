@@ -1,7 +1,7 @@
 // Plan 118.6 — unsafe { &x } gives raw stack pointer (for FFI).
 // EXPECT_PASS
 
-module plan118_6.t3_unsafe_addr_of_raw
+module nova_tests.plan118_6
 
 test "unsafe addr_of gives raw pointer" {
     ro x = 99

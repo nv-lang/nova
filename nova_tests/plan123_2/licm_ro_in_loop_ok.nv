@@ -1,14 +1,14 @@
 // Plan 123.2 T1.1: ro field invariant внутри loop → hoist
 // `ro _at_<F>_loop = @<F>` immediately before the loop.
 
-module plan123_2.licm_ro_in_loop_ok
+module nova_tests.plan123_2
 
-type Image {
+type Image3 {
     ro pixels int
     ro width int
 }
 
-fn Image @sum_pixels_for(times int) -> int {
+fn Image3 @sum_pixels_for(times int) -> int {
     mut total = 0
     mut i = 0
     while i < times {
@@ -19,12 +19,12 @@ fn Image @sum_pixels_for(times int) -> int {
     total + @width
 }
 
-fn Image.new(p int, w int) -> Image {
-    Image { pixels: p, width: w }
+fn Image3.new(p int, w int) -> Image3 {
+    Image3 { pixels: p, width: w }
 }
 
 test "ro field hoisted из while loop" {
-    ro img = Image.new(7, 100)
+    ro img = Image3.new(7, 100)
     ro r = img.sum_pixels_for(3)
     // total: 3*(7+7) = 42; + width 100 = 142.
     assert(r == 142)

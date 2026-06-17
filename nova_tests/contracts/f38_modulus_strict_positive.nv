@@ -1,7 +1,7 @@
 // Ф.38.1 (Plan 33.6): TrivialBackend modulus strict `>` для negative goal.
 // `requires x >= 0; ensures (x % 5) > -1` — result >= 0 > -1.
 
-module contracts.f38_modulus_strict_positive
+module nova_tests.contracts
 
 #verify
 fn mod_strict_above_neg(x int) -> int

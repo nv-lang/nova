@@ -2,31 +2,31 @@
 // Both are callable: ro binding -> ro overload, mut binding -> mut overload.
 // Verifies A-135.a, A-135.b, A-135.c, A-135.d.
 
-module plan135.t1_ro_mut_overload_basic_ok
+module nova_tests.plan135
 
-type Flag { priv mut state int }
+type Flag4 { priv mut state int }
 
-fn Flag.new(v int) -> Self => { state: v }
+fn Flag4.new(v int) -> Self => { state: v }
 
 // ro overload: returns 0 as marker
-fn Flag @kind() -> int => 0
+fn Flag4 @kind() -> int => 0
 
 // mut overload: returns 1 as marker
-fn Flag mut @kind() -> int => 1
+fn Flag4 mut @kind() -> int => 1
 
 test "ro binding calls ro overload" {
-    ro a = Flag.new(42)
+    ro a = Flag4.new(42)
     assert(a.kind() == 0)
 }
 
 test "mut binding calls mut overload" {
-    mut b = Flag.new(42)
+    mut b = Flag4.new(42)
     assert(b.kind() == 1)
 }
 
 test "both overloads coexist without CC-FAIL" {
-    ro a = Flag.new(10)
-    mut b = Flag.new(20)
+    ro a = Flag4.new(10)
+    mut b = Flag4.new(20)
     assert(a.kind() == 0)
     assert(b.kind() == 1)
     assert(a.kind() != b.kind())

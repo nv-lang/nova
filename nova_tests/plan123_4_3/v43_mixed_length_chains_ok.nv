@@ -3,27 +3,27 @@
 // @a.b.c.x.k (length 5, share length-3 prefix @a.b.c). V4.3 должен
 // обработать обе глубины корректно.
 
-module plan123_4_3.v43_mixed_length_chains_ok
+module nova_tests.plan123_4_3
 
 type Bot { ro k int }
-type Mid { ro x Bot }
-type Lv { ro c int, ro d Mid }
-type Mv { ro b Lv }
-type Nv { ro a Mv }
+type Mid1 { ro x Bot }
+type Lv2 { ro c int, ro d Mid1 }
+type Mv2 { ro b Lv2 }
+type Nv4 { ro a Mv2 }
 
-fn Nv @combo() -> int {
+fn Nv4 @combo() -> int {
     // length-2 shared (@a.b → for @a.b.c & @a.b.d): emitted length-2.
     // length-3+ chains @a.b.d.x не shared с другими.
     // Здесь только length-2 sharing активен (depth=4 default).
     @a.b.c + @a.b.c + @a.b.c + @a.b.d.x.k + @a.b.d.x.k + @a.b.d.x.k
 }
 
-fn Nv.new() -> Nv {
-    Nv { a: Mv { b: Lv { c: 3, d: Mid { x: Bot { k: 5 } } } } }
+fn Nv4.new() -> Nv4 {
+    Nv4 { a: Mv2 { b: Lv2 { c: 3, d: Mid1 { x: Bot { k: 5 } } } } }
 }
 
 test "V4.3: mixed-length chains semantic preservation" {
-    ro r = Nv.new()
+    ro r = Nv4.new()
     ro got = r.combo()
     // 3*3 + 5*3 = 24
     assert(got == 24)

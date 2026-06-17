@@ -1,6 +1,6 @@
 // Plan 125 Ф.1: match с двумя divergent + одной не-divergent — выбирает int.
 
-module plan125.two_branch_diverging_match_int
+module nova_tests.plan125
 
 type Sig | Halt | Quit | Go
 

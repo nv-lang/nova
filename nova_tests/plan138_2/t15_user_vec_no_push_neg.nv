@@ -7,7 +7,7 @@
 // header; instead the user-Vec has no `push`, so codegen rejects the access
 // (`no member named 'push' in 'struct Nova_Vec'`). User wins entirely (D29).
 
-module plan138_2.t15_user_vec_no_push_neg
+module nova_tests.plan138_2
 
 import std.collections.vec.{Vec}
 

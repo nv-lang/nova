@@ -3,7 +3,7 @@
 // (& / *) require proper type inference + escape analysis — Ф.4
 // follow-on phase.
 
-module plan118.t2_1_addr_of_deref_in_unsafe_ok
+module nova_tests.plan118
 
 test "unsafe block executes (basic)" {
     ro x = 42

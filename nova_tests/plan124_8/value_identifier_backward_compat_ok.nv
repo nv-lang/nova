@@ -1,6 +1,6 @@
 // Plan 124.8 — positive: `value` контекстный keyword — backward compat
 // для variables/fields с именем `value`.
-module plan124_8.value_identifier_backward_compat_ok
+module nova_tests.plan124_8
 
 type Item {
     code int

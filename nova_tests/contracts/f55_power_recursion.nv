@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14 Dafny-port): power step с invariant.
 // V1: single multiplication step (Ф.37.2 strict positive product).
 
-module contracts.f55_power_recursion
+module nova_tests.contracts
 
 #verify
 fn pow_step(acc int, base int) -> int

@@ -3,9 +3,9 @@
 // Ф.1 hookpoint. interrupt валиден только в handler-body — fn оборачивает
 // в effect-handler context.
 
-module plan125_1.interrupt_in_let_typed
+module nova_tests.plan125_1
 
-fn classify(c bool) -> int {
+fn classify1(c bool) -> int {
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {
@@ -20,5 +20,5 @@ fn classify(c bool) -> int {
 }
 
 test "interrupt-handler with int let typed" {
-    assert(classify(false) == 55)
+    assert(classify1(false) == 55)
 }

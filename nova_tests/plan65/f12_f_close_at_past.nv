@@ -1,7 +1,7 @@
 // Plan 65 R18 / Ф.12.5: ChanReader.close_at(Monotonic) — past deadline
 // returns an already-closed reader with no timer alloc + no leak.
 
-module plan65.f12_f_close_at_past
+module nova_tests.plan65
 
 import std.time.duration
 

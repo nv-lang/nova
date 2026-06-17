@@ -1,6 +1,6 @@
 // Plan 124.8 — positive: `ro x mut T = ...` form (binding ro, content mut)
 // — D176 amend Ф.2 closes parser gap.
-module plan124_8.binding_ro_mut_type_ok
+module nova_tests.plan124_8
 
 test "ro binding + mut type — parses + works" {
     mut arr []int = [1, 2, 3]

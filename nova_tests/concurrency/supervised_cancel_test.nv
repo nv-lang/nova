@@ -23,7 +23,7 @@
 // multi-worker armed scheduler. Same root cause: [M-83.10.1-armed-cancel-timer-hang].
 
 
-module concurrency.supervised_cancel_test
+module nova_tests.concurrency
 
 // ================================================================
 // SECTION 1: supervised(cancel:) без cancel() ≡ обычный supervised

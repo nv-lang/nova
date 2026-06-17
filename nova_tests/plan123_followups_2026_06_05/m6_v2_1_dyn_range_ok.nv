@@ -3,15 +3,15 @@
 // Positive: literal `0..N` exclusive range gives precise iter weight
 // (vs env default 8). Semantic preservation verified through known sum.
 
-module plan123_followups_2026_06_05.m6_v2_1_dyn_range_ok
+module nova_tests.plan123_followups_2026_06_05
 
-type Cv {
+type Cv10 {
     mut y int
 }
 
-fn Cv.new(init int) -> Cv => { y: init }
+fn Cv10.new(init int) -> Cv10 => { y: init }
 
-fn Cv mut @sum_range_5() -> int {
+fn Cv10 mut @sum_range_5() -> int {
     // Range expr `0..5` вЂ” literal bound 5 parsed via parse_loop_iter_count.
     mut acc = 0
     for i in 0..5 {
@@ -20,7 +20,7 @@ fn Cv mut @sum_range_5() -> int {
     acc
 }
 
-fn Cv mut @sum_range_inclusive_3() -> int {
+fn Cv10 mut @sum_range_inclusive_3() -> int {
     // Range expr `1..=3` вЂ” literal inclusive, 3 iterations (1,2,3).
     mut acc = 0
     for i in 1..=3 {
@@ -30,13 +30,13 @@ fn Cv mut @sum_range_inclusive_3() -> int {
 }
 
 test "V2.1 dyn 0..5 exclusive: 5 iters Г— y" {
-    mut Cv = Cv.new(2)
-    ro r = Cv.sum_range_5()
+    mut Cv10 = Cv10.new(2)
+    ro r = Cv10.sum_range_5()
     assert(r == 10)
 }
 
 test "V2.1 dyn 1..=3 inclusive: 3 iters Г— y" {
-    mut Cv = Cv.new(7)
-    ro r = Cv.sum_range_inclusive_3()
+    mut Cv10 = Cv10.new(7)
+    ro r = Cv10.sum_range_inclusive_3()
     assert(r == 21)
 }

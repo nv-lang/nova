@@ -19,7 +19,7 @@
 // Stress kind: positive_stress_heavy — 10k fibers, 10k timer handles,
 // 10k park/wake. External harness `tools/stress_bisect.sh` repeats the
 // binary 3-5x only.
-module concurrency.fibers_10k_sleep_cancel
+module nova_tests.concurrency
 
 test "10000 parked fibers — cancel wakes all within 5 seconds" {
     ro tok = CancelToken.new()

@@ -23,7 +23,7 @@
 // Body is intentionally a single supervised scope: external harness
 // repeats binary execution to isolate any per-run SEGV (one failure
 // in the loop does not mask subsequent runs).
-module concurrency.timer_fire_during_cancel
+module nova_tests.concurrency
 
 test "natural-fire vs cancel race — idempotent CAS, no UAF" {
     // Sleep duration (30ms) deliberately matches the cancel deadline

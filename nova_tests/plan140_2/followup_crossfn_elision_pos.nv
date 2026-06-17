@@ -3,7 +3,7 @@
 // `at(v,i) requires 0<=i<v.len()` → внутри `v[i]` провабелен ИЗ requires →
 // contract-based элизия (codegen элидит ТОЛЬКО при включённых контрактах).
 
-module plan140_2.followup_crossfn_elision_pos
+module nova_tests.plan140_2
 
 import std.collections.vec.{Vec}
 

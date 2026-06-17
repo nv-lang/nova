@@ -1,6 +1,6 @@
 // Plan 169 Ф.6: full slow variant — large N, runs in slow lane only.
 // Fast version (reduced N): t2_fast_variant.nv
-module plan169.t2_fast_variant_slow
+module nova_tests.plan169
 
 test "full variant: 10000 iterations" {
     mut sum = 0

@@ -30,7 +30,7 @@
 //   no race), so these Ф.4 tests are deterministic. Broader varying-count
 //   stress lives with that marker until the scheduler race is fixed.
 
-module concurrency.blocking_driver_test
+module nova_tests.concurrency
 
 // Trivially fast leaf — exercises the wake-before-park fast-path.
 #blocking fn _drv_fast(n int) -> int {

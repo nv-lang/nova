@@ -1,19 +1,19 @@
-// Plan 100.2 (D156): `for consume tx in []Transaction` — consume iteration.
+// Plan 100.2 (D156): `for consume tx in []Transaction5` — consume iteration.
 //
 // Каждый element tx в arm-теле обязан consumed (consume-obligation).
 // После for — vec considered Consumed (pragmatic: `for consume` marks iter).
-// Uses inline Transaction literals (не consume-let) — no loose obligations.
+// Uses inline Transaction5 literals (не consume-let) — no loose obligations.
 
-module plan100_2.for_consume_iter_ok
+module nova_tests.plan100_2
 
-type Transaction consume {
+type Transaction5 consume {
     id int,
 }
-fn Transaction consume @commit() -> () { () }
+fn Transaction5 consume @commit() -> () { () }
 
 test "for consume tx in vec — каждый element consume'ится в arm'е" {
     // Inline literals → no named consume-obligations outside loop.
-    ro txs = [Transaction { id: 1 }, Transaction { id: 2 }, Transaction { id: 3 }]
+    ro txs = [Transaction5 { id: 1 }, Transaction5 { id: 2 }, Transaction5 { id: 3 }]
     for consume tx in txs {
         tx.commit()                             // consume obligation satisfied ✅
     }

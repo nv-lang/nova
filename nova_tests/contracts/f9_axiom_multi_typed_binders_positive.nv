@@ -1,7 +1,7 @@
 // Plan 33.3 (refactor): axiom с тремя типизированными биндерами.
 // Проверяет, что парсер и type-check принимают аксиомы с 3 параметрами.
 
-module contracts.f9_axiom_multi_typed_binders_positive
+module nova_tests.contracts
 
 type Ledger effect {
     #pure balance(from int, to int) -> int

@@ -2,7 +2,7 @@
 // Nova-body reroute. Confirms RawMem-body parity with the retired C lowering —
 // same primitives (memcmp via RawMem.compare, memcpy via Vec.append). Not a unit
 // assertion of correctness (that's comparison.nv); a workload to time end-to-end.
-module plan152_5.bench_operators
+module nova_tests.plan152_5
 
 test "operator workload (compare + eq + concat) runs to completion" {
     ro a = "the quick brown fox jumps over the lazy dog"

@@ -8,7 +8,7 @@
 // modifier, so they do not trip E_POINTER_PREFIX_MODIFIER. The only
 // surviving value-T conflict is ro+mut (§V3.1), tested elsewhere.
 
-module plan138_5.pos_value_t_modifier_order
+module nova_tests.plan138_5
 
 extern "nova" fn p_ro_unsafe(x ro unsafe int) -> ()
 extern "nova" fn p_unsafe_ro(x unsafe ro int) -> ()

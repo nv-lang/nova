@@ -4,7 +4,7 @@
 // на примитиве is rejected; pure ro-methods (`fn int @doubled`)
 // remain a normal D35 v2 feature.
 
-module plan128.t10_primitive_ro_method_ok
+module nova_tests.plan128
 
 fn int @doubled() -> int => @ * 2
 fn int @is_positive() -> bool => @ > 0

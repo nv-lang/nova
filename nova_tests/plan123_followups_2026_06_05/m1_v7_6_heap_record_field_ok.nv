@@ -4,24 +4,24 @@
 // `@F.method()` doesn't invalidate `@F` cache when method mutates *F
 // behind pointer (V7.6 V2 spec-driven, не hardcoded list).
 
-module plan123_followups_2026_06_05.m1_v7_6_heap_record_field_ok
+module nova_tests.plan123_followups_2026_06_05
 
-type Inner {
+type Inner4 {
     mut count int
 }
 
-fn Inner.new() -> Inner => { count: 0 }
-fn Inner mut @bump() -> () { @count = @count + 1 }
-fn Inner @get() -> int => @count
+fn Inner4.new() -> Inner4 => { count: 0 }
+fn Inner4 mut @bump() -> () { @count = @count + 1 }
+fn Inner4 @get() -> int => @count
 
-type Outer {
-    mut inner Inner
+type Outer3 {
+    mut inner Inner4
 }
 
-fn Outer.new() -> Outer => { inner: Inner.new() }
+fn Outer3.new() -> Outer3 => { inner: Inner4.new() }
 
-fn Outer mut @sample_three_bumps() -> int {
-    // V7.6 V2: `Inner` is heap-record (default AllocKind::Heap),
+fn Outer3 mut @sample_three_bumps() -> int {
+    // V7.6 V2: `Inner4` is heap-record (default AllocKind::Heap),
     // classified via TypeKindRegistry as HeapRecord ⇒ ref-typed.
     // Multiple `@inner.bump()` / `@inner.get()` chain through field.
     @inner.bump()
@@ -34,7 +34,7 @@ fn Outer mut @sample_three_bumps() -> int {
 }
 
 test "V7.6 V2: heap-record field ref-classification preserves semantics" {
-    mut o = Outer.new()
+    mut o = Outer3.new()
     ro r = o.sample_three_bumps()
     // bumps: 0→1, 1→2, 2→3
     // a=1, b=2, c=3 ⇒ 1+2+3 = 6

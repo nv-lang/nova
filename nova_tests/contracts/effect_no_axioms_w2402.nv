@@ -1,9 +1,9 @@
 // Ф.27.3 (Plan 33.6): effect с #pure methods но без axioms → W2402.
 // EXPECT_COMPILE_WARNING W2402
 
-module contracts.effect_no_axioms_w2402
+module nova_tests.contracts
 
-type Counter effect {
+type Counter2 effect {
     #pure value() -> int
 }
 

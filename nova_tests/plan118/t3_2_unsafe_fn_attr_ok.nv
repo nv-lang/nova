@@ -6,7 +6,7 @@
 // Callers MUST `unsafe { ... }` wrap call (E_UNSAFE_CALL_REQUIRES_WRAP
 // enforcement landed Ф.3.5 / Plan 118 commit 5c0d2c975ce).
 
-module plan118.t3_2_unsafe_fn_attr_ok
+module nova_tests.plan118
 
 unsafe fn ffi_wrapper(x i64) -> i64 {
     x * 2

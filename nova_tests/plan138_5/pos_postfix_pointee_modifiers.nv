@@ -5,22 +5,22 @@
 // `*unsafe T` (ptr to possibly-uninit pointee). The modifier is on the
 // pointee (postfix, after `*`).
 
-module plan138_5.pos_postfix_pointee_modifiers
+module nova_tests.plan138_5
 
-type Acc {
+type Acc1 {
     id i64
 }
 
-extern "nova" fn p_default(p * Acc) -> ()
-extern "nova" fn p_ro(p *Acc) -> ()
-extern "nova" fn p_mut(p *mut Acc) -> ()
-extern "nova" fn p_unsafe(p *unsafe Acc) -> ()
-extern "nova" fn r_default() -> * Acc
-extern "nova" fn r_mut() -> *mut Acc
+extern "nova" fn p_default(p * Acc1) -> ()
+extern "nova" fn p_ro(p *Acc1) -> ()
+extern "nova" fn p_mut(p *mut Acc1) -> ()
+extern "nova" fn p_unsafe(p *unsafe Acc1) -> ()
+extern "nova" fn r_default() -> * Acc1
+extern "nova" fn r_mut() -> *mut Acc1
 
 test "postfix pointee modifiers parse + typecheck" {
-    assert(size_of[*mut Acc]() == 8)
-    assert(size_of[*Acc]() == 8)
-    assert(size_of[*unsafe Acc]() == 8)
-    assert(size_of[* Acc]() == 8)
+    assert(size_of[*mut Acc1]() == 8)
+    assert(size_of[*Acc1]() == 8)
+    assert(size_of[*unsafe Acc1]() == 8)
+    assert(size_of[* Acc1]() == 8)
 }

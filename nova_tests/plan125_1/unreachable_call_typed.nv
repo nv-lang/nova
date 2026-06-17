@@ -2,9 +2,9 @@
 // Whitelist в infer_expr_type включает panic/exit/abort/unreachable.
 // assignable(never, str) -> Ok.
 
-module plan125_1.unreachable_call_typed
+module nova_tests.plan125_1
 
-fn classify(c int) -> str {
+fn classify2(c int) -> str {
     ro s str = if c == 0 {
         "zero"
     } else if c > 0 {
@@ -16,6 +16,6 @@ fn classify(c int) -> str {
 }
 
 test "unreachable in else branch with str target" {
-    assert(classify(0) == "zero")
-    assert(classify(5) == "pos")
+    assert(classify2(0) == "zero")
+    assert(classify2(5) == "pos")
 }

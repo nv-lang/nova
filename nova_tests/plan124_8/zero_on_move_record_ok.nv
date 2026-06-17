@@ -4,16 +4,16 @@
 // followup [M-124.8-zero-on-move-auto-inject]. Тест verifies type
 // declares successfully и normal field access работает (no behavior
 // change в absence of consume).
-module plan124_8.zero_on_move_record_ok
+module nova_tests.plan124_8
 
 #zero_on_move
-type Secret {
+type Secret4 {
     mut key str
     mut nonce int
 }
 
 test "zero_on_move heap record — declared and used normally" {
-    mut s = Secret { key: "abc", nonce: 42 }
+    mut s = Secret4 { key: "abc", nonce: 42 }
     assert(s.nonce == 42)
     s.nonce = 100
     assert(s.nonce == 100)

@@ -1,0 +1,24 @@
+// Plan 140.2 Part B (D257 / B.4) SOUNDNESS GUARD: если `v` мутируется в цикле
+// (`v.pop()` меняет длину), frame-check НЕ read-only ⇒ `v[i]` НЕ элидируется ⇒
+// inline bounds-check остаётся ⇒ OOB (i вышел за усохшую длину) ловится в
+// runtime. Если бы элизия сработала ошибочно — был бы UB вместо чистого panic.
+// EXPECT_RUNTIME_PANIC array: index
+
+module neg.b4_soundness_neg
+
+import std.collections.vec.{Vec}
+
+fn drain_while_indexing() -> int {
+    mut v = Vec[int].of(1, 2, 3, 4, 5)
+    mut s = 0
+    for i in 0..v.len() {
+        v.pop()
+        s = s + v[i]
+    }
+    s
+}
+
+test "mutated-v loop traps OOB (not elided)" {
+    ro r = drain_while_indexing()
+    assert(r == 0)
+}

@@ -15,7 +15,7 @@
 // один тест убил бы всю прогонку (exit) или приходилось бы выходить
 // из процесса (panic без supervisor'а).
 
-module runtime.panic_exit
+module nova_tests.runtime
 
 
 // ───── Базовый sanity: функции есть в prelude и компилируются ─────

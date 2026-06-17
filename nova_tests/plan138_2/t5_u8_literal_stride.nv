@@ -12,7 +12,7 @@
 // built as `Vec[u8]` (`Nova_Vec____nova_byte`, 1-byte stride) — byte-identical
 // to the push-built vector.
 
-module plan138_2.t5_u8_literal_stride
+module nova_tests.plan138_2
 
 import std.runtime.raw_mem
 import std.collections.vec.{Vec}

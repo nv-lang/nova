@@ -2,7 +2,7 @@
 // Heap-record (default allocation) with `#impl(Equal)` вЂ” synthesized
 // memberwise `@equal` OVERRIDES default identity-eq. Two distinct heap
 // instances with equal fields compare true. D109 amend / AC-126.2.3.
-module plan126_2.p6_heap_record_equatable_override_ok
+module nova_tests.plan126_2
 
 #impl(Equal)
 type Node {

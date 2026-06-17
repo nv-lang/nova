@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_avl_balance
+module nova_tests.contracts
 
 // Высота дерева: leaf = 0, node = 1 + max(left, right).
 #verify

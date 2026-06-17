@@ -2,7 +2,7 @@
 // `FiltIt[MapIt[I, T, U], U]` written out by hand instead of `FiltIt[Self, U]`.
 // This is expected to PASS, isolating the bug to the `Self` type-arg
 // substitution (full receiver mono) rather than the nested-generic machinery.
-module self_nested.repro_explicit
+module nova_tests.self_nested
 
 import std.collections.vec.{Vec, VecIter}
 

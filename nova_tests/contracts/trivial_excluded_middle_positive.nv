@@ -1,7 +1,7 @@
 // Ф.21.1 (Plan 33.6): boolean excluded middle/contradiction в TrivialBackend.
 // `(X ∨ ¬X) = true`, `(X ∧ ¬X) = false`.
 
-module contracts.trivial_excluded_middle_positive
+module nova_tests.contracts
 
 #verify
 fn either_branch(c bool) -> bool

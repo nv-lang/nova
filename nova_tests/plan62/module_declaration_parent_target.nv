@@ -22,7 +22,7 @@
 // to `#no_prelude` before `module` declaration.
 
 #no_prelude
-module plan62.module_declaration_parent_target
+module nova_tests.plan62
 
 import std.prelude.core.{Option, Some, None}
 import std.prelude.runtime.{assert}

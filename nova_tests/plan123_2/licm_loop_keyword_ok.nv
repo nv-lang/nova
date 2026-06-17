@@ -1,12 +1,12 @@
 // Plan 123.2 T1.4: `loop { ... break ... }` form.
 
-module plan123_2.licm_loop_keyword_ok
+module nova_tests.plan123_2
 
-type Wrap {
+type Wrap3 {
     ro limit int
 }
 
-fn Wrap @find_first() -> int {
+fn Wrap3 @find_first() -> int {
     mut x = 0
     loop {
         if x >= @limit + @limit { break }
@@ -15,12 +15,12 @@ fn Wrap @find_first() -> int {
     x
 }
 
-fn Wrap.new(l int) -> Wrap {
-    Wrap { limit: l }
+fn Wrap3.new(l int) -> Wrap3 {
+    Wrap3 { limit: l }
 }
 
 test "loop keyword form — @limit hoisted" {
-    ro w = Wrap.new(5)
+    ro w = Wrap3.new(5)
     ro r = w.find_first()
     // limit*2 = 10, x increments from 0 to 10.
     assert(r == 10)

@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_fibonacci
+module nova_tests.contracts
 
 // fib(0) = 0, fib(1) = 1, fib(2) = 1.
 #verify

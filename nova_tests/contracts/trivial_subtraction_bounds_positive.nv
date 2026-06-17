@@ -1,7 +1,7 @@
 // Ф.18.1 (Plan 33.6): TrivialBackend subtraction bounds.
 // `x >= 5, y <= 3 ⊢ x - y >= 2`.
 
-module contracts.trivial_subtraction_bounds_positive
+module nova_tests.contracts
 
 #verify
 fn diff_bounded(x int, y int) -> int

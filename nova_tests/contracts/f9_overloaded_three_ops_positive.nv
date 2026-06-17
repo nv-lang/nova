@@ -1,7 +1,7 @@
 // Plan 33.3 (refactor): три перегрузки одного operation в effect
 // (по int, str, bool) — все три разные сигнатуры, дубликатов нет.
 
-module contracts.f9_overloaded_three_ops_positive
+module nova_tests.contracts
 
 type Converter effect {
     convert(x int) -> str

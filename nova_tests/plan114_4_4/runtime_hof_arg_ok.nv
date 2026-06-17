@@ -2,19 +2,19 @@
 // automatic trampoline generation.
 //
 // Before V4.2: this raised E_CONST_FN_FIRST_CLASS_RUNTIME_HOF.
-// V4.2: `double` → trampoline `double__trampoline(int x) -> int { x * 2 }`,
-// passed as fn pointer to `apply`.
+// V4.2: `double2` → trampoline `double__trampoline(int x) -> int { x * 2 }`,
+// passed as fn pointer to `apply3`.
 
-module plan114_4_4.runtime_hof_arg_ok
+module nova_tests.plan114_4_4
 
-fn double(const x int) -> const int => x * 2
+fn double2(const x int) -> const int => x * 2
 
-fn apply(f fn(int) -> int, x int) -> int => f(x)
+fn apply3(f fn(int) -> int, x int) -> int => f(x)
 
 test "const fn passed as runtime HOF arg" {
-    ro r = apply(double, 5)
+    ro r = apply3(double2, 5)
     assert(r == 10)
 
-    ro r2 = apply(double, 7)
+    ro r2 = apply3(double2, 7)
     assert(r2 == 14)
 }

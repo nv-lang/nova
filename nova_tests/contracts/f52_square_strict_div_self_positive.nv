@@ -2,7 +2,7 @@
 // Ф.52.1: `requires x >= 1; ensures (x * x) > 0` — square strict positive.
 // Ф.52.3: `ensures (x / x) == 1` (для non-zero — spec assumption).
 
-module contracts.f52_square_strict_div_self_positive
+module nova_tests.contracts
 
 #verify
 fn square_strict_pos(x int) -> int

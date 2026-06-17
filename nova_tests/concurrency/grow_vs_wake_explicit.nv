@@ -19,7 +19,7 @@
 // NO `// ENV NOVA_AUTOARM=0` gate — this runs in armed M:N mode by default
 // (that is the whole point of the regression guard).
 
-module concurrency.grow_vs_wake_explicit
+module nova_tests.concurrency
 
 test "grow-vs-wake: 5 sequential supervised blocks (3/1/5/4/5) complete" {
     ro t0 = Time.now()

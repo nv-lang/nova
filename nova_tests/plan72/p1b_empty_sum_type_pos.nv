@@ -10,7 +10,7 @@
 // 2. `type Marker { }` (explicit empty braces) parses and compiles
 // 3. Empty sum types produce a valid C typedef (not a build error)
 
-module plan72.p1b_empty_sum_type_pos
+module nova_tests.plan72
 
 // Empty sum — bottom / uninhabited type (0 variants).
 type Uninhabited

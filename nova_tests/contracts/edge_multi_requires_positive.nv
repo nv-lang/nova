@@ -1,6 +1,6 @@
 // Ф.15.3 (Plan 33.6): edge case — много requires/ensures clauses через bounds prop.
 
-module contracts.edge_multi_requires_positive
+module nova_tests.contracts
 
 #verify
 fn many_constraints(a int) -> int

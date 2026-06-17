@@ -13,22 +13,22 @@
 // ENV NOVA_FIBER_STACK=8MB
 // ENV NOVA_MAXPROCS=1
 
-module concurrency.plan149_env_stack
+module nova_tests.concurrency
 
 // Recursive sum 1..n — consumes one frame per level. depth=2000 is trivial
 // for an 8MB stack but exercises real recursion inside a fiber.
-fn rec_sum(n int) -> int {
+fn rec_sum1(n int) -> int {
     if n <= 0 {
         0
     } else {
-        n + rec_sum(n - 1)
+        n + rec_sum1(n - 1)
     }
 }
 
 test "env NOVA_FIBER_STACK=8MB: deep-recursion fiber completes" {
     mut r = 0
     supervised {
-        spawn { r = rec_sum(2000) }
+        spawn { r = rec_sum1(2000) }
     }
     // 2000 * 2001 / 2 = 2001000
     assert(r == 2001000)
@@ -39,7 +39,7 @@ test "env NOVA_FIBER_STACK=8MB: many fibers each recurse" {
     supervised {
         mut i = 0
         while i < 50 {
-            spawn { total += rec_sum(500) }   // 500*501/2 = 125250 each
+            spawn { total += rec_sum1(500) }   // 500*501/2 = 125250 each
             i += 1
         }
     }

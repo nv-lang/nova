@@ -4,7 +4,7 @@
 // Verifies match emission site (emit_match → pattern_cond) уважает
 // NPO layout for NovaOpt[*T] — no tag field access.
 
-module plan118.t5_3_npo_match_pattern_ok
+module nova_tests.plan118
 
 type Item {
     ro tag i64

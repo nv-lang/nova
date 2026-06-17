@@ -2,7 +2,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_gcd_lcm
+module nova_tests.contracts
 
 // GCD свойства: gcd делит оба числа (через модulo check).
 // gcd(a, 0) = a.

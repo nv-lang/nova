@@ -4,7 +4,7 @@
 // concrete-значением (V2: Z3_get_model + Skolem decl extraction).
 // Тест проверяет только что exists не ломает компиляцию.
 
-module contracts.witness_exists_positive
+module nova_tests.contracts
 
 #verify
 fn has_positive(n int) -> int

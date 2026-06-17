@@ -4,9 +4,9 @@
 // runtime-enforcement недоказанного requires использует receiver (nova_self).
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.plan140_2_self_field_positive
+module nova_tests.contracts
 
-type Counter {
+type Counter9 {
     count int
 }
 
@@ -14,7 +14,7 @@ type Counter {
 // _field_count_int(_self) >= 0 ⇒ _field_count_int(_self) + _field_count_int(_self) >= 0.
 // ensures доказывается Z3 (элидируется); requires остаётся runtime-проверкой.
 #verify
-fn Counter @doubled() -> int
+fn Counter9 @doubled() -> int
     requires @count >= 0
     ensures result >= 0
 {
@@ -23,14 +23,14 @@ fn Counter @doubled() -> int
 
 // ensures result == @count — рефлексивно после подстановки result→@count.
 #verify
-fn Counter @identity_count() -> int
+fn Counter9 @identity_count() -> int
     ensures result == @count
 {
     @count
 }
 
 test "self-field contract positive" {
-    ro c = Counter { count: 5 }
+    ro c = Counter9 { count: 5 }
     assert(c.doubled() == 10)
     assert(c.identity_count() == 5)
 }

@@ -1,0 +1,11 @@
+// Plan 118.5 V3 T10 → RETIRED by Plan 138.5 (2026-06-11).
+//
+// `safe` was a propagation-stopper that suppressed the §V3.2 modifier-order
+// check. With the order check retired and `safe` removed, this form errors
+// at the `safe` token. Kept as a regression guard for the retired stopper.
+//
+// EXPECT_COMPILE_ERROR E_SAFE_RETIRED
+
+module neg.t10_safe_breaks_modifier_order_ok
+
+extern "nova" fn t10_p(x * safe unsafe int) -> ()

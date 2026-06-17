@@ -3,16 +3,16 @@
 // `expr is Variant` — runtime tag-check. Возвращает bool.
 // Без binding-формы (binding это работа `if let` из D34).
 
-module syntax.is_sum
+module nova_tests.syntax
 
-type Shape
+type Shape1
     | Circle { radius f64 }
     | Square { side f64 }
     | Origin
 
-fn make_circle(r f64) -> Shape => Circle { radius: r }
-fn make_square(s f64) -> Shape => Square { side: s }
-fn make_origin() -> Shape => Origin
+fn make_circle(r f64) -> Shape1 => Circle { radius: r }
+fn make_square(s f64) -> Shape1 => Square { side: s }
+fn make_origin() -> Shape1 => Origin
 
 // ================================================================
 // SECTION 1: базовый is для sum-вариантов
@@ -89,7 +89,7 @@ test "is Ok / is Err on Result" {
 
 test "is — counter of variants in array" {
     // Считаем число Circle'ов в массиве forms.
-    // Сейчас массивы Shape работают через type-erasure, но для is
+    // Сейчас массивы Shape1 работают через type-erasure, но для is
     // мы итерируем по индексу и считаем теги.
     ro s1 = make_circle(1.0)
     ro s2 = make_square(2.0)
@@ -102,7 +102,7 @@ test "is — counter of variants in array" {
 }
 
 test "is — guard-стиль через if-expression" {
-    ro s Shape = make_origin()
+    ro s Shape1 = make_origin()
     ro label =
         if s is Origin { "at-origin" }
         else if s is Circle { "circle" }

@@ -19,7 +19,7 @@
 // Реальный инвариант теста = «cancel будит всех, scope НЕ виснет на 10s», а не
 // 250ms-латентность. Бюджеты ослаблены до wake-not-hang границ (10×+ ниже sleep).
 
-module concurrency.supervised_cancel_stress_test
+module nova_tests.concurrency
 
 test "cancel during 100 parked sleeps wakes all immediately" {
     ro tok = CancelToken.new()

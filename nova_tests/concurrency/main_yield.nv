@@ -31,7 +31,7 @@
 // Reason: semantically cooperative — would require rewrite for M:N semantics.
 // (Directive applied at top of file to stay within parser's 30-line window.)
 
-module concurrency.main_yield
+module nova_tests.concurrency
 
 // ================================================================
 // SECTION 1: main yields between spawn registrations

@@ -1,8 +1,8 @@
 // Plan 125 Ф.1: симметричный кейс — divergent в else, не-divergent в then.
 
-module plan125.if_else_throw_then_str
+module nova_tests.plan125
 
-fn pick(c bool) Fail -> str {
+fn pick3(c bool) Fail -> str {
     if c {
         "hi"
     } else {
@@ -14,7 +14,7 @@ test "if-else-throw / then-str returns str" {
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {
-        ro s = pick(true)
+        ro s = pick3(true)
         assert(s == "hi")
     }
 }
@@ -24,7 +24,7 @@ test "if-else-throw fires on false" {
     with Fail = effect Fail {
         fail(_) { caught = true; interrupt () }
     } {
-        ro _s = pick(false)
+        ro _s = pick3(false)
     }
     assert(caught)
 }

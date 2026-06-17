@@ -1,6 +1,6 @@
 // Ф.9.9 (Plan 33.6): V3 coverage — SCC purity inference chain (3+ pure fns calling each other).
 
-module contracts.v3_scc_purity_chain_positive
+module nova_tests.contracts
 
 #pure
 fn helper_a(x int) -> int

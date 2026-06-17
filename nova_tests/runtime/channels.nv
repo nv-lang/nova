@@ -10,7 +10,7 @@
 // явный tx.close() в конце теста там где нужно (Plan 25 G8 = open-coded
 // defer устранит это ограничение в будущем).
 
-module runtime.channels
+module nova_tests.runtime
 
 // ================================================================
 // SECTION 1: send / recv — buffered channel

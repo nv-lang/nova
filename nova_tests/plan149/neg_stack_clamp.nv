@@ -19,7 +19,7 @@
 // ENV NOVA_MAXPROCS=1
 // EXPECT_STDERR exceeds max
 
-module plan149.neg_stack_clamp
+module nova_tests.plan149
 
 test "stack above max: clamped to 256MB, fiber still runs" {
     mut total = 0

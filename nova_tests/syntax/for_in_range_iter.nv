@@ -21,7 +21,7 @@
 // но символ _nova_throw_typed_void нужен линкеру — standalone linker issue).
 // Заменяем step_by-тесты на RangeIter-итерацию.
 
-module syntax.for_in_range_iter
+module nova_tests.syntax
 
 test "Range for-in loop — sum via RangeIter" {
     mut sum = 0

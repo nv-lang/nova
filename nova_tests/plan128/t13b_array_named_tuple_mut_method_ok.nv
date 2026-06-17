@@ -3,25 +3,25 @@
 // return workaround). Requires both:
 //   - Ф.1 fix (is_lvalue_receiver recognises Index-of-Ident as lvalue —
 //     receiver emits as `&(arr->data[i])` not `&__tmp`).
-//   - Ф.2 fix (array literal `[Vec3(...), ...]` infers element type via
+//   - Ф.2 fix (array literal `[Vec310(...), ...]` infers element type via
 //     TypeDeclKind::NamedTuple constructor type-producing).
 
-module plan128.t13b_array_named_tuple_mut_method_ok
+module nova_tests.plan128
 
-type Vec3(x f64, y f64, z f64)
+type Vec310(x f64, y f64, z f64)
 
-fn Vec3 mut @set_x(v f64) -> () {
+fn Vec310 mut @set_x(v f64) -> () {
     @x = v
 }
 
-fn Vec3 mut @scale_inplace(k f64) -> () {
+fn Vec310 mut @scale_inplace(k f64) -> () {
     @x = @x * k
     @y = @y * k
     @z = @z * k
 }
 
 test "array[i].set_x — direct mut method through Index projection" {
-    mut vs = [Vec3(x: 1.0, y: 2.0, z: 3.0), Vec3(x: 4.0, y: 5.0, z: 6.0)]
+    mut vs = [Vec310(x: 1.0, y: 2.0, z: 3.0), Vec310(x: 4.0, y: 5.0, z: 6.0)]
     vs[0].set_x(99.0)
     assert(vs[0].x == 99.0)
     assert(vs[0].y == 2.0)
@@ -33,7 +33,7 @@ test "array[i].set_x — direct mut method through Index projection" {
 }
 
 test "array[i].scale_inplace — direct mut method through Index" {
-    mut vs = [Vec3(x: 1.0, y: 1.0, z: 1.0), Vec3(x: 2.0, y: 2.0, z: 2.0)]
+    mut vs = [Vec310(x: 1.0, y: 1.0, z: 1.0), Vec310(x: 2.0, y: 2.0, z: 2.0)]
     vs[1].scale_inplace(3.0)
     // Element 0 untouched.
     assert(vs[0].x == 1.0)
@@ -46,7 +46,7 @@ test "array[i].scale_inplace — direct mut method through Index" {
 }
 
 test "array[i].mut_method on both elements — independent writes" {
-    mut vs = [Vec3(x: 0.0, y: 0.0, z: 0.0), Vec3(x: 0.0, y: 0.0, z: 0.0)]
+    mut vs = [Vec310(x: 0.0, y: 0.0, z: 0.0), Vec310(x: 0.0, y: 0.0, z: 0.0)]
     vs[0].set_x(10.0)
     vs[1].set_x(20.0)
     assert(vs[0].x == 10.0)

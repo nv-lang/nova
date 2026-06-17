@@ -10,15 +10,15 @@
 // chains (the field-read path now decodes element types out of the mono'd
 // struct name, not only a per-Ident side-table).
 
-module plan148.tr_tuple_typed_fields_ok
+module nova_tests.plan148
 
 // A record element — stored as the typed `Nova_Point*`, not a boxed int.
-type Point {
+type Point5 {
     x int
     y int
 }
 
-fn Point.new(x int, y int) -> Point => { x, y }
+fn Point5.new(x int, y int) -> Point5 => { x, y }
 
 // Tuple as a fn PARAMETER (mono'd struct by value). Field reads must keep the
 // real element types — this is the path that previously needed the side-table.
@@ -52,9 +52,9 @@ test "heterogeneous tuple return — typed field reads" {
 }
 
 test "record element stored as typed pointer, not boxed int" {
-    ro pt = Point.new(4, 9)
+    ro pt = Point5.new(4, 9)
     ro pair = (pt, "label")
-    // `pair.0` is a `Point` (typed), so `.x`/`.y` are real field reads.
+    // `pair.0` is a `Point5` (typed), so `.x`/`.y` are real field reads.
     assert(pair.0.x == 4)
     assert(pair.0.y == 9)
     assert(pair.1 == "label")

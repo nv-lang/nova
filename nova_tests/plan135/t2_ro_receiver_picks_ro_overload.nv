@@ -2,22 +2,22 @@
 // Must dispatch to the ro overload (returns 0).
 // Verifies A-135.b.
 
-module plan135.t2_ro_receiver_picks_ro_overload
+module nova_tests.plan135
 
-type Sensor { priv val int }
+type Sensor7 { priv val int }
 
-fn Sensor.new(v int) -> Self => { val: v }
+fn Sensor7.new(v int) -> Self => { val: v }
 
-fn Sensor @read() -> int => 0        // ro overload: marker 0
-fn Sensor mut @read() -> int => 1    // mut overload: marker 1
+fn Sensor7 @read() -> int => 0        // ro overload: marker 0
+fn Sensor7 mut @read() -> int => 1    // mut overload: marker 1
 
 test "ro binding dispatches to ro overload" {
-    ro s = Sensor.new(5)
+    ro s = Sensor7.new(5)
     assert(s.read() == 0)
 }
 
 test "ro binding via explicit ro keyword — ro overload" {
-    ro s = Sensor.new(99)
+    ro s = Sensor7.new(99)
     ro result = s.read()
     assert(result == 0)
 }

@@ -1,5 +1,5 @@
 // Plan 124.8 — positive: `mut x ro T = ...` form (binding mut, content ro).
-module plan124_8.binding_mut_ro_type_ok
+module nova_tests.plan124_8
 
 test "mut binding + ro type — parses + works" {
     ro arr []int = [1, 2, 3]

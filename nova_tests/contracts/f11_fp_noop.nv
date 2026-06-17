@@ -1,7 +1,7 @@
 // FP noop test
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f11_fp_noop
+module nova_tests.contracts
 
 #verify
 fn id_f64(x f64) -> f64

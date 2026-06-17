@@ -1,40 +1,40 @@
-module plan91_8a_2.impl_verification_test
+module nova_tests.plan91_8a_2
 
 // Plan 91.9 (D186) — verification pass for `#impl(P + Q + ...)`.
 // При декларации type X #impl(P) compiler проверяет что X provides все
 // методы P (explicit OR synthesizable from P's default body).
 // Missing → E_IMPL_MISSING_METHODS at type-decl site (не при использовании).
 
-type Greetable protocol {
+type Greetable3 protocol {
     @greet() -> str {
         "Hello, " + @name()
     }
 }
 
-// Positive: User имеет @name → Greetable.greet synthesizable → #impl ok.
-#impl(Greetable)
-type User { display_name str }
-fn User @name() -> str => @display_name
+// Positive: User6 имеет @name → Greetable3.greet synthesizable → #impl ok.
+#impl(Greetable3)
+type User6 { display_name str }
+fn User6 @name() -> str => @display_name
 
-test "verified #impl(Greetable) — bare call works" {
-    ro u = User { display_name: "World" }
+test "verified #impl(Greetable3) — bare call works" {
+    ro u = User6 { display_name: "World" }
     assert(u.greet() == "Hello, World")
 }
 
 test "verified #impl multi: Equal + Compare + Display" {
-    ro a = Coin { value: 5 }
-    ro b = Coin { value: 5 }
+    ro a = Coin10 { value: 5 }
+    ro b = Coin10 { value: 5 }
     assert(a.equal(b))
     assert(a.compare(b) == 0)
     consume sb = StringBuilder.new()
     a.display(sb)
-    assert(sb.as_str() == "Coin(5)")
+    assert(sb.as_str() == "Coin10(5)")
 }
 
 #impl(Equal + Compare + Display)
-type Coin { value int }
-fn Coin @compare(other Self) -> int =>
+type Coin10 { value int }
+fn Coin10 @compare(other Self) -> int =>
     if @value < other.value { -1 }
     else if @value > other.value { 1 }
     else { 0 }
-fn str.from(c Coin) -> str => "Coin(${c.value})"
+fn str.from(c Coin10) -> str => "Coin10(${c.value})"

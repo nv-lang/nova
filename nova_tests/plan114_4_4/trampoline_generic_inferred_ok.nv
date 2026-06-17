@@ -2,18 +2,18 @@
 // HOF type inference. Closes [M-114.4.4-trampoline-generics] for monomorphic
 // instantiations inferred from callee fn signature.
 
-module plan114_4_4.trampoline_generic_inferred_ok
+module nova_tests.plan114_4_4
 
-fn id[T](const x T) -> const T => x
+fn id1[T](const x T) -> const T => x
 
-fn apply_i(f fn(int) -> int, x int) -> int => f(x)
+fn apply_i2(f fn(int) -> int, x int) -> int => f(x)
 
 test "generic const fn first-class через HOF inference" {
-    // apply_i expects f: fn(int) -> int → T inferred = int.
+    // apply_i2 expects f: fn(int) -> int → T inferred = int.
     // Compiler generates id__trampoline_int(x int) -> int { return x; }
-    ro r1 = apply_i(id, 42)
+    ro r1 = apply_i2(id1, 42)
     assert(r1 == 42)
 
-    ro r2 = apply_i(id, 100)
+    ro r2 = apply_i2(id1, 100)
     assert(r2 == 100)
 }

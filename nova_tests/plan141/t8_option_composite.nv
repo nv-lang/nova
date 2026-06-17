@@ -2,10 +2,10 @@
 // compare structurally via emit_field_eq, not memcmp. memcmp on
 // Option[(f64,int)] would be unsound for -0.0/NaN; on Option[str] it would
 // compare {ptr,len} bits instead of string value.
-module plan141.t8_option_composite
+module nova_tests.plan141
 
 fn some_tuple(a int, b int) -> Option[(int, int)] => Some((a, b))
-fn make_nan(z f64) -> f64 => z / z
+fn make_nan2(z f64) -> f64 => z / z
 
 test "Option[(int,int)] structural eq" {
     ro a = some_tuple(1, 2)
@@ -25,7 +25,7 @@ test "Option[(int,int)] None vs Some" {
 
 test "Option[(f64,int)] NaN payload — IEEE NaN != NaN" {
     ro zero = 0.0
-    ro nan = make_nan(zero)
+    ro nan = make_nan2(zero)
     ro a Option[(f64, int)] = Some((nan, 1))
     ro b Option[(f64, int)] = Some((nan, 1))
     assert(a != b)

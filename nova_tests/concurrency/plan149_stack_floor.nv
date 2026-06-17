@@ -10,20 +10,20 @@
 // ENV NOVA_MAXPROCS=1
 // EXPECT_STDERR below floor
 
-module concurrency.plan149_stack_floor
+module nova_tests.concurrency
 
-fn rec_sum(n int) -> int {
+fn rec_sum2(n int) -> int {
     if n <= 0 {
         0
     } else {
-        n + rec_sum(n - 1)
+        n + rec_sum2(n - 1)
     }
 }
 
 test "stack below floor: clamped to 256KB, shallow fiber still runs" {
     mut r = 0
     supervised {
-        spawn { r = rec_sum(100) }   // shallow — fits 240KB usable easily
+        spawn { r = rec_sum2(100) }   // shallow — fits 240KB usable easily
     }
     // 100 * 101 / 2 = 5050
     assert(r == 5050)

@@ -3,7 +3,7 @@
 // `v[i].field = x` (field-write через индекс) и чтение поля через индекс
 // корректны под clang (plain stmt-expr `data[i]` НЕ был бы lvalue).
 
-module plan140_2.b_lvalue_contexts
+module nova_tests.plan140_2
 
 import std.collections.vec.{Vec}
 

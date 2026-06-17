@@ -16,7 +16,7 @@
 // (see [M-handler-duration-schema-mismatch] / [M-time-now-schema-mismatch]
 // in docs/simplifications.md; the latter is targeted by Plan 65 Ф.12.3).
 
-module plan65.f8_mock_time_advance
+module nova_tests.plan65
 
 import std.time.duration
 

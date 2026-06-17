@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14): range check invariants.
 // Value within range — bounded passthrough patterns.
 
-module contracts.f57_range_check
+module nova_tests.contracts
 
 // Уже в range — passthrough.
 #verify

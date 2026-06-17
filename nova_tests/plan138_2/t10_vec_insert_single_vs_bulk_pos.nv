@@ -12,7 +12,7 @@
 // `Vec[Vec[int]]`: `.insert(i, inner)` where `inner: Vec[int] == T` inserts the
 // nested vector as ONE element (it is NOT a splice).
 
-module plan138_2.t10_vec_insert_single_vs_bulk_pos
+module nova_tests.plan138_2
 
 import std.collections.vec.{Vec}
 

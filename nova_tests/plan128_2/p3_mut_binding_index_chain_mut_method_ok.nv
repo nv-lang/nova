@@ -1,21 +1,21 @@
 // Plan 128.2 Ф.2 P3 — mut binding + index chain + mut method = OK.
 //
-// `mut arr: []Vec3`, `arr[0].set_x(42)` — IndexAccess chain. Root
+// `mut arr: []Vec36`, `arr[0].set_x(42)` — IndexAccess chain. Root
 // binding `mut`, chain-walking helper walks `IndexAccess { obj: Ident
 // "arr" }` → root Ident → mut → enforcement пропускает.
 
-module plan128_2.p3_mut_binding_index_chain_mut_method_ok
+module nova_tests.plan128_2
 
-type Vec3(x int, y int, z int)
+type Vec36(x int, y int, z int)
 
-fn Vec3 mut @set_x(v int) -> () {
+fn Vec36 mut @set_x(v int) -> () {
     @x = v
 }
 
 test "mut binding + index chain + mut method — OK" {
     mut arr = [
-        Vec3(x: 1, y: 2, z: 3),
-        Vec3(x: 4, y: 5, z: 6),
+        Vec36(x: 1, y: 2, z: 3),
+        Vec36(x: 4, y: 5, z: 6),
     ]
     arr[0].set_x(42)
     assert(arr[0].x == 42)

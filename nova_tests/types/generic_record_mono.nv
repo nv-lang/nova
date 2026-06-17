@@ -4,96 +4,96 @@
 // codegen эмитит отдельный C-struct `Nova_GenericType____Nova_Concrete1__Nova_Concrete2`.
 // Поля получают конкретные типы (не void*).
 
-module types.generic_record_mono
+module nova_tests.types
 
-// === 1. Wrapper[T] — одно поле ===
+// === 1. Wrapper4[T] — одно поле ===
 
-type Wrapper[T] {
+type Wrapper4[T] {
     value T
 }
 
-fn Wrapper[T].of(v T) -> Wrapper[T] =>
+fn Wrapper4[T].of(v T) -> Wrapper4[T] =>
     { value: v }
 
-fn Wrapper[T] @get() -> T => @value
+fn Wrapper4[T] @get() -> T => @value
 
-fn Wrapper[T] @map_int() -> int => 0    // smoke: компилируется для любого T
+fn Wrapper4[T] @map_int() -> int => 0    // smoke: компилируется для любого T
 
-test "Wrapper[int] конструктор и get" {
-    ro w = Wrapper[int].of(42)
+test "Wrapper4[int] конструктор и get" {
+    ro w = Wrapper4[int].of(42)
     assert(w.get() == 42)
 }
 
-test "Wrapper[str] конструктор и get" {
-    ro w = Wrapper[str].of("hello")
+test "Wrapper4[str] конструктор и get" {
+    ro w = Wrapper4[str].of("hello")
     assert(w.get() == "hello")
 }
 
-test "Wrapper[bool] конструктор и get" {
-    ro w = Wrapper[bool].of(true)
+test "Wrapper4[bool] конструктор и get" {
+    ro w = Wrapper4[bool].of(true)
     assert(w.get() == true)
 }
 
-test "два Wrapper разных типов независимы" {
-    ro a = Wrapper[int].of(1)
-    ro b = Wrapper[str].of("x")
+test "два Wrapper4 разных типов независимы" {
+    ro a = Wrapper4[int].of(1)
+    ro b = Wrapper4[str].of("x")
     assert(a.get() == 1)
     assert(b.get() == "x")
 }
 
 
-// === 2. Pair[A, B] — два разных поля ===
+// === 2. Pair3[A, B] — два разных поля ===
 
-type Pair[A, B] {
+type Pair3[A, B] {
     fst A
     snd B
 }
 
-fn Pair[A, B].make(a A, b B) -> Pair[A, B] =>
+fn Pair3[A, B].make(a A, b B) -> Pair3[A, B] =>
     { fst: a, snd: b }
 
-test "Pair[int, str] — fst и snd независимы" {
-    ro p = Pair[int, str].make(7, "hi")
+test "Pair3[int, str] — fst и snd независимы" {
+    ro p = Pair3[int, str].make(7, "hi")
     assert(p.fst == 7)
     assert(p.snd == "hi")
 }
 
-test "Pair[str, bool].make" {
-    ro p = Pair[str, bool].make("ok", true)
+test "Pair3[str, bool].make" {
+    ro p = Pair3[str, bool].make("ok", true)
     assert(p.fst == "ok")
     assert(p.snd == true)
 }
 
 
-// === 3. Generic sum type Result2[T] ===
+// === 3. Generic sum type Result23[T] ===
 
-type Result2[T]
+type Result23[T]
     | Ok2(T)
     | Err2
 
-fn Result2[T] @is_ok() -> bool => match @ {
+fn Result23[T] @is_ok() -> bool => match @ {
     Ok2(_) => true
     Err2   => false
 }
 
-fn Result2[T] @unwrap_or(fallback T) -> T => match @ {
+fn Result23[T] @unwrap_or(fallback T) -> T => match @ {
     Ok2(v) => v
     Err2   => fallback
 }
 
-test "Result2[int] Ok2 — is_ok и unwrap_or" {
+test "Result23[int] Ok2 — is_ok и unwrap_or" {
     ro r = Ok2(42)
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 42)
 }
 
-test "Result2[int] Err2 — is_ok false" {
+test "Result23[int] Err2 — is_ok false" {
     ro r = Err2
     assert(!r.is_ok())
     assert(r.unwrap_or(99) == 99)
 }
 
-test "Result2[str] Ok2" {
+test "Result23[str] Ok2" {
     ro r = Ok2("value")
     assert(r.is_ok())
     assert(r.unwrap_or("") == "value")

@@ -5,17 +5,17 @@
 // inspection. Bootstrap version (str-prefix discrimination); full
 // `if err is T` narrowing после payload `any` migration.
 
-module plan110.codegen_typed_error_dispatch_t2_11
+module nova_tests.plan110
 
-type TxRes {
+type TxRes3 {
     ro id int
 }
 
-fn TxRes.new(id int) -> TxRes => { id }
+fn TxRes3.new(id int) -> TxRes3 => { id }
 
 // on_exit inspects outcome variant + (bootstrap) message prefix
 // для cancel-vs-throw discrimination.
-fn TxRes consume @on_exit(outcome ScopeOutcome) -> () {
+fn TxRes3 consume @on_exit(outcome ScopeOutcome) -> () {
     match outcome {
         Success => ()
         Failure(msg) => {
@@ -36,7 +36,7 @@ fn TxRes consume @on_exit(outcome ScopeOutcome) -> () {
 
 fn use_typed_dispatch() -> int {
     mut result = 0
-    consume tx = TxRes.new(7) {
+    consume tx = TxRes3.new(7) {
         result = tx.id
     }
     result

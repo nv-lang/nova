@@ -14,20 +14,20 @@
 // ENV NOVA_FIBER_STACK=8MB
 // ENV NOVA_MAXPROCS=1
 
-module plan149.pos_env_stack_8mb
+module nova_tests.plan149
 
-fn rec_sum(n int) -> int {
+fn rec_sum3(n int) -> int {
     if n <= 0 {
         0
     } else {
-        n + rec_sum(n - 1)
+        n + rec_sum3(n - 1)
     }
 }
 
 test "NOVA_FIBER_STACK=8MB: deep-recursion fiber completes" {
     mut r = 0
     supervised {
-        spawn { r = rec_sum(4000) }
+        spawn { r = rec_sum3(4000) }
     }
     // 4000 * 4001 / 2 = 8002000
     assert(r == 8002000)
@@ -38,7 +38,7 @@ test "NOVA_FIBER_STACK=8MB: many fibers each recurse" {
     supervised {
         mut i = 0
         while i < 40 {
-            spawn { total += rec_sum(600) }   // 600*601/2 = 180300 each
+            spawn { total += rec_sum3(600) }   // 600*601/2 = 180300 each
             i += 1
         }
     }

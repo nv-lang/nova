@@ -9,7 +9,7 @@
 // 2. Функции с modifies корректно компилируются и выполняются.
 // 3. `old(x)` в ensures корректно вычисляется через substitute_old.
 
-module contracts.frame_smt_positive
+module nova_tests.contracts
 
 // Функция модифицирует только `x`, поэтому по frame-axiom
 // `_old_y == y` — то есть y не меняется.

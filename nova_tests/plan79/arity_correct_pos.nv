@@ -2,7 +2,7 @@
 // position (signatures, fields, let annotations, turbofish, nested
 // generics) compiles and runs unchanged. Guards against false positives.
 
-module plan79.arity_correct_pos
+module nova_tests.plan79
 
 import std.collections.hashmap.{HashMap}
 
@@ -17,13 +17,13 @@ type Registry {
 }
 
 // Result/Option with correct arity in signatures.
-fn lookup(n int) -> Result[int, str] => Ok(n)
+fn lookup2(n int) -> Result[int, str] => Ok(n)
 
 fn maybe(n int) -> Option[int] => Some(n)
 
 test "Ф.2 — correct arity compiles" {
     // Result[T, E] — 2 args; Option[T] — 1 arg; in let annotations.
-    ro r Result[int, str] = lookup(3)
+    ro r Result[int, str] = lookup2(3)
     assert(r.is_ok())
 
     ro m Option[int] = maybe(5)

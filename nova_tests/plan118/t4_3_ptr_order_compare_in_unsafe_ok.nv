@@ -2,7 +2,7 @@
 // (`<`/`<=`/`>`/`>=`) allowed inside unsafe context (D216 §6).
 // Verifies E_PTR_ORDER_COMPARE_REQUIRES_UNSAFE не fires при unsafe wrap.
 
-module plan118.t4_3_ptr_order_compare_in_unsafe_ok
+module nova_tests.plan118
 
 test "pointer < pointer inside unsafe — passes checker" {
     ro x = 10

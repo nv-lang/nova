@@ -1,8 +1,8 @@
 // Plan 125 Ф.4: цепочка if-else-if — все ветки divergent, кроме одной.
 
-module plan125.if_chain_throws
+module nova_tests.plan125
 
-fn pick(n int) Fail -> str {
+fn pick2(n int) Fail -> str {
     if n == 0 {
         throw "zero"
     } else if n < 0 {
@@ -18,7 +18,7 @@ test "if-chain: valid n returns ok" {
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {
-        ro s = pick(42)
+        ro s = pick2(42)
         assert(s == "ok")
     }
 }
@@ -28,7 +28,7 @@ test "if-chain: n=0 throws" {
     with Fail = effect Fail {
         fail(_) { caught = 1; interrupt () }
     } {
-        ro _ = pick(0)
+        ro _ = pick2(0)
     }
     assert(caught == 1)
 }

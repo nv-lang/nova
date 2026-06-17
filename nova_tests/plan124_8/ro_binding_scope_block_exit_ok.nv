@@ -6,7 +6,7 @@
 // `ro v = ...` (including in stdlib modules checked before user code)
 // polluted the global state и блокировал outer `mut v.field = ...`.
 // After fix: f1_block snapshots/restores ro_binding_names on entry/exit.
-module plan124_8.ro_binding_scope_block_exit_ok
+module nova_tests.plan124_8
 
 type Cell {
     mut value int

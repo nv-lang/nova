@@ -21,27 +21,27 @@
 //   1. Compile-success — codegen emits wrap + leave + compose.
 //   2. Runtime: outer body's flow not corrupted by inner cleanup throw.
 
-module plan110.on_exit_throws_shield_restored_v1_1
+module nova_tests.plan110
 
 import std.prelude.errors
 
-type InnerThrowing { ro id int }
-fn InnerThrowing.new(id int) -> InnerThrowing => { id }
+type InnerThrowing3 { ro id int }
+fn InnerThrowing3.new(id int) -> InnerThrowing3 => { id }
 // Inner.on_exit throws — exercises the [M-110.x-on-exit-throws-leaks-shield] path.
-fn InnerThrowing consume @on_exit(_outcome ScopeOutcome) Fail[str] -> () {
+fn InnerThrowing3 consume @on_exit(_outcome ScopeOutcome) Fail[str] -> () {
     throw "inner-cleanup-failed"
 }
 
-type OuterPlain { ro id int }
-fn OuterPlain.new(id int) -> OuterPlain => { id }
-fn OuterPlain consume @on_exit(_outcome ScopeOutcome) -> () => ()
+type OuterPlain3 { ro id int }
+fn OuterPlain3.new(id int) -> OuterPlain3 => { id }
+fn OuterPlain3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 // Outer scope wraps inner. Inner.on_exit throws → fix ensures
 // leave_shield runs + outer's deadline restored + throw propagates
 // cleanly to caller's Fail[str] handler.
 fn use_throwing_cleanup() Fail[str] -> int {
-    consume outer = OuterPlain.new(7) {
-        consume inner = InnerThrowing.new(3) {
+    consume outer = OuterPlain3.new(7) {
+        consume inner = InnerThrowing3.new(3) {
             ro _ = inner.id
         }
         // Pre-fix: if inner.on_exit threw, leave_shield для inner shield

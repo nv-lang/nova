@@ -2,9 +2,9 @@
 // if c { loop {} } else { 42 } — then-arm divergent, тип if-expr = int
 // по else-arm. Mechanical CFA expansion в expr_diverges_125.
 
-module plan125_2.loop_inf_in_then_else_value
+module nova_tests.plan125_2
 
-fn pick(c bool) -> int {
+fn pick1(c bool) -> int {
     if c {
         loop {}
     } else {
@@ -13,6 +13,6 @@ fn pick(c bool) -> int {
 }
 
 test "loop-inf in then, int in else — returns int" {
-    ro n = pick(false)
+    ro n = pick1(false)
     assert(n == 42)
 }

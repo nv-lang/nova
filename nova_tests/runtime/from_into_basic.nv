@@ -10,7 +10,7 @@
 // все try_from возвращают payload как nova_int. Поэтому char.try_from
 // тоже распаковывается как int (codepoint).
 
-module runtime.from_into_basic
+module nova_tests.runtime
 
 
 // ───── str → int ─────

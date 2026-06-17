@@ -3,7 +3,7 @@
 // Plan 33.7 Ф.5: #nooverflow — Z3 proves add won't overflow given requires.
 // Precondition guarantees a + b < 2^32, so no overflow VC fails.
 
-module contracts.f60_bv_nooverflow_safe_z3_positive
+module nova_tests.contracts
 
 #nooverflow #verify
 fn safe_add_u32(a u32, b u32) -> u32

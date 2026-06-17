@@ -1,0 +1,16 @@
+// Plan 140.2 SOUNDNESS GUARD: прямой `v.index(i)` с OOB i ловится в runtime.
+// B.1 заменил у @index ручной if/panic на `requires`, но contract-enforcement
+// НЕ эмитится для generic-type mono'd методов (Plan 140 gap) → дыра для прямых
+// вызовов. Восстановлен явный bounds-panic в теле @index → OOB ловится.
+// (Inline `v[i]` всегда был безопасен своей проверкой; это про `.index()`.)
+// EXPECT_RUNTIME_PANIC requires failed
+
+module neg.followup_index_direct_oob_neg
+
+import std.collections.vec.{Vec}
+
+test "direct v.index(OOB) traps" {
+    ro v = Vec[int].of(1, 2, 3)
+    ro x = v.index(5)
+    assert(x == 0)
+}

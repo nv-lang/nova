@@ -1,18 +1,18 @@
 ﻿// Plan 124.9 Р¤.2 вЂ” positive: 2-level nested record literal.
-// Each level allocates its own declared field type (Bv), not Av twice.
-module plan124_9.p1_two_level_nested_literal_ok
+// Each level allocates its own declared field type (Bv1), not Av1 twice.
+module nova_tests.plan124_9
 
-type Bv {
+type Bv1 {
     mut x int
 }
 
-type Av {
-    mut Bv Bv
+type Av1 {
+    mut Bv1 Bv1
 }
 
 test "2-level nested record literal" {
-    mut Av = Av { Bv: Bv { x: 1 } }
-    assert(Av.Bv.x == 1)
-    Av.Bv.x = 7
-    assert(Av.Bv.x == 7)
+    mut Av1 = Av1 { Bv1: Bv1 { x: 1 } }
+    assert(Av1.Bv1.x == 1)
+    Av1.Bv1.x = 7
+    assert(Av1.Bv1.x == 7)
 }

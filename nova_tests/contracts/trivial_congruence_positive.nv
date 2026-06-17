@@ -1,7 +1,7 @@
 // Ф.12.1 (Plan 33.6): TrivialBackend congruence — a==b ⊢ f(a)==f(b).
 // propagate_equalities делает substitution в App args автоматически.
 
-module contracts.trivial_congruence_positive
+module nova_tests.contracts
 
 #pure
 fn f(x int) -> int

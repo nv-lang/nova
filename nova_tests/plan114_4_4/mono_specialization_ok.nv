@@ -1,6 +1,6 @@
 // Plan 114.4.4.5 V4.1: per-const-arg monomorphization для mixed const fns.
 
-module plan114_4_4.mono_specialization_ok
+module nova_tests.plan114_4_4
 
 fn scale(const factor int, x int) -> int => x * factor
 

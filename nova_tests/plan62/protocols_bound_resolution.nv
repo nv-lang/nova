@@ -23,23 +23,23 @@
 // Acceptance: РІСЃРµ 6 tests РґРѕР»Р¶РЅС‹ pass вЂ” type-check РїСЂРѕС…РѕРґРёС‚ РїСЂРё
 // satisfied bound'Р°С…, runtime behavior РєРѕСЂСЂРµРєС‚РЅС‹Р№.
 
-module plan62.protocols_bound_resolution
+module nova_tests.plan62
 
 
 // User-defined С‚РёРї, СѓРґРѕРІР»РµС‚РІРѕСЂСЏСЋС‰РёР№ Hash + Equal + Compare
 // СЃС‚СЂСѓРєС‚СѓСЂРЅРѕ. Р’СЃРµ С‚СЂРё РјРµС‚РѕРґР° СЂРµР°Р»РёР·РѕРІР°РЅС‹ РєР°Рє @hash/@equal/@compare instance fns.
 // Plan 91.8a (D183): rename eqв†’equals, cmpв†’compare; Orderingв†’int.
-type Item {
+type Item2 {
     id u64
 }
 
-fn Item.new(id u64) -> Item => { id }
+fn Item2.new(id u64) -> Item2 => { id }
 
-export fn Item @hash() -> u64 => @id
+export fn Item2 @hash() -> u64 => @id
 
-export fn Item @equal(other Item) -> bool => @id == other.id
+export fn Item2 @equal(other Item2) -> bool => @id == other.id
 
-export fn Item @compare(other Item) -> int =>
+export fn Item2 @compare(other Item2) -> int =>
     if @id < other.id { -1 }
     else if @id > other.id { 1 }
     else { 0 }
@@ -51,8 +51,8 @@ export fn Item @compare(other Item) -> int =>
 
 fn hash_anything[T Hash](v T) -> u64 => v.hash()
 
-test "Hash bound СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· prelude вЂ” Item.hash()" {
-    ro it = Item.new(42 as u64)
+test "Hash bound СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· prelude вЂ” Item2.hash()" {
+    ro it = Item2.new(42 as u64)
     ro h = hash_anything(it)
     assert(h == (42 as u64))
 }
@@ -64,10 +64,10 @@ test "Hash bound СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР·
 
 fn eq_via_bound[T Equal](a T, b T) -> bool => a.equals(b)
 
-test "Equal bound вЂ” Item.equals()" {
-    ro a = Item.new(7 as u64)
-    ro b = Item.new(7 as u64)
-    ro c = Item.new(8 as u64)
+test "Equal bound вЂ” Item2.equals()" {
+    ro a = Item2.new(7 as u64)
+    ro b = Item2.new(7 as u64)
+    ro c = Item2.new(8 as u64)
     assert(eq_via_bound(a, b) == true)
     assert(eq_via_bound(a, c) == false)
 }
@@ -81,9 +81,9 @@ test "Equal bound вЂ” Item.equals()" {
 fn min_of[T Compare](a T, b T) -> T =>
     if a.compare(b) <= 0 { a } else { b }
 
-test "Compare bound вЂ” Item.compare() СЃ int-based check" {
-    ro a = Item.new(3 as u64)
-    ro b = Item.new(7 as u64)
+test "Compare bound вЂ” Item2.compare() СЃ int-based check" {
+    ro a = Item2.new(3 as u64)
+    ro b = Item2.new(7 as u64)
     ro m = min_of(a, b)
     assert(m.id == (3 as u64))
 }

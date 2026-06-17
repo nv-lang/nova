@@ -1,36 +1,36 @@
 // Plan 124.1 / D220 §3: cross-instance priv(type) field access within own method.
 // `other.field` where other is a parameter of the same type — РАЗРЕШЕНО.
-module plan124_1.priv_cross_instance_ok
+module nova_tests.plan124_1
 
-type Point value priv(type) {
+type Point4 value priv(type) {
     x int
     y int
 }
 
-fn Point.new(x int, y int) -> Point => { x, y }
+fn Point4.new(x int, y int) -> Point4 => { x, y }
 
-fn Point @equal(other Point) -> bool => @x == other.x && @y == other.y
+fn Point4 @equal(other Point4) -> bool => @x == other.x && @y == other.y
 
-fn Point @dist_sq(other Point) -> int {
+fn Point4 @dist_sq(other Point4) -> int {
     ro dx = @x - other.x
     ro dy = @y - other.y
     dx * dx + dy * dy
 }
 
 test "cross-instance: eq same" {
-    ro a = Point.new(3, 4)
-    ro b = Point.new(3, 4)
+    ro a = Point4.new(3, 4)
+    ro b = Point4.new(3, 4)
     assert(a.equal(b) == true)
 }
 
 test "cross-instance: eq different" {
-    ro a = Point.new(1, 2)
-    ro b = Point.new(9, 9)
+    ro a = Point4.new(1, 2)
+    ro b = Point4.new(9, 9)
     assert(a.equal(b) == false)
 }
 
 test "cross-instance: dist_sq 3-4-5" {
-    ro a = Point.new(0, 0)
-    ro b = Point.new(3, 4)
+    ro a = Point4.new(0, 0)
+    ro b = Point4.new(3, 4)
     assert(a.dist_sq(b) == 25)
 }

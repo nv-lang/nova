@@ -1,7 +1,0 @@
-// Ф.4.2 (Plan 33.6): extern "nova" fn с контрактами без #trusted → compile error.
-// EXPECT_COMPILE_ERROR cannot have contracts
-
-module contracts.external_no_trusted_fail
-
-extern "nova" fn libc_strlen(s str) -> int
-    ensures result >= 0

@@ -2,9 +2,9 @@
 // Проверяет что unreachable интегрирован с divergence-aware inference Plan 125:
 // тип if-expr = тип не-unreachable ветки.
 
-module plan125_followups.unreachable_basic
+module nova_tests.plan125_followups
 
-fn classify(n int) -> str {
+fn classify2(n int) -> str {
     if n == 0 {
         "zero"
     } else if n > 0 {
@@ -17,7 +17,7 @@ fn classify(n int) -> str {
 }
 
 test "unreachable in else picks str from other branches" {
-    assert(classify(0) == "zero")
-    assert(classify(5) == "pos")
-    assert(classify(-3) == "neg")
+    assert(classify2(0) == "zero")
+    assert(classify2(5) == "pos")
+    assert(classify2(-3) == "neg")
 }

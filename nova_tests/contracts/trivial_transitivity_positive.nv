@@ -1,7 +1,7 @@
 // Ф.11.4 (Plan 33.6): TrivialBackend transitivity — a==b, b==c ⊢ a==c.
 // До этого fix'a Trivial не делал propagation equalities.
 
-module contracts.trivial_transitivity_positive
+module nova_tests.contracts
 
 #verify
 fn transitivity_int(a int, b int, c int) -> int

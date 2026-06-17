@@ -1,0 +1,23 @@
+// Plan 140.2 followup §2 SOUNDNESS GUARD: под `--contracts=off` fn-`requires`
+// НЕ enforced (проверка на входе `at_unchecked` стёрта). Значит contract-based
+// элизию `v[i]` применять НЕЛЬЗЯ — codegen-гейт (`index_site_elided` учитывает
+// `contracts_elided_here()`) оставляет bounds-check → OOB (i=5 ≥ len=3) ловится
+// в runtime. Если бы гейт ошибочно элидировал — был бы UB вместо чистого panic.
+// CONTRACTS off
+// EXPECT_RUNTIME_PANIC array: index
+
+module neg.followup_crossfn_contractsoff_neg
+
+import std.collections.vec.{Vec}
+
+fn at_unchecked(v Vec[int], i int) -> int
+    requires 0 <= i && i < v.len()
+{
+    v[i]
+}
+
+test "contracts-off: contract-based v[i] NOT elided → OOB traps" {
+    ro v = Vec[int].of(1, 2, 3)
+    ro r = at_unchecked(v, 5)
+    assert(r == 0)
+}

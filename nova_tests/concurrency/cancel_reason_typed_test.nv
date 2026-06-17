@@ -4,7 +4,7 @@
 // с garbage content (int boxed как str → memory-corruption на str-операциях).
 // После: per-T un-box через ternary + compound literal, Option[T] правильно.
 
-module concurrency.cancel_reason_typed_test
+module nova_tests.concurrency
 
 
 // ──────────────────────────────────────────────────────────────────────────

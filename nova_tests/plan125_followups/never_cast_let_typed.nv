@@ -3,7 +3,7 @@
 // «assigning to 'nova_str' from incompatible type 'nova_int'».
 // Теперь: dummy cast'ится в target type через compound literal.
 
-module plan125_followups.never_cast_let_typed
+module nova_tests.plan125_followups
 
 fn maybe_str(c bool) Fail -> str {
     // typed let — target = nova_str. Раньше CC-FAIL на (call, 0LL).

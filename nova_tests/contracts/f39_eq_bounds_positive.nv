@@ -2,7 +2,7 @@
 // pinned var: `requires z >= 5; requires z <= 5; ensures result == 5`.
 // disproven: `requires x >= 10; ensures x != 5` (через bounds, x=5 impossible).
 
-module contracts.f39_eq_bounds_positive
+module nova_tests.contracts
 
 #verify
 fn pinned_eq(z int) -> int

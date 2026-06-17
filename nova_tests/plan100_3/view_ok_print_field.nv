@@ -1,23 +1,23 @@
 // Plan 100.3 (D157): basic view T — read-only borrow для чтения полей.
 //
-// `fn print_id(t Transaction)` — view-param. Source `tx` остаётся
+// `fn print_id(t Transaction10)` — view-param. Source `tx` остаётся
 // Live после вызова; функция читает поле без consume.
 
-module plan100_3.view_ok_print_field
+module nova_tests.plan100_3
 
-type Transaction consume {
+type Transaction10 consume {
     id int,
 }
 
-fn Transaction consume @commit() -> () { () }
+fn Transaction10 consume @commit() -> () { () }
 
 // view-param — read-only borrow. Source caller'а остаётся Live.
-fn print_id(t Transaction) -> () {
+fn print_id(t Transaction10) -> () {
     println(t.id)                              // ✅ read field
 }
 
 test "view-param read-only — source остаётся Live" {
-    consume tx = Transaction { id: 42 }
+    consume tx = Transaction10 { id: 42 }
     print_id(tx)                          // ✅ view-передача
     print_id(tx)                          // ✅ multiple view OK
     tx.commit()                                // ✅ tx Live после view-uses

@@ -17,7 +17,7 @@
 // math runtime functions (f64.sqrt, f64.abs) — если registry-driven
 // resolution ломается, тест не скомпилируется.
 
-module plan62.runtime_module_form
+module nova_tests.plan62
 
 test "f64 @sqrt — declared в std/runtime/math.nv (module runtime.math)" {
     ro x = 16.0

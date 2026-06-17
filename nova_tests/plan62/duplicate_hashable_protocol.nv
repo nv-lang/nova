@@ -11,7 +11,7 @@
 // Positive path: locally-defined Hash СЃРѕ structurally-different
 // signature РЅРµ Р»РѕРјР°РµС‚ РєРѕРјРїРёР»СЏС†РёСЋ.
 
-module plan62.duplicate_hashable_protocol
+module nova_tests.plan62
 
 // User shadows prelude Hash СЃ РґСЂСѓРіРёРј required method (extra arg).
 // W_PRELUDE_SHADOW warning, РЅРµ error. User-version wins РґР»СЏ structural
@@ -20,14 +20,14 @@ type Hash protocol {
     @hash_with_seed(seed u64) -> u64
 }
 
-type Bucket {
+type Bucket2 {
     value int
 }
 
-fn Bucket @hash_with_seed(seed u64) -> u64 => (@value as u64) ^ seed
+fn Bucket2 @hash_with_seed(seed u64) -> u64 => (@value as u64) ^ seed
 
 test "user-defined Hash shadow вЂ” runs OK С‡РµСЂРµР· user-version" {
-    ro b = Bucket { value: 42 }
+    ro b = Bucket2 { value: 42 }
     ro h = b.hash_with_seed(7 as u64)
     assert(h != (0 as u64))
 }

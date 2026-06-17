@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_boolean_algebra
+module nova_tests.contracts
 
 // De Morgan: !(a && b) == !a || !b.
 #verify

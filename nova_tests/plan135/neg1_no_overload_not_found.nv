@@ -1,18 +1,18 @@
 // EXPECT_CC_ERROR no member named
 //
 // Plan 135 Ф.3 NEG1: calling a method that doesn't exist on the type.
-// Neither a ro nor mut overload exists for `phantom()` on Sensor.
+// Neither a ro nor mut overload exists for `phantom()` on Sensor3.
 // Nova codegen generates a C call to a nonexistent member → CC-FAIL.
 // Verifies that overload dispatch does not silently succeed for unknown methods.
 
-module plan135.neg1_no_overload_not_found
+module nova_tests.plan135
 
-type Sensor { priv val int }
+type Sensor3 { priv val int }
 
-fn Sensor.new(v int) -> Self => { val: v }
-fn Sensor @read() -> int => @val
+fn Sensor3.new(v int) -> Self => { val: v }
+fn Sensor3 @read() -> int => @val
 
 test "call nonexistent method fails" {
-    ro s = Sensor.new(42)
-    ro _ = s.phantom()   // no such method on Sensor
+    ro s = Sensor3.new(42)
+    ro _ = s.phantom()   // no such method on Sensor3
 }

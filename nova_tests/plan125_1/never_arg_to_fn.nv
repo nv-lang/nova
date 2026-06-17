@@ -3,13 +3,13 @@
 // bidirectional check, Ф.3 trailing-typeref возвращает never,
 // codegen target-typed dummy ([M-125-codegen-never-cast]).
 
-module plan125_1.never_arg_to_fn
+module nova_tests.plan125_1
 
 fn echo(s str) -> str {
     s
 }
 
-fn pick(c bool) Fail -> str {
+fn pick1(c bool) Fail -> str {
     // if-expr с divergent else в arg-position — никаких CC-FAIL.
     echo(if c {
         throw "no string"
@@ -22,7 +22,7 @@ test "divergent if-expr in arg position" {
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {
-        ro out = pick(false)
+        ro out = pick1(false)
         assert(out == "hello")
     }
 }

@@ -3,15 +3,15 @@
 // value-record escape analysis (Plan 127) already handles auto-promote.
 // After Plan 118.6 Ф.2: AddrOf is safe for value-records too.
 
-module plan118_6.t2_pos_ampersand_value_record_no_unsafe
+module nova_tests.plan118_6
 
-type Point value {
+type Point2 value {
     x int
     y int
 }
 
 test "&x on value-record — safe, no unsafe required" {
-    ro pt = Point { x: 10, y: 20 }
+    ro pt = Point2 { x: 10, y: 20 }
     ro p = &pt
     unsafe {
         assert(p.x == 10)

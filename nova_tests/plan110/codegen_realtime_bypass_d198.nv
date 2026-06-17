@@ -4,20 +4,20 @@
 // Codegen emits hardcoded 0 instead of nv_resolve_exit_timeout_ms()
 // call. Verifies compile path для realtime cleanup contexts.
 
-module plan110.codegen_realtime_bypass_d198
+module nova_tests.plan110
 
-type RtRes {
+type RtRes3 {
     ro id int
 }
 
-fn RtRes.new(id int) -> RtRes => { id }
-fn RtRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn RtRes3.new(id int) -> RtRes3 => { id }
+fn RtRes3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 // #realtime fn — codegen emits Duration.zero timeout (no suspend).
 #realtime
 fn use_rt() -> int {
     mut result = 0
-    consume r = RtRes.new(7) {
+    consume r = RtRes3.new(7) {
         result = r.id
     }
     result

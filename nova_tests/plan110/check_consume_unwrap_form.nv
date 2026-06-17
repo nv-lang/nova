@@ -4,22 +4,22 @@
 // — Result-unwrap form. type-checker infer'ит inner type через recursive
 // ?-peel (110.1.2 heuristic). Codegen эмитит init + body (110.1.4.a).
 
-module plan110.check_consume_unwrap_form
+module nova_tests.plan110
 
-type FailableResource {
+type FailableResource4 {
     ro id int
 }
 
-fn FailableResource.try_new(id int) -> Result[FailableResource, str] => Ok(FailableResource.new(id))
+fn FailableResource4.try_new(id int) -> Result[FailableResource4, str] => Ok(FailableResource4.new(id))
 
-fn FailableResource.new(id int) -> FailableResource => { id }
+fn FailableResource4.new(id int) -> FailableResource4 => { id }
 
-fn FailableResource consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn FailableResource4 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 // `consume r = try_new()? { body }` — `?` unwrap inferred via recurse.
 fn use_unwrap() Fail[str] -> int {
     mut result = 0
-    consume r = FailableResource.try_new(7)? {
+    consume r = FailableResource4.try_new(7)? {
         result = r.id
     }
     result

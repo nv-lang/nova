@@ -11,7 +11,7 @@
 // which is the object size behind the box — not the value/`size_of` of a sum
 // reference. Updated to the pointer size with align 8.
 
-module plan114_4_4.size_of_sum_ok
+module nova_tests.plan114_4_4
 
 // Unit-only sum, heap-boxed → reference is Nova_Color* = 8 bytes, align 8.
 type Color | Red | Green | Blue

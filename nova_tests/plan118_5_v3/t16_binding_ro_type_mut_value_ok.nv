@@ -5,9 +5,9 @@
 // orthogonal: `ro` — на binding (запрет переприсваивания x), `mut` — на
 // type (можно менять поля / вызывать mut методы). Не §V3.1 conflict.
 
-module plan118_5_v3.t16_binding_ro_type_mut_value_ok
+module nova_tests.plan118_5_v3
 
-type Acc {
+type Acc1 {
     id i64
 }
 
@@ -17,8 +17,8 @@ extern "nova" fn t16_p1(ro x mut int) -> ()
 // ro binding + mut value-type (str) — должен работать.
 extern "nova" fn t16_p2(ro x mut str) -> ()
 
-// ro binding + mut reference-type (Acc) — должен работать.
-extern "nova" fn t16_p3(ro x mut Acc) -> ()
+// ro binding + mut reference-type (Acc1) — должен работать.
+extern "nova" fn t16_p3(ro x mut Acc1) -> ()
 
 test "ro x mut T binding form allowed regardless of T storage class" {
     assert(1 == 1)

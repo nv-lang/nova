@@ -27,7 +27,7 @@
 // AUTOARM=0 directive removed — test passes under full M:N armed mode.
 
 
-module concurrency.per_fiber_handlers
+module nova_tests.concurrency
 
 // ================================================================
 // SECTION 1: Разные Time handlers в разных fiber'ах

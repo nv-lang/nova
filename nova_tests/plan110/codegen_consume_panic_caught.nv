@@ -6,18 +6,18 @@
 // Acceptance:
 // - A110.1.4.g: panic → outcome=Panic(msg), on_exit fires, panic re-raises.
 
-module plan110.codegen_consume_panic_caught
+module nova_tests.plan110
 
-type ResY {
+type ResY3 {
     ro id int
 }
 
-fn ResY.new(id int) -> ResY => { id }
+fn ResY3.new(id int) -> ResY3 => { id }
 
-fn ResY consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn ResY3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 fn use_panicking() -> int {
-    consume r = ResY.new(99) {
+    consume r = ResY3.new(99) {
         panic("body panic")
         r.id
     }

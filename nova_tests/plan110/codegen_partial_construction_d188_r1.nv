@@ -9,22 +9,22 @@
 // Acceptance A110.1.9 / T2.2: init throw → on_exit skipped + throw
 // propagates correctly.
 
-module plan110.codegen_partial_construction_d188_r1
+module nova_tests.plan110
 
-type FailableInit {
+type FailableInit3 {
     ro id int
 }
 
 // fn that throws — никогда не возвращает valid resource.
-fn FailableInit.try_make() Fail[str] -> FailableInit {
+fn FailableInit3.try_make() Fail[str] -> FailableInit3 {
     throw "construction-failed"
 }
 
-fn FailableInit consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn FailableInit3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 // Helper to verify partial construction routing.
 fn use_failable() Fail[str] -> int {
-    consume r = FailableInit.try_make() {
+    consume r = FailableInit3.try_make() {
         r.id
     }
 }

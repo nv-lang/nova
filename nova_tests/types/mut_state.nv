@@ -1,10 +1,10 @@
 // 23_mut_state.nv — мутабельное состояние: let mut, mut поля,
 // присваивание через chained access, мутация элементов массива.
 
-module types.mut_state
+module nova_tests.types
 
-type Box { mut inner int }
-type Wrap { mut b Box }
+type Box3 { mut inner int }
+type Wrap { mut b Box3 }
 
 test "let mut простое переприсваивание" {
     mut x = 0
@@ -22,19 +22,19 @@ test "let mut в цикле" {
 }
 
 test "mut поле прямое присваивание" {
-    ro b = Box { inner: 10 }
+    ro b = Box3 { inner: 10 }
     b.inner = 99
     assert(b.inner == 99)
 }
 
 test "вложенное mut присваивание через цепочку" {
-    ro w = Wrap { b: Box { inner: 0 } }
+    ro w = Wrap { b: Box3 { inner: 0 } }
     w.b.inner = 42
     assert(w.b.inner == 42)
 }
 
 test "мутация элемента массива записей" {
-    ro xs = [Box { inner: 1 }, Box { inner: 2 }, Box { inner: 3 }]
+    ro xs = [Box3 { inner: 1 }, Box3 { inner: 2 }, Box3 { inner: 3 }]
     xs[1].inner = 200
     assert(xs[0].inner == 1)
     assert(xs[1].inner == 200)
@@ -42,7 +42,7 @@ test "мутация элемента массива записей" {
 }
 
 test "мутация поля через переменную-копию" {
-    ro b = Box { inner: 5 }
+    ro b = Box3 { inner: 5 }
     ro other = b
     other.inner = 100
     // record-семантика в bootstrap'е: other и b делят значение
@@ -50,7 +50,7 @@ test "мутация поля через переменную-копию" {
 }
 
 test "compound assign на mut поле" {
-    ro b = Box { inner: 1 }
+    ro b = Box3 { inner: 1 }
     b.inner += 10
     b.inner *= 2
     assert(b.inner == 22)

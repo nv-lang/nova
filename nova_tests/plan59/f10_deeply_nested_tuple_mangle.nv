@@ -4,7 +4,7 @@
 // underscores collide с 2-underscore separator). Phase 5 length-prefixed
 // mangle решает это properly.
 
-module plan59.f10_deeply_nested_tuple_mangle
+module nova_tests.plan59
 
 
 // 4 уровня: tuple of tuple of tuple of tuple. Каждый — mono'd struct.

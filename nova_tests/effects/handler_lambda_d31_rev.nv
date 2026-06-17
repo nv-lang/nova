@@ -9,20 +9,20 @@
 // Если codegen pipeline не справляется, runtime через interp
 // (`cargo run -- test ...`) подтверждает interp-side D31-rev.
 
-module effects.handler_lambda_d31_rev
+module nova_tests.effects
 
-type Logger effect {
+type Logger3 effect {
     log(msg str) -> ()
 }
 
-fn make_msg() Logger -> str {
-    Logger.log("hi")
+fn make_msg() Logger3 -> str {
+    Logger3.log("hi")
     "done"
 }
 
 test "handler-лямбда: handler-литерал baseline" {
     mut captured = ""
-    with Logger = effect Logger {
+    with Logger3 = effect Logger3 {
         log(msg) {
             captured = msg
             return ()
@@ -34,9 +34,9 @@ test "handler-лямбда: handler-литерал baseline" {
     assert(captured == "hi")
 }
 
-test "D31-rev sugar: with Logger = |msg| ... " {
+test "D31-rev sugar: with Logger3 = |msg| ... " {
     mut captured = ""
-    with Logger = |msg| {
+    with Logger3 = |msg| {
         captured = msg
     } {
         ro r = make_msg()

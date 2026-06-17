@@ -3,9 +3,9 @@
 //
 // Тест: парсинг + type-check проходят без ошибок.
 
-module contracts.f9_overloaded_ops_in_protocol_positive
+module nova_tests.contracts
 
-type Store protocol {
+type Store2 protocol {
     @get(key str) -> int
     @get(key int) -> int
 }

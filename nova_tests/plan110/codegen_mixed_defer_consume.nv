@@ -3,18 +3,18 @@
 // Plan 110.1.9 T2.5 (D188 R5 LIFO): defer inside consume body fires
 // BEFORE on_exit. LIFO exit order verification.
 
-module plan110.codegen_mixed_defer_consume
+module nova_tests.plan110
 
-type ResZ {
+type ResZ3 {
     ro id int
 }
 
-fn ResZ.new(id int) -> ResZ => { id }
-fn ResZ consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn ResZ3.new(id int) -> ResZ3 => { id }
+fn ResZ3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 fn use_mixed() -> int {
     mut counter = 0
-    consume r = ResZ.new(5) {
+    consume r = ResZ3.new(5) {
         defer { counter = counter + 100 }
         counter = counter + r.id
         // Exit order: defer body runs (counter += 100),

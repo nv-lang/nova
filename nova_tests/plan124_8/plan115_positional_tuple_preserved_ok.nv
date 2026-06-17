@@ -1,6 +1,6 @@
 // Plan 124.8 — positive: positional tuple newtype (Plan 115 FFI pattern)
 // preserved unchanged. Demonstrates type X(T) form parses без изменений.
-module plan124_8.plan115_positional_tuple_preserved_ok
+module nova_tests.plan124_8
 
 type Wrap(int)
 

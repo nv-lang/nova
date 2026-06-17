@@ -10,16 +10,16 @@
 // ptr to a possibly-uninit pointee). The ro pointee is the bare canon `*T`
 // (`*T ≡ *ro T` per Plan 147 / D246; explicit `*ro T` migrated here).
 
-module plan118_5.t9_npo_unsafe_outer_disables_ok
+module nova_tests.plan118_5
 
-type Acc {
+type Acc2 {
     id i64
 }
 
-extern "nova" fn p9_a() -> Option[* Acc]
-extern "nova" fn p9_b() -> Option[*mut Acc]
-extern "nova" fn p9_c() -> Option[*Acc]
-extern "nova" fn p9_d() -> Option[*unsafe Acc]
+extern "nova" fn p9_a() -> Option[* Acc2]
+extern "nova" fn p9_b() -> Option[*mut Acc2]
+extern "nova" fn p9_c() -> Option[*Acc2]
+extern "nova" fn p9_d() -> Option[*unsafe Acc2]
 
 test "Option[*T] family compiles for all canonical postfix variants" {
     assert(1 == 1)

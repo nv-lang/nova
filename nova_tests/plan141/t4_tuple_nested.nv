@@ -2,7 +2,7 @@
 // `((1,2), 3)` recurses into the inner `(1,2)` tuple field. The prior
 // memcmp would (incidentally) work for all-int nested tuples, but the
 // field-by-field path is what makes nested composites correct in general.
-module plan141.t4_tuple_nested
+module nova_tests.plan141
 
 test "((1,2),3) == ((1,2),3) → true" {
     ro a = ((1, 2), 3)

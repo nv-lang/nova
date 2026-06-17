@@ -1,16 +1,16 @@
 // Plan 127 Ф.5 / A127.2 — POS: return `&v` → auto-promote to heap.
 // Escape walker detects return-position `&v` → v gets ValueHeapPromoted,
 // codegen heap-allocates and returns valid pointer.
-module plan127.t2_return_addr_auto_promote_ok
+module nova_tests.plan127
 
-type Vec3 value {
+type Vec33 value {
     x f64
     y f64
     z f64
 }
 
-fn escape_ref() -> *Vec3 {
-    ro v = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+fn escape_ref() -> *Vec33 {
+    ro v = Vec33 { x: 1.0, y: 2.0, z: 3.0 }
     unsafe { &v }
 }
 

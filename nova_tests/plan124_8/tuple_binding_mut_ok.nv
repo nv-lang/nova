@@ -1,13 +1,13 @@
 // Plan 124.8 — positive: tuple binding-level mutability (D215 amend).
-// `mut p = Vec3(...)` позволяет мутировать все поля (Rust-style).
+// `mut p = Vec31(...)` позволяет мутировать все поля (Rust-style).
 //
 // Note: V1 codegen tuple field write через .field assignment может
 // иметь limitations; этот тест verifies parser/checker layer.
-module plan124_8.tuple_binding_mut_ok
+module nova_tests.plan124_8
 
-type Vec3(x f64, y f64, z f64)
+type Vec31(x f64, y f64, z f64)
 
 test "mut binding tuple — construction works" {
-    mut v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    mut v = Vec31(x: 1.0, y: 2.0, z: 3.0)
     assert(v.x == 1.0)
 }

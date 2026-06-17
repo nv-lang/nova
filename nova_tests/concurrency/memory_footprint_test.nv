@@ -12,7 +12,7 @@
 // Boehm видит все live SpawnCtx через NovaFiberQueue.fiber_ctx[],
 // не допускает преждевременную сборку.
 
-module concurrency.memory_footprint_test
+module nova_tests.concurrency
 
 test "100 idle supervised scopes — no sched_state allocations" {
     // 100 fiber'ов которые spawn'ятся и сразу завершаются.

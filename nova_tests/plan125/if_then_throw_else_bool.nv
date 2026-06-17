@@ -1,8 +1,8 @@
 // Plan 125 Ф.1: bool тип в else, throw в then.
 
-module plan125.if_then_throw_else_bool
+module nova_tests.plan125
 
-fn pick(c bool) Fail -> bool {
+fn pick9(c bool) Fail -> bool {
     if c {
         throw "x"
     } else {
@@ -14,7 +14,7 @@ test "bool else, throw then" {
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {
-        ro b = pick(false)
+        ro b = pick9(false)
         assert(b)
     }
 }

@@ -6,7 +6,7 @@
 // NOT the legacy `NovaArray_nova_int*` int64-erasure. This fixture pins that:
 // a plain `[]int` with `.push` / `.len` / index works without any Vec import.
 
-module plan138_2.t3_universal_novec_unit
+module nova_tests.plan138_2
 
 test "Vec-free []int push + len + index (universal flip)" {
     mut x []int = [1, 2, 3]

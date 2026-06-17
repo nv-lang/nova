@@ -2,19 +2,19 @@
 // `#impl(Equal)` auto-derive synthesizes memberwise `@equal`, Рё operator
 // `==` dispatches Рє РЅРµРјСѓ at runtime. Equal objects compare true, unequal false.
 // AC-126.2.2 / AC-126.2.3.
-module plan126_2.p1_equatable_runtime_ok
+module nova_tests.plan126_2
 
 #impl(Equal)
-type Vec3 {
+type Vec31 {
     x int
     y int
     z int
 }
 
 test "memberwise == true for equal, != for unequal" {
-    ro a = Vec3 { x: 1, y: 2, z: 3 }
-    ro b = Vec3 { x: 1, y: 2, z: 3 }
-    ro c = Vec3 { x: 1, y: 2, z: 99 }
+    ro a = Vec31 { x: 1, y: 2, z: 3 }
+    ro b = Vec31 { x: 1, y: 2, z: 3 }
+    ro c = Vec31 { x: 1, y: 2, z: 99 }
     assert(a == b)
     assert(a != c)
 }

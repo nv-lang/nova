@@ -1,6 +1,6 @@
 // Plan 65 Ф.1/Ф.2 smoke test — ChanReader.close_after compiles and works.
 
-module plan65.smoke_close_after
+module nova_tests.plan65
 
 import std.time.duration
 

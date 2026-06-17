@@ -1,7 +1,7 @@
 // 25_coalesce_and_annotations.nv — `??` (D4) на Option и type
 // annotations в let.
 
-module syntax.coalesce_and_annotations
+module nova_tests.syntax
 
 test "?? на Option Some" {
     ro s = Some(42)

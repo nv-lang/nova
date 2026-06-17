@@ -27,7 +27,7 @@
 // where close_cb lands after the fiber has unwound. Many parallel sleepers
 // give the driver many close_cb's to fire post-mortem.
 
-module concurrency.close_cb_after_fiber_dead
+module nova_tests.concurrency
 
 
 test "close_cb fires after sleeper exits — must be no-op, no UAF" {

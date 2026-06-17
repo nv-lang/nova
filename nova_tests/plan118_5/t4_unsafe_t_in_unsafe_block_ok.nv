@@ -4,7 +4,7 @@
 // the read когда properly wrapped в unsafe context. Mirror Plan 118 pattern
 // for AddrOf/Deref: depth-counted via Block.is_unsafe flag.
 
-module plan118_5.t4_unsafe_t_in_unsafe_block_ok
+module nova_tests.plan118_5
 
 fn read_unsafe_value() -> () {
     ro x unsafe int = 42

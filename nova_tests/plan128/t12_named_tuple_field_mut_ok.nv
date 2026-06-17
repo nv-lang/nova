@@ -7,22 +7,22 @@
 // is covered separately by T12b (this fixture keeps the local-binding
 // pattern as regression guard for the simple case).
 
-module plan128.t12_named_tuple_field_mut_ok
+module nova_tests.plan128
 
-type Vec3(x f64, y f64, z f64)
+type Vec33(x f64, y f64, z f64)
 
-fn Vec3 mut @set_x(v f64) -> () {
+fn Vec33 mut @set_x(v f64) -> () {
     @x = v
 }
 
-fn Vec3 mut @scale_inplace(k f64) -> () {
+fn Vec33 mut @scale_inplace(k f64) -> () {
     @x = @x * k
     @y = @y * k
     @z = @z * k
 }
 
 test "direct field write + subsequent mut method on binding" {
-    mut v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    mut v = Vec33(x: 1.0, y: 2.0, z: 3.0)
     v.x = 10.0
     v.scale_inplace(2.0)
     assert(v.x == 20.0)
@@ -31,7 +31,7 @@ test "direct field write + subsequent mut method on binding" {
 }
 
 test "mut method + subsequent direct field write" {
-    mut v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    mut v = Vec33(x: 1.0, y: 2.0, z: 3.0)
     v.set_x(100.0)
     v.y = 200.0
     assert(v.x == 100.0)
@@ -40,7 +40,7 @@ test "mut method + subsequent direct field write" {
 }
 
 test "interleaved direct + method writes" {
-    mut v = Vec3(x: 1.0, y: 1.0, z: 1.0)
+    mut v = Vec33(x: 1.0, y: 1.0, z: 1.0)
     v.x = 2.0
     v.set_x(3.0)
     v.x = 4.0

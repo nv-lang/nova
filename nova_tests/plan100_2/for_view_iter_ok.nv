@@ -4,21 +4,21 @@
 // obligation on loop variable tx. vec stays Live (not consumed by view loop).
 // Demonstrates backward-compat: view-mode iteration unchanged from Plan 100.1.
 //
-// Note (2026-06-05 baseline-fix): original used `type Transaction consume`
+// Note (2026-06-05 baseline-fix): original used `type Transaction6 consume`
 // + `let` bindings — incompatible с D133 strict-consume rules introduced
 // post-Plan 100.1. Migrated к plain type since view-iter test focus is on
 // loop-var semantics, not consume-collection semantics.
 
-module plan100_2.for_view_iter_ok
+module nova_tests.plan100_2
 
-type Transaction {
+type Transaction6 {
     id int,
 }
 
 test "for view — regular for, no consume obligation on tx" {
     // Plain (non-consume) type — bindings have no consume obligation.
-    ro tx1 = Transaction { id: 1 }
-    ro tx2 = Transaction { id: 2 }
+    ro tx1 = Transaction6 { id: 1 }
+    ro tx2 = Transaction6 { id: 2 }
     ro txs = [tx1, tx2]
     for tx in txs {
         // View mode: tx is not consume-obligation — no error if not consumed.

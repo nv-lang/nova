@@ -1,9 +1,9 @@
 // Plan 33.3 Ф.9 (refactor): #verify и #trusted на with-binding.
 // Effect имеет axiom → gate требует атрибут → #trusted пропускает.
 
-module contracts.f9_verify_trusted_handler_positive
+module nova_tests.contracts
 
-type Counter effect {
+type Counter4 effect {
     Increment()
     #pure value() -> int
     axiom non_negative() => value() >= 0
@@ -11,12 +11,12 @@ type Counter effect {
 
 test "#trusted handler passes gate" {
     mut n = 0
-    with #trusted Counter = effect Counter {
+    with #trusted Counter4 = effect Counter4 {
         Increment() { n = n + 1 }
         value() => n
     } {
-        Counter.Increment()
-        Counter.Increment()
-        assert(Counter.value() == 2)
+        Counter4.Increment()
+        Counter4.Increment()
+        assert(Counter4.value() == 2)
     }
 }

@@ -2,18 +2,18 @@
 //
 // Plan 33.9 Ф.6.3: duplicate `reveal X; reveal X;` → W2402.
 
-module contracts.f58_dup_reveal_w2402
+module nova_tests.contracts
 
 #opaque #pure
-fn helper(x int) -> int
+fn helper2(x int) -> int
 => x + 1
 
 #verify
-fn caller(n int) -> int
+fn caller6(n int) -> int
     requires n >= 0
     ensures result >= 0
 {
-    reveal helper
-    reveal helper   // дубликат
+    reveal helper2
+    reveal helper2   // дубликат
     n
 }

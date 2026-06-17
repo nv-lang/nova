@@ -11,26 +11,26 @@
 // methods с receiver'ом). Здесь Self — именно эти methods, поэтому
 // уникальные имена нужны.
 
-module syntax.self_in_expr
+module nova_tests.syntax
 
 
 // ─── 1. Default → parameterized constructor ───
 
-type Account {
+type Account2 {
     balance int
 }
 
-export fn Account.acc_with_initial(amount int) -> Self =>
+export fn Account2.acc_with_initial(amount int) -> Self =>
     { balance: amount }
 
-export fn Account.acc_new() -> Self =>
+export fn Account2.acc_new() -> Self =>
     Self.acc_with_initial(0)
 
 
 test "Self.method(...) в static — default → parameterized" {
-    ro a = Account.acc_new()
+    ro a = Account2.acc_new()
     assert(a.balance == 0)
-    ro b = Account.acc_with_initial(100)
+    ro b = Account2.acc_with_initial(100)
     assert(b.balance == 100)
 }
 
@@ -83,19 +83,19 @@ test "Self.method chain в нескольких constructors" {
 
 // ─── 4. Self.method с несколькими args ───
 
-type Counter {
+type Counter19 {
     value int
 }
 
-export fn Counter.ctr_with_initial(v int) -> Self =>
+export fn Counter19.ctr_with_initial(v int) -> Self =>
     { value: v }
 
-export fn Counter.ctr_from_pair(a int, b int) -> Self =>
+export fn Counter19.ctr_from_pair(a int, b int) -> Self =>
     Self.ctr_with_initial(a + b)
 
 
 test "Self.method с несколькими args" {
-    ro c = Counter.ctr_from_pair(3, 4)
+    ro c = Counter19.ctr_from_pair(3, 4)
     assert(c.value == 7)
 }
 

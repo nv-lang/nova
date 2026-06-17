@@ -1,0 +1,33 @@
+﻿// Plan 128.2 Р¤.2 N2 вЂ” ro binding + deep chain + mut method в†’ reject.
+//
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+//
+// Chain depth 3 (`Av.Bv.Cv.mut_m()`) вЂ” chain-walking helper recursively
+// walks Рє root Ident `Av`, РІРёРґРёС‚ ro binding, fires E_LOCAL_NOT_MUT.
+
+module neg.n2_ro_binding_deep_chain_mut_neg
+
+type Cv {
+    mut value int
+}
+
+fn Cv mut @bump() -> () {
+    @value = @value + 1
+}
+
+type Bv {
+    mut Cv Cv
+}
+
+type Av {
+    mut Bv Bv
+}
+
+fn Av.new() -> Self => {
+    Bv: { Cv: { value: 0 } },
+}
+
+test "ro binding + deep chain + mut method в†’ E_LOCAL_NOT_MUT" {
+    ro Av = Av.new()
+    Av.Bv.Cv.bump()
+}

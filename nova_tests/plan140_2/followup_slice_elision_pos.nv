@@ -3,7 +3,7 @@
 // `v` не мутируется → fn-frame-safe → slice bounds-check элидируется (always-safe,
 // из CODE — без requires). Корректность не зависит от элизии.
 
-module plan140_2.followup_slice_elision_pos
+module nova_tests.plan140_2
 
 import std.collections.vec.{Vec}
 

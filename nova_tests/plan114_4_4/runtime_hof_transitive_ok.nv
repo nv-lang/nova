@@ -5,16 +5,16 @@
 // Trampoline `compose__trampoline` body внутри переписан на
 // `inner__trampoline(x)`.
 
-module plan114_4_4.runtime_hof_transitive_ok
+module nova_tests.plan114_4_4
 
 fn inner(const x int) -> const int => x + 1
 
 fn compose(const x int) -> const int => inner(x) * 2
 
-fn apply(f fn(int) -> int, x int) -> int => f(x)
+fn apply5(f fn(int) -> int, x int) -> int => f(x)
 
 test "transitive trampoline" {
-    ro r = apply(compose, 3)
+    ro r = apply5(compose, 3)
     // inner(3) = 4, compose(3) = 4 * 2 = 8
     assert(r == 8)
 }

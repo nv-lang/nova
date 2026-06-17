@@ -1,12 +1,12 @@
 // Plan 33.3 Ф.9.4: fn с `decreases` и правильной recursion → проходит
 // без panic (depth не превышает limit).
 
-module contracts.decreases_recursion_positive
+module nova_tests.contracts
 
-fn factorial(n int) -> int
+fn factorial1(n int) -> int
     requires n >= 0
     decreases n
-=> if n == 0 { 1 } else { n * factorial(n - 1) }
+=> if n == 0 { 1 } else { n * factorial1(n - 1) }
 
 fn fib(n int) -> int
     requires n >= 0
@@ -14,7 +14,7 @@ fn fib(n int) -> int
 => if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
 
 test "decreases correct recursion" {
-    assert(factorial(5) == 120)
-    assert(factorial(0) == 1)
+    assert(factorial1(5) == 120)
+    assert(factorial1(0) == 1)
     assert(fib(10) == 55)
 }

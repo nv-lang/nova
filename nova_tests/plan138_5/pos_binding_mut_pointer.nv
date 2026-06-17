@@ -6,7 +6,7 @@
 // writable). `ro q *T` — fixed binding + read-only target (bare `*T` is the
 // ro canon, `*T ≡ *ro T` per Plan 147 / D246).
 
-module plan138_5.pos_binding_mut_pointer
+module nova_tests.plan138_5
 
 test "binding-mut pointer local + reassign" {
     mut buf *mut u8 = unsafe { RawMem.alloc(4) }

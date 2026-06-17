@@ -1,7 +1,7 @@
 // Ф.35.2 (Plan 33.6): TrivialBackend addition upper bound `<=` / `<`.
 // `requires x <= 5; requires y <= 5; ensures (x + y) <= 10` — upper sum.
 
-module contracts.f35_addition_upper_positive
+module nova_tests.contracts
 
 #verify
 fn sum_below_threshold(x int, y int) -> int

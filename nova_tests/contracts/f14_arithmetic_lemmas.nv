@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_arithmetic_lemmas
+module nova_tests.contracts
 
 // abs корректен.
 #verify
@@ -58,7 +58,7 @@ fn distrib(x int, y int, z int) -> bool
 
 // Clamp в диапазон [lo, hi].
 #verify
-fn clamp(x int, lo int, hi int) -> int
+fn clamp1(x int, lo int, hi int) -> int
     requires lo <= hi
     ensures result >= lo && result <= hi
 {
@@ -74,7 +74,7 @@ test "f14 arithmetic lemmas" {
     assert(add_comm(3, 7) == true)
     assert(add_assoc(1, 2, 3) == true)
     assert(distrib(2, 3, 4) == true)
-    assert(clamp(15, 0, 10) == 10)
-    assert(clamp(-5, 0, 10) == 0)
-    assert(clamp(5, 0, 10) == 5)
+    assert(clamp1(15, 0, 10) == 10)
+    assert(clamp1(-5, 0, 10) == 0)
+    assert(clamp1(5, 0, 10) == 5)
 }

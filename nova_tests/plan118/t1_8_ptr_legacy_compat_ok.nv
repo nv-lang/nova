@@ -9,7 +9,7 @@
 // + `[M-115-null-ptr-to-option-after-npo]` closure). Until then, `ptr`
 // (Plan 115 V1) и `*T` (Plan 118) coexist.
 
-module plan118.t1_8_ptr_legacy_compat_ok
+module nova_tests.plan118
 
 // Plan 115 V1 opaque handle pattern — continues работать.
 type LegacyHandle(*())

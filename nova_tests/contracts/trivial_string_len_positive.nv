@@ -1,6 +1,6 @@
 // Ф.25.2 (Plan 33.6): string length non-negative — `s.len() >= 0` всегда true.
 
-module contracts.trivial_string_len_positive
+module nova_tests.contracts
 
 type Wrapper {
     data str,

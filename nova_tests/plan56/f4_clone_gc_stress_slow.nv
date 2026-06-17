@@ -1,7 +1,7 @@
 // Plan 56 Ф.3 — GC stress test для @clone().
 // 100 clones × 100 entries — heap bounded.
 
-module plan56.f4_clone_gc_stress
+module nova_tests.plan56
 
 import std.collections.hashmap.{HashMap}
 

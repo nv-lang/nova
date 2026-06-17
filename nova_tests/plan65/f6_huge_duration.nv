@@ -8,7 +8,7 @@
 // actually wait; just allocate and let `supervised{}` scope exit clean it up
 // via `on_select_lost` / scope cleanup. The point is no panic, no UB.
 
-module plan65.f6_huge_duration
+module nova_tests.plan65
 
 import std.time.duration
 

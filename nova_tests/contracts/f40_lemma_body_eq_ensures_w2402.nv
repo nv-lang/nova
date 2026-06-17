@@ -1,7 +1,7 @@
 // Ф.40.1 (Plan 33.6): lemma body буквально совпадает с ensures → W2402.
 // EXPECT_COMPILE_WARNING W2402
 
-module contracts.f40_lemma_body_eq_ensures_w2402
+module nova_tests.contracts
 
 // body `x * 2` совпадает с ensures result == x * 2 (ensures говорит result == BODY).
 // Не нарушение — SMT доказывает trivially. Программист скорее всего хотел
@@ -12,7 +12,7 @@ lemma trivial_double(x int)
 => x * 2 >= 0
 
 #verify
-fn caller(x int) -> int
+fn caller3(x int) -> int
     requires x >= 0
     ensures result >= 0
 {

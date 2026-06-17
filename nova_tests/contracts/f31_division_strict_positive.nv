@@ -1,7 +1,7 @@
 // Ф.31.2 (Plan 33.6): TrivialBackend division `>` strict.
 // `requires x >= 0; ensures (x / 2) > -1 { x / 2 }` — result >= 0 > -1 → true.
 
-module contracts.f31_division_strict_positive
+module nova_tests.contracts
 
 #verify
 fn div_strict_above_neg(x int) -> int

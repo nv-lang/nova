@@ -1,7 +1,7 @@
 // Ф.36.2 (Plan 33.6): TrivialBackend negation upper bound `<=` / `<`.
 // `requires x >= -5; ensures (0 - x) <= 5` — -lower(x) = 5.
 
-module contracts.f36_negation_upper_positive
+module nova_tests.contracts
 
 #verify
 fn neg_below(x int) -> int

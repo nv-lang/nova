@@ -22,7 +22,7 @@
 //
 // ENV NOVA_AUTOARM=0
 
-module concurrency.supervised_errors
+module nova_tests.concurrency
 
 // Простая ad-hoc структура для агрегации статуса fiber'а — не Result
 // (prelude занят), просто record с success-флагом.

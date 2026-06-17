@@ -12,28 +12,28 @@
 // 2. Handler с interrupt-семантикой (значение IRT) работает в runtime.
 // 3. Тип Effect[E, IRT] парсится и type-checker не ломается.
 
-module effects.handler_irt_d87
+module nova_tests.effects
 
-type Logger effect {
+type Logger2 effect {
     log(msg str) -> ()
 }
 
 test "Effect[E] (default IRT=never): handler без interrupt" {
     mut count = 0
-    with Logger = effect Logger {
+    with Logger2 = effect Logger2 {
         log(_msg) {
             count = count + 1
             return ()
         }
     } {
-        Logger.log("a")
-        Logger.log("b")
+        Logger2.log("a")
+        Logger2.log("b")
     }
     assert(count == 2)
 }
 
 test "Effect[E, IRT] (явный IRT=int): handler с interrupt" {
-    ro r = with Logger = effect Logger {
+    ro r = with Logger2 = effect Logger2 {
         log(msg) {
             if msg == "stop" {
                 interrupt 42
@@ -41,8 +41,8 @@ test "Effect[E, IRT] (явный IRT=int): handler с interrupt" {
             return ()
         }
     } {
-        Logger.log("ok")
-        Logger.log("stop")
+        Logger2.log("ok")
+        Logger2.log("stop")
         // log("stop") → interrupt 42 → with-блок отдаёт 42
         99
     }
@@ -52,7 +52,7 @@ test "Effect[E, IRT] (явный IRT=int): handler с interrupt" {
 // Type-position проверка: parser принимает `Effect[E, IRT]` как
 // аннотацию (даже если bootstrap не enforce'ит IRT-семантику в типе).
 fn type_anno_check() -> int {
-    // `let h Effect[Logger, int] = effect Logger { ... }` —
+    // `let h Effect[Logger2, int] = effect Logger2 { ... }` —
     // парсер ОК. Здесь не используем (handler-as-let-value
     // имеет другие codegen-нюансы), просто проверяем что парсер
     // не падает на двух-аргументном Handler в сигнатуре.

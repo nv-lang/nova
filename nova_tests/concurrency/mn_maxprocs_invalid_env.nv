@@ -6,7 +6,7 @@
 // ENV NOVA_MAXPROCS=banana
 // EXPECT_STDERR invalid NOVA_MAXPROCS
 
-module concurrency.mn_maxprocs_invalid_env
+module nova_tests.concurrency
 
 test "invalid NOVA_MAXPROCS falls back to auto-detect" {
     runtime.init(0)

@@ -1,7 +1,7 @@
 // [M-153-scalar-min-max] — scalar @min / @max on numeric types (D239 §2).
 // Verifies that (5).max(3) == 5, (5).min(3) == 3, etc.
 
-module plan153_1.scalar_min_max
+module nova_tests.plan153_1
 
 test "int min / max basic" {
     assert((5).max(3) == 5)

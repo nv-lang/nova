@@ -1,7 +1,7 @@
 // Ф.9.9 (Plan 33.6): V2 coverage — nested loops с invariants.
 // Outer loop sum, inner loop count — both have invariants.
 
-module contracts.v2_nested_loops_positive
+module nova_tests.contracts
 
 fn nested_sum(n int) -> int
     requires n >= 0

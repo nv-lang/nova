@@ -1,7 +1,7 @@
 // Ф.19.3 (Plan 33.6): `requires true` → W2402 (no-op).
 // EXPECT_COMPILE_WARNING W2402
 
-module contracts.redundant_requires_true_w2402
+module nova_tests.contracts
 
 fn no_constraint(x int) -> int
     requires true

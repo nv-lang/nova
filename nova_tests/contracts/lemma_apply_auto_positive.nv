@@ -1,7 +1,7 @@
 // Ф.13.1 (Plan 33.6): `apply lemma_name` без скобок — auto-inference из scope.
 // fn param `x` matches lemma param `x` (unique name match).
 
-module contracts.lemma_apply_auto_positive
+module nova_tests.contracts
 
 lemma sum_positive(x int)
     requires x >= 0
@@ -9,7 +9,7 @@ lemma sum_positive(x int)
 => x
 
 #verify
-fn use_lemma(x int) -> int
+fn use_lemma2(x int) -> int
     requires x >= 0
     ensures result == x
 {
@@ -18,6 +18,6 @@ fn use_lemma(x int) -> int
 }
 
 test "apply auto-inference" {
-    assert(use_lemma(5) == 5)
-    assert(use_lemma(0) == 0)
+    assert(use_lemma2(5) == 5)
+    assert(use_lemma2(0) == 0)
 }

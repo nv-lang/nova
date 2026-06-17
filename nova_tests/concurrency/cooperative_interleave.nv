@@ -19,7 +19,7 @@
 // Cross-runtime: tokio `current_thread` runtime — closest equivalent
 // (single-thread cooperative); Node always cooperative single-thread.
 
-module concurrency.cooperative_interleave
+module nova_tests.concurrency
 
 test "supervised: two fibers interleave at every yield" {
     // A writes 1, yield, 2, yield, 3.

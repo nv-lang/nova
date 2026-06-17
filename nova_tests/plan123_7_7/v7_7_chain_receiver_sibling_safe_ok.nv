@@ -4,22 +4,22 @@
 // Extends V7.5 sibling-safe rule k chains: `@F0.F1.....Fn.method()`
 // preserves caches of fields outside the chain root.
 
-module plan123_7_7.v7_7_chain_receiver_sibling_safe_ok
+module nova_tests.plan123_7_7
 
-type Inner {
+type Inner2 {
     mut sub []int
 }
 
-type Cv {
+type Cv3 {
     mut counter int
-    mut inner Inner
+    mut inner Inner2
 }
 
-fn Inner.new() -> Inner => { sub: []int.new() }
+fn Inner2.new() -> Inner2 => { sub: []int.new() }
 
-fn Cv.new() -> Cv => { counter: 0, inner: Inner.new() }
+fn Cv3.new() -> Cv3 => { counter: 0, inner: Inner2.new() }
 
-fn Cv mut @sample_and_grow(v int) -> int {
+fn Cv3 mut @sample_and_grow(v int) -> int {
     // V7.7: chain `@inner.sub.push(v)` doesn't invalidate sibling
     // `@counter` cache. Read counter twice before Рё twice after.
     ro c1 = @counter
@@ -31,12 +31,12 @@ fn Cv mut @sample_and_grow(v int) -> int {
 }
 
 test "V7.7: chain receiver doesn't invalidate sibling cache" {
-    mut Cv = Cv.new()
-    Cv.counter = 13
-    ro r = Cv.sample_and_grow(42)
+    mut Cv3 = Cv3.new()
+    Cv3.counter = 13
+    ro r = Cv3.sample_and_grow(42)
     // counter = 13 throughout вЂ” 13*4 = 52
     assert(r == 52)
     // Verify chain mutation:
-    assert(Cv.inner.sub.len() == 1)
-    assert(Cv.inner.sub[0] == 42)
+    assert(Cv3.inner.sub.len() == 1)
+    assert(Cv3.inner.sub[0] == 42)
 }

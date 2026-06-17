@@ -8,43 +8,43 @@
 // Protocol declarations are now live in std/prelude/protocols.nv (stable 0.1).
 // Callers must match/unwrap the Result instead of using try-propagation "?".
 
-module plan72.p2a_try_from_into_pos
+module nova_tests.plan72
 
-type Celsius { deg int }
-type Fahrenheit { deg int }
+type Celsius2 { deg int }
+type Fahrenheit2 { deg int }
 
-fn Celsius.try_from(f Fahrenheit) -> Result[Celsius, str] => {
+fn Celsius2.try_from(f Fahrenheit2) -> Result[Celsius2, str] => {
     ro c = (f.deg - 32) * 5 / 9
-    if c < -273 { Err("below absolute zero") } else { Ok(Celsius { deg: c }) }
+    if c < -273 { Err("below absolute zero") } else { Ok(Celsius2 { deg: c }) }
 }
 
-fn Fahrenheit.try_from(c Celsius) -> Result[Fahrenheit, str] => {
+fn Fahrenheit2.try_from(c Celsius2) -> Result[Fahrenheit2, str] => {
     ro f = c.deg * 9 / 5 + 32
-    Ok(Fahrenheit { deg: f })
+    Ok(Fahrenheit2 { deg: f })
 }
 
-test "P2-A — TryFrom Fahrenheit → Celsius Ok path" {
-    ro r = Celsius.try_from(Fahrenheit { deg: 212 })
+test "P2-A — TryFrom Fahrenheit2 → Celsius2 Ok path" {
+    ro r = Celsius2.try_from(Fahrenheit2 { deg: 212 })
     assert(r.is_ok())
-    ro c = r.unwrap_or(Celsius { deg: 0 })
+    ro c = r.unwrap_or(Celsius2 { deg: 0 })
     assert(c.deg == 100)
 }
 
-test "P2-A — TryFrom Fahrenheit → Celsius Err path (below abs zero)" {
-    ro r = Celsius.try_from(Fahrenheit { deg: -1000 })
+test "P2-A — TryFrom Fahrenheit2 → Celsius2 Err path (below abs zero)" {
+    ro r = Celsius2.try_from(Fahrenheit2 { deg: -1000 })
     assert(r.is_err())
 }
 
-test "P2-A — TryFrom Celsius → Fahrenheit Ok path" {
-    ro r = Fahrenheit.try_from(Celsius { deg: 100 })
+test "P2-A — TryFrom Celsius2 → Fahrenheit2 Ok path" {
+    ro r = Fahrenheit2.try_from(Celsius2 { deg: 100 })
     assert(r.is_ok())
-    ro f = r.unwrap_or(Fahrenheit { deg: 0 })
+    ro f = r.unwrap_or(Fahrenheit2 { deg: 0 })
     assert(f.deg == 212)
 }
 
 test "P2-A — TryInto via try_from symmetry" {
-    ro r = Celsius.try_from(Fahrenheit { deg: 32 })
+    ro r = Celsius2.try_from(Fahrenheit2 { deg: 32 })
     assert(r.is_ok())
-    ro c = r.unwrap_or(Celsius { deg: -1 })
+    ro c = r.unwrap_or(Celsius2 { deg: -1 })
     assert(c.deg == 0)
 }

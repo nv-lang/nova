@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14 Dafny-port): sum of non-negatives is non-negative.
 // V1: только 2-arity addition (TrivialBackend reasoning per single Binary).
 
-module contracts.f55_sum_bounds
+module nova_tests.contracts
 
 #verify
 fn sum_two_nonneg(a int, b int) -> int

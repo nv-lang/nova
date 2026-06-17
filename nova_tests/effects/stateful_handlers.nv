@@ -13,9 +13,9 @@
 // (см. docs/known-issues-bootstrap.md «with X = factory()»).
 // Для тестов используем альтернативный синтаксис.
 
-module effects.stateful_handlers
+module nova_tests.effects
 
-type Counter effect {
+type Counter4 effect {
     next() -> int
 }
 
@@ -23,15 +23,15 @@ type Counter effect {
 
 test "closure capture — state в mut" {
     mut counter = 0
-    with Counter = effect Counter {
+    with Counter4 = effect Counter4 {
         next() {
             counter += 1
             return counter
         }
     } {
-        ro a = Counter.next()
-        ro b = Counter.next()
-        ro c = Counter.next()
+        ro a = Counter4.next()
+        ro b = Counter4.next()
+        ro c = Counter4.next()
         assert(a == 1)
         assert(b == 2)
         assert(c == 3)
@@ -42,25 +42,25 @@ test "closure capture — state в mut" {
 
 test "closure capture — state переживает несколько with-блоков" {
     mut counter = 100
-    with Counter = effect Counter {
+    with Counter4 = effect Counter4 {
         next() {
             counter += 10
             return counter
         }
     } {
-        ro _ = Counter.next()
-        ro _ = Counter.next()
+        ro _ = Counter4.next()
+        ro _ = Counter4.next()
     }
     ro mid = counter
     assert(mid == 120)
 
-    with Counter = effect Counter {
+    with Counter4 = effect Counter4 {
         next() {
             counter += 1
             return counter
         }
     } {
-        ro r = Counter.next()
+        ro r = Counter4.next()
         assert(r == 121)
     }
     ro final_v = counter
@@ -69,21 +69,21 @@ test "closure capture — state переживает несколько with-б�
 
 // === Способ 2: Record + @method (упрощённый — handler ссылается через closure) ===
 
-type CounterState { mut value int }
+type CounterState2 { mut value int }
 
-fn CounterState @inc_and_get() -> int {
+fn CounterState2 @inc_and_get() -> int {
     @value += 1
     @value
 }
 
 test "record + @method — handler ссылается через closure на record" {
-    ro s = CounterState { value: 0 }
-    with Counter = effect Counter {
+    ro s = CounterState2 { value: 0 }
+    with Counter4 = effect Counter4 {
         next() => s.inc_and_get()
     } {
-        ro a = Counter.next()
-        ro b = Counter.next()
-        ro c = Counter.next()
+        ro a = Counter4.next()
+        ro b = Counter4.next()
+        ro c = Counter4.next()
         assert(a == 1)
         assert(b == 2)
         assert(c == 3)
@@ -93,22 +93,22 @@ test "record + @method — handler ссылается через closure на re
 }
 
 test "record state — несколько handler'ов на один state" {
-    ro s = CounterState { value: 0 }
-    ro h1 = effect Counter {
+    ro s = CounterState2 { value: 0 }
+    ro h1 = effect Counter4 {
         next() => s.inc_and_get()
     }
-    with Counter = h1 {
-        ro _ = Counter.next()
-        ro _ = Counter.next()
+    with Counter4 = h1 {
+        ro _ = Counter4.next()
+        ro _ = Counter4.next()
     }
     ro after_h1 = s.value
     assert(after_h1 == 2)
 
-    ro h2 = effect Counter {
+    ro h2 = effect Counter4 {
         next() => s.inc_and_get()
     }
-    with Counter = h2 {
-        ro r = Counter.next()
+    with Counter4 = h2 {
+        ro r = Counter4.next()
         assert(r == 3)
     }
     ro after_h2 = s.value
@@ -117,16 +117,16 @@ test "record state — несколько handler'ов на один state" {
 
 // === Handler-фабрика как свободная функция (caller передаёт state) ===
 
-fn make_counter_starting(start_state CounterState) -> Effect[Counter] => effect Counter {
+fn make_counter_starting(start_state CounterState2) -> Effect[Counter4] => effect Counter4 {
     next() => start_state.inc_and_get()
 }
 
 test "handler-фабрика принимает state как параметр" {
-    ro s = CounterState { value: 10 }
+    ro s = CounterState2 { value: 10 }
     ro h = make_counter_starting(s)
-    with Counter = h {
-        ro a = Counter.next()
-        ro b = Counter.next()
+    with Counter4 = h {
+        ro a = Counter4.next()
+        ro b = Counter4.next()
         assert(a == 11)
         assert(b == 12)
     }
@@ -141,8 +141,8 @@ type Reset effect {
 }
 
 test "два эффекта на один state" {
-    ro s = CounterState { value: 0 }
-    ro h_counter = effect Counter {
+    ro s = CounterState2 { value: 0 }
+    ro h_counter = effect Counter4 {
         next() => s.inc_and_get()
     }
     ro h_reset = effect Reset {
@@ -151,13 +151,13 @@ test "два эффекта на один state" {
             return ()
         }
     }
-    with Counter = h_counter, Reset = h_reset {
-        ro a = Counter.next()
-        ro b = Counter.next()
+    with Counter4 = h_counter, Reset = h_reset {
+        ro a = Counter4.next()
+        ro b = Counter4.next()
         assert(a == 1)
         assert(b == 2)
         Reset.reset()
-        ro c = Counter.next()
+        ro c = Counter4.next()
         assert(c == 1)
     }
     ro final_v = s.value

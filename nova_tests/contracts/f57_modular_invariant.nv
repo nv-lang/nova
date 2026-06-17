@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14): modular arithmetic invariants.
 // x % k bounds (Ф.19.1 / Ф.26.1 / Ф.38.1).
 
-module contracts.f57_modular_invariant
+module nova_tests.contracts
 
 #verify
 fn mod_lower_bound(x int) -> int

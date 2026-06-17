@@ -4,26 +4,26 @@
 // `_at_a_b_c_pre = _at_a_b_pre.c` + per-chain lets reference longest
 // covering prefix. Поведение должно остаться semantic-identical V4/V4.2.
 
-module plan123_4_3.v43_deep_prefix_three_level_ok
+module nova_tests.plan123_4_3
 
-type Lv { ro x int, ro y int }
-type Mv { ro c Lv }
-type Nv { ro b Mv }
-type Ov { ro a Nv }
+type Lv1 { ro x int, ro y int }
+type Mv1 { ro c Lv1 }
+type Nv1 { ro b Mv1 }
+type Ov3 { ro a Nv1 }
 
-fn Ov @sum_both() -> int {
+fn Ov3 @sum_both() -> int {
     // 4 chain occurrences exceeds chain_threshold=2; both .x и .y
     // share length-3 prefix @a.b.c. V4.3 chains через iterative
     // deepening: @a.b → _at_a_b_pre, @a.b.c → _at_a_b_c_pre.c
     @a.b.c.x + @a.b.c.x + @a.b.c.y + @a.b.c.y
 }
 
-fn Ov.new() -> Ov {
-    Ov { a: Nv { b: Mv { c: Lv { x: 7, y: 11 } } } }
+fn Ov3.new() -> Ov3 {
+    Ov3 { a: Nv1 { b: Mv1 { c: Lv1 { x: 7, y: 11 } } } }
 }
 
 test "V4.3: length-3 deep prefix preserves semantics" {
-    ro r = Ov.new()
+    ro r = Ov3.new()
     ro got = r.sum_both()
     // 7 + 7 + 11 + 11 = 36
     assert(got == 36)

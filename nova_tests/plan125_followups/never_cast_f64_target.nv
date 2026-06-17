@@ -1,7 +1,7 @@
 // [M-125-codegen-never-cast] positive — f64 target type.
 // (different scalar — exercises typed_zero_value_125 float branch)
 
-module plan125_followups.never_cast_f64_target
+module nova_tests.plan125_followups
 
 fn ratio(num f64, denom f64) -> f64 {
     if denom == 0.0 {

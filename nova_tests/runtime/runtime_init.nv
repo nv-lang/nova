@@ -2,7 +2,7 @@
 // Проверяет init/shutdown/worker_count/is_initialized/current_worker_id/yield.
 // bootstrap-режим: init(1) запускает 1 worker.
 
-module runtime.runtime_init
+module nova_tests.runtime
 
 import std.runtime.runtime
 

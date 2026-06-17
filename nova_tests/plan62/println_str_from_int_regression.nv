@@ -15,7 +15,7 @@
 // `println(str.from(...))` (точно паттерн bench/corpus/06_contracts.nv,
 // который был P0 hotfix trigger).
 
-module plan62.println_str_from_int_regression
+module nova_tests.plan62
 
 fn factorial(n int) -> int => {
     if n <= 1 { 1 } else { n * factorial(n - 1) }

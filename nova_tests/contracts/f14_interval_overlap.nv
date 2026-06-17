@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_interval_overlap
+module nova_tests.contracts
 
 // Overlap: [a1, b1] ∩ [a2, b2] непусто iff a1 <= b2 && a2 <= b1.
 #verify

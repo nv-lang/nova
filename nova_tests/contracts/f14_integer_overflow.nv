@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_integer_overflow
+module nova_tests.contracts
 
 // Safe add: проверяем что сумма не переполняется (в рамках диапазона).
 #verify

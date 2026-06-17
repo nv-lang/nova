@@ -4,7 +4,7 @@
 // Attests on C-side function as callable from ConsumeScope on_exit
 // body without firing W_FFI_CANCEL_UNSAFE warning.
 
-module plan110.cancel_safe_attr_parses
+module nova_tests.plan110
 
 // Production-like usage: `#cancel_safe` attribute attests that a fn
 // is safe to call from inside a ConsumeScope on_exit body (under
@@ -15,7 +15,7 @@ module plan110.cancel_safe_attr_parses
 // `external fn` form is restricted to std.runtime.* per D82; this
 // fixture verifies the attribute parses on plain Nova fns.
 #cancel_safe
-fn close_safe(handle int) -> int {
+fn close_safe1(handle int) -> int {
     handle  // stub
 }
 
@@ -25,20 +25,20 @@ fn close_safe_realtime(handle int) -> int => handle
 // Без attribute — control case.
 fn close_unsafe(handle int) -> int => handle
 
-type Conn {
+type Conn3 {
     ro h int
 }
 
-fn Conn.new(h int) -> Conn => { h }
+fn Conn3.new(h int) -> Conn3 => { h }
 
-fn Conn consume @on_exit(_outcome ScopeOutcome) -> () {
-    ro _rc = close_safe(@h)
+fn Conn3 consume @on_exit(_outcome ScopeOutcome) -> () {
+    ro _rc = close_safe1(@h)
     return ()
 }
 
 fn run_with_cancel_safe() -> int {
     mut result = 0
-    consume conn = Conn.new(7) {
+    consume conn = Conn3.new(7) {
         result = conn.h
     }
     result

@@ -1,6 +1,6 @@
 // Plan 120 (D215): T1 — basic named tuple declaration, construction, field access.
 
-module plan120.t1_basic_named_tuple
+module nova_tests.plan120
 
 type Point(x f64, y f64)
 

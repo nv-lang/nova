@@ -1,6 +1,6 @@
 // Plan 140.2 Part B: прямой вызов @index (.index(i)) эмитит контракт-enforcement
 // `requires 0 <= i && i < @len` корректно (instance-метод, nova_self в scope).
-module plan140_2.b_index_direct_call_pos
+module nova_tests.plan140_2
 
 import std.collections.vec.{Vec}
 

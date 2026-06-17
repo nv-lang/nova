@@ -2,11 +2,11 @@
 // record fields → pass adds receiver type to skip_types; methods
 // on sum types unaffected.
 
-module plan123_1.sum_type_no_field_cache_ok
+module nova_tests.plan123_1
 
-type Shape | Circle(int) | Square(int) | Rect(int, int)
+type Shape2 | Circle(int) | Square(int) | Rect(int, int)
 
-fn Shape @area() -> int {
+fn Shape2 @area() -> int {
     match @ {
         Circle(r) => r * r * 3,
         Square(s) => s * s,

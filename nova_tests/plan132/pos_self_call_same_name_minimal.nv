@@ -1,15 +1,15 @@
 // Plan 132.1 regression guard: minimal repro for @name() self-call when field/method share name
-module plan132.pos_self_call_same_name_minimal
+module nova_tests.plan132
 
-type MyObj { priv mut x int }
+type MyObj5 { priv mut x int }
 
-fn MyObj.new() -> Self => { x: 0 }
-fn MyObj @x() -> int => @x          // method @x() — returns field @x (no parens = field)
-fn MyObj @call_x() -> int => @x()   // calls method @x() — was CC-FAIL before Plan 132.1 fix
-fn MyObj @set_x(v int) { @x = v }
+fn MyObj5.new() -> Self => { x: 0 }
+fn MyObj5 @x() -> int => @x          // method @x() — returns field @x (no parens = field)
+fn MyObj5 @call_x() -> int => @x()   // calls method @x() — was CC-FAIL before Plan 132.1 fix
+fn MyObj5 @set_x(v int) { @x = v }
 
 test "self-call @x() from @call_x() works" {
-    mut t = MyObj.new()
+    mut t = MyObj5.new()
     t.set_x(42)
     assert(t.x() == 42)
     assert(t.call_x() == 42)

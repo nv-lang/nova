@@ -5,21 +5,21 @@
 // использует method_receivers["next"] для dispatch на
 // Nova_<T>_method_next.
 //
-// Этот тест определяет custom-итератор (Counter) и проходится
+// Этот тест определяет custom-итератор (Counter10) и проходится
 // через него. Это покрывает path «structural Iterable[T] для
 // user-defined типов».
 
-module syntax.for_iter
+module nova_tests.syntax
 
 
 // Custom итератор: считает 0..end.
-type Counter {
+type Counter10 {
     end       int
     mut cur   int
 }
 
 
-export fn Counter mut @next() -> Option[int] {
+export fn Counter10 mut @next() -> Option[int] {
     if @cur >= @end {
         None
     } else {
@@ -30,14 +30,14 @@ export fn Counter mut @next() -> Option[int] {
 }
 
 
-export fn Counter.new(end int) -> Counter {
-    Counter { end, cur: 0 }
+export fn Counter10.new(end int) -> Counter10 {
+    Counter10 { end, cur: 0 }
 }
 
 
-test "for-in over custom Iterable[T] (Counter)" {
+test "for-in over custom Iterable[T] (Counter10)" {
     mut sum = 0
-    ro it = Counter.new(5)
+    ro it = Counter10.new(5)
     for x in it {
         sum = sum + x
     }
@@ -46,9 +46,9 @@ test "for-in over custom Iterable[T] (Counter)" {
 }
 
 
-test "for-in over Counter — empty range" {
+test "for-in over Counter10 — empty range" {
     mut count = 0
-    ro it = Counter.new(0)
+    ro it = Counter10.new(0)
     for _ in it {
         count = count + 1
     }
@@ -56,9 +56,9 @@ test "for-in over Counter — empty range" {
 }
 
 
-test "for-in over Counter — single element" {
+test "for-in over Counter10 — single element" {
     mut last = -1
-    ro it = Counter.new(1)
+    ro it = Counter10.new(1)
     for x in it {
         last = x
     }

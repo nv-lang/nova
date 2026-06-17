@@ -3,7 +3,7 @@
 // payload → C compile error ("invalid operands to binary =="). The
 // field-by-field path recurses into the tuple element types instead, so
 // this both COMPILES and is structurally correct.
-module plan141.t6_sum_nested_tuple
+module nova_tests.plan141
 
 type Wrap
     | T((int, int))

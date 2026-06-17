@@ -1,7 +1,7 @@
 // Plan 124.9 Ф.2 — positive: nested value-records (D228).
 // Nested value-record literals must allocate each declared field type.
 // V1 codegen treats value records as heap-backed transparent fallback.
-module plan124_9.p4_nested_value_record_literal_ok
+module nova_tests.plan124_9
 
 type Inner value {
     x int

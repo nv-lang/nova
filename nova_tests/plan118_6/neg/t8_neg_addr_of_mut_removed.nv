@@ -1,0 +1,16 @@
+// Plan 118.6 Ф.5 NEG T8 — addr_of_mut(x) removed → E_ADDR_OF_REMOVED.
+//
+// addr_of_mut() was the mutable variant. After Plan 118.6 Ф.3 it is
+// removed entirely. Use &x on a mut binding instead.
+//
+// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
+
+module neg.t8_neg_addr_of_mut_removed
+
+test "addr_of_mut(x) removed — use &x on mut binding instead" {
+    mut x = 42
+    unsafe {
+        ro p = addr_of_mut(x)
+        p.write(100)
+    }
+}

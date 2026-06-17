@@ -3,7 +3,7 @@
 // After Plan 118.6 Ф.2: AddrOf is safe — no unsafe { } required.
 // GC + escape analysis guarantee pointer validity.
 
-module plan118_6.t1_pos_ampersand_int_no_unsafe
+module nova_tests.plan118_6
 
 test "&x on int — safe, no unsafe required" {
     ro x = 42

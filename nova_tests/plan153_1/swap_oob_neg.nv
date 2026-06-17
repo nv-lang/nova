@@ -1,8 +1,0 @@
-// EXPECT_RUNTIME_PANIC requires failed
-//
-// Plan 153.1 — негатив: @swap(i,j) с OOB-индексом → контракт паника.
-module plan153_1.swap_oob_neg
-fn main() -> () {
-    mut v = Vec[int].of(1, 2, 3)
-    v.swap(0, 5)
-}

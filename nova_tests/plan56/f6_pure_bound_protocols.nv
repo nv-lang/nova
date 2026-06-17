@@ -1,6 +1,6 @@
 // Plan 56 Ф.2.7 — positive: pure bound protocols работают.
 
-module plan56.f6_pure_bound_protocols
+module nova_tests.plan56
 
 
 type MyHashable protocol {
@@ -14,18 +14,18 @@ type MyDisplay protocol {
 }
 
 
-type Counter {
+type Counter3 {
     n int
 }
 
 
-fn Counter @hash() -> u64 => @n as u64
-fn Counter @equal(other Counter) -> bool => @n == other.n
+fn Counter3 @hash() -> u64 => @n as u64
+fn Counter3 @equal(other Counter3) -> bool => @n == other.n
 
 
 test "pure bound protocol declarations compile" {
-    ro c = Counter { n: 42 }
+    ro c = Counter3 { n: 42 }
     assert(c.hash() == 42 as u64)
-    assert(c.equal(Counter { n: 42 }))
-    assert(!c.equal(Counter { n: 99 }))
+    assert(c.equal(Counter3 { n: 42 }))
+    assert(!c.equal(Counter3 { n: 99 }))
 }

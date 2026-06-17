@@ -5,7 +5,7 @@
 // (zero-overhead, single-pointer ABI). Record form `type Handle { ro p
 // *T, ro extra State }` — для handles с extra state.
 
-module plan118.t1_6_record_field_pointer_ok
+module nova_tests.plan118
 
 type Buffer {
     ro length i64

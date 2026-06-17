@@ -13,7 +13,7 @@
 //
 // 5000 < ~16384 fiber-arena cap, so it does not hit the Plan 82 arena limit.
 
-module concurrency.ring_overflow_drain
+module nova_tests.concurrency
 
 test "5000 fibers (> ring cap 4096) — overflow to global queue, none lost" {
     mut done = AtomicInt.new(0)

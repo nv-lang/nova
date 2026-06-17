@@ -1,6 +1,6 @@
 // Plan 114.4.2 T3-extra: const fn без параметров (-> const T только).
 
-module plan114_4_2.const_fn_no_args_ok
+module nova_tests.plan114_4_2
 
 fn answer() -> const int => 42
 

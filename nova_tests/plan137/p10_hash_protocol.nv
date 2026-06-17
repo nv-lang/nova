@@ -1,6 +1,6 @@
 // Plan 137 (D237) — POS P10:
 // `#impl(Hash)` на record → auto-derive @hash.
-module plan137.p10_hash_protocol
+module nova_tests.plan137
 
 #impl(Hash)
 type UserId {

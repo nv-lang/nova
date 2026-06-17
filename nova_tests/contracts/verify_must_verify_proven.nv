@@ -1,19 +1,19 @@
 // Plan 33.1 Ф.3: #verify positive — trivial backend доказывает
 // reflexive ensures `result == body_expr`.
 //
-// `must_double` имеет `ensures result == x * 2`, body `=> x * 2`.
+// `must_double2` имеет `ensures result == x * 2`, body `=> x * 2`.
 // После substitute result → x*2: `x*2 == x*2` → reflexive → proven.
 
-module contracts.verify_must_verify_proven
+module nova_tests.contracts
 
 #verify
-fn must_double(x int) -> int
+fn must_double2(x int) -> int
     requires x > 0
     ensures result == x * 2
 => x * 2
 
 #verify
-fn identity(x int) -> int
+fn identity6(x int) -> int
     ensures result == x
 => x
 
@@ -23,7 +23,7 @@ fn const_42() -> int
 => 42
 
 test "must_verify proven by trivial backend" {
-    assert(must_double(3) == 6)
-    assert(identity(7) == 7)
+    assert(must_double2(3) == 6)
+    assert(identity6(7) == 7)
     assert(const_42() == 42)
 }

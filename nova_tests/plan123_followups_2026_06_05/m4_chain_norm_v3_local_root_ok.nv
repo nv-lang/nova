@@ -3,7 +3,7 @@
 // Positive: local-var root `v.push(...).push(...)` triggers chain-norm
 // hoisting (V1/V2 only handled `@F` self-field root).
 
-module plan123_followups_2026_06_05.m4_chain_norm_v3_local_root_ok
+module nova_tests.plan123_followups_2026_06_05
 
 fn build_list() -> []int {
     mut v = [10, 20, 30]

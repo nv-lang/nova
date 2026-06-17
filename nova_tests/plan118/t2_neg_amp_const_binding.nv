@@ -11,7 +11,7 @@
 // runtime. Adding fixture documents intent для Ф.3.5 implementation.
 // EXPECTED behavior: E_AMP_CONST_BINDING at type-checker level (Ф.3.5).
 
-module plan118.t2_neg_amp_const_binding
+module nova_tests.plan118
 
 const VALUE int = 42
 

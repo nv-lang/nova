@@ -15,14 +15,14 @@
 //   A110.4.4.a.a — handler.on_scope_enter called с type name + timeout_ms.
 //   A110.4.4.b.a — handler.on_scope_exit called с outcome value.
 
-module plan110.cleanup_effect_dispatch_t7_1
+module nova_tests.plan110
 
-type TracedRes {
+type TracedRes3 {
     ro id int
 }
 
-fn TracedRes.new(id int) -> TracedRes => { id }
-fn TracedRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn TracedRes3.new(id int) -> TracedRes3 => { id }
+fn TracedRes3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 test "Plan 110.4.4.a A110.4.4.a.a + A110.4.4.b.a: Cleanup handler observes enter+exit" {
     mut enter_calls = 0
@@ -41,20 +41,20 @@ test "Plan 110.4.4.a A110.4.4.a.a + A110.4.4.b.a: Cleanup handler observes enter
             return ()
         }
     } {
-        consume r = TracedRes.new(99) {
+        consume r = TracedRes3.new(99) {
             ro _ = r.id
         }
     }
     assert(enter_calls == 1)
     assert(exit_calls == 1)
-    assert(last_enter_label == "TracedRes")
+    assert(last_enter_label == "TracedRes3")
     // Default exit_timeout (Level 3) hardcoded = 5000ms.
     assert(last_enter_timeout == 5000)
 }
 
 test "Plan 110.4.4.a/b: no handler bound → silent no-op (no crash, body runs)" {
     mut completed = 0
-    consume r = TracedRes.new(11) {
+    consume r = TracedRes3.new(11) {
         completed = r.id
     }
     assert(completed == 11)

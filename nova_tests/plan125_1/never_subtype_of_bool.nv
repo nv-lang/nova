@@ -1,7 +1,7 @@
 // Plan 125.1 Ф.1+Ф.2 positive — never <: bool.
 // Дополнительный subtype check для primitive bool target.
 
-module plan125_1.never_subtype_of_bool
+module nova_tests.plan125_1
 
 fn is_ready(c bool) Fail -> bool {
     if c {

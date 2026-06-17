@@ -1,7 +1,7 @@
 // Ф.34.1 (Plan 33.6): ensures_fail на fn без Fail effect → W2402.
 // EXPECT_COMPILE_WARNING W2402
 
-module contracts.f34_ensures_fail_no_fail_w2402
+module nova_tests.contracts
 
 // Нет Fail в effects, но есть ensures_fail — unreachable warning.
 #verify

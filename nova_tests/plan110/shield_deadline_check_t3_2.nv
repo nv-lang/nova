@@ -22,19 +22,19 @@
 // WithExitTimeout) so a sub-5-second budget can be configured per-scope.
 // See followup marker [M-110-deadline-fire-fixture] in Plan 110.2.6.
 
-module plan110.shield_deadline_check_t3_2
+module nova_tests.plan110
 
-type ShortLivedRes {
+type ShortLivedRes3 {
     ro id int
 }
 
-fn ShortLivedRes.new(id int) -> ShortLivedRes => { id }
+fn ShortLivedRes3.new(id int) -> ShortLivedRes3 => { id }
 
-fn ShortLivedRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn ShortLivedRes3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 fn use_with_short_sleep() -> int {
     mut completed = 0
-    consume r = ShortLivedRes.new(42) {
+    consume r = ShortLivedRes3.new(42) {
         // Tiny sleep — far below the 5000ms default deadline.
         // Suspend entry MUST consult shield deadline_ns and NOT throw.
         Time.sleep(1)

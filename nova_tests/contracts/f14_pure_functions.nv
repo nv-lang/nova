@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_pure_functions
+module nova_tests.contracts
 
 // Идемпотентная функция: f(f(x)) == f(x).
 #verify

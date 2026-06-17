@@ -6,11 +6,11 @@
 // bucket end-to-end — insert / get / iter — across int→str, record-value, and
 // nested map-in-map shapes, BEFORE the universal `[]T ≡ Vec[T]` flip
 // (Ф.0-final). Verifies the migration is observable-behaviour-preserving.
-module plan138_2.t12_map_vec_bucket_pos
+module nova_tests.plan138_2
 
 import std.collections.hashmap.{HashMap}
 
-type Point { x int, y int }
+type Point1 { x int, y int }
 
 test "Vec-backed bucket: int→str insert/get" {
     ro m HashMap[int, str] = [1: "a", 2: "b"]
@@ -32,9 +32,9 @@ test "Vec-backed bucket: iterate over entries" {
 }
 
 test "Vec-backed bucket: record value map" {
-    ro m HashMap[str, Point] = {
-        origin: Point { x: 0, y: 0 },
-        unit: Point { x: 1, y: 1 },
+    ro m HashMap[str, Point1] = {
+        origin: Point1 { x: 0, y: 0 },
+        unit: Point1 { x: 1, y: 1 },
     }
     assert(m.len() == 2)
     if Some(p) = m.get("unit") {

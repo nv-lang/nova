@@ -1,6 +1,6 @@
 // Plan 114.4.2 T3.1: basic const fn — block body, local const, arith.
 
-module plan114_4_2.const_fn_basic_ok
+module nova_tests.plan114_4_2
 
 fn calc(const a int, const b char) -> const int {
     const c = b as int

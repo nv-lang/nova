@@ -15,7 +15,7 @@
 //
 // ENV NOVA_MAXPROCS=1
 
-module concurrency.parallel_for_array
+module nova_tests.concurrency
 
 // ================================================================
 // SECTION 1: range → []int

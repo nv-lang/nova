@@ -12,7 +12,7 @@
 //   wb.len(), wb.capacity(), wb.clone()
 //   wb.into() -> []u8 (infallible)
 
-module runtime.write_buffer
+module nova_tests.runtime
 
 
 // ================================================================

@@ -10,14 +10,14 @@
 //                Application handler → exit_timeout resolves via
 //                inherited handler, not Level 3 fallback.
 
-module plan110.application_cross_fiber_t8_7
+module nova_tests.plan110
 
-type Res {
+type Res3 {
     ro id int
 }
 
-fn Res.new(id int) -> Res => { id }
-fn Res consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn Res3.new(id int) -> Res3 => { id }
+fn Res3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 test "Plan 110.4.7 A110.4.7.a: child fiber inherits Application via D80 snapshot" {
     mut child_observed = -1
@@ -42,7 +42,7 @@ test "Plan 110.4.7 A110.4.7.a: child fiber inherits Application via D80 snapshot
             // it must see Application 750ms через D80 snapshot.
             supervised {
                 spawn {
-                    consume r = Res.new(1) {
+                    consume r = Res3.new(1) {
                         ro _ = r.id
                     }
                 }

@@ -1,6 +1,6 @@
 // Plan 114.4.2 T3.5: const fn used в module-level const initialiser.
 
-module plan114_4_2.const_fn_used_in_const_ok
+module nova_tests.plan114_4_2
 
 fn shift(const a int, const k int) -> const int => a * 1000 + k
 

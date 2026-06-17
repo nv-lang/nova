@@ -19,7 +19,7 @@
 // unrelated to this nested-type-arg fix and so not asserted here. The
 // nested-Self value-generic surface IS covered (and passes) by repro.nv
 // (return position) and repro_param.nv (param position).
-module self_nested.repro_control
+module nova_tests.self_nested
 
 import std.collections.vec.{Vec}
 

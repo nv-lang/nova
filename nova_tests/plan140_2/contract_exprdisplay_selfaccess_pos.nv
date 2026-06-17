@@ -3,15 +3,15 @@
 // clean (no violation), so the display fix is purely about the message text of
 // the negative path and does not perturb the satisfied path.
 
-module plan140_2.contract_exprdisplay_selfaccess_pos
+module nova_tests.plan140_2
 
-type Counter { count int, limit int }
+type Counter2 { count int, limit int }
 
-fn Counter @step() -> int
+fn Counter2 @step() -> int
     requires @count > 0 && @count <= @limit
 => @count - 1
 
 test "satisfied @field contract runs without panic" {
-    ro c = Counter { count: 5, limit: 10 }
+    ro c = Counter2 { count: 5, limit: 10 }
     assert(c.step() == 4)
 }

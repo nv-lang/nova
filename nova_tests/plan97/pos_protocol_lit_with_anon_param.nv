@@ -4,7 +4,7 @@
 // fn принимает анонимный protocol-type `c protocol { @close() -> () }`
 // (Plan 97 Ф.2). Caller передаёт protocol-литерал значение.
 
-module plan97.pos_protocol_lit_with_anon_param
+module nova_tests.plan97
 
 
 export type Resource protocol {
@@ -13,7 +13,7 @@ export type Resource protocol {
 
 
 // Helper принимает named protocol-typed value.
-fn use_closer(c Resource) -> () => c.close()
+fn use_closer2(c Resource) -> () => c.close()
 
 
 test "protocol-литерал передан в fn ожидающую named protocol" {
@@ -23,7 +23,7 @@ test "protocol-литерал передан в fn ожидающую named prot
             closed = closed + 1
         }
     }
-    use_closer(r)
-    use_closer(r)
+    use_closer2(r)
+    use_closer2(r)
     assert(closed == 2)
 }

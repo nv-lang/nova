@@ -3,7 +3,7 @@
 // `0 <= i < v.len()` доказывается Z3 ⇒ inline-проверка элидируется (с z3).
 // Корректность не зависит от элизии (тест проходит и на Trivial).
 
-module plan140_2.b4_elision_pos
+module nova_tests.plan140_2
 
 import std.collections.vec.{Vec}
 

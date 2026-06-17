@@ -1,7 +1,7 @@
 // Plan 124.8 [M-124.8-tuple-mut-field-write-codegen] — positive:
 // compound assignment patterns on tuple field — value re-read after
 // write используется в expression (assign-then-read flow).
-module plan124_8.tuple_mut_field_compound_ok
+module nova_tests.plan124_8
 
 type Counter(value int, step int)
 

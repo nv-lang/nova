@@ -4,12 +4,12 @@
 //
 // Без save/restore на boundary fn body emit:
 //   - parse_str() body emit ставит pending = str_int*
-//   - parse_int() body emit ставит pending = int_int*
-//   - parse_bool() body emit ставит pending = bool_int*
+//   - parse_int1() body emit ставит pending = int_int*
+//   - parse_bool1() body emit ставит pending = bool_int*
 //   - test body's `let r1 = parse_str(...)` consumed бы leaked
 //     bool_int* (последний) вместо правильного str_int* из registry.
 
-module plan59.f21_multiple_result_fns_no_pending_leak
+module nova_tests.plan59
 
 
 fn parse_str(s str) -> Result[(str, int), str] {
@@ -18,13 +18,13 @@ fn parse_str(s str) -> Result[(str, int), str] {
 }
 
 
-fn parse_int(s str) -> Result[(int, int), str] {
+fn parse_int1(s str) -> Result[(int, int), str] {
     if s == "5" { Ok((5, 50)) }
     else { Err("bad") }
 }
 
 
-fn parse_bool(s str) -> Result[(bool, int), str] {
+fn parse_bool1(s str) -> Result[(bool, int), str] {
     if s == "t" { Ok((true, 1)) }
     else { Err("bad") }
 }
@@ -32,8 +32,8 @@ fn parse_bool(s str) -> Result[(bool, int), str] {
 
 test "три Result-fns с разными mono types — каждая destructure правильно" {
     ro r1 = parse_str("a")
-    ro r2 = parse_int("5")
-    ro r3 = parse_bool("t")
+    ro r2 = parse_int1("5")
+    ro r3 = parse_bool1("t")
 
     mut k1 str = ""
     mut v1 int = 0
@@ -69,11 +69,11 @@ test "пересекающиеся inline matches — pending не leak'ает �
         Ok((_, v)) => { totals = totals + v }
         Err(_) => assert(false)
     }
-    match parse_int("5") {
+    match parse_int1("5") {
         Ok((k, _)) => { totals = totals + k }
         Err(_) => assert(false)
     }
-    match parse_bool("t") {
+    match parse_bool1("t") {
         Ok((_, v)) => { totals = totals + v }
         Err(_) => assert(false)
     }

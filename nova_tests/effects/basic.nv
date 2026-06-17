@@ -6,9 +6,9 @@
 // обычная функция: финальное выражение или `return v` становится
 // результатом операции в caller'е.
 
-module effects.basic
+module nova_tests.effects
 
-type Counter effect {
+type Counter1 effect {
     next() -> int
 }
 
@@ -25,16 +25,16 @@ type Switch effect {
     flip() -> bool
 }
 
-fn three_times() Counter -> int {
-    ro a = Counter.next()
-    ro b = Counter.next()
-    ro c = Counter.next()
+fn three_times() Counter1 -> int {
+    ro a = Counter1.next()
+    ro b = Counter1.next()
+    ro c = Counter1.next()
     a + b + c
 }
 
 test "single-op handler with state" {
     mut s = 0
-    with Counter = effect Counter {
+    with Counter1 = effect Counter1 {
         next() {
             s += 1
             return s
@@ -90,22 +90,22 @@ test "handler with multiple operations on same effect" {
 test "nested with: inner handler shadows outer" {
     mut outer_calls = 0
     mut inner_calls = 0
-    with Counter = effect Counter {
+    with Counter1 = effect Counter1 {
         next() {
             outer_calls += 1
             return 1
         }
     } {
-        with Counter = effect Counter {
+        with Counter1 = effect Counter1 {
             next() {
                 inner_calls += 1
                 return 99
             }
         } {
-            ro v = Counter.next()
+            ro v = Counter1.next()
             assert(v == 99)
         }
-        ro v2 = Counter.next()
+        ro v2 = Counter1.next()
         assert(v2 == 1)
     }
     assert(outer_calls == 1)

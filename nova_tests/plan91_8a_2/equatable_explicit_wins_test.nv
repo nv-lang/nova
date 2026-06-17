@@ -1,12 +1,12 @@
-module plan91_8a_2.equatable_explicit_wins_test
+module nova_tests.plan91_8a_2
 
 // Plan 91.8a.2 part 3: тип с ОБОИМИ @compare и @equal — explicit
 // @equal takes precedence (NOT default body synthesis). Synthesis
 // fires only when explicit method отсутствует.
 
-type Marker { id int, tag str }
+type Marker3 { id int, tag str }
 
-fn Marker @compare(other Self) -> int =>
+fn Marker3 @compare(other Self) -> int =>
     if @id < other.id { -1 }
     else if @id > other.id { 1 }
     else { 0 }
@@ -14,18 +14,18 @@ fn Marker @compare(other Self) -> int =>
 // Explicit @equal — игнорирует id, сравнивает только tag.
 // Synthesized default body would use @compare → check id; explicit
 // here checks tag — different behavior verifies explicit wins.
-fn Marker @equal(other Self) -> bool => @tag == other.tag
+fn Marker3 @equal(other Self) -> bool => @tag == other.tag
 
-fn check_eq[T Equal](a T, b T) -> bool => a.equal(b)
+fn check_eq1[T Equal](a T, b T) -> bool => a.equal(b)
 
 test "explicit @equal wins over synthesized default" {
-    ro m1 = Marker { id: 1, tag: "alpha" }
-    ro m2 = Marker { id: 2, tag: "alpha" }
-    ro m3 = Marker { id: 1, tag: "beta" }
+    ro m1 = Marker3 { id: 1, tag: "alpha" }
+    ro m2 = Marker3 { id: 2, tag: "alpha" }
+    ro m3 = Marker3 { id: 1, tag: "beta" }
     // m1 vs m2: same tag (alpha), different id → explicit @equal returns true
     //                                            synthesized default would return false (compare != 0)
-    assert(check_eq(m1, m2))
+    assert(check_eq1(m1, m2))
     // m1 vs m3: different tag (alpha vs beta), same id → explicit @equal returns false
     //                                                   synthesized default would return true (compare == 0)
-    assert(!check_eq(m1, m3))
+    assert(!check_eq1(m1, m3))
 }

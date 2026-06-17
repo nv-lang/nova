@@ -13,7 +13,7 @@
 // Cross-toolchain: ASan/TSan/UBSan clean validation is done in Linux
 // Docker (Plan 44.1 infra) — not exercised here on Windows.
 
-module plan65.f11_concurrent_timer_alloc
+module nova_tests.plan65
 
 import std.time.duration
 

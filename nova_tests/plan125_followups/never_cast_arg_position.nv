@@ -2,7 +2,7 @@
 // `foo(if c { v } else { throw E })` где foo ожидает non-int type — dummy
 // должен быть target-typed.
 
-module plan125_followups.never_cast_arg_position
+module nova_tests.plan125_followups
 
 fn take_str(s str) -> int => s.byte_len()
 

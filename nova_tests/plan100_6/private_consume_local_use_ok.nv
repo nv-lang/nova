@@ -2,19 +2,19 @@
 // D164 D7: private consume не leak cross-package. Внутри пакета — полная
 // consume-semantics: must-consume enforced, methods доступны.
 
-module plan100_6.private_consume_local_use_ok
+module nova_tests.plan100_6
 
 // Private consume-type — нет `export`, не видна из других пакетов:
-type LocalGuard consume {
+type LocalGuard2 consume {
     lock_id int,
 }
 
-fn LocalGuard consume @release() -> () { () }
+fn LocalGuard2 consume @release() -> () { () }
 
-fn acquire_mutex(id int) -> LocalGuard => { lock_id: id }
+fn acquire_mutex(id int) -> LocalGuard2 => { lock_id: id }
 
 // Factory helpers (also private):
-fn do_critical_work(consume guard LocalGuard) -> () {
+fn do_critical_work(consume guard LocalGuard2) -> () {
     guard.release()
 }
 

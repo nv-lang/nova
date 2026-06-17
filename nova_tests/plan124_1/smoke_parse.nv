@@ -1,6 +1,6 @@
 // Plan 124.1 Ф.1 — smoke test: priv modifier parses без ошибок.
 // Type-level priv flip + per-field priv/pub markers.
-module plan124_1.smoke_parse
+module nova_tests.plan124_1
 
 // Per-field priv modifier (D220).
 export type Account {

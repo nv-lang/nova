@@ -22,7 +22,7 @@
 // Rule E case (b) сломается — resolver не найдёт `Some`/`Ok` /
 // `assert`, и компиляция упадёт.
 
-module plan62.facade_rule_e_smoke
+module nova_tests.plan62
 
 // Это auto-imported через std.prelude facade (Rule E case b):
 // - Option/Some/None/Result/Ok/Err — re-export'ятся из

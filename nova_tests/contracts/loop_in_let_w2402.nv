@@ -7,7 +7,7 @@
 // (условное присваивание) → fail-safe W2402 (Ф.2.1).
 // EXPECT_COMPILE_WARNING W2402
 
-module contracts.loop_in_let_w2402
+module nova_tests.contracts
 
 fn sum_in_let(n int) -> int
     requires n >= 0

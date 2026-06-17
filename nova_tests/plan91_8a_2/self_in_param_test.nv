@@ -1,13 +1,13 @@
-module plan91_8a_2.self_in_param_test
+module nova_tests.plan91_8a_2
 
 // Plan 91.8a.2 (D183 amendment): Self в param-type position для instance methods.
 
-type Pt { x int, y int }
+type Pt3 { x int, y int }
 
 // Self в param — раньше E7001; должно работать после fix.
-fn Pt @equal(other Self) -> bool => @x == other.x && @y == other.y
+fn Pt3 @equal(other Self) -> bool => @x == other.x && @y == other.y
 
-fn Pt @compare(other Self) -> int =>
+fn Pt3 @compare(other Self) -> int =>
     if @x < other.x { -1 }
     else if @x > other.x { 1 }
     else if @y < other.y { -1 }
@@ -15,16 +15,16 @@ fn Pt @compare(other Self) -> int =>
     else { 0 }
 
 test "Self в param works для @equal" {
-    ro a = Pt { x: 1, y: 2 }
-    ro b = Pt { x: 1, y: 2 }
-    ro c = Pt { x: 3, y: 4 }
+    ro a = Pt3 { x: 1, y: 2 }
+    ro b = Pt3 { x: 1, y: 2 }
+    ro c = Pt3 { x: 3, y: 4 }
     assert(a.equal(b))
     assert(!a.equal(c))
 }
 
 test "Self в param works для @compare" {
-    ro a = Pt { x: 1, y: 2 }
-    ro b = Pt { x: 3, y: 4 }
+    ro a = Pt3 { x: 1, y: 2 }
+    ro b = Pt3 { x: 3, y: 4 }
     assert(a.compare(b) < 0)
     assert(b.compare(a) > 0)
     assert(a.compare(a) == 0)

@@ -10,7 +10,7 @@
 // Mut-capture в closure (один-разделяемый счётчик) не работает в
 // bootstrap codegen (env копирует value); test для этого — в C16.
 
-module syntax.closure_corner_cases
+module nova_tests.syntax
 
 // ─── #1: shared enclosing scope (immutable) — двойное чтение n ────
 
@@ -28,13 +28,13 @@ test "corner: множественные closures читают один enclosin
 
 // ─── #2: escape — closure outlives parent fn ────────────────────────
 
-fn make_adder(n int) -> fn(int) -> int {
+fn make_adder1(n int) -> fn(int) -> int {
     |x| x + n        // n captured; parent fn возвращает closure
 }
 
 test "corner: escape — captured `n` живёт после parent fn'а" {
-    ro add5 = make_adder(5)      // make_adder завершилась
-    ro add10 = make_adder(10)
+    ro add5 = make_adder1(5)      // make_adder1 завершилась
+    ro add10 = make_adder1(10)
     // captured `n` для каждого closure'а свой; должно работать
     // через managed-heap (D32).
     assert(add5(100) == 105)

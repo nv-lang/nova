@@ -3,24 +3,24 @@
 // Программист пишет ОДНУ реализацию из пары — компилятор автоматически
 // даёт обе формы вызова (T.from(v) и v.into()).
 
-module runtime.from_into_derive
+module nova_tests.runtime
 
 // ================================================================
 // SECTION 1: написана @into → from синтезируется
 // ================================================================
 
-type UserId { id u64 }
+type UserId2 { id u64 }
 
-fn UserId @into() -> str => "user#" + str.from(@id)
+fn UserId2 @into() -> str => "user#" + str.from(@id)
 
 test "into-form вызова — explicit method" {
-    ro u = UserId { id: 42 }
+    ro u = UserId2 { id: 42 }
     ro s str = u.into()
     assert(s == "user#42")
 }
 
-test "from-form авто-выводится из @into (UserId → str)" {
-    ro u = UserId { id: 99 }
+test "from-form авто-выводится из @into (UserId2 → str)" {
+    ro u = UserId2 { id: 99 }
     ro s = str.from(u)        // авто: вызывает u.into()
     assert(s == "user#99")
 }
@@ -29,26 +29,26 @@ test "from-form авто-выводится из @into (UserId → str)" {
 // SECTION 2: написан from → into синтезируется
 // ================================================================
 
-type Celsius { degrees int }
-type Fahrenheit { degrees int }
+type Celsius2 { degrees int }
+type Fahrenheit2 { degrees int }
 
-fn Fahrenheit.from(c Celsius) -> Self =>
+fn Fahrenheit2.from(c Celsius2) -> Self =>
     { degrees: c.degrees * 9 / 5 + 32 }
 
 test "from-form вызова — explicit static" {
-    ro c = Celsius { degrees: 100 }
-    ro f = Fahrenheit.from(c)
+    ro c = Celsius2 { degrees: 100 }
+    ro f = Fahrenheit2.from(c)
     assert(f.degrees == 212)
 }
 
-test "into-form авто-выводится из .from (Celsius → Fahrenheit)" {
-    ro c = Celsius { degrees: 0 }
-    ro f Fahrenheit = c.into()    // авто: вызывает Fahrenheit.from(c)
+test "into-form авто-выводится из .from (Celsius2 → Fahrenheit2)" {
+    ro c = Celsius2 { degrees: 0 }
+    ro f Fahrenheit2 = c.into()    // авто: вызывает Fahrenheit2.from(c)
     assert(f.degrees == 32)
 }
 
 test "into-form: ещё одна точка проверки" {
-    ro c = Celsius { degrees: 100 }
-    ro f Fahrenheit = c.into()
+    ro c = Celsius2 { degrees: 100 }
+    ro f Fahrenheit2 = c.into()
     assert(f.degrees == 212)
 }

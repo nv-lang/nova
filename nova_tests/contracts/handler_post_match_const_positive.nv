@@ -5,7 +5,7 @@
 //  внутри `match`-arm для action body, и нет extract_match_assignments
 //  логики. Gated на `z3v2` — fixture для Plan 33.5 Ф.6 V2 session.)
 
-module contracts.handler_post_match_const_positive
+module nova_tests.contracts
 
 type Setter effect {
     SetByCode(c int)

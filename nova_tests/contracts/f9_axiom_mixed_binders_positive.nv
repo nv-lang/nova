@@ -1,7 +1,7 @@
 // Plan 33.3 (refactor): typed binders с разными типами (str, int).
 // axiom использует биндеры разных типов — парсер и type-check принимают.
 
-module contracts.f9_axiom_mixed_binders_positive
+module nova_tests.contracts
 
 type Registry effect {
     #pure lookup(key str) -> int

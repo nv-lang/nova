@@ -6,7 +6,7 @@
 // simultaneously → violation. This is an observable interleave property,
 // not just a final-value check.
 
-module concurrency.sync_mutex
+module nova_tests.concurrency
 
 // ─── Basic API ─────────────────────────────────────────────────
 

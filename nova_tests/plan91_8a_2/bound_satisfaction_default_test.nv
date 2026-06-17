@@ -1,38 +1,38 @@
-module plan91_8a_2.bound_satisfaction_default_test
+module nova_tests.plan91_8a_2
 
 // Plan 91.8a.2 part 2 (D183 amendment): type satisfies [T Equal] bound
-// via default body fallback. Type Money имеет только @compare; @equal
+// via default body fallback. Type Money3 имеет только @compare; @equal
 // будет synthesized из Equal.equals default body.
 
 #impl(Equal + Compare)
-type Money { cents int }
+type Money3 { cents int }
 
-fn Money @compare(other Self) -> int =>
+fn Money3 @compare(other Self) -> int =>
     if @cents < other.cents { -1 }
     else if @cents > other.cents { 1 }
     else { 0 }
 
-// Type-checker: Money satisfies Compare (has @compare).
+// Type-checker: Money3 satisfies Compare (has @compare).
 // Также satisfies Equal через default body (uses @compare).
 // Раньше pure bound check rejected — теперь принимает.
 
 fn cmp_via_bound[T Compare](a T, b T) -> int => a.compare(b)
 
-test "Compare bound — Money satisfies через @compare" {
-    ro a = Money { cents: 100 }
-    ro b = Money { cents: 200 }
+test "Compare bound — Money3 satisfies через @compare" {
+    ro a = Money3 { cents: 100 }
+    ro b = Money3 { cents: 200 }
     assert(cmp_via_bound(a, b) < 0)
     assert(cmp_via_bound(b, a) > 0)
     assert(cmp_via_bound(a, a) == 0)
 }
 
-// Equal bound — должен accept Money (через default body).
+// Equal bound — должен accept Money3 (через default body).
 // Codegen synthesis для @equal — Part 2 followup; type-check этого commit
 // уже принимает satisfaction.
 fn eq_via_bound[T Equal](a T, b T) -> bool => a.equal(b)
 
-test "Equal bound — Money satisfies через default body fallback" {
-    ro a = Money { cents: 100 }
-    ro b = Money { cents: 100 }
+test "Equal bound — Money3 satisfies через default body fallback" {
+    ro a = Money3 { cents: 100 }
+    ro b = Money3 { cents: 100 }
     assert(eq_via_bound(a, b))
 }

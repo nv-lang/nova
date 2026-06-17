@@ -1,4 +1,4 @@
-module plan61.f3_typed_result_err
+module nova_tests.plan61
 
 // Plan 61 followup #3: Result[T, CustomErr] с typed Err payload.
 // Hybrid: Nova_Result extended err_typed_payload + tid; constructor
@@ -7,7 +7,7 @@ module plan61.f3_typed_result_err
 
 export type DbError | ConnFailed(str) | Timeout
 
-fn try_connect() -> Result[int, DbError] {
+fn try_connect1() -> Result[int, DbError] {
     Err(ConnFailed("127.0.0.1:5432"))
 }
 
@@ -16,7 +16,7 @@ test "Result[int, DbError]!!  carries typed payload" {
         ConnFailed(h) => h
         Timeout       => "timeout"
     }) {
-        ro _ = try_connect()!!
+        ro _ = try_connect1()!!
         "unreachable"
     }
     assert(host == "127.0.0.1:5432",

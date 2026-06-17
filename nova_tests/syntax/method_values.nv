@@ -3,46 +3,46 @@
 // `Type.method`  — static method value (fn pointer без self).
 // Note: bound method value `obj.@method` removed in Plan 132 — use lambdas instead.
 
-module syntax.method_values
+module nova_tests.syntax
 
-type Counter { value int }
+type Counter15 { value int }
 
-fn Counter.new() -> Self => { value: 0 }
-fn Counter @get() -> int => @value
-fn Counter @add(n int) -> int => @value + n
-fn Counter @add_two(a int, b int) -> int => @value + a + b
+fn Counter15.new() -> Self => { value: 0 }
+fn Counter15 @get() -> int => @value
+fn Counter15 @add(n int) -> int => @value + n
+fn Counter15 @add_two(a int, b int) -> int => @value + a + b
 
 test "bound method value: no args" {
-    ro c = Counter.new()
+    ro c = Counter15.new()
     ro f = || c.get()
     ro v = f()
     assert(v == 0)
 }
 
 test "bound method value: one arg" {
-    ro c = Counter.new()
+    ro c = Counter15.new()
     ro f = fn(n int) -> int => c.add(n)
     ro r = f(7)
     assert(r == 7)
 }
 
 test "bound method value: two args" {
-    ro c = Counter.new()
+    ro c = Counter15.new()
     ro f = fn(a int, b int) -> int => c.add_two(a, b)
     ro r = f(3, 4)
     assert(r == 7)
 }
 
 test "unbound method value: explicit self pass" {
-    ro c = Counter.new()
-    ro f = Counter.@add
+    ro c = Counter15.new()
+    ro f = Counter15.@add
     ro r = f(c, 5)
     assert(r == 5)
 }
 
 test "bound method value: разные обращения" {
-    ro a = Counter.new()
-    ro b = Counter.new()
+    ro a = Counter15.new()
+    ro b = Counter15.new()
     // Каждый lambda несёт свой capture.
     ro fa = || a.get()
     ro fb = || b.get()
@@ -58,7 +58,7 @@ test "bound method value: разные обращения" {
 
 // Plan 132: disambiguation через closure-full вместо as fn(...).
 test "disambiguation через closure-full" {
-    ro c = Counter.new()
+    ro c = Counter15.new()
     ro f = fn(n int) -> int => c.add(n)
     ro r = f(11)
     assert(r == 11)

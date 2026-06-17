@@ -1,21 +1,21 @@
 // Plan 125.1 Ф.1+Ф.2 positive — never <: user struct.
 // Type-checker должен видеть `throw e` (тип never) как assignable к
-// `Point` через D25 bottom-rule.
+// `Point2` через D25 bottom-rule.
 
-module plan125_1.never_subtype_of_struct
+module nova_tests.plan125_1
 
-type Point {
+type Point2 {
     ro x int
     ro y int
 }
 
-fn Point.new(x int, y int) -> Point => { x, y }
+fn Point2.new(x int, y int) -> Point2 => { x, y }
 
-fn pick_point(c bool) Fail -> Point {
+fn pick_point(c bool) Fail -> Point2 {
     if c {
         throw "no point"
     } else {
-        Point.new(3, 4)
+        Point2.new(3, 4)
     }
 }
 

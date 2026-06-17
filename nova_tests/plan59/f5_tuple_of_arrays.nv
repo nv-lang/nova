@@ -2,7 +2,7 @@
 // tuple_element_types должен propagate в let-rebind, иначе
 // `pair.0` infers как nova_int и subscription fails в C.
 
-module plan59.f5_tuple_of_arrays
+module nova_tests.plan59
 
 
 test "tuple of arrays — field access keeps array typing" {

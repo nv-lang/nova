@@ -29,7 +29,7 @@
 // concurrent M:N are tested separately in plan83_10_4 fixtures.
 
 
-module effects.fail_handler
+module nova_tests.effects
 
 // Functions that throw via Fail.
 fn parse_num(s str) -> int {

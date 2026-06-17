@@ -2,7 +2,7 @@
 // Each call should produce the same literal — codegen sees 100 copies
 // of literal `1000`.
 
-module plan114_4_2.const_fn_memoization_ok
+module nova_tests.plan114_4_2
 
 fn mul(const a int, const b int) -> const int => a * b
 

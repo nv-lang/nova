@@ -8,19 +8,19 @@
 // - A110.1.4.e: on_exit called с Failure outcome.
 // - A110.1.4.f: throw re-raised после on_exit completion.
 
-module plan110.codegen_consume_throw_caught
+module nova_tests.plan110
 
-type ResourceX {
+type ResourceX3 {
     ro id int
 }
 
-fn ResourceX.new(id int) -> ResourceX => { id }
+fn ResourceX3.new(id int) -> ResourceX3 => { id }
 
-fn ResourceX consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn ResourceX3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 // fn что throws inside body — on_exit должен fire, throw должен re-raise.
 fn use_throwing() Fail[str] -> int {
-    consume r = ResourceX.new(42) {
+    consume r = ResourceX3.new(42) {
         throw "body-failure"
         r.id
     }

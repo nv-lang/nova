@@ -7,67 +7,67 @@
 // both kinds of receiver types live in the same module и share
 // codegen helpers (receiver_c_type / prepare_method_recv).
 
-module plan128.t15_value_record_in_named_tuple_ok
+module nova_tests.plan128
 
 // Value-record (D228) — gets NovaValue_VVec* receiver on mut method.
-type VVec value {
+type VVec4 value {
     x f64
     y f64
 }
 
-fn VVec.new(a f64, b f64) -> VVec => { x: a, y: b }
+fn VVec4.new(a f64, b f64) -> VVec4 => { x: a, y: b }
 
-fn VVec mut @set_x(v f64) -> () {
+fn VVec4 mut @set_x(v f64) -> () {
     @x = v
 }
 
-fn VVec @sum() -> f64 => @x + @y
+fn VVec4 @sum() -> f64 => @x + @y
 
 // Named tuple (D215) — gets NovaTuple_NTPair* receiver on mut method.
-type NTPair(a f64, b f64)
+type NTPair3(a f64, b f64)
 
-fn NTPair mut @set_a(v f64) -> () {
+fn NTPair3 mut @set_a(v f64) -> () {
     @a = v
 }
 
-fn NTPair @prod() -> f64 => @a * @b
+fn NTPair3 @prod() -> f64 => @a * @b
 
 // Heap record containing one of each + a primitive.
-type Holder {
+type Holder2 {
     mut name str
-    mut nt NTPair
-    mut vv VVec
+    mut nt NTPair3
+    mut vv VVec4
 }
 
-fn Holder.new() -> Self => {
+fn Holder2.new() -> Self => {
     name: "init",
-    nt: NTPair(a: 2.0, b: 3.0),
-    vv: VVec.new(4.0, 5.0),
+    nt: NTPair3(a: 2.0, b: 3.0),
+    vv: VVec4.new(4.0, 5.0),
 }
 
 test "holder reads both kinds of field via ro method" {
-    ro h = Holder.new()
+    ro h = Holder2.new()
     assert(h.name == "init")
     assert(h.nt.prod() == 6.0)
     assert(h.vv.sum() == 9.0)
 }
 
 test "value-record mut binding mut method works standalone" {
-    mut v = VVec.new(1.0, 2.0)
+    mut v = VVec4.new(1.0, 2.0)
     v.set_x(10.0)
     assert(v.x == 10.0)
     assert(v.y == 2.0)
 }
 
 test "named tuple mut binding mut method works standalone" {
-    mut t = NTPair(a: 1.0, b: 2.0)
+    mut t = NTPair3(a: 1.0, b: 2.0)
     t.set_a(99.0)
     assert(t.a == 99.0)
     assert(t.b == 2.0)
 }
 
 test "extract-mutate-writeback пакеты для обоих типов из holder" {
-    mut h = Holder.new()
+    mut h = Holder2.new()
     h.name = "updated"
 
     mut t = h.nt

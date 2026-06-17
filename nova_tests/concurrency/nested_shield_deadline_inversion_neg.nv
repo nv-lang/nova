@@ -18,7 +18,7 @@
 // CleanupTimeoutError fires; mask/deadline fields must read as proper
 // zero from initialized codegen struct.
 
-module concurrency.nested_shield_deadline_inversion_neg
+module nova_tests.concurrency
 
 test "supervised(cancel:) nested + inverted budgets — no bogus cleanup-timeout" {
     ro tok_outer = CancelToken.new()

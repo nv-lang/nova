@@ -25,27 +25,27 @@
 // Runtime fire-path verified manually pending structured catch infra
 // (same limitation as deadline_fire_e2e_v1_1.nv).
 
-module plan110.nested_shield_deadline_outer_fire_neg_v1_1
+module nova_tests.plan110
 
 import std.prelude.errors
 
-type InnerRes2 { ro id int }
-fn InnerRes2.new(id int) -> InnerRes2 => { id }
-fn InnerRes2 @exit_timeout_ms() -> int => 100
-fn InnerRes2 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+type InnerRes24 { ro id int }
+fn InnerRes24.new(id int) -> InnerRes24 => { id }
+fn InnerRes24 @exit_timeout_ms() -> int => 100
+fn InnerRes24 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
-type OuterRes2 { ro id int }
-fn OuterRes2.new(id int) -> OuterRes2 => { id }
-fn OuterRes2 @exit_timeout_ms() -> int => 10
-fn OuterRes2 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+type OuterRes24 { ro id int }
+fn OuterRes24.new(id int) -> OuterRes24 => { id }
+fn OuterRes24 @exit_timeout_ms() -> int => 10
+fn OuterRes24 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 // Fail[CleanupTimeoutError] signature declares typed throw propagates
 // up; codegen emits typed throw infrastructure pour outer deadline fire.
 fn run_nested_outer_fire() Fail[CleanupTimeoutError] -> int {
     mut counter = 0
-    consume outer = OuterRes2.new(10) {
+    consume outer = OuterRes24.new(10) {
         // Inner: enters with 100ms budget (saves outer's 10ms prev_deadline).
-        consume inner = InnerRes2.new(1) {
+        consume inner = InnerRes24.new(1) {
             ro _ = inner.id
         }
         // Inner exits → leave restores outer's 10ms. Sleep 50ms → fires.

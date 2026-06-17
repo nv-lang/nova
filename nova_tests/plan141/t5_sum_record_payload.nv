@@ -3,7 +3,7 @@
 // Point, so the two values are distinct pointers with equal content. The
 // prior per-field dispatch emitted a pointer `==` for the record payload
 // (identity) — this proves it is now structural via the record's @equal.
-module plan141.t5_sum_record_payload
+module nova_tests.plan141
 
 #impl(Equal)
 type Point {

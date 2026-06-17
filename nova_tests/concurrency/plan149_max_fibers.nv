@@ -11,7 +11,7 @@
 // ENV NOVA_MAX_FIBERS=20000
 // ENV NOVA_MAXPROCS=1
 
-module concurrency.plan149_max_fibers
+module nova_tests.concurrency
 
 test "NOVA_MAX_FIBERS=20000 (rounds to 20032): 500 fibers spawn + sum" {
     mut total = 0

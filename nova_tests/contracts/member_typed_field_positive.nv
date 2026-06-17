@@ -2,7 +2,7 @@
 // `is_open` (bool-conventional) и `count` (int) кодируются разными UF —
 // нет sort-mismatch.
 
-module contracts.member_typed_field_positive
+module nova_tests.contracts
 
 type Door {
     is_open bool,

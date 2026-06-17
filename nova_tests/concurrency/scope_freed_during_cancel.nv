@@ -32,7 +32,7 @@
 // Catalogued as "negative" N9 in §8.2 — i.e. verifies the absence of
 // bad behavior (no UAF on armed list — driver detects + skips). The
 // fixture itself must exit 0 and NOT panic.
-module concurrency.scope_freed_during_cancel
+module nova_tests.concurrency
 
 
 test "scope_freed_during_cancel — cancel-from-spawn UAF regression guard" {

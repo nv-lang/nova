@@ -2,7 +2,7 @@
 // `requires x >= 5; requires y >= 5; ensures result > 0 { x + y }` —
 // lower(x)+lower(y) = 10 >= effective_goal(1) → true.
 
-module contracts.f30_addition_strict_positive
+module nova_tests.contracts
 
 #verify
 fn sum_strict_positive(x int, y int) -> int

@@ -1,18 +1,18 @@
 // 28_effects_composition.nv — композиция нескольких эффектов (D61).
 //
 // 13_effects.nv покрыл базовые случаи. Здесь:
-// - функция с двумя эффектами в сигнатуре (Logger Counter)
+// - функция с двумя эффектами в сигнатуре (Logger1 Counter2)
 // - вложенные with-блоки для разных эффектов
 // - state-style эффект через get/set
 // - reader/writer паттерн
 
-module effects.effects_composition
+module nova_tests.effects
 
-type Logger effect {
+type Logger1 effect {
     log(msg str) -> ()
 }
 
-type Counter effect {
+type Counter2 effect {
     next() -> int
 }
 
@@ -31,21 +31,21 @@ type Writer effect {
 
 // --- Two effects ---
 
-fn task(n int) Logger Counter -> int {
-    ro id = Counter.next()
-    Logger.log("processing")
+fn task(n int) Logger1 Counter2 -> int {
+    ro id = Counter2.next()
+    Logger1.log("processing")
     n * id
 }
 
 test "функция с двумя эффектами в сигнатуре (flat with)" {
     mut entries = []
     mut count = 0
-    with Logger = effect Logger {
+    with Logger1 = effect Logger1 {
         log(msg) {
             entries.push(msg)
             return ()
         }
-    }, Counter = effect Counter {
+    }, Counter2 = effect Counter2 {
         next() {
             count += 1
             return count
@@ -122,14 +122,14 @@ test "reader/writer композиция (flat with)" {
     assert(output == "hello!")
 }
 
-// --- Counter с разной семантикой ---
+// --- Counter2 с разной семантикой ---
 
-fn three() Counter -> int {
-    Counter.next() + Counter.next() + Counter.next()
+fn three() Counter2 -> int {
+    Counter2.next() + Counter2.next() + Counter2.next()
 }
 
 test "константный counter" {
-    with Counter = effect Counter {
+    with Counter2 = effect Counter2 {
         next() => 7
     } {
         ro total = three()
@@ -139,7 +139,7 @@ test "константный counter" {
 
 test "нарастающий counter с state" {
     mut n = 0
-    with Counter = effect Counter {
+    with Counter2 = effect Counter2 {
         next() {
             n += 1
             return n
@@ -153,13 +153,13 @@ test "нарастающий counter с state" {
 
 test "decrementing counter" {
     mut n = 100
-    with Counter = effect Counter {
+    with Counter2 = effect Counter2 {
         next() {
             n -= 10
             return n
         }
     } {
-        ro r = Counter.next() + Counter.next() + Counter.next()
+        ro r = Counter2.next() + Counter2.next() + Counter2.next()
         assert(r == 90 + 80 + 70)
     }
     assert(n == 70)

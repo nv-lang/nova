@@ -3,15 +3,15 @@
 // Positive: V1.2 nested-region caching inside if-then with internal
 // write вЂ” semantic preservation through region-aware caching.
 
-module plan123_followups_2026_06_05.m2_v5_4_1_nested_region_ok
+module nova_tests.plan123_followups_2026_06_05
 
-type Cv {
+type Cv3 {
     mut x int
 }
 
-fn Cv.new() -> Cv => { x: 0 }
+fn Cv3.new() -> Cv3 => { x: 0 }
 
-fn Cv mut @nested_two_regions(cond bool) -> int {
+fn Cv3 mut @nested_two_regions(cond bool) -> int {
     // mut acc init.
     mut acc = 0
     if cond {
@@ -21,27 +21,27 @@ fn Cv mut @nested_two_regions(cond bool) -> int {
         // Internal write splits nested region.
         @x = 99
         // 2 reads after write вЂ” Region B.
-        ro Cv = @x
+        ro Cv3 = @x
         ro d = @x
-        acc = a + b + Cv + d
+        acc = a + b + Cv3 + d
     }
     acc
 }
 
 test "V5.4.1 nested region: semantic preservation with cond true" {
-    mut Cv = Cv.new()
-    Cv.x = 10
-    ro r = Cv.nested_two_regions(true)
-    // a=10, b=10, write @x=99, Cv=99, d=99 в‡’ 10+10+99+99 = 218
+    mut Cv3 = Cv3.new()
+    Cv3.x = 10
+    ro r = Cv3.nested_two_regions(true)
+    // a=10, b=10, write @x=99, Cv3=99, d=99 в‡’ 10+10+99+99 = 218
     assert(r == 218)
-    assert(Cv.x == 99)
+    assert(Cv3.x == 99)
 }
 
 test "V5.4.1 nested region: cond false skips region entirely" {
-    mut Cv = Cv.new()
-    Cv.x = 10
-    ro r = Cv.nested_two_regions(false)
+    mut Cv3 = Cv3.new()
+    Cv3.x = 10
+    ro r = Cv3.nested_two_regions(false)
     assert(r == 0)
     // @x stays unchanged.
-    assert(Cv.x == 10)
+    assert(Cv3.x == 10)
 }

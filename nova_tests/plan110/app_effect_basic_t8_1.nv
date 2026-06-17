@@ -4,7 +4,7 @@
 // Verifies that declarations type-check; runtime integration с
 // 3-level resolution lands в Plan 110.4.6.
 
-module plan110.app_effect_basic_t8_1
+module nova_tests.plan110
 
 // Type-check verification: Application effect operations declared.
 // Бойлер consumer fn that references both register_finalizer +

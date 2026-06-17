@@ -1,20 +1,20 @@
 // Plan 33.3 Ф.9 (refactor): #verify на fn (переименован с #must_verify).
 // Trivial backend доказывает рефлексивные ensures (result == body_expr).
 
-module contracts.f9_verify_attr_on_fn_positive
+module nova_tests.contracts
 
 #verify
-fn double(x int) -> int
+fn double4(x int) -> int
     requires x > 0
     ensures result == x * 2
 => x * 2
 
 #verify
-fn identity(x int) -> int
+fn identity3(x int) -> int
     ensures result == x
 => x
 
 test "#verify fn proves trivially" {
-    assert(double(3) == 6)
-    assert(identity(7) == 7)
+    assert(double4(3) == 6)
+    assert(identity3(7) == 7)
 }

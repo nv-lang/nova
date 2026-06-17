@@ -2,19 +2,19 @@
 // barriers (write + self-mutating call). Each region accumulates
 // 2+ reads → three cache lets emitted.
 
-module plan123_1_1.v1_1_three_regions_mixed_ok
+module nova_tests.plan123_1_1
 
-type State {
+type State4 {
     mut x int
 }
 
-fn State.new() -> State => { x: 1 }
+fn State4.new() -> State4 => { x: 1 }
 
-fn State mut @bump_x() -> () {
+fn State4 mut @bump_x() -> () {
     @x = @x + 1
 }
 
-fn State mut @triple() -> int {
+fn State4 mut @triple() -> int {
     // Region A: x == 1, 2 reads.
     ro a1 = @x
     ro a2 = @x
@@ -32,7 +32,7 @@ fn State mut @triple() -> int {
 }
 
 test "V1.1: 3-region mut cache (write + call barriers)" {
-    mut s = State.new()
+    mut s = State4.new()
     ro r = s.triple()
     // (1+1) + (10+10) + (11+11) = 44
     assert(r == 44)

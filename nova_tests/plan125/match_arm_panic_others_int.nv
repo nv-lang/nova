@@ -1,10 +1,10 @@
 // Plan 125 Ф.2: match arm panic, others int.
 
-module plan125.match_arm_panic_others_int
+module nova_tests.plan125
 
-type Tag | Lo | Hi | Bad
+type Tag1 | Lo | Hi | Bad
 
-fn rank(t Tag) -> int {
+fn rank2(t Tag1) -> int {
     match t {
         Lo  => 1
         Hi  => 100
@@ -12,10 +12,10 @@ fn rank(t Tag) -> int {
     }
 }
 
-test "rank Lo" {
-    assert(rank(Tag.Lo) == 1)
+test "rank2 Lo" {
+    assert(rank2(Tag1.Lo) == 1)
 }
 
-test "rank Hi" {
-    assert(rank(Tag.Hi) == 100)
+test "rank2 Hi" {
+    assert(rank2(Tag1.Hi) == 100)
 }

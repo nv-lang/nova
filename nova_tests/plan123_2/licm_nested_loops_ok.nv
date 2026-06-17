@@ -1,14 +1,14 @@
 // Plan 123.2 T1.5: nested loops — LICM hoists at each loop boundary
 // where field is invariant.
 
-module plan123_2.licm_nested_loops_ok
+module nova_tests.plan123_2
 
-type Matrix {
+type Matrix3 {
     ro rows int
     ro cols int
 }
 
-fn Matrix @cell_count() -> int {
+fn Matrix3 @cell_count() -> int {
     mut total = 0
     mut i = 0
     while i < @rows {
@@ -22,12 +22,12 @@ fn Matrix @cell_count() -> int {
     total
 }
 
-fn Matrix.new(r int, c int) -> Matrix {
-    Matrix { rows: r, cols: c }
+fn Matrix3.new(r int, c int) -> Matrix3 {
+    Matrix3 { rows: r, cols: c }
 }
 
 test "nested loops — @cols hoisted at inner boundary" {
-    ro m = Matrix.new(3, 4)
+    ro m = Matrix3.new(3, 4)
     ro r = m.cell_count()
     // 3 × (4 iterations × cols=4) = 3 × 16 = 48.
     assert(r == 48)

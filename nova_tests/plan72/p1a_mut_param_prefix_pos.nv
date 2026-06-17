@@ -8,14 +8,14 @@
 // 1. `mut it T` works in a generic function (T is a type-var, not concrete type)
 // 2. The mutated parameter behaves correctly (next() side-effect works)
 
-module plan72.p1a_mut_param_prefix_pos
+module nova_tests.plan72
 
-type Counter {
+type Counter2 {
     mut cur int
     end int
 }
 
-fn Counter mut @next() -> Option[int] => {
+fn Counter2 mut @next() -> Option[int] => {
     if @cur < @end {
         ro v = @cur
         @cur += 1
@@ -35,13 +35,13 @@ fn count_items[U, T Iterable[U]](mut it T) -> int => {
 }
 
 test "P1-A — `mut it T` leading-mut parameter with generic type-var" {
-    ro c = Counter { cur: 0, end: 5 }
-    ro n = count_items[int, Counter](c)
+    ro c = Counter2 { cur: 0, end: 5 }
+    ro n = count_items[int, Counter2](c)
     assert(n == 5)
 }
 
 test "P1-A — leading-mut parameter with concrete type" {
-    ro c = Counter { cur: 0, end: 3 }
-    ro n = count_items[int, Counter](c)
+    ro c = Counter2 { cur: 0, end: 3 }
+    ro n = count_items[int, Counter2](c)
     assert(n == 3)
 }

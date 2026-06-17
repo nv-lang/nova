@@ -1,20 +1,20 @@
 // Plan 124.1 / D220 §5: прiv(type) = организационный инструмент, не security-барьер.
 // Пользователь может намеренно добавить метод-акцессор — это его выбор.
-module plan124_1.priv_intentional_expose_ok
+module nova_tests.plan124_1
 
-type Counter value priv(type) {
+type Counter4 value priv(type) {
     mut n int
 }
 
-fn Counter.new(start int) -> Counter => { n: start }
-fn Counter @inc() { @n = @n + 1 }
+fn Counter4.new(start int) -> Counter4 => { n: start }
+fn Counter4 @inc() { @n = @n + 1 }
 
 // Намеренный акцессор: пользователь осознанно раскрывает priv(type) поле.
 // D220 §5: это легально — priv(type) защищает от СЛУЧАЙНОГО доступа, не от намеренного.
-fn Counter @value() -> int => @n
+fn Counter4 @value() -> int => @n
 
 test "intentional accessor exposes priv(type) field" {
-    mut c = Counter.new(10)
+    mut c = Counter4.new(10)
     c.inc()
     c.inc()
     c.inc()
@@ -22,7 +22,7 @@ test "intentional accessor exposes priv(type) field" {
 }
 
 test "cross-instance via intentional accessor" {
-    ro a = Counter.new(5)
-    ro b = Counter.new(5)
+    ro a = Counter4.new(5)
+    ro b = Counter4.new(5)
     assert(a.value() == b.value())
 }

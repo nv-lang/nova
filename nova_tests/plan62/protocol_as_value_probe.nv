@@ -22,19 +22,19 @@
 // existential param РІС‹РґР°СЋС‚ РЅРµРїСЂР°РІРёР»СЊРЅС‹Р№ output Р±РµР· CC-FAIL. Strict
 // diagnostic вЂ” РѕС‚РґРµР»СЊРЅС‹Р№ task (style Plan 70 В«no silent fallbackВ»).
 
-module plan62.protocol_as_value_probe
+module nova_tests.plan62
 
 
-type IntCounter {
+type IntCounter3 {
     mut cur int
     end int
 }
 
 
-fn IntCounter.new(start int, end int) -> IntCounter => { cur: start, end }
+fn IntCounter3.new(start int, end int) -> IntCounter3 => { cur: start, end }
 
 
-fn IntCounter mut @next() -> Option[int] => {
+fn IntCounter3 mut @next() -> Option[int] => {
     if @cur < @end {
         ro v = @cur
         @cur += 1
@@ -49,7 +49,7 @@ fn IntCounter mut @next() -> Option[int] => {
 // Р­С‚Рѕ existential binding вЂ” concrete С‚РёРї converts Рє protocol-type
 // reference С‡РµСЂРµР· void* erasure (Plan 56 D122 binding-level).
 test "let x: Iterable[int] = concrete вЂ” existential binding (coercion compiles)" {
-    ro c = IntCounter.new(1, 4)
+    ro c = IntCounter3.new(1, 4)
     ro _x Iterable[int] = c
     assert(true)  // binding compiles + concrete value lives РІ x
 }

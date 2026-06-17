@@ -3,29 +3,29 @@
 // A type with exactly one modifier (or zero) can never be out-of-canon —
 // there is nothing to reorder. Verifies the enforcement only fires on 2+
 // modifiers and does not regress the common single-modifier forms.
-module plan148.mo_single_modifiers_ok
+module nova_tests.plan148
 
 // Single `value` — stack-allocated value record.
-type Vec2 value {
+type Vec22 value {
     x f64
     y f64
 }
 
 // Single `priv` — field-default visibility flip (heap record).
-type Account priv {
+type Account2 priv {
     pub ro id u64
     balance int
 }
 
-fn Vec2.new(x f64, y f64) -> Vec2 => { x, y }
-fn Account.new(id u64, b int) -> Account => { id, balance: b }
+fn Vec22.new(x f64, y f64) -> Vec22 => { x, y }
+fn Account2.new(id u64, b int) -> Account2 => { id, balance: b }
 
 test "single value modifier ok" {
-    ro v = Vec2.new(3.0, 4.0)
+    ro v = Vec22.new(3.0, 4.0)
     assert(v.x == 3.0)
 }
 
 test "single priv modifier ok" {
-    ro a = Account.new(42, 100)
+    ro a = Account2.new(42, 100)
     assert(a.id == 42)
 }

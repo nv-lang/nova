@@ -1,0 +1,15 @@
+// Plan 118.5 V3 T12 → RECODED by Plan 138.5 (2026-06-11).
+//
+// The §V3.4 redundancy check (`mut * mut`) is retired — the leading prefix
+// `mut` before `*` now fails first with E_POINTER_PREFIX_MODIFIER. Migrate
+// → `*mut Acc`. Return position forces the type-position arm.
+//
+// EXPECT_COMPILE_ERROR E_POINTER_PREFIX_MODIFIER
+
+module neg.t12_neg_mut_redundant_chain
+
+type Acc {
+    id i64
+}
+
+extern "nova" fn t12_p() -> mut * mut Acc

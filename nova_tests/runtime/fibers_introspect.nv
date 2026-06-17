@@ -3,7 +3,7 @@
 // Платформы без arena (NOVA_FIBER_ARENA_ENABLED=0) → всё возвращает 0.
 // Тесты используют differential-pattern: if fibers.slot_count() == 0 { ... }.
 
-module runtime.fibers_introspect
+module nova_tests.runtime
 
 import std.runtime.fibers
 

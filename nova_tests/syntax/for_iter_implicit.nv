@@ -7,7 +7,7 @@
 // Поведение по D58: «`for x in collection`-синтаксис вызывает
 // `collection.iter().next()` в цикле».
 
-module syntax.for_iter_implicit
+module nova_tests.syntax
 
 
 // Custom коллекция с iter() методом.

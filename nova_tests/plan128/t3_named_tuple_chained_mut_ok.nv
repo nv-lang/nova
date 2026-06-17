@@ -4,33 +4,33 @@
 // call-site (no stale stack-temp address reused), so a sequence of
 // mut method calls на одном binding correctly composes mutations.
 
-module plan128.t3_named_tuple_chained_mut_ok
+module nova_tests.plan128
 
-type Counter(value int, step int)
+type Counter5(value int, step int)
 
-fn Counter mut @inc() -> () {
+fn Counter5 mut @inc() -> () {
     @value = @value + @step
 }
 
-fn Counter mut @set_step(s int) -> () {
+fn Counter5 mut @set_step(s int) -> () {
     @step = s
 }
 
-fn Counter mut @reset() -> () {
+fn Counter5 mut @reset() -> () {
     @value = 0
 }
 
-fn Counter @get() -> int => @value
+fn Counter5 @get() -> int => @value
 
 test "depth-2 mut chain — inc twice composes" {
-    mut c = Counter(value: 0, step: 5)
+    mut c = Counter5(value: 0, step: 5)
     c.inc()
     c.inc()
     assert(c.get() == 10)
 }
 
 test "mut chain — change step mid-sequence" {
-    mut c = Counter(value: 0, step: 1)
+    mut c = Counter5(value: 0, step: 1)
     c.inc()           // value = 1
     c.inc()           // value = 2
     c.set_step(10)    // step = 10, value still 2
@@ -40,7 +40,7 @@ test "mut chain — change step mid-sequence" {
 }
 
 test "mut chain — reset clears accumulated state" {
-    mut c = Counter(value: 100, step: 3)
+    mut c = Counter5(value: 100, step: 3)
     c.inc()           // value = 103
     c.inc()           // value = 106
     c.reset()         // value = 0

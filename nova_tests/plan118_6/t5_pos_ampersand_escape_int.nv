@@ -4,7 +4,7 @@
 // GC owns it → pointer not dangling after function returns.
 // (Plan 118.6 Ф.1: escape analysis extended to primitive types.)
 
-module plan118_6.t5_pos_ampersand_escape_int
+module nova_tests.plan118_6
 
 fn get_ptr() -> *int {
     ro x = 42

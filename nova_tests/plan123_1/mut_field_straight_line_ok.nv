@@ -1,24 +1,24 @@
 // Plan 123.1 T2.1: mut field accessed 2+ times в straight-line region
 // (no writes, no calls в prefix) → first-region cache emitted.
 
-module plan123_1.mut_field_straight_line_ok
+module nova_tests.plan123_1
 
-type Counter {
+type Counter3 {
     mut value int
     mut step int
 }
 
-fn Counter @target_for_growth() -> int {
+fn Counter3 @target_for_growth() -> int {
     // 4 reads of mut fields, no writes, no calls → cache both.
     @value + @step + @value * @step
 }
 
-fn Counter.new(v int, s int) -> Counter {
-    Counter { value: v, step: s }
+fn Counter3.new(v int, s int) -> Counter3 {
+    Counter3 { value: v, step: s }
 }
 
 test "mut field first-region caching" {
-    ro c = Counter.new(10, 3)
+    ro c = Counter3.new(10, 3)
     ro r = c.target_for_growth()
     // 10 + 3 + 10*3 = 13 + 30 = 43
     assert(r == 43)

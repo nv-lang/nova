@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_sorting_invariants
+module nova_tests.contracts
 
 // Если a <= b и b <= c, то a <= c (transitivity — lemma в Dafny).
 #verify

@@ -16,23 +16,23 @@
 //      (codegen НЕ enforce'ит protocol declaration на arbitrary
 //      type-annotations).
 
-module plan62.iter_protocol_from_prelude
+module nova_tests.plan62
 
 
 // Custom iterator-state: counter от 0 до N (exclusive).
 // Удовлетворяет `Iterable[int]` структурно — есть `mut next() -> Option[int]`.
-type Counter {
+type Counter3 {
     end       int
     mut cur   int
 }
 
-// Static fn `Counter.new(...)` — конструктор (см. nova_tests/syntax/
-// for_iter.nv pattern, `fn Counter.new(end int) -> Counter`).
-fn Counter.new(end int) -> Counter {
-    Counter { end, cur: 0 }
+// Static fn `Counter3.new(...)` — конструктор (см. nova_tests/syntax/
+// for_iter.nv pattern, `fn Counter3.new(end int) -> Counter3`).
+fn Counter3.new(end int) -> Counter3 {
+    Counter3 { end, cur: 0 }
 }
 
-fn Counter mut @next() -> Option[int] {
+fn Counter3 mut @next() -> Option[int] {
     if @cur >= @end { return None }
     ro v = @cur
     @cur += 1
@@ -49,15 +49,15 @@ fn Counter mut @next() -> Option[int] {
 // проверки). Теперь резолвится через cross-file resolve в
 // std.prelude.collections.Iter. Поведение идентично: signature
 // принимается, codegen не меняется.
-fn make_counter(n int) -> Counter =>
-    Counter.new(n)
+fn make_counter(n int) -> Counter3 =>
+    Counter3.new(n)
 
 
 // ────────────────────────────────────────────────────────────────────
-// 2. For-in over `Counter` — structural duck-typing продолжает работать.
+// 2. For-in over `Counter3` — structural duck-typing продолжает работать.
 // ────────────────────────────────────────────────────────────────────
 
-test "Counter ducks Iterable[int] — for-in dispatch via structural next()" {
+test "Counter3 ducks Iterable[int] — for-in dispatch via structural next()" {
     mut sum = 0
     ro it = make_counter(5)
     for x in it {
@@ -68,7 +68,7 @@ test "Counter ducks Iterable[int] — for-in dispatch via structural next()" {
 }
 
 
-test "Counter iter — manual next() loop yields all elements then None" {
+test "Counter3 iter — manual next() loop yields all elements then None" {
     mut it = make_counter(3)
     assert(it.next() == Some(0))
     assert(it.next() == Some(1))
@@ -79,7 +79,7 @@ test "Counter iter — manual next() loop yields all elements then None" {
 }
 
 
-test "empty Counter yields nothing" {
+test "empty Counter3 yields nothing" {
     mut count = 0
     for _x in make_counter(0) {
         count += 1

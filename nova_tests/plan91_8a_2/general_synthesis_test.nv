@@ -1,31 +1,31 @@
-module plan91_8a_2.general_synthesis_test
+module nova_tests.plan91_8a_2
 
 // Plan 91.8a.2 [M-91.8a.2-default-body-general]: synthesis is generalized.
 // Defines a NEW protocol (not Equal/Display) with a default body that
 // references a method available на T. Synthesis должна работать без hardcoded
 // special-case для этого protocol name.
 
-type Greetable protocol {
+type Greetable1 protocol {
     @greet() -> str {
         "Hello, " + @name()
     }
 }
 
-#impl(Greetable)
-type User { display_name str }
+#impl(Greetable1)
+type User2 { display_name str }
 
-fn User @name() -> str => @display_name
+fn User2 @name() -> str => @display_name
 
-test "general synthesis: Greetable.greet via T.@name (no hardcoded case)" {
-    ro u = User { display_name: "World" }
+test "general synthesis: Greetable1.greet via T.@name (no hardcoded case)" {
+    ro u = User2 { display_name: "World" }
     ro s = u.greet()
     assert(s == "Hello, World")
 }
 
-test "generic bound [T Greetable] dispatches to synthesized method" {
-    ro u = User { display_name: "Alice" }
-    ro r = make_greeting(u)
+test "generic bound [T Greetable1] dispatches to synthesized method" {
+    ro u = User2 { display_name: "Alice" }
+    ro r = make_greeting1(u)
     assert(r == "Hello, Alice")
 }
 
-fn make_greeting[T Greetable](x T) -> str => x.greet()
+fn make_greeting1[T Greetable1](x T) -> str => x.greet()

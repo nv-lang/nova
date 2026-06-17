@@ -2,11 +2,11 @@
 // match-arm с `while true {}` (без break) — divergent.
 // Остальные ветки контрибутируют тип. Тип match = int.
 
-module plan125_2.while_true_no_break_match_arm
+module nova_tests.plan125_2
 
-type Tag | Lo | Hi | Stuck
+type Tag2 | Lo | Hi | Stuck
 
-fn score(t Tag) -> int {
+fn score(t Tag2) -> int {
     match t {
         Lo    => 1
         Hi    => 99
@@ -15,9 +15,9 @@ fn score(t Tag) -> int {
 }
 
 test "match-arm while-true: Lo picks 1" {
-    assert(score(Tag.Lo) == 1)
+    assert(score(Tag2.Lo) == 1)
 }
 
 test "match-arm while-true: Hi picks 99" {
-    assert(score(Tag.Hi) == 99)
+    assert(score(Tag2.Hi) == 99)
 }

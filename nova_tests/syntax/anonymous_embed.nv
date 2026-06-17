@@ -7,30 +7,30 @@
 // Multi-anonymous one type → compile error (см. отдельный negative
 // test, нужна compile_fail инфраструктура).
 
-module syntax.anonymous_embed
+module nova_tests.syntax
 
 
 // ─── 1. Базовый named embed: auto-proxy ───
 
-type Account {
+type Account1 {
     bal int
 }
 
-export fn Account.acc_new(b int) -> Self =>
+export fn Account1.acc_new(b int) -> Self =>
     { bal: b }
 
-export fn Account @balance() -> int =>
+export fn Account1 @balance() -> int =>
     @bal
 
 
 type AuditedAccount {
-    use account Account
+    use account Account1
     audit_log_count int
 }
 
 
 test "named embed: auto-proxy через wrapper" {
-    ro a = Account.acc_new(100)
+    ro a = Account1.acc_new(100)
     ro aa = AuditedAccount { account: a, audit_log_count: 0 }
     assert(aa.balance() == 100)
 }
@@ -38,25 +38,25 @@ test "named embed: auto-proxy через wrapper" {
 
 // ─── 2. Anonymous embed: auto-proxy без alias ───
 
-type Counter {
+type Counter1 {
     cnt_value int
 }
 
-export fn Counter.cnt_new(v int) -> Self =>
+export fn Counter1.cnt_new(v int) -> Self =>
     { cnt_value: v }
 
-export fn Counter @value() -> int =>
+export fn Counter1 @value() -> int =>
     @cnt_value
 
 
 type LoggingCounter {
-    use _ Counter
+    use _ Counter1
     log_count int
 }
 
 
 test "anonymous embed: auto-proxy без alias" {
-    ro inner = Counter.cnt_new(42)
+    ro inner = Counter1.cnt_new(42)
     ro lc = LoggingCounter { __embed_Counter: inner, log_count: 0 }
     assert(lc.value() == 42)
 }

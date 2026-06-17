@@ -16,14 +16,14 @@
 //
 // Canonical P3-B positive tests: nova_tests/plan72/p3b_vtable_dispatch_pos.nv
 
-module plan72.p0_erased_method_call_neg
+module nova_tests.plan72
 
-type IntCounter {
+type IntCounter2 {
     mut cur int
     end int
 }
 
-fn IntCounter mut @next() -> Option[int] => {
+fn IntCounter2 mut @next() -> Option[int] => {
     if @cur < @end {
         ro v = @cur
         @cur += 1
@@ -35,7 +35,7 @@ fn IntCounter mut @next() -> Option[int] => {
 
 // P3-B: this now compiles and dispatches via NovaVtable_Iter_nova_int.
 test "P0→P3-B — method call on existential Iterable[int] now works via vtable" {
-    ro c = IntCounter { cur: 0, end: 3 }
+    ro c = IntCounter2 { cur: 0, end: 3 }
     mut x Iterable[int] = c
     ro r = x.next()
     assert(r.is_some())

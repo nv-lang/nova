@@ -23,7 +23,7 @@
 // any supervised/spawn block depends on the same invariant; this file
 // makes the contract explicit and gives §8.2 N3 a dedicated test name.
 
-module concurrency.cancel_from_non_fiber
+module nova_tests.concurrency
 
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14): safe division invariants — IntLit divisor.
 // V1: TrivialBackend Ф.20.1 поддерживает только `(/ Var Lit)`, не `(/ Var Var)`.
 
-module contracts.f56_safe_division
+module nova_tests.contracts
 
 // Numerator non-negative, divisor literal positive → result non-negative.
 #verify

@@ -1,4 +1,4 @@
-module plan153_1.core_api
+module nova_tests.plan153_1
 test "cap setter — exact, round-trip, shrink-to-fit" {
     mut v = Vec[int].of(1, 2, 3)
     v.cap(10)

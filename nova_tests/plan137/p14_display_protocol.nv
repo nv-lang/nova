@@ -1,14 +1,14 @@
 // Plan 137 (D237) — POS P14:
 // `@display` method works in string interpolation.
-module plan137.p14_display_protocol
+module nova_tests.plan137
 
-type Point {
+type Point4 {
     x int
     y int
 }
 
-fn Point @display(mut w Write) -> () {
-    w.write("Point(")
+fn Point4 @display(mut w Write) -> () {
+    w.write("Point4(")
     w.write(str.from(@x))
     w.write(", ")
     w.write(str.from(@y))
@@ -16,7 +16,7 @@ fn Point @display(mut w Write) -> () {
 }
 
 test "Display @display works in interpolation" {
-    ro p = Point { x: 3, y: 4 }
+    ro p = Point4 { x: 3, y: 4 }
     ro s = "${p}"
-    assert(s == "Point(3, 4)")
+    assert(s == "Point4(3, 4)")
 }

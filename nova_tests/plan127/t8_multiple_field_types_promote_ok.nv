@@ -1,5 +1,5 @@
 // Plan 127 Ф.5 — POS: mixed-type value-record (f64 + int + bool) promotes correctly.
-module plan127.t8_multiple_field_types_promote_ok
+module nova_tests.plan127
 
 type Mixed value {
     f f64

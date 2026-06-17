@@ -12,7 +12,7 @@
 //
 // Single test{} block — external harness (tools/stress_bisect.sh) repeats
 // the binary N times for stress isolation; do not loop inside the body.
-module concurrency.cancel_cascade_linked_3
+module nova_tests.concurrency
 
 test "cascade A->B->C: cancel(A) cancels B and C" {
     ro a = CancelToken.new()

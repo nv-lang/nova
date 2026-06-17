@@ -2,7 +2,7 @@
 // through Index projection. Restored to array literal form после Plan
 // 128.1 Ф.2 (TypeDeclKind::NamedTuple constructor type-producing +
 // array-lit Nova_* whitelist) — array-of-named-tuple literal
-// `[Vec3(...), ...]` now infers the element type cleanly.
+// `[Vec37(...), ...]` now infers the element type cleanly.
 //
 // Coverage:
 //   - `vs[i].field` field access through Index projection (V1 ro
@@ -16,12 +16,12 @@
 // [M-128.1-array-namedtuple-ro-method] tracks unboxing the receiver
 // in this path.
 
-module plan128.t13_named_tuple_in_array_ok
+module nova_tests.plan128
 
-type Vec3(x f64, y f64, z f64)
+type Vec37(x f64, y f64, z f64)
 
 test "array of named tuple — field access via Index" {
-    ro vs = [Vec3(x: 1.0, y: 2.0, z: 3.0), Vec3(x: 4.0, y: 5.0, z: 6.0)]
+    ro vs = [Vec37(x: 1.0, y: 2.0, z: 3.0), Vec37(x: 4.0, y: 5.0, z: 6.0)]
     assert(vs[0].x == 1.0)
     assert(vs[0].y == 2.0)
     assert(vs[0].z == 3.0)
@@ -31,7 +31,7 @@ test "array of named tuple — field access via Index" {
 }
 
 test "array of named tuple — pattern coverage of indices" {
-    ro vs = [Vec3(x: 10.0, y: 20.0, z: 30.0), Vec3(x: 40.0, y: 50.0, z: 60.0)]
+    ro vs = [Vec37(x: 10.0, y: 20.0, z: 30.0), Vec37(x: 40.0, y: 50.0, z: 60.0)]
     // Sum читается через field access; ro-method version gated by
     // [M-128.1-array-namedtuple-ro-method] followup.
     assert(vs[0].x + vs[0].y + vs[0].z == 60.0)

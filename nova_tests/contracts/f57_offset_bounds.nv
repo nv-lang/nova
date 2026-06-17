@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14): offset / shift invariants.
 // x + offset / x - offset preserves bounds (с правильным adjustment).
 
-module contracts.f57_offset_bounds
+module nova_tests.contracts
 
 #verify
 fn shift_up(x int) -> int

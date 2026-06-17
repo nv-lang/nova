@@ -6,7 +6,7 @@
 // сейчас erased к nova_int, не propagate'ит mono'd tuple type. Это
 // предсуществующая limitation вне Plan 59 scope — separate followup.
 
-module plan59.f17_tuple_in_option
+module nova_tests.plan59
 
 
 fn find_pair(needle int) -> Option[(int, int)] {

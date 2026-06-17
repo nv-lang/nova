@@ -1,0 +1,23 @@
+// Plan 128.2 Ф.2 N3 — ro binding + index chain + mut method → reject.
+//
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+//
+// `ro arr; arr[0].set_x(...)` — IndexAccess chain root. Chain-walking
+// helper walks `IndexAccess { obj: Ident "arr" }` к root Ident `arr`,
+// видит ro binding, fires E_LOCAL_NOT_MUT.
+
+module neg.n3_ro_binding_index_chain_mut_neg
+
+type Vec3(x int, y int, z int)
+
+fn Vec3 mut @set_x(v int) -> () {
+    @x = v
+}
+
+test "ro binding + index chain + mut method → E_LOCAL_NOT_MUT" {
+    ro arr = [
+        Vec3(x: 1, y: 2, z: 3),
+        Vec3(x: 4, y: 5, z: 6),
+    ]
+    arr[0].set_x(99)
+}

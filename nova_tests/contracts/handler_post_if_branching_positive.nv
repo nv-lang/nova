@@ -6,9 +6,9 @@
 //  Plan 33.5 Ф.6 V2 handler-exec extension. Gated на фиктивный backend
 //  `z3v2` чтобы skip до реализации V2 — fixture сохранён для будущей сессии.)
 
-module contracts.handler_post_if_branching_positive
+module nova_tests.contracts
 
-type Flag effect {
+type Flag3 effect {
     SetFlag(v bool)
     #pure get_flag() -> bool
     axiom after_set(v) => post(SetFlag(v))(get_flag()) == v
@@ -16,7 +16,7 @@ type Flag effect {
 
 test "handler if-branching post-axiom" {
     mut store = false
-    with #verify Flag = effect Flag {
+    with #verify Flag3 = effect Flag3 {
         SetFlag(v) {
             if v {
                 store = true
@@ -26,7 +26,7 @@ test "handler if-branching post-axiom" {
         }
         get_flag() => store
     } {
-        Flag.SetFlag(true)
-        assert(Flag.get_flag() == true)
+        Flag3.SetFlag(true)
+        assert(Flag3.get_flag() == true)
     }
 }

@@ -1,15 +1,15 @@
-module plan72.p3b_method_protocol_param_pos
+module nova_tests.plan72
 
 // Plan 72 P3-B: protocol-typed parameter on a METHOD (instance + static).
 // Regression guard for closed [M-protocol-param-free-fn-only] — call-site
 // arg-boxing now covers methods, not only free functions.
 
-type IntCounter {
+type IntCounter8 {
     mut cur int
     end int
 }
 
-fn IntCounter mut @next() -> Option[int] => {
+fn IntCounter8 mut @next() -> Option[int] => {
     if @cur < @end {
         ro v = @cur
         @cur += 1
@@ -19,10 +19,10 @@ fn IntCounter mut @next() -> Option[int] => {
     }
 }
 
-type Summer { tag int }
+type Summer3 { tag int }
 
 // instance method with a protocol-typed parameter
-fn Summer @drain(mut it Iterable[int]) -> int => {
+fn Summer3 @drain(mut it Iterable[int]) -> int => {
     mut count = 0
     mut go = true
     loop {
@@ -34,7 +34,7 @@ fn Summer @drain(mut it Iterable[int]) -> int => {
 }
 
 // static method with a protocol-typed parameter
-fn Summer.count_static(mut it Iterable[int]) -> int => {
+fn Summer3.count_static(mut it Iterable[int]) -> int => {
     mut n = 0
     mut go = true
     loop {
@@ -45,14 +45,14 @@ fn Summer.count_static(mut it Iterable[int]) -> int => {
 }
 
 test "method protocol param — instance call boxes arg" {
-    mut s = Summer { tag: 0 }
-    ro c = IntCounter { cur: 0, end: 4 }
+    mut s = Summer3 { tag: 0 }
+    ro c = IntCounter8 { cur: 0, end: 4 }
     ro n = s.drain(c)
     assert(n == 4)
 }
 
 test "method protocol param — static call boxes arg" {
-    ro c = IntCounter { cur: 0, end: 3 }
-    ro n = Summer.count_static(c)
+    ro c = IntCounter8 { cur: 0, end: 3 }
+    ro n = Summer3.count_static(c)
     assert(n == 3)
 }

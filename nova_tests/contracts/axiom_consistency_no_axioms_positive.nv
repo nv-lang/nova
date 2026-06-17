@@ -1,9 +1,9 @@
 // Ф.7.4 positive (Plan 33.6): модуль без axioms — W2402 не эмитится.
 // check_axiom_consistency пропускает effects без axiom block.
 
-module contracts.axiom_consistency_no_axioms_positive
+module nova_tests.contracts
 
-type Logger effect {
+type Logger1 effect {
     log(msg str)
 }
 

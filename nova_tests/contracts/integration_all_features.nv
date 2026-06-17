@@ -12,10 +12,10 @@
 // - 33.3 assume (true expression — pass).
 // - D96 #-attributes (#pure, #unverified).
 
-module contracts.integration_all_features
+module nova_tests.contracts
 
 // Record + invariant (parsed, runtime-check эмитится в Plan 33.3 full).
-type Counter {
+type Counter6 {
     value int
 }
     invariant value >= 0
@@ -53,7 +53,7 @@ fn process(input int) -> int
 
 // modifies-frame: только параметр `a`, не локали.
 #unverified
-fn modify_a(a int, b int) -> int
+fn modify_a2(a int, b int) -> int
     reads a, b
     modifies a
 {
@@ -69,10 +69,10 @@ test "integration: все фичи bootstrap Plan 33" {
     assert(process(5) == 5)
     assert(process(100) == 100)
 
-    // modify_a — frame check проходит (модифицируется только local, не a/b).
-    assert(modify_a(3, 4) == 14)
+    // modify_a2 — frame check проходит (модифицируется только local, не a/b).
+    assert(modify_a2(3, 4) == 14)
 
     // Record с invariant — конструктор не падает.
-    ro c = Counter { value: 42 }
+    ro c = Counter6 { value: 42 }
     assert(c.value == 42)
 }

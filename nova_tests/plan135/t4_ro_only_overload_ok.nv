@@ -2,21 +2,21 @@
 // Works fine — single overload, no dispatch ambiguity.
 // Verifies A-135.e.
 
-module plan135.t4_ro_only_overload_ok
+module nova_tests.plan135
 
-type Gauge { priv reading int }
+type Gauge3 { priv reading int }
 
-fn Gauge.new(v int) -> Self => { reading: v }
+fn Gauge3.new(v int) -> Self => { reading: v }
 
 // Only the ro overload exists — no mut counterpart.
-fn Gauge @get() -> int => @reading
+fn Gauge3 @get() -> int => @reading
 
 test "ro binding calls single ro overload" {
-    ro g = Gauge.new(55)
+    ro g = Gauge3.new(55)
     assert(g.get() == 55)
 }
 
 test "second ro binding" {
-    ro g = Gauge.new(100)
+    ro g = Gauge3.new(100)
     assert(g.get() == 100)
 }

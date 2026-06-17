@@ -1,13 +1,13 @@
 // Plan 123.1 T2.3: compound-assign (+=, -=, etc.) treated as write
 // → cache invalidated после compound boundary.
 
-module plan123_1.mut_field_compound_assign_ok
+module nova_tests.plan123_1
 
-type Acc {
+type Acc3 {
     mut total int
 }
 
-fn Acc mut @sum_with_bonus(bonus int) -> int {
+fn Acc3 mut @sum_with_bonus(bonus int) -> int {
     // 2 reads of @total в prefix → eligible.
     ro pre_bonus = @total + @total
     @total += bonus
@@ -15,12 +15,12 @@ fn Acc mut @sum_with_bonus(bonus int) -> int {
     @total + pre_bonus
 }
 
-fn Acc.new(x int) -> Acc {
-    Acc { total: x }
+fn Acc3.new(x int) -> Acc3 {
+    Acc3 { total: x }
 }
 
 test "compound assign as write boundary" {
-    mut a = Acc.new(10)
+    mut a = Acc3.new(10)
     ro r = a.sum_with_bonus(5)
     // pre_bonus = 10+10 = 20, total += 5 → 15, return 15+20 = 35.
     assert(r == 35)

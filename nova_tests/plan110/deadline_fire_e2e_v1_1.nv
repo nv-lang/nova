@@ -18,27 +18,27 @@
 //   4. nova_throw_typed populates fail-frame с NOVA_TID_USER_CleanupTimeoutError
 //   5. Outer fail-frame catches → propagates to function's Fail[CleanupTimeoutError]
 
-module plan110.deadline_fire_e2e_v1_1
+module nova_tests.plan110
 
 import std.prelude.errors
 
-type SlowCleanup { ro id int }
+type SlowCleanup4 { ro id int }
 
-fn SlowCleanup.new(id int) -> SlowCleanup => { id }
+fn SlowCleanup4.new(id int) -> SlowCleanup4 => { id }
 
 // Plan 110.9.2 V1.1 Level 1: tiny budget — beats default 5000ms hard-fallback.
-fn SlowCleanup @exit_timeout_ms() -> int => 1
+fn SlowCleanup4 @exit_timeout_ms() -> int => 1
 
 // Plan 110.9.1 V1.1: on_exit с Fail[CleanupTimeoutError] effect-signature
 // declares что throw path возможен. Time.sleep(50) reliably exceeds 1ms.
-fn SlowCleanup consume @on_exit(_outcome ScopeOutcome) Fail[CleanupTimeoutError] -> () {
+fn SlowCleanup4 consume @on_exit(_outcome ScopeOutcome) Fail[CleanupTimeoutError] -> () {
     Time.sleep(50)
     return ()
 }
 
 // Function-level Fail[CleanupTimeoutError] declaration propagates error up.
 fn use_slow_cleanup() Fail[CleanupTimeoutError] -> int {
-    consume r = SlowCleanup.new(42) {
+    consume r = SlowCleanup4.new(42) {
         return r.id
     }
 }

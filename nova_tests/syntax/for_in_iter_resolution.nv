@@ -13,16 +13,16 @@
 // - Auto-iter() insertion: `for x in collection` resolves к
 //   `for x in collection.iter()` под капотом.
 
-module syntax.for_in_iter_resolution
+module nova_tests.syntax
 
 // ── Case 1: type с direct `next()` ───────────────────────────────────────
 
-type Counter {
+type Counter9 {
     mut cur int
     end int
 }
 
-fn Counter mut @next() -> Option[int] {
+fn Counter9 mut @next() -> Option[int] {
     if @cur >= @end { return None }
     ro v = @cur
     @cur += 1
@@ -31,7 +31,7 @@ fn Counter mut @next() -> Option[int] {
 
 test "Case 1: direct iterator (mut next)" {
     mut sum = 0
-    ro it = Counter { cur: 0, end: 5 }
+    ro it = Counter9 { cur: 0, end: 5 }
     for x in it {
         sum = sum + x
     }
@@ -41,20 +41,20 @@ test "Case 1: direct iterator (mut next)" {
 
 // ── Case 2: collection с `iter()` метода ─────────────────────────────────
 
-type NumBag {
+type NumBag2 {
     cap int
 }
 
-type NumBagIter {
+type NumBagIter2 {
     mut cur int
     end int
 }
 
-fn NumBag @iter() -> NumBagIter {
-    NumBagIter { cur: 0, end: @cap }
+fn NumBag2 @iter() -> NumBagIter2 {
+    NumBagIter2 { cur: 0, end: @cap }
 }
 
-fn NumBagIter mut @next() -> Option[int] {
+fn NumBagIter2 mut @next() -> Option[int] {
     if @cur >= @end { return None }
     ro v = @cur * 10
     @cur += 1
@@ -63,7 +63,7 @@ fn NumBagIter mut @next() -> Option[int] {
 
 test "Case 2: auto-iter() insertion (collection.iter() → next())" {
     mut total = 0
-    ro bag = NumBag { cap: 3 }
+    ro bag = NumBag2 { cap: 3 }
     // D58: `for x in bag` должен expand'нуться в `for x in bag.iter()`.
     for x in bag {
         total = total + x
@@ -99,12 +99,12 @@ test "regression: array iteration через NovaArray (Case 2 emit_for optimisa
 
 // ── Generic-like iterator (counter с initial state) ──────────────────────
 
-type Squares {
+type Squares2 {
     mut i int
     n int
 }
 
-fn Squares mut @next() -> Option[int] {
+fn Squares2 mut @next() -> Option[int] {
     if @i >= @n { return None }
     ro v = @i * @i
     @i += 1
@@ -113,7 +113,7 @@ fn Squares mut @next() -> Option[int] {
 
 test "iterator with computed values" {
     mut sum = 0
-    ro sq = Squares { i: 0, n: 4 }
+    ro sq = Squares2 { i: 0, n: 4 }
     for s in sq {
         sum = sum + s
     }

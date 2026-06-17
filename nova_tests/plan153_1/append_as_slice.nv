@@ -1,4 +1,4 @@
-module plan153_1.append_as_slice
+module nova_tests.plan153_1
 
 test "append vec to vec" {
     mut a = Vec[int].of(1, 2, 3)

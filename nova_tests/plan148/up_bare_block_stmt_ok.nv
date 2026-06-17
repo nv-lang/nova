@@ -8,7 +8,7 @@
 // invariant so a future change to statement-vs-expression disambiguation
 // cannot silently regress it.
 
-module plan148.up_bare_block_stmt_ok
+module nova_tests.plan148
 
 test "bare block at head of statement runs as its own statement" {
     mut n = 0

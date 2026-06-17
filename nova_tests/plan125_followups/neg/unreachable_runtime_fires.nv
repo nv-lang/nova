@@ -1,0 +1,19 @@
+// [M-125-unreachable-builtin] negative (runtime-panic) — намеренно
+// триггерим unreachable: должен panic с сообщением "unreachable: ${reason}".
+//
+// EXPECT_RUNTIME_PANIC unreachable: forced for test
+
+module neg.unreachable_runtime_fires
+
+fn force_unreachable() -> int {
+    if true {
+        unreachable("forced for test")
+    } else {
+        42
+    }
+}
+
+test "unreachable fires with reason in panic msg" {
+    ro _ = force_unreachable()
+    assert(false, "should not reach — unreachable() should panic above")
+}

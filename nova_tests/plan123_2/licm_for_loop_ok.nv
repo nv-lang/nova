@@ -1,29 +1,29 @@
 // Plan 123.2 T1.3: for loop hoisting.
 
-module plan123_2.licm_for_loop_ok
+module nova_tests.plan123_2
 
-type Box {
+type Box4 {
     ro factor int
 }
 
-fn Box.helper() -> int { 7 }
+fn Box4.helper() -> int { 7 }
 
-fn Box @apply(n int) -> int {
+fn Box4 @apply(n int) -> int {
     // Call before loop → Plan 123.1 ro path may still cache since ro
     // unaffected by call. But test verifies for-loop hoist works.
-    mut sum = Box.helper()
+    mut sum = Box4.helper()
     for i in 0..n {
         sum = sum + @factor + @factor
     }
     sum
 }
 
-fn Box.new(f int) -> Box {
-    Box { factor: f }
+fn Box4.new(f int) -> Box4 {
+    Box4 { factor: f }
 }
 
 test "for loop @factor hoisted" {
-    ro b = Box.new(3)
+    ro b = Box4.new(3)
     ro r = b.apply(4)
     // sum = 7, 4 iterations × (3+3) = 24. Total = 31.
     assert(r == 31)

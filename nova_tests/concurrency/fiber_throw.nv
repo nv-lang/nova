@@ -12,7 +12,7 @@
 // готова. Тесты с реальным throw-rethrow'ом потребуют test-runner'а
 // с поддержкой ожидаемых exit-кодов.
 
-module concurrency.fiber_throw
+module nova_tests.concurrency
 
 // Helper: simulates an operation that may fail via Result.
 fn validated(n int) -> Result {

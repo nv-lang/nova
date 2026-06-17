@@ -2,7 +2,7 @@
 //
 // Closes [M-118.5-member-index-call-broader] POS half (member).
 
-module plan118_5.t8_unsafe_t_member_in_unsafe_ok
+module nova_tests.plan118_5
 
 type Point {
     x i64

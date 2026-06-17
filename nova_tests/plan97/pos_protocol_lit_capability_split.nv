@@ -5,7 +5,7 @@
 // state. Без anonymous protocol-литерала пришлось бы объявлять
 // два отдельных named-типа-обёртки.
 
-module plan97.pos_protocol_lit_capability_split
+module nova_tests.plan97
 
 
 export type Reader protocol {
@@ -17,13 +17,13 @@ export type Writer protocol {
 }
 
 
-type Cell {
+type Cell2 {
     mut value int
 }
 
 
-fn Cell.new(initial int) -> (Reader, Writer) {
-    ro state = Cell { value: initial }
+fn Cell2.new(initial int) -> (Reader, Writer) {
+    ro state = Cell2 { value: initial }
     ro r = protocol Reader {
         read() => state.value
     }
@@ -37,7 +37,7 @@ fn Cell.new(initial int) -> (Reader, Writer) {
 
 
 test "capability-split factory pattern" {
-    ro (r, w) = Cell.new(10)
+    ro (r, w) = Cell2.new(10)
     ro initial = r.read()
     assert(initial == 10)
     w.write(99)

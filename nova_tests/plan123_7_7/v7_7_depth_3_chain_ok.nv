@@ -1,47 +1,47 @@
 ﻿// Plan 123.7.7 (V7.7, 2026-06-04): deeper chain receiver
-// `@a.b.Cv.method()` still sibling-safe.
+// `@a.b.Cv6.method()` still sibling-safe.
 
-module plan123_7_7.v7_7_depth_3_chain_ok
+module nova_tests.plan123_7_7
 
-type Leaf {
+type Leaf2 {
     mut store []int
 }
 
-type Mid {
-    mut leaf Leaf
+type Mid2 {
+    mut leaf Leaf2
 }
 
-type Inner {
-    mut mid Mid
+type Inner4 {
+    mut mid Mid2
 }
 
-type Cv {
+type Cv6 {
     mut tag int
-    mut inner Inner
+    mut inner Inner4
 }
 
-fn Leaf.new() -> Leaf => { store: []int.new() }
-fn Mid.new() -> Mid => { leaf: Leaf.new() }
-fn Inner.new() -> Inner => { mid: Mid.new() }
+fn Leaf2.new() -> Leaf2 => { store: []int.new() }
+fn Mid2.new() -> Mid2 => { leaf: Leaf2.new() }
+fn Inner4.new() -> Inner4 => { mid: Mid2.new() }
 
-fn Cv.new() -> Cv => { tag: 0, inner: Inner.new() }
+fn Cv6.new() -> Cv6 => { tag: 0, inner: Inner4.new() }
 
-fn Cv mut @cycle(v int) -> int {
+fn Cv6 mut @cycle(v int) -> int {
     ro a = @tag
     ro b = @tag
     // depth-3 chain: @inner.mid.leaf.store.push(v)
     @inner.mid.leaf.store.push(v)
-    ro Cv = @tag
+    ro Cv6 = @tag
     ro d = @tag
-    a + b + Cv + d
+    a + b + Cv6 + d
 }
 
 test "V7.7: depth-3 chain doesn't invalidate sibling cache" {
-    mut Cv = Cv.new()
-    Cv.tag = 5
-    ro r = Cv.cycle(99)
+    mut Cv6 = Cv6.new()
+    Cv6.tag = 5
+    ro r = Cv6.cycle(99)
     // tag = 5 throughout вЂ” 5*4 = 20
     assert(r == 20)
-    assert(Cv.inner.mid.leaf.store.len() == 1)
-    assert(Cv.inner.mid.leaf.store[0] == 99)
+    assert(Cv6.inner.mid.leaf.store.len() == 1)
+    assert(Cv6.inner.mid.leaf.store[0] == 99)
 }

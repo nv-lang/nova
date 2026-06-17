@@ -22,7 +22,7 @@
 // Both are tracked as a follow-up; the feature here is the `-> @` signatures
 // plus the resolvable fluent forms.
 
-module plan138_2.t6_fluent_push
+module nova_tests.plan138_2
 
 import std.collections.vec.{Vec}
 

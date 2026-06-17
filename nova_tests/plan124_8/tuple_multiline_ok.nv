@@ -1,14 +1,14 @@
 // Plan 124.8 — positive: multi-line tuple (D215 amend Ф.1).
-module plan124_8.tuple_multiline_ok
+module nova_tests.plan124_8
 
-type Vec3(
+type Vec32(
     x f64,
     y f64,
     z f64
 )
 
 test "multi-line tuple no trailing comma" {
-    ro v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    ro v = Vec32(x: 1.0, y: 2.0, z: 3.0)
     assert(v.x == 1.0)
     assert(v.y == 2.0)
     assert(v.z == 3.0)

@@ -2,18 +2,18 @@
 // propagates как обычный Fail. Compile pass — D158 checker permits
 // Fail-throws когда enclosing fn-sig declares Fail[E].
 
-module plan100_4_1.defer_fail_ok_normal_exit
+module nova_tests.plan100_4_1
 
-type CommitErr { msg str }
+type CommitErr2 { msg str }
 
 // Failable cleanup function (infallible body, just declares Fail).
-fn commit() Fail[CommitErr] -> () { () }
+fn commit3() Fail[CommitErr2] -> () { () }
 
-// fn-sig объявляет Fail[CommitErr] — D158 разрешает Fail-call в defer.
-fn process() Fail[CommitErr] -> () {
-    defer { commit() }                          // failable cleanup body (D158)
+// fn-sig объявляет Fail[CommitErr2] — D158 разрешает Fail-call в defer.
+fn process4() Fail[CommitErr2] -> () {
+    defer { commit3() }                          // failable cleanup body (D158)
 }
 
 test "defer с Fail effect на normal exit — D158 compile pass" {
-    process()
+    process4()
 }

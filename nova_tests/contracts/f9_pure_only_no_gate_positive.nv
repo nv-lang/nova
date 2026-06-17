@@ -1,9 +1,9 @@
 // Plan 33.3 Ф.9 (refactor): effect с #pure но БЕЗ axiom — gate НЕ
 // срабатывает. Handler без атрибута допустим (нечего верифицировать).
 
-module contracts.f9_pure_only_no_gate_positive
+module nova_tests.contracts
 
-type Db effect {
+type Db6 effect {
     SetBalance(id int, amount int)
     #pure balance(id int) -> int
     // axiom отсутствует → gate не активируется
@@ -11,11 +11,11 @@ type Db effect {
 
 test "no gate without axiom" {
     mut store = 0
-    with Db = effect Db {
+    with Db6 = effect Db6 {
         SetBalance(id, amount) { store = amount }
         balance(id) => store
     } {
-        Db.SetBalance(1, 42)
-        assert(Db.balance(1) == 42)
+        Db6.SetBalance(1, 42)
+        assert(Db6.balance(1) == 42)
     }
 }

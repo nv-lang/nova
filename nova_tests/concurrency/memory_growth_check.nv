@@ -15,9 +15,9 @@
 // С Boehm GC: live count должен быть bounded (most objects unreachable).
 // С alloc_rc.c (RC): аналогично — released immediate когда refcount=0.
 
-module concurrency.memory_growth_check
+module nova_tests.concurrency
 
-type Point { x int, y int, z int }
+type Point2 { x int, y int, z int }
 
 test "100 string concatenations — bounded under GC, unbounded под malloc" {
     mut s str = ""
@@ -40,7 +40,7 @@ test "10k record allocations — process не падает по OOM" {
     // single process, но demonstrates leak rate.
     mut last_z int = 0
     for i in 0..10_000 {
-        ro p = Point { x: i, y: i * 2, z: i * 3 }
+        ro p = Point2 { x: i, y: i * 2, z: i * 3 }
         last_z = p.z
     }
     assert(last_z == 29_997)

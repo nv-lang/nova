@@ -2,9 +2,9 @@
 // TrivialBackend доказывает простые рефлексивные контракты.
 
 #must_verify_module
-module contracts.must_verify_module_positive
+module nova_tests.contracts
 
-fn double(x int) -> int
+fn double5(x int) -> int
     ensures result == x * 2
 {
     x * 2
@@ -24,7 +24,7 @@ fn no_contract(x int) -> int {
 }
 
 test "must_verify_module positive" {
-    assert(double(4) == 8)
+    assert(double5(4) == 8)
     assert(add_positive(2, 3) == 5)
     assert(no_contract(10) == 11)
 }

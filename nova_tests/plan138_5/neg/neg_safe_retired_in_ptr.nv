@@ -1,0 +1,11 @@
+// Plan 138.5 NEG — `safe` retired even as the (former) propagation-stopper
+// inside a pointer (`* safe T`).
+//
+// With prefix `unsafe *` forbidden there is nothing to stop; `safe` in any
+// type position is a hard error.
+//
+// EXPECT_COMPILE_ERROR E_SAFE_RETIRED
+
+module neg.neg_safe_retired_in_ptr
+
+extern "nova" fn p(x * safe int) -> ()

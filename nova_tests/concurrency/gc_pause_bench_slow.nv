@@ -25,11 +25,11 @@
 //
 // ALLOC_REQUIRES boehm
 
-module concurrency.gc_pause_bench
+module nova_tests.concurrency
 
-type Obj { a int, b int, c int }
+type Obj4 { a int, b int, c int }
 
-fn make_obj(i int) -> Obj =>
+fn make_obj4(i int) -> Obj4 =>
     { a: i, b: i + 1, c: i + 2 }
 
 // Возвращает max-pause из N раундов (миллисекунды).
@@ -38,7 +38,7 @@ fn run_rounds(rounds int, per_round int) -> int {
     mut sum_pause = 0
     for _ in 0..rounds {
         for i in 0..per_round {
-            ro _ = make_obj(i)
+            ro _ = make_obj4(i)
         }
         ro t0 = Time.now()
         gc.collect()

@@ -2,7 +2,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_multivar_contracts
+module nova_tests.contracts
 
 // Swap: переменные меняются местами (через sum/difference).
 #verify

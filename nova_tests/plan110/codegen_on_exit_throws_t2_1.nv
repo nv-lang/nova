@@ -4,23 +4,23 @@
 // → composed как secondary в MultiError chain (primary stays = body's
 // throw). Verifies cleanup-fail-during-propagation flow.
 
-module plan110.codegen_on_exit_throws_t2_1
+module nova_tests.plan110
 
-type FailingResource {
+type FailingResource3 {
     ro id int
 }
 
-fn FailingResource.new(id int) -> FailingResource => { id }
+fn FailingResource3.new(id int) -> FailingResource3 => { id }
 
 // on_exit может throw — composes в MultiError when body throws.
-fn FailingResource consume @on_exit(_outcome ScopeOutcome) Fail[str] -> () {
+fn FailingResource3 consume @on_exit(_outcome ScopeOutcome) Fail[str] -> () {
     throw "cleanup-failure"
 }
 
 // Caller uses consume scope; on_exit throws after body completes.
 // Caller must declare Fail[str] чтобы accept on_exit's throw.
 fn use_failing_cleanup() Fail[str] -> int {
-    consume r = FailingResource.new(42) {
+    consume r = FailingResource3.new(42) {
         r.id
     }
 }

@@ -13,7 +13,7 @@
 // ENV NOVA_MAXPROCS=1
 // EXPECT_STDERR invalid NOVA_FIBER_STACK
 
-module plan149.neg_garbage_stack
+module nova_tests.plan149
 
 test "garbage NOVA_FIBER_STACK: warn + default, program still runs" {
     mut total = 0

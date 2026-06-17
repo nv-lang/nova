@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_BOUND_METHOD_REMOVED
+//
+// Plan 132 Ф.1.6 (NEG): call via bound method value — removed syntax.
+// `c.@add(5)` where c is an instance must emit E_BOUND_METHOD_REMOVED.
+
+module neg.neg_bound_method_with_args
+
+type Counter { mut value int }
+
+fn Counter.new() -> Self => { value: 0 }
+fn Counter @get() -> int => @value
+fn Counter @add(n int) -> () { @value = @value + n }
+
+fn main() {
+    mut c = Counter.new()
+    c.@add(5)  // call via bound method — removed
+}

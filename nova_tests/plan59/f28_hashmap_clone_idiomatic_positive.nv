@@ -3,7 +3,7 @@
 // в generic method body работает). Validates что workaround removal
 // не regress'ит для разных K, V types.
 
-module plan59.f28_hashmap_clone_idiomatic_positive
+module nova_tests.plan59
 
 
 import std.collections.hashmap.{HashMap}

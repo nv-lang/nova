@@ -4,7 +4,7 @@
 // Previously (V1) this was a parse-only smoke test; now that Z3 axiomatic encoding is
 // implemented, verification works and proves ensures under reveal.
 
-module contracts.f58_opaque_parse_smoke
+module nova_tests.contracts
 
 // #opaque + #pure + #fuel(2) — все три attribute composable.
 #opaque #pure #fuel(2)

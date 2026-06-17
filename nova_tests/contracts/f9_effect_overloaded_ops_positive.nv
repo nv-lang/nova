@@ -3,9 +3,9 @@
 //
 // Тест: парсинг + type-check (без runtime использования перегруженных ops).
 
-module contracts.f9_effect_overloaded_ops_positive
+module nova_tests.contracts
 
-type Db effect {
+type Db4 effect {
     balance(id int) -> int
     balance(id str) -> int
     SetBalance(id int, amount int)

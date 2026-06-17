@@ -2,7 +2,7 @@
 // (фиксирует целевое число worker'ов); реальные worker-потоки
 // поднимаются лениво на первом worker-bound spawn. Программа без
 // spawn идёт на одном главном потоке — 0 worker-потоков, 0 sysmon.
-module concurrency.mn_lazy_spawn
+module nova_tests.concurrency
 
 test "init arms but does not materialize the pool" {
     runtime.init(3)

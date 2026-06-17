@@ -18,7 +18,7 @@
 //
 // `RuntimeNoneError`/`Option`/`Some`/`None` — из prelude, БЕЗ import.
 
-module plan62.runtime_none_error_from_prelude
+module nova_tests.plan62
 
 
 // Сигнатура с `Fail[RuntimeNoneError]` — type-checker резолвит

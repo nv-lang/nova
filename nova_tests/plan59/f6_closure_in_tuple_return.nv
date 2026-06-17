@@ -2,10 +2,10 @@
 // `nova_int` slot, но return type — `_NovaTuple____void_p__void_p`.
 // Без field-wise copy struct assignment fails C type-check.
 
-module plan59.f6_closure_in_tuple_return
+module nova_tests.plan59
 
 
-fn make_pair() -> (fn() -> int, fn() -> int) {
+fn make_pair2() -> (fn() -> int, fn() -> int) {
     mut n = 0
     ro inc = || { n += 1; n }
     ro get = || n
@@ -14,7 +14,7 @@ fn make_pair() -> (fn() -> int, fn() -> int) {
 
 
 test "pair of closures — shared mut box via tuple return" {
-    ro pair = make_pair()
+    ro pair = make_pair2()
     ro inc = pair.0
     ro get = pair.1
     assert(get() == 0)

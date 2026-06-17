@@ -7,36 +7,36 @@
 //
 // Acceptance A110.1.8.a: nested consume{} inside on_exit works correctly.
 
-module plan110.codegen_reentrance_d197
+module nova_tests.plan110
 
-type Lock {
+type Lock3 {
     ro id int
 }
 
-fn Lock.new(id int) -> Lock => { id }
-fn Lock consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn Lock3.new(id int) -> Lock3 => { id }
+fn Lock3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
-type Connection {
-    ro lock Lock
+type Connection3 {
+    ro lock Lock3
     ro conn_id int
 }
 
-fn Connection.new(conn_id int, lock_id int) -> Connection => {
-    lock: Lock.new(lock_id),
+fn Connection3.new(conn_id int, lock_id int) -> Connection3 => {
+    lock: Lock3.new(lock_id),
     conn_id,
 }
 
-// Connection.on_exit acquires inner Lock через nested consume scope —
+// Connection3.on_exit acquires inner Lock3 через nested consume scope —
 // D197 re-entrance.
-fn Connection consume @on_exit(_outcome ScopeOutcome) -> () {
-    consume _l = Lock.new(@lock.id + 100) {
+fn Connection3 consume @on_exit(_outcome ScopeOutcome) -> () {
+    consume _l = Lock3.new(@lock.id + 100) {
         // Inner cleanup work; _l fires on_exit at this scope end.
     }
 }
 
 fn use_with_reentrance() -> int {
     mut result = 0
-    consume conn = Connection.new(1, 7) {
+    consume conn = Connection3.new(1, 7) {
         result = conn.conn_id
     }
     result

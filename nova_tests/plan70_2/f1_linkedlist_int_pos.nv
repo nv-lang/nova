@@ -1,31 +1,31 @@
-// Plan 70.2 Ф.1+Ф.2+Ф.3 POSITIVE: LinkedList[int] sum-type mono.
+// Plan 70.2 Ф.1+Ф.2+Ф.3 POSITIVE: LinkedList1[int] sum-type mono.
 //
-// Pre-fix: LinkedList.nil() при mono с T=int не подставляет параметр в
+// Pre-fix: LinkedList1.nil() при mono с T=int не подставляет параметр в
 // constructor name; Cons destructure → t: void* вместо LinkedList____nova_int*;
 // method dispatch collides с StringBuilder.
 
-module plan70_2.f1_linkedlist_int_pos
+module nova_tests.plan70_2
 
-type LinkedList[T]
+type LinkedList1[T]
     | Nil
-    | Cons(T, LinkedList[T])
+    | Cons(T, LinkedList1[T])
 
-fn len_int(l LinkedList[int]) -> int {
+fn len_int(l LinkedList1[int]) -> int {
     match l {
         Nil => 0
         Cons(_, rest) => 1 + len_int(rest)
     }
 }
 
-fn sum_int(l LinkedList[int]) -> int {
+fn sum_int(l LinkedList1[int]) -> int {
     match l {
         Nil => 0
         Cons(h, rest) => h + sum_int(rest)
     }
 }
 
-test "LinkedList[int]: nil + cons + len" {
-    ro l0 LinkedList[int] = Nil
+test "LinkedList1[int]: nil + cons + len" {
+    ro l0 LinkedList1[int] = Nil
     ro l1 = Cons(1, l0)
     ro l2 = Cons(2, l1)
     ro l3 = Cons(3, l2)
@@ -33,7 +33,7 @@ test "LinkedList[int]: nil + cons + len" {
     assert(len_int(l3) == 3)
 }
 
-test "LinkedList[int]: sum" {
+test "LinkedList1[int]: sum" {
     ro l = Cons(10, Cons(20, Cons(30, Nil)))
     assert(sum_int(l) == 60)
 }

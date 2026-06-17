@@ -1,7 +1,7 @@
 // Positive: nested tuple `((int, int), (int, int))` требует topo-sort
 // mono'd typedef'ов — outer struct ссылается на inner mangled type.
 
-module plan59.f2_nested_tuple_typedef_order
+module nova_tests.plan59
 
 
 test "tuple of tuples — nested mono'd typedef order" {

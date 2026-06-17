@@ -14,14 +14,14 @@
 // без compile errors. Runtime fire-path (actually exceeding timeout)
 // remains gated на real-world deadline scenarios.
 
-module plan110.typed_cleanup_timeout_v1_1
+module nova_tests.plan110
 
 import std.prelude.errors
 
-type Resource { ro id int }
-fn Resource.new(id int) -> Resource => { id }
+type Resource3 { ro id int }
+fn Resource3.new(id int) -> Resource3 => { id }
 
-fn Resource consume @on_exit(_outcome ScopeOutcome) -> () {
+fn Resource3 consume @on_exit(_outcome ScopeOutcome) -> () {
     return ()
 }
 
@@ -36,7 +36,7 @@ test "Plan 110.9.1 V1.1: typed CleanupTimeoutError throw codegen emitted" {
     //   1. NOVA_TID_USER_CleanupTimeoutError macro defined
     //   2. _nova_throw_cleanup_timeout_impl static fn emitted
     //   3. _nova_throw_cleanup_timeout_fn assigned в main()
-    consume r = Resource.new(99) {
+    consume r = Resource3.new(99) {
         assert(r.id == 99)
     }
     // Construct CleanupTimeoutError directly to confirm struct usable.

@@ -1,30 +1,30 @@
 // Plan 123.1 T2.9 (negative-style): embed field skipped (use-style
 // embed = D39 auto-proxy, не direct field caching applicable).
 
-module plan123_1.embed_field_no_cache_ok
+module nova_tests.plan123_1
 
 type Inner {
     ro v int
 }
 
-type Outer {
+type Outer3 {
     use inner Inner
     ro mark int
 }
 
-fn Outer @combine() -> int {
+fn Outer3 @combine() -> int {
     // @mark — 3 reads — should be cached (ro).
     // @inner.v access — embed proxy; not direct @field caching.
     // V1 conservative: @inner — embed, skipped from registry.
     @mark + @mark + @mark + @inner.v
 }
 
-fn Outer.new(v int, m int) -> Outer {
-    Outer { inner: Inner { v }, mark: m }
+fn Outer3.new(v int, m int) -> Outer3 {
+    Outer3 { inner: Inner { v }, mark: m }
 }
 
 test "embed field skipped, ro mark cached" {
-    ro r = Outer.new(7, 5).combine()
+    ro r = Outer3.new(7, 5).combine()
     // 5+5+5+7 = 22.
     assert(r == 22)
 }

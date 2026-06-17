@@ -1,48 +1,48 @@
 // Plan 53: record-destructuring в let-биндингах.
 // `let { tx, rx } = ch` вместо `let tx = ch.tx; let rx = ch.rx`.
 
-module syntax.let_destructure_record
+module nova_tests.syntax
 
-type Pair {
+type Pair2 {
     tx int
     rx int
 }
 
 type Outer {
-    inner Pair
+    inner Pair2
     label int
 }
 
-fn make_pair(a int, b int) -> Pair => { tx: a, rx: b }
+fn make_pair2(a int, b int) -> Pair2 => { tx: a, rx: b }
 
 test "shorthand basic" {
-    ro { tx, rx } = make_pair(1, 2)
+    ro { tx, rx } = make_pair2(1, 2)
     assert(tx == 1)
     assert(rx == 2)
 }
 
 test "type-prefix" {
-    ro p = Pair { tx: 5, rx: 6 }
-    ro Pair { tx, rx } = p
+    ro p = Pair2 { tx: 5, rx: 6 }
+    ro Pair2 { tx, rx } = p
     assert(tx == 5)
     assert(rx == 6)
 }
 
 test "rest .. без bind" {
-    ro p = Pair { tx: 7, rx: 8 }
+    ro p = Pair2 { tx: 7, rx: 8 }
     ro { tx, .. } = p
     assert(tx == 7)
 }
 
 test "renaming через под-pattern" {
-    ro p = Pair { tx: 9, rx: 10 }
+    ro p = Pair2 { tx: 9, rx: 10 }
     ro { tx: sender, rx: receiver } = p
     assert(sender == 9)
     assert(receiver == 10)
 }
 
 test "nested destructure" {
-    ro o = Outer { inner: Pair { tx: 11, rx: 12 }, label: 42 }
+    ro o = Outer { inner: Pair2 { tx: 11, rx: 12 }, label: 42 }
     ro { inner: { tx, rx }, label } = o
     assert(tx == 11)
     assert(rx == 12)
@@ -53,7 +53,7 @@ test "одиночный eval RHS — порядок side-effects" {
     mut count = []int.new()
     ro p = {
         count.push(1)
-        Pair { tx: 100, rx: 200 }
+        Pair2 { tx: 100, rx: 200 }
     }
     ro { tx, rx } = p
     assert(tx == 100)

@@ -4,7 +4,7 @@
 // Phase 5: каждый level — explicit `<Lk>_<Tk>`, unambiguous до любой
 // глубины. Здесь mangled C name ~150+ chars.
 
-module plan59.f13_five_level_nesting
+module nova_tests.plan59
 
 
 test "5-level nested ((((( int ))))) с access на каждый уровень" {

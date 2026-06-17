@@ -4,36 +4,36 @@
 // arm-binding'и Live linear, обязан consumed в arm. D157 решает через
 // view-match: arm-binding'и — view, source остаётся Live.
 
-module plan100_3.match_view_ok_option
+module nova_tests.plan100_3
 
-type File consume {
+type File2 consume {
     fd int,
 }
 
-fn File consume @close() -> () { () }
+fn File2 consume @close() -> () { () }
 
-type Service consume {
-    consume file Option[File],
+type Service3 consume {
+    consume file Option[File2],
 }
 
-fn Service consume @shutdown() -> () {
+fn Service3 consume @shutdown() -> () {
     match @file {
         Some(f) => f.close(),                   // consume arm
         None => (),
     }
 }
 
-// Deep peek через view-match: получить fd без consume File.
-fn Service @file_id() -> Option[int] {
+// Deep peek через view-match: получить fd без consume File2.
+fn Service3 @file_id() -> Option[int] {
     match @file {                          // ← view-match
-        Some(f) => Some(f.fd),                  // f: view File, read-only
+        Some(f) => Some(f.fd),                  // f: view File2, read-only
         None => None,
     }
     // @file остаётся Live (не Consumed) ✅
 }
 
 test "match @file — deep peek без consume" {
-    consume svc = Service { file: Some(File { fd: 7 }) }
+    consume svc = Service3 { file: Some(File2 { fd: 7 }) }
     ro id = svc.file_id()
     assert(id == Some(7))
     svc.shutdown()                             // svc Live после view-match

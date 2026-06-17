@@ -5,17 +5,17 @@
 // Models the HashMap value-ownership pattern: V consume items must all be
 // explicitly handled, not silently dropped.
 
-module plan100_2.hashmap_consume_value_ok
+module nova_tests.plan100_2
 
-type Transaction consume {
+type Transaction16 consume {
     id int,
 }
-fn Transaction consume @commit() -> () { () }
+fn Transaction16 consume @commit() -> () { () }
 
-fn begin(n int) -> Transaction => { id: n }
+fn begin5(n int) -> Transaction16 => { id: n }
 
 // Concrete consume-param sink for pair of consume values.
-fn commit_pair(consume a Transaction, consume b Transaction) -> () {
+fn commit_pair(consume a Transaction16, consume b Transaction16) -> () {
     a.commit()
     b.commit()
 }
@@ -26,8 +26,8 @@ fn handle_pair[T consume](consume a T, consume b T) -> () {
 }
 
 test "generic consume propagation — pair of consume values handled" {
-    consume tx1 = begin(1)
-    consume tx2 = begin(2)
+    consume tx1 = begin5(1)
+    consume tx2 = begin5(2)
     // handle_pair has consume-params [0, 1] → tx1, tx2 both consumed.
     handle_pair(tx1, tx2)
 }

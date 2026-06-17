@@ -9,7 +9,7 @@
 //   - is None / is Some checks work
 //   - Backward-compat с Plan 115 fixtures preserved
 
-module plan118.t5_5_npo_option_ptr_ok
+module nova_tests.plan118
 
 extern "nova" fn p118_try_alloc_raw(size i64) -> Option[*()]
 

@@ -7,7 +7,7 @@
 // (anonymous record literal) — verification compile-error mechanism
 // зафиксирован как known V2 followup.
 
-module concurrency.polymorphic_recursion_smoke
+module nova_tests.concurrency
 
 
 // Non-recursive generic — sanity check. Depth-limit (500) с запасом

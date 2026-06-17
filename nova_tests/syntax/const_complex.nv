@@ -9,15 +9,15 @@
 // return value }`. На use-site `Ident(name)` для lazy const'ов эмитится
 // `nova_const_<name>()`.
 
-module syntax.const_complex
+module nova_tests.syntax
 
 
 // === 1. Const с record-литералом ===
 
-type Point { x f64, y f64 }
+type Point1 { x f64, y f64 }
 
-const ORIGIN Point = Point { x: 0.0, y: 0.0 }
-const UNIT_X Point = Point { x: 1.0, y: 0.0 }
+const ORIGIN Point1 = Point1 { x: 0.0, y: 0.0 }
+const UNIT_X Point1 = Point1 { x: 1.0, y: 0.0 }
 
 test "const с record-литералом" {
     assert(ORIGIN.x == 0.0)
@@ -28,8 +28,8 @@ test "const с record-литералом" {
 
 // === 2. Const с D55 coercion (без имени типа) ===
 
-const ZERO_POINT Point = { x: 0.0, y: 0.0 }
-const FAR_POINT Point = { x: 100.0, y: 200.0 }
+const ZERO_POINT Point1 = { x: 0.0, y: 0.0 }
+const FAR_POINT Point1 = { x: 100.0, y: 200.0 }
 
 test "const с D55 record-coercion" {
     assert(ZERO_POINT.x == 0.0)
@@ -47,7 +47,7 @@ test "const с D55 record-coercion" {
 // Lazy-init не используется в bootstrap'е (followup [M-114.4-ro-module-lazy-init]
 // для `ro X = compute()` module-level — отдельная work item).
 
-const COMPUTED Point = Point { x: 7.0, y: 14.0 }
+const COMPUTED Point1 = Point1 { x: 7.0, y: 14.0 }
 
 test "const с constexpr record-literal" {
     assert(COMPUTED.x == 7.0)
@@ -57,12 +57,12 @@ test "const с constexpr record-literal" {
 
 // === 4. Const используется в expression ===
 
-const FACTOR Point = Point { x: 2.0, y: 3.0 }
+const FACTOR Point1 = Point1 { x: 2.0, y: 3.0 }
 
-fn scale(p Point) -> Point => { x: p.x * FACTOR.x, y: p.y * FACTOR.y }
+fn scale(p Point1) -> Point1 => { x: p.x * FACTOR.x, y: p.y * FACTOR.y }
 
 test "lazy const использован в fn body" {
-    ro p = scale(Point { x: 5.0, y: 10.0 })
+    ro p = scale(Point1 { x: 5.0, y: 10.0 })
     assert(p.x == 10.0)
     assert(p.y == 30.0)
 }
@@ -70,7 +70,7 @@ test "lazy const использован в fn body" {
 
 // === 5. Несколько обращений к одному lazy const ===
 
-const SHARED Point = Point { x: 42.0, y: 84.0 }
+const SHARED Point1 = Point1 { x: 42.0, y: 84.0 }
 
 test "lazy const повторное обращение — кеш" {
     // Первое обращение — инициализирует.

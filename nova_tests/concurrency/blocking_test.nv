@@ -5,7 +5,7 @@
 // Arguments are passed as parameters; result is returned normally.
 // On main thread (no fiber): runs inline (no worker to free).
 
-module concurrency.blocking_test
+module nova_tests.concurrency
 
 // ================================================================
 // SECTION 1: basic execution + return value

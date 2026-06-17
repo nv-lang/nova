@@ -14,16 +14,16 @@
 //
 // Acceptance: compile-success verifies the codegen wrap pattern.
 
-module plan110.on_exit_throws_handler_catches_v1_1
+module nova_tests.plan110
 
-type AlwaysThrows { ro id int }
-fn AlwaysThrows.new(id int) -> AlwaysThrows => { id }
-fn AlwaysThrows consume @on_exit(_outcome ScopeOutcome) Fail[str] -> () {
+type AlwaysThrows3 { ro id int }
+fn AlwaysThrows3.new(id int) -> AlwaysThrows3 => { id }
+fn AlwaysThrows3 consume @on_exit(_outcome ScopeOutcome) Fail[str] -> () {
     throw "cleanup-err"
 }
 
 fn body_ok_cleanup_throws() Fail[str] -> int {
-    consume r = AlwaysThrows.new(1) {
+    consume r = AlwaysThrows3.new(1) {
         return r.id
     }
 }

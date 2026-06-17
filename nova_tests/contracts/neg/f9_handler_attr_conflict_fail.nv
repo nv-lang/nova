@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR duplicate or conflicting handler verification attribute
+//
+// Plan 33.3 Ф.9.6: оба атрибута на одной binding'е — parse error.
+
+module neg.f9_handler_attr_conflict_fail
+
+type Db effect {
+    #pure balance(id int) -> int
+}
+
+test "conflicting attributes" {
+    with #verify #trusted Db = effect Db {
+        balance(id) => 0
+    } {
+        ro _ = Db.balance(1)
+    }
+}

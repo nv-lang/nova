@@ -4,9 +4,9 @@
 // тип if-expr = тип then-arm (str). Mechanical CFA expansion в
 // expr_diverges_125 / block_trailing_diverges.
 
-module plan125_2.while_true_inf_in_else
+module nova_tests.plan125_2
 
-fn pick(c bool) -> str {
+fn pick2(c bool) -> str {
     if c {
         "ok"
     } else {
@@ -15,6 +15,6 @@ fn pick(c bool) -> str {
 }
 
 test "while-true in else, str in then — returns str" {
-    ro s = pick(true)
+    ro s = pick2(true)
     assert(s == "ok")
 }

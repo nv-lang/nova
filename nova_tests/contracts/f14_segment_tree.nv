@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_segment_tree
+module nova_tests.contracts
 
 // Node count for n leaves: 2*n - 1.
 #verify

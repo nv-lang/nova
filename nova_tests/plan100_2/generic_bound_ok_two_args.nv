@@ -1,31 +1,31 @@
 // Plan 100.2 (D156): `fn consume_both[T consume](consume a T, consume b T)`
 // — оба явно consume. Оба обязательства удовлетворяются передачей в
-// consume-param функцию `finish`.
+// consume-param функцию `finish2`.
 
-module plan100_2.generic_bound_ok_two_args
+module nova_tests.plan100_2
 
-type Transaction consume {
+type Transaction14 consume {
     id int,
 }
-fn Transaction consume @commit() -> () { () }
+fn Transaction14 consume @commit() -> () { () }
 
-fn begin(n int) -> Transaction => { id: n }
+fn begin4(n int) -> Transaction14 => { id: n }
 
 // Concrete consume-param sink (registered in ConsumeRegistry).
-fn finish(consume t Transaction) -> () {
+fn finish2(consume t Transaction14) -> () {
     t.commit()
 }
 
 // Two consume-bound params: both must be satisfied.
-// Each passed to finish() — obligation consumed via consume-param.
+// Each passed to finish2() — obligation consumed via consume-param.
 fn consume_both[T consume](consume a T, consume b T) -> () {
-    finish(a)                                   // a consumed via finish's consume-param
-    finish(b)                                   // b consumed
+    finish2(a)                                   // a consumed via finish2's consume-param
+    finish2(b)                                   // b consumed
 }
 
 test "two consume params — both obligations satisfied" {
-    consume tx1 = begin(1)
-    consume tx2 = begin(2)
+    consume tx1 = begin4(1)
+    consume tx2 = begin4(2)
     // consume_both has consume-params at [0] and [1] → tx1, tx2 both consumed.
     consume_both(tx1, tx2)
 }

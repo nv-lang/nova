@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14/Ф.55 Dafny-port): clamp invariants.
 // V1: single-branch passthrough (TrivialBackend reasons single Binary).
 
-module contracts.f56_clamp_bounds
+module nova_tests.contracts
 
 // "clamp" возврат — value уже в bounds, ensures = preserve.
 #verify

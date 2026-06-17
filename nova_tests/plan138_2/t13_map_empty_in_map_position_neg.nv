@@ -8,7 +8,7 @@
 // len()/is_empty()/get() on it are well-defined, and subsequent inserts grow it
 // from empty. (Named `_neg` per the plan: it is the empty/edge boundary of the
 // Vec-backed bucket path, asserted to behave rather than fault.)
-module plan138_2.t13_map_empty_in_map_position_neg
+module nova_tests.plan138_2
 
 import std.collections.hashmap.{HashMap}
 

@@ -12,7 +12,7 @@
 // de-risk guard: the user-Vec wins, compiles cleanly, and the prelude-Vec
 // methods do NOT leak onto the user receiver (no E7310, no method-arity cascade).
 
-module plan138_2.t14_user_vec_shadow_pos
+module nova_tests.plan138_2
 
 import std.collections.vec.{Vec}
 

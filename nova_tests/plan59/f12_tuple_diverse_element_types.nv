@@ -3,7 +3,7 @@
 // element'а. Mangle: `_NovaTuple_<arity>_<L1>_<T1>_<L2>_<T2>...` где
 // `<Ln>` ≠ для каждого element'а. Parser должен брать exactly Ln chars.
 
-module plan59.f12_tuple_diverse_element_types
+module nova_tests.plan59
 
 
 test "5-element tuple: (int, str, bool, u8, f64)" {

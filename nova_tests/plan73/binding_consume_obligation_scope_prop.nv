@@ -12,20 +12,20 @@
 //
 // EXPECT_PASS
 
-module plan73.binding_consume_obligation_scope_prop
+module nova_tests.plan73
 
-type Token consume { val int }
+type Token7 consume { val int }
 
-fn Token.new(v int) -> Token => { val: v }
+fn Token7.new(v int) -> Token7 => { val: v }
 
-fn Token consume @release(mut counter AtomicInt) -> int {
+fn Token7 consume @release(mut counter AtomicInt) -> int {
     counter.fetch_add(1)
     @val
 }
 
 // Fluent mutator — no semantic change; exercises M3 path
 // (fluent-chain `-> @` before consume).
-fn Token mut @bump() -> @ { @ }
+fn Token7 mut @bump() -> @ { @ }
 
 test "property: each consume-binding satisfied exactly once across scenarios" {
     mut counter = AtomicInt.new(0)
@@ -33,7 +33,7 @@ test "property: each consume-binding satisfied exactly once across scenarios" {
 
     // Scenario A: basic consume.
     {
-        consume t = Token.new(1)
+        consume t = Token7.new(1)
         ro v = t.release(counter)
         assert(v == 1)
         expected = expected + 1
@@ -41,7 +41,7 @@ test "property: each consume-binding satisfied exactly once across scenarios" {
 
     // Scenario B: alias-move via `consume Y = X`.
     {
-        consume a = Token.new(2)
+        consume a = Token7.new(2)
         consume b = a
         ro v = b.release(counter)
         assert(v == 2)
@@ -51,7 +51,7 @@ test "property: each consume-binding satisfied exactly once across scenarios" {
     // Scenario C: branch — each branch consumes exactly once.
     {
         ro pick = 1
-        consume t = Token.new(3)
+        consume t = Token7.new(3)
         if pick == 1 {
             ro v = t.release(counter)
             assert(v == 3)
@@ -66,7 +66,7 @@ test "property: each consume-binding satisfied exactly once across scenarios" {
     // statement (not trailing) so it does not implicit-return-consume;
     // explicit `release` consumes `t` on a separate stmt.
     {
-        consume t = Token.new(4)
+        consume t = Token7.new(4)
         t.bump().bump()
         ro v = t.release(counter)
         assert(v == 4)
@@ -76,7 +76,7 @@ test "property: each consume-binding satisfied exactly once across scenarios" {
     // Scenario E: loop — N iterations, each owns + consumes its own token.
     ro n = 5
     for i in 0..n {
-        consume t = Token.new(i)
+        consume t = Token7.new(i)
         ro v = t.release(counter)
         assert(v == i)
         expected = expected + 1

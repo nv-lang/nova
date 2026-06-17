@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Plan 79 Ф.1: annotation ↔ RHS assignability. `let x int = true` used
+// to compile AND run wrong (silent miscompilation). Now → E7301.
+
+module neg.assign_let_bool_to_int
+
+fn run() -> int {
+    ro x int = true
+    x
+}

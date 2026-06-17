@@ -5,27 +5,27 @@
 // pointer itself, which is already a reference). This test ensures
 // Plan 128 changes did not break the heap-record path.
 
-module plan128.t5_heap_record_mut_regression_ok
+module nova_tests.plan128
 
-type Counter {
+type Counter10 {
     mut value int
     mut step int
 }
 
-fn Counter.new() -> Self => { value: 0, step: 1 }
+fn Counter10.new() -> Self => { value: 0, step: 1 }
 
-fn Counter mut @inc() -> () {
+fn Counter10 mut @inc() -> () {
     @value = @value + @step
 }
 
-fn Counter mut @set_step(s int) -> () {
+fn Counter10 mut @set_step(s int) -> () {
     @step = s
 }
 
-fn Counter @get() -> int => @value
+fn Counter10 @get() -> int => @value
 
 test "heap record mut method — inc loop accumulates" {
-    mut c = Counter.new()
+    mut c = Counter10.new()
     mut i = 0
     while i < 5 {
         c.inc()
@@ -35,7 +35,7 @@ test "heap record mut method — inc loop accumulates" {
 }
 
 test "heap record mut method composes — step change mid-sequence" {
-    mut c = Counter.new()
+    mut c = Counter10.new()
     c.inc()                 // value = 1
     c.set_step(10)
     c.inc()                 // value = 11
@@ -44,7 +44,7 @@ test "heap record mut method composes — step change mid-sequence" {
 }
 
 test "heap record ro method preserves binding" {
-    mut c = Counter.new()
+    mut c = Counter10.new()
     c.inc()
     c.inc()
     assert(c.get() == 2)

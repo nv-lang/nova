@@ -1,7 +1,7 @@
 // Ф.33.2 (Plan 33.6): TrivialBackend VarA * VarB non-negative.
 // `requires a >= 0; requires b >= 0; ensures (a * b) >= 0` — lower(a)>=0 && lower(b)>=0.
 
-module contracts.f33_var_mul_nonneg_positive
+module nova_tests.contracts
 
 #verify
 fn product_nonneg(a int, b int) -> int

@@ -1,14 +1,14 @@
 // Plan 127 Ф.5 — POS: match arm escape — `&v` в match arm body.
-module plan127.t11_match_arm_escape_ok
+module nova_tests.plan127
 
-type Vec3 value {
+type Vec31 value {
     x f64
     y f64
     z f64
 }
 
-fn match_escape(tag int) -> *Vec3 {
-    ro v = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+fn match_escape(tag int) -> *Vec31 {
+    ro v = Vec31 { x: 1.0, y: 2.0, z: 3.0 }
     match tag {
         0 => unsafe { &v }
         _ => unsafe { &v }

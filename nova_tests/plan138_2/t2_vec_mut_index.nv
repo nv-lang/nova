@@ -11,7 +11,7 @@
 // blocker doc on `Vec[T] mut @index_set` in std/collections/vec_owned.nv. The
 // observable `v[i] = val` write semantics below are unaffected.
 
-module plan138_2.t2_vec_mut_index
+module nova_tests.plan138_2
 
 import std.collections.vec.{Vec}
 

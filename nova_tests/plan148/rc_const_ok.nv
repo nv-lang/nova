@@ -2,14 +2,14 @@
 // module-level constants correctly declared `const` — no partition error.
 // Covers literal / arithmetic / record-literal / const-ref forms.
 
-module plan148.rc_const_ok
+module nova_tests.plan148
 
-type Point { x f64, y f64 }
+type Point3 { x f64, y f64 }
 
 const MAX int = 4096
 const TIMEOUT_SEC int = 60 * 5
 const GREETING str = "hello"
-const ORIGIN Point = Point { x: 0.0, y: 0.0 }
+const ORIGIN Point3 = Point3 { x: 0.0, y: 0.0 }
 
 test "const constexpr declarations accepted" {
     assert(MAX == 4096)

@@ -15,7 +15,7 @@
 //   * nova_finalizer_push call в Nova_Application_register_finalizer.
 //   * Stack init + fire_lifo + TLS save/restore в with-block.
 
-module plan110.register_finalizer_lifo_v1_1
+module nova_tests.plan110
 
 import std.prelude.effects
 

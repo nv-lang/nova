@@ -10,14 +10,14 @@
 //                  scope sees handler's timeout value; unbound scope
 //                  sees Level 3 default (5000ms).
 
-module plan110.timeout_application_level2_t3_8
+module nova_tests.plan110
 
-type Res {
+type Res6 {
     ro id int
 }
 
-fn Res.new(id int) -> Res => { id }
-fn Res consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn Res6.new(id int) -> Res6 => { id }
+fn Res6 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 test "Plan 110.4.6.a A110.4.6.a.a: Application handler overrides Level 3 (Cleanup observes 250ms)" {
     mut observed_timeout = -1
@@ -40,7 +40,7 @@ test "Plan 110.4.6.a A110.4.6.a.a: Application handler overrides Level 3 (Cleanu
                 return ()
             }
         } {
-            consume r = Res.new(1) {
+            consume r = Res6.new(1) {
                 ro _ = r.id
             }
         }
@@ -59,7 +59,7 @@ test "Plan 110.4.6.a A110.4.6.a.a: no Application handler → Level 3 fallback (
             return ()
         }
     } {
-        consume r = Res.new(2) {
+        consume r = Res6.new(2) {
             ro _ = r.id
         }
     }

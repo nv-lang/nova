@@ -1,0 +1,19 @@
+// Plan 128 Ф.4 T6 — primitive `str` cannot have mut-methods.
+//
+// EXPECT_COMPILE_ERROR E_PRIMITIVE_MUT_METHOD
+//
+// Verifies Ф.3 diagnostic rejects `fn str mut @method`. Primitives are
+// immutable by design; allowing this would silently no-op (codegen
+// dropped the mutation pre-Ф.3 — a footgun).
+
+module neg.t6_primitive_str_mut_method_neg
+
+fn str mut @hack() -> () {
+    @ = "x"
+}
+
+test "should not compile: fn str mut @hack" {
+    mut s = "abc"
+    s.hack()
+    assert(s == "x")
+}

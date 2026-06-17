@@ -3,7 +3,7 @@
 // Plan 33.7 Ф.5: BV arithmetic verified by Z3.
 // u32 params map to BitVec(32); BV comparisons and add/sub/mul use bv ops.
 
-module contracts.f60_bv_arith_z3_positive
+module nova_tests.contracts
 
 // Simple identity: ensure add-then-sub round-trips within BV range.
 #verify

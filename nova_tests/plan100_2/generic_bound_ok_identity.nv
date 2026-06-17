@@ -4,20 +4,20 @@
 // ident satisfies consume-obligation of x. Return value discarded by caller
 // (no `consume` let-binding on call site → no caller obligation).
 
-module plan100_2.generic_bound_ok_identity
+module nova_tests.plan100_2
 
-type Transaction consume {
+type Transaction10 consume {
     id int,
 }
-fn Transaction consume @commit() -> () { () }
+fn Transaction10 consume @commit() -> () { () }
 
-fn begin() -> Transaction => { id: 42 }
+fn begin2() -> Transaction10 => { id: 42 }
 
 // Identity: x returned as trailing FnBody::Expr ident — obligation satisfied.
 fn id_consume[T consume](consume x T) -> T => x
 
 test "identity with consume bound — FnBody::Expr form" {
-    consume tx = begin()
+    consume tx = begin2()
     // id_consume has consume-param[0] → tx marked consumed at call.
     // Return value discarded (no `consume` let → no obligation for caller).
     id_consume(tx)

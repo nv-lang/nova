@@ -4,7 +4,7 @@
 // Раньше CANCEL-throw обрабатывался как Fail; теперь — нет. Раньше отмена
 // убегала из supervised(cancel:) как ошибка; теперь — нет.
 
-module concurrency.cancel_negative_behavior_test
+module nova_tests.concurrency
 
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 // Plan 33.7 Ф.5: BV bitwise operations in contracts.
 // u32 params use bvand/bvor/bvxor/bvshl/bvlshr SMT ops.
 
-module contracts.f60_bv_bitwise_z3_positive
+module nova_tests.contracts
 
 // Mask low 8 bits: x & 0xFF → result in [0, 255].
 #verify

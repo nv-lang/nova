@@ -13,49 +13,49 @@
 // - Фильтр 3: result-type из контекста (если есть).
 // - Фильтр 4: самый специфичный матч (concrete > generic, etc.).
 
-module syntax.overload_free_fn
+module nova_tests.syntax
 
 
 // ───── Overload по типу аргумента ─────
 
-fn describe(n int) -> str { "int: ${n}" }
-fn describe(s str) -> str { "str: ${s}" }
-fn describe(b bool) -> str { if b { "bool: true" } else { "bool: false" } }
+fn describe3(n int) -> str { "int: ${n}" }
+fn describe3(s str) -> str { "str: ${s}" }
+fn describe3(b bool) -> str { if b { "bool: true" } else { "bool: false" } }
 
 
 test "overload по int" {
-    assert(describe(42) == "int: 42")
+    assert(describe3(42) == "int: 42")
 }
 
 
 test "overload по str" {
-    assert(describe("hello") == "str: hello")
+    assert(describe3("hello") == "str: hello")
 }
 
 
 test "overload по bool" {
-    assert(describe(true) == "bool: true")
-    assert(describe(false) == "bool: false")
+    assert(describe3(true) == "bool: true")
+    assert(describe3(false) == "bool: false")
 }
 
 
 // ───── Overload по арности ─────
 
-fn greet(name str) -> str { "Hello, ${name}!" }
-fn greet(name str, lang str) -> str {
+fn greet2(name str) -> str { "Hello, ${name}!" }
+fn greet2(name str, lang str) -> str {
     if lang == "ru" { "Привет, ${name}!" }
     else { "Hello, ${name}!" }
 }
 
 
 test "overload по арности — 1 arg" {
-    assert(greet("Alice") == "Hello, Alice!")
+    assert(greet2("Alice") == "Hello, Alice!")
 }
 
 
 test "overload по арности — 2 args" {
-    assert(greet("Bob", "ru") == "Привет, Bob!")
-    assert(greet("Carol", "en") == "Hello, Carol!")
+    assert(greet2("Bob", "ru") == "Привет, Bob!")
+    assert(greet2("Carol", "en") == "Hello, Carol!")
 }
 
 
@@ -75,13 +75,13 @@ test "overload по арности — 2 args" {
 
 // ───── Mix: разные оси перегрузки в одном модуле ─────
 
-fn render(n int) -> str { "int=${n}" }
-fn render(s str) -> str { "str='${s}'" }
-fn render(n int, prefix str) -> str { "${prefix}: ${n}" }
+fn render3(n int) -> str { "int=${n}" }
+fn render3(s str) -> str { "str='${s}'" }
+fn render3(n int, prefix str) -> str { "${prefix}: ${n}" }
 
 
 test "mix overloads — by type and by arity" {
-    assert(render(1) == "int=1")
-    assert(render("x") == "str='x'")
-    assert(render(99, "score") == "score: 99")
+    assert(render3(1) == "int=1")
+    assert(render3("x") == "str='x'")
+    assert(render3(99, "score") == "score: 99")
 }

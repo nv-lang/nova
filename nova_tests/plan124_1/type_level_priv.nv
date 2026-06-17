@@ -1,6 +1,6 @@
 // Plan 124.1 Ф.1 — positive: type-level `priv {}` default flip.
 // `type X priv { ... }` — fields default = priv; `pub` overrides.
-module plan124_1.type_level_priv
+module nova_tests.plan124_1
 
 // Все три поля default priv; tag — explicit pub override.
 export type Secret priv {

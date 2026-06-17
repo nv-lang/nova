@@ -9,7 +9,7 @@
 // in that we exercise double-cancel both OUTSIDE a supervised(cancel:)-scope
 // (pure idempotency of the token itself) AND from two different fibers within
 // a bound scope (race between two cancel() callers — first wins, second no-op).
-module concurrency.cancel_double_call
+module nova_tests.concurrency
 
 
 // ──────────────────────────────────────────────────────────────────────────

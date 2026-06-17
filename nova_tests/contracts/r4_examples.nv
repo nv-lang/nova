@@ -3,10 +3,10 @@
 // Это упрощённые версии R4-функций без mut params/Fail effects
 // (те ждут 33.2/33.3). Покрытие 33.1 scope: requires/ensures/old/result.
 
-module contracts.r4_examples
+module nova_tests.contracts
 
 // 1. Simple precondition.
-fn double(x int) -> int
+fn double7(x int) -> int
     requires x >= 0
     ensures result == x + x
 => x + x
@@ -26,7 +26,7 @@ fn divide(a int, b int) -> int
 => a / b
 
 // 4. Implication.
-fn classify(x int) -> int
+fn classify2(x int) -> int
     requires x >= 0
     ensures x == 0 ==> result == 0
     ensures x > 0 ==> result > 0
@@ -38,8 +38,8 @@ fn parity(x int) -> int
     ensures (result == 0) <==> (x % 2 == 0)
 => x % 2
 
-// 6. Range check.
-fn clamp(x int, lo int, hi int) -> int
+// 6. Range check2.
+fn clamp2(x int, lo int, hi int) -> int
     requires lo <= hi
     ensures result >= lo
     ensures result <= hi
@@ -76,28 +76,28 @@ fn sign(x int) -> int
 }
 
 // 10. Chained implications.
-fn check(x int, y int) -> int
+fn check2(x int, y int) -> int
     requires x >= 0
     requires y >= 0
     ensures (x > 0 && y > 0) ==> result > 0
 => x * y
 
 test "R4-inspired contracts end-to-end" {
-    assert(double(5) == 10)
+    assert(double7(5) == 10)
     assert(next(7) == 8)
     assert(divide(10, 3) == 3)
-    assert(classify(5) == 5)
+    assert(classify2(5) == 5)
     assert(parity(4) == 0)
     assert(parity(7) == 1)
-    assert(clamp(5, 1, 10) == 5)
-    assert(clamp(0, 1, 10) == 1)
-    assert(clamp(20, 1, 10) == 10)
+    assert(clamp2(5, 1, 10) == 5)
+    assert(clamp2(0, 1, 10) == 1)
+    assert(clamp2(20, 1, 10) == 10)
     assert(abs_helper(5) == 5)
     assert(abs_helper(-3) == 3)
     assert(safe_subtract(10, 3) == 7)
     assert(sign(5) == 1)
     assert(sign(-2) == -1)
     assert(sign(0) == 0)
-    assert(check(3, 4) == 12)
-    assert(check(0, 5) == 0)
+    assert(check2(3, 4) == 12)
+    assert(check2(0, 5) == 0)
 }

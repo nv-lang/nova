@@ -1,7 +1,7 @@
 // Plan 124.9 Ф.2 — positive: mix of heap + value records nested.
 // A heap record containing a value record containing a heap record;
 // each level must allocate its own declared field type.
-module plan124_9.p5_nested_mixed_heap_value_ok
+module nova_tests.plan124_9
 
 type Leaf {
     mut value int

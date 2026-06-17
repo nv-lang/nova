@@ -24,19 +24,19 @@
 // CC-FAIL «unknown type name 'Nova_Iter'» закрыт. Actual method-call
 // usage на erased param — known limitation, не Plan 62 scope.
 
-module plan62.protocol_param_erasure
+module nova_tests.plan62
 
 
-type IntCounter {
+type IntCounter6 {
     mut cur int
     end int
 }
 
 
-fn IntCounter.new(start int, end int) -> IntCounter => { cur: start, end }
+fn IntCounter6.new(start int, end int) -> IntCounter6 => { cur: start, end }
 
 
-fn IntCounter mut @next() -> Option[int] => {
+fn IntCounter6 mut @next() -> Option[int] => {
     if @cur < @end {
         ro v = @cur
         @cur += 1
@@ -55,14 +55,14 @@ fn accepts_iter_param(it Iterable[int], fallback int) -> int => fallback
 
 
 test "Iterable[int] as parameter type — declaration compiles (CC-FAIL fix)" {
-    ro c = IntCounter.new(1, 4)
+    ro c = IntCounter6.new(1, 4)
     ro r = accepts_iter_param(c, 42)
     assert(r == 42)
 }
 
 
 test "second call confirms repeated codegen path stable" {
-    ro c2 = IntCounter.new(0, 0)
+    ro c2 = IntCounter6.new(0, 0)
     ro r = accepts_iter_param(c2, 7)
     assert(r == 7)
 }

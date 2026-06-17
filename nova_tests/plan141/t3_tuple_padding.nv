@@ -2,7 +2,7 @@
 // `(1 as u8, 2) == (1 as u8, 2)` → true regardless of indeterminate
 // padding bytes between the u8 and the int. The prior memcmp could
 // compare uninitialized padding and report inequality.
-module plan141.t3_tuple_padding
+module nova_tests.plan141
 
 test "(1 as u8, 2) == (1 as u8, 2) → true (padding-independent)" {
     ro a = (1 as u8, 2)

@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_binary_search
+module nova_tests.contracts
 
 // Предусловие: массив отсортирован (моделируем через параметры lo/hi/mid).
 // В Nova 33.1 нет arrays в SMT, поэтому верифицируем pure arithmetic core:

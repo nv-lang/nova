@@ -1,6 +1,6 @@
 // Plan 114.4.4 Ф.5 positive: size_of[T]() в const fn body.
 
-module plan114_4_4.size_of_in_const_fn_ok
+module nova_tests.plan114_4_4
 
 fn buf_size(const count int) -> const int =>
     count * size_of[int]()

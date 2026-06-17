@@ -1,7 +1,7 @@
 // Ф.17.3 (Plan 33.6): dead lemma tracking — lemma определена но не применена → W2402.
 // EXPECT_COMPILE_WARNING W2402
 
-module contracts.dead_lemma_w2402
+module nova_tests.contracts
 
 lemma unused_lemma(x int)
     ensures result == x

@@ -1,23 +1,23 @@
 // Plan 153.1 / [M-138.2-generic-method-overload-mono]: generic-type method
 // overloads (arity + param-type) resolve correctly in monomorphization —
 // dispatch (call) + return-type inference (chained receiver).
-module plan153_1.generic_overload
+module nova_tests.plan153_1
 
-type Box[T] priv { mut inner T }
-fn Box[T].of(x T) -> Self => { inner: x }
-fn Box[T] @slot() -> T => @inner                 // getter (0-arg)
-fn Box[T] mut @slot(x T) -> () { @inner = x }    // setter (1-arg) — ARITY overload
-fn Box[T] @tag(n int) -> int => n + 1            // PARAM-TYPE overload (int)
-fn Box[T] @tag(s str) -> int => s.byte_len()     //                    (str), same arity (D249: str.len retired)
+type Box6[T] priv { mut inner T }
+fn Box6[T].of(x T) -> Self => { inner: x }
+fn Box6[T] @slot() -> T => @inner                 // getter (0-arg)
+fn Box6[T] mut @slot(x T) -> () { @inner = x }    // setter (1-arg) — ARITY overload
+fn Box6[T] @tag(n int) -> int => n + 1            // PARAM-TYPE overload (int)
+fn Box6[T] @tag(s str) -> int => s.byte_len()     //                    (str), same arity (D249: str.len retired)
 
 test "arity overload getter/setter on generic type" {
-    mut b = Box[int].of(5)
+    mut b = Box6[int].of(5)
     assert(b.slot() == 5)
     b.slot(10)
     assert(b.slot() == 10)
 }
 test "param-type overload (same arity, different types)" {
-    ro b = Box[int].of(0)
+    ro b = Box6[int].of(0)
     assert(b.tag(7) == 8)
     assert(b.tag("abc") == 3)
 }

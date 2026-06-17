@@ -33,7 +33,7 @@
 //
 // Verifies: across all 1000 iterations there is no panic / SEGV / abort,
 // and the final assertion confirms the loop reached completion.
-module concurrency.cancel_storm_1000
+module nova_tests.concurrency
 
 test "1000 cancel scopes in tight loop — no panic, no SEGV, no leak" {
     mut completed = 0

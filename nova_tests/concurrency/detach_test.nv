@@ -14,13 +14,13 @@
 // (cooperative drain). После flip + Plan 83.4.5.7 race fix: worker pool
 // fire-and-forget.
 
-module concurrency.detach_test
+module nova_tests.concurrency
 
-type Counter {
+type Counter2 {
     mut val int
 }
 
-fn make_counter(v int) -> Counter => { val: v }
+fn make_counter2(v int) -> Counter2 => { val: v }
 
 // ================================================================
 // SECTION 1: базовое исполнение (с explicit-sync через drain_orphans)
@@ -74,7 +74,7 @@ test "detach: captures multiple vars" {
 }
 
 test "detach: mutates captured record field" {
-    ro counter = make_counter(10)
+    ro counter = make_counter2(10)
     detach {
         counter.val = counter.val + 5
     }

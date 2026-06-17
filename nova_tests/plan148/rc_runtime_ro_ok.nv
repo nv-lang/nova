@@ -5,7 +5,7 @@
 // strict-правила"). This guards that the module-level rule does not leak
 // into function bodies / blocks.
 
-module plan148.rc_runtime_ro_ok
+module nova_tests.plan148
 
 fn compute() -> int => 21 * 2
 

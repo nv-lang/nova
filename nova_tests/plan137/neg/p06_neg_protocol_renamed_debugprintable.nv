@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_PROTOCOL_RENAMED
+//
+// Plan 137 (D237) — NEG P06:
+// `#impl(DebugPrintable)` → E_PROTOCOL_RENAMED: use `#impl(Debug)`.
+module neg.p06_neg_protocol_renamed_debugprintable
+
+#impl(DebugPrintable)
+type Widget {
+    id int
+}
+
+test "DebugPrintable is renamed to Debug" {
+    ro w = Widget { id: 42 }
+    assert(w.id == 42)
+}

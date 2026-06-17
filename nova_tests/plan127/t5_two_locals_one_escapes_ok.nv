@@ -1,17 +1,17 @@
 // Plan 127 Ф.5 — POS: two value-record locals в одной fn — только escape'нувший
 // promoted; second остаётся на стеке. Verifies per-binding granularity.
-module plan127.t5_two_locals_one_escapes_ok
+module nova_tests.plan127
 
-type Vec3 value {
+type Vec34 value {
     x f64
     y f64
     z f64
 }
 
-fn mixed() -> *Vec3 {
-    ro local_only = Vec3 { x: 100.0, y: 200.0, z: 300.0 }
+fn mixed() -> *Vec34 {
+    ro local_only = Vec34 { x: 100.0, y: 200.0, z: 300.0 }
     ro _shadow = local_only.x
-    ro escapes = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+    ro escapes = Vec34 { x: 1.0, y: 2.0, z: 3.0 }
     unsafe { &escapes }
 }
 

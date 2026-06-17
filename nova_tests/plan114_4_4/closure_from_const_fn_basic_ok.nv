@@ -3,7 +3,7 @@
 // `make_adder(5)` → specialized `make_adder__closure_0(x int) -> int { x + 5 }`.
 // Call site rewritten к `Ident("make_adder__closure_0")` (fn pointer).
 
-module plan114_4_4.closure_from_const_fn_basic_ok
+module nova_tests.plan114_4_4
 
 fn make_adder(const n int) -> const fn(int) -> int =>
     |x| x + n

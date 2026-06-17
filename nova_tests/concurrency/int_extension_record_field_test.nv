@@ -4,7 +4,7 @@
 // эмитил invalid C `((nova_int)100LL).method()` (member-access on int).
 // После — proper Nova_int_method_<method> dispatch через method_overloads.
 
-module concurrency.int_extension_record_field_test
+module nova_tests.concurrency
 
 
 // Local types — НЕ импортируем std.time.duration чтобы не блокироваться

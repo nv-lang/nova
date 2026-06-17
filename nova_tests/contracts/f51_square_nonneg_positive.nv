@@ -1,6 +1,6 @@
 // Ф.51.1 (Plan 33.6): TrivialBackend `a * a >= 0` (квадрат неотрицателен без bounds).
 
-module contracts.f51_square_nonneg_positive
+module nova_tests.contracts
 
 #verify
 fn square_nonneg(x int) -> int

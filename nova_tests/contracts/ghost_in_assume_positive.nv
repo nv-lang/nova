@@ -1,6 +1,6 @@
 // Ф.1.1 (Plan 33.6): ghost var в assume — spec position, OK.
 
-module contracts.ghost_in_assume_positive
+module nova_tests.contracts
 
 fn with_assume(x int) -> int {
     ghost ro g = x * 2

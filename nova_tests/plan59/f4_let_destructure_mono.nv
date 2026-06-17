@@ -2,10 +2,10 @@
 // mono'd `_NovaTuple____<...>` (не legacy _NovaTupleN). Раньше
 // hardcoded `_NovaTuple{N}` в general-case destructure ломал тип.
 
-module plan59.f4_let_destructure_mono
+module nova_tests.plan59
 
 
-fn make_pair(a int, b int) -> (int, int) {
+fn make_pair1(a int, b int) -> (int, int) {
     (a, b)
 }
 
@@ -16,7 +16,7 @@ fn make_typed_pair() -> (str, int) {
 
 
 test "let destructure from fn returning (int, int)" {
-    ro (x, y) = make_pair(7, 9)
+    ro (x, y) = make_pair1(7, 9)
     assert(x == 7)
     assert(y == 9)
 }

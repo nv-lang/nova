@@ -1,27 +1,27 @@
 // Plan 128.2 Ф.2 P1 — mut binding + member chain + mut method = OK.
 //
-// `mut b` binding, `Wrapper { mut inner Vec3 }`, b.inner.set_x(42).
+// `mut b` binding, `Wrapper2 { mut inner Vec32 }`, b.inner.set_x(42).
 // Verifies positive path: chain-walking enforcement allows mutation
 // когда root binding `mut` и intermediate field `mut`.
 
-module plan128_2.p1_mut_binding_member_chain_mut_method_ok
+module nova_tests.plan128_2
 
-type Vec3(x int, y int, z int)
+type Vec32(x int, y int, z int)
 
-fn Vec3 mut @set_x(v int) -> () {
+fn Vec32 mut @set_x(v int) -> () {
     @x = v
 }
 
-type Wrapper {
-    mut inner Vec3
+type Wrapper2 {
+    mut inner Vec32
 }
 
-fn Wrapper.new() -> Self => {
-    inner: Vec3(x: 1, y: 2, z: 3),
+fn Wrapper2.new() -> Self => {
+    inner: Vec32(x: 1, y: 2, z: 3),
 }
 
 test "mut binding + member chain + mut method — OK" {
-    mut b = Wrapper.new()
+    mut b = Wrapper2.new()
     b.inner.set_x(42)
     assert(b.inner.x == 42)
     assert(b.inner.y == 2)

@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR duplicate or conflicting verify mode attribute
+//
+// Plan 33.1 Ф.1 (D24): #verify и #unverified взаимоисключающие;
+// два #verify подряд — тоже ошибка.
+
+module neg.parse_duplicate_verify_mode
+
+#verify
+#unverified
+fn conflicting(x int) -> int
+    requires x > 0
+=> x

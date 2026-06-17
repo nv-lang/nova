@@ -17,7 +17,7 @@
 // (tools/stress_bisect.sh) repeats the compiled binary 30x to widen the
 // race window. Do NOT loop inside the test body — each invocation must
 // stay isolated so a single SEGV/timeout doesn't kill the run.
-module concurrency.cancel_during_natural_fire
+module nova_tests.concurrency
 
 test "50 fibers mixed durations + mid-flight cancel — drain <300ms" {
     ro tok = CancelToken.new()

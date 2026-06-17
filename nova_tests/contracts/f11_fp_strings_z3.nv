@@ -10,7 +10,7 @@
 // NaN/infinity исключены из контрактов — это by-design для MVP:
 // полные FP теоремы требуют явного !fp.is_nan(x) в requires.
 
-module contracts.f11_fp_strings_z3
+module nova_tests.contracts
 
 // Тест 1: FP переменная объявляется и используется в контракте.
 // ensures 1.0 > 0.0 — константа, Z3 доказывает тривиально.

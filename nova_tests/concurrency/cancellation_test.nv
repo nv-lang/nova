@@ -16,7 +16,7 @@
 // in _nova_fw_gc_push_other_roots). Marker redirected to
 // [M-mn-worker-fiber-closure-call-stack-overflow] and CLOSED — see docs/plans/151.
 
-module concurrency.cancellation_test
+module nova_tests.concurrency
 
 import std.concurrency.cancellation
 

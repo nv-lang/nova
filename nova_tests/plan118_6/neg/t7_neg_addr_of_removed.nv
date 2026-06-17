@@ -1,0 +1,14 @@
+// Plan 118.6 Ф.5 NEG T7 — addr_of(x) removed → E_ADDR_OF_REMOVED.
+//
+// addr_of() was the old unsafe workaround. After Plan 118.6 Ф.3 it is
+// removed entirely. Use &x instead.
+//
+// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
+
+module neg.t7_neg_addr_of_removed
+
+test "addr_of(x) removed — use &x instead" {
+    ro x = 42
+    ro p = addr_of(x)
+    unsafe { assert(p.read() == 42) }
+}

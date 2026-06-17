@@ -4,7 +4,7 @@
 // Also exercises the args_key sanitizer (record literals contain
 // `{`, `}`, `:`, `;` which must be rewritten в valid C identifier).
 
-module plan123_3_2.v32_record_literal_args_ok
+module nova_tests.plan123_3_2
 
 type Color {
     ro r int
@@ -12,27 +12,27 @@ type Color {
     ro b int
 }
 
-type Pixel {
+type Pixel4 {
     ro base int
 }
 
 #pure
-fn Pixel @with_color(c Color) -> int {
+fn Pixel4 @with_color(c Color) -> int {
     @base + c.r + c.g + c.b
 }
 
-fn Pixel @use_twice() -> int {
+fn Pixel4 @use_twice() -> int {
     ro a = @with_color(Color{r: 0, g: 0, b: 255})
     ro b = @with_color(Color{r: 0, g: 0, b: 255})
     a + b
 }
 
-fn Pixel.new(base int) -> Pixel {
-    Pixel { base }
+fn Pixel4.new(base int) -> Pixel4 {
+    Pixel4 { base }
 }
 
 test "V3.2: record-literal arg pure-call is cached" {
-    ro p = Pixel.new(10)
+    ro p = Pixel4.new(10)
     ro got = p.use_twice()
     // with_color = 10 + 0 + 0 + 255 = 265; doubled = 530.
     assert(got == 530)

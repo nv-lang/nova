@@ -13,21 +13,21 @@
 //   4. nv_compose_suppressed(&body_frame, on_exit error) appends к chain.
 //   5. nova_rethrow_with_suppressed(&body_frame) — body remains primary.
 
-module plan110.on_exit_throws_compose_v1_1
+module nova_tests.plan110
 
 import std.prelude.errors
 
-type ComposingResource { ro id int }
-fn ComposingResource.new(id int) -> ComposingResource => { id }
+type ComposingResource3 { ro id int }
+fn ComposingResource3.new(id int) -> ComposingResource3 => { id }
 // on_exit throws regardless of outcome.
-fn ComposingResource consume @on_exit(_outcome ScopeOutcome) Fail[str] -> () {
+fn ComposingResource3 consume @on_exit(_outcome ScopeOutcome) Fail[str] -> () {
     throw "cleanup-err"
 }
 
 // Body throws "body-err"; on_exit then throws "cleanup-err".
 // D193 R5: composed MultiError {primary: body-err, suppressed: [cleanup-err]}.
 fn use_double_throw() Fail[str] -> int {
-    consume r = ComposingResource.new(99) {
+    consume r = ComposingResource3.new(99) {
         throw "body-err"
         return r.id
     }

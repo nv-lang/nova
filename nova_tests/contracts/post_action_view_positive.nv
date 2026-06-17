@@ -4,9 +4,9 @@
 // Handler: SetBalance assigns store = amount; balance reads store.
 // TrivialBackend не может доказать x==x после symbolic rewrite — нужен Z3.
 
-module contracts.post_action_view_positive
+module nova_tests.contracts
 
-type Db effect {
+type Db10 effect {
     SetBalance(id int, amount int)
     #pure balance(id int) -> int
     axiom after_set(id, x) => post(SetBalance(id, x))(balance(id)) == x
@@ -14,11 +14,11 @@ type Db effect {
 
 test "post action view symbolic exec" {
     mut store = 0
-    with #verify Db = effect Db {
+    with #verify Db10 = effect Db10 {
         SetBalance(id, amount) { store = amount }
         balance(id) => store
     } {
-        Db.SetBalance(1, 42)
-        assert(Db.balance(1) == 42)
+        Db10.SetBalance(1, 42)
+        assert(Db10.balance(1) == 42)
     }
 }

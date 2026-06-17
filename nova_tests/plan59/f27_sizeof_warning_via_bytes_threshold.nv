@@ -5,7 +5,7 @@
 // arity > 5). Edge-case test что estimator корректно sum'ит struct
 // types (nova_str = 16 bytes, не pointer-8).
 
-module plan59.f27_sizeof_warning_via_bytes_threshold
+module nova_tests.plan59
 
 
 fn make_str_octuple() -> (str, str, str, str, str, str, str, str) {

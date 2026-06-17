@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR consume
+//
+// Plan 127 Ф.5 — NEG: consume binding + later `&v`. Generic D131
+// use-after-consume catches это (along with Plan 127 specialized error
+// E_VALUE_RECORD_ESCAPE_AFTER_CONSUME — фокус на pattern recognition).
+module neg.t15_neg_consume_drain_then_addr
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+fn bad() -> f64 {
+    consume v = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+    ro _p = unsafe { &v }
+    1.0
+}

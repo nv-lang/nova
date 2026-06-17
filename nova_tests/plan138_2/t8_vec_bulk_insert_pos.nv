@@ -8,7 +8,7 @@
 // [M-138.2-bulk-insert-overload]). Exercises splice@middle, splice@0,
 // splice@len (== append), u8 stride-1, and self-splice.
 
-module plan138_2.t8_vec_bulk_insert_pos
+module nova_tests.plan138_2
 
 import std.collections.vec.{Vec}
 

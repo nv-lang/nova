@@ -10,7 +10,7 @@
 // produced by `@flt` (which already returns `FiltIt[Self, U]`) — must have the
 // EXACT SAME mangled C type as the declared param, or C reports an incompatible
 // argument. This was the param-side companion of the return-side bug.
-module self_nested.repro_param
+module nova_tests.self_nested
 
 import std.collections.vec.{Vec, VecIter}
 

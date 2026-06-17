@@ -5,18 +5,18 @@
 // REQUIRES_SMT_BACKEND trivial
 // EXPECT_COMPILE_WARNING W2402
 
-module contracts.axiom_consistency_w2402_trivial
+module nova_tests.contracts
 
-type Flag effect {
+type Flag1 effect {
     #pure enabled() -> bool
     axiom always_false() => enabled() == false
 }
 
-fn check() -> bool
+fn check1() -> bool
 {
     true
 }
 
 test "axiom consistency trivial → W2402" {
-    assert(check())
+    assert(check1())
 }

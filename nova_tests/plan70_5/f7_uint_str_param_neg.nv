@@ -5,11 +5,11 @@
 //
 // Параллель Rust: `fn f(x: &str) {}; f(u64::MAX)` — compile error.
 
-module plan70_5.f7_uint_str_param_neg
+module nova_tests.plan70_5
 
 fn format_str(s str) -> str { s }
 
 // EXPECT_CC_ERROR incompatible type
-fn bad() -> str {
+fn bad2() -> str {
     format_str(uint.MAX)
 }

@@ -3,7 +3,7 @@
 // Bound K methods (key.hash(), key.eq()) resolve через mono path
 // (для concrete K) или vtable (для erased generic body).
 
-module plan56.f1_hashmap_clone_basic
+module nova_tests.plan56
 
 import std.collections.hashmap.{HashMap}
 

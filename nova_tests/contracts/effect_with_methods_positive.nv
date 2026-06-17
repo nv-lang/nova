@@ -1,8 +1,8 @@
 // Ф.28.3 positive (Plan 33.6): effect с methods → no W2402 empty.
 
-module contracts.effect_with_methods_positive
+module nova_tests.contracts
 
-type Logger effect {
+type Logger2 effect {
     log(msg str)
 }
 

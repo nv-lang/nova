@@ -4,21 +4,21 @@
 // scope-block parses + type-checks + codegen эмитит init binding +
 // body emit + on_exit placeholder. Acceptance A110.1.1.a / A110.1.4.a.
 
-module plan110.parse_consume_scope_basic
+module nova_tests.plan110
 
 // Минимальный Consumable[never] resource type для scope-block init.
-type DummyResource {
+type DummyResource3 {
     ro id int
 }
 
-fn DummyResource.new(id int) -> DummyResource => { id }
+fn DummyResource3.new(id int) -> DummyResource3 => { id }
 
-fn DummyResource consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn DummyResource3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 // Basic scope-block — parser scaffold + AST variant existence.
 fn use_resource() -> int {
     mut result = 0
-    consume r = DummyResource.new(42) {
+    consume r = DummyResource3.new(42) {
         result = r.id
     }
     result

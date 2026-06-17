@@ -2,9 +2,9 @@
 // Ф.2: infer_expr_type(Throw) -> Some(never). Ф.3: infer_block_trailing_typeref
 // returns never для divergent trailing. Ф.1: assignable(never, T) -> Ok.
 
-module plan125_1.throw_in_let_typed
+module nova_tests.plan125_1
 
-fn pick(c bool) Fail -> str {
+fn pick3(c bool) Fail -> str {
     ro x str = if c {
         "fine"
     } else {
@@ -17,7 +17,7 @@ test "typed let with throw branch" {
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {
-        ro s = pick(true)
+        ro s = pick3(true)
         assert(s == "fine")
     }
 }

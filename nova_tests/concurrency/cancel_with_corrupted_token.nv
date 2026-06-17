@@ -28,7 +28,7 @@
 // Expected: все test'ы PASS (intent recorded, no SEGV, no abort). Любое
 // падение в этих сценариях = latent UAF/wild-write в cancel API.
 
-module concurrency.cancel_with_corrupted_token
+module nova_tests.concurrency
 
 
 // ──────────────────────────────────────────────────────────────────────────

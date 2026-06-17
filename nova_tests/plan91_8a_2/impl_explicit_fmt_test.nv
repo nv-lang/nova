@@ -1,28 +1,28 @@
-module plan91_8a_2.impl_explicit_fmt_test
+module nova_tests.plan91_8a_2
 
 // Plan 91.9 acceptance: #impl(Display) с explicit @display method (not via
 // default body). Verification finds @display directly, no default-body
 // satisfiability check needed.
 
 #impl(Display)
-type Tag { name str }
+type Tag3 { name str }
 
-fn Tag @display(mut w Write) -> () {
-    w.write("Tag(")
+fn Tag3 @display(mut w Write) -> () {
+    w.write("Tag3(")
     w.write(@name)
     w.write(")")
 }
 
 test "verified #impl(Display) with explicit @display" {
-    ro t = Tag { name: "hello" }
+    ro t = Tag3 { name: "hello" }
     // Bare call works (explicit method, не synth)
     consume sb = StringBuilder.new()
     t.display(sb)
-    assert(sb.as_str() == "Tag(hello)")
+    assert(sb.as_str() == "Tag3(hello)")
 }
 
 test "explicit @display routes through interpolation directly" {
-    ro t = Tag { name: "world" }
+    ro t = Tag3 { name: "world" }
     ro s = "got ${t}"
-    assert(s == "got Tag(world)")
+    assert(s == "got Tag3(world)")
 }

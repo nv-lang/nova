@@ -1,6 +1,6 @@
 // Ф.27.2 (Plan 33.6): boolean absorption `X ∧ (X ∨ Y) = X`.
 
-module contracts.trivial_absorption_positive
+module nova_tests.contracts
 
 #verify
 fn absorb_and(a bool, b bool) -> bool

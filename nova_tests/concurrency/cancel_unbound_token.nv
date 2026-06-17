@@ -12,7 +12,7 @@
 // Гарантирует что Plan 83.11 централизованный I/O driver не сломал
 // pre-bind cancel path: токен может быть создан, cancel'ed, и только
 // потом передан в supervised(cancel:) — scope сразу видит intent.
-module concurrency.cancel_unbound_token
+module nova_tests.concurrency
 
 
 // ──────────────────────────────────────────────────────────────────────────

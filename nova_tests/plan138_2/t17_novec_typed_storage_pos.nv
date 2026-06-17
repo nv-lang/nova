@@ -1,13 +1,13 @@
 // Plan 138.2 Ф.0-final — t17: typed (non-erased) composite storage, Vec-free.
 //
 // Under the universal flip a Vec-free unit storing COMPOSITE elements
-// (`[]Option[int]`, `[]Point`, `[][]int`) gets TYPED storage in the
+// (`[]Option[int]`, `[]Point2`, `[][]int`) gets TYPED storage in the
 // `Nova_Vec____<elem>*` buffer — NOT int64-slot erasure. Field/element reads
 // recover the real typed value. No `import std.collections.vec`.
 
-module plan138_2.t17_novec_typed_storage_pos
+module nova_tests.plan138_2
 
-type Point {
+type Point2 {
     x i64
     y i64
 }
@@ -27,10 +27,10 @@ test "[]Option[int] stores typed Option elements" {
     }
 }
 
-test "[]Point stores typed record elements, field read back" {
-    mut pts []Point = []
-    pts.push(Point { x: 1, y: 2 })
-    pts.push(Point { x: 3, y: 4 })
+test "[]Point2 stores typed record elements, field read back" {
+    mut pts []Point2 = []
+    pts.push(Point2 { x: 1, y: 2 })
+    pts.push(Point2 { x: 3, y: 4 })
     assert(pts.len() == 2)
     assert(pts[0].x == 1)
     assert(pts[1].y == 4)

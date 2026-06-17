@@ -1,0 +1,18 @@
+// Plan 128 Ф.4 T7 — primitive `int` cannot have mut-methods.
+//
+// EXPECT_COMPILE_ERROR E_PRIMITIVE_MUT_METHOD
+//
+// Same rationale as T6: `int` is a scalar, by-value receiver, no
+// observable in-place mutation possible.
+
+module neg.t7_primitive_int_mut_method_neg
+
+fn int mut @inc(by int) -> () {
+    @ = @ + by
+}
+
+test "should not compile: fn int mut @inc" {
+    mut n = 5
+    n.inc(10)
+    assert(n == 15)
+}

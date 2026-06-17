@@ -1,6 +1,6 @@
 // Plan 114.4.4 Ф.5 positive: size_of[T]() intrinsic для primitive types.
 
-module plan114_4_4.size_of_primitives_ok
+module nova_tests.plan114_4_4
 
 const SIZE_INT = size_of[int]()
 const SIZE_BOOL = size_of[bool]()

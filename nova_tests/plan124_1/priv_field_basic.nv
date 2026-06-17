@@ -1,7 +1,7 @@
 // Plan 124.1 Ф.1 — positive: per-field priv modifier parses + compiles.
 // V1: parser/AST infrastructure (enforcement = followup marker
 // [M-124.1-checker-enforcement]).
-module plan124_1.priv_field_basic
+module nova_tests.plan124_1
 
 export type Account {
     priv mut money f64

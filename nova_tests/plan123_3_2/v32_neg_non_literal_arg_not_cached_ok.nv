@@ -4,18 +4,18 @@
 // short-circuits on non-literal nested arg. This is positive
 // behavior — программа компилится и работает идентично без cache.
 
-module plan123_3_2.v32_neg_non_literal_arg_not_cached_ok
+module nova_tests.plan123_3_2
 
-type Box {
+type Box4 {
     ro base int
 }
 
 #pure
-fn Box @sum_pair_with(t (int, int), n int) -> int {
+fn Box4 @sum_pair_with(t (int, int), n int) -> int {
     @base + t.0 + t.1 + n
 }
 
-fn Box @uses_var() -> int {
+fn Box4 @uses_var() -> int {
     ro v = 7
     // First arg is (v, 2) — `v` is не literal → V3.2 reject → no cache.
     // Both calls still execute correctly (no eligibility = no cache,
@@ -25,12 +25,12 @@ fn Box @uses_var() -> int {
     a + b
 }
 
-fn Box.new(b int) -> Box {
-    Box { base: b }
+fn Box4.new(b int) -> Box4 {
+    Box4 { base: b }
 }
 
 test "V3.2 NEG: non-literal tuple element bypasses cache" {
-    ro x = Box.new(10)
+    ro x = Box4.new(10)
     ro got = x.uses_var()
     // 10 + 7 + 2 + 100 = 119; doubled = 238.
     assert(got == 238)

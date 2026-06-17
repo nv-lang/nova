@@ -1,6 +1,6 @@
 // 12_ranges_for.nv — range-литералы (D58), for-in
 
-module types.ranges_for
+module nova_tests.types
 
 test "range exclusive 0..n" {
     mut sum = 0

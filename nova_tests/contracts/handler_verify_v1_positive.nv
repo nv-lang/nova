@@ -2,9 +2,9 @@
 // статическим axiom'ом. Axiom `value() >= 0` доказуем потому что
 // handler body `=> 0` (константа 0 >= 0 — тавтология для TrivialBackend).
 
-module contracts.handler_verify_v1_positive
+module nova_tests.contracts
 
-type Counter effect {
+type Counter5 effect {
     Increment()
     #pure value() -> int
     axiom non_negative() => value() >= 0
@@ -12,11 +12,11 @@ type Counter effect {
 
 test "#verify handler с тривиальным static axiom компилируется" {
     mut n = 0
-    with #verify Counter = effect Counter {
+    with #verify Counter5 = effect Counter5 {
         Increment() { n = n + 1 }
         value() => 0
     } {
-        Counter.Increment()
-        assert(Counter.value() == 0)
+        Counter5.Increment()
+        assert(Counter5.value() == 0)
     }
 }

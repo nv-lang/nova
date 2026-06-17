@@ -11,10 +11,10 @@
 // На malloc-backend: gc.heap_size() возвращает 0 (honest sentinel) →
 // тест проходит тривиально. Реальный GC-test — под boehm.
 
-module plan55.f1_closure_array_gc_stress
+module nova_tests.plan55
 
 
-fn run_one() -> int {
+fn run_one2() -> int {
     mut arr []fn() -> int = []
     for i in 0..1000 {
         arr.push(|| i + 1)
@@ -29,13 +29,13 @@ fn run_one() -> int {
 
 test "1000 closures × 50 циклов — heap bounded" {
     // Warm-up + reset
-    ro _ = run_one()
+    ro _ = run_one2()
     gc.collect()
     gc.reset_stats()
     ro baseline = gc.heap_size()
 
     for _ in 0..50 {
-        ro _ = run_one()
+        ro _ = run_one2()
     }
     gc.collect()
     ro after = gc.heap_size()

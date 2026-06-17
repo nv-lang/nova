@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// Plan 79 Ф.1: integer literal assigned to a `str` annotation.
+
+module neg.assign_let_int_to_str
+
+fn run() -> int {
+    ro s str = 5
+    0
+}

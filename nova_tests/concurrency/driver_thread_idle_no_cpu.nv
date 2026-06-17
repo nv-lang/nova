@@ -29,10 +29,10 @@
 // generous bounds applied. Slack accounts for `nova test --jobs 16`
 // oversubscription (LOAD_SLACK pattern from sleep_precision_bench.nv).
 
-module concurrency.driver_thread_idle_no_cpu
+module nova_tests.concurrency
 
 // Lower bound: timer may fire ~15ms early on Windows.
-const UNDER_SLACK_MS int = 20
+const UNDER_SLACK_MS1 int = 20
 
 // Upper bound: under --jobs 16 oversubscription, OS scheduler can
 // add 100-200ms latency. We're catching gross busy-spin (sleep stuck
@@ -48,7 +48,7 @@ test "100ms main-thread sleep, no fibers — completes near target" {
     ro elapsed = Time.now() - t0
 
     // Lower bound: sleep actually waited (driver didn't short-circuit).
-    assert(elapsed >= 100 - UNDER_SLACK_MS)
+    assert(elapsed >= 100 - UNDER_SLACK_MS1)
     // Upper bound: driver didn't busy-spin to the point of starving
     // the main thread for hundreds of ms.
     assert(elapsed < 100 + OVER_SLACK_MS)
@@ -65,7 +65,7 @@ test "successive idle sleeps don't accumulate driver overhead" {
 
     // Theoretical: 5 × 20 = 100ms. Allow generous slack for Windows
     // timer gran (×5 iterations = up to 5×15ms drift) + oversubscription.
-    assert(elapsed >= 100 - UNDER_SLACK_MS)
+    assert(elapsed >= 100 - UNDER_SLACK_MS1)
     assert(elapsed < 100 + OVER_SLACK_MS)
 }
 

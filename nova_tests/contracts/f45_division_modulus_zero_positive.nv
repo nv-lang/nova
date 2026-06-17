@@ -3,7 +3,7 @@
 // Ф.45.2: 0 / a → 0
 // Ф.45.3: 0 % a → 0
 
-module contracts.f45_division_modulus_zero_positive
+module nova_tests.contracts
 
 #verify
 fn div_by_neg_one(x int) -> int

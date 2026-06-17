@@ -6,7 +6,7 @@
 //   `*mut *Node`     = pointer-to-mut (pointer-to-ro Node)
 //   `* *mut Node`    = ro pointer to a mut-pointer (`**mut Node`)
 
-module plan118.t1_3_chain_multi_level_ok
+module nova_tests.plan118
 
 type Node {
     ro value i64

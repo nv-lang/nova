@@ -2,7 +2,7 @@
 // method (replacement for `@minus(Monotonic)` operator overload — see
 // Эволюция note in std/time/duration.nv).
 
-module plan65.f12_g_close_at_elapsed_since
+module nova_tests.plan65
 
 import std.time.duration
 

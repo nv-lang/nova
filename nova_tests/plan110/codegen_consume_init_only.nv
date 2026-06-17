@@ -7,19 +7,19 @@
 // Acceptance A110.1.4.a: init evaluates, binding accessible в body,
 // scope executes без runtime error.
 
-module plan110.codegen_consume_init_only
+module nova_tests.plan110
 
-type SimpleRes {
+type SimpleRes3 {
     ro id int
 }
 
-fn SimpleRes.new(id int) -> SimpleRes => { id }
+fn SimpleRes3.new(id int) -> SimpleRes3 => { id }
 
-fn SimpleRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn SimpleRes3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 fn use_simple() -> int {
     mut result = 0
-    consume r = SimpleRes.new(99) {
+    consume r = SimpleRes3.new(99) {
         result = r.id
     }
     result

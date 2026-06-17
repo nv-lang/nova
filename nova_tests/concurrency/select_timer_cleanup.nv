@@ -16,7 +16,7 @@
 // вместо nova_alloc — снимает Boehm conservative scan dependency,
 // решает Windows boundary ~35 SEGV. Восстановлен оригинальный 50-iter.
 
-module concurrency.select_timer_cleanup
+module nova_tests.concurrency
 
 import std.time.duration
 

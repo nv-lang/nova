@@ -23,7 +23,7 @@
 // AUTOARM=0 directive removed — test passes under full M:N armed mode.
 
 
-module concurrency.time_handler
+module nova_tests.concurrency
 
 // ================================================================
 // SECTION 1: with Time handler overrides default

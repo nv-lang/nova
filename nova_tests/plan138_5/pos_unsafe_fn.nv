@@ -2,7 +2,7 @@
 // valid (only the PREFIX-before-`*` is forbidden). `*unsafe fn(...)` is the
 // postfix pointee-unsafe form applied to a fn-pointer.
 
-module plan138_5.pos_unsafe_fn
+module nova_tests.plan138_5
 
 unsafe fn risky(x i64) -> i64 {
     x + 100

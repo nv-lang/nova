@@ -8,7 +8,7 @@
 //
 // Покрывает: Iterable[u8], Iterable[bool], Iterable[i32], Iterable[str], Iterable[(int,str)].
 
-module syntax.for_iter_typed
+module nova_tests.syntax
 
 
 // Iterable[u8] — счётчик байтов 0..n.

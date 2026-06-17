@@ -2,7 +2,7 @@
 // Recursive synthesis: nested record clone calls inner synthesized `@clone`.
 // Mutating the deep-copied inner field of the clone must not affect the
 // original's inner record. AC-126.2.8.
-module plan126_2.p7_nested_record_clone_deep_ok
+module nova_tests.plan126_2
 
 #impl(Clone + Equal)
 type Inner {

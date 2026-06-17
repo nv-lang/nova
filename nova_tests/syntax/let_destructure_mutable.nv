@@ -7,12 +7,12 @@
 // Этот тест проверяет что mutable destructure действительно делает
 // каждое поле mutable-bound (можно переприсвоить) и source record
 // не затрагивается (field-copy semantics).
-module syntax.let_destructure_mutable
+module nova_tests.syntax
 
-type Pair { x int, y int }
+type Pair1 { x int, y int }
 
 test "let mut { x, y } binds mutable copies" {
-    ro p = Pair { x: 10, y: 20 }
+    ro p = Pair1 { x: 10, y: 20 }
     mut { x, y } = p
     assert(x == 10)
     assert(y == 20)
@@ -27,7 +27,7 @@ test "let mut { x, y } binds mutable copies" {
 }
 
 test "let mut single-field destructure" {
-    ro p = Pair { x: 5, y: 7 }
+    ro p = Pair1 { x: 5, y: 7 }
     mut { x, .. } = p
     assert(x == 5)
     x = 999
@@ -36,7 +36,7 @@ test "let mut single-field destructure" {
 }
 
 test "immutable destructure stays immutable (regression baseline)" {
-    ro p = Pair { x: 1, y: 2 }
+    ro p = Pair1 { x: 1, y: 2 }
     ro { x, y } = p
     assert(x == 1)
     assert(y == 2)

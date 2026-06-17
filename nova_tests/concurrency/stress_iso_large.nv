@@ -13,7 +13,7 @@
 //             register).
 // After fix:  any fiber count safe — token kept reachable via ctx_pins
 //             through the entire scope lifetime.
-module concurrency.stress_iso_large
+module nova_tests.concurrency
 
 test "999+1 fibers — token alias regression guard" {
     ro tok = CancelToken.new()

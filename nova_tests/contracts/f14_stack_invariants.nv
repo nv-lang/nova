@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_stack_invariants
+module nova_tests.contracts
 
 // Stack push: size увеличивается на 1.
 #verify

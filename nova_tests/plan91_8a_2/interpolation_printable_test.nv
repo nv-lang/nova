@@ -1,4 +1,4 @@
-module plan91_8a_2.interpolation_printable_test
+module nova_tests.plan91_8a_2
 
 // Plan 91.8a.2 followup: "${m}" interpolation routes через Display.fmt
 // path. Three paths covered:
@@ -7,48 +7,48 @@ module plan91_8a_2.interpolation_printable_test
 //   Path 3: `fn T @into() -> str` — append result.
 
 #impl(Display)
-type Money { cents int }
-fn str.from(m Money) -> str => "Money(" + str.from(m.cents) + ")"
+type Money6 { cents int }
+fn str.from(m Money6) -> str => "Money6(" + str.from(m.cents) + ")"
 
 #impl(Display)
-type Coin { value int }
-fn Coin @into() -> str => "Coin(" + str.from(@value) + ")"
+type Coin12 { value int }
+fn Coin12 @into() -> str => "Coin12(" + str.from(@value) + ")"
 
-// Point has explicit @display — `#impl(Display)` not required (type-checker
+// Point2 has explicit @display — `#impl(Display)` not required (type-checker
 // finds method directly без synthesis). Annotation добавлен для verification.
 // Plan 152.7.1 (D258 AMEND): migrated to Write sink — @display(mut w Write).
 #impl(Display)
-type Point { x int, y int }
-fn Point @display(mut w Write) -> () {
-    w.write("Point(")
+type Point2 { x int, y int }
+fn Point2 @display(mut w Write) -> () {
+    w.write("Point2(")
     w.write(str.from(@x))
     w.write(", ")
     w.write(str.from(@y))
     w.write(")")
 }
 
-test "\"${m}\" with fn str.from(Money) overload" {
-    ro m = Money { cents: 250 }
+test "\"${m}\" with fn str.from(Money6) overload" {
+    ro m = Money6 { cents: 250 }
     ro s = "amount = ${m}"
-    assert(s == "amount = Money(250)")
+    assert(s == "amount = Money6(250)")
 }
 
-test "\"${c}\" with fn Coin @into() -> str" {
-    ro c = Coin { value: 7 }
+test "\"${c}\" with fn Coin12 @into() -> str" {
+    ro c = Coin12 { value: 7 }
     ro s = "got ${c} pcs"
-    assert(s == "got Coin(7) pcs")
+    assert(s == "got Coin12(7) pcs")
 }
 
-test "\"${p}\" with explicit fn Point @display" {
-    ro p = Point { x: 3, y: 4 }
+test "\"${p}\" with explicit fn Point2 @display" {
+    ro p = Point2 { x: 3, y: 4 }
     ro s = "loc=${p}"
-    assert(s == "loc=Point(3, 4)")
+    assert(s == "loc=Point2(3, 4)")
 }
 
 test "multiple interpolations same string" {
-    ro m = Money { cents: 1 }
-    ro c = Coin { value: 2 }
-    ro p = Point { x: 5, y: 6 }
+    ro m = Money6 { cents: 1 }
+    ro c = Coin12 { value: 2 }
+    ro p = Point2 { x: 5, y: 6 }
     ro s = "m=${m} c=${c} p=${p}"
-    assert(s == "m=Money(1) c=Coin(2) p=Point(5, 6)")
+    assert(s == "m=Money6(1) c=Coin12(2) p=Point2(5, 6)")
 }

@@ -7,7 +7,7 @@
 //
 // EXPECT_COMPILE_WARNING W_OPTION_DOUBLE_NESTED
 
-module plan118.t5_warn_option_double_nested
+module nova_tests.plan118
 
 // extern "nova" fn signature — return-type carries the nested Option pattern.
 extern "nova" fn p118_nested_opt() -> Option[Option[*()]]

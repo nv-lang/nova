@@ -2,13 +2,13 @@
 // (concurrent body, fiber aliasing safety). Body executes
 // concurrently per element.
 
-module plan123_2.neg_parallel_for_skip_ok
+module nova_tests.plan123_2
 
-type Cfg {
+type Cfg3 {
     ro factor int
 }
 
-fn Cfg @gather() -> int {
+fn Cfg3 @gather() -> int {
     mut total = 0
     mut i = 0
     while i < 3 {
@@ -18,12 +18,12 @@ fn Cfg @gather() -> int {
     total
 }
 
-fn Cfg.new(f int) -> Cfg {
-    Cfg { factor: f }
+fn Cfg3.new(f int) -> Cfg3 {
+    Cfg3 { factor: f }
 }
 
 test "regular while loop hoists; parallel for body would be skipped" {
-    ro c = Cfg.new(5)
+    ro c = Cfg3.new(5)
     ro r = c.gather()
     // 3 × (5+5) = 30.
     assert(r == 30)

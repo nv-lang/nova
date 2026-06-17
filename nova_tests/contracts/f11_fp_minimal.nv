@@ -1,7 +1,7 @@
 // Minimal FP test - only ensures on constant
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f11_fp_minimal
+module nova_tests.contracts
 
 #verify
 fn always_true_f64(x f64) -> bool

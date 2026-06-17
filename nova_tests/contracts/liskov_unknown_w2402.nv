@@ -2,7 +2,7 @@
 // match в ensures → encoding fail → W2402 + skip Liskov check.
 // EXPECT_COMPILE_WARNING W2402
 
-module contracts.liskov_unknown_w2402
+module nova_tests.contracts
 
 type Branchy effect {
     classify(x int) -> int

@@ -6,16 +6,16 @@
 // (`id`/`id`). С real Z3_mk_func_decl + Z3_mk_app axiom propagation
 // работает независимо от выбора имён.
 
-module contracts.z3_axiom_alpha_rename
+module nova_tests.contracts
 
-type Db effect {
+type Db11 effect {
     #pure balance(id int) -> int
     // Binder `account_id` отличается от парамета функции ниже.
     axiom non_negative(account_id) => balance(account_id) >= 0
 }
 
 #verify
-fn check_balance(id int) Db -> int
+fn check_balance1(id int) Db11 -> int
     ensures balance(id) >= 0
 => 0
 

@@ -6,7 +6,7 @@
 //
 // Closes [M-118.5-arg-coerce-unsafe] POS half.
 
-module plan118_5.t7_unsafe_arg_to_unsafe_param_ok
+module nova_tests.plan118_5
 
 fn accepts_unsafe(x unsafe int) -> () {
     // Body would need unsafe { } to read x (Ф.4 enforcement);

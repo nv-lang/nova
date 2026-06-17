@@ -25,25 +25,25 @@
 //
 // `TryFrom`/`TryInto`/`Result`/`Ok`/`Err` — все из prelude, БЕЗ import.
 
-module plan62.tryfrom_tryinto_from_prelude
+module nova_tests.plan62
 
 
 // ────────────────────────────────────────────────────────────────────
 // 1. TryFrom — static factory, fallible. Удовлетворяет TryFrom[int, str].
 // ────────────────────────────────────────────────────────────────────
 
-type PositiveInt { val int }
+type PositiveInt2 { val int }
 
-fn PositiveInt.make(n int) -> PositiveInt => { val: n }
+fn PositiveInt2.make(n int) -> PositiveInt2 => { val: n }
 
 // TryFrom[int, str] impl: static-метод (как From — `fn Type.try_from`,
 // без `@`). Negative input → Err.
-export fn PositiveInt.try_from(n int) -> Result[PositiveInt, str] =>
-    if n >= 0 { Ok(PositiveInt.make(n)) } else { Err("negative") }
+export fn PositiveInt2.try_from(n int) -> Result[PositiveInt2, str] =>
+    if n >= 0 { Ok(PositiveInt2.make(n)) } else { Err("negative") }
 
 
 test "TryFrom from prelude — Ok discriminant" {
-    ro r = PositiveInt.try_from(42)
+    ro r = PositiveInt2.try_from(42)
     ro is_ok = match r {
         Ok(_) => true
         Err(_) => false
@@ -52,7 +52,7 @@ test "TryFrom from prelude — Ok discriminant" {
 }
 
 test "TryFrom from prelude — Err discriminant" {
-    ro r = PositiveInt.try_from(-1)
+    ro r = PositiveInt2.try_from(-1)
     ro is_ok = match r {
         Ok(_) => true
         Err(_) => false
@@ -62,17 +62,17 @@ test "TryFrom from prelude — Err discriminant" {
 
 
 // ────────────────────────────────────────────────────────────────────
-// 2. TryInto — instance method, fallible. Удовлетворяет TryInto[Feet, str].
+// 2. TryInto — instance method, fallible. Удовлетворяет TryInto[Feet2, str].
 // ────────────────────────────────────────────────────────────────────
 
 type Meters { v int }
-type Feet { v int }
+type Feet2 { v int }
 
-fn Feet.make(v int) -> Feet => { v }
+fn Feet2.make(v int) -> Feet2 => { v }
 
-// TryInto[Feet, str] impl: instance-метод (как Into — `@try_into`).
-export fn Meters @try_into() -> Result[Feet, str] =>
-    if @v >= 0 { Ok(Feet.make(@v * 3)) } else { Err("negative meters") }
+// TryInto[Feet2, str] impl: instance-метод (как Into — `@try_into`).
+export fn Meters @try_into() -> Result[Feet2, str] =>
+    if @v >= 0 { Ok(Feet2.make(@v * 3)) } else { Err("negative meters") }
 
 
 test "TryInto from prelude — Ok discriminant" {
@@ -106,7 +106,7 @@ test "TryInto from prelude — Err discriminant" {
 
 fn _accepts_try_from[T TryFrom[int, str]](_v T) -> () => ()
 
-fn _accepts_try_into[T TryInto[Feet, str]](_v T) -> () => ()
+fn _accepts_try_into[T TryInto[Feet2, str]](_v T) -> () => ()
 
 
 test "TryFrom/TryInto bounds резолвятся через prelude (parse + eligibility)" {

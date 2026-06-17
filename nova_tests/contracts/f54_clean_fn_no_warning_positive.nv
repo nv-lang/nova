@@ -1,7 +1,7 @@
 // Ф.54 (test pack): positive — fn/lemma БЕЗ проблем НЕ должна давать warning.
 // Guards против false-positive lints (Ф.31-Ф.50).
 
-module contracts.f54_clean_fn_no_warning_positive
+module nova_tests.contracts
 
 // Чистая fn: requires + ensures (НЕ только requires) → no Ф.42.4 warning.
 // Содержит ensures с result → no Ф.33.1 tautological warning.

@@ -2,17 +2,17 @@
 // промежуточного binding. Ownership передаётся напрямую; callee
 // обязан consumed внутри.
 
-module plan100_3.consume_ok_rvalue_to_consume_param
+module nova_tests.plan100_3
 
-type Transaction consume {
+type Transaction6 consume {
     id int,
 }
 
-fn Transaction consume @commit() -> () { () }
+fn Transaction6 consume @commit() -> () { () }
 
-fn begin() -> Transaction => { id: 42 }
+fn begin() -> Transaction6 => { id: 42 }
 
-fn close(consume t Transaction) -> () {        // consume-param
+fn close(consume t Transaction6) -> () {        // consume-param
     t.commit()                                  // ownership consumed внутри
 }
 

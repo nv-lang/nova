@@ -4,20 +4,20 @@
 // allows ro+mut combination — «binding ro (no rebind) + content mut
 // (mutate fields)».
 //
-// Acc is heap record (no `value` modifier) — reference type.
+// Acc3 is heap record (no `value` modifier) — reference type.
 // In param position, this is binding context (top-level) — combination OK.
 //
 // Closes [M-118.5-V3-ro-mut-storage-class] reference-type POS.
 
-module plan118_5_v3.t4_ro_mut_ref_type_ok
+module nova_tests.plan118_5_v3
 
-type Acc {
+type Acc3 {
     mut name str
     id i64
 }
 
-extern "nova" fn p_acc(x ro mut Acc) -> ()
-extern "nova" fn p_acc2(y mut ro Acc) -> ()
+extern "nova" fn p_acc(x ro mut Acc3) -> ()
+extern "nova" fn p_acc2(y mut ro Acc3) -> ()
 
 test "ro+mut combination on reference type at binding position OK" {
     assert(1 == 1)

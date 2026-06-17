@@ -4,7 +4,7 @@
 //
 // Positive: 500_000 ns (500 μs) input → actual delay ≥ 1ms.
 
-module plan65.f5_sub_ms_precision
+module nova_tests.plan65
 
 import std.time.duration
 

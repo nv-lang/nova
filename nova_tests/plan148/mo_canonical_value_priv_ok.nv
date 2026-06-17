@@ -3,18 +3,18 @@
 // Canonical type-modifier order is ownership → representation → visibility:
 //   value (rank 1, type-level representation) → priv (rank 2, field-default visibility).
 // `value priv` remains canonical (consume absent, value < priv).
-module plan148.mo_canonical_value_priv_ok
+module nova_tests.plan148
 
-type Point value priv {
+type Point2 value priv {
     pub ro x f64
     pub ro y f64
     tag int
 }
 
-fn Point.new(x f64, y f64, tag int) -> Point => { x, y, tag }
+fn Point2.new(x f64, y f64, tag int) -> Point2 => { x, y, tag }
 
 test "value priv canonical order parses + works" {
-    ro p = Point.new(1.0, 2.0, 7)
+    ro p = Point2.new(1.0, 2.0, 7)
     assert(p.x == 1.0)
     assert(p.y == 2.0)
 }

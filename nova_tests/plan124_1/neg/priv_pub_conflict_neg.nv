@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_PRIV_PUB_CONFLICT
+//
+// Plan 124.1 / D220 — negative: field cannot have both `priv` AND `pub` modifiers.
+// D281: bare `priv` on field = module-private; `priv(type)` = type-private.
+// In both cases, combining with `pub` is a conflict -> E_PRIV_PUB_CONFLICT.
+module neg.priv_pub_conflict_neg
+
+export type X priv {
+    priv pub mut both f64
+}
+
+fn main() -> () { }

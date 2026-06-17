@@ -1,7 +1,7 @@
 // Ф.47.1 (Plan 33.6): readability hint for 5+ AND-conjuncts в contract clause.
 // EXPECT_COMPILE_WARNING W2402
 
-module contracts.f47_long_conjunction_w2402
+module nova_tests.contracts
 
 #verify
 fn complex(x int) -> int

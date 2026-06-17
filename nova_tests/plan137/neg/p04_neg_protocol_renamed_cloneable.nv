@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_PROTOCOL_RENAMED
+//
+// Plan 137 (D237) — NEG P04:
+// `#impl(Cloneable)` → E_PROTOCOL_RENAMED: use `#impl(Clone)`.
+module neg.p04_neg_protocol_renamed_cloneable
+
+#impl(Cloneable)
+type Point {
+    x f64
+    y f64
+}
+
+test "Cloneable is renamed to Clone" {
+    ro p = Point { x: 1.0, y: 2.0 }
+    assert(p.x == 1.0)
+}

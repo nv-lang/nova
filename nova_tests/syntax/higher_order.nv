@@ -4,9 +4,9 @@
 // вручную через for. Эти тесты проверяют что HOF-параметры работают
 // (`fn(int) -> int` как тип параметра, передача lambda, вызов внутри).
 
-module syntax.higher_order
+module nova_tests.syntax
 
-fn map_int(xs []int, f fn(int) -> int) -> []int {
+fn map_int2(xs []int, f fn(int) -> int) -> []int {
     mut r = []
     for x in xs { r.push(f(x)) }
     r
@@ -52,16 +52,16 @@ fn all(xs []int, pred fn(int) -> bool) -> bool {
     true
 }
 
-test "map_int double" {
+test "map_int2 double" {
     ro xs = [1, 2, 3]
-    ro ys = map_int(xs, |x| x * 2)
+    ro ys = map_int2(xs, |x| x * 2)
     assert(ys[0] == 2)
     assert(ys[2] == 6)
 }
 
-test "map_int square" {
+test "map_int2 square" {
     ro xs = [1, 2, 3, 4]
-    ro ys = map_int(xs, |x| x * x)
+    ro ys = map_int2(xs, |x| x * x)
     assert(ys[0] == 1)
     assert(ys[3] == 16)
 }
@@ -120,7 +120,7 @@ test "all" {
 
 test "композиция HOF: map потом filter" {
     ro xs = [1, 2, 3, 4, 5]
-    ro squared = map_int(xs, |x| x * x)
+    ro squared = map_int2(xs, |x| x * x)
     ro big = filter_int(squared, |x| x > 5)
     assert(big.len() == 3)
     assert(big[0] == 9)

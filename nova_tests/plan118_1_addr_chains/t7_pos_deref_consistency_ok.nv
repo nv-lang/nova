@@ -2,14 +2,14 @@
 // and `&((*p).field)` (explicit deref) are the SAME operation and must
 // get the same verdict.
 // (addr_of removed in Plan 118.6 — use & syntax directly.)
-module plan118_1_addr_chains.t7_pos_deref_consistency_ok
+module nova_tests.plan118_1_addr_chains
 
-type Sv {
+type Sv3 {
     ro v i64
 }
 
 test "addr_of through a pointer (auto-deref and explicit *) both accepted" {
-    ro s = Sv { v: 5 }
+    ro s = Sv3 { v: 5 }
     unsafe {
         ro ps = &s
         ro a = &ps.v

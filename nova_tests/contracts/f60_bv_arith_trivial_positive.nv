@@ -5,7 +5,7 @@
 // Trivial backend does not support BV theory → UnsupportedTheory unknown.
 // Contract parsing + type mapping must succeed (no crash).
 
-module contracts.f60_bv_arith_trivial_positive
+module nova_tests.contracts
 
 fn add_u32(a u32, b u32) -> u32
     requires a >= 0 as u32

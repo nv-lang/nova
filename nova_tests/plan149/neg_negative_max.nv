@@ -13,7 +13,7 @@
 // ENV NOVA_MAXPROCS=1
 // EXPECT_STDERR invalid NOVA_MAX_FIBERS
 
-module plan149.neg_negative_max
+module nova_tests.plan149
 
 test "negative NOVA_MAX_FIBERS: warn + default, program still runs" {
     mut total = 0

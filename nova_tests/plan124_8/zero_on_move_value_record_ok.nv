@@ -6,17 +6,17 @@
 // Note: пре-существующий bug `mut t = Type { ... }` direct literal
 // для value-records (отдельный followup [M-124.8-value-record-mut-literal-codegen]) —
 // тест обходит через `ro` + constructor pattern (поддерживаемый flow).
-module plan124_8.zero_on_move_value_record_ok
+module nova_tests.plan124_8
 
 #zero_on_move
-type Token value {
+type Token2 value {
     bits int
 }
 
-fn Token.new(b int) -> Token =>
+fn Token2.new(b int) -> Token2 =>
     { bits: b }
 
 test "zero_on_move + value record (ro binding via constructor)" {
-    ro t = Token.new(3735928559)
+    ro t = Token2.new(3735928559)
     assert(t.bits == 3735928559)
 }

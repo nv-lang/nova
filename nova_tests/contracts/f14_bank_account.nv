@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_bank_account
+module nova_tests.contracts
 
 // Deposit: баланс увеличивается на amount.
 #verify
@@ -17,7 +17,7 @@ fn deposit(balance int, amount int) -> int
 
 // Withdraw: баланс уменьшается на amount (достаточно средств).
 #verify
-fn withdraw(balance int, amount int) -> int
+fn withdraw1(balance int, amount int) -> int
     requires amount > 0 && amount <= balance
     ensures result == balance - amount
     ensures result >= 0
@@ -45,7 +45,7 @@ fn balance_nonneg(balance int, amount int) -> int
 
 test "f14 bank account" {
     assert(deposit(100, 50) == 150)
-    assert(withdraw(100, 30) == 70)
+    assert(withdraw1(100, 30) == 70)
     assert(transfer_total(100, 50, 30) == 150)
     assert(balance_nonneg(100, 100) == 0)
 }

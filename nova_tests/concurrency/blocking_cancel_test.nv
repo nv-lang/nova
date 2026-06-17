@@ -8,7 +8,7 @@
 //     result discarded — industry-standard (Go/tokio).
 // In both cases after_work_cb always fires → fiber woken, no deadlock.
 
-module concurrency.blocking_cancel_test
+module nova_tests.concurrency
 
 #blocking fn _busy_work(upto int) -> int {
     mut acc = 0
@@ -20,7 +20,7 @@ module concurrency.blocking_cancel_test
     acc
 }
 
-fn busy(upto int) -> int {
+fn busy1(upto int) -> int {
     _busy_work(upto)
 }
 
@@ -32,7 +32,7 @@ test "blocking: offload in supervised(cancel:) — no cancel, runs normally" {
     ro tok = CancelToken.new()
     mut got = 0
     supervised(cancel: tok) {
-        spawn { got = busy(50000) }
+        spawn { got = busy1(50000) }
     }
     // stop_cb registration in pending table does not break normal path.
     assert(got == 50000)
@@ -53,7 +53,7 @@ test "blocking: offload + scope cancel — after_work_cb always wakes, no deadlo
         supervised(cancel: tok) {
             spawn { tok.cancel() }
             spawn {
-                ro _ = busy(50000)
+                ro _ = busy1(50000)
             }
         }
     }
@@ -69,7 +69,7 @@ test "blocking: cancel() on finished scope after offload — harmless no-op" {
     ro tok = CancelToken.new()
     mut got = 0
     supervised(cancel: tok) {
-        spawn { got = busy(30000) }
+        spawn { got = busy1(30000) }
     }
     tok.cancel()
     assert(got == 30000)

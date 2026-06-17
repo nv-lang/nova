@@ -13,20 +13,20 @@
 // ENV NOVA_FIBER_STACK=2MB
 // ENV NOVA_MAXPROCS=1
 
-module plan149.pos_env_stack_2mb
+module nova_tests.plan149
 
-fn rec_sum(n int) -> int {
+fn rec_sum2(n int) -> int {
     if n <= 0 {
         0
     } else {
-        n + rec_sum(n - 1)
+        n + rec_sum2(n - 1)
     }
 }
 
 test "NOVA_FIBER_STACK=2MB: fiber recurses and returns" {
     mut r = 0
     supervised {
-        spawn { r = rec_sum(1500) }
+        spawn { r = rec_sum2(1500) }
     }
     // 1500 * 1501 / 2 = 1125750
     assert(r == 1125750)

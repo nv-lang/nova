@@ -18,7 +18,7 @@
 //
 // ENV NOVA_AUTOARM=0
 
-module concurrency.mn_runtime_smoke
+module nova_tests.concurrency
 
 test "runtime not initialized by default" {
     assert(!runtime.is_initialized())

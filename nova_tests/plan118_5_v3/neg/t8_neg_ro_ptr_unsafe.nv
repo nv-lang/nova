@@ -1,0 +1,12 @@
+// Plan 118.5 V3 T8 → RECODED by Plan 138.5 (2026-06-11).
+//
+// `ro * unsafe int` — the leading `ro` before `*` is a prefix pointer
+// modifier, now forbidden. (Under the retired V3 model this was
+// E_MODIFIER_ORDER; the prefix-pointer ban now fires first.) Migrate →
+// `*ro unsafe int` (postfix pointee chain).
+//
+// EXPECT_COMPILE_ERROR E_POINTER_PREFIX_MODIFIER
+
+module neg.t8_neg_ro_ptr_unsafe
+
+extern "nova" fn p(x ro * unsafe int) -> ()

@@ -1,7 +1,7 @@
 // Plan 126.2 Р¤.3 вЂ” RUNTIME POS p4:
 // `#impl(Compare)` auto-derive synthesizes `@compare(other) -> int`
 // (lexicographic if-chain). Returns <0, 0, >0 per field-order. AC-126.2.6.
-module plan126_2.p4_comparable_runtime_ok
+module nova_tests.plan126_2
 
 #impl(Compare + Equal)
 type Ver {

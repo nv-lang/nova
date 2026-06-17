@@ -2,7 +2,7 @@
 // spawn) — диагностируемый no-op на stderr: тюнер опоздал, цель уже
 // зафиксирована и пул поднят. Не abort — существующий пул корректен.
 // EXPECT_STDERR already materialized
-module concurrency.mn_init_after_materialize
+module nova_tests.concurrency
 
 test "init after first spawn is a diagnosed no-op" {
     runtime.init(2)

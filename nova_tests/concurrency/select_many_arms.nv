@@ -6,7 +6,7 @@
 // Подтверждает что compound-literal storage в emit_select работает
 // для значений >>32 без silent zero-fill или зависания.
 
-module concurrency.select_many_arms
+module nova_tests.concurrency
 
 test "select: 100 arms (way beyond former cap=32)" {
     ro c00 = Channel.new(1); ro c01 = Channel.new(1); ro c02 = Channel.new(1); ro c03 = Channel.new(1)

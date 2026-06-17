@@ -5,7 +5,7 @@
 // (Mut inner-wrap к Pointer gives T*; the ro pointee is the bare canon `*T`,
 // `*T ≡ *ro T` per Plan 147 / D246 — explicit `*ro` migrated here).
 
-module plan118_5.t2_chain_canonical_ok
+module nova_tests.plan118_5
 
 type Node {
     val i64

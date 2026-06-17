@@ -4,7 +4,7 @@
 // СОХРАНЯЕТ длину) → frame-safe → И write `v[i]=`, И read `v[i]` элидируются.
 // Корректность не зависит от элизии (проходит и на Trivial).
 
-module plan140_2.b4_writeback_elision_pos
+module nova_tests.plan140_2
 
 import std.collections.vec.{Vec}
 

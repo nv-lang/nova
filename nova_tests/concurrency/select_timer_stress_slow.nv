@@ -14,7 +14,7 @@
 // Также пробует pattern «timer wins сам по себе»: 100 iterations
 // Time.after(1ms) timeout fires — verify timer cleanup после fire тоже OK.
 
-module concurrency.select_timer_stress
+module nova_tests.concurrency
 
 import std.time.duration
 

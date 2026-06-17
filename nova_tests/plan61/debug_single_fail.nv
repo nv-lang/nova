@@ -1,4 +1,4 @@
-module plan61.debug_single_fail
+module nova_tests.plan61
 
 test "simple fail handler with interrupt" {
     mut caught = ""

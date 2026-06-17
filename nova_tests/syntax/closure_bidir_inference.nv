@@ -5,7 +5,7 @@
 // До fix'а: `|x| x` в HOF(fn(str)->str) компилировалось как nova_int → type mismatch.
 // После fix'а: `x` получает тип str из контекста.
 
-module syntax.closure_bidir_inference
+module nova_tests.syntax
 
 // HOF с bool-параметром в closure.
 fn apply_bool_fn(x bool, f fn(bool) -> bool) -> bool {

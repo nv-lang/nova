@@ -5,7 +5,7 @@
 // порядок разрешения Plan 83 §3 П6: explicit > ENV > auto-detect.
 // ENV NOVA_MAXPROCS=3
 
-module concurrency.mn_maxprocs_env
+module nova_tests.concurrency
 
 test "NOVA_MAXPROCS resolved on auto-detect init(0)" {
     runtime.init(0)

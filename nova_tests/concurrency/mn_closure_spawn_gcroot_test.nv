@@ -16,7 +16,7 @@
 // This fixture must run armed at the default worker count. Do NOT add a
 // `// ENV NOVA_AUTOARM=0` directive — that would mask the very bug it guards.
 
-module concurrency.mn_closure_spawn_gcroot_test
+module nova_tests.concurrency
 
 import std.concurrency.cancellation
 

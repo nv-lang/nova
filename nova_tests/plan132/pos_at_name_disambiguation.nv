@@ -4,24 +4,24 @@
 // Both forms are unambiguous and work correctly even when field and method share a name.
 // Plan 132.1 fix: @name() self-call now generates correct Nova_T_method_name(nova_self, ...).
 
-module plan132.pos_at_name_disambiguation
+module nova_tests.plan132
 
-type Counter { priv mut n int, priv mut len int }
+type Counter6 { priv mut n int, priv mut len int }
 
-fn Counter.new() -> Self => { n: 0, len: 0 }
+fn Counter6.new() -> Self => { n: 0, len: 0 }
 
 // @len() method: returns field value via @len (no parens = field access)
-fn Counter @len() -> int => @len
+fn Counter6 @len() -> int => @len
 
 // @inc(): increments both n and len fields using @field (no parens = field)
-fn Counter @inc() { @n = @n + 1; @len = @len + 1 }
+fn Counter6 @inc() { @n = @n + 1; @len = @len + 1 }
 
 // @call_len(): calls method @len() using @len() (WITH parens = method call)
 // This was the bug site: generated nova_fn__at_len instead of Nova_Counter_method_len
-fn Counter @call_len() -> int => @len()
+fn Counter6 @call_len() -> int => @len()
 
 // @double_len(): uses BOTH @len (field) and @len() (method) in the same body
-fn Counter @double_len() -> int {
+fn Counter6 @double_len() -> int {
     ro field_val = @len          // @len (no parens) = field access
     ro method_val = @len()       // @len() (with parens) = method call
     assert(field_val == method_val)
@@ -29,7 +29,7 @@ fn Counter @double_len() -> int {
 }
 
 test "@name (no parens) = field; @name() (parens) = method call" {
-    mut c = Counter.new()
+    mut c = Counter6.new()
     c.inc()
     c.inc()
     c.inc()

@@ -7,7 +7,7 @@
 // dst), amortised ×2 growth, empty-source no-op, AND that the source is left
 // intact. Parity baseline mirror of plan90_1/append_*.
 
-module plan138_2.t9_vec_bulk_append_parity_pos
+module nova_tests.plan138_2
 
 import std.collections.vec.{Vec}
 

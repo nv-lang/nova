@@ -1,25 +1,25 @@
 // Plan 128 Ф.4 T1 — named tuple mut-receiver: caller observes mutation.
 //
 // Verifies the D215/D226-mirror NovaTuple_X* pointer ABI Ф.2 wired in:
-// `fn Vec3 mut @method` receives `NovaTuple_Vec3*` and writes through
+// `fn Vec320 mut @method` receives `NovaTuple_Vec3*` and writes through
 // it must be visible на caller's binding после метод-call returns.
 
-module plan128.t1_named_tuple_mut_observed_ok
+module nova_tests.plan128
 
-type Vec3(x f64, y f64, z f64)
+type Vec320(x f64, y f64, z f64)
 
-fn Vec3 mut @set_x(v f64) -> () {
+fn Vec320 mut @set_x(v f64) -> () {
     @x = v
 }
 
-fn Vec3 mut @scale_inplace(k f64) -> () {
+fn Vec320 mut @scale_inplace(k f64) -> () {
     @x = @x * k
     @y = @y * k
     @z = @z * k
 }
 
 test "named tuple mut method writes single field — caller observes" {
-    mut v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    mut v = Vec320(x: 1.0, y: 2.0, z: 3.0)
     v.set_x(42.0)
     assert(v.x == 42.0)
     assert(v.y == 2.0)
@@ -27,7 +27,7 @@ test "named tuple mut method writes single field — caller observes" {
 }
 
 test "named tuple mut method writes all fields — caller observes" {
-    mut v = Vec3(x: 1.0, y: 2.0, z: 3.0)
+    mut v = Vec320(x: 1.0, y: 2.0, z: 3.0)
     v.scale_inplace(10.0)
     assert(v.x == 10.0)
     assert(v.y == 20.0)

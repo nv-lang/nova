@@ -4,19 +4,19 @@
 // 1000-iteration loop с consume scope — verifies no resource leak,
 // no double-dispatch, on_exit fires exactly once per iteration.
 
-module plan110.stress_high_freq_loop_t11_8
+module nova_tests.plan110
 
-type LoopRes {
+type LoopRes6 {
     ro id int
 }
 
-fn LoopRes.new(id int) -> LoopRes => { id }
-fn LoopRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn LoopRes6.new(id int) -> LoopRes6 => { id }
+fn LoopRes6 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
-fn run_loop_iterations(n int) -> int {
+fn run_loop_iterations2(n int) -> int {
     mut sum = 0
     for i in 0..n {
-        consume r = LoopRes.new(i) {
+        consume r = LoopRes6.new(i) {
             // Body counts iterations via outer accumulation.
             sum = sum + 1
         }
@@ -26,7 +26,7 @@ fn run_loop_iterations(n int) -> int {
 }
 
 test "Plan 110.6.11 T11.8: 1000-iter ConsumeScope at scale (no leak)" {
-    ro count = run_loop_iterations(1000)
+    ro count = run_loop_iterations2(1000)
     assert(count == 1000)
     // 1000 iterations × 1 scope each completed.
     // Indirect verification of exactly-once + no leak through

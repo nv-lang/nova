@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_graph_bfs
+module nova_tests.contracts
 
 // BFS distance: d[v] <= d[u] + 1 для edge (u, v).
 #verify

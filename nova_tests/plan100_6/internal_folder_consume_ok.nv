@@ -4,20 +4,20 @@
 //
 // Simulated mock: internal impl type + public wrapper.
 
-module plan100_6.internal_folder_consume_ok
+module nova_tests.plan100_6
 
 // "internal/cache.nv" — impl-detail consume type:
-type CacheHandle consume {
+type CacheHandle2 consume {
     id int,
 }
 
-fn CacheHandle consume @invalidate() -> () { () }
-fn CacheHandle_make(id int) -> CacheHandle => { id }
-fn CacheHandle_acquire(id int) -> CacheHandle => CacheHandle_make(id)
+fn CacheHandle2 consume @invalidate() -> () { () }
+fn CacheHandle_make(id int) -> CacheHandle2 => { id }
+fn CacheHandle_acquire(id int) -> CacheHandle2 => CacheHandle_make(id)
 
 // "service.nv" — public API using internal type:
 export type CacheService consume {
-    consume handle CacheHandle,
+    consume handle CacheHandle2,
 }
 
 export fn CacheService consume @shutdown() -> () {

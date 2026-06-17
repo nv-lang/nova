@@ -2,7 +2,7 @@
 // mono'd tuple structs. Без upcoming Plan 59 это failed CC из-за
 // _NovaTuple2 int slots не fit'я в nova_str.
 
-module plan59.f1_for_tuple_in_hashmap
+module nova_tests.plan59
 
 import std.collections.hashmap.{HashMap}
 

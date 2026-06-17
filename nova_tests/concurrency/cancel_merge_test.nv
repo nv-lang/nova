@@ -4,7 +4,7 @@
 // Превосходит Go (нет merge нескольких contexts напрямую),
 // TS AbortSignal.any() (есть, но reason: any), Rust (нет stdlib merge).
 
-module concurrency.cancel_merge_test
+module nova_tests.concurrency
 
 
 test "merge: cancel первого источника отменяет merged" {

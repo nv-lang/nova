@@ -9,7 +9,7 @@
 //
 // Сравнение `c == 'A'` работает (оба int). Match-pattern `match c { 'a' => ... }` тоже.
 
-module types.char_literals
+module nova_tests.types
 
 // ================================================================
 // SECTION 1: ASCII literals
@@ -82,7 +82,7 @@ test "Unicode \\u{1F600} = 128512 (😀)" {
 // SECTION 4: char in match patterns
 // ================================================================
 
-fn classify(c int) -> int {
+fn classify1(c int) -> int {
     match c {
         '0' => 0
         '1' => 1
@@ -93,11 +93,11 @@ fn classify(c int) -> int {
 }
 
 test "match с char literal patterns" {
-    assert(classify(48) == 0)       // '0'
-    assert(classify(49) == 1)       // '1'
-    assert(classify(43) == 100)     // '+'
-    assert(classify(45) == 200)     // '-'
-    assert(classify(99) == -1)
+    assert(classify1(48) == 0)       // '0'
+    assert(classify1(49) == 1)       // '1'
+    assert(classify1(43) == 100)     // '+'
+    assert(classify1(45) == 200)     // '-'
+    assert(classify1(99) == -1)
 }
 
 // ================================================================

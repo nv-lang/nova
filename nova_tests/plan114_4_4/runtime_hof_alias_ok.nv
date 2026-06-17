@@ -1,16 +1,16 @@
 // Plan 114.4.4.3 V4.2 POSITIVE: const fn alias used as first-class.
-// `const DBL = double` then `apply(DBL, ...)` resolves alias → trampoline.
+// `const DBL = double1` then `apply2(DBL, ...)` resolves alias → trampoline.
 
-module plan114_4_4.runtime_hof_alias_ok
+module nova_tests.plan114_4_4
 
-fn double(const x int) -> const int => x * 2
+fn double1(const x int) -> const int => x * 2
 
-const DBL = double
+const DBL = double1
 
-fn apply(f fn(int) -> int, x int) -> int => f(x)
+fn apply2(f fn(int) -> int, x int) -> int => f(x)
 
 test "const fn alias as first-class via trampoline" {
-    // Alias used as Call.arg → resolves to double → double__trampoline.
-    ro r = apply(DBL, 6)
+    // Alias used as Call.arg → resolves to double1 → double__trampoline.
+    ro r = apply2(DBL, 6)
     assert(r == 12)
 }

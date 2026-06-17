@@ -1,6 +1,6 @@
 // Plan 127 Ф.5 — POS: return by-value (no `&`) — escape walker не trigger'ит
 // promotion. Stack-allocated path preserved (Plan 124.8 V2 behavior).
-module plan127.t7_return_by_value_no_promote_ok
+module nova_tests.plan127
 
 type Pair value {
     a int

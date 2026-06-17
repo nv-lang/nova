@@ -3,7 +3,7 @@
 //
 // Spec: spec/decisions/08-runtime.md D26.
 
-module types.numeric_constants
+module nova_tests.types
 
 // ── signed integers ──────────────────────────────────────────────────────
 

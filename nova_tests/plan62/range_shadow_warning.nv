@@ -16,7 +16,7 @@
 // user_shadow_*.nv` (W_PRELUDE_SHADOW С‚РµСЃС‚РёСЂСѓРµС‚СЃСЏ РѕС‚РґРµР»СЊРЅРѕ). Р­С‚РѕС‚ test
 // СЃРѕС…СЂР°РЅС‘РЅ РєР°Рє minimal local sum-type compile check РїРѕСЃР»Рµ D183 cleanup.
 
-module plan62.range_shadow_warning
+module nova_tests.plan62
 
 // Local sum-type Р±РµР· collision СЃ prelude вЂ” basic regression marker
 // С‡С‚Рѕ local sum-type declarations РІСЃС‘ РµС‰С‘ compile after D183 prelude

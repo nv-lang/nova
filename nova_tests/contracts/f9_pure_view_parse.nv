@@ -4,9 +4,9 @@
 // и `axiom name(binders) => <formula>` после ops. Полный SMT-цикл (UF
 // encoding + axiom assert + inconsistency check) — отдельные фазы.
 
-module contracts.f9_pure_view_parse
+module nova_tests.contracts
 
-type Db effect {
+type Db8 effect {
     SetBalance(id int, amount int)
     Withdraw(id int, amount int)
     #pure balance(id int) -> int

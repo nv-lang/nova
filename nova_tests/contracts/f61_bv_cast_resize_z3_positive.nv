@@ -4,7 +4,7 @@
 // zero_extend (unsigned-источник) / sign_extend (signed) / extract (сужение).
 // u8 → u32: zero_extend 24 → значение сохраняется, верхние биты нулевые.
 
-module contracts.f61_bv_cast_resize_z3_positive
+module nova_tests.contracts
 
 // Расширение u8 → u32: результат всегда <= 255 (старший байт занулён).
 #verify

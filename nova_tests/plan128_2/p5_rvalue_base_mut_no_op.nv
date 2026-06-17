@@ -6,24 +6,24 @@
 // mutation lands on temp slot then discarded (semantically no-op,
 // but the code must compile cleanly).
 
-module plan128_2.p5_rvalue_base_mut_no_op
+module nova_tests.plan128_2
 
-type Vec3(x int, y int, z int)
+type Vec38(x int, y int, z int)
 
-fn Vec3 mut @set_x(v int) -> () {
+fn Vec38 mut @set_x(v int) -> () {
     @x = v
 }
 
-type Wrapper {
-    mut inner Vec3
+type Wrapper3 {
+    mut inner Vec38
 }
 
-fn make_w() -> Wrapper => {
-    inner: Vec3(x: 1, y: 2, z: 3),
+fn make_w() -> Wrapper3 => {
+    inner: Vec38(x: 1, y: 2, z: 3),
 }
 
 test "rvalue base + mut method chain — compiles (mutation discarded)" {
-    // make_w() returns a fresh Wrapper; chain through `.inner.set_x()`
+    // make_w() returns a fresh Wrapper3; chain through `.inner.set_x()`
     // mutates a temp. The call must type-check (no E_LOCAL_NOT_MUT
     // because there is no local to check) — chain root is rvalue.
     make_w().inner.set_x(42)

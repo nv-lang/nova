@@ -10,15 +10,15 @@
 //
 // Fires когда method_overloads contains (TypeName, "exit_timeout_ms").
 
-module plan110.with_exit_timeout_level1_v1_1
+module nova_tests.plan110
 
-type Conn { ro h int }
-fn Conn.new(h int) -> Conn => { h }
+type Conn10 { ro h int }
+fn Conn10.new(h int) -> Conn10 => { h }
 
 // Plan 110.9.2 V1.1: per-type exit_timeout_ms — overrides Level 2/3 fallback.
-fn Conn @exit_timeout_ms() -> int => 250
+fn Conn10 @exit_timeout_ms() -> int => 250
 
-fn Conn consume @on_exit(_outcome ScopeOutcome) -> () {
+fn Conn10 consume @on_exit(_outcome ScopeOutcome) -> () {
     return ()
 }
 
@@ -26,7 +26,7 @@ test "Plan 110.9.2 V1.1: Level 1 WithExitTimeout overrides default" {
     // Compilation success verifies codegen emits Level 1 lookup
     // (Nova_Conn_method_exit_timeout_ms(c_binding)) instead of Level 2/3.
     // Runtime behavior validated через consume scope completing normally.
-    consume conn = Conn.new(7) {
+    consume conn = Conn10.new(7) {
         assert(conn.h == 7)
     }
     assert(true)

@@ -1,6 +1,6 @@
 // Plan 137 (D237) — POS P13:
 // `#impl(Clone)` на record → auto-derive @clone.
-module plan137.p13_clone_protocol
+module nova_tests.plan137
 
 #impl(Clone)
 type Vec3 {

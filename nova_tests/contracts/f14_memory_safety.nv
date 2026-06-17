@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_memory_safety
+module nova_tests.contracts
 
 // Bounds check: индекс в диапазоне [0, len).
 #verify

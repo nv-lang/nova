@@ -16,7 +16,7 @@
 // Plan 83.10.2 (2026-05-26): validates cancel+sleep under armed M:N —
 // cross-thread uv_close dispatch via NovaDeferredCloseQueue.
 
-module concurrency.cancel_latency_bench
+module nova_tests.concurrency
 
 test "single fiber cancel-during-sleep — wake latency measurement" {
     ro t0 = Time.now()

@@ -3,7 +3,7 @@
 // `requires y <= -1` ⊢ `ensures result != 0` через upper(y)=-1 < 0.
 // `requires z >= 3; requires z <= 3` ⊢ `ensures result != 5` — pinned z=3, 3 != 5.
 
-module contracts.f29_neq_bounds_positive
+module nova_tests.contracts
 
 #verify
 fn nonzero_positive(x int) -> int

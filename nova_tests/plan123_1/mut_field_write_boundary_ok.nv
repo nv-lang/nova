@@ -2,13 +2,13 @@
 // V1 first-region: reads BEFORE write — eligible for cache;
 // reads AFTER write — stay as direct @F access.
 
-module plan123_1.mut_field_write_boundary_ok
+module nova_tests.plan123_1
 
-type Counter {
+type Counter6 {
     mut value int
 }
 
-fn Counter mut @bump_and_check() -> int {
+fn Counter6 mut @bump_and_check() -> int {
     // Two reads BEFORE write → cache eligible (count=2 ≥ threshold).
     ro doubled = @value + @value
     @value = doubled
@@ -16,12 +16,12 @@ fn Counter mut @bump_and_check() -> int {
     @value
 }
 
-fn Counter.new(v int) -> Counter {
-    Counter { value: v }
+fn Counter6.new(v int) -> Counter6 {
+    Counter6 { value: v }
 }
 
 test "mut field write invalidates cache" {
-    mut c = Counter.new(5)
+    mut c = Counter6.new(5)
     ro r = c.bump_and_check()
     // initial=5, doubled = 5+5=10, @value=10, return @value=10.
     assert(r == 10)

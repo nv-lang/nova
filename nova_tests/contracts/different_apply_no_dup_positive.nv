@@ -1,6 +1,6 @@
 // Ф.28.1 positive (Plan 33.6): разные apply (разные args или разные lemma) → no W2402.
 
-module contracts.different_apply_no_dup_positive
+module nova_tests.contracts
 
 lemma helper(x int)
     ensures result == x

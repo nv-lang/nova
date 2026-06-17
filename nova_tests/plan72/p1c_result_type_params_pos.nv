@@ -9,47 +9,47 @@
 // bindings; emit paths use extract_result_type_params + cast_from_nova_int
 // to emit the right C cast. infer_expr_c_type returns actual T or E.
 
-module plan72.p1c_result_type_params_pos
+module nova_tests.plan72
 
-fn parse_int(s str) -> Result[int, str] => {
+fn parse_int3(s str) -> Result[int, str] => {
     if s == "42" { Ok(42) } else { Err("bad") }
 }
 
-fn parse_bool(s str) -> Result[bool, str] => {
+fn parse_bool3(s str) -> Result[bool, str] => {
     if s == "true" { Ok(true) } else { Err("not a bool") }
 }
 
 test "P1-C — unwrap_or on Result[int, str] Ok path" {
-    ro r = parse_int("42")
+    ro r = parse_int3("42")
     assert(r.unwrap_or(0) == 42)
 }
 
 test "P1-C — unwrap_or on Result[int, str] Err path" {
-    ro r = parse_int("bad")
+    ro r = parse_int3("bad")
     assert(r.unwrap_or(99) == 99)
 }
 
 test "P1-C — unwrap_or_else on Result[int, str] Err path" {
-    ro r = parse_int("bad")
+    ro r = parse_int3("bad")
     ro v = r.unwrap_or_else(fn(e str) -> int => 100)
     assert(v == 100)
 }
 
 test "P1-C — is_ok / is_err on Result[int, str]" {
-    ro ok_r = parse_int("42")
-    ro err_r = parse_int("bad")
+    ro ok_r = parse_int3("42")
+    ro err_r = parse_int3("bad")
     assert(ok_r.is_ok())
     assert(err_r.is_err())
 }
 
 test "P1-C — unwrap_or on Result[bool, str] Err path" {
-    ro r = parse_bool("nope")
+    ro r = parse_bool3("nope")
     ro b = r.unwrap_or(false)
     assert(!b)
 }
 
 test "P1-C — unwrap_or on Result[bool, str] Ok path" {
-    ro r = parse_bool("true")
+    ro r = parse_bool3("true")
     ro b = r.unwrap_or(false)
     assert(b)
 }

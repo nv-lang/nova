@@ -6,9 +6,9 @@
 // Теперь это first-class: infer_expr_type(Throw) -> Some(never),
 // assignable(never, T) -> Ok.
 
-module plan125_1.never_subtype_of_str
+module nova_tests.plan125_1
 
-fn pick(c bool) Fail -> str {
+fn pick2(c bool) Fail -> str {
     // never <: str via assignable hookpoint
     if c {
         throw "boom"
@@ -21,7 +21,7 @@ test "never subtype of str via throw branch" {
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {
-        ro s = pick(false)
+        ro s = pick2(false)
         assert(s == "ok")
     }
 }

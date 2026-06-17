@@ -13,19 +13,19 @@
 // to `#prelude(...)` before `module` declaration.
 
 #prelude(core, runtime)
-module plan62.partial_prelude_core_only
+module nova_tests.plan62
 
 // core provides Option + Some + None + Ok + Err.
 // runtime provides assert (+ panic / exit / debug_assert).
 //
 // Plan 91.8a (D183): Ordering СѓРґР°Р»С‘РЅ РёР· prelude (Compare.compare -> int
 // Р±РѕР»СЊС€Рµ РЅРµ С‚СЂРµР±СѓРµС‚ sum-type Less/Equal/Greater).
-fn make_some() -> Option[int] {
+fn make_some2() -> Option[int] {
     Some(7)
 }
 
 test "partial_prelude(core, runtime) вЂ” Option available" {
-    ro o = make_some()
+    ro o = make_some2()
     assert(o.is_some())
     assert(o.unwrap() == 7)
 }

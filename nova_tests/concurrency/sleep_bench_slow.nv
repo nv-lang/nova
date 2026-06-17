@@ -17,7 +17,7 @@
 // тестирует scheduler scalability; "thousands of fibers in parallel"
 // claim упирается в 10k гипотетически — TBD via [M-83.10.4-sleep-bench-scale-cliff].
 
-module concurrency.sleep_bench
+module nova_tests.concurrency
 
 // 5k concurrent sleep'ов через park/wake. Theoretical: ~100ms
 // wall-clock (все спят параллельно через libuv event loop). Если

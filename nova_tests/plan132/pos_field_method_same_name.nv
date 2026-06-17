@@ -3,17 +3,17 @@
 // `@len` in method body (no parens) = field access.
 // `@len()` in method body (with parens) = method call.
 
-module plan132.pos_field_method_same_name
+module nova_tests.plan132
 
-type Buf { priv mut data int, priv mut len int }
+type Buf4 { priv mut data int, priv mut len int }
 
-fn Buf.new() -> Self => { data: 0, len: 0 }
-fn Buf @push(v int) { @data = @data + v; @len = @len + 1 }
+fn Buf4.new() -> Self => { data: 0, len: 0 }
+fn Buf4 @push(v int) { @data = @data + v; @len = @len + 1 }
 // @len() returns the field value — @len (no parens) = field
-fn Buf @len() -> int => @len
+fn Buf4 @len() -> int => @len
 
 test "field and method with same name coexist" {
-    mut b = Buf.new()
+    mut b = Buf4.new()
     b.push(10)
     b.push(20)
     b.push(30)

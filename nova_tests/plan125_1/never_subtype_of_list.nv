@@ -2,7 +2,7 @@
 // throw e в позиции, где expected тип = []int — assignable() с never
 // возвращает Compat::Ok.
 
-module plan125_1.never_subtype_of_list
+module nova_tests.plan125_1
 
 fn pick_list(c bool) Fail -> []int {
     if c {

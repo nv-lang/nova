@@ -8,7 +8,7 @@
 //   - Guard arms
 //   - Timeout via Time.after
 
-module concurrency.select_test
+module nova_tests.concurrency
 
 import std.time.duration
 

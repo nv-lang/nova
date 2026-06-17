@@ -1,18 +1,18 @@
 // Plan 127 Ф.5 / A127.11 — POS: priv-field композиция после auto-promote.
 // Priv access through promoted pointer работает — ownership-semantics
 // preserved (same module).
-module plan127.t12_priv_field_after_promote_ok
+module nova_tests.plan127
 
-type Box value {
+type Box2 value {
     priv hidden int
 }
 
-fn make_box() -> *Box {
-    ro b = Box { hidden: 99 }
+fn make_box() -> *Box2 {
+    ro b = Box2 { hidden: 99 }
     unsafe { &b }
 }
 
-fn Box.@reveal() -> int =>
+fn Box2.@reveal() -> int =>
     @hidden
 
 test "priv field accessible from own module после promote" {

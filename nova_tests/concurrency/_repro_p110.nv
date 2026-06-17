@@ -11,7 +11,7 @@
 // Pre-fix expected: RUN-FAIL with massive over_ms value.
 // Post-fix expected: PASS with tok.is_cancelled() == true.
 
-module concurrency._repro_p110
+module nova_tests.concurrency
 
 test "supervised+cancel+sleep — deadline underflow repro" {
     ro tok = CancelToken.new()

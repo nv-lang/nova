@@ -9,7 +9,7 @@
 // Регресс-страховка: если кто-то удалит schema-регистрацию,
 // destructure упадёт с "no member named 'tx'" в C-coder или
 // runtime-segfault.
-module syntax.let_destructure_channel_dedup
+module nova_tests.syntax
 
 test "Channel.new destructure через generic path — send+recv round-trip" {
     ro { tx, rx } = Channel.new(4)

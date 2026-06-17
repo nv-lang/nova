@@ -4,23 +4,23 @@
 // `Fail[never]` ≡ «не throws» — caller fn не должна объявлять Fail-effect.
 // Hot-path optimization (D194 §perf) разворачивается в codegen Plan 110.1.7.
 
-module plan110.check_consume_never_no_fail_required
+module nova_tests.plan110
 
 // MutexGuard-style infallible resource — release не может fail.
-type InfallibleResource {
+type InfallibleResource3 {
     ro id int
 }
 
-fn InfallibleResource.new(id int) -> InfallibleResource => { id }
+fn InfallibleResource3.new(id int) -> InfallibleResource3 => { id }
 
 // Consumable[never]: on_exit БЕЗ Fail-effect.
-fn InfallibleResource consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn InfallibleResource3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 // Caller fn НЕ объявляет Fail[E] — должно проходить type-check
 // (D194 Never special case).
 fn use_infallible() -> int {
     mut result = 0
-    consume r = InfallibleResource.new(42) {
+    consume r = InfallibleResource3.new(42) {
         result = r.id
     }
     result

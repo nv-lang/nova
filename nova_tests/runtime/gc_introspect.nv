@@ -3,7 +3,7 @@
 // Boehm backend → heap_size() > 0 после аллокаций.
 // Тесты используют if gc.heap_size() == 0 { ... } differential-pattern.
 
-module runtime.gc_introspect
+module nova_tests.runtime
 
 import std.runtime.gc
 

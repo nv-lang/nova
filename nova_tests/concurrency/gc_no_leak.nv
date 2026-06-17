@@ -14,17 +14,17 @@
 //
 // ALLOC_REQUIRES boehm
 
-module concurrency.gc_no_leak
+module nova_tests.concurrency
 
-type Junk { a int, b int, c int, d int }
+type Junk2 { a int, b int, c int, d int }
 
-fn make_junk(i int) -> Junk =>
+fn make_junk2(i int) -> Junk2 =>
     { a: i, b: i + 1, c: i + 2, d: i + 3 }
 
-type Wrap { item Junk, count int }
+type Wrap { item Junk2, count int }
 
 fn make_wrap(i int) -> Wrap =>
-    { item: make_junk(i), count: i }
+    { item: make_junk2(i), count: i }
 
 // ── 1. Stable heap после warmup ────────────────────────────────────────
 
@@ -32,7 +32,7 @@ test "gc no-leak: heap stable после 20 циклов × 10k allocs (records)
     // Warm-up: первые 3 цикла прогревают heap, не учитываем.
     for _ in 0..3 {
         for i in 0..10_000 {
-            ro _ = make_junk(i)
+            ro _ = make_junk2(i)
         }
         gc.collect()
     }
@@ -42,7 +42,7 @@ test "gc no-leak: heap stable после 20 циклов × 10k allocs (records)
     mut max_growth = 0
     for cycle in 0..20 {
         for i in 0..10_000 {
-            ro _ = make_junk(i)
+            ro _ = make_junk2(i)
         }
         gc.collect()
         ro h = gc.heap_size()
@@ -101,7 +101,7 @@ test "gc no-leak: heap stable с nested records (10 циклов × 5k Wrap)" {
 test "gc no-leak: stable heap при mixed alloc (15 циклов × 5k)" {
     for _ in 0..3 {
         for i in 0..5_000 {
-            ro _ = make_junk(i)
+            ro _ = make_junk2(i)
             ro _ = "item_${i}_alloc"
         }
         gc.collect()
@@ -111,7 +111,7 @@ test "gc no-leak: stable heap при mixed alloc (15 циклов × 5k)" {
     mut max_growth = 0
     for cycle in 0..15 {
         for i in 0..5_000 {
-            ro _ = make_junk(i)
+            ro _ = make_junk2(i)
             ro _ = "item_${i}_alloc"
         }
         gc.collect()
@@ -137,7 +137,7 @@ test "gc no-leak: stable heap при fiber-allocations (10 циклов × 32 fi
         supervised {
             for i in 0..32 {
                 spawn {
-                    ro _ = make_junk(i)
+                    ro _ = make_junk2(i)
                 }
             }
         }
@@ -150,7 +150,7 @@ test "gc no-leak: stable heap при fiber-allocations (10 циклов × 32 fi
         supervised {
             for i in 0..32 {
                 spawn {
-                    ro _ = make_junk(i)
+                    ro _ = make_junk2(i)
                 }
             }
         }

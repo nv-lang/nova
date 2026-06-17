@@ -8,7 +8,7 @@
 // - lambda возвращаемая из match-ветвей
 // - lambda как параметр и возвращаемое значение HOF
 
-module syntax.fn_first_class
+module nova_tests.syntax
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ test "lambda 3-арная" {
 // Lambda → принимает lambda → возвращает lambda
 // ──────────────────────────────────────────────────────────────────────────
 
-fn map_int(xs []int, f fn(int) -> int) -> []int {
+fn map_int1(xs []int, f fn(int) -> int) -> []int {
     mut r = []
     for x in xs { r.push(f(x)) }
     r
@@ -51,7 +51,7 @@ fn map_int(xs []int, f fn(int) -> int) -> []int {
 fn make_scaler(factor int) -> fn(int) -> int =>
     |x| x * factor
 
-fn make_adder(n int) -> fn(int) -> int =>
+fn make_adder4(n int) -> fn(int) -> int =>
     |x| x + n
 
 test "HOF возвращает lambda — параметризованный builder" {
@@ -63,14 +63,14 @@ test "HOF возвращает lambda — параметризованный bui
 
 test "HOF возвращает lambda + сразу применяется" {
     ro xs = [1, 2, 3]
-    ro ys = map_int(xs, make_adder(10))
+    ro ys = map_int1(xs, make_adder4(10))
     assert(ys[0] == 11)
     assert(ys[1] == 12)
     assert(ys[2] == 13)
 }
 
 test "две независимые lambda-фабрики не конфликтуют" {
-    ro a = make_adder(5)
+    ro a = make_adder4(5)
     ro s = make_scaler(2)
     // (x + 5) * 2 != (x * 2) + 5
     assert(s(a(10)) == 30)
@@ -126,23 +126,23 @@ test "lambda захватывает несколько переменных" {
 // Композиция через HOF
 // ──────────────────────────────────────────────────────────────────────────
 
-fn compose(f fn(int) -> int, g fn(int) -> int) -> fn(int) -> int =>
+fn compose3(f fn(int) -> int, g fn(int) -> int) -> fn(int) -> int =>
     |x| f(g(x))
 
-test "compose lambda-аргументов" {
+test "compose3 lambda-аргументов" {
     ro inc1 = |x| x + 1
     ro dbl  = |x| x * 2
-    ro f = compose(inc1, dbl)
+    ro f = compose3(inc1, dbl)
     // f(x) = inc1(dbl(x)) = (x*2) + 1
     assert(f(3) == 7)
     assert(f(0) == 1)
 }
 
-test "compose трёх — композиция результата с третьей" {
+test "compose3 трёх — композиция результата с третьей" {
     ro inc1 = |x| x + 1
     ro dbl  = |x| x * 2
     ro neg1 = |x| -x
-    ro f = compose(neg1, compose(inc1, dbl))
+    ro f = compose3(neg1, compose3(inc1, dbl))
     // f(x) = -(inc1(dbl(x))) = -((x*2)+1)
     assert(f(3) == -7)
     assert(f(0) == -1)
@@ -169,7 +169,7 @@ test "free fn name as value — ro-binding" {
 
 test "free fn name as value — передача в HOF" {
     ro xs = [1, 2, 3]
-    ro ys = map_int(xs, top_inc)
+    ro ys = map_int1(xs, top_inc)
     assert(ys[0] == 2)
     assert(ys[1] == 3)
     assert(ys[2] == 4)
@@ -177,22 +177,22 @@ test "free fn name as value — передача в HOF" {
 
 test "две free fn в HOF — независимые" {
     ro xs = [1, 2, 3]
-    ro incd = map_int(xs, top_inc)
-    ro dbld = map_int(xs, top_dbl)
+    ro incd = map_int1(xs, top_inc)
+    ro dbld = map_int1(xs, top_dbl)
     assert(incd[2] == 4)
     assert(dbld[2] == 6)
 }
 
-test "free fn в compose с lambda" {
-    // compose ожидает fn(int)->int; передаём именованную top_inc + lambda.
-    ro f = compose(top_inc, |x| x * 10)
+test "free fn в compose3 с lambda" {
+    // compose3 ожидает fn(int)->int; передаём именованную top_inc + lambda.
+    ro f = compose3(top_inc, |x| x * 10)
     // f(x) = top_inc((x) * 10) = x*10 + 1
     assert(f(0) == 1)
     assert(f(3) == 31)
 }
 
-test "две именованные fn в compose" {
-    ro f = compose(top_inc, top_dbl)
+test "две именованные fn в compose3" {
+    ro f = compose3(top_inc, top_dbl)
     // f(x) = top_inc(top_dbl(x)) = x*2 + 1
     assert(f(0) == 1)
     assert(f(5) == 11)

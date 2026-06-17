@@ -6,7 +6,7 @@
 //
 // Closes [M-118.5-narrow-cast] POS half.
 
-module plan118_5.t6_unsafe_t_narrow_in_unsafe_ok
+module nova_tests.plan118_5
 
 fn use_narrowed() -> () {
     mut x unsafe int = 0

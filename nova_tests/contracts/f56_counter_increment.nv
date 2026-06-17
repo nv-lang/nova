@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14): counter increment invariants.
 // counter += 1 preserves non-negativity, bounds upper.
 
-module contracts.f56_counter_increment
+module nova_tests.contracts
 
 #verify
 fn inc(c int) -> int

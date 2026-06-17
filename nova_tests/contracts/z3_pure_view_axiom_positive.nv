@@ -7,20 +7,20 @@
 //
 // Body здесь — заглушка (значение `result` не релевантно).
 
-module contracts.z3_pure_view_axiom_positive
+module nova_tests.contracts
 
-type Db effect {
+type Db12 effect {
     #pure balance(id int) -> int
     axiom non_negative(id) => balance(id) >= 0
 }
 
 #verify
-fn check_balance(id int) Db -> int
+fn check_balance2(id int) Db12 -> int
     ensures balance(id) >= 0
 => 0
 
 test "z3 axiom proves ensures balance >= 0" {
-    // Sanity: check_balance прошёл #verify на этапе компиляции.
+    // Sanity: check_balance2 прошёл #verify на этапе компиляции.
     // Runtime семантика не релевантна — handler не запускается, контракт
     // стирается в release.
     assert(1 + 1 == 2)

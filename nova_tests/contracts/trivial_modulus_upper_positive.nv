@@ -1,6 +1,6 @@
 // Ф.26.1 (Plan 33.6): TrivialBackend modulus upper bound — `x % 10 < 10`.
 
-module contracts.trivial_modulus_upper_positive
+module nova_tests.contracts
 
 #verify
 fn mod_upper(x int) -> int

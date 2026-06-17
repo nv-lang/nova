@@ -1,6 +1,6 @@
 // Plan 125 Ф.4: вложенный match в then-branch — обе арки divergent.
 
-module plan125.nested_match_in_if
+module nova_tests.plan125
 
 type Outcome | Stop | Skip | Take
 

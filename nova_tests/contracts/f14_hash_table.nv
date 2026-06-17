@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_hash_table
+module nova_tests.contracts
 
 // Bucket index: hash % capacity.
 #verify

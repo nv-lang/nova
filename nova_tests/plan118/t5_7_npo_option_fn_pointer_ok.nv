@@ -12,7 +12,7 @@
 //   - Generated C uses NPO single-pointer layout
 //   - None ctor emits NULL value
 
-module plan118.t5_7_npo_option_fn_pointer_ok
+module nova_tests.plan118
 
 // extern "nova" fn returning Option of function pointer (FFI callback registration
 // pattern — dlsym/GetProcAddress style).

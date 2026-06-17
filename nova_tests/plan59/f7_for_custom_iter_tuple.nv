@@ -3,7 +3,7 @@
 // "for-in tuple-pattern: непонятный elem-type". Сейчас direct value-copy
 // + восстановление tuple_element_types из mangled name.
 
-module plan59.f7_for_custom_iter_tuple
+module nova_tests.plan59
 
 
 type Counter {

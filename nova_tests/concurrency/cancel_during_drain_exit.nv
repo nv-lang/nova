@@ -24,7 +24,7 @@
 // (tools/stress_bisect.sh) repeats the compiled binary 30x to widen the
 // drain/cancel ordering window. Do NOT loop inside the test body — keep
 // each invocation isolated so a single SEGV/UAF doesn't kill the run.
-module concurrency.cancel_during_drain_exit
+module nova_tests.concurrency
 
 test "100 fibers exit naturally, then late cancel — safe no-op" {
     ro tok = CancelToken.new()

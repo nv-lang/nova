@@ -5,24 +5,24 @@
 // cannot prove result == x * 2. With reveal, the body axiom is injected and
 // Z3 can prove the ensures.
 
-module contracts.f59_opaque_reveal_z3_positive
+module nova_tests.contracts
 
 #opaque #pure
-fn double(x int) -> int
+fn double3(x int) -> int
     requires x >= 0
     ensures result >= 0
 => x * 2
 
 #verify
-fn caller_with_reveal(n int) -> int
+fn caller_with_reveal2(n int) -> int
     requires n >= 0
     ensures result == n * 2
 {
-    reveal double
-    double(n)
+    reveal double3
+    double3(n)
 }
 
 test "opaque reveal z3 positive" {
-    assert(double(5) == 10)
-    assert(caller_with_reveal(7) == 14)
+    assert(double3(5) == 10)
+    assert(caller_with_reveal2(7) == 14)
 }

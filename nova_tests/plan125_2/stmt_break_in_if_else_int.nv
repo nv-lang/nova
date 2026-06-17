@@ -2,7 +2,7 @@
 // `Stmt::Break` at last-stmt position in if-else arm → divergent.
 // If-expr type inferred from non-divergent branch (int).
 
-module plan125_2.stmt_break_in_if_else_int
+module nova_tests.plan125_2
 
 fn first_positive(xs []int) -> int {
     mut result = -1

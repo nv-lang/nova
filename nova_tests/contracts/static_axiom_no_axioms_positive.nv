@@ -1,7 +1,7 @@
 // Ф.7.5 positive (Plan 33.6): handler без axiom — W2402 не эмитится.
 // verify_handlers пропускает effects без axioms.
 
-module contracts.static_axiom_no_axioms_positive
+module nova_tests.contracts
 
 type Greeter effect {
     greet() -> str

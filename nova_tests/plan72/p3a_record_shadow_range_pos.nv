@@ -12,7 +12,7 @@
 // This test verifies that `Range { start: 0, end: 10 }` still works
 // correctly as a plain struct init (no crash, correct field values).
 
-module plan72.p3a_record_shadow_range_pos
+module nova_tests.plan72
 
 import std.collections.range
 

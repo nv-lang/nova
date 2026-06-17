@@ -1,14 +1,14 @@
 // Plan 127 Ф.5 / A127.8 — POS: field access `.x` через promoted pointer.
 // Auto-deref works the same as stack-mode — user-visible API unchanged.
-module plan127.t3_field_access_after_promote_ok
+module nova_tests.plan127
 
-type Point value {
+type Point1 value {
     x f64
     y f64
 }
 
-fn make_point() -> *Point {
-    ro p = Point { x: 10.0, y: 20.0 }
+fn make_point() -> *Point1 {
+    ro p = Point1 { x: 10.0, y: 20.0 }
     unsafe { &p }
 }
 

@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR &
+//
+// Plan 127 Ф.5 — NEG: `&arr[i]` array element address. Plan 118 baseline
+// — coordinates с [M-127-array-element-promote] V3 followup; V1 rejects.
+module neg.t17_neg_addr_of_index
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+fn bad() -> *Vec3 {
+    ro arr = [Vec3 { x: 1.0, y: 2.0, z: 3.0 }]
+    unsafe { &arr[0] }
+}

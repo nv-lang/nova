@@ -22,7 +22,7 @@
 //
 // ENV NOVA_MAXPROCS=1
 
-module concurrency.sleep_precision_bench
+module nova_tests.concurrency
 
 const TARGET_MS int = 50
 

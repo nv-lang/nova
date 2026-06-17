@@ -1,7 +1,7 @@
 // Ф.43.1+43.2 (Plan 33.6): TrivialBackend addition algebraic identities.
 // (a - b) + b → a   и   a + (0 - a) → 0.
 
-module contracts.f43_addition_algebraic_positive
+module nova_tests.contracts
 
 // (x - y) + y == x — Ф.43.1.
 #verify

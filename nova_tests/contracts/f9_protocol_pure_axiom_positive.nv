@@ -3,9 +3,9 @@
 //
 // Тест: парсинг + type-check проходят без ошибок.
 
-module contracts.f9_protocol_pure_axiom_positive
+module nova_tests.contracts
 
-type Storage protocol {
+type Storage2 protocol {
     #pure @size() -> int
     axiom non_negative() => size() >= 0
 }

@@ -13,7 +13,7 @@
 // ENV NOVA_MAXPROCS=1
 // EXPECT_STDERR exceeds max
 
-module plan149.neg_max_clamp
+module nova_tests.plan149
 
 test "huge NOVA_MAX_FIBERS: clamped to MAX, fibers still spawn" {
     mut total = 0

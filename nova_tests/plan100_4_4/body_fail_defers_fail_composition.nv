@@ -2,27 +2,27 @@
 // + D161 composition. Compile pass + runtime catches primary через outer
 // handler (composite chain handled runtime-side).
 
-module plan100_4_4.body_fail_defers_fail_composition
+module nova_tests.plan100_4_4
 
 type WorkErr { msg str }
-type Err1 { msg str }
-type Err2 { msg str }
+type Err11 { msg str }
+type Err21 { msg str }
 
-fn defer_a() Fail[Err1] -> () { () }
-fn defer_b() Fail[Err2] -> () { () }
+fn defer_a1() Fail[Err11] -> () { () }
+fn defer_b1() Fail[Err21] -> () { () }
 
 fn do_work_fails() Fail[WorkErr] -> () {
     throw WorkErr { msg: "operation failed" }
 }
 
-fn process() Fail -> () {
-    defer { defer_a() }
-    defer { defer_b() }
+fn process2() Fail -> () {
+    defer { defer_a1() }
+    defer { defer_b1() }
     do_work_fails()?
 }
 
 test "body fail + multi-defer Fail bodies — D161 composition" {
     with Fail = effect Fail { fail(_msg) { interrupt () } } {
-        process()
+        process2()
     }
 }

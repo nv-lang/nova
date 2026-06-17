@@ -5,7 +5,7 @@
 // axes commute on a value-T (`Readonly(Unsafe(T))` ≡ `Unsafe(Readonly(T))`),
 // the order check is retired entirely — `ro unsafe T` now COMPILES.
 
-module plan118_5_v3.t6_neg_ro_wraps_unsafe
+module nova_tests.plan118_5_v3
 
 extern "nova" fn t6_p(x ro unsafe int) -> ()
 

@@ -2,7 +2,7 @@
 // `match { ...; call(...) } { Ok((k, v)) => ... }` — helper должен
 // recurse в Block.trailing для propagation.
 
-module plan59.f22_result_block_scrutinee
+module nova_tests.plan59
 
 
 fn parse_pair(s str) -> Result[(str, int), str] {

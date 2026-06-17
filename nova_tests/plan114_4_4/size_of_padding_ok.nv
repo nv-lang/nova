@@ -1,7 +1,7 @@
 // Plan 114.4.4 V4.4 Ф.1 POSITIVE: padding/alignment edge cases для tuples.
 // Документирует layout semantics — see docs/size-of-align-of.md.
 
-module plan114_4_4.size_of_padding_ok
+module nova_tests.plan114_4_4
 
 // Order matters: i8 first → padding before i32
 const A_SIZE  = size_of[(i8, i32)]()    // 1 + pad(3) + 4 = 8

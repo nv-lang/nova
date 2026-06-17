@@ -2,7 +2,7 @@
 // Positive: zero Duration -> channel closed immediately, recv returns None
 // without yielding. AD3 / R5 fast-path: no libuv timer allocation.
 
-module plan65.f4_zero_duration
+module nova_tests.plan65
 
 import std.time.duration
 

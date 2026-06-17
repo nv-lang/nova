@@ -3,7 +3,7 @@
 // `mut unsafe T` was E_MODIFIER_ORDER under the retired §V3.2 model; the
 // order check is retired (axes commute on a value-T), so it now COMPILES.
 
-module plan118_5_v3.t7_neg_mut_wraps_unsafe
+module nova_tests.plan118_5_v3
 
 extern "nova" fn t7_p() -> mut unsafe int
 

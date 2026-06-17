@@ -3,7 +3,7 @@
 // 08_pattern_matching.nv покрыл базу. Здесь — глубокая вложенность,
 // match по строкам/bool/tuple, комбинации Option/Result.
 
-module syntax.match_advanced
+module nova_tests.syntax
 
 test "match по строке" {
     ro cmd = "stop"

@@ -5,7 +5,7 @@
 // API. Без этого закрытия с capture'ами не работают как функция
 // первого класса.
 
-module syntax.closure_capture_through_fnparam
+module nova_tests.syntax
 
 
 fn invoker(tap fn(int) -> int) -> int {

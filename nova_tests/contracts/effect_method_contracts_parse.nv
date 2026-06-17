@@ -1,9 +1,9 @@
 // Plan 33.5 Ф.5.1: контракты метода эффекта — requires/ensures в effect-декларации.
 // Проверяем что парсинг работает без ошибок.
 
-module contracts.effect_method_contracts_parse
+module nova_tests.contracts
 
-type Storage effect {
+type Storage1 effect {
     read(key int) -> int
         requires key > 0
         ensures result >= 0

@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14/Ф.55/Ф.56): doubling invariants.
 // 2*x для positive x остаётся positive.
 
-module contracts.f57_double_invariant
+module nova_tests.contracts
 
 #verify
 fn double_nonneg(x int) -> int

@@ -5,10 +5,10 @@
 // #trusted extern "nova" fn тестируется в parse-only тесте (extern "nova" fn ограничен std.runtime.*).
 
 #must_verify_module
-module contracts.f13_module_strict_trusted
+module nova_tests.contracts
 
 // Без #verify, но #must_verify_module → MustVerify автоматически.
-fn double(x int) -> int
+fn double1(x int) -> int
     ensures result == x * 2
 {
     x * 2
@@ -22,13 +22,13 @@ fn add_one(x int) -> int
 }
 
 // Функция без контрактов — MustVerify не применяется (нет контрактов).
-fn identity(x int) -> int {
+fn identity2(x int) -> int {
     x
 }
 
 test "f13 module strict mode" {
-    assert(double(5) == 10)
-    assert(double(0) == 0)
+    assert(double1(5) == 10)
+    assert(double1(0) == 0)
     assert(add_one(3) == 4)
-    assert(identity(7) == 7)
+    assert(identity2(7) == 7)
 }

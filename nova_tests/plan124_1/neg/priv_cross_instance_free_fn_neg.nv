@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_PRIV_FIELD_READ
+// D220 §3: cross-instance доступ к priv(type) полю вне метода типа — ЗАПРЕЩЁН.
+// Свободная функция, принимающая два экземпляра типа, НЕ может читать priv(type) поля.
+module neg.priv_cross_instance_free_fn_neg
+
+type Point value priv(type) {
+    x int
+    y int
+}
+
+fn Point.new(x int, y int) -> Point => { x, y }
+
+// Свободная функция — НЕ метод Point → E_PRIV_FIELD_READ
+fn points_equal(a Point, b Point) -> bool => a.x == b.x && a.y == b.y

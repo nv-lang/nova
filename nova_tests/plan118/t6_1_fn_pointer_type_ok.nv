@@ -7,7 +7,7 @@
 // (E_CALLBACK_THROWS_OVER_C_ABI / E_EXTERNAL_FN_FAIL_EFFECT) — Ф.6
 // follow-on phase work.
 
-module plan118.t6_1_fn_pointer_type_ok
+module nova_tests.plan118
 
 // extern "nova" fn declaring callback parameter — fn pointer type в signature.
 extern "nova" fn p118_register_cb(cb *fn(i64) -> i64) -> i64

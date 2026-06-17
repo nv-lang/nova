@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR
+//
+// Plan 127 Ф.5 — NEG: `&` const-binding на module-level — already rejected
+// (Plan 118 baseline). Plan 127 escape walker не applies — const lives in
+// .rodata, no value-record local.
+module neg.t16_neg_addr_of_const_binding
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+const C f64 = 1.5
+
+fn bad() -> *f64 {
+    unsafe { &C }
+}

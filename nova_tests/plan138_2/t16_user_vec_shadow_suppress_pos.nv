@@ -7,7 +7,7 @@
 // cleanly today and stays clean after the flip (user wins entirely, D29).
 
 #allow(shadow)
-module plan138_2.t16_user_vec_shadow_suppress_pos
+module nova_tests.plan138_2
 
 import std.collections.vec.{Vec}
 

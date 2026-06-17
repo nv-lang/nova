@@ -6,7 +6,7 @@
 // length-prefixed mangle не маскирует bounds-error (старый split-based
 // мог dropped indexing prematurely в edge cases).
 
-module plan59.f14_tuple_field_out_of_bounds_rejected
+module nova_tests.plan59
 
 
 test "access .5 of 2-tuple — should reject" {

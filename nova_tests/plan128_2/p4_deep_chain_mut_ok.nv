@@ -1,41 +1,41 @@
 ﻿// Plan 128.2 Р¤.2 P4 вЂ” deep member chain mut binding + mut method = OK.
 //
-// `mut Av: Av; Av.Bv.Cv.Dv.mut_m()` вЂ” chain depth 4, root binding `mut`, РІСЃРµ
+// `mut Av2: Av2; Av2.Bv2.Cv2.Dv3.mut_m()` вЂ” chain depth 4, root binding `mut`, РІСЃРµ
 // intermediate fields `mut`. Chain-walking helper recursively walks
 // РґРѕ root Ident.
 
-module plan128_2.p4_deep_chain_mut_ok
+module nova_tests.plan128_2
 
-type Dv {
+type Dv3 {
     mut value int
 }
 
-fn Dv.new() -> Self => { value: 0 }
+fn Dv3.new() -> Self => { value: 0 }
 
-fn Dv mut @set(v int) -> () {
+fn Dv3 mut @set(v int) -> () {
     @value = v
 }
 
-type Cv {
-    mut Dv Dv
+type Cv2 {
+    mut Dv3 Dv3
 }
 
-fn Cv.new() -> Self => { Dv: Dv.new() }
+fn Cv2.new() -> Self => { Dv3: Dv3.new() }
 
-type Bv {
-    mut Cv Cv
+type Bv2 {
+    mut Cv2 Cv2
 }
 
-fn Bv.new() -> Self => { Cv: Cv.new() }
+fn Bv2.new() -> Self => { Cv2: Cv2.new() }
 
-type Av {
-    mut Bv Bv
+type Av2 {
+    mut Bv2 Bv2
 }
 
-fn Av.new() -> Self => { Bv: Bv.new() }
+fn Av2.new() -> Self => { Bv2: Bv2.new() }
 
 test "deep chain mut binding + mut method вЂ” OK" {
-    mut Av = Av.new()
-    Av.Bv.Cv.Dv.set(99)
-    assert(Av.Bv.Cv.Dv.value == 99)
+    mut Av2 = Av2.new()
+    Av2.Bv2.Cv2.Dv3.set(99)
+    assert(Av2.Bv2.Cv2.Dv3.value == 99)
 }

@@ -4,16 +4,16 @@
 //   consume (rank 0) precedes value (rank 1) — canonical.
 // Previously this was a negative test (old order value→consume); flipped when
 // D241 was updated to Rust-like ordering.
-module plan148.mo_neg_consume_value
+module nova_tests.plan148
 
-type Token consume value {
+type Token2 consume value {
     id int
 }
 
-fn Token consume @close() -> () { () }
+fn Token2 consume @close() -> () { () }
 
 test "consume value canonical order accepted" {
-    consume t = Token { id: 1 }
+    consume t = Token2 { id: 1 }
     t.close()
     assert(true)
 }

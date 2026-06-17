@@ -11,7 +11,7 @@
 //
 // This test is informational and expected to PASS.
 
-module plan65.f12_c_mono_as_unix_neg
+module nova_tests.plan65
 
 import std.time.duration
 

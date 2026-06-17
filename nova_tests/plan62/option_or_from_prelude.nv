@@ -5,7 +5,7 @@
 // `None` всегда с явной аннотацией (`let b Option[int] = None`) — без
 // неё bootstrap-inference дефолтит элемент к `int` (см. plan-doc 62).
 
-module plan62.option_or_from_prelude
+module nova_tests.plan62
 
 // ────────────────────────────────────────────────────────────────────
 // Some.or(Some) — левый выигрывает

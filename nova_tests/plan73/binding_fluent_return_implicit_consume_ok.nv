@@ -6,37 +6,37 @@
 // D131 «consume-obligation not satisfied» false-positive.
 // С M3: chain root (`sb`) → recursed through fluent `push` → marked Consumed.
 
-module plan73.binding_fluent_return_implicit_consume_ok
+module nova_tests.plan73
 
-type Box consume {
+type Box4 consume {
     mut data []int
 }
 
-fn Box.new() -> Self => { data: [].with_capacity(4) }
+fn Box4.new() -> Self => { data: [].with_capacity(4) }
 
-fn Box mut @push(x int) -> @ { @data.push(x); @ }
+fn Box4 mut @push(x int) -> @ { @data.push(x); @ }
 
-fn Box consume @sum() -> int {
+fn Box4 consume @sum() -> int {
     mut s = 0
     for v in @data { s = s + v }
     s
 }
 
 // M3 case 1: 2-deep fluent chain as implicit return.
-fn make_box_two() -> Box {
-    consume sb = Box.new()
+fn make_box_two() -> Box4 {
+    consume sb = Box4.new()
     sb.push(1).push(2)
 }
 
 // M3 case 2: 3-deep fluent chain as implicit return.
-fn make_box_three() -> Box {
-    consume sb = Box.new()
+fn make_box_three() -> Box4 {
+    consume sb = Box4.new()
     sb.push(10).push(20).push(30)
 }
 
 // M3 case 3: single-element fluent chain (1-method) as implicit return.
-fn make_box_one() -> Box {
-    consume sb = Box.new()
+fn make_box_one() -> Box4 {
+    consume sb = Box4.new()
     sb.push(7)
 }
 

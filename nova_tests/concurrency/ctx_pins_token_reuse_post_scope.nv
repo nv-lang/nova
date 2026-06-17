@@ -10,7 +10,7 @@
 // Post-V3: array freed, token only reachable via caller stack scan.
 // Bug would manifest as token reclaimed → GC race → bind panic on reuse.
 
-module concurrency.ctx_pins_token_reuse_post_scope
+module nova_tests.concurrency
 
 test "token survives scope exit + reusable in second supervised" {
     ro tok = CancelToken.new()

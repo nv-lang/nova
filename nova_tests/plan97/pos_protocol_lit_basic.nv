@@ -5,7 +5,7 @@
 // allocation + NovaBox fat-pointer). Allocation должна работать
 // без CC-FAIL.
 
-module plan97.pos_protocol_lit_basic
+module nova_tests.plan97
 
 
 export type Runnable protocol {

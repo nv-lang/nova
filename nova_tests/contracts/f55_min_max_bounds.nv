@@ -2,7 +2,7 @@
 // TrivialBackend не reasoning'ует про if-then-else напрямую; используем
 // bounded passthrough.
 
-module contracts.f55_min_max_bounds
+module nova_tests.contracts
 
 #verify
 fn max_with_zero(a int) -> int

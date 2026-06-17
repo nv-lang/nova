@@ -9,21 +9,21 @@
 // - 9.5 pre-entry loop invariant check.
 // - 9.7 ghost type-check (ghost OK в spec-positions).
 
-module contracts.f9_combined_features
+module nova_tests.contracts
 
 // 9.2: record with invariant.
-type Counter {
+type Counter3 {
     value int
 }
     invariant value >= 0
 
 // 9.4: recursive fn с decreases (guard catches infinite recursion).
-fn fact(n int) -> int
+fn fact2(n int) -> int
     requires n >= 0
     decreases n
-=> if n == 0 { 1 } else { n * fact(n - 1) }
+=> if n == 0 { 1 } else { n * fact2(n - 1) }
 
-fn use_all(c Counter) -> int
+fn use_all(c Counter3) -> int
     requires c.value >= 0
 {
     // 9.1 + 9.7: ghost let, виден только в spec.
@@ -46,9 +46,9 @@ fn use_all(c Counter) -> int
 }
 
 test "combined features positive" {
-    ro c = Counter { value: 5 }   // 9.2 invariant passes
+    ro c = Counter3 { value: 5 }   // 9.2 invariant passes
     assert(c.value == 5)
     assert(use_all(c) == 0 + 1 + 2 + 3 + 4)
-    assert(fact(5) == 120)         // 9.4 normal recursion
-    assert(fact(0) == 1)
+    assert(fact2(5) == 120)         // 9.4 normal recursion
+    assert(fact2(0) == 1)
 }

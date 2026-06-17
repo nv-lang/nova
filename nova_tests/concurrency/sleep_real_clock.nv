@@ -18,14 +18,14 @@
 //
 // ENV NOVA_AUTOARM=0
 
-module concurrency.sleep_real_clock
+module nova_tests.concurrency
 
 // Slack 200ms даёт CI-стабильность.
-const SLACK_MS int = 200
+const SLACK_MS2 int = 200
 
 // Windows timer-resolution default ~15.6ms (GetTickCount). libuv timer
 // может fire'нуть на 15ms раньше theoretical deadline. Под-slack 20ms.
-const UNDER_SLACK_MS int = 20
+const UNDER_SLACK_MS2 int = 20
 
 test "sleep waits at least ms (fiber-context)" {
     supervised {
@@ -36,8 +36,8 @@ test "sleep waits at least ms (fiber-context)" {
             // Windows: timer-resolution ~15ms означает что 100ms sleep
             // может fire через 85ms. Тест валидирует "approximately 100ms",
             // не "exact ≥ 100ms".
-            assert(elapsed >= 100 - UNDER_SLACK_MS)
-            assert(elapsed < 100 + SLACK_MS)
+            assert(elapsed >= 100 - UNDER_SLACK_MS2)
+            assert(elapsed < 100 + SLACK_MS2)
         }
     }
 }
@@ -53,8 +53,8 @@ test "many fibers sleep concurrently, not sequentially" {
     ro elapsed = Time.now() - t0
     // Все 4 fiber'а спят параллельно — итого ~100ms, не 400ms.
     // Windows timer-resolution slack — допускается ~85ms (см. выше).
-    assert(elapsed >= 100 - UNDER_SLACK_MS)
-    assert(elapsed < 100 + SLACK_MS)
+    assert(elapsed >= 100 - UNDER_SLACK_MS2)
+    assert(elapsed < 100 + SLACK_MS2)
 }
 
 test "cancel during long sleep wakes immediately" {
@@ -71,7 +71,7 @@ test "cancel during long sleep wakes immediately" {
     }
     ro elapsed = Time.now() - t0
     // 10 sec sleep должен прерваться через ~50ms + slack.
-    assert(elapsed < 50 + SLACK_MS)
+    assert(elapsed < 50 + SLACK_MS2)
 }
 
 test "Time.sleep(0) is fast yield" {
@@ -85,7 +85,7 @@ test "Time.sleep(0) is fast yield" {
         }
     }
     ro elapsed = Time.now() - t0
-    assert(elapsed < SLACK_MS)
+    assert(elapsed < SLACK_MS2)
 }
 
 test "sleep handler override works (mock)" {

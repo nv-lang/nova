@@ -5,7 +5,7 @@
 // `[]fn->T` return — отдельный orthogonal issue (Array-of-Func
 // mono'rphization), не входит в Ф.4 scope.
 
-module concurrency.fn_array_collect_test
+module nova_tests.concurrency
 
 
 // Simple identity-like generic — return []T от []T input.

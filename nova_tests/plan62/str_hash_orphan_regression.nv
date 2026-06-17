@@ -18,7 +18,7 @@
 // FNV-1a hash by spec — non-zero для непустых строк; разные
 // строки дают разные hashes (with overwhelming probability).
 
-module plan62.str_hash_orphan_regression
+module nova_tests.plan62
 
 test "str @hash via .hash() — non-zero для непустой строки" {
     ro s = "hello"

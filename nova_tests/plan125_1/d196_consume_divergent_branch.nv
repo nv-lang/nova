@@ -4,21 +4,21 @@
 // Теперь Ф.4 распознаёт divergent ветку и возвращает None из
 // detect_divergent_consumable — нет fake-conflict.
 
-module plan125_1.d196_consume_divergent_branch
+module nova_tests.plan125_1
 
-type GuardR {
+type GuardR3 {
     ro id int
 }
 
-fn GuardR.new(id int) -> GuardR => { id }
+fn GuardR3.new(id int) -> GuardR3 => { id }
 
-fn GuardR consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn GuardR3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
 
 fn use_guard(c bool) Fail -> int {
     mut result = 0
     // if-init с divergent else — Ф.4 skip'ает throw-ветку.
     consume g = if c {
-        GuardR.new(7)
+        GuardR3.new(7)
     } else {
         throw "no guard"
     } {

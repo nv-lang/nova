@@ -4,15 +4,15 @@
 // Semantic preservation: код работает correctly, даже если cache
 // эмитится только для региона A.
 
-module plan123_1_1.v1_1_single_read_region_no_cache_ok
+module nova_tests.plan123_1_1
 
-type Counter {
+type Counter3 {
     mut x int
 }
 
-fn Counter.new() -> Counter => { x: 100 }
+fn Counter3.new() -> Counter3 => { x: 100 }
 
-fn Counter mut @mixed_density() -> int {
+fn Counter3 mut @mixed_density() -> int {
     // Region A: 2 reads (cached).
     ro a1 = @x
     ro a2 = @x
@@ -23,7 +23,7 @@ fn Counter mut @mixed_density() -> int {
 }
 
 test "V1.1: single-read region не cached, semantic ok" {
-    mut c = Counter.new()
+    mut c = Counter3.new()
     ro r = c.mixed_density()
     // 100 + 100 + 7 = 207
     assert(r == 207)

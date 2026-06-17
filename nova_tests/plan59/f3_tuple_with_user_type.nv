@@ -2,7 +2,7 @@
 // Требует preamble order: USER_TYPE_FWD_DECLS до MONO_TUPLE_TYPEDEFS,
 // чтобы `_NovaTuple____Nova_Point_p__nova_int` мог сослаться на Nova_Point*.
 
-module plan59.f3_tuple_with_user_type
+module nova_tests.plan59
 
 
 type Point {

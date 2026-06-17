@@ -2,7 +2,7 @@
 // simplify_app уже fold'ит IntLit OP IntLit → BoolLit.
 // Тест документирует что TrivialBackend доказывает contracts с constant folding.
 
-module contracts.f29_lit_comparison_positive
+module nova_tests.contracts
 
 // ensures с константой больше нижней bound → trivially proven через bounds.
 #verify

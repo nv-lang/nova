@@ -1,6 +1,6 @@
 // Ф.1.1 (Plan 33.6): ghost-var доступен в loop invariant — spec-позиция.
 
-module contracts.ghost_in_invariant_positive
+module nova_tests.contracts
 
 fn sum_loop(n int) -> int {
     ghost ro target = n * (n + 1) / 2

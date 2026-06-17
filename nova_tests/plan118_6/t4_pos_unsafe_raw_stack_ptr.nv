@@ -4,7 +4,7 @@
 // Programmer takes responsibility. Typical pattern: pass int* to C function.
 // Here we verify read-back inside the same unsafe scope (pointer valid on stack).
 
-module plan118_6.t4_pos_unsafe_raw_stack_ptr
+module nova_tests.plan118_6
 
 test "unsafe { &x } raw stack pointer — valid in same scope" {
     ro x = 99

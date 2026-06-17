@@ -8,18 +8,18 @@
 // formatter into a StringBuilder; if any field were int-boxed, the f64 / str
 // fields would format wrongly.
 
-module plan148.tr_tuple_eq_debug_ok
+module nova_tests.plan148
 
 // A record whose `@debug` formats a heterogeneous tuple field-by-field. The
 // tuple's elements (int, str, f64, bool) must each retain their real type for
 // the formatting to be correct.
-type Row {
+type Row2 {
     id int
     data (str, f64, bool)
 }
 
-fn Row @debug(mut w Write) -> () {
-    w.write("Row(")
+fn Row2 @debug(mut w Write) -> () {
+    w.write("Row2(")
     w.write(str.from(@id))
     w.write(", ")
     w.write(@data.0)
@@ -62,7 +62,7 @@ test "nested tuple eq recurses field-by-field" {
 }
 
 test "debug formatting of a record holding a typed tuple field" {
-    ro r = Row { id: 7, data: ("q", 3.5, true) }
+    ro r = Row2 { id: 7, data: ("q", 3.5, true) }
     ro s = "${r:?}"
-    assert(s == "Row(7, q, 3.5, true)")
+    assert(s == "Row2(7, q, 3.5, true)")
 }

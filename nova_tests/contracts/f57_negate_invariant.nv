@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14): negate invariants.
 // negate(x) = -x; bounds invert.
 
-module contracts.f57_negate_invariant
+module nova_tests.contracts
 
 #verify
 fn negate_pos_to_neg(x int) -> int

@@ -7,7 +7,7 @@
 //
 // Closes [M-118.5-write-safe-tracking].
 
-module plan118_5.t5_unsafe_t_write_ok
+module nova_tests.plan118_5
 
 fn init_then_read() -> () {
     mut x unsafe int = 0

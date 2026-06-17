@@ -3,22 +3,22 @@
 // (через D88 default); функция, возвращающая `Effect[E]` —
 // корректно типизирована.
 
-module plan97.pos_effect_type_alias
+module nova_tests.plan97
 
 
-type Logger effect {
+type Logger2 effect {
     log(msg str) -> ()
 }
 
 
-fn console_logger() -> Effect[Logger] => effect Logger {
+fn console_logger() -> Effect[Logger2] => effect Logger2 {
     log(msg) => ()
 }
 
 
 test "Effect[E] alias return type" {
     ro h = console_logger()
-    with Logger = h {
-        Logger.log("ok")
+    with Logger2 = h {
+        Logger2.log("ok")
     }
 }

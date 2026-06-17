@@ -3,17 +3,17 @@
 // a pointer, so the prefix-pointer ban does not touch it (its modifier chain
 // bottoms out at a non-pointer base).
 
-module plan138_5.pos_unsafe_value_wrapper
+module nova_tests.plan138_5
 
-type Acc {
+type Acc2 {
     id i64
 }
 
 extern "nova" fn p_unsafe_int(x unsafe int) -> ()
-extern "nova" fn p_unsafe_acc(x unsafe Acc) -> ()
+extern "nova" fn p_unsafe_acc(x unsafe Acc2) -> ()
 
 test "unsafe T value-wrapper transparent layout" {
     assert(size_of[unsafe int]() == 8)
     assert(size_of[unsafe u8]() == 1)
-    assert(size_of[unsafe Acc]() == 8)
+    assert(size_of[unsafe Acc2]() == 8)
 }

@@ -2,7 +2,7 @@
 // outer `ro x` properly blocks mutation, then inner block redeclares
 // `mut x` (shadowing), inner mutation works, after inner exits outer
 // `x` is still recognized as `ro`.
-module plan124_8.ro_binding_scope_shadowing_ok
+module nova_tests.plan124_8
 
 type Box {
     mut n int

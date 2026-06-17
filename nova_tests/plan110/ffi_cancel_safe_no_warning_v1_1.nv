@@ -7,31 +7,31 @@
 // compiler-codegen/src/lints.rs (extern "nova" fn restricted to std.runtime.*
 // per D82 — cannot be used in user fixtures).
 
-module plan110.ffi_cancel_safe_no_warning_v1_1
+module nova_tests.plan110
 
 // Plain Nova fns с #cancel_safe — attribute parses but lint scope is
 // FFI-only. Call from on_exit must be silent.
 #cancel_safe
-fn close_safe(handle int) -> int => handle
+fn close_safe2(handle int) -> int => handle
 
 // Без attribute — plain Nova fn call from on_exit also silent (not FFI).
 fn close_plain(handle int) -> int => handle
 
-type Conn {
+type Conn6 {
     ro h int
 }
 
-fn Conn.new(h int) -> Conn => { h }
+fn Conn6.new(h int) -> Conn6 => { h }
 
-fn Conn consume @on_exit(_outcome ScopeOutcome) -> () {
+fn Conn6 consume @on_exit(_outcome ScopeOutcome) -> () {
     // Plain Nova fns с / без #cancel_safe — оба silent (not external fn).
-    ro _r1 = close_safe(@h)
+    ro _r1 = close_safe2(@h)
     ro _r2 = close_plain(@h)
     return ()
 }
 
 test "Plan 110.9.4: lint silent on plain Nova fns in on_exit" {
-    consume conn = Conn.new(42) {
+    consume conn = Conn6.new(42) {
         assert(conn.h == 42)
     }
     assert(true)

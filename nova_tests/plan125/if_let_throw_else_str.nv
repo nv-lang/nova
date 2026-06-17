@@ -1,8 +1,8 @@
 // Plan 125 Ф.4: if-let — divergent в then.
 
-module plan125.if_let_throw_else_str
+module nova_tests.plan125
 
-fn pick(opt Option[int]) Fail -> str {
+fn pick4(opt Option[int]) Fail -> str {
     if let Some(_x) = opt {
         throw "bad"
     } else {
@@ -14,7 +14,7 @@ test "if-let then-throw, else-str" {
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {
-        ro s = pick(None)
+        ro s = pick4(None)
         assert(s == "none-ok")
     }
 }

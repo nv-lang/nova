@@ -1,7 +1,7 @@
 // Ф.1.2 (Plan 33.6): #unverified fn с non-encodable body → warning, не error.
 // Loop body не encodable, но #unverified → осознанный отказ от SMT.
 
-module contracts.unverified_attribute_positive
+module nova_tests.contracts
 
 #unverified
 fn loop_with_ensures(n int) -> int

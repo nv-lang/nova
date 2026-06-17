@@ -1,6 +1,6 @@
 // Plan 114.4.4 Ф.3 positive: break + continue в const fn body.
 
-module plan114_4_4.loop_break_continue_ok
+module nova_tests.plan114_4_4
 
 fn first_multiple_of_3(const limit int) -> const int {
     mut result = -1

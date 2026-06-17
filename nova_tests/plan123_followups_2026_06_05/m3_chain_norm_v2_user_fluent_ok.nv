@@ -4,30 +4,30 @@
 // hoisting via FnDecl.returns_receiver discovery (V1 hardcoded list
 // would skip).
 
-module plan123_followups_2026_06_05.m3_chain_norm_v2_user_fluent_ok
+module nova_tests.plan123_followups_2026_06_05
 
-type Counter {
+type Counter4 {
     mut n int
 }
 
-fn Counter.new() -> Counter => { n: 0 }
+fn Counter4.new() -> Counter4 => { n: 0 }
 
 // User fluent builder: `-> @` return marker → registered в
 // FluentMethodRegistry.
-fn Counter mut @step(by int) -> @ {
+fn Counter4 mut @step(by int) -> @ {
     @n = @n + by
     @
 }
 
-fn Counter @get() -> int => @n
+fn Counter4 @get() -> int => @n
 
-type Holder {
-    mut c Counter
+type Holder8 {
+    mut c Counter4
 }
 
-fn Holder.new() -> Holder => { c: Counter.new() }
+fn Holder8.new() -> Holder8 => { c: Counter4.new() }
 
-fn Holder mut @use_chain() -> int {
+fn Holder8 mut @use_chain() -> int {
     // V2: `@c.step(1).step(2).step(3)` — root `@c` (heap-record ref),
     // chain depth 3 of user-defined `step` `-> @`. V2 hoists root.
     @c.step(1).step(2).step(3)
@@ -35,7 +35,7 @@ fn Holder mut @use_chain() -> int {
 }
 
 test "chain-norm V2 user fluent: depth-3 user step chain" {
-    mut h = Holder.new()
+    mut h = Holder8.new()
     ro r = h.use_chain()
     // 0 → 1 → 3 → 6
     assert(r == 6)

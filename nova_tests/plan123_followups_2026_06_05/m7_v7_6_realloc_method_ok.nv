@@ -5,37 +5,37 @@
 // invalidate across `@F.replace_with()` calls. Semantic preservation
 // verified through observed slot replacement.
 
-module plan123_followups_2026_06_05.m7_v7_6_realloc_method_ok
+module nova_tests.plan123_followups_2026_06_05
 
-type Slot {
+type Slot5 {
     mut count int
 }
 
-fn Slot.new(init int) -> Slot => { count: init }
+fn Slot5.new(init int) -> Slot5 => { count: init }
 
 // V7.6-realloc heuristic: `mut` receiver + non-self param of receiver
 // type ⇒ registered в replaces_self_methods.
-fn Slot mut @replace_with(other Slot) -> () {
+fn Slot5 mut @replace_with(other Slot5) -> () {
     @count = other.count
 }
 
 // `mut` receiver + non-Self param (int) ⇒ NOT marked replaces_self.
-fn Slot mut @bump(by int) -> () {
+fn Slot5 mut @bump(by int) -> () {
     @count = @count + by
 }
 
-fn Slot @get() -> int => @count
+fn Slot5 @get() -> int => @count
 
-type Holder {
-    mut s Slot
+type Holder11 {
+    mut s Slot5
 }
 
-fn Holder.new() -> Holder => { s: Slot.new(0) }
+fn Holder11.new() -> Holder11 => { s: Slot5.new(0) }
 
-fn Holder mut @demo_replace_then_bump() -> int {
+fn Holder11 mut @demo_replace_then_bump() -> int {
     @s.bump(3)
     ro a = @s.get()         // expect 3
-    @s.replace_with(Slot.new(100))
+    @s.replace_with(Slot5.new(100))
     ro b = @s.get()         // expect 100 — replace_with overwrites slot
     @s.bump(1)
     ro c = @s.get()         // expect 101
@@ -43,7 +43,7 @@ fn Holder mut @demo_replace_then_bump() -> int {
 }
 
 test "V7.6-realloc: replace-style method preserves semantic observable" {
-    mut h = Holder.new()
+    mut h = Holder11.new()
     ro r = h.demo_replace_then_bump()
     assert(r == 204)
     assert(h.s.get() == 101)

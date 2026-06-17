@@ -2,32 +2,32 @@
 // (umbrella §8.1 verification method #4). Runs same logic через
 // 4 different access patterns; results must match.
 
-module plan123_1.prop_semantic_equivalence_ok
+module nova_tests.plan123_1
 
-type Vl {
+type Vl6 {
     ro a int
     ro b int
     ro c int
 }
 
 // Pattern 1: maximum direct accesses (all reads of same field).
-fn Vl @sum_p1() -> int {
+fn Vl6 @sum_p1() -> int {
     @a + @a + @b + @b + @c + @c
 }
 
 // Pattern 2: mixed positions (binary expressions).
-fn Vl @sum_p2() -> int {
+fn Vl6 @sum_p2() -> int {
     (@a + @b) + (@a + @c) + (@b + @c)
 }
 
 // Pattern 3: through local intermediate.
-fn Vl @sum_p3() -> int {
+fn Vl6 @sum_p3() -> int {
     ro x = @a + @b + @c
     x + @a + @b + @c
 }
 
 // Pattern 4: nested if branches (cache spans branches).
-fn Vl @sum_p4() -> int {
+fn Vl6 @sum_p4() -> int {
     if @a > 0 {
         @a + @b + @c + @a + @b + @c
     } else {
@@ -35,12 +35,12 @@ fn Vl @sum_p4() -> int {
     }
 }
 
-fn Vl.new(a int, b int, c int) -> Vl {
-    Vl { a, b, c }
+fn Vl6.new(a int, b int, c int) -> Vl6 {
+    Vl6 { a, b, c }
 }
 
 test "property: all 4 patterns equivalent (positive)" {
-    ro v = Vl.new(2, 3, 5)
+    ro v = Vl6.new(2, 3, 5)
     ro p1 = v.sum_p1()
     ro p2 = v.sum_p2()
     ro p3 = v.sum_p3()
@@ -53,8 +53,8 @@ test "property: all 4 patterns equivalent (positive)" {
 }
 
 test "property: works for various inputs" {
-    assert(Vl.new(7, 11, 13).sum_p1() == 62)
-    assert(Vl.new(7, 11, 13).sum_p2() == 62)
-    assert(Vl.new(7, 11, 13).sum_p3() == 62)
-    assert(Vl.new(7, 11, 13).sum_p4() == 62)
+    assert(Vl6.new(7, 11, 13).sum_p1() == 62)
+    assert(Vl6.new(7, 11, 13).sum_p2() == 62)
+    assert(Vl6.new(7, 11, 13).sum_p3() == 62)
+    assert(Vl6.new(7, 11, 13).sum_p4() == 62)
 }

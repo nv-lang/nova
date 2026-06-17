@@ -2,21 +2,21 @@
 // bailed (call before loop invalidates mut prefix region). LICM
 // emits hoisted cache immediately before loop.
 
-module plan123_2.licm_mut_after_call_ok
+module nova_tests.plan123_2
 
-type Counter {
+type Counter4 {
     mut threshold int
 }
 
-fn Counter.helper(x int) -> int {
+fn Counter4.helper(x int) -> int {
     x + 1
 }
 
-fn Counter mut @sum_above() -> int {
+fn Counter4 mut @sum_above() -> int {
     // 123.1 mut path: prefix region ends at the helper Call.
     // Loop body has 2 reads of @threshold, no writes, no calls.
     // LICM should hoist @threshold immediately before loop.
-    mut bias = Counter.helper(5)
+    mut bias = Counter4.helper(5)
     mut total = 0
     mut i = 0
     while i < 4 {
@@ -26,12 +26,12 @@ fn Counter mut @sum_above() -> int {
     total + bias
 }
 
-fn Counter.new(x int) -> Counter {
-    Counter { threshold: x }
+fn Counter4.new(x int) -> Counter4 {
+    Counter4 { threshold: x }
 }
 
 test "LICM hoists mut field after-call inside loop" {
-    mut c = Counter.new(3)
+    mut c = Counter4.new(3)
     ro r = c.sum_above()
     // bias = helper(5) = 6; loop 4 iterations × (3+3) = 24; + 6 = 30.
     assert(r == 30)

@@ -2,7 +2,7 @@
 // infer_expr_type сопоставляет Call{func: Ident("panic")} с never.
 // Match-arm divergent — never <: int via Ф.1 hookpoint.
 
-module plan125_1.panic_in_match_arm_typed
+module nova_tests.plan125_1
 
 type Color | Red | Green | Blue | Bad
 

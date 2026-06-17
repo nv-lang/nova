@@ -5,14 +5,14 @@
 // (B) Protocol return type: `fn get_iter() -> Iterable[int]` — функция возвращает
 //     NovaBox_Iter_nova_int; `let x = get_iter()` автоматически fat pointer.
 
-module plan72.p3b_fatptr_return_pos
+module nova_tests.plan72
 
-type IntCounter {
+type IntCounter6 {
     mut cur int
     end int
 }
 
-fn IntCounter mut @next() -> Option[int] => {
+fn IntCounter6 mut @next() -> Option[int] => {
     if @cur < @end {
         ro v = @cur
         @cur += 1
@@ -22,8 +22,8 @@ fn IntCounter mut @next() -> Option[int] => {
     }
 }
 
-fn make_counter(n int) -> IntCounter => {
-    IntCounter { cur: 0, end: n }
+fn make_counter(n int) -> IntCounter6 => {
+    IntCounter6 { cur: 0, end: n }
 }
 
 test "P3-B fat ptr — ro x Iterable[int] = make_counter(3); x.next()" {
@@ -58,11 +58,11 @@ test "P3-B fat ptr — count через protocol var из make_counter" {
 // ── Part B: fn returns Iterable[int] directly, no annotation on let ──────────────
 
 fn get_iter_3() -> Iterable[int] => {
-    IntCounter { cur: 0, end: 3 }
+    IntCounter6 { cur: 0, end: 3 }
 }
 
 fn get_iter_0() -> Iterable[int] => {
-    IntCounter { cur: 0, end: 0 }
+    IntCounter6 { cur: 0, end: 0 }
 }
 
 test "P3-B fat ptr return — ro x = get_iter_3(); x.next() is Some" {

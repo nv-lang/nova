@@ -1,17 +1,17 @@
 // Plan 118.1 [M-118.1-addr-of-chains] — &(@a.b): a field chain rooted in
 // `self` (SelfAccess) is a valid lvalue → accepted.
 // (addr_of removed in Plan 118.6 — use & syntax directly.)
-module plan118_1_addr_chains.t6_pos_self_field_chain_ok
+module nova_tests.plan118_1_addr_chains
 
-type Inner {
+type Inner3 {
     ro z i64
 }
 
-type Holder {
-    ro inner Inner
+type Holder2 {
+    ro inner Inner3
 }
 
-fn Holder @peek() -> i64 {
+fn Holder2 @peek() -> i64 {
     unsafe {
         ro p = &@inner.z
         p.read()
@@ -19,6 +19,6 @@ fn Holder @peek() -> i64 {
 }
 
 test "addr_of of a self-rooted field chain is accepted" {
-    ro h = Holder { inner: Inner { z: 9 } }
+    ro h = Holder2 { inner: Inner3 { z: 9 } }
     assert(h.peek() == 9)
 }

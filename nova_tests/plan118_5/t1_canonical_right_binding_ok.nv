@@ -7,16 +7,16 @@
 // the pointer is binding, not type. The ro pointee is the bare canon `*T`
 // (`*T ≡ *ro T`; explicit `*ro T` is a hard error, migrated here).
 
-module plan118_5.t1_canonical_right_binding_ok
+module nova_tests.plan118_5
 
-type Acc {
+type Acc1 {
     id i64
 }
 
-extern "nova" fn p118_5_t1_a(p * Acc) -> ()
-extern "nova" fn p118_5_t1_b(p *Acc) -> ()
-extern "nova" fn p118_5_t1_c(p *mut Acc) -> ()
-extern "nova" fn p118_5_t1_d(p *unsafe Acc) -> ()
+extern "nova" fn p118_5_t1_a(p * Acc1) -> ()
+extern "nova" fn p118_5_t1_b(p *Acc1) -> ()
+extern "nova" fn p118_5_t1_c(p *mut Acc1) -> ()
+extern "nova" fn p118_5_t1_d(p *unsafe Acc1) -> ()
 
 test "parses canonical right-binding forms" {
     assert(1 == 1)

@@ -1,0 +1,10 @@
+// Plan 118.5 V3 T15 → RETIRED by Plan 138.5 (2026-06-11).
+//
+// `safe` (the §V3.4 stopper for an unsafe chain) is retired; `* safe unsafe
+// int` errors at the `safe` token. Kept as a regression guard.
+//
+// EXPECT_COMPILE_ERROR E_SAFE_RETIRED
+
+module neg.t15_safe_breaks_unsafe_chain_ok
+
+extern "nova" fn t15_p(x * safe unsafe int) -> ()

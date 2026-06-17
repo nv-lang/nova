@@ -3,7 +3,7 @@
 // V1 (этот тест): cancel(reason: T) с typed boxing для T=str/int/bool/pointer.
 // V2: reason() -> Option[T] per-T (нужна mono'd helper или infer-context).
 
-module concurrency.cancel_token_generic_smoke
+module nova_tests.concurrency
 
 
 // ──────────────────────────────────────────────────────────────────────────

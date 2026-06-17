@@ -1,12 +1,12 @@
 // 30_alias_tagged.nv — type aliases (`type X alias T`) и
 // tagged template literals.
 
-module types.alias_tagged
+module nova_tests.types
 
 // --- Alias types ---
 
 type Name alias str
-type UserId alias int
+type UserId1 alias int
 type Score alias int
 
 fn greet(n Name) -> str {
@@ -23,7 +23,7 @@ test "alias на str — функция-парам" {
 }
 
 test "alias на int — арифметика" {
-    ro id UserId = 42
+    ro id UserId1 = 42
     assert(id + 8 == 50)
 }
 

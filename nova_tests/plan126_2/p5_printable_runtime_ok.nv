@@ -2,18 +2,18 @@
 // `#impl(Display)` auto-derive synthesizes `@display(w Write) -> ()` producing
 // `TypeName { field: value, ... }`. Verify rendered string via StringBuilder.
 // AC-126.2.7. Plan 152.7.1 (D258 AMEND): migrated v.fmt(sb) -> v.display(sb).
-module plan126_2.p5_printable_runtime_ok
+module nova_tests.plan126_2
 
 #impl(Display)
-type Vec3 {
+type Vec32 {
     x int
     y int
     z int
 }
 
 test "auto-derived display renders TypeName fields" {
-    ro v = Vec3 { x: 1, y: 2, z: 3 }
+    ro v = Vec32 { x: 1, y: 2, z: 3 }
     consume sb = StringBuilder.new()
     v.display(sb)
-    assert(sb.as_str() == "Vec3 { x: 1, y: 2, z: 3 }")
+    assert(sb.as_str() == "Vec32 { x: 1, y: 2, z: 3 }")
 }

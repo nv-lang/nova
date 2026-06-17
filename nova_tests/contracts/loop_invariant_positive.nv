@@ -3,9 +3,9 @@
 // Invariant'ы инжектятся как assert_static в начало body цикла.
 // Каждая итерация проверяет invariant — если нарушен, runtime panic.
 
-module contracts.loop_invariant_positive
+module nova_tests.contracts
 
-fn sum_to(n int) -> int
+fn sum_to1(n int) -> int
     requires n >= 0
 {
     mut s = 0
@@ -32,7 +32,7 @@ fn count_with_inv(xs []int) -> int {
 }
 
 test "loop invariants positive" {
-    assert(sum_to(5) == 0 + 1 + 2 + 3 + 4)
-    assert(sum_to(0) == 0)
+    assert(sum_to1(5) == 0 + 1 + 2 + 3 + 4)
+    assert(sum_to1(0) == 0)
     assert(count_with_inv([1, 2, 3, 4]) == 4)
 }

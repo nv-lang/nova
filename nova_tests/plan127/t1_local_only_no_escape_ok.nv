@@ -1,16 +1,16 @@
 // Plan 127 Ф.5 / A127.1 — POS: `&v` local-only, no escape — stays stack.
 // Binding `p = &v` is consumed inside fn; no return/heap-store/closure-cap.
 // Codegen must NOT auto-promote `v` (stays NovaValue_Vec3 на stack).
-module plan127.t1_local_only_no_escape_ok
+module nova_tests.plan127
 
-type Vec3 value {
+type Vec32 value {
     x f64
     y f64
     z f64
 }
 
 fn local_ref() -> f64 {
-    ro v = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
+    ro v = Vec32 { x: 1.0, y: 2.0, z: 3.0 }
     ro p = unsafe { &v }
     v.x
 }

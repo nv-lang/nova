@@ -1,6 +1,6 @@
 // Ф.9.4 (Plan 33.6): TrivialBackend commutativity для * — `a * b == b * a`.
 
-module contracts.trivial_mul_commutativity_positive
+module nova_tests.contracts
 
 #verify
 fn commutative_mul(a int, b int) -> int

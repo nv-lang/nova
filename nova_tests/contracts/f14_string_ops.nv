@@ -3,7 +3,7 @@
 
 // REQUIRES_SMT_BACKEND z3
 
-module contracts.f14_string_ops
+module nova_tests.contracts
 
 // String equality reflexive.
 #verify

@@ -1,8 +1,8 @@
 // Plan 123.4 T1.6: chain reads spanning if-else branches.
 
-module plan123_4.chain_with_conditionals_ok
+module nova_tests.plan123_4
 
-type Wrap {
+type Wrap3 {
     ro inner Wrap_Inner
 }
 
@@ -11,7 +11,7 @@ type Wrap_Inner {
     ro data int
 }
 
-fn Wrap @select_value() -> int {
+fn Wrap3 @select_value() -> int {
     if @inner.flag > 0 {
         @inner.data + @inner.data
     } else {
@@ -19,11 +19,11 @@ fn Wrap @select_value() -> int {
     }
 }
 
-fn Wrap.new(f int, d int) -> Wrap {
-    Wrap { inner: Wrap_Inner { flag: f, data: d } }
+fn Wrap3.new(f int, d int) -> Wrap3 {
+    Wrap3 { inner: Wrap_Inner { flag: f, data: d } }
 }
 
 test "chain caching across branches" {
-    assert(Wrap.new(1, 5).select_value() == 10)
-    assert(Wrap.new(0, 99).select_value() == 100)
+    assert(Wrap3.new(1, 5).select_value() == 10)
+    assert(Wrap3.new(0, 99).select_value() == 100)
 }

@@ -1,5 +1,5 @@
 // Plan 124.8 — positive: `mut acc` binding allows write к `mut field`.
-module plan124_8.d175_mut_binding_ok
+module nova_tests.plan124_8
 
 type Acc {
     mut money f64

@@ -1,7 +1,7 @@
 // Plan 33.19 (extending Ф.14 Dafny-port): abs() V1 — single-branch.
 // Положительный bound (a >= 0) → abs = a сам по себе.
 
-module contracts.f55_abs_value
+module nova_tests.contracts
 
 #verify
 fn abs_already_pos(x int) -> int

@@ -24,7 +24,7 @@
 // is covered separately by Plan 83.10.3 `panic_in_nested_supervised`). This
 // fixture isolates cancel-cascade propagation through 3 levels.
 
-module concurrency.nested_supervised_3_levels_cancel
+module nova_tests.concurrency
 
 test "nested supervised cascade — outer cancel cascades 3 levels" {
     ro outer_tok = CancelToken.new()

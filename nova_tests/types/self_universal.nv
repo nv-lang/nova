@@ -4,64 +4,64 @@
 // После D66: `Self` валиден в любом type-контексте — static-методах,
 // instance-методах, sum-вариантах, effect-объявлениях.
 
-module types.self_universal
+module nova_tests.types
 
 // === 1. Self в static-методе record'а ===
 
-type Box {
+type Box8 {
     mut value int
 }
 
-fn Box.new(v int) -> Self {
-    Box { value: v }
+fn Box8.new(v int) -> Self {
+    Box8 { value: v }
 }
 
-fn Box.zero() -> Self {
-    Box { value: 0 }
+fn Box8.zero() -> Self {
+    Box8 { value: 0 }
 }
 
 test "Self в static-методе" {
-    ro b = Box.new(42)
+    ro b = Box8.new(42)
     assert(b.value == 42)
-    ro z = Box.zero()
+    ro z = Box8.zero()
     assert(z.value == 0)
 }
 
 // === 2. Self в instance-методе record'а — для clone/builder ===
 
-fn Box @clone() -> Self {
-    Box { @value }
+fn Box8 @clone() -> Self {
+    Box8 { @value }
 }
 
-fn Box @doubled() -> Self {
-    Box { value: @value * 2 }
+fn Box8 @doubled() -> Self {
+    Box8 { value: @value * 2 }
 }
 
 test "Self в @clone" {
-    ro b = Box { value: 7 }
+    ro b = Box8 { value: 7 }
     ro c = b.clone()
     assert(c.value == 7)
 }
 
 test "Self в return type instance-метода (builder)" {
-    ro b = Box { value: 5 }
+    ro b = Box8 { value: 5 }
     ro d = b.doubled()
     assert(d.value == 10)
 }
 
 // === 3. Self в generic record'е ===
 
-type Pair[A, B] {
+type Pair6[A, B] {
     fst A
     snd B
 }
 
-fn Pair[A, B] @swap() -> Pair[B, A] {
-    Pair { fst: @snd, snd: @fst }
+fn Pair6[A, B] @swap() -> Pair6[B, A] {
+    Pair6 { fst: @snd, snd: @fst }
 }
 
-test "Self не нужен — но альтернатива через Pair[B, A] явная" {
-    mut p = Pair { fst: 1, snd: "x" }
+test "Self не нужен — но альтернатива через Pair6[B, A] явная" {
+    mut p = Pair6 { fst: 1, snd: "x" }
     ro s = p.swap()
     assert(s.fst == "x")
     assert(s.snd == 1)
@@ -69,11 +69,11 @@ test "Self не нужен — но альтернатива через Pair[B, 
 
 // === 4. Self в sum-варианте ===
 
-type Tree
+type Tree2
     | Leaf
-    | Node(int, Tree, Tree)
+    | Node(int, Tree2, Tree2)
 
-fn Tree @count() -> int => match @ {
+fn Tree2 @count() -> int => match @ {
     Leaf          => 0
     Node(_, l, r) => 1 + l.count() + r.count()
 }
@@ -109,38 +109,38 @@ test "effect методы используют обычные типы (не Sel
 // replaces old D70 `ToStr` / `@to_str`). Built-in `str.from(int)`
 // turns an int into its decimal string.
 
-type UserId { id u64 }
+type UserId3 { id u64 }
 
-fn UserId @into() -> str => "user#" + str.from(@id)
+fn UserId3 @into() -> str => "user#" + str.from(@id)
 
-test "Into[str] for UserId — string conversion via D73" {
-    ro u = UserId { id: 42 }
+test "Into[str] for UserId3 — string conversion via D73" {
+    ro u = UserId3 { id: 42 }
     ro s str = u.into()
     assert(s == "user#42")
 }
 
 // === 7. Self vs обычное имя типа — DRY ===
 
-type Account { balance int }
+type Account3 { balance int }
 
 // Без Self — повтор имени
-fn Account.with_balance(b int) -> Account {
-    Account { balance: b }
+fn Account3.with_balance(b int) -> Account3 {
+    Account3 { balance: b }
 }
 
 // С Self — DRY (рекомендуется)
-fn Account.zero_balance() -> Self {
+fn Account3.zero_balance() -> Self {
     Self { balance: 0 }
 }
 
 test "Self literal — Self { ... } работает в bootstrap" {
-    ro a = Account.zero_balance()
+    ro a = Account3.zero_balance()
     assert(a.balance == 0)
 }
 
 test "обе формы возвращают тот же тип" {
-    ro a1 = Account.with_balance(100)
-    ro a2 = Account.zero_balance()
+    ro a1 = Account3.with_balance(100)
+    ro a2 = Account3.zero_balance()
     assert(a1.balance == 100)
     assert(a2.balance == 0)
 }

@@ -1,16 +1,16 @@
 // Plan 127 Ф.5 / A127.14 regression — heap records (no `value` keyword)
 // are NOT subject to Plan 127 escape promote logic. They stay heap-allocated
 // always; no V1 promotion machinery applies.
-module plan127.t4_no_value_record_no_promote_ok
+module nova_tests.plan127
 
-type Triple {
+type Triple2 {
     a int
     b int
     c int
 }
 
-fn make_triple() -> Triple {
-    Triple { a: 1, b: 2, c: 3 }
+fn make_triple() -> Triple2 {
+    Triple2 { a: 1, b: 2, c: 3 }
 }
 
 test "heap record (no value kw) — escape analysis no-op" {

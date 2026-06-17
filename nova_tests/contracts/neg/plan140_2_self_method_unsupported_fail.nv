@@ -1,0 +1,18 @@
+// Plan 140.2 Part A (D256): non-accessor self-метод `@helper()` в контракте —
+// внятная checker-ошибка (не обобщённый E2401-encoder-crash).
+// EXPECT_COMPILE_ERROR @helper
+
+module neg.plan140_2_self_method_unsupported_fail
+
+type Box {
+    val int
+}
+
+fn Box.helper() -> int => @val
+
+#verify
+fn Box.check() -> int
+    requires @helper() > 0
+{
+    @val
+}

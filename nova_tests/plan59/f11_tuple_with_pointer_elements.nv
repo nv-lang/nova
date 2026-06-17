@@ -4,7 +4,7 @@
 // Тест гарантирует что parser handle'ит `_p` corectly: `Nova_Foo_p`
 // (length=10) → desanitize → `Nova_Foo*` round-trip.
 
-module plan59.f11_tuple_with_pointer_elements
+module nova_tests.plan59
 
 
 type Foo {

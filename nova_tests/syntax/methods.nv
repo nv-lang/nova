@@ -1,67 +1,67 @@
 // 09_methods.nv — @-методы (D35), static-методы
 
-module syntax.methods
+module nova_tests.syntax
 
-type Point { x int, y int }
+type Point7 { x int, y int }
 
-type Counter { mut value int }
+type Counter18 { mut value int }
 
 // Instance method (D35) — @ для self
-fn Point @sum() -> int => @x + @y
+fn Point7 @sum() -> int => @x + @y
 
-fn Point @scale(k int) -> Point => { x: @x * k, y: @y * k }
+fn Point7 @scale(k int) -> Point7 => { x: @x * k, y: @y * k }
 
 // Method using fields via @field
-fn Point @magnitude_sq() -> int => @x * @x + @y * @y
+fn Point7 @magnitude_sq() -> int => @x * @x + @y * @y
 
 // Static method via dot
-fn Point.origin() -> Point => { x: 0, y: 0 }
+fn Point7.origin() -> Point7 => { x: 0, y: 0 }
 
-fn Point.from_pair(p (int, int)) -> Point => { x: p.0, y: p.1 }
+fn Point7.from_pair(p (int, int)) -> Point7 => { x: p.0, y: p.1 }
 
 // Mut method
-fn Counter mut @inc() -> () { @value = @value + 1 }
+fn Counter18 mut @inc() -> () { @value = @value + 1 }
 
-fn Counter @get() -> int => @value
+fn Counter18 @get() -> int => @value
 
 test "instance method @-access" {
-    ro p = Point { x: 3, y: 4 }
+    ro p = Point7 { x: 3, y: 4 }
     assert(p.sum() == 7)
 }
 
 test "method returning new value" {
-    ro p = Point { x: 2, y: 3 }
+    ro p = Point7 { x: 2, y: 3 }
     ro p2 = p.scale(10)
     assert(p2.x == 20)
     assert(p2.y == 30)
 }
 
 test "magnitude squared" {
-    ro p = Point { x: 3, y: 4 }
+    ro p = Point7 { x: 3, y: 4 }
     assert(p.magnitude_sq() == 25)
 }
 
 test "static method origin" {
-    ro o = Point.origin()
+    ro o = Point7.origin()
     assert(o.x == 0)
     assert(o.y == 0)
 }
 
 test "static method from tuple" {
-    ro p = Point.from_pair((7, 9))
+    ro p = Point7.from_pair((7, 9))
     assert(p.x == 7)
     assert(p.y == 9)
 }
 
 test "method chaining" {
-    ro p = Point { x: 1, y: 1 }
+    ro p = Point7 { x: 1, y: 1 }
     ro r = p.scale(2).scale(3)
     assert(r.x == 6)
     assert(r.y == 6)
 }
 
 test "mut method modifies receiver field" {
-    mut c = Counter { value: 0 }
+    mut c = Counter18 { value: 0 }
     c.inc()
     c.inc()
     c.inc()

@@ -3,7 +3,7 @@
 // method-style Path → Nova_<Type>_method_<name>. Регистрация
 // fn_result_ok_inner_types для methods тоже работает.
 
-module plan59.f20_result_method_with_tuple
+module nova_tests.plan59
 
 
 type Parser {

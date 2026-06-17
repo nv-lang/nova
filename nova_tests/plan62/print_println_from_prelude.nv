@@ -29,7 +29,7 @@
 // Codegen special-case остаётся в emit_c.rs (Plan 62.B.bis Ф.1 reorder).
 // См. docs/plans/62.B.bis-print-println-migration.md.
 
-module plan62.print_println_from_prelude
+module nova_tests.plan62
 
 
 test "println single str через prelude (basic resolve)" {

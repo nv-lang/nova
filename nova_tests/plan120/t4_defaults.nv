@@ -1,6 +1,6 @@
 // Plan 120 (D215 amend): T4 — named tuple fields with default values.
 
-module plan120.t4_defaults
+module nova_tests.plan120
 
 // Simple type with all-default fields
 type Complex(re f64 = 0.0, im f64 = 0.0)

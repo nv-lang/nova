@@ -11,7 +11,7 @@
 //
 // Closes acceptance A20 ✅ — NPO применяется через newtype.
 
-module plan118.t5_6_npo_newtype_handle_ok
+module nova_tests.plan118
 
 // Canonical FFI pattern — opaque handle wrapping *() (Plan 115 D214).
 type SqHandle(*())

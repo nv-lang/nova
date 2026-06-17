@@ -4,14 +4,14 @@
 // model:
 //   - value-T (`unsafe ro int` / `unsafe mut int`): order is free — both
 //     these and the flipped `ro unsafe` / `mut unsafe` compile.
-//   - pointer pointee-safety: the prefix `unsafe * ro Acc` form is retired
+//   - pointer pointee-safety: the prefix `unsafe * ro Acc4` form is retired
 //     (E_POINTER_PREFIX_MODIFIER); the canonical postfix forms are
-//     `*unsafe ro Acc` / `*unsafe mut Acc` (ptr to a possibly-uninit Acc
-//     whose pointee is ro / mut). FFI nullable-uninit is `Option[*unsafe Acc]`.
+//     `*unsafe ro Acc4` / `*unsafe mut Acc4` (ptr to a possibly-uninit Acc4
+//     whose pointee is ro / mut). FFI nullable-uninit is `Option[*unsafe Acc4]`.
 
-module plan118_5_v3.t9_safety_outer_ok
+module nova_tests.plan118_5_v3
 
-type Acc {
+type Acc4 {
     id i64
 }
 
@@ -20,8 +20,8 @@ extern "nova" fn p1(x unsafe ro int) -> ()
 extern "nova" fn p2(x unsafe mut int) -> ()
 
 // postfix pointee-unsafe pointer forms (canonical, replacing `unsafe * …`)
-extern "nova" fn p3(x *unsafe ro Acc) -> ()
-extern "nova" fn p4(x *unsafe mut Acc) -> ()
+extern "nova" fn p3(x *unsafe ro Acc4) -> ()
+extern "nova" fn p4(x *unsafe mut Acc4) -> ()
 
 test "value-T safety order + postfix pointee-unsafe pointer accepted" {
     assert(1 == 1)

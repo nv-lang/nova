@@ -1,7 +1,7 @@
 // Plan 141 — A1: float tuple equality by IEEE semantics.
 // `(0.0, 1) == (-0.0, 1)` must be true: IEEE `-0.0 == +0.0`.
 // The prior memcmp gave FALSE here (different bit patterns).
-module plan141.t1_tuple_float_neg_zero
+module nova_tests.plan141
 
 fn make_neg_zero(x f64) -> f64 => 0.0 - x
 

@@ -8,7 +8,7 @@
 // V1-contract (D50): body is a leaf (CPU/FFI without GC-allocation).
 // Here the body is a CPU busy-loop (pure arithmetic), V1-compatible.
 
-module concurrency.blocking_offload_test
+module nova_tests.concurrency
 
 // leaf work: CPU busy-loop. Returns result → tests result-passing via ctx-struct after wake.
 #blocking fn _busy_sum_work(upto int) -> int {

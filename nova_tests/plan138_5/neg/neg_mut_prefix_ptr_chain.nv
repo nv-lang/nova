@@ -1,0 +1,20 @@
+// Plan 138.5 NEG — prefix `mut *` at the head of a pointer CHAIN is forbidden.
+//
+// `mut * *mut Node` → the outer `mut` before `*` is the prefix form. Migrate
+// the whole chain to postfix pointee modifiers: `*mut *mut Node`. (Under the
+// 3-axis canon, Plan 147 / D246, the inner level must use `*mut`/`*T`, never
+// `*ro` — a bare `*T ≡ *ro T`, so an explicit `*ro` would mask this prefix
+// error with E_REDUNDANT_POINTER_RO; the inner level here is `*mut` to keep
+// the prefix-`mut` the only defect.)
+//
+// EXPECT_COMPILE_ERROR E_POINTER_PREFIX_MODIFIER
+
+module neg.neg_mut_prefix_ptr_chain
+
+type Node {
+    id i64
+}
+
+// Return position to force the type-position `mut *` arm (a param post-name
+// `mut` is eaten as binding-mut per the D6 legacy form).
+extern "nova" fn p() -> mut * *mut Node

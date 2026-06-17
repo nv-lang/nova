@@ -9,14 +9,14 @@
 // to `#no_prelude` before `module` declaration.
 
 #no_prelude
-module plan62.no_prelude_explicit_import
+module nova_tests.plan62
 
 // `Some` нужен для конструктора. `assert` — для test'ов (runtime fn,
 // не доступен без auto-import). Импортируем оба explicitly.
 import std.prelude.core.{Option, Some, None}
 import std.prelude.runtime.{assert}
 
-fn make_some() -> Option[int] {
+fn make_some1() -> Option[int] {
     Some(42)
 }
 
@@ -25,7 +25,7 @@ fn make_none() -> Option[int] {
 }
 
 test "no_prelude + explicit import — Some constructor works" {
-    ro o = make_some()
+    ro o = make_some1()
     // `is_some` — method на Option, registered через runtime helper.
     // Доступен independent от prelude auto-import (lookup идёт через
     // method-receiver registry, не через name-scope).
