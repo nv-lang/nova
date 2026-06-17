@@ -30,7 +30,7 @@
 //       v.into()                         // сериализация
 //   - D74 instance-методы числовых операций (не используется напрямую,
 //     но `len`, comparisons на u64 — стандартные методы).
-//   - D46 operator overloading: @eq, @lt — для естественного сравнения.
+//   - D46/D184 operator overloading: @equal, @compare — для естественного сравнения.
 //
 // Pending language features (используются ниже):
 //   - `str.split(sep str) -> []str` — стандартный split
@@ -285,7 +285,7 @@ fn is_ascii_ident_char(c char) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `Into[str]` — формат `MAJOR.MINOR.PATCH[-PRE][+BUILD]`.
-/// Round-trip: `Version.from(v.into()).eq(v)` для валидной Version.
+/// Round-trip: `Version.from(v.into())== v` для валидной Version.
 #stable(since = "0.1")
 export fn Version @into() -> str {
     mut s = str.from(@major) + "." + str.from(@minor) + "." + str.from(@patch)
@@ -317,7 +317,7 @@ fn join_dots(parts []str) -> str {
 /// Strict equality (`==`) — structural по всем полям (включая build).
 /// Для semver-precedence equality (без build) используй [`eq_precedence`].
 #stable(since = "0.1")
-export fn Version @eq(other Version) -> bool =>
+export fn Version @equal(other Version) -> bool =>
     @major == other.major
     && @minor == other.minor
     && @patch == other.patch
@@ -332,40 +332,39 @@ export fn Version @eq_precedence(other Version) -> bool =>
     && @patch == other.patch
     && pre_eq(@pre, other.pre)
 
-/// Less-than (`<`) per semver.org § 11 precedence:
+/// Compare per semver.org § 11 precedence. Returns <0, 0, >0.
 /// 1. major/minor/patch numeric compare;
 /// 2. не-pre > pre (1.0.0 > 1.0.0-anything);
 /// 3. покомпонентное сравнение pre (numeric < alphanumeric).
 #stable(since = "0.1")
-export fn Version @lt(other Version) -> bool {
-    if @major != other.major { return @major < other.major }
-    if @minor != other.minor { return @minor < other.minor }
-    if @patch != other.patch { return @patch < other.patch }
+export fn Version @compare(other Version) -> int {
+    if @major != other.major { return if @major < other.major { -1 } else { 1 } }
+    if @minor != other.minor { return if @minor < other.minor { -1 } else { 1 } }
+    if @patch != other.patch { return if @patch < other.patch { -1 } else { 1 } }
 
     // major.minor.patch равны → смотрим pre.
     ro a_has_pre = @pre.len() > 0
     ro b_has_pre = other.pre.len() > 0
 
-    if a_has_pre && !b_has_pre { return true }   // 1.0.0-alpha < 1.0.0
-    if !a_has_pre && b_has_pre { return false }
-    if !a_has_pre && !b_has_pre { return false } // равны
+    if a_has_pre && !b_has_pre { return -1 }  // 1.0.0-alpha < 1.0.0
+    if !a_has_pre && b_has_pre { return 1 }
+    if !a_has_pre && !b_has_pre { return 0 }  // равны
 
     // Оба pre — покомпонентное сравнение.
-    pre_lt(@pre, other.pre)
+    pre_compare(@pre, other.pre)
 }
 
-// Покомпонентное pre-release сравнение (§ 11.4).
-fn pre_lt(a []str, b []str) -> bool {
+// Покомпонентное pre-release сравнение (§ 11.4). Returns <0, 0, >0.
+fn pre_compare(a []str, b []str) -> int {
     ro n = if a.len() < b.len() { a.len() } else { b.len() }
     mut i = 0
     while i < n {
         ro result = compare_ident(a[i], b[i])
-        if result < 0 { return true }
-        if result > 0 { return false }
+        if result != 0 { return result }
         i += 1
     }
     // Все общие компоненты равны — у кого меньше длина, тот меньше.
-    a.len() < b.len()
+    if a.len() < b.len() { -1 } else if a.len() > b.len() { 1 } else { 0 }
 }
 
 // Сравнение двух identifier'ов: возвращает -1, 0, или 1.
@@ -390,7 +389,7 @@ fn compare_ident(a str, b str) -> int {
     if a < b { -1 } else if a > b { 1 } else { 0 }
 }
 
-// Helper для @eq: массив строк структурно равен.
+// Helper для @equal: массив строк структурно равен.
 fn pre_eq(a []str, b []str) -> bool {
     if a.len() != b.len() { return false }
     mut i = 0
@@ -401,17 +400,7 @@ fn pre_eq(a []str, b []str) -> bool {
     true
 }
 
-/// Less-than-or-equal (`<=`) — precedence-based.
-#stable(since = "0.1")
-export fn Version @le(other Version) -> bool => @lt(other) || @eq_precedence(other)
-
-/// Greater-than (`>`) — precedence-based.
-#stable(since = "0.1")
-export fn Version @gt(other Version) -> bool => other.lt(@)
-
-/// Greater-than-or-equal (`>=`) — precedence-based.
-#stable(since = "0.1")
-export fn Version @ge(other Version) -> bool => @gt(other) || @eq_precedence(other)
+// Note: @le/@gt/@ge removed — use @compare(other) <=/>/>=  0, or < > <= >= operators.
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -552,28 +541,28 @@ test "into: round-trip простая версия" {
     ro v = Version.new(1, 2, 3)
     assert(v.into() == "1.2.3")
     ro parsed = Version.from(v.into())
-    assert(parsed.eq(v))
+    assert(parsed== v)
 }
 
 test "into: round-trip с pre" {
     ro v = Version.full(1, 0, 0, ["alpha", "1"], [])
     assert(v.into() == "1.0.0-alpha.1")
     ro parsed = Version.from(v.into())
-    assert(parsed.eq(v))
+    assert(parsed== v)
 }
 
 test "into: round-trip с build" {
     ro v = Version.full(1, 0, 0, [], ["build", "42"])
     assert(v.into() == "1.0.0+build.42")
     ro parsed = Version.from(v.into())
-    assert(parsed.eq(v))
+    assert(parsed== v)
 }
 
 test "into: round-trip с pre и build" {
     ro v = Version.full(1, 0, 0, ["beta"], ["exp", "sha", "5114f85"])
     assert(v.into() == "1.0.0-beta+exp.sha.5114f85")
     ro parsed = Version.from(v.into())
-    assert(parsed.eq(v))
+    assert(parsed== v)
 }
 
 test "compare: numeric ordering" {
@@ -582,17 +571,17 @@ test "compare: numeric ordering" {
     ro c = Version.from("1.1.0")
     ro d = Version.from("1.0.1")
 
-    assert(a.lt(b))
-    assert(a.lt(c))
-    assert(a.lt(d))
-    assert(d.lt(c))
-    assert(c.lt(b))
+    assert(a< b)
+    assert(a< c)
+    assert(a< d)
+    assert(d< c)
+    assert(c< b)
 }
 
 test "compare: pre-release < release (semver § 11.3)" {
     ro pre = Version.from("1.0.0-alpha")
     ro rel = Version.from("1.0.0")
-    assert(pre.lt(rel))
+    assert(pre< rel)
     assert(rel.gt(pre))
 }
 
@@ -610,7 +599,7 @@ test "compare: цепочка pre-release per semver.org example" {
         Version.from("1.0.0"),
     ]
     for i in 0..chain.len() - 1 {
-        assert(chain[i].lt(chain[i + 1]))
+        assert(chain[i]< chain[i + 1])
     }
 }
 
@@ -618,14 +607,14 @@ test "compare: numeric vs alphanumeric pre identifier" {
     // Numeric < alphanumeric (semver § 11.4.3)
     ro num = Version.from("1.0.0-1")
     ro alpha = Version.from("1.0.0-a")
-    assert(num.lt(alpha))
+    assert(num< alpha)
 }
 
 test "compare: длина pre identifiers" {
     // Из § 11.4.4: shorter < longer когда префикс совпадает
     ro short = Version.from("1.0.0-alpha")
     ro long = Version.from("1.0.0-alpha.1")
-    assert(short.lt(long))
+    assert(short< long)
 }
 
 test "compare: build metadata игнорируется (semver § 10)" {
@@ -633,9 +622,9 @@ test "compare: build metadata игнорируется (semver § 10)" {
     ro b = Version.from("1.0.0+build.2")
     // Имеют одинаковый precedence, но структурно разные.
     assert(a.eq_precedence(b))
-    assert(!a.eq(b))           // структурное @eq различает build
-    assert(!a.lt(b))
-    assert(!b.lt(a))
+    assert(a != b)             // структурное @equal различает build
+    assert(!(a < b))
+    assert(!(b < a))
 }
 
 test "is_stable: только не-pre с major >= 1" {
