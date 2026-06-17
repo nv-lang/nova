@@ -954,11 +954,10 @@ Plan 15 D53 strict-mode (Plan 15 Ф.5) ввёл различие protocol/effect
 2. **Record-coercion.** Анонимный record-литерал `{ field: value, ... }`
    получает тип `T` без необходимости писать имя типа перед `{}`.
 3. **Map-coercion.** Анонимный record-литерал `{ name: value, ... }` в
-   позиции, ожидающей str-keyed map (`HashMap[str, V]` — тип с
-   compiler-recognized marker `FromFields[V]`), превращается в map:
-   имена полей становятся **строковыми ключами**. Это **не**
-   record-coercion (поля литерала ≠ поля struct'а `HashMap`) — отдельное
-   правило, см. ниже.
+   позиции, ожидающей str-keyed map (тип помечен атрибутом `#from_fields`,
+   как `HashMap[str, V]`), превращается в map: имена полей становятся
+   **строковыми ключами**. Это **не** record-coercion (поля литерала ≠
+   поля struct'а `HashMap`) — отдельное правило, см. ниже.
 4. **Numeric literal coercion.** Целочисленный литерал в позиции
    numeric-типа (`u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`,
    `int`) принимается без явного `as`-cast если значение **влезает в
