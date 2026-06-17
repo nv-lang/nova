@@ -14245,6 +14245,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             ExprKind::Member { obj: inner, name } => {
                 self.compute_field_array_elem_type(inner, name)
             }
+            // [M-91.8c-direct-index-method]: @[j] in a generic []T method body
+            // (ExprKind::SelfAccess). emit_monomorphized_method registers the
+            // concrete element C type under "nova_self" in array_element_types
+            // so that infer_expr_c_type for `@[j].compare(key)` resolves the
+            // correct pointer type (e.g. "Nova_Point*") instead of falling back
+            // to the NovaArray_ strip path which loses the trailing '*'.
+            ExprKind::SelfAccess => self.array_element_types.get("nova_self").cloned(),
             _ => None,
         }
     }
@@ -14862,6 +14869,42 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         } else {
             None
         };
+        // [M-91.8c-direct-index-method] Register the concrete element C type for
+        // array_element_types["nova_self"] so that @[j].method() in generic []T
+        // method bodies resolves the element type via compute_array_elem_type_for_obj
+        // (SelfAccess arm) instead of falling back to the NovaArray_ strip path
+        // which loses the trailing '*' for struct pointer elements.
+        // Covers two receiver families:
+        //   Nova_Vec____<elem>* — look up generic_type_instance_info for the
+        //   mono'd Vec type; fall back to current_type_subst for the first typevar
+        //   when the info entry is not yet present.
+        //   NovaArray_<elem>*  — strip prefix and restore '*' for struct pointers.
+        let prev_self_elem: Option<Option<String>> = if is_instance {
+            let elem_ty_opt: Option<String> = if recv_c.starts_with("Nova_Vec____") {
+                let mangled = recv_c.trim_end_matches('*').trim().to_string();
+                self.generic_type_instance_info.borrow()
+                    .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                    .or_else(|| {
+                        // Fallback: derive from current_type_subst for the generic param.
+                        fn_decl.generics.iter()
+                            .find(|g| !g.name.is_empty())
+                            .and_then(|g| self.current_type_subst.get(&g.name).cloned())
+                    })
+            } else if let Some(after_prefix) = recv_c.strip_prefix("NovaArray_") {
+                // NovaArray_<elem>* — element is after the prefix, re-add '*' for structs.
+                let elem = after_prefix.trim_end_matches('*').trim();
+                if elem.starts_with("Nova_") {
+                    Some(format!("{}*", elem))
+                } else {
+                    Some(elem.to_string())
+                }
+            } else {
+                None
+            };
+            elem_ty_opt.map(|e| self.array_element_types.insert("nova_self".to_string(), e))
+        } else {
+            None
+        };
         let saved_var_types: Vec<(String, Option<String>)> = fn_decl.params.iter()
             .zip(&param_c_tys)
             .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
@@ -15193,6 +15236,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
         } else {
             let _ = prev_self;
+        }
+        // [M-91.8c-direct-index-method] Restore array_element_types["nova_self"]
+        // (paired with the registration above after var_types["nova_self"] set).
+        if let Some(prev) = prev_self_elem {
+            match prev {
+                Some(old) => { self.array_element_types.insert("nova_self".to_string(), old); }
+                None => { self.array_element_types.remove("nova_self"); }
+            }
         }
         for (name, prev) in saved_fn_sigs {
             match prev {
