@@ -155,11 +155,16 @@ test "uses helper" {
 ### Когда folder-module невозможен
 
 Folder-module не применяется если:
-1. В директории есть конфликты имён (одна и та же `fn foo` / `type Foo` в двух файлах).
+1. В директории есть конфликты имён (одна и та же `fn foo` / `type Foo` в двух файлах) — **и** ты не хочешь их разрешать (см. ниже).
 2. Директория содержит `_slow.nv`-файлы с другим module-путём.
 3. Директория — именованный пакет с `nova.toml`.
 
 В этом случае файлы остаются **standalone**: каждый объявляет свой уникальный `module <dir>.<filename>`.
+
+При конфликтах имён есть три выхода:
+- **Ordinal-suffix rename** (предпочтительно для существующих dirs): `Counter` в 3 файлах → `Counter1`/`Counter2`/`Counter3` (алфавитный порядок по имени файла). Массовый рефактор — `python scripts/catb_convert.py <dir>`.
+- **Уникальный prefix** (для нового кода): `feature_a_helper()` вместо `helper()`.
+- **Оставить standalone** (если переименование ломает смысл теста или dir заблокирована `nova.toml`).
 
 ---
 
@@ -252,7 +257,7 @@ test "option works" {
 grep -h "^fn \|^type \|^const " nova_tests/plan_foo/*.nv | sort | uniq -d
 ```
 
-Если конфликт неизбежен — **префиксируй именем файла**:
+**Для нового кода** — префиксируй именем файла:
 
 ```nova
 // feature_a.nv
@@ -262,7 +267,17 @@ fn feature_a_helper() -> int { ... }    // не просто "helper"
 fn feature_b_helper() -> int { ... }    // не конфликтует
 ```
 
-Или разнеси тест в отдельный standalone-файл с уникальным module-путём вместо folder-module.
+**Для рефактора существующей dir с конфликтами** — ordinal-suffix rename через скрипт:
+
+```sh
+# dry-run (показывает что изменится):
+python scripts/catb_convert.py --dry-run nova_tests/plan_foo
+
+# применить:
+python scripts/catb_convert.py nova_tests/plan_foo
+```
+
+Скрипт переименовывает `Counter` → `Counter1`/`Counter2`/... (по алфавиту файла), переносит EXPECT_COMPILE_ERROR → `neg/`, обновляет все ссылки внутри файлов. Не трогает stdlib-типы (Vec, Option, Result, str, int и др.).
 
 ---
 
@@ -697,7 +712,7 @@ Multi-line patterns не поддерживаются. Runner склеивает
 | `EXPECT_EXIT_CODE`, `EXPECT_STDOUT`, `EXPECT_STDERR` | standalone в `nova_tests/<group>/` |
 | Медленный тест | `nova_tests/<group>/<name>_slow.nv` |
 
-Конвенция folder-module (`module nova_tests.<group>`) применяется для позитивных тестов начиная с Plan 169 Ф.8. Старые standalone-файлы (`module <group>.<filename>`) сохранены там, где есть конфликты имён.
+Конвенция folder-module (`module nova_tests.<group>`) применяется для всех позитивных тестов начиная с Plan 169 Ф.8 (Cat-A+Cat-B). Оставшиеся standalone-файлы — только dirs с `nova.toml` (named packages) или с pre-existing compile errors в positives.
 
 ---
 
