@@ -778,6 +778,9 @@ fn prelude_items() -> Vec<IdentInfo> {
         ("Set", "Set[T] — hash set (import std.collections.set)", IdentKind::Type),
         ("Range", "Range — integer range a..b", IdentKind::Type),
         ("StringBuilder", "mutable UTF-8 string builder", IdentKind::Type),
+        // Protocols (std/prelude/protocols.nv)
+        ("Compare", "protocol Compare — three-way comparison via @compare (Plan 91.8a, D183)", IdentKind::Type),
+        ("Debug", "protocol Debug — debug output via @debug; used by ${x:?} interpolation (Plan 91.14, D229)", IdentKind::Type),
         // Common prelude functions/values.
         ("print", "print(s str) — write to stdout without newline", IdentKind::Fn),
         ("println", "println(s str) — write to stdout with newline", IdentKind::Fn),
@@ -849,6 +852,7 @@ fn int_methods() -> Vec<MethodInfo> {
         MethodInfo::new("max", "(other int) -> int", "Maximum of two ints"),
         MethodInfo::new("clamp", "(lo int, hi int) -> int", "Clamp to [lo, hi]"),
         MethodInfo::new("compare", "(other int) -> int", "Three-way comparison (-1/0/1)"),
+        MethodInfo::new("debug", "(sb consume StringBuilder) -> StringBuilder", "Debug format: decimal — called by ${x:?} interpolation (Plan 91.14, D229)"),
         // str.from(n) is the idiomatic int→str conversion in Nova
         // (no direct @to_str on int); listed here for discoverability.
     ]
@@ -876,6 +880,7 @@ fn f64_methods() -> Vec<MethodInfo> {
         MethodInfo::new("max", "(other f64) -> f64", "Maximum"),
         MethodInfo::new("clamp", "(lo f64, hi f64) -> f64", "Clamp to [lo, hi]"),
         MethodInfo::new("compare", "(other f64) -> int", "Three-way comparison"),
+        MethodInfo::new("debug", "(sb consume StringBuilder) -> StringBuilder", "Debug format: decimal — called by ${x:?} interpolation (Plan 91.14, D229)"),
     ]
 }
 
@@ -932,6 +937,8 @@ fn str_methods() -> Vec<MethodInfo> {
         // parse.nv
         MethodInfo::new("parse_int", "(radix int = 10) -> Option[int]", "Parse as integer"),
         MethodInfo::new("try_parse_int", "(radix int = 10) -> Result[int, ParseIntError]", "Parse as integer (detailed error)"),
+        // Debug protocol (Plan 91.14, D229)
+        MethodInfo::new("debug", "(sb consume StringBuilder) -> StringBuilder", "Debug format: quoted with escape sequences e.g. \"hello\\n\" — called by ${x:?}"),
     ]
 }
 
@@ -978,10 +985,21 @@ fn vec_methods() -> Vec<MethodInfo> {
         MethodInfo::new("retain", "mut (pred fn(T)->bool) -> @", "Keep only elements matching predicate"),
         MethodInfo::new("fill", "mut (v T) -> @", "Fill all slots with value"),
         MethodInfo::new("reserve", "mut (additional int) -> @", "Ensure capacity for at least N more elements"),
-        // Sort (sort.nv) — all require `mut` receiver
+        // Sort (sort.nv) — concrete []int fast-path + generic _of variants (Plan 91.8c, D185)
         MethodInfo::new("sort", "mut [T Compare] () -> @", "Stable sort by Compare"),
         MethodInfo::new("sort_by", "mut (cmp fn(T,T)->int) -> @", "Stable sort with custom comparator"),
         MethodInfo::new("sort_unstable", "mut [T Compare] () -> @", "Unstable sort (faster, less memory)"),
+        MethodInfo::new("sort_of", "mut [T Compare] () -> @", "Generic stable sort for any T Compare (Plan 91.8c)"),
+        MethodInfo::new("sort_by_of", "mut (cmp fn(T,T)->int) -> @", "Generic sort with callback, no Compare bound (Plan 91.8c)"),
+        MethodInfo::new("min_of", "[T Compare] () -> Option[T]", "Minimum element for any T Compare; None if empty (Plan 91.8c)"),
+        MethodInfo::new("max_of", "[T Compare] () -> Option[T]", "Maximum element for any T Compare; None if empty (Plan 91.8c)"),
+        MethodInfo::new("min_by_of", "(cmp fn(T,T)->int) -> Option[T]", "Minimum by callback comparator; None if empty (Plan 91.8c)"),
+        MethodInfo::new("max_by_of", "(cmp fn(T,T)->int) -> Option[T]", "Maximum by callback comparator; None if empty (Plan 91.8c)"),
+        MethodInfo::new("binary_search_of", "[T Compare] (target T) -> Option[int]", "Binary search on sorted slice; returns index or None (Plan 91.8c)"),
+        MethodInfo::new("reverse_of", "mut () -> @", "Reverse elements in-place (Plan 91.8c)"),
+        MethodInfo::new("position_of", "(pred fn(T)->bool) -> Option[int]", "Index of first matching element; None if not found (Plan 91.8c)"),
+        MethodInfo::new("count_of", "(pred fn(T)->bool) -> int", "Count elements matching predicate (Plan 91.8c)"),
+        MethodInfo::new("find_of", "(pred fn(T)->bool) -> Option[T]", "First element matching predicate; None if not found (Plan 91.8c)"),
         MethodInfo::new("dedup", "mut () -> @", "Remove consecutive duplicates"),
         MethodInfo::new("partition", "mut (pred fn(T)->bool) -> int", "Partition by predicate, return split index"),
         // Restructure (restructure.nv)
@@ -1005,6 +1023,7 @@ fn vec_methods() -> Vec<MethodInfo> {
         // Protocols
         MethodInfo::new("equal", "(other Vec[T]) -> bool", "Element-wise equality"),
         MethodInfo::new("as_slice", "() -> Vec[T]", "AsSlice[T] protocol implementation"),
+        MethodInfo::new("debug", "(sb consume StringBuilder) -> StringBuilder [T Debug]", "Debug format: [e1, e2, ...] — called by ${x:?} (Plan 91.14, D229)"),
     ]
 }
 
@@ -1013,7 +1032,7 @@ fn vec_methods() -> Vec<MethodInfo> {
 fn bool_methods() -> Vec<MethodInfo> {
     vec![
         MethodInfo::new("compare", "(other bool) -> int", "Three-way comparison"),
-        // display/debug are protocol methods; str.from(b) is idiomatic bool→str
+        MethodInfo::new("debug", "(sb consume StringBuilder) -> StringBuilder", "Debug protocol — called by ${x:?} interpolation (Plan 91.14, D229)"),
     ]
 }
 
@@ -1029,6 +1048,7 @@ fn option_methods() -> Vec<MethodInfo> {
         MethodInfo::new("map", "[U] (map_fn fn(T)->U) -> Option[U]", "Map Some value"),
         MethodInfo::new("ok_or", "[E] (err E) -> Result[T,E]", "Convert to Result"),
         MethodInfo::new("or", "(other Option[T]) -> Option[T]", "Return self if Some, else other"),
+        MethodInfo::new("debug", "(sb consume StringBuilder) -> StringBuilder [T Debug]", "Debug format: Some(x) / None — called by ${x:?} (Plan 91.14, D229)"),
     ]
 }
 
@@ -1045,6 +1065,7 @@ fn result_methods() -> Vec<MethodInfo> {
         MethodInfo::new("err", "() -> Option[E]", "Convert Err to Some, Ok to None"),
         MethodInfo::new("map", "[U] (map_fn fn(T)->U) -> Result[U,E]", "Map Ok value"),
         MethodInfo::new("map_err", "[F] (err_fn fn(E)->F) -> Result[T,F]", "Map Err value"),
+        MethodInfo::new("debug", "(sb consume StringBuilder) -> StringBuilder [T Debug, E Debug]", "Debug format: Ok(x) / Err(e) — called by ${x:?} (Plan 91.14, D229)"),
     ]
 }
 
