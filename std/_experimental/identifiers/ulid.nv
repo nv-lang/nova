@@ -187,31 +187,22 @@ export fn Ulid @timestamp_ms() -> u64 =>
 
 /// Equality (`==`) — structural по обеим частям.
 #stable(since = "0.1")
-export fn Ulid @eq(other Ulid) -> bool =>
+export fn Ulid @equal(other Ulid) -> bool =>
     @ts_part == other.ts_part && @rand_part == other.rand_part
 
-/// Less-than (`<`) — лексикографический order по timestamp, затем random.
+/// Compare — лексикографический order по timestamp, затем random.
 /// Точно как сравнение строк-ULID'ов лексикографически — главная фича.
+/// Returns <0, 0, >0.
 #stable(since = "0.1")
-export fn Ulid @lt(other Ulid) -> bool {
+export fn Ulid @compare(other Ulid) -> int {
     if @ts_part != other.ts_part {
-        @ts_part < other.ts_part
+        if @ts_part < other.ts_part { -1 } else { 1 }
+    } else if @rand_part != other.rand_part {
+        if @rand_part < other.rand_part { -1 } else { 1 }
     } else {
-        @rand_part < other.rand_part
+        0
     }
 }
-
-/// Less-than-or-equal (`<=`).
-#stable(since = "0.1")
-export fn Ulid @le(other Ulid) -> bool => @lt(other) || @eq(other)
-
-/// Greater-than (`>`).
-#stable(since = "0.1")
-export fn Ulid @gt(other Ulid) -> bool => other.lt(@)
-
-/// Greater-than-or-equal (`>=`).
-#stable(since = "0.1")
-export fn Ulid @ge(other Ulid) -> bool => @gt(other) || @eq(other)
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -375,14 +366,14 @@ test "генерация: ulid имеет правильный timestamp" {
 test "genеrация: одинаковый seed → одинаковый ULID" {
     ro a = with Time = th.fixed_ms(1000), Random = th.seeded(42) { Ulid.new() }
     ro b = with Time = th.fixed_ms(1000), Random = th.seeded(42) { Ulid.new() }
-    assert(a.eq(b))
+    assert(a== b)
 }
 
 test "генерация: разные timestamps → разные ULID" {
     ro a = with Time = th.fixed_ms(1000), Random = th.seeded(0) { Ulid.new() }
     ro b = with Time = th.fixed_ms(2000), Random = th.seeded(0) { Ulid.new() }
-    assert(!a.eq(b))
-    assert(a.lt(b))                                   // earlier < later
+    assert(!a== b)
+    assert(a< b)                                   // earlier < later
 }
 
 test "lexicographic ordering — главная фича ULID" {
@@ -425,7 +416,7 @@ test "round-trip: from(u.into()) == u" {
         ro u = Ulid.new()
         ro s = u.into()
         ro parsed = Ulid.from(s)
-        assert(parsed.eq(u))
+        assert(parsed== u)
     }
 }
 
@@ -435,7 +426,7 @@ test "from: case-insensitive" {
         ro s_upper = u.into()
         // ULID by spec — upper-case, но decode принимает обе.
         ro parsed = Ulid.from(s_upper.to_lower())
-        assert(parsed.eq(u))
+        assert(parsed== u)
     }
 }
 
@@ -449,7 +440,7 @@ test "from: I/L → 1, O → 0 (Crockford ambiguity)" {
         if s.contains("0") || s.contains("1") {
             ro modified = s.replace("0", "O").replace("1", "I")
             ro parsed = Ulid.from(modified)
-            assert(parsed.eq(u))
+            assert(parsed== u)
         }
     }
 }
@@ -485,6 +476,6 @@ test "AI-first: ULID-генерация детерминистична чере�
         // Time fixed → одинаковый timestamp
         assert(u1.timestamp_ms() == u2.timestamp_ms())
         // Random seeded → каждый вызов выдаёт разные значения, но детерминистично
-        assert(!u1.eq(u2))
+        assert(!u1== u2)
     }
 }
