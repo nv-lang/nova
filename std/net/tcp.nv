@@ -149,8 +149,8 @@ export fn TcpStream mut @write(data str) TcpNet -> Result[int, NetError] {
 
 /// Read up to `max` bytes from the stream (parks until data or EOF).
 ///
-/// Returns `Ok(data)` where `data` is the received bytes.
-/// `Ok("")` signals EOF (the remote side closed the connection).
+/// Returns `Ok(data)` where `data` is the received bytes (always non-empty).
+/// Returns `Err(NetError.Eof)` when the connection is closed by the peer.
 #stable(since = "0.1")
 export fn TcpStream mut @read(max int) TcpNet -> Result[str, NetError] {
     TcpNet.read(@, max)
@@ -230,7 +230,8 @@ export fn TcpStream consume @split() TcpNet -> (TcpReadHalf, TcpWriteHalf) {
 
 /// Read up to `max` bytes from the read half (parks until data or EOF).
 ///
-/// `Ok("")` signals EOF (the remote side closed the connection).
+/// Returns `Ok(data)` where `data` is the received bytes (always non-empty).
+/// Returns `Err(NetError.Eof)` when the connection is closed by the peer.
 #stable(since = "0.1")
 export fn TcpReadHalf mut @read(max int) TcpNet -> Result[str, NetError] {
     TcpNet.read_half_read(@, max)
@@ -323,11 +324,17 @@ fn TcpWriteHalf._from_raw(h CTcpStream) -> TcpWriteHalf => { handle: h }
 
 // ─── Error helpers ───────────────────────────────────────────────────────────
 
+// Classify a libuv error message (uv_strerror output) into a typed NetError.
+// The C runtime normalises the relevant UV codes to stable canonical strings
+// (net.c _nova_net_uv_err): UV_EACCES → "permission denied",
+// UV_ECONNRESET → "connection reset by peer", so matching here is
+// platform-stable.
 fn net_error(msg str) -> NetError {
     if msg.contains("connection refused") { NetError.ConnectionRefused }
     else if msg.contains("address already in use") { NetError.AddressInUse }
     else if msg.contains("address not available") { NetError.AddressNotAvailable }
-    else if msg.contains("connection reset") { NetError.BrokenPipe }
+    else if msg.contains("permission denied") { NetError.PermissionDenied }
+    else if msg.contains("connection reset") { NetError.ConnectionReset }
     else if msg.contains("broken pipe") { NetError.BrokenPipe }
     else if msg.contains("cancelled") { NetError.Cancelled }
     else if msg.contains("timed out") { NetError.TimedOut }
@@ -348,6 +355,10 @@ fn tcp_read_result_err() -> Result[str, NetError] {
     Err(net_error(net_last_error()))
 }
 fn _tcp_read_ok(data str) -> Result[str, NetError] => Ok(data)
+
+// EOF sentinel: tcp_stream_read_bytes / tcp_read_half_read return -2 when the
+// peer closed the connection (NOVA_NET_READ_EOF in net.h). Map to NetError.Eof.
+fn _tcp_read_eof() -> Result[str, NetError] => Err(NetError.Eof)
 
 // Result[(), NetError] helpers for write_all.
 fn tcp_write_unit_err() -> Result[(), NetError] {
@@ -397,7 +408,8 @@ export fn real_tcp_net() -> Effect[TcpNet] => effect TcpNet {
     }
     read(stream, max) {
         ro n = tcp_stream_read_bytes(stream.handle, max)
-        if n < 0 { tcp_read_result_err() }
+        if n == -2 { _tcp_read_eof() }
+        else if n < 0 { tcp_read_result_err() }
         else { _tcp_read_ok(tcp_stream_read_data()) }
     }
     close_stream(stream) {
@@ -428,7 +440,8 @@ export fn real_tcp_net() -> Effect[TcpNet] => effect TcpNet {
     }
     read_half_read(half, max) {
         ro n = tcp_read_half_read(half.handle, max)
-        if n < 0 { tcp_read_result_err() }
+        if n == -2 { _tcp_read_eof() }
+        else if n < 0 { tcp_read_result_err() }
         else { _tcp_read_ok(tcp_stream_read_data()) }
     }
     read_half_close(half) {

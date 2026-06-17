@@ -100,7 +100,7 @@ export fn mock_addr_net() -> Effect[AddrNet] => effect AddrNet {
         else { Ok(SocketAddr._from_raw(handle)) }
     }
     port(addr)             => socket_addr_port(addr.handle)
-    host_str(addr)         => socket_addr_host_str(addr.handle)
+    ip(addr)               => socket_addr_ip(addr.handle)
     is_v4(addr)            => socket_addr_is_v4(addr.handle)
     is_v6(addr)            => socket_addr_is_v6(addr.handle)
     to_str(addr)           => socket_addr_to_str(addr.handle)

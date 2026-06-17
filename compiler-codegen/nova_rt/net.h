@@ -50,6 +50,24 @@ typedef enum {
     NOVA_NET_STAGE_CLOSED  = 3,  /* close_cb has fired */
 } NovaNetStage;
 
+/* ─── Read sentinels (returned by tcp_stream_read_bytes / tcp_read_half_read) ──
+ * >= 0 : number of bytes read (data in tcp_stream_read_data() TLS slot).
+ * -1   : generic I/O error (message in net_last_error()).
+ * -2   : end of file — the peer closed the connection (Plan 91.15: NetError.Eof). */
+#define NOVA_NET_READ_ERR  (-1)
+#define NOVA_NET_READ_EOF  (-2)
+
+/* ─── Canonical error strings (Plan 91.15 P2 / D302) ──────────────────────────
+ * Net errors are carried to the Nova layer as the libuv message string and
+ * classified by std/net/tcp.nv `net_error()`. For the codes below the runtime
+ * normalises the message to a fixed canonical string (rather than relying on the
+ * platform-specific uv_strerror text) so the Nova-side string match is stable
+ * across OSes. See _nova_net_uv_err in net.c.
+ *   UV_EACCES     → NetError.PermissionDenied
+ *   UV_ECONNRESET → NetError.ConnectionReset                                    */
+#define NOVA_NET_MSG_PERMISSION_DENIED   "permission denied"
+#define NOVA_NET_MSG_CONNECTION_RESET    "connection reset by peer"
+
 /* ─── NetAddrResult: error codes for address parsing ──────────────── */
 
 typedef enum {
@@ -248,7 +266,7 @@ NovaRt_SocketAddr*  socket_addr_v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d, u
  * f0=code (0=OK, 1=INVALID_ADDR, 2=INVALID_PORT), f1=NovaRt_SocketAddr* cast to nova_int. */
 _NovaTuple2         socket_addr_parse(nova_str s);
 uint16_t            socket_addr_port(NovaRt_SocketAddr* addr);
-nova_str            socket_addr_host_str(NovaRt_SocketAddr* addr);
+nova_str            socket_addr_ip(NovaRt_SocketAddr* addr);
 nova_bool           socket_addr_is_v4(NovaRt_SocketAddr* addr);
 nova_bool           socket_addr_is_v6(NovaRt_SocketAddr* addr);
 nova_str            socket_addr_to_str(NovaRt_SocketAddr* addr);

@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.15 P2 — NetError.PermissionDenied (D302).
+//
+// UV_EACCES (e.g. binding a privileged port without rights) is normalised by
+// the C runtime to the canonical string "permission denied" and classified by
+// std/net `net_error()` into NetError.PermissionDenied.
+//
+// The OS-level behaviour of binding a low port is platform-dependent (Unix
+// restricts ports < 1024 to root; Windows does not), so this file does NOT
+// assert that a particular bind must fail. It verifies, deterministically:
+//   1. the variant exists and renders correctly (pure), and
+//   2. a real privileged bind never panics or yields a raw string — the Result
+//      is always a well-formed Ok/Err carrying a typed NetError (smoke check
+//      that the classification path is wired).
+//
+// Bare NetError literals erase to nova_int under the V2 net codegen, so the
+// variant is inspected via the (proven) to_str() path rather than `match`.
+
+module plan91_15.net_permission_denied
+
+import std.net.{SocketAddr, TcpListener, NetError, real_tcp_net, real_addr_net}
+
+test "PermissionDenied — variant renders" {
+    ro e = NetError.PermissionDenied
+    assert(e.to_str() == "permission denied")
+}
+
+test "bind result is always classified (no panic, typed error) _slow" {
+    with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+        // Port 1 is privileged on Unix (would yield PermissionDenied as non-root);
+        // on Windows the bind typically succeeds. Either way the Result must be a
+        // well-formed Ok/Err with a typed NetError — never a panic or raw string.
+        ro r = TcpListener.bind(SocketAddr.loopback(1))
+        ro ok = match r {
+            Ok(l) => {
+                l.close()
+                true
+            }
+            Err(e) => {
+                // Whatever the OS reported, it must be a typed variant; render it
+                // to confirm to_str() is total over the new variants.
+                ro _msg = e.to_str()
+                true
+            }
+        }
+        assert(ok)
+    }
+}

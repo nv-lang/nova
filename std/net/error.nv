@@ -21,10 +21,14 @@ module std.net
 /// - `AddressInUse` — the local address/port is already bound by another process.
 /// - `AddressNotAvailable` — the requested address cannot be used on this host.
 /// - `NotFound` — hostname not found / no route to host.
+/// - `Eof` — the peer closed the connection (a read returned 0 bytes).
 /// - `Closed` — operation on a closed or half-closed socket.
 /// - `Cancelled` — operation was cancelled via a cancel token.
 /// - `TimedOut` — operation timed out before completion.
 /// - `BrokenPipe` — remote peer closed the connection while writing.
+/// - `ConnectionReset` — remote peer forcibly reset the connection (UV_ECONNRESET).
+/// - `PermissionDenied` — the OS denied the operation, e.g. binding a
+///   privileged port without sufficient rights (UV_EACCES).
 /// - `IoError(str)` — OS-level I/O error with message.
 /// - `InvalidAddr(str)` — malformed socket address string.
 ///
@@ -37,10 +41,39 @@ export type NetError
     | AddressInUse
     | AddressNotAvailable
     | NotFound
+    | Eof
     | Closed
     | Cancelled
     | TimedOut
     | BrokenPipe
+    | ConnectionReset
+    | PermissionDenied
     | IoError(str)
     | InvalidAddr(str)
     | InvalidPort
+
+/// Human-readable, lowercase description of this error (no trailing newline).
+///
+/// ```nova
+/// assert(NetError.ConnectionRefused.to_str() == "connection refused")
+/// assert(NetError.Eof.to_str() == "end of file")
+/// ```
+#stable(since = "0.1")
+export fn NetError @to_str() -> str {
+    match @ {
+        ConnectionRefused   => "connection refused"
+        AddressInUse        => "address already in use"
+        AddressNotAvailable => "address not available"
+        NotFound            => "not found"
+        Eof                 => "end of file"
+        Closed              => "connection closed"
+        Cancelled           => "operation cancelled"
+        TimedOut            => "operation timed out"
+        BrokenPipe          => "broken pipe"
+        ConnectionReset     => "connection reset by peer"
+        PermissionDenied    => "permission denied"
+        IoError(msg)        => msg
+        InvalidAddr(msg)    => "invalid address: ${msg}"
+        InvalidPort         => "invalid port"
+    }
+}

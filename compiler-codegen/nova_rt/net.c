@@ -43,7 +43,15 @@ static inline nova_str _nova_net_cstr(const char* s) {
 }
 
 static inline nova_str _nova_net_uv_err(int rc) {
-    return _nova_net_cstr(uv_strerror(rc));
+    /* Plan 91.15 P2 / D302: normalise the two codes the Nova layer classifies
+     * into typed NetError variants to stable canonical strings, so the match in
+     * std/net/tcp.nv `net_error()` does not depend on platform-specific
+     * uv_strerror wording. All other codes pass through uv_strerror verbatim. */
+    switch (rc) {
+        case UV_EACCES:     return _nova_net_cstr(NOVA_NET_MSG_PERMISSION_DENIED);
+        case UV_ECONNRESET: return _nova_net_cstr(NOVA_NET_MSG_CONNECTION_RESET);
+        default:            return _nova_net_cstr(uv_strerror(rc));
+    }
 }
 
 #define _NET_OK(ptr)    nova_make_Result_Ok((nova_int)(intptr_t)(ptr))
@@ -611,13 +619,11 @@ NovaRes_nova_int_nova_str* NovaRt_TcpStream_method_read_bytes(
 
     /* Build nova_str from read_buf (we own this memory; use it directly). */
     if (s->read_len == 0) {
-        /* EOF: return Ok(""). */
+        /* EOF: return Ok(0). The literal entry point tcp_stream_read_bytes()
+         * detects the 0 payload and maps it to NOVA_NET_READ_EOF (-2), which
+         * the Nova handler turns into Err(NetError.Eof) (Plan 91.15 / D302). */
         if (s->read_buf) { free(s->read_buf); s->read_buf = NULL; }
-        return nova_make_Result_Ok((nova_int)(intptr_t)(nova_alloc(sizeof(nova_str))));
-        /* Actually we want to return Ok("") as a nova_str ... */
-        /* But Ok wraps nova_int. The str value needs to be returned as pointer. */
-        /* For empty string, return Ok(0) — caller checks r.is_ok() == true. */
-        /* In C, Ok(0) is a valid empty-string sentinel. */
+        return nova_make_Result_Ok((nova_int)0);
     }
     /* Copy data into GC-managed string. */
     char* heap = (char*)nova_alloc(s->read_len + 1);
@@ -855,10 +861,10 @@ nova_int tcp_read_half_read(NovaRt_TcpStream* s, nova_int max) {
     }
 
     if (s->read_len == 0) {
-        /* EOF: empty string. */
+        /* EOF: peer closed the connection. Plan 91.15 — distinct from data. */
         if (s->read_buf) { free(s->read_buf); s->read_buf = NULL; }
         _net_tcp_read_data = (nova_str){ .ptr = NULL, .len = 0 };
-        return 0;
+        return NOVA_NET_READ_EOF;
     }
     char* heap = (char*)nova_alloc(s->read_len + 1);
     memcpy(heap, s->read_buf, s->read_len);
@@ -1243,7 +1249,8 @@ _NovaTuple2 socket_addr_parse(nova_str s) {
 uint16_t socket_addr_port(NovaRt_SocketAddr* addr) {
     return NovaRt_SocketAddr_method_port(addr);
 }
-nova_str socket_addr_host_str(NovaRt_SocketAddr* addr) {
+/* Plan 91.15: renamed socket_addr_host_str → socket_addr_ip (public API @ip()). */
+nova_str socket_addr_ip(NovaRt_SocketAddr* addr) {
     return NovaRt_SocketAddr_method_host_str(addr);
 }
 nova_bool socket_addr_is_v4(NovaRt_SocketAddr* addr) {
@@ -1330,11 +1337,11 @@ nova_int tcp_stream_read_bytes(NovaRt_TcpStream* s, nova_int max) {
     }
     nova_int payload = r->payload.Ok._0;
     if (payload == 0) {
-        /* EOF: empty string. */
+        /* EOF: peer closed the connection. Plan 91.15 — distinct from data. */
         _net_tcp_read_data = (nova_str){ .ptr = NULL, .len = 0 };
-    } else {
-        _net_tcp_read_data = *(nova_str*)(intptr_t)payload;
+        return NOVA_NET_READ_EOF;
     }
+    _net_tcp_read_data = *(nova_str*)(intptr_t)payload;
     return (nova_int)_net_tcp_read_data.len;
 }
 nova_str tcp_stream_read_data(void) { return _net_tcp_read_data; }

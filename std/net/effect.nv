@@ -18,6 +18,27 @@
 
 module std.net
 
+// ─── Effect-operation naming convention (Plan 91.15 P2) ──────────────────────
+//
+// These effect operations are internal dispatch points; user code never calls
+// them directly (it uses the @method() API on TcpListener/TcpStream/etc.). The
+// operation names follow a per-handle prefix so the receiver type is obvious at
+// the dispatch site:
+//
+//   TcpNet
+//     listener_*    — operations on a TcpListener   (listener_local_port, …)
+//     stream_*      — operations on a TcpStream      (stream_local_addr, …)
+//     read_half_*   — operations on a TcpReadHalf    (Plan 91.16 split)
+//     write_half_*  — operations on a TcpWriteHalf   (Plan 91.16 split)
+//   UdpNet
+//     socket_*      — operations on a UdpSocket       (socket_local_port, …)
+//
+// Exceptions (intentional, no prefix): the verb already implies the receiver —
+//   bind / accept / connect / write / write_all / read / send_to / recv_from —
+// and the close_<kind> family (close_stream / close_listener / close_socket /
+// split_stream) names the receiver kind as a suffix for symmetry with close.
+// New operations MUST follow the matching prefix for their receiver type.
+
 // TcpNet -- TCP transport operations.
 //
 // All fallible operations return Result[T, NetError].
@@ -87,7 +108,7 @@ export type AddrNet effect {
     v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr
     from_str(s str) -> Result[SocketAddr, NetError]
     port(addr SocketAddr) -> u16
-    host_str(addr SocketAddr) -> str
+    ip(addr SocketAddr) -> str
     is_v4(addr SocketAddr) -> bool
     is_v6(addr SocketAddr) -> bool
     to_str(addr SocketAddr) -> str

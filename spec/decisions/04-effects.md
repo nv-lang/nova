@@ -6095,3 +6095,72 @@ write_half_local_addr / write_half_peer_addr -> SocketAddr
   `mut`-bound значения не отслеживаются на double-consume. Поэтому double-close
   одной из половин НЕ ловится компилятором в V1 (refcount защищает на runtime).
   Followup-маркер: [M-91.16-tuple-consume-binding].
+
+## D302 — `NetError.Eof`, `NetError @to_str()`, `SocketAddr @ip()` rename (Plan 91.15 P1, 2026-06-17)
+
+**Source:** Plan 91.15 Phase P1, 2026-06-17. **Status:** ✅ ACTIVE.
+**Связь:** [D301](04-effects.md#d301), [Plan 91.12](../../docs/plans/91.12-net-effect-and-hardening.md).
+
+### Мотивация
+
+Три отдельных огреха публичного API `std/net`, которые я закрываю одним блоком:
+
+1. **EOF возвращался как `Ok("")`.** Когда peer закрывал соединение, `read`
+   возвращал `Ok("")` — неотличимо от (теоретически возможного) пустого чтения и
+   требовало от каждого вызывающего проверять `data.len() == 0`. Закрытие
+   соединения — это событие, а не данные; ему место в `Err`-ветке.
+2. **`NetError` нельзя было напечатать.** `IoError(str)`/`InvalidAddr(str)` несут
+   строку, но достать её без exhaustive `match` нельзя — ошибка, которую нельзя
+   залогировать, бесполезна.
+3. **`@host_str()` — нестандартное имя.** Суффикс `_str` протекает тип в имя
+   метода; ни один язык так не называет (Rust: `.ip()`).
+
+### Изменения
+
+**(1) `NetError.Eof`.** Новый вариант enum (после `NotFound`). `TcpStream.read` /
+`TcpReadHalf.read` теперь возвращают `Err(NetError.Eof)` при закрытии соединения
+peer'ом; `Ok(data)` всегда непуст.
+
+C-контракт: `tcp_stream_read_bytes` / `tcp_read_half_read` возвращают сентинел
+`NOVA_NET_READ_EOF` (`-2`) на EOF (раньше `0`). Nova-handler мапит `-2` →
+`Err(NetError.Eof)`, `-1` → generic error, `>= 0` → `Ok(data)`. Константы
+`NOVA_NET_READ_ERR`/`NOVA_NET_READ_EOF` в `net.h`.
+
+**(2) `NetError @to_str() -> str`.** Метод (без эффектов) даёт lowercase
+human-readable описание каждого варианта. `IoError(msg)` → `msg`;
+`InvalidAddr(msg)` → `"invalid address: ${msg}"`.
+
+**(3) `SocketAddr @host_str()` → `@ip()`.** Полное переименование: метод в
+`addr.nv`, операция `AddrNet.ip`, extern `socket_addr_ip` (C-символ
+`socket_addr_host_str` → `socket_addr_ip` в `net.c`/`net.h`). Внутренний
+`NovaRt_SocketAddr_method_host_str` оставлен (не literal entry point).
+
+### Совместимость
+
+Breaking для пользователей `host_str()` и для кода, полагавшегося на `Ok("")` как
+EOF-сигнал. `std/net` ещё `#stable(since = "0.1")`, но не зарелижен — миграция в
+рамках pre-release окна.
+
+### Дополнение — `PermissionDenied` / `ConnectionReset` (Plan 91.15 P2, 2026-06-17)
+
+Добавил два типизированных варианта `NetError`, чтобы две распространённые
+OS-ошибки больше не сваливались в `IoError(str)`/`BrokenPipe`:
+
+- **`PermissionDenied`** — OS отказала в операции (`UV_EACCES`), например bind
+  привилегированного порта без прав. `to_str() == "permission denied"`.
+- **`ConnectionReset`** — peer форсированно сбросил соединение (`UV_ECONNRESET`).
+  `to_str() == "connection reset by peer"`. Раньше эта ошибка классифицировалась
+  как `BrokenPipe`; теперь это отдельный вариант (BrokenPipe остаётся для
+  «запись в закрытый peer» без RST).
+
+**C-контракт.** Net-ошибки доходят до Nova-слоя строкой (вывод `uv_strerror`) и
+классифицируются в `std/net/tcp.nv net_error()`. Для этих двух кодов рантайм
+(`_nova_net_uv_err` в `net.c`) нормализует сообщение к фиксированной канонической
+строке (`NOVA_NET_MSG_PERMISSION_DENIED` / `NOVA_NET_MSG_CONNECTION_RESET` в
+`net.h`), поэтому строковый матч в Nova платформо-стабилен. Прочие коды проходят
+через `uv_strerror` без изменений.
+
+**Effect-naming.** Зафиксировал соглашение об именах операций effect-семейства в
+`std/net/effect.nv` (per-handle префиксы `listener_*`/`stream_*`/`socket_*`/
+`read_half_*`/`write_half_*`); существующие имена НЕ переименованы (нулевой
+user-visible эффект, высокий churn) — только задокументированы.

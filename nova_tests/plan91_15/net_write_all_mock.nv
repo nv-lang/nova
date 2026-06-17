@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.15 P1 — positive (mock): TcpStream.write_all sends the whole buffer.
+//
+// write_all returns Result[(), NetError] (no byte count) — it either writes
+// everything or errors. mock_tcp_net's write_all always succeeds.
+
+module plan91_15.net_write_all_mock
+
+import std.net.{SocketAddr, TcpStream, mock_tcp_net, mock_addr_net}
+
+test "write_all — full buffer through mock stream" {
+    with AddrNet = mock_addr_net(), TcpNet = mock_tcp_net() {
+        supervised {
+            spawn {
+                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c
+                    Err(_) => panic("connect")
+                }
+                assert(s.write_all("the entire message").is_ok())
+                s.close()
+            }
+        }
+    }
+}

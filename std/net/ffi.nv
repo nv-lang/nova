@@ -31,7 +31,7 @@ extern "C" fn socket_addr_v4(a u8, b u8, c u8, d u8, port u16) -> CSocketAddr
 // handle is valid CSocketAddr on success, null on error.
 extern "C" fn socket_addr_parse(s str) -> (int, CSocketAddr)
 extern "C" fn socket_addr_port(addr CSocketAddr) -> u16
-extern "C" fn socket_addr_host_str(addr CSocketAddr) -> str
+extern "C" fn socket_addr_ip(addr CSocketAddr) -> str
 extern "C" fn socket_addr_is_v4(addr CSocketAddr) -> bool
 extern "C" fn socket_addr_is_v6(addr CSocketAddr) -> bool
 extern "C" fn socket_addr_to_str(addr CSocketAddr) -> str
