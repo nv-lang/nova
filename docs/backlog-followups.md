@@ -42,3 +42,9 @@ referenced from plan docs and simplifications.md.
 - **[M-168-resize-with-free-fn-shadow]** `plan153_1/resize_with_free_fn_shadow` — pre-existing CODEGEN-FAIL: `undefined identifier f` when a module-level free fn `f` clashes with closure param `f` inside Vec.resize_with/fill_with. Not caused by Plan 168. Requires fix in name resolution (closure param scope should shadow outer free fn). Priority: M.
 
 - **[M-168-other-generic-fwd-decl]** Other generic types (HashMap[K,V], Set[T], etc.) may have similar body-only instantiation gaps if they're used in fn bodies but not in signatures/fields. The Plan 168 tuple-elem fwd-decl fix covers them too (via MONO_TUPLE_TYPEDEFS), but the pre-pass body-scan only scans Vec TurboFish. If HashMap[str, u32] appears body-only it may also fail. Monitor for CC-FAIL patterns and extend scan if needed. Priority: L.
+
+---
+
+## Plan 91.8b — operator-dispatch cleanup
+
+- **[M-91.8b-precompiled-c-rebuild]** Plan 91.8b renamed `str @eq → @equal` in core.nv but did NOT regenerate precompiled std/collections/*.c files. `Nova_str_method_eq` is still referenced in vec_seq.c/set.c/hashmap.c → CC-FAIL in pos_equal_dispatch + pos_str_equal (plan91_8b). Fix: rebuild std precompiled .c files after `str @eq → @equal` rename, or regenerate them via `nova build-std`. Priority: H.
