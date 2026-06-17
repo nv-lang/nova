@@ -513,6 +513,7 @@ Rename NOVA_ARRAY_DECL → NOVA_VEC_DECL в Ф.7+.
 - `[M-138-nova-array-decl-rename]` — NOVA_ARRAY_DECL → NOVA_VEC_DECL C-macro rename
 - `[M-138-char-at-deprecate]` — убрать `str.char_at` после migration period
 - `[M-138-vec-range-index]` — `v[2..5]` → `[]T` zero-copy view (Vec range-index, Ф.2 deferred)
+- `[M-138-vec-pointer-element-mono]` — `Vec[*T]`/`Vec[*mut T]`: codegen монорфизация для pointer-element-type сломана — `Vec.new()` вызывает generic-заглушку `Nova_Vec_static_new()` → NULL вместо специализированного конструктора → SEGFAULT при push/index. Структура `Nova_Vec____int64_t_p` и методы генерируются правильно; ломается только static constructor. `Option[*mut T]: Some(p)→*p=v` работает (другой путь). Воспроизводится: `Vec[*mut i64].new()` + `v.push(&a)` + `*v[0]=100`. Priority: P2.
 
 ---
 

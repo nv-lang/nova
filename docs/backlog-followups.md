@@ -79,6 +79,12 @@ referenced from plan docs and simplifications.md.
 
 ---
 
+## Plan 138 — `[]T` sugar / Vec codegen
+
+- **[M-138-vec-pointer-element-mono]** `Vec[*T]`/`Vec[*mut T]`: codegen монорфизация для pointer-element-type сломана — `Vec.new()` вызывает generic-заглушку `Nova_Vec_static_new()` → NULL вместо специализированного конструктора → SEGFAULT при push/index. Структура `Nova_Vec____int64_t_p` и методы push/index генерируются правильно; ломается только static constructor. `Option[*mut T]: Some(p)→*p=v` работает (другой путь). Воспроизводится: `mut v Vec[*mut i64] = Vec.new(); v.push(&a); unsafe{*v[0]=100}`. Priority: P2.
+
+---
+
 ## Plan 168 — Vec generic fwd-decl (D300)
 
 - **[M-168-resize-with-free-fn-shadow]** `plan153_1/resize_with_free_fn_shadow` — pre-existing CODEGEN-FAIL: `undefined identifier f` when a module-level free fn `f` clashes with closure param `f` inside Vec.resize_with/fill_with. Not caused by Plan 168. Requires fix in name resolution (closure param scope should shadow outer free fn). Priority: M.

@@ -9007,8 +9007,8 @@ co-handle'ам; `ro` = это имя не пишет).
 `unsafe{*v.p=w}`✅ · `str{ptr *u8,len int}`: `s.ptr=q`❌, буфер ro.
 
 > ¹ `Vec[*mut T]: *v[i]=x` — семантически верно (тип элемента `*mut T`), но
-> **codegen не реализован**: `Vec.new()` для pointer-element-type возвращает NULL
-> (generic-заглушка). Граница `[M-147-generic-element-deref-write]`, P2.
+> **codegen не реализован**: `Vec.new()` для pointer-element-type вызывает generic-заглушку
+> `Nova_Vec_static_new()` → NULL → SEGFAULT. Граница `[M-138-vec-pointer-element-mono]` (Plan 138), P2.
 > `Option[*mut T]: Some(p)→*p=v` работает (проверено e7_option_mut_ptr_deref_write).
 
 ### Error codes

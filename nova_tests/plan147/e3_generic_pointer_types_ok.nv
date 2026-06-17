@@ -5,11 +5,12 @@
 //   `Option[*T]` / `Option[*mut T]` — NPO-eligible (None = null, 8 bytes)
 //
 // The element-deref-WRITE asymmetry (`*v[i]=x` on `Vec[*T]` vs `Vec[*mut T]`)
-// is NOT Nova-gated — it requires element-type inference through `[]` on a
-// monomorphised generic (documented boundary [M-147-generic-element-deref-write]);
-// the L3 const-element-pointee is enforced at the C level. This fixture pins
-// the cleanly-checkable part: all four canonical generic-pointer type forms
-// type-check in declaration positions.
+// is NOT Nova-gated — Vec[*mut T] has a codegen bug: Vec.new() calls the generic
+// stub Nova_Vec_static_new() → NULL instead of the specialised constructor
+// (documented boundary [M-138-vec-pointer-element-mono], Plan 138).
+// Option[*mut T]: Some(p)→*p=v works (different path, verified e7).
+// This fixture pins the cleanly-checkable part: all four canonical generic-pointer
+// type forms type-check in declaration positions.
 //
 // EXPECT_OUTPUT: ok
 
