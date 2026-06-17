@@ -379,7 +379,6 @@ const FN_BODY_KEYWORDS: &[(&str, &str)] = &[
     ("type", "Local type alias"),
     ("effect", "Effect declaration"),
     ("defer", "Defer expression to function exit"),
-    ("blocking", "Mark blocking IO operation"),
     ("unsafe", "Unsafe block"),
     ("consume", "Consume a value"),
     ("apply", "Apply a lemma"),
