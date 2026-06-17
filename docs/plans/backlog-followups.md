@@ -136,7 +136,7 @@
 | `[M-104.2-symbol-cache]` | Каждый hover/goto re-parses файл; dashmap symbol cache deferred. | plan-104.2 Followups | P3 |
 | `[M-104.2-protocol-method-hover]` | Hover на protocol-method bodies не отдельно резолвится; SymbolInfo::ProtocolMethod deferred. | plan-104.2 Followups | P3 |
 | `[M-104.2-signature-type-dispatch]` | Signature help: overload выбирается по имени, не типу receiver; type-driven dispatch V2. | plan-104.2 Followups | P3 |
-| `[M-104.2-body-walk-local-var-type]` | body-walk находит ident по имени, lookup ищет среди top-level деклараций; тип локальной переменной внутри тел не выводится (показывается объявление только если имя совпадает с top-level fn/const). V2: type inference pass внутри тел. | plan-104.2 Followups | P3 |
+| `[M-104.2-body-walk-local-var-type]` | ✅ **CLOSED 2026-06-17 (Plan 104.2 Fix B).** body-walk обнаруживает курсор на `LetDecl`-биндинге и возвращает `SymbolInfo::LocalVar` с явной аннотацией типа из `LetDecl.ty`. Также: Fix A — `resolve_item` для `Item::Fn` возвращает `None` внутри тела → body-walk находит фактический callee (fn-body hover priority). | plan-104.2 Followups | ✅ done |
 | `[M-104.9-dynamic-method-completion]` | Completion items — статические таблицы в completion.rs; V2: запрашивать методы через compiler API. | plan-104.9 Followups | P3 |
 | `[M-104.5-suggestion-field-wiring]` | CodeAction edit range: re-scan источника вместо compiler Suggestion.span. V2: wire напрямую. | plan-104.5 Followups | P3 |
 | `[M-104.5-multi-edit-rename]` | E_PREFIX_SHADOWS_NAMED_TYPE: переименовать все вхождения, не только объявление. | plan-104.5 Followups | P3 |
