@@ -655,3 +655,10 @@ Open V1 markers (gated on type-checker resolver API in Plan 104.2):
 | Маркер | Статус | Home | Действие |
 |---|---|---|---|
 | `[M-91.8b-remove-old-ops]` | ✅ CLOSED 2026-06-17. @eq/@lt/@le/@gt/@ge удалены из компилятора и std. | Plan 91.8b | ✅ done |
+
+## Follow-up: Plan 91.8c (generic array sort/min/max/_by)
+
+| Маркер | Статус | Действие |
+|---|---|---|
+| `[M-91.8c-pdq-sort]` | OPEN | Upgrade sort_of from insertion sort O(n²) to pdq/intro-sort O(n log n) for large arrays (>1000 elements). Low priority — insertion sort correct and stable. |
+| `[M-91.8c-int-min-max-dispatch]` | OPEN | Pre-existing CC-FAIL: `[]int @min()/@max()` resolve to `f64.min` (2-arg) in codegen. Needs dispatch fix in emit_c.rs method resolution. See plan91/sort_basic.nv. |

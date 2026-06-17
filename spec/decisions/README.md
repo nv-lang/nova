@@ -132,6 +132,7 @@
 | D298 | 04-effects.md | **UDP Socket Split — `UdpSendHalf` + `UdpRecvHalf`** (Plan 166, 2026-06-17) — `UdpSocket.split()` на send/recv половины с независимыми C-side park-слотами (TOCTOU fix); образец для TCP split D301. |
 | D301 | 04-effects.md | **TCP Stream Split — `TcpReadHalf` + `TcpWriteHalf`** (Plan 91.16, 2026-06-17) — `TcpStream.split() -> (TcpReadHalf, TcpWriteHalf)`; полнодуплексный read+write через раздельные `read_scope`/`write_scope` park-слоты; atomic `split_refcount` для owning/close; `write_all` семантика. V1 limit: tuple-consume binding не отслеживается `[M-91.16-tuple-consume-binding]`. |
 | D302 | 04-effects.md | **std/net API polish — `NetError.Eof`, `@to_str()`, `SocketAddr @ip()`, `write_all`** (Plan 91.15, 2026-06-17) — EOF как `Err(NetError.Eof)` (не `Ok("")`); `NetError @to_str()` для всех вариантов; `host_str()` → `ip()` rename; `write_all` C-backed; новые варианты `PermissionDenied`/`ConnectionReset`; завершает удаление `Blocking` effect (D172). |
+| D185 | 02-types.md | **Generic array API: sort/min/max/binary_search + _by variants** (Plan 91.8c, 2026-06-17) — `fn[T Compare] []T @sort_of/min_of/max_of/binary_search_of`; `fn[T] []T @sort_by_of/min_by_of/max_by_of`; suффикс `_of` избегает collision с concrete `[]int` методами; insertion sort O(n²) MVP; 13/13 PASS. |
 
 ## История
 

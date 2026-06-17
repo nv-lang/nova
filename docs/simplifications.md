@@ -9,6 +9,8 @@
 > rationale и roadmap. **Не использовать этот документ как тихое разрешение
 > оставлять tech-debt без плана.**
 
+[2026-06-17 Plan 91.8c] Упрощения: (1) Суффикс `_of` вместо перегрузки — `sort_of/min_of/max_of/binary_search_of` не перегружают `sort/min/max` из concrete `[]int` (избегаем overload-resolution сложности, concrete fast-path сохранён). (2) Алгоритм sort: insertion sort O(n²) для MVP; pdq-sort в followup `[M-91.8c-pdq-sort]`. (3) `[]int @min/@max` pre-existing CC-FAIL (f64.min dispatch) — не фиксируем в Plan 91.8c, используем `min_of/max_of` в регрессионном тесте.
+
 Формат:
 - **Где** — файл/модуль.
 - **Что упрощено** — что НЕ делается.
