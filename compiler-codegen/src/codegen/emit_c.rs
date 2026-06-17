@@ -19692,8 +19692,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if concrete_ty == "nova_str" {
                         // Plan 152.5a D-R4: Nova-body @eq (see the nova_str BinOp arm below).
                         return match op {
-                            BinOp::Eq  => Ok(format!("(Nova_str_method_eq(*(nova_str*)({}), {}))", void_side, concrete_side)),
-                            BinOp::Neq => Ok(format!("(!Nova_str_method_eq(*(nova_str*)({}), {}))", void_side, concrete_side)),
+                            BinOp::Eq  => Ok(format!("(Nova_str_method_equal(*(nova_str*)({}), {}))", void_side, concrete_side)),
+                            BinOp::Neq => Ok(format!("(!Nova_str_method_equal(*(nova_str*)({}), {}))", void_side, concrete_side)),
                             _ => Ok("(0)".into()),
                         };
                     } else if concrete_ty == "nova_int" || concrete_ty == "nova_bool"
