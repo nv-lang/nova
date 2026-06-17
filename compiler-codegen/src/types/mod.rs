@@ -164,8 +164,6 @@ fn check_module_impl(
                     // Verification: D214 §«Layered FFI pattern». Future
                     // `[M-115-ffi-build-pipeline]` formalizes shim linking
                     // CLI.
-                    let _ = fd.needs_caps; // backward-compat field, всегда empty.
-
                     // Plan 118 (D216 §20): `external fn ... Fail -> ...` —
                     // E_EXTERNAL_FN_FAIL_EFFECT. C ABI не propagates Nova
                     // exception machinery; Fail effect crossing FFI boundary
