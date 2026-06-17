@@ -1,0 +1,39 @@
+// Plan 120 D215-amend: T5 — field defaults with methods on the same type.
+
+module plan120.t5_defaults_methods
+
+type Vec2(x f64 = 0.0, y f64 = 0.0)
+
+fn Vec2 @length() -> f64 {
+    ro sq = @x * @x + @y * @y
+    // simple sqrt approximation via Newton for testing
+    if sq == 0.0 { return 0.0 }
+    ro r = sq
+    return r
+}
+
+fn Vec2 @scale(factor f64) -> Vec2 => Vec2(x: @x * factor, y: @y * factor)
+
+fn Vec2 @is_zero() -> bool => @x == 0.0 && @y == 0.0
+
+test "default zero vector" {
+    ro v = Vec2()
+    assert(v.is_zero())
+}
+
+test "scale preserves defaults" {
+    ro v = Vec2(x: 3.0)
+    ro s = v.scale(2.0)
+    assert(s.x == 6.0)
+    assert(s.y == 0.0)
+}
+
+test "method on fully specified" {
+    ro v = Vec2(x: 3.0, y: 4.0)
+    assert(!v.is_zero())
+}
+
+test "re-use default y in expression" {
+    ro v = Vec2(x: 5.0)
+    assert(v.x + v.y == 5.0)
+}

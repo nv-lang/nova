@@ -1,0 +1,36 @@
+// Plan 91.14 (A4) — []T @debug produces "[elem1, elem2, ...]" via ${:?}
+//
+// Vec[T Debug] @debug is declared in std/collections/vec/protocols.nv.
+// Output format: "Vec[e0, e1, ..., eN-1]" (Vec prefix, square brackets).
+
+module plan91_14.pos_debug_vec
+
+import std.collections.vec.{Vec}
+
+test "Vec[int] debug non-empty" {
+    ro v = Vec[int].of(1, 2, 3)
+    consume sb = StringBuilder.new()
+    v.debug(sb)
+    assert(sb.as_str() == "Vec[1, 2, 3]")
+}
+
+test "Vec[int] debug empty" {
+    ro v = Vec[int].new()
+    consume sb = StringBuilder.new()
+    v.debug(sb)
+    assert(sb.as_str() == "Vec[]")
+}
+
+test "Vec[int] single element" {
+    ro v = Vec[int].of(42)
+    consume sb = StringBuilder.new()
+    v.debug(sb)
+    assert(sb.as_str() == "Vec[42]")
+}
+
+test "Vec[bool] debug" {
+    ro v = Vec[bool].of(true, false, true)
+    consume sb = StringBuilder.new()
+    v.debug(sb)
+    assert(sb.as_str() == "Vec[true, false, true]")
+}

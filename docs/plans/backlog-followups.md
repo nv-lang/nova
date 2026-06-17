@@ -136,6 +136,7 @@
 | `[M-104.2-symbol-cache]` | Каждый hover/goto re-parses файл; dashmap symbol cache deferred. | plan-104.2 Followups | P3 |
 | `[M-104.2-protocol-method-hover]` | Hover на protocol-method bodies не отдельно резолвится; SymbolInfo::ProtocolMethod deferred. | plan-104.2 Followups | P3 |
 | `[M-104.2-signature-type-dispatch]` | Signature help: overload выбирается по имени, не типу receiver; type-driven dispatch V2. | plan-104.2 Followups | P3 |
+| `[M-104.2-body-walk-local-var-type]` | body-walk находит ident по имени, lookup ищет среди top-level деклараций; тип локальной переменной внутри тел не выводится (показывается объявление только если имя совпадает с top-level fn/const). V2: type inference pass внутри тел. | plan-104.2 Followups | P3 |
 | `[M-104.9-dynamic-method-completion]` | Completion items — статические таблицы в completion.rs; V2: запрашивать методы через compiler API. | plan-104.9 Followups | P3 |
 | `[M-104.5-suggestion-field-wiring]` | CodeAction edit range: re-scan источника вместо compiler Suggestion.span. V2: wire напрямую. | plan-104.5 Followups | P3 |
 | `[M-104.5-multi-edit-rename]` | E_PREFIX_SHADOWS_NAMED_TYPE: переименовать все вхождения, не только объявление. | plan-104.5 Followups | P3 |
@@ -655,3 +656,18 @@ Open V1 markers (gated on type-checker resolver API in Plan 104.2):
 | Маркер | Статус | Home | Действие |
 |---|---|---|---|
 | `[M-91.8b-remove-old-ops]` | ✅ CLOSED 2026-06-17. @eq/@lt/@le/@gt/@ge удалены из компилятора и std. | Plan 91.8b | ✅ done |
+
+## Follow-up: Plan 91.14 (Debug protocol + format spec)
+
+| Маркер | Статус | Действие |
+|---|---|---|
+| `[M-91.14-sum-debug-variants]` | OPEN | Sum-type debug V1 outputs type name; extend `synthesize_debug` for per-variant output |
+| `[M-91.14-str-from-debug-walker]` | OPEN | `default_body_calls_satisfy_for` doesn't check `str.from_debug`; add check |
+| `[M-91.14-format-dsl-extensions]` | OPEN | Future format-spec extensions: `:hex`, `:.3`, `:pad-N` |
+
+## Follow-up: Plan 91.8c (generic array sort/min/max/_by)
+
+| Маркер | Статус | Действие |
+|---|---|---|
+| `[M-91.8c-pdq-sort]` | OPEN | Upgrade sort_of from insertion sort O(n²) to pdq/intro-sort O(n log n) for large arrays (>1000 elements). Low priority — insertion sort correct and stable. |
+| `[M-91.8c-int-min-max-dispatch]` | OPEN | Pre-existing CC-FAIL: `[]int @min()/@max()` resolve to `f64.min` (2-arg) in codegen. Needs dispatch fix in emit_c.rs method resolution. See plan91/sort_basic.nv. |

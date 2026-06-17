@@ -103,8 +103,11 @@ fn render_hover_markdown(sym: &SymbolInfo) -> String {
         SymbolInfo::MethodDecl { signature, doc, .. } => {
             render_code_and_doc(signature, doc.as_deref())
         }
-        SymbolInfo::TypeDecl { name, kind_label, doc, .. } => {
-            let code = format!("type {} ({})", name, kind_label);
+        SymbolInfo::TypeDecl { name, kind_label, signature, doc, .. } => {
+            let code = match signature {
+                Some(sig) => sig.clone(),
+                None => format!("type {} ({})", name, kind_label),
+            };
             render_code_and_doc(&code, doc.as_deref())
         }
         SymbolInfo::LocalVar { name, ty_text, is_mut, doc, .. } => {

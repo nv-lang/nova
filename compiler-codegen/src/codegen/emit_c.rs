@@ -582,6 +582,10 @@ pub struct CEmitter {
     emitted_vtable_instances: HashSet<(String, String)>,
     /// Maps struct name → field name → C type
     record_schemas: HashMap<String, HashMap<String, String>>,
+    /// D215 amend (Plan 91.8b follow-up): named tuple field defaults.
+    /// Maps type_name → per-field Vec<Option<Expr>> in declaration order.
+    /// Used at constructor call sites to fill omitted fields with their defaults.
+    named_tuple_field_defaults: HashMap<String, Vec<(String, Option<crate::ast::Expr>)>>,
     /// Plan 124.8 V2 (D226): names of value-records — `type X value { ... }`.
     /// emit_record_lit checks this set чтобы emit stack-init code path
     /// instead of heap-alloc (Nova_X*) path. is_value_type recognizes
@@ -1298,6 +1302,7 @@ impl CEmitter {
             emitted_vtable_types: HashSet::new(),
             emitted_vtable_instances: HashSet::new(),
             record_schemas: HashMap::new(),
+            named_tuple_field_defaults: HashMap::new(),
             value_record_names: HashSet::new(),
             sum_schemas: HashMap::new(),
             effect_schemas: HashMap::new(),
@@ -3120,14 +3125,17 @@ impl CEmitter {
                             &e,
                         ))?,
                         // Plan 55 Ф.3: для `=> expr` body инфирим из выражения
-                        // (call-site нужен правильный type до emit_fn). Для Block —
-                        // оставляем nova_unit (Block без `-> T` имеет side-effect
-                        // semantics, return type irrelevant и infer на module-scan
-                        // даёт stale значения т.к. var_types ещё не заполнен).
-                        None => match &f.body {
-                            FnBody::Expr(_) => self.return_type_c(f)
-                                .unwrap_or_else(|_| "nova_unit".into()),
-                            _ => "nova_unit".into(),
+                        // (call-site нужен правильный type до emit_fn).
+                        // field_cache coerces FnBody::Expr → FnBody::Block(stmts=[],trailing=e)
+                        // BEFORE codegen sees AST — match both forms.
+                        None => {
+                            let is_expr_like = matches!(&f.body, FnBody::Expr(_))
+                                || matches!(&f.body, FnBody::Block(b) if b.stmts.is_empty());
+                            if is_expr_like {
+                                self.return_type_c(f).unwrap_or_else(|_| "nova_unit".into())
+                            } else {
+                                "nova_unit".into()
+                            }
                         },
                     };
                     // Sentinel-key: пустая строка вместо receiver-type.
@@ -3255,10 +3263,38 @@ impl CEmitter {
                             &format!("method `{}.{}` return type", recv.type_name, f.name),
                             &e,
                         ))?,
-                        None => match &f.body {
-                            FnBody::Expr(_) => self.return_type_c(f)
-                                .unwrap_or_else(|_| "nova_unit".into()),
-                            _ => "nova_unit".into(),
+                        None => {
+                            // Plan 55 Ф.3 + field_cache fix: match both FnBody::Expr AND
+                            // FnBody::Block(stmts=[], trailing=Some) — the latter is the
+                            // field_cache (Plan 123.1) coercion of a `=> expr` body.
+                            // D215: restore current_receiver_type + pre-populate
+                            // var_types["nova_self"] around return_type_c so that
+                            // SelfAccess in `=> expr` bodies (e.g. `=> @n`) can derive
+                            // the correct field C-type during the fwd-decl scan pass.
+                            let is_expr_like = matches!(&f.body, FnBody::Expr(_))
+                                || matches!(&f.body, FnBody::Block(b) if b.stmts.is_empty());
+                            if is_expr_like && matches!(recv.kind, ReceiverKind::Instance) {
+                                let prev_recv_for_ret = self.current_receiver_type.replace(recv.type_name.clone());
+                                let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
+                                let prev_nova_self = self.var_types.insert("nova_self".into(), recv_c);
+                                let ret = self.return_type_c(f)
+                                    .unwrap_or_else(|_| "nova_unit".into());
+                                self.current_receiver_type = prev_recv_for_ret;
+                                match prev_nova_self {
+                                    Some(prev) => { self.var_types.insert("nova_self".into(), prev); }
+                                    None => { self.var_types.remove("nova_self"); }
+                                }
+                                ret
+                            } else if is_expr_like {
+                                // Static receiver or no receiver: just set receiver type.
+                                let prev_recv_for_ret = self.current_receiver_type.replace(recv.type_name.clone());
+                                let ret = self.return_type_c(f)
+                                    .unwrap_or_else(|_| "nova_unit".into());
+                                self.current_receiver_type = prev_recv_for_ret;
+                                ret
+                            } else {
+                                "nova_unit".into()
+                            }
                         },
                     };
                     // For array extension methods, use the C-identifier form as the key so that
@@ -6119,21 +6155,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // из выражения. Раньше всегда возвращали nova_unit → CC-FAIL в callers
             // ожидающих real type (e.g. str.from(d.@as_secs_f64()) внутри Duration).
             None => {
-                // Plan 55 Ф.3: только для `=> expr` body — infer из выражения.
-                // Block body без аннотации сохраняет старое поведение nova_unit:
-                // (a) infer на forward-decl/register pass'е стрэйл (var_types
-                //     ещё не заполнен), (b) Block обычно имеет side-effect
-                //     semantics в stdlib (Channel.close, mut.insert, и т.п.).
-                match &f.body {
-                    FnBody::Expr(e) => {
-                        let t = self.infer_expr_c_type(e);
-                        if t.is_empty() || t == "void*" {
-                            Ok("nova_unit".into())
-                        } else {
-                            Ok(t)
-                        }
+                // Plan 55 Ф.3: для `=> expr` body — infer из выражения.
+                // field_cache (Plan 123.1) coerces FnBody::Expr → FnBody::Block(stmts=[],trailing=e)
+                // BEFORE codegen sees the AST. Treat that coerced form the same as FnBody::Expr.
+                // Block body с stmts сохраняет старое поведение nova_unit:
+                // (a) Block обычно имеет side-effect semantics в stdlib (Channel.close, mut.insert, и т.п.).
+                let expr_opt: Option<&Expr> = match &f.body {
+                    FnBody::Expr(e) => Some(e),
+                    // field_cache coercion: empty stmts + trailing = was originally FnBody::Expr.
+                    FnBody::Block(b) if b.stmts.is_empty() => b.trailing.as_deref(),
+                    _ => None,
+                };
+                if let Some(e) = expr_opt {
+                    let t = self.infer_expr_c_type(e);
+                    if t.is_empty() || t == "void*" {
+                        Ok("nova_unit".into())
+                    } else {
+                        Ok(t)
                     }
-                    FnBody::Block(_) | FnBody::External => Ok("nova_unit".into()),
+                } else {
+                    Ok("nova_unit".into())
                 }
             }
         }
@@ -10498,6 +10539,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.line("};");
         self.line("");
         self.record_schemas.insert(name.to_string(), schema);
+        // D215 amend: register field defaults for constructor call emission.
+        let field_defaults: Vec<(String, Option<crate::ast::Expr>)> = fields.iter()
+            .map(|f| (f.name.clone(), f.default.clone()))
+            .collect();
+        self.named_tuple_field_defaults.insert(name.to_string(), field_defaults);
         // Value type: Named{Point} → "NovaTuple_Point" (no pointer, like type alias).
         self.type_aliases.insert(name.to_string(), format!("NovaTuple_{}", name));
         Ok(())
@@ -16445,6 +16491,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // Plan 135 Ф.2: track whether current method has a mut receiver
             // so that SelfAccess call-sites can tiebreak __mut/__ro overloads.
             self.current_receiver_is_mut = recv.mutable;
+            // D215: pre-register nova_self type before return_type_c so that
+            // SelfAccess in `=> expr` bodies (e.g. `@real() => @re`) resolves
+            // the correct C type for field-access inference. Without this,
+            // the first instance method on a named tuple gets nova_int for SelfAccess
+            // because var_types["nova_self"] is only populated at the params loop
+            // (line ~16191), after return_type_c is called. The definition then
+            // conflicts with the forward decl if both used different paths.
+            if matches!(recv.kind, ReceiverKind::Instance) {
+                let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
+                self.var_types.insert("nova_self".into(), recv_c);
+            }
         } else {
             self.current_receiver_type = None;
             self.current_receiver_is_mut = false;
@@ -19868,6 +19925,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     let r_fixed = if rty == "NovaOpt_nova_int" && r.contains(none_pat) && canonical_opt_ty != "NovaOpt_nova_int" {
                         r.replace(none_pat, &none_replacement)
                     } else { r.clone() };
+                    // If one side is bare T (not NovaOpt_T), wrap it in Some so
+                    // nova_opt_eq_T receives matching types on both sides.
+                    // This handles `opt_char == char_literal` patterns where the
+                    // checker promotes char to Some(char) but codegen emits bare char.
+                    let l_fixed = if !lty.starts_with("NovaOpt_") && rty.starts_with("NovaOpt_") {
+                        self.option_some_expr(&elem_ty, &l_fixed)
+                    } else { l_fixed };
+                    let r_fixed = if !rty.starts_with("NovaOpt_") && lty.starts_with("NovaOpt_") {
+                        self.option_some_expr(&elem_ty, &r_fixed)
+                    } else { r_fixed };
                     return match op {
                         BinOp::Eq  => Ok(format!("(nova_opt_eq_{}({}, {}))", elem_ty, l_fixed, r_fixed)),
                         BinOp::Neq => Ok(format!("(!nova_opt_eq_{}({}, {}))", elem_ty, l_fixed, r_fixed)),
@@ -19891,6 +19958,44 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             });
                         }
                         _ => return Err(format!("unsupported operator {:?} on tuple", op)),
+                    }
+                }
+                // D215 (Plan 120): NovaTuple_X named tuple — value struct, operators
+                // must route to user-defined methods (@plus, @minus, @times, @div,
+                // @equal) since C has no struct operator overloading.
+                if lty.starts_with("NovaTuple_") || rty.starts_with("NovaTuple_") {
+                    let tuple_ty = if lty.starts_with("NovaTuple_") { &lty } else { &rty };
+                    let type_name = tuple_ty.strip_prefix("NovaTuple_").unwrap_or("");
+                    let method_name = match op {
+                        BinOp::Eq  | BinOp::Neq => "equal",
+                        BinOp::Add => "plus",
+                        BinOp::Sub => "minus",
+                        BinOp::Mul => "times",
+                        BinOp::Div => "div",
+                        _ => "",
+                    };
+                    if !method_name.is_empty() {
+                        // Look up the method overload (prefer the 1-param instance overload).
+                        let key = (type_name.to_string(), method_name.to_string());
+                        let c_name_opt = self.method_overloads.get(&key)
+                            .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
+                            .map(|s| s.c_name.clone());
+                        if let Some(c_name) = c_name_opt {
+                            let call = format!("{}({}, {})", c_name, l, r);
+                            return Ok(match op {
+                                BinOp::Neq => format!("(!({}))", call),
+                                _          => format!("({})", call),
+                            });
+                        }
+                        // @equal fallback: field-by-field structural comparison.
+                        if matches!(op, BinOp::Eq | BinOp::Neq) {
+                            let eq = self.emit_field_eq(tuple_ty, &l, &r, 0);
+                            return Ok(match op {
+                                BinOp::Eq  => format!("({})", eq),
+                                BinOp::Neq => format!("(!({}))", eq),
+                                _ => unreachable!(),
+                            });
+                        }
                     }
                 }
                 // Plan 153.3: Result `NovaRes_<n>*` structural `==`/`!=`. Result
@@ -20217,6 +20322,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     }
                 }
                 let v = self.emit_expr(operand)?;
+                // D215 (Plan 120): named tuple unary negation → @neg method.
+                if matches!(op, UnOp::Neg) {
+                    let operand_ty = self.infer_expr_c_type(operand);
+                    if operand_ty.starts_with("NovaTuple_") {
+                        let type_name = operand_ty.strip_prefix("NovaTuple_").unwrap_or("");
+                        let key = (type_name.to_string(), "neg".to_string());
+                        if let Some(c_name) = self.method_overloads.get(&key)
+                            .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
+                            .map(|s| s.c_name.clone())
+                        {
+                            return Ok(format!("({}({}))", c_name, v));
+                        }
+                    }
+                }
                 let op_str = match op {
                     UnOp::Neg => "-",
                     UnOp::Not => "!",
@@ -22436,9 +22555,50 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
             // Plan 120 (D215): named tuple constructor `Point(x: 1.0, y: 2.0)`.
             // type_aliases maps "Point" → "NovaTuple_Point"; emit compound literal.
+            // D215 amend: if fewer args than fields, fill omitted fields from defaults.
             if let Some(c_ty) = self.type_aliases.get(name.as_str()).cloned() {
                 if c_ty.starts_with("NovaTuple_") {
+                    let field_defaults = self.named_tuple_field_defaults.get(name.as_str()).cloned();
+                    // Check if any args are named (determines how we fill defaults).
+                    let has_named_args = args.iter().any(|a| matches!(a, CallArg::Named { .. }));
                     let mut field_inits = Vec::new();
+                    if let Some(ref fds) = field_defaults {
+                        if has_named_args || args.len() < fds.len() {
+                            // Named-arg path OR partial positional: emit .field = value
+                            // for each declared field, using provided arg or default.
+                            // Build name→value map from provided named args.
+                            let mut provided: HashMap<String, String> = HashMap::new();
+                            let mut positional_idx = 0usize;
+                            for a in args {
+                                match a {
+                                    CallArg::Named { name: field_name, value } => {
+                                        let v = self.emit_expr(value)?;
+                                        provided.insert(field_name.clone(), v);
+                                    }
+                                    CallArg::Item(e) => {
+                                        if positional_idx < fds.len() {
+                                            let v = self.emit_expr(e)?;
+                                            provided.insert(fds[positional_idx].0.clone(), v);
+                                        }
+                                        positional_idx += 1;
+                                    }
+                                    CallArg::Spread(_) => {}
+                                }
+                            }
+                            for (fname, fdefault) in fds {
+                                let mangled = Self::mangle_field_name(fname);
+                                if let Some(v) = provided.get(fname) {
+                                    field_inits.push(format!(".{} = {}", mangled, v));
+                                } else if let Some(def_expr) = fdefault {
+                                    let dv = self.emit_expr(def_expr)?;
+                                    field_inits.push(format!(".{} = {}", mangled, dv));
+                                }
+                                // missing required field: checker already reported error
+                            }
+                            return Ok(format!("(({}){{{}}})", c_ty, field_inits.join(", ")));
+                        }
+                    }
+                    // All-positional path (no defaults needed or no schema): existing logic.
                     for a in args {
                         match a {
                             CallArg::Named { name: field_name, value } => {
@@ -33823,7 +33983,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         }
         // [M-153.2-flat-map-inner-option]: value-record payloads — route to VR
         // buffer (same logic as register_novaopt_decl path above).
-        if c_ty.contains("____") && c_ty.starts_with("NovaValue_") {
+        // D215 amend: NovaTuple_ payloads need the same treatment.
+        if (c_ty.contains("____") && c_ty.starts_with("NovaValue_"))
+            || (c_ty.starts_with("NovaTuple_") && !c_ty.ends_with('*')) {
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
             let cmp_body_vr = "a.value == b.value".to_string(); // force_npo path
@@ -33920,7 +34082,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // — a marker placed AFTER __GENERIC_TYPE_DEFS__. By that point the
         // struct body is always complete so `{ int tag; NovaValue_… value; }`
         // compiles without "field has incomplete type".
-        if c_ty.contains("____") && c_ty.starts_with("NovaValue_") {
+        // D215 amend: same issue applies to NovaTuple_ (named tuple) payloads —
+        // the struct body must be defined before its use in Option payload.
+        if (c_ty.contains("____") && c_ty.starts_with("NovaValue_"))
+            || (c_ty.starts_with("NovaTuple_") && !c_ty.ends_with('*')) {
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
             let cmp_body2 = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
@@ -34505,6 +34670,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let no_ptr = obj_ty.trim_end_matches('*').trim();
         no_ptr.strip_prefix("NovaValue_")
             .or_else(|| no_ptr.strip_prefix("Nova_"))
+            // D215 (Plan 120): named tuple C-type is `NovaTuple_X`;
+            // method_overloads keys use bare "X" (same as records).
+            .or_else(|| no_ptr.strip_prefix("NovaTuple_"))
             .unwrap_or(no_ptr)
             .trim()
             .to_string()
@@ -34540,6 +34708,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // "NovaValue_CharsIter".
             other => other.strip_prefix("NovaValue_")
                 .or_else(|| other.strip_prefix("Nova_"))
+                // D215 (Plan 120): named tuple C-type "NovaTuple_X" → "X"
+                .or_else(|| other.strip_prefix("NovaTuple_"))
                 .unwrap_or(other).to_string(),
         }
     }
@@ -35504,8 +35674,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // self contexts; non-int silent miscompilation possible но
                 // не observed в test corpus.
                 // Documented как Cat B13.
-                let raw = self.var_types.get("nova_self").cloned()
-                    .unwrap_or_else(|| "nova_int".into());
+                let raw = self.var_types.get("nova_self").cloned().unwrap_or_else(|| {
+                    // D215: during fwd-decl scan pass (step 1c), var_types["nova_self"] is
+                    // not yet set but current_receiver_type may name the receiver type.
+                    // If it is a named tuple, return "NovaTuple_X" so downstream
+                    // Member field-type lookup finds the schema correctly.
+                    if let Some(recv_name) = &self.current_receiver_type {
+                        if self.named_tuple_field_defaults.contains_key(recv_name.as_str()) {
+                            return format!("NovaTuple_{recv_name}");
+                        }
+                    }
+                    "nova_int".into()
+                });
                 // Plan 152.1 Ф.3: a value-record receiver `nova_self` has C-type
                 // `NovaValue_X*` (by-pointer), but bare `@` denotes the VALUE
                 // (`emit_expr` yields `(*nova_self)`). Infer the by-value type so
@@ -37109,11 +37289,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         let target = self.from_targets.iter()
                             .find(|(_, sources)| sources.iter().any(|s| s == &recv_type))
                             .map(|(t, _)| t.clone());
+                        // Helper: convert Nova type name to C type. Primitives and value-records
+                        // (D215/Plan 139) use non-pointer C types; heap types use Nova_T*.
+                        let target_to_c = |t: &str| -> String {
+                            match t {
+                                "str" => "nova_str".into(),
+                                "int" => "nova_int".into(),
+                                "bool" => "nova_bool".into(),
+                                "char" => "nova_char".into(),
+                                "f64" => "nova_f64".into(),
+                                "f32" => "nova_f32".into(),
+                                other => format!("Nova_{}*", other),
+                            }
+                        };
                         if let Some(target_type) = target {
-                            return format!("Nova_{}*", target_type);
+                            return target_to_c(&target_type);
                         }
                         if let Some(target_type) = self.into_targets.get(&recv_type) {
-                            return format!("Nova_{}*", target_type);
+                            return target_to_c(target_type);
                         }
                     }
                     // Plan 138.1 Ф.1 (D239) BRIDGE: C-runtime-only array helpers
@@ -37323,6 +37516,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         let bare = obj_ty.trim_end_matches('*');
                         let recv_tn = bare.strip_prefix("NovaValue_")
                             .or_else(|| bare.strip_prefix("Nova_"))
+                            // D215: named tuples have NovaTuple_ C prefix
+                            .or_else(|| bare.strip_prefix("NovaTuple_"))
                             .unwrap_or(bare);
                         if !recv_tn.is_empty() {
                             let tq = format!("fn_ret_{}_{}", recv_tn, method);
@@ -37754,6 +37949,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let struct_name = stripped_const
                     .strip_prefix("Nova_")
                     .or_else(|| stripped_const.strip_prefix("NovaValue_"))
+                    // Plan 120 (D215): named tuple C-type is `NovaTuple_X`; schema
+                    // is registered under bare name "X" (same as records/value-records).
+                    // Without this strip, `obj.field` on a named tuple infers `nova_int`.
+                    .or_else(|| stripped_const.strip_prefix("NovaTuple_"))
                     .unwrap_or("")
                     .trim_end_matches('*')
                     .trim()
@@ -37876,6 +38075,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     .unwrap_or_else(|| "nova_unit".into())
             }
             ExprKind::TaggedTemplate { .. } => "nova_str".into(),
+            // `lhs ?? rhs` — type is the unwrapped inner type of lhs (Option[T] → T),
+            // falling back to rhs's type. Fixes `ro body = opt_str ?? str_val` → nova_str.
+            ExprKind::Coalesce(lhs, rhs) => {
+                let lhs_ty = self.infer_expr_c_type(lhs);
+                if lhs_ty.starts_with("NovaOpt_") {
+                    lhs_ty.strip_prefix("NovaOpt_").unwrap_or("nova_int").to_string()
+                } else {
+                    self.infer_expr_c_type(rhs)
+                }
+            }
             // Plan 39 Issue A: With-блок тип = T_body. Если trailing == None
             // (body заканчивается throw/return/interrupt statement'ом), смотрим
             // на handler interrupt-VAL тип через bindings — это semantically

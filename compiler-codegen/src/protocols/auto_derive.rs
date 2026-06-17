@@ -1357,6 +1357,7 @@ mod tests {
                     priv_field: false,
                     priv_module_field: false,
                     visible_to: vec![],
+                    default: None,
                 },
                 NamedTupleField {
                     name: "second".to_string(),
@@ -1365,6 +1366,7 @@ mod tests {
                     priv_field: false,
                     priv_module_field: false,
                     visible_to: vec![],
+                    default: None,
                 },
             ]),
             span: Span::dummy(),
@@ -1615,6 +1617,7 @@ mod tests {
                     priv_field: false,
                     priv_module_field: false,
                     visible_to: vec![],
+                    default: None,
                 },
                 NamedTupleField {
                     name: "second".to_string(),
@@ -1623,6 +1626,7 @@ mod tests {
                     priv_field: false,
                     priv_module_field: false,
                     visible_to: vec![],
+                    default: None,
                 },
             ]),
             span: Span::dummy(),

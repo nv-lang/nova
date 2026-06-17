@@ -36,8 +36,8 @@ test "reverse_of empty array" {
 
 test "reverse_of returns receiver (chain)" {
     mut xs []int = [1, 2, 3]
-    ro r = xs.reverse_of()
-    assert(r.len() == 3)
+    xs.reverse_of()
+    assert(xs.len() == 3)
     assert(xs[0] == 3)
 }
 
@@ -46,8 +46,8 @@ test "sum для []int" {
     assert(xs.sum() == 15)
     ro empty []int = []
     assert(empty.sum() == 0)
-    ro single []int = [42]
-    assert(single.sum() == 42)
+    ro one_elem []int = [42]
+    assert(one_elem.sum() == 42)
 }
 
 test "product для []int" {

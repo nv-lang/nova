@@ -1,0 +1,61 @@
+// Plan 91.14 (A5) — "${x:?}" interpolation calls @debug, not @to_str / @display.
+//
+// Verifies that the ":?" format specifier in interp-strings routes to
+// Debug.@debug rather than Display.@display. The distinction is observable
+// for str (quoted in debug, unquoted in display) and for custom types
+// that provide both @display and @debug with different output.
+
+module plan91_14.pos_debug_interpolation
+
+// Type with distinct Display and Debug outputs
+type Tagged { label str, value int }
+
+fn Tagged @display(mut w Write) -> () {
+    w.write(@label)
+    w.write("=")
+    w.write(str.from(@value))
+}
+
+fn Tagged @debug(mut w Write) -> () {
+    w.write("Tagged { label: ")
+    @label.debug(w)
+    w.write(", value: ")
+    w.write(str.from(@value))
+    w.write(" }")
+}
+
+test "str: debug is quoted, display is not" {
+    ro s = "hello"
+    // ${s} uses Display → "hello" (unquoted)
+    // ${s:?} uses Debug → "\"hello\"" (quoted)
+    assert("${s}" == "hello")
+    assert("${s:?}" == "\"hello\"")
+}
+
+test "int: debug same as display" {
+    ro n = 42
+    assert("${n}" == "42")
+    assert("${n:?}" == "42")
+}
+
+test "bool: debug same as display" {
+    ro b = false
+    assert("${b}" == "false")
+    assert("${b:?}" == "false")
+}
+
+test "custom type: debug routes to @debug not @display" {
+    ro t = Tagged { label: "x", value: 7 }
+    // Display: "x=7"  — from @display
+    // Debug:   "Tagged { label: \"x\", value: 7 }" — from @debug
+    ro disp = "${t}"
+    ro dbg = "${t:?}"
+    assert(disp == "x=7")
+    assert(dbg == "Tagged { label: \"x\", value: 7 }")
+}
+
+test "interpolation in larger string" {
+    ro v = 99
+    ro result = "value is ${v:?} and done"
+    assert(result == "value is 99 and done")
+}

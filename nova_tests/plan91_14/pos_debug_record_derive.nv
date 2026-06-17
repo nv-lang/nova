@@ -1,0 +1,36 @@
+// Plan 91.14 (A6) — #impl(Debug) auto-derive on record types
+//
+// #impl(Debug) instructs the compiler to synthesize @debug for the type.
+// Output form: "TypeName { f1: <debug_f1>, f2: <debug_f2> }"
+// (matches Plan 126 auto-derive for Debug protocol).
+
+module plan91_14.pos_debug_record_derive
+
+#impl(Debug)
+type Point { x int, y int }
+
+#impl(Debug)
+type Named { name str, score int }
+
+#impl(Debug)
+type Wrapper { value int }
+
+test "Point #impl(Debug) basic" {
+    ro p = Point { x: 1, y: 2 }
+    assert("${p:?}" == "Point { x: 1, y: 2 }")
+}
+
+test "Point #impl(Debug) zero values" {
+    ro p = Point { x: 0, y: 0 }
+    assert("${p:?}" == "Point { x: 0, y: 0 }")
+}
+
+test "Named #impl(Debug) with str field" {
+    ro n = Named { name: "hello", score: 42 }
+    assert("${n:?}" == "Named { name: \"hello\", score: 42 }")
+}
+
+test "Wrapper #impl(Debug) single field" {
+    ro w = Wrapper { value: 99 }
+    assert("${w:?}" == "Wrapper { value: 99 }")
+}
