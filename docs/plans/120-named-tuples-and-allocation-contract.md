@@ -756,3 +756,75 @@ Candidates for future migration: geometric types in examples/.
 
 - `[M-120-named-positional-mix]` — mixed in single decl (out of scope)
 - `[M-120-stack-arrays]` → **[Plan 121](121-stack-fixed-arrays.md)** — `[3]Vec3` fixed-size stack arrays
+
+---
+
+## D215 amend — Named tuple field defaults (2026-06-17)
+
+> **Статус:** ✅ ЗАКРЫТ (2026-06-17). Ветка `plan-91.8b-remove-old-ops`.
+> Спека: [D215 amend](../../spec/decisions/02-types.md#d215-amend--named-tuple-field-defaults-2026-06-17).
+
+### Что
+
+Extension D215: поля named tuple могут иметь **default values** (значения по умолчанию).
+Конструктор может опускать поля с дефолтами; required поля всегда обязательны.
+
+```nova
+type Complex(re f64 = 0.0, im f64 = 0.0)      // all optional
+type Rect(x f64, y f64, width f64 = 100.0)     // x,y required; width optional
+
+ro z = Complex()           // Complex(re: 0.0, im: 0.0)
+ro z2 = Complex(re: 3.0)   // Complex(re: 3.0, im: 0.0)
+ro r = Rect(x: 1.0, y: 2.0) // Rect(x: 1.0, y: 2.0, width: 100.0)
+```
+
+### Изменения в компиляторе
+
+| Компонент | Изменение |
+|---|---|
+| `ast/mod.rs` | `NamedTupleField.default: Option<Box<Expr>>` |
+| `parser/mod.rs` | parse `= expr` after type in named_field |
+| `types/mod.rs` | arity check min/max; `named_tuple_field_defaults` map; default injection |
+| `protocols/auto_derive.rs` | skip default fields from arity in `@from` / `@into` derive |
+| `codegen/emit_c.rs` | 12 fixes for NovaTuple_ method dispatch + prefix stripping |
+| `std/_experimental/math/complex.nv` | migrated from heap-record to named tuple |
+
+### Acceptance criteria
+
+| # | Критерий | Status |
+|---|---|---|
+| AC-1 | `type X(f T = expr)` принимается парсером | ✅ |
+| AC-2 | Mixed required+optional fields | ✅ |
+| AC-3 | `X()` when all fields optional | ✅ |
+| AC-4 | Partial override `X(a: v)` | ✅ |
+| AC-5 | Missing required field → E_TUPLE_CONSTRUCT_ARITY_MISMATCH | ✅ |
+| AC-6 | Default references module-level constant | ✅ |
+| AC-7 | `complex.nv` migration (18/18 pos tests + 1 pre-existing bug noted) | ✅ |
+| AC-8 | «без упрощений как для прода» — production-grade implementation | ✅ |
+| AC-9 | plan120 t4_defaults (8 tests) + neg_t4_missing_required PASS | ✅ |
+
+### Test results (2026-06-17)
+
+```
+nova_tests/plan120/t4_defaults             8/8 PASS
+nova_tests/plan120/t5_defaults_methods     4/4 PASS
+nova_tests/plan120/neg_t4_missing_required 1/1 PASS (E_TUPLE_CONSTRUCT_ARITY_MISMATCH)
+nova_tests/plan120/neg_t5_unknown_field    1/1 PASS (E_TUPLE_UNKNOWN_FIELD)
+std/_experimental/math/complex.nv         18/18 PASS
+plan120 total                              12/12 PASS (0 FAIL)
+```
+
+### Commits
+
+| Commit | Summary |
+|---|---|
+| `12522cbb` | feat(D215-amend): named tuple field defaults — compiler pipeline |
+| `7fffedd4` | feat(D215-amend): complex.nv → named tuple with field defaults |
+| `c74204fe` | test(D215-amend): plan120 t4_defaults + neg_t4_missing_required fixtures |
+
+### Pre-existing limitation (not fixed)
+
+`infer_handler_interrupt_ty` не может определить тип параметра lambda `|e|` в
+`with Fail[E] = |e| interrupt Some(e) { ... None }` без информации о типе Fail binding.
+Следствие: `Some(e)` → `NovaOpt_nova_int` вместо `NovaOpt_ParseComplexError`.
+Тест в complex.nv закомментирован. Followup: `[M-D215-defaults-handler-lambda-type]`.

@@ -1,0 +1,69 @@
+module plan91_8c.pos_min_max_str
+
+import std.sort
+
+// Plan 91.8c (D185): min_of/max_of для []str.
+
+test "min_of []str" {
+    ro xs []str = ["zebra", "apple", "mango", "cherry"]
+    match xs.min_of() {
+        Some(m) => assert(m == "apple")
+        None    => assert(false)
+    }
+}
+
+test "max_of []str" {
+    ro xs []str = ["zebra", "apple", "mango", "cherry"]
+    match xs.max_of() {
+        Some(m) => assert(m == "zebra")
+        None    => assert(false)
+    }
+}
+
+test "min_of []str single element" {
+    ro xs []str = ["only"]
+    match xs.min_of() {
+        Some(m) => assert(m == "only")
+        None    => assert(false)
+    }
+}
+
+test "max_of []str single element" {
+    ro xs []str = ["only"]
+    match xs.max_of() {
+        Some(m) => assert(m == "only")
+        None    => assert(false)
+    }
+}
+
+test "min_of []str empty — None" {
+    ro empty []str = []
+    match empty.min_of() {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "max_of []str empty — None" {
+    ro empty []str = []
+    match empty.max_of() {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "min_of []int via Compare" {
+    ro xs []int = [5, 2, 8, 1, 9, 3]
+    match xs.min_of() {
+        Some(m) => assert(m == 1)
+        None    => assert(false)
+    }
+}
+
+test "max_of []int via Compare" {
+    ro xs []int = [5, 2, 8, 1, 9, 3]
+    match xs.max_of() {
+        Some(m) => assert(m == 9)
+        None    => assert(false)
+    }
+}

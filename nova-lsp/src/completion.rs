@@ -847,6 +847,7 @@ fn int_methods() -> Vec<MethodInfo> {
     vec![
         MethodInfo::new("min", "(other int) -> int", "Minimum of two ints"),
         MethodInfo::new("max", "(other int) -> int", "Maximum of two ints"),
+        MethodInfo::new("clamp", "(lo int, hi int) -> int", "Clamp to [lo, hi]"),
         MethodInfo::new("compare", "(other int) -> int", "Three-way comparison (-1/0/1)"),
         // str.from(n) is the idiomatic int→str conversion in Nova
         // (no direct @to_str on int); listed here for discoverability.
@@ -873,6 +874,7 @@ fn f64_methods() -> Vec<MethodInfo> {
         MethodInfo::new("is_infinite", "() -> bool", "True if ±infinity"),
         MethodInfo::new("min", "(other f64) -> f64", "Minimum"),
         MethodInfo::new("max", "(other f64) -> f64", "Maximum"),
+        MethodInfo::new("clamp", "(lo f64, hi f64) -> f64", "Clamp to [lo, hi]"),
         MethodInfo::new("compare", "(other f64) -> int", "Three-way comparison"),
     ]
 }
@@ -1572,6 +1574,7 @@ fn main() -> () {
         let items = method_items(src, src.len());
         assert!(has_label(&items, "min"), "min should be in int methods");
         assert!(has_label(&items, "max"), "max should be in int methods");
+        assert!(has_label(&items, "clamp"), "clamp should be in int methods");
         assert!(has_label(&items, "compare"), "compare should be in int methods");
     }
 

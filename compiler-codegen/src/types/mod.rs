@@ -994,7 +994,7 @@ fn check_const_constexpr(
     known_consts: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
     let empty: HashSet<String> = HashSet::new();
-    check_const_constexpr_ex(expr, known_consts, &empty)
+    check_const_constexpr_ex(expr, known_consts, &empty, &empty)
 }
 
 /// Plan 114.4.2 (D199): extended constexpr validator с awareness of
@@ -1002,10 +1002,13 @@ fn check_const_constexpr(
 /// + module-level const validation when const fn registry уже built.
 /// `const_fn_names` — set of all const fn names в module (если empty —
 /// backward-compatible с original check_const_constexpr behavior).
+/// `named_tuple_names` — set of named tuple type names; their constructors
+/// are constexpr (D215 amend: pure value construction, no side effects).
 fn check_const_constexpr_ex(
     expr: &crate::ast::Expr,
     known_consts: &HashSet<String>,
     const_fn_names: &HashSet<String>,
+    named_tuple_names: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
     use crate::ast::ExprKind as E;
     match &expr.kind {
@@ -1013,18 +1016,18 @@ fn check_const_constexpr_ex(
         E::IntLit(_) | E::FloatLit(_) | E::StrLit(_) | E::BoolLit(_)
         | E::CharLit(_) | E::UnitLit => Ok(()),
         // Unary над constexpr operand.
-        E::Unary { operand, .. } => check_const_constexpr_ex(operand, known_consts, const_fn_names),
+        E::Unary { operand, .. } => check_const_constexpr_ex(operand, known_consts, const_fn_names, named_tuple_names),
         // Binary над constexpr operands.
         E::Binary { left, right, .. } => {
-            check_const_constexpr_ex(left, known_consts, const_fn_names)?;
-            check_const_constexpr_ex(right, known_consts, const_fn_names)
+            check_const_constexpr_ex(left, known_consts, const_fn_names, named_tuple_names)?;
+            check_const_constexpr_ex(right, known_consts, const_fn_names, named_tuple_names)
         }
         // Plan 114.4.2 D199: `as`-cast — constexpr if inner is constexpr.
-        E::As(inner, _) => check_const_constexpr_ex(inner, known_consts, const_fn_names),
+        E::As(inner, _) => check_const_constexpr_ex(inner, known_consts, const_fn_names, named_tuple_names),
         // Tuple-литерал — каждый элемент constexpr.
         E::TupleLit(elems) => {
             for e in elems {
-                check_const_constexpr_ex(e, known_consts, const_fn_names)?;
+                check_const_constexpr_ex(e, known_consts, const_fn_names, named_tuple_names)?;
             }
             Ok(())
         }
@@ -1032,7 +1035,7 @@ fn check_const_constexpr_ex(
         E::ArrayLit(elems) => {
             for el in elems {
                 match el {
-                    crate::ast::ArrayElem::Item(e) => check_const_constexpr_ex(e, known_consts, const_fn_names)?,
+                    crate::ast::ArrayElem::Item(e) => check_const_constexpr_ex(e, known_consts, const_fn_names, named_tuple_names)?,
                     crate::ast::ArrayElem::Spread(_) => {
                         return Err(Diagnostic::new(
                             "[E_CONST_NOT_CONSTEXPR] spread `...` not allowed \
@@ -1057,7 +1060,7 @@ fn check_const_constexpr_ex(
                     ));
                 }
                 match &f.value {
-                    Some(v) => check_const_constexpr_ex(v, known_consts, const_fn_names)?,
+                    Some(v) => check_const_constexpr_ex(v, known_consts, const_fn_names, named_tuple_names)?,
                     None => {
                         // Shorthand `{ name }` — refers binding called `name`.
                         if !known_consts.contains(&f.name) {
@@ -1112,6 +1115,8 @@ fn check_const_constexpr_ex(
         // Plan 114.4.2 D199 / Plan 114.4.3 Ф.4 V2: Call к const fn — constexpr,
         // если callee = Ident (или TurboFish<Ident, ...> для generic const fn)
         // и зарегистрирован как const fn, и каждый arg constexpr.
+        // D215 amend: named tuple constructors `T(...)` are also constexpr
+        // (pure value construction, no side effects — same as record literals).
         E::Call { func, args, trailing: None } => {
             // Unwrap TurboFish to get underlying Ident name (generic const fn).
             let callee_name_opt: Option<&String> = match &func.kind {
@@ -1128,6 +1133,18 @@ fn check_const_constexpr_ex(
                 if name == "size_of" || name == "align_of" {
                     return Ok(());
                 }
+                // D215 amend: named tuple constructor — each arg must be constexpr.
+                if named_tuple_names.contains(name) {
+                    for a in args {
+                        let arg_expr = match a {
+                            crate::ast::CallArg::Item(e) => e,
+                            crate::ast::CallArg::Named { value, .. } => value,
+                            crate::ast::CallArg::Spread(e) => e,
+                        };
+                        check_const_constexpr_ex(arg_expr, known_consts, const_fn_names, named_tuple_names)?;
+                    }
+                    return Ok(());
+                }
                 if const_fn_names.contains(name) {
                     for a in args {
                         match a {
@@ -1136,7 +1153,7 @@ fn check_const_constexpr_ex(
                                 // если нет — переэмитим с E_CONST_FN_NON_CONST_ARG
                                 // (per-D199 более информативный код для caller'а).
                                 if let Err(_inner) = check_const_constexpr_ex(
-                                    e, known_consts, const_fn_names,
+                                    e, known_consts, const_fn_names, named_tuple_names,
                                 ) {
                                     return Err(Diagnostic::new(
                                         format!(
@@ -1168,9 +1185,10 @@ fn check_const_constexpr_ex(
             Err(Diagnostic::new(
                 "[E_CONST_NOT_CONSTEXPR] non-const-fn call в `const` initialiser \
                  — only literals, arithmetic, `as`-casts, record/tuple/array \
-                 literals, references to top-level consts, и calls to other \
-                 `const fn` are allowed. Use `ro X = …` для runtime / lazy-init, \
-                 либо declare `fn ... const param ... -> const T` (D199).".to_string(),
+                 literals, named-tuple constructors, references to top-level consts, \
+                 и calls to other `const fn` are allowed. Use `ro X = …` для \
+                 runtime / lazy-init, либо declare `fn ... const param ... -> const T` \
+                 (D199).".to_string(),
                 expr.span,
             ))
         }
@@ -1224,6 +1242,7 @@ fn check_ro_module_partition(
     decl: &crate::ast::LetDecl,
     known_consts: &HashSet<String>,
     const_fn_names: &HashSet<String>,
+    named_tuple_names: &HashSet<String>,
 ) -> Option<Diagnostic> {
     // `ghost ro X = …` — spec-only binding, not subject to the partition.
     if decl.is_ghost {
@@ -1254,7 +1273,7 @@ fn check_ro_module_partition(
     // as `E_CONST_NOT_CONSTEXPR`). A runtime call / effect / allocation /
     // reference to another `ro` makes the binding genuinely runtime → `ro`
     // is correct and we stay silent.
-    if check_const_constexpr_ex(&decl.value, known_consts, const_fn_names).is_err() {
+    if check_const_constexpr_ex(&decl.value, known_consts, const_fn_names, named_tuple_names).is_err() {
         return None;
     }
     Some(Diagnostic::new(
@@ -2978,6 +2997,21 @@ impl<'a> TypeCheckCtx<'a> {
             }
             s
         };
+        // D215 amend: named tuple constructor names for constexpr recognition.
+        let partition_named_tuple_names: HashSet<String> = module
+            .items
+            .iter()
+            .filter_map(|it| match it {
+                Item::Type(td) => {
+                    if matches!(td.kind, crate::ast::TypeDeclKind::NamedTuple(_)) {
+                        Some(td.name.clone())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect();
         for item in &module.items {
             match item {
                 Item::Fn(fd) => {
@@ -3007,6 +3041,7 @@ impl<'a> TypeCheckCtx<'a> {
                     // refs → E_CONST_NOT_CONSTEXPR.
                     if let Err(d) = check_const_constexpr_ex(
                         &cd.value, &partition_known_consts, &partition_const_fn_names,
+                        &partition_named_tuple_names,
                     ) {
                         errors.push(d);
                     }
@@ -3026,6 +3061,7 @@ impl<'a> TypeCheckCtx<'a> {
                 Item::Let(ld) => {
                     if let Some(d) = check_ro_module_partition(
                         ld, &partition_known_consts, &partition_const_fn_names,
+                        &partition_named_tuple_names,
                     ) {
                         errors.push(d);
                     }
@@ -4619,8 +4655,9 @@ impl<'a> TypeCheckCtx<'a> {
                 // `b` — const param).
                 if !self.in_const_fn.get() {
                     let empty_consts: HashSet<String> = HashSet::new();
+                    let empty_nt: HashSet<String> = HashSet::new();
                     if let Err(diag) = check_const_constexpr_ex(
-                        &d.value, &empty_consts, &self.const_fn_names,
+                        &d.value, &empty_consts, &self.const_fn_names, &empty_nt,
                     ) {
                         errors.push(diag);
                     }
@@ -6749,14 +6786,21 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 }
-                if args.len() != fields.len() {
+                // D215 amend: fields with defaults are optional at call site.
+                let required = fields.iter().filter(|f| f.default.is_none()).count();
+                let total = fields.len();
+                if args.len() < required || args.len() > total {
+                    let range_desc = if required == total {
+                        format!("exactly {} argument{}", total, if total == 1 { "" } else { "s" })
+                    } else {
+                        format!("{}-{} arguments", required, total)
+                    };
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_TUPLE_CONSTRUCT_ARITY_MISMATCH] named tuple `{}` expects \
-                             {} argument{} but {} {} provided",
+                             {} but {} {} provided",
                             name,
-                            fields.len(),
-                            if fields.len() == 1 { "" } else { "s" },
+                            range_desc,
                             args.len(),
                             if args.len() == 1 { "was" } else { "were" },
                         ),
@@ -21361,6 +21405,7 @@ mod named_tuple_ctor_infer_tests {
             priv_field: false,
             priv_module_field: false,
             visible_to: Vec::new(),
+            default: None,
         }).collect();
         TypeDecl {
             name: name.to_string(),

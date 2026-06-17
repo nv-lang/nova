@@ -1,0 +1,50 @@
+module plan91_8c.pos_sort_record
+
+import std.sort
+
+// Plan 91.8c (D185): sort_by_of для []T с custom comparator callback — T не обязан Compare.
+
+type Point {
+    x int
+    y int
+}
+
+test "sort_by_of []Point by x coordinate" {
+    mut pts []Point = [Point { x: 3, y: 1 }, Point { x: 1, y: 5 }, Point { x: 2, y: 3 }]
+    pts.sort_by_of(|a, b| a.x - b.x)
+    assert(pts[0].x == 1)
+    assert(pts[1].x == 2)
+    assert(pts[2].x == 3)
+}
+
+test "sort_by_of []Point by y coordinate" {
+    mut pts []Point = [Point { x: 1, y: 9 }, Point { x: 2, y: 1 }, Point { x: 3, y: 5 }]
+    pts.sort_by_of(|a, b| a.y - b.y)
+    assert(pts[0].y == 1)
+    assert(pts[1].y == 5)
+    assert(pts[2].y == 9)
+}
+
+test "sort_by_of []Point descending by x" {
+    mut pts []Point = [Point { x: 1, y: 0 }, Point { x: 3, y: 0 }, Point { x: 2, y: 0 }]
+    pts.sort_by_of(|a, b| b.x - a.x)
+    assert(pts[0].x == 3)
+    assert(pts[1].x == 2)
+    assert(pts[2].x == 1)
+}
+
+test "sort_by_of []Point empty" {
+    mut pts []Point = []
+    pts.sort_by_of(|a, b| a.x - b.x)
+    assert(pts.len() == 0)
+}
+
+test "sort_by_of []int descending via callback" {
+    mut xs []int = [5, 1, 4, 2, 3]
+    xs.sort_by_of(|a, b| b - a)
+    assert(xs[0] == 5)
+    assert(xs[1] == 4)
+    assert(xs[2] == 3)
+    assert(xs[3] == 2)
+    assert(xs[4] == 1)
+}

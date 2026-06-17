@@ -9,6 +9,8 @@
 > rationale и roadmap. **Не использовать этот документ как тихое разрешение
 > оставлять tech-debt без плана.**
 
+[2026-06-17 Plan 91.8c] Упрощения: (1) Суффикс `_of` вместо перегрузки — `sort_of/min_of/max_of/binary_search_of` не перегружают `sort/min/max` из concrete `[]int` (избегаем overload-resolution сложности, concrete fast-path сохранён). (2) Алгоритм sort: insertion sort O(n²) для MVP; pdq-sort в followup `[M-91.8c-pdq-sort]`. (3) `[]int @min/@max` pre-existing CC-FAIL (f64.min dispatch) — не фиксируем в Plan 91.8c, используем `min_of/max_of` в регрессионном тесте.
+
 Формат:
 - **Где** — файл/модуль.
 - **Что упрощено** — что НЕ делается.
@@ -28890,6 +28892,8 @@ finalizer LIFO needed / CleanupTimeoutError typed catch needed).
 - 🟡 `[M-120-named-positional-mix]` — mixed positional+named in single tuple decl (out of V1 scope).
 - 🟡 `[M-120-stack-arrays]` — stack-allocated fixed-size arrays `[3]Vec3` (separate plan).
 - ✅ `[M-120-positional-construct-check]` — CLOSED (2026-06-01): f5_check_tuple_construct в f1_expr; E_TUPLE_CONSTRUCT_NAMED_ON_POSITIONAL + E_TUPLE_CONSTRUCT_ARITY_MISMATCH + E_TUPLE_UNKNOWN_FIELD; 3 негативных fixture PASS.
+- ✅ `[M-D215-field-defaults]` — CLOSED (2026-06-17): named tuple field defaults `type X(f T = expr)`. AST: NamedTupleField.default; parser: `= expr`; checker: named_tuple_field_defaults map + min/max arity + injection; emit_c.rs: 12 фиксов NovaTuple_ dispatch. complex.nv мигрирован (18/18 PASS). plan120 12/12 PASS. D215 amend в spec.
+- 🟡 `[M-D215-defaults-handler-lambda-type]` — infer_handler_interrupt_ty не может определить тип lambda-параметра `e` в `with Fail[E] = |e| interrupt Some(e)`. Тест в complex.nv закомментирован.
 
 **Design lesson:** Named tuple vs record distinction drives 4× different C code: `NovaTuple_X { x; y; }` (stack struct, value type) vs `Nova_X*` (heap pointer, GC-tracked). The bracket syntax (`()` vs `{}`) was already implicit in spec (D32/D123) — Plan 120 makes it explicit at the type-declaration level. `type_aliases` HashMap in emit_c.rs is the key integration point: stores `"Vec3" → "NovaTuple_Vec3"`, enabling value-type dispatch everywhere without special-casing.
 

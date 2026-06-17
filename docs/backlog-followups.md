@@ -37,6 +37,19 @@ referenced from plan docs and simplifications.md.
 
 ---
 
+## D215 amend — Named tuple field defaults
+
+- **[M-D215-defaults-handler-lambda-type]** `infer_handler_interrupt_ty` не может вывести тип
+  lambda-параметра `e` в паттерне `with Fail[E] = |e| interrupt Some(e) { ... None }`.
+  Корень: `infer_expr_c_type(Lambda(...))` не знает тип `e` без binding annotation или
+  type-propagation от `Fail[E]` окружающего контекста. Следствие: `Some(e)` → `NovaOpt_nova_int`
+  вместо `NovaOpt_ParseComplexError` → match на `Option[ParseComplexError]` падает.
+  Тест в `std/_experimental/math/complex.nv` закомментирован.
+  Fix: propagate Fail-binding type через context при выводе типа handler-lambda параметров.
+  Priority: M (нужен для любого non-trivial Fail-bound error handler).
+
+---
+
 ## Plan 168 — Vec generic fwd-decl (D300)
 
 - **[M-168-resize-with-free-fn-shadow]** `plan153_1/resize_with_free_fn_shadow` — pre-existing CODEGEN-FAIL: `undefined identifier f` when a module-level free fn `f` clashes with closure param `f` inside Vec.resize_with/fill_with. Not caused by Plan 168. Requires fix in name resolution (closure param scope should shadow outer free fn). Priority: M.

@@ -1,0 +1,88 @@
+module plan91_8c.pos_sort_int_regression
+
+import std.sort
+
+// Plan 91.8c (D185): regression — []int sort, sort_by, min_of, max_of, sum, product
+// still work after adding generic sort_of/min_of/max_of/binary_search_of.
+//
+// NOTE: concrete []int @min() / @max() dispatch (plan91/sort_basic.nv) has a pre-existing
+// codegen mis-dispatch bug (f64.min confusion) tracked separately.
+// Use min_of()/max_of() (generic path) for int in this regression suite.
+
+test "[]int @sort still works" {
+    mut xs []int = [3, 1, 4, 1, 5, 9, 2, 6]
+    xs.sort()
+    assert(xs[0] == 1)
+    assert(xs[1] == 1)
+    assert(xs[2] == 2)
+    assert(xs[3] == 3)
+    assert(xs[4] == 4)
+    assert(xs[5] == 5)
+    assert(xs[6] == 6)
+    assert(xs[7] == 9)
+}
+
+test "[]int @sort_by still works" {
+    mut xs []int = [3, 1, 4]
+    xs.sort_by(|a, b| b - a)
+    assert(xs[0] == 4)
+    assert(xs[1] == 3)
+    assert(xs[2] == 1)
+}
+
+test "[]int @sum regression" {
+    ro xs []int = [1, 2, 3, 4, 5]
+    assert(xs.sum() == 15)
+    ro empty []int = []
+    assert(empty.sum() == 0)
+}
+
+test "[]int @product regression" {
+    ro xs []int = [1, 2, 3, 4]
+    assert(xs.product() == 24)
+    ro empty []int = []
+    assert(empty.product() == 1)
+}
+
+test "sort_of on []int works (generic path)" {
+    mut xs []int = [5, 3, 1, 4, 2]
+    xs.sort_of()
+    assert(xs[0] == 1)
+    assert(xs[1] == 2)
+    assert(xs[2] == 3)
+    assert(xs[3] == 4)
+    assert(xs[4] == 5)
+}
+
+test "min_of on []int works" {
+    ro xs []int = [3, 1, 4, 1, 5, 9, 2, 6]
+    match xs.min_of() {
+        Some(m) => assert(m == 1)
+        None    => assert(false)
+    }
+    ro empty []int = []
+    match empty.min_of() {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "max_of on []int works" {
+    ro xs []int = [3, 1, 4, 1, 5, 9, 2, 6]
+    match xs.max_of() {
+        Some(m) => assert(m == 9)
+        None    => assert(false)
+    }
+}
+
+test "binary_search_of on sorted []int works" {
+    ro xs []int = [1, 2, 3, 5, 8, 13]
+    match xs.binary_search_of(5) {
+        Some(idx) => assert(idx == 3)
+        None      => assert(false)
+    }
+    match xs.binary_search_of(4) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}

@@ -663,3 +663,10 @@ Open V1 markers (gated on type-checker resolver API in Plan 104.2):
 | `[M-91.14-sum-debug-variants]` | OPEN | Sum-type debug V1 outputs type name; extend `synthesize_debug` for per-variant output |
 | `[M-91.14-str-from-debug-walker]` | OPEN | `default_body_calls_satisfy_for` doesn't check `str.from_debug`; add check |
 | `[M-91.14-format-dsl-extensions]` | OPEN | Future format-spec extensions: `:hex`, `:.3`, `:pad-N` |
+
+## Follow-up: Plan 91.8c (generic array sort/min/max/_by)
+
+| Маркер | Статус | Действие |
+|---|---|---|
+| `[M-91.8c-pdq-sort]` | OPEN | Upgrade sort_of from insertion sort O(n²) to pdq/intro-sort O(n log n) for large arrays (>1000 elements). Low priority — insertion sort correct and stable. |
+| `[M-91.8c-int-min-max-dispatch]` | OPEN | Pre-existing CC-FAIL: `[]int @min()/@max()` resolve to `f64.min` (2-arg) in codegen. Needs dispatch fix in emit_c.rs method resolution. See plan91/sort_basic.nv. |

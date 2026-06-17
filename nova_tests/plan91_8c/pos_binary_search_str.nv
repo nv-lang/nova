@@ -1,0 +1,70 @@
+module plan91_8c.pos_binary_search_str
+
+import std.sort
+
+// Plan 91.8c (D185): binary_search_of для отсортированного []str.
+
+test "binary_search_of []str found" {
+    ro xs []str = ["apple", "cherry", "mango", "zebra"]
+    match xs.binary_search_of("mango") {
+        Some(idx) => assert(idx == 2)
+        None      => assert(false)
+    }
+}
+
+test "binary_search_of []str first element" {
+    ro xs []str = ["apple", "cherry", "mango", "zebra"]
+    match xs.binary_search_of("apple") {
+        Some(idx) => assert(idx == 0)
+        None      => assert(false)
+    }
+}
+
+test "binary_search_of []str last element" {
+    ro xs []str = ["apple", "cherry", "mango", "zebra"]
+    match xs.binary_search_of("zebra") {
+        Some(idx) => assert(idx == 3)
+        None      => assert(false)
+    }
+}
+
+test "binary_search_of []str not found — None" {
+    ro xs []str = ["apple", "cherry", "mango", "zebra"]
+    match xs.binary_search_of("banana") {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "binary_search_of []str empty — None" {
+    ro empty []str = []
+    match empty.binary_search_of("anything") {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "binary_search_of []str single element found" {
+    ro xs []str = ["only"]
+    match xs.binary_search_of("only") {
+        Some(idx) => assert(idx == 0)
+        None      => assert(false)
+    }
+}
+
+test "binary_search_of []str single element not found" {
+    ro xs []str = ["only"]
+    match xs.binary_search_of("other") {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "sort_of + binary_search_of pipeline for []str" {
+    mut xs []str = ["mango", "apple", "zebra", "cherry"]
+    xs.sort_of()
+    match xs.binary_search_of("cherry") {
+        Some(idx) => assert(idx == 1)
+        None      => assert(false)
+    }
+}
