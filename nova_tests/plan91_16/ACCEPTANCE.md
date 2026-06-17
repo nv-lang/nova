@@ -43,6 +43,9 @@ UDP split (Plan 166 / D298). Spec: **D301** in `spec/decisions/04-effects.md`.
 ## Regression
 - `plan91_12` 26/2 — the 2 non-PASS are pre-existing and not regressions:
   `net_v2_tcp_multi_client_slow` flakes under 16-job parallel load (PASS isolated);
-  `net_v2_udp_two_fiber_slow` hangs on UDP-loopback datagram drop (UDP runtime is
-  byte-identical to base `ccca04f6` — unrelated to TCP split).
+  `net_v2_udp_two_fiber_slow` intermittently hangs (~2/3 of runs timeout, ~1/3 PASS,
+  even at `--jobs 1`) — a UDP-loopback park/wake race. UDP runtime in
+  `compiler-codegen/nova_rt/net.c` is byte-identical to base `ccca04f6` (0 UDP lines
+  changed) and `std/net/udp.nv` only drops the `Blocking` annotation, so this is
+  unrelated to the TCP split. Tracked as `[M-net-udp-two-fiber-race]`.
 - `plan83_10` 20/0, `plan100_4_2` 9/0 — shared runtime / consume-checker unaffected.
