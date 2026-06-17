@@ -33,6 +33,17 @@
 
 ---
 
+### Plan 104.2 Ф.7 — hover body-walk + prelude name-lookup (2026-06-17, ✅ CLOSED)
+
+- **Где** — `nova-lsp/src/hover.rs`, `nova-lsp/src/symbol.rs`, `nova-lsp/src/server.rs`.
+- **Что сделано** — Hover теперь работает внутри fn/test тел: body-walker рекурсивно обходит ExprKind/Stmt/Block и находит ident под курсором; name-lookup ищет объявление среди ALL items включая inlined prelude → `assert`/`println`/etc. показывают hover.
+- **Корень бага**: `resolve_imports_inline` **prepend**'ит imported items перед оригинальными (`new_items.append(&mut module.items)`). `.take(original_len)` захватывало только prepended imports; `.skip(items_start)` захватывает только оригинальные items.
+- **Упрощения:**
+  1. **Hover на локальных переменных внутри тел** — body-walk находит ident по имени, но lookup_decl_by_name ищет только среди top-level объявлений. Тип локальной переменной (`ro x = 42`) не показывается — только если переменная объявлена как top-level const/fn. `[M-104.2-body-walk-local-var-type]`.
+  2. **Dot-completion при неизвестном типе** — возвращает пустой список (не «каша» из всех методов). V2: type inference внутри тел для dot-completion.
+- **Как чинить** — V2: type inference pass для тел функций в LSP; использовать `types::check_module` результат для type-per-expression.
+- **Приоритет** — L (followup deferred).
+
 ### Plan 104.9 — nova-lsp language-sync: completion + quick-fixes (2026-06-17, ✅ CLOSED [M-104.9-completion-language-sync])
 
 - **Где** — `nova-lsp/src/completion.rs`, `nova-lsp/src/code_actions.rs`, `nova-lsp/tests/completion.rs`.
