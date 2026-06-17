@@ -21,6 +21,7 @@
 | [D277](#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv) | Test-discovery skip/route-конвенции — `fixtures/`, OS-суффикс, `_slow.nv` |
 | [D278](#d278-editor-syntax-highlighting-keyword-set-must-track-the-lexer) | Editor syntax-highlighting keyword set MUST track the lexer (conformance-тест) |
 | [D296](#d296--lsp-rename-atomicity-contract-plan-1046-2026-06-16) | LSP Rename Atomicity Contract — prepare/collect/atomic-check, WorkspaceEdit.documentChanges |
+| [D298](#d298--test-suite-time-budget) | Test-suite time budget — бюджет `nova test` + пороги переноса в `_slow` |
 
 ---
 
@@ -2877,6 +2878,51 @@ slow-gate-прогоном (CI merge/nightly), а не наличием файл
 
 ---
 
+## D298. Test-suite time budget
+
+> **Plan 169** (2026-06-17). Фиксирует численный бюджет дефолтного `nova test`
+> и пороги переноса тестов в slow-lane.
+
+### Бюджет
+
+| Прогон | Цель wall-clock | Параллельность |
+|---|---|---|
+| `nova test` (дефолт, без `--slow`) | ≤ 120s на CI | 8 воркеров (num_cpus) |
+| `nova test --include-slow` | без лимита (nightly / merge gate) | любая |
+
+Эмпирический baseline (2026-06-17, 260 тестов, clang, 8 jobs): медиана 36.7s,
+p90 47.5s на _тест_ (compile-dominated: 96% времени — компиляция через clang).
+
+### Порог кандидата на `_slow.nv`
+
+Тест переносится в slow-lane если выполняется хотя бы одно:
+- **total_ms ≥ 3000** (compile + run), ИЛИ
+- **run_ms ≥ 2000** (только выполнение — IO/sleep/stress-loop), ИЛИ
+- **compile_ms ≥ 500** (тяжёлый compile — крупные mono-инстанции, большой файл).
+
+Пороги актуализируются по `docs/research/12-test-suite-profile-2026.md`.
+
+### Fast-variant конвенция
+
+Когда тест медленен только из-за большого параметра N:
+1. Переименовать оригинал → `<name>_slow.nv` (обновить строку `module` на `…_slow`).
+2. Создать `<name>.nv` с уменьшенными параметрами
+   (итерации ≤ 500, sleep ≤ 100ms, concurrent fibers ≤ 100).
+3. Добавить комментарий в начало: `// Fast variant. Full test: <name>_slow.nv`
+
+### Поля timing в results-file (Plan 169 Ф.1)
+
+`nova test --results-file out.json` сохраняет на каждый тест:
+- `elapsed_ms` — суммарное (compile + run)
+- `compile_ms` — время codegen → C → clang/cl.exe
+- `run_ms` — время выполнения скомпилированного бинаря
+
+**Ссылки:** D277 (discovery-конвенции `_slow.nv`);
+[Plan 156](../plans/156-test-runner-slow-lane.md);
+[Plan 169](../plans/169-test-suite-profiling-and-speedup.md).
+
+---
+
 ## D278. Editor syntax-highlighting keyword set MUST track the lexer
 
 **Plan 104.9 (2026-06-14).**
@@ -3072,7 +3118,7 @@ Non-matching prefixes (e.g., `[NOTE]`) produce `code = None`.
 
 **104.5.3 — Plan 100 (7 fixes):**
 `E_CONSUME_KEYWORD_MISSING`, `E_LOCAL_NOT_MUT`, `E_PARAM_NOT_MUT`,
-`E_ADDR_OF_MUT_REQUIRES_MUT_BINDING`, `E_REDUNDANT_POINTER_RO`,
+`E_ADDR_OF_REMOVED` (Plan 118.6 rename from `E_ADDR_OF_MUT_REQUIRES_MUT_BINDING`), `E_REDUNDANT_POINTER_RO`,
 `E_REDUNDANT_TYPE_MODIFIER`, `E_REDUNDANT_IMPORT_ALIAS`.
 
 **104.5.4 — General (7 fixes):**
@@ -3084,7 +3130,30 @@ Non-matching prefixes (e.g., `[NOTE]`) produce `code = None`.
 `E_TYPE_UNKNOWN` (known stdlib types), `E_BOUND_UNKNOWN` (stdlib protocols),
 `E_AUTO_DERIVE_UNKNOWN_PROTOCOL` (Levenshtein suggestion).
 
-**Total: 25 fixes** (meets ≥25 production requirement).
+**104.5.6 — Protocol impl fixes (7 fixes, added 2026-06-17):**
+`E_METHOD_REDEFINITION`, `E_IMPL_UNKNOWN_PROTOCOL` (suggest import for known stdlib protocols),
+`E_IMPL_NOT_A_PROTOCOL_METHOD`, `E_IMPL_SIGNATURE_MISMATCH`, `E_PRIMITIVE_NO_PROTOCOL_METHOD`,
+`E_BLANKET_CONFLICT`, `E_DUPLICATE_PROTOCOL_IMPL`.
+
+**104.5.7 — Field/type fixes (2 fixes, added 2026-06-17):**
+`E_FIELD_MODULE_PRIVATE` (guidance note), `E_TYPE_NAME_TOO_SHORT` (guidance note).
+
+**104.5.8 — String operation fixes (2 fixes, added 2026-06-17):**
+`E_STR_NO_LEN` (MachineApplicable: replace `.len` → `.byte_len()`),
+`E_STR_NO_INT_INDEX` (guidance note).
+
+**104.5.9 — Comparison chain fixes (2 fixes, added 2026-06-17):**
+`E_CMP_CHAIN_UNSUPPORTED` (guidance note — use `&&`),
+`E_RELATIONAL_OPERAND_NOT_ORDERED` (suggest import `Ordered` protocol).
+
+**Total: 39 fixes** (initial ≥25 met; extended to 39 across all nova-lsp language-sync work).
+
+**Note on `E_STR_NO_LEN` fix applicability:**
+The `fix_str_no_len` handler scans the diagnostic range for the pattern `.len` and replaces
+it with `.byte_len()`. This is `MachineApplicable` (`is_preferred = true`) because `byte_len()`
+is the direct equivalent for ASCII strings, and the overwhelming majority of `.len` usages
+intend byte-length. For Unicode-aware char-count, the compiler diagnostic message directs
+the user to `as_chars().count()` (O(n)) — the fix does not attempt this substitution.
 
 ### §5 Suggestion vs CodeAction relationship
 

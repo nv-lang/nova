@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.15 P1 — positive: NetError @to_str() renders each variant.
+//
+// Pure: no network, no effects. Validates the human-readable rendering added
+// in D302 (so errors can be logged without an exhaustive match at every site).
+
+module plan91_15.net_error_to_str
+
+import std.net.{NetError}
+
+test "to_str — nullary variants" {
+    ro refused = NetError.ConnectionRefused
+    assert(refused.to_str() == "connection refused")
+    ro in_use = NetError.AddressInUse
+    assert(in_use.to_str() == "address already in use")
+    ro not_avail = NetError.AddressNotAvailable
+    assert(not_avail.to_str() == "address not available")
+    ro nf = NetError.NotFound
+    assert(nf.to_str() == "not found")
+    ro eof = NetError.Eof
+    assert(eof.to_str() == "end of file")
+    ro closed = NetError.Closed
+    assert(closed.to_str() == "connection closed")
+    ro cancelled = NetError.Cancelled
+    assert(cancelled.to_str() == "operation cancelled")
+    ro timed = NetError.TimedOut
+    assert(timed.to_str() == "operation timed out")
+    ro pipe = NetError.BrokenPipe
+    assert(pipe.to_str() == "broken pipe")
+    ro reset = NetError.ConnectionReset
+    assert(reset.to_str() == "connection reset by peer")
+    ro perm = NetError.PermissionDenied
+    assert(perm.to_str() == "permission denied")
+    ro bad_port = NetError.InvalidPort
+    assert(bad_port.to_str() == "invalid port")
+}
+
+test "to_str — payload variants" {
+    ro io = NetError.IoError("disk gone")
+    assert(io.to_str() == "disk gone")
+    ro bad_addr = NetError.InvalidAddr("1.2.3")
+    assert(bad_addr.to_str() == "invalid address: 1.2.3")
+}

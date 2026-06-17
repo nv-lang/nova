@@ -175,3 +175,9 @@ export fn f32 @min(other Self) -> Self => if @ < other { @ } else { other }
 export fn f32 @max(other Self) -> Self => if @ > other { @ } else { other }
 export fn f64 @min(other Self) -> Self => if @ < other { @ } else { other }
 export fn f64 @max(other Self) -> Self => if @ > other { @ } else { other }
+
+// clamp — restrict value to [lo, hi] range.
+export fn int @clamp(lo int, hi int) -> int =>
+    if @ < lo { lo } else if @ > hi { hi } else { @ }
+export fn f64 @clamp(lo f64, hi f64) -> f64 =>
+    if @ < lo { lo } else if @ > hi { hi } else { @ }

@@ -2705,6 +2705,9 @@ impl CEmitter {
                         if let Some(r) = &f.return_type {
                             Self::collect_array_elem_typerefs(r, acc);
                         }
+                        // Plan 168 (D300): scan fn body for Vec[T] local vars
+                        // so body-only instantiations get a global forward-decl.
+                        Self::collect_array_elem_typerefs_in_fnbody(&f.body, acc);
                     }
                     _ => {}
                 }
@@ -3925,6 +3928,33 @@ impl CEmitter {
         }
         let mut tuple_decls = String::new();
         if !sorted.is_empty() {
+            // Plan 168 (D300): before emitting tuple typedefs, forward-declare any
+            // heap generic struct types (Nova_Vec____..., etc.) that appear as pointer
+            // element types. These may be emitted into generic_type_defs_buf (after the
+            // user_type_fwd_decls marker) but their typedef is needed for the field
+            // declaration here. A `typedef struct X X;` before the first use is sufficient
+            // because pointer-to-incomplete-type is valid C.
+            let mut tuple_fwd_seen: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for inst in &sorted {
+                for elem in inst.iter() {
+                    // Only emit fwd-decl for pointer-to-user-struct types: `Nova_...*`
+                    // (excluding primitive-pointer aliases like `Nova_u32*` which are
+                    // handled separately, and value-record types like `NovaValue_...`).
+                    let base = elem.trim_end_matches('*');
+                    if base.len() == elem.len() { continue; } // not a pointer
+                    if !base.starts_with("Nova_") { continue; }
+                    if base.contains("__") { // mono'd instance like Nova_Vec____uint32_t
+                        if tuple_fwd_seen.insert(base.to_string()) {
+                            // Only emit if not already in user_type_fwd_decls
+                            let fwd = format!("typedef struct {0} {0};\n", base);
+                            if !self.user_type_fwd_decls.contains(&fwd) {
+                                tuple_decls.push_str(&fwd);
+                            }
+                        }
+                    }
+                }
+            }
             tuple_decls.push_str("/* Plan 59: mono'd tuple typedefs — real element types, no int-slot erasure. */\n");
             tuple_decls.push_str("/* Plan 115 D214: tagged struct form — позволяет shim header'у\n");
             tuple_decls.push_str(" * forward-declare same typedef для external fn tuple-return ABI без redefinition. */\n");
@@ -11153,6 +11183,286 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         }
     }
 
+    /// Plan 168 (D300): collect Vec[T] element TypeRefs from a function body
+    /// so that body-only Vec instantiations (local vars, TurboFish calls)
+    /// get forward-declared in the global preamble, just like signature/field
+    /// sites.  Scans Let type annotations and TurboFish type_args recursively.
+    /// Lambda / closure bodies are NOT entered — they are handled by their own
+    /// mono-pass context and do not produce Vec-local vars without a
+    /// surrounding signature context.
+    fn collect_array_elem_typerefs_in_fnbody(
+        body: &crate::ast::FnBody,
+        out: &mut Vec<crate::ast::TypeRef>,
+    ) {
+        use crate::ast::FnBody;
+        match body {
+            FnBody::Block(block) => Self::collect_array_elem_typerefs_in_block(block, out),
+            FnBody::Expr(expr) => Self::collect_array_elem_typerefs_in_expr(expr, out),
+            FnBody::External => {}
+        }
+    }
+
+    fn collect_array_elem_typerefs_in_block(
+        block: &crate::ast::Block,
+        out: &mut Vec<crate::ast::TypeRef>,
+    ) {
+        for stmt in &block.stmts {
+            Self::collect_array_elem_typerefs_in_stmt(stmt, out);
+        }
+        if let Some(trailing) = &block.trailing {
+            Self::collect_array_elem_typerefs_in_expr(trailing, out);
+        }
+    }
+
+    fn collect_array_elem_typerefs_in_stmt(
+        stmt: &crate::ast::Stmt,
+        out: &mut Vec<crate::ast::TypeRef>,
+    ) {
+        use crate::ast::Stmt;
+        match stmt {
+            Stmt::Let(ld) => {
+                if let Some(ty) = &ld.ty {
+                    Self::collect_array_elem_typerefs(ty, out);
+                }
+                Self::collect_array_elem_typerefs_in_expr(&ld.value, out);
+            }
+            Stmt::Const(cd) => {
+                if let Some(ty) = &cd.ty {
+                    Self::collect_array_elem_typerefs(ty, out);
+                }
+                Self::collect_array_elem_typerefs_in_expr(&cd.value, out);
+            }
+            Stmt::Expr(e) => Self::collect_array_elem_typerefs_in_expr(e, out),
+            Stmt::Assign { target, value, .. } => {
+                Self::collect_array_elem_typerefs_in_expr(target, out);
+                Self::collect_array_elem_typerefs_in_expr(value, out);
+            }
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { Self::collect_array_elem_typerefs_in_expr(e, out); }
+                for e in rhs { Self::collect_array_elem_typerefs_in_expr(e, out); }
+            }
+            Stmt::Return { value: Some(e), .. }
+            | Stmt::Throw { value: e, .. }
+            | Stmt::Defer { body: e, .. }
+            | Stmt::ErrDefer { body: e, .. }
+            | Stmt::OkDefer { body: e, .. }
+            | Stmt::DeferWithResult { body: e, .. } => {
+                Self::collect_array_elem_typerefs_in_expr(e, out);
+            }
+            Stmt::ConsumeScope { type_annot, init, body, .. } => {
+                if let Some(ty) = type_annot {
+                    Self::collect_array_elem_typerefs(ty, out);
+                }
+                Self::collect_array_elem_typerefs_in_expr(init, out);
+                Self::collect_array_elem_typerefs_in_block(body, out);
+            }
+            // Ghost / proof statements — no runtime TypeRefs
+            Stmt::Return { value: None, .. }
+            | Stmt::Break(_) | Stmt::Continue(_)
+            | Stmt::AssertStatic { .. } | Stmt::Assume { .. }
+            | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        }
+    }
+
+    fn collect_array_elem_typerefs_in_expr(
+        expr: &crate::ast::Expr,
+        out: &mut Vec<crate::ast::TypeRef>,
+    ) {
+        use crate::ast::ExprKind;
+        match &expr.kind {
+            // Key sites: TurboFish carries explicit type_args (e.g. Vec[u32].with_capacity(n))
+            ExprKind::TurboFish { base, type_args } => {
+                // If this is `Vec[T]` (or `[]T` sugar), add T directly as a Vec element
+                // so the forward-decl pre-pass picks up body-only Vec instantiations.
+                let base_is_vec = matches!(&base.kind,
+                    ExprKind::Ident(n) if n == "Vec");
+                if base_is_vec {
+                    for ta in type_args {
+                        // Push element type directly — mirrors Array arm of
+                        // collect_array_elem_typerefs which pushes inner.
+                        if !matches!(ta, crate::ast::TypeRef::Func { .. }) {
+                            out.push(ta.clone());
+                        }
+                        Self::collect_array_elem_typerefs(ta, out);
+                    }
+                } else {
+                    for ta in type_args {
+                        Self::collect_array_elem_typerefs(ta, out);
+                    }
+                }
+                Self::collect_array_elem_typerefs_in_expr(base, out);
+            }
+            ExprKind::As(e, ty) | ExprKind::Is(e, ty) => {
+                Self::collect_array_elem_typerefs(ty, out);
+                Self::collect_array_elem_typerefs_in_expr(e, out);
+            }
+            ExprKind::RecordLit { .. } => {
+                // RecordLit does not carry a TypeRef directly in ExprKind;
+                // its type_name is a path (Vec<String>), not a TypeRef.
+                // No TypeRef to collect here.
+            }
+            ExprKind::Call { func, args, trailing } => {
+                Self::collect_array_elem_typerefs_in_expr(func, out);
+                for a in args {
+                    use crate::ast::CallArg;
+                    match a {
+                        CallArg::Item(e) | CallArg::Spread(e) => {
+                            Self::collect_array_elem_typerefs_in_expr(e, out);
+                        }
+                        CallArg::Named { value, .. } => {
+                            Self::collect_array_elem_typerefs_in_expr(value, out);
+                        }
+                    }
+                }
+                if let Some(t) = trailing {
+                    use crate::ast::Trailing;
+                    match t {
+                        Trailing::Block(block) => {
+                            Self::collect_array_elem_typerefs_in_block(block, out);
+                        }
+                        // Fn / LegacyBlockWithParams are closures — skip (separate mono context)
+                        Trailing::Fn(_) | Trailing::LegacyBlockWithParams(_) => {}
+                    }
+                }
+            }
+            ExprKind::Member { obj, .. } | ExprKind::Spawn(obj)
+            | ExprKind::Try(obj) | ExprKind::Bang(obj) | ExprKind::Throw(obj)
+            | ExprKind::Interrupt(Some(obj)) => {
+                Self::collect_array_elem_typerefs_in_expr(obj, out);
+            }
+            ExprKind::Index { obj, index } => {
+                Self::collect_array_elem_typerefs_in_expr(obj, out);
+                Self::collect_array_elem_typerefs_in_expr(index, out);
+            }
+            ExprKind::Unary { operand, .. } => {
+                Self::collect_array_elem_typerefs_in_expr(operand, out);
+            }
+            ExprKind::Binary { left, right, .. }
+            | ExprKind::Coalesce(left, right) => {
+                Self::collect_array_elem_typerefs_in_expr(left, out);
+                Self::collect_array_elem_typerefs_in_expr(right, out);
+            }
+            ExprKind::Block(block) => {
+                Self::collect_array_elem_typerefs_in_block(block, out);
+            }
+            ExprKind::If { cond, then, else_, .. } => {
+                Self::collect_array_elem_typerefs_in_expr(cond, out);
+                Self::collect_array_elem_typerefs_in_block(then, out);
+                if let Some(eb) = else_ {
+                    use crate::ast::ElseBranch;
+                    match eb {
+                        ElseBranch::Block(b) => {
+                            Self::collect_array_elem_typerefs_in_block(b, out);
+                        }
+                        ElseBranch::If(e) => {
+                            Self::collect_array_elem_typerefs_in_expr(e, out);
+                        }
+                    }
+                }
+            }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                Self::collect_array_elem_typerefs_in_expr(scrutinee, out);
+                Self::collect_array_elem_typerefs_in_block(then, out);
+                if let Some(eb) = else_ {
+                    use crate::ast::ElseBranch;
+                    match eb {
+                        ElseBranch::Block(b) => {
+                            Self::collect_array_elem_typerefs_in_block(b, out);
+                        }
+                        ElseBranch::If(e) => {
+                            Self::collect_array_elem_typerefs_in_expr(e, out);
+                        }
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                Self::collect_array_elem_typerefs_in_expr(scrutinee, out);
+                for arm in arms {
+                    use crate::ast::MatchArmBody;
+                    match &arm.body {
+                        MatchArmBody::Expr(e) => Self::collect_array_elem_typerefs_in_expr(e, out),
+                        MatchArmBody::Block(b) => Self::collect_array_elem_typerefs_in_block(b, out),
+                    }
+                }
+            }
+            ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+                Self::collect_array_elem_typerefs_in_expr(iter, out);
+                Self::collect_array_elem_typerefs_in_block(body, out);
+            }
+            ExprKind::While { cond, body, .. } => {
+                Self::collect_array_elem_typerefs_in_expr(cond, out);
+                Self::collect_array_elem_typerefs_in_block(body, out);
+            }
+            ExprKind::WhileLet { scrutinee, body, .. } => {
+                Self::collect_array_elem_typerefs_in_expr(scrutinee, out);
+                Self::collect_array_elem_typerefs_in_block(body, out);
+            }
+            ExprKind::Loop { body, .. } => {
+                Self::collect_array_elem_typerefs_in_block(body, out);
+            }
+            ExprKind::With { body, .. } | ExprKind::Supervised { body, .. }
+            | ExprKind::Detach(body) | ExprKind::Blocking(body)
+            | ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+                Self::collect_array_elem_typerefs_in_block(body, out);
+            }
+            ExprKind::TupleLit(items) => {
+                for e in items { Self::collect_array_elem_typerefs_in_expr(e, out); }
+            }
+            ExprKind::ArrayLit(elems) => {
+                use crate::ast::ArrayElem;
+                for e in elems {
+                    match e {
+                        ArrayElem::Item(ex) | ArrayElem::Spread(ex) => {
+                            Self::collect_array_elem_typerefs_in_expr(ex, out);
+                        }
+                    }
+                }
+            }
+            ExprKind::MapLit { elems, inferred_key, inferred_value, .. } => {
+                if let Some(k) = inferred_key { Self::collect_array_elem_typerefs(k, out); }
+                if let Some(v) = inferred_value { Self::collect_array_elem_typerefs(v, out); }
+                use crate::ast::MapElem;
+                for e in elems {
+                    match e {
+                        MapElem::Pair(k, v) => {
+                            Self::collect_array_elem_typerefs_in_expr(k, out);
+                            Self::collect_array_elem_typerefs_in_expr(v, out);
+                        }
+                        MapElem::Spread(e) => {
+                            Self::collect_array_elem_typerefs_in_expr(e, out);
+                        }
+                    }
+                }
+            }
+            ExprKind::TaggedTemplate { tag, args, .. } => {
+                Self::collect_array_elem_typerefs_in_expr(tag, out);
+                for e in args { Self::collect_array_elem_typerefs_in_expr(e, out); }
+            }
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    Self::collect_array_elem_typerefs_in_block(&arm.body, out);
+                }
+            }
+            ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+                Self::collect_array_elem_typerefs_in_expr(range, out);
+                Self::collect_array_elem_typerefs_in_expr(body, out);
+            }
+            ExprKind::Range { start, end, .. } => {
+                if let Some(e) = start { Self::collect_array_elem_typerefs_in_expr(e, out); }
+                if let Some(e) = end { Self::collect_array_elem_typerefs_in_expr(e, out); }
+            }
+            // Atoms and lambda/closure bodies — no TypeRefs to collect here
+            ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+            | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
+            | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+            | ExprKind::SelfAccess | ExprKind::InterpolatedStr { .. }
+            | ExprKind::Interrupt(None)
+            | ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
+            | ExprKind::ClosureFull(_)
+            | ExprKind::HandlerLit { .. } | ExprKind::ProtocolLit { .. } => {}
+        }
+    }
+
     /// Plan 95 Ф.2.1: C type приёмника для builtin sum-типов
     /// (`Option`/`Result`), участвующих в method-mono через
     /// «method-only»-канал. Резолвится через `current_type_subst` (заполнен
@@ -14980,11 +15290,27 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     .collect();
                 // Redirect output to generic_type_defs_buf so instances appear
                 // before fn definitions in the final C output (via marker splice).
+                // Plan 168 (D300): also reset indent to 0 so the struct definition
+                // is emitted at global scope even when drain is called from inside
+                // a function body. Restores after emit.
                 let saved_out = std::mem::take(&mut self.out);
+                let saved_indent = self.indent;
+                self.indent = 0;
+                // Plan 168 (D300): emit forward-decl into user_type_fwd_decls so
+                // that tuple-typedefs emitted before this drain call can reference
+                // the type without "unknown type name". The struct definition itself
+                // goes into generic_type_defs_buf (spliced at the marker, before fns).
+                if base_name == "Vec" {
+                    let fwd = format!("typedef struct {0} {0};\n", mangled);
+                    if !self.user_type_fwd_decls.contains(&fwd) {
+                        self.user_type_fwd_decls.push_str(&fwd);
+                    }
+                }
                 self.emit_generic_type_instance(&template.clone(), &type_subst, &mangled)?;
                 let instance_code = std::mem::take(&mut self.out);
                 self.generic_type_defs_buf.push_str(&instance_code);
                 self.out = saved_out;
+                self.indent = saved_indent;
             }
             depth += 1;
             if depth > self.mono_depth_limit {
@@ -28046,6 +28372,87 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             sb, v,
                         ));
                         continue;
+                    }
+                    // Plan 91.15 Ф.2: builtin sum type (Option/Result) @debug/@display
+                    // dispatch via DeclaredBody routing — same mechanism as method call
+                    // path (lines ~23245). Must precede the all_methods lookup because
+                    // `all_methods` is keyed by "Option"/"Result" but arg_ty is
+                    // "NovaOpt_<T>" / "NovaRes_<n>" — the lookup would always miss.
+                    if !matches!(e.kind, ExprKind::CharLit(_)) {
+                        let sum_result: Option<String> = if arg_ty.starts_with("NovaOpt_") {
+                            let elem_ty = arg_ty.strip_prefix("NovaOpt_")
+                                .unwrap_or("nova_int")
+                                .trim_end_matches('*')
+                                .trim()
+                                .to_string();
+                            let routing = self.sum_schema_registry
+                                .lookup_method_routing("Option", method_name)
+                                .cloned();
+                            if let Some(super::sum_schema_registry::MethodRouting::DeclaredBody {
+                                has_nova_body: true,
+                            }) = routing {
+                                let fn_decl = self.generic_type_methods
+                                    .get("Option")
+                                    .and_then(|ms| ms.iter().find(|m| m.name == method_name))
+                                    .cloned();
+                                if let Some(fn_decl) = fn_decl {
+                                    let real_t = self.novaopt_value_types.borrow()
+                                        .get(&elem_ty)
+                                        .cloned()
+                                        .unwrap_or_else(|| elem_ty.clone());
+                                    let param_names = self.builtin_sum_type_params
+                                        .get("Option").cloned().unwrap_or_default();
+                                    if !param_names.is_empty() {
+                                        let type_subst: Vec<(String, String)> =
+                                            vec![(param_names[0].clone(), real_t.clone())];
+                                        let mono_name = format!(
+                                            "Nova_Option_method_{}_{}",
+                                            method_name, elem_ty);
+                                        self.register_mono_method_instance(
+                                            &fn_decl, type_subst, &mono_name, "Option");
+                                        Some(mono_name)
+                                    } else { None }
+                                } else { None }
+                            } else { None }
+                        } else if Self::is_result_like(&arg_ty) {
+                            let routing = self.sum_schema_registry
+                                .lookup_method_routing("Result", method_name)
+                                .cloned();
+                            if let Some(super::sum_schema_registry::MethodRouting::DeclaredBody {
+                                has_nova_body: true,
+                            }) = routing {
+                                let fn_decl = self.generic_type_methods
+                                    .get("Result")
+                                    .and_then(|ms| ms.iter().find(|m| m.name == method_name))
+                                    .cloned();
+                                if let Some(fn_decl) = fn_decl {
+                                    let (ok_c, err_c) = self.novares_ok_err(&arg_ty)
+                                        .unwrap_or_else(|| (
+                                            "nova_int".to_string(),
+                                            "nova_str".to_string(),
+                                        ));
+                                    let param_names = self.builtin_sum_type_params
+                                        .get("Result").cloned().unwrap_or_default();
+                                    if param_names.len() >= 2 {
+                                        let type_subst: Vec<(String, String)> = vec![
+                                            (param_names[0].clone(), ok_c.clone()),
+                                            (param_names[1].clone(), err_c.clone()),
+                                        ];
+                                        let suffix = Self::novares_name(&ok_c, &err_c);
+                                        let mono_name = format!(
+                                            "Nova_Result_method_{}_{}",
+                                            method_name, suffix);
+                                        self.register_mono_method_instance(
+                                            &fn_decl, type_subst, &mono_name, "Result");
+                                        Some(mono_name)
+                                    } else { None }
+                                } else { None }
+                            } else { None }
+                        } else { None };
+                        if let Some(fn_name) = sum_result {
+                            self.line(&format!("{}({}, {});", fn_name, v, sb));
+                            continue;
+                        }
                     }
                     // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
                     // unified Display.display routing для user types (D237).

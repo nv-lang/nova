@@ -946,21 +946,12 @@ fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
                 "write_str",
                 vec![ex(ExprKind::StrLit(prefix))],
             )));
-            if is_primitive_field(&f.ty) {
-                // Primitive field: route via str.from_debug
-                stmts.push(Stmt::Expr(member_call(
-                    ident("w"),
-                    "write_str",
-                    vec![member_call(ident("str"), "from_debug", vec![self_field(&f.name)])],
-                )));
-            } else {
-                // Record / nested field: recurse into its synthesized @debug.
-                stmts.push(Stmt::Expr(member_call(
-                    self_field(&f.name),
-                    "debug",
-                    vec![ident("w")],
-                )));
-            }
+            // All fields (primitive or record) implement Debug — call @debug(w) uniformly.
+            stmts.push(Stmt::Expr(member_call(
+                self_field(&f.name),
+                "debug",
+                vec![ident("w")],
+            )));
         }
         stmts.push(Stmt::Expr(member_call(
             ident("w"),

@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR is retracted
+//
+// Plan 91.10 — Negative guard: D163 `needs <Cap>` clause is retracted.
+//
+// D163 (Plan 100.5) introduced a `needs <Cap>` clause on `external fn` to
+// declare a mandatory capability when the FFI took/returned consume-types.
+// Plan 91.10 retracted D163: capability == effect-without-operations, so a
+// parallel `needs <Cap>` tracking system is redundant. The parser now emits a
+// hard error with a migration hint ("declare an effect instead") when it sees
+// `needs <Cap>` after an `external fn` signature.
+//
+// This file is the regression guard for Acceptance #1 of Plan 91.10: the
+// retracted syntax must produce a clear compile error, not silently parse.
+
+module plan91_10.needs_cap_retracted_neg
+
+extern "nova" fn foo(x int) -> int needs Sys   // ERROR: `needs <Cap>` retracted
+
+test "needs <Cap> clause is retracted (D163 retract)" {
+    // Parse error fires before this body is ever reached.
+}

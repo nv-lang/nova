@@ -1,0 +1,13 @@
+// Plan 91.15 Ф.4 POS — int.clamp / f64.clamp
+module plan91_15.pos_clamp
+
+test "int.clamp below" { assert((-5).clamp(0, 10) == 0) }
+test "int.clamp above" { assert(15.clamp(0, 10) == 10) }
+test "int.clamp within" { assert(5.clamp(0, 10) == 5) }
+test "int.clamp at lo" { assert(0.clamp(0, 10) == 0) }
+test "int.clamp at hi" { assert(10.clamp(0, 10) == 10) }
+test "int.clamp equal lo hi" { assert(5.clamp(5, 5) == 5) }
+
+test "f64.clamp below" { assert((-1.0).clamp(0.0, 1.0) == 0.0) }
+test "f64.clamp above" { assert(2.5.clamp(0.0, 1.0) == 1.0) }
+test "f64.clamp within" { assert(0.5.clamp(0.0, 1.0) == 0.5) }

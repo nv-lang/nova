@@ -366,8 +366,15 @@ closed, A1-A40 acceptance criteria, 65/65 fixtures PASS на release nova-cli.
 - **Q12.1 (spawn-семантика)** → `spawn` только в structured-scope;
   fire-and-forget — через `detach { ... }` с эффектом `Detach`.
 - **Q12.2 (Async vs Par)** → один эффект `Async`, `Par` не вводится.
-- **Q12.6 (C interop)** → `blocking { ... }` примитив + эффект
-  `Blocking` (несовместим с `Realtime`).
+- **Q12.6 (C interop)** → ~~`blocking { ... }` примитив + эффект
+  `Blocking` (несовместим с `Realtime`)~~ → **ОБНОВЛЕНО.** И `blocking { ... }`
+  expression-форма, и эффект `Blocking` **отозваны**:
+  [D172](decisions/06-concurrency.md#d172) (Plan 113) сделал `blocking{}` hard
+  compile-error; Plan 91.15 P0 удалил эффект `Blocking` из компилятора
+  (realtime_suspend_effect + builtin-registry) и из всех сигнатур `std/net`.
+  CPU-bound offload теперь покрывается `blocking{}`→threadpool на codegen-уровне
+  (Plan 83.3, [D50](decisions/06-concurrency.md#d50) §4) без отдельного эффекта.
+  `#blocking fn` attribute сохранён (см. D50).
 - **`await`/маркер на call site** → нет, эффект `Async` в сигнатуре
   единственная декларация (подтверждение D14).
 
@@ -6328,8 +6335,14 @@ Configurable runtime через `Runtime.set_workers(n)` API?
 
 ### Q-mn-5. `Blocking`-effect — pool size
 
-Plan M:N добавляет honest blocking-pool thread'ов для `Blocking`
-operations ([D50](decisions/06-concurrency.md#d50)). Размер пула —
+> **ОБНОВЛЕНО (Plan 91.15 P0 + Plan 83.3).** Эффекта `Blocking` больше нет
+> (отозван — см. Q12.6 выше). Вопрос переформулируется как «размер threadpool
+> для `blocking{}`→offload» (codegen-уровень, без эффекта). Сам вопрос о
+> размере пула остаётся открытым, но привязан к `blocking{}`-примитиву
+> ([D50](decisions/06-concurrency.md#d50) §4), а не к удалённому эффекту.
+
+Plan M:N добавляет honest blocking-pool thread'ов для `blocking{}`
+offload ([D50](decisions/06-concurrency.md#d50)). Размер пула —
 fixed, auto-grow, либо bounded?
 
 Прецеденты: Go's blocking-pool unbounded (один thread per blocking

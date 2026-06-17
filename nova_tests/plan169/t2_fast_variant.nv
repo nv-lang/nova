@@ -1,0 +1,12 @@
+// Plan 169 Ф.6: fast variant example — reduced N for quick CI.
+// Full test (large N): t2_fast_variant_slow.nv
+module plan169.t2_fast_variant
+
+test "fast variant: 100 iterations" {
+    mut sum = 0
+    for i in 0..100 {
+        sum = sum + i
+    }
+    // sum(0..99) = 99*100/2 = 4950
+    assert(sum == 4_950)
+}

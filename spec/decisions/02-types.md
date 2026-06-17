@@ -5423,8 +5423,7 @@ Nova **превосходит Rust** на одной оси — backward-compat:
 > - Parser `needs` clause (hard error w/ migration hint).
 > - `check_external_fn_needs_caps` (D163-missing-cap diagnostic).
 > - `emit_d163_external_stub` (C codegen стаб generator).
-> - `FnDecl.needs_caps` AST field — сохранён как always-empty, удаление
->   followup `[M-91.10-remove-needs-caps-field]`.
+> - `FnDecl.needs_caps` AST field — удалён (Plan 91.15 Ф.5, `[M-91.10-remove-needs-caps-field]` ✅).
 > - Test fixtures `nova_tests/plan100_5/external_*` (6 files) и
 >   `nova_tests/plan100_7/{file_open_read_close,mutex_lock_release,
 >   socket_listen_accept}.nv` (3 files).
@@ -11282,21 +11281,21 @@ V2.1 closes 3 [M-124.8-*] markers landed 2026-06-03:
 ```nova
 #stable(since = "0.1")
 export type Debug protocol {
-    @debug(sb StringBuilder) -> ()
+    @debug(mut w Write) -> ()
+    // D258 AMEND: parameter renamed sb→w, type StringBuilder→Write (decoupled sink).
     // NO default body в protocol decl. Compiler synthesizes per-type
-    // via hybrid strategy (см. «Default body synthesis» ниже):
-    //   - Primitives: shortcut к `str.from_debug(@)` C-primitive
-    //   - User types: memberwise iteration через все fields (incl. private)
+    // via inject_synthesized_methods (auto_derive.rs) for #impl(Debug) types.
 }
 ```
 
 **Метод name = `@debug`** (НЕ `@display`) — avoid collision с D183 Display.@display. Distinct method names enable both protocols on same type simultaneously.
 
 **Hybrid default body strategy** (Plan 91.14 design decision #1, user-confirmed 2026-06-05):
-- Protocol decl ships БЕЗ default body — explicit synthesis в codegen.
-- Primitives (i*/u*/f*/bool/char/byte/str/ptr): codegen emits direct `str.from_debug(@)` C-primitive call.
-- User types (records, sums, tuples): codegen synthesizes memberwise iteration (incl. private fields per design decision #3).
-- This avoids the «default body fails for structs» problem (single-line shortcut couldn't handle nested types) while preserving zero-friction implicit synthesis.
+- Protocol decl ships БЕЗ default body — explicit synthesis через `inject_synthesized_methods` (auto_derive.rs) для `#impl(Debug)` типов.
+- Primitives (int/f64/f32/bool/char/str): explicit `@debug` bodies в `std/prelude/protocols.nv`; routes через `@field.debug(w)` в synthesized method bodies.
+- User types (records): `#impl(Debug)` → `inject_synthesized_methods` appends synthesized `Item::Fn` to AST → codegen sees it as ordinary method.
+- `Option[T Debug]` и `Result[T Debug, E Debug]`: explicit Nova-body в `std/prelude/core.nv`; codegen dispatches via DeclaredBody в string interpolation path (Plan 91.15 Ф.2).
+- Known limitation: checker does not validate field Debug bounds at `#impl(Debug)` synthesis time — missing bound produces CC-FAIL, not E_BOUND_MISSING.
 
 #### Format spec syntax
 
@@ -11305,25 +11304,20 @@ Inside Nova interp-string `${expr:SPEC}`:
 - `${expr:?}` — calls Debug.@debug (NEW)
 - `${expr:foo}` — E_FORMAT_SPEC_UNKNOWN (foundation, extensions per [M-91.14-format-dsl-extensions])
 
-#### Default body synthesis
+#### Default body synthesis (#impl(Debug))
 
-Когда user type X не implements Debug manually:
-1. Compiler synthesizes memberwise body iterating fields:
-   ```nova
-   @debug(sb StringBuilder) -> () :=
-       sb.append("X { ")
-       sb.append("field1: "); @field1.debug_fmt(sb)
-       sb.append(", field2: "); @field2.debug_fmt(sb)
-       sb.append(" }")
-   ```
-2. Recursive — каждое field вызывает .debug_fmt() — все fields must impl Debug (otherwise E_DEBUG_PRINTABLE_NOT_IMPLEMENTED).
-3. Primitives ship default impl via `str.from_debug` primitives (C function):
-   - i64/i32/etc → "-42"
-   - f64/f32 → "3.14" (round-trip format)
+Когда user type X помечен `#impl(Debug)`:
+1. `inject_synthesized_methods` (auto_derive.rs) синтезирует `fn X @debug(mut w Write) -> ()` и append'ит в `module.items` перед codegen.
+2. Body: `w.write("X { "); w.write_str("field1: "); @field1.debug(w); w.write(", field2: "); @field2.debug(w); w.write(" }")`.
+3. Все поля (primitive и record) — через `@field.debug(w)`. Primitives имеют @debug в `std/prelude/protocols.nv`.
+4. Known limitation: checker не проверяет Debug bounds у полей при синтезе. Отсутствие @debug у поля даёт CC-FAIL, не checker error.
+
+Primitives (int/f64/f32/bool/char/str) — explicit @debug в `std/prelude/protocols.nv`:
+   - int → decimal string (`str.from(@)`)
+   - f64/f32 → float string
    - bool → "true"/"false"
-   - char → "'A'" с escape rules
-   - str → "\"hello\\n\"" (quoted с escape rules)
-   - byte/u8 → "42u8" (with type suffix)
+   - char → `"${@:?}"` (quoted with escapes)
+   - str → `"${@:?}"` (quoted with escapes)
 
 #### Error codes registered
 
@@ -12832,3 +12826,39 @@ export fn Vec[T] mut @append[S AsSlice[T]](other S) -> @ {
 ### Реализовано в
 
 `std/prelude/protocols.nv` (protocol declaration), `std/collections/vec/access.nv` (`#impl(AsSlice[T])` на `Vec[T] @as_ptr`), `std/collections/vec/mutate.nv` (обновлённый `@append`). Тесты: `nova_tests/plan153_1/append_as_slice.nv` (6 кейсов: vec→vec, пустые случаи, self-append, slice view). D299 NEW.
+
+## D300 — Vec generic forward-decl: body-site scan + tuple-elem fwd-decl (Plan 168, 2026-06-17)
+
+**Проблема:** `Vec[u32]` в теле функции (локальная переменная, TurboFish-конструктор)
+генерировал C-тип `Nova_Vec____Nova_u32_p` (через generic stub path),
+тогда как в сигнатурах и полях тот же тип даёт `Nova_Vec____uint32_t`.
+Pre-pass `collect_array_elem_typerefs` не заходил в тела функций →
+`typedef struct Nova_Vec____Nova_u32_p Nova_Vec____Nova_u32_p;` отсутствовал в
+глобальном preamble → CC-FAIL «unknown type name» в tuple typedefs.
+
+**Два исправления:**
+
+1. **Body scan** (`emit_c.rs`): добавлены `collect_array_elem_typerefs_in_fnbody`,
+   `collect_array_elem_typerefs_in_block`, `collect_array_elem_typerefs_in_stmt`,
+   `collect_array_elem_typerefs_in_expr`. `scan_item` для `Item::Fn` теперь вызывает
+   `collect_array_elem_typerefs_in_fnbody(&f.body, acc)`.
+   При нахождении `ExprKind::TurboFish { base: Ident("Vec"), type_args }` — напрямую
+   добавляет type_args как Vec elem TypeRefs.
+
+2. **Tuple-elem fwd-decl** (`emit_c.rs`, строки ~3915): перед splice `MONO_TUPLE_TYPEDEFS`
+   проходит по всем mono'd tuple instances, и для каждого pointer-field вида `Nova_...__...*`
+   (mono'd instance = содержит `__`) добавляет `typedef struct X X;` в начало `tuple_decls`.
+   Это обеспечивает forward-decl для `Nova_Vec____Nova_u32_p` и любых аналогичных типов,
+   которые появляются в tuple field-types до своего полного struct-определения.
+
+**Результат:** `nova_tests/plan168` 2/2 PASS; `nova_tests/plan153_1` 8/9 PASS
+(1 pre-existing CODEGEN-FAIL `resize_with_free_fn_shadow` — не связан с fix'ом).
+
+**Инварианты:**
+- `Nova_Vec____<elem>` — полная struct-definition эмитируется в `generic_type_defs_buf`
+  (до fn-definitions, via marker splice)
+- `typedef struct Nova_Vec____<elem> Nova_Vec____<elem>;` — в `user_type_fwd_decls`
+  (до tuple typedefs, via marker splice)
+- Tuple typedef может ссылаться на `Nova_Vec____<elem>*` как incomplete pointer — OK по C99
+
+D300 NEW.

@@ -448,11 +448,6 @@ pub struct FnDecl {
     /// None = no annotation (conservative: treated as Parks in realtime context).
     /// Stored in ExternalDecl for O(1) lookup during emit_call.
     pub sync_class: Option<SyncClass>,
-    /// Plan 100.5 (D163): `needs <Cap1>, <Cap2>` clause on `external fn`.
-    /// Declares which capabilities the FFI function requires. Empty = no
-    /// needs clause declared (used by type-checker to emit D163-missing-cap
-    /// when the function carries consume-obligations).
-    pub needs_caps: Vec<String>,
     /// Plan 118 (D216 §9, D2 amend): `#unsafe` attribute on fn declaration.
     /// Body implicitly в unsafe context (pointer ops без unsafe{} wrap).
     /// Callers must `unsafe { ... }` wrap the call (E_UNSAFE_CALL_REQUIRES_WRAP

@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.16 — positive (real network): read + write via split halves.
+//
+// The server accepts a connection and splits it into a read half and a write
+// half. It reads the client's request through the read half and replies through
+// the write half. The client splits its own stream symmetrically. Read and
+// write run on DIFFERENT halves backed by independent C-side park slots
+// (read_scope/read_slot vs write_scope/write_slot) — a single shared op_slot
+// would corrupt under the cross-fiber read/write traffic this test drives.
+//
+// Tagged _slow: real OS loopback networking.
+
+module plan91_16.tcp_split_echo_slow
+
+import std.net.{SocketAddr, TcpListener, TcpStream, real_tcp_net, real_addr_net}
+
+test "TCP split: server + client exchange via read/write halves" {
+    with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+        mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+            Ok(l) => l
+            Err(_) => panic("bind failed")
+        }
+        ro port = lst.local_port()
+        assert(port > 0)
+
+        supervised {
+            // Server fiber: accept, split, read request, reply via write half.
+            spawn {
+                mut srv = match lst.accept() {
+                    Ok(s) => s
+                    Err(_) => panic("accept failed")
+                }
+                mut (srv_rd, srv_wr) = srv.split()
+
+                ro incoming = srv_rd.read(64)
+                assert(incoming.is_ok())
+                ro req = match incoming { Ok(srv_payload) => srv_payload, Err(_) => panic("srv read") }
+                assert(req == "client-hello")
+
+                ro reply_wr = srv_wr.write_all("server-greeting")
+                assert(reply_wr.is_ok())
+
+                srv_rd.close()
+                srv_wr.close()
+            }
+
+            // Client fiber: connect, split, write request, read reply.
+            spawn {
+                mut conn = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(s) => s
+                    Err(_) => panic("connect failed")
+                }
+                mut (cli_rd, cli_wr) = conn.split()
+
+                ro wr = cli_wr.write("client-hello")
+                assert(wr.is_ok())
+                ro nbytes = match wr { Ok(cli_n) => cli_n, Err(_) => panic("client write") }
+                assert(nbytes == 12)
+
+                ro rd = cli_rd.read(64)
+                assert(rd.is_ok())
+                ro reply = match rd { Ok(cli_payload) => cli_payload, Err(_) => panic("client read") }
+                assert(reply == "server-greeting")
+
+                cli_rd.close()
+                cli_wr.close()
+            }
+        }
+
+        lst.close()
+    }
+}

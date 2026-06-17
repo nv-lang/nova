@@ -38,6 +38,7 @@ export fn mock_tcp_net() -> Effect[TcpNet] => effect TcpNet {
     accept(_lst)           => Ok(TcpStream._from_raw(CTcpStream(2 as *())))
     connect(_addr)         => Ok(TcpStream._from_raw(CTcpStream(3 as *())))
     write(_stream, data)   => Ok(data.len())
+    write_all(_stream, _data) => Ok(())
     read(_stream, _max)    => Ok("mock-reply")
     close_stream(stream)   { ro _ = stream }
     close_listener(lst)    { ro _ = lst }
@@ -50,6 +51,21 @@ export fn mock_tcp_net() -> Effect[TcpNet] => effect TcpNet {
     set_nodelay(_s, _on)              {}
     set_keepalive(_s, _on)            {}
     set_reuse_address(_lst, _on)      {}
+    // ── Plan 91.16 / D300: split + half operations ──
+    split_stream(_stream)             => _tcp_split_pair(TcpReadHalf._from_raw(CTcpStream(7 as *())), TcpWriteHalf._from_raw(CTcpStream(8 as *())))
+    read_half_read(_half, _max)       => Ok("mock-reply")
+    read_half_close(half)             { ro _ = half }
+    read_half_local_port(_half)       => 5050
+    read_half_peer_port(_half)        => 6060
+    read_half_local_addr(_half)       => SocketAddr._from_raw(socket_addr_loopback(5050))
+    read_half_peer_addr(_half)        => SocketAddr._from_raw(socket_addr_loopback(6060))
+    write_half_write(_half, data)     => Ok(data.len())
+    write_half_write_all(_half, _data) => Ok(())
+    write_half_close(half)            { ro _ = half }
+    write_half_local_port(_half)      => 5050
+    write_half_peer_port(_half)       => 6060
+    write_half_local_addr(_half)      => SocketAddr._from_raw(socket_addr_loopback(5050))
+    write_half_peer_addr(_half)       => SocketAddr._from_raw(socket_addr_loopback(6060))
 }
 
 /// In-memory UdpNet handler for unit-testing.
@@ -84,7 +100,7 @@ export fn mock_addr_net() -> Effect[AddrNet] => effect AddrNet {
         else { Ok(SocketAddr._from_raw(handle)) }
     }
     port(addr)             => socket_addr_port(addr.handle)
-    host_str(addr)         => socket_addr_host_str(addr.handle)
+    ip(addr)               => socket_addr_ip(addr.handle)
     is_v4(addr)            => socket_addr_is_v4(addr.handle)
     is_v6(addr)            => socket_addr_is_v6(addr.handle)
     to_str(addr)           => socket_addr_to_str(addr.handle)

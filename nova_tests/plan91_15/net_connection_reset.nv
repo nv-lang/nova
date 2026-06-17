@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.15 P2 — NetError.ConnectionReset (D302).
+//
+// UV_ECONNRESET (peer forcibly reset the connection) is normalised by the C
+// runtime to the canonical string "connection reset by peer" and classified by
+// std/net `net_error()` into NetError.ConnectionReset (previously this folded
+// into BrokenPipe).
+//
+// A deterministic cross-platform RST is not reliably reproducible from pure
+// Nova (it depends on SO_LINGER/abortive-close timing the public API does not
+// expose), so this verifies the variant + its rendering (the surface the
+// C-side classification feeds), rather than provoking a real RST. The match
+// arm is exercised in net_eof_semantics_slow's Result-destructuring path; bare
+// NetError literals are erased to nova_int under the V2 net codegen, so they are
+// inspected here via the (proven) to_str() path.
+
+module plan91_15.net_connection_reset
+
+import std.net.{NetError}
+
+test "ConnectionReset — variant renders" {
+    ro e = NetError.ConnectionReset
+    assert(e.to_str() == "connection reset by peer")
+}
+
+test "ConnectionReset is distinct from BrokenPipe" {
+    // Distinct rendering proves they are separate variants (reset no longer
+    // aliases BrokenPipe as it did pre-D302).
+    ro reset = NetError.ConnectionReset
+    ro pipe = NetError.BrokenPipe
+    assert(reset.to_str() == "connection reset by peer")
+    assert(pipe.to_str() == "broken pipe")
+    assert(reset.to_str() != pipe.to_str())
+}

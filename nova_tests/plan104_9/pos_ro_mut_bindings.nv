@@ -1,0 +1,48 @@
+// Plan 104.9 pos: ro/mut binding syntax (not let) as surfaced by nova-lsp completion.
+// Verifies that ro/mut are valid binding keywords across all contexts.
+module plan104_9.pos_ro_mut_bindings
+
+fn identity(x int) -> int => x
+
+test "ro binding is read-only" {
+    ro x = 42
+    assert(x == 42)
+}
+
+test "mut binding is mutable" {
+    mut x = 0
+    x = 10
+    assert(x == 10)
+}
+
+test "ro with explicit type" {
+    ro s str = "hello"
+    assert(s.byte_len() == 5)
+}
+
+test "mut with explicit type" {
+    mut n int = 0
+    n = n + 1
+    assert(n == 1)
+}
+
+test "ro in for loop body" {
+    mut sum = 0
+    for i in 0..5 {
+        ro doubled = i * 2
+        sum = sum + doubled
+    }
+    assert(sum == 20)
+}
+
+test "mut in while loop" {
+    mut i = 0
+    while i < 3 {
+        i = i + 1
+    }
+    assert(i == 3)
+}
+
+test "fn params are implicit ro" {
+    assert(identity(7) == 7)
+}

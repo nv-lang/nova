@@ -486,6 +486,11 @@ enum Cmd {
         /// Plan 156: run ONLY *_slow.nv tests, skipping all normal tests.
         #[arg(long = "slow-only")]
         slow_only: bool,
+        /// [M-169-timing-report-regression-gate]: if any test exceeds N ms
+        /// (total elapsed_ms), after the run print the violators and exit
+        /// with code 3. Default: 0 (disabled).
+        #[arg(long = "max-test-ms", default_value_t = 0)]
+        max_test_ms: u128,
     },
     /// Build and run a single Nova test file (used by IDE / CI for one-shot debug).
     #[command(name = "test-build")]
@@ -4315,6 +4320,7 @@ fn cmd_test(
     mono_depth: Option<usize>,
     include_slow: bool,
     slow_only: bool,
+    max_test_ms: u128,
 ) -> Result<()> {
     if timeout_secs == 0 {
         return Err(usage_err("--timeout must be >= 1 second"));
@@ -4479,6 +4485,8 @@ fn cmd_test(
         } else {
             test_runner::SlowLane::Exclude
         },
+        // [M-169-timing-report-regression-gate]: --max-test-ms N.
+        max_test_ms,
     };
 
     // Plan 57.D.1: optionally aggregate PerfTimer markers across all
@@ -4570,7 +4578,8 @@ fn cmd_test_build(
     };
 
     test_runner::install_cancel_handler();
-    let outcome = test_runner::run_one(&opts);
+    let mut _split: (u128, u128) = (0, 0);
+    let outcome = test_runner::run_one(&opts, &mut _split);
     let label = outcome.label();
     let elapsed = outcome.elapsed();
     let detail = outcome.detail();
@@ -5544,7 +5553,7 @@ fn run() -> ExitCode {
             verbose, quiet, results_file, rerun_failed, retries,
             include_stdlib, keep_artifacts, gc,
             list, filter_from, shuffle, skip, mono_depth,
-            include_slow, slow_only,
+            include_slow, slow_only, max_test_ms,
         } => cmd_test(
             path.as_deref(),
             filter.as_deref(),
@@ -5570,6 +5579,7 @@ fn run() -> ExitCode {
             mono_depth,
             include_slow,
             slow_only,
+            max_test_ms,
         ),
         Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts, gc, mono_depth } => cmd_test_build(
             &file,

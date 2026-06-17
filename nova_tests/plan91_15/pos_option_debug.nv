@@ -1,0 +1,22 @@
+// Plan 91.15 Ф.2 POS — Option[T] @debug impl
+module plan91_15.pos_option_debug
+
+test "Some(int) debug" {
+    ro s = Some(42)
+    assert("${s:?}" == "Some(42)")
+}
+
+test "None debug" {
+    ro n = None as Option[int]
+    assert("${n:?}" == "None")
+}
+
+test "Some(str) debug" {
+    ro s = Some("hello")
+    assert("${s:?}" == "Some(\"hello\")")
+}
+
+test "nested Some debug" {
+    ro s = Some(Some(1))
+    assert("${s:?}" == "Some(Some(1))")
+}

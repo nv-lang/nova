@@ -1,0 +1,17 @@
+// EXPECT_CC_ERROR no member named 'host_str'
+//
+// Plan 91.15 P1 — negative: SocketAddr.host_str() was renamed to .ip() (D302).
+// The old name no longer resolves: the value-record `SocketAddr` has no such
+// method, so codegen lowers `a.host_str()` to a struct-member access that the
+// C compiler rejects (`no member named 'host_str'`).
+
+module plan91_15.net_host_str_removed_neg
+
+import std.net.{SocketAddr, real_addr_net}
+
+test "host_str is gone" {
+    with AddrNet = real_addr_net() {
+        ro a = SocketAddr.loopback(80)
+        ro _ = a.host_str()
+    }
+}

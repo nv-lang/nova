@@ -5996,3 +5996,173 @@ close_recv_half(handle CUdpSocket) -> ()
 - `UdpSendHalf.recv_from` → type error (нет такого метода)
 - `UdpRecvHalf.send_to` → type error (нет такого метода)
 - Незакрытый half → consume violation (consume value must be used)
+
+## D301 — TCP Stream Split: `TcpReadHalf` + `TcpWriteHalf` (Plan 91.16, 2026-06-17)
+
+**Source:** Plan 91.16, 2026-06-17. **Status:** ✅ ACTIVE.
+**Связь:** [D291](04-effects.md#d291), [D292](02-types.md#d292), [D298](04-effects.md#d298), [Plan 91.12](../../docs/plans/91.12-net-effect-and-hardening.md).
+
+### Мотивация
+
+`TcpStream` делил единственную пару `op_scope`/`op_slot` между `connect`,
+`read` и `write`. Это исключало паттерн полнодуплексного соединения:
+один файбер читает входящий поток, другой одновременно пишет ответы на том
+же соединении. При попытке конкурентного read+write на одной паре slot'ов
+park-bookkeeping одной операции затирался другой (TOCTOU, тот же класс бага,
+что в D298 для UDP `send_to`).
+
+Это TCP-аналог UDP split из [D298](04-effects.md#d298): я делю `TcpStream` на
+read- и write-половины с НЕЗАВИСИМЫМИ C-side park-слотами.
+
+### API
+
+```nova
+export type TcpReadHalf  consume value { priv handle CTcpStream }
+export type TcpWriteHalf consume value { priv handle CTcpStream }
+
+export fn TcpStream consume @split() TcpNet -> (TcpReadHalf, TcpWriteHalf)
+
+// Дополнительно: write_all на самом TcpStream (loop до полной записи).
+// NB: эффект `Blocking` отозван (Plan 91.15 P0, D172 завершение) — все
+// сетевые операции несут только `TcpNet`; suspend/offload — внутри handler'а.
+export fn TcpStream mut @write_all(data str) TcpNet -> Result[(), NetError]
+
+// TcpReadHalf: только чтение + интроспекция адресов.
+export fn TcpReadHalf mut @read(max int) TcpNet -> Result[str, NetError]
+export fn TcpReadHalf @local_port() TcpNet -> u16
+export fn TcpReadHalf @peer_port() TcpNet -> u16
+export fn TcpReadHalf @local_addr() TcpNet -> SocketAddr
+export fn TcpReadHalf @peer_addr() TcpNet -> SocketAddr
+export fn TcpReadHalf consume @close() TcpNet -> ()
+
+// TcpWriteHalf: только запись + интроспекция адресов.
+export fn TcpWriteHalf mut @write(data str) TcpNet -> Result[int, NetError]
+export fn TcpWriteHalf mut @write_all(data str) TcpNet -> Result[(), NetError]
+export fn TcpWriteHalf @local_port() TcpNet -> u16
+export fn TcpWriteHalf @peer_port() TcpNet -> u16
+export fn TcpWriteHalf @local_addr() TcpNet -> SocketAddr
+export fn TcpWriteHalf @peer_addr() TcpNet -> SocketAddr
+export fn TcpWriteHalf consume @close() TcpNet -> ()
+```
+
+### Контракт конкурентности
+
+- `TcpReadHalf` паркуется на `read_scope`/`read_slot` — безопасно при concurrent write.
+- `TcpWriteHalf` паркуется на `write_scope`/`write_slot` — безопасно при concurrent read.
+- Один файбер на half — внутри каждого half операции последовательны.
+- Два файбера могут одновременно использовать read_half и write_half на одном соединении.
+- `connect`-эра пары `op_scope`/`op_slot` после split не используется (connect уже завершён).
+
+### Семантика владения / close
+
+- `TcpStream.split()` потребляет поток и возвращает два consume-значения,
+  оба несущие ОДИН и тот же C-handle (`NovaRt_TcpStream*`).
+- Оба half ДОЛЖНЫ быть закрыты (enforced через consume type system).
+- Close использует atomic refcount (`split_refcount`): `split()` ставит refcount=2,
+  каждый `close()` делает `__atomic_sub_fetch`; `uv_close` фактически выполняется
+  только когда последний half закрывается (refcount → 0).
+- `TcpStream` без split: `split_refcount=0`, `close()` работает как прежде
+  (отдельный путь через `NovaRt_TcpStream_method_close`).
+
+### Операции `TcpNet` effect (новые)
+
+```nova
+write_all(stream TcpStream, data str) -> Result[(), NetError]
+split_stream(stream TcpStream) -> (TcpReadHalf, TcpWriteHalf)
+read_half_read(half TcpReadHalf, max int) -> Result[str, NetError]
+read_half_close(half TcpReadHalf) -> ()
+read_half_local_port / read_half_peer_port -> u16
+read_half_local_addr / read_half_peer_addr -> SocketAddr
+write_half_write(half TcpWriteHalf, data str) -> Result[int, NetError]
+write_half_write_all(half TcpWriteHalf, data str) -> Result[(), NetError]
+write_half_close(half TcpWriteHalf) -> ()
+write_half_local_port / write_half_peer_port -> u16
+write_half_local_addr / write_half_peer_addr -> SocketAddr
+```
+
+### write_all семантика
+
+`write_all` гарантирует запись ВСЕХ байт (в отличие от `write`, который может
+вернуть после частичной записи). На C-уровне libuv `uv_write` ставит в очередь
+весь буфер целиком, поэтому одиночный вызов либо пишет всё, либо ошибка —
+`tcp_stream_write_all` / `tcp_write_half_write_all` делегируют единичной записи.
+
+### Негативные случаи
+
+- Использование `TcpStream` после `split()` → consume violation (требует `consume`-binding
+  на исходном потоке; покрыто `tcp_split_stream_after_split_neg.nv`).
+- `TcpReadHalf.write` / `TcpWriteHalf.read` → type error (нет такого метода).
+- **Ограничение V1:** consume-tracking не пробрасывается через tuple-destructuring
+  (`mut (rd, wr) = s.split()`): парсер не принимает `consume (rd, wr) = ...`, а
+  `mut`-bound значения не отслеживаются на double-consume. Поэтому double-close
+  одной из половин НЕ ловится компилятором в V1 (refcount защищает на runtime).
+  Followup-маркер: [M-91.16-tuple-consume-binding].
+
+## D302 — `NetError.Eof`, `NetError @to_str()`, `SocketAddr @ip()` rename (Plan 91.15 P1, 2026-06-17)
+
+**Source:** Plan 91.15 Phase P1, 2026-06-17. **Status:** ✅ ACTIVE.
+**Связь:** [D301](04-effects.md#d301), [Plan 91.12](../../docs/plans/91.12-net-effect-and-hardening.md).
+
+### Мотивация
+
+Три отдельных огреха публичного API `std/net`, которые я закрываю одним блоком:
+
+1. **EOF возвращался как `Ok("")`.** Когда peer закрывал соединение, `read`
+   возвращал `Ok("")` — неотличимо от (теоретически возможного) пустого чтения и
+   требовало от каждого вызывающего проверять `data.len() == 0`. Закрытие
+   соединения — это событие, а не данные; ему место в `Err`-ветке.
+2. **`NetError` нельзя было напечатать.** `IoError(str)`/`InvalidAddr(str)` несут
+   строку, но достать её без exhaustive `match` нельзя — ошибка, которую нельзя
+   залогировать, бесполезна.
+3. **`@host_str()` — нестандартное имя.** Суффикс `_str` протекает тип в имя
+   метода; ни один язык так не называет (Rust: `.ip()`).
+
+### Изменения
+
+**(1) `NetError.Eof`.** Новый вариант enum (после `NotFound`). `TcpStream.read` /
+`TcpReadHalf.read` теперь возвращают `Err(NetError.Eof)` при закрытии соединения
+peer'ом; `Ok(data)` всегда непуст.
+
+C-контракт: `tcp_stream_read_bytes` / `tcp_read_half_read` возвращают сентинел
+`NOVA_NET_READ_EOF` (`-2`) на EOF (раньше `0`). Nova-handler мапит `-2` →
+`Err(NetError.Eof)`, `-1` → generic error, `>= 0` → `Ok(data)`. Константы
+`NOVA_NET_READ_ERR`/`NOVA_NET_READ_EOF` в `net.h`.
+
+**(2) `NetError @to_str() -> str`.** Метод (без эффектов) даёт lowercase
+human-readable описание каждого варианта. `IoError(msg)` → `msg`;
+`InvalidAddr(msg)` → `"invalid address: ${msg}"`.
+
+**(3) `SocketAddr @host_str()` → `@ip()`.** Полное переименование: метод в
+`addr.nv`, операция `AddrNet.ip`, extern `socket_addr_ip` (C-символ
+`socket_addr_host_str` → `socket_addr_ip` в `net.c`/`net.h`). Внутренний
+`NovaRt_SocketAddr_method_host_str` оставлен (не literal entry point).
+
+### Совместимость
+
+Breaking для пользователей `host_str()` и для кода, полагавшегося на `Ok("")` как
+EOF-сигнал. `std/net` ещё `#stable(since = "0.1")`, но не зарелижен — миграция в
+рамках pre-release окна.
+
+### Дополнение — `PermissionDenied` / `ConnectionReset` (Plan 91.15 P2, 2026-06-17)
+
+Добавил два типизированных варианта `NetError`, чтобы две распространённые
+OS-ошибки больше не сваливались в `IoError(str)`/`BrokenPipe`:
+
+- **`PermissionDenied`** — OS отказала в операции (`UV_EACCES`), например bind
+  привилегированного порта без прав. `to_str() == "permission denied"`.
+- **`ConnectionReset`** — peer форсированно сбросил соединение (`UV_ECONNRESET`).
+  `to_str() == "connection reset by peer"`. Раньше эта ошибка классифицировалась
+  как `BrokenPipe`; теперь это отдельный вариант (BrokenPipe остаётся для
+  «запись в закрытый peer» без RST).
+
+**C-контракт.** Net-ошибки доходят до Nova-слоя строкой (вывод `uv_strerror`) и
+классифицируются в `std/net/tcp.nv net_error()`. Для этих двух кодов рантайм
+(`_nova_net_uv_err` в `net.c`) нормализует сообщение к фиксированной канонической
+строке (`NOVA_NET_MSG_PERMISSION_DENIED` / `NOVA_NET_MSG_CONNECTION_RESET` в
+`net.h`), поэтому строковый матч в Nova платформо-стабилен. Прочие коды проходят
+через `uv_strerror` без изменений.
+
+**Effect-naming.** Зафиксировал соглашение об именах операций effect-семейства в
+`std/net/effect.nv` (per-handle префиксы `listener_*`/`stream_*`/`socket_*`/
+`read_half_*`/`write_half_*`); существующие имена НЕ переименованы (нулевой
+user-visible эффект, высокий churn) — только задокументированы.

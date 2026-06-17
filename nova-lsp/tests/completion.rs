@@ -34,29 +34,33 @@ fn ipos1_top_level_completion() {
     assert!(has_label(&items, "test"), "test snippet at top level");
 }
 
-/// ipos2: fn-body completion returns let, if, for, return keywords + prelude.
+/// ipos2: fn-body completion returns ro, mut, if, for, return keywords + prelude.
 #[test]
 fn ipos2_fn_body_completion() {
     let src = "module test.i\nfn f() -> () {\n    ";
     let items = completion_for(src, src.len());
-    assert!(has_label(&items, "let"), "let in fn body");
+    assert!(has_label(&items, "ro"), "ro keyword in fn body");
+    assert!(has_label(&items, "mut"), "mut keyword in fn body");
     assert!(has_label(&items, "if"), "if in fn body");
     assert!(has_label(&items, "return"), "return in fn body");
     assert!(has_label(&items, "int"), "int type from prelude");
     assert!(has_label(&items, "Option"), "Option from prelude");
+    assert!(!has_label(&items, "let"), "let must NOT appear — removed in Plan 114");
 }
 
 /// ipos3: method-dot completion on int variable.
 #[test]
 fn ipos3_method_dot_int() {
-    let src = "module test.i\nfn f() -> () {\n    let count int = 5\n    count.";
+    let src = "module test.i\nfn f() -> () {\n    ro count int = 5\n    count.";
     let items = completion_for(src, src.len());
     assert!(!items.is_empty(), "method completions expected after dot");
     assert!(
         items.iter().all(|i| i.kind == Some(CompletionItemKind::METHOD)),
         "all items should be METHOD kind"
     );
-    assert!(has_label(&items, "abs"), "abs method on int");
+    assert!(has_label(&items, "min"), "min method on int");
+    assert!(has_label(&items, "max"), "max method on int");
+    assert!(has_label(&items, "compare"), "compare method on int");
 }
 
 /// ipos4: import path completion for std.
@@ -80,7 +84,7 @@ fn ipos5_comment_no_completion() {
 /// ipos6: cursor in string → no completions.
 #[test]
 fn ipos6_string_no_completion() {
-    let src = "module test.i\nfn f() -> () {\n    let s str = \"hello ";
+    let src = "module test.i\nfn f() -> () {\n    ro s str = \"hello ";
     let items = completion_for(src, src.len());
     assert!(items.is_empty(), "no completions inside string");
 }
@@ -88,23 +92,23 @@ fn ipos6_string_no_completion() {
 /// ipos7: multiple bindings in scope — all appear.
 #[test]
 fn ipos7_multiple_bindings_in_scope() {
-    let src = "module test.i\nfn f() -> () {\n    let alpha int = 1\n    let beta str = \"\"\n    let gamma bool = true\n    ";
+    let src = "module test.i\nfn f() -> () {\n    ro alpha int = 1\n    ro beta str = \"\"\n    ro gamma bool = true\n    ";
     let items = completion_for(src, src.len());
     assert!(has_label(&items, "alpha"), "alpha in scope");
     assert!(has_label(&items, "beta"), "beta in scope");
     assert!(has_label(&items, "gamma"), "gamma in scope");
 }
 
-/// ipos8: type-body context returns fn, const, pub — no fn-body keywords like let.
+/// ipos8: type-body context returns fn, const, pub — no fn-body keywords like ro/mut.
 #[test]
 fn ipos8_type_body_no_let() {
     let src = "module test.i\ntype Foo {\n    ";
     let items = completion_for(src, src.len());
-    // type body should have fn keyword but NOT let (fn-body keyword)
+    // type body should have fn keyword but NOT ro/mut (fn-body keywords)
     assert!(has_label(&items, "fn"), "fn in type body");
-    // `let` is NOT in type-body keyword list
+    // `let` is NOT in keyword list (removed in Plan 114)
     let has_let_kw = items.iter().any(|i| i.label == "let" && i.kind == Some(CompletionItemKind::KEYWORD));
-    assert!(!has_let_kw, "let keyword should NOT appear in type body");
+    assert!(!has_let_kw, "let keyword should NOT appear");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,7 +118,7 @@ fn ipos8_type_body_no_let() {
 /// Ranking: verify sort_text ordering local < module < std < keyword.
 #[test]
 fn ranking_full_ordering() {
-    let src = "module test.r\nfn globalFn() -> () {}\nfn g() -> () {\n    let myLocal int = 0\n    ";
+    let src = "module test.r\nfn globalFn() -> () {}\nfn g() -> () {\n    ro myLocal int = 0\n    ";
     let items = completion_for(src, src.len());
 
     let local_sort = items.iter()
@@ -132,24 +136,27 @@ fn ranking_full_ordering() {
         .and_then(|i| i.sort_text.as_deref())
         .expect("int (prelude) should appear");
 
+    // `ro` replaces `let` as the canonical fn-body binding keyword (Plan 114)
     let kw_sort = items.iter()
-        .find(|i| i.label == "let" && i.kind == Some(CompletionItemKind::KEYWORD))
+        .find(|i| i.label == "ro" && i.kind == Some(CompletionItemKind::KEYWORD))
         .and_then(|i| i.sort_text.as_deref())
-        .expect("let (keyword) should appear");
+        .expect("ro (keyword) should appear");
 
     assert!(local_sort < module_sort, "local < module");
     assert!(module_sort < prelude_sort, "module < prelude");
     assert!(prelude_sort < kw_sort, "prelude < keyword");
 }
 
-/// Method completions: str methods appear with detail.
+/// Method completions: str methods appear with detail (byte_len replaces len).
 #[test]
 fn method_str_detail_present() {
-    let src = "module test.m\nfn f() -> () {\n    let msg str = \"\"\n    msg.";
+    let src = "module test.m\nfn f() -> () {\n    ro msg str = \"\"\n    msg.";
     let items = method_items(src, src.len());
-    let len_item = items.iter().find(|i| i.label == "len");
-    assert!(len_item.is_some(), "len method on str");
-    assert!(len_item.unwrap().detail.is_some(), "detail should be present");
+    let byte_len_item = items.iter().find(|i| i.label == "byte_len");
+    assert!(byte_len_item.is_some(), "byte_len method on str (len was removed)");
+    assert!(byte_len_item.unwrap().detail.is_some(), "detail should be present");
+    // `len` should NOT appear as a standalone method
+    assert!(!items.iter().any(|i| i.label == "len"), "len removed — use byte_len()");
 }
 
 /// Import items: std.sync returns mutex, rwlock, semaphore.
@@ -162,10 +169,10 @@ fn import_sync_submodules() {
     assert!(has_label(&items, "channel"), "std.sync.channel");
 }
 
-/// Scope identifiers: param from fn sig, let binding, type decl — all present.
+/// Scope identifiers: param from fn sig, ro binding, type decl — all present.
 #[test]
 fn scope_params_and_decls() {
-    let src = "module test.s\ntype MyType {}\nfn calc(input int, factor float) -> int {\n    let result int = 0\n    ";
+    let src = "module test.s\ntype MyType {}\nfn calc(input int, factor f64) -> int {\n    ro result int = 0\n    ";
     let idents = collect_scope_identifiers(src, src.len());
 
     let names: Vec<&str> = idents.iter().map(|i| i.name.as_str()).collect();

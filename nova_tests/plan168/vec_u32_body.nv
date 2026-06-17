@@ -1,0 +1,18 @@
+module plan168.vec_u32_body
+
+test "Vec[u32] local var — body-only instantiation" {
+    mut v = Vec[u32].with_capacity(4)
+    v.push(1 as u32)
+    v.push(2 as u32)
+    assert(v.len() == 2)
+    assert(v[0] == 1 as u32)
+    assert(v[1] == 2 as u32)
+}
+
+test "Vec[u32] empty push pop" {
+    mut v = Vec[u32].new()
+    assert(v.len() == 0)
+    v.push(42 as u32)
+    assert(v.len() == 1)
+    assert(v[0] == 42 as u32)
+}

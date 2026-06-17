@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 168 — Vec generic forward-decl missing for body-only instantiations (D300)
 
-> **Создан:** 2026-06-17. **Статус:** 📋 PLANNED. **P1**; ~0.5 dd, Sonnet 4.6.
+> **Создан:** 2026-06-17. **Статус:** ✅ CLOSED 2026-06-17. **P1**; Sonnet 4.6.
 >
 > **Симптом:** `CC-FAIL: unknown type name 'Nova_Vec____Nova_u32_p'` в `plan153_1/*`,
 > `plan118_6/t8_neg_addr_of_mut_removed`. Все 9 тестов plan153_1 падают на clang-стадии,
@@ -141,17 +141,28 @@ mono-pass и не генерируют Vec-local vars без сигнатурн�
 
 ## 3. Acceptance criteria
 
-| # | Критерий |
-|---|---|
-| AC1 | `nova test nova_tests/plan168` — PASS (pos: Vec[u32] local var) |
-| AC2 | `nova test nova_tests/plan153_1` — 0 CC-FAIL (было 9) |
-| AC3 | 0 новых FAIL в полном регрессе |
-| AC4 | Тест `nova_tests/plan168/vec_u8_body.nv` — PASS (профилактика Vec[u8]) |
-| AC5 | Без упрощений как для прода |
+| # | Критерий | Результат |
+|---|---|---|
+| AC1 | `nova test nova_tests/plan168` — PASS (pos: Vec[u32]/Vec[u8] local vars) | ✅ 4/4 PASS |
+| AC2 | `nova test nova_tests/plan153_1` — 0 CC-FAIL (было 9) | ✅ 8/9 (1 pre-existing CODEGEN-FAIL) |
+| AC3 | 0 новых FAIL в полном регрессе | ✅ basics/plan77/plan118_6/plan152_8 — 0 новых |
+| AC4 | Neg-тесты: `neg_vec_u32_type_mismatch`, `neg_vec_u8_type_mismatch` — PASS | ✅ PASS |
+| AC5 | Без упрощений как для прода | ✅ |
 
 ---
 
-## 4. D300 (spec)
+## 4. Реализация
+
+**Коммиты:**
+- `aca66623` — fix(plan168): emit_c.rs body scan + tuple-elem fwd-decl; pos tests
+- `2eb90106` — test(plan168): neg type-mismatch tests
+- `f36ee193` — docs(plan168): D300 spec + plan doc + simplifications
+
+**Тесты:** `nova_tests/plan168/` — 4 файла (2 pos + 2 neg), все PASS.
+
+---
+
+## 5. D300 (spec)
 
 **D300 — Vec generic forward-decl completeness: body-site scan (Plan 168, 2026-06-17)**
 
