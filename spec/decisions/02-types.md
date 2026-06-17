@@ -12935,3 +12935,20 @@ Overload resolution: конкретный receiver (`[]int`) выбирает co
 - Plan 91.3 — concrete `[]int @sort`.
 
 D185 NEW.
+
+### D185 §amend-1 — direct @[i].method() dispatch in generic array methods
+
+**Дата:** 2026-06-17. **Закрывает:** [M-91.8c-direct-index-method].
+
+Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T Compare] []T`-тела
+компилятор не мог вывести тип элемента для `SelfAccess`-объекта и пропускал dispatch.
+
+**Изменения в `compiler-codegen/src/codegen/emit_c.rs`:**
+1. `compute_array_elem_type_for_obj` — добавлен arm для `ExprKind::SelfAccess`
+   (ранее только `ExprKind::Ident` и другие; `SelfAccess` без arm → элемент-тип не выводился).
+2. `emit_monomorphized_method` — при входе в метод заполняет `array_element_types["nova_self"]`
+   из receiver-типа mono-инстанса, делая тип элемента доступным при обработке вложенных
+   `@[i].method()`-вызовов до того, как в теле появится explicit присвоение.
+
+**Результат:** `@[j].compare(key)` в `fn[T Compare] []T`-телах (sort_of, binary_search_of и т.д.)
+теперь диспетчится корректно без промежуточного binding'а.
