@@ -196,3 +196,38 @@ Three checker gaps under D246 three-axis mutability were closed:
 - `f7_neg4_ro_slice_via_fn_index_write.nv` — `ro a = make(); a[1] = 99` → `E_READONLY_CONTENT`.
 
 **Result: 37/0 PASS** (plan147 suite including 30 Ф.1-Ф.6 oracle + 7 new Ф.7 fixtures).
+
+### Acceptance (Ф.7-specific)
+
+> **Обязательный принцип:** «без упрощений, как для прода» — все пункты ниже обязательны.
+
+- **A7.1** ✅ — `ro a = [...]; a[i] = x` даёт `E_READONLY_CONTENT` (P7 binding-dominates L2).
+  Подтверждено: `f7_neg1_ro_local_index_write` PASS.
+- **A7.2** ✅ — `func(v []int) { v[i] = x }` даёт `E_READONLY_CONTENT` (param ro-by-default D176).
+  Подтверждено: `f7_neg2_ro_param_index_write` PASS.
+- **A7.3** ✅ — `ro a = fn_returning_slice(); a[i] = x` даёт `E_READONLY_CONTENT`.
+  Подтверждено: `f7_neg4_ro_slice_via_fn_index_write` PASS.
+- **A7.4** ✅ — `ro a ro []int = [...]` даёт `E_REDUNDANT_TYPE_MODIFIER`.
+  Подтверждено: `f7_neg3_ro_ro_redundant_local` PASS.
+- **A7.5** ✅ — `mut a = [...]; a[i] = x` компилируется (no regression).
+  Подтверждено: `f7_pos2_mut_binding_write_ok` PASS.
+- **A7.6** ✅ — `func(mut v []int) { v[i] = x }` компилируется (no regression).
+  Подтверждено: `f7_pos3_mut_param_write_ok` PASS.
+- **A7.7** ✅ — `ro a = [...]; _ = a[i]` компилируется (read always allowed).
+  Подтверждено: `f7_pos1_ro_binding_read_ok` PASS.
+- **A7.8** ✅ — 0 новых регрессий в 30 Ф.1-Ф.6 oracle fixtures.
+  Подтверждено: 37/0 PASS vs 30/0 baseline.
+- **A7.9** ✅ — no false positives в prelude/std (entry-code guard via `span.file_id`).
+  Подтверждено: полный nova test build clean, stdlib компилируется без новых ошибок.
+- **A7.10** ✅ — D246 spec § Error codes обновлён: `E_READONLY_CONTENT` + oracle F (index-write).
+  Ф.7 amendment note добавлен в status header D246.
+- **A7.11** ✅ — nova-lsp: `E_REDUNDANT_TYPE_MODIFIER` quick-fix существует (pre-existing);
+  `E_READONLY_CONTENT` LSP-диагностика работает (без quick-fix MVP — acceptable P2 followup).
+  Маркер: `[M-147-readonly-content-lsp-quickfix]` (P2).
+
+### Known limitations / followups
+
+- **`[M-147-readonly-content-lsp-quickfix]`** (P2) — `E_READONLY_CONTENT` в nova-lsp
+  показывает ошибку, но не предлагает quick-fix «добавить `mut`». Аналогично существующему
+  `fix_local_not_mut` / `fix_param_not_mut`. Добавить в code_actions.rs: предложить
+  «Change `ro` → `mut`» для binding, «Add `mut` before param» для param.
