@@ -1,14 +1,12 @@
-// Fast variant — reduced parameters. Full test: f4_clone_gc_stress_slow.nv
-//
 // Plan 56 Ф.3 — GC stress test для @clone().
-// Fast: 10 clones × 100 entries (reduced from 100 clones).
+// 100 clones × 100 entries — heap bounded.
 
 module plan56.f4_clone_gc_stress
 
 import std.collections.hashmap.{HashMap}
 
 
-test "@clone × 10 итераций — heap bounded [fast]" {
+test "@clone × 100 итераций — heap bounded" {
     mut m HashMap[str, int] = []
     for i in 0..100 {
         m.insert(str.from(i), i)
@@ -17,15 +15,16 @@ test "@clone × 10 итераций — heap bounded [fast]" {
     gc.collect()
     ro baseline_post = gc.heap_size()
 
-    // 10 clones (fast: reduced from 100).
-    for _ in 0..10 {
+    // 100 clones — каждый создаёт ~100-entry HashMap copy.
+    for _ in 0..100 {
         ro _c = m.clone()
     }
 
     gc.collect()
     ro final_heap = gc.heap_size()
 
-    // Heap bounded — clones собраны GC. Threshold: 4x baseline.
+    // Heap bounded — clones собраны GC. Threshold: 4x baseline (loose
+    // chunk allocator + Boehm overhead).
     ro upper = if baseline_post == 0 {
         16 * 1024 * 1024   // malloc backend: heap_size() == 0 always
     } else {

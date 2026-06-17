@@ -1784,7 +1784,10 @@ impl Drop for TempSubdir {
 
 /// Запустить codegen + cc + run + check для одного .nv.
 /// Production-grade: per-test isolation + timeout. Возвращает `Outcome`.
-pub fn run_one(opts: &TestBuildOpts) -> Outcome {
+/// Plan 169 Ф.1: `split_out` receives (compile_ms, run_ms) split timing
+/// before every return path. Both default to 0 on early exits.
+pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
+    *split_out = (0, 0);
     let start = Instant::now();
     let src = match std::fs::read_to_string(opts.nv_file) {
         Ok(s) => s,
@@ -1868,6 +1871,9 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         captured_stderr: if verbose { err.map(|s| s.to_string()) } else { None },
         retries: 0,
     };
+
+    // Plan 169 Ф.1: split timing — compile phase starts here (codegen + cc).
+    let compile_start = Instant::now();
 
     // Step 1: codegen.
     // codegen_to_c returns Ok((codegen_warns, lint_warns)) on success,
@@ -2126,7 +2132,11 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
         };
     }
 
+    // Plan 169 Ф.1: compile phase complete — capture elapsed ms before run.
+    let compile_ms = compile_start.elapsed().as_millis();
+
     // Step 3 — run с timeout.
+    let run_start = Instant::now();
     let mut run_cmd = Command::new(&exe_file);
     #[cfg(not(target_os = "windows"))]
     {
@@ -2152,6 +2162,8 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
             };
         }
     };
+    // Plan 169 Ф.1: capture run_ms immediately after execution completes.
+    let run_ms = run_start.elapsed().as_millis();
     let stdout = bytes_to_string(&run_captured.stdout);
     let stderr = bytes_to_string(&run_captured.stderr);
     let run_status = match run_captured.status {
@@ -2280,6 +2292,9 @@ pub fn run_one(opts: &TestBuildOpts) -> Outcome {
             }
         }
     };
+
+    // Plan 169 Ф.1: record split timing for the successful run path.
+    *split_out = (compile_ms, run_ms);
 
     // Cleanup через subdir_guard Drop (RAII).
     outcome
@@ -2786,11 +2801,17 @@ impl Verbosity {
 
 /// Plan 26 Ф.10: serializable record для last-results.json. Структура
 /// stable, чтобы старые results-files оставались читаемы при minor-bumps.
+/// Plan 169 Ф.1: split timing — compile_ms (codegen→C→cc), run_ms (exe execution).
+/// Missing fields in old files decode as 0 (backward-compat).
 #[derive(Debug, Clone)]
 pub struct ResultRecord {
     pub name: String,
     pub passed: bool,
     pub elapsed_ms: u128,
+    /// Time spent in codegen (.nv→.c) + C compiler (cc) phase. 0 for skip/timeout.
+    pub compile_ms: u128,
+    /// Time spent executing the compiled binary. 0 for skip/timeout/compile-fail.
+    pub run_ms: u128,
 }
 
 /// Helper: best-effort `num_cpus()` без extra-deps. Stable API в std 1.59+.
@@ -3592,6 +3613,7 @@ fn xml_escape(s: &str) -> String {
 
 /// Plan 26 Ф.10: загрузить ResultRecord'ы из JSON. Простой format
 /// (один record на строку) — не нужен serde_json.
+/// Plan 169 Ф.1: parse compile_ms/run_ms with backward-compat (missing → 0).
 fn load_results(path: &Path) -> Vec<ResultRecord> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
@@ -3602,18 +3624,27 @@ fn load_results(path: &Path) -> Vec<ResultRecord> {
         if line.is_empty() || !line.starts_with('{') {
             continue;
         }
-        // Парсим: {"name":"...","passed":true,"elapsed_ms":123}
+        // Парсим: {"name":"...","passed":true,"elapsed_ms":123,"compile_ms":80,"run_ms":43}
         // Минималистично через manual split — без regex/serde_json.
+        // compile_ms/run_ms optional for backward compat (old files → 0).
         let name = extract_json_str(line, "\"name\":\"");
         let passed_str = extract_json_field(line, "\"passed\":");
         let elapsed_str = extract_json_field(line, "\"elapsed_ms\":");
         if let (Some(name), Some(passed), Some(elapsed)) = (name, passed_str, elapsed_str) {
             let passed = passed.trim() == "true";
             let elapsed_ms = elapsed.trim_end_matches('}').trim().parse::<u128>().unwrap_or(0);
+            let compile_ms = extract_json_field(line, "\"compile_ms\":")
+                .and_then(|s| s.trim_end_matches('}').trim().parse::<u128>().ok())
+                .unwrap_or(0);
+            let run_ms = extract_json_field(line, "\"run_ms\":")
+                .and_then(|s| s.trim_end_matches('}').trim().parse::<u128>().ok())
+                .unwrap_or(0);
             out.push(ResultRecord {
                 name,
                 passed,
                 elapsed_ms,
+                compile_ms,
+                run_ms,
             });
         }
     }
@@ -3637,11 +3668,14 @@ fn extract_json_field(line: &str, key: &str) -> Option<String> {
 fn save_results(path: &Path, records: &[ResultRecord]) -> std::io::Result<()> {
     let mut s = String::new();
     for r in records {
+        // Plan 169 Ф.1: include compile_ms/run_ms split timing fields.
         s.push_str(&format!(
-            "{{\"name\":\"{}\",\"passed\":{},\"elapsed_ms\":{}}}\n",
+            "{{\"name\":\"{}\",\"passed\":{},\"elapsed_ms\":{},\"compile_ms\":{},\"run_ms\":{}}}\n",
             json_escape(&r.name),
             r.passed,
             r.elapsed_ms,
+            r.compile_ms,
+            r.run_ms,
         ));
     }
     if let Some(parent) = path.parent() {
@@ -3756,8 +3790,9 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     // Plan 26 Ф.3: параллельный прогон через std::thread::scope.
     let jobs_arc = std::sync::Arc::new(jobs);
     let next_idx = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    // Plan 169 Ф.1: store split timing (compile_ms, run_ms) alongside each result.
     let results_mutex = std::sync::Arc::new(std::sync::Mutex::new(
-        Vec::<(usize, String, Outcome)>::with_capacity(total),
+        Vec::<(usize, String, Outcome, (u128, u128))>::with_capacity(total),
     ));
 
     let workers = std::cmp::max(1, opts.jobs).min(total.max(1));
@@ -3825,13 +3860,15 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                 // Exponential backoff: 100ms, 200ms, 400ms.
                 // Plan 26 Ф.17 #1: cumulative elapsed.
                 let retry_start = Instant::now();
-                let mut outcome = run_one(&test_opts);
+                // Plan 169 Ф.1: split timing output from run_one.
+                let mut split: (u128, u128) = (0, 0);
+                let mut outcome = run_one(&test_opts, &mut split);
                 let mut retry_count = 0u32;
                 for attempt in 1..=retries {
                     if !is_transient_fail(&outcome) { break; }
                     let backoff = Duration::from_millis(100 * (1 << (attempt - 1)));
                     std::thread::sleep(backoff);
-                    outcome = run_one(&test_opts);
+                    outcome = run_one(&test_opts, &mut split);
                     if outcome.is_pass() {
                         retry_count = attempt;
                         // DX-сигнал: retry помог — есть AV-race.
@@ -3863,7 +3900,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                     Ok(g) => g,
                     Err(poisoned) => poisoned.into_inner(),
                 };
-                guard.push((idx, display.clone(), outcome));
+                guard.push((idx, display.clone(), outcome, split));
             }).expect("failed to spawn test worker thread");
         }
     });
@@ -3884,10 +3921,15 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
         Ok(v) => v,
         Err(poison) => { eprintln!("warning: results mutex poisoned, recovering"); poison.into_inner() }
     };
-    indexed.sort_by_key(|(idx, _, _)| *idx);
-    let results: Vec<(String, Outcome)> = indexed
+    indexed.sort_by_key(|(idx, _, _, _)| *idx);
+    // Plan 169 Ф.1: carry split timing through results for save_results.
+    let results_with_split: Vec<(String, Outcome, (u128, u128))> = indexed
         .into_iter()
-        .map(|(_, name, outcome)| (name, outcome))
+        .map(|(_, name, outcome, split)| (name, outcome, split))
+        .collect();
+    let results: Vec<(String, Outcome)> = results_with_split
+        .iter()
+        .map(|(name, outcome, _)| (name.clone(), outcome.clone()))
         .collect();
 
     let mut pass = 0usize;
@@ -3901,13 +3943,15 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
 
     // Plan 26 Ф.10: save results. Skip'ы не сохраняем (not pass/fail).
     if let Some(path) = opts.results_file {
-        let records: Vec<ResultRecord> = results
+        let records: Vec<ResultRecord> = results_with_split
             .iter()
-            .filter(|(_, o)| !o.is_skipped())
-            .map(|(name, outcome)| ResultRecord {
+            .filter(|(_, o, _)| !o.is_skipped())
+            .map(|(name, outcome, split)| ResultRecord {
                 name: name.clone(),
                 passed: outcome.is_pass(),
                 elapsed_ms: outcome.elapsed().as_millis(),
+                compile_ms: split.0,
+                run_ms: split.1,
             })
             .collect();
         if let Err(e) = save_results(path, &records) {

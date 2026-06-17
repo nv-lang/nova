@@ -4570,7 +4570,8 @@ fn cmd_test_build(
     };
 
     test_runner::install_cancel_handler();
-    let outcome = test_runner::run_one(&opts);
+    let mut _split: (u128, u128) = (0, 0);
+    let outcome = test_runner::run_one(&opts, &mut _split);
     let label = outcome.label();
     let elapsed = outcome.elapsed();
     let detail = outcome.detail();

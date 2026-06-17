@@ -1,8 +1,8 @@
-// Fast variant — reduced parameters. Full test: stress_high_freq_loop_t11_8_slow.nv
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Plan 110.6.11 T11.8 (D188 R2 exactly-once verification at scale):
-// 100-iteration loop с consume scope (fast: reduced from 1000).
-// Verifies no resource leak, no double-dispatch, on_exit fires exactly once per iteration.
+// 1000-iteration loop с consume scope — verifies no resource leak,
+// no double-dispatch, on_exit fires exactly once per iteration.
 
 module plan110.stress_high_freq_loop_t11_8
 
@@ -25,10 +25,10 @@ fn run_loop_iterations(n int) -> int {
     sum
 }
 
-test "Plan 110.6.11 T11.8: 100-iter ConsumeScope at scale (no leak) [fast]" {
-    ro count = run_loop_iterations(100)
-    assert(count == 100)
-    // 100 iterations × 1 scope each completed.
+test "Plan 110.6.11 T11.8: 1000-iter ConsumeScope at scale (no leak)" {
+    ro count = run_loop_iterations(1000)
+    assert(count == 1000)
+    // 1000 iterations × 1 scope each completed.
     // Indirect verification of exactly-once + no leak through
     // no crash + no OOM в loop.
 }
