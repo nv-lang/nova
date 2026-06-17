@@ -235,6 +235,22 @@ mod tests {
     }
 
     #[test]
+    fn pos7_hover_call_in_test_body() {
+        // Hover inside a test body uses body-walk (resolve_item returns None for
+        // Test items, so body-walk is the only path to resolve symbols there).
+        // line 4 char 2 = 'a' in 'add(1, 2)'.
+        let src = "module basics.lsp\n/// Compute sum.\nfn add(a int, b int) -> int => a + b\ntest \"my_test\" {\n  add(1, 2)\n}";
+        let h = compute_hover(src, pos(4, 2), None);
+        assert!(h.is_some(), "expected hover on fn call inside test body");
+        let contents = match h.unwrap().contents {
+            HoverContents::Markup(m) => m.value,
+            _ => panic!("expected Markup"),
+        };
+        assert!(contents.contains("fn add"), "should resolve to fn add declaration");
+        assert!(contents.contains("Compute sum"), "should include doc of resolved fn");
+    }
+
+    #[test]
     fn neg1_hover_whitespace_returns_none() {
         let src = "module basics.lsp\n\nfn f() => ()";
         let h = compute_hover(src, pos(1, 0), None);
