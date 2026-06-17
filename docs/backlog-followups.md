@@ -70,3 +70,11 @@ referenced from plan docs and simplifications.md.
 - **[M-91.10-remove-needs-caps-field]** ✅ CLOSED (Plan 91.15 Ф.5, 2026-06-17) — FnDecl.needs_caps removed from AST.
 - **[M-91.14-option-result-debug]** ✅ CLOSED (Plan 91.15 Ф.2, 2026-06-17) — Option/Result @debug work via DeclaredBody interp dispatch.
 - **[M-91.14-derive-debug]** ✅ CLOSED (Plan 91.15 Ф.3, 2026-06-17) — `#impl(Debug)` auto-derive works for record types. known-limit: checker does not validate field Debug bounds at synthesis time.
+
+---
+
+## Plan 147 Ф.7 — D246 checker enforcement gaps
+
+- **[M-147-ro-binding-index-freeze]** ✅ CLOSED (Plan 147 Ф.7, 2026-06-17) — `ro a = [...]; a[0] = x` now gives `E_READONLY_CONTENT`. `is_through_ro_binding` check added to `check_target_readonly` Index arm in `compiler-codegen/src/types/mod.rs`; entry-code guard avoids false positives in prelude/std imports.
+- **[M-147-param-index-freeze]** ✅ CLOSED (Plan 147 Ф.7, 2026-06-17) — non-`mut` params are now registered in `ro_binding_names` at fn entry (snapshot/restore), so `v[i] = x` on a plain `v []int` param gives `E_READONLY_CONTENT`.
+- **[M-147-ro-ro-redundant-binding]** ✅ CLOSED (Plan 147 Ф.7, 2026-06-17) — `ro a ro []int = [...]` gives `E_REDUNDANT_TYPE_MODIFIER`; handled at parser level (`parser/mod.rs` lines 5198–5205, already present); oracle test `f7_neg3` confirms.

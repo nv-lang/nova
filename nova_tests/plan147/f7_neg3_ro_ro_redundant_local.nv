@@ -1,0 +1,14 @@
+// Plan 147 Ф.7 — negative: `ro a ro []int` — redundant ro modifier.
+//
+// D246 canon syntax: `ro x ro T` → E_REDUNDANT_TYPE_MODIFIER.
+// A ro binding already propagates readonly; explicit `ro T` is redundant
+// (D33/D176 amend, Plan 124.8 / Plan 147).
+//
+// EXPECT_COMPILE_ERROR E_REDUNDANT_TYPE_MODIFIER
+
+module plan147.f7_neg3_ro_ro_redundant_local
+
+fn main() -> () {
+    ro a ro []int = [1, 2, 3]
+    _ = a[0]
+}

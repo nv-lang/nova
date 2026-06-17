@@ -1,0 +1,15 @@
+// Plan 147 Ф.7 — negative: ro binding of fn-returned []int → index write forbidden.
+//
+// D246 P7: binding dominates. Even when the value comes from a function return,
+// a `ro` binding freezes the owned-graph — `a[i] = x` → E_READONLY_CONTENT.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_CONTENT
+
+module plan147.f7_neg4_ro_slice_via_fn_index_write
+
+fn make() -> []int => [10, 20, 30]
+
+fn main() -> () {
+    ro a = make()
+    a[1] = 99
+}

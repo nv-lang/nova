@@ -1,0 +1,20 @@
+// Plan 147 Ф.7 — positive: ro local binding allows index read (L2 freeze).
+//
+// `ro a []int` freezes writes through the binding but reads are always ok.
+// D246 P7: bare `ro` binding dominates — no index write.
+// This fixture verifies the POSITIVE half (read is allowed).
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.f7_pos1_ro_binding_read_ok
+
+fn main() -> () {
+    ro a = [10, 20, 30]
+    ro v0 = a[0]
+    ro v1 = a[1]
+    ro v2 = a[2]
+    assert(v0 == 10)
+    assert(v1 == 20)
+    assert(v2 == 30)
+    println("ok")
+}
