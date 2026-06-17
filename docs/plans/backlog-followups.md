@@ -671,3 +671,4 @@ Open V1 markers (gated on type-checker resolver API in Plan 104.2):
 |---|---|---|
 | `[M-91.8c-pdq-sort]` | OPEN | Upgrade sort_of from insertion sort O(n²) to pdq/intro-sort O(n log n) for large arrays (>1000 elements). Low priority — insertion sort correct and stable. |
 | `[M-91.8c-int-min-max-dispatch]` | OPEN | Pre-existing CC-FAIL: `[]int @min()/@max()` resolve to `f64.min` (2-arg) in codegen. Needs dispatch fix in emit_c.rs method resolution. See plan91/sort_basic.nv. |
+| `[M-91.8c-direct-index-method]` | ✅ **CLOSED 2026-06-17** | `@[i].method()` now dispatches correctly — `ExprKind::SelfAccess` arm added to `compute_array_elem_type_for_obj` (emit_c.rs ~14248); `emit_monomorphized_method` derives concrete element C type from recv_c and registers under `array_element_types["nova_self"]`. No intermediate binding needed. 5/5 tests PASS; 14/14 regression PASS. |
