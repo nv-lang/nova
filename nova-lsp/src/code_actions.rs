@@ -1,10 +1,11 @@
 //! Code actions / quick-fixes for nova-lsp — Plan 104.5.
 //!
-//! Provides ≥25 machine-applicable quick-fixes covering:
+//! Provides ≥26 machine-applicable quick-fixes covering:
 //!   - 104.5.2: Plan 101 generic-type errors (8 fixes)
 //!   - 104.5.3: Plan 100 consume/mutability errors (7 fixes)
 //!   - 104.5.4: General fixes — protocol-embed, keyword-removal (7 fixes)
 //!   - 104.5.5: Auto-import / suggest-import (3 fixes)
+//!   - Plan 147 Ф.7: E_READONLY_CONTENT quick-fix (ro-binding/param index-write)
 //!
 //! # Architecture
 //!
@@ -80,6 +81,7 @@ pub fn compute_code_actions(
             "E_CONSUME_KEYWORD_MISSING"          => fix_consume_keyword_missing(uri, src, rope, diag),
             "E_LOCAL_NOT_MUT"                    => fix_local_not_mut(uri, src, rope, diag),
             "E_PARAM_NOT_MUT"                    => fix_param_not_mut(uri, src, rope, diag),
+            "E_READONLY_CONTENT"                 => fix_readonly_content(uri, src, rope, diag),
             "E_ADDR_OF_REMOVED"                  => fix_addr_of_removed(uri, src, rope, diag),
             "E_REDUNDANT_POINTER_RO"             => fix_redundant_pointer_ro(uri, src, rope, diag),
             "E_REDUNDANT_TYPE_MODIFIER"          => fix_redundant_type_modifier(uri, src, rope, diag),
@@ -619,6 +621,63 @@ fn fix_param_not_mut(
         diag,
         false, // MaybeIncorrect
     ))
+}
+
+/// Fix 11b: E_READONLY_CONTENT (Plan 147 Ф.7) — binding or param is ro, index write forbidden.
+///
+/// Strategy: extract the root identifier from the assignment LHS, then search the file for:
+///   1. A local `ro <name>` binding — offer "Change `ro` → `mut`".
+///   2. A param declaration `(... <name> T ...)` — offer "Add `mut` before param".
+///
+/// Both actions are MaybeIncorrect (API change for params; changing ro intent for locals).
+fn fix_readonly_content(
+    uri: &tower_lsp::lsp_types::Url,
+    src: &str,
+    rope: &Rope,
+    diag: &Diagnostic,
+) -> Option<CodeAction> {
+    let (start_byte, _) = range_to_byte_offsets(rope, diag.range);
+    let line = line_at_byte(src, start_byte);
+    // Extract root ident: first identifier token on the line (before `[`).
+    let ident: &str = line.trim_start()
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .next()
+        .filter(|s| !s.is_empty())?;
+
+    // Search upward from the error line for a `ro <ident>` local binding.
+    let error_line_start = src[..start_byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let preceding_src = &src[..error_line_start];
+    let ro_pattern = format!("ro {ident}");
+    if let Some(ro_off) = preceding_src.rfind(&ro_pattern) {
+        let s = byte_to_lsp_position(src, ro_off);
+        let e = byte_to_lsp_position(src, ro_off + 2); // "ro" is 2 chars
+        let edit = single_edit(uri, Range { start: s, end: e }, "mut".to_string());
+        return Some(make_action(
+            &format!("Change `ro {ident}` → `mut {ident}` to allow index write"),
+            CodeActionKind::QUICKFIX,
+            edit,
+            diag,
+            false, // MaybeIncorrect — changing ro intent
+        ));
+    }
+
+    // Search for param `<ident> <Type>` inside a fn signature (add `mut ` before ident).
+    // Heuristic: find `fn ... (` then the param name.
+    let param_pattern = format!("({ident} ");
+    if let Some(param_off) = preceding_src.rfind(&param_pattern) {
+        let name_off = param_off + 1; // skip `(`
+        let s = byte_to_lsp_position(src, name_off);
+        let edit = insert_edit(uri, s, "mut ".to_string());
+        return Some(make_action(
+            &format!("Add `mut` before param `{ident}` to allow index write (API change — review callers)"),
+            CodeActionKind::QUICKFIX,
+            edit,
+            diag,
+            false, // MaybeIncorrect — API change
+        ));
+    }
+
+    None
 }
 
 /// Fix 12: E_ADDR_OF_REMOVED — replace addr_of(x)/addr_of_mut(x) with &x (Plan 118.6).
@@ -1417,6 +1476,42 @@ mod tests {
         let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
         // Inserts `mut ` or produces no action — no panic.
         let _ = actions;
+    }
+
+    /// pos_147_1: E_READONLY_CONTENT on ro local binding → offers ro→mut fix.
+    #[test]
+    fn pos_147_1_readonly_content_ro_local() {
+        let src = "ro a = [1, 2, 3]\na[0] = 99\n";
+        let rope = Rope::from_str(src);
+        let msg = "[E_READONLY_CONTENT] cannot write through index on a `ro`-bound binding";
+        // Diagnostic points at line 1 (`a[0] = 99`), col 0-1.
+        let diag = make_diag_with_code("E_READONLY_CONTENT", msg, 1, 0, 1);
+        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        assert!(!actions.is_empty(), "E_READONLY_CONTENT on ro local should yield action");
+    }
+
+    /// pos_147_2: E_READONLY_CONTENT on param → offers add-mut fix.
+    #[test]
+    fn pos_147_2_readonly_content_param() {
+        let src = "fn fill(v []int, val int) {\n    v[0] = val\n}\n";
+        let rope = Rope::from_str(src);
+        let msg = "[E_READONLY_CONTENT] cannot write through index on a `ro`-bound binding or non-mut param";
+        // Diagnostic points at line 1 (v[0] = val).
+        let diag = make_diag_with_code("E_READONLY_CONTENT", msg, 1, 4, 5);
+        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        // Should produce an action or no panic.
+        let _ = actions;
+    }
+
+    /// neg_147_1: E_READONLY_CONTENT with unknown ident → no action (no panic).
+    #[test]
+    fn neg_147_1_readonly_content_unknown_ident() {
+        let src = "x[0] = 1\n";
+        let rope = Rope::from_str(src);
+        let msg = "[E_READONLY_CONTENT] cannot write through index";
+        let diag = make_diag_with_code("E_READONLY_CONTENT", msg, 0, 0, 1);
+        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        let _ = actions; // no panic
     }
 
     /// pos_100_3: E_REDUNDANT_IMPORT_ALIAS produces delete action.

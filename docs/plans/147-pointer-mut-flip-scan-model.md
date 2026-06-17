@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 147 — Three-axis mutability model (supersede flip-scan / D245)
 
-> **Создан:** 2026-06-11. **Reframed:** 2026-06-12 (flip-scan → 3-axis). **Закрыт:** 2026-06-12.
-> **Статус:** ✅ **CLOSED** (Ф.1-Ф.6 LANDED; 3-axis модель D246 в spec+parser+checker+codegen; codebase мигрирован; oracle 30/0). **Worktree:** `nova-p138` @ `plan-138.1` (НЕ смёржен в main).
+> **Создан:** 2026-06-11. **Reframed:** 2026-06-12 (flip-scan → 3-axis). **Закрыт:** 2026-06-12. **Ф.7:** 2026-06-17.
+> **Статус:** ✅ **CLOSED** (Ф.1-Ф.7 LANDED; 3-axis модель D246 в spec+parser+checker+codegen; codebase мигрирован; oracle 37/0). **Worktree:** `nova-p147` @ `plan-147-f7`.
 > **Model:** Opus + Thinking ON. **Production, без упрощений.**
 > **История:** Ф.1-черновик flip-scan (D245, commit `befe92c`) **ОТКЛОНЁН** adversarial-критикой
 > (4 BLOCKER: `*T` контекстно-зависим → тип не самодостаточен). Две design-workflow + ~15 раундов
@@ -200,16 +200,86 @@ nova-private discussion-log: `871119db31` (Ф.2-3), `1feeb569c6` (Ф.4), + close
 - `[M-147-deref-write-compound-lvalue]` (P2) — `*(p+i)=v` (Binary operand) → no-gate.
 - `[M-147-generic-element-deref-write]` (P2) — `*v[i]=x` на `Vec[*T]` не enforced на Nova-уровне.
 - `[M-147-null-star-ptr-retraction-guard]` (P3, **pre-existing** Plan 134) — `null *()` не ловится retraction-guard'ом (orthogonal к 3-axis).
+- ~~`[M-147-ro-binding-index-freeze]`~~ **CLOSED Ф.7** (2026-06-17).
+- ~~`[M-147-param-index-freeze]`~~ **CLOSED Ф.7** (2026-06-17).
+- ~~`[M-147-ro-ro-redundant-binding]`~~ **CLOSED Ф.7** (2026-06-17).
 
 ### Связанные маркеры
 - `[M-138-binding-type-mut-conflict]` — **CLOSED** (разрешён D246 P6 split L1×L2: `ro X mut T`/`mut X ro T` — явные ортогональные оси; контекстно-зависимая visibility-aware диагностика больше не нужна — модель прямо разрешает обе пары).
 - `[M-ptr-cast-reinterpret-unsafe]` — **учтён в coercion** D246: `*mut→*T` авто-сужение, `*T→*mut T` ❌; ОСТАЁТСЯ OPEN (P2) для reinterpret-каста `*T→*U` (смена pointee-типа = align/aliasing UB — требует `unsafe`/`E_PTR_CAST_REINTERPRET`); это отдельная ось от ro-laundering, которую D246 уже закрывает через `E_READONLY_COERCE`-аналог.
 - `[M-139-f0-lang-item-decl]` — **РАЗГЕЙЧЕНО**: str-поле `ptr *u8` легально под восстановленным `*T≡*ro T` (bare `*u8` = ro-pointee canon; `*ro u8` был бы `E_REDUNDANT_POINTER_RO`). Остаётся lang-item checker-инфра (Plan 139 followup).
 - flip-scan-маркеры удалены/переформулированы (`[M-138.5-right-binding-migration]` — postfix-модель landed).
-- **[M-147-ro-binding-index-freeze]** OPEN — `ro a []int` → `a[i]=x` разрешается (баг).
-  Index-ветка `check_target_readonly` не проверяет `ro_binding_names`. `a[i]=x` codegen-inlined,
-  не через `mut @index` метод → `mut_methods` реестр не помогает. Актуально для `[]T` сейчас
-  + `[N]T` после Plan 121. Детали в backlog-followups.md.
-- **[M-147-ro-ro-redundant-binding]** OPEN — `ro a ro T`, `func(a ro T)`, `mut a mut T`,
-  `func(mut a mut T)` не дают `E_REDUNDANT_TYPE_MODIFIER`. Детали в backlog-followups.md.
-- **[M-147-param-index-freeze]** OPEN — `func(a []int)` → `a[i]=x` разрешается (ro param, codegen-inlined). Связан с [M-147-ro-binding-index-freeze].
+- ~~`[M-147-ro-binding-index-freeze]`~~ **CLOSED Ф.7** (2026-06-17).
+- ~~`[M-147-ro-ro-redundant-binding]`~~ **CLOSED Ф.7** (2026-06-17).
+- ~~`[M-147-param-index-freeze]`~~ **CLOSED Ф.7** (2026-06-17).
+
+---
+
+## ✅ Ф.7 CLOSE (2026-06-17) — checker enforcement gaps for D246
+
+**Branch:** `plan-147-f7`. **Worktree:** `nova-p147`.
+
+### What was implemented
+
+Three checker gaps under D246 three-axis mutability were closed:
+
+1. **`[M-147-ro-binding-index-freeze]`** — `ro a = [...]; a[0] = x` now gives `E_READONLY_CONTENT`.
+   - `check_target_readonly` `ExprKind::Index` arm extended with `is_through_ro_binding(obj)` check.
+   - Entry-code guard (`is_target_in_entry` via `span.file_id`) prevents false positives on prelude/std imports that have `ro buf = ...` locals with valid index writes.
+   - File: `compiler-codegen/src/types/mod.rs` (~line 8028–8053).
+
+2. **`[M-147-param-index-freeze]`** — non-`mut` params now freeze index writes inside the fn body.
+   - At fn entry in `f1_check_fn`, non-mut/non-consume params are inserted into `ro_binding_names` (snapshot/restore around the body ensures names don't leak across functions).
+   - File: `compiler-codegen/src/types/mod.rs` (~line 5121–5152).
+
+3. **`[M-147-ro-ro-redundant-binding]`** — `ro a ro []int = [...]` gives `E_REDUNDANT_TYPE_MODIFIER`.
+   - Already handled at parser level (parser/mod.rs lines 5198–5205, pre-existing); oracle test `f7_neg3` confirms no regression.
+
+### Tests
+
+7 new fixtures in `nova_tests/plan147/`:
+- `f7_pos1_ro_binding_read_ok.nv` — read via index on `ro` binding is allowed.
+- `f7_pos2_mut_binding_write_ok.nv` — index write on `mut` binding is allowed.
+- `f7_pos3_mut_param_write_ok.nv` — index write on explicit `mut` param is allowed.
+- `f7_neg1_ro_local_index_write.nv` — `ro a = [...]; a[0] = 99` → `E_READONLY_CONTENT`.
+- `f7_neg2_ro_param_index_write.nv` — plain param `v []int`, `v[0] = val` → `E_READONLY_CONTENT`.
+- `f7_neg3_ro_ro_redundant_local.nv` — `ro a ro []int = [...]` → `E_REDUNDANT_TYPE_MODIFIER`.
+- `f7_neg4_ro_slice_via_fn_index_write.nv` — `ro a = make(); a[1] = 99` → `E_READONLY_CONTENT`.
+
+**Result: 37/0 PASS** (plan147 suite including 30 Ф.1-Ф.6 oracle + 7 new Ф.7 fixtures).
+
+### Acceptance (Ф.7-specific)
+
+> **Обязательный принцип:** «без упрощений, как для прода» — все пункты ниже обязательны.
+
+- **A7.1** ✅ — `ro a = [...]; a[i] = x` даёт `E_READONLY_CONTENT` (P7 binding-dominates L2).
+  Подтверждено: `f7_neg1_ro_local_index_write` PASS.
+- **A7.2** ✅ — `func(v []int) { v[i] = x }` даёт `E_READONLY_CONTENT` (param ro-by-default D176).
+  Подтверждено: `f7_neg2_ro_param_index_write` PASS.
+- **A7.3** ✅ — `ro a = fn_returning_slice(); a[i] = x` даёт `E_READONLY_CONTENT`.
+  Подтверждено: `f7_neg4_ro_slice_via_fn_index_write` PASS.
+- **A7.4** ✅ — `ro a ro []int = [...]` даёт `E_REDUNDANT_TYPE_MODIFIER`.
+  Подтверждено: `f7_neg3_ro_ro_redundant_local` PASS.
+- **A7.5** ✅ — `mut a = [...]; a[i] = x` компилируется (no regression).
+  Подтверждено: `f7_pos2_mut_binding_write_ok` PASS.
+- **A7.6** ✅ — `func(mut v []int) { v[i] = x }` компилируется (no regression).
+  Подтверждено: `f7_pos3_mut_param_write_ok` PASS.
+- **A7.7** ✅ — `ro a = [...]; _ = a[i]` компилируется (read always allowed).
+  Подтверждено: `f7_pos1_ro_binding_read_ok` PASS.
+- **A7.8** ✅ — 0 новых регрессий в 30 Ф.1-Ф.6 oracle fixtures.
+  Подтверждено: 37/0 PASS vs 30/0 baseline.
+- **A7.9** ✅ — no false positives в prelude/std (entry-code guard via `span.file_id`).
+  Подтверждено: полный nova test build clean, stdlib компилируется без новых ошибок.
+- **A7.10** ✅ — D246 spec § Error codes обновлён: `E_READONLY_CONTENT` + oracle F (index-write).
+  Ф.7 amendment note добавлен в status header D246.
+- **A7.11** ✅ — nova-lsp: `E_REDUNDANT_TYPE_MODIFIER` quick-fix существует (pre-existing);
+  `E_READONLY_CONTENT` LSP-диагностика работает (без quick-fix MVP — acceptable P2 followup).
+  Маркер: `[M-147-readonly-content-lsp-quickfix]` (P2).
+
+### Known limitations / followups
+
+- **`[M-147-readonly-content-lsp-quickfix]`** (P2) — `E_READONLY_CONTENT` в nova-lsp
+  показывает ошибку, но не предлагает quick-fix «добавить `mut`». Аналогично существующему
+  `fix_local_not_mut` / `fix_param_not_mut`. Добавить в code_actions.rs: предложить
+  «Change `ro` → `mut`» для binding, «Add `mut` before param» для param.
+  **Добавлен Ф.7:** `fix_readonly_content` в `nova-lsp/src/code_actions.rs` — базовый heuristic.

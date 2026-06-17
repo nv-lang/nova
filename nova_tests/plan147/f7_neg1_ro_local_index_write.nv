@@ -1,0 +1,13 @@
+// Plan 147 Ф.7 — negative: ro local binding → index write forbidden.
+//
+// D246 P7 (binding dominates): bare `ro a` freezes the whole owned-graph.
+// `a[0] = 99` must give E_READONLY_CONTENT (L1/L2 binding freeze).
+//
+// EXPECT_COMPILE_ERROR E_READONLY_CONTENT
+
+module plan147.f7_neg1_ro_local_index_write
+
+fn main() -> () {
+    ro a = [1, 2, 3]
+    a[0] = 99
+}

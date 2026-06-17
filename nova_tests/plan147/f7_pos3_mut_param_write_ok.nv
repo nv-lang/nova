@@ -1,0 +1,21 @@
+// Plan 147 Ф.7 — positive: `mut` param allows index write.
+//
+// D176 / D246: params are ro by default; explicit `mut` opts in to writes.
+// `mut v []int` → `v[i] = val` is permitted (D246 P3 opt-in).
+//
+// EXPECT_OUTPUT: ok
+
+module plan147.f7_pos3_mut_param_write_ok
+
+fn fill(mut v []int, val int) -> () {
+    v[0] = val
+    v[1] = val + 1
+}
+
+fn main() -> () {
+    mut a = [0, 0, 0]
+    fill(a, 5)
+    assert(a[0] == 5)
+    assert(a[1] == 6)
+    println("ok")
+}

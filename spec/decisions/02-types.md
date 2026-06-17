@@ -8845,13 +8845,15 @@ pointer-mut в типе vs pointee-mut), особенно в return-позици
 
 ## D246. Три оси мутабельности: L1 binding / L2 view / L3 pointee
 
-> **Status:** 🆕 SPEC LANDED 2026-06-12 (Plan 147 Ф.1). Реализация — [Plan
-> 147](../../docs/plans/147-pointer-mut-flip-scan-model.md) (Ф.2 parser / Ф.3
-> checker / Ф.4 migration / Ф.5 tests). **Supersedes** flip-scan-draft (, отклонён).
-> **Восстанавливает** D216 §V2.6 «`*T ≡ *ro T`». **Источник:** 2 design-workflow
-> (critique `wkx3dytr1`, value-side `wlqgc2nyk`, synthesis `w9nktq8x1`) + ~15
-> раундов ревью с пользователем. **Гейтит** Plan 139 `[M-139-f0-lang-item-decl]`
-> (str-поля `ptr *u8` под чистой моделью).
+> **Status:** ✅ FULLY IMPLEMENTED. Ф.1-Ф.6 LANDED 2026-06-12 (Plan 147).
+> **AMENDED Ф.7** 2026-06-17 (Plan 147 Ф.7): checker enforcement gaps closed —
+> ro-binding + param index-freeze (`E_READONLY_CONTENT`), redundant modifier oracle.
+> Реализация — [Plan 147](../../docs/plans/147-pointer-mut-flip-scan-model.md)
+> (Ф.2 parser / Ф.3 checker / Ф.4 migration / Ф.5 tests / Ф.7 enforcement).
+> **Supersedes** flip-scan-draft (отклонён). **Восстанавливает** D216 §V2.6
+> «`*T ≡ *ro T`». **Источник:** 2 design-workflow (critique `wkx3dytr1`,
+> value-side `wlqgc2nyk`, synthesis `w9nktq8x1`) + ~15 раундов ревью.
+> **Гейтит** Plan 139 `[M-139-f0-lang-item-decl]` (str-поля `ptr *u8`).
 
 ### Что
 
@@ -8969,8 +8971,42 @@ co-handle'ам; `ro` = это имя не пишет).
 - **`E_POINTER_RO_ASSIGN`** (NEW, Plan 147 Ф.3) — запись `*p = …` через `*T`/`*ro`
   pointee (ro-pointee read-only). Pointer-ops — в `unsafe {}`.
 - **`E_POINTER_PREFIX_MODIFIER`** (существует, D216 §1) — модификатор перед `*`.
-- **`E_REDUNDANT_TYPE_MODIFIER`** (существует) — `ro x ro T` / `*ro ro T`.
+- **`E_REDUNDANT_TYPE_MODIFIER`** (существует) — `ro x ro T` / `*ro ro T` / `func(a ro T)` /
+  `mut x mut T` / `func(mut a mut T)`. (Ф.7: oracle-test f7_neg3 подтверждает
+  parser-level enforcement для `ro a ro T`; `func(a ro T)` — parser аналогично.)
+- **`E_READONLY_CONTENT`** (существует, D176) — запись через ro-view L2: `view[i] = x`
+  на `ro T`-типе ИЛИ (NEW Ф.7) через `ro`-binding (L1 dominates P7): `ro a = [...]`
+  → `a[i] = x` → `E_READONLY_CONTENT`; `func(v []int)` → `v[i] = x` →
+  `E_READONLY_CONTENT` (param ro-by-default D176, P7 freeze).
 - **`E_READONLY_COERCE`** (существует) — ro-content-источник → mut-content-цель (P8).
+
+#### ORACLE F — Index-write through ro binding/param (Ф.7, 2026-06-17)
+
+```nova
+// F1: ro local binding → index write forbidden (P7 freeze)
+ro a = [1, 2, 3]
+a[0] = 99                  // ❌ E_READONLY_CONTENT (ro binding dominates, P7)
+_ = a[0]                   // ✅ reads always ok
+
+// F2: mut binding → index write allowed
+mut a = [1, 2, 3]
+a[0] = 99                  // ✅
+
+// F3: param without mut → index write forbidden (ro by default D176, P7 freeze)
+fn fill(v []int, val int) {
+    v[0] = val             // ❌ E_READONLY_CONTENT
+}
+
+// F4: mut param → index write allowed
+fn fill(mut v []int, val int) {
+    v[0] = val             // ✅
+}
+
+// F5: ro local via fn return → index write forbidden
+fn make_slice() -> []int { [1, 2, 3] }
+ro a = make_slice()
+a[1] = 99                  // ❌ E_READONLY_CONTENT (ro binding P7)
+```
 
 ### Осознанные trade-off'ы (намеренно)
 

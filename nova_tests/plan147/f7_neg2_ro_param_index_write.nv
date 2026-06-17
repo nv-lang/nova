@@ -1,0 +1,18 @@
+// Plan 147 Ф.7 — negative: param without `mut` → index write forbidden.
+//
+// D176 / D246: params are ro by default (non-mut param is a ro binding).
+// `v[0] = val` inside `fn fill(v []int, ...)` must give E_READONLY_CONTENT
+// (L1/L2 binding freeze — param index-freeze, Plan 147 Ф.7).
+//
+// EXPECT_COMPILE_ERROR E_READONLY_CONTENT
+
+module plan147.f7_neg2_ro_param_index_write
+
+fn fill(v []int, val int) -> () {
+    v[0] = val
+}
+
+fn main() -> () {
+    mut a = [1, 2, 3]
+    fill(a, 99)
+}
