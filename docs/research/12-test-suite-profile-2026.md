@@ -252,3 +252,114 @@ plan97/pos_protocol_lit_gc_stress.nv
 4. **`_slow` migration is the highest-leverage CI win**: Moving 40+ bench/stress tests saves 40-100 s each in the default run.
 5. **CC-only tests are fast (< 5 s)**: Negative/checker tests add negligible cost; they should stay in default run.
 6. **Run time is usually 1-2 s**: Exceptions are intentional stress/bench tests (up to 21 s for `sleep_leak_check`).
+
+---
+
+## Ф.3 Classification of Slow Candidates
+
+Classification applied 2026-06-17 (Plan 169 Ф.3).
+
+### Rules
+- **keep-fast**: total_ms < 3000 AND run_ms < 2000 — stays in default run
+- **migrate-slow**: total_ms ≥ 3000 OR run_ms ≥ 2000 — rename to `_slow.nv`
+- **create-fast-variant**: slow only because of large N — create fast version + rename original to `_slow`
+- **investigate**: slow due to suspected runtime/compiler issue — add `[M-169-...]` marker
+
+### Classification Table
+
+| File | Category | Reason | Action |
+|------|----------|--------|--------|
+| `concurrency/cancel_latency_bench.nv` | migrate-slow | Bench fixture: 3 tests using real sleep timers (50ms/30ms/20ms × iterations), inherently time-bound. run_ms ~1350 ms, total ~51 s. | Rename to `cancel_latency_bench_slow.nv` |
+| `concurrency/gc_bench.nv` | create-fast-variant | Has 5 sub-tests; "bench: 100k record-аллокаций" and "bench: объект-sentinel жив после 1M аллокаций" are reduceable (100k→1k, 1M→10k). Others small. | Create `gc_bench.nv` (1k/10k N), rename original to `gc_bench_slow.nv` |
+| `concurrency/gc_pause_bench.nv` | migrate-slow | GC pause measurement: large workload test (1M × 3 rounds) has 30 s timeout. Inherently an observability test, not a fast regression guard. | Rename to `gc_pause_bench_slow.nv` |
+| `concurrency/plan40_perf_bench.nv` | migrate-slow | 3 perf benchmarks: 1000 supervised select dispatches, 200 timer-cleanup rounds, 10k channel throughput. run_ms ~5.9 s, total ~33 s. "perf_bench" in name. | Rename to `plan40_perf_bench_slow.nv` |
+| `concurrency/select_timer_stress.nv` | migrate-slow | 500-iteration select cleanup stress (500 × spawn + timer cancel). run_ms ~5.9 s. N is intentionally large for race detection; not reduceable without losing stress value. | Rename to `select_timer_stress_slow.nv` |
+| `concurrency/sleep_bench.nv` | migrate-slow | Two bench tests: 5k concurrent sleeps (inherently ~100-500ms wall), 100k sleep(0) yields. Bench fixture — not a functional correctness test. | Rename to `sleep_bench_slow.nv` |
+| `concurrency/sleep_precision_bench.nv` | migrate-slow | 50-sample precision measurement loop (50 × sleep(50ms) = minimum 2.5 s). Measurement fixture, not reduceable. ENV NOVA_MAXPROCS=1. | Rename to `sleep_precision_bench_slow.nv` |
+| `concurrency/stress_iso_3e.nv` | keep-fast | Regression guard for [M-83.10.4-iso-cancel-startup-race]: 99+1 fibers, cancel(30ms). Total run_ms ~30–300ms expected. Classified slow in profile due to compile cost (~50 s), not run cost. Functional correctness test, must stay in default run. | No change |
+| `concurrency/stress_iso_large.nv` | keep-fast | Regression guard for [M-83.11-gc-cancel-token-alias]: 999+1 no-op fibers. Body is instant (no sleeps). Only compile cost makes it appear slow. Must stay in default run. | No change |
+| `concurrency/supervised_cancel_stress_test.nv` | migrate-slow | 3 tests with 100-fiber cancel scopes × 3 repetitions, run_ms varies but scope is explicitly "stress". Budget relaxed (1000ms/1000ms/2000ms) but inherently multi-fiber. | Rename to `supervised_cancel_stress_test_slow.nv` |
+| `gc/stress_100k_ints.nv` | keep-fast | Pure int loop (no allocs): 100k iterations are trivially fast in C. Only compile dominates. Functional correctness test. run_ms should be < 100 ms. | No change |
+| `plan103_2/atomic_stress_sequential.nv` | keep-fast | Sequential atomic ops (10k–5k iterations). Pure single-fiber, no sync overhead. Fast execution. Only compile cost makes it appear slow. | No change |
+| `plan103_3/mutex_stress_mn_4workers.nv` | migrate-slow | 8 fibers × 5000 mutex-protected iters = 40000 lock/unlock cycles under M:N(4). EXPECT_TIMEOUT_MS 60000. Inherently slow by concurrency stress design. | Rename to `mutex_stress_mn_4workers_slow.nv` |
+| `plan103_3/rwlock_read_heavy_stress.nv` | migrate-slow | 10 readers + 1 writer × 1000 iters under M:N. EXPECT_TIMEOUT_MS 60000. High concurrency lock stress. | Rename to `rwlock_read_heavy_stress_slow.nv` |
+| `plan103_5/once_stress_mn_4workers.nv` | migrate-slow | 3 tests: 16 fibers × 100 calls. EXPECT_TIMEOUT_MS 150000 (2.5 min). Explicitly large-scale concurrency stress. | Rename to `once_stress_mn_4workers_slow.nv` |
+| `plan103_8/stress_cas_loop_high_contention.nv` | migrate-slow | 3 CAS-loop tests: 16 fibers × 20 iterations under contention. EXPECT_TIMEOUT_MS 300000. High-contention design. | Rename to `stress_cas_loop_high_contention_slow.nv` |
+| `plan103_8/stress_mixed_sync_mn.nv` | migrate-slow | 16 fibers × 200 iters using 4 sync primitives simultaneously. EXPECT_TIMEOUT_MS 300000. Cross-cutting stress fixture. | Rename to `stress_mixed_sync_mn_slow.nv` |
+| `plan103_8/stress_once_oncecell_lazy_combined.nv` | keep-fast | 4 fibers × small ops. EXPECT_TIMEOUT_MS 300000 (defensive), but actual runtime is fast (4 fibers × 1 init call each). Functional correctness test, low actual run cost. | No change |
+| `plan103_8/stress_producer_consumer_bounded.nv` | migrate-slow | 4 producers + 4 consumers × 500 items each using Condvar wait pattern. EXPECT_TIMEOUT_MS 300000. Inherently blocking/synchronization heavy. | Rename to `stress_producer_consumer_bounded_slow.nv` |
+| `plan103_8/stress_rwlock_read_heavy.nv` | keep-fast | Small scale: 4 readers + 1 writer × 10 iters only. EXPECT_TIMEOUT_MS 300000 (defensive). Actual run should be fast. Functional correctness. | No change |
+| `plan110/racing_cancels_stress_t11_3.nv` | keep-fast | 8 spawns each with trivial consume scope (no sleep, no loop). Completes near-instantly. Only compile cost makes it appear in slow list. | No change |
+| `plan110/stress_high_freq_loop_t11_8.nv` | create-fast-variant | 1000-iteration consume-scope loop. Run_ms should be fast (pure CPU). However, if it's slow in profile, N=1000 → N=100 for default, keep 1000 as `_slow`. | Create `stress_high_freq_loop_t11_8.nv` (100 iters), rename original to `stress_high_freq_loop_t11_8_slow.nv` |
+| `plan110/stress_nested_10_levels_t11_2.nv` | keep-fast | Single test, 10-level fixed nesting — not parameterized by N. Executes in microseconds. Only compile cost. | No change |
+| `plan140/perf_contract_hot_loop.nv` | migrate-slow | 20M iterations hot loop measuring contract overhead. `fn main()` not a `test` — perf fixture. EXPECT_STDOUT PERF_DONE. Inherently long run. | Rename to `perf_contract_hot_loop_slow.nv` |
+| `plan152_5/bench_operators.nv` | migrate-slow | 200k memcmp + 50k concat iterations. Explicitly bench workload. "bench" in name. High run cost by design. | Rename to `bench_operators_slow.nv` |
+| `plan55/f1_closure_array_gc_stress.nv` | create-fast-variant | 50-cycle GC stress (1000 closures × 50 cycles). Reduce to 5 cycles for default run (still exercises GC path), keep 50-cycle as `_slow`. | Create `f1_closure_array_gc_stress.nv` (5 cycles), rename original to `f1_closure_array_gc_stress_slow.nv` |
+| `plan56/f4_clone_gc_stress.nv` | create-fast-variant | 100 clones × 100-entry HashMap. Reduce to 10 clones for default (still verifies GC behavior), keep 100 as `_slow`. | Create `f4_clone_gc_stress.nv` (10 clones), rename original to `f4_clone_gc_stress_slow.nv` |
+| `plan57/p1_bench_basic_compiles.nv` | keep-fast | bench DSL compile smoke test — 1 test + 2 bench items. Inherently fast to execute (bench items don't run in `nova test`). Only clang compile time. | No change |
+| `plan57/p2_bench_namespace_callable.nv` | keep-fast | 5 functional tests of bench.*/gc.* intrinsics. Fast execution. Only compile cost. | No change |
+| `plan57/p4_bench_groups_compiles.nv` | keep-fast | bench DSL group/case compile smoke + 1 trivial test. Fast execution. Only compile cost. | No change |
+| `plan57/p5_bench_throughput_setters.nv` | keep-fast | bench setter callability smoke + 1 trivial test. Fast execution. Only compile cost. | No change |
+| `plan83_4_5_6_stress/cancel_stress.nv` | migrate-slow | 3 tests: 100 sequential supervised cancel scopes, 50 mid-flight cancels, 10 sleep-cancel cycles. Inherently sequential stress (100+ supervised scopes). | Rename to `cancel_stress_slow.nv` |
+| `plan83_4_5_6_stress/park_wake_stress.nv` | migrate-slow | 100 fibers × sleep(1), 20 fibers × sleep(5), 50-fiber sum. Real timer sleeps — inherently time-bounded. ENV NOVA_AUTOARM=0. | Rename to `park_wake_stress_slow.nv` |
+| `plan83_4_5_6_stress/spawn_stress_10k.nv` | migrate-slow | 1K no-op spawns, 100-spawn sum, 10-outer × 10-inner nested. ENV NOVA_AUTOARM=0. High spawn count stress. | Rename to `spawn_stress_10k_slow.nv` |
+| `plan83_11/driver_stress_cancel.nv` | migrate-slow | 20 cancel-sleep cycles × (8 fibers + canceller), 50 immediate-cancel races. EXPECT_TIMEOUT_MS 30000. ENV NOVA_AUTOARM=0. Concurrency stress. | Rename to `driver_stress_cancel_slow.nv` |
+| `plan83_stress_armed/cancel_stress_armed.nv` | migrate-slow | 10K supervised cancel cycles armed M:N. ALLOC_REQUIRES boehm. Times out at 60 s (100 s observed). Production scale stress. | Rename to `cancel_stress_armed_slow.nv` |
+| `plan83_stress_armed/memory_bounded_armed.nv` | migrate-slow | 10 cycles × 1K parallel-for spawns under armed M:N with GC measurement. ALLOC_REQUIRES boehm. | Rename to `memory_bounded_armed_slow.nv` |
+| `plan83_stress_armed/orphan_drain_stress_armed.nv` | migrate-slow | 1K detach orphans + runtime.drain_orphans(). ALLOC_REQUIRES boehm. | Rename to `orphan_drain_stress_armed_slow.nv` |
+| `plan83_stress_armed/park_wake_stress_armed.nv` | migrate-slow | 10K channel ping-pong under armed M:N. ALLOC_REQUIRES boehm. High N by design. | Rename to `park_wake_stress_armed_slow.nv` |
+| `plan83_stress_armed/spawn_stress_armed.nv` | migrate-slow | 10K parallel-for spawns under armed M:N. ALLOC_REQUIRES boehm. EXPECT_TIMEOUT_MS 120000. | Rename to `spawn_stress_armed_slow.nv` |
+| `plan97/pos_protocol_lit_gc_stress.nv` | keep-fast | 1000 protocol literal allocations — tight loop, instant in C. Second test is 4-literal smoke. Only compile cost makes it appear slow. | No change |
+
+### Summary
+
+| Category | Count | Files |
+|----------|------:|-------|
+| migrate-slow | 22 | See list below |
+| create-fast-variant | 4 | `gc_bench`, `stress_high_freq_loop_t11_8`, `f1_closure_array_gc_stress`, `f4_clone_gc_stress` |
+| keep-fast | 15 | `stress_iso_3e`, `stress_iso_large`, `stress_100k_ints`, `atomic_stress_sequential`, `stress_once_oncecell_lazy_combined`, `stress_rwlock_read_heavy`, `racing_cancels_stress_t11_3`, `stress_nested_10_levels_t11_2`, `p1_bench_basic_compiles`, `p2_bench_namespace_callable`, `p4_bench_groups_compiles`, `p5_bench_throughput_setters`, `pos_protocol_lit_gc_stress`, `gc_stress_100k_ints`, `stress_high_freq_loop_t11_8` (pending fast variant) |
+| investigate | 0 | All slowness attributed to intentional N or compile cost |
+
+### migrate-slow list (22 files)
+
+```
+concurrency/cancel_latency_bench.nv
+concurrency/gc_pause_bench.nv
+concurrency/plan40_perf_bench.nv
+concurrency/select_timer_stress.nv
+concurrency/sleep_bench.nv
+concurrency/sleep_precision_bench.nv
+concurrency/supervised_cancel_stress_test.nv
+plan103_3/mutex_stress_mn_4workers.nv
+plan103_3/rwlock_read_heavy_stress.nv
+plan103_5/once_stress_mn_4workers.nv
+plan103_8/stress_cas_loop_high_contention.nv
+plan103_8/stress_mixed_sync_mn.nv
+plan103_8/stress_producer_consumer_bounded.nv
+plan140/perf_contract_hot_loop.nv
+plan152_5/bench_operators.nv
+plan83_4_5_6_stress/cancel_stress.nv
+plan83_4_5_6_stress/park_wake_stress.nv
+plan83_4_5_6_stress/spawn_stress_10k.nv
+plan83_11/driver_stress_cancel.nv
+plan83_stress_armed/cancel_stress_armed.nv
+plan83_stress_armed/memory_bounded_armed.nv
+plan83_stress_armed/orphan_drain_stress_armed.nv
+plan83_stress_armed/park_wake_stress_armed.nv
+plan83_stress_armed/spawn_stress_armed.nv
+```
+
+### create-fast-variant list (4 files)
+
+| Original (→ `_slow`) | Fast variant parameters |
+|---------------------|------------------------|
+| `concurrency/gc_bench.nv` | Reduce test 1: 100k→1k allocs; test 5: 1M→10k sentinel allocs; others unchanged |
+| `plan110/stress_high_freq_loop_t11_8.nv` | Reduce 1000→100 loop iterations |
+| `plan55/f1_closure_array_gc_stress.nv` | Reduce 50→5 GC stress cycles |
+| `plan56/f4_clone_gc_stress.nv` | Reduce 100→10 clone iterations |
+
+### investigate list
+
+None. All observed slowness is attributable to:
+- Intentional N (stress/bench design) → migrate-slow or create-fast-variant
+- Compile time floor (~15-50 s per test on Windows/clang debug) → not a runtime bug
