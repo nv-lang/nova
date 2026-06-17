@@ -41,12 +41,10 @@ import std.collections.vec.{Vec}
 // `std.collections.hashmap`).
 //
 // `HashMap[K Hash, V]` ниже теперь резолвит `Hash` через cross-file
-// resolve в prelude (`std.prelude.protocols.Hash`). Структурное
-// требование `eq(other Self) -> bool` для key collision check сохраняется
-// implicitly через codegen lookup `key.eq(other_key)` — не объявлено
-// formally здесь, потому что split-policy D109: `[K Hash + Equal]`
-// будет рекомендованной формой когда multi-bound syntax появится в
-// bootstrap parser (D72 ext).
+// resolve в prelude (`std.prelude.protocols.Hash`). Key collision check
+// использует `==` (BinOp::Eq → nova_str_eq / int ==), что требует
+// неявного Equal-контракта от K. D109 split-policy: `[K Hash + Equal]`
+// будет формальным когда multi-bound syntax появится в bootstrap parser (D72 ext).
 //
 // Документация моевого Hash осталась в `std/prelude/protocols.nv`
 // (single source of truth для `nova doc`).
@@ -520,7 +518,7 @@ fn HashMap[K, V] @find_slot(key K) -> int {
                 if first_tombstone < 0 { first_tombstone = idx }
             }
             Occupied { key: k } => {             // partial: value игнорируется
-                if k.eq(key) { return idx }
+                if k == key { return idx }
             }
         }
         idx = (idx + 1) & mask
