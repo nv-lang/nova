@@ -66,7 +66,7 @@ type Slot[K, V]
 /// Hash map с открытой адресацией и линейным пробированием.
 ///
 /// Требует `K: Hash` — структурный bound на `hash() -> u64`.
-/// Автоматически растёт при достижении `load_factor` (по умолчанию 0.75).
+/// Автоматически растёт при достижении 75% заполненности (load factor = 3/4).
 ///
 /// `map-literal` синтаксис `[k: v, ...]` десугарируется в `HashMap` через
 /// атрибут `#from_pairs` (D108). Record-literal `{field: val}` коэрсируется
@@ -104,10 +104,6 @@ export type HashMap[K Hash, V] {
     // accumulating tombstones (даже если count низкий, много
     // tombstones замедляют lookup). Internal.
     _tombstones int
-
-    // Конфигурация — readonly invariants. Public (config-как).
-    ro load_factor f64       // обычно 0.75
-    ro initial_capacity int  // обычно 16
 }
 
 
@@ -151,8 +147,6 @@ export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V]
         _buckets: new_buckets[K, V](cap),
         _count: 0,
         _tombstones: 0,
-        load_factor: 0.75,
-        initial_capacity: cap,
     }
 }
 
@@ -534,12 +528,12 @@ fn HashMap[K, V] @find_slot(key K) -> int {
 }
 
 
-// HashMap.mut @maybe_grow() — пересоздать массив, если load_factor
+// HashMap.mut @maybe_grow() — пересоздать массив, если load factor
 // превышен или слишком много tombstones.
+// Load factor = 3/4 (75%): used * 4 < buckets * 3 → не растём.
 fn HashMap[K, V] mut @maybe_grow() {
     ro used = @_count + @_tombstones
-    ro threshold = (@_buckets.len() as f64 * @load_factor) as int
-    if used < threshold { return }
+    if used * 4 < @_buckets.len() * 3 { return }
 
     // Если tombstones — большая часть, можно rehash в тот же размер.
     // Иначе удваиваем capacity.
