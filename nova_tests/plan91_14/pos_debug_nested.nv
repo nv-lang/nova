@@ -1,0 +1,51 @@
+// Plan 91.14 — nested Debug: Option[T], Result[T,E] with user record types.
+//
+// Tests that the Debug protocol composes correctly through multiple
+// levels of nesting — critical for production debugging scenarios.
+// Option[Point] exercises the interaction between #impl(Debug) auto-derive
+// and the Option[T Debug] @debug implementation.
+
+module plan91_14.pos_debug_nested
+
+#impl(Debug)
+type Point { x int, y int }
+
+test "Option[Point] Some debug" {
+    ro p = Point { x: 3, y: 4 }
+    ro opt = Some(p)
+    ro s = "${opt:?}"
+    assert(s == "Some(Point { x: 3, y: 4 })")
+}
+
+test "Option[int] None debug — primitive type-param avoids struct cast" {
+    ro opt = None as Option[int]
+    ro s = "${opt:?}"
+    assert(s == "None")
+}
+
+test "Result[Point, str] Ok debug" {
+    ro p = Point { x: 1, y: 0 }
+    ro r = Ok(p) as Result[Point, str]
+    ro s = "${r:?}"
+    assert(s == "Ok(Point { x: 1, y: 0 })")
+}
+
+test "Result[Point, str] Err debug" {
+    ro r = Err("not found") as Result[Point, str]
+    ro s = "${r:?}"
+    // Inner str is debug-formatted (quoted)
+    assert(s == "Err(\"not found\")")
+}
+
+test "Option[Option[int]] nested Some" {
+    ro inner = Some(42)
+    ro outer = Some(inner)
+    ro s = "${outer:?}"
+    assert(s == "Some(Some(42))")
+}
+
+test "Option[str] — inner str is quoted" {
+    ro opt = Some("debug")
+    ro s = "${opt:?}"
+    assert(s == "Some(\"debug\")")
+}

@@ -1,0 +1,27 @@
+// Plan 91.14 (A8) — #impl(Debug) with wrong @debug signature → compile error.
+//
+// A type that claims #impl(Debug) but provides @debug with the wrong
+// return type triggers E_IMPL_WRONG_SIGNATURE at type-check time.
+//
+// This verifies that the Debug protocol signature is enforced:
+//   expected: fn @debug(mut w Write) -> ()
+//   actual:   fn @debug(mut w Write) -> str  — WRONG
+//
+// EXPECT_COMPILE_ERROR E_IMPL_WRONG_SIGNATURE
+
+module plan91_14.neg_debug_no_impl
+
+#impl(Debug)
+type BadDebugImpl { value int }
+
+// Wrong return type — Debug.@debug must return ()
+fn BadDebugImpl @debug(mut w Write) -> str {
+    w.write(str.from(@value))
+    str.from(@value)
+}
+
+test "wrong @debug signature detected at compile time" {
+    ro b = BadDebugImpl { value: 42 }
+    ro s = "${b:?}"
+    assert(s == "BadDebugImpl { value: 42 }")
+}

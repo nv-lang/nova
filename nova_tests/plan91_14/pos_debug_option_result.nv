@@ -1,0 +1,42 @@
+// Plan 91.14 (A3) — Option[T] and Result[T,E] @debug via ${:?}
+//
+// Tests Option[T Debug] @debug and Result[T,E Debug] @debug methods
+// added in Plan 91.15 Ф.2 (core.nv).
+// These are part of the 91.14 acceptance scope: A3.
+
+module plan91_14.pos_debug_option_result
+
+test "Some(int) debug" {
+    ro s = Some(42)
+    assert("${s:?}" == "Some(42)")
+}
+
+test "None debug" {
+    ro n = None as Option[int]
+    assert("${n:?}" == "None")
+}
+
+test "Some(str) debug — inner str is quoted" {
+    ro s = Some("hello")
+    assert("${s:?}" == "Some(\"hello\")")
+}
+
+test "nested Some debug" {
+    ro s = Some(Some(1))
+    assert("${s:?}" == "Some(Some(1))")
+}
+
+test "Ok(int) debug" {
+    ro r = Ok(1) as Result[int, str]
+    assert("${r:?}" == "Ok(1)")
+}
+
+test "Err(str) debug — inner str is quoted" {
+    ro r = Err("oops") as Result[int, str]
+    assert("${r:?}" == "Err(\"oops\")")
+}
+
+test "Ok(str) debug" {
+    ro r = Ok("yes") as Result[str, str]
+    assert("${r:?}" == "Ok(\"yes\")")
+}
