@@ -224,10 +224,8 @@ export fn[T Compare] []T mut @sort_of() -> @ {
     while i < n {
         ro key = @[i]
         mut j = i - 1
-        // Note: binding `cur = @[j]` workaround — direct @[j].method
-        // не диспатчится правильно в mono пути (followup [M-91.8c-direct-index-method]).
         mut cur = @[j]
-        while j >= 0 && cur.compare(key) > 0 {
+        while j >= 0 && cur > key {
             @[j + 1] = cur
             j = j - 1
             if j >= 0 { cur = @[j] }
