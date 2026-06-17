@@ -37103,3 +37103,15 @@ Tests: 39 unit + 13 integration = 52 completion-specific + 167 total nova-lsp te
   `Nova_...__...*` pointer-elem в tuple fields, если он ещё не в `user_type_fwd_decls`
 - plan168: 2/2 PASS; plan153_1: 8/9 PASS (1 pre-existing CODEGEN-FAIL); plan118_6: 15/15 PASS
 - D300 spec NEW
+
+## Plan 169 — Test-suite profiling + speedup (2026-06-17)
+
+**Реализовано:**
+- compile_ms/run_ms split в TestResult + --results-file JSON (backward-compat)
+- Timing profile: 260 тестов, median 36.7s, p90 47.5s (compile 96%)
+- 24 файла → _slow.nv; 4 fast variants (gc_bench/stress_high_freq/closure_gc_stress/clone_gc_stress)
+- D278 spec: бюджет ≤120s CI, пороги total≥3s/run≥2s/compile≥500ms
+- plan169/ фикстуры: 3/3 PASS (t1+t2 default, t2_slow slow-lane)
+
+**Упрощений нет:** производственная реализация.
+**Followup:** [M-169-timing-report-regression-gate] P3 — CI gate no test > 3s.
