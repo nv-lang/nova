@@ -1,0 +1,125 @@
+module plan91_8c_direct.pos_direct_compare
+
+// Plan 91.8c fix M-91.8c-direct-index-method:
+// @[j].compare(key) in a [T Compare] generic method body must work without
+// an intermediate binding (fix: SelfAccess arm in compute_array_elem_type_for_obj).
+
+#impl(Compare)
+type Score {
+    value int
+}
+
+fn Score @compare(other Score) -> int {
+    @value - other.value
+}
+
+// Generic linear search using @[i].compare(key) directly — no intermediate var.
+fn[T Compare] []T @linear_search_direct(key T) -> Option[int] {
+    ro n = @len()
+    mut i = 0
+    while i < n {
+        ro cmp = @[i].compare(key)
+        if cmp == 0 { return Some(i) }
+        i = i + 1
+    }
+    None
+}
+
+// Generic binary search using @[mid].compare(key) directly — the canonical
+// bug reproduction case (compute_array_elem_type_for_obj SelfAccess).
+fn[T Compare] []T @binary_search_direct(key T) -> Option[int] {
+    mut lo = 0
+    mut hi = @len() - 1
+    while lo <= hi {
+        ro mid = (lo + hi) / 2
+        ro cmp = @[mid].compare(key)
+        if cmp == 0 { return Some(mid) }
+        if cmp < 0 { lo = mid + 1 }
+        else       { hi = mid - 1 }
+    }
+    None
+}
+
+test "linear_search_direct []int — found" {
+    ro xs []int = [3, 1, 4, 1, 5, 9, 2, 6]
+    match xs.linear_search_direct(9) {
+        Some(idx) => assert(idx == 5)
+        None      => assert(false)
+    }
+}
+
+test "linear_search_direct []int — not found" {
+    ro xs []int = [1, 2, 3]
+    match xs.linear_search_direct(99) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "linear_search_direct []Score — found" {
+    ro xs []Score = [Score { value: 10 }, Score { value: 20 }, Score { value: 30 }]
+    ro key = Score { value: 20 }
+    match xs.linear_search_direct(key) {
+        Some(idx) => assert(idx == 1)
+        None      => assert(false)
+    }
+}
+
+test "linear_search_direct []Score — not found" {
+    ro xs []Score = [Score { value: 10 }, Score { value: 30 }]
+    ro key = Score { value: 15 }
+    match xs.linear_search_direct(key) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "binary_search_direct []int — found" {
+    ro xs []int = [1, 3, 5, 7, 9]
+    match xs.binary_search_direct(5) {
+        Some(idx) => assert(idx == 2)
+        None      => assert(false)
+    }
+}
+
+test "binary_search_direct []int — not found" {
+    ro xs []int = [1, 3, 5, 7, 9]
+    match xs.binary_search_direct(4) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
+
+test "binary_search_direct []int — first element" {
+    ro xs []int = [2, 4, 6, 8, 10]
+    match xs.binary_search_direct(2) {
+        Some(idx) => assert(idx == 0)
+        None      => assert(false)
+    }
+}
+
+test "binary_search_direct []int — last element" {
+    ro xs []int = [2, 4, 6, 8, 10]
+    match xs.binary_search_direct(10) {
+        Some(idx) => assert(idx == 4)
+        None      => assert(false)
+    }
+}
+
+test "binary_search_direct []Score — found" {
+    ro xs []Score = [Score { value: 1 }, Score { value: 3 }, Score { value: 5 }]
+    ro key = Score { value: 3 }
+    match xs.binary_search_direct(key) {
+        Some(idx) => assert(idx == 1)
+        None      => assert(false)
+    }
+}
+
+test "binary_search_direct []Score — not found" {
+    ro xs []Score = [Score { value: 1 }, Score { value: 3 }, Score { value: 5 }]
+    ro key = Score { value: 4 }
+    match xs.binary_search_direct(key) {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}

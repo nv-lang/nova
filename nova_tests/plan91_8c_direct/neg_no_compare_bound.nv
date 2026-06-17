@@ -1,0 +1,37 @@
+// EXPECT_COMPILE_ERROR does not satisfy `Compare` bound
+module plan91_8c_direct.neg_no_compare_bound
+
+// Plan 91.8c fix M-91.8c-direct-index-method: negative guard.
+// Calling a [T Compare] generic method (which uses @[j].compare(key) directly)
+// with a concrete type that does NOT implement Compare must be a compile error.
+// Guards that the fix did not weaken the Compare bound enforcement at call sites.
+
+type Widget {
+    id int
+    label str
+}
+
+// Widget does NOT implement Compare — no @compare method.
+
+// Generic binary search that uses @[mid].compare(target) directly (the fix).
+// Bound [T Compare] is declared — call-site check must fire.
+fn[T Compare] []T @direct_search(key T) -> Option[int] {
+    ro n = @len()
+    mut lo = 0
+    mut hi = n - 1
+    while lo <= hi {
+        ro mid = (lo + hi) / 2
+        ro cmp = @[mid].compare(key)
+        if cmp == 0 { return Some(mid) }
+        if cmp < 0 { lo = mid + 1 }
+        else       { hi = mid - 1 }
+    }
+    None
+}
+
+test "calling [T Compare] method with non-Compare type is compile error" {
+    ro xs []Widget = [Widget { id: 1, label: "a" }, Widget { id: 2, label: "b" }]
+    ro key = Widget { id: 1, label: "a" }
+    // Widget does not implement Compare — must fail with E_PROTO_NOT_IMPL at call site.
+    xs.direct_search(key)
+}
