@@ -5118,6 +5118,46 @@ impl<'a> TypeCheckCtx<'a> {
                 });
             }
         }
+        // Plan 147 Ф.7 [M-147-param-index-freeze]: non-mut params are ro by
+        // default (D176 §«Параметры функций»). Register them in ro_binding_names
+        // so that check_target_readonly's is_through_ro_binding covers index
+        // writes `arr[i] = x` on ro params, mirroring the Member-field check.
+        //
+        // Guard: only apply to functions defined in entry-module files (i.e.
+        // the user's own code). Imported functions from std/prelude have already
+        // been checked when their source was type-checked; re-enforcing here
+        // would fire false positives on std library bodies that intentionally
+        // write through array params.
+        //
+        // When the module has peer files (multi-file module), `entry_file_ids`
+        // contains the FileIds of entry-module peers. When testing a single file
+        // (no peer files), `entry_file_ids` is empty; in that case we use
+        // file_id == 0 (the initial parse file) as the entry-module heuristic —
+        // inline-merged imports are parsed as separate source strings with
+        // file_id > 0, so this correctly skips them.
+        //
+        // Note: `ro b []int` (prefix synonym, valid per D176) and `b ro []int`
+        // (type-position ro) produce the same AST (Readonly([]int), is_mut=false)
+        // so no redundancy check is added here — the prefix synonym form is
+        // explicitly documented as valid. The parser already catches `ro x ro T`
+        // and `mut x mut T` for let-bindings (lines 5198-5215 in parser/mod.rs).
+        let is_entry_fn = if self.entry_file_ids.is_empty() {
+            fd.span.file_id == 0
+        } else {
+            self.entry_file_ids.contains(&fd.span.file_id)
+        };
+        let ro_snap_fn: std::collections::HashSet<String> =
+            self.ro_binding_names.borrow().clone();
+        if is_entry_fn {
+            for p in &fd.params {
+                // Add non-mut, non-consume params to ro_binding_names so
+                // is_through_ro_binding fires on index writes `arr[i] = x` (P7
+                // freeze, D246).  `mut` params and `consume` params may mutate.
+                if !p.is_mut && !p.consume {
+                    self.ro_binding_names.borrow_mut().insert(p.name.clone());
+                }
+            }
+        }
         match &fd.body {
             FnBody::Expr(e) => {
                 self.f1_expr(e, &gs, &mut scope, errors);
@@ -5126,6 +5166,10 @@ impl<'a> TypeCheckCtx<'a> {
             FnBody::Block(b) => self.f1_block(b, &gs, &mut scope, errors),
             FnBody::External => {}
         }
+        // Restore ro_binding_names to the state before this fn's params were
+        // added — function scopes are independent; param names from one fn
+        // must not bleed into the next fn's checks.
+        *self.ro_binding_names.borrow_mut() = ro_snap_fn;
     }
 
     fn f1_block(
@@ -7961,10 +8005,48 @@ impl<'a> TypeCheckCtx<'a> {
             // D176 / Plan 114 D184: index write `arr[i] = x` — forbid if arr has `ro` type.
             ExprKind::Index { obj, .. } => {
                 let obj_ty = self.infer_expr_type(obj, scope);
-                if let Some(tr) = obj_ty {
+                if let Some(tr) = &obj_ty {
                     if tr.is_readonly() {
                         errors.push(Diagnostic::new(
                             "[E_READONLY_CONTENT] cannot write through index on `ro` array".to_string(),
+                            target.span,
+                        ));
+                        return;
+                    }
+                }
+                // Plan 147 Ф.7 [M-147-ro-binding-index-freeze] + [M-147-param-index-freeze]:
+                // L1/L2 freeze (D246 P7): a `ro`-bound local or a non-mut param is frozen —
+                // even an explicitly-`mut`-typed content view does NOT allow index writes if
+                // the ROOT binding is ro.  Mirror the Member-field check above (line ~7878).
+                //
+                // `ro r mut []int` → `r[0] = x` ❌ (binding ro dominates; L1 freeze)
+                // but `ro r mut Point` → `r.field = v` ✅ was already the Member rule.
+                // The only carve-out: explicit `mut` content-view type on the object
+                // (TypeRef::Mut) allows content writes regardless of binding (R2-split P6).
+                // We check: if root is ro-bound AND the *declared type* is NOT TypeRef::Mut
+                // (explicit mut content-view) → fire.
+                // Plan 147 Ф.7: only enforce the ro-binding freeze for
+                // assignments in user's own code (entry-module file_id). Imported
+                // prelude / std functions may legitimately use `ro buf = ...` locals
+                // that they then write through (e.g. WriteBuffer internals). Their
+                // correctness is established when their own module is compiled; we
+                // must not re-check them here against the user module's entry guard.
+                let is_target_in_entry = if self.entry_file_ids.is_empty() {
+                    target.span.file_id == 0
+                } else {
+                    self.entry_file_ids.contains(&target.span.file_id)
+                };
+                if is_target_in_entry && self.is_through_ro_binding(obj) {
+                    let explicit_mut_view = obj_ty.map_or(false, |t| t.is_mut());
+                    if !explicit_mut_view {
+                        errors.push(Diagnostic::new(
+                            "[E_READONLY_CONTENT] cannot write through index on a `ro`-bound \
+                             binding or non-mut param — L1/L2 freeze (Plan 147 / D246 P7). \
+                             The binding is readonly; use `mut binding = ...` (local) or \
+                             `mut param T` (param) to allow index writes. An explicit `mut T` \
+                             content-view type (`ro r mut []int`) would also permit it \
+                             (R2-split, P6)."
+                                .to_string(),
                             target.span,
                         ));
                     }
