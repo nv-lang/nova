@@ -1,0 +1,2 @@
+# Marks std/_experimental/ as a fixture directory — excluded from nova test discovery.
+# Files here are not compiled as standalone tests; they are design/prototype stubs.
