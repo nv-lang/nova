@@ -1,0 +1,12 @@
+// Plan 169 Ф.6: full slow variant — large N, runs in slow lane only.
+// Fast version (reduced N): t2_fast_variant.nv
+module plan169.t2_fast_variant_slow
+
+test "full variant: 10000 iterations" {
+    mut sum = 0
+    for i in 0..10_000 {
+        sum = sum + i
+    }
+    // sum(0..9999) = 9999*10000/2 = 49_995_000
+    assert(sum == 49_995_000)
+}

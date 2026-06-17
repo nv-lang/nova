@@ -74,11 +74,11 @@ export fn SocketAddr.from_str(s str) AddrNet -> Result[SocketAddr, NetError] {
 #stable(since = "0.1")
 export fn SocketAddr @port() AddrNet -> u16 { AddrNet.port(@) }
 
-/// Get the host as a human-readable string.
+/// Get the host IP as a human-readable string.
 ///
 /// For IPv4: dotted-decimal ("127.0.0.1"). For IPv6: compressed hex ("::1").
 #stable(since = "0.1")
-export fn SocketAddr @host_str() AddrNet -> str { AddrNet.host_str(@) }
+export fn SocketAddr @ip() AddrNet -> str { AddrNet.ip(@) }
 
 /// Return `true` if this is an IPv4 address.
 #stable(since = "0.1")
@@ -119,7 +119,7 @@ export fn real_addr_net() -> Effect[AddrNet] => effect AddrNet {
         else { Ok(SocketAddr._from_raw(handle)) }
     }
     port(addr) => socket_addr_port(addr.handle)
-    host_str(addr) => socket_addr_host_str(addr.handle)
+    ip(addr) => socket_addr_ip(addr.handle)
     is_v4(addr) => socket_addr_is_v4(addr.handle)
     is_v6(addr) => socket_addr_is_v6(addr.handle)
     to_str(addr) => socket_addr_to_str(addr.handle)

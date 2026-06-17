@@ -184,6 +184,7 @@
 
 | Маркер | Суть | Home | Pri |
 |---|---|---|---|
+| `[M-169-timing-report-regression-gate]` | ✅ **CLOSED**: `--max-test-ms N` флаг — тесты превышающие порог → список + exit 3. | Plan 169 | ✅ done |
 | `[M-118.1-typed-pointer-cookbook]` | docs/typed-pointers.md cookbook не написан (есть только Plan 115 FFI cookbook). | plan-118.1 Followups | P3 |
 | `[M-118.1.7-extern-block]` | `extern "C" { unsafe fn … }` block-сахар (gated на multi-ABI); сейчас individual `external unsafe fn`. | plan-118.1 Followups | P3 |
 | `[M-D227-alias-newtype-range]` | D227 range-check НЕ покрывает alias/newtype над sized-int (`assignable()` чекает только direct Named + Readonly/Mut/Unsafe; резолв alias-имени требует `self.types`, недоступного на free-fn coercion-сайте). | plan-142 Scoped open-questions | P3 |
@@ -560,6 +561,52 @@
 - ~~**`[M-91.13-real-dns-integration-test]`**~~ ✅ **CLOSED 2026-06-16** — `net_v2_dns_real_slow.nv` добавлен (`_slow` suffix, `NOVA_SLOW_TESTS=1` opt-in); `assert(r.is_ok())` с реальным `localhost` resolver.
 - **`[M-91.12-double-close-static]`** — double-close через effect-dispatch не ловится checker'ом для `mut`-binding value types (только `consume`-binding consume-types отслеживаются). → Future Plan.
 - **`[M-91.12-real_addr_net-naming]`** — рассмотреть `sys_tcp_net/sys_addr_net` vs `real_*` naming. → Future API review.
+- **`[M-91.16-tcp-split]`** — ✅ CLOSED 2026-06-17 (Plan 91.16, D301). `TcpReadHalf`/`TcpWriteHalf` consume-split реализован: независимые C-side park-слоты (`read_scope`/`read_slot` vs `write_scope`/`write_slot`), atomic `split_refcount` на C-handle, mock + real-network тесты PASS.
+- **`[M-91.12-split-halves]`** (TCP) — ✅ CLOSED 2026-06-17 (Plan 91.16, D301). См. выше.
+- **`[M-91.16-tuple-consume-binding]`** — consume-tracking не пробрасывается через tuple-destructuring: `consume (rd, wr) = s.split()` → parse error («unexpected `consume`»), а `mut (rd, wr)` не отслеживается на double-consume. → double-close одной из split-половин НЕ ловится компилятором (refcount защищает на runtime). Нужна поддержка `consume`-binding на tuple-pattern в парсере + consume-checker. → Future Plan. (тот же класс, что `[M-91.12-double-close-static]`.)
+- **`[M-net-udp-two-fiber-race]`** — 🔴 OPEN (P2, обнаружено 2026-06-17, Plan 91.16 final regression). `net_v2_udp_two_fiber_slow` (plan91_12) интермиттентно зависает (~2/3 запусков timeout ~45-73s даже в isolation `--jobs 1`, ~1/3 PASS). Класс: park/wake race на UDP-loopback двух concurrent-фиберов (один `recv_from` паркуется, другой `send_to`; датаграмма теряется или wake не приходит). НЕ регрессия Plan 91.15/91.16: UDP-рантайм в `compiler-codegen/nova_rt/net.c` byte-identical к base `ccca04f6` (0 UDP-строк изменено), `std/net/udp.nv` — только снятие `Blocking`-аннотации (без runtime-эффекта). Корень в shared M:N park/wake (ср. `[reference-mn-race-case-study]`). → Future Plan (UDP recv/send wake-ordering hardening).
+
+## Plan 91.16 — TCP split: TcpReadHalf + TcpWriteHalf ✅ CLOSED 2026-06-17
+
+По образцу UDP split (Plan 166 / D298). `TcpStream consume @split() -> (TcpReadHalf, TcpWriteHalf)`. Atomic refcount (`split_refcount`) на C-handle, оба half — consume value, независимые park-слоты для concurrent r/w. Также добавлен `TcpStream @write_all` + `TcpWriteHalf @write_all` (закрывает `[M-91.15-write-all]`). Spec: D301. Тесты: `nova_tests/plan91_16/` (mock + `_slow` real-network + stream-after-split neg). → маркер `[M-91.16-tcp-split]` CLOSED.
+
+## Plan 91.15 — std/net API polish ✅ CLOSED 2026-06-17
+
+### P0 — Удалить retracted фичу (blocking {} / Blocking) ✅ DONE
+
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-91.15-remove-blocking]` | ✅ CLOSED 2026-06-17 (P0). Blocking убран из TcpNet/UdpNet сигнатур; compiler registry + checker arm. | Plan 91.15 P0 | ✅ done |
+
+### P1 — Критические ✅ DONE
+
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-91.15-write-all]` | ✅ CLOSED 2026-06-17 (P1). TcpStream/TcpWriteHalf.write_all() — C-backed. | Plan 91.15 P1 | ✅ done |
+| `[M-91.15-eof-semantics]` | ✅ CLOSED 2026-06-17 (P1). NetError.Eof при TCP peer-close. | Plan 91.15 P1 | ✅ done |
+| `[M-91.15-neterror-to-str]` | ✅ CLOSED 2026-06-17 (P1). NetError @to_str() 14 variants. | Plan 91.15 P1 | ✅ done |
+| `[M-91.15-host-str-rename]` | ✅ CLOSED 2026-06-17 (P1). SocketAddr.ip() renamed from host_str(). | Plan 91.15 P1 | ✅ done |
+
+### P2 — Важные дополнения ✅ DONE
+
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-91.15-permission-denied]` | ✅ CLOSED 2026-06-17 (P2). NetError.PermissionDenied + UV_EACCES normalization. | Plan 91.15 P2 | ✅ done |
+| `[M-91.15-connection-reset]` | ✅ CLOSED 2026-06-17 (P2). NetError.ConnectionReset + UV_ECONNRESET normalization. | Plan 91.15 P2 | ✅ done |
+| `[M-91.15-connect-timeout]` | OPEN P3. TCP connect-timeout API. | plan-91.15 Followups | P3 |
+| `[M-91.15-read-bytes]` | OPEN P3. read_bytes(n int) — guaranteed binary read. | plan-91.15 Followups | P3 |
+| `[M-91.15-effect-prefix-consistency]` | OPEN P3. Convention documented in effect.nv; no renames (zero user impact, high churn). | plan-91.15 Followups | P3 |
+
+### P3 — Полезно иметь (DEFERRED)
+
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-91.15-read-exact]` | OPEN P3. read_exact() — fixed-length framing. | plan-91.15 Followups | P3 |
+| `[M-91.15-shutdown-write]` | OPEN P3. shutdown_write() — half-close TCP write side. | plan-91.15 Followups | P3 |
+| `[M-91.15-so-reuseport]` | OPEN P3. SO_REUSEPORT for multi-listener load-balancing. | plan-91.15 Followups | P3 |
+| `[M-91.15-udp-multicast]` | OPEN P3. UDP multicast join/leave API. | plan-91.15 Followups | P3 |
+
+[M-118.6-tuple-field-escape] tuple field chain-root tracking — &tuple.N escape analysis.
 
 ## Follow-up: Plan 106 (if/while && guard)
 
@@ -575,12 +622,34 @@
 | `[M-104.9-dynamic-method-completion]` | OPEN P3. Completion — статические таблицы. V2: запрашивать методы через compiler API. | plan-104.9 Followups | P3 |
 | `[M-104.5-suggestion-field-wiring]` | OPEN P3. CodeAction edit — re-scan vs compiler Suggestion.span. | plan-104.5 Followups | P3 |
 
+## Follow-up: Plan 104.4 (documentSymbol + workspaceSymbol + references)
+
+✅ **CLOSED 2026-06-16** — branch `plan-104-4`, commit `8b3e1903`; 86+15 PASS.
+
+Open V1 markers (gated on type-checker resolver API in Plan 104.2):
+- **`[M-104.4-refs-incremental-index]`** — references scan is full filesystem per-request (V2: incremental index). Гейт: type-checker integration (Plan 104.2).
+- **`[M-104.4-workspace-symbol-fuzzy]`** — workspace/symbol uses substring V1 (V2: fuzzy ranking / prefix scoring). Independent of type-checker.
+- **`[M-104.4-cross-file-method-nesting]`** — documentSymbol nests methods under type only within same file via receiver name match (V2: cross-file resolver needs Plan 104.2 symbol resolution API).
+
+## Follow-up: Plan 104.5 (LSP Code Actions / Quick-fixes V1)
+
+- **`[M-104.5-suggestion-field-wiring]`** (P2, home **Plan 104.5**) — `Suggestion` struct field в compiler diagnostic не propagated в LSP yet; code_actions.rs парсит сам из message text. Когда compiler добавит machine-readable `Suggestion` поле в DiagnosticResult, LSP should consume it directly without re-parsing. → Plan 104.x или Plan 101 V3.
+- **`[M-104.5-multi-edit-rename]`** (P3, home **Plan 104.5**) — fix handlers currently produce single-span TextEdit; multi-edit (e.g., rename generic `T` → `T1` across all occurrences in fn signature + body) требует cross-span edits и range-finder в source. V2 с Plan 104.6 (rename).
+- **`[M-104.5-organize-imports]`** (P3, home **Plan 104.5**) — `source.organizeImports` action kind advertised but not yet implemented (no-op body); V2 после Plan 104.3/104.6 когда symbol index доступен для dead-import detection.
+
+## Follow-up: Plan 104.6 (Rename + Format-on-save)
+
+- **`[M-104.6-symbol-table-rename]`** (P3) — V1 rename uses regex word-boundary scan across all files; does not distinguish `foo` declared in different scopes. V2: expose `resolve_symbol_at(module, pos) -> Option<Symbol>` from `compiler-codegen` for per-position symbol resolution; use it to restrict rename to the exact declaration + its references only.
+- **`[M-104.6-nova-fmt-stdin]`** (P3) — Current `format_document` writes to a temp file. If `nova fmt` adds `--stdin` support, switch to piped stdin to avoid I/O overhead.
+- **`[M-104.6-ontypeformat-more-triggers]`** (P4) — Add `,` and `;` triggers for onTypeFormatting (auto-space after comma etc.).
+
 ## Follow-up: tree-sitter-nova (grammar sync)
 
 | Маркер | Статус | Действие |
 |---|---|---|
 | `[M-104.7-v4-keywords]` | OPEN | Будущие keywords → grammar update при добавлении в lexer |
 | `[M-104.7-query-update-priv]` | ✅ CLOSED 2026-06-17 | highlights.scm updated — priv/pub/extern highlighted |
+
 ## Follow-up: Plan 91.8b (remove @eq/@lt/@le/@gt/@ge)
 
 | Маркер | Статус | Home | Действие |

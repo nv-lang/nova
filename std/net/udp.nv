@@ -52,7 +52,7 @@ export fn UdpSocket.bind(addr SocketAddr) UdpNet -> Result[UdpSocket, NetError] 
 ///
 /// Returns `Ok(n)` where `n` is bytes sent, or `Err(...)` on error.
 #stable(since = "0.1")
-export fn UdpSocket mut @send_to(data str, addr SocketAddr) UdpNet Blocking -> Result[int, NetError] {
+export fn UdpSocket mut @send_to(data str, addr SocketAddr) UdpNet -> Result[int, NetError] {
     UdpNet.send_to(@, data, addr)
 }
 
@@ -63,7 +63,7 @@ export fn UdpSocket mut @send_to(data str, addr SocketAddr) UdpNet Blocking -> R
 ///
 /// **Cancel-safe:** in-flight receive is aborted on scope cancel.
 #stable(since = "0.1")
-export fn UdpSocket mut @recv_from(max int) UdpNet Blocking -> Result[(str, SocketAddr), NetError] {
+export fn UdpSocket mut @recv_from(max int) UdpNet -> Result[(str, SocketAddr), NetError] {
     UdpNet.recv_from(@, max)
 }
 

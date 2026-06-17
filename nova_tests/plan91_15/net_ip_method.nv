@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.15 P1 — positive: SocketAddr @ip() (renamed from @host_str(), D302).
+//
+// Uses real_addr_net() — address ops are pure (no I/O), so no supervised needed.
+
+module plan91_15.net_ip_method
+
+import std.net.{SocketAddr, real_addr_net}
+
+test "ip — IPv4 loopback renders dotted-decimal" {
+    with AddrNet = real_addr_net() {
+        ro a = SocketAddr.loopback(8080)
+        assert(a.ip() == "127.0.0.1")
+    }
+}
+
+test "ip — IPv6 loopback renders compressed hex" {
+    with AddrNet = real_addr_net() {
+        ro a = SocketAddr.loopback_v6(9090)
+        assert(a.ip() == "::1")
+    }
+}
+
+test "ip — explicit v4 octets" {
+    with AddrNet = real_addr_net() {
+        ro a = SocketAddr.v4(192, 168, 1, 1, 80)
+        assert(a.ip() == "192.168.1.1")
+    }
+}

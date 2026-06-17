@@ -1,16 +1,16 @@
 // EXPECT_COMPILE_ERROR D172-block-form-removed
 //
-// Plan 83.10 (2026-05-25): blocking body (Plan 83.3 leaf-contract) bans
-// async I/O effects (Net/Fs/Db/Time) — body runs on libuv threadpool
-// thread without fiber/event-loop context. Time.sleep inside blocking{}
-// → compile error.
+// Plan 91.15 (D172): the `blocking { }` block-form was retracted by Plan 113
+// and the `Blocking` effect removed from the compiler entirely. Any use of the
+// block-form is a parse error (`[D172-block-form-removed]`) regardless of the
+// enclosing function's effects. Use a `#blocking fn` instead.
 //
-// Counterpart к existing blocking_body_alloc_rejected.nv / blocking_body_
-// suspend_rejected.nv для Time-specific subset.
+// (Previously this fixture exercised the Plan 83.3 leaf-contract ban on async
+// I/O effects inside a `blocking { }` body; that contract no longer exists.)
 
 module plan83_10.cancel_token_wrong_type_compile_error
 
-fn blocking_with_time_violates() Blocking + Time -> int {
+fn blocking_with_time_violates() Time -> int {
     mut r = 0
     blocking {
         Time.sleep(0)

@@ -9,25 +9,48 @@
 // not raw C handles. Handlers unwrap/wrap .handle internally.
 //
 // All fallible operations return Result[T, NetError] so error handling is
-// explicit and uniform at the call site. Blocking annotation lives on the
-// public API wrappers in tcp.nv / udp.nv, not on the effect operations
-// themselves.
+// explicit and uniform at the call site. Operations that wait on I/O park the
+// calling fiber inside the effect handler (real_tcp_net / real_udp_net),
+// resuming it when the libuv event loop completes the request; the caller sees
+// a plain synchronous-looking call carrying only the TcpNet / UdpNet effect.
 //
 // D281: TcpNet/UdpNet/DnsNet effect family spec.
 
 module std.net
 
+// ─── Effect-operation naming convention (Plan 91.15 P2) ──────────────────────
+//
+// These effect operations are internal dispatch points; user code never calls
+// them directly (it uses the @method() API on TcpListener/TcpStream/etc.). The
+// operation names follow a per-handle prefix so the receiver type is obvious at
+// the dispatch site:
+//
+//   TcpNet
+//     listener_*    — operations on a TcpListener   (listener_local_port, …)
+//     stream_*      — operations on a TcpStream      (stream_local_addr, …)
+//     read_half_*   — operations on a TcpReadHalf    (Plan 91.16 split)
+//     write_half_*  — operations on a TcpWriteHalf   (Plan 91.16 split)
+//   UdpNet
+//     socket_*      — operations on a UdpSocket       (socket_local_port, …)
+//
+// Exceptions (intentional, no prefix): the verb already implies the receiver —
+//   bind / accept / connect / write / write_all / read / send_to / recv_from —
+// and the close_<kind> family (close_stream / close_listener / close_socket /
+// split_stream) names the receiver kind as a suffix for symmetry with close.
+// New operations MUST follow the matching prefix for their receiver type.
+
 // TcpNet -- TCP transport operations.
 //
 // All fallible operations return Result[T, NetError].
-// Blocking operations (accept, connect, write) park the calling fiber;
-// the caller declares `Blocking` on the public API wrapper.
+// Operations that wait on I/O (accept, connect, write, read) park the calling
+// fiber inside the handler and resume it from the libuv event loop.
 #stable(since = "0.1")
 export type TcpNet effect {
     bind(addr SocketAddr) -> Result[TcpListener, NetError]
     accept(listener TcpListener) -> Result[TcpStream, NetError]
     connect(addr SocketAddr) -> Result[TcpStream, NetError]
     write(stream TcpStream, data str) -> Result[int, NetError]
+    write_all(stream TcpStream, data str) -> Result[(), NetError]
     read(stream TcpStream, max int) -> Result[str, NetError]
     close_stream(stream TcpStream) -> ()
     close_listener(listener TcpListener) -> ()
@@ -41,6 +64,24 @@ export type TcpNet effect {
     set_nodelay(stream TcpStream, on bool) -> ()
     set_keepalive(stream TcpStream, on bool) -> ()
     set_reuse_address(listener TcpListener, on bool) -> ()
+
+    // ── Plan 91.16 / D300: TcpStream split into read + write halves ──
+    // split_stream consumes the stream and yields two halves that may be used
+    // concurrently from separate fibers (independent C-side park slots).
+    split_stream(stream TcpStream) -> (TcpReadHalf, TcpWriteHalf)
+    read_half_read(half TcpReadHalf, max int) -> Result[str, NetError]
+    read_half_close(half TcpReadHalf) -> ()
+    read_half_local_port(half TcpReadHalf) -> u16
+    read_half_peer_port(half TcpReadHalf) -> u16
+    read_half_local_addr(half TcpReadHalf) -> SocketAddr
+    read_half_peer_addr(half TcpReadHalf) -> SocketAddr
+    write_half_write(half TcpWriteHalf, data str) -> Result[int, NetError]
+    write_half_write_all(half TcpWriteHalf, data str) -> Result[(), NetError]
+    write_half_close(half TcpWriteHalf) -> ()
+    write_half_local_port(half TcpWriteHalf) -> u16
+    write_half_peer_port(half TcpWriteHalf) -> u16
+    write_half_local_addr(half TcpWriteHalf) -> SocketAddr
+    write_half_peer_addr(half TcpWriteHalf) -> SocketAddr
 }
 
 // UdpNet -- UDP datagram transport.
@@ -67,7 +108,7 @@ export type AddrNet effect {
     v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr
     from_str(s str) -> Result[SocketAddr, NetError]
     port(addr SocketAddr) -> u16
-    host_str(addr SocketAddr) -> str
+    ip(addr SocketAddr) -> str
     is_v4(addr SocketAddr) -> bool
     is_v6(addr SocketAddr) -> bool
     to_str(addr SocketAddr) -> str

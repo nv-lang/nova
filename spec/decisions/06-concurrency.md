@@ -225,6 +225,19 @@ inverse-маркером.
 
 ## D50. Concurrency model: `spawn`, `detach`, `Blocking`
 
+> 🔴 **`blocking { }` block-form + `Blocking` effect REMOVED.**
+> Plan 113 ([D172](#d172-realtimeblocking-sync-class-annotation-system-plan-1036),
+> 2026-05-30) retracted the `blocking { ... }` block-form: the parser now
+> rejects it with `[D172-block-form-removed]` and directs users to a
+> `#blocking fn` attribute instead. Plan 91.15 (2026-06-17) completed the
+> removal — the `Blocking` effect is gone from the compiler entirely (no
+> longer a built-in effect name, no longer in the realtime-suspend-effect
+> list) and from `std/net` (TCP/UDP I/O methods carry only `TcpNet` /
+> `UdpNet`; the effect handler parks the fiber on the libuv event loop, so
+> no separate `Blocking` declaration is needed). The `§4 blocking { … }`
+> subsection below and every `Blocking`/`blocking { }` mention in this D50
+> are **historical** — kept for context, no longer normative.
+>
 > ⚠️ **REVISED → [D62](04-effects.md#d62), [D64](04-effects.md#d64).**
 > Исходный D50 трактовал `Async` как эффект и упоминал «единый эффект
 > `Async`». После D62 `Async` — ambient runtime-инфраструктура, не

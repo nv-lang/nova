@@ -34,7 +34,7 @@ module std.net
 /// # Effects
 ///
 /// `bind` carries `TcpNet`.
-/// `accept` carries `TcpNet Blocking`.
+/// `accept` carries `TcpNet` (parks the fiber via the effect handler).
 /// `close` carries `TcpNet` (consume).
 #stable(since = "0.1")
 export type TcpListener consume value { priv handle CTcpListener }
@@ -53,11 +53,37 @@ export type TcpListener consume value { priv handle CTcpListener }
 ///
 /// # Effects
 ///
-/// `connect` carries `TcpNet Blocking`.
-/// `write` carries `TcpNet Blocking`.
+/// `connect` carries `TcpNet` (parks the fiber via the effect handler).
+/// `write` carries `TcpNet` (parks the fiber via the effect handler).
 /// `close` carries `TcpNet` (consume).
 #stable(since = "0.1")
 export type TcpStream consume value { priv handle CTcpStream }
+
+/// Read half of a split `TcpStream` (Plan 91.16 / D300).
+///
+/// Produced by `TcpStream.split()`. Carries the same underlying connection as
+/// its sibling `TcpWriteHalf`; the two may be moved into separate fibers so one
+/// fiber reads while another writes on the same connection. The socket is
+/// closed only after BOTH halves are closed.
+///
+/// # Effects
+///
+/// `read` carries `TcpNet` (parks the fiber via the effect handler).
+/// `close` carries `TcpNet` (consume).
+#stable(since = "0.1")
+export type TcpReadHalf consume value { priv handle CTcpStream }
+
+/// Write half of a split `TcpStream` (Plan 91.16 / D300).
+///
+/// Produced by `TcpStream.split()`. See `[TcpReadHalf]` for the concurrency
+/// contract. The socket is closed only after BOTH halves are closed.
+///
+/// # Effects
+///
+/// `write` / `write_all` carry `TcpNet` (park the fiber via the effect handler).
+/// `close` carries `TcpNet` (consume).
+#stable(since = "0.1")
+export type TcpWriteHalf consume value { priv handle CTcpStream }
 
 // ─── TcpListener public API ──────────────────────────────────────────────────
 
@@ -77,7 +103,7 @@ export fn TcpListener.bind(addr SocketAddr) TcpNet -> Result[TcpListener, NetErr
 /// Cancel-safe: if the enclosing supervised scope is cancelled, the
 /// pending accept is cleaned up.
 #stable(since = "0.1")
-export fn TcpListener mut @accept() TcpNet Blocking -> Result[TcpStream, NetError] {
+export fn TcpListener mut @accept() TcpNet -> Result[TcpStream, NetError] {
     TcpNet.accept(@)
 }
 
@@ -109,7 +135,7 @@ export fn TcpListener consume @close() TcpNet {
 
 /// Connect to a remote TCP address (parks until connected or error).
 #stable(since = "0.1")
-export fn TcpStream.connect(addr SocketAddr) TcpNet Blocking -> Result[TcpStream, NetError] {
+export fn TcpStream.connect(addr SocketAddr) TcpNet -> Result[TcpStream, NetError] {
     TcpNet.connect(addr)
 }
 
@@ -117,16 +143,16 @@ export fn TcpStream.connect(addr SocketAddr) TcpNet Blocking -> Result[TcpStream
 ///
 /// Returns `Ok(n)` where `n` is the number of bytes written.
 #stable(since = "0.1")
-export fn TcpStream mut @write(data str) TcpNet Blocking -> Result[int, NetError] {
+export fn TcpStream mut @write(data str) TcpNet -> Result[int, NetError] {
     TcpNet.write(@, data)
 }
 
 /// Read up to `max` bytes from the stream (parks until data or EOF).
 ///
-/// Returns `Ok(data)` where `data` is the received bytes.
-/// `Ok("")` signals EOF (the remote side closed the connection).
+/// Returns `Ok(data)` where `data` is the received bytes (always non-empty).
+/// Returns `Err(NetError.Eof)` when the connection is closed by the peer.
 #stable(since = "0.1")
-export fn TcpStream mut @read(max int) TcpNet Blocking -> Result[str, NetError] {
+export fn TcpStream mut @read(max int) TcpNet -> Result[str, NetError] {
     TcpNet.read(@, max)
 }
 
@@ -166,24 +192,149 @@ export fn TcpStream mut @set_keepalive(on bool) TcpNet {
     TcpNet.set_keepalive(@, on)
 }
 
+/// Write the entire `data` to the stream, looping until all bytes are sent.
+///
+/// Unlike `write`, which may return after a partial write, `write_all` retries
+/// until every byte is written or an error occurs.
+#stable(since = "0.1")
+export fn TcpStream mut @write_all(data str) TcpNet -> Result[(), NetError] {
+    TcpNet.write_all(@, data)
+}
+
 /// Close the stream and release all resources (consume).
 #stable(since = "0.1")
 export fn TcpStream consume @close() TcpNet {
     TcpNet.close_stream(@)
 }
 
+/// Split this stream into a read half and a write half (consume).
+///
+/// The two halves share the underlying connection but have independent C-side
+/// park slots, so they may be moved into separate fibers and used concurrently
+/// (one reading while the other writes). The socket is closed only after BOTH
+/// halves have been closed.
+///
+/// ```nova
+/// let (rh, wh) = stream.split()
+/// supervised {
+///     spawn { wh.write("ping"); wh.close() }
+///     spawn { let msg = rh.read(64); rh.close() }
+/// }
+/// ```
+#stable(since = "0.1")
+export fn TcpStream consume @split() TcpNet -> (TcpReadHalf, TcpWriteHalf) {
+    TcpNet.split_stream(@)
+}
+
+// ─── TcpReadHalf public API ──────────────────────────────────────────────────
+
+/// Read up to `max` bytes from the read half (parks until data or EOF).
+///
+/// Returns `Ok(data)` where `data` is the received bytes (always non-empty).
+/// Returns `Err(NetError.Eof)` when the connection is closed by the peer.
+#stable(since = "0.1")
+export fn TcpReadHalf mut @read(max int) TcpNet -> Result[str, NetError] {
+    TcpNet.read_half_read(@, max)
+}
+
+/// Return the local port of this read half.
+#stable(since = "0.1")
+export fn TcpReadHalf @local_port() TcpNet -> u16 {
+    TcpNet.read_half_local_port(@)
+}
+
+/// Return the remote peer port of this read half.
+#stable(since = "0.1")
+export fn TcpReadHalf @peer_port() TcpNet -> u16 {
+    TcpNet.read_half_peer_port(@)
+}
+
+/// Return the local address of this read half.
+#stable(since = "0.1")
+export fn TcpReadHalf @local_addr() TcpNet -> SocketAddr {
+    TcpNet.read_half_local_addr(@)
+}
+
+/// Return the remote peer address of this read half.
+#stable(since = "0.1")
+export fn TcpReadHalf @peer_addr() TcpNet -> SocketAddr {
+    TcpNet.read_half_peer_addr(@)
+}
+
+/// Close the read half (consume). Closes the socket if the write half is
+/// already closed.
+#stable(since = "0.1")
+export fn TcpReadHalf consume @close() TcpNet {
+    TcpNet.read_half_close(@)
+}
+
+// ─── TcpWriteHalf public API ─────────────────────────────────────────────────
+
+/// Write `data` to the write half (parks until written or error).
+///
+/// Returns `Ok(n)` where `n` is the number of bytes written.
+#stable(since = "0.1")
+export fn TcpWriteHalf mut @write(data str) TcpNet -> Result[int, NetError] {
+    TcpNet.write_half_write(@, data)
+}
+
+/// Write the entire `data` to the write half, looping until all bytes are sent.
+#stable(since = "0.1")
+export fn TcpWriteHalf mut @write_all(data str) TcpNet -> Result[(), NetError] {
+    TcpNet.write_half_write_all(@, data)
+}
+
+/// Return the local port of this write half.
+#stable(since = "0.1")
+export fn TcpWriteHalf @local_port() TcpNet -> u16 {
+    TcpNet.write_half_local_port(@)
+}
+
+/// Return the remote peer port of this write half.
+#stable(since = "0.1")
+export fn TcpWriteHalf @peer_port() TcpNet -> u16 {
+    TcpNet.write_half_peer_port(@)
+}
+
+/// Return the local address of this write half.
+#stable(since = "0.1")
+export fn TcpWriteHalf @local_addr() TcpNet -> SocketAddr {
+    TcpNet.write_half_local_addr(@)
+}
+
+/// Return the remote peer address of this write half.
+#stable(since = "0.1")
+export fn TcpWriteHalf @peer_addr() TcpNet -> SocketAddr {
+    TcpNet.write_half_peer_addr(@)
+}
+
+/// Close the write half (consume). Closes the socket if the read half is
+/// already closed.
+#stable(since = "0.1")
+export fn TcpWriteHalf consume @close() TcpNet {
+    TcpNet.write_half_close(@)
+}
+
 // ─── Package-private factories ───────────────────────────────────────────────
 
 fn TcpListener._from_raw(h CTcpListener) -> TcpListener => { handle: h }
 fn TcpStream._from_raw(h CTcpStream) -> TcpStream => { handle: h }
+fn TcpReadHalf._from_raw(h CTcpStream) -> TcpReadHalf => { handle: h }
+fn TcpWriteHalf._from_raw(h CTcpStream) -> TcpWriteHalf => { handle: h }
 
 // ─── Error helpers ───────────────────────────────────────────────────────────
 
+// Classify a libuv error message (uv_strerror output) into a typed NetError.
+// The C runtime normalises the relevant UV codes to stable canonical strings
+// (net.c _nova_net_uv_err): UV_EACCES → "permission denied",
+// UV_ECONNRESET → "connection reset by peer", so matching here is
+// platform-stable.
 fn net_error(msg str) -> NetError {
     if msg.contains("connection refused") { NetError.ConnectionRefused }
     else if msg.contains("address already in use") { NetError.AddressInUse }
     else if msg.contains("address not available") { NetError.AddressNotAvailable }
-    else if msg.contains("connection reset") { NetError.BrokenPipe }
+    else if msg.contains("permission denied") { NetError.PermissionDenied }
+    else if msg.contains("connection reset") { NetError.ConnectionReset }
     else if msg.contains("broken pipe") { NetError.BrokenPipe }
     else if msg.contains("cancelled") { NetError.Cancelled }
     else if msg.contains("timed out") { NetError.TimedOut }
@@ -204,6 +355,19 @@ fn tcp_read_result_err() -> Result[str, NetError] {
     Err(net_error(net_last_error()))
 }
 fn _tcp_read_ok(data str) -> Result[str, NetError] => Ok(data)
+
+// EOF sentinel: tcp_stream_read_bytes / tcp_read_half_read return -2 when the
+// peer closed the connection (NOVA_NET_READ_EOF in net.h). Map to NetError.Eof.
+fn _tcp_read_eof() -> Result[str, NetError] => Err(NetError.Eof)
+
+// Result[(), NetError] helpers for write_all.
+fn tcp_write_unit_err() -> Result[(), NetError] {
+    Err(net_error(net_last_error()))
+}
+fn tcp_write_unit_ok() -> Result[(), NetError] => Ok(())
+
+// Workaround for codegen tuple-return inference in effect handler body.
+fn _tcp_split_pair(rh TcpReadHalf, wh TcpWriteHalf) -> (TcpReadHalf, TcpWriteHalf) => (rh, wh)
 
 // ─── real_tcp_net: concrete TcpNet handler ───────────────────────────────────
 
@@ -237,9 +401,15 @@ export fn real_tcp_net() -> Effect[TcpNet] => effect TcpNet {
         if n < 0 { tcp_write_result_err() }
         else { Ok(n) }
     }
+    write_all(stream, data) {
+        ro n = tcp_stream_write_all(stream.handle, data)
+        if n < 0 { tcp_write_unit_err() }
+        else { tcp_write_unit_ok() }
+    }
     read(stream, max) {
         ro n = tcp_stream_read_bytes(stream.handle, max)
-        if n < 0 { tcp_read_result_err() }
+        if n == -2 { _tcp_read_eof() }
+        else if n < 0 { tcp_read_result_err() }
         else { _tcp_read_ok(tcp_stream_read_data()) }
     }
     close_stream(stream) {
@@ -261,4 +431,45 @@ export fn real_tcp_net() -> Effect[TcpNet] => effect TcpNet {
     set_nodelay(stream, on) => tcp_stream_set_nodelay(stream.handle, on)
     set_keepalive(stream, on) => tcp_stream_set_keepalive(stream.handle, on)
     set_reuse_address(listener, on) => tcp_listener_set_reuse_address(listener.handle, on)
+
+    // ── Plan 91.16 / D300: split + half operations ──
+    split_stream(stream) {
+        ro h = tcp_stream_split(stream.handle)
+        ro _ = stream
+        _tcp_split_pair(TcpReadHalf._from_raw(h), TcpWriteHalf._from_raw(h))
+    }
+    read_half_read(half, max) {
+        ro n = tcp_read_half_read(half.handle, max)
+        if n == -2 { _tcp_read_eof() }
+        else if n < 0 { tcp_read_result_err() }
+        else { _tcp_read_ok(tcp_stream_read_data()) }
+    }
+    read_half_close(half) {
+        ro h = half.handle
+        ro _ = half
+        tcp_read_half_close(h)
+    }
+    read_half_local_port(half) => tcp_read_half_local_port(half.handle)
+    read_half_peer_port(half) => tcp_read_half_peer_port(half.handle)
+    read_half_local_addr(half) => SocketAddr._from_raw(tcp_read_half_local_addr(half.handle))
+    read_half_peer_addr(half) => SocketAddr._from_raw(tcp_read_half_peer_addr(half.handle))
+    write_half_write(half, data) {
+        ro n = tcp_write_half_write(half.handle, data)
+        if n < 0 { tcp_write_result_err() }
+        else { Ok(n) }
+    }
+    write_half_write_all(half, data) {
+        ro n = tcp_write_half_write_all(half.handle, data)
+        if n < 0 { tcp_write_unit_err() }
+        else { tcp_write_unit_ok() }
+    }
+    write_half_close(half) {
+        ro h = half.handle
+        ro _ = half
+        tcp_write_half_close(h)
+    }
+    write_half_local_port(half) => tcp_write_half_local_port(half.handle)
+    write_half_peer_port(half) => tcp_write_half_peer_port(half.handle)
+    write_half_local_addr(half) => SocketAddr._from_raw(tcp_write_half_local_addr(half.handle))
+    write_half_peer_addr(half) => SocketAddr._from_raw(tcp_write_half_peer_addr(half.handle))
 }

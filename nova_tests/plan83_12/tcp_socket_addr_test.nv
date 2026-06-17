@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 83.12: SocketAddr construction and methods.
 //
-// Verifies SocketAddr.loopback, SocketAddr.v4, port(), host_str(),
+// Verifies SocketAddr.loopback, SocketAddr.v4, port(), ip(),
 // is_v4(), is_v6(), to_str() without any async I/O.
 //
 // Plan 83.11 Ф.3 (2026-06-08): armed M:N works — centralized driver eliminates cancel-timer race.
@@ -32,9 +32,9 @@ test "SocketAddr.v4 — all octets and port preserved" {
     assert(addr.port() == 12345)
 }
 
-test "SocketAddr.loopback — host_str non-empty" {
+test "SocketAddr.loopback — ip non-empty" {
     ro addr = SocketAddr.loopback(0)
-    ro h = addr.host_str()
+    ro h = addr.ip()
     assert(h.len() > 0)
 }
 

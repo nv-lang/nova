@@ -21,6 +21,7 @@
 | [D277](#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv) | Test-discovery skip/route-конвенции — `fixtures/`, OS-суффикс, `_slow.nv` |
 | [D278](#d278-editor-syntax-highlighting-keyword-set-must-track-the-lexer) | Editor syntax-highlighting keyword set MUST track the lexer (conformance-тест) |
 | [D296](#d296--lsp-rename-atomicity-contract-plan-1046-2026-06-16) | LSP Rename Atomicity Contract — prepare/collect/atomic-check, WorkspaceEdit.documentChanges |
+| [D298](#d298--test-suite-time-budget) | Test-suite time budget — бюджет `nova test` + пороги переноса в `_slow` |
 
 ---
 
@@ -2874,6 +2875,51 @@ slow-gate-прогоном (CI merge/nightly), а не наличием файл
   `is_slow_file_stem`, `walk_nv_filtered`, `SlowLane`).
 - `[M-test-runner-large-test-lane]` — маркер slow-lane; `[M-156-slow-subtree-dir]`
   — отложенный folder-module-вариант.
+
+---
+
+## D298. Test-suite time budget
+
+> **Plan 169** (2026-06-17). Фиксирует численный бюджет дефолтного `nova test`
+> и пороги переноса тестов в slow-lane.
+
+### Бюджет
+
+| Прогон | Цель wall-clock | Параллельность |
+|---|---|---|
+| `nova test` (дефолт, без `--slow`) | ≤ 120s на CI | 8 воркеров (num_cpus) |
+| `nova test --include-slow` | без лимита (nightly / merge gate) | любая |
+
+Эмпирический baseline (2026-06-17, 260 тестов, clang, 8 jobs): медиана 36.7s,
+p90 47.5s на _тест_ (compile-dominated: 96% времени — компиляция через clang).
+
+### Порог кандидата на `_slow.nv`
+
+Тест переносится в slow-lane если выполняется хотя бы одно:
+- **total_ms ≥ 3000** (compile + run), ИЛИ
+- **run_ms ≥ 2000** (только выполнение — IO/sleep/stress-loop), ИЛИ
+- **compile_ms ≥ 500** (тяжёлый compile — крупные mono-инстанции, большой файл).
+
+Пороги актуализируются по `docs/research/12-test-suite-profile-2026.md`.
+
+### Fast-variant конвенция
+
+Когда тест медленен только из-за большого параметра N:
+1. Переименовать оригинал → `<name>_slow.nv` (обновить строку `module` на `…_slow`).
+2. Создать `<name>.nv` с уменьшенными параметрами
+   (итерации ≤ 500, sleep ≤ 100ms, concurrent fibers ≤ 100).
+3. Добавить комментарий в начало: `// Fast variant. Full test: <name>_slow.nv`
+
+### Поля timing в results-file (Plan 169 Ф.1)
+
+`nova test --results-file out.json` сохраняет на каждый тест:
+- `elapsed_ms` — суммарное (compile + run)
+- `compile_ms` — время codegen → C → clang/cl.exe
+- `run_ms` — время выполнения скомпилированного бинаря
+
+**Ссылки:** D277 (discovery-конвенции `_slow.nv`);
+[Plan 156](../plans/156-test-runner-slow-lane.md);
+[Plan 169](../plans/169-test-suite-profiling-and-speedup.md).
 
 ---
 

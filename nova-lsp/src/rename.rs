@@ -197,7 +197,8 @@ pub fn compute_rename(
 
     // Phase 2: atomic post-rename type-check.
     for (uri, new_text) in &changed_texts {
-        let diags = check_source_inner(new_text);
+        let path = uri.to_file_path().ok();
+        let diags = check_source_inner(new_text, path.as_deref());
         if !diags.is_empty() {
             let msgs: Vec<_> = diags.iter().map(|d| d.message.as_str()).collect();
             return Err(Error {

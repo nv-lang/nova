@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 91.15 P1 — slow positive: reading past peer-close surfaces NetError.Eof.
+//
+// D302: a read that observes the peer closing the connection now returns
+// Err(NetError.Eof) instead of the old Ok("") sentinel.
+//
+// Scenario: server sends one message then closes. The client reads the
+// message (Ok), then reads again — the second read observes the clean FIN and
+// must return Err(NetError.Eof).
+//
+// Tagged _slow: real OS networking + fiber scheduling.
+
+module plan91_15.net_eof_semantics_slow
+
+import std.net.{SocketAddr, TcpListener, TcpStream, NetError, real_tcp_net, real_addr_net}
+
+test "real loopback: read past peer close → Err(NetError.Eof)" {
+    with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+        mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+            Ok(l) => l
+            Err(_) => panic("bind failed")
+        }
+        ro port = lst.local_port()
+        assert(port > 0)
+
+        supervised {
+            // Server: accept, send one message, then close.
+            spawn {
+                mut srv = match lst.accept() {
+                    Ok(s) => s
+                    Err(_) => panic("accept failed")
+                }
+                ro wr = srv.write("bye")
+                assert(wr.is_ok())
+                srv.close()
+            }
+
+            // Client: read the message, then read again → EOF.
+            spawn {
+                mut conn = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(s) => s
+                    Err(_) => panic("connect failed")
+                }
+                ro first = conn.read(64)
+                ro msg = match first { Ok(s) => s, Err(_) => panic("first read err") }
+                assert(msg == "bye")
+                // Second read: peer has closed → EOF.
+                ro second = conn.read(64)
+                ro is_eof = match second {
+                    Ok(_) => false
+                    Err(e) => match e {
+                        Eof => true
+                        _   => false
+                    }
+                }
+                assert(is_eof)
+                conn.close()
+            }
+        }
+
+        lst.close()
+    }
+}
