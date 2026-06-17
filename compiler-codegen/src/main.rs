@@ -1176,6 +1176,9 @@ fn cmd_test_all(
         contracts_off: contracts == "off",
         // Plan 156: slow-lane selection (--include-slow / --slow-only).
         slow_lane,
+        // [M-169-timing-report-regression-gate]: not exposed in the
+        // internal codegen test runner; 0 = disabled.
+        max_test_ms: 0,
     };
     let summary = test_runner::run_all(opts)?;
     test_runner::print_summary(&summary, format);

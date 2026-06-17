@@ -2615,6 +2615,10 @@ pub struct TestAllOpts<'a> {
     pub contracts_off: bool,
     /// Plan 156: slow-lane selection. Default Exclude (skip *_slow.nv).
     pub slow_lane: SlowLane,
+    /// [M-169-timing-report-regression-gate]: if > 0, after run_all report
+    /// tests whose total elapsed_ms exceeds this threshold and exit with
+    /// code 3. Default 0 (disabled).
+    pub max_test_ms: u128,
 }
 
 // ---------- Plan 26 Ф.13: graceful Ctrl+C ----------
@@ -3956,6 +3960,29 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             .collect();
         if let Err(e) = save_results(path, &records) {
             eprintln!("warning: failed to save results file {}: {}", path.display(), e);
+        }
+    }
+
+    // [M-169-timing-report-regression-gate]: if --max-test-ms N is set,
+    // collect violators and exit(3) so CI catches accidental slow tests.
+    if opts.max_test_ms > 0 {
+        let mut violators: Vec<(String, u128)> = results_with_split
+            .iter()
+            .filter(|(_, o, _)| !o.is_skipped())
+            .filter(|(_, o, _)| o.elapsed().as_millis() > opts.max_test_ms)
+            .map(|(name, o, _)| (name.clone(), o.elapsed().as_millis()))
+            .collect();
+        if !violators.is_empty() {
+            violators.sort_by(|a, b| b.1.cmp(&a.1));
+            eprintln!(
+                "\nerror: {} test(s) exceeded --max-test-ms {} threshold:",
+                violators.len(),
+                opts.max_test_ms
+            );
+            for (name, ms) in &violators {
+                eprintln!("  {:>8}ms  {}", ms, name);
+            }
+            std::process::exit(3);
         }
     }
 
