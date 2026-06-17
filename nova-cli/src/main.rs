@@ -402,14 +402,19 @@ enum Cmd {
         #[arg(long = "contracts", value_parser = ["enforce", "off"], default_value = "enforce")]
         contracts: String,
     },
-    /// Run Nova tests from a directory or single file.
+    /// Run Nova tests from directories or files.
     ///
-    /// Positional path: file → run that file (must have test blocks),
-    /// directory → walk recursively. Default: `<repo>/nova_tests/`.
+    /// Each positional path is a file or directory (recursive walk).
+    /// Default (no paths): `<repo>/nova_tests/`.
+    /// Examples:
+    ///   nova test                        # nova_tests/ only
+    ///   nova test std                    # std/ only
+    ///   nova test std nova_tests         # both
+    ///   nova test std/collections/hashmap.nv  # single file
     Test {
-        /// Path to tests directory or file. Default: `<repo>/nova_tests/`.
-        #[arg(num_args = 0..=1)]
-        path: Option<PathBuf>,
+        /// Paths to test (files or directories). Default: `<repo>/nova_tests/`.
+        #[arg(num_args = 0..)]
+        paths: Vec<PathBuf>,
         /// Filter by display-name substring.
         #[arg(long)]
         filter: Option<String>,
@@ -450,9 +455,6 @@ enum Cmd {
         /// Retry count for transient failures (AV races, etc). Default 0.
         #[arg(long, default_value_t = 0)]
         retries: u32,
-        /// Include std/ files in the run.
-        #[arg(long = "include-stdlib")]
-        include_stdlib: bool,
         /// Keep .c / .exe / .obj build artifacts after the run.
         #[arg(long = "keep-artifacts")]
         keep_artifacts: bool,
@@ -4296,7 +4298,7 @@ fn cmd_build(
 }
 
 fn cmd_test(
-    path_arg: Option<&Path>,
+    input_paths: &[PathBuf],
     filter: Option<&str>,
     jobs: usize,
     format: &str,
@@ -4310,7 +4312,6 @@ fn cmd_test(
     results_file: Option<&Path>,
     rerun_failed: bool,
     retries: u32,
-    include_stdlib: bool,
     keep_artifacts: bool,
     gc: &str,
     list_only: bool,
@@ -4361,65 +4362,45 @@ fn cmd_test(
         tc.vcvars_path(),
     );
 
-    // Plan 36 Ф.1: positional path argument.
-    // None → default <repo>/nova_tests/.
-    // Some(file) → use parent dir as tests_dir, filter to single file via display name.
-    // Some(dir) → use as tests_dir.
-    let (tests_dir, single_file_filter): (PathBuf, Option<String>) = match path_arg {
-        None => (paths.tests_dir.clone(), None),
-        Some(p) => {
-            if !p.exists() {
+    // [36.D.1] Resolve input paths; validate each exists.
+    let resolved_inputs: Vec<PathBuf> = if input_paths.is_empty() {
+        vec![paths.tests_dir.clone()]
+    } else {
+        let mut out = Vec::with_capacity(input_paths.len());
+        for p in input_paths {
+            let abs = if p.is_absolute() {
+                p.clone()
+            } else {
+                std::env::current_dir().unwrap_or_default().join(p)
+            };
+            if !abs.exists() {
                 return Err(usage_err(format!("path not found: {}", p.display())));
             }
-            if p.is_file() {
-                if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-                    return Err(usage_err(format!("not a Nova source: {}", p.display())));
-                }
-                // Use parent dir as tests_dir, derive display name relative to it.
-                let parent = p.parent()
-                    .ok_or_else(|| usage_err(format!("cannot get parent of {}", p.display())))?
-                    .to_path_buf();
-                let stem = p.file_stem()
-                    .and_then(|s| s.to_str())
-                    .ok_or_else(|| usage_err(format!("invalid file name: {}", p.display())))?;
-                (parent, Some(stem.to_string()))
-            } else if p.is_dir() {
-                (p.to_path_buf(), None)
-            } else {
-                return Err(usage_err(format!("path is neither file nor directory: {}", p.display())));
+            if abs.is_file() && abs.extension().and_then(|s| s.to_str()) != Some("nv") {
+                return Err(usage_err(format!("not a Nova source: {}", p.display())));
             }
+            out.push(abs);
         }
+        out
     };
 
     if format == test_runner::OutputFormat::Text {
+        let dirs_display: Vec<String> = resolved_inputs.iter()
+            .map(|p| p.display().to_string())
+            .collect();
         eprintln!(
-            "Toolchain: {}, mode={:?}, jobs={}, tests-dir={}",
+            "Toolchain: {}, mode={:?}, jobs={}, paths=[{}]",
             tc.name(),
             mode,
             jobs,
-            tests_dir.display()
+            dirs_display.join(", ")
         );
         if libuv.is_none() {
             eprintln!("warning: libuv not found — concurrency tests will fail");
         }
     }
 
-    if !tests_dir.is_dir() {
-        return Err(usage_err(format!("tests directory not found: {}", tests_dir.display())));
-    }
-
-    // If single-file requested, filter through display-name to that one file
-    // (path-filter ⊥ test-name-filter — single-file is path-filter).
-    // If user passes both single-file path + --filter — single-file wins (path is
-    // path-filter, --filter is test-name-filter; current test_runner uses single
-    // string filter for display-name, so we cannot orthogonally combine).
-    let effective_filter: Option<String> = single_file_filter.or_else(|| filter.map(str::to_string));
-    let effective_filter_ref: Option<&str> = effective_filter.as_deref();
-    let stdlib_dir_opt = if include_stdlib {
-        Some(paths.stdlib_dir.as_path())
-    } else {
-        None
-    };
+    let effective_filter_ref: Option<&str> = filter;
 
     // ensure target/ dir exists for the default results file
     let results_path: PathBuf = results_file
@@ -4449,9 +4430,8 @@ fn cmd_test(
     };
     let tmp_dir = default_tmp_dir();
     let opts = test_runner::TestAllOpts {
-        tests_dir: &tests_dir,
-        stdlib_dir: stdlib_dir_opt,
-        include_stdlib,
+        input_dirs: &resolved_inputs,
+        tests_dir: &paths.tests_dir,
         filter: effective_filter_ref,
         mode,
         toolchain: tc,
@@ -5549,13 +5529,13 @@ fn run() -> ExitCode {
             &contracts,
         ),
         Cmd::Test {
-            path, filter, jobs, format, mode, toolchain, vcvars, clang, timeout,
+            paths, filter, jobs, format, mode, toolchain, vcvars, clang, timeout,
             verbose, quiet, results_file, rerun_failed, retries,
-            include_stdlib, keep_artifacts, gc,
+            keep_artifacts, gc,
             list, filter_from, shuffle, skip, mono_depth,
             include_slow, slow_only, max_test_ms,
         } => cmd_test(
-            path.as_deref(),
+            &paths,
             filter.as_deref(),
             jobs,
             &format,
@@ -5569,7 +5549,6 @@ fn run() -> ExitCode {
             results_file.as_deref(),
             rerun_failed,
             retries,
-            include_stdlib,
             keep_artifacts,
             gc.as_deref().unwrap_or("boehm"),
             list,

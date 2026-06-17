@@ -2557,9 +2557,12 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
 // ---------- test-all: walk + summary ----------
 
 pub struct TestAllOpts<'a> {
+    /// [36.D.1] One or more directories/files to scan. Replaces single tests_dir
+    /// + include_stdlib. Display names are built relative to cwd.
+    pub input_dirs: &'a [PathBuf],
+    /// Kept for compatibility with internal callers that resolve cg_include/rt_dir
+    /// relative to a repo root — not used for test discovery.
     pub tests_dir: &'a Path,
-    pub stdlib_dir: Option<&'a Path>,
-    pub include_stdlib: bool,
     pub filter: Option<&'a str>,
     pub mode: Mode,
     pub toolchain: Toolchain,
@@ -3485,14 +3488,11 @@ fn folder_module_has_tests(files: &[PathBuf]) -> bool {
 /// Сборка display-name для теста на основе path + base.
 /// `nova_tests/basics/literals.nv` → `basics/literals`.
 /// `std/checksums/fnv.nv` → `std/checksums/fnv`.
-fn display_name(path: &Path, base: &Path, is_stdlib: bool) -> String {
-    let rel = path.strip_prefix(base).unwrap_or(path);
-    let s = rel.with_extension("");
-    let mut s = s.to_string_lossy().replace('\\', "/");
-    if is_stdlib {
-        s = format!("std/{}", s);
-    }
-    s
+/// [36.D.1] Build display name relative to cwd (or the nearest parent that
+/// is one of the input dirs). Falls back to the full path if strip fails.
+fn display_name(path: &Path, cwd: &Path) -> String {
+    let rel = path.strip_prefix(cwd).unwrap_or(path);
+    rel.with_extension("").to_string_lossy().replace('\\', "/")
 }
 
 /// JSON-escape для строк. Минимальный — обрабатывает контрольные символы.
@@ -3718,20 +3718,27 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     // cryptic linker error для каждого теста.
     let _ = resolve_gc_or_exit(opts.gc_kind, opts.cg_include);
 
-    // Collect .nv files.
-    let mut inputs: Vec<(PathBuf, /*is_stdlib*/ bool)> = Vec::new();
-    let mut tests_files = Vec::new();
-    walk_nv_filtered(opts.tests_dir, &mut tests_files, opts.slow_lane)?;
-    for p in tests_files { inputs.push((p, false)); }
-    if opts.include_stdlib {
-        if let Some(stdlib) = opts.stdlib_dir {
-            let mut stdlib_files = Vec::new();
-            walk_nv_filtered(stdlib, &mut stdlib_files, opts.slow_lane)?;
-            for p in stdlib_files { inputs.push((p, true)); }
+    // [36.D.1] Collect .nv files from all input_dirs (or fallback to tests_dir).
+    let cwd = std::env::current_dir().unwrap_or_else(|_| opts.tests_dir.to_path_buf());
+    let fallback_dir;
+    let effective_dirs: &[PathBuf] = if opts.input_dirs.is_empty() {
+        fallback_dir = [opts.tests_dir.to_path_buf()];
+        &fallback_dir
+    } else {
+        opts.input_dirs
+    };
+    let mut inputs: Vec<PathBuf> = Vec::new();
+    for dir_or_file in effective_dirs {
+        if dir_or_file.is_file() {
+            inputs.push(dir_or_file.clone());
+        } else {
+            let mut found = Vec::new();
+            walk_nv_filtered(dir_or_file, &mut found, opts.slow_lane)?;
+            inputs.extend(found);
         }
     }
     // Стабильный порядок по пути — shuffle потом переопределит если нужно.
-    inputs.sort_by(|a, b| a.0.cmp(&b.0));
+    inputs.sort();
 
     std::fs::create_dir_all(opts.tmp_dir)
         .map_err(|e| anyhow!("create tmp_dir: {}", e))?;
@@ -3763,9 +3770,8 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
 
     // Build job list applying all filters.
     let mut jobs: Vec<(String, PathBuf)> = Vec::new();
-    for (nv_path, is_stdlib) in &inputs {
-        let base = if *is_stdlib { opts.stdlib_dir.unwrap_or(opts.tests_dir) } else { opts.tests_dir };
-        let display = display_name(nv_path, base, *is_stdlib);
+    for nv_path in &inputs {
+        let display = display_name(nv_path, &cwd);
         if let Some(filter) = opts.filter {
             if !display.contains(filter) { continue; }
         }
@@ -4430,15 +4436,15 @@ mod tests {
     #[test]
     fn display_name_simple() {
         let path = Path::new("d:/repo/nova_tests/basics/literals.nv");
-        let base = Path::new("d:/repo/nova_tests");
-        assert_eq!(display_name(path, base, false), "basics/literals");
+        let cwd = Path::new("d:/repo");
+        assert_eq!(display_name(path, cwd), "nova_tests/basics/literals");
     }
 
     #[test]
-    fn display_name_stdlib_prefix() {
+    fn display_name_stdlib() {
         let path = Path::new("d:/repo/std/checksums/fnv.nv");
-        let base = Path::new("d:/repo/std");
-        assert_eq!(display_name(path, base, true), "std/checksums/fnv");
+        let cwd = Path::new("d:/repo");
+        assert_eq!(display_name(path, cwd), "std/checksums/fnv");
     }
 
     #[test]
