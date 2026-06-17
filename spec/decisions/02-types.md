@@ -8924,13 +8924,11 @@ mutable-у-mut-binding (D175).
 
 **Параметры (`ro` по умолчанию, D176):**
 
-| Форма | reassign | `.field`/`[i]` |
-|---|---|---|
-| `v T` ≡ `ro v T` | ❌ | ❌ (P7) |
-| `mut v T` | ❌* | ✅ |
-| `mut v ro T` | ❌* | ❌ |
-
-*param reassign виден только внутри fn (копия binding).
+| Форма | `.field`/`[i]` write |
+|---|---|
+| `v T` ≡ `ro v T` | ❌ (P7 freeze) |
+| `mut v T` | ✅ |
+| `mut v ro T` | ❌ (L2 freeze) |
 
 **Указатели (L3 из типа):**
 
