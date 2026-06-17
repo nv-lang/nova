@@ -723,3 +723,30 @@ Gaps closed: **160/160** (85 v3 + 75 v4), with clear MVP boundary.
 | 36.C CI | .pre-commit-hooks.yaml, GHA annotations, workflows examples | distribution story для `nova` binary |
 | 36.D ergonomics | -q/-v/-vv, --explain, --dry-run, --list, shell completions | none |
 | 36.E workspace | manifest schema validation, nested nova.toml, workspace concept | ManifestResolver (AD6) |
+
+### [36.D.1] nova test — multiple paths + display name от cwd
+
+**Задача:** `nova test` принимает несколько path-аргументов; display name строится относительно cwd.
+
+**Мотивация:**
+- Сейчас `nova test` принимает один positional path (`num_args = 0..=1`).
+- Нельзя сделать `nova test std nova_tests` — нужно два отдельных вызова.
+- `--include-stdlib` — костыль для совместного запуска std + nova_tests; удалить.
+- Display name сейчас строится относительно `tests_dir` (для std-файлов через `is_stdlib` флаг добавляется искусственный `std/` префикс). Правильнее — всегда от cwd: `std/collections/hashmap`, `nova_tests/basics/literals`, `mylib/job` — однозначно и без флагов, как в Go (`go test ./...`).
+
+**Изменения:**
+
+1. `nova-cli/src/main.rs`: `num_args = 0..`, `Vec<PathBuf>` вместо `Option<PathBuf>`; по умолчанию (пустой список) — `[nova_tests/]`; каждый path может быть файлом или директорией.
+2. `cmd_test()`: итерация по всем paths, сбор inputs из каждого.
+3. `display_name()`: `strip_prefix(cwd)` вместо `strip_prefix(tests_dir)` + `is_stdlib` логики.
+4. Убрать `--include-stdlib` флаг и `is_stdlib: bool` из `TestAllOpts` / inputs vector.
+
+**Результат:**
+```sh
+nova test                        # только nova_tests/ (дефолт)
+nova test std                    # только std/
+nova test std nova_tests         # оба вместе
+nova test std mylib/job.nv       # std + один файл
+```
+
+Display name: `std/collections/hashmap`, `nova_tests/basics/literals`, `mylib/job`.
