@@ -1194,7 +1194,7 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
 `HashMap` (`buckets`, `count`) и падала бы. Map-coercion трактует
 имена полей литерала как **ключи**, а не как поля struct'а. Чтобы
 компилятор знал, какое из двух правил применить, целевой тип несёт
-**compiler-recognized marker** `FromFields[V]`:
+**`#from_fields` атрибут** (TypeAttr, ставится перед `type`):
 
 - Это **не** opt-in ради эргономики (которое D55 отвергает для
   sum/record) — marker здесь **load-bearing для дисамбигуации**:
@@ -1204,6 +1204,11 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
   не начнёт принимать произвольные record-литералы.
 - Bootstrap: marker захардкожен для `HashMap`. Протокол `FromFields[V]`
   как точка расширения (`OrderedMap`, `BTreeMap[str, V]`) — позже.
+- **Протокол `#from_fields`:** тип обязан иметь:
+  - `static with_capacity(n int) -> Self` — предаллоцировать под `n` записей;
+  - `mut @insert_new(key str, val V) -> ()` — вставить новую запись
+    (без возврата `Option`; дублей нет по construction).
+  Отсутствие любого из методов → CC-FAIL при десугаринге.
 
 **Правила:**
 
@@ -1218,14 +1223,16 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
    // "alice" → Str("alice"), 30.0 → Num(30.0); оба → JsonValue
    ```
 4. **Десугаринг — без промежуточных объектов:** block-expression с
-   `with_capacity` + `@insert`, никакой промежуточный record не
+   `with_capacity` + `@insert_new`, никакой промежуточный record не
    материализуется (литерал — только синтаксис):
    ```nova
    { mut _m0 = HashMap[str, V].with_capacity(n)
-     ro _ = _m0.insert("debug", true)
-     ro _ = _m0.insert("verbose", false)
+     _m0.insert_new("debug", true)
+     _m0.insert_new("verbose", false)
      _m0 }
    ```
+   (`@insert_new` вместо `@insert` — мапа только что создана, дублей нет,
+   нет нужды в `Option[V]`-возврате.)
 5. **Пустой `{}` — это НЕ пустая мапа.** `{}` всегда парсится как пустой
    block-expression с типом `unit` — даже в позиции, ожидающей
    `HashMap[str, V]`. Пустая мапа записывается как `[]` + ожидаемый тип
