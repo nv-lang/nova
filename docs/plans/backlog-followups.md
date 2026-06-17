@@ -562,45 +562,41 @@
 
 По образцу UDP split (Plan 166 / D298). `TcpStream consume @split() -> (TcpReadHalf, TcpWriteHalf)`. Atomic refcount (`split_refcount`) на C-handle, оба half — consume value, независимые park-слоты для concurrent r/w. Также добавлен `TcpStream @write_all` + `TcpWriteHalf @write_all` (закрывает `[M-91.15-write-all]`). Spec: D301. Тесты: `nova_tests/plan91_16/` (mock + `_slow` real-network + stream-after-split neg). → маркер `[M-91.16-tcp-split]` CLOSED.
 
-## Plan 91.17 — std/net API polish (followup компаративного ревью 2026-06-17)
+## Plan 91.15 — std/net API polish ✅ CLOSED 2026-06-17
 
-Сравнительный анализ Nova Net API vs Go/Rust/TS/Kotlin/Java выявил следующие пункты (источник: сессия 2026-06-17).
+### P0 — Удалить retracted фичу (blocking {} / Blocking) ✅ DONE
 
-**Контекст:** `blocking { }` и эффект `Blocking` в сигнатурах — **retracted** в Plan 113 (D172, 2026-05-29), заменены на `#blocking fn`. Оба в спеке отозваны, но парсер/компилятор ещё поддерживают для совместимости.
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-91.15-remove-blocking]` | ✅ CLOSED 2026-06-17 (P0). Blocking убран из TcpNet/UdpNet сигнатур; compiler registry + checker arm. | Plan 91.15 P0 | ✅ done |
 
-### P0 — Удалить retracted фичу (blocking {} / Blocking)
+### P1 — Критические ✅ DONE
 
-| Маркер | Суть | Приоритет |
-|---|---|---|
-| `[M-91.15-remove-blocking]` | Удалить `blocking { }` из компилятора и `Blocking` из сигнатур. **Компилятор:** убрать `ExprKind::Blocking`, `KwBlocking` (или превратить в ошибку), `blocking_body_active`, проверку `declared_effects.contains("Blocking")`, `"Blocking"` из `realtime_suspend_effect`. **std/net:** убрать `Blocking` из 6 сигнатур в tcp.nv и udp.nv, обновить комментарии в effect.nv. **Тесты:** удалить `nova_tests/negative_capability/blocking_*.nv` (4 файла), скорректировать `plan83_10/`, `plan100_4_2/defer_err_blocking_in_body.nv`. **NB:** `#blocking fn` (атрибут) остаётся — трогать не нужно. | P0 |
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-91.15-write-all]` | ✅ CLOSED 2026-06-17 (P1). TcpStream/TcpWriteHalf.write_all() — C-backed. | Plan 91.15 P1 | ✅ done |
+| `[M-91.15-eof-semantics]` | ✅ CLOSED 2026-06-17 (P1). NetError.Eof при TCP peer-close. | Plan 91.15 P1 | ✅ done |
+| `[M-91.15-neterror-to-str]` | ✅ CLOSED 2026-06-17 (P1). NetError @to_str() 14 variants. | Plan 91.15 P1 | ✅ done |
+| `[M-91.15-host-str-rename]` | ✅ CLOSED 2026-06-17 (P1). SocketAddr.ip() renamed from host_str(). | Plan 91.15 P1 | ✅ done |
 
-### P1 — Критические (до публичного релиза)
+### P2 — Важные дополнения ✅ DONE
 
-| Маркер | Суть | Приоритет |
-|---|---|---|
-| `[M-91.15-write-all]` | Нет `TcpStream @write_all(data str) -> Result[(), NetError]`. `write()` возвращает `int` (bytes written) — TCP может записать частично. Каждый пользовательский код без цикла = скрытая потеря данных. `write_all` должен быть основным методом для большинства случаев. | P1 |
-| `[M-91.15-eof-semantics]` | `TcpStream @read()` возвращает `Ok("")` на EOF — неотличимо от успешного пустого чтения. Добавить `NetError.Eof` и возвращать `Err(NetError.Eof)` на graceful close. Аналог Go `io.EOF`. | P1 |
-| `[M-91.15-neterror-to-str]` | `NetError` не имеет `@to_str() -> str`. `IoError(str)` несёт строку, но достать без exhaustive match нельзя. Ошибка, которую нельзя напечатать = бесполезна в логах. | P1 |
-| `[M-91.15-host-str-rename]` | `SocketAddr @host_str()` — нестандартное имя (нет ни в одном языке). `_str` суффикс = тип протекает в имя метода. Переименовать в `@ip() -> str` (Rust: `.ip()`, Deno: `.hostname`). | P1 |
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-91.15-permission-denied]` | ✅ CLOSED 2026-06-17 (P2). NetError.PermissionDenied + UV_EACCES normalization. | Plan 91.15 P2 | ✅ done |
+| `[M-91.15-connection-reset]` | ✅ CLOSED 2026-06-17 (P2). NetError.ConnectionReset + UV_ECONNRESET normalization. | Plan 91.15 P2 | ✅ done |
+| `[M-91.15-connect-timeout]` | OPEN P3. TCP connect-timeout API. | plan-91.15 Followups | P3 |
+| `[M-91.15-read-bytes]` | OPEN P3. read_bytes(n int) — guaranteed binary read. | plan-91.15 Followups | P3 |
+| `[M-91.15-effect-prefix-consistency]` | OPEN P3. Convention documented in effect.nv; no renames (zero user impact, high churn). | plan-91.15 Followups | P3 |
 
-### P2 — Важные дополнения
+### P3 — Полезно иметь (DEFERRED)
 
-| Маркер | Суть | Приоритет |
-|---|---|---|
-| `[M-91.15-permission-denied]` | Добавить `NetError.PermissionDenied` — EACCES при bind на порт <1024 без root. Сейчас падает в `IoError(str)`. | P2 |
-| `[M-91.15-connection-reset]` | Добавить `NetError.ConnectionReset` — TCP RST от peer. Отличается от `Closed` (локальное закрытие). Сейчас падает в `IoError(str)`. | P2 |
-| `[M-91.15-connect-timeout]` | `TcpStream.connect()` к недостижимому хосту блокирует ~2 мин. Если fiber cancellation через `supervised {}` это решает — нужен пример в доках. Если нет — добавить `connect_timeout(addr, ms int)`. | P2 |
-| `[M-91.15-read-bytes]` | `TcpStream @read(max int) -> Result[str, NetError]` блокирует реализацию бинарных протоколов (protobuf, TLS, HTTP/2). Добавить `@read_bytes(max int) -> Result[[]u8, NetError]`. Гейт: `[]u8` как полноценный тип в Nova. | P2 |
-| `[M-91.15-effect-prefix-consistency]` | В `TcpNet` effect смешаны два стиля: operation-first (`close_stream`, `close_listener`) и type-first (`listener_local_port`, `stream_local_port`). В `UdpNet` аналогично (`close_socket` vs `socket_local_port`). Стандартизировать на type-first везде: `stream_close`, `listener_close`, `socket_close`. | P2 |
-
-### P3 — Полезно иметь
-
-| Маркер | Суть | Приоритет |
-|---|---|---|
-| `[M-91.15-read-exact]` | `TcpStream @read_exact(n int) -> Result[str, NetError]` — для fixed-length framing в бинарных протоколах. | P3 |
-| `[M-91.15-shutdown-write]` | `TcpStream @shutdown_write() -> Result[(), NetError]` — half-close (отправить FIN, продолжать читать). Нужен для HTTP/1.0 и некоторых RPC паттернов. | P3 |
-| `[M-91.15-so-reuseport]` | `TcpListener @set_reuse_port(on bool)` — `SO_REUSEPORT` (несколько сокетов на одном порту для load-balancing). Отличается от `SO_REUSEADDR`. | P3 |
-| `[M-91.15-udp-multicast]` | `UdpSocket @set_broadcast(on bool)` / `@join_multicast(addr)` — LAN discovery, mDNS, SSDP. | P3 |
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-91.15-read-exact]` | OPEN P3. read_exact() — fixed-length framing. | plan-91.15 Followups | P3 |
+| `[M-91.15-shutdown-write]` | OPEN P3. shutdown_write() — half-close TCP write side. | plan-91.15 Followups | P3 |
+| `[M-91.15-so-reuseport]` | OPEN P3. SO_REUSEPORT for multi-listener load-balancing. | plan-91.15 Followups | P3 |
+| `[M-91.15-udp-multicast]` | OPEN P3. UDP multicast join/leave API. | plan-91.15 Followups | P3 |
 
 [M-118.6-tuple-field-escape] tuple field chain-root tracking — &tuple.N escape analysis.
 ## Follow-up: Plan 104.4 (documentSymbol + workspaceSymbol + references)

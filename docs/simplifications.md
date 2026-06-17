@@ -30,6 +30,27 @@
 
 ---
 
+### Plan 91.16 — TcpStream split: TcpReadHalf + TcpWriteHalf (2026-06-17, ✅ CLOSED [M-91.16-tcp-split])
+
+- **Где** — `std/net/tcp.nv`, `std/net/effect.nv`, `std/net/ffi.nv`, `std/net/mock.nv`, `compiler-codegen/nova_rt/net.h`, `compiler-codegen/nova_rt/net.c`.
+- **Что сделано** — `TcpStream.split() -> (TcpReadHalf, TcpWriteHalf)` — consume value types для параллельного r/w одного соединения из двух файберов. C runtime: `NovaRt_TcpStream` получил независимые слоты `read_scope`/`read_slot`/`read_op_error` и `write_scope`/`write_slot`/`write_op_error` + `volatile int32_t split_refcount`. Новые типы `NovaRt_TcpReadHalf`/`NovaRt_TcpWriteHalf`. `TcpNet` расширен: `split_stream` + 14 `read_half_*`/`write_half_*` ops + `write_all`. `mock.nv` покрывает все новые arms. D301. Тесты: 3/3 PASS.
+- **Что упрощено** (V1): (1) `write_all` реализован на C, не через Nova-loop — vtable OK-type erasure ломала Nova-level `while` (`nova_str` вместо `Nova_NetError_p` в ветке `Err`); libuv `uv_write` атомарно ставит весь буфер. (2) Только 1 negative-тест: `consume (rd, wr) = s.split()` отклоняет parser; double-close-of-half и read-after-close-of-half не выразимы как compile-time ошибки в V1 — runtime refcount защищает. Followup `[M-91.16-tuple-consume-binding]`.
+- **Как чинить** — `[M-91.16-tuple-consume-binding]`: добавить tuple-destructure в consume-tracking checker.
+- **Приоритет** — L (CLOSED 2026-06-17).
+
+---
+
+### Plan 91.15 — std/net API polish (2026-06-17, ✅ CLOSED)
+
+- **Где** — `std/net/error.nv`, `std/net/tcp.nv`, `std/net/effect.nv`, `compiler-codegen/nova_rt/net.c`, `compiler-codegen/nova_rt/net.h`, `compiler-codegen/src/types/mod.rs`.
+- **Что сделано** — P0: `Blocking` эффект убран из всех сигнатур `TcpNet`/`UdpNet`; из `realtime_suspend_effect()` и builtin-effect registry компилятора; `ExprKind::Blocking` checker-арм коллапсирован (парсер уже отклоняет `blocking{}` с `[D172-block-form-removed]`). P1/P2: `NetError.Eof` (TCP peer close), `NetError @to_str()` (14 вариантов), `SocketAddr.ip()` (rename от `host_str()`), `write_all()` на `TcpStream`/`TcpWriteHalf`. `NetError.PermissionDenied` (UV_EACCES), `NetError.ConnectionReset` (UV_ECONNRESET); нормализация строк в `_nova_net_uv_err()`. D302. Тесты: 7/7 PASS.
+- **Что упрощено** (V1): (1) `match`-on-`NetError`-literal в тестах → CC-FAIL (vtable erasure, pre-existing V2-net лимит) — тесты используют `to_str()`-путь. (2) Именование эффект-операций задокументировано, но не переименовывалось. (3) `negative_capability/blocking_*.nv` сохранены: Plan 113 мигрировал их ожидать `D172-block-form-removed` → дают retraction-покрытие.
+- **Отложено (P3)** — `[M-91.15-read-exact]`, `[M-91.15-shutdown-write]`, `[M-91.15-so-reuseport]`, `[M-91.15-udp-multicast]`, `[M-91.15-connect-timeout]`, `[M-91.15-read-bytes]`.
+- **Как чинить** — каждый P3-маркер имеет отдельный followup.
+- **Приоритет** — L (CLOSED 2026-06-17).
+
+---
+
 ### Plan 104.2 — hover/goto-def/sighelp V1 simplifications (2026-06-16)
 
 - **Где** — `nova-lsp/src/symbol.rs`, `nova-lsp/src/goto_definition.rs`, `nova-lsp/src/signature_help.rs`.
