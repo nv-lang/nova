@@ -770,6 +770,10 @@ pub struct CEmitter {
     /// устанавливается при эмите function body, когда нужно использовать
     /// declared return type как target для anonymous record (D55).
     expected_record_type: Option<String>,
+    /// D73/D84: When emitting `ro x T = v.into()`, set to T before emitting
+    /// the RHS so the .into() resolver can prefer `T.from(v)` over other
+    /// targets that also accept v (e.g. StringBuilder.from(str)).
+    expected_into_target: Option<String>,
     /// Hint for empty/uninferable array literals: element C type (e.g. "nova_str").
     /// Set when target type is NovaArray_X* so `[]` emits nova_array_new_X not nova_int.
     current_array_elem_hint: Option<String>,
@@ -908,6 +912,11 @@ pub struct CEmitter {
     /// Interior mutability: используется из `&self`-методов
     /// (type_ref_to_c, infer_expr_c_type).
     novaopt_typedefs_buf: std::cell::RefCell<String>,
+    /// Set when generating nova_opt_eq_ body (inside ensure_opt_typedef).
+    /// In this mode, emit_field_eq uses pointer equality for sum types to
+    /// avoid "incomplete type" C errors: opt_eq fns are emitted before the
+    /// sum type struct definitions, so member access is forbidden.
+    novaopt_early_gen: std::cell::RefCell<bool>,
     /// [M-153.2-flat-map-inner-option]: NovaOpt typedefs where the payload is a
     /// value-record (NovaValue_… by-value, needs complete struct before use in
     /// field decl). Spliced at /*__NOVAOPT_VR_TYPEDEFS__*/ which is placed AFTER
@@ -1345,6 +1354,7 @@ impl CEmitter {
             current_receiver_type: None,
             current_receiver_is_mut: false,
             expected_record_type: None,
+            expected_into_target: None,
             current_array_elem_hint: None,
             current_array_protocol_box: None,
             synthesized_default_methods: HashSet::new(),
@@ -1377,6 +1387,7 @@ impl CEmitter {
             // Для прочих — typedef эмитится в novaopt_typedefs_buf и
             // splice'ится через маркер /*__NOVAOPT_TYPEDEFS__*/.
             novaopt_typedefs_buf: std::cell::RefCell::new(String::new()),
+            novaopt_early_gen: std::cell::RefCell::new(false),
             novaopt_vr_typedefs_buf: std::cell::RefCell::new(String::new()),
             novaopt_decls_seen: {
                 let mut s = std::collections::HashSet::new();
@@ -8773,10 +8784,37 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn emit_handler_forward_decls(&mut self, module: &Module) -> Result<(), String> {
         let mut h_ctr = 0usize; // handler_counter
         let mut s_ctr = 0usize; // spawn_counter
+        // Scan order MUST match actual emit order: Fn (step 4) → Test (step 5) → Bench (step 5b).
+        // Mixed order caused handler_counter desync when Tests precede Fns in module.items.
+        let dead = compute_dead_decls(module);
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                // Mirror the DCE skips from step 4.
+                if f.receiver.is_none() && f.generics.is_empty()
+                    && !matches!(f.body, crate::ast::FnBody::External)
+                    && dead.dead_fns.contains(&f.name)
+                {
+                    continue;
+                }
+                if let Some(r) = &f.receiver {
+                    if f.generics.is_empty()
+                        && !matches!(f.body, crate::ast::FnBody::External)
+                        && dead.dead_method_keys.contains(&(r.type_name.clone(), f.name.clone()))
+                    {
+                        continue;
+                    }
+                }
+                self.scan_fn_fwd(f, &mut h_ctr, &mut s_ctr)?;
+            }
+        }
+        for item in &module.items {
+            if let Item::Test(t) = item {
+                self.scan_block_fwd(&t.body, &mut h_ctr, &mut s_ctr)?;
+            }
+        }
         for item in &module.items {
             match item {
-                Item::Fn(f) => self.scan_fn_fwd(f, &mut h_ctr, &mut s_ctr)?,
-                Item::Test(t) => self.scan_block_fwd(&t.body, &mut h_ctr, &mut s_ctr)?,
+                Item::Fn(_) | Item::Test(_) => {} // already processed above
                 // Plan 83.4.5.6 Ф.4 (2026-05-24): pre-scan bench bodies для
                 // spawn-fwd decls. Без этого `bench "..." { measure { supervised
                 // { parallel for ... } } }` падает на CC-FAIL — `_nova_spawn_N`
@@ -12728,6 +12766,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // (3) sum-type recursion over tag + payload via sum_schemas. Records
             // without a tag never reach here in practice (they always get an
             // auto-derived @equal), so this path is for tagged sum payloads.
+            //
+            // Guard: when novaopt_early_gen is set we are inside ensure_opt_typedef,
+            // which emits code into novaopt_typedefs_buf — BEFORE sum type struct
+            // definitions. Accessing ->tag / ->payload here causes clang "incomplete
+            // type" errors. Fall back to pointer identity (the function calling us
+            // is in an opt_eq context where struct members are unavailable).
+            if *self.novaopt_early_gen.borrow() && self.sum_schemas.contains_key(&type_name) {
+                return format!("(({}) == ({}))", l, r);
+            }
             if let Some(variants) = self.sum_schemas.get(&type_name).cloned() {
                 let mut field_conds: Vec<String> = Vec::new();
                 for (var_name, field_types) in &variants {
@@ -17079,6 +17126,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.line(&format!("int _nova_tests_total = {};", tests.len()));
             self.line("int _nova_tests_failed = 0;");
             self.line("printf(\"Running %d tests...\\n\", _nova_tests_total);");
+            self.line("fflush(stdout);");
             for (idx, t) in tests.iter().enumerate() {
                 let safe = Self::mangle_test_name_indexed(&t.name, idx);
                 let escaped = Self::escape_c_str(&t.name);
@@ -17100,8 +17148,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 self.line("int _tf_fail_jmp = (_tf_jmp == 0) ? setjmp(_tf_fail.jmp) : 0;");
                 self.line("if (_tf_jmp == 0 && _tf_fail_jmp == 0) {");
                 self.indent += 1;
+                self.line(&format!("fflush(stdout);"));
                 self.line(&format!("nova_test_{}();", safe));
-                self.line(&format!("printf(\"  PASS: {}\\n\");", escaped));
+                self.line(&format!("printf(\"  PASS: {}\\n\"); fflush(stdout);", escaped));
                 self.indent -= 1;
                 self.line("} else {");
                 self.indent += 1;
@@ -18028,7 +18077,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 } else {
                     false
                 };
+                // D73/D84: when the RHS is a .into() call, set expected_into_target
+                // so the resolver can pick the user's T.from(v) over stdlib types
+                // (e.g. StringBuilder.from(str)) that also accept the source type.
+                let saved_into_target = self.expected_into_target.clone();
+                let is_into_call = matches!(&decl.value.kind,
+                    ExprKind::Call { func, args, .. }
+                    if args.is_empty() && matches!(&func.kind, ExprKind::Member { name, .. } if name == "into"));
+                if is_into_call && decl.ty.is_some() {
+                    let target_name = Self::nova_type_name_from_c(&ty_c);
+                    if !target_name.is_empty() {
+                        self.expected_into_target = Some(target_name);
+                    }
+                }
                 let val = self.emit_expr_with_target_type(&decl.value, &ty_c)?;
+                self.expected_into_target = saved_into_target;
                 // Plan 127 Ф.3: clear the transient signal на случай если
                 // emit_record_lit не consumed его (defensive — emit_record_lit
                 // должен take() его на entry в value-record path).
@@ -25159,9 +25222,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         .map(|(t, _)| t == &recv_type).unwrap_or(false);
                     if !has_explicit_into {
                         // Look for any target T such that `T.from(v V)` is defined.
-                        let target = self.from_targets.iter()
-                            .find(|(_, sources)| sources.iter().any(|s| s == &recv_type))
-                            .map(|(t, _)| t.clone());
+                        // When expected_into_target is set (from a typed let binding),
+                        // prefer that target to avoid ambiguity when multiple types
+                        // accept the same source (e.g. StringBuilder vs user type).
+                        let expected_into = self.expected_into_target.clone();
+                        let target = if let Some(ref expected) = expected_into {
+                            self.from_targets.iter()
+                                .find(|(t, sources)| t.as_str() == expected && sources.iter().any(|s| s == &recv_type))
+                                .or_else(|| self.from_targets.iter().find(|(_, sources)| sources.iter().any(|s| s == &recv_type)))
+                                .map(|(t, _)| t.clone())
+                        } else {
+                            self.from_targets.iter()
+                                .find(|(_, sources)| sources.iter().any(|s| s == &recv_type))
+                                .map(|(t, _)| t.clone())
+                        };
                         if let Some(target_type) = target {
                             let obj_c = self.emit_expr(obj)?;
                             // D73 + D84 (Plan 85.3): `from` может быть
@@ -29456,7 +29530,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // declared as the pointer type, so the assignment is exact.
                     // Idempotent for non-pointer element types (`nova_int`,
                     // value records) where there is no `_p` suffix.
-                    let binding_c_ty = Self::desanitize_c_from_ident(&elem_c_ty);
+                    //
+                    // Exception: mono'd tuple structs (`_NovaTuple_N_…`) have
+                    // `_p` as part of their field-encoding suffix, NOT as a
+                    // pointer marker. They are value types stored by value in
+                    // the NovaOpt — do not desanitize them.
+                    let binding_c_ty = if elem_c_ty.starts_with("_NovaTuple_") {
+                        elem_c_ty.clone()
+                    } else {
+                        Self::desanitize_c_from_ident(&elem_c_ty)
+                    };
                     self.line(&format!(
                         "{} {} = {}.value;", binding_c_ty, binding, opt_tmp));
                     self.var_types.insert(binding.clone(), binding_c_ty);
@@ -30316,7 +30399,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             let variant_lookup = if self.record_schemas.contains_key(&struct_name) {
                 None
             } else {
-                self.sum_schema_registry.find_variant_compat(&struct_name)
+                // Context-first disambiguation: if the current function's return type
+                // is `Nova_SomeSum*`, prefer that sum's variant over the first registered
+                // one with the same name. Fixes e.g. `Circle { r }` in `-> Shape2` picking
+                // Shape1.Circle when both Shape1 and Shape2 have a Circle variant.
+                let ctx_lookup = self.current_fn_return_ty.as_ref().and_then(|ret_ty| {
+                    let base = ret_ty.trim_end_matches('*').trim().strip_prefix("Nova_")?;
+                    let entry = self.sum_schema_registry.lookup_sum_schema(base)?;
+                    let v = entry.variants.iter().find(|v| v.variant_name == struct_name)?;
+                    Some((base.to_string(), v.field_c_types.clone()))
+                });
+                ctx_lookup.or_else(|| self.sum_schema_registry.find_variant_compat(&struct_name))
             };
             if let Some((sum_type_name, _)) = variant_lookup {
                 // Emit as sum-type record variant constructor: nova_make_T_Variant(field_vals...)
@@ -32981,6 +33074,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         }
     }
 
+    fn clos_struct_ret_type(clos_c_ty: &str) -> Option<&'static str> {
+        let name = clos_c_ty.trim_end_matches('*').trim();
+        match name {
+            "NovaClos_vi"  => Some("nova_int"),
+            "NovaClos_ii"  => Some("nova_int"),
+            "NovaClos_ib"  => Some("nova_bool"),
+            "NovaClos_iii" => Some("nova_int"),
+            "NovaClos_vii" => Some("nova_int"),
+            "NovaClosBase" => Some("void*"),
+            _ => None,
+        }
+    }
+
     fn clos_fn_ty(param_tys: &[String], ret_ty: &str) -> &'static str {
         match (param_tys, ret_ty) {
             ([], r) if r == "nova_int"                                                => "nova_fn_vi",
@@ -34083,7 +34189,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let cmp_body = if is_scalar || is_pointer {
             "a.value == b.value".to_string()
         } else {
-            self.emit_field_eq(c_ty, "a.value", "b.value", 0)
+            // Set novaopt_early_gen so emit_field_eq uses pointer equality for
+            // sum types — these opt_eq functions are emitted before sum type
+            // struct definitions, so member access would be an "incomplete type".
+            *self.novaopt_early_gen.borrow_mut() = true;
+            let body = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
+            *self.novaopt_early_gen.borrow_mut() = false;
+            body
         };
         let eq_fn = if force_npo {
             format!(
@@ -34214,7 +34326,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let cmp_body = if is_scalar || is_pointer || is_newtype_ptr {
             "a.value == b.value".to_string()
         } else {
-            self.emit_field_eq(c_ty, "a.value", "b.value", 0)
+            // Set novaopt_early_gen so emit_field_eq uses pointer equality for
+            // sum types — these opt_eq functions are emitted before sum type
+            // struct definitions, so member access would be an "incomplete type".
+            *self.novaopt_early_gen.borrow_mut() = true;
+            let body = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
+            *self.novaopt_early_gen.borrow_mut() = false;
+            body
         };
         let eq_fn = if is_npo {
             // NPO eq: value-based identity (NULL == NULL = None equal;
@@ -36711,6 +36829,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         }
                         return format!("Nova_{}*", type_name);
                     }
+                    // Calling a closure-typed local variable: `first()` where
+                    // `first: NovaClos_vi*` → return type is the closure's return
+                    // type. MUST precede the `fn_ret_<name>` lookup below: a local
+                    // closure binding shadows a same-named free fn (e.g. the std
+                    // iterator adapter `first() -> Option[T]`), whose `fn_ret_first`
+                    // would otherwise hijack the inference and mistype the call.
+                    if let Some(clos_ty) = self.var_types.get(name).cloned() {
+                        if let Some(ret_c) = Self::clos_struct_ret_type(&clos_ty) {
+                            return ret_c.to_string();
+                        }
+                    }
                     let key = format!("fn_ret_{}", name);
                     if let Some(t) = self.var_types.get(&key).cloned() {
                         return t;
@@ -38180,24 +38309,47 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     inner_ty
                 }
             }
+            // ClosureLight `|| body` / `|x| body` — infer closure struct pointer
+            // type so that `let f = || n` gets `NovaClos_vi* f` instead of
+            // `nova_int f` (which caused type mismatch when calling f() later).
+            // Params default to nova_int (no annotations); body type is inferred
+            // from the expression in the current var_types scope (zero-param
+            // closures like `|| n` work perfectly; param-capturing closures
+            // may fall back to nova_int for the body, which is conservative but safe).
+            ExprKind::ClosureLight { params, body } => {
+                let body_expr = match body {
+                    crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                    crate::ast::ClosureBody::Block(b) => Expr::new(
+                        ExprKind::Block(b.clone()), b.span,
+                    ),
+                };
+                let param_c_tys: Vec<String> = params.iter()
+                    .map(|_| "nova_int".into())
+                    .collect();
+                let ret_c = self.infer_expr_c_type(&body_expr);
+                let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c);
+                format!("{}*", clos_struct)
+            }
+            // Legacy Lambda (deprecated, Plan 19) — same approach with typed params.
+            ExprKind::Lambda { params, body, return_type, .. } => {
+                let param_c_tys: Vec<String> = params.iter()
+                    .map(|p| p.ty.as_ref()
+                        .and_then(|t| self.type_ref_to_c(t).ok())
+                        .unwrap_or_else(|| "nova_int".into()))
+                    .collect();
+                let ret_c = match return_type {
+                    Some(rt) => self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()),
+                    None => self.infer_expr_c_type(body),
+                };
+                let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c);
+                format!("{}*", clos_struct)
+            }
             // Plan 70 Cat B (intentional erasure, session 2 finding): final wildcard
             // в infer_expr_c_type. Reached for ExprKind variants which cannot
-            // meaningfully infer a standalone C type — primarily ClosureLight
-            // (variant 35, `|x| ...`) and Path-only expressions без call-context
-            // (variant 12). В этих случаях caller (emit_call, emit_let, etc.)
+            // meaningfully infer a standalone C type — Path-only expressions без
+            // call-context, etc. В этих случаях caller (emit_call, emit_let, etc.)
             // знает expected type из bidirectional context (fn_param_sigs,
             // current_fn_return_ty) и delivers правильный type через alternative path.
-            //
-            // Этот fallback — placeholder для "I don't know", не silent
-            // miscompilation: тип никогда не используется для actual C emit;
-            // используется только для overload resolution / hint computation,
-            // где nova_int treated как "any int-shaped placeholder".
-            //
-            // Migration к strict: requires bidirectional inference в каждом
-            // wildcard-hitter ExprKind (ClosureLight требует context; Path
-            // требует upper-context type) — отдельный план (Plan 70+1 если
-            // ever needed). Documented в docs/codegen-erasure-sites.md как
-            // B11 при добавлении.
             _ => "nova_int".into(),
         }
     }
