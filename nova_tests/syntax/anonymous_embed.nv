@@ -57,7 +57,7 @@ type LoggingCounter {
 
 test "anonymous embed: auto-proxy без alias" {
     ro inner = Counter1.cnt_new(42)
-    ro lc = LoggingCounter { __embed_Counter: inner, log_count: 0 }
+    ro lc = LoggingCounter { __embed_Counter1: inner, log_count: 0 }
     assert(lc.value() == 42)
 }
 
