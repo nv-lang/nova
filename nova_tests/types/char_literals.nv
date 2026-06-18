@@ -106,18 +106,19 @@ test "match с char literal patterns" {
 // ================================================================
 
 test "StringBuilder.append with char literals" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append('h')
     sb.append('i')
-    ro s = sb.into()
+    ro s = sb.as_str()
     assert(s == "hi")
 }
 
 test "StringBuilder.append with Unicode codepoint" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append('\u{410}')           // Cyrillic 'А' — 1 codepoint, 2 bytes UTF-8
-    assert(sb.len() == 1)          // Plan 13 Ф.9: codepoint count
-    assert(sb.byte_len() == 2)
+    assert(sb.char_len() == 1)     // Plan 13 Ф.9: codepoint count
+    assert(sb.len() == 2)          // 2 bytes UTF-8
+    ro _ = sb.as_str()
 }
 
 // ================================================================

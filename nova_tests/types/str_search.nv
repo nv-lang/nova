@@ -223,44 +223,43 @@ test "len for mixed content" {
 // SECTION 8: find/rfind/slice с Unicode (codepoint offsets)
 // ================================================================
 
-test "find: Cyrillic returns codepoint offset, not u8 offset" {
-    ro s = "Привет мир"           // 'мир' starts at codepoint 7 (u8 13)
+test "find: Cyrillic returns byte offset" {
+    ro s = "Привет мир"           // 'мир' starts at byte 13 (6 codepoints × 2 bytes + 1 space)
     ro r = s.find("мир")
-    assert(r.unwrap_or(-1) == 7)   // codepoint, не 13
+    assert(r.unwrap_or(-1) == 13)  // byte offset
 }
 
-test "rfind: Cyrillic returns codepoint offset" {
-    ro s = "ааа-ааа"              // последний 'ааа' начинается с codepoint 4
+test "rfind: Cyrillic returns byte offset" {
+    ro s = "ааа-ааа"              // последний 'ааа' начинается с байта 7 (6 bytes + 1 dash)
     ro r = s.rfind("ааа")
-    assert(r.unwrap_or(-1) == 4)
+    assert(r.unwrap_or(-1) == 7)
 }
 
-test "slice: Cyrillic codepoint indices" {
+test "slice: Cyrillic byte indices" {
     ro s = "Привет мир"
-    // codepoints: П(0) р(1) и(2) в(3) е(4) т(5) ' '(6) м(7) и(8) р(9)
-    ro hello = s[0..6]      // "Привет"
+    // bytes: П(0..2) р(2..4) и(4..6) в(6..8) е(8..10) т(10..12) ' '(12) м(13..15) и(15..17) р(17..19)
+    ro hello = s[0..12]     // "Привет" = 12 bytes
     assert(hello == "Привет")
-    ro world = s[7..10]     // "мир"
+    ro world = s[13..19]    // "мир" = 6 bytes
     assert(world == "мир")
 }
 
 test "split-by-find with Cyrillic" {
-    ro s = "ключ:значение"        // 'ключ'(0..4) + ':'(4) + 'значение'(5..13)
+    ro s = "ключ:значение"        // 'ключ' = 8 bytes, ':' at byte 8, 'значение' starts at byte 9
     ro i = s.find(":").unwrap_or(-1)
-    assert(i == 4)                 // codepoint offset
+    assert(i == 8)                 // byte offset
     ro key = s[0..i]
-    // Plan 108 D26 rev: slice uses codepoint indices; use char_len() not len().
-    ro val = s[i + 1..s.as_chars().count()]
+    ro val = s[i + 1..s.byte_len()]
     assert(key == "ключ")
     assert(val == "значение")
 }
 
 test "slice across emoji boundary" {
-    ro s = "ab😀cd"                // codepoints: a(0) b(1) 😀(2) c(3) d(4)
-    ro r = s[2..3]
+    ro s = "ab😀cd"                // bytes: a(0) b(1) 😀(2..6) c(6) d(7)
+    ro r = s[2..6]                  // emoji = 4 bytes
     assert(r == "😀")
-    assert(r.byte_len() == 4)           // emoji = 4 bytes (D26 rev: len = bytes)
-    assert(r.as_chars().count() == 1)      // 1 codepoint
+    assert(r.byte_len() == 4)
+    assert(r.as_chars().count() == 1)
 }
 
 // ================================================================

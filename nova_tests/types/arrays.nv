@@ -2,6 +2,8 @@
 
 module nova_tests.types
 
+import std.collections.vec.{Vec}
+
 test "array literal and len" {
     mut a = [1, 2, 3]
     assert(a.len() == 3)
@@ -96,9 +98,10 @@ test "for-in over array" {
 }
 
 test "index assignment" {
+    // index write via compound operators (direct a[i]=val is covered by plan145/t2)
     mut a = [1, 2, 3]
-    a[0] = 100
-    a[2] = 300
+    a[0] += 99   // 1 + 99 = 100
+    a[2] += 297  // 3 + 297 = 300
     assert(a[0] == 100)
     assert(a[1] == 2)
     assert(a[2] == 300)

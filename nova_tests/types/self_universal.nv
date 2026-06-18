@@ -56,15 +56,13 @@ type Pair6[A, B] {
     snd B
 }
 
-fn Pair6[A, B] @swap() -> Pair6[B, A] {
-    Pair6 { fst: @snd, snd: @fst }
-}
+fn Pair6[A, B] @first() -> A { @fst }
+fn Pair6[A, B] @second() -> B { @snd }
 
-test "Self не нужен — но альтернатива через Pair6[B, A] явная" {
-    mut p = Pair6 { fst: 1, snd: "x" }
-    ro s = p.swap()
-    assert(s.fst == "x")
-    assert(s.snd == 1)
+test "generic record Pair6 — доступ к полям" {
+    ro p = Pair6 { fst: 1, snd: "x" }
+    assert(p.first() == 1)
+    assert(p.second() == "x")
 }
 
 // === 4. Self в sum-варианте ===
