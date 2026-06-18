@@ -31,6 +31,10 @@ test "Leaf(Point) differing field → not equal" {
 
 test "Leaf vs Empty → not equal (tag differs)" {
     ro a = leaf(1, 2)
-    ro e = Empty
+    // Аннотация обязательна: `Empty` — unit-вариант, имя которого
+    // коллизирует с `Empty` других sum-типов в том же folder-модуле
+    // (напр. Slot.Empty). Без bidirectional-инференса из `a != e`
+    // компилятор не может выбрать Node.Empty, поэтому тип указан явно.
+    ro e Node = Empty
     assert(a != e)
 }

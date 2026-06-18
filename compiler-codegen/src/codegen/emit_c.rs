@@ -19459,6 +19459,25 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
             }
         }
+        // Bare unit-variant `Empty` whose name collides across sum-types
+        // (Node.Empty vs Slot.Empty in the same folder-module): the default
+        // `find_variant_compat` is first-wins and may pick the WRONG sum,
+        // emitting `nova_make_Slot_Empty()` for a `Nova_Node*` target. When the
+        // target type is a concrete `Nova_<Sum>*` and that sum actually has this
+        // unit variant, build the constructor for THAT sum. This is the
+        // disambiguation the explicit `ro e Node = Empty` annotation requests.
+        if let ExprKind::Ident(name) = &expr.kind {
+            let base = target_ty_c.trim_end_matches('*').trim();
+            if let Some(sum) = base.strip_prefix("Nova_") {
+                if let Some(entry) = self.sum_schema_registry.lookup_sum_schema(sum) {
+                    if let Some(v) = entry.variants.iter().find(|v| v.variant_name == *name) {
+                        if v.field_c_types.is_empty() {
+                            return Ok(format!("nova_make_{}_{}()", sum, name));
+                        }
+                    }
+                }
+            }
+        }
         // When target is NovaArray_X* or (Plan 138.1 Ф.2) the flipped
         // Vec[X] (`Nova_Vec____<X>*`) and expr is an array literal, set hint so
         // emit_array_lit / try_emit_typed_vec_literal uses X as the element

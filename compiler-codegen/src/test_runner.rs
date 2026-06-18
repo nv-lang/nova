@@ -1627,7 +1627,7 @@ impl Outcome {
             Outcome::Skipped { reason, .. } => reason.description(),
             Outcome::Fail { stage, .. } => match stage {
                 Stage::Codegen { error } | Stage::Cc { error } | Stage::Run { error } => {
-                    error.chars().take(150).collect()
+                    error.chars().take(400).collect()
                 }
                 Stage::NoCFile => String::new(),
                 Stage::Expectation { mismatch } => mismatch.detail(),

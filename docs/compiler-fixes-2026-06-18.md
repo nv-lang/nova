@@ -291,3 +291,34 @@ Ident возвращала `name.clone()` без манглинга.
 `emit_const_expr(Ident)` теперь резолвит mangled C-name через
 `private_const_c_names` по `expr.span.file_id`; fallback на сырое имя для
 exported const'ов (эмитятся под собственным именем).
+
+---
+
+## 13. emit_c.rs: bare unit-variant дизамбигуируется по target-типу (аннотации)
+
+**Файл:** `compiler-codegen/src/codegen/emit_c.rs`
+**Метод:** `emit_expr_with_target_type`, ветка `ExprKind::Ident`
+
+**Проблема:**
+`Empty` объявлен и в `Node | Leaf(Point) | Empty`, и в `Slot` (другой файл
+folder-модуля). `ro e Node = Empty` давал `Nova_Node* e = nova_make_Slot_Empty()`
+— тип переменной правильный (по аннотации), но КОНСТРУКТОР резолвился через
+first-wins `find_variant_compat("Empty")` → `Slot.Empty`. Сравнение `a != e`
+обращалось к чужому layout → RUN-FAIL.
+
+**Почему это баг:**
+Явная аннотация `ro e Node = …` — авторитетный target-тип. Конструктор bare
+unit-variant обязан строить вариант ИМЕННО этого sum-типа.
+
+**Исправление:**
+`emit_expr_with_target_type(Ident)`: если target = `Nova_<Sum>*` и у `<Sum>`
+есть unit-вариант с этим именем — эмитим `nova_make_<Sum>_<Variant>()`.
+Симметрично существующей дизамбигуации `None` по `NovaOpt_<T>` target.
+
+Известное ограничение (НЕ фикс): без аннотации (`ro e = Empty`) и при
+коллизии имён компилятор по-прежнему берёт first-wins — bidirectional-инференс
+из последующего сравнения требует доработки type-checker'а. Аннотация — рабочий
+обход; см. `nova_tests/plan141/t5_sum_record_payload.nv`.
+
+NOTE §11: лимит детали RUN-FAIL поднят 150 → 400 символов (имена тестов на
+кириллице длиннее; полезнее для диагностики).
