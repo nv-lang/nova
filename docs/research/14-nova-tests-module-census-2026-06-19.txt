@@ -1,0 +1,362 @@
+﻿=== SUMMARY ===
+peer-modules (folder-module, 1 mod, >1 file): 218
+single-file modules:                          63
+MULTI-module dirs (consolidation candidates):  72
+neg/ dirs:                                     135 (682 neg files)
+
+=== MULTI-MODULE CANDIDATES ===
+cfg	8 files, 8 modules
+expected_runtime	22 files, 22 modules
+modules	29 files, 29 modules
+named_params	8 files, 8 modules
+negative_capability	5 files, 5 modules
+negative_capability/folder_file_conflict_setup/admin	2 files, 2 modules
+negative_capability/folder_inconsistent_decl	2 files, 2 modules
+negative_capability/module_forbid_violation_setup	3 files, 3 modules
+negative_capability/peer_path_leak_setup	2 files, 2 modules
+plan_parser_recsep	2 files, 2 modules
+plan03_1/internal_dep/consumer	2 files, 2 modules
+plan100_1	17 files, 17 modules
+plan100_1/parser	6 files, 6 modules
+plan100_4_5	4 files, 4 modules
+plan101_1	9 files, 9 modules
+plan101_1/negative	8 files, 8 modules
+plan101_3	3 files, 3 modules
+plan101_3/negative	3 files, 3 modules
+plan101_4	5 files, 5 modules
+plan101_4/negative	6 files, 6 modules
+plan103_1	5 files, 5 modules
+plan103_1/negative	2 files, 2 modules
+plan103_2	11 files, 11 modules
+plan103_2/negative	6 files, 6 modules
+plan103_8	14 files, 4 modules
+plan106	13 files, 13 modules
+plan107	5 files, 5 modules
+plan107/folder_no_prelude_inherited	2 files, 2 modules
+plan110_9_np	2 files, 2 modules
+plan114_4_1	5 files, 5 modules
+plan115	6 files, 6 modules
+plan118_1_cstr_nul	2 files, 2 modules
+plan118_2	2 files, 2 modules
+plan139_1	4 files, 4 modules
+plan140	10 files, 10 modules
+plan143_2	7 files, 7 modules
+plan144_0	10 files, 10 modules
+plan144_1	6 files, 6 modules
+plan144_checker	2 files, 2 modules
+plan144_inftype	11 files, 11 modules
+plan147	38 files, 38 modules
+plan149_toml	2 files, 2 modules
+plan150	13 files, 13 modules
+plan154	5 files, 5 modules
+plan156	4 files, 3 modules
+plan159	19 files, 19 modules
+plan160	6 files, 6 modules
+plan162	8 files, 8 modules
+plan162_1	3 files, 3 modules
+plan162_2	3 files, 3 modules
+plan163	4 files, 4 modules
+plan60	6 files, 6 modules
+plan67	14 files, 14 modules
+plan81	10 files, 10 modules
+plan81/entry_fmod	2 files, 2 modules
+plan83_11	4 files, 2 modules
+plan83_4_5_6_stress	3 files, 3 modules
+plan83_stress_armed	5 files, 5 modules
+plan84	3 files, 3 modules
+plan84/fmod_rel/geo	2 files, 2 modules
+plan84/reexport	3 files, 3 modules
+plan84/sibling	2 files, 2 modules
+plan91_12	21 files, 21 modules
+plan91_14	21 files, 21 modules
+plan91_15	11 files, 11 modules
+plan91_16	3 files, 3 modules
+plan91_8b	4 files, 4 modules
+plan91_8c	14 files, 14 modules
+plan91_8c_direct	5 files, 5 modules
+protocols/comparison	6 files, 6 modules
+protocols/conversion	9 files, 9 modules
+protocols/iter	11 files, 11 modules
+=== PEER (218) ===
+basics (8)
+buffers (10)
+cfg/feature_gate (3)
+cfg/platform_route (4)
+cfg/predicate_all (2)
+cfg/predicate_all_off (2)
+cfg/predicate_any (2)
+cfg/predicate_not (2)
+cfg/target_os_module (3)
+concurrency (115)
+contracts (226)
+doc (22)
+effects (10)
+gc (2)
+generics (5)
+map_literals (20)
+modules/folder_internal (2)
+modules/folder_internal/internal (2)
+modules/folder_module_basic (2)
+modules/folder_module_forbid (3)
+modules/folder_module_with_test (2)
+modules/folder_mutual_recursion (2)
+modules/folder_per_file_imports (2)
+modules/folder_with_doc (3)
+modules/peer_isolation_ok (2)
+modules/reexport_facade (2)
+modules/reexport_selective (2)
+modules/rename_import_source (2)
+modules/rule_e_file/sub (2)
+named_params/imported_mod (2)
+negative_capability/folder_cycle_setup/modA (2)
+negative_capability/folder_cycle_setup/modB (2)
+plan_value_iter (3)
+plan100_2 (11)
+plan100_3 (6)
+plan100_4_1 (10)
+plan100_4_2 (5)
+plan100_4_4 (9)
+plan100_6 (10)
+plan100_7 (2)
+plan100_8 (2)
+plan103_3 (18)
+plan103_4 (20)
+plan103_5 (16)
+plan103_6 (13)
+plan103_9 (10)
+plan104_7_grammar (4)
+plan104_9 (9)
+plan108 (3)
+plan108_1 (8)
+plan108_2 (7)
+plan108_3 (10)
+plan108_4 (7)
+plan11_followup (17)
+plan110 (40)
+plan114 (5)
+plan114_4 (5)
+plan114_4_2 (6)
+plan114_4_3 (10)
+plan114_4_4 (34)
+plan118 (22)
+plan118_1 (10)
+plan118_1_6 (6)
+plan118_1_7 (3)
+plan118_1_addr_chains (6)
+plan118_1_closeout (4)
+plan118_1_unsafe_extern_fn (3)
+plan118_4 (3)
+plan118_5 (9)
+plan118_5_v3 (6)
+plan118_6 (9)
+plan118_7 (2)
+plan120 (5)
+plan123_1 (18)
+plan123_1_1 (3)
+plan123_1_2 (5)
+plan123_2 (14)
+plan123_3 (12)
+plan123_3_1 (4)
+plan123_3_2 (3)
+plan123_4 (10)
+plan123_4_3 (3)
+plan123_7_1 (10)
+plan123_7_2 (2)
+plan123_7_5 (3)
+plan123_7_7 (2)
+plan123_chain_elem (2)
+plan123_followups_2026_06_05 (11)
+plan124_1 (6)
+plan124_2 (8)
+plan124_3 (6)
+plan124_5 (3)
+plan124_6 (9)
+plan124_8 (27)
+plan124_9 (7)
+plan125 (18)
+plan125_1 (12)
+plan125_2 (6)
+plan125_followups (7)
+plan126 (15)
+plan126_2 (8)
+plan127 (12)
+plan127_1 (3)
+plan128 (14)
+plan128_2 (5)
+plan131 (12)
+plan132 (4)
+plan133 (2)
+plan134 (3)
+plan135 (10)
+plan136 (9)
+plan136_1 (7)
+plan137 (9)
+plan138 (8)
+plan138_1 (9)
+plan138_2 (18)
+plan138_3 (2)
+plan138_5 (7)
+plan139 (33)
+plan139_2 (8)
+plan140_1 (3)
+plan140_2 (7)
+plan140_3 (3)
+plan140_4 (3)
+plan141 (8)
+plan142 (2)
+plan143 (3)
+plan145 (4)
+plan145_2 (4)
+plan148 (10)
+plan149 (10)
+plan152_0 (2)
+plan152_1 (4)
+plan152_2 (3)
+plan152_3 (3)
+plan152_4 (11)
+plan152_5 (6)
+plan152_7 (7)
+plan152_8 (6)
+plan153_0 (3)
+plan153_1 (6)
+plan153_2 (10)
+plan153_2_zc (5)
+plan153_3 (7)
+plan153_3_1 (6)
+plan153_4 (2)
+plan153_5 (3)
+plan153_5_nested (4)
+plan153_6 (2)
+plan154_1 (4)
+plan160/plan160_lib (2)
+plan161 (11)
+plan163/plan163_lib (2)
+plan164 (5)
+plan167 (3)
+plan168 (2)
+plan169 (3)
+plan34 (4)
+plan36_d1 (2)
+plan48_1 (2)
+plan48_mpm (5)
+plan55 (19)
+plan56 (6)
+plan57 (7)
+plan59 (25)
+plan59_1 (8)
+plan61 (7)
+plan62 (27)
+plan63 (2)
+plan63/cm_box (2)
+plan65 (13)
+plan70 (5)
+plan70_1 (3)
+plan70_2 (2)
+plan70_3 (5)
+plan70_4 (6)
+plan70_5 (8)
+plan72 (12)
+plan73 (14)
+plan74 (2)
+plan77 (3)
+plan79 (5)
+plan81/peer_recur (2)
+plan83_10 (10)
+plan83_10_3 (3)
+plan83_10_4 (3)
+plan83_12 (10)
+plan83_6 (3)
+plan83_7 (2)
+plan87 (4)
+plan88 (4)
+plan89 (7)
+plan90 (6)
+plan90_1 (16)
+plan91 (2)
+plan91_13 (8)
+plan91_7 (5)
+plan91_8a (2)
+plan91_8a_2 (22)
+plan91_fe1 (8)
+plan91_fe2 (6)
+plan91_fe4 (9)
+plan91_fe5 (5)
+plan95 (5)
+plan95bis (4)
+plan96 (14)
+plan96_1 (2)
+plan97 (16)
+plan98 (4)
+plan99 (7)
+plan99_2_ctor (2)
+runtime (19)
+self_nested (4)
+str (11)
+str_builder (7)
+syntax (54)
+syntax_probe (2)
+types (21)
+=== SINGLE (63) ===
+cgfix_fluent_tail_if
+doc/fixtures/basic
+doc/fixtures/capability_forbid
+doc/fixtures/doctests
+doc/fixtures/expect_output
+doc/fixtures/kinds
+doc/fixtures/links
+doc/fixtures/module_attrs
+doc/fixtures/must_verify
+doc/fixtures/orphan
+doc/fixtures/real_attrs
+doc/fixtures/reexport
+doc/fixtures/sections
+doc/fixtures/should_panic
+doc/fixtures/stability
+modules/reexport_facade/internal
+modules/reexport_selective/internal
+negative_capability/folder_file_conflict_setup
+negative_capability/peer_path_leak_target
+plan03_1
+plan03_1/cross_pkg_neg
+plan03_1/cycle_dep/consumer
+plan03_1/cycle_dep/cyc_a_pkg
+plan03_1/cycle_dep/cyc_b_pkg
+plan03_1/dup_dep_neg
+plan03_1/git_dep_neg
+plan03_1/internal_dep/deplib
+plan03_1/internal_dep/deplib/internal
+plan03_1/missing_path_neg
+plan03_1/name_mismatch_neg/consumer
+plan03_1/name_mismatch_neg/realname
+plan03_1/path_dep/consumer
+plan03_1/path_dep/mathlib
+plan03_1/std_reserved_neg
+plan101_1/probe
+plan101_2
+plan101_2/negative
+plan123_2_1
+plan123_4_2
+plan123_4_4
+plan123_5
+plan123_5_4
+plan123_7
+plan123_7_6
+plan124_4
+plan152_6
+plan162/plan162_ext_methods
+plan162/plan162_ext_type
+plan162/plan162_mod_a
+plan162/plan162_mod_b
+plan162/plan162_proxy
+plan162/plan162_type_lib
+plan162_1/p162_1_mod_a
+plan162_1/p162_1_mod_b
+plan162_2/plan162_2_fn_lib
+plan76
+plan82_2
+plan84/fmod_rel
+plan84/neg_notfound
+plan84/parent
+plan84/parent/sub
+plan91_10
+plan99_probe

@@ -1,0 +1,72 @@
+﻿cfg	8f pos=8 neg/expect=0 [CROSS?]
+expected_runtime	22f pos=1 neg/expect=21 [CROSS?]
+modules	29f pos=27 neg/expect=2 [CROSS?]
+named_params	8f pos=8 neg/expect=0
+negative_capability	5f pos=5 neg/expect=0 [CROSS?]
+negative_capability/folder_file_conflict_setup/admin	2f pos=2 neg/expect=0 [CROSS?]
+negative_capability/folder_inconsistent_decl	2f pos=0 neg/expect=2 [CROSS?]
+negative_capability/module_forbid_violation_setup	3f pos=3 neg/expect=0 [CROSS?]
+negative_capability/peer_path_leak_setup	2f pos=2 neg/expect=0 [CROSS?]
+plan_parser_recsep	2f pos=2 neg/expect=0
+plan03_1/internal_dep/consumer	2f pos=1 neg/expect=1 [CROSS?]
+plan100_1	17f pos=9 neg/expect=8
+plan100_1/parser	6f pos=3 neg/expect=3
+plan100_4_5	4f pos=1 neg/expect=3
+plan101_1	9f pos=9 neg/expect=0
+plan101_1/negative	8f pos=0 neg/expect=8
+plan101_3	3f pos=3 neg/expect=0
+plan101_3/negative	3f pos=0 neg/expect=3
+plan101_4	5f pos=5 neg/expect=0
+plan101_4/negative	6f pos=0 neg/expect=6
+plan103_1	5f pos=5 neg/expect=0
+plan103_1/negative	2f pos=2 neg/expect=0
+plan103_2	11f pos=11 neg/expect=0
+plan103_2/negative	6f pos=6 neg/expect=0
+plan103_8	14f pos=0 neg/expect=14
+plan106	13f pos=9 neg/expect=4
+plan107	5f pos=5 neg/expect=0 [CROSS?]
+plan107/folder_no_prelude_inherited	2f pos=1 neg/expect=1 [CROSS?]
+plan110_9_np	2f pos=1 neg/expect=1
+plan114_4_1	5f pos=1 neg/expect=4
+plan115	6f pos=6 neg/expect=0
+plan118_1_cstr_nul	2f pos=1 neg/expect=1
+plan118_2	2f pos=1 neg/expect=1
+plan139_1	4f pos=1 neg/expect=3
+plan140	10f pos=1 neg/expect=9
+plan143_2	7f pos=7 neg/expect=0 [CROSS?]
+plan144_0	10f pos=10 neg/expect=0
+plan144_1	6f pos=6 neg/expect=0
+plan144_checker	2f pos=1 neg/expect=1
+plan144_inftype	11f pos=6 neg/expect=5
+plan147	38f pos=14 neg/expect=24
+plan149_toml	2f pos=2 neg/expect=0 [CROSS?]
+plan150	13f pos=5 neg/expect=8 [CROSS?]
+plan154	5f pos=3 neg/expect=2
+plan156	4f pos=4 neg/expect=0 [CROSS?]
+plan159	19f pos=18 neg/expect=1 [CROSS?]
+plan160	6f pos=1 neg/expect=5
+plan162	8f pos=8 neg/expect=0 [CROSS?]
+plan162_1	3f pos=3 neg/expect=0 [CROSS?]
+plan162_2	3f pos=3 neg/expect=0 [CROSS?]
+plan163	4f pos=4 neg/expect=0
+plan60	6f pos=2 neg/expect=4
+plan67	14f pos=14 neg/expect=0
+plan81	10f pos=5 neg/expect=5
+plan81/entry_fmod	2f pos=2 neg/expect=0
+plan83_11	4f pos=0 neg/expect=4 [CROSS?]
+plan83_4_5_6_stress	3f pos=2 neg/expect=1
+plan83_stress_armed	5f pos=4 neg/expect=1
+plan84	3f pos=0 neg/expect=3 [CROSS?]
+plan84/fmod_rel/geo	2f pos=2 neg/expect=0 [CROSS?]
+plan84/reexport	3f pos=3 neg/expect=0 [CROSS?]
+plan84/sibling	2f pos=2 neg/expect=0 [CROSS?]
+plan91_12	21f pos=21 neg/expect=0
+plan91_14	21f pos=16 neg/expect=5
+plan91_15	11f pos=11 neg/expect=0
+plan91_16	3f pos=2 neg/expect=1
+plan91_8b	4f pos=4 neg/expect=0
+plan91_8c	14f pos=13 neg/expect=1
+plan91_8c_direct	5f pos=4 neg/expect=1
+protocols/comparison	6f pos=5 neg/expect=1
+protocols/conversion	9f pos=8 neg/expect=1
+protocols/iter	11f pos=9 neg/expect=2
