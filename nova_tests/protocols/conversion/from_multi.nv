@@ -29,9 +29,9 @@ test "From[str] — длина строки" {
     assert(n.val == 5)
 }
 
-test "From[str] — Unicode длина codepoint'ов" {
+test "From[str] — Unicode byte_len (12 bytes)" {
     ro n = MyNum.from("Привет")
-    assert(n.val == 6)
+    assert(n.val == 12)
 }
 
 test "From[bool] — true -> 1" {

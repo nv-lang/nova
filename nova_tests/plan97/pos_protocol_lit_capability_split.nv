@@ -23,7 +23,7 @@ type Cell2 {
 
 
 fn Cell2.new(initial int) -> (Reader, Writer) {
-    ro state = Cell2 { value: initial }
+    mut state = Cell2 { value: initial }
     ro r = protocol Reader {
         read() => state.value
     }

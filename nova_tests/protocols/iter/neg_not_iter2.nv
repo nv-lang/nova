@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR does not satisfy
+// EXPECT_COMPILE_ERROR for-in: type 'NotIter' has neither
 //
 // Plan 85.5 Ф.3 — негатив: тип без @next в generic bound `[T Iterable[int]]`.
 //

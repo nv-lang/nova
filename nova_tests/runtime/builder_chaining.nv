@@ -15,25 +15,25 @@ module nova_tests.runtime
 // ================================================================
 
 test "StringBuilder: chained append str" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hello").append(" ").append("world")
-    ro s = sb.into()
+    ro s = sb.as_str()
     assert(s == "hello world")
 }
 
 test "StringBuilder: chained append str + char" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("=").append('>').append(" ").append("ok")
-    ro s = sb.into()
+    ro s = sb.as_str()
     assert(s == "=> ok")
 }
 
 test "StringBuilder: chain produces same buffer (Self semantics)" {
-    mut sb = StringBuilder.new()
-    ro r = sb.append("a").append("b")
-    // r и sb — один и тот же буфер. Проверка через @len + into.
+    consume sb = StringBuilder.new()
+    sb.append("a").append("b")
+    // append returns @, chain still uses same sb. Verify len.
     assert(sb.len() == 2)
-    ro s = sb.into()
+    ro s = sb.as_str()
     assert(s == "ab")
 }
 

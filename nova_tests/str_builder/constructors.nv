@@ -1,7 +1,6 @@
 // Plan 85.1 Ф.1 — StringBuilder constructors.
 //
 // Покрывает: new(), with_capacity(0/1/100), from(str), from(char).
-// Включая edge cases: пустая строка, ASCII char, Cyrillic char.
 
 module nova_tests.str_builder
 
@@ -9,102 +8,107 @@ module nova_tests.str_builder
 // ── new() ──────────────────────────────────────────────────────────
 
 test "new() — пустой, capacity >= 16" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     assert(sb.len() == 0)
-    assert(sb.byte_len() == 0)
     assert(sb.capacity() >= 16)
     assert(sb.is_empty())
+    ro _ = sb.as_str()
 }
 
 
 // ── with_capacity(n) ───────────────────────────────────────────────
 
 test "with_capacity(0) — пустой, валидный" {
-    mut sb = StringBuilder.with_capacity(0)
+    consume sb = StringBuilder.with_capacity(0)
     assert(sb.len() == 0)
-    assert(sb.byte_len() == 0)
     assert(sb.capacity() >= 0)
     assert(sb.is_empty())
+    ro _ = sb.as_str()
 }
 
 test "with_capacity(1) — capacity >= 1" {
-    mut sb = StringBuilder.with_capacity(1)
+    consume sb = StringBuilder.with_capacity(1)
     assert(sb.len() == 0)
     assert(sb.capacity() >= 1)
+    ro _ = sb.as_str()
 }
 
 test "with_capacity(100) — capacity >= 100" {
-    mut sb = StringBuilder.with_capacity(100)
+    consume sb = StringBuilder.with_capacity(100)
     assert(sb.len() == 0)
-    assert(sb.byte_len() == 0)
     assert(sb.capacity() >= 100)
+    ro _ = sb.as_str()
 }
 
 test "with_capacity(0) — append после ноль-капасити растёт" {
-    mut sb = StringBuilder.with_capacity(0)
+    consume sb = StringBuilder.with_capacity(0)
     sb.append("data")
     assert(sb.len() == 4)
-    assert(sb.byte_len() == 4)
     assert(sb.capacity() >= 4)
+    ro _ = sb.as_str()
 }
 
 
 // ── from(str) ──────────────────────────────────────────────────────
 
 test "from(str) — ASCII" {
-    mut sb = StringBuilder.from("hello")
+    consume sb = StringBuilder.from("hello")
     assert(sb.len() == 5)
-    assert(sb.byte_len() == 5)
+    ro _ = sb.as_str()
 }
 
 test "from(str) — пустая строка" {
-    mut sb = StringBuilder.from("")
+    consume sb = StringBuilder.from("")
     assert(sb.len() == 0)
-    assert(sb.byte_len() == 0)
     assert(sb.is_empty())
+    ro _ = sb.as_str()
 }
 
 test "from(str) — Cyrillic codepoints vs bytes" {
-    mut sb = StringBuilder.from("Привет")
-    assert(sb.len() == 6)        // 6 codepoints
-    assert(sb.byte_len() == 12)  // 2 байта на codepoint
+    consume sb = StringBuilder.from("Привет")
+    assert(sb.char_len() == 6)  // 6 codepoints
+    assert(sb.len() == 12)      // 2 байта на codepoint
+    ro _ = sb.as_str()
 }
 
 test "from(str) — append продолжает с готового контента" {
-    mut sb = StringBuilder.from("abc")
+    consume sb = StringBuilder.from("abc")
     sb.append("def")
     assert(sb.len() == 6)
-    assert(sb.into() == "abcdef")
+    assert(sb.as_str() == "abcdef")
 }
 
 
 // ── from(char) ─────────────────────────────────────────────────────
 
 test "from(char) — ASCII single codepoint" {
-    mut sb = StringBuilder.from('A')
+    consume sb = StringBuilder.from('A')
     assert(sb.len() == 1)
-    assert(sb.byte_len() == 1)
+    ro _ = sb.as_str()
 }
 
 test "from(char) — Cyrillic codepoint = 2 байта" {
-    mut sb = StringBuilder.from('Я')
-    assert(sb.len() == 1)
-    assert(sb.byte_len() == 2)
+    consume sb = StringBuilder.from('Я')
+    assert(sb.char_len() == 1)
+    assert(sb.len() == 2)
+    ro _ = sb.as_str()
 }
 
 test "from(char) — CJK codepoint = 3 байта" {
-    mut sb = StringBuilder.from('中')
-    assert(sb.len() == 1)
-    assert(sb.byte_len() == 3)
+    consume sb = StringBuilder.from('中')
+    assert(sb.char_len() == 1)
+    assert(sb.len() == 3)
+    ro _ = sb.as_str()
 }
 
 test "from(char) — emoji codepoint = 4 байта" {
-    mut sb = StringBuilder.from('😀')
-    assert(sb.len() == 1)
-    assert(sb.byte_len() == 4)
+    consume sb = StringBuilder.from('😀')
+    assert(sb.char_len() == 1)
+    assert(sb.len() == 4)
+    ro _ = sb.as_str()
 }
 
-test "from(char) — content проверяется через into" {
-    mut sb = StringBuilder.from('Z')
-    assert(sb.into() == "Z")
+test "from(char) — content проверяется через as_str" {
+    consume sb = StringBuilder.from('Z')
+    assert(sb.as_str() == "Z")
 }

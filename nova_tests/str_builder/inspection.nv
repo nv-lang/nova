@@ -1,7 +1,8 @@
 // Plan 85.1 Ф.2 — StringBuilder non-consuming inspection.
 //
-// @starts_with(prefix) / @ends_with(suffix) / @is_empty() / @peek()
+// @starts_with(prefix) / @ends_with(suffix) / @is_empty() / @len()
 // — все non-consuming: append после них продолжает работать.
+// Note: @peek() удалён в Plan 109/D179 (unsound aliasing with realloc).
 
 module nova_tests.str_builder
 
@@ -9,123 +10,101 @@ module nova_tests.str_builder
 // ── @is_empty ──────────────────────────────────────────────────────
 
 test "is_empty — true для свежего, false после append" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     assert(sb.is_empty())
     sb.append("x")
     assert(!sb.is_empty())
+    ro _ = sb.as_str()
 }
 
 test "is_empty — append пустой строки оставляет пустым" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("")
     assert(sb.is_empty())
+    ro _ = sb.as_str()
 }
 
 
 // ── @starts_with ───────────────────────────────────────────────────
 
 test "starts_with — совпадает префикс" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hello world")
     assert(sb.starts_with("hello"))
     assert(sb.starts_with("h"))
     assert(sb.starts_with("hello world"))
+    ro _ = sb.as_str()
 }
 
 test "starts_with — пустой префикс всегда true" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("data")
     assert(sb.starts_with(""))
+    ro _ = sb.as_str()
 }
 
 test "starts_with — false при несовпадении" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hello world")
     assert(!sb.starts_with("world"))
     assert(!sb.starts_with("Hello"))      // case-sensitive
     assert(!sb.starts_with("hello world!"))  // длиннее буфера
+    ro _ = sb.as_str()
 }
 
 test "starts_with — Unicode префикс" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("Привет, мир")
     assert(sb.starts_with("Привет"))
     assert(!sb.starts_with("привет"))     // регистр
+    ro _ = sb.as_str()
 }
 
 
 // ── @ends_with ─────────────────────────────────────────────────────
 
 test "ends_with — совпадает суффикс" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hello world")
     assert(sb.ends_with("world"))
     assert(sb.ends_with("d"))
     assert(sb.ends_with("hello world"))
+    ro _ = sb.as_str()
 }
 
 test "ends_with — пустой суффикс всегда true" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("data")
     assert(sb.ends_with(""))
+    ro _ = sb.as_str()
 }
 
 test "ends_with — false при несовпадении" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hello world")
     assert(!sb.ends_with("hello"))
     assert(!sb.ends_with("WORLD"))
+    ro _ = sb.as_str()
 }
 
 test "ends_with — Unicode суффикс" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("конец 😀")
     assert(sb.ends_with("😀"))
     assert(sb.ends_with(" 😀"))
-}
-
-
-// ── @peek ──────────────────────────────────────────────────────────
-
-test "peek — snapshot до append" {
-    mut sb = StringBuilder.new()
-    sb.append("abc")
-    ro snap = sb.peek()
-    assert(snap == "abc")
-}
-
-test "peek — append после peek работает" {
-    mut sb = StringBuilder.new()
-    sb.append("abc")
-    ro snap = sb.peek()
-    assert(snap == "abc")
-    sb.append("def")
-    assert(sb.into() == "abcdef")
-}
-
-test "peek — пустой буфер" {
-    mut sb = StringBuilder.new()
-    assert(sb.peek() == "")
-}
-
-test "peek — Unicode контент" {
-    mut sb = StringBuilder.new()
-    sb.append("Привет")
-    assert(sb.peek() == "Привет")
+    ro _ = sb.as_str()
 }
 
 
 // ── non-consuming: все методы не consume буфер ────────────────────
 
-test "non-consuming — все inspection до into" {
-    mut sb = StringBuilder.new()
+test "non-consuming — все inspection до as_str" {
+    consume sb = StringBuilder.new()
     sb.append("foo/bar")
     ro _ = sb.is_empty()
     ro _ = sb.starts_with("foo")
     ro _ = sb.ends_with("bar")
-    ro _ = sb.peek()
     ro _ = sb.len()
-    ro _ = sb.byte_len()
     sb.append("/baz")                    // append после всех проверок
-    assert(sb.into() == "foo/bar/baz")
+    assert(sb.as_str() == "foo/bar/baz")
 }

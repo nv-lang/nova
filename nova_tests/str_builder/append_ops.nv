@@ -1,7 +1,7 @@
-// Plan 85.1 Ф.1 — StringBuilder append + plus операторы.
+// Plan 85.1 Ф.1 — StringBuilder append операторы.
 //
 // Покрывает: @append(str), @append(char) ASCII/Unicode/emoji,
-// @plus(str)/@plus(char), chaining, пустой append.
+// chaining, пустой append.
 
 module nova_tests.str_builder
 
@@ -9,118 +9,95 @@ module nova_tests.str_builder
 // ── @append(str) ───────────────────────────────────────────────────
 
 test "append(str) — несколько частей" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hello")
     sb.append(" ")
     sb.append("world")
     assert(sb.len() == 11)
-    assert(sb.into() == "hello world")
+    assert(sb.as_str() == "hello world")
 }
 
 test "append(str) — пустой append не меняет буфер" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("abc")
     sb.append("")
     assert(sb.len() == 3)
-    assert(sb.byte_len() == 3)
-    assert(sb.into() == "abc")
+    assert(sb.as_str() == "abc")
 }
 
 test "append(str) — пустой в пустой остаётся пустым" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("")
     assert(sb.is_empty())
+    ro _ = sb.as_str()
 }
 
 
 // ── @append(char) ──────────────────────────────────────────────────
 
 test "append(char) — ASCII" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append('A')
     sb.append('B')
     sb.append('C')
     assert(sb.len() == 3)
-    assert(sb.byte_len() == 3)
-    assert(sb.into() == "ABC")
+    assert(sb.char_len() == 3)
+    assert(sb.as_str() == "ABC")
 }
 
 test "append(char) — Cyrillic 2 байта" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append('П')
     sb.append('р')
-    assert(sb.len() == 2)
-    assert(sb.byte_len() == 4)
+    assert(sb.char_len() == 2)
+    assert(sb.len() == 4)
+    ro _ = sb.as_str()
 }
 
 test "append(char) — emoji 4 байта" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append('😀')
-    assert(sb.len() == 1)
-    assert(sb.byte_len() == 4)
+    assert(sb.char_len() == 1)
+    assert(sb.len() == 4)
+    ro _ = sb.as_str()
 }
 
 test "append(char) — смешанные ширины codepoint'ов" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append('A')      // 1 байт
     sb.append('Я')      // 2 байта
     sb.append('中')     // 3 байта
     sb.append('😀')     // 4 байта
-    assert(sb.len() == 4)
-    assert(sb.byte_len() == 10)
+    assert(sb.char_len() == 4)
+    assert(sb.len() == 10)
+    ro _ = sb.as_str()
 }
 
 
 // ── append(str) + append(char) вперемешку ─────────────────────────
 
 test "append str и char вперемешку" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("hi")
     sb.append(' ')
     sb.append("there")
     sb.append('!')
     assert(sb.len() == 9)
-    assert(sb.into() == "hi there!")
+    assert(sb.as_str() == "hi there!")
 }
 
 
 // ── chaining (@append возвращает receiver) ────────────────────────
 
 test "chaining append().append().append()" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("a").append("b").append("c")
     assert(sb.len() == 3)
-    assert(sb.into() == "abc")
+    assert(sb.as_str() == "abc")
 }
 
 test "chaining str + char вперемешку" {
-    mut sb = StringBuilder.new()
+    consume sb = StringBuilder.new()
     sb.append("x").append('y').append("z")
-    assert(sb.into() == "xyz")
-}
-
-
-// ── @plus оператор `+` ─────────────────────────────────────────────
-
-test "sb + str через @plus" {
-    mut sb = StringBuilder.new()
-    sb + "foo"
-    sb + "bar"
-    assert(sb.byte_len() == 6)
-    assert(sb.into() == "foobar")
-}
-
-test "sb + char через @plus" {
-    mut sb = StringBuilder.new()
-    sb + 'A'
-    sb + 'B'
-    assert(sb.len() == 2)
-    assert(sb.into() == "AB")
-}
-
-test "sb + char — UTF-8 multi-byte" {
-    mut sb = StringBuilder.new()
-    sb = sb + 'Я' + '中'
-    assert(sb.len() == 2)
-    assert(sb.byte_len() == 5)
+    assert(sb.as_str() == "xyz")
 }

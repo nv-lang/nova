@@ -51,13 +51,15 @@ test "shallow @clone — nested record share'ится по ссылке" {
 // === 3. StringBuilder.@clone() — DEEP (исключение для accumulator) ===
 
 test "StringBuilder.@clone() — независимые буферы (исключение)" {
-    mut a = StringBuilder.new()
+    consume a = StringBuilder.new()
     a.append("hello")
-    mut b = a.clone()
+    consume b = a.clone()
     b.append(" world")
     // оба независимы — accumulator clone deep по семантике типа
     assert(a.len() == 5)
     assert(b.len() == 11)
+    ro _ = a.as_str()
+    ro _ = b.as_str()
 }
 
 

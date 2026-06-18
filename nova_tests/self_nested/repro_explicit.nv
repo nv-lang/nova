@@ -1,20 +1,20 @@
 // Control: the EXPLICIT form of repro.nv — `flt` returns
-// `FiltIt[MapIt[I, T, U], U]` written out by hand instead of `FiltIt[Self, U]`.
+// `FiltItX[MapItX[I, T, U], U]` written out by hand instead of `FiltItX[Self, U]`.
 // This is expected to PASS, isolating the bug to the `Self` type-arg
 // substitution (full receiver mono) rather than the nested-generic machinery.
 module nova_tests.self_nested
 
 import std.collections.vec.{Vec, VecIter}
 
-type MapIt[I, T, U] value { mut src I, priv f fn(T) -> U }
-type FiltIt[I, T] value { mut src I, priv pred fn(T) -> bool }
+type MapItX[I, T, U] value { mut src I, priv f fn(T) -> U }
+type FiltItX[I, T] value { mut src I, priv pred fn(T) -> bool }
 
-fn MapIt[I Next[T], T, U] mut @next() -> Option[U] => match (@src).next() {
+fn MapItX[I Next[T], T, U] mut @next() -> Option[U] => match (@src).next() {
     Some(x) => Some((@f)(x)),
     None => None,
 }
 
-fn FiltIt[I Next[T], T] mut @next() -> Option[T] {
+fn FiltItX[I Next[T], T] mut @next() -> Option[T] {
     while true {
         match (@src).next() {
             Some(x) => { if (@pred)(x) { return Some(x) } },
@@ -24,12 +24,12 @@ fn FiltIt[I Next[T], T] mut @next() -> Option[T] {
     None
 }
 
-fn VecIter[T] @m[U](f fn(T) -> U) -> MapIt[VecIter[T], T, U] => { src: @, f }
+fn VecIter[T] @mx[U](f fn(T) -> U) -> MapItX[VecIter[T], T, U] => { src: @, f }
 
-// <-- EXPLICIT FiltIt[MapIt[I, T, U], U] (no Self)
-fn MapIt[I, T, U] @flt(pred fn(U) -> bool) -> FiltIt[MapIt[I, T, U], U] => { src: @, pred }
+// <-- EXPLICIT FiltItX[MapItX[I, T, U], U] (no Self)
+fn MapItX[I, T, U] @flt(pred fn(U) -> bool) -> FiltItX[MapItX[I, T, U], U] => { src: @, pred }
 
-fn FiltIt[I Next[T], T] mut @drain() -> Vec[T] {
+fn FiltItX[I Next[T], T] mut @drain() -> Vec[T] {
     mut out = Vec[T].new()
     while true {
         match @next() {
@@ -42,6 +42,6 @@ fn FiltIt[I Next[T], T] mut @drain() -> Vec[T] {
 
 test "explicit nested generic (control)" {
     ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
-    ro got = v.iter().m(|x| x * 10).flt(|x| x > 25).drain()
+    ro got = v.iter().mx(|x| x * 10).flt(|x| x > 25).drain()
     assert(got == [30, 40, 50, 60])
 }
