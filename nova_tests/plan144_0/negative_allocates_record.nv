@@ -37,7 +37,7 @@ test "constructors allocate" {
     assert(p.x == 1)
     assert(p.y == 2)
     ro xs = mk_array(3, 4)
-    assert(xs.len == 3)
+    assert(xs.len() == 3)
     ro m = mk_map(5, 6)
-    assert(m.len == 1)
+    assert(m.len() == 1)
 }
