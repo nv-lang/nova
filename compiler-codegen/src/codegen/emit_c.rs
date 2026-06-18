@@ -3152,6 +3152,21 @@ impl CEmitter {
                     // Sentinel-key: пустая строка вместо receiver-type.
                     // Не конфликтует с user-types (имена ≠ пустой строке).
                     let key = ("".to_string(), f.name.clone());
+                    // Dedup IDENTICAL declarations (same params + return). Two peer
+                    // files of a folder-module may declare the same `extern fn`
+                    // (one external symbol forward-declared twice). Registering
+                    // both would (a) mangle the 2nd with a param-type suffix →
+                    // distinct c_name → false "ambiguous overload", and (b) emit
+                    // two prototypes. Skip the duplicate entirely — это НЕ overload
+                    // (overload требует различия по D84-осям), а повтор одной декл.
+                    if let Some(existing) = self.method_overloads.get(&key) {
+                        let is_dup = existing.iter().any(|s|
+                            s.param_c_types == param_c_types
+                            && s.return_c_type == return_c_type);
+                        if is_dup {
+                            continue;
+                        }
+                    }
                     let existing_count = self.method_overloads.get(&key)
                         .map(|v| v.len()).unwrap_or(0);
                     let base_c_name = self.free_fn_c_name(&f.name);
@@ -35932,8 +35947,40 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     return obj_ty_pre;
                 }
                 // arr[i] → element type of arr.
-                // Check array_element_types first (pointer-stomped elements override).
-                if let ExprKind::Ident(name) = &obj.kind {
+                // Check array_element_types first (pointer-stomped elements override)
+                // — BUT only when `obj_ty_pre` is NOT a self-describing mono Vec/
+                // array name. The side-table is keyed by bare var name and is
+                // last-wins across peer files of a folder-module: a `v` declared
+                // `[]byte` in one test poisons the entry for a `v` declared
+                // `[]str` in another → wrong element type (nova_byte vs nova_str)
+                // → e.g. `v[0] == v[2]` mis-emits a raw struct `==`. The mono name
+                // `Nova_Vec____nova_str*` is authoritative; prefer decoding it
+                // (handled below) and consult the side-table only for non-self-
+                // describing obj types (pointer-stomped raw buffers).
+                let obj_ty_self_describing = obj_ty_pre.starts_with("Nova_Vec____")
+                    || obj_ty_pre.starts_with("NovaArray_");
+                if obj_ty_self_describing {
+                    // Decode element type DIRECTLY from the authoritative mono name,
+                    // bypassing every name-keyed side-table (array_element_types,
+                    // compute_array_elem_type_for_obj) — all of which are last-wins
+                    // across folder-module peers and can be poisoned by a same-named
+                    // var of a different element type in another file.
+                    if let Some(elem) = obj_ty_pre.strip_prefix("NovaArray_") {
+                        let elem = elem.trim_end_matches('*').trim();
+                        if !elem.is_empty() { return elem.to_string(); }
+                    }
+                    if obj_ty_pre.starts_with("Nova_Vec____") && !obj_ty_pre.trim_end().ends_with("**") {
+                        let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
+                        if let Some(elem) = self.generic_type_instance_info.borrow()
+                            .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                        {
+                            if !elem.is_empty() { return elem; }
+                        }
+                        let elem = obj_ty_pre.strip_prefix("Nova_Vec____")
+                            .unwrap_or("").trim_end_matches('*').trim();
+                        if !elem.is_empty() { return elem.to_string(); }
+                    }
+                } else if let ExprKind::Ident(name) = &obj.kind {
                     if let Some(et) = self.array_element_types.get(name) {
                         return et.clone();
                     }

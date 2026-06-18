@@ -432,3 +432,34 @@ consume-методы (`as_str`) не попадают в LinearityRegistry → D
 
 Любой из них — обширный stdlib-архитектурный рефакторинг, вне точечных
 codegen-багфиксов этой сессии.
+
+---
+
+## 18. emit_c.rs: Vec/array индексация декодирует элемент из mono-имени, не из стейл side-table
+
+**Файл:** `compiler-codegen/src/codegen/emit_c.rs`
+**Метод:** `infer_expr_c_type`, ветка `ExprKind::Index`
+
+**Проблема:**
+`v[0] == v[2]` где `v: []str` (Vec[str]) генерировал прямой C `nova_str ==
+nova_str` (структуры нельзя сравнивать через `==`) → CC-FAIL «invalid operands».
+Причина: `infer_expr_c_type(v[0])` возвращал `nova_byte` вместо `nova_str`, хотя
+`obj_ty_pre` = `Nova_Vec____nova_str*` (правильно). Index-инференс читал
+`array_element_types["v"]` ПЕРВЫМ — а эта side-table last-wins по голому имени
+переменной между peer-файлами folder-модуля: `v` объявленный `[]byte` в одном
+тесте отравил запись для `v: []str` в другом. Неправильный element-тип →
+`v[0]` инферился как nova_byte → `==` пошёл прямой вместо Nova_str_method_equal.
+
+**Почему это баг:**
+mono-имя `Nova_Vec____nova_str*` self-describing и авторитетно. Стейл
+side-table (array_element_types / compute_array_elem_type_for_obj — обе keyed
+по имени, last-wins) не должна переопределять его.
+
+**Исправление:**
+Когда `obj_ty_pre` self-describing (`Nova_Vec____*` / `NovaArray_*`), элемент
+декодируется НАПРЯМУЮ из mono-имени (через generic_type_instance_info или
+суффикс), минуя все name-keyed side-tables. Side-table консультируется только
+для не-self-describing obj (pointer-stomped raw buffers). plan139 5/5 PASS.
+
+(То же семейство, что §7 tuple-of-closures: self-describing C-имя авторитетнее
+стейл side-table при коллизии имён в folder-модуле.)
