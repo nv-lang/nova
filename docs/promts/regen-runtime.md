@@ -74,7 +74,7 @@
    нестабильное форматирование). **Не коммитить** до фикса.
 4. **Проверить что всё собирается.** В корне:
    ```sh
-   nova-cli/target/debug/nova test --include-stdlib
+   nova-cli/target/debug/nova test nova_tests std
    ```
    Все codegen-тесты + nova_tests должны проходить. Расхождение
    означает что .nv-проекция не матчит ожиданиям type-check'а или
