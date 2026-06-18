@@ -6,7 +6,11 @@
 
 module plan100_1.consume_ok_record_field
 
-type Write {
+// Имя `Write` занято prelude-протоколом `std.prelude.protocols.Write`
+// (Write-sink). Пользовательский record назван `WriteRec`, чтобы не
+// коллизировать: auto-derive на `[]Write` резолвил prelude-протокол и
+// искал метод `write` → E7320.
+type WriteRec {
     value int,
 }
 
@@ -20,7 +24,7 @@ fn Transaction consume @rollback() -> () { () }
 // Record с consume-полем — обязан быть declared `consume` (D4).
 type TxState consume {
     consume tx Transaction,
-    writes []Write,
+    writes []WriteRec,
 }
 
 // Consume-метод record'а: на exit'е consume-поля могут быть Consumed (D5).
