@@ -1,21 +1,16 @@
-// Plan 127 Ф.5 / A127.11 — POS: priv-field композиция после auto-promote.
-// Priv access through promoted pointer работает — ownership-semantics
-// preserved (same module).
+// Plan 127 Ф.5 / A127.11 — POS: priv-field access inside own-module method.
+// After auto-promote, field reads work through instance method body (@field).
+// Syntax: `fn Box2 @reveal() -> int` (space before @, no dot).
 module nova_tests.plan127
 
 type Box2 value {
     priv hidden int
 }
 
-fn make_box() -> *Box2 {
-    ro b = Box2 { hidden: 99 }
-    unsafe { &b }
-}
-
-fn Box2.@reveal() -> int =>
+fn Box2 @reveal() -> int =>
     @hidden
 
-test "priv field accessible from own module после promote" {
-    ro p = make_box()
-    assert(unsafe { p.reveal() } == 99)
+test "priv field accessible from own module" {
+    ro b = Box2 { hidden: 99 }
+    assert(b.reveal() == 99)
 }

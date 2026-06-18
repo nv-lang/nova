@@ -1,18 +1,18 @@
-// EXPECT_COMPILE_ERROR
-//
-// Plan 127 Ф.5 — NEG: `&` const-binding на module-level — already rejected
-// (Plan 118 baseline). Plan 127 escape walker не applies — const lives in
-// .rodata, no value-record local.
+// Plan 127 / Plan 118.6 — POS: `unsafe { &C }` для const принято.
+// После Plan 118.6 &x safe для всех типов (value-record + примитив).
+// unsafe { &C } = raw stack pointer (константа в .rodata), без промоута.
+// Тест переименован из neg в pos (замысел устарел после Plan 118.6).
 module neg.t16_neg_addr_of_const_binding
-
-type Vec3 value {
-    x f64
-    y f64
-    z f64
-}
 
 const C f64 = 1.5
 
-fn bad() -> *f64 {
+fn get_const_ptr() -> *f64 {
     unsafe { &C }
+}
+
+test "unsafe addr-of const accepted (Plan 118.6 safe-& model)" {
+    ro p = get_const_ptr()
+    mut v = 0.0
+    unsafe { v = *p }
+    assert(v == 1.5)
 }
