@@ -169,3 +169,102 @@ sum-coercion (D-правило «тип литерала ≠ return-тип») г
 `current_fn_return_ty == "Nova_<Sum>*"` и у `<Sum>` есть вариант с искомым
 именем — берём именно его. Fallback на `find_variant_compat` сохранён для
 случаев без контекста (let-биндинг без аннотации и т.п.).
+
+---
+
+## 7. emit_c.rs: tuple-of-closures — индекс tuple теряет тип элемента
+
+**Файл:** `compiler-codegen/src/codegen/emit_c.rs`  
+**Метод:** `infer_expr_c_type`, ветка `Member { name = "0"/"1"/… }` (tuple index)
+
+**Проблема:**  
+`fn make_pair1() -> (fn()->int, fn()->int)` возвращает tuple замыканий. При
+`ro inc = pair.0` codegen объявлял `nova_int inc` вместо `void*` (closure-
+storage), потому что инференс `pair.0` читал side-table `tuple_element_types`
+(содержащий устаревшие `["nova_int","nova_int"]`, записанные при биндинге
+`pair`), а не декодировал реальный C-mono-name `_NovaTuple_2_6_void_p_6_void_p`.
+
+**Исправление:**  
+Декодирование mono-имени (`parse_mono_tuple_elements(&obj_ty)`) теперь
+АВТОРИТЕТНО — оно отражает реальный C-struct. Side-table `tuple_element_types`
+используется только как fallback, когда obj_ty не self-describing.
+
+---
+
+## 8. emit_c.rs: closure-вызов через fn_param_sigs в инференсе
+
+**Файл:** `compiler-codegen/src/codegen/emit_c.rs`  
+**Метод:** `infer_expr_c_type`, ветка `Call { func = Ident(name) }`
+
+**Проблема:**  
+После фикса №7 `get` (элемент tuple) хранится как opaque `void*`. Вызов
+`get()` инферился неправильно (str), потому что `void*` не распознаётся как
+closure-struct, и срабатывала коллизия имени с stdlib-методом `get`.
+Emit-сторона при этом корректно роутит `get()` через `fn_param_sigs` →
+`NOVA_CLOS_CALL_vi`.
+
+**Исправление:**  
+Инференс `name()` теперь читает return-тип из `fn_param_sigs[name]` (тот же
+реестр, что использует emit) ПЕРЕД lookup'ом `fn_ret_<name>`. Симметрия
+инференса и эмиссии.
+
+---
+
+## 9. emit_c.rs: match block-arm — локальные let'ы засеиваются в инференсе результата
+
+**Файл:** `compiler-codegen/src/codegen/emit_c.rs`  
+**Методы:** `emit_match` (`infer_arm` closure) + `infer_expr_c_type`
+(`ExprKind::Match`)
+
+**Проблема:**  
+`match xs { [] => 0; [_, ..rest] => { mut s = 0; for x in rest { s += x }; s } }`
+— результат `rest_sum` инферился как `nova_str` вместо `nova_int`. Тело arm
+НЕ эмитится во время инференса, поэтому trailing-`s` подхватывал устаревший
+`var_types["s"]` (от arm/файла в том же folder-модуле, где `s` был str).
+Аналогично tuple-pattern `(1, _, c) => c` подхватывал `c: Nova_Color*`.
+
+**Исправление:**  
+Два места:
+1. `collect_pattern_inner_bindings` получил ветку `Pattern::Tuple` — декодирует
+   element-types из mono-имени scrutinee и рекурсивно биндит под-паттерны.
+2. Оба `infer_arm` (emit_match через `var_types`, infer_expr_c_type через
+   `pattern_binding_overrides`) теперь засеивают block-local `let`-биндинги
+   их инференс-типами перед инференсом trailing, с save/restore.
+
+---
+
+## 10. emit_c.rs: bare-call free fn затеняется одноимённым методом в fn_ret
+
+**Файл:** `compiler-codegen/src/codegen/emit_c.rs`  
+**Метод:** `infer_expr_c_type`, ветка `Call { func = Ident(name) }`
+
+**Проблема:**  
+`fn scale(p Point1) -> Point1` (free fn) и метод `Point7.scale(k) -> Point7`
+делят ключ `fn_ret_scale` (записывается last-wins под голым именем и для
+free fn, и для методов). При вызове `ro p = scale(...)` инференс брал
+`fn_ret_scale = Nova_Point7*` (последний записанный метод), и `p` объявлялся
+`Nova_Point7*` вместо `Nova_Point1*` → `p.x` читался через чужой layout →
+assert `p.x == 10.0` падал в рантайме.
+
+**Исправление:**  
+Bare-вызов (`func` = `Ident`, не `Member`) — это вызов FREE fn. Инференс
+теперь сначала читает return-тип из `user_fn_sigs[name]` (реестр заполняется
+ТОЛЬКО для non-generic free fn без receiver — авторитетен для bare-call)
+перед lookup'ом загрязнённого `fn_ret_<name>`.
+
+---
+
+## 11. test_runner.rs: RUN-FAIL detail показывает строки с FAIL/assert/panic
+
+**Файл:** `compiler-codegen/src/test_runner.rs`  
+**Место:** формирование `Stage::Run { error }` при `exit != 0` без content-marker
+
+**Проблема (DX, не баг компилятора):**  
+In-binary тест-харнесс печатает много `PASS:`-строк, затем summary
+(`351/352 passed`). При фейле раннер показывал «последние 3 строки» — это
+trailing PASS + счётчик, скрывая КАКОЙ тест упал.
+
+**Исправление:**  
+detail теперь предпочитает строки, содержащие `fail`/`assert`/`panic`
+(до 4 шт.); fallback на last-3, если таких нет. Диагностика, поведение
+тестов не меняется.

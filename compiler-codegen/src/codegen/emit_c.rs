@@ -29662,12 +29662,41 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             for (n, t) in &bindings {
                 this.var_types.insert(n.clone(), t.clone());
             }
+            // For a Block arm, the trailing expr may reference a local `let`
+            // declared inside the block (e.g. `{ mut s = 0; …; s }`). The arm
+            // body is NOT emitted during inference, so without seeding those
+            // local bindings the trailing Ident would pick up a STALE
+            // `var_types[name]` left by an unrelated arm/file in the same
+            // folder-module (e.g. a `nova_str`-typed `s`), mistyping the whole
+            // match result. Seed each block-local let's inferred type first,
+            // then restore — same save/restore discipline as the pattern
+            // bindings above.
+            let mut block_saved: Vec<(String, Option<String>)> = Vec::new();
+            if let MatchArmBody::Block(b) = &arm.body {
+                for stmt in &b.stmts {
+                    if let crate::ast::Stmt::Let(decl) = stmt {
+                        if let crate::ast::Pattern::Ident { name, .. } = &decl.pattern {
+                            let vt = this.infer_expr_c_type(&decl.value);
+                            if !vt.is_empty() {
+                                block_saved.push((name.clone(), this.var_types.get(name).cloned()));
+                                this.var_types.insert(name.clone(), vt);
+                            }
+                        }
+                    }
+                }
+            }
             let t = match &arm.body {
                 MatchArmBody::Expr(e) => this.infer_expr_c_type(e),
                 MatchArmBody::Block(b) => b.trailing.as_ref()
                     .map(|e| this.infer_expr_c_type(e))
                     .unwrap_or_else(|| "nova_unit".into()),
             };
+            for (n, prev) in block_saved {
+                match prev {
+                    Some(p) => { this.var_types.insert(n, p); }
+                    None => { this.var_types.remove(&n); }
+                }
+            }
             for (n, prev) in saved {
                 match prev {
                     Some(p) => { this.var_types.insert(n, p); }
@@ -29931,8 +29960,29 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
                 out
             }
-            // Tuple / Array — без bindings extraction (bootstrap covers main cases).
-            Pattern::Tuple(..) | Pattern::Array { .. } => vec![],
+            // Tuple-pattern `(p0, p1, …)`: recover each element's C-type from
+            // the scrutinee's self-describing mono name (`_NovaTuple_N_…`) and
+            // recurse per sub-pattern. Without this, an Ident sub-pattern (e.g.
+            // `c` in `(1, _, c) => c`) yields NO binding here, so `infer_arm`
+            // leaves a STALE `var_types["c"]` from an unrelated arm in another
+            // folder-module file (e.g. a `Color`-typed `c`) — mistyping the
+            // whole match result as `Nova_Color*`. Decoding the tuple makes the
+            // binding authoritative.
+            Pattern::Tuple(patterns, _) => {
+                if let Some(elem_tys) = Self::parse_mono_tuple_elements(scr_ty) {
+                    let mut out = vec![];
+                    for (i, p) in patterns.iter().enumerate() {
+                        if let Some(elem_c) = elem_tys.get(i) {
+                            out.extend(Self::collect_pattern_inner_bindings(p, elem_c, this));
+                        }
+                    }
+                    out
+                } else {
+                    vec![]
+                }
+            }
+            // Array — без bindings extraction (bootstrap covers main cases).
+            Pattern::Array { .. } => vec![],
         }
     }
 
@@ -36840,6 +36890,36 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             return ret_c.to_string();
                         }
                     }
+                    // A closure binding registered in `fn_param_sigs` (lambda,
+                    // fn-value, or tuple-of-closures element like `ro get =
+                    // pair.1`) carries its return type there. The emit side
+                    // already routes `get()` through this table to pick the
+                    // NOVA_CLOS_CALL_* macro — mirror it here so inference agrees
+                    // (the storage type is an opaque `void*`, so neither the
+                    // clos-struct check above nor a free-fn lookup can recover
+                    // the return type). MUST precede the `fn_ret_<name>` lookup:
+                    // a local closure binding shadows a same-named free fn (e.g.
+                    // the Map/Option adapter `get`), whose return type would
+                    // otherwise hijack the inference.
+                    if let Some((_, ret_ty)) = self.fn_param_sigs.get(name) {
+                        if !ret_ty.is_empty() && ret_ty != "void*" {
+                            return ret_ty.clone();
+                        }
+                    }
+                    // A bare `name(...)` call (func is Ident, not Member) targets
+                    // a FREE function. The `fn_ret_<name>` table below is keyed by
+                    // bare name and is last-wins across declarations, so a method
+                    // with the same name on some type (`Point7.scale`) overwrites
+                    // the free fn's entry (`scale`) — mistyping the free call's
+                    // result (Nova_Point7* instead of Nova_Point1*). `user_fn_sigs`
+                    // is registered ONLY for non-generic free fns (no receiver),
+                    // so it is the authoritative source for a bare call's return
+                    // type. MUST precede the `fn_ret_<name>` lookup.
+                    if let Some((_, ret_ty)) = self.user_fn_sigs.get(name) {
+                        if !ret_ty.is_empty() && ret_ty != "void*" && !self.is_generic_stub_c(ret_ty) {
+                            return ret_ty.clone();
+                        }
+                    }
                     let key = format!("fn_ret_{}", name);
                     if let Some(t) = self.var_types.get(&key).cloned() {
                         return t;
@@ -37985,6 +38065,29 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             })
                             .collect()
                     };
+                    // Seed block-local `let`s (e.g. `{ mut s = 0; …; s }`) into
+                    // the same override map so the trailing Ident infers from the
+                    // local binding, not a stale `var_types[name]` left by an
+                    // unrelated arm/file in the folder-module. Mirrors the
+                    // emit_match `infer_arm` seed; uses pattern_binding_overrides
+                    // because this path is `&self`.
+                    let block_saved: Vec<(String, Option<String>)> = if let MatchArmBody::Block(b) = &arm.body {
+                        let mut bs = Vec::new();
+                        for stmt in &b.stmts {
+                            if let crate::ast::Stmt::Let(decl) = stmt {
+                                if let crate::ast::Pattern::Ident { name, .. } = &decl.pattern {
+                                    let vt = this.infer_expr_c_type(&decl.value);
+                                    if !vt.is_empty() {
+                                        let prev = this.pattern_binding_overrides.borrow_mut().insert(name.clone(), vt);
+                                        bs.push((name.clone(), prev));
+                                    }
+                                }
+                            }
+                        }
+                        bs
+                    } else {
+                        Vec::new()
+                    };
                     let t = match &arm.body {
                         MatchArmBody::Expr(e) => this.infer_expr_c_type(e),
                         MatchArmBody::Block(b) => b.trailing.as_ref()
@@ -37992,6 +38095,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             .unwrap_or_else(|| "nova_unit".into()),
                     };
                     let mut overrides = this.pattern_binding_overrides.borrow_mut();
+                    for (n, prev) in block_saved {
+                        match prev {
+                            Some(p) => { overrides.insert(n, p); }
+                            None => { overrides.remove(&n); }
+                        }
+                    }
                     for (n, prev) in saved {
                         match prev {
                             Some(p) => { overrides.insert(n, p); }
@@ -38065,20 +38174,23 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if name.chars().all(|c| c.is_ascii_digit()) {
                     let idx: usize = name.parse().unwrap_or(0);
                     // Plan 148 Ф.4 [M-codegen-unify-tuple-repr]: recover the
-                    // element type from EITHER the `tuple_element_types` side-
-                    // table (TupleLit temps, keyed by Ident) OR — for fn-params,
-                    // call-result tuples and **nested** `t.0.1` chains — by
-                    // decoding the mono'd struct name carried in `obj_ty`. The
-                    // typed representation is self-describing, so chained field
-                    // access no longer collapses to the `nova_int` fallback.
-                    let elem_tys: Option<Vec<String>> = match &obj.kind {
-                        ExprKind::Ident(var_name) => self
-                            .tuple_element_types
-                            .get(var_name.as_str())
-                            .cloned()
-                            .or_else(|| Self::parse_mono_tuple_elements(&obj_ty)),
-                        _ => Self::parse_mono_tuple_elements(&obj_ty),
-                    };
+                    // element type from the mono'd struct name carried in
+                    // `obj_ty` (self-describing) OR — fallback — from the
+                    // `tuple_element_types` side-table (TupleLit temps, keyed
+                    // by Ident). The mono name is AUTHORITATIVE: it reflects the
+                    // actual C struct, whereas the side-table may carry a stale
+                    // best-effort inference recorded at the let-binding (e.g. a
+                    // tuple of closures bound as `nova_int` slots there while the
+                    // real struct is `_NovaTuple_2_6_void_p_6_void_p`). Decoding
+                    // `obj_ty` first prevents `t.0`/`t.1` collapsing to nova_int.
+                    let elem_tys: Option<Vec<String>> = Self::parse_mono_tuple_elements(&obj_ty)
+                        .or_else(|| match &obj.kind {
+                            ExprKind::Ident(var_name) => self
+                                .tuple_element_types
+                                .get(var_name.as_str())
+                                .cloned(),
+                            _ => None,
+                        });
                     if let Some(elem_tys) = elem_tys {
                         if let Some(elem_ty) = elem_tys.get(idx) {
                             if !elem_ty.is_empty() {
