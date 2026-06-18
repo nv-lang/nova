@@ -2247,8 +2247,23 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
             let has_content_marker = !stdout_pats.is_empty() || !stderr_pats.is_empty();
 
             if !has_content_marker && exit != 0 {
-                let last_lines: Vec<&str> = stdout.lines().chain(stderr.lines()).rev().take(3).collect();
-                let detail = last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ");
+                // Prefer lines that actually name the failure (FAIL/assert/panic);
+                // the in-binary harness prints many PASS lines then a summary, so
+                // a blind "last 3 lines" only shows the trailing PASS + count and
+                // hides WHICH test failed. Fall back to last-3 if none match.
+                let fail_lines: Vec<&str> = stdout.lines().chain(stderr.lines())
+                    .filter(|l| {
+                        let lc = l.to_lowercase();
+                        lc.contains("fail") || lc.contains("assert") || lc.contains("panic")
+                    })
+                    .take(4)
+                    .collect();
+                let detail = if !fail_lines.is_empty() {
+                    fail_lines.join(" | ")
+                } else {
+                    let last_lines: Vec<&str> = stdout.lines().chain(stderr.lines()).rev().take(3).collect();
+                    last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
+                };
                 Outcome::Fail {
                     stage: Stage::Run { error: detail },
                     elapsed: start.elapsed(),
