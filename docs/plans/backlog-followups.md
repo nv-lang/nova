@@ -467,10 +467,9 @@
   [_by_key]` переведены с alias-стабильного на **настоящий in-place heapsort** (O(n log n) worst,
   O(1) extra — даёт `_unstable` его смысл: без scratch-буфера и без quicksort O(n²)-обрыва).
   Тест `plan153_3/heapsort_rigor` 5/5.
-- **`[M-153.3-sort-pdqsort]`** (planned, P3, **perf-only — НЕ упрощение**): heapsort корректен и
-  worst-case-оптимален; pattern-defeating quicksort (pdqsort) обгоняет его лишь по константам
-  (cache/branch). Чистая perf-оптимизация поверх рабочего, гарантированного алгоритма.
-  **Home: [Plan 153.3.1](153.3.1-pdqsort.md)**.
+- **`[M-153.3-sort-pdqsort]`** ✅ **CLOSED (Plan 153.3.1, 2026-06-18)**: pdqsort реализован в
+  `@sort_unstable*` — median-of-3 pivot + Lomuto partition + ins-sort(n≤16) + heapsort depth-guard
+  (2·ilog2(n)). O(n log n) worst, O(log n) stack. Heapsort сохранён как depth-guard fallback.
 - **`[M-153-select-nth]`** ✅ **RESOLVED** (commit `468bccf5`): `@select_nth_unstable(k)` реализован
   как **introselect** — median-of-three quickselect (O(n) средн.) + depth-guard fallback на
   heapsort (O(n log n) worst, без O(n²)), контракт `k ∈ [0,len)`. Тест `plan153_3/select_nth` 4/4
@@ -671,6 +670,6 @@ Open V1 markers (gated on type-checker resolver API in Plan 104.2):
 
 | Маркер | Статус | Действие |
 |---|---|---|
-| `[M-91.8c-pdq-sort]` | OPEN | Upgrade sort_of from insertion sort O(n²) to pdq/intro-sort O(n log n) for large arrays (>1000 elements). Low priority — insertion sort correct and stable. |
+| `[M-91.8c-pdq-sort]` | ✅ **CLOSED (Plan 153.3.1, 2026-06-18)** | `@sort_unstable*` upgraded from heapsort to pdqsort. `std/sort.nv @sort_of` remains insertion sort (NovaArray path, separate blocker `[M-153.x-array-new-not-vec]`). |
 | `[M-91.8c-int-min-max-dispatch]` | OPEN | Pre-existing CC-FAIL: `[]int @min()/@max()` resolve to `f64.min` (2-arg) in codegen. Needs dispatch fix in emit_c.rs method resolution. See plan91/sort_basic.nv. |
 | `[M-91.8c-direct-index-method]` | ✅ **CLOSED 2026-06-17** | `@[i].method()` now dispatches correctly — `ExprKind::SelfAccess` arm added to `compute_array_elem_type_for_obj` (emit_c.rs ~14248); `emit_monomorphized_method` derives concrete element C type from recv_c and registers under `array_element_types["nova_self"]`. No intermediate binding needed. 5/5 tests PASS; 14/14 regression PASS. |

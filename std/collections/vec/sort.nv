@@ -3,13 +3,10 @@
 // Two distinct production algorithms:
 //   * STABLE   = bottom-up merge sort (O(n log n) guaranteed, O(n) scratch),
 //                preserves equal-element order — `@sort[_by][_by_key]`.
-//   * UNSTABLE = in-place binary heapsort (O(n log n) guaranteed, O(1) extra),
-//                no equal-order guarantee but zero allocation —
+//   * UNSTABLE = pdqsort (pattern-defeating quicksort): median-of-3 pivot +
+//                Lomuto partition + insertion-sort (n≤16) + heapsort
+//                depth-guard (2·log₂(n)), O(n log n) worst, O(log n) stack —
 //                `@sort_unstable[_by][_by_key]`.
-// Heapsort gives `*_unstable` its real purpose (no scratch buffer) with a hard
-// O(n log n) worst case (no quicksort O(n²) cliff). A pattern-defeating
-// quicksort (pdqsort) would beat heapsort's constants — pure perf-opt, tracked
-// `[M-153.3-sort-pdqsort]`, NOT a correctness/complexity gap.
 // Comparators return int (<0 / 0 / >0); there is no `Ordering` type (D183).
 #prelude(core, runtime, collections, protocols)
 module collections.vec
@@ -115,6 +112,129 @@ fn Vec[T] mut @_heapsort(cmp fn(T, T) -> int) -> @ {
     @
 }
 
+// Internal: insertion sort for small slices [lo, hi).
+fn Vec[T] mut @_ins_sort_range(lo int, hi int, cmp fn(T, T) -> int) -> @ {
+    mut i = lo + 1
+    while i < hi {
+        ro key = unsafe { @data[i] }
+        mut j = i - 1
+        while j >= lo {
+            ro ej = unsafe { @data[j] }
+            if cmp(ej, key) <= 0 { break }
+            unsafe { @data[j + 1] = ej }
+            j = j - 1
+        }
+        unsafe { @data[j + 1] = key }
+        i = i + 1
+    }
+    @
+}
+
+// Internal: integer log2 (floor). ilog2(1)=0, ilog2(2)=1, ilog2(4)=2, etc.
+fn _pdq_ilog2(n int) -> int {
+    mut result = 0
+    mut m = n
+    while m > 1 {
+        m = m / 2
+        result = result + 1
+    }
+    result
+}
+
+// Internal: iterative pdqsort over the full Vec by `cmp`.
+// Uses an explicit work-stack (Vec of int pairs lo/hi) to avoid recursion.
+// Threshold PDQ_SMALL=16 for insertion sort; depth_limit=2*ilog2(n) for heapsort fallback.
+fn Vec[T] mut @_pdqsort(cmp fn(T, T) -> int) -> @ {
+    ro n = @len
+    if n < 2 {
+        return @
+    }
+    ro depth_limit = _pdq_ilog2(n) + _pdq_ilog2(n) + 2
+    mut stack = Vec[int].new()
+    stack.push(0)
+    stack.push(n)
+    while stack.len > 0 {
+        ro hi_val = stack.pop()
+        match hi_val {
+            None => { break }
+            Some(hi) => {
+                ro lo_val = stack.pop()
+                match lo_val {
+                    None => { break }
+                    Some(lo) => {
+                        ro size = hi - lo
+                        if size <= 1 {
+                            // nothing to do
+                        } else if size <= 16 {
+                            @_ins_sort_range(lo, hi, cmp)
+                        } else if stack.len >= depth_limit {
+                            // depth guard: heapsort this range via temp Vec
+                            mut tmp = Vec[T].with_capacity(size)
+                            mut ci = lo
+                            while ci < hi {
+                                tmp.push(unsafe { @data[ci] })
+                                ci = ci + 1
+                            }
+                            tmp._heapsort(cmp)
+                            mut wi = lo
+                            mut ti = 0
+                            while wi < hi {
+                                ro tv = unsafe { tmp.data[ti] }
+                                unsafe { @data[wi] = tv }
+                                wi = wi + 1
+                                ti = ti + 1
+                            }
+                        } else {
+                            // median-of-3 pivot to position hi-1
+                            ro mid = lo + size / 2
+                            @_median3_to_end(lo, mid, hi - 1, cmp)
+                            ro pivot = unsafe { @data[hi - 1] }
+                            // Lomuto partition [lo, hi-1) around pivot
+                            mut i = lo
+                            mut j = lo
+                            while j < hi - 1 {
+                                ro ej = unsafe { @data[j] }
+                                if cmp(ej, pivot) < 0 {
+                                    if i != j {
+                                        @swap(i, j)
+                                    }
+                                    i = i + 1
+                                }
+                                j = j + 1
+                            }
+                            @swap(i, hi - 1)
+                            ro p = i
+                            // push the larger partition first
+                            ro left_size = p - lo
+                            ro right_size = hi - (p + 1)
+                            if left_size >= right_size {
+                                if p - lo > 1 {
+                                    stack.push(lo)
+                                    stack.push(p)
+                                }
+                                if hi - (p + 1) > 1 {
+                                    stack.push(p + 1)
+                                    stack.push(hi)
+                                }
+                            } else {
+                                if hi - (p + 1) > 1 {
+                                    stack.push(p + 1)
+                                    stack.push(hi)
+                                }
+                                if p - lo > 1 {
+                                    stack.push(lo)
+                                    stack.push(p)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    @
+}
+
 /// Sort in place ascending by the element's own `Compare` (stable). O(n log n).
 export fn Vec[T Compare] mut @sort() -> @ => @_msort(|a, b| a.compare(b))
 
@@ -124,15 +244,15 @@ export fn Vec[T] mut @sort_by(cmp fn(T, T) -> int) -> @ => @_msort(cmp)
 /// Sort in place by a projected key, ordered by the key type's `Compare`, stable.
 export fn Vec[T] mut @sort_by_key[K Compare](key fn(T) -> K) -> @ => @_msort(|a, b| key(a).compare(key(b)))
 
-/// Unstable in-place sort by the element's own `Compare` — heapsort, O(n log n),
-/// O(1) extra space (no scratch buffer, unlike `@sort`). No equal-order guarantee.
-export fn Vec[T Compare] mut @sort_unstable() -> @ => @_heapsort(|a, b| a.compare(b))
+/// Unstable in-place sort by the element's own `Compare` — pdqsort, O(n log n),
+/// O(log n) stack (no scratch buffer, unlike `@sort`). No equal-order guarantee.
+export fn Vec[T Compare] mut @sort_unstable() -> @ => @_pdqsort(|a, b| a.compare(b))
 
-/// Unstable in-place sort by comparator `cmp(a, b)` (`<0`/`0`/`>0`) — heapsort.
-export fn Vec[T] mut @sort_unstable_by(cmp fn(T, T) -> int) -> @ => @_heapsort(cmp)
+/// Unstable in-place sort by comparator `cmp(a, b)` (`<0`/`0`/`>0`) — pdqsort.
+export fn Vec[T] mut @sort_unstable_by(cmp fn(T, T) -> int) -> @ => @_pdqsort(cmp)
 
-/// Unstable in-place sort by projected key — heapsort.
-export fn Vec[T] mut @sort_unstable_by_key[K Compare](key fn(T) -> K) -> @ => @_heapsort(|a, b| key(a).compare(key(b)))
+/// Unstable in-place sort by projected key — pdqsort.
+export fn Vec[T] mut @sort_unstable_by_key[K Compare](key fn(T) -> K) -> @ => @_pdqsort(|a, b| key(a).compare(key(b)))
 
 // ─── dedup + partition (Plan 153.3 reordering) ────────────────────────
 

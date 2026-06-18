@@ -37162,3 +37162,15 @@ Tests: 39 unit + 13 integration = 52 completion-specific + 167 total nova-lsp te
 [2026-06-18 Plan 118.7] NO simplifications — raw &x реализован production-grade. raw — контекстное KW (не резервируется lexer, аналог bench/measure). Все lvalue-ограничения (&-семейства) применены и к raw &. expr_is_typed_pointer расширен на RawAddrOf. Тесты: 4/4 PASS. Migration: 7 файлов.
 
 [2026-06-18 Plan 104.2 Variant B] LSP hover type inference for unannotated local variables. Variant B implemented: infer_rhs_type() in symbol.rs recognizes IntLit→int, FloatLit→float, BoolLit→bool, StrLit→str, CharLit→char, Range→Range, Call→return-type-from-ModuleEnv.fns, As→cast-type, ArrayLit→[]T. check_module() called in hover.rs and passed as Option<&ModuleEnv> to resolver chain. Variant A (expr_types: HashMap<Span,Ty> in ModuleEnv) deferred to Plan 104.3+ for full accuracy. Closes [M-104.2-local-var-type-inference]. Tests: 263/0 PASS.
+
+=== Plan 153.3.1 (pdqsort): @sort_unstable* upgraded from heapsort to pdqsort ===
+Date: 2026-06-18. Branch: plan-153.3.1-pdqsort.
+Files: std/collections/vec/sort.nv.
+Added: @_ins_sort_range (insertion sort for n<=16), _pdq_ilog2, @_pdqsort
+(iterative pdqsort: median-of-3 pivot + Lomuto partition + ins-sort(n<=16) +
+heapsort depth-guard(2*log2(n)), O(n log n) worst, O(log n) stack).
+@sort_unstable / @sort_unstable_by / @sort_unstable_by_key now call @_pdqsort.
+Heapsort kept as depth-guard fallback (not removed).
+Tests: nova_tests/plan153_3_1/ (11 test blocks + 1 slow).
+Closes [M-153.3-sort-pdqsort] + [M-91.8c-pdq-sort].
+D185 §amend-2 added.

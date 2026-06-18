@@ -1,0 +1,10 @@
+// Plan 153.3.1: pdqsort — empty array (no panic)
+module nova_tests.plan153_3_1
+
+test "empty array sort" {
+    mut xs = Vec[int].new()
+    xs.sort_unstable()
+    assert(xs.len == 0)
+    xs.sort_unstable_by(|a, b| a - b)
+    assert(xs.len == 0)
+}

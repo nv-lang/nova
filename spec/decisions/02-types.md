@@ -13086,3 +13086,17 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
 
 **Результат:** `@[j].compare(key)` в `fn[T Compare] []T`-телах (sort_of, binary_search_of и т.д.)
 теперь диспетчится корректно без промежуточного binding'а.
+
+### D185 §amend-2 — @sort_unstable* переведены с heapsort на pdqsort (Plan 153.3.1, 2026-06-18)
+
+**Дата:** 2026-06-18. **Закрывает:** [M-153.3-sort-pdqsort] + [M-91.8c-pdq-sort].
+
+`@sort_unstable` / `@sort_unstable_by` / `@sort_unstable_by_key` теперь вызывают `@_pdqsort` вместо `@_heapsort`.
+
+**Алгоритм `@_pdqsort` (итеративный, без рекурсии — Nova-safe):**
+- n ≤ 1 → return immediately (no work)
+- n ≤ 16 → `@_ins_sort_range` (insertion sort, cache-warm)
+- `stack.len ≥ depth_limit` (depth_limit = 2·ilog2(n)+2) → heapsort fallback на диапазон через temp Vec
+- иначе: median-of-3 pivot (→ `@_median3_to_end`) + Lomuto partition + Vec[int] work-stack (lo/hi pairs)
+
+**O(n log n) worst case, O(log n) stack space.** Heapsort сохранён как depth-guard fallback и для `@select_nth_unstable` (не удалён). Stable `@sort*` (merge sort) не тронут.

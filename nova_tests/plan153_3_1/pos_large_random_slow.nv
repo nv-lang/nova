@@ -1,0 +1,21 @@
+// Plan 153.3.1: pdqsort — large random array (slow lane)
+// Tests that pdqsort doesn't stack overflow or hang on large inputs.
+module nova_tests.plan153_3_1
+
+test "large random 100000 elements" {
+    mut xs = Vec[int].with_capacity(100000)
+    mut seed = 98765
+    mut i = 0
+    while i < 100000 {
+        seed = (seed * 1664525 + 1013904223) % 2147483647
+        xs.push(seed)
+        i = i + 1
+    }
+    xs.sort_unstable()
+    mut j = 0
+    while j < 99999 {
+        assert(xs[j] <= xs[j + 1])
+        j = j + 1
+    }
+    assert(xs.len == 100000)
+}

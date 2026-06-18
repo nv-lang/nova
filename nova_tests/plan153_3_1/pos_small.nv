@@ -1,0 +1,19 @@
+// Plan 153.3.1: pdqsort — small arrays use insertion sort path (n<=16)
+module nova_tests.plan153_3_1
+
+test "small array sort" {
+    mut xs = Vec[int].new()
+    xs.push(5)
+    xs.push(3)
+    xs.push(8)
+    xs.push(1)
+    xs.push(9)
+    xs.push(2)
+    xs.sort_unstable()
+    assert(xs[0] == 1)
+    assert(xs[1] == 2)
+    assert(xs[2] == 3)
+    assert(xs[3] == 5)
+    assert(xs[4] == 8)
+    assert(xs[5] == 9)
+}
