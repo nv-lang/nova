@@ -1,16 +1,10 @@
 // EXPECT_COMPILE_ERROR module declaration does not match file path
 //
-// Plan 42.17 Ф.7: peers folder-module ДОЛЖНЫ объявлять одинаковый
-// `module`. Здесь `beta.nv` сделал опечатку в декларации → папка
-// перестаёт распознаваться как folder-module (`is_folder_module_dir`
-// требует идентичных decl) → каждый peer проверяется как single-file
-// и проваливает manifest check (rev-3 ожидает `folder_inconsistent_decl.alpha`).
+// Plan 42.17 Ф.7: standalone файл в папке folder_inconsistent_decl/
+// объявляет намеренно неверный module path → D78 E_D78_MODULE_PATH_MISMATCH.
+// Ожидается rev-3 `folder_inconsistent_decl.alpha`, объявлено `wrong.alpha`.
 
-module folder_inconsistent_decl.alpha
+module wrong.alpha
 
 export fn alpha_fn() -> int =>
     1
-
-test "unreachable — manifest mismatch" {
-    assert(alpha_fn() == 1)
-}

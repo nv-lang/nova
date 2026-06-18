@@ -1,16 +1,10 @@
 // EXPECT_COMPILE_ERROR module declaration does not match file path
 //
-// Plan 42.17 Ф.7: опечатка в `module` декларации этого peer'а
-// («inconsistnet» вместо «inconsistent») рассинхронизирует folder-module.
-// `alpha.nv` объявил корректный `negative_capability.folder_inconsistent_decl`,
-// этот файл — нет → папка не folder-module → manifest check проваливается
-// на обоих peers.
+// Plan 42.17 Ф.7: standalone файл в папке folder_inconsistent_decl/
+// объявляет намеренно неверный module path → D78 E_D78_MODULE_PATH_MISMATCH.
+// Ожидается rev-3 `folder_inconsistent_decl.beta`, объявлено `wrong.beta`.
 
-module folder_inconsistent_decl.beta
+module wrong.beta
 
 export fn beta_fn() -> int =>
     2
-
-test "unreachable — manifest mismatch" {
-    assert(beta_fn() == 2)
-}
