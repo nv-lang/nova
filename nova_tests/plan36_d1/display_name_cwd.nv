@@ -1,0 +1,14 @@
+// Plan 36.D.1 — display name is built from cwd, not from tests_dir.
+// When run as `nova test nova_tests/plan36_d1`, the display name for
+// this file should be `nova_tests/plan36_d1/display_name_cwd` (cwd-relative).
+// Previously display name was relative to --tests-dir root.
+// folder-module: module nova_tests.plan36_d1
+
+module nova_tests.plan36_d1
+
+test "display name: peer file in same folder-module" {
+    // Both files compile as one TU (folder-module convention).
+    // multi_path_basic.nv is in the same module — helper visible.
+    ro v []int = [1, 2, 3]
+    assert(v.len() == 3)
+}

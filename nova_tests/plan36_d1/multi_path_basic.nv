@@ -1,0 +1,16 @@
+// Plan 36.D.1 — nova test multi-path: base positive fixture.
+// Verifies that this directory is correctly discovered when passed
+// as a path argument: `nova test nova_tests/plan36_d1`.
+// folder-module: module nova_tests.plan36_d1
+
+module nova_tests.plan36_d1
+
+test "multi-path discovery: simple assertion" {
+    ro x = 1 + 1
+    assert(x == 2)
+}
+
+test "multi-path discovery: string comparison" {
+    ro s = "hello"
+    assert(s == "hello")
+}

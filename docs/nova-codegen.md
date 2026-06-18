@@ -33,7 +33,6 @@ Version: `0.1.0` (bootstrap). Cargo package `nova-codegen`, crate
   - [`nova-codegen emit-runtime-stubs`](#nova-codegen-emit-runtime-stubs)
   - [`nova-codegen dump-runtime`](#nova-codegen-dump-runtime)
   - [`nova-codegen test-build`](#nova-codegen-test-build)
-  - [`nova-codegen test-all`](#nova-codegen-test-all)
 - [Environment variables](#environment-variables)
 - [Cargo features](#cargo-features)
 - [Library API (`nova_codegen`)](#library-api-nova_codegen)
@@ -138,7 +137,7 @@ nova-codegen test-interp FILE
 
 This command is a loud stub: it prints an error and exits `1`. Run
 tests through the C pipeline instead — use the `nova` CLI `nova test`,
-or [`test-build`](#nova-codegen-test-build) / [`test-all`](#nova-codegen-test-all).
+or [`test-build`](#nova-codegen-test-build).
 
 ---
 
@@ -273,64 +272,6 @@ EXPECT markers (D89):
 
 ---
 
-### `nova-codegen test-all`
-
-Plan 24 — batch test runner: recursive walk of all `.nv` under
-`--tests-dir`. Serves as the engine behind `nova test`
-([docs/nova-cli.md](nova-cli.md)).
-
-```
-nova-codegen test-all [--tests-dir PATH] [--stdlib-dir PATH] [--include-stdlib]
-                      [--filter SUBSTR] [--mode dev|release]
-                      [--toolchain auto|clang|msvc|gcc]
-                      [--vcvars PATH] [--clang PATH]
-                      [--cg-include PATH] [--rt-dir PATH] [--tmp-dir PATH]
-                      [--keep-artifacts] [--timeout SECS] [--jobs N]
-                      [--format text|json|tap] [-v|-q]
-                      [--results-file PATH] [--rerun-failed]
-                      [--retries N] [--gc boehm|malloc]
-```
-
-| Flag | Default | Description |
-|---|---|---|
-| `--tests-dir PATH` | `nova_tests` | Test corpus root |
-| `--stdlib-dir PATH` | `std` | `std/` root (if `--include-stdlib`) |
-| `--include-stdlib` | off | Include `std/*` files |
-| `--filter SUBSTR` | — | Filter by display name |
-| `--mode` | `dev` | See [`test-build`](#nova-codegen-test-build) |
-| `--toolchain` | `auto` | |
-| `--vcvars`, `--clang` | auto | |
-| `--cg-include`, `--rt-dir` | derived from CWD | |
-| `--tmp-dir` | `$TEMP/nova_tests` or equivalent | |
-| `--keep-artifacts` | off | |
-| `--timeout` | `60` | Per-test timeout (Plan 26 Ф.1) |
-| `--jobs N` | `0` (= num_cpus) | Parallel workers (Plan 26 Ф.3) |
-| `--format` | `text` | `text`, `json`, `tap` (Plan 26 Ф.4) |
-| `-v`, `--verbose` | off | Output for PASS tests (Plan 26 Ф.9) |
-| `-q`, `--quiet` | off | FAIL + summary only (Plan 26 Ф.9) |
-| `--results-file PATH` | — | `last-results.json` file (Plan 26 Ф.10) |
-| `--rerun-failed` | off | Re-run only failed/timeout from `--results-file` |
-| `--retries N` | `0` | Retry on transient AV/race failures (Plan 26 Ф.12; CI default 2) |
-| `--gc boehm\|malloc` | `boehm` | See [`test-build`](#nova-codegen-test-build) |
-
-**Informational messages** (text mode) — to stderr (like cargo):
-```
-Toolchain: clang, mode=Dev, jobs=8, tests-dir=nova_tests
-libuv: enabled
-```
-
-Per-test events and summary — to stdout (so wrappers can stream stdout).
-
-**Limitations:**
-
-- `cache_dir: None` — Plan 26 Ф.5 (incremental cache) not implemented
-  (hook left in `opts`)
-- `list_only: false`, `filter_from: None`, `shuffle_seed: None`,
-  `skip: &[]`, `mono_depth: None` — supported only via
-  [`nova test`](nova-cli.md#nova-test) (Plan 26 Ф.13+ / 34 / 48)
-
----
-
 ## Environment variables
 
 | Var | Effect |
@@ -428,7 +369,7 @@ src/
   callnorm.rs             call-site normalization
   perf_timer.rs           NOVA_PERF_TIMER markers
   lib.rs                  re-exports
-  main.rs                 CLI dispatch (~664 LOC)
+  main.rs                 CLI dispatch (~450 LOC; test-all removed in Plan 36.D.1)
 ```
 
 ### Cross-file resolver (Plan 35 R31)
@@ -520,7 +461,7 @@ always linked:
 - [`docs/plans/13-runtime-stdlib-and-autogen.md`](plans/13-runtime-stdlib-and-autogen.md)
   — runtime registry + auto-gen
 - [`docs/plans/24-cross-platform-test-runner.md`](plans/24-cross-platform-test-runner.md)
-  — `test-build` / `test-all`
+  — `test-build` (per-file; `test-all` removed in Plan 36.D.1, use `nova test`)
 - [`docs/plans/26-test-runner-hardening.md`](plans/26-test-runner-hardening.md)
   — timeout / parallel / format / rerun-failed
 - [`docs/plans/27-gc-switch.md`](plans/27-gc-switch.md) —

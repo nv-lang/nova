@@ -9,6 +9,8 @@
 > rationale и roadmap. **Не использовать этот документ как тихое разрешение
 > оставлять tech-debt без плана.**
 
+[2026-06-18 Plan 36.D.1] Упрощения: (1) Нет негативных `.nv` тестов для CLI-поведения (--include-stdlib exit 2, test-all unrecognized) — CLI-контракты не выразимы через Nova EXPECT-маркеры; verified вручную + Rust build-тест. (2) `nova-codegen test-all` удалён без deprecation-периода — bootstrap не в проде, чистый break.
+
 [2026-06-17 Plan 91.8c] Упрощения: (1) Суффикс `_of` вместо перегрузки — `sort_of/min_of/max_of/binary_search_of` не перегружают `sort/min/max` из concrete `[]int` (избегаем overload-resolution сложности, concrete fast-path сохранён). (2) Алгоритм sort: insertion sort O(n²) для MVP; pdq-sort в followup `[M-91.8c-pdq-sort]`. (3) `[]int @min/@max` pre-existing CC-FAIL (f64.min dispatch) — не фиксируем в Plan 91.8c, используем `min_of/max_of` в регрессионном тесте.
 
 [2026-06-17 Plan 147 Ф.7] Checker enforcement gaps for D246 three-axis mutability CLOSED. (1) `[M-147-ro-binding-index-freeze]` CLOSED — `ro a = [...]; a[0] = x` now gives `E_READONLY_CONTENT`; `is_through_ro_binding` added to `check_target_readonly` Index arm with entry-code guard (avoids false positives in prelude/std). (2) `[M-147-param-index-freeze]` CLOSED — non-`mut` params inserted into `ro_binding_names` at fn entry (snapshot/restore); `v[i]=x` on plain param now gives `E_READONLY_CONTENT`. (3) `[M-147-ro-ro-redundant-binding]` CLOSED — `ro a ro T = ...` gives `E_REDUNDANT_TYPE_MODIFIER` (parser-level, pre-existing; oracle test f7_neg3 confirms). Oracle tests: 7 new fixtures (f7_pos1..f7_pos3, f7_neg1..f7_neg4). Result: 37/0 PASS.

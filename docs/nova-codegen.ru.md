@@ -34,7 +34,6 @@ C-бэкенд + cross-file resolver + SMT-верификатор контрак
   - [`nova-codegen emit-runtime-stubs`](#nova-codegen-emit-runtime-stubs)
   - [`nova-codegen dump-runtime`](#nova-codegen-dump-runtime)
   - [`nova-codegen test-build`](#nova-codegen-test-build)
-  - [`nova-codegen test-all`](#nova-codegen-test-all)
 - [Переменные окружения](#переменные-окружения)
 - [Cargo features](#cargo-features)
 - [Library API (`nova_codegen`)](#library-api-nova_codegen)
@@ -139,7 +138,7 @@ nova-codegen test-interp FILE
 
 Это громкая заглушка: печатает ошибку и выходит с кодом `1`. Прогоняй
 тесты через C-pipeline — через `nova` CLI `nova test`, либо
-[`test-build`](#nova-codegen-test-build) / [`test-all`](#nova-codegen-test-all).
+[`test-build`](#nova-codegen-test-build).
 
 ---
 
@@ -274,64 +273,6 @@ EXPECT-маркеры (D89):
 
 ---
 
-### `nova-codegen test-all`
-
-Plan 24 — batch test runner: рекурсивный прогон всех `.nv` в
-`--tests-dir`. Используется как движок для `nova test`
-([docs/nova-cli.ru.md](nova-cli.ru.md)).
-
-```
-nova-codegen test-all [--tests-dir PATH] [--stdlib-dir PATH] [--include-stdlib]
-                      [--filter SUBSTR] [--mode dev|release]
-                      [--toolchain auto|clang|msvc|gcc]
-                      [--vcvars PATH] [--clang PATH]
-                      [--cg-include PATH] [--rt-dir PATH] [--tmp-dir PATH]
-                      [--keep-artifacts] [--timeout SECS] [--jobs N]
-                      [--format text|json|tap] [-v|-q]
-                      [--results-file PATH] [--rerun-failed]
-                      [--retries N] [--gc boehm|malloc]
-```
-
-| Флаг | По умолчанию | Описание |
-|---|---|---|
-| `--tests-dir PATH` | `nova_tests` | Корень тестового корпуса |
-| `--stdlib-dir PATH` | `std` | Корень `std/` (если `--include-stdlib`) |
-| `--include-stdlib` | off | Включить `std/*` файлы |
-| `--filter SUBSTR` | — | Filter по display-name |
-| `--mode` | `dev` | См. [`test-build`](#nova-codegen-test-build) |
-| `--toolchain` | `auto` | |
-| `--vcvars`, `--clang` | auto | |
-| `--cg-include`, `--rt-dir` | вычисляются из CWD | |
-| `--tmp-dir` | `$TEMP/nova_tests` или эквивалент | |
-| `--keep-artifacts` | off | |
-| `--timeout` | `60` | Per-test timeout (Plan 26 Ф.1) |
-| `--jobs N` | `0` (= num_cpus) | Параллельные worker'ы (Plan 26 Ф.3) |
-| `--format` | `text` | `text`, `json`, `tap` (Plan 26 Ф.4) |
-| `-v`, `--verbose` | off | Output PASS-тестов (Plan 26 Ф.9) |
-| `-q`, `--quiet` | off | Только FAIL + summary (Plan 26 Ф.9) |
-| `--results-file PATH` | — | Файл `last-results.json` (Plan 26 Ф.10) |
-| `--rerun-failed` | off | Перезапустить только failed/timeout из `--results-file` |
-| `--retries N` | `0` | Retry на transient AV/race fail'ах (Plan 26 Ф.12; CI default 2) |
-| `--gc boehm\|malloc` | `boehm` | См. [`test-build`](#nova-codegen-test-build) |
-
-**Информационные сообщения** (text-режим) — в stderr (как cargo):
-```
-Toolchain: clang, mode=Dev, jobs=8, tests-dir=nova_tests
-libuv: enabled
-```
-
-Per-test events и summary — в stdout (для wrapper-скриптов).
-
-**Ограничения:**
-
-- `cache_dir: None` — Plan 26 Ф.5 (incremental cache) не реализован
-  (оставлен крючок в `opts`)
-- `list_only: false`, `filter_from: None`, `shuffle_seed: None`,
-  `skip: &[]`, `mono_depth: None` — поддерживаются только через
-  [`nova test`](nova-cli.ru.md#nova-test) (Plan 26 Ф.13+ / 34 / 48)
-
----
-
 ## Переменные окружения
 
 | Var | Эффект |
@@ -342,7 +283,7 @@ Per-test events и summary — в stdout (для wrapper-скриптов).
 | `NOVA_DEBUG_MONO=1` | Verbose debug-print mono-instances (диагностика поломок codegen) |
 | `NOVA_SMT_BACKEND=trivial\|z3` | Override SMT-backend для контрактов |
 | `NOVA_CACHE_DIR=PATH` | Override директории SMT proof cache (default `<cwd>/target/`) |
-| `NOVA_CLANG=PATH` | Override `clang.exe` для test-build/test-all |
+| `NOVA_CLANG=PATH` | Override `clang.exe` для test-build |
 | `NOVA_GCC=PATH` | Override пути к `gcc` |
 | `NOVA_VCVARS=PATH` | Override `vcvars64.bat` (Windows MSVC) |
 | `NOVA_MARCH_NATIVE=1` | Включить `-march=native` (release builds; non-portable binary) |
@@ -429,7 +370,7 @@ src/
   callnorm.rs             call-site normalization
   perf_timer.rs           NOVA_PERF_TIMER markers
   lib.rs                  re-exports
-  main.rs                 CLI dispatch (~664 LOC)
+  main.rs                 CLI dispatch (~450 LOC; test-all удалён в Plan 36.D.1)
 ```
 
 ### Cross-file resolver (Plan 35 R31)
@@ -517,7 +458,7 @@ C-исходники линкуются в каждый `.exe`. Линкуетс
 - [`docs/plans/13-runtime-stdlib-and-autogen.md`](plans/13-runtime-stdlib-and-autogen.md)
   — runtime registry + auto-gen
 - [`docs/plans/24-cross-platform-test-runner.md`](plans/24-cross-platform-test-runner.md)
-  — `test-build` / `test-all`
+  — `test-build` (per-file; `test-all` удалён в Plan 36.D.1, используй `nova test`)
 - [`docs/plans/26-test-runner-hardening.md`](plans/26-test-runner-hardening.md)
   — timeout / parallel / format / rerun-failed
 - [`docs/plans/27-gc-switch.md`](plans/27-gc-switch.md) —
