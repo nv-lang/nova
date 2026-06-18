@@ -20612,6 +20612,7 @@ impl UnsafeCtx {
         use crate::ast::{ExprKind, UnOp};
         match &e.kind {
             ExprKind::Unary { op: UnOp::AddrOf, .. } => true,
+            ExprKind::Unary { op: UnOp::RawAddrOf, .. } => true,
             ExprKind::Unary { op: UnOp::Deref, .. } => true,
             // Plan 118.5 V2 (2026-06-04): expanded to detect all pointer-
             // family AST wrappers — Pointer (canonical), Mut (mut * T),
@@ -20755,10 +20756,11 @@ impl UnsafeCtx {
             // Plan 118 D216 §8 ENFORCEMENT POINT: AddrOf / Deref require
             // unsafe context (block с is_unsafe = true OR enclosing #unsafe fn).
             ExprKind::Unary { op: UnOp::AddrOf, operand } => {
-                // Ф.2: &x is safe — no E_UNSAFE_REQUIRED for AddrOf.
+                // Plan 118.6: &x is safe — no E_UNSAFE_REQUIRED for AddrOf.
+                // Plan 118.7: unsafe { &x } no longer suppresses promote —
+                // &x always uses escape analysis regardless of unsafe context.
                 // Plan 118 A33: pointer ops banned в #realtime fn body
-                // (D216 §20, D172 cross-ref) — deref может GC trigger,
-                // & may allocate via auto-promote.
+                // (D216 §20, D172 cross-ref) — & may allocate via auto-promote.
                 if self.in_realtime {
                     errors.push(Diagnostic::new(
                         "[E_REALTIME_POINTER_OP] `&value` pointer creation \
@@ -20766,6 +20768,28 @@ impl UnsafeCtx {
                          + Plan 113 D172). `&` может trigger heap allocation \
                          via escape-analysis auto-promote — violates \
                          realtime no-GC-pause guarantee.".to_string(),
+                        e.span,
+                    ));
+                }
+                self.walk_expr(operand, errors);
+            }
+            // Plan 118.7 D216 §4 amend: `raw &x` — сырой стек-адрес без
+            // escape analysis. Требует unsafe {} (E_UNSAFE_REQUIRED вне него).
+            ExprKind::Unary { op: UnOp::RawAddrOf, operand } => {
+                if self.depth == 0 {
+                    errors.push(Diagnostic::new(
+                        "[E_UNSAFE_REQUIRED] `raw &x` requires unsafe context \
+                         (Plan 118.7 D216 §4). `raw &x` produces a raw stack \
+                         pointer without escape analysis or auto-promote — may \
+                         be dangling after scope exit. Wrap в `unsafe { raw &x }` \
+                         или mark enclosing fn `#unsafe`.".to_string(),
+                        e.span,
+                    ));
+                }
+                if self.in_realtime {
+                    errors.push(Diagnostic::new(
+                        "[E_REALTIME_POINTER_OP] `raw &x` forbidden в `#realtime fn` \
+                         body (Plan 118 D216 §20 + Plan 113 D172).".to_string(),
                         e.span,
                     ));
                 }

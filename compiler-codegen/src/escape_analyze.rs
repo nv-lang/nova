@@ -406,6 +406,12 @@ impl<'a> EscapeCtx<'a> {
             ExprKind::Unary { op: UnOp::AddrOf, operand } => {
                 self.walk_expr(operand);
             }
+            // Plan 118.7: `raw &x` — сырой стек-адрес, никогда не промоутит.
+            // Escape analysis не применяется к RawAddrOf — это намеренно
+            // сырой указатель, программист берёт ответственность.
+            ExprKind::Unary { op: UnOp::RawAddrOf, operand } => {
+                self.walk_expr(operand);
+            }
             ExprKind::Unary { operand, .. } => self.walk_expr(operand),
             ExprKind::Block(b) => self.walk_block(b, /*is_fn_body=*/ false),
             ExprKind::Binary { left, right, .. } => {
@@ -589,6 +595,11 @@ impl<'a> EscapeCtx<'a> {
                 }
                 // Recurse into operand for nested escape (rare: `&(&v)` —
                 // but operand walk handles further `&` chains).
+                self.walk_expr(operand);
+            }
+            // Plan 118.7: `raw &x` в escape position — НЕ промоутит.
+            // Сырой стек-адрес: программист знает что делает.
+            ExprKind::Unary { op: UnOp::RawAddrOf, operand } => {
                 self.walk_expr(operand);
             }
             // Tail-position recursion: nested expressions where the result

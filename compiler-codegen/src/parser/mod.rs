@@ -6902,6 +6902,84 @@ impl Parser {
                     span,
                 ))
             }
+            // Plan 118.7 D216 §4 amend: `raw &x` — сырой стек-адрес без
+            // escape analysis / auto-promote. Требует `unsafe {}` (type-
+            // checker enforces E_UNSAFE_REQUIRED). Те же lvalue-ограничения
+            // что и у `&x` (E_AMP_LITERAL, E_ARRAY_INDEX_PTR_BANNED, etc.).
+            // `raw` — контекстное ключевое слово (не зарезервировано в lexer,
+            // аналог `bench`/`measure`): распознаётся только перед `&`.
+            TokenKind::Ident(ref s)
+                if s == "raw"
+                    && matches!(
+                        self.tokens[self.pos + 1].kind,
+                        TokenKind::Amp
+                    ) =>
+            {
+                self.bump(); // eat `raw`
+                let amp_span = self.peek().span;
+                if !matches!(self.peek().kind, TokenKind::Amp) {
+                    return Err(Diagnostic::new(
+                        "`raw` must be followed by `&` (e.g. `raw &x`). \
+                         `raw` is not a standalone expression.".to_string(),
+                        amp_span,
+                    ));
+                }
+                self.bump(); // eat `&`
+                let operand = self.parse_unary()?;
+                // Те же lvalue-проверки что у AddrOf.
+                if matches!(operand.kind, ExprKind::RecordLit { .. }) {
+                    return Err(Diagnostic::new(
+                        "[E_AMP_RECORD_LITERAL] `raw &Record { ... }` без named \
+                         binding запрещён — use `ro acc = Record { ... }; \
+                         unsafe { raw &acc }`.".to_string(),
+                        start,
+                    ));
+                }
+                if matches!(operand.kind, ExprKind::Index { .. }) {
+                    return Err(Diagnostic::new(
+                        "[E_ARRAY_INDEX_PTR_BANNED] `raw &arr[i]` forbidden \
+                         (D216 §15) — array buffer может relocate.".to_string(),
+                        start,
+                    ));
+                }
+                if matches!(
+                    operand.kind,
+                    ExprKind::IntLit(_) | ExprKind::FloatLit(_)
+                        | ExprKind::BoolLit(_) | ExprKind::CharLit(_)
+                        | ExprKind::StrLit(_)
+                ) {
+                    return Err(Diagnostic::new(
+                        "[E_AMP_LITERAL] `raw &<literal>` forbidden (D216 §15) — \
+                         literals не addressable. Bind в named local first.".to_string(),
+                        start,
+                    ));
+                }
+                match crate::ast::addr_of_chain_root(&operand.kind) {
+                    crate::ast::AddrChainRoot::Lvalue(_) => {}
+                    crate::ast::AddrChainRoot::IndexInChain => {
+                        return Err(Diagnostic::new(
+                            "[E_ARRAY_INDEX_PTR_BANNED] `raw &(...arr[i]...)` forbidden \
+                             (D216 §15) — field path through array index → dangling.".to_string(),
+                            start,
+                        ));
+                    }
+                    crate::ast::AddrChainRoot::Rvalue => {
+                        return Err(Diagnostic::new(
+                            "[E_ADDR_OF_NON_LVALUE] `raw &value` requires an lvalue \
+                             (named binding, field access, or self).".to_string(),
+                            start,
+                        ));
+                    }
+                }
+                let span = start.merge(operand.span);
+                Ok(Expr::new(
+                    ExprKind::Unary {
+                        op: UnOp::RawAddrOf,
+                        operand: Box::new(operand),
+                    },
+                    span,
+                ))
+            }
             // Plan 118 D216 §4: `&value` pointer creation (prefix operator,
             // expr-position only — type-position `&Type` doesn't exist).
             // Type-checker (Ф.2.3) enforces unsafe context требование +

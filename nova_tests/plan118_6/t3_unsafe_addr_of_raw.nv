@@ -1,12 +1,13 @@
-// Plan 118.6 — unsafe { &x } gives raw stack pointer (for FFI).
+// Plan 118.7 migration: `unsafe { &x }` → `unsafe { raw &x }`.
+// `raw &x` = сырой стек-адрес без escape analysis / promote.
 // EXPECT_PASS
 
 module nova_tests.plan118_6
 
-test "unsafe addr_of gives raw pointer" {
+test "unsafe raw &x gives raw pointer" {
     ro x = 99
     unsafe {
-        ro p = &x
+        ro p = raw &x
         assert(p.read() == 99)
     }
 }

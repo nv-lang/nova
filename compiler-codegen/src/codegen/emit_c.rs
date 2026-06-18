@@ -4744,7 +4744,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // Plan 118 D216 §4-5: pointer ops not valid в const
                     // expressions (constexpr evaluation has no addressable
                     // storage / runtime pointer values).
-                    UnOp::AddrOf | UnOp::Deref => {
+                    UnOp::AddrOf | UnOp::RawAddrOf | UnOp::Deref => {
                         return Err("[E_PTR_OP_IN_CONST] pointer operators \
                              (&/*) are not valid в const expression context"
                             .to_string());
@@ -20396,6 +20396,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // (currently locals NOT yet auto-promoted; user code
                     // должен соблюдать contract вручную).
                     UnOp::AddrOf => "&",
+                    // Plan 118.7: raw &x — сырой стек-адрес (в этом контексте
+                    // emit как &, промоут уже не применяется escape analysis'ом).
+                    UnOp::RawAddrOf => "&",
                     UnOp::Deref => "*",
                 };
                 Ok(format!("({}{})", op_str, v))
@@ -35437,7 +35440,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // `<x_type>*`; `*p` → strip trailing `*` если есть, иначе
                 // unknown. Ф.4 (auto-deref) добавит proper Ty::TypedPtr
                 // resolution; здесь scaffold.
-                UnOp::AddrOf => {
+                UnOp::AddrOf | UnOp::RawAddrOf => {
                     let inner = self.infer_expr_c_type(operand);
                     if inner.is_empty() || inner == "void*" { "void*".into() } else { format!("{}*", inner) }
                 }
@@ -38280,6 +38283,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     UnOp::Neg => "-",
                     UnOp::Not => "!",
                     UnOp::AddrOf => "&",
+                    UnOp::RawAddrOf => "raw &",
                     UnOp::Deref => "*",
                 };
                 format!("{}{}", op_str, Self::expr_to_display(operand))

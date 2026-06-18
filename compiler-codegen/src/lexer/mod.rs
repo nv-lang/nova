@@ -624,6 +624,9 @@ impl<'a> Lexer<'a> {
             //   - `unsafe { ... }` block (Ф.3),
             //   - `#unsafe` attribute on fn declarations (Ф.3).
             "unsafe" => TokenKind::KwUnsafe,
+            // Plan 118.7 (D216 §4 amend): `raw` остаётся идентификатором
+            // (контекстное ключевое слово, аналог `bench`/`measure`).
+            // Парсер распознаёт `raw &expr` контекстно в parse_unary().
             // Plan 118.5 V3 §V3.4 → RETIRED in Plan 138.5 (2026-06-11):
             // `safe` was a type-position propagation-stopper (`unsafe * safe
             // T`). With prefix `unsafe *` now forbidden there is nothing to

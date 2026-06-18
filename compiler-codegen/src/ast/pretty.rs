@@ -271,6 +271,8 @@ fn unop_str(op: &UnOp) -> &'static str {
         UnOp::Not => "!",
         // Plan 118 D216 §4-5: pointer creation + deref.
         UnOp::AddrOf => "&",
+        // Plan 118.7: raw &x — сырой стек-адрес без promote.
+        UnOp::RawAddrOf => "raw &",
         UnOp::Deref => "*",
     }
 }

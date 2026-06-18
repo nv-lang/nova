@@ -1,12 +1,13 @@
 // Plan 131 Ф.2 NEG — deref-write outside unsafe block rejected.
 // `*ptr = v` requires unsafe context (E_UNSAFE_REQUIRED).
+// Plan 118.7: `unsafe { &x }` → `unsafe { raw &x }` для сырого стек-адреса.
 // EXPECT_COMPILE_ERROR E_UNSAFE_REQUIRED
 
 module neg.ptr_deref_write_outside_unsafe
 
 fn main() -> () {
     mut x int = 0
-    ro p = unsafe { &x }
+    ro p = unsafe { raw &x }
     // Deref-write outside unsafe block — should fail with E_UNSAFE_REQUIRED.
     *p = 42
 }

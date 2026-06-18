@@ -7678,6 +7678,23 @@ deref, arithmetic banned by default).
 > → `E_ADDR_OF_REMOVED`. `mut` binding → `*mut T` auto; `ro` binding → `*T`
 > auto. Escape analysis extended to primitives. 15/15 tests PASS.
 >
+> **D216 §4 AMEND 2 (Plan 118.7, 2026-06-18):** `raw &x` — новый унарный
+> оператор для сырого стек-адреса без escape analysis / auto-promote.
+> Требует `unsafe {}` контекст (`E_UNSAFE_REQUIRED`). `raw` — контекстное
+> ключевое слово (не зарезервировано в lexer, аналог `bench`/`measure`).
+>
+> Инвариант после 118.7:
+> - `&x` — **всегда** safe + escape analysis + auto-promote. Работает везде.
+> - `raw &x` — **всегда** сырой стек-адрес, без промоута. Только в `unsafe {}`.
+> - `unsafe { &x }` — эквивалентен `&x` (unsafe-контекст не влияет на `&`).
+>
+> Дополнительные диагностики:
+> - `E_UNSAFE_REQUIRED` теперь также для `raw &x` вне unsafe (§4 amend 2).
+> - `E_AMP_LITERAL` / `E_AMP_RECORD_LITERAL` / `E_ARRAY_INDEX_PTR_BANNED` —
+>   применяются и к `raw &expr` (те же lvalue-ограничения).
+>
+> 4/4 plan118_7 tests PASS. Migration: 7 файлов `unsafe { &x }` → `unsafe { raw &x }`.
+>
 > Enforced diagnostics (V1):
 >   - `E_UNSAFE_REQUIRED` (D216 §8) — A8 ✅ commit 5c0d2c975ce
 >   - `E_UNSAFE_CALL_REQUIRES_WRAP` (D216 §9) — A11 ✅ commit abd4be4603b

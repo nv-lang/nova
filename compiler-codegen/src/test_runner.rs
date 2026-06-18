@@ -2560,8 +2560,7 @@ pub struct TestAllOpts<'a> {
     /// [36.D.1] One or more directories/files to scan. Replaces single tests_dir
     /// + include_stdlib. Display names are built relative to cwd.
     pub input_dirs: &'a [PathBuf],
-    /// Kept for compatibility with internal callers that resolve cg_include/rt_dir
-    /// relative to a repo root — not used for test discovery.
+    /// Kept for fallback when input_dirs is empty.
     pub tests_dir: &'a Path,
     pub filter: Option<&'a str>,
     pub mode: Mode,
