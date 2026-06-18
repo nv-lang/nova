@@ -1,0 +1,17 @@
+// Plan 153.3.1 — negative: sort_unstable called on Vec[T] where T has no Compare.
+//
+// EXPECT_CC_ERROR
+//
+// `sort_unstable()` requires `[T Compare]`.
+// `Point` is a plain record without any Compare implementation
+// → calling sort_unstable() on Vec[Point] is a type error.
+module neg.neg_sort_no_compare
+
+type Point { x int, y int }
+
+test "sort_unstable on Vec[T] without Compare should not compile" {
+    mut pts = Vec[Point].new()
+    pts.push(Point { x: 1, y: 2 })
+    pts.push(Point { x: 3, y: 1 })
+    pts.sort_unstable()
+}

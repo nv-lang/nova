@@ -1,0 +1,115 @@
+// Plan 153.3.1: pdqsort — correctness tests for sort_unstable variants
+module nova_tests.plan153_3_1
+
+test "random array correctness" {
+    // Build pseudo-random array using LCG (seed=12345)
+    mut xs = Vec[int].with_capacity(1000)
+    mut seed = 12345
+    mut i = 0
+    while i < 1000 {
+        seed = (seed * 1664525 + 1013904223) % 2147483647
+        xs.push(seed % 100000)
+        i = i + 1
+    }
+    xs.sort_unstable()
+    // Verify sorted
+    mut j = 0
+    while j < 999 {
+        assert(xs[j] <= xs[j + 1])
+        j = j + 1
+    }
+    assert(xs.len == 1000)
+}
+
+test "already sorted input" {
+    mut xs = Vec[int].with_capacity(100)
+    mut i = 0
+    while i < 100 {
+        xs.push(i)
+        i = i + 1
+    }
+    xs.sort_unstable()
+    mut j = 0
+    while j < 99 {
+        assert(xs[j] <= xs[j + 1])
+        j = j + 1
+    }
+}
+
+test "reversed input worst-case" {
+    mut xs = Vec[int].with_capacity(200)
+    mut i = 199
+    while i >= 0 {
+        xs.push(i)
+        i = i - 1
+    }
+    xs.sort_unstable()
+    mut j = 0
+    while j < 199 {
+        assert(xs[j] <= xs[j + 1])
+        j = j + 1
+    }
+}
+
+test "all duplicates" {
+    mut xs = Vec[int].with_capacity(100)
+    mut i = 0
+    while i < 100 {
+        xs.push(42)
+        i = i + 1
+    }
+    xs.sort_unstable()
+    mut j = 0
+    while j < 100 {
+        assert(xs[j] == 42)
+        j = j + 1
+    }
+}
+
+test "nearly sorted input" {
+    mut xs = Vec[int].with_capacity(50)
+    mut i = 0
+    while i < 50 {
+        xs.push(i)
+        i = i + 1
+    }
+    // Swap a few pairs
+    xs.swap(3, 7)
+    xs.swap(12, 20)
+    xs.swap(35, 41)
+    xs.sort_unstable()
+    mut j = 0
+    while j < 49 {
+        assert(xs[j] <= xs[j + 1])
+        j = j + 1
+    }
+}
+
+test "single element" {
+    mut xs = Vec[int].new()
+    xs.push(42)
+    xs.sort_unstable()
+    assert(xs.len == 1)
+    assert(xs[0] == 42)
+}
+
+test "sort_unstable_by descending" {
+    mut xs = Vec[int].new()
+    xs.push(3)
+    xs.push(1)
+    xs.push(4)
+    xs.push(1)
+    xs.push(5)
+    xs.push(9)
+    xs.sort_unstable_by(|a, b| b - a)
+    assert(xs[0] == 9)
+    assert(xs[1] == 5)
+    assert(xs[2] == 4)
+    assert(xs[3] == 3)
+    assert(xs[4] == 1)
+    assert(xs[5] == 1)
+}
+
+// Note: sort_unstable_by_key uses generic type param named `key` in codegen
+// which conflicts with a pre-existing codegen bug — tested via heapsort path
+// in plan153_3 fixture set instead.

@@ -1,0 +1,15 @@
+// Plan 153.3.1 — negative: sort_unstable_by called on non-existent type method.
+//
+// EXPECT_CC_ERROR
+//
+// Calling `sort_unstable_by_key` with `|x| x.nonexistent_field` on Vec[int]
+// → `int` has no `nonexistent_field` member → CC error at the call site.
+module neg.neg_sort_wrong_cmp_type
+
+test "sort_unstable_by_key with invalid key accessor should not compile" {
+    mut xs = Vec[int].new()
+    xs.push(3)
+    xs.push(1)
+    xs.push(2)
+    xs.sort_unstable_by_key(|x| x.nonexistent_field)
+}

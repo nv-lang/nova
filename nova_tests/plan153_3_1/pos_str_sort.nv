@@ -1,0 +1,17 @@
+// Plan 153.3.1: pdqsort — generic Vec[str] sort_unstable
+module nova_tests.plan153_3_1
+
+test "str sort" {
+    mut xs = Vec[str].new()
+    xs.push("zebra")
+    xs.push("apple")
+    xs.push("mango")
+    xs.push("banana")
+    xs.push("cherry")
+    xs.sort_unstable()
+    assert(xs[0] == "apple")
+    assert(xs[1] == "banana")
+    assert(xs[2] == "cherry")
+    assert(xs[3] == "mango")
+    assert(xs[4] == "zebra")
+}
