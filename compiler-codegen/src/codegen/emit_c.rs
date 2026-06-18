@@ -6395,10 +6395,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         //     pointer goes through value_ptr; reader dereferences.
         // Если body не имеет trailing (заканчивается throw/return), смотрим на
         // handler interrupt-VAL type — это semantically тип W (D61 §10).
-        let trail_ty = if let Some(t) = &body.trailing {
-            self.infer_expr_c_type(t)
-        } else {
-            // Probe handler-лямбды на interrupt VAL.
+        // Probe handler-лямбды на interrupt VAL — fallback тип W (D61 §10)
+        // когда trailing отсутствует ИЛИ divergent (см. ниже).
+        let probe_handler_ty = || -> String {
             let mut found: Option<String> = None;
             for b in bindings {
                 if let Some(ty) = infer_handler_interrupt_ty(self, &b.handler) {
@@ -6407,6 +6406,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
             }
             found.unwrap_or_else(|| "nova_unit".into())
+        };
+        let trail_ty = match &body.trailing {
+            // A divergent trailing (`throw` / `interrupt` / panic) infers as
+            // `Nova_never*` — which is NOT a real C type. The with-block's value
+            // is never produced through it; its semantic type W comes from the
+            // handler's `interrupt VAL`. Without this, `result_decl_ty` became
+            // `Nova_never*` → CC-FAIL «unknown type name 'Nova_never'».
+            Some(t) => {
+                let ty = self.infer_expr_c_type(t);
+                if ty == "Nova_never*" || ty == "Nova_never" || self.expr_diverges_125(t) {
+                    probe_handler_ty()
+                } else {
+                    ty
+                }
+            }
+            None => probe_handler_ty(),
         };
         let category = with_result_category(&trail_ty);
 

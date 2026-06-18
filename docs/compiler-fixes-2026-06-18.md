@@ -372,3 +372,28 @@ initializing), либо conflicting types forward-decl (unit) vs definition (int
 восстанавливаем (save/restore, без утечки между декларациями). Теперь
 `cv.notify_one()` резолвится в `Nova_Condvar*` → method-lookup попадает →
 return = nova_unit. plan103_6 14/14 PASS.
+
+---
+
+## 16. emit_c.rs: divergent trailing в `with`-блоке не материализует Nova_never
+
+**Файл:** `compiler-codegen/src/codegen/emit_c.rs`
+**Метод:** `emit_with` (вычисление `trail_ty`)
+
+**Проблема:**
+`with Fail = effect Fail { fail(_) { …; interrupt () } } { mu.lock(); throw "…" }`.
+Trailing блока — `throw`, инферится как `Nova_never*` (тип `never`). Этот тип
+НЕ материализуется в C → `Nova_never* _nv_tmp;` → CC-FAIL «unknown type name
+'Nova_never'».
+
+**Почему это баг:**
+Значение with-блока никогда не производится через divergent trailing; его
+семантический тип W приходит из `interrupt VAL` хэндлера (D61 §10) — ровно как
+в ветке «trailing отсутствует». `never` — не носитель значения.
+
+**Исправление:**
+Когда trailing divergent (`infer == Nova_never*` или `expr_diverges_125`),
+`trail_ty` берётся из probe хэндлера (`infer_handler_interrupt_ty`), как при
+отсутствующем trailing. Probe-логика вынесена в общий замыкание. plan103_3:
+mutex_with_lock_panic_safety и наблюдаемый interleave компилируются (остаётся
+несвязанный concurrency-TIMEOUT в reentrant_unlock_neg — M:N race, не codegen).
