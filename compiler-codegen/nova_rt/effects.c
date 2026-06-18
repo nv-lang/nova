@@ -73,16 +73,27 @@ void nova_interrupt(nova_int value) {
                 _nova_interrupt_top = _nova_interrupt_top->prev;
             }
             NovaInterruptFrame* f = _nova_current_handler_iframe;
-            _nova_current_handler_iframe = NULL;
+            /* Restore saved handler iframe so the with-block recovery code
+             * (after longjmp) sees the correct outer context, not the stale
+             * handler-arm pointer that was set when the Fail handler was
+             * invoked. Without this, the pointer leaks past the with-block
+             * and causes STATUS_BAD_STACK on Windows when a later test runs. */
+            _nova_current_handler_iframe = f->saved_handler_iframe;
             f->value = value;
             longjmp(f->jmp, 1);
         }
         /* else: fall through к default top (defer frames intercept). */
     }
     if (_nova_interrupt_top) {
-        /* Case 1 (fiber-local with) or case 3 (main-flow with) — both safe. */
-        _nova_interrupt_top->value = value;
-        longjmp(_nova_interrupt_top->jmp, 1);
+        /* Case 1 (fiber-local with) or case 3 (main-flow with) — both safe.
+         * Restore saved handler iframe before longjmp: prevents stale pointer
+         * leaking past the with-block when interrupt fires inside a Fail
+         * handler body (the dispatch code sets _nova_current_handler_iframe
+         * but the restore-after-call is bypassed by longjmp). */
+        NovaInterruptFrame* top = _nova_interrupt_top;
+        _nova_current_handler_iframe = top->saved_handler_iframe;
+        top->value = value;
+        longjmp(top->jmp, 1);
         /* unreachable */
     }
     if (mco_running() && _nova_active_scope) {
@@ -136,14 +147,16 @@ void nova_interrupt_ptr(void* value) {
                 _nova_interrupt_top = _nova_interrupt_top->prev;
             }
             NovaInterruptFrame* f = _nova_current_handler_iframe;
-            _nova_current_handler_iframe = NULL;
+            _nova_current_handler_iframe = f->saved_handler_iframe;
             f->value_ptr = value;
             longjmp(f->jmp, 1);
         }
     }
     if (_nova_interrupt_top) {
-        _nova_interrupt_top->value_ptr = value;
-        longjmp(_nova_interrupt_top->jmp, 1);
+        NovaInterruptFrame* top = _nova_interrupt_top;
+        _nova_current_handler_iframe = top->saved_handler_iframe;
+        top->value_ptr = value;
+        longjmp(top->jmp, 1);
         /* unreachable */
     }
     if (mco_running() && _nova_active_scope) {

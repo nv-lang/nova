@@ -381,6 +381,11 @@ typedef struct NovaInterruptFrame {
     void*    value_ptr;        /* Plan 39 Issue A: non-int / non-bool результат */
     int      kind;             /* Plan 61 fu#1: NOVA_IFRAME_* */
     struct NovaInterruptFrame* prev;
+    /* Saved _nova_current_handler_iframe at push time — restored by
+     * nova_interrupt before longjmp so a stale handler-arm pointer never
+     * leaks past the with-block boundary. See effects.c for why this is
+     * necessary when interrupt fires inside a Fail handler body. */
+    struct NovaInterruptFrame* saved_handler_iframe;
 } NovaInterruptFrame;
 
 #ifdef _MSC_VER
@@ -403,6 +408,7 @@ static inline void nova_interrupt_push(NovaInterruptFrame* f) {
      * nova_interrupt_push_defer для defer scopes). */
     f->kind = NOVA_IFRAME_WITHBLOCK;
     f->prev = _nova_interrupt_top;
+    f->saved_handler_iframe = _nova_current_handler_iframe;
     _nova_interrupt_top = f;
 }
 
@@ -411,6 +417,7 @@ static inline void nova_interrupt_push(NovaInterruptFrame* f) {
 static inline void nova_interrupt_push_defer(NovaInterruptFrame* f) {
     f->kind = NOVA_IFRAME_DEFER_SCOPE;
     f->prev = _nova_interrupt_top;
+    f->saved_handler_iframe = _nova_current_handler_iframe;
     _nova_interrupt_top = f;
 }
 
