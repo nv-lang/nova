@@ -54,6 +54,8 @@ nova build app.nv -o app         # compile to a native binary (the way to run co
 nova add mathlib --path ../mathlib   # add a dependency, update nova.lock
 nova info mathlib                # a dependency's effect-surface
 nova test                        # compile + run all nova_tests/
+nova test nova_tests/plan118     # a single subdirectory
+nova test std nova_tests         # multiple paths: std/ + nova_tests/
 nova test --filter basics        # substring subset
 
 nova doc lib.nv                  # markdown to stdout
@@ -445,11 +447,11 @@ Run tests from a directory or a file. Plan 28 (together with
 [Plan 34](plans/34-stdlib-typecheck-and-compile-fix.md)).
 
 ```
-nova test [PATH] [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
+nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
           [--mode dev|release] [--toolchain auto|clang|msvc|gcc]
           [--vcvars PATH] [--clang PATH] [--timeout SECS] [-v|-q]
           [--results-file PATH] [--rerun-failed] [--retries N]
-          [--include-stdlib] [--keep-artifacts] [--gc boehm|malloc]
+          [--keep-artifacts] [--gc boehm|malloc]
           [--list] [--filter-from PATH] [--shuffle [SEED]]
           [--skip PATTERN]... [--mono-depth N]
 ```
@@ -458,7 +460,7 @@ nova test [PATH] [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 
 | Flag | Default | Description |
 |---|---|---|
-| `PATH` | `<root>/nova_tests/` | Test file or directory |
+| `PATH...` | `<root>/nova_tests/` | Files and/or directories to test (0 or more) |
 | `--filter SUBSTR` | — | Filter by display-name substring |
 | `--jobs N` | `0` (= num_cpus) | Parallel workers |
 | `--format` | `text` | `text`, `json`, `tap`, `junit` |
@@ -472,7 +474,6 @@ nova test [PATH] [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 | `--results-file PATH` | `<root>/target/last-test-results.json` | Where to write results |
 | `--rerun-failed` | off | Re-run only failed/timed-out from last run |
 | `--retries N` | `0` | Retries for transient failures (AV races, etc.) |
-| `--include-stdlib` | off | Include `std/` |
 | `--keep-artifacts` | off | Keep `.c`/`.exe`/`.obj` |
 | `--gc` | `boehm` | `boehm` (default) or `malloc` (internal only) |
 | `--list` | off | List tests without running |
@@ -480,6 +481,17 @@ nova test [PATH] [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 | `--shuffle [SEED]` | off | Random order; optional seed for reproducibility |
 | `--skip PATTERN` | `[]` | Skip tests by name or path substring (repeatable) |
 | `--mono-depth N` | `500` (or env) | Monomorphization-instantiation depth limit |
+
+**Multi-path** (Plan 36.D.1): pass any number of paths — directories and/or files.
+With no arguments, defaults to `nova_tests/` (if it exists). To also test `std/`:
+
+```bash
+nova test std nova_tests         # std/ + nova_tests/ together
+nova test nova_tests/plan118     # specific subdirectory
+```
+
+**Display name** is relative to the current working directory (cwd):
+`nova_tests/plan118/t1_parse_ok` instead of an absolute path.
 
 **Output formats:**
 

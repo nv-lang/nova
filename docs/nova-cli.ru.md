@@ -53,6 +53,8 @@ nova build app.nv -o app         # скомпилировать в native binary
 nova add mathlib --path ../mathlib   # добавить зависимость, обновить nova.lock
 nova info mathlib                # effect-surface зависимости
 nova test                        # компиляция + запуск всех nova_tests/
+nova test nova_tests/plan118     # один поддиректорий
+nova test std nova_tests         # несколько путей: std/ + nova_tests/
 nova test --filter basics        # подмножество по подстроке
 
 nova doc lib.nv                  # markdown в stdout
@@ -445,11 +447,11 @@ nova build FILE [-o OUTPUT] [--mode dev|release] [--toolchain auto|clang|msvc|gc
 [Plan 34](plans/34-stdlib-typecheck-and-compile-fix.md)).
 
 ```
-nova test [PATH] [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
+nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
           [--mode dev|release] [--toolchain auto|clang|msvc|gcc]
           [--vcvars PATH] [--clang PATH] [--timeout SECS] [-v|-q]
           [--results-file PATH] [--rerun-failed] [--retries N]
-          [--include-stdlib] [--keep-artifacts] [--gc boehm|malloc]
+          [--keep-artifacts] [--gc boehm|malloc]
           [--list] [--filter-from PATH] [--shuffle [SEED]]
           [--skip PATTERN]... [--mono-depth N]
 ```
@@ -458,7 +460,7 @@ nova test [PATH] [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
-| `PATH` | `<root>/nova_tests/` | Файл или директория с тестами |
+| `PATH...` | `<root>/nova_tests/` | Файлы и/или директории с тестами (0 или более) |
 | `--filter SUBSTR` | — | Фильтр по display-name (substring) |
 | `--jobs N` | `0` (= num_cpus) | Параллельные воркеры |
 | `--format` | `text` | `text`, `json`, `tap`, `junit` |
@@ -472,7 +474,6 @@ nova test [PATH] [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 | `--results-file PATH` | `<root>/target/last-test-results.json` | Куда писать результаты |
 | `--rerun-failed` | off | Перезапустить только failed/timed-out из последнего прогона |
 | `--retries N` | `0` | Повторов на transient-фейлах (AV-races и т.п.) |
-| `--include-stdlib` | off | Включить `std/` |
 | `--keep-artifacts` | off | Не удалять `.c`/`.exe`/`.obj` |
 | `--gc` | `boehm` | `boehm` (default) или `malloc` (internal only) |
 | `--list` | off | Список тестов без запуска |
@@ -480,6 +481,17 @@ nova test [PATH] [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 | `--shuffle [SEED]` | off | Случайный порядок; опц. seed для воспроизводимости |
 | `--skip PATTERN` | `[]` | Пропустить тесты по substring имени или пути (repeatable) |
 | `--mono-depth N` | `500` (или env) | Лимит mono-instantiation |
+
+**Multi-path** (Plan 36.D.1): передавать любое количество путей — директорий и/или файлов.
+Без аргументов — `nova_tests/` (если существует). Чтобы добавить `std/`:
+
+```bash
+nova test std nova_tests         # std/ + nova_tests/ одновременно
+nova test nova_tests/plan118     # конкретная поддиректория
+```
+
+**Display name** формируется как путь от текущего рабочего каталога (cwd):
+`nova_tests/plan118/t1_parse_ok` вместо абсолютного пути.
 
 **Форматы вывода:**
 
