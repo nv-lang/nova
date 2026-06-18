@@ -1,0 +1,95 @@
+# Plan 170 — nova_tests fix-sweep (folder-module name-collision class)
+
+> **Задача-свип, не feature-план.** Прогнать весь `nova_tests/` по папкам
+> (`nova test <path>`), исправить КАЖДЫЙ падающий модуль: либо настоящий
+> баг компилятора, либо устаревший тест под актуальную модель языка.
+> **Статус:** 🟡 В РАБОТЕ (начато 2026-06-18).
+> **Приоритет:** P1 (зелёный регресс — требование к шиппингу).
+> **Зависимости:** Plan 36.D.1 (nova test multi-path — фолдер-модули как единый бинарь).
+
+## Контекст
+
+После Plan 36.D.1 folder-модули компилируются как **единый бинарь из co-equal
+peer-файлов**. Это вскрыло целый КЛАСС багов: общие реестры компилятора
+(`var_types`, `array_element_types`, `fn_ret_<name>`, sum-variant-registry
+first-wins, `method_overloads`) НЕ изолированы между peer-файлами — значение
+из одного файла «протекает» в инференс/codegen другого.
+
+**Корневой принцип всех фиксов этого класса:** self-describing C-имя
+(mono `Nova_Vec____nova_str`, `NovaClos_vi`) и явный контекст
+(`current_fn_return_ty`, тип scrutinee, `user_fn_sigs`, `fn_param_sigs`)
+**АВТОРИТЕТНЕЕ** name-keyed last-wins side-tables. Везде, где инференс читал
+side-table до self-describing типа — порядок инвертирован.
+
+## Правила работы (из брифа)
+
+- Чинить настоящие баги компилятора — записывать в
+  [plan-170-compiler-fixes.md](../plan-170-compiler-fixes.md).
+- Тесты-фиксы — приводить к актуальному синтаксису/модели, **НЕ выхолащивать**
+  (не вырезать проверяемую функциональность ради «зелёного»).
+- Менять spec/компилятор только если это подтверждённый баг, не смена спеки.
+- НЕ трогать nova-lsp (параллельный агент).
+- Тестировать только через C-codegen (`nova test` / `test-build`), не интерпретатор.
+- Коммит по задачам; без `Co-Authored-By: Claude`; `git add` только конкретных файлов.
+
+## Прогресс
+
+### ✅ Закрытые модули (2026-06-18)
+
+| Модуль | Тестов | Природа фикса |
+|--------|--------|---------------|
+| syntax | 352/352 | компилятор §5–10 |
+| plan100_1 | 23/23 | тест: Write→WriteRec (prelude collision) |
+| plan103_6 | 14/14 | компилятор §15 (bodyless ->T param seed) |
+| plan144_0 | 10/10 | тест: .len()→метод |
+| plan125 | 5/5 | компилятор §14 (pattern_cond scrutinee) |
+| plan139 | 5/5 | компилятор §18 (Index mono-decode + extern-dedup) |
+| plan114_4 | 5/5 | компилятор §12 (const-ref-const mangle) |
+| plan141 | 1/1 | компилятор §13 + тест: аннотация Node |
+| effects | 1/1 | тест: handler_wrappers ro→mut (D246) |
+| str_builder, plan96, plan97, protocols, self_nested, runtime, types | — | тесты под consume/mut/byte_len/slice |
+
+### ✅ Багфиксы компилятора ([plan-170-compiler-fixes.md](../plan-170-compiler-fixes.md) §5–18)
+
+- §5 closure-local затеняет free fn в инференсе (var_types перед fn_ret).
+- §6 sum-variant дизамбигуация по current_fn_return_ty (emit_record_lit).
+- §7 tuple-of-closures декодирует элемент из mono-имени.
+- §8 closure-call через fn_param_sigs.
+- §9 match block-arm засеивает локальные let + Pattern::Tuple bindings.
+- §10 bare-call free fn через user_fn_sigs (не fn_ret last-wins).
+- §11 test_runner: RUN-FAIL показывает fail/assert/panic строки (детализация 150→400).
+- §12 const-ref-const манглит имя референса.
+- §13 bare unit-variant дизамбигуация по target-типу.
+- §14 pattern_cond тег unit-варианта из типа scrutinee.
+- §15 bodyless ->T инференс засеивает типы параметров (forward-decl + emit_fn).
+- §16 divergent trailing в with-блоке не материализует Nova_never.
+- §18 Index декодирует элемент из mono-имени + extern-dedup (type-check + codegen).
+- runtime: interrupt восстанавливает saved_handler_iframe перед longjmp
+  (STATUS_BAD_STACK на Windows).
+
+### ⏳ Осталось
+
+- **Полный регресс батчами** (`nova test <папка>` каждая <10 мин) — увидеть
+  ТОЧНУЮ итоговую картину оставшихся фейлов. Работа велась по выборочным
+  прогонам, полной гарантии «всё зелёное» пока нет.
+- tree-sitter-nova + www (отдельная задача из брифа).
+- Синк с main.
+
+## Known-limitations (диагностированы, НЕ исправлены — нужно архитектурное решение)
+
+- **plan107** — `#prelude(<подмножество>)` несовместим с монолитным stdlib-графом:
+  `core` транзитивно тянет `std.unicode` → Vec/StringBuilder/Next/Debug, поэтому
+  любое подмножество с `core` требует почти весь prelude. Фиксы (выбрать):
+  (1) самодостаточный `core` (убрать unicode/`#impl(Debug)` из core);
+  (2) auto-транзитивные prelude-deps в import-resolver. См. §17 в compiler-fixes.
+- **plan103_3 / plan103_4** — M:N concurrency race в ReentrantMutex: non-owner
+  unlock panic не пропагируется через `supervised` → TIMEOUT. Тот же класс, что
+  Plan 83 race-investigations ([[reference-mn-race-case-study]]).
+
+## Followups
+
+- `[M-170-full-regress-batched]` — прогнать весь nova_tests батчами, зафиксировать
+  оставшиеся фейлы списком.
+- `[M-170-prelude-partial-stdlib-graph]` — plan107: решить core-самодостаточность
+  vs auto-транзитивные prelude-deps.
+- `[M-170-reentrant-mutex-mn-race]` — concurrency timeout в plan103_3/103_4.
