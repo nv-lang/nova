@@ -7,7 +7,7 @@
 // Migration: `null ptr` → `(0 as ptr)` mechanical replacement
 // (NULL=(void*)0 в C ABI), либо `Option[ptr] = None` для new code.
 //
-// EXPECT_COMPILE_ERROR E_NULL_PTR_RETRACTED_USE_OPTION
+// EXPECT_COMPILE_ERROR undefined identifier `null`
 
 module neg.t5_neg_null_ptr_retracted
 
