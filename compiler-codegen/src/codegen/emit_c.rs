@@ -9474,7 +9474,31 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         } else {
             self.current_receiver_type = None;
         }
+        // Seed parameter types into var_types BEFORE inferring the return type
+        // from a bodyless `-> T` (return_type_c infers from the trailing expr
+        // when no annotation). At forward-declaration time the params are not
+        // yet in var_types, so `cv.notify_one()` saw `cv` as the nova_int
+        // fallback → method lookup missed → return mistyped nova_int (then the
+        // bodyless fn was declared `nova_int` and assigned a unit value → CC-FAIL).
+        // Restore afterwards so we don't leak param types across declarations.
+        let mut ret_seed_saved: Vec<(String, Option<String>)> = Vec::new();
+        if f.return_type.is_none() {
+            for p in &f.params {
+                if let Ok(pc) = self.type_ref_to_c(&p.ty) {
+                    if !pc.is_empty() {
+                        ret_seed_saved.push((p.name.clone(), self.var_types.get(&p.name).cloned()));
+                        self.var_types.insert(p.name.clone(), pc);
+                    }
+                }
+            }
+        }
         let mut ret = self.return_type_c(f)?;
+        for (n, prev) in ret_seed_saved {
+            match prev {
+                Some(pp) => { self.var_types.insert(n, pp); }
+                None => { self.var_types.remove(&n); }
+            }
+        }
         // Plan 72 P3-B return: a protocol return type (`-> Iter[int]`) lowers to
         // a `NovaBox_*` fat pointer — the C function physically returns the
         // 16-byte { data, vtable } struct. Emit the typedef up front so the
@@ -16616,7 +16640,29 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.current_receiver_type = None;
             self.current_receiver_is_mut = false;
         }
+        // Seed param types before inferring a bodyless `-> T` return type (same
+        // reason as the forward-decl path ~9484): the params loop populates
+        // var_types only AFTER return_type_c, so a trailing `cv.notify_one()`
+        // would see `cv` as nova_int → method lookup miss → return mistyped
+        // nova_int, conflicting with the unit-typed forward decl. Restore after.
+        let mut ret_seed_saved: Vec<(String, Option<String>)> = Vec::new();
+        if f.return_type.is_none() {
+            for p in &f.params {
+                if let Ok(pc) = self.type_ref_to_c(&p.ty) {
+                    if !pc.is_empty() {
+                        ret_seed_saved.push((p.name.clone(), self.var_types.get(&p.name).cloned()));
+                        self.var_types.insert(p.name.clone(), pc);
+                    }
+                }
+            }
+        }
         let mut ret = self.return_type_c(f)?;
+        for (n, prev) in ret_seed_saved {
+            match prev {
+                Some(pp) => { self.var_types.insert(n, pp); }
+                None => { self.var_types.remove(&n); }
+            }
+        }
         // Plan 72 P3-B return: protocol return type (`-> Iter[int]`) → the C
         // function returns a `NovaBox_*` fat pointer; trailing/explicit return
         // values are boxed (see `wrap_protocol_return`).
