@@ -59,7 +59,7 @@ export fn WriteBuffer.from(b []u8) -> Self {
 export fn WriteBuffer @len() -> int => @buf.len()
 
 // Allocated capacity в байтах.
-export fn WriteBuffer @capacity() -> int => @buf.capacity()
+export fn WriteBuffer @capacity() -> int => @buf.cap()
 
 // Независимая копия (deep copy buffer). Read-only access — original не consume'ится.
 export fn WriteBuffer @clone() -> Self {

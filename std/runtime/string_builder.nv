@@ -69,7 +69,7 @@ export fn StringBuilder @char_len() -> int {
 }
 
 // Allocated capacity в байтах.
-export fn StringBuilder @capacity() -> int => @buf.capacity()
+export fn StringBuilder @capacity() -> int => @buf.cap()
 
 // true если буфер пуст.
 export fn StringBuilder @is_empty() -> bool => @buf.is_empty()
