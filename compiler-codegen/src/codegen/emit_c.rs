@@ -4797,8 +4797,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 };
                 Ok(format!("(({}) {} ({}))", l, op_str, r))
             }
-            // Reference на another top-level const — emit C identifier.
-            ExprKind::Ident(name) => Ok(name.clone()),
+            // Reference на another top-level const — emit its C identifier.
+            // A module-private const is mangled to `Nova_const_<modpath>_<NAME>`
+            // (see emit_module pre-pass); the bare source name is NOT a valid C
+            // identifier at that point. Resolve the mangled name via
+            // `private_const_c_names` keyed by this expression's file_id (peers
+            // in the same module-group all carry the group's consts). Fall back
+            // to the bare name for exported consts (emitted under their own name).
+            ExprKind::Ident(name) => {
+                let mangled = self.private_const_c_names
+                    .get(&(expr.span.file_id, name.clone()))
+                    .cloned()
+                    .unwrap_or_else(|| name.clone());
+                Ok(mangled)
+            }
             _ => Err(format!("non-constant expression in const declaration: {:?}", expr.kind)),
         }
     }

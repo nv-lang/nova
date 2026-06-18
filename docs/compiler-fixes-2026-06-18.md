@@ -268,3 +268,26 @@ trailing PASS + счётчик, скрывая КАКОЙ тест упал.
 detail теперь предпочитает строки, содержащие `fail`/`assert`/`panic`
 (до 4 шт.); fallback на last-3, если таких нет. Диагностика, поведение
 тестов не меняется.
+
+---
+
+## 12. emit_c.rs: const-ссылка-на-const манглит имя референса
+
+**Файл:** `compiler-codegen/src/codegen/emit_c.rs`
+**Метод:** `emit_const_expr`, ветка `ExprKind::Ident`
+
+**Проблема:**
+`const BASE int = 100` + `const DERIVED int = BASE + 10`. Module-private const
+`BASE` мангляется в C как `Nova_const_<modpath>_BASE`, но при эмиссии
+инициализатора `DERIVED` ссылка на `BASE` выдавалась как сырой `BASE` →
+`use of undeclared identifier 'BASE'` (CC-FAIL).
+
+**Почему это баг:**
+На use-site `Ident(name)` обычного кода манглинг уже делался через
+`private_const_c_names`, но в const-инициализаторе (`emit_const_expr`) ветка
+Ident возвращала `name.clone()` без манглинга.
+
+**Исправление:**
+`emit_const_expr(Ident)` теперь резолвит mangled C-name через
+`private_const_c_names` по `expr.span.file_id`; fallback на сырое имя для
+exported const'ов (эмитятся под собственным именем).
