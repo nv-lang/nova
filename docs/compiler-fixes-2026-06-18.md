@@ -322,3 +322,25 @@ unit-variant обязан строить вариант ИМЕННО этого 
 
 NOTE §11: лимит детали RUN-FAIL поднят 150 → 400 символов (имена тестов на
 кириллице длиннее; полезнее для диагностики).
+
+---
+
+## 14. emit_c.rs: pattern_cond тег unit-варианта берёт sum из типа scrutinee
+
+**Файл:** `compiler-codegen/src/codegen/emit_c.rs`
+**Метод:** `pattern_cond`, ветка `Pattern::Variant` (резолв `type_name` при `path.len()==1`)
+
+**Проблема:**
+`type Tier | Low | Mid | Hi` + другой sum-тип с вариантом `Hi` (`Tag1`) в том
+же folder-модуле. В `match t { … Hi => "hi" }` для arm `Hi` (bare, без `Tier.`)
+тег резолвился через first-wins `find_variant_compat("Hi")` → `NOVA_TAG_Tag1_Hi`
+вместо `NOVA_TAG_Tier_Hi`. Scrutinee `Nova_Tier*` никогда не матчил этот tag →
+`_nv_matched` оставался 0 → результат match неинициализирован → assert падал.
+
+**Исправление:**
+При `path.len()==1` тип scrutinee (`var_types[scr]` → `Nova_<Sum>*`)
+АВТОРИТЕТЕН: если этот sum объявляет искомый вариант, берём его имя. Guard
+`scr_is_mono` (имя содержит `____`): для mono'd generic sum тег пишется как
+`NOVA_TAG_Nova_<mono>_<V>`, поэтому там оставляем fallback на
+find_variant_compat (базовое имя). Fallback также при unknown scrutinee.
+plan125 5/5 PASS (без регрессии negative-тестов).

@@ -31689,21 +31689,39 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let type_name = if path.len() > 1 {
                     path[..path.len()-1].join("_")
                 } else {
-                    // Plan 62.A.bis Ф.2.1: registry-driven lookup (find_variant_v2)
-                    // вместо legacy find_variant. Semantically equivalent —
-                    // registry mirror'ит sum_schemas через register_user_sum
-                    // (+ init_hardcoded_baseline для Option/Result/RuntimeError).
-                    self.sum_schema_registry.find_variant_compat(&variant_name)
-                        .map(|(t, _)| t)
-                        .unwrap_or_else(|| {
-                            // Fall back: infer from scrutinee's C type
-                            scr_ty
-                                .strip_prefix("Nova_")
-                                .unwrap_or(&scr_ty)
-                                .trim_end_matches('*')
-                                .trim()
-                                .to_string()
-                        })
+                    // The scrutinee's C type is AUTHORITATIVE when known: a bare
+                    // variant name (`Hi`) may collide across sum-types in the same
+                    // folder-module (Tier.Hi vs Tag1.Hi), and the registry's
+                    // find_variant_compat is first-wins — it would emit the WRONG
+                    // tag (NOVA_TAG_Tag1_Hi for a Nova_Tier* scrutinee), so the arm
+                    // never matches and the match result is uninitialized garbage.
+                    // Prefer scr_ty's sum name if it actually declares this variant.
+                    let scr_sum = scr_ty
+                        .strip_prefix("Nova_")
+                        .unwrap_or(&scr_ty)
+                        .trim_end_matches('*')
+                        .trim()
+                        .to_string();
+                    // Only trust scr_sum for NON-generic sums: a mono'd name
+                    // (`Slot____nova_int__nova_str`) uses a different tag spelling
+                    // (NOVA_TAG_Nova_<mono>_<V>), so deferring to find_variant_compat
+                    // (base name `Slot`) stays correct there. The collision this
+                    // fixes is between plain (non-generic) sum-types.
+                    let scr_is_mono = scr_sum.contains("____");
+                    let scr_has_variant = !scr_is_mono && self.sum_schema_registry
+                        .lookup_sum_schema(&scr_sum)
+                        .map(|e| e.variants.iter().any(|v| v.variant_name == variant_name))
+                        .unwrap_or(false);
+                    if scr_has_variant {
+                        scr_sum
+                    } else {
+                        // Plan 62.A.bis Ф.2.1: registry-driven lookup. Fallback when
+                        // the scrutinee type is unknown / not a sum declaring this
+                        // variant (e.g. Option/Result inference paths).
+                        self.sum_schema_registry.find_variant_compat(&variant_name)
+                            .map(|(t, _)| t)
+                            .unwrap_or(scr_sum)
+                    }
                 };
 
                 // NovaOpt_T is a value struct (not pointer), uses `.tag` and `.value`
