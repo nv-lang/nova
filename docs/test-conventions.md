@@ -760,7 +760,7 @@ Multi-line patterns не поддерживаются. Runner склеивает
 | `EXPECT_EXIT_CODE`, `EXPECT_STDOUT`, `EXPECT_STDERR` | standalone в `nova_tests/<group>/` |
 | Медленный тест | `nova_tests/<group>/<name>_slow.nv` |
 
-Конвенция folder-module (`module nova_tests.<group>`) применяется для всех позитивных тестов начиная с Plan 169 Ф.8 (Cat-A+Cat-B). Оставшиеся standalone-файлы — только dirs с `nova.toml` (named packages) или с pre-existing compile errors в positives.
+Конвенция folder-module (`module nova_tests.<group>`) применяется для всех позитивных тестов начиная с Plan 169.1 Ф.8 (Cat-A+Cat-B). Оставшиеся standalone-файлы — только dirs с `nova.toml` (named packages) или с pre-existing compile errors в positives.
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## Methodology
 
-- **Tool**: `nova test --results-file` with Plan 169 Ф.1 split-timing (compile_ms / run_ms)
+- **Tool**: `nova test --results-file` with Plan 169.1 Ф.1 split-timing (compile_ms / run_ms)
 - **Platform**: Windows 11, clang toolchain, dev mode (unoptimized codegen)
 - **Jobs**: 8 parallel workers (`--jobs 8`)
 - **Per-test timeout**: 60 s (`--timeout 60`)
@@ -257,13 +257,13 @@ plan97/pos_protocol_lit_gc_stress.nv
 
 ## Ф.3 Classification of Slow Candidates
 
-Classification applied 2026-06-17 (Plan 169 Ф.3).
+Classification applied 2026-06-17 (Plan 169.1 Ф.3).
 
 ### Rules
 - **keep-fast**: total_ms < 3000 AND run_ms < 2000 — stays in default run
 - **migrate-slow**: total_ms ≥ 3000 OR run_ms ≥ 2000 — rename to `_slow.nv`
 - **create-fast-variant**: slow only because of large N — create fast version + rename original to `_slow`
-- **investigate**: slow due to suspected runtime/compiler issue — add `[M-169-...]` marker
+- **investigate**: slow due to suspected runtime/compiler issue — add `[M-169.1-...]` marker
 
 ### Classification Table
 

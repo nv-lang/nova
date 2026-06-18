@@ -1784,7 +1784,7 @@ impl Drop for TempSubdir {
 
 /// Запустить codegen + cc + run + check для одного .nv.
 /// Production-grade: per-test isolation + timeout. Возвращает `Outcome`.
-/// Plan 169 Ф.1: `split_out` receives (compile_ms, run_ms) split timing
+/// Plan 169.1 Ф.1: `split_out` receives (compile_ms, run_ms) split timing
 /// before every return path. Both default to 0 on early exits.
 pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     *split_out = (0, 0);
@@ -1872,7 +1872,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         retries: 0,
     };
 
-    // Plan 169 Ф.1: split timing — compile phase starts here (codegen + cc).
+    // Plan 169.1 Ф.1: split timing — compile phase starts here (codegen + cc).
     let compile_start = Instant::now();
 
     // Step 1: codegen.
@@ -2132,7 +2132,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         };
     }
 
-    // Plan 169 Ф.1: compile phase complete — capture elapsed ms before run.
+    // Plan 169.1 Ф.1: compile phase complete — capture elapsed ms before run.
     let compile_ms = compile_start.elapsed().as_millis();
 
     // Step 3 — run с timeout.
@@ -2162,7 +2162,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
             };
         }
     };
-    // Plan 169 Ф.1: capture run_ms immediately after execution completes.
+    // Plan 169.1 Ф.1: capture run_ms immediately after execution completes.
     let run_ms = run_start.elapsed().as_millis();
     let stdout = bytes_to_string(&run_captured.stdout);
     let stderr = bytes_to_string(&run_captured.stderr);
@@ -2308,7 +2308,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         }
     };
 
-    // Plan 169 Ф.1: record split timing for the successful run path.
+    // Plan 169.1 Ф.1: record split timing for the successful run path.
     *split_out = (compile_ms, run_ms);
 
     // Cleanup через subdir_guard Drop (RAII).
@@ -2822,7 +2822,7 @@ impl Verbosity {
 
 /// Plan 26 Ф.10: serializable record для last-results.json. Структура
 /// stable, чтобы старые results-files оставались читаемы при minor-bumps.
-/// Plan 169 Ф.1: split timing — compile_ms (codegen→C→cc), run_ms (exe execution).
+/// Plan 169.1 Ф.1: split timing — compile_ms (codegen→C→cc), run_ms (exe execution).
 /// Missing fields in old files decode as 0 (backward-compat).
 #[derive(Debug, Clone)]
 pub struct ResultRecord {
@@ -3441,7 +3441,7 @@ pub fn walk_nv_filtered(root: &Path, out: &mut Vec<PathBuf>, lane: SlowLane) -> 
     }
     let is_folder_module = direct_nv.len() >= 2 && is_folder_module_dir(&direct_nv);
     if is_folder_module {
-        // Plan 169 Ф.8: folder-module с test-блоками → один compile unit.
+        // Plan 169.1 Ф.8: folder-module с test-блоками → один compile unit.
         // Первый файл (по алфавиту) — entry; resolver подтянет остальных peers
         // через resolve_imports_inline_ex (include_test_peers=true).
         // Folder-module без test-блоков — библиотека, пропускаем как раньше.
@@ -3488,7 +3488,7 @@ fn is_folder_module_dir(files: &[PathBuf]) -> bool {
     decls.iter().all(|d| d == first)
 }
 
-/// Plan 169 Ф.8: хотя бы один peer содержит `test "` блок?
+/// Plan 169.1 Ф.8: хотя бы один peer содержит `test "` блок?
 /// Читаем тела файлов — вызывается только для подтверждённых folder-module
 /// (is_folder_module_dir уже прошёл), поэтому I/O здесь оправдан.
 fn folder_module_has_tests(files: &[PathBuf]) -> bool {
@@ -3652,7 +3652,7 @@ fn xml_escape(s: &str) -> String {
 
 /// Plan 26 Ф.10: загрузить ResultRecord'ы из JSON. Простой format
 /// (один record на строку) — не нужен serde_json.
-/// Plan 169 Ф.1: parse compile_ms/run_ms with backward-compat (missing → 0).
+/// Plan 169.1 Ф.1: parse compile_ms/run_ms with backward-compat (missing → 0).
 fn load_results(path: &Path) -> Vec<ResultRecord> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
@@ -3707,7 +3707,7 @@ fn extract_json_field(line: &str, key: &str) -> Option<String> {
 fn save_results(path: &Path, records: &[ResultRecord]) -> std::io::Result<()> {
     let mut s = String::new();
     for r in records {
-        // Plan 169 Ф.1: include compile_ms/run_ms split timing fields.
+        // Plan 169.1 Ф.1: include compile_ms/run_ms split timing fields.
         s.push_str(&format!(
             "{{\"name\":\"{}\",\"passed\":{},\"elapsed_ms\":{},\"compile_ms\":{},\"run_ms\":{}}}\n",
             json_escape(&r.name),
@@ -3835,7 +3835,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     // Plan 26 Ф.3: параллельный прогон через std::thread::scope.
     let jobs_arc = std::sync::Arc::new(jobs);
     let next_idx = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    // Plan 169 Ф.1: store split timing (compile_ms, run_ms) alongside each result.
+    // Plan 169.1 Ф.1: store split timing (compile_ms, run_ms) alongside each result.
     let results_mutex = std::sync::Arc::new(std::sync::Mutex::new(
         Vec::<(usize, String, Outcome, (u128, u128))>::with_capacity(total),
     ));
@@ -3905,7 +3905,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
                 // Exponential backoff: 100ms, 200ms, 400ms.
                 // Plan 26 Ф.17 #1: cumulative elapsed.
                 let retry_start = Instant::now();
-                // Plan 169 Ф.1: split timing output from run_one.
+                // Plan 169.1 Ф.1: split timing output from run_one.
                 let mut split: (u128, u128) = (0, 0);
                 let mut outcome = run_one(&test_opts, &mut split);
                 let mut retry_count = 0u32;
@@ -3967,7 +3967,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
         Err(poison) => { eprintln!("warning: results mutex poisoned, recovering"); poison.into_inner() }
     };
     indexed.sort_by_key(|(idx, _, _, _)| *idx);
-    // Plan 169 Ф.1: carry split timing through results for save_results.
+    // Plan 169.1 Ф.1: carry split timing through results for save_results.
     let results_with_split: Vec<(String, Outcome, (u128, u128))> = indexed
         .into_iter()
         .map(|(_, name, outcome, split)| (name, outcome, split))
