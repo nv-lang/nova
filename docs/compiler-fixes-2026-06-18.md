@@ -397,3 +397,38 @@ Trailing блока — `throw`, инферится как `Nova_never*` (тип
 отсутствующем trailing. Probe-логика вынесена в общий замыкание. plan103_3:
 mutex_with_lock_panic_safety и наблюдаемый interleave компилируются (остаётся
 несвязанный concurrency-TIMEOUT в reentrant_unlock_neg — M:N race, не codegen).
+
+---
+
+## 17. plan107 #prelude(partial) — KNOWN LIMITATION (не фикс)
+
+**Файлы:** nova_tests/plan107/{prelude_core_attr, prelude_multi_attr, no_prelude_attr, no_prelude_explicit_import_attr}.nv
+**Статус:** pre-existing, НЕ исправлено (диагностика записана для будущей работы).
+
+**Симптом:** `#prelude(core, runtime)` → CODEGEN-FAIL `[D133-not-consumed] sb`,
+далее (при попытке чинить) каскад: E_IMPL_UNKNOWN_PROTOCOL `Next`/`Debug`,
+E7320 `byte_len on str`, и т.д.
+
+**Root cause (диагностировано):**
+`core` prelude транзитивно тянет `std.unicode` (str-методы, core.nv:78
+`import std.unicode`). `std/unicode/normalize.nv::cps_to_str` использует
+`consume sb = StringBuilder...; sb.as_str()`. Но StringBuilder в prelude
+приходит ТОЛЬКО через `collections` (std/prelude.nv:89), не через `runtime`.
+При partial `#prelude(core, runtime)` StringBuilder-тип используется, но его
+consume-методы (`as_str`) не попадают в LinearityRegistry → D133 ложно
+срабатывает на `sb`. Добавление `collections` вскрывает следующий слой
+(`Next`/`Debug` протоколы из `protocols`), затем str-методы (`byte_len`) — то
+есть `core` ФУНКЦИОНАЛЬНО зависит почти от всего prelude-графа.
+
+**Вывод:** `#prelude(<подмножество>)` концептуально несовместим с текущим
+МОНОЛИТНЫМ stdlib-графом зависимостей. Любое подмножество, включающее `core`,
+транзитивно требует collections+protocols+string+unicode.
+
+**Возможные фиксы (НЕ сделаны, требуют решения):**
+1. Сделать `core` самодостаточным: убрать `import std.unicode` из core.nv,
+   убрать `#impl(Debug)` с Option/Result в core (вынести в protocols).
+2. Import-resolver: при `#prelude(подмножество)` авто-добавлять транзитивно
+   требуемые prelude-модули (анализ графа).
+
+Любой из них — обширный stdlib-архитектурный рефакторинг, вне точечных
+codegen-багфиксов этой сессии.

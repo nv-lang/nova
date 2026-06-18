@@ -23027,13 +23027,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     overloads.iter()
                                         .map(|s| format!("{}({})", name, s.param_c_types.join(", ")))
                                         .collect::<Vec<_>>().join(" | "))),
-                                _ => return Err(format!(
-                                    "ambiguous overload for `{}({})` — multiple candidates match: {}",
-                                    name,
-                                    arg_c_types.join(", "),
-                                    matches.iter()
-                                        .map(|s| s.c_name.clone())
-                                        .collect::<Vec<_>>().join(" | "))),
+                                _ => {
+                                    // Multiple matches with the SAME c_name are not
+                                    // ambiguous — they are duplicate forward-decls of
+                                    // one symbol (e.g. identical `extern fn` declared
+                                    // in two peer files of a folder-module). Collapse
+                                    // to that single symbol. Genuine ambiguity (distinct
+                                    // c_names) stays an error.
+                                    let first_c = &matches[0].c_name;
+                                    if matches.iter().all(|s| &s.c_name == first_c) {
+                                        first_c.clone()
+                                    } else {
+                                        return Err(format!(
+                                            "ambiguous overload for `{}({})` — multiple candidates match: {}",
+                                            name,
+                                            arg_c_types.join(", "),
+                                            matches.iter()
+                                                .map(|s| s.c_name.clone())
+                                                .collect::<Vec<_>>().join(" | ")));
+                                    }
+                                }
                             }
                         } else {
                             // Single overload — короткое имя (backward compat).

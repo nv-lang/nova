@@ -666,6 +666,20 @@ pub fn resolve_imports_inline_ex(
                 let src = std::fs::read_to_string(&sp).map_err(|e| {
                     anyhow!("failed to read entry-folder peer {}: {}", sp.display(), e)
                 })?;
+                // Skip peer that requires a specific SMT backend not currently active.
+                // (Same logic as test_runner's REQUIRES_SMT_BACKEND check, but applied
+                // before parsing so a file with unsupported syntax gated on z3v2 etc.
+                // doesn't cause a parse error when included as a folder-module peer.)
+                if let Some(required) = crate::test_runner::parse_smt_backend_requirement(&src) {
+                    let actual = std::env::var("NOVA_SMT_BACKEND")
+                        .ok()
+                        .map(|s| s.trim().to_ascii_lowercase())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "trivial".to_string());
+                    if actual != required {
+                        continue;
+                    }
+                }
                 let fid = next_file_id;
                 next_file_id += 1;
                 let sib_mod = parser::parse_with_file_id(&src, fid).map_err(|d| {

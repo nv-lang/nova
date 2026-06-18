@@ -469,6 +469,18 @@ fn check_module_impl(
                     // типе (shadow всего типа), не override чужого метода → НЕ ошибка
                     // (напр. nova_tests/syntax/for_in_range_iter.nv: локальные
                     // `type Range`+`fn Range @step_by`).
+                    // Two IDENTICAL `extern` declarations (same signature, same
+                    // C symbol) across peer files of one folder-module are NOT a
+                    // conflict — they are repeated forward-declarations of a
+                    // single external symbol. Codegen emits one prototype; the
+                    // duplicate is harmless. Silent-merge (keep one) instead of
+                    // erroring. Fires e.g. when two plan139 t4_* peers both
+                    // declare `extern "nova" fn p139_make_str() -> str`.
+                    let both_external = fd.is_external
+                        && dup_existing.map(|e| e.is_external).unwrap_or(false);
+                    if both_external {
+                        continue;
+                    }
                     let is_method = fd.receiver.is_some();
                     let recv_user_local = fd.receiver.as_ref()
                         .map(|r| user_declared_types.contains(&r.type_name))
@@ -7559,9 +7571,16 @@ impl<'a> TypeCheckCtx<'a> {
                         // литерала к sized-типу — hard range-check. Default
                         // `int`/`uint` (wide) → sized_int_name = None → Ok.
                         if let Some(name) = sized_int_name(expected) {
-                            if let Some(msg) =
-                                lit_range_check(*v as i128, &name)
-                            {
+                            // Hex literals > i64::MAX are stored as wrapping
+                            // i64 by the lexer (spec: bit-identical). For
+                            // unsigned target types, reinterpret as u64 so
+                            // 0xCBF29CE484222325 (FNV offset etc.) is valid.
+                            let v128 = if matches!(name.as_str(), "u8"|"u16"|"u32"|"u64") && *v < 0 {
+                                (*v as u64) as i128
+                            } else {
+                                *v as i128
+                            };
+                            if let Some(msg) = lit_range_check(v128, &name) {
                                 return Compat::OutOfRange { msg };
                             }
                         }
@@ -13800,16 +13819,23 @@ struct LinearityRegistry {
     consume_types: HashSet<String>,
     /// Consume-методы по типу: type_name → Vec<method_name>.
     consume_methods: HashMap<String, Vec<String>>,
+    /// Все имена типов, объявленных ЛОКАЛЬНО в модуле (независимо от consume).
+    /// Используется в W_CONSUME_KEYWORD_UNNECESSARY: предупреждать только
+    /// для локальных типов — для внешних типов мы не знаем их consume-статус
+    /// из module.items.
+    local_type_names: HashSet<String>,
 }
 
 impl LinearityRegistry {
     fn build(module: &Module) -> Self {
         let mut consume_types = HashSet::new();
         let mut consume_methods: HashMap<String, Vec<String>> = HashMap::new();
+        let mut local_type_names = HashSet::new();
 
-        // 1. Local module: consume-types + consume-methods.
+        // 1. Local module: consume-types + consume-methods + all local type names.
         for item in &module.items {
             if let Item::Type(td) = item {
+                local_type_names.insert(td.name.clone());
                 if td.consume {
                     consume_types.insert(td.name.clone());
                 }
@@ -13826,38 +13852,7 @@ impl LinearityRegistry {
             }
         }
 
-        // 2. Plan 73.1 [M-73.1-warning-needs-project-wide-registry] fix:
-        //    external stdlib modules (sync.nv) declare cross-module consume-types
-        //    (MutexGuard, ReadGuard, WriteGuard, Permit, OnceGuard). Без них
-        //    project-wide check ложно классифицирует RHS типа MutexGuard как
-        //    "не-consume" → W_CONSUME_KEYWORD_UNNECESSARY false positives.
-        //    Mirrors ConsumeRegistry::build §3 (см. line ~8043).
-        let external_sources: &[&str] = &[
-            crate::codegen::external_registry::ExternalRegistry::SYNC_SRC,
-        ];
-        for src in external_sources {
-            if let Ok(ext_module) = crate::parser::parse(src) {
-                for item in &ext_module.items {
-                    if let Item::Type(td) = item {
-                        if td.consume {
-                            consume_types.insert(td.name.clone());
-                        }
-                    }
-                    if let Item::Fn(fd) = item {
-                        if let Some(recv) = &fd.receiver {
-                            if recv.consume {
-                                consume_methods
-                                    .entry(recv.type_name.clone())
-                                    .or_default()
-                                    .push(fd.name.clone());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        LinearityRegistry { consume_types, consume_methods }
+        LinearityRegistry { consume_types, consume_methods, local_type_names }
     }
 
     /// Plan 100.1 (D133 / D6): `type_is_consume(TypeRef)` — рекурсивно
@@ -14187,11 +14182,18 @@ impl ConsumeRegistry {
                         }
                         // Plan 103.9 (D174): track method return-type for inference.
                         // `fn Mutex mut @lock() -> MutexGuard consume` → ("Mutex","lock") → "MutexGuard".
+                        // Resolve "Self" → receiver type so that `consume b = a.clone()`
+                        // correctly infers b's type as the receiver type (e.g. "StringBuilder").
                         if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
                             if path.len() == 1 {
+                                let ret = if path[0] == "Self" {
+                                    r.type_name.clone()
+                                } else {
+                                    path[0].clone()
+                                };
                                 method_return_types.insert(
                                     (r.type_name.clone(), fd.name.clone()),
-                                    path[0].clone(),
+                                    ret,
                                 );
                             }
                         }
@@ -14237,45 +14239,6 @@ impl ConsumeRegistry {
                             .collect();
                         if !view_idx.is_empty() {
                             fn_view_params.insert(fd.name.clone(), view_idx);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Plan 103.9 (D174): stdlib external modules (sync.nv etc.) that
-        //    define consume guard types are not always imported into user
-        //    modules (they come via codegen ExternalRegistry, not prelude).
-        //    Parse them here so that consume methods (MutexGuard.unlock etc.)
-        //    and method return types (Mutex.lock → MutexGuard) are visible
-        //    to the checker regardless of explicit import.
-        //
-        //    This mirrors ExternalRegistry::load_builtins() but for the
-        //    consume-analysis side only.
-        let external_sources: &[&str] = &[
-            crate::codegen::external_registry::ExternalRegistry::SYNC_SRC,
-        ];
-        for src in external_sources {
-            if let Ok(ext_module) = crate::parser::parse(src) {
-                for item in &ext_module.items {
-                    if let Item::Fn(fd) = item {
-                        if let Some(r) = &fd.receiver {
-                            if r.consume {
-                                methods.insert((r.type_name.clone(), fd.name.clone()));
-                            }
-                            // Plan 108.1 (D176 amend): mut-receiver methods registry
-                            // — extern modules.
-                            if r.mutable {
-                                mut_methods.insert((r.type_name.clone(), fd.name.clone()));
-                            }
-                            if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
-                                if path.len() == 1 {
-                                    method_return_types.insert(
-                                        (r.type_name.clone(), fd.name.clone()),
-                                        path[0].clone(),
-                                    );
-                                }
-                            }
                         }
                     }
                 }
@@ -16057,17 +16020,22 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     applicability: crate::diag::Applicability::MachineApplicable,
                 }));
             }
-            // W_CONSUME_KEYWORD_UNNECESSARY: V2 RESTORED — `consume` keyword
-            // на binding с не-consume RHS. Cross-module false positives устранены
-            // через расширенный LinearityRegistry::build (M-73.1-warning-needs-
-            // project-wide-registry CLOSED — теперь sync.nv consume-types
-            // в registry'е).
+            // W_CONSUME_KEYWORD_UNNECESSARY: `consume` keyword на binding с
+            // не-consume RHS. Эмитится только когда тип ОБЪЯВЛЕН ЛОКАЛЬНО в
+            // текущем модуле (local_type_names). Для внешних типов (stdlib,
+            // ExternalRegistry) мы не можем надёжно определить consume-статус
+            // из module.items → предупреждение не эмитится (false-negative,
+            // но не false-positive). Это корректно: пользовательские типы из
+            // stdlib могут быть consume без попадания в module.items.
             //
             // Conservative: emit только когда inferred_ty_d180.is_some() —
             // т.е. тип известен и НЕ consume. Если тип неизвестен (None),
             // skip (sound: false-negative permissive, не false-positive).
             else if decl.consume && !rhs_yields_consume_type && !alias_obligated
-                && names.len() == 1 && inferred_ty_d180.is_some()
+                && names.len() == 1
+                && inferred_ty_d180.as_ref().map(|ty| {
+                    ctx.lin_reg.local_type_names.contains(ty.as_str())
+                }).unwrap_or(false)
             {
                 let consume_kw_span = crate::diag::Span {
                     file_id: decl.span.file_id,
@@ -18106,14 +18074,18 @@ struct ContractCtx {
     /// При вызове `balance(id)` в контракте определяем (а) что это
     /// pure_view, (б) к какому эффекту относится, (в) что эффект в
     /// сигнатуре enclosing fn.
-    pure_views: HashMap<String, (String, usize)>,
+    // Multimap: method_name → Vec<(effect_name, arity)>.
+    // Multiple effects can share the same pure_view method name; we keep all of
+    // them so that a function whose signature contains *any* matching effect is
+    // accepted without a spurious "effect not in signature" error.
+    pure_views: HashMap<String, Vec<(String, usize)>>,
 }
 
 impl ContractCtx {
     fn build(module: &Module) -> Self {
         let mut fn_names = HashSet::new();
         let mut pure_fn_names = HashSet::new();
-        let mut pure_views: HashMap<String, (String, usize)> = HashMap::new();
+        let mut pure_views: HashMap<String, Vec<(String, usize)>> = HashMap::new();
         for item in &module.items {
             match item {
                 Item::Fn(fd) => {
@@ -18127,10 +18099,10 @@ impl ContractCtx {
                     if let TypeDeclKind::Effect(methods) = &td.kind {
                         for m in methods {
                             if matches!(m.kind, EffectOpKind::PureView) {
-                                pure_views.insert(
-                                    m.name.clone(),
-                                    (td.name.clone(), m.params.len()),
-                                );
+                                pure_views
+                                    .entry(m.name.clone())
+                                    .or_default()
+                                    .push((td.name.clone(), m.params.len()));
                             }
                         }
                     }
@@ -18415,18 +18387,31 @@ impl ContractCtx {
                     // разрешён только если соответствующий эффект объявлен в
                     // сигнатуре enclosing fn (`(...) Eff -> ...`). pure_view
                     // — read-only observation, нужен effect-handler в scope.
-                    if let Some((effect_name, expected_arity)) = self.pure_views.get(name) {
-                        if !fn_effects.contains(effect_name) {
+                    // Multiple effects may share the same pure_view name;
+                    // accept if fn_effects contains ANY of them.
+                    if let Some(entries) = self.pure_views.get(name) {
+                        let matching = entries.iter()
+                            .find(|(eff, _)| fn_effects.contains(eff));
+                        let (effect_name, expected_arity) = if let Some(entry) = matching {
+                            entry
+                        } else {
+                            let (effect_name, expected_arity) = &entries[0];
+                            let effects_hint: Vec<&str> = entries.iter()
+                                .map(|(e, _)| e.as_str())
+                                .collect();
                             errors.push(Diagnostic::new(
                                 format!(
                                     "pure_view `{}.{}` referenced in contract of `{}`, \
                                      but effect `{}` is not in this function's signature \
                                      (add `{}` to effects)",
-                                    effect_name, name, fn_name, effect_name, effect_name,
+                                    effect_name, name, fn_name,
+                                    effects_hint.join("` or `"),
+                                    effects_hint.join("` or `"),
                                 ),
                                 e.span,
                             ));
-                        }
+                            &entries[0]
+                        };
                         if args.len() != *expected_arity {
                             errors.push(Diagnostic::new(
                                 format!(
