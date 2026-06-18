@@ -3352,10 +3352,30 @@ Body-walk обнаруживает курсор на локальном бинд
 
 Закрывает `[M-104.2-body-walk-local-var-type]`.
 
+#### C. Инференция типа локальной переменной без аннотации (Variant B, 2026-06-18)
+
+Если у `LetDecl` нет явной аннотации (`ld.ty = None`), LSP вызывает `infer_rhs_type(rhs, env)`
+используя `ModuleEnv`, полученный из `nova_codegen::types::check_module` в `hover.rs`.
+
+Поддерживаемые случаи:
+- `ro x = 5` → `int` (IntLit)
+- `ro x = 3.14` → `float` (FloatLit)
+- `ro x = true` → `bool` (BoolLit)
+- `ro x = "hello"` → `str` (StrLit)
+- `ro x = 'a'` → `char` (CharLit)
+- `ro x = 0..=5` → `Range` (ExprKind::Range)
+- `ro x = foo()` → return type из `ModuleEnv.fns["foo"]` (первый overload)
+- `ro x = val as T` → `T`
+- `ro x = [1, 2, 3]` → `[]int`
+
+Вариант A (полная точность): расширить `ModuleEnv` полем `expr_types: HashMap<Span, Ty>` — followup Plan 104.3+.
+
+Закрывает `[M-104.2-local-var-type-inference]`.
+
 ### Связь
 
 - `nova-lsp/src/hover.rs` — `compute_hover`, `resolve_imports_for_hover`
-- `nova-lsp/src/symbol.rs` — `resolve_symbol_at_with_limit`, `find_ident_in_bodies_from`, `lookup_decl_by_name`
+- `nova-lsp/src/symbol.rs` — `resolve_symbol_at_with_limit`, `find_ident_in_bodies_from`, `lookup_decl_by_name`, `infer_rhs_type`
 - `nova_tests/plan104_9/pos_hover_prelude_calls_in_test.nv` — fixture
 - `nova_tests/plan104_9/pos_hover_prelude_calls_in_fn.nv` — fixture
 - Plan 104.2 Ф.7 sub-plan file: `docs/plans/104.2-hover-goto-sigp.md`

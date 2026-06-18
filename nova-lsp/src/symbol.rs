@@ -12,6 +12,7 @@ use nova_codegen::ast::{
     Stmt, TypeDeclKind, TypeRef,
 };
 use nova_codegen::diag::Span;
+use nova_codegen::types::ModuleEnv;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SymbolInfo
@@ -294,7 +295,7 @@ fn pattern_name(p: &Pattern) -> Option<&str> {
 /// [M-104.2-local-var-resolution]: local variable types via body walk — V2.
 pub fn resolve_symbol_at(module: &Module, byte_offset: usize) -> Option<SymbolInfo> {
     // No inlining: all items are original, so items_start = 0 (skip nothing).
-    resolve_symbol_at_with_limit(module, byte_offset, 0)
+    resolve_symbol_at_with_limit(module, byte_offset, 0, None)
 }
 
 /// Resolve a symbol at `byte_offset` in `module`.
@@ -309,7 +310,12 @@ pub fn resolve_symbol_at(module: &Module, byte_offset: usize) -> Option<SymbolIn
 /// - Body-walk is also restricted to `items[items_start..]`.
 /// - Name lookup (to resolve the found ident) searches ALL items so prelude
 ///   symbols like `assert` are found.
-pub fn resolve_symbol_at_with_limit(module: &Module, byte_offset: usize, items_start: usize) -> Option<SymbolInfo> {
+pub fn resolve_symbol_at_with_limit(
+    module: &Module,
+    byte_offset: usize,
+    items_start: usize,
+    env: Option<&ModuleEnv>,
+) -> Option<SymbolInfo> {
     // Check imports first (they appear early in the file).
     for import in &module.imports {
         if span_contains(import.span, byte_offset) {
@@ -331,7 +337,7 @@ pub fn resolve_symbol_at_with_limit(module: &Module, byte_offset: usize, items_s
     // First fallback: check if cursor is on a local variable binding pattern.
     // This must run before the ident-name lookup because pattern names are not
     // in module.items and cannot be found by lookup_decl_by_name.
-    if let Some(info) = find_local_var_at(module, byte_offset, items_start) {
+    if let Some(info) = find_local_var_at(module, byte_offset, items_start, env) {
         return Some(info);
     }
 
@@ -482,7 +488,7 @@ pub fn find_ident_in_bodies_from(module: &Module, offset: usize, items_start: us
 /// Walk fn/test bodies looking for a `Stmt::Let` binding whose pattern span
 /// covers `offset`. Returns a `SymbolInfo::LocalVar` if found.
 /// This handles hover on the binding name of a local variable.
-fn find_local_var_at(module: &Module, offset: usize, items_start: usize) -> Option<SymbolInfo> {
+fn find_local_var_at(module: &Module, offset: usize, items_start: usize, env: Option<&ModuleEnv>) -> Option<SymbolInfo> {
     for item in module.items.iter().skip(items_start) {
         match item {
             Item::Fn(fd) => {
@@ -490,14 +496,14 @@ fn find_local_var_at(module: &Module, offset: usize, items_start: usize) -> Opti
                     continue;
                 }
                 if let FnBody::Block(block) = &fd.body {
-                    if let Some(info) = find_local_var_in_block(block, offset) {
+                    if let Some(info) = find_local_var_in_block(block, offset, env) {
                         return Some(info);
                     }
                 }
             }
             Item::Test(td) => {
                 if span_contains(td.span, offset) {
-                    if let Some(info) = find_local_var_in_block(&td.body, offset) {
+                    if let Some(info) = find_local_var_in_block(&td.body, offset, env) {
                         return Some(info);
                     }
                 }
@@ -508,16 +514,16 @@ fn find_local_var_at(module: &Module, offset: usize, items_start: usize) -> Opti
     None
 }
 
-fn find_local_var_in_block(block: &Block, offset: usize) -> Option<SymbolInfo> {
+fn find_local_var_in_block(block: &Block, offset: usize, env: Option<&ModuleEnv>) -> Option<SymbolInfo> {
     for stmt in &block.stmts {
-        if let Some(info) = find_local_var_in_stmt(stmt, offset) {
+        if let Some(info) = find_local_var_in_stmt(stmt, offset, env) {
             return Some(info);
         }
     }
     None
 }
 
-fn find_local_var_in_stmt(stmt: &Stmt, offset: usize) -> Option<SymbolInfo> {
+fn find_local_var_in_stmt(stmt: &Stmt, offset: usize, env: Option<&ModuleEnv>) -> Option<SymbolInfo> {
     match stmt {
         Stmt::Let(ld) => {
             // Check if cursor is on the pattern binding name.
@@ -527,7 +533,10 @@ fn find_local_var_in_stmt(stmt: &Stmt, offset: usize) -> Option<SymbolInfo> {
                     .to_string();
                 let ty_text = ld.ty.as_ref()
                     .map(format_type_ref)
-                    .unwrap_or_else(|| "_".to_string());
+                    .unwrap_or_else(|| {
+                        // Variant B: infer type from RHS using ModuleEnv when no explicit annotation.
+                        infer_rhs_type(&ld.value, env).unwrap_or_else(|| "_".to_string())
+                    });
                 return Some(SymbolInfo::LocalVar {
                     name,
                     ty_text,
@@ -537,53 +546,108 @@ fn find_local_var_in_stmt(stmt: &Stmt, offset: usize) -> Option<SymbolInfo> {
                 });
             }
             // Recurse into nested blocks in the value expression.
-            find_local_var_in_expr(&ld.value, offset)
+            find_local_var_in_expr(&ld.value, offset, env)
         }
         // Recurse into control-flow bodies that contain nested Stmt::Let.
-        Stmt::Expr(e) => find_local_var_in_expr(e, offset),
-        Stmt::Assign { value, .. } => find_local_var_in_expr(value, offset),
+        Stmt::Expr(e) => find_local_var_in_expr(e, offset, env),
+        Stmt::Assign { value, .. } => find_local_var_in_expr(value, offset, env),
         _ => None,
     }
 }
 
-fn find_local_var_in_expr(expr: &Expr, offset: usize) -> Option<SymbolInfo> {
+/// Variant B: infer the type of a RHS expression using ModuleEnv.
+/// Handles the most common cases: literals, function calls, range literals.
+/// Returns None for complex expressions where inference is not trivial.
+fn infer_rhs_type(expr: &Expr, env: Option<&ModuleEnv>) -> Option<String> {
+    match &expr.kind {
+        // Literals — known types
+        ExprKind::IntLit(_) => Some("int".to_string()),
+        ExprKind::FloatLit(_) => Some("float".to_string()),
+        ExprKind::BoolLit(_) => Some("bool".to_string()),
+        ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => Some("str".to_string()),
+        ExprKind::CharLit(_) => Some("char".to_string()),
+        ExprKind::UnitLit => Some("()".to_string()),
+        ExprKind::ArrayLit(elems) => {
+            // []T — Vec[T]. Try to infer T from first element.
+            if elems.is_empty() {
+                Some("[]_".to_string())
+            } else {
+                // Only look at concrete element literals.
+                let first = match &elems[0] {
+                    nova_codegen::ast::ArrayElem::Item(e) => infer_rhs_type(e, env),
+                    _ => None,
+                };
+                match first {
+                    Some(t) => Some(format!("[]{}", t)),
+                    None => Some("[]_".to_string()),
+                }
+            }
+        }
+        // Range literals: `lo..hi` or `lo..=hi` → Range
+        ExprKind::Range { .. } => Some("Range".to_string()),
+        // Function call — look up return type in ModuleEnv.fns
+        ExprKind::Call { func, .. } => {
+            let fn_name = extract_call_name(func)?;
+            let env = env?;
+            let overloads = env.fns.get(&fn_name)?;
+            // Use first overload's return type (Variant B simplification).
+            let fd = overloads.first()?;
+            fd.return_type.as_ref().map(format_type_ref)
+        }
+        // As-cast: the result type is the cast target.
+        ExprKind::As(_, ty) => Some(format_type_ref(ty)),
+        _ => None,
+    }
+}
+
+/// Extract the callee name from a Call `func` expression.
+fn extract_call_name(func: &Expr) -> Option<String> {
+    match &func.kind {
+        ExprKind::Ident(name) => Some(name.clone()),
+        ExprKind::Path(parts) => parts.last().cloned(),
+        ExprKind::TurboFish { base, .. } => extract_call_name(base),
+        _ => None,
+    }
+}
+
+fn find_local_var_in_expr(expr: &Expr, offset: usize, env: Option<&ModuleEnv>) -> Option<SymbolInfo> {
     if !span_contains(expr.span, offset) {
         return None;
     }
     match &expr.kind {
-        ExprKind::Block(block) => find_local_var_in_block(block, offset),
+        ExprKind::Block(block) => find_local_var_in_block(block, offset, env),
         ExprKind::If { then, else_, .. } => {
-            find_local_var_in_block(then, offset)
+            find_local_var_in_block(then, offset, env)
                 .or_else(|| else_.as_ref().and_then(|e| match e {
-                    nova_codegen::ast::ElseBranch::Block(b) => find_local_var_in_block(b, offset),
-                    nova_codegen::ast::ElseBranch::If(expr) => find_local_var_in_expr(expr, offset),
+                    nova_codegen::ast::ElseBranch::Block(b) => find_local_var_in_block(b, offset, env),
+                    nova_codegen::ast::ElseBranch::If(expr) => find_local_var_in_expr(expr, offset, env),
                 }))
         }
-        ExprKind::While { body, .. } => find_local_var_in_block(body, offset),
-        ExprKind::For { body, .. } => find_local_var_in_block(body, offset),
+        ExprKind::While { body, .. } => find_local_var_in_block(body, offset, env),
+        ExprKind::For { body, .. } => find_local_var_in_block(body, offset, env),
         ExprKind::IfLet { then, else_, .. } => {
-            find_local_var_in_block(then, offset)
+            find_local_var_in_block(then, offset, env)
                 .or_else(|| else_.as_ref().and_then(|e| match e {
-                    nova_codegen::ast::ElseBranch::Block(b) => find_local_var_in_block(b, offset),
-                    nova_codegen::ast::ElseBranch::If(expr) => find_local_var_in_expr(expr, offset),
+                    nova_codegen::ast::ElseBranch::Block(b) => find_local_var_in_block(b, offset, env),
+                    nova_codegen::ast::ElseBranch::If(expr) => find_local_var_in_expr(expr, offset, env),
                 }))
         }
-        ExprKind::WhileLet { body, .. } => find_local_var_in_block(body, offset),
-        ExprKind::Forbid { body, .. } | ExprKind::Blocking(body) => find_local_var_in_block(body, offset),
-        ExprKind::Supervised { body, .. } => find_local_var_in_block(body, offset),
+        ExprKind::WhileLet { body, .. } => find_local_var_in_block(body, offset, env),
+        ExprKind::Forbid { body, .. } | ExprKind::Blocking(body) => find_local_var_in_block(body, offset, env),
+        ExprKind::Supervised { body, .. } => find_local_var_in_block(body, offset, env),
         ExprKind::Match { arms, .. } => {
             arms.iter().find_map(|arm| match &arm.body {
-                MatchArmBody::Block(b) => find_local_var_in_block(b, offset),
-                MatchArmBody::Expr(e) => find_local_var_in_expr(e, offset),
+                MatchArmBody::Block(b) => find_local_var_in_block(b, offset, env),
+                MatchArmBody::Expr(e) => find_local_var_in_expr(e, offset, env),
             })
         }
         ExprKind::ClosureLight { body, .. } => match body {
-            nova_codegen::ast::ClosureBody::Block(b) => find_local_var_in_block(b, offset),
-            nova_codegen::ast::ClosureBody::Expr(e) => find_local_var_in_expr(e, offset),
+            nova_codegen::ast::ClosureBody::Block(b) => find_local_var_in_block(b, offset, env),
+            nova_codegen::ast::ClosureBody::Expr(e) => find_local_var_in_expr(e, offset, env),
         },
         ExprKind::ClosureFull(sig_body) => match &sig_body.body {
-            FnBody::Block(b) => find_local_var_in_block(b, offset),
-            FnBody::Expr(e) => find_local_var_in_expr(e, offset),
+            FnBody::Block(b) => find_local_var_in_block(b, offset, env),
+            FnBody::Expr(e) => find_local_var_in_expr(e, offset, env),
             FnBody::External => None,
         },
         _ => None,
@@ -1071,16 +1135,15 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_local_var_no_annotation_shows_placeholder() {
-        // Hover on 'y' in `ro y = 5` (no annotation) — ty_text should be "_".
+    fn test_resolve_local_var_no_annotation_infers_int() {
+        // Hover on 'y' in `ro y = 5` (no annotation) — Variant B infers "int" from IntLit.
         let src = "module basics.lsp_test\nfn f() {\n  ro y = 5\n}";
         let module = parse_module(src);
         let y_offset = src.find("ro y").unwrap() + 3; // 'y' in 'ro y'
         let sym = resolve_symbol_at(&module, y_offset);
-        // May be Some (LocalVar with "_") or None if pattern span doesn't cover it.
-        // Main invariant: no panic, and if Some, ty_text = "_".
+        // No panic; if resolved, ty_text should be inferred as "int" from the literal.
         if let Some(SymbolInfo::LocalVar { ty_text, .. }) = sym {
-            assert_eq!(ty_text, "_");
+            assert_eq!(ty_text, "int");
         }
     }
 }

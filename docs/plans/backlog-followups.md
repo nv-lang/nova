@@ -137,7 +137,7 @@
 | `[M-104.2-protocol-method-hover]` | Hover на protocol-method bodies не отдельно резолвится; SymbolInfo::ProtocolMethod deferred. | plan-104.2 Followups | P3 |
 | `[M-104.2-signature-type-dispatch]` | Signature help: overload выбирается по имени, не типу receiver; type-driven dispatch V2. | plan-104.2 Followups | P3 |
 | `[M-104.2-body-walk-local-var-type]` | ✅ **CLOSED 2026-06-17 (Plan 104.2 Fix B).** body-walk обнаруживает курсор на `LetDecl`-биндинге и возвращает `SymbolInfo::LocalVar` с явной аннотацией типа из `LetDecl.ty`. Также: Fix A — `resolve_item` для `Item::Fn` возвращает `None` внутри тела → body-walk находит фактический callee (fn-body hover priority). | plan-104.2 Followups | ✅ done |
-| `[M-104.2-local-var-type-inference]` | Hover на `ro r = 0..=5` показывает `ro r _` (тип неизвестен) — тип инферится только при явной аннотации. Вариант B (flow-анализ по RHS в LSP) заменится Вариантом A: расширить `ModuleEnv` в compiler-codegen полем `expr_types: HashMap<Span, Ty>`, заполнять в checker, использовать в hover. Аналогично — `.start` на локальной переменной без аннотации не резолвится. | plan-104.2 Followups | P2 |
+| `[M-104.2-local-var-type-inference]` | ✅ **CLOSED (Variant B, 2026-06-18).** `infer_rhs_type()` в `symbol.rs`: `ro r = 5` → `int`, `ro r = 0..=5` → `Range`, `ro r = foo()` → return type из `ModuleEnv.fns`. `check_module()` вызывается в `hover.rs` и передаётся в resolver. Вариант A (расширить `ModuleEnv.expr_types`) — followup для полной точности (Plan 104.3+). | plan-104.2 Followups | ✅ done |
 | `[M-104.9-dynamic-method-completion]` | Completion items — статические таблицы в completion.rs; V2: запрашивать методы через compiler API. | plan-104.9 Followups | P3 |
 | `[M-104.5-suggestion-field-wiring]` | CodeAction edit range: re-scan источника вместо compiler Suggestion.span. V2: wire напрямую. | plan-104.5 Followups | P3 |
 | `[M-104.5-multi-edit-rename]` | E_PREFIX_SHADOWS_NAMED_TYPE: переименовать все вхождения, не только объявление. | plan-104.5 Followups | P3 |
@@ -470,6 +470,7 @@
 - **`[M-153.3-sort-pdqsort]`** (planned, P3, **perf-only — НЕ упрощение**): heapsort корректен и
   worst-case-оптимален; pattern-defeating quicksort (pdqsort) обгоняет его лишь по константам
   (cache/branch). Чистая perf-оптимизация поверх рабочего, гарантированного алгоритма.
+  **Home: [Plan 153.3.1](153.3.1-pdqsort.md)**.
 - **`[M-153-select-nth]`** ✅ **RESOLVED** (commit `468bccf5`): `@select_nth_unstable(k)` реализован
   как **introselect** — median-of-three quickselect (O(n) средн.) + depth-guard fallback на
   heapsort (O(n log n) worst, без O(n²)), контракт `k ∈ [0,len)`. Тест `plan153_3/select_nth` 4/4

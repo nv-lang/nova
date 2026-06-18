@@ -59,8 +59,14 @@ pub fn compute_hover(src: &str, pos: Position, uri: Option<&Url>) -> Option<Hove
     // items_start = how many imported items were prepended.
     let items_start = module.items.len().saturating_sub(items_before_inline);
 
+    // Variant B: run type-checker to get ModuleEnv (fn return types, etc.)
+    // for local variable type inference when no explicit annotation is present.
+    // The checker was already called in check_source_inner for diagnostics;
+    // here we capture its output for hover type resolution.
+    let env = nova_codegen::types::check_module(&module).ok();
+
     // Resolve symbol at cursor.
-    let symbol = resolve_symbol_at_with_limit(&module, byte_offset, items_start)?;
+    let symbol = resolve_symbol_at_with_limit(&module, byte_offset, items_start, env.as_ref())?;
 
     // Render to markdown.
     let md = render_hover_markdown(&symbol);
