@@ -117,3 +117,108 @@
 проверок (существование/арность — чекер; перегрузки — codegen; категория — C; scalar-narrowing — дыра)
 получена прямыми пробами. Готовая инфраструктура (`is_int_narrowing`, `Compat::Narrowing`,
 `E_IMPLICIT_NARROWING`) из commit `f96016e6`.
+
+---
+
+# Архитектурный контекст: фрагментация типового движка
+
+> Method-arg дыра — **симптом**, не корень. Корень — у Nova **нет единого типового движка**.
+> Аудит (3 параллельных агента, 2026-06-19) нашёл **ЧЕТЫРЕ независимых движка типов** над
+> разными представлениями, с раздельными реестрами и раздельным знанием stdlib. Этот раздел —
+> карта «как есть» и путь «как привести в порядок».
+
+## 8. Где живёт type-работа (карта «как есть»)
+
+### 8.1 Четыре независимых типовых движка
+
+| # | Движок | Где | Представление | Что делает |
+|---|---|---|---|---|
+| 1 | **Checker** | `types/mod.rs` | `Ty` (`ty_of_ref` :13145), `TyCat` (`cat_of_depth` :8345), сырой `TypeRef` | best-effort inference (`infer_expr_type` :7894), проверки (`assignable` :7748, `f1_check_call` :6367), **частичный** single-overload резолв |
+| 2 | **Codegen** | `codegen/emit_c.rs` | C-строки (`nova_int`/`uint32_t`/`Nova_Vec____*`) + `MethodSig` | **полный** re-derive типа каждого выражения (`infer_expr_c_type` :35718, ~1900 строк), **настоящий** резолв перегрузок/методов (`resolve_overload` :11140, D84 :23150), моно-substitution |
+| 3 | **Const-fn pipeline** | `const_fn_closure.rs` + `const_fn_trampoline.rs` | `TypeRef` | **третий** движок unification/substitution (`match_type` :382, `type_subst` :516, `infer_generic_subst` :1027) + свой sig-registry |
+| 4 | **Sum-schema** | `codegen/sum_schema_registry.rs` | свой | layout sum-типов, по своему же заголовку «sits PARALLEL» к legacy `sum_schemas` в codegen |
+
+Genuine type-lines = #1/#2/#3/#4. **Не** type-lines (consumers/name-passes): `imports.rs`
+(name-only sig-prepass + export-gating), `chain_norm.rs` (fluent-rewrite), `resolver.rs` (semver),
+`may_gc.rs`/`preempt_keep.rs` (`typeref_sig`→string для mangling), `callnorm.rs`/`argbind.rs`
+(arg-binding), `parser/`/`ast/` (производят `TypeRef`, не выводят).
+
+### 8.2 Три представления типа в одном чекере (каждое лоссее)
+
+- `TypeRef` (raw AST) — **канон**: хранит ширину int, generic-аргументы, L1/L2/L3-модификаторы. Вся
+  точная работа (narrowing, range-check, readonly-coerce, generic-arg mismatch) — на нём.
+- `Ty` (`ty_of_ref` :13145) — все int-ширины → `Ty::Int`; generic-аргументы **дропаются**
+  (`Named{path,generics}`→`Ty::Named(last)`). Используется почти только для `Ty::Never`-хука.
+- `TyCat` (`cat_of_depth` :8345) — ещё грубее: int-ширина+знак → `TyCat::Int`; `Vec[int]` и
+  `Vec[u32]` оба → `Array(Int)` (ширина **намеренно теряется** — её ловит raw-`TypeRef`-проверка в
+  `f1_check_call`). На нём `cat_compatible` (:8672, permissive: `Other` матчит всё, int↔float ок).
+
+### 8.3 Что чекер НЕ делает (делегирует codegen/C)
+
+- **Multi-overload и instance-method dispatch** — `f1_check_call` выходит на `>1` overload и на
+  `obj.method` (`_ => return` :6476). Реальный резолвер — codegen `method_overloads`/`resolve_overload`.
+- **Builtin Vec/str методы** — их нет в `method_table` (он строится только из `Item::Fn`); чекер
+  держит параллельный **хардкоженный** `builtins: HashSet` (:11497) и явно отсылает к codegen.
+- **Return-type inference обычных вызовов** — `infer_expr_type`→None; общий тип берётся из codegen
+  `infer_expr_c_type`.
+- **Width/representation корректность** — в итоге падает на **C-компилятор** (категориальные
+  несовпадения → CC-FAIL), а scalar-narrowing не ловит никто (эта дыра — §1-7).
+
+### 8.4 Дублирование и дрейф (инвентарь)
+
+| Что дублировано | Где | Риск |
+|---|---|---|
+| **Inference выражения** | checker `infer_expr_type` :7894 ↔ codegen `infer_expr_c_type` :35718 | два независимых вывода, могут расходиться |
+| **Type→repr mapping** | `type_ref_to_c` :5769, `simple_type_ref_to_c` :14752 (**уже дрейфил**: u32/u16 отсутствовали → `Vec[u32]` мис-манглился), `apply_type_subst_to_ref` | внутри codegen — троекратно |
+| **Метод/fn-таблицы** | checker `method_table` (TypeCheckCtx :2273, заново в BoundCtx :9266, CapabilityCtx :10815) + codegen `method_overloads` :618 | одни методы в ≥4 копиях, 2 представления |
+| **Знание stdlib** | checker `builtins: HashSet` :11497 ↔ codegen `ExternalRegistry` (parsed из `.nv`) :634 | **худшая поверхность дрейфа** — API stdlib закодирован дважды |
+| **Width-логика** | `cat_of_depth` int-arm + `int_width_rank` :8586 + `sized_int_bounds` :8540 | одна модель ширины в 3 местах |
+| **`is_intrinsic_namespace`** | checker :8706 ↔ codegen guard :23338 (комментарий «совпадает с…») | руками синхронизируемые списки |
+| **Sum-layout** | `sum_schema_registry` ↔ legacy `sum_schemas` | внутри codegen |
+
+**Корень одной фразой:** checker и codegen — **два полностью независимых типовых движка** над
+разными представлениями, каждый со своим реестром, построенным своим pre-pass'ом, и с **раздельным
+знанием stdlib**. Codegen **заново** реализует резолв перегрузок, generic-substitution и типизацию
+выражений вместо того, чтобы **потреблять единый типизированный IR**, который произвёл чекер.
+
+## 9. Целевая архитектура (единый типовой IR)
+
+```
+parse → [SEMANTIC ANALYSIS: один движок типов] → типизированный IR → codegen (лоуэринг) → C
+```
+
+1. **Один резолвер/инференсер** в семантической фазе: выводит тип каждого выражения, разрешает
+   каждый вызов (перегрузки/методы/builtin — по типам) **один раз**, проверяет конверсии.
+2. **Типизированный IR** — результат: каждое выражение аннотировано типом, каждый вызов — выбранным
+   callee + моно-substitution. **Единый источник истины** (§0 compiler-conventions).
+3. **Один реестр** методов/сигнатур/stdlib (включая builtin — из `.nv`, не хардкод-список §2),
+   читаемый и чекером, и codegen.
+4. **Codegen — только лоуэринг**: читает аннотации/выбранный callee из IR, не выводит и не резолвит
+   типы заново. `infer_expr_c_type`/`resolve_overload`/мангл-инференс **исчезают** как дубль.
+5. **C никогда не ловит ошибку типов**; все «no matching overload»/D124/`E_IMPLICIT_NARROWING`-классы
+   — диагностики **чекера**.
+
+## 10. Этапы приведения в порядок (отдельный umbrella, шире Plan 173)
+
+Plan 173 (method-arg narrowing) — **первый конкретный шаг** этого пути. Полная унификация — крупный
+многофазный рефактор, кандидат в **отдельный umbrella-план**:
+
+- **U.1 — Единое знание stdlib.** Чекер читает `ExternalRegistry` (из `.nv`) вместо хардкоженного
+  `builtins: HashSet`. Убирает худший дрейф; даёт чекеру сигнатуры builtin-методов → разблокирует
+  резолв методов в чекере (нужно для Plan 173 варианта C).
+- **U.2 — Один реестр методов/сигнатур.** Слить checker `method_table` (×3 контекста) и codegen
+  `method_overloads` в один, построенный одним pre-pass'ом; оба слоя читают его.
+- **U.3 — Резолв вызовов/перегрузок в чекере.** Перенести `resolve_overload`/D84-логику в
+  семантическую фазу; codegen **потребляет** выбранный callee. Закрывает method-arg дыру (Plan 173)
+  и переносит «no matching overload»/D124 в чекер.
+- **U.4 — Единый инференс выражения.** Свести `infer_expr_type` и `infer_expr_c_type` к одному;
+  C-строки выводятся **из** аннотированного IR-типа, не заново.
+- **U.5 — Единое представление ширины/модификаторов.** Один тип, несущий ширину/знак/L1-L3, вместо
+  `Ty`/`TyCat`-схлопывания + трёх width-хелперов.
+- **U.6 — Свернуть дубли codegen.** `simple_type_ref_to_c`→`type_ref_to_c`; `sum_schema_registry`↔
+  `sum_schemas`; `typeref_sig` (may_gc↔preempt_keep); const-fn движок (#3) поверх общего.
+- **U.7 — C не ловит типы.** Гарантия-критерий: на корректном фронтенде ни одного CC-FAIL по типам.
+
+Порядок задаёт зависимость: **U.1→U.2→U.3** разблокируют полноценный Plan 173 и убирают дрейф;
+U.4-U.7 — последующая консолидация. Каждый этап — измеримый, с регрессом против чистого бинаря
+(§6 compiler-conventions).
