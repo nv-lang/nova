@@ -5,6 +5,8 @@
 **D-блок:** предв. **D311** (финал при impl; D310=172, D309=171, D308=169.2.1)
 **Ветка:** TBD (`plan-173-method-arg-typecheck`)
 **Приоритет:** P1 (soundness).
+**Umbrella:** [Plan 174 — Unified type engine](174-unified-type-engine.md) (этот план — первый
+конкретный шаг, часть U.1-U.3 на узком кейсе method-arg narrowing).
 **Связан с:** `[M-instance-method-arg-scalar-narrowing]`, `[M-generic-arg-type-mismatch-silent]` (closed), `[M-scalar-nonliteral-narrowing-not-enforced]` (mostly-done — этот план закрывает остаток).
 
 ---
