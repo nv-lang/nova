@@ -1,4 +1,4 @@
-﻿// Plan 123 V*.followups 2026-06-05 marker 6 вЂ” V2.1 dynamic loop count.
+// Plan 123 V*.followups 2026-06-05 marker 6 вЂ” V2.1 dynamic loop count.
 // Closes [M-123.2.1-dynamic-loop-count].
 // Positive: literal `0..N` exclusive range gives precise iter weight
 // (vs env default 8). Semantic preservation verified through known sum.

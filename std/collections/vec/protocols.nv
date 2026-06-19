@@ -172,7 +172,7 @@ export fn Vec[T Hash] @hash() -> u64 {
 /// let v = Vec[int].from([1, 2, 3])
 /// consume sb = StringBuilder.new()
 /// v.display(sb)
-/// assert(sb.as_str() == "Vec[1, 2, 3]")
+/// assert(sb.into_str() == "Vec[1, 2, 3]")
 /// ```
 export fn Vec[T Display] @display(mut w Write) -> () {
     w.write("Vec[")

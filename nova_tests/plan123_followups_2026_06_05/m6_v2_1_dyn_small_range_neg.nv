@@ -1,4 +1,4 @@
-﻿// Plan 123 V*.followups 2026-06-05 marker 6 вЂ” V2.1 dynamic loop count negative.
+// Plan 123 V*.followups 2026-06-05 marker 6 вЂ” V2.1 dynamic loop count negative.
 // Negative: small literal range (`0..3`) gives weight=3 вЂ” below typical
 // caching threshold вЂ” optimizer chooses NOT Рє cache, but observable
 // behavior remains correct.

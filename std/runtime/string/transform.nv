@@ -12,11 +12,12 @@ import std.prelude.core.{Option, Some, None}
 import std.runtime.string_builder.{StringBuilder}
 
 
-// Убирает whitespace с начала и конца. Plan 152.2 Ф.2: теперь ZERO-COPY (sub-view
-// через `@[start..end]`, не alloc-копия) — закрывает [M-139-f1-trim-view]. str
-// иммутабелен (R8) + GC держит буфер живым через view. Whitespace = байт <= 0x20
-// (как бывший nova_str_trim; Unicode-WS — Phase B, 152.4).
-export fn str @trim() -> str {
+// Убирает ASCII whitespace с начала и конца. Plan 152.2 Ф.2: теперь ZERO-COPY
+// (sub-view через `@[start..end]`, не alloc-копия) — закрывает
+// [M-139-f1-trim-view]. str иммутабелен (R8) + GC держит буфер живым через view.
+// Whitespace = байт <= 0x20 (как бывший nova_str_trim; Unicode-WS — Phase B,
+// 152.4). Renamed trim → trim_ascii (Plan 91.18 Ф.2).
+export fn str @trim_ascii() -> str {
     ro bytes = @as_bytes()
     ro n = @byte_len()
     mut start = 0
@@ -26,8 +27,9 @@ export fn str @trim() -> str {
     @[start..end]
 }
 
-// Убирает whitespace только СЛЕВА (zero-copy view). Plan 152.2 Ф.2.
-export fn str @trim_start() -> str {
+// Убирает ASCII whitespace только СЛЕВА (zero-copy view). Plan 152.2 Ф.2.
+// Renamed trim_start → trim_ascii_start (Plan 91.18 Ф.2).
+export fn str @trim_ascii_start() -> str {
     ro bytes = @as_bytes()
     ro n = @byte_len()
     mut start = 0
@@ -35,8 +37,9 @@ export fn str @trim_start() -> str {
     @[start..n]
 }
 
-// Убирает whitespace только СПРАВА (zero-copy view). Plan 152.2 Ф.2.
-export fn str @trim_end() -> str {
+// Убирает ASCII whitespace только СПРАВА (zero-copy view). Plan 152.2 Ф.2.
+// Renamed trim_end → trim_ascii_end (Plan 91.18 Ф.2).
+export fn str @trim_ascii_end() -> str {
     ro bytes = @as_bytes()
     ro n = @byte_len()
     mut end = n
@@ -88,8 +91,9 @@ export fn str @strip_suffix(suffix str) -> Option[str] {
     }
 }
 
-// Lowercase копия (ASCII). Plan 139 Ф.1: Nova-body, alloc через []u8.
-export fn str @to_lower() -> str {
+// ASCII lowercase копия. Plan 139 Ф.1: Nova-body, alloc через []u8.
+// Renamed to_lower → to_ascii_lower (Plan 91.18 Ф.2).
+export fn str @to_ascii_lower() -> str {
     ro bytes = @as_bytes()
     ro n = @byte_len()
     mut out = []u8.with_capacity(n)
@@ -103,8 +107,9 @@ export fn str @to_lower() -> str {
     str.from_bytes_unchecked(out)
 }
 
-// Uppercase копия (ASCII). Plan 139 Ф.1: Nova-body, alloc через []u8.
-export fn str @to_upper() -> str {
+// ASCII uppercase копия. Plan 139 Ф.1: Nova-body, alloc через []u8.
+// Renamed to_upper → to_ascii_upper (Plan 91.18 Ф.2).
+export fn str @to_ascii_upper() -> str {
     ro bytes = @as_bytes()
     ro n = @byte_len()
     mut out = []u8.with_capacity(n)
@@ -144,22 +149,24 @@ export fn str @concat(other str) -> str {
 // Оператор `+`: `s1 + s2 == s1.@plus(s2)` → @concat (D46).
 export fn str @plus(other str) -> str => @concat(other)
 
-// Pad строку слева до width CODEPOINT'ов символом fill. Если width <= длины — s.
+// Pad строку с начала до width CODEPOINT'ов символом fill. Если width <= длины — s.
 // Plan 152.2 Ф.3: ширина в codepoint'ах (`as_chars().count()`), не байтах — иначе
-// для multibyte `"é".pad_left(3,'·')` дало бы 1 паддинг вместо 2.
-export fn str @pad_left(width int, fill char) -> str {
+// для multibyte `"é".pad_start(3,'·')` дало бы 1 паддинг вместо 2.
+// Renamed pad_left → pad_start (Plan 91.18 Ф.2).
+export fn str @pad_start(width int, fill char) -> str {
     ro pad = width - @as_chars().count()
     if pad <= 0 { return @ }
     ro fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).as_str()
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).into_str()
 }
 
-// Pad строку справа до width CODEPOINT'ов символом fill. Если width <= длины — s.
-export fn str @pad_right(width int, fill char) -> str {
+// Pad строку с конца до width CODEPOINT'ов символом fill. Если width <= длины — s.
+// Renamed pad_right → pad_end (Plan 91.18 Ф.2).
+export fn str @pad_end(width int, fill char) -> str {
     ro pad = width - @as_chars().count()
     if pad <= 0 { return @ }
     ro fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).as_str()
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).into_str()
 }
 
 // Pad с обеих сторон до width CODEPOINT'ов (левый паддинг = floor(pad/2)). Plan 152.2 Ф.3.
@@ -169,13 +176,13 @@ export fn str @pad_center(width int, fill char) -> str {
     ro left = pad / 2
     ro right = pad - left
     ro fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, left).append(@).append_repeat(fill_s, right).as_str()
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, left).append(@).append_repeat(fill_s, right).into_str()
 }
 
 // Повторение строки n раз. n <= 0 → пустая строка.
 export fn str @repeat(n int) -> str {
     if n <= 0 { return "" }
-    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).as_str()
+    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).into_str()
 }
 
 // Заменить все non-overlapping occurrences `from` на `to`. Empty `from` → возвращает s unchanged.

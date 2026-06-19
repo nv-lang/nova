@@ -161,8 +161,9 @@ export fn StringBuilder mut @write(s str) -> () { @buf.append(s.as_bytes()) }
 
 // ─── Consume ───
 
-// Финализировать в str. После @as_str() StringBuilder consumed.
+// Финализировать в str. После @into_str() StringBuilder consumed.
 // Zero-copy steal: reuse @buf data ptr напрямую (writes '\0' in-place
 // если cap > len, иначе alloc+copy fallback).
 // Infallible: UTF-8 invariant поддерживается append-методами.
-export fn StringBuilder consume @as_str() -> str => str.from_bytes_unchecked_steal(@buf)
+// Renamed as_str → into_str (Plan 91.18 Ф.2; D77: into_* = consuming).
+export fn StringBuilder consume @into_str() -> str => str.from_bytes_unchecked_steal(@buf)

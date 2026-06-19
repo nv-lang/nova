@@ -15,7 +15,7 @@ fn count_lines(s str) -> int {
 fn main() {
     ro greeting = "hello, world"
     println("len = ", greeting.byte_len())
-    println("upper = ", greeting.to_upper())
+    println("upper = ", greeting.to_ascii_upper())
     println("starts with 'hello' = ", greeting.starts_with("hello"))
     println("contains 'world' = ", greeting.contains("world"))
 }

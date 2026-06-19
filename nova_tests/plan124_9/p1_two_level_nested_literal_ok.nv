@@ -1,4 +1,4 @@
-﻿// Plan 124.9 Р¤.2 вЂ” positive: 2-level nested record literal.
+// Plan 124.9 Р¤.2 вЂ” positive: 2-level nested record literal.
 // Each level allocates its own declared field type (Bv1), not Av1 twice.
 module nova_tests.plan124_9
 

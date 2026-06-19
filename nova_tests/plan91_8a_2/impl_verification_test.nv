@@ -28,7 +28,7 @@ test "verified #impl multi: Equal + Compare + Display" {
     assert(a.compare(b) == 0)
     consume sb = StringBuilder.new()
     a.display(sb)
-    assert(sb.as_str() == "Coin10(5)")
+    assert(sb.into_str() == "Coin10(5)")
 }
 
 #impl(Equal + Compare + Display)

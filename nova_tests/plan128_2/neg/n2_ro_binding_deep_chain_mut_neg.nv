@@ -1,4 +1,4 @@
-﻿// Plan 128.2 Р¤.2 N2 вЂ” ro binding + deep chain + mut method в†’ reject.
+// Plan 128.2 Р¤.2 N2 вЂ” ro binding + deep chain + mut method в†’ reject.
 //
 // EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
 //

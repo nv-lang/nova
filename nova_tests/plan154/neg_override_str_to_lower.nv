@@ -7,4 +7,4 @@ module plan154.neg_override_str_to_lower
 
 fn str @to_lower() -> str => "X"
 
-fn main() -> () { print("ABC".to_lower()) }
+fn main() -> () { print("ABC".to_ascii_lower()) }

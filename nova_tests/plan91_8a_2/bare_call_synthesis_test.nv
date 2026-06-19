@@ -29,7 +29,7 @@ test "bare call: m.display(sb) для Money1 (через fn str.from)" {
     ro m = Money1 { cents: 500 }
     consume sb = StringBuilder.new()
     m.display(sb)
-    assert(sb.as_str() == "Money1(500)")
+    assert(sb.into_str() == "Money1(500)")
 }
 
 // Display.fmt via @into → str chain — bare call.
@@ -41,5 +41,5 @@ test "bare call: c.display(sb) для Coin2 (через @into)" {
     ro c = Coin2 { value: 7 }
     consume sb = StringBuilder.new()
     c.display(sb)
-    assert(sb.as_str() == "Coin2(7)")
+    assert(sb.into_str() == "Coin2(7)")
 }

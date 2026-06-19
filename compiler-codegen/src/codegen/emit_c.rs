@@ -28818,10 +28818,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
         }
         let result = self.fresh_tmp_named("interp_str");
-        // Plan 109 (D179) + Plan 91 followup: consume @as_str() — Nova-generated:
-        // Nova_StringBuilder_consume_as_str. Renamed from @to_str().
+        // Plan 109 (D179) + Plan 91.18 Ф.2: consume @into_str() — Nova-generated:
+        // Nova_StringBuilder_consume_into_str. Renamed from @as_str() (Plan 91.18).
         self.line(&format!(
-            "nova_str {} = Nova_StringBuilder_consume_as_str({});",
+            "nova_str {} = Nova_StringBuilder_consume_into_str({});",
             result, sb
         ));
         self.var_types
@@ -29050,7 +29050,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             ));
             self.line(&format!("{}({}, {});", fn_name, v, fmt_sb));
             let _ = sb; // interp builder unused on this path.
-            format!("Nova_StringBuilder_consume_as_str({})", fmt_sb)
+            format!("Nova_StringBuilder_consume_into_str({})", fmt_sb)
         };
 
         // Apply string-precision truncation (codepoints), then pad/align.
@@ -39298,7 +39298,7 @@ mod dce_tests {
         .expect("fixture parses");
         let mut used: HashSet<String> = HashSet::new();
         crate::lints::collect_used_names(&module.items, &mut used);
-        for name in ["StringBuilder", "with_capacity", "append", "as_str"] {
+        for name in ["StringBuilder", "with_capacity", "append", "into_str"] {
             assert!(
                 used.contains(name),
                 "interpolation must seed `{name}` for reachability-DCE soundness"

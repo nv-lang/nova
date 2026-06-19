@@ -1,4 +1,4 @@
-﻿// Plan 128.2 Р¤.2 P4 вЂ” deep member chain mut binding + mut method = OK.
+// Plan 128.2 Р¤.2 P4 вЂ” deep member chain mut binding + mut method = OK.
 //
 // `mut Av2: Av2; Av2.Bv2.Cv2.Dv3.mut_m()` вЂ” chain depth 4, root binding `mut`, РІСЃРµ
 // intermediate fields `mut`. Chain-walking helper recursively walks

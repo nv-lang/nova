@@ -400,8 +400,8 @@ export fn Duration @into_human() -> str {
     if p.minutes > 0 || started { buf.append(str.from(p.minutes)); buf.append("min "); started = true }
     if p.seconds > 0 || started { buf.append(str.from(p.seconds)); buf.append("s") }
 
-    ro result = buf.as_str()
-    result.trim()
+    ro result = buf.into_str()
+    result.trim_ascii()
 }
 
 

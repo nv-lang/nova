@@ -172,7 +172,7 @@ export fn Pair @display(mut w Write) -> () {
 fn fmt_to_string[T Display](v T) -> str {
     consume sb = StringBuilder.new()
     v.display(sb)
-    sb.as_str()
+    sb.into_str()
 }
 
 test "Display bound вЂ” Pair.fmt() in StringBuilder" {

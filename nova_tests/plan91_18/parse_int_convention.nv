@@ -1,0 +1,18 @@
+module nova_tests.plan91_18
+
+test "parse_int throws on error" {
+    ro ok = "42".parse_int()
+    assert(ok == 42)
+}
+
+test "try_parse_int returns Result" {
+    ro r = "bad".try_parse_int()
+    assert(r.is_err())
+    ro ok = "123".try_parse_int()
+    assert(ok == Ok(123))
+}
+
+test "parse_int_opt returns Option" {
+    assert("bad".parse_int_opt() == None)
+    assert("7".parse_int_opt() == Some(7))
+}

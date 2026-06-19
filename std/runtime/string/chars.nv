@@ -153,3 +153,13 @@ export fn str @as_chars() -> CharsIter => CharsIter.new(@)
 // the char lens is the default iteration unit (matching Go `for range`, Rust
 // `.chars()` when spelled, Swift `for c in s`).
 export fn str @iter() -> CharsIter => @as_chars()
+
+// Raw int codepoints without the char wrapper — for low-level protocols/tables.
+// Values are identical to `@as_chars()` cast to int.
+// `"a😀".to_code_points() == [0x61, 0x1F600]`.
+// Moved from std.encoding.utf16 → runtime.string (Plan 91.18 Ф.2).
+export fn str @to_code_points() -> []int {
+    mut out = []int.with_capacity(@byte_len())
+    for c in @as_chars() { out.push(c as int) }
+    out
+}

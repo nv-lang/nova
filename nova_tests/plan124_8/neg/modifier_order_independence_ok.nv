@@ -1,4 +1,4 @@
-﻿// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
 //
 // Plan 124.8 originally tested that type-decl modifiers were order-INDEPENDENT
 // (`value priv` в‰Ў `priv value`). Plan 148 Р¤.1 (D241) RETIRES that allowance:

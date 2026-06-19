@@ -37,7 +37,7 @@ const SCOUNT int = 11172  // LCOUNT * NCOUNT
 // are always well-formed, so the sentinel is a safety net, not a hot path).
 fn hex(s str) -> int {
     // D102: `radix` has a default → keyword-only.
-    match s.parse_int(radix: 16) { Some(v) => v, None => -1 }
+    match s.try_parse_int(radix: 16) { Ok(v) => v, Err(_) => -1 }
 }
 
 // "d1,d2,d3" (comma-separated hex) -> [d1, d2, d3].
@@ -136,7 +136,7 @@ fn str_to_cps(s str) -> Vec[u32] {
 fn cps_to_str(cps Vec[u32]) -> str {
     consume sb = StringBuilder.with_capacity(cps.len() * 2)
     for cp in cps { sb.append(str.from_codepoint(cp)) }
-    sb.as_str()
+    sb.into_str()
 }
 
 // ---- decomposition ----

@@ -2,12 +2,12 @@
 module nova_tests.plan152_2
 
 test "trim / trim_start / trim_end (ASCII whitespace)" {
-    assert("  hi  ".trim() == "hi")
-    assert("\t\n hi \r\n".trim() == "hi")
-    assert("  hi  ".trim_start() == "hi  ")
-    assert("  hi  ".trim_end() == "  hi")
-    assert("nows".trim() == "nows")
-    assert("   ".trim() == "")
+    assert("  hi  ".trim_ascii() == "hi")
+    assert("\t\n hi \r\n".trim_ascii() == "hi")
+    assert("  hi  ".trim_ascii_start() == "hi  ")
+    assert("  hi  ".trim_ascii_end() == "  hi")
+    assert("nows".trim_ascii() == "nows")
+    assert("   ".trim_ascii() == "")
 }
 
 test "trim_matches / trim_start_matches / trim_end_matches (char)" {

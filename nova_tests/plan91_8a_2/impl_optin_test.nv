@@ -42,7 +42,7 @@ test "#impl(A + B + C): multi-protocol opt-in" {
     // Display.fmt via str.from(Coin8) default — opted in
     consume sb = StringBuilder.new()
     a.display(sb)
-    assert(sb.as_str() == "Coin8(5)")
+    assert(sb.into_str() == "Coin8(5)")
 }
 
 test "#impl(Greetable2): generic bound mono'd through opted-in type" {

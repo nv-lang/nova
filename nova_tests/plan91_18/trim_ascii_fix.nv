@@ -1,15 +1,15 @@
 module nova_tests.plan91_18
 
 test "trim_ascii_fix: tab and newline are trimmed" {
-    assert("\t hello \n".trim() == "hello")
+    assert("\t hello \n".trim_ascii() == "hello")
 }
 
 test "trim_ascii_fix: BS (code 8) is NOT trimmed" {
     ro s = "\x08hello\x08"
-    assert(s.trim() == s)
+    assert(s.trim_ascii() == s)
 }
 
 test "trim_ascii_fix: trim_start and trim_end" {
-    assert("  \t hi \n  ".trim_start() == "hi \n  ")
-    assert("  \t hi \n  ".trim_end() == "  \t hi")
+    assert("  \t hi \n  ".trim_ascii_start() == "hi \n  ")
+    assert("  \t hi \n  ".trim_ascii_end() == "  \t hi")
 }

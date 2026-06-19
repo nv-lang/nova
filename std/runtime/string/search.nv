@@ -226,9 +226,10 @@ export fn str @split_terminator(sep str) -> ro []str {
 }
 
 // Split on runs of ASCII whitespace, skipping empty segments (leading/trailing WS
-// ignored). Rust/Go `Fields`/`split_whitespace`. Non-ASCII Unicode whitespace —
-// Phase B (`[M-152-ws-unicode]`, delegates to std/unicode in Plan 152.4).
-export fn str @split_whitespace() -> ro []str {
+// ignored). Rust/Go `Fields`/`split_ascii_whitespace`. Non-ASCII Unicode whitespace
+// — Phase B (`[M-152-ws-unicode]`, delegates to std/unicode in Plan 152.4).
+// Renamed split_whitespace → split_ascii_whitespace (Plan 91.18 Ф.2).
+export fn str @split_ascii_whitespace() -> ro []str {
     mut out = Vec[str].new()
     ro bytes = @as_bytes()
     ro sn = @byte_len()

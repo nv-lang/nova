@@ -18,5 +18,5 @@ test "user #impl(Display) on a method works" {
     consume sb = StringBuilder.new()
     ro p = Point { x: 1, y: 2 }
     p.display(sb)
-    assert(sb.as_str() == "Point(1, 2)")
+    assert(sb.into_str() == "Point(1, 2)")
 }

@@ -9,52 +9,52 @@ test "primitive display direct" {
     consume a = StringBuilder.new()
     ro i = 7
     i.display(a)
-    assert(a.as_str() == "7")
+    assert(a.into_str() == "7")
     consume b = StringBuilder.new()
     ro f = 2.5
     f.display(b)
-    assert(b.as_str() == "2.5")
+    assert(b.into_str() == "2.5")
     consume c = StringBuilder.new()
     ro bo = true
     bo.display(c)
-    assert(c.as_str() == "true")
+    assert(c.into_str() == "true")
     consume d = StringBuilder.new()
     ro ch = 'z'
     ch.display(d)
-    assert(d.as_str() == "z")
+    assert(d.into_str() == "z")
     consume e = StringBuilder.new()
     ro s = "hey"
     s.display(e)
-    assert(e.as_str() == "hey")
+    assert(e.into_str() == "hey")
 }
 
 test "primitive debug quotes/escapes" {
     consume c = StringBuilder.new()
     ro ch = 'z'
     ch.debug(c)
-    assert(c.as_str() == "'z'")
+    assert(c.into_str() == "'z'")
     consume e = StringBuilder.new()
     ro s = "hey"
     s.debug(e)
-    assert(e.as_str() == "\"hey\"")
+    assert(e.into_str() == "\"hey\"")
     consume i = StringBuilder.new()
     ro n = 42
     n.debug(i)
-    assert(i.as_str() == "42")
+    assert(i.into_str() == "42")
 }
 
 test "Vec[primitive] display + debug" {
     ro vi = Vec[int].of(1, 2, 3)
     consume a = StringBuilder.new()
     vi.display(a)
-    assert(a.as_str() == "Vec[1, 2, 3]")
+    assert(a.into_str() == "Vec[1, 2, 3]")
     consume b = StringBuilder.new()
     vi.debug(b)
-    assert(b.as_str() == "Vec[1, 2, 3]")
+    assert(b.into_str() == "Vec[1, 2, 3]")
 }
 
 test "StringBuilder typed append fluent" {
     consume sb = StringBuilder.new()
     sb.append(1).append(true).append(2.5)
-    assert(sb.as_str() == "1true2.5")
+    assert(sb.into_str() == "1true2.5")
 }

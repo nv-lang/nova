@@ -75,16 +75,16 @@ test "from_utf16: truncated surrogate pair at end -> Err" {
     }
 }
 
-test "code_points: raw int codepoints" {
-    ro cp = "a😀".code_points()
+test "to_code_points: raw int codepoints" {
+    ro cp = "a😀".to_code_points()
     assert(cp.len() == 2)
     assert(cp[0] == 0x61)
     assert(cp[1] == 0x1F600)
 }
 
-test "code_points == as_chars values as int" {
+test "to_code_points == as_chars values as int" {
     ro s = "héλ😀"
-    ro cp = s.code_points()
+    ro cp = s.to_code_points()
     mut chars_as_int = []int.with_capacity(4)
     for c in s.as_chars() { chars_as_int.push(c as int) }
     assert(cp.len() == chars_as_int.len())

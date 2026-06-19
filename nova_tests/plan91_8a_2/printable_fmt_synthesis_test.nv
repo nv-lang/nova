@@ -25,14 +25,14 @@ test "Money9 satisfies Display bound via str.from(T) overload" {
     ro m = Money9 { cents: 1250 }
     consume sb = StringBuilder.new()
     show(m, sb)
-    assert(sb.as_str() == "Money9(1250)")
+    assert(sb.into_str() == "Money9(1250)")
 }
 
 test "Coin14 satisfies Display bound via @into → str chain" {
     ro c = Coin14 { value: 7 }
     consume sb = StringBuilder.new()
     show(c, sb)
-    assert(sb.as_str() == "Coin14(7)")
+    assert(sb.into_str() == "Coin14(7)")
 }
 
 test "synthesized fmt composable with explicit appends" {
@@ -43,5 +43,5 @@ test "synthesized fmt composable with explicit appends" {
     show(m1, sb)
     sb.append(", second=")
     show(m2, sb)
-    assert(sb.as_str() == "first=Money9(100), second=Money9(250)")
+    assert(sb.into_str() == "first=Money9(100), second=Money9(250)")
 }

@@ -79,7 +79,7 @@ export type CronTime {
 /// ```
 #stable(since = "0.1")
 export fn Cron.parse(expr str) Fail[ParseCronError] -> CronExpr {
-    ro fields = expr.trim().split(" ")
+    ro fields = expr.trim_ascii().split(" ")
     // Удалить пустые (multiple spaces)
     mut clean []str = []
     for f in fields {

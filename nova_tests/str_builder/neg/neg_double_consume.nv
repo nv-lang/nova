@@ -9,6 +9,6 @@ module neg.neg_double_consume
 
 test "двойной as_str — use-after-consume" {
     consume sb = StringBuilder.from("data")
-    ro _ = sb.as_str()                 // первый consume
-    ro _ = sb.as_str()                 // ← ОШИБКА D131
+    ro _ = sb.into_str()                 // первый consume
+    ro _ = sb.into_str()                 // ← ОШИБКА D131
 }

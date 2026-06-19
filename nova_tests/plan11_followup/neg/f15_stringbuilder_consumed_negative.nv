@@ -12,6 +12,6 @@ module neg.f15_stringbuilder_consumed_negative
 test "append после @as_str() — compile error (D131)" {
     consume sb = StringBuilder.new()
     sb.append("hello")
-    ro _ = sb.as_str()                   // consume
+    ro _ = sb.into_str()                   // consume
     sb.append(" world")                   // ← ОШИБКА D131: use-after-consume
 }

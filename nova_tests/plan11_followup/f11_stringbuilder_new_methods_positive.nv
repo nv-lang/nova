@@ -13,7 +13,7 @@ test "is_empty: true для свежего, false после append" {
     assert(sb.is_empty())
     sb.append("x")
     assert(!sb.is_empty())
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "starts_with: matches префикс" {
@@ -23,7 +23,7 @@ test "starts_with: matches префикс" {
     assert(sb.starts_with(""))           // пустой префикс всегда true
     assert(!sb.starts_with("world"))
     assert(!sb.starts_with("HELLO"))     // case-sensitive
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "ends_with: matches суффикс" {
@@ -33,7 +33,7 @@ test "ends_with: matches суффикс" {
     assert(sb.ends_with(""))
     assert(!sb.ends_with("hello"))
     assert(!sb.ends_with("WORLD"))
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "non-consuming: append после starts_with/ends_with работает" {
@@ -43,7 +43,7 @@ test "non-consuming: append после starts_with/ends_with работает" {
     ro _ = sb.ends_with("o")             // не consume
     sb.append("/bar")                     // должен compile + run
     assert(sb.ends_with("bar"))
-    ro final = sb.as_str()               // consume
+    ro final = sb.into_str()               // consume
     assert(final == "foo/bar")
 }
 
@@ -61,5 +61,5 @@ test "Path.join pattern (real use case ends_with-based logic)" {
         buf.append(part)
         first = false
     }
-    assert(buf.as_str() == "/usr/local/bin")
+    assert(buf.into_str() == "/usr/local/bin")
 }

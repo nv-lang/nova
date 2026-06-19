@@ -11,7 +11,7 @@ test "Cyrillic — len вдвое больше char_len" {
     sb.append("Программирование")
     assert(sb.char_len() == 16)   // 16 codepoints
     assert(sb.len() == 32)        // 2 байта на codepoint
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "CJK — len втрое больше char_len" {
@@ -19,7 +19,7 @@ test "CJK — len втрое больше char_len" {
     sb.append("中文字符")
     assert(sb.char_len() == 4)
     assert(sb.len() == 12)
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "emoji — len вчетверо больше char_len" {
@@ -27,7 +27,7 @@ test "emoji — len вчетверо больше char_len" {
     sb.append("😀😁😂")
     assert(sb.char_len() == 3)
     assert(sb.len() == 12)
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "смешанный скрипт — точный подсчёт" {
@@ -38,7 +38,7 @@ test "смешанный скрипт — точный подсчёт" {
     sb.append('😀')               // 1 cp, 4 b
     assert(sb.char_len() == 10)
     assert(sb.len() == 18)
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "Unicode — starts_with на codepoint-границе" {
@@ -47,7 +47,7 @@ test "Unicode — starts_with на codepoint-границе" {
     assert(sb.starts_with("日本"))
     assert(sb.starts_with("日本語"))
     assert(!sb.starts_with("本"))
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "Unicode — ends_with на codepoint-границе" {
@@ -55,7 +55,7 @@ test "Unicode — ends_with на codepoint-границе" {
     sb.append("текст конца 🎉")
     assert(sb.ends_with("🎉"))
     assert(sb.ends_with("конца 🎉"))
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "Unicode — append(char) по одному codepoint'у" {
@@ -68,7 +68,7 @@ test "Unicode — append(char) по одному codepoint'у" {
     sb.append('т')
     assert(sb.char_len() == 6)
     assert(sb.len() == 12)
-    assert(sb.as_str() == "Привет")
+    assert(sb.into_str() == "Привет")
 }
 
 test "Unicode — clone сохраняет многобайтные codepoint'ы" {
@@ -77,15 +77,15 @@ test "Unicode — clone сохраняет многобайтные codepoint'ы
     consume b = a.clone()
     assert(b.len() == a.len())
     assert(b.char_len() == a.char_len())
-    assert(b.as_str() == "Ёлка 🎄 中")
-    ro _ = a.as_str()
+    assert(b.into_str() == "Ёлка 🎄 中")
+    ro _ = a.into_str()
 }
 
 test "Unicode — as_str паритет char count со str" {
     consume sb = StringBuilder.new()
     sb.append("Привет, 世界 😀")
     ro n = sb.char_len()    // codepoints
-    ro s = sb.as_str()
+    ro s = sb.into_str()
     // Plan 108 D26 rev: s.as_chars().count() = codepoints == sb.char_len() before consume.
     assert(s.as_chars().count() == n)
 }

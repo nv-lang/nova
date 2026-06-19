@@ -11,30 +11,30 @@ import std.collections.vec.{Vec}
 test "Vec[f32].new() chained .debug (empty)" {
     consume a = StringBuilder.new()
     Vec[f32].new().debug(a)
-    assert(a.as_str() == "Vec[]")
+    assert(a.into_str() == "Vec[]")
 }
 
 test "Vec[f32].from([...]) chained .debug" {
     consume a = StringBuilder.new()
     Vec[f32].from([1.5, 2.5]).debug(a)
-    assert(a.as_str() == "Vec[1.5, 2.5]")
+    assert(a.into_str() == "Vec[1.5, 2.5]")
 }
 
 test "Vec[f32].from([...]) chained .display" {
     consume a = StringBuilder.new()
     Vec[f32].from([1.5, 2.5]).display(a)
-    assert(a.as_str() == "Vec[1.5, 2.5]")
+    assert(a.into_str() == "Vec[1.5, 2.5]")
 }
 
 // Control: Vec[int] chained already works.
 test "Vec[int].from([...]) chained .debug (control)" {
     consume a = StringBuilder.new()
     Vec[int].from([1, 2]).debug(a)
-    assert(a.as_str() == "Vec[1, 2]")
+    assert(a.into_str() == "Vec[1, 2]")
 }
 
 test "Vec[int].new() chained .debug (control)" {
     consume a = StringBuilder.new()
     Vec[int].new().debug(a)
-    assert(a.as_str() == "Vec[]")
+    assert(a.into_str() == "Vec[]")
 }

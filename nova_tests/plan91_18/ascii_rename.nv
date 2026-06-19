@@ -1,0 +1,16 @@
+module nova_tests.plan91_18
+
+test "trim_ascii renamed" {
+    assert("  hi  ".trim_ascii() == "hi")
+    assert("\thi\n".trim_ascii_start() == "hi\n")
+}
+
+test "to_ascii_lower and upper" {
+    assert("HELLO".to_ascii_lower() == "hello")
+    assert("hello".to_ascii_upper() == "HELLO")
+}
+
+test "pad renamed" {
+    assert("hi".pad_start(5, ' ') == "   hi")
+    assert("hi".pad_end(5, ' ') == "hi   ")
+}

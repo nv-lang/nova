@@ -11,26 +11,26 @@ test "fmt produces Vec[...] representation" {
     ro v = Vec[int].of(1, 2, 3)
     consume sb = StringBuilder.new()
     v.display(sb)
-    assert(sb.as_str() == "Vec[1, 2, 3]")
+    assert(sb.into_str() == "Vec[1, 2, 3]")
 }
 
 test "fmt on empty Vec" {
     ro v = Vec[int].new()
     consume sb = StringBuilder.new()
     v.display(sb)
-    assert(sb.as_str() == "Vec[]")
+    assert(sb.into_str() == "Vec[]")
 }
 
 test "debug_fmt produces Vec[...] representation" {
     ro v = Vec[int].of(10, 20, 30)
     consume sb = StringBuilder.new()
     v.debug(sb)
-    assert(sb.as_str() == "Vec[10, 20, 30]")
+    assert(sb.into_str() == "Vec[10, 20, 30]")
 }
 
 test "fmt single-element Vec" {
     ro v = Vec[int].of(42)
     consume sb = StringBuilder.new()
     v.display(sb)
-    assert(sb.as_str() == "Vec[42]")
+    assert(sb.into_str() == "Vec[42]")
 }

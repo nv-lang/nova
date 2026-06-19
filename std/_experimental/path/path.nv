@@ -61,7 +61,7 @@ export fn Path.join(...parts []str) -> str {
         buf.append(cleaned)
         first = false
     }
-    buf.as_str()
+    buf.into_str()
 }
 
 /// Parent directory компонент. `None` если path не имеет parent (`""`, `"/"`, bare basename).
@@ -193,7 +193,7 @@ export fn Path.normalize(p str) -> str {
         buf.append(s)
         first = false
     }
-    ro result = buf.as_str()
+    ro result = buf.into_str()
     if result.len() == 0 { "." } else { result }
 }
 

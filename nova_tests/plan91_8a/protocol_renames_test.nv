@@ -74,5 +74,5 @@ test "Display.fmt вЂ” StringBuilder formatting" {
     mut b = Buffer { data: "hello" }
     consume sb = StringBuilder.new()
     b.display(sb)
-    assert(sb.as_str() == "Buffer(hello)")
+    assert(sb.into_str() == "Buffer(hello)")
 }

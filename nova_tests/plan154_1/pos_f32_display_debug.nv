@@ -10,10 +10,10 @@ test "f32 display + debug direct" {
     consume a = StringBuilder.new()
     ro x f32 = 1.5
     x.display(a)
-    assert(a.as_str() == "1.5")
+    assert(a.into_str() == "1.5")
     consume b = StringBuilder.new()
     x.debug(b)
-    assert(b.as_str() == "1.5")
+    assert(b.into_str() == "1.5")
 }
 
 test "f32 interp ${x} / ${x:?}" {
@@ -30,10 +30,10 @@ test "Vec[f32] display + debug (explicit push)" {
     v.push(y)
     consume a = StringBuilder.new()
     v.debug(a)
-    assert(a.as_str() == "Vec[1.5, 2.5]")
+    assert(a.into_str() == "Vec[1.5, 2.5]")
     consume b = StringBuilder.new()
     v.display(b)
-    assert(b.as_str() == "Vec[1.5, 2.5]")
+    assert(b.into_str() == "Vec[1.5, 2.5]")
 }
 
 // [M-154.1-f32-literal-coercion] RESOLVED: numeric array literals coerce to f32
@@ -43,15 +43,15 @@ test "Vec[f32].from / .of literal coercion" {
     ro vf = Vec[f32].from([1.5, 2.5])
     consume a = StringBuilder.new()
     vf.debug(a)
-    assert(a.as_str() == "Vec[1.5, 2.5]")
+    assert(a.into_str() == "Vec[1.5, 2.5]")
     ro vi = Vec[f32].from([1, 2])
     consume b = StringBuilder.new()
     vi.debug(b)
-    assert(b.as_str() == "Vec[1, 2]")
+    assert(b.into_str() == "Vec[1, 2]")
     ro vo = Vec[f32].of(1.5, 2)
     consume c = StringBuilder.new()
     vo.debug(c)
-    assert(c.as_str() == "Vec[1.5, 2]")
+    assert(c.into_str() == "Vec[1.5, 2]")
 }
 
 // StringBuilder typed @append(f32) overload (resolves via the arg-type self-call
@@ -60,7 +60,7 @@ test "StringBuilder append f32" {
     consume sb = StringBuilder.new()
     ro x f32 = 3.5
     sb.append(x)
-    assert(sb.as_str() == "3.5")
+    assert(sb.into_str() == "3.5")
 }
 
 // Production-grade evidence: non-exact f32 values format cleanly (no f32→f64
@@ -70,17 +70,17 @@ test "f32 non-exact values format cleanly" {
     consume a = StringBuilder.new()
     ro p f32 = 0.1
     p.display(a)
-    assert(a.as_str() == "0.1")
+    assert(a.into_str() == "0.1")
     consume b = StringBuilder.new()
     ro pi f32 = 3.14159
     pi.display(b)
-    assert(b.as_str() == "3.14159")
+    assert(b.into_str() == "3.14159")
     consume c = StringBuilder.new()
     ro n f32 = 0.0 - 2.5
     n.display(c)
-    assert(c.as_str() == "-2.5")
+    assert(c.into_str() == "-2.5")
     consume z = StringBuilder.new()
     ro zero f32 = 0.0
     zero.display(z)
-    assert(z.as_str() == "0")
+    assert(z.into_str() == "0")
 }

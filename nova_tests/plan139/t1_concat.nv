@@ -19,5 +19,5 @@ test "plus operator" {
 
 test "concat with migrated methods composes" {
     ro s = "  Hi  "
-    assert(s.trim().to_lower().concat("!") == "hi!")
+    assert(s.trim_ascii().to_ascii_lower().concat("!") == "hi!")
 }

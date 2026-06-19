@@ -24,19 +24,19 @@ test "search submodule: find / contains / starts_with / split" {
 }
 
 test "transform submodule (Ф.3 buffer-refactor golden): trim / concat / to_bytes / case" {
-    assert("  hi  ".trim() == "hi")          // trim via Vec.append+steal
+    assert("  hi  ".trim_ascii() == "hi")          // trim via Vec.append+steal
     assert("ab".concat("cd") == "abcd")      // concat via Vec.append+steal
-    assert("Foo".to_lower() == "foo")
-    assert("Foo".to_upper() == "FOO")
+    assert("Foo".to_ascii_lower() == "foo")
+    assert("Foo".to_ascii_upper() == "FOO")
     ro b = "abc".to_bytes()                  // to_bytes via Vec.append
     assert(b.len() == 3)
     assert(b[0] == 97)
 }
 
 test "parse submodule: parse_int / ParseIntError path" {
-    assert("42".parse_int() == Some(42))
-    assert("ff".parse_int(radix: 16) == Some(255))
-    assert("xyz".parse_int() == None)
+    assert("42".parse_int_opt() == Some(42))
+    assert("ff".parse_int_opt(radix: 16) == Some(255))
+    assert("xyz".parse_int_opt() == None)
 }
 
 test "chars submodule: as_chars().nth (replaces retired char_at/get(int))" {
@@ -47,7 +47,7 @@ test "chars submodule: as_chars().nth (replaces retired char_at/get(int))" {
 }
 
 test "A0.6: StringBuilder (Vec[u8] wrapper) == str.concat" {
-    ro via_sb = StringBuilder.from("ab").append("cd").as_str()
+    ro via_sb = StringBuilder.from("ab").append("cd").into_str()
     assert(via_sb == "ab".concat("cd"))
     assert(via_sb == "abcd")
 }
