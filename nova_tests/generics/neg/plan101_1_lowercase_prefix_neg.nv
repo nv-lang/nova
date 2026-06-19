@@ -1,0 +1,11 @@
+// C7 — lowercase generic name `fn[t]` → parse error / convention error.
+//
+// EXPECT_COMPILE_ERROR
+
+module neg.plan101_1_lowercase_prefix_neg
+
+fn[t] t @bad() -> t => @
+
+test "should error" {
+    assert(1 == 1)
+}

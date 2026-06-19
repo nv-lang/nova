@@ -1,0 +1,17 @@
+// Plan 101.1 Ф.5 — positive: fn[T] []T @map_mis[U] T≠U (cross-type).
+
+module nova_tests.generics
+
+fn[T] []T @my_map_mis[U](f fn(T) -> U) -> []U {
+    mut out []U = []U.with_capacity(@len())
+    for x in @ { out.push(f(x)) }
+    out
+}
+
+test "fn[T] []T @map_mis int → str (T≠U)" {
+    ro v []int = [1, 2, 3]
+    ro strs = v.my_map_mis(|x| str.from(x))
+    assert(strs.len() == 3)
+    assert(strs.get(0) == Some("1"))
+    assert(strs.get(2) == Some("3"))
+}
