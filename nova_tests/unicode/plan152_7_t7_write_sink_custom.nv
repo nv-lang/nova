@@ -1,0 +1,50 @@
+// Plan 152.7.1 (D258 AMEND) POS T7 — Write-sink: user-defined @display.
+//
+// Verifies that a user type implementing @display(mut w Write) correctly
+// writes to a StringBuilder passed as a Write sink, and that string
+// interpolation "${p}" routes through the same @display method.
+module nova_tests.unicode
+
+type Point { x int, y int }
+
+fn Point @display(mut w Write) -> () {
+    w.write("(")
+    w.write(str.from(@x))
+    w.write(", ")
+    w.write(str.from(@y))
+    w.write(")")
+}
+
+test "custom @display writes to Write sink directly" {
+    ro p = Point { x: 3, y: 4 }
+    consume sb = StringBuilder.new()
+    p.display(sb)
+    assert(sb.into_str() == "(3, 4)")
+}
+
+test "custom @display via string interpolation" {
+    ro p = Point { x: 7, y: 8 }
+    ro s = "${p}"
+    assert(s == "(7, 8)")
+}
+
+test "custom @display manual + interp produce same result" {
+    ro p = Point { x: 5, y: 6 }
+    consume sb = StringBuilder.new()
+    p.display(sb)
+    ro manual = sb.into_str()
+    ro interp = "${p}"
+    assert(manual == interp)
+}
+
+test "nested: display delegates to sub-type display" {
+    ro p1 = Point { x: 1, y: 1 }
+    ro p2 = Point { x: 9, y: 9 }
+    consume sb = StringBuilder.new()
+    sb.write("[")
+    p1.display(sb)
+    sb.write(" -> ")
+    p2.display(sb)
+    sb.write("]")
+    assert(sb.into_str() == "[(1, 1) -> (9, 9)]")
+}

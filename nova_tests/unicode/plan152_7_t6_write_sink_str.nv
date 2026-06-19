@@ -1,0 +1,39 @@
+// Plan 152.7.1 (D258 AMEND) POS T6 — Write-sink: primitives display via Write.
+//
+// Verifies that @display on primitive types (int, f64, bool, str) writes
+// correctly to a StringBuilder passed as a Write sink.
+module nova_tests.unicode
+
+test "int @display writes to Write sink" {
+    consume sb = StringBuilder.new()
+    42.display(sb)
+    assert(sb.into_str() == "42")
+}
+
+test "f64 @display writes to Write sink" {
+    consume sb = StringBuilder.new()
+    3.14.display(sb)
+    assert(sb.into_str() == "3.14")
+}
+
+test "bool @display writes to Write sink" {
+    consume sb = StringBuilder.new()
+    true.display(sb)
+    assert(sb.into_str() == "true")
+}
+
+test "str @display writes to Write sink" {
+    consume sb = StringBuilder.new()
+    "hello".display(sb)
+    assert(sb.into_str() == "hello")
+}
+
+test "multiple display calls accumulate in same sink" {
+    consume sb = StringBuilder.new()
+    1.display(sb)
+    sb.write(", ")
+    2.display(sb)
+    sb.write(", ")
+    3.display(sb)
+    assert(sb.into_str() == "1, 2, 3")
+}
