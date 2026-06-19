@@ -912,31 +912,36 @@ fn str_methods() -> Vec<MethodInfo> {
         MethodInfo::new("splitn", "(n int, sep str) -> ro []str", "Split at most n times"),
         MethodInfo::new("rsplit", "(sep str) -> ro []str", "Split from right"),
         MethodInfo::new("split_once", "(sep str) -> Option[(str, str)]", "Split at first separator"),
-        MethodInfo::new("split_whitespace", "() -> ro []str", "Split on ASCII whitespace"),
+        MethodInfo::new("split_ascii_whitespace", "() -> ro []str", "Split on ASCII whitespace"),
         MethodInfo::new("lines", "() -> ro []str", "Split on newlines"),
         MethodInfo::new("match_indices", "(needle str) -> []int", "All byte offsets of needle"),
-        // transform.nv
-        MethodInfo::new("trim", "() -> str", "Trim ASCII whitespace from both ends"),
-        MethodInfo::new("trim_start", "() -> str", "Trim ASCII whitespace from start"),
-        MethodInfo::new("trim_end", "() -> str", "Trim ASCII whitespace from end"),
+        // transform.nv — ASCII variants (always available, no import needed)
+        MethodInfo::new("trim_ascii", "() -> str", "Trim ASCII whitespace from both ends"),
+        MethodInfo::new("trim_ascii_start", "() -> str", "Trim ASCII whitespace from start"),
+        MethodInfo::new("trim_ascii_end", "() -> str", "Trim ASCII whitespace from end"),
         MethodInfo::new("trim_start_matches", "(c char) -> str", "Trim leading occurrences of char"),
         MethodInfo::new("trim_end_matches", "(c char) -> str", "Trim trailing occurrences of char"),
         MethodInfo::new("strip_prefix", "(prefix str) -> Option[str]", "Remove prefix if present"),
         MethodInfo::new("strip_suffix", "(suffix str) -> Option[str]", "Remove suffix if present"),
-        MethodInfo::new("to_lower", "() -> str", "ASCII lowercase"),
-        MethodInfo::new("to_upper", "() -> str", "ASCII uppercase"),
+        MethodInfo::new("to_ascii_lower", "() -> str", "ASCII lowercase (no import needed)"),
+        MethodInfo::new("to_ascii_upper", "() -> str", "ASCII uppercase (no import needed)"),
         MethodInfo::new("replace", "(from str, to str) -> str", "Replace all occurrences"),
         MethodInfo::new("replacen", "(from str, to str, n int) -> str", "Replace at most n occurrences"),
         MethodInfo::new("repeat", "(n int) -> str", "Repeat string n times"),
-        MethodInfo::new("pad_left", "(width int, fill char) -> str", "Pad to width on left"),
-        MethodInfo::new("pad_right", "(width int, fill char) -> str", "Pad to width on right"),
+        MethodInfo::new("pad_start", "(width int, fill char) -> str", "Pad to width on left"),
+        MethodInfo::new("pad_end", "(width int, fill char) -> str", "Pad to width on right"),
         MethodInfo::new("pad_center", "(width int, fill char) -> str", "Center-pad to width"),
         MethodInfo::new("concat", "(other str) -> str", "Concatenate (also via `+` operator)"),
         // slice.nv — indexing with Range (byte-coordinated)
         MethodInfo::new("get", "(r Range) -> Option[str]", "Byte-range slice (bounds-safe)"),
-        // parse.nv
-        MethodInfo::new("parse_int", "(radix int = 10) -> Option[int]", "Parse as integer"),
-        MethodInfo::new("try_parse_int", "(radix int = 10) -> Result[int, ParseIntError]", "Parse as integer (detailed error)"),
+        MethodInfo::new("split_at", "(idx int) -> (str, str)", "Split at byte index (panics on non-boundary)"),
+        MethodInfo::new("split_at_checked", "(idx int) -> Option[(str, str)]", "Split at byte index (None on non-boundary)"),
+        // chars.nv
+        MethodInfo::new("to_code_points", "() -> []int", "Collect all Unicode codepoints"),
+        // parse.nv — D178 amend V3: bare throws, try_ returns Result, _opt returns Option
+        MethodInfo::new("parse_int", "(radix int = 10) -> int", "Parse as integer (throws ParseIntError on failure)"),
+        MethodInfo::new("try_parse_int", "(radix int = 10) -> Result[int, ParseIntError]", "Parse as integer (Result)"),
+        MethodInfo::new("parse_int_opt", "(radix int = 10) -> Option[int]", "Parse as integer (None on failure)"),
         // Debug protocol (Plan 91.14, D229)
         MethodInfo::new("debug", "(sb consume StringBuilder) -> StringBuilder", "Debug format: quoted with escape sequences e.g. \"hello\\n\" — called by ${x:?}"),
     ]
@@ -1606,7 +1611,7 @@ fn main() -> () {
         let items = method_items(src, src.len());
         assert!(has_label(&items, "byte_len"), "byte_len in str methods");
         assert!(has_label(&items, "contains"), "contains in str methods");
-        assert!(has_label(&items, "to_upper"), "to_upper in str methods");
+        assert!(has_label(&items, "to_ascii_upper"), "to_ascii_upper in str methods");
         assert!(has_label(&items, "as_bytes"), "as_bytes in str methods");
         assert!(has_label(&items, "as_chars"), "as_chars in str methods");
         assert!(has_label(&items, "lines"), "lines in str methods");
