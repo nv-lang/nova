@@ -36,6 +36,7 @@
 | [D282](#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) | Blanket protocol-receiver methods `fn[I Next[T]] I @m` — typevar-ресивер + bound-dispatch (Plan 161, G-F) | active |
 | [D284](#d284-enumerateiter--zero-cost-enumerate-adapter-plan-162) | `EnumerateIter[I, T]` — zero-cost enumerate adapter; per-type `@zenumerate()` dispatch; tuple parametric return (Plan 162) | active |
 | [D290](#d290--value-record-iterator-types-plan-165-2026-06-16) | Iterator value-records: `VecIter[T] value` (GC-pointer fields covered by fiber arena) + `Range`/`RangeIter`/`StepRangeIter`/`ReverseRangeIter value` (int-only, pure stack) — zero malloc in adapter chain (Plan 165) | active |
+| [D307](#d307-file-private-visibility--privfile-plan-170) | File-private visibility `priv(file) fn`/`type`/`const` — лесенка `priv(file)` ⊂ module ⊂ export; `E_FILE_PRIV_LEAK`; file-discriminated codegen; dedup одноимённых в peer-файлах (Plan 170) | active |
 
 ---
 
@@ -12778,6 +12779,83 @@ Type-private field (explicit `priv(type)` field, OR type-level `priv(type)` defa
 - [D78](07-modules.md#d78) — module-path enforcement (defines module identity).
 - [D47](07-modules.md#d47) — default-public baseline (unchanged).
 - Plan 160 — план реализации.
+
+## D307. File-private visibility — `priv(file)` (Plan 170)
+
+> **Status:** ACTIVE (2026-06-19, Plan 170). **Зависит от:** [D281](#d281-module-level-field-privacy--type-x-priv---plan-160) / [D220](#d220-per-field-visibility--priv-keyword--type-level-default-flip) (инфраструктура `priv`/`priv(type)`), [D29](07-modules.md#d29) (folder-module model), [D78](07-modules.md#d78) (module-path). **Нумерация:** план назвал блок «D304», но к моменту реализации D304 уже был занят (Test Category Selectors, 09-tooling.md, Plan 169.1.1, 2026-06-19); D305/D306 зарезервированы proposed-планом 104.10 (LSP) → этому блоку присвоен свободный номер **D307**.
+
+### Мотивация
+
+folder-module = один compile unit из co-equal peer-файлов (D29/D78): все `.nv` в папке с одинаковым `module X` делят одно top-level пространство имён — `fn`/`type`/`const` каждого файла видны всем peer-файлам. Текущая лесенка видимости top-level **бинарна**:
+
+- `export` — виден снаружи модуля;
+- (без модификатора) — module-private (виден всем peer-файлам модуля).
+
+Недоставало **самого узкого** уровня — file-private. Без него одноимённые helper-функции/типы в разных файлах одного folder-module **конфликтуют** (`E_DUP_DEFINITION`) и требуют некрасивого ordinal-rename (`helper1`/`helper2`). `priv(file)` закрывает дыру: символ виден **только в своём файле**, не утекает к peer-файлам. Аналог Rust `pub(self)`. Польза шире тестов — любой folder-module (`std/collections/vec/` и т.п.) получает file-local helper'ы без загрязнения общего namespace.
+
+### Синтаксис
+
+```nova
+priv(file) type Acc { … }       // тип виден только в этом файле
+priv(file) fn helper() -> int   // free fn не виден peer-файлам модуля
+priv(file) const K = 42         // file-local константа
+// (без модификатора)           // module-private (как сейчас, D281)
+export     fn api() …           // публичный (как сейчас)
+```
+
+Лесенка видимости top-level символов: **`priv(file)` ⊂ (module-default) ⊂ `export`**.
+
+`priv(file)` — это **visibility-hint, НЕ смена module-резолва**: модуль остаётся один (D29 не нарушается), символ лишь помечен «не виден peer-файлам». `file` — НЕ ключевое слово (распознаётся как `Ident("file")` внутри `priv(...)`), что исключает коллизию с идентификаторами.
+
+**Нейминг-обоснование** (`priv(file)`, не `local`): единая ось видимости под `priv` + scope-квалификатор — симметрично `priv(type)` (D281). `local` двусмысленно (вложенные функции — тоже «локальные») и потребовало бы нового KW с риском коллизии идентификаторов.
+
+**Применимость.** Только к top-level `fn` / `type` / `const`. Не применим к `test`/`bench`/`lemma`/`let`/`ro` (не имеют file-private видимости) и к методам (`fn T @m` — receiver-qualified, вне scope file-private). Scope-local `const` внутри тела fn — уже block-scoped, `priv(file)` не нужен.
+
+### Правило
+
+#### §1 Резолв (checker)
+
+При построении группового namespace folder-module из shared-набора **исключаются** `priv(file)`-имена каждого peer-файла. Для файла `F` видимый набор имён = `(shared group namespace без любых file-private) ∪ (собственные file-private имена F)`. Поэтому sibling-файл **никогда** не резолвит чужой `priv(file)` символ.
+
+Если файл `F` ссылается на имя, которое `priv(file)` в ДРУГОМ peer-файле той же группы (и иначе не резолвится) → специфичная диагностика `E_FILE_PRIV_LEAK` (вместо родового «undefined identifier»), с подсказкой «remove priv(file) … or move the symbol».
+
+#### §2 Дедупликация (no-conflict)
+
+Два `priv(file)` символа с **одинаковым** именем в **разных** peer-файлах — **НЕ конфликт** (непересекающиеся file-scope). Проверка «duplicate top-level name» для такого имени снимается **тогда и только тогда**, когда **каждая** декларация этого имени file-private И они в разных файлах. Если хотя бы одна декларация module-private/export — имя живёт в общем namespace → коллизия как раньше (`E_DUP_DEFINITION`, D29).
+
+#### §3 Codegen (mangling)
+
+`priv(file)` free-fn получает **file-дискриминированное** C-имя — `nova_fn_<module>_f<file_id>_<name>` — где дискриминатор = стабильный `file_id` объявляющего файла. Два одноимённых `priv(file) fn helper` из разных файлов дают **разные** C-символы → нет коллизии линковки. Call-site внутри файла резолвит в свой вариант по тому же `(file_id, name)` ключу, что и checker §1. File-private free-fns НЕ регистрируются в shared overload-registry (file-local, не участвуют в cross-file overload resolution). Точный паттерн переиспользует существующий `private_const_c_names` (Plan 160, уже keyed по `file_id`).
+
+#### §4 Error codes
+
+| Code | Context |
+|---|---|
+| `E_FILE_PRIV_LEAK` | Ссылка из peer-файла на `priv(file)` символ другого файла группы |
+| `E_PRIV_QUALIFIER` | `priv(file)` + `export` вместе; bare top-level `priv` без `(file)`; `priv(<other>)` на top-level; `priv(file)` перед не-`fn`/`type`/`const` |
+
+#### §5 Критерии приёмки (без упрощений, как для прода)
+
+1. **Парсинг:** `priv(file) fn`/`type`/`const` парсится; `priv(file)` + `export` → `E_PRIV_QUALIFIER`.
+2. **Позитив own-file:** `priv(file) fn h()` вызывается в своём файле → компилируется и работает.
+3. **Позитив co-exist:** два peer-файла, оба объявляют `priv(file) fn helper()` с разным телом, каждый вызывает свой → компилируются (file-discriminated codegen, нет линк-коллизии) и работают.
+4. **Негатив leak:** ссылка из peer на чужой `priv(file)` → `E_FILE_PRIV_LEAK`.
+5. **Регрессия:** module-private (`priv`/default) символ из одного peer ВИДЕН другому (D281 без изменений); `export` без изменений.
+6. **Регресс:** plan160 / plan124* / modules / std — 0 новых FAIL.
+
+### AST / Checker / Codegen-реализация
+
+- `ast`: `FnDecl.file_private: bool` / `TypeDecl.file_private: bool` / `ConstDecl.file_private: bool` (default `false`). Минимальный путь — `bool` (без enum-рефактора `is_export`).
+- `parser`: распознавание `priv` `(` `file` `)` в общем parse-item ДО `KwExport`-eat; пробрасывается в `parse_fn`/`parse_type_decl`/`parse_const_decl`. Взаимоисключение с `export`.
+- `types`: file-private dedup в `check_module_impl` (снятие dup-проверки для disjoint file-scope); `NameResCtx.file_priv_leak: HashMap<FileId, HashMap<name, owner_path>>` — per-file leak-table; групповой namespace вычитает file-private каждого peer.
+- `codegen`: `file_priv_fn_c_names: HashMap<(FileId, String), String>` + `current_emit_file_id` — file-дискриминированный C-символ, резолвится в `free_fn_c_name`/`mangle_fn`.
+
+### Связь
+
+- [D281](#d281-module-level-field-privacy--type-x-priv---plan-160) — module-private (соседний уровень лесенки); этот блок добавляет узкий file-private.
+- [D29](07-modules.md#d29) — folder-module model (не нарушается: модуль остаётся один).
+- [D78](07-modules.md#d78) — module-path / file identity (file_id источник дискриминатора).
+- Plan 170 — план реализации.
 
 ---
 
