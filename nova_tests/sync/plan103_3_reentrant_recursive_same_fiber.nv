@@ -1,0 +1,47 @@
+// Plan 103.3 — ReentrantMutex: same fiber can lock() multiple times.
+
+module nova_tests.sync
+
+test "same fiber: recursive lock — no deadlock, lock_count tracks correctly" {
+    mut rm = ReentrantMutex.new()
+
+    assert(rm.lock_count() == 0)
+    rm.lock()
+    assert(rm.lock_count() == 1)
+    rm.lock()
+    assert(rm.lock_count() == 2)
+    rm.lock()
+    assert(rm.lock_count() == 3)
+    rm.unlock()
+    assert(rm.lock_count() == 2)
+    rm.unlock()
+    assert(rm.lock_count() == 1)
+    rm.unlock()
+    assert(rm.lock_count() == 0)
+}
+
+test "with_lock on ReentrantMutex — explicit lock/defer/unlock" {
+    mut rm = ReentrantMutex.new()
+    rm.lock()
+    assert(rm.lock_count() == 1)
+    rm.lock()
+    assert(rm.lock_count() == 2)
+    rm.unlock()
+    assert(rm.lock_count() == 1)
+    ro result = 100
+    rm.unlock()
+    assert(rm.lock_count() == 0)
+    assert(result == 100)
+}
+
+test "try_lock from owner fiber succeeds" {
+    mut rm = ReentrantMutex.new()
+    rm.lock()
+    assert(rm.lock_count() == 1)
+    ro ok = rm.try_lock()
+    assert(ok == true)
+    assert(rm.lock_count() == 2)
+    rm.unlock()
+    rm.unlock()
+    assert(rm.lock_count() == 0)
+}

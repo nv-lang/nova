@@ -231,9 +231,11 @@ Folder-module не применяется если:
   (маркер относится к целому TU; в общем бинаре они бы повесили/уронили остальные).
   Остаются standalone. Runtime-panic консолидируются отдельно через `panics`-клаузулу
   (Plan 169.1.2 Ф.2); timeout — всегда standalone.
-- **Валидация — ТОЛЬКО канонически:** `nova test . --filter <тема>` из корня репо.
-  Standalone `nova test nova_tests/<тема>` folder-module НЕ обрабатывает (root модуля
-  считается иначе) → ложные `E_D78_MODULE_PATH_MISMATCH`/провалы.
+- **Валидация — передавать папки напрямую:** `nova test nova_tests/<тема>` (можно
+  несколько папок одной командой: `nova test nova_tests/atomics nova_tests/sync`).
+  НЕ `--filter <тема>` — он матчит по подстроке и цепляет лишнее (напр. `--filter sync`
+  тянет `std/runtime/sync*`). Path-invocation работает при ПРАВИЛЬНОЙ форме модуля
+  `module nova_tests.<тема>`; при неверной форме — `E_D78_MODULE_PATH_MISMATCH`.
 - **Починка fallout:** приводя старые тесты к актуальному компилятору, чинить новые
   ошибки enforcement'а (напр. `E_LOCAL_NOT_MUT` → добавить `mut` переприсваиваемым
   переменным), **НЕ выхолащивая** тест.
