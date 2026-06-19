@@ -465,3 +465,26 @@ side-table (array_element_types / compute_array_elem_type_for_obj — обе key
 
 (То же семейство, что §7 tuple-of-closures: self-describing C-имя авторитетнее
 стейл side-table при коллизии имён в folder-модуле.)
+
+## 19. types/mod.rs: blanket-метод `fn[T] T @m` не резолвился на str/user-типах
+
+**Симптом:** `[E7320] no field or method` на blanket-методе (receiver = собственный
+type-параметр функции, напр. `fn[T] T @bare_identity() -> T => @`) при вызове на
+типе из `self.types` — `str` (lang-item, Plan 139), user-типы. На примитивах (int)
+проходило. `plan101_1/bare_t_identity.nv` падал на str-кейсе (стр.14) на текущем main
+(pre-existing баг, вскрыт консолидацией generics 169.1.2).
+
+**Почему это баг:**
+Blanket-метод лежит в `method_table` под ключом type-параметра (`"T"`), а не под
+конкретным типом. `f3_check_member` резолвит методы по `tname` (`method_table[tname]`)
+→ для str/user-типов blanket не находит → ложный E7320. Примитивы случайно проходили:
+их нет в `self.types` → ранний `let Some(td) = self.types.get(tname) else { return };`
+ДО проверки метода (т.е. без проверки вообще).
+
+**Исправление:**
+При build `method_table` собираем `blanket_method_names: HashSet<String>` — методы,
+где `recv.type_name ∈ f.generics` (receiver — собственный type-параметр fn). В
+`f3_check_member` перед E7320 принимаем имя, если оно ∈ `blanket_method_names` (blanket
+применим к любому типу). Тесты: plan101_1/bare_t_identity int+str PASS;
+`nova_tests/plan169_2_blanket` (blanket + `[]T` в folder-module); регресс plan101/99/138
+0 FAIL. Маркер `[M-blanket-method-resolve]`, commit `ca85c001`, merged в main.

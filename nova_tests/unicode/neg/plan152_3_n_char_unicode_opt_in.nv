@@ -1,0 +1,14 @@
+// Plan 152.3b (D252, criterion: opt-in boundary). The Unicode-aware classification
+// is part of the OPT-IN `std.unicode` module — NOT the prelude. Without
+// `import std.unicode`, `general_category` (and the other code-point predicates the
+// char methods delegate to) is not in scope: the program must NOT silently compile.
+// Pins the opt-in boundary, exactly like plan152_4/n_case_opt_in.nv. The ASCII-core
+// char API (char_ascii.nv) stays prelude-available and is unaffected.
+//
+// EXPECT_COMPILE_ERROR undefined identifier
+module neg.plan152_3_n_char_unicode_opt_in
+
+test "general_category is undefined without import std.unicode" {
+    ro c = general_category(0x41)
+    assert(c == c)
+}

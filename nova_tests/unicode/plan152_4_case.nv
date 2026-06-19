@@ -1,0 +1,76 @@
+// Plan 152.4.4 (D253): Unicode case folding + case mapping — hand-authored
+// semantic cases (the breadth conformance lives in case_conformance.nv). Greek
+// literals are written as \u{..} escapes so the expected sigma form (σ vs ς) is
+// unambiguous in source.
+
+module nova_tests.unicode
+
+import std.unicode.{fold_case, to_uppercase, to_lowercase}
+
+test "fold_case — ASCII + multi-cp + caseless eq" {
+    assert(fold_case("HELLO") == "hello")
+    assert(fold_case("Hello, World!") == "hello, world!")
+    assert(fold_case("\u{df}") == "ss")                  // ß → "ss" (full fold)
+    assert(fold_case("\u{fb01}") == "fi")                // ﬁ ligature → "fi"
+    assert(fold_case("\u{3a3}") == "\u{3c3}")            // Σ → σ
+    assert(fold_case("\u{3c2}") == "\u{3c3}")            // ς → σ
+    assert(fold_case("\u{3c3}") == "\u{3c3}")            // σ → σ
+    assert(fold_case("\u{3a3}") == fold_case("\u{3c2}")) // caseless: Σ ≈ ς
+    assert(fold_case("\u{212a}") == "k")                 // KELVIN SIGN → k
+    assert(fold_case(fold_case("\u{df}")) == fold_case("\u{df}"))  // idempotent
+}
+
+test "to_uppercase — multi-cp expansions, no locale" {
+    assert(to_uppercase("hello") == "HELLO")
+    assert(to_uppercase("stra\u{df}e") == "STRASSE")     // ß → SS
+    assert(to_uppercase("\u{fb01}le") == "FILE")         // ﬁ → FI
+    assert(to_uppercase("\u{3b1}\u{3b2}\u{3b3}") == "\u{391}\u{392}\u{393}")  // αβγ → ΑΒΓ
+}
+
+test "to_lowercase — basic + unconditional multi-cp" {
+    assert(to_lowercase("HELLO") == "hello")
+    assert(to_lowercase("\u{391}\u{392}\u{393}") == "\u{3b1}\u{3b2}\u{3b3}")  // ΑΒΓ → αβγ
+    assert(to_lowercase("\u{130}") == "i\u{307}")        // İ → "i" + combining dot above
+}
+
+test "to_lowercase — Final_Sigma (Σ → ς word-finally, σ otherwise)" {
+    assert(to_lowercase("\u{39f}\u{394}\u{39f}\u{3a3}") == "\u{3bf}\u{3b4}\u{3bf}\u{3c2}")  // ΟΔΟΣ → οδος
+    assert(to_lowercase("\u{3a3}\u{39f}") == "\u{3c3}\u{3bf}")                              // ΣΟ → σο (initial)
+    assert(to_lowercase("\u{391}\u{3a3}\u{392}") == "\u{3b1}\u{3c3}\u{3b2}")                // ΑΣΒ → ασβ (medial)
+    assert(to_lowercase("\u{391}\u{3a3}") == "\u{3b1}\u{3c2}")                              // ΑΣ → ας (final)
+}
+
+// ── INDEPENDENT oracle cases (expected hand-derived from the UCD spec, NOT from
+//    the generator) — these pin table SELECTION, which the breadth conformance
+//    (self-referential: expected derived from the same generator) cannot. They
+//    cover the central D253 "no-locale" promise + field-index + multi-cp paths. ──
+
+test "no-locale selection — Turkic/Lithuanian excluded (independent oracle)" {
+    // I (U+0049): CaseFolding C → i; Turkic T → ı (U+0131) must be EXCLUDED.
+    assert(fold_case("I") == "i")
+    assert(fold_case("I") != "\u{131}")
+    // simple lower I → i (tr/az Not_Before_Dot → ı excluded).
+    assert(to_lowercase("I") == "i")
+    // simple upper i → I (tr/az → İ U+0130 excluded).
+    assert(to_uppercase("i") == "I")
+    assert(to_uppercase("i") != "\u{130}")
+    // İ (U+0130): unconditional full lower → "i" + combining dot above
+    // (tr/az conditional → plain "i" excluded).
+    assert(to_lowercase("\u{130}") == "i\u{307}")
+}
+
+test "multi-cp expansion — 3-codepoint paths (independent oracle)" {
+    assert(fold_case("\u{fb00}") == "ff")            // ﬀ → ff
+    assert(fold_case("\u{fb03}") == "ffi")           // ﬃ → ffi (3-cp fold)
+    assert(to_uppercase("\u{fb03}") == "FFI")        // ﬃ → FFI (3-cp upper)
+    assert(to_uppercase("\u{149}") == "\u{2bc}N")    // ŉ → ʼN (U+02BC + N)
+}
+
+test "Final_Sigma — case-ignorable interleaving (independent oracle)" {
+    // trailing ignorable (’ U+2019, Case_Ignorable) after Σ → still final → ς
+    assert(to_lowercase("\u{391}\u{3a3}\u{2019}") == "\u{3b1}\u{3c2}\u{2019}")
+    // ignorable then a cased char after Σ → NOT final → σ
+    assert(to_lowercase("\u{391}\u{3a3}\u{2019}\u{392}") == "\u{3b1}\u{3c3}\u{2019}\u{3b2}")
+    // uncased non-ignorable (space) before Σ → before-context fails → σ
+    assert(to_lowercase(" \u{3a3}") == " \u{3c3}")
+}

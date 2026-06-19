@@ -1,0 +1,41 @@
+// Plan 152.2 Ф.2 (D251): trim / trim_matches / strip — zero-copy views.
+module nova_tests.unicode
+
+test "trim / trim_start / trim_end (ASCII whitespace)" {
+    assert("  hi  ".trim_ascii() == "hi")
+    assert("\t\n hi \r\n".trim_ascii() == "hi")
+    assert("  hi  ".trim_ascii_start() == "hi  ")
+    assert("  hi  ".trim_ascii_end() == "  hi")
+    assert("nows".trim_ascii() == "nows")
+    assert("   ".trim_ascii() == "")
+}
+
+test "trim_matches / trim_start_matches / trim_end_matches (char)" {
+    assert("xxhixx".trim_matches('x') == "hi")
+    assert("xxhixx".trim_start_matches('x') == "hixx")
+    assert("xxhixx".trim_end_matches('x') == "xxhi")
+    assert("---".trim_matches('-') == "")
+    assert("hi".trim_matches('x') == "hi")
+}
+
+test "trim_matches on a multibyte char" {
+    // 'я' = 2 bytes (U+044F). Trimming it must work byte-correctly.
+    assert("яяtextяя".trim_matches('я') == "text")
+    assert("яяtext".trim_start_matches('я') == "text")
+}
+
+test "strip_prefix / strip_suffix -> Option" {
+    assert("foobar".strip_prefix("foo") == Some("bar"))
+    assert("foobar".strip_prefix("xyz") == None)
+    assert("foobar".strip_suffix("bar") == Some("foo"))
+    assert("foobar".strip_suffix("xyz") == None)
+    assert("foobar".strip_prefix("") == Some("foobar"))   // empty prefix
+}
+
+test "strip composes (non-ASCII)" {
+    // "αβγ": each Greek letter 2 bytes
+    match "αβγ".strip_prefix("α") {
+        Some(rest) => assert(rest == "βγ"),
+        None => assert(false),
+    }
+}

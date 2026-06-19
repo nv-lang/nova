@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 152.7-B (D258) POS T1 — width + alignment + fill.
+//
+// Rust-style `${expr:[[fill]align][width]}`:
+//   default (numbers right-align), `<` left, `>` right, `^` center, fill char.
+module nova_tests.unicode
+
+test "int width default (right-align)" {
+    assert("${42:5}" == "   42")
+}
+
+test "int left align" {
+    assert("${42:<5}" == "42   ")
+}
+
+test "int right align explicit" {
+    assert("${42:>5}" == "   42")
+}
+
+test "int center align (extra pad right)" {
+    assert("${42:^5}" == " 42  ")
+}
+
+test "fill char center" {
+    assert("${42:*^10}" == "****42****")
+}
+
+test "fill char left" {
+    assert("${7:.<5}" == "7....")
+}
+
+test "fill char right" {
+    assert("${7:0>5}" == "00007")
+}
+
+test "width smaller than value (no truncation of numbers)" {
+    assert("${12345:3}" == "12345")
+}
+
+test "string left-align is the string default" {
+    ro s = "ab"
+    assert("${s:5}" == "ab   ")
+}
+
+test "string right-align" {
+    ro s = "hi"
+    assert("${s:>5}" == "   hi")
+}
+
+test "string center with fill" {
+    ro s = "hi"
+    assert("${s:*^6}" == "**hi**")
+}

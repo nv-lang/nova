@@ -1,0 +1,85 @@
+// Plan 152.4.6 (D253): sentence segmentation (UAX #29) — hand-authored semantic
+// cases (full SentenceBreakTest breadth lives in sentence_conformance.nv).
+//
+// UAX #29 default sentence boundaries have NO abbreviation dictionary: the rules
+// decide purely on the Sentence_Break categories. The cases below pin the
+// observable consequences (each matched against the official SentenceBreakTest
+// behaviour for the same codepoints).
+
+module nova_tests.unicode
+
+import std.unicode.{SentencesIter}
+
+test "as_sentences — UAX #29 segment counts" {
+    assert("".as_sentences().count() == 0)                 // SB1/SB2: empty
+    assert("Hello".as_sentences().count() == 1)            // SB998: no terminator
+    assert("3.4".as_sentences().count() == 1)              // SB6: ATerm × Numeric
+    // SB8: ATerm Sp × (¬…)* Lower — a lowercase word after "." suppresses the break
+    // ("the resp. leaders are" is ONE sentence in SentenceBreakTest.txt).
+    assert("the resp. leaders are".as_sentences().count() == 1)
+    // SB8: "U.S.A. is" — trailing ". is" reaches a Lower → still one sentence.
+    assert("U.S.A. is one".as_sentences().count() == 1)
+}
+
+test "as_sentences — STerm/ATerm + Upper splits (SB11)" {
+    // "Hello! World" — STerm '!' then Sp then Upper 'W'. SB8 is ATerm-only, so the
+    // STerm context falls through to SB11 → break before "World".
+    {
+        mut sv = "Hello! World".as_sentences()
+        match sv.next() { Some(s) => assert(s == "Hello! "), None => assert(false) }
+        match sv.next() { Some(s) => assert(s == "World"), None => assert(false) }
+        assert(sv.next() == None)
+    }
+    // Two full sentences separated by ". " before an Uppercase word. Because the
+    // word after the period is Uppercase (not Lower), SB8 does NOT fire and SB11
+    // breaks — the documented default-UAX#29 behaviour (no abbreviation lookup).
+    {
+        mut sv = "Mr. Smith went home. He slept.".as_sentences()
+        match sv.next() { Some(s) => assert(s == "Mr. "), None => assert(false) }
+        match sv.next() { Some(s) => assert(s == "Smith went home. "), None => assert(false) }
+        match sv.next() { Some(s) => assert(s == "He slept."), None => assert(false) }
+        assert(sv.next() == None)
+    }
+}
+
+test "as_sentences — paragraph separators + decimals/quotes" {
+    // SB4: a hard line separator (LF) always ends the sentence.
+    {
+        mut sv = "One\nTwo".as_sentences()
+        match sv.next() { Some(s) => assert(s == "One\n"), None => assert(false) }
+        match sv.next() { Some(s) => assert(s == "Two"), None => assert(false) }
+        assert(sv.next() == None)
+    }
+    // SB3: CR LF is a single separator (one break, not two).
+    {
+        mut sv = "A\r\nB".as_sentences()
+        match sv.next() { Some(s) => assert(s == "A\r\n"), None => assert(false) }
+        match sv.next() { Some(s) => assert(s == "B"), None => assert(false) }
+        assert(sv.next() == None)
+    }
+    // Decimal "3.14" — ATerm between Numerics (SB6) keeps one sentence.
+    assert("Pi is 3.14 today".as_sentences().count() == 1)
+    // SB9: terminator followed by closing quote/paren stays attached; SB11 then
+    // breaks before the Uppercase next sentence. `"Stop!" Go` →  '"Stop!"' + ' ' | Go
+    {
+        mut sv = "\u{201c}Stop!\u{201d} Go".as_sentences()
+        match sv.next() { Some(s) => assert(s == "\u{201c}Stop!\u{201d} "), None => assert(false) }
+        match sv.next() { Some(s) => assert(s == "Go"), None => assert(false) }
+        assert(sv.next() == None)
+    }
+}
+
+test "as_sentences — iter + position-aware count" {
+    mut sv = "Hi! Bye.".as_sentences()
+    assert(sv.count() == 2)                                 // remaining = total
+    match sv.next() { Some(s) => assert(s == "Hi! "), None => assert(false) }
+    assert(sv.count() == 1)                                 // remaining decremented
+    assert(!sv.is_empty())
+    match sv.next() { Some(s) => assert(s == "Bye."), None => assert(false) }
+    assert(sv.count() == 0)
+    assert(sv.next() == None)
+    // for-in routes through @iter (Iter self-iterator).
+    mut total = 0
+    for _ in "A. B. C.".as_sentences() { total = total + 1 }
+    assert(total == 3)
+}
