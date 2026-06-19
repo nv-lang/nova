@@ -161,6 +161,21 @@ export import std.prelude.effects.{Fail, Time, Mem}
 // std.runtime.string имеет #no_prelude — cycle protection (prelude→string→prelude).
 export import std.runtime.string.{parse_int, pad_left, pad_right, repeat, replace, compare, to_bytes, to_chars, as_bytes}
 
+// Plan 169.2.1 (D303): char Unicode-aware methods (`'a'.is_alphabetic()` etc.)
+// are NOT re-exported here. A bare `export import std.unicode.{is_alphabetic,…}`
+// would ALSO pull the same-named free functions (`is_alphabetic(cp int)`,
+// `general_category(cp int)`, `to_uppercase(s str)`) into the global prelude
+// namespace — breaking the opt-in boundary pinned by the negative test
+// `plan152_3/neg/n_char_unicode_opt_in.nv` (`general_category(0x41)` MUST stay
+// undefined without `import std.unicode`). Instead the char @methods are made
+// available without an explicit import by the resolver's auto-injection of
+// `std.unicode` into the USER entry group when it sees a char-Unicode
+// *method-call* selector (`expr.is_alphabetic()`, tagged `@method:` in
+// lints::collect_expr) — see imports.rs `CHAR_UNICODE_METHOD_SELECTORS` (Plan
+// 159 Ф.4, restored by 169.2.1). That path distinguishes method calls from the
+// opt-in free-function form and never enters the prelude→unicode→collections
+// cycle. `core` stays unicode-free → partial `#prelude(core,…)` is fixed.
+
 /// Prelude version marker — verify в тестах что auto-import работает.
 /// Bump'ается при каждой migration phase Plan 62.
 ///   - 1 = pre-migration (только этот placeholder).

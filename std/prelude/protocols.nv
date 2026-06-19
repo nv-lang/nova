@@ -627,3 +627,63 @@ fn char @debug(mut w Write) -> () { w.write("${@:?}") }
 fn str @display(mut w Write) -> () { w.write(@) }
 #impl(Debug)
 fn str @debug(mut w Write) -> () { w.write("${@:?}") }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Option[T] / Result[T,E] — Debug impl
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 91.15 Ф.2 originally declared these in `std/prelude/core.nv`, next to the
+// Option/Result type declarations. Plan 169.2.1 (D303) moved them HERE because
+// they reference the `Debug` protocol and the `Write` sink — both declared in
+// THIS module — so under a partial `#prelude(core, runtime)` (no `protocols`)
+// they raised `E_IMPL_UNKNOWN_PROTOCOL`. Hosting them with the protocols they
+// implement keeps `core` self-contained (its "ZERO imports" architecture rule)
+// and lets `#prelude(core, runtime)` compile. The `Option`/`Result` types are
+// visible here via the prelude auto-import (re-exported from `prelude.core`).
+
+/// Debug representation for Option[T]: `Some(value)` or `None`.
+/// Requires `[T Debug]` — propagates the bound to the inner value.
+///
+/// # Examples
+///
+/// ```nova
+/// assert("${Some(42):?}" == "Some(42)")
+/// assert("${None:?}" == "None")
+/// assert("${Some("hi"):?}" == "Some(\"hi\")")
+/// ```
+#impl(Debug)
+fn Option[T Debug] @debug(mut w Write) -> () {
+    match @ {
+        Some(v) => {
+            w.write("Some(")
+            v.debug(w)
+            w.write(")")
+        }
+        None => w.write("None")
+    }
+}
+
+/// Debug representation for Result[T,E]: `Ok(value)` or `Err(error)`.
+/// Requires `[T Debug, E Debug]`.
+///
+/// # Examples
+///
+/// ```nova
+/// assert("${Ok(1):?}" == "Ok(1)")
+/// assert("${Err("oops"):?}" == "Err(\"oops\")")
+/// ```
+#impl(Debug)
+fn Result[T Debug, E Debug] @debug(mut w Write) -> () {
+    match @ {
+        Ok(v) => {
+            w.write("Ok(")
+            v.debug(w)
+            w.write(")")
+        }
+        Err(e) => {
+            w.write("Err(")
+            e.debug(w)
+            w.write(")")
+        }
+    }
+}
