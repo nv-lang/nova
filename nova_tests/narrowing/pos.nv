@@ -1,0 +1,31 @@
+// Non-literal int narrowing requires `as` (D54). These are the cases that must
+// stay legal: value-range-preserving widening, explicit `as`, and literals.
+module narrowing.pos
+
+fn take_int(x int) -> int => x
+
+test "widening u8 -> int is implicit" {
+    ro b u8 = 5
+    ro w int = b
+    assert(w == 5)
+    assert(take_int(b) == 5)
+}
+test "widening i16 -> i32 is implicit" {
+    ro a i16 = 100
+    ro w i32 = a
+    assert(w == 100)
+}
+test "unsigned into strictly wider signed (u8 -> i32) is implicit" {
+    ro b u8 = 200
+    ro w i32 = b
+    assert(w == 200)
+}
+test "narrowing with explicit as is OK" {
+    ro c int = 30
+    ro a u8 = c as u8
+    assert(a == 30)
+}
+test "literal that fits the target is OK" {
+    ro a u8 = 200
+    assert(a == 200)
+}

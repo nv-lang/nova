@@ -5313,6 +5313,41 @@ impl<'a> TypeCheckCtx<'a> {
                         ));
                     }
                 }
+                // [M-scalar-nonliteral-narrowing-not-enforced] (D54): reassignment
+                // `a = c` where a non-literal wider int narrows into `a`'s declared
+                // int type needs an explicit `as`. Reassignment has no general
+                // `assignable()` check, so do a focused narrowing-only compare here.
+                // Literals coerce by context (skip); `as`-casts infer as their
+                // target width (no narrowing seen). Only fires int→int narrowing.
+                if let ExprKind::Ident(name) = &target.kind {
+                    let is_num_lit = matches!(
+                        value.kind,
+                        ExprKind::IntLit(_) | ExprKind::FloatLit(_)
+                    ) || matches!(&value.kind,
+                        ExprKind::Unary { op: UnOp::Neg, operand }
+                        if matches!(operand.kind, ExprKind::IntLit(_) | ExprKind::FloatLit(_)));
+                    if !is_num_lit {
+                        if let (Some(target_ty), Some(value_ty)) =
+                            (scope.get(name).cloned(), self.infer_expr_type(value, scope))
+                        {
+                            if is_int_narrowing(&value_ty, &target_ty) {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_IMPLICIT_NARROWING] cannot assign value of \
+                                         type `{}` to `{}` of narrower type `{}` — \
+                                         implicit int narrowing loses range; use an \
+                                         explicit `... as {}` cast (D54)",
+                                        typeref_display(&value_ty),
+                                        name,
+                                        typeref_display(&target_ty),
+                                        typeref_display(&target_ty),
+                                    ),
+                                    value.span,
+                                ));
+                            }
+                        }
+                    }
+                }
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
@@ -5717,6 +5752,24 @@ impl<'a> TypeCheckCtx<'a> {
                 errors.push(
                     Diagnostic::new(
                         format!("[E_LIT_OUT_OF_RANGE] {msg}"),
+                        value.span,
+                    )
+                    .with_note_at(
+                        "type expected because of this annotation".to_string(),
+                        ann.span(),
+                    ),
+                );
+            }
+            // [M-scalar-nonliteral-narrowing-not-enforced] (D54).
+            Compat::Narrowing { from, to } => {
+                errors.push(
+                    Diagnostic::new(
+                        format!(
+                            "[E_IMPLICIT_NARROWING] cannot assign value of type `{}` \
+                             to `{}` of narrower type `{}` — implicit int narrowing \
+                             loses range; use an explicit `... as {}` cast (D54)",
+                            from, name, to, to,
+                        ),
                         value.span,
                     )
                     .with_note_at(
@@ -6399,6 +6452,23 @@ impl<'a> TypeCheckCtx<'a> {
                     errors.push(
                         Diagnostic::new(
                             format!("[E_LIT_OUT_OF_RANGE] {msg}"),
+                            arg.expr().span,
+                        )
+                        .with_note_at(
+                            format!("parameter `{}` declared here", param.name),
+                            param.span,
+                        ),
+                    );
+                }
+                Compat::Narrowing { from, to } => {
+                    errors.push(
+                        Diagnostic::new(
+                            format!(
+                                "[E_IMPLICIT_NARROWING] cannot pass `{}` as argument \
+                                 `{}` of narrower type `{}` — implicit int narrowing \
+                                 loses range; use an explicit `{} as {}` cast (D54)",
+                                from, param.name, to, "<value>", to,
+                            ),
                             arg.expr().span,
                         )
                         .with_note_at(
@@ -7734,6 +7804,20 @@ impl<'a> TypeCheckCtx<'a> {
             return Compat::Ok;
         }
         let found_cat = self.cat_of(&found_tr, expr_gs);
+        // [M-scalar-nonliteral-narrowing-not-enforced] (D54): a NON-LITERAL int
+        // value coerced into a narrower / value-range-unsafe int position must
+        // use an explicit `as`. Literals already returned above (D227 handles
+        // their range-check); an `as`-cast infers as its target width (no
+        // narrowing seen here). Only fires int→int — widening stays implicit.
+        if matches!(found_cat, TyCat::Int)
+            && matches!(exp_cat, TyCat::Int)
+            && is_int_narrowing(&found_tr, expected)
+        {
+            return Compat::Narrowing {
+                from: typeref_display(&found_tr),
+                to: typeref_display(expected),
+            };
+        }
         if cat_compatible(&found_cat, &exp_cat) {
             Compat::Ok
         } else {
@@ -8376,6 +8460,11 @@ enum Compat {
     /// Plan 142 (D227): целочисленный литерал вне диапазона sized-типа.
     /// `msg` — готовый суффикс диагностики, e.g. «300 > u8.MAX (255)».
     OutOfRange { msg: String },
+    /// [M-scalar-nonliteral-narrowing-not-enforced] (D54): неявное сужение
+    /// НЕ-литерала из более широкого int-типа в более узкий (или
+    /// value-range-unsafe sign-flip / cross). Требует явного `as`. `from`/`to` —
+    /// отображения исходного и целевого типов для диагностики.
+    Narrowing { from: String, to: String },
 }
 
 /// Plan 142 (D227 Rule 3/6): диапазон `[min, max]` для sized-int типа.
@@ -8421,6 +8510,63 @@ fn sized_int_name(tr: &TypeRef) -> Option<String> {
         | TypeRef::Unsafe(inner, _) => sized_int_name(inner),
         _ => None,
     }
+}
+
+/// [M-scalar-nonliteral-narrowing-not-enforced] (D54/D129/D130): `(bit-width,
+/// is_signed)` of a DIRECT int-family TypeRef. `int` = `i64` = (64, signed);
+/// `uint` = `u64` = (64, unsigned). Unwraps `ro`/`mut`/`unsafe` wrappers like
+/// `sized_int_name`. Returns `None` for non-int types AND for alias/newtype names
+/// (resolving those needs `self.types`, unavailable here) → the narrowing check
+/// stays permissive on them, matching the D227 alias-range-check skip.
+fn int_width_rank(tr: &TypeRef) -> Option<(u8, bool)> {
+    match tr {
+        TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+            match path.last()?.as_str() {
+                "i8" => Some((8, true)),
+                "i16" => Some((16, true)),
+                "i32" => Some((32, true)),
+                "i64" | "int" => Some((64, true)),
+                "u8" => Some((8, false)),
+                "u16" => Some((16, false)),
+                "u32" => Some((32, false)),
+                "u64" | "uint" => Some((64, false)),
+                _ => None,
+            }
+        }
+        TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Unsafe(inner, _) => int_width_rank(inner),
+        _ => None,
+    }
+}
+
+/// [M-scalar-nonliteral-narrowing-not-enforced] (D54): would coercing a
+/// non-literal value of type `found` into position `expected` LOSE range — i.e.
+/// is it a narrowing / value-range-unsafe int conversion that must require an
+/// explicit `as`? Both sides must be direct int-family types (else `false` —
+/// permissive). Value-range-PRESERVING widening stays implicit:
+///   - same (width, sign)                      → ok  (incl. `int`≡`i64`, `uint`≡`u64`);
+///   - signed → strictly wider signed          → ok;
+///   - unsigned → strictly wider unsigned       → ok;
+///   - unsigned → strictly wider signed         → ok  (whole range fits);
+///   - signed → unsigned (any width)            → NARROW (negatives);
+///   - anything not strictly wider              → NARROW (incl. u32→i32, u64→int).
+fn is_int_narrowing(found: &TypeRef, expected: &TypeRef) -> bool {
+    let (Some((fw, fs)), Some((ew, es))) =
+        (int_width_rank(found), int_width_rank(expected))
+    else {
+        return false;
+    };
+    if fw == ew && fs == es {
+        return false; // identity widening (int≡i64, uint≡u64, Tn→Tn)
+    }
+    let safe_widening = match (fs, es) {
+        (true, true) => ew > fw,   // signed → wider signed
+        (false, false) => ew > fw, // unsigned → wider unsigned
+        (false, true) => ew > fw,  // unsigned → strictly wider signed (range fits)
+        (true, false) => false,    // signed → unsigned: never implicit
+    };
+    !safe_widening
 }
 
 /// Plan 142 (D227 Rule 3/6): диапазон-проверка значения `val` (i128)

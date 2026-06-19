@@ -1,0 +1,4 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+// Non-literal int -> u8 reassignment without `as` (D54).
+module neg.n_reassign
+test "t" { mut a u8 = 0  ro c int = 30  a = c  assert(a >= 0) }
