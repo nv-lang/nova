@@ -209,10 +209,34 @@ Folder-module не применяется если:
 
 В этом случае файлы остаются **standalone**: каждый объявляет свой уникальный `module <dir>.<filename>`.
 
-При конфликтах имён есть три выхода:
-- **Ordinal-suffix rename** (предпочтительно для существующих dirs): `Counter` в 3 файлах → `Counter1`/`Counter2`/`Counter3` (алфавитный порядок по имени файла). Массовый рефактор — `python scripts/catb_convert.py <dir>`.
+При конфликтах имён есть выходы (в порядке предпочтения):
+- **`priv(file)`** (Plan 170, предпочтительно): пометить конфликтующие top-level `fn`/`const`/тип-без-методов как `priv(file) fn helper()` → file-private, ноль rename, имена читаемы. **Ограничение:** `priv(file)` типы С методами НЕ дискриминируются по файлу (коллизия метод-символа `Nova_<T>_static_<m>`) → для них ordinal-rename.
+- **Ordinal-suffix rename**: `Counter` в 3 файлах → `Counter1`/`Counter2`/`Counter3` (алфавитный порядок по имени файла). Массовый рефактор — `python scripts/catb_convert.py <dir>`.
 - **Уникальный prefix** (для нового кода): `feature_a_helper()` вместо `helper()`.
 - **Оставить standalone** (если переименование ломает смысл теста или dir заблокирована `nova.toml`).
+
+---
+
+### Консолидация по темам (Plan 169.1.2)
+
+Сокращение CU: тесты разных планов одной **ТЕМЫ** (atomics, sync, syntax, …)
+сливаются в один folder-module `module nova_tests.<тема>`, а не по номеру плана.
+
+- **Связь тест↔план — через имя файла:** `plan103_2_atomic_i64.nv` в `nova_tests/atomics/`.
+  Имена файлов произвольны (на `module` не влияют); происхождение видно по префиксу,
+  раннер печатает путь при падении → навигация цела.
+- **Module:** все позитивы темы → `module nova_tests.<тема>`; neg → `neg/` (`module neg.<stem>`).
+- **Коллизии между планами:** `priv(file)` / rename (см. выше). Между темами часто их нет.
+- **EXPECT_TIMEOUT / EXPECT_RUNTIME_PANIC / EXPECT_EXIT — НЕ сливаются** в folder-module
+  (маркер относится к целому TU; в общем бинаре они бы повесили/уронили остальные).
+  Остаются standalone. Runtime-panic консолидируются отдельно через `panics`-клаузулу
+  (Plan 169.1.2 Ф.2); timeout — всегда standalone.
+- **Валидация — ТОЛЬКО канонически:** `nova test . --filter <тема>` из корня репо.
+  Standalone `nova test nova_tests/<тема>` folder-module НЕ обрабатывает (root модуля
+  считается иначе) → ложные `E_D78_MODULE_PATH_MISMATCH`/провалы.
+- **Починка fallout:** приводя старые тесты к актуальному компилятору, чинить новые
+  ошибки enforcement'а (напр. `E_LOCAL_NOT_MUT` → добавить `mut` переприсваиваемым
+  переменным), **НЕ выхолащивая** тест.
 
 ---
 
