@@ -203,7 +203,8 @@ pub fn parse_expect(src: &str) -> Vec<ExpectMarker> {
 
         let parsed: Option<ExpectMarker> = if let Some(rest) = body.strip_prefix("EXPECT_COMPILE_ERROR") {
             let arg = rest.trim();
-            (!arg.is_empty()).then(|| ExpectMarker::CompileError(arg.to_string()))
+            // Empty pattern matches any compile error (same as EXPECT_CC_ERROR behaviour).
+            Some(ExpectMarker::CompileError(arg.to_string()))
         } else if let Some(rest) = body.strip_prefix("EXPECT_CC_ERROR") {
             let arg = rest.trim();
             Some(ExpectMarker::CcError(arg.to_string()))
