@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_ARG_ELEM_TYPE_MISMATCH
+//
+// Passing a whole Vec[int] where Vec[u32] is expected is a pointer
+// reinterpretation (8-byte slots read as 4-byte) — must be a type error.
+module neg.n_vec_int_to_u32
+
+fn takes_u32(v Vec[u32]) -> int => v.len()
+
+test "Vec[int] -> Vec[u32] is rejected" {
+    mut a = Vec[int].with_capacity(1)
+    a.push(1)
+    assert(takes_u32(a) == 1)
+}

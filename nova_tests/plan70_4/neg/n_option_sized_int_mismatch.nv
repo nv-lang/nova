@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_ARG_ELEM_TYPE_MISMATCH
+//
+// Plan 70.4 Ф.2 negative: Option[i16] incompatible with Option[i32].
+// sized-int types generate distinct C-structs (NovaOpt_int16_t vs
+// NovaOpt_int32_t). Previously caught only at the C stage (EXPECT_CC_ERROR);
+// the generic type-argument check now rejects it at type-check time.
+module neg.n_option_sized_int_mismatch
+
+fn take_opt_i32(o Option[i32]) -> bool { o.is_some() }
+
+fn bad2() -> bool {
+    ro o Option[i16] = Some(1 as i16)
+    take_opt_i32(o)
+}

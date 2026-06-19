@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_ARG_ELEM_TYPE_MISMATCH
+//
+// The same reinterpretation footgun on a USER-DEFINED generic type: a
+// Stack[int] passed where Stack[u32] is expected. The check is general, not
+// hardcoded to Vec.
+module neg.n_user_generic_int_to_u32
+
+type Stack[T] { items []T }
+
+fn takes_u32(s Stack[u32]) -> int => s.items.len()
+
+test "Stack[int] -> Stack[u32] is rejected" {
+    ro a Stack[int] = Stack[int] { items: [1, 2] }
+    assert(takes_u32(a) == 2)
+}

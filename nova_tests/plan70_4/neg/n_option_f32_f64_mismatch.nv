@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_ARG_ELEM_TYPE_MISMATCH
+//
+// Plan 70.4 Ф.1 negative: Option[f32] incompatible with Option[f64].
+// f32/f64 generate distinct C-structs (NovaOpt_nova_f32 vs NovaOpt_nova_f64);
+// passing one for the other is a reinterpretation. Previously this slipped past
+// the type-checker and only failed at the C stage (EXPECT_CC_ERROR); the generic
+// type-argument check now rejects it cleanly at type-check time.
+module neg.n_option_f32_f64_mismatch
+
+fn take_opt_f64(o Option[f64]) -> bool { o.is_some() }
+
+fn bad1() -> bool {
+    ro o Option[f32] = Some(1.0 as f32)
+    take_opt_f64(o)
+}

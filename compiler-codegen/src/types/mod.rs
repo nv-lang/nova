@@ -6407,7 +6407,74 @@ impl<'a> TypeCheckCtx<'a> {
                         ),
                     );
                 }
-                Compat::Ok | Compat::Unknown => {}
+                Compat::Ok | Compat::Unknown => {
+                    // [M-generic-arg-type-mismatch-silent] The Ty/TyCat lowering
+                    // folds every int width into one `TyCat::Int` and drops a
+                    // named type's generic arguments, so a generic value passed
+                    // with a different concrete primitive type-argument (e.g.
+                    // `Vec[int]`→`Vec[u32]`, or a user `Stack[int]`→`Stack[u32]`)
+                    // slips past `assignable`. That is a pointer reinterpretation —
+                    // a generic instantiation is a distinct monomorphized struct
+                    // (`Nova_Vec____nova_int*` 8-byte slots vs
+                    // `Nova_Vec____uint32_t*` 4-byte slots), so reading one as the
+                    // other misreads element width/stride and yields garbage like
+                    // `(hi<<32)|lo`. We catch it here at raw-TypeRef granularity
+                    // (Ty/TyCat cannot). NOT Vec-specific — fires for ANY generic
+                    // type whose base name + arity match but a concrete-primitive
+                    // type-argument differs. Scalar coercion (`int`→`u32` outside a
+                    // generic, e.g. `push(int)` into a `Vec[u32]`) is a value-level
+                    // truncation and is intentionally NOT flagged.
+                    if let (Some((base_p, args_p)), Some(arg_tr)) = (
+                        generic_args(&param.ty),
+                        self.infer_expr_type(arg.expr(), scope),
+                    ) {
+                        if let Some((base_a, args_a)) = generic_args(&arg_tr) {
+                            // Same generic type (base name + arity) — compare each
+                            // type-argument; flag the first concrete-primitive pair
+                            // that differs.
+                            if base_p == base_a && args_p.len() == args_a.len() {
+                                for (pa, aa) in args_p.iter().zip(args_a.iter()) {
+                                    if let (Some(pe), Some(ae)) = (
+                                        concrete_primitive_name(pa),
+                                        concrete_primitive_name(aa),
+                                    ) {
+                                        if pe != ae {
+                                            errors.push(
+                                                Diagnostic::new(
+                                                    format!(
+                                                        "[E_ARG_ELEM_TYPE_MISMATCH] \
+                                                         cannot pass `{}` as argument \
+                                                         `{}` of type `{}` — generic \
+                                                         type argument differs (`{}` \
+                                                         vs `{}`); a generic \
+                                                         instantiation is a distinct \
+                                                         monomorphized type, so this \
+                                                         would reinterpret its \
+                                                         contents at the wrong width",
+                                                        typeref_display(&arg_tr),
+                                                        param.name,
+                                                        typeref_display(&param.ty),
+                                                        ae,
+                                                        pe,
+                                                    ),
+                                                    arg.expr().span,
+                                                )
+                                                .with_note_at(
+                                                    format!(
+                                                        "parameter `{}` declared here",
+                                                        param.name,
+                                                    ),
+                                                    param.span,
+                                                ),
+                                            );
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -7728,6 +7795,31 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 125.1 (Ф.2): never-returning builtins + user fns whose
             // return_type resolves to `Ty::Never` → propagate `never`.
             ExprKind::Call { func, .. } => {
+                // [M-vec-elem-type-mismatch-silent] generic constructor:
+                // `Type[T..].new(...)` / `.with_capacity` / `.from` / `.default`
+                // / `.filled` → `Named{Type, generics:[T..]}`. Preserves the
+                // element type (unlike `infer_value_type`, which collapses to the
+                // bare name) so an inferred `mut v = Vec[int].with_capacity(n)`
+                // binds `v: Vec[int]` in scope — letting the container
+                // element-mismatch arg-check fire on inferred bindings, not only
+                // explicitly-annotated ones. AST shape: Call{ func: Member{ obj:
+                // TurboFish{ base: Ident(Type), type_args }, name: ctor } }.
+                if let ExprKind::Member { obj, name: ctor } = &func.kind {
+                    if let ExprKind::TurboFish { base, type_args } = &obj.kind {
+                        if let ExprKind::Ident(tyname) = &base.kind {
+                            if matches!(
+                                ctor.as_str(),
+                                "new" | "with_capacity" | "from" | "default" | "filled"
+                            ) {
+                                return Some(TypeRef::Named {
+                                    path: vec![tyname.clone()],
+                                    generics: type_args.clone(),
+                                    span: expr.span,
+                                });
+                            }
+                        }
+                    }
+                }
                 if let ExprKind::Ident(name) = &func.kind {
                     if let Some(td) = self.types.get(name) {
                         // Plan 128.1 Ф.2 — D215 NamedTuple constructor (`Vec3(1,2,3)`)
@@ -8121,7 +8213,7 @@ impl<'a> TypeCheckCtx<'a> {
             return TyCat::Other;
         }
         match tr {
-            TypeRef::Named { path, .. } => {
+            TypeRef::Named { path, generics, .. } => {
                 let Some(name) = path.last() else { return TyCat::Other; };
                 if gs.contains(name) {
                     return TyCat::Other;
@@ -8135,6 +8227,22 @@ impl<'a> TypeCheckCtx<'a> {
                     "bool" => TyCat::Bool,
                     "str" => TyCat::Str,
                     "char" => TyCat::Char,
+                    // [M-vec-elem-type-mismatch-silent] D239: `Vec[T] ≡ []T`.
+                    // Lower the named `Vec[T]` form to the SAME `Array(elem)`
+                    // category as the `[]T` sugar so the two spellings unify in
+                    // assignability — e.g. a `Vec[int]` value passed to an
+                    // `[]int` param. Without this the named form fell through to
+                    // the Record arm below and collapsed to `Named("Vec")` with
+                    // the element dropped, so it never matched `Array(elem)` and
+                    // a `Vec[int]`→`[]int` argument spuriously failed once the
+                    // binding's `Vec[int]` type became known. The element STILL
+                    // lowers through `cat_of_depth`, so `Vec[int]` and `Vec[u32]`
+                    // both reduce to `Array(Int)` here (int-width collapse is
+                    // intentional at this layer); the raw-TypeRef element check
+                    // in `f1_check_call` catches genuine width mismatches.
+                    "Vec" if generics.len() == 1 => TyCat::Array(Box::new(
+                        self.cat_of_depth(&generics[0], gs, depth + 1),
+                    )),
                     // Plan 134: `ptr` removed — but keep as Ptr for legacy compat
                     // during transition; produces error in codegen type_ref_to_c.
                     "ptr" => TyCat::Ptr,
@@ -12817,6 +12925,50 @@ fn typeref_equal(a: &TypeRef, b: &TypeRef) -> bool {
         (TypeRef::Mut(ia, _), TypeRef::Mut(ib, _)) => typeref_equal(ia, ib),
         (TypeRef::Unsafe(ia, _), TypeRef::Unsafe(ib, _)) => typeref_equal(ia, ib),
         _ => false,
+    }
+}
+
+/// [M-generic-arg-type-mismatch-silent] — extract `(base-name, type-arguments)`
+/// from ANY generic type: a user `Stack[T]` / `Map[K,V]` / `Box[T]` as well as
+/// the builtin `Vec[T]` and its `[]T` array sugar. Deliberately NOT Vec-specific:
+/// the silent element-reinterpretation bug applies to every generic type — a
+/// `Stack[int]` passed where `Stack[u32]` is expected is the same
+/// pointer-reinterpretation footgun as `Vec[int]`→`Vec[u32]`.
+///
+/// The `[]T` array form normalizes to base `"Vec"` (D239: `[]T ≡ Vec[T]`) so the
+/// two spellings of the one builtin compare equal. Peels `ro`/`mut` binding
+/// wrappers. Returns `None` for non-generic types (bare names, primitives,
+/// tuples, …) — the caller then skips the check.
+fn generic_args(tr: &TypeRef) -> Option<(String, Vec<&TypeRef>)> {
+    match tr {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) => generic_args(inner),
+        TypeRef::Array(inner, _) => Some(("Vec".to_string(), vec![inner.as_ref()])),
+        TypeRef::FixedArray(_, inner, _) => Some(("Vec".to_string(), vec![inner.as_ref()])),
+        TypeRef::Named { path, generics, .. } if !generics.is_empty() => {
+            Some((path.last()?.clone(), generics.iter().collect()))
+        }
+        _ => None,
+    }
+}
+
+/// [M-generic-arg-type-mismatch-silent] — if `tr` is a concrete builtin scalar
+/// primitive (named, single-segment, no generics), return its name. Generic
+/// type-params (`T`), records, newtypes and aliases return `None` so they are
+/// never flagged by the generic-argument mismatch check — only genuine
+/// primitive-vs-primitive differences (the width-reinterpretation bug class)
+/// fire. Scalar coercion (`int`→`u32` outside a generic) is unaffected: this is
+/// consulted ONLY for type-arguments of matching generic types.
+fn concrete_primitive_name(tr: &TypeRef) -> Option<&str> {
+    match tr {
+        TypeRef::Named { path, generics, .. } if generics.is_empty() && path.len() == 1 => {
+            match path[0].as_str() {
+                n @ ("int" | "i8" | "i16" | "i32" | "i64"
+                | "u8" | "u16" | "u32" | "u64" | "uint"
+                | "f32" | "f64" | "char" | "bool" | "str") => Some(n),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
