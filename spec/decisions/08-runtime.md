@@ -923,9 +923,9 @@ fn str @contains(needle str) -> bool
 fn str @starts_with(prefix str) -> bool
 fn str @ends_with(suffix str) -> bool
 fn str @split(sep str) -> Iter[str]
-fn str @trim() -> str
-fn str @to_lower() -> str
-fn str @to_upper() -> str
+fn str @trim_ascii() -> str            // Plan 91.18: bare trim = Unicode под import std.unicode
+fn str @to_ascii_lower() -> str        // Plan 91.18: bare to_lower = Unicode под import std.unicode
+fn str @to_ascii_upper() -> str        // Plan 91.18: bare to_upper = Unicode под import std.unicode
 ```
 
 `s.find(":") -> Option[int]` возвращает **байт-offset** ":", который композируется
