@@ -270,7 +270,10 @@ fn collation_elements(s str) -> Vec[u32] {
     ro n = cps.len()
     mut used = Vec[int].with_capacity(n)
     mut z = 0
-    while z < n { used.push(0) z = z + 1 }
+    while z < n {
+        used.push(0)
+        z += 1
+    }
     mut acc = Vec[u32].with_capacity(n * 8)
     mut i = 0
     while i < n {

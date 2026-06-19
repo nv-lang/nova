@@ -93,7 +93,10 @@ fn str_to_cps(s str) -> Vec[u32] {
 
 fn cps_to_str(cps Vec[u32]) -> str {
     consume sb = StringBuilder.with_capacity(cps.len() * 2)
-    for cp in cps { sb.append(str.from_codepoint(cp)) }
+    for cp in cps {
+        ro c = match char.try_from(cp as int) { Ok(c) => c, Err(_) => '\u{FFFD}' }
+        sb.append(c)
+    }
     sb.into_str()
 }
 

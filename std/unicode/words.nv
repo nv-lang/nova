@@ -285,17 +285,20 @@ export fn to_titlecase(s str) -> str {
     ro n = cps.len()
     ro cats = wb_cats(cps)
     ro starts = wb_starts(cps, cats)
-    // is_start[i] == 1 ⟺ cp i begins a new word (reset the first-cased tracker).
-    mut is_start = Vec[u32].with_capacity(n)
+    // is_start[i] ⟺ cp i begins a new word (reset the first-cased tracker).
+    mut is_start = Vec[bool].with_capacity(n)
     mut z = 0
-    while z < n { is_start.push(0) z = z + 1 }
-    for st in starts { is_start[st] = 1 }
+    while z < n {
+        is_start.push(false)
+        z += 1
+    }
+    for st in starts { is_start[st] = true }
     mut out = Vec[u32].with_capacity(n)
     mut seen_cased = false
     mut i = 0
     while i < n {
         ro cp = cps[i]
-        if is_start[i] == 1 { seen_cased = false }
+        if is_start[i] { seen_cased = false }
         ro mapped = if (!seen_cased) && is_cased(cp) {
             title_one(cp)                                  // first cased char → titlecase
         } else if cp == CAP_SIGMA {
