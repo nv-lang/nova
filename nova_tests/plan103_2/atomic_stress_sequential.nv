@@ -12,7 +12,7 @@ module plan103_2.atomic_stress_sequential
 
 test "stress: AtomicI64 10000 fetch_add/sub — net zero" {
     mut a = AtomicI64.new(0)
-    ro i = 0
+    mut i = 0
     while i < 10000 {
         a.fetch_add(1)
         a.fetch_sub(1)
@@ -23,7 +23,7 @@ test "stress: AtomicI64 10000 fetch_add/sub — net zero" {
 
 test "stress: AtomicU64 10000 fetch_add — final value correct" {
     mut a = AtomicU64.new(0)
-    ro i = 0
+    mut i = 0
     while i < 10000 {
         a.fetch_add(1, Relaxed)
         i = i + 1
@@ -33,7 +33,7 @@ test "stress: AtomicU64 10000 fetch_add — final value correct" {
 
 test "stress: AtomicI32 1000 fetch_or/and cycles — final value 0" {
     mut a = AtomicI32.new(0)
-    ro i = 0
+    mut i = 0
     while i < 1000 {
         a.fetch_or(0xFF)
         a.fetch_and(0)
@@ -44,7 +44,7 @@ test "stress: AtomicI32 1000 fetch_or/and cycles — final value 0" {
 
 test "stress: AtomicBool 5000 flip-flops via fetch_xor" {
     mut a = AtomicBool.new(false)
-    ro i = 0
+    mut i = 0
     while i < 5000 {
         a.fetch_xor(true)
         i = i + 1
@@ -56,10 +56,10 @@ test "stress: AtomicBool 5000 flip-flops via fetch_xor" {
 test "stress: AtomicI64 1000 compare_exchange retry loop — counter" {
     mut a = AtomicI64.new(0)
     // Increment via CAS loop 100 times
-    ro outer = 0
+    mut outer = 0
     while outer < 100 {
-        ro done = false
-        ro inner = 0
+        mut done = false
+        mut inner = 0
         while inner < 1000 {
             ro cur = a.load()
             ro ok = a.compare_exchange(cur, cur + 1)
@@ -77,7 +77,7 @@ test "stress: AtomicI64 1000 compare_exchange retry loop — counter" {
 
 test "stress: AtomicI64 fetch_max over ascending sequence" {
     mut a = AtomicI64.new(0)
-    ro i = 0
+    mut i = 0
     while i < 1000 {
         a.fetch_max(i)
         i = i + 1
@@ -87,7 +87,7 @@ test "stress: AtomicI64 fetch_max over ascending sequence" {
 
 test "stress: AtomicI64 fetch_min over descending sequence" {
     mut a = AtomicI64.new(1000)
-    ro i = 999
+    mut i = 999
     while i >= 0 {
         a.fetch_min(i)
         i = i - 1

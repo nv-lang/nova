@@ -32,7 +32,7 @@ test "AtomicI64 compare_exchange with explicit success/failure orderings" {
 
 test "AtomicU32 fetch_add with Relaxed — pipeline counter" {
     mut counter = AtomicU32.new(0)
-    ro i = 0
+    mut i = 0
     while i < 10 {
         counter.fetch_add(1, Relaxed)
         i = i + 1
@@ -49,8 +49,8 @@ test "AtomicI32 swap with AcqRel" {
 
 test "AtomicI64 compare_exchange_weak with ordering — retry loop" {
     mut a = AtomicI64.new(0)
-    ro i = 0
-    ro done = false
+    mut i = 0
+    mut done = false
     while i < 100 {
         ro ok = a.compare_exchange_weak(0, 1, AcqRel, Acquire)
         if ok {

@@ -39,8 +39,8 @@ test "AtomicBool compare_exchange_weak — success path" {
     mut a = AtomicBool.new(true)
     // compare_exchange_weak may spuriously fail on some platforms;
     // retry until success for a deterministic test.
-    ro i = 0
-    ro ok = false
+    mut i = 0
+    mut ok = false
     while i < 100 {
         ro r = a.compare_exchange_weak(true, false)
         if r {
