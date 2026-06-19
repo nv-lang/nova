@@ -12,6 +12,26 @@ module runtime.string
 import std.prelude.core.{Option, Some, None}
 
 
+// Module-private: decode one UTF-8 codepoint at bytes[i].
+// Returns (codepoint, step_bytes). R-UTF8: assumes valid UTF-8.
+// On invalid lead byte: returns (bytes[i] as int, 1) — graceful degrade.
+// runtime.string decode; std.unicode has decode_at (intentional per-module copy, folder boundary).
+fn decode_utf8(bytes ro []u8, i int, n int) -> (int, int) {
+    ro b = bytes[i] as int
+    if b < 0x80 { return (b, 1) }
+    if (b & 0xE0) == 0xC0 && i + 1 < n {
+        return (((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F), 2)
+    }
+    if (b & 0xF0) == 0xE0 && i + 2 < n {
+        return (((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F), 3)
+    }
+    if (b & 0xF8) == 0xF0 && i + 3 < n {
+        return (((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F), 4)
+    }
+    (b, 1)
+}
+
+
 // ─── CharsIter — codepoint decoding lens (Plan 152.1 Ф.3, D250) ───
 //
 // `as_chars()` is a DECODING lens (not a reinterpretation like `as_bytes()`):
@@ -54,24 +74,8 @@ export fn CharsIter mut @next() -> Option[char] {
     ro bytes = @buf.as_bytes()
     ro n = @buf.byte_len()
     if @pos >= n { return None }
-    ro b = bytes[@pos] as int
-    mut cp = b
-    mut step = 1
-    if b < 0x80 {
-        cp = b; step = 1
-    } else if (b & 0xE0) == 0xC0 && @pos + 1 < n {
-        cp = ((b & 0x1F) << 6) | (bytes[@pos+1] as int & 0x3F)
-        step = 2
-    } else if (b & 0xF0) == 0xE0 && @pos + 2 < n {
-        cp = ((b & 0x0F) << 12) | ((bytes[@pos+1] as int & 0x3F) << 6) | (bytes[@pos+2] as int & 0x3F)
-        step = 3
-    } else if (b & 0xF8) == 0xF0 && @pos + 3 < n {
-        cp = ((b & 0x07) << 18) | ((bytes[@pos+1] as int & 0x3F) << 12) | ((bytes[@pos+2] as int & 0x3F) << 6) | (bytes[@pos+3] as int & 0x3F)
-        step = 4
-    } else {
-        cp = b; step = 1
-    }
-    @pos = @pos + step
+    ro (cp, step) = decode_utf8(bytes, @pos, n)
+    @pos += step
     Some(cp_to_char(cp))
 }
 
@@ -108,28 +112,10 @@ export fn CharsIter @nth(idx int) -> Option[char] {
     mut cp_idx = 0
     mut i = @pos
     while i < n {
-        ro b = bytes[i] as int
-        mut cp = b
-        mut step = 1
-        if b < 0x80 {
-            cp = b; step = 1
-        } else if (b & 0xE0) == 0xC0 && i + 1 < n {
-            cp = ((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F)
-            step = 2
-        } else if (b & 0xF0) == 0xE0 && i + 2 < n {
-            cp = ((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F)
-            step = 3
-        } else if (b & 0xF8) == 0xF0 && i + 3 < n {
-            cp = ((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F)
-            step = 4
-        } else {
-            cp = b; step = 1
-        }
-        if cp_idx == idx {
-            return Some(cp_to_char(cp))
-        }
-        cp_idx = cp_idx + 1
-        i = i + step
+        ro (cp, step) = decode_utf8(bytes, i, n)
+        if cp_idx == idx { return Some(cp_to_char(cp)) }
+        cp_idx += 1
+        i += step
     }
     None
 }

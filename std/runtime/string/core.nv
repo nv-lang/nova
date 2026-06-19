@@ -251,8 +251,7 @@ export fn str.from_bytes_unchecked_steal(consume bytes []u8) -> str {
 // Codepoints как []char (allocating). D178: renamed from @chars().
 // Plan 139 Ф.2: Nova-body — UTF-8 decode cursor над @as_bytes() (zero-copy view),
 // push каждого codepoint как char (через cp_to_char). Семантика идентична
-// nova_str_to_chars. Использует тот же decode-алгоритм, что @char_at (≤2
-// irreducible: decode-курсор на Nova, не C).
+// nova_str_to_chars. decode_utf8 — peer-fn из chars.nv (runtime.string folder module).
 export fn str @to_chars() -> []char {
     ro bytes = @as_bytes()
     ro n = @byte_len()
@@ -261,25 +260,9 @@ export fn str @to_chars() -> []char {
     mut out = []char.with_capacity(@byte_len())
     mut i = 0
     while i < n {
-        ro b = bytes[i] as int
-        mut cp = b
-        mut step = 1
-        if b < 0x80 {
-            cp = b; step = 1
-        } else if (b & 0xE0) == 0xC0 && i + 1 < n {
-            cp = ((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F)
-            step = 2
-        } else if (b & 0xF0) == 0xE0 && i + 2 < n {
-            cp = ((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F)
-            step = 3
-        } else if (b & 0xF8) == 0xF0 && i + 3 < n {
-            cp = ((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F)
-            step = 4
-        } else {
-            cp = b; step = 1
-        }
+        ro (cp, step) = decode_utf8(bytes, i, n)
         out.push(cp_to_char(cp))
-        i = i + step
+        i += step
     }
     out
 }
