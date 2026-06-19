@@ -1,4 +1,4 @@
-﻿// Plan 123 V*.followups 2026-06-05 marker 5 вЂ” V2.1 LICM weighted threshold.
+// Plan 123 V*.followups 2026-06-05 marker 5 вЂ” V2.1 LICM weighted threshold.
 // Closes [M-123.2.1-v2-licm-threshold-integration].
 // Positive: nested-loop pattern exercises V2.1 LICM eligibility check
 // via `count_field_reads_in_block_weighted`. Semantic preservation

@@ -32,65 +32,10 @@ const GCB_LVT int = 13
 
 // ─── lazy-static range tables (built once on first touch) ───
 // Flat int arrays: GCB stride 3 (lo,hi,cat), ExtPict stride 2 (lo,hi); both
-// sorted by lo (binary search). `hex` is shared from the `std.unicode` peer
-// normalize.nv (folder-module peers share declarations).
-fn parse_flat(data str) -> Vec[u32] {
-    mut out = Vec[u32].with_capacity(1024)
-    for entry in data.split(";") {
-        for f in entry.split(",") {
-            ro v = hex(f)
-            if v >= 0 { out.push(v) }
-        }
-    }
-    out
-}
-
+// sorted by lo (binary search). parse_flat/range_lookup3/in_ranges2 live in
+// the std.unicode peer ranges.nv; hex/decode_at in cp_utils.nv.
 ro gcb_flat Vec[u32] = parse_flat(GCB_DATA)
 ro extpict_flat Vec[u32] = parse_flat(EXTPICT_DATA)
-
-// Binary search over sorted (lo,hi,cat) triples; returns cat or 0 (Other).
-fn range_lookup3(t Vec[u32], cp int) -> int {
-    ro count = t.len() / 3
-    mut lo = 0
-    mut hi = count - 1
-    mut res = 0
-    while lo <= hi {
-        ro mid = (lo + hi) / 2
-        ro rlo = t[mid * 3]
-        ro rhi = t[mid * 3 + 1]
-        if cp < rlo {
-            hi = mid - 1
-        } else if cp > rhi {
-            lo = mid + 1
-        } else {
-            res = t[mid * 3 + 2]
-            lo = hi + 1
-        }
-    }
-    res
-}
-
-// Binary search over sorted (lo,hi) pairs; membership test.
-fn in_ranges2(t Vec[u32], cp int) -> bool {
-    ro count = t.len() / 2
-    mut lo = 0
-    mut hi = count - 1
-    mut res = false
-    while lo <= hi {
-        ro mid = (lo + hi) / 2
-        ro rlo = t[mid * 2]
-        ro rhi = t[mid * 2 + 1]
-        if cp < rlo {
-            hi = mid - 1
-        } else if cp > rhi {
-            lo = mid + 1
-        } else {
-            res = true
-            lo = hi + 1
-        }
-    }
-    res
-}
 
 fn gcb(cp int) -> int => range_lookup3(gcb_flat, cp)
 fn is_ext_pict(cp int) -> bool => in_ranges2(extpict_flat, cp)
@@ -101,25 +46,6 @@ const INCB_EXTEND int = 2
 const INCB_LINKER int = 3
 ro incb_flat Vec[u32] = parse_flat(INCB_DATA)
 fn incb_of(cp int) -> int => range_lookup3(incb_flat, cp)
-
-// UTF-8 decode at byte offset `i`: returns (codepoint, byte_step). R-UTF8 (D26)
-// makes this total; the `else` arm guards a truncated tail (single-byte step).
-fn decode_at(s str, i int) -> (int, int) {
-    ro bytes = s.as_bytes()
-    ro n = s.byte_len()
-    ro b = bytes[i] as int
-    if b < 0x80 {
-        (b, 1)
-    } else if ((b & 0xE0) == 0xC0) && (i + 1 < n) {
-        (((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F), 2)
-    } else if ((b & 0xF0) == 0xE0) && (i + 2 < n) {
-        (((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F), 3)
-    } else if ((b & 0xF8) == 0xF0) && (i + 3 < n) {
-        (((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F), 4)
-    } else {
-        (b, 1)
-    }
-}
 
 // Is there a grapheme boundary BEFORE `cur` (between `prev` and `cur`)?
 // `gb11` = prev is a ZWJ closing an `ExtPict Extend*` run (GB11 eligibility);
@@ -154,18 +80,18 @@ fn is_grapheme_break(prev int, cur int, gb11 bool, cur_ep bool, ri_count int, in
     }
 }
 
-// ─── GraphemesView — the third lens ───
-export type GraphemesView value priv(type) {
+// ─── GraphemesIter — the third lens ───
+export type GraphemesIter value priv(type) {
     buf str    // borrows str (alias of the buffer; GC sees ptr through the field)
     pos int    // current byte offset into buf
 }
 
-fn GraphemesView.new(buf str) -> GraphemesView => { buf, pos: 0 }
+fn GraphemesIter.new(buf str) -> GraphemesIter => { buf, pos: 0 }
 
 // `Next[str]`: the next extended grapheme cluster as a byte-slice of `buf`, or
 // `None` when exhausted. Decodes codepoints from `pos`, applies UAX #29 boundary
 // rules, returns `buf[start..pos]`.
-export fn GraphemesView mut @next() -> Option[str] {
+export fn GraphemesIter mut @next() -> Option[str] {
     ro n = @buf.byte_len()
     if @pos >= n { return None }
     ro start = @pos
@@ -189,7 +115,7 @@ export fn GraphemesView mut @next() -> Option[str] {
         } else {
             @pos = @pos + step1
             if cur == GCB_RI {
-                if prev == GCB_RI { ri_count = ri_count + 1 } else { ri_count = 1 }
+                if prev == GCB_RI { ri_count += 1 } else { ri_count = 1 }
             } else {
                 ri_count = 0
             }
@@ -224,17 +150,17 @@ export fn GraphemesView mut @next() -> Option[str] {
 }
 
 // `Iter` (self-iterator): `for g in s.as_graphemes()` routes through for-in (D58).
-export fn GraphemesView @iter() -> GraphemesView => @
+export fn GraphemesIter @iter() -> GraphemesIter => @
 
 // Number of grapheme clusters remaining. O(n). Non-mutating: iterates a value
-// copy (GraphemesView is a `value` record), so safe on a temporary.
-export fn GraphemesView @count() -> int {
+// copy (GraphemesIter is a `value` record), so safe on a temporary.
+export fn GraphemesIter @count() -> int {
     mut it = @
     mut c = 0
     mut going = true
     while going {
         match it.next() {
-            Some(_) => { c = c + 1 }
+            Some(_) => { c += 1 }
             None => { going = false }
         }
     }
@@ -242,10 +168,10 @@ export fn GraphemesView @count() -> int {
 }
 
 // True if no graphemes remain. O(1).
-export fn GraphemesView @is_empty() -> bool => @pos >= @buf.byte_len()
+export fn GraphemesIter @is_empty() -> bool => @pos >= @buf.byte_len()
 
 // ─── str lens ───
 // Lazy grapheme iterator (borrows `self`; O(1) to create). The grapheme layer of
 // the lens model: `s.as_graphemes().count()` for user-visible length, `for g in
 // s.as_graphemes()` to walk visible characters.
-export fn str @as_graphemes() -> GraphemesView => GraphemesView.new(@)
+export fn str @as_graphemes() -> GraphemesIter => GraphemesIter.new(@)

@@ -1,4 +1,4 @@
-﻿// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
 //
 // Plan 148 Р¤.1 (D241) вЂ” negative: `priv value` is out of canonical order.
 //

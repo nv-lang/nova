@@ -135,7 +135,7 @@ fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
                     _ => ()
                 }
             }
-            (scheme.to_lower(), s[i + 1..s.len()])
+            (scheme.to_ascii_lower(), s[i + 1..s.len()])
         }
     }
 }

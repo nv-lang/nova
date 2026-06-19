@@ -61,3 +61,4 @@ bench/**/*.c
 nova_tests/**/*_conformance_slow.nv
 docs/research/170-str-unicode-api-improvements.md
 docs/research/13-str-unicode-api-audit.md
+test_out.txt

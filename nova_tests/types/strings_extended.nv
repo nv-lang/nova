@@ -56,14 +56,14 @@ test "Unicode mixed ASCII + Cyrillic" {
 test "case-sensitivity" {
     assert("abc" == "abc")
     assert("abc" != "ABC")
-    assert("abc".to_upper() == "ABC")
-    assert("ABC".to_lower() == "abc")
+    assert("abc".to_ascii_upper() == "ABC")
+    assert("ABC".to_ascii_lower() == "abc")
 }
 
 test "trim only edges" {
-    assert("   hello   ".trim() == "hello")
-    assert("hello".trim() == "hello")
-    assert("  ".trim() == "")
+    assert("   hello   ".trim_ascii() == "hello")
+    assert("hello".trim_ascii() == "hello")
+    assert("  ".trim_ascii() == "")
 }
 
 test "concat последовательно" {

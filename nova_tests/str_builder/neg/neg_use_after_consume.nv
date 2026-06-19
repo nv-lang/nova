@@ -10,6 +10,6 @@ module neg.neg_use_after_consume
 test "append после as_str — use-after-consume" {
     consume sb = StringBuilder.new()
     sb.append("hello")
-    ro _ = sb.as_str()                 // consume
+    ro _ = sb.into_str()                 // consume
     sb.append(" world")               // ← ОШИБКА D131
 }

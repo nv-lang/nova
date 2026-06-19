@@ -14,7 +14,7 @@ test "shared interned buffer is never mutated through any binding" {
     ro c = "shared"
     // Derive a new string from `a` — must allocate a fresh buffer, never
     // write through the shared interned `*u8` ro-pointee.
-    ro upper = a.to_upper()
+    ro upper = a.to_ascii_upper()
     assert(upper == "SHARED", "to_upper produces new buffer")
     // The interned occurrences are untouched by the derivation above.
     assert(a == "shared", "a unchanged after derive")

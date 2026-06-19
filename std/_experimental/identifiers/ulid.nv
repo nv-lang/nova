@@ -425,7 +425,7 @@ test "from: case-insensitive" {
         ro u = Ulid.new()
         ro s_upper = u.into()
         // ULID by spec — upper-case, но decode принимает обе.
-        ro parsed = Ulid.from(s_upper.to_lower())
+        ro parsed = Ulid.from(s_upper.to_ascii_lower())
         assert(parsed== u)
     }
 }

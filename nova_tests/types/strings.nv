@@ -29,15 +29,15 @@ test "contains" {
 }
 
 test "to_lower / to_upper" {
-    assert("HELLO".to_lower() == "hello")
-    assert("hello".to_upper() == "HELLO")
-    assert("Mixed Case".to_lower() == "mixed case")
+    assert("HELLO".to_ascii_lower() == "hello")
+    assert("hello".to_ascii_upper() == "HELLO")
+    assert("Mixed Case".to_ascii_lower() == "mixed case")
 }
 
 test "trim" {
-    assert("   hello   ".trim() == "hello")
-    assert("\n\tabc\n".trim() == "abc")
-    assert("no-trim".trim() == "no-trim")
+    assert("   hello   ".trim_ascii() == "hello")
+    assert("\n\tabc\n".trim_ascii() == "abc")
+    assert("no-trim".trim_ascii() == "no-trim")
 }
 
 test "equality and comparison" {

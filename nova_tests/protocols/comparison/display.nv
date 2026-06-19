@@ -2,7 +2,7 @@
 //
 // `Display` (D109): `fmt(sb StringBuilder) -> ()`. User-defined через
 // `fn Type @display(mut sb StringBuilder) -> ()` — пишет representation
-// в переданный StringBuilder. Результат читается через `sb.as_str()`.
+// в переданный StringBuilder. Результат читается через `sb.into_str()`.
 
 module comparison.display
 
@@ -22,14 +22,14 @@ test "Point @display — пишет representation в StringBuilder" {
     ro p = Point { x: 3, y: 4 }
     consume sb = StringBuilder.new()
     p.display(sb)
-    assert(sb.as_str() == "(3, 4)")
+    assert(sb.into_str() == "(3, 4)")
 }
 
 test "Point @display — отрицательные координаты" {
     ro p = Point { x: -1, y: -20 }
     consume sb = StringBuilder.new()
     p.display(sb)
-    assert(sb.as_str() == "(-1, -20)")
+    assert(sb.into_str() == "(-1, -20)")
 }
 
 test "Point @display — в непустой буфер дописывает" {
@@ -37,7 +37,7 @@ test "Point @display — в непустой буфер дописывает" {
     consume sb = StringBuilder.new()
     sb.append("origin: ")
     p.display(sb)
-    assert(sb.as_str() == "origin: (0, 0)")
+    assert(sb.into_str() == "origin: (0, 0)")
 }
 
 
@@ -60,7 +60,7 @@ test "вложенный Display — Segment делегирует Point.fmt" {
     }
     consume sb = StringBuilder.new()
     seg.display(sb)
-    assert(sb.as_str() == "[(1, 1) -> (5, 9)]")
+    assert(sb.into_str() == "[(1, 1) -> (5, 9)]")
 }
 
 
@@ -73,5 +73,5 @@ test "Display — несколько объектов в один буфер" {
     p1.display(sb)
     sb.append(" ")
     p2.display(sb)
-    assert(sb.as_str() == "(1, 2) (3, 4)")
+    assert(sb.into_str() == "(1, 2) (3, 4)")
 }

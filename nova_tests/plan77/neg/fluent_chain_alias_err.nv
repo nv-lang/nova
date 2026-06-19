@@ -12,7 +12,7 @@ module neg.fluent_chain_alias_err
 test "use after consume через builder-chain alias" {
     consume sb = StringBuilder.new()
     ro sb2 = sb.append("a")   // ОШИБКА E_VIEW_BINDING_FORBIDDEN: alias на consume-var
-    ro s = sb2.as_str()
+    ro s = sb2.into_str()
     sb.append("b")
     assert(s == "a")
 }

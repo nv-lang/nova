@@ -14,14 +14,14 @@ test "is_empty — true для свежего, false после append" {
     assert(sb.is_empty())
     sb.append("x")
     assert(!sb.is_empty())
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "is_empty — append пустой строки оставляет пустым" {
     consume sb = StringBuilder.new()
     sb.append("")
     assert(sb.is_empty())
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 
@@ -33,14 +33,14 @@ test "starts_with — совпадает префикс" {
     assert(sb.starts_with("hello"))
     assert(sb.starts_with("h"))
     assert(sb.starts_with("hello world"))
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "starts_with — пустой префикс всегда true" {
     consume sb = StringBuilder.new()
     sb.append("data")
     assert(sb.starts_with(""))
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "starts_with — false при несовпадении" {
@@ -49,7 +49,7 @@ test "starts_with — false при несовпадении" {
     assert(!sb.starts_with("world"))
     assert(!sb.starts_with("Hello"))      // case-sensitive
     assert(!sb.starts_with("hello world!"))  // длиннее буфера
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "starts_with — Unicode префикс" {
@@ -57,7 +57,7 @@ test "starts_with — Unicode префикс" {
     sb.append("Привет, мир")
     assert(sb.starts_with("Привет"))
     assert(!sb.starts_with("привет"))     // регистр
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 
@@ -69,14 +69,14 @@ test "ends_with — совпадает суффикс" {
     assert(sb.ends_with("world"))
     assert(sb.ends_with("d"))
     assert(sb.ends_with("hello world"))
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "ends_with — пустой суффикс всегда true" {
     consume sb = StringBuilder.new()
     sb.append("data")
     assert(sb.ends_with(""))
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "ends_with — false при несовпадении" {
@@ -84,7 +84,7 @@ test "ends_with — false при несовпадении" {
     sb.append("hello world")
     assert(!sb.ends_with("hello"))
     assert(!sb.ends_with("WORLD"))
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 test "ends_with — Unicode суффикс" {
@@ -92,7 +92,7 @@ test "ends_with — Unicode суффикс" {
     sb.append("конец 😀")
     assert(sb.ends_with("😀"))
     assert(sb.ends_with(" 😀"))
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 
@@ -106,5 +106,5 @@ test "non-consuming — все inspection до as_str" {
     ro _ = sb.ends_with("bar")
     ro _ = sb.len()
     sb.append("/baz")                    // append после всех проверок
-    assert(sb.as_str() == "foo/bar/baz")
+    assert(sb.into_str() == "foo/bar/baz")
 }

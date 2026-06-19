@@ -13,7 +13,7 @@ fn drain_loop() -> int {
     while n < 3 {
         // ОШИБКА D131: sb потребляется в теле цикла — на 2-й
         // итерации значение уже отдано.
-        ro _gone = sb.as_str()
+        ro _gone = sb.into_str()
         n = n + 1
     }
     n

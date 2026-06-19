@@ -37177,3 +37177,10 @@ D185 §amend-2 added.
 
 [M-169.1.1-lane-flags] ✅ CLOSED — TestSelection + CLI category-selectors
 [M-169.1.1-ci-workflow] ✅ CLOSED — nova-test-regression.yml CI workflow
+
+## Plan 91.18 — str + unicode API cleanup (2026-06-19)
+
+- Collator: zero-field value type не поддерживается codegen ({}→NOVA_UNIT, тип не совпадает). Сохранён `_tag int` placeholder с `priv(type)`. Tailoring при готовности заменит поле без изменения call sites.
+- `to_upper_import_gated` тест проверяет free-fn `to_uppercase` (не метод `s.to_upper()`): str extension methods резолвятся без explicit import в текущей реализации. Зафиксировано как `[M-91.18-import-gated-str-methods]` followup.
+- Деление test/folder: plan91_18 — folder-module (15 файлов = один test TU), neg/ — отдельный neg test. Это ожидаемая структура.
+- CharIndicesIter добавлен, но `{ buf: @buf, pos: @pos }` заменён на `{ @buf, @pos }` (D52 §2 shorthand обязателен).

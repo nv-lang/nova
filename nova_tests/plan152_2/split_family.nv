@@ -50,12 +50,12 @@ test "split_terminator: no trailing empty" {
 }
 
 test "split_whitespace: runs, skip empty, trim ends" {
-    ro p = "  hello   world  ".split_whitespace()
+    ro p = "  hello   world  ".split_ascii_whitespace()
     assert(p.len() == 2)
     assert(p[0] == "hello")
     assert(p[1] == "world")
-    assert("\tone\ntwo\r three ".split_whitespace().len() == 3)
-    assert("".split_whitespace().len() == 0)
+    assert("\tone\ntwo\r three ".split_ascii_whitespace().len() == 3)
+    assert("".split_ascii_whitespace().len() == 0)
 }
 
 test "lines: strip \\n and \\r\\n, final unterminated line kept" {

@@ -40,7 +40,7 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
 
     for raw_line in s.split("\n") {
         line_num += 1
-        ro line = raw_line.trim()
+        ro line = raw_line.trim_ascii()
 
         // Пропускаем пустые и комментарии
         if line.len() == 0 { continue }
@@ -51,7 +51,7 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
             if !line.ends_with("]") {
                 throw UnclosedSection { line: line_num }
             }
-            current_section = line[1..line.len() - 1].trim()
+            current_section = line[1..line.len() - 1].trim_ascii()
             if !result.contains(current_section) {
                 result.insert(current_section, HashMap[str, str].new())
             }
@@ -62,8 +62,8 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
         match line.find("=") {
             None => throw InvalidLine { line: line_num, content: line }
             Some(i) => {
-                ro key = line[0..i].trim()
-                ro value_raw = line[i + 1..line.len()].trim()
+                ro key = line[0..i].trim_ascii()
+                ro value_raw = line[i + 1..line.len()].trim_ascii()
                 ro value = if value_raw.starts_with("\"") && value_raw.ends_with("\"") && value_raw.len() >= 2 {
                     value_raw[1..value_raw.len() - 1]
                 } else {

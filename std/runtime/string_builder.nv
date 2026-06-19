@@ -141,7 +141,9 @@ export fn StringBuilder mut @append(x f32) -> @ { @append(x as f64) }
 // Append строку s ровно n раз. n <= 0 → no-op.
 // Single reserve(total) → один realloc вместо n× амортизированного doubling.
 // `as_bytes()` — zero-copy view; `append` в loop без indirection.
-export fn StringBuilder mut @append_repeat(s str, n int) -> @ {
+export fn StringBuilder mut @append_repeat(s str, n int) -> @
+    requires n >= 0
+{
     if n <= 0 { return @ }
     ro bytes = s.as_bytes()
     @buf.reserve(bytes.len() * n)
@@ -152,7 +154,9 @@ export fn StringBuilder mut @append_repeat(s str, n int) -> @ {
 }
 
 // Обрезать буфер до len байт. len >= @len() → no-op. Caller отвечает за UTF-8 границы.
-export fn StringBuilder mut @truncate(len int) -> @ { @buf.truncate(len); @ }
+export fn StringBuilder mut @truncate(len int) -> @
+    requires len >= 0
+{ @buf.truncate(len); @ }
 
 // Plan 152.7.1 (D258 AMEND) — Write protocol implementation.
 // Delegates to @buf.append directly (same UTF-8 bytes path as @append(s str)).
@@ -161,8 +165,9 @@ export fn StringBuilder mut @write(s str) -> () { @buf.append(s.as_bytes()) }
 
 // ─── Consume ───
 
-// Финализировать в str. После @as_str() StringBuilder consumed.
+// Финализировать в str. После @into_str() StringBuilder consumed.
 // Zero-copy steal: reuse @buf data ptr напрямую (writes '\0' in-place
 // если cap > len, иначе alloc+copy fallback).
 // Infallible: UTF-8 invariant поддерживается append-методами.
-export fn StringBuilder consume @as_str() -> str => str.from_bytes_unchecked_steal(@buf)
+// Renamed as_str → into_str (Plan 91.18 Ф.2; D77: into_* = consuming).
+export fn StringBuilder consume @into_str() -> str => str.from_bytes_unchecked_steal(@buf)

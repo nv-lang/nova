@@ -35,8 +35,8 @@ test "replacen: first n occurrences" {
 }
 
 test "pad_*: width in CODEPOINTS (not bytes)" {
-    assert("é".pad_left(3, '·') == "··é")      // é=2 bytes, 1 codepoint → 2 pad
-    assert("hi".pad_right(4, '.') == "hi..")
+    assert("é".pad_start(3, '·') == "··é")      // é=2 bytes, 1 codepoint → 2 pad
+    assert("hi".pad_end(4, '.') == "hi..")
     assert("x".pad_center(5, '-') == "--x--")
-    assert("toolong".pad_left(3, ' ') == "toolong")   // width <= len → unchanged
+    assert("toolong".pad_start(3, ' ') == "toolong")   // width <= len → unchanged
 }

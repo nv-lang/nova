@@ -23,7 +23,7 @@ test "two independently built strings with same bytes are equal" {
 test "empty strings equal regardless of origin" {
     ro a = ""
     ro b = "x"
-    ro c = b.trim()        // build an empty result (no trailing space here -> "x", use slice)
+    ro c = b.trim_ascii()        // build an empty result (no trailing space here -> "x", use slice)
     ro e2 = "ab"[0..0]     // empty slice view, different buffer than literal ""
     assert(a == "", "literal empty == empty")
     assert(e2 == "", "empty slice == literal empty")

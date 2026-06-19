@@ -1,4 +1,4 @@
-﻿// Plan 124.9 Р¤.2 вЂ” positive: nested literals where each level has
+// Plan 124.9 Р¤.2 вЂ” positive: nested literals where each level has
 // multiple fields. Verifies field-type allocation is per-field, not
 // inherited from the outermost type.
 module nova_tests.plan124_9

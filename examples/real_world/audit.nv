@@ -117,12 +117,12 @@ fn action_from_route(method str, pattern str) -> str {
             "POST"          => "create"
             "PUT" | "PATCH" => "update"
             "DELETE"        => "delete"
-            _               => method.to_lower()
+            _               => method.to_ascii_lower()
         }
     }
 
     if entity == "" {
-        method.to_lower()
+        method.to_ascii_lower()
     } else {
         "${entity}.${verb}"
     }
@@ -175,7 +175,7 @@ fn singularize(s str) -> str =>
 // client_ip — IP клиента с учётом X-Forwarded-For (за nginx).
 fn client_ip(headers Headers, remote_addr str) -> str =>
     match headers.get("X-Forwarded-For") {
-        Some(fwd) => fwd.split(",").get(0).unwrap_or(fwd).trim()
+        Some(fwd) => fwd.split(",").get(0).unwrap_or(fwd).trim_ascii()
         None      => match split_host_port(remote_addr) {
             Ok((host, _)) => host
             Err(_)        => remote_addr
@@ -212,7 +212,7 @@ fn redact_secrets(obj Json) -> Json =>
     }
 
 fn is_secret_key(k str) -> bool {
-    ro low = k.to_lower()
+    ro low = k.to_ascii_lower()
     low.contains("password") || low.contains("token") || low.contains("secret")
 }
 

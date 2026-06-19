@@ -5,18 +5,18 @@
 module nova_tests.plan139
 
 test "trim spaces" {
-    assert("  hi  ".trim() == "hi")
-    assert("hi".trim() == "hi")
-    assert("   ".trim() == "")
-    assert("".trim() == "")
+    assert("  hi  ".trim_ascii() == "hi")
+    assert("hi".trim_ascii() == "hi")
+    assert("   ".trim_ascii() == "")
+    assert("".trim_ascii() == "")
 }
 
 test "trim tabs/newlines (control bytes <= 0x20)" {
-    assert("\t\nhi\r\n".trim() == "hi")
-    assert(" \t a b \t ".trim() == "a b")
+    assert("\t\nhi\r\n".trim_ascii() == "hi")
+    assert(" \t a b \t ".trim_ascii() == "a b")
 }
 
 test "trim preserves interior + utf8" {
-    assert("  héllo  ".trim() == "héllo")
-    assert("a".trim() == "a")
+    assert("  héllo  ".trim_ascii() == "héllo")
+    assert("a".trim_ascii() == "a")
 }

@@ -19,17 +19,17 @@ you pick a **lens**:
    ── byte layer (u8) ──                      ── codepoint layer (char) ──
 
         as_graphemes() ▼   (opt-in: import std.unicode)
-   GraphemesView  (UAX #29 cluster stream)
+   GraphemesIter  (UAX #29 cluster stream)
    next / count / is_empty — O(n);  no [i]
    ── grapheme layer (visible "character", a str slice) ──
 
         as_words() ▼   (opt-in: import std.unicode)
-   WordsView  (UAX #29 word segments; O(n) to create)
+   WordsIter  (UAX #29 word segments; O(1) to create)
    next / count / is_empty;  no [i]
    ── word layer (words / spaces / punctuation, str slices) ──
 
         as_sentences() ▼   (opt-in: import std.unicode)
-   SentencesView  (UAX #29 sentence segments; O(n) to create)
+   SentencesIter  (UAX #29 sentence segments; O(1) to create)
    next / count / is_empty;  no [i]
    ── sentence layer (a sentence + its trailing whitespace, str slices) ──
 ```
@@ -48,12 +48,11 @@ you pick a **lens**:
   tables — the byte/codepoint layers above stay table-free. See
   [Unicode operations](#unicode-operations-opt-in-stdunicode) below.
 - **`as_words()` is the word-segment lens** — UAX #29 word boundaries (`import
-  std.unicode`); iterates words, whitespace and punctuation as `str` slices. Unlike
-  the others it is **O(n) to create** (word rules need lookahead, so boundaries are
-  materialized once). Powers `to_titlecase`.
+  std.unicode`); iterates words, whitespace and punctuation as `str` slices. O(1) to
+  create (forward state-machine, lazy). Powers `to_titlecase`.
 - **`as_sentences()` is the sentence-segment lens** — UAX #29 sentence boundaries
   (`import std.unicode`); iterates sentences (each with its trailing whitespace and
-  terminator) as `str` slices. Also **O(n) to create**. Note: the default UAX #29
+  terminator) as `str` slices. O(1) to create (forward state-machine, lazy). Note: the default UAX #29
   algorithm has **no abbreviation dictionary**, so `"Mr. Smith"` splits after `Mr.`
   (a capital letter after `.` is a boundary) — this is the spec's documented
   behaviour, not a bug.
@@ -77,6 +76,7 @@ codepoints, graphemes), so the unit is always explicit. `s.len()` → `E_STR_NO_
 |---|---|---|
 | i-th byte | `s.as_bytes()[i]` → `u8` (panics OOB) | O(1) |
 | i-th codepoint | `s.as_chars().nth(i)` → `Option[char]` | O(n) |
+| codepoint + byte offset | `s.as_chars().indices()` → `CharIndicesIter` → `Option[(int, char)]` | O(n) per step |
 
 There is **no `s[i]`** integer index — codepoint-indexing UTF-8 is O(n) hiding
 behind `[i]`. `s[i]` → `E_STR_NO_INT_INDEX`.
@@ -146,7 +146,7 @@ official `NormalizationTest.txt`.
 
 ### Grapheme clusters (UAX #29)
 
-`str.@as_graphemes() -> GraphemesView` is the third lens — iterate over
+`str.@as_graphemes() -> GraphemesIter` is the third lens — iterate over
 user-perceived characters:
 
 ```nova
@@ -161,31 +161,40 @@ for g in "a🇺🇸b".as_graphemes() {              // g is a str slice of one c
 }
 ```
 
-`GraphemesView` mirrors `CharsIter` (a value-record stream): `next() ->
+`GraphemesIter` mirrors `CharsIter` (a value-record stream): `next() ->
 Option[str]`, `count()`, `is_empty()`, O(n), no positional `[i]`. Implements the
 extended grapheme cluster rules GB1–GB13 **plus GB9c** (Indic Conjunct Break,
 Unicode 15.1) — verified against the official `GraphemeBreakTest.txt`.
 
 ### Case folding & Unicode case mapping
 
-Locale-independent, multi-codepoint — the Unicode upgrade of core's ASCII-only
-`str.to_upper()`/`to_lower()` (which stay ASCII so they need no tables):
+Locale-independent, multi-codepoint. Convention: **bare `to_upper`/`to_lower` = Unicode
+full mapping** (under `import std.unicode`; needs tables); **`_ascii_` suffix =
+ASCII-only, table-free, always available** (`to_ascii_upper`/`to_ascii_lower` from
+prelude). Call `s.to_upper()` without `import std.unicode` → compile error (E7320) —
+the compiler will not silently fall back to ASCII.
 
 ```nova
 import std.unicode
 
 assert(fold_case("MASSE") == fold_case("masse"))   // caseless match
 assert(fold_case("ß") == "ss")                      // full fold
-assert(to_uppercase("straße") == "STRASSE")         // ß → SS (multi-cp)
-assert(to_uppercase("ﬁle") == "FILE")               // ligature ﬁ → FI
-assert(to_lowercase("ΟΔΟΣ") == "οδος")               // final Σ → ς, others → σ
+assert("straße".to_upper() == "STRASSE")            // ß → SS (multi-cp)
+assert("ﬁle".to_upper() == "FILE")                  // ligature ﬁ → FI
+assert("ΟΔΟΣ".to_lower() == "οδος")                  // final Σ → ς, others → σ
+
+// ASCII-only variants (always available, no import needed):
+assert("hello".to_ascii_upper() == "HELLO")
+assert("HELLO".to_ascii_lower() == "hello")
 ```
 
-- `fold_case(s)` — full case folding (UCD `CaseFolding` C+F) for caseless matching.
+- `s.fold_case()` — full case folding (UCD `CaseFolding` C+F) for caseless matching.
   Not normalization: for canonically-equivalent text, normalize first, then fold.
-- `to_uppercase(s)` / `to_lowercase(s)` — full Unicode case mapping, including the
+- `s.to_upper()` / `s.to_lower()` — full Unicode case mapping, including the
   **Final_Sigma** context rule (Greek Σ → ς word-finally, σ otherwise). No locale
-  tailoring (Turkic/Lithuanian).
+  tailoring (Turkic/Lithuanian). Require `import std.unicode`.
+- `s.to_ascii_upper()` / `s.to_ascii_lower()` — ASCII-only (A–Z/a–z only); no tables;
+  always available from prelude.
 
 ### Code-point (`char`) classification & case
 
@@ -220,12 +229,17 @@ General_Category + Alphabetic + White_Space from UCD 16.0) and to the case maps
 `import std.unicode` the Unicode classification is not in scope (the ASCII-core `char`
 methods stay prelude-available).
 
+> **Method resolution:** `s.to_upper()` and `s.to_lower()` are defined only under
+> `import std.unicode`. Without that import the names are unresolved → compile error
+> `E7320`. There is no silent ASCII fallback. `s.to_ascii_upper()` /
+> `s.to_ascii_lower()` are always available and are the correct choice when Unicode
+> tables are not wanted.
+
 ### Word segmentation & title-casing (UAX #29)
 
-`str.@as_words() -> WordsView` is the fourth lens — iterate UAX #29 word segments
-(words, whitespace and punctuation — every inter-boundary piece). Unlike the other
-lenses it is **O(n) to create** (the word rules need lookahead, so boundaries are
-materialized once), not O(1).
+`str.@as_words() -> WordsIter` is the fourth lens — iterate UAX #29 word segments
+(words, whitespace and punctuation — every inter-boundary piece). O(1) to create
+(forward state-machine, lazy — no eager boundary materialisation).
 
 ```nova
 import std.unicode
@@ -235,7 +249,7 @@ assert(to_titlecase("hello world") == "Hello World") // first cased char per wor
 assert(to_titlecase("ﬁle") == "File")                // ﬁ → "Fi" (title mapping)
 ```
 
-- `as_words()` / `WordsView` — `next()`/`count()`/`is_empty()`, UAX #29 boundary
+- `as_words()` / `WordsIter` — `next()`/`count()`/`is_empty()`, UAX #29 boundary
   rules WB1–WB16 (handles `can't`, `3.14`, regional-indicator flags, ZWJ-emoji).
 - `to_titlecase(s)` — titlecases the first cased char of each word (using the
   **titlecase** mapping, e.g. ǆ → ǅ, not uppercase Ǆ) and lowercases the rest with
@@ -243,11 +257,10 @@ assert(to_titlecase("ﬁle") == "File")                // ﬁ → "Fi" (title ma
 
 ### Sentence segmentation (UAX #29)
 
-`str.@as_sentences() -> SentencesView` is the fifth lens — iterate UAX #29 sentence
-segments (each sentence together with its trailing whitespace and terminator). Like
-`as_words` it is **O(n) to create** (the sentence rules need an Extend/Format
-ignore-rule, an ATerm/STerm context state machine, and an SB8 forward lookahead, so
-boundaries are materialized once).
+`str.@as_sentences() -> SentencesIter` is the fifth lens — iterate UAX #29 sentence
+segments (each sentence together with its trailing whitespace and terminator). O(1) to
+create (forward state-machine, lazy; SB8 lookahead is bounded per-segment, O(1)
+amortised).
 
 ```nova
 import std.unicode
@@ -262,7 +275,7 @@ assert("the resp. leaders are".as_sentences().count() == 1) // lowercase after "
 }
 ```
 
-- `as_sentences()` / `SentencesView` — `next()`/`count()`/`is_empty()`, UAX #29
+- `as_sentences()` / `SentencesIter` — `next()`/`count()`/`is_empty()`, UAX #29
   boundary rules SB1–SB11 (+ SB998 default-no-break). Default UAX #29 has **no
   abbreviation dictionary**: `"Mr. Smith went home. He slept."` yields three
   segments (`"Mr. "`, `"Smith went home. "`, `"He slept."`), because a capital
@@ -279,17 +292,24 @@ import std.unicode
 
 assert(collate_compare("apple", "Apple") < 0)   // case is tertiary, not primary
 assert(collate_compare("café", "cafe") > 0)      // accent is secondary
-ro key = collate_sort_key("naïve")               // []int sort key (cache for sorting)
+ro key = collate_sort_key("naïve")               // Vec[u32] sort key (cache for sorting)
 ro c = Collator.root()                            // c.order(a,b) / c.key(s) / c.same(a,b)
 ```
 
-- `collate_compare(a,b) -> int` (-1/0/+1), `collate_sort_key(s) -> []int`,
+- `collate_compare(a,b) -> int` (-1/0/+1), `collate_sort_key(s) -> Vec[u32]`,
   `collate_eq`, `Collator.root()`. Multi-level (primary/secondary/tertiary +
   quaternary) **Shifted** variable-weighting; NFD-normalizes first; handles
   contractions (incl. UCA S2.1 discontiguous) and implicit weights (CJK etc.).
 - Scope: **DUCET (root, non-tailored)**. CLDR locale-tailoring + `eq_ignore_case` are
   roadmap (Plan 152.5b, `[M-152-collation-tailoring]`) — like Rust `unicode-collation`
   DUCET mode / ICU root collator.
+
+> **Why free functions, not str methods?** String transforms (`trim_ascii`,
+> `to_ascii_lower`, `to_upper`, etc.) are `str` methods because they fit the
+> "transform this string" idiom. Collation (`collate_compare`, `collate_sort_key`,
+> `Collator`) is intentionally **not** `str @compare`/`@equal` — collation must
+> never silently replace the default byte-`Ord` (D254 design decision). The
+> asymmetry is intentional, not an oversight.
 
 ## Encoding interop (UTF-16 / code points)
 
@@ -315,25 +335,40 @@ string ops):
 | byte length | `str.byte_len()` | O(1), reads the `len` field |
 | byte lens | `str.as_bytes() -> ro []u8` | O(1) `[i]`/`len()` |
 | codepoint lens | `str.as_chars() -> CharsIter` | `next`/`count`/`nth`/`is_empty` |
-| grapheme lens | `str.as_graphemes() -> GraphemesView` | `import std.unicode`; UAX #29 |
-| word lens | `str.as_words() -> WordsView` | `import std.unicode`; UAX #29; O(n) create |
+| grapheme lens | `str.as_graphemes() -> GraphemesIter` | `import std.unicode`; UAX #29 |
+| word lens | `str.as_words() -> WordsIter` | `import std.unicode`; UAX #29 |
 | normalization | `normalize_nfc/nfd/nfkc/nfkd(s)` | `import std.unicode`; UAX #15 |
-| case fold / map / title | `fold_case`/`to_uppercase`/`to_lowercase`/`to_titlecase(s)` | `import std.unicode` |
+| case fold / map / title | `s.fold_case()`/`s.to_upper()`/`s.to_lower()`/`to_titlecase(s)` | `import std.unicode` |
+| case (ASCII-only) | `s.to_ascii_upper()`/`s.to_ascii_lower()` | always available, no import |
 | char classification (Unicode) | `c.is_alphabetic`/`is_numeric`/`is_whitespace`/`general_category` | `import std.unicode`; 1:1 UCD |
 | char case (Unicode) | `c.to_uppercase()`/`to_lowercase() -> str` | `import std.unicode`; multi-cp |
+| codepoint + byte-offset | `s.as_chars().indices() -> CharIndicesIter` | `next()->(int,char)` |
 | slice | `str[a..b]` / `str.get(a..b)` | byte-range, zero-copy |
 | search | `find`/`rfind`/`contains`/`starts_with`/`ends_with` | byte offsets |
 | split/trim/replace/pad/repeat/concat | `transform`/`search` | see std/runtime/string/ |
 | owned bytes/chars | `to_bytes`/`to_chars` | alloc |
-| UTF-16 / code points | `encode_utf16`/`from_utf16`/`code_points` | `import std.encoding.utf16` |
+| UTF-16 / code points | `encode_utf16`/`from_utf16`/`to_code_points` | `import std.encoding.utf16` |
 | identity | `==` / `compare` / `hash` / clone | content-based (byte-`Ord`) |
 | collation (UCA) | `collate_compare`/`collate_sort_key`/`Collator` | `import std.unicode`; DUCET/UTS #10 |
 
 > Normalization (UAX #15) and grapheme segmentation (UAX #29) ship in the opt-in
 > `std/unicode` module — see [Unicode operations](#unicode-operations-opt-in-stdunicode).
-> Unicode case folding/mapping and locale collation remain Phase B (Plan 152.4.4 /
-> 152.5b). The core lenses above are ASCII-complete and byte/codepoint-correct
-> without any Unicode tables.
+> The core lenses above are ASCII-complete and byte/codepoint-correct without any
+> Unicode tables.
+
+## Error policy
+
+| Situation | Use | Example |
+|---|---|---|
+| Invariant violation (programmer bug), out-of-bounds | **panic** | `s.as_bytes()[i]` OOB; `s[a..b]` through codepoint boundary |
+| Expected absence (not found, empty, index past end) | **`Option`** | `s.find(needle) -> Option[int]`; `iter.next() -> Option[char]` |
+| Recoverable, external input error | **`Result`** | `str.try_parse_int() -> Result[int, ParseIntError]`; `str.from_utf16() -> Result[str, _]` |
+| Best-effort decode of untrusted bytes | **lossy U+FFFD** | `str.from_bytes_lossy`; `cps_to_str` (invalid cp → `\u{FFFD}`) |
+
+Rules (source: protocols.nv:126-128, D77, D25):
+- **`parse_int(s)`** (bare) — throws `ParseIntError`; for explicit handling use `try_parse_int` (Result) or `parse_int_opt` (Option).
+- **Never** return an empty string on failure — that is indistinguishable from an empty input. Use `Option`/`Result` instead.
+- `*_lossy` functions always return valid UTF-8; they substitute `U+FFFD` for every invalid byte sequence, never silently drop bytes.
 
 ## Interpolation & format specs
 

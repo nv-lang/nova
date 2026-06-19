@@ -109,7 +109,7 @@ test "StringBuilder.append with char literals" {
     consume sb = StringBuilder.new()
     sb.append('h')
     sb.append('i')
-    ro s = sb.as_str()
+    ro s = sb.into_str()
     assert(s == "hi")
 }
 
@@ -118,7 +118,7 @@ test "StringBuilder.append with Unicode codepoint" {
     sb.append('\u{410}')           // Cyrillic 'А' — 1 codepoint, 2 bytes UTF-8
     assert(sb.char_len() == 1)     // Plan 13 Ф.9: codepoint count
     assert(sb.len() == 2)          // 2 bytes UTF-8
-    ro _ = sb.as_str()
+    ro _ = sb.into_str()
 }
 
 // ================================================================

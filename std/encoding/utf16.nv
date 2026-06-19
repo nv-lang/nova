@@ -94,18 +94,15 @@ export fn str.from_utf16(units []u16) -> Result[str, Utf16Error] {
     }
     // Все code units валидны → строим str. StringBuilder создаётся ПОСЛЕ всех
     // ранних `return Err`, потребляется один раз через @as_str (D133-safe).
-    consume sb = StringBuilder.with_capacity(cps.len() * 2)
-    for cp in cps { sb.append(str.from_codepoint(cp)) }   // cp validated → known-valid path
-    Ok(sb.as_str())
+    // Capacity *4: supplementary codepoints encode to 4 UTF-8 bytes.
+    consume sb = StringBuilder.with_capacity(cps.len() * 4)
+    for cp in cps {
+        ro c = match char.try_from(cp) { Ok(c) => c, Err(_) => '\u{FFFD}' }
+        sb.append(c)
+    }
+    Ok(sb.into_str())
 }
 
 // ─── str → raw code points ───
-
-/// Сырые int-codepoint'ы строки (без `char`-обёртки) — для низкоуровневых
-/// протоколов/таблиц. Значения идентичны `@as_chars()` как int.
-/// `code_points("a😀") == [0x61, 0x1F600]`.
-export fn str @code_points() -> []int {
-    mut out = []int.with_capacity(@byte_len())
-    for c in @as_chars() { out.push(c as int) }
-    out
-}
+// Moved to runtime.string chars.nv as @to_code_points() (Plan 91.18 Ф.2).
+// Use `s.to_code_points()` — available without explicit import via runtime.string.

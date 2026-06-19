@@ -5,7 +5,7 @@
 
 module neg.mut_consume_conflict_neg
 
-fn bad(mut consume sb StringBuilder) -> str => sb.as_str()
+fn bad(mut consume sb StringBuilder) -> str => sb.into_str()
 
 test "mut + consume → parser error" {
     consume sb = StringBuilder.from("x")

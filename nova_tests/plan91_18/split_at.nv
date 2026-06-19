@@ -1,0 +1,62 @@
+module nova_tests.plan91_18
+import std.prelude.core.{Ok, Err}
+
+test "split_at ASCII" {
+    ro (before, after) = "hello world".split_at(5)
+    assert(before == "hello")
+    assert(after == " world")
+}
+
+test "split_at zero" {
+    ro (before, after) = "abc".split_at(0)
+    assert(before == "")
+    assert(after == "abc")
+}
+
+test "split_at full length" {
+    ro (before, after) = "abc".split_at(3)
+    assert(before == "abc")
+    assert(after == "")
+}
+
+test "split_at UTF-8 boundary" {
+    ro (b, a) = "\u{041F}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442}".split_at(2)
+    assert(b == "\u{041F}")
+    assert(a == "\u{0440}\u{0438}\u{0432}\u{0435}\u{0442}")
+}
+
+test "split_at_checked valid" {
+    ro r = "hello".split_at_checked(3)
+    match r {
+        Some((a, b)) => {
+            assert(a == "hel")
+            assert(b == "lo")
+        }
+        None => assert(false)
+    }
+}
+
+test "split_at_checked out of bounds" {
+    ro r = "hi".split_at_checked(10)
+    assert(r == None)
+}
+
+test "try_from_codepoint valid ASCII" {
+    ro r = str.try_from_codepoint(65)
+    assert(r == Ok("A"))
+}
+
+test "try_from_codepoint valid multibyte" {
+    ro r = str.try_from_codepoint(0x041F)
+    assert(r == Ok("\u{041F}"))
+}
+
+test "try_from_codepoint surrogate is Err" {
+    ro r = str.try_from_codepoint(0xD800)
+    assert(r.is_err())
+}
+
+test "try_from_codepoint above range is Err" {
+    ro r = str.try_from_codepoint(0x110000)
+    assert(r.is_err())
+}

@@ -195,7 +195,7 @@ export fn StrGen @generate() Random -> str {
         }
         buf.append(c)
     }
-    buf.as_str()
+    buf.into_str()
 }
 
 /// Shrink string — "" / половина / на 1 короче.

@@ -1,4 +1,4 @@
-﻿// EXPECT_COMPILE_ERROR [E_INFINITE_TYPE]
+// EXPECT_COMPILE_ERROR [E_INFINITE_TYPE]
 //
 // Q-infinite-value-type (D280 В§4) вЂ” NEGATIVE: Av MUTUAL value-containment cycle.
 //

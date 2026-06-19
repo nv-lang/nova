@@ -8,7 +8,7 @@ module neg.consume_err_use_after
 test "use after into — отвергается" {
     consume sb = StringBuilder.new()
     sb.append("hi")
-    ro s = sb.as_str()
+    ro s = sb.into_str()
     // ОШИБКА D131: sb потреблён вызовом @into() выше.
     sb.append("oops")
     assert(s == "hi")

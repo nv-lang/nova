@@ -310,7 +310,7 @@ export type ParseComplexError | InvalidFormat | NotANumber
 /// ```
 #stable(since = "0.1")
 export fn Complex.from(s str) Fail[ParseComplexError] -> Self {
-    ro trimmed = s.trim()
+    ro trimmed = s.trim_ascii()
     if trimmed == "" {
         throw InvalidFormat
     }

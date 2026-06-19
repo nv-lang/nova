@@ -24,7 +24,7 @@ test "[]Display holds Money5 + Coin6 + Tag1, iterate + fmt all" {
         x.display(sb)
         sb.append("|")
     }
-    assert(sb.as_str() == "Money5(10)|Coin6(5)|Tag1(x)|")
+    assert(sb.into_str() == "Money5(10)|Coin6(5)|Tag1(x)|")
 }
 
 test "[]Display single element works" {
@@ -34,7 +34,7 @@ test "[]Display single element works" {
     for x in xs {
         x.display(sb)
     }
-    assert(sb.as_str() == "Money5(42)")
+    assert(sb.into_str() == "Money5(42)")
 }
 
 test "[]Display пустой массив — for-loop не выполняется" {
@@ -45,5 +45,5 @@ test "[]Display пустой массив — for-loop не выполняетс
         x.display(sb)
     }
     sb.append("after")
-    assert(sb.as_str() == "beforeafter")
+    assert(sb.into_str() == "beforeafter")
 }

@@ -3,8 +3,8 @@
 // Opt-in `std.unicode` peer (NOT prelude — table cost paid only by importers).
 // Co-equal with `case_data.nv` (generated tables) in the `std.unicode`
 // folder-module, so the `*_DATA` constants are visible here directly. Reuses peer
-// helpers: parse_cp_list / str_to_cps / cps_to_str / parse_decomp_table
-// (normalize.nv), parse_flat / in_ranges2 (graphemes.nv).
+// helpers: parse_cp_keyed_table / parse_cp_list / str_to_cps / cps_to_str
+// (cp_utils.nv), parse_flat / in_ranges2 (ranges.nv).
 //
 //   fold_case(s)    — full case folding (CaseFolding C+F), for caseless matching.
 //   to_uppercase(s) — full Unicode uppercase (multi-codepoint: ß→SS, ﬁ→FI, …).
@@ -24,10 +24,10 @@ import std.collections.hashmap.{HashMap}
 import std.collections.vec.{Vec}
 
 // ── lazy-static case tables (built once on first touch) ──
-ro fold_map HashMap[int, str] = parse_decomp_table(FOLD_DATA)
-ro lower_map HashMap[int, str] = parse_decomp_table(LOWER_DATA)
-ro upper_map HashMap[int, str] = parse_decomp_table(UPPER_DATA)
-ro title_map HashMap[int, str] = parse_decomp_table(TITLE_DATA)
+ro fold_map HashMap[int, str] = parse_cp_keyed_table(FOLD_DATA)
+ro lower_map HashMap[int, str] = parse_cp_keyed_table(LOWER_DATA)
+ro upper_map HashMap[int, str] = parse_cp_keyed_table(UPPER_DATA)
+ro title_map HashMap[int, str] = parse_cp_keyed_table(TITLE_DATA)
 ro cased_flat Vec[u32] = parse_flat(CASED_DATA)
 ro caseign_flat Vec[u32] = parse_flat(CASE_IGNORABLE_DATA)
 
@@ -110,10 +110,25 @@ export fn to_lowercase(s str) -> str {
                 None => out.push(cp)
             }
         }
-        i = i + 1
+        i += 1
     }
     cps_to_str(out)
 }
+
+// ── str case methods (Plan 91.18 Ф.5) ──
+// Available opt-in under `import std.unicode` (different from ASCII runtime.string variants).
+
+/// Full case folding as a str method (for caseless matching).
+export fn str @fold_case() -> str => fold_case(@)
+
+/// Full Unicode uppercase as a str method (multi-codepoint: ß→SS, ﬁ→FI).
+export fn str @to_upper() -> str => to_uppercase(@)
+
+/// Full Unicode lowercase as a str method (includes Final_Sigma context rule).
+export fn str @to_lower() -> str => to_lowercase(@)
+
+/// Unicode title-casing as a str method (requires word-boundary segmentation).
+export fn str @to_title() -> str => to_titlecase(@)
 
 /// Unicode full-case-fold equality for `str` (opt-in, requires `import std.unicode`).
 /// Handles multi-codepoint folds: "STRASSE".eq_ignore_case("straße") == true.
@@ -137,7 +152,7 @@ fn is_final_sigma(cps Vec[u32], i int) -> bool {
     while scan && j >= 0 {
         ro c = cps[j]
         if is_case_ignorable(c) {
-            j = j - 1
+            j -= 1
         } else if is_cased(c) {
             before_cased = true
             scan = false
@@ -154,7 +169,7 @@ fn is_final_sigma(cps Vec[u32], i int) -> bool {
         while scan && k < n {
             ro c = cps[k]
             if is_case_ignorable(c) {
-                k = k + 1
+                k += 1
             } else if is_cased(c) {
                 after_cased = true
                 scan = false

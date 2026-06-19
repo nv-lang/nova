@@ -81,7 +81,7 @@ export fn Markdown.to_html(md str) -> str {
             while level < 6 && line.as_chars().nth(level) == Some('#') {
                 level += 1
             }
-            ro text = line[level..line.len()].trim()
+            ro text = line[level..line.len()].trim_ascii()
             buf.append("<h" + str.from(level) + ">")
             buf.append(render_inline(text))
             buf.append("</h" + str.from(level) + ">\n")
@@ -105,7 +105,7 @@ export fn Markdown.to_html(md str) -> str {
         }
 
         // Empty line — paragraph break
-        if line.trim().len() == 0 {
+        if line.trim_ascii().len() == 0 {
             flush_paragraph(buf, paragraph)
             paragraph = StringBuilder.new()
             if in_list { buf.append("</ul>\n"); in_list = false }
@@ -131,9 +131,9 @@ export fn Markdown.to_html(md str) -> str {
 fn flush_paragraph(buf mut Buffer, paragraph Buffer) -> () {
     if paragraph.len() > 0 {
         ro text = paragraph.clone().into()
-        if text.trim().len() > 0 {
+        if text.trim_ascii().len() > 0 {
             buf.append("<p>")
-            buf.append(render_inline(text.trim()))
+            buf.append(render_inline(text.trim_ascii()))
             buf.append("</p>\n")
         }
     }

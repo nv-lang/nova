@@ -18,7 +18,7 @@ test "verified #impl(Display) with explicit @display" {
     // Bare call works (explicit method, не synth)
     consume sb = StringBuilder.new()
     t.display(sb)
-    assert(sb.as_str() == "Tag3(hello)")
+    assert(sb.into_str() == "Tag3(hello)")
 }
 
 test "explicit @display routes through interpolation directly" {

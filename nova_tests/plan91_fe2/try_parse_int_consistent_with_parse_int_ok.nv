@@ -9,7 +9,7 @@ test "decimal values agree" {
     // "42": both should give 42
     mut pi_val int = -1
     mut tpi_val int = -2
-    match "42".parse_int() {
+    match "42".parse_int_opt() {
         Some(n) => { pi_val = n }
         None => assert(false, "parse_int returned None for 42")
     }
@@ -23,7 +23,7 @@ test "decimal values agree" {
 test "hex values agree" {
     mut pi_val int = -1
     mut tpi_val int = -2
-    match "ff".parse_int(radix: 16) {
+    match "ff".parse_int_opt(radix: 16) {
         Some(n) => { pi_val = n }
         None => assert(false, "parse_int returned None for ff")
     }
@@ -37,7 +37,7 @@ test "hex values agree" {
 test "error cases both fail for invalid input" {
     mut pi_none = true
     mut tpi_err = true
-    match "abc".parse_int() {
+    match "abc".parse_int_opt() {
         Some(_) => { pi_none = false }
         None => {}
     }

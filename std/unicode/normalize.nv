@@ -31,87 +31,13 @@ const TCOUNT int = 28
 const NCOUNT int = 588    // VCOUNT * TCOUNT
 const SCOUNT int = 11172  // LCOUNT * NCOUNT
 
-// ---- table parsing ----
-
-// Parse a lowercase-hex integer; -1 on malformed input (the generated tables
-// are always well-formed, so the sentinel is a safety net, not a hot path).
-fn hex(s str) -> int {
-    // D102: `radix` has a default → keyword-only.
-    match s.parse_int(radix: 16) { Some(v) => v, None => -1 }
-}
-
-// "d1,d2,d3" (comma-separated hex) -> [d1, d2, d3].
-fn parse_cp_list(s str) -> Vec[u32] {
-    mut out = Vec[u32].with_capacity(4)
-    for part in s.split(",") {
-        ro cp = hex(part)
-        if cp >= 0 { out.push(cp) }
-    }
-    out
-}
-
-// "cp:d1,d2;cp2:..." -> { cp -> "d1,d2" } (decomposition kept as text, parsed
-// lazily by `decompose`).
-fn parse_decomp_table(data str) -> HashMap[int, str] {
-    ro entries = data.split(";")
-    mut m = HashMap[int, str].with_capacity(entries.len() + 8)
-    for entry in entries {
-        match entry.split_once(":") {
-            Some((k, v)) => {
-                ro cp = hex(k)
-                if cp >= 0 { m.insert(cp, v) }
-            }
-            None => {}
-        }
-    }
-    m
-}
-
-// "cp:ccc;..." -> { cp -> ccc }.
-fn parse_ccc_table(data str) -> HashMap[int, int] {
-    ro entries = data.split(";")
-    mut m = HashMap[int, int].with_capacity(entries.len() + 8)
-    for entry in entries {
-        match entry.split_once(":") {
-            Some((k, v)) => {
-                ro cp = hex(k)
-                ro cc = hex(v)
-                if cp >= 0 && cc >= 0 { m.insert(cp, cc) }
-            }
-            None => {}
-        }
-    }
-    m
-}
-
-// "a,b:cp;..." -> { (a << 21) | b -> cp }. Packed-int key avoids tuple-key
-// HashMap (codepoints fit in 21 bits; see [M-hashmap-tuple-key-mono]).
-fn parse_comp_table(data str) -> HashMap[int, int] {
-    ro entries = data.split(";")
-    mut m = HashMap[int, int].with_capacity(entries.len() + 8)
-    for entry in entries {
-        match entry.split_once(":") {
-            Some((ab, cp_s)) => {
-                match ab.split_once(",") {
-                    Some((a_s, b_s)) => {
-                        ro a = hex(a_s)
-                        ro b = hex(b_s)
-                        ro cp = hex(cp_s)
-                        if a >= 0 && b >= 0 && cp >= 0 { m.insert((a << 21) | b, cp) }
-                    }
-                    None => {}
-                }
-            }
-            None => {}
-        }
-    }
-    m
-}
-
 // ---- lazy-static tables (built once on first normalization call) ----
-ro nfd_map HashMap[int, str] = parse_decomp_table(NFD_DATA)
-ro nfkd_map HashMap[int, str] = parse_decomp_table(NFKD_DATA)
-ro ccc_map HashMap[int, int] = parse_ccc_table(CCC_DATA)
+// hex / parse_cp_list / parse_cp_keyed_table / parse_cp_int_table /
+// parse_comp_table / str_to_cps / cps_to_str live in the std.unicode peer
+// cp_utils.nv (folder-module peers share declarations).
+ro nfd_map HashMap[int, str] = parse_cp_keyed_table(NFD_DATA)
+ro nfkd_map HashMap[int, str] = parse_cp_keyed_table(NFKD_DATA)
+ro ccc_map HashMap[int, int] = parse_cp_int_table(CCC_DATA)
 ro comp_map HashMap[int, int] = parse_comp_table(COMP_DATA)
 
 fn ccc_of(cp int) -> int {
@@ -124,19 +50,6 @@ fn decomp_lookup(cp int, compat bool) -> Option[str] {
 
 fn is_hangul_syllable(cp int) -> bool {
     cp >= SBASE && cp < SBASE + SCOUNT
-}
-
-// ---- codepoint <-> str ----
-fn str_to_cps(s str) -> Vec[u32] {
-    mut out = Vec[u32].with_capacity(s.byte_len())
-    for c in s.as_chars() { out.push(c as int) }
-    out
-}
-
-fn cps_to_str(cps Vec[u32]) -> str {
-    consume sb = StringBuilder.with_capacity(cps.len() * 2)
-    for cp in cps { sb.append(str.from_codepoint(cp)) }
-    sb.as_str()
 }
 
 // ---- decomposition ----
@@ -175,10 +88,10 @@ fn canonical_order(arr Vec[u32]) -> Vec[u32] {
                 ro tmp = a[j]
                 a[j] = a[j - 1]
                 a[j - 1] = tmp
-                j = j - 1
+                j -= 1
             }
         }
-        i = i + 1
+        i += 1
     }
     a
 }
@@ -222,6 +135,9 @@ fn compose(cps Vec[u32]) -> Vec[u32] {
             if comp >= 0 && (last_ccc < cc || last_ccc == 0) {
                 out[starter_pos] = comp
                 starter_ch = comp
+                // last_ccc intentionally not updated here: UAX#15 blocking rule —
+                // the composed character inherits the starter's CCC (0), so the
+                // next combiner is still blocked by the same blocking condition.
             } else {
                 if cc == 0 {
                     starter_pos = out.len()
@@ -230,7 +146,7 @@ fn compose(cps Vec[u32]) -> Vec[u32] {
                 last_ccc = cc
                 out.push(ch)
             }
-            i = i + 1
+            i += 1
         }
         out
     }
@@ -257,3 +173,17 @@ export fn normalize_nfc(s str) -> str {
 export fn normalize_nfkc(s str) -> str {
     cps_to_str(compose(canonical_order(decompose(str_to_cps(s), true))))
 }
+
+// ---- str extension methods (Plan 91.18 Ф.5) ----
+
+/// Canonical decomposition + ordering (NFD) as a str method.
+export fn str @to_nfd() -> str => normalize_nfd(@)
+
+/// Compatibility decomposition + ordering (NFKD) as a str method.
+export fn str @to_nfkd() -> str => normalize_nfkd(@)
+
+/// Canonical decomposition, ordering, then composition (NFC) as a str method.
+export fn str @to_nfc() -> str => normalize_nfc(@)
+
+/// Compatibility decomposition, ordering, then composition (NFKC) as a str method.
+export fn str @to_nfkc() -> str => normalize_nfkc(@)

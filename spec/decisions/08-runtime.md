@@ -4504,6 +4504,60 @@ unit-typed, возвращается `"nova_unit"` вместо `"nova_int"` fal
 
 ---
 
+## D178 amend V3 — Plan 91.18 str API cleanup (Ф.2/Ф.5/Ф.6/Ф.7/Ф.10)
+
+**Статус:** IMPLEMENTED (Plan 91.18, 2026-06-19).
+
+Дополнение к D178 V1/V2. Изменения из Plan 91.18:
+
+### Переименования (Ф.2)
+- `str @trim/trim_start/trim_end` → `@trim_ascii/trim_ascii_start/trim_ascii_end`
+  (bare = Unicode-семантика под `import std.unicode`, `_ascii_` = таблицы не нужны).
+- `str @to_lower/to_upper` (ASCII) → `@to_ascii_lower/to_ascii_upper`.
+- `str @split_whitespace` → `@split_ascii_whitespace`.
+- `str @pad_left/pad_right` → `@pad_start/pad_end` (start/end convention).
+- `StringBuilder @as_str()` → `@into_str()` (Rust-идиома consume+transfer; `as_`
+  = O(1) borrow, `into_` = consume).
+- `str @code_points()` → `@to_code_points()` + перенос из utf16.nv → chars.nv
+  (`to_*` = allocating copy convention).
+
+### Новые str методы (Ф.2/Ф.5)
+- `str @parse_int(radix=10) -> int Fail[ParseIntError]` — bare = throw convention
+  (D77/D25); `try_parse_int` = Result; `parse_int_opt` = Option.
+- `str @split_at(idx)` / `@split_at_checked(idx)` (Ф.5 П6).
+- `str @to_nfc/nfd/nfkc/nfkd()` — тонкие делегаты к `normalize_*` (Ф.5 П1).
+- `str @fold_case()` / `@to_upper()` / `@to_lower()` / `@to_title()` — тонкие
+  делегаты к case-free-fns под `import std.unicode` (Ф.5 П2).
+- `str @trim/trim_start/trim_end/split_whitespace()` под `import std.unicode` (Ф.5 П3).
+- `str @contains(c char)` / `@starts_with(c char)` / `@ends_with(c char)` —
+  char-перегрузки без аллокации (Ф.5 П5).
+- `str.try_from_codepoint(cp) -> Result[str, _]` — checked обёртка над `char.try_from` (Ф.5 П4).
+
+### CharIndicesIter (Ф.10)
+- `export type CharIndicesIter value priv(type) { buf str; pos int }` в chars.nv.
+- `CharsIter @indices() -> CharIndicesIter` — адаптер захватывает buf+pos.
+- `CharIndicesIter mut @next() -> Option[(int, char)]` — off = byte-offset перед advance.
+
+### split("") policy (Ф.10, Решение 1)
+**Отменяет решение Plan 91.15 Ф.4** (split("") → паника). Единое правило:
+пустой sep/паттерн = определённый край (не паника) во всём search/split/replace
+surface. `"hi".split("") == ["hi"]`, `"hi".find("") == Some(0)`,
+`"hi".rfind("") == Some(2)`, `"hi".contains("") == true`.
+
+### collate doc fix (Ф.10)
+`collate_sort_key(s) -> Vec[u32]` (было задокументировано `[]int`; код уже был
+правильным — только doc исправлен). `Collator.strength` удалён как dead field;
+`Collator` хранит `_tag int` placeholder (type-private). STRENGTH_QUATERNARY удалён.
+
+### Связь
+- [D178](#d178-str-api-cleanup-и-расширения--plan-91-ф26) — V1.
+- [D178 amend V2](#d178-amend-v2--str-try_parse_int--parseiniterror-sum-type--plan-91-ф2) — V2.
+- [D253](#d253-stdunicode--нормализация-uax-15--graphemewordsentence-сегментация-uax-29--case-foldingmappingtitle-casing) — unicode методы.
+- [D254](#d254-модель-сравнения-строк--byte-ord-дефолт--явный-collation) — collation.
+- `nova_tests/plan91_18/` — 15 fixtures + neg/to_upper_import_gated.
+
+---
+
 ## D217. Method-local receiver field caching — Plan 123.1
 
 **Source:** [Plan 123 umbrella](../../docs/plans/123-receiver-field-cse.md)

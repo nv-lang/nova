@@ -4,7 +4,7 @@
 // Coverage: stride-1 sample = 1093 of 1093 test lines.
 module nova_tests.plan152_4
 
-import std.unicode.{GraphemesView}
+import std.unicode.{GraphemesIter}
 
 test "UAX#29 GraphemeBreakTest (chunk 0, 250 cases)" {
     {

@@ -5,7 +5,7 @@ module nova_tests.plan108_1
 
 fn build_str(consume sb StringBuilder) -> str {
     sb.append("!")        // ✓ consume → mut неявный
-    sb.as_str()
+    sb.into_str()
 }
 
 test "consume param can mutate" {

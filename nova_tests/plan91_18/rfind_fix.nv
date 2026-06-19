@@ -1,0 +1,14 @@
+module nova_tests.plan91_18
+
+test "rfind: finds last occurrence" {
+    assert("abcabc".rfind("b") == Some(4))
+    assert("abcabc".rfind("abc") == Some(3))
+}
+
+test "rfind: returns None when not found" {
+    assert("abc".rfind("x") == None)
+}
+
+test "rfind: empty needle returns byte_len" {
+    assert("abc".rfind("") == Some(3))
+}

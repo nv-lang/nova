@@ -104,7 +104,7 @@ test "Display — @display method works" {
     ro p = Pair2 { x: 3, y: 4 }
     consume sb = StringBuilder.new()
     p.display(sb)
-    assert(sb.as_str() == "(3, 4)")
+    assert(sb.into_str() == "(3, 4)")
 }
 
 test "Display — interp-string uses @display" {

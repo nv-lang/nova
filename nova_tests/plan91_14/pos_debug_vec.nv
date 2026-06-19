@@ -11,26 +11,26 @@ test "Vec[int] debug non-empty" {
     ro v = Vec[int].of(1, 2, 3)
     consume sb = StringBuilder.new()
     v.debug(sb)
-    assert(sb.as_str() == "Vec[1, 2, 3]")
+    assert(sb.into_str() == "Vec[1, 2, 3]")
 }
 
 test "Vec[int] debug empty" {
     ro v = Vec[int].new()
     consume sb = StringBuilder.new()
     v.debug(sb)
-    assert(sb.as_str() == "Vec[]")
+    assert(sb.into_str() == "Vec[]")
 }
 
 test "Vec[int] single element" {
     ro v = Vec[int].of(42)
     consume sb = StringBuilder.new()
     v.debug(sb)
-    assert(sb.as_str() == "Vec[42]")
+    assert(sb.into_str() == "Vec[42]")
 }
 
 test "Vec[bool] debug" {
     ro v = Vec[bool].of(true, false, true)
     consume sb = StringBuilder.new()
     v.debug(sb)
-    assert(sb.as_str() == "Vec[true, false, true]")
+    assert(sb.into_str() == "Vec[true, false, true]")
 }

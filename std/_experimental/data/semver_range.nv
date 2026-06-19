@@ -64,7 +64,7 @@ export type ParseRangeError
 /// `*` (any).
 #stable(since = "0.1")
 export fn VersionReq.parse(s str) Fail[ParseRangeError] -> Self {
-    ro trimmed = s.trim()
+    ro trimmed = s.trim_ascii()
     if trimmed.len() == 0 { throw EmptyInput }
 
     if trimmed == "*" {
@@ -75,7 +75,7 @@ export fn VersionReq.parse(s str) Fail[ParseRangeError] -> Self {
     mut sets []ComparatorSet = []
     ro or_groups = trimmed.split("||")
     for group in or_groups {
-        ro comps = parse_comparator_set(group.trim())
+        ro comps = parse_comparator_set(group.trim_ascii())
         sets.push({ comparators: comps })
     }
     { sets, any_match: false }
@@ -86,7 +86,7 @@ fn parse_comparator_set(s str) Fail[ParseRangeError] -> []Comparator {
     // Split by whitespace
     ro tokens = s.split(" ")
     for tok in tokens {
-        ro t = tok.trim()
+        ro t = tok.trim_ascii()
         if t.len() == 0 { continue }
         ro comps = parse_one_comparator(t)
         for c in comps { out.push(c) }

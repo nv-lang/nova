@@ -1,0 +1,17 @@
+module nova_tests.plan91_18
+
+test "contains char" {
+    assert("hello".contains('h'))
+    assert("hello".contains('e'))
+    assert(!"hello".contains('z'))
+}
+
+test "starts_with char" {
+    assert("hello".starts_with('h'))
+    assert(!"hello".starts_with('e'))
+}
+
+test "ends_with char" {
+    assert("hello".ends_with('o'))
+    assert(!"hello".ends_with('h'))
+}

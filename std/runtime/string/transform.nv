@@ -12,35 +12,35 @@ import std.prelude.core.{Option, Some, None}
 import std.runtime.string_builder.{StringBuilder}
 
 
-// Убирает whitespace с начала и конца. Plan 152.2 Ф.2: теперь ZERO-COPY (sub-view
-// через `@[start..end]`, не alloc-копия) — закрывает [M-139-f1-trim-view]. str
-// иммутабелен (R8) + GC держит буфер живым через view. Whitespace = байт <= 0x20
-// (как бывший nova_str_trim; Unicode-WS — Phase B, 152.4).
-export fn str @trim() -> str {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+// Убирает ASCII whitespace с начала и конца. Plan 152.2 Ф.2: теперь ZERO-COPY
+// (sub-view через `@[start..end]`, не alloc-копия) — закрывает
+// [M-139-f1-trim-view]. str иммутабелен (R8) + GC держит буфер живым через view.
+// Whitespace = байт <= 0x20 (как бывший nova_str_trim; Unicode-WS — Phase B,
+// 152.4). Renamed trim → trim_ascii (Plan 91.18 Ф.2).
+export fn str @trim_ascii() -> str {
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     mut start = 0
-    while start < n && (bytes[start] as int) <= 32 { start = start + 1 }
+    while start < n && is_ascii_ws(bytes[start] as int) { start += 1 }
     mut end = n
-    while end > start && (bytes[end - 1] as int) <= 32 { end = end - 1 }
+    while end > start && is_ascii_ws(bytes[end - 1] as int) { end -= 1 }
     @[start..end]
 }
 
-// Убирает whitespace только СЛЕВА (zero-copy view). Plan 152.2 Ф.2.
-export fn str @trim_start() -> str {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+// Убирает ASCII whitespace только СЛЕВА (zero-copy view). Plan 152.2 Ф.2.
+// Renamed trim_start → trim_ascii_start (Plan 91.18 Ф.2).
+export fn str @trim_ascii_start() -> str {
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     mut start = 0
-    while start < n && (bytes[start] as int) <= 32 { start = start + 1 }
+    while start < n && is_ascii_ws(bytes[start] as int) { start += 1 }
     @[start..n]
 }
 
-// Убирает whitespace только СПРАВА (zero-copy view). Plan 152.2 Ф.2.
-export fn str @trim_end() -> str {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+// Убирает ASCII whitespace только СПРАВА (zero-copy view). Plan 152.2 Ф.2.
+// Renamed trim_end → trim_ascii_end (Plan 91.18 Ф.2).
+export fn str @trim_ascii_end() -> str {
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     mut end = n
-    while end > 0 && (bytes[end - 1] as int) <= 32 { end = end - 1 }
+    while end > 0 && is_ascii_ws(bytes[end - 1] as int) { end -= 1 }
     @[0..end]
 }
 
@@ -88,32 +88,34 @@ export fn str @strip_suffix(suffix str) -> Option[str] {
     }
 }
 
-// Lowercase копия (ASCII). Plan 139 Ф.1: Nova-body, alloc через []u8.
-export fn str @to_lower() -> str {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+// ASCII lowercase копия. Bulk-copy then in-place patch: one alloc + memcpy,
+// then patch only the A-Z bytes. ASCII ops preserve UTF-8 validity.
+// Renamed to_lower → to_ascii_lower (Plan 91.18 Ф.2).
+export fn str @to_ascii_lower() -> str {
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     mut out = []u8.with_capacity(n)
+    out.append(bytes)
     mut i = 0
     while i < n {
-        mut c = bytes[i] as int
-        if c >= 65 && c <= 90 { c = c + 32 }
-        out.push(c as u8)
-        i = i + 1
+        ro b = out[i] as int
+        if b >= 65 && b <= 90 { out[i] = (b + 32) as u8 }
+        i += 1
     }
     str.from_bytes_unchecked(out)
 }
 
-// Uppercase копия (ASCII). Plan 139 Ф.1: Nova-body, alloc через []u8.
-export fn str @to_upper() -> str {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+// ASCII uppercase копия. Bulk-copy then in-place patch: one alloc + memcpy,
+// then patch only the a-z bytes. ASCII ops preserve UTF-8 validity.
+// Renamed to_upper → to_ascii_upper (Plan 91.18 Ф.2).
+export fn str @to_ascii_upper() -> str {
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     mut out = []u8.with_capacity(n)
+    out.append(bytes)
     mut i = 0
     while i < n {
-        mut c = bytes[i] as int
-        if c >= 97 && c <= 122 { c = c - 32 }
-        out.push(c as u8)
-        i = i + 1
+        ro b = out[i] as int
+        if b >= 97 && b <= 122 { out[i] = (b - 32) as u8 }
+        i += 1
     }
     str.from_bytes_unchecked(out)
 }
@@ -144,22 +146,24 @@ export fn str @concat(other str) -> str {
 // Оператор `+`: `s1 + s2 == s1.@plus(s2)` → @concat (D46).
 export fn str @plus(other str) -> str => @concat(other)
 
-// Pad строку слева до width CODEPOINT'ов символом fill. Если width <= длины — s.
+// Pad строку с начала до width CODEPOINT'ов символом fill. Если width <= длины — s.
 // Plan 152.2 Ф.3: ширина в codepoint'ах (`as_chars().count()`), не байтах — иначе
-// для multibyte `"é".pad_left(3,'·')` дало бы 1 паддинг вместо 2.
-export fn str @pad_left(width int, fill char) -> str {
+// для multibyte `"é".pad_start(3,'·')` дало бы 1 паддинг вместо 2.
+// Renamed pad_left → pad_start (Plan 91.18 Ф.2).
+export fn str @pad_start(width int, fill char) -> str {
     ro pad = width - @as_chars().count()
     if pad <= 0 { return @ }
     ro fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).as_str()
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).into_str()
 }
 
-// Pad строку справа до width CODEPOINT'ов символом fill. Если width <= длины — s.
-export fn str @pad_right(width int, fill char) -> str {
+// Pad строку с конца до width CODEPOINT'ов символом fill. Если width <= длины — s.
+// Renamed pad_right → pad_end (Plan 91.18 Ф.2).
+export fn str @pad_end(width int, fill char) -> str {
     ro pad = width - @as_chars().count()
     if pad <= 0 { return @ }
     ro fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).as_str()
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).into_str()
 }
 
 // Pad с обеих сторон до width CODEPOINT'ов (левый паддинг = floor(pad/2)). Plan 152.2 Ф.3.
@@ -169,50 +173,53 @@ export fn str @pad_center(width int, fill char) -> str {
     ro left = pad / 2
     ro right = pad - left
     ro fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, left).append(@).append_repeat(fill_s, right).as_str()
+    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, left).append(@).append_repeat(fill_s, right).into_str()
 }
 
 // Повторение строки n раз. n <= 0 → пустая строка.
 export fn str @repeat(n int) -> str {
     if n <= 0 { return "" }
-    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).as_str()
+    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).into_str()
 }
 
-// Заменить все non-overlapping occurrences `from` на `to`. Empty `from` → возвращает s unchanged.
-// Note: uses @concat loop (not []str.join) to avoid circular import with std.text. O(n²) for
-// many replacements — acceptable for bootstrap; StringBuilder followup is [str-replace-buffered].
+// Заменить все non-overlapping occurrences `from` на `to`. Empty `from` → s unchanged.
+// O(n) via StringBuilder: single scan with find, no concat-loop allocs.
 export fn str @replace(from str, to str) -> str {
-    if from.byte_len() == 0 { return @ }
-    ro parts = @split(from)
-    ro n = parts.len()
-    if n == 0 { return @ }
-    mut result = parts[0]
-    mut i = 1
-    while i < n {
-        result = result.concat(to).concat(parts[i])
-        i = i + 1
+    ro fn_len = from.byte_len()
+    if fn_len == 0 { return @ }
+    ro to_len = to.byte_len()
+    ro estimated = @byte_len() + if to_len > fn_len { to_len - fn_len } else { 0 }
+    consume sb = StringBuilder.with_capacity(estimated)
+    mut rest = @
+    while true {
+        match rest.find(from) {
+            Some(k) => {
+                sb.append(rest[0..k]).append(to)
+                rest = rest[k + fn_len .. rest.byte_len()]
+            }
+            None => break
+        }
     }
-    result
+    sb.append(rest).into_str()
 }
 
 // Заменить первые `n` non-overlapping вхождений `from` на `to` (Rust `replacen`).
-// `n <= 0` / пустой `from` → s без изменений. Scan через @find на остатке (`rest`),
-// concat сегментов (как @replace, O(результата) на concat — bootstrap-acceptable).
+// O(n) via StringBuilder: single scan with find.
 export fn str @replacen(from str, to str, n int) -> str {
     ro fn_len = from.byte_len()
     if n <= 0 || fn_len == 0 { return @ }
-    mut result = ""
+    consume sb = StringBuilder.with_capacity(@byte_len())
     mut rest = @
     mut count = 0
     while count < n {
         match rest.find(from) {
             Some(k) => {
-                result = result.concat(rest[0..k]).concat(to)
+                sb.append(rest[0..k]).append(to)
                 rest = rest[k + fn_len .. rest.byte_len()]
-                count = count + 1
-            },
-            None => break,
+                count += 1
+            }
+            None => break
         }
     }
-    result.concat(rest)
+    sb.append(rest).into_str()
 }

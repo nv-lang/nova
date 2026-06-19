@@ -1,4 +1,4 @@
-﻿// Plan 123 V*.followups 2026-06-05 marker 2 вЂ” V5.4.1 region-tagging.
+// Plan 123 V*.followups 2026-06-05 marker 2 вЂ” V5.4.1 region-tagging.
 // Closes [M-123.5.4-explain-region-tagging].
 // Positive: V1.2 nested-region caching inside if-then with internal
 // write вЂ” semantic preservation through region-aware caching.

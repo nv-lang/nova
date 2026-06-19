@@ -19,7 +19,7 @@ test "custom @display writes to Write sink directly" {
     ro p = Point { x: 3, y: 4 }
     consume sb = StringBuilder.new()
     p.display(sb)
-    assert(sb.as_str() == "(3, 4)")
+    assert(sb.into_str() == "(3, 4)")
 }
 
 test "custom @display via string interpolation" {
@@ -32,7 +32,7 @@ test "custom @display manual + interp produce same result" {
     ro p = Point { x: 5, y: 6 }
     consume sb = StringBuilder.new()
     p.display(sb)
-    ro manual = sb.as_str()
+    ro manual = sb.into_str()
     ro interp = "${p}"
     assert(manual == interp)
 }
@@ -46,5 +46,5 @@ test "nested: display delegates to sub-type display" {
     sb.write(" -> ")
     p2.display(sb)
     sb.write("]")
-    assert(sb.as_str() == "[(1, 1) -> (9, 9)]")
+    assert(sb.into_str() == "[(1, 1) -> (9, 9)]")
 }

@@ -1,4 +1,4 @@
-﻿// Plan 124.9 Р¤.0 вЂ” bug repro: 4-level nested record literal.
+// Plan 124.9 Р¤.0 вЂ” bug repro: 4-level nested record literal.
 // Expected: each level allocates its own declared field type (Bv5, Cv4, Dv2),
 // not the outermost type Av5 four times.
 module nova_tests.plan124_9

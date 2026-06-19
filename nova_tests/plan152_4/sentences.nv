@@ -8,7 +8,7 @@
 
 module nova_tests.plan152_4
 
-import std.unicode.{SentencesView}
+import std.unicode.{SentencesIter}
 
 test "as_sentences — UAX #29 segment counts" {
     assert("".as_sentences().count() == 0)                 // SB1/SB2: empty

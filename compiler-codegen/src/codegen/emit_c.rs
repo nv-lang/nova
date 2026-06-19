@@ -25124,8 +25124,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             // Plan 135 Ф.2: tiebreak by receiver mutability when
                             // multiple primitive extension overloads are registered.
                             let caller_prim_is_mut = self.is_obj_mutable(obj);
+                            // Plan 91.18 Ф.7: when multiple overloads differ in
+                            // param types (e.g. str @contains(str) vs str @contains(char)),
+                            // first try to match on argument C-types exactly, then
+                            // fall back to recv_mutable-only tiebreak (Plan 135).
+                            let arg_c_types: Vec<String> = args.iter()
+                                .map(|a| self.infer_expr_c_type(a.expr()))
+                                .collect();
                             let sig_opt = inst_overloads.iter()
-                                .find(|s| s.recv_mutable == caller_prim_is_mut)
+                                .find(|s| s.recv_mutable == caller_prim_is_mut
+                                    && s.param_c_types == arg_c_types)
+                                .or_else(|| inst_overloads.iter()
+                                    .find(|s| s.param_c_types == arg_c_types))
+                                .or_else(|| inst_overloads.iter()
+                                    .find(|s| s.recv_mutable == caller_prim_is_mut))
                                 .or_else(|| inst_overloads.first());
                             if let Some(sig) = sig_opt {
                                 let obj_c = self.emit_expr(obj)?;
@@ -27172,8 +27184,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 res_var, v));
                             let out = self.fresh_tmp();
                             // Plan 59 Ф.7.5 D1c: dual-mode producer.
+                            // Plan 91.18 Ф.7: Ok type must be nova_char (not nova_int)
+                            // so that `Ok(c)` arm binds c as char, enabling str.from(c)
+                            // to dispatch to Nova_str_static_from_char (not nova_int_to_str).
                             let res_c_ty = self.result_repr_c_type(
-                                "nova_int", "nova_str");
+                                "nova_char", "nova_str");
                             let ok_ctor = self.result_ctor_name(&res_c_ty, "Ok");
                             let err_ctor = self.result_ctor_name(&res_c_ty, "Err");
                             self.line(&format!("{} {};", res_c_ty, out));
@@ -28818,10 +28833,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
         }
         let result = self.fresh_tmp_named("interp_str");
-        // Plan 109 (D179) + Plan 91 followup: consume @as_str() — Nova-generated:
-        // Nova_StringBuilder_consume_as_str. Renamed from @to_str().
+        // Plan 109 (D179) + Plan 91.18 Ф.2: consume @into_str() — Nova-generated:
+        // Nova_StringBuilder_consume_into_str. Renamed from @as_str() (Plan 91.18).
         self.line(&format!(
-            "nova_str {} = Nova_StringBuilder_consume_as_str({});",
+            "nova_str {} = Nova_StringBuilder_consume_into_str({});",
             result, sb
         ));
         self.var_types
@@ -29050,7 +29065,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             ));
             self.line(&format!("{}({}, {});", fn_name, v, fmt_sb));
             let _ = sb; // interp builder unused on this path.
-            format!("Nova_StringBuilder_consume_as_str({})", fmt_sb)
+            format!("Nova_StringBuilder_consume_into_str({})", fmt_sb)
         };
 
         // Apply string-precision truncation (codepoints), then pad/align.
@@ -36266,6 +36281,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         }
                     }
                 }
+                // Plan 91.18 Ф.7: `char.try_from(int_expr)` — static call whose
+                // emit-side producer (line ~27180) was fixed to emit a
+                // `NovaRes_nova_char_nova_str*` result.  Without this mirror in
+                // `infer_expr_c_type` the scrutinee variable of
+                //   `match char.try_from(cp) { Ok(c) => c, … }`
+                // would still be typed `NovaRes_nova_int_nova_str*`, binding `c`
+                // as `nova_int` and dispatching `str.from(c)` to `nova_int_to_str`
+                // instead of `Nova_str_static_from_char`.
+                if let ExprKind::Path(parts) = &func.kind {
+                    if parts.len() == 2 && parts[0] == "char" && parts[1] == "try_from" {
+                        if let Some(first_arg) = args.first() {
+                            let arg_ty = self.infer_expr_c_type(first_arg.expr());
+                            if arg_ty == "nova_int" {
+                                return self.result_repr_c_type("nova_char", "nova_str");
+                            }
+                        }
+                    }
+                }
                 // Plan 11 Ф.1-Ф.3: multi-overload infer. Если func — Path/Member
                 // call на known receiver-type, ищем в method_overloads. Это
                 // решает single-key last-wins для одноимённых методов.
@@ -39298,7 +39331,7 @@ mod dce_tests {
         .expect("fixture parses");
         let mut used: HashSet<String> = HashSet::new();
         crate::lints::collect_used_names(&module.items, &mut used);
-        for name in ["StringBuilder", "with_capacity", "append", "as_str"] {
+        for name in ["StringBuilder", "with_capacity", "append", "into_str"] {
             assert!(
                 used.contains(name),
                 "interpolation must seed `{name}` for reachability-DCE soundness"

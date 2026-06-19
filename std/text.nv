@@ -15,12 +15,12 @@
 
 module std.text
 
+import std.runtime.string_builder.{StringBuilder}
 
 /// Concatenate `[]str` через `sep`. Empty array → пустая строка.
 ///
-/// O(total_len) — single pass с предварительным расчётом final size.
-/// V1 simple: используем `str.@plus` (concat) внутри loop. Для крупных
-/// arrays — followup `[text-join-buffered]` с string_builder.
+/// O(total_len) — single pass: pre-compute exact capacity, then one StringBuilder
+/// fill (no intermediate allocations). Fixes the O(n²) concat-loop from V1.
 ///
 /// # Examples
 /// ```nova
@@ -32,14 +32,19 @@ module std.text
 #stable(since = "0.1")
 export fn []str @join(sep str) -> str {
     ro n = @len()
-    if n == 0 {
-        return ""
-    }
-    mut result = @[0]
+    if n == 0 { return "" }
+    mut total = @[0].byte_len()
     mut i = 1
     while i < n {
-        result = result + sep + @[i]
-        i = i + 1
+        total += sep.byte_len() + @[i].byte_len()
+        i += 1
     }
-    result
+    consume sb = StringBuilder.with_capacity(total).append(@[0])
+    i = 1
+    while i < n {
+        sb.append(sep).append(@[i])
+        i += 1
+    }
+    sb.into_str()
 }
+

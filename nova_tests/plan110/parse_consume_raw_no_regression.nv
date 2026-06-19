@@ -14,7 +14,7 @@ module nova_tests.plan110
 
 fn extract_str() -> str {
     consume sb = StringBuilder.new()
-    sb.append("hello").as_str()
+    sb.append("hello").into_str()
 }
 
 test "Plan 110.1.1: raw consume binding without block — no regression" {

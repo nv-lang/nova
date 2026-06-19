@@ -116,3 +116,15 @@ referenced from plan docs and simplifications.md.
 - **[M-147-readonly-content-lsp-quickfix]** nova-lsp `E_READONLY_CONTENT` quick-fix (Plan 147 Ф.7, 2026-06-17) — базовый `fix_readonly_content` добавлен в `nova-lsp/src/code_actions.rs`: ищет `ro <name>` binding вверх по файлу и предлагает `ro → mut`, или добавляет `mut ` перед параметром. Priority: P2 (улучшить heuristic при необходимости).
 
 - **[M-118.7-safe-addr-outside-fn-scope]** Plan 118.6/118.7 known limitation: `&ident` без `unsafe {}` как trailing expr в fn body даёт `undefined identifier` (checker ищет ident в другом контексте). Workaround: `unsafe { &ident }` — поведение идентично после 118.7. Priority: P3 (правильная fix requires full type-inference in escape sink).
+
+---
+
+## Plan 91.18 — str + unicode API audit & cleanup (followups)
+
+- **[M-91.18-to-words-array]** `str @to_words() -> []str` — eager materialization of word segments (mirrors `to_chars`). Priority: P2.
+- **[M-91.18-eq-u8-slice]** `Equal` for `ro []u8` — would simplify `string_builder.nv @starts_with/@ends_with` (`.compare(b)==0` → `==b`). Priority: P2.
+- **[M-91.18-from-bytes-lossy-slice]** `str.from_bytes_lossy` valid-sequence push optimization: `out.append(bytes[i..i+seq])` instead of per-byte push. Priority: P2.
+- **[M-91.18-validate-utf8-dedup]** Shared `utf8_seq_len()` helper to de-duplicate utf8 sequence-length calculation between `from_bytes_lossy` and `chars.nv` decode. Priority: P3.
+- **[M-91.18-stringbuilder-len-naming]** Consider `@len` → `@byte_len`, `@capacity` → `@cap` on StringBuilder (aligns with str convention; WriteBuffer family naming context). Priority: P3.
+- **[M-91.18-unicode-cat-enum]** `GCB_*` / `WB_*` / `GC_*` / `SB_*` constants as real enums (requires codegen enum-from-int support). Priority: P3.
+- **[M-91.18-import-gated-str-methods]** `str @to_upper()` / `str @to_lower()` extension methods currently resolve without `import std.unicode` (str ext-methods bypass import gating). Fix would require per-module method visibility tracking in the resolver. Priority: P2.

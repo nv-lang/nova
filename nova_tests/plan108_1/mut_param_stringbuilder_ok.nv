@@ -12,6 +12,6 @@ test "mut param + StringBuilder append" {
     consume sb = StringBuilder.from("hello")
     ro n = append_world(sb)
     assert(n == 11)         // "hello world" = 11 bytes
-    ro final = sb.as_str()
+    ro final = sb.into_str()
     assert(final == "hello world")
 }

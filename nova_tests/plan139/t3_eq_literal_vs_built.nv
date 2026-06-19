@@ -22,5 +22,5 @@ test "length-difference inequality (prefix not equal)" {
 
 test "case-sensitive equality" {
     assert("ABC" != "abc", "case sensitive")
-    assert("ABC".to_lower() == "abc", "lowered equals")
+    assert("ABC".to_ascii_lower() == "abc", "lowered equals")
 }

@@ -38,15 +38,15 @@ test "starts_with and ends_with" {
 
 test "to_upper and to_lower" {
     ro s = "Hello"
-    assert(s.to_lower() == "hello")
-    assert(s.to_upper() == "HELLO")
+    assert(s.to_ascii_lower() == "hello")
+    assert(s.to_ascii_upper() == "HELLO")
 }
 
 test "trim removes whitespace" {
     ro s = "  hello  "
-    assert(s.trim() == "hello")
-    assert(s.trim_start() == "hello  ")
-    assert(s.trim_end() == "  hello")
+    assert(s.trim_ascii() == "hello")
+    assert(s.trim_ascii_start() == "hello  ")
+    assert(s.trim_ascii_end() == "  hello")
 }
 
 test "contains and find" {

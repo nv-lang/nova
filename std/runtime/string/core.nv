@@ -116,7 +116,7 @@ fn validate_utf8(bytes ro []u8, n int) -> bool {
         mut k = 1
         while k < seq {
             if i + k >= n || !is_cont(bytes[i + k] as int) { return false }
-            k = k + 1
+            k += 1
         }
         // Overlong / surrogate / range guards (mirror C lossy validator).
         if seq == 3 {
@@ -127,7 +127,7 @@ fn validate_utf8(bytes ro []u8, n int) -> bool {
             if c == 0xF0 && (bytes[i+1] as int) < 0x90 { return false }
             if c == 0xF4 && (bytes[i+1] as int) >= 0x90 { return false }
         }
-        i = i + seq
+        i += seq
     }
     true
 }
@@ -193,7 +193,7 @@ export fn str.from_bytes_lossy(ro bytes []u8) -> str {
             mut k = 1
             while k < seq && valid {
                 if i + k >= n || !is_cont(bytes[i + k] as int) { valid = false }
-                k = k + 1
+                k += 1
             }
         }
         if valid && seq == 3 {
@@ -208,14 +208,14 @@ export fn str.from_bytes_lossy(ro bytes []u8) -> str {
             mut k = 0
             while k < seq {
                 out.push(bytes[i + k])
-                k = k + 1
+                k += 1
             }
-            i = i + seq
+            i += seq
         } else {
             out.push(0xEF as u8)
             out.push(0xBF as u8)
             out.push(0xBD as u8)
-            i = i + 1
+            i += 1
         }
     }
     str.from_bytes_unchecked(out)
@@ -251,35 +251,17 @@ export fn str.from_bytes_unchecked_steal(consume bytes []u8) -> str {
 // Codepoints как []char (allocating). D178: renamed from @chars().
 // Plan 139 Ф.2: Nova-body — UTF-8 decode cursor над @as_bytes() (zero-copy view),
 // push каждого codepoint как char (через cp_to_char). Семантика идентична
-// nova_str_to_chars. Использует тот же decode-алгоритм, что @char_at (≤2
-// irreducible: decode-курсор на Nova, не C).
+// nova_str_to_chars. decode_utf8 — peer-fn из chars.nv (runtime.string folder module).
 export fn str @to_chars() -> []char {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     // Plan 152.1 Ф.4: capacity hint = byte length (codepoint count ≤ byte count;
     // `@char_len()` retired — over-allocating by the multibyte slack is fine).
     mut out = []char.with_capacity(@byte_len())
     mut i = 0
     while i < n {
-        ro b = bytes[i] as int
-        mut cp = b
-        mut step = 1
-        if b < 0x80 {
-            cp = b; step = 1
-        } else if (b & 0xE0) == 0xC0 && i + 1 < n {
-            cp = ((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F)
-            step = 2
-        } else if (b & 0xF0) == 0xE0 && i + 2 < n {
-            cp = ((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F)
-            step = 3
-        } else if (b & 0xF8) == 0xF0 && i + 3 < n {
-            cp = ((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F)
-            step = 4
-        } else {
-            cp = b; step = 1
-        }
+        ro (cp, step) = decode_utf8(bytes, i, n)
         out.push(cp_to_char(cp))
-        i = i + step
+        i += step
     }
     out
 }
@@ -297,8 +279,7 @@ export fn str @to_chars() -> []char {
 // — хардкод C `nova_str_lt`/`eq`/`concat` в operator-lowering снят. Закрывает
 // `[M-139.1-operator-lowered-methods]`.
 export fn str @compare(other str) -> int {
-    ro an = @byte_len()
-    ro bn = other.byte_len()
+    ro (an, bn) = (@byte_len(), other.byte_len())
     ro min = if an < bn { an } else { bn }
     // Plan 152.5a D-R4: RawMem.compare (= memcmp) over the shared prefix instead
     // of a byte-loop — perf-parity with the retired C nova_str_compare, so the
@@ -337,6 +318,22 @@ export fn str @is_char_boundary(idx int) -> bool {
     (bytes[idx] as int & 0xC0) != 0x80
 }
 
+// Plan 91.18 Ф.5: checked codepoint → str conversion.
+// `str.from_codepoint` (char.nv) is unchecked — invalid cp → silent empty str.
+// `str.try_from_codepoint` validates via `char.try_from` and returns a Result.
+
+/// Error type for `str.try_from_codepoint`: the given int is not a valid Unicode scalar value.
+export type InvalidCodepoint | InvalidCodepointError
+
+/// Checked codepoint → str. Returns `Err(InvalidCodepointError)` for surrogates,
+/// negative values, and values > 0x10FFFF. Valid codepoints map to a 1–4-byte str.
+export fn str.try_from_codepoint(cp int) -> Result[str, InvalidCodepoint] {
+    match char.try_from(cp) {
+        Ok(c)  => Ok(str.from(c))
+        Err(_) => Err(InvalidCodepointError)
+    }
+}
+
 // Module-private: ASCII lowercase of a single byte (A-Z → a-z; else unchanged).
 fn ascii_lower_byte(b int) -> int => if b >= 65 && b <= 90 { b + 32 } else { b }
 
@@ -347,12 +344,11 @@ fn ascii_lower_byte(b int) -> int => if b >= 65 && b <= 90 { b + 32 } else { b }
 export fn str @eq_ignore_ascii_case(other str) -> bool {
     ro n = @byte_len()
     if n != other.byte_len() { return false }
-    ro a = @as_bytes()
-    ro b = other.as_bytes()
+    ro (a, b) = (@as_bytes(), other.as_bytes())
     mut i = 0
     while i < n {
         if ascii_lower_byte(a[i] as int) != ascii_lower_byte(b[i] as int) { return false }
-        i = i + 1
+        i += 1
     }
     true
 }

@@ -1,4 +1,4 @@
-﻿// Plan 123.7.7 (V7.7, 2026-06-04): deeper chain receiver
+// Plan 123.7.7 (V7.7, 2026-06-04): deeper chain receiver
 // `@a.b.Cv6.method()` still sibling-safe.
 
 module nova_tests.plan123_7_7
