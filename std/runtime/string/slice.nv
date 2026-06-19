@@ -49,3 +49,22 @@ export fn str @get(r Range) -> Option[str] {
     if r.end < n && (bytes[r.end] as int & 0xC0) == 0x80 { return None }
     Some(@[r.start..r.end])
 }
+
+// Plan 91.18 Ф.5: split_at / split_at_checked.
+
+// Split at byte offset `idx` → (before, from_idx). Panics on out-of-bounds.
+// Contract: 0 <= idx <= byte_len.
+export fn str @split_at(idx int) -> (str, str)
+    requires 0 <= idx && idx <= @byte_len()
+{
+    (@[0..idx], @[idx..@byte_len()])
+}
+
+// Checked split at byte offset `idx`. Returns None when idx is out of bounds
+// or does not land on a codepoint boundary.
+export fn str @split_at_checked(idx int) -> Option[(str, str)] {
+    if idx < 0 || idx > @byte_len() || !@is_char_boundary(idx) {
+        return None
+    }
+    Some((@[0..idx], @[idx..@byte_len()]))
+}

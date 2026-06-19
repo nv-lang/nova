@@ -337,6 +337,22 @@ export fn str @is_char_boundary(idx int) -> bool {
     (bytes[idx] as int & 0xC0) != 0x80
 }
 
+// Plan 91.18 Ф.5: checked codepoint → str conversion.
+// `str.from_codepoint` (char.nv) is unchecked — invalid cp → silent empty str.
+// `str.try_from_codepoint` validates via `char.try_from` and returns a Result.
+
+/// Error type for `str.try_from_codepoint`: the given int is not a valid Unicode scalar value.
+export type InvalidCodepoint | InvalidCodepointError
+
+/// Checked codepoint → str. Returns `Err(InvalidCodepointError)` for surrogates,
+/// negative values, and values > 0x10FFFF. Valid codepoints map to a 1–4-byte str.
+export fn str.try_from_codepoint(cp int) -> Result[str, InvalidCodepoint] {
+    match char.try_from(cp) {
+        Ok(c)  => Ok(str.from(c))
+        Err(_) => Err(InvalidCodepointError)
+    }
+}
+
 // Module-private: ASCII lowercase of a single byte (A-Z → a-z; else unchanged).
 fn ascii_lower_byte(b int) -> int => if b >= 65 && b <= 90 { b + 32 } else { b }
 

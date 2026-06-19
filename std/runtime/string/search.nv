@@ -288,6 +288,59 @@ export fn str @match_indices(needle str) -> []int {
     out
 }
 
+// Plan 91.18 Ф.5: char overloads for @contains/@starts_with/@ends_with.
+// Inline UTF-8 decode — no dependency on Ф.6 decode_utf8 (that version
+// would be an exported free fn; here we decode inline in each method).
+
+// Module-private: decode one UTF-8 codepoint at bytes[i], length n.
+fn utf8_decode_at(bytes ro []u8, i int, n int) -> (int, int) {
+    ro b = bytes[i] as int
+    if b < 0x80 {
+        (b, 1)
+    } else if (b & 0xE0) == 0xC0 && i + 1 < n {
+        (((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F), 2)
+    } else if (b & 0xF0) == 0xE0 && i + 2 < n {
+        (((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F), 3)
+    } else if (b & 0xF8) == 0xF0 && i + 3 < n {
+        (((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F), 4)
+    } else {
+        (b, 1)
+    }
+}
+
+// True if string contains codepoint `c` — UTF-8 scan.
+export fn str @contains(c char) -> bool {
+    ro bytes = @as_bytes()
+    ro n = @byte_len()
+    ro cp = c as int
+    mut i = 0
+    while i < n {
+        ro (decoded, step) = utf8_decode_at(bytes, i, n)
+        if decoded == cp { return true }
+        i += step
+    }
+    false
+}
+
+// True if string starts with codepoint `c`.
+export fn str @starts_with(c char) -> bool {
+    if @is_empty() { return false }
+    ro bytes = @as_bytes()
+    ro (first_cp, _) = utf8_decode_at(bytes, 0, @byte_len())
+    first_cp == (c as int)
+}
+
+// True if string ends with codepoint `c`.
+export fn str @ends_with(c char) -> bool {
+    if @is_empty() { return false }
+    ro bytes = @as_bytes()
+    ro n = @byte_len()
+    mut i = n - 1
+    while i > 0 && ((bytes[i] as int) & 0xC0) == 0x80 { i -= 1 }
+    ro (last_cp, _) = utf8_decode_at(bytes, i, n)
+    last_cp == (c as int)
+}
+
 // Все вхождения `needle` как подстроки (zero-copy views) — Rust `matches`.
 // Пустой needle → пусто.
 export fn str @matches(needle str) -> ro []str {

@@ -170,3 +170,17 @@ export fn normalize_nfc(s str) -> str {
 export fn normalize_nfkc(s str) -> str {
     cps_to_str(compose(canonical_order(decompose(str_to_cps(s), true))))
 }
+
+// ---- str extension methods (Plan 91.18 Ф.5) ----
+
+/// Canonical decomposition + ordering (NFD) as a str method.
+export fn str @to_nfd() -> str => normalize_nfd(@)
+
+/// Compatibility decomposition + ordering (NFKD) as a str method.
+export fn str @to_nfkd() -> str => normalize_nfkd(@)
+
+/// Canonical decomposition, ordering, then composition (NFC) as a str method.
+export fn str @to_nfc() -> str => normalize_nfc(@)
+
+/// Compatibility decomposition, ordering, then composition (NFKC) as a str method.
+export fn str @to_nfkc() -> str => normalize_nfkc(@)

@@ -115,6 +115,21 @@ export fn to_lowercase(s str) -> str {
     cps_to_str(out)
 }
 
+// ── str case methods (Plan 91.18 Ф.5) ──
+// Available opt-in under `import std.unicode` (different from ASCII runtime.string variants).
+
+/// Full case folding as a str method (for caseless matching).
+export fn str @fold_case() -> str => fold_case(@)
+
+/// Full Unicode uppercase as a str method (multi-codepoint: ß→SS, ﬁ→FI).
+export fn str @to_upper() -> str => to_uppercase(@)
+
+/// Full Unicode lowercase as a str method (includes Final_Sigma context rule).
+export fn str @to_lower() -> str => to_lowercase(@)
+
+/// Unicode title-casing as a str method (requires word-boundary segmentation).
+export fn str @to_title() -> str => to_titlecase(@)
+
 /// Unicode full-case-fold equality for `str` (opt-in, requires `import std.unicode`).
 /// Handles multi-codepoint folds: "STRASSE".eq_ignore_case("straße") == true.
 /// For ASCII-only input prefer `eq_ignore_ascii_case` (no table overhead).

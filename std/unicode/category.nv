@@ -168,3 +168,90 @@ export fn char_to_lowercase(cp int) -> str => cps_to_str(lower_one(cp))
 // the char_to_uppercase / char_to_lowercase helpers remain here.
 // The char @method declarations reference these free functions from core.nv
 // via the `import std.unicode` that core.nv holds.
+
+// ─── Unicode trim / split (Plan 91.18 Ф.5) ───
+// Opt-in under `import std.unicode`; bare names (no _ascii_ suffix) shadow
+// nothing — ASCII variants are named trim_ascii / trim_ascii_start / trim_ascii_end.
+
+// Trim Unicode whitespace from both ends (zero-copy view).
+// Uses is_whitespace (WS_DATA) and decode_at (cp_utils.nv peer).
+fn str @trim_unicode() -> str {
+    ro n = @byte_len()
+    if n == 0 { return @ }
+    ro bytes = @as_bytes()
+    mut start = 0
+    while start < n {
+        ro (cp, step) = decode_at(@, start)
+        if !is_whitespace(cp) { break }
+        start += step
+    }
+    mut end = n
+    while end > start {
+        mut i = end - 1
+        while i > start && ((bytes[i] as int) & 0xC0) == 0x80 { i -= 1 }
+        ro (cp, _) = decode_at(@, i)
+        if !is_whitespace(cp) { break }
+        end = i
+    }
+    @[start..end]
+}
+
+// Trim Unicode whitespace from the start (zero-copy view).
+fn str @trim_unicode_start() -> str {
+    ro n = @byte_len()
+    mut start = 0
+    while start < n {
+        ro (cp, step) = decode_at(@, start)
+        if !is_whitespace(cp) { break }
+        start += step
+    }
+    @[start..n]
+}
+
+// Trim Unicode whitespace from the end (zero-copy view).
+fn str @trim_unicode_end() -> str {
+    ro n = @byte_len()
+    ro bytes = @as_bytes()
+    mut end = n
+    while end > 0 {
+        mut i = end - 1
+        while i > 0 && ((bytes[i] as int) & 0xC0) == 0x80 { i -= 1 }
+        ro (cp, _) = decode_at(@, i)
+        if !is_whitespace(cp) { break }
+        end = i
+    }
+    @[0..end]
+}
+
+/// Trim Unicode whitespace from both ends (opt-in under `import std.unicode`).
+export fn str @trim() -> str => @trim_unicode()
+
+/// Trim Unicode whitespace from the start (opt-in under `import std.unicode`).
+export fn str @trim_start() -> str => @trim_unicode_start()
+
+/// Trim Unicode whitespace from the end (opt-in under `import std.unicode`).
+export fn str @trim_end() -> str => @trim_unicode_end()
+
+/// Split on runs of Unicode whitespace, skipping empty segments.
+/// Opt-in under `import std.unicode`.
+export fn str @split_whitespace() -> ro []str {
+    mut out = Vec[str].new()
+    ro n = @byte_len()
+    mut i = 0
+    while i < n {
+        while i < n {
+            ro (cp, step) = decode_at(@, i)
+            if !is_whitespace(cp) { break }
+            i += step
+        }
+        if i >= n { break }
+        ro start = i
+        while i < n {
+            ro (cp, step) = decode_at(@, i)
+            if is_whitespace(cp) { break }
+            i += step
+        }
+        out.push(@[start..i])
+    }
+    out
+}
