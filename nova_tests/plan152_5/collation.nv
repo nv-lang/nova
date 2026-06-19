@@ -102,3 +102,13 @@ test "Collator namespace delegates to the free functions" {
     assert(Collator.same("caf\u{e9}", "cafe\u{301}"))
     assert(Collator.key("a").len() > 0)
 }
+
+test "S2.1 discontiguous contraction does not OOB (idx_seq_push regression)" {
+    // Tibetan U+0FB2 + U+0F71 + U+0F80 is a DUCET discontiguous contraction;
+    // the S2.1 path accumulates consumed indices into a Vec[int]. A prior bug
+    // pushed that list through cp_seq_push (Vec[u32]), reinterpreting 64-bit
+    // indices as 32-bit words → a (hi<<32)|lo garbage index that panicked with
+    // "array: index ... out of bounds for length 4". Must now just compare.
+    assert(collate_compare("\u{fb2}\u{334}\u{f71}\u{f80}", "\u{fb2}\u{334}\u{f80}\u{f71}") <= 0)
+    assert(collate_sort_key("\u{fb2}\u{334}\u{f71}\u{f80}").len() > 0)
+}

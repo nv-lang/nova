@@ -193,6 +193,17 @@ fn cp_seq_push(src Vec[u32], x u32) -> Vec[u32] {
     out
 }
 
+// Same as cp_seq_push but for `Vec[int]` index lists. A separate function is
+// REQUIRED: passing a `Vec[int]` to `cp_seq_push` (which takes `Vec[u32]`)
+// reinterprets 64-bit ints as 32-bit words → garbage indices (the `(hi<<32)|lo`
+// out-of-bounds that bit the s21 discontiguous path). Keep the element types exact.
+fn idx_seq_push(src Vec[int], x int) -> Vec[int] {
+    mut out = Vec[int].with_capacity(src.len() + 1)
+    for v in src { out.push(v) }
+    out.push(x)
+    out
+}
+
 // UCA S2.1: longest contraction match at `i` with **discontiguous** extension —
 // a contraction continuation may match across an interposed non-starter whose
 // combining class is strictly lower (the interposed mark is collated separately).
@@ -224,7 +235,7 @@ fn s21_match(cps Vec[u32], used Vec[int], i int) -> (Option[str], Vec[int]) {
                         match contraction_lookup(first, trial) {
                             Some(ces) => {
                                 cur_tail = trial
-                                cur_consumed = cp_seq_push(cur_consumed, j)
+                                cur_consumed = idx_seq_push(cur_consumed, j)
                                 best_ces = Some(ces)
                                 best_consumed = with_base(i, cur_consumed)
                                 prev_ccc = 0
@@ -233,7 +244,7 @@ fn s21_match(cps Vec[u32], used Vec[int], i int) -> (Option[str], Vec[int]) {
                             None => {
                                 if contraction_has_longer(first, trial) {
                                     cur_tail = trial
-                                    cur_consumed = cp_seq_push(cur_consumed, j)
+                                    cur_consumed = idx_seq_push(cur_consumed, j)
                                     prev_ccc = 0
                                     j += 1
                                 } else if ccj == 0 {
