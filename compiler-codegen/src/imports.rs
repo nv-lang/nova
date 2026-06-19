@@ -128,6 +128,141 @@ pub fn collect_module_signatures_from_items(
     ModuleSignatures { type_names, fn_sigs, module_name }
 }
 
+/// Plan 172.1 U.1.2 — the implicitly-imported "prelude" package.
+///
+/// `prelude` is the one package every module gets **without** writing
+/// `import`. It is *not* special-cased anywhere downstream: the [`Import`]
+/// nodes returned by [`compute_prelude_imports`] flow through the exact same
+/// resolver as a user-written `import`. There is no "prelude path" — only this
+/// single named description of *which* package is implicit. Per
+/// `docs/compiler-conventions.md` §2, the *location* of the package (the std
+/// search-path) is configurable (Plan 172.1 U.1.1), but *what is implicit* is
+/// described here in one place.
+const PRELUDE_PACKAGE: [&str; 2] = ["std", "prelude"];
+
+/// Build a single prelude [`Import`] for `PRELUDE_PACKAGE` (optionally with a
+/// trailing sub-module segment, e.g. `std.prelude.core` for `#prelude(core)`
+/// or `std.prelude.<edition>` for an edition pin). Centralizes the `Import`
+/// boilerplate that was previously duplicated across the two prelude-injection
+/// sites (sig pre-pass + authoritative resolve).
+fn prelude_import(sub_module: Option<&str>) -> Import {
+    let mut path: Vec<String> = PRELUDE_PACKAGE.iter().map(|s| s.to_string()).collect();
+    if let Some(name) = sub_module {
+        path.push(name.to_string());
+    }
+    Import {
+        path,
+        items: None,
+        alias: None,
+        is_export: false,
+        span: crate::diag::Span::dummy(),
+        doc_attrs: Vec::new(),
+        anchor: crate::ast::ImportAnchor::Package,
+    }
+}
+
+/// Plan 172.1 U.1.2 — compute the prelude [`Import`]s a module gets implicitly.
+///
+/// Single source for both [`collect_all_signatures`] (the signature pre-pass)
+/// and [`resolve_imports_inline_ex`] (the authoritative resolve), which
+/// previously duplicated this logic — the pre-pass diverged by only ever
+/// injecting the default facade, ignoring `#prelude(..)` and edition pins.
+/// Unifying them makes the signature table see exactly the same prelude set
+/// as the real resolve.
+///
+/// Honors (D26 / D174, Plan 62.F / Plan 107):
+///   - `#no_prelude` → no implicit prelude.
+///   - `#prelude(a, b, ...)` → only the named `std/prelude/<name>.nv`
+///     sub-modules (validated against disk; empty/unknown → `Err`).
+///   - `[package].edition = "X"` pin → `std/prelude/<sanitized>.nv` snapshot
+///     facade when present, else falls back to the rolling facade.
+///   - default → the rolling `std/prelude.nv` facade.
+///
+/// Prelude-self modules (the prelude files themselves) get nothing, to avoid a
+/// self-import cycle.
+fn compute_prelude_imports(
+    module: &Module,
+    stdlib_dir: &Path,
+    entry_path: &Path,
+) -> Result<Vec<Import>> {
+    let is_prelude_self = crate::manifest::is_prelude_self_module(&module.name);
+    let has_no_prelude = module
+        .attrs
+        .iter()
+        .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::NoPrelude));
+    if is_prelude_self || has_no_prelude {
+        return Ok(Vec::new());
+    }
+    let partial_prelude_names: Option<Vec<String>> = module.attrs.iter().find_map(|a| {
+        if let crate::ast::ModuleAttrKind::PartialPrelude(names) = &a.kind {
+            Some(names.clone())
+        } else {
+            None
+        }
+    });
+    let mut prelude_imports: Vec<Import> = Vec::new();
+    if let Some(names) = partial_prelude_names {
+        // D174: empty `#prelude()` is rejected by the parser; defensive check
+        // here in case the AST is constructed directly.
+        if names.is_empty() {
+            return Err(anyhow!(
+                "empty prelude list `#prelude()` is not allowed (D174, Plan 107); \
+                 use `#no_prelude` to disable prelude auto-import\n  \
+                 in module `{}`",
+                module.name.join(".")
+            ));
+        }
+        // Plan 62.F: auto-import only the listed sub-modules, validated against
+        // real `std/prelude/<name>.nv` files. Bad name → compile error.
+        let prelude_subdir = stdlib_dir.join("prelude");
+        for name in &names {
+            let sub_path = prelude_subdir.join(format!("{}.nv", name));
+            if !sub_path.exists() || !sub_path.is_file() {
+                return Err(anyhow!(
+                    "`partial_prelude({})`: unknown prelude sub-module `{}`\n  \
+                     in module `{}`\n  \
+                     expected file: {}\n  \
+                     valid sub-modules (Plan 62): core, runtime, errors, \
+                     collections, protocols, effects\n  \
+                     hint: check spelling or remove from list (D26, Plan 62.F)",
+                    names.join(", "),
+                    name,
+                    module.name.join("."),
+                    sub_path.display(),
+                ));
+            }
+            prelude_imports.push(prelude_import(Some(name)));
+        }
+    } else {
+        // Default facade, with optional edition pin (Plan 62.F.bis Ф.1):
+        // `[package].edition = "X"` → `std/prelude/<sanitized>.nv` snapshot
+        // when present (sanitization: `.` → `_`), else the rolling facade.
+        // Soft-fail: edition specified but file absent → fall back silently.
+        let mut edition_pin_used = false;
+        if let Some(manifest) = crate::manifest::find_manifest(entry_path) {
+            if let Some(edition) = &manifest.edition {
+                let sanitized = crate::manifest::sanitize_edition(edition);
+                if !sanitized.is_empty() {
+                    let pin_path = stdlib_dir
+                        .join("prelude")
+                        .join(format!("{}.nv", sanitized));
+                    if pin_path.exists() && pin_path.is_file() {
+                        prelude_imports.push(prelude_import(Some(&sanitized)));
+                        edition_pin_used = true;
+                    }
+                }
+            }
+        }
+        if !edition_pin_used {
+            let prelude_path = stdlib_dir.join("prelude.nv");
+            if prelude_path.exists() && prelude_path.is_file() {
+                prelude_imports.push(prelude_import(None));
+            }
+        }
+    }
+    Ok(prelude_imports)
+}
+
 /// Signature-only pre-pass over the full import graph.
 ///
 /// Walks the same import graph as [`resolve_imports_inline_ex`] (same path
@@ -164,29 +299,12 @@ pub fn collect_all_signatures(
         import_work.push((imp.clone(), entry_path.to_path_buf()));
     }
 
-    // Add prelude import using the same heuristic as resolve_imports_inline_ex
-    // (simple default: look for std/prelude.nv in stdlib_dir).
-    let is_prelude_self = crate::manifest::is_prelude_self_module(&module.name);
-    let has_no_prelude = module
-        .attrs
-        .iter()
-        .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::NoPrelude));
-    if !is_prelude_self && !has_no_prelude {
-        let prelude_path = stdlib_dir.join("prelude.nv");
-        if prelude_path.exists() && prelude_path.is_file() {
-            import_work.push((
-                Import {
-                    path: vec!["std".into(), "prelude".into()],
-                    items: None,
-                    alias: None,
-                    is_export: false,
-                    span: crate::diag::Span::dummy(),
-                    doc_attrs: Vec::new(),
-                    anchor: crate::ast::ImportAnchor::Package,
-                },
-                entry_path.to_path_buf(),
-            ));
-        }
+    // Plan 172.1 U.1.2: prelude auto-import via the SINGLE shared source
+    // ([`compute_prelude_imports`]) — identical to the authoritative resolve,
+    // so the signature table sees exactly the prelude set the real resolve
+    // will, including `#prelude(..)` partials and edition pins.
+    for imp in compute_prelude_imports(module, stdlib_dir, entry_path)? {
+        import_work.push((imp, entry_path.to_path_buf()));
     }
 
     // Mark entry as in-progress so transitive re-imports of entry early-return.
@@ -534,137 +652,17 @@ pub fn resolve_imports_inline_ex(
         }
     }
 
-    // Plan 35 sub-plan 35.A R27: auto-import `std.prelude` if exists.
-    // D26 (08-runtime.md): prelude — auto-available имена (Option/Result/...).
-    // Currently большая часть prelude hardcoded в type-checker'е/codegen'е;
-    // R27 даёт миграционный путь — пользователь может расширять prelude
-    // через `std/prelude.nv` файл (или future полная миграция hardcoded
-    // в file-based). MVP: если файл существует — добавляем как import.
-    // Skip prelude auto-import для самого prelude (избежать self-cycle).
-    // Plan 42 Sub-plan 42.6: detect prelude self по обоих declaration
-    // форматов (rev-1 legacy + rev-3 parent.X). Logic — в manifest helper.
+    // Plan 35 sub-plan 35.A R27 / Plan 62.F / D174 (Plan 107): auto-import the
+    // implicit `std.prelude` package. The full policy (`#no_prelude`,
+    // `#prelude(a,b,..)` partials, edition pins, default facade) lives in the
+    // single shared source [`compute_prelude_imports`] (Plan 172.1 U.1.2), used
+    // identically by the signature pre-pass — there is no separate "prelude
+    // path", only this one description of which package is implicit.
     //
-    // **Plan 62.F / D174 (Plan 107):** prelude opt-out атрибуты. Logic:
-    //   - `#no_prelude` (NoPrelude) → НЕ auto-import'им вообще.
-    //   - `#prelude(a, b, ...)` (PartialPrelude) → auto-import только
-    //     перечисленных sub-modules. Empty list → compile error (D174).
-    //   - default → full `std.prelude` facade (как раньше).
-    // Inline-формы `no_prelude`/`partial_prelude`/`allow_prelude_shadow`
-    // удалены (D174) — parser эмитит hard error с migration hint.
-    let is_prelude_self = crate::manifest::is_prelude_self_module(&module.name);
-    let has_no_prelude = module.attrs.iter()
-        .any(|a| matches!(a.kind, crate::ast::ModuleAttrKind::NoPrelude));
-    let partial_prelude_names: Option<Vec<String>> = module.attrs.iter()
-        .find_map(|a| if let crate::ast::ModuleAttrKind::PartialPrelude(names) = &a.kind {
-            Some(names.clone())
-        } else { None });
-    // Plan 81 Ф.10: prelude auto-imports collected separately from the
+    // Plan 81 Ф.10: prelude auto-imports are collected separately from the
     // entry's own (and sibling peers') `import` statements — prelude is
     // resolved once and shared by every entry-group peer (see below).
-    let mut prelude_imports: Vec<Import> = Vec::new();
-    if !is_prelude_self && !has_no_prelude {
-        if let Some(names) = partial_prelude_names {
-            // D174: пустой список — compile error (parser уже отклоняет #prelude(),
-            // но defensive check для надёжности в случае прямого AST использования).
-            if names.is_empty() {
-                return Err(anyhow!(
-                    "empty prelude list `#prelude()` is not allowed (D174, Plan 107); \
-                     use `#no_prelude` to disable prelude auto-import\n  \
-                     in module `{}`",
-                    module.name.join(".")
-                ));
-            }
-            // Plan 62.F: `partial_prelude(a, b, ...)` — auto-import только
-            // перечисленных sub-modules. Валидируем имена против реальных
-            // файлов `std/prelude/<name>.nv`. Bad name → compile error.
-            let prelude_subdir = stdlib_dir.join("prelude");
-            for name in &names {
-                let sub_path = prelude_subdir.join(format!("{}.nv", name));
-                if !sub_path.exists() || !sub_path.is_file() {
-                    let importing = module.name.join(".");
-                    return Err(anyhow!(
-                        "`partial_prelude({})`: unknown prelude sub-module `{}`\n  \
-                         in module `{}`\n  \
-                         expected file: {}\n  \
-                         valid sub-modules (Plan 62): core, runtime, errors, \
-                         collections, protocols, effects\n  \
-                         hint: check spelling or remove from list (D26, Plan 62.F)",
-                        names.join(", "),
-                        name,
-                        importing,
-                        sub_path.display(),
-                    ));
-                }
-                prelude_imports.push(Import {
-                    path: vec!["std".into(), "prelude".into(), name.clone()],
-                    items: None,
-                    alias: None,
-                    is_export: false,
-                    span: crate::diag::Span::dummy(),
-                    doc_attrs: Vec::new(),
-                    anchor: crate::ast::ImportAnchor::Package,
-                });
-            }
-            // D174: empty list — defensive path (unreachable after parser check above).
-        } else {
-            // Default: full prelude facade.
-            //
-            // Plan 62.F.bis Ф.1 (edition versioning, 2026-05-18):
-            // если в `nova.toml` указано `[package].edition = "<X>"`, и
-            // соответствующий `std/prelude/<sanitized>.nv` существует —
-            // используем его вместо rolling `std/prelude.nv` facade.
-            // Sanitization: `.` → `_` (например `2026.05` → `2026_05.nv`).
-            //
-            // Fallback chain (resolver-side):
-            //   1. edition pin: `std/prelude/<sanitized>.nv` — если найден,
-            //      import path = `["std", "prelude", "<sanitized>"]`.
-            //   2. rolling facade: `std/prelude.nv` — backward-compat
-            //      default (нет edition в манифесте, или edition pin не
-            //      найден на диске).
-            //
-            // Безопасность: pin даёт stable prelude content на edition
-            // — даже если будущие версии compiler'а изменят `std/prelude.nv`,
-            // package с `edition = "2026.05"` видит фиксированный snapshot.
-            // Soft-fail (edition specified, но файла нет): silently fall back
-            // на rolling facade — не блокируем build, но user может явно
-            // указать edition без файла (например для будущего pin).
-            let mut edition_pin_used = false;
-            if let Some(manifest) = crate::manifest::find_manifest(entry_path) {
-                if let Some(edition) = &manifest.edition {
-                    let sanitized = crate::manifest::sanitize_edition(edition);
-                    if !sanitized.is_empty() {
-                        let pin_path = stdlib_dir.join("prelude").join(format!("{}.nv", sanitized));
-                        if pin_path.exists() && pin_path.is_file() {
-                            prelude_imports.push(Import {
-                                path: vec!["std".into(), "prelude".into(), sanitized.clone()],
-                                items: None,
-                                alias: None,
-                                is_export: false,
-                                span: crate::diag::Span::dummy(),
-                                doc_attrs: Vec::new(),
-                                anchor: crate::ast::ImportAnchor::Package,
-                            });
-                            edition_pin_used = true;
-                        }
-                    }
-                }
-            }
-            if !edition_pin_used {
-                let prelude_path = stdlib_dir.join("prelude.nv");
-                if prelude_path.exists() && prelude_path.is_file() {
-                    prelude_imports.push(Import {
-                        path: vec!["std".into(), "prelude".into()],
-                        items: None,
-                        alias: None,
-                        is_export: false,
-                        span: crate::diag::Span::dummy(),
-                        doc_attrs: Vec::new(),
-                        anchor: crate::ast::ImportAnchor::Package,
-                    });
-                }
-            }
-        }
-    }
+    let prelude_imports: Vec<Import> = compute_prelude_imports(module, stdlib_dir, entry_path)?;
 
     // Plan 42.10: accumulate module-level attrs from `_module.nv` peers
     // of imported folder-modules. Applied to entry's module.attrs at end.
