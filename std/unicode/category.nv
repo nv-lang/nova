@@ -162,12 +162,56 @@ export fn char_to_uppercase(cp int) -> str => cps_to_str(upper_one(cp))
 /// `lower_one`.
 export fn char_to_lowercase(cp int) -> str => cps_to_str(lower_one(cp))
 
-// ─── char Unicode-aware methods (Plan 162 Ф.4) ───
-// Moved to std/prelude/core.nv — now part of the prelude, available without
-// `import std.unicode`. The free-function predicates (is_alphabetic, etc.) and
-// the char_to_uppercase / char_to_lowercase helpers remain here.
-// The char @method declarations reference these free functions from core.nv
-// via the `import std.unicode` that core.nv holds.
+// ─── char Unicode-aware methods (Plan 169.2.1 — moved back here) ───
+// Plan 162 Ф.4 hoisted these to std/prelude/core.nv (so they were available
+// without `import std.unicode`), but that forced `core.nv` to `import
+// std.unicode`, which pulled the whole unicode folder-module — including
+// `normalize.nv::cps_to_str`'s `consume sb = StringBuilder…` — into every
+// partial `#prelude(core, …)`. D133 (type-check, before DCE) then saw `sb`
+// not-consumed because StringBuilder's consume-methods live in `collections`,
+// which the partial prelude does not pull → plan107 failed. Plan 169.2.1 (D303)
+// moves the methods back into `std.unicode` and makes them prelude-available
+// via a re-export in `std/prelude.nv` (the rolling facade) instead of via
+// `core`. `core` becomes unicode-free again.
+//
+// The bodies delegate to the code-point predicates / case-mapping helpers
+// declared above in this same `std.unicode` folder-module — no import needed.
+
+/// Unicode Alphabetic property (UCD `Alphabetic` derived core property).
+/// Broader than `Lu|Ll|Lt`: includes `Lm|Lo|Nl` and Other_Alphabetic marks.
+/// Equivalent to `std.unicode.is_alphabetic(@ as int)`.
+export fn char @is_alphabetic() -> bool => is_alphabetic(@ as int)
+
+/// Numeric: General_Category ∈ {Nd, Nl, No}.
+/// Matches Rust `char::is_numeric` — derived from UCD GC, not ASCII-only.
+export fn char @is_numeric() -> bool => is_numeric(@ as int)
+
+/// Alphanumeric: alphabetic OR numeric.
+export fn char @is_alphanumeric() -> bool => is_alphanumeric(@ as int)
+
+/// White_Space (UCD `White_Space` binary property from PropList.txt).
+export fn char @is_whitespace() -> bool => is_whitespace(@ as int)
+
+/// Uppercase letter: General_Category == Lu.
+export fn char @is_uppercase() -> bool => is_uppercase(@ as int)
+
+/// Lowercase letter: General_Category == Ll.
+export fn char @is_lowercase() -> bool => is_lowercase(@ as int)
+
+/// Control character: General_Category == Cc.
+export fn char @is_control() -> bool => is_control(@ as int)
+
+/// UCD General_Category of this code point. Returns `Cn` (not assigned)
+/// for unassigned/reserved/noncharacter code points.
+export fn char @general_category() -> GeneralCategory => general_category(@ as int)
+
+/// Full uppercase mapping of a single code point, as a str.
+/// Multi-code-point expansions apply (ß → "SS", ﬁ → "FI"); no locale tailoring.
+export fn char @to_uppercase() -> str => char_to_uppercase(@ as int)
+
+/// Full lowercase mapping of a single code point, as a str.
+/// Final_Sigma is a string-level context rule; a lone Σ lowercases to σ.
+export fn char @to_lowercase() -> str => char_to_lowercase(@ as int)
 
 // ─── Unicode trim / split (Plan 91.18 Ф.5) ───
 // Opt-in under `import std.unicode`; bare names (no _ascii_ suffix) shadow

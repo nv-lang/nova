@@ -70,12 +70,15 @@
 
 module prelude.core
 
-// Plan 162 Ф.4: char Unicode-aware methods moved here from std.unicode.category.
-// The cycle prelude.core → std.unicode → std.collections.vec → prelude.core
-// is handled by Plan 162 Ф.2 cycle guard (returns Ok(()) on re-entry).
-// `GeneralCategory` and the free predicates (is_alphabetic etc.) come from
-// std.unicode and are usable in the char @method bodies below.
-import std.unicode
+// Plan 169.2.1 (D303): `core` is unicode-free again. The char Unicode-aware
+// methods (`'a'.is_alphabetic()` etc.) moved BACK to `std/unicode/category.nv`
+// (reverting the Plan 162 Ф.4 hoist). They are made prelude-available — usable
+// without an explicit `import std.unicode` — through a re-export in
+// `std/prelude.nv` (the rolling facade), NOT through `core`. Removing
+// `import std.unicode` from here breaks the chain `prelude.core → std.unicode →
+// std.collections → prelude.core`: a partial `#prelude(core, …)` no longer
+// pulls `normalize.nv::cps_to_str` (whose `consume sb = StringBuilder…` tripped
+// D133 when `collections` was absent). See plan107, [M-169.2.1-core-unicode-decouple].
 
 // ──────────────────────────────────────────────────────────────────────────
 // Sum types
@@ -400,98 +403,12 @@ fn Result[T, E] @ok() -> Option[T] => match @ { Ok(v) => Some(v), Err(_) => None
 #stable(since = "0.1")
 fn Result[T, E] @err() -> Option[E] => match @ { Ok(_) => None, Err(e) => Some(e) }
 
-
-// ──────────────────────────────────────────────────────────────────────────
-// Option[T] / Result[T,E] — Debug impl (Plan 91.15 Ф.2)
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Debug representation for Option[T]: `Some(value)` or `None`.
-/// Requires `[T Debug]` — propagates the bound to the inner value.
-///
-/// # Examples
-///
-/// ```nova
-/// assert("${Some(42):?}" == "Some(42)")
-/// assert("${None:?}" == "None")
-/// assert("${Some("hi"):?}" == "Some(\"hi\")")
-/// ```
-#impl(Debug)
-fn Option[T Debug] @debug(mut w Write) -> () {
-    match @ {
-        Some(v) => {
-            w.write("Some(")
-            v.debug(w)
-            w.write(")")
-        }
-        None => w.write("None")
-    }
-}
-
-/// Debug representation for Result[T,E]: `Ok(value)` or `Err(error)`.
-/// Requires `[T Debug, E Debug]`.
-///
-/// # Examples
-///
-/// ```nova
-/// assert("${Ok(1):?}" == "Ok(1)")
-/// assert("${Err("oops"):?}" == "Err(\"oops\")")
-/// ```
-#impl(Debug)
-fn Result[T Debug, E Debug] @debug(mut w Write) -> () {
-    match @ {
-        Ok(v) => {
-            w.write("Ok(")
-            v.debug(w)
-            w.write(")")
-        }
-        Err(e) => {
-            w.write("Err(")
-            e.debug(w)
-            w.write(")")
-        }
-    }
-}
-
-
-// ──────────────────────────────────────────────────────────────────────────
-// char Unicode-aware methods (Plan 162 Ф.4)
-// Moved from std/unicode/category.nv. Bodies delegate to the code-point
-// predicates in std.unicode (imported above). No explicit `import std.unicode as unicode`
-// required by the user — these are part of the prelude.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Unicode Alphabetic property (UCD `Alphabetic` derived core property).
-/// Broader than `Lu|Ll|Lt`: includes `Lm|Lo|Nl` and Other_Alphabetic marks.
-/// Equivalent to `std.unicode.is_alphabetic(@ as int)`.
-export fn char @is_alphabetic() -> bool => is_alphabetic(@ as int)
-
-/// Numeric: General_Category ∈ {Nd, Nl, No}.
-/// Matches Rust `char::is_numeric` — derived from UCD GC, not ASCII-only.
-export fn char @is_numeric() -> bool => is_numeric(@ as int)
-
-/// Alphanumeric: alphabetic OR numeric.
-export fn char @is_alphanumeric() -> bool => is_alphanumeric(@ as int)
-
-/// White_Space (UCD `White_Space` binary property from PropList.txt).
-export fn char @is_whitespace() -> bool => is_whitespace(@ as int)
-
-/// Uppercase letter: General_Category == Lu.
-export fn char @is_uppercase() -> bool => is_uppercase(@ as int)
-
-/// Lowercase letter: General_Category == Ll.
-export fn char @is_lowercase() -> bool => is_lowercase(@ as int)
-
-/// Control character: General_Category == Cc.
-export fn char @is_control() -> bool => is_control(@ as int)
-
-/// UCD General_Category of this code point. Returns `Cn` (not assigned)
-/// for unassigned/reserved/noncharacter code points.
-export fn char @general_category() -> GeneralCategory => general_category(@ as int)
-
-/// Full uppercase mapping of a single code point, as a str.
-/// Multi-code-point expansions apply (ß → "SS", ﬁ → "FI"); no locale tailoring.
-export fn char @to_uppercase() -> str => char_to_uppercase(@ as int)
-
-/// Full lowercase mapping of a single code point, as a str.
-/// Final_Sigma is a string-level context rule; a lone Σ lowercases to σ.
-export fn char @to_lowercase() -> str => char_to_lowercase(@ as int)
+// Plan 169.2.1 (D303): the `Option[T] @debug` / `Result[T,E] @debug`
+// `#impl(Debug)` methods (Plan 91.15 Ф.2) moved OUT of `core` into
+// `std/prelude/protocols.nv`. They reference the `Debug` protocol and the
+// `Write` sink type — both declared in `protocols.nv` — so under a partial
+// `#prelude(core, runtime)` (no `protocols`) they raised `E_IMPL_UNKNOWN_PROTOCOL`
+// (`Debug`/`Write` unknown). That error was previously masked by the unicode
+// D133 failure; removing the unicode import (above) exposed it. Hosting the
+// impls next to the protocols they implement restores core's "ZERO imports /
+// self-contained" architecture rule and lets `#prelude(core, runtime)` compile.
