@@ -8703,15 +8703,11 @@ fn fn_generic_scope(fd: &FnDecl) -> HashSet<String> {
 /// (`gc.collect()`, `Time.sleep()`, ...) — не обычные module-qualified
 /// вызовы свободных функций. Совпадает со списком guard'а в
 /// `emit_c.rs` (Member-rewrite Plan 70.1).
+// Plan 172.1 U.1.4: делегирует в ЕДИНЫЙ `crate::is_intrinsic_namespace`
+// (раньше список был захардкожен здесь И в codegen emit_c.rs — hand-synced;
+// теперь один источник). Тонкий wrapper сохранён, чтобы не трогать call-sites.
 fn is_intrinsic_namespace(name: &str) -> bool {
-    matches!(
-        name,
-        "gc" | "fibers" | "runtime" | "Channel" | "ChanReader"
-        | "ChanWriter" | "Time" | "Monotonic" | "CancelToken"
-        | "StringBuilder" | "WriteBuffer" | "ReadBuffer"
-        | "f64" | "f32" | "int" | "u8" | "u16" | "u32" | "u64"
-        | "i8" | "i16" | "i32" | "i64" | "Self" | "Duration"
-    )
+    crate::is_intrinsic_namespace(name)
 }
 
 /// Ф.1: syntactic ptr-detection для arithmetic-ban check в

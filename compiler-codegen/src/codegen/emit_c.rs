@@ -23335,13 +23335,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 //     family — StringBuilder, ChannelPair, etc.).
                 if let ExprKind::Ident(prefix) = &obj.kind {
                     let is_local_var = self.var_types.contains_key(prefix);
-                    let is_intrinsic_namespace = matches!(prefix.as_str(),
-                        "gc" | "fibers" | "runtime" | "Channel" | "ChanReader" |
-                        "ChanWriter" | "Time" | "Monotonic" | "CancelToken" |
-                        "StringBuilder" | "WriteBuffer" | "ReadBuffer" |
-                        "f64" | "f32" | "int" | "u8" | "u16" | "u32" | "u64" |
-                        "i8" | "i16" | "i32" | "i64" | "Self" | "Duration"
-                    );
+                    // Plan 172.1 U.1.4: ЕДИНЫЙ источник (раньше был hand-synced
+                    // дубль с types/mod.rs:is_intrinsic_namespace).
+                    let is_intrinsic_namespace = crate::is_intrinsic_namespace(prefix.as_str());
                     if !is_local_var
                         && !is_intrinsic_namespace
                         && self.imported_modules.contains(prefix)

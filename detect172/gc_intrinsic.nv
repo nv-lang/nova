@@ -1,0 +1,10 @@
+// [U.1.4] verify: intrinsic-namespace gc.* доступен БЕЗ import (через единый
+// is_intrinsic_namespace + C-lowering). Guard на collapse дублирующих списков.
+module detect172
+
+test "gc intrinsic namespace без import" {
+    ro n = gc.heap_size()
+    assert(n >= 0)
+    ro live = gc.live_count()
+    assert(live >= 0)
+}
