@@ -39,7 +39,10 @@ export fn str @try_parse_int(radix int = 10) -> Result[int, ParseIntError] {
     if n == 0 { return Err(Empty) }
     mut neg = false
     mut start = 0
-    if bytes[0] == '-' { neg = true; start = 1 }
+    if bytes[0] == '-' {
+        neg = true
+        start = 1
+    }
     else if bytes[0] == '+' { start = 1 }
     if start >= n { return Err(Empty) }
     mut acc = 0

@@ -71,8 +71,7 @@ fn CharsIter.new(buf str) -> CharsIter => { buf, pos: 0 }
 // total — no malformed-sequence branch is reachable (the `else` arm only guards
 // against a truncated tail and degrades to a single-byte step).
 export fn CharsIter mut @next() -> Option[char] {
-    ro bytes = @buf.as_bytes()
-    ro n = @buf.byte_len()
+    ro (bytes, n) = (@buf.as_bytes(), @buf.byte_len())
     if @pos >= n { return None }
     ro (cp, step) = decode_utf8(bytes, @pos, n)
     @pos += step
@@ -88,14 +87,13 @@ export fn CharsIter @iter() -> CharsIter => @
 // identical count to walking `next()` to exhaustion, but cheaper. On a fresh
 // `s.as_chars()` (pos == 0) this is the full codepoint length of `s`.
 export fn CharsIter @count() -> int {
-    ro bytes = @buf.as_bytes()
-    ro n = @buf.byte_len()
+    ro (bytes, n) = (@buf.as_bytes(), @buf.byte_len())
     mut count = 0
     mut i = @pos
     while i < n {
         ro b = bytes[i] as int
-        if (b & 0xC0) != 0x80 { count = count + 1 }
-        i = i + 1
+        if (b & 0xC0) != 0x80 { count += 1 }
+        i += 1
     }
     count
 }
@@ -107,8 +105,7 @@ export fn CharsIter @count() -> int {
 // (`s.as_chars().nth(i)`).
 export fn CharsIter @nth(idx int) -> Option[char] {
     if idx < 0 { return None }
-    ro bytes = @buf.as_bytes()
-    ro n = @buf.byte_len()
+    ro (bytes, n) = (@buf.as_bytes(), @buf.byte_len())
     mut cp_idx = 0
     mut i = @pos
     while i < n {

@@ -73,15 +73,15 @@ fn wb_is_break(cps Vec[u32], cats Vec[int], i int, ri_run int) -> bool {
     } else {
         // Effective previous base (skip trailing ignorables) — WB4 fold.
         mut pbi = i - 1
-        while pbi > 0 && wb_ignorable(cats[pbi]) { pbi = pbi - 1 }
+        while pbi > 0 && wb_ignorable(cats[pbi]) { pbi -= 1 }
         ro pcat = cats[pbi]
         // Char before the prev base (WB7 / WB7c / WB11).
         mut ppi = pbi - 1
-        while ppi > 0 && wb_ignorable(cats[ppi]) { ppi = ppi - 1 }
+        while ppi > 0 && wb_ignorable(cats[ppi]) { ppi -= 1 }
         ro ppcat = if pbi > 0 { cats[ppi] } else { 0 }
         // Next base after current (WB6 / WB7b / WB12).
         mut nbi = i + 1
-        while nbi < n && wb_ignorable(cats[nbi]) { nbi = nbi + 1 }
+        while nbi < n && wb_ignorable(cats[nbi]) { nbi += 1 }
         ro ncat = if nbi < n { cats[nbi] } else { 0 }
         if wb_ahletter(pcat) && wb_ahletter(c) {
             false                                                   // WB5
@@ -134,7 +134,7 @@ fn wb_starts(cps Vec[u32], cats Vec[int]) -> Vec[int] {
         while i < n {
             if wb_is_break(cps, cats, i, ri_run) { starts.push(i) }
             ri_run = wb_ri_step(cats[i], ri_run)
-            i = i + 1
+            i += 1
         }
         starts
     }
@@ -308,7 +308,7 @@ export fn to_titlecase(s str) -> str {
         }
         if is_cased(cp) { seen_cased = true }
         for d in mapped { out.push(d) }
-        i = i + 1
+        i += 1
     }
     cps_to_str(out)
 }

@@ -40,7 +40,7 @@ export fn str @contains(needle str) -> bool {
     mut i = 0
     while i + nn <= sn {
         if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { return true }
-        i = i + 1
+        i += 1
     }
     false
 }
@@ -58,7 +58,7 @@ export fn str @find(needle str) -> Option[int] {
     mut i = 0
     while i + nn <= sn {
         if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { return Some(i) }
-        i = i + 1
+        i += 1
     }
     None
 }
@@ -100,10 +100,10 @@ export fn str @split(sep str) -> ro []str {
     while i + sep_len <= sn {
         if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
             out.push(@[start..i])   // byte-range zero-copy view (Index[Range,str])
-            i = i + sep_len
+            i += sep_len
             start = i
         } else {
-            i = i + 1
+            i += 1
         }
     }
     // Trailing segment [start, sn) — `@push` returns `@` (the Vec).
@@ -131,11 +131,11 @@ export fn str @splitn(n int, sep str) -> ro []str {
     while i + sep_len <= sn && splits < n - 1 {
         if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
             out.push(@[start..i])
-            i = i + sep_len
+            i += sep_len
             start = i
-            splits = splits + 1
+            splits += 1
         } else {
-            i = i + 1
+            i += 1
         }
     }
     out.push(@[start..sn])
@@ -153,9 +153,9 @@ export fn str @rsplit(sep str) -> ro []str {
         if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
             out.push(@[i + sep_len .. end])
             end = i
-            i = i - sep_len
+            i -= sep_len
         } else {
-            i = i - 1
+            i -= 1
         }
     }
     out.push(@[0..end])
@@ -176,10 +176,10 @@ export fn str @rsplitn(n int, sep str) -> ro []str {
         if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
             out.push(@[i + sep_len .. end])
             end = i
-            i = i - sep_len
-            splits = splits + 1
+            i -= sep_len
+            splits += 1
         } else {
-            i = i - 1
+            i -= 1
         }
     }
     out.push(@[0..end])
@@ -215,10 +215,10 @@ export fn str @split_terminator(sep str) -> ro []str {
     while i + sep_len <= sn {
         if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
             out.push(@[start..i])
-            i = i + sep_len
+            i += sep_len
             start = i
         } else {
-            i = i + 1
+            i += 1
         }
     }
     if start < sn { out.push(@[start..sn]) }
@@ -231,14 +231,13 @@ export fn str @split_terminator(sep str) -> ro []str {
 // Renamed split_whitespace → split_ascii_whitespace (Plan 91.18 Ф.2).
 export fn str @split_ascii_whitespace() -> ro []str {
     mut out = Vec[str].new()
-    ro bytes = @as_bytes()
-    ro sn = @byte_len()
+    ro (bytes, sn) = (@as_bytes(), @byte_len())
     mut i = 0
     while i < sn {
-        while i < sn && is_ascii_ws(bytes[i] as int) { i = i + 1 }
+        while i < sn && is_ascii_ws(bytes[i] as int) { i += 1 }
         if i >= sn { break }
         ro start = i
-        while i < sn && !is_ascii_ws(bytes[i] as int) { i = i + 1 }
+        while i < sn && !is_ascii_ws(bytes[i] as int) { i += 1 }
         out.push(@[start..i])
     }
     out
@@ -249,20 +248,19 @@ export fn str @split_ascii_whitespace() -> ro []str {
 // the empty string yields no lines (Rust `lines`).
 export fn str @lines() -> ro []str {
     mut out = Vec[str].new()
-    ro bytes = @as_bytes()
-    ro sn = @byte_len()
+    ro (bytes, sn) = (@as_bytes(), @byte_len())
     if sn == 0 { return out }
     mut start = 0
     mut i = 0
     while i < sn {
         if (bytes[i] as int) == 10 {
             mut end = i
-            if end > start && (bytes[end - 1] as int) == 13 { end = end - 1 }
+            if end > start && (bytes[end - 1] as int) == 13 { end -= 1 }
             out.push(@[start..end])
-            i = i + 1
+            i += 1
             start = i
         } else {
-            i = i + 1
+            i += 1
         }
     }
     if start < sn { out.push(@[start..sn]) }
@@ -280,9 +278,9 @@ export fn str @match_indices(needle str) -> []int {
     while i + nn <= sn {
         if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } {
             out.push(i)
-            i = i + nn
+            i += nn
         } else {
-            i = i + 1
+            i += 1
         }
     }
     out
@@ -293,8 +291,7 @@ export fn str @match_indices(needle str) -> []int {
 
 // True if string contains codepoint `c` — UTF-8 scan.
 export fn str @contains(c char) -> bool {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     ro cp = c as int
     mut i = 0
     while i < n {
@@ -316,8 +313,7 @@ export fn str @starts_with(c char) -> bool {
 // True if string ends with codepoint `c`.
 export fn str @ends_with(c char) -> bool {
     if @is_empty() { return false }
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     mut i = n - 1
     while i > 0 && ((bytes[i] as int) & 0xC0) == 0x80 { i -= 1 }
     ro (last_cp, _) = decode_utf8(bytes, i, n)
@@ -335,9 +331,9 @@ export fn str @matches(needle str) -> ro []str {
     while i + nn <= sn {
         if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } {
             out.push(@[i..i + nn])
-            i = i + nn
+            i += nn
         } else {
-            i = i + 1
+            i += 1
         }
     }
     out

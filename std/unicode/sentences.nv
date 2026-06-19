@@ -99,10 +99,12 @@ fn SentencesIter mut @_advance(c int, after int) {
     @prev_imm = c
     if !sb_ignorable(c) {
         if c == SB_ATERM {
-            @term = 11 @phase = 0
+            @term = 11
+            @phase = 0
             @sb8_lower = sb_sb8_has_lower_buf(@buf, after, @n)
         } else if c == SB_STERM {
-            @term = 13 @phase = 0
+            @term = 13
+            @phase = 0
             @sb8_lower = false
         } else if @term != 0 && c == SB_CLOSE && @phase == 0 {
             if @term == 11 {
@@ -114,7 +116,8 @@ fn SentencesIter mut @_advance(c int, after int) {
                 @sb8_lower = sb_sb8_has_lower_buf(@buf, after, @n)
             }
         } else {
-            @term = 0 @phase = 0
+            @term = 0
+            @phase = 0
             @sb8_lower = false
         }
         @ppeb = @peb

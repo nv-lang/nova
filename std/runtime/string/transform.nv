@@ -18,32 +18,29 @@ import std.runtime.string_builder.{StringBuilder}
 // Whitespace = байт <= 0x20 (как бывший nova_str_trim; Unicode-WS — Phase B,
 // 152.4). Renamed trim → trim_ascii (Plan 91.18 Ф.2).
 export fn str @trim_ascii() -> str {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     mut start = 0
-    while start < n && is_ascii_ws(bytes[start] as int) { start = start + 1 }
+    while start < n && is_ascii_ws(bytes[start] as int) { start += 1 }
     mut end = n
-    while end > start && is_ascii_ws(bytes[end - 1] as int) { end = end - 1 }
+    while end > start && is_ascii_ws(bytes[end - 1] as int) { end -= 1 }
     @[start..end]
 }
 
 // Убирает ASCII whitespace только СЛЕВА (zero-copy view). Plan 152.2 Ф.2.
 // Renamed trim_start → trim_ascii_start (Plan 91.18 Ф.2).
 export fn str @trim_ascii_start() -> str {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     mut start = 0
-    while start < n && is_ascii_ws(bytes[start] as int) { start = start + 1 }
+    while start < n && is_ascii_ws(bytes[start] as int) { start += 1 }
     @[start..n]
 }
 
 // Убирает ASCII whitespace только СПРАВА (zero-copy view). Plan 152.2 Ф.2.
 // Renamed trim_end → trim_ascii_end (Plan 91.18 Ф.2).
 export fn str @trim_ascii_end() -> str {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     mut end = n
-    while end > 0 && is_ascii_ws(bytes[end - 1] as int) { end = end - 1 }
+    while end > 0 && is_ascii_ws(bytes[end - 1] as int) { end -= 1 }
     @[0..end]
 }
 
@@ -95,8 +92,7 @@ export fn str @strip_suffix(suffix str) -> Option[str] {
 // then patch only the A-Z bytes. ASCII ops preserve UTF-8 validity.
 // Renamed to_lower → to_ascii_lower (Plan 91.18 Ф.2).
 export fn str @to_ascii_lower() -> str {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     mut out = []u8.with_capacity(n)
     out.append(bytes)
     mut i = 0
@@ -112,8 +108,7 @@ export fn str @to_ascii_lower() -> str {
 // then patch only the a-z bytes. ASCII ops preserve UTF-8 validity.
 // Renamed to_upper → to_ascii_upper (Plan 91.18 Ф.2).
 export fn str @to_ascii_upper() -> str {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     mut out = []u8.with_capacity(n)
     out.append(bytes)
     mut i = 0

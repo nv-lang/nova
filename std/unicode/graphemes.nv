@@ -115,7 +115,7 @@ export fn GraphemesIter mut @next() -> Option[str] {
         } else {
             @pos = @pos + step1
             if cur == GCB_RI {
-                if prev == GCB_RI { ri_count = ri_count + 1 } else { ri_count = 1 }
+                if prev == GCB_RI { ri_count += 1 } else { ri_count = 1 }
             } else {
                 ri_count = 0
             }
@@ -160,7 +160,7 @@ export fn GraphemesIter @count() -> int {
     mut going = true
     while going {
         match it.next() {
-            Some(_) => { c = c + 1 }
+            Some(_) => { c += 1 }
             None => { going = false }
         }
     }

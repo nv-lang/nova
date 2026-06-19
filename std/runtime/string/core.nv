@@ -116,7 +116,7 @@ fn validate_utf8(bytes ro []u8, n int) -> bool {
         mut k = 1
         while k < seq {
             if i + k >= n || !is_cont(bytes[i + k] as int) { return false }
-            k = k + 1
+            k += 1
         }
         // Overlong / surrogate / range guards (mirror C lossy validator).
         if seq == 3 {
@@ -127,7 +127,7 @@ fn validate_utf8(bytes ro []u8, n int) -> bool {
             if c == 0xF0 && (bytes[i+1] as int) < 0x90 { return false }
             if c == 0xF4 && (bytes[i+1] as int) >= 0x90 { return false }
         }
-        i = i + seq
+        i += seq
     }
     true
 }
@@ -193,7 +193,7 @@ export fn str.from_bytes_lossy(ro bytes []u8) -> str {
             mut k = 1
             while k < seq && valid {
                 if i + k >= n || !is_cont(bytes[i + k] as int) { valid = false }
-                k = k + 1
+                k += 1
             }
         }
         if valid && seq == 3 {
@@ -208,14 +208,14 @@ export fn str.from_bytes_lossy(ro bytes []u8) -> str {
             mut k = 0
             while k < seq {
                 out.push(bytes[i + k])
-                k = k + 1
+                k += 1
             }
-            i = i + seq
+            i += seq
         } else {
             out.push(0xEF as u8)
             out.push(0xBF as u8)
             out.push(0xBD as u8)
-            i = i + 1
+            i += 1
         }
     }
     str.from_bytes_unchecked(out)
@@ -253,8 +253,7 @@ export fn str.from_bytes_unchecked_steal(consume bytes []u8) -> str {
 // push каждого codepoint как char (через cp_to_char). Семантика идентична
 // nova_str_to_chars. decode_utf8 — peer-fn из chars.nv (runtime.string folder module).
 export fn str @to_chars() -> []char {
-    ro bytes = @as_bytes()
-    ro n = @byte_len()
+    ro (bytes, n) = (@as_bytes(), @byte_len())
     // Plan 152.1 Ф.4: capacity hint = byte length (codepoint count ≤ byte count;
     // `@char_len()` retired — over-allocating by the multibyte slack is fine).
     mut out = []char.with_capacity(@byte_len())
@@ -280,8 +279,7 @@ export fn str @to_chars() -> []char {
 // — хардкод C `nova_str_lt`/`eq`/`concat` в operator-lowering снят. Закрывает
 // `[M-139.1-operator-lowered-methods]`.
 export fn str @compare(other str) -> int {
-    ro an = @byte_len()
-    ro bn = other.byte_len()
+    ro (an, bn) = (@byte_len(), other.byte_len())
     ro min = if an < bn { an } else { bn }
     // Plan 152.5a D-R4: RawMem.compare (= memcmp) over the shared prefix instead
     // of a byte-loop — perf-parity with the retired C nova_str_compare, so the
@@ -346,12 +344,11 @@ fn ascii_lower_byte(b int) -> int => if b >= 65 && b <= 90 { b + 32 } else { b }
 export fn str @eq_ignore_ascii_case(other str) -> bool {
     ro n = @byte_len()
     if n != other.byte_len() { return false }
-    ro a = @as_bytes()
-    ro b = other.as_bytes()
+    ro (a, b) = (@as_bytes(), other.as_bytes())
     mut i = 0
     while i < n {
         if ascii_lower_byte(a[i] as int) != ascii_lower_byte(b[i] as int) { return false }
-        i = i + 1
+        i += 1
     }
     true
 }

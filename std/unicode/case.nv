@@ -110,7 +110,7 @@ export fn to_lowercase(s str) -> str {
                 None => out.push(cp)
             }
         }
-        i = i + 1
+        i += 1
     }
     cps_to_str(out)
 }
@@ -152,7 +152,7 @@ fn is_final_sigma(cps Vec[u32], i int) -> bool {
     while scan && j >= 0 {
         ro c = cps[j]
         if is_case_ignorable(c) {
-            j = j - 1
+            j -= 1
         } else if is_cased(c) {
             before_cased = true
             scan = false
@@ -169,7 +169,7 @@ fn is_final_sigma(cps Vec[u32], i int) -> bool {
         while scan && k < n {
             ro c = cps[k]
             if is_case_ignorable(c) {
-                k = k + 1
+                k += 1
             } else if is_cased(c) {
                 after_cased = true
                 scan = false
