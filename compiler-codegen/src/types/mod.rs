@@ -6430,45 +6430,39 @@ impl<'a> TypeCheckCtx<'a> {
                     ) {
                         if let Some((base_a, args_a)) = generic_args(&arg_tr) {
                             // Same generic type (base name + arity) — compare each
-                            // type-argument; flag the first concrete-primitive pair
-                            // that differs.
+                            // type-argument recursively; flag the first pair that is
+                            // a definite mismatch (primitive width, nested generic,
+                            // or distinct concrete record/sum/newtype).
                             if base_p == base_a && args_p.len() == args_a.len() {
                                 for (pa, aa) in args_p.iter().zip(args_a.iter()) {
-                                    if let (Some(pe), Some(ae)) = (
-                                        concrete_primitive_name(pa),
-                                        concrete_primitive_name(aa),
-                                    ) {
-                                        if pe != ae {
-                                            errors.push(
-                                                Diagnostic::new(
-                                                    format!(
-                                                        "[E_ARG_ELEM_TYPE_MISMATCH] \
-                                                         cannot pass `{}` as argument \
-                                                         `{}` of type `{}` — generic \
-                                                         type argument differs (`{}` \
-                                                         vs `{}`); a generic \
-                                                         instantiation is a distinct \
-                                                         monomorphized type, so this \
-                                                         would reinterpret its \
-                                                         contents at the wrong width",
-                                                        typeref_display(&arg_tr),
-                                                        param.name,
-                                                        typeref_display(&param.ty),
-                                                        ae,
-                                                        pe,
-                                                    ),
-                                                    arg.expr().span,
-                                                )
-                                                .with_note_at(
-                                                    format!(
-                                                        "parameter `{}` declared here",
-                                                        param.name,
-                                                    ),
-                                                    param.span,
+                                    if self.generic_arg_mismatch(pa, aa, &callee_gs, gs) {
+                                        errors.push(
+                                            Diagnostic::new(
+                                                format!(
+                                                    "[E_ARG_ELEM_TYPE_MISMATCH] cannot \
+                                                     pass `{}` as argument `{}` of type \
+                                                     `{}` — generic type argument \
+                                                     differs (`{}` vs `{}`); a generic \
+                                                     instantiation is a distinct \
+                                                     monomorphized type, so this would \
+                                                     reinterpret its contents",
+                                                    typeref_display(&arg_tr),
+                                                    param.name,
+                                                    typeref_display(&param.ty),
+                                                    typeref_display(aa),
+                                                    typeref_display(pa),
                                                 ),
-                                            );
-                                            break;
-                                        }
+                                                arg.expr().span,
+                                            )
+                                            .with_note_at(
+                                                format!(
+                                                    "parameter `{}` declared here",
+                                                    param.name,
+                                                ),
+                                                param.span,
+                                            ),
+                                        );
+                                        break;
                                     }
                                 }
                             }
@@ -8313,6 +8307,60 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
                 self.cat_of_depth(inner, gs, depth + 1)
             }
+        }
+    }
+
+    /// [M-generic-arg-type-mismatch-silent] — recursively decide whether two
+    /// type-arguments `p` (parameter side, scope `pgs`) and `a` (actual-argument
+    /// side, scope `ags`) of the SAME generic type are a definite mismatch (two
+    /// distinct monomorphizations). Conservative — returns `true` ONLY when
+    /// confident, so legal code is never rejected:
+    ///   1. a generic type-PARAMETER on either side instantiates to anything →
+    ///      permissive (`false`);
+    ///   2. both concrete primitives with different names → mismatch
+    ///      (width-sensitive: `int` ≠ `u32`, `f32` ≠ `f64`, `char` ≠ `int`);
+    ///   3. both the SAME-base generic (`Vec[..]`/`[]..` or a user `G[..]`) →
+    ///      recurse on each nested type-argument; mismatch if any nested pair is;
+    ///   4. both concrete NAMED types (record / sum / newtype, alias-resolved via
+    ///      `cat_of`) with different canonical names → mismatch (`Foo` ≠ `Bar`);
+    ///   5. anything else (protocols, unknown names, base/arity differences) →
+    ///      permissive.
+    /// Aliases are transparent (`cat_of` resolves them), so `Box[MyAlias]` and
+    /// `Box[Underlying]` do NOT falsely flag; newtypes stay nominally distinct.
+    fn generic_arg_mismatch(
+        &self,
+        p: &TypeRef,
+        a: &TypeRef,
+        pgs: &HashSet<String>,
+        ags: &HashSet<String>,
+    ) -> bool {
+        // (1) generic type-param on either side → instantiates to anything.
+        if is_type_param_name(p, pgs) || is_type_param_name(a, ags) {
+            return false;
+        }
+        // (2) both concrete primitives → width-sensitive name compare.
+        if let (Some(pp), Some(pa)) =
+            (concrete_primitive_name(p), concrete_primitive_name(a))
+        {
+            return pp != pa;
+        }
+        // (3) both the same-base generic → recurse on each type-argument.
+        if let (Some((bp, ap)), Some((ba, aa))) = (generic_args(p), generic_args(a)) {
+            if bp == ba && ap.len() == aa.len() {
+                return ap
+                    .iter()
+                    .zip(aa.iter())
+                    .any(|(x, y)| self.generic_arg_mismatch(x, y, pgs, ags));
+            }
+            // Different base / arity — could be an alias or an unknown import;
+            // stay permissive rather than risk a false positive.
+            return false;
+        }
+        // (4) both concrete named (record / sum / newtype, alias-resolved) →
+        // compare canonical names.
+        match (self.cat_of(p, pgs), self.cat_of(a, ags)) {
+            (TyCat::Named(np), TyCat::Named(na)) => np != na,
+            _ => false,
         }
     }
 }
@@ -12949,6 +12997,15 @@ fn generic_args(tr: &TypeRef) -> Option<(String, Vec<&TypeRef>)> {
         }
         _ => None,
     }
+}
+
+/// [M-generic-arg-type-mismatch-silent] — is `tr` a bare generic type-PARAMETER
+/// (a single-segment name with no generics that is bound in scope `gs`, e.g. the
+/// `T` of `fn f[T](...)`)? Such a position instantiates to anything, so the
+/// generic-argument mismatch check must stay permissive on it.
+fn is_type_param_name(tr: &TypeRef, gs: &HashSet<String>) -> bool {
+    matches!(tr, TypeRef::Named { path, generics, .. }
+        if generics.is_empty() && path.len() == 1 && gs.contains(&path[0]))
 }
 
 /// [M-generic-arg-type-mismatch-silent] — if `tr` is a concrete builtin scalar

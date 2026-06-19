@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_ARG_ELEM_TYPE_MISMATCH
+//
+// Generic argument mismatch on RECORD type-arguments (not just primitives):
+// a Box[Dog] passed where Box[Cat] is expected. Distinct records → distinct
+// monomorphizations → must be rejected. Proves the check covers record-typed
+// generic arguments, not only int-width primitives.
+module neg.n_user_generic_record_mismatch
+
+type Dog { name str }
+type Cat { name str }
+type Box[T] { item T }
+
+fn takes_cat_box(b Box[Cat]) -> str => b.item.name
+
+test "Box[Dog] -> Box[Cat] is rejected" {
+    ro d Box[Dog] = Box[Dog] { item: Dog { name: "rex" } }
+    assert(takes_cat_box(d) == "rex")
+}
