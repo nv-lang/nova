@@ -2027,6 +2027,98 @@ Kotlin (`@file:` паттерн аналогичен `#attr` до деклара
 
 ---
 
+## D303. `prelude.core` развязан от `std.unicode` — char-методы через resolver-инъекцию, не через `core`-импорт
+
+**Статус:** принято, реализовано ([Plan 169.2.1](../../docs/plans/169.2.1-core-unicode-decouple.md), 2026-06-19).
+
+### Что
+
+`std/prelude/core.nv` (группа `core` в [D174](#d174-prelude-control-attributes--no_prelude-prelude-allowshadow))
+больше **не импортирует** `std.unicode`. Десять char-Unicode @методов
+(`'a'.is_alphabetic()` и сиблинги) перенесены **обратно** в
+`std/unicode/category.nv` ([D253](03-syntax.md#d253)); их доступность «без
+явного `import std.unicode`» обеспечивается **resolver-инъекцией** (восстановлен
+механизм Plan 159 Ф.4), а не `core`-импортом. `core` снова self-contained
+(архитектурное правило «ZERO imports», D26/Plan 62).
+
+### Контекст (баг)
+
+[Plan 162 Ф.4](../../docs/plans/162-module-resolution.md) разместил char-@методы
+в `prelude.core` и добавил `core.nv import std.unicode`. Это заставляло **любой**
+частичный `#prelude(core, …)` тянуть весь folder-module `std.unicode` (14 файлов),
+включая `normalize.nv::cps_to_str` с `consume sb = StringBuilder…`. Проверка
+[D133](05-memory.md#d133) (consume-анализ на этапе type-check, **до** codegen/DCE)
+видела инлайненный `cps_to_str`, в котором `sb` не-consumed — потому что
+consume-методы `StringBuilder` живут в `collections`, которого частичный prelude
+не подтягивает → объявление не подхвачено → `[D133-not-consumed] sb`. Это **не**
+cross-module-резолв и **не** DCE-баг (DCE работает на codegen, после падения в
+type-check): это **неполнота транзитивных зависимостей при частичном prelude +
+полный type-check инлайненного кода** (корень `[M-169.2-prelude-partial-stdlib-graph]`).
+
+### Решение
+
+1. **Перенос методов.** 10 char-@методов (`is_alphabetic` / `is_numeric` /
+   `is_alphanumeric` / `is_whitespace` / `is_uppercase` / `is_lowercase` /
+   `is_control` / `general_category` / `to_uppercase` / `to_lowercase`) →
+   из `core.nv` обратно в `std/unicode/category.nv`. Тела делегируют свободным
+   предикатам/case-маппингам того же folder-module — импорт не нужен.
+2. **`core` без unicode.** Убран `import std.unicode` из `core.nv`. Цикл
+   `prelude.core → std.unicode → std.collections → prelude.core` разорван.
+3. **Доступность без import — через resolver-инъекцию (НЕ facade-реэкспорт).**
+   Восстановлен механизм Plan 159 Ф.4: резолвер сканирует entry-группу на
+   *method-call*-селектор char-Unicode (`expr.is_alphabetic()`, помечен
+   `@method:` в `lints::collect_expr`) и, если найден и `std.unicode` ещё не
+   импортирован, инжектит `import std.unicode` в **пользовательский entry-модуль**
+   (обычный, cycle-free путь — prelude→unicode→collections цикл не входится).
+   Plan 159 Ф.1 reachability-DCE срезает неиспользуемые unicode-таблицы.
+4. **Debug-импл вынесен из `core`.** `Option[T] @debug` / `Result[T,E] @debug`
+   (`#impl(Debug)`, Plan 91.15 Ф.2) перенесены из `core.nv` в `protocols.nv`:
+   они ссылаются на протокол `Debug` и sink-тип `Write` (оба в `protocols.nv`),
+   поэтому при частичном `#prelude(core, runtime)` (без `protocols`) давали
+   `E_IMPL_UNKNOWN_PROTOCOL`, как только маска D133 ушла. Размещение рядом с
+   реализуемыми протоколами восстанавливает «ZERO imports» для `core`.
+
+### Почему НЕ facade-реэкспорт
+
+Утверждённая в плане формулировка предполагала `export import
+std.unicode.{is_alphabetic, …}` в `std/prelude.nv`. Это **отклонено**: имена
+методов **совпадают** с одноимёнными свободными функциями (`is_alphabetic(cp int)`,
+`general_category(cp int)`, `to_uppercase(s str)`), а селектор реэкспорта
+матчится по имени (`FnDecl.name`, без различения receiver) — реэкспорт вытащил бы
+свободные функции в глобальный namespace prelude и **сломал opt-in-границу**,
+закреплённую негативным тестом `plan152_3/neg/n_char_unicode_opt_in.nv`
+(`general_category(0x41)` ДОЛЖЕН быть undefined без `import std.unicode`).
+Resolver-инъекция различает method-call от free-call (тег `@method:`) и сохраняет
+границу: 6/0 opt-in-негативов PASS.
+
+### Граница / результат
+
+- **Обычный код** (полный prelude): char-@методы доступны без import (инъекция);
+  `general_category()`-результат всё ещё требует `import std.unicode.{Lu, …}` для
+  использования вариантов `GeneralCategory` (паритет с до-169.2.1).
+- **`core` сам**: не тянет unicode → `#prelude(core)` не тянет normalize/
+  StringBuilder → D133 не падает; Debug-импл не тянет protocols → не падает.
+- **partial `#prelude(core)`**: char-@методы недоступны (unicode не подтянут),
+  но код unicode туда не инлайнится → ошибки нет (ожидаемо для урезанного prelude).
+- **Остаточный плана107-FAIL** (`prelude_core_attr`/`prelude_multi_attr` CC-FAIL
+  `must use 'struct' tag … Nova_StringBuilder`): отдельный, до-существующий gap
+  `runtime → collections` — `runtime.unreachable` использует interp-string
+  (`"unreachable: ${reason}"`), который лоуерится в `Nova_StringBuilder`, чей
+  typedef частичный `#prelude(core, runtime)` не подтягивает. Вне scope 169.2.1
+  (та чинит ось `core → unicode`); followup `[M-169.2.1-runtime-stringbuilder-partial]`.
+
+### Связь
+
+- [D174](#d174-prelude-control-attributes--no_prelude-prelude-allowshadow) — prelude-атрибуты; D303 чинит частичный `#prelude(core, …)`.
+- [D253](03-syntax.md#d253) — `std/unicode` API; char-@методы возвращены сюда.
+- [D133](05-memory.md#d133) — consume-анализ (type-check, до DCE) — точка падения.
+- [D26](08-runtime.md#d26) — prelude; `core` self-contained «ZERO imports».
+- [Plan 159 Ф.4](../../docs/plans/159-reachability-dce.md) — resolver-инъекция (восстановлена).
+- [Plan 162 Ф.4](../../docs/plans/162-module-resolution.md) — заменённый подход (хост в core).
+- [Plan 169.2.1](../../docs/plans/169.2.1-core-unicode-decouple.md) — реализация.
+
+---
+
 ## D134. Symbol mangling v0 — C-имена свободных функций
 
 **Статус:** принято, реализовано ([Plan 81](../../docs/plans/81-module-resolution-hardening.md) Ф.6).
