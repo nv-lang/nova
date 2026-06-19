@@ -59,3 +59,4 @@ bench/**/*.c
 # from pinned UCD into the slow-lane, NOT committed (only the fast *_conformance.nv
 # sample is committed). See docs/research/10-unicode-test-data-storage.md.
 nova_tests/**/*_conformance_slow.nv
+test_out.txt
