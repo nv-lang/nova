@@ -2027,7 +2027,7 @@ Kotlin (`@file:` паттерн аналогичен `#attr` до деклара
 
 ---
 
-## D303. `prelude.core` развязан от `std.unicode` — char-методы через resolver-инъекцию, не через `core`-импорт
+## D308. `prelude.core` развязан от `std.unicode` — char-методы через resolver-инъекцию, не через `core`-импорт
 
 **Статус:** принято, реализовано ([Plan 169.2.1](../../docs/plans/169.2.1-core-unicode-decouple.md), 2026-06-19).
 
@@ -2109,7 +2109,7 @@ Resolver-инъекция различает method-call от free-call (тег 
 
 ### Связь
 
-- [D174](#d174-prelude-control-attributes--no_prelude-prelude-allowshadow) — prelude-атрибуты; D303 чинит частичный `#prelude(core, …)`.
+- [D174](#d174-prelude-control-attributes--no_prelude-prelude-allowshadow) — prelude-атрибуты; D308 чинит частичный `#prelude(core, …)`.
 - [D253](03-syntax.md#d253) — `std/unicode` API; char-@методы возвращены сюда.
 - [D133](05-memory.md#d133) — consume-анализ (type-check, до DCE) — точка падения.
 - [D26](08-runtime.md#d26) — prelude; `core` self-contained «ZERO imports».
