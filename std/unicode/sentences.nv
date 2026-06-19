@@ -237,7 +237,7 @@ export fn SentencesView @count() -> int {
     if b == 0 { 0 } else { b - 1 - @idx }
 }
 
-export fn SentencesView @is_empty() -> bool => @bounds.len() <= 1
+export fn SentencesView @is_empty() -> bool => @bounds.len() == 0 || @idx + 1 >= @bounds.len()
 
 // ─── str lens ───
 // Sentence-segment iterator (UAX #29). O(n) to create (materializes boundaries).

@@ -65,20 +65,17 @@ export fn str @find(needle str) -> Option[int] {
 
 // БАЙТОВЫЙ offset последнего вхождения needle. Plan 152.1 Ф.2 (D249): byte-offset
 // (как @find). Пустой needle → byte-длина (Rust-parity `"abc".rfind("")==Some(3)`).
+// Backward scan: O(n) with early exit on first (rightmost) match.
 export fn str @rfind(needle str) -> Option[int] {
-    ro sn = @byte_len()
-    ro nn = needle.byte_len()
-    if nn == 0 {
-        return Some(sn)
-    }
+    ro (sn, nn) = (@byte_len(), needle.byte_len())
+    if nn == 0 { return Some(sn) }
     if nn > sn { return None }
-    mut last = -1
-    mut i = 0
-    while i + nn <= sn {
-        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { last = i }
-        i = i + 1
+    mut i = sn - nn
+    while i >= 0 {
+        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { return Some(i) }
+        i -= 1
     }
-    if last < 0 { None } else { Some(last) }
+    None
 }
 
 

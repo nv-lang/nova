@@ -20,9 +20,9 @@ export fn str @trim() -> str {
     ro bytes = @as_bytes()
     ro n = @byte_len()
     mut start = 0
-    while start < n && (bytes[start] as int) <= 32 { start = start + 1 }
+    while start < n && is_ascii_ws(bytes[start] as int) { start = start + 1 }
     mut end = n
-    while end > start && (bytes[end - 1] as int) <= 32 { end = end - 1 }
+    while end > start && is_ascii_ws(bytes[end - 1] as int) { end = end - 1 }
     @[start..end]
 }
 
@@ -31,7 +31,7 @@ export fn str @trim_start() -> str {
     ro bytes = @as_bytes()
     ro n = @byte_len()
     mut start = 0
-    while start < n && (bytes[start] as int) <= 32 { start = start + 1 }
+    while start < n && is_ascii_ws(bytes[start] as int) { start = start + 1 }
     @[start..n]
 }
 
@@ -40,7 +40,7 @@ export fn str @trim_end() -> str {
     ro bytes = @as_bytes()
     ro n = @byte_len()
     mut end = n
-    while end > 0 && (bytes[end - 1] as int) <= 32 { end = end - 1 }
+    while end > 0 && is_ascii_ws(bytes[end - 1] as int) { end = end - 1 }
     @[0..end]
 }
 
