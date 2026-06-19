@@ -35265,8 +35265,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             ("i8",   "MIN", "INT8_MIN",              "int8_t"),
             // Unsigned integers
             ("u64",  "MAX", "UINT64_MAX",            "uint64_t"),
-            // Plan 70.5: uint = alias u64.
-            ("uint", "MAX", "UINT64_MAX",            "uint64_t"),
+            // Plan 70.5: uint = alias u64. Canonical C type = nova_uint
+            // (typedef uintptr_t, Plan 133), NOT raw uint64_t — иначе
+            // Some(uint.MAX) мэнглит NovaOpt_uint64_t вместо NovaOpt_nova_uint
+            // (undefined) и C-init падает. Mirror int.MAX pattern (169.2).
+            ("uint", "MAX", "((nova_uint)UINT64_MAX)", "nova_uint"),
             ("u32",  "MAX", "UINT32_MAX",            "uint32_t"),
             ("u16",  "MAX", "UINT16_MAX",            "uint16_t"),
             // Plan 70.4 Ф.4: u8 → nova_byte (C typedef uint8_t).
