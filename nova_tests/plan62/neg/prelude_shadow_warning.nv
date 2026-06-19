@@ -8,7 +8,7 @@
 // `nova check` warnings field и в `nova test` через test_runner's
 // pattern match.
 
-module nova_tests.plan62
+module neg.prelude_shadow_warning
 
 // PRELUDE_VERSION2 re-exported из std.prelude (via std/prelude.nv:139).
 // User-decl с тем же именем → user-decl wins, но W_PRELUDE_SHADOW fired.

@@ -1,7 +1,7 @@
 // Plan 55 Ф.3 — negative: inferred return type — type mismatch на caller.
 // `@into() => 42` inferred как i64, но caller использует как str → CC type error.
 
-module nova_tests.plan55
+module neg.f3_negative_into_wrong_return
 
 
 type Thing { x i64 }

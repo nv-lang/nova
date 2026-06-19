@@ -13,7 +13,7 @@
 // to `#allow(shadow)` before `module` declaration.
 
 #allow(shadow)
-module nova_tests.plan62
+module neg.prelude_shadow_suppress
 
 // PRELUDE_VERSION1 shadow'ит prelude const. С `#allow(shadow)`
 // attr — никакого warning'а; user-decl wins silently.

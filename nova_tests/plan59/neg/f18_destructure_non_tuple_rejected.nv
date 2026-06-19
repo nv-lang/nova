@@ -5,7 +5,7 @@
 // rejects через struct field assignment mismatch. Guard что parser
 // length-prefix не маскирует фундаментальный type-error.
 
-module nova_tests.plan59
+module neg.f18_destructure_non_tuple_rejected
 
 
 test "destructure int as 2-tuple — should reject" {

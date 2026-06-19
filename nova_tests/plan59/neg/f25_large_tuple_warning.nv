@@ -5,7 +5,7 @@
 // для clarity и stable ABI. Большие tuples могут вызвать cache-line
 // stuffing.
 
-module nova_tests.plan59
+module neg.f25_large_tuple_warning
 
 
 fn make_huge() -> (int, int, int, int, int, int, int) {

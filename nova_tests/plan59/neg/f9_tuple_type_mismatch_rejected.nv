@@ -5,7 +5,7 @@
 // type-incompatibility ловится C compiler'ом — legacy int-slot erasure
 // silently accepted (bit pattern reinterpreted), mono'd жёстко reject'ит.
 
-module nova_tests.plan59
+module neg.f9_tuple_type_mismatch_rejected
 
 
 fn sum_pair2(p (int, int)) -> int {

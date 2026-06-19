@@ -14,7 +14,7 @@
 // несовместимый тип → clang «incompatible type». Тест фиксирует, что
 // misuse как минимум НЕ компилируется молча в garbage.
 
-module nova_tests.plan62
+module neg.option_or_payload_mismatch_neg
 
 test "Option.or с разным payload-типом — compile error" {
     ro a = Some(1)
