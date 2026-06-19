@@ -99,8 +99,13 @@ impl<'a> SigRegistry<'a> {
     /// suffix), `variadic_last`, `param_defaults`, `is_delegated`; merging the
     /// import-resolved std + intrinsic .nv source; checker/codegen consumption
     /// (U.2.3/U.2.4) and the `MethodSig` fold + dead `resolve_overload` removal
-    /// (U.2.5). A `type_ref_to_c` error (e.g. removed `usize`) leaves the C-type
-    /// field empty (best-effort; the checker emits the real diagnostic).
+    /// (U.2.5).
+    ///
+    /// [M-172-sig-registry] §1 «никаких авто-выводимых неверных типов»: the
+    /// `unwrap_or_default()` below (empty C-type on a `type_ref_to_c` error,
+    /// e.g. removed `usize`) is INERT today — this registry is not yet consumed
+    /// by live codegen. When wired (U.2.3/U.2.4) an unresolved type MUST become
+    /// a checker `[E_*]` diagnostic, NOT a silent empty/`nova_int` default.
     pub fn build_from_module(module: &'a Module) -> Self {
         use crate::codegen::external_registry::ExternalRegistry as ER;
         let mut reg = Self::new();
