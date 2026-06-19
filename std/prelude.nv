@@ -64,6 +64,15 @@ export import std.prelude.runtime.{panic, exit, unreachable, assert, debug_asser
 // видит их через method_table; auto-import делает доступными без явного import.
 import std.runtime.defaults
 
+// Plan 172.1 U.1.3a (минимальный prelude — Rust std::prelude / Go universe, §3
+// conventions). `char` сюда: `str.from(char)` / `str.from_codepoint` эмитит САМ
+// компилятор (тест-харнесс, строковая интерполяция, `char.into()`) — пользователь
+// не может заимпортить за compiler-generated код → обязан быть неявным, как
+// Option/print. Прочие std-API (sync/net/cstr) — библиотечные, требуют ЯВНЫЙ
+// import (НЕ в prelude). Плейн import (как `defaults`) инлайнит char-сигнатуры
+// в каждый модуль → единый реестр (из import-resolved модуля) их содержит.
+import std.runtime.char
+
 // Plan 62.C / 62.C.bis: re-export error types из std.prelude.errors.
 // RuntimeError (6 variants) + ReadBufferError (1 variant) +
 // RuntimeNoneError (unit-type, D85 — ошибка `Option!!` на None). Type

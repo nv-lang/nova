@@ -1,0 +1,12 @@
+// [DETECT-U.1.3] probe: RawMem (std.runtime.raw_mem) БЕЗ явного import.
+module detect172
+
+test "RawMem.copy без import" {
+    ro src []u8 = [11, 22, 33, 44, 55]
+    mut dst []u8 = [0, 0, 0, 0, 0]
+    unsafe {
+        RawMem.copy(src.as_ptr(), dst.as_mut_ptr(), 5)
+    }
+    assert(dst[0] == (11 as u8))
+    assert(dst[4] == (55 as u8))
+}

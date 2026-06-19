@@ -1,0 +1,9 @@
+// [DETECT-U.1.3] probe: чистые языковые builtin, без std-функций.
+module detect172
+
+test "арифметика и сравнение" {
+    ro a = 2 + 3 * 4
+    assert(a == 14)
+    ro b = a > 10 && a < 20
+    assert(b)
+}

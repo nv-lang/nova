@@ -1,0 +1,8 @@
+// [DETECT-U.1.3] probe: str.from(...) static без import std.runtime.char.
+module detect172
+
+test "str.from int/bool/char без import" {
+    assert(str.from(42) == "42")
+    assert(str.from(true) == "true")
+    assert(str.from('A') == "A")
+}

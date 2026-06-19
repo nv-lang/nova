@@ -109,11 +109,18 @@ impl ExternalRegistry {
     /// Plan 83.12: добавлены 3 источника std/net (addr, tcp, udp).
     pub fn load_builtins() -> Result<Self, String> {
         let mut reg = Self::default();
+        // Plan 172.1 U.1.3a: `char.nv` УБРАН из этого захардкоженного списка —
+        // `str.from`/`str.from_codepoint` теперь приходят через prelude
+        // (`import std.runtime.char`, минимальный-prelude §3) и регистрируются в
+        // реестре из import-resolved модуля (`from_module`). char.nv безопасен
+        // для переноса сейчас: у него нет `Item::Type` (только 2 extern), поэтому
+        // `by_key`-merge достаточно. Оставшиеся 9 файлов — БИБЛИОТЕЧНЫЕ (имеют
+        // type_decls / Nova-body тела); их полное удаление — U.1.3b, gated на U.4
+        // (codegen не должен сам выводить типы методов; [M-172.1-U1-lib-import-needs-U4]).
         for (name, src) in &[
             ("string_builder.nv", Self::STRING_BUILDER_SRC),
             ("write_buffer.nv",   Self::WRITE_BUFFER_SRC),
             ("read_buffer.nv",    Self::READ_BUFFER_SRC),
-            ("char.nv",           Self::CHAR_SRC),
             ("sync.nv",           Self::SYNC_SRC),
             // Plan 118.1 Ф.1: RawMem intrinsics.
             ("raw_mem.nv",        Self::RAW_MEM_SRC),

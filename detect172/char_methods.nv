@@ -1,0 +1,10 @@
+// [DETECT-U.1.3] probe: char-методы + case mapping без import std.unicode/char.
+module detect172
+
+test "char predicates + case mapping без import" {
+    assert('A'.is_alphabetic())
+    assert('7'.is_numeric())
+    assert(' '.is_whitespace())
+    assert('a'.to_uppercase() == "A")
+    assert('A'.to_lowercase() == "a")
+}
