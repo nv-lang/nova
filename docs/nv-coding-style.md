@@ -22,10 +22,10 @@
 
 - **`as_*` = O(1) zero-copy view или ленивый итератор**, заимствующий receiver.
   `str.@as_bytes()` возвращает реальную `ro []u8` реинтерпретацию (`core.nv:88`);
-  `str.@as_chars()` строит `CharsIter` value-record за O(1) (`chars.nv:149`). `as_*` НИКОГДА
+  `str.@as_chars()` строит `CharsIter` value-record за O(1) (`chars.nv:132`). `as_*` НИКОГДА
   не аллоцирует-и-копирует и НИКОГДА не потребляет (`consume`) receiver.
 - **`to_*` = O(n) аллоцирующая владеющая копия.** `@to_bytes()`/`@to_chars()` аллоцируют
-  свежий `[]u8`/`[]char` (`core.nv:61,256`). Имя на `to_` = вызывающий платит за аллокацию.
+  свежий `[]u8`/`[]char` (`core.nv:61,255`). Имя на `to_` = вызывающий платит за аллокацию.
 - **Ось `as_`/`to_` — это ВЛАДЕНИЕ (borrow vs copy), не стоимость.** Ленивые итераторы
   `as_chars`/`as_words`/`as_sentences` — O(1) создание. Если итератор по какой-то причине
   O(n) в создании, это нарушение — делайте его ленивым (как `WordsIter`/`SentencesIter` в
@@ -44,14 +44,15 @@
   table-free, из prelude.** `str @to_upper()` — Unicode full case (`case.nv`), `str
   @to_ascii_upper()` — ASCII A-Z (`transform.nv`). Без `import std.unicode` вызов bare-имени
   Unicode-метода — compile error (E7320), НЕ молчаливый ASCII.
-- **На `char` ASCII-варианты — явные `@is_ascii_*`/`@to_ascii_*`** (`defaults.nv:59-85`),
+- **На `char` ASCII-варианты — явные `@is_ascii_*`/`@to_ascii_*`** (`defaults.nv:58-81`),
   т.к. unqualified `@is_alphabetic`/`@to_uppercase` — Unicode (`core.nv:466,493`).
 - **`eq_ignore_ascii_case` (ASCII, table-free, core) vs `eq_ignore_case` (Unicode fold,
-  std.unicode)** (`core.nv:347` / `case.nv:121`). Правило: когда оба слоя дают один предикат
+  std.unicode)** (`core.nv:344` / `case.nv:136`). Правило: когда оба слоя дают один предикат
   на одном типе, ASCII-вариант несёт `ascii` в имени, Unicode владеет голым именем.
 - **Резолюция одноимённых str-методов из двух stdlib-модулей сейчас НЕ диагностируется**
-  (`check_extension_method_policy` early-return для str, types/mod.rs:5927) — избегайте
-  коллизий именованием и документируйте правило резолюции.
+  (`check_extension_method_policy` early-return для всех stdlib-типов — std/prelude/runtime,
+  str в их числе, types/mod.rs:5927) — избегайте коллизий именованием и документируйте
+  правило резолюции.
 
 ## 3. Методы предпочтительнее свободных функций — и паттерн «фасад»
 
@@ -77,10 +78,12 @@
   `CharsIter @nth -> Option[char]`, `@split_once -> Option[(str,str)]`, `@parse_int_opt`.
 - **Result = recoverable с payload для вызывающего.** `@try_parse_int -> Result[int,
   ParseIntError]`, `str.from_utf16 -> Result[str, Utf16Error]`, `str.try_from_codepoint`.
-- **Дуальный API: bare(throw) + `try_`(Result) + `_opt`(Option).** Конвенция (D77/D25,
+- **Дуальный API: bare(throw) + `try_`(Result).** Конвенция TryFrom (D77/D25,
   protocols.nv:126-128): `from`/bare даёт значение или throw (требует эффекта `Fail[E]` в
-  сигнатуре); `try_*` возвращает Result; `_opt` — Option. `try_from` — fallible-конвертер;
-  `from` — total/infallible направление.
+  сигнатуре); `try_*` возвращает Result; `try_from` — fallible-конвертер, `from` —
+  total/infallible направление. Option-вариант в TryFrom-механизме получают через
+  `Result.ok()` (D77), а `_opt`-метод (`@parse_int_opt -> Option[int]`,
+  `std/runtime/string/parse.nv:63`) — отдельная str-API-конвенция-обёртка.
 - **lossy-FFFD (четвёртая категория) — ТОЛЬКО для функций, чьё имя это говорит** (`*_lossy`)
   или чей контракт best-effort (`cps_to_str`): подставляют U+FFFD. **Никогда не подставляйте
   пустую строку** как «успех» при невалидном входе — это потеря данных под видом успеха.
@@ -94,16 +97,19 @@
   < @byte_len()` (только `&&`, никогда chain `0 <= i < n` → `E_CMP_CHAIN_UNSUPPORTED`). В
   методах ссылайтесь на состояние receiver через `@field`/`@byte_len()`.
 - **Параметр-only `requires` особенно ценны** — Z3 снимает их на литеральных аргументах
-  (`requires radix>=2 && radix<=36` исчезает на `parse_int(16)`). `requires len>=0` на
-  `@truncate(len)`/`@append_repeat(s,n)`.
+  (`requires radix>=2 && radix<=36` исчезает на `parse_int_opt(16)`, `parse.nv:63-64`).
+  `requires len>=0` на `@truncate(len)`/`@append_repeat(s,n)`.
 - **НЕ добавляйте `ensures result >= 0` на size-accessors** (`byte_len`/`len`/`cap`/`count`) —
   non-negativity уже встроена в SMT-бэкенд как аксиома (`z3.rs:547-558`, План 33.6); это
   no-op, ничего не доказывает downstream. Аналогично Vec `@len()` намеренно без такого ensures.
-- **НЕ пишите `ensures` с вызовами non-`#pure` методов** (`@len()`/`s.byte_len()` не pure →
-  не скомпилируется) и **tuple-выражениями в `ensures`** (E2401). `ensures` — для отношений,
+- **НЕ пишите `ensures` с вызовами произвольных non-`#pure` user-функций/методов**
+  (`types/mod.rs:18585`) и **tuple-выражениями в `ensures`** (E2401). Встроенные
+  size-аксессоры `@len()`/`@cap()`/`@byte_len()`/`@is_empty()` (и форма на параметре
+  `s.byte_len()`) — РАЗРЕШЕНЫ (хардкод-вайтлист, `encode.rs:230`). `ensures` — для отношений,
   выразимых через чистые термы.
-- Помечайте side-effect-free helper'ы `#pure`, чтобы их можно было звать **внутри других
-  контрактов** (`contracts.md:314`) — `is_ascii_ws`, `is_cont`.
+- Помечайте side-effect-free helper'ы `#pure`, ЕСЛИ хотите звать их **внутри других
+  контрактов** (`contracts.md:314`); напр. `is_ascii_ws`/`is_cont` сейчас НЕ аннотированы —
+  пометь их `#pure`, прежде чем использовать в `requires`/`ensures`.
 - Контракты стоят **между сигнатурой и `{`**, не внутри тела.
 
 ## 6. Компактный стиль
@@ -125,10 +131,12 @@
   `@to_bytes` = `with_capacity(byte_len()).append(@as_bytes())` — один `RawMem.copy`
   (`memmove`), без цикла (`core.nv:61-67`).
 - **Сравнение/скан через `RawMem.compare` (`memcmp`), не ручной byte-loop.** `@compare`,
-  `@equal`, `@starts_with`, `@ends_with`, `@contains`, `@find`, `@split` (`search.nv`).
+  `@equal` (`core.nv`); `@starts_with`, `@ends_with`, `@contains`, `@find`, `@split`
+  (`search.nv`).
 - **Всегда пре-сайзьте.** `[]u8.with_capacity(n)`/`StringBuilder.with_capacity(n)` до любого
   заполнения; не растите инкрементально, если финальный размер известен. Для таблиц-карт
-  (case/decomp) парсите один раз в lazy-static `HashMap[int, Vec[u32]]`, не per-cp.
+  (case/decomp) парсите один раз в lazy-static `HashMap[int, str]` (packed-str значение
+  декодируется лениво через `parse_cp_list`), не per-cp.
 - Остаточный push-цикл допустим только на честно нерегулярном пути (lossy UTF-8 FFFD-замена,
   `core.nv:207-219`) — и документируется как таковой.
 
@@ -140,8 +148,10 @@
   `SentencesIter`. **`*View` НЕ используем** — суффикс `View` ошибочно намекает на
   random-access окно (Rust никогда не говорит `GraphemeView`). Сегментаторы — это стримы с
   `next()`/`count()`/`is_empty()`, ровно как `CharsIter`.
-- **Все такие типы — `value` записи** (стек, без per-iteration heap-churn); внутренний
-  курсор `priv(type)`. Итератор — `value priv(type)`, никогда не heap-класс.
+- **Все такие типы — `value` записи** (стек, без per-iteration heap-churn), никогда не
+  heap-класс. String/unicode-итераторы (CharsIter, CharIndicesIter, Graphemes/Words/
+  SentencesIter) — `value priv(type)` (курсор закрыт type-privacy); коллекционные (VecIter,
+  RangeIter, Map/Filter/Take/Enumerate/StepByIter) — field-level `priv`/`_`-курсор.
 - **Каждый такой тип — свой `@iter()` self-iterator** (`CharsIter @iter() => @`), чтобы
   `for x in it` и `it.iter()` шли одним for-in-путём (D58).
 
@@ -173,8 +183,10 @@
   `for x in xs { … }`, не индексный `while` с `xs[i]`. for-in выражает намерение,
   исключает off-by-one и забытый инкремент, идёт единым D58-путём
   (`@iter()` → `next()`).
-- **Нужен индекс — `enumerate()`/`CharIndicesIter`,** не ручной счётчик:
-  `for (i, x) in xs.enumerate() { … }`; `for (i, c) in s.char_indices() { … }`.
+- **Нужен индекс — `.iter().enumerate()` / `.as_chars().indices()`,** не ручной счётчик:
+  `for (i, x) in xs.iter().enumerate() { … }`; `for (i, c) in s.as_chars().indices() { … }`.
+  (`@enumerate` есть только на iterator-адаптерах, не на голом Vec — `vec/iter.nv:32`;
+  `char_indices()` не существует, канон — `as_chars().indices()`, `chars.nv:164,178`.)
 - **Шаг/реверс — методы Range,** не арифметика в `while`: `(0..n).step_by(2)` /
   `(1..=n).reverse()` вместо `i += 2` / `i -= 1` в `while` (range в скобках +
   метод; `std/collections/range.nv:143,179`).
