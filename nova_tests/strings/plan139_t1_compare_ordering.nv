@@ -1,0 +1,26 @@
+// Plan 139 Ф.1 — compare + ordering operators REMAIN C (nova_str_compare /
+// nova_str_lt etc.): operators lower directly in BinOp codegen. Regression
+// guard. Full structural eq/ordering review is Plan 139 Ф.3.
+module nova_tests.strings
+
+test "compare sign" {
+    assert("a".compare("b") < 0)
+    assert("b".compare("a") > 0)
+    assert("a".compare("a") == 0)
+    assert("ab".compare("a") > 0)     // longer with shared prefix
+    assert("a".compare("ab") < 0)
+}
+
+test "ordering operators" {
+    assert("a" < "b")
+    assert("b" > "a")
+    assert("a" <= "a")
+    assert("a" >= "a")
+    assert("abc" < "abd")
+}
+
+test "equality operators" {
+    assert("abc" == "abc")
+    assert("abc" != "abd")
+    assert(("a".concat("b")) == "ab")
+}

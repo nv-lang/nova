@@ -1,0 +1,27 @@
+module nova_tests.strings
+
+import std.text
+
+test "join basic" {
+    assert(["a", "b", "c"].join(", ") == "a, b, c")
+}
+
+test "join empty array" {
+    assert([]str.new().join(",") == "")
+}
+
+test "join single element" {
+    assert(["only"].join(",") == "only")
+}
+
+test "replace O(n) basic" {
+    ro s = "hello world hello"
+    ro r = s.replace("hello", "hi")
+    assert(r == "hi world hi")
+}
+
+test "replacen limits count" {
+    ro s = "aaa"
+    ro r = s.replacen("a", "b", 2)
+    assert(r == "bba")
+}

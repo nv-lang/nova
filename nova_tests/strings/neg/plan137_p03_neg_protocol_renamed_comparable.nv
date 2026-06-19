@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_PROTOCOL_RENAMED
+//
+// Plan 137 (D237) — NEG P03:
+// `#impl(Comparable)` → E_PROTOCOL_RENAMED: use `#impl(Compare)`.
+module neg.plan137_p03_neg_protocol_renamed_comparable
+
+#impl(Comparable)
+type Score {
+    val int
+}
+
+test "Comparable is renamed to Compare" {
+    ro s = Score { val: 10 }
+    assert(s.val == 10)
+}

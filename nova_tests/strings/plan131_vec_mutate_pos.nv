@@ -1,0 +1,50 @@
+// Plan 131 Ф.3 — mutation: insert/remove/swap_remove/reverse/truncate.
+
+module nova_tests.strings
+
+import std.collections.vec.{Vec}
+
+test "insert shifts right" {
+    mut v = Vec[int].of(1, 2, 4)
+    v.insert(2, 3)
+    assert(v.equal(Vec[int].of(1, 2, 3, 4)))
+    v.insert(0, 0)
+    assert(v.equal(Vec[int].of(0, 1, 2, 3, 4)))
+    v.insert(5, 5)             // i == len → append
+    assert(v.equal(Vec[int].of(0, 1, 2, 3, 4, 5)))
+}
+
+test "remove shifts left" {
+    mut v = Vec[int].of(1, 2, 3, 4)
+    assert(v.remove(0) == 1)
+    assert(v.equal(Vec[int].of(2, 3, 4)))
+    assert(v.remove(2) == 4)
+    assert(v.equal(Vec[int].of(2, 3)))
+}
+
+test "swap_remove is O(1) and unordered" {
+    mut v = Vec[int].of(10, 20, 30, 40)
+    // swap_remove(0): last (40) moves into slot 0 → [40, 20, 30]
+    assert(v.swap_remove(0) == 10)
+    assert(v.equal(Vec[int].of(40, 20, 30)))
+    // swap_remove on last element just pops
+    assert(v.swap_remove(2) == 30)
+    assert(v.equal(Vec[int].of(40, 20)))
+}
+
+test "reverse in place" {
+    mut v = Vec[int].of(1, 2, 3, 4, 5)
+    v.reverse()
+    assert(v.equal(Vec[int].of(5, 4, 3, 2, 1)))
+    mut single = Vec[int].of(7)
+    single.reverse()
+    assert(single.equal(Vec[int].of(7)))
+}
+
+test "truncate shortens only when smaller" {
+    mut v = Vec[int].of(1, 2, 3, 4, 5)
+    v.truncate(2)
+    assert(v.equal(Vec[int].of(1, 2)))
+    v.truncate(10)             // larger → no-op
+    assert(v.equal(Vec[int].of(1, 2)))
+}

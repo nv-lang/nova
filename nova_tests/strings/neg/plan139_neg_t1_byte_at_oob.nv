@@ -1,0 +1,14 @@
+// EXPECT_RUNTIME_PANIC out of bounds
+//
+// Plan 139 Ф.1 — byte_at remains the irreducible C byte-access primitive and
+// retains its panic-on-OOB contract (Plan 90). The Nova-body str methods read
+// SAFELY via @as_bytes()[i] (in-bounds by construction); raw byte_at OOB panics.
+//
+// `fn main` (not a `test` block): panic must reach the runtime frame
+// (inside a test block the harness intercepts it).
+module neg.plan139_neg_t1_byte_at_oob
+
+fn main() -> () {
+    ro s = "AB"
+    ro _ = s.as_bytes()[5]
+}

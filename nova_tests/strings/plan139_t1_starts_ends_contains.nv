@@ -1,0 +1,36 @@
+// Plan 139 Ф.1 — starts_with/ends_with/contains migrated to Nova-body
+// (byte-compare via @as_bytes). Semantics identical to former nova_str_*.
+module nova_tests.strings
+
+test "starts_with basic" {
+    assert("hello".starts_with("he"))
+    assert("hello".starts_with(""))
+    assert("hello".starts_with("hello"))
+    assert(!"hello".starts_with("x"))
+    assert(!"he".starts_with("hello"))
+}
+
+test "ends_with basic" {
+    assert("hello".ends_with("lo"))
+    assert("hello".ends_with(""))
+    assert("hello".ends_with("hello"))
+    assert(!"hello".ends_with("x"))
+    assert(!"lo".ends_with("hello"))
+}
+
+test "contains basic" {
+    assert("hello".contains("ell"))
+    assert("hello".contains("hello"))
+    assert("hello".contains(""))      // empty needle → true
+    assert("hello".contains("h"))
+    assert("hello".contains("o"))
+    assert(!"hello".contains("z"))
+    assert(!"hi".contains("hello"))
+}
+
+test "utf8 multibyte prefix/suffix" {
+    ro s = "héllo"             // h(1) é(2) l l o = 6 bytes
+    assert(s.starts_with("hé"))
+    assert(s.ends_with("llo"))
+    assert(s.contains("él"))
+}

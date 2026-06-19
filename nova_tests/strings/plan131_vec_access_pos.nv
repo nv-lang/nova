@@ -1,0 +1,32 @@
+// Plan 131 Ф.3 — access: get/first/last (Some/None cases) + in-place set.
+
+module nova_tests.strings
+
+import std.collections.vec.{Vec}
+
+test "get in-bounds and out-of-bounds" {
+    mut v = Vec[int].of(10, 20, 30)
+    assert(v.get(0) == Some(10))
+    assert(v.get(1) == Some(20))
+    assert(v.get(2) == Some(30))
+    assert(v.get(3) == None)
+    assert(v.get(-1) == None)
+}
+
+test "first / last" {
+    mut v = Vec[int].of(10, 20, 30)
+    assert(v.first() == Some(10))
+    assert(v.last() == Some(30))
+
+    ro empty = Vec[int].new()
+    assert(empty.first() == None)
+    assert(empty.last() == None)
+}
+
+test "in-place element write via v[i] = val" {
+    mut v = Vec[int].of(1, 2, 3)
+    v[1] = 99
+    assert(v.get(1) == Some(99))
+    assert(v.get(0) == Some(1))
+    assert(v.get(2) == Some(3))
+}

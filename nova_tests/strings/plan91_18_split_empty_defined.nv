@@ -1,0 +1,19 @@
+module nova_tests.strings
+
+test "split empty sep: whole string in one segment" {
+    ro parts = "hi".split("")
+    assert(parts.len() == 1)
+    assert(parts[0] == "hi")
+}
+
+test "find empty returns Some(0)" {
+    assert("hi".find("") == Some(0))
+}
+
+test "contains empty returns true" {
+    assert("hi".contains(""))
+}
+
+test "rfind empty returns Some(byte_len)" {
+    assert("hi".rfind("") == Some(2))
+}

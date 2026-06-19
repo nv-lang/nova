@@ -1,0 +1,10 @@
+// Plan 139 Ф.0 — GATE: trivial str literal + concat + println (A0.1)
+module nova_tests.strings
+
+test "str literal, concat, byte-len via value-record lowering" {
+    ro s = "abc"
+    assert(s.byte_len() == 3)
+    ro t = s + "d"
+    assert(t.byte_len() == 4)
+    assert(t == "abcd")
+}

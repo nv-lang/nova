@@ -1,0 +1,33 @@
+// Plan 131 Ф.3 — bulk operations: extend/append/retain.
+
+module nova_tests.strings
+
+import std.collections.vec.{Vec}
+
+test "extend appends a slice" {
+    mut v = Vec[int].of(1, 2, 3)
+    v.extend([4, 5, 6])
+    assert(v.equal(Vec[int].of(1, 2, 3, 4, 5, 6)))
+    v.extend([])
+    assert(v.len() == 6)
+}
+
+test "append copies other into self, leaving it intact" {
+    mut a = Vec[int].of(1, 2, 3)
+    mut b = Vec[int].of(4, 5)
+    a.append(b)
+    assert(a.equal(Vec[int].of(1, 2, 3, 4, 5)))
+    // `@append` is a COPY (D141): `b` is left UNCHANGED (not a move-merge).
+    assert(b.equal(Vec[int].of(4, 5)))
+    assert(b.len() == 2)
+}
+
+test "retain keeps matching elements in order" {
+    mut v = Vec[int].of(1, 2, 3, 4, 5, 6)
+    v.retain(|x| x % 2 == 0)
+    assert(v.equal(Vec[int].of(2, 4, 6)))
+
+    mut all = Vec[int].of(1, 2, 3)
+    all.retain(|_| false)
+    assert(all.is_empty())
+}

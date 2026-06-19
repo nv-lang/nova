@@ -1,0 +1,106 @@
+// Plan 85.1 Ф.2 — StringBuilder метрики: len / char_len / capacity.
+//
+// @len()      — длина в байтах (D179), O(1).
+// @char_len() — длина в codepoints, O(n) UTF-8 walk.
+// @capacity() — allocated capacity в байтах, >= len.
+
+module nova_tests.strings
+
+
+// ── @len bytes vs @char_len codepoints ───────────────────────────
+
+test "ASCII: len == char_len" {
+    consume sb = StringBuilder.new()
+    sb.append("hello world")
+    assert(sb.len() == 11)
+    assert(sb.char_len() == 11)
+    ro _ = sb.into_str()
+}
+
+test "Cyrillic: len = 2 * char_len" {
+    consume sb = StringBuilder.new()
+    sb.append("Привет")
+    assert(sb.char_len() == 6)
+    assert(sb.len() == 12)
+    ro _ = sb.into_str()
+}
+
+test "emoji: len = 4 * char_len" {
+    consume sb = StringBuilder.new()
+    sb.append('😀')
+    sb.append('🎉')
+    assert(sb.char_len() == 2)
+    assert(sb.len() == 8)
+    ro _ = sb.into_str()
+}
+
+test "смешанный текст: char_len < len" {
+    consume sb = StringBuilder.new()
+    sb.append("Hi Я 中")     // H,i,space,Я,space,中 = 6 codepoints
+    assert(sb.char_len() == 6)
+    // H(1)+i(1)+sp(1)+Я(2)+sp(1)+中(3) = 9 байт
+    assert(sb.len() == 9)
+    ro _ = sb.into_str()
+}
+
+test "пустой: len == 0, char_len == 0" {
+    consume sb = StringBuilder.new()
+    assert(sb.len() == 0)
+    assert(sb.char_len() == 0)
+    ro _ = sb.into_str()
+}
+
+
+// ── @capacity ──────────────────────────────────────────────────────
+
+test "capacity >= len всегда" {
+    consume sb = StringBuilder.new()
+    sb.append("some content here")
+    assert(sb.capacity() >= sb.len())
+    ro _ = sb.into_str()
+}
+
+test "capacity растёт при переполнении" {
+    consume sb = StringBuilder.with_capacity(4)
+    ro cap_before = sb.capacity()
+    sb.append("aaaaaaaaaaaaaaaa")     // 16 байт >> cap 4
+    assert(sb.len() == 16)
+    assert(sb.capacity() >= 16)
+    assert(sb.capacity() >= cap_before)
+    ro _ = sb.into_str()
+}
+
+test "capacity не уменьшается при чтении" {
+    consume sb = StringBuilder.new()
+    sb.append("data")
+    ro c1 = sb.capacity()
+    ro _ = sb.len()
+    ro _ = sb.char_len()
+    ro _ = sb.is_empty()
+    assert(sb.capacity() == c1)
+    ro _ = sb.into_str()
+}
+
+
+// ── len после grow корректна ───────────────────────────────────────
+
+test "hot-loop accumulation — len точна после многих grow" {
+    consume sb = StringBuilder.with_capacity(2)
+    for i in 0..200 {
+        sb.append("x")
+    }
+    assert(sb.len() == 200)
+    assert(sb.char_len() == 200)
+    assert(sb.capacity() >= 200)
+    ro _ = sb.into_str()
+}
+
+test "hot-loop Unicode — char_len codepoints, len bytes" {
+    consume sb = StringBuilder.new()
+    for i in 0..50 {
+        sb.append('Я')
+    }
+    assert(sb.char_len() == 50)
+    assert(sb.len() == 100)
+    ro _ = sb.into_str()
+}

@@ -1,0 +1,32 @@
+// Plan 139 Ф.6 — literal interning (rodata dedup). The SAME literal used
+// many times behaves identically: each occurrence yields the same content,
+// length, and equality, regardless of the shared-buffer optimization.
+// (Single-buffer emission is verified separately via emitted-C inspection;
+// this fixture proves interning is semantically transparent at runtime.)
+module nova_tests.strings
+
+fn make() -> str {
+    return "abc"
+}
+
+test "same literal three times -> identical content" {
+    ro a = "abc"
+    ro b = "abc"
+    ro c = "abc"
+    assert(a == b, "a == b")
+    assert(b == c, "b == c")
+    assert(a == c, "a == c (transitive)")
+    assert(a.byte_len() == 3, "len 3")
+}
+
+test "interned literal from fn matches inline literal" {
+    ro fromfn = make()
+    ro direct = "abc"
+    assert(fromfn == direct, "fn-returned interned literal == inline literal")
+}
+
+test "distinct literals remain distinct" {
+    ro x = "abc"
+    ro y = "abd"
+    assert(x != y, "different content not equal even when both interned")
+}
