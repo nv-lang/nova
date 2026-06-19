@@ -1,0 +1,15 @@
+// Plan 103.2 Ф.9 negative — non-existent static constructor on AtomicI32.
+//
+// EXPECT_CC_ERROR Nova_AtomicI32_static_from_bytes
+//
+// `AtomicI32.from_bytes()` doesn't exist — codegen emits a call to
+// `Nova_AtomicI32_static_from_bytes` which is not declared → CC error.
+
+module neg.plan103_2_atomic_i32_no_such_static_neg
+
+fn bad() -> AtomicI32 => AtomicI32.from_bytes()
+
+test "should not compile" {
+    ro _ = bad()
+    assert(true)
+}

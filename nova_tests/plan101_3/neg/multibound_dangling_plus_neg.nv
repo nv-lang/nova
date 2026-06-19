@@ -1,0 +1,17 @@
+// Plan 101.3 — negative: `+` без следующего bound — parse error.
+//
+// EXPECT_COMPILE_ERROR expected type
+
+module neg.multibound_dangling_plus_neg
+
+type HasA protocol {
+    @a() -> int
+}
+
+
+fn f[T HasA + ](x T) -> int => x.a()
+
+
+test "should error" {
+    assert(1 == 1)
+}

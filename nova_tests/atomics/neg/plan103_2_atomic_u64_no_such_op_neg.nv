@@ -1,0 +1,17 @@
+// Plan 103.2 Ф.9 negative — non-existent bitwise op on AtomicU64.
+//
+// EXPECT_CC_ERROR too few arguments to function call
+//
+// `a.rotate_left()` does not exist in Plan 103.2 atomic API — rotate is not
+// included. rotate_left стал резолвимым bit-op, форма ошибки изменилась — вызов всё равно отвергнут).
+// → clang error: "too few arguments to function call" (был 'no member named rotate_left';
+
+module neg.plan103_2_atomic_u64_no_such_op_neg
+
+fn bad(a AtomicU64) => a.rotate_left()
+
+test "should not compile" {
+    mut a = AtomicU64.new(1)
+    bad(a)
+    assert(true)
+}
