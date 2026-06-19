@@ -132,10 +132,12 @@
 | `[M-116-openssl-backend]` | Опц. OpenSSL TLS 1.0/1.1 handler (rustls = default); Plan 116 не начат (PLANNED). | plan-116 Followups | P2 |
 | `[M-91.fe5-math-time-conformance]` | math (sqrt/ln) есть; Instant/Duration time-API conformance pending. | plan-91 Followups | P2 |
 | `[M-ide-integration-deferred]` | ✅ **CLOSED 2026-06-17 (Plan 104 ВСЕ sub-plans 104.0–104.9).** Production LSP полностью построен: completion/refs/rename/format/code-actions/symbols/tree-sitter/editor-packaging/close-out. 268 tests PASS. | plan-104 Followups | ✅ done |
-| `[M-104.2-cross-file-goto]` | goto-definition V1 single-file; cross-file resolution через workspace import graph deferred. `[M-104.4-refs-incremental-index]` также open. | plan-104.10 Ф.1 | P1 |
-| `[M-104.2-symbol-cache]` | Каждый hover/goto re-parses файл; dashmap symbol cache deferred. | plan-104.10 Ф.2 | P1 |
-| `[M-104.2-protocol-method-hover]` | Hover на protocol-method bodies не отдельно резолвится; SymbolInfo::ProtocolMethod deferred. | plan-104.2 Followups | P3 |
-| `[M-104.2-signature-type-dispatch]` | Signature help: overload выбирается по имени, не типу receiver; type-driven dispatch V2. | plan-104.10 Ф.9 | P3 |
+| `[M-104.2-cross-file-goto]` | goto-definition V1 single-file; cross-file через provenance file_id→path (peer_files). | plan-104.10 Ф.3 | P1 |
+| `[M-104.2-symbol-cache]` | Каждый hover/goto re-parses файл; per-URI ResolvedModule cache (Module+file_map+env). | plan-104.10 Ф.1 | P1 |
+| `[M-104.2-protocol-method-hover]` | Hover на protocol-method bodies не отдельно резолвится; cross-file hover + member-access. | plan-104.10 Ф.4/Ф.6 | P2 |
+| `[M-104.2-signature-type-dispatch]` | Signature help: overload по имени, не типу receiver; type-driven через expr_types. | plan-104.10 Ф.8 | P2 |
+| `[M-104.2-expr-types-member-hover]` | Variant A (надмножество закрытого Variant B): `ModuleEnv.expr_types` opt-in per-expr type map → member-access hover (`r.start`), type-driven completion/signature. | plan-104.10 Ф.2/Ф.6 | P2 |
+| `[M-104.6-symbol-table-rename]` | Rename через symbol-table/scope (shadow-safe), не regex word-boundary. | plan-104.10 Ф.7 | P2 |
 | `[M-104.2-body-walk-local-var-type]` | ✅ **CLOSED 2026-06-17 (Plan 104.2 Fix B).** body-walk обнаруживает курсор на `LetDecl`-биндинге и возвращает `SymbolInfo::LocalVar` с явной аннотацией типа из `LetDecl.ty`. Также: Fix A — `resolve_item` для `Item::Fn` возвращает `None` внутри тела → body-walk находит фактический callee (fn-body hover priority). | plan-104.2 Followups | ✅ done |
 | `[M-104.2-local-var-type-inference]` | ✅ **CLOSED (Variant B, 2026-06-18).** `infer_rhs_type()` в `symbol.rs`: `ro r = 5` → `int`, `ro r = 0..=5` → `Range`, `ro r = foo()` → return type из `ModuleEnv.fns`. `check_module()` вызывается в `hover.rs` и передаётся в resolver. Вариант A (расширить `ModuleEnv.expr_types`) — followup для полной точности (Plan 104.3+). | plan-104.2 Followups | ✅ done |
 | `[M-104.9-dynamic-method-completion]` | Completion items — статические таблицы в completion.rs; V2: запрашивать методы через compiler API. | plan-104.10 Ф.3 | P1 |
