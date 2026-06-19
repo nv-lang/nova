@@ -1,0 +1,12 @@
+// Plan 169.1.1: slow-lane positive test — excluded from default nova test.
+// Run with: nova test --slow nova_tests/plan169
+module nova_tests.plan169
+
+test "pos slow: large sum 0..100_000" {
+    mut sum = 0
+    for i in 0..100_000 {
+        sum = sum + i
+    }
+    // sum(0..99999) = 99999*100000/2 = 4_999_950_000
+    assert(sum == 4_999_950_000)
+}

@@ -1,0 +1,55 @@
+name: nova-test-regression
+
+# Plan 169.1.1: Автоматический регресс nova_tests на каждый коммит.
+# PR/push — быстрый (positive+fast); nightly — полный (--full).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * *'
+
+jobs:
+  nova-test-fast:
+    name: nova test / positive-fast (PR + push)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install system deps
+        run: sudo apt-get install -y libgc-dev
+      - name: Build nova-cli (release)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+      - name: Run nova_tests (positive-fast, default)
+        run: ./nova-cli/target/release/nova test nova_tests
+      - name: Run std tests
+        run: ./nova-cli/target/release/nova test std
+
+  nova-test-nightly-full:
+    name: nova test / full (nightly)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install system deps
+        run: sudo apt-get install -y libgc-dev
+      - name: Build nova-cli (release)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+      - name: Run nova_tests full
+        run: ./nova-cli/target/release/nova test --full nova_tests 2>&1 | tee nova-test-full-report.txt
+      - name: Run std tests
+        run: ./nova-cli/target/release/nova test std
+      - name: Upload full test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-test-full-report
+          path: nova-test-full-report.txt
+          retention-days: 30

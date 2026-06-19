@@ -37175,6 +37175,9 @@ Tests: nova_tests/plan153_3_1/ (11 test blocks + 1 slow).
 Closes [M-153.3-sort-pdqsort] + [M-91.8c-pdq-sort].
 D185 §amend-2 added.
 
+[M-169.1.1-lane-flags] ✅ CLOSED — TestSelection + CLI category-selectors
+[M-169.1.1-ci-workflow] ✅ CLOSED — nova-test-regression.yml CI workflow
+
 ## Plan 91.18 — str + unicode API cleanup (2026-06-19)
 
 - Collator: zero-field value type не поддерживается codegen ({}→NOVA_UNIT, тип не совпадает). Сохранён `_tag int` placeholder с `priv(type)`. Tailoring при готовности заменит поле без изменения call sites.

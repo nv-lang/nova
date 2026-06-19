@@ -1,0 +1,8 @@
+// EXPECT_COMPILE_ERROR undefined_variable
+// Plan 169.1.1: compile-error category test.
+// Validates that --compile-error flag picks up EXPECT_COMPILE_ERROR tests.
+module neg.plan169_1_1_neg_undefined_var
+
+fn main() {
+    ro x = undefined_variable
+}
