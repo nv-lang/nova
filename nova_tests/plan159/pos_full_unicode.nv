@@ -7,7 +7,7 @@
 
 module plan159.pos_full_unicode
 
-import std.unicode.{general_category, collate_compare, normalize_nfc, WordsView, to_titlecase, is_uppercase, is_numeric, Lu, Nd}
+import std.unicode.{general_category, collate_compare, normalize_nfc, WordsIter, to_titlecase, is_uppercase, is_numeric, Lu, Nd}
 
 fn main() {
     ro cat_ok = general_category(0x41) == Lu && general_category(0x35) == Nd

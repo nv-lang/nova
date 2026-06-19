@@ -19,17 +19,17 @@ you pick a **lens**:
    ── byte layer (u8) ──                      ── codepoint layer (char) ──
 
         as_graphemes() ▼   (opt-in: import std.unicode)
-   GraphemesView  (UAX #29 cluster stream)
+   GraphemesIter  (UAX #29 cluster stream)
    next / count / is_empty — O(n);  no [i]
    ── grapheme layer (visible "character", a str slice) ──
 
         as_words() ▼   (opt-in: import std.unicode)
-   WordsView  (UAX #29 word segments; O(n) to create)
+   WordsIter  (UAX #29 word segments; O(1) to create)
    next / count / is_empty;  no [i]
    ── word layer (words / spaces / punctuation, str slices) ──
 
         as_sentences() ▼   (opt-in: import std.unicode)
-   SentencesView  (UAX #29 sentence segments; O(n) to create)
+   SentencesIter  (UAX #29 sentence segments; O(1) to create)
    next / count / is_empty;  no [i]
    ── sentence layer (a sentence + its trailing whitespace, str slices) ──
 ```
@@ -48,12 +48,11 @@ you pick a **lens**:
   tables — the byte/codepoint layers above stay table-free. See
   [Unicode operations](#unicode-operations-opt-in-stdunicode) below.
 - **`as_words()` is the word-segment lens** — UAX #29 word boundaries (`import
-  std.unicode`); iterates words, whitespace and punctuation as `str` slices. Unlike
-  the others it is **O(n) to create** (word rules need lookahead, so boundaries are
-  materialized once). Powers `to_titlecase`.
+  std.unicode`); iterates words, whitespace and punctuation as `str` slices. O(1) to
+  create (forward state-machine, lazy). Powers `to_titlecase`.
 - **`as_sentences()` is the sentence-segment lens** — UAX #29 sentence boundaries
   (`import std.unicode`); iterates sentences (each with its trailing whitespace and
-  terminator) as `str` slices. Also **O(n) to create**. Note: the default UAX #29
+  terminator) as `str` slices. O(1) to create (forward state-machine, lazy). Note: the default UAX #29
   algorithm has **no abbreviation dictionary**, so `"Mr. Smith"` splits after `Mr.`
   (a capital letter after `.` is a boundary) — this is the spec's documented
   behaviour, not a bug.
@@ -146,7 +145,7 @@ official `NormalizationTest.txt`.
 
 ### Grapheme clusters (UAX #29)
 
-`str.@as_graphemes() -> GraphemesView` is the third lens — iterate over
+`str.@as_graphemes() -> GraphemesIter` is the third lens — iterate over
 user-perceived characters:
 
 ```nova
@@ -161,7 +160,7 @@ for g in "a🇺🇸b".as_graphemes() {              // g is a str slice of one c
 }
 ```
 
-`GraphemesView` mirrors `CharsIter` (a value-record stream): `next() ->
+`GraphemesIter` mirrors `CharsIter` (a value-record stream): `next() ->
 Option[str]`, `count()`, `is_empty()`, O(n), no positional `[i]`. Implements the
 extended grapheme cluster rules GB1–GB13 **plus GB9c** (Indic Conjunct Break,
 Unicode 15.1) — verified against the official `GraphemeBreakTest.txt`.
@@ -222,10 +221,9 @@ methods stay prelude-available).
 
 ### Word segmentation & title-casing (UAX #29)
 
-`str.@as_words() -> WordsView` is the fourth lens — iterate UAX #29 word segments
-(words, whitespace and punctuation — every inter-boundary piece). Unlike the other
-lenses it is **O(n) to create** (the word rules need lookahead, so boundaries are
-materialized once), not O(1).
+`str.@as_words() -> WordsIter` is the fourth lens — iterate UAX #29 word segments
+(words, whitespace and punctuation — every inter-boundary piece). O(1) to create
+(forward state-machine, lazy — no eager boundary materialisation).
 
 ```nova
 import std.unicode
@@ -235,7 +233,7 @@ assert(to_titlecase("hello world") == "Hello World") // first cased char per wor
 assert(to_titlecase("ﬁle") == "File")                // ﬁ → "Fi" (title mapping)
 ```
 
-- `as_words()` / `WordsView` — `next()`/`count()`/`is_empty()`, UAX #29 boundary
+- `as_words()` / `WordsIter` — `next()`/`count()`/`is_empty()`, UAX #29 boundary
   rules WB1–WB16 (handles `can't`, `3.14`, regional-indicator flags, ZWJ-emoji).
 - `to_titlecase(s)` — titlecases the first cased char of each word (using the
   **titlecase** mapping, e.g. ǆ → ǅ, not uppercase Ǆ) and lowercases the rest with
@@ -243,11 +241,10 @@ assert(to_titlecase("ﬁle") == "File")                // ﬁ → "Fi" (title ma
 
 ### Sentence segmentation (UAX #29)
 
-`str.@as_sentences() -> SentencesView` is the fifth lens — iterate UAX #29 sentence
-segments (each sentence together with its trailing whitespace and terminator). Like
-`as_words` it is **O(n) to create** (the sentence rules need an Extend/Format
-ignore-rule, an ATerm/STerm context state machine, and an SB8 forward lookahead, so
-boundaries are materialized once).
+`str.@as_sentences() -> SentencesIter` is the fifth lens — iterate UAX #29 sentence
+segments (each sentence together with its trailing whitespace and terminator). O(1) to
+create (forward state-machine, lazy; SB8 lookahead is bounded per-segment, O(1)
+amortised).
 
 ```nova
 import std.unicode
@@ -262,7 +259,7 @@ assert("the resp. leaders are".as_sentences().count() == 1) // lowercase after "
 }
 ```
 
-- `as_sentences()` / `SentencesView` — `next()`/`count()`/`is_empty()`, UAX #29
+- `as_sentences()` / `SentencesIter` — `next()`/`count()`/`is_empty()`, UAX #29
   boundary rules SB1–SB11 (+ SB998 default-no-break). Default UAX #29 has **no
   abbreviation dictionary**: `"Mr. Smith went home. He slept."` yields three
   segments (`"Mr. "`, `"Smith went home. "`, `"He slept."`), because a capital
@@ -315,8 +312,8 @@ string ops):
 | byte length | `str.byte_len()` | O(1), reads the `len` field |
 | byte lens | `str.as_bytes() -> ro []u8` | O(1) `[i]`/`len()` |
 | codepoint lens | `str.as_chars() -> CharsIter` | `next`/`count`/`nth`/`is_empty` |
-| grapheme lens | `str.as_graphemes() -> GraphemesView` | `import std.unicode`; UAX #29 |
-| word lens | `str.as_words() -> WordsView` | `import std.unicode`; UAX #29; O(n) create |
+| grapheme lens | `str.as_graphemes() -> GraphemesIter` | `import std.unicode`; UAX #29 |
+| word lens | `str.as_words() -> WordsIter` | `import std.unicode`; UAX #29 |
 | normalization | `normalize_nfc/nfd/nfkc/nfkd(s)` | `import std.unicode`; UAX #15 |
 | case fold / map / title | `fold_case`/`to_uppercase`/`to_lowercase`/`to_titlecase(s)` | `import std.unicode` |
 | char classification (Unicode) | `c.is_alphabetic`/`is_numeric`/`is_whitespace`/`general_category` | `import std.unicode`; 1:1 UCD |

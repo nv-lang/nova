@@ -3,7 +3,7 @@
 
 module nova_tests.plan152_4
 
-import std.unicode.{WordsView, to_titlecase}
+import std.unicode.{WordsIter, to_titlecase}
 
 test "as_words — UAX #29 segments" {
     assert("café".as_words().count() == 1)               // ALetter run (WB5)

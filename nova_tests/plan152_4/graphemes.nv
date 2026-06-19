@@ -3,7 +3,7 @@
 // Hangul jamo, CR-LF. Bulk UAX #29 conformance — separate generated fixture.
 module nova_tests.plan152_4
 
-import std.unicode.{GraphemesView}
+import std.unicode.{GraphemesIter}
 
 test "grapheme count: combining / flags / ZWJ-emoji = 1 each" {
     assert("hello".as_graphemes().count() == 5)

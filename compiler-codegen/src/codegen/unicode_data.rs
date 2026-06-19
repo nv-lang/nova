@@ -449,7 +449,7 @@ pub fn render_grapheme_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::R
     out.push_str("// `as_graphemes()` yields the expected cluster sequence (content-checked).\n");
     out.push_str(&format!("// Coverage: stride-{} sample = {} of {} test lines.\n", stride, sel.len(), total));
     out.push_str("module plan152_4.grapheme_conformance\n\n");
-    out.push_str("import std.unicode.{GraphemesView}\n\n");
+    out.push_str("import std.unicode.{GraphemesIter}\n\n");
     const CHUNK: usize = 250;
     for (ci, chunk) in sel.chunks(CHUNK).enumerate() {
         out.push_str(&format!(
@@ -710,7 +710,7 @@ pub fn render_word_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::Resul
         sel.len(), total
     ));
     out.push_str("module plan152_4.word_conformance\n\n");
-    out.push_str("import std.unicode.{WordsView}\n\n");
+    out.push_str("import std.unicode.{WordsIter}\n\n");
     const CHUNK: usize = 250;
     for (ci, chunk) in sel.chunks(CHUNK).enumerate() {
         out.push_str(&format!(
@@ -1406,7 +1406,7 @@ pub fn render_sentence_conformance_nv(ucd_dir: &Path, limit: usize) -> anyhow::R
         sel.len(), total
     ));
     out.push_str("module plan152_4.sentence_conformance\n\n");
-    out.push_str("import std.unicode.{SentencesView}\n\n");
+    out.push_str("import std.unicode.{SentencesIter}\n\n");
     const CHUNK: usize = 250;
     for (ci, chunk) in sel.chunks(CHUNK).enumerate() {
         out.push_str(&format!(

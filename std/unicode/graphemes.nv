@@ -154,18 +154,18 @@ fn is_grapheme_break(prev int, cur int, gb11 bool, cur_ep bool, ri_count int, in
     }
 }
 
-// ─── GraphemesView — the third lens ───
-export type GraphemesView value priv(type) {
+// ─── GraphemesIter — the third lens ───
+export type GraphemesIter value priv(type) {
     buf str    // borrows str (alias of the buffer; GC sees ptr through the field)
     pos int    // current byte offset into buf
 }
 
-fn GraphemesView.new(buf str) -> GraphemesView => { buf, pos: 0 }
+fn GraphemesIter.new(buf str) -> GraphemesIter => { buf, pos: 0 }
 
 // `Next[str]`: the next extended grapheme cluster as a byte-slice of `buf`, or
 // `None` when exhausted. Decodes codepoints from `pos`, applies UAX #29 boundary
 // rules, returns `buf[start..pos]`.
-export fn GraphemesView mut @next() -> Option[str] {
+export fn GraphemesIter mut @next() -> Option[str] {
     ro n = @buf.byte_len()
     if @pos >= n { return None }
     ro start = @pos
@@ -224,11 +224,11 @@ export fn GraphemesView mut @next() -> Option[str] {
 }
 
 // `Iter` (self-iterator): `for g in s.as_graphemes()` routes through for-in (D58).
-export fn GraphemesView @iter() -> GraphemesView => @
+export fn GraphemesIter @iter() -> GraphemesIter => @
 
 // Number of grapheme clusters remaining. O(n). Non-mutating: iterates a value
-// copy (GraphemesView is a `value` record), so safe on a temporary.
-export fn GraphemesView @count() -> int {
+// copy (GraphemesIter is a `value` record), so safe on a temporary.
+export fn GraphemesIter @count() -> int {
     mut it = @
     mut c = 0
     mut going = true
@@ -242,10 +242,10 @@ export fn GraphemesView @count() -> int {
 }
 
 // True if no graphemes remain. O(1).
-export fn GraphemesView @is_empty() -> bool => @pos >= @buf.byte_len()
+export fn GraphemesIter @is_empty() -> bool => @pos >= @buf.byte_len()
 
 // ─── str lens ───
 // Lazy grapheme iterator (borrows `self`; O(1) to create). The grapheme layer of
 // the lens model: `s.as_graphemes().count()` for user-visible length, `for g in
 // s.as_graphemes()` to walk visible characters.
-export fn str @as_graphemes() -> GraphemesView => GraphemesView.new(@)
+export fn str @as_graphemes() -> GraphemesIter => GraphemesIter.new(@)

@@ -1,9 +1,8 @@
 // Plan 152.4.5 (D253): word-boundary segmentation (UAX #29) + `to_titlecase`.
 //
-// Opt-in `std.unicode` peer. `str.@as_words() -> WordsView` iterates UAX #29 word
-// segments (every inter-boundary piece — words, whitespace, punctuation). Unlike
-// `as_chars`/`as_graphemes` it is **O(n) to create** (the word rules need
-// lookahead + the WB4 ignore-rule, so boundaries are materialized once), not O(1).
+// Opt-in `std.unicode` peer. `str.@as_words() -> WordsIter` iterates UAX #29 word
+// segments (every inter-boundary piece — words, whitespace, punctuation). O(1) to
+// create (state-machine lazily driven per next() call — no eager materialisation).
 //
 // `to_titlecase(s)` titlecases the first cased char of each word and lowercases the
 // rest (with Final_Sigma context) — the Unicode-correct title-casing that needs
@@ -44,23 +43,6 @@ fn wbcat(cp int) -> int => range_lookup3(wb_flat, cp)
 fn wb_ignorable(c int) -> bool => c == WB_EXTEND || c == WB_FORMAT || c == WB_ZWJ
 fn wb_ahletter(c int) -> bool => c == WB_ALETTER || c == WB_HEBREW
 fn wb_midnumletq(c int) -> bool => c == WB_MIDNUMLET || c == WB_SQ
-
-// ─── decode str → (codepoints, byte-offsets) ───
-// offs has cps.len()+1 entries: start byte of each cp, then byte_len at the end.
-fn wb_decode(s str) -> (Vec[u32], Vec[int]) {
-    mut cps = Vec[u32].with_capacity(s.byte_len())
-    mut offs = Vec[int].with_capacity(s.byte_len() + 1)
-    ro n = s.byte_len()
-    mut i = 0
-    while i < n {
-        ro (cp, step) = decode_at(s, i)
-        cps.push(cp)
-        offs.push(i)
-        i = i + step
-    }
-    offs.push(n)
-    (cps, offs)
-}
 
 // Incremental Regional_Indicator run-parity (WB15/16): fold one codepoint into the
 // running count of consecutive RI effective-bases. Ignorables (WB4) don't change the
@@ -164,55 +146,135 @@ fn wb_cats(cps Vec[u32]) -> Vec[int] {
     cats
 }
 
-// Word-boundary byte offsets: [start0, start1, …, byte_len]. Empty for "".
-fn word_boundaries(s str) -> Vec[int] {
-    ro (cps, offs) = wb_decode(s)
-    ro cats = wb_cats(cps)
-    ro starts = wb_starts(cps, cats)
-    mut bounds = Vec[int].with_capacity(starts.len() + 1)
-    if starts.len() == 0 {
-        bounds
+// ─── Parameterised break predicate (lazy iterator) ───
+// Like wb_is_break but takes explicit prev/eff-prev/prev-prev-eff/ncat instead of
+// indexing into arrays. WB3c needs the raw codepoint `cp` for is_ext_pict.
+fn wb_is_break_s(prev_imm int, prev_eff int, prev_prev_eff int, cat int, cp int, ncat int, ri_run int) -> bool {
+    if prev_imm == WB_CR && cat == WB_LF {
+        false                                                       // WB3
+    } else if prev_imm == WB_NEWLINE || prev_imm == WB_CR || prev_imm == WB_LF {
+        true                                                        // WB3a
+    } else if cat == WB_NEWLINE || cat == WB_CR || cat == WB_LF {
+        true                                                        // WB3b
+    } else if prev_imm == WB_ZWJ && is_ext_pict(cp) {
+        false                                                       // WB3c
+    } else if prev_imm == WB_WSEGSPACE && cat == WB_WSEGSPACE {
+        false                                                       // WB3d
+    } else if wb_ignorable(cat) {
+        false                                                       // WB4: Any × (Extend|Format|ZWJ)
+    } else if wb_ahletter(prev_eff) && wb_ahletter(cat) {
+        false                                                       // WB5
+    } else if wb_ahletter(prev_eff) && (cat == WB_MIDLETTER || wb_midnumletq(cat)) && wb_ahletter(ncat) {
+        false                                                       // WB6
+    } else if (prev_eff == WB_MIDLETTER || wb_midnumletq(prev_eff)) && wb_ahletter(cat) && wb_ahletter(prev_prev_eff) {
+        false                                                       // WB7
+    } else if prev_eff == WB_HEBREW && cat == WB_SQ {
+        false                                                       // WB7a
+    } else if prev_eff == WB_HEBREW && cat == WB_DQ && ncat == WB_HEBREW {
+        false                                                       // WB7b
+    } else if prev_prev_eff == WB_HEBREW && prev_eff == WB_DQ && cat == WB_HEBREW {
+        false                                                       // WB7c
+    } else if prev_eff == WB_NUMERIC && cat == WB_NUMERIC {
+        false                                                       // WB8
+    } else if wb_ahletter(prev_eff) && cat == WB_NUMERIC {
+        false                                                       // WB9
+    } else if prev_eff == WB_NUMERIC && wb_ahletter(cat) {
+        false                                                       // WB10
+    } else if (prev_eff == WB_MIDNUM || wb_midnumletq(prev_eff)) && cat == WB_NUMERIC && prev_prev_eff == WB_NUMERIC {
+        false                                                       // WB11
+    } else if prev_eff == WB_NUMERIC && (cat == WB_MIDNUM || wb_midnumletq(cat)) && ncat == WB_NUMERIC {
+        false                                                       // WB12
+    } else if prev_eff == WB_KATAKANA && cat == WB_KATAKANA {
+        false                                                       // WB13
+    } else if (wb_ahletter(prev_eff) || prev_eff == WB_NUMERIC || prev_eff == WB_KATAKANA || prev_eff == WB_EXTENDNUMLET) && cat == WB_EXTENDNUMLET {
+        false                                                       // WB13a
+    } else if prev_eff == WB_EXTENDNUMLET && (wb_ahletter(cat) || cat == WB_NUMERIC || cat == WB_KATAKANA) {
+        false                                                       // WB13b
+    } else if prev_eff == WB_RI && cat == WB_RI && (ri_run % 2 == 1) {
+        false                                                       // WB15/16
     } else {
-        for st in starts { bounds.push(offs[st]) }
-        bounds.push(offs[cps.len()])
-        bounds
+        true                                                        // WB999
     }
 }
 
-// ─── WordsView — UAX #29 word-segment iterator ───
-export type WordsView value priv(type) {
-    buf str
-    bounds Vec[int]   // byte offsets [s0,…,len]; len-1 == word count
-    idx int
+// Does the current `cat` require a lookahead scan to resolve WB6/7b/12?
+fn wb_needs_lookahead(prev_eff int, prev_prev_eff int, cat int) -> bool =>
+    (wb_ahletter(prev_eff) && (cat == WB_MIDLETTER || wb_midnumletq(cat))) || (prev_eff == WB_HEBREW && cat == WB_DQ) || (prev_eff == WB_NUMERIC && (cat == WB_MIDNUM || wb_midnumletq(cat)))
+
+// Scan forward for the next non-ignorable WB category (for WB6/7b/12 lookahead).
+fn scan_next_eff_cat(buf str, from int, n int) -> int {
+    mut j = from
+    while j < n {
+        ro (cp, step) = decode_at(buf, j)
+        ro cat = wbcat(cp)
+        if !wb_ignorable(cat) { return cat }
+        j += step
+    }
+    0
 }
 
-fn WordsView.new(buf str) -> WordsView => { buf, bounds: word_boundaries(buf), idx: 0 }
+// ─── WordsIter — UAX #29 word-segment lazy iterator ───
+export type WordsIter value priv(type) {
+    buf str
+    pos int
+    n int
+    prev_imm_cat int
+    prev_eff_cat int
+    prev_prev_eff_cat int
+    ri_run int
+}
+
+fn WordsIter.new(buf str) -> WordsIter =>
+    { buf, pos: 0, n: buf.byte_len(),
+      prev_imm_cat: 0, prev_eff_cat: 0, prev_prev_eff_cat: 0, ri_run: 0 }
+
+fn WordsIter mut @_advance(cat int) {
+    @prev_imm_cat = cat
+    @ri_run = wb_ri_step(cat, @ri_run)
+    if !wb_ignorable(cat) {
+        @prev_prev_eff_cat = @prev_eff_cat
+        @prev_eff_cat = cat
+    }
+}
 
 // `Next[str]`: the next word segment as a byte-slice of `buf`, or None when done.
-export fn WordsView mut @next() -> Option[str] {
-    if @idx + 1 >= @bounds.len() {
-        None
-    } else {
-        ro s = @buf[@bounds[@idx]..@bounds[@idx + 1]]
-        @idx = @idx + 1
-        Some(s)
+export fn WordsIter mut @next() -> Option[str] {
+    if @pos >= @n { return None }
+    ro start = @pos
+    ro (cp0, step0) = decode_at(@buf, @pos)
+    @_advance(wbcat(cp0))
+    @pos += step0
+    while @pos < @n {
+        ro (cp, step) = decode_at(@buf, @pos)
+        ro cat = wbcat(cp)
+        ro ncat = if wb_needs_lookahead(@prev_eff_cat, @prev_prev_eff_cat, cat) {
+            scan_next_eff_cat(@buf, @pos + step, @n)
+        } else {
+            0
+        }
+        if wb_is_break_s(@prev_imm_cat, @prev_eff_cat, @prev_prev_eff_cat, cat, cp, ncat, @ri_run) {
+            return Some(@buf[start..@pos])
+        }
+        @_advance(cat)
+        @pos += step
     }
+    Some(@buf[start..@n])
 }
 
-export fn WordsView @iter() -> WordsView => @
+export fn WordsIter @iter() -> WordsIter => @
 
-// Number of word segments remaining from the current position. O(1) (boundaries
-// precomputed). Mirrors CharsIter/GraphemesView count (remaining, not total).
-export fn WordsView @count() -> int {
-    ro b = @bounds.len()
-    if b == 0 { 0 } else { b - 1 - @idx }
+export fn WordsIter @is_empty() -> bool => @pos >= @n
+
+export fn WordsIter @count() -> int {
+    mut tmp = @
+    mut cnt = 0
+    while tmp.next() != None { cnt += 1 }
+    cnt
 }
-
-export fn WordsView @is_empty() -> bool => @bounds.len() <= 1
 
 // ─── str lens ───
-// Word-segment iterator (UAX #29). O(n) to create (materializes boundaries).
-export fn str @as_words() -> WordsView => WordsView.new(@)
+// Word-segment lazy iterator (O(1) to create). UAX #29 word segmentation.
+export fn str @as_words() -> WordsIter => WordsIter.new(@)
 
 // ─── to_titlecase ───
 /// Unicode title-casing (locale-independent): titlecase the first cased char of

@@ -4,7 +4,7 @@
 // Coverage: uniform spread = 1500 of 1826 test lines.
 module nova_tests.plan152_4
 
-import std.unicode.{WordsView}
+import std.unicode.{WordsIter}
 
 test "UAX#29 WordBreakTest (chunk 0, 250 cases)" {
     {

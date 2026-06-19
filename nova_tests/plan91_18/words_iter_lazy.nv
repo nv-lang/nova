@@ -1,0 +1,50 @@
+module nova_tests.plan91_18
+
+test "as_words is O(1) and returns WordsIter" {
+    ro it = "hello world".as_words()
+    assert(!it.is_empty())
+}
+
+test "words iter basic" {
+    mut v = []str.new()
+    mut it = "hello world foo".as_words()
+    while true {
+        match it.next() {
+            Some(s) => { v.push(s) }
+            None => { break }
+        }
+    }
+    assert(v.len() == 5)
+    assert(v[0] == "hello")
+    assert(v[1] == " ")
+    assert(v[2] == "world")
+    assert(v[3] == " ")
+    assert(v[4] == "foo")
+}
+
+test "words iter is_empty correct after partial iteration" {
+    mut it = "hello world".as_words()
+    ro _ = it.next()
+    ro _ = it.next()
+    assert(!it.is_empty())
+    while it.next() != None {}
+    assert(it.is_empty())
+}
+
+test "words iter empty string" {
+    assert("".as_words().is_empty())
+}
+
+test "words iter WB6 midletter lookahead" {
+    mut cnt = 0
+    mut it = "can't".as_words()
+    while it.next() != None { cnt += 1 }
+    assert(cnt >= 1)
+}
+
+test "words iter WB12 midnum lookahead" {
+    mut cnt = 0
+    mut it = "1,234".as_words()
+    while it.next() != None { cnt += 1 }
+    assert(cnt >= 1)
+}

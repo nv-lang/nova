@@ -1,7 +1,7 @@
 // Plan 152.8 Layer 1 (Vec[u32] migration) — T3: grapheme segmentation after migration.
 module nova_tests.plan152_8
 
-import std.unicode.{GraphemesView}
+import std.unicode.{GraphemesIter}
 
 test "grapheme count: plain ASCII" {
     assert("Hello".as_graphemes().count() == 5)

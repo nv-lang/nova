@@ -1,15 +1,13 @@
 // Plan 152.4.6 (D253): sentence-boundary segmentation (UAX #29).
 //
-// Opt-in `std.unicode` peer. `str.@as_sentences() -> SentencesView` iterates UAX #29
+// Opt-in `std.unicode` peer. `str.@as_sentences() -> SentencesIter` iterates UAX #29
 // sentence segments (every inter-boundary piece — a sentence and its trailing
-// whitespace/terminator). Like `as_words` it is **O(n) to create** (the sentence
-// rules need an Extend/Format ignore-rule + an ATerm-context state machine + an SB8
-// forward lookahead, so boundaries are materialized once), not O(1).
+// whitespace/terminator). O(1) to create (forward state-machine driven lazily per
+// next() call — no eager materialisation).
 //
 // Sentence rules default to NO break (SB998 = ×), the opposite of grapheme/word
-// (which default to break). The eager boundary-computation mirrors words.nv:
-// decode → categories → compute boundary offsets (one O(1)-amortized forward pass
-// over the SB rule cascade) → SentencesView walks the offsets.
+// (which default to break). The forward state machine threads term/phase/peb/ppeb
+// and sb8_has_lower per-call, matching the SB rule cascade O(1) amortised.
 //
 // Reuses peer helpers: decode_at / range_lookup3 / parse_flat (graphemes.nv).
 
@@ -47,198 +45,139 @@ fn sb_parasep(c int) -> bool => c == SB_SEP || c == SB_CR || c == SB_LF
 // `(¬…)*` run — the scan stops here without having reached a Lower).
 fn sb_sb8_blocker(c int) -> bool => c == SB_OLETTER || c == SB_UPPER || c == SB_LOWER || c == SB_SEP || c == SB_CR || c == SB_LF || c == SB_STERM || c == SB_ATERM
 
-// SB8 forward lookahead from effective-base index `j` (the index of the char that
-// would be `cps[i]` — current). UAX #29 SB8:
-//   ATerm Close* Sp* × ( ¬(OLetter|Upper|Lower|Sep|CR|LF|STerm|ATerm) )* Lower
-// i.e. scanning forward over the allowed set, do we reach a Lower before any
-// blocker? Extend/Format are skipped (SB5 ignore-rule). Bounded by `n` → O(k) per
-// call, but each char is visited O(1) amortized across the whole pass because the
-// run only extends to the next blocker/Lower (no quadratic re-scan of long words —
-// the allowed set excludes letters except Lower, which terminates).
-fn sb_sb8_has_lower(cats Vec[int], start int, n int) -> bool {
-    mut j = start
+// SB8 forward lookahead: from byte offset `from` in `buf`, scan for a Lower before
+// any blocker. Extend/Format transparent (SB5). Returns true if Lower found.
+fn sb_sb8_has_lower_buf(buf str, from int, n int) -> bool {
+    mut j = from
     mut found = false
     mut going = true
     while going && j < n {
-        ro c = cats[j]
+        ro (cp, step) = decode_at(buf, j)
+        ro c = sbcat(cp)
         if sb_ignorable(c) {
-            j = j + 1                       // SB5: skip Extend/Format in the scan
+            j += step
         } else if c == SB_LOWER {
-            found = true                     // reached Lower → SB8 matches
+            found = true
             going = false
         } else if sb_sb8_blocker(c) {
-            going = false                    // hit a blocker before any Lower
+            going = false
         } else {
-            j = j + 1                        // allowed filler → keep scanning
+            j += step
         }
     }
     found
 }
 
-// ─── decode str → (codepoints, byte-offsets) ───
-// offs has cps.len()+1 entries: start byte of each cp, then byte_len at the end.
-fn sb_decode(s str) -> (Vec[u32], Vec[int]) {
-    mut cps = Vec[u32].with_capacity(s.byte_len())
-    mut offs = Vec[int].with_capacity(s.byte_len() + 1)
-    ro n = s.byte_len()
-    mut i = 0
-    while i < n {
-        ro (cp, step) = decode_at(s, i)
-        cps.push(cp)
-        offs.push(i)
-        i = i + step
-    }
-    offs.push(n)
-    (cps, offs)
-}
-
-fn sb_cats(cps Vec[u32]) -> Vec[int] {
-    mut cats = Vec[int].with_capacity(cps.len())
-    for cp in cps { cats.push(sbcat(cp)) }
-    cats
-}
-
-// Sentence-start codepoint indices (0-based: 0, then every break position).
+// ─── SentencesIter — UAX #29 sentence-segment lazy iterator ───
 //
-// The SB6-SB11 rules examine a `(STerm|ATerm) Close* Sp*` context, so we thread a
-// small forward state machine (O(1) per cp, no backward rescan):
-//   term  : 0 = no active terminator context, 11 = ATerm, 13 = STerm
-//   phase : within the context — 0 = right after the terminator (Close* allowed),
-//           1 = in the Sp* tail (Close no longer allowed; a Close ends the ctx)
-// Extend/Format (SB5) are transparent: they neither change `term/phase` nor the
-// effective previous base used by the rule cascade.
-fn sb_starts(cps Vec[u32], cats Vec[int]) -> Vec[int] {
-    ro n = cps.len()
-    mut starts = Vec[int].with_capacity(n + 1)
-    if n == 0 {
-        return starts
+// State fields (as of the position BEFORE the codepoint at @pos):
+//   prev_imm  : SB category of the immediately preceding codepoint (for SB3/SB4/SB5)
+//   term      : 0 = no active terminator context, 11 = ATerm, 13 = STerm
+//   phase     : 0 = right after the terminator (Close* zone),
+//               1 = in the Sp* tail (Close no longer allowed; a Close ends the ctx)
+//   peb       : effective previous base category (skip trailing Extend/Format)
+//   ppeb      : effective base before peb (for SB7)
+//   sb8_lower : cached SB8 forward-scan result for the current context window
+export type SentencesIter value priv(type) {
+    buf str
+    pos int
+    n int
+    prev_imm int
+    term int
+    phase int
+    peb int
+    ppeb int
+    sb8_lower bool
+}
+
+fn SentencesIter.new(buf str) -> SentencesIter =>
+    { buf, pos: 0, n: buf.byte_len(), prev_imm: 0, term: 0, phase: 0, peb: 0, ppeb: 0, sb8_lower: false }
+
+// Advance the state machine for one consumed codepoint category `c` at byte offset
+// `at` (needed to recompute sb8 lookahead from `at + step`).
+fn SentencesIter mut @_advance(c int, after int) {
+    @prev_imm = c
+    if !sb_ignorable(c) {
+        if c == SB_ATERM {
+            @term = 11 @phase = 0
+            @sb8_lower = sb_sb8_has_lower_buf(@buf, after, @n)
+        } else if c == SB_STERM {
+            @term = 13 @phase = 0
+            @sb8_lower = false
+        } else if @term != 0 && c == SB_CLOSE && @phase == 0 {
+            if @term == 11 {
+                @sb8_lower = sb_sb8_has_lower_buf(@buf, after, @n)
+            }
+        } else if @term != 0 && c == SB_SP {
+            @phase = 1
+            if @term == 11 {
+                @sb8_lower = sb_sb8_has_lower_buf(@buf, after, @n)
+            }
+        } else {
+            @term = 0 @phase = 0
+            @sb8_lower = false
+        }
+        @ppeb = @peb
+        @peb = c
     }
-    starts.push(0)                     // SB1: sot ÷
-    // State as of the position BEFORE cps[i] (i starts at 1).
-    // `peb` = effective previous base category (skip trailing Extend/Format).
-    mut term = 0                        // active (STerm|ATerm) context terminator
-    mut phase = 0                       // 0 = Close* zone, 1 = Sp* zone
-    // Initialise the context from cps[0] (a lone terminator opens a context).
-    ro c0 = cats[0]
-    if c0 == SB_ATERM { term = 11 phase = 0 }
-    else if c0 == SB_STERM { term = 13 phase = 0 }
-    mut peb = c0                        // effective previous base (cps[0] is a base)
-    mut i = 1
-    while i < n {
-        ro p = cats[i - 1]             // immediate previous
-        ro c = cats[i]                 // current
-        ro is_break = if p == SB_CR && c == SB_LF {
+}
+
+// `Next[str]`: the next sentence segment as a byte-slice of `buf`, or None when done.
+export fn SentencesIter mut @next() -> Option[str] {
+    if @pos >= @n { return None }
+    ro start = @pos
+    // Consume the first codepoint unconditionally (SB1: no break at sot / after
+    // a segment break, the boundary is already before this char).
+    ro (cp0, step0) = decode_at(@buf, @pos)
+    ro c0 = sbcat(cp0)
+    @_advance(c0, @pos + step0)
+    @pos += step0
+    while @pos < @n {
+        ro (cp, step) = decode_at(@buf, @pos)
+        ro c = sbcat(cp)
+        ro is_break = if @prev_imm == SB_CR && c == SB_LF {
             false                                                   // SB3
-        } else if sb_parasep(p) {
+        } else if sb_parasep(@prev_imm) {
             true                                                    // SB4
         } else if sb_ignorable(c) {
             false                                                   // SB5: X × (Extend|Format)
-        } else if term == 11 && c == SB_NUMERIC && peb == SB_ATERM {
+        } else if @term == 11 && c == SB_NUMERIC && @peb == SB_ATERM {
             false                                                   // SB6: ATerm × Numeric
-        } else if peb == SB_ATERM && c == SB_UPPER && sb_prev_upper_lower(cats, i) {
+        } else if @peb == SB_ATERM && c == SB_UPPER && (@ppeb == SB_UPPER || @ppeb == SB_LOWER) {
             false                                                   // SB7: (Upper|Lower) ATerm × Upper
-        } else if term == 11 && sb_sb8_has_lower(cats, i, n) {
+        } else if @term == 11 && @sb8_lower {
             false                                                   // SB8: ATerm Close* Sp* × (¬…)* Lower
-        } else if term != 0 && (c == SB_SCONTINUE || c == SB_STERM || c == SB_ATERM) {
-            false                                                   // SB8a: (STerm|ATerm) Close* Sp* × (SContinue|STerm|ATerm)
-        } else if term != 0 && phase == 0 && (c == SB_CLOSE || c == SB_SP || sb_parasep(c)) {
-            false                                                   // SB9: (STerm|ATerm) Close* × (Close|Sp|ParaSep)
-        } else if term != 0 && (c == SB_SP || sb_parasep(c)) {
-            false                                                   // SB10: (STerm|ATerm) Close* Sp* × (Sp|ParaSep)
-        } else if term != 0 {
-            true                                                    // SB11: (STerm|ATerm) Close* Sp* (ParaSep)? ÷
+        } else if @term != 0 && (c == SB_SCONTINUE || c == SB_STERM || c == SB_ATERM) {
+            false                                                   // SB8a
+        } else if @term != 0 && @phase == 0 && (c == SB_CLOSE || c == SB_SP || sb_parasep(c)) {
+            false                                                   // SB9
+        } else if @term != 0 && (c == SB_SP || sb_parasep(c)) {
+            false                                                   // SB10
+        } else if @term != 0 {
+            true                                                    // SB11
         } else {
-            false                                                   // SB998: × otherwise
+            false                                                   // SB998
         }
-        if is_break { starts.push(i) }
-        // ── advance the forward state for the boundary after cps[i] ──
-        if sb_ignorable(c) {
-            // SB5: transparent — keep term/phase/peb unchanged.
-        } else {
-            // Update the (STerm|ATerm) Close* Sp* context.
-            if c == SB_ATERM {
-                term = 11 phase = 0
-            } else if c == SB_STERM {
-                term = 13 phase = 0
-            } else if term != 0 && c == SB_CLOSE && phase == 0 {
-                // still in Close* zone — context continues
-            } else if term != 0 && c == SB_SP {
-                phase = 1                                  // enter / stay in Sp* zone
-            } else {
-                term = 0 phase = 0                         // anything else closes the context
-            }
-            peb = c                                         // new effective base
+        if is_break {
+            return Some(@buf[start..@pos])
         }
-        i = i + 1
+        @_advance(c, @pos + step)
+        @pos += step
     }
-    starts
+    Some(@buf[start..@n])
 }
 
-// SB7 helper: is the char before the (effective) ATerm an Upper or Lower? At the
-// boundary before cps[i], the ATerm is the effective previous base (peb == ATerm),
-// so its own index is `i-1` minus any trailing Extend/Format; the char before THAT
-// (skipping ignorables) must be Upper|Lower. O(k) over the ignorable run only.
-fn sb_prev_upper_lower(cats Vec[int], i int) -> bool {
-    // Locate the ATerm base (skip Extend/Format immediately before cps[i]).
-    mut a = i - 1
-    while a > 0 && sb_ignorable(cats[a]) { a = a - 1 }
-    // Char before the ATerm base (skip its preceding ignorables).
-    mut b = a - 1
-    while b >= 0 && sb_ignorable(cats[b]) { b = b - 1 }
-    if b < 0 {
-        false
-    } else {
-        ro pc = cats[b]
-        pc == SB_UPPER || pc == SB_LOWER
-    }
+export fn SentencesIter @iter() -> SentencesIter => @
+
+export fn SentencesIter @is_empty() -> bool => @pos >= @n
+
+export fn SentencesIter @count() -> int {
+    mut tmp = @
+    mut cnt = 0
+    while tmp.next() != None { cnt += 1 }
+    cnt
 }
-
-// Sentence-boundary byte offsets: [start0, start1, …, byte_len]. Empty for "".
-fn sentence_boundaries(s str) -> Vec[int] {
-    ro (cps, offs) = sb_decode(s)
-    ro cats = sb_cats(cps)
-    ro starts = sb_starts(cps, cats)
-    mut bounds = Vec[int].with_capacity(starts.len() + 1)
-    if starts.len() == 0 {
-        bounds
-    } else {
-        for st in starts { bounds.push(offs[st]) }
-        bounds.push(offs[cps.len()])
-        bounds
-    }
-}
-
-// ─── SentencesView — UAX #29 sentence-segment iterator ───
-export type SentencesView value priv(type) {
-    buf str
-    bounds Vec[int]   // byte offsets [s0,…,len]; len-1 == sentence count
-    idx int
-}
-
-fn SentencesView.new(buf str) -> SentencesView => { buf, bounds: sentence_boundaries(buf), idx: 0 }
-
-// `Next[str]`: the next sentence segment as a byte-slice of `buf`, or None when done.
-export fn SentencesView mut @next() -> Option[str] {
-    if @idx + 1 >= @bounds.len() {
-        None
-    } else {
-        ro s = @buf[@bounds[@idx]..@bounds[@idx + 1]]
-        @idx = @idx + 1
-        Some(s)
-    }
-}
-
-export fn SentencesView @iter() -> SentencesView => @
-
-// Number of sentence segments remaining from the current position. O(1) (boundaries
-// precomputed). Mirrors WordsView.count() (remaining, not total).
-export fn SentencesView @count() -> int {
-    ro b = @bounds.len()
-    if b == 0 { 0 } else { b - 1 - @idx }
-}
-
-export fn SentencesView @is_empty() -> bool => @bounds.len() == 0 || @idx + 1 >= @bounds.len()
 
 // ─── str lens ───
-// Sentence-segment iterator (UAX #29). O(n) to create (materializes boundaries).
-export fn str @as_sentences() -> SentencesView => SentencesView.new(@)
+// Sentence-segment lazy iterator (O(1) to create). UAX #29 sentence segmentation.
+export fn str @as_sentences() -> SentencesIter => SentencesIter.new(@)

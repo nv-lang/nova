@@ -5,7 +5,7 @@
 
 module plan159.e2e_words
 
-import std.unicode.{WordsView}
+import std.unicode.{WordsIter}
 
 fn main() {
     ro n = "Hello, world".as_words().count()
