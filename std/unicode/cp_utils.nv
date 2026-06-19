@@ -1,0 +1,118 @@
+// Codepoint utilities shared across std.unicode peers: hex parser, table parsers,
+// codepoint <-> str converters, UTF-8 decode.
+// Dedup helpers: parse_cp_keyed_table / parse_cp_int_table consolidate the 6
+// identical semicolon-of-colon table parsers scattered across normalize.nv and
+// collate.nv into 2 shared functions.
+
+module std.unicode
+
+import std.collections.hashmap.{HashMap}
+import std.collections.vec.{Vec}
+
+// Parse a lowercase-hex integer; -1 on malformed input (the generated tables
+// are always well-formed, so the sentinel is a safety net, not a hot path).
+fn hex(s str) -> int {
+    match s.try_parse_int(radix: 16) { Ok(v) => v, Err(_) => -1 }
+}
+
+// "d1,d2,d3" (comma-separated hex) -> [d1, d2, d3].
+fn parse_cp_list(s str) -> Vec[u32] {
+    mut out = Vec[u32].with_capacity(4)
+    for part in s.split(",") {
+        ro cp = hex(part)
+        if cp >= 0 { out.push(cp) }
+    }
+    out
+}
+
+// "cp:value;cp2:value2;.." -> { cp -> value_str }.
+// Covers decomposition tables (NFD/NFKD), collation single/contraction tables —
+// all share this exact semicolon-of-colon text shape.
+fn parse_cp_keyed_table(data str) -> HashMap[int, str] {
+    ro entries = data.split(";")
+    mut m = HashMap[int, str].with_capacity(entries.len() + 8)
+    for entry in entries {
+        match entry.split_once(":") {
+            Some((k, v)) => {
+                ro cp = hex(k)
+                if cp >= 0 { m.insert(cp, v) }
+            }
+            None => {}
+        }
+    }
+    m
+}
+
+// "cp:int;cp2:int2;.." -> { cp -> int }.
+// Used for CCC table (canonical combining class).
+fn parse_cp_int_table(data str) -> HashMap[int, int] {
+    ro entries = data.split(";")
+    mut m = HashMap[int, int].with_capacity(entries.len() + 8)
+    for entry in entries {
+        match entry.split_once(":") {
+            Some((k, v)) => {
+                ro cp = hex(k)
+                ro cc = hex(v)
+                if cp >= 0 && cc >= 0 { m.insert(cp, cc) }
+            }
+            None => {}
+        }
+    }
+    m
+}
+
+// "a,b:cp;..." -> { (a << 21) | b -> cp }. Packed-int key avoids tuple-key
+// HashMap (codepoints fit in 21 bits; see [M-hashmap-tuple-key-mono]).
+fn parse_comp_table(data str) -> HashMap[int, int] {
+    ro entries = data.split(";")
+    mut m = HashMap[int, int].with_capacity(entries.len() + 8)
+    for entry in entries {
+        match entry.split_once(":") {
+            Some((ab, cp_s)) => {
+                match ab.split_once(",") {
+                    Some((a_s, b_s)) => {
+                        ro a = hex(a_s)
+                        ro b = hex(b_s)
+                        ro cp = hex(cp_s)
+                        if a >= 0 && b >= 0 && cp >= 0 { m.insert((a << 21) | b, cp) }
+                    }
+                    None => {}
+                }
+            }
+            None => {}
+        }
+    }
+    m
+}
+
+fn str_to_cps(s str) -> Vec[u32] {
+    mut out = Vec[u32].with_capacity(s.byte_len())
+    for c in s.as_chars() { out.push(c as int) }
+    out
+}
+
+fn cps_to_str(cps Vec[u32]) -> str {
+    consume sb = StringBuilder.with_capacity(cps.len() * 2)
+    for cp in cps { sb.append(str.from_codepoint(cp)) }
+    sb.into_str()
+}
+
+// UTF-8 decode at byte offset `i`: returns (codepoint, byte_step). R-UTF8 (D26)
+// makes this total; the `else` arm guards a truncated tail (single-byte step).
+// Intentional per-module copy of UTF-8 decode; runtime.string has its own (folder boundary).
+fn decode_at(s str, i int) -> (int, int) {
+    ro bytes = s.as_bytes()
+    ro n = s.byte_len()
+    ro b = bytes[i] as int
+    if b < 0x80 {
+        (b, 1)
+    } else if ((b & 0xE0) == 0xC0) && (i + 1 < n) {
+        (((b & 0x1F) << 6) | (bytes[i+1] as int & 0x3F), 2)
+    } else if ((b & 0xF0) == 0xE0) && (i + 2 < n) {
+        (((b & 0x0F) << 12) | ((bytes[i+1] as int & 0x3F) << 6) | (bytes[i+2] as int & 0x3F), 3)
+    } else if ((b & 0xF8) == 0xF0) && (i + 3 < n) {
+        (((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F), 4)
+    } else {
+        (b, 1)
+    }
+}

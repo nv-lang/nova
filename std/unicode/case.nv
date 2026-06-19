@@ -3,8 +3,8 @@
 // Opt-in `std.unicode` peer (NOT prelude — table cost paid only by importers).
 // Co-equal with `case_data.nv` (generated tables) in the `std.unicode`
 // folder-module, so the `*_DATA` constants are visible here directly. Reuses peer
-// helpers: parse_cp_list / str_to_cps / cps_to_str / parse_decomp_table
-// (normalize.nv), parse_flat / in_ranges2 (graphemes.nv).
+// helpers: parse_cp_keyed_table / parse_cp_list / str_to_cps / cps_to_str
+// (cp_utils.nv), parse_flat / in_ranges2 (ranges.nv).
 //
 //   fold_case(s)    — full case folding (CaseFolding C+F), for caseless matching.
 //   to_uppercase(s) — full Unicode uppercase (multi-codepoint: ß→SS, ﬁ→FI, …).
@@ -24,10 +24,10 @@ import std.collections.hashmap.{HashMap}
 import std.collections.vec.{Vec}
 
 // ── lazy-static case tables (built once on first touch) ──
-ro fold_map HashMap[int, str] = parse_decomp_table(FOLD_DATA)
-ro lower_map HashMap[int, str] = parse_decomp_table(LOWER_DATA)
-ro upper_map HashMap[int, str] = parse_decomp_table(UPPER_DATA)
-ro title_map HashMap[int, str] = parse_decomp_table(TITLE_DATA)
+ro fold_map HashMap[int, str] = parse_cp_keyed_table(FOLD_DATA)
+ro lower_map HashMap[int, str] = parse_cp_keyed_table(LOWER_DATA)
+ro upper_map HashMap[int, str] = parse_cp_keyed_table(UPPER_DATA)
+ro title_map HashMap[int, str] = parse_cp_keyed_table(TITLE_DATA)
 ro cased_flat Vec[u32] = parse_flat(CASED_DATA)
 ro caseign_flat Vec[u32] = parse_flat(CASE_IGNORABLE_DATA)
 

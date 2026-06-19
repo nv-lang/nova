@@ -1,0 +1,65 @@
+// Shared range-table helpers for std.unicode peers.
+// parse_flat: semicolon-of-comma flat array builder; range_lookup3: (lo,hi,cat)
+// ternary binary search; in_ranges2: (lo,hi) membership binary search.
+// parse_flat and parse_implicit share the same nested-split shape.
+
+module std.unicode
+
+import std.collections.vec.{Vec}
+
+// "lo,hi,cat;lo,hi,cat;.." (or any nested ';'-of-',') -> flat Vec[u32].
+// Used by graphemes.nv (GCB/ExtPict/InCB) and collate.nv (implicit weights).
+fn parse_flat(data str) -> Vec[u32] {
+    mut out = Vec[u32].with_capacity(1024)
+    for entry in data.split(";") {
+        for f in entry.split(",") {
+            ro v = hex(f)
+            if v >= 0 { out.push(v) }
+        }
+    }
+    out
+}
+
+// Binary search over sorted (lo,hi,cat) triples; returns cat or 0 (Other).
+fn range_lookup3(t Vec[u32], cp int) -> int {
+    ro count = t.len() / 3
+    mut lo = 0
+    mut hi = count - 1
+    mut res = 0
+    while lo <= hi {
+        ro mid = (lo + hi) / 2
+        ro rlo = t[mid * 3]
+        ro rhi = t[mid * 3 + 1]
+        if cp < rlo {
+            hi = mid - 1
+        } else if cp > rhi {
+            lo = mid + 1
+        } else {
+            res = t[mid * 3 + 2]
+            lo = hi + 1
+        }
+    }
+    res
+}
+
+// Binary search over sorted (lo,hi) pairs; membership test.
+fn in_ranges2(t Vec[u32], cp int) -> bool {
+    ro count = t.len() / 2
+    mut lo = 0
+    mut hi = count - 1
+    mut res = false
+    while lo <= hi {
+        ro mid = (lo + hi) / 2
+        ro rlo = t[mid * 2]
+        ro rhi = t[mid * 2 + 1]
+        if cp < rlo {
+            hi = mid - 1
+        } else if cp > rhi {
+            lo = mid + 1
+        } else {
+            res = true
+            lo = hi + 1
+        }
+    }
+    res
+}

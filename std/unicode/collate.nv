@@ -31,56 +31,12 @@ import std.collections.hashmap.{HashMap}
 import std.collections.vec.{Vec}
 
 // ── DUCET table parsing (lazy-static, built once on first touch) ──
-
-// SINGLE_DATA "cp:ce|ce;.." -> { cp -> "ce|ce" } (CE list kept as text, parsed
-// per-codepoint by `single_ces`). Reuses the normalize.nv `:`-split shape.
-fn parse_collate_single(data str) -> HashMap[int, str] {
-    ro entries = data.split(";")
-    mut m = HashMap[int, str].with_capacity(entries.len() + 8)
-    for entry in entries {
-        match entry.split_once(":") {
-            Some((k, v)) => {
-                ro cp = hex(k)
-                if cp >= 0 { m.insert(cp, v) }
-            }
-            None => {}
-        }
-    }
-    m
-}
-
-// CONTRACTION_DATA "cp0:rest=ces#rest=ces;.." -> { cp0 -> "rest=ces#rest=ces" }
-// keyed by the FIRST codepoint; variants kept as text (parsed by `match_contraction`).
-fn parse_collate_contractions(data str) -> HashMap[int, str] {
-    ro entries = data.split(";")
-    mut m = HashMap[int, str].with_capacity(entries.len() + 8)
-    for entry in entries {
-        match entry.split_once(":") {
-            Some((k, v)) => {
-                ro cp = hex(k)
-                if cp >= 0 { m.insert(cp, v) }
-            }
-            None => {}
-        }
-    }
-    m
-}
-
-// IMPLICIT_DATA "lo,hi,base,kind;.." -> flat [lo,hi,base,kind, ..] (sorted by lo).
-fn parse_implicit(data str) -> Vec[u32] {
-    mut out = Vec[u32].with_capacity(128)
-    for entry in data.split(";") {
-        for f in entry.split(",") {
-            ro v = hex(f)
-            if v >= 0 { out.push(v) }
-        }
-    }
-    out
-}
-
-ro collate_single_map HashMap[int, str] = parse_collate_single(SINGLE_DATA)
-ro collate_contraction_map HashMap[int, str] = parse_collate_contractions(CONTRACTION_DATA)
-ro implicit_flat Vec[u32] = parse_implicit(IMPLICIT_DATA)
+// parse_cp_keyed_table / hex live in cp_utils.nv peer; parse_flat in ranges.nv peer.
+// SINGLE_DATA and CONTRACTION_DATA both use the "cp:value;.." shape -> parse_cp_keyed_table.
+// IMPLICIT_DATA uses the nested ';'-of-',' flat shape -> parse_flat.
+ro collate_single_map HashMap[int, str] = parse_cp_keyed_table(SINGLE_DATA)
+ro collate_contraction_map HashMap[int, str] = parse_cp_keyed_table(CONTRACTION_DATA)
+ro implicit_flat Vec[u32] = parse_flat(IMPLICIT_DATA)
 
 // ── collation-element parsing ──
 // One CE is encoded "[*]P.S.T". We unpack it into 4 ints appended to `acc`:
