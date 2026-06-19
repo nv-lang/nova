@@ -8,7 +8,7 @@
 // Important для downstream Plan 103.2: atomic store/load с fence
 // используются в fiber-coordination patterns.
 
-module plan103_1.fence_in_supervised
+module nova_tests.atomics
 
 test "fence(SeqCst) внутри spawn body" {
     mut counter = AtomicInt.new(0)

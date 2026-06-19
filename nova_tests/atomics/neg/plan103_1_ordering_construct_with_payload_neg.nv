@@ -9,7 +9,7 @@
 // не может resolve undefined symbol → CC error (link phase).
 // `bad()` вызывается из теста чтобы линкер не выкинул её через DCE.
 
-module neg.ordering_construct_with_payload_neg
+module neg.plan103_1_ordering_construct_with_payload_neg
 
 fn bad() -> MemOrdering => MemOrdering.Acquire(42)
 

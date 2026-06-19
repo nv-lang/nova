@@ -7,7 +7,7 @@
 // "no member named 'no_such_op' in 'Nova_AtomicI64'".
 // Verifies that unknown instance methods are caught at C compile time.
 
-module neg.atomic_i64_no_such_method_neg
+module neg.plan103_2_atomic_i64_no_such_method_neg
 
 fn bad() -> int {
     mut a = AtomicI64.new(0)

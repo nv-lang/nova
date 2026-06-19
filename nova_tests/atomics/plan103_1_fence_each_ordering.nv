@@ -4,7 +4,7 @@
 // fence(SeqCst) компилируются и выполняются без краша. Функциональный
 // эффект fence без paired atomic-операций не наблюдаем; тест smoke-level.
 
-module plan103_1.fence_each_ordering
+module nova_tests.atomics
 
 test "fence(Relaxed) — no crash" {
     fence(Relaxed)

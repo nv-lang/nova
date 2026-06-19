@@ -7,7 +7,7 @@
 // Codegen emits a member access of `count_ones` on `Nova_AtomicIsize`
 // → clang error: "no member named 'count_ones' in 'Nova_AtomicIsize'".
 
-module neg.atomic_isize_no_such_method_neg
+module neg.plan103_2_atomic_isize_no_such_method_neg
 
 fn bad(a AtomicIsize) -> int => a.count_ones()
 
