@@ -1,7 +1,7 @@
 // EXPECT_COMPILE_WARNING W_PRELUDE_SHADOW
 
 // Plan 62.F.bis Ф.2 positive test: user-declaration shadowing prelude
-// `PRELUDE_VERSION2` const triggers W_PRELUDE_SHADOW structured warning.
+// `PRELUDE_VERSION` const triggers W_PRELUDE_SHADOW structured warning.
 //
 // User wins (declaration accepted, compilation продолжается); structured
 // warning surfaced через `lints::lint_prelude_shadow` — surface'ит в
@@ -10,10 +10,10 @@
 
 module neg.prelude_shadow_warning
 
-// PRELUDE_VERSION2 re-exported из std.prelude (via std/prelude.nv:139).
+// PRELUDE_VERSION re-exported из std.prelude (via std/prelude.nv:139).
 // User-decl с тем же именем → user-decl wins, но W_PRELUDE_SHADOW fired.
-const PRELUDE_VERSION2 int = 42
+const PRELUDE_VERSION int = 42
 
-test "user shadow PRELUDE_VERSION2 wins" {
-    assert(PRELUDE_VERSION2 == 42)
+test "user shadow PRELUDE_VERSION wins" {
+    assert(PRELUDE_VERSION == 42)
 }
