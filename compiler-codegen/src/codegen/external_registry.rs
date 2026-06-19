@@ -338,7 +338,9 @@ impl ExternalRegistry {
     /// Type mapping из Nova TypeRef в C-имя. Соответствует
     /// `CEmitter::type_ref_to_c`, но в standalone-форме (не требует
     /// CEmitter state). `Self` резолвится к receiver-типу.
-    fn type_ref_to_c(ty: &TypeRef, recv: Option<&str>) -> Result<String, String> {
+    // Plan 172.1 U.2.2: pub(crate) — SigRegistry переиспользует ЭТОТ standalone
+    // type→C mapping (а не копирует), реализуя §0 «один type→C mapping».
+    pub(crate) fn type_ref_to_c(ty: &TypeRef, recv: Option<&str>) -> Result<String, String> {
         match ty {
             TypeRef::Named { path, generics, .. } => {
                 let name = path.join("_");

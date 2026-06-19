@@ -86,17 +86,40 @@ impl<'a> SigRegistry<'a> {
             .map(Vec::as_slice)
     }
 
-    /// U.2.1 SKELETON builder: index every `fn`/method of `module` by
-    /// `(receiver, name)` with the raw `&FnDecl` + a PARTIAL [`CodegenView`]
-    /// (TypeRef-independent flags only). C-type/mangling population is **U.2.2**
-    /// ([M-172-sig-registry]); merging the std/builtin source (U.1.3's
-    /// import-resolved registry) and deleting the parallel tables are U.2.2–U.2.5.
+    /// Builder: index every `fn`/method of `module` by `(receiver, name)` with
+    /// the raw `&FnDecl` + a [`CodegenView`].
+    ///
+    /// U.2.1: TypeRef-independent flags (is_instance/is_external/recv_mutable).
+    /// **U.2.2 (this step):** also populate `param_c_types` + `return_c_type` by
+    /// REUSING the shared `ExternalRegistry::type_ref_to_c` (§0 «один type→C
+    /// mapping» — not a copy). `Self`-return resolves to the receiver type.
+    ///
+    /// STILL TODO ([M-172-sig-registry]): `c_name` (Plan 11 mangling needs the
+    /// per-key overload count + consume/static/instance base + last-param
+    /// suffix), `variadic_last`, `param_defaults`, `is_delegated`; merging the
+    /// import-resolved std + intrinsic .nv source; checker/codegen consumption
+    /// (U.2.3/U.2.4) and the `MethodSig` fold + dead `resolve_overload` removal
+    /// (U.2.5). A `type_ref_to_c` error (e.g. removed `usize`) leaves the C-type
+    /// field empty (best-effort; the checker emits the real diagnostic).
     pub fn build_from_module(module: &'a Module) -> Self {
+        use crate::codegen::external_registry::ExternalRegistry as ER;
         let mut reg = Self::new();
         for item in &module.items {
             if let Item::Fn(f) = item {
                 let receiver = f.receiver.as_ref().map(|r| r.type_name.clone());
+                let recv_c = receiver.as_deref();
+                let param_c_types: Vec<String> = f
+                    .params
+                    .iter()
+                    .map(|p| ER::type_ref_to_c(&p.ty, recv_c).unwrap_or_default())
+                    .collect();
+                let return_c_type = match &f.return_type {
+                    Some(t) => ER::type_ref_to_c(t, recv_c).unwrap_or_default(),
+                    None => "nova_unit".to_string(),
+                };
                 let cv = CodegenView {
+                    param_c_types,
+                    return_c_type,
                     is_instance: f
                         .receiver
                         .as_ref()
@@ -104,8 +127,8 @@ impl<'a> SigRegistry<'a> {
                         .unwrap_or(false),
                     is_external: f.is_external,
                     recv_mutable: f.receiver.as_ref().map(|r| r.mutable).unwrap_or(false),
-                    // C-type / mangling / delegated / variadic / defaults:
-                    // populated in U.2.2 [M-172-sig-registry].
+                    // c_name / variadic_last / param_defaults / is_delegated:
+                    // U.2.2-next [M-172-sig-registry].
                     ..Default::default()
                 };
                 reg.insert(receiver, f.name.clone(), SigEntry { fn_decl: f, codegen: cv });
@@ -155,5 +178,32 @@ mod tests {
         let m = parse("module t\nfn g(x int) -> int => x\nfn g(x str) -> int => 0\n");
         let reg = SigRegistry::build_from_module(&m);
         assert_eq!(reg.lookup(None, "g").expect("g present").len(), 2);
+    }
+
+    #[test]
+    fn codegen_view_c_types_via_shared_mapping() {
+        // U.2.2: param/return C-types populated via ExternalRegistry::type_ref_to_c.
+        let m = parse("module t\nfn h(a int, b str) -> bool => true\n");
+        let reg = SigRegistry::build_from_module(&m);
+        let cv = &reg.lookup(None, "h").expect("h")[0].codegen;
+        assert_eq!(cv.param_c_types, vec!["nova_int".to_string(), "nova_str".to_string()]);
+        assert_eq!(cv.return_c_type, "nova_bool");
+    }
+
+    #[test]
+    fn unit_return_maps_to_nova_unit() {
+        let m = parse("module t\nfn noret(x int) => ()\n");
+        let reg = SigRegistry::build_from_module(&m);
+        let cv = &reg.lookup(None, "noret").expect("noret")[0].codegen;
+        assert_eq!(cv.return_c_type, "nova_unit");
+    }
+
+    #[test]
+    fn self_return_resolves_to_receiver() {
+        // `Self` in a method return → `Nova_<Recv>*` (shared mapping).
+        let m = parse("module t\nfn Bar.make() -> Self => Bar.make()\n");
+        let reg = SigRegistry::build_from_module(&m);
+        let cv = &reg.lookup(Some("Bar"), "make").expect("make")[0].codegen;
+        assert_eq!(cv.return_c_type, "Nova_Bar*");
     }
 }
