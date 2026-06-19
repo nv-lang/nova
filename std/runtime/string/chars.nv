@@ -146,3 +146,34 @@ export fn str @to_code_points() -> []int {
     for c in @as_chars() { out.push(c as int) }
     out
 }
+
+
+// ─── CharIndicesIter — (byte_offset, char) pairs (Plan 91.18 Ф.10) ───
+//
+// `as_chars().indices()` adapts CharsIter into a stream of (byte-offset, char)
+// pairs. `off` is the byte index of the *start* of the codepoint — compatible
+// with the byte-range slice `s[off..]` / `s[prev..off]`. Mirrors Rust
+// `str::char_indices()`. Same `value priv(type)` pattern as CharsIter.
+export type CharIndicesIter value priv(type) {
+    buf str
+    pos int
+}
+
+// Adapter constructor on CharsIter: captures buf+pos at the point of call, so
+// the resulting iterator starts from wherever CharsIter is currently positioned.
+export fn CharsIter @indices() -> CharIndicesIter => { @buf, @pos }
+
+// Yield the next (byte_offset, char) pair. `off` is captured before advancing
+// so it points to the first byte of the returned codepoint.
+export fn CharIndicesIter mut @next() -> Option[(int, char)] {
+    ro bytes = @buf.as_bytes()
+    ro n = @buf.byte_len()
+    if @pos >= n { return None }
+    ro off = @pos
+    ro (cp, step) = decode_utf8(bytes, @pos, n)
+    @pos += step
+    Some((off, cp_to_char(cp)))
+}
+
+// Self-iterator — `for (i, c) in s.as_chars().indices()` routes through here.
+export fn CharIndicesIter @iter() -> CharIndicesIter => @

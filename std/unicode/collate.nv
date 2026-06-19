@@ -311,7 +311,7 @@ fn collation_elements(s str) -> Vec[u32] {
 // a shorter run at level N always sorts before a longer one — standard UCA.)
 const L4_MAX u32 = 0xFFFF
 
-/// Build the UCA sort key for `s` as a `[]int` of 16-bit weights (Shifted variant).
+/// Build the UCA sort key for `s` as a `Vec[u32]` of 16-bit weights (Shifted variant).
 /// `compare`/`eq` byte-compare these keys. Caching a precomputed key for repeated
 /// comparisons (e.g. sorting) avoids re-normalizing per comparison.
 export fn collate_sort_key(s str) -> Vec[u32] {
@@ -404,20 +404,19 @@ export fn collate_eq(a str, b str) -> bool {
 // A value-type wrapper that exposes the DUCET collator as an object, mirroring
 // `java.text.Collator` / `Intl.Collator`. Stateless for DUCET (no tailoring), so
 // it's a thin handle; `sort_key`/`compare` delegate to the free functions. A
-// future tailored Collator ([M-152-collation-tailoring]) would carry locale data.
-export type Collator value {
-    // DUCET has no per-instance state yet; the field reserves space for a future
-    // strength/locale parameter without changing the call sites.
-    strength int
+// future tailored Collator ([M-152-collation-tailoring]) would carry locale data and
+// will reintroduce fields here without changing call sites.
+export type Collator value priv(type) {
+    // Placeholder for future locale/strength parameter (zero logical content).
+    // Kept as a named int so the codegen has a real field; reintroduce content
+    // when locale tailoring ([M-152-collation-tailoring]) is added.
+    _tag int
 }
-
-// Strength = highest level compared. 4 = quaternary (default, full Shifted key).
-const STRENGTH_QUATERNARY int = 4
 
 /// The root (DUCET, non-tailored) collator. Method names are `order`/`key`/`same`
 /// (not the `@compare`/`@equal` protocol names) — collation is opt-in and must not
 /// be mistaken for `str`'s default byte Ord (D254).
-export fn Collator.root() -> Collator => { strength: STRENGTH_QUATERNARY }
+export fn Collator.root() -> Collator => { _tag: 0 }
 
 export fn Collator @order(a str, b str) -> int => collate_compare(a, b)
 
