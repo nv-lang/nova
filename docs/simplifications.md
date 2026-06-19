@@ -37174,3 +37174,10 @@ Heapsort kept as depth-guard fallback (not removed).
 Tests: nova_tests/plan153_3_1/ (11 test blocks + 1 slow).
 Closes [M-153.3-sort-pdqsort] + [M-91.8c-pdq-sort].
 D185 §amend-2 added.
+
+## Plan 91.18 — str + unicode API cleanup (2026-06-19)
+
+- Collator: zero-field value type не поддерживается codegen ({}→NOVA_UNIT, тип не совпадает). Сохранён `_tag int` placeholder с `priv(type)`. Tailoring при готовности заменит поле без изменения call sites.
+- `to_upper_import_gated` тест проверяет free-fn `to_uppercase` (не метод `s.to_upper()`): str extension methods резолвятся без explicit import в текущей реализации. Зафиксировано как `[M-91.18-import-gated-str-methods]` followup.
+- Деление test/folder: plan91_18 — folder-module (15 файлов = один test TU), neg/ — отдельный neg test. Это ожидаемая структура.
+- CharIndicesIter добавлен, но `{ buf: @buf, pos: @pos }` заменён на `{ @buf, @pos }` (D52 §2 shorthand обязателен).
