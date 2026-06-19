@@ -2407,7 +2407,7 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
     // E_BOUND_UNKNOWN / E7401 for symbols from transitively imported modules).
     let sig_table_opt: Option<crate::imports::ModuleSigTable> =
         if let Some(repo) = find_repo_root_from(path) {
-            let stdlib_dir = repo.join("std");
+            let stdlib_dir = crate::manifest::resolve_std_path(repo.as_ref());
             let _t = crate::perf_timer::PerfTimer::new("imports-resolve");
             // Plan 42 правило F: test mode = include `*_test.nv` peers.
             crate::imports::resolve_imports_inline_ex(path, &mut module, &repo, &stdlib_dir, true)

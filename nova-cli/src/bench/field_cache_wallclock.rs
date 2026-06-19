@@ -309,7 +309,7 @@ fn static_estimate(file: &Path) -> Result<(u64, StaticLayerBreakdown)> {
         .map_err(|d| anyhow!("parse: {}",
             d.render(&src, &file.to_string_lossy())))?;
     if let Some(repo) = nova_codegen::test_runner::find_repo_root_from(file) {
-        let stdlib_dir = repo.join("std");
+        let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
         let _ = nova_codegen::imports::resolve_imports_inline_ex(
             file, &mut module, &repo, &stdlib_dir, true);
     }

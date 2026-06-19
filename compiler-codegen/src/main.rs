@@ -235,7 +235,7 @@ fn cmd_check(path: &PathBuf, explain_cache: bool) -> Result<()> {
     {
         let sig_table = nova_codegen::test_runner::find_repo_root_from(path)
             .map(|repo| {
-                let stdlib_dir = repo.join("std");
+                let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
                 nova_codegen::imports::collect_all_signatures(path, &module, &repo, &stdlib_dir)
                     .unwrap_or_else(|_| nova_codegen::imports::ModuleSigTable::new())
             });
@@ -347,7 +347,7 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     let module_env = {
         let sig_table = nova_codegen::test_runner::find_repo_root_from(path)
             .map(|repo| {
-                let stdlib_dir = repo.join("std");
+                let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
                 nova_codegen::imports::collect_all_signatures(path, &module, &repo, &stdlib_dir)
                     .unwrap_or_else(|_| nova_codegen::imports::ModuleSigTable::new())
             });

@@ -880,6 +880,69 @@ pub fn is_prelude_self_module(name: &[String]) -> bool {
     is_prelude_root || is_prelude_submodule
 }
 
+/// Plan 172.1 U.1.1 (compiler-conventions §2 «никакой особости std»): резолвит
+/// КОРЕНЬ std-пакета как **конфиг**, а не хардкод `repo.join("std")`. std — просто
+/// пакет, найденный по search-path (как sysroot в Rust / GOROOT в Go); «ГДЕ искать»
+/// — конфиг (разрешено §2), «ЧТО внутри» (файлы/сигнатуры) — остаётся в папке.
+///
+/// Precedence (highest first):
+///   1. env `NOVA_STD_PATH` (абсолютный или относительный к `repo`);
+///   2. `nova.toml` ключ `std = "..."` в секции `[workspace]` или `[package]`
+///      (относительный — к `repo`);
+///   3. дефолт `repo/std` — **байт-идентично** прежнему поведению (0 регрессий).
+///
+/// CLI `--std-path` (ещё одна config-поверхность поверх env) — followup
+/// `[M-172.1-U1-cli-stdpath]`; env+manifest уже делают расположение std
+/// настраиваемым, что и требует §2.
+pub fn resolve_std_path(repo: &Path) -> PathBuf {
+    // (1) env override.
+    if let Ok(v) = std::env::var("NOVA_STD_PATH") {
+        let v = v.trim();
+        if !v.is_empty() {
+            let p = PathBuf::from(v);
+            return if p.is_absolute() { p } else { repo.join(p) };
+        }
+    }
+    // (2) manifest `[workspace]/[package].std`.
+    if let Some(rel) = read_std_key(&repo.join("nova.toml")) {
+        let p = PathBuf::from(&rel);
+        return if p.is_absolute() { p } else { repo.join(p) };
+    }
+    // (3) default — identical to the previous hardcode.
+    repo.join("std")
+}
+
+/// Прочитать ключ `std = "..."` из секции `[workspace]` или `[package]` файла
+/// `nova.toml`. Минимальный целевой парс (как `edition` в `parse_manifest`),
+/// чтобы не тащить полный Manifest в путь-резолва. `None`, если файла/ключа нет.
+fn read_std_key(toml_path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(toml_path).ok()?;
+    let mut section = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.trim_matches(|c| c == '[' || c == ']').trim().to_string();
+            continue;
+        }
+        if section != "workspace" && section != "package" {
+            continue;
+        }
+        if let Some((key, val)) = line.split_once('=') {
+            if key.trim() == "std" {
+                // Strip inline comment, quotes, whitespace.
+                let v = val.split('#').next().unwrap_or("").trim().trim_matches('"').trim();
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod parse_tests {
     use super::*;
@@ -1009,5 +1072,65 @@ mod parse_tests {
     fn dep_forbid_absent_empty() {
         assert!(parse_dep_forbid("{ path = \"../foo\" }").is_empty());
         assert!(parse_dep_forbid("\"1.2\"").is_empty());
+    }
+
+    // ── Plan 172.1 U.1.1: resolve_std_path ───────────────────────────────
+
+    /// `read_std_key` достаёт `std = "..."` из `[workspace]` и `[package]`,
+    /// игнорирует другие секции, комментарии и иные ключи.
+    #[test]
+    fn read_std_key_workspace_and_package() {
+        let (p, _d) = write_toml(
+            "nova.toml",
+            "[workspace]\nmembers = [\"std\"]\nstd = \"vendor/std\"  # comment\n",
+        );
+        assert_eq!(read_std_key(&p).as_deref(), Some("vendor/std"));
+
+        let (p2, _d2) = write_toml(
+            "nova.toml",
+            "[package]\nname = \"x\"\nstd = \"../mystd\"\n",
+        );
+        assert_eq!(read_std_key(&p2).as_deref(), Some("../mystd"));
+    }
+
+    /// Без ключа `std` в релевантных секциях → None (а `std` в другой секции
+    /// или другой ключ не путаются).
+    #[test]
+    fn read_std_key_absent() {
+        let (p, _d) = write_toml(
+            "nova.toml",
+            "[package]\nname = \"x\"\nedition = \"2026.05\"\n[dependencies]\nstd = \"ignored\"\n",
+        );
+        assert_eq!(read_std_key(&p), None);
+        // несуществующий файл → None
+        assert_eq!(read_std_key(std::path::Path::new("/nonexistent/nova.toml")), None);
+    }
+
+    /// `resolve_std_path` без env и без manifest → дефолт `repo/std`
+    /// (байт-идентично прежнему хардкоду). env здесь НЕ трогаем (флака в
+    /// параллельных тестах); env-precedence проверяется интеграционно.
+    #[test]
+    fn resolve_std_path_default_is_repo_std() {
+        // unique temp repo dir WITHOUT a nova.toml → no manifest key.
+        let dir = std::env::temp_dir().join(format!("nova_u111_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        // Guard: only assert the default when NOVA_STD_PATH is unset in this env.
+        if std::env::var_os("NOVA_STD_PATH").is_none() {
+            assert_eq!(resolve_std_path(&dir), dir.join("std"));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// manifest-ключ резолвится относительно `repo`.
+    #[test]
+    fn resolve_std_path_manifest_relative_to_repo() {
+        if std::env::var_os("NOVA_STD_PATH").is_some() {
+            return; // env override wins — skip in that environment.
+        }
+        let dir = std::env::temp_dir().join(format!("nova_u111m_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("nova.toml"), "[workspace]\nstd = \"vendored/std\"\n").unwrap();
+        assert_eq!(resolve_std_path(&dir), dir.join("vendored/std"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

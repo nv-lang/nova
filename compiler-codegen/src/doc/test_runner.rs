@@ -133,7 +133,7 @@ fn run_one(t: &DocTest, original_source: Option<&str>, entry_path: Option<&Path>
     // проваливаемся в обычный check (поведение как до фикса).
     if let Some(ep) = entry_path {
         if let Some(repo) = crate::test_runner::find_repo_root_from(ep) {
-            let stdlib = repo.join("std");
+            let stdlib = crate::manifest::resolve_std_path(repo.as_ref());
             let _ = crate::imports::resolve_imports_inline_ex(ep, &mut module, &repo, &stdlib, false);
         }
     }

@@ -144,7 +144,7 @@ pub fn check_source_inner(src: &str, path: Option<&Path>) -> Vec<Diagnostic> {
     // Step 2: resolve imports (prelude + cross-file), same as cmd_check.
     if let Some(p) = path {
         if let Some(repo) = find_repo_root_from(p) {
-            let stdlib_dir = repo.join("std");
+            let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
             let _ = nova_codegen::imports::resolve_imports_inline(
                 p, &mut module, &repo, &stdlib_dir,
             );

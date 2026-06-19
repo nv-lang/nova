@@ -87,7 +87,7 @@ fn resolve_imports_for_hover(path: &std::path::Path, module: &mut Module) {
         tracing::warn!("hover: no repo root found for {:?}", path);
         return;
     };
-    let stdlib_dir = repo.join("std");
+    let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
     let items_before = module.items.len();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = nova_codegen::imports::resolve_imports_inline(path, module, &repo, &stdlib_dir);

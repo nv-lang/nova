@@ -1106,7 +1106,7 @@ struct RepoPaths {
 fn resolve_paths(repo: &Path) -> RepoPaths {
     RepoPaths {
         tests_dir: repo.join("nova_tests"),
-        stdlib_dir: repo.join("std"),
+        stdlib_dir: nova_codegen::manifest::resolve_std_path(repo.as_ref()),
         cg_include: repo.join("compiler-codegen"),
         rt_dir: repo.join("compiler-codegen").join("nova_rt"),
         default_results_file: repo.join("target").join("last-test-results.json"),
@@ -1433,7 +1433,7 @@ fn cmd_check_explain_cache(
         };
         // Resolve imports (mirror test_runner pipeline).
         if let Some(repo) = nova_codegen::test_runner::find_repo_root_from(file) {
-            let stdlib_dir = repo.join("std");
+            let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
             if let Err(e) = nova_codegen::imports::resolve_imports_inline_ex(file, &mut module, &repo, &stdlib_dir, true) {
                 eprintln!("warn: skip {} (import resolve failed: {})", file.display(), e);
                 continue;
@@ -1543,7 +1543,7 @@ fn cmd_check_telemetry_cache(
             Err(_) => { skipped_files += 1; continue; }
         };
         if let Some(repo) = nova_codegen::test_runner::find_repo_root_from(file) {
-            let stdlib_dir = repo.join("std");
+            let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
             if nova_codegen::imports::resolve_imports_inline_ex(file, &mut module, &repo, &stdlib_dir, true).is_err() {
                 skipped_files += 1;
                 continue;
