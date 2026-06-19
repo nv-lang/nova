@@ -61,4 +61,5 @@ export fn str @try_parse_int(radix int = 10) -> Result[int, ParseIntError] {
 
 /// Option variant: Some(n) on success, None on any error. Default radix=10.
 export fn str @parse_int_opt(radix int = 10) -> Option[int]
+    requires radix >= 2 && radix <= 36
 => match @try_parse_int(radix: radix) { Ok(v) => Some(v), Err(_) => None }
