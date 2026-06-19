@@ -37180,7 +37180,7 @@ D185 §amend-2 added.
 
 ## Plan 91.18 — str + unicode API cleanup (2026-06-19)
 
-- Collator: zero-field value type не поддерживается codegen ({}→NOVA_UNIT, тип не совпадает). Сохранён `_tag int` placeholder с `priv(type)`. Tailoring при готовности заменит поле без изменения call sites.
+- ~~Collator: zero-field value type не поддерживается codegen~~ → **исправлено 2026-06-19**: `Collator` переведён в bodyless namespace (`type Collator` + статические `Collator.order/key/same`, как `type RawMem`). DUCET stateless → экземпляр не нужен, `_tag`/`root()` удалены. Исходный диагноз был неверен: ограничение было в парсере (пустой record-литерал `Collator{}` не парсится), а не в codegen; namespace-форма обходит его полностью. Tailoring (`[M-152-collation-tailoring]`) вернёт поля через `Collator.with_locale(...)` без слома call sites.
 - `to_upper_import_gated` тест проверяет free-fn `to_uppercase` (не метод `s.to_upper()`): str extension methods резолвятся без explicit import в текущей реализации. Зафиксировано как `[M-91.18-import-gated-str-methods]` followup.
 - Деление test/folder: plan91_18 — folder-module (15 файлов = один test TU), neg/ — отдельный neg test. Это ожидаемая структура.
 - CharIndicesIter добавлен, но `{ buf: @buf, pos: @pos }` заменён на `{ @buf, @pos }` (D52 §2 shorthand обязателен).

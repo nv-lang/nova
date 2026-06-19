@@ -97,9 +97,8 @@ test "sort_key is consistent with compare" {
     assert(differ)
 }
 
-test "Collator object delegates to the free functions" {
-    ro c = Collator.root()
-    assert(c.order("a", "b") < 0)
-    assert(c.same("caf\u{e9}", "cafe\u{301}"))
-    assert(c.key("a").len() > 0)
+test "Collator namespace delegates to the free functions" {
+    assert(Collator.order("a", "b") < 0)
+    assert(Collator.same("caf\u{e9}", "cafe\u{301}"))
+    assert(Collator.key("a").len() > 0)
 }

@@ -25,9 +25,8 @@ test "collate_compare: accents are secondary" {
     assert(collate_compare("résumé", "resume") > 0)  // accented after plain
 }
 
-test "Collator object delegates to free functions" {
-    ro c = Collator.root()
-    assert(c.order("apple", "banana") < 0)
-    assert(c.order("zebra", "apple") > 0)
-    assert(c.same("caf\u{e9}", "cafe\u{301}"))
+test "Collator namespace delegates to free functions" {
+    assert(Collator.order("apple", "banana") < 0)
+    assert(Collator.order("zebra", "apple") > 0)
+    assert(Collator.same("caf\u{e9}", "cafe\u{301}"))
 }

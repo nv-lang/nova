@@ -399,27 +399,21 @@ export fn collate_eq(a str, b str) -> bool {
     collate_compare(a, b) == 0
 }
 
-// ── Collator (key-caching convenience) ──
+// ── Collator (DUCET namespace) ──
 //
-// A value-type wrapper that exposes the DUCET collator as an object, mirroring
-// `java.text.Collator` / `Intl.Collator`. Stateless for DUCET (no tailoring), so
-// it's a thin handle; `sort_key`/`compare` delegate to the free functions. A
-// future tailored Collator ([M-152-collation-tailoring]) would carry locale data and
-// will reintroduce fields here without changing call sites.
-export type Collator value priv(type) {
-    // Placeholder for future locale/strength parameter (zero logical content).
-    // Kept as a named int so the codegen has a real field; reintroduce content
-    // when locale tailoring ([M-152-collation-tailoring]) is added.
-    _tag int
-}
+// A bodyless namespace that exposes the DUCET collator as static methods, mirroring
+// `java.text.Collator` / `Intl.Collator`. DUCET is stateless (no tailoring), so the
+// collator carries no fields — `order`/`key`/`same` delegate to the free functions.
+// A future tailored Collator ([M-152-collation-tailoring]) carrying locale data would
+// become a value-record with a `Collator.with_locale(...)` constructor; the static
+// DUCET entry points stay as-is. Mirrors `type RawMem` namespace convention.
+export type Collator
 
-/// The root (DUCET, non-tailored) collator. Method names are `order`/`key`/`same`
+/// DUCET (non-tailored) collation. Method names are `order`/`key`/`same`
 /// (not the `@compare`/`@equal` protocol names) — collation is opt-in and must not
 /// be mistaken for `str`'s default byte Ord (D254).
-export fn Collator.root() -> Collator => { _tag: 0 }
+export fn Collator.order(a str, b str) -> int => collate_compare(a, b)
 
-export fn Collator @order(a str, b str) -> int => collate_compare(a, b)
+export fn Collator.key(s str) -> Vec[u32] => collate_sort_key(s)
 
-export fn Collator @key(s str) -> Vec[u32] => collate_sort_key(s)
-
-export fn Collator @same(a str, b str) -> bool => collate_eq(a, b)
+export fn Collator.same(a str, b str) -> bool => collate_eq(a, b)

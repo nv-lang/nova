@@ -3,14 +3,12 @@ module nova_tests.plan91_18
 import std.unicode
 
 test "collate compare" {
-    ro c = Collator.root()
-    ro r = c.order("apple", "banana")
+    ro r = Collator.order("apple", "banana")
     assert(r < 0)
 }
 
 test "collate same" {
-    ro c = Collator.root()
-    assert(c.same("café", "café"))
+    assert(Collator.same("café", "café"))
 }
 
 test "collate compare case secondary" {

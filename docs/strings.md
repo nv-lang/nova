@@ -293,11 +293,11 @@ import std.unicode
 assert(collate_compare("apple", "Apple") < 0)   // case is tertiary, not primary
 assert(collate_compare("café", "cafe") > 0)      // accent is secondary
 ro key = collate_sort_key("naïve")               // Vec[u32] sort key (cache for sorting)
-ro c = Collator.root()                            // c.order(a,b) / c.key(s) / c.same(a,b)
+ro r = Collator.order("a", "b")                  // Collator.order/key/same (DUCET namespace)
 ```
 
 - `collate_compare(a,b) -> int` (-1/0/+1), `collate_sort_key(s) -> Vec[u32]`,
-  `collate_eq`, `Collator.root()`. Multi-level (primary/secondary/tertiary +
+  `collate_eq`, `Collator.order/key/same` (bodyless namespace, no instance). Multi-level (primary/secondary/tertiary +
   quaternary) **Shifted** variable-weighting; NFD-normalizes first; handles
   contractions (incl. UCA S2.1 discontiguous) and implicit weights (CJK etc.).
 - Scope: **DUCET (root, non-tailored)**. CLDR locale-tailoring + `eq_ignore_case` are
