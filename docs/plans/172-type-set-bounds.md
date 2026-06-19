@@ -1,0 +1,68 @@
+# Plan 172 — Type-set bounds (Go-style generic constraints)
+
+**Статус:** 📋 proposed 2026-06-19
+**D-блок:** предв. **D310** (финал при impl; D308=169.2.1, D309=171)
+**Ветка:** TBD (`plan-172-type-set-bounds`)
+
+---
+
+## 1. Мотивация
+
+Сейчас generic-bound в Nova — это **протокол(ы)**: `[T Hash]`, multi-bound `[T A + B + C]`
+(D72 / D145). Нельзя ограничить параметр **набором конкретных типов** (как Go 1.18
+`type IntNumber interface { ~int8 | ~int16 | … }`).
+
+Из-за этого код, общий для всех целочисленных типов, приходится писать **per-type
+тонкими обёртками** (×~10 типов × N методов). Прямой триггер — Plan 171 (primitive
+parse API): `int.try_parse` / `u32.try_parse` / … хочется выразить одним
+`fn[T IntNumber] T.try_parse(s str, radix int) -> Result[T, ParseIntError]`,
+но без type-set bound это невозможно — приходится плодить обёртки (вариант A в Plan 171).
+
+Type-set bound нужен шире parse: `clamp`, `min`/`max`, checked-арифметика, numeric
+algorithms — всё, что обобщается над множеством примитивов с одинаковой семантикой.
+
+## 2. Что есть сейчас (опора)
+
+- `GenericParam { name, bounds: Vec<TypeRef> }` ([ast/mod.rs:752](../../compiler-codegen/src/ast/mod.rs#L752)) — bound = список протокол-TypeRef (conjunction).
+- `type X | A | B` уже занят под **sum-type** (union вариантов) — **конфликт синтаксиса** для наивного `type IntNumber | i8 | i16`.
+- `numeric_type_constant_mapping` ([emit_c.rs:35113](../../compiler-codegen/src/codegen/emit_c.rs#L35113)) — `int.MAX→INT_MAX`, `f32.MAX→FLT_MAX` и т.д. по **конкретному** имени типа. Под мономорфизацию это значит: после подстановки конкретного T в инстансе `T.MAX` резолвится — фундамент для overflow-чека внутри generic-тела есть.
+- Generic static methods на типе работают: `export fn[T] T.from(t T) -> T => t` ([protocols.nv:109](../../std/prelude/protocols.nv#L109)), `fn int.new() -> Self => 0`.
+
+## 3. Открытые дизайн-вопросы (решить в Ф.0)
+
+- **Q1 — синтаксис объявления.** `type X | A | B` уже = sum. Кандидаты:
+  - `bound IntNumber = i8 | i16 | … | uint` (новое ключевое слово `bound`)
+  - `type IntNumber set i8 | i16 | …` (контекстное `set`)
+  - inline в позиции параметра: `fn[T in i8|i16|…]` / `fn[T (i8|i16)]`
+  Критерий: нулевая неоднозначность с sum-type; читаемость; reuse в нескольких сигнатурах.
+- **Q2 — семантика тела.** Мономорфизация по каждому типу набора (как у обычных generic). `T.MAX`/`T.MIN`/`T.new`/литералы резолвятся per-instantiation через существующий numeric mapping. Проверить, что mapping срабатывает на подставленном T, а не только на синтаксически-конкретном имени.
+- **Q3 — операторы в generic-теле.** Для overflow-чека нужны `* radix`, `+ digit`, сравнения с MIN/MAX. Какие операции легальны над type-set-параметром? Минимум: арифметика + сравнения, разрешённые ВСЕМИ членами набора (целочисленные — да; если в наборе float — другой профиль).
+- **Q4 — композиция с protocol-bound.** Допускать ли `[T IntNumber + Hash]` (type-set ∧ protocol)? Предв. да — type-set сужает множество, протокол добавляет требование; обе проверки независимы.
+- **Q5 — только примитивы или произвольные типы?** Go допускает `~T` (underlying). У Nova нет newtype-underlying — на V1 ограничиться **именованными конкретными типами** (примитивы + объявленные типы), без `~`.
+- **Q6 — uint/u64 граница.** Прямой урок Plan 171: `max(u64/uint) = 2^64−1` НЕ влезает в `int`(i64). Значит generic над знаковыми и беззнаковыми **не может** делить одно ядро с границами-`int`. Решение на уровне type-set: либо два отдельных bound (`SignedInt` / `UnsignedInt`), либо разрешить телу ветвиться по `T.MIN == 0`. Зафиксировать в Ф.0.
+
+## 4. Фазы (предв.)
+
+| Ф | Тема | Выход |
+|---|------|-------|
+| 0 | Research + design: Q1–Q6, выбор синтаксиса, профиль операций | дизайн-нота + D-блок-черновик |
+| 1 | Parser: объявление type-set + использование в `[T Bound]` позиции | AST-узел, парс pos/neg |
+| 2 | Checker: проверка членства T∈set при инстанцировании; композиция с protocol-bound; легальные операции в теле | E_TYPE_NOT_IN_SET и т.п. |
+| 3 | Mono/codegen: инстанцирование per member, резолв `T.MAX`/`T.MIN`/литералов | рабочие инстансы |
+| 4 | Тесты pos+neg (release nova, см. test-conventions.md) | nova_tests/plan172 |
+| 5 | Spec D309 + decision-table + README; логи; close | статус CLOSED |
+
+## 5. Критерии приёмки
+
+- [ ] **Без упрощений, как для прода** (обязательный критерий) — никаких заглушек, TODO, hard-code пользовательских типов в компиляторе.
+- [ ] Объявление type-set bound парсится; используется как `[T Bound]`; не конфликтует с sum-type.
+- [ ] T вне набора → внятная ошибка на инстанцировании (не на use-site внутри тела).
+- [ ] `fn[T IntNumber] T.try_parse(...)` (показательный кейс) компилируется и инстанцируется для всех членов; `T.MAX`/`T.MIN` корректны per-type.
+- [ ] Композиция с protocol-bound (если Q4=да) работает.
+- [ ] POS+NEG тесты проходят на релизном nova; 0 регрессий в существующих generic-тестах (plan15/plan101.3/plan100.2).
+- [ ] Spec D309 + decision-table + README обновлены; project-creation.txt / simplifications.md / discussion-log.md дописаны.
+
+## 6. Связи
+
+- **Разблокирует Plan 171 (primitive parse API), вариант B** — после 172 per-type обёртки `int.try_parse`/`u32.try_parse`/… схлопываются в один `fn[T IntNumber] T.try_parse`. До 172 — Plan 171 идёт вариантом A (ядра + обёртки).
+- Опора: D72 (generic bound), D145 (multi-bound).
