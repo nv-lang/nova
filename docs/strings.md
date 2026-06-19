@@ -76,6 +76,7 @@ codepoints, graphemes), so the unit is always explicit. `s.len()` → `E_STR_NO_
 |---|---|---|
 | i-th byte | `s.as_bytes()[i]` → `u8` (panics OOB) | O(1) |
 | i-th codepoint | `s.as_chars().nth(i)` → `Option[char]` | O(n) |
+| codepoint + byte offset | `s.as_chars().indices()` → `CharIndicesIter` → `Option[(int, char)]` | O(n) per step |
 
 There is **no `s[i]`** integer index — codepoint-indexing UTF-8 is O(n) hiding
 behind `[i]`. `s[i]` → `E_STR_NO_INT_INDEX`.
@@ -167,24 +168,33 @@ Unicode 15.1) — verified against the official `GraphemeBreakTest.txt`.
 
 ### Case folding & Unicode case mapping
 
-Locale-independent, multi-codepoint — the Unicode upgrade of core's ASCII-only
-`str.to_upper()`/`to_lower()` (which stay ASCII so they need no tables):
+Locale-independent, multi-codepoint. Convention: **bare `to_upper`/`to_lower` = Unicode
+full mapping** (under `import std.unicode`; needs tables); **`_ascii_` suffix =
+ASCII-only, table-free, always available** (`to_ascii_upper`/`to_ascii_lower` from
+prelude). Call `s.to_upper()` without `import std.unicode` → compile error (E7320) —
+the compiler will not silently fall back to ASCII.
 
 ```nova
 import std.unicode
 
 assert(fold_case("MASSE") == fold_case("masse"))   // caseless match
 assert(fold_case("ß") == "ss")                      // full fold
-assert(to_uppercase("straße") == "STRASSE")         // ß → SS (multi-cp)
-assert(to_uppercase("ﬁle") == "FILE")               // ligature ﬁ → FI
-assert(to_lowercase("ΟΔΟΣ") == "οδος")               // final Σ → ς, others → σ
+assert("straße".to_upper() == "STRASSE")            // ß → SS (multi-cp)
+assert("ﬁle".to_upper() == "FILE")                  // ligature ﬁ → FI
+assert("ΟΔΟΣ".to_lower() == "οδος")                  // final Σ → ς, others → σ
+
+// ASCII-only variants (always available, no import needed):
+assert("hello".to_ascii_upper() == "HELLO")
+assert("HELLO".to_ascii_lower() == "hello")
 ```
 
-- `fold_case(s)` — full case folding (UCD `CaseFolding` C+F) for caseless matching.
+- `s.fold_case()` — full case folding (UCD `CaseFolding` C+F) for caseless matching.
   Not normalization: for canonically-equivalent text, normalize first, then fold.
-- `to_uppercase(s)` / `to_lowercase(s)` — full Unicode case mapping, including the
+- `s.to_upper()` / `s.to_lower()` — full Unicode case mapping, including the
   **Final_Sigma** context rule (Greek Σ → ς word-finally, σ otherwise). No locale
-  tailoring (Turkic/Lithuanian).
+  tailoring (Turkic/Lithuanian). Require `import std.unicode`.
+- `s.to_ascii_upper()` / `s.to_ascii_lower()` — ASCII-only (A–Z/a–z only); no tables;
+  always available from prelude.
 
 ### Code-point (`char`) classification & case
 
@@ -218,6 +228,12 @@ General_Category + Alphabetic + White_Space from UCD 16.0) and to the case maps
 (`case_data.nv`). Like the lenses above, they are **opt-in** — without
 `import std.unicode` the Unicode classification is not in scope (the ASCII-core `char`
 methods stay prelude-available).
+
+> **Method resolution:** `s.to_upper()` and `s.to_lower()` are defined only under
+> `import std.unicode`. Without that import the names are unresolved → compile error
+> `E7320`. There is no silent ASCII fallback. `s.to_ascii_upper()` /
+> `s.to_ascii_lower()` are always available and are the correct choice when Unicode
+> tables are not wanted.
 
 ### Word segmentation & title-casing (UAX #29)
 
@@ -276,17 +292,24 @@ import std.unicode
 
 assert(collate_compare("apple", "Apple") < 0)   // case is tertiary, not primary
 assert(collate_compare("café", "cafe") > 0)      // accent is secondary
-ro key = collate_sort_key("naïve")               // []int sort key (cache for sorting)
+ro key = collate_sort_key("naïve")               // Vec[u32] sort key (cache for sorting)
 ro c = Collator.root()                            // c.order(a,b) / c.key(s) / c.same(a,b)
 ```
 
-- `collate_compare(a,b) -> int` (-1/0/+1), `collate_sort_key(s) -> []int`,
+- `collate_compare(a,b) -> int` (-1/0/+1), `collate_sort_key(s) -> Vec[u32]`,
   `collate_eq`, `Collator.root()`. Multi-level (primary/secondary/tertiary +
   quaternary) **Shifted** variable-weighting; NFD-normalizes first; handles
   contractions (incl. UCA S2.1 discontiguous) and implicit weights (CJK etc.).
 - Scope: **DUCET (root, non-tailored)**. CLDR locale-tailoring + `eq_ignore_case` are
   roadmap (Plan 152.5b, `[M-152-collation-tailoring]`) — like Rust `unicode-collation`
   DUCET mode / ICU root collator.
+
+> **Why free functions, not str methods?** String transforms (`trim_ascii`,
+> `to_ascii_lower`, `to_upper`, etc.) are `str` methods because they fit the
+> "transform this string" idiom. Collation (`collate_compare`, `collate_sort_key`,
+> `Collator`) is intentionally **not** `str @compare`/`@equal` — collation must
+> never silently replace the default byte-`Ord` (D254 design decision). The
+> asymmetry is intentional, not an oversight.
 
 ## Encoding interop (UTF-16 / code points)
 
@@ -315,22 +338,37 @@ string ops):
 | grapheme lens | `str.as_graphemes() -> GraphemesIter` | `import std.unicode`; UAX #29 |
 | word lens | `str.as_words() -> WordsIter` | `import std.unicode`; UAX #29 |
 | normalization | `normalize_nfc/nfd/nfkc/nfkd(s)` | `import std.unicode`; UAX #15 |
-| case fold / map / title | `fold_case`/`to_uppercase`/`to_lowercase`/`to_titlecase(s)` | `import std.unicode` |
+| case fold / map / title | `s.fold_case()`/`s.to_upper()`/`s.to_lower()`/`to_titlecase(s)` | `import std.unicode` |
+| case (ASCII-only) | `s.to_ascii_upper()`/`s.to_ascii_lower()` | always available, no import |
 | char classification (Unicode) | `c.is_alphabetic`/`is_numeric`/`is_whitespace`/`general_category` | `import std.unicode`; 1:1 UCD |
 | char case (Unicode) | `c.to_uppercase()`/`to_lowercase() -> str` | `import std.unicode`; multi-cp |
+| codepoint + byte-offset | `s.as_chars().indices() -> CharIndicesIter` | `next()->(int,char)` |
 | slice | `str[a..b]` / `str.get(a..b)` | byte-range, zero-copy |
 | search | `find`/`rfind`/`contains`/`starts_with`/`ends_with` | byte offsets |
 | split/trim/replace/pad/repeat/concat | `transform`/`search` | see std/runtime/string/ |
 | owned bytes/chars | `to_bytes`/`to_chars` | alloc |
-| UTF-16 / code points | `encode_utf16`/`from_utf16`/`code_points` | `import std.encoding.utf16` |
+| UTF-16 / code points | `encode_utf16`/`from_utf16`/`to_code_points` | `import std.encoding.utf16` |
 | identity | `==` / `compare` / `hash` / clone | content-based (byte-`Ord`) |
 | collation (UCA) | `collate_compare`/`collate_sort_key`/`Collator` | `import std.unicode`; DUCET/UTS #10 |
 
 > Normalization (UAX #15) and grapheme segmentation (UAX #29) ship in the opt-in
 > `std/unicode` module — see [Unicode operations](#unicode-operations-opt-in-stdunicode).
-> Unicode case folding/mapping and locale collation remain Phase B (Plan 152.4.4 /
-> 152.5b). The core lenses above are ASCII-complete and byte/codepoint-correct
-> without any Unicode tables.
+> The core lenses above are ASCII-complete and byte/codepoint-correct without any
+> Unicode tables.
+
+## Error policy
+
+| Situation | Use | Example |
+|---|---|---|
+| Invariant violation (programmer bug), out-of-bounds | **panic** | `s.as_bytes()[i]` OOB; `s[a..b]` through codepoint boundary |
+| Expected absence (not found, empty, index past end) | **`Option`** | `s.find(needle) -> Option[int]`; `iter.next() -> Option[char]` |
+| Recoverable, external input error | **`Result`** | `str.try_parse_int() -> Result[int, ParseIntError]`; `str.from_utf16() -> Result[str, _]` |
+| Best-effort decode of untrusted bytes | **lossy U+FFFD** | `str.from_bytes_lossy`; `cps_to_str` (invalid cp → `\u{FFFD}`) |
+
+Rules (source: protocols.nv:126-128, D77, D25):
+- **`parse_int(s)`** (bare) — throws `ParseIntError`; for explicit handling use `try_parse_int` (Result) or `parse_int_opt` (Option).
+- **Never** return an empty string on failure — that is indistinguishable from an empty input. Use `Option`/`Result` instead.
+- `*_lossy` functions always return valid UTF-8; they substitute `U+FFFD` for every invalid byte sequence, never silently drop bytes.
 
 ## Interpolation & format specs
 
