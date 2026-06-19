@@ -1,0 +1,6 @@
+// [M-blanket-method-resolve] regression: blanket `fn[T] T @m` резолвится на
+// str/user-типах (не только на примитивах) даже рядом с `[]T @m2` в folder-module.
+module nova_tests.plan169_2_blanket
+fn[T] T @ident() -> T => @
+test "blanket method on int" { assert(42.ident() == 42) }
+test "blanket method on str" { assert("hi".ident() == "hi") }
