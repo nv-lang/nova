@@ -8,6 +8,7 @@
 - Как принимать дизайн-решения языка → [`project-philosophy.md`](project-philosophy.md).
 - Нормативная семантика → `spec/decisions/` (D-блоки).
 - Тесты → [`test-conventions.md`](test-conventions.md). Перф → [`perf-conventions.md`](perf-conventions.md).
+- Языковой сервер (`nova-lsp/`) → [`lsp-conventions.md`](lsp-conventions.md) (наследует этот файл).
 
 ---
 
