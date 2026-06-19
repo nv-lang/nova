@@ -791,6 +791,35 @@ Nova ближе к Rust/Swift/Go — comment-маркер на уровне test
 
 ---
 
+## CLI Category Selectors (Plan 169.1.1)
+
+`nova test` supports additive category flags. Multiple flags = OR (union).
+
+| Flag               | Selects                              |
+|--------------------|--------------------------------------|
+| (default, no flag) | positive ∩ fast                      |
+| `--positive`      | tests without EXPECT_* marker        |
+| `--compile-error` | EXPECT_COMPILE_ERROR tests           |
+| `--panic`         | EXPECT_RUNTIME_PANIC tests           |
+| `--timeout`       | EXPECT_TIMEOUT tests                 |
+| `--exit`          | EXPECT_EXIT tests                    |
+| `--slow`          | include *_slow.nv (any type)         |
+| `--full`          | all types + slow                     |
+
+Examples:
+```
+nova test nova_tests                        # positive-fast (default)
+nova test --compile-error nova_tests        # compile-error only
+nova test --panic --compile-error nova_tests # panic OR compile-error
+nova test --full nova_tests                 # everything
+```
+
+Filter by marker, not by folder: compile-error and panic tests outside `neg/` are caught.
+
+Backward-compat: `--include-slow` = `--slow`; `--slow-only` deprecated (use `--full` or combine flags).
+
+---
+
 ## Ссылки
 
 - [D89 в spec/decisions/09-tooling.md](../spec/decisions/09-tooling.md#d89) — нормативная спецификация.

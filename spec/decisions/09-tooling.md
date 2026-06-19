@@ -23,6 +23,7 @@
 | [D296](#d296--lsp-rename-atomicity-contract-plan-1046-2026-06-16) | LSP Rename Atomicity Contract — prepare/collect/atomic-check, WorkspaceEdit.documentChanges |
 | [D298](#d298--test-suite-time-budget) | Test-suite time budget — бюджет `nova test` + пороги переноса в `_slow` |
 | [D303](#d303--lsp-hover-inside-fn--test-bodies-items_start-pattern) | LSP hover inside fn/test bodies — `items_start` pattern, prepend semantics |
+| [D304](#d304--test-category-selectors-testselection----positive---compile-error---panic---timeout---exit---slow---full-plan-16911-2026-06-19) | Test Category Selectors — `TestSelection` + category flags (Plan 169.1.1) |
 
 ---
 
@@ -3379,3 +3380,50 @@ Body-walk обнаруживает курсор на локальном бинд
 - `nova_tests/plan104_9/pos_hover_prelude_calls_in_test.nv` — fixture
 - `nova_tests/plan104_9/pos_hover_prelude_calls_in_fn.nv` — fixture
 - Plan 104.2 Ф.7 sub-plan file: `docs/plans/104.2-hover-goto-sigp.md`
+
+---
+
+## D304 — Test Category Selectors: `TestSelection` + `--positive`/`--compile-error`/`--panic`/`--timeout`/`--exit`/`--slow`/`--full` (Plan 169.1.1, 2026-06-19)
+
+**Проблема.** CLI `nova test` имел только `--include-slow`/`--slow-only` (D277).
+Нет способа запустить только compile-error тесты, только panic-тесты, или их комбинацию.
+GitHub CI не запускал полный регресс (только contracts-z3 + nova-doc) — поломки
+копились незаметно (Plan 169.2: десятки битых модулей).
+
+**Решение.** Аддитивная двух-осевая модель категорий:
+
+- **Ось типа** (по `EXPECT_*` маркеру заголовка; positive = нет маркера):
+  `Positive` · `CompileError` · `Panic` · `Timeout` · `Exit`.
+- **Ось скорости** (суффикс `*_slow.nv`): fast · slow.
+
+Новые CLI-флаги (аддитивные, несколько = OR):
+
+| Флаг             | Категория                          |
+|------------------|------------------------------------|
+| (дефолт)         | Positive ∩ fast                    |
+| `--positive`   | Positive (явно)                    |
+| `--compile-error` | EXPECT_COMPILE_ERROR тесты      |
+| `--panic`      | EXPECT_RUNTIME_PANIC тесты         |
+| `--timeout`    | EXPECT_TIMEOUT тесты               |
+| `--exit`       | EXPECT_EXIT тесты                  |
+| `--slow`       | включить `*_slow.nv` (любой тип) |
+| `--full`       | все типы + slow                    |
+
+`--include-slow` (D277) сохранён как backward-compat алиас для `--slow`.
+`--slow-only` deprecated (hidden), эквивалентен `--full` для legacy.
+
+**Реализация.**
+- `TestType` enum (`Positive`/`CompileError`/`Panic`/`Timeout`/`Exit`) в `test_runner.rs`.
+- `TestSelection { types: HashSet<TestType>, include_slow: bool }` заменяет `SlowLane`
+  в `TestAllOpts`.
+- `detect_test_type(path)` — читает первые 30 строк файла, возвращает `TestType`
+  по первому `EXPECT_*` маркеру. Нулевой overhead для positive-тестов когда маркер
+  не найден в первых строках.
+- `walk_nv_selected(root, out, &TestSelection)` — заменяет `walk_nv_filtered` в `run_all`.
+  Фильтр по маркеру, **не по папке** — ловит compile-error и panic тесты вне `neg/`.
+
+**CI.** `.github/workflows/nova-test-regression.yml`:
+- PR/push: `nova test nova_tests` + `nova test std` (positive-fast, 60 мин).
+- Nightly 03:00 UTC: `nova test --full nova_tests` + artifact upload (360 мин).
+
+**Связь.** [D277](09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv) (slow-lane), [D298](09-tooling.md#d298--test-suite-time-budget) (time budget), [Plan 169.1.1](../../docs/plans/169.1.1-test-lane-flags-and-ci.md).

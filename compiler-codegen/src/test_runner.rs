@@ -203,7 +203,8 @@ pub fn parse_expect(src: &str) -> Vec<ExpectMarker> {
 
         let parsed: Option<ExpectMarker> = if let Some(rest) = body.strip_prefix("EXPECT_COMPILE_ERROR") {
             let arg = rest.trim();
-            (!arg.is_empty()).then(|| ExpectMarker::CompileError(arg.to_string()))
+            // Empty pattern matches any compile error (same as EXPECT_CC_ERROR behaviour).
+            Some(ExpectMarker::CompileError(arg.to_string()))
         } else if let Some(rest) = body.strip_prefix("EXPECT_CC_ERROR") {
             let arg = rest.trim();
             Some(ExpectMarker::CcError(arg.to_string()))
@@ -2630,8 +2631,8 @@ pub struct TestAllOpts<'a> {
     /// все контракт-проверки на codegen для всего прогона (legacy zero-cost).
     /// Propagated to every per-test TestBuildOpts. Default `false` (enforce).
     pub contracts_off: bool,
-    /// Plan 156: slow-lane selection. Default Exclude (skip *_slow.nv).
-    pub slow_lane: SlowLane,
+    /// Plan 169.1.1: test type + slow selection. Default = {Positive}, no slow.
+    pub selection: TestSelection,
     /// [M-169-timing-report-regression-gate]: if > 0, after run_all report
     /// tests whose total elapsed_ms exceeds this threshold and exit with
     /// code 3. Default 0 (disabled).
@@ -3369,6 +3370,45 @@ pub enum SlowLane {
     Only,
 }
 
+/// Test type determined by EXPECT_* header marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TestType {
+    Positive,
+    CompileError,
+    Panic,
+    Timeout,
+    Exit,
+}
+
+/// Additive selection model: types = OR of enabled types, slow flag controls slow files.
+/// Default = {Positive}, include_slow=false.
+#[derive(Debug, Clone)]
+pub struct TestSelection {
+    pub types: std::collections::HashSet<TestType>,
+    pub include_slow: bool,
+}
+
+impl Default for TestSelection {
+    fn default() -> Self {
+        let mut types = std::collections::HashSet::new();
+        types.insert(TestType::Positive);
+        TestSelection { types, include_slow: false }
+    }
+}
+
+impl TestSelection {
+    /// All types + slow (--full flag).
+    pub fn full() -> Self {
+        let mut types = std::collections::HashSet::new();
+        types.insert(TestType::Positive);
+        types.insert(TestType::CompileError);
+        types.insert(TestType::Panic);
+        types.insert(TestType::Timeout);
+        types.insert(TestType::Exit);
+        TestSelection { types, include_slow: true }
+    }
+}
+
 /// Plan 156: per-file slow-test suffix. A test file whose stem ends in
 /// `_slow` (e.g. `collation_conformance_slow.nv`) is a large/slow test,
 /// excluded from the default run, included only via --include-slow/--slow-only.
@@ -3376,6 +3416,22 @@ pub enum SlowLane {
 /// so it composes with them. Zero per-file I/O: matched on the dirent name in
 /// `walk_nv_filtered` — the file body is never read at default discovery.
 pub fn is_slow_file_stem(stem: &str) -> bool { stem.ends_with("_slow") }
+
+/// Read the EXPECT_* marker from the first 30 lines of a .nv file.
+/// Returns TestType based on the first matching marker found.
+pub fn detect_test_type(path: &Path) -> TestType {
+    use std::io::{BufRead, BufReader};
+    let Ok(f) = std::fs::File::open(path) else { return TestType::Positive };
+    let reader = BufReader::new(f);
+    for line in reader.lines().take(30) {
+        let Ok(line) = line else { break };
+        if line.contains("EXPECT_COMPILE_ERROR") { return TestType::CompileError; }
+        if line.contains("EXPECT_RUNTIME_PANIC") { return TestType::Panic; }
+        if line.contains("EXPECT_TIMEOUT")       { return TestType::Timeout; }
+        if line.contains("EXPECT_EXIT")           { return TestType::Exit; }
+    }
+    TestType::Positive
+}
 
 /// Рекурсивный обход директории, возвращает все .nv файлы.
 /// Plan 36: pub — используется в `nova check <dir>` flow.
@@ -3462,6 +3518,76 @@ pub fn walk_nv_filtered(root: &Path, out: &mut Vec<PathBuf>, lane: SlowLane) -> 
     // но centralized check внутри walk_nv — единственная точка истины).
     for sub in sub_dirs {
         walk_nv_filtered(&sub, out, lane)?;
+    }
+    Ok(())
+}
+
+/// Plan 169.1.1: Like `walk_nv_filtered` but uses `TestSelection` to filter by type
+/// (EXPECT_* marker) AND slow-file suffix. Reads file header only for type detection.
+pub fn walk_nv_selected(root: &Path, out: &mut Vec<PathBuf>, sel: &TestSelection) -> Result<()> {
+    if root.is_file() {
+        let stem = root.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let is_slow = is_slow_file_stem(stem);
+        if is_slow && !sel.include_slow {
+            return Ok(());
+        }
+        let test_type = detect_test_type(root);
+        if sel.types.contains(&test_type) {
+            out.push(root.to_path_buf());
+        }
+        return Ok(());
+    }
+    if !root.is_dir() {
+        return Ok(());
+    }
+    if is_fixture_dir(root) {
+        return Ok(());
+    }
+    let entries = std::fs::read_dir(root)
+        .map_err(|e| anyhow!("read_dir {}: {}", root.display(), e))?;
+    let target = crate::imports::current_target_os();
+    let mut direct_nv: Vec<PathBuf> = Vec::new();
+    let mut sub_dirs: Vec<PathBuf> = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| anyhow!("read_dir entry: {}", e))?;
+        let path = entry.path();
+        if path.is_dir() {
+            sub_dirs.push(path);
+        } else if path.extension().and_then(|s| s.to_str()) == Some("nv") {
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if stem == "_module" { continue; }
+                let is_slow = is_slow_file_stem(stem);
+                if is_slow && !sel.include_slow { continue; }
+                let stem_no_slow = stem.strip_suffix("_slow").unwrap_or(stem);
+                let core_stem = stem_no_slow.strip_suffix("_test").unwrap_or(stem_no_slow);
+                if !crate::imports::peer_active_for_target_pub(core_stem, target) { continue; }
+            }
+            direct_nv.push(path);
+        }
+    }
+    let is_folder_module = direct_nv.len() >= 2 && is_folder_module_dir(&direct_nv);
+    if is_folder_module {
+        if folder_module_has_tests(&direct_nv) {
+            let mut sorted = direct_nv.clone();
+            sorted.sort();
+            if let Some(entry) = sorted.into_iter().next() {
+                // Type for folder-module is determined by first file (entry)
+                let test_type = detect_test_type(&entry);
+                if sel.types.contains(&test_type) {
+                    out.push(entry);
+                }
+            }
+        }
+    } else {
+        for p in direct_nv {
+            let test_type = detect_test_type(&p);
+            if sel.types.contains(&test_type) {
+                out.push(p);
+            }
+        }
+    }
+    for sub in sub_dirs {
+        walk_nv_selected(&sub, out, sel)?;
     }
     Ok(())
 }
@@ -3747,7 +3873,7 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
             inputs.push(dir_or_file.clone());
         } else {
             let mut found = Vec::new();
-            walk_nv_filtered(dir_or_file, &mut found, opts.slow_lane)?;
+            walk_nv_selected(dir_or_file, &mut found, &opts.selection)?;
             inputs.extend(found);
         }
     }
@@ -4615,6 +4741,73 @@ mod plan156_slow_lane_tests {
         assert_eq!(only, expected, "Only must contain exactly the *_slow.nv files");
 
         // Cleanup.
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn walk_nv_selected_type_filter() {
+        use super::{walk_nv_selected, TestSelection, TestType};
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("nova_p169_sel_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+        // positive
+        fs::write(root.join("pos.nv"), "fn main() {}").unwrap();
+        // compile-error
+        fs::write(root.join("ce.nv"), "// EXPECT_COMPILE_ERROR\nfn main() {}").unwrap();
+        // panic
+        fs::write(root.join("pan.nv"), "// EXPECT_RUNTIME_PANIC\nfn main() {}").unwrap();
+        // timeout
+        fs::write(root.join("to.nv"), "// EXPECT_TIMEOUT\nfn main() {}").unwrap();
+        // exit
+        fs::write(root.join("ex.nv"), "// EXPECT_EXIT\nfn main() {}").unwrap();
+        // slow positive
+        fs::write(root.join("slow_pos_slow.nv"), "fn main() {}").unwrap();
+
+        // default: only Positive, no slow
+        let sel = TestSelection::default();
+        let mut out = vec![];
+        walk_nv_selected(&root, &mut out, &sel).unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(out[0].ends_with("pos.nv"));
+
+        // compile-error only
+        let sel_ce = TestSelection { types: [TestType::CompileError].into(), include_slow: false };
+        let mut out2 = vec![];
+        walk_nv_selected(&root, &mut out2, &sel_ce).unwrap();
+        assert_eq!(out2.len(), 1);
+        assert!(out2[0].ends_with("ce.nv"));
+
+        // panic + positive
+        let sel_pp = TestSelection { types: [TestType::Positive, TestType::Panic].into(), include_slow: false };
+        let mut out3 = vec![];
+        walk_nv_selected(&root, &mut out3, &sel_pp).unwrap();
+        assert_eq!(out3.len(), 2);
+
+        // full
+        let sel_full = TestSelection::full();
+        let mut out4 = vec![];
+        walk_nv_selected(&root, &mut out4, &sel_full).unwrap();
+        assert_eq!(out4.len(), 6); // all 6 files
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn detect_test_type_markers() {
+        use super::{detect_test_type, TestType};
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("nova_p169_det_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+        let pos = root.join("pos.nv");
+        fs::write(&pos, "fn main() {}").unwrap();
+        assert_eq!(detect_test_type(&pos), TestType::Positive);
+        let ce = root.join("ce.nv");
+        fs::write(&ce, "// EXPECT_COMPILE_ERROR\nfn main() {}").unwrap();
+        assert_eq!(detect_test_type(&ce), TestType::CompileError);
+        let pan = root.join("pan.nv");
+        fs::write(&pan, "// EXPECT_RUNTIME_PANIC\nfn main() {}").unwrap();
+        assert_eq!(detect_test_type(&pan), TestType::Panic);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

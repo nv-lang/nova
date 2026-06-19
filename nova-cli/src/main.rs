@@ -482,12 +482,33 @@ enum Cmd {
         /// via env var NOVA_MONO_DEPTH.
         #[arg(long = "mono-depth", value_name = "N")]
         mono_depth: Option<usize>,
-        /// Plan 156: include *_slow.nv tests in addition to normal tests.
+        /// Plan 156: include *_slow.nv tests in addition to normal tests. Backward-compat alias for --slow.
         #[arg(long = "include-slow")]
         include_slow: bool,
-        /// Plan 156: run ONLY *_slow.nv tests, skipping all normal tests.
-        #[arg(long = "slow-only")]
+        /// Include slow tests (*_slow.nv). Same as --include-slow.
+        #[arg(long)]
+        slow: bool,
+        /// Deprecated: use default (no flags) for positive, --slow for slow. Kept for compat.
+        #[arg(long = "slow-only", hide = true)]
         slow_only: bool,
+        /// Select positive (no EXPECT_*) tests [default when no type flag given].
+        #[arg(long)]
+        positive: bool,
+        /// Select EXPECT_COMPILE_ERROR tests.
+        #[arg(long = "compile-error")]
+        compile_error: bool,
+        /// Select EXPECT_RUNTIME_PANIC tests.
+        #[arg(long = "panic")]
+        panic: bool,
+        /// Select EXPECT_TIMEOUT tests.
+        #[arg(long = "timeout-type")]
+        timeout_type: bool,
+        /// Select EXPECT_EXIT tests.
+        #[arg(long = "exit")]
+        exit: bool,
+        /// Select all test types including slow (--positive --compile-error --panic --timeout --exit --slow).
+        #[arg(long)]
+        full: bool,
         /// [M-169-timing-report-regression-gate]: if any test exceeds N ms
         /// (total elapsed_ms), after the run print the violators and exit
         /// with code 3. Default: 0 (disabled).
@@ -4320,7 +4341,14 @@ fn cmd_test(
     skip: &[String],
     mono_depth: Option<usize>,
     include_slow: bool,
+    slow: bool,
     slow_only: bool,
+    positive: bool,
+    compile_error: bool,
+    panic: bool,
+    timeout_type: bool,
+    exit: bool,
+    full: bool,
     max_test_ms: u128,
 ) -> Result<()> {
     if timeout_secs == 0 {
@@ -4457,13 +4485,25 @@ fn cmd_test(
         // Plan 140 Ф.2 (D24 amend): `nova test` enforce'ит контракты по
         // умолчанию (тесты проверяют поведение enforce-with-elision).
         contracts_off: false,
-        // Plan 156: slow-lane selection via --include-slow / --slow-only.
-        slow_lane: if slow_only {
-            test_runner::SlowLane::Only
-        } else if include_slow {
-            test_runner::SlowLane::Include
-        } else {
-            test_runner::SlowLane::Exclude
+        // Plan 169.1.1: type + slow selection.
+        selection: {
+            use test_runner::{TestSelection, TestType};
+            if full || slow_only {
+                // --full or legacy --slow-only: all types + slow
+                TestSelection::full()
+            } else {
+                let any_type = positive || compile_error || panic || timeout_type || exit;
+                let mut types = std::collections::HashSet::new();
+                if !any_type || positive { types.insert(TestType::Positive); }
+                if compile_error         { types.insert(TestType::CompileError); }
+                if panic                 { types.insert(TestType::Panic); }
+                if timeout_type          { types.insert(TestType::Timeout); }
+                if exit                  { types.insert(TestType::Exit); }
+                TestSelection {
+                    types,
+                    include_slow: include_slow || slow,
+                }
+            }
         },
         // [M-169-timing-report-regression-gate]: --max-test-ms N.
         max_test_ms,
@@ -5533,7 +5573,8 @@ fn run() -> ExitCode {
             verbose, quiet, results_file, rerun_failed, retries,
             keep_artifacts, gc,
             list, filter_from, shuffle, skip, mono_depth,
-            include_slow, slow_only, max_test_ms,
+            include_slow, slow, slow_only, positive, compile_error, panic, timeout_type, exit, full,
+            max_test_ms,
         } => cmd_test(
             &paths,
             filter.as_deref(),
@@ -5557,7 +5598,14 @@ fn run() -> ExitCode {
             &skip,
             mono_depth,
             include_slow,
+            slow,
             slow_only,
+            positive,
+            compile_error,
+            panic,
+            timeout_type,
+            exit,
+            full,
             max_test_ms,
         ),
         Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts, gc, mono_depth } => cmd_test_build(
