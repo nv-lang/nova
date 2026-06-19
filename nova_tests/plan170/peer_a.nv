@@ -1,0 +1,24 @@
+// Plan 170 (D307): positive — two peer files of the SAME folder-module each
+// declare same-named `priv(file)` free fn / const with a DIFFERENT body/value.
+// They coexist: no name conflict (disjoint file-scope, checker dedup) and no
+// link collision (codegen file-discriminator). This file's `helper` -> 100.
+
+module nova_tests.plan170
+
+priv(file) fn helper() -> int => 100
+
+priv(file) const LOCAL_TAG = 100
+
+priv(file) fn compute() -> int => helper() + LOCAL_TAG
+
+test "peer_a uses its own file-private helper" {
+    assert(helper() == 100)
+}
+
+test "peer_a uses its own file-private const" {
+    assert(LOCAL_TAG == 100)
+}
+
+test "peer_a file-private fn chains its own file-private symbols" {
+    assert(compute() == 200)
+}

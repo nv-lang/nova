@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_FILE_PRIV_LEAK
+//
+// Plan 170 (D307): negative — a sibling peer file references a symbol that is
+// `priv(file)` in THIS file. file-private must not leak across files of the
+// same folder-module => E_FILE_PRIV_LEAK at compile time.
+//
+// This file (sorts first => entry, carries the marker) declares the private
+// helper; `b_use.nv` references it and fails.
+
+module neg.file_priv_leak
+
+priv(file) fn secret_helper() -> int => 7
+
+test "own file can see its own file-private helper" {
+    assert(secret_helper() == 7)
+}

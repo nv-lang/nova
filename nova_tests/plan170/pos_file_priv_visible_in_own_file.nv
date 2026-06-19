@@ -1,0 +1,32 @@
+// Plan 170 (D307): positive — a `priv(file)` symbol is visible inside its
+// own file (free fn / type / const). File-private narrows below module-default;
+// the declaring file resolves the symbol normally.
+
+module nova_tests.plan170
+
+priv(file) const SELF_K = 42
+
+priv(file) type SelfAcc {
+    mut total int
+}
+
+priv(file) fn self_helper(n int) -> int => n * 2
+
+fn SelfAcc.new() -> SelfAcc => { total: 0 }
+fn SelfAcc @add(n int) -> () { @total = @total + n }
+fn SelfAcc @get() -> int => @total
+
+test "file-private fn visible in own file" {
+    assert(self_helper(21) == 42)
+}
+
+test "file-private const visible in own file" {
+    assert(SELF_K == 42)
+}
+
+test "file-private type visible in own file" {
+    mut a = SelfAcc.new()
+    a.add(10)
+    a.add(SELF_K)
+    assert(a.get() == 52)
+}

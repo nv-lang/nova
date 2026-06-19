@@ -1,0 +1,25 @@
+// Plan 170 (D307): positive — peer file of `peer_a.nv` in the SAME folder-
+// module. Declares same-named `priv(file)` free fn / const with a DIFFERENT
+// body/value. Must coexist with peer_a's copies: no `E_DUP_DEFINITION` (file-
+// private dedup) and no C link collision (file-discriminated mangling). This
+// file's `helper` -> 200.
+
+module nova_tests.plan170
+
+priv(file) fn helper() -> int => 200
+
+priv(file) const LOCAL_TAG = 200
+
+priv(file) fn compute() -> int => helper() + LOCAL_TAG
+
+test "peer_b uses its own file-private helper (distinct body)" {
+    assert(helper() == 200)
+}
+
+test "peer_b uses its own file-private const (distinct value)" {
+    assert(LOCAL_TAG == 200)
+}
+
+test "peer_b file-private fn chains its own file-private symbols" {
+    assert(compute() == 400)
+}
