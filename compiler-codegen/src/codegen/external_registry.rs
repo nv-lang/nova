@@ -10,7 +10,7 @@
 //! Plan 103.6 / Plan 113: SyncClass annotation driven by #realtime/#parks/#wakes
 //! attributes in sync.nv. Replaces hardcoded is_realtime_blocking lists.
 
-use crate::ast::{FnBody, FnDecl, Item, Module, Receiver, ReceiverKind, SyncClass, TypeDecl, TypeDeclKind, TypeRef};
+use crate::ast::{FnBody, FnDecl, Item, Module, Param, Receiver, ReceiverKind, SyncClass, TypeDecl, TypeDeclKind, TypeRef};
 use std::collections::HashMap;
 
 // Re-export SyncClass so callers (emit_c.rs) can import from either place.
@@ -239,6 +239,51 @@ impl ExternalRegistry {
         Ok(reg)
     }
 
+    /// Plan 172.1 U.2.2 (§0 один источник mangling): Plan 11 c-name для метода/fn.
+    /// ЕДИНЫЙ источник, используемый и `decl_from_fn` (ExternalRegistry), и
+    /// `SigRegistry` — раньше логика жила только здесь inline. Byte-identical с
+    /// прежним inline-кодом (тот же base + overload-suffix).
+    ///
+    /// - `(Some(rt), instance, consume)` → `Nova_{rt}_consume_{name}` (D174)
+    /// - `(Some(rt), instance, !consume)` → `Nova_{rt}_method_{name}`
+    /// - `(Some(rt), static)` → `Nova_{rt}_static_{name}`
+    /// - `(None)` → `nova_fn_{name}`
+    /// + `_{last_suffix}` при `total_overloads >= 2 && !last_suffix.is_empty()`.
+    pub(crate) fn mangle_method_c_name(
+        receiver: Option<&str>,
+        is_instance: bool,
+        is_consume_recv: bool,
+        name: &str,
+        total_overloads: usize,
+        last_suffix: &str,
+    ) -> String {
+        let base_c = match (receiver, is_instance, is_consume_recv) {
+            (Some(rt), true, true)  => format!("Nova_{}_consume_{}", rt, name),
+            (Some(rt), true, false) => format!("Nova_{}_method_{}", rt, name),
+            (Some(rt), false, _)    => format!("Nova_{}_static_{}", rt, name),
+            (None, _, _)            => format!("nova_fn_{}", name),
+        };
+        if total_overloads >= 2 && !last_suffix.is_empty() {
+            format!("{}_{}", base_c, last_suffix)
+        } else {
+            base_c
+        }
+    }
+
+    /// Plan 172.1 U.2.2 (§0): Nova-type имя ПОСЛЕДНЕГО параметра для overload-
+    /// suffix (Plan 103.2). `[]byte → "bytes"`, `char → "char"`, …; пусто если
+    /// нет параметров / non-simple. ЕДИНЫЙ источник (был inline в decl_from_fn).
+    pub(crate) fn last_param_suffix(params: &[Param]) -> String {
+        match params.last().map(|p| &p.ty) {
+            Some(TypeRef::Named { path, .. }) if path.len() == 1 => path[0].clone(),
+            Some(TypeRef::Array(inner, _)) => match inner.as_ref() {
+                TypeRef::Named { path, .. } if path.len() == 1 => format!("{}s", path[0]),
+                _ => "arr".into(),
+            },
+            _ => String::new(),
+        }
+    }
+
     fn decl_from_fn(f: &FnDecl, total_overloads: usize) -> Result<ExternalDecl, String> {
         let (recv_type_name, is_instance, is_mut_recv, is_consume_recv) = match &f.receiver {
             Some(Receiver { type_name, kind, mutable, consume, .. }) => {
@@ -264,36 +309,19 @@ impl ExternalRegistry {
         // Это compatible с runtime naming.
         // Plan 103.9 (D174): consume-receiver methods → Nova_{T}_consume_{name}
         // to match the D164 ABI used by emit_c.rs for user-defined consume methods.
-        let base_c = match (&recv_type_name, is_instance, is_consume_recv) {
-            (Some(rt), true, true)  => format!("Nova_{}_consume_{}", rt, f.name),
-            (Some(rt), true, false) => format!("Nova_{}_method_{}", rt, f.name),
-            (Some(rt), false, _)    => format!("Nova_{}_static_{}", rt, f.name),
-            (None, _, _)            => format!("nova_fn_{}", f.name),
-        };
-        // Suffix builder: использует Nova-type ПОСЛЕДНЕГО параметра (Plan 103.2).
-        // Использование last (а не first) позволяет различать overload'ы вида:
-        //   store(v i64)  vs  store(v i64, ord MemOrdering)
-        // — оба имеют одинаковый первый параметр, но разный последний.
-        // Обратная совместимость: все существующие overload'ы однопараметровые
-        // (first == last), поэтому с-имена не меняются.
-        // []byte → "bytes", char → "char", str → "str", MemOrdering → "MemOrdering".
-        let suffix = if !f.params.is_empty() {
-            match f.params.last().map(|p| &p.ty) {
-                Some(TypeRef::Named { path, .. }) if path.len() == 1 => path[0].clone(),
-                Some(TypeRef::Array(inner, _)) => match inner.as_ref() {
-                    TypeRef::Named { path, .. } if path.len() == 1 => format!("{}s", path[0]),
-                    _ => "arr".into(),
-                },
-                _ => String::new(),
-            }
-        } else {
-            String::new()
-        };
-        let c_name = if total_overloads >= 2 && !suffix.is_empty() {
-            format!("{}_{}", base_c, suffix)
-        } else {
-            base_c
-        };
+        // Plan 172.1 U.2.2: base + overload-suffix через ЕДИНЫЕ хелперы (§0).
+        // Suffix — Nova-type ПОСЛЕДНЕГО параметра (Plan 103.2, различает
+        // `store(v)` vs `store(v, ord)`). consume-receiver → Nova_{T}_consume_{m}
+        // (D174). Byte-identical с прежним inline-кодом.
+        let suffix = Self::last_param_suffix(&f.params);
+        let c_name = Self::mangle_method_c_name(
+            recv_type_name.as_deref(),
+            is_instance,
+            is_consume_recv,
+            &f.name,
+            total_overloads,
+            &suffix,
+        );
         // Plan 83.12: для Result-возвратов с non-trivial ok-типом
         // сохраняем (ok_c, err_c) чтобы CEmitter мог зарегистрировать
         // `NovaRes_<ok_s>_<err_s>` struct через `register_novares_decl`.

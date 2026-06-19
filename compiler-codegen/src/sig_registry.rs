@@ -108,6 +108,18 @@ impl<'a> SigRegistry<'a> {
     /// a checker `[E_*]` diagnostic, NOT a silent empty/`nova_int` default.
     pub fn build_from_module(module: &'a Module) -> Self {
         use crate::codegen::external_registry::ExternalRegistry as ER;
+        use std::collections::HashMap as Map;
+
+        // Pass 1: per-key overload count (Plan 11 — c_name suffix only when ≥2).
+        let mut overloads: Map<(Option<String>, String), usize> = Map::new();
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                let receiver = f.receiver.as_ref().map(|r| r.type_name.clone());
+                *overloads.entry((receiver, f.name.clone())).or_insert(0) += 1;
+            }
+        }
+
+        // Pass 2: build entries with full CodegenView (C-types + Plan 11 c_name).
         let mut reg = Self::new();
         for item in &module.items {
             if let Item::Fn(f) = item {
@@ -122,18 +134,34 @@ impl<'a> SigRegistry<'a> {
                     Some(t) => ER::type_ref_to_c(t, recv_c).unwrap_or_default(),
                     None => "nova_unit".to_string(),
                 };
+                let is_instance = f
+                    .receiver
+                    .as_ref()
+                    .map(|r| matches!(r.kind, ReceiverKind::Instance))
+                    .unwrap_or(false);
+                let is_consume = f.receiver.as_ref().map(|r| r.consume).unwrap_or(false);
+                let total = *overloads
+                    .get(&(receiver.clone(), f.name.clone()))
+                    .unwrap_or(&1);
+                // c_name via the SHARED Plan 11 mangling (§0 — same source as
+                // ExternalRegistry::decl_from_fn).
+                let c_name = ER::mangle_method_c_name(
+                    recv_c,
+                    is_instance,
+                    is_consume,
+                    &f.name,
+                    total,
+                    &ER::last_param_suffix(&f.params),
+                );
                 let cv = CodegenView {
                     param_c_types,
                     return_c_type,
-                    is_instance: f
-                        .receiver
-                        .as_ref()
-                        .map(|r| matches!(r.kind, ReceiverKind::Instance))
-                        .unwrap_or(false),
+                    is_instance,
                     is_external: f.is_external,
                     recv_mutable: f.receiver.as_ref().map(|r| r.mutable).unwrap_or(false),
-                    // c_name / variadic_last / param_defaults / is_delegated:
-                    // U.2.2-next [M-172-sig-registry].
+                    c_name,
+                    // variadic_last / param_defaults / is_delegated: U.2.2-next
+                    // [M-172-sig-registry].
                     ..Default::default()
                 };
                 reg.insert(receiver, f.name.clone(), SigEntry { fn_decl: f, codegen: cv });
@@ -210,5 +238,41 @@ mod tests {
         let reg = SigRegistry::build_from_module(&m);
         let cv = &reg.lookup(Some("Bar"), "make").expect("make")[0].codegen;
         assert_eq!(cv.return_c_type, "Nova_Bar*");
+    }
+
+    #[test]
+    fn c_name_mangling_free_static_instance() {
+        let m = parse(
+            "module t\nfn foo(x int) -> int => x\nfn Bar.make() -> int => 0\nfn Bar @get() -> int => 0\n",
+        );
+        let reg = SigRegistry::build_from_module(&m);
+        assert_eq!(reg.lookup(None, "foo").unwrap()[0].codegen.c_name, "nova_fn_foo");
+        assert_eq!(reg.lookup(Some("Bar"), "make").unwrap()[0].codegen.c_name, "Nova_Bar_static_make");
+        assert_eq!(reg.lookup(Some("Bar"), "get").unwrap()[0].codegen.c_name, "Nova_Bar_method_get");
+    }
+
+    #[test]
+    fn c_name_overload_gets_last_param_suffix() {
+        // ≥2 overloads → c_name carries the last-param Nova-type suffix.
+        let m = parse("module t\nfn g(x int) -> int => x\nfn g(x str) -> int => 0\n");
+        let reg = SigRegistry::build_from_module(&m);
+        let mut names: Vec<String> =
+            reg.lookup(None, "g").unwrap().iter().map(|e| e.codegen.c_name.clone()).collect();
+        names.sort();
+        assert_eq!(names, vec!["nova_fn_g_int".to_string(), "nova_fn_g_str".to_string()]);
+    }
+
+    #[test]
+    fn parity_with_external_registry_for_extern_fn() {
+        // §0: SigRegistry's c_name MUST match ExternalRegistry for the same fn
+        // (both use the shared mangle_method_c_name).
+        use crate::codegen::external_registry::ExternalRegistry;
+        let src = "module t\nexport extern \"nova\" fn AtomicI64.new(v i64) -> Self\n";
+        let m = parse(src);
+        let sig = SigRegistry::build_from_module(&m);
+        let ext = ExternalRegistry::from_module(&m).expect("ext registry");
+        let sig_cname = &sig.lookup(Some("AtomicI64"), "new").unwrap()[0].codegen.c_name;
+        let ext_cname = &ext.lookup("AtomicI64", "new").unwrap()[0].c_name;
+        assert_eq!(sig_cname, ext_cname, "SigRegistry c_name must match ExternalRegistry");
     }
 }
