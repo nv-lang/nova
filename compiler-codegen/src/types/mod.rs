@@ -2271,6 +2271,13 @@ struct TypeCheckCtx<'a> {
     fn_decls: HashMap<String, Vec<&'a FnDecl>>,
     /// Ф.1: методы по receiver-типу — для резолва `Type.method(...)`.
     method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+    /// [M-blanket-method-resolve] Имена blanket-методов — `fn[T] T @m`, где
+    /// receiver = собственный type-параметр функции (recv.type_name ∈ f.generics).
+    /// Такой метод применим к ЛЮБОМУ типу, но в `method_table` лежит под ключом
+    /// параметра ("T"), а не под конкретным типом, поэтому `f3_check_member` для
+    /// `str.m()`/`UserType.m()` (тип ∈ self.types) его не находил → ложный E7320.
+    /// Примитивы (int) случайно проходили: их нет в self.types → ранний return.
+    blanket_method_names: HashSet<String>,
     /// Ф.1: объявления типов — для разворачивания alias/newtype при
     /// категоризации (assignability сравнивает категории, не имена).
     types: HashMap<String, &'a TypeDecl>,
@@ -2509,10 +2516,19 @@ impl<'a> TypeCheckCtx<'a> {
         let mut method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>> =
             HashMap::new();
         let mut types: HashMap<String, &'a TypeDecl> = HashMap::new();
+        // [M-blanket-method-resolve]: names of blanket methods (`fn[T] T @m`).
+        let mut blanket_method_names: HashSet<String> = HashSet::new();
         for item in &module.items {
             match item {
                 Item::Fn(f) => {
                     if let Some(recv) = &f.receiver {
+                        // Blanket method `fn[T] T @m`: receiver IS one of the fn's
+                        // own type-params → applicable to ANY concrete type. Record
+                        // the name so member-resolution accepts it on `self.types`
+                        // types (str / user types), not just primitives.
+                        if f.generics.iter().any(|g| g.name == recv.type_name) {
+                            blanket_method_names.insert(f.name.clone());
+                        }
                         method_table
                             .entry(recv.type_name.clone())
                             .or_default()
@@ -2816,7 +2832,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
-        TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules,
+        TypeCheckCtx { arity, fn_decls, method_table, blanket_method_names, types, imported_modules,
             entry_imported_modules,
             entry_file_ids,
             const_fn_names,
@@ -6709,6 +6725,15 @@ impl<'a> TypeCheckCtx<'a> {
                 ));
                 return;
             }
+        }
+        // [M-blanket-method-resolve]: a blanket method `fn[T] T @m` (receiver is
+        // one of the fn's own type-params) applies to ANY concrete type, but lives
+        // in `method_table` under the param key ("T"), not under `tname`. The
+        // per-type resolution below keys on `tname` and would miss it, firing a
+        // false [E7320] on `str`/user types (primitives slip through the
+        // `self.types.get` early-return). Accept the blanket method here.
+        if self.blanket_method_names.contains(name) {
+            return;
         }
         let Some(td) = self.types.get(tname) else { return; };
         match &td.kind {
