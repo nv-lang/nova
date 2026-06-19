@@ -1292,7 +1292,62 @@ impl Parser {
         // attribute если он был между `external` и `fn`.
         let pre_cancel_safe = self.parse_cancel_safe_attr();
 
+        // Plan 170 (D307): `priv(file)` top-level visibility modifier — file-private.
+        // Parsed BEFORE `export` (mutually exclusive). Forms:
+        //   `priv(file)`       → file_private = true (visible only in this file)
+        //   `priv`  (bare)     → error: bare top-level priv not supported (this plan)
+        //   `priv(<other>)`    → error: E_PRIV_QUALIFIER (unknown qualifier)
+        // `file` is NOT a keyword → matched as `Ident("file")` inside `priv(...)`.
+        let mut file_private = false;
+        if matches!(self.peek().kind, TokenKind::KwPriv) {
+            let priv_sp = self.peek().span;
+            self.bump(); // consume `priv`
+            if matches!(self.peek().kind, TokenKind::LParen) {
+                self.bump(); // consume `(`
+                if matches!(self.peek().kind, TokenKind::Ident(ref s) if s == "file") {
+                    self.bump(); // consume `file`
+                    self.expect(&TokenKind::RParen)?;
+                    file_private = true;
+                } else {
+                    let bad_sp = self.peek().span;
+                    return Err(Diagnostic::new(
+                        "[E_PRIV_QUALIFIER] unknown qualifier inside top-level `priv(…)`. \
+                         The only valid top-level form is `priv(file)` (file-private). \
+                         Omit the modifier for module-private visibility (D307, \
+                         spec/decisions/02-types.md).".to_string(),
+                        bad_sp,
+                    ));
+                }
+            } else {
+                return Err(Diagnostic::new(
+                    "[E_PRIV_QUALIFIER] bare `priv` on a top-level item is not supported; \
+                     use `priv(file)` for file-private visibility, or omit the modifier \
+                     for module-private (default). See D307 (spec/decisions/02-types.md).".to_string(),
+                    priv_sp,
+                ));
+            }
+        }
+
         let is_export = self.eat(&TokenKind::KwExport).is_some();
+        // Plan 170 (D307): `priv(file)` and `export` are mutually exclusive.
+        // Catch BOTH orders: `priv(file) export …` (file_private already set)
+        // AND `export priv(file) …` (priv token still ahead after eating export).
+        if file_private && is_export {
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                "[E_PRIV_QUALIFIER] `priv(file)` and `export` are mutually exclusive — \
+                 a symbol cannot be both file-private and exported. Pick one (D307).".to_string(),
+                sp,
+            ));
+        }
+        if is_export && matches!(self.peek().kind, TokenKind::KwPriv) {
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                "[E_PRIV_QUALIFIER] `export` and `priv(file)` are mutually exclusive — \
+                 a symbol cannot be both exported and file-private. Pick one (D307).".to_string(),
+                sp,
+            ));
+        }
         // Plan 91.12 Ф.-1 (D282): `extern "nova" fn` / `extern "C" fn` — canonical FFI syntax.
         // `external fn` keyword retracted (E_EXTERNAL_FN_RETRACTED): use `extern "nova" fn`.
         // `external type X` retracted (E_EXTERNAL_TYPE_RETRACTED); types/mod.rs enforces this.
@@ -1491,9 +1546,25 @@ impl Parser {
                 span,
             ));
         }
+        // Plan 170 (D307): `priv(file)` applies only to `fn` / `type` / `const`.
+        // Reject it before any other item kind (test/bench/lemma/let/ro).
+        if file_private
+            && !matches!(self.peek().kind, TokenKind::KwFn | TokenKind::KwType | TokenKind::KwConst)
+        {
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                format!(
+                    "[E_PRIV_QUALIFIER] `priv(file)` is only valid before `fn`, `type`, or \
+                     `const`, got `{}` (D307). `test`/`bench`/`lemma`/`let`/`ro` items have \
+                     no file-private visibility.",
+                    self.peek().kind.name()
+                ),
+                sp,
+            ));
+        }
         let parsed = match self.peek().kind {
-            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, extern_abi, realtime_attr, blocking_attr, cancel_safe_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone())?),
-            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, extern_abi, realtime_attr, blocking_attr, cancel_safe_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
+            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
                     // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
@@ -1544,7 +1615,7 @@ impl Parser {
                     self.peek().span,
                 ));
             }
-            TokenKind::KwConst => Item::Const(self.parse_const_decl(is_export, pending_doc.clone(), pending_doc_attrs.clone())?),
+            TokenKind::KwConst => Item::Const(self.parse_const_decl(is_export, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
             TokenKind::KwTest if !is_export => {
                 if let Some(d) = &pending_doc {
                     eprintln!(
@@ -2747,7 +2818,7 @@ impl Parser {
 
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool, extern_abi: Option<String>, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, impl_protocols: Vec<String>, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, extern_abi: Option<String>, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, impl_protocols: Vec<String>, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -3217,6 +3288,8 @@ impl Parser {
             compiler_generated: false,
             // Plan 140 Ф.2 + Plan 140.3 ([M-140-contract-levels]): per-fn opt-out.
             contract_opt_out: contract_attrs.contract_opt_out,
+            // Plan 170 (D307): `priv(file) fn` — file-private visibility.
+            file_private,
         })
     }
 
@@ -3517,7 +3590,7 @@ impl Parser {
 
     // ─── type declarations ───────────────────────────────────────────────
 
-    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, zero_on_move: bool, pub_to: Vec<String>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<TypeDecl, Diagnostic> {
+    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, zero_on_move: bool, pub_to: Vec<String>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<TypeDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwType)?;
         let (name, name_span) = self.parse_ident()?;
@@ -3772,6 +3845,7 @@ impl Parser {
                 allocation,
                 zero_on_move,
                 pub_to: pub_to.clone(),
+                file_private,
             });
         }
         // Silence unused warning when is_external is false; name_span used только в Opaque branch.
@@ -3847,6 +3921,7 @@ impl Parser {
                     impl_protocols: impl_protocols.clone(),
                     zero_on_move,
                     pub_to: pub_to.clone(),
+                    file_private,
                 });
             }
         }
@@ -3975,6 +4050,7 @@ impl Parser {
             impl_protocols,
             zero_on_move,
             pub_to,
+            file_private,
         })
     }
 
@@ -5267,7 +5343,7 @@ impl Parser {
         })
     }
 
-    fn parse_const_decl(&mut self, is_export: bool, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>) -> Result<ConstDecl, Diagnostic> {
+    fn parse_const_decl(&mut self, is_export: bool, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<ConstDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwConst)?;
         let (name, _) = self.parse_ident()?;
@@ -5289,6 +5365,7 @@ impl Parser {
             ty,
             value,
             span: start.merge(value_span),
+            file_private,
         })
     }
 
@@ -9683,7 +9760,8 @@ impl Parser {
             // block. Constexpr-only (checker enforces); inline literal в
             // codegen. Reuses parse_const_decl (без is_export / doc).
             TokenKind::KwConst => {
-                let c = self.parse_const_decl(false, None, Vec::new())?;
+                // Plan 170 (D307): scope-local const — file-private inapplicable.
+                let c = self.parse_const_decl(false, None, Vec::new(), false)?;
                 Ok(StmtOrExpr::Stmt(Stmt::Const(c)))
             }
             // Plan 33.3 (D24): `ghost let` — контекстный keyword `ghost`.

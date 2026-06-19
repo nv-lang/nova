@@ -357,10 +357,58 @@ fn check_module_impl(
         .filter_map(|it| if let Item::Type(td) = it { Some(td.name.clone()) } else { None })
         .collect();
 
+    // Plan 170 (D307): file-private dedup support. Two `priv(file)` symbols
+    // with the SAME name in DIFFERENT peer files are NOT a conflict — they
+    // occupy disjoint file-scopes. Collect, per top-level name, the set of
+    // file_ids in which a `priv(file)` symbol of that name is declared. A
+    // name-collision is тогда suppressed iff EVERY declaration carrying that
+    // name (existing + new) is file-private AND they live in distinct files.
+    // Module-private / export collisions remain errors as before (D281/D29).
+    let mut file_priv_decl_files: std::collections::HashMap<String, std::collections::HashSet<FileId>>
+        = std::collections::HashMap::new();
+    // Count of NON-file-private (module-default / export) decls per name —
+    // if any exists, the name lives in the shared module namespace and a
+    // collision is a genuine duplicate even if other copies are file-private.
+    let mut non_file_priv_names: std::collections::HashSet<String>
+        = std::collections::HashSet::new();
+    {
+        let mut record = |name: &str, fp: bool, fid: FileId| {
+            if fp {
+                file_priv_decl_files.entry(name.to_string()).or_default().insert(fid);
+            } else {
+                non_file_priv_names.insert(name.to_string());
+            }
+        };
+        for item in &module.items {
+            match item {
+                Item::Type(td) => record(&td.name, td.file_private, td.span.file_id),
+                Item::Const(cd) => record(&cd.name, cd.file_private, cd.span.file_id),
+                Item::Fn(fd) if fd.receiver.is_none() => {
+                    record(&fd.name, fd.file_private, fd.span.file_id);
+                }
+                _ => {}
+            }
+        }
+    }
+    // A name's collision is suppressible (file-private dedup) iff there is NO
+    // non-file-private decl of that name AND it is file-private in ≥2 files.
+    let is_file_priv_dedup = |name: &str| -> bool {
+        !non_file_priv_names.contains(name)
+            && file_priv_decl_files.get(name).map_or(false, |s| s.len() >= 2)
+    };
+
     for item in &module.items {
         match item {
             Item::Type(td) => {
                 if !names.insert(td.name.clone()) {
+                    // Plan 170 (D307): file-private dedup — two `priv(file)`
+                    // types with the same name in different peer files are NOT
+                    // a conflict (disjoint file-scopes). Silently keep the
+                    // first registered (env.types is name-keyed; both share an
+                    // identical user-visible signature within their own file).
+                    if is_file_priv_dedup(&td.name) {
+                        continue;
+                    }
                     // Plan 62.D bis-1: classify the duplicate per D29.
                     match classify_dup(&td.name) {
                         Some(true) => {
@@ -481,6 +529,16 @@ fn check_module_impl(
                     if both_external {
                         continue;
                     }
+                    // Plan 170 (D307): file-private dedup — two `priv(file)`
+                    // free functions with the same name in different peer files
+                    // are NOT a conflict. Applies only to free fns (`key` ==
+                    // bare name); methods carry a receiver-qualified key and are
+                    // out of scope for file-private. Codegen gives them distinct
+                    // C symbols (file-discriminator), so no link collision; the
+                    // first-registered overload is kept for type-checking.
+                    if fd.receiver.is_none() && is_file_priv_dedup(&key) {
+                        continue;
+                    }
                     let is_method = fd.receiver.is_some();
                     let recv_user_local = fd.receiver.as_ref()
                         .map(|r| user_declared_types.contains(&r.type_name))
@@ -536,6 +594,12 @@ fn check_module_impl(
             }
             Item::Const(cd) => {
                 if !names.insert(cd.name.clone()) {
+                    // Plan 170 (D307): file-private dedup — two `priv(file)`
+                    // consts with the same name in different peer files are NOT
+                    // a conflict (disjoint file-scopes). Keep first registered.
+                    if is_file_priv_dedup(&cd.name) {
+                        continue;
+                    }
                     // Plan 62.D bis-1: same prelude-shadow rule as for types.
                     match classify_dup(&cd.name) {
                         Some(true) => {
@@ -591,6 +655,7 @@ fn check_module_impl(
                                 ty: ld.ty.clone(),
                                 value: ld.value.clone(),
                                 span: ld.span,
+                                file_private: false,
                             },
                         );
                     }
@@ -11132,6 +11197,13 @@ struct NameResCtx {
     /// Key = file_id of peer file (MAIN_FILE_ID for entry).
     /// Value = set of module/alias names visible in that peer.
     peer_module_names: HashMap<FileId, HashSet<String>>,
+    /// Plan 170 (D307): per-file file-private leak table. Key = file_id of a
+    /// peer F. Value = map `name → owner_path` for every `priv(file)` symbol
+    /// declared in ANOTHER peer file of F's module-group. When F references
+    /// such a name and it is otherwise unresolved, the resolver emits the
+    /// specific `E_FILE_PRIV_LEAK` diagnostic (instead of generic «undefined
+    /// identifier»). The symbol is intentionally NOT in `group_decls[F]`.
+    file_priv_leak: HashMap<FileId, HashMap<String, String>>,
 }
 
 impl NameResCtx {
@@ -11205,14 +11277,54 @@ impl NameResCtx {
             }
         }
 
+        // Plan 170 (D307): file-private leak table — per-file map of names that
+        // are `priv(file)` in another peer file of the same module-group.
+        let mut file_priv_leak: HashMap<FileId, HashMap<String, String>> = HashMap::new();
+
+        // Plan 170 (D307): collect a peer's `priv(file)` top-level names — these
+        // are visible ONLY inside their own file and must NOT enter the shared
+        // group namespace. Free fns / types (+ sum variants) / consts.
+        fn collect_file_private_names(items: &[Item], out: &mut HashSet<String>) {
+            for item in items {
+                match item {
+                    Item::Fn(fd) if fd.receiver.is_none() && fd.file_private => {
+                        out.insert(fd.name.clone());
+                    }
+                    Item::Type(td) if td.file_private => {
+                        out.insert(td.name.clone());
+                        if let TypeDeclKind::Sum(variants) = &td.kind {
+                            for v in variants { out.insert(v.name.clone()); }
+                        }
+                    }
+                    Item::Const(cd) if cd.file_private => {
+                        out.insert(cd.name.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         if module.peer_files.is_empty() {
-            // Legacy/single-file: flat — все module.items.
+            // Legacy/single-file: flat — все module.items. A lone file has no
+            // peers, so file-private symbols are trivially visible in it.
             collect_decl_names(&module.items, &mut shared_decls);
         } else {
             // Группируем peers по parent dir пути. Все peers одной
             // папки = одна module-group, делят declarations.
+            //
+            // Plan 170 (D307): the SHARED group namespace excludes each peer's
+            // `priv(file)` names. Per peer F the visible set is then
+            // `shared_group ∪ F's own file-private names` — so a sibling never
+            // resolves another file's private symbol.
             let mut groups: HashMap<(std::path::PathBuf, Vec<String>), HashSet<String>> = HashMap::new();
             let mut peer_group_key: HashMap<FileId, (std::path::PathBuf, Vec<String>)> = HashMap::new();
+            // Per file: its OWN file-private names (re-added to its own scope).
+            let mut own_file_private: HashMap<FileId, HashSet<String>> = HashMap::new();
+            // Per group: file-private name → owner file path (for leak diag).
+            let mut group_file_private: HashMap<
+                (std::path::PathBuf, Vec<String>),
+                HashMap<String, (FileId, String)>,
+            > = HashMap::new();
             for pf in &module.peer_files {
                 let dir_key = pf.path.parent()
                     .map(|p| p.to_path_buf())
@@ -11220,14 +11332,45 @@ impl NameResCtx {
                 // Plan 81 F.1: group by (dir, module_name).
                 let group_key = (dir_key, pf.module_name.clone());
                 peer_group_key.insert(pf.file_id, group_key.clone());
-                let entry = groups.entry(group_key).or_default();
-                collect_decl_names(&pf.items_here, entry);
+                // Collect ALL decl names, then subtract this file's privates so
+                // the shared group set has only module-default / export names.
+                let mut all_here: HashSet<String> = HashSet::new();
+                collect_decl_names(&pf.items_here, &mut all_here);
+                let mut fp_here: HashSet<String> = HashSet::new();
+                collect_file_private_names(&pf.items_here, &mut fp_here);
+                let entry = groups.entry(group_key.clone()).or_default();
+                for n in all_here.difference(&fp_here) {
+                    entry.insert(n.clone());
+                }
+                let path_str = pf.path.to_string_lossy().to_string();
+                let gfp = group_file_private.entry(group_key).or_default();
+                for n in &fp_here {
+                    gfp.entry(n.clone()).or_insert((pf.file_id, path_str.clone()));
+                }
+                own_file_private.insert(pf.file_id, fp_here);
             }
-            // Разворачиваем: для каждого peer'а — decls его группы.
+            // Разворачиваем: для каждого peer'а — shared group decls ∪ его own
+            // file-private. Также строим leak-table: file-private имена,
+            // объявленные в ДРУГИХ файлах группы.
             for pf in &module.peer_files {
                 if let Some(gk) = peer_group_key.get(&pf.file_id) {
                     if let Some(decls) = groups.get(gk) {
-                        group_decls.insert(pf.file_id, decls.clone());
+                        let mut visible = decls.clone();
+                        if let Some(own) = own_file_private.get(&pf.file_id) {
+                            for n in own { visible.insert(n.clone()); }
+                        }
+                        group_decls.insert(pf.file_id, visible);
+                    }
+                    if let Some(gfp) = group_file_private.get(gk) {
+                        let mut leak: HashMap<String, String> = HashMap::new();
+                        for (name, (owner_fid, owner_path)) in gfp {
+                            if *owner_fid != pf.file_id {
+                                leak.insert(name.clone(), owner_path.clone());
+                            }
+                        }
+                        if !leak.is_empty() {
+                            file_priv_leak.insert(pf.file_id, leak);
+                        }
                     }
                 }
             }
@@ -11403,7 +11546,7 @@ impl NameResCtx {
 
         NameResCtx {
             group_decls, shared_decls, all_decls, builtins,
-            peer_module_names, peer_imported_names,
+            peer_module_names, peer_imported_names, file_priv_leak,
         }
     }
 
@@ -11583,10 +11726,28 @@ impl NameResCtx {
         match &e.kind {
             ExprKind::Ident(name) => {
                 if !self.is_known(name, file_id, scope) {
-                    errors.push(Diagnostic::new(
-                        format!("undefined identifier `{}`", name),
-                        e.span,
-                    ));
+                    // Plan 170 (D307): if the name is file-private to ANOTHER
+                    // peer of this module-group, emit the specific leak error.
+                    if let Some(owner) = self.file_priv_leak
+                        .get(&file_id)
+                        .and_then(|m| m.get(name))
+                    {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_FILE_PRIV_LEAK] `{}` is file-private to {}; not \
+                                 visible from this file. Remove `priv(file)` from the \
+                                 declaration (to make it module-private) or move the \
+                                 symbol into this file (D307).",
+                                name, owner,
+                            ),
+                            e.span,
+                        ));
+                    } else {
+                        errors.push(Diagnostic::new(
+                            format!("undefined identifier `{}`", name),
+                            e.span,
+                        ));
+                    }
                 }
             }
             // Path-form `Module.func` / `Type.method`: head — модуль или

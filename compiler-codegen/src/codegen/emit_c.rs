@@ -1008,6 +1008,20 @@ pub struct CEmitter {
     /// lookup at Ident emission attribute'ит ссылку к её peer'у через
     /// `expr.span.file_id`. Exported consts → no mangle.
     private_const_c_names: HashMap<(crate::diag::FileId, String), String>,
+    /// Plan 170 (D307): file-private FREE-FN C-name mangling. Same per-file
+    /// resolution model as `private_const_c_names`: `((file_id, source_name)
+    /// → file-discriminated C name)`. A `priv(file) fn helper` gets a unique
+    /// C symbol per declaring file (`nova_fn_<modpath>_f<file_id>_<name>`), so
+    /// two same-named file-private helpers in peer files never collide at link
+    /// time. Resolved at both the function-definition emit and every call-site
+    /// via `current_emit_file_id` inside `free_fn_c_name`. File-private fns are
+    /// kept OUT of `method_overloads` (file-local, never cross-file overloads).
+    file_priv_fn_c_names: HashMap<(crate::diag::FileId, String), String>,
+    /// Plan 170 (D307): the current file being emitted (function definition or
+    /// the body whose call-sites are being lowered). Threaded so `free_fn_c_name`
+    /// can resolve a file-private free fn to its declaring-file C symbol.
+    /// `None` outside any per-file emission context (no file-private resolution).
+    current_emit_file_id: Option<crate::diag::FileId>,
     /// Plan 20 Ф.4: stack of active defer/errdefer scopes during emission.
     /// Each block that contains a `defer`/`errdefer` stmt pushes a `DeferScope`
     /// on entry and pops on exit. `Stmt::Return`/`Break`/`Continue` walk the
@@ -1436,6 +1450,8 @@ impl CEmitter {
             imported_modules: HashSet::new(),
             fn_module_map: HashMap::new(),
             private_const_c_names: HashMap::new(),
+            file_priv_fn_c_names: HashMap::new(),
+            current_emit_file_id: None,
             mono_fn_decls: HashMap::new(),
             mono_method_decls: HashMap::new(),
             self_method_decls: HashMap::new(),
@@ -2033,6 +2049,17 @@ impl CEmitter {
                 for item in &pf.items_here {
                     if let Item::Const(c) = item {
                         if !c.is_export {
+                            // Plan 170 (D307): a `priv(file)` const is file-local
+                            // — it must NOT be distributed across the group (two
+                            // peers may declare the same name with different
+                            // values). It gets a file-discriminated C name keyed
+                            // ONLY to its own file_id (handled in the dedicated
+                            // pass below), and is skipped here so Rule-C
+                            // distribution never overwrites a peer's same-named
+                            // file-private const with the wrong group name.
+                            if c.file_private {
+                                continue;
+                            }
                             let mangled = format!(
                                 "Nova_const_{}_{}",
                                 pf.module_name.join("_"),
@@ -2046,7 +2073,8 @@ impl CEmitter {
 
             // Step 2: distribute group's consts к каждому peer's file_id —
             // обеспечивает correct lookup на любом Ident use-site внутри
-            // module-group (Rule C).
+            // module-group (Rule C). file-private consts excluded above; their
+            // per-file names are populated directly in the pass below.
             for pf in &module.peer_files {
                 if let Some(gk) = peer_group_key.get(&pf.file_id) {
                     if let Some(consts) = group_consts.get(gk) {
@@ -2054,6 +2082,64 @@ impl CEmitter {
                             self.private_const_c_names
                                 .entry((pf.file_id, name.clone()))
                                 .or_insert_with(|| mangled.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Plan 170 (D307): file-private FREE-FN mangling. For each peer file,
+        // every `priv(file) fn helper` (free fn, non-external) gets a unique
+        // C symbol keyed by (file_id, source_name). The file discriminator is
+        // the stable peer file_id, so two same-named file-private helpers in
+        // different peer files map to DISTINCT C symbols — no link collision.
+        // The discriminated name is resolved both at the definition emit and
+        // at every call-site (via current_emit_file_id in free_fn_c_name).
+        {
+            for pf in &module.peer_files {
+                if pf.module_name.is_empty() { continue; }
+                for item in &pf.items_here {
+                    if let Item::Fn(f) = item {
+                        if f.file_private && f.receiver.is_none() && !f.is_external {
+                            let mangled = format!(
+                                "nova_fn_{}_f{}_{}",
+                                pf.module_name.join("_"),
+                                pf.file_id,
+                                f.name,
+                            );
+                            self.file_priv_fn_c_names
+                                .entry((pf.file_id, f.name.clone()))
+                                .or_insert(mangled);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Plan 170 (D307): file-private CONST mangling. A `priv(file) const`
+        // is file-local: it gets a file-discriminated C name keyed ONLY to its
+        // declaring file_id (NOT distributed Rule-C across the group), so two
+        // peers may declare the same name with different values without C
+        // symbol collision. Reuses `private_const_c_names` (the const lookup
+        // map) — the consumer at the Ident use-site already keys by
+        // (file_id, name), and call-sites of a file-private const can only
+        // occur in its own file (resolver enforces E_FILE_PRIV_LEAK otherwise).
+        {
+            for pf in &module.peer_files {
+                if pf.module_name.is_empty() { continue; }
+                for item in &pf.items_here {
+                    if let Item::Const(c) = item {
+                        if c.file_private && !c.is_export {
+                            let mangled = format!(
+                                "Nova_const_{}_f{}_{}",
+                                pf.module_name.join("_"),
+                                pf.file_id,
+                                c.name,
+                            );
+                            // Insert directly for THIS file only (overwrite any
+                            // stale group entry — file-private wins in its file).
+                            self.private_const_c_names
+                                .insert((pf.file_id, c.name.clone()), mangled);
                         }
                     }
                 }
@@ -3118,6 +3204,16 @@ impl CEmitter {
                             continue;
                         }
                     }
+                }
+                // Plan 170 (D307): file-private free fns are NOT registered in
+                // the shared free-fn overload registry — they are file-local and
+                // never participate in cross-file overload resolution. Each gets
+                // a file-discriminated C symbol (file_priv_fn_c_names) resolved
+                // directly through free_fn_c_name. Registering them here would
+                // (a) collide same-named privates from peer files under the same
+                // sentinel key, and (b) wrongly surface them to sibling call-sites.
+                if f.receiver.is_none() && f.file_private && !f.is_external {
+                    continue;
                 }
                 // === D84: free-function overload registration ===
                 if f.receiver.is_none() {
@@ -4443,12 +4539,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // flushes via `flush_boxed_vars`; `emit_test` must do the same, scoped to
         // the test body and restored afterwards.
         let saved_var_boxed = std::mem::take(&mut self.var_boxed);
+        // Plan 170 (D307): set the emission file so a `test "…"` block that calls
+        // a `priv(file)` helper declared in the SAME file resolves to its file-
+        // discriminated C symbol (free_fn_c_name reads current_emit_file_id).
+        let saved_emit_file_id = self.current_emit_file_id.replace(t.span.file_id);
         self.line(&format!("static nova_unit nova_test_{}(void) {{", safe));
         self.indent = 1;
         self.emit_block_stmts(&t.body, "nova_unit")?;
         self.indent = 0;
         self.line("}");
         self.line("");
+        self.current_emit_file_id = saved_emit_file_id;
         // Restore scope-state — fixes leak (Plan 54 Ф.1).
         self.var_types = saved_var_types;
         self.var_mutable = saved_var_mutable;
@@ -10992,6 +11093,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 ReceiverKind::Static   => format!("Nova_{}_static_{}", safe_type, f.name),
             }
         } else {
+            // Plan 170 (D307): file-private free fn — the C symbol is file-
+            // discriminated by the DECLARING file (`f.span.file_id`), so the
+            // definition header AND the forward-decl always resolve to the same
+            // per-file name regardless of `current_emit_file_id`. Take priority
+            // over the shared overload registry (file-private fns are never in
+            // it — see emit_fn_forward_decl skip).
+            if f.file_private && !f.is_external {
+                if let Some(mangled) = self
+                    .file_priv_fn_c_names
+                    .get(&(f.span.file_id, f.name.clone()))
+                {
+                    return mangled.clone();
+                }
+            }
             // D84: free-function — тот же путь через registry с sentinel-key
             // ("", name). Если несколько overloads — резолвим по param C-типам
             // этого FnDecl'а и возвращаем mangled c_name.
@@ -12380,6 +12495,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // Check FIRST: c_literal_extern_fns takes priority over registry and module map.
         if self.c_literal_extern_fns.contains(name) {
             return name.to_string();
+        }
+        // Plan 170 (D307): file-private free fn — resolve to the file-discriminated
+        // C symbol for the CURRENT emission file. Checked before fn_module_map so a
+        // file-private helper shadows a same-named module symbol within its own file.
+        // (current_emit_file_id is set during the function-definition emit and during
+        // call-site lowering; both share the declaring file for a file-local helper.)
+        if let Some(fid) = self.current_emit_file_id {
+            if let Some(mangled) = self.file_priv_fn_c_names.get(&(fid, name.to_string())) {
+                return mangled.clone();
+            }
         }
         // Plan 103.1 Ф.6: ExternalRegistry builtins (fence, etc.) always
         // use nova_fn_<name> — they live in nova_rt/*.h, not user modules.
@@ -16721,6 +16846,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let saved_pending_result = self.pending_result_ok_inner_type.take();
         let saved_pending_option = self.pending_option_inner_type.take();
         let params = self.params_c(f)?;
+        // Plan 170 (D307): set the current emission file for the whole fn body
+        // so call-sites to file-private helpers declared in THIS file resolve to
+        // the right file-discriminated C symbol (free_fn_c_name reads this for
+        // bare-name call-sites). Restored at the end of the fn body. Any same-file
+        // module-default fn calling a `priv(file)` helper relies on this too.
+        let saved_emit_file_id = self.current_emit_file_id.replace(f.span.file_id);
         let mangled = self.mangle_fn(f);
         // Plan 63 Fix F+ [M-result-erased-no-mono]: register fn's Result Ok
         // payload mono'd type. Enables call-site propagation (let r = parse_kv())
@@ -17066,6 +17197,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.out.push_str(&std::mem::take(&mut self.lambda_impls));
         }
         self.out.push_str(&fn_body);
+        // Plan 170 (D307): restore the previous emission-file context.
+        self.current_emit_file_id = saved_emit_file_id;
         Ok(())
     }
 
