@@ -1,0 +1,31 @@
+// Plan 139 Ф.1 — to_lower/to_upper migrated to Nova-body (ASCII case, alloc
+// via []u8 + str.from_bytes_unchecked). Non-ASCII bytes pass through unchanged.
+module nova_tests.strings
+
+test "to_lower ascii" {
+    assert("AbC".to_ascii_lower() == "abc")
+    assert("HELLO".to_ascii_lower() == "hello")
+    assert("already".to_ascii_lower() == "already")
+    assert("".to_ascii_lower() == "")
+    assert("123!@#".to_ascii_lower() == "123!@#")
+}
+
+test "to_upper ascii" {
+    assert("AbC".to_ascii_upper() == "ABC")
+    assert("hello".to_ascii_upper() == "HELLO")
+    assert("ALREADY".to_ascii_upper() == "ALREADY")
+    assert("".to_ascii_upper() == "")
+    assert("123!@#".to_ascii_upper() == "123!@#")
+}
+
+test "case preserves non-ascii bytes" {
+    // é is multibyte; ASCII case-fold must leave its bytes untouched.
+    assert("héLLo".to_ascii_lower() == "héllo")
+    assert("héllo".to_ascii_upper() == "HéLLO")
+}
+
+test "len preserved after case" {
+    ro s = "MixedCase"
+    assert(s.to_ascii_lower().byte_len() == s.byte_len())
+    assert(s.to_ascii_upper().byte_len() == s.byte_len())
+}

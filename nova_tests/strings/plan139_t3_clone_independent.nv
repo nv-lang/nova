@@ -1,0 +1,34 @@
+// Plan 139 Ф.3 — clone = shallow 16-byte handle copy over an immutable (*u8 ro-pointee)
+// shared buffer. Because the buffer is immutable, the clone stays valid
+// independently of the source binding; no deep copy needed.
+module nova_tests.strings
+
+test "value copy shares immutable buffer, stays valid after rebind" {
+    ro original = "shared-immutable"
+    ro copy = original          // 16-byte value copy (handle), buffer shared
+    // Rebinding `original` cannot affect `copy` (str is a value; buffer is *ro).
+    ro original2 = "different"
+    assert(copy == "shared-immutable", "copy intact after source rebind")
+    assert(original2 == "different", "rebind independent")
+    assert(copy != original2, "copy != rebound source")
+}
+
+test "pass-by-value copy independent of caller" {
+    ro s = "payload"
+    ro echoed = echo_str(s)
+    assert(echoed == "payload", "echoed value equals")
+    assert(s == "payload", "source unchanged by callee")
+    assert(s == echoed, "both equal by content")
+}
+
+test "clone in collection stays equal" {
+    ro s = "elem"
+    mut v = [s, s, s]           // three value-copies of the same handle
+    assert(v.len() == 3, "three copies")
+    assert(v[0] == v[2], "copies equal")
+    assert(v[0] == "elem", "copy equals literal")
+}
+
+fn echo_str(x str) -> str {
+    return x
+}

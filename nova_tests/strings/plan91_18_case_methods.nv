@@ -1,0 +1,21 @@
+module nova_tests.strings
+import std.unicode
+
+test "to_upper Unicode" {
+    ro upper = "\u{00DF}".to_upper()
+    assert(upper == "SS")
+}
+
+test "to_lower Unicode" {
+    ro lower = "HELLO".to_lower()
+    assert(lower == "hello")
+}
+
+test "fold_case for caseless match" {
+    assert("STRASSE".fold_case() == "strasse")
+}
+
+test "to_title capitalizes first cased char" {
+    ro t = "hello world".to_title()
+    assert(t == "Hello World")
+}

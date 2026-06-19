@@ -1,0 +1,28 @@
+// Plan 139 Ф.1 — char_at migrated to Nova-body (UTF-8 decode cursor, codepoint
+// indexed; cp_to_char helper). None on OOB. Semantics identical to nova_str_char_at.
+module nova_tests.strings
+
+test "char_at ascii" {
+    assert("abc".as_chars().nth(0) == Some('a'))
+    assert("abc".as_chars().nth(1) == Some('b'))
+    assert("abc".as_chars().nth(2) == Some('c'))
+    assert("abc".as_chars().nth(3) == None)
+    assert("abc".as_chars().nth(-1) == None)
+}
+
+test "char_at multibyte (codepoint indexed)" {
+    ro s = "héllo"
+    assert(s.as_chars().nth(0) == Some('h'))
+    assert(s.as_chars().nth(1) == Some('é'))   // codepoint index 1, byte offset 1
+    assert(s.as_chars().nth(2) == Some('l'))
+    assert(s.as_chars().nth(4) == Some('o'))
+    assert(s.as_chars().nth(5) == None)
+}
+
+test "char_at 3- and 4-byte codepoints" {
+    ro s = "é€😀"
+    assert(s.as_chars().nth(0) == Some('é'))
+    assert(s.as_chars().nth(1) == Some('€'))
+    assert(s.as_chars().nth(2) == Some('😀'))
+    assert(s.as_chars().nth(3) == None)
+}

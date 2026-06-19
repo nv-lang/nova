@@ -1,0 +1,12 @@
+// Plan 131 Ф.3 NEG — insert() beyond len panics (i > len is invalid; i == len
+// is a valid append).
+// EXPECT_RUNTIME_PANIC requires failed
+
+module neg.plan131_vec_insert_oob_neg
+
+import std.collections.vec.{Vec}
+
+test "insert at index past len panics" {
+    mut v = Vec[int].of(1, 2, 3)
+    v.insert(10, 99)
+}

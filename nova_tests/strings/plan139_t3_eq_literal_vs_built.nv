@@ -1,0 +1,26 @@
+// Plan 139 Ф.3 — literal vs built equality (content), and ordering consistency.
+module nova_tests.strings
+
+test "literal == concat(method)" {
+    ro built = "ab".concat("c")
+    assert(built == "abc", "concat == literal")
+    assert("abc" == built, "literal == concat (symmetric)")
+}
+
+test "inequality on different bytes" {
+    ro a = "abc"
+    ro b = "abd"
+    assert(a != b, "abc != abd")
+    assert(!(a == b), "not equal")
+}
+
+test "length-difference inequality (prefix not equal)" {
+    ro a = "ab"
+    ro b = "abc"
+    assert(a != b, "ab != abc")
+}
+
+test "case-sensitive equality" {
+    assert("ABC" != "abc", "case sensitive")
+    assert("ABC".to_ascii_lower() == "abc", "lowered equals")
+}

@@ -1,0 +1,67 @@
+// Plan 85.1 Ф.3 — StringBuilder consume @as_str() -> str (позитив).
+//
+// @as_str() — consume-метод (D131): финализирует буфер в str.
+// Негативная сторона (use-after-consume = compile error) — см.
+// neg_use_after_consume.nv / neg_double_consume.nv.
+
+module nova_tests.strings
+
+
+test "as_str — ASCII content" {
+    consume sb = StringBuilder.new()
+    sb.append("hello world")
+    ro s = sb.into_str()
+    assert(s == "hello world")
+    assert(s.len() == 11)
+}
+
+test "as_str — пустой буфер даёт пустую строку" {
+    consume sb = StringBuilder.new()
+    ro s = sb.into_str()
+    assert(s == "")
+    assert(s.len() == 0)
+}
+
+test "as_str — Unicode паритет char_len со str" {
+    consume sb = StringBuilder.new()
+    sb.append("Привет")
+    ro cp_before = sb.char_len()   // codepoints before consume
+    ro s = sb.into_str()
+    // Plan 108 D26 rev: str.len() = bytes O(1), str.as_chars().count() = codepoints O(n).
+    assert(s.as_chars().count() == cp_before)   // 6 codepoints == sb.char_len()
+    assert(s.len() == 12)               // 12 bytes (2 bytes per Cyrillic codepoint)
+}
+
+test "as_str — после from(str)" {
+    consume sb = StringBuilder.from("preloaded")
+    assert(sb.into_str() == "preloaded")
+}
+
+test "as_str — после from(char)" {
+    consume sb = StringBuilder.from('Я')
+    assert(sb.into_str() == "Я")
+}
+
+test "as_str — после chaining" {
+    consume sb = StringBuilder.new()
+    sb.append("a").append("b").append("c")
+    assert(sb.into_str() == "abc")
+}
+
+test "as_str — emoji сохраняется" {
+    consume sb = StringBuilder.new()
+    sb.append("done ")
+    sb.append('🎉')
+    ro s = sb.into_str()
+    assert(s == "done 🎉")
+    assert(s.as_chars().count() == 6)  // d,o,n,e,space,🎉 = 6 codepoints
+    assert(s.len() == 9)       // 4 ASCII + 1 space + 4 emoji bytes = 9 bytes
+}
+
+test "as_str — результат можно использовать дальше" {
+    consume sb = StringBuilder.new()
+    sb.append("XYZ")
+    ro s = sb.into_str()
+    assert(s.starts_with("X"))
+    assert(s.ends_with("Z"))
+}
