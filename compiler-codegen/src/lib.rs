@@ -29,6 +29,7 @@ pub mod perf_timer;
 pub mod protocols;
 pub mod resolver;
 pub mod semver;
+pub mod sig_registry;
 pub mod test_runner;
 pub mod types;
 pub mod verify;
