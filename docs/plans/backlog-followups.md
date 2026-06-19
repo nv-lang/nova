@@ -189,6 +189,8 @@
 | Маркер | Суть | Home | Pri |
 |---|---|---|---|
 | `[M-169.1-timing-report-regression-gate]` | ✅ **CLOSED**: `--max-test-ms N` флаг — тесты превышающие порог → список + exit 3. | Plan 169.1 | ✅ done |
+| `[M-169.1.1-lane-flags]` | ✅ CLOSED 2026-06-19 — TestSelection + CLI flags (Ф.1) | Plan 169.1.1 | ✅ done |
+| `[M-169.1.1-ci-workflow]` | ✅ CLOSED 2026-06-19 — nova-test-regression.yml (Ф.2) | Plan 169.1.1 | ✅ done |
 | `[M-118.1-typed-pointer-cookbook]` | docs/typed-pointers.md cookbook не написан (есть только Plan 115 FFI cookbook). | plan-118.1 Followups | P3 |
 | `[M-118.1.7-extern-block]` | `extern "C" { unsafe fn … }` block-сахар (gated на multi-ABI); сейчас individual `external unsafe fn`. | plan-118.1 Followups | P3 |
 | `[M-D227-alias-newtype-range]` | D227 range-check НЕ покрывает alias/newtype над sized-int (`assignable()` чекает только direct Named + Readonly/Mut/Unsafe; резолв alias-имени требует `self.types`, недоступного на free-fn coercion-сайте). | plan-142 Scoped open-questions | P3 |
