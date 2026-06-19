@@ -83,7 +83,7 @@ ro u = u64.try_parse(s, radix: 16).ok() // полный u64-диапазон
 
 - **D74 (08-runtime.md:2273-2283) — частичный RETRACT:** убрать `f64.try_parse(s)->Option[f64]` + окружающую прозу; заменить на `f64.try_from(s)->Result[f64, ParseFloatError]` + «Option via `.ok()`». Закрывает Q-from-builtins resolved-in-favor-of-D77. f64-константы (PI/E/MAX) остаются.
 - **D77 (08-runtime.md:2586+) — UPHELD + carve-out:** «Option через `.ok()`» остаётся абсолютным (никакого `_opt`/`try_parse→Option`). Bullet «отвергнуто `u64.parse(s)`» (2642) дополнить: «`parse`/`try_parse` возвращается ИСКЛЮЧИТЕЛЬНО как radix-несущая целочисленная форма, т.к. фикс-сигнатура `from(s)` не вмещает radix; это НЕ альтернативное десятичное имя — десятичное всегда `from`/`try_from`, поэтому D9 не нарушен». Bullet semver обновить `u64.try_parse`→`u64.try_from`.
-- **Новый D-блок (предв. D309) «Канон парсинга примитивов»:** одно правило — «radix-free decimal ⇒ from/try_from (Option через .ok()); radix-bearing integer ⇒ try_parse(s, radix); float/bool radix не имеют ⇒ parse нет». Инвариант: вся логика в str-движках, type-level — тонкие делегаты, `from` авто-derive'ится. Записать, что per-type обёртки — **interim** (схлопнутся после Plan 172).
+- **Новый D-блок (предв. D309) «Канон парсинга примитивов»:** одно правило — «radix-free decimal ⇒ from/try_from (Option через .ok()); radix-bearing integer ⇒ try_parse(s, radix); float/bool radix не имеют ⇒ parse нет». Инвариант: вся логика в str-движках, type-level — тонкие делегаты, `from` авто-derive'ится. Записать, что per-type обёртки — **interim** (схлопнутся после Plan 175.3).
 - **D73 / D178 / D25 — UPHELD** без изменений.
 
 ## 4. Фикс бага truncation (range-check)
@@ -108,7 +108,7 @@ fn i8.try_from(s str) -> Result[i8, ParseIntError] {
 | 3 | **Вырезать хардкод**: удалить try_parse-ветку (27036-87) + str→numeric-арм try_from (27117-78); **СОХРАНИТЬ** str.try_from([]byte) (27106) и int→char (27180). Пересобрать nova-cli (parse.nv = include_str!) | codegen clean |
 | 4 | **Миграция**: json.nv:454 `f64.try_parse`→`f64.try_from` (Some/None→Ok/Err); _experimental complex/toml/url; verify semver = 0 правок; grep trim-зависимых call-sites | мигрировано |
 | 5 | **Регресс-фикстуры**: range-check (i8 "999"⇒Overflow, u8 "-1"⇒InvalidDigit, sized radix overflow), full-u64 radix, match-ability ParseFloatError/ParseBoolError, decimal-via-try_from+Option-via-.ok(), radix-via-try_parse, **trim-is-error** | nova_tests/plan171 |
-| 6 | **Закрытие**: полный nova test (батчи <10мин), STATUS.md/project-creation/discussion-log/simplifications, memory-статус, отметить Plan 172 как future-collapse | CLOSED |
+| 6 | **Закрытие**: полный nova test (батчи <10мин), STATUS.md/project-creation/discussion-log/simplifications, memory-статус, отметить Plan 175.3 как future-collapse | CLOSED |
 
 ## 6. Критерии приёмки
 
@@ -127,11 +127,11 @@ fn i8.try_from(s str) -> Result[i8, ParseIntError] {
 1. **TRIM-регрессия (высший):** conv.h триммят пробелы, Nova-движки нет → `int.try_from(" 42 ")` флипнется `Ok(42)→Err(InvalidDigit)`. До удаления хардкода — grep call-sites + зафиксировать no-trim фикстурой.
 2. **Хрупкость вырезания codegen:** str→numeric-арм сидит в том же `parts[1]=="try_from"` блоке, что str.try_from([]byte) и int→char, которые ДОЛЖНЫ выжить — легко over-delete. Regression на оба пути.
 3. **Авто-derive `from` из `try_from`-делегата:** проверить, что 4-way реально синтезирует Fail-форму И что generic `[U TryFrom[str,E]]` резолвится на сгенерированную форму (D72) — purity-выигрыш зависит от реального срабатывания derive.
-4. **Два движка (signed i64 + unsigned u64)** дублируют digit-loop — держать в lock-step (no-trim, sign, overflow); общие фикстуры на оба. Plan 172 их НЕ сольёт (разные overflow-домены).
+4. **Два движка (signed i64 + unsigned u64)** дублируют digit-loop — держать в lock-step (no-trim, sign, overflow); общие фикстуры на оба. Plan 175.3 их НЕ сольёт (разные overflow-домены).
 5. f64/bool остаются C-backed (strtod/memcmp) — `все логика в Nova` частична; ParseFloatError теряет гранулярность strtod (только Empty|Invalid).
 
 ## 8. Связи
 
-- **Plan 172 (type-set bounds)** — desirable, НЕ blocking. Схлопнёт ~13 per-type обёрток в ~2-3 generic после landing. Сейчас per-type обёртки — корректная форма (T.MAX per-concrete-type).
+- **Plan 175.3 (type-set bounds)** — desirable, НЕ blocking. Схлопнёт ~13 per-type обёрток в ~2-3 generic после landing. Сейчас per-type обёртки — корректная форма (T.MAX per-concrete-type).
 - Закрывает дыру `[M-91.fe2-parse-f64]` (parse_float не существовал) и параллельные для bool/char.
 - Опора: D77/D73/D178/D25, static-методы примитивов (defaults.nv), numeric_type_constant_mapping.
