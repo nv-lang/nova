@@ -487,6 +487,12 @@ pub struct FnDecl {
     /// виды; `#unchecked(requires)` / `#unchecked(ensures)` / `#unchecked(invariant)`
     /// (комбинируемо) — Eiffel-style раздельная гранулярность.
     pub contract_opt_out: ContractOptOut,
+    /// Plan 170 (D307): `priv(file) fn` — file-private visibility. Символ
+    /// помечен «не виден peer-файлам модуля» (visibility-hint, НЕ смена
+    /// module-резолва — модуль остаётся один, D29). Аналог Rust `pub(self)`.
+    /// Лесенка: `priv(file)` ⊂ module-default ⊂ `export`. Взаимоисключаем с
+    /// `is_export`. Default `false`.
+    pub file_private: bool,
 }
 
 /// Plan 140.3 ([M-140-contract-levels]): per-kind contract opt-out — Eiffel-style
@@ -1010,6 +1016,12 @@ pub struct TypeDecl {
     /// (as if those types were in the same module). Empty Vec = no extra grants
     /// (backward-compat default).
     pub pub_to: Vec<String>,
+    /// Plan 170 (D307): `priv(file) type` — file-private visibility. Тип
+    /// помечен «не виден peer-файлам модуля» (visibility-hint; модуль один,
+    /// D29). Лесенка: `priv(file)` ⊂ module-default ⊂ `export`. Взаимоисключаем
+    /// с `is_export`. Ортогонален `field_default_visibility` (видимость самого
+    /// типа vs дефолтная видимость его полей). Default `false`.
+    pub file_private: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1349,6 +1361,11 @@ pub struct ConstDecl {
     pub ty: Option<TypeRef>,
     pub value: Expr,
     pub span: Span,
+    /// Plan 170 (D307): `priv(file) const` — file-private visibility.
+    /// Константа не видна peer-файлам модуля (visibility-hint; модуль один,
+    /// D29). Лесенка: `priv(file)` ⊂ module-default ⊂ `export`. Взаимоисключаема
+    /// с `is_export`. Default `false`.
+    pub file_private: bool,
 }
 
 #[derive(Debug, Clone)]

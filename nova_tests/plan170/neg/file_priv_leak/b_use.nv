@@ -1,0 +1,9 @@
+// Plan 170 (D307): negative (peer of `a_decl.nv`) — this file illegally
+// references `secret_helper`, which is `priv(file)` to `a_decl.nv`. The
+// folder-module is compiled as one TU and must fail with E_FILE_PRIV_LEAK.
+
+module neg.file_priv_leak
+
+test "peer cannot see another file's file-private helper" {
+    assert(secret_helper() == 7)
+}

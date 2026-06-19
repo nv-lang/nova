@@ -1,0 +1,27 @@
+// Plan 170 (D307): regression (D281) — a module-default (no modifier) symbol
+// declared in this peer file IS visible to OTHER peer files of the same
+// folder-module. file-private must NOT change module-default visibility.
+// This file declares the shared helpers; `pos_module_priv_peer_b.nv` uses them.
+
+module nova_tests.plan170
+
+// Module-default (module-private) free fn — visible to all peers of this module.
+fn shared_module_helper(n int) -> int => n + 7
+
+// Module-default const — visible to all peers.
+const SHARED_K = 1000
+
+// Module-default type — visible to all peers.
+type SharedBox {
+    n int
+}
+
+fn SharedBox.new(n int) -> SharedBox => { n }
+fn SharedBox @n() -> int => @n
+
+test "module-default symbols usable in declaring file" {
+    assert(shared_module_helper(3) == 10)
+    assert(SHARED_K == 1000)
+    ro b = SharedBox.new(5)
+    assert(b.n() == 5)
+}

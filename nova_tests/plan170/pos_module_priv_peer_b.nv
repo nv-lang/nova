@@ -1,0 +1,19 @@
+// Plan 170 (D307): regression (D281) — this peer file USES the module-default
+// symbols declared in `pos_module_priv_peer_a.nv`. They cross the file boundary
+// because they are module-private (not file-private). Proves file-private is
+// additive and does not regress module-default peer visibility.
+
+module nova_tests.plan170
+
+test "module-default fn from peer is visible" {
+    assert(shared_module_helper(13) == 20)
+}
+
+test "module-default const from peer is visible" {
+    assert(SHARED_K == 1000)
+}
+
+test "module-default type from peer is visible" {
+    ro b = SharedBox.new(99)
+    assert(b.n() == 99)
+}

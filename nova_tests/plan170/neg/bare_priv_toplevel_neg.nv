@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR E_PRIV_QUALIFIER
+//
+// Plan 170 (D307): negative — bare `priv` on a top-level item is not
+// supported (this plan). Use `priv(file)` for file-private, or omit the
+// modifier for module-private => E_PRIV_QUALIFIER.
+
+module neg.bare_priv_toplevel_neg
+
+priv fn bad() -> int => 0
