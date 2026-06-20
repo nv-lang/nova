@@ -1,0 +1,19 @@
+// Plan 124.8 — positive: `value` composable с `priv` (Plan 124.1 D220).
+module nova_tests.plan124
+
+type Secret3 value {
+    pub ro id u64
+    priv mut key str
+}
+
+fn Secret3.create(i u64, k str) -> Secret3 =>
+    { id: i, key: k }
+
+fn Secret3 @get_id() -> u64 =>
+    @id
+
+test "value + priv composition" {
+    ro s = Secret3.create(42, "key123")
+    assert(s.get_id() == 42)
+    assert(s.id == 42)
+}

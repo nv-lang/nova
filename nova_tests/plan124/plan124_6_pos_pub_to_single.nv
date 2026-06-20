@@ -1,0 +1,41 @@
+// Plan 124.6 — positive: #pub_to(Friend) on type declaration grants friend
+// type access to all priv(type) fields of that type (D224 §4 rule-4).
+module nova_tests.plan124
+
+#pub_to(Bank_pospubtosingle)
+export type Account_pospubtosingle {
+    pub owner str
+    priv(type) mut balance f64
+    priv(type) mut txn_count int
+}
+
+export type Bank_pospubtosingle {
+    pub name str
+}
+
+export fn Account_pospubtosingle.new(owner str) -> Account_pospubtosingle =>
+    { owner, balance: 0.0, txn_count: 0 }
+
+export fn Account_pospubtosingle mut @deposit(amount f64) {
+    @balance = @balance + amount
+    @txn_count = @txn_count + 1
+}
+
+export fn Bank_pospubtosingle.new(name str) -> Bank_pospubtosingle =>
+    { name }
+
+// Bank_pospubtosingle method can read all priv(type) fields of Account_pospubtosingle via #pub_to(Bank_pospubtosingle).
+export fn Bank_pospubtosingle @audit(a Account_pospubtosingle) -> f64 =>
+    a.balance
+
+export fn Bank_pospubtosingle @tx_count(a Account_pospubtosingle) -> int =>
+    a.txn_count
+
+test "Plan 124.6: #pub_to(Bank_pospubtosingle) grants Bank_pospubtosingle access to Account_pospubtosingle priv(type) fields" {
+    mut a = Account_pospubtosingle.new("carol")
+    a.deposit(500.0)
+    a.deposit(250.0)
+    ro b = Bank_pospubtosingle.new("FirstBank")
+    assert(b.audit(a) == 750.0)
+    assert(b.tx_count(a) == 2)
+}

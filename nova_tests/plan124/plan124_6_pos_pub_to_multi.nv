@@ -1,0 +1,53 @@
+// Plan 124.6 — positive: #pub_to(Y, Z) multiple friends on type declaration.
+// Both listed types get priv(type) field access (D224 §4 rule-4).
+module nova_tests.plan124
+
+#pub_to(Auditor, Regulator)
+export type Account_pospubtomulti {
+    pub owner str
+    priv(type) mut balance f64
+}
+
+export type Auditor {
+    pub firm str
+}
+
+export type Regulator {
+    pub agency str
+}
+
+export type Stranger {
+    pub name str
+}
+
+export fn Account_pospubtomulti.new(owner str) -> Account_pospubtomulti =>
+    { owner, balance: 0.0 }
+
+export fn Account_pospubtomulti mut @credit(amount f64) {
+    @balance = @balance + amount
+}
+
+export fn Auditor.new(firm str) -> Auditor =>
+    { firm }
+
+export fn Regulator.new(agency str) -> Regulator =>
+    { agency }
+
+export fn Stranger.new(name str) -> Stranger =>
+    { name }
+
+// Both Auditor and Regulator listed in #pub_to — both get access.
+export fn Auditor @read_balance(a Account_pospubtomulti) -> f64 =>
+    a.balance
+
+export fn Regulator @read_balance(a Account_pospubtomulti) -> f64 =>
+    a.balance
+
+test "Plan 124.6: #pub_to(Auditor, Regulator) grants both friends access" {
+    mut a = Account_pospubtomulti.new("dave")
+    a.credit(1000.0)
+    ro aud = Auditor.new("KPMG")
+    ro reg = Regulator.new("SEC")
+    assert(aud.read_balance(a) == 1000.0)
+    assert(reg.read_balance(a) == 1000.0)
+}

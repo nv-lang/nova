@@ -1,0 +1,20 @@
+// Plan 124.8 — positive: type-level `priv` flip preserved на value-record
+// (D220 §3.3.1 для records survives — отличается от D225 retract для tuples).
+module nova_tests.plan124
+
+type Hidden3 value priv {
+    pub ro tag str
+    secret int        // inherits priv flip
+}
+
+fn Hidden3.new(t str, s int) -> Hidden3 =>
+    { tag: t, secret: s }
+
+fn Hidden3 @tag_only() -> str =>
+    @tag
+
+test "value + priv type-flip" {
+    ro h = Hidden3.new("public", 42)
+    assert(h.tag == "public")
+    assert(h.tag_only() == "public")
+}
