@@ -54,6 +54,7 @@ examples/**/*.c
 nova_tests/**/*.c
 std/**/*.c
 bench/**/*.c
+detect172/**/*.c
 
 # Plan 156 (rev-3): full Unicode conformance corpora are regenerated on-demand
 # from pinned UCD into the slow-lane, NOT committed (only the fast *_conformance.nv
