@@ -10,47 +10,9 @@ use crate::diag::{Diagnostic, FileId, MAIN_FILE_ID, Span};
 use crate::parser::{impl_spec_base_name, impl_spec_args_text};
 use std::collections::{HashMap, HashSet};
 
-/// Очень упрощённая система типов для bootstrap'а.
-///
-/// Treewalk-интерпретатор работает с динамическими значениями, поэтому
-/// здесь мы выполняем минимум: проверки имён, базовая совместимость,
-/// effect inference через accumulated set.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Ty {
-    Int,
-    Float,
-    Str,
-    Bool,
-    Unit,
-    Never,
-    /// Plan 115 D214: `ptr` — opaque pointer-sized integer (ABI: `void*`).
-    /// Distinct от `Ty::Int` на type-check уровне (нельзя смешать без cast).
-    /// Arithmetic banned (E_PTR_ARITHMETIC_BANNED); member access banned
-    /// (E_PTR_NO_MEMBER); equality + casts (as u64/i64/int) allowed.
-    Ptr,
-    /// Plan 118 D216 §1-3: typed pointer family `*T` / `*ro T` / `*mut T`
-    /// / `*unsafe T`. Distinct от `Ty::Ptr` (opaque Plan 115 D214) на
-    /// type-check уровне — typed pointer carries pointee type + modifier.
-    ///
-    /// Auto-deref `p.field` / `p.method()` / `p.field = v` (only в unsafe
-    /// context — D216 §5) использует inner Ty для member resolution.
-    /// Binding-mut rule (D216 §2): `mut p *T` infers modifier=Mut. ABI:
-    /// same as `Ty::Ptr` (`void*` / `T*` в codegen, см. emit_c.rs
-    /// type_ref_to_c для TypeRef::Pointer).
-    TypedPtr(crate::ast::PointerModifier, Box<Ty>),
-    /// Любой тип / неизвестный (для bootstrap'а — fallback).
-    Any,
-    /// Рменованный тип (record, sum, effect, newtype, alias).
-    /// Generics не разворачиваются — они мономорфизируются позже.
-    Named(String),
-    Array(Box<Ty>),
-    Tuple(Vec<Ty>),
-    Func {
-        params: Vec<Ty>,
-        ret: Box<Ty>,
-        effects: Vec<String>,
-    },
-}
+// Plan 172.1 U.5.4: the lossy bootstrap `Ty` enum (+ `ty_of_ref`) was DELETED — its int
+// collapse + single `Ptr`/`TypedPtr` modelling is fully subsumed by the lossless
+// `ResolvedType` (defined below), the single type representation the checker uses.
 
 /// Plan 172.1 U.5.1 ([M-172.1-U5-structured-type]): single LOSSLESS structured
 /// type carrier — replaces the lossy `Ty`/`TyCat` int-collapse (both map every int
@@ -8270,12 +8232,13 @@ impl<'a> TypeCheckCtx<'a> {
                         let exp_direct = ResolvedType::from_type_ref(expected);
                         // i128 negation — без overflow даже для i64::MIN.
                         let neg = -(v as i128);
-                        // D227 amend ([M-172.1-U5.2-d227-neg-uint]): a NEGATIVE literal into
-                        // ANY unsigned target is a sign-domain error. The wide-default skip
-                        // (D227 Rule 1) relaxes only the UPPER bound — never the floor 0.
-                        // Keyed on the GENERAL `signed == false` property (not a `uint`
-                        // special-case), this closes the `uint = -1` hole vs `u64 = -1` and
-                        // is byte-identical for sized unsigned (same `< T.MIN (0)` message).
+                        // D227 amend (Rule 6, fixed 2026-06-20; spec 03-syntax.md; regress
+                        // detect172/d227): a NEGATIVE literal into ANY unsigned target is a
+                        // sign-domain error. The wide-default skip (D227 Rule 1) relaxes only
+                        // the UPPER bound — never the floor 0. Keyed on the GENERAL
+                        // `signed == false` property (not a `uint` special-case), this closed
+                        // the `uint = -1` hole vs `u64 = -1`; byte-identical for sized unsigned
+                        // (same `< T.MIN (0)` message). NOT an open marker — bug is fixed.
                         if matches!(exp_direct, ResolvedType::Scalar { signed: false, .. })
                             && neg < 0
                         {
@@ -8479,16 +8442,17 @@ impl<'a> TypeCheckCtx<'a> {
                         return Some(prim_ref("never", expr.span));
                     }
                     // Plan 125.1 (Ф.2): propagate `never` для user fns whose
-                    // declared return_type resolves к Ty::Never. Requires ВСЕ
+                    // declared return_type resolves к `never`. Requires ВСЕ
                     // overloads divergent — иначе ambiguous (call resolution
                     // ещё не выполнена на этом этапе, безопаснее fallback к
-                    // `None` чем выбрать random overload).
+                    // `None` чем выбрать random overload). U.5.4: `from_type_ref`
+                    // mirrors the deleted `ty_of_ref` for the `never` check.
                     if let Some(decls) = self.sig.fn_decls.get(name) {
                         if !decls.is_empty()
                             && decls.iter().all(|d| {
-                                d.return_type
-                                    .as_ref()
-                                    .map_or(false, |tr| matches!(ty_of_ref(tr), Ty::Never))
+                                d.return_type.as_ref().map_or(false, |tr| {
+                                    matches!(ResolvedType::from_type_ref(tr), ResolvedType::Never)
+                                })
                             })
                         {
                             return Some(prim_ref("never", expr.span));
@@ -8869,14 +8833,16 @@ impl<'a> TypeCheckCtx<'a> {
                         .collect()
                 };
                 // [M-172.1-U5-nv-type-name-hardcode] §3 DEBT (carried from legacy
-                // `cat_of`, NOT introduced here): `str` (Plan 139 lang-item core.nv),
-                // `char` (char.nv), `Vec` (vec_seq.nv / D239) are `.nv`-DECLARED types,
-                // so name-keying their category here violates §3 ("resolve from the
-                // declaration, not a Rust name-match"). The principled fix derives their
-                // category from the import-resolved registry / lang-item (U.1/U.6), NOT a
-                // wider `ResolvedType` change — U.5 only collapses the REPRESENTATION
-                // (Ty+TyCat→ResolvedType) and carries this debt forward byte-identically.
-                // `f32`/`f64`/`bool` below ARE genuine no-`.nv` primitives (sanctioned).
+                // `cat_of`, NOT introduced here): `str` (Plan 139 lang-item
+                // `type str value {...}` in core.nv) and `Vec` (vec_seq.nv / D239) ARE
+                // `.nv`-DECLARED types, so name-keying their category here violates §3
+                // ("resolve from the declaration, not a Rust name-match"). The principled
+                // fix derives their category from the import-resolved registry / lang-item
+                // (U.1/U.6), NOT a wider `ResolvedType` change — U.5 only collapses the
+                // REPRESENTATION (Ty+TyCat→ResolvedType), carrying this debt byte-identically.
+                // `char`/`f32`/`f64`/`bool` are genuine compiler PRIMITIVES (NO `.nv` type
+                // decl — `char.nv` declares only METHODS on the primitive, like `int`) →
+                // sanctioned §3 exception, same class as `scalar_from_int_name`.
                 match name.as_str() {
                     "f32" => R::Float { width: 32 },
                     "f64" => R::Float { width: 64 },
@@ -13495,90 +13461,9 @@ fn has_throw_in_expr(e: &Expr) -> bool {
     }
 }
 
-/// Преобразует `TypeRef` AST в `Ty` для базовой проверки.
-pub fn ty_of_ref(tr: &TypeRef) -> Ty {
-    match tr {
-        TypeRef::Named { path, .. } => match path.last().map(|s| s.as_str()) {
-            Some("int") | Some("i8") | Some("i16") | Some("i32") | Some("i64") => Ty::Int,
-            Some("u8") | Some("u16") | Some("u32") | Some("u64") => Ty::Int,
-            Some("f32") | Some("f64") => Ty::Float,
-            Some("str") => Ty::Str,
-            Some("bool") => Ty::Bool,
-            // Plan 76: bottom-тип `never` — строчный встроенный примитив.
-            Some("never") => Ty::Never,
-            // Plan 134: `ptr` removed; kept for legacy compat during transition.
-            // Actual pointer type is TypeRef::Pointer(TypeRef::Unit) → handled below.
-            Some("ptr") => Ty::Ptr,
-            Some(name) => Ty::Named(name.to_string()),
-            None => Ty::Any,
-        },
-        TypeRef::Array(inner, _) => Ty::Array(Box::new(ty_of_ref(inner))),
-        TypeRef::FixedArray(_, inner, _) => Ty::Array(Box::new(ty_of_ref(inner))),
-        TypeRef::Tuple(elems, _) => Ty::Tuple(elems.iter().map(ty_of_ref).collect()),
-        TypeRef::Func {
-            params,
-            return_type,
-            effects,
-            ..
-        } => Ty::Func {
-            params: params.iter().map(ty_of_ref).collect(),
-            ret: Box::new(
-                return_type
-                    .as_ref()
-                    .map(|t| ty_of_ref(t))
-                    .unwrap_or(Ty::Unit),
-            ),
-            effects: effects
-                .iter()
-                .filter_map(|e| match e {
-                    TypeRef::Named { path, .. } => path.last().cloned(),
-                    _ => None,
-                })
-                .collect(),
-        },
-        // Plan 97 Ф.2 (D142): анонимный protocol-тип — структурный
-        // контракт. Для baseline-ty system ty_of_ref сводим к Ty::Any
-        // (permissive); satisfaction-check выполняется отдельно.
-        TypeRef::Protocol { .. } => Ty::Any,
-        TypeRef::Unit(_) => Ty::Unit,
-        // D176 (Plan 108): readonly T — same Ty as inner (transparent).
-        TypeRef::Readonly(inner, _) => ty_of_ref(inner),
-        // Plan 118 D216 §1 / Plan 118.5 V2 (2026-06-04): SEMANTIC COLLAPSE.
-        // AST is structural (separate Mut/Unsafe wrappers); Ty is collapsed
-        // semantic (single TypedPtr variant carries the modifier).
-        //
-        // Rules:
-        //   - Pointer(inner)               → TypedPtr(Ro, inner)
-        //   - Mut(Pointer(inner))          → TypedPtr(Mut, inner)
-        //   - Unsafe(Pointer(inner))       → TypedPtr(Unsafe, inner)
-        //   - Mut(non-Pointer)             → transparent recurse (no Ty
-        //                                    representation for type-level
-        //                                    `mut` over non-pointer; this
-        //                                    documented asymmetry между AST
-        //                                    и Ty — bootstrap-minimal).
-        //   - Unsafe(non-Pointer)          → transparent recurse (ditto for
-        //                                    `unsafe T` over non-pointer:
-        //                                    no Ty variant — safety-axis
-        //                                    enforced separately at AST level).
-        TypeRef::Pointer(inner, _) => {
-            Ty::TypedPtr(crate::ast::PointerModifier::Ro, Box::new(ty_of_ref(inner)))
-        }
-        TypeRef::Mut(inner, _) => match inner.as_ref() {
-            TypeRef::Pointer(p_inner, _) => Ty::TypedPtr(
-                crate::ast::PointerModifier::Mut,
-                Box::new(ty_of_ref(p_inner)),
-            ),
-            _ => ty_of_ref(inner),
-        },
-        TypeRef::Unsafe(inner, _) => match inner.as_ref() {
-            TypeRef::Pointer(p_inner, _) => Ty::TypedPtr(
-                crate::ast::PointerModifier::Unsafe,
-                Box::new(ty_of_ref(p_inner)),
-            ),
-            _ => ty_of_ref(inner),
-        },
-    }
-}
+// Plan 172.1 U.5.4: `ty_of_ref` (TypeRef → lossy `Ty`) was deleted — its sole consumer
+// (the `never` propagation check) now uses `ResolvedType::from_type_ref` (which mirrors
+// `ty_of_ref`'s `never`/collapse rules losslessly). `Ty` enum deleted with it.
 
 /// D84: structural equality для TypeRef (игнорирует Span'ы).
 ///
