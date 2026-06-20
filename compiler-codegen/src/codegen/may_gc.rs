@@ -54,6 +54,7 @@
 // EVERYONE is MayGC (mirrors `PreemptKeepSet::populated`).
 
 use crate::ast::*;
+use crate::codegen::overload_sig::{approx_arg_sig_lit, overload_compatible, param_sig, typeref_sig};
 use std::collections::{HashMap, HashSet};
 
 /// A stable, source-level identity for a callable node in the graph.
@@ -138,46 +139,6 @@ impl NodeFlags {
     }
 }
 
-/// Render a parameter list to a stable signature string.  Unknown / generic
-/// types render as `?`.  Identical to `preempt_keep::param_sig`.
-fn param_sig(params: &[Param]) -> String {
-    let mut parts: Vec<String> = Vec::with_capacity(params.len());
-    for p in params {
-        parts.push(typeref_sig(&p.ty));
-    }
-    parts.join(",")
-}
-
-/// Stable string form of a source `TypeRef`, sufficient to distinguish
-/// concrete scalar overloads.  Anything we cannot render to a concrete
-/// primitive renders to `?`.  Identical to `preempt_keep::typeref_sig`.
-fn typeref_sig(t: &TypeRef) -> String {
-    match t {
-        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
-            typeref_sig(inner)
-        }
-        TypeRef::Named { path, generics, .. } => {
-            let name = path.join(".");
-            if generics.is_empty() {
-                name
-            } else {
-                format!(
-                    "{}<{}>",
-                    name,
-                    generics.iter().map(typeref_sig).collect::<Vec<_>>().join(",")
-                )
-            }
-        }
-        TypeRef::Array(inner, _) => format!("[]{}", typeref_sig(inner)),
-        TypeRef::FixedArray(n, inner, _) => format!("[{}]{}", n, typeref_sig(inner)),
-        TypeRef::Tuple(elems, _) => {
-            format!("({})", elems.iter().map(typeref_sig).collect::<Vec<_>>().join(","))
-        }
-        TypeRef::Unit(_) => "()".to_string(),
-        _ => "?".to_string(),
-    }
-}
-
 /// Whether a `TypeRef` is a FUNCTION type (`fn(...) -> R`).  Used to discern
 /// the allocating method-value `as fn(...)` cast from a non-allocating scalar
 /// `as T` cast.  Conservative: only a clearly-rendered non-function type is
@@ -199,49 +160,6 @@ fn typeref_is_function(t: &TypeRef) -> bool {
         // function-shaped → conservatively allocating.
         _ => true,
     }
-}
-
-/// Source-syntactic approximation of an expression's TYPE signature for
-/// overload disambiguation.  `Some(sig)` only when source-evident; `None` =
-/// unknown → edge to all candidates (conservative).  Identical to
-/// `preempt_keep::approx_arg_sig_lit`.
-fn approx_arg_sig_lit(e: &Expr) -> Option<String> {
-    match &e.kind {
-        ExprKind::As(_, ty) => Some(typeref_sig(ty)),
-        ExprKind::IntLit(_) => Some("int".to_string()),
-        ExprKind::FloatLit(_) => Some("f64".to_string()),
-        ExprKind::BoolLit(_) => Some("bool".to_string()),
-        ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => Some("str".to_string()),
-        ExprKind::CharLit(_) => Some("char".to_string()),
-        _ => None,
-    }
-}
-
-/// Whether a candidate's param signature is COMPATIBLE with the approximated
-/// argument signatures.  Identical to `preempt_keep::overload_compatible`.
-fn overload_compatible(param_sig_str: &str, approx_args: &[Option<String>]) -> bool {
-    let param_parts: Vec<&str> = if param_sig_str.is_empty() {
-        Vec::new()
-    } else {
-        param_sig_str.split(',').collect()
-    };
-    if param_parts.len() != approx_args.len() {
-        return false;
-    }
-    for (pp, aa) in param_parts.iter().zip(approx_args.iter()) {
-        match aa {
-            None => continue,
-            Some(a) => {
-                if *pp == "?" || pp.contains('<') {
-                    continue;
-                }
-                if pp != a {
-                    return false;
-                }
-            }
-        }
-    }
-    true
 }
 
 /// Builder for the call-graph + per-node may-GC flags.
