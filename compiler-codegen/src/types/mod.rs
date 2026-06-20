@@ -52,6 +52,256 @@ pub enum Ty {
     },
 }
 
+/// Plan 172.1 U.5.1 ([M-172.1-U5-structured-type]): single LOSSLESS structured
+/// type carrier — replaces the lossy `Ty`/`TyCat` int-collapse (both map every int
+/// width to ONE `Int` variant). Int-family carries EXACT `(width, signed)`; the L3
+/// pointee modifier is carried via `TypedPtr` (mirrors `Ty::TypedPtr`). L2 view
+/// (`ro`/`mut`) is transparent here — matching the `is_int_narrowing`/`int_width_rank`
+/// unwrap (D227/D54); full L2 carriage is deferred to U.5.2 if the `assignable`
+/// rewire needs it (`[M-172.1-U5-l2-view-deferred]`).
+///
+/// §2 exception: the primitive width/sign table (`int`≡`i64`=(64,signed),
+/// `uint`≡`u64`=(64,unsigned), …) is the sanctioned hardcode (also pinned by the
+/// `int`≡`i64` D-block). ADDITIVE in U.5.1 — not yet consumed by `assignable`/codegen.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedType {
+    /// Int-family with EXACT bit-width + signedness (lossless replacement for
+    /// `Ty::Int` / `TyCat::Int`).
+    Scalar { width: u8, signed: bool },
+    Float,
+    Str,
+    Bool,
+    Unit,
+    Never,
+    /// Plan 115 D214 opaque `ptr`.
+    Ptr,
+    Any,
+    /// L3 typed pointer: pointee modifier + inner (mirrors `Ty::TypedPtr`).
+    TypedPtr(crate::ast::PointerModifier, Box<ResolvedType>),
+    /// Named record/sum/newtype/alias/`char` (generics not expanded — mono later).
+    Named(String),
+    Array(Box<ResolvedType>),
+    Tuple(Vec<ResolvedType>),
+    Func { params: Vec<ResolvedType>, ret: Box<ResolvedType>, effects: Vec<String> },
+}
+
+impl ResolvedType {
+    /// Total conversion from a `TypeRef`, mirroring `ty_of_ref`'s collapse rules
+    /// (`Pointer`/`Mut(Pointer)`/`Unsafe(Pointer)` → `TypedPtr`; `Readonly` /
+    /// `Mut(non-ptr)` / `Unsafe(non-ptr)` transparent) but LOSSLESS for int
+    /// width/sign. Int-family resolves only with EMPTY type-args (mirrors
+    /// `int_width_rank`'s generics-guard, so `int[X]` — an arity error caught
+    /// elsewhere — is `Named`, never a bogus scalar).
+    pub fn from_type_ref(tr: &TypeRef) -> ResolvedType {
+        use ResolvedType as R;
+        match tr {
+            TypeRef::Named { path, generics, .. } => {
+                let name = path.last().map(|s| s.as_str());
+                if generics.is_empty() {
+                    match name {
+                        Some("i8") => return R::Scalar { width: 8, signed: true },
+                        Some("i16") => return R::Scalar { width: 16, signed: true },
+                        Some("i32") => return R::Scalar { width: 32, signed: true },
+                        Some("i64") | Some("int") => return R::Scalar { width: 64, signed: true },
+                        Some("u8") => return R::Scalar { width: 8, signed: false },
+                        Some("u16") => return R::Scalar { width: 16, signed: false },
+                        Some("u32") => return R::Scalar { width: 32, signed: false },
+                        Some("u64") | Some("uint") => return R::Scalar { width: 64, signed: false },
+                        _ => {}
+                    }
+                }
+                match name {
+                    Some("f32") | Some("f64") => R::Float,
+                    Some("str") => R::Str,
+                    Some("bool") => R::Bool,
+                    Some("never") => R::Never,
+                    Some("ptr") => R::Ptr,
+                    Some(n) => R::Named(n.to_string()),
+                    None => R::Any,
+                }
+            }
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                R::Array(Box::new(R::from_type_ref(inner)))
+            }
+            TypeRef::Tuple(elems, _) => R::Tuple(elems.iter().map(R::from_type_ref).collect()),
+            TypeRef::Func { params, return_type, effects, .. } => R::Func {
+                params: params.iter().map(R::from_type_ref).collect(),
+                ret: Box::new(return_type.as_ref().map(|t| R::from_type_ref(t)).unwrap_or(R::Unit)),
+                effects: effects
+                    .iter()
+                    .filter_map(|e| match e {
+                        TypeRef::Named { path, .. } => path.last().cloned(),
+                        _ => None,
+                    })
+                    .collect(),
+            },
+            TypeRef::Protocol { .. } => R::Any,
+            TypeRef::Unit(_) => R::Unit,
+            TypeRef::Readonly(inner, _) => R::from_type_ref(inner),
+            TypeRef::Pointer(inner, _) => {
+                R::TypedPtr(crate::ast::PointerModifier::Ro, Box::new(R::from_type_ref(inner)))
+            }
+            TypeRef::Mut(inner, _) => match inner.as_ref() {
+                TypeRef::Pointer(p, _) => {
+                    R::TypedPtr(crate::ast::PointerModifier::Mut, Box::new(R::from_type_ref(p)))
+                }
+                _ => R::from_type_ref(inner),
+            },
+            TypeRef::Unsafe(inner, _) => match inner.as_ref() {
+                TypeRef::Pointer(p, _) => {
+                    R::TypedPtr(crate::ast::PointerModifier::Unsafe, Box::new(R::from_type_ref(p)))
+                }
+                _ => R::from_type_ref(inner),
+            },
+        }
+    }
+
+    /// `(width, signed)` if int-family, else `None`. Single source for the width/sign
+    /// that `int_width_rank` recovers separately today (folded by U.5.2).
+    pub fn int_width_sign(&self) -> Option<(u8, bool)> {
+        match self {
+            ResolvedType::Scalar { width, signed } => Some((*width, *signed)),
+            _ => None,
+        }
+    }
+
+    /// Signedness if int-family.
+    pub fn is_signed(&self) -> Option<bool> {
+        self.int_width_sign().map(|(_, s)| s)
+    }
+
+    /// Would coercing a non-literal value of `self` into `target` LOSE range — i.e.
+    /// a narrowing / value-range-unsafe int conversion requiring explicit `as`?
+    /// Mirrors `is_int_narrowing` EXACTLY (single source for U.5.2). Non-int on
+    /// either side ⇒ `false` (permissive, D54).
+    pub fn would_narrow_into(&self, target: &ResolvedType) -> bool {
+        let (Some((fw, fs)), Some((ew, es))) =
+            (self.int_width_sign(), target.int_width_sign())
+        else {
+            return false;
+        };
+        if fw == ew && fs == es {
+            return false; // identity widening (int≡i64, uint≡u64, Tn→Tn)
+        }
+        let safe_widening = match (fs, es) {
+            (true, true) => ew > fw,   // signed → wider signed
+            (false, false) => ew > fw, // unsigned → wider unsigned
+            (false, true) => ew > fw,  // unsigned → strictly wider signed (range fits)
+            (true, false) => false,    // signed → unsigned: never implicit
+        };
+        !safe_widening
+    }
+}
+
+#[cfg(test)]
+mod resolved_type_tests {
+    use super::*;
+    use crate::diag::Span;
+
+    fn r(name: &str) -> ResolvedType {
+        ResolvedType::from_type_ref(&prim_ref(name, Span::dummy()))
+    }
+
+    #[test]
+    fn primitives_lossless_width_sign() {
+        assert_eq!(r("int"), ResolvedType::Scalar { width: 64, signed: true });
+        assert_eq!(r("i64"), ResolvedType::Scalar { width: 64, signed: true });
+        assert_eq!(r("uint"), ResolvedType::Scalar { width: 64, signed: false });
+        assert_eq!(r("u64"), ResolvedType::Scalar { width: 64, signed: false });
+        assert_eq!(r("i8"), ResolvedType::Scalar { width: 8, signed: true });
+        assert_eq!(r("u32"), ResolvedType::Scalar { width: 32, signed: false });
+        assert_eq!(r("f64"), ResolvedType::Float);
+        assert_eq!(r("str"), ResolvedType::Str);
+        assert_eq!(r("bool"), ResolvedType::Bool);
+        assert_eq!(r("never"), ResolvedType::Never);
+        // `char` has no `Ty` primitive → `Named` (mirrors ty_of_ref).
+        assert_eq!(r("char"), ResolvedType::Named("char".to_string()));
+        assert_eq!(r("Foo"), ResolvedType::Named("Foo".to_string()));
+    }
+
+    #[test]
+    fn l2_view_transparent_for_int() {
+        let int = || prim_ref("int", Span::dummy());
+        assert_eq!(
+            ResolvedType::from_type_ref(&TypeRef::Readonly(Box::new(int()), Span::dummy())),
+            ResolvedType::Scalar { width: 64, signed: true }
+        );
+        assert_eq!(
+            ResolvedType::from_type_ref(&TypeRef::Mut(Box::new(int()), Span::dummy())),
+            ResolvedType::Scalar { width: 64, signed: true }
+        );
+    }
+
+    #[test]
+    fn l3_typed_pointer_modifier_preserved() {
+        use crate::ast::PointerModifier;
+        let int = || prim_ref("int", Span::dummy());
+        let ptr = |inner| TypeRef::Pointer(Box::new(inner), Span::dummy());
+        let scal = || ResolvedType::Scalar { width: 64, signed: true };
+        assert_eq!(
+            ResolvedType::from_type_ref(&ptr(int())),
+            ResolvedType::TypedPtr(PointerModifier::Ro, Box::new(scal()))
+        );
+        assert_eq!(
+            ResolvedType::from_type_ref(&TypeRef::Mut(Box::new(ptr(int())), Span::dummy())),
+            ResolvedType::TypedPtr(PointerModifier::Mut, Box::new(scal()))
+        );
+        assert_eq!(
+            ResolvedType::from_type_ref(&TypeRef::Unsafe(Box::new(ptr(int())), Span::dummy())),
+            ResolvedType::TypedPtr(PointerModifier::Unsafe, Box::new(scal()))
+        );
+    }
+
+    #[test]
+    fn array_element_lossless() {
+        let arr = TypeRef::Array(Box::new(prim_ref("u32", Span::dummy())), Span::dummy());
+        assert_eq!(
+            ResolvedType::from_type_ref(&arr),
+            ResolvedType::Array(Box::new(ResolvedType::Scalar { width: 32, signed: false }))
+        );
+    }
+
+    #[test]
+    fn int_with_type_args_is_named_not_scalar() {
+        // `int[X]` (arity error elsewhere) must NOT become a bogus scalar —
+        // mirrors int_width_rank's generics-guard.
+        let int_x = TypeRef::Named {
+            path: vec!["int".to_string()],
+            generics: vec![prim_ref("X", Span::dummy())],
+            span: Span::dummy(),
+        };
+        assert_eq!(ResolvedType::from_type_ref(&int_x), ResolvedType::Named("int".to_string()));
+    }
+
+    #[test]
+    fn would_narrow_into_matches_is_int_narrowing() {
+        let s = |w, sg| ResolvedType::Scalar { width: w, signed: sg };
+        // narrowing / value-range-unsafe:
+        assert!(s(32, false).would_narrow_into(&s(32, true))); // u32 → i32
+        assert!(s(64, false).would_narrow_into(&s(64, true))); // u64 → int(i64)
+        assert!(s(32, true).would_narrow_into(&s(32, false))); // i32 → u32 (signed→unsigned)
+        assert!(s(64, true).would_narrow_into(&s(8, true)));   // i64 → i8
+        // safe widening / identity:
+        assert!(!s(8, false).would_narrow_into(&s(64, true)));  // u8 → int (range fits)
+        assert!(!s(64, true).would_narrow_into(&s(64, true)));  // int ≡ i64 identity
+        assert!(!s(8, true).would_narrow_into(&s(16, true)));   // i8 → i16
+        assert!(!s(8, false).would_narrow_into(&s(16, false))); // u8 → u16
+        // cross-check vs the legacy fn over real TypeRefs (the byte-identical gate for U.5.2):
+        let tr = |n| prim_ref(n, Span::dummy());
+        for (f, e) in [
+            ("u32", "i32"), ("u8", "int"), ("i32", "u32"),
+            ("int", "i64"), ("u64", "int"), ("u8", "u16"), ("i64", "i8"),
+        ] {
+            assert_eq!(
+                ResolvedType::from_type_ref(&tr(f))
+                    .would_narrow_into(&ResolvedType::from_type_ref(&tr(e))),
+                is_int_narrowing(&tr(f), &tr(e)),
+                "would_narrow_into must match is_int_narrowing for {f}→{e}"
+            );
+        }
+    }
+}
+
 /// Результат проверки модуля — карта имён top-level → тип.
 ///
 /// **D84 overloading:** `fns` хранит **Vec** для каждого имени, потому
