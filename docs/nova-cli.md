@@ -1100,8 +1100,8 @@ Generates `index.html` + `bench-<safe>.html` per bench + `data.json`.
 
 Consume-type coverage analyzer ([Plan 100.8](plans/100.8-performance-ide-tooling.md) / D7).
 Scans a file or directory, collects all consume-typed bindings, and
-reports how many are covered via consume-methods, `errdefer`, or
-`okdefer`. Useful as a CI hygiene check.
+reports how many are covered via consume-methods (`Consumable.on_exit`, D188)
+or `defer`. Useful as a CI hygiene check.
 
 ```
 nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]
