@@ -45,8 +45,9 @@ struct Numberer {
     /// Next id to hand out. Starts at 1 — `ExprId::UNSET` (0) is reserved for
     /// post-numbering synthesis (desugar/codegen scaffolding).
     next: u32,
-    /// Plan 172.1 U.4.1 part 2: resolved-type seed for context-free literals
-    /// (ExprId → ResolvedType), consumed by codegen via `infer_expr_c_type`.
+    /// Plan 172.1 U.4.1/U.4.2: resolved-type seed for the context-free leaf +
+    /// bool-operator arms (ExprId → ResolvedType), consumed by codegen via
+    /// `infer_expr_c_type` (equivalence-checked in debug).
     lits: HashMap<ExprId, crate::types::ResolvedType>,
 }
 
@@ -54,16 +55,23 @@ impl Numberer {
     fn expr(&mut self, e: &mut Expr) {
         e.id = ExprId(self.next);
         self.next += 1;
-        self.seed_literal(e);
+        self.seed_type(e);
         self.children(e);
     }
 
-    /// Plan 172.1 U.4.1 part 2: record the resolved type of a LITERAL expr (the
-    /// context-free trivial producer). Mirrors `infer_expr_c_type`'s literal arms
-    /// (int/f64/bool/str/char/unit/`void*`): `null ptr`→opaque `Ptr`. Non-literals
-    /// are produced by the checker (U.4.2+) — skipped here (no annotation → codegen
-    /// falls back, sound).
-    fn seed_literal(&mut self, e: &Expr) {
+    /// Plan 172.1 U.4.1/U.4.2: record the resolved type of an expr the producer can
+    /// derive WITHOUT bottom-up inference — the context-free leaf + bool-operator
+    /// arms. Mirrors `infer_expr_c_type`'s arms EXACTLY:
+    /// - literals: int→`Scalar`, f64→`Float`, bool, str/interp→`Str`,
+    ///   char→`Named{"char"}`, unit→`Unit`, `null ptr`→opaque `Ptr`;
+    /// - bool-producing operators (result is bool regardless of operand types):
+    ///   comparison/logical `Binary` (Eq/Neq/Lt/Le/Gt/Ge/And/Or/Implies/Iff),
+    ///   `Unary` Not, `Is`.
+    ///
+    /// Arithmetic `Binary` / `Unary Neg` (operand type + promotion) and
+    /// `As`/`Tuple`/`Block` (need operand types / state-dependent lowering) are a
+    /// later U.4.2 slice — skipped here → codegen falls back (sound, never wrong).
+    fn seed_type(&mut self, e: &Expr) {
         use crate::types::ResolvedType as R;
         let rt = match &e.kind {
             ExprKind::IntLit(_) => R::Scalar { width: 64, signed: true, wide_default: true },
@@ -73,6 +81,14 @@ impl Numberer {
             ExprKind::CharLit(_) => R::Named { name: "char".to_string(), args: Vec::new() },
             ExprKind::UnitLit => R::Unit,
             ExprKind::NullPtrLit => R::Ptr,
+            ExprKind::Binary {
+                op:
+                    BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+                    | BinOp::And | BinOp::Or | BinOp::Implies | BinOp::Iff,
+                ..
+            } => R::Bool,
+            ExprKind::Unary { op: UnOp::Not, .. } => R::Bool,
+            ExprKind::Is(_, _) => R::Bool,
             _ => return,
         };
         self.lits.insert(e.id, rt);
