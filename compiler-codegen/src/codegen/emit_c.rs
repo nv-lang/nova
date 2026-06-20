@@ -5743,6 +5743,34 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     // (e.g. `Vec.data`), so its C codegen stays `Nova_T*` (no `const`) and the
     // forward-`typedef` still fires. Field types are now emitted verbatim.
 
+    /// Plan 172.1 U.6.1.b: THE single primitive type-name → C-name table, shared by
+    /// `type_ref_to_c` and `apply_type_subst_to_ref` (§0/§2 — eliminates the third
+    /// hand-copied table whose missing `u32` drifted and broke `Vec[u32]` mangling,
+    /// Plan 152.8). Returns ONLY the pure primitive mapping; the caller-specific bits
+    /// stay caller-side: `type_ref_to_c` keeps the removed-type `Err` arms
+    /// (usize/isize/ptr) + `never`; `apply_type_subst_to_ref` keeps the `byte` alias.
+    /// (§2-sanctioned primitive width/sign table — the only exception, single source.)
+    fn primitive_name_to_c(name: &str) -> Option<&'static str> {
+        Some(match name {
+            "int" => "nova_int",
+            "i64" => "int64_t",
+            "i32" => "int32_t",
+            "i16" => "int16_t",
+            "i8" => "int8_t",
+            "u64" => "uint64_t",
+            "uint" => "nova_uint",
+            "u32" => "uint32_t",
+            "u16" => "uint16_t",
+            "u8" => "nova_byte",
+            "f64" => "nova_f64",
+            "f32" => "nova_f32",
+            "bool" => "nova_bool",
+            "str" => "nova_str",
+            "char" => "nova_char",
+            _ => return None,
+        })
+    }
+
     fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
         // Plan 48: type parameter substitution (monomorphization context)
         if let TypeRef::Named { path, generics, .. } = ty {
@@ -5762,43 +5790,28 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         match ty {
             TypeRef::Named { path, generics, .. } => {
                 let name = path.join("_");
+                // U.6.1.b: common primitives via the SINGLE shared table
+                // (`primitive_name_to_c`, also consumed by `apply_type_subst_to_ref`
+                // — no third drift-prone copy; the missing u32 in that copy broke
+                // Vec[u32] mangling, Plan 152.8). The removed types (usize/isize/ptr
+                // → Err) and `never` stay HERE — they differ from the
+                // `apply_type_subst_to_ref` consumer (which has neither, + a `byte`
+                // alias). Matches the prior name-arms regardless of generics.
+                if let Some(c) = Self::primitive_name_to_c(&name) {
+                    return Ok(c.into());
+                }
                 match name.as_str() {
-                    // Plan 133: int = intptr_t (address-sized signed), i64 = fixed 64-bit.
-                    "int"  => Ok("nova_int".into()),
-                    "i64"  => Ok("int64_t".into()),
-                    "i32"  => Ok("int32_t".into()),
-                    "i16"  => Ok("int16_t".into()),
-                    "i8"   => Ok("int8_t".into()),
-                    // Plan 133: uint = uintptr_t (address-sized unsigned), u64 = fixed 64-bit.
-                    "u64"  => Ok("uint64_t".into()),
-                    "uint" => Ok("nova_uint".into()),
                     // Plan 133: usize/isize removed — use int/uint instead.
                     "usize" => Err("type `usize` is removed — use `int` (Plan 133)".into()),
                     "isize" => Err("type `isize` is removed — use `int` (Plan 133)".into()),
-                    "u32"  => Ok("uint32_t".into()),
-                    "u16"  => Ok("uint16_t".into()),
-                    // Plan 70.4 Ф.4: u8 → nova_byte (same as byte). Both are
-                    // typedef uint8_t under the hood — distinct C names caused
-                    // Option[byte] ≠ Option[u8] mangle collapse.
-                    "u8"   => Ok("nova_byte".into()),
-                    "f64"  => Ok("nova_f64".into()),
-                    "f32"  => Ok("nova_f32".into()),
-                    "bool" => Ok("nova_bool".into()),
-                    "str"  => Ok("nova_str".into()),
-                    // D26 Q-string-indexing школа B: char это Unicode codepoint.
-                    // Plan 70.3: distinct `nova_char` typedef над `nova_int` (см.
-                    // nova_rt/nova_rt.h). Same int64_t storage, но distinct C name
-                    // → generic mono mangle distinguishes Option[char] vs Option[int].
-                    "char" => Ok("nova_char".into()),
-                    // Plan 76: `never` — bottom-тип (uninhabited). Значений
-                    // не существует, поэтому C-тип — чистый ABI placeholder.
-                    // `nova_int` — консистентно с empty-sum (`typedef
-                    // int64_t Nova_X`); слот никогда не читается/пишется.
-                    "never" => Ok("nova_int".into()),
                     // Plan 134: `ptr` builtin type REMOVED — use `*()` (Plan 134).
                     // *() = TypeRef::Pointer(TypeRef::Unit) → emits "void*"
                     // via the TypeRef::Pointer arm above.
                     "ptr" => Err("type `ptr` is removed — use `*()` (Plan 134)".into()),
+                    // Plan 76: `never` — bottom-тип (uninhabited). Значений не
+                    // существует, поэтому C-тип — чистый ABI placeholder `nova_int`
+                    // (консистентно с empty-sum; слот никогда не читается/пишется).
+                    "never" => Ok("nova_int".into()),
                     "Option" => {
                         // Plan 14 Ф.1: Option[T] правильно типизирован
                         // через generic. Для T без NOVA_ARRAY_DECL в
@@ -14542,35 +14555,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if let Some((_, Some(c_ty))) = subst.iter().find(|(n, _)| n == &name) {
                     return Some(c_ty.clone());
                 }
-                // Known primitive names. Concrete user-types (NOT type-params)
-                // резолвятся caller'ом через `type_ref_to_c` — здесь нельзя
-                // отличить `Ordering` (user-тип) от unresolved type-param `U`
-                // без registry, поэтому только примитивы.
-                let c = match name.as_str() {
-                    // Plan 133: int = nova_int (intptr_t), i64 = int64_t (fixed).
-                    "int" => "nova_int",
-                    "i64" => "int64_t",
-                    // Plan 133: uint = nova_uint (uintptr_t), u64 = uint64_t (fixed).
-                    "uint" => "nova_uint",
-                    "u64" => "uint64_t",
-                    "f64" => "nova_f64",
-                    "f32" => "nova_f32",
-                    "bool" => "nova_bool",
-                    "str" => "nova_str",
-                    "u8" | "byte" => "nova_byte",
-                    // Plan 152.8: fixed-width integer primitives missing from this list
-                    // caused Vec[u32] to be mangled as Nova_Vec____Nova_u32_p instead of
-                    // Nova_Vec____uint32_t (inconsistent with type_ref_to_c which has full list).
-                    "u32" => "uint32_t",
-                    "u16" => "uint16_t",
-                    "i8" => "int8_t",
-                    "i16" => "int16_t",
-                    "i32" => "int32_t",
-                    "char" => "nova_char",
-                    // Plan 133: usize/isize removed — not matched here.
-                    _ => return None,
-                };
-                Some(c.to_string())
+                // U.6.1.b: common primitives via the SINGLE shared `primitive_name_to_c`
+                // (no third hand-copied table — the missing u32 there drifted and broke
+                // Vec[u32] mangling, Plan 152.8).
+                if let Some(c) = Self::primitive_name_to_c(&name) {
+                    return Some(c.to_string());
+                }
+                // `byte` alias (≡ `u8` → nova_byte) is apply-only — `type_ref_to_c` has
+                // no bare `byte` arm — so it stays here, NOT in the shared table.
+                if name == "byte" {
+                    return Some("nova_byte".to_string());
+                }
+                // Concrete user-types (NOT type-params) резолвятся caller'ом через
+                // `type_ref_to_c` — здесь нельзя отличить `Ordering` (user-тип) от
+                // unresolved type-param `U` без registry, поэтому только примитивы.
+                None
             }
             // Option[T] → NovaOpt_<T_c>
             crate::ast::TypeRef::Named { path, generics, .. }
