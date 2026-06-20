@@ -154,8 +154,21 @@ impl ResolvedType {
             TypeRef::Protocol { .. } => R::Any,
             TypeRef::Unit(_) => R::Unit,
             TypeRef::Readonly(inner, _) => R::from_type_ref(inner),
+            // U.5.5(a): `*mut T` / `*unsafe T` pointee-modifier fidelity. The canonical
+            // mutable pointer is `Pointer(Mut(T))` / `Pointer(Unsafe(T))` (Nova V2 syntax,
+            // Plan 131/118.5); the pre-U.5.5 arm collapsed BOTH spellings to
+            // `TypedPtr(Ro, …)`, losing the modifier (so the C mangle would emit `const T*`
+            // instead of `T*`). Mirror `type_ref_to_c`'s `(is_mutable_ptr, base_inner)`
+            // split — strip a `Mut`/`Unsafe` wrapper for the modifier — so `Pointer(Mut(T))`
+            // ≡ `Mut(Pointer(T))` → `TypedPtr(Mut, T)` (the `Mut(Pointer)`/`Unsafe(Pointer)`
+            // spellings below already did this; this closes the divergent `Pointer(Mut)`).
             TypeRef::Pointer(inner, _) => {
-                R::TypedPtr(crate::ast::PointerModifier::Ro, Box::new(R::from_type_ref(inner)))
+                let (modifier, base) = match inner.as_ref() {
+                    TypeRef::Mut(ti, _) => (crate::ast::PointerModifier::Mut, ti.as_ref()),
+                    TypeRef::Unsafe(ti, _) => (crate::ast::PointerModifier::Unsafe, ti.as_ref()),
+                    _ => (crate::ast::PointerModifier::Ro, inner.as_ref()),
+                };
+                R::TypedPtr(modifier, Box::new(R::from_type_ref(base)))
             }
             TypeRef::Mut(inner, _) => match inner.as_ref() {
                 TypeRef::Pointer(p, _) => {
@@ -308,6 +321,24 @@ mod resolved_type_tests {
         assert_eq!(
             ResolvedType::from_type_ref(&TypeRef::Unsafe(Box::new(ptr(int())), Span::dummy())),
             ResolvedType::TypedPtr(PointerModifier::Unsafe, Box::new(scal()))
+        );
+        // U.5.5(a) fidelity: the CANONICAL `*mut T` / `*unsafe T` spelling
+        // `Pointer(Mut(T))` / `Pointer(Unsafe(T))` (Plan 131) — pre-U.5.5 these collapsed
+        // to `TypedPtr(Ro)` (modifier lost → `const T*`). They now carry the modifier AND
+        // agree with the `Mut(Pointer)` / `Unsafe(Pointer)` spelling above (no divergence).
+        let mutw = |inner| TypeRef::Mut(Box::new(inner), Span::dummy());
+        let unsw = |inner| TypeRef::Unsafe(Box::new(inner), Span::dummy());
+        assert_eq!(
+            ResolvedType::from_type_ref(&ptr(mutw(int()))),
+            ResolvedType::TypedPtr(PointerModifier::Mut, Box::new(scal()))
+        );
+        assert_eq!(
+            ResolvedType::from_type_ref(&ptr(unsw(int()))),
+            ResolvedType::TypedPtr(PointerModifier::Unsafe, Box::new(scal()))
+        );
+        assert_eq!(
+            ResolvedType::from_type_ref(&ptr(mutw(int()))),
+            ResolvedType::from_type_ref(&mutw(ptr(int())))
         );
     }
 
