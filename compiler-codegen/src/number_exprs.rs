@@ -101,6 +101,18 @@ impl Numberer {
                 None => return,
             },
             ExprKind::Is(_, _) => R::Bool,
+            // `expr as T` for a PRIMITIVE target T (stateless type→C). Non-primitive
+            // targets (generics/user/pointer) need the state-dependent
+            // `type_ref_to_c` → deferred (U.6.1/U.4.3). Context-free (the result is
+            // the syntactic T, independent of the operand).
+            ExprKind::As(_, ty) => {
+                let rt = crate::types::ResolvedType::from_type_ref(ty);
+                if is_primitive_lowerable(&rt) {
+                    rt
+                } else {
+                    return;
+                }
+            }
             _ => return,
         };
         self.lits.insert(e.id, rt);
@@ -442,4 +454,14 @@ fn is_typed_int(rt: &crate::types::ResolvedType) -> bool {
         R::Named { name, args } if args.is_empty() && name.as_str() == "char" => true,
         _ => false,
     }
+}
+
+/// Types whose `resolved_type_to_c` lowering is byte-identical to legacy WITHOUT
+/// CEmitter state — primitives + `char`. Gates `As` annotation to primitive cast
+/// targets; non-primitive targets (generics/user/pointer) need the state-dependent
+/// `type_ref_to_c` and are deferred (U.6.1/U.4.3).
+fn is_primitive_lowerable(rt: &crate::types::ResolvedType) -> bool {
+    use crate::types::ResolvedType as R;
+    matches!(rt, R::Scalar { .. } | R::Float { .. } | R::Bool | R::Str)
+        || matches!(rt, R::Named { name, args } if args.is_empty() && name.as_str() == "char")
 }
