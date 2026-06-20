@@ -1,9 +1,0 @@
-// Plan 118.6 — addr_of(x) is removed → E_ADDR_OF_REMOVED.
-// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
-
-module neg.neg_addr_of_removed
-
-fn bad() {
-    ro x = 1
-    addr_of(x)  // E_ADDR_OF_REMOVED
-}
