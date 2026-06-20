@@ -307,6 +307,18 @@ impl SumSchemaRegistry {
     /// - `ChannelPair` — record-only.
     /// - `Fail` / `Time` / `Mem` — effects, not sums.
     pub fn init_hardcoded_baseline(&mut self) {
+        // [M-172.1-U6-sumschema-baseline-nv] §3-долг: захардкоженные `variants`
+        // ниже (Option {Some/None}, Result {Ok:nova_int, Err:nova_str},
+        // RuntimeError {...}) — зеркало `.nv`-деклараций prelude
+        // (std/prelude/core.nv, errors.nv), которое ДОЛЖНО браться из `.nv`,
+        // как уже сделано для `Vec`. Сейчас baseline load-bearing cross-module
+        // (prelude-декларация не всегда в `module.items` текущей компиляции →
+        // registry получает эти типы ТОЛЬКО отсюда; подтверждено detect'ом
+        // 172.1 U.6.2.b: KEYSET `registry-only Option/Result/RuntimeError`).
+        // Полное устранение — ФИНАЛЬНАЯ ЧИСТКА sum-schema-трека на typed IR
+        // (172.1 U.4/U.5): behavior-change (mono-Result nova_int/nova_str, ~30
+        // потребителей registry, pattern-codegen). NB: `method_routing` НЕ в
+        // этом долге — легитимный реестр C-трамплинов (simplifications.md:10737).
         // Option — value-type, NovaOpt_<T> templating.
         // Mirror emit_c.rs:960-964:
         //   opt_variants.insert("Some" → vec!["nova_int"]);

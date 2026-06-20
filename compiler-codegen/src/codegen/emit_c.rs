@@ -33574,25 +33574,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.record_variant_field_types.get(&key).cloned()
     }
 
-    /// Find which sum type a variant belongs to. Returns (type_name, field_types).
-    fn find_variant(&self, variant_name: &str) -> Option<(String, Vec<String>)> {
-        // Prefer canonical type names over C-mangled aliases (e.g. "Option" over "NovaOpt_nova_int")
-        let mut result: Option<(String, Vec<String>)> = None;
-        for (type_name, variants) in &self.sum_schemas {
-            if let Some(fields) = variants.get(variant_name) {
-                match result {
-                    None => result = Some((type_name.clone(), fields.clone())),
-                    Some((ref existing, _)) => {
-                        // Prefer shorter, non-mangled type names
-                        if type_name.len() < existing.len() || existing.starts_with("NovaOpt_") || existing.starts_with("Nova_Result") {
-                            result = Some((type_name.clone(), fields.clone()));
-                        }
-                    }
-                }
-            }
-        }
-        result
-    }
+    // Plan 172.1 U.6.2.b §3-срез (2026-06-20): мёртвый `find_variant` УДАЛЁН
+    // (0 callers — вытеснен `sum_schema_registry.find_variant_compat`). Это был
+    // последний legacy-reader, итерировавший `self.sum_schemas` целиком для
+    // variant→sum резолва; теперь этот резолв идёт ТОЛЬКО через registry
+    // (на шаг ближе к §0 single-source). Перенос остальных `sum_schemas`-чтений
+    // на registry ресеквенсирован ПОСЛЕ де-хардкода baseline-схем — см.
+    // `[M-172.1-U6-sumschema-baseline-nv]` (sum_schema_registry.rs init_hardcoded_baseline).
 
     /// Convenience alias на `infer_expr_c_type` (returns `String` напрямую,
     /// без `&str`-view). Сохранён как public-ish surface для consumer'ов
