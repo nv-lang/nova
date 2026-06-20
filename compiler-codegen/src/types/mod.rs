@@ -6789,6 +6789,45 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     /// Ф.1: проверить типы аргументов call-site против параметров callee.
+    /// Plan 172.1 U.3.1: true if `callee` is arg-compatible with `args` (no arg
+    /// yields `Compat::Bad`). Permissive by design — Narrowing/OutOfRange/Unknown/Ok
+    /// all count as compatible, because codegen still performs the FINAL exact-C-type
+    /// overload selection (U.3.4 moves that too); the checker only enforces that
+    /// AT LEAST ONE overload is category-compatible (catches the str↔int leak that
+    /// previously fell through to the C compiler). Pure: emits no diagnostics.
+    fn overload_arg_compatible(
+        &self,
+        callee: &FnDecl,
+        args: &[CallArg],
+        gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+    ) -> bool {
+        let Ok(bindings) = crate::argbind::bind_call_args(&callee.params, args)
+        else {
+            return false; // arity/name mismatch — not this overload
+        };
+        let callee_gs = fn_generic_scope(callee);
+        for (pi, binding) in bindings.iter().enumerate() {
+            let ai = match binding {
+                crate::argbind::ArgBinding::Positional(i)
+                | crate::argbind::ArgBinding::Named(i) => *i,
+                _ => continue,
+            };
+            let Some(param) = callee.params.get(pi) else { continue; };
+            if param.is_variadic {
+                continue;
+            }
+            let Some(arg) = args.get(ai) else { continue; };
+            if matches!(
+                self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope),
+                Compat::Bad { .. }
+            ) {
+                return false;
+            }
+        }
+        true
+    }
+
     fn f1_check_call(
         &self,
         func: &Expr,
@@ -6812,7 +6851,31 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Ident(n) => {
                 match self.sig.fn_decls.get(n).map(|v| v.as_slice()) {
                     Some([single]) => single,
-                    _ => return,
+                    Some(multi) => {
+                        // Plan 172.1 U.3.1: resolve free-fn overloads in the
+                        // CHECKER (§0/§1). If NO overload is arg-compatible the
+                        // call is a type error that previously leaked to
+                        // codegen/C ("no matching overload" / CC-FAIL); now it's
+                        // a clean Nova diagnostic. If ≥1 overload matches, defer
+                        // FINAL selection to codegen's exact-C-type match (that
+                        // move is U.3.4, gated on U.2.4). De-risk: rule calibrated
+                        // in detect-mode — zero false positives on the positive
+                        // corpus (all multi-overload free-fn calls resolve).
+                        if !multi.iter()
+                            .any(|c| self.overload_arg_compatible(c, args, gs, scope))
+                        {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_NO_MATCHING_OVERLOAD] no overload of `{}` \
+                                     matches the given argument types",
+                                    n,
+                                ),
+                                base.span,
+                            ));
+                        }
+                        return;
+                    }
+                    None => return,
                 }
             }
             ExprKind::Path(parts) if parts.len() == 2 => {

@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+// U.3.1: overload set {g(int), g(str)} called with a `bool` argument — no
+// overload is arg-compatible (bool↔int and bool↔str are both category
+// mismatches). Previously this leaked to codegen/C ("no matching overload" /
+// CC-FAIL); the checker now catches it as a clean Nova diagnostic (§0/§1).
+module neg.n_no_overload
+fn g(x int) -> int => x
+fn g(s str) -> int => 0
+test "t" { ro b bool = true  ro r int = g(b)  assert(r == 0) }

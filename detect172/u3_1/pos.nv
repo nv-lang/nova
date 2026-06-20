@@ -1,0 +1,13 @@
+// U.3.1 regression guard: free-fn overload set {g(int), g(str)} is resolved by
+// argument type in the CHECKER. Both calls are arg-compatible → NO
+// E_NO_MATCHING_OVERLOAD; codegen still selects the exact overload by C-type.
+// MUST stay green (the rule must not false-positive on valid overloaded calls).
+module u3_1.pos
+fn g(x int) -> int => x
+fn g(s str) -> int => 100
+test "t" {
+  ro a int = g(5)
+  ro b int = g("hi")
+  assert(a == 5)
+  assert(b == 100)
+}
