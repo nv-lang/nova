@@ -693,7 +693,14 @@ fn check_module_impl(
     // должны их объявить или удалить.
     check_generic_bound_declarations(module, sig_table, &mut errors);
 
-    let bound_ctx = BoundCtx::build(module);
+    // Plan 172.1 U.2.3.2: ONE base signature registry, built once and shared by
+    // BoundCtx / CapabilityCtx (and TypeCheckCtx, U.2.3.3) — replaces the three
+    // duplicated `fn_decls`/`method_table` build loops (§0 single source). BASE
+    // ONLY: synthesized auto-derive methods are a TypeCheckCtx-private overlay (F2),
+    // so this shared registry is byte-identical to what Bound/Cap built themselves.
+    let sig = crate::sig_registry::SigRegistry::build_base(module);
+
+    let bound_ctx = BoundCtx::build(module, &sig);
     bound_ctx.check_module(module, &mut errors);
 
     // Plan 16 (D63 forbid + D64 realtime): capability enforcement.
@@ -704,7 +711,7 @@ fn check_module_impl(
     // suspend-effects запрещены; в `realtime nogc` — alloc-fn'ы
     // запрещены. Установка handler'а для forbidden-эффекта внутри
     // forbid-блока — error.
-    let cap_ctx = CapabilityCtx::build(module);
+    let cap_ctx = CapabilityCtx::build(module, &sig);
     cap_ctx.check_module(module, &mut errors);
 
     // D90 Plan 20 Ф.3: defer/errdefer body constraints.
@@ -9255,12 +9262,12 @@ struct BoundCtx<'a> {
     /// дифференциированного error-сообщения, если их пытаются
     /// использовать как bound («`Db` is an effect, not a protocol»).
     effect_decls: HashMap<String, &'a TypeDecl>,
-    /// D84: HashMap → Vec<&FnDecl> чтобы хранить multiple overloads
-    /// одного имени (методы и свободные функции). Резолв в check_call_bounds —
-    /// фильтр по arity. Полный type-based resolve остаётся за codegen (где
-    /// есть type-инфер аргументов).
-    fn_decls: HashMap<String, Vec<&'a FnDecl>>,
-    method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+    /// Plan 172.1 U.2.3.2: shared base signature registry — replaces the local
+    /// `fn_decls`/`method_table` build loop (§0 single source). Read via
+    /// `self.sig.fn_decls` / `self.sig.method_table` (same nested shapes, base only).
+    /// D84 overload semantics unchanged: `Vec<&FnDecl>` per name; bound-checker
+    /// filters by arity, codegen does full type-based resolve.
+    sig: &'a crate::sig_registry::SigRegistry<'a>,
     /// Plan 53: имена sum-variant'ов (для refutability check let-pattern).
     /// `type Color | Red | Green` → {"Red", "Green"}. Рспользуется чтобы
     /// отличить `let Color.Red { x } = obj` (refutable, error) от
@@ -9275,12 +9282,11 @@ struct BoundCtx<'a> {
 }
 
 impl<'a> BoundCtx<'a> {
-    fn build(module: &'a Module) -> Self {
+    fn build(module: &'a Module, sig: &'a crate::sig_registry::SigRegistry<'a>) -> Self {
         // Plan 101.4: direct = name → (own methods, embed-typerefs).
         // Используется для flatten DFS ниже.
         let mut direct: HashMap<String, (Vec<EffectMethod>, Vec<TypeRef>)> = HashMap::new();
-        let mut fn_decls: HashMap<String, Vec<&FnDecl>> = HashMap::new();
-        let mut method_table: HashMap<String, HashMap<String, Vec<&FnDecl>>> = HashMap::new();
+        // U.2.3.2: fn_decls/method_table no longer built here — read from `sig`.
         let mut sum_variant_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         let mut effect_decls: HashMap<String, &TypeDecl> = HashMap::new();
@@ -9307,19 +9313,6 @@ impl<'a> BoundCtx<'a> {
                             }
                         }
                         _ => {}
-                    }
-                }
-                Item::Fn(f) => {
-                    if let Some(recv) = &f.receiver {
-                        method_table
-                            .entry(recv.type_name.clone())
-                            .or_default()
-                            .entry(f.name.clone())
-                            .or_default()
-                            .push(f);
-                    } else {
-                        // D84: свободные функции тоже могут иметь overloads.
-                        fn_decls.entry(f.name.clone()).or_default().push(f);
                     }
                 }
                 _ => {}
@@ -9400,7 +9393,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, effect_decls, fn_decls, method_table, sum_variant_names, type_defining_modules, type_method_map }
+        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map }
     }
 
     /// Plan 162 Ф.3: returns true iff method_name on type type_name is inherent
@@ -9983,7 +9976,7 @@ impl<'a> BoundCtx<'a> {
         // делает разрешение (это работа codegen, у которого есть type-info).
         // Bound-проверка пропускается; codegen ловит ambiguity на своём
         // уровне.
-        let Some(overloads) = self.fn_decls.get(&fn_name) else { return; };
+        let Some(overloads) = self.sig.fn_decls.get(&fn_name) else { return; };
         let arity_matches: Vec<&&FnDecl> = overloads.iter()
             .filter(|f| f.params.len() == args.len())
             .collect();
@@ -10074,7 +10067,7 @@ impl<'a> BoundCtx<'a> {
             _ => return, // Non-array, non-single-name — skip.
         };
         // Lookup methods под этим receiver-key.
-        let Some(methods_for_recv) = self.method_table.get(recv_key) else { return; };
+        let Some(methods_for_recv) = self.sig.method_table.get(recv_key) else { return; };
         let Some(overloads) = methods_for_recv.get(method_name) else { return; };
         // Take single match (skip if multiple overloads — codegen разрулит).
         let callee: &FnDecl = match overloads.as_slice() {
@@ -10139,7 +10132,7 @@ impl<'a> BoundCtx<'a> {
                 // The closure call is validated via the var's fn-type / codegen,
                 // so skip the free-fn arg-check entirely when shadowed.
                 if scope.contains_key(name) { return; }
-                let Some(overloads) = self.fn_decls.get(name) else { return; };
+                let Some(overloads) = self.sig.fn_decls.get(name) else { return; };
                 match overloads.as_slice() {
                     [single] => &single.params,
                     _ => return, // overload — пропускаем (D102: нет overload,
@@ -10148,7 +10141,7 @@ impl<'a> BoundCtx<'a> {
             }
             ExprKind::Path(parts) if parts.len() == 2 => {
                 // `Type.method` — static-method резолв.
-                let Some(methods) = self.method_table.get(&parts[0]) else { return; };
+                let Some(methods) = self.sig.method_table.get(&parts[0]) else { return; };
                 let Some(overloads) = methods.get(&parts[1]) else { return; };
                 match overloads.as_slice() {
                     [single] => &single.params,
@@ -10451,7 +10444,7 @@ impl<'a> BoundCtx<'a> {
             if let TypeRef::Named { path, .. } = &recv_ty {
                 if path.len() == 1 {
                     let type_name = &path[0];
-                    if let Some(methods) = self.method_table.get(type_name) {
+                    if let Some(methods) = self.sig.method_table.get(type_name) {
                         if let Some(overloads) = methods.get(method_name) {
                             // Plan 162 Ф.3: prefer inherent overloads over
                             // extension overloads when receiver type is known.
@@ -10496,7 +10489,7 @@ impl<'a> BoundCtx<'a> {
         let mut found: Option<&FnDecl> = None;
         let mut ambiguous_inherent = false;
         let mut ambiguous = false;
-        for (type_name, methods) in &self.method_table {
+        for (type_name, methods) in &self.sig.method_table {
             if let Some(overloads) = methods.get(method_name) {
                 for f in overloads {
                     if f.params.len() != arg_count_hint { continue; }
@@ -10697,7 +10690,7 @@ impl<'a> BoundCtx<'a> {
             return;
         }
         let empty: HashMap<String, Vec<&FnDecl>> = HashMap::new();
-        let concrete_methods = self.method_table.get(&concrete_name).unwrap_or(&empty);
+        let concrete_methods = self.sig.method_table.get(&concrete_name).unwrap_or(&empty);
         let mut missing: Vec<String> = Vec::new();
         for req in required {
             let found = concrete_methods.get(&req.name).map(|fns| {
@@ -10805,12 +10798,11 @@ fn nogc_blacklisted_call(callee_path: &[String]) -> bool {
 
 /// Plan 16: registry для capability enforcement.
 struct CapabilityCtx<'a> {
-    /// Top-level free fn-декларации (для resolve вызова по имени).
-    /// D84: Vec<&FnDecl> для multi-overload — все overloads имени.
-    /// Capability check ходит по всем overloads (см. check_capabilities_at).
-    fn_decls: HashMap<String, Vec<&'a FnDecl>>,
-    /// Plan 15 reuse: type → method_name → fn-decls.
-    method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+    /// Plan 172.1 U.2.3.2: shared base signature registry — replaces the local
+    /// `fn_decls`/`method_table` build (§0 single source). Read via
+    /// `self.sig.fn_decls` / `self.sig.method_table` (base only). D84 overload
+    /// semantics unchanged (capability check walks all overloads).
+    sig: &'a crate::sig_registry::SigRegistry<'a>,
     /// Effect-type name registry (для distinguish'а effect-call vs ordinary).
     effect_decls: HashMap<String, &'a TypeDecl>,
 }
@@ -10858,34 +10850,17 @@ impl CapState {
 }
 
 impl<'a> CapabilityCtx<'a> {
-    fn build(module: &'a Module) -> Self {
-        let mut fn_decls: HashMap<String, Vec<&FnDecl>> = HashMap::new();
-        let mut method_table: HashMap<String, HashMap<String, Vec<&FnDecl>>> = HashMap::new();
+    fn build(module: &'a Module, sig: &'a crate::sig_registry::SigRegistry<'a>) -> Self {
+        // U.2.3.2: fn_decls/method_table read from `sig` (shared base registry).
         let mut effect_decls: HashMap<String, &TypeDecl> = HashMap::new();
         for item in &module.items {
-            match item {
-                Item::Type(t) => {
-                    if matches!(t.kind, TypeDeclKind::Effect(_)) {
-                        effect_decls.insert(t.name.clone(), t);
-                    }
+            if let Item::Type(t) = item {
+                if matches!(t.kind, TypeDeclKind::Effect(_)) {
+                    effect_decls.insert(t.name.clone(), t);
                 }
-                Item::Fn(f) => {
-                    if let Some(recv) = &f.receiver {
-                        method_table
-                            .entry(recv.type_name.clone())
-                            .or_default()
-                            .entry(f.name.clone())
-                            .or_default()
-                            .push(f);
-                    } else {
-                        // D84: свободные функции тоже могут иметь overloads.
-                        fn_decls.entry(f.name.clone()).or_default().push(f);
-                    }
-                }
-                _ => {}
             }
         }
-        CapabilityCtx { fn_decls, method_table, effect_decls }
+        CapabilityCtx { sig, effect_decls }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -11316,7 +11291,7 @@ impl<'a> CapabilityCtx<'a> {
         // (overloads обычно отличаются типом аргумента, не эффектами),
         // но если случится — программист дисамбигуирует через cast.
         if path.len() == 1 {
-            if let Some(overloads) = self.fn_decls.get(&path[0]) {
+            if let Some(overloads) = self.sig.fn_decls.get(&path[0]) {
                 for callee in overloads.iter() {
                     self.check_callee_effects(callee, &path[0], state, e.span, errors);
                 }
@@ -11326,7 +11301,7 @@ impl<'a> CapabilityCtx<'a> {
         // (Только receiver-Path формы; instance-method через obj.method
         // требует type-инференции, отложен.)
         if path.len() == 2 {
-            if let Some(methods) = self.method_table.get(&path[0]) {
+            if let Some(methods) = self.sig.method_table.get(&path[0]) {
                 if let Some(fns) = methods.get(&path[1]) {
                     for callee in fns {
                         self.check_callee_effects(callee, &format!("{}.{}", path[0], path[1]), state, e.span, errors);
