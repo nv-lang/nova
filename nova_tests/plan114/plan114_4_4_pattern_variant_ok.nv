@@ -1,0 +1,15 @@
+// Plan 114.4.4 Ф.4 positive: variant destructuring pattern в const fn match.
+// Variant constructor convention: TitleCase Call → ConstValue::Variant.
+
+module nova_tests.plan114
+
+fn unwrap_or(const v int, const fallback int) -> const int =>
+    match Some(v) {
+        Some(x) => x
+        None => fallback
+    }
+
+test "variant pattern Some(x)" {
+    const A_plan11444patternvariantok = unwrap_or(42, -1)
+    assert(A_plan11444patternvariantok == 42)
+}

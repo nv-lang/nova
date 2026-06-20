@@ -1,0 +1,16 @@
+// Plan 59.1 — positional field access .0 / .1 на mono'd tuple.
+module nova_tests.plan59
+
+fn[T] dup_fieldaccess(v T) -> (T, T) => (v, v)
+
+test "field access without destructure" {
+    ro p = dup_fieldaccess[int](100)
+    assert(p.0 == 100)
+    assert(p.1 == 100)
+}
+
+test "field access with str" {
+    ro p = dup_fieldaccess[str]("ok")
+    assert(p.0 == "ok")
+    assert(p.1 == "ok")
+}

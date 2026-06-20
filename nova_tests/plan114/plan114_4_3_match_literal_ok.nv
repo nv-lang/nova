@@ -1,0 +1,22 @@
+// Plan 114.4.3 T4.1 positive: match с literal patterns + wildcard.
+
+module nova_tests.plan114
+
+fn weekday_to_int(const day str) -> const int =>
+    match day {
+        "mon" => 0
+        "tue" => 1
+        "wed" => 2
+        "thu" => 3
+        "fri" => 4
+        _ => -1
+    }
+
+test "match literal patterns" {
+    const A_plan11443matchliteralok = weekday_to_int("wed")
+    const B_plan11443matchliteralok = weekday_to_int("fri")
+    const C_plan11443matchliteralok = weekday_to_int("xxx")
+    assert(A_plan11443matchliteralok == 2)
+    assert(B_plan11443matchliteralok == 4)
+    assert(C_plan11443matchliteralok == -1)
+}

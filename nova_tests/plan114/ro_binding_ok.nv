@@ -20,13 +20,13 @@ test "ro tuple destructure" {
     assert(b == 2)
 }
 
-type Point {
+type Point_robindingok {
     x int
     y int
 }
 
 test "ro record destructure" {
-    ro p = Point { x: 7, y: 9 }
+    ro p = Point_robindingok { x: 7, y: 9 }
     ro { x, y } = p
     assert(x == 7)
     assert(y == 9)

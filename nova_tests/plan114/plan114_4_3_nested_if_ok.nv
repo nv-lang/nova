@@ -1,0 +1,13 @@
+// Plan 114.4.3 T4.1 positive: nested if-else (sign function).
+
+module nova_tests.plan114
+
+fn sign(const x int) -> const int =>
+    if x == 0 { 0 } else if x > 0 { 1 } else { -1 }
+
+test "nested if (sign function)" {
+    const A_plan11443nestedifok = sign(0)
+    const B_plan11443nestedifok = sign(42)
+    assert(A_plan11443nestedifok == 0)
+    assert(B_plan11443nestedifok == 1)
+}

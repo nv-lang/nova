@@ -1,0 +1,11 @@
+// Plan 114.4 Ф.1: const X = ref на другой top-level const — constexpr-eligible.
+
+module nova_tests.plan114
+
+const BASE_plan1144constrefconstok int = 100
+const DERIVED int = BASE_plan1144constrefconstok + 10
+
+test "const refs another const" {
+    assert(BASE_plan1144constrefconstok == 100)
+    assert(DERIVED == 110)
+}

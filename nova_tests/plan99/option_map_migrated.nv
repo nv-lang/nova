@@ -3,7 +3,7 @@
 
 module nova_tests.plan99
 
-type User { id int, name str }
+type User_optionmapmigrated { id int, name str }
 
 test "Option[int].map int→int (T==U)" {
     ro a Option[int] = Some(21)

@@ -1,0 +1,14 @@
+// Plan 114.4.3 Ф.5 T4.5 positive: const fn alias V2.0 — alias-only.
+
+module nova_tests.plan114
+
+fn double(const x int) -> const int => x * 2
+
+const DBL_plan11443firstclassaliasok = double
+
+test "const fn alias" {
+    const A_plan11443firstclassaliasok = DBL_plan11443firstclassaliasok(7)
+    const B_plan11443firstclassaliasok = DBL_plan11443firstclassaliasok(21)
+    assert(A_plan11443firstclassaliasok == 14)
+    assert(B_plan11443firstclassaliasok == 42)
+}

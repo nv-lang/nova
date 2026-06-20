@@ -1,0 +1,12 @@
+// Plan 114.4.3 Ф.4 T4.4 positive: generic const fn — T-independent body.
+
+module nova_tests.plan114
+
+fn[T] noop(const x int) -> const int => x
+
+test "generic const fn T-independent" {
+    const A_plan11443genericconstidok = noop[int](42)
+    const B_plan11443genericconstidok = noop[str](7)
+    assert(A_plan11443genericconstidok == 42)
+    assert(B_plan11443genericconstidok == 7)
+}
