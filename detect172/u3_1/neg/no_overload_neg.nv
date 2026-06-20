@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+// U.3.1: overload set {g(int), g(str)} called with a `bool` — no overload is
+// arg-compatible (bool↔int and bool↔str are both category mismatches). This
+// previously leaked to codegen/C ("no matching overload" / CC-FAIL); the checker
+// now catches it as a clean Nova diagnostic (§0/§1). Per test-conventions.md:
+// no `test`-block in an EXPECT_COMPILE_ERROR file — the trigger lives in a fn
+// body (f1 checks all fn bodies), the file must fail to compile.
+module neg.no_overload_neg
+fn g(x int) -> int => x
+fn g(s str) -> int => 0
+fn trigger() -> int { g(true) }

@@ -6789,23 +6789,29 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     /// Ф.1: проверить типы аргументов call-site против параметров callee.
-    /// Plan 172.1 U.3.1: true if `callee` is arg-compatible with `args` (no arg
-    /// yields `Compat::Bad`). Permissive by design — Narrowing/OutOfRange/Unknown/Ok
-    /// all count as compatible, because codegen still performs the FINAL exact-C-type
-    /// overload selection (U.3.4 moves that too); the checker only enforces that
-    /// AT LEAST ONE overload is category-compatible (catches the str↔int leak that
-    /// previously fell through to the C compiler). Pure: emits no diagnostics.
-    fn overload_arg_compatible(
+    /// Plan 172.1 U.3.1: ARITY-AWARE compatibility probe for ONE overload.
+    ///
+    /// - `None` — the overload is not even ARITY-applicable (`bind_call_args`
+    ///   fails: wrong number of positional args, bad named arg, etc.). That is a
+    ///   wrong-arity / non-call situation reported elsewhere (BoundCtx), NOT a
+    ///   "no matching overload by type" — the caller must EXCLUDE it from the
+    ///   no-match decision (else a 0-arg / wrong-arity reference to a multi-overload
+    ///   fn would falsely fire E_NO_MATCHING_OVERLOAD).
+    /// - `Some(true)` — binds AND every arg is category-compatible (no `Compat::Bad`).
+    /// - `Some(false)` — binds but some arg is a category mismatch (the str↔int leak).
+    ///
+    /// Permissive by design — Narrowing/OutOfRange/Unknown/Ok all count as
+    /// compatible, because codegen still performs the FINAL exact-C-type selection
+    /// (U.3.4). The checker only enforces that AT LEAST ONE arity-applicable overload
+    /// is category-compatible. Pure: emits no diagnostics.
+    fn overload_applicability(
         &self,
         callee: &FnDecl,
         args: &[CallArg],
         gs: &HashSet<String>,
         scope: &HashMap<String, TypeRef>,
-    ) -> bool {
-        let Ok(bindings) = crate::argbind::bind_call_args(&callee.params, args)
-        else {
-            return false; // arity/name mismatch — not this overload
-        };
+    ) -> Option<bool> {
+        let bindings = crate::argbind::bind_call_args(&callee.params, args).ok()?;
         let callee_gs = fn_generic_scope(callee);
         for (pi, binding) in bindings.iter().enumerate() {
             let ai = match binding {
@@ -6822,10 +6828,10 @@ impl<'a> TypeCheckCtx<'a> {
                 self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope),
                 Compat::Bad { .. }
             ) {
-                return false;
+                return Some(false);
             }
         }
-        true
+        Some(true)
     }
 
     fn f1_check_call(
@@ -6853,17 +6859,20 @@ impl<'a> TypeCheckCtx<'a> {
                     Some([single]) => single,
                     Some(multi) => {
                         // Plan 172.1 U.3.1: resolve free-fn overloads in the
-                        // CHECKER (§0/§1). If NO overload is arg-compatible the
-                        // call is a type error that previously leaked to
-                        // codegen/C ("no matching overload" / CC-FAIL); now it's
-                        // a clean Nova diagnostic. If ≥1 overload matches, defer
-                        // FINAL selection to codegen's exact-C-type match (that
-                        // move is U.3.4, gated on U.2.4). De-risk: rule calibrated
-                        // in detect-mode — zero false positives on the positive
-                        // corpus (all multi-overload free-fn calls resolve).
-                        if !multi.iter()
-                            .any(|c| self.overload_arg_compatible(c, args, gs, scope))
-                        {
+                        // CHECKER (§0/§1). Consider ONLY arity-applicable overloads
+                        // (`overload_applicability` → Some(_)); if at least one
+                        // binds by arity but NONE is category-compatible, the call
+                        // is a type error that previously leaked to codegen/C
+                        // ("no matching overload" / CC-FAIL) — now a clean Nova
+                        // diagnostic. If NO overload binds by arity (wrong-arity
+                        // call or a non-call reference to the name), defer: that
+                        // arity error is reported by BoundCtx, not here. If ≥1
+                        // overload is type-compatible, defer FINAL selection to
+                        // codegen's exact-C-type match (that move is U.3.4).
+                        let applicable: Vec<bool> = multi.iter()
+                            .filter_map(|c| self.overload_applicability(c, args, gs, scope))
+                            .collect();
+                        if !applicable.is_empty() && !applicable.iter().any(|&ok| ok) {
                             errors.push(Diagnostic::new(
                                 format!(
                                     "[E_NO_MATCHING_OVERLOAD] no overload of `{}` \

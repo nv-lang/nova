@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+// U.3.1: MULTI-param free-fn overload set {f(int,int), f(int,str)} called with
+// (int, bool). 1st arg matches both candidates; 2nd arg `bool` matches NEITHER
+// int nor str → no overload is fully arg-compatible (the rule checks ALL
+// positions, not just the first). Exercises the all-params loop in
+// overload_arg_compatible. Per test-conventions.md: no `test`-block — trigger
+// in a fn body, the file must fail to compile.
+module neg.multiparam_no_overload_neg
+fn f(a int, b int) -> int => a + b
+fn f(a int, s str) -> int => a
+fn trigger() -> int { f(1, true) }
