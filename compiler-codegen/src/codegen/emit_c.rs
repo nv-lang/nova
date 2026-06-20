@@ -14691,68 +14691,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         }
     }
 
-    /// D109: convert TypeRef to C type string without &self context.
-    /// Used in infer_expr_c_type for TurboFish member call return type resolution.
-    fn simple_type_ref_to_c(tr: &crate::ast::TypeRef) -> String {
-        use crate::ast::TypeRef;
-        match tr {
-            TypeRef::Named { path, generics, .. } if generics.is_empty() => {
-                match path.join("_").as_str() {
-                    "str"           => "nova_str".to_string(),
-                    "int" | "i64"  => "nova_int".to_string(),
-                    "bool"          => "nova_bool".to_string(),
-                    "f64"           => "nova_f64".to_string(),
-                    "f32"           => "nova_f32".to_string(),
-                    "u8" | "byte"   => "nova_byte".to_string(),
-                    "unit"          => "nova_unit".to_string(),
-                    // Plan 152.8: fixed-width and other primitive types missing from
-                    // simple_type_ref_to_c caused Vec[u32] (and Vec[u16]/Vec[i32]/etc.)
-                    // to mangle as Nova_Vec____Nova_u32_p* in infer_expr_c_type's
-                    // TurboFish branch (line ~34900). Mirrors type_ref_to_c primitives.
-                    "u32"           => "uint32_t".to_string(),
-                    "u16"           => "uint16_t".to_string(),
-                    "u64"           => "uint64_t".to_string(),
-                    "uint"          => "nova_uint".to_string(),
-                    "i8"            => "int8_t".to_string(),
-                    "i16"           => "int16_t".to_string(),
-                    "i32"           => "int32_t".to_string(),
-                    "char"          => "nova_char".to_string(),
-                    "never"         => "nova_int".to_string(),
-                    other           => format!("Nova_{}*", other),
-                }
-            }
-            // Plan 131 Ф.3: Option[T] / Result[T,E] must mangle к their
-            // canonical C names (`NovaOpt_<T>` / `NovaRes_<T>_<E>*`), mirroring
-            // `apply_type_subst_to_ref` / `type_ref_to_c`. Without this, a
-            // user generic over `Option[int]` (e.g. `Vec[Option[int]]`)
-            // produced the call-site type `Nova_Box____Nova_Option____nova_int_p`
-            // while the definition emitted `Nova_Box____NovaOpt_nova_int` —
-            // CC-FAIL «unknown type name».
-            TypeRef::Named { path, generics, .. }
-                if path.last().map(|s| s.as_str()) == Some("Option") && generics.len() == 1 =>
-            {
-                let inner_c = Self::simple_type_ref_to_c(&generics[0]);
-                format!("NovaOpt_{}", Self::sanitize_for_novaopt(&inner_c))
-            }
-            TypeRef::Named { path, generics, .. }
-                if path.last().map(|s| s.as_str()) == Some("Result") && generics.len() == 2 =>
-            {
-                let ok_c = Self::simple_type_ref_to_c(&generics[0]);
-                let err_c = Self::simple_type_ref_to_c(&generics[1]);
-                format!("NovaRes_{}_{}*",
-                    Self::sanitize_for_novaopt(&ok_c),
-                    Self::sanitize_for_novaopt(&err_c))
-            }
-            TypeRef::Named { path, generics, .. } => {
-                let base = path.last().cloned().unwrap_or_default();
-                let args: Vec<String> = generics.iter()
-                    .map(|g| Self::simple_type_ref_to_c(g))
-                    .collect();
-                format!("{}*", Self::compute_generic_type_c_name(&base, &args))
-            }
-            _ => "nova_int".to_string(),
-        }
-    }
+    // Plan 172.1 U.6.1.a: `simple_type_ref_to_c` (a lossy static mirror of `type_ref_to_c`
+    // that drifted — the missing u32 broke Vec[u32] mangling, Plan 152.8) was DELETED; the
+    // one TurboFish-member caller (infer_expr_c_type) now delegates to the single instance
+    // `type_ref_to_c`. One type->C path (§0/§2). NOT byte-identical: the smart resolver
+    // resolves nested mono type-params to concrete (more precise) — owner-approved 2026-06-20.
 
     /// Plan 48 V1 fallback: register/emit a void*-erased version of a generic fn on demand.
     /// Called when type argument inference fails (e.g. generic record params).
@@ -36207,9 +36150,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             if self.generic_types.contains(type_name.as_str()) {
                                 let type_args_c: Vec<String> = type_args.iter()
                                     .map(|tr| {
-                                        // In a monomorphized context, type params (K, V, etc.)
-                                        // are stored in current_type_subst as C-type strings.
-                                        // simple_type_ref_to_c is static and can't see them.
+                                        // U.6.1.a: delegate to the SINGLE `type_ref_to_c`
+                                        // (removes the drift-prone `simple_type_ref_to_c`
+                                        // mirror — §0/§2). NOT byte-identical by design:
+                                        // unlike the deleted static mirror, `type_ref_to_c`
+                                        // resolves NESTED mono type-params (the `K`/`V` inside
+                                        // `Slot[K,V]`) to their concrete C-types via
+                                        // current_type_subst at each recursion level, so the
+                                        // inferred turbofish-member type matches the
+                                        // (likewise-`type_ref_to_c`) DEFINITION side instead
+                                        // of an erased `Nova_K_p` placeholder — strictly more
+                                        // precise mono. The early bare-type-param return is
+                                        // kept (current_type_subst-only precedence, as before).
+                                        // `type_ref_to_c` only errs on removed types
+                                        // (usize/isize/ptr, Plan 133/134) — not valid here.
                                         if let crate::ast::TypeRef::Named { path, generics, .. } = tr {
                                             if generics.is_empty() && path.len() == 1 {
                                                 if let Some(c) = self.current_type_subst.get(&path[0]) {
@@ -36217,7 +36171,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                                 }
                                             }
                                         }
-                                        Self::simple_type_ref_to_c(tr)
+                                        self.type_ref_to_c(tr).unwrap_or_else(|_| "nova_int".to_string())
                                     })
                                     .collect();
                                 let mangled = Self::compute_generic_type_c_name(type_name, &type_args_c);
