@@ -7012,24 +7012,27 @@ impl<'a> TypeCheckCtx<'a> {
                     // (`Nova_Vec____nova_int*` 8-byte slots vs
                     // `Nova_Vec____uint32_t*` 4-byte slots), so reading one as the
                     // other misreads element width/stride and yields garbage like
-                    // `(hi<<32)|lo`. We catch it here at raw-TypeRef granularity
-                    // (Ty/TyCat cannot). NOT Vec-specific — fires for ANY generic
-                    // type whose base name + arity match but a concrete-primitive
-                    // type-argument differs. Scalar coercion (`int`→`u32` outside a
-                    // generic, e.g. `push(int)` into a `Vec[u32]`) is a value-level
-                    // truncation and is intentionally NOT flagged.
+                    // `(hi<<32)|lo`. NOT Vec-specific — fires for ANY generic type whose
+                    // base name + arity match but a concrete type-argument differs.
+                    // Scalar coercion (`int`→`u32` OUTSIDE a generic, e.g. `push(int)`
+                    // into a `Vec[u32]`) is a value-level truncation and is intentionally
+                    // NOT flagged. U.5.3: the mismatch DECISION is now made on the
+                    // lossless structured `ResolvedType` (`distinct_mono`); `generic_args`
+                    // is kept only to iterate the arg pairs + display their `TypeRef`s in
+                    // the message (a thin accessor, not a parallel type engine).
                     if let (Some((base_p, args_p)), Some(arg_tr)) = (
                         generic_args(&param.ty),
                         self.infer_expr_type(arg.expr(), scope),
                     ) {
                         if let Some((base_a, args_a)) = generic_args(&arg_tr) {
                             // Same generic type (base name + arity) — compare each
-                            // type-argument recursively; flag the first pair that is
-                            // a definite mismatch (primitive width, nested generic,
-                            // or distinct concrete record/sum/newtype).
+                            // type-argument; flag the first definite mismatch.
                             if base_p == base_a && args_p.len() == args_a.len() {
                                 for (pa, aa) in args_p.iter().zip(args_a.iter()) {
-                                    if self.generic_arg_mismatch(pa, aa, &callee_gs, gs) {
+                                    if distinct_mono(
+                                        &self.resolved_cat_of(pa, &callee_gs),
+                                        &self.resolved_cat_of(aa, gs),
+                                    ) {
                                         errors.push(
                                             Diagnostic::new(
                                                 format!(
@@ -8821,139 +8824,18 @@ impl<'a> TypeCheckCtx<'a> {
 
     // ── End D175/D176 helpers ──────────────────────────────────────────────
 
-    /// Ф.1: грубая категория типа. Alias/newtype разворачиваются —
-    /// assignability сравнивает категории, не имена (newtype-cast
-    /// строгость D54 — отдельная забота Plan 37).
-    fn cat_of(&self, tr: &TypeRef, gs: &HashSet<String>) -> TyCat {
-        self.cat_of_depth(tr, gs, 0)
-    }
-
-    fn cat_of_depth(
-        &self,
-        tr: &TypeRef,
-        gs: &HashSet<String>,
-        depth: u32,
-    ) -> TyCat {
-        if depth > 16 {
-            return TyCat::Other;
-        }
-        match tr {
-            TypeRef::Named { path, generics, .. } => {
-                let Some(name) = path.last() else { return TyCat::Other; };
-                if gs.contains(name) {
-                    return TyCat::Other;
-                }
-                match name.as_str() {
-                    "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16"
-                    | "u32" | "u64" | "uint"
-                    // Plan 133: usize/isize removed — int/uint are address-sized.
-                    => TyCat::Int,
-                    "f32" | "f64" => TyCat::Float,
-                    "bool" => TyCat::Bool,
-                    "str" => TyCat::Str,
-                    "char" => TyCat::Char,
-                    // [M-vec-elem-type-mismatch-silent] D239: `Vec[T] ≡ []T`.
-                    // Lower the named `Vec[T]` form to the SAME `Array(elem)`
-                    // category as the `[]T` sugar so the two spellings unify in
-                    // assignability — e.g. a `Vec[int]` value passed to an
-                    // `[]int` param. Without this the named form fell through to
-                    // the Record arm below and collapsed to `Named("Vec")` with
-                    // the element dropped, so it never matched `Array(elem)` and
-                    // a `Vec[int]`→`[]int` argument spuriously failed once the
-                    // binding's `Vec[int]` type became known. The element STILL
-                    // lowers through `cat_of_depth`, so `Vec[int]` and `Vec[u32]`
-                    // both reduce to `Array(Int)` here (int-width collapse is
-                    // intentional at this layer); the raw-TypeRef element check
-                    // in `f1_check_call` catches genuine width mismatches.
-                    "Vec" if generics.len() == 1 => TyCat::Array(Box::new(
-                        self.cat_of_depth(&generics[0], gs, depth + 1),
-                    )),
-                    // Plan 134: `ptr` removed — but keep as Ptr for legacy compat
-                    // during transition; produces error in codegen type_ref_to_c.
-                    "ptr" => TyCat::Ptr,
-                    "any" | "never" | "Self" => TyCat::Other,
-                    other => match self.types.get(other) {
-                        Some(td) => match &td.kind {
-                            // Alias всегда transparent (D52 явно: «X и Y совместимы»).
-                            TypeDeclKind::Alias(inner) => {
-                                self.cat_of_depth(inner, gs, depth + 1)
-                            }
-                            // Newtype: D52 явно: «X — новый тип, типизированно
-                            // отличный от Y». Plan 115 D214: critical для
-                            // opaque handle pattern (`type SqHandle(ptr)` ≠
-                            // `type PngHandle(ptr)` ≠ `ptr`). Возвращаем
-                            // Named(name) для nominal distinction.
-                            //
-                            // Backward-compat для существующих Go-style
-                            // newtype'ов с numeric/str/bool inner: literal
-                            // expressions (IntLit/FloatLit/etc.) checked
-                            // BEFORE cat_compatible в assignable() — литералы
-                            // адаптируются к контексту через path-specific
-                            // arms. Variable-typing — нужна distinction.
-                            TypeDeclKind::Newtype(_) => {
-                                TyCat::Named(other.to_string())
-                            }
-                            // Concrete data-типы — сравниваются по имени.
-                            TypeDeclKind::Record(_)
-                            | TypeDeclKind::Sum(_)
-                            // Plan 120 (D215): named tuples are concrete value types.
-                            | TypeDeclKind::NamedTuple(_) => {
-                                TyCat::Named(other.to_string())
-                            }
-                            // protocol/effect — структурная конформность
-                            // (забота D72 bound-checker'а), opaque —
-                            // непрозрачен: любой concrete-тип потенциально
-                            // совместим → permissive.
-                            TypeDeclKind::Protocol { .. }
-                            | TypeDeclKind::Effect(_)
-                            | TypeDeclKind::Opaque => TyCat::Other,
-                        },
-                        // Неизвестное имя — вариант sum-типа, не-смерженный
-                        // импорт, generic из чужого scope: permissive,
-                        // чтобы исключить ложные срабатывания.
-                        None => TyCat::Other,
-                    },
-                }
-            }
-            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
-                TyCat::Array(Box::new(self.cat_of_depth(inner, gs, depth + 1)))
-            }
-            TypeRef::Tuple(_, _) | TypeRef::Func { .. } => TyCat::Other,
-            // Plan 97 Ф.2 (D142): анонимный protocol-тип — структурный
-            // контракт. Конформность проверяется отдельно
-            // (`check_satisfaction` + inline-protocol case), для
-            // category-based assignability — `Other` (permissive, чтобы
-            // любой concrete-тип не отвергался).
-            TypeRef::Protocol { .. } => TyCat::Other,
-            TypeRef::Unit(_) => TyCat::Unit,
-            // D176 (Plan 108): readonly T — same category as inner (transparent for assignability).
-            TypeRef::Readonly(inner, _) => self.cat_of_depth(inner, gs, depth + 1),
-            // Plan 118 D216: typed pointer `*T` — category Ptr (matches D214
-            // `ptr` opaque). Внутренний type categorization не нужен для
-            // assignability rules; mutability/safety enforced отдельно в Ф.4.
-            TypeRef::Pointer(_, _) => TyCat::Ptr,
-            // Plan 118.5: `mut T` / `unsafe T` modifiers are transparent —
-            // their category derives from inner (typically a Pointer → Ptr,
-            // но возможны и другие inner-shapes, e.g. `mut * T`).
-            TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
-                self.cat_of_depth(inner, gs, depth + 1)
-            }
-        }
-    }
-
-    /// Plan 172.1 U.5.2 ([M-172.1-U5.2-resolved-cat-transitional]): LOSSLESS structured
-    /// mirror of `cat_of_depth` — SAME resolution (alias-transparent, `Vec[T]`→`Array`,
-    /// newtype/record/sum/named-tuple→`Named`, unknown/protocol/effect/`any`/`never`/
-    /// generic-param→`Any`, `char`→`Named("char")`) but int-family carries EXACT
-    /// `(width, signed, wide_default)` instead of the `TyCat::Int` collapse. Feeds the
-    /// structured `cat_compatible_rt` in `assignable`/`f1_check_for_elem`.
+    /// Plan 172.1 U.5.4: the SOLE structured category resolver — the LOSSLESS replacement
+    /// of the deleted lossy `cat_of`/`cat_of_depth`/`TyCat` parallel engine. SAME
+    /// resolution as the old `cat_of` (alias-transparent, `Vec[T]`→`Array`,
+    /// newtype/record/sum/named-tuple→`Named` + generic args, unknown/protocol/effect/
+    /// `any`/`never`/generic-param→`Any`, `char`→`Named { "char" }`) but int-family
+    /// carries EXACT `(width, signed, wide_default)`, float carries width, and `Named`
+    /// carries generic args — instead of the `TyCat`-collapse. Feeds `cat_compatible_rt`
+    /// (`assignable`/`f1_check_for_elem`) and `distinct_mono` (generic-arg identity).
     ///
-    /// Like `cat_of` (and UNLIKE `from_type_ref`), int-family names resolve to `Scalar`
-    /// REGARDLESS of generics (`int[X]`→`Scalar`) — it mirrors `cat_of`'s name match,
-    /// not `ty_of_ref`'s generics-guard. TRANSITIONAL: a second converter alongside
-    /// `cat_of` only until U.5.4 deletes `TyCat`/`cat_of` and this becomes the sole
-    /// category resolver (the temporary duplication is the cost of routing
-    /// `cat_compatible` before `cat_of` is removed — tracked by the marker).
+    /// Like the old `cat_of` (and UNLIKE `from_type_ref`), int-family names resolve to
+    /// `Scalar` REGARDLESS of generics (`int[X]`→`Scalar`) — name match, not
+    /// `ty_of_ref`'s generics-guard.
     fn resolved_cat_of(&self, tr: &TypeRef, gs: &HashSet<String>) -> ResolvedType {
         self.resolved_cat_of_depth(tr, gs, 0)
     }
@@ -9042,59 +8924,11 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// [M-generic-arg-type-mismatch-silent] — recursively decide whether two
-    /// type-arguments `p` (parameter side, scope `pgs`) and `a` (actual-argument
-    /// side, scope `ags`) of the SAME generic type are a definite mismatch (two
-    /// distinct monomorphizations). Conservative — returns `true` ONLY when
-    /// confident, so legal code is never rejected:
-    ///   1. a generic type-PARAMETER on either side instantiates to anything →
-    ///      permissive (`false`);
-    ///   2. both concrete primitives with different names → mismatch
-    ///      (width-sensitive: `int` ≠ `u32`, `f32` ≠ `f64`, `char` ≠ `int`);
-    ///   3. both the SAME-base generic (`Vec[..]`/`[]..` or a user `G[..]`) →
-    ///      recurse on each nested type-argument; mismatch if any nested pair is;
-    ///   4. both concrete NAMED types (record / sum / newtype, alias-resolved via
-    ///      `cat_of`) with different canonical names → mismatch (`Foo` ≠ `Bar`);
-    ///   5. anything else (protocols, unknown names, base/arity differences) →
-    ///      permissive.
-    /// Aliases are transparent (`cat_of` resolves them), so `Box[MyAlias]` and
-    /// `Box[Underlying]` do NOT falsely flag; newtypes stay nominally distinct.
-    fn generic_arg_mismatch(
-        &self,
-        p: &TypeRef,
-        a: &TypeRef,
-        pgs: &HashSet<String>,
-        ags: &HashSet<String>,
-    ) -> bool {
-        // (1) generic type-param on either side → instantiates to anything.
-        if is_type_param_name(p, pgs) || is_type_param_name(a, ags) {
-            return false;
-        }
-        // (2) both concrete primitives → width-sensitive name compare.
-        if let (Some(pp), Some(pa)) =
-            (concrete_primitive_name(p), concrete_primitive_name(a))
-        {
-            return pp != pa;
-        }
-        // (3) both the same-base generic → recurse on each type-argument.
-        if let (Some((bp, ap)), Some((ba, aa))) = (generic_args(p), generic_args(a)) {
-            if bp == ba && ap.len() == aa.len() {
-                return ap
-                    .iter()
-                    .zip(aa.iter())
-                    .any(|(x, y)| self.generic_arg_mismatch(x, y, pgs, ags));
-            }
-            // Different base / arity — could be an alias or an unknown import;
-            // stay permissive rather than risk a false positive.
-            return false;
-        }
-        // (4) both concrete named (record / sum / newtype, alias-resolved) →
-        // compare canonical names.
-        match (self.cat_of(p, pgs), self.cat_of(a, ags)) {
-            (TyCat::Named(np), TyCat::Named(na)) => np != na,
-            _ => false,
-        }
-    }
+    // [M-generic-arg-type-mismatch-silent] U.5.3: the raw-TypeRef
+    // `generic_arg_mismatch` (+ `concrete_primitive_name` / `is_type_param_name`) was
+    // folded into the structured `distinct_mono` over the lossless `ResolvedType` and
+    // deleted. `generic_args` (a thin TypeRef accessor) is retained for the f1_check_call
+    // arg-pair iteration + message display. This removed the LAST `cat_of` consumer.
 }
 
 /// Ф.1: результат проверки совместимости.
@@ -9157,24 +8991,10 @@ fn lit_range_check(val: i128, name: &str) -> Option<String> {
     }
 }
 
-/// Ф.1: грубая категория типа для assignability.
-#[derive(PartialEq, Clone)]
-enum TyCat {
-    Int,
-    Float,
-    Bool,
-    Str,
-    Char,
-    Unit,
-    /// Plan 115 D214: `ptr` — opaque pointer primitive.
-    Ptr,
-    /// Concrete именованный тип (record/sum) — сравнивается по имени.
-    Named(String),
-    Array(Box<TyCat>),
-    /// Generic-параметр / `any` / func / tuple / неизвестное — проверку
-    /// не делаем (permissive, чтобы не было ложных срабатываний).
-    Other,
-}
+// Plan 172.1 U.5.4: the lossy `TyCat` category enum (and `cat_of`/`cat_of_depth`/
+// `cat_compatible`) was deleted — `ResolvedType` + `resolved_cat_of` + `cat_compatible_rt`
+// are the single lossless category representation. (`Ty`/`ty_of_ref` remain pending the
+// U.5.4 never-check migration.)
 
 /// Plan 172.1 U.5.2: structured mirror of `cat_compatible` over `ResolvedType`
 /// (replaces the `TyCat` version for the `assignable` / `f1_check_for_elem` category
@@ -9199,6 +9019,54 @@ fn cat_compatible_rt(found: &ResolvedType, expected: &ResolvedType) -> bool {
         // NAME only — generic args ignored here (permissive); `char` rides as `Named`.
         (R::Named { name: a, .. }, R::Named { name: b, .. }) => a == b,
         (R::Array(a), R::Array(b)) => cat_compatible_rt(a, b),
+        _ => false,
+    }
+}
+
+/// U.5.3 ([M-generic-arg-type-mismatch-silent], structured): `char` rides as
+/// `Named { name: "char", .. }`, so it must be treated as a primitive LEAF here, not a
+/// nominal record (mirrors the legacy `concrete_primitive_name` which lists `char`).
+fn is_char_rt(t: &ResolvedType) -> bool {
+    matches!(t, ResolvedType::Named { name, .. } if name == "char")
+}
+
+/// U.5.3 — is `t` a concrete builtin scalar primitive leaf (the
+/// `concrete_primitive_name` set: int-family, `f32`/`f64`, `char`, `bool`, `str`)? Used
+/// by `distinct_mono` to decide where width/sign/float-width must match EXACTLY.
+fn is_prim_leaf_rt(t: &ResolvedType) -> bool {
+    use ResolvedType as R;
+    matches!(t, R::Scalar { .. } | R::Float { .. } | R::Bool | R::Str) || is_char_rt(t)
+}
+
+/// U.5.3 — structured replacement of `generic_arg_mismatch`: are two `ResolvedType`
+/// type-arguments of the SAME generic a DEFINITE mismatch (two distinct
+/// monomorphizations, a pointer-reinterpretation footgun)? Conservative — `true` ONLY
+/// when confident, mirroring the legacy raw-TypeRef rules on the now-lossless type:
+///   1. `Any` (generic-param / unknown / protocol) either side → permissive (`false`);
+///   2. both concrete primitives → mismatch iff NOT structurally equal (int names via
+///      `wide_default`, `f32`≠`f64` via width, `char`≠`int`, …);
+///   3. both same-base generic (`Array`/`[]`, or a user `Named { args }`) → recurse on
+///      each nested type-argument; mismatch if any nested pair is;
+///   4. both concrete NAMED records (alias-resolved via `resolved_cat_of`) with
+///      different names → mismatch;
+///   5. a primitive vs a record (or `ptr`/`unit`/mixed) → permissive (`false`).
+fn distinct_mono(p: &ResolvedType, a: &ResolvedType) -> bool {
+    use ResolvedType as R;
+    match (p, a) {
+        (R::Any, _) | (_, R::Any) => false, // (1)
+        (R::Array(x), R::Array(y)) => distinct_mono(x, y), // (3) Vec/[]T
+        // (4) both nominal records (NOT `char`, which is a primitive leaf) → name +
+        // recurse args.
+        (R::Named { name: np, args: ap }, R::Named { name: na, args: aa })
+            if !is_char_rt(p) && !is_char_rt(a) =>
+        {
+            np != na
+                || ap.len() != aa.len()
+                || ap.iter().zip(aa.iter()).any(|(x, y)| distinct_mono(x, y))
+        }
+        // (2) both concrete primitives → exact structural identity.
+        _ if is_prim_leaf_rt(p) && is_prim_leaf_rt(a) => p != a,
+        // (5) primitive vs record / ptr / unit / mixed → permissive.
         _ => false,
     }
 }
@@ -13792,35 +13660,9 @@ fn generic_args(tr: &TypeRef) -> Option<(String, Vec<&TypeRef>)> {
     }
 }
 
-/// [M-generic-arg-type-mismatch-silent] — is `tr` a bare generic type-PARAMETER
-/// (a single-segment name with no generics that is bound in scope `gs`, e.g. the
-/// `T` of `fn f[T](...)`)? Such a position instantiates to anything, so the
-/// generic-argument mismatch check must stay permissive on it.
-fn is_type_param_name(tr: &TypeRef, gs: &HashSet<String>) -> bool {
-    matches!(tr, TypeRef::Named { path, generics, .. }
-        if generics.is_empty() && path.len() == 1 && gs.contains(&path[0]))
-}
-
-/// [M-generic-arg-type-mismatch-silent] — if `tr` is a concrete builtin scalar
-/// primitive (named, single-segment, no generics), return its name. Generic
-/// type-params (`T`), records, newtypes and aliases return `None` so they are
-/// never flagged by the generic-argument mismatch check — only genuine
-/// primitive-vs-primitive differences (the width-reinterpretation bug class)
-/// fire. Scalar coercion (`int`→`u32` outside a generic) is unaffected: this is
-/// consulted ONLY for type-arguments of matching generic types.
-fn concrete_primitive_name(tr: &TypeRef) -> Option<&str> {
-    match tr {
-        TypeRef::Named { path, generics, .. } if generics.is_empty() && path.len() == 1 => {
-            match path[0].as_str() {
-                n @ ("int" | "i8" | "i16" | "i32" | "i64"
-                | "u8" | "u16" | "u32" | "u64" | "uint"
-                | "f32" | "f64" | "char" | "bool" | "str") => Some(n),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
+// [M-generic-arg-type-mismatch-silent] U.5.3: `is_type_param_name` (→ `Any` in
+// `resolved_cat_of`) and `concrete_primitive_name` (→ structural eq of primitive
+// `ResolvedType` leaves) were folded into `distinct_mono` and deleted.
 
 // ============================================================================
 // D90 Plan 20 Ф.3: defer/errdefer body constraints
