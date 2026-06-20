@@ -62,12 +62,21 @@ pub enum Ty {
 ///
 /// §2 exception: the primitive width/sign table (`int`≡`i64`=(64,signed),
 /// `uint`≡`u64`=(64,unsigned), …) is the sanctioned hardcode (also pinned by the
-/// `int`≡`i64` D-block). ADDITIVE in U.5.1 — not yet consumed by `assignable`/codegen.
+/// `int`≡`i64` D-block).
+///
+/// U.5.2 amend: `Scalar` also carries `wide_default` — `true` ONLY for `int`/`uint`,
+/// `false` for the explicit sized names (`i8`..`i64` / `u8`..`u64`). `int`≡`i64` and
+/// `uint`≡`u64` stay equal on `(width, signed)` (arithmetic / `would_narrow_into`
+/// read only those), but DIFFER on `wide_default`: the wide defaults skip the literal
+/// range-check (D227 Rule 1), the sized names are range-checked. This is the one bit
+/// the lossy `Ty`/`TyCat` could not express and the reason `sized_int_name` needs the
+/// structured carrier (`int`/`uint` → `None`; `i64`/`u64` → checked).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedType {
     /// Int-family with EXACT bit-width + signedness (lossless replacement for
-    /// `Ty::Int` / `TyCat::Int`).
-    Scalar { width: u8, signed: bool },
+    /// `Ty::Int` / `TyCat::Int`). `wide_default`: `true` for `int`/`uint` only
+    /// (D227 Rule 1 — no literal range-check), `false` for sized `i8..u64`.
+    Scalar { width: u8, signed: bool, wide_default: bool },
     Float,
     Str,
     Bool,
@@ -99,14 +108,16 @@ impl ResolvedType {
                 let name = path.last().map(|s| s.as_str());
                 if generics.is_empty() {
                     match name {
-                        Some("i8") => return R::Scalar { width: 8, signed: true },
-                        Some("i16") => return R::Scalar { width: 16, signed: true },
-                        Some("i32") => return R::Scalar { width: 32, signed: true },
-                        Some("i64") | Some("int") => return R::Scalar { width: 64, signed: true },
-                        Some("u8") => return R::Scalar { width: 8, signed: false },
-                        Some("u16") => return R::Scalar { width: 16, signed: false },
-                        Some("u32") => return R::Scalar { width: 32, signed: false },
-                        Some("u64") | Some("uint") => return R::Scalar { width: 64, signed: false },
+                        Some("i8") => return R::Scalar { width: 8, signed: true, wide_default: false },
+                        Some("i16") => return R::Scalar { width: 16, signed: true, wide_default: false },
+                        Some("i32") => return R::Scalar { width: 32, signed: true, wide_default: false },
+                        Some("i64") => return R::Scalar { width: 64, signed: true, wide_default: false },
+                        Some("int") => return R::Scalar { width: 64, signed: true, wide_default: true },
+                        Some("u8") => return R::Scalar { width: 8, signed: false, wide_default: false },
+                        Some("u16") => return R::Scalar { width: 16, signed: false, wide_default: false },
+                        Some("u32") => return R::Scalar { width: 32, signed: false, wide_default: false },
+                        Some("u64") => return R::Scalar { width: 64, signed: false, wide_default: false },
+                        Some("uint") => return R::Scalar { width: 64, signed: false, wide_default: true },
                         _ => {}
                     }
                 }
@@ -160,7 +171,7 @@ impl ResolvedType {
     /// that `int_width_rank` recovers separately today (folded by U.5.2).
     pub fn int_width_sign(&self) -> Option<(u8, bool)> {
         match self {
-            ResolvedType::Scalar { width, signed } => Some((*width, *signed)),
+            ResolvedType::Scalar { width, signed, .. } => Some((*width, *signed)),
             _ => None,
         }
     }
@@ -168,6 +179,37 @@ impl ResolvedType {
     /// Signedness if int-family.
     pub fn is_signed(&self) -> Option<bool> {
         self.int_width_sign().map(|(_, s)| s)
+    }
+
+    /// Sized-int name (`i8`..`i64` / `u8`..`u64`) for the literal range-check +
+    /// diagnostic message — the structured replacement of the standalone
+    /// `sized_int_name(&TypeRef)`. `None` for the wide defaults (`int`/`uint`, D227
+    /// Rule 1: a bare literal in `int`/`uint` context is NOT range-checked) and for
+    /// non-int. Byte-identical to `sized_int_name(tr)` when called on
+    /// `from_type_ref(tr)`: the name is reconstructed from `(width, signed)` (the §2
+    /// primitive table, inverse of `from_type_ref`'s map); `wide_default` carries the
+    /// `int`/`uint`-vs-`i64`/`u64` distinction the lossy `Ty`/`TyCat` dropped.
+    pub fn sized_int_name(&self) -> Option<String> {
+        let ResolvedType::Scalar { width, signed, wide_default } = self else {
+            return None;
+        };
+        if *wide_default {
+            return None; // `int`/`uint` — wide default, no range-check (D227 Rule 1)
+        }
+        Some(
+            match (*width, *signed) {
+                (8, true) => "i8",
+                (16, true) => "i16",
+                (32, true) => "i32",
+                (64, true) => "i64",
+                (8, false) => "u8",
+                (16, false) => "u16",
+                (32, false) => "u32",
+                (64, false) => "u64",
+                _ => return None,
+            }
+            .to_string(),
+        )
     }
 
     /// Would coercing a non-literal value of `self` into `target` LOSE range — i.e.
@@ -204,12 +246,17 @@ mod resolved_type_tests {
 
     #[test]
     fn primitives_lossless_width_sign() {
-        assert_eq!(r("int"), ResolvedType::Scalar { width: 64, signed: true });
-        assert_eq!(r("i64"), ResolvedType::Scalar { width: 64, signed: true });
-        assert_eq!(r("uint"), ResolvedType::Scalar { width: 64, signed: false });
-        assert_eq!(r("u64"), ResolvedType::Scalar { width: 64, signed: false });
-        assert_eq!(r("i8"), ResolvedType::Scalar { width: 8, signed: true });
-        assert_eq!(r("u32"), ResolvedType::Scalar { width: 32, signed: false });
+        // `int`≡`i64` and `uint`≡`u64` on (width, signed) — the arithmetic /
+        // narrowing axis — but DIFFER on `wide_default` (the D227 range-check axis).
+        assert_eq!(r("int"), ResolvedType::Scalar { width: 64, signed: true, wide_default: true });
+        assert_eq!(r("i64"), ResolvedType::Scalar { width: 64, signed: true, wide_default: false });
+        assert_eq!(r("uint"), ResolvedType::Scalar { width: 64, signed: false, wide_default: true });
+        assert_eq!(r("u64"), ResolvedType::Scalar { width: 64, signed: false, wide_default: false });
+        // representation identical (int ≡ i64): same width/sign ⇒ no narrowing between them.
+        assert_eq!(r("int").int_width_sign(), r("i64").int_width_sign());
+        assert_eq!(r("uint").int_width_sign(), r("u64").int_width_sign());
+        assert_eq!(r("i8"), ResolvedType::Scalar { width: 8, signed: true, wide_default: false });
+        assert_eq!(r("u32"), ResolvedType::Scalar { width: 32, signed: false, wide_default: false });
         assert_eq!(r("f64"), ResolvedType::Float);
         assert_eq!(r("str"), ResolvedType::Str);
         assert_eq!(r("bool"), ResolvedType::Bool);
@@ -224,11 +271,11 @@ mod resolved_type_tests {
         let int = || prim_ref("int", Span::dummy());
         assert_eq!(
             ResolvedType::from_type_ref(&TypeRef::Readonly(Box::new(int()), Span::dummy())),
-            ResolvedType::Scalar { width: 64, signed: true }
+            ResolvedType::Scalar { width: 64, signed: true, wide_default: true }
         );
         assert_eq!(
             ResolvedType::from_type_ref(&TypeRef::Mut(Box::new(int()), Span::dummy())),
-            ResolvedType::Scalar { width: 64, signed: true }
+            ResolvedType::Scalar { width: 64, signed: true, wide_default: true }
         );
     }
 
@@ -237,7 +284,7 @@ mod resolved_type_tests {
         use crate::ast::PointerModifier;
         let int = || prim_ref("int", Span::dummy());
         let ptr = |inner| TypeRef::Pointer(Box::new(inner), Span::dummy());
-        let scal = || ResolvedType::Scalar { width: 64, signed: true };
+        let scal = || ResolvedType::Scalar { width: 64, signed: true, wide_default: true };
         assert_eq!(
             ResolvedType::from_type_ref(&ptr(int())),
             ResolvedType::TypedPtr(PointerModifier::Ro, Box::new(scal()))
@@ -257,7 +304,7 @@ mod resolved_type_tests {
         let arr = TypeRef::Array(Box::new(prim_ref("u32", Span::dummy())), Span::dummy());
         assert_eq!(
             ResolvedType::from_type_ref(&arr),
-            ResolvedType::Array(Box::new(ResolvedType::Scalar { width: 32, signed: false }))
+            ResolvedType::Array(Box::new(ResolvedType::Scalar { width: 32, signed: false, wide_default: false }))
         );
     }
 
@@ -275,7 +322,8 @@ mod resolved_type_tests {
 
     #[test]
     fn would_narrow_into_matches_is_int_narrowing() {
-        let s = |w, sg| ResolvedType::Scalar { width: w, signed: sg };
+        // narrowing reads only (width, signed) — `wide_default` is irrelevant here.
+        let s = |w, sg| ResolvedType::Scalar { width: w, signed: sg, wide_default: false };
         // narrowing / value-range-unsafe:
         assert!(s(32, false).would_narrow_into(&s(32, true))); // u32 → i32
         assert!(s(64, false).would_narrow_into(&s(64, true))); // u64 → int(i64)
@@ -299,6 +347,34 @@ mod resolved_type_tests {
                 "would_narrow_into must match is_int_narrowing for {f}→{e}"
             );
         }
+    }
+
+    #[test]
+    fn sized_int_name_matches_legacy_and_distinguishes_wide_default() {
+        let tr = |n| prim_ref(n, Span::dummy());
+        // The whole reason for `wide_default`: `int`/`uint` skip the range-check
+        // (D227 Rule 1), the sized names are checked — a distinction `Scalar{w,s}`
+        // alone could NOT express (`uint`≡`u64`≡(64,false)).
+        assert_eq!(r("int").sized_int_name(), None);
+        assert_eq!(r("uint").sized_int_name(), None);
+        assert_eq!(r("i64").sized_int_name(), Some("i64".to_string()));
+        assert_eq!(r("u64").sized_int_name(), Some("u64".to_string()));
+        assert_eq!(r("u8").sized_int_name(), Some("u8".to_string()));
+        assert_eq!(r("i32").sized_int_name(), Some("i32".to_string()));
+        assert_eq!(r("str").sized_int_name(), None);
+        assert_eq!(r("Foo").sized_int_name(), None);
+        // byte-identical to the standalone `sized_int_name(&TypeRef)` (the U.5.2 gate):
+        // method on `from_type_ref(tr)` must equal the legacy fn for every direct name.
+        for n in ["int", "uint", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "str", "bool"] {
+            assert_eq!(
+                ResolvedType::from_type_ref(&tr(n)).sized_int_name(),
+                sized_int_name(&tr(n)),
+                "sized_int_name method must match legacy fn for `{n}`"
+            );
+        }
+        // L2 view (ro/mut/unsafe) transparent — same as the legacy unwrap.
+        let ro_u8 = TypeRef::Readonly(Box::new(tr("u8")), Span::dummy());
+        assert_eq!(ResolvedType::from_type_ref(&ro_u8).sized_int_name(), sized_int_name(&ro_u8));
     }
 }
 
