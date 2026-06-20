@@ -4,6 +4,11 @@
 > **Plan 100.8 (D166).** Закрыт 2026-05-26.
 > Охватывает: диагностика, LSP quick-fixes, `nova doc` badges,
 > `nova consume-analyze` CLI, C-codegen errdefer-hoisting fix.
+>
+> ⚠️ **Note (2026-06-20):** упоминания `errdefer`/`okdefer` ниже — исторические;
+> они УДАЛЕНЫ ([D189](../../spec/decisions/03-syntax.md#d189)). Актуальная идиома →
+> [consume-scope-cleanup.md](consume-scope-cleanup.md), модель →
+> [error-and-cleanup-model.md](error-and-cleanup-model.md).
 
 ---
 
