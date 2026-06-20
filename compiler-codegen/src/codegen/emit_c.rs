@@ -30036,19 +30036,28 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     return vec![];
                 }
                 // ---- User sum-types ----
-                // Lookup sum_schemas: variant_field_types[(sum_name, variant_name)].
+                // Plan 172.1 U.6.2.b (single-source read): layout вариантов читаем
+                // из `sum_schema_registry`, а не из legacy `sum_schemas`. Option/Result
+                // обработаны ВЫШЕ (ранний return), сюда доходят только user sum-types —
+                // их registry зеркалит из `.nv` через `register_user_sum` (тот же layout,
+                // что legacy; detect U.6.2.b: 0 дивергенций на широком sum-heavy корпусе).
+                // Остальные field-layout/existence/mono чтения + де-хардкод baseline —
+                // финальная чистка sum-schema-трека, см. [M-172.1-U6-sumschema-baseline-nv].
                 let sum_name = scr_ty.trim_end_matches('*').trim()
                     .strip_prefix("Nova_").unwrap_or("").to_string();
-                if let Some(schema) = this.sum_schemas.get(&sum_name) {
-                    if let Some(variant_tys) = schema.get(&variant_name) {
-                        let mut out = vec![];
-                        for (i, p) in patterns.iter().enumerate() {
-                            if let Some(field_c) = variant_tys.get(i) {
-                                out.extend(Self::collect_pattern_inner_bindings(p, field_c, this));
-                            }
+                if let Some(variant_tys) = this.sum_schema_registry
+                    .lookup_sum_schema(&sum_name)
+                    .and_then(|e| e.variants.iter()
+                        .find(|v| v.variant_name == variant_name)
+                        .map(|v| &v.field_c_types))
+                {
+                    let mut out = vec![];
+                    for (i, p) in patterns.iter().enumerate() {
+                        if let Some(field_c) = variant_tys.get(i) {
+                            out.extend(Self::collect_pattern_inner_bindings(p, field_c, this));
                         }
-                        return out;
                     }
+                    return out;
                 }
                 vec![]
             }
