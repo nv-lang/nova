@@ -77,7 +77,10 @@ pub enum ResolvedType {
     /// `Ty::Int` / `TyCat::Int`). `wide_default`: `true` for `int`/`uint` only
     /// (D227 Rule 1 — no literal range-check), `false` for sized `i8..u64`.
     Scalar { width: u8, signed: bool, wide_default: bool },
-    Float,
+    /// Float-family with EXACT bit-width (`f32`=32, `f64`=64) — lossless like `Scalar`
+    /// (U.5.3): `cat_compatible` is permissive on width (assignability), but the
+    /// generic-arg type-identity check needs `f32`≠`f64`.
+    Float { width: u8 },
     Str,
     Bool,
     Unit,
@@ -87,8 +90,11 @@ pub enum ResolvedType {
     Any,
     /// L3 typed pointer: pointee modifier + inner (mirrors `Ty::TypedPtr`).
     TypedPtr(crate::ast::PointerModifier, Box<ResolvedType>),
-    /// Named record/sum/newtype/alias/`char` (generics not expanded — mono later).
-    Named(String),
+    /// Named record/sum/newtype/alias/`char` WITH its generic type-arguments (U.5.3:
+    /// `args` preserves `Stack[int]`≠`Stack[u32]` for the type-identity check; empty for
+    /// non-generic names). `cat_compatible` compares the NAME only (args ignored —
+    /// permissive assignability), the generic-arg check compares args exactly.
+    Named { name: String, args: Vec<ResolvedType> },
     Array(Box<ResolvedType>),
     Tuple(Vec<ResolvedType>),
     Func { params: Vec<ResolvedType>, ret: Box<ResolvedType>, effects: Vec<String> },
@@ -139,12 +145,16 @@ impl ResolvedType {
                     }
                 }
                 match name {
-                    Some("f32") | Some("f64") => R::Float,
+                    Some("f32") => R::Float { width: 32 },
+                    Some("f64") => R::Float { width: 64 },
                     Some("str") => R::Str,
                     Some("bool") => R::Bool,
                     Some("never") => R::Never,
                     Some("ptr") => R::Ptr,
-                    Some(n) => R::Named(n.to_string()),
+                    Some(n) => R::Named {
+                        name: n.to_string(),
+                        args: generics.iter().map(R::from_type_ref).collect(),
+                    },
                     None => R::Any,
                 }
             }
@@ -280,13 +290,14 @@ mod resolved_type_tests {
         assert_eq!(r("uint").int_width_sign(), r("u64").int_width_sign());
         assert_eq!(r("i8"), ResolvedType::Scalar { width: 8, signed: true, wide_default: false });
         assert_eq!(r("u32"), ResolvedType::Scalar { width: 32, signed: false, wide_default: false });
-        assert_eq!(r("f64"), ResolvedType::Float);
+        assert_eq!(r("f64"), ResolvedType::Float { width: 64 });
+        assert_eq!(r("f32"), ResolvedType::Float { width: 32 });
         assert_eq!(r("str"), ResolvedType::Str);
         assert_eq!(r("bool"), ResolvedType::Bool);
         assert_eq!(r("never"), ResolvedType::Never);
         // `char` has no `Ty` primitive → `Named` (mirrors ty_of_ref).
-        assert_eq!(r("char"), ResolvedType::Named("char".to_string()));
-        assert_eq!(r("Foo"), ResolvedType::Named("Foo".to_string()));
+        assert_eq!(r("char"), ResolvedType::Named { name: "char".to_string(), args: vec![] });
+        assert_eq!(r("Foo"), ResolvedType::Named { name: "Foo".to_string(), args: vec![] });
     }
 
     #[test]
@@ -340,7 +351,11 @@ mod resolved_type_tests {
             generics: vec![prim_ref("X", Span::dummy())],
             span: Span::dummy(),
         };
-        assert_eq!(ResolvedType::from_type_ref(&int_x), ResolvedType::Named("int".to_string()));
+        // `int[X]` → `Named { "int", [X] }` (NOT a bogus scalar — generics-guard).
+        assert!(matches!(
+            ResolvedType::from_type_ref(&int_x),
+            ResolvedType::Named { name, .. } if name == "int"
+        ));
     }
 
     #[test]
@@ -430,6 +445,8 @@ mod resolved_type_tests {
     fn cat_compatible_rt_mirrors_legacy_arms() {
         use ResolvedType as R;
         let sc = |w, s| R::Scalar { width: w, signed: s, wide_default: false };
+        let nm = |n: &str| R::Named { name: n.to_string(), args: vec![] };
+        let f = |w| R::Float { width: w };
         // `Any` permissive (= old `Other`):
         assert!(cat_compatible_rt(&R::Any, &R::Str));
         assert!(cat_compatible_rt(&R::Bool, &R::Any));
@@ -437,18 +454,24 @@ mod resolved_type_tests {
         // is decided SEPARATELY by `would_narrow_into`, not here:
         assert!(cat_compatible_rt(&sc(8, false), &sc(64, true)));
         assert!(cat_compatible_rt(&sc(64, false), &sc(8, true)));
-        assert!(cat_compatible_rt(&sc(32, true), &R::Float));
-        assert!(cat_compatible_rt(&R::Float, &sc(16, false)));
+        assert!(cat_compatible_rt(&sc(32, true), &f(64)));
+        assert!(cat_compatible_rt(&f(32), &sc(16, false)));
+        assert!(cat_compatible_rt(&f(32), &f(64))); // float width permissive here
         // same-kind primitives:
         assert!(cat_compatible_rt(&R::Bool, &R::Bool));
         assert!(cat_compatible_rt(&R::Str, &R::Str));
         assert!(cat_compatible_rt(&R::Unit, &R::Unit));
         assert!(cat_compatible_rt(&R::Ptr, &R::Ptr));
-        // Named by name (incl. `char` riding as `Named("char")` = old `(Char,Char)`):
-        assert!(cat_compatible_rt(&R::Named("char".into()), &R::Named("char".into())));
-        assert!(cat_compatible_rt(&R::Named("Foo".into()), &R::Named("Foo".into())));
-        assert!(!cat_compatible_rt(&R::Named("Foo".into()), &R::Named("Bar".into())));
-        assert!(!cat_compatible_rt(&R::Named("char".into()), &R::Str));
+        // Named by name (incl. `char` riding as `Named { "char", .. }` = old `(Char,Char)`);
+        // generic args ignored here (permissive) — exactness is the type-identity check:
+        assert!(cat_compatible_rt(&nm("char"), &nm("char")));
+        assert!(cat_compatible_rt(&nm("Foo"), &nm("Foo")));
+        assert!(cat_compatible_rt(
+            &R::Named { name: "Box".into(), args: vec![sc(64, true)] },
+            &R::Named { name: "Box".into(), args: vec![sc(32, false)] }
+        )); // same NAME, different args → still compatible at this layer
+        assert!(!cat_compatible_rt(&nm("Foo"), &nm("Bar")));
+        assert!(!cat_compatible_rt(&nm("char"), &R::Str));
         // Array recurses on element:
         assert!(cat_compatible_rt(
             &R::Array(Box::new(sc(8, false))),
@@ -8225,7 +8248,7 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                         Compat::Ok
                     }
-                    ResolvedType::Float => Compat::Ok,
+                    ResolvedType::Float { .. } => Compat::Ok,
                     _ => Compat::Bad { found: "int".to_string() },
                 };
             }
@@ -8266,13 +8289,13 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                         Compat::Ok
                     }
-                    ResolvedType::Float => Compat::Ok,
+                    ResolvedType::Float { .. } => Compat::Ok,
                     _ => Compat::Bad { found: "int".to_string() },
                 };
             }
             ExprKind::FloatLit(_) => {
                 return match &exp_rt {
-                    ResolvedType::Float => Compat::Ok,
+                    ResolvedType::Float { .. } => Compat::Ok,
                     _ => Compat::Bad { found: "f64".to_string() },
                 };
             }
@@ -8291,8 +8314,8 @@ impl<'a> TypeCheckCtx<'a> {
                 };
             }
             ExprKind::CharLit(_) => {
-                // `char` riding as `Named("char")` — mirrors the legacy `TyCat::Char`.
-                return if matches!(&exp_rt, ResolvedType::Named(n) if n == "char") {
+                // `char` riding as `Named { name: "char", .. }` — mirrors legacy `TyCat::Char`.
+                return if matches!(&exp_rt, ResolvedType::Named { name, .. } if name == "char") {
                     Compat::Ok
                 } else {
                     Compat::Bad { found: "char".to_string() }
@@ -8955,11 +8978,29 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(s) = ResolvedType::scalar_from_int_name(name) {
                     return s;
                 }
+                // Generic type-arguments (lossless, U.5.3) — recursed for the nominal
+                // arms below so `Stack[int]` ≠ `Stack[u32]` in the type-identity check.
+                let rt_args = || -> Vec<R> {
+                    generics
+                        .iter()
+                        .map(|g| self.resolved_cat_of_depth(g, gs, depth + 1))
+                        .collect()
+                };
+                // [M-172.1-U5-nv-type-name-hardcode] §3 DEBT (carried from legacy
+                // `cat_of`, NOT introduced here): `str` (Plan 139 lang-item core.nv),
+                // `char` (char.nv), `Vec` (vec_seq.nv / D239) are `.nv`-DECLARED types,
+                // so name-keying their category here violates §3 ("resolve from the
+                // declaration, not a Rust name-match"). The principled fix derives their
+                // category from the import-resolved registry / lang-item (U.1/U.6), NOT a
+                // wider `ResolvedType` change — U.5 only collapses the REPRESENTATION
+                // (Ty+TyCat→ResolvedType) and carries this debt forward byte-identically.
+                // `f32`/`f64`/`bool` below ARE genuine no-`.nv` primitives (sanctioned).
                 match name.as_str() {
-                    "f32" | "f64" => R::Float,
+                    "f32" => R::Float { width: 32 },
+                    "f64" => R::Float { width: 64 },
                     "bool" => R::Bool,
                     "str" => R::Str,
-                    "char" => R::Named("char".to_string()),
+                    "char" => R::Named { name: "char".to_string(), args: Vec::new() },
                     // D239 `Vec[T] ≡ []T` — same `Array(elem)` category as the sugar.
                     "Vec" if generics.len() == 1 => {
                         R::Array(Box::new(self.resolved_cat_of_depth(&generics[0], gs, depth + 1)))
@@ -8969,14 +9010,16 @@ impl<'a> TypeCheckCtx<'a> {
                     other => match self.types.get(other) {
                         Some(td) => match &td.kind {
                             // Alias transparent (D52); newtype/record/sum/named-tuple
-                            // nominal by name; protocol/effect/opaque permissive.
+                            // nominal by name (+ generic args); protocol/effect/opaque permissive.
                             TypeDeclKind::Alias(inner) => {
                                 self.resolved_cat_of_depth(inner, gs, depth + 1)
                             }
                             TypeDeclKind::Newtype(_)
                             | TypeDeclKind::Record(_)
                             | TypeDeclKind::Sum(_)
-                            | TypeDeclKind::NamedTuple(_) => R::Named(other.to_string()),
+                            | TypeDeclKind::NamedTuple(_) => {
+                                R::Named { name: other.to_string(), args: rt_args() }
+                            }
                             TypeDeclKind::Protocol { .. }
                             | TypeDeclKind::Effect(_)
                             | TypeDeclKind::Opaque => R::Any,
@@ -9146,12 +9189,15 @@ fn cat_compatible_rt(found: &ResolvedType, expected: &ResolvedType) -> bool {
     use ResolvedType as R;
     match (found, expected) {
         (R::Any, _) | (_, R::Any) => true,
+        // Permissive on int width/sign AND float width (assignability) — the
+        // generic-arg type-identity check is what compares those exactly (U.5.3).
         (R::Scalar { .. }, R::Scalar { .. })
-        | (R::Float, R::Float)
-        | (R::Scalar { .. }, R::Float)
-        | (R::Float, R::Scalar { .. }) => true,
+        | (R::Float { .. }, R::Float { .. })
+        | (R::Scalar { .. }, R::Float { .. })
+        | (R::Float { .. }, R::Scalar { .. }) => true,
         (R::Bool, R::Bool) | (R::Str, R::Str) | (R::Unit, R::Unit) | (R::Ptr, R::Ptr) => true,
-        (R::Named(a), R::Named(b)) => a == b,
+        // NAME only — generic args ignored here (permissive); `char` rides as `Named`.
+        (R::Named { name: a, .. }, R::Named { name: b, .. }) => a == b,
         (R::Array(a), R::Array(b)) => cat_compatible_rt(a, b),
         _ => false,
     }
