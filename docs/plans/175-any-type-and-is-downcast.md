@@ -1,8 +1,8 @@
-# Plan 177 — `any` top-type + `is`/`try_as` runtime type-check & downcast
+# Plan 175 — `any` top-type + `is`/`try_as` runtime type-check & downcast
 
 > **Top-level план.** Создан 2026-06-20 (вынесен из [173](173-error-system-unify-harden.md) Ф.4 как
-> самостоятельная языковая фича — шире error-handling). **Статус:** 📋 PROPOSED. **Маркер:** `[M-177-any-is]`.
-> **Запуск:** «**выполни план 177**» (самодостаточен). **Приоритет:** P1 (фундамент для typed-errors).
+> самостоятельная языковая фича — шире error-handling). **Статус:** 📋 PROPOSED. **Маркер:** `[M-175-any-is]`.
+> **Запуск:** «**выполни план 175**» (самодостаточен). **Приоритет:** P1 (фундамент для typed-errors).
 > **Разблокирует:** [Plan 173](173-error-system-unify-harden.md) Ф.4 (`Failure(any)`, `e is CancelError`).
 >
 > **Сквозной критерий приёмки: «без упрощений, как для прода».**
@@ -98,4 +98,4 @@ USER_BASE=17, `emit_c.rs:1139`), уже используемый для typed-`F
 
 ## 9. Followup-маркер
 
-`[M-177-any-is]`. Ф.3 (расширенный vtable / heterogeneous-`any`) — опционально, позже.
+`[M-175-any-is]`. Ф.3 (расширенный vtable / heterogeneous-`any`) — опционально, позже.
