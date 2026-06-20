@@ -2,8 +2,8 @@
 //
 // EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
 //
-// Chain depth 3 (`Av.Bv.Cv.mut_m()`) вЂ” chain-walking helper recursively
-// walks Рє root Ident `Av`, РІРёРґРёС‚ ro binding, fires E_LOCAL_NOT_MUT.
+// Chain depth 3 (`av.Bv.Cv.mut_m()`) вЂ” chain-walking helper recursively
+// walks Рє root Ident `av`, РІРёРґРёС‚ ro binding, fires E_LOCAL_NOT_MUT.
 
 module neg.n2_ro_binding_deep_chain_mut_neg
 
@@ -28,6 +28,6 @@ fn Av.new() -> Self => {
 }
 
 test "ro binding + deep chain + mut method в†’ E_LOCAL_NOT_MUT" {
-    ro Av = Av.new()
-    Av.Bv.Cv.bump()
+    ro av = Av.new()
+    av.Bv.Cv.bump()
 }

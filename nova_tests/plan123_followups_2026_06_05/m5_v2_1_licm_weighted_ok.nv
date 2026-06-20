@@ -28,10 +28,10 @@ fn Cv6 mut @sum_nested(n int, m int) -> int {
 }
 
 test "V2.1 LICM weighted: nested-loop accumulation preserves semantics" {
-    mut Cv6 = Cv6.new(7)
+    mut cv6 = Cv6.new(7)
     // 3 outer Г— 4 inner Г— 7 = 84
-    ro r = Cv6.sum_nested(3, 4)
+    ro r = cv6.sum_nested(3, 4)
     assert(r == 84)
     // @x unchanged.
-    assert(Cv6.x == 7)
+    assert(cv6.x == 7)
 }

@@ -18,6 +18,6 @@ fn Xv.new(v int) -> Xv {
 }
 
 test "single pure call not cached (semantic preserved)" {
-    ro Xv = Xv.new(42)
-    assert(Xv.single() == 42)
+    ro xv = Xv.new(42)
+    assert(xv.single() == 42)
 }

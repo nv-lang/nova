@@ -21,8 +21,8 @@ type Av3 {
 }
 
 test "4-level nested record literal allocates correct types" {
-    mut Av3 = Av3 { Bv3: Bv3 { Cv2: Cv2 { Dv1: Dv1 { value: 0 } } } }
-    assert(Av3.Bv3.Cv2.Dv1.value == 0)
-    Av3.Bv3.Cv2.Dv1.value = 42
-    assert(Av3.Bv3.Cv2.Dv1.value == 42)
+    mut av3 = Av3 { Bv3: Bv3 { Cv2: Cv2 { Dv1: Dv1 { value: 0 } } } }
+    assert(av3.Bv3.Cv2.Dv1.value == 0)
+    av3.Bv3.Cv2.Dv1.value = 42
+    assert(av3.Bv3.Cv2.Dv1.value == 42)
 }

@@ -15,8 +15,8 @@ type Av2 {
 }
 
 test "3-level nested record literal" {
-    mut Av2 = Av2 { Bv2: Bv2 { Cv1: Cv1 { x: 1 } } }
-    assert(Av2.Bv2.Cv1.x == 1)
-    Av2.Bv2.Cv1.x = 99
-    assert(Av2.Bv2.Cv1.x == 99)
+    mut av2 = Av2 { Bv2: Bv2 { Cv1: Cv1 { x: 1 } } }
+    assert(av2.Bv2.Cv1.x == 1)
+    av2.Bv2.Cv1.x = 99
+    assert(av2.Bv2.Cv1.x == 99)
 }

@@ -19,13 +19,13 @@ type Av4 {
 }
 
 test "nested literal with multiple fields per level" {
-    mut Av4 = Av4 { Bv4: Bv4 { Cv3: Cv3 { p: 1, q: 2 }, tag: 3 }, name: 4 }
-    assert(Av4.Bv4.Cv3.p == 1)
-    assert(Av4.Bv4.Cv3.q == 2)
-    assert(Av4.Bv4.tag == 3)
-    assert(Av4.name == 4)
-    Av4.Bv4.Cv3.q = 20
-    Av4.Bv4.tag = 30
-    assert(Av4.Bv4.Cv3.q == 20)
-    assert(Av4.Bv4.tag == 30)
+    mut av4 = Av4 { Bv4: Bv4 { Cv3: Cv3 { p: 1, q: 2 }, tag: 3 }, name: 4 }
+    assert(av4.Bv4.Cv3.p == 1)
+    assert(av4.Bv4.Cv3.q == 2)
+    assert(av4.Bv4.tag == 3)
+    assert(av4.name == 4)
+    av4.Bv4.Cv3.q = 20
+    av4.Bv4.tag = 30
+    assert(av4.Bv4.Cv3.q == 20)
+    assert(av4.Bv4.tag == 30)
 }

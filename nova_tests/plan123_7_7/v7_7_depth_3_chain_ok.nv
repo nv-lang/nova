@@ -1,5 +1,5 @@
 // Plan 123.7.7 (V7.7, 2026-06-04): deeper chain receiver
-// `@a.b.Cv6.method()` still sibling-safe.
+// `@a.b.cv6.method()` still sibling-safe.
 
 module nova_tests.plan123_7_7
 
@@ -31,17 +31,17 @@ fn Cv6 mut @cycle(v int) -> int {
     ro b = @tag
     // depth-3 chain: @inner.mid.leaf.store.push(v)
     @inner.mid.leaf.store.push(v)
-    ro Cv6 = @tag
+    ro cv6 = @tag
     ro d = @tag
-    a + b + Cv6 + d
+    a + b + cv6 + d
 }
 
 test "V7.7: depth-3 chain doesn't invalidate sibling cache" {
-    mut Cv6 = Cv6.new()
-    Cv6.tag = 5
-    ro r = Cv6.cycle(99)
+    mut cv6 = Cv6.new()
+    cv6.tag = 5
+    ro r = cv6.cycle(99)
     // tag = 5 throughout вЂ” 5*4 = 20
     assert(r == 20)
-    assert(Cv6.inner.mid.leaf.store.len() == 1)
-    assert(Cv6.inner.mid.leaf.store[0] == 99)
+    assert(cv6.inner.mid.leaf.store.len() == 1)
+    assert(cv6.inner.mid.leaf.store[0] == 99)
 }
