@@ -9,7 +9,7 @@
 > Создан 2026-06-20.
 >
 > **⚠️ Описывает ТЕКУЩУЮ (частично противоречивую) модель. Идёт редизайн —
-> [Plan 175](../plans/175-error-system-unify-harden.md)** (унификация в «defer-kernel»:
+> [Plan 173](../plans/173-error-system-unify-harden.md)** (унификация в «defer-kernel»:
 > `defer(o ScopeOutcome)`, consume=сахар, единый re-dispatch; устранение 11 дефектов вкл.
 > with-Fail-глотает-panic; structured-concurrency error API). После Ф.2 хаб переписывается под единую модель.
 
