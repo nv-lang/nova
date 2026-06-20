@@ -1,0 +1,10 @@
+// Plan 108.2 (D36 enforcement): `let mut` разрешает mut-методы на arrays.
+
+module nova_tests.plan108
+
+test "let mut + push" {
+    mut arr = [1, 2]
+    arr.push(3)
+    arr.push(4)
+    assert(arr.len() == 4)
+}

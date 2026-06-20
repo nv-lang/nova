@@ -1,0 +1,23 @@
+// Plan 108.2 (D36 enforcement): `let mut` для user-defined record с mut @method.
+
+module nova_tests.plan108
+
+type Counter_plan1082letmutuserrecordok {
+    mut value int
+}
+
+fn Counter_plan1082letmutuserrecordok.new() -> Counter_plan1082letmutuserrecordok => { value: 0 }
+
+fn Counter_plan1082letmutuserrecordok mut @inc() -> () {
+    @value = @value + 1
+}
+
+fn Counter_plan1082letmutuserrecordok @get() -> int => @value
+
+test "let mut + user record + mut @method" {
+    mut c = Counter_plan1082letmutuserrecordok.new()
+    c.inc()
+    c.inc()
+    c.inc()
+    assert(c.get() == 3)
+}
