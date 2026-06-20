@@ -45,8 +45,8 @@ struct Numberer {
     /// Next id to hand out. Starts at 1 — `ExprId::UNSET` (0) is reserved for
     /// post-numbering synthesis (desugar/codegen scaffolding).
     next: u32,
-    /// Plan 172.1 U.4.1/U.4.2: resolved-type seed for the context-free leaf +
-    /// bool-operator arms (ExprId → ResolvedType), consumed by codegen via
+    /// Plan 172.1 U.4.1/U.4.2: resolved-type seed for the leaf, bool-operator, and
+    /// primitive-arithmetic arms (ExprId → ResolvedType), consumed by codegen via
     /// `infer_expr_c_type` (equivalence-checked in debug).
     lits: HashMap<ExprId, crate::types::ResolvedType>,
 }
@@ -55,22 +55,23 @@ impl Numberer {
     fn expr(&mut self, e: &mut Expr) {
         e.id = ExprId(self.next);
         self.next += 1;
-        self.seed_type(e);
+        // children FIRST: arithmetic/Neg seeding (post-order) reads operand types
+        // from `lits`; literals/bool-ops are order-independent.
         self.children(e);
+        self.seed_type(e);
     }
 
-    /// Plan 172.1 U.4.1/U.4.2: record the resolved type of an expr the producer can
-    /// derive WITHOUT bottom-up inference — the context-free leaf + bool-operator
-    /// arms. Mirrors `infer_expr_c_type`'s arms EXACTLY:
+    /// Plan 172.1 U.4.1/U.4.2: record the resolved type of an expr (post-order — so
+    /// operand types are already seeded). Mirrors `infer_expr_c_type`'s arms EXACTLY:
     /// - literals: int→`Scalar`, f64→`Float`, bool, str/interp→`Str`,
     ///   char→`Named{"char"}`, unit→`Unit`, `null ptr`→opaque `Ptr`;
-    /// - bool-producing operators (result is bool regardless of operand types):
-    ///   comparison/logical `Binary` (Eq/Neq/Lt/Le/Gt/Ge/And/Or/Implies/Iff),
-    ///   `Unary` Not, `Is`.
+    /// - bool operators: comparison/logical `Binary`
+    ///   (Eq/Neq/Lt/Le/Gt/Ge/And/Or/Implies/Iff), `Unary` Not, `Is`;
+    /// - arithmetic/bitwise/shift `Binary` + `Unary Neg` over primitive operands
+    ///   (`promote_arith`; non-primitive/unannotated operand → skip → fallback).
     ///
-    /// Arithmetic `Binary` / `Unary Neg` (operand type + promotion) and
-    /// `As`/`Tuple`/`Block` (need operand types / state-dependent lowering) are a
-    /// later U.4.2 slice — skipped here → codegen falls back (sound, never wrong).
+    /// `As`/`Tuple`/`Block` (state-dependent / general type→C lowering) are a later
+    /// U.4 slice — skipped here → codegen falls back (sound, never wrong).
     fn seed_type(&mut self, e: &Expr) {
         use crate::types::ResolvedType as R;
         let rt = match &e.kind {
@@ -81,17 +82,50 @@ impl Numberer {
             ExprKind::CharLit(_) => R::Named { name: "char".to_string(), args: Vec::new() },
             ExprKind::UnitLit => R::Unit,
             ExprKind::NullPtrLit => R::Ptr,
-            ExprKind::Binary {
-                op:
-                    BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
-                    | BinOp::And | BinOp::Or | BinOp::Implies | BinOp::Iff,
-                ..
-            } => R::Bool,
+            ExprKind::Binary { op, left, right } => match op {
+                // bool-producing (result independent of operand types)
+                BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+                | BinOp::And | BinOp::Or | BinOp::Implies | BinOp::Iff => R::Bool,
+                // arithmetic / bitwise / shift: primitive promotion (operands
+                // already seeded — post-order). None ⇒ a non-primitive/unannotated
+                // operand ⇒ skip → codegen falls back (sound).
+                _ => match self.promote_arith(left, right) {
+                    Some(rt) => rt,
+                    None => return,
+                },
+            },
             ExprKind::Unary { op: UnOp::Not, .. } => R::Bool,
+            // `-x` preserves operand type (legacy: UnOp::Neg → infer(operand)).
+            ExprKind::Unary { op: UnOp::Neg, operand } => match self.lits.get(&operand.id) {
+                Some(rt) => rt.clone(),
+                None => return,
+            },
             ExprKind::Is(_, _) => R::Bool,
             _ => return,
         };
         self.lits.insert(e.id, rt);
+    }
+
+    /// Plan 172.1 U.4.2: primitive arithmetic/bitwise/shift promotion, mirroring
+    /// `infer_expr_c_type`'s Binary `_` arm EXACTLY for the primitive case. Both
+    /// operands must be already-seeded (⟹ primitive — the producer only annotates
+    /// primitives ⟹ the legacy raw-cptr branches never fire); otherwise `None`
+    /// (codegen falls back). f64 wins; a typed-int (sized i8..u64 except `i64`, plus
+    /// `char` — exactly `is_typed_integer`) beats `int`; else the LEFT type.
+    fn promote_arith(&self, left: &Expr, right: &Expr) -> Option<crate::types::ResolvedType> {
+        use crate::types::ResolvedType as R;
+        let l = self.lits.get(&left.id)?;
+        let r = self.lits.get(&right.id)?;
+        if is_f64(l) || is_f64(r) {
+            return Some(R::Float { width: 64 });
+        }
+        if is_typed_int(l) && is_nova_int(r) {
+            return Some(l.clone());
+        }
+        if is_typed_int(r) && is_nova_int(l) {
+            return Some(r.clone());
+        }
+        Some(l.clone())
     }
 
     fn item(&mut self, item: &mut Item) {
@@ -378,5 +412,34 @@ impl Numberer {
                 FnBody::External => {}
             },
         }
+    }
+}
+
+// ── Plan 172.1 U.4.2: primitive predicates mirroring infer_expr_c_type's
+// promotion tests, in ResolvedType terms (verified against primitive_name_to_c). ──
+
+/// `f64` — the legacy `lt == "nova_f64"` test.
+fn is_f64(rt: &crate::types::ResolvedType) -> bool {
+    matches!(rt, crate::types::ResolvedType::Float { width: 64 })
+}
+
+/// `int` — the wide-default signed 64-bit (legacy `== "nova_int"`).
+fn is_nova_int(rt: &crate::types::ResolvedType) -> bool {
+    matches!(
+        rt,
+        crate::types::ResolvedType::Scalar { width: 64, signed: true, wide_default: true }
+    )
+}
+
+/// Mirrors `infer_expr_c_type::is_typed_integer` EXACTLY in ResolvedType terms:
+/// the sized int C-typedefs {u8..u64, i8..i32} PLUS `char` — i.e. every sized
+/// scalar EXCEPT `i64` (whose C-type `int64_t` is absent from that set), and NEVER
+/// the wide `int`/`uint`.
+fn is_typed_int(rt: &crate::types::ResolvedType) -> bool {
+    use crate::types::ResolvedType as R;
+    match rt {
+        R::Scalar { width, signed, wide_default: false } => !(*width == 64 && *signed),
+        R::Named { name, args } if args.is_empty() && name.as_str() == "char" => true,
+        _ => false,
     }
 }
