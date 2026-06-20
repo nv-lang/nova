@@ -305,7 +305,7 @@ mod tests {
     use crate::diag::Span;
 
     fn span() -> Span { Span { start: 0, end: 0, file_id: 0 } }
-    fn e(kind: ExprKind) -> Expr { Expr { kind, span: span() } }
+    fn e(kind: ExprKind) -> Expr { Expr { kind, span: span(), id: crate::ast::ExprId::UNSET } }
 
     #[test]
     fn literal_int() {

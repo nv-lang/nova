@@ -4240,7 +4240,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn synth_int_let(name: &str, value: i64, span: crate::diag::Span) -> Stmt {
         let int_lit = Expr {
             kind: ExprKind::IntLit(value),
-            span,
+            span, id: crate::ast::ExprId::UNSET,
         };
         Stmt::Let(LetDecl {
             mutable: false,
@@ -22641,7 +22641,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 self.var_types.insert(tmp.clone(), box_ty);
                                 new_args.push(CallArg::Item(Expr {
                                     kind: ExprKind::Ident(tmp),
-                                    span: arg_expr.span,
+                                    span: arg_expr.span, id: crate::ast::ExprId::UNSET,
                                 }));
                                 rewrote = true;
                                 continue;
@@ -22687,7 +22687,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }).collect();
             let synth_array = Expr {
                 kind: ExprKind::ArrayLit(var_elems),
-                span: func.span,
+                span: func.span, id: crate::ast::ExprId::UNSET,
             };
             let mut new_args: Vec<CallArg> = args[..regular_arity].to_vec();
             new_args.push(CallArg::Item(synth_array));
@@ -23230,7 +23230,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     {
                         let bare_func = Expr {
                             kind: ExprKind::Ident(method.clone()),
-                            span: func.span,
+                            span: func.span, id: crate::ast::ExprId::UNSET,
                         };
                         return self.emit_call(&bare_func, args);
                     }
@@ -23278,7 +23278,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         if let Some(recv) = &self.current_receiver_type {
                             self_obj_storage = Expr {
                                 kind: ExprKind::Ident(recv.clone()),
-                                span: obj.span,
+                                span: obj.span, id: crate::ast::ExprId::UNSET,
                             };
                             &self_obj_storage
                         } else {
@@ -27258,14 +27258,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if parts.len() == 2 && self.lazy_consts.contains(&parts[0]) {
                     let new_obj = Expr {
                         kind: ExprKind::Ident(parts[0].clone()),
-                        span: func.span,
+                        span: func.span, id: crate::ast::ExprId::UNSET,
                     };
                     let new_func = Expr {
                         kind: ExprKind::Member {
                             obj: Box::new(new_obj),
                             name: parts[1].clone(),
                         },
-                        span: func.span,
+                        span: func.span, id: crate::ast::ExprId::UNSET,
                     };
                     let new_call = Expr {
                         kind: ExprKind::Call {
@@ -27273,7 +27273,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             args: args.to_vec(),
                             trailing: None,
                         },
-                        span: func.span,
+                        span: func.span, id: crate::ast::ExprId::UNSET,
                     };
                     return self.emit_expr(&new_call);
                 }
@@ -29727,12 +29727,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             obj: Box::new(iter.clone()),
                             name: "iter".to_string(),
                         },
-                        span: iter.span,
+                        span: iter.span, id: crate::ast::ExprId::UNSET,
                     }),
                     args: Vec::new(),
                     trailing: None,
                 },
-                span: iter.span,
+                span: iter.span, id: crate::ast::ExprId::UNSET,
             };
             return self.emit_for(pattern, &iter_call, body);
         }
@@ -35648,14 +35648,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if parts.len() == 2 && self.lazy_consts.contains(&parts[0]) {
                     let new_obj = Expr {
                         kind: ExprKind::Ident(parts[0].clone()),
-                        span: func.span,
+                        span: func.span, id: crate::ast::ExprId::UNSET,
                     };
                     let new_func = Expr {
                         kind: ExprKind::Member {
                             obj: Box::new(new_obj),
                             name: parts[1].clone(),
                         },
-                        span: func.span,
+                        span: func.span, id: crate::ast::ExprId::UNSET,
                     };
                     let new_call = Expr {
                         kind: ExprKind::Call {
@@ -35663,7 +35663,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             args: args.clone(),
                             trailing: trailing.clone(),
                         },
-                        span: expr.span,
+                        span: expr.span, id: crate::ast::ExprId::UNSET,
                     };
                     return self.infer_expr_c_type(&new_call);
                 }
@@ -39441,7 +39441,7 @@ mod mem_ordering_tests {
     fn path_expr(parts: &[&str]) -> Expr {
         Expr {
             kind: ExprKind::Path(parts.iter().map(|s| s.to_string()).collect()),
-            span: Span::dummy(),
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
         }
     }
 
@@ -39484,7 +39484,7 @@ mod mem_ordering_tests {
     #[test]
     fn non_mem_ordering_path_returns_none() {
         // Bare ident (not a path) → None
-        let e = Expr { kind: ExprKind::Ident("Relaxed".to_string()), span: Span::dummy() };
+        let e = Expr { kind: ExprKind::Ident("Relaxed".to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET };
         assert_eq!(CEmitter::nova_mem_ordering_to_atomic(&e), None);
     }
 
@@ -39640,36 +39640,36 @@ mod lvalue_receiver_tests {
     use crate::diag::Span;
 
     fn ident(name: &str) -> Expr {
-        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy() }
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
     }
 
     fn member(obj: Expr, name: &str) -> Expr {
         Expr {
             kind: ExprKind::Member { obj: Box::new(obj), name: name.to_string() },
-            span: Span::dummy(),
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
         }
     }
 
     fn index(obj: Expr, key: Expr) -> Expr {
         Expr {
             kind: ExprKind::Index { obj: Box::new(obj), index: Box::new(key) },
-            span: Span::dummy(),
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
         }
     }
 
     fn self_access() -> Expr {
-        Expr { kind: ExprKind::SelfAccess, span: Span::dummy() }
+        Expr { kind: ExprKind::SelfAccess, span: Span::dummy(), id: crate::ast::ExprId::UNSET }
     }
 
     fn call(func: Expr) -> Expr {
         Expr {
             kind: ExprKind::Call { func: Box::new(func), args: vec![], trailing: None },
-            span: Span::dummy(),
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
         }
     }
 
     fn int_lit(v: i64) -> Expr {
-        Expr { kind: ExprKind::IntLit(v), span: Span::dummy() }
+        Expr { kind: ExprKind::IntLit(v), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
     }
 
     #[test]
@@ -39847,11 +39847,11 @@ mod array_lit_named_tuple_box_tests {
     use crate::diag::Span;
 
     fn ident(name: &str) -> Expr {
-        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy() }
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
     }
 
     fn float_lit(v: f64) -> Expr {
-        Expr { kind: ExprKind::FloatLit(v), span: Span::dummy() }
+        Expr { kind: ExprKind::FloatLit(v), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
     }
 
     fn call(func: Expr, args: Vec<Expr>) -> Expr {
@@ -39861,7 +39861,7 @@ mod array_lit_named_tuple_box_tests {
                 args: args.into_iter().map(CallArg::Item).collect(),
                 trailing: None,
             },
-            span: Span::dummy(),
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
         }
     }
 
@@ -39906,8 +39906,8 @@ mod array_lit_named_tuple_box_tests {
         // (e.g. accidentally matching int prefix) сломал бы baseline.
         let mut e = CEmitter::new();
         let elems = vec![
-            ArrayElem::Item(Expr { kind: ExprKind::IntLit(1), span: Span::dummy() }),
-            ArrayElem::Item(Expr { kind: ExprKind::IntLit(2), span: Span::dummy() }),
+            ArrayElem::Item(Expr { kind: ExprKind::IntLit(1), span: Span::dummy(), id: crate::ast::ExprId::UNSET }),
+            ArrayElem::Item(Expr { kind: ExprKind::IntLit(2), span: Span::dummy(), id: crate::ast::ExprId::UNSET }),
         ];
         let before_out = e.out.clone();
         let _tmp = e.emit_array_lit(&elems).expect("emit_array_lit must succeed");
@@ -39981,20 +39981,20 @@ mod plan127_promoted_member_access_tests {
     use crate::diag::Span;
 
     fn ident(name: &str) -> Expr {
-        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy() }
+        Expr { kind: ExprKind::Ident(name.to_string()), span: Span::dummy(), id: crate::ast::ExprId::UNSET }
     }
 
     fn member(obj: Expr, name: &str) -> Expr {
         Expr {
             kind: ExprKind::Member { obj: Box::new(obj), name: name.to_string() },
-            span: Span::dummy(),
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
         }
     }
 
     fn path(parts: &[&str]) -> Expr {
         Expr {
             kind: ExprKind::Path(parts.iter().map(|s| s.to_string()).collect()),
-            span: Span::dummy(),
+            span: Span::dummy(), id: crate::ast::ExprId::UNSET,
         }
     }
 

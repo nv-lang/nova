@@ -528,7 +528,7 @@ fn subst_ident_in_expr(
         },
         _ => return expr.clone(),
     };
-    crate::ast::Expr { kind: new_kind, span: expr.span }
+    crate::ast::Expr { kind: new_kind, span: expr.span, id: crate::ast::ExprId::UNSET }
 }
 
 fn subst_call_arg(
@@ -587,7 +587,7 @@ fn extract_block_assignments(block: &crate::ast::Block) -> Vec<(String, crate::a
                                         span: else_val.span, is_unsafe: false
                                     })),
                                 },
-                                span: e.span,
+                                span: e.span, id: crate::ast::ExprId::UNSET,
                             };
                             result.push((var.clone(), ite_expr));
                         }
@@ -630,7 +630,7 @@ fn extract_match_assignments(
                 };
                 let lit_expr = crate::ast::Expr {
                     kind: lit_expr_kind,
-                    span: arm.span,
+                    span: arm.span, id: crate::ast::ExprId::UNSET,
                 };
                 Some(crate::ast::Expr {
                     kind: crate::ast::ExprKind::Binary {
@@ -638,7 +638,7 @@ fn extract_match_assignments(
                         left: Box::new(scrutinee.clone()),
                         right: Box::new(lit_expr),
                     },
-                    span: arm.span,
+                    span: arm.span, id: crate::ast::ExprId::UNSET,
                 })
             }
             crate::ast::Pattern::Wildcard(_) => None, // catch-all else
@@ -696,7 +696,7 @@ fn extract_match_assignments(
                         span: acc.span, is_unsafe: false
                     })),
                 },
-                span: match_span,
+                span: match_span, id: crate::ast::ExprId::UNSET,
             };
         }
         result.push((var.clone(), acc));
@@ -808,7 +808,7 @@ fn rewrite_post_in_expr(
         _ => return Ok((formula.clone(), false)),
     };
 
-    Ok((crate::ast::Expr { kind: new_kind, span: formula.span }, changed))
+    Ok((crate::ast::Expr { kind: new_kind, span: formula.span, id: crate::ast::ExprId::UNSET }, changed))
 }
 
 fn verify_post_axiom_with_handler(

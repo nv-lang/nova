@@ -122,7 +122,7 @@ impl ConstValue {
             // Plan 114.4.4 Ф.4: variant → Call expression `Name(args)`.
             ConstValue::Variant(name, args) => {
                 let func = Box::new(Expr {
-                    kind: ExprKind::Ident(name.clone()), span,
+                    kind: ExprKind::Ident(name.clone()), span, id: crate::ast::ExprId::UNSET,
                 });
                 let call_args = args.iter().map(|v|
                     crate::ast::CallArg::Item(v.to_literal_expr(span))
@@ -147,7 +147,7 @@ impl ConstValue {
                 }
             }
         };
-        Expr { kind, span }
+        Expr { kind, span, id: crate::ast::ExprId::UNSET }
     }
 
     pub fn type_name(&self) -> &'static str {
@@ -2436,7 +2436,7 @@ fn walk_expr(
                     match type_size_or_align(&type_args[0], n == "align_of") {
                         Some(size) => {
                             let span = e.span;
-                            *e = Expr { kind: ExprKind::IntLit(size), span };
+                            *e = Expr { kind: ExprKind::IntLit(size), span, id: crate::ast::ExprId::UNSET };
                             return;
                         }
                         None => {

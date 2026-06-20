@@ -229,6 +229,9 @@ fn cmd_check(path: &PathBuf, explain_cache: bool) -> Result<()> {
         )
     })?;
     check_module_path(path, &module)?;
+    // Plan 172.1 U.4.1: stable ExprId for every expr (post-parse, pre-check)
+    // so check_module can annotate ModuleEnv.resolved_types (§0/§1).
+    nova_codegen::number_exprs::number_exprs(&mut module);
     // Plan 162.2 Ф.2: collect cross-module signatures before type-check so
     // that is_known_type / is_known_fn can suppress false-positive diagnostics
     // for symbols from transitively imported modules.
@@ -341,6 +344,10 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
         anyhow!("{}", d.render(&src, &path.to_string_lossy()))
     })?;
     check_module_path(path, &module)?;
+    // Plan 172.1 U.4.1: assign a stable ExprId to every expr (post-parse,
+    // pre-check) so the checker annotates ModuleEnv.resolved_types and codegen
+    // reads it instead of re-deriving (`infer_expr_c_type`, §0/§1).
+    nova_codegen::number_exprs::number_exprs(&mut module);
     // Plan 162.2 Ф.2: collect cross-module signatures before type-check so
     // that is_known_type / is_known_fn can suppress false-positive diagnostics
     // for symbols from transitively imported modules.

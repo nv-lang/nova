@@ -573,7 +573,7 @@ impl VerificationPipeline {
                             if matches.len() == 1 {
                                 auto_args.push(crate::ast::Expr {
                                     kind: ExprKind::Ident(pname.clone()),
-                                    span: apply_span,
+                                    span: apply_span, id: crate::ast::ExprId::UNSET,
                                 });
                             } else {
                                 auto_ok = false;
@@ -2385,7 +2385,7 @@ fn extract_body_assignments(body: &Block) -> Vec<(String, Expr)> {
                     op: BinOp::Add,
                     right: Box::new(value.clone()),
                 },
-                span: value.span,
+                span: value.span, id: crate::ast::ExprId::UNSET,
             },
             // x -= k  →  synthetic: x - k
             AssignOp::Sub => Expr {
@@ -2394,7 +2394,7 @@ fn extract_body_assignments(body: &Block) -> Vec<(String, Expr)> {
                     op: BinOp::Sub,
                     right: Box::new(value.clone()),
                 },
-                span: value.span,
+                span: value.span, id: crate::ast::ExprId::UNSET,
             },
             _ => continue, // Mul/Div — skip in V1
         };

@@ -1989,15 +1989,50 @@ pub enum AssignOp {
     Div,
 }
 
+/// Stable per-`Expr` identity (Plan 172.1 U.4.1 — TypedIR substrate).
+///
+/// Assigned by `number_exprs` AFTER parse, BEFORE type-checking; carries the
+/// checker's resolved-type annotation (`ModuleEnv.resolved_types: ExprId →
+/// ResolvedType`) across `desugar` into codegen so codegen READS the type
+/// instead of re-deriving it (`infer_expr_c_type`, §0/§1).
+///
+/// `UNSET` (0) marks exprs synthesized AFTER numbering — `desugar` lowering
+/// (map-literal, `+=`, for-invariant) and codegen scaffolding — which carry no
+/// annotation; codegen falls back to local inference for them.
+///
+/// Why not key by `Span`: parser/desugar synthesize MULTIPLE distinct `Expr`s
+/// at ONE span (for-invariant wrapper shares the loop span: parser.rs
+/// `wrap_loop_with_preentry_check`; map-literal lowering stamps ~15-20 nodes
+/// with the `[k:v]` span: desugar.rs `build_map_block`), so spans collide and
+/// cannot be the annotation key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct ExprId(pub u32);
+
+impl ExprId {
+    /// Sentinel for exprs created after the numbering pass (no annotation).
+    pub const UNSET: ExprId = ExprId(0);
+    /// True once `number_exprs` has stamped a real id.
+    pub fn is_set(self) -> bool {
+        self.0 != 0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: Span,
+    /// Plan 172.1 U.4.1: stable identity for type-annotation carry.
+    /// `ExprId::UNSET` until `number_exprs` assigns it (post-parse, pre-check).
+    pub id: ExprId,
 }
 
 impl Expr {
     pub fn new(kind: ExprKind, span: Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            id: ExprId::UNSET,
+        }
     }
 
     /// D38 turbofish: type_args — explicit hint для monomorphization, в bootstrap

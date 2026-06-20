@@ -2422,6 +2422,14 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
             None
         };
 
+    // Plan 172.1 U.4.1: number every expr of the FULLY-ASSEMBLED module
+    // (after import inlining via resolve_imports_inline_ex above, before
+    // type-check) so check_module can annotate ModuleEnv.resolved_types and
+    // codegen READS it instead of re-deriving (`infer_expr_c_type`, §0/§1).
+    // Must run post-inline: numbering the merged module once yields globally
+    // unique ids (per-peer parse would restart at 1 → folder-module collisions).
+    crate::number_exprs::number_exprs(&mut module);
+
     // Plan 140 Ф.3 (D24 amend): capture ModuleEnv. `check_module` runs the
     // VerificationPipeline (types/mod.rs `env.proven_contracts = report.proven`)
     // on THIS build path — proven contracts must be fed to codegen below for

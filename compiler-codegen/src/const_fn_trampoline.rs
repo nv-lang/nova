@@ -1463,7 +1463,7 @@ fn rewrite_body_expr(e: &mut Expr, ts: &HashSet<String>, errs: &mut Vec<Diagnost
                 if (n == "size_of" || n == "align_of") && args.is_empty() && type_args.len() == 1 {
                     match type_size_or_align(&type_args[0], n == "align_of") {
                         Some(v) => {
-                            *e = Expr { kind: ExprKind::IntLit(v), span };
+                            *e = Expr { kind: ExprKind::IntLit(v), span, id: crate::ast::ExprId::UNSET };
                             return;
                         }
                         None => {
@@ -1604,12 +1604,12 @@ impl<'a> RewriteCtx<'a> {
             if self.trampoline_set.contains(resolved) {
                 let span = e.span;
                 let new_name = trampoline_name(resolved);
-                *e = Expr { kind: ExprKind::Ident(new_name), span };
+                *e = Expr { kind: ExprKind::Ident(new_name), span, id: crate::ast::ExprId::UNSET };
                 return true;
             }
             if let Some(mangled) = self.generic_instance_map.get(resolved) {
                 let span = e.span;
-                *e = Expr { kind: ExprKind::Ident(mangled.clone()), span };
+                *e = Expr { kind: ExprKind::Ident(mangled.clone()), span, id: crate::ast::ExprId::UNSET };
                 return true;
             }
         }
