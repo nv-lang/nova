@@ -3,21 +3,21 @@
 // [M-124.1-checker-enforcement]).
 module nova_tests.plan124_1
 
-export type Account {
+export type Account_privfieldbasic {
     priv mut money f64
     ro name str
     priv id u64
 }
 
-export fn Account.new(n str) -> Account =>
+export fn Account_privfieldbasic.new(n str) -> Account_privfieldbasic =>
     { money: 0.0, name: n, id: 0 }
 
-export fn Account mut @deposit(amount f64) {
+export fn Account_privfieldbasic mut @deposit(amount f64) {
     @money = @money + amount
 }
 
 test "priv field accessible inside type method" {
-    mut acc = Account.new("alice")
+    mut acc = Account_privfieldbasic.new("alice")
     acc.deposit(100.0)
     assert(acc.name == "alice")
 }

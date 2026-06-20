@@ -7,16 +7,16 @@ module nova_tests.plan61
 // как число. Handler получает строку типа "140726384521232".
 //
 // После Plan 61 Ф.3 (per-E specialization): handler arm видит typed
-// `e: ParseError`, может прочитать `e.detail`.
+// `e: ParseError_reprosilentubthrowtyped`, может прочитать `e.detail`.
 
-export type ParseError | Bad(str) | EOF
+export type ParseError_reprosilentubthrowtyped | Bad(str) | EOF
 
-fn raise2() Fail[ParseError] -> int {
+fn raise2() Fail[ParseError_reprosilentubthrowtyped] -> int {
     throw Bad("expected digit")
 }
 
-test "throw ParseError carries typed payload" {
-    ro result = with Fail[ParseError] = |e| interrupt (match e {
+test "throw ParseError_reprosilentubthrowtyped carries typed payload" {
+    ro result = with Fail[ParseError_reprosilentubthrowtyped] = |e| interrupt (match e {
         Bad(detail) => detail
         EOF         => "eof"
     }) {

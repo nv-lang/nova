@@ -10,7 +10,7 @@
 
 module nova_tests.concurrency
 
-#blocking fn _busy_work(upto int) -> int {
+#blocking fn _busy_work_blockingcanceltest(upto int) -> int {
     mut acc = 0
     mut i = 0
     while i < upto {
@@ -21,7 +21,7 @@ module nova_tests.concurrency
 }
 
 fn busy1(upto int) -> int {
-    _busy_work(upto)
+    _busy_work_blockingcanceltest(upto)
 }
 
 // ================================================================

@@ -9,7 +9,7 @@
 module nova_tests.concurrency
 
 // leaf CPU work: increments acc upto times, returns upto.
-#blocking fn _busy_work(upto int) -> int {
+#blocking fn _busy_work_blockingpoolsaturationtest(upto int) -> int {
     mut acc = 0
     mut i = 0
     while i < upto {
@@ -20,7 +20,7 @@ module nova_tests.concurrency
 }
 
 fn busy2(upto int) -> int {
-    _busy_work(upto)
+    _busy_work_blockingpoolsaturationtest(upto)
 }
 
 test "blocking: pool saturation — offloads > pool size, graceful queue" {

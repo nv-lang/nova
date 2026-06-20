@@ -1,25 +1,25 @@
 // Plan 124.2 — positive: if-let pattern на priv field внутри
-// static method body — OK (recv = Account).
+// static method body — OK (recv = Account_ifletinsidemethodok).
 module nova_tests.plan124_2
 
-export type Account {
+export type Account_ifletinsidemethodok {
     priv mut money f64
     ro name str
 }
 
-export fn Account.new(n str) -> Account =>
+export fn Account_ifletinsidemethodok.new(n str) -> Account_ifletinsidemethodok =>
     { money: 0.0, name: n }
 
 // Static method scope — priv pattern access allowed.
-export fn Account.amount_of(acc Account) -> f64 {
+export fn Account_ifletinsidemethodok.amount_of(acc Account_ifletinsidemethodok) -> f64 {
     mut got = 0.0
-    if Account { money, .. } = acc {
+    if Account_ifletinsidemethodok { money, .. } = acc {
         got = money
     }
     got
 }
 
 test "Plan 124.2: if-let на priv внутри static метода" {
-    ro acc = Account.new("bob")
-    assert(Account.amount_of(acc) == 0.0)
+    ro acc = Account_ifletinsidemethodok.new("bob")
+    assert(Account_ifletinsidemethodok.amount_of(acc) == 0.0)
 }

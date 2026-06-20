@@ -6,14 +6,14 @@ module nova_tests.plan48_mpm
 // let s = w.map(...) должен infer корректный Nova_Wrapper____<U>* тип,
 // иначе следующий .map в цепочке dispatch'нется на wrong receiver.
 
-export type Wrapper[T] { inner T }
-export fn Wrapper[T].of(v T) -> Wrapper[T] => { inner: v }
-export fn Wrapper[T] @map[U](f fn(T) -> U) -> Wrapper[U] {
-    Wrapper[U].of(f(@inner))
+export type Wrapper_f3longchainpositive[T] { inner T }
+export fn Wrapper_f3longchainpositive[T].of(v T) -> Wrapper_f3longchainpositive[T] => { inner: v }
+export fn Wrapper_f3longchainpositive[T] @map[U](f fn(T) -> U) -> Wrapper_f3longchainpositive[U] {
+    Wrapper_f3longchainpositive[U].of(f(@inner))
 }
 
 test "chain int→str→int→str→int" {
-    ro w0 = Wrapper[int].of(3)
+    ro w0 = Wrapper_f3longchainpositive[int].of(3)
     ro w1 = w0.map(|x| str.from(x))   // int → str  "3"
     ro w2 = w1.map(|s| s.len())       // str → int   1
     ro w3 = w2.map(|x| str.from(x))   // int → str  "1"
@@ -22,7 +22,7 @@ test "chain int→str→int→str→int" {
 }
 
 test "chain through ALL primitive transitions" {
-    ro w0 = Wrapper[int].of(42)
+    ro w0 = Wrapper_f3longchainpositive[int].of(42)
     ro w1 = w0.map(|x| x > 10)        // int → bool
     ro w2 = w1.map(|b| if b { 1 } else { 0 })  // bool → int
     ro w3 = w2.map(|x| str.from(x))             // int → str
@@ -30,8 +30,8 @@ test "chain through ALL primitive transitions" {
 }
 
 test "two parallel chains не interfere" {
-    ro a = Wrapper[int].of(10).map(|x| x + 1)
-    ro b = Wrapper[str].of("ab").map(|s| s + "c")
+    ro a = Wrapper_f3longchainpositive[int].of(10).map(|x| x + 1)
+    ro b = Wrapper_f3longchainpositive[str].of("ab").map(|s| s + "c")
     assert(a.inner == 11, "int chain")
     assert(b.inner == "abc", "str chain (parallel mono instance не overwrote int)")
 }

@@ -9,13 +9,13 @@ export fn public_api(x int) -> int => x * 2
 
 /// Internal helper — hidden from docs.
 #hide_doc
-export fn internal_helper(x int) -> int => x + 1
+export fn internal_helper_f23hidedocattrpositive(x int) -> int => x + 1
 
 /// Another hidden function.
 #hide_doc
 fn private_impl(x int) -> int => x - 1
 
-export fn combined(x int) -> int => public_api(internal_helper(x))
+export fn combined(x int) -> int => public_api(internal_helper_f23hidedocattrpositive(x))
 
 test "public api works" {
     assert(public_api(5) == 10)
@@ -24,12 +24,12 @@ test "public api works" {
 }
 
 test "internal helper works even if hidden from docs" {
-    assert(internal_helper(5) == 6)
-    assert(internal_helper(0) == 1)
+    assert(internal_helper_f23hidedocattrpositive(5) == 6)
+    assert(internal_helper_f23hidedocattrpositive(0) == 1)
 }
 
 test "combined uses both" {
-    // combined(x) = public_api(internal_helper(x)) = (x+1)*2
+    // combined(x) = public_api(internal_helper_f23hidedocattrpositive(x)) = (x+1)*2
     assert(combined(4) == 10)
     assert(combined(0) == 2)
     assert(combined(-1) == 0)

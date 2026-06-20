@@ -2,25 +2,25 @@
 // access fn body для test purposes.
 module nova_tests.plan124_6
 
-export type Account {
+export type Account_testaccessgrantsprivok {
     ro name str
     priv(type) mut balance f64
 }
 
-export fn Account.new(n str) -> Account =>
+export fn Account_testaccessgrantsprivok.new(n str) -> Account_testaccessgrantsprivok =>
     { name: n, balance: 0.0 }
 
-export fn Account mut @deposit(amount f64) {
+export fn Account_testaccessgrantsprivok mut @deposit(amount f64) {
     @balance = @balance + amount
 }
 
 // External test fn with #test_access — может читать priv balance.
-#test_access(Account)
-fn assert_balance_eq(acc Account, expected f64) -> bool =>
+#test_access(Account_testaccessgrantsprivok)
+fn assert_balance_eq(acc Account_testaccessgrantsprivok, expected f64) -> bool =>
     acc.balance == expected
 
 test "Plan 124.6: #test_access fn reads priv field" {
-    mut a = Account.new("alice")
+    mut a = Account_testaccessgrantsprivok.new("alice")
     a.deposit(100.0)
     assert(assert_balance_eq(a, 100.0))
 }

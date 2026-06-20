@@ -2,22 +2,22 @@
 // scope — OK (no priv concern).
 module nova_tests.plan124_2
 
-export type Account {
+export type Account_publicfieldmatchoutsideok {
     priv mut money f64
     ro name str
 }
 
-export fn Account.new(n str) -> Account =>
+export fn Account_publicfieldmatchoutsideok.new(n str) -> Account_publicfieldmatchoutsideok =>
     { money: 0.0, name: n }
 
 // extern "nova" fn pattern-matches только public `name` field.
-fn describe(acc Account) -> str {
+fn describe(acc Account_publicfieldmatchoutsideok) -> str {
     match acc {
-        Account { name, .. } => name
+        Account_publicfieldmatchoutsideok { name, .. } => name
     }
 }
 
 test "Plan 124.2: match на public field outside — OK" {
-    ro acc = Account.new("dave")
+    ro acc = Account_publicfieldmatchoutsideok.new("dave")
     assert(describe(acc) == "dave")
 }

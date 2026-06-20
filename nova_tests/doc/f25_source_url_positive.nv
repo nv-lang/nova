@@ -15,11 +15,11 @@ export fn second_fn(x int) -> int => x * 2
 /// Function with multiline body.
 ///
 /// `[src]` link должен указывать на line этого decl, не body.
-export fn factorial(n int) -> int {
+export fn factorial_f25sourceurlpositive(n int) -> int {
     if n <= 1 {
         1
     } else {
-        n * factorial(n - 1)
+        n * factorial_f25sourceurlpositive(n - 1)
     }
 }
 
@@ -48,12 +48,12 @@ test "second_fn" {
     assert(second_fn(-3) == -6)
 }
 
-test "factorial" {
-    assert(factorial(0) == 1)
-    assert(factorial(1) == 1)
-    assert(factorial(2) == 2)
-    assert(factorial(5) == 120)
-    assert(factorial(6) == 720)
+test "factorial_f25sourceurlpositive" {
+    assert(factorial_f25sourceurlpositive(0) == 1)
+    assert(factorial_f25sourceurlpositive(1) == 1)
+    assert(factorial_f25sourceurlpositive(2) == 2)
+    assert(factorial_f25sourceurlpositive(5) == 120)
+    assert(factorial_f25sourceurlpositive(6) == 720)
 }
 
 test "power_of_two" {
@@ -80,7 +80,7 @@ test "functions at distinct line positions" {
     // Все 6 функций live в разных line ranges → distinct `[src]` URLs.
     assert(first_fn(0) == 1)
     assert(second_fn(1) == 2)
-    assert(factorial(3) == 6)
+    assert(factorial_f25sourceurlpositive(3) == 6)
     assert(power_of_two(3) == 8)
     assert(fib(5) == 5)
     assert(last_fn(2) == 1)

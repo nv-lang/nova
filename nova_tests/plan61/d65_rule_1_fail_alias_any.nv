@@ -3,9 +3,9 @@ module nova_tests.plan61
 // Plan 61 / D65 правило 1: `Fail` ≡ `Fail[any]` — alias / catch-all.
 // `with Fail = |e| ...` (без [E]) ловит **любой** throw.
 
-export type ParseError | Bad
+export type ParseError_d65rule1failaliasany | Bad
 
-fn raise1() Fail[ParseError] -> int {
+fn raise1() Fail[ParseError_d65rule1failaliasany] -> int {
     throw Bad
 }
 

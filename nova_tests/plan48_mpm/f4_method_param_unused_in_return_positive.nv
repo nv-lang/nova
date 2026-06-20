@@ -4,24 +4,24 @@ module nova_tests.plan48_mpm
 // (не в return). Inference должен работать чисто через arg position,
 // независимо от того что return type не содержит U.
 
-export type Wrapper[T] { inner T }
-export fn Wrapper[T].of(v T) -> Wrapper[T] => { inner: v }
+export type Wrapper_f4methodparamunusedinreturnpositive[T] { inner T }
+export fn Wrapper_f4methodparamunusedinreturnpositive[T].of(v T) -> Wrapper_f4methodparamunusedinreturnpositive[T] => { inner: v }
 
 // U inferred из closure return, но в return type не упоминается.
 // Возвращаем нативный счётчик (T-dependent: nova_int).
-export fn Wrapper[T] @discard_map[U](f fn(T) -> U) -> int {
+export fn Wrapper_f4methodparamunusedinreturnpositive[T] @discard_map[U](f fn(T) -> U) -> int {
     ro _u = f(@inner)
     1
 }
 
 test "U inferred even if not in return" {
-    ro w = Wrapper[int].of(5)
+    ro w = Wrapper_f4methodparamunusedinreturnpositive[int].of(5)
     ro n = w.discard_map(|x| str.from(x))  // U=str inferred from closure
     assert(n == 1, "U=str instance mono'd, return int correct")
 }
 
 test "different U yields different mono instance" {
-    ro w = Wrapper[int].of(7)
+    ro w = Wrapper_f4methodparamunusedinreturnpositive[int].of(7)
     ro n1 = w.discard_map(|x| x * 2)         // U=int
     ro n2 = w.discard_map(|x| str.from(x))   // U=str (different mono)
     assert(n1 == 1, "U=int instance")
@@ -29,7 +29,7 @@ test "different U yields different mono instance" {
 }
 
 test "T=str path also works" {
-    ro w = Wrapper[str].of("hello")
+    ro w = Wrapper_f4methodparamunusedinreturnpositive[str].of("hello")
     ro n = w.discard_map(|s| s.len())  // T=str, U=int
     assert(n == 1, "(T=str, U=int) instance")
 }

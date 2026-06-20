@@ -7,14 +7,14 @@ module nova_tests.doc
 /// Returns absolute value.
 /// requires: x can be any int
 /// ensures: result >= 0
-export fn abs_val(x int) -> int
+export fn abs_val_f23contractspositive(x int) -> int
     requires true
     ensures result >= 0
     => if x < 0 { 0 - x } else { x }
 
 /// Clamps x to [lo, hi].
 /// ensures: lo <= result <= hi
-export fn clamp(x int, lo int, hi int) -> int
+export fn clamp_f23contractspositive(x int, lo int, hi int) -> int
     requires lo <= hi
     ensures result >= lo
     ensures result <= hi
@@ -25,28 +25,28 @@ export fn safe_div(a int, b int) -> int
     requires b != 0
     => a / b
 
-test "abs_val positive" {
-    assert(abs_val(5) == 5)
-    assert(abs_val(0) == 0)
-    assert(abs_val(-7) == 7)
-    assert(abs_val(-1) == 1)
+test "abs_val_f23contractspositive positive" {
+    assert(abs_val_f23contractspositive(5) == 5)
+    assert(abs_val_f23contractspositive(0) == 0)
+    assert(abs_val_f23contractspositive(-7) == 7)
+    assert(abs_val_f23contractspositive(-1) == 1)
 }
 
-test "abs_val result is non-negative" {
-    assert(abs_val(100) >= 0)
-    assert(abs_val(-100) >= 0)
-    assert(abs_val(0) >= 0)
+test "abs_val_f23contractspositive result is non-negative" {
+    assert(abs_val_f23contractspositive(100) >= 0)
+    assert(abs_val_f23contractspositive(-100) >= 0)
+    assert(abs_val_f23contractspositive(0) >= 0)
 }
 
-test "clamp within bounds" {
-    assert(clamp(5, 0, 10) == 5)
-    assert(clamp(-5, 0, 10) == 0)
-    assert(clamp(15, 0, 10) == 10)
-    assert(clamp(0, 0, 0) == 0)
+test "clamp_f23contractspositive within bounds" {
+    assert(clamp_f23contractspositive(5, 0, 10) == 5)
+    assert(clamp_f23contractspositive(-5, 0, 10) == 0)
+    assert(clamp_f23contractspositive(15, 0, 10) == 10)
+    assert(clamp_f23contractspositive(0, 0, 0) == 0)
 }
 
-test "clamp result satisfies ensures" {
-    ro r = clamp(42, 10, 20)
+test "clamp_f23contractspositive result satisfies ensures" {
+    ro r = clamp_f23contractspositive(42, 10, 20)
     assert(r >= 10)
     assert(r <= 20)
 }

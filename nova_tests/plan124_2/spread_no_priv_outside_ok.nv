@@ -3,19 +3,19 @@
 module nova_tests.plan124_2
 
 // Все public — нет priv → spread allowed везде.
-export type Point {
+export type Point_spreadnoprivoutsideok {
     ro x f64
     ro y f64
 }
 
-export fn Point.origin() -> Point => { x: 0.0, y: 0.0 }
+export fn Point_spreadnoprivoutsideok.origin() -> Point_spreadnoprivoutsideok => { x: 0.0, y: 0.0 }
 
-fn shift(p Point, dx f64) -> Point {
-    Point { ...p, x: p.x + dx }
+fn shift(p Point_spreadnoprivoutsideok, dx f64) -> Point_spreadnoprivoutsideok {
+    Point_spreadnoprivoutsideok { ...p, x: p.x + dx }
 }
 
 test "Plan 124.2: spread на public-only type — OK везде" {
-    ro p = Point.origin()
+    ro p = Point_spreadnoprivoutsideok.origin()
     ro q = shift(p, 5.0)
     assert(q.x == 5.0)
     assert(q.y == 0.0)

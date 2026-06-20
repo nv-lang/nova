@@ -1,25 +1,25 @@
 // Plan 124.2 — positive: rest-pattern `..` outside type-method scope —
 // `..` НЕ produces bindings → не leak'ит priv field (D221 §3).
 //
-// Pattern { name, .. } outside Account methods — binds public `name`,
+// Pattern { name, .. } outside Account_restpatternignoresprivok methods — binds public `name`,
 // игнорирует priv `money` через `..`.
 module nova_tests.plan124_2
 
-export type Account {
+export type Account_restpatternignoresprivok {
     priv mut money f64
     ro name str
 }
 
-export fn Account.new(n str) -> Account =>
+export fn Account_restpatternignoresprivok.new(n str) -> Account_restpatternignoresprivok =>
     { money: 0.0, name: n }
 
 // extern "nova" fn — `..` НЕ binds priv field. OK.
-fn show_name(acc Account) -> str {
-    ro Account { name, .. } = acc
+fn show_name(acc Account_restpatternignoresprivok) -> str {
+    ro Account_restpatternignoresprivok { name, .. } = acc
     name
 }
 
 test "Plan 124.2: `..` не bind'ит priv field" {
-    ro acc = Account.new("carol")
+    ro acc = Account_restpatternignoresprivok.new("carol")
     assert(show_name(acc) == "carol")
 }

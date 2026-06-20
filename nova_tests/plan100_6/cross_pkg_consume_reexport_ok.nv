@@ -4,17 +4,17 @@
 module nova_tests.plan100_6
 
 // "Package A":
-export type Transaction consume { id int }
-export fn Transaction consume @commit() -> () { () }
-export fn begin() -> Transaction => { id: 1 }
+export type Transaction_crosspkgconsumereexportok consume { id int }
+export fn Transaction_crosspkgconsumereexportok consume @commit() -> () { () }
+export fn begin_crosspkgconsumereexportok() -> Transaction_crosspkgconsumereexportok => { id: 1 }
 
 // "Package B" — re-exports от A:
-// export import a.types.{Transaction, begin}     // в реальном коде
+// export import a.types.{Transaction_crosspkgconsumereexportok, begin_crosspkgconsumereexportok}     // в реальном коде
 
-// "Package C" — imports Transaction через chain:
-// import b.facade.Transaction
+// "Package C" — imports Transaction_crosspkgconsumereexportok через chain:
+// import b.facade.Transaction_crosspkgconsumereexportok
 
 test "re-export preserves consume-marker через chain" {
-    consume tx = begin()
+    consume tx = begin_crosspkgconsumereexportok()
     tx.commit()
 }

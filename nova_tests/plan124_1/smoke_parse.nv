@@ -3,14 +3,14 @@
 module nova_tests.plan124_1
 
 // Per-field priv modifier (D220).
-export type Account {
+export type Account_smokeparse {
     priv mut money f64
     ro name str
     priv id u64
 }
 
 // Type-level priv {} flip (D220 §3.3.1).
-export type Secret priv {
+export type Secret_smokeparse priv {
     pub ro tag str
     mut salt u64
 }

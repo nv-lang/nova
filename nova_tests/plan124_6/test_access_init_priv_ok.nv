@@ -2,16 +2,16 @@
 // literal с priv field works в fn body.
 module nova_tests.plan124_6
 
-export type Account {
+export type Account_testaccessinitprivok {
     ro name str
     priv(type) mut balance f64
 }
 
-export fn Account.new(n str) -> Account =>
+export fn Account_testaccessinitprivok.new(n str) -> Account_testaccessinitprivok =>
     { name: n, balance: 0.0 }
 
-#test_access(Account)
-fn make_with_balance(n str, b f64) -> Account =>
+#test_access(Account_testaccessinitprivok)
+fn make_with_balance(n str, b f64) -> Account_testaccessinitprivok =>
     { name: n, balance: b }    // priv balance init OK с #test_access
 
 test "Plan 124.6: #test_access INIT priv via record literal" {

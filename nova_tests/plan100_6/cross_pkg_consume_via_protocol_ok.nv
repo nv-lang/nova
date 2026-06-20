@@ -5,16 +5,16 @@
 module nova_tests.plan100_6
 
 // "Package A" — protocol definition:
-export type Resource protocol {
+export type Resource_crosspkgconsumeviaprotocolok protocol {
     @cleanup() -> ()
 }
 
-// "Package B" — consume-type that satisfies Resource protocol:
+// "Package B" — consume-type that satisfies Resource_crosspkgconsumeviaprotocolok protocol:
 export type DbConnection consume {
     id int,
 }
 
-export fn DbConnection consume @cleanup() -> () { () }    // satisfies Resource.cleanup
+export fn DbConnection consume @cleanup() -> () { () }    // satisfies Resource_crosspkgconsumeviaprotocolok.cleanup
 export fn DbConnection consume @close() -> () { () }
 
 fn DbConnection_make(id int) -> DbConnection => { id }

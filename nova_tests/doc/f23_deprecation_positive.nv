@@ -13,7 +13,7 @@ export fn new_compute(x int) -> int => x * 2
 
 /// Another deprecated with only note.
 #deprecated(note = "legacy, will be removed")
-export fn legacy_add(a int, b int) -> int => a + b
+export fn legacy_add_f23deprecationpositive(a int, b int) -> int => a + b
 
 test "deprecated fn still works" {
     assert(old_compute(5) == 10)
@@ -36,8 +36,8 @@ test "deprecated and new produce same results" {
     }
 }
 
-test "legacy_add still computes" {
-    assert(legacy_add(2, 3) == 5)
-    assert(legacy_add(0, 0) == 0)
-    assert(legacy_add(-1, 1) == 0)
+test "legacy_add_f23deprecationpositive still computes" {
+    assert(legacy_add_f23deprecationpositive(2, 3) == 5)
+    assert(legacy_add_f23deprecationpositive(0, 0) == 0)
+    assert(legacy_add_f23deprecationpositive(-1, 1) == 0)
 }

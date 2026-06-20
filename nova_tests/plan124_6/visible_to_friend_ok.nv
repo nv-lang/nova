@@ -2,27 +2,27 @@
 // methods TypeY get priv access к marked field.
 module nova_tests.plan124_6
 
-export type Account {
+export type Account_visibletofriendok {
     ro name str
-    #visible_to(Bank) priv(type) mut balance f64
+    #visible_to(Bank_visibletofriendok) priv(type) mut balance f64
 }
 
-export type Bank {
+export type Bank_visibletofriendok {
     ro id str
 }
 
-export fn Account.new(n str) -> Account =>
+export fn Account_visibletofriendok.new(n str) -> Account_visibletofriendok =>
     { name: n, balance: 0.0 }
 
-export fn Bank.new(id str) -> Bank =>
+export fn Bank_visibletofriendok.new(id str) -> Bank_visibletofriendok =>
     { id }
 
-// Bank's method has access to Account.balance через #visible_to(Bank).
-export fn Bank @audit_account(a Account) -> f64 =>
+// Bank_visibletofriendok's method has access to Account_visibletofriendok.balance через #visible_to(Bank_visibletofriendok).
+export fn Bank_visibletofriendok @audit_account(a Account_visibletofriendok) -> f64 =>
     a.balance
 
 test "Plan 124.6: #visible_to grants friend access" {
-    ro a = Account.new("carol")
-    ro b = Bank.new("bnk1")
+    ro a = Account_visibletofriendok.new("carol")
+    ro b = Bank_visibletofriendok.new("bnk1")
     assert(b.audit_account(a) == 0.0)
 }

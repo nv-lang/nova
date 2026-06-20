@@ -11,10 +11,10 @@
 module nova_tests.plan100_6
 
 // "Package A":
-export type Transaction consume { id int }
-export fn Transaction consume @commit() -> () { () }
+export type Transaction_crosspkggenericconsumeok consume { id int }
+export fn Transaction_crosspkggenericconsumeok consume @commit() -> () { () }
 
-fn make_tx(id int) -> Transaction => { id }
+fn make_tx(id int) -> Transaction_crosspkggenericconsumeok => { id }
 
 // "Package B" — direct cross-package consume dispatch (no Result wrap).
 fn use_tx_direct(id int) -> () {

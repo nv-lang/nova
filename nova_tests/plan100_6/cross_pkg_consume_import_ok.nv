@@ -1,5 +1,5 @@
 // Plan 100.6 (D164): consume-маркер propagates через границы пакетов.
-// Package A exports Transaction consume; Package B imports + consumes.
+// Package A exports Transaction_crosspkgconsumeimportok consume; Package B imports + consumes.
 
 module nova_tests.plan100_6
 
@@ -7,16 +7,16 @@ module nova_tests.plan100_6
 // Here single-package mock с export + import.
 
 // "Package A":
-export type Transaction consume {
+export type Transaction_crosspkgconsumeimportok consume {
     id int,
 }
 
-export fn Transaction consume @commit() -> () { () }
-export fn Transaction consume @rollback() -> () { () }
-export fn begin() -> Transaction => { id: 42 }
+export fn Transaction_crosspkgconsumeimportok consume @commit() -> () { () }
+export fn Transaction_crosspkgconsumeimportok consume @rollback() -> () { () }
+export fn begin_crosspkgconsumeimportok() -> Transaction_crosspkgconsumeimportok => { id: 42 }
 
-// "Package B" — would import Transaction.
+// "Package B" — would import Transaction_crosspkgconsumeimportok.
 test "cross-package consume — import работает; binding-form OK" {
-    consume tx = begin()                        // consume-marker visible from A
+    consume tx = begin_crosspkgconsumeimportok()                        // consume-marker visible from A
     tx.commit()
 }

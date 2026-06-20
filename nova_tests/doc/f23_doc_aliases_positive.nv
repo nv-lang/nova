@@ -3,9 +3,9 @@
 
 module nova_tests.doc
 
-/// Compute absolute value.
+/// Compute absolute_f23docaliasespositive value.
 #doc_alias("abs", "magnitude")
-export fn absolute(x int) -> int => if x < 0 { 0 - x } else { x }
+export fn absolute_f23docaliasespositive(x int) -> int => if x < 0 { 0 - x } else { x }
 
 /// Convert to string representation.
 #doc_alias("stringify", "to_str")
@@ -16,14 +16,14 @@ export fn to_string_repr(n int) -> str {
     "other"
 }
 
-test "absolute value positive input" {
-    assert(absolute(5) == 5)
-    assert(absolute(0) == 0)
+test "absolute_f23docaliasespositive value positive input" {
+    assert(absolute_f23docaliasespositive(5) == 5)
+    assert(absolute_f23docaliasespositive(0) == 0)
 }
 
-test "absolute value negative input" {
-    assert(absolute(-5) == 5)
-    assert(absolute(-1) == 1)
+test "absolute_f23docaliasespositive value negative input" {
+    assert(absolute_f23docaliasespositive(-5) == 5)
+    assert(absolute_f23docaliasespositive(-1) == 1)
 }
 
 test "to_string_repr basic" {
@@ -34,6 +34,6 @@ test "to_string_repr basic" {
 }
 
 test "aliases dont affect runtime" {
-    assert(absolute(-42) == 42)
-    assert(absolute(42) == 42)
+    assert(absolute_f23docaliasespositive(-42) == 42)
+    assert(absolute_f23docaliasespositive(42) == 42)
 }
