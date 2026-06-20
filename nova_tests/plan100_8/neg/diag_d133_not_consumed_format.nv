@@ -16,7 +16,7 @@
 //            .commit() -> ()
 //            .rollback() -> ()
 //      suggestion (machine-applicable):
-//            + errdefer { tx.rollback() }
+//            + defer { tx.rollback() }
 //            + tx.commit()?
 
 module neg.diag_d133_not_consumed_format

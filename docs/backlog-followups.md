@@ -161,3 +161,19 @@ referenced from plan docs and simplifications.md.
   element-type) → **гейтован на Plan 172 U.4** (removal of fallback). Репро: plan55
   `f1_closure_array_gc_stress` (RUN-FAIL 3/3); диагностика по docs/debugging-races.md §2.1.1.
   Priority: M (гейт 172 U.4).
+
+## Plan 110.5.7 / D189 — errdefer/okdefer retraction cleanup
+
+- **[M-172-errdefer-okdefer-dead-surface]** `errdefer`/`okdefer` ретракнуты (D189, Plan 110.5.7,
+  hard cutover): парсер реджектит их диагностикой (`parser/mod.rs:9835-9850`). Остаточный мусор в
+  трёх слоях. **(1) USER-FACING БАГ (P1):** диагностика `D133-not-consumed` строит
+  machine-applicable suggestion с `errdefer` (`types/mod.rs:15306-15318`:
+  `"errdefer {{ {name}.{cl}() }}\n{name}.{primary}()"`) — применение quick-fix даёт код, который
+  парсер реджектит. Заменить на `defer`. **(2) Мёртвый AST+codegen (P3):** узлы `ErrDefer`/`OkDefer`
+  (`ast/mod.rs:1842-1853`) недостижимы (парсер реджектит до их конструирования); keyword'ы
+  `KwErrDefer`/`KwOkDefer` (`token.rs:143-149`) нужны ТОЛЬКО как tombstone для дружелюбной ошибки —
+  оставить; но большой dead-codegen в `emit_c.rs` ~17518-18093 (DeferScope.is_error,
+  error-path/success-path dispatch, okdefer-skip, hoist-for-errdefer) + ветки в
+  may_gc/escape_analyze/interp — выпилить. **(3) Внутренние error-строки (P3):** `emit_c.rs:16462`
+  + `:19092` ("defer/errdefer[/okdefer] outside defer scope") → убрать errdefer/okdefer из текста.
+  Test-rot (stale-комменты про errdefer/okdefer в тестах) уже подметён осью 169.2.

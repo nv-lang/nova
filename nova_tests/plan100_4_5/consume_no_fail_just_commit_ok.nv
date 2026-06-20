@@ -1,6 +1,6 @@
 // Plan 100.4.5 (D162): infallible function + consume binding + explicit
 // commit. D162 не fires когда нет Fail в sig (только failable functions
-// требуют errdefer cover error-path).
+// требуют defer cover error-path).
 
 module plan100_4_5.consume_no_fail_just_commit_ok
 
