@@ -177,3 +177,33 @@ referenced from plan docs and simplifications.md.
   may_gc/escape_analyze/interp — выпилить. **(3) Внутренние error-строки (P3):** `emit_c.rs:16462`
   + `:19092` ("defer/errdefer[/okdefer] outside defer scope") → убрать errdefer/okdefer из текста.
   Test-rot (stale-комменты про errdefer/okdefer в тестах) уже подметён осью 169.2.
+
+## D13 — panic catchability (soundness)
+
+- **[M-172-with-fail-swallows-panic]** `with Fail[E]`-handler **ловит `panic`** как
+  recoverable-ошибку → **нарушение D13** (panic перехватывается ТОЛЬКО runtime'ом на
+  границе fiber'а; «программист НЕ ловит panic в обычном коде», нет `try_panic`/`catch` —
+  spec/decisions/08-runtime.md §«Три уровня катастрофы»). **Эмпирически подтверждено
+  2026-06-20** (C-codegen): `panic("BOOM")` внутри
+  `with Fail[E1] = effect Fail { fail(_e) { interrupt () } } { risky_panic() }` → with-блок
+  отдаёт значение, выполнение продолжается. Сырой stdout = `PROBE\nREACHED_AFTER_HANDLER`,
+  процесс жив (exit 0), `panic: BOOM` НЕ всплыл. Ожидалось: паника проходит сквозь
+  Fail-handler до границы fiber'а — в синхронной CLI = смерть процесса с `panic: BOOM`.
+  **Root cause:** re-dispatch ветка Fail-handler'а (`emit_c.rs:6648-6675`) ре-throw'ит
+  ТОЛЬКО `NOVA_THROW_CANCEL`; `NOVA_THROW_PANIC` проваливается в «USER path: handler already
+  ran» → паника проглатывается (а CANCEL — единственный структурный throw, который
+  корректно пробрасывается). **Фикс:** добавить симметричную ветку `if (ff.error_kind ==
+  NOVA_THROW_PANIC) { nova_fail_pop(); nova_interrupt_pop(); restore handlers; nv_panic(ff.error_msg); }`
+  ПЕРЕД USER-path (NB: `supervised{}` ДОЛЖЕН продолжать ловить panic для restart — это
+  ОТДЕЛЬНАЯ граница, не трогать). Priority: **P1** (soundness — panic recoverable вопреки D13).
+  Репро (scratch, удалён — пересоздать при фиксе как `EXPECT_RUNTIME_PANIC BOOM`):
+  ```nova
+  module nova_tests.<stem>
+  type E1 { msg str }
+  fn risky_panic() Fail[E1] -> () { panic("BOOM") }
+  fn main() -> () {
+      println("PROBE")
+      with Fail[E1] = effect Fail { fail(_e) { interrupt () } } { risky_panic() }
+      println("REACHED_AFTER_HANDLER")   // НЕ должно печататься после фикса
+  }
+  ```
