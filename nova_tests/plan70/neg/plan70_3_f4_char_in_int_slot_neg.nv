@@ -9,7 +9,7 @@
 //
 // EXPECT_CC_ERROR incompatible type
 
-module neg.f4_char_in_int_slot_neg
+module neg.plan70_3_f4_char_in_int_slot_neg
 
 test "char literal rejected in Option[int] slot" {
     ro i Option[int] = Some('a')

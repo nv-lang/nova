@@ -4,7 +4,7 @@
 // sized-int types generate distinct C-structs (NovaOpt_int16_t vs
 // NovaOpt_int32_t). Previously caught only at the C stage (EXPECT_CC_ERROR);
 // the generic type-argument check now rejects it at type-check time.
-module neg.n_option_sized_int_mismatch
+module neg.plan70_4_n_option_sized_int_mismatch
 
 fn take_opt_i32(o Option[i32]) -> bool { o.is_some() }
 

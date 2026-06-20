@@ -8,14 +8,14 @@
 
 module nova_tests.plan70
 
-type Box[T] {
+type Box_f1recordfieldconcretepos[T] {
     value T          // type-param field — handled by void* arm, не fallback
     label str        // concrete — handled by fallback path, должен пройти type_ref_to_c успешно
     tag int          // concrete int — same
 }
 
-test "Box[int] concrete fields compile" {
-    ro b Box[int] = { value: 42, label: "answer", tag: 1 }
+test "Box_f1recordfieldconcretepos[int] concrete fields compile" {
+    ro b Box_f1recordfieldconcretepos[int] = { value: 42, label: "answer", tag: 1 }
     assert(b.value == 42)
     assert(b.label == "answer")
     assert(b.tag == 1)

@@ -5,7 +5,7 @@
 // passing one for the other is a reinterpretation. Previously this slipped past
 // the type-checker and only failed at the C stage (EXPECT_CC_ERROR); the generic
 // type-argument check now rejects it cleanly at type-check time.
-module neg.n_option_f32_f64_mismatch
+module neg.plan70_4_n_option_f32_f64_mismatch
 
 fn take_opt_f64(o Option[f64]) -> bool { o.is_some() }
 

@@ -1,4 +1,4 @@
-module nova_tests.plan70_5
+module nova_tests.plan70
 
 // Plan 70.5: []uint and Option[uint] use NovaArray_uint64_t / NovaOpt_uint64_t.
 

@@ -6,7 +6,7 @@
 //
 // Документирует поведение codegen для неизвестных type-path констант.
 
-module neg.f8_uint_undefined_const_neg
+module neg.plan70_5_f8_uint_undefined_const_neg
 
 // EXPECT_CC_ERROR undeclared identifier
 fn bad3() -> uint {

@@ -1,0 +1,34 @@
+// Plan 70.3 — positive: char distinct в user generic record.
+//
+// Расширяет f1 (Option) / f2 (array): подтверждает что distinct
+// `nova_char` typedef корректно прокидывается в user-defined generic
+// type instantiation. `Box_plan703f5genericrecordcharpos[char]` mono'ится в `Nova_Box____nova_char`,
+// `Box_plan703f5genericrecordcharpos[int]` — в `Nova_Box____nova_int` — independent C structs.
+
+module nova_tests.plan70
+
+type Box_plan703f5genericrecordcharpos[T] {
+    value T
+}
+
+fn unwrap_box[T](b Box_plan703f5genericrecordcharpos[T]) -> T => b.value
+
+test "Box_plan703f5genericrecordcharpos[char] holds char field" {
+    ro bc Box_plan703f5genericrecordcharpos[char] = { value: 'z' }
+    assert(bc.value == 'z')
+    assert(unwrap_box(bc) == 'z')
+}
+
+test "Box_plan703f5genericrecordcharpos[int] holds int field — distinct mono instance" {
+    ro bi Box_plan703f5genericrecordcharpos[int] = { value: 100 }
+    assert(bi.value == 100)
+    assert(unwrap_box(bi) == 100)
+}
+
+test "char + int Box_plan703f5genericrecordcharpos coexist без collapse" {
+    ro bc Box_plan703f5genericrecordcharpos[char] = { value: 'A' }
+    ro bi Box_plan703f5genericrecordcharpos[int] = { value: 65 }
+    // Underlying codepoint совпадает (A = 65), но C-типы distinct.
+    assert(bc.value == 'A')
+    assert(bi.value == 65)
+}
