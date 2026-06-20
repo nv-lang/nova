@@ -1813,6 +1813,9 @@ impl CEmitter {
             R::Named { name, args, .. } if args.is_empty() => Self::primitive_name_to_c(name)
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("Nova_{}", name)),
+            // U.5.5(a): L2 `readonly` view is transparent for C (`readonly T` ABI ≡ `T`,
+            // exactly as `type_ref_to_c`'s Readonly arm) — peel and lower the inner type.
+            R::Readonly(inner) => Self::resolved_type_to_c(inner),
             _ => "<u4.1-unhandled>".to_string(),
         }
     }

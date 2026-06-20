@@ -462,6 +462,10 @@ fn is_typed_int(rt: &crate::types::ResolvedType) -> bool {
 /// `type_ref_to_c` and are deferred (U.6.1/U.4.3).
 fn is_primitive_lowerable(rt: &crate::types::ResolvedType) -> bool {
     use crate::types::ResolvedType as R;
+    // U.5.5(a): peel the L2 `readonly` view — `x as readonly <prim>` lowers like
+    // `x as <prim>` (readonly transparent for C), so it stays annotatable (no coverage
+    // regression). The stored annotation keeps the view; `resolved_type_to_c` peels it.
+    let rt = rt.peel_view();
     matches!(rt, R::Scalar { .. } | R::Float { .. } | R::Bool | R::Str)
         || matches!(rt, R::Named { name, args, .. } if args.is_empty() && name.as_str() == "char")
 }

@@ -52,6 +52,16 @@ pub enum ResolvedType {
     Any,
     /// L3 typed pointer: pointee modifier + inner (mirrors `Ty::TypedPtr`).
     TypedPtr(crate::ast::PointerModifier, Box<ResolvedType>),
+    /// L2 content-view `readonly T` (D246 axis L2). U.5.5(a): carried LOSSLESSLY (D315 —
+    /// the canonical type holds ALL mutability axes) where the pre-U.5.5 `from_type_ref`
+    /// unwrapped it. It is TRANSPARENT to (a) the int/never queries — `peel_view` strips it
+    /// so narrowing/range-check/bottom-type see the inner type, byte-identical to the old
+    /// unwrap — and (b) the C lowering (`readonly T` ABI ≡ `T`, exactly as
+    /// `type_ref_to_c`). Produced ONLY by `from_type_ref`; `resolved_cat_of` stays
+    /// transparent (never yields `Readonly`), so `cat_compatible_rt`/`distinct_mono` never
+    /// observe it. The L2-`mut`/`unsafe` (binding-level, non-pointer) wrappers remain
+    /// transparent — they are not a `readonly` view.
+    Readonly(Box<ResolvedType>),
     /// Named record/sum/newtype/alias/`char` WITH its generic type-arguments (U.5.3:
     /// `args` preserves `Stack[int]`≠`Stack[u32]` for the type-identity check; empty for
     /// non-generic names). `cat_compatible` compares the NAME only (args ignored —
@@ -153,7 +163,11 @@ impl ResolvedType {
             },
             TypeRef::Protocol { .. } => R::Any,
             TypeRef::Unit(_) => R::Unit,
-            TypeRef::Readonly(inner, _) => R::from_type_ref(inner),
+            // U.5.5(a): carry the L2 `readonly` view (was unwrapped). Transparent to the
+            // int/never queries via `peel_view` and to the C lowering, but lossless in the
+            // carrier (D315). `mut`/`unsafe` on a non-pointer stay transparent below — they
+            // are binding-level, not a `readonly` content-view.
+            TypeRef::Readonly(inner, _) => R::Readonly(Box::new(R::from_type_ref(inner))),
             // U.5.5(a): `*mut T` / `*unsafe T` pointee-modifier fidelity. The canonical
             // mutable pointer is `Pointer(Mut(T))` / `Pointer(Unsafe(T))` (Nova V2 syntax,
             // Plan 131/118.5); the pre-U.5.5 arm collapsed BOTH spellings to
@@ -185,10 +199,24 @@ impl ResolvedType {
         }
     }
 
+    /// U.5.5(a): strip the L2 `readonly` view wrapper(s) to reach the underlying type.
+    /// The view is carried losslessly (D315 — all mutability axes live in the carrier) but
+    /// is TRANSPARENT to the int/never queries (narrowing, range-check, bottom-type) and to
+    /// the C lowering (`readonly T` ABI ≡ `T`) — byte-identical to the pre-U.5.5 unwrap and
+    /// to `type_ref_to_c`. Idempotent on non-`Readonly`; loops to peel nested `readonly`.
+    pub fn peel_view(&self) -> &ResolvedType {
+        let mut t = self;
+        while let ResolvedType::Readonly(inner) = t {
+            t = inner;
+        }
+        t
+    }
+
     /// `(width, signed)` if int-family, else `None`. Single source for the width/sign
-    /// that `int_width_rank` recovers separately today (folded by U.5.2).
+    /// that `int_width_rank` recovers separately today (folded by U.5.2). Peels the L2
+    /// `readonly` view first (U.5.5(a)) so `readonly Tn` narrows exactly like `Tn`.
     pub fn int_width_sign(&self) -> Option<(u8, bool)> {
-        match self {
+        match self.peel_view() {
             ResolvedType::Scalar { width, signed, .. } => Some((*width, *signed)),
             _ => None,
         }
@@ -205,7 +233,8 @@ impl ResolvedType {
     /// `None` for non-int. Used for the diagnostic name in BOTH the sized range-check
     /// and the D227 unsigned-floor (where wide `uint` has no `sized_int_name`).
     pub fn int_name(&self) -> Option<&'static str> {
-        let ResolvedType::Scalar { width, signed, wide_default } = self else {
+        // U.5.5(a): peel the L2 `readonly` view — `readonly Tn` names like `Tn`.
+        let ResolvedType::Scalar { width, signed, wide_default } = self.peel_view() else {
             return None;
         };
         Some(match (*width, *signed, *wide_default) {
@@ -230,7 +259,10 @@ impl ResolvedType {
     /// incl `uint` — is enforced separately, D227 amend.) Byte-identical to the deleted
     /// standalone `sized_int_name(&TypeRef)` when called on `from_type_ref(tr)`.
     pub fn sized_int_name(&self) -> Option<String> {
-        match self {
+        // U.5.5(a): peel the L2 `readonly` view first — `readonly int` stays a wide default
+        // (no range-check), `readonly u8` stays sized (range-checked), exactly like the
+        // bare `int`/`u8`. `int_name` peels too, so the `_` arm is also view-transparent.
+        match self.peel_view() {
             ResolvedType::Scalar { wide_default: true, .. } => None,
             _ => self.int_name().map(str::to_string),
         }
@@ -292,16 +324,41 @@ mod resolved_type_tests {
     }
 
     #[test]
-    fn l2_view_transparent_for_int() {
+    fn l2_readonly_view_carried_but_query_transparent() {
         let int = || prim_ref("int", Span::dummy());
+        let ro = |t| TypeRef::Readonly(Box::new(t), Span::dummy());
+        let scal_int = || ResolvedType::Scalar { width: 64, signed: true, wide_default: true };
+        // U.5.5(a): the L2 `readonly` view is now CARRIED losslessly (pre-U.5.5 it was
+        // unwrapped to the inner type) — the carrier distinguishes `readonly T` from `T`.
         assert_eq!(
-            ResolvedType::from_type_ref(&TypeRef::Readonly(Box::new(int()), Span::dummy())),
-            ResolvedType::Scalar { width: 64, signed: true, wide_default: true }
+            ResolvedType::from_type_ref(&ro(int())),
+            ResolvedType::Readonly(Box::new(scal_int()))
         );
+        // …but TRANSPARENT to the int/never queries: `peel_view` strips it, so
+        // narrowing/range/bottom see the inner type exactly as the old unwrap did.
+        assert_eq!(ResolvedType::from_type_ref(&ro(int())).peel_view(), &scal_int());
+        assert_eq!(ResolvedType::from_type_ref(&ro(int())).int_width_sign(), Some((64, true)));
+        // nested `readonly readonly T` peels fully.
+        assert_eq!(ResolvedType::from_type_ref(&ro(ro(int()))).peel_view(), &scal_int());
+        // `readonly never` is still bottom after peeling (never-propagation unchanged).
+        assert!(matches!(
+            ResolvedType::from_type_ref(&ro(prim_ref("never", Span::dummy()))).peel_view(),
+            ResolvedType::Never
+        ));
+        // `mut`/`unsafe` on a NON-pointer stay transparent (binding-level, not a readonly
+        // content-view) — unchanged from pre-U.5.5.
         assert_eq!(
             ResolvedType::from_type_ref(&TypeRef::Mut(Box::new(int()), Span::dummy())),
-            ResolvedType::Scalar { width: 64, signed: true, wide_default: true }
+            scal_int()
         );
+        // Query transparency through the view: sized-vs-wide-default + narrowing verdict
+        // are identical to the bare inner type (the byte-identical gate for narrowing/D227).
+        let ro_u8 = ResolvedType::from_type_ref(&ro(prim_ref("u8", Span::dummy())));
+        assert_eq!(ro_u8.sized_int_name(), Some("u8".to_string())); // sized → range-checked
+        assert_eq!(ResolvedType::from_type_ref(&ro(int())).sized_int_name(), None); // wide default
+        let ro_u32 = ResolvedType::from_type_ref(&ro(prim_ref("u32", Span::dummy())));
+        let i32t = ResolvedType::from_type_ref(&prim_ref("i32", Span::dummy()));
+        assert!(ro_u32.would_narrow_into(&i32t)); // `readonly u32` → i32 narrows like `u32`
     }
 
     #[test]
@@ -8511,7 +8568,8 @@ impl<'a> TypeCheckCtx<'a> {
         // Plan 125.1 (Ф.1) — never-subtype-of-T per spec D25: `never` assignable
         // to any expected type (bottom type). `from_type_ref` mirrors `ty_of_ref`
         // (both map `never` → `Never`, neither resolves aliases).
-        if matches!(ResolvedType::from_type_ref(&found_tr), ResolvedType::Never) {
+        // U.5.5(a): peel the L2 `readonly` view so `readonly never` is still bottom.
+        if matches!(ResolvedType::from_type_ref(&found_tr).peel_view(), ResolvedType::Never) {
             return Compat::Ok;
         }
         let found_rt = self.resolved_cat_of(&found_tr, expr_gs);
@@ -8650,7 +8708,9 @@ impl<'a> TypeCheckCtx<'a> {
                         if !decls.is_empty()
                             && decls.iter().all(|d| {
                                 d.return_type.as_ref().map_or(false, |tr| {
-                                    matches!(ResolvedType::from_type_ref(tr), ResolvedType::Never)
+                                    // U.5.5(a): peel the L2 `readonly` view (`readonly never`
+                                    // is still bottom) so the never-propagation is unchanged.
+                                    matches!(ResolvedType::from_type_ref(tr).peel_view(), ResolvedType::Never)
                                 })
                             })
                         {
