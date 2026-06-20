@@ -9418,8 +9418,20 @@ Rust-style fallback «default to `i32` when value fits» **отвергнут**.
    при exponent overflow тоже compile error).
 
 6. **Negative literal в unsigned context.** `-1`, `-200` etc. в позиции
-   `uN` типа — **hard error**, не wrap. Для wrap-семантики используется
-   `(-1) as u32` (D54 saturation rules apply).
+   **любого** unsigned-типа — `u8`/`u16`/`u32`/`u64` **И wide `uint`** —
+   **hard error** (`E_LIT_OUT_OF_RANGE`, напр. `-1 < uint.MIN (0)`), не wrap.
+   Для wrap-семантики используется `(-1) as u32` (D54 saturation rules apply).
+
+   > **Amend 2026-06-20 (Plan 172.1, `[M-172.1-U5.2-d227-neg-uint]`).** Уточнение
+   > для wide-default `uint`. Правило «widest int» (Rule 1: `int`/`uint` несут
+   > любой литерал без **верхнего** range-check) относится ТОЛЬКО к верхней
+   > границе. **Нижняя граница (floor 0) для unsigned проверяется ВСЕГДА**, включая
+   > `uint`: отрицательный литерал в `uint` — sign-domain ошибка, как и в `u64`. До
+   > 2026-06-20 impl имел дыру — `uint = -1` молча принимался (wrap → `u64.MAX`),
+   > тогда как `u64 = -1` корректно ругался. Fix (impl→spec conformance) ключится на
+   > общем свойстве `signed == false`, не на имени `uint` (§3 общий механизм).
+   > Регресс — `detect172/d227` (pos: положительный `uint`/large-hex OK; neg:
+   > `uint = -1`/`-5` → `E_LIT_OUT_OF_RANGE`).
 
 7. **Pointer-typed positions.** Литералы **не coerce'ятся в pointer
    type** автоматически (в отличие от numeric Rule 2). Требуется
