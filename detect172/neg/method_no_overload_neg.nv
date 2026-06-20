@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
+// U.3.3: overloaded static methods {Box.mk(int), Box.mk(str)} called with a `bool` —
+// no arg-compatible overload (bool↔int and bool↔str are category mismatches). Previously
+// leaked to codegen/C; the checker now catches it (§0/§1). Per test-conventions.md: no
+// `test`-block — trigger in a fn body, the file must fail to compile.
+module neg.method_no_overload_neg
+type Box { v int }
+fn Box.mk(x int) -> int => x
+fn Box.mk(s str) -> int => 0
+fn trigger() -> int { Box.mk(true) }

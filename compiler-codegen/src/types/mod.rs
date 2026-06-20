@@ -6916,7 +6916,33 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 match overloads {
                     Some([single]) => single,
-                    _ => return,
+                    Some(multi) => {
+                        // Plan 172.1 U.3.3: arity-aware overload resolution in the
+                        // CHECKER for non-primitive `Type.method(args)` calls —
+                        // same rule as U.3.1 (free-fn). Fire E_NO_MATCHING_OVERLOAD
+                        // only when ≥1 overload binds by arity but NONE is
+                        // category-compatible (previously leaked to codegen/C).
+                        // Final exact-C-type selection stays in codegen (U.3.4).
+                        // (primitive-receiver bailed above — U.3.2 closes that via
+                        // ExternalRegistry.) Method params exclude the receiver
+                        // (`f.receiver`), so they align 1:1 with call args exactly
+                        // like the single-overload path below.
+                        let applicable: Vec<bool> = multi.iter()
+                            .filter_map(|c| self.overload_applicability(c, args, gs, scope))
+                            .collect();
+                        if !applicable.is_empty() && !applicable.iter().any(|&ok| ok) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_NO_MATCHING_OVERLOAD] no overload of `{}.{}` \
+                                     matches the given argument types",
+                                    parts[0], parts[1],
+                                ),
+                                base.span,
+                            ));
+                        }
+                        return;
+                    }
+                    None => return,
                 }
             }
             // Plan 81 Ф.2: module-qualified вызов `alias.func(...)` /

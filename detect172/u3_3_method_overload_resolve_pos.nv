@@ -1,0 +1,19 @@
+// U.3.3 regression guard: чекер резолвит overload'ы СТАТИЧЕСКИХ методов (`Type.method`)
+// по типам аргументов — тот же arity-aware rule, что U.3.1 (free-fn). primitive-receiver
+// (`str.*`/`int.*`) — область U.3.2 (ещё не сделано), сюда НЕ входят by design.
+// Покрытие: single-param по типу + multi-param/арность. Folder-module peer of `module detect172`.
+module detect172
+
+type Box { v int }
+fn Box.mk(x int) -> int => x
+fn Box.mk(s str) -> int => 100
+fn Box.mk(a int, b int) -> int => a + b
+
+test "u3_3: static-method overload resolves by arg type (int vs str)" {
+  assert(Box.mk(5) == 5)
+  assert(Box.mk("hi") == 100)
+}
+
+test "u3_3: static-method overload resolves by ARITY / multi-param" {
+  assert(Box.mk(3, 4) == 7)
+}
