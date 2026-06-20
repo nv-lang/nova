@@ -1,0 +1,5 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+// U.5.2: u32 -> i32 value-range-unsafe even at equal width (D54), via would_narrow_into.
+module neg.n_u32_to_i32
+fn take_i32(x i32) -> i32 => x
+test "t" { ro u u32 = 100  assert(take_i32(u) >= 0) }

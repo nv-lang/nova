@@ -1,0 +1,4 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+// U.5.2: reassignment narrowing int -> u8 (D54), via would_narrow_into in Stmt::Assign.
+module neg.n_reassign
+test "t" { mut a u8 = 0  ro c int = 30  a = c  assert(a >= 0) }

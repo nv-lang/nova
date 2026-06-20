@@ -95,6 +95,29 @@ pub enum ResolvedType {
 }
 
 impl ResolvedType {
+    /// `(width, signed, wide_default)` `Scalar` for a bare int-family primitive NAME
+    /// (`i8`..`i64` / `u8`..`u64` / `int` / `uint`), else `None`. THE single primitive
+    /// width/sign table (`[M-172.1-U5-structured-type]` §2 exception) — shared by
+    /// `from_type_ref` (empty-generics guarded) and `resolved_cat_of` (unguarded,
+    /// mirroring `cat_of`'s name match) so the width/sign/wide-default mapping lives in
+    /// ONE place (no drift, §2/§0).
+    fn scalar_from_int_name(name: &str) -> Option<ResolvedType> {
+        use ResolvedType as R;
+        Some(match name {
+            "i8" => R::Scalar { width: 8, signed: true, wide_default: false },
+            "i16" => R::Scalar { width: 16, signed: true, wide_default: false },
+            "i32" => R::Scalar { width: 32, signed: true, wide_default: false },
+            "i64" => R::Scalar { width: 64, signed: true, wide_default: false },
+            "int" => R::Scalar { width: 64, signed: true, wide_default: true },
+            "u8" => R::Scalar { width: 8, signed: false, wide_default: false },
+            "u16" => R::Scalar { width: 16, signed: false, wide_default: false },
+            "u32" => R::Scalar { width: 32, signed: false, wide_default: false },
+            "u64" => R::Scalar { width: 64, signed: false, wide_default: false },
+            "uint" => R::Scalar { width: 64, signed: false, wide_default: true },
+            _ => return None,
+        })
+    }
+
     /// Total conversion from a `TypeRef`, mirroring `ty_of_ref`'s collapse rules
     /// (`Pointer`/`Mut(Pointer)`/`Unsafe(Pointer)` → `TypedPtr`; `Readonly` /
     /// `Mut(non-ptr)` / `Unsafe(non-ptr)` transparent) but LOSSLESS for int
@@ -106,19 +129,13 @@ impl ResolvedType {
         match tr {
             TypeRef::Named { path, generics, .. } => {
                 let name = path.last().map(|s| s.as_str());
+                // Int-family only with EMPTY type-args (generics-guard mirrors
+                // `int_width_rank`/`ty_of_ref`, so `int[X]` — arity error caught
+                // elsewhere — is `Named`, never a bogus scalar). Category resolution
+                // (`resolved_cat_of`) drops this guard to mirror `cat_of`.
                 if generics.is_empty() {
-                    match name {
-                        Some("i8") => return R::Scalar { width: 8, signed: true, wide_default: false },
-                        Some("i16") => return R::Scalar { width: 16, signed: true, wide_default: false },
-                        Some("i32") => return R::Scalar { width: 32, signed: true, wide_default: false },
-                        Some("i64") => return R::Scalar { width: 64, signed: true, wide_default: false },
-                        Some("int") => return R::Scalar { width: 64, signed: true, wide_default: true },
-                        Some("u8") => return R::Scalar { width: 8, signed: false, wide_default: false },
-                        Some("u16") => return R::Scalar { width: 16, signed: false, wide_default: false },
-                        Some("u32") => return R::Scalar { width: 32, signed: false, wide_default: false },
-                        Some("u64") => return R::Scalar { width: 64, signed: false, wide_default: false },
-                        Some("uint") => return R::Scalar { width: 64, signed: false, wide_default: true },
-                        _ => {}
+                    if let Some(s) = name.and_then(ResolvedType::scalar_from_int_name) {
+                        return s;
                     }
                 }
                 match name {
@@ -321,7 +338,7 @@ mod resolved_type_tests {
     }
 
     #[test]
-    fn would_narrow_into_matches_is_int_narrowing() {
+    fn would_narrow_into_int_semantics() {
         // narrowing reads only (width, signed) — `wide_default` is irrelevant here.
         let s = |w, sg| ResolvedType::Scalar { width: w, signed: sg, wide_default: false };
         // narrowing / value-range-unsafe:
@@ -334,47 +351,92 @@ mod resolved_type_tests {
         assert!(!s(64, true).would_narrow_into(&s(64, true)));  // int ≡ i64 identity
         assert!(!s(8, true).would_narrow_into(&s(16, true)));   // i8 → i16
         assert!(!s(8, false).would_narrow_into(&s(16, false))); // u8 → u16
-        // cross-check vs the legacy fn over real TypeRefs (the byte-identical gate for U.5.2):
+        // over real TypeRefs (the narrowing surface `assignable` exercises) — these are
+        // the exact pairs the deleted `is_int_narrowing` decided; pinned to the SAME
+        // verdicts (the U.5.2 fold is byte-identical, also gated by the corpus run).
         let tr = |n| prim_ref(n, Span::dummy());
-        for (f, e) in [
-            ("u32", "i32"), ("u8", "int"), ("i32", "u32"),
-            ("int", "i64"), ("u64", "int"), ("u8", "u16"), ("i64", "i8"),
+        for (f, e, expect) in [
+            ("u32", "i32", true),  // narrowing (same width, sign flip)
+            ("u8", "int", false),  // safe widening (range fits)
+            ("i32", "u32", true),  // signed → unsigned
+            ("int", "i64", false), // int ≡ i64 identity
+            ("u64", "int", true),  // u64 → i64 narrowing
+            ("u8", "u16", false),  // safe widening
+            ("i64", "i8", true),   // narrowing
         ] {
             assert_eq!(
                 ResolvedType::from_type_ref(&tr(f))
                     .would_narrow_into(&ResolvedType::from_type_ref(&tr(e))),
-                is_int_narrowing(&tr(f), &tr(e)),
-                "would_narrow_into must match is_int_narrowing for {f}→{e}"
+                expect,
+                "would_narrow_into({f} → {e})"
             );
         }
     }
 
     #[test]
-    fn sized_int_name_matches_legacy_and_distinguishes_wide_default() {
+    fn sized_int_name_distinguishes_wide_default() {
         let tr = |n| prim_ref(n, Span::dummy());
         // The whole reason for `wide_default`: `int`/`uint` skip the range-check
         // (D227 Rule 1), the sized names are checked — a distinction `Scalar{w,s}`
-        // alone could NOT express (`uint`≡`u64`≡(64,false)).
+        // alone could NOT express (`uint`≡`u64`≡(64,false)). Replaces the deleted
+        // standalone `sized_int_name(&TypeRef)` — same verdicts, pinned directly.
         assert_eq!(r("int").sized_int_name(), None);
         assert_eq!(r("uint").sized_int_name(), None);
         assert_eq!(r("i64").sized_int_name(), Some("i64".to_string()));
         assert_eq!(r("u64").sized_int_name(), Some("u64".to_string()));
         assert_eq!(r("u8").sized_int_name(), Some("u8".to_string()));
+        assert_eq!(r("i8").sized_int_name(), Some("i8".to_string()));
+        assert_eq!(r("i16").sized_int_name(), Some("i16".to_string()));
         assert_eq!(r("i32").sized_int_name(), Some("i32".to_string()));
+        assert_eq!(r("u16").sized_int_name(), Some("u16".to_string()));
+        assert_eq!(r("u32").sized_int_name(), Some("u32".to_string()));
         assert_eq!(r("str").sized_int_name(), None);
+        assert_eq!(r("bool").sized_int_name(), None);
         assert_eq!(r("Foo").sized_int_name(), None);
-        // byte-identical to the standalone `sized_int_name(&TypeRef)` (the U.5.2 gate):
-        // method on `from_type_ref(tr)` must equal the legacy fn for every direct name.
-        for n in ["int", "uint", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "str", "bool"] {
-            assert_eq!(
-                ResolvedType::from_type_ref(&tr(n)).sized_int_name(),
-                sized_int_name(&tr(n)),
-                "sized_int_name method must match legacy fn for `{n}`"
-            );
-        }
-        // L2 view (ro/mut/unsafe) transparent — same as the legacy unwrap.
+        // L2 view (ro/mut/unsafe) transparent — `from_type_ref` unwraps, so the method
+        // sees the inner sized int (same as the deleted fn's unwrap).
         let ro_u8 = TypeRef::Readonly(Box::new(tr("u8")), Span::dummy());
-        assert_eq!(ResolvedType::from_type_ref(&ro_u8).sized_int_name(), sized_int_name(&ro_u8));
+        assert_eq!(
+            ResolvedType::from_type_ref(&ro_u8).sized_int_name(),
+            Some("u8".to_string())
+        );
+    }
+
+    #[test]
+    fn cat_compatible_rt_mirrors_legacy_arms() {
+        use ResolvedType as R;
+        let sc = |w, s| R::Scalar { width: w, signed: s, wide_default: false };
+        // `Any` permissive (= old `Other`):
+        assert!(cat_compatible_rt(&R::Any, &R::Str));
+        assert!(cat_compatible_rt(&R::Bool, &R::Any));
+        // Scalar/Float permissive on width+sign (= old (Int,Int)/(Int,Float)) — narrowing
+        // is decided SEPARATELY by `would_narrow_into`, not here:
+        assert!(cat_compatible_rt(&sc(8, false), &sc(64, true)));
+        assert!(cat_compatible_rt(&sc(64, false), &sc(8, true)));
+        assert!(cat_compatible_rt(&sc(32, true), &R::Float));
+        assert!(cat_compatible_rt(&R::Float, &sc(16, false)));
+        // same-kind primitives:
+        assert!(cat_compatible_rt(&R::Bool, &R::Bool));
+        assert!(cat_compatible_rt(&R::Str, &R::Str));
+        assert!(cat_compatible_rt(&R::Unit, &R::Unit));
+        assert!(cat_compatible_rt(&R::Ptr, &R::Ptr));
+        // Named by name (incl. `char` riding as `Named("char")` = old `(Char,Char)`):
+        assert!(cat_compatible_rt(&R::Named("char".into()), &R::Named("char".into())));
+        assert!(cat_compatible_rt(&R::Named("Foo".into()), &R::Named("Foo".into())));
+        assert!(!cat_compatible_rt(&R::Named("Foo".into()), &R::Named("Bar".into())));
+        assert!(!cat_compatible_rt(&R::Named("char".into()), &R::Str));
+        // Array recurses on element:
+        assert!(cat_compatible_rt(
+            &R::Array(Box::new(sc(8, false))),
+            &R::Array(Box::new(sc(64, true)))
+        ));
+        assert!(!cat_compatible_rt(
+            &R::Array(Box::new(R::Bool)),
+            &R::Array(Box::new(R::Str))
+        ));
+        // mismatched kinds → false:
+        assert!(!cat_compatible_rt(&R::Bool, &R::Str));
+        assert!(!cat_compatible_rt(&sc(8, true), &R::Bool));
     }
 }
 
@@ -5742,7 +5804,11 @@ impl<'a> TypeCheckCtx<'a> {
                         if let (Some(target_ty), Some(value_ty)) =
                             (scope.get(name).cloned(), self.infer_expr_type(value, scope))
                         {
-                            if is_int_narrowing(&value_ty, &target_ty) {
+                            // U.5.2: single-source narrowing via `would_narrow_into`
+                            // on DIRECT types (folds the legacy `is_int_narrowing`).
+                            if ResolvedType::from_type_ref(&value_ty)
+                                .would_narrow_into(&ResolvedType::from_type_ref(&target_ty))
+                            {
                                 errors.push(Diagnostic::new(
                                     format!(
                                         "[E_IMPLICIT_NARROWING] cannot assign value of \
@@ -6652,11 +6718,12 @@ impl<'a> TypeCheckCtx<'a> {
         let Some(elem_tr) = self.infer_iter_elem_type(iter, scope) else {
             return;
         };
-        let ann_cat = self.cat_of(ann, gs);
-        let elem_cat = self.cat_of(&elem_tr, gs);
-        // Permissive на Other (generic-параметр / неизвестное / protocol)
-        // — как в `assignable`.
-        if !cat_compatible(&elem_cat, &ann_cat) {
+        // U.5.2: structured category (`resolved_cat_of` + `cat_compatible_rt`),
+        // mirroring `assignable`. Permissive на `Any` (generic-параметр /
+        // неизвестное / protocol). Транзитный parity-ассерт снимается в Phase B.
+        let ann_rt = self.resolved_cat_of(ann, gs);
+        let elem_rt = self.resolved_cat_of(&elem_tr, gs);
+        if !cat_compatible_rt(&elem_rt, &ann_rt) {
             errors.push(
                 Diagnostic::new(
                     format!(
@@ -8096,20 +8163,29 @@ impl<'a> TypeCheckCtx<'a> {
         exp_gs: &HashSet<String>,
         scope: &HashMap<String, TypeRef>,
     ) -> Compat {
-        let exp_cat = self.cat_of(expected, exp_gs);
+        // U.5.2: category через структурный `ResolvedType` (lossless width/sign) —
+        // `resolved_cat_of` зеркалит `cat_of` (alias/Vec/Named/Any), но int-семья несёт
+        // точные (width, signed) вместо `TyCat::Int`-коллапса.
+        let exp_rt = self.resolved_cat_of(expected, exp_gs);
         // Generic-параметр / any / func / tuple — проверить нельзя.
-        if matches!(exp_cat, TyCat::Other) {
+        if matches!(exp_rt, ResolvedType::Any) {
             return Compat::Ok;
         }
         // Литералы: тип адаптируется к контексту (D44).
         match &expr.kind {
             ExprKind::IntLit(v) => {
-                return match exp_cat {
-                    TyCat::Int => {
+                return match &exp_rt {
+                    ResolvedType::Scalar { .. } => {
                         // Plan 142 (D227 Rule 3): context-coercion целого
                         // литерала к sized-типу — hard range-check. Default
                         // `int`/`uint` (wide) → sized_int_name = None → Ok.
-                        if let Some(name) = sized_int_name(expected) {
+                        // Имя для range-check берём из DIRECT-типа
+                        // (`from_type_ref`, БЕЗ alias-резолва) — byte-identical
+                        // c legacy `sized_int_name(expected)` (alias → None,
+                        // `uint` ≠ `u64`; `wide_default` несёт это различие).
+                        if let Some(name) =
+                            ResolvedType::from_type_ref(expected).sized_int_name()
+                        {
                             // Hex literals > i64::MAX are stored as wrapping
                             // i64 by the lexer (spec: bit-identical). For
                             // unsigned target types, reinterpret as u64 so
@@ -8125,7 +8201,7 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                         Compat::Ok
                     }
-                    TyCat::Float => Compat::Ok,
+                    ResolvedType::Float => Compat::Ok,
                     _ => Compat::Bad { found: "int".to_string() },
                 };
             }
@@ -8139,9 +8215,11 @@ impl<'a> TypeCheckCtx<'a> {
                 let ExprKind::IntLit(v) = operand.kind else {
                     unreachable!()
                 };
-                return match exp_cat {
-                    TyCat::Int => {
-                        if let Some(name) = sized_int_name(expected) {
+                return match &exp_rt {
+                    ResolvedType::Scalar { .. } => {
+                        if let Some(name) =
+                            ResolvedType::from_type_ref(expected).sized_int_name()
+                        {
                             // i128 negation — без overflow даже для i64::MIN.
                             let neg = -(v as i128);
                             if let Some(msg) = lit_range_check(neg, &name) {
@@ -8150,48 +8228,49 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                         Compat::Ok
                     }
-                    TyCat::Float => Compat::Ok,
+                    ResolvedType::Float => Compat::Ok,
                     _ => Compat::Bad { found: "int".to_string() },
                 };
             }
             ExprKind::FloatLit(_) => {
-                return match exp_cat {
-                    TyCat::Float => Compat::Ok,
+                return match &exp_rt {
+                    ResolvedType::Float => Compat::Ok,
                     _ => Compat::Bad { found: "f64".to_string() },
                 };
             }
             ExprKind::BoolLit(_) => {
-                return if exp_cat == TyCat::Bool {
+                return if matches!(exp_rt, ResolvedType::Bool) {
                     Compat::Ok
                 } else {
                     Compat::Bad { found: "bool".to_string() }
                 };
             }
             ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => {
-                return if exp_cat == TyCat::Str {
+                return if matches!(exp_rt, ResolvedType::Str) {
                     Compat::Ok
                 } else {
                     Compat::Bad { found: "str".to_string() }
                 };
             }
             ExprKind::CharLit(_) => {
-                return if exp_cat == TyCat::Char {
+                // `char` riding as `Named("char")` — mirrors the legacy `TyCat::Char`.
+                return if matches!(&exp_rt, ResolvedType::Named(n) if n == "char") {
                     Compat::Ok
                 } else {
                     Compat::Bad { found: "char".to_string() }
                 };
             }
             ExprKind::UnitLit => {
-                return if exp_cat == TyCat::Unit {
+                return if matches!(exp_rt, ResolvedType::Unit) {
                     Compat::Ok
                 } else {
                     Compat::Bad { found: "()".to_string() }
                 };
             }
             // Plan 134: null ptr literal — only assignable к *() or pointer types
-            // (TyCat::Ptr). Mismatch flagged as *()-not-X.
+            // (ResolvedType::Ptr). Mismatch flagged as *()-not-X.
             ExprKind::NullPtrLit => {
-                return if exp_cat == TyCat::Ptr {
+                return if matches!(exp_rt, ResolvedType::Ptr) {
                     Compat::Ok
                 } else {
                     Compat::Bad { found: "*()".to_string() }
@@ -8203,30 +8282,29 @@ impl<'a> TypeCheckCtx<'a> {
         let Some(found_tr) = self.infer_expr_type(expr, scope) else {
             return Compat::Unknown;
         };
-        // Plan 125.1 (Ф.1) — never-subtype-of-T per spec D25: `Ty::Never`
-        // assignable to any expected type (bottom type). Hookpoint fires
-        // once `infer_expr_type` returns `never` for Throw/Interrupt/
-        // never-returning calls in subsequent Ф.* steps. Pure additive —
-        // existing `TyCat::Other` safety-net preserved.
-        if matches!(ty_of_ref(&found_tr), Ty::Never) {
+        // Plan 125.1 (Ф.1) — never-subtype-of-T per spec D25: `never` assignable
+        // to any expected type (bottom type). `from_type_ref` mirrors `ty_of_ref`
+        // (both map `never` → `Never`, neither resolves aliases).
+        if matches!(ResolvedType::from_type_ref(&found_tr), ResolvedType::Never) {
             return Compat::Ok;
         }
-        let found_cat = self.cat_of(&found_tr, expr_gs);
+        let found_rt = self.resolved_cat_of(&found_tr, expr_gs);
         // [M-scalar-nonliteral-narrowing-not-enforced] (D54): a NON-LITERAL int
         // value coerced into a narrower / value-range-unsafe int position must
-        // use an explicit `as`. Literals already returned above (D227 handles
-        // their range-check); an `as`-cast infers as its target width (no
-        // narrowing seen here). Only fires int→int — widening stays implicit.
-        if matches!(found_cat, TyCat::Int)
-            && matches!(exp_cat, TyCat::Int)
-            && is_int_narrowing(&found_tr, expected)
+        // use an explicit `as`. U.5.2: narrowing decided on the DIRECT
+        // (`from_type_ref`) types via `would_narrow_into` — the SINGLE source that
+        // folds the former raw-TypeRef `is_int_narrowing` second pass. Direct-only
+        // width (no alias resolve) preserves the legacy `int_width_rank` semantics
+        // byte-identically; widening stays implicit.
+        if ResolvedType::from_type_ref(&found_tr)
+            .would_narrow_into(&ResolvedType::from_type_ref(expected))
         {
             return Compat::Narrowing {
                 from: typeref_display(&found_tr),
                 to: typeref_display(expected),
             };
         }
-        if cat_compatible(&found_cat, &exp_cat) {
+        if cat_compatible_rt(&found_rt, &exp_rt) {
             Compat::Ok
         } else {
             Compat::Bad { found: typeref_display(&found_tr) }
@@ -8802,6 +8880,87 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// Plan 172.1 U.5.2 ([M-172.1-U5.2-resolved-cat-transitional]): LOSSLESS structured
+    /// mirror of `cat_of_depth` — SAME resolution (alias-transparent, `Vec[T]`→`Array`,
+    /// newtype/record/sum/named-tuple→`Named`, unknown/protocol/effect/`any`/`never`/
+    /// generic-param→`Any`, `char`→`Named("char")`) but int-family carries EXACT
+    /// `(width, signed, wide_default)` instead of the `TyCat::Int` collapse. Feeds the
+    /// structured `cat_compatible_rt` in `assignable`/`f1_check_for_elem`.
+    ///
+    /// Like `cat_of` (and UNLIKE `from_type_ref`), int-family names resolve to `Scalar`
+    /// REGARDLESS of generics (`int[X]`→`Scalar`) — it mirrors `cat_of`'s name match,
+    /// not `ty_of_ref`'s generics-guard. TRANSITIONAL: a second converter alongside
+    /// `cat_of` only until U.5.4 deletes `TyCat`/`cat_of` and this becomes the sole
+    /// category resolver (the temporary duplication is the cost of routing
+    /// `cat_compatible` before `cat_of` is removed — tracked by the marker).
+    fn resolved_cat_of(&self, tr: &TypeRef, gs: &HashSet<String>) -> ResolvedType {
+        self.resolved_cat_of_depth(tr, gs, 0)
+    }
+
+    fn resolved_cat_of_depth(
+        &self,
+        tr: &TypeRef,
+        gs: &HashSet<String>,
+        depth: u32,
+    ) -> ResolvedType {
+        use ResolvedType as R;
+        if depth > 16 {
+            return R::Any; // mirrors cat_of_depth depth-guard → Other
+        }
+        match tr {
+            TypeRef::Named { path, generics, .. } => {
+                let Some(name) = path.last() else { return R::Any; };
+                if gs.contains(name) {
+                    return R::Any; // generic type-param → permissive
+                }
+                // Int-family — UNGUARDED on generics (mirrors cat_of, not from_type_ref).
+                if let Some(s) = ResolvedType::scalar_from_int_name(name) {
+                    return s;
+                }
+                match name.as_str() {
+                    "f32" | "f64" => R::Float,
+                    "bool" => R::Bool,
+                    "str" => R::Str,
+                    "char" => R::Named("char".to_string()),
+                    // D239 `Vec[T] ≡ []T` — same `Array(elem)` category as the sugar.
+                    "Vec" if generics.len() == 1 => {
+                        R::Array(Box::new(self.resolved_cat_of_depth(&generics[0], gs, depth + 1)))
+                    }
+                    "ptr" => R::Ptr,
+                    "any" | "never" | "Self" => R::Any,
+                    other => match self.types.get(other) {
+                        Some(td) => match &td.kind {
+                            // Alias transparent (D52); newtype/record/sum/named-tuple
+                            // nominal by name; protocol/effect/opaque permissive.
+                            TypeDeclKind::Alias(inner) => {
+                                self.resolved_cat_of_depth(inner, gs, depth + 1)
+                            }
+                            TypeDeclKind::Newtype(_)
+                            | TypeDeclKind::Record(_)
+                            | TypeDeclKind::Sum(_)
+                            | TypeDeclKind::NamedTuple(_) => R::Named(other.to_string()),
+                            TypeDeclKind::Protocol { .. }
+                            | TypeDeclKind::Effect(_)
+                            | TypeDeclKind::Opaque => R::Any,
+                        },
+                        None => R::Any, // unknown name → permissive
+                    },
+                }
+            }
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                R::Array(Box::new(self.resolved_cat_of_depth(inner, gs, depth + 1)))
+            }
+            TypeRef::Tuple(_, _) | TypeRef::Func { .. } => R::Any,
+            TypeRef::Protocol { .. } => R::Any,
+            TypeRef::Unit(_) => R::Unit,
+            TypeRef::Readonly(inner, _) => self.resolved_cat_of_depth(inner, gs, depth + 1),
+            TypeRef::Pointer(_, _) => R::Ptr,
+            TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+                self.resolved_cat_of_depth(inner, gs, depth + 1)
+            }
+        }
+    }
+
     /// [M-generic-arg-type-mismatch-silent] — recursively decide whether two
     /// type-arguments `p` (parameter side, scope `pgs`) and `a` (actual-argument
     /// side, scope `ags`) of the SAME generic type are a definite mismatch (two
@@ -8898,85 +9057,11 @@ fn sized_int_bounds(name: &str) -> Option<(i128, i128)> {
     Some((min, max))
 }
 
-/// Plan 142 (D227): извлечь имя sized-int типа из `expected`, развернув
-/// `readonly T` / `mut T`. Возвращает `None`, если это не прямой
-/// именованный sized-int (alias/newtype резолвятся через cat_of, но имя
-/// для range-check недоступно — пропускаем, чтобы не давать ложное имя
-/// в диагностике).
-fn sized_int_name(tr: &TypeRef) -> Option<String> {
-    match tr {
-        TypeRef::Named { path, .. } => {
-            let name = path.last()?;
-            if sized_int_bounds(name).is_some() {
-                Some(name.clone())
-            } else {
-                None
-            }
-        }
-        TypeRef::Readonly(inner, _)
-        | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _) => sized_int_name(inner),
-        _ => None,
-    }
-}
-
-/// [M-scalar-nonliteral-narrowing-not-enforced] (D54/D129/D130): `(bit-width,
-/// is_signed)` of a DIRECT int-family TypeRef. `int` = `i64` = (64, signed);
-/// `uint` = `u64` = (64, unsigned). Unwraps `ro`/`mut`/`unsafe` wrappers like
-/// `sized_int_name`. Returns `None` for non-int types AND for alias/newtype names
-/// (resolving those needs `self.types`, unavailable here) → the narrowing check
-/// stays permissive on them, matching the D227 alias-range-check skip.
-fn int_width_rank(tr: &TypeRef) -> Option<(u8, bool)> {
-    match tr {
-        TypeRef::Named { path, generics, .. } if generics.is_empty() => {
-            match path.last()?.as_str() {
-                "i8" => Some((8, true)),
-                "i16" => Some((16, true)),
-                "i32" => Some((32, true)),
-                "i64" | "int" => Some((64, true)),
-                "u8" => Some((8, false)),
-                "u16" => Some((16, false)),
-                "u32" => Some((32, false)),
-                "u64" | "uint" => Some((64, false)),
-                _ => None,
-            }
-        }
-        TypeRef::Readonly(inner, _)
-        | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _) => int_width_rank(inner),
-        _ => None,
-    }
-}
-
-/// [M-scalar-nonliteral-narrowing-not-enforced] (D54): would coercing a
-/// non-literal value of type `found` into position `expected` LOSE range — i.e.
-/// is it a narrowing / value-range-unsafe int conversion that must require an
-/// explicit `as`? Both sides must be direct int-family types (else `false` —
-/// permissive). Value-range-PRESERVING widening stays implicit:
-///   - same (width, sign)                      → ok  (incl. `int`≡`i64`, `uint`≡`u64`);
-///   - signed → strictly wider signed          → ok;
-///   - unsigned → strictly wider unsigned       → ok;
-///   - unsigned → strictly wider signed         → ok  (whole range fits);
-///   - signed → unsigned (any width)            → NARROW (negatives);
-///   - anything not strictly wider              → NARROW (incl. u32→i32, u64→int).
-fn is_int_narrowing(found: &TypeRef, expected: &TypeRef) -> bool {
-    let (Some((fw, fs)), Some((ew, es))) =
-        (int_width_rank(found), int_width_rank(expected))
-    else {
-        return false;
-    };
-    if fw == ew && fs == es {
-        return false; // identity widening (int≡i64, uint≡u64, Tn→Tn)
-    }
-    let safe_widening = match (fs, es) {
-        (true, true) => ew > fw,   // signed → wider signed
-        (false, false) => ew > fw, // unsigned → wider unsigned
-        (false, true) => ew > fw,  // unsigned → strictly wider signed (range fits)
-        (true, false) => false,    // signed → unsigned: never implicit
-    };
-    !safe_widening
-}
-
+/// Plan 172.1 U.5.2: the former `sized_int_name(&TypeRef)`, `int_width_rank` and
+/// `is_int_narrowing` standalone helpers were folded into `ResolvedType`
+/// (`sized_int_name()` method + `would_narrow_into`, the single narrowing source) and
+/// deleted here — the raw-TypeRef second pass over `assignable` is gone.
+///
 /// Plan 142 (D227 Rule 3/6): диапазон-проверка значения `val` (i128)
 /// против sized-типа `name`. `Some(msg)` — литерал вне диапазона,
 /// `msg` — суффикс диагностики; `None` — в пределах (или не sized).
@@ -9010,16 +9095,26 @@ enum TyCat {
     Other,
 }
 
-/// Ф.1: совместимы ли две категории. Permissive на `Other` и на разнице
-/// ширины числовых типов (int↔float для не-литералов — codegen/`as`).
-fn cat_compatible(found: &TyCat, expected: &TyCat) -> bool {
-    use TyCat::*;
+/// Plan 172.1 U.5.2: structured mirror of `cat_compatible` over `ResolvedType`
+/// (replaces the `TyCat` version for the `assignable` / `f1_check_for_elem` category
+/// gate). Permissive on `Any` (= old `Other`) and — exactly like the old `(Int,Int)` —
+/// on int WIDTH/SIGN: `(Scalar,Scalar)` is ALWAYS compatible here. Narrowing is decided
+/// SEPARATELY by `would_narrow_into` on the DIRECT (`from_type_ref`) types BEFORE this
+/// call, preserving the `int_width_rank`-vs-`cat_of` alias asymmetry byte-identically
+/// (an alias-to-int must NOT be flagged as narrowing — `int_width_rank` does not resolve
+/// aliases, so the width gate stays direct-only). `char` rides as `Named("char")`, so the
+/// old `(Char,Char)` case is covered by the `(Named,Named)` arm.
+fn cat_compatible_rt(found: &ResolvedType, expected: &ResolvedType) -> bool {
+    use ResolvedType as R;
     match (found, expected) {
-        (Other, _) | (_, Other) => true,
-        (Int, Int) | (Float, Float) | (Int, Float) | (Float, Int) => true,
-        (Bool, Bool) | (Str, Str) | (Char, Char) | (Unit, Unit) | (Ptr, Ptr) => true,
-        (Named(a), Named(b)) => a == b,
-        (Array(a), Array(b)) => cat_compatible(a, b),
+        (R::Any, _) | (_, R::Any) => true,
+        (R::Scalar { .. }, R::Scalar { .. })
+        | (R::Float, R::Float)
+        | (R::Scalar { .. }, R::Float)
+        | (R::Float, R::Scalar { .. }) => true,
+        (R::Bool, R::Bool) | (R::Str, R::Str) | (R::Unit, R::Unit) | (R::Ptr, R::Ptr) => true,
+        (R::Named(a), R::Named(b)) => a == b,
+        (R::Array(a), R::Array(b)) => cat_compatible_rt(a, b),
         _ => false,
     }
 }

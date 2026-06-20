@@ -1,0 +1,4 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+// U.5.2: non-literal int -> u8 binding without `as` (D54), now via would_narrow_into.
+module neg.n_narrow_binding
+test "t" { ro c int = 30  ro a u8 = c  assert(a >= 0) }

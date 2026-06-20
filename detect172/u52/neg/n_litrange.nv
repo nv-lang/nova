@@ -1,0 +1,4 @@
+// EXPECT_COMPILE_ERROR E_LIT_OUT_OF_RANGE
+// U.5.2: literal 300 out of u8 range (D227 Rule 3), via ResolvedType::sized_int_name.
+module neg.n_litrange
+test "t" { ro a u8 = 300  assert(a >= 0) }
