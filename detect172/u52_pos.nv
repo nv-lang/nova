@@ -2,37 +2,38 @@
 // onto `ResolvedType` (resolved_cat_of + cat_compatible_rt + would_narrow_into +
 // sized_int_name). These MUST stay green: value-range-preserving widening, explicit
 // `as`, in-range literals, char category, Vec element category.
-module u52.pos
+// Folder-module peer of `module detect172` (один CU; деталь задачи — в имени файла).
+module detect172
 
 fn take_int(x int) -> int => x
 fn take_i32(x i32) -> i32 => x
 
-test "widening u8 -> int is implicit (would_narrow_into = false)" {
+test "u52: widening u8 -> int is implicit (would_narrow_into = false)" {
     ro b u8 = 5
     ro w int = b
     assert(w == 5)
     assert(take_int(b) == 5)
 }
-test "unsigned u8 -> wider signed i32 implicit (range fits)" {
+test "u52: unsigned u8 -> wider signed i32 implicit (range fits)" {
     ro b u8 = 200
     ro w i32 = b
     assert(take_i32(b) == 200)
     assert(w == 200)
 }
-test "explicit as narrowing is OK" {
+test "u52: explicit as narrowing is OK" {
     ro c int = 30
     ro a u8 = c as u8
     assert(a == 30)
 }
-test "in-range literal into sized target passes range-check" {
+test "u52: in-range literal into sized target passes range-check" {
     ro a u8 = 255
     assert(a == 255)
 }
-test "char literal into char (Named category)" {
+test "u52: char literal into char (Named category)" {
     ro c char = 'x'
     assert(c == 'x')
 }
-test "Vec[int] element category compatible with []int" {
+test "u52: Vec[int] element category compatible with []int" {
     ro v []int = [1, 2, 3]
     assert(v.len() == 3)
 }
