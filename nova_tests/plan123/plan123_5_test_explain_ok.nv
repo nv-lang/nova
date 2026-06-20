@@ -1,0 +1,24 @@
+// Plan 123.5 T1.1: --explain-cache output verification.
+
+module nova_tests.plan123
+
+type Calc_plan1235testexplainok {
+    ro a int
+    ro b int
+}
+
+#pure
+fn Calc_plan1235testexplainok @sum() -> int => @a + @b
+
+fn Calc_plan1235testexplainok @demo() -> int {
+    @a + @a + @b + @b + @sum() + @sum()
+}
+
+fn Calc_plan1235testexplainok.new(a int, b int) -> Calc_plan1235testexplainok {
+    Calc_plan1235testexplainok { a, b }
+}
+
+test "demo runs" {
+    ro c = Calc_plan1235testexplainok.new(3, 5)
+    assert(c.demo() == 32)  // 3+3+5+5 + 8+8 = 16 + 16 = 32
+}

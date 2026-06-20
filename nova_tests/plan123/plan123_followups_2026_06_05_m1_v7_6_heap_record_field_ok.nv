@@ -1,0 +1,43 @@
+// Plan 123 V*.followups 2026-06-05 marker 1 — V7.6 TypeDecl refactor.
+// Closes [M-123.7.6-generic-ref-types].
+// Positive: heap-record field via TypeDecl classification → ref-typed →
+// `@F.method()` doesn't invalidate `@F` cache when method mutates *F
+// behind pointer (V7.6 V2 spec-driven, не hardcoded list).
+
+module nova_tests.plan123
+
+type Inner4_plan123followups20260605m1v76heaprecordfieldok {
+    mut count int
+}
+
+fn Inner4_plan123followups20260605m1v76heaprecordfieldok.new() -> Inner4_plan123followups20260605m1v76heaprecordfieldok => { count: 0 }
+fn Inner4_plan123followups20260605m1v76heaprecordfieldok mut @bump() -> () { @count = @count + 1 }
+fn Inner4_plan123followups20260605m1v76heaprecordfieldok @get() -> int => @count
+
+type Outer3_plan123followups20260605m1v76heaprecordfieldok {
+    mut inner Inner4_plan123followups20260605m1v76heaprecordfieldok
+}
+
+fn Outer3_plan123followups20260605m1v76heaprecordfieldok.new() -> Outer3_plan123followups20260605m1v76heaprecordfieldok => { inner: Inner4_plan123followups20260605m1v76heaprecordfieldok.new() }
+
+fn Outer3_plan123followups20260605m1v76heaprecordfieldok mut @sample_three_bumps() -> int {
+    // V7.6 V2: `Inner4_plan123followups20260605m1v76heaprecordfieldok` is heap-record (default AllocKind::Heap),
+    // classified via TypeKindRegistry as HeapRecord ⇒ ref-typed.
+    // Multiple `@inner.bump()` / `@inner.get()` chain through field.
+    @inner.bump()
+    ro a = @inner.get()
+    @inner.bump()
+    ro b = @inner.get()
+    @inner.bump()
+    ro c = @inner.get()
+    a + b + c
+}
+
+test "V7.6 V2: heap-record field ref-classification preserves semantics" {
+    mut o = Outer3_plan123followups20260605m1v76heaprecordfieldok.new()
+    ro r = o.sample_three_bumps()
+    // bumps: 0→1, 1→2, 2→3
+    // a=1, b=2, c=3 ⇒ 1+2+3 = 6
+    assert(r == 6)
+    assert(o.inner.get() == 3)
+}

@@ -1,0 +1,39 @@
+// Plan 123.3.2 (V3.2, 2026-06-02): pure-call cache survives record
+// literal args. Method `@with_color(c)` called twice с identical
+// record literal `Color{r:0, g:0, b:255}` → ONE cached invocation.
+// Also exercises the args_key sanitizer (record literals contain
+// `{`, `}`, `:`, `;` which must be rewritten в valid C identifier).
+
+module nova_tests.plan123
+
+type Color {
+    ro r int
+    ro g int
+    ro b int
+}
+
+type Pixel4 {
+    ro base int
+}
+
+#pure
+fn Pixel4 @with_color(c Color) -> int {
+    @base + c.r + c.g + c.b
+}
+
+fn Pixel4 @use_twice() -> int {
+    ro a = @with_color(Color{r: 0, g: 0, b: 255})
+    ro b = @with_color(Color{r: 0, g: 0, b: 255})
+    a + b
+}
+
+fn Pixel4.new(base int) -> Pixel4 {
+    Pixel4 { base }
+}
+
+test "V3.2: record-literal arg pure-call is cached" {
+    ro p = Pixel4.new(10)
+    ro got = p.use_twice()
+    // with_color = 10 + 0 + 0 + 255 = 265; doubled = 530.
+    assert(got == 530)
+}

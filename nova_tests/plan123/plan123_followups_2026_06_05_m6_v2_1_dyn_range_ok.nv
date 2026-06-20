@@ -1,0 +1,42 @@
+// Plan 123 V*.followups 2026-06-05 marker 6 вЂ” V2.1 dynamic loop count.
+// Closes [M-123.2.1-dynamic-loop-count].
+// Positive: literal `0..N` exclusive range gives precise iter weight
+// (vs env default 8). Semantic preservation verified through known sum.
+
+module nova_tests.plan123
+
+type Cv10 {
+    mut y int
+}
+
+fn Cv10.new(init int) -> Cv10 => { y: init }
+
+fn Cv10 mut @sum_range_5() -> int {
+    // Range expr `0..5` вЂ” literal bound 5 parsed via parse_loop_iter_count.
+    mut acc = 0
+    for i in 0..5 {
+        acc = acc + @y
+    }
+    acc
+}
+
+fn Cv10 mut @sum_range_inclusive_3() -> int {
+    // Range expr `1..=3` вЂ” literal inclusive, 3 iterations (1,2,3).
+    mut acc = 0
+    for i in 1..=3 {
+        acc = acc + @y
+    }
+    acc
+}
+
+test "V2.1 dyn 0..5 exclusive: 5 iters Г— y" {
+    mut cv10 = Cv10.new(2)
+    ro r = cv10.sum_range_5()
+    assert(r == 10)
+}
+
+test "V2.1 dyn 1..=3 inclusive: 3 iters Г— y" {
+    mut cv10 = Cv10.new(7)
+    ro r = cv10.sum_range_inclusive_3()
+    assert(r == 21)
+}

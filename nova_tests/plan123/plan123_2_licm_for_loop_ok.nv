@@ -1,0 +1,30 @@
+// Plan 123.2 T1.3: for loop hoisting.
+
+module nova_tests.plan123
+
+type Box4_plan1232licmforloopok {
+    ro factor int
+}
+
+fn Box4_plan1232licmforloopok.helper() -> int { 7 }
+
+fn Box4_plan1232licmforloopok @apply(n int) -> int {
+    // Call before loop → Plan 123.1 ro path may still cache since ro
+    // unaffected by call. But test verifies for-loop hoist works.
+    mut sum = Box4_plan1232licmforloopok.helper()
+    for i in 0..n {
+        sum = sum + @factor + @factor
+    }
+    sum
+}
+
+fn Box4_plan1232licmforloopok.new(f int) -> Box4_plan1232licmforloopok {
+    Box4_plan1232licmforloopok { factor: f }
+}
+
+test "for loop @factor hoisted" {
+    ro b = Box4_plan1232licmforloopok.new(3)
+    ro r = b.apply(4)
+    // sum = 7, 4 iterations × (3+3) = 24. Total = 31.
+    assert(r == 31)
+}

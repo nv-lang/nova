@@ -1,0 +1,27 @@
+// Plan 123.3 T1.5: pure-call cache composes с D217 ro field cache.
+
+module nova_tests.plan123
+
+type Box_plan1233purewithrofieldscompositionok {
+    ro a int
+    ro b int
+}
+
+#pure
+fn Box_plan1233purewithrofieldscompositionok @sum2() -> int => @a + @b
+
+fn Box_plan1233purewithrofieldscompositionok @triple_sum() -> int {
+    // 3 pure calls + 2 direct @a + 2 direct @b reads.
+    @sum2() + @sum2() + @sum2() + @a + @a + @b + @b
+}
+
+fn Box_plan1233purewithrofieldscompositionok.new(a int, b int) -> Box_plan1233purewithrofieldscompositionok {
+    Box_plan1233purewithrofieldscompositionok { a, b }
+}
+
+test "pure cache composes with ro field cache" {
+    ro x = Box_plan1233purewithrofieldscompositionok.new(2, 5)
+    ro r = x.triple_sum()
+    // 3*(2+5) + 2*2 + 2*5 = 21 + 4 + 10 = 35.
+    assert(r == 35)
+}

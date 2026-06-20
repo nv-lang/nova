@@ -1,0 +1,34 @@
+// Plan 123.7.1 T-NEG.1: mut field cache invalidated by self-method
+// call that writes the field per IPA write_set.
+
+module nova_tests.plan123
+
+type Counter4_plan12371ipamutinvalidatesonwritingcallok {
+    mut value int
+}
+
+// This method WRITES @value.
+fn Counter4_plan12371ipamutinvalidatesonwritingcallok mut @increment() -> () {
+    @value = @value + 1
+}
+
+fn Counter4_plan12371ipamutinvalidatesonwritingcallok mut @work() -> int {
+    // 2 reads @value, then @increment() (writes @value),
+    // then 2 more reads.
+    // IPA: @increment writes @value → barrier; cache invalidated.
+    ro a = @value + @value
+    @increment()
+    @value + @value + a
+}
+
+fn Counter4_plan12371ipamutinvalidatesonwritingcallok.new(v int) -> Counter4_plan12371ipamutinvalidatesonwritingcallok {
+    Counter4_plan12371ipamutinvalidatesonwritingcallok { value: v }
+}
+
+test "IPA: cache invalidated when callee writes field" {
+    mut c = Counter4_plan12371ipamutinvalidatesonwritingcallok.new(10)
+    ro r = c.work()
+    // a = 20 (from initial value=10); after increment value=11.
+    // Then 11+11+20 = 42.
+    assert(r == 42)
+}

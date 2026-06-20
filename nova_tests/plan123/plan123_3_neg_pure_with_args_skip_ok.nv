@@ -1,0 +1,26 @@
+// Plan 123.3 T-NEG.3: pure methods with args → V3 skip (V3.1 enhance).
+
+module nova_tests.plan123
+
+type Calc_plan1233negpurewithargsskipok {
+    ro base int
+}
+
+#pure
+fn Calc_plan1233negpurewithargsskipok @add(x int) -> int => @base + x
+
+fn Calc_plan1233negpurewithargsskipok @sum() -> int {
+    // @add(1) + @add(1) — same args, but V3 doesn't recognize identity.
+    @add(1) + @add(1) + @add(2)
+}
+
+fn Calc_plan1233negpurewithargsskipok.new(b int) -> Calc_plan1233negpurewithargsskipok {
+    Calc_plan1233negpurewithargsskipok { base: b }
+}
+
+test "pure method with args — semantic preserved (V3 skip)" {
+    ro c = Calc_plan1233negpurewithargsskipok.new(10)
+    ro r = c.sum()
+    // 11 + 11 + 12 = 34.
+    assert(r == 34)
+}

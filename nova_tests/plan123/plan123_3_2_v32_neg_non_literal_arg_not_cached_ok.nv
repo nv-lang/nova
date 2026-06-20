@@ -1,0 +1,37 @@
+// Plan 123.3.2 V3.2 (2026-06-02) NEGATIVE: non-literal tuple arg
+// (variable component) is NOT eligible for cache key — call site
+// is preserved as-is (no cache local). Verifies V3.2 encoder
+// short-circuits on non-literal nested arg. This is positive
+// behavior — программа компилится и работает идентично без cache.
+
+module nova_tests.plan123
+
+type Box4_plan12332v32negnonliteralargnotcachedok {
+    ro base int
+}
+
+#pure
+fn Box4_plan12332v32negnonliteralargnotcachedok @sum_pair_with(t (int, int), n int) -> int {
+    @base + t.0 + t.1 + n
+}
+
+fn Box4_plan12332v32negnonliteralargnotcachedok @uses_var() -> int {
+    ro v = 7
+    // First arg is (v, 2) — `v` is не literal → V3.2 reject → no cache.
+    // Both calls still execute correctly (no eligibility = no cache,
+    // not = wrong result).
+    ro a = @sum_pair_with((v, 2), 100)
+    ro b = @sum_pair_with((v, 2), 100)
+    a + b
+}
+
+fn Box4_plan12332v32negnonliteralargnotcachedok.new(b int) -> Box4_plan12332v32negnonliteralargnotcachedok {
+    Box4_plan12332v32negnonliteralargnotcachedok { base: b }
+}
+
+test "V3.2 NEG: non-literal tuple element bypasses cache" {
+    ro x = Box4_plan12332v32negnonliteralargnotcachedok.new(10)
+    ro got = x.uses_var()
+    // 10 + 7 + 2 + 100 = 119; doubled = 238.
+    assert(got == 238)
+}

@@ -1,0 +1,24 @@
+// Plan 123 V*.followups 2026-06-05 marker 4 — chain-norm V3 non-self root.
+// Closes [M-123.4.4-non-self-receivers].
+// Positive: local-var root `v.push(...).push(...)` triggers chain-norm
+// hoisting (V1/V2 only handled `@F` self-field root).
+
+module nova_tests.plan123
+
+fn build_list() -> []int {
+    mut v = [10, 20, 30]
+    // V3 local-var Ident root pattern: hoisted under V3.
+    v.push(40).push(50).push(60)
+    v
+}
+
+test "chain-norm V3 local-var Ident root: depth-3 push chain" {
+    ro xs = build_list()
+    assert(xs.len() == 6)
+    assert(xs[0] == 10)
+    assert(xs[1] == 20)
+    assert(xs[2] == 30)
+    assert(xs[3] == 40)
+    assert(xs[4] == 50)
+    assert(xs[5] == 60)
+}

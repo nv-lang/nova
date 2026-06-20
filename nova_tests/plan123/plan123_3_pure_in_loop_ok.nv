@@ -1,0 +1,33 @@
+// Plan 123.3 T1.2: pure method called inside loop — cached at body
+// prefix (since no @F write).
+
+module nova_tests.plan123
+
+type Buf_plan1233pureinloopok {
+    ro data int
+}
+
+#pure
+fn Buf_plan1233pureinloopok @size() -> int => @data
+
+fn Buf_plan1233pureinloopok @scan_for(target int) -> int {
+    mut count = 0
+    mut i = 0
+    while i < @size() {
+        if i == target { count = count + 1 }
+        if i < @size() / 2 { count = count + 0 }
+        i = i + 1
+    }
+    count + @size()
+}
+
+fn Buf_plan1233pureinloopok.new(d int) -> Buf_plan1233pureinloopok {
+    Buf_plan1233pureinloopok { data: d }
+}
+
+test "pure method in loop cached at body prefix" {
+    ro b = Buf_plan1233pureinloopok.new(4)
+    ro r = b.scan_for(2)
+    // size=4, loop iterates 0..4. count=1 (only i==2). + size=4 → 5.
+    assert(r == 5)
+}
