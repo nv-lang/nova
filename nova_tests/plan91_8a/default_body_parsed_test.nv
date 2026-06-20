@@ -33,5 +33,5 @@ test "Compare use Equal + default equals body вЂ” РєРѕРјРїРёР»Р
     ro a = Sortable { weight: 5 }
     ro b = Sortable { weight: 10 }
     assert(a.compare(b) < 0)
-    assert(a.equals(a))
+    assert(a.equal(a))
 }
