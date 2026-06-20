@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E7320
+//
+// Plan 138.2 Ф.0c (negative): calling `.push(...)` on a plain user record
+// (which has no such method) is an honest no-field/method error — the checker
+// rejects the access ([E7320] no field or method `push` on type `UserRec15`).
+//
+// 169.2: ранее формулировалось через user `type Vec` SHADOW прелюд-`Vec[T]`;
+// тип переименован в `UserRec15`, shadow-покрытие снято (см. [M-vec-shadow-leak-e7310]).
+
+module neg.t15_user_record_no_push_neg
+
+type UserRec15 { x int, y int }
+
+test "push on user record is a no-method error" {
+    mut v = UserRec15 { x: 1, y: 2 }
+    v.push(99)
+}

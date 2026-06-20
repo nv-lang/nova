@@ -25,6 +25,17 @@ referenced from plan docs and simplifications.md.
   Реализация: в check_bound_ref, если bound-name резолвится в user TypeDecl (не Protocol) И в prelude есть Protocol с тем же именем — добавить hint к E_BOUND_NOT_PROTOCOL.
   Priority: M.
 
+- **[M-vec-shadow-leak-e7310]** User-shadow обобщённого типа протекает во внутренние type-refs
+  импортированного модуля. `type Vec { x int, y int }` (не-generic) в пользовательском модуле,
+  затеняющий прелюд/импортированный `Vec[T]` (D29 «user wins»), приводит к тому, что СОБСТВЕННЫЙ
+  код `std/collections/vec.nv` / `hashmap.nv` (`Vec[T]`, `Vec[Slot[K,V]]`) резолвится на
+  пользовательский НЕ-generic `Vec` (0 type-параметров) → `[E7310] type Vec is not generic —
+  takes no type arguments, but 1 was provided`. Затенение должно быть scope'нуто к модулю
+  пользователя, не протекать в чужие модули. Комментарий fixture'а (plan138_2/t14) утверждает,
+  что это когда-то чинилось → вероятно регресс (или дрейф от Vec-prelude-flip). Вскрыто
+  консолидацией 169.1.2; обходной путь применён — shadow-fixtures plan138_2 (t14/t15/t16)
+  переименованы в `UserRecNN` (shadow-покрытие снято, см. 169.2). Priority: M.
+
 ---
 
 ## Plan 118.6 — Safe &x model

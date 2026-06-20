@@ -1,0 +1,16 @@
+// Plan 138.2 Ф.0c — user-defined record compiles cleanly.
+//
+// 169.2: ранее тестировал `#allow(shadow)` подавление W_PRELUDE_SHADOW при
+// user `type Vec`, затеняющем прелюд-`Vec`; тип переименован в `UserRec16`,
+// затенения больше нет → `#allow(shadow)` снят (no-op). Suppress-механизм
+// покрыт plan62/neg/prelude_shadow_suppress.nv; shadow-баг — [M-vec-shadow-leak-e7310].
+
+module nova_tests.plan138_2
+
+type UserRec16 { x int, y int }
+
+test "user record literal + field read (16)" {
+    ro v = UserRec16 { x: 7, y: 11 }
+    assert(v.x == 7)
+    assert(v.y == 11)
+}
