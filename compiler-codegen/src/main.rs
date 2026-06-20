@@ -345,13 +345,14 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     })?;
     check_module_path(path, &module)?;
     // Plan 172.1 U.4.1: assign a stable ExprId to every expr (post-parse,
-    // pre-check) so the checker annotates ModuleEnv.resolved_types and codegen
-    // reads it instead of re-deriving (`infer_expr_c_type`, §0/§1).
-    nova_codegen::number_exprs::number_exprs(&mut module);
+    // pre-check) and seed the literal resolved-type table; stored into
+    // ModuleEnv.resolved_types below so codegen reads it instead of re-deriving
+    // (`infer_expr_c_type`, §0/§1).
+    let resolved_types = nova_codegen::number_exprs::number_exprs(&mut module);
     // Plan 162.2 Ф.2: collect cross-module signatures before type-check so
     // that is_known_type / is_known_fn can suppress false-positive diagnostics
     // for symbols from transitively imported modules.
-    let module_env = {
+    let mut module_env = {
         let sig_table = nova_codegen::test_runner::find_repo_root_from(path)
             .map(|repo| {
                 let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
@@ -370,6 +371,9 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
             .collect();
         anyhow!("{}", messages.join("\n"))
     })?;
+    // Plan 172.1 U.4.1: hand the literal resolved-type seed to ModuleEnv so the
+    // emitter can read it (set_resolved_types below).
+    module_env.resolved_types = resolved_types;
     // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression
     // ПОСЛЕ type-check, ДО effect-inference и codegen. После прохода
     // codegen видит обычные method-call'ы (with_capacity / insert).
@@ -440,6 +444,8 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     // Plan 140.2 Part B (D257 / B.4): proven index-сайты для элизии bounds-check.
     emitter.set_proven_index_sites(&module_env.proven_index_sites);
     emitter.set_proven_index_sites_contract(&module_env.proven_index_sites_contract);
+    // Plan 172.1 U.4.1: feed per-Expr resolved-type annotations to the emitter.
+    emitter.set_resolved_types(&module_env.resolved_types);
     // Plan 140.4 ([M-opt-elide-proven-overflow-checks]): proven `int`-overflow сайты
     // для элизии `nova_int_checked_*`.
     emitter.set_proven_overflow_sites(

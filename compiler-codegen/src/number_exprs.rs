@@ -17,12 +17,16 @@
 //! ids and codegen falls back, so partial numbering is sound, never wrong.
 
 use crate::ast::*;
+use std::collections::HashMap;
 
 /// Assign sequential [`ExprId`]s (1..N) to every `Expr` in `module`, in
-/// deterministic pre-order. Mirrors `desugar::desugar_module`'s reach
-/// (`module.items` + `peer_files`).
-pub fn number_exprs(module: &mut Module) {
-    let mut n = Numberer { next: 1 };
+/// deterministic pre-order, AND seed the per-Expr resolved-type table for the
+/// context-free LITERAL kinds (Plan 172.1 U.4.1 part 2 — the trivial producer;
+/// the checker annotates non-literal exprs in U.4.2+). Returns `ExprId →
+/// ResolvedType` for the seeded literals. Mirrors `desugar::desugar_module`'s
+/// reach (`module.items` + `peer_files`).
+pub fn number_exprs(module: &mut Module) -> HashMap<ExprId, crate::types::ResolvedType> {
+    let mut n = Numberer { next: 1, lits: HashMap::new() };
     for item in &mut module.items {
         n.item(item);
     }
@@ -34,19 +38,44 @@ pub fn number_exprs(module: &mut Module) {
             n.item(item);
         }
     }
+    n.lits
 }
 
 struct Numberer {
     /// Next id to hand out. Starts at 1 — `ExprId::UNSET` (0) is reserved for
     /// post-numbering synthesis (desugar/codegen scaffolding).
     next: u32,
+    /// Plan 172.1 U.4.1 part 2: resolved-type seed for context-free literals
+    /// (ExprId → ResolvedType), consumed by codegen via `infer_expr_c_type`.
+    lits: HashMap<ExprId, crate::types::ResolvedType>,
 }
 
 impl Numberer {
     fn expr(&mut self, e: &mut Expr) {
         e.id = ExprId(self.next);
         self.next += 1;
+        self.seed_literal(e);
         self.children(e);
+    }
+
+    /// Plan 172.1 U.4.1 part 2: record the resolved type of a LITERAL expr (the
+    /// context-free trivial producer). Mirrors `infer_expr_c_type`'s literal arms
+    /// (int/f64/bool/str/char/unit/`void*`): `null ptr`→opaque `Ptr`. Non-literals
+    /// are produced by the checker (U.4.2+) — skipped here (no annotation → codegen
+    /// falls back, sound).
+    fn seed_literal(&mut self, e: &Expr) {
+        use crate::types::ResolvedType as R;
+        let rt = match &e.kind {
+            ExprKind::IntLit(_) => R::Scalar { width: 64, signed: true, wide_default: true },
+            ExprKind::FloatLit(_) => R::Float { width: 64 },
+            ExprKind::BoolLit(_) => R::Bool,
+            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => R::Str,
+            ExprKind::CharLit(_) => R::Named { name: "char".to_string(), args: Vec::new() },
+            ExprKind::UnitLit => R::Unit,
+            ExprKind::NullPtrLit => R::Ptr,
+            _ => return,
+        };
+        self.lits.insert(e.id, rt);
     }
 
     fn item(&mut self, item: &mut Item) {

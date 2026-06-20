@@ -2428,7 +2428,7 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
     // codegen READS it instead of re-deriving (`infer_expr_c_type`, §0/§1).
     // Must run post-inline: numbering the merged module once yields globally
     // unique ids (per-peer parse would restart at 1 → folder-module collisions).
-    crate::number_exprs::number_exprs(&mut module);
+    let resolved_types = crate::number_exprs::number_exprs(&mut module);
 
     // Plan 140 Ф.3 (D24 amend): capture ModuleEnv. `check_module` runs the
     // VerificationPipeline (types/mod.rs `env.proven_contracts = report.proven`)
@@ -2437,7 +2437,7 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
     // on the test-build path → proven contracts were NOT elided (R4: pipeline
     // ran but proven was never wired to the emitter).
     // Plan 162.2 Ф.2: use check_module_with_sig_table when sig_table available.
-    let module_env = {
+    let mut module_env = {
         let _t = crate::perf_timer::PerfTimer::new("type-check");
         match sig_table_opt {
             Some(sig_table) => types::check_module_with_sig_table(&module, sig_table),
@@ -2450,6 +2450,8 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
                 .join("\n")
         })?
     };
+    // Plan 172.1 U.4.1: hand the literal resolved-type seed to ModuleEnv.
+    module_env.resolved_types = resolved_types;
     // Plan 52 Ф.9: lints — ПОСЛЕ check_module (типы validated), ДО
     // desugar (lints видят MapLit-узлы). Возвращаются caller'у для
     // EXPECT_COMPILE_WARNING сверки.
@@ -2564,6 +2566,8 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         // Plan 140.2 Part B (D257 / B.4): proven index-сайты для элизии bounds-check.
         emitter.set_proven_index_sites(&module_env.proven_index_sites);
         emitter.set_proven_index_sites_contract(&module_env.proven_index_sites_contract);
+        // Plan 172.1 U.4.1: feed per-Expr resolved-type annotations to the emitter.
+        emitter.set_resolved_types(&module_env.resolved_types);
         emitter.emit_module(&module)
             .map_err(|e| format!("codegen error: {}", e))?
     };

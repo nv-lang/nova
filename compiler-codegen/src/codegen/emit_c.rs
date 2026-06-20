@@ -685,6 +685,13 @@ pub struct CEmitter {
     /// (cross-fn). Элидируются ТОЛЬКО при включённых контрактах — под
     /// `--contracts=off`/`#unchecked` requires не enforced → элизия unsound.
     proven_index_sites_contract: std::collections::HashSet<usize>,
+    /// Plan 172.1 U.4.1: per-Expr resolved-type annotations (ExprId → ResolvedType)
+    /// from the semantic pass — codegen reads them (equivalence-checked in debug)
+    /// instead of re-deriving (`infer_expr_c_type`, §0/§1). Part 2: literals.
+    /// (Read only by the debug equivalence-assert until U.4.2 makes it the
+    /// authoritative type source; release-`dead_code` allowed in the interim.)
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    resolved_types: std::collections::HashMap<crate::ast::ExprId, crate::types::ResolvedType>,
     /// Plan 140.4 ([M-opt-elide-proven-overflow-checks]): proven `int` `+`/`-`/`*`
     /// сайты (по span.start), чей результат доказан в диапазоне i64 из LOOP/CODE.
     /// Codegen элидит `nova_int_checked_*` ВСЕГДА (safe даже под `--contracts=off`).
@@ -1329,6 +1336,7 @@ impl CEmitter {
             proven_contracts: std::collections::HashSet::new(),
             proven_index_sites: std::collections::HashSet::new(),
             proven_index_sites_contract: std::collections::HashSet::new(),
+            resolved_types: std::collections::HashMap::new(),
             proven_overflow_sites: std::collections::HashSet::new(),
             proven_overflow_sites_contract: std::collections::HashSet::new(),
             contracts_off: false,
@@ -1763,6 +1771,49 @@ impl CEmitter {
         self.proven_index_sites_contract.clear();
         for span in sites {
             self.proven_index_sites_contract.insert(span.start);
+        }
+    }
+
+    /// Plan 172.1 U.4.1: install the per-Expr resolved-type annotations produced by
+    /// the semantic pass (literal seed from `number_exprs`; checker for U.4.2+).
+    /// Mirrors the `set_proven_*` channel. Codegen reads these via
+    /// `infer_expr_c_type`'s equivalence check (authoritative type source post-U.4.2).
+    pub fn set_resolved_types(
+        &mut self,
+        m: &std::collections::HashMap<crate::ast::ExprId, crate::types::ResolvedType>,
+    ) {
+        self.resolved_types = m.clone();
+    }
+
+    /// Plan 172.1 U.4.1: lower a checker `ResolvedType` to its C-type string — the
+    /// thin lowering that will replace codegen's re-derivation (`infer_expr_c_type`,
+    /// §0/§1). Reuses the single primitive table `primitive_name_to_c` (§0/§2 — no
+    /// drift). Part 2 handles the types the literal seed produces; the `_` marker
+    /// makes the equivalence-assert fire loudly if a non-literal annotation slips in.
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    fn resolved_type_to_c(rt: &crate::types::ResolvedType) -> String {
+        use crate::types::ResolvedType as R;
+        match rt {
+            R::Scalar { .. } => {
+                let name = rt.int_name().expect("Scalar always yields an int_name");
+                Self::primitive_name_to_c(name)
+                    .expect("int primitive always in table")
+                    .to_string()
+            }
+            R::Float { width } => {
+                let name = if *width == 32 { "f32" } else { "f64" };
+                Self::primitive_name_to_c(name).unwrap().to_string()
+            }
+            R::Bool => Self::primitive_name_to_c("bool").unwrap().to_string(),
+            R::Str => Self::primitive_name_to_c("str").unwrap().to_string(),
+            R::Unit => "nova_unit".to_string(),
+            R::Ptr => "void*".to_string(),
+            // `char` (and any future primitive-named) via the single table; a
+            // non-primitive Named is not produced by the part-2 literal seed.
+            R::Named { name, args } if args.is_empty() => Self::primitive_name_to_c(name)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("Nova_{}", name)),
+            _ => "<u4.1-unhandled>".to_string(),
         }
     }
 
@@ -35594,7 +35645,29 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.fn_field_call_sig(obj, field).map(|(_, ret)| ret)
     }
 
+    /// Plan 172.1 U.4.1: thin entry over the legacy re-derivation. When the semantic
+    /// pass annotated this Expr (resolved_types), DEBUG-asserts the annotation lowers
+    /// to the SAME C-type — proving equivalence across the corpus before U.4.2+ flips
+    /// codegen to read the annotation authoritatively. In release the check compiles
+    /// out → byte-identical to legacy.
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
+        let legacy = self.infer_expr_c_type_legacy(expr);
+        #[cfg(debug_assertions)]
+        if expr.id.is_set() {
+            if let Some(rt) = self.resolved_types.get(&expr.id) {
+                debug_assert_eq!(
+                    Self::resolved_type_to_c(rt),
+                    legacy,
+                    "[U.4.1] IR annotation != legacy infer at id={:?} span={:?}",
+                    expr.id,
+                    expr.span
+                );
+            }
+        }
+        legacy
+    }
+
+    fn infer_expr_c_type_legacy(&self, expr: &Expr) -> String {
         // D38 turbofish: type_args не меняют c-тип; делегируем в base.
         if let ExprKind::TurboFish { base, .. } = &expr.kind {
             return self.infer_expr_c_type(base);

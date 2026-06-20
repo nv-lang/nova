@@ -480,6 +480,11 @@ pub struct ModuleEnv {
     /// Plan 140.4: `int`-арифм. сайты, доказанные ТОЛЬКО с fn-`requires`. Codegen
     /// элидит ТОЛЬКО при включённых контрактах (не `--contracts=off`).
     pub proven_overflow_sites_contract: Vec<Span>,
+    /// Plan 172.1 U.4.1: per-Expr resolved-type annotations (ExprId → ResolvedType)
+    /// from the semantic pass — codegen reads them instead of re-deriving
+    /// (`infer_expr_c_type`, §0/§1). Part 2 seeds LITERALS via `number_exprs`; the
+    /// checker annotates the rest in U.4.2+.
+    pub resolved_types: HashMap<crate::ast::ExprId, ResolvedType>,
 }
 
 /// Минимальная проверка модуля. Регистрирует имена и базовую структуру —
