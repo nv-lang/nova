@@ -79,7 +79,7 @@ impl Numberer {
             ExprKind::FloatLit(_) => R::Float { width: 64 },
             ExprKind::BoolLit(_) => R::Bool,
             ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => R::Str,
-            ExprKind::CharLit(_) => R::Named { name: "char".to_string(), args: Vec::new() },
+            ExprKind::CharLit(_) => R::Named { name: "char".to_string(), module: Vec::new(), args: Vec::new() },
             ExprKind::UnitLit => R::Unit,
             ExprKind::NullPtrLit => R::Ptr,
             ExprKind::Binary { op, left, right } => match op {
@@ -451,7 +451,7 @@ fn is_typed_int(rt: &crate::types::ResolvedType) -> bool {
     use crate::types::ResolvedType as R;
     match rt {
         R::Scalar { width, signed, wide_default: false } => !(*width == 64 && *signed),
-        R::Named { name, args } if args.is_empty() && name.as_str() == "char" => true,
+        R::Named { name, args, .. } if args.is_empty() && name.as_str() == "char" => true,
         _ => false,
     }
 }
@@ -463,5 +463,5 @@ fn is_typed_int(rt: &crate::types::ResolvedType) -> bool {
 fn is_primitive_lowerable(rt: &crate::types::ResolvedType) -> bool {
     use crate::types::ResolvedType as R;
     matches!(rt, R::Scalar { .. } | R::Float { .. } | R::Bool | R::Str)
-        || matches!(rt, R::Named { name, args } if args.is_empty() && name.as_str() == "char")
+        || matches!(rt, R::Named { name, args, .. } if args.is_empty() && name.as_str() == "char")
 }

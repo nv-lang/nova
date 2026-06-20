@@ -1810,7 +1810,7 @@ impl CEmitter {
             R::Ptr => "void*".to_string(),
             // `char` (and any future primitive-named) via the single table; a
             // non-primitive Named is not produced by the part-2 literal seed.
-            R::Named { name, args } if args.is_empty() => Self::primitive_name_to_c(name)
+            R::Named { name, args, .. } if args.is_empty() => Self::primitive_name_to_c(name)
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("Nova_{}", name)),
             _ => "<u4.1-unhandled>".to_string(),

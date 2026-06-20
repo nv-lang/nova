@@ -56,7 +56,17 @@ pub enum ResolvedType {
     /// `args` preserves `Stack[int]`≠`Stack[u32]` for the type-identity check; empty for
     /// non-generic names). `cat_compatible` compares the NAME only (args ignored —
     /// permissive assignability), the generic-arg check compares args exactly.
-    Named { name: String, args: Vec<ResolvedType> },
+    ///
+    /// U.5.5(a) — `module`: the qualifier path segments BEFORE the name (the syntactic
+    /// `TypeRef::Named.path` minus its last segment); `[]` for a bare name. Makes the
+    /// carrier LOSSLESS for the C mangle (D315): `type_ref_to_c` mangles a user type from
+    /// `path.join("_")` → `Nova_<module…>_<name>*`, so the pre-U.5.5 `path.last()` dropped
+    /// the module and mis-mangled `Nova_mymod_Foo*` as `Nova_Foo*`. Populated ONLY by
+    /// `from_type_ref` (the direct C-lowering producer); `resolved_cat_of` and the literal
+    /// producer leave it `[]` — they key category/identity on `name` alone, so the field is
+    /// invisible to `cat_compatible_rt`/`distinct_mono` (both read `name`, not the struct).
+    /// Full path for the future `resolved_type_to_c` lowering = `module ++ [name]`.
+    Named { name: String, module: Vec<String>, args: Vec<ResolvedType> },
     Array(Box<ResolvedType>),
     Tuple(Vec<ResolvedType>),
     Func { params: Vec<ResolvedType>, ret: Box<ResolvedType>, effects: Vec<String> },
@@ -117,6 +127,10 @@ impl ResolvedType {
                     // name. `ResolvedType::Ptr` stays for typed pointers `*T`/`*()`.)
                     Some(n) => R::Named {
                         name: n.to_string(),
+                        // U.5.5(a): carry the qualifier prefix (path minus the name
+                        // segment) so the C mangle keeps the full identity, not just
+                        // `path.last()`. `Some(n)` ⇒ `path` non-empty ⇒ no underflow.
+                        module: path[..path.len() - 1].to_vec(),
                         args: generics.iter().map(R::from_type_ref).collect(),
                     },
                     None => R::Any,
@@ -260,8 +274,8 @@ mod resolved_type_tests {
         assert_eq!(r("bool"), ResolvedType::Bool);
         assert_eq!(r("never"), ResolvedType::Never);
         // `char` has no `Ty` primitive → `Named` (mirrors ty_of_ref).
-        assert_eq!(r("char"), ResolvedType::Named { name: "char".to_string(), args: vec![] });
-        assert_eq!(r("Foo"), ResolvedType::Named { name: "Foo".to_string(), args: vec![] });
+        assert_eq!(r("char"), ResolvedType::Named { name: "char".to_string(), module: vec![], args: vec![] });
+        assert_eq!(r("Foo"), ResolvedType::Named { name: "Foo".to_string(), module: vec![], args: vec![] });
     }
 
     #[test]
@@ -320,6 +334,55 @@ mod resolved_type_tests {
             ResolvedType::from_type_ref(&int_x),
             ResolvedType::Named { name, .. } if name == "int"
         ));
+    }
+
+    #[test]
+    fn named_carries_module_identity_lossless() {
+        // U.5.5(a): the carrier keeps the FULL syntactic identity — the qualifier prefix
+        // (`module`) plus the `name` — so the C mangle reconstructs `path.join("_")`
+        // (`Nova_<module…>_<name>*`) instead of dropping the module (the pre-U.5.5
+        // `path.last()` mis-mangled `Nova_mymod_Foo*` as `Nova_Foo*`).
+        let named = |segs: &[&str], gen: Vec<TypeRef>| TypeRef::Named {
+            path: segs.iter().map(|s| s.to_string()).collect(),
+            generics: gen,
+            span: Span::dummy(),
+        };
+        // bare name → empty module.
+        assert_eq!(
+            ResolvedType::from_type_ref(&named(&["Foo"], vec![])),
+            ResolvedType::Named { name: "Foo".into(), module: vec![], args: vec![] }
+        );
+        // single-segment qualifier preserved.
+        assert_eq!(
+            ResolvedType::from_type_ref(&named(&["mymod", "Foo"], vec![])),
+            ResolvedType::Named { name: "Foo".into(), module: vec!["mymod".into()], args: vec![] }
+        );
+        // multi-segment qualifier preserved in order (full path = module ++ [name]).
+        assert_eq!(
+            ResolvedType::from_type_ref(&named(&["std", "collections", "Map"], vec![])),
+            ResolvedType::Named {
+                name: "Map".into(),
+                module: vec!["std".into(), "collections".into()],
+                args: vec![],
+            }
+        );
+        // generics recurse and carry their own identity; outer module preserved.
+        assert_eq!(
+            ResolvedType::from_type_ref(&named(&["mymod", "Box"], vec![prim_ref("int", Span::dummy())])),
+            ResolvedType::Named {
+                name: "Box".into(),
+                module: vec!["mymod".into()],
+                args: vec![ResolvedType::Scalar { width: 64, signed: true, wide_default: true }],
+            }
+        );
+        // CALIBRATION (byte-identical gate): `module` is invisible to category/identity
+        // comparison — `cat_compatible_rt`/`distinct_mono` read `name` only, so a
+        // module-qualified and a bare same-name type stay category-compatible and are NOT
+        // a distinct-mono mismatch (the enrichment cannot shift any existing decision).
+        let qual = ResolvedType::from_type_ref(&named(&["mymod", "Foo"], vec![]));
+        let bare = ResolvedType::from_type_ref(&named(&["Foo"], vec![]));
+        assert!(cat_compatible_rt(&qual, &bare));
+        assert!(!distinct_mono(&qual, &bare));
     }
 
     #[test]
@@ -409,7 +472,7 @@ mod resolved_type_tests {
     fn cat_compatible_rt_mirrors_legacy_arms() {
         use ResolvedType as R;
         let sc = |w, s| R::Scalar { width: w, signed: s, wide_default: false };
-        let nm = |n: &str| R::Named { name: n.to_string(), args: vec![] };
+        let nm = |n: &str| R::Named { name: n.to_string(), module: vec![], args: vec![] };
         let f = |w| R::Float { width: w };
         // `Any` permissive (= old `Other`):
         assert!(cat_compatible_rt(&R::Any, &R::Str));
@@ -431,8 +494,8 @@ mod resolved_type_tests {
         assert!(cat_compatible_rt(&nm("char"), &nm("char")));
         assert!(cat_compatible_rt(&nm("Foo"), &nm("Foo")));
         assert!(cat_compatible_rt(
-            &R::Named { name: "Box".into(), args: vec![sc(64, true)] },
-            &R::Named { name: "Box".into(), args: vec![sc(32, false)] }
+            &R::Named { name: "Box".into(), module: vec![], args: vec![sc(64, true)] },
+            &R::Named { name: "Box".into(), module: vec![], args: vec![sc(32, false)] }
         )); // same NAME, different args → still compatible at this layer
         assert!(!cat_compatible_rt(&nm("Foo"), &nm("Bar")));
         assert!(!cat_compatible_rt(&nm("char"), &R::Str));
@@ -8953,7 +9016,9 @@ impl<'a> TypeCheckCtx<'a> {
                     "f64" => R::Float { width: 64 },
                     "bool" => R::Bool,
                     "str" => R::Str,
-                    "char" => R::Named { name: "char".to_string(), args: Vec::new() },
+                    // U.5.5(a): category resolver — keyed on `name` only, so `module`
+                    // stays `[]` (the C-lowering identity comes from `from_type_ref`).
+                    "char" => R::Named { name: "char".to_string(), module: Vec::new(), args: Vec::new() },
                     // D239 `Vec[T] ≡ []T` — same `Array(elem)` category as the sugar.
                     "Vec" if generics.len() == 1 => {
                         R::Array(Box::new(self.resolved_cat_of_depth(&generics[0], gs, depth + 1)))
@@ -8973,7 +9038,7 @@ impl<'a> TypeCheckCtx<'a> {
                             | TypeDeclKind::Record(_)
                             | TypeDeclKind::Sum(_)
                             | TypeDeclKind::NamedTuple(_) => {
-                                R::Named { name: other.to_string(), args: rt_args() }
+                                R::Named { name: other.to_string(), module: Vec::new(), args: rt_args() }
                             }
                             TypeDeclKind::Protocol { .. }
                             | TypeDeclKind::Effect(_)
@@ -9130,7 +9195,7 @@ fn distinct_mono(p: &ResolvedType, a: &ResolvedType) -> bool {
         (R::Array(x), R::Array(y)) => distinct_mono(x, y), // (3) Vec/[]T
         // (4) both nominal records (NOT `char`, which is a primitive leaf) → name +
         // recurse args.
-        (R::Named { name: np, args: ap }, R::Named { name: na, args: aa })
+        (R::Named { name: np, args: ap, .. }, R::Named { name: na, args: aa, .. })
             if !is_char_rt(p) && !is_char_rt(a) =>
         {
             np != na
