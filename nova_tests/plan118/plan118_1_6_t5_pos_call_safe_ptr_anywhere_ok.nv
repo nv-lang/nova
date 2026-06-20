@@ -1,0 +1,17 @@
+// Plan 118.1.6 Ф.4 T5 POS — call *fn pointer из safe context works.
+//
+// Safe fn pointer (*fn(Args) -> Ret) carries no unsafe obligation;
+// indirect call позволен в любом контексте, аналогично direct safe fn call.
+
+module nova_tests.plan118
+
+fn double(x i64) -> i64 {
+    x * 2
+}
+
+test "calling *fn pointer из safe context" {
+    ro p *fn(i64) -> i64 = double
+    // Indirect call — NO unsafe wrap. Safe ptr → safe call-site.
+    ro v = p(21)
+    assert(v == 42)
+}

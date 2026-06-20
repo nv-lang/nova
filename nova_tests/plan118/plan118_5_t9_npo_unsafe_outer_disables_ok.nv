@@ -1,0 +1,26 @@
+// Plan 118.5 V2 T9 → MIGRATED by Plan 138.5 (2026-06-11).
+//
+// The retired §V2.4 NPO-DISABLE rule (for the prefix `unsafe * T` /
+// Option[unsafe * T] form) is gone — that prefix form no longer exists. All
+// pointers are non-null, so Option[*…] is ALWAYS NPO-eligible (8 bytes, None
+// = null). This fixture now confirms all canonical POSTFIX pointer forms
+// compile under Option:
+//   Option[*T] / Option[*mut T] / Option[*unsafe T]
+// (the last is the FFI nullable-uninit form: None = null, Some = non-null
+// ptr to a possibly-uninit pointee). The ro pointee is the bare canon `*T`
+// (`*T ≡ *ro T` per Plan 147 / D246; explicit `*ro T` migrated here).
+
+module nova_tests.plan118
+
+type Acc2_plan1185t9npounsafeouterdisablesok {
+    id i64
+}
+
+extern "nova" fn p9_a() -> Option[* Acc2_plan1185t9npounsafeouterdisablesok]
+extern "nova" fn p9_b() -> Option[*mut Acc2_plan1185t9npounsafeouterdisablesok]
+extern "nova" fn p9_c() -> Option[*Acc2_plan1185t9npounsafeouterdisablesok]
+extern "nova" fn p9_d() -> Option[*unsafe Acc2_plan1185t9npounsafeouterdisablesok]
+
+test "Option[*T] family compiles for all canonical postfix variants" {
+    assert(1 == 1)
+}

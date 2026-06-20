@@ -1,0 +1,30 @@
+// Plan 118.7 POS-T1 — `raw &x` inside `unsafe {}` compiles and runs.
+// D216 §4 amend: raw &x = raw stack address; no escape analysis, no heap-promote.
+// EXPECT_PASS
+
+module nova_tests.plan118
+
+test "raw &x inside unsafe: read value via deref" {
+    ro x = 42
+    unsafe {
+        ro p = raw &x
+        assert(*p == 42)
+    }
+}
+
+test "raw &x of mutable local: deref-write" {
+    mut n = 0
+    unsafe {
+        ro p = raw &n
+        *p = 99
+    }
+    assert(n == 99)
+}
+
+test "raw &x of f64 value" {
+    ro v = 3.14
+    unsafe {
+        ro p = raw &v
+        assert(*p == 3.14)
+    }
+}

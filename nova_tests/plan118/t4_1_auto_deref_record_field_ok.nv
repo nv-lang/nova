@@ -8,7 +8,7 @@
 
 module nova_tests.plan118
 
-type Acc3 {
+type Acc3_t41autoderefrecordfieldok {
     ro id i64
     ro balance i64
 }
@@ -16,9 +16,9 @@ type Acc3 {
 // V1 demo через record-as-ptr cast (without extern "nova" fn shim). Verifies
 // codegen emits (*p)->field for *T где T = record.
 test "p.field auto-deref для typed pointer to record (codegen-level)" {
-    ro acc = Acc3 { id: 42, balance: 100 }
-    // acc уже Nova_Acc* в C. `*Acc3` тип означает Nova_Acc** в C.
-    // Plan 118 Ф.4 codegen: member access на *Acc3 emits (*p)->field.
+    ro acc = Acc3_t41autoderefrecordfieldok { id: 42, balance: 100 }
+    // acc уже Nova_Acc* в C. `*Acc3_t41autoderefrecordfieldok` тип означает Nova_Acc** в C.
+    // Plan 118 Ф.4 codegen: member access на *Acc3_t41autoderefrecordfieldok emits (*p)->field.
     // Без actual *T binding (требует & operator + escape promote — Ф.2.4),
     // но codegen path для *T-typed access verified through chain
     // patterns в t1_3 + record-field в t1_6.

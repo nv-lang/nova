@@ -1,0 +1,17 @@
+// Plan 118.5 V3 T11 → RECODED by Plan 147 (2026-06-12).
+//
+// The leading prefix `ro` before `*` fails with E_POINTER_PREFIX_MODIFIER
+// (pointer reassignability is a binding concern, not a `*`-prefix). The
+// pointee here is the bare canon `*T` (`*T ≡ *ro T` per Plan 147 / D246;
+// an explicit `*ro` pointee would itself be E_REDUNDANT_POINTER_RO).
+// Migrate → `*Acc` (single canonical pointee), prefix still rejected.
+//
+// EXPECT_COMPILE_ERROR E_POINTER_PREFIX_MODIFIER
+
+module neg.plan118_5_v3_t11_neg_ro_redundant_chain
+
+type Acc {
+    id i64
+}
+
+extern "nova" fn p(x ro * Acc) -> ()

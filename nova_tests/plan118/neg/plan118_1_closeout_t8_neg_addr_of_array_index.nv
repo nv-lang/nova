@@ -1,0 +1,9 @@
+// Plan 118.6 T8 NEG — addr_of() removed → E_ADDR_OF_REMOVED.
+// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
+module neg.plan118_1_closeout_t8_neg_addr_of_array_index
+test "addr_of removed — array index case also gives E_ADDR_OF_REMOVED" {
+    ro arr = [1, 2, 3]
+    unsafe {
+        ro p = addr_of(arr[0])
+    }
+}

@@ -1,0 +1,11 @@
+// Plan 118.7 NEG-T3 — `raw &x` outside `unsafe {}` rejected.
+// E_UNSAFE_REQUIRED: raw &x requires an unsafe context.
+// EXPECT_COMPILE_ERROR E_UNSAFE_REQUIRED
+
+module neg.plan118_7_t3_neg_raw_addr_outside_unsafe
+
+test "raw &x outside unsafe — rejected" {
+    ro x = 10
+    ro p = raw &x
+    assert(p == p)
+}
