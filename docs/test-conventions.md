@@ -1,5 +1,7 @@
 # Test conventions
 
+> **Нормативный документ** — изменения и отклонения только по согласованию с владельцем; см. [conventions-governance.md](conventions-governance.md).
+
 Практический guide для авторов и пользователей тестов Nova.
 Нормативная спецификация D89 EXPECT-маркеров —
 [spec/decisions/09-tooling.md](../spec/decisions/09-tooling.md#d89).
@@ -268,7 +270,15 @@ test "wrong type" {
 }
 ```
 
-Правило: **никаких `test "..."` блоков** в файлах с `EXPECT_COMPILE_ERROR` — файл не должен компилироваться, runner проверяет только сообщение об ошибке.
+Контейнер для провоцирующего кода — **любой** (`test "..."` / `fn` / top-level decl): он **не исполняется**, т.к. файл обязан не компилироваться (runner проверяет ошибку на этапе codegen — `NEG-NO-ERROR`, если компиляция прошла, независимо от наличия `test`-блока). Для читаемости предпочтителен `fn`/top-level (не подразумевает проходящий тест), но `test`-блок **допустим**. Один EXPECT-маркер на файл.
+
+> **Как это видит раннер** (`test_runner.rs`, чтобы конвенция не расходилась с инструментом):
+> классификация теста — по **маркеру** `EXPECT_*` (`detect_test_type`), НЕ по суффиксу `_neg` или
+> имени папки `neg/`. Группировка файлов в один TU — по **равенству `module`-деклараций**
+> (`is_folder_module_dir`): neg с `module neg.<name>` ≠ позитивам → отдельный TU автоматически.
+> Поэтому neg **обязан** декларировать отличный `module neg.<name>` и жить в `neg/` — иначе
+> деградирует folder-module соседей-позитивов. Суффикс `_neg` и имя `neg/` — сигнал для
+> людей/агентов, не для раннера.
 
 ---
 
@@ -278,12 +288,12 @@ test "wrong type" {
 |---|---|---|
 | Позитивный тест | `<feature_or_scenario>.nv` | `option_map.nv`, `closure_capture.nv` |
 | Позитивный тест (план) | `<phase_or_feature>.nv` | `f1_basic_case.nv`, `t2_edge_case.nv` |
-| Отрицательный (compile error) | `<что_проверяем>_neg.nv` | `type_mismatch_neg.nv`, `mut_conflict_neg.nv` |
+| Отрицательный (compile error) | внутри `neg/`: `<что_проверяем>.nv`; вне `neg/`: `<что_проверяем>_neg.nv` | `type_mismatch.nv` (в `neg/`), `mut_conflict_neg.nv` (вне) |
 | Runtime panic / exit тест | `<scenario>_panic.nv` / `<scenario>_exit.nv` | `div_zero_panic.nv` |
 | Медленный тест | `<name>_slow.nv` | `stress_gc_slow.nv`, `cancel_stress_slow.nv` |
 | Fast-variant медленного | `<name>.nv` (тот же module, меньший N) | `stress_gc.nv` рядом с `stress_gc_slow.nv` |
 
-Суффикс `_neg` в отрицательных файлах **обязателен** — он явно сигнализирует агентам и читателям, что файл ожидает ошибку компиляции.
+Суффикс `_neg`: **необязателен внутри `neg/`** (путь `neg/` + `module neg.<name>` уже сигналят «негатив», и раннер классифицирует по маркеру `EXPECT_*`, а не по имени файла); **обязателен для neg-файлов ВНЕ `neg/`** (standalone / консолидация — там иного сигнала нет). Когда применяется — `_neg` явно сигнализирует агентам и читателям, что файл ожидает ошибку компиляции.
 
 ---
 
@@ -378,7 +388,7 @@ nova_tests/plan_foo/
 1. **Определи категорию**: позитивный / compile-error / runtime-panic / stdout/stderr.
 2. **Выбери директорию**: существующая тематическая (`plan_foo/`) или новая.
 3. **Проверь folder-module eligibility**: все файлы в директории объявляют одинаковый `module`? Нет конфликтов имён? → добавь peer-файл с тем же `module nova_tests.<dir>`.
-4. **Негативные → `neg/`**: EXPECT_COMPILE_ERROR → `neg/<name>_neg.nv`, `module neg.<name>_neg`.
+4. **Негативные → `neg/`**: EXPECT_COMPILE_ERROR → `neg/<name>.nv`, `module neg.<name>` (суффикс `_neg` обязателен только ВНЕ `neg/`; контейнер `test`/`fn` — любой, не исполняется).
 5. **Медленные → `_slow.nv`**: run > 2s или total > 3s → суффикс `_slow`; создай fast-variant.
 6. **Проверь полноту**: happy path + edge cases + взаимодействие фич.
 7. **Проверь детерминизм**: `assert` проверяет гарантированный контракт, не эвристику планировщика.
@@ -781,7 +791,7 @@ Multi-line patterns не поддерживаются. Runner склеивает
 | Тип теста | Куда |
 |---|---|
 | Позитивный `test "..."` | `nova_tests/<group>/<name>.nv` (folder-module, `module nova_tests.<group>`) |
-| `EXPECT_COMPILE_ERROR` | `nova_tests/<group>/neg/<name>_neg.nv` (`module neg.<name>_neg`) |
+| `EXPECT_COMPILE_ERROR` | `nova_tests/<group>/neg/<name>.nv` (`module neg.<name>`; суффикс `_neg` обязателен только вне `neg/`) |
 | `EXPECT_RUNTIME_PANIC`, `fn main()` | standalone в `nova_tests/<group>/` или `nova_tests/<group>/rt/` |
 | `EXPECT_EXIT_CODE`, `EXPECT_STDOUT`, `EXPECT_STDERR` | standalone в `nova_tests/<group>/` |
 | Медленный тест | `nova_tests/<group>/<name>_slow.nv` |

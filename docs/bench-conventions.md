@@ -1,5 +1,7 @@
 # Nova Performance — conventions and bench infrastructure
 
+> **Нормативный документ** — изменения и отклонения только по согласованию с владельцем; см. [conventions-governance.md](conventions-governance.md).
+
 > Plan 57 — production-grade benchmark infrastructure (Criterion+benchstat-level rigor).
 
 ## Когда писать bench (checklist для агента)
