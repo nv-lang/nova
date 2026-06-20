@@ -5,38 +5,15 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, BTreeMap};
 use std::fmt::Write as FmtWrite;
 
-/// Plan 11 Ф.1: одна signature методa в multi-overload registry.
-/// `param_c_types` — C-типы параметров (без receiver'а), используются
-/// для resolve по arg-types и для C-name mangling.
-#[derive(Debug, Clone)]
-pub struct MethodSig {
-    pub param_c_types: Vec<String>,
-    pub return_c_type: String,
-    pub is_instance: bool,
-    pub is_external: bool,
-    /// Plan 11 Ф.9.2: D39 anonymous embed `use _ Type` auto-генерирует
-    /// прокси методы. Override-precedence: Own (declared прямо на receiver'е)
-    /// побеждает Delegated (auto-proxy). Резолвер фильтрует Delegated если
-    /// есть совпадающий Own.
-    pub is_delegated: bool,
-    /// Mangled C name. Для single-overload — `Nova_T_method_m` /
-    /// `Nova_T_static_m`. Для overloaded — с `_<param_type1>_<...>` суффиксом.
-    pub c_name: String,
-    /// Plan 14 Ф.6 (D69): true если последний параметр variadic
-    /// (`...items []T`). На call-site emit_call collects args[N-1..]
-    /// в синтезированный ArrayLit и передаёт как последний аргумент.
-    pub variadic_last: bool,
-    /// Plan 91 Ф.2.6 (D178): C-string expressions for parameter defaults.
-    /// Parallel to `param_c_types`; `None` = required param (no default).
-    /// Used at call-site when explicit args < param count (Nova-body dispatch).
-    pub param_defaults: Vec<Option<String>>,
-    /// Plan 128 Ф.1: receiver mutability flag from AST `Receiver.mutable`
-    /// (`fn Type mut @method` ⇒ `true`). Threaded into the overload registry so
-    /// call-sites (`prepare_method_recv`, future ABI dispatch) can consult it
-    /// without re-resolving the FnDecl. Ф.1: producer sites populate; consumer
-    /// sites pass it through unchanged. Ф.2/Ф.3 will switch ABI on this flag.
-    pub recv_mutable: bool,
-}
+/// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
+///
+/// Plan 172.1 U.2.5 (§0, [M-172-sig-registry]): `MethodSig` СВЁРНУТ в единый тип
+/// [`crate::sig_registry::CodegenView`] — поля byte-идентичны (`param_c_types`/`return_c_type`/
+/// `is_instance`/`is_external`/`is_delegated`/`c_name`/`variadic_last`/`param_defaults`/
+/// `recv_mutable`). Один тип вместо двух копий; `method_overloads` хранит `Vec<CodegenView>`.
+/// (ИСТОЧНИК построения `method_overloads` пока codegen-локальный — byte-identical-унификация
+/// источника = U.2.4, заблокирована mangling-фрагментацией, см. `[M-172.1-U2.4-mangling-fragmented]`.)
+pub type MethodSig = crate::sig_registry::CodegenView;
 
 /// Plan 39 Issue A: classification of `with`-block trail type for
 /// choosing which NovaInterruptFrame slot to use.
@@ -11128,41 +11105,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         }
     }
 
-    /// Plan 11 Ф.2: overload resolution. Возвращает выбранный MethodSig
-    /// или подробную ошибку. `arg_c_types` — типы args без receiver'а.
-    /// Strict matching, no implicit conversions.
-    ///
-    /// **Reserved for future use** — current emit_call использует
-    /// inline resolution; этот helper готов к экстракции если потребуется
-    /// разделить overload-lookup из call-emission. Сохраняется для
-    /// stability semver public-ish API surface.
-    #[allow(dead_code)]
-    fn resolve_overload(
-        &self,
-        receiver_type: &str,
-        method_name: &str,
-        arg_c_types: &[String],
-    ) -> Option<MethodSig> {
-        let key = (receiver_type.to_string(), method_name.to_string());
-        let overloads = self.method_overloads.get(&key)?;
-        // Single-overload — short-circuit.
-        if overloads.len() == 1 {
-            return Some(overloads[0].clone());
-        }
-        // Filter по arity + param types. Strict.
-        let matches: Vec<&MethodSig> = overloads.iter()
-            .filter(|sig| sig.param_c_types.len() == arg_c_types.len())
-            .filter(|sig| sig.param_c_types.iter().zip(arg_c_types.iter())
-                .all(|(want, got)| want == got))
-            .collect();
-        match matches.len() {
-            1 => Some(matches[0].clone()),
-            // 0 или >1 — single-overload fallback path не помогает.
-            // Возвращаем None, вызывающий code сам fallback'нется на старую
-            // логику или эмитит ошибку.
-            _ => None,
-        }
-    }
+    // Plan 172.1 U.2.5 (§0): dead `resolve_overload` removed — был `#[allow(dead_code)]`
+    // c 0 callers (emit_call использует inline overload-резолв; перенос резолва в чекер — U.3).
 
     /// Mangle an effect op name with its param C-types for vtable field naming.
     /// Single overload (no collision): returns plain name.
