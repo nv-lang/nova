@@ -198,35 +198,41 @@ impl ResolvedType {
         self.int_width_sign().map(|(_, s)| s)
     }
 
-    /// Sized-int name (`i8`..`i64` / `u8`..`u64`) for the literal range-check +
-    /// diagnostic message — the structured replacement of the standalone
-    /// `sized_int_name(&TypeRef)`. `None` for the wide defaults (`int`/`uint`, D227
-    /// Rule 1: a bare literal in `int`/`uint` context is NOT range-checked) and for
-    /// non-int. Byte-identical to `sized_int_name(tr)` when called on
-    /// `from_type_ref(tr)`: the name is reconstructed from `(width, signed)` (the §2
-    /// primitive table, inverse of `from_type_ref`'s map); `wide_default` carries the
-    /// `int`/`uint`-vs-`i64`/`u64` distinction the lossy `Ty`/`TyCat` dropped.
-    pub fn sized_int_name(&self) -> Option<String> {
+    /// Canonical primitive NAME of an int-family scalar — `i8`..`i64`/`int`,
+    /// `u8`..`u64`/`uint` — reconstructed from `(width, signed, wide_default)`, the
+    /// inverse of `scalar_from_int_name` (THE single §2-sanctioned primitive table).
+    /// `None` for non-int. Used for the diagnostic name in BOTH the sized range-check
+    /// and the D227 unsigned-floor (where wide `uint` has no `sized_int_name`).
+    pub fn int_name(&self) -> Option<&'static str> {
         let ResolvedType::Scalar { width, signed, wide_default } = self else {
             return None;
         };
-        if *wide_default {
-            return None; // `int`/`uint` — wide default, no range-check (D227 Rule 1)
+        Some(match (*width, *signed, *wide_default) {
+            (64, true, true) => "int",
+            (64, false, true) => "uint",
+            (8, true, _) => "i8",
+            (16, true, _) => "i16",
+            (32, true, _) => "i32",
+            (64, true, _) => "i64",
+            (8, false, _) => "u8",
+            (16, false, _) => "u16",
+            (32, false, _) => "u32",
+            (64, false, _) => "u64",
+            _ => return None,
+        })
+    }
+
+    /// Sized-int name (`i8`..`i64` / `u8`..`u64`) for the literal range-check —
+    /// `int_name` gated to the SIZED types: `None` for the wide defaults (`int`/`uint`,
+    /// D227 Rule 1: a bare literal in `int`/`uint` context is not range-checked for the
+    /// UPPER bound) and for non-int. (The unsigned FLOOR — negative into any unsigned,
+    /// incl `uint` — is enforced separately, D227 amend.) Byte-identical to the deleted
+    /// standalone `sized_int_name(&TypeRef)` when called on `from_type_ref(tr)`.
+    pub fn sized_int_name(&self) -> Option<String> {
+        match self {
+            ResolvedType::Scalar { wide_default: true, .. } => None,
+            _ => self.int_name().map(str::to_string),
         }
-        Some(
-            match (*width, *signed) {
-                (8, true) => "i8",
-                (16, true) => "i16",
-                (32, true) => "i32",
-                (64, true) => "i64",
-                (8, false) => "u8",
-                (16, false) => "u16",
-                (32, false) => "u32",
-                (64, false) => "u64",
-                _ => return None,
-            }
-            .to_string(),
-        )
     }
 
     /// Would coercing a non-literal value of `self` into `target` LOSE range — i.e.
@@ -400,6 +406,24 @@ mod resolved_type_tests {
             ResolvedType::from_type_ref(&ro_u8).sized_int_name(),
             Some("u8".to_string())
         );
+    }
+
+    #[test]
+    fn int_name_full_table_incl_wide_defaults() {
+        // int_name covers ALL int spellings (incl wide int/uint) — the name source for
+        // the D227 unsigned-floor where sized_int_name(uint) is None.
+        assert_eq!(r("int").int_name(), Some("int"));
+        assert_eq!(r("uint").int_name(), Some("uint"));
+        assert_eq!(r("i64").int_name(), Some("i64"));
+        assert_eq!(r("u64").int_name(), Some("u64"));
+        assert_eq!(r("i8").int_name(), Some("i8"));
+        assert_eq!(r("u32").int_name(), Some("u32"));
+        assert_eq!(r("str").int_name(), None);
+        assert_eq!(r("Foo").int_name(), None);
+        // round-trips through scalar_from_int_name (the single primitive table):
+        for n in ["i8", "i16", "i32", "i64", "int", "u8", "u16", "u32", "u64", "uint"] {
+            assert_eq!(r(n).int_name(), Some(n));
+        }
     }
 
     #[test]
@@ -8217,11 +8241,25 @@ impl<'a> TypeCheckCtx<'a> {
                 };
                 return match &exp_rt {
                     ResolvedType::Scalar { .. } => {
-                        if let Some(name) =
-                            ResolvedType::from_type_ref(expected).sized_int_name()
+                        let exp_direct = ResolvedType::from_type_ref(expected);
+                        // i128 negation — без overflow даже для i64::MIN.
+                        let neg = -(v as i128);
+                        // D227 amend ([M-172.1-U5.2-d227-neg-uint]): a NEGATIVE literal into
+                        // ANY unsigned target is a sign-domain error. The wide-default skip
+                        // (D227 Rule 1) relaxes only the UPPER bound — never the floor 0.
+                        // Keyed on the GENERAL `signed == false` property (not a `uint`
+                        // special-case), this closes the `uint = -1` hole vs `u64 = -1` and
+                        // is byte-identical for sized unsigned (same `< T.MIN (0)` message).
+                        if matches!(exp_direct, ResolvedType::Scalar { signed: false, .. })
+                            && neg < 0
                         {
-                            // i128 negation — без overflow даже для i64::MIN.
-                            let neg = -(v as i128);
+                            if let Some(name) = exp_direct.int_name() {
+                                return Compat::OutOfRange {
+                                    msg: format!("{neg} < {name}.MIN (0)"),
+                                };
+                            }
+                        }
+                        if let Some(name) = exp_direct.sized_int_name() {
                             if let Some(msg) = lit_range_check(neg, &name) {
                                 return Compat::OutOfRange { msg };
                             }

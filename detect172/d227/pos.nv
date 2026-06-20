@@ -1,0 +1,21 @@
+// D227 fix (negative-into-unsigned) regression guard — POSITIVE side: the wide-default
+// skip relaxes only the UPPER bound, so positive `uint`/`u64` literals (incl values that
+// don't fit i64, stored as wrapping bit-patterns) MUST still be accepted unchanged.
+module d227.pos
+
+test "small positive uint OK" {
+    ro a uint = 42
+    assert(a == 42)
+}
+test "large positive uint (> i64.MAX, valid u64) OK" {
+    ro a uint = 0xFFFFFFFFFFFFFFFF
+    assert(a > 0)
+}
+test "u64 positive in range OK" {
+    ro a u64 = 255
+    assert(a == 255)
+}
+test "signed int negative literal still OK" {
+    ro a int = -1
+    assert(a == -1)
+}

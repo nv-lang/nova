@@ -1,0 +1,5 @@
+// EXPECT_COMPILE_ERROR E_LIT_OUT_OF_RANGE
+// D227 fix: negative literal into `uint` (-5 < uint.MIN (0)) — general rule keyed on
+// signedness, not a per-value case.
+module neg.n_uint_neg5
+test "t" { ro a uint = -5  assert(a >= 0) }

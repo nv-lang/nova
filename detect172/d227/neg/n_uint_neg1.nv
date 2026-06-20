@@ -1,0 +1,5 @@
+// EXPECT_COMPILE_ERROR E_LIT_OUT_OF_RANGE
+// D227 fix: negative literal into `uint` is a sign-domain error (-1 < uint.MIN (0)),
+// just like `u64 = -1` — the wide-default skip must NOT relax the floor.
+module neg.n_uint_neg1
+test "t" { ro a uint = -1  assert(a >= 0) }
