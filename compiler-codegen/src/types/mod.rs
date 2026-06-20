@@ -112,7 +112,9 @@ impl ResolvedType {
                     Some("str") => R::Str,
                     Some("bool") => R::Bool,
                     Some("never") => R::Never,
-                    Some("ptr") => R::Ptr,
+                    // (legacy bare `ptr` name arm removed, U.5.4 — `ptr` is no longer a
+                    // type, Plan 134; it now falls through to `Named` like any unknown
+                    // name. `ResolvedType::Ptr` stays for typed pointers `*T`/`*()`.)
                     Some(n) => R::Named {
                         name: n.to_string(),
                         args: generics.iter().map(R::from_type_ref).collect(),
@@ -8853,7 +8855,9 @@ impl<'a> TypeCheckCtx<'a> {
                     "Vec" if generics.len() == 1 => {
                         R::Array(Box::new(self.resolved_cat_of_depth(&generics[0], gs, depth + 1)))
                     }
-                    "ptr" => R::Ptr,
+                    // (legacy bare `ptr` name arm removed, U.5.4 — Plan 134; `ptr` now
+                    // resolves as an unknown name → `Any` via the `other` arm below.
+                    // `TypeRef::Pointer` (typed `*T`) still → `Ptr` further down.)
                     "any" | "never" | "Self" => R::Any,
                     other => match self.types.get(other) {
                         Some(td) => match &td.kind {
