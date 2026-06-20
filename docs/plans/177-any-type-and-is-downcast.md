@@ -1,0 +1,101 @@
+# Plan 177 — `any` top-type + `is`/`try_as` runtime type-check & downcast
+
+> **Top-level план.** Создан 2026-06-20 (вынесен из [173](173-error-system-unify-harden.md) Ф.4 как
+> самостоятельная языковая фича — шире error-handling). **Статус:** 📋 PROPOSED. **Маркер:** `[M-177-any-is]`.
+> **Запуск:** «**выполни план 177**» (самодостаточен). **Приоритет:** P1 (фундамент для typed-errors).
+> **Разблокирует:** [Plan 173](173-error-system-unify-harden.md) Ф.4 (`Failure(any)`, `e is CancelError`).
+>
+> **Сквозной критерий приёмки: «без упрощений, как для прода».**
+
+## 1. Зачем / проблема (ground-truth)
+
+`any` — top-type через пустой protocol (D53, `08-runtime.md:490`); `is`/`try_as`/`as?` — runtime
+type-check (D54). **Что работает сейчас:** `is` для **sum-вариантов** (D54 v2, `emit_c.rs:21540` —
+`x is Some`/`Failure`/… через сравнение tag). **Чего НЕТ:** `is`-на-`any` (D54 **v1** — downcast
+type-erased значения в произвольный конкретный тип) — в codegen этого пути нет (на не-вариант → ошибка
+«unknown variant»); any-downcast (`try_as`/`as[T]`) в корпусе почти не используется.
+
+Это блокирует typed-errors (Plan 173 Ф.4: `Failure(any)`, `e is CancelError`, `e.reason is Timeout`) и
+любые heterogeneous-контейнеры (`[]any`, печать/сравнение стёртых значений).
+
+## 2. Дизайн (sign-off 2026-06-20)
+
+**Представление `any` = fat-pointer:**
+```c
+typedef struct { void* data; const NovaTypeInfo* vt; } nova_any;   // 16 байт
+```
+- `data` — heap-boxed значение (GC-scanned);
+- `vt` — per-type `NovaTypeInfo` (как Rust `dyn` / Go interface).
+
+**`NovaTypeInfo`** (минимум) = `{ NovaTypeId type_id; const char* name; size_t size; /* Display-thunk */ }`.
+Решить, что ещё кладём (под-вопрос Ф.3): `Eq`/`Hash`/`Clone`-thunks для `any` в коллекциях. **Для старта —
+`type_id + name + Display`** (downcast + лог).
+
+**Операции:**
+- **upcast/boxing** `v: T → any` — аллоцировать box, `vt = &NOVA_TYPEINFO_<T>`.
+- **`x is T`** (x: any) → `x.vt->type_id == NOVA_TID_T` (или `x.vt == &NOVA_TYPEINFO_T`). Дёшево.
+- **`x.try_as[T]() -> Option[T]`** → match → `Some(*(T*)x.data)`, иначе `None`.
+- **`x.as[T]? -> T`** (через Fail/None) — комплемент.
+- **flow-narrowing:** `if x is T { /* x: T здесь */ }` (D54).
+
+**Переиспользуем Plan 61 type_id-инфру** (НЕ изобретаем): `NOVA_TID_<E>`-реестр (`type_id_registry`,
+USER_BASE=17, `emit_c.rs:1139`), уже используемый для typed-`Fail`-dispatch (`error_user_type_id`).
+`is T` = та же проверка `type_id == NOVA_TID_T`.
+
+**Сосуществует с мономорфизацией:** generic-bounds мономорфизируются + скрытые vtable-параметры
+(`vtables.h:27`) когда тип статичен; `any` fat-pointer — когда тип стёрт в рантайме. Два дополняющих режима.
+
+## 3. Фазы
+
+### Ф.1 — Представление `any` + boxing + NovaTypeInfo
+- AST/типы: `any` как конкретное рантайм-представление (fat-pointer); codegen `nova_any`.
+- codegen генерит `NovaTypeInfo` (`type_id + name + size + Display-thunk`) на каждый тип, боксируемый в `any`.
+- upcast `T → any` (явный и неявный по D53 supertype): box + set `vt`.
+- GC: `data` сканируется; box uncollectable-safe.
+
+### Ф.2 — `is` / `try_as[T]()` / `as[T]?` для `any` (D54 v1)
+- codegen `ExprKind::Is` для `any`-операнда: `x.vt->type_id == NOVA_TID_T` (сейчас путь только sum-variant).
+- `try_as[T]()` (Option) + `as[T]?` (Fail/None) — stdlib на `any` (D54 §«методы на any»).
+- flow-narrowing `if x is T { … x: T … }`.
+- диагностика: `is`/`as` на не-`any`/не-sum → понятная ошибка (не «unknown variant»).
+
+### Ф.3 — (опц., позже) расширенный vtable + heterogeneous
+- `NovaTypeInfo` + `Eq`/`Hash`/`Clone` → `any` в `HashSet`/`HashMap`/сравнение/печать; `[]any` гетерогенные.
+
+## 4. Spec / D / Q / docs
+
+- amend **D53** (`any` рантайм-представление = fat-pointer) + **D54** (is-on-`any` = type_id-сравнение;
+  `try_as`/`as?` семантика); описать `NovaTypeInfo` ABI.
+- Q-блок «type-erasure & downcast» в `08-runtime.md`/`02-types.md`.
+- docs/idiom: гайд по `any`/`is`/`try_as` (когда type-erasure vs generics).
+
+## 5. Тесты (pos + neg)
+
+- **pos** `nova_tests/any_is/`: box `v as any` → `is T` (match) / `is U` (no-match); `try_as[T]()` извлекает;
+  `as[T]?` happy; flow-narrowing `if x is T { use x }`; `[]any` гетерогенный + Display; identity (`int as any is int`).
+- **neg:** `is`/`as` на не-`any`-не-sum → диагностика; `try_as` неверный тип → `None`.
+- **regression:** sum-variant `is` (Some/Ok/Failure) остаётся зелёным; мономорфизация generic-bounds не задета (disasm-парность).
+
+## 6. Критерии приёмки
+
+1. **«Без упрощений, как для прода».** `is`/`try_as`/`as?` на `any` работают на реальных значениях.
+2. `any`-boxing + downcast корректны под GC (data сканируется, нет use-after-free).
+3. Sum-variant `is` (D54 v2) не сломан; мономорфизация-путь не деградировал (disasm hot-path ≡).
+4. **Plan 173 Ф.4 разблокирован** — `Failure(any)` + `e is CancelError` строятся поверх этого.
+
+## 7. Исполнение фоновыми агентами
+
+- **Без `git stash`** (repo-global) — baseline через temp-worktree / commit+reset. `git add` конкретных файлов;
+  `git diff --cached --stat` перед коммитом. `.rs`/`.h` → пересобрать `nova-cli` release; тесты только C-codegen.
+- Фоновые workflow-агенты ловят rate-limit → `.filter(Boolean)`, чекпоинты (commit per task), идемпотентность.
+
+## 8. Источники для исполнителя
+
+- Спека: `08-runtime.md:490,1094` (D53 `any`), `03-syntax.md:3017,3166,3263,3317` (D54 `is`/`try_as`/`as?`), `:3427` (v1 any vs v2 sum).
+- Код: `emit_c.rs:21540` (текущий `is` = sum-variant), `:1139` (`type_id_registry`/`NOVA_TID`), `1155` (`fail_e_map`),
+  `vtables.h:27` (мономорфизация + скрытые vtable-параметры), `typeid.c` (`NovaTypeId`/`nova_typeid_to_name`),
+  `effects.h:799` (`error_user_type_id` — пример type_id в рантайме).
+
+## 9. Followup-маркер
+
+`[M-177-any-is]`. Ф.3 (расширенный vtable / heterogeneous-`any`) — опционально, позже.
