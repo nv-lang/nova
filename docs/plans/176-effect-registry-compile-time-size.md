@@ -1,0 +1,108 @@
+# Plan 176 — Effect-registry: compile-time размер вместо хардкода 32
+
+> **Top-level план.** Создан 2026-06-20. **Статус:** 📋 READY. **Маркер:** `[M-176-effect-registry-size]`.
+> **Запуск:** «**выполни план 176**» (самодостаточен). **Приоритет:** P2 (латентный correctness + память).
+> **Связь:** смежно с [Plan 175](175-error-system-unify-harden.md) Ф.3 (наследование handler'ов через фиберы),
+> но шире — общая effect-машинерия (все эффекты). Не блокирует и не блокируется 175.
+>
+> **Сквозной критерий приёмки: «без упрощений, как для прода».**
+
+## 1. Проблема (ground-truth, file:line)
+
+Per-fiber наследование effect-handler'ов держится на **хардкод-таблице 32** ([effects.h:971-1009](../../compiler-codegen/nova_rt/effects.h#L971)):
+
+```c
+#define NOVA_MAX_EFFECT_STORAGES 32
+typedef struct { void** slots[NOVA_MAX_EFFECT_STORAGES]; int count; } NovaEffectRegistry;   // per-thread TLS
+typedef struct { void* values[NOVA_MAX_EFFECT_STORAGES]; } NovaEffectSnapshot;               // per-fiber, 256B
+```
+
+Механизм (Plan 83.10.4 Ф.3, `[M-83.10.1-per-fiber-handler-tls-race]`):
+- Каждый эффект → TLS-глобал `_nova_handler_X`; codegen эмитит `nova_register_effect_storage(&_nova_handler_X)`
+  в `_nova_register_all_effects_()` (вызывается per-thread на старте; per-thread из-за Windows TLS-адресов).
+- При resume фибера — `nova_effect_snapshot_save/restore` копирует значения handler'ов (save/restore **O(count)**,
+  по времени уже минимально); снапшот хранится per-fiber в `scope->fiber_effect_snapshot[slot]`.
+
+**Два дефекта** (код сам признаёт долг, [effects.h:1001](../../compiler-codegen/nova_rt/effects.h#L1001): *«Silent overflow… Production должен использовать dynamic-resize либо assert»*):
+1. **Латентный correctness-баг (главное):** при **>32 различных эффектов** `nova_register_effect_storage`
+   **молча дропает** (`if (count < 32)`, без else). Дропнутый эффект → handler **не наследуется через фиберы**
+   → тихо неверное поведение без диагностики. По мере роста stdlib (Fail/Time/Mem/Cleanup→ResourceTrace/
+   Application/Net/Db/Log + user-эффекты) 32 достижимо.
+2. **Память:** `NovaEffectSnapshot` = `void*[32]` (256B) на КАЖДЫЙ фибер независимо от реального числа эффектов;
+   при ~10k фиберов ≈ 2.5MB впустую.
+
+## 2. Решение
+
+Компилятор **знает точный набор эффектов** (`effect_schemas`: built-in + user-defined — уже итерируется в
+`emit_user_effect_registrations`, `emit_c.rs:17500+`). Размер таблицы — выводить на компиляции, не хардкодить.
+
+### Ф.1 — Compile-time точный размер (минимальный fix, СЕЙЧАС)
+
+1. На finalize codegen вычислить `N = effect_schemas.len()` (distinct effects; built-in + user).
+2. Сгенерированный `.c` эмитит `#define NOVA_MAX_EFFECT_STORAGES <N>` **до** include `effects.h`; в `effects.h`
+   обернуть дефолт в `#ifndef … #define … 32 #endif` (32 остаётся fallback для hand-written/bootstrap).
+3. **Edge `N == 0`** (эффектов нет): C запрещает массив `[0]` → клампить размер к `max(N, 1)` ЛИБО полностью
+   элидить registry/snapshot (если эффектов нет — наследовать нечего). Выбрать в реализации, оба валидны.
+4. Заменить silent-drop на `assert` (теперь N точный → переполнение = codegen-баг, не нормальный путь):
+   `nova_register_effect_storage` при `count == N` → `assert`/диагностика, не молчаливый дроп.
+
+**Итог Ф.1:** silent-drop невозможен (размер = точный N); per-fiber snapshot = ровно N указателей (нет waste).
+
+### Ф.2 — Статические индексы эффектов (follow-up, убирает рантайм-регистрацию)
+
+1. Компилятор присваивает каждому эффекту **статический индекс** `[0..N)`; `_nova_handler_X` ↔ известный slot.
+2. `snapshot save/restore` → генерируемые codegen'ом функции, прямо трогающие каждый `_nova_handler_X`-глобал
+   по фикс-индексу (глобалы `__thread` → per-thread-корректно, сохраняет fix TLS-race Plan 83.10.4).
+3. Рантайм `NovaEffectRegistry` (linear-scan + count + `nova_register_effect_storage`) **больше не нужен** —
+   маппинг address→index резолвится на компиляции. Быстрее, без рантайм-инициализации registry.
+
+## 3. Spec / D / Q / docs
+
+- Внутренняя codegen/runtime-деталь — отдельный D-блок не обязателен; **обновить** комментарии в `effects.h`
+  (убрать «Production должен использовать dynamic-resize» — заменено compile-time размером) и заметку про
+  Plan 83.10.4 Ф.3 (registry теперь sized компилятором).
+- При желании — Q-блок в `08-runtime.md`/`04-effects.md`: «effect-handler inheritance: registry размером с
+  фактическое число эффектов (compile-time)».
+- Если убираем registry в Ф.2 — обновить упоминания `nova_register_effect_storage`/`NovaEffectRegistry` в доках.
+
+## 4. Тесты (pos + neg)
+
+- **pos (THE correctness-тест)** `nova_tests/effect_registry/`: программа с **>32 различными эффектами** (≥33),
+  `spawn`/`supervised` дочерний фибер, который вызывает handler КАЖДОГО эффекта → все наследуются (сегодня
+  фейлит из-за silent-drop). Проверяет, что 33-й+ эффект работает через фибер.
+- **pos:** программа с малым числом эффектов — поведение корректно (snapshot sized мал; регресс по поведению).
+- **regression:** `[M-83.10.1-per-fiber-handler-tls-race]` тест (per-fiber handler TLS) остаётся зелёным;
+  существующие effect-тесты (plan110, concurrency, std/net Db Time) зелёные.
+- **neg:** N/A (внутреннее); опц. — codegen-assert при искусственном переполнении (Ф.1 п.4) под debug-сборкой.
+
+## 5. Критерии приёмки
+
+1. **«Без упрощений, как для прода»** — silent-drop устранён реально (не задокументирован-как-known);
+   `N==0` обработан; TLS-race-инвариант сохранён.
+2. >32-эффектов-тест PASS (был бы fail сегодня); полный `nova test` зелёный.
+3. Per-fiber snapshot память = O(N) (не фикс-256B). Под Ф.2 — рантайм-registry устранён.
+4. **Disasm/perf hot-path фиберов** (spawn/resume snapshot save/restore) не деградировал (парность baseline).
+5. `[M-83.10.1-per-fiber-handler-tls-race]` зелёный (cross-thread TLS-инвариант цел).
+
+## 6. Исполнение фоновыми агентами
+
+- **НИКАКОГО `git stash`** (repo-global, конкурентные worktree) — baseline через **temp-worktree** (`git worktree add`)
+  или **commit+reset** в своей ветке.
+- `git add` только конкретных файлов; `git diff --cached --stat` перед коммитом.
+- Изменения `.rs`/`.h` → **пересобрать `nova-cli` release** перед тестами; GC env (`NOVA_GC_INCLUDE_DIR`/`LIB_DIR`)
+  из main-репо; тесты — только C-codegen (`nova test`).
+- Фоновые workflow-агенты ловят серверный rate-limit и падают: скрипты `.filter(Boolean)`, чекпоинты
+  (commit per task), идемпотентность — продолжать на частичном результате.
+- Коммит после задачи; sync в main после фазы.
+
+## 7. Источники для исполнителя
+
+- `compiler-codegen/nova_rt/effects.h:971-1023` (registry/snapshot/save/restore, `NOVA_MAX_EFFECT_STORAGES`),
+  `effects.c:235-244` (`_nova_effect_registry` TLS + `_nova_register_effects_fn`).
+- `compiler-codegen/src/codegen/emit_c.rs`: `emit_user_effect_registrations` (~17500), `_nova_register_all_effects_`
+  (~17447-17453), spawn-time snapshot capture (~7635-7799, 8584), `effect_schemas`.
+- Контекст: Plan 83.10.4 Ф.3 (почему registry per-thread), `[M-83.10.1-per-fiber-handler-tls-race]`.
+
+## 8. Followup-маркер
+
+`[M-176-effect-registry-size]` (Ф.1 размер; Ф.2 статические индексы + удаление рантайм-registry).
