@@ -1,81 +1,80 @@
-# Plan 174 — `?` авто-конверсия ошибки через `From` (Rust-паритет)
+# Plan 174 — `?` в точности как в Rust: return-only + авто-`From`
 
 > **Top-level план.** Создан 2026-06-20. **Статус:** 📋 PLANNED (компиляторная фича +
 > amend D85; реализация — зона 172/владельца). **Маркер:** `[M-174-question-from]`.
-> **Решение (2026-06-20):** разворот D85-стойки «только явный `.map_err()`» — `?`
-> авто-конвертит тип ошибки через `From`, как в Rust (`Err(e) => return Err(From::from(e))`).
+> **Решение (2026-06-20):** `?` приводится в точности к Rust — (A) **return-only**
+> (только на `Result`/`Option`, проброс значением), (B) **авто-`From`** конверсия ошибки.
 
 ## Зачем
 
-Rust-эргономика: `?` авто-приводит тип ошибки источника к типу ошибки caller'а через
-`From`, убирая ручные `.map_err(...)` в каждой точке проброса. Nova ранее
-([D85](../../spec/decisions/04-effects.md#d85)) сознательно требовала явный `.map_err()`
-(«не магия»). Решение 2026-06-20 — принять Rust-эргономику для `?`.
+Rust-эргономика `?`: пробрасывает ошибку **значением** (`return Err(From::from(e))`),
+авто-конвертя тип через `From` — убирает ручные `.map_err(...)`. Nova ранее
+([D85](../../spec/decisions/04-effects.md#d85)) требовала явный `.map_err()` («не магия»),
+а D165 добавил мутный throw-режим `?` в Fail-функциях. Решение 2026-06-20 — чистый Rust.
 
-## Семантика: сейчас → станет
+## Часть A — `?` строго return-only (убрать throw-режим D165)
 
-Обозначения: `E` — тип ошибки источника (`expr: Result[T,E]`), `E'` — тип ошибки caller'а.
+`?` работает **только** в функциях, возвращающих `Result[T,E]` / `Option[T]`, и пробрасывает
+**значением** (`return Err/None`). В Fail-эффект-функциях `?` **запрещён** — там ошибка
+пробрасывается прямым `throw` или `!!`.
 
-### Сейчас (D85 + D165)
+- **Обоснование:** `never` — это тип операции эффекта `fail(value E) -> never`
+  ([04-effects.md:922](../../spec/decisions/04-effects.md#L922)), а не функции (у неё свой
+  `-> T`); смешивать value-propagation (`?`) с effect-throw (`fail`/`!!`) незачем. Возвращает
+  каноническую [D85](../../spec/decisions/04-effects.md#d85) («`?` не задействует Fail»).
+- **Fallout минимальный.** В компилируемом корпусе `?` уже используется только на
+  Result/Option-функциях (`nova_tests/effects/throws.nv`) — throw-режим D165 в корпусе НЕ
+  задействован, «нечего откатывать». Мигрировать лишь: aspirational examples
+  (`http.nv`, `oxsar_port.nv`) + doc-comment-примеры on_exit в spec/stdlib
+  (`@commit()?` → `@commit()!!`).
 
-| Режим | Условие | Err-путь | При `E ≠ E'` |
-|---|---|---|---|
-| return ([D85](../../spec/decisions/04-effects.md#d85)) | fn → `Result[U,E']` | `return Err(e)` | **compile error** → нужен `.map_err` |
-| throw (D165/Plan 100.7, Fail-context) | fn на `Fail[E']` | `throw e` | **compile error** → нужен `.map_err` |
+## Часть B — `?` авто-конвертит ошибку через `From` (как Rust)
 
-### Станет (Rust-паритет)
+`E` — тип ошибки источника (`expr: Result[T,E]`), `E'` — тип ошибки caller'а.
 
-При `E ≠ E'`, если на `E'` есть **не-identity** `From[E]`-impl (`fn E'.from(e E) -> E'`):
+| Случай | Сейчас | Станет (Rust) |
+|---|---|---|
+| `E ≡ E'` | `return Err(e)` | `return Err(e)` (без конверсии, fast-path) |
+| `E ≠ E'`, есть не-identity `From[E]` на `E'` | **compile error** → `.map_err` | `return Err(E'.from(e))` (авто) |
+| `E ≠ E'`, нет `From` | compile error | compile error `[E_TRY_NO_FROM]` + подсказка |
 
-| Режим | Err-путь |
-|---|---|
-| return | `return Err(E'.from(e))` |
-| throw | `throw E'.from(e)` |
-
-- `E ≡ E'` → без конверсии (fast-path, как сейчас).
-- `E ≠ E'` И НЕТ `From[E]` на `E'` → compile error `[E_TRY_NO_FROM]` с подсказкой
-  «impl `From[E]` for `E'` или `expr.map_err(|e| …)?`».
-- `Option[T]?` → **без изменений** (`return None`; None не несёт значения ошибки —
-  как в Rust, From там не применяется).
+`Option[T]?` → без изменений (`return None`; None не несёт значения ошибки, как в Rust).
 
 ## Изменения по слоям
 
-1. **Checker** (`compiler-codegen/src/types/mod.rs`): в точке `?`, где сейчас при
-   `E ≠ E'` выдаётся ошибка несовместимости, — проверить наличие не-identity
-   `From[E]`-impl на `E'`; есть → разрешить + записать «нужна конверсия» для codegen;
-   нет → `[E_TRY_NO_FROM]`. Sum-supertype-совместимость (D85) сохранить как fast-path
-   ДО From-резолва.
-2. **Codegen** (`compiler-codegen/src/codegen/emit_c.rs:21274-21334`, обе ветки
-   return/throw): на Err-пути, когда нужна конверсия, эмитить `E'.from(e)` через
-   существующий From-mono-механизм (`T.from(v)`), а не сырой `e`. `E'` — из
-   `current_fn_return_ty` (return) или из Fail-эффект-типа (throw).
-3. **Спека:** **amend [D85](../../spec/decisions/04-effects.md#d85)** — desugar Err-пути =
-   `return/throw E'.from(e)` при несовпадении; снять «нужно явное `.map_err()`» (оставить
-   `.map_err` для НЕ-From преобразований / смены значения). **Заодно починить stale
-   `## D4` (04-effects.md:290) + дубль `####` (:950)** — они до-D85, говорят «`?` только
-   в `Fail[E]` → throw», прямо противоречат D85.
-4. **Тесты** `nova_tests/q_auto_from/`: (a) return E≠E' с From → PASS; (b) throw E≠E' с
-   From → PASS; (c) E≡E' без конверсии; (d) neg E≠E' без From → `[E_TRY_NO_FROM]`;
-   (e) identity-blanket НЕ оборачивает; (f) Option? без изменений.
+1. **Checker** (`compiler-codegen/src/types/mod.rs`):
+   - (A) `?` в функции на Fail-эффекте (return-тип не Result/Option) → `[E_TRY_IN_FAIL_FN]`
+     с подсказкой «используй `!!` или `throw`».
+   - (B) в return-точке `?` при `E ≠ E'`: проверить не-identity `From[E]` на `E'`; есть →
+     разрешить + пометить конверсию; нет → `[E_TRY_NO_FROM]`. Sum-supertype (D85) — fast-path.
+2. **Codegen** (`compiler-codegen/src/codegen/emit_c.rs:21236-21340`):
+   - (A) убрать ветку Fail-context throw для `?` (`in_fail_ctx`) — становится недостижимой
+     (checker отверг раньше); оставить только return-Err/None.
+   - (B) на Err-пути при конверсии эмитить `E'.from(e)` через From-mono (`T.from(v)`).
+3. **Спека:** amend [D85](../../spec/decisions/04-effects.md#d85): (A) `?` return-only, запрещён
+   в Fail-fn; (B) Err-путь авто-`From`. Починить stale `## D4` (04-effects.md:290) + дубль
+   `####` (:950) (до-D85, противоречат). Поправить doc-comment-примеры on_exit (`?` → `!!`)
+   в spec D188 + `std/prelude/{core,protocols,errors}.nv`.
+4. **Тесты** `nova_tests/q_auto_from/`: (a) return `E≠E'` с From → PASS; (b) `E≡E'` без
+   конверсии; (c) neg `E≠E'` без From → `[E_TRY_NO_FROM]`; (d) neg `?` в Fail-fn →
+   `[E_TRY_IN_FAIL_FN]`; (e) identity-blanket НЕ оборачивает; (f) `Option?` без изменений.
 
-## Открытые вопросы (на решение владельца)
+## Открытые вопросы
 
-- **`!!` тоже авто-From?** `?` в throw-режиме и `!!` оба throw'ят → для симметрии `!!`
-  логично тоже авто-конвертить. Запрошено было только `?`. Реши scope: `?` или `?`+`!!`.
-- **Identity-blanket — ключевая ловушка.** `From[T] for T` ([protocols.nv:109](../../std/prelude/protocols.nv#L109))
-  существует для ВСЕХ `T` → формально «From есть всегда». Правило обязано быть: конверсия
-  только если `E ≠ E'` И есть **не-identity** `From[E]` на `E'`; иначе любой mismatch
-  ложно «разрешится» через несуществующий путь.
-- **Транзитивность From.** Rust НЕ делает транзитивный From — держать один шаг.
-- **D77 4-way auto-derive.** `From`-форма может быть синтезирована из `TryFrom`/Fail-формы
-  ([protocols.nv:126-138](../../std/prelude/protocols.nv#L126)) — `?` должен видеть и
-  синтезированные From-impl.
+- **`!!` тоже авто-From?** `!!` — оператор effect-throw на Result/Option-значении (Fail).
+  Для симметрии с `?` логично тоже авто-конвертить (`throw E'.from(e)`); Rust-аналога у `!!`
+  нет. Реши: авто-From только `?` или `?`+`!!`.
+- **Identity-blanket — ловушка.** `From[T] for T`
+  ([protocols.nv:109](../../std/prelude/protocols.nv#L109)) есть для всех `T` → правило:
+  конверсия только если `E ≠ E'` И есть **не-identity** `From[E]` на `E'`.
+- **Транзитивность From** — Rust не делает; держать один шаг.
+- **D77 4-way auto-derive** — `?` должен видеть синтезированные From-impl
+  ([protocols.nv:126-138](../../std/prelude/protocols.nv#L126)).
 
 ## Гейт / зависимости
 
 - Реализация компиляторная (checker + codegen) → зона **172**/владельца.
-- Пересекается с 172.1 U.4 (typed IR): после U.4 точка `?` знает оба типа ошибок чище —
-  можно делать поверх U.4 либо независимо (точечно в текущем `?`-codegen).
+- Пересекается с 172.1 U.4 (typed IR): после U.4 типы ошибок в точке `?` известны чище.
 
 ## Followup-маркер
 
