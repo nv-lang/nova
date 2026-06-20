@@ -63,15 +63,29 @@ pub struct SigEntry<'a> {
     pub codegen: CodegenView,
 }
 
-/// Unified signature registry. `by_key[(receiver, name)]` = overload set.
+/// Unified signature registry. ONE build pass; multiple indexes over the SAME
+/// `&'a FnDecl`s — indexes are *views* of one source, not copies of data (§0).
+///
+/// - `by_key` — flat `(receiver, name) → overloads` + [`CodegenView`] (codegen side, U.2.4).
+/// - `method_table` / `fn_decls` — the nested + free-fn shapes the CHECKER reads
+///   verbatim (U.2.3 F1): a flat key cannot serve `method_table.get(type)` borrows,
+///   full iteration, `contains_key`, or `keys().any(..)`, so the nested base index is
+///   STORED, not reconstructed. These mirror the legacy `TypeCheckCtx`/`BoundCtx`/
+///   `CapabilityCtx` field types byte-for-byte, in declaration order.
 #[derive(Default)]
 pub struct SigRegistry<'a> {
     pub by_key: HashMap<(Option<String>, String), Vec<SigEntry<'a>>>,
+    /// Nested checker index: `type → method → overloads`. BASE ONLY — synthesized
+    /// auto-derive methods are a `TypeCheckCtx`-private overlay (U.2.3 F2), never here,
+    /// so this one registry stays byte-identical for `BoundCtx`/`CapabilityCtx`.
+    pub method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+    /// Free-fn checker index: `name → overloads`.
+    pub fn_decls: HashMap<String, Vec<&'a FnDecl>>,
 }
 
 impl<'a> SigRegistry<'a> {
     pub fn new() -> Self {
-        Self { by_key: HashMap::new() }
+        Self::default()
     }
 
     /// Add an overload under `(receiver, name)`.
@@ -86,45 +100,109 @@ impl<'a> SigRegistry<'a> {
             .map(Vec::as_slice)
     }
 
-    /// Builder: index every `fn`/method of `module` by `(receiver, name)` with
-    /// the raw `&FnDecl` + a [`CodegenView`].
-    ///
-    /// U.2.1: TypeRef-independent flags (is_instance/is_external/recv_mutable).
-    /// **U.2.2 (this step):** also populate `param_c_types` + `return_c_type` by
-    /// REUSING the shared `ExternalRegistry::type_ref_to_c` (§0 «один type→C
-    /// mapping» — not a copy). `Self`-return resolves to the receiver type.
-    ///
-    /// STILL TODO ([M-172-sig-registry]): `c_name` (Plan 11 mangling needs the
-    /// per-key overload count + consume/static/instance base + last-param
-    /// suffix), `variadic_last`, `param_defaults`, `is_delegated`; merging the
-    /// import-resolved std + intrinsic .nv source; checker/codegen consumption
-    /// (U.2.3/U.2.4) and the `MethodSig` fold + dead `resolve_overload` removal
-    /// (U.2.5).
-    ///
-    /// [M-172-sig-registry] §1 «никаких авто-выводимых неверных типов»: the
-    /// `unwrap_or_default()` below (empty C-type on a `type_ref_to_c` error,
-    /// e.g. removed `usize`) is INERT today — this registry is not yet consumed
-    /// by live codegen. When wired (U.2.3/U.2.4) an unresolved type MUST become
-    /// a checker `[E_*]` diagnostic, NOT a silent empty/`nova_int` default.
-    pub fn build_from_module(module: &'a Module) -> Self {
-        use crate::codegen::external_registry::ExternalRegistry as ER;
-        use std::collections::HashMap as Map;
+    // --- Checker-facing accessors (U.2.3 F1) -------------------------------
+    // Return the legacy `fn_decls`/`method_table` shapes verbatim so read-sites
+    // swap `self.method_table` → `self.sig.methods_of(..)` etc. with ZERO behavior
+    // change. BASE ONLY (no synthesized methods — see [`build_base`]); the synth
+    // overlay lives in `TypeCheckCtx` (U.2.3.3, F2).
 
-        // Pass 1: per-key overload count (Plan 11 — c_name suffix only when ≥2).
-        let mut overloads: Map<(Option<String>, String), usize> = Map::new();
-        for item in &module.items {
-            if let Item::Fn(f) = item {
-                let receiver = f.receiver.as_ref().map(|r| r.type_name.clone());
-                *overloads.entry((receiver, f.name.clone())).or_insert(0) += 1;
-            }
-        }
+    /// Free-fn overload set by name (legacy `fn_decls.get(name)`).
+    pub fn free_fns(&self, name: &str) -> Option<&Vec<&'a FnDecl>> {
+        self.fn_decls.get(name)
+    }
 
-        // Pass 2: build entries with full CodegenView (C-types + Plan 11 c_name).
+    /// All methods of a receiver type (legacy `method_table.get(type)`), for sites
+    /// that borrow the inner map (iterate keys, `.get(method)`).
+    pub fn methods_of(&self, type_name: &str) -> Option<&HashMap<String, Vec<&'a FnDecl>>> {
+        self.method_table.get(type_name)
+    }
+
+    /// Overload set for `(type, method)` (legacy
+    /// `method_table.get(type).and_then(|m| m.get(method))`).
+    pub fn method_overloads(&self, type_name: &str, method: &str) -> Option<&Vec<&'a FnDecl>> {
+        self.method_table.get(type_name).and_then(|m| m.get(method))
+    }
+
+    /// Whether any method is declared on `type_name` (legacy
+    /// `method_table.contains_key(type)`).
+    pub fn has_type(&self, type_name: &str) -> bool {
+        self.method_table.contains_key(type_name)
+    }
+
+    /// Iterate `(type, methods)` (legacy `for (t, m) in &method_table`).
+    pub fn iter_types(
+        &self,
+    ) -> impl Iterator<Item = (&String, &HashMap<String, Vec<&'a FnDecl>>)> {
+        self.method_table.iter()
+    }
+
+    /// Build the cheap CHECKER-facing base index in ONE pass: the flat `by_key`
+    /// (with EMPTY [`CodegenView`]s) plus the nested `method_table` + `fn_decls`
+    /// the checker reads (U.2.3 F1). No `type_ref_to_c`/mangling here — the checker
+    /// never reads [`CodegenView`], so the cost is deferred to
+    /// [`populate_codegen_views`] for the codegen side (U.2.3 F3 perf §2).
+    ///
+    /// Iteration is `module.items` in declaration order, so every overload `Vec`
+    /// matches the legacy `TypeCheckCtx`/`BoundCtx`/`CapabilityCtx` build loops
+    /// byte-for-byte (this is the SINGLE loop those three duplicated, U.2.3).
+    ///
+    /// BASE = user `fn`s only. Synthesized auto-derive methods are deliberately NOT
+    /// added here so this ONE registry is byte-identical for `BoundCtx`/`CapabilityCtx`
+    /// (which never saw synth); `TypeCheckCtx` layers synth as a private overlay (F2).
+    pub fn build_base(module: &'a Module) -> Self {
         let mut reg = Self::new();
         for item in &module.items {
             if let Item::Fn(f) = item {
                 let receiver = f.receiver.as_ref().map(|r| r.type_name.clone());
-                let recv_c = receiver.as_deref();
+                // Nested checker indexes (legacy shapes, declaration order).
+                match &receiver {
+                    Some(recv) => {
+                        reg.method_table
+                            .entry(recv.clone())
+                            .or_default()
+                            .entry(f.name.clone())
+                            .or_default()
+                            .push(f);
+                    }
+                    None => {
+                        reg.fn_decls.entry(f.name.clone()).or_default().push(f);
+                    }
+                }
+                // Flat codegen index (CodegenView populated lazily, see below).
+                reg.insert(
+                    receiver,
+                    f.name.clone(),
+                    SigEntry { fn_decl: f, codegen: CodegenView::default() },
+                );
+            }
+        }
+        reg
+    }
+
+    /// Populate every [`SigEntry::codegen`] in `by_key` (C-types + Plan 11 `c_name`)
+    /// via the SHARED `ExternalRegistry` helpers (§0 «один type→C mapping» / Plan 11
+    /// mangling — same source as `ExternalRegistry::decl_from_fn`, not a copy).
+    /// `Self`-return resolves to the receiver type. Codegen-only (U.2.4); the checker
+    /// (U.2.3) never reads these fields.
+    ///
+    /// Per-key overload count = `entries.len()` (Plan 11 — `c_name` suffix only when
+    /// ≥2), so no separate counting pass is needed.
+    ///
+    /// STILL TODO ([M-172-sig-registry]): `variadic_last`, `param_defaults`,
+    /// `is_delegated`; merging the import-resolved std + intrinsic .nv source (U.2.4);
+    /// the `MethodSig` fold + dead `resolve_overload` removal (U.2.5).
+    ///
+    /// [M-172-sig-registry] §1 «никаких авто-выводимых неверных типов»: the
+    /// `unwrap_or_default()` below (empty C-type on a `type_ref_to_c` error, e.g.
+    /// removed `usize`) is INERT until codegen consumes this — when wired (U.2.4)
+    /// an unresolved type MUST become a checker `[E_*]`, NOT a silent empty/`nova_int`.
+    pub fn populate_codegen_views(&mut self) {
+        use crate::codegen::external_registry::ExternalRegistry as ER;
+        for ((receiver, _name), entries) in self.by_key.iter_mut() {
+            let total = entries.len();
+            let recv_c = receiver.as_deref();
+            for entry in entries.iter_mut() {
+                let f = entry.fn_decl;
                 let param_c_types: Vec<String> = f
                     .params
                     .iter()
@@ -140,11 +218,6 @@ impl<'a> SigRegistry<'a> {
                     .map(|r| matches!(r.kind, ReceiverKind::Instance))
                     .unwrap_or(false);
                 let is_consume = f.receiver.as_ref().map(|r| r.consume).unwrap_or(false);
-                let total = *overloads
-                    .get(&(receiver.clone(), f.name.clone()))
-                    .unwrap_or(&1);
-                // c_name via the SHARED Plan 11 mangling (§0 — same source as
-                // ExternalRegistry::decl_from_fn).
                 let c_name = ER::mangle_method_c_name(
                     recv_c,
                     is_instance,
@@ -153,20 +226,27 @@ impl<'a> SigRegistry<'a> {
                     total,
                     &ER::last_param_suffix(&f.params),
                 );
-                let cv = CodegenView {
+                entry.codegen = CodegenView {
                     param_c_types,
                     return_c_type,
                     is_instance,
                     is_external: f.is_external,
                     recv_mutable: f.receiver.as_ref().map(|r| r.mutable).unwrap_or(false),
                     c_name,
-                    // variadic_last / param_defaults / is_delegated: U.2.2-next
+                    // variadic_last / param_defaults / is_delegated: U.2.4
                     // [M-172-sig-registry].
                     ..Default::default()
                 };
-                reg.insert(receiver, f.name.clone(), SigEntry { fn_decl: f, codegen: cv });
             }
         }
+    }
+
+    /// Full build (base index + codegen views). Used where BOTH sides are needed
+    /// (and by the U.2.1/U.2.2 unit tests). The checker path calls [`build_base`]
+    /// directly to skip the codegen-view cost (U.2.3 F3).
+    pub fn build_from_module(module: &'a Module) -> Self {
+        let mut reg = Self::build_base(module);
+        reg.populate_codegen_views();
         reg
     }
 }
@@ -274,5 +354,71 @@ mod tests {
         let sig_cname = &sig.lookup(Some("AtomicI64"), "new").unwrap()[0].codegen.c_name;
         let ext_cname = &ext.lookup("AtomicI64", "new").unwrap()[0].c_name;
         assert_eq!(sig_cname, ext_cname, "SigRegistry c_name must match ExternalRegistry");
+    }
+
+    // --- U.2.3.1: base index (nested method_table + fn_decls) + accessors ---
+
+    #[test]
+    fn build_base_indexes_free_fns_and_methods_nested() {
+        let m = parse(
+            "module t\nfn foo(x int) -> int => x\nfn Bar @get() -> int => 0\nfn Bar.make() -> int => 0\n",
+        );
+        let reg = SigRegistry::build_base(&m);
+        // free fn → fn_decls (NOT method_table)
+        assert_eq!(reg.free_fns("foo").map(|v| v.len()), Some(1));
+        assert!(reg.free_fns("get").is_none());
+        // receiver fns → nested method_table
+        assert!(reg.has_type("Bar"));
+        assert!(!reg.has_type("foo"));
+        assert_eq!(reg.method_overloads("Bar", "get").map(|v| v.len()), Some(1));
+        assert_eq!(reg.method_overloads("Bar", "make").map(|v| v.len()), Some(1));
+        assert!(reg.method_overloads("Bar", "nope").is_none());
+        // methods_of borrows the whole inner map (F1 — borrow-able shape)
+        assert_eq!(reg.methods_of("Bar").map(|m| m.len()), Some(2));
+        assert!(reg.methods_of("foo").is_none());
+    }
+
+    #[test]
+    fn build_base_leaves_codegen_view_empty() {
+        // F3: base build is cheap — CodegenView stays Default until populate.
+        let m = parse("module t\nfn h(a int) -> bool => true\n");
+        let reg = SigRegistry::build_base(&m);
+        let cv = &reg.lookup(None, "h").expect("h")[0].codegen;
+        assert!(cv.c_name.is_empty());
+        assert!(cv.param_c_types.is_empty());
+        assert_eq!(cv.return_c_type, "");
+    }
+
+    #[test]
+    fn build_from_module_still_populates_codegen_view() {
+        // build_from_module = build_base + populate_codegen_views (U.2.2 parity).
+        let m = parse("module t\nfn h(a int, b str) -> bool => true\n");
+        let reg = SigRegistry::build_from_module(&m);
+        let cv = &reg.lookup(None, "h").expect("h")[0].codegen;
+        assert_eq!(cv.param_c_types, vec!["nova_int".to_string(), "nova_str".to_string()]);
+        assert_eq!(cv.return_c_type, "nova_bool");
+        assert_eq!(cv.c_name, "nova_fn_h");
+    }
+
+    #[test]
+    fn overload_vec_in_declaration_order() {
+        // byte-identical resolution depends on overload order = declaration order.
+        let m = parse("module t\nfn g(x int) -> int => x\nfn g(x str) -> int => 0\n");
+        let reg = SigRegistry::build_from_module(&m);
+        // free_fns (nested index) and by_key share one build pass → same order.
+        assert_eq!(reg.free_fns("g").map(|v| v.len()), Some(2));
+        let g = reg.lookup(None, "g").expect("g");
+        assert_eq!(g.len(), 2);
+        assert_eq!(g[0].codegen.c_name, "nova_fn_g_int");
+        assert_eq!(g[1].codegen.c_name, "nova_fn_g_str");
+    }
+
+    #[test]
+    fn iter_types_visits_all_receiver_types() {
+        let m = parse("module t\nfn A @m() -> int => 0\nfn B @m() -> int => 0\n");
+        let reg = SigRegistry::build_base(&m);
+        let mut types: Vec<String> = reg.iter_types().map(|(t, _)| t.clone()).collect();
+        types.sort();
+        assert_eq!(types, vec!["A".to_string(), "B".to_string()]);
     }
 }
