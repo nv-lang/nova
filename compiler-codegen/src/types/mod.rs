@@ -833,8 +833,8 @@ fn check_module_impl(
     // build_with_sig_table so that is_known_type / is_known_fn
     // can consult cross-module signatures during type-checking.
     let type_check_ctx = match sig_table {
-        Some(st) => TypeCheckCtx::build_with_sig_table(module, &synth_arena, st.clone()),
-        None => TypeCheckCtx::build(module, &synth_arena),
+        Some(st) => TypeCheckCtx::build_with_sig_table(module, &synth_arena, st.clone(), &sig),
+        None => TypeCheckCtx::build(module, &synth_arena, &sig),
     };
     type_check_ctx.check_module(module, &mut errors);
 
@@ -2274,10 +2274,18 @@ impl FnDeclArena {
 struct TypeCheckCtx<'a> {
     /// Ф.2: имя типа → объявленная арность.
     arity: HashMap<String, ArityInfo>,
-    /// Ф.1: свободные функции — для резолва callee на call-site.
-    fn_decls: HashMap<String, Vec<&'a FnDecl>>,
-    /// Ф.1: методы по receiver-типу — для резолва `Type.method(...)`.
-    method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+    /// Plan 172.1 U.2.3.3: shared base signature registry (free fns + base methods,
+    /// §0 single source) — replaces the local `fn_decls`/`method_table` build loop.
+    /// Read via `self.sig.fn_decls` / `self.sig.method_table`, or the synth-aware
+    /// helpers `method_overloads` / `t_provides_method` / `find_method_decl`.
+    sig: &'a crate::sig_registry::SigRegistry<'a>,
+    /// Plan 172.1 U.2.3.3 (F2, [M-172.1-U2.3-synth-overlay]): synthesized auto-derive
+    /// methods (Plan 126) — a TypeCheckCtx-PRIVATE overlay on top of `sig.method_table`.
+    /// NOT in the shared registry: Bound/Cap must not see synth (their resolution is
+    /// base-only). Keyed `type → method → overloads`; for a given (type, method)
+    /// overloads come from EITHER base OR synth, never both (synth is registered only
+    /// when base lacks the method — see `register_synthesized_methods`).
+    synth_methods: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
     /// Ф.1: объявления типов — для разворачивания alias/newtype при
     /// категоризации (assignability сравнивает категории, не имена).
     types: HashMap<String, &'a TypeDecl>,
@@ -2510,30 +2518,18 @@ impl<'a> crate::protocols::auto_derive::DeriveQuery for AutoDeriveQueryBridge<'a
 }
 
 impl<'a> TypeCheckCtx<'a> {
-    fn build(module: &'a Module, synth_arena: &'a FnDeclArena) -> Self {
+    fn build(
+        module: &'a Module,
+        synth_arena: &'a FnDeclArena,
+        sig: &'a crate::sig_registry::SigRegistry<'a>,
+    ) -> Self {
         let mut arity: HashMap<String, ArityInfo> = HashMap::new();
-        let mut fn_decls: HashMap<String, Vec<&'a FnDecl>> = HashMap::new();
-        let mut method_table: HashMap<String, HashMap<String, Vec<&'a FnDecl>>> =
-            HashMap::new();
+        // U.2.3.3: fn_decls/method_table read from `sig` (shared base registry);
+        // only `types` is still collected here (needed locally below).
         let mut types: HashMap<String, &'a TypeDecl> = HashMap::new();
         for item in &module.items {
-            match item {
-                Item::Fn(f) => {
-                    if let Some(recv) = &f.receiver {
-                        method_table
-                            .entry(recv.type_name.clone())
-                            .or_default()
-                            .entry(f.name.clone())
-                            .or_default()
-                            .push(f);
-                    } else {
-                        fn_decls.entry(f.name.clone()).or_default().push(f);
-                    }
-                }
-                Item::Type(td) => {
-                    types.insert(td.name.clone(), td);
-                }
-                _ => {}
+            if let Item::Type(td) = item {
+                types.insert(td.name.clone(), td);
             }
         }
         // Все типы (пользовательские + merged-from-imports) — для подсчёта
@@ -2675,8 +2671,13 @@ impl<'a> TypeCheckCtx<'a> {
         // `verify_impl_protocols` pass re-runs synthesis и emits the
         // E_AUTO_DERIVE_* / E_IMPL_MISSING_METHODS diagnostics. This pass is
         // registration-only.
+        // U.2.3.3 (F2): synth goes into a TypeCheckCtx-private overlay (NOT the shared
+        // base registry). DeriveQuery reads base (`sig.method_table`) for user-method
+        // coverage — synth is registered only where the user did not provide the method.
+        let mut synth_methods: HashMap<String, HashMap<String, Vec<&'a FnDecl>>> =
+            HashMap::new();
         Self::register_synthesized_methods(
-            module, synth_arena, &types, &mut method_table,
+            module, synth_arena, &types, &sig.method_table, &mut synth_methods,
         );
 
         // Plan 138.2 Ф.0c (D29 method-level shadow): detect generic types that
@@ -2823,7 +2824,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
-        TypeCheckCtx { arity, fn_decls, method_table, types, imported_modules,
+        TypeCheckCtx { arity, sig, synth_methods, types, imported_modules,
             entry_imported_modules,
             entry_file_ids,
             const_fn_names,
@@ -2853,8 +2854,9 @@ impl<'a> TypeCheckCtx<'a> {
         module: &'a Module,
         synth_arena: &'a FnDeclArena,
         sig_table: crate::imports::ModuleSigTable,
+        sig: &'a crate::sig_registry::SigRegistry<'a>,
     ) -> Self {
-        let mut ctx = Self::build(module, synth_arena);
+        let mut ctx = Self::build(module, synth_arena, sig);
         ctx.sig_table = sig_table;
         ctx
     }
@@ -2874,8 +2876,25 @@ impl<'a> TypeCheckCtx<'a> {
     /// or (b) any module in the cross-module `sig_table`.
     /// Used for disambiguation before full resolution.
     fn is_known_fn(&self, name: &str) -> bool {
-        self.fn_decls.contains_key(name)
+        self.sig.fn_decls.contains_key(name)
             || !self.sig_table.find_fn_modules(name).is_empty()
+    }
+
+    /// U.2.3.3: overload set for `(type, method)`, base (`sig`) ∪ synth overlay.
+    /// For any (type, method) the overloads live in EXACTLY ONE source (synth is
+    /// registered only when base lacks the method), so synth-first ∥ base is
+    /// collision-free; both Vecs preserve declaration order.
+    fn method_overloads(&self, type_name: &str, method: &str) -> Option<&Vec<&'a FnDecl>> {
+        self.synth_methods
+            .get(type_name)
+            .and_then(|m| m.get(method))
+            .or_else(|| self.sig.method_overloads(type_name, method))
+    }
+
+    /// U.2.3.3: whether any method (any name) is declared on `type_name`,
+    /// base (`sig`) ∪ synth overlay (legacy `method_table.contains_key`).
+    fn type_has_any_method(&self, type_name: &str) -> bool {
+        self.sig.has_type(type_name) || self.synth_methods.contains_key(type_name)
     }
 
     /// Plan 126.2 Ф.1: synthesize + register auto-derive methods into
@@ -2890,18 +2909,19 @@ impl<'a> TypeCheckCtx<'a> {
         module: &'a Module,
         synth_arena: &'a FnDeclArena,
         types: &HashMap<String, &'a TypeDecl>,
-        method_table: &mut HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+        base_methods: &HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+        synth_methods: &mut HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
     ) {
         use crate::protocols::auto_derive::DeriveQuery as _;
-        // Two-phase to avoid a borrow conflict: phase 1 synthesizes against an
-        // immutable `&method_table` (the DeriveQuery reads it for field
-        // eligibility + user-method coverage); phase 2 inserts the resulting
-        // `&'a FnDecl`s into `&mut method_table`.
+        // Two-phase: phase 1 synthesizes against the immutable BASE methods
+        // (`base_methods` = `sig.method_table`; DeriveQuery reads it for field
+        // eligibility + user-method coverage — user wins); phase 2 inserts the
+        // resulting `&'a FnDecl`s into the `synth_methods` overlay (U.2.3.3 F2).
         let mut pending: Vec<(String, &'a FnDecl)> = Vec::new();
         {
-            // Local DeriveQuery over the already-built `types` + `method_table`.
+            // Local DeriveQuery over the already-built `types` + BASE `method_table`.
             // Decouples synthesis from the not-yet-constructed `TypeCheckCtx`.
-            let query = BuildTimeDeriveQuery { types, method_table: &*method_table };
+            let query = BuildTimeDeriveQuery { types, method_table: base_methods };
             for item in &module.items {
                 let Item::Type(td) = item else { continue; };
                 if td.impl_protocols.is_empty() { continue; }
@@ -2931,10 +2951,10 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
-        // Phase 2: insert. Same key convention as user instance methods:
-        // f.name (the protocol method bare name, e.g. "equals"/"hash").
+        // Phase 2: insert into the synth overlay. Same key convention as user
+        // instance methods: f.name (the protocol method bare name, e.g. "equal"/"hash").
         for (type_name, fd_ref) in pending {
-            let entry = method_table
+            let entry = synth_methods
                 .entry(type_name)
                 .or_default()
                 .entry(fd_ref.name.clone())
@@ -3372,18 +3392,16 @@ impl<'a> TypeCheckCtx<'a> {
             return;
         }
         // Look up on_exit method on the type.
-        let has_on_exit = self.method_table.get(&type_name)
-            .map(|methods| methods.contains_key("on_exit"))
-            .unwrap_or(false);
+        let has_on_exit = self.method_overloads(&type_name, "on_exit").is_some();
         if !has_on_exit {
             // Тип known? Если не known — это либо primitive (`int`/`str`)
             // либо unresolved (caught by name resolution). Skip primitive
             // случаи silently.
             let is_known_type = self.types.contains_key(&type_name)
-                || self.method_table.contains_key(&type_name);
+                || self.type_has_any_method(&type_name);
             // Even for primitive types like `int`/`str` — нет on_exit → error.
             // Но diagnostic должен быть полезный (suggest implement).
-            if is_known_type || self.method_table.contains_key(&type_name) {
+            if is_known_type || self.type_has_any_method(&type_name) {
                 let diag = Diagnostic::new(
                     format!(
                         "[D188-not-consumable] type `{name}` does not implement `Consumable[E]` \
@@ -3421,8 +3439,7 @@ impl<'a> TypeCheckCtx<'a> {
     ///   (no other effects).
     /// - No generic parameters (cleanup methods on concrete types).
     fn validate_on_exit_signature(&self, type_name: &str, init_span: Span, errors: &mut Vec<Diagnostic>) {
-        let Some(methods) = self.method_table.get(type_name) else { return; };
-        let Some(decls) = methods.get("on_exit") else { return; };
+        let Some(decls) = self.method_overloads(type_name, "on_exit") else { return; };
         for decl in decls {
             // Param[0] must be `outcome ScopeOutcome`.
             let first_param_ok = decl.params.first()
@@ -3708,14 +3725,12 @@ impl<'a> TypeCheckCtx<'a> {
                 if parts.len() >= 2 {
                     let type_name = &parts[parts.len() - 2];
                     let method_name = &parts[parts.len() - 1];
-                    if let Some(methods) = self.method_table.get(type_name) {
-                        if let Some(decls) = methods.get(method_name) {
-                            if let Some(decl) = decls.first() {
-                                if let Some(TypeRef::Named { path, .. }) = &decl.return_type {
-                                    if let Some(outer) = path.last() {
-                                        if outer == "Option" || outer == "Result" {
-                                            return Some(outer.clone());
-                                        }
+                    if let Some(decls) = self.method_overloads(type_name, method_name) {
+                        if let Some(decl) = decls.first() {
+                            if let Some(TypeRef::Named { path, .. }) = &decl.return_type {
+                                if let Some(outer) = path.last() {
+                                    if outer == "Option" || outer == "Result" {
+                                        return Some(outer.clone());
                                     }
                                 }
                             }
@@ -3818,8 +3833,7 @@ impl<'a> TypeCheckCtx<'a> {
                     ExprKind::Path(parts) if parts.len() >= 2 => {
                         let type_name = &parts[parts.len() - 2];
                         let method_name = &parts[parts.len() - 1];
-                        let methods = self.method_table.get(type_name)?;
-                        let decls = methods.get(method_name)?;
+                        let decls = self.method_overloads(type_name, method_name)?;
                         let decl = decls.first()?;
                         let rt = decl.return_type.as_ref()?;
                         // Self → receiver type substitution.
@@ -6392,16 +6406,14 @@ impl<'a> TypeCheckCtx<'a> {
         // Резолвим callee только однозначно (ровно один overload).
         let callee: &FnDecl = match &base.kind {
             ExprKind::Ident(n) => {
-                match self.fn_decls.get(n).map(|v| v.as_slice()) {
+                match self.sig.fn_decls.get(n).map(|v| v.as_slice()) {
                     Some([single]) => single,
                     _ => return,
                 }
             }
             ExprKind::Path(parts) if parts.len() == 2 => {
                 let overloads = self
-                    .method_table
-                    .get(&parts[0])
-                    .and_then(|m| m.get(&parts[1]))
+                    .method_overloads(&parts[0], &parts[1])
                     .map(|v| v.as_slice());
                 // Plan 91.8a.2 followup 2026-05-29: для receiver-types,
                 // у которых ЧАСТЬ overload'ов лежит вне method_table
@@ -6452,7 +6464,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if is_intrinsic_namespace(prefix) {
                     return;
                 }
-                match self.fn_decls.get(name) {
+                match self.sig.fn_decls.get(name) {
                     Some(overloads) => match overloads.as_slice() {
                         [single] => single,
                         // 0 (никогда) или overload — пропускаем arg-check.
@@ -6735,9 +6747,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // the field block below and fires privacy correctly. This matches
                 // the documented field/method same-name design (see E_BOUND_METHOD
                 // heuristic above) и поведение codegen method-resolution.
-                let has_same_name_method = self.method_table.get(tname).map_or(false, |m| {
-                    m.keys().any(|k| k.trim_start_matches('@') == name)
-                });
+                let has_same_name_method = self.t_provides_method(tname, name);
                 if has_same_name_method {
                     // Plan 162 Ф.5: extension method policy — check even for
                     // method/field same-name early return (e.g. str.len() case).
@@ -6788,9 +6798,7 @@ impl<'a> TypeCheckCtx<'a> {
                     return;
                 }
                 // Метод? Имена операторных методов могут храниться с ведущим `@`.
-                let has_method = self.method_table.get(tname).map_or(false, |m| {
-                    m.keys().any(|k| k.trim_start_matches('@') == name)
-                });
+                let has_method = self.t_provides_method(tname, name);
                 if has_method {
                     // Plan 162 Ф.5: extension method policy.
                     self.check_extension_method_policy(tname, name, span, errors);
@@ -6903,9 +6911,7 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                     return;
                 }
-                let has_method = self.method_table.get(tname).map_or(false, |m| {
-                    m.keys().any(|k| k.trim_start_matches('@') == name)
-                });
+                let has_method = self.t_provides_method(tname, name);
                 if has_method {
                     // Plan 162 Ф.5: extension method policy.
                     self.check_extension_method_policy(tname, name, span, errors);
@@ -6938,9 +6944,7 @@ impl<'a> TypeCheckCtx<'a> {
             TypeDeclKind::Newtype(TypeRef::Tuple(_, _)) => {
                 // Positional tuple: named field access (`.x`) is invalid
                 if !name.chars().all(|c| c.is_ascii_digit()) {
-                    let has_method = self.method_table.get(tname).map_or(false, |m| {
-                        m.keys().any(|k| k.trim_start_matches('@') == name)
-                    });
+                    let has_method = self.t_provides_method(tname, name);
                     if has_method {
                         // Plan 162 Ф.5: extension method policy.
                         self.check_extension_method_policy(tname, name, span, errors);
@@ -7657,21 +7661,28 @@ impl<'a> TypeCheckCtx<'a> {
 
     /// T has method `name` (instance or static, with-or-without `@` prefix).
     fn t_provides_method(&self, tname: &str, name: &str) -> bool {
-        self.method_table.get(tname).map_or(false, |m| {
-            m.keys().any(|k| k.trim_start_matches('@') == name)
-        })
+        // U.2.3.3: base (sig) ∪ synth overlay (this is the F1 helper that collapses
+        // the inline `method_table.get(t).keys().any(trim @)` sites).
+        let has = |tbl: Option<&HashMap<String, Vec<&'a FnDecl>>>| {
+            tbl.map_or(false, |m| m.keys().any(|k| k.trim_start_matches('@') == name))
+        };
+        has(self.sig.methods_of(tname)) || has(self.synth_methods.get(tname))
     }
 
     /// Find the FnDecl of T's method with given name. Returns first match
     /// (overloads not typical для protocol methods — strict 1-to-1 match).
     fn find_method_decl(&self, tname: &str, name: &str) -> Option<&FnDecl> {
-        let methods = self.method_table.get(tname)?;
-        for (k, fns) in methods.iter() {
-            if k.trim_start_matches('@') == name {
-                return fns.first().copied();
+        // U.2.3.3: search base (sig) then synth overlay.
+        let search = |tbl: Option<&HashMap<String, Vec<&'a FnDecl>>>| -> Option<&'a FnDecl> {
+            let methods = tbl?;
+            for (k, fns) in methods.iter() {
+                if k.trim_start_matches('@') == name {
+                    return fns.first().copied();
+                }
             }
-        }
-        None
+            None
+        };
+        search(self.sig.methods_of(tname)).or_else(|| search(self.synth_methods.get(tname)))
     }
 
     fn t_provides_field(&self, tname: &str, name: &str) -> bool {
@@ -7688,8 +7699,7 @@ impl<'a> TypeCheckCtx<'a> {
     /// - `fn T @into() -> str` (D73 chain).
     fn t_satisfies_str_from(&self, tname: &str) -> bool {
         // Path 1: explicit `fn str.from(T) -> str` overload.
-        let str_from = self.method_table.get("str")
-            .and_then(|m| m.get("from"))
+        let str_from = self.method_overloads("str", "from")
             .map_or(false, |fns| fns.iter().any(|f| {
                 f.params.len() == 1
                     && matches!(&f.params[0].ty, TypeRef::Named { path, .. }
@@ -7697,8 +7707,8 @@ impl<'a> TypeCheckCtx<'a> {
             }));
         if str_from { return true; }
         // Path 2: T has `@into() -> str`.
-        self.method_table.get(tname)
-            .and_then(|m| m.get("into").or_else(|| m.get("@into")))
+        self.method_overloads(tname, "into")
+            .or_else(|| self.method_overloads(tname, "@into"))
             .map_or(false, |fns| fns.iter().any(|f| {
                 matches!(&f.return_type, Some(TypeRef::Named { path, .. })
                     if path.len() == 1 && path[0] == "str")
@@ -8005,7 +8015,7 @@ impl<'a> TypeCheckCtx<'a> {
                     // overloads divergent — иначе ambiguous (call resolution
                     // ещё не выполнена на этом этапе, безопаснее fallback к
                     // `None` чем выбрать random overload).
-                    if let Some(decls) = self.fn_decls.get(name) {
+                    if let Some(decls) = self.sig.fn_decls.get(name) {
                         if !decls.is_empty()
                             && decls.iter().all(|d| {
                                 d.return_type
@@ -22079,7 +22089,8 @@ mod named_tuple_ctor_infer_tests {
             make_named_tuple("Vec3", vec![("x", "f64"), ("y", "f64"), ("z", "f64")]),
         ]);
         let arena = FnDeclArena::new();
-        let ctx = TypeCheckCtx::build(&m, &arena);
+        let sig = crate::sig_registry::SigRegistry::build_base(&m);
+        let ctx = TypeCheckCtx::build(&m, &arena, &sig);
         let inferred = infer_ctor(&ctx, "Vec3");
         match inferred {
             Some(TypeRef::Named { path, .. }) => {
@@ -22104,7 +22115,8 @@ mod named_tuple_ctor_infer_tests {
             make_newtype("SqHandle", "ptr"),
         ]);
         let arena = FnDeclArena::new();
-        let ctx = TypeCheckCtx::build(&m, &arena);
+        let sig = crate::sig_registry::SigRegistry::build_base(&m);
+        let ctx = TypeCheckCtx::build(&m, &arena, &sig);
         let inferred = infer_ctor(&ctx, "SqHandle");
         match inferred {
             Some(TypeRef::Named { path, .. }) => {
@@ -22130,7 +22142,8 @@ mod named_tuple_ctor_infer_tests {
             make_sum_with_tuple_variant("Color", "Red", "int"),
         ]);
         let arena = FnDeclArena::new();
-        let ctx = TypeCheckCtx::build(&m, &arena);
+        let sig = crate::sig_registry::SigRegistry::build_base(&m);
+        let ctx = TypeCheckCtx::build(&m, &arena, &sig);
         // `Red(1)` — variant ctor; `Red` НЕ в `ctx.types`.
         let inferred = infer_ctor(&ctx, "Red");
         assert!(inferred.is_none(),
@@ -22165,22 +22178,15 @@ mod named_tuple_ctor_infer_tests {
         td
     }
 
-    /// Helper: true если method_table[type] содержит method с данным именем.
+    /// Helper: true если у типа есть метод с данным именем (base ∪ synth).
+    /// U.2.3.3: was `ctx.method_table` (= base+synth); now via synth-aware helper.
     fn mt_has(ctx: &TypeCheckCtx<'_>, ty: &str, method: &str) -> bool {
-        ctx.method_table
-            .get(ty)
-            .map_or(false, |m| m.keys().any(|k| k.trim_start_matches('@') == method))
+        ctx.t_provides_method(ty, method)
     }
 
-    /// Helper: первый FnDecl method_table[type][method].
+    /// Helper: первый FnDecl метода типа по имени (base ∪ synth).
     fn mt_fn<'c>(ctx: &'c TypeCheckCtx<'_>, ty: &str, method: &str) -> Option<&'c FnDecl> {
-        let methods = ctx.method_table.get(ty)?;
-        for (k, fns) in methods {
-            if k.trim_start_matches('@') == method {
-                return fns.first().copied();
-            }
-        }
-        None
+        ctx.find_method_decl(ty, method)
     }
 
     #[test]
@@ -22189,7 +22195,8 @@ mod named_tuple_ctor_infer_tests {
             make_named_tuple_impl("P", vec![("x", "int"), ("y", "int")], &["Equal"]),
         ]);
         let arena = FnDeclArena::new();
-        let ctx = TypeCheckCtx::build(&m, &arena);
+        let sig = crate::sig_registry::SigRegistry::build_base(&m);
+        let ctx = TypeCheckCtx::build(&m, &arena, &sig);
         assert!(mt_has(&ctx, "P", "equal"),
             "synthesized Equal.equal must be registered in method_table[P]");
     }
@@ -22200,7 +22207,8 @@ mod named_tuple_ctor_infer_tests {
             make_named_tuple_impl("P", vec![("x", "int")], &["Hash"]),
         ]);
         let arena = FnDeclArena::new();
-        let ctx = TypeCheckCtx::build(&m, &arena);
+        let sig = crate::sig_registry::SigRegistry::build_base(&m);
+        let ctx = TypeCheckCtx::build(&m, &arena, &sig);
         assert!(mt_has(&ctx, "P", "hash"),
             "synthesized Hash.hash must be registered in method_table[P]");
     }
@@ -22211,7 +22219,8 @@ mod named_tuple_ctor_infer_tests {
             make_named_tuple_impl("P", vec![("x", "int")], &["Clone"]),
         ]);
         let arena = FnDeclArena::new();
-        let ctx = TypeCheckCtx::build(&m, &arena);
+        let sig = crate::sig_registry::SigRegistry::build_base(&m);
+        let ctx = TypeCheckCtx::build(&m, &arena, &sig);
         assert!(mt_has(&ctx, "P", "clone"),
             "synthesized Clone.clone must be registered in method_table[P]");
     }
@@ -22222,7 +22231,8 @@ mod named_tuple_ctor_infer_tests {
             make_named_tuple_impl("P", vec![("x", "int")], &["Compare"]),
         ]);
         let arena = FnDeclArena::new();
-        let ctx = TypeCheckCtx::build(&m, &arena);
+        let sig = crate::sig_registry::SigRegistry::build_base(&m);
+        let ctx = TypeCheckCtx::build(&m, &arena, &sig);
         assert!(mt_has(&ctx, "P", "compare"),
             "synthesized Compare.compare must be registered in method_table[P]");
     }
@@ -22233,7 +22243,8 @@ mod named_tuple_ctor_infer_tests {
             make_named_tuple_impl("P", vec![("x", "int")], &["Display"]),
         ]);
         let arena = FnDeclArena::new();
-        let ctx = TypeCheckCtx::build(&m, &arena);
+        let sig = crate::sig_registry::SigRegistry::build_base(&m);
+        let ctx = TypeCheckCtx::build(&m, &arena, &sig);
         assert!(mt_has(&ctx, "P", "display"),
             "synthesized Display.display must be registered in method_table[P]");
     }
@@ -22248,7 +22259,8 @@ mod named_tuple_ctor_infer_tests {
             ),
         ]);
         let arena = FnDeclArena::new();
-        let ctx = TypeCheckCtx::build(&m, &arena);
+        let sig = crate::sig_registry::SigRegistry::build_base(&m);
+        let ctx = TypeCheckCtx::build(&m, &arena, &sig);
         for method in ["equal", "hash", "clone", "compare", "display", "debug"] {
             assert!(mt_has(&ctx, "P", method),
                 "synthesized method `{}` must be registered in method_table[P]",
@@ -22262,7 +22274,8 @@ mod named_tuple_ctor_infer_tests {
             make_named_tuple_impl("P", vec![("x", "int")], &["Equal", "Hash"]),
         ]);
         let arena = FnDeclArena::new();
-        let ctx = TypeCheckCtx::build(&m, &arena);
+        let sig = crate::sig_registry::SigRegistry::build_base(&m);
+        let ctx = TypeCheckCtx::build(&m, &arena, &sig);
         for method in ["equal", "hash"] {
             let fd = mt_fn(&ctx, "P", method)
                 .unwrap_or_else(|| panic!("method `{}` not registered", method));
@@ -22282,11 +22295,12 @@ mod named_tuple_ctor_infer_tests {
             make_named_tuple("P", vec![("x", "int")]),
         ]);
         let arena = FnDeclArena::new();
-        let ctx = TypeCheckCtx::build(&m, &arena);
+        let sig = crate::sig_registry::SigRegistry::build_base(&m);
+        let ctx = TypeCheckCtx::build(&m, &arena, &sig);
         assert!(!mt_has(&ctx, "P", "equal"),
             "no `#impl` annotation → no synthesized methods in method_table");
-        assert!(ctx.method_table.get("P").map_or(true, |m| m.is_empty()),
-            "method_table[P] must be empty/absent without #impl");
+        assert!(ctx.synth_methods.get("P").map_or(true, |m| m.is_empty()),
+            "synth_methods[P] must be empty/absent without #impl");
     }
 
     #[test]
@@ -22324,10 +22338,10 @@ mod named_tuple_ctor_infer_tests {
             doc: None,
         };
         let arena = FnDeclArena::new();
-        let ctx = TypeCheckCtx::build(&m, &arena);
-        let fns = ctx.method_table.get("P").and_then(|m| {
-            m.iter().find(|(k, _)| k.trim_start_matches('@') == "equal").map(|(_, v)| v)
-        }).expect("equal must be registered (user-provided)");
+        let sig = crate::sig_registry::SigRegistry::build_base(&m);
+        let ctx = TypeCheckCtx::build(&m, &arena, &sig);
+        let fns = ctx.method_overloads("P", "equal")
+            .expect("equal must be registered (user-provided)");
         assert_eq!(fns.len(), 1,
             "user-provided equal must not be duplicated by synthesis");
         assert!(!fns[0].compiler_generated,
