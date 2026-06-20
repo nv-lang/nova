@@ -7931,6 +7931,17 @@ impl<'a> TypeCheckCtx<'a> {
                 })
             }
             ExprKind::As(_, ty) => Some(ty.clone()),
+            // A block expression's value is its trailing expr. Conservative:
+            // only infer when the block has NO statements, so the trailing
+            // cannot reference inner let-bindings (which are absent from the
+            // outer `scope`) → no risk of resolving a name to the wrong outer
+            // binding. Covers `ro p = unsafe { … as *mut T }` so `p` infers as
+            // `*mut T` — required by the raw-pointer index-write carve-out in
+            // `check_target_readonly` (169.2 [M-169.2-ptr-index-ro-binding]).
+            // Blocks with statements stay `None` as before.
+            ExprKind::Block(b) if b.stmts.is_empty() => {
+                b.trailing.as_ref().and_then(|t| self.infer_expr_type(t, scope))
+            }
             ExprKind::IntLit(_) => Some(prim_ref("int", expr.span)),
             ExprKind::FloatLit(_) => Some(prim_ref("f64", expr.span)),
             ExprKind::BoolLit(_) => Some(prim_ref("bool", expr.span)),
@@ -8284,6 +8295,29 @@ impl<'a> TypeCheckCtx<'a> {
             // D176 / Plan 114 D184: index write `arr[i] = x` — forbid if arr has `ro` type.
             ExprKind::Index { obj, .. } => {
                 let obj_ty = self.infer_expr_type(obj, scope);
+                // Plan 147 Ф.3 (D246, L3 pointee-capability) — RAW-POINTER index write.
+                // `p[i] = v` ≡ `*(p+i) = v` is a write THROUGH the pointer: for a raw
+                // pointer the pointee-mutability is read FROM THE TYPE (L3), binding-
+                // independent — mirror the `*p = v` Deref rule below. So `ro p *mut T`
+                // permits `p[i] = v` (oracle row C); the L1/L2 binding-freeze (which is
+                // for VALUE collections like `[]int`/Vec) must NOT apply to raw pointers.
+                // `pointee_is_writable` returns Some(..) only for TypeRef::Pointer (None
+                // for value collections), so this carve-out is pointer-exact. (169.2:
+                // P7 was over-strict on `*mut T` index-writes — [M-169.2-ptr-index-ro-binding].)
+                if let Some(ty) = &obj_ty {
+                    if let Some(writable) = pointee_is_writable(ty) {
+                        if !writable {
+                            errors.push(Diagnostic::new(
+                                "[E_POINTER_RO_ASSIGN] cannot write through index on a \
+                                 readonly pointer — `*T` is a readonly pointee (L3 default). \
+                                 Use `*mut T` to opt into a writable pointee."
+                                    .to_string(),
+                                target.span,
+                            ));
+                        }
+                        return;
+                    }
+                }
                 if let Some(tr) = &obj_ty {
                     if tr.is_readonly() {
                         errors.push(Diagnostic::new(

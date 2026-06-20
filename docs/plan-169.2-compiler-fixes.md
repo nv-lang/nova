@@ -510,3 +510,51 @@ C-тип Nova `uint` — `nova_uint` (`typedef uintptr_t nova_uint`, Plan 133), 
 "nova_uint")` — зеркалит паттерн `int.MAX`/`u8.MAX` (каст к nova-typedef + nova-typedef как
 тип). `u64.MAX` НЕ трогаем (его канон = `uint64_t`, бага нет). plan70_5: PASS 4/0.
 Маркер `[M-169.2-uint-max-opt-mangle]`.
+
+## 21. KNOWN BUG (не фикс, отложен): user-shadow generic-типа протекает в чужой модуль
+
+**Симптом:** `[E7310] type Vec is not generic — takes no type arguments, but 1 was provided`,
+указывающий на `std/collections/hashmap.nv` / `vec.nv`, при наличии в пользовательском модуле
+`type Vec { x int, y int }` (не-generic), затеняющего прелюд/импортированный `Vec[T]`. Вскрыто
+консолидацией 169.1.2 (plan138_2 как folder-module).
+
+**Почему это баг (не test-rot):**
+Затенение пользователем имени обобщённого типа (`Vec`) **протекает за пределы модуля
+пользователя** во внутренние `Vec[T]`-ссылки СОБСТВЕННОГО кода импортированных std-модулей.
+По D29 «user wins entirely» затенение должно быть module-local, а std-модуль должен видеть
+свой настоящий generic `Vec[T]`. Комментарий fixture'а plan138_2/t14 фиксирует, что это
+поведение когда-то чинилось → вероятно регресс (или дрейф от Vec-prelude-flip). Это
+**семантика резолвера**, фикс — в компиляторе.
+
+**Статус:** ОТЛОЖЕН (риск: затрагивает name-resolution/shadow-scoping по всей системе типов).
+Обходной путь применён в тестах: shadow-fixtures `plan138_2` (t14/t15/t16) переименованы
+`type Vec` → `UserRecNN` (shadow-покрытие снято; suppress-механизм по-прежнему покрыт
+`plan62/neg/prelude_shadow_suppress.nv`). Маркер `[M-vec-shadow-leak-e7310]`
+(backlog-followups.md). Priority: M.
+
+## 22. types/mod.rs: P7 (E_READONLY_CONTENT) over-strict на index-write через raw `*mut T`
+
+**Симптом:** `ro p = unsafe { RawMem.alloc(..) as *mut T }; unsafe { p[0] = a }` →
+`[E_READONLY_CONTENT] cannot write through index on a ro-bound binding (L1/L2 freeze,
+D246 P7)`. plan138_2/t17 (cell #1 turbofish-misparse regression; `p[0]=a` — лишь setup
+в конструкторе). Вскрыто консолидацией 169.1.2.
+
+**Почему это баг (подтверждено решением автора):**
+`p[i] = v` ≡ `*(p+i) = v` — запись ЧЕРЕЗ указатель. По D246 для raw-указателя
+pointee-мутабельность читается из ТИПА (L3): `*mut T` writable, binding-independent
+(как `T* const` в C). `ro` замораживает только ребиндинг `p`, не запись через `*p` —
+ровно как уже делает Deref-ветка (`*p = v`, oracle row C). Но Index-ветка применяла
+L1/L2 binding-freeze (корректную для VALUE-коллекций `[]int`/Vec) и к raw-указателям.
+
+**Исправление (две части):**
+1. `check_target_readonly` Index-ветка: перед binding-freeze — если `pointee_is_writable(obj_ty)`
+   возвращает `Some` (т.е. obj — raw `TypeRef::Pointer`; None для value-коллекций),
+   обработать как Deref: `Some(false)`→`E_POINTER_RO_ASSIGN`, `Some(true)`→разрешить (return).
+   Carve-out pointer-exact (value-коллекции не затронуты — plan147/108/118 0 FAIL).
+2. `infer_expr_type`: добавлена ветка `Block(b) if b.stmts.is_empty()` → тип трейлинг-выражения.
+   Без неё `ro p = unsafe { … as *mut T }` инферил `None` (блок-выражение не имело ветки →
+   `_ => None`), и carve-out (часть 1) не видел, что `p` — указатель. Консервативно: только
+   блоки БЕЗ statements (трейлинг не может ссылаться на внутренние let-биндинги, отсутствующие
+   в outer scope). Блоки со stmts остаются `None` как раньше.
+
+plan138_2: PASS 1/0. Маркер `[M-169.2-ptr-index-ro-binding]`.
