@@ -145,3 +145,15 @@ referenced from plan docs and simplifications.md.
 - **[M-instance-method-arg-scalar-narrowing]** Precise scope (corrected 2026-06-19 after empirical mapping): argument types of method calls ARE validated, just by other layers — overloaded fns/methods resolve by static arg types in the **codegen overload resolver** (emit_c.rs:23026; a no-match → CODEGEN-FAIL `no matching overload for g(nova_bool)`), and a category mismatch (struct↔scalar, e.g. `Vec[int].push(str)`) is caught by the **C compiler** (CC-FAIL `passing nova_str to incompatible type nova_int`). The Nova type-checker itself does not type-check method args, but the ONLY thing that slips through ALL layers is **scalar→scalar implicit narrowing** through a single-overload method arg (`vec_u32.push(int_var)`: arity matches the one `push(u32)`, and int→u32 is a C-legal truncation). So the gap is narrow (NOT "methods are untyped"). Fix is point-sized: the codegen resolver already knows each param's C-type (`param_c_types`), so add an int-narrowing check there comparing arg C-type vs param C-type. This WILL flag the ~375 std `push(int)` sites → migrate them with explicit `as`. Priority: P1 (soundness).
 - ~~**[M-generic-arg-mismatch-records-followup]**~~ ✅ **DONE 2026-06-19** (commit `4e5533ff`). The generic-argument mismatch check now flags concrete **record/sum/newtype** type-args too (`Box[Dog]`→`Box[Cat]`) and **nested** generics (`Vec[Vec[int]]`→`Vec[Vec[u32]]`) via a recursive `generic_arg_mismatch()`. Alias-safe (resolved via `cat_of`, so `Box[Meters alias int]`→`Box[int]` does not false-flag); permissive on generic type-params / protocols / unknowns. Zero false positives across the corpus.
 - **[M-172.1-U1-cli-stdpath]** Plan 172.1 U.1.1: std-path is configurable via env `NOVA_STD_PATH` + `nova.toml [workspace]/[package].std` (resolver `manifest::resolve_std_path`, default `repo/std` byte-identical). The CLI `--std-path` flag (a third config surface above env) is not yet wired — env+manifest already satisfy the §2 «WHERE is config» requirement. Priority: P3 (UX convenience). Add a `--std-path` arg threaded (via a process-global set at startup) into `resolve_std_path`.
+
+- **[M-169.2-vec-fn-empty-literal-nova-int]** `mut arr []fn() -> int = []` — пустой
+  array-литерал для `[]fn` выводит element-type как **`nova_int`** (fallback), а не
+  fn/void_p: codegen создаёт `Nova_Vec____nova_int_static_new()`, но `arr` типизирован
+  `NovaArray_void_p*` и в него пушатся closure-указатели → type-confused контейнер.
+  Малый N работает (совпадение layout), на масштабе (≥~512, realloc) расходится →
+  элемент читается как null → `NOVA_CLOS_CALL_vi(null)` → детерминированный SEGV (READ@0,
+  frame[1]=`nova_fn_main_impl`). **НЕ GC** (`GC_DONT_GC=1` не чинит). Это конкретный
+  инстанс класса **[M-172-nova-int-fallback-audit]** (silent nova_int fallback на unknown
+  element-type) → **гейтован на Plan 172 U.4** (removal of fallback). Репро: plan55
+  `f1_closure_array_gc_stress` (RUN-FAIL 3/3); диагностика по docs/debugging-races.md §2.1.1.
+  Priority: M (гейт 172 U.4).

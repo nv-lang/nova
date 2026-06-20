@@ -558,3 +558,32 @@ L1/L2 binding-freeze (корректную для VALUE-коллекций `[]in
    в outer scope). Блоки со stmts остаются `None` как раньше.
 
 plan138_2: PASS 1/0. Маркер `[M-169.2-ptr-index-ro-binding]`.
+
+## 23. KNOWN BUG (не фикс, гейт Plan 172 U.4): пустой `[]fn`-литерал → nova_int element-fallback
+
+**Симптом:** `nova_tests/plan55/f1_closure_array_gc_stress` RUN-FAIL (детерминированно 3/3) —
+SEGV. Изначально выглядело как GC heap-bound/closure-collect баг (предмет Plan 55 Ф.1).
+
+**Диагностика (по [docs/debugging-races.md](debugging-races.md) §2.1.1 + §3.1):**
+- Дискриминатор #1 `GC_DONT_GC=1` **НЕ чинит** → это НЕ GC premature-collect.
+- `NOVA_DIAG_SEGV=1` → frame[1]=`nova_fn_main_impl` (probe.c:1206), READ@0x0,
+  RIP в `NOVA_CLOS_CALL_vi(f)` с `f == null`.
+- Scale-порог 400→700 (n≤400 PASS, n≥700 SEGV); `[]int` контроль n=1000 PASS;
+  `[]fn` с НЕ-захватывающими `|| 1` n=1000 — тоже SEGV (не про захват).
+
+**Корень (генерённый .c):**
+```c
+/* mut arr []fn() -> int = [] */
+Nova_Vec____nova_int* _nv_tmp = Nova_Vec____nova_int_static_new();  // ← Vec из INT!
+NovaArray_void_p* arr = _nv_tmp;                                    // ← а тип void_p
+... nova_array_push_void_p(arr, &closure) ...                      // пуш closure-указателей
+```
+Пустой литерал `[]` для `[]fn() -> int` вывел element-type как **`nova_int`** (fallback)
+вместо fn/void_p → type-confused контейнер (`Vec[int]` vs `NovaArray_void_p`). Малый N
+совпадает по layout; на масштабе (realloc) расходится → `f`==null → call-null → SEGV.
+
+**Статус:** ОТЛОЖЕН, гейт **Plan 172 U.4**. Это конкретный инстанс класса
+**[M-172-nova-int-fallback-audit]** (silent nova_int fallback на unknown element-type,
+main `3046f7e6`, ~78 sites), который Plan 172 U.4 убирает системно. Отдельно НЕ чиним
+(point-fix продублирует 172 U.4). Маркер `[M-169.2-vec-fn-empty-literal-nova-int]`
+(backlog-followups.md).
