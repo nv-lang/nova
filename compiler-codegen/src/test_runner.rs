@@ -2568,6 +2568,10 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         emitter.set_proven_index_sites_contract(&module_env.proven_index_sites_contract);
         // Plan 172.1 U.4.1: feed per-Expr resolved-type annotations to the emitter.
         emitter.set_resolved_types(&module_env.resolved_types);
+        // Plan 172.1 U.4.3: feed the resolved-callee channel (ExprId → chosen callee
+        // FnDecl.span) so codegen reads its OWN view of the chosen callee instead of
+        // re-resolving the overload (§0). Stage (a): equivalence-assert (debug).
+        emitter.set_resolved_callees(&module_env.resolved_callees);
         emitter.emit_module(&module)
             .map_err(|e| format!("codegen error: {}", e))?
     };

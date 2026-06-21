@@ -692,6 +692,25 @@ pub struct CEmitter {
     /// authoritative type source; release-`dead_code` allowed in the interim.)
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     resolved_types: std::collections::HashMap<crate::ast::ExprId, crate::types::ResolvedType>,
+    /// Plan 172.1 U.4.3: the resolved-callee channel (call-site `ExprId` → chosen
+    /// callee `FnDecl` declaration `Span`) the checker populated in `f1_check_call`
+    /// (`ModuleEnv.resolved_callees`, U.3.4-prep). The `FnDecl.span` is the stable
+    /// cross-layer callee IDENTITY both layers hold (§7.7) — codegen looks up ITS OWN
+    /// view of that callee (`fn_ret_by_span`) and lowers it, instead of re-resolving the
+    /// overload (§0). Stage (a): free-fn single-overload — read by the debug
+    /// equivalence-assert in `infer_expr_c_type` (proves channel == legacy over the
+    /// corpus) before later stages flip codegen to read it authoritatively.
+    /// [M-172.1-U4-typedir-substrate]
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    resolved_callees: std::collections::HashMap<crate::ast::ExprId, crate::diag::Span>,
+    /// Plan 172.1 U.4.3 (stage a): codegen's OWN view of every FREE function's return
+    /// C-type, keyed by the declaration `Span`. Built from the same `ret` codegen
+    /// registers as `fn_ret_<name>` (the free-fn forward-decl pass), so it is the
+    /// codegen-native "CodegenView" of the callee the `resolved_callees` channel points
+    /// at — no `SigRegistry` needed in codegen (U.2.4 not merged; mangling/return are
+    /// codegen lowering, §0/§7.7). Used by the U.4.3 equivalence-assert.
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    fn_ret_by_span: std::collections::HashMap<crate::diag::Span, String>,
     /// Plan 140.4 ([M-opt-elide-proven-overflow-checks]): proven `int` `+`/`-`/`*`
     /// сайты (по span.start), чей результат доказан в диапазоне i64 из LOOP/CODE.
     /// Codegen элидит `nova_int_checked_*` ВСЕГДА (safe даже под `--contracts=off`).
@@ -1337,6 +1356,8 @@ impl CEmitter {
             proven_index_sites: std::collections::HashSet::new(),
             proven_index_sites_contract: std::collections::HashSet::new(),
             resolved_types: std::collections::HashMap::new(),
+            resolved_callees: std::collections::HashMap::new(),
+            fn_ret_by_span: std::collections::HashMap::new(),
             proven_overflow_sites: std::collections::HashSet::new(),
             proven_overflow_sites_contract: std::collections::HashSet::new(),
             contracts_off: false,
@@ -1783,6 +1804,18 @@ impl CEmitter {
         m: &std::collections::HashMap<crate::ast::ExprId, crate::types::ResolvedType>,
     ) {
         self.resolved_types = m.clone();
+    }
+
+    /// Plan 172.1 U.4.3: feed the resolved-callee channel (`ExprId` → chosen callee
+    /// `FnDecl.span`) the checker populated. Mirrors `set_resolved_types`. Codegen reads
+    /// it via the U.4.3 equivalence-assert (stage a: free-fn); later stages make it the
+    /// authoritative dispatch source, deleting the codegen re-resolution (§0).
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn set_resolved_callees(
+        &mut self,
+        m: &std::collections::HashMap<crate::ast::ExprId, crate::diag::Span>,
+    ) {
+        self.resolved_callees = m.clone();
     }
 
     /// Plan 172.1 U.4.1: lower a checker `ResolvedType` to its C-type string — the
@@ -9505,6 +9538,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let mangled = self.mangle_fn(f);
         // Register return type so call sites can infer print helper
         self.var_types.insert(format!("fn_ret_{}", f.name), ret.clone());
+        // Plan 172.1 U.4.3 (stage a): index THIS free fn's return C-type by its
+        // declaration `Span` — the codegen-native view of the callee the
+        // `resolved_callees` channel points at (the checker recorded `callee.span`
+        // for single-overload free-fns). Only free fns here (`receiver.is_none()`):
+        // method return derivation goes through `method_overloads` (mono-subst /
+        // Self-resolution), which stages (b)/(c) cover separately. Same `ret` the
+        // name-keyed `fn_ret_<name>` lookup returns → the equivalence-assert proves the
+        // channel selects the identical callee codegen would (§0/§7.7).
+        if f.receiver.is_none() {
+            self.fn_ret_by_span.insert(f.span, ret.clone());
+        }
         // Plan 152.4.3: also register a TYPE-QUALIFIED return key for methods —
         // the name-only key above is last-wins across types, so same-named methods
         // on different receivers collide (e.g. `CharsIter.next -> Option[char]` vs
@@ -35491,6 +35535,28 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         expr.id,
                         expr.span
                     );
+                }
+            }
+            // Plan 172.1 U.4.3 (stage a): when the checker recorded a resolved callee
+            // for THIS call (`resolved_callees`, populated for free-fn single-overload /
+            // `Type.method` / module-fn in `f1_check_call`), look up codegen's OWN return
+            // C-type for that callee by its declaration `Span` (`fn_ret_by_span`, built
+            // only for FREE fns — stage a) and prove it equals the legacy re-derivation.
+            // The channel carries callee IDENTITY (`FnDecl.span`); codegen lowers its own
+            // view (§0/§7.7). ADDITIVE: the returned value is still `legacy` (channel NOT
+            // yet authoritative) → release byte-identical; this assert measures channel ==
+            // legacy across the corpus before a later stage flips codegen to read it.
+            if matches!(&expr.kind, ExprKind::Call { .. }) {
+                if let Some(span) = self.resolved_callees.get(&expr.id) {
+                    if let Some(ch_ret) = self.fn_ret_by_span.get(span) {
+                        debug_assert_eq!(
+                            *ch_ret,
+                            legacy,
+                            "[U.4.3] channel callee return-type != legacy at call id={:?} span={:?}",
+                            expr.id,
+                            expr.span
+                        );
+                    }
                 }
             }
         }
