@@ -1,0 +1,31 @@
+// Plan 172.1 U.4.3 (d) POS — codegen CONSUMES the checker's overload choice for an
+// overloaded method on a GENERIC type (the 5b mono-instance dispatch path), fixing the
+// same mis-dispatch class as c2.2 but for generic receivers. Codegen's exact param-C-type
+// selection mis-picks on a narrowing arg (u8 vs an int overload, str overload declared
+// first) -> wrong overload index -> wrong mono __<suffix> -> both overloads collapse to one
+// mono symbol -> CC-FAIL. Reading the checker's chosen FnDecl.span picks the right index.
+//
+// NB: the receiver type must be CHECKER-KNOWN for the channel to record the call. An
+// explicit-type param (`b GBox[int]`) is known; a constructor-inferred local
+// (`ro b = GBox[int].of(0)`) is NOT yet (the checker does not infer generic-constructor
+// return types — that is gated on U.4 unified inference). So this fixture passes the
+// receiver as an explicit-typed param.
+module detect172
+
+type GBox[T] { v T }
+fn GBox[T].of(x T) -> GBox[T] => { v: x }
+fn GBox[T] @pick(s str) -> int => 1
+fn GBox[T] @pick(n int) -> int => 2
+
+fn pick_via(b GBox[int], n int, w u8, s str) -> int {
+    // exact-match int (already worked), str, AND the narrowing u8 (was mis-dispatched):
+    assert(b.pick(n) == 2)
+    assert(b.pick(s) == 1)
+    assert(b.pick(w) == 2)
+    b.pick(w)
+}
+
+test "generic-type overloaded method dispatch resolves by arg type (narrowing arg)" {
+    ro b = GBox[int].of(0)
+    assert(pick_via(b, 7, 3, "hi") == 2)
+}

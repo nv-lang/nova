@@ -25897,6 +25897,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         let (method_decl, overload_index): (Option<crate::ast::FnDecl>, usize) =
                             if same_name.len() <= 1 {
                                 (same_name.first().cloned(), 0)
+                            } else if let Some(idx) = self.resolved_callees.get(&call_id)
+                                .and_then(|sp| same_name.iter().position(|m| m.span == *sp))
+                            {
+                                // Plan 172.1 U.4.3 (d): codegen CONSUMES the checker's overload
+                                // choice for a generic-type method (§0) — same fix as c2.2 but
+                                // on the 5b generic-instance dispatch path. The checker resolved
+                                // the overload by arg CATEGORY; the exact param-C-type selection
+                                // below MIS-PICKS on a narrowing arg (e.g. `u8` vs an `int`
+                                // overload): pass-1 finds no exact match → pass-2 falls to the
+                                // first arity-match → the WRONG overload index → the mono name
+                                // gets the wrong (or no) `__<paramtype>` suffix → both overloads
+                                // collapse to one mono symbol → CC-FAIL (`GBox[int].pick(u8)`).
+                                // Reading the checker's chosen `FnDecl.span` (recorded in
+                                // `resolved_callees`, c2.1 multi-overload) picks the right index,
+                                // so the `[M-138.2]` suffix logic below emits the right mono name.
+                                // `same_name` are the generic-method FnDecls the checker also saw
+                                // (both from `generic_type_methods`/`method_table`), so the spans
+                                // match. Falls through to the legacy selection when the channel
+                                // has no entry (recv-mut-only overloads / complex receivers).
+                                (Some(same_name[idx].clone()), idx)
                             } else {
                                 // Receiver type-subst (T -> concrete) for the param-type compare.
                                 let recv_subst_vec: Vec<(String, String)> = self.generic_type_templates
