@@ -1791,14 +1791,24 @@ impl CEmitter {
     /// drift). Part 2 handles the types the literal seed produces; the `_` marker
     /// makes the equivalence-assert fire loudly if a non-literal annotation slips in.
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    fn resolved_type_to_c(rt: &crate::types::ResolvedType) -> String {
+    /// Plan 172.1 U.4.6: lower the canonical `ResolvedType` (D315) to its C type, the
+    /// SINGLE lowering that will replace `type_ref_to_c` (whose resolve-half duplicates the
+    /// checker, §0-anti-pattern). State-aware (`&self`: mono-subst, schema/template/alias
+    /// registries, receiver) — it reproduces `type_ref_to_c`'s ABI dispatch by reading
+    /// `ResolvedType` fields instead of re-resolving a `TypeRef`, recursing on `ResolvedType`.
+    /// Returns `None` for the families not yet mirrored (state-heavy generic-mono / `Array` /
+    /// `Tuple`, `[M-172.1-U4.6-state-heavy-arms]`) and the `type_ref_to_c`-`Err` cases
+    /// (`usize`/`isize`/`ptr`, `Self`-without-receiver) — the parity gate skips `None`.
+    /// Side-effects it shares with `type_ref_to_c` (`register_novaopt_decl`) are idempotent
+    /// (D315 spike), so running both under the gate is safe. NOT yet wired as authoritative
+    /// (no `type_ref_to_c` site flips here — U.4.7/U.4.8); this builds + proves parity.
+    fn resolved_type_to_c(&self, rt: &crate::types::ResolvedType) -> Option<String> {
         use crate::types::ResolvedType as R;
-        match rt {
+        use crate::ast::PointerModifier as PM;
+        Some(match rt {
             R::Scalar { .. } => {
                 let name = rt.int_name().expect("Scalar always yields an int_name");
-                Self::primitive_name_to_c(name)
-                    .expect("int primitive always in table")
-                    .to_string()
+                Self::primitive_name_to_c(name).expect("int primitive always in table").to_string()
             }
             R::Float { width } => {
                 let name = if *width == 32 { "f32" } else { "f64" };
@@ -1807,17 +1817,153 @@ impl CEmitter {
             R::Bool => Self::primitive_name_to_c("bool").unwrap().to_string(),
             R::Str => Self::primitive_name_to_c("str").unwrap().to_string(),
             R::Unit => "nova_unit".to_string(),
+            // `never` — bottom-type ABI placeholder (mirrors type_ref_to_c `never` arm).
+            R::Never => "nova_int".to_string(),
+            // Opaque `ptr` (Plan 115) — only from the NullPtrLit literal seed; not a
+            // `type_ref_to_c` parity input (no TypeRef lowers to it).
             R::Ptr => "void*".to_string(),
-            // `char` (and any future primitive-named) via the single table; a
-            // non-primitive Named is not produced by the part-2 literal seed.
-            R::Named { name, args, .. } if args.is_empty() => Self::primitive_name_to_c(name)
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("Nova_{}", name)),
-            // U.5.5(a): L2 `readonly` view is transparent for C (`readonly T` ABI ≡ `T`,
-            // exactly as `type_ref_to_c`'s Readonly arm) — peel and lower the inner type.
-            R::Readonly(inner) => Self::resolved_type_to_c(inner),
-            _ => "<u4.1-unhandled>".to_string(),
+            // `any` — value-erased (mirrors type_ref_to_c anon-`Protocol` → void*).
+            R::Any => "void*".to_string(),
+            // U.5.5(a): L2 `readonly` view transparent for C (`readonly T` ABI ≡ `T`).
+            R::Readonly(inner) => self.resolved_type_to_c(inner)?,
+            // L3 typed pointer (mirrors type_ref_to_c Pointer arm): `*() = void*`;
+            // `*ro T → const T*`; `*mut T`/`*unsafe T → T*`.
+            R::TypedPtr(modifier, inner) => {
+                if matches!(inner.as_ref(), R::Unit) {
+                    "void*".to_string()
+                } else {
+                    let inner_c = self.resolved_type_to_c(inner)?;
+                    match modifier {
+                        PM::Ro => format!("const {}*", inner_c),
+                        PM::Mut | PM::Unsafe => format!("{}*", inner_c),
+                    }
+                }
+            }
+            // Function type — opaque void* (mirrors type_ref_to_c Func arm).
+            R::Func { .. } => "void*".to_string(),
+            R::Named { name, module, args } => self.resolved_named_to_c(name, module, args)?,
+            // State-heavy ABI (generic-mono Vec/Tuple — worklist + typedef side-effects):
+            // next U.4.6 increment. `[M-172.1-U4.6-state-heavy-arms]`.
+            R::Array(_) | R::Tuple(_) => return None,
+        })
+    }
+
+    /// U.4.6: the `Named` ABI dispatch of `resolved_type_to_c`, mirroring `type_ref_to_c`'s
+    /// `Named` arm driven by `ResolvedType` fields. `full` = `module ++ [name]` joined by
+    /// `_` (the `path.join("_")` equivalent, U.5.5(a) made `module` lossless).
+    fn resolved_named_to_c(
+        &self,
+        name: &str,
+        module: &[String],
+        args: &[crate::types::ResolvedType],
+    ) -> Option<String> {
+        let full = if module.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}_{}", module.join("_"), name)
+        };
+        // Type-param mono-subst (mirrors type_ref_to_c top: only for empty type-args).
+        if args.is_empty() {
+            if let Some(concrete) = self.type_subst_overrides.borrow().get(&full) {
+                return Some(concrete.clone());
+            }
+            if let Some(concrete) = self.current_type_subst.get(&full) {
+                return Some(concrete.clone());
+            }
         }
+        if let Some(c) = Self::primitive_name_to_c(&full) {
+            return Some(c.to_string());
+        }
+        Some(match full.as_str() {
+            // type_ref_to_c returns Err here → None (parity gate skips Err too).
+            "usize" | "isize" | "ptr" => return None,
+            "never" => "nova_int".to_string(),
+            "Option" => {
+                if let Some(inner) = args.first() {
+                    let inner_c = self.resolved_type_to_c(inner)?;
+                    if inner_c == "void*" {
+                        return Some("NovaOpt_nova_int".to_string());
+                    }
+                    if let Some(x) =
+                        inner_c.strip_suffix('*').and_then(|s| s.trim().strip_prefix("Nova_"))
+                    {
+                        let is_concrete = self.record_schemas.contains_key(x)
+                            || self.sum_schemas.contains_key(x)
+                            || self.generic_types.contains(x)
+                            || x.contains("____");
+                        if !is_concrete {
+                            return Some("NovaOpt_nova_int".to_string());
+                        }
+                    }
+                    let sanitized = Self::sanitize_for_novaopt(&inner_c);
+                    self.register_novaopt_decl(&sanitized, &inner_c);
+                    format!("NovaOpt_{}", sanitized)
+                } else {
+                    "NovaOpt_nova_int".to_string()
+                }
+            }
+            "Result" => {
+                if args.len() == 2 {
+                    // Propagate DEFER (`?`): if an inner type is a not-yet-handled family
+                    // (Array/Tuple/generic-mono → None), the whole Result defers — it must
+                    // NOT fall to the erased fallback (`type_ref_to_c` lowers those inners to
+                    // a CONCRETE mono, so erasing here would be a false mismatch). Only when
+                    // BOTH inners genuinely lower does it pick concrete-vs-erased like legacy.
+                    let ok_c = self.resolved_type_to_c(&args[0])?;
+                    let err_c = self.resolved_type_to_c(&args[1])?;
+                    if !ok_c.is_empty() && ok_c != "void*" && !err_c.is_empty() && err_c != "void*"
+                        && !self.is_generic_stub_c(&ok_c) && !self.is_generic_stub_c(&err_c)
+                    {
+                        return Some(self.result_repr_c_type(&ok_c, &err_c));
+                    }
+                }
+                "NovaRes_nova_int_nova_str*".to_string()
+            }
+            "Self" => match &self.current_receiver_type {
+                Some(recv) => self.receiver_c_type(recv, false),
+                // type_ref_to_c Errs (Self outside receiver) → None.
+                None => return None,
+            },
+            "Effect" => match args.first() {
+                Some(crate::types::ResolvedType::Named { name: en, module: em, .. }) => {
+                    let eff_full = if em.is_empty() {
+                        en.clone()
+                    } else {
+                        format!("{}_{}", em.join("_"), en)
+                    };
+                    format!("NovaVtable_{}*", eff_full)
+                }
+                _ => "void*".to_string(),
+            },
+            "CancelToken" => "NovaCancelToken*".to_string(),
+            "Write" => "Nova_StringBuilder*".to_string(),
+            _ => {
+                // Protocol (value-erased): non-generic → NovaBox_<proto> (the bare name,
+                // mirroring type_ref_to_c's `path.last()`); generic → void*.
+                if self.protocol_types.contains(&full) || self.protocol_types.contains(name) {
+                    if args.is_empty() {
+                        return Some(format!("NovaBox_{}", name));
+                    }
+                    return Some("void*".to_string());
+                }
+                // Type alias (skip when referenced WITH args AND a known generic template —
+                // mirrors type_ref_to_c's guard so the mono path is not bypassed).
+                let is_generic_template_with_args =
+                    !args.is_empty() && self.generic_type_templates.contains_key(&full);
+                if !is_generic_template_with_args {
+                    if let Some(aliased_c) = self.type_aliases.get(&full).cloned() {
+                        return Some(aliased_c);
+                    }
+                }
+                // Generic-template instance (mono mangling + worklist side-effects) —
+                // state-heavy, next U.4.6 increment (`[M-172.1-U4.6-state-heavy-arms]`).
+                if !args.is_empty() && self.generic_type_templates.contains_key(&full) {
+                    return None;
+                }
+                // User-defined concrete record/sum — pointer to struct.
+                format!("Nova_{}*", full)
+            }
+        })
     }
 
     /// Plan 140.2: можно ли элидировать inline bounds-check Index-сайта `span`?
@@ -5825,7 +5971,31 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         })
     }
 
+    /// U.4.6 parity gate (env `NOVA_U46_PARITY`, debug-only): prove `resolved_type_to_c`
+    /// (driven by the canonical `ResolvedType`, D315) lowers to the SAME C type as the
+    /// legacy `type_ref_to_c` over the corpus BEFORE any declared-type site flips to it
+    /// (U.4.7/U.4.8). `None` from the IR lowering = a family it still defers (state-heavy
+    /// generic-mono/`Array`/`Tuple`) → skipped. Off by default ⇒ zero cost; the production
+    /// path is the unchanged `type_ref_to_c_impl`, so this is byte-identical by construction.
     fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
+        let out = self.type_ref_to_c_impl(ty);
+        #[cfg(debug_assertions)]
+        if std::env::var_os("NOVA_U46_PARITY").is_some() {
+            if let Ok(expected) = &out {
+                let rt = crate::types::ResolvedType::from_type_ref(ty);
+                if let Some(got) = self.resolved_type_to_c(&rt) {
+                    debug_assert_eq!(
+                        &got, expected,
+                        "[U.4.6] resolved_type_to_c != type_ref_to_c\n  TypeRef: {:?}\n  ResolvedType: {:?}",
+                        ty, rt
+                    );
+                }
+            }
+        }
+        out
+    }
+
+    fn type_ref_to_c_impl(&self, ty: &TypeRef) -> Result<String, String> {
         // Plan 48: type parameter substitution (monomorphization context)
         if let TypeRef::Named { path, generics, .. } = ty {
             if generics.is_empty() {
@@ -35658,13 +35828,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         #[cfg(debug_assertions)]
         if expr.id.is_set() {
             if let Some(rt) = self.resolved_types.get(&expr.id) {
-                debug_assert_eq!(
-                    Self::resolved_type_to_c(rt),
-                    legacy,
-                    "[U.4.1] IR annotation != legacy infer at id={:?} span={:?}",
-                    expr.id,
-                    expr.span
-                );
+                // U.4.1/U.4.2 equivalence: when the IR lowering handles the annotation it
+                // must match legacy. `None` = a family `resolved_type_to_c` still defers
+                // (U.4.6 state-heavy arms) — no claim, skip (the producer only seeds
+                // primitives today, so `None` does not occur on the current corpus).
+                if let Some(ir_c) = self.resolved_type_to_c(rt) {
+                    debug_assert_eq!(
+                        ir_c,
+                        legacy,
+                        "[U.4.1] IR annotation != legacy infer at id={:?} span={:?}",
+                        expr.id,
+                        expr.span
+                    );
+                }
             }
         }
         legacy
