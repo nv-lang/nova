@@ -74,6 +74,19 @@ degradation; Option-null; realtime/fiber-bans). **Три недочёта:**
 
 Имена методов: **`.offset`** (полное слово, как Rust + стиль Nova full-word; не `.offs`), `.at`/`.set`/`.dist`. Прочие — финал при реализации.
 
+### 3a. Авто-коэрции (implicit) — только «безопасное направление»
+
+| from → to | auto? | почему |
+|---|---|---|
+| `*mut T` → `*T` (`*ro T`) | ✅ | потеря write безопасна (mut→ro covariance) |
+| `*mut uninit T` → `*uninit T` | ✅ | потеря write; uninit **сохраняется** |
+| `*T` → `*uninit T` | ✅ | ослабление гарантии (init→maybe-uninit) безопасно |
+| `*mut uninit T` → `*T` | ❌ | сброс `uninit` = claim init (**unsound**) — только через `.write()`→init |
+| `*uninit T` → `*T` | ❌ | то же (uninit→init) — `unsafe` |
+| `*T` → `*mut T` | ❌ | приобретение write (ro→mut) — `unsafe`-cast |
+
+**Принцип (две оси):** по **mut-оси** теряем capability (`mut→ro`) **автоматически**; по **init-оси** «доказать init» (`uninit→init`) коэрцией **нельзя** — только `.write()`→init или unsafe-assert. Согласуется с cast-таблицей `02-types.md` (`*mut T→*T` ✓; `*uninit T→*T` unsafe).
+
 ## 4. Write-cap fix (закрытие дыры; absorb `[M-138.5-unsafe-ptr-write-cap]`)
 
 > **RENAME (sign-off 2026-06-22): `unsafe T` → `uninit T`** (и `*unsafe T`→`*uninit T`, `*mut unsafe T`→`*mut uninit T`,
