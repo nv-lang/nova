@@ -47,6 +47,31 @@
 - **172.3** — независимая фича; после landing единого движка (172.1) выражается чище (схлопывает
   ~13 per-type обёрток Plan 171 в ~2-3 generic).
 
+## 3.1. Forward-compat с системой ошибок (Plan 173/174/175) — чтобы 173 не переделывал 172
+
+Анализ 2026-06-21 (по запросу владельца): [Plan 173](173-error-system-unify-harden.md) (error/cleanup),
+[174](174-question-mark-return-only.md) (`?`-return-only), [175](175-any-type-and-is-downcast.md)
+(`any`+`is`-downcast) садятся на типовой движок 172. Чтобы 173 строился ПОВЕРХ единого движка, а не
+переделывал его, **172.1 обязан учесть 4 точки** (в основном осознанность/lossless, не большие правки):
+
+1. **Эффекты в `ResolvedType` — LOSSLESS, с type-args (`Fail[E]` несёт `E`).** Сейчас
+   `ResolvedType::Func.effects: Vec<String>` (только имена, `from_type_ref` берёт `path.last()`) —
+   **лосси** (теряет `E` у `Fail[E]`). Это и [D315](../../spec/decisions/02-types.md#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21)-нарушение (носитель обязан быть lossless), и блокер
+   typed-errors 173/175. **U.5.5 обязан нести полный эффект-тип** (имя + type-args), не bare-name.
+   Иначе 173 Ф.4 (типизированный `Fail[E]`/`ScopeOutcome.Failure(any)`) переделывает носитель.
+2. **`any` + `is`/downcast — согласовать с Plan 175.** 172-резолв `Any`/`is`-теста НЕ должен
+   форклоузить модель Plan 175 (`any`-тип + `is T`/downcast по `type_id`) — 175 строит typed-error
+   dispatch 173 поверх ЕДИНОГО движка. Координировать дизайн `Any`/`is` в U.4 с Plan 175.
+3. **`[M-parfor-record-result-miscompile]` чинится U.4 ПО ПОСТРОЕНИЮ.** Чекер типизирует
+   `parallel for → []T` для ЛЮБОГО `T`, а array-mode codegen (`emit_c.rs:8154`) умеет лишь
+   `T∈{int,bool,f64,str}` → молчаливый degrade в `unit` → утечка C-error. Это ровно §0
+   checker↔codegen рассинхрон. Унифицированный `[]T`-lowering (any `T`, U.4.4) ДОЛЖЕН покрыть
+   parfor-result-array (не оставить отдельным re-deriving путём) → 173 Ф.3 тривиален. 172 берёт
+   этот маркер в свой радар.
+4. **Error-типы (`Result`/`MultiError`/`ScopeOutcome`) — generic mechanism (§3), не hardcode.**
+   172.1 U.1 (де-хардкод stdlib) обязан не спец-кейсить error-типы → 173 эволюционирует их
+   (materialize `MultiError`, `Failure(any)`) без борьбы с 172-хардкодом.
+
 ## 4. Критерий «готово» (зонтик)
 
 Зонтик закрыт, когда выполнены критерии приёмки **172.1** (единый источник истины, codegen не
