@@ -7068,6 +7068,8 @@ impl<'a> TypeCheckCtx<'a> {
         scope: &HashMap<String, TypeRef>,
         span: crate::diag::Span,
         errors: &mut Vec<Diagnostic>,
+        // Plan 172.1 U.4.3 (stage c1): call-site `ExprId` — key for the resolved-callee channel.
+        call_id: crate::ast::ExprId,
     ) {
         let Some(recv_ty) = BoundCtx::infer_arg_ty(obj, scope) else { return; };
         let TypeRef::Named { path, .. } = &recv_ty else { return; };
@@ -7080,6 +7082,18 @@ impl<'a> TypeCheckCtx<'a> {
         }
         let Some(methods) = self.sig.method_table.get(type_name) else { return; };
         let Some(overloads) = methods.get(method_name) else { return; };
+        // Plan 172.1 U.4.3 (stage c1): record the chosen INSTANCE callee into the
+        // resolved-callee channel — substrate for codegen consume (§0/§7.7: checker chooses,
+        // codegen lowers its own view by `FnDecl.span`). SINGLE-overload only here:
+        // unambiguous → byte-identical (codegen picks the same single FnDecl). The
+        // multi-overload case (checker resolves by arg-type, codegen currently mis-picks by
+        // C-type — the `p.shifted("hi")` mis-dispatch) is stage (c2): recording THAT choice
+        // and reading it for dispatch is the behavior-change fix, gated on a blast-radius
+        // measure. (Generic instance methods are NOT in codegen's `fn_ret_by_span` — mono
+        // registration path — so the equivalence-assert naturally scopes to non-generic.)
+        if let [single] = overloads.as_slice() {
+            self.resolved_callees.borrow_mut().insert(call_id, single.span);
+        }
         let mut any_arity = false;
         let mut any_compat = false;
         for f in overloads {
@@ -7231,7 +7245,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // keeps the FINAL exact-C selection, U.3.4). User-type receivers only —
                 // primitive receivers gated (U.3.2). De-risked §7: 0 false-positives on
                 // 707K corpus calls (62K resolved-ok), catches the crafted mismatch.
-                self.check_instance_overload(obj, name, args, gs, scope, func.span, errors);
+                self.check_instance_overload(obj, name, args, gs, scope, func.span, errors, call_id);
                 let ExprKind::Ident(prefix) = &obj.kind else { return; };
                 // Локальная переменная перекрывает имя → это instance-
                 // метод на значении, не module-call.
