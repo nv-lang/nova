@@ -1802,6 +1802,14 @@ impl CEmitter {
     /// Side-effects it shares with `type_ref_to_c` (`register_novaopt_decl`) are idempotent
     /// (D315 spike), so running both under the gate is safe. NOT yet wired as authoritative
     /// (no `type_ref_to_c` site flips here — U.4.7/U.4.8); this builds + proves parity.
+    ///
+    /// MVP framing (deliberate): this MIRRORS the legacy C NAME byte-identically — the mangle
+    /// is an ABI contract (one type → one C name everywhere, or it won't link during the
+    /// site migration), NOT a claim the legacy name is "right". Legacy bootstrap imprecisions
+    /// it faithfully mirrors (Option/Result int64-erasure, boxed `NovaArray_nova_int*`,
+    /// concrete-vs-erased by C-string) → a MORE correct C name is deferred to
+    /// `Q-resolved-type-c-name` (spec/open-questions.md): do it AFTER `type_ref_to_c` is gone
+    /// (one source, U.4.8), as separate behavior-change commits (§7 — don't mix with the merge).
     fn resolved_type_to_c(&self, rt: &crate::types::ResolvedType) -> Option<String> {
         use crate::types::ResolvedType as R;
         use crate::ast::PointerModifier as PM;
