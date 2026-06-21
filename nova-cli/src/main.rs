@@ -514,6 +514,12 @@ enum Cmd {
         /// with code 3. Default: 0 (disabled).
         #[arg(long = "max-test-ms", default_value_t = 0)]
         max_test_ms: u128,
+        /// Plan 172.1 U.7.1: after the run, emit the CC-FAIL audit report —
+        /// un-expected type-class CC-FAIL leaks on the corpus (the §0-progress
+        /// metric) plus a classification of every EXPECT_CC_ERROR fixture.
+        /// Tooling-only; changes no compilation.
+        #[arg(long = "report-cc-leaks")]
+        report_cc_leaks: bool,
     },
     /// Build and run a single Nova test file (used by IDE / CI for one-shot debug).
     #[command(name = "test-build")]
@@ -4350,6 +4356,7 @@ fn cmd_test(
     exit: bool,
     full: bool,
     max_test_ms: u128,
+    report_cc_leaks: bool,
 ) -> Result<()> {
     if timeout_secs == 0 {
         return Err(usage_err("--timeout must be >= 1 second"));
@@ -4507,6 +4514,8 @@ fn cmd_test(
         },
         // [M-169-timing-report-regression-gate]: --max-test-ms N.
         max_test_ms,
+        // Plan 172.1 U.7.1: --report-cc-leaks.
+        report_cc_leaks,
     };
 
     // Plan 57.D.1: optionally aggregate PerfTimer markers across all
@@ -5574,7 +5583,7 @@ fn run() -> ExitCode {
             keep_artifacts, gc,
             list, filter_from, shuffle, skip, mono_depth,
             include_slow, slow, slow_only, positive, compile_error, panic, timeout_type, exit, full,
-            max_test_ms,
+            max_test_ms, report_cc_leaks,
         } => cmd_test(
             &paths,
             filter.as_deref(),
@@ -5607,6 +5616,7 @@ fn run() -> ExitCode {
             exit,
             full,
             max_test_ms,
+            report_cc_leaks,
         ),
         Cmd::TestBuild { file, mode, toolchain, vcvars, clang, timeout, keep_artifacts, gc, mono_depth } => cmd_test_build(
             &file,

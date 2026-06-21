@@ -2653,6 +2653,11 @@ pub struct TestAllOpts<'a> {
     /// tests whose total elapsed_ms exceeds this threshold and exit with
     /// code 3. Default 0 (disabled).
     pub max_test_ms: u128,
+    /// Plan 172.1 U.7.1: after the run, emit the CC-FAIL audit report
+    /// (un-expected type-class CC-FAIL leaks on the corpus + a classification
+    /// of every existing EXPECT_CC_ERROR fixture). Tooling-only, no codegen
+    /// change. Default `false`. See [`print_cc_leak_report`].
+    pub report_cc_leaks: bool,
 }
 
 // ---------- Plan 26 Ф.13: graceful Ctrl+C ----------
@@ -4169,6 +4174,13 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
         }
     }
 
+    // Plan 172.1 U.7.1: CC-FAIL audit report (un-expected type-class CC-FAIL
+    // leaks on the corpus + classification of existing EXPECT_CC_ERROR fixtures).
+    // Tooling-only — runs after results are assembled, changes no compilation.
+    if opts.report_cc_leaks {
+        print_cc_leak_report(&results, effective_dirs);
+    }
+
     Ok(Summary { pass, fail, skip, results })
 }
 
@@ -4331,6 +4343,274 @@ pub fn print_summary(summary: &Summary, format: OutputFormat) {
     let _ = out.flush();
 }
 
+// ---------- Plan 172.1 U.7.1: CC-FAIL audit harness ----------
+//
+// Purpose (compiler-conventions §0/§1/§6): C is a sanity-net, NEVER the first
+// type-checker. A test that ends in `Stage::Cc` ("CC-FAIL") for a TYPE reason is
+// a front-end gap — the checker should have produced a clean Nova diagnostic.
+// This harness MEASURES the remaining gap so later 172.1 phases (U.3/U.4/172.2)
+// can drive it to zero (the §0-progress metric), and reclassifies every existing
+// `EXPECT_CC_ERROR` fixture into type-class (a leak to fix) vs capability-class
+// (a legitimate D91 forbid-effect assertion to KEEP) vs toolchain/link.
+//
+// NB on §3: matching a C-compiler's diagnostic TEXT is not the banned hardcode —
+// §3 forbids baking Nova type/fn NAMES into the compiler. Here we pattern-match
+// the BACKEND's diagnostic phrases (clang/gcc text + MSVC codes), which is the
+// only way to classify cc output. Genuinely ambiguous inputs are reported as
+// `Unknown` (not force-fit), per §4 ("no silent holes") and §7.3 (human-confirm
+// the borderline set).
+
+/// Classification of a C-compiler failure / `EXPECT_CC_ERROR` assertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CcErrorClass {
+    /// Type-system leak: SHOULD be a clean Nova checker diagnostic (§0/§1/§6).
+    /// Category mismatch, narrowing, no-overload, no-member, unknown `Nova_` type,
+    /// no-such-variant/method. These are the leaks U.7 drives to zero.
+    Type,
+    /// Capability-isolation (D91 forbid-effect): a method/member is genuinely
+    /// absent because the effect was forbidden — a legitimate CC assertion. KEEP.
+    Capability,
+    /// Toolchain/link failure (linker, file-lock, missing header/runtime symbol).
+    /// NOT a type error; a separate bucket the U.7 gate must never count as a leak.
+    Toolchain,
+    /// Could not be classified from the available text — needs human review.
+    Unknown,
+}
+
+impl CcErrorClass {
+    pub fn label(self) -> &'static str {
+        match self {
+            CcErrorClass::Type => "TYPE",
+            CcErrorClass::Capability => "CAPABILITY",
+            CcErrorClass::Toolchain => "TOOLCHAIN",
+            CcErrorClass::Unknown => "UNKNOWN",
+        }
+    }
+}
+
+/// clang/gcc text + MSVC codes that denote a TYPE error. Operand `s` must be
+/// already-lowercased.
+fn cc_text_is_type_class(s: &str) -> bool {
+    const PATS: &[&str] = &[
+        "incompatible",
+        "passing argument",
+        "no member named",
+        "too few arguments",
+        "too many arguments",
+        "no matching function",
+        "is not a member",
+        "is not a structure or union",
+        "member reference",
+        "subscripted value is not",
+        "called object type",
+        "conflicting types for",
+        "undeclared identifier",
+        "unknown type name",
+        "initializing",
+        // MSVC diagnostic text / codes
+        "cannot convert",
+        "does not take",
+        "c2440", "c2664", "c2660", "c2039", "c2027", "c2065", "c2228", "c2036",
+    ];
+    PATS.iter().any(|p| s.contains(p))
+}
+
+/// clang/gcc/MSVC phrases that denote a TOOLCHAIN/LINK failure (never a type
+/// leak). Operand `s` must be already-lowercased.
+fn cc_text_is_toolchain(s: &str) -> bool {
+    const PATS: &[&str] = &[
+        "cannot open output file",
+        "spawn cc",
+        "mkdir subdir",
+        "mkdir obj_dir",
+        "undefined reference",
+        "undefined symbol",
+        "unresolved external",
+        "lld-link",
+        "ld.lld",
+        "linker command failed",
+        "lnk2019", "lnk1120", "lnk2001",
+        "cannot open include file",
+        "file not found",
+        "no such file",
+        "c1083",
+    ];
+    PATS.iter().any(|p| s.contains(p))
+}
+
+/// Classify a raw CC error string captured at run time (list A — the actual
+/// `Stage::Cc` failures on the corpus). Toolchain checked first: a failure that
+/// reached the linker compiled cleanly, so it is never a type leak.
+pub fn classify_cc_error_text(error: &str) -> CcErrorClass {
+    let s = error.to_lowercase();
+    if cc_text_is_toolchain(&s) {
+        return CcErrorClass::Toolchain;
+    }
+    if cc_text_is_type_class(&s) {
+        return CcErrorClass::Type;
+    }
+    CcErrorClass::Unknown
+}
+
+/// Classify an `EXPECT_CC_ERROR` marker (list B) by its asserted pattern + path
+/// context. D91 capability-isolation fixtures live under `negative_capability/`;
+/// the asserted symbol's case disambiguates a mangled Nova *type* (`Nova_…`,
+/// front-end gap) from a runtime C *function* symbol (`nova_…`, link assertion).
+pub fn classify_cc_expect(pat: &str, path: &Path) -> CcErrorClass {
+    let p = pat.to_lowercase();
+    let path_str = path.to_string_lossy().replace('\\', "/");
+    let in_capability_dir = path_str.contains("/negative_capability/");
+
+    // Mangled Nova *type*/variant symbol (capital `Nova_…`, `MemOrdering_…`):
+    // unknown-type / no-such-variant / no-such-method = a front-end gap (type-class).
+    if pat.starts_with("Nova_") || pat.starts_with("MemOrdering") {
+        return CcErrorClass::Type;
+    }
+    // Lowercase runtime C symbol (e.g. `nova_fn_main_impl`) or an explicit link
+    // phrase → a link/toolchain assertion, not a type leak.
+    if pat.starts_with("nova_") || cc_text_is_toolchain(&p) {
+        return CcErrorClass::Toolchain;
+    }
+    if cc_text_is_type_class(&p) {
+        return CcErrorClass::Type;
+    }
+    // Empty/generic pattern: rely on directory context.
+    if in_capability_dir {
+        return CcErrorClass::Capability;
+    }
+    // No source-only signal (typically an empty-pattern type test outside the
+    // capability dir) → needs human review rather than a forced guess (§4/§7.3).
+    CcErrorClass::Unknown
+}
+
+/// Recursively collect every `.nv` file under `dir` (raw — no folder-module /
+/// slow-lane / target-OS filtering), so the EXPECT_CC_ERROR audit is exhaustive
+/// over the corpus rather than over the runnable-entry subset.
+fn collect_all_nv_raw(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return; };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_all_nv_raw(&path, out);
+        } else if path.extension().and_then(|s| s.to_str()) == Some("nv") {
+            out.push(path);
+        }
+    }
+}
+
+/// Plan 172.1 U.7.1: emit the CC-FAIL audit report.
+///
+/// - **(A)** Un-expected CC-FAIL leaks on the run corpus, classified — a
+///   `Stage::Cc` outcome is, by construction, a test whose cc step failed with
+///   NO satisfied `EXPECT_CC_ERROR` (run_one converts a matching EXPECT_CC_ERROR
+///   to `Pass`). The type-class subtotal is the §0-progress metric U.7 drives to
+///   zero.
+/// - **(B)** Every existing `EXPECT_CC_ERROR` fixture under `scan_dirs`,
+///   classified type-class (a leak to migrate to a Nova diagnostic) vs
+///   capability-class (legitimate D91, KEEP) vs toolchain/link.
+pub fn print_cc_leak_report(results: &[(String, Outcome)], scan_dirs: &[PathBuf]) {
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out);
+    let _ = writeln!(out, "===== CC-FAIL AUDIT (Plan 172.1 U.7.1) =====");
+
+    // ---- List A: un-expected CC-FAILs (tests WITHOUT a satisfied EXPECT_CC_ERROR).
+    let mut a_rows: Vec<(CcErrorClass, &str, String)> = Vec::new();
+    let (mut a_type, mut a_tool, mut a_unknown) = (0usize, 0usize, 0usize);
+    for (name, outcome) in results {
+        if let Outcome::Fail { stage: Stage::Cc { error }, .. } = outcome {
+            let class = classify_cc_error_text(error);
+            match class {
+                CcErrorClass::Type => a_type += 1,
+                CcErrorClass::Toolchain => a_tool += 1,
+                // Capability is not expected from raw run-time cc text on the
+                // positive corpus; fold any into `unknown` for visibility.
+                CcErrorClass::Capability | CcErrorClass::Unknown => a_unknown += 1,
+            }
+            let detail: String = error.chars().take(140).collect();
+            a_rows.push((class, name.as_str(), detail));
+        }
+    }
+    a_rows.sort_by(|x, y| x.0.label().cmp(y.0.label()).then(x.1.cmp(y.1)));
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "[A] Un-expected CC-FAIL leaks on run corpus ({} tests ran):",
+        results.len()
+    );
+    if a_rows.is_empty() {
+        let _ = writeln!(out, "  (none)");
+    } else {
+        for (class, name, detail) in &a_rows {
+            let _ = writeln!(out, "  {:<10} {}  # {}", class.label(), name, detail);
+        }
+    }
+    let _ = writeln!(
+        out,
+        "  --- A totals: type-class={}  toolchain={}  unknown={}  (total CC-FAIL={})",
+        a_type, a_tool, a_unknown, a_rows.len()
+    );
+
+    // ---- List B: existing EXPECT_CC_ERROR fixtures, classified (source scan).
+    let mut files: Vec<PathBuf> = Vec::new();
+    for d in scan_dirs {
+        if d.is_dir() {
+            collect_all_nv_raw(d, &mut files);
+        } else if d.extension().and_then(|s| s.to_str()) == Some("nv") {
+            files.push(d.clone());
+        }
+    }
+    files.sort();
+    files.dedup();
+    let mut b_rows: Vec<(CcErrorClass, String, String)> = Vec::new();
+    let (mut b_type, mut b_cap, mut b_tool, mut b_unknown) = (0usize, 0usize, 0usize, 0usize);
+    for f in &files {
+        let Ok(src) = std::fs::read_to_string(f) else { continue; };
+        for m in parse_expect(&src) {
+            if let ExpectMarker::CcError(pat) = m {
+                let class = classify_cc_expect(&pat, f);
+                match class {
+                    CcErrorClass::Type => b_type += 1,
+                    CcErrorClass::Capability => b_cap += 1,
+                    CcErrorClass::Toolchain => b_tool += 1,
+                    CcErrorClass::Unknown => b_unknown += 1,
+                }
+                let rel = f.to_string_lossy().replace('\\', "/");
+                let pat_disp = if pat.is_empty() { "<any>".to_string() } else { pat.clone() };
+                b_rows.push((class, rel, pat_disp));
+            }
+        }
+    }
+    b_rows.sort_by(|x, y| x.0.label().cmp(y.0.label()).then(x.1.cmp(&y.1)));
+    let _ = writeln!(out);
+    let _ = writeln!(out, "[B] Existing EXPECT_CC_ERROR fixtures (classified):");
+    if b_rows.is_empty() {
+        let _ = writeln!(out, "  (none)");
+    } else {
+        for (class, path, pat) in &b_rows {
+            let _ = writeln!(out, "  {:<10} {}  // EXPECT_CC_ERROR {}", class.label(), path, pat);
+        }
+    }
+    let _ = writeln!(
+        out,
+        "  --- B totals: type-class={}  capability={}  toolchain={}  unknown={}  (total={})",
+        b_type, b_cap, b_tool, b_unknown, b_rows.len()
+    );
+
+    // ---- Headline §0-progress metric.
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        ">>> U.7 §0-progress metric — type-class CC-FAIL leaks (A) = {}",
+        a_type
+    );
+    let _ = writeln!(
+        out,
+        ">>> EXPECT_CC_ERROR still type-class (candidates to become Nova diagnostics) = {}",
+        b_type
+    );
+    let _ = out.flush();
+}
+
 /// Best-effort ISO-8601 timestamp без extra deps. Format: YYYY-MM-DDTHH:MM:SS.
 /// На systems где SystemTime accuracy ≥1 s — достаточно для JUnit timestamp.
 fn chrono_like_iso8601() -> String {
@@ -4370,6 +4650,77 @@ mod tests {
 
     fn first_marker(src: &str) -> Option<ExpectMarker> {
         parse_expect(src).into_iter().next()
+    }
+
+    // ---- Plan 172.1 U.7.1: CC-FAIL classifier tests ----
+
+    #[test]
+    fn cc_classify_text_type_vs_toolchain() {
+        // Type-class C diagnostics (clang/gcc text + MSVC codes).
+        assert_eq!(
+            classify_cc_error_text("foo.c:9:5: error: passing 'int' to parameter of incompatible type 'nova_str'"),
+            CcErrorClass::Type
+        );
+        assert_eq!(
+            classify_cc_error_text("error: no member named 'host_str' in 'NovaSocketAddr'"),
+            CcErrorClass::Type
+        );
+        assert_eq!(
+            classify_cc_error_text("error: too few arguments to function call, expected 2"),
+            CcErrorClass::Type
+        );
+        assert_eq!(
+            classify_cc_error_text("error: member reference type 'nova_int' (aka 'long long') is not a structure or union"),
+            CcErrorClass::Type
+        );
+        // codegen-emitted invalid C (lvalue cast) is NOT a type-checking gap →
+        // stays Unknown for human review, not force-fit into Type.
+        assert_eq!(
+            classify_cc_error_text("error: assignment to cast is illegal, lvalue casts are not supported"),
+            CcErrorClass::Unknown
+        );
+        assert_eq!(
+            classify_cc_error_text("x.c(12): error C2440: 'initializing': cannot convert from 'int' to 'char'"),
+            CcErrorClass::Type
+        );
+        // Toolchain/link must win even if a type-looking token appears.
+        assert_eq!(
+            classify_cc_error_text("lld-link: error: undefined symbol: nova_fn_main_impl"),
+            CcErrorClass::Toolchain
+        );
+        assert_eq!(
+            classify_cc_error_text("spawn cc: program not found"),
+            CcErrorClass::Toolchain
+        );
+        assert_eq!(
+            classify_cc_error_text("LINK : fatal error LNK1120: 1 unresolved externals"),
+            CcErrorClass::Toolchain
+        );
+        // Genuinely unclassifiable → Unknown, not a forced guess (§4).
+        assert_eq!(classify_cc_error_text("some unrelated message"), CcErrorClass::Unknown);
+    }
+
+    #[test]
+    fn cc_classify_expect_by_pattern_and_path() {
+        use std::path::PathBuf;
+        // Empty pattern in the capability dir = legitimate D91 assertion (KEEP).
+        let cap = PathBuf::from("nova_tests/negative_capability/channel_sender_no_recv.nv");
+        assert_eq!(classify_cc_expect("", &cap), CcErrorClass::Capability);
+        // Type-class pattern.
+        let typ = PathBuf::from("nova_tests/plan135/neg2_wrong_arg_type.nv");
+        assert_eq!(classify_cc_expect("incompatible type", &typ), CcErrorClass::Type);
+        let nomem = PathBuf::from("nova_tests/plan135/neg1_no_overload_not_found.nv");
+        assert_eq!(classify_cc_expect("no member named", &nomem), CcErrorClass::Type);
+        // Mangled Nova *type*/variant symbol (capital) = front-end gap (type-class).
+        let atomics = PathBuf::from("nova_tests/atomics/neg/x.nv");
+        assert_eq!(classify_cc_expect("Nova_AtomicI32_static_from_bytes", &atomics), CcErrorClass::Type);
+        assert_eq!(classify_cc_expect("MemOrdering_NoSuchVariant", &atomics), CcErrorClass::Type);
+        // Lowercase runtime C symbol = link/toolchain assertion (NOT a type leak).
+        let link = PathBuf::from("nova_tests/plan159/neg_library_not_pruned.nv");
+        assert_eq!(classify_cc_expect("nova_fn_main_impl", &link), CcErrorClass::Toolchain);
+        // Empty pattern outside the capability dir = no source-only signal → review.
+        let amb = PathBuf::from("nova_tests/plan59/neg/f9_tuple_type_mismatch_rejected.nv");
+        assert_eq!(classify_cc_expect("", &amb), CcErrorClass::Unknown);
     }
 
     #[test]
