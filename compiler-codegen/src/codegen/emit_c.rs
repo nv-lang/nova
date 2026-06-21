@@ -2761,6 +2761,8 @@ impl CEmitter {
                     // marker (FFI/runtime entries) — default false. Ф.2 can extend
                     // ExternalDecl/ExternalRegistry to carry mutability if needed.
                     recv_mutable: false,
+                    // U.4.3 c2.2: external-registry entries have no single source FnDecl.
+                    fn_span: None,
                 };
                 self.method_overloads.entry(key.clone()).or_default().push(sig);
                 // Plan 83.12: register novares struct for non-trivial Result returns
@@ -3675,6 +3677,8 @@ impl CEmitter {
                         param_defaults,
                         // Plan 128 Ф.1: free fns have no receiver — false.
                         recv_mutable: false,
+                        // U.4.3 c2.2: source FnDecl identity for the dispatch consume.
+                        fn_span: Some(f.span),
                     };
                     self.method_overloads.entry(key.clone()).or_default().push(sig);
                     // Plan 125 followup [M-125-method-call-never-detection]:
@@ -3864,6 +3868,9 @@ impl CEmitter {
                         param_defaults,
                         // Plan 128 Ф.1: capture recv.mutable for downstream ABI dispatch.
                         recv_mutable: recv.mutable,
+                        // U.4.3 c2.2: source FnDecl identity — the KEY site for the
+                        // instance-method dispatch consume (matches the checker's choice).
+                        fn_span: Some(f.span),
                     };
                     // Plan 125 followup [M-125-method-call-never-detection]:
                     // instance/static method `-> never` registry. Captures
@@ -3980,6 +3987,8 @@ impl CEmitter {
                         // the original (Ф.2 will use this when shaping the
                         // proxy's nova_self ABI).
                         recv_mutable: base_sig.recv_mutable,
+                        // U.4.3 c2.2: D39 embed proxy is synthesized (no single FnDecl).
+                        fn_span: None,
                     };
                     self.method_overloads.entry(key).or_default().push(proxy_sig);
                     // all_methods (для Plan 06 Iter[T] dispatch).
@@ -6022,6 +6031,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         // Using it here for correctness; checker enforcement (Ф.2)
                         // will wire full mut-receiver dispatch for protocol methods.
                         recv_mutable: m.receiver_mut,
+                        // U.4.3 c2.2: protocol-default method is synthesized (no FnDecl).
+                        fn_span: None,
                     };
                     self.method_overloads
                         .entry((t_name.to_string(), method_name.to_string()))
@@ -9454,6 +9465,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // demand. Inherit from FnDecl recv.mutable; concrete mono'd
                     // emission will use this when registering the real sig.
                     recv_mutable: recv.mutable,
+                    // U.4.3 c2.2: generic mono-sentinel is a routing placeholder, not a
+                    // concrete dispatch target — channel records only non-generic callees.
+                    fn_span: None,
                 };
                 let key = (recv.type_name.clone(), f.name.clone());
                 self.method_overloads.entry(key).or_default().push(sig);
@@ -20575,6 +20589,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         func,
                         &args_extended,
                         None,
+                        expr.id, // U.4.3 c2.2: thread the Call-site ExprId for dispatch consume
                     );
                 }
                 let legacy_tb = trailing.as_ref().and_then(|t| match t {
@@ -20588,7 +20603,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         "Trailing::Fn handled above by pre-rewrite"
                     ),
                 });
-                self.emit_call_with_trailing(func, args, legacy_tb.as_ref())
+                self.emit_call_with_trailing(func, args, legacy_tb.as_ref(), expr.id)
             }
 
             ExprKind::Member { obj, name } => {
@@ -22152,7 +22167,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
     /// Wrapper for emit_call that handles trailing blocks.
     /// A trailing block is emitted as a static C function and passed as an extra argument.
-    fn emit_call_with_trailing(&mut self, func: &Expr, args: &[CallArg], trailing: Option<&TrailingBlock>) -> Result<String, String> {
+    fn emit_call_with_trailing(&mut self, func: &Expr, args: &[CallArg], trailing: Option<&TrailingBlock>, call_id: crate::ast::ExprId) -> Result<String, String> {
         // D38 turbofish: для trailing-block пути нужен stripped func (Ident/Path)
         // для infer_trailing_block_sig / infer_func_c_name. Для обычного пути —
         // передаём оригинал в emit_call, чтобы TurboFish type_args дошли до
@@ -22334,7 +22349,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 ));
                 let mut extended: Vec<CallArg> = args.to_vec();
                 extended.push(synthetic);
-                let result = self.emit_call(func, &extended);
+                let result = self.emit_call(func, &extended, call_id);
                 // Restore var_types so the synthetic name doesn't leak.
                 match prev_ty {
                     Some(t) => { self.var_types.insert(clos_tmp.clone(), t); }
@@ -22350,7 +22365,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             arg_strs.push(format!("(void*)({})", clos_tmp));
             return Ok(format!("{}({})", func_c, arg_strs.join(", ")));
         }
-        self.emit_call(func, args)
+        self.emit_call(func, args, call_id)
     }
 
     /// Infer the C signature (param types, return type) for a trailing block based on the called function.
@@ -22441,7 +22456,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         Ok(())
     }
 
-    fn emit_call(&mut self, func: &Expr, args: &[CallArg]) -> Result<String, String> {
+    fn emit_call(&mut self, func: &Expr, args: &[CallArg], call_id: crate::ast::ExprId) -> Result<String, String> {
         // [M-91.1-method-turbofish-dispatch] Plan 91 Ф.1: method-level turbofish.
         // `obj.method[U,...](args)` parses as Call{func:TurboFish{base:Member,..}}.
         // The func_c match below has no TurboFish{base:Member} arm, so it falls to
@@ -22454,7 +22469,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             if matches!(base.kind, ExprKind::Member { .. }) {
                 let saved_tf = std::mem::replace(
                     &mut self.current_method_turbofish, type_args.clone());
-                let r = self.emit_call(base, args);
+                let r = self.emit_call(base, args, call_id);
                 self.current_method_turbofish = saved_tf;
                 return r;
             }
@@ -22574,7 +22589,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     new_args.push(a.clone());
                 }
                 if rewrote {
-                    return self.emit_call(func, &new_args);
+                    return self.emit_call(func, &new_args, call_id);
                 }
             }
         }
@@ -22623,7 +22638,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // Recurse с переписанными args (variadic-флаг очищен через
             // synthesized array — fn видит обычный []T parameter).
             let saved = std::mem::replace(&mut self.suppress_variadic_routing, true);
-            let result = self.emit_call(func, &new_args);
+            let result = self.emit_call(func, &new_args, call_id);
             self.suppress_variadic_routing = saved;
             return result;
         }
@@ -23155,7 +23170,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             kind: ExprKind::Ident(method.clone()),
                             span: func.span, id: crate::ast::ExprId::UNSET,
                         };
-                        return self.emit_call(&bare_func, args);
+                        return self.emit_call(&bare_func, args, call_id);
                     }
                 }
                 // Plan 65 Ф.5: E5101 early guard — `Time.after(...)` was
@@ -25780,7 +25795,28 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 //   - strict pool is empty (no exact match)
                                 //   - all candidates are external (is_external = true)
                                 //   - exactly ONE candidate has the matching arity
-                                let chosen = if let Some(sig) = pool.into_iter().next() {
+                                // Plan 172.1 U.4.3 (c2.2): codegen CONSUMES the checker's
+                                // overload choice (§0) — if the checker recorded the chosen
+                                // callee for THIS call (`resolved_callees[call_id]`), lower
+                                // the candidate whose source `FnDecl.span` matches, instead
+                                // of re-resolving by exact arg C-type. FIXES the mis-dispatch
+                                // where the arg C-type does not EXACTLY match a param string
+                                // (narrowing arg `u8`→`int` with another overload declared
+                                // first → `strict` empty → `pool.first()` = WRONG overload →
+                                // CC-FAIL). Fires ONLY when the channel has an entry AND a
+                                // candidate matches by span; the checker records only when
+                                // EXACTLY ONE overload is arg-type-compatible (recv-mut-only-
+                                // differing overloads have equal params → ≥2 compatible → not
+                                // recorded), so this never overrides the recv-mut tiebreak.
+                                let channel_choice: Option<MethodSig> =
+                                    self.resolved_callees.get(&call_id).and_then(|chosen_span| {
+                                        candidates.iter()
+                                            .find(|s| s.fn_span == Some(*chosen_span))
+                                            .cloned()
+                                    });
+                                let chosen = if channel_choice.is_some() {
+                                    channel_choice
+                                } else if let Some(sig) = pool.into_iter().next() {
                                     Some(sig)
                                 } else if candidates.iter().all(|c| c.is_external) {
                                     let arity_matches: Vec<&MethodSig> = candidates.iter()

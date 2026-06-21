@@ -52,6 +52,13 @@ pub struct CodegenView {
     pub param_defaults: Vec<Option<String>>,
     /// `fn Type mut @method` ⇒ receiver is mutable.
     pub recv_mutable: bool,
+    /// Plan 172.1 U.4.3 (c2.2): declaration `Span` of the source `FnDecl` (when this
+    /// view was built from one). The codegen dispatch site matches this against the
+    /// checker's `resolved_callees` choice so codegen LOWERS the callee the checker
+    /// CHOSE instead of re-resolving the overload by exact C-type (§0). `None` for
+    /// synthesized views with no single source decl (D39 embed proxy, protocol-default,
+    /// external-registry entries) — those never carry a checker-recorded instance choice.
+    pub fn_span: Option<crate::diag::Span>,
 }
 
 /// One signature entry: the raw `&FnDecl` (checker side) + the [`CodegenView`]

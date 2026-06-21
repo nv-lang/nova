@@ -1,0 +1,22 @@
+// Plan 172.1 U.4.3 (c2.2) POS — codegen CONSUMES the checker's overload choice for an
+// overloaded `@`-instance method, FIXING the mis-dispatch the U.3.3-instance note deferred
+// here. The checker resolves `b.pick(arg)` by arg type (category-compatible); codegen used
+// to RE-resolve by EXACT arg C-type and mis-pick when the C-type did not match a param
+// string exactly — a narrowing arg (`u8`->`int`) with the `str` overload declared FIRST made
+// the `strict` match empty -> `pool.first()` = the `str` overload -> `nova_byte` passed to a
+// `nova_str` parameter -> CC-FAIL. Now codegen reads `resolved_callees` (the checker's chosen
+// FnDecl.span) and lowers THAT callee (section 0). Both the exact-C-type case AND the
+// narrowing case dispatch correctly + run.
+module detect172
+
+type MBox { x int }
+fn MBox @pick(s str) -> int => 1
+fn MBox @pick(n int) -> int => 2
+
+test "overloaded at-instance dispatch resolves by arg type (narrowing arg + str-first)" {
+    ro b = MBox { x: 0 }
+    assert(b.pick("hi") == 1)
+    assert(b.pick(7) == 2)
+    ro v u8 = 3
+    assert(b.pick(v) == 2)
+}
