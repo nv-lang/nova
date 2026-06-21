@@ -454,6 +454,8 @@ nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
           [--keep-artifacts] [--gc boehm|malloc]
           [--list] [--filter-from PATH] [--shuffle [SEED]]
           [--skip PATTERN]... [--mono-depth N]
+          [--positive] [--compile-error] [--panic] [--timeout-type]
+          [--exit] [--slow] [--full]
 ```
 
 **Аргументы:**
@@ -481,6 +483,19 @@ nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 | `--shuffle [SEED]` | off | Случайный порядок; опц. seed для воспроизводимости |
 | `--skip PATTERN` | `[]` | Пропустить тесты по substring имени или пути (repeatable) |
 | `--mono-depth N` | `500` (или env) | Лимит mono-instantiation |
+| `--positive` | on (default) | Выбрать позитивные тесты (без `EXPECT_*`-маркера). По умолчанию, когда не задан ни один category-флаг. |
+| `--compile-error` | off | Выбрать тесты `EXPECT_COMPILE_ERROR`. |
+| `--panic` | off | Выбрать тесты `EXPECT_RUNTIME_PANIC`. |
+| `--timeout-type` | off | Выбрать тесты `EXPECT_TIMEOUT`. |
+| `--exit` | off | Выбрать тесты `EXPECT_EXIT_CODE`. |
+| `--slow` | off | Дополнительно включить `*_slow.nv` (любого типа). Алиас: `--include-slow`. |
+| `--full` | off | Все типы + slow (`--positive --compile-error --panic --timeout-type --exit --slow`). |
+
+**Category-флаги** (Plan 169.1.1, D304) аддитивны — несколько флагов объединяют
+свои наборы тестов (OR). Без category-флага по умолчанию выбираются только
+позитивные тесты, быстрые (non-slow). Тип теста определяется по первому
+`EXPECT_*`-маркеру в заголовке файла (первые 30 строк), а не по папке —
+поэтому негативные тесты находятся даже вне `neg/`.
 
 **Multi-path** (Plan 36.D.1): передавать любое количество путей — директорий и/или файлов.
 Без аргументов — `nova_tests/` (если существует). Чтобы добавить `std/`:

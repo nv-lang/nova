@@ -454,6 +454,8 @@ nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
           [--keep-artifacts] [--gc boehm|malloc]
           [--list] [--filter-from PATH] [--shuffle [SEED]]
           [--skip PATTERN]... [--mono-depth N]
+          [--positive] [--compile-error] [--panic] [--timeout-type]
+          [--exit] [--slow] [--full]
 ```
 
 **Arguments:**
@@ -481,6 +483,19 @@ nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 | `--shuffle [SEED]` | off | Random order; optional seed for reproducibility |
 | `--skip PATTERN` | `[]` | Skip tests by name or path substring (repeatable) |
 | `--mono-depth N` | `500` (or env) | Monomorphization-instantiation depth limit |
+| `--positive` | on (default) | Select positive tests (no `EXPECT_*` marker). Default when no category flag is given. |
+| `--compile-error` | off | Select `EXPECT_COMPILE_ERROR` tests. |
+| `--panic` | off | Select `EXPECT_RUNTIME_PANIC` tests. |
+| `--timeout-type` | off | Select `EXPECT_TIMEOUT` tests. |
+| `--exit` | off | Select `EXPECT_EXIT_CODE` tests. |
+| `--slow` | off | Also include `*_slow.nv` tests (any type). Alias: `--include-slow`. |
+| `--full` | off | All types + slow (`--positive --compile-error --panic --timeout-type --exit --slow`). |
+
+**Category flags** (Plan 169.1.1, D304) are additive — multiple flags union their
+test sets (OR). With no category flag the default is positive tests only, fast
+(non-slow). The test type is detected from the first `EXPECT_*` marker in the file
+header (first 30 lines), not from the folder — so negative tests are found even
+outside `neg/`.
 
 **Multi-path** (Plan 36.D.1): pass any number of paths — directories and/or files.
 With no arguments, defaults to `nova_tests/` (if it exists). To also test `std/`:
