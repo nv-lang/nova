@@ -1,11 +1,13 @@
 // U.3.3-instance POS — a VALID instance-method `obj.method(args)` call resolves in the
-// CHECKER (no false `E_NO_MATCHING_OVERLOAD`) and lowers+runs cleanly. User-type value
-// receiver, `@`-instance method (the correct instance syntax; `fn T.method` is STATIC).
+// CHECKER (no false `E_NO_MATCHING_OVERLOAD`) and lowers+runs cleanly. User-type receiver
+// (`Pt2` is a heap-record, passed by-reference `Nova_Pt2*`), `@`-instance method (the
+// correct instance syntax; `fn T.method` is STATIC).
 //
 // NB: single-overload on purpose. The checker DOES resolve overloaded `@`-instance methods
 // by arg type (U.3.3-instance; see the 707K-call detect-mode = 0 false-positive), but
 // CODEGEN still re-dispatches an overloaded instance call by C-type and MIS-PICKS for a
-// local value receiver (`p.shifted("hi")` → the `int` overload → CC-FAIL). That codegen
+// local-variable receiver (`p.shifted("hi")` → the `int` overload → CC-FAIL) — the mis-pick
+// is about ARG-overload selection, orthogonal to receiver passing. That codegen
 // re-resolution is exactly what U.3.4 channel → U.4.3 removes (codegen READS the checker's
 // chosen callee), so the overloaded-instance-RUNTIME-positive is deferred to U.4.3.
 module detect172
