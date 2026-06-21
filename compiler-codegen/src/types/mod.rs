@@ -6990,6 +6990,64 @@ impl<'a> TypeCheckCtx<'a> {
         Some(true)
     }
 
+    /// Plan 172.1 U.3.3-instance (§6/§1). Resolve a value-receiver `obj.method(args)`
+    /// call's overloads in the CHECKER and fire `[E_NO_MATCHING_OVERLOAD]` when a category
+    /// mismatch is present — so it is a clean checker diagnostic, not a leaked `CC-FAIL`.
+    ///
+    /// Permissive, identical to the U.3.1 (free-fn) / U.3.3 (`Type.method`) rule: fires
+    /// ONLY when ≥1 overload binds by arity (`overload_applicability` is `Some(_)`) but
+    /// NONE is category-compatible (`Some(true)`). Narrowing/OutOfRange/Unknown count as
+    /// compatible — codegen does the FINAL exact-C-type selection (U.3.4). Receiver type
+    /// via the self-less `BoundCtx::infer_arg_ty`; unknown/complex receiver → skip (gap,
+    /// not wrong). PRIMITIVE receivers gated (U.3.2): their external overloads live in
+    /// codegen's `ExternalRegistry`, not the checker's `method_table`, so the checker's
+    /// set is incomplete → would false-positive. De-risked in detect-mode (§7): 0
+    /// false-positives across 707K corpus calls (62K resolved-ok).
+    fn check_instance_overload(
+        &self,
+        obj: &Expr,
+        method_name: &str,
+        args: &[CallArg],
+        gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+        span: crate::diag::Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Some(recv_ty) = BoundCtx::infer_arg_ty(obj, scope) else { return; };
+        let TypeRef::Named { path, .. } = &recv_ty else { return; };
+        if path.len() != 1 {
+            return;
+        }
+        let type_name = path[0].as_str();
+        if is_primitive_recv_name(type_name) {
+            return; // U.3.2 gate — external overloads not in the checker's table
+        }
+        let Some(methods) = self.sig.method_table.get(type_name) else { return; };
+        let Some(overloads) = methods.get(method_name) else { return; };
+        let mut any_arity = false;
+        let mut any_compat = false;
+        for f in overloads {
+            match self.overload_applicability(f, args, gs, scope) {
+                Some(true) => {
+                    any_arity = true;
+                    any_compat = true;
+                }
+                Some(false) => any_arity = true,
+                None => {} // arity-fail for this candidate
+            }
+        }
+        if any_arity && !any_compat {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_NO_MATCHING_OVERLOAD] no overload of method `{}` on type `{}` \
+                     matches the given argument types",
+                    method_name, type_name,
+                ),
+                span,
+            ));
+        }
+    }
+
     fn f1_check_call(
         &self,
         func: &Expr,
@@ -7107,6 +7165,15 @@ impl<'a> TypeCheckCtx<'a> {
             // функция давала link-error (EXPECT_COMPILE_ERROR не ловил —
             // Plan 70.1 known-limitation); теперь — compile-error E7401.
             ExprKind::Member { obj, name } => {
+                // Plan 172.1 U.3.3-instance (§6 «каждая ошибка понятна» / §1 «C — не
+                // первичный чекер»): resolve `obj.method(args)` overloads in the checker
+                // so a category mismatch (str↔int) is a clean `[E_NO_MATCHING_OVERLOAD]`,
+                // NOT a leaked `CC-FAIL`. Same permissive rule as U.3.1/U.3.3 (fires only
+                // when ≥1 arity-applicable overload but NONE category-compatible; codegen
+                // keeps the FINAL exact-C selection, U.3.4). User-type receivers only —
+                // primitive receivers gated (U.3.2). De-risked §7: 0 false-positives on
+                // 707K corpus calls (62K resolved-ok), catches the crafted mismatch.
+                self.check_instance_overload(obj, name, args, gs, scope, func.span, errors);
                 let ExprKind::Ident(prefix) = &obj.kind else { return; };
                 // Локальная переменная перекрывает имя → это instance-
                 // метод на значении, не module-call.
@@ -9327,6 +9394,20 @@ fn fn_generic_scope(fd: &FnDecl) -> HashSet<String> {
 // теперь один источник). Тонкий wrapper сохранён, чтобы не трогать call-sites.
 fn is_intrinsic_namespace(name: &str) -> bool {
     crate::is_intrinsic_namespace(name)
+}
+
+/// Plan 172.1 U.3.3-instance gate: a PRIMITIVE receiver name whose methods are (partly)
+/// external (`ExternalRegistry`, not the checker's `method_table`) → excluded from the
+/// instance-method overload rule until U.1/U.2 give the checker the full set (same gate
+/// as U.3.2). NOT a §3 hardcode of stdlib NAMES — it is the language primitive set (the
+/// §2-sanctioned width/sign/builtin exception, mirrors `scalar_from_int_name` + the
+/// non-int primitives), used only to DEFER, never to resolve.
+fn is_primitive_recv_name(name: &str) -> bool {
+    matches!(
+        name,
+        "int" | "uint" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
+            | "f32" | "f64" | "str" | "bool" | "char" | "byte" | "unit" | "any" | "never"
+    )
 }
 
 /// Ф.1: syntactic ptr-detection для arithmetic-ban check в

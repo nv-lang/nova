@@ -1,0 +1,13 @@
+// U.3.3-instance POS — overloaded instance method `obj.method` resolves by arg type
+// in the CHECKER (not leaked to codegen). User-type receiver; one overload matches.
+module detect172
+
+type Pt { x int }
+fn Pt.shift(dx int) int { dx + 1 }
+fn Pt.shift(label str) str { label }
+
+test "instance overload resolves" {
+    ro p = Pt { x: 10 }
+    assert(p.shift(5) == 6)
+    assert(p.shift("hi").len() == 2)
+}
