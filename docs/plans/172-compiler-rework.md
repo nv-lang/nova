@@ -73,6 +73,33 @@
    172.1 U.1 (де-хардкод stdlib) обязан не спец-кейсить error-типы → 173 эволюционирует их
    (materialize `MultiError`, `Failure(any)`) без борьбы с 172-хардкодом.
 
+## 3.2. Forward-compat с pointer/FFI-моделью (Plan 177/178) — чтобы они не переделывали носитель
+
+Анализ 2026-06-22 (по запросу владельца): [Plan 177](177-pointer-ops-methods.md) (pointer-ops→методы +
+`uninit T` + write-cap) и [Plan 178](178-ffi-abi-types.md) (C-FFI ABI тип-лист + `*extern "C" fn` ABI-тег) —
+оба PROPOSED, оба явно координируются с «type-engine = 172» и амендят spec в зоне 172 (`02-types.md` /
+`08-runtime.md`). Направление: 177/178 **садятся на** единый носитель 172, 172 их **не блокирует**. Чтобы они
+строились ПОВЕРХ носителя, а не переделывали его, **172 держит на радаре 3 точки** (осознанность/lossless,
+как §3.1; не новые задачи 172.1 до landing 177/178):
+
+1. **fn-ptr ABI-тег (`*extern "C" fn` vs `*fn`) — носится в `ResolvedType` LOSSLESS** (178 §3). По
+   [D315](../../spec/decisions/02-types.md#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21)
+   носитель несёт ПОЛНУЮ семантическую личность; ABI-тег fn-ptr — такая же ось, как module-путь /
+   `*mut`-верность / effects-type-args (U.5.5). При ретайре `type_ref_to_c` (U.4.8 ✅) тег теряться НЕ должен →
+   U.5.5-style enrichment Func/Pointer-арма, когда 178 landed. Сейчас носитель тег не несёт — добавится
+   **осознанно** (как U.5.5a/c), не переделкой.
+2. **C-ABI-совместимость (178 §2) — soundness-проверка в ЕДИНОМ чекере (§1), читает `ResolvedType`.**
+   Рекурсивная `C_ABI` (Scalar/RawPtr/`Option[*T]`/Tuple/ValueRecord) — НЕ отдельный re-derive в
+   FFI-build/codegen, а проверка над УЖЕ разрешённым носителем (нужна полная личность: value-record поля,
+   tuple-элементы, `Option[*T]`-NPO). Пересекается с **172.4** (value-record/tuple by-value C-ABI = тот же
+   value-ABI путь) — 172.4 и 178 §2 садятся на ОДИН value-ABI-резолв, не два.
+3. **177: write-cap + `uninit`-ось — в едином чекере; `uninit T` как типовая модальность.** Pointer write-cap
+   fix (`[M-138.5-unsafe-ptr-write-cap]`) и `uninit T` (data-uninit) живут в чекере единого движка; `uninit`-ось —
+   потенциальная ось `ResolvedType` (рядом с L1/L2/L3 [D246](../../spec/decisions/02-types.md#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee)),
+   если влияет на совместимость/коэрцию (`*mut uninit T↛*T`: сброс uninit unsound). Retire `*p`/`p+i`/`p[i]`→методы
+   использует единый method-резолв (U.2/U.3 + U.4.3 dispatch). `02-types.md` — shared zone: spec-амендменты 177
+   применять согласованно с 172/138.5 (177 это фиксирует в своей шапке).
+
 ## 4. Критерий «готово» (зонтик)
 
 Зонтик закрыт, когда выполнены критерии приёмки **172.1** (единый источник истины, codegen не
