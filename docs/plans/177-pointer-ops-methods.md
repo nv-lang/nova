@@ -46,7 +46,7 @@ degradation; Option-null; realtime/fiber-bans). **Три недочёта:**
 
 **Принцип:** value-доступ и адресная арифметика — **только методы** (видно + `unsafe`-gated); `[]` — **только
 безопасные контейнеры** (D138 Index, bounds-checked); указателям `@index` **не давать**; `==`/`!=` и auto-deref `.`
-остаются. Все методы — `unsafe` (требуют `unsafe {}` / `#unsafe fn`), кроме отмеченного.
+остаются. Все методы — `unsafe` (требуют `unsafe {}` / `unsafe fn`), кроме отмеченного.
 
 | Операция | Новая форма | Заметка |
 |---|---|---|
@@ -90,7 +90,7 @@ degradation; Option-null; realtime/fiber-bans). **Три недочёта:**
 
 > **RENAME (sign-off 2026-06-22): `unsafe T` → `uninit T`** (и `*unsafe T`→`*uninit T`, `*mut unsafe T`→`*mut uninit T`,
 > `Unsafe(T)`→`Uninit(T)`). Имя самодокументирует «возможно-неинициализированный» (= Rust `MaybeUninit`) и развязывает
-> перегрузку слова «unsafe». **НЕ переименовываются:** `unsafe {}`-блок, `#unsafe fn`, `*unsafe fn` (указатель на
+> перегрузку слова «unsafe». **НЕ переименовываются:** `unsafe {}`-блок, `unsafe fn`, `*unsafe fn` (указатель на
 > unsafe-**вызываемую функцию** — другое значение).
 
 - `*uninit T` = **ro** + possibly-uninit (ro — дефолт pointee).
@@ -106,12 +106,18 @@ degradation; Option-null; realtime/fiber-bans). **Три недочёта:**
   init-апгрейд `.write` чист (uninit→init), а «восстанавливать bounds/align после write» — несуществующий вопрос.
 - **Stale-тест:** `nova_tests/plan118/plan118_5_v3_t9_safety_outer_ok.nv:23-24` — старый порядок `*unsafe mut/ro Acc4`
   (pre-138.5-flip → `E_MODIFIER_ORDER`) → мигрировать на `*mut uninit` / `*uninit` (ro implicit).
-- **🔲 Под-вопрос (value-uninit init-at-decl, найдено 2026-06-22):** сейчас `mut p uninit Point = Point{…}` **допускается**
-  (тест `plan118_5_t8` PASS), но **бессмысленно**: значение задано → логически init, однако тип остаётся `uninit` и
-  чтение `p.x` всё равно требует `unsafe` (компилятор НЕ flow-трекает init = sticky-uninit). Чистая модель (Rust
-  `MaybeUninit` + Model A): `uninit T` — для storage **без** полного инициализатора; есть полное значение → `mut p Point
-  = value` (init трекается, чтение без unsafe). → сделать `uninit T = <полный инициализатор>` **lint/ошибкой**
-  (противоречие); переход uninit→читаемый-`T` — явный (assume-init / `.write()` init-upgrade). Зона 138.5/§V2.3 (value-uninit), смежно с rename.
+- **✅ Семантика value-`uninit T` (sign-off 2026-06-22) — flow-sensitive MaybeUninit** (заменяет sticky-uninit, тест `plan118_5_t8` мигрировать):
+  1. `mut p uninit T = <значение>` (init при объявлении) → **ошибка** (противоречие; есть значение → `mut p T = …`).
+  2. `mut p uninit T` (без инициализатора) → uninit storage; **полная запись** `p = <значение>` → компилятор
+     **flow-сужает** `p` до `T` (init трекается) → чтение **без `unsafe`**. Частичная/условная запись → остаётся
+     `uninit`, пока init не доказан на всех путях (definite-assignment).
+  3. `p as T` (в `unsafe`) → **assume-init**: реинтерпретация **без копии** (uninit→T под ответственность), когда
+     flow доказать не может (напр. FFI заполнил через указатель).
+  4. `ro p uninit T` → **ошибка**: `ro` запрещает запись → проинициализировать нельзя → бессмысленно.
+  5. `mut q T = <uninit-значение>` → **ошибка**: uninit↛init без assert (§3a init-ось); нужно `unsafe { p as T }`.
+
+  Связующий принцип: **запись `p=value` ДОКАЗЫВАЕТ init** → flow-сужение uninit→T законно; коэрция (§3a) init не
+  доказывает → запрещена. Единственный авто-путь uninit→init — доказательство записью. Зона 138.5/§V2.3, смежно с rename.
 
 ## 5. Фазы
 
