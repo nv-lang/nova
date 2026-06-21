@@ -79,7 +79,16 @@ pub enum ResolvedType {
     Named { name: String, module: Vec<String>, args: Vec<ResolvedType> },
     Array(Box<ResolvedType>),
     Tuple(Vec<ResolvedType>),
-    Func { params: Vec<ResolvedType>, ret: Box<ResolvedType>, effects: Vec<String> },
+    /// U.5.5(c) (D315 lossless): `effects` carries the FULL resolved effect TYPE, not a
+    /// bare name — so `Fail[E]` keeps its `E` (`Named{name:"Fail", args:[E]}`), `Db[T]`
+    /// keeps `T`, etc. Was `Vec<String>` (`from_type_ref` took `path.last()`, dropping
+    /// generics) → lossy, a D315 violation («несёт ПОЛНУЮ семантическую личность») AND a
+    /// blocker for typed-errors (Plan 173 Ф.4 `Fail[E]`-dispatch by `type_id`) + `any`/`is`
+    /// (Plan 175). Like every other `ResolvedType` field it is keyed for category/identity
+    /// on `name`/structure, so the effect args stay INVISIBLE to `cat_compatible_rt`/
+    /// `distinct_mono` (they never recurse into `effects`); only `from_type_ref` writes it
+    /// and NO consumer reads it yet → byte-identical by construction (parity with U.5.5(a)).
+    Func { params: Vec<ResolvedType>, ret: Box<ResolvedType>, effects: Vec<ResolvedType> },
 }
 
 impl ResolvedType {
@@ -153,10 +162,14 @@ impl ResolvedType {
             TypeRef::Func { params, return_type, effects, .. } => R::Func {
                 params: params.iter().map(R::from_type_ref).collect(),
                 ret: Box::new(return_type.as_ref().map(|t| R::from_type_ref(t)).unwrap_or(R::Unit)),
+                // U.5.5(c) (D315 lossless): carry the FULL effect type (name + module +
+                // args via the U.5.5(a)-lossless `Named`), not just `path.last()` — so
+                // `Fail[E]` keeps `E`. Effects are always `Named`; non-Named are dropped
+                // (as before). Write-only today → byte-identical (no consumer reads it).
                 effects: effects
                     .iter()
                     .filter_map(|e| match e {
-                        TypeRef::Named { path, .. } => path.last().cloned(),
+                        TypeRef::Named { .. } => Some(R::from_type_ref(e)),
                         _ => None,
                     })
                     .collect(),
@@ -471,6 +484,67 @@ mod resolved_type_tests {
         let bare = ResolvedType::from_type_ref(&named(&["Foo"], vec![]));
         assert!(cat_compatible_rt(&qual, &bare));
         assert!(!distinct_mono(&qual, &bare));
+    }
+
+    #[test]
+    fn func_effects_carry_type_args_lossless() {
+        // U.5.5(c) (D315): the carrier keeps the FULL effect TYPE — `Fail[E]` keeps its
+        // `E` — not a bare name (was `Vec<String>` taking `path.last()`, dropping the
+        // generics). This is the D315 «несёт ПОЛНУЮ семантическую личность» requirement and
+        // the un-blocker for typed-errors (Plan 173 Ф.4 `Fail[E]`-dispatch by `type_id`) +
+        // `any`/`is` (Plan 175). The effect args stay INVISIBLE to category/identity
+        // comparison (write-only today), so the enrichment is byte-identical by construction.
+        let named = |segs: &[&str], gen: Vec<TypeRef>| TypeRef::Named {
+            path: segs.iter().map(|s| s.to_string()).collect(),
+            generics: gen,
+            span: Span::dummy(),
+        };
+        // `fn() Fail[MyErr]` — the `Fail` effect carries its `MyErr` type-arg losslessly.
+        let func = TypeRef::Func {
+            params: vec![],
+            return_type: None,
+            effects: vec![named(&["Fail"], vec![named(&["MyErr"], vec![])])],
+            span: Span::dummy(),
+        };
+        match ResolvedType::from_type_ref(&func) {
+            ResolvedType::Func { effects, .. } => {
+                assert_eq!(effects.len(), 1);
+                assert_eq!(
+                    effects[0],
+                    ResolvedType::Named {
+                        name: "Fail".into(),
+                        module: vec![],
+                        args: vec![ResolvedType::Named {
+                            name: "MyErr".into(), module: vec![], args: vec![],
+                        }],
+                    },
+                    "Fail[MyErr] effect must carry its `MyErr` type-arg (D315 lossless)"
+                );
+            }
+            other => panic!("expected Func, got {:?}", other),
+        }
+        // A module-qualified effect with a nested generic stays fully lossless:
+        // `Db[std.Conn]` → `Named{name:Db, args:[Named{name:Conn, module:[std]}]}`.
+        let func2 = TypeRef::Func {
+            params: vec![],
+            return_type: None,
+            effects: vec![named(&["Db"], vec![named(&["std", "Conn"], vec![])])],
+            span: Span::dummy(),
+        };
+        if let ResolvedType::Func { effects, .. } = ResolvedType::from_type_ref(&func2) {
+            assert_eq!(
+                effects[0],
+                ResolvedType::Named {
+                    name: "Db".into(),
+                    module: vec![],
+                    args: vec![ResolvedType::Named {
+                        name: "Conn".into(), module: vec!["std".into()], args: vec![],
+                    }],
+                }
+            );
+        } else {
+            panic!("expected Func");
+        }
     }
 
     #[test]
