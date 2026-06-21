@@ -1,0 +1,28 @@
+// Plan 152.8 Layer 1 (Vec[u32] migration) — T1: NFC normalization after migration.
+module nova_tests.unicode
+
+import std.unicode.{normalize_nfc, normalize_nfd}
+
+test "NFC: precomposed é is unchanged by NFC" {
+    assert(normalize_nfc("\u{e9}") == "\u{e9}")
+}
+
+test "NFC: decomposed e + combining-acute composes to é" {
+    assert(normalize_nfc("e\u{301}") == "\u{e9}")
+}
+
+test "NFC: café (precomposed) round-trips through NFD → NFC" {
+    ro composed = "caf\u{e9}"
+    ro decomposed = normalize_nfd(composed)
+    assert(normalize_nfc(decomposed) == composed)
+}
+
+test "NFC: ASCII unchanged" {
+    assert(normalize_nfc("hello") == "hello")
+    assert(normalize_nfc("") == "")
+}
+
+test "NFC: Hangul algorithmic composition" {
+    assert(normalize_nfc("\u{1100}\u{1161}") == "\u{ac00}")           // L + V -> 가
+    assert(normalize_nfc("\u{1100}\u{1161}\u{11a8}") == "\u{ac01}")   // L + V + T -> 각
+}

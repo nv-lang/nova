@@ -4,33 +4,33 @@
 
 module nova_tests.doc
 
-type Logger effect {
+type Logger_f23effectspositive effect {
     log(msg str) -> ()
 }
 
-type Counter effect {
+type Counter_f23effectspositive effect {
     tick() -> ()
     get() -> int
 }
 
-/// Log a message — requires Logger effect.
-export fn log_message(msg str) Logger -> () {
-    Logger.log(msg)
+/// Log a message — requires Logger_f23effectspositive effect.
+export fn log_message(msg str) Logger_f23effectspositive -> () {
+    Logger_f23effectspositive.log(msg)
 }
 
-/// Count up to n using Counter effect.
-export fn count_to(n int) Counter -> int {
+/// Count up to n using Counter_f23effectspositive effect.
+export fn count_to_f23effectspositive(n int) Counter_f23effectspositive -> int {
     mut i = 0
     while i < n {
-        Counter.tick()
+        Counter_f23effectspositive.tick()
         i = i + 1
     }
-    Counter.get()
+    Counter_f23effectspositive.get()
 }
 
 test "log with handler — void result" {
     mut calls = 0
-    with Logger = effect Logger {
+    with Logger_f23effectspositive = effect Logger_f23effectspositive {
         log(msg str) {
             calls = calls + 1
             return ()
@@ -42,24 +42,24 @@ test "log with handler — void result" {
     assert(calls == 2)
 }
 
-test "count_to basic" {
+test "count_to_f23effectspositive basic" {
     mut n = 0
-    ro result = with Counter = effect Counter {
+    ro result = with Counter_f23effectspositive = effect Counter_f23effectspositive {
         tick() { n = n + 1; return () }
         get() { return n }
     } {
-        count_to(5)
+        count_to_f23effectspositive(5)
     }
     assert(result == 5)
 }
 
-test "count_to zero" {
+test "count_to_f23effectspositive zero" {
     mut n = 0
-    ro result = with Counter = effect Counter {
+    ro result = with Counter_f23effectspositive = effect Counter_f23effectspositive {
         tick() { n = n + 1; return () }
         get() { return n }
     } {
-        count_to(0)
+        count_to_f23effectspositive(0)
     }
     assert(result == 0)
 }
@@ -67,15 +67,15 @@ test "count_to zero" {
 test "effects compose sequentially" {
     mut log_count = 0
     mut cnt = 0
-    with Logger = effect Logger {
+    with Logger_f23effectspositive = effect Logger_f23effectspositive {
         log(_msg str) { log_count = log_count + 1; return () }
     } {
         log_message("start")
-        ro inner = with Counter = effect Counter {
+        ro inner = with Counter_f23effectspositive = effect Counter_f23effectspositive {
             tick() { cnt = cnt + 1; return () }
             get() { return cnt }
         } {
-            count_to(3)
+            count_to_f23effectspositive(3)
         }
         log_message("end")
         assert(inner == 3)

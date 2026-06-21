@@ -21,7 +21,7 @@ module nova_tests.plan100_8
 ///
 /// ```nova
 /// let consume h = open("/tmp/foo")
-/// errdefer { h.close_error() }
+/// defer { h.close_error() }
 /// h.close_ok()
 /// ```
 ///

@@ -1,0 +1,11 @@
+// Plan 118.6 T3 NEG — addr_of() removed → E_ADDR_OF_REMOVED.
+//
+// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
+
+module neg.plan118_1_closeout_t3_neg_addr_of_outside_unsafe
+
+test "addr_of removed — use & syntax" {
+    ro x = 42
+    ro p = addr_of(x)
+    assert(p.read() == 42)
+}

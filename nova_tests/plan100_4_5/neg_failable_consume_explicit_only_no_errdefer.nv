@@ -1,7 +1,7 @@
 // EXPECT_COMPILE_ERROR D162
 //
 // Plan 100.4.5 (D162): failable fn + consume + explicit consume на success-path
-// но НЕТ errdefer → D162-uncovered-error-path (throw before commit leaks).
+// но НЕТ defer cover → D162-uncovered-error-path (throw before commit leaks).
 
 module plan100_4_5.neg_failable_consume_explicit_only_no_errdefer
 
@@ -11,12 +11,12 @@ fn Connection consume @disconnect() -> () { () }
 
 fn connect() -> Connection => { fd: 1 }
 
-// ❌ failable + consume + explicit но НЕТ errdefer
+// ❌ failable + consume + explicit но НЕТ defer cover
 fn process() Fail -> () {
     consume c = connect()
     c.disconnect()   // happens-IF-no-throw; throw earlier leaks c
 }
 
-test "failable + consume + explicit-only без errdefer — D162 error" {
+test "failable + consume + explicit-only без defer cover — D162 error" {
     process()
 }

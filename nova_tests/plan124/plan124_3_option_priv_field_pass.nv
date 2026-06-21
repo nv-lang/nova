@@ -1,0 +1,36 @@
+// Plan 124.3 — positive: Option[Account_plan1243optionprivfieldpass] where Account_plan1243optionprivfieldpass имеет priv
+// field. Verifies priv enforcement не false-positive'ит на типе
+// внутри `Option[T]` wrapper.
+//
+// Coverage: Account_plan1243optionprivfieldpass access через public method `balance()` после
+// извлечения из Option — priv `money` остаётся защищён, no false-
+// positive из generic wrapper context.
+module nova_tests.plan124
+
+export type Account_plan1243optionprivfieldpass {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account_plan1243optionprivfieldpass.new(n str) -> Account_plan1243optionprivfieldpass =>
+    { money: 0.0, name: n }
+
+export fn Account_plan1243optionprivfieldpass @balance() -> f64 =>
+    @money
+
+// extern "nova" fn — passes Account_plan1243optionprivfieldpass через Option, accesses public balance().
+fn check_account(a Account_plan1243optionprivfieldpass) -> f64 =>
+    a.balance()
+
+test "Plan 124.3: Account_plan1243optionprivfieldpass.balance() через public method — OK" {
+    ro acc = Account_plan1243optionprivfieldpass.new("greg")
+    ro got = check_account(acc)
+    assert(got == 0.0)
+}
+
+test "Plan 124.3: повторный вызов на разных Account_plan1243optionprivfieldpass" {
+    ro a1 = Account_plan1243optionprivfieldpass.new("alice")
+    ro a2 = Account_plan1243optionprivfieldpass.new("bob")
+    assert(check_account(a1) == 0.0)
+    assert(check_account(a2) == 0.0)
+}

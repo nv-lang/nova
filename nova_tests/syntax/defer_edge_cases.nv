@@ -1,5 +1,5 @@
 // defer_edge_cases.nv — Plan 20 Ф.8 follow-up: edge-cases для verify
-// что defer/errdefer работает в нетривиальных сценариях.
+// что defer работает в нетривиальных сценариях.
 //
 // Покрытие:
 //   1. defer fires на early break из inner loop (через scope walking).

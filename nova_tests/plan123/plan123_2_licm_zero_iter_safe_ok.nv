@@ -1,0 +1,28 @@
+// Plan 123.2 T1.7: zero-iteration loop — hoisted load executed in
+// vain (side-effect-free for record-field). Semantics preserved.
+
+module nova_tests.plan123
+
+type Container3_plan1232licmzeroitersafeok {
+    ro value int
+}
+
+fn Container3_plan1232licmzeroitersafeok @sum_n(n int) -> int {
+    mut total = 0
+    mut i = 0
+    while i < n {
+        total = total + @value + @value
+        i = i + 1
+    }
+    total
+}
+
+fn Container3_plan1232licmzeroitersafeok.new(v int) -> Container3_plan1232licmzeroitersafeok {
+    Container3_plan1232licmzeroitersafeok { value: v }
+}
+
+test "zero-iter loop — semantic equivalence" {
+    ro c = Container3_plan1232licmzeroitersafeok.new(99)
+    assert(c.sum_n(0) == 0)
+    assert(c.sum_n(3) == 3 * (99 + 99))
+}

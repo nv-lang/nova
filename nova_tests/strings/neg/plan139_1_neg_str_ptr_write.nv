@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E_POINTER_RO_ASSIGN
+//
+// Plan 139.1 Ф.C — str lang-item GATE (negative, ro-pointee fires).
+//
+// `str` is declared `type str value priv { ptr *u8, len int }` in
+// std/prelude/core.nv. The backing-buffer field is typed `ptr *u8`: a BARE
+// `*u8` is the ro-pointee canon (`*T ≡ *ro T`, Plan 147 / D246). Writing
+// THROUGH such a pointer is forbidden regardless of binding mutability — a
+// writable pointee requires the `*mut T` opt-in. This is the TYPE-level half
+// of str's dual backing-buffer protection (the binding-level half — the
+// `priv` field — is pinned by neg_str_priv_field.nv).
+//
+// We pin the rule on a bare `*u8` (exactly str's field type): str's `ptr` is
+// `priv`, so an outside-module `s.ptr` would fire E_PRIV_FIELD_READ first and
+// never reach this check (privacy gates field access before pointee-write
+// rules apply). Testing the `*u8` ro-pointee directly isolates the exact
+// invariant that makes the underlying byte buffer immutable. The write is
+// wrapped in `unsafe` so only E_POINTER_RO_ASSIGN fires (an unwrapped `*p`
+// would additionally raise E_UNSAFE_REQUIRED, Plan 118 D216 §8).
+module neg.plan139_1_neg_str_ptr_write
+
+fn poke(p *u8) {
+    unsafe {
+        // write through a bare `*u8` (ro-pointee) → E_POINTER_RO_ASSIGN.
+        *p = 65 as u8
+    }
+}

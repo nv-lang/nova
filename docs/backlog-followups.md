@@ -25,6 +25,17 @@ referenced from plan docs and simplifications.md.
   Реализация: в check_bound_ref, если bound-name резолвится в user TypeDecl (не Protocol) И в prelude есть Protocol с тем же именем — добавить hint к E_BOUND_NOT_PROTOCOL.
   Priority: M.
 
+- **[M-vec-shadow-leak-e7310]** User-shadow обобщённого типа протекает во внутренние type-refs
+  импортированного модуля. `type Vec { x int, y int }` (не-generic) в пользовательском модуле,
+  затеняющий прелюд/импортированный `Vec[T]` (D29 «user wins»), приводит к тому, что СОБСТВЕННЫЙ
+  код `std/collections/vec.nv` / `hashmap.nv` (`Vec[T]`, `Vec[Slot[K,V]]`) резолвится на
+  пользовательский НЕ-generic `Vec` (0 type-параметров) → `[E7310] type Vec is not generic —
+  takes no type arguments, but 1 was provided`. Затенение должно быть scope'нуто к модулю
+  пользователя, не протекать в чужие модули. Комментарий fixture'а (plan138_2/t14) утверждает,
+  что это когда-то чинилось → вероятно регресс (или дрейф от Vec-prelude-flip). Вскрыто
+  консолидацией 169.1.2; обходной путь применён — shadow-fixtures plan138_2 (t14/t15/t16)
+  переименованы в `UserRecNN` (shadow-покрытие снято, см. 169.2). Priority: M.
+
 ---
 
 ## Plan 118.6 — Safe &x model
@@ -134,3 +145,65 @@ referenced from plan docs and simplifications.md.
 - **[M-instance-method-arg-scalar-narrowing]** Precise scope (corrected 2026-06-19 after empirical mapping): argument types of method calls ARE validated, just by other layers — overloaded fns/methods resolve by static arg types in the **codegen overload resolver** (emit_c.rs:23026; a no-match → CODEGEN-FAIL `no matching overload for g(nova_bool)`), and a category mismatch (struct↔scalar, e.g. `Vec[int].push(str)`) is caught by the **C compiler** (CC-FAIL `passing nova_str to incompatible type nova_int`). The Nova type-checker itself does not type-check method args, but the ONLY thing that slips through ALL layers is **scalar→scalar implicit narrowing** through a single-overload method arg (`vec_u32.push(int_var)`: arity matches the one `push(u32)`, and int→u32 is a C-legal truncation). So the gap is narrow (NOT "methods are untyped"). Fix is point-sized: the codegen resolver already knows each param's C-type (`param_c_types`), so add an int-narrowing check there comparing arg C-type vs param C-type. This WILL flag the ~375 std `push(int)` sites → migrate them with explicit `as`. Priority: P1 (soundness).
 - ~~**[M-generic-arg-mismatch-records-followup]**~~ ✅ **DONE 2026-06-19** (commit `4e5533ff`). The generic-argument mismatch check now flags concrete **record/sum/newtype** type-args too (`Box[Dog]`→`Box[Cat]`) and **nested** generics (`Vec[Vec[int]]`→`Vec[Vec[u32]]`) via a recursive `generic_arg_mismatch()`. Alias-safe (resolved via `cat_of`, so `Box[Meters alias int]`→`Box[int]` does not false-flag); permissive on generic type-params / protocols / unknowns. Zero false positives across the corpus.
 - **[M-172.1-U1-cli-stdpath]** Plan 172.1 U.1.1: std-path is configurable via env `NOVA_STD_PATH` + `nova.toml [workspace]/[package].std` (resolver `manifest::resolve_std_path`, default `repo/std` byte-identical). The CLI `--std-path` flag (a third config surface above env) is not yet wired — env+manifest already satisfy the §2 «WHERE is config» requirement. Priority: P3 (UX convenience). Add a `--std-path` arg threaded (via a process-global set at startup) into `resolve_std_path`.
+- **[M-172-nova-int-fallback-audit]** Plan 172 / conventions §1 «никаких авто-выводимых неверных типов». `emit_c.rs` имеет **~78** сайтов молчаливого fallback-типа (`_ => "nova_int"`, `unwrap_or(... nova_int)`) в путях вывода C-типа: при неизвестном типе codegen подставляет `nova_int` вместо резолва → **soundness-дыра** (маскирует ошибку типа: `if` на «int» вместо `bool`, мис-диспатч; всплыла на `self.try_start_won()` → `nova_int` при инлайне sync, см. [M-172.1-U1-lib-import-needs-U4]). Это симптом фрагментированного inference; **корректный фикс — U.4** (типизированный IR: чекер резолвит тип, codegen читает; genuinely-unresolvable → `[E_*]`-диагностика). НЕ патчить точечно в codegen (§0/§1). Audit: `grep -nE '_ => "nova_int"|unwrap_or.*nova_int' emit_c.rs`; каждый сайт при переносе на единый inference либо получает реальный тип, либо становится диагностикой. Priority: P1 (soundness). Gate: U.2→U.3→U.4.
+- **[M-172.1-U2.3-synth-overlay]** Plan 172.1 U.2.3 (variant A; commits `930f3eda`/`12e492f6`/`0b225980`). Три контекста чекера (BoundCtx/CapabilityCtx/TypeCheckCtx) больше НЕ строят собственные `fn_decls`/`method_table` — читают ОДИН base-реестр `SigRegistry::build_base` (§0; три дублирующихся build-цикла устранены). Осознанный компромисс (F2): общий реестр = **base-only**; синтезированные auto-derive методы (Plan 126) остаются TypeCheckCtx-PRIVATE overlay `synth_methods` (НЕ в общем реестре — Bound/Cap не должны их видеть: их резолв base-only, byte-identical к до-рефактора). Поле `method_table` убрано из всех трёх; TypeCheckCtx сохраняет `synth_methods` (genuinely-unique забота auto-derive, НЕ дубль build-цикла). Полная унификация (вариант B: synth внутрь общего реестра + корпус-пруф, что Bound/Cap не затронуты) — возможный follow-up; A выбран как min-risk byte-identical. Priority: P3 (чистота §0; функционально завершено + byte-identical-верифицировано на 43 фикстурах зон риска вкл. plan126).
+- **[M-172.1-U2.4-mangling-fragmented]** Plan 172.1 U.2.4 (разведка 2026-06-20). Исходная форма U.2.4 («standalone `SigRegistry` → populate `method_overloads` из неё») byte-identical НЕВЫПОЛНИМА: `method_overloads` строится из 5+ источников (ExternalRegistry builtins :2374 / free-fn D84 :3189 / receiver methods :3311 / embed-proxy D39 :3568 / mono :5650,:9560) с РАЗНЫМИ mangling-схемами — codegen использует `receiver_type_c_ident` + суффикс по ВСЕМ param-C-types (sanitized) + `__mut`/`__ro` tiebreak (Plan 135) + `erased_type_ref_c` (generic-recv) + `free_fn_c_name` (modular/file-priv/literal); SigRegistry (`mangle_method_c_name`+`last_param_suffix`) — упрощённая (last-param-Nova suffix, raw type, без mut/erasure/modular), совпадает лишь для single-overload concrete-recv (кейс parity-теста U.2.2). Плюс `ExternalRegistry::type_ref_to_c` (standalone) ≠ `CEmitter::type_ref_to_c` (state-aware). Корень: codegen mangling/type-map зависят от `CEmitter`-состояния (generic_types/mono/receiver-context/fn_module_map), которого нет у независимого реестра. Развилка: (1) строить SigRegistry ВНУТРИ CEmitter + единый mangler (целевая §0) / (2) вынести ОДИН shared mangler, источник не менять / (3) отложить U.2.4-impl за U.4/U.5 (typed IR) + U.6 (collapse `type_ref_to_c`×3); сейчас закрыть U.2.5 (fold MethodSig + del `resolve_overload`). Priority: P1 (§0 ядро). Gate: решение владельца + (для целевой) U.4/U.5/U.6.
+- **[M-172-codegen-typedef-order-nondeterminism]** Pre-existing (обнаружено при U.2.3 byte-identical гейте, 2026-06-20). Codegen эмитит forward-typedef-блок (`typedef struct Nova_X Nova_X;`) в порядке HashMap-итерации → **порядок строк варьируется между запусками ОДНОГО бинаря** (подтверждено: 2 прогона одного `nova.exe` на одном входе дают разный порядок `Nova_U`/`Nova_F`/`Nova_K`). Семантически безвредно (forward-typedef порядок-независимы), но: (1) нарушает §2-детерминизм сборки; (2) ломает наивный byte-diff `.c` как verification-гейт (приходится сравнивать line-multiset, `diff <(sort a) <(sort b)`); (3) снижает эффективность `.c`-кэша (байт-идентичный вход → разный `.c`). Фикс: эмитить forward-typedefs в детерминированном порядке (BTreeMap / сортировка по имени / declaration-order items). Priority: P2 (детерминизм сборки + byte-identical-верифицируемость будущих рефакторов).
+
+- **[M-169.2-vec-fn-empty-literal-nova-int]** `mut arr []fn() -> int = []` — пустой
+  array-литерал для `[]fn` выводит element-type как **`nova_int`** (fallback), а не
+  fn/void_p: codegen создаёт `Nova_Vec____nova_int_static_new()`, но `arr` типизирован
+  `NovaArray_void_p*` и в него пушатся closure-указатели → type-confused контейнер.
+  Малый N работает (совпадение layout), на масштабе (≥~512, realloc) расходится →
+  элемент читается как null → `NOVA_CLOS_CALL_vi(null)` → детерминированный SEGV (READ@0,
+  frame[1]=`nova_fn_main_impl`). **НЕ GC** (`GC_DONT_GC=1` не чинит). Это конкретный
+  инстанс класса **[M-172-nova-int-fallback-audit]** (silent nova_int fallback на unknown
+  element-type) → **гейтован на Plan 172 U.4** (removal of fallback). Репро: plan55
+  `f1_closure_array_gc_stress` (RUN-FAIL 3/3); диагностика по docs/debugging-races.md §2.1.1.
+  Priority: M (гейт 172 U.4).
+
+## Plan 110.5.7 / D189 — errdefer/okdefer retraction cleanup
+
+- **[M-172-errdefer-okdefer-dead-surface]** `errdefer`/`okdefer` ретракнуты (D189, Plan 110.5.7,
+  hard cutover): парсер реджектит их диагностикой (`parser/mod.rs:9835-9850`). Остаточный мусор в
+  трёх слоях. **(1) USER-FACING БАГ (P1):** диагностика `D133-not-consumed` строит
+  machine-applicable suggestion с `errdefer` (`types/mod.rs:15306-15318`:
+  `"errdefer {{ {name}.{cl}() }}\n{name}.{primary}()"`) — применение quick-fix даёт код, который
+  парсер реджектит. Заменить на `defer`. **(2) Мёртвый AST+codegen (P3):** узлы `ErrDefer`/`OkDefer`
+  (`ast/mod.rs:1842-1853`) недостижимы (парсер реджектит до их конструирования); keyword'ы
+  `KwErrDefer`/`KwOkDefer` (`token.rs:143-149`) нужны ТОЛЬКО как tombstone для дружелюбной ошибки —
+  оставить; но большой dead-codegen в `emit_c.rs` ~17518-18093 (DeferScope.is_error,
+  error-path/success-path dispatch, okdefer-skip, hoist-for-errdefer) + ветки в
+  may_gc/escape_analyze/interp — выпилить. **(3) Внутренние error-строки (P3):** `emit_c.rs:16462`
+  + `:19092` ("defer/errdefer[/okdefer] outside defer scope") → убрать errdefer/okdefer из текста.
+  Test-rot (stale-комменты про errdefer/okdefer в тестах) уже подметён осью 169.2.
+
+## D13 — panic catchability (soundness)
+
+- **[M-172-with-fail-swallows-panic]** `with Fail[E]`-handler **ловит `panic`** как
+  recoverable-ошибку → **нарушение D13** (panic перехватывается ТОЛЬКО runtime'ом на
+  границе fiber'а; «программист НЕ ловит panic в обычном коде», нет `try_panic`/`catch` —
+  spec/decisions/08-runtime.md §«Три уровня катастрофы»). **Эмпирически подтверждено
+  2026-06-20** (C-codegen): `panic("BOOM")` внутри
+  `with Fail[E1] = effect Fail { fail(_e) { interrupt () } } { risky_panic() }` → with-блок
+  отдаёт значение, выполнение продолжается. Сырой stdout = `PROBE\nREACHED_AFTER_HANDLER`,
+  процесс жив (exit 0), `panic: BOOM` НЕ всплыл. Ожидалось: паника проходит сквозь
+  Fail-handler до границы fiber'а — в синхронной CLI = смерть процесса с `panic: BOOM`.
+  **Root cause:** re-dispatch ветка Fail-handler'а (`emit_c.rs:6648-6675`) ре-throw'ит
+  ТОЛЬКО `NOVA_THROW_CANCEL`; `NOVA_THROW_PANIC` проваливается в «USER path: handler already
+  ran» → паника проглатывается (а CANCEL — единственный структурный throw, который
+  корректно пробрасывается). **Фикс:** добавить симметричную ветку `if (ff.error_kind ==
+  NOVA_THROW_PANIC) { nova_fail_pop(); nova_interrupt_pop(); restore handlers; nv_panic(ff.error_msg); }`
+  ПЕРЕД USER-path (NB: `supervised{}` ДОЛЖЕН продолжать ловить panic для restart — это
+  ОТДЕЛЬНАЯ граница, не трогать). Priority: **P1** (soundness — panic recoverable вопреки D13).
+  Репро (scratch, удалён — пересоздать при фиксе как `EXPECT_RUNTIME_PANIC BOOM`):
+  ```nova
+  module nova_tests.<stem>
+  type E1 { msg str }
+  fn risky_panic() Fail[E1] -> () { panic("BOOM") }
+  fn main() -> () {
+      println("PROBE")
+      with Fail[E1] = effect Fail { fail(_e) { interrupt () } } { risky_panic() }
+      println("REACHED_AFTER_HANDLER")   // НЕ должно печататься после фикса
+  }
+  ```

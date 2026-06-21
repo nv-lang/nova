@@ -1,0 +1,53 @@
+// Plan 152.0 — acceptance fixtures.
+// A0.1: methods from ALL co-equal submodules (core/search/transform/parse/chars)
+//   resolve without explicit import (folder-split conforms D29; str-resolve from .nv).
+// A0.5: golden byte-equivalence for the buffer-refactored methods (trim/concat/to_bytes).
+// A0.6: StringBuilder and str.concat give identical results (shared Vec[u8] buffer).
+module nova_tests.unicode
+
+test "core submodule: byte_len / as_bytes / is_empty / compare" {
+    ro s = "héllo"
+    assert(s.byte_len() == 6)          // h + é(2) + l + l + o
+    assert(s.as_bytes()[0] == 104)     // 'h'
+    assert("".is_empty())
+    assert("a".compare("b") < 0)
+}
+
+test "search submodule: find / contains / starts_with / split" {
+    assert("abcabc".find("bc") == Some(1))
+    assert("hello".contains("ell"))
+    assert("hello".starts_with("he"))
+    ro parts = "a,b,c".split(",")
+    assert(parts.len() == 3)
+    assert(parts[0] == "a")
+    assert(parts[2] == "c")
+}
+
+test "transform submodule (Ф.3 buffer-refactor golden): trim / concat / to_bytes / case" {
+    assert("  hi  ".trim_ascii() == "hi")          // trim via Vec.append+steal
+    assert("ab".concat("cd") == "abcd")      // concat via Vec.append+steal
+    assert("Foo".to_ascii_lower() == "foo")
+    assert("Foo".to_ascii_upper() == "FOO")
+    ro b = "abc".to_bytes()                  // to_bytes via Vec.append
+    assert(b.len() == 3)
+    assert(b[0] == 97)
+}
+
+test "parse submodule: parse_int / ParseIntError path" {
+    assert("42".parse_int_opt() == Some(42))
+    assert("ff".parse_int_opt(radix: 16) == Some(255))
+    assert("xyz".parse_int_opt() == None)
+}
+
+test "chars submodule: as_chars().nth (replaces retired char_at/get(int))" {
+    // D249/D250: positional codepoint access is the codepoint lens, not str.get
+    // (which is now get(Range)->Option[str]). Retired char_at/get(int)->char.
+    assert("abc".as_chars().nth(0) == Some('a'))
+    assert("abc".as_chars().nth(9) == None)
+}
+
+test "A0.6: StringBuilder (Vec[u8] wrapper) == str.concat" {
+    ro via_sb = StringBuilder.from("ab").append("cd").into_str()
+    assert(via_sb == "ab".concat("cd"))
+    assert(via_sb == "abcd")
+}

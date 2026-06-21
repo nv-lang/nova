@@ -1,0 +1,25 @@
+// Plan 124.2 — positive: match arm pattern на priv field внутри
+// instance method body. Recv = Account_matcharminsidemethodok → priv field PATTERN allowed.
+module nova_tests.plan124
+
+export type Account_matcharminsidemethodok {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account_matcharminsidemethodok.new(n str) -> Account_matcharminsidemethodok =>
+    { money: 0.0, name: n }
+
+// Instance method: match arm destructures priv field — OK.
+export fn Account_matcharminsidemethodok @debug_balance() -> f64 {
+    ro tmp = @money
+    match tmp {
+        0.0 => 0.0
+        _ => tmp
+    }
+}
+
+test "Plan 124.2: match arm на priv внутри метода" {
+    ro acc = Account_matcharminsidemethodok.new("alice")
+    assert(acc.debug_balance() == 0.0)
+}

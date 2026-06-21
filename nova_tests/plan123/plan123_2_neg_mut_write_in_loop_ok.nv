@@ -1,0 +1,28 @@
+// Plan 123.2 T-NEG.1: @F = ... inside loop body → no hoist (LICM
+// correctness preserved). Semantic equivalence verified.
+
+module nova_tests.plan123
+
+type Counter10 {
+    mut value int
+}
+
+fn Counter10 mut @increment_n(n int) -> int {
+    mut i = 0
+    while i < n {
+        @value = @value + 1   // ← write to @value inside loop
+        i = i + 1
+    }
+    @value
+}
+
+fn Counter10.new(v int) -> Counter10 {
+    Counter10 { value: v }
+}
+
+test "write in loop blocks LICM — correctness preserved" {
+    mut c = Counter10.new(0)
+    ro r = c.increment_n(5)
+    // value 0 → 5.
+    assert(r == 5)
+}

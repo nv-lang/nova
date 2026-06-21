@@ -1,0 +1,38 @@
+// Plan 137 (D237) — generic bounds with new protocol names.
+// Tests [T Hash], [T Equal], [T Display], [T Compare], [T Clone].
+
+module nova_tests.strings
+
+
+fn[T Hash] hash_of(x T) -> u64 => x.hash()
+
+fn[T Equal] are_equal(a T, b T) -> bool => a == b
+
+fn[T Compare] max_of(a T, b T) -> T {
+    if a > b { a } else { b }
+}
+
+test "bound [T Hash] — primitive int" {
+    assert(hash_of(42) == hash_of(42))
+    assert(hash_of(1) != hash_of(2))
+}
+
+test "bound [T Equal] — primitive int" {
+    assert(are_equal(5, 5))
+    assert(!are_equal(5, 6))
+}
+
+test "bound [T Compare] — primitive int" {
+    assert(max_of(3, 7) == 7)
+    assert(max_of(10, 2) == 10)
+}
+
+test "bound [T Hash] — string" {
+    assert(hash_of("hello") == hash_of("hello"))
+    assert(hash_of("foo") != hash_of("bar"))
+}
+
+test "bound [T Equal] — string" {
+    assert(are_equal("abc", "abc"))
+    assert(!are_equal("abc", "xyz"))
+}

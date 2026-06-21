@@ -19,8 +19,8 @@ fn Cv mut @almost(cond bool) -> int {
 }
 
 test "V1.2: nested below-threshold not cached, semantic ok" {
-    mut Cv = Cv.new()
-    ro r = Cv.almost(true)
+    mut cv = Cv.new()
+    ro r = cv.almost(true)
     assert(r == 99)
     mut c2 = Cv.new()
     ro r2 = c2.almost(false)

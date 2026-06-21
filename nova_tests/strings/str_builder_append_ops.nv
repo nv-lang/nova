@@ -1,0 +1,103 @@
+// Plan 85.1 Ф.1 — StringBuilder append операторы.
+//
+// Покрывает: @append(str), @append(char) ASCII/Unicode/emoji,
+// chaining, пустой append.
+
+module nova_tests.strings
+
+
+// ── @append(str) ───────────────────────────────────────────────────
+
+test "append(str) — несколько частей" {
+    consume sb = StringBuilder.new()
+    sb.append("hello")
+    sb.append(" ")
+    sb.append("world")
+    assert(sb.len() == 11)
+    assert(sb.into_str() == "hello world")
+}
+
+test "append(str) — пустой append не меняет буфер" {
+    consume sb = StringBuilder.new()
+    sb.append("abc")
+    sb.append("")
+    assert(sb.len() == 3)
+    assert(sb.into_str() == "abc")
+}
+
+test "append(str) — пустой в пустой остаётся пустым" {
+    consume sb = StringBuilder.new()
+    sb.append("")
+    assert(sb.is_empty())
+    ro _ = sb.into_str()
+}
+
+
+// ── @append(char) ──────────────────────────────────────────────────
+
+test "append(char) — ASCII" {
+    consume sb = StringBuilder.new()
+    sb.append('A')
+    sb.append('B')
+    sb.append('C')
+    assert(sb.len() == 3)
+    assert(sb.char_len() == 3)
+    assert(sb.into_str() == "ABC")
+}
+
+test "append(char) — Cyrillic 2 байта" {
+    consume sb = StringBuilder.new()
+    sb.append('П')
+    sb.append('р')
+    assert(sb.char_len() == 2)
+    assert(sb.len() == 4)
+    ro _ = sb.into_str()
+}
+
+test "append(char) — emoji 4 байта" {
+    consume sb = StringBuilder.new()
+    sb.append('😀')
+    assert(sb.char_len() == 1)
+    assert(sb.len() == 4)
+    ro _ = sb.into_str()
+}
+
+test "append(char) — смешанные ширины codepoint'ов" {
+    consume sb = StringBuilder.new()
+    sb.append('A')      // 1 байт
+    sb.append('Я')      // 2 байта
+    sb.append('中')     // 3 байта
+    sb.append('😀')     // 4 байта
+    assert(sb.char_len() == 4)
+    assert(sb.len() == 10)
+    ro _ = sb.into_str()
+}
+
+
+// ── append(str) + append(char) вперемешку ─────────────────────────
+
+test "append str и char вперемешку" {
+    consume sb = StringBuilder.new()
+    sb.append("hi")
+    sb.append(' ')
+    sb.append("there")
+    sb.append('!')
+    assert(sb.len() == 9)
+    assert(sb.into_str() == "hi there!")
+}
+
+
+// ── chaining (@append возвращает receiver) ────────────────────────
+
+test "chaining append().append().append()" {
+    consume sb = StringBuilder.new()
+    sb.append("a").append("b").append("c")
+    assert(sb.len() == 3)
+    assert(sb.into_str() == "abc")
+}
+
+test "chaining str + char вперемешку" {
+    consume sb = StringBuilder.new()
+    sb.append("x").append('y').append("z")
+    assert(sb.into_str() == "xyz")
+}

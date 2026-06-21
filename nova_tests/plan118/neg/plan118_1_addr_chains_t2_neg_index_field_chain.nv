@@ -1,0 +1,14 @@
+// Plan 118.6 — addr_of() removed → E_ADDR_OF_REMOVED.
+// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
+module neg.plan118_1_addr_chains_t2_neg_index_field_chain
+
+type Sv {
+    ro v i64
+}
+
+test "addr_of removed — index-chain case gives E_ADDR_OF_REMOVED" {
+    ro arr = [Sv { v: 10 }, Sv { v: 20 }]
+    unsafe {
+        ro p = addr_of(arr[0].v)
+    }
+}

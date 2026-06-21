@@ -1,0 +1,28 @@
+// Plan 152.5b (D254): negative / boundary test — shows that eq_ignore_ascii_case and
+// eq_ignore_case DIFFER for non-ASCII codepoints that have case mappings.
+//
+// eq_ignore_ascii_case: byte-compares non-ASCII literally (no folding).
+// eq_ignore_case:       full Unicode case-fold (handles É/é, ß/ss, …).
+module nova_tests.unicode
+
+import std.unicode.{eq_ignore_case}
+
+test "ascii_case treats non-ASCII literally: É != é" {
+    // eq_ignore_ascii_case leaves É and é as distinct bytes → false
+    assert(!"É".eq_ignore_ascii_case("é"))
+}
+
+test "unicode fold correctly equates É and é" {
+    // fold_case("É") == fold_case("é") == "é" → true
+    assert("É".eq_ignore_case("é"))
+}
+
+test "ascii_case cannot match ß with ss" {
+    // eq_ignore_ascii_case: "ß" and "ss" are byte-distinct → false
+    assert(!"ß".eq_ignore_ascii_case("ss"))
+}
+
+test "unicode fold equates ß with ss" {
+    // fold_case("ß") == "ss"; fold_case("ss") == "ss" → true
+    assert("ß".eq_ignore_case("ss"))
+}

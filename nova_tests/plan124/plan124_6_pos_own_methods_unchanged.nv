@@ -1,0 +1,36 @@
+// Plan 124.6 — positive: own type methods still access priv(type) fields
+// (rule-1 unchanged — canonical type-method scope, D220). Regression guard.
+module nova_tests.plan124
+
+export type Stack {
+    pub label str
+    priv(type) mut size int
+    priv(type) mut top int
+}
+
+export fn Stack.new(lbl str) -> Stack =>
+    { label: lbl, size: 0, top: -1 }
+
+export fn Stack mut @push(val int) {
+    @size = @size + 1
+    @top = val
+}
+
+export fn Stack @peek() -> int =>
+    @top
+
+export fn Stack @len() -> int =>
+    @size
+
+export fn Stack @is_empty() -> bool =>
+    @size == 0
+
+test "Plan 124.6: own methods access priv(type) fields (rule-1 unchanged)" {
+    mut s = Stack.new("mystack")
+    assert(s.is_empty())
+    s.push(42)
+    s.push(99)
+    assert(s.len() == 2)
+    assert(s.peek() == 99)
+    assert(!s.is_empty())
+}

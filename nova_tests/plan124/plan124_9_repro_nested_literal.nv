@@ -1,0 +1,27 @@
+// Plan 124.9 Р¤.0 вЂ” bug repro: 4-level nested record literal.
+// Expected: each level allocates its own declared field type (Bv5, Cv4, Dv2),
+// not the outermost type Av5 four times.
+module nova_tests.plan124
+
+type Dv2 {
+    mut value int
+}
+
+type Cv4 {
+    mut Dv2 Dv2
+}
+
+type Bv5 {
+    mut Cv4 Cv4
+}
+
+type Av5 {
+    mut Bv5 Bv5
+}
+
+test "4-level nested record literal allocates correct types" {
+    mut av5 = Av5 { Bv5: Bv5 { Cv4: Cv4 { Dv2: Dv2 { value: 0 } } } }
+    assert(av5.Bv5.Cv4.Dv2.value == 0)
+    av5.Bv5.Cv4.Dv2.value = 42
+    assert(av5.Bv5.Cv4.Dv2.value == 42)
+}

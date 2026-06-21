@@ -1,0 +1,20 @@
+// Plan 118.1 [M-118.1-addr-of-chains] — &(local.a.b): a nested field
+// chain rooted in a named local is a valid lvalue → accepted.
+// (addr_of removed in Plan 118.6 — use & syntax directly.)
+module nova_tests.plan118
+
+type Inner2 {
+    ro z i64
+}
+
+type Outer2 {
+    ro inner Inner2
+}
+
+test "addr_of of a nested field chain rooted in a named local is accepted" {
+    ro o = Outer2 { inner: Inner2 { z: 7 } }
+    unsafe {
+        ro p = &o.inner.z
+        assert(p.read() == 7)
+    }
+}

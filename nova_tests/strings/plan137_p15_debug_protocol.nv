@@ -1,0 +1,22 @@
+// Plan 137 (D237) — POS P15:
+// `@debug` method works in `${expr:?}` interpolation.
+module nova_tests.strings
+
+type Pair4 {
+    a int
+    b int
+}
+
+fn Pair4 @debug(mut w Write) -> () {
+    w.write("Pair4 { a: ")
+    w.write(str.from(@a))
+    w.write(", b: ")
+    w.write(str.from(@b))
+    w.write(" }")
+}
+
+test "Debug @debug works in :? interpolation" {
+    ro p = Pair4 { a: 1, b: 2 }
+    ro s = "${p:?}"
+    assert(s == "Pair4 { a: 1, b: 2 }")
+}

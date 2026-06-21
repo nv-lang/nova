@@ -9,7 +9,7 @@ module nova_tests.doc
 ///
 /// #[deprecated]
 /// Этот attr должен trigger warning, но компиляция продолжается.
-export fn legacy_add(a int, b int) -> int => a + b
+export fn legacy_add_f25docwarningspositive(a int, b int) -> int => a + b
 
 /// Function with unknown doc-attr in description.
 ///
@@ -43,11 +43,11 @@ export fn problematic(n int) -> int {
 /// ```
 export fn double(x int) -> int => x * 2
 
-test "legacy_add runtime correct" {
-    assert(legacy_add(2, 3) == 5)
-    assert(legacy_add(0, 0) == 0)
-    assert(legacy_add(-1, 1) == 0)
-    assert(legacy_add(100, 200) == 300)
+test "legacy_add_f25docwarningspositive runtime correct" {
+    assert(legacy_add_f25docwarningspositive(2, 3) == 5)
+    assert(legacy_add_f25docwarningspositive(0, 0) == 0)
+    assert(legacy_add_f25docwarningspositive(-1, 1) == 0)
+    assert(legacy_add_f25docwarningspositive(100, 200) == 300)
 }
 
 test "future_proof runtime correct" {
@@ -72,7 +72,7 @@ test "double runtime" {
 }
 
 test "doc-warnings dont affect runtime" {
-    ro a = legacy_add(future_proof(1), double(2))
+    ro a = legacy_add_f25docwarningspositive(future_proof(1), double(2))
     assert(a == 105)
     ro b = problematic(double(3))
     assert(b == 21)

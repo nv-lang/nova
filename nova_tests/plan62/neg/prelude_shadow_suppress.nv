@@ -1,0 +1,24 @@
+// Plan 62.F.bis Ф.2 positive test: `#allow(shadow)` before `module` declaration
+// suppresses W_PRELUDE_SHADOW warnings on user-declarations that shadow
+// prelude names. User-declaration wins (как в _warning.nv), но warning
+// silenced.
+//
+// Если бы suppress'а не было — test FAIL: пустой EXPECT_COMPILE_WARNING
+// конфликтует с emitted warning. Отсутствие EXPECT_COMPILE_WARNING marker
+// без suppress сейчас допустимо (test runner не fail'ит на unexpected
+// warnings) — но регрессия suppress'а будет обнаружена ниже через assert
+// что user-decl wins (через тип-checker accepts).
+//
+// D174 (Plan 107): syntax migrated from inline `module X allow_prelude_shadow`
+// to `#allow(shadow)` before `module` declaration.
+
+#allow(shadow)
+module neg.prelude_shadow_suppress
+
+// PRELUDE_VERSION1 shadow'ит prelude const. С `#allow(shadow)`
+// attr — никакого warning'а; user-decl wins silently.
+const PRELUDE_VERSION1 int = 99
+
+test "suppress: user shadow PRELUDE_VERSION1 wins, no warning" {
+    assert(PRELUDE_VERSION1 == 99)
+}

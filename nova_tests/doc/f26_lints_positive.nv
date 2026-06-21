@@ -5,30 +5,30 @@
 
 module nova_tests.doc
 
-/// Returns the absolute value of x.
+/// Returns the absolute_f26lintspositive value of x.
 ///
 /// # Examples
 ///
 /// ```nova
-/// assert(absolute(-5) == 5)
+/// assert(absolute_f26lintspositive(-5) == 5)
 /// ```
 #stable(since = "1.0")
-export fn absolute(x int) -> int => if x < 0 { 0 - x } else { x }
+export fn absolute_f26lintspositive(x int) -> int => if x < 0 { 0 - x } else { x }
 
-/// Computes factorial of n.
+/// Computes factorial_f26lintspositive of n.
 ///
 /// # Examples
 ///
 /// ```nova
-/// assert(factorial(5) == 120)
+/// assert(factorial_f26lintspositive(5) == 120)
 /// ```
 ///
 /// # Errors
 ///
 /// Returns 1 for n <= 0 (no error case).
 #stable(since = "1.0")
-export fn factorial(n int) -> int {
-    if n <= 1 { 1 } else { n * factorial(n - 1) }
+export fn factorial_f26lintspositive(n int) -> int {
+    if n <= 1 { 1 } else { n * factorial_f26lintspositive(n - 1) }
 }
 
 /// Compute power.
@@ -65,18 +65,18 @@ export fn sum_to_n(n int) -> int {
     if n <= 0 { 0 } else { n + sum_to_n(n - 1) }
 }
 
-test "absolute" {
-    assert(absolute(0) == 0)
-    assert(absolute(5) == 5)
-    assert(absolute(-5) == 5)
-    assert(absolute(-100) == 100)
+test "absolute_f26lintspositive" {
+    assert(absolute_f26lintspositive(0) == 0)
+    assert(absolute_f26lintspositive(5) == 5)
+    assert(absolute_f26lintspositive(-5) == 5)
+    assert(absolute_f26lintspositive(-100) == 100)
 }
 
-test "factorial" {
-    assert(factorial(0) == 1)
-    assert(factorial(1) == 1)
-    assert(factorial(5) == 120)
-    assert(factorial(6) == 720)
+test "factorial_f26lintspositive" {
+    assert(factorial_f26lintspositive(0) == 1)
+    assert(factorial_f26lintspositive(1) == 1)
+    assert(factorial_f26lintspositive(5) == 120)
+    assert(factorial_f26lintspositive(6) == 720)
 }
 
 test "power" {
@@ -103,8 +103,8 @@ test "sum_to_n" {
 
 test "all lint-clean functions compose" {
     ro s = sum_to_n(10)
-    ro f = factorial(min_int(s, 5))
-    ro p = power(2, min_int(absolute(-3), 10))
+    ro f = factorial_f26lintspositive(min_int(s, 5))
+    ro p = power(2, min_int(absolute_f26lintspositive(-3), 10))
     assert(s == 55)
     assert(f == 120)
     assert(p == 8)

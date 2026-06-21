@@ -1,0 +1,38 @@
+// Plan 123.2 T1.2: mut field inside loop where Plan 123.1 mut path
+// bailed (call before loop invalidates mut prefix region). LICM
+// emits hoisted cache immediately before loop.
+
+module nova_tests.plan123
+
+type Counter4_plan1232licmmutaftercallok {
+    mut threshold int
+}
+
+fn Counter4_plan1232licmmutaftercallok.helper(x int) -> int {
+    x + 1
+}
+
+fn Counter4_plan1232licmmutaftercallok mut @sum_above() -> int {
+    // 123.1 mut path: prefix region ends at the helper Call.
+    // Loop body has 2 reads of @threshold, no writes, no calls.
+    // LICM should hoist @threshold immediately before loop.
+    mut bias = Counter4_plan1232licmmutaftercallok.helper(5)
+    mut total = 0
+    mut i = 0
+    while i < 4 {
+        total += @threshold + @threshold
+        i += 1
+    }
+    total + bias
+}
+
+fn Counter4_plan1232licmmutaftercallok.new(x int) -> Counter4_plan1232licmmutaftercallok {
+    Counter4_plan1232licmmutaftercallok { threshold: x }
+}
+
+test "LICM hoists mut field after-call inside loop" {
+    mut c = Counter4_plan1232licmmutaftercallok.new(3)
+    ro r = c.sum_above()
+    // bias = helper(5) = 6; loop 4 iterations × (3+3) = 24; + 6 = 30.
+    assert(r == 30)
+}

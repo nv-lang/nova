@@ -1,0 +1,33 @@
+// Plan 123.4 T1.4: chain inside loop body — composition с D218 LICM
+// (LICM hoists single-field @F, V4 chain caches the deeper path).
+
+module nova_tests.plan123
+
+type Holder3 {
+    ro inner Holder_Inner
+}
+
+type Holder_Inner {
+    ro value int
+}
+
+fn Holder3 @loop_sum(n int) -> int {
+    mut total = 0
+    mut i = 0
+    while i < n {
+        total = total + @inner.value + @inner.value
+        i = i + 1
+    }
+    total + @inner.value
+}
+
+fn Holder3.new(v int) -> Holder3 {
+    Holder3 { inner: Holder_Inner { value: v } }
+}
+
+test "chain inside loop body cached" {
+    ro h = Holder3.new(4)
+    ro r = h.loop_sum(3)
+    // 3 × 8 + 4 = 28.
+    assert(r == 28)
+}

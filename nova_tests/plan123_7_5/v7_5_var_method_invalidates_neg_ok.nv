@@ -22,9 +22,9 @@ fn Cv mut @do(mut v []int) -> int {
 }
 
 test "V7.5: var.method() still invalidates, semantic preserved" {
-    mut Cv = Cv.new()
+    mut cv = Cv.new()
     mut v = []int.new()
-    ro r = Cv.do(v)
+    ro r = cv.do(v)
     assert(r == 6)
     assert(v.len() == 1)
 }

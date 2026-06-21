@@ -1,6 +1,6 @@
 // EXPECT_COMPILE_ERROR D162-uncovered-error-path
 //
-// Plan 100.4.5 (D162): failable function с consume binding но БЕЗ errdefer —
+// Plan 100.4.5 (D162): failable function с consume binding но БЕЗ defer cover —
 // error D162-uncovered-error-path. На throw consume будет leaked.
 
 module plan100_4_5.neg_failable_no_errdefer
@@ -14,12 +14,12 @@ fn Transaction consume @rollback() -> () { () }
 
 fn begin() -> Transaction => { id: 1 }
 
-// ❌ failable + consume + НЕТ errdefer
+// ❌ failable + consume + НЕТ defer cover
 fn process() Fail -> () {
     consume tx = begin()
     tx.commit()   // D162-uncovered-error-path: throw before commit leaks tx
 }
 
-test "failable fn без errdefer cover — D162 error" {
+test "failable fn без defer cover — D162 error" {
     process()
 }

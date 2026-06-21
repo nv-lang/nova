@@ -1,0 +1,20 @@
+// Plan 118.1 [M-118.1-addr-of-chains] — bare `&local.a.b` (parser path) on a
+// nested field chain rooted in a named local is a valid lvalue → accepted
+// (parser must not over-reject genuine field paths).
+module nova_tests.plan118
+
+type Inner1 {
+    ro z i64
+}
+
+type Outer1 {
+    ro inner Inner1
+}
+
+test "bare & of a nested field chain rooted in a named local is accepted" {
+    ro o = Outer1 { inner: Inner1 { z: 7 } }
+    unsafe {
+        ro p = &o.inner.z
+        assert(p.read() == 7)
+    }
+}

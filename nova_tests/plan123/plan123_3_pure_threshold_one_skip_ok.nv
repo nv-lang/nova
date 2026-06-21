@@ -1,0 +1,23 @@
+// Plan 123.3 T1.4: single call в†’ no cache (below threshold).
+
+module nova_tests.plan123
+
+type Xv {
+    ro v int
+}
+
+#pure
+fn Xv @get() -> int => @v
+
+fn Xv @single() -> int {
+    @get()
+}
+
+fn Xv.new(v int) -> Xv {
+    Xv { v }
+}
+
+test "single pure call not cached (semantic preserved)" {
+    ro xv = Xv.new(42)
+    assert(xv.single() == 42)
+}

@@ -1,11 +1,11 @@
-����� 14 sessions (�.25 > �.33) Plan 45 close on ~98%. ��� user-facing
-features implemented � production-grade test coverage.
+[ENCODING-LOST] 14 sessions (Ф.25 > Ф.33) Plan 45 close on ~98%. [ENCODING-LOST] user-facing
+features implemented [ENCODING-LOST] production-grade test coverage.
 
-=== Plan 45 Sprint �.34 � HTTP MCP + cache + stdlib doc-pass (2026-05-16) ===
+=== Plan 45 Sprint Ф.34 [ENCODING-LOST] HTTP MCP + cache + stdlib doc-pass (2026-05-16) ===
 
-�.34.1 (5b055e7): HTTP MCP transport via std::net (no tokio). `nova doc-mcp --port N`.
-�.34.2 (dff9e6e): Incremental cache (closes �.30.2). WatchCache + Arc<Module> sharing.
-�.34.3 (a946013): std/time/duration doc-pass partial (14 docs, 16% coverage).
+Ф.34.1 (5b055e7): HTTP MCP transport via std::net (no tokio). `nova doc-mcp --port N`.
+Ф.34.2 (dff9e6e): Incremental cache (closes Ф.30.2). WatchCache + Arc<Module> sharing.
+Ф.34.3 (a946013): std/time/duration doc-pass partial (14 docs, 16% coverage).
 
 200+ doc tests PASS (26+ suites + 75+ unit). Plan 45 close ~99%.
 Remaining: Plan 45.B full stdlib doc-pass (weeks).
@@ -12695,56 +12695,56 @@ TrivialBackend string len.
 **Итого Ф.28:** 3 closed. **182 PASS (+3) / 44 SKIP / 1 pre-existing FAIL.**
 Коммит: `be5b9839c27`.
 
-=== Plan 45 �.25 � nova tests (positive + negative) ===
+=== Plan 45 Ф.25 [ENCODING-LOST] nova tests (positive + negative) ===
 
-����� �������� �.25 (4 ����) �������� nova-tests .nv ��� �������� �����
-release nova-binary. ���� � convince ��� doc-tooling ��������� �� ������
-runtime behavior, � ��� edge cases �������� ����� ����.
+[ENCODING-LOST] [ENCODING-LOST] Ф.25 (4 [ENCODING-LOST]) [ENCODING-LOST] nova-tests .nv [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST]
+release nova-binary. [ENCODING-LOST] [ENCODING-LOST] convince [ENCODING-LOST] doc-tooling [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST]
+runtime behavior, [ENCODING-LOST] [ENCODING-LOST] edge cases [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST].
 
-6 ������ nova_tests/doc/f25_*:
+6 [ENCODING-LOST] nova_tests/doc/f25_*:
 
-f25_doc_warnings_positive.nv (�.25.1):
-- ������� � malformed #[deprecated], unknown #[future_compat_marker],
-  doc-test � unknown modifier 
+f25_doc_warnings_positive.nv (Ф.25.1):
+- [ENCODING-LOST] [ENCODING-LOST] malformed #[deprecated], unknown #[future_compat_marker],
+  doc-test [ENCODING-LOST] unknown modifier 
 ova,future_mod.
-- Doc-warnings �� ��������� ���������� � ������� ������������� � runtime ok.
+- Doc-warnings [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] runtime ok.
 
-f25_markdown_summary_positive.nv (�.25.2):
-- ������� � tricky docstrings: decimal 3.14, abbreviation e.g.,
+f25_markdown_summary_positive.nv (Ф.25.2):
+- [ENCODING-LOST] [ENCODING-LOST] tricky docstrings: decimal 3.14, abbreviation e.g.,
   markdown link [docs](https://example.com/api.html), version 1.0.0,
   naked URL https://x.com/path.html, backticked ormat!.
-- ��� extract'���� ��������� (����������� implicitly ����� �������� ����������).
+- [ENCODING-LOST] extract'[ENCODING-LOST] [ENCODING-LOST] ([ENCODING-LOST] implicitly [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST]).
 
-f25_source_url_positive.nv (�.25.3):
-- 6 ������� � ������ line positions (top, mid, bottom of file).
-- Cause [src] URLs ��������� �� distinct lines.
-- Runtime testing ������������ ��� recursive (factorial, fib, power_of_two)
-  �������� �� ���������� positions.
+f25_source_url_positive.nv (Ф.25.3):
+- 6 [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] line positions (top, mid, bottom of file).
+- Cause [src] URLs [ENCODING-LOST] [ENCODING-LOST] distinct lines.
+- Runtime testing [ENCODING-LOST] [ENCODING-LOST] recursive (factorial, fib, power_of_two)
+  [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] positions.
 
-f25_mutation_contracts_positive.nv (�.25.4):
-- 6 ������� � contracts, �� ����� �� ������ mutation operator:
+f25_mutation_contracts_positive.nv (Ф.25.4):
+- 6 [ENCODING-LOST] [ENCODING-LOST] contracts, [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] mutation operator:
   - > 0 (gt-to-ge mutant)
   - >= 0 (ge-to-gt mutant)
   - == 5 (eq-to-ne mutant)
   - < 100 (lt-to-le mutant)
   - Multiple <=/>= (combined)
-  - Recursive � decreases (drop-requires + ensures mutants)
-- Tests �������� boundary values (0 ��� >= 0, 99 ��� < 100) � ���
-  ������ �� cases ������� killing mutants.
+  - Recursive [ENCODING-LOST] decreases (drop-requires + ensures mutants)
+- Tests [ENCODING-LOST] boundary values (0 [ENCODING-LOST] >= 0, 99 [ENCODING-LOST] < 100) [ENCODING-LOST] [ENCODING-LOST]
+  [ENCODING-LOST] [ENCODING-LOST] cases [ENCODING-LOST] killing mutants.
 
 f25_doc_warnings_negative.nv:
-- Function � malformed attrs + ������� �������������� 	otally_undefined_helper_qwerty.
-- Compile error � ���� (�� � attrs � attrs ������ warnings).
+- Function [ENCODING-LOST] malformed attrs + [ENCODING-LOST] [ENCODING-LOST] 	otally_undefined_helper_qwerty.
+- Compile error [ENCODING-LOST] [ENCODING-LOST] ([ENCODING-LOST] [ENCODING-LOST] attrs [ENCODING-LOST] attrs [ENCODING-LOST] warnings).
 
 f25_mutation_contracts_negative.nv:
-- Function � contracts + ������� �������������� 
+- Function [ENCODING-LOST] contracts + [ENCODING-LOST] [ENCODING-LOST] 
 onexistent_mutation_target_zzz.
 - Compile error.
 
-������ ����� 
+[ENCODING-LOST] [ENCODING-LOST] 
 ova-cli/target/release/nova.exe test:
-- 4 PASS ����������
-- 2 PASS ���������� (expect compile error)
+- 4 PASS [ENCODING-LOST]
+- 2 PASS [ENCODING-LOST] (expect compile error)
 - Total: 6/6 PASS
 
 Test runtime: ~14s per file (release nova compilation overhead).
@@ -13328,51 +13328,51 @@ poly_recursion). Zero new regressions.
 
 Plan §11.5 catalog claim '10 lints' теперь **полностью покрыт** (11 implemented).
 
-=== Plan 45 �.26 nova tests (positive + negative, 2026-05-16) ===
+=== Plan 45 Ф.26 nova tests (positive + negative, 2026-05-16) ===
 
-����� closure Sprint �.26 (4 ����: Newtype fix / handler matrix / allow_transit /
-3 lints) �������� nova-tests ��� �������� runtime correctness ����� release nova.
+[ENCODING-LOST] closure Sprint Ф.26 (4 [ENCODING-LOST]: Newtype fix / handler matrix / allow_transit /
+3 lints) [ENCODING-LOST] nova-tests [ENCODING-LOST] [ENCODING-LOST] runtime correctness [ENCODING-LOST] release nova.
 
-**������ � indirect testing** (��� �� ��� �.25): 
-ova test ��������� compiled
-binary, � ���� ��� access � doc-tooling output (JSON/MD). ������� nova-tests
-��������� ��� Nova-��� **������������� � runtime ���������** ��� �������������
-���, � doc-tooling output ������ cargo integration tests (73 PASS).
+**[ENCODING-LOST] [ENCODING-LOST] indirect testing** ([ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] Ф.25): 
+ova test [ENCODING-LOST] compiled
+binary, [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] access [ENCODING-LOST] doc-tooling output (JSON/MD). [ENCODING-LOST] nova-tests
+[ENCODING-LOST] [ENCODING-LOST] Nova-[ENCODING-LOST] **[ENCODING-LOST] [ENCODING-LOST] runtime [ENCODING-LOST]** [ENCODING-LOST] [ENCODING-LOST]
+[ENCODING-LOST], [ENCODING-LOST] doc-tooling output [ENCODING-LOST] cargo integration tests (73 PASS).
 
-**6 ������ � nova_tests/doc/:**
+**6 [ENCODING-LOST] [ENCODING-LOST] nova_tests/doc/:**
 
-**f26_newtype_positive.nv** (�.26.1):
-- 	ype Email str, 	ype AccountId int � newtype declarations
-- 	ype UserName alias str � alias ��� contrast
-- Runtime: newtype ������������ ��� distinct type, alias works for plain types
-- Doc-pipeline: ��� newtype'� ���������� ��� kind: "newtype" � JSON (verified
-  � cargo doc_newtype.rs)
+**f26_newtype_positive.nv** (Ф.26.1):
+- 	ype Email str, 	ype AccountId int [ENCODING-LOST] newtype declarations
+- 	ype UserName alias str [ENCODING-LOST] alias [ENCODING-LOST] contrast
+- Runtime: newtype [ENCODING-LOST] [ENCODING-LOST] distinct type, alias works for plain types
+- Doc-pipeline: [ENCODING-LOST] newtype'[ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] kind: "newtype" [ENCODING-LOST] JSON (verified
+  [ENCODING-LOST] cargo doc_newtype.rs)
 
-**f26_handler_matrix_positive.nv** (�.26.2):
-- 2 effects (Counter, Logger) + 3 fn'� � handler literals
+**f26_handler_matrix_positive.nv** (Ф.26.2):
+- 2 effects (Counter, Logger) + 3 fn'[ENCODING-LOST] [ENCODING-LOST] handler literals
 - single handler usage, multiple handlers, handler reuse
-- Doc-pipeline: scanner ������� handler Counter { literals � populate'��
+- Doc-pipeline: scanner [ENCODING-LOST] handler Counter { literals [ENCODING-LOST] populate'[ENCODING-LOST]
   Counter.handlers = [{caller_item_id: "count_to"}, {caller_item_id: "count_twice"}, ...]
 
-**f26_capabilities_positive.nv** (�.26.3):
-- #realtime + #realtime nogc ������� (��� export � D63/D64 attr position)
-- Pure functions ��� #pure (Plan 33.6 hardening ������������ #pure ��� contracts)
-- Doc-pipeline: allow_transit ���� ������ [] (parser support � Plan 16 follow-up)
+**f26_capabilities_positive.nv** (Ф.26.3):
+- #realtime + #realtime nogc [ENCODING-LOST] ([ENCODING-LOST] export [ENCODING-LOST] D63/D64 attr position)
+- Pure functions [ENCODING-LOST] #pure (Plan 33.6 hardening [ENCODING-LOST] #pure [ENCODING-LOST] contracts)
+- Doc-pipeline: allow_transit [ENCODING-LOST] [ENCODING-LOST] [] (parser support [ENCODING-LOST] Plan 16 follow-up)
 
-**f26_lints_positive.nv** (�.26.4):
+**f26_lints_positive.nv** (Ф.26.4):
 - 5 lint-clean functions (proper summary, # Examples, #stable attr)
-- ��� �11.5 ������� ���������: imperative-mood, section-order, examples-present,
+- [ENCODING-LOST] [ENCODING-LOST]11.5 [ENCODING-LOST] [ENCODING-LOST]: imperative-mood, section-order, examples-present,
   stability-tagged, summary < 120 chars, no raw HTML
 - Doc-pipeline: 
-ova doc --check �� ���� ����� � 0 lint violations
+ova doc --check [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] 0 lint violations
 
 **f26_handler_matrix_negative.nv:**
-- handler literal + undefined fn � Set call > compile error
+- handler literal + undefined fn [ENCODING-LOST] Set call > compile error
 
 **f26_newtype_negative.nv:**
-- newtype declarations + undefined helper � ���� fn > compile error
+- newtype declarations + undefined helper [ENCODING-LOST] [ENCODING-LOST] fn > compile error
 
-**���������:** 6/6 PASS ����� 
+**[ENCODING-LOST]:** 6/6 PASS [ENCODING-LOST] 
 ova-cli/target/release/nova.exe test.
 
 **Issue encountered:** Plan 33.6 production hardening (Ф.1.2) сделал #pure
@@ -13517,23 +13517,23 @@ fix. Zero regressions от Plan 54 items.
 - feat(plan54 Ф.5 partial): nested-call inference caller-side
 - fix(plan54 Ф.4): generic-array-return turbofish through infer
 
-=== Plan 45 Sprint �.29 � Cleanup sprint (2026-05-16) ===
+=== Plan 45 Sprint Ф.29 [ENCODING-LOST] Cleanup sprint (2026-05-16) ===
 
-4 smaller items ������� � ����� ������ ����� �.28 completion.
+4 smaller items [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] Ф.28 completion.
 
-�.29.1 (ebd6138): Remove render_expr_legacy dead code, 127 LOC.
-�.29.2 (389e9c1): Precedence-aware parens � Nova precedence table + helpers.
-�.29.3 (d64eaa5): Drop-ensures mutator parallel to drop-requires.
-�.29.4 (286c6ad): Workspace mutation testing real-exec ����� sources_by_module_path.
+Ф.29.1 (ebd6138): Remove render_expr_legacy dead code, 127 LOC.
+Ф.29.2 (389e9c1): Precedence-aware parens [ENCODING-LOST] Nova precedence table + helpers.
+Ф.29.3 (d64eaa5): Drop-ensures mutator parallel to drop-requires.
+Ф.29.4 (286c6ad): Workspace mutation testing real-exec [ENCODING-LOST] sources_by_module_path.
 
-**Total ����� �.29:** 103 doc tests PASS (16 integration suites + 12 unit).
+**Total [ENCODING-LOST] Ф.29:** 103 doc tests PASS (16 integration suites + 12 unit).
 
-Plan 45 + 45.A foundation + �.29 cleanups = formally closed.
+Plan 45 + 45.A foundation + Ф.29 cleanups = formally closed.
 
-��� �������� (�.30+, ��������� sprints):
-- �.30: External crate-doc linking + incremental cache
-- �.31: HTML output + lunr search (main adoption blocker)
-- �.32: MCP server ��� AI/LLM real-time queries
+[ENCODING-LOST] [ENCODING-LOST] (Ф.30+, [ENCODING-LOST] sprints):
+- Ф.30: External crate-doc linking + incremental cache
+- Ф.31: HTML output + lunr search (main adoption blocker)
+- Ф.32: MCP server [ENCODING-LOST] AI/LLM real-time queries
 - Plan 45.B: Stdlib full doc-pass
 ### Ф.1 — Empty `{}` parser fix ✅
 
@@ -13661,20 +13661,20 @@ acceptance и аккуратное закрытие каждого Ф.* посл
 Имплементация Plan 55 — в следующем sprint'е (P3, не блокирует main
 work).
 
-=== Plan 45 Sprint �.31 � HTML polish trio (2026-05-16) ===
+=== Plan 45 Sprint Ф.31 [ENCODING-LOST] HTML polish trio (2026-05-16) ===
 
-�.31.2 (ca94cd6): HTML search index + inline JS filter (~25 LOC JS, no deps).
-�.31.3 (ca94cd6): Dark mode via CSS variables + prefers-color-scheme.
-�.31.4 (072365c): Multi-page HTML output (--output-dir CLI flag).
+Ф.31.2 (ca94cd6): HTML search index + inline JS filter (~25 LOC JS, no deps).
+Ф.31.3 (ca94cd6): Dark mode via CSS variables + prefers-color-scheme.
+Ф.31.4 (072365c): Multi-page HTML output (--output-dir CLI flag).
 
 HTML UX completed: light/dark auto, inline search, multi-page nav, XSS-safe,
 responsive, offline (no external deps).
 
 125 doc integration tests PASS (19 suites + 14 unit).
 
-Plan 45 family �������:
-- �.32 MCP server (��������� crate)
-- Plan 45.B stdlib doc-pass (��������� effort)
+Plan 45 family [ENCODING-LOST]:
+- Ф.32 MCP server ([ENCODING-LOST] crate)
+- Plan 45.B stdlib doc-pass ([ENCODING-LOST] effort)
 - Plan 45.A round 2: incremental cache, syntax highlighting
 2026-05-16 — Plan 52.3 — remaining map features
 
@@ -13724,18 +13724,18 @@ overload'ов `with_capacity`.
 - feat(52.3 Ф.1): empty [] в map-position теперь работает
 - docs(52.3): Ф.2/Ф.3 deferred — mono-pass corruption discovered
 
-=== Plan 45 Sprint �.31.5/6 + �.32.1 (2026-05-16) ===
+=== Plan 45 Sprint Ф.31.5/6 + Ф.32.1 (2026-05-16) ===
 
-�.31.5 (ed27942): Nova syntax highlighting ����� inline JS regex tokenizer.
-�.31.6 (b48e8e7): sitemap.xml generation (sitemaps.org/0.9 format).
-�.32.1 (fdbe11b): nova doc-query CLI (foundation ��� MCP server).
+Ф.31.5 (ed27942): Nova syntax highlighting [ENCODING-LOST] inline JS regex tokenizer.
+Ф.31.6 (b48e8e7): sitemap.xml generation (sitemaps.org/0.9 format).
+Ф.32.1 (fdbe11b): nova doc-query CLI (foundation [ENCODING-LOST] MCP server).
 
 Total: 138+ doc tests PASS (21+ suites + 19+ unit).
 
-Plan 45 family �������:
-- �.32.2/3 � JSON input parser + MCP server proper
-- Plan 45.B � stdlib full doc-pass
-- Plan 45.A round 2 � incremental cache, etc
+Plan 45 family [ENCODING-LOST]:
+- Ф.32.2/3 [ENCODING-LOST] JSON input parser + MCP server proper
+- Plan 45.B [ENCODING-LOST] stdlib full doc-pass
+- Plan 45.A round 2 [ENCODING-LOST] incremental cache, etc
 - Plan 16/42 follow-ups
 
 
@@ -13828,60 +13828,60 @@ improvements, regression sweep).
 - (54.3 commit ID не сохранён)
 - (Ф.4-Ф.6 — последующие коммиты)
 
-=== Plan 45 Sprint �.32.2/3 � JSON parser + MCP server (2026-05-16) ===
+=== Plan 45 Sprint Ф.32.2/3 [ENCODING-LOST] JSON parser + MCP server (2026-05-16) ===
 
-�.32.2 (53022051): Minimal JSON parser (280 LOC, no serde). doc-query CLI
+Ф.32.2 (53022051): Minimal JSON parser (280 LOC, no serde). doc-query CLI
 accepts .json input. 19 tests.
 
-�.32.3 (26b07fb): MCP server skeleton � Nova-unique! `nova doc-mcp <file>`
+Ф.32.3 (26b07fb): MCP server skeleton [ENCODING-LOST] Nova-unique! `nova doc-mcp <file>`
 exposes 3 tools (query_items/list_modules/get_item) via JSON-RPC over stdio.
-Compatible � Claude Code � MCP Inspector. 18 tests.
+Compatible [ENCODING-LOST] Claude Code [ENCODING-LOST] MCP Inspector. 18 tests.
 
 165+ doc tests PASS (24+ suites + 34+ unit).
 
-Plan 45 family � ����� �����. ��� ��������:
+Plan 45 family [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST]. [ENCODING-LOST] [ENCODING-LOST]:
 - Plan 45.B stdlib full doc-pass (weeks)
 - Plan 45.A round 2: incremental cache, HTTP/SSE MCP, AST highlight
 - Plan 16/42 follow-ups
 
-=== Plan 45 Sprint �.33 � Production polish (2026-05-16) ===
+=== Plan 45 Sprint Ф.33 [ENCODING-LOST] Production polish (2026-05-16) ===
 
-3 production polish items � ����� ������:
+3 production polish items [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST]:
 
-�.33.1 (953c57c): Server-side syntax highlighting.
-- `doc/highlight.rs` ���������� Nova lexer ��� accurate tokenization
-  (replaces JS regex �.31.5 ������� ����� context-blind matching).
-- HTML output � `<span class="tok-X">` markers, no JS needed.
-- 9 unit tests + critical context-aware test: `fn` ������ string literal
-  �� highlighted as keyword (regex tokenizer �����, AST �� �����).
+Ф.33.1 (953c57c): Server-side syntax highlighting.
+- `doc/highlight.rs` [ENCODING-LOST] Nova lexer [ENCODING-LOST] accurate tokenization
+  (replaces JS regex Ф.31.5 [ENCODING-LOST] [ENCODING-LOST] context-blind matching).
+- HTML output [ENCODING-LOST] `<span class="tok-X">` markers, no JS needed.
+- 9 unit tests + critical context-aware test: `fn` [ENCODING-LOST] string literal
+  [ENCODING-LOST] highlighted as keyword (regex tokenizer [ENCODING-LOST], AST [ENCODING-LOST] [ENCODING-LOST]).
 
-�.33.2 (cb1dbe7): Doc coverage CI gate.
+Ф.33.2 (cb1dbe7): Doc coverage CI gate.
 - New CLI flag `--coverage-threshold N` (0-100).
-- `--coverage` ������ exit 1 ���� actual coverage % < threshold.
+- `--coverage` [ENCODING-LOST] exit 1 [ENCODING-LOST] actual coverage % < threshold.
 - CI integration: `nova doc <dir> --coverage --coverage-threshold 80`.
 - Threshold validation 0..=100, error if out of range.
 
-�.33.3 (8585c03): nova.toml [doc] config.
-- `doc/config.rs` � minimal TOML subset parser (no serde dep).
+Ф.33.3 (8585c03): nova.toml [doc] config.
+- `doc/config.rs` [ENCODING-LOST] minimal TOML subset parser (no serde dep).
 - Fields: strict, coverage_threshold, source_url_template, extern_links, site_url.
 - CLI args override config; config sets env defaults.
 - nova.toml lookup walks up to 16 parent dirs.
 - 12 unit tests cover parsing, validation, escapes, edge cases.
 
-**Total ����� �.33:** ~190 doc tests PASS (24+ suites + 55+ unit).
+**Total [ENCODING-LOST] Ф.33:** ~190 doc tests PASS (24+ suites + 55+ unit).
 
 **Plan 45 family closure status:**
-- ? Core (�.1-�.28), Cleanup (�.29), Small wins (�.30), HTML (�.31.1-6),
-  AI integration (�.32.1-3), Production polish (�.33.1-3)
+- ? Core (Ф.1-Ф.28), Cleanup (Ф.29), Small wins (Ф.30), HTML (Ф.31.1-6),
+  AI integration (Ф.32.1-3), Production polish (Ф.33.1-3)
 
-**��� ��������:**
-- Plan 45.B � stdlib full doc-pass (weeks effort, ��������� ����)
-- Plan 45.A round 2 � HTTP/SSE MCP transport, incremental cache
-- Plan 16 follow-up � parser `#allow_transit`
-- Plan 42 follow-up � FileRegistry ��� handler matrix workspace
+**[ENCODING-LOST] [ENCODING-LOST]:**
+- Plan 45.B [ENCODING-LOST] stdlib full doc-pass (weeks effort, [ENCODING-LOST] [ENCODING-LOST])
+- Plan 45.A round 2 [ENCODING-LOST] HTTP/SSE MCP transport, incremental cache
+- Plan 16 follow-up [ENCODING-LOST] parser `#allow_transit`
+- Plan 42 follow-up [ENCODING-LOST] FileRegistry [ENCODING-LOST] handler matrix workspace
 
-����� 14 sessions (�.25 > �.33) Plan 45 close on ~98%. ��� user-facing
-features implemented � production-grade test coverage.
+[ENCODING-LOST] 14 sessions (Ф.25 > Ф.33) Plan 45 close on ~98%. [ENCODING-LOST] user-facing
+features implemented [ENCODING-LOST] production-grade test coverage.
 
 
 Session: Plan 57 MVP — Performance Benchmark Infrastructure (2026-05-16)
@@ -18436,23 +18436,23 @@ hard-assert эвристики планировщика нет. `parallel_for.nv
 bounded-sampling; quarantine только явный, с tracking — паритет
 Go/Rust). simplifications.md `[M-flaky-mn-actual-workload]` ✅ ЗАКРЫТО;
 README + plan-doc статусы. Spec правок не требует.
-=== Plan 90 � ��������� ������� � ������ (2026-05-22) ===
+=== Plan 90 [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] (2026-05-22) ===
 
-byte_at / bulk slice-�������� / compare � ��� �������� �������� �
-stdlib-���������� �� Nova ��� ������ ��������� � external fn.
+byte_at / bulk slice-[ENCODING-LOST] / compare [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST]
+stdlib-[ENCODING-LOST] [ENCODING-LOST] Nova [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] external fn.
 
-�.0 ����� (GATE): ������� A � safe-only. unsafe-keyword � �����
-��������� �� �������� (D6 ��������); 6 ������ ������ ��������� �������
+Ф.0 [ENCODING-LOST] (GATE): [ENCODING-LOST] A [ENCODING-LOST] safe-only. unsafe-keyword [ENCODING-LOST] [ENCODING-LOST]
+[ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] (D6 [ENCODING-LOST]); 6 [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST]
 external fn / external type / to_bits / BCE.
-�.1 spec D141. �.2 ������� C: nova_str_byte_at (nova_rt.h);
-nova_array_copy_from/copy_within/fill � ������� NOVA_ARRAY_IMPL
-(array.h); nova_array_compare_nova_byte (memcmp). �.3 codegen + registry
-(str @byte_at -> std/runtime/string.nv). �.4 � 6 �������
+Ф.1 spec D141. Ф.2 [ENCODING-LOST] C: nova_str_byte_at (nova_rt.h);
+nova_array_copy_from/copy_within/fill [ENCODING-LOST] [ENCODING-LOST] NOVA_ARRAY_IMPL
+(array.h); nova_array_compare_nova_byte (memcmp). Ф.3 codegen + registry
+(str @byte_at -> std/runtime/string.nv). Ф.4 [ENCODING-LOST] 6 [ENCODING-LOST]
 nova_tests/plan90/.
 
-Worktree nova-p90, ����� plan-90. ������ nova test: 1064 PASS / 0 FAIL
-(9 RUN-FAIL � ����� ������������� �������, ���������������� PASS ���
---jobs 1). Plan 90 (�.0-�.5) ������.
+Worktree nova-p90, [ENCODING-LOST] plan-90. [ENCODING-LOST] nova test: 1064 PASS / 0 FAIL
+(9 RUN-FAIL [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST] [ENCODING-LOST], [ENCODING-LOST] PASS [ENCODING-LOST]
+--jobs 1). Plan 90 (Ф.0-Ф.5) [ENCODING-LOST].
 
 ### Plan 93 Ф.0 — Option.is_some/is_none Nova-телом: GATE-STOP
 
@@ -19220,7 +19220,7 @@ Followup Plan 96 закрыл оба deferred-маркера одной итер
 - 0a3a48c1aa0 Ф.4 удалить runtime nova_str_slice + external fn @slice
 - 689717fff13 Ф.5 spec D26 + simplifications RESOLVED
 
-Р�зменения:
+Р[ENCODING-LOST]зменения:
 1. W_VIEW_PUSH_DETACH lint (compiler-codegen/src/lints.rs):
    per-function walker трекает биндинги let X = arr[range], при
    X.push(...) → emit warning. 3 теста pos/neg в nova_tests/plan96_1/.
@@ -23217,7 +23217,7 @@ Status: Ф.0 ✅ ЗАКРЫТ. Plan 91 переоценен по факту. Ф.
 готов для делегирования (single dev / parallel-agent split).
 Следующий immediate next P0 — Ф.7.1 quarantine.
 
-=== Plan 103.6 � realtime/blocking sync-class enforcement ===
+=== Plan 103.6 [ENCODING-LOST] realtime/blocking sync-class enforcement ===
 Date: 2026-05-27
 Branch: plan-103.6 (merged into main)
 Worktree: nova-p103-rt-blocking
@@ -23227,19 +23227,19 @@ Implements #parks/#wakes/#realtime bare attributes on ~85 external fn decls in
 std/runtime/sync.nv. Replaces hardcoded is_realtime_blocking match in emit_c.rs with
 ExternalRegistry-driven lookup. 6 error/warning codes, D172 spec.
 
-�.0 (Audit): Existing hardcoded list in emit_c.rs + SyncClass AST enum planned.
-�.1+�.2 (Impl): SyncClass enum in AST; ContractAttrs.sync_class; parse_sync_class_attr()
+Ф.0 (Audit): Existing hardcoded list in emit_c.rs + SyncClass AST enum planned.
+Ф.1+Ф.2 (Impl): SyncClass enum in AST; ContractAttrs.sync_class; parse_sync_class_attr()
   interleaving loop before export keyword; ~85 external fn annotations in sync.nv;
   annotation-driven enforcement in CEmitter (in_realtime/in_blocking flags).
-�.3+�.4 (Tests): emit_fn_forward_decl stores non-generic #parks fns in mono_fn_decls;
+Ф.3+Ф.4 (Tests): emit_fn_forward_decl stores non-generic #parks fns in mono_fn_decls;
   generic-type method dispatch (OnceCell[T], Lazy[T]) sync_class check; 26 test fixtures:
     Positive (10): realtime_{atomic_load,atomic_fetch_add,mutex_try_lock,
       semaphore_try_acquire,lazy_is_forced,oncecell_get,oncecell_set_first_call,fence}_ok.nv
       + blocking_{atomic_fetch_add,mutex_unlock}_ok.nv
     Negative (14): 12 EXPECT_COMPILE_ERROR + 2 EXPECT_COMPILE_WARNING
   All 26/26 tests PASS.
-�.5 (Spec): D172 draft in spec/decisions/06-concurrency.md (194 lines, �1-6 + matrix).
-�.6 (Closure): plan-103.6 merged into main (no-ff).
+Ф.5 (Spec): D172 draft in spec/decisions/06-concurrency.md (194 lines, [ENCODING-LOST]1-6 + matrix).
+Ф.6 (Closure): plan-103.6 merged into main (no-ff).
 
 Key findings:
   - fence() as trailing block expression generates void-to-nova_int cast; fixed by
@@ -23250,10 +23250,10 @@ Key findings:
   - Non-generic user fns with #parks must be stored in mono_fn_decls for call-site check.
 
 Commits:
-  - feat(plan103.6 �.1+�.2): e8916453269 � sync.nv annotation sweep + annotation-driven enforcement
-  - feat(plan103.6 �.3+�.4): 16c9eb9912d � emit_c enforcement fixes + 26 plan103_6 tests
-  - docs(plan103.6 �.5): 80d8fe12543 � D172 spec draft
-  - docs(plan103.6 �.6): <closure commit>
+  - feat(plan103.6 Ф.1+Ф.2): e8916453269 [ENCODING-LOST] sync.nv annotation sweep + annotation-driven enforcement
+  - feat(plan103.6 Ф.3+Ф.4): 16c9eb9912d [ENCODING-LOST] emit_c enforcement fixes + 26 plan103_6 tests
+  - docs(plan103.6 Ф.5): 80d8fe12543 [ENCODING-LOST] D172 spec draft
+  - docs(plan103.6 Ф.6): <closure commit>
   - Merge no-ff: <merge hash>
 
 === Plan 83.12 — Async net/socket stdlib TcpListener/TcpStream/UdpSocket (2026-05-27) ===
@@ -38555,3 +38555,7 @@ plan55 4->0 FAIL (e5945c24 + a4cb7f4d): Bug A — emit_c.rs: export fn T @m() =>
 [2026-06-19] Plan 169.2.1 CLOSED -- decouple prelude.core from std.unicode (D308). Root-fix for plan107 #prelude(core,runtime) [M-169.2-prelude-partial-stdlib-graph]: core.nv import std.unicode pulled the whole unicode folder-module incl normalize.cps_to_str consume sb -> D133-not-consumed at type-check (StringBuilder consume-methods live in collections, absent in partial prelude). Fix: (1) 10 char @methods moved back core.nv -> std/unicode/category.nv; (2) import std.unicode removed from core.nv (cycle core->unicode->collections->core broken); (3) no-import availability via RESTORED Plan 159 F.4 resolver-injection of std.unicode on char method-call selector (@method: tag), NOT facade re-export (re-export collides method names with same-named free fns -> would leak general_category(int) into global ns, breaking opt-in negative n_char_unicode_opt_in); (4) Option/Result @debug #impl(Debug) moved core.nv -> protocols.nv (else E_IMPL_UNKNOWN_PROTOCOL once D133 mask gone; restores core ZERO-imports). Tests: plan159 14/4 (f4_no_import PASS; 4 CC-FAIL pre-existing nova_str-init), plan152_3 16/16, opt-in negatives 6/0, Option/Result Debug plan91_14+15 27/0. Residual orthogonal followup [M-169.2.1-runtime-stringbuilder-partial] (runtime.unreachable interp-string -> Nova_StringBuilder typedef not in partial prelude). Branch plan-169.2.1-core-unicode (not merged).
 [2026-06-19] Plan 170 CLOSED -- priv(file) file-private visibility (D307). Narrowest top-level tier below module-default: priv(file) fn/type/const visible only in own file, not to peer files of a folder-module. Ladder priv(file) < module-default (D281) < export. file = contextual Ident (not KW). Parser: priv(file) before export, mutually exclusive both orders; bare top-level priv / priv(<other>) / priv(file)+export -> E_PRIV_QUALIFIER. Checker: file-private dedup (same-named priv(file) in different peers NOT a conflict -- disjoint file-scope) + per-file leak table -> E_FILE_PRIV_LEAK when peer references another file private symbol. Codegen: file-discriminated C symbols for priv(file) free fns (nova_fn_<mod>_f<file_id>_<name>) and consts (Nova_const_<mod>_f<file_id>_<name>), current_emit_file_id threaded through emit_fn + emit_test. Analog Rust pub(self); D29 module model intact (pure visibility hint). Tests: 13/13 positive blocks + 5/5 negative PASS. Regress plan160/plan124*/modules/std: 0 new FAIL (baseline-diffed). D-num: plan said D304 but taken (Test Category Selectors 169.1.1) + D305/D306 reserved by 104.10 -> assigned D307. Branch plan-170-priv-file.
 [2026-06-19] Plan 172 (Compiler rework: type system) — umbrella + atomic decomposition + first impl step. Renumbered 175→172 umbrella with sub-plans 172.1 (unified type engine), 172.2 (method-arg typecheck), 172.3 (type-set bounds). 4-agent audit found FOUR independent type engines; conventions §2 extended with "no specialness of std — uniform package resolution". Plan 172.1 decomposed into 36 atomic tasks (U.1.1…U.7.3); U.1 reworked under uniform-package model (original "expose ExternalRegistry to checker" rejected — it hardcodes the std file list; keystone is U.1.3: one registry from the import-resolved module). IMPLEMENTED U.1.1 (commit 71760459, branch plan-172-unified-type-engine): configurable std search-path (env NOVA_STD_PATH > nova.toml [workspace]/[package].std > default repo/std), all 9 repo.join("std") sites routed through manifest::resolve_std_path; 4/4 unit tests; default byte-identical (0 regressions). CLI --std-path → [M-172.1-U1-cli-stdpath].
+[2026-06-21] Plan 172.1 U.4.8 CLOSED (commit e1f1d96a, branch plan-172-unified-type-engine) — D315-endgame: delete dead type_ref_to_c_impl (~500 lines). After the U.4.7 flip type_ref_to_c was a thin wrapper `match resolved_type_to_c(from_type_ref(ty)) { Some=>Ok, None=>type_ref_to_c_impl(ty) }`; _impl was reachable ONLY for None. Folded its behavior into the single lowering: resolved_type_to_c Option<String>→Result<String,String> so the one type→C path carries its own failure reason (Err: usize/isize/ptr removed — byte-identical _impl messages; Self-without-receiver). type_ref_to_c is now resolved_type_to_c(from_type_ref(ty)); the §0/§10 "two windows of type truth" anti-pattern is gone. The one non-mechanical subtlety: the Result arm no longer `?`-defers an un-lowerable inner — it mirrors _impl (catch-and-fallback to erased NovaRes_nova_int_nova_str*), else Option[Result[usize,E]] would wrongly become Err instead of erased-Ok. Verification (patch+checkout baseline, dev-workflow §6): byte-identical multiset-.c vs the clean binary over ~55 type-heavy dirs (all arms); every non-identical file proven pre-existing per-process nondeterminism ([M-172-codegen-typedef-order-nondeterminism]: closure env-field order / sum-variant &&-clause order — same clean binary varies A≠B across 6 runs); FAIL sets identical clean↔new everywhere (43-dir 99/10, 12-dir 39/14, all pre-existing). Neg guards: plan133/134/neg (usize/isize/ptr) + new detect172/neg/n_removed_type_sig (removed type in a fn signature → E7001) pass on the flipped binary. Remaining endgame U.6.1 (collapse the TypeRef→ResolvedType adapter hop at ~120 declared-type sites) is OUT of scope.
+[2026-06-21] Plan 172.1 U.4.2 non-primitive `As` CLOSED (commit 08d213c4, branch plan-172-unified-type-engine) — the gate U.4.2's stateful-`As` ceiling waited on (a general state-aware type→C lowering) was DELIVERED by U.4.6/U.4.8, so lifted the `is_primitive_lowerable` gate in number_exprs: the producer now seeds `from_type_ref(target)` for ANY cast target, not just primitives. Equivalence is guaranteed by construction — legacy `infer_expr_c_type(As)` = `type_ref_to_c(target)`, which by the U.4.8 identity IS `resolved_type_to_c(from_type_ref(target))`, the exact value the consumer computes. `is_primitive_lowerable` (sole caller) deleted. Byte-identical in release by construction: `resolved_types` has exactly one read site, under `#[cfg(debug_assertions)]` (the equivalence assert) — in release it is written but never read, so the extra annotations are unobservable (grep-proven). Verified: debug nova-codegen test-build on 11 non-primitive-`As` fixtures (ptr-casts / newtype / hof-alias / handle-pattern) → 0 `[U.4.1]` panics; release As-heavy sample 0 regressions. This completes the STATELESS+SYNTACTIC producer (literals/bool-ops/arithmetic/primitive+non-primitive `As`). Tuple/Block are deliberately NOT taken (not a simplification — proven non-equivalent): `infer_expr_c_type(TupleLit)` concreteness (`ety.is_empty()`) differs from `resolved_type_to_c(Tuple)` (`Nova_`-prefix-schema) → they diverge on a type-param element (`x as T` in a base generic body); Block legacy does a trailing-`let` lookup + pattern-override side-effects the syntactic producer cannot replicate. Their correct annotation needs the checker-resolved element/trailing type (U.4.4), not the syntactic producer. number_exprs is now at its syntactic ceiling; further U.4 progress needs the checker-resolution path (U.3.4 resolved-callee channel → U.4.3 Call-arm / U.4.4 structural).
+[2026-06-21] Plan 172.1 U.3.3-instance CLOSED (commit f3ba0013, branch plan-172-unified-type-engine, pushed to github) — instance-method `obj.method(args)` overload resolution moved into the checker, closing the §6 «каждая ошибка понятна» / §1 «C — не первичный чекер» gap. Before: `f1_check_call`'s Member arm bailed on value receivers («receiver-type inference ненадёжна в bootstrap») → an argument category mismatch (str↔int) leaked to the C compiler as an ugly `CC-FAIL`. Now `check_instance_overload` resolves overloads in the checker (receiver type via the self-less `BoundCtx::infer_arg_ty` called cross-ctx from TypeCheckCtx; overload set from `sig.method_table`; arg-compat via `overload_applicability` — the same permissive arity-aware rule as U.3.1 free-fn / U.3.3 Type.method) and fires the existing `[E_NO_MATCHING_OVERLOAD]` (error-index unchanged) ONLY when ≥1 overload binds by arity but none is category-compatible; codegen keeps the final exact-C selection (U.3.4). Primitive receivers are gated out (`is_primitive_recv_name`) — their external overloads (`str.from(char)`) live in codegen's ExternalRegistry, not the checker's method_table, so the set is incomplete and would false-positive (same gate as U.3.2, deps U.1/U.2). Followed §7 strictly: built an env-gated NON-FATAL detect-mode FIRST (eprintln classification, removed after), measured the blast-radius over the WHOLE nova_tests = 707K instance-call classifications with ZERO WOULD-FLAG (62K resolved-ok, 58K primitive-gated) → zero false positives on the full positive corpus before turning the rule fatal. Regression: 43-dir 99/10 + 66-dir 126/14 identical to clean, 0 new E_NO_MATCHING_OVERLOAD; crafted mismatch `f.bar("hello")`→`Foo.bar(int)` now a clean checker error at the right span (was CC-FAIL). Tests: detect172/u33i_instance_overload_pos (overload resolves) + detect172/neg/n_instance_method_mismatch (EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD). This was the direct payoff of recording the §6 «errors must be understandable» principle. Remaining: primitive-recv instance methods (U.3.2, gated on U.1/U.2) and complex-receiver calls (infer_arg_ty→None = honest gap).
+[2026-06-21] Plan 172.1 U.3.4-prep SUBSTRATE + fixture fix (commits f1438a61 + 96f309f7, branch plan-172-unified-type-engine, pushed). (1) Resolved-callee span-channel substrate toward the §0 prize (U.4.3 — deleting the ~900-line overload re-resolution in codegen's Call arm). KEY INSIGHT that retires the supposed U.2.4 gate: codegen does NOT need the checker to reproduce its mangled C-name (that IS the blocked [M-172.1-U2.4-mangling-fragmented]) — it only needs a STABLE callee identity, the FnDecl declaration Span (both layers hold &FnDecl). The checker writes "chose FnDecl@span"; codegen reads the span, looks up its own CodegenView, and mangles itself (mono included — legitimate lowering stays codegen-side). So U.3.4/U.4.3 are NOT gated on U.2.4 (unifying the mangling schemes is a separate concern). Implemented: ModuleEnv.resolved_callees: HashMap<ExprId, Span>; TypeCheckCtx writes a RefCell buffer from f1_check_call (call-site e.id → callee.span) on unambiguous resolution (free-fn single / Type.method / module-fn); check_module_impl lifts it into env. Codegen does NOT read it yet (grep-proven absent in codegen/) → byte-identical by construction (ADDITIVE substrate, like U.4.1). Coverage 77 callees in plan99 (build path, where number_exprs assigned ExprIds; nova-cli `check` skips number_exprs → key collision, so measure via build/test). Regression sample 33/0. Remaining = instance/multi-overload selection + codegen consume + equivalence-assert = U.4.3. (2) Found+fixed a defect in last turn's U.3.3-instance fixtures (f3ba0013): both used `fn Type.method` (STATIC) + `obj.method()` (instance) — wrong syntax; Nova instance methods are `fn Type @method`. The `--compile-error` run had not compiled the positive blocks, so it slipped to github. Pos is now a single-overload `@`-method (compiles+runs); neg an `@`-method mismatch → E_NO_MATCHING_OVERLOAD. Surfaced a REAL U.4.3 motivator: codegen mis-dispatches an overloaded `@`-instance call by C-type for a local-variable receiver (`Pt2` is a heap-record, passed by reference `Nova_Pt2*` — calling it a "value receiver" earlier was imprecise; the mis-dispatch is about ARG-overload selection, orthogonal to receiver passing) (`p.shifted("hi")` → the int overload → CC-FAIL) even though the checker resolves it correctly — exactly what the consume-channel removes.

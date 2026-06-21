@@ -1,0 +1,19 @@
+// Plan 101.1 Ф.5 — positive: fn[T] []T @map_mii[U] inline.
+
+module nova_tests.generics
+
+fn[T] []T @my_map_mii[U](f fn(T) -> U) -> []U {
+    mut out []U = []U.with_capacity(@len())
+    for x in @ {
+        out.push(f(x))
+    }
+    out
+}
+
+test "fn[T] []T @map_mii int → int" {
+    ro v []int = [1, 2, 3]
+    ro doubled = v.my_map_mii(|x| x * 2)
+    assert(doubled.len() == 3)
+    assert(doubled.get(0) == Some(2))
+    assert(doubled.get(2) == Some(6))
+}

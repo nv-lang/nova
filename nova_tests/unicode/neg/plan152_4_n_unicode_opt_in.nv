@@ -1,0 +1,11 @@
+// Plan 152.4 (criterion A6): `std/unicode` is OPT-IN — NOT in the prelude.
+// Without `import std.unicode`, the normalization functions are not in scope:
+// the program must not silently compile. Negative test pins the opt-in boundary.
+//
+// EXPECT_COMPILE_ERROR undefined identifier
+module neg.plan152_4_n_unicode_opt_in
+
+test "normalize_nfc is undefined without import std.unicode" {
+    ro x = normalize_nfc("e\u{301}")
+    assert(x == "\u{e9}")
+}

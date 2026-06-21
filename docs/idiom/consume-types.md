@@ -25,32 +25,46 @@ Heuristic: «**забыть → leak / inconsistency**».
 
 ## Canonical lifecycle
 
-### Симметричная пара errdefer + okdefer
+### Cover через `Consumable.on_exit` (D188)
+
+> `errdefer`/`okdefer` УДАЛЕНЫ ([D189](../../spec/decisions/03-syntax.md#d189)) —
+> success/error/panic-пути consume-ресурса покрывает `on_exit(outcome)`. Подробно →
+> [consume-scope-cleanup.md](consume-scope-cleanup.md); модель panic/fail/defer/on_exit →
+> [error-and-cleanup-model.md](error-and-cleanup-model.md).
 
 ```nova
+type Transaction consume { /* ... */ }
+
+fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[OrderErr] -> () {
+    match outcome {
+        Success    => @commit()?      // success → commit
+        Failure(_) => @rollback()?    // error   → rollback
+        Panic(_)   => @rollback()?    // panic   → rollback
+    }
+}
+
 fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
-    consume tx = db.begin()
-    errdefer { tx.rollback()? }                 // error → rollback
-    okdefer  { tx.commit()?   }                 // success → commit
-    ro order = db.insert(data)?
-    db.notify(order)?
-    return Receipt { id: order.id }
+    consume tx = db.begin() {
+        ro order = db.insert(data)?
+        db.notify(order)?
+        Receipt { id: order.id }
+    }   // выход из блока → on_exit(outcome), exactly-once
 }
 ```
 
-Exhaustive cover для consume-обязательства через **defer-family**:
-- success path → `okdefer` (commit)
-- error path → `errdefer` (rollback)
-- failable cleanup composes через D158 Plan 49 multi-error.
+`on_exit` вызывается ровно один раз на любом exit-path (success / throw / panic / cancel);
+failable cleanup композируется через [D158](../../spec/decisions/03-syntax.md#d158) (MultiError).
 
-### Альтернатива — explicit commit на success
+### Альтернатива — explicit commit + флаг-паттерн (без Consumable)
 
 ```nova
 fn process() Fail[Err] -> () {
+    mut done = false
     consume tx = begin()
-    errdefer { tx.rollback() }                  // error → rollback
+    defer { if !done { tx.rollback() } }         // error/panic → rollback
     do_work()?
     tx.commit()                                  // success → explicit commit
+    done = true
 }
 ```
 
@@ -227,8 +241,8 @@ commit/rollback choice важен.
 - [D133](../../spec/decisions/02-types.md#d133) — type-level consume.
 - [D156](../../spec/decisions/02-types.md#d156) — generic `[T consume]`.
 - [D157](../../spec/decisions/05-memory.md#d157) — implicit view default + closure capture + match consume.
-- [D158-D162](../../spec/decisions/03-syntax.md#d158) — defer/errdefer/
-  okdefer family.
+- [D158-D162](../../spec/decisions/03-syntax.md#d158) — defer + cleanup family
+  (errdefer/okdefer ретракнуты [D189](../../spec/decisions/03-syntax.md#d189) → D188 on_exit).
 - [D163](../../spec/decisions/02-types.md#d163) — FFI `external fn`.
 - [D164](../../spec/decisions/02-types.md#d164) — cross-module.
 

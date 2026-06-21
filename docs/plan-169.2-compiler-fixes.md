@@ -465,3 +465,125 @@ side-table (array_element_types / compute_array_elem_type_for_obj — обе key
 
 (То же семейство, что §7 tuple-of-closures: self-describing C-имя авторитетнее
 стейл side-table при коллизии имён в folder-модуле.)
+
+## 19. types/mod.rs: blanket-метод `fn[T] T @m` не резолвился на str/user-типах
+
+**Симптом:** `[E7320] no field or method` на blanket-методе (receiver = собственный
+type-параметр функции, напр. `fn[T] T @bare_identity() -> T => @`) при вызове на
+типе из `self.types` — `str` (lang-item, Plan 139), user-типы. На примитивах (int)
+проходило. `plan101_1/bare_t_identity.nv` падал на str-кейсе (стр.14) на текущем main
+(pre-existing баг, вскрыт консолидацией generics 169.1.2).
+
+**Почему это баг:**
+Blanket-метод лежит в `method_table` под ключом type-параметра (`"T"`), а не под
+конкретным типом. `f3_check_member` резолвит методы по `tname` (`method_table[tname]`)
+→ для str/user-типов blanket не находит → ложный E7320. Примитивы случайно проходили:
+их нет в `self.types` → ранний `let Some(td) = self.types.get(tname) else { return };`
+ДО проверки метода (т.е. без проверки вообще).
+
+**Исправление:**
+При build `method_table` собираем `blanket_method_names: HashSet<String>` — методы,
+где `recv.type_name ∈ f.generics` (receiver — собственный type-параметр fn). В
+`f3_check_member` перед E7320 принимаем имя, если оно ∈ `blanket_method_names` (blanket
+применим к любому типу). Тесты: plan101_1/bare_t_identity int+str PASS;
+`nova_tests/plan169_2_blanket` (blanket + `[]T` в folder-module); регресс plan101/99/138
+0 FAIL. Маркер `[M-blanket-method-resolve]`, commit `ca85c001`, merged в main.
+
+## 20. emit_c.rs: `uint.MAX` манглит `NovaOpt_uint64_t` вместо `NovaOpt_nova_uint`
+
+**Симптом:** `Some(uint.MAX)` → CC-FAIL `initializing 'NovaOpt_nova_uint' with an
+expression of incompatible type 'NovaOpt_uint64_t'`. Все 5 файлов `plan70_5` падали
+(каждый отдельно, ~стр.6096 .c). Вскрыто консолидацией 169.1.2 (после выноса
+EXPECT-в-root, см. `1a5feddb`).
+
+**Почему это баг:**
+`NovaOpt_<X>` = `format!("NovaOpt_{}", sanitize_c_for_ident(payload_c_type))`. Канонический
+C-тип Nova `uint` — `nova_uint` (`typedef uintptr_t nova_uint`, Plan 133), и Option-машинерия
+эмитит `NovaOpt_nova_uint`. Но таблица numeric-констант (`int.MAX`/`f64.NAN`/…) для строки
+`uint.MAX` отдавала C-тип `"uint64_t"` (скопировано с `u64`, у которого канон именно
+`uint64_t`). → `Some(uint.MAX)` мэнглил `NovaOpt_uint64_t` (undefined struct) при том, что
+`Some(99 as uint)` корректно давал `NovaOpt_nova_uint`. `nova_uint`≠`uint64_t` как C-типы
+(хоть и равной ширины) → C-init incompatible.
+
+**Исправление:**
+`("uint", "MAX", "UINT64_MAX", "uint64_t")` → `("uint", "MAX", "((nova_uint)UINT64_MAX)",
+"nova_uint")` — зеркалит паттерн `int.MAX`/`u8.MAX` (каст к nova-typedef + nova-typedef как
+тип). `u64.MAX` НЕ трогаем (его канон = `uint64_t`, бага нет). plan70_5: PASS 4/0.
+Маркер `[M-169.2-uint-max-opt-mangle]`.
+
+## 21. KNOWN BUG (не фикс, отложен): user-shadow generic-типа протекает в чужой модуль
+
+**Симптом:** `[E7310] type Vec is not generic — takes no type arguments, but 1 was provided`,
+указывающий на `std/collections/hashmap.nv` / `vec.nv`, при наличии в пользовательском модуле
+`type Vec { x int, y int }` (не-generic), затеняющего прелюд/импортированный `Vec[T]`. Вскрыто
+консолидацией 169.1.2 (plan138_2 как folder-module).
+
+**Почему это баг (не test-rot):**
+Затенение пользователем имени обобщённого типа (`Vec`) **протекает за пределы модуля
+пользователя** во внутренние `Vec[T]`-ссылки СОБСТВЕННОГО кода импортированных std-модулей.
+По D29 «user wins entirely» затенение должно быть module-local, а std-модуль должен видеть
+свой настоящий generic `Vec[T]`. Комментарий fixture'а plan138_2/t14 фиксирует, что это
+поведение когда-то чинилось → вероятно регресс (или дрейф от Vec-prelude-flip). Это
+**семантика резолвера**, фикс — в компиляторе.
+
+**Статус:** ОТЛОЖЕН (риск: затрагивает name-resolution/shadow-scoping по всей системе типов).
+Обходной путь применён в тестах: shadow-fixtures `plan138_2` (t14/t15/t16) переименованы
+`type Vec` → `UserRecNN` (shadow-покрытие снято; suppress-механизм по-прежнему покрыт
+`plan62/neg/prelude_shadow_suppress.nv`). Маркер `[M-vec-shadow-leak-e7310]`
+(backlog-followups.md). Priority: M.
+
+## 22. types/mod.rs: P7 (E_READONLY_CONTENT) over-strict на index-write через raw `*mut T`
+
+**Симптом:** `ro p = unsafe { RawMem.alloc(..) as *mut T }; unsafe { p[0] = a }` →
+`[E_READONLY_CONTENT] cannot write through index on a ro-bound binding (L1/L2 freeze,
+D246 P7)`. plan138_2/t17 (cell #1 turbofish-misparse regression; `p[0]=a` — лишь setup
+в конструкторе). Вскрыто консолидацией 169.1.2.
+
+**Почему это баг (подтверждено решением автора):**
+`p[i] = v` ≡ `*(p+i) = v` — запись ЧЕРЕЗ указатель. По D246 для raw-указателя
+pointee-мутабельность читается из ТИПА (L3): `*mut T` writable, binding-independent
+(как `T* const` в C). `ro` замораживает только ребиндинг `p`, не запись через `*p` —
+ровно как уже делает Deref-ветка (`*p = v`, oracle row C). Но Index-ветка применяла
+L1/L2 binding-freeze (корректную для VALUE-коллекций `[]int`/Vec) и к raw-указателям.
+
+**Исправление (две части):**
+1. `check_target_readonly` Index-ветка: перед binding-freeze — если `pointee_is_writable(obj_ty)`
+   возвращает `Some` (т.е. obj — raw `TypeRef::Pointer`; None для value-коллекций),
+   обработать как Deref: `Some(false)`→`E_POINTER_RO_ASSIGN`, `Some(true)`→разрешить (return).
+   Carve-out pointer-exact (value-коллекции не затронуты — plan147/108/118 0 FAIL).
+2. `infer_expr_type`: добавлена ветка `Block(b) if b.stmts.is_empty()` → тип трейлинг-выражения.
+   Без неё `ro p = unsafe { … as *mut T }` инферил `None` (блок-выражение не имело ветки →
+   `_ => None`), и carve-out (часть 1) не видел, что `p` — указатель. Консервативно: только
+   блоки БЕЗ statements (трейлинг не может ссылаться на внутренние let-биндинги, отсутствующие
+   в outer scope). Блоки со stmts остаются `None` как раньше.
+
+plan138_2: PASS 1/0. Маркер `[M-169.2-ptr-index-ro-binding]`.
+
+## 23. KNOWN BUG (не фикс, гейт Plan 172 U.4): пустой `[]fn`-литерал → nova_int element-fallback
+
+**Симптом:** `nova_tests/plan55/f1_closure_array_gc_stress` RUN-FAIL (детерминированно 3/3) —
+SEGV. Изначально выглядело как GC heap-bound/closure-collect баг (предмет Plan 55 Ф.1).
+
+**Диагностика (по [docs/debugging-races.md](debugging-races.md) §2.1.1 + §3.1):**
+- Дискриминатор #1 `GC_DONT_GC=1` **НЕ чинит** → это НЕ GC premature-collect.
+- `NOVA_DIAG_SEGV=1` → frame[1]=`nova_fn_main_impl` (probe.c:1206), READ@0x0,
+  RIP в `NOVA_CLOS_CALL_vi(f)` с `f == null`.
+- Scale-порог 400→700 (n≤400 PASS, n≥700 SEGV); `[]int` контроль n=1000 PASS;
+  `[]fn` с НЕ-захватывающими `|| 1` n=1000 — тоже SEGV (не про захват).
+
+**Корень (генерённый .c):**
+```c
+/* mut arr []fn() -> int = [] */
+Nova_Vec____nova_int* _nv_tmp = Nova_Vec____nova_int_static_new();  // ← Vec из INT!
+NovaArray_void_p* arr = _nv_tmp;                                    // ← а тип void_p
+... nova_array_push_void_p(arr, &closure) ...                      // пуш closure-указателей
+```
+Пустой литерал `[]` для `[]fn() -> int` вывел element-type как **`nova_int`** (fallback)
+вместо fn/void_p → type-confused контейнер (`Vec[int]` vs `NovaArray_void_p`). Малый N
+совпадает по layout; на масштабе (realloc) расходится → `f`==null → call-null → SEGV.
+
+**Статус:** ОТЛОЖЕН, гейт **Plan 172 U.4**. Это конкретный инстанс класса
+**[M-172-nova-int-fallback-audit]** (silent nova_int fallback на unknown element-type,
+main `3046f7e6`, ~78 sites), который Plan 172 U.4 убирает системно. Отдельно НЕ чиним
+(point-fix продублирует 172 U.4). Маркер `[M-169.2-vec-fn-empty-literal-nova-int]`
+(backlog-followups.md).

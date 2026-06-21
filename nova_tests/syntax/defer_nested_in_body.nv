@@ -1,4 +1,4 @@
-// defer_nested_in_body.nv — Plan 20 gap-check (2): defer/errdefer
+// defer_nested_in_body.nv — Plan 20 gap-check (2): defer
 // внутри defer body.
 //
 // Spec D90 не обсуждает явно. Defer body — это обычный block, в

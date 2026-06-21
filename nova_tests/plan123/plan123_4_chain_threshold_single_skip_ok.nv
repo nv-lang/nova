@@ -1,0 +1,24 @@
+// Plan 123.4 T1.7: single chain access — below threshold, not cached.
+
+module nova_tests.plan123
+
+type Layer3 {
+    ro inner Layer_Inner
+}
+
+type Layer_Inner {
+    ro v int
+}
+
+fn Layer3 @single() -> int {
+    @inner.v
+}
+
+fn Layer3.new(v int) -> Layer3 {
+    Layer3 { inner: Layer_Inner { v } }
+}
+
+test "single chain access not cached" {
+    ro l = Layer3.new(42)
+    assert(l.single() == 42)
+}

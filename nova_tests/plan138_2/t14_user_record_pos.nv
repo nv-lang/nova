@@ -1,0 +1,31 @@
+// Plan 138.2 Ф.0c — user-defined non-generic record: literal, field read,
+// field mutate, value independence.
+//
+// 169.2: ранее этот фикстур тестировал user `type Vec` SHADOW прелюд-`Vec[T]`;
+// тип переименован в `UserRec14`, shadow-покрытие снято (затенение `Vec`
+// протекало во внутренние `Vec[T]`-ссылки std → E7310, баг резолвера).
+
+module nova_tests.plan138_2
+
+type UserRec14 { x int, y int }
+
+test "user record literal + field read" {
+    ro v = UserRec14 { x: 1, y: 2 }
+    assert(v.x == 1)
+    assert(v.y == 2)
+}
+
+test "user record mutate own field" {
+    mut v = UserRec14 { x: 10, y: 20 }
+    v.x = 99
+    assert(v.x == 99)
+    assert(v.y == 20)
+}
+
+test "two user records are independent values" {
+    ro a = UserRec14 { x: 1, y: 2 }
+    ro b = UserRec14 { x: 3, y: 4 }
+    assert(a.x == 1)
+    assert(b.x == 3)
+    assert(a.y + b.y == 6)
+}

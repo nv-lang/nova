@@ -1,0 +1,9 @@
+// Plan 124.8 — positive: single-line tuple + trailing comma.
+module nova_tests.plan124
+
+type Vec36(x f64, y f64, z f64,)
+
+test "single-line + trailing comma" {
+    ro v = Vec36(x: 1.0, y: 2.0, z: 3.0)
+    assert(v.x == 1.0)
+}

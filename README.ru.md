@@ -55,7 +55,7 @@ type Db effect {
 
 // Бизнес-логика: эффект Db в сигнатуре, реализация неизвестна
 fn transfer(from u64, to u64, amount money) Db Fail -> () {
-    let src = Db.query(sql`SELECT * FROM accounts WHERE id = ${from}`)
+    ro src = Db.query(sql`SELECT * FROM accounts WHERE id = ${from}`)
     if src[0].balance < amount { throw InsufficientFunds }
     Db.exec(sql`UPDATE accounts SET balance = balance - ${amount} WHERE id = ${from}`)
     Db.exec(sql`UPDATE accounts SET balance = balance + ${amount} WHERE id = ${to}`)
@@ -69,7 +69,7 @@ fn main() Io Fail -> () =>
 
 // Тест: тот же код, in-memory handler, никаких моков
 test "transfer moves money" {
-    let mem = in_memory_db([
+    ro mem = in_memory_db([
         Account { id: 1, balance: 500 },
         Account { id: 2, balance: 0 },
     ])
@@ -90,7 +90,7 @@ DI-фреймворка, никакой mock-библиотеки.
 ```nova
 fn check_all(urls []str) Net Fail -> []HealthStatus =>
     parallel for url in urls {
-        let resp = Http.get(url)!!
+        ro resp = Http.get(url)!!
         HealthStatus { url, code: resp.status, latency: resp.elapsed }
     }
 ```
@@ -112,7 +112,7 @@ fn pick_winner(participants []str) Random -> str =>
     participants[Random.range(0, participants.len())]
 
 test "winner is deterministic with seed" {
-    let people = ["alice", "bob", "carol", "dave"]
+    ro people = ["alice", "bob", "carol", "dave"]
     with Random = seed(42) {
         assert(pick_winner(people) == "carol")
         assert(pick_winner(people) == "alice")
@@ -226,7 +226,7 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
   library boundaries. File-level `#forbid Net, Fs` capability
   attribute (Nova-unique).
 - Эффекты + handlers (D61/D87): keyword'ы `effect`/`handler`,
-  `with X = h { body }`, `interrupt v`, `Handler[E, IRT]` first-class
+  `with X = h { body }`, `interrupt v`, `Effect[E, IRT]` first-class
   тип. `forbid`, `realtime` capability-блоки.
 - Structured concurrency (D71/D75/D92): `spawn`, `supervised`,
   `supervised(cancel: tok)`, `parallel for`, channels, `select`.

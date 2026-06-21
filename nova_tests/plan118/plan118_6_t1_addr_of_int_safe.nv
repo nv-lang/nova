@@ -1,0 +1,20 @@
+// Plan 118.6 — &x on int without unsafe block (safe after Ф.2).
+// EXPECT_PASS
+
+module nova_tests.plan118
+
+test "addr_of int is safe" {
+    ro x = 42
+    ro p = &x
+    unsafe {
+        assert(p.read() == 42)
+    }
+}
+
+test "addr_of int mut is safe" {
+    mut y = 10
+    ro p = &y
+    unsafe {
+        assert(p.read() == 10)
+    }
+}

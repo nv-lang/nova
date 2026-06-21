@@ -61,7 +61,7 @@ type Db effect {
 
 // Business logic: Db effect in the signature, implementation unknown
 fn transfer(from u64, to u64, amount money) Db Fail -> () {
-    let src = Db.query(sql`SELECT * FROM accounts WHERE id = ${from}`)
+    ro src = Db.query(sql`SELECT * FROM accounts WHERE id = ${from}`)
     if src[0].balance < amount { throw InsufficientFunds }
     Db.exec(sql`UPDATE accounts SET balance = balance - ${amount} WHERE id = ${from}`)
     Db.exec(sql`UPDATE accounts SET balance = balance + ${amount} WHERE id = ${to}`)
@@ -75,7 +75,7 @@ fn main() Io Fail -> () =>
 
 // Test: same code, in-memory handler, no mocks at all
 test "transfer moves money" {
-    let mem = in_memory_db([
+    ro mem = in_memory_db([
         Account { id: 1, balance: 500 },
         Account { id: 2, balance: 0 },
     ])
@@ -96,7 +96,7 @@ code. No DI framework, no mocking library.
 ```nova
 fn check_all(urls []str) Net Fail -> []HealthStatus =>
     parallel for url in urls {
-        let resp = Http.get(url)!!
+        ro resp = Http.get(url)!!
         HealthStatus { url, code: resp.status, latency: resp.elapsed }
     }
 ```
@@ -120,7 +120,7 @@ fn pick_winner(participants []str) Random -> str =>
     participants[Random.range(0, participants.len())]
 
 test "winner is deterministic with seed" {
-    let people = ["alice", "bob", "carol", "dave"]
+    ro people = ["alice", "bob", "carol", "dave"]
     with Random = seed(42) {
         assert(pick_winner(people) == "carol")
         assert(pick_winner(people) == "alice")
@@ -206,7 +206,7 @@ programmer writes nothing special.
 - [spec/open-questions.md](spec/open-questions.md) — unresolved questions
 - [spec/decisions/](spec/decisions/) — design decision log with rationale
 - [docs/typed-pointers.md](docs/typed-pointers.md) — `*T` family canonical syntax (V2/V3 right-binding rule, `safe` keyword, modifier composition rules)
-- [compiler-codegen/](compiler-codegen/) — Nova compiler (Rust): parser, type-checker, treewalk interpreter, C-backend codegen
+- [compiler-codegen/](compiler-codegen/) — Nova compiler (Rust): parser, type-checker, C-backend codegen, native runtime
 
 ## Status
 
@@ -235,7 +235,7 @@ What works today (bootstrap):
   for library boundaries. File-level `#forbid Net, Fs` capability
   attribute (Nova-unique).
 - Effects + handlers (D61/D87): `effect`/`handler` keywords,
-  `with X = h { body }`, `interrupt v`, `Handler[E, IRT]` first-class
+  `with X = h { body }`, `interrupt v`, `Effect[E, IRT]` first-class
   type. `forbid`, `realtime` capability blocks.
 - Structured concurrency (D71/D75/D92): `spawn`, `supervised`,
   `supervised(cancel: tok)`, `parallel for`, `channels`, `select`.
@@ -244,9 +244,13 @@ What works today (bootstrap):
 - Contracts (D24): `requires`/`ensures`/`old`/`result`/`invariant`/
   `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`.
   Bootstrap SMT через TrivialBackend (reflexive ensures); Z3 — milestone.
-- `defer` / `errdefer` / `okdefer` symmetric cleanup (D90/D160):
-  success-only `okdefer`, error-only `errdefer`, always `defer`;
-  reason-aware `defer |result| { ... }` form.
+- `defer` + consume-scope cleanup (D90/D188): `defer { ... }` runs on
+  every scope exit — including `throw` and `panic` (unlike Rust `Drop`
+  under `panic=abort`). A resource bound with `consume x = acquire() { ... }`
+  runs its `Consumable.on_exit(outcome)` at scope end, receiving a
+  `ScopeOutcome` (`Success` / `Failure` / `Panic`) for outcome-aware
+  cleanup. (The earlier `errdefer` / `okdefer` / `defer |result|` forms
+  were retracted — D189.)
 - Boehm GC default with introspection API (`heap_size`, `live_count`,
   `collect`).
 
@@ -433,8 +437,10 @@ NOVA_SMT_BACKEND=z3 nova test nova_tests/contracts/
 ## Editor support
 
 Syntax highlighting plugins for several editors are in
-[editors/](editors/). All are TextMate grammar / handcrafted — no
-semantic analysis (LSP is not yet implemented).
+[editors/](editors/). These are TextMate / handcrafted grammars —
+syntax highlighting only. Semantic features (diagnostics, etc.) come
+from a separate language server, [`nova-lsp/`](nova-lsp/); wiring it
+into these editor plugins is in progress.
 
 | Editor | Subdir | Notes |
 |---|---|---|

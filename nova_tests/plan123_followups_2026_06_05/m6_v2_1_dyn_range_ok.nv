@@ -30,13 +30,13 @@ fn Cv10 mut @sum_range_inclusive_3() -> int {
 }
 
 test "V2.1 dyn 0..5 exclusive: 5 iters Г— y" {
-    mut Cv10 = Cv10.new(2)
-    ro r = Cv10.sum_range_5()
+    mut cv10 = Cv10.new(2)
+    ro r = cv10.sum_range_5()
     assert(r == 10)
 }
 
 test "V2.1 dyn 1..=3 inclusive: 3 iters Г— y" {
-    mut Cv10 = Cv10.new(7)
-    ro r = Cv10.sum_range_inclusive_3()
+    mut cv10 = Cv10.new(7)
+    ro r = cv10.sum_range_inclusive_3()
     assert(r == 21)
 }

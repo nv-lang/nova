@@ -1,0 +1,14 @@
+// Plan 152.4.0 foundation: module-level `ro NAME = EXPR` is for a *runtime* RHS
+// only (the lazy-static path). A constexpr-eligible RHS must be `const` (strict
+// const/ro partition, D199 / Plan 148 Ф.3). Guards the lazy-static boundary —
+// only genuine runtime values (e.g. `ro nfd_map = parse_decomp_table(NFD_DATA)`)
+// become lazy-statics; a plain literal must not.
+//
+// EXPECT_COMPILE_ERROR E_RO_FOR_CONSTEXPR_PREFER_CONST
+module neg.plan152_4_n_ro_constexpr_prefers_const
+
+ro TABLE_SIZE int = 256
+
+test "constexpr ro is rejected" {
+    assert(TABLE_SIZE == 256)
+}

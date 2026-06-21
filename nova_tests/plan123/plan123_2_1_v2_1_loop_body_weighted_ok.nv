@@ -1,0 +1,31 @@
+// Plan 123.2.1 (V2.1, 2026-06-04): loop-body LICM coordination.
+// Closes [M-123.1.2-loop-body-licm-coordination].
+//
+// V1.1 top-level region scanner weights reads inside loop bodies
+// by NOVA_FC_LOOP_ITERS (default 8). Semantic preservation
+// проверяется: cached path equals uncached.
+
+module nova_tests.plan123
+
+type Counter_plan12321v21loopbodyweightedok {
+    mut x int
+}
+
+fn Counter_plan12321v21loopbodyweightedok.new(start int) -> Counter_plan12321v21loopbodyweightedok => { x: start }
+
+fn Counter_plan12321v21loopbodyweightedok mut @sum_in_loop(n int) -> int {
+    mut acc = 0
+    mut i = 0
+    while i < n {
+        acc = acc + @x
+        i = i + 1
+    }
+    acc
+}
+
+test "V2.1: loop-body read accumulates correctly" {
+    mut c = Counter_plan12321v21loopbodyweightedok.new(3)
+    ro r = c.sum_in_loop(5)
+    // 3 * 5 = 15
+    assert(r == 15)
+}

@@ -1,0 +1,30 @@
+// Plan 123.7.5 (V7.5, 2026-06-04): NEGATIVE вЂ” V7.5 doesn't relax for
+// non-@F-receiver method calls. `var.method()` (local-variable
+// receiver) still conservatively invalidates. Semantic preservation
+// РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ.
+
+module nova_tests.plan123
+
+type Cv_plan12375v75varmethodinvalidatesnegok {
+    mut n int
+}
+
+fn Cv_plan12375v75varmethodinvalidatesnegok.new() -> Cv_plan12375v75varmethodinvalidatesnegok => { n: 3 }
+
+fn Cv_plan12375v75varmethodinvalidatesnegok mut @do(mut v []int) -> int {
+    ro a = @n
+    // var.push() вЂ” non-self receiver, V7.5 РЅРµ applicable.
+    // V1.1 splits @n cache here; pre-call @n cache valid; post-call
+    // re-read.
+    v.push(99)
+    ro b = @n
+    a + b
+}
+
+test "V7.5: var.method() still invalidates, semantic preserved" {
+    mut cv = Cv_plan12375v75varmethodinvalidatesnegok.new()
+    mut v = []int.new()
+    ro r = cv.do(v)
+    assert(r == 6)
+    assert(v.len() == 1)
+}

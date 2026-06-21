@@ -1,0 +1,24 @@
+// Plan 139 Ф.4 — C → str (from_cstr path).
+//
+// A C FFI fn returns a `nova_str` it builds via nova_str_from_cstr from a
+// static rodata C-string. Proves the C→str direction on the value-record ABI:
+// the returned 16-byte value carries a `const uint8_t*` into rodata + the
+// correct byte length (D26: len = bytes). Shim: nova_fn_p139_make_str in
+// compiler-codegen/nova_rt/plan115_ffi_test.h.
+module nova_tests.strings
+
+extern "nova" fn p139_make_str() -> str
+
+test "from_cstr: C-returned str has correct bytes and length" {
+    ro s = p139_make_str()
+    assert(s == "hello world")
+    assert(s.len() == 11)
+    assert(s.as_chars().count() == 11)
+}
+
+test "from_cstr result interops with Nova str methods" {
+    ro s = p139_make_str()
+    assert(s.starts_with("hello"))
+    assert(s.ends_with("world"))
+    assert(s.contains("o w"))
+}

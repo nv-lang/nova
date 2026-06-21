@@ -1,0 +1,9 @@
+// Plan 118.6 — addr_of_mut(x) is removed → E_ADDR_OF_REMOVED.
+// EXPECT_COMPILE_ERROR E_ADDR_OF_REMOVED
+
+module neg.plan118_6_neg_addr_of_mut_removed
+
+fn bad() {
+    mut x = 1
+    addr_of_mut(x)  // E_ADDR_OF_REMOVED
+}

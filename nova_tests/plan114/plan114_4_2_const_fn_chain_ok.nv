@@ -1,0 +1,12 @@
+// Plan 114.4.2 T3.6: const fn calls const fn (chain through 2 functions).
+
+module nova_tests.plan114
+
+fn add1(const a int, const b int) -> const int => a + b
+
+fn outer(const x int) -> const int => add1(x, 1)
+
+test "const fn calls const fn" {
+    const R_plan11442constfnchainok = outer(41)
+    assert(R_plan11442constfnchainok == 42)
+}

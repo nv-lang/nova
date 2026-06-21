@@ -1,5 +1,7 @@
 # Test conventions
 
+> **Нормативный документ** — изменения и отклонения только по согласованию с владельцем; см. [conventions-governance.md](conventions-governance.md).
+
 Практический guide для авторов и пользователей тестов Nova.
 Нормативная спецификация D89 EXPECT-маркеров —
 [spec/decisions/09-tooling.md](../spec/decisions/09-tooling.md#d89).
@@ -160,6 +162,26 @@ nova_tests/
 
 ### Как писать положительный тест
 
+> **ТРЕБОВАНИЕ (приоритет, не пожелание): МАКСИМИЗИРУЙ folder-module — МИНИМИЗИРУЙ число
+> compile-unit'ов.** Каждый отдельный `module` = отдельный вызов codegen + clang = прямой налог
+> на скорость регресса (§«ТРЕБОВАНИЕ: регресс должен быть быстрым»). Поэтому:
+> - **По умолчанию новый позитивный тест — ПИР-ФАЙЛ в СУЩЕСТВУЮЩЕМ folder-module** (тот же
+>   `module nova_tests.<тема>`), а НЕ новый standalone-модуль и НЕ новая под-директория.
+> - **НЕ плоди per-задача / per-фича standalone-модули** (`module u52.pos`, `module d227.pos`, …) —
+>   это анти-паттерн: N задач → N лишних CU. Деталь задачи кладётся в **ОПИСАТЕЛЬНОЕ ИМЯ ФАЙЛА**
+>   формата `<ссылка>_<что_тестирует>` (`plan103_2_atomic_i64.nv`, `u52_narrowing_category_pos.nv`)
+>   и/или в имя `test "…"`-блока, НЕ в отдельный модуль. Имя должно говорить, ЧТО тестируется —
+>   не только код-ссылка: `d227_pos.nv` плохо («что за d227?»), `d227_numeric_literal_range_pos.nv`
+>   хорошо (ссылка на D-блок + суть).
+> - **Конфликты имён при слиянии** решаются `priv(file)` / префиксом файла (см. ниже), а НЕ
+>   выделением в отдельный модуль.
+> - Standalone-модуль оправдан ТОЛЬКО когда folder-module технически невозможен (см.
+>   «Когда folder-module невозможен»: `nova.toml`-пакет, `_slow.nv` с другим module, `main`/
+>   `EXPECT_RUNTIME_PANIC`, неразрешимый конфликт). Во всех прочих случаях — пир-файл.
+>
+> Перед добавлением теста спроси: «есть ли уже folder-module этой темы, куда это ляжет пир-файлом?»
+> Если да — добавляй туда. Создание нового модуля/папки требует обоснования из списка исключений.
+
 **Стандартный случай — folder-module**
 
 Все положительные тесты в одной директории объявляют **одинаковый** `module`:
@@ -209,10 +231,36 @@ Folder-module не применяется если:
 
 В этом случае файлы остаются **standalone**: каждый объявляет свой уникальный `module <dir>.<filename>`.
 
-При конфликтах имён есть три выхода:
-- **Ordinal-suffix rename** (предпочтительно для существующих dirs): `Counter` в 3 файлах → `Counter1`/`Counter2`/`Counter3` (алфавитный порядок по имени файла). Массовый рефактор — `python scripts/catb_convert.py <dir>`.
+При конфликтах имён есть выходы (в порядке предпочтения):
+- **`priv(file)`** (Plan 170, предпочтительно): пометить конфликтующие top-level `fn`/`const`/тип-без-методов как `priv(file) fn helper()` → file-private, ноль rename, имена читаемы. **Ограничение:** `priv(file)` типы С методами НЕ дискриминируются по файлу (коллизия метод-символа `Nova_<T>_static_<m>`) → для них ordinal-rename.
+- **Ordinal-suffix rename**: `Counter` в 3 файлах → `Counter1`/`Counter2`/`Counter3` (алфавитный порядок по имени файла). Массовый рефактор — `python scripts/catb_convert.py <dir>`.
 - **Уникальный prefix** (для нового кода): `feature_a_helper()` вместо `helper()`.
 - **Оставить standalone** (если переименование ломает смысл теста или dir заблокирована `nova.toml`).
+
+---
+
+### Консолидация по темам (Plan 169.1.2)
+
+Сокращение CU: тесты разных планов одной **ТЕМЫ** (atomics, sync, syntax, …)
+сливаются в один folder-module `module nova_tests.<тема>`, а не по номеру плана.
+
+- **Связь тест↔план — через имя файла:** `plan103_2_atomic_i64.nv` в `nova_tests/atomics/`.
+  Имена файлов произвольны (на `module` не влияют); происхождение видно по префиксу,
+  раннер печатает путь при падении → навигация цела.
+- **Module:** все позитивы темы → `module nova_tests.<тема>`; neg → `neg/` (`module neg.<stem>`).
+- **Коллизии между планами:** `priv(file)` / rename (см. выше). Между темами часто их нет.
+- **EXPECT_TIMEOUT / EXPECT_RUNTIME_PANIC / EXPECT_EXIT — НЕ сливаются** в folder-module
+  (маркер относится к целому TU; в общем бинаре они бы повесили/уронили остальные).
+  Остаются standalone. Runtime-panic консолидируются отдельно через `panics`-клаузулу
+  (Plan 169.1.2 Ф.2); timeout — всегда standalone.
+- **Валидация — передавать папки напрямую:** `nova test nova_tests/<тема>` (можно
+  несколько папок одной командой: `nova test nova_tests/atomics nova_tests/sync`).
+  НЕ `--filter <тема>` — он матчит по подстроке и цепляет лишнее (напр. `--filter sync`
+  тянет `std/runtime/sync*`). Path-invocation работает при ПРАВИЛЬНОЙ форме модуля
+  `module nova_tests.<тема>`; при неверной форме — `E_D78_MODULE_PATH_MISMATCH`.
+- **Починка fallout:** приводя старые тесты к актуальному компилятору, чинить новые
+  ошибки enforcement'а (напр. `E_LOCAL_NOT_MUT` → добавить `mut` переприсваиваемым
+  переменным), **НЕ выхолащивая** тест.
 
 ---
 
@@ -242,7 +290,15 @@ test "wrong type" {
 }
 ```
 
-Правило: **никаких `test "..."` блоков** в файлах с `EXPECT_COMPILE_ERROR` — файл не должен компилироваться, runner проверяет только сообщение об ошибке.
+Контейнер для провоцирующего кода — **любой** (`test "..."` / `fn` / top-level decl): он **не исполняется**, т.к. файл обязан не компилироваться (runner проверяет ошибку на этапе codegen — `NEG-NO-ERROR`, если компиляция прошла, независимо от наличия `test`-блока). Для читаемости предпочтителен `fn`/top-level (не подразумевает проходящий тест), но `test`-блок **допустим**. Один EXPECT-маркер на файл.
+
+> **Как это видит раннер** (`test_runner.rs`, чтобы конвенция не расходилась с инструментом):
+> классификация теста — по **маркеру** `EXPECT_*` (`detect_test_type`), НЕ по суффиксу `_neg` или
+> имени папки `neg/`. Группировка файлов в один TU — по **равенству `module`-деклараций**
+> (`is_folder_module_dir`): neg с `module neg.<name>` ≠ позитивам → отдельный TU автоматически.
+> Поэтому neg **обязан** декларировать отличный `module neg.<name>` и жить в `neg/` — иначе
+> деградирует folder-module соседей-позитивов. Суффикс `_neg` и имя `neg/` — сигнал для
+> людей/агентов, не для раннера.
 
 ---
 
@@ -252,12 +308,12 @@ test "wrong type" {
 |---|---|---|
 | Позитивный тест | `<feature_or_scenario>.nv` | `option_map.nv`, `closure_capture.nv` |
 | Позитивный тест (план) | `<phase_or_feature>.nv` | `f1_basic_case.nv`, `t2_edge_case.nv` |
-| Отрицательный (compile error) | `<что_проверяем>_neg.nv` | `type_mismatch_neg.nv`, `mut_conflict_neg.nv` |
+| Отрицательный (compile error) | внутри `neg/`: `<что_проверяем>.nv`; вне `neg/`: `<что_проверяем>_neg.nv` | `type_mismatch.nv` (в `neg/`), `mut_conflict_neg.nv` (вне) |
 | Runtime panic / exit тест | `<scenario>_panic.nv` / `<scenario>_exit.nv` | `div_zero_panic.nv` |
 | Медленный тест | `<name>_slow.nv` | `stress_gc_slow.nv`, `cancel_stress_slow.nv` |
 | Fast-variant медленного | `<name>.nv` (тот же module, меньший N) | `stress_gc.nv` рядом с `stress_gc_slow.nv` |
 
-Суффикс `_neg` в отрицательных файлах **обязателен** — он явно сигнализирует агентам и читателям, что файл ожидает ошибку компиляции.
+Суффикс `_neg`: **необязателен внутри `neg/`** (путь `neg/` + `module neg.<name>` уже сигналят «негатив», и раннер классифицирует по маркеру `EXPECT_*`, а не по имени файла); **обязателен для neg-файлов ВНЕ `neg/`** (standalone / консолидация — там иного сигнала нет). Когда применяется — `_neg` явно сигнализирует агентам и читателям, что файл ожидает ошибку компиляции.
 
 ---
 
@@ -350,9 +406,9 @@ nova_tests/plan_foo/
 ### Полный checklist для агента при написании тестов
 
 1. **Определи категорию**: позитивный / compile-error / runtime-panic / stdout/stderr.
-2. **Выбери директорию**: существующая тематическая (`plan_foo/`) или новая.
-3. **Проверь folder-module eligibility**: все файлы в директории объявляют одинаковый `module`? Нет конфликтов имён? → добавь peer-файл с тем же `module nova_tests.<dir>`.
-4. **Негативные → `neg/`**: EXPECT_COMPILE_ERROR → `neg/<name>_neg.nv`, `module neg.<name>_neg`.
+2. **Выбери директорию — СНАЧАЛА ищи существующий folder-module темы** (приоритет: минимум CU). Новая папка/модуль — только если folder-module невозможен (исключения выше).
+3. **Добавляй ПИР-ФАЙЛОМ в существующий folder-module** (тот же `module nova_tests.<тема>`); НЕ создавай standalone-модуль на задачу. Конфликт имён → `priv(file)`/префикс, НЕ новый модуль. Имя файла — **описательное** `<ссылка>_<что_тестирует>.nv` (не только код-ссылка).
+4. **Негативные → `neg/`**: EXPECT_COMPILE_ERROR → `neg/<name>.nv`, `module neg.<name>` (суффикс `_neg` обязателен только ВНЕ `neg/`; контейнер `test`/`fn` — любой, не исполняется).
 5. **Медленные → `_slow.nv`**: run > 2s или total > 3s → суффикс `_slow`; создай fast-variant.
 6. **Проверь полноту**: happy path + edge cases + взаимодействие фич.
 7. **Проверь детерминизм**: `assert` проверяет гарантированный контракт, не эвристику планировщика.
@@ -755,7 +811,7 @@ Multi-line patterns не поддерживаются. Runner склеивает
 | Тип теста | Куда |
 |---|---|
 | Позитивный `test "..."` | `nova_tests/<group>/<name>.nv` (folder-module, `module nova_tests.<group>`) |
-| `EXPECT_COMPILE_ERROR` | `nova_tests/<group>/neg/<name>_neg.nv` (`module neg.<name>_neg`) |
+| `EXPECT_COMPILE_ERROR` | `nova_tests/<group>/neg/<name>.nv` (`module neg.<name>`; суффикс `_neg` обязателен только вне `neg/`) |
 | `EXPECT_RUNTIME_PANIC`, `fn main()` | standalone в `nova_tests/<group>/` или `nova_tests/<group>/rt/` |
 | `EXPECT_EXIT_CODE`, `EXPECT_STDOUT`, `EXPECT_STDERR` | standalone в `nova_tests/<group>/` |
 | Медленный тест | `nova_tests/<group>/<name>_slow.nv` |

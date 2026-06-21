@@ -4,6 +4,7 @@
 // std-метода `str @to_lower` с той же сигнатурой → ошибка (был silent no-op:
 // codegen first-match брал std, тело пользователя не вызывалось).
 module plan154.neg_override_str_to_lower
+import std.unicode
 
 fn str @to_lower() -> str => "X"
 

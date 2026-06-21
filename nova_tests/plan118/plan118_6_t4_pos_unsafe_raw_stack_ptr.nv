@@ -1,0 +1,14 @@
+// Plan 118.7 migration: `unsafe { &x }` → `unsafe { raw &x }` для FFI.
+// `raw &x` = сырой стек-адрес без escape analysis / promote.
+// Programmer takes responsibility. Typical pattern: pass int* to C function.
+// Here we verify read-back inside the same unsafe scope (pointer valid on stack).
+
+module nova_tests.plan118
+
+test "unsafe { raw &x } raw stack pointer — valid in same scope" {
+    ro x = 99
+    unsafe {
+        ro p = raw &x
+        assert(p.read() == 99)
+    }
+}

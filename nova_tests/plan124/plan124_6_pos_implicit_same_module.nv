@@ -1,0 +1,24 @@
+// Plan 124.6 — positive: test block in same module gets implicit priv(type)
+// access (D224 §2 rule-2). No #test_access needed — same module grant.
+module nova_tests.plan124
+
+export type Counter_plan1246posimplicitsamemodule {
+    pub label str
+    priv(type) mut count int
+}
+
+export fn Counter_plan1246posimplicitsamemodule.new(lbl str) -> Counter_plan1246posimplicitsamemodule =>
+    { label: lbl, count: 0 }
+
+export fn Counter_plan1246posimplicitsamemodule mut @inc() {
+    @count = @count + 1
+}
+
+test "Plan 124.6: test block in same module can read priv(type) field" {
+    mut c = Counter_plan1246posimplicitsamemodule.new("hits")
+    c.inc()
+    c.inc()
+    // Direct read of priv(type) field: implicit same-module grant (D224 §2).
+    assert(c.count == 2)
+    assert(c.label == "hits")
+}

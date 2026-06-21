@@ -1,0 +1,75 @@
+// Plan 152.4.2: Unicode normalization (NFC/NFD/NFKC/NFKD, UAX #15) — hand-picked
+// cases covering canonical/compatibility decomposition, composition, canonical
+// ordering of combining marks, Hangul algorithmic decomp/comp, and idempotence.
+// Bulk UAX #15 conformance (NormalizationTest.txt) is a separate fixture.
+module nova_tests.unicode
+
+import std.unicode.{normalize_nfc, normalize_nfd, normalize_nfkc, normalize_nfkd, UNICODE_VERSION}
+
+test "ASCII unchanged under all forms" {
+    assert(normalize_nfc("hello world") == "hello world")
+    assert(normalize_nfd("hello world") == "hello world")
+    assert(normalize_nfkc("hello world") == "hello world")
+    assert(normalize_nfkd("hello world") == "hello world")
+}
+
+test "NFD: canonical decomposition" {
+    assert(normalize_nfd("\u{e9}") == "e\u{301}")    // é -> e + combining acute
+    assert(normalize_nfd("\u{c0}") == "A\u{300}")    // À -> A + combining grave
+    assert(normalize_nfd("\u{f1}") == "n\u{303}")    // ñ -> n + combining tilde
+}
+
+test "NFC: canonical composition" {
+    assert(normalize_nfc("e\u{301}") == "\u{e9}")    // e + acute -> é
+    assert(normalize_nfc("\u{e9}") == "\u{e9}")      // already composed -> identity
+    assert(normalize_nfc("A\u{300}") == "\u{c0}")    // A + grave -> À
+}
+
+test "NFD/NFC roundtrip on a word" {
+    ro composed = "\u{e9}cole"          // "école" with precomposed é
+    ro decomposed = "e\u{301}cole"      // same, decomposed
+    assert(normalize_nfd(composed) == decomposed)
+    assert(normalize_nfc(decomposed) == composed)
+}
+
+test "NFKD/NFKC: compatibility decomposition" {
+    assert(normalize_nfkd("\u{fb01}") == "fi")       // ﬁ ligature -> f i
+    assert(normalize_nfkc("\u{fb01}") == "fi")
+    assert(normalize_nfd("\u{fb01}") == "\u{fb01}")  // canonical form leaves it alone
+    assert(normalize_nfkc("\u{2075}") == "5")        // superscript five -> '5'
+}
+
+test "canonical ordering of combining marks (by combining class)" {
+    // q + DOT ABOVE (ccc 230) + DOT BELOW (ccc 220) -> dot-below sorts first.
+    assert(normalize_nfd("q\u{307}\u{323}") == "q\u{323}\u{307}")
+    // Equal-class marks keep input order (stability): two ccc=230 marks.
+    assert(normalize_nfd("e\u{301}\u{300}") == "e\u{301}\u{300}")
+}
+
+test "Hangul: algorithmic decomposition" {
+    assert(normalize_nfd("\u{ac00}") == "\u{1100}\u{1161}")           // 가 -> L V
+    assert(normalize_nfd("\u{ac01}") == "\u{1100}\u{1161}\u{11a8}")   // 각 -> L V T
+}
+
+test "Hangul: algorithmic composition" {
+    assert(normalize_nfc("\u{1100}\u{1161}") == "\u{ac00}")
+    assert(normalize_nfc("\u{1100}\u{1161}\u{11a8}") == "\u{ac01}")
+    // LV + T late composition.
+    assert(normalize_nfc("\u{ac00}\u{11a8}") == "\u{ac01}")
+}
+
+test "idempotence (combining-mark reorder case)" {
+    ro s = "\u{1e0b}\u{323}"   // ḋ (d + dot above) followed by dot below
+    assert(normalize_nfd(normalize_nfd(s)) == normalize_nfd(s))
+    assert(normalize_nfc(normalize_nfc(s)) == normalize_nfc(s))
+    assert(normalize_nfkd(normalize_nfkd(s)) == normalize_nfkd(s))
+}
+
+test "empty string" {
+    assert(normalize_nfc("") == "")
+    assert(normalize_nfd("") == "")
+}
+
+test "UNICODE_VERSION pinned" {
+    assert(UNICODE_VERSION == "16.0")
+}

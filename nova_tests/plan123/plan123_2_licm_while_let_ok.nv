@@ -1,0 +1,32 @@
+// Plan 123.2 T1.8: while-let form — LICM hoists invariant @field.
+
+module nova_tests.plan123
+
+type Counter7 {
+    ro limit int
+}
+
+fn Counter7 @count_options() -> int {
+    mut x = 0
+    mut state = Some(0)
+    while let Some(v) = state {
+        if v >= @limit + @limit {
+            state = None
+        } else {
+            x = x + 1
+            state = Some(v + 1)
+        }
+    }
+    x
+}
+
+fn Counter7.new(l int) -> Counter7 {
+    Counter7 { limit: l }
+}
+
+test "while-let — @limit hoisted" {
+    ro c = Counter7.new(3)
+    ro r = c.count_options()
+    // 2*3=6 iterations.
+    assert(r == 6)
+}

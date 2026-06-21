@@ -31,12 +31,12 @@ fn Cv3 mut @sample_and_grow(v int) -> int {
 }
 
 test "V7.7: chain receiver doesn't invalidate sibling cache" {
-    mut Cv3 = Cv3.new()
-    Cv3.counter = 13
-    ro r = Cv3.sample_and_grow(42)
+    mut cv3 = Cv3.new()
+    cv3.counter = 13
+    ro r = cv3.sample_and_grow(42)
     // counter = 13 throughout вЂ” 13*4 = 52
     assert(r == 52)
     // Verify chain mutation:
-    assert(Cv3.inner.sub.len() == 1)
-    assert(Cv3.inner.sub[0] == 42)
+    assert(cv3.inner.sub.len() == 1)
+    assert(cv3.inner.sub[0] == 42)
 }

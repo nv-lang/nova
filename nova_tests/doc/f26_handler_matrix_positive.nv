@@ -6,32 +6,32 @@
 
 module nova_tests.doc
 
-/// Counter effect — simple state.
-export type Counter effect {
+/// Counter_f26handlermatrixpositive effect — simple state.
+export type Counter_f26handlermatrixpositive effect {
     incr()
     #pure get() -> int
     axiom non_negative(_x int) => true
 }
 
-/// Logger effect — collect strings.
-export type Logger effect {
+/// Logger_f26handlermatrixpositive effect — collect strings.
+export type Logger_f26handlermatrixpositive effect {
     log(msg str)
     #pure last() -> str
 }
 
 /// Function — single handler usage.
-export fn count_to(n int) -> int {
+export fn count_to_f26handlermatrixpositive(n int) -> int {
     mut c = 0
-    with #trusted Counter = effect Counter {
+    with #trusted Counter_f26handlermatrixpositive = effect Counter_f26handlermatrixpositive {
         incr() { c = c + 1 }
         get() => c
     } {
         mut i = 0
         while i < n {
-            Counter.incr()
+            Counter_f26handlermatrixpositive.incr()
             i = i + 1
         }
-        Counter.get()
+        Counter_f26handlermatrixpositive.get()
     }
 }
 
@@ -39,43 +39,43 @@ export fn count_to(n int) -> int {
 export fn count_and_log(n int) -> int {
     mut c = 0
     mut last_msg = ""
-    with #trusted Counter = effect Counter {
+    with #trusted Counter_f26handlermatrixpositive = effect Counter_f26handlermatrixpositive {
         incr() { c = c + 1 }
         get() => c
     } {
-        with #trusted Logger = effect Logger {
+        with #trusted Logger_f26handlermatrixpositive = effect Logger_f26handlermatrixpositive {
             log(msg) { last_msg = msg }
             last() => last_msg
         } {
             mut i = 0
             while i < n {
-                Counter.incr()
-                Logger.log("tick")
+                Counter_f26handlermatrixpositive.incr()
+                Logger_f26handlermatrixpositive.log("tick")
                 i = i + 1
             }
-            Counter.get()
+            Counter_f26handlermatrixpositive.get()
         }
     }
 }
 
-/// Helper — reuses Counter handler in second caller.
+/// Helper — reuses Counter_f26handlermatrixpositive handler in second caller.
 export fn count_twice(n int) -> int {
     mut c = 0
-    with #trusted Counter = effect Counter {
+    with #trusted Counter_f26handlermatrixpositive = effect Counter_f26handlermatrixpositive {
         incr() { c = c + 1 }
         get() => c
     } {
-        Counter.incr()
-        Counter.incr()
+        Counter_f26handlermatrixpositive.incr()
+        Counter_f26handlermatrixpositive.incr()
     }
-    count_to(n)
+    count_to_f26handlermatrixpositive(n)
 }
 
-test "count_to basic" {
-    assert(count_to(0) == 0)
-    assert(count_to(1) == 1)
-    assert(count_to(5) == 5)
-    assert(count_to(10) == 10)
+test "count_to_f26handlermatrixpositive basic" {
+    assert(count_to_f26handlermatrixpositive(0) == 0)
+    assert(count_to_f26handlermatrixpositive(1) == 1)
+    assert(count_to_f26handlermatrixpositive(5) == 5)
+    assert(count_to_f26handlermatrixpositive(10) == 10)
 }
 
 test "count_and_log basic" {
@@ -85,15 +85,15 @@ test "count_and_log basic" {
 }
 
 test "count_twice — second call independent" {
-    // First handler isolates c=0; count_to does its own.
+    // First handler isolates c=0; count_to_f26handlermatrixpositive does its own.
     assert(count_twice(5) == 5)
     assert(count_twice(0) == 0)
 }
 
 test "handler isolation per with-block" {
     // Two separate with-blocks → each has own state.
-    ro r1 = count_to(3)
-    ro r2 = count_to(7)
+    ro r1 = count_to_f26handlermatrixpositive(3)
+    ro r2 = count_to_f26handlermatrixpositive(7)
     assert(r1 == 3)
     assert(r2 == 7)
 }

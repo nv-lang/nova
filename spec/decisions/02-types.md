@@ -37,6 +37,7 @@
 | [D284](#d284-enumerateiter--zero-cost-enumerate-adapter-plan-162) | `EnumerateIter[I, T]` — zero-cost enumerate adapter; per-type `@zenumerate()` dispatch; tuple parametric return (Plan 162) | active |
 | [D290](#d290--value-record-iterator-types-plan-165-2026-06-16) | Iterator value-records: `VecIter[T] value` (GC-pointer fields covered by fiber arena) + `Range`/`RangeIter`/`StepRangeIter`/`ReverseRangeIter value` (int-only, pure stack) — zero malloc in adapter chain (Plan 165) | active |
 | [D307](#d307-file-private-visibility--privfile-plan-170) | File-private visibility `priv(file) fn`/`type`/`const` — лесенка `priv(file)` ⊂ module ⊂ export; `E_FILE_PRIV_LEAK`; file-discriminated codegen; dedup одноимённых в peer-файлах (Plan 170) | active |
+| [D315](#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21) | `ResolvedType` — единый канонический носитель типа; проверки/совместимость/конверсии/перевод-в-C выводятся из него; `type_ref_to_c` ретайрится; сахар нормализуется; ABI выводится, не хранится (Plan 172.1, D315) | active |
 
 ---
 
@@ -13178,3 +13179,91 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
 - иначе: median-of-3 pivot (→ `@_median3_to_end`) + Lomuto partition + Vec[int] work-stack (lo/hi pairs)
 
 **O(n log n) worst case, O(log n) stack space.** Heapsort сохранён как depth-guard fallback и для `@select_nth_unstable` (не удалён). Stable `@sort*` (merge sort) не тронут.
+
+## D315. `ResolvedType` — единый канонический носитель типа (Plan 172.1, 2026-06-21)
+
+**Статус:** ACTIVE. *Single source of type truth.* Реализует [`compiler-conventions.md`](../../docs/compiler-conventions.md) §0. Supersedes
+врезку M2 Plan 172.1 («`ResolvedType` достаточен как носитель» — спайк 2026-06-21 доказал обратное).
+
+### Что
+
+Тип в компиляторе имеет **ОДНО** каноническое представление — `ResolvedType`. Из него выводится **ВСЁ**:
+проверки, совместимость типов, конверсии **и перевод в C**. Legacy-путь «`TypeRef` → C»
+(`type_ref_to_c`, который резолвит И переводит в одном проходе) — **ретайрится**.
+
+### Правило
+
+- **`TypeRef` — только синтаксис** (выхлоп парсера). Может нести `Self`, свёрнутые алиасы,
+  неразрешённые имена, generic-параметры. Это сырая, **неразрешённая** форма → **НЕ вход для
+  перевода в C** (сперва его надо разрешить).
+- **Семантический анализ разрешает тип ОДИН раз** в канонический `ResolvedType`: `Self`→приёмник,
+  алиасы развёрнуты, имена→конкретные объявления, дженерики. **Каноничность:** семантически
+  равные типы → структурно равные `ResolvedType` (иначе совместимость = сравнение типов ломается).
+- **`ResolvedType` несёт ПОЛНУЮ семантическую личность:** разрешённая идентичность (а не
+  `path.last()`), generic-аргументы, ширина/знак (`Scalar{width,signed,wide_default}`), эффекты,
+  **все оси изменяемости** (L1 binding / L2 view / L3 pointee, [D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee)),
+  верность модификаторов указателя.
+- **Сахар нормализуется прочь** (намеренно): имя алиаса, написание `Self`. Это не потеря — это и
+  делает окно *единым*. Исходное написание, нужное для текста ошибки, — **отдельный
+  диагностический канал**, не часть канонического типа.
+- **ABI/бэкенд-факты — НЕ хранятся в типе, а ВЫВОДЯТСЯ.** Мангл-имя, erasure
+  (`Option[void*]`→`NovaOpt_nova_int`), `NovaValue_`-префикс (D228), int64-слоты — это **решения
+  лоуэринга**, не свойства типа. Их выводит `resolved_type_to_c` (живёт в codegen: финальная
+  mono-подстановка + побочки эмиссии typedef'ов, но **БЕЗ повторного резолва** — резолв уже сделан
+  чекером).
+- **Один вывод (чекер), один лоуэринг (`resolved_type_to_c`).** `type_ref_to_c` ретайрится:
+  объявленные типы (сигнатуры, поля) тоже идут через «разрешить → опустить».
+
+### Почему
+
+- **§0 (единый источник истины).** `type_ref_to_c` сегодня делает ДВЕ вещи: (1) резолвит —
+  разворачивает алиасы, превращает `Self` в приёмник, подставляет mono; (2) переводит в C. Первая
+  половина **дублирует чекер** — ровно §0-анти-паттерн «codegen re-derive». Разделение «разрешить
+  один раз (чекер) → опустить (codegen)» убирает дубль.
+- **Два окна правды неизбежно дрейфуют.** `ResolvedType` для проверок + `TypeRef`-driven перевод
+  в C = тот самый класс багов `Vec[u32]`-мис-манглинга (`simple_type_ref_to_c` дрейфнул, пропустил
+  u32). Одно каноническое окно убивает класс дрейфа в корне.
+- **Спайк (2026-06-21)** доказал: текущий `ResolvedType` лосси для C — берёт `path.last()` (теряет
+  модуль), схлопывает `*mut T` (форма `Pointer(Mut)`) в `TypedPtr(Ro,…)`, разворачивает L2
+  `readonly`. Значит прежнее допущение плана (M2: «носитель достаточен») неверно; D315 ставит целью
+  **обогащение до lossless-canonical** + ретайр `type_ref_to_c`.
+
+### Что отвергнуто
+
+- **«`TypeRef` → C — нормальный лоуэринг».** Отвергнуто: `TypeRef` неразрешён (`Self`/алиас) →
+  не вход для перевода, его надо сперва разрешить.
+- **«Ничего не обогащать; реконструировать `TypeRef` из `ResolvedType` на лоуэринге».** Отвергнуто:
+  лосси round-trip (выбрасываемый костыль); возвращает резолв-в-codegen — тот самый анти-паттерн.
+- **«Второй лоуэринг `resolved_type_to_c` рядом с `type_ref_to_c`».** Отвергнуто: два лоуэринга =
+  фрагментация, которую §0 запрещает; цель — ОДИН.
+- **«Хранить ABI-факты в `ResolvedType`».** Отвергнуто: засоряет семантический тип бэкенд-заботами;
+  ABI выводится, не хранится.
+
+### Связь
+
+- [`compiler-conventions.md`](../../docs/compiler-conventions.md) §0 — D315 это его конкретная
+  формулировка про носитель типа (§10 анти-паттерн «два окна правды»).
+- [D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee) — три оси мутабельности;
+  `ResolvedType` обязан нести все три.
+- [D129](#d129-int-как-alias-i64-в-bootstrap-nova) / [D227](03-syntax.md#d227) — `int`=`i64`
+  wide-default vs sized; несётся через `Scalar{width,signed,wide_default}`.
+- D239 (`[]T≡Vec[T]`), D228 (value-record), D216 (typed pointers) — это **лоуэринг (ABI)** факты,
+  выводятся не хранятся.
+- [Plan 172.1](../../docs/plans/172.1-unified-type-engine.md) U.4/U.5/U.6.1 — реализация: U.5
+  унифицировал внутреннее представление чекера; U.4 делает `ResolvedType` носителем для codegen;
+  ретайрит `type_ref_to_c`.
+
+### Эволюция
+
+- **U.5 (2026-06-20):** `ResolvedType` введён как внутренний width/sign-тип чекера (заменил
+  `Ty`/`TyCat`/`cat_of`).
+- **2026-06-21 (D315):** поднят из «внутренний тип чекера» в **«единый канонический тип
+  компилятора»**; спайк нашёл текущий носитель лосси → обогащение-до-lossless + ретайр
+  `type_ref_to_c` поставлены целью. Supersedes врезку M2 Plan 172.1.
+- **2026-06-21 (Plan 172.1 U.4.6→U.4.8):** цель реализована. U.5.5(a) сделал `ResolvedType`
+  lossless для C (модуль-путь / `*mut` / L2 readonly); U.4.6 построил единый `resolved_type_to_c`
+  (ABI-лоуэринг ЧТЕНИЕМ полей `ResolvedType`, без повторного резолва) до byte-identical паритета;
+  U.4.7 флипнул `type_ref_to_c` на делегирование; **U.4.8 (`e1f1d96a`) удалил дублирующий
+  `type_ref_to_c_impl`** — `resolved_type_to_c` стал `Result<String,String>` (несёт причину отказа
+  сам: usize/isize/ptr removed, Self-no-recv). Production type→C теперь ОДИН лоуэринг. Остаток —
+  свернуть синтаксический адаптер-хоп `TypeRef→ResolvedType` на объявленных-тип сайтах (U.6.1).

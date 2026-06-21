@@ -3,7 +3,7 @@
 // suffix, so it is classified as a NORMAL test: runs by default and
 // under --include-slow, EXCLUDED under --slow-only.
 
-module nova_tests.plan156
+module plan156.notslow
 
 test "notslow is a normal test" {
     assert(3 + 3 == 6)

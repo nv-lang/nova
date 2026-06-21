@@ -1,4 +1,4 @@
-// defer_in_blocks.nv — Plan 20 Ф.8 (3): positive-тесты для defer/errdefer
+// defer_in_blocks.nv — Plan 20 Ф.8 (3): positive-тесты для defer
 // внутри различных block-emission контекстов.
 //
 // Plan 20 Ф.4 покрывал только fn-body + range-for-body + emit_block_into/

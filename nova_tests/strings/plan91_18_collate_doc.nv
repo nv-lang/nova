@@ -1,0 +1,21 @@
+module nova_tests.strings
+
+import std.unicode
+
+test "collate compare" {
+    ro r = Collator.order("apple", "banana")
+    assert(r < 0)
+}
+
+test "collate same" {
+    assert(Collator.same("café", "café"))
+}
+
+test "collate compare case secondary" {
+    assert(collate_compare("apple", "Apple") < 0)
+}
+
+test "collate sort key is Vec[u32]" {
+    ro key = collate_sort_key("hello")
+    assert(key.len() > 0)
+}

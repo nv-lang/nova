@@ -1,0 +1,73 @@
+// Plan 152.4 (foundation): module-level `ro NAME = EXPR` lazy-static globals.
+//
+// A module-level `ro` binding with a genuinely runtime RHS (call / alloc /
+// effect) is a lazy-static global: storage + an `init` flag, the initialiser
+// runs at most once on first touch, every read returns the same value. The
+// strict const/ro partition (D199, Plan 148 Ф.3) forces a constexpr-eligible
+// RHS to `const`, so only a real runtime RHS reaches this codegen path.
+//
+// This is the storage mechanism for the Unicode normalization tables
+// (152.4.1/152.4.2): a multi-hundred-KB embedded table string is parsed into a
+// HashMap once, lazily, on first normalization call.
+module nova_tests.unicode
+
+import std.collections.hashmap.{HashMap}
+
+// --- HashMap[int, str] global (NFD-style: codepoint -> decomposition text) ---
+fn build_decomp_table() -> HashMap[int, str] {
+    mut m = HashMap[int, str].new()
+    m.insert(0xc0, "41,300")   // À -> A + combining grave
+    m.insert(0xc1, "41,301")   // Á -> A + combining acute
+    m.insert(0xe9, "65,301")   // é -> e + combining acute
+    m
+}
+
+// lowercase-binder form (`ro name = ...`) — Pattern::Ident path.
+ro decomp_table HashMap[int, str] = build_decomp_table()
+
+// --- HashMap[int, int] global (packed-pair key: (a << 21) | b -> composed) ---
+fn build_compose_table() -> HashMap[int, int] {
+    mut m = HashMap[int, int].new()
+    m.insert((0x41 << 21) | 0x300, 0xc0)   // A + grave -> À
+    m.insert((0x41 << 21) | 0x301, 0xc1)   // A + acute -> Á
+    m.insert((0x65 << 21) | 0x301, 0xe9)   // e + acute -> é
+    m
+}
+
+// UPPER_CASE-binder form (`ro NAME = ...`) — single-segment unit-Variant path.
+ro COMPOSE_TABLE HashMap[int, int] = build_compose_table()
+
+// --- scalar int global with a runtime (non-constexpr) RHS ---
+fn compute_answer() -> int {
+    mut x = 0
+    mut i = 0
+    while i < 7 { x = x + 6; i = i + 1 }
+    x   // 42
+}
+ro answer int = compute_answer()
+
+test "lazy-static HashMap[int,str] global: built once, queryable" {
+    match decomp_table.get(0xc0) { Some(v) => assert(v == "41,300"), None => assert(false) }
+    match decomp_table.get(0xe9) { Some(v) => assert(v == "65,301"), None => assert(false) }
+    assert(decomp_table.get(0x99) == None)
+    assert(decomp_table.contains(0xc1))
+}
+
+test "lazy-static global: repeated access reuses the same built table" {
+    // Both reads route through the same lazy getter; values stay consistent
+    // (a fresh build per access would still match here, but the init-flag
+    // guarantees a single build — see codegen `_nova_const_*_init`).
+    match decomp_table.get(0xc0) { Some(a) =>
+        match decomp_table.get(0xc0) { Some(b) => assert(a == b), None => assert(false) },
+      None => assert(false) }
+}
+
+test "lazy-static HashMap[int,int] global with packed-pair keys" {
+    match COMPOSE_TABLE.get((0x41 << 21) | 0x300) { Some(v) => assert(v == 0xc0), None => assert(false) }
+    match COMPOSE_TABLE.get((0x65 << 21) | 0x301) { Some(v) => assert(v == 0xe9), None => assert(false) }
+    assert(COMPOSE_TABLE.get((0x41 << 21) | 0x30a) == None)
+}
+
+test "lazy-static scalar int global, runtime RHS" {
+    assert(answer == 42)
+}

@@ -1,0 +1,23 @@
+// Plan 124.2 — positive: match arm на public field outside type-method
+// scope — OK (no priv concern).
+module nova_tests.plan124
+
+export type Account_publicfieldmatchoutsideok {
+    priv mut money f64
+    ro name str
+}
+
+export fn Account_publicfieldmatchoutsideok.new(n str) -> Account_publicfieldmatchoutsideok =>
+    { money: 0.0, name: n }
+
+// extern "nova" fn pattern-matches только public `name` field.
+fn describe(acc Account_publicfieldmatchoutsideok) -> str {
+    match acc {
+        Account_publicfieldmatchoutsideok { name, .. } => name
+    }
+}
+
+test "Plan 124.2: match на public field outside — OK" {
+    ro acc = Account_publicfieldmatchoutsideok.new("dave")
+    assert(describe(acc) == "dave")
+}

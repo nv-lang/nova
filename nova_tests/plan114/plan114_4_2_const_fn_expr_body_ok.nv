@@ -1,0 +1,10 @@
+// Plan 114.4.2 T3.2: expression-body const fn.
+
+module nova_tests.plan114
+
+fn add2(const a int, const b int) -> const int => a + b
+
+test "expression body const fn" {
+    const R_plan11442constfnexprbodyok = add2(2, 3)
+    assert(R_plan11442constfnexprbodyok == 5)
+}

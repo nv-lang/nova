@@ -6,7 +6,7 @@ module nova_tests.doc
 
 /// Публичная стабильная функция.
 #stable(since = "1.0")
-export fn square(x int) -> int => x * x
+export fn square_f24docattrspositive(x int) -> int => x * x
 
 /// Куб числа.
 #stable(since = "1.0")
@@ -15,7 +15,7 @@ export fn cube(x int) -> int => x * x * x
 
 /// Скрытый хелпер — не отображается в docs.
 #hide_doc
-export fn internal_helper(x int) -> int => x + 42
+export fn internal_helper_f24docattrspositive(x int) -> int => x + 42
 
 /// Unstable helper.
 #unstable(feature = "math_extras")
@@ -34,12 +34,12 @@ export fn isqrt(n int) -> int {
 #experimental(note = "API may change")
 export fn hypot_sq(a int, b int) -> int => a * a + b * b
 
-test "square basic" {
-    assert(square(0) == 0)
-    assert(square(1) == 1)
-    assert(square(5) == 25)
-    assert(square(-3) == 9)
-    assert(square(10) == 100)
+test "square_f24docattrspositive basic" {
+    assert(square_f24docattrspositive(0) == 0)
+    assert(square_f24docattrspositive(1) == 1)
+    assert(square_f24docattrspositive(5) == 25)
+    assert(square_f24docattrspositive(-3) == 9)
+    assert(square_f24docattrspositive(10) == 100)
 }
 
 test "cube basic" {
@@ -50,10 +50,10 @@ test "cube basic" {
     assert(cube(3) == 27)
 }
 
-test "internal_helper works despite hide_doc" {
-    assert(internal_helper(0) == 42)
-    assert(internal_helper(8) == 50)
-    assert(internal_helper(-42) == 0)
+test "internal_helper_f24docattrspositive works despite hide_doc" {
+    assert(internal_helper_f24docattrspositive(0) == 42)
+    assert(internal_helper_f24docattrspositive(8) == 50)
+    assert(internal_helper_f24docattrspositive(-42) == 0)
 }
 
 test "isqrt basic" {
@@ -82,7 +82,7 @@ test "hypot_sq basic" {
 
 test "stability attrs do not affect runtime" {
     // #stable, #unstable, #experimental — только doc metadata.
-    ro x = square(7)
+    ro x = square_f24docattrspositive(7)
     ro y = cube(3)
     ro z = hypot_sq(3, 4)
     assert(x == 49)

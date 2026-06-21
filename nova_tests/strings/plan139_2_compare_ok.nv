@@ -1,0 +1,65 @@
+// compare_ok.nv — Plan 139.2 Ф.3
+// str @compare(other) -> int — Nova-body. Lexicographic byte-loop over
+// @as_bytes() of both operands (like C strcmp / memcmp), length-aware tiebreak.
+// Returns negative / 0 / positive. Byte-exact with the retired C
+// nova_str_compare (array.h:989). Direct method-form call (`s.compare(t)`)
+// routes here; comparison OPERATORS lower separately to C nova_str_lt/…
+// (option (b)) — both must agree on ordering.
+
+module nova_tests.strings
+
+test "compare: equal strings → 0" {
+    assert("abc".compare("abc") == 0)
+    assert("".compare("") == 0)
+    assert("héllo".compare("héllo") == 0)
+}
+
+test "compare: less-than → negative" {
+    // 'a' (0x61) < 'b' (0x62) at first differing byte.
+    assert("abc".compare("abd") < 0)
+    assert("abc".compare("abx") < 0)
+}
+
+test "compare: greater-than → positive" {
+    assert("abd".compare("abc") > 0)
+    assert("abx".compare("abc") > 0)
+}
+
+test "compare: prefix is less than longer string (length tiebreak)" {
+    // "ab" is a prefix of "abc" → shorter sorts first.
+    assert("ab".compare("abc") < 0)
+    assert("abc".compare("ab") > 0)
+}
+
+test "compare: empty string sorts first" {
+    assert("".compare("a") < 0)
+    assert("a".compare("") > 0)
+}
+
+test "compare: byte-wise (not codepoint) — high byte > ASCII" {
+    // "é" lead byte 0xC3 (195) > 'z' (0x7A, 122) at byte 0.
+    assert("é".compare("z") > 0)
+    assert("z".compare("é") < 0)
+}
+
+test "compare: agrees with the comparison operators (option (b))" {
+    // The migrated Nova-body method and the still-C `<`/`>`/`==` operators
+    // must agree: sign(compare) ⇔ operator result.
+    ro a = "apple"
+    ro b = "banana"
+    assert((a.compare(b) < 0) == (a < b))
+    assert((b.compare(a) > 0) == (b > a))
+    assert((a.compare(a) == 0) == (a == a))
+    assert(a < b)        // operator still works (C nova_str_lt)
+    assert(b > a)
+    assert(!(a == b))
+}
+
+test "compare: result usable as a sort key (transitivity sanity)" {
+    ro x = "alpha"
+    ro y = "beta"
+    ro z = "gamma"
+    assert(x.compare(y) < 0)
+    assert(y.compare(z) < 0)
+    assert(x.compare(z) < 0)   // transitive
+}

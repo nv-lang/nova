@@ -1,0 +1,16 @@
+// Plan 118.1.6 Ф.4 T7 POS — call *unsafe fn pointer внутри unsafe { } works.
+//
+// Wrapping call в unsafe block satisfies E_UNSAFE_CALL_REQUIRES_WRAP
+// для indirect call через *unsafe fn pointer. Counterpart к T6 NEG.
+
+module nova_tests.plan118
+
+unsafe fn risky_dec(x i64) -> i64 {
+    x - 1
+}
+
+test "indirect call via *unsafe fn pointer inside unsafe { } works" {
+    ro p *unsafe fn(i64) -> i64 = risky_dec
+    ro v = unsafe { p(43) }
+    assert(v == 42)
+}

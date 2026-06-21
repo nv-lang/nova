@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Cleanup-on-failure — defer/errdefer/okdefer для consume-resources
 
+> ⚠️ **УСТАРЕЛО (pre-Plan-110).** `errdefer`/`okdefer`/`defer |result|` УДАЛЕНЫ
+> ([D189](../../spec/decisions/03-syntax.md#d189), 2026-06-20, hard cutover; парсер
+> реджектит). Этот guide описывает Plan 100.4 family (D158-D162) до радикального
+> упрощения Plan 110 и сохранён как история. **Актуально** →
+> [consume-scope-cleanup.md](consume-scope-cleanup.md) (D188) + модель
+> [error-and-cleanup-model.md](error-and-cleanup-model.md).
+
 > Practical guide для Plan 100.4 family
 > ([D158](../../spec/decisions/03-syntax.md#d158)–
 > [D162](../../spec/decisions/03-syntax.md#d162)). Production-grade

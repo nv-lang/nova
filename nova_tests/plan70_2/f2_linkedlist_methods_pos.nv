@@ -17,15 +17,15 @@ type LinkedList3[T]
 
 fn LinkedList3[T] @len() -> int => match @ {
     Nil => 0
-    Cons(_, rest) => 1 + rest.@len()
+    Cons(_, rest) => 1 + rest.len()
 }
 
 test "LinkedList3[int] @len method (mono'd dispatch)" {
     ro l = Cons(1, Cons(2, Cons(3, Nil)))
-    assert(l.@len() == 3)
+    assert(l.len() == 3)
 }
 
 test "LinkedList3[int] empty @len = 0" {
     ro l LinkedList3[int] = Nil
-    assert(l.@len() == 0)
+    assert(l.len() == 0)
 }

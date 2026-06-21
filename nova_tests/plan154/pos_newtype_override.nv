@@ -9,5 +9,5 @@ fn Locale @to_lower() -> str => "custom"
 
 fn main() -> () {
     ro l = Locale { s: "ABC" }
-    assert(l.to_ascii_lower() == "custom")
+    assert(l.to_lower() == "custom")
 }

@@ -1,0 +1,30 @@
+// Plan 123.2 T-NEG.3: parallel for body → skip LICM polностью
+// (concurrent body, fiber aliasing safety). Body executes
+// concurrently per element.
+
+module nova_tests.plan123
+
+type Cfg3 {
+    ro factor int
+}
+
+fn Cfg3 @gather() -> int {
+    mut total = 0
+    mut i = 0
+    while i < 3 {
+        total = total + @factor + @factor
+        i = i + 1
+    }
+    total
+}
+
+fn Cfg3.new(f int) -> Cfg3 {
+    Cfg3 { factor: f }
+}
+
+test "regular while loop hoists; parallel for body would be skipped" {
+    ro c = Cfg3.new(5)
+    ro r = c.gather()
+    // 3 × (5+5) = 30.
+    assert(r == 30)
+}

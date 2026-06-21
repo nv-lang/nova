@@ -1,0 +1,23 @@
+// Plan 118.5 / 138.5 T1 — canonical postfix pointer syntax parses + typechecks.
+//
+// Tests pointer grammar: *T, *mut T, *unsafe T forms in external fn
+// signatures (parser + typecheck only — no runtime ops).
+//
+// Per Plan 147 / D246, pointee-mut is POSTFIX (after `*`); reassignability of
+// the pointer is binding, not type. The ro pointee is the bare canon `*T`
+// (`*T ≡ *ro T`; explicit `*ro T` is a hard error, migrated here).
+
+module nova_tests.plan118
+
+type Acc1_plan1185t1canonicalrightbindingok {
+    id i64
+}
+
+extern "nova" fn p118_5_t1_a(p * Acc1_plan1185t1canonicalrightbindingok) -> ()
+extern "nova" fn p118_5_t1_b(p *Acc1_plan1185t1canonicalrightbindingok) -> ()
+extern "nova" fn p118_5_t1_c(p *mut Acc1_plan1185t1canonicalrightbindingok) -> ()
+extern "nova" fn p118_5_t1_d(p *unsafe Acc1_plan1185t1canonicalrightbindingok) -> ()
+
+test "parses canonical right-binding forms" {
+    assert(1 == 1)
+}

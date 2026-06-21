@@ -1,7 +1,7 @@
 // EXPECT_RUNTIME_PANIC nova: unhandled Fail: crash
 // EXPECT_STDOUT DEFER_RUNS
 //
-// nv_panic fix: defer (не errdefer) тоже срабатывает на panic() на
+// nv_panic fix: defer тоже срабатывает на panic() на
 // main flow. defer срабатывает на любом exit — panic, throw, normal.
 
 module expected_runtime.defer_panic_mainflow

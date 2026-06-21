@@ -1,5 +1,7 @@
 # Performance conventions — Nova bootstrap
 
+> **Нормативный документ** — изменения и отклонения только по согласованию с владельцем; см. [conventions-governance.md](conventions-governance.md).
+
 > **Created 2026-05-16.** Documents wall-clock cost expectations
 > для common operations. Used as **mental model** для writing
 > performance-sensitive Nova code. Plan 57 (perf bench infrastructure)

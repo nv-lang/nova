@@ -1,0 +1,10 @@
+// Plan 114.4.2 T3-extra: const fn без параметров (-> const T только).
+
+module nova_tests.plan114
+
+fn answer() -> const int => 42
+
+test "const fn no args" {
+    const A_plan11442constfnnoargsok = answer()
+    assert(A_plan11442constfnnoargsok == 42)
+}

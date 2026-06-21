@@ -3,25 +3,25 @@
 // Pointer model (Plan 147 / D246): pointee-mut is POSTFIX (after each `*`),
 // and the ro pointee is the bare canon (`*T ≡ *ro T`; explicit `*ro` is a
 // hard error, migrated to `*`).
-//   `*mut *Node`     = pointer-to-mut (pointer-to-ro Node)
-//   `* *mut Node`    = ro pointer to a mut-pointer (`**mut Node`)
+//   `*mut *Node_t13chainmultilevelok`     = pointer-to-mut (pointer-to-ro Node_t13chainmultilevelok)
+//   `* *mut Node_t13chainmultilevelok`    = ro pointer to a mut-pointer (`**mut Node_t13chainmultilevelok`)
 
 module nova_tests.plan118
 
-type Node {
+type Node_t13chainmultilevelok {
     ro value i64
 }
 
 // Two-level chain — mut/ro mixed (pointee-mut postfix per level; ro = bare `*`).
-extern "nova" fn p118_chain_mut_ro(pp *mut *Node) -> i64
-extern "nova" fn p118_chain_ro_mut(pp **mut Node) -> i64
+extern "nova" fn p118_chain_mut_ro(pp *mut *Node_t13chainmultilevelok) -> i64
+extern "nova" fn p118_chain_ro_mut(pp **mut Node_t13chainmultilevelok) -> i64
 
 // Three-level form collapses to two levels here (outer/inner pointee-mut
 // expressed postfix at each `*`).
-extern "nova" fn p118_chain_triple(ppp *mut *Node) -> i64
+extern "nova" fn p118_chain_triple(ppp *mut *Node_t13chainmultilevelok) -> i64
 
 // Chain в return position.
-extern "nova" fn p118_return_chain() -> *mut *Node
+extern "nova" fn p118_return_chain() -> *mut *Node_t13chainmultilevelok
 
 test "multi-level pointer chains parse + type-check" {
     assert(1 == 1)

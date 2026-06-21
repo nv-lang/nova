@@ -1,0 +1,27 @@
+// Plan 123.2 T1.4: `loop { ... break ... }` form.
+
+module nova_tests.plan123
+
+type Wrap3_plan1232licmloopkeywordok {
+    ro limit int
+}
+
+fn Wrap3_plan1232licmloopkeywordok @find_first() -> int {
+    mut x = 0
+    loop {
+        if x >= @limit + @limit { break }
+        x = x + 1
+    }
+    x
+}
+
+fn Wrap3_plan1232licmloopkeywordok.new(l int) -> Wrap3_plan1232licmloopkeywordok {
+    Wrap3_plan1232licmloopkeywordok { limit: l }
+}
+
+test "loop keyword form — @limit hoisted" {
+    ro w = Wrap3_plan1232licmloopkeywordok.new(5)
+    ro r = w.find_first()
+    // limit*2 = 10, x increments from 0 to 10.
+    assert(r == 10)
+}

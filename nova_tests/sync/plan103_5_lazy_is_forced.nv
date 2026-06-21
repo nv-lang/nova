@@ -1,0 +1,29 @@
+// Plan 103.5 — Lazy[T].is_forced: observability.
+
+module nova_tests.sync
+
+test "Lazy.is_forced: false before any force, true after successful force" {
+    ro lazy = Lazy[str].new() { "hello" }
+    assert(lazy.is_forced() == false)
+    ro v = lazy.force()
+    assert(v == "hello")
+    assert(lazy.is_forced() == true)
+}
+
+test "Lazy.is_forced: stays true after multiple forces" {
+    ro lazy = Lazy[int].new() { 99 }
+    ro _ = lazy.force()
+    ro _ = lazy.force()
+    assert(lazy.is_forced() == true)
+}
+
+test "Lazy.is_forced: false after panic (not poisoned yet = not forced)" {
+    ro lazy = Lazy[int].new() { throw "oops"; 0 }
+    with Fail = effect Fail {
+        fail(_msg) { interrupt () }
+    } {
+        ro _ = lazy.force()
+    }
+    // is_forced should be false (value never stored)
+    assert(lazy.is_forced() == false)
+}

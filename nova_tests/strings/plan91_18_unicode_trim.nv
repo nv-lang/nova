@@ -1,0 +1,26 @@
+module nova_tests.strings
+import std.unicode
+
+test "trim removes ASCII whitespace" {
+    assert("  hello  ".trim() == "hello")
+}
+
+test "trim removes Unicode whitespace" {
+    assert("\u{00A0}hello\u{00A0}".trim() == "hello")
+}
+
+test "trim_start removes leading whitespace" {
+    assert("  hello  ".trim_start() == "hello  ")
+}
+
+test "trim_end removes trailing whitespace" {
+    assert("  hello  ".trim_end() == "  hello")
+}
+
+test "split_whitespace splits on Unicode spaces" {
+    ro parts = "hello world\t\tfoo".split_whitespace()
+    assert(parts.len() == 3)
+    assert(parts[0] == "hello")
+    assert(parts[1] == "world")
+    assert(parts[2] == "foo")
+}

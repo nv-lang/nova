@@ -1,0 +1,13 @@
+// Plan 114.4.3 T4.2 positive: recursive factorial (direct self-recursion).
+
+module nova_tests.plan114
+
+fn fact(const n int) -> const int =>
+    if n <= 1 { 1 } else { n * fact(n - 1) }
+
+test "factorial recursion" {
+    const A_plan11443recursionfactorialok = fact(5)
+    const B_plan11443recursionfactorialok = fact(10)
+    assert(A_plan11443recursionfactorialok == 120)
+    assert(B_plan11443recursionfactorialok == 3628800)
+}

@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 91.18 Ф.2 (D253 + strings.md, criterion A6): `to_uppercase(s)` (Unicode
+// free function form) is opt-in — defined in std.unicode, NOT in prelude.
+// Without `import std.unicode`, `to_uppercase` is not in scope.
+//
+// Note: `str @to_upper()` (extension method) is also in std.unicode/case.nv,
+// but extension methods on str types resolve from all stdlib modules automatically.
+// The free-function form is the reliable gated surface.
+
+module neg.plan91_18_to_upper_import_gated
+
+test "to_uppercase free fn without import std.unicode is undefined" {
+    ro s = "straße"
+    ro _ = to_uppercase(s)
+}

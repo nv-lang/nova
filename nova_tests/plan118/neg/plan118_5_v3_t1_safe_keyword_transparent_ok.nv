@@ -1,0 +1,11 @@
+// Plan 118.5 V3 T1 → RETIRED by Plan 138.5 (2026-06-11).
+//
+// The `safe` type-modifier (propagation-stopper, §V3.4) is retired. What was
+// a transparent no-op now errors with a migration hint. This fixture is kept
+// as a regression guard proving `safe` in type position is rejected.
+//
+// EXPECT_COMPILE_ERROR E_SAFE_RETIRED
+
+module neg.plan118_5_v3_t1_safe_keyword_transparent_ok
+
+extern "nova" fn p1(x safe int) -> ()

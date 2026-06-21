@@ -62,7 +62,7 @@ test "Hash bound СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР·
 // 2. Equal bound вЂ” СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· prelude auto-import.
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
-fn eq_via_bound[T Equal](a T, b T) -> bool => a.equals(b)
+fn eq_via_bound[T Equal](a T, b T) -> bool => a.equal(b)
 
 test "Equal bound вЂ” Item2.equals()" {
     ro a = Item2.new(7 as u64)
@@ -137,7 +137,7 @@ export fn FahrToC @into() -> Celsius =>
 
 // Generic fn СЃ bound `[T Into[Celsius]]` вЂ” type-checker РІР°Р»РёРґРёСЂСѓРµС‚ С‡С‚Рѕ
 // T РёРјРµРµС‚ `into() -> Celsius` РјРµС‚РѕРґ (СЃС‚СЂСѓРєС‚СѓСЂРЅРѕ С‡РµСЂРµР· prelude).
-fn needs_into[T Into[Celsius]](v T) -> Celsius => v.to_str()
+fn needs_into[T Into[Celsius]](v T) -> Celsius => v.into()
 
 test "Into[X] bound вЂ” explicit @into impl СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· prelude" {
     ro f = FahrToC { value: 32.0 }

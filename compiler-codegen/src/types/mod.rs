@@ -2861,6 +2861,14 @@ struct TypeCheckCtx<'a> {
     /// overloads come from EITHER base OR synth, never both (synth is registered only
     /// when base lacks the method — see `register_synthesized_methods`).
     synth_methods: HashMap<String, HashMap<String, Vec<&'a FnDecl>>>,
+    /// [M-blanket-method-resolve] (merge: main 169.2 `ca85c001` ↔ U.2.3 shared registry).
+    /// Имена blanket-методов — `fn[T] T @m`, где receiver = собственный type-параметр
+    /// функции (recv.type_name ∈ f.generics). Метод применим к ЛЮБОМУ типу, но в реестре
+    /// лежит под ключом параметра ("T"), не под конкретным типом → `f3_check_member` для
+    /// `str.m()`/`UserType.m()` (тип ∈ self.types) его не находил → ложный E7320. Примитивы
+    /// (int) случайно проходили (их нет в self.types → ранний return). Заполняется здесь,
+    /// в `TypeCheckCtx::build` (детекция по `module.items`), независимо от `sig`-реестра.
+    blanket_method_names: HashSet<String>,
     /// Ф.1: объявления типов — для разворачивания alias/newtype при
     /// категоризации (assignability сравнивает категории, не имена).
     types: HashMap<String, &'a TypeDecl>,
@@ -3109,9 +3117,28 @@ impl<'a> TypeCheckCtx<'a> {
         // U.2.3.3: fn_decls/method_table read from `sig` (shared base registry);
         // only `types` is still collected here (needed locally below).
         let mut types: HashMap<String, &'a TypeDecl> = HashMap::new();
+        // [M-blanket-method-resolve]: names of blanket methods (`fn[T] T @m`).
+        let mut blanket_method_names: HashSet<String> = HashSet::new();
         for item in &module.items {
-            if let Item::Type(td) = item {
-                types.insert(td.name.clone(), td);
+            match item {
+                Item::Fn(f) => {
+                    // [M-blanket-method-resolve] (merge: main 169.2 ↔ U.2.3): detect a
+                    // blanket method `fn[T] T @m` (receiver IS one of the fn's own
+                    // type-params → applicable to ANY concrete type). U.2.3: `fn_decls`/
+                    // `method_table` are built in `SigRegistry::build_base`, NOT here — so
+                    // ONLY the blanket-NAME detection lives here (consumed by
+                    // `f3_check_member` to accept the method on `self.types` types, not just
+                    // primitives, where the registry keys it under the param `"T"`).
+                    if let Some(recv) = &f.receiver {
+                        if f.generics.iter().any(|g| g.name == recv.type_name) {
+                            blanket_method_names.insert(f.name.clone());
+                        }
+                    }
+                }
+                Item::Type(td) => {
+                    types.insert(td.name.clone(), td);
+                }
+                _ => {}
             }
         }
         // Все типы (пользовательские + merged-from-imports) — для подсчёта
@@ -3406,7 +3433,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
-        TypeCheckCtx { arity, sig, synth_methods, types, imported_modules,
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, imported_modules,
             entry_imported_modules,
             entry_file_ids,
             const_fn_names,
@@ -7496,6 +7523,15 @@ impl<'a> TypeCheckCtx<'a> {
                 return;
             }
         }
+        // [M-blanket-method-resolve]: a blanket method `fn[T] T @m` (receiver is
+        // one of the fn's own type-params) applies to ANY concrete type, but lives
+        // in `method_table` under the param key ("T"), not under `tname`. The
+        // per-type resolution below keys on `tname` and would miss it, firing a
+        // false [E7320] on `str`/user types (primitives slip through the
+        // `self.types.get` early-return). Accept the blanket method here.
+        if self.blanket_method_names.contains(name) {
+            return;
+        }
         let Some(td) = self.types.get(tname) else { return; };
         match &td.kind {
             TypeDeclKind::Record(fields) => {
@@ -8717,6 +8753,17 @@ impl<'a> TypeCheckCtx<'a> {
                 })
             }
             ExprKind::As(_, ty) => Some(ty.clone()),
+            // A block expression's value is its trailing expr. Conservative:
+            // only infer when the block has NO statements, so the trailing
+            // cannot reference inner let-bindings (which are absent from the
+            // outer `scope`) → no risk of resolving a name to the wrong outer
+            // binding. Covers `ro p = unsafe { … as *mut T }` so `p` infers as
+            // `*mut T` — required by the raw-pointer index-write carve-out in
+            // `check_target_readonly` (169.2 [M-169.2-ptr-index-ro-binding]).
+            // Blocks with statements stay `None` as before.
+            ExprKind::Block(b) if b.stmts.is_empty() => {
+                b.trailing.as_ref().and_then(|t| self.infer_expr_type(t, scope))
+            }
             ExprKind::IntLit(_) => Some(prim_ref("int", expr.span)),
             ExprKind::FloatLit(_) => Some(prim_ref("f64", expr.span)),
             ExprKind::BoolLit(_) => Some(prim_ref("bool", expr.span)),
@@ -9073,6 +9120,29 @@ impl<'a> TypeCheckCtx<'a> {
             // D176 / Plan 114 D184: index write `arr[i] = x` — forbid if arr has `ro` type.
             ExprKind::Index { obj, .. } => {
                 let obj_ty = self.infer_expr_type(obj, scope);
+                // Plan 147 Ф.3 (D246, L3 pointee-capability) — RAW-POINTER index write.
+                // `p[i] = v` ≡ `*(p+i) = v` is a write THROUGH the pointer: for a raw
+                // pointer the pointee-mutability is read FROM THE TYPE (L3), binding-
+                // independent — mirror the `*p = v` Deref rule below. So `ro p *mut T`
+                // permits `p[i] = v` (oracle row C); the L1/L2 binding-freeze (which is
+                // for VALUE collections like `[]int`/Vec) must NOT apply to raw pointers.
+                // `pointee_is_writable` returns Some(..) only for TypeRef::Pointer (None
+                // for value collections), so this carve-out is pointer-exact. (169.2:
+                // P7 was over-strict on `*mut T` index-writes — [M-169.2-ptr-index-ro-binding].)
+                if let Some(ty) = &obj_ty {
+                    if let Some(writable) = pointee_is_writable(ty) {
+                        if !writable {
+                            errors.push(Diagnostic::new(
+                                "[E_POINTER_RO_ASSIGN] cannot write through index on a \
+                                 readonly pointer — `*T` is a readonly pointee (L3 default). \
+                                 Use `*mut T` to opt into a writable pointee."
+                                    .to_string(),
+                                target.span,
+                            ));
+                        }
+                        return;
+                    }
+                }
                 if let Some(tr) = &obj_ty {
                     if tr.is_readonly() {
                         errors.push(Diagnostic::new(

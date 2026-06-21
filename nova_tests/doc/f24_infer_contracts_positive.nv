@@ -9,22 +9,22 @@ module nova_tests.doc
 /// # Examples
 ///
 /// ```nova,infer_contracts
-/// assert(abs_val(-5) == 5)
-/// assert(abs_val(0) == 0)
-/// assert(abs_val(3) == 3)
+/// assert(abs_val_f24infercontractspositive(-5) == 5)
+/// assert(abs_val_f24infercontractspositive(0) == 0)
+/// assert(abs_val_f24infercontractspositive(3) == 3)
 /// ```
-export fn abs_val(x int) -> int => if x < 0 { 0 - x } else { x }
+export fn abs_val_f24infercontractspositive(x int) -> int => if x < 0 { 0 - x } else { x }
 
 /// Зажимает значение в диапазон [lo, hi].
 ///
 /// # Examples
 ///
 /// ```nova,infer_contracts
-/// assert(clamp(5, 0, 10) == 5)
-/// assert(clamp(-5, 0, 10) == 0)
-/// assert(clamp(15, 0, 10) == 10)
+/// assert(clamp_f24infercontractspositive(5, 0, 10) == 5)
+/// assert(clamp_f24infercontractspositive(-5, 0, 10) == 0)
+/// assert(clamp_f24infercontractspositive(15, 0, 10) == 10)
 /// ```
-export fn clamp(x int, lo int, hi int) -> int
+export fn clamp_f24infercontractspositive(x int, lo int, hi int) -> int
     requires lo <= hi
     => if x < lo { lo } else if x > hi { hi } else { x }
 
@@ -44,39 +44,39 @@ export fn min_of(a int, b int) -> int => if a < b { a } else { b }
 /// # Examples
 ///
 /// ```nova,infer_contracts
-/// assert(factorial(0) == 1)
-/// assert(factorial(1) == 1)
-/// assert(factorial(5) == 120)
+/// assert(factorial_f24infercontractspositive(0) == 1)
+/// assert(factorial_f24infercontractspositive(1) == 1)
+/// assert(factorial_f24infercontractspositive(5) == 120)
 /// ```
-export fn factorial(n int) -> int {
-    if n <= 0 { 1 } else { n * factorial(n - 1) }
+export fn factorial_f24infercontractspositive(n int) -> int {
+    if n <= 0 { 1 } else { n * factorial_f24infercontractspositive(n - 1) }
 }
 
-test "abs_val satisfies inferred contracts" {
-    assert(abs_val(-5) == 5)
-    assert(abs_val(0) == 0)
-    assert(abs_val(3) == 3)
-    assert(abs_val(-100) == 100)
-    assert(abs_val(1) == 1)
+test "abs_val_f24infercontractspositive satisfies inferred contracts" {
+    assert(abs_val_f24infercontractspositive(-5) == 5)
+    assert(abs_val_f24infercontractspositive(0) == 0)
+    assert(abs_val_f24infercontractspositive(3) == 3)
+    assert(abs_val_f24infercontractspositive(-100) == 100)
+    assert(abs_val_f24infercontractspositive(1) == 1)
 }
 
-test "abs_val always non-negative" {
-    assert(abs_val(-999) >= 0)
-    assert(abs_val(0) >= 0)
-    assert(abs_val(999) >= 0)
+test "abs_val_f24infercontractspositive always non-negative" {
+    assert(abs_val_f24infercontractspositive(-999) >= 0)
+    assert(abs_val_f24infercontractspositive(0) >= 0)
+    assert(abs_val_f24infercontractspositive(999) >= 0)
 }
 
-test "clamp satisfies inferred contracts" {
-    assert(clamp(5, 0, 10) == 5)
-    assert(clamp(-5, 0, 10) == 0)
-    assert(clamp(15, 0, 10) == 10)
+test "clamp_f24infercontractspositive satisfies inferred contracts" {
+    assert(clamp_f24infercontractspositive(5, 0, 10) == 5)
+    assert(clamp_f24infercontractspositive(-5, 0, 10) == 0)
+    assert(clamp_f24infercontractspositive(15, 0, 10) == 10)
 }
 
-test "clamp edge cases" {
-    assert(clamp(0, 0, 0) == 0)
-    assert(clamp(-1, 0, 5) == 0)
-    assert(clamp(6, 0, 5) == 5)
-    assert(clamp(3, 3, 3) == 3)
+test "clamp_f24infercontractspositive edge cases" {
+    assert(clamp_f24infercontractspositive(0, 0, 0) == 0)
+    assert(clamp_f24infercontractspositive(-1, 0, 5) == 0)
+    assert(clamp_f24infercontractspositive(6, 0, 5) == 5)
+    assert(clamp_f24infercontractspositive(3, 3, 3) == 3)
 }
 
 test "min_of satisfies inferred contracts" {
@@ -91,11 +91,11 @@ test "min_of additional" {
     assert(min_of(100, 0) == 0)
 }
 
-test "factorial satisfies inferred contracts" {
-    assert(factorial(0) == 1)
-    assert(factorial(1) == 1)
-    assert(factorial(5) == 120)
-    assert(factorial(4) == 24)
-    assert(factorial(3) == 6)
-    assert(factorial(2) == 2)
+test "factorial_f24infercontractspositive satisfies inferred contracts" {
+    assert(factorial_f24infercontractspositive(0) == 1)
+    assert(factorial_f24infercontractspositive(1) == 1)
+    assert(factorial_f24infercontractspositive(5) == 120)
+    assert(factorial_f24infercontractspositive(4) == 24)
+    assert(factorial_f24infercontractspositive(3) == 6)
+    assert(factorial_f24infercontractspositive(2) == 2)
 }

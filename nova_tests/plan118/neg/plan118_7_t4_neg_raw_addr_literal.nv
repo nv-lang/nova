@@ -1,0 +1,9 @@
+// Plan 118.7 NEG-T4 — `raw &<literal>` rejected (E_AMP_LITERAL).
+// Literals are not addressable. Bind to a named local first.
+// EXPECT_COMPILE_ERROR E_AMP_LITERAL
+
+module neg.plan118_7_t4_neg_raw_addr_literal
+
+fn get_ptr() -> *int {
+    unsafe { raw &42 }
+}

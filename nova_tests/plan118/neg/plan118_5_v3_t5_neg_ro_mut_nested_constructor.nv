@@ -1,0 +1,23 @@
+// Plan 118.5 V3 Ф.2 NEG T5 — `ro mut T` inside a nested (Array) constructor
+// → error (no binding context for disambiguation).
+//
+// Per D216 V3 §V3.1: при nested constructor position (Array, etc.), no
+// binding context — the ro+mut combination is invalid regardless of T's
+// storage class.
+//
+// NOTE (Plan 147 / D246 migration): the original form used a *pointer*
+// constructor (`* ro mut Acc`). Under the 3-axis canon a bare `*T ≡ *ro T`,
+// so an explicit `*ro` is a HARD ERROR E_REDUNDANT_POINTER_RO fired at parse
+// time — it would mask this §V3.1 ro+mut value-type conflict. The conflict is
+// preserved here in an `[]ro mut Acc` array constructor, which is the same
+// «nested constructor, no binding context» position without the `*ro` clash.
+//
+// EXPECT_COMPILE_ERROR E_MUTABILITY_CONFLICT_VALUE_TYPE
+
+module neg.plan118_5_v3_t5_neg_ro_mut_nested_constructor
+
+type Acc {
+    id i64
+}
+
+extern "nova" fn p(x []ro mut Acc) -> ()

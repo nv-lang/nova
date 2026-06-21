@@ -150,7 +150,7 @@ export type RuntimeNoneError
 // Plan 100.4.1 (D158): MultiError — composite error для failable cleanup
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Composite error от **failable defer/errdefer/okdefer body** (D158).
+/// Composite error от **failable defer body** (D158).
 ///
 /// Когда cleanup-fail происходит **во время propagation другой ошибки** —
 /// primary error НЕ заменяется; cleanup-error appended в chain `suppressed`.

@@ -23,8 +23,8 @@ fn Cv13 @small_range_no_promote() -> int {
 }
 
 test "V2.1 dyn small range: semantic preservation regardless of cache decision" {
-    ro Cv13 = Cv13.new()
-    ro r = Cv13.small_range_no_promote()
+    ro cv13 = Cv13.new()
+    ro r = cv13.small_range_no_promote()
     // 3 Г— 5 = 15
     assert(r == 15)
 }

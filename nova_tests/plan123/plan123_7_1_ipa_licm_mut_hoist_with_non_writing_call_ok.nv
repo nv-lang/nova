@@ -1,0 +1,40 @@
+// Plan 123.7.1 T2.1: LICM hoists mut @field inside loop even when
+// loop body has self-method calls that don't write that field.
+
+module nova_tests.plan123
+
+type Worker4 {
+    mut total int
+    mut log int
+}
+
+// Writes ONLY @log — IPA write_set = {"log"}.
+fn Worker4 mut @bump_log() -> () {
+    @log = @log + 1
+}
+
+fn Worker4 mut @work(n int) -> int {
+    mut accum = 0
+    mut i = 0
+    while i < n {
+        // Loop body: 2 reads of @total + call @bump_log() (writes @log,
+        // not @total). V7 conservative would skip mut LICM here.
+        // V7.1 IPA: @bump_log doesn't write @total → can hoist.
+        accum = accum + @total + @total
+        @bump_log()
+        i = i + 1
+    }
+    accum
+}
+
+fn Worker4.new(t int, l int) -> Worker4 {
+    Worker4 { total: t, log: l }
+}
+
+test "LICM IPA: mut field hoisted despite non-writing call in loop" {
+    mut w = Worker4.new(5, 0)
+    ro r = w.work(3)
+    // total=5 throughout (bump_log writes only @log).
+    // accum = 3 * (5+5) = 30.
+    assert(r == 30)
+}
