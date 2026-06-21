@@ -128,6 +128,8 @@ referenced from plan docs and simplifications.md.
 
 - **[M-118.7-safe-addr-outside-fn-scope]** Plan 118.6/118.7 known limitation: `&ident` без `unsafe {}` как trailing expr в fn body даёт `undefined identifier` (checker ищет ident в другом контексте). Workaround: `unsafe { &ident }` — поведение идентично после 118.7. Priority: P3 (правильная fix requires full type-inference in escape sink).
 
+- **[M-138.5-unsafe-ptr-write-cap]** `*unsafe T` должен быть **ro + possibly-uninit** (НЕ writable); writable-uninit = **`*mut unsafe T`** (канон post-138.5 §V3.2 flip: capability-OUTER, safety-INNER → `Pointer(Mut(Unsafe(T)))`). Спека **противоречива**: `.write(v)`-таблица (`02-types.md:8278`) принимает **голый `*unsafe T`** как writable (Model B) — конфликтует с наличием `*mut unsafe T` (Model A), позволяет писать сквозь non-mut указатель (нарушение capability-модели; не memory-unsafe — uninit пишется — но `*mut unsafe T` становится бессмысленным). **Фикс (sign-off 2026-06-21):** `.write()`/`*p=v` требует **mut-capability** (`*mut T` / `*mut unsafe T`), reject голый `*unsafe T` (→ `E_POINTER_RO_ASSIGN`); `*unsafe T` остаётся **ro**. Также мигрировать **stale-тест** `nova_tests/plan118/plan118_5_v3_t9_safety_outer_ok.nv:23-24`: старый порядок `*unsafe mut/ro Acc4` (pre-138.5-flip → теперь `E_MODIFIER_ORDER`) → на `*mut unsafe`/`*unsafe` (ro implicit). Refs: `02-types.md:8278` (write-table), `:10389` (§V3.2 flip), `:10561` (E_MODIFIER_ORDER). Priority: P2 (capability-consistency).
+
 ---
 
 ## Plan 91.18 — str + unicode API audit & cleanup (followups)
