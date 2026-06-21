@@ -53,7 +53,8 @@ degradation; Option-null; realtime/fiber-bans). **Три недочёта:**
 | создать (safe) | `&x` | без изменений (auto-promote) |
 | создать (raw стек) | `raw &x` | без изменений |
 | read (любой `T`, incl. struct) | `p.read() -> T` | **заменяет `*p`** (read); закрывает struct-gap |
-| write (нужен mut-cap) | `p.write(v T) -> ()` | заменяет `*p=v`; требует `*mut T`/`*mut unsafe T` (**fix дыры**); возвращает **unit** (Rust-канон) |
+| write value | `p.write(v T) -> *mut T` | заменяет `*p=v`; нужен mut-cap; на `*mut unsafe T` → **апгрейд `*mut T` (инициализировано)** (= Rust `MaybeUninit::write`); возврат `*mut T` (не unit — несёт init-апгрейд) |
+| write from-ptr | `p.write(v *T) -> *mut T` | копия из источника-указателя (большой struct без value-копии); тот же init-апгрейд; overload по типу арг (`T` vs `*T`) |
 | offset (арифметика) | `*T`→`p.offs(n) -> *unsafe T`; `*mut T`→`*mut unsafe T` | заменяет `p+i`/`p-i`; **сохраняет mut-cap** (Rust-паритет); element-units; degraded |
 | offset без UB | `p.wrapping_offs(n)` | UB-free вычисление out-of-bounds адреса (**ниша; низкий приоритет**) |
 | distance | `p.dist(q) -> int` | заменяет `p-q`; signed element count (= Rust `offset_from`) |
@@ -61,7 +62,7 @@ degradation; Option-null; realtime/fiber-bans). **Три недочёта:**
 | indexed write | `p.set(i, v)` | **Nova-сахар** `= p.offs(i).write(v)`, mut; заменяет `p[i]=v` |
 | unaligned | `p.read_unaligned()` / `p.write_unaligned(v)` | в C это UB — явные ops (close gap) |
 | volatile | `p.read_volatile()` / `p.write_volatile(v)` | как есть |
-| copy из/в ptr | `p.copy_from(src *T, n)` / `p.copy_to(dst, n)` | копия из/в указатель (struct/bulk, без value-копии; Rust `copy`); **НЕ перегружать `.write`** |
+| copy bulk (N эл.) | `p.copy_from(src *T, n)` / `p.copy_to(dst, n)` | **N элементов** memcpy/memmove (single-эл. = `.write(v *T)`); Rust `copy` |
 | cast | `p as *U` (**оператор остаётся**) | общий cast-оператор, не deref-маскарад; `.cast`-метод не нужен |
 | order (в буфере) | знак `p.dist(q)` | отдельный `<`/`.addr_lt` **не нужен** — выводится из `.dist` |
 | eq | `p == q` / `p != q` | ✅ **остаётся** оператором (safe identity) |
@@ -82,6 +83,13 @@ degradation; Option-null; realtime/fiber-bans). **Три недочёта:**
 - **Spec-амендмент:** `02-types.md:8278` write-таблица — убрать `*unsafe T` из write-allowed (оставить `*mut T` / `*mut unsafe T`).
 - **Stale-тест:** `nova_tests/plan118/plan118_5_v3_t9_safety_outer_ok.nv:23-24` — старый порядок `*unsafe mut/ro Acc4`
   (pre-138.5-flip → `E_MODIFIER_ORDER`) → мигрировать на `*mut unsafe` / `*unsafe` (ro implicit).
+- **Init-upgrade (sign-off 2026-06-21):** `.write(v T)` / `.write(v *T)` на `*mut unsafe T` возвращает **`*mut T`**
+  (pointee инициализирован) — канонический способ инициализировать uninit (= Rust `MaybeUninit::write() -> &mut T`).
+  Возврат `*mut T` (не unit) несёт переход uninit→init в типе.
+- **🔲 Под-вопрос (uninit vs degraded):** `*unsafe T` сейчас **конфлейтит** две причины — «uninit» (свежая аллокация)
+  и «degraded арифметикой» (bounds/align off после `.offs`). `.write` чинит uninit, но НЕ восстанавливает bounds/align,
+  значит init-апгрейд `*mut unsafe T → *mut T` звучен для **uninit-причины**, а для арифметически-degraded — write не
+  делает указатель безопасным. Рассмотреть **разделение причин** (Rust: `MaybeUninit<T>` vs raw-ptr-after-arith — РАЗНЫЕ типы). TBD.
 
 ## 5. Фазы
 
