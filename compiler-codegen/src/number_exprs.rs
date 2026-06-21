@@ -70,8 +70,12 @@ impl Numberer {
     /// - arithmetic/bitwise/shift `Binary` + `Unary Neg` over primitive operands
     ///   (`promote_arith`; non-primitive/unannotated operand → skip → fallback).
     ///
-    /// `As`/`Tuple`/`Block` (state-dependent / general type→C lowering) are a later
-    /// U.4 slice — skipped here → codegen falls back (sound, never wrong).
+    /// `As` IS annotated (the cast target is syntactic; lowering equals legacy BY
+    /// CONSTRUCTION via U.4.8 — see the arm). `Tuple`/`Block` are a later U.4 slice:
+    /// their EXPRESSION-inference (tuple-element concreteness via `is_empty`; block
+    /// trailing-`let` binding lookup + pattern-override side-effects) is NOT the same as
+    /// the type→C `resolved_type_to_c` lowering, so they need the checker-resolved
+    /// element/trailing type (U.4.4) — skipped here → codegen falls back (sound).
     fn seed_type(&mut self, e: &Expr) {
         use crate::types::ResolvedType as R;
         let rt = match &e.kind {
@@ -101,18 +105,16 @@ impl Numberer {
                 None => return,
             },
             ExprKind::Is(_, _) => R::Bool,
-            // `expr as T` for a PRIMITIVE target T (stateless type→C). Non-primitive
-            // targets (generics/user/pointer) need the state-dependent
-            // `type_ref_to_c` → deferred (U.6.1/U.4.3). Context-free (the result is
-            // the syntactic T, independent of the operand).
-            ExprKind::As(_, ty) => {
-                let rt = crate::types::ResolvedType::from_type_ref(ty);
-                if is_primitive_lowerable(&rt) {
-                    rt
-                } else {
-                    return;
-                }
-            }
+            // `expr as T` — the C-type IS the cast target T (D54), independent of the
+            // operand (context-free). `from_type_ref(T)` is state-free; the consumer
+            // lowers it via the SINGLE authoritative `resolved_type_to_c` (U.4.6), which
+            // equals the legacy `infer_expr_c_type` As-arm (`type_ref_to_c(T)`) BY
+            // CONSTRUCTION — U.4.8 made `type_ref_to_c(T) ≡ resolved_type_to_c(from_type_ref(T))`.
+            // So ALL targets are annotatable (the pre-U.4.8 `is_primitive_lowerable` gate,
+            // needed only while there was no state-aware lowering, is lifted). A
+            // non-lowerable target (removed type / `Self` outside a receiver) lowers to
+            // `Err` → the consumer's `if let Ok` skips the assert, never a wrong claim.
+            ExprKind::As(_, ty) => crate::types::ResolvedType::from_type_ref(ty),
             _ => return,
         };
         self.lits.insert(e.id, rt);
@@ -454,18 +456,4 @@ fn is_typed_int(rt: &crate::types::ResolvedType) -> bool {
         R::Named { name, args, .. } if args.is_empty() && name.as_str() == "char" => true,
         _ => false,
     }
-}
-
-/// Types whose `resolved_type_to_c` lowering is byte-identical to legacy WITHOUT
-/// CEmitter state — primitives + `char`. Gates `As` annotation to primitive cast
-/// targets; non-primitive targets (generics/user/pointer) need the state-dependent
-/// `type_ref_to_c` and are deferred (U.6.1/U.4.3).
-fn is_primitive_lowerable(rt: &crate::types::ResolvedType) -> bool {
-    use crate::types::ResolvedType as R;
-    // U.5.5(a): peel the L2 `readonly` view — `x as readonly <prim>` lowers like
-    // `x as <prim>` (readonly transparent for C), so it stays annotatable (no coverage
-    // regression). The stored annotation keeps the view; `resolved_type_to_c` peels it.
-    let rt = rt.peel_view();
-    matches!(rt, R::Scalar { .. } | R::Float { .. } | R::Bool | R::Str)
-        || matches!(rt, R::Named { name, args, .. } if args.is_empty() && name.as_str() == "char")
 }
