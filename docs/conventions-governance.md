@@ -7,6 +7,7 @@
 
 Обязательны для любого контрибьютора, включая AI-агентов:
 
+- [dev-workflow.md](dev-workflow.md) — процесс разработки + **жёсткие операционные правила** (worktree-модель, никакого `git stash`, `git add` по именам файлов, коммит на задачу). Онбординг-вход для агентов — `AGENTS.md`; в порядок чтения добавлен в [promts/read-project.md](promts/read-project.md).
 - [compiler-conventions.md](compiler-conventions.md) — разработка компилятора (front-end + codegen).
 - [test-conventions.md](test-conventions.md) — написание и запуск тестов.
 - [nv-coding-style.md](nv-coding-style.md) — стиль кода на Nova (`.nv`).
@@ -61,3 +62,9 @@
   ссылкой на `dev-workflow.md §6`. Заодно: убрана ставшая ненужной приписка в `dev-workflow.md §6`
   («compiler-conventions ещё упоминает stash») и вычищены 3 stale `stash+rebuild`-ссылки в плане 172.1
   (+ исправлен §-номер §6→§7). Нормативного поведения тестов не меняет — приведение к уже принятому правилу.
+- **2026-06-21 · discoverability `dev-workflow.md`** — устранён разрыв обнаружения: `dev-workflow.md`
+  (создан 2026-06-21, держит жёсткие операционные правила) был доступен только через `AGENTS.md`, но
+  **не** через собственный session-start промпт `promts/read-project.md` и **не** в нормативном списке
+  выше → агент, идущий по «прочитай проект», к нему не попадал (ровно это дало жизнь stash-противоречию).
+  Согласовано с владельцем: (1) добавлен в этот нормативный список; (2) добавлен «СНАЧАЛА»-callout в
+  `promts/read-project.md` (шаг до nova.toml, с указателем на `AGENTS.md`).
