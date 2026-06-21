@@ -7082,29 +7082,42 @@ impl<'a> TypeCheckCtx<'a> {
         }
         let Some(methods) = self.sig.method_table.get(type_name) else { return; };
         let Some(overloads) = methods.get(method_name) else { return; };
-        // Plan 172.1 U.4.3 (stage c1): record the chosen INSTANCE callee into the
-        // resolved-callee channel — substrate for codegen consume (§0/§7.7: checker chooses,
-        // codegen lowers its own view by `FnDecl.span`). SINGLE-overload only here:
-        // unambiguous → byte-identical (codegen picks the same single FnDecl). The
-        // multi-overload case (checker resolves by arg-type, codegen currently mis-picks by
-        // C-type — the `p.shifted("hi")` mis-dispatch) is stage (c2): recording THAT choice
-        // and reading it for dispatch is the behavior-change fix, gated on a blast-radius
-        // measure. (Generic instance methods are NOT in codegen's `fn_ret_by_span` — mono
-        // registration path — so the equivalence-assert naturally scopes to non-generic.)
-        if let [single] = overloads.as_slice() {
-            self.resolved_callees.borrow_mut().insert(call_id, single.span);
-        }
+        // Plan 172.1 U.4.3 (c1/c2): record the chosen INSTANCE callee into the
+        // resolved-callee channel — substrate for codegen consume (§0/§7.7: the checker
+        // CHOOSES the overload by arg type, codegen lowers its own view by `FnDecl.span`).
+        // c1: SINGLE-overload (unambiguous → byte-identical, codegen picks the same one).
+        // c2: MULTI-overload → the UNIQUE type-compatible overload. Codegen's C-type
+        // re-dispatch MIS-PICKS when the arg C-type does not EXACTLY match a param string
+        // (narrowing arg like `u8`→`int`, with another overload declared first → strict
+        // match empty → `pool.first()` = wrong overload → CC-FAIL); reading THIS choice for
+        // dispatch (codegen consume, c2) FIXES it. (Generic instance methods take the mono
+        // registration path and are NOT in codegen's span indexes, so the consume/assert
+        // naturally scope to non-generic — see `fn_ret_by_span` / `c_name_by_span`.)
         let mut any_arity = false;
-        let mut any_compat = false;
+        let mut compat_spans: Vec<crate::diag::Span> = Vec::new();
         for f in overloads {
             match self.overload_applicability(f, args, gs, scope) {
                 Some(true) => {
                     any_arity = true;
-                    any_compat = true;
+                    compat_spans.push(f.span);
                 }
                 Some(false) => any_arity = true,
                 None => {} // arity-fail for this candidate
             }
+        }
+        let any_compat = !compat_spans.is_empty();
+        // Single-overload → codegen picks it regardless (c1). Multi-overload → record only
+        // when EXACTLY ONE overload is type-compatible (the unambiguous choice); 0 or ≥2
+        // compatible = error / genuine ambiguity → leave to codegen (no record).
+        let chosen_span = if overloads.len() == 1 {
+            Some(overloads[0].span)
+        } else if compat_spans.len() == 1 {
+            Some(compat_spans[0])
+        } else {
+            None
+        };
+        if let Some(sp) = chosen_span {
+            self.resolved_callees.borrow_mut().insert(call_id, sp);
         }
         if any_arity && !any_compat {
             errors.push(Diagnostic::new(
