@@ -115,6 +115,45 @@ impl Numberer {
             // non-lowerable target (removed type / `Self` outside a receiver) lowers to
             // `Err` → the consumer's `if let Ok` skips the assert, never a wrong claim.
             ExprKind::As(_, ty) => crate::types::ResolvedType::from_type_ref(ty),
+            // Plan 172.1 U.4.4 (syntactic constructor slice): a turbofish-constructor call
+            // `Type[args].ctor()` (ctor ∈ {new,with_capacity,from,default,filled}) has a
+            // SYNTACTIC return identity — the type-args live in the turbofish node, so no
+            // checker scope is needed. Mirrors the checker's `infer_expr_type` arm
+            // (types/mod.rs:8909) EXACTLY: `TypeRef::Named { path:[Type], generics: args }`.
+            // Builtin ctors are NOT in the resolved_callees channel (U.4.3 records user /
+            // overloaded callees by `FnDecl.span`; builtin static ctors have none), so this
+            // fills the U.4.3↔U.4.4 boundary for constructor returns. Generic-LEVEL annotation
+            // (args may be type-params); codegen mono-substitutes at lowering, exactly like
+            // every other arm. Any other Call shape → `return` (its return type is the
+            // resolved_callees channel, U.4.3). A non-lowerable arg lowers to `Err` at the
+            // consumer → the `if let Ok` skips the assert (never a wrong claim).
+            ExprKind::Call { func, .. } => {
+                let ctor_named = match &func.kind {
+                    ExprKind::Member { obj, name: ctor }
+                        if matches!(
+                            ctor.as_str(),
+                            "new" | "with_capacity" | "from" | "default" | "filled"
+                        ) =>
+                    {
+                        match &obj.kind {
+                            ExprKind::TurboFish { base, type_args } => match &base.kind {
+                                ExprKind::Ident(tyname) => Some(TypeRef::Named {
+                                    path: vec![tyname.clone()],
+                                    generics: type_args.clone(),
+                                    span: e.span,
+                                }),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                match ctor_named {
+                    Some(tr) => crate::types::ResolvedType::from_type_ref(&tr),
+                    None => return,
+                }
+            }
             _ => return,
         };
         self.lits.insert(e.id, rt);
