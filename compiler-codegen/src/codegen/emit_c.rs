@@ -1811,10 +1811,10 @@ impl CEmitter {
     /// concrete-vs-erased by C-string) → a MORE correct C name is deferred to
     /// `Q-resolved-type-c-name` (spec/open-questions.md): do it AFTER `type_ref_to_c` is gone
     /// (one source, U.4.8), as separate behavior-change commits (§7 — don't mix with the merge).
-    fn resolved_type_to_c(&self, rt: &crate::types::ResolvedType) -> Option<String> {
+    fn resolved_type_to_c(&self, rt: &crate::types::ResolvedType) -> Result<String, String> {
         use crate::types::ResolvedType as R;
         use crate::ast::PointerModifier as PM;
-        Some(match rt {
+        Ok(match rt {
             R::Scalar { .. } => {
                 let name = rt.int_name().expect("Scalar always yields an int_name");
                 Self::primitive_name_to_c(name).expect("int primitive always in table").to_string()
@@ -1861,7 +1861,7 @@ impl CEmitter {
                 let mut all_concrete = true;
                 for e in elems {
                     match self.resolved_type_to_c(e) {
-                        Some(c) => {
+                        Ok(c) => {
                             let trimmed = c.trim_end_matches('*').trim();
                             if let Some(nm) = trimmed.strip_prefix("Nova_") {
                                 let is_concrete = self.record_schemas.contains_key(nm)
@@ -1875,7 +1875,7 @@ impl CEmitter {
                             }
                             elem_cs.push(c);
                         }
-                        None => {
+                        Err(_) => {
                             all_concrete = false;
                             break;
                         }
@@ -1896,16 +1896,17 @@ impl CEmitter {
     /// side-effects, idempotent); else the legacy primitive-keyed `NovaArray_<prim>*` (the
     /// `elem_key` reconstructed from the `ResolvedType`: `Scalar`/`Float`/`Str`/`Bool` →
     /// primitive name, `Named` type-param/user → `current_type_subst` back-map, exactly as the
-    /// legacy `Named{path:[..]}` path). Always `Some` (Array never defers, like type_ref_to_c).
-    fn resolved_array_to_c(&self, inner: &crate::types::ResolvedType) -> Option<String> {
+    /// legacy `Named{path:[..]}` path). Always `Ok` (Array never errors, like type_ref_to_c —
+    /// an un-lowerable element falls through to the legacy primitive-keyed fallback).
+    fn resolved_array_to_c(&self, inner: &crate::types::ResolvedType) -> Result<String, String> {
         use crate::types::ResolvedType as R;
         // Closure-array `[]fn(...)` → NovaArray_void_p* ([M-138.1-closure-array]).
         if matches!(inner, R::Func { .. }) {
-            return Some("NovaArray_void_p*".to_string());
+            return Ok("NovaArray_void_p*".to_string());
         }
         // D239 `[]T ≡ Vec[T]`: Vec-flip when the Vec template is present.
         if self.generic_type_templates.contains_key("Vec") {
-            if let Some(mut elem_c) = self.resolved_type_to_c(inner) {
+            if let Ok(mut elem_c) = self.resolved_type_to_c(inner) {
                 // int64-erasure of an UNRESOLVED type-param element (mirror legacy).
                 if self.is_generic_stub_c(&elem_c) && !elem_c.contains("____") {
                     elem_c = "nova_int".to_string();
@@ -1922,7 +1923,7 @@ impl CEmitter {
                     .borrow_mut()
                     .entry(mangled.clone())
                     .or_insert_with(|| ("Vec".to_string(), type_args_c));
-                return Some(format!("{}*", mangled));
+                return Ok(format!("{}*", mangled));
             }
             // else fall through to legacy (elem couldn't lower).
         }
@@ -1956,7 +1957,7 @@ impl CEmitter {
             }
             _ => "", // non-bare-Named inner → final NovaArray_nova_int*
         };
-        Some(
+        Ok(
             match elem_key {
                 "str" => "NovaArray_nova_str*",
                 "u8" => "NovaArray_nova_byte*",
@@ -1986,7 +1987,7 @@ impl CEmitter {
         name: &str,
         module: &[String],
         args: &[crate::types::ResolvedType],
-    ) -> Option<String> {
+    ) -> Result<String, String> {
         let full = if module.is_empty() {
             name.to_string()
         } else {
@@ -1995,24 +1996,28 @@ impl CEmitter {
         // Type-param mono-subst (mirrors type_ref_to_c top: only for empty type-args).
         if args.is_empty() {
             if let Some(concrete) = self.type_subst_overrides.borrow().get(&full) {
-                return Some(concrete.clone());
+                return Ok(concrete.clone());
             }
             if let Some(concrete) = self.current_type_subst.get(&full) {
-                return Some(concrete.clone());
+                return Ok(concrete.clone());
             }
         }
         if let Some(c) = Self::primitive_name_to_c(&full) {
-            return Some(c.to_string());
+            return Ok(c.to_string());
         }
-        Some(match full.as_str() {
-            // type_ref_to_c returns Err here → None (parity gate skips Err too).
-            "usize" | "isize" | "ptr" => return None,
+        Ok(match full.as_str() {
+            // U.4.8: removed types lower to nothing — carry the SAME Err message the deleted
+            // `type_ref_to_c_impl` produced. `resolved_type_to_c` is the single type→C path now
+            // (D315), so the failure reason lives HERE (Err), not in a fallback. Plan 133/134.
+            "usize" => return Err("type `usize` is removed — use `int` (Plan 133)".to_string()),
+            "isize" => return Err("type `isize` is removed — use `int` (Plan 133)".to_string()),
+            "ptr" => return Err("type `ptr` is removed — use `*()` (Plan 134)".to_string()),
             "never" => "nova_int".to_string(),
             "Option" => {
                 if let Some(inner) = args.first() {
                     let inner_c = self.resolved_type_to_c(inner)?;
                     if inner_c == "void*" {
-                        return Some("NovaOpt_nova_int".to_string());
+                        return Ok("NovaOpt_nova_int".to_string());
                     }
                     if let Some(x) =
                         inner_c.strip_suffix('*').and_then(|s| s.trim().strip_prefix("Nova_"))
@@ -2022,7 +2027,7 @@ impl CEmitter {
                             || self.generic_types.contains(x)
                             || x.contains("____");
                         if !is_concrete {
-                            return Some("NovaOpt_nova_int".to_string());
+                            return Ok("NovaOpt_nova_int".to_string());
                         }
                     }
                     let sanitized = Self::sanitize_for_novaopt(&inner_c);
@@ -2034,25 +2039,31 @@ impl CEmitter {
             }
             "Result" => {
                 if args.len() == 2 {
-                    // Propagate DEFER (`?`): if an inner type is a not-yet-handled family
-                    // (Array/Tuple/generic-mono → None), the whole Result defers — it must
-                    // NOT fall to the erased fallback (`type_ref_to_c` lowers those inners to
-                    // a CONCRETE mono, so erasing here would be a false mismatch). Only when
-                    // BOTH inners genuinely lower does it pick concrete-vs-erased like legacy.
-                    let ok_c = self.resolved_type_to_c(&args[0])?;
-                    let err_c = self.resolved_type_to_c(&args[1])?;
-                    if !ok_c.is_empty() && ok_c != "void*" && !err_c.is_empty() && err_c != "void*"
-                        && !self.is_generic_stub_c(&ok_c) && !self.is_generic_stub_c(&err_c)
+                    // U.4.8: mirror the deleted `type_ref_to_c_impl` Result arm EXACTLY — an
+                    // un-lowerable inner (removed type / `Self`-without-receiver → Err) makes the
+                    // whole Result fall to the erased fallback; it does NOT propagate the Err
+                    // (legacy used `if let (Ok, Ok)`). Only when BOTH inners lower does it pick
+                    // concrete-vs-erased. The arm must therefore NOT use `?`: an enclosing
+                    // `Option[Result[usize, E]]` then sees the concrete erased Result (Ok),
+                    // exactly like legacy, instead of erroring out.
+                    if let (Ok(ok_c), Ok(err_c)) =
+                        (self.resolved_type_to_c(&args[0]), self.resolved_type_to_c(&args[1]))
                     {
-                        return Some(self.result_repr_c_type(&ok_c, &err_c));
+                        if !ok_c.is_empty() && ok_c != "void*" && !err_c.is_empty() && err_c != "void*"
+                            && !self.is_generic_stub_c(&ok_c) && !self.is_generic_stub_c(&err_c)
+                        {
+                            return Ok(self.result_repr_c_type(&ok_c, &err_c));
+                        }
                     }
                 }
                 "NovaRes_nova_int_nova_str*".to_string()
             }
             "Self" => match &self.current_receiver_type {
                 Some(recv) => self.receiver_c_type(recv, false),
-                // type_ref_to_c Errs (Self outside receiver) → None.
-                None => return None,
+                // U.4.8: `Self` outside a receiver context — carry the SAME Err the deleted
+                // `type_ref_to_c_impl` produced (Plan 11 follow-up: hard error, not a fallback,
+                // so it never silently lowers to a bogus `Nova_Self*`).
+                None => return Err("Self type used outside receiver context (free function or top-level expression). Self valid only внутри `fn Type[..].method(...)` или `fn Type[..] @method(...)`.".to_string()),
             },
             "Effect" => match args.first() {
                 Some(crate::types::ResolvedType::Named { name: en, module: em, .. }) => {
@@ -2072,9 +2083,9 @@ impl CEmitter {
                 // mirroring type_ref_to_c's `path.last()`); generic → void*.
                 if self.protocol_types.contains(&full) || self.protocol_types.contains(name) {
                     if args.is_empty() {
-                        return Some(format!("NovaBox_{}", name));
+                        return Ok(format!("NovaBox_{}", name));
                     }
-                    return Some("void*".to_string());
+                    return Ok("void*".to_string());
                 }
                 // Type alias (skip when referenced WITH args AND a known generic template —
                 // mirrors type_ref_to_c's guard so the mono path is not bypassed).
@@ -2082,7 +2093,7 @@ impl CEmitter {
                     !args.is_empty() && self.generic_type_templates.contains_key(&full);
                 if !is_generic_template_with_args {
                     if let Some(aliased_c) = self.type_aliases.get(&full).cloned() {
-                        return Some(aliased_c);
+                        return Ok(aliased_c);
                     }
                 }
                 // Generic-template instance (mono mangling + worklist/instance-info
@@ -2093,7 +2104,7 @@ impl CEmitter {
                 if !args.is_empty() && self.generic_type_templates.contains_key(&full) {
                     let type_args_c: Vec<String> = args
                         .iter()
-                        .map(|a| self.resolved_type_to_c(a).unwrap_or_else(|| "nova_int".to_string()))
+                        .map(|a| self.resolved_type_to_c(a).unwrap_or_else(|_| "nova_int".to_string()))
                         .collect();
                     let mangled = Self::compute_generic_type_c_name(&full, &type_args_c);
                     if !self.emitted_generic_type_instances.contains(&mangled) {
@@ -2107,9 +2118,9 @@ impl CEmitter {
                         .entry(mangled.clone())
                         .or_insert_with(|| (full.clone(), type_args_c));
                     if self.is_value_generic_template(&full) {
-                        return Some(format!("NovaValue_{}", Self::mono_short_name(&mangled)));
+                        return Ok(format!("NovaValue_{}", Self::mono_short_name(&mangled)));
                     }
-                    return Some(format!("{}*", mangled));
+                    return Ok(format!("{}*", mangled));
                 }
                 // User-defined concrete record/sum — pointer to struct.
                 format!("Nova_{}*", full)
@@ -6122,526 +6133,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         })
     }
 
-    /// U.4.7: `resolved_type_to_c` (the canonical single lowering from `ResolvedType`, D315)
-    /// is now AUTHORITATIVE for type→C — this RETIRES the duplicate resolution in
-    /// `type_ref_to_c_impl`, which remains ONLY as the fallback for the cases the IR lowering
-    /// declines (`None`: `usize`/`isize`/`ptr` removed → `Err`, `Self`-without-receiver),
-    /// until U.4.8 deletes it. Conforms to compiler-conventions §0/§10 (one type→C path).
+    /// U.4.8 (D315): thin adapter from the SYNTACTIC `TypeRef` (parser output) to the single
+    /// canonical type→C lowering `resolved_type_to_c` (over `ResolvedType`). The duplicate
+    /// resolution-and-lowering `type_ref_to_c_impl` is DELETED — its `Ok` outputs were proven
+    /// byte-identical to `resolved_type_to_c` (U.4.6/U.4.7 parity, 0 divergences over the
+    /// type-heavy corpus), and its `Err` cases (`usize`/`isize`/`ptr` removed, `Self`-without-
+    /// receiver) now live INSIDE `resolved_type_to_c` (the lowering carries its own failure
+    /// reason via `Result`). One resolve (checker), one lowering (`resolved_type_to_c`) —
+    /// compiler-conventions §0/§10, the §0-anti-pattern "two windows of type truth" is gone.
     ///
-    /// Verification: return-value parity was proven EXHAUSTIVELY pre-flip (U.4.6 env-gated
-    /// `debug_assert resolved == type_ref_to_c_impl`, 0 divergences over ~21 type-heavy dirs);
-    /// the flip's new surface — emission side-effect order (worklist / mono typedefs) — is
-    /// proven byte-identical by an emitted-`.c` diff vs the clean pre-flip binary (U.4.7 gate).
+    /// (Endgame U.6.1 — collapsing this `TypeRef`→`ResolvedType` adapter hop at the ~120
+    /// declared-type call sites — is intentionally OUT of U.4.8 scope.)
     fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
-        match self.resolved_type_to_c(&crate::types::ResolvedType::from_type_ref(ty)) {
-            Some(c) => Ok(c),
-            None => self.type_ref_to_c_impl(ty),
-        }
-    }
-
-    fn type_ref_to_c_impl(&self, ty: &TypeRef) -> Result<String, String> {
-        // Plan 48: type parameter substitution (monomorphization context)
-        if let TypeRef::Named { path, generics, .. } = ty {
-            if generics.is_empty() {
-                let name = path.join("_");
-                // Plan 48 method-param mono (Plan 63 followup): per-call override
-                // (set by `infer_mono_method_ret_with_args` when resolving closure
-                // body types against method-level type-param subst).
-                if let Some(concrete) = self.type_subst_overrides.borrow().get(&name) {
-                    return Ok(concrete.clone());
-                }
-                if let Some(concrete) = self.current_type_subst.get(&name) {
-                    return Ok(concrete.clone());
-                }
-            }
-        }
-        match ty {
-            TypeRef::Named { path, generics, .. } => {
-                let name = path.join("_");
-                // U.6.1.b: common primitives via the SINGLE shared table
-                // (`primitive_name_to_c`, also consumed by `apply_type_subst_to_ref`
-                // — no third drift-prone copy; the missing u32 in that copy broke
-                // Vec[u32] mangling, Plan 152.8). The removed types (usize/isize/ptr
-                // → Err) and `never` stay HERE — they differ from the
-                // `apply_type_subst_to_ref` consumer (which has neither, + a `byte`
-                // alias). Matches the prior name-arms regardless of generics.
-                if let Some(c) = Self::primitive_name_to_c(&name) {
-                    return Ok(c.into());
-                }
-                match name.as_str() {
-                    // Plan 133: usize/isize removed — use int/uint instead.
-                    "usize" => Err("type `usize` is removed — use `int` (Plan 133)".into()),
-                    "isize" => Err("type `isize` is removed — use `int` (Plan 133)".into()),
-                    // Plan 134: `ptr` builtin type REMOVED — use `*()` (Plan 134).
-                    // *() = TypeRef::Pointer(TypeRef::Unit) → emits "void*"
-                    // via the TypeRef::Pointer arm above.
-                    "ptr" => Err("type `ptr` is removed — use `*()` (Plan 134)".into()),
-                    // Plan 76: `never` — bottom-тип (uninhabited). Значений не
-                    // существует, поэтому C-тип — чистый ABI placeholder `nova_int`
-                    // (консистентно с empty-sum; слот никогда не читается/пишется).
-                    "never" => Ok("nova_int".into()),
-                    "Option" => {
-                        // Plan 14 Ф.1: Option[T] правильно типизирован
-                        // через generic. Для T без NOVA_ARRAY_DECL в
-                        // runtime — typedef эмитится лениво в preamble
-                        // (emit_lazy_novaopt_decls).
-                        //
-                        // Fallback на NovaOpt_nova_int (legacy int-stomp):
-                        //   - no generics specified;
-                        //   - inner T = void* (generic erased);
-                        //   - inner T = Nova_<X>* где X — type-param
-                        //     (нет struct/sum decl) — generic-erased.
-                        if let Some(inner) = generics.first() {
-                            let inner_c = self.type_ref_to_c(inner)?;
-                            if inner_c == "void*" {
-                                return Ok("NovaOpt_nova_int".into());
-                            }
-                            // Detect type-param: Nova_<X>* где X не в
-                            // record_schemas / sum_schemas / generic_types.
-                            // Это означает X — type-param метода/типа,
-                            // а не реальный struct.
-                            //
-                            // [M-91.13-codegen-none-arm-nested-generic-mismatch]
-                            // (2026-06-05): mono'd generic instance name
-                            // contains `____` (e.g. `Nova_HashMap____Nova_str_____Nova_JsonValue_p_p`).
-                            // Mono'd names не в generic_types но они concrete —
-                            // treat them as such, иначе `Option[HashMap[K,V]]`
-                            // falls к erased `NovaOpt_nova_int`.
-                            if let Some(x) = inner_c
-                                .strip_suffix('*')
-                                .and_then(|s| s.trim().strip_prefix("Nova_"))
-                            {
-                                let is_concrete_type =
-                                    self.record_schemas.contains_key(x)
-                                    || self.sum_schemas.contains_key(x)
-                                    || self.generic_types.contains(x)
-                                    || x.contains("____");
-                                if !is_concrete_type {
-                                    return Ok("NovaOpt_nova_int".into());
-                                }
-                            }
-                            let sanitized = Self::sanitize_for_novaopt(&inner_c);
-                            self.register_novaopt_decl(&sanitized, &inner_c);
-                            Ok(format!("NovaOpt_{}", sanitized))
-                        } else {
-                            Ok("NovaOpt_nova_int".into())
-                        }
-                    }
-                    "Result" => {
-                        // Plan 59 Ф.7.5: concrete (T, E) → mono'd
-                        // `NovaRes_<ok>_<err>*` через `result_repr_c_type`
-                        // (единая точка флипа D3). Erased / non-concrete
-                        // (T,E) → erased mono-инстанс `NovaRes_nova_int_
-                        // nova_str*` (ABI-эквивалент стёртого Result, как
-                        // `NovaOpt_nova_int`).
-                        if generics.len() == 2 {
-                            if let (Ok(ok_c), Ok(err_c)) = (
-                                self.type_ref_to_c(&generics[0]),
-                                self.type_ref_to_c(&generics[1]),
-                            ) {
-                                if !ok_c.is_empty() && ok_c != "void*"
-                                    && !err_c.is_empty() && err_c != "void*"
-                                    && !self.is_generic_stub_c(&ok_c)
-                                    && !self.is_generic_stub_c(&err_c)
-                                {
-                                    return Ok(self.result_repr_c_type(&ok_c, &err_c));
-                                }
-                            }
-                        }
-                        Ok("NovaRes_nova_int_nova_str*".into())
-                    }
-                    "Self" => {
-                        // Self resolves to current receiver type.
-                        // Plan 11 Follow-up: hard-error если Self в non-receiver
-                        // context (free fn) — раньше эмитили "Nova_Self*"
-                        // fallback, что давало невнятную CC-FAIL «unknown type
-                        // name Nova_Self». Теперь error на type-check.
-                        //
-                        // Plan 91.7 (D180): для primitive receiver (int, bool,
-                        // str, Option, etc.) hardcoded `Nova_{recv}*` давал
-                        // ложный `Nova_int*` / `Nova_str*` — несуществующие C
-                        // типы. Делегируем в receiver_c_type, который правильно
-                        // мапит все типы (primitives → nova_*; Option/Result →
-                        // builtin_sum_receiver_c_type; user → Nova_X*).
-                        if let Some(recv) = &self.current_receiver_type {
-                            // Plan 128 Ф.1: pass false default — current_receiver_type only
-                            // tracks the name. Ф.2 will add `current_receiver_mutable` mirror
-                            // state alongside (set/cleared in same spots) so Self-as-return
-                            // honors the mutability flag. Currently no behavior change
-                            // (flag is unused in receiver_c_type body).
-                            Ok(self.receiver_c_type(recv, false))
-                        } else {
-                            Err("Self type used outside receiver context (free function or top-level expression). Self valid only внутри `fn Type[..].method(...)` или `fn Type[..] @method(...)`.".into())
-                        }
-                    }
-                    // Plan 97 Ф.3 (D142): builtin `Handler` → `Effect`.
-                    // `Effect[EffectName]` → NovaVtable_EffectName* (тот же
-                    // runtime vtable, только имя type-конструктора другое).
-                    "Effect" => {
-                        if let Some(g) = generics.first() {
-                            if let TypeRef::Named { path: eff_path, .. } = g {
-                                return Ok(format!("NovaVtable_{}*", eff_path.join("_")));
-                            }
-                        }
-                        Ok("void*".into())
-                    }
-                    // D75 (revised, Plan 47): CancelToken — caller-owned
-                    // cancellation handle. C-тип — NovaCancelToken* (без
-                    // подчёркивания Nova_ — это runtime-struct, не Nova-record).
-                    "CancelToken" => Ok("NovaCancelToken*".into()),
-                    // Plan 152.7.1 (D258 AMEND): Write — sink protocol for Display/Debug.
-                    // Decouples @display/@debug from concrete StringBuilder. At the C level
-                    // Write always lowers to Nova_StringBuilder* (V1 — StringBuilder is
-                    // the only Write implementor used by the interp-string codegen path).
-                    // Future: when WriteBuffer display is needed, add a write_to_buffer
-                    // thunk and update the codegen to pass a thin wrapper.
-                    "Write" => Ok("Nova_StringBuilder*".into()),
-                    _ => {
-                        // Plan 62.E (`std/prelude/collections.nv`) + merge fix
-                        // 2026-05-19: generic protocol declarations (e.g. `Iter[T]`,
-                        // `Hashable`, `Display`) — value-type erased to void*.
-                        // Без этого arm type_ref_to_c эмитит "Nova_Iter*" → CC-FAIL
-                        // `unknown type name`. Last-segment match покрывает оба
-                        // canonical и full-path форму (после import-resolve).
-                        if self.protocol_types.contains(&name)
-                            || path.last().map(|s| self.protocol_types.contains(s)).unwrap_or(false)
-                        {
-                            // Plan 97.1 Ф.3 (D142): non-generic protocol-typed
-                            // value-position → `NovaBox_<Proto>` fat-pointer
-                            // (вместо `void*`). Generic protocol'ы (`Iter[T]`,
-                            // `Hashable[K]` etc.) — оставить `void*`, т.к. их
-                            // box-форма для concrete type-args обрабатывается
-                            // отдельным path'ом (Plan 72 P3-B
-                            // `protocol_box_c_type_for`).
-                            // Typedef'ы pre-эмитятся в emit_module после
-                            // регистрации protocol_method_registry — здесь
-                            // только возвращаем имя.
-                            if generics.is_empty() {
-                                let proto_name = path.last().cloned()
-                                    .unwrap_or_else(|| name.clone());
-                                return Ok(format!("NovaBox_{}", proto_name));
-                            }
-                            return Ok("void*".into());
-                        }
-                        // Check if it's a type alias — return the aliased type directly (no *).
-                        // Guard: skip the alias when the type is referenced WITH type arguments
-                        // AND the base name is a known generic template (e.g. `VecIter[int]`
-                        // where `VecIter -> NovaValue_VecIter` lives in type_aliases as the
-                        // erased-stub alias). Returning the erased alias here would bypass the
-                        // monomorphization path below and produce `NovaValue_VecIter` instead of
-                        // the correctly-mangled `NovaValue_VecIter____nova_int`. Non-generic
-                        // aliases (newtypes, pointer typedefs, named tuples) always arrive with
-                        // empty `generics`, so the guard has no effect on them.
-                        let is_generic_template_with_args = !generics.is_empty()
-                            && self.generic_type_templates.contains_key(&name);
-                        if !is_generic_template_with_args {
-                            if let Some(aliased_c) = self.type_aliases.get(&name).cloned() {
-                                return Ok(aliased_c);
-                            }
-                        }
-                        // Plan 48 Ф.3: if this is a generic type with concrete type args,
-                        // compute mangled name and enqueue instance emission.
-                        if !generics.is_empty() && self.generic_type_templates.contains_key(&name) {
-                            // Plan 70 Cat B (intentional): generic type args translation
-                            // в any_erased detection — fallback к "nova_int" не silent
-                            // miscompilation, а *part of contract*: код ниже использует
-                            // any_erased check чтобы skip mangling если type-param ещё
-                            // unresolved. Strict-mode здесь = false-positive — мы
-                            // explicitly tolerate erasure для partial-mono path.
-                            let type_args_c: Vec<String> = generics.iter()
-                                .map(|g| self.type_ref_to_c(g).unwrap_or_else(|_| "nova_int".into()))
-                                .collect();
-                            // If any arg is still a type-param (void* or unknown), fall back
-                            let any_erased = type_args_c.iter().any(|a|
-                                a == "void*" || a.starts_with("Nova_") && !self.record_schemas.contains_key(
-                                    a.trim_start_matches("Nova_").trim_end_matches('*').trim()));
-                            if any_erased && !self.current_type_subst.is_empty() {
-                                // In mono context: all type-params should be substituted already
-                                // (type_ref_to_c does subst at top). If still void*, it's genuinely void.
-                            }
-                            let mangled = Self::compute_generic_type_c_name(&name, &type_args_c);
-                            // Enqueue instance if not yet registered (via RefCell — allows &self)
-                            if !self.emitted_generic_type_instances.contains(&mangled) {
-                                let mut wl = self.generic_type_worklist.borrow_mut();
-                                if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                                    wl.push((name.clone(), type_args_c.clone(), mangled.clone()));
-                                }
-                            }
-                            // Register instance info for emit_call method dispatch.
-                            // Keyed by the `Nova_`-prefixed mangled name for BOTH
-                            // heap and value templates — the dispatch path strips
-                            // either `NovaValue_` or `Nova_` and re-prefixes `Nova_`.
-                            self.generic_type_instance_info.borrow_mut()
-                                .entry(mangled.clone())
-                                .or_insert_with(|| (name.clone(), type_args_c));
-                            // Plan 153.2 Ф.1 (STAGE 1): a `value` generic record
-                            // instance is carried BY VALUE — `NovaValue_<short>`
-                            // (no trailing `*`), the same shape as a non-generic
-                            // value-record. The whole D226 value-record ABI keys
-                            // off the `NovaValue_` prefix (is_value_type /
-                            // prepare_method_recv / SelfAccess deref), so this one
-                            // return drives the by-value lowering end-to-end. Heap
-                            // generics keep the `Nova_<mangled>*` pointer ABI.
-                            if self.is_value_generic_template(&name) {
-                                return Ok(format!(
-                                    "NovaValue_{}", Self::mono_short_name(&mangled)));
-                            }
-                            return Ok(format!("{}*", mangled));
-                        }
-                        // User-defined type — pointer to struct
-                        Ok(format!("Nova_{}*", name))
-                    }
-                }
-            }
-            TypeRef::Unit(_) => Ok("nova_unit".into()),
-            TypeRef::Array(inner, _) => {
-                // Plan 55 Ф.1: `[]fn(...) -> T` → array of closure pointers.
-                // Storage = NovaArray_void_p* (typedef void* void_p).
-                // Element call goes through NovaClosBase dispatch.
-                // Plan 138.1 Ф.1: closure-array (`[]fn(...)`) is EXPLICITLY
-                // out of scope of the `[]T → Vec[T]` flip (followup
-                // [M-138.1-closure-array]) — stays NovaArray_void_p*.
-                if matches!(inner.as_ref(), TypeRef::Func { .. }) {
-                    return Ok("NovaArray_void_p*".into());
-                }
-                // Plan 138.1 Ф.1 (D239): `[]T` resolves to `Vec[T]`. Instead
-                // of the legacy `NovaArray_<elem>*` (int64-erasure for non-
-                // primitive T), resolve `elem` → its C type and emit the
-                // `Vec[elem]` monomorphization `Nova_Vec____<elem_c>*` —
-                // typed storage (`*mut T`), no boxing. We reuse the EXACT
-                // worklist-registration path of `TypeRef::Named{path:["Vec"],
-                // generics:[elem]}` (see the `_` arm above): compute the
-                // mangled name, enqueue the instance, and record instance
-                // info for method dispatch.
-                //
-                // Guarded by `generic_type_templates.contains_key("Vec")` so
-                // compilation units that do NOT pull `std/collections/
-                // vec_owned.nv` (Vec template absent) degrade gracefully to
-                // the legacy NovaArray path below — no regression.
-                if self.generic_type_templates.contains_key("Vec") {
-                    // Resolve the element C type (recurses: nested `[][]T`
-                    // becomes Vec[Vec[T]]; records → Nova_X*; primitives →
-                    // nova_*). On error, fall through to the legacy path.
-                    if let Ok(mut elem_c) = self.type_ref_to_c(inner) {
-                        // Plan 138.2 Ф.0-final: int64-erasure of an UNRESOLVED
-                        // type-param element. When an erased `fn[T] []T @m`
-                        // base body is emitted with `T` NOT in
-                        // `current_type_subst`, `type_ref_to_c(inner)` returns a
-                        // dangling generic stub (`Nova_T*` — not a record/sum/
-                        // generic schema), giving the schema-less Vec mono
-                        // `Vec____Nova_T_p`. The legacy NovaArray path erased
-                        // such an unresolved element to `NovaArray_nova_int*`
-                        // (the `_` arm below, int64-slot bootstrap contract);
-                        // mirror that for the Vec mono so the base body lowers
-                        // to the always-concrete `Nova_Vec____nova_int*`. This
-                        // is the SAME erasure the Named-arm `any_erased`
-                        // carve-out (above) applies — not a heuristic, the
-                        // documented int64-erasure of the partial-mono path.
-                        // The concrete per-element Vec mono is still emitted at
-                        // each monomorphized call-site (where `T` IS in
-                        // `current_type_subst`).
-                        if self.is_generic_stub_c(&elem_c) && !elem_c.contains("____") {
-                            elem_c = "nova_int".to_string();
-                        }
-                        let type_args_c = vec![elem_c];
-                        let mangled =
-                            Self::compute_generic_type_c_name("Vec", &type_args_c);
-                        // Enqueue instance if not yet registered (via RefCell —
-                        // allows &self), mirroring the Named-arm path.
-                        if !self.emitted_generic_type_instances.contains(&mangled) {
-                            let mut wl = self.generic_type_worklist.borrow_mut();
-                            if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                                wl.push((
-                                    "Vec".to_string(),
-                                    type_args_c.clone(),
-                                    mangled.clone(),
-                                ));
-                            }
-                        }
-                        // Register instance info for emit_call method dispatch.
-                        self.generic_type_instance_info
-                            .borrow_mut()
-                            .entry(mangled.clone())
-                            .or_insert_with(|| ("Vec".to_string(), type_args_c));
-                        return Ok(format!("{}*", mangled));
-                    }
-                }
-                // ---- Legacy fallback (Vec template absent / elem unresolved).
-                // Мономорфизация по primitive elem-type. Каждый primitive
-                // type имеет собственный NovaArray_T с реальным packed
-                // storage (не int64-erasure). Для byte это критично:
-                // `[]byte` = `uint8_t[]`, не int64[].
-                // Record/sum/array-of-array хранятся через nova_int slots
-                // (boxed pointers) — bootstrap-ограничение.
-                if let TypeRef::Named { path, .. } = inner.as_ref() {
-                    if path.len() == 1 {
-                        // Resolve type-param substitution first (e.g. K→nova_str).
-                        // current_type_subst stores C-type names, so map back to
-                        // the canonical elem-name used in the match below.
-                        let nova_name = path[0].as_str();
-                        let elem_key = if let Some(c_ty) = self.current_type_subst.get(nova_name) {
-                            // Map C type name back to canonical Nova array key.
-                            match c_ty.as_str() {
-                                "nova_str"  => "str",
-                                "nova_byte" | "uint8_t" => "u8",
-                                "nova_bool" => "bool",
-                                "nova_f64" | "float" | "double" => "f64",
-                                // Plan 70.4: nova_f32 maps back to "f32" key, not "f64".
-                                "nova_f32" => "f32",
-                                // Plan 70.4 Ф.2: sized-int C types → Nova keys.
-                                "int32_t"  => "i32",
-                                "int16_t"  => "i16",
-                                "int8_t"   => "i8",
-                                "uint32_t" => "u32",
-                                "uint16_t" => "u16",
-                                "uint64_t" => "u64",
-                                "nova_char" => "char",
-                                _ => nova_name,   // fallback → NovaArray_nova_int*
-                            }
-                        } else {
-                            nova_name
-                        };
-                        return Ok(match elem_key {
-                            "str" => "NovaArray_nova_str*".into(),
-                            "u8" => "NovaArray_nova_byte*".into(),
-                            "bool" => "NovaArray_nova_bool*".into(),
-                            "f64" => "NovaArray_nova_f64*".into(),
-                            // Plan 70.4: f32 distinct from f64 (ABI: 4 vs 8 bytes).
-                            "f32" => "NovaArray_nova_f32*".into(),
-                            // Plan 70.3: char distinct from int.
-                            "char" => "NovaArray_nova_char*".into(),
-                            // Plan 70.4 Ф.2: sized-int arrays — distinct packed storage.
-                            "i32" => "NovaArray_int32_t*".into(),
-                            "i16" => "NovaArray_int16_t*".into(),
-                            "i8"  => "NovaArray_int8_t*".into(),
-                            "i64" => "NovaArray_nova_int*".into(), // i64 == nova_int (int64_t)
-                            "u32"  => "NovaArray_uint32_t*".into(),
-                            "u16"  => "NovaArray_uint16_t*".into(),
-                            "u64"  => "NovaArray_uint64_t*".into(),
-                            // Plan 70.5: uint = alias u64.
-                            "uint" => "NovaArray_uint64_t*".into(),
-                            // int + unknown user types — через int64 slot.
-                            _ => "NovaArray_nova_int*".into(),
-                        });
-                    }
-                }
-                Ok("NovaArray_nova_int*".into())
-            }
-            TypeRef::Tuple(elems, _) => {
-                // Plan 59: try mono'd tuple struct. Compute element C types
-                // через type_ref_to_c (которая использует current_type_subst
-                // для substitution). Если все elements resolved к concrete
-                // C types (не type-param placeholders) → use mono'd struct.
-                // Иначе fallback на legacy _NovaTupleN (nova_int slots).
-                let n = elems.len();
-                let mut elem_cs: Vec<String> = Vec::with_capacity(n);
-                let mut all_concrete = true;
-                for e in elems {
-                    match self.type_ref_to_c(e) {
-                        Ok(c) => {
-                            // Filter out type-param placeholders (Nova_K* etc).
-                            let trimmed = c.trim_end_matches('*').trim();
-                            if let Some(name) = trimmed.strip_prefix("Nova_") {
-                                let is_concrete = self.record_schemas.contains_key(name)
-                                    || self.sum_schemas.contains_key(name)
-                                    || self.generic_types.contains(name)
-                                    || c.contains("____");  // mono'd instance
-                                if !is_concrete {
-                                    all_concrete = false;
-                                    break;
-                                }
-                            }
-                            elem_cs.push(c);
-                        }
-                        Err(_) => { all_concrete = false; break; }
-                    }
-                }
-                if all_concrete && !elem_cs.is_empty() {
-                    let mangled = self.register_mono_tuple(&elem_cs);
-                    Ok(mangled)
-                } else {
-                    // Plan 148 Ф.4: erased-generic tuple → legacy all-int
-                    // `_NovaTupleN`. Register arity for on-demand typedef emit.
-                    Ok(self.register_legacy_tuple(n))
-                }
-            }
-            TypeRef::Func { .. } => {
-                // Function type — use a void pointer as opaque representation
-                Ok("void*".into())
-            }
-            TypeRef::FixedArray(_n, inner, span) => {
-                // [N]T в bootstrap — тот же runtime-тип что и `[]T` (NovaArray_T*).
-                // Размер N запоминается в типе AST, но в bootstrap-codegen не
-                // enforce'ится: dynamic-array под капотом, push/pop/len работают
-                // одинаково. Stack-allocation как в C `T[N]` пока не делаем —
-                // это будет отдельная оптимизация (production), здесь bootstrap
-                // приоритезирует совместимость с `[]T`-кодом.
-                self.type_ref_to_c(&TypeRef::Array(inner.clone(), *span))
-            }
-            // Plan 97 Ф.2 (D142): анонимный protocol-тип в позиции
-            // value/return — value-erased к void* (как named protocol
-            // через `protocol_types` set выше). Структурная проверка
-            // satisfaction'а — в type-checker'е, codegen работает с
-            // dynamic value-ом (managed pointer).
-            TypeRef::Protocol { .. } => Ok("void*".into()),
-            // D176 (Plan 108): readonly T — zero overhead, transparent for codegen.
-            TypeRef::Readonly(inner, _) => self.type_ref_to_c(inner),
-            // Plan 118 D216 §1: typed pointer family `*T` family — emit C pointer.
-            // §11 codegen: `*ro T` → `const T*` (helps clang/MSVC optimizer);
-            // `*mut T` / `*unsafe T` → `T*`. ABI consistent с Plan 115 ptr.
-            //
-            // Plan 118.5: Mut/Unsafe become transparent wrappers (like Readonly).
-            // Canonical ro pointer = Pointer(T) → `const T*`. Mut(Pointer(T)) /
-            // Unsafe(Pointer(T)) emit `T*` без const. Non-Pointer inner
-            // transparently recurses (Mut/Unsafe used elsewhere as modifiers).
-            //
-            // Plan 131 Ф.2: Nova V2 syntax `*mut T` = Pointer(Mut(T)) — "pointer
-            // to mutable T". In C, this maps to `T*` (non-const, writable pointer).
-            // Without this: Pointer(Mut(T)) → "const " + type_ref_to_c(Mut(T)) + "*"
-            //   = "const nova_int*" (CC-FAIL when used as lvalue for deref-write).
-            // Fix: when inner has Mut/Unsafe wrapper, strip it for const decision —
-            // emit `T*` (mutable pointer) instead of `const T*`.
-            TypeRef::Pointer(inner, _) => {
-                let (is_mutable_ptr, base_inner) = match inner.as_ref() {
-                    TypeRef::Mut(ti, _) | TypeRef::Unsafe(ti, _) => (true, ti.as_ref()),
-                    _ => (false, inner.as_ref()),
-                };
-                // Plan 134: *() = pointer-to-unit = void* (replaces `ptr` builtin).
-                if matches!(base_inner, TypeRef::Unit(_)) {
-                    return Ok("void*".into());
-                }
-                let inner_c = self.type_ref_to_c(base_inner)?;
-                if is_mutable_ptr {
-                    Ok(format!("{}*", inner_c))
-                } else {
-                    Ok(format!("const {}*", inner_c))
-                }
-            }
-            TypeRef::Mut(inner, _) => {
-                if let TypeRef::Pointer(p_inner, _) = inner.as_ref() {
-                    // Plan 134: *mut () = void*.
-                    if matches!(p_inner.as_ref(), TypeRef::Unit(_)) {
-                        return Ok("void*".into());
-                    }
-                    let inner_c = self.type_ref_to_c(p_inner)?;
-                    Ok(format!("{}*", inner_c))
-                } else {
-                    self.type_ref_to_c(inner)
-                }
-            }
-            TypeRef::Unsafe(inner, _) => {
-                if let TypeRef::Pointer(p_inner, _) = inner.as_ref() {
-                    // Plan 134: *unsafe () = void*.
-                    if matches!(p_inner.as_ref(), TypeRef::Unit(_)) {
-                        return Ok("void*".into());
-                    }
-                    let inner_c = self.type_ref_to_c(p_inner)?;
-                    Ok(format!("{}*", inner_c))
-                } else {
-                    self.type_ref_to_c(inner)
-                }
-            }
-        }
+        self.resolved_type_to_c(&crate::types::ResolvedType::from_type_ref(ty))
     }
 
     fn return_type_c(&self, f: &FnDecl) -> Result<String, String> {
@@ -35973,10 +35477,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         if expr.id.is_set() {
             if let Some(rt) = self.resolved_types.get(&expr.id) {
                 // U.4.1/U.4.2 equivalence: when the IR lowering handles the annotation it
-                // must match legacy. `None` = a family `resolved_type_to_c` still defers
-                // (U.4.6 state-heavy arms) — no claim, skip (the producer only seeds
-                // primitives today, so `None` does not occur on the current corpus).
-                if let Some(ir_c) = self.resolved_type_to_c(rt) {
+                // must match legacy. `Err` = a non-lowerable type (removed `usize`/`isize`/
+                // `ptr`, or `Self`-without-receiver) — no claim, skip (the producer only seeds
+                // primitives today, so `Err` does not occur on the current corpus).
+                if let Ok(ir_c) = self.resolved_type_to_c(rt) {
                     debug_assert_eq!(
                         ir_c,
                         legacy,

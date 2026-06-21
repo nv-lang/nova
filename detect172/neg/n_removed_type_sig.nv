@@ -1,0 +1,9 @@
+// U.4.8 NEG — removed type `usize` in a fn SIGNATURE reaches the single type→C
+// lowering `resolved_type_to_c`, which now carries the removal Err itself (the
+// duplicate `type_ref_to_c_impl` is deleted). Guards the Err arm at a DIFFERENT
+// consumer (signature/overload-reg lowering, E7001) than plan133/neg (let-binding).
+//
+// EXPECT_COMPILE_ERROR usize` is removed
+module neg.n_removed_type_sig
+
+fn f(x usize) int { 0 }
