@@ -13260,3 +13260,10 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
 - **2026-06-21 (D315):** поднят из «внутренний тип чекера» в **«единый канонический тип
   компилятора»**; спайк нашёл текущий носитель лосси → обогащение-до-lossless + ретайр
   `type_ref_to_c` поставлены целью. Supersedes врезку M2 Plan 172.1.
+- **2026-06-21 (Plan 172.1 U.4.6→U.4.8):** цель реализована. U.5.5(a) сделал `ResolvedType`
+  lossless для C (модуль-путь / `*mut` / L2 readonly); U.4.6 построил единый `resolved_type_to_c`
+  (ABI-лоуэринг ЧТЕНИЕМ полей `ResolvedType`, без повторного резолва) до byte-identical паритета;
+  U.4.7 флипнул `type_ref_to_c` на делегирование; **U.4.8 (`e1f1d96a`) удалил дублирующий
+  `type_ref_to_c_impl`** — `resolved_type_to_c` стал `Result<String,String>` (несёт причину отказа
+  сам: usize/isize/ptr removed, Self-no-recv). Production type→C теперь ОДИН лоуэринг. Остаток —
+  свернуть синтаксический адаптер-хоп `TypeRef→ResolvedType` на объявленных-тип сайтах (U.6.1).
