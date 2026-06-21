@@ -206,7 +206,7 @@ programmer writes nothing special.
 - [spec/open-questions.md](spec/open-questions.md) — unresolved questions
 - [spec/decisions/](spec/decisions/) — design decision log with rationale
 - [docs/typed-pointers.md](docs/typed-pointers.md) — `*T` family canonical syntax (V2/V3 right-binding rule, `safe` keyword, modifier composition rules)
-- [compiler-codegen/](compiler-codegen/) — Nova compiler (Rust): parser, type-checker, treewalk interpreter, C-backend codegen
+- [compiler-codegen/](compiler-codegen/) — Nova compiler (Rust): parser, type-checker, C-backend codegen, native runtime
 
 ## Status
 
@@ -244,9 +244,13 @@ What works today (bootstrap):
 - Contracts (D24): `requires`/`ensures`/`old`/`result`/`invariant`/
   `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`.
   Bootstrap SMT через TrivialBackend (reflexive ensures); Z3 — milestone.
-- `defer` / `errdefer` / `okdefer` symmetric cleanup (D90/D160):
-  success-only `okdefer`, error-only `errdefer`, always `defer`;
-  reason-aware `defer |result| { ... }` form.
+- `defer` + consume-scope cleanup (D90/D188): `defer { ... }` runs on
+  every scope exit — including `throw` and `panic` (unlike Rust `Drop`
+  under `panic=abort`). A resource bound with `consume x = acquire() { ... }`
+  runs its `Consumable.on_exit(outcome)` at scope end, receiving a
+  `ScopeOutcome` (`Success` / `Failure` / `Panic`) for outcome-aware
+  cleanup. (The earlier `errdefer` / `okdefer` / `defer |result|` forms
+  were retracted — D189.)
 - Boehm GC default with introspection API (`heap_size`, `live_count`,
   `collect`).
 
@@ -433,8 +437,10 @@ NOVA_SMT_BACKEND=z3 nova test nova_tests/contracts/
 ## Editor support
 
 Syntax highlighting plugins for several editors are in
-[editors/](editors/). All are TextMate grammar / handcrafted — no
-semantic analysis (LSP is not yet implemented).
+[editors/](editors/). These are TextMate / handcrafted grammars —
+syntax highlighting only. Semantic features (diagnostics, etc.) come
+from a separate language server, [`nova-lsp/`](nova-lsp/); wiring it
+into these editor plugins is in progress.
 
 | Editor | Subdir | Notes |
 |---|---|---|
