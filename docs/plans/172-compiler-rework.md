@@ -54,11 +54,12 @@
 (`any`+`is`-downcast) садятся на типовой движок 172. Чтобы 173 строился ПОВЕРХ единого движка, а не
 переделывал его, **172.1 обязан учесть 4 точки** (в основном осознанность/lossless, не большие правки):
 
-1. **Эффекты в `ResolvedType` — LOSSLESS, с type-args (`Fail[E]` несёт `E`).** Сейчас
-   `ResolvedType::Func.effects: Vec<String>` (только имена, `from_type_ref` берёт `path.last()`) —
-   **лосси** (теряет `E` у `Fail[E]`). Это и [D315](../../spec/decisions/02-types.md#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21)-нарушение (носитель обязан быть lossless), и блокер
-   typed-errors 173/175. **U.5.5 обязан нести полный эффект-тип** (имя + type-args), не bare-name.
-   Иначе 173 Ф.4 (типизированный `Fail[E]`/`ScopeOutcome.Failure(any)`) переделывает носитель.
+1. **Эффекты в `ResolvedType` — LOSSLESS, с type-args (`Fail[E]` несёт `E`). ✅ DONE 2026-06-21
+   (172.1 U.5.5c, `f7511bda`).** Был `ResolvedType::Func.effects: Vec<String>` (только имена,
+   `from_type_ref`→`path.last()`) — **лосси** (терял `E` у `Fail[E]`), [D315](../../spec/decisions/02-types.md#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21)-нарушение + блокер
+   typed-errors 173/175. Обогащён до **`Vec<ResolvedType>`** (имя + module + type-args). Теперь
+   173 Ф.4 (типизированный `Fail[E]`/`ScopeOutcome.Failure(any)`) + 175 (`any`/`is`) садятся на
+   готовый носитель, НЕ переделывая его. Byte-identical (effects write-only до consume).
 2. **`any` + `is`/downcast — согласовать с Plan 175.** 172-резолв `Any`/`is`-теста НЕ должен
    форклоузить модель Plan 175 (`any`-тип + `is T`/downcast по `type_id`) — 175 строит typed-error
    dispatch 173 поверх ЕДИНОГО движка. Координировать дизайн `Any`/`is` в U.4 с Plan 175.
