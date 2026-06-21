@@ -1796,9 +1796,10 @@ impl CEmitter {
     /// checker, §0-anti-pattern). State-aware (`&self`: mono-subst, schema/template/alias
     /// registries, receiver) — it reproduces `type_ref_to_c`'s ABI dispatch by reading
     /// `ResolvedType` fields instead of re-resolving a `TypeRef`, recursing on `ResolvedType`.
-    /// Returns `None` for the families not yet mirrored (state-heavy generic-mono / `Array` /
-    /// `Tuple`, `[M-172.1-U4.6-state-heavy-arms]`) and the `type_ref_to_c`-`Err` cases
-    /// (`usize`/`isize`/`ptr`, `Self`-without-receiver) — the parity gate skips `None`.
+    /// After U.4.6b ALL structural families are mirrored (generic-mono Named / `Array`
+    /// Vec-flip+legacy / `Tuple`) → full parity. Returns `None` ONLY where `type_ref_to_c`
+    /// returns `Err` (`usize`/`isize`/`ptr` removed, `Self`-without-receiver) — the parity
+    /// gate skips `None` (and the matching `Err`).
     /// Side-effects it shares with `type_ref_to_c` (`register_novaopt_decl`) are idempotent
     /// (D315 spike), so running both under the gate is safe. NOT yet wired as authoritative
     /// (no `type_ref_to_c` site flips here — U.4.7/U.4.8); this builds + proves parity.
@@ -1850,10 +1851,131 @@ impl CEmitter {
             // Function type — opaque void* (mirrors type_ref_to_c Func arm).
             R::Func { .. } => "void*".to_string(),
             R::Named { name, module, args } => self.resolved_named_to_c(name, module, args)?,
-            // State-heavy ABI (generic-mono Vec/Tuple — worklist + typedef side-effects):
-            // next U.4.6 increment. `[M-172.1-U4.6-state-heavy-arms]`.
-            R::Array(_) | R::Tuple(_) => return None,
+            // Array `[]T` (D239 ≡ Vec[T]) — mirrors type_ref_to_c's Array arm.
+            R::Array(inner) => self.resolved_array_to_c(inner)?,
+            // Tuple — mono'd struct if all elems concrete, else legacy `_NovaTupleN`
+            // (Plan 59/148). Mirrors type_ref_to_c's Tuple arm; `register_mono_tuple` /
+            // `register_legacy_tuple` side-effects are shared + idempotent.
+            R::Tuple(elems) => {
+                let mut elem_cs: Vec<String> = Vec::with_capacity(elems.len());
+                let mut all_concrete = true;
+                for e in elems {
+                    match self.resolved_type_to_c(e) {
+                        Some(c) => {
+                            let trimmed = c.trim_end_matches('*').trim();
+                            if let Some(nm) = trimmed.strip_prefix("Nova_") {
+                                let is_concrete = self.record_schemas.contains_key(nm)
+                                    || self.sum_schemas.contains_key(nm)
+                                    || self.generic_types.contains(nm)
+                                    || c.contains("____");
+                                if !is_concrete {
+                                    all_concrete = false;
+                                    break;
+                                }
+                            }
+                            elem_cs.push(c);
+                        }
+                        None => {
+                            all_concrete = false;
+                            break;
+                        }
+                    }
+                }
+                if all_concrete && !elem_cs.is_empty() {
+                    self.register_mono_tuple(&elem_cs)
+                } else {
+                    self.register_legacy_tuple(elems.len())
+                }
+            }
         })
+    }
+
+    /// U.4.6b: lower `[]T` (D239 ≡ `Vec[T]`) — mirrors `type_ref_to_c`'s Array arm driven by
+    /// the element `ResolvedType`. Closure-array → `NovaArray_void_p*`; Vec-flip to the
+    /// `Nova_Vec____<elem>*` mono when the `Vec` template is present (worklist + instance-info
+    /// side-effects, idempotent); else the legacy primitive-keyed `NovaArray_<prim>*` (the
+    /// `elem_key` reconstructed from the `ResolvedType`: `Scalar`/`Float`/`Str`/`Bool` →
+    /// primitive name, `Named` type-param/user → `current_type_subst` back-map, exactly as the
+    /// legacy `Named{path:[..]}` path). Always `Some` (Array never defers, like type_ref_to_c).
+    fn resolved_array_to_c(&self, inner: &crate::types::ResolvedType) -> Option<String> {
+        use crate::types::ResolvedType as R;
+        // Closure-array `[]fn(...)` → NovaArray_void_p* ([M-138.1-closure-array]).
+        if matches!(inner, R::Func { .. }) {
+            return Some("NovaArray_void_p*".to_string());
+        }
+        // D239 `[]T ≡ Vec[T]`: Vec-flip when the Vec template is present.
+        if self.generic_type_templates.contains_key("Vec") {
+            if let Some(mut elem_c) = self.resolved_type_to_c(inner) {
+                // int64-erasure of an UNRESOLVED type-param element (mirror legacy).
+                if self.is_generic_stub_c(&elem_c) && !elem_c.contains("____") {
+                    elem_c = "nova_int".to_string();
+                }
+                let type_args_c = vec![elem_c];
+                let mangled = Self::compute_generic_type_c_name("Vec", &type_args_c);
+                if !self.emitted_generic_type_instances.contains(&mangled) {
+                    let mut wl = self.generic_type_worklist.borrow_mut();
+                    if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                        wl.push(("Vec".to_string(), type_args_c.clone(), mangled.clone()));
+                    }
+                }
+                self.generic_type_instance_info
+                    .borrow_mut()
+                    .entry(mangled.clone())
+                    .or_insert_with(|| ("Vec".to_string(), type_args_c));
+                return Some(format!("{}*", mangled));
+            }
+            // else fall through to legacy (elem couldn't lower).
+        }
+        // Legacy fallback (Vec template absent / elem unresolved): primitive-keyed NovaArray.
+        // `elem_key` reconstructed from the ResolvedType (type_ref_to_c keys off the bare
+        // `Named{path:[name]}`; in RT primitives are Scalar/Float/Str/Bool, `char`/user/
+        // type-param are Named).
+        let elem_key: &str = match inner {
+            R::Str => "str",
+            R::Bool => "bool",
+            R::Float { width: 32 } => "f32",
+            R::Float { .. } => "f64",
+            R::Scalar { .. } => inner.int_name().unwrap_or("int"),
+            R::Named { name, module, args } if module.is_empty() && args.is_empty() => {
+                // type-param / user type: subst back-map (mirror legacy current_type_subst).
+                match self.current_type_subst.get(name).map(String::as_str) {
+                    Some("nova_str") => "str",
+                    Some("nova_byte") | Some("uint8_t") => "u8",
+                    Some("nova_bool") => "bool",
+                    Some("nova_f64") | Some("float") | Some("double") => "f64",
+                    Some("nova_f32") => "f32",
+                    Some("int32_t") => "i32",
+                    Some("int16_t") => "i16",
+                    Some("int8_t") => "i8",
+                    Some("uint32_t") => "u32",
+                    Some("uint16_t") => "u16",
+                    Some("uint64_t") => "u64",
+                    Some("nova_char") => "char",
+                    _ => name.as_str(), // user type / unmapped → NovaArray_nova_int*
+                }
+            }
+            _ => "", // non-bare-Named inner → final NovaArray_nova_int*
+        };
+        Some(
+            match elem_key {
+                "str" => "NovaArray_nova_str*",
+                "u8" => "NovaArray_nova_byte*",
+                "bool" => "NovaArray_nova_bool*",
+                "f64" => "NovaArray_nova_f64*",
+                "f32" => "NovaArray_nova_f32*",
+                "char" => "NovaArray_nova_char*",
+                "i32" => "NovaArray_int32_t*",
+                "i16" => "NovaArray_int16_t*",
+                "i8" => "NovaArray_int8_t*",
+                "i64" => "NovaArray_nova_int*", // i64 == nova_int
+                "u32" => "NovaArray_uint32_t*",
+                "u16" => "NovaArray_uint16_t*",
+                "u64" => "NovaArray_uint64_t*",
+                "uint" => "NovaArray_uint64_t*",
+                _ => "NovaArray_nova_int*",
+            }
+            .to_string(),
+        )
     }
 
     /// U.4.6: the `Named` ABI dispatch of `resolved_type_to_c`, mirroring `type_ref_to_c`'s
@@ -1963,10 +2085,31 @@ impl CEmitter {
                         return Some(aliased_c);
                     }
                 }
-                // Generic-template instance (mono mangling + worklist side-effects) —
-                // state-heavy, next U.4.6 increment (`[M-172.1-U4.6-state-heavy-arms]`).
+                // Generic-template instance (mono mangling + worklist/instance-info
+                // side-effects, idempotent). U.4.6b: mirrors type_ref_to_c's generic arm
+                // driven by ResolvedType — type-args lowered via resolved_type_to_c
+                // (parity-protected recursion), erased (None→"nova_int") EXACTLY like
+                // type_ref_to_c's `unwrap_or(nova_int)` partial-mono tolerance.
                 if !args.is_empty() && self.generic_type_templates.contains_key(&full) {
-                    return None;
+                    let type_args_c: Vec<String> = args
+                        .iter()
+                        .map(|a| self.resolved_type_to_c(a).unwrap_or_else(|| "nova_int".to_string()))
+                        .collect();
+                    let mangled = Self::compute_generic_type_c_name(&full, &type_args_c);
+                    if !self.emitted_generic_type_instances.contains(&mangled) {
+                        let mut wl = self.generic_type_worklist.borrow_mut();
+                        if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                            wl.push((full.clone(), type_args_c.clone(), mangled.clone()));
+                        }
+                    }
+                    self.generic_type_instance_info
+                        .borrow_mut()
+                        .entry(mangled.clone())
+                        .or_insert_with(|| (full.clone(), type_args_c));
+                    if self.is_value_generic_template(&full) {
+                        return Some(format!("NovaValue_{}", Self::mono_short_name(&mangled)));
+                    }
+                    return Some(format!("{}*", mangled));
                 }
                 // User-defined concrete record/sum — pointer to struct.
                 format!("Nova_{}*", full)
