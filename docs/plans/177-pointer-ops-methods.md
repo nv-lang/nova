@@ -56,7 +56,7 @@ degradation; Option-null; realtime/fiber-bans). **Три недочёта:**
 | write value | `p.write(v T) -> *mut T` | заменяет `*p=v`; нужен mut-cap; на `*mut uninit T` → **апгрейд `*mut T` (инициализировано)** (= Rust `MaybeUninit::write`); возврат `*mut T` (не unit — несёт init-апгрейд) |
 | write from-ptr | `p.write(v *T) -> *mut T` | копия из источника-указателя (большой struct без value-копии); тот же init-апгрейд; overload по типу арг (`T` vs `*T`) |
 | offset (арифметика) | `*T`→`p.offset(n) -> *T`; `*mut T`→`*mut T` | заменяет `p+i`/`p-i`; **сохраняет cap, тип НЕ деградирует** (Model A); bounds/align = unsafe-контракт; element-units |
-| offset без UB | `p.wrapping_offset(n)` | UB-free вычисление out-of-bounds адреса (**ниша; низкий приоритет**) |
+| offset без UB | `p.wrapping_offset(n)` | целочисленная арифметика по модулю адр. пространства — **вычислять НЕ UB** (UB только разыменовать out-of-bounds); vs `.offset` (pointer-арифметика, выход за аллокацию = UB даже при вычислении). **Ниша; низкий приоритет** |
 | distance | `p.dist(q) -> int` | заменяет `p-q`; signed element count (= Rust `offset_from`) |
 | indexed read | `p.at(i) -> T` | **Nova-сахар** (не Rust) `= p.offset(i).read()`; заменяет `p[i]` |
 | indexed write | `p.set(i, v)` | **Nova-сахар** `= p.offset(i).write(v)`, mut; заменяет `p[i]=v` |
