@@ -703,12 +703,15 @@ pub struct CEmitter {
     /// [M-172.1-U4-typedir-substrate]
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     resolved_callees: std::collections::HashMap<crate::ast::ExprId, crate::diag::Span>,
-    /// Plan 172.1 U.4.3 (stage a): codegen's OWN view of every FREE function's return
-    /// C-type, keyed by the declaration `Span`. Built from the same `ret` codegen
-    /// registers as `fn_ret_<name>` (the free-fn forward-decl pass), so it is the
-    /// codegen-native "CodegenView" of the callee the `resolved_callees` channel points
-    /// at — no `SigRegistry` needed in codegen (U.2.4 not merged; mangling/return are
-    /// codegen lowering, §0/§7.7). Used by the U.4.3 equivalence-assert.
+    /// Plan 172.1 U.4.3 (stages a+b): codegen's OWN view of a callee's return C-type,
+    /// keyed by the declaration `Span`. Built from the same `ret` codegen registers as
+    /// `fn_ret_<name>` / `fn_ret_<recv>_<name>` (the CONCRETE non-mono forward-decl pass)
+    /// for free fns [stage a] and STATIC methods [stage b] — generic / receiver-generic /
+    /// own-generic-param callees return early (mono pipeline) and are NOT indexed, so the
+    /// mono lowering stays codegen's job (legitimate, stages c/d). It is the codegen-
+    /// native "CodegenView" of the callee the `resolved_callees` channel points at — no
+    /// `SigRegistry` needed in codegen (U.2.4 not merged; mangling/return are codegen
+    /// lowering, §0/§7.7). Used by the U.4.3 equivalence-assert.
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     fn_ret_by_span: std::collections::HashMap<crate::diag::Span, String>,
     /// Plan 140.4 ([M-opt-elide-proven-overflow-checks]): proven `int` `+`/`-`/`*`
@@ -9538,15 +9541,25 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let mangled = self.mangle_fn(f);
         // Register return type so call sites can infer print helper
         self.var_types.insert(format!("fn_ret_{}", f.name), ret.clone());
-        // Plan 172.1 U.4.3 (stage a): index THIS free fn's return C-type by its
-        // declaration `Span` — the codegen-native view of the callee the
-        // `resolved_callees` channel points at (the checker recorded `callee.span`
-        // for single-overload free-fns). Only free fns here (`receiver.is_none()`):
-        // method return derivation goes through `method_overloads` (mono-subst /
-        // Self-resolution), which stages (b)/(c) cover separately. Same `ret` the
-        // name-keyed `fn_ret_<name>` lookup returns → the equivalence-assert proves the
-        // channel selects the identical callee codegen would (§0/§7.7).
-        if f.receiver.is_none() {
+        // Plan 172.1 U.4.3: index THIS callee's return C-type by its declaration
+        // `Span` — codegen's OWN view of the callee the `resolved_callees` channel
+        // points at (the checker recorded `callee.span` on unambiguous resolution).
+        // Stage (a): free fns (`receiver.is_none()`). Stage (b): STATIC methods
+        // (`fn Type.method`, `ReceiverKind::Static`) — the channel records these via
+        // the Path arm. BOTH reach this MAIN (non-generic) registration path, so only
+        // CONCRETE (non-mono) callees are indexed: generic fns / generic-own-param
+        // methods / receiver-generic methods all returned early above (mono_fn_decls /
+        // sentinel / erased forward-decl) and stay codegen-mono'd at the call site
+        // (legitimate lowering — stages c/d). Instance methods (`@method`) are
+        // EXCLUDED here — stage (c) (the checker does not yet record instance callees).
+        // Same `ret` the name-keyed `fn_ret_<name>` / `fn_ret_<recv>_<name>` lookups
+        // return → the equivalence-assert proves the channel selects the identical
+        // callee codegen would derive (§0/§7.7).
+        let is_static_or_free = f
+            .receiver
+            .as_ref()
+            .map_or(true, |r| matches!(r.kind, crate::ast::ReceiverKind::Static));
+        if is_static_or_free {
             self.fn_ret_by_span.insert(f.span, ret.clone());
         }
         // Plan 152.4.3: also register a TYPE-QUALIFIED return key for methods —
@@ -35537,14 +35550,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     );
                 }
             }
-            // Plan 172.1 U.4.3 (stage a): when the checker recorded a resolved callee
+            // Plan 172.1 U.4.3 (stages a+b): when the checker recorded a resolved callee
             // for THIS call (`resolved_callees`, populated for free-fn single-overload /
             // `Type.method` / module-fn in `f1_check_call`), look up codegen's OWN return
-            // C-type for that callee by its declaration `Span` (`fn_ret_by_span`, built
-            // only for FREE fns — stage a) and prove it equals the legacy re-derivation.
-            // The channel carries callee IDENTITY (`FnDecl.span`); codegen lowers its own
-            // view (§0/§7.7). ADDITIVE: the returned value is still `legacy` (channel NOT
-            // yet authoritative) → release byte-identical; this assert measures channel ==
+            // C-type for that callee by its declaration `Span` (`fn_ret_by_span`, built for
+            // free fns [stage a] + STATIC methods [stage b] — both the CONCRETE non-mono
+            // registration path) and prove it equals the legacy re-derivation. The channel
+            // carries callee IDENTITY (`FnDecl.span`); codegen lowers its own view
+            // (§0/§7.7). ADDITIVE: the returned value is still `legacy` (channel NOT yet
+            // authoritative) → release byte-identical; this assert measures channel ==
             // legacy across the corpus before a later stage flips codegen to read it.
             if matches!(&expr.kind, ExprKind::Call { .. }) {
                 if let Some(span) = self.resolved_callees.get(&expr.id) {
