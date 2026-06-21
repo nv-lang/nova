@@ -2,6 +2,9 @@
 
 > Instructions for AI agents and coding assistants working in this repository.
 > Think of this as a README for agents. Human contributors: see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+>
+> **New here?** How development actually works — plan-driven dev, the worktree model, the daily loop, and the
+> hard operational rules — is in [docs/dev-workflow.md](docs/dev-workflow.md) (Russian). Read it before picking up work.
 
 ## What is Nova
 
@@ -90,11 +93,13 @@ Test files live in `nova_tests/`. Each `.nv` file uses `EXPECT` markers to decla
 fn main() Io -> () => print("hello")
 ```
 
-Error tests use `EXPECT_ERR`:
+Error tests declare the expected failure with an `EXPECT_*` marker, matched as a substring against the first ~30 lines:
 
 ```nova
-// EXPECT_ERR: type mismatch
+// EXPECT_COMPILE_ERROR: type mismatch
 ```
+
+Other markers: `EXPECT_RUNTIME_PANIC`, `EXPECT_EXIT` / `EXPECT_EXIT_CODE`, `EXPECT_STDOUT`, `EXPECT_STDERR`, `EXPECT_TIMEOUT`, `EXPECT_LINT_WARNING`. The runner classifies a test by its marker (not by folder or filename suffix), so `neg/` and `_neg` are human signals only. Full list: [docs/test-conventions.md](docs/test-conventions.md).
 
 A test file for a new feature `X` goes in `nova_tests/<category>/X.nv`. For a soundness regression, add `// SOUNDNESS_REGRESSION` in the first lines.
 
@@ -131,6 +136,7 @@ Deferred work is tracked with `[M-<kebab-name>]` markers in docs and code commen
 
 | File | What it covers |
 |---|---|
+| [docs/dev-workflow.md](docs/dev-workflow.md) | **How development works** — sources of truth, plan-driven dev, worktrees, the daily loop, operational rules |
 | [spec/decisions/README.md](spec/decisions/README.md) | Index of all D-blocks |
 | [docs/plans/README.md](docs/plans/README.md) | Index of all plans |
 | [docs/plans/backlog-followups.md](docs/plans/backlog-followups.md) | Registry of floating `[M-…]` followup markers **not** tied to a plan (codegen / perf / debug-info backlog). Plan-bound markers live in their plan's Followups section. |
