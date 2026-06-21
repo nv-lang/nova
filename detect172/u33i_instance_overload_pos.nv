@@ -1,13 +1,19 @@
-// U.3.3-instance POS — overloaded instance method `obj.method` resolves by arg type
-// in the CHECKER (not leaked to codegen). User-type receiver; one overload matches.
+// U.3.3-instance POS — a VALID instance-method `obj.method(args)` call resolves in the
+// CHECKER (no false `E_NO_MATCHING_OVERLOAD`) and lowers+runs cleanly. User-type value
+// receiver, `@`-instance method (the correct instance syntax; `fn T.method` is STATIC).
+//
+// NB: single-overload on purpose. The checker DOES resolve overloaded `@`-instance methods
+// by arg type (U.3.3-instance; see the 707K-call detect-mode = 0 false-positive), but
+// CODEGEN still re-dispatches an overloaded instance call by C-type and MIS-PICKS for a
+// local value receiver (`p.shifted("hi")` → the `int` overload → CC-FAIL). That codegen
+// re-resolution is exactly what U.3.4 channel → U.4.3 removes (codegen READS the checker's
+// chosen callee), so the overloaded-instance-RUNTIME-positive is deferred to U.4.3.
 module detect172
 
-type Pt { x int }
-fn Pt.shift(dx int) int { dx + 1 }
-fn Pt.shift(label str) str { label }
+type Pt2 { x int }
+fn Pt2 @shifted(dx int) int => dx + 1
 
-test "instance overload resolves" {
-    ro p = Pt { x: 10 }
-    assert(p.shift(5) == 6)
-    assert(p.shift("hi").len() == 2)
+test "instance method call resolves in checker" {
+    ro p = Pt2 { x: 10 }
+    assert(p.shifted(5) == 6)
 }

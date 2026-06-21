@@ -1,12 +1,12 @@
 // U.3.3-instance NEG — `obj.method(args)` argument type mismatch is now a CLEAN checker
 // error [E_NO_MATCHING_OVERLOAD] (§6 «каждая ошибка понятна» / §1 «C — не первичный
-// чекер»), not a leaked CC-FAIL. User-type receiver; the lone overload wants `int`.
+// чекер»), not a leaked CC-FAIL. User-type value receiver, `@`-instance method wants `int`.
 //
 // EXPECT_COMPILE_ERROR E_NO_MATCHING_OVERLOAD
 module neg.n_instance_method_mismatch
 
 type Foo { x int }
-fn Foo.bar(n int) int { n + 1 }
+fn Foo @bar(n int) int => n + 1
 
 fn main() -> () {
     ro f = Foo { x: 1 }
