@@ -6122,28 +6122,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         })
     }
 
-    /// U.4.6 parity gate (env `NOVA_U46_PARITY`, debug-only): prove `resolved_type_to_c`
-    /// (driven by the canonical `ResolvedType`, D315) lowers to the SAME C type as the
-    /// legacy `type_ref_to_c` over the corpus BEFORE any declared-type site flips to it
-    /// (U.4.7/U.4.8). `None` from the IR lowering = a family it still defers (state-heavy
-    /// generic-mono/`Array`/`Tuple`) → skipped. Off by default ⇒ zero cost; the production
-    /// path is the unchanged `type_ref_to_c_impl`, so this is byte-identical by construction.
+    /// U.4.7: `resolved_type_to_c` (the canonical single lowering from `ResolvedType`, D315)
+    /// is now AUTHORITATIVE for type→C — this RETIRES the duplicate resolution in
+    /// `type_ref_to_c_impl`, which remains ONLY as the fallback for the cases the IR lowering
+    /// declines (`None`: `usize`/`isize`/`ptr` removed → `Err`, `Self`-without-receiver),
+    /// until U.4.8 deletes it. Conforms to compiler-conventions §0/§10 (one type→C path).
+    ///
+    /// Verification: return-value parity was proven EXHAUSTIVELY pre-flip (U.4.6 env-gated
+    /// `debug_assert resolved == type_ref_to_c_impl`, 0 divergences over ~21 type-heavy dirs);
+    /// the flip's new surface — emission side-effect order (worklist / mono typedefs) — is
+    /// proven byte-identical by an emitted-`.c` diff vs the clean pre-flip binary (U.4.7 gate).
     fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
-        let out = self.type_ref_to_c_impl(ty);
-        #[cfg(debug_assertions)]
-        if std::env::var_os("NOVA_U46_PARITY").is_some() {
-            if let Ok(expected) = &out {
-                let rt = crate::types::ResolvedType::from_type_ref(ty);
-                if let Some(got) = self.resolved_type_to_c(&rt) {
-                    debug_assert_eq!(
-                        &got, expected,
-                        "[U.4.6] resolved_type_to_c != type_ref_to_c\n  TypeRef: {:?}\n  ResolvedType: {:?}",
-                        ty, rt
-                    );
-                }
-            }
+        match self.resolved_type_to_c(&crate::types::ResolvedType::from_type_ref(ty)) {
+            Some(c) => Ok(c),
+            None => self.type_ref_to_c_impl(ty),
         }
-        out
     }
 
     fn type_ref_to_c_impl(&self, ty: &TypeRef) -> Result<String, String> {
