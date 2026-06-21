@@ -226,7 +226,7 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
   library boundaries. File-level `#forbid Net, Fs` capability
   attribute (Nova-unique).
 - Эффекты + handlers (D61/D87): keyword'ы `effect`/`handler`,
-  `with X = h { body }`, `interrupt v`, `Handler[E, IRT]` first-class
+  `with X = h { body }`, `interrupt v`, `Effect[E, IRT]` first-class
   тип. `forbid`, `realtime` capability-блоки.
 - Structured concurrency (D71/D75/D92): `spawn`, `supervised`,
   `supervised(cancel: tok)`, `parallel for`, channels, `select`.

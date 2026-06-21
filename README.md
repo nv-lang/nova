@@ -235,7 +235,7 @@ What works today (bootstrap):
   for library boundaries. File-level `#forbid Net, Fs` capability
   attribute (Nova-unique).
 - Effects + handlers (D61/D87): `effect`/`handler` keywords,
-  `with X = h { body }`, `interrupt v`, `Handler[E, IRT]` first-class
+  `with X = h { body }`, `interrupt v`, `Effect[E, IRT]` first-class
   type. `forbid`, `realtime` capability blocks.
 - Structured concurrency (D71/D75/D92): `spawn`, `supervised`,
   `supervised(cancel: tok)`, `parallel for`, `channels`, `select`.
