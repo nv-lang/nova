@@ -61,7 +61,7 @@ type Db effect {
 
 // Business logic: Db effect in the signature, implementation unknown
 fn transfer(from u64, to u64, amount money) Db Fail -> () {
-    let src = Db.query(sql`SELECT * FROM accounts WHERE id = ${from}`)
+    ro src = Db.query(sql`SELECT * FROM accounts WHERE id = ${from}`)
     if src[0].balance < amount { throw InsufficientFunds }
     Db.exec(sql`UPDATE accounts SET balance = balance - ${amount} WHERE id = ${from}`)
     Db.exec(sql`UPDATE accounts SET balance = balance + ${amount} WHERE id = ${to}`)
@@ -75,7 +75,7 @@ fn main() Io Fail -> () =>
 
 // Test: same code, in-memory handler, no mocks at all
 test "transfer moves money" {
-    let mem = in_memory_db([
+    ro mem = in_memory_db([
         Account { id: 1, balance: 500 },
         Account { id: 2, balance: 0 },
     ])
@@ -96,7 +96,7 @@ code. No DI framework, no mocking library.
 ```nova
 fn check_all(urls []str) Net Fail -> []HealthStatus =>
     parallel for url in urls {
-        let resp = Http.get(url)!!
+        ro resp = Http.get(url)!!
         HealthStatus { url, code: resp.status, latency: resp.elapsed }
     }
 ```
@@ -120,7 +120,7 @@ fn pick_winner(participants []str) Random -> str =>
     participants[Random.range(0, participants.len())]
 
 test "winner is deterministic with seed" {
-    let people = ["alice", "bob", "carol", "dave"]
+    ro people = ["alice", "bob", "carol", "dave"]
     with Random = seed(42) {
         assert(pick_winner(people) == "carol")
         assert(pick_winner(people) == "alice")
