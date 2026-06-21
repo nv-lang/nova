@@ -636,6 +636,20 @@ pub struct ModuleEnv {
     /// (`infer_expr_c_type`, §0/§1). Part 2 seeds LITERALS via `number_exprs`; the
     /// checker annotates the rest in U.4.2+.
     pub resolved_types: HashMap<crate::ast::ExprId, ResolvedType>,
+    /// Plan 172.1 U.3.4: per-call resolved-CALLEE channel (call-site `ExprId` → chosen
+    /// callee `FnDecl` declaration `Span`). The checker resolves each call's overload
+    /// ONCE (it already does, for arg-checking) and records WHICH `FnDecl` it picked;
+    /// codegen will READ this and lower (mangle) that callee instead of re-resolving the
+    /// overload itself (§0 — the ~900-line Call-arm re-derivation, U.4.3). The callee
+    /// identity is the declaration `Span` — a STABLE cross-layer key BOTH sides already
+    /// hold (`&FnDecl`); codegen keeps doing its own (state-dependent / mono) mangling for
+    /// the chosen `FnDecl`, so this does NOT require unifying the mangling schemes (U.2.4
+    /// is a SEPARATE concern, not a gate here). Populated for `.nv`-declared callees that
+    /// the checker resolves UNAMBIGUOUSLY; intrinsics / unresolved stay codegen-side (gap,
+    /// not wrong). U.3.4 = ADDITIVE substrate (this map is written but not yet read —
+    /// byte-identical, mirrors U.4.1); U.4.3 wires the codegen consumption + equivalence
+    /// assert.
+    pub resolved_callees: HashMap<crate::ast::ExprId, Span>,
 }
 
 /// Минимальная проверка модуля. Регистрирует имена и базовую структуру —
@@ -1556,6 +1570,12 @@ fn check_module_impl(
     // OR enclosing #unsafe fn). Walks fn bodies + test bodies, maintains
     // depth counter, emits diagnostic при depth == 0.
     check_unsafe_context_in_module(module, &mut errors);
+
+    // Plan 172.1 U.3.4: lift the per-call resolved-callee channel (call-site `ExprId` →
+    // chosen callee `FnDecl` span) out of the checker into the `ModuleEnv` so the pipeline
+    // hands it to codegen. ADDITIVE substrate — codegen does not read it yet (U.4.3), so
+    // byte-identical. Populated even when there are errors (harmless; only read on success).
+    env.resolved_callees = type_check_ctx.resolved_callees.take();
 
     if errors.is_empty() {
         Ok(env)
@@ -2936,6 +2956,13 @@ struct TypeCheckCtx<'a> {
     /// type-check time). Used by `is_known_type` / `is_known_fn` to answer
     /// "does any imported module define symbol X?" without a full resolve.
     sig_table: crate::imports::ModuleSigTable,
+    /// Plan 172.1 U.3.4: write-buffer for the per-call resolved-CALLEE channel
+    /// (call-site `ExprId` → chosen callee `FnDecl` declaration `Span`). `f1_check_call`
+    /// records WHICH `FnDecl` it resolved each call to; extracted into
+    /// `ModuleEnv.resolved_callees` after the check pass. Interior-mutable because the
+    /// check walk is `&self` (mirrors the other `RefCell` side-tables here). ADDITIVE —
+    /// not yet consumed by codegen (U.4.3), so byte-identical.
+    resolved_callees: std::cell::RefCell<HashMap<crate::ast::ExprId, Span>>,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -3397,6 +3424,8 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 162.1 Step 2: default build uses empty sig_table; callers
             // that need cross-module symbol lookup call build_with_sig_table.
             sig_table: crate::imports::ModuleSigTable::new(),
+            // Plan 172.1 U.3.4: empty callee channel; filled during the check walk.
+            resolved_callees: std::cell::RefCell::new(HashMap::new()),
         }
     }
 
@@ -6081,7 +6110,7 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
                 self.f1_check_call(
-                    func, args, trailing.is_some(), gs, scope, errors,
+                    func, args, trailing.is_some(), gs, scope, errors, e.id,
                 );
                 self.f5_check_tuple_construct(func, args, e.span, scope, errors);
             }
@@ -7056,6 +7085,8 @@ impl<'a> TypeCheckCtx<'a> {
         gs: &HashSet<String>,
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
+        // Plan 172.1 U.3.4: call-site `ExprId` — key for the resolved-callee channel.
+        call_id: crate::ast::ExprId,
     ) {
         // Trailing-форма перепривязывает последний param — пропускаем
         // (редко, и codegen всё равно проверяет).
@@ -7219,6 +7250,14 @@ impl<'a> TypeCheckCtx<'a> {
             // резолвит по type-info.
             _ => return,
         };
+        // Plan 172.1 U.3.4: record WHICH `FnDecl` this call resolved to (declaration
+        // `Span` = stable cross-layer callee identity both layers hold). Codegen will READ
+        // this (U.4.3) and lower THAT callee instead of re-resolving the overload (§0). Only
+        // `.nv` callees the checker resolves UNAMBIGUOUSLY (free-fn single / `Type.method` /
+        // module-fn — the arms above) land here; instance / multi-overload (`_ => return`)
+        // stay codegen-resolved for now (gap, not wrong). ADDITIVE: written, not yet read →
+        // byte-identical.
+        self.resolved_callees.borrow_mut().insert(call_id, callee.span);
         let Ok(bindings) =
             crate::argbind::bind_call_args(&callee.params, args)
         else {
