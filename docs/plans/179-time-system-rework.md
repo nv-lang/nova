@@ -135,7 +135,7 @@ fn sleep_until(deadline Monotonic) Time     // монотонный дедлай
 |---|---|---|---|
 | Q1 | 5 observability-счётчиков | **Вынести в отдельный `TimerMetrics`-surface** (read-only), убрать из `Time` (Ф.1) | Минимальный плумбинг-эффект; счётчики — Plan 66 territory; не заставлять handler'ы стабить |
 | Q2 | record-через-границу | **Узкий single-i64 scalar-bridge поверх Ф.1b**, НЕ блокироваться на 172.4 | Каждый тип = 1×i64 → bridge sound by construction; forward-compatible (172.4 субсумирует) |
-| Q3 | `sleep_until` MVP/later | **MVP** (Ф.3): обёртка `sleep(deadline.checked_minus(Monotonic.now()) ?? ZERO)`; true re-arm timer → Plan 66 | ~5 строк, drift-free семантика, tokio-паритет которого нет у Go/JS/Kotlin/Java |
+| Q3 | `sleep_until` MVP/later | **MVP** (Ф.3): обёртка `sleep(deadline - Monotonic.now())` (оператор `-` = `@minus(Monotonic)`, saturate-to-zero D318 → прошлый дедлайн = немедленно); true re-arm timer → Plan 66 | ~5 строк, drift-free семантика, tokio-паритет которого нет у Go/JS/Kotlin/Java |
 | Q4 | `@elapsed_since` vs `@minus(Monotonic)` | **Убрать `@elapsed_since`**, дать overload `@minus(Monotonic)->Duration` + `checked_duration_since(other)->Option[Duration]` | Симметрия с Timestamp; Go-стиль; checked — escape-hatch Rust |
 | Q5 | единица | **ns везде** (storage + wire); `now_ms`/`now_ns`-опы убрать | Уже storage-unit; ns = precision-floor uv_hrtime/Rust/Java/Temporal |
 | Q6 | метод-форма `d.sleep()` | **Нет**, только free `sleep(d)` | Go/Rust — free fn; «один очевидный способ» |
