@@ -152,6 +152,10 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
 - Fallible-вариант — **`try_`-префикс**, возвращает `Result` (`try_from`/`try_parse`/`try_plus`); ошибки парсинга — **`Parse<X>Error`** (как `ParseIntError`).
 - Конверсии — `from`/`try_from`/`Into`/`TryInto` (D77). Чтения-в-новое на immutable-value — **bare-verb** (`@trim_ascii`/`@normalize`), не `-ed` (sorted/normalized — это для mut/non-mut-пар, которых в Nova нет; различие — через `mut`+тип-возврата).
 - Метод предпочтительнее свободной функции (фасад, [nv-coding-style §3](nv-coding-style.md)); эффект — явно у `export`, выводимо у private ([§11](nv-coding-style.md)).
+- **Числовые типы.** Индексы / длины / размеры / offset / позиции / счётчики — **`int`** (i64), **не `u64`/`usize`** (в отличие от
+  Rust): так во всём std (`Vec.@len()->int`, `str.@byte_len()->int`, `ReadBuffer.@position()->int`, `SeekFrom.Start(int)`). `u64`/`u32` —
+  **только** где значение *само по себе* этой ширины (типизированные атомики `AtomicU64`, bitmask по необходимости). Байты — `u8`/`[]u8`;
+  UTF-16 code units — `u16`/`[]u16`. Сырой `as u64`-каст ради «беззнаковости offset» — анти-паттерн (литералы Nova — `int`).
 
 ## 6. Spec / D-block / тесты / docs
 
