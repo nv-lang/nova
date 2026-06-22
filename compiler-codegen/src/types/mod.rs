@@ -6381,6 +6381,20 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 }
+                // Plan 172.1 U.4.4 (Match-arm half): materialize the common primitive
+                // arm type into the checker channel so codegen READS the resolved match
+                // type instead of re-deriving it (§0/§1). See
+                // `infer_match_common_primitive`. The consumer `infer_expr_c_type` is
+                // ALREADY authoritative (U.4.4b) → the annotation is consumed directly.
+                // GATE non-unit primitive → byte-identical to legacy arm-inference for
+                // the gated set (consolidates the consumer side onto the channel).
+                if e.id.is_set() {
+                    if let Some(rt) =
+                        self.infer_match_common_primitive(arms, scope)
+                    {
+                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                    }
+                }
             }
             ExprKind::Block(b) => self.f1_block(b, gs, scope, errors),
             ExprKind::ArrayLit(elems) => {
@@ -7171,6 +7185,63 @@ impl<'a> TypeCheckCtx<'a> {
             | ResolvedType::Unit => true,
             ResolvedType::Named { name, args, .. } => args.is_empty() && name.as_str() == "char",
             _ => false,
+        }
+    }
+
+    /// Plan 172.1 U.4.4 (Match-arm half): the COMMON result type of a `match`
+    /// expression's arms, materialized for the checker channel. `infer_expr_type`
+    /// does NOT derive a match type (returns `None`), so the match's result type is
+    /// re-derived in codegen (the `emit_match` `result_ty` pass + the legacy
+    /// `infer_expr_c_type` Match arm) — §0 fragmentation. This is the bounded
+    /// inference: a match's value type is the common type of its arm bodies; a
+    /// diverging arm (`never`: `throw` / `interrupt`) does NOT constrain it.
+    ///
+    /// Returns `Some(rt)` iff EVERY non-diverging arm body resolves (via
+    /// `infer_expr_type`, in the OUTER scope) to the SAME type AND that type is a
+    /// NON-UNIT primitive (`primitive_gate`; `Unit` is excluded so a statement-
+    /// position match keeps the legacy unit-domination path untouched). Maximally
+    /// conservative: ANY arm whose body type is unresolvable here (a pattern-binding
+    /// reference — bindings are absent from the outer scope; a block with statements;
+    /// a generic / record / `Vec` result) → `None` → the whole match bails to legacy.
+    /// Mirror of the `Ident` (U.4.4b) / `Member` / `Index` flips; for the gated set
+    /// it is byte-identical to the legacy Match-arm inference (which already computes
+    /// the same primitive via authoritative arm-body inference) — it consolidates the
+    /// CONSUMER side (`infer_expr_c_type`) onto the channel.
+    fn infer_match_common_primitive(
+        &self,
+        arms: &[MatchArm],
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<ResolvedType> {
+        let mut common: Option<ResolvedType> = None;
+        for arm in arms {
+            let body_tr = match &arm.body {
+                MatchArmBody::Expr(e) => self.infer_expr_type(e, scope)?,
+                MatchArmBody::Block(b) => {
+                    // A block's value is its trailing expr — only when NO statements
+                    // can shadow `scope` (mirror `infer_expr_type`'s `Block(b)` arm).
+                    if !b.stmts.is_empty() {
+                        return None;
+                    }
+                    self.infer_expr_type(b.trailing.as_deref()?, scope)?
+                }
+            };
+            let rt = ResolvedType::from_type_ref(&body_tr);
+            if rt == ResolvedType::Never {
+                continue; // diverging arm contributes no constraint
+            }
+            match &common {
+                None => common = Some(rt),
+                Some(c) if *c == rt => {}
+                Some(_) => return None, // arms disagree on type → bail
+            }
+        }
+        let rt = common?;
+        // NON-UNIT primitive only (Unit excluded: a statement-position all-unit /
+        // unit-dominated match must stay on the legacy path, §0-safe minimal subset).
+        if rt != ResolvedType::Unit && Self::primitive_gate(&rt) {
+            Some(rt)
+        } else {
+            None
         }
     }
 

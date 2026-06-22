@@ -1,0 +1,109 @@
+// U.4.4 regression guard: Match-arm common-type flip (conventions §0/§1/§10).
+// Третья половина серии U.4.4 (Ident U.4.4b ✅ / Member field ✅ / Index element ✅):
+// чекер материализует ОБЩИЙ примитивный тип арм match-выражения в канал
+// resolved_types_buf[match.id] вместо re-derive в codegen (emit_match result_ty +
+// legacy infer_expr_c_type Match-арм). Новая bounded-инференс: общий тип арм;
+// diverging-арм (never: panic/throw) НЕ ограничивает общий тип. GATE non-unit primitive
+// (shared primitive_gate; Unit исключён — statement-position match остаётся на legacy).
+// Consumer infer_expr_c_type уже authoritative (U.4.4b) → канал потребляется напрямую.
+// Бинды БЕЗ аннотации типа → codegen инферит тип match ЧЕРЕЗ канал (аннотация обошла бы).
+// Folder-module peer of `module detect172` (один CU, co-compile в entry basics).
+module detect172
+
+test "u44match: int arms (byte-identical nova_int)" {
+    ro k int = 1
+    ro r = match k {
+        0 => 100
+        1 => 200
+        _ => 300
+    }
+    assert(r == 200)
+    assert(r + 1 == 201)
+}
+
+test "u44match: str arms — общий тип str, метод на результате" {
+    ro k int = 2
+    ro s = match k {
+        1 => "one"
+        2 => "two"
+        _ => "other"
+    }
+    assert(s == "two")
+    assert(s.len() == 3)
+    assert(s.starts_with("t"))
+}
+
+test "u44match: bool arms — результат напрямую в boolean-контексте" {
+    ro k int = 0
+    ro flag = match k {
+        0 => true
+        _ => false
+    }
+    assert(flag)
+    assert(flag && k == 0)
+}
+
+test "u44match: char arms — равенство с char-литералом" {
+    ro k int = 3
+    ro c = match k {
+        1 => 'a'
+        3 => 'c'
+        _ => 'z'
+    }
+    assert(c == 'c')
+}
+
+test "u44match: f64 arms — float-арифметика на результате" {
+    ro k int = 1
+    ro x = match k {
+        0 => 1.5
+        1 => 2.5
+        _ => 0.0
+    }
+    assert(x * 2.0 == 5.0)
+}
+
+test "u44match: sized-int arms (§1 nova_int-fallback fix)" {
+    ro a u8 = 200
+    ro b u8 = 100
+    ro k int = 1
+    ro w = match k {
+        0 => a
+        _ => b
+    }
+    assert(w == 100)
+    // sized-int результат в widen-контексте (implicit u8 -> int)
+    ro widened int = w
+    assert(widened == 100)
+}
+
+test "u44match: guard-арм, общий тип str" {
+    ro k int = 7
+    ro label = match k {
+        0 => "zero"
+        n if n > 0 => "positive"
+        _ => "negative"
+    }
+    assert(label == "positive")
+}
+
+test "u44match: diverging arm (panic) НЕ ограничивает общий тип" {
+    ro k int = 2
+    ro s = match k {
+        2 => "ok"
+        _ => panic("unreachable in u44match test")
+    }
+    assert(s == "ok")
+    assert(s.len() == 2)
+}
+
+test "u44match: block-арм (trailing без stmts) общий тип str" {
+    ro k int = 1
+    ro v = match k {
+        0 => { "a" }
+        1 => { "bb" }
+        _ => { "ccc" }
+    }
+    assert(v == "bb")
+    assert(v.len() == 2)
+}
