@@ -35582,34 +35582,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// codegen to read the annotation authoritatively. In release the check compiles
     /// out → byte-identical to legacy.
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
+        // Compute legacy FIRST and ALWAYS — its emission side-effects (typedef / mono
+        // registration) must run even when we return the annotation, so flipping only the
+        // RETURN value never drops a typedef (the U.4.3 "skip side-effects → missing typedef →
+        // CC-FAIL" hazard). U.4.5 will delete the legacy path once those side-effects are
+        // relocated; for this incremental flip we keep it purely for the side-effects.
         let legacy = self.infer_expr_c_type_legacy(expr);
+        // Plan 172.1 U.4.3: callee-channel equivalence-assert (debug-only; measures the
+        // resolved-callee return-type channel == legacy until U.4.3's own return-flip).
         #[cfg(debug_assertions)]
         if expr.id.is_set() {
-            if let Some(rt) = self.resolved_types.get(&expr.id) {
-                // U.4.1/U.4.2 equivalence: when the IR lowering handles the annotation it
-                // must match legacy. `Err` = a non-lowerable type (removed `usize`/`isize`/
-                // `ptr`, or `Self`-without-receiver) — no claim, skip (the producer only seeds
-                // primitives today, so `Err` does not occur on the current corpus).
-                if let Ok(ir_c) = self.resolved_type_to_c(rt) {
-                    debug_assert_eq!(
-                        ir_c,
-                        legacy,
-                        "[U.4.1] IR annotation != legacy infer at id={:?} span={:?}",
-                        expr.id,
-                        expr.span
-                    );
-                }
-            }
-            // Plan 172.1 U.4.3 (stages a+b+c1): when the checker recorded a resolved callee
-            // for THIS call (`resolved_callees`, populated in `f1_check_call` for free-fn
-            // single-overload / `Type.method` / module-fn [a/b] + single-overload INSTANCE
-            // `obj.method` [c1, `check_instance_overload`]), look up codegen's OWN return
-            // C-type for that callee by its declaration `Span` (`fn_ret_by_span`, every
-            // CONCRETE non-mono callee) and prove it equals the legacy re-derivation. The
-            // channel carries callee IDENTITY (`FnDecl.span`); codegen lowers its own view
-            // (§0/§7.7). ADDITIVE: the returned value is still `legacy` (channel NOT yet
-            // authoritative) → release byte-identical; this assert measures channel ==
-            // legacy across the corpus before a later stage flips codegen to read it.
             if matches!(&expr.kind, ExprKind::Call { .. }) {
                 if let Some(span) = self.resolved_callees.get(&expr.id) {
                     if let Some(ch_ret) = self.fn_ret_by_span.get(span) {
@@ -35621,6 +35603,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             expr.span
                         );
                     }
+                }
+            }
+        }
+        // Plan 172.1 U.4.5 (incremental flip, U.4.4b): RETURN the semantic-pass annotation
+        // AUTHORITATIVELY when present, lowered via the SINGLE `resolved_type_to_c` (§0/§1) —
+        // codegen reads the resolved type instead of re-deriving. The `number_exprs` arms
+        // (literals/bool-ops/arith/As/ctor) are byte-identical to legacy (proven U.4.1/U.4.2),
+        // so their flip is a no-op; the checker `Ident` arm (U.4.4b) is the BEHAVIOR-CHANGE that
+        // FIXES legacy `_=>nova_int` fallback bugs (e.g. a `bool` var legacy mis-typed `nova_int`).
+        // Legacy side-effects already ran above; only the returned STRING changes. Un-annotated
+        // exprs, and non-lowerable `Err` annotations (removed `usize`/`isize`/`ptr`,
+        // `Self`-without-receiver), fall back to `legacy`.
+        if expr.id.is_set() {
+            if let Some(rt) = self.resolved_types.get(&expr.id) {
+                if let Ok(ir_c) = self.resolved_type_to_c(rt) {
+                    return ir_c;
                 }
             }
         }

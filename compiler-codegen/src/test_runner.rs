@@ -2451,7 +2451,10 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         })?
     };
     // Plan 172.1 U.4.1: hand the literal resolved-type seed to ModuleEnv.
+    // Plan 172.1 U.4.4(b): merge the checker's semantic Ident annotations OVER the seed.
+    let checker_annotations = std::mem::take(&mut module_env.resolved_types);
     module_env.resolved_types = resolved_types;
+    module_env.resolved_types.extend(checker_annotations);
     // Plan 52 Ф.9: lints — ПОСЛЕ check_module (типы validated), ДО
     // desugar (lints видят MapLit-узлы). Возвращаются caller'у для
     // EXPECT_COMPILE_WARNING сверки.

@@ -1650,6 +1650,9 @@ fn check_module_impl(
     // hands it to codegen. ADDITIVE substrate — codegen does not read it yet (U.4.3), so
     // byte-identical. Populated even when there are errors (harmless; only read on success).
     env.resolved_callees = type_check_ctx.resolved_callees.take();
+    // Plan 172.1 U.4.4(b): lift the checker-side resolved-type channel; the pipeline merges
+    // it OVER the number_exprs seed (main.rs / test_runner).
+    env.resolved_types = type_check_ctx.resolved_types_buf.take();
 
     if errors.is_empty() {
         Ok(env)
@@ -3045,6 +3048,16 @@ struct TypeCheckCtx<'a> {
     /// check walk is `&self` (mirrors the other `RefCell` side-tables here). ADDITIVE —
     /// not yet consumed by codegen (U.4.3), so byte-identical.
     resolved_callees: std::cell::RefCell<HashMap<crate::ast::ExprId, Span>>,
+    /// Plan 172.1 U.4.4(b): per-expr resolved-type channel the checker fills during the
+    /// scope-aware `f1_expr` walk (expr `ExprId` → its `ResolvedType`), for the structural /
+    /// semantic arms the SYNTACTIC `number_exprs` producer cannot reach. FIRST arm: `Ident`
+    /// (var-types from scope), gated to skip bare generic-params (their codegen lowering is
+    /// erased `void*` / mono-substituted, which the generic-level annotation cannot reproduce).
+    /// Lifted into `ModuleEnv.resolved_types` (merged OVER the `number_exprs` seed). Codegen
+    /// reads it AUTHORITATIVELY (U.4.5 flip) — a BEHAVIOR-CHANGE: it FIXES legacy
+    /// `infer_expr_c_type` `_=>nova_int` fallback bugs (§0/§1; e.g. a `bool` var legacy typed
+    /// as `nova_int`). Verified by full regress (the divergence set is bounded — U.4.4-prep.b audit).
+    resolved_types_buf: std::cell::RefCell<HashMap<crate::ast::ExprId, ResolvedType>>,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -3527,6 +3540,8 @@ impl<'a> TypeCheckCtx<'a> {
             sig_table: crate::imports::ModuleSigTable::new(),
             // Plan 172.1 U.3.4: empty callee channel; filled during the check walk.
             resolved_callees: std::cell::RefCell::new(HashMap::new()),
+            // Plan 172.1 U.4.4(b): empty checker-side resolved-type channel.
+            resolved_types_buf: std::cell::RefCell::new(HashMap::new()),
         }
     }
 
@@ -6192,6 +6207,44 @@ impl<'a> TypeCheckCtx<'a> {
         scope: &mut HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
+        // Plan 172.1 U.4.4(b): annotate this Ident's resolved type into the checker channel
+        // (lifted into `ModuleEnv.resolved_types` → read AUTHORITATIVELY by codegen instead of
+        // re-deriving in `infer_expr_c_type`, §0/§1). This is the scope-aware producer the
+        // syntactic `number_exprs` cannot be. GATE: skip bare generic-params (`T`) — their
+        // codegen lowering is erased `void*` in the generic stub / mono-substituted at
+        // instantiation, which the generic-LEVEL annotation `Named{T}` cannot reproduce
+        // (U.4.4-prep.b audit: the `Nova_T*` vs `void*` class). Concrete-typed Idents are the
+        // BEHAVIOR-CHANGE set: where the checker resolves a real type the legacy
+        // `infer_expr_c_type` mis-fell-back to `nova_int`, codegen now emits the correct type.
+        if let ExprKind::Ident(_) = &e.kind {
+            if e.id.is_set() {
+                if let Some(tr) = self.infer_expr_type(e, scope) {
+                    let rt = ResolvedType::from_type_ref(&tr);
+                    // GATE to PRIMITIVE resolved types only. Their C-type is ALWAYS a registered
+                    // builtin (`nova_int`/`nova_bool`/`uint32_t`/…) — no undeclared-identifier and
+                    // no generic-inference hazard — and the ONLY divergence from legacy is the §1
+                    // `_=>nova_int` fallback FIX (a `bool`/sized-int var legacy mis-typed `nova_int`).
+                    // Non-primitive Idents (records / generics / enums / Vec / pointers) stay on the
+                    // legacy path: their lowering needs codegen mono / typedef-registration context
+                    // the generic-level annotation cannot reproduce — the full-corpus regress proved
+                    // those break the flip (generic-arg inference; undeclared enum type-name).
+                    let is_primitive = match rt.peel_view() {
+                        ResolvedType::Scalar { .. }
+                        | ResolvedType::Float { .. }
+                        | ResolvedType::Bool
+                        | ResolvedType::Str
+                        | ResolvedType::Unit => true,
+                        ResolvedType::Named { name, args, .. } => {
+                            args.is_empty() && name.as_str() == "char"
+                        }
+                        _ => false,
+                    };
+                    if is_primitive {
+                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                    }
+                }
+            }
+        }
         match &e.kind {
             ExprKind::Call { func, args, trailing } => {
                 self.f1_expr(func, gs, scope, errors);

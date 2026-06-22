@@ -373,7 +373,11 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     })?;
     // Plan 172.1 U.4.1: hand the literal resolved-type seed to ModuleEnv so the
     // emitter can read it (set_resolved_types below).
+    // Plan 172.1 U.4.4(b): merge the checker's semantic Ident annotations (lifted into
+    // module_env.resolved_types during check) OVER the number_exprs syntactic seed (base).
+    let checker_annotations = std::mem::take(&mut module_env.resolved_types);
     module_env.resolved_types = resolved_types;
+    module_env.resolved_types.extend(checker_annotations);
     // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression
     // ПОСЛЕ type-check, ДО effect-inference и codegen. После прохода
     // codegen видит обычные method-call'ы (with_capacity / insert).
