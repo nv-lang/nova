@@ -54,24 +54,42 @@ handler-подмену). Но **поверхность эффекта расси
 
 ## 3. Новая схема (типизированный эффект; один источник)
 
-**Принцип:** эффект отдаёт **типизированные записи**, а не сырой int; единица — **наносекунды** внутри всех трёх
-типов; схема живёт в **одном** месте (`.nv`-декларация), codegen её **читает** (не хардкодит); `Monotonic.now()` —
-обычная `.nv`-функция; default-handler = тонкие non-portable extern-примитивы (C) + typed-обёртка в `.nv`.
+**Принцип.** `Time` — **внутренний плумбинг-эффект** (как `TcpNet`/`AddrNet`, [net/effect.nv §21-40](../../std/net/effect.nv#L21)):
+user-код его **не вызывает напрямую**, а ходит через type-методы. Эффект отдаёт **типизированные записи**, а не сырой
+int; единица — **наносекунды** внутри всех трёх типов; схема живёт в **одном** месте (`.nv`-декларация), codegen её
+**читает** (не хардкодит); default-handler = тонкие non-portable extern-примитивы (C) + typed-обёртка в `.nv`.
 
+**Эффект (плумбинг — юзер не трогает).** Опы названы по возвращаемому типу (как `AddrNet.loopback`/`v4`), симметрично:
 ```nova
-export type Time effect {
-    now()           -> Timestamp     // wall-clock (Unix epoch ns); может прыгать (NTP/DST)
-    now_monotonic() -> Monotonic     // монотонные часы (ns); never backwards
-    sleep(d Duration) -> ()          // suspend текущего fiber на d (D64)
+type Time effect {
+    timestamp() -> Timestamp     // wall-clock read (Unix epoch ns); может прыгать (NTP/DST)
+    monotonic() -> Monotonic     // монотонные часы (ns); never backwards
+    sleep(d Duration) -> ()      // suspend текущего fiber на d (D64, cancellable)
 }
 ```
 
-| Операция | Было | Стало | Заметка |
+**User-facing surface (на типах + free-fn).** Только это юзер и видит:
+```nova
+Timestamp.now()  => Time.timestamp()        // .nv-сахар
+Monotonic.now()  => Time.monotonic()        // .nv-сахар (из compiler-builtin, Ф.3)
+fn sleep(d Duration) Time => Time.sleep(d)  // free, prelude-export (метод-формы d.sleep() НЕТ)
+fn sleep_until(deadline Monotonic) Time     // монотонный дедлайн, drift-free циклы (tokio-паритет)
+```
+- `sleep_until` — **только `Monotonic`** (дедлайн обязан быть монотонным, иммунен к NTP/DST; tokio `sleep_until(Instant)`).
+  Wall-абсолютный сон — **явно** `sleep(ts.time_until())` (footgun против скачков часов виден на call-site); отдельный
+  `sleep_until(Timestamp)` **не вводим** (выродился бы в то же `sleep(ts−now)` + спрятал бы fragility; усиливает D124).
+- `sleep` — единственный оп, который юзер зовёт «как есть»; free-обёртка прячет эффект (как у net), `Time` остаётся виден
+  в сигнатуре. Метод-форма `d.sleep()` — нет («один очевидный способ»; Go `time.Sleep`/Rust `thread::sleep` — тоже free).
+- `sleep_until` — MVP **или** followup (на усмотрение Ф.0); MVP-срез = `sleep(deadline − Monotonic.now())`, «истинный
+  deadline-таймер» (re-arm) — уточнение.
+
+| Операция (эффект) | Было | Стало | Заметка |
 |---|---|---|---|
-| wall-clock | `now() -> int` (ms/ns?) | `now() -> Timestamp` | закрывает mismatch; `.minus()` → `Timestamp.@minus` |
-| monotonic | builtin `Monotonic.now()` (i64) | effect-op `now_monotonic() -> Monotonic` + `.nv`-обёртка `Monotonic.now() => Time.now_monotonic()` | мокабельно; убирает hardcode |
-| sleep | `sleep(ms int)` | `sleep(d Duration)` | финализирует `[M-handler-duration-schema-mismatch]` |
-| observability | 5×int в `Time` | вынести в отдельный surface (как `Mem`) **или** пометить orthogonal | решение в Ф.0 |
+| wall-clock | `now() -> int` (ms/ns?) | `timestamp() -> Timestamp` (+ сахар `Timestamp.now()`) | закрывает mismatch |
+| monotonic | builtin (i64) | `monotonic() -> Monotonic` (+ сахар `Monotonic.now()`) | мокабельно; убирает hardcode |
+| sleep | `sleep(ms int)` | `sleep(d Duration)` + free `sleep`/`sleep_until` | финализирует `[M-handler-duration-schema-mismatch]` |
+| ⛔ убрать из эффекта | `now_ms()->u64`, `now_ns()->u64` | — (= `Timestamp.now().as_unix_millis()`/`…nanos()`) | артефакты int-провода |
+| observability | 5×int в `Time` | вынести в отдельный surface (как `Mem`) **или** orthogonal | решение в Ф.0 |
 | единица | ms vs ns дрейф | **ns** канон внутри всех типов | задокументировать |
 
 **ABI-ключ (исправлено 2026-06-22 после проверки C).** `Timestamp`/`Monotonic`/`Duration` — все `{ ro nanos i64 }`,
@@ -86,40 +104,56 @@ vs полный 172.4).
 
 ## 3a. Методы `Timestamp` / `Monotonic`: есть → после рерайта
 
-**Инвариант:** метод-surface сохраняется **1:1** — рерайт его не сокращает, а *чинит* (через int-провод сейчас часть
-ломается о method-dispatch). Меняется только представление (Ф.1b: heap→value) и провод эффекта (Ф.2: int→typed).
+**Инвариант:** существующий метод-surface сохраняется (рерайт его не сокращает, а *чинит* — через int-провод сейчас
+часть ломается о method-dispatch), кроме одного осознанного удаления (`@elapsed_since` → overload `@minus`). Меняется
+представление (Ф.1b: heap→value), провод эффекта (Ф.2: int→typed); **добавляются** `@display`/`@debug` + `.now()`-сахар.
 
 **`Timestamp`** (`#stable 0.1`):
 
 | Метод | Сигнатура | Было | После |
 |---|---|---|---|
+| `Timestamp.now()` | `-> Self` | — (нет) | **NEW** `.nv`-сахар `=> Time.timestamp()` |
 | `EPOCH` / `from_unix_secs/millis/nanos` | `(i64) -> Self` | работает | без изменений |
 | `as_unix_secs/millis/nanos` | `-> i64` | работает | без изменений |
 | `@plus(d Duration)` | `-> Timestamp` | работает | без изменений |
 | `@minus(d Duration)` | `-> Timestamp` | работает | без изменений |
 | `@minus(other Timestamp)` | `-> Duration` | работает (overload) | без изменений |
 | `@compare` | `-> int` (синтез `==…>=`) | работает | без изменений |
-| `@is_past` / `@time_until` / `@elapsed` | `() Time -> bool/Duration` | **ломается** (int-провод: `Time.now()` не `Timestamp`) | **начинает работать** (Ф.2) |
+| `@is_past` / `@time_until` / `@elapsed` | `() Time -> bool/Duration` | **ломается** (int-провод) | **начинает работать** (Ф.2) |
+| `@display` / `@debug` | `(mut w Write)` | — (нет) | **NEW** протоколы; full-datetime `@display` ждёт 179.1, до этого `@debug`=raw `Timestamp(unix_ns=…)` |
 
 **`Monotonic`** (`#stable 0.6`):
 
 | Метод | Сигнатура | Было | После |
 |---|---|---|---|
-| `Monotonic.now()` | `-> Self` | **compiler-builtin**, немокабелен | `.nv`-обёртка `=> Time.now_monotonic()`, мокабелен (Ф.3) |
+| `Monotonic.now()` | `-> Self` | **compiler-builtin**, немокабелен | `.nv`-обёртка `=> Time.monotonic()`, мокабелен (Ф.3) |
 | `@as_nanos` | `-> i64` | работает | без изменений |
 | `@plus(d Duration)` / `@minus(d Duration)` | `-> Monotonic` | работает | без изменений |
-| `@elapsed_since(other Monotonic)` | `-> Duration` | работает (named, не оператор) | без изменений; **+ опц. добавить симметричный `@minus(other Monotonic) -> Duration`** (см. ниже) |
+| `@minus(other Monotonic)` | `-> Duration` | — (нет; был только `@elapsed_since`) | **NEW** overload (симметрично `Timestamp`) |
+| `@elapsed_since(other Monotonic)` | `-> Duration` | работает (named) | **УДАЛИТЬ** (заменён overload `@minus`) |
 | `@compare` | `-> int` | работает | без изменений |
+| `@display` / `@debug` | `(mut w Write)` | — (нет) | **NEW** протоколы (`@debug`=raw monotonic-ns) |
+| `Monotonic.from_*` | — | **нет** | **НЕ вводить** (opaque, как Rust `Instant` — из числа не собрать) |
 | ⛔ `Monotonic ± Timestamp`, `as_unix_*`, `from_unix_*` | — | compile-error (D124) | **остаётся ошибкой** (намеренно) |
 
-**Асимметрия `@elapsed_since` vs `@minus` (ответ на вопрос).** `Timestamp` имеет overload `@minus(Timestamp)->Duration`,
-а `Monotonic` — нет (только named `@elapsed_since`). Причина в коде ([duration.nv:903](../../std/time/duration.nv#L903)):
-*«Operator overload отсутствует, чтобы не конфликтовать с method-resolution на receiver type»*. Это **историческая
-несимметрия** (Monotonic добавлен позже, Plan 65; автор обошёл второй `@minus`-overload + directional-имя читается
-яснее: `t2.elapsed_since(t1)` однозначно `t2 − t1`, оператор легко перепутать). Но `Timestamp` тот же overload **несёт
-и он работает** → запрет не фундаментальный. Ф.0 решает: дать `Monotonic` симметричный `@minus(Monotonic)->Duration`
-(консистентность с Timestamp) **или** оставить `elapsed_since` каноном с явной фиксацией «directional by design». Под
-unified-движком (172.1) overload-резолюция надёжна → технический блокер снимается.
+**`@elapsed_since` → `@minus(Monotonic)` (решено).** `Timestamp` несёт overload `@minus(Timestamp)->Duration` и **он
+работает** → запрет на `Monotonic` не фундаментальный, а stale (комментарий [duration.nv:903](../../std/time/duration.nv#L903)
+*«чтобы не конфликтовать с method-resolution»* — перестраховка Plan 65). **Решение:** `@elapsed_since` **убрать**, дать
+`Monotonic @minus(other Monotonic) -> Duration` (Go-стиль: только `Sub`). Если компилятор мис-диспатчит overload — это
+**баг резолюции, чиним** (а не workaround); `Timestamp` доказывает, что паттерн рабочий, под unified-движком (172.1)
+резолюция надёжна.
+
+**Display/Debug (Rust/Go-эталон).** Сейчас у времени только `@into()->str`/`@into_human()` (`Into[str]`, D73) — а
+протоколов `Display`/`Debug` (sink `@display(mut w Write)`/`@debug(mut w Write)`, на них висит `${x}`/`${x:?}`) **нет**,
+т.е. `print(d)`/интерполяция не работают. Добавить на все три типа:
+- `@display` — канон, авто-масштаб `"2s"`/`"500ns"` (= Rust `Debug` / Go `String`); `@into()` делегирует в `@display`.
+- `@debug` — диагностика, однозначно; `@into_human()` (`"1d 2h 30min"`) — оставить как extra (Nova-nicety).
+- `Timestamp`/`Monotonic`: full-datetime `@display` требует календаря → **после 179.1**; до этого `@debug` = сырой.
+
+**Заметка days/weeks (Go/Rust-урок).** `Duration.from_days/from_weeks/@days/@weeks` у Nova есть, а Rust/Go их **убрали**
+(день ≠ фикс. длительность из-за DST). У Nova это ровно `N×86400s` — для *интервала* корректно, но имя путает с
+*календарным* днём. Оставить как exact-интервалы + в доке прямо: «ровно N×86400s, не календарный день; календарь →
+`Period` в 179.1».
 
 ## 4. Фазы
 
@@ -136,14 +170,18 @@ unified-движком (172.1) overload-резолюция надёжна → т
   (`const ZERO Duration = {…}`), `@into()`/`@into_human()` (возвращают `str`), `DurationParts` (7 полей — остаётся heap,
   это display-helper, не hot-path). Возможен codegen generic-forward-decl нюанс (D290, Plan 165) — здесь типы
   не-generic, проще. Координация 172.4 (единый value-ABI).
-- **Ф.2 — Типизированная поверхность (retire int-wire).** `now() -> Timestamp`, `now_monotonic() -> Monotonic`,
-  `sleep(d Duration)` через границу эффекта. `Time.now().minus(other)` роутится на `Timestamp.@minus`. **Закрывает
+- **Ф.2 — Типизированная поверхность эффекта (retire int-wire).** Эффект-опы: `timestamp() -> Timestamp`,
+  `monotonic() -> Monotonic`, `sleep(d Duration)` через границу эффекта; **убрать** `now()->int` / `now_ms` / `now_ns` /
+  `now_monotonic` (артефакты int-провода). `Timestamp.now().minus(other)` роутится на `Timestamp.@minus`. **Закрывает
   `[M-time-now-schema-mismatch]`.** Gate: 172.4 (record-across-boundary) **или** узкий bridge из Ф.0.
-- **Ф.3 — Monotonic из builtin → `.nv`.** Убрать compiler-builtin dispatch ([emit_c.rs:2312](../../compiler-codegen/src/codegen/emit_c.rs#L2312)
-  + [fibers.h:2951](../../compiler-codegen/nova_rt/fibers.h#L2951)); `Monotonic.now() => Time.now_monotonic()` как
-  Nova-fn в [duration.nv](../../std/time/duration.nv). **Закрывает `[M-monotonic-mock-support]`** (handler перехватывает).
-- **Ф.4 — `sleep(Duration)` канон + unit-гигиена.** `sleep(ms int)` → `sleep(d Duration)` в prelude-decl;
-  финализировать `[M-handler-duration-schema-mismatch]`; задокументировать ns-канон везде.
+- **Ф.3 — User-facing `.nv`-поверхность.** (a) сахар на типах: `Timestamp.now() => Time.timestamp()`,
+  `Monotonic.now() => Time.monotonic()` (последний — **из compiler-builtin**, убрать dispatch
+  [emit_c.rs:2312](../../compiler-codegen/src/codegen/emit_c.rs#L2312) + [fibers.h:2951](../../compiler-codegen/nova_rt/fibers.h#L2951)
+  → **закрывает `[M-monotonic-mock-support]`**); (b) free-fn `sleep(d Duration) Time` (prelude-export) + `sleep_until(deadline Monotonic) Time`;
+  (c) `@elapsed_since` → overload `@minus(other Monotonic) -> Duration` (если мис-диспатч — **фикс резолюции overload'ов**,
+  не workaround); (d) `@display`/`@debug` на `Duration`/`Timestamp`/`Monotonic` (`@into()` делегирует в `@display`).
+- **Ф.4 — `sleep(Duration)` канон + unit-гигиена.** `sleep(ms int)` → `sleep(d Duration)` в prelude-decl/handler'ах;
+  финализировать `[M-handler-duration-schema-mismatch]`; задокументировать ns-канон везде + days/weeks-заметку (§3a).
 - **Ф.5 — Default + test handlers + миграция Time.now()→Monotonic.** Default-handler: тонкие extern-примитивы
   (`__nova_wall_now_ns`/`__nova_monotonic_now_ns`/`nova_fiber_sleep`, non-portable → C по [[feedback-maximize-nv-sourcing]]
   §3) + typed-обёртка в `.nv`; `fixed`/`mut_clock` под новую схему. Мигрировать ≈9 timing-сайтов на `Monotonic.now()`
@@ -160,9 +198,12 @@ unified-движком (172.1) overload-резолюция надёжна → т
 ## 5. Spec / D / Q / docs
 
 - amend **D124** (Monotonic vs Timestamp): теперь оба возвращаются типизированно из `Time`-эффекта; `Monotonic.now()` —
-  `.nv`-обёртка над `Time.now_monotonic()`, не builtin.
-- amend **prelude `Time`-декларация** (D11/D14/D62, [04-effects.md]): typed-surface `now()->Timestamp` /
-  `now_monotonic()->Monotonic` / `sleep(d Duration)`; единица — ns.
+  `.nv`-обёртка над `Time.monotonic()`, не builtin; `@elapsed_since` заменён overload'ом `@minus(Monotonic)`.
+- amend **prelude `Time`-декларация** (D11/D14/D62, [04-effects.md]): `Time` — внутренний плумбинг-эффект (юзер не зовёт
+  напрямую, как `TcpNet`/`AddrNet`); опы `timestamp()->Timestamp` / `monotonic()->Monotonic` / `sleep(d Duration)`;
+  user-facing — `Timestamp.now()`/`Monotonic.now()`-сахар + free `sleep`/`sleep_until`; единица — ns.
+- amend **D73 Display/Debug**: `Duration`/`Timestamp`/`Monotonic` реализуют `@display`/`@debug` (sink), `@into()`
+  делегирует в `@display`.
 - **NEW D-block** — «`Time`-эффект: типизированный surface + единый источник схемы (codegen читает из `.nv`)»;
   фиксация ns-канона; политика observability-счётчиков. error-index: code на нарушение (если потребуется).
 - сверить с **D64** (Time = suspend-effect, запрещён в `realtime {}`) — surface-смена не должна снять запрет.
@@ -178,23 +219,27 @@ nv не в релизе → меняем напрямую, но **измерит
 
 ## 7. Тесты (pos + neg)
 
-- **pos** `nova_tests/time179/`: `Time.now().elapsed()/.minus()/.time_until()` без ручной обёртки (роутинг на
-  `Timestamp`-методы); `Monotonic.now().elapsed_since()`; `sleep(Duration)`; mock через `fixed`/`mut_clock` —
-  **в т.ч. перехват `Monotonic.now()`** (раньше невозможно); `with Time = ...` детерминизм; D124 cross-type
-  по-прежнему compile-error.
+- **pos** `nova_tests/time179/`: `Timestamp.now().elapsed()/.minus()/.time_until()` без ручной обёртки (роутинг на
+  `Timestamp`-методы); `m2 - m1` (overload `Monotonic @minus(Monotonic)`); `sleep(Duration)` + `sleep_until(Monotonic)`
+  (drift-free цикл); `${d}`/`${d:?}` (`@display`/`@debug`); mock через `fixed`/`mut_clock` — **в т.ч. перехват
+  `Monotonic.now()`** (раньше невозможно); `with Time = ...` детерминизм; D124 cross-type по-прежнему compile-error.
 - **neg:** смешивание `Monotonic`↔`Timestamp` арифметикой → compile-error (absent overload, D124); `Time` внутри
-  `realtime {}` → `E_EFFECT_REALTIME_VIOLATION` (D64); (если вводим) reinterpret raw-ns без явного метода → ошибка.
-- per-OS: монотонность (`now_monotonic` не убывает) на Win/Linux; wall vs monotonic не путаются.
+  `realtime {}` → `E_EFFECT_REALTIME_VIOLATION` (D64); `Monotonic.from_unix_*`/`as_unix_*` → нет метода (opaque);
+  `sleep_until(Timestamp)` → нет такого оп (use `sleep(ts.time_until())`).
+- per-OS: монотонность (`monotonic()` не убывает) на Win/Linux; wall vs monotonic не путаются.
 
 ## 8. Критерии приёмки
 
-1. `Time`-эффект типизирован: `now()->Timestamp`, `now_monotonic()->Monotonic`, `sleep(Duration)`; int-провод ретайрнут.
+1. `Time`-эффект типизирован и плумбинг: опы `timestamp()->Timestamp` / `monotonic()->Monotonic` / `sleep(Duration)`;
+   int-провод (`now()->int`/`now_ms`/`now_ns`/`now_monotonic`) ретайрнут.
 2. Схема `Time` — **один** источник (codegen читает из `.nv`, не хардкодит 4-ю копию).
-3. `Monotonic.now()` — `.nv`-функция (builtin-dispatch удалён); мокабелен через handler.
-4. `Time.now().minus(...)`/`.elapsed()` работают без ручной обёртки; ≈9 timing-сайтов мигрированы на `Monotonic`.
+3. User-facing surface: `Timestamp.now()`/`Monotonic.now()` (`.nv`-сахар, builtin-dispatch удалён, мокабельны) +
+   free `sleep`/`sleep_until(Monotonic)`; `@display`/`@debug` на трёх типах; `@elapsed_since` убран → overload `@minus(Monotonic)`.
+4. `Timestamp.now().minus(...)`/`.elapsed()` работают без ручной обёртки; ≈9 timing-сайтов мигрированы на `Monotonic`.
 5. Закрыты `[M-time-now-schema-mismatch]`, `[M-monotonic-mock-support]`, `[M-monotonic-migration-deferred]`;
    финализирован `[M-handler-duration-schema-mismatch]`.
-6. Полный регресс зелёный; **без упрощений**.
+6. `Duration`/`Timestamp`/`Monotonic` — `value`-records (стек); `Monotonic` без `from_*` (opaque).
+7. Полный регресс зелёный; **без упрощений**.
 
 ## 9. Конвенции + координация
 
