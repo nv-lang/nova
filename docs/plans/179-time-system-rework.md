@@ -85,7 +85,8 @@ Runtime-часы: `uv_hrtime()` ([fibers.h:2260/2276](../../compiler-codegen/nov
 **Принцип.** `Time` — **внутренний плумбинг-эффект** (как `TcpNet`/`AddrNet`, [net/effect.nv §21-40](../../std/net/effect.nv#L21)):
 user-код его **не вызывает напрямую**, а ходит через type-методы. Эффект отдаёт **типизированные value-записи**, не int;
 единица — **наносекунды**; схема живёт в **одном** месте (`.nv`-decl), codegen её **читает**; default-handler = тонкие
-non-portable extern-примитивы (C) + typed-обёртка в `.nv`.
+non-portable **`extern "nova" fn`**-примитивы (Nova-ABI хуки в свой рантайм, как `runtime.*`/`sync.*` — **не** `extern "C"`,
+в отличие от net/D282/Plan 178: часы/сон — это рантайм-хуки, а не внешняя C-библиотека) + typed-обёртка в `.nv`.
 
 **Эффект (плумбинг — юзер не трогает; опы названы по возвращаемому типу, как `AddrNet.loopback`/`v4`):**
 ```nova
@@ -227,8 +228,9 @@ fn sleep_until(deadline Monotonic) Time     // монотонный дедлай
 - **Ф.4 — sleep-канон + unit + семантика.** `sleep(ms int)`→`sleep(d Duration)` в decl/handler'ах; `sleep(d<=0)`→немедленно
   (Go/tokio); задокументировать granularity (uv-timer ~1ms) и «sleep гарантирует ≥ d»; days/weeks-заметку; финализировать
   `[M-handler-duration-schema-mismatch]`. DEP: Ф.3.
-- **Ф.5 — handlers + auto-advance + миграция + M:N-контракт.** (a) default-handler: extern-примитивы (`__nova_wall_now_ns`/
-  `__nova_monotonic_now_ns`/`nova_fiber_sleep`, non-portable → C, [[feedback-maximize-nv-sourcing]] §3) + typed-обёртка `.nv`;
+- **Ф.5 — handlers + auto-advance + миграция + M:N-контракт.** (a) default-handler: **`extern "nova" fn`**-примитивы
+  (`__nova_wall_now_ns`/`__nova_monotonic_now_ns`/`nova_fiber_sleep` — Nova-ABI хуки в рантайм, как `runtime.*`/`sync.*`;
+  **НЕ** `extern "C"` как net/D282 — это свой рантайм, не внешняя C-либа; [[feedback-maximize-nv-sourcing]] §3) + typed-обёртка `.nv`;
   (b) `fixed`/`mut_clock` под новую typed-схему; (c) **auto-advance virtual clock** (tokio/Kotlin/Go-synctest killer-feature):
   под paused-clock, когда все фибры в scope durably-blocked на `sleep`, handler **авто-продвигает** время к ближайшему дедлайну
   и будит спящего (hook в [fibers.h](../../compiler-codegen/nova_rt/fibers.h) park/wake) — если велик, MVP = explicit `advance(d)`
