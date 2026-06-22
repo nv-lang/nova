@@ -127,6 +127,7 @@ fn IoError @to_str() -> str
 | Q6 | **Read/Write протокол vs существующий `Write`(@display sink)** | (a) байтовый `Write` отдельен от text-sink; (b) объединить | уточнить — `@display`-sink text-ориентирован; байтовый io.Write — сибling |
 | Q7 | **lines() и CRLF** | (a) split `\n`, strip trailing `\r` (Rust); (b) только `\n` | (a) strip `\r\n` (Rust-семантика) |
 | Q8 | **permissions портабельно** | Unix-octal mode vs Windows readonly/ACL | портабельный subset + платформенный escape (как Rust) |
+| Q9 | **FFI str-граница** (C НЕ понимает `str` как `char*`) | (a) nova_rt-шим берёт `nova_str` `{ptr,len}` (Plan 139 ABI) → внутри **NUL-terminate + reject interior-NUL** (`InvalidInput`, как Rust `CString::new`), т.к. `str` не-NUL-terminated и может нести NUL; libc/libuv хотят `char*`; (b) extern на `CStr` + конверсия `str→CStr` в Nova | (a) — наши шимы берут `nova_str` (net-паттерн `socket_addr_from_str(s str)`) + NUL-terminate/interior-NUL-check на границе. Прямой биндинг libc `getenv(str)` **запрещён** |
 
 ## 4. Фазы (декомпозиция)
 
