@@ -1,0 +1,64 @@
+// U.4.4 regression guard: PRIMITIVE-Index (element) flip (conventions §0/§1/§10).
+// Вторая половина U.4.4, названная конвенцией §1 наравне с field (Member): чекер
+// материализует ELEMENT-тип индексации `arr[i]` для `[]T`/`[N]T` в канал
+// `resolved_types_buf[index_expr.id]` (структурный inner массива, как infer_iter_elem_type),
+// вместо re-derive в codegen. GATE primitive (shared primitive_gate). Consumer уже
+// authoritative (U.4.4b) → behavior-change (фикс §1 _=>nova_int для sized-int элемента).
+// Generic-element ([]T, T-параметр) gate отсекает; Named-контейнеры (Vec/HashMap)/str/
+// custom @index → legacy (нет Array-TypeRef). Range-индекс (arr[a..b]) = срез, не элемент.
+// Folder-module peer of `module detect172` (один CU).
+module detect172
+
+test "u44idx: []int element — арифметика и индекс-через-переменную" {
+    ro v []int = [10, 20, 30, 40]
+    assert(v[0] + v[3] == 50)
+    ro i int = 2
+    assert(v[i] == 30)
+}
+
+test "u44idx: []bool element НАПРЯМУЮ в boolean-контексте" {
+    ro flags []bool = [true, false, true]
+    assert(flags[0])
+    assert(!flags[1])
+    assert(flags[0] && flags[2])
+}
+
+test "u44idx: []f64 element в float-арифметике" {
+    ro xs []f64 = [1.5, 2.5, 4.0]
+    assert(xs[0] * 2.0 == 3.0)
+    assert(xs[1] + xs[2] == 6.5)
+}
+
+test "u44idx: []str element + метод" {
+    ro names []str = ["alice", "bob", "ch"]
+    assert(names[0] == "alice")
+    assert(names[1].len() == 3)
+    assert(names[2].starts_with("c"))
+}
+
+test "u44idx: []char element — равенство с char-литералом" {
+    ro cs []char = ['a', 'b', 'c']
+    assert(cs[0] == 'a')
+    assert(cs[2] == 'c')
+}
+
+test "u44idx: sized-int element (§1 nova_int-fallback fix)" {
+    ro bs []u8 = [200, 100, 50]
+    ro ws []u32 = [4000000000, 1, 2]
+    assert(bs[0] == 200)
+    assert(ws[0] == 4000000000)
+    // sized-int element в widen-контексте (implicit u8 -> int)
+    ro widened int = bs[0]
+    assert(widened == 200)
+}
+
+test "u44idx: element в сумме по индексам" {
+    ro v []int = [1, 2, 3, 4, 5]
+    mut acc = 0
+    mut k = 0
+    while k < 5 {
+        acc = acc + v[k]
+        k = k + 1
+    }
+    assert(acc == 15)
+}

@@ -6220,26 +6220,14 @@ impl<'a> TypeCheckCtx<'a> {
             if e.id.is_set() {
                 if let Some(tr) = self.infer_expr_type(e, scope) {
                     let rt = ResolvedType::from_type_ref(&tr);
-                    // GATE to PRIMITIVE resolved types only. Their C-type is ALWAYS a registered
-                    // builtin (`nova_int`/`nova_bool`/`uint32_t`/…) — no undeclared-identifier and
-                    // no generic-inference hazard — and the ONLY divergence from legacy is the §1
-                    // `_=>nova_int` fallback FIX (a `bool`/sized-int var legacy mis-typed `nova_int`).
-                    // Non-primitive Idents (records / generics / enums / Vec / pointers) stay on the
-                    // legacy path: their lowering needs codegen mono / typedef-registration context
-                    // the generic-level annotation cannot reproduce — the full-corpus regress proved
-                    // those break the flip (generic-arg inference; undeclared enum type-name).
-                    let is_primitive = match rt.peel_view() {
-                        ResolvedType::Scalar { .. }
-                        | ResolvedType::Float { .. }
-                        | ResolvedType::Bool
-                        | ResolvedType::Str
-                        | ResolvedType::Unit => true,
-                        ResolvedType::Named { name, args, .. } => {
-                            args.is_empty() && name.as_str() == "char"
-                        }
-                        _ => false,
-                    };
-                    if is_primitive {
+                    // GATE to PRIMITIVE resolved types only (shared `primitive_gate`). Their C-type
+                    // is ALWAYS a registered builtin — no undeclared-identifier / generic-inference
+                    // hazard — and the ONLY divergence from legacy is the §1 `_=>nova_int` fallback
+                    // FIX (a `bool`/sized-int var legacy mis-typed `nova_int`). Non-primitive Idents
+                    // (records / generics / enums / Vec / pointers) stay on the legacy path: their
+                    // lowering needs codegen mono / typedef context the generic-level annotation
+                    // cannot reproduce — the full-corpus regress proved those break the flip.
+                    if Self::primitive_gate(&rt) {
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     }
                 }
@@ -6319,6 +6307,41 @@ impl<'a> TypeCheckCtx<'a> {
                                  byte-range slice `s[a..b]`.".to_string(),
                                 e.span,
                             ));
+                        }
+                        // Plan 172.1 U.4.4 (element half): materialize the ELEMENT type of an
+                        // `[]T`/`[N]T` index `arr[i]` into the checker channel — the convention
+                        // §1 «materialize the resolve, do not throw it» names BOTH field AND
+                        // element; field is done (Member), this is element. The element of a
+                        // STRUCTURAL array type is its `inner` (same extraction as
+                        // `infer_iter_elem_type`; structural, NOT a name-keyed `Vec` special-case
+                        // → §3-clean). Reuses the `obj_tr` already resolved above (no second
+                        // `infer_expr_type` — §2). GATE primitive (shared `primitive_gate`): the
+                        // consumer `infer_expr_c_type` is ALREADY authoritative (U.4.4b) → this is
+                        // a BEHAVIOR-CHANGE fixing the §1 `_=>nova_int` fallback for a
+                        // primitive-element index. A generic element (`[]T`, T a param) →
+                        // `Named{T}` is not primitive → rejected (mono/U.4.3(d) territory); Named
+                        // containers (`Vec[T]`/`HashMap[K,V]`) / `str` / custom `@index` carry no
+                        // `Array` TypeRef here → not annotated → legacy (minimal, sound). Range
+                        // index (`arr[a..b]`) is excluded above — it yields a slice, not an element.
+                        if e.id.is_set() {
+                            let elem: Option<&TypeRef> = match &obj_tr {
+                                TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                                    Some(inner.as_ref())
+                                }
+                                TypeRef::Readonly(inner, _) => match inner.as_ref() {
+                                    TypeRef::Array(e2, _) | TypeRef::FixedArray(_, e2, _) => {
+                                        Some(e2.as_ref())
+                                    }
+                                    _ => None,
+                                },
+                                _ => None,
+                            };
+                            if let Some(elem) = elem {
+                                let rt = ResolvedType::from_type_ref(elem);
+                                if Self::primitive_gate(&rt) {
+                                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                }
+                            }
                         }
                     }
                 }
@@ -7129,6 +7152,28 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// Plan 172.1 U.4.4: the shared PRIMITIVE gate for checker-channel annotations
+    /// (`Ident` var / `Member` field / `Index` element). A resolved type is
+    /// primitive-lowerable iff its C-type is ALWAYS a registered builtin
+    /// (`nova_int`/`nova_bool`/`uint32_t`/`nova_str`/…) — no undeclared-identifier,
+    /// mono, or generic-inference hazard — so annotating it into `resolved_types_buf`
+    /// and letting codegen consume it (U.4.4b authoritative flip) is sound. Non-primitive
+    /// (records / generics / `Vec` / pointers / enums) need codegen mono/typedef context
+    /// the generic-level annotation cannot reproduce → they stay on the legacy path
+    /// (U.4.3(d)/U.4.5 territory). View axes (L2 `readonly`) are peeled — `readonly T`
+    /// lowers identically to `T`.
+    fn primitive_gate(rt: &ResolvedType) -> bool {
+        match rt.peel_view() {
+            ResolvedType::Scalar { .. }
+            | ResolvedType::Float { .. }
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Unit => true,
+            ResolvedType::Named { name, args, .. } => args.is_empty() && name.as_str() == "char",
+            _ => false,
+        }
+    }
+
     /// Ф.1: проверить типы аргументов call-site против параметров callee.
     /// Plan 172.1 U.3.1: ARITY-AWARE compatibility probe for ONE overload.
     ///
@@ -7738,18 +7783,7 @@ impl<'a> TypeCheckCtx<'a> {
                     // concrete primitive field (`count int`) is type-arg-independent → safe.
                     if member_id.is_set() {
                         let rt = ResolvedType::from_type_ref(&field.ty);
-                        let is_primitive = match rt.peel_view() {
-                            ResolvedType::Scalar { .. }
-                            | ResolvedType::Float { .. }
-                            | ResolvedType::Bool
-                            | ResolvedType::Str
-                            | ResolvedType::Unit => true,
-                            ResolvedType::Named { name, args, .. } => {
-                                args.is_empty() && name.as_str() == "char"
-                            }
-                            _ => false,
-                        };
-                        if is_primitive {
+                        if Self::primitive_gate(&rt) {
                             self.resolved_types_buf.borrow_mut().insert(member_id, rt);
                         }
                     }
