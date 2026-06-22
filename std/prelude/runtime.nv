@@ -108,7 +108,16 @@ extern "nova" fn exit(code int, msg str) -> never
 /// position в любом if/match thanks to divergence-aware inference,
 /// например `let x = if cond { compute() } else { unreachable("inv broken") }`.
 #stable(since = "0.1")
-fn unreachable(reason str) -> never => panic("unreachable: ${reason}")
+// Plan 172.1 (struct-tag leak fix): `extern "nova"` (NOT a Nova body) — the call
+// lowers in codegen's `emit_call` special-case to
+// `nv_panic(nova_str_concat(nova_str_from_cstr("unreachable: "), reason))`, using the
+// C-level concat helpers. The previous Nova body `=> panic("unreachable: ${reason}")`
+// used string interpolation, which desugars to a `StringBuilder` pipeline; under a
+// selective `#prelude(core, runtime)` / `#no_prelude` (StringBuilder NOT pulled) the
+// inlined body emitted `Nova_StringBuilder*` with no typedef → CC-FAIL «must use 'struct'
+// tag» (U.7.1 leak). Keeping runtime.nv ZERO-imports / all-`extern` (file-header rule)
+// removes that compiler-emitted StringBuilder dependency entirely.
+extern "nova" fn unreachable(reason str) -> never
 
 /// Runtime-проверка условия. Падает с auto-generated сообщением
 /// (текст condition'а через display) если `cond == false`. Always-on:

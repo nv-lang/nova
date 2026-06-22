@@ -22720,6 +22720,28 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let msg_val = self.emit_expr(args[0].expr())?;
                 return Ok(format!("(nv_panic({}), (nova_int)0LL)", msg_val));
             }
+            // `unreachable(reason str) -> never` (std/prelude/runtime.nv, `extern "nova"`).
+            // Plan 172.1 (struct-tag leak fix): lower like `panic`, but PREPEND the
+            // "unreachable: " context via the C-level `nova_str_concat` / `nova_str_from_cstr`
+            // helpers (always in the runtime). The previous Nova body used string
+            // INTERPOLATION (`"unreachable: ${reason}"`), which desugars to a `StringBuilder`
+            // pipeline; under a selective `#prelude(core, runtime)` / `#no_prelude` StringBuilder
+            // is not pulled, so the inlined body referenced an undeclared `Nova_StringBuilder`
+            // → CC-FAIL «must use 'struct' tag» (U.7.1 leak). Lowering here keeps runtime.nv
+            // ZERO-imports and uses only C runtime helpers (no Nova `str.concat` either — that
+            // is `Nova_str_method_concat`, also unavailable under a partial prelude).
+            if name == "unreachable" {
+                if args.len() != 1 {
+                    return Err(format!(
+                        "unreachable expects 1 argument (reason str), got {}",
+                        args.len()));
+                }
+                let reason_val = self.emit_expr(args[0].expr())?;
+                return Ok(format!(
+                    "(nv_panic(nova_str_concat(nova_str_from_cstr(\"unreachable: \"), {})), (nova_int)0LL)",
+                    reason_val
+                ));
+            }
             // exit(code int, msg str) -> never — D13: смерть всего процесса.
             // НЕ перехватывается handler'ом. В тестах routes через NovaTestFrame
             // (test-runner-level), в production — exit(code). См. nv_exit.
