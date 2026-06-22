@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# Stdlib module conventions — как проектировать модули stdlib и интегрировать C-библиотеки
+# Module conventions — как проектировать модули и интегрировать C-библиотеки
 
 > **Нормативно.** Изменения/отклонения — только по согласованию с владельцем (см.
 > [conventions-governance.md](conventions-governance.md)). Это **дизайн-конвенция** (как устроен модуль и его граница с C),
@@ -7,6 +7,19 @@
 > CStr/указатели/`unsafe`/примеры libsqlite3 и т.п.), [compiler-conventions.md](compiler-conventions.md) (§3 «не хардкодить
 > stdlib», §5 spec-first). **Канонический пример** — `std/net/` (TcpNet-семейство); **референс-планы** —
 > [179](plans/179-time-system-rework.md)/[179.1](plans/179.1-civil-time.md)/[180](plans/180-io-fs-os.md).
+
+## Применимость (scope)
+
+Про **любой** Nova-модуль, не только stdlib: app-код, third-party-библиотеки, **биндинги C-библиотек** (ровно как
+`my_app/sqlite3.nv` в [ffi-cookbook](ffi-cookbook.md)).
+
+- **Универсально (любой модуль):** §0–§1 эффект-семейство (мокабельный плумбинг + фасад), §2 value/must-consume-типы +
+  byte-first, §3 структурный `Result`-домен ошибок, §4.2–§4.5 `extern "C"`-маппинг (`CStr`/`(*u8,len)`/value-records/errno),
+  `#cfg`-platform-split, §5 нейминг, §6 тесты/docs, §7 чек-лист.
+- **Только std / собственный рантайм Nova** (помечено по тексту): `extern "nova" fn` (§4.1) — функции рантайма Nova; **user/
+  third-party код в рантайм не добавляет → использует только `extern "C"`**. Async park/wake (`nova_sched_park`, §4.6) —
+  runtime-внутреннее; **user-FFI обычно синхронный или через `blocking { }`** ([Plan 83.3](plans/83.3-blocking-effect-threadpool.md)/D50),
+  а не своя park/wake. `#stable(since)` (§6) — маркер стабильности публичного std-API.
 
 ---
 
