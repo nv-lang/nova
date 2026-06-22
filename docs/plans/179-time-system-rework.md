@@ -233,8 +233,10 @@ fn sleep_until(deadline Monotonic) Time     // монотонный дедлай
   (Go/tokio); задокументировать granularity (uv-timer ~1ms) и «sleep гарантирует ≥ d»; days/weeks-заметку; финализировать
   `[M-handler-duration-schema-mismatch]`. DEP: Ф.3.
 - **Ф.5 — handlers + auto-advance + миграция + M:N-контракт.** (a) default-handler: module-private **`extern "C" fn`**
-  скаляр-примитивы `_nova_time_wall_now_ns() -> int` / `_nova_time_monotonic_now_ns() -> int` / `_nova_time_fiber_sleep_ns(ns int) -> ()`
-  — литеральные C-символы в `nova_rt` (как `std/net/ffi.nv`; D282 rule 2: все типы C-нативные); Nova-типизация — в `.nv`-обёртке
+  скаляр-примитивы `time_wall_now_ns() -> int` / `time_monotonic_now_ns() -> int` / `time_sleep_ns(ns int) -> ()`
+  — литеральные C-символы в `nova_rt`; **именование `<resource>_<action>` без Nova-префикса** (D282/net-конвенция,
+  `02-types.md:12962`; лидирующий `_` у глобального C-символа зарезервирован C-стандартом); D282 rule 2: все типы C-нативные.
+  Nova-типизация — в `.nv`-обёртке
   `real_time() -> Effect[Time]` (часы оборачиваются в `Timestamp`/`Monotonic`, `Duration.nanos`→ns). [[feedback-maximize-nv-sourcing]] §3 (impl в C);
   (b) `fixed`/`mut_clock` под новую typed-схему; (c) **auto-advance virtual clock** (tokio/Kotlin/Go-synctest killer-feature):
   под paused-clock, когда все фибры в scope durably-blocked на `sleep`, handler **авто-продвигает** время к ближайшему дедлайну
