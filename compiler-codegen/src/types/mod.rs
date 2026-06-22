@@ -6293,7 +6293,9 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::Member { obj, name } => {
                 self.f1_expr(obj, gs, scope, errors);
-                self.f3_check_member(obj, name, e.span, scope, errors);
+                // Plan 172.1 U.4.4: thread the Member expr's `ExprId` so the
+                // field-found site can annotate a concrete primitive field type.
+                self.f3_check_member(obj, name, e.span, e.id, scope, errors);
             }
             ExprKind::Index { obj, index } => {
                 self.f1_expr(obj, gs, scope, errors);
@@ -7586,6 +7588,14 @@ impl<'a> TypeCheckCtx<'a> {
         obj: &Expr,
         name: &str,
         span: Span,
+        // Plan 172.1 U.4.4 (primitive-Member flip): the `ExprId` of the Member
+        // expression itself (threaded from the `f1_expr` caller). When a CONCRETE
+        // primitive-typed field is found below, its resolved type is written into the
+        // checker channel (`resolved_types_buf[member_id]`) instead of being thrown
+        // away (the validation-only walk computed `field.ty` for the privacy check but
+        // discarded it — conventions §1/§10 anti-pattern «materialize the resolve, do
+        // not throw it»). Codegen reads it AUTHORITATIVELY (consumer flipped in U.4.4b).
+        member_id: crate::ast::ExprId,
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -7712,6 +7722,37 @@ impl<'a> TypeCheckCtx<'a> {
                     return;
                 }
                 if let Some(field) = fields.iter().find(|f| f.name == name) {
+                    // Plan 172.1 U.4.4 (primitive-Member flip, mirror of U.4.4b Ident):
+                    // the checker found the field and knows `field.ty` (it needs it for the
+                    // privacy/E7320 checks below) — MATERIALIZE that resolve into the
+                    // channel instead of discarding it (§1/§10). Codegen reads it
+                    // AUTHORITATIVELY (consumer flipped in U.4.4b), so this is a
+                    // BEHAVIOR-CHANGE: where legacy `infer_expr_c_type` mis-fell-back to
+                    // `nova_int` for a `bool`/sized-int field it now emits the correct type.
+                    // GATE to PRIMITIVE resolved types only (same as U.4.4b): their C-type
+                    // is ALWAYS a registered builtin — no undeclared-identifier / mono /
+                    // generic-inference hazard. A GENERIC field (`field.ty = T` on a generic
+                    // record) lowers to `from_type_ref(T) = Named{T}` which the gate REJECTS
+                    // (not primitive) — that subset needs receiver type-arg substitution
+                    // (mono-hazard, gated on U.4.3(d)), out of scope for this atom. A
+                    // concrete primitive field (`count int`) is type-arg-independent → safe.
+                    if member_id.is_set() {
+                        let rt = ResolvedType::from_type_ref(&field.ty);
+                        let is_primitive = match rt.peel_view() {
+                            ResolvedType::Scalar { .. }
+                            | ResolvedType::Float { .. }
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Unit => true,
+                            ResolvedType::Named { name, args, .. } => {
+                                args.is_empty() && name.as_str() == "char"
+                            }
+                            _ => false,
+                        };
+                        if is_primitive {
+                            self.resolved_types_buf.borrow_mut().insert(member_id, rt);
+                        }
+                    }
                     // Plan 124 (D220) + 124.6 (D225): priv field READ access check.
                     // Allowed: own type-method, или fn с #test_access(tname),
                     // или current_recv ∈ field.visible_to (friend).

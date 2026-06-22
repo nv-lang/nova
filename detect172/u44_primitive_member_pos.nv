@@ -1,0 +1,93 @@
+// U.4.4 regression guard: PRIMITIVE-Member flip (conventions §0/§1/§10).
+// Чекер материализует резолв примитивного поля (`f3_check_member`, field-found) в канал
+// `resolved_types_buf[member_expr.id]` вместо того чтобы выбросить его; codegen ЧИТАЕТ
+// аннотацию (U.4.4b consumer flip) вместо re-derive в `infer_expr_c_type`. GATE primitive-
+// only (Scalar/Float/Bool/Str/Unit/char) — их C-тип всегда зарегистрированный builtin.
+// Покрытие: member-доступ к полям ВСЕХ примитивных типов (вкл. sized-int — где legacy
+// `_=>nova_int` fallback мис-типизировал), `@field` self-доступ (Member через SelfAccess),
+// и ГРАНИЦА ГЕЙТА — generic-запись с КОНКРЕТНЫМ примитивным полем (аннотируется) РЯДОМ
+// с generic-T полем (gate отсекает Named{T} → legacy/mono, область U.4.3(d)).
+// Folder-module peer of `module detect172` (один CU).
+module detect172
+
+type U44Scalars {
+    i int
+    b bool
+    f f64
+    s str
+    c char
+}
+
+type U44Sized {
+    a i8
+    bu u8
+    d i16
+    e u16
+    g i32
+    h u32
+    j i64
+    k u64
+    l f32
+}
+
+test "u44: primitive-Member read — int/bool/f64/str/char поля" {
+    ro r = U44Scalars { i: 42, b: true, f: 2.5, s: "hi", c: 'z' }
+    // int-поле в арифметике
+    assert(r.i + 8 == 50)
+    // bool-поле НАПРЯМУЮ в boolean-контексте (legacy мог fallback на nova_int)
+    assert(r.b)
+    assert(!(!r.b))
+    // f64-поле в float-арифметике
+    assert(r.f * 2.0 == 5.0)
+    // str-поле + метод
+    assert(r.s == "hi")
+    assert(r.s.len() == 2)
+    // char-поле — равенство с char-литералом
+    assert(r.c == 'z')
+}
+
+test "u44: primitive-Member read — sized int/float поля (§1 nova_int-fallback fix)" {
+    ro r = U44Sized { a: 1, bu: 200, d: 30, e: 40, g: 50, h: 4000000000, j: 60, k: 70, l: 1.5 }
+    assert(r.a == 1)
+    assert(r.bu == 200)
+    assert(r.d == 30)
+    assert(r.e == 40)
+    assert(r.g == 50)
+    assert(r.h == 4000000000)
+    assert(r.j == 60)
+    assert(r.k == 70)
+    assert(r.l == 1.5)
+    // sized-int поле в виджет-контексте (implicit widen u8 -> int)
+    ro widened int = r.bu
+    assert(widened == 200)
+}
+
+// `@field` self-доступ = Member{obj: SelfAccess} → проходит f3_check_member.
+fn U44Scalars @sum_ib() -> int => @i + (if @b { 1 } else { 0 })
+fn U44Scalars @first_char() -> char => @c
+
+test "u44: primitive @field self-access (Member через SelfAccess)" {
+    ro r = U44Scalars { i: 10, b: true, f: 0.0, s: "", c: 'q' }
+    assert(r.sum_ib() == 11)
+    assert(r.first_char() == 'q')
+}
+
+// ГРАНИЦА ГЕЙТА: generic-запись. `.tag` (конкретный int) → аннотируется flip'ом;
+// `.val` (generic T) → from_type_ref(T)=Named{T} НЕ primitive → gate отсекает → legacy
+// (область U.4.3(d), mono-lowering). Обе формы доступа должны работать корректно.
+type U44Box[T] {
+    val T
+    tag int
+}
+
+fn U44Box[T].make(v T, t int) -> U44Box[T] =>
+    { val: v, tag: t }
+
+test "u44: gate boundary — concrete primitive field annotated, generic field legacy" {
+    ro bi = U44Box[int].make(7, 100)
+    assert(bi.tag == 100)   // concrete int field — annotated
+    assert(bi.val == 7)     // generic T field — legacy/mono path
+    ro bs = U44Box[str].make("x", 200)
+    assert(bs.tag == 200)   // concrete int field — annotated (T-independent)
+    assert(bs.val == "x")   // generic T field — legacy/mono path
+}
