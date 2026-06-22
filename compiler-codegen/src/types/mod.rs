@@ -9108,6 +9108,21 @@ impl<'a> TypeCheckCtx<'a> {
                 if let ExprKind::Member { obj, name: ctor } = &func.kind {
                     if let ExprKind::TurboFish { base, type_args } = &obj.kind {
                         if let ExprKind::Ident(tyname) = &base.kind {
+                            // Plan 172.1 U.4.3(d) [M-172.1-U4.3d-generic-recv-infer]:
+                            // resolve the generic static-method's DECLARED return type
+                            // from the registry (§0/§3 general mechanism). This SUBSUMES
+                            // the former name-keyed ctor hardcode below — a Self-returning
+                            // ctor (`new`/…) resolves here to the SAME `Type[Targs]`, and
+                            // ANY other static method (`of`, user ctors) now infers too.
+                            if let Some(rt) = self.resolve_generic_static_return(
+                                tyname, ctor, type_args, expr.span,
+                            ) {
+                                return Some(rt);
+                            }
+                            // Intrinsic fallback: Self-returning ctors whose methods live
+                            // in Rust (no `.nv` decl) so the registry can't resolve them —
+                            // `Vec[T].new`/`.with_capacity`/`.from`/`.default`/`.filled`.
+                            // (User `.nv` ctors of the same names already resolved above.)
                             if matches!(
                                 ctor.as_str(),
                                 "new" | "with_capacity" | "from" | "default" | "filled"
@@ -9216,6 +9231,83 @@ impl<'a> TypeCheckCtx<'a> {
             }
             _ => None,
         }
+    }
+
+    /// Plan 172.1 U.4.3(d) [M-172.1-U4.3d-generic-recv-infer]: resolve the DECLARED
+    /// return type of a generic static-method call `Type[Targs].method(args)` from the
+    /// signature registry, substituting the receiver's carrier generics (`Targs`) and
+    /// `Self` → the concrete receiver type. This is the §0/§3 GENERAL mechanism that
+    /// SUBSUMES the former name-keyed ctor hardcode `{new,with_capacity,from,default,
+    /// filled}`: those Self-returning ctors resolve here to the SAME `Type[Targs]`, and
+    /// ANY other static method (`of`, user ctors, non-Self returns) now resolves
+    /// correctly too — no name list. Materialized into scope by the let-binding
+    /// inference (`Stmt::Let` → `infer_expr_type`), it lets `ro b = GBox[int].of(0)`
+    /// bind `b: GBox[int]`, unblocking the instance overload-dispatch channel
+    /// (`check_instance_overload` → `resolved_callees`) for constructor-inferred
+    /// receivers — previously gated on this; explicit-typed receivers already worked
+    /// (bd1e5d66).
+    ///
+    /// PERMISSIVE (§7.3 calibration — zero false positives on the positive corpus):
+    /// returns `None` (caller falls back to the intrinsic hardcode / `None`) on anything
+    /// ambiguous — method not in the registry (intrinsic `Vec`), ≥2 overloads, non-static
+    /// receiver, no declared return, turbofish/receiver arity mismatch, or a substituted
+    /// return that still mentions an UNBOUND method-level generic (`fn Box[T].wrap[U](u U)
+    /// -> U` — `U` comes from the arg, not the turbofish).
+    fn resolve_generic_static_return(
+        &self,
+        tyname: &str,
+        method: &str,
+        type_args: &[TypeRef],
+        span: Span,
+    ) -> Option<TypeRef> {
+        // Synth-aware (base ∪ auto-derive overlay), same source the dispatch channel reads.
+        let overloads = self.method_overloads(tyname, method)?;
+        // Single overload only — ≥2 is permissive (codegen / hardcode fallback handle it,
+        // byte-identical for the Self-returning ctor case).
+        let [f] = overloads.as_slice() else { return None; };
+        let recv = f.receiver.as_ref()?;
+        if !matches!(recv.kind, ReceiverKind::Static) {
+            return None;
+        }
+        if recv.type_name != tyname {
+            return None;
+        }
+        let ret = f.return_type.as_ref()?;
+        // The turbofish must bind exactly the receiver's carrier generics.
+        if type_args.len() != recv.generics.len() {
+            return None;
+        }
+        let recv_ty = TypeRef::Named {
+            path: vec![tyname.to_string()],
+            generics: type_args.to_vec(),
+            span,
+        };
+        let mut subst: HashMap<String, TypeRef> = HashMap::new();
+        subst.insert("Self".to_string(), recv_ty);
+        for (i, g) in recv.generics.iter().enumerate() {
+            if let TypeRef::Named { path, generics, .. } = g {
+                if path.len() == 1 && generics.is_empty() {
+                    if let Some(ta) = type_args.get(i) {
+                        subst.insert(path[0].clone(), ta.clone());
+                    }
+                }
+            }
+        }
+        let out = crate::const_fn_trampoline::subst_type_ref_pub(ret, &subst);
+        // Don't materialize a HALF-resolved type: a method-level generic (`[U]`) of `f`
+        // left in the result after substitution would bind the local to an unresolved
+        // typevar — permissive bail.
+        let bound: HashSet<&str> = subst.keys().map(String::as_str).collect();
+        let unbound: HashSet<String> = f
+            .generics
+            .iter()
+            .map(|g| g.name.clone())
+            .filter(|n| !bound.contains(n.as_str()))
+            .collect();
+        if !unbound.is_empty() && typeref_mentions_any(&out, &unbound) {
+            return None;
+        }
+        Some(out)
     }
 
     // ── D175/D176 (Plan 108): readonly enforcement helpers ─────────────────
@@ -9865,6 +9957,34 @@ fn prim_ref(name: &str, span: Span) -> TypeRef {
         path: vec![name.to_string()],
         generics: Vec::new(),
         span,
+    }
+}
+
+/// Plan 172.1 U.4.3(d): does `ty` mention any single-name type from `names`
+/// (an unbound generic-param set)? Used by `resolve_generic_static_return` to
+/// reject a half-substituted return type (one still carrying a method-level
+/// typevar the turbofish did not bind). Recurses through every TypeRef shape
+/// that can carry a generic name.
+fn typeref_mentions_any(ty: &TypeRef, names: &HashSet<String>) -> bool {
+    match ty {
+        TypeRef::Named { path, generics, .. } => {
+            (path.len() == 1 && names.contains(&path[0]))
+                || generics.iter().any(|g| typeref_mentions_any(g, names))
+        }
+        TypeRef::Array(inner, _)
+        | TypeRef::FixedArray(_, inner, _)
+        | TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Pointer(inner, _) => typeref_mentions_any(inner, names),
+        TypeRef::Tuple(elems, _) => elems.iter().any(|e| typeref_mentions_any(e, names)),
+        TypeRef::Func { params, return_type, .. } => {
+            params.iter().any(|p| typeref_mentions_any(p, names))
+                || return_type
+                    .as_ref()
+                    .map_or(false, |r| typeref_mentions_any(r, names))
+        }
+        TypeRef::Protocol { .. } | TypeRef::Unit(_) => false,
     }
 }
 
