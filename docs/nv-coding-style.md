@@ -737,6 +737,19 @@ fn use_it(src *u8, dst *mut u8, n int) -> () {
 
 ---
 
+## 24. Числовые типы: `int` для индексов/размеров/offset; `u*` — только где ширина семантична
+
+- **Индекс / длина / размер / offset / позиция / счётчик — `int`** (i64), **не `u64`/`usize`** (в отличие от Rust). Так во
+  всём stdlib: `Vec[T].@len()->int`, `str.@byte_len()->int`, `WriteBuffer.@len()/@capacity()->int`, `ReadBuffer.@position()/@remaining()->int`,
+  `SeekFrom.Start(int)`. i64 покрывает любой реальный размер/offset (±8 EiB).
+- **`u8`/`u16`/`u32`/`u64` — только когда значение *само по себе* этой ширины:** байт-данные — `u8`/`[]u8`; UTF-16 code units —
+  `u16`/`[]u16`; типизированные атомики (`AtomicU64.@fetch_add(v u64) -> u64`); фиксированный bitmask по необходимости. Там ширина
+  семантична, а не «беззнаковость ради порядка».
+- **Анти-паттерн:** `u64`/`usize` для offset/len «чтобы было ≥0» + россыпь `as u64`-кастов (литералы Nova — `int`). Знак не кодируем
+  типом — отрицательный индекс/offset → доменная ошибка (`InvalidInput` / контракт `requires i >= 0`), как `SeekFrom.Start(int)` (Start < 0 → ошибка).
+
+---
+
 ## Известные расхождения для будущего sweep'а
 
 1. **`docs/idioms/size-accessors.md:41-42`** документирует `s.len()` как O(n) codepoint-count,
