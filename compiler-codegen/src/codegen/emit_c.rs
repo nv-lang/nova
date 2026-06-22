@@ -146,13 +146,18 @@ pub fn with_result_category(c_type: &str) -> WithResultCategory {
 /// the generated C (smaller `.c`, faster C compilation — the final binary
 /// was already trimmed by linker-level DCE, Ф.7.1).
 ///
-/// **Scope — only monomorphic free functions.**
+/// **Scope of THIS wrapper — only the monomorphic free-function subset.**
 ///  - Generic free functions are already emitted lazily via the
 ///    monomorphization worklist — an uninstantiated one is never emitted.
-///  - Methods / types / constants are out of scope: compiler-level method
-///    DCE needs conservative protocol dynamic-dispatch retention (a
-///    separate increment, Ф.7.2-methods); the linker already strips unused
-///    methods from the binary.
+///  - This wrapper returns `.dead_fns` only. **Method-level DCE IS implemented**
+///    (Plan 159) — `compute_dead_decls_with` collects every monomorphic method
+///    as `(receiver_type, method_name, refs)` and *fires* it (keeps body+fwd,
+///    anchors callees) iff BOTH the receiver-type name AND the method name are
+///    reachable (the intersection at the method-firing loop, ~:418-424); never
+///    fired ⇒ `dead_method_keys`, whose fwd+body are skipped at the emission
+///    gates (~:3091-3100). Granularity is coarse-by-name (`[M-159-method-pruning]`):
+///    a reachable name-collision over-keeps (never over-prunes). Consts/`ro`-globals
+///    likewise pruned via `.dead_consts`. See `compute_dead_decls_with`.
 ///
 /// **Soundness.** A monomorphic free function is only ever *called* by its
 /// name appearing syntactically — a bare `Ident` (same-module / merged
@@ -232,10 +237,12 @@ struct DeadDecls {
 ///   are always emitted, so anything they name must be kept.
 ///   Consts/ro-globals are **no longer auto-roots** (Plan 159 Ф.1): a table is
 ///   kept only if a reachable fn/const actually reads it.
-/// - **Methods** (`receiver.is_some()`) are emitted unconditionally (still out
-///   of scope for body-level method DCE in Ф.1), BUT their *referenced names*
-///   are anchored to their **receiver type's reachability** rather than being
-///   unconditional roots. A method `T.m()` can only ever be invoked on a value
+/// - **Methods** (`receiver.is_some()`) **undergo body-level DCE** (Plan 159): a
+///   method is kept iff it *fires* — its *referenced names* are anchored to their
+///   **receiver type's reachability** AND the method name is itself reachable
+///   (the `(type-name ∧ method-name)` intersection at ~:418-424), rather than
+///   being unconditional roots. Never-fired ⇒ `dead_method_keys`, fwd+body
+///   skipped (~:3091-3100). A method `T.m()` can only ever be invoked on a value
 ///   of type `T`; constructing such a value makes the name `T` appear in
 ///   reachable code, so the receiver-type-name reaches the closure exactly when
 ///   a live `T` can exist at runtime. Until `T` is reached, `m`'s callees are
