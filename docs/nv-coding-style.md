@@ -737,6 +737,27 @@ fn use_it(src *u8, dst *mut u8, n int) -> () {
 
 ---
 
+## 24. Числовые типы: `int` для индексов/размеров/offset; `u*` — только где ширина семантична
+
+- **Индекс / длина / размер / offset / позиция / счётчик — `int`** (i64), **не `u64`/`usize`** (в отличие от Rust). Так во
+  всём stdlib: `Vec[T].@len()->int`, `str.@byte_len()->int`, `WriteBuffer.@len()/@capacity()->int`, `ReadBuffer.@position()/@remaining()->int`,
+  `SeekFrom.Start(int)`. i64 покрывает любой реальный размер/offset (±8 EiB).
+- **`u8`/`u16`/`u32`/`u64` — только когда значение *само по себе* этой ширины:** байт-данные — `u8`/`[]u8`; UTF-16 code units —
+  `u16`/`[]u16`; типизированные атомики (`AtomicU64.@fetch_add(v u64) -> u64`); фиксированный bitmask по необходимости. Там ширина
+  семантична, а не «беззнаковость ради порядка».
+- **Анти-паттерн:** `u64`/`usize` для offset/len «чтобы было ≥0» + россыпь `as u64`-кастов (литералы Nova — `int`). Знак не кодируем
+  типом — отрицательный индекс/offset → доменная ошибка (`InvalidInput` / контракт `requires i >= 0`), как `SeekFrom.Start(int)` (Start < 0 → ошибка).
+- **Почему signed, а не unsigned (обоснование/research):**
+  [research/08-int-width-and-literal-inference.md §1](research/08-int-width-and-literal-inference.md) (3 раунда обсуждения, 2026-06-03)
+  → формализовано в [D226 «Signed indexing convention»](../spec/decisions/02-types.md#d226) (§Почему); `usize`/`isize` удалены
+  [Plan 133](plans/133-remove-usize-isize.md). Ключевое: **industry 7:3 за signed** (Go/Swift/Java/Kotlin/C#/Python/TS signed;
+  Rust `usize`/C++ `size_t`/Zig — unsigned, причём **Stroustrup: «I regret using unsigned for size in STL»** + vocal Rust-regrets);
+  **нет underflow-trap** (`xs.len() - 1` на пустом vec даёт `-1`, не паника как Rust `0usize-1`); sentinel `-1` для find; разности/diff
+  естественно signed; mixed-arith без `as`-ceremony (**AI-first**: LLM пишет signed-индексацию вернее); bit-width-аргумент мёртв на
+  64-bit (i64 = 9.2×10¹⁸ элементов).
+
+---
+
 ## Известные расхождения для будущего sweep'а
 
 1. **`docs/idioms/size-accessors.md:41-42`** документирует `s.len()` как O(n) codepoint-count,

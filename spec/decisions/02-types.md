@@ -13267,3 +13267,9 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
   `type_ref_to_c_impl`** — `resolved_type_to_c` стал `Result<String,String>` (несёт причину отказа
   сам: usize/isize/ptr removed, Self-no-recv). Production type→C теперь ОДИН лоуэринг. Остаток —
   свернуть синтаксический адаптер-хоп `TypeRef→ResolvedType` на объявленных-тип сайтах (U.6.1).
+- **2026-06-21 (Plan 172.1 U.5.5c, `f7511bda`):** носитель стал lossless и для ЭФФЕКТОВ —
+  `ResolvedType::Func.effects` был `Vec<String>` (только имя, `from_type_ref`→`path.last()`, дропал
+  generics → `Fail[E]` терял `E`, нарушение «несёт ПОЛНУЮ семантическую личность»). Обогащён до
+  `Vec<ResolvedType>` (имя + module + type-args через lossless `Named`). Разблокирует typed-errors
+  Plan 173 (`Fail[E]`-dispatch по `type_id`) + Plan 175 (`any`/`is`) — садятся на готовый носитель,
+  не переделывая. Byte-identical конструкцией (effects write-only до consume).

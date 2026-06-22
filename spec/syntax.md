@@ -198,7 +198,7 @@ spawn(|| compute())
 ```
 
 `|...|` валиден **только когда контекст однозначно задаёт сигнатуру**
-(параметр fn-call'а, annotated let, return-position, first-use
+(параметр fn-call'а, annotated `ro`-биндинг, return-position, first-use
 inference). Без контекста — переключайся на `fn(...)`.
 
 **closure-full** — типизированная форма, идентична named fn без имени.
@@ -252,7 +252,7 @@ list.map() fn(s str) Fail -> int { parse(s)? }
 
 **Когда trailing-fn vs closure-light в args:**
 - `f(|x| body)` — компактнее для one-liner'ов.
-- `f(args) fn(x) { ... }` — лучше для длинных тел с `let`'ами,
+- `f(args) fn(x) { ... }` — лучше для длинных тел с биндингами,
   визуально маркирует «это блок-аргумент к вызову».
 
 Подробно — [D22](decisions/03-syntax.md#d22-closure-light--и-full-fn),
@@ -398,7 +398,7 @@ f64.try_parse(s str) -> Option[f64]
   `T.from_X(...)` — доменный конструктор когда `from(v)` не передаёт
   смысл (`from_secs`, `from_polar`, `from_imag`).
 - `@into()` — конверсия в другой тип через `Into[T]` ([D73](decisions/08-runtime.md#d73));
-  тип цели берётся из контекста (`let s str = v.into()`). Конверсия
+  тип цели берётся из контекста (`ro s str = v.into()`). Конверсия
   в строку — `str.from(v)` или `v.into()` с context = `str` (раньше
   было `@to_str()` через old D70 `ToStr`, отменено в v3).
 - `@hash()` — хеш, `@clone()` — копия, `@iter()`/`@next()` — iterator.
@@ -415,7 +415,7 @@ f64.try_parse(s str) -> Option[f64]
 - `@is_X()` дублирует `v is X` (D54): для sum-типов и `any`
   оператор `is` работает напрямую (`shape is Circle`,
   `arg is int` для `arg any`). Для извлечения значения варианта
-  с биндингом — `if let X(n) = v` (D34).
+  с биндингом — `if X(n) = v` (D34).
 - `_prefix` — **только для полей** (используй методы вместо прямого
   доступа). Для функций/методов **не используется**.
 - Test-имена — строки естественного языка: `test "insert and get"`,
@@ -719,7 +719,7 @@ loop { ... }                      // бесконечный, выход чере
 ```
 
 **Явный тип элемента — `for x TYPE in iter`** — опционален и следует
-универсальному правилу «name type» (как `let x int`, `fn(x int)`,
+универсальному правилу «name type» (как `ro x int`, `fn(x int)`,
 `[T Bound]`). Аннотация **проверяется компилятором**: если `TYPE` не
 совпадает с фактическим типом элемента итератора — compile error. Это
 делает её *checked assertion* (фиксирует ожидание; смена типа источника
@@ -727,7 +727,7 @@ loop { ... }                      // бесконечный, выход чере
 аннотацию loop-переменной не дают вовсе — Nova получает её как строгий
 проверяемый superset.
 
-Переменная в `for x in iter` — **immutable binding** (как `let` без
+Переменная в `for x in iter` — **immutable binding** (как `ro`, без
 `mut`), на каждой итерации получает **новое значение**. В теле блока
 переприсвоить нельзя:
 
@@ -748,7 +748,7 @@ for mut x in list {
 `break` / `continue` — стандартные. `break value` выходит из `loop`
 со значением (loop — выражение).
 
-### `if let` и `while let`
+### Паттерн в условии — `if pattern = …` / `while pattern = …`
 
 Паттерн-матч прямо в условии — короткая альтернатива `match` для
 одного варианта:
@@ -766,7 +766,7 @@ if Ok(user) = Db.find(id) {
     Log.warn("user not found")
 }
 
-// while let — итерация пока паттерн совпадает
+// while с паттерном — итерация пока паттерн совпадает
 while Some(line) = reader.read_line()? {
     process(line)
 }
@@ -777,9 +777,9 @@ if Some(user) = lookup(id), user.is_active {
 }
 ```
 
-> ⚠ **Chain-форма (`if let … , …`) пока не реализована** — parser drift,
+> ⚠ **Chain-форма (`if … , …`) пока не реализована** — parser drift,
 > см. [Plan 106](../docs/plans/106-if-let-chains.md). Реализовано только
-> одиночное `if let pattern = expr`.
+> одиночное `if pattern = expr`.
 
 Локальные binding'и (`data`, `user`, `line`) доступны **только в теле
 блока**. После закрывающей `}` — недоступны.
@@ -945,7 +945,7 @@ show(my_acc)
 // показывает 150, my_acc не изменён
 ```
 
-### Поля типа: `let` для never-mut, `mut` для cache
+### Поля типа: `ro` для never-mut, `mut` для cache
 
 ```nova
 type Account {
@@ -1319,7 +1319,7 @@ ro msg = "id=${user_id}"                    // sugar над str.from(user_id)
 - **`T.from(v)`** — целевой тип в начале, читается «build a Fahrenheit
   from this Celsius». Хорош в выражениях.
 - **`v.into()`** — короче в method-chains: `c.into().log()`. Тип
-  цели — из контекста (`let x T = ...`, параметр функции, return-type).
+  цели — из контекста (`ro x T = ...`, параметр функции, return-type).
 
 **Граница `as` vs `From`:**
 
@@ -1328,7 +1328,7 @@ ro msg = "id=${user_id}"                    // sugar над str.from(user_id)
   `User.from(json)`.
 
 **Граница D73 vs D55:** D55 — automatic coercion для record/sum-литералов
-в позиции с известным типом (`let u User = { id: 1, name: "x" }`).
+в позиции с известным типом (`ro u User = { id: 1, name: "x" }`).
 D73 — explicit method call для произвольных типов.
 
 Подробно: [D54](decisions/03-syntax.md#d54), [D73](decisions/08-runtime.md#d73).
@@ -1378,7 +1378,7 @@ supervised {
 }
 ```
 
-**Bootstrap-исключение:** `let r = spawn { ... }` вне `supervised`
+**Bootstrap-исключение:** `ro r = spawn { ... }` вне `supervised`
 временно работает (legacy eager-blocking). Удалится вместе с
 ужесточением «`spawn` вне scope = compile error».
 

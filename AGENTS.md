@@ -128,7 +128,7 @@ Deferred work is tracked with `[M-<kebab-name>]` markers in docs and code commen
   ```
 - **`git add` specific files only** — never `git add .` or `git add -A`. Multiple agents may work in parallel worktrees.
 - **One commit per logical task.** Multiple tasks → multiple commits.
-- **No `Co-Authored-By: <AI tool>` trailers** in commit messages.
+- **No `Co-Authored-By: <AI tool>` trailers** in commit messages. A repo hook strips them automatically — do **not** add the trailer by hand (and no need to check for it manually; the hook removes it on commit).
 - **Language convention.** Commit *subjects* use English conventional-commits (`fix(...)`, `docs(...)`). Commit *bodies* and the project's internal dev logs (`docs/project-creation.txt`, `docs/simplifications.md`, and the team's discussion log) are written in **Russian** with English technical terms inline — the house style; match the surrounding entries rather than switching to all-English prose. Public-facing docs (`README.md`, `AGENTS.md`, `CONTRIBUTING.md`) stay in English.
 - **License:** code is `MIT OR Apache-2.0`; docs are `CC-BY-4.0`. See [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE).
 
@@ -141,6 +141,7 @@ Deferred work is tracked with `[M-<kebab-name>]` markers in docs and code commen
 | [docs/plans/README.md](docs/plans/README.md) | Index of all plans |
 | [docs/plans/backlog-followups.md](docs/plans/backlog-followups.md) | Registry of floating `[M-…]` followup markers **not** tied to a plan (codegen / perf / debug-info backlog). Plan-bound markers live in their plan's Followups section. |
 | [docs/test-conventions.md](docs/test-conventions.md) | EXPECT markers, test runner flags |
+| [docs/module-conventions.md](docs/module-conventions.md) | **Designing any Nova module (std/app/third-party) + C integration** — effect-family architecture (mockable plumbing + type-method facade), value/must-consume types, structured `Result` errors, byte-first, the `extern "C"` `ffi.nv` layer (CStr vs `(*u8,len)`, errno, value-records), `#cfg` platform-split. (`extern "nova"`/runtime park-wake/`#stable` are std-runtime-only — marked in §Применимость.) Complements [ffi-cookbook.md](docs/ffi-cookbook.md) (FFI mechanics) and [nv-coding-style.md](docs/nv-coding-style.md) (`.nv` style). |
 | [docs/simplifications.md](docs/simplifications.md) | History of removed complexity |
 | [compiler-codegen/README.md](compiler-codegen/README.md) | Compiler internals, build options |
 | [docs/nova-cli.md](docs/nova-cli.md) | CLI command reference |

@@ -1,0 +1,188 @@
+# Plan 177 — Указатели: операции через методы (retire `*p`/`p+i`/`p[i]`) + полный метод-набор + write-cap fix
+
+> **Top-level план.** Создан 2026-06-21 (по аудиту pointer-модели + cross-lang Rust). **Статус:** 📋 PROPOSED.
+> **Маркер:** `[M-177-pointer-ops-methods]`. **Запуск:** «**выполни план 177**».
+> **Координация:** pointer-модель = D216 / Plan 147 (D246) / Plan 138.5; type-engine = Plan 172. **НЕ править
+> `spec/decisions/02-types.md` в одиночку** — файл в зоне 172-переработки; spec-амендменты этого плана применять
+> согласованно с 172/138.5. **Поглощает** `[M-138.5-unsafe-ptr-write-cap]`.
+> **Сквозной критерий:** «без упрощений, как для прода».
+
+## 1. Зачем (вердикт аудита 2026-06-21)
+
+Pointer-фундамент Nova сильный (двухуровневость safe/unsafe; `&x` safe+auto-promote; `*T` ro-default; `*unsafe T`
+degradation; Option-null; realtime/fiber-bans). **Три недочёта:**
+
+1. **Операторы `*p` / `p+i` / `p[i]` маскируются.** `p[i]` (raw, без проверки границ) выглядит **идентично** `arr[i]`
+   (safe, bounds-checked, D138 Index) — один синтаксис, разная семантика → footgun даже внутри `unsafe`. Rust
+   намеренно не даёт `+`/`[]` на сырых указателях (только методы `.add(n)`), чтобы опасное было видно.
+2. **Write-cap дыра** (`[M-138.5-unsafe-ptr-write-cap]`): `.write()`-таблица (`02-types.md:8278`) принимает **голый
+   `*unsafe T`** как writable — конфликтует с `*mut unsafe T` (канон §V3.2 flip) и позволяет писать сквозь non-mut
+   указатель (нарушение capability-модели).
+3. **Нет методов**, которые есть в Rust: arith-методы, struct read/write, unaligned, cast, bulk-copy, wrapping.
+
+## 2. Текущая схема (как есть)
+
+| Операция | Форма | Safe? |
+|---|---|---|
+| `&x` | оператор | ✅ safe (auto-promote) |
+| `raw &x` | контекст. kw | unsafe (стек-адрес) |
+| deref read `*p` | **оператор** | unsafe |
+| deref write `*p = v` | **оператор** | unsafe, нужен `*mut` (иначе `E_POINTER_RO_ASSIGN`) |
+| index read `p[i]` | **оператор** | unsafe (сахар `*(p+i)`) |
+| index write `p[i] = v` | **оператор** | unsafe, нужен `*mut` |
+| arith `p+i` / `p-i` | **оператор** | unsafe → `*unsafe T` (degraded) |
+| dist `p - q` | **оператор** | unsafe → `int` |
+| order `p < q` | **оператор** | unsafe |
+| eq `p == q` | оператор | ✅ safe (identity) |
+| cast `p as *T` | **оператор** | unsafe |
+| `.read()` / `.write(v)` | метод | unsafe — **только примитивы**; `.write` ошибочно берёт `*unsafe T` |
+| `.read_volatile()` / `.write_volatile(v)` | метод | unsafe |
+| auto-deref `p.field` / `p.method()` | сахар на `.` | unsafe (one-level) |
+| null | — | `Option[*T]` (NPO) |
+
+Методов **нет**: `.offset`, `.wrapping_offset`, `.dist` (offset_from), struct `.read/.write`, `.read_unaligned/.write_unaligned`, `.copy_to/.copy_from`.
+
+## 3. Новая схема (всё через методы; `[]`/`+`/`*p` retired)
+
+**Принцип:** value-доступ и адресная арифметика — **только методы** (видно + `unsafe`-gated); `[]` — **только
+безопасные контейнеры** (D138 Index, bounds-checked); указателям `@index` **не давать**; `==`/`!=` и auto-deref `.`
+остаются. Все методы — `unsafe` (требуют `unsafe {}` / `unsafe fn`), кроме отмеченного.
+
+| Операция | Новая форма | Заметка |
+|---|---|---|
+| создать (safe) | `&x` | без изменений (auto-promote) |
+| создать (raw стек) | `raw &x` | без изменений |
+| read (любой `T`, incl. struct) | `p.read() -> T` | **заменяет `*p`** (read); закрывает struct-gap |
+| write value | `p.write(v T) -> *mut T` | заменяет `*p=v`; нужен mut-cap; на `*mut uninit T` → **апгрейд `*mut T` (инициализировано)** (= Rust `MaybeUninit::write`); возврат `*mut T` (не unit — несёт init-апгрейд) |
+| write from-ptr | `p.write(v *T) -> *mut T` | копия из источника-указателя (большой struct без value-копии); тот же init-апгрейд; overload по типу арг (`T` vs `*T`) |
+| offset (арифметика) | `*T`→`p.offset(n) -> *T`; `*mut T`→`*mut T` | заменяет `p+i`/`p-i`; **сохраняет cap, тип НЕ деградирует** (Model A); bounds/align = unsafe-контракт; element-units |
+| offset без UB | `p.wrapping_offset(n)` | целочисленная арифметика по модулю адр. пространства — **вычислять НЕ UB** (UB только разыменовать out-of-bounds); vs `.offset` (pointer-арифметика, выход за аллокацию = UB даже при вычислении). **Ниша; низкий приоритет** |
+| distance | `p.dist(q) -> int` | заменяет `p-q`; signed element count (= Rust `offset_from`) |
+| index read/write | `p.offset(i).read()` / `p.offset(i).write(v)` | заменяет `p[i]`/`p[i]=v`; **`.at`/`.set` НЕ вводим** (минимализм, как Rust — отдельного индекс-сахара нет) |
+| unaligned | `p.read_unaligned()` / `p.write_unaligned(v)` | в C это UB — явные ops (close gap) |
+| volatile | `p.read_volatile()` / `p.write_volatile(v)` | как есть |
+| copy bulk (N эл.) | `p.copy_from(src,n)`=**memmove** (overlap-safe) / `p.copy_from_nonoverlapping`=**memcpy** / `p.copy_to(...)` | типизир. обёртка над `RawMem.copy`/`copy_nonoverlapping` (byte-level уже есть); single-эл. = `.write(v *T)` |
+| cast (reinterpret) | `p as *U` (оператор) | **unsafe при `U≠T`** (type-punning, cast-table `*T1→*T2`=unsafe); `*mut T→*T` (drop mut) — это **авто-коэрция §3a, НЕ cast**; `.cast`-метод не нужен |
+| order (в буфере) | знак `p.dist(q)` | отдельный `<`/`.addr_lt` **не нужен** — выводится из `.dist` |
+| eq | `p == q` / `p != q` | ✅ **остаётся** оператором (safe identity) |
+| member access | `p.field` / `p.method()` | ✅ **остаётся** auto-deref на `.` (one-level) |
+| null | `Option[*T]` + match | как есть (нет `.is_null()` — Option лучше) |
+
+**Retired (становятся ошибкой):** `*p`, `p+i`/`p-i`, `p-q` (→ `.dist`), `p[i]`/`p[i]=v`, `p<q`/`>` (→ знак `.dist`). **`p as *U` ОСТАЁТСЯ** (общий cast-оператор, не маскарад).
+`[]`/`@index` указателям **не вводить** — `p[i]` просто не компилируется (нет `@index` на `*T`) → форсит `.offset(i).read()`.
+
+Имена методов: **`.offset`** (полное слово, как Rust + стиль Nova; не `.offs`), `.dist`. `.at`/`.set` **НЕ вводим** (индекс = `.offset(i).read()/.write()`). Прочие — финал при реализации.
+
+**RawMem-связь (S1):** типизированные `p.copy_from(src *T, n)` / `.copy_from_nonoverlapping` — **обёртки** над byte-level `RawMem`: `= RawMem.copy(src as *u8, dst as *u8, n*sizeof[T]())` (resp. `copy_nonoverlapping`). `RawMem` остаётся byte-level (V1); типизированный pointer-copy — рекомендуемый путь. Дубля нет — разные уровни (типизир. поверх byte-level).
+
+### 3a. Авто-коэрции (implicit) — только «безопасное направление»
+
+| from → to | auto? | почему |
+|---|---|---|
+| `*mut T` → `*T` (`*ro T`) | ✅ | потеря write безопасна (mut→ro covariance) |
+| `*mut uninit T` → `*uninit T` | ✅ | потеря write; uninit **сохраняется** |
+| `*T` → `*uninit T` | ✅ | ослабление гарантии (init→maybe-uninit) безопасно |
+| `*mut uninit T` → `*T` | ❌ | сброс `uninit` = claim init (**unsound**) — только через `.write()`→init |
+| `*uninit T` → `*T` | ❌ | то же (uninit→init) — `unsafe` |
+| `*T` → `*mut T` | ❌ | приобретение write (ro→mut) — `unsafe`-cast |
+
+**Принцип (две оси):** по **mut-оси** теряем capability (`mut→ro`) **автоматически**; по **init-оси** «доказать init» (`uninit→init`) коэрцией **нельзя** — только `.write()`→init или unsafe-assert. Согласуется с cast-таблицей `02-types.md` (`*mut T→*T` ✓; `*uninit T→*T` unsafe).
+
+## 4. Write-cap fix (закрытие дыры; absorb `[M-138.5-unsafe-ptr-write-cap]`)
+
+> **RENAME (sign-off 2026-06-22): `unsafe T` → `uninit T`** (и `*unsafe T`→`*uninit T`, `*mut unsafe T`→`*mut uninit T`,
+> `Unsafe(T)`→`Uninit(T)`). Имя самодокументирует «возможно-неинициализированный» (= Rust `MaybeUninit`) и развязывает
+> перегрузку слова «unsafe». **НЕ переименовываются:** `unsafe {}`-блок, `unsafe fn`, `*unsafe fn` (указатель на
+> unsafe-**вызываемую функцию** — другое значение).
+
+- `*uninit T` = **ro** + possibly-uninit (ro — дефолт pointee).
+- writable-uninit = **`*mut uninit T`** (`Pointer(Mut(Uninit(T)))`).
+- `.write()` / `.set()` / (legacy `*p=v` до retire) требуют **mut-capability** (`*mut T` / `*mut uninit T`); голый
+  `*uninit T` → `E_POINTER_RO_ASSIGN`.
+- **Spec-амендмент:** `02-types.md:8278` write-таблица — убрать голый uninit-указатель из write-allowed (оставить `*mut T` / `*mut uninit T`).
+- **Init-upgrade:** `.write(v T)` / `.write(v *T)` на `*mut uninit T` возвращает **`*mut T`** (pointee инициализирован) —
+  канонический способ инициализировать uninit (= Rust `MaybeUninit::write() -> &mut T`). Возврат `*mut T` несёт uninit→init в типе.
+- **✅ Конфляция uninit/degraded РЕШЕНА (Model A, sign-off 2026-06-22):** арифметика (`.offset`) **НЕ деградирует тип**
+  (`*T`→`*T`, `*mut T`→`*mut T`); bounds/align — **unsafe-контракт** (ты в `unsafe`), не состояние типа (тулинг: проверки/тесты).
+  `uninit`-тип несёт **только** ось «инициализирован ли» — как Rust (`MaybeUninit` = тип; bounds/align = контракт). Поэтому
+  init-апгрейд `.write` чист (uninit→init), а «восстанавливать bounds/align после write» — несуществующий вопрос.
+- **Stale-тест:** `nova_tests/plan118/plan118_5_v3_t9_safety_outer_ok.nv:23-24` — старый порядок `*unsafe mut/ro Acc4`
+  (pre-138.5-flip → `E_MODIFIER_ORDER`) → мигрировать на `*mut uninit` / `*uninit` (ro implicit).
+- **✅ Семантика value-`uninit T` (sign-off 2026-06-22) — flow-sensitive MaybeUninit** (заменяет sticky-uninit, тест `plan118_5_t8` мигрировать):
+  1. `mut p uninit T = <значение>` (init при объявлении) → **ошибка** (противоречие; есть значение → `mut p T = …`).
+  2. `mut p uninit T` (без инициализатора) → uninit storage; **полная запись** `p = <значение>` → компилятор
+     **flow-сужает** `p` до `T` (init трекается) → чтение **без `unsafe`**. Частичная/условная запись → остаётся
+     `uninit`, пока init не доказан на всех путях (definite-assignment).
+  3. `p as T` (в `unsafe`) → **assume-init**: реинтерпретация **без копии** (uninit→T под ответственность), когда
+     flow доказать не может (напр. FFI заполнил через указатель).
+  4. `ro p uninit T` → **ошибка**: `ro` запрещает запись → проинициализировать нельзя → бессмысленно.
+  5. `mut q T = <uninit-значение>` → **ошибка**: uninit↛init без assert (§3a init-ось); нужно `unsafe { p as T }`.
+
+  Связующий принцип: **запись `p=value` ДОКАЗЫВАЕТ init** → flow-сужение uninit→T законно; коэрция (§3a) init не
+  доказывает → запрещена. Единственный авто-путь uninit→init — доказательство записью. Зона 138.5/§V2.3, смежно с rename.
+  - **Граница «прямая запись vs через указатель»:** авто-сужает **только ПРЯМОЕ** `p = value` (decidable). Запись
+    **через указатель** — `(&p).write(a)`, FFI-fill `c_fill(&p)` — **НЕ авто-сужает** `p` (init-через-указатель в общем
+    недоказуем: указатель убегает/условно/в цикле); это случай п.3 → `.write()` отдаёт `*mut T` (init-**указатель**),
+    но `p`-значение остаётся `uninit`, пока не `unsafe { p as T }`. (Как Rust: `MaybeUninit::write()->&mut T`, но
+    сам `p` — через `assume_init`.)
+  - **Definite-assignment (M2):** flow-сужение uninit→T по правилам: **`if/else`** → `T` в точке слияния **iff**
+    записано на **ВСЕХ** ветках, иначе `uninit`; **тело цикла** — запись НЕ сужает (0-итераций возможна) → после
+    цикла `uninit`; **struct/tuple** → `T` **iff ВСЕ поля** рекурсивно достигли `T` (частичная init полей → `uninit`).
+  - **Move/consume un-narrowed uninit запрещён (M3):** `move`/`consume` ещё-не-сужённого `uninit` → **`E_UNINIT_VALUE_MOVE`**
+    (иначе uninit «утекает» в init-контекст); сначала инициализируй (прямая запись / `unsafe { p as T }`).
+  - **Алиасинг при init-upgrade (S3):** `.write()` апгрейдит до `*mut T` **только возвращённый** указатель; другие
+    сырые алиасы на тот же `uninit`-слот остаются `*uninit T` (компилятор НЕ авто-сужает не-возвращённые алиасы).
+
+## 5. Фазы
+
+- **Ф.1 — write-cap fix** (мелкая, изолированная): `.write()`/`*p=v` требует mut-cap; spec-таблица 8278; stale-тест.
+  **Acceptance:** (a) `.write` на голом `*uninit T` → `E_POINTER_RO_ASSIGN`; (b) на `*mut uninit T` компилируется;
+  (c) `02-types.md:8278` обновлён (убран голый uninit из write-allowed); (d) `plan118_5_v3_t9` мигрирован, 0 регрессий.
+- **Ф.2 — недостающие методы:** `.offset`/`.wrapping_offset`/`.dist`/`.read`(any-T)/`.write`(any-T)/`.read_unaligned`/`.write_unaligned`/`.copy_from`(memmove)/`.copy_from_nonoverlapping`(memcpy)/`.copy_to`. Struct read/write — закрыть gap. (`.at`/`.set` и `.cast`-метод НЕ вводим — индекс через `.offset(i)`, cast через `as`.)
+  **Acceptance:** все перечисленные методы резолвятся в чекере+codegen-C; struct/record/tuple/sum `.read/.write` — end-to-end (`nova_tests/ptr177`); 0 новых регрессий; паритет с Rust (§9.4).
+- **Ф.3 — retire операторов:** `*p`/`p+i`/`p-i`/`p-q`/`p[i]`/`p[i]=v`/`p<q` → диагностика `[E_POINTER_OP_USE_METHOD]` с fix-it на метод. **`p as *U` НЕ ретайрить** (cast-оператор остаётся). `[]`/`@index` указателям не давать. `==`/`!=` + auto-deref `.` оставить.
+- **Ф.4 — миграция:** detect-режим → blast-radius по std/nova_tests (§7); переписать все `*p`/`p[i]`/`p+i` на методы.
+
+## 6. Spec / D / Q / docs
+
+- **amend D216 — конкретно (M6):** (a) pointer-ops секция (`02-types.md` D216 §1/§«операции») — операторы
+  `*p`/`+`/`[]`/`<` на `*T` ретайрятся (`as`-cast остаётся), операции → методы; (b) write-table `02-types.md:8278` —
+  `.write` требует mut-cap, голый `*uninit T`=ro; (c) `[]`/`@index` — только safe-контейнеры; `==`/`!=` + auto-deref `.`
+  остаются. + полный метод-набор/сигнатуры. Точные §-номера D216 финализировать при правке (координация 172/138.5).
+- **error-index (09-tooling.md, M5):** `E_POINTER_OP_USE_METHOD` — сообщение: «operator `*p`/`p+i`/`p[i]`/`p<q` on raw
+  pointer retired — use `.read()`/`.offset(i)`/`.dist(q)`» + fix-it на конкретный метод. (`E_POINTER_RO_ASSIGN`,
+  `E_UNINIT_VALUE_MOVE` — тоже в error-index.)
+- `docs/typed-pointers.md` (раздел «Операции») — переписать на метод-набор + таблица «было→стало».
+
+## 7. Миграция (§7 compiler-conventions)
+
+nv не в релизе → меняем напрямую, но по процедуре §7.2 compiler-conventions: **(1) detect-режим** — `[E_POINTER_OP_USE_METHOD]`
+эмитится **non-fatal**; **(2) Run-1** — посчитать сайты `*p`/`p[i]`/`p+i`/`p-q`/`p<q` в std/nova_tests; **(3) Run-2** —
+включить как ошибку + переписать на методы in-place в том же изменении; **(4)** полный регресс + **верификация против
+чистого бинаря** (не sibling). Не оставлять красным.
+
+## 8. Тесты (pos + neg)
+
+- **pos** `nova_tests/ptr177/`: `.read()/.write()` на примитиве И **struct/record/tuple/sum** (close gap);
+  `.offset(n)` (`*mut T`→`*mut T`, cap сохраняется)/`.offset(i).read()`/`.offset(i).write(v)`/`.dist(q)`/`p as *U`/`.read_unaligned()`/`.wrapping_offset(n)`; `*mut uninit T` writable + init-upgrade → `*mut T`; `==`/`!=`; auto-deref `.`.
+- **neg:** `*p`/`p+i`/`p[i]`/`p<q` → `[E_POINTER_OP_USE_METHOD]` (fix-it на метод); `.write()` на голом `*uninit T`/`*T` → `E_POINTER_RO_ASSIGN`; `p[i]` (нет `@index` на `*T`) → понятная ошибка.
+
+## 9. Критерии приёмки
+
+1. Все pointer-операции — методы (кроме `&x`/`raw &x`/`==`/`as`-cast/auto-deref-`.`); операторы `*p`/`+`/`[]`/`<` ретайрнуты.
+2. `[]`/`@index` — только safe-контейнеры; `p[i]` не компилируется.
+3. Write-cap дыра закрыта: `.write()` требует mut-cap; `*uninit T` = ro; writable-uninit = `*mut uninit T`.
+4. Метод-набор покрывает Rust (read/write any-T, offs/dist, unaligned, volatile, cast, wrapping, bulk).
+5. std/nova_tests мигрированы; полный регресс зелёный; **без упрощений**.
+
+## 10. Конвенции + координация
+
+§1 (проверки в чекере), §3 (методы резолвятся из реестра/`.nv`, не хардкод), §5 spec-first (D216 amend до кода),
+§6 (коды ошибок + error-index), §7 (blast-radius + чистый бинарь), §8 (pos+neg, C-codegen). **Координировать с 172**
+(type-engine; pointer write-cap живёт в чекере единого движка) и **138.5/147** (pointer-модель). `02-types.md` —
+не править в одиночку (hot, 172).
+
+## 11. Followup
+
+`[M-177-pointer-ops-methods]`. Поглощает `[M-138.5-unsafe-ptr-write-cap]` (Ф.1). Отложенный кусок:
+`[M-177-wrapping-offset-deferred]` (`.wrapping_offset` — ниша, низкий приоритет). Имена методов — финал при реализации.

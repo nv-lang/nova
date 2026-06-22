@@ -128,6 +128,8 @@ referenced from plan docs and simplifications.md.
 
 - **[M-118.7-safe-addr-outside-fn-scope]** Plan 118.6/118.7 known limitation: `&ident` без `unsafe {}` как trailing expr в fn body даёт `undefined identifier` (checker ищет ident в другом контексте). Workaround: `unsafe { &ident }` — поведение идентично после 118.7. Priority: P3 (правильная fix requires full type-inference in escape sink).
 
+- *(write-cap указателей → перенесено в [Plan 177](plans/177-pointer-ops-methods.md) Ф.1/§4; C-FFI ABI типы → [Plan 178](plans/178-ffi-abi-types.md). Были `[M-138.5-unsafe-ptr-write-cap]` / `[M-D282-ffi-abi-type-list]`.)*
+
 ---
 
 ## Plan 91.18 — str + unicode API audit & cleanup (followups)
