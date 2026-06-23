@@ -72,9 +72,11 @@ test "u44: primitive @field self-access (Member через SelfAccess)" {
     assert(r.first_char() == 'q')
 }
 
-// ГРАНИЦА ГЕЙТА: generic-запись. `.tag` (конкретный int) → аннотируется flip'ом;
-// `.val` (generic T) → from_type_ref(T)=Named{T} НЕ primitive → gate отсекает → legacy
-// (область U.4.3(d), mono-lowering). Обе формы доступа должны работать корректно.
+// generic-запись. `.tag` (конкретный int) → аннотируется primitive-Member flip'ом.
+// `.val` (generic T) — ДО generic-Member отсекалось гейтом (Named{T} не primitive); ПОСЛЕ
+// U.4.3(d)+generic-Member type-arg приёмника подставляется (T→int/str), и т.к. результат
+// примитивен — `.val` ТЕПЕРЬ тоже аннотируется (см. u44_generic_member_pos). Обе формы
+// доступа работают корректно (asserts проверяют значение, не путь резолва).
 type U44Box[T] {
     val T
     tag int

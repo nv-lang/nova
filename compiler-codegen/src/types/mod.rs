@@ -7769,7 +7769,10 @@ impl<'a> TypeCheckCtx<'a> {
         ) {
             return; // permissive — defer to codegen + Ф.4 full integration
         }
-        let TypeRef::Named { path, .. } = &obj_tr else { return; };
+        // Plan 172.1 U.4.4 generic-Member: capture the receiver's type-args (`recv_type_args`)
+        // so a generic field's type can be substituted before the channel gate (see the hook
+        // at the field-found site below). `[]` for a non-generic receiver → no substitution.
+        let TypeRef::Named { path, generics: recv_type_args, .. } = &obj_tr else { return; };
         let Some(tname) = path.last() else { return; };
         // Plan 152.1 Ф.4 (D249): str's bare length / codepoint-access / byte-access
         // accessors are retired for the lens model. Targeted error (fires BEFORE the
@@ -7853,7 +7856,17 @@ impl<'a> TypeCheckCtx<'a> {
                     // (mono-hazard, gated on U.4.3(d)), out of scope for this atom. A
                     // concrete primitive field (`count int`) is type-arg-independent → safe.
                     if member_id.is_set() {
-                        let rt = ResolvedType::from_type_ref(&field.ty);
+                        // Plan 172.1 U.4.4 generic-Member (unblocked by U.4.3(d) generic-
+                        // receiver inference): substitute the receiver's type-args into the
+                        // field type, THEN gate on the SUBSTITUTED type. A concrete field
+                        // (`count int`) substitutes to itself → the primitive-Member behavior
+                        // is byte-identical; a generic field `v T` on a now-typed receiver
+                        // `b: GMBox[int]` materializes `b.v: int`; a generic field substituting
+                        // to a NON-primitive (`[]T` → `[]int`) is rejected by the gate → legacy
+                        // (mono-hazard avoided, same as the pre-U.4.3(d) generic-field skip).
+                        let field_ty =
+                            self.subst_receiver_generics(&field.ty, &td.generics, recv_type_args);
+                        let rt = ResolvedType::from_type_ref(&field_ty);
                         if Self::primitive_gate(&rt) {
                             self.resolved_types_buf.borrow_mut().insert(member_id, rt);
                         }
@@ -9308,6 +9321,30 @@ impl<'a> TypeCheckCtx<'a> {
             return None;
         }
         Some(out)
+    }
+
+    /// Plan 172.1 U.4.4 generic-Member: substitute a record's declared generic params
+    /// (`type_params`, from the `TypeDecl`) with the receiver's concrete type-args
+    /// (`type_args`, from the materialized receiver type `Named{T, [args]}`) inside a
+    /// field/member type. A concrete field (`count int`) carries no param name → returned
+    /// unchanged (no-op, so the primitive-Member behavior is byte-identical); a generic
+    /// field (`v T`) on a typed receiver `GBox[int]` becomes `int`. Returns the type
+    /// unchanged on a non-generic receiver (`type_params` empty) or an arity mismatch
+    /// (permissive — gate downstream rejects an unresolved param as non-primitive).
+    fn subst_receiver_generics(
+        &self,
+        field_ty: &TypeRef,
+        type_params: &[GenericParam],
+        type_args: &[TypeRef],
+    ) -> TypeRef {
+        if type_params.is_empty() || type_params.len() != type_args.len() {
+            return field_ty.clone();
+        }
+        let mut subst: HashMap<String, TypeRef> = HashMap::new();
+        for (p, a) in type_params.iter().zip(type_args.iter()) {
+            subst.insert(p.name.clone(), a.clone());
+        }
+        crate::const_fn_trampoline::subst_type_ref_pub(field_ty, &subst)
     }
 
     // ── D175/D176 (Plan 108): readonly enforcement helpers ─────────────────

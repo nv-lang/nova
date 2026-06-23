@@ -1,0 +1,64 @@
+// U.4.4 generic-Member flip (conventions §0/§1/§10), unblocked by U.4.3(d)
+// generic-receiver inference. The checker materializes a GENERIC field's type by
+// SUBSTITUTING the receiver's type-args before the primitive gate: `field v T` on a
+// now-typed receiver `b: GMBox[int]` (inferred from the constructor, U.4.3(d), or an
+// explicit param) materializes `b.v: int` into `resolved_types_buf[member.id]`; codegen
+// reads it AUTHORITATIVELY (consumer flipped in U.4.4b). Mirror of primitive-Member but
+// with receiver-type-arg substitution. GATE: a field substituting to a PRIMITIVE
+// (Scalar/Float/Bool/Str/Unit/char) is annotated; one substituting to a NON-primitive
+// (`[]T` -> `[]int`) is rejected by the gate -> legacy/mono (mono-hazard avoided).
+// Folder-module peer of `module detect172` (один CU).
+module detect172
+
+type GMBox[T] { v T, tag int }
+fn GMBox[T].of(x T) -> GMBox[T] => { v: x, tag: 0 }
+
+type GMPair[A, B] { a A, b B }
+fn GMPair[A, B].mk(x A, y B) -> GMPair[A, B] => { a: x, b: y }
+
+type GMNest[T] { items []T }
+fn GMNest[T].of(xs []T) -> GMNest[T] => { items: xs }
+
+test "u44gm: generic field substitutes to primitive (int/bool/str/char)" {
+    // constructor-inferred receiver (U.4.3(d)) -> b: GMBox[int]; field v: T -> int.
+    ro bi = GMBox[int].of(7)
+    assert(bi.v + 3 == 10)        // int generic field in arithmetic
+    ro bb = GMBox[bool].of(true)
+    assert(bb.v)                  // bool generic field DIRECTLY in boolean context
+    assert(!(!bb.v))
+    ro bs = GMBox[str].of("hi")
+    assert(bs.v == "hi")
+    assert(bs.v.len() == 2)
+    ro bc = GMBox[char].of('z')
+    assert(bc.v == 'z')
+}
+
+test "u44gm: sized-int generic field (subst to u8/u32; §1 nova_int-fallback class)" {
+    ro bu = GMBox[u8].of(200)
+    assert(bu.v == 200)
+    ro widened int = bu.v         // implicit widen u8 -> int
+    assert(widened == 200)
+    ro bw = GMBox[u32].of(4000000000)
+    assert(bw.v == 4000000000)
+}
+
+test "u44gm: multi-param generic — both type-args substituted" {
+    ro p = GMPair[int, bool].mk(5, true)
+    assert(p.a + 1 == 6)          // A -> int
+    assert(p.b)                   // B -> bool
+}
+
+// explicit-typed generic receiver param (not constructor-inferred) — same path.
+fn sum_box(b GMBox[int]) -> int => b.v + b.tag
+
+test "u44gm: explicit-typed generic receiver param" {
+    ro b = GMBox[int].of(9)
+    assert(sum_box(b) == 9)
+}
+
+test "u44gm: gate boundary — generic field substituting to NON-primitive stays legacy" {
+    ro n = GMNest[int].of([1, 2, 3])
+    // items: []T -> []int (non-primitive) -> gate rejects -> legacy/mono path; must still work.
+    assert(n.items.len() == 3)
+    assert(n.items[0] == 1)
+}
