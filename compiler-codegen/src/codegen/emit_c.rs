@@ -20538,7 +20538,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
 
             ExprKind::If { cond, then, else_ } => {
-                self.emit_if_expr(cond, then, else_.as_ref())
+                self.emit_if_expr(cond, then, else_.as_ref(), expr.id)
             }
 
             ExprKind::Block(block) => {
@@ -28390,6 +28390,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         cond: &Expr,
         then: &Block,
         else_: Option<&ElseBranch>,
+        if_id: crate::ast::ExprId,
     ) -> Result<String, String> {
         // Plan 08 Ф.4: strict `if cond: bool`. Spec D54: cond обязан быть
         // bool, не truthy-int (Rust/Swift/Kotlin прецедент). Закрывает
@@ -28408,7 +28409,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // is divergent (throw/panic/exit/interrupt/user-never/recursive),
         // use else-branch's type instead. Otherwise fall back to then's type
         // (preserves Ф.0 baseline behavior — no flip for non-divergent).
-        let if_ty = if else_.is_none() {
+        let mut if_ty = if else_.is_none() {
             "nova_unit".into()
         } else {
             let then_diverges = self.block_trailing_diverges(then);
@@ -28459,6 +28460,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.debug_if_infer_125("emit_if_expr", then_diverges, &then_ty, &else_ty, &chosen);
             chosen
         };
+        // Plan 172.1 U.4.4/U.4.5 (emit_if_expr result_ty CONSUME): the checker's If-expr atom
+        // (3748093f) materialized the common primitive of `if/else` into resolved_types[if_id].
+        // CONSUME it AUTHORITATIVELY here instead of letting the legacy then/else re-derive ABOVE
+        // be the result-type source — closing the SECOND independent If re-derive (§0; mirror of
+        // the emit_match result_ty consume; the `infer_expr_c_type` If arm already consumes the
+        // channel since the If-expr atom). The legacy derivation ABOVE still runs (its
+        // `infer_expr_c_type` carries typedef/mono-registration side-effects — the U.4.3 hazard);
+        // only the result-type STRING is flipped, and it then drives `emit_block_into` below.
+        // Byte-identical for the gated subset: the If-expr atom materializes ONLY when both
+        // branches are empty-stmt blocks with an EQUAL non-unit primitive, which is exactly where
+        // the legacy lands the same primitive (no divergence / no unit-domination). Verified §7.2
+        // detect-mode: 2450 if-result consume sites over 60 if-dirs, 0 DIFF. Absent channel →
+        // legacy `if_ty` unchanged.
+        if if_id.is_set() {
+            if let Some(rt) = self.resolved_types.get(&if_id) {
+                if let Ok(ct) = self.resolved_type_to_c(rt) {
+                    if_ty = ct;
+                }
+            }
+        }
         let cond_val = self.emit_expr(cond)?;
         let tmp = self.fresh_tmp_named("if");
         self.line(&format!("{} {};", if_ty, tmp));
