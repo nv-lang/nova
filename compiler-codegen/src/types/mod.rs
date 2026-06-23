@@ -6405,6 +6405,41 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 }
+                // Plan 172.1 U.4.4 (composite Array): materialize the array's element type
+                // from the FIRST `Item` (mirror the legacy ArrayLit arm's first-Item element)
+                // into the channel as `Array(elem)` when that element is a concrete primitive
+                // (shared `primitive_gate`). The consumer lowers it via resolved_type_to_c →
+                // `resolved_array_to_c` (Vec-flip `Nova_Vec____<elem>*` + the SAME worklist /
+                // instance-info side-effects as legacy) → byte-identical.
+                //
+                // The `current_array_elem_hint` int-literal→sized promotion ([M-138.2], a
+                // `[]u8 = [1,2,3]` lowering to `Nova_Vec____nova_byte*`) does NOT need a gate
+                // here: it is an EMISSION-side hint (set in emit_assign_typed around emit_expr),
+                // and an ANNOTATED array takes its C-type from the ANNOTATION (authoritative),
+                // routing AROUND this `infer_expr_c_type` consumer entirely. Proven empirically
+                // (§7.2 detect-mode: 265 materializations over sized-int + broad dirs + the
+                // direct `[]u8`/`[]u32` fixture cases — 0 DIFF). So an UN-annotated array (the
+                // only context this channel is consumed for the array's own type) has no hint →
+                // legacy yields the same primitive element → byte-identical. A non-primitive /
+                // unresolvable first element (generic-`T`, user type, a nested `[]`/tuple, a
+                // `Call`/`Member`/`Index`) bails to legacy (sound). Spread-first / no-`Item`
+                // bails (legacy's spread element handling differs). `e.id` is direct.
+                if e.id.is_set() {
+                    let first_item = elems.iter().find_map(|el| match el {
+                        ArrayElem::Item(x) => Some(x),
+                        _ => None,
+                    });
+                    if let Some(x) = first_item {
+                        if let Some(tr) = self.infer_expr_type(x, scope) {
+                            let rt = ResolvedType::from_type_ref(&tr);
+                            if Self::primitive_gate(&rt) {
+                                self.resolved_types_buf
+                                    .borrow_mut()
+                                    .insert(e.id, ResolvedType::Array(Box::new(rt)));
+                            }
+                        }
+                    }
+                }
             }
             ExprKind::MapLit { elems, .. } => {
                 for (k, v) in crate::ast::MapElem::cloned_pairs(elems).iter() {

@@ -1,0 +1,68 @@
+// U.4.4 regression guard: composite ArrayLit element flip (conventions §0/§1/§10).
+// Композитная половина U.4.4 (после TupleLit): чекер материализует ResolvedType
+// МАССИВА `[..]` (Array(elem)) в канал resolved_types_buf[array.id] по типу ПЕРВОГО
+// Item-элемента (зеркало legacy ArrayLit-арма), когда элемент — конкретный примитив.
+// Consumer лоуэрит через resolved_type_to_c → resolved_array_to_c (Vec-flip
+// Nova_Vec____<elem>* / NovaArray fallback — те же side-effects, что legacy) → byte-identical.
+// Дивергенция, которую опасались (legacy current_array_elem_hint [M-138.2]: int-литерал →
+// sized-promotion для []u8-биндинга), эмпирически НЕ проявляется через infer_expr_c_type:
+// аннотированный массив берёт C-тип из АННОТАЦИИ (authoritative), минуя канал-консьюмера
+// (detect-mode: 258 материализаций по sized+broad dirs, 0 DIFF). Worry-кейс []u8=[..] здесь
+// проверяется напрямую. Бинды БЕЗ аннотации → тип массива ЧЕРЕЗ канал.
+// Folder-module peer of `module detect172` (один CU, co-compile в entry basics).
+module detect172
+
+test "u44arr: []int литерал через канал (без аннотации)" {
+    ro xs = [10, 20, 30]
+    assert(xs.len() == 3)
+    assert(xs[0] == 10)
+    assert(xs[2] == 30)
+}
+
+test "u44arr: []str литерал" {
+    ro xs = ["a", "bb", "ccc"]
+    assert(xs.len() == 3)
+    assert(xs[1] == "bb")
+    assert(xs[2].len() == 3)
+}
+
+test "u44arr: []bool литерал" {
+    ro xs = [true, false, true]
+    assert(xs.len() == 3)
+    assert(xs[0])
+    assert(!xs[1])
+}
+
+test "u44arr: []f64 литерал — float-арифметика на элементах" {
+    ro xs = [1.5, 2.5, 3.0]
+    assert(xs[0] + xs[1] == 4.0)
+}
+
+test "u44arr: []char литерал" {
+    ro xs = ['x', 'y', 'z']
+    assert(xs.len() == 3)
+    assert(xs[1] == 'y')
+}
+
+test "u44arr: worry-case []u8 sized-биндинг (хинт идёт мимо канала)" {
+    ro xs []u8 = [1, 2, 3]
+    assert(xs.len() == 3)
+    assert(xs[0] == 1)
+    ro sum int = xs[0] + xs[1] + xs[2]
+    assert(sum == 6)
+}
+
+test "u44arr: []u32 sized-биндинг" {
+    ro xs []u32 = [100, 200, 300]
+    assert(xs.len() == 3)
+    assert(xs[2] == 300)
+}
+
+test "u44arr: gate-граница — non-primitive элемент (nested []) → legacy" {
+    // Элемент — сам массив ([]int), не примитив → внешний массив бейлит
+    // материализацию в legacy (sound); inner [..] сами материализуются.
+    ro grid = [[1, 2], [3, 4]]
+    assert(grid.len() == 2)
+    assert(grid[0][1] == 2)
+    assert(grid[1][0] == 3)
+}
