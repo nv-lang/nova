@@ -20834,7 +20834,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
 
             ExprKind::Match { scrutinee, arms } => {
-                self.emit_match(scrutinee, arms)
+                self.emit_match(scrutinee, arms, expr.id)
             }
 
             ExprKind::Select { arms } => {
@@ -29775,7 +29775,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
     // ---- match ----
 
-    fn emit_match(&mut self, scrutinee: &Expr, arms: &[MatchArm]) -> Result<String, String> {
+    fn emit_match(&mut self, scrutinee: &Expr, arms: &[MatchArm], match_id: crate::ast::ExprId) -> Result<String, String> {
         let scr = self.emit_expr(scrutinee)?;
         let scr_tmp = self.fresh_tmp_named("scr");
         let result_tmp = self.fresh_tmp_named("match");
@@ -29924,6 +29924,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
         }
 
+        // Plan 172.1 U.4.4/U.4.5 (emit_match result_ty CONSUME): the checker's Match-arm
+        // atom (3a3b62b3) materialized the common primitive arm type into
+        // resolved_types[match_id]. CONSUME it here AUTHORITATIVELY instead of letting the
+        // legacy arm-inference above be the result-type source — closing the SECOND independent
+        // Match re-derive (§0; the `infer_expr_c_type` Match arm already consumes the channel
+        // since U.4.4b, this aligns `emit_match` onto the SAME source). The legacy derivation
+        // ABOVE still runs (its `infer_expr_c_type` arm-inference has typedef/mono-registration
+        // side-effects that must NOT be skipped — the U.4.3 hazard); only the result-type STRING
+        // is flipped. Byte-identical for the gated subset: the Match-arm atom materializes ONLY
+        // when all non-divergent arms agree on a primitive, which is exactly where the legacy
+        // first/second-pass lands the same primitive. Absent channel (non-primitive / mixed /
+        // Option-Result arms) → legacy result_ty unchanged. Verified §7.2 detect-mode: 189
+        // match-result materializations over the 83 match-using dirs, 0 DIFF.
+        if match_id.is_set() {
+            if let Some(rt) = self.resolved_types.get(&match_id) {
+                if let Ok(ct) = self.resolved_type_to_c(rt) {
+                    result_ty = ct;
+                }
+            }
+        }
         self.line(&format!("{} {};", result_ty, result_tmp));
         self.var_types.insert(result_tmp.clone(), result_ty.clone());
         // matched flag: tracks if any arm matched (needed for guard fallthrough)
