@@ -1,0 +1,75 @@
+// U.4.4 regression guard: If-expression common-type flip (conventions §0/§1/§10).
+// If-параллель Match-arm флипа (3a3b62b3): чекер материализует ОБЩИЙ примитивный тип
+// `if cond { .. } else { .. }` ВЫРАЖЕНИЯ в канал resolved_types_buf[if.id] вместо re-derive
+// в codegen (legacy infer_expr_c_type If-арм :38326 — divergence-aware then/else). Новая
+// bounded-инференс infer_if_common_primitive: обе ветви — EMPTY-stmt блоки с РАВНЫМ non-unit
+// примитивным trailing. if-без-else (unit), else-if цепочка, diverging/non-primitive/stmt'd
+// ветвь → bail в legacy. Consumer infer_expr_c_type уже authoritative (U.4.4b) → канал прямо.
+// Бинды БЕЗ аннотации → codegen инферит тип if ЧЕРЕЗ канал (аннотация обошла бы).
+// Folder-module peer of `module detect172` (один CU, co-compile в entry basics).
+module detect172
+
+test "u44if: int ветви (byte-identical nova_int)" {
+    ro k int = 1
+    ro r = if k > 0 { 100 } else { 200 }
+    assert(r == 100)
+    assert(r + 1 == 101)
+}
+
+test "u44if: str ветви — метод на результате" {
+    ro k int = 0
+    ro s = if k > 0 { "pos" } else { "nonpos" }
+    assert(s == "nonpos")
+    assert(s.len() == 6)
+}
+
+test "u44if: bool ветви" {
+    ro k int = 5
+    ro flag = if k > 3 { true } else { false }
+    assert(flag)
+}
+
+test "u44if: f64 ветви — float-арифметика на результате" {
+    ro k int = 1
+    ro x = if k > 0 { 1.5 } else { 2.5 }
+    assert(x * 2.0 == 3.0)
+}
+
+test "u44if: char ветви — равенство с char-литералом" {
+    ro k int = 0
+    ro c = if k > 0 { 'a' } else { 'z' }
+    assert(c == 'z')
+}
+
+test "u44if: sized-int ветви (§1 nova_int-fallback класс)" {
+    ro a u8 = 200
+    ro b u8 = 100
+    ro k int = 1
+    ro w = if k > 0 { a } else { b }
+    assert(w == 200)
+    ro widened int = w
+    assert(widened == 200)
+}
+
+test "u44if: gate-граница — else-if цепочка → legacy, корректно" {
+    ro k int = 2
+    ro r = if k == 1 { 10 } else if k == 2 { 20 } else { 30 }
+    assert(r == 20)
+}
+
+test "u44if: gate-граница — stmt'd ветвь → legacy, корректно" {
+    ro k int = 1
+    ro r = if k > 0 {
+        ro base = 5
+        base + 5
+    } else { 99 }
+    assert(r == 10)
+}
+
+test "u44if: gate-граница — if без else (unit) → legacy" {
+    mut acc int = 0
+    if acc == 0 {
+        acc = 42
+    }
+    assert(acc == 42)
+}

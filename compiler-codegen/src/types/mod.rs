@@ -6352,6 +6352,17 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(eb) = else_ {
                     self.f1_else(eb, gs, scope, errors);
                 }
+                // Plan 172.1 U.4.4 (If-expr half): materialize the common primitive type of an
+                // `if/else` EXPRESSION into the checker channel so codegen READS it instead of
+                // re-deriving (§0/§1) — the If-parallel of the Match-arm flip. See
+                // `infer_if_common_primitive` (maximally conservative: both branches empty-stmt
+                // blocks with EQUAL non-unit primitive trailing). Consumer `infer_expr_c_type`
+                // is ALREADY authoritative (U.4.4b) → byte-identical to legacy for the gated set.
+                if e.id.is_set() {
+                    if let Some(rt) = self.infer_if_common_primitive(then, else_, scope) {
+                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                    }
+                }
             }
             ExprKind::IfLet { pattern, scrutinee, then, else_, .. } => {
                 self.f1_expr(scrutinee, gs, scope, errors);
@@ -7316,6 +7327,51 @@ impl<'a> TypeCheckCtx<'a> {
         // unit-dominated match must stay on the legacy path, §0-safe minimal subset).
         if rt != ResolvedType::Unit && Self::primitive_gate(&rt) {
             Some(rt)
+        } else {
+            None
+        }
+    }
+
+    /// Plan 172.1 U.4.4 (If-expr half): the COMMON primitive value type of an
+    /// `if cond { … } else { … }` EXPRESSION — the If-parallel of
+    /// `infer_match_common_primitive`. `infer_expr_type` has no `If` arm (returns
+    /// `None`), and legacy `infer_expr_c_type` RE-derives it (the `If` arm at
+    /// emit_c.rs:38326 — divergence-aware then/else selection) — §0 fragmentation.
+    /// Materializing it lets codegen READ the resolved If type instead of re-deriving.
+    ///
+    /// MAXIMALLY CONSERVATIVE (§0-safe minimal subset): returns `Some(rt)` ONLY when
+    /// BOTH branches are EMPTY-stmt blocks (their value = the trailing expr; a stmt'd
+    /// block's trailing may reference inner `let`s absent from `scope` — mirror the
+    /// `match` Block-arm constraint) whose trailing types are EQUAL and a NON-UNIT
+    /// primitive (`primitive_gate`). An `if` WITHOUT `else` (unit-valued), an `else if`
+    /// CHAIN, a diverging branch (`Never` ≠ the other primitive), a non-primitive /
+    /// unresolvable branch — all bail to `None` → legacy (which keeps its
+    /// divergence-aware path for those). For the gated subset the legacy arm lands the
+    /// SAME primitive (`then_ty`, no divergence) → byte-identical.
+    fn infer_if_common_primitive(
+        &self,
+        then: &crate::ast::Block,
+        else_: &Option<crate::ast::ElseBranch>,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<ResolvedType> {
+        let else_ = else_.as_ref()?;
+        let branch_rt = |blk: &crate::ast::Block| -> Option<ResolvedType> {
+            if !blk.stmts.is_empty() {
+                return None;
+            }
+            let tr = self.infer_expr_type(blk.trailing.as_deref()?, scope)?;
+            Some(ResolvedType::from_type_ref(&tr))
+        };
+        let then_rt = branch_rt(then)?;
+        let else_rt = match else_ {
+            crate::ast::ElseBranch::Block(b) => branch_rt(b)?,
+            crate::ast::ElseBranch::If(_) => return None,
+        };
+        if then_rt == else_rt
+            && then_rt != ResolvedType::Unit
+            && Self::primitive_gate(&then_rt)
+        {
+            Some(then_rt)
         } else {
             None
         }
