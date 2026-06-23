@@ -80,12 +80,18 @@
   `CharsIter @nth -> Option[char]`, `@split_once -> Option[(str,str)]`, `@parse_int_opt`.
 - **Result = recoverable с payload для вызывающего.** `@try_parse_int -> Result[int,
   ParseIntError]`, `str.from_utf16 -> Result[str, Utf16Error]`, `str.try_from_codepoint`.
-- **Дуальный API: bare(throw) + `try_`(Result).** Конвенция TryFrom (D77/D25,
-  protocols.nv:126-128): `from`/bare даёт значение или throw (требует эффекта `Fail[E]` в
-  сигнатуре); `try_*` возвращает Result; `try_from` — fallible-конвертер, `from` —
-  total/infallible направление. Option-вариант в TryFrom-механизме получают через
-  `Result.ok()` (D77), а `_opt`-метод (`@parse_int_opt -> Option[int]`,
-  `std/runtime/string/parse.nv:63`) — отдельная str-API-конвенция-обёртка.
+- **Дуальный fallible-нейминг: bare (throw via `Fail[E]`) + `try_` (Result)** — общая
+  конвенция (D77/D25), не только для конверсий. Голое имя несёт `Fail[E]` и `throw`-ит на
+  ошибке (горячий путь — под `!!` / авто-проброс / `??`); `try_`-форма возвращает
+  `Result[T,E]` (точка ветвления — под `?` / `match`). **`try_`-форма первична, bare —
+  тонкая обёртка** `=> @try_X()!!`: эталон `std/runtime/read_buffer.nv:425-449` (~20 пар
+  `read_X`/`try_read_X`), `str.parse_int`/`try_parse_int` (`parse.nv:24`). Для
+  `from`/`into`/`try_from`/`try_into` bare-форму auto-генерит компилятор (D77 4-way) —
+  руками не пиши. `Option`-лесенка: общий путь — `Result.ok()` (D77); `_opt`-метод
+  (`@parse_int_opt -> Option[int]`, `parse.nv:63`) — узкая str-API-обёртка, в новых API не плоди.
+- **I/O-расхождение (известное):** `std/net` сознательно `Result`-everywhere (0 `Fail[`,
+  capability несёт эффект `TcpNet`/`UdpNet`), без bare-throw-близнецов — для effect-I/O это
+  открытый вопрос, который унифицирует Plan 173. Не образец «по умолчанию» для нового API.
 - **lossy-FFFD (четвёртая категория) — ТОЛЬКО для функций, чьё имя это говорит** (`*_lossy`)
   или чей контракт best-effort (`cps_to_str`): подставляют U+FFFD. **Никогда не подставляйте
   пустую строку** как «успех» при невалидном входе — это потеря данных под видом успеха.
@@ -627,8 +633,8 @@ ro v = opt ?? panic("expected Some")   // краш ТОЛЬКО явно — for
 ```nv
 // 1) defer — безусловное освобождение, LIFO, любой exit-путь (D90):
 fn read_config(path str) Fs Fail -> Config {
-    ro file = Fs.open(path)
-    defer file.close()            // выполнится на любом выходе
+    consume file = Fs.open(path)  // File линейный (must-consume, D133) → consume; `ro` = E_CONSUME_KEYWORD_MISSING (D180 Rule 1)
+    defer file.close()            // consume @close — разряжает обязательство на любом выходе
     ro raw = file.read_all()
     Config.parse(raw)
 }

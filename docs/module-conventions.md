@@ -89,7 +89,7 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
   (`NotFound`/`PermissionDenied`/`AlreadyExists`/…). `@to_str()` для сообщений (platform-stable строки на C-стороне,
   [net.c:45-55](../compiler-codegen/nova_rt/net.c#L45)).
 - Не плодить дублирующие error-типы для родственных доменов — переиспользовать/проецировать (напр. net `NetError` → проекция на `IoError`-kinds).
-- Конструкторы/parse **fallible**, без default-panicking (`try_`-конвенция, §5).
+- Конструкторы/parse **fallible**, без default-panicking. Парный нейминг bare(throw via `Fail`)+`try_`(Result) — канон [nv-coding-style §4](nv-coding-style.md) (выжимка — §5).
 
 ## 4. Интеграция с C-библиотеками (граница `.nv` ↔ C)
 
