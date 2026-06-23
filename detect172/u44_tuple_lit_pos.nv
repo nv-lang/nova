@@ -1,0 +1,66 @@
+// U.4.4 regression guard: composite TupleLit ResolvedType flip (conventions §0/§1/§10).
+// Композитная половина U.4.4 (после leaf-флипов Ident/Member/Index/Match + generic-Member):
+// чекер материализует ResolvedType КОРТЕЖА `(..)` в канал resolved_types_buf[tuple.id], когда
+// КАЖДЫЙ элемент резолвится в конкретный ПРИМИТИВ (shared primitive_gate). Consumer лоуэрит
+// его через resolved_type_to_c Tuple-арм — те же register_mono_tuple/compute_mono_tuple_c_name,
+// что у legacy infer_expr_c_type TupleLit-арма → all-primitive кортеж byte-identical (оба идут
+// MONO; примитив «concrete» в ОБЕИХ проверках). Дивергенция U.4.2 (concreteness ety.is_empty()
+// ≠ Nova_-prefix-схема) — это НЕ-примитивный элемент: любой non-primitive/unresolvable элемент
+// (generic-T, user-тип, вложенный агрегат, Call/Member/Index) бейлит ВЕСЬ кортеж в legacy (sound).
+// Бинды БЕЗ аннотации типа → codegen инферит тип кортежа ЧЕРЕЗ канал (аннотация обошла бы).
+// Folder-module peer of `module detect172` (один CU, co-compile в entry basics).
+module detect172
+
+test "u44tup: (int,int) primitive tuple через канал" {
+    ro t = (1, 2)
+    assert(t.0 == 1)
+    assert(t.1 == 2)
+    assert(t.0 + t.1 == 3)
+}
+
+test "u44tup: (int,str,bool) смешанные примитивы" {
+    ro t = (42, "hi", true)
+    assert(t.0 == 42)
+    assert(t.1 == "hi")
+    assert(t.1.len() == 2)
+    assert(t.2)
+}
+
+test "u44tup: (f64,f64) float-арифметика на элементах" {
+    ro t = (1.5, 2.5)
+    assert(t.0 + t.1 == 4.0)
+}
+
+test "u44tup: (u8,u8) sized-int элементы" {
+    ro a u8 = 200
+    ro b u8 = 100
+    ro t = (a, b)
+    assert(t.0 == 200)
+    assert(t.1 == 100)
+    // sized-int элемент в widen-контексте
+    ro widened int = t.1
+    assert(widened == 100)
+}
+
+test "u44tup: (char,str) char + str примитивы" {
+    ro t = ('x', "yz")
+    assert(t.0 == 'x')
+    assert(t.1 == "yz")
+    assert(t.1.len() == 2)
+}
+
+test "u44tup: деструктуризация primitive tuple" {
+    ro (a, b, c) = (10, 20, 30)
+    assert(a == 10)
+    assert(b == 20)
+    assert(c == 30)
+}
+
+test "u44tup: gate-граница — non-primitive (nested) элемент → legacy, корректно" {
+    // Вложенный кортеж (2,3) как элемент — это Tuple, НЕ примитив → внешний кортеж
+    // бейлит материализацию в legacy (sound); inner (2,3) сам по себе материализуется.
+    ro t = (1, (2, 3))
+    assert(t.0 == 1)
+    assert(t.1.0 == 2)
+    assert(t.1.1 == 3)
+}

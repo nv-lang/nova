@@ -6413,8 +6413,49 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::TupleLit(elems) => {
-                for e in elems {
-                    self.f1_expr(e, gs, scope, errors);
+                for el in elems {
+                    self.f1_expr(el, gs, scope, errors);
+                }
+                // Plan 172.1 U.4.4 (composite Tuple): materialize the tuple's
+                // `ResolvedType` into the checker channel when EVERY element resolves
+                // to a concrete PRIMITIVE (the shared `primitive_gate`). The consumer
+                // lowers it via the already-byte-identical `resolved_type_to_c` Tuple
+                // arm — which calls the SAME `register_mono_tuple` /
+                // `compute_mono_tuple_c_name` helpers as the legacy
+                // `infer_expr_c_type` TupleLit arm — so an all-primitive tuple is
+                // byte-identical (both go MONO; a primitive element is "concrete" in
+                // BOTH concreteness checks). The composite divergence U.4.2 flagged is
+                // exactly the NON-primitive element (`infer_expr_c_type`'s `ety.is_empty()`
+                // ≠ `resolved_type_to_c`'s `Nova_`-prefix schema on a type-param element):
+                // any non-primitive / unresolvable element (generic-`T`, user type, a
+                // nested aggregate, a `Call`/`Member`/`Index` the checker can't infer)
+                // bails the WHOLE tuple to legacy (sound). `e.id` is available directly
+                // (no plumbing). Same flip as the leaf atoms (Ident/Member/Index/Match).
+                if e.id.is_set() && !elems.is_empty() {
+                    let mut elem_rts: Vec<ResolvedType> = Vec::with_capacity(elems.len());
+                    let mut all_primitive = true;
+                    for el in elems {
+                        match self.infer_expr_type(el, scope) {
+                            Some(tr) => {
+                                let rt = ResolvedType::from_type_ref(&tr);
+                                if Self::primitive_gate(&rt) {
+                                    elem_rts.push(rt);
+                                } else {
+                                    all_primitive = false;
+                                    break;
+                                }
+                            }
+                            None => {
+                                all_primitive = false;
+                                break;
+                            }
+                        }
+                    }
+                    if all_primitive {
+                        self.resolved_types_buf
+                            .borrow_mut()
+                            .insert(e.id, ResolvedType::Tuple(elem_rts));
+                    }
                 }
             }
             ExprKind::RecordLit { fields, .. } => {
