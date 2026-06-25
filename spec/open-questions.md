@@ -7352,16 +7352,22 @@ fn mutate(x ref mut BigStruct)       // мутация caller-значения
 
 ### Текущий статус
 
-**РЕШЕНО (2026-06-21, владелец): explicit `ref T` / `ref mut T` НЕ вводим.** Вместо явных
-ссылок — **автоматический вывод компилятором**: by-reference vs by-value (и heap vs stack) —
+**2026-06-21 (владелец): explicit `ref T` / `ref mut T` как ТИП НЕ вводим.** Вместо явных
+ссылок-типов — **автоматический вывод компилятором**: by-reference vs by-value (и heap vs stack) —
 это **ABI/placement-решение лоуэринга**, выводимое из типа + escape-анализа, а НЕ часть
 синтаксиса/типа ([D315](decisions/02-types.md#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21):
-«ABI выводится, не хранится»). Обоснование: «передача больших стековых значений без копии»
-(ЗА-аргумент) решается **авто-by-ref** (компилятор сам передаёт указатель, когда копия не
-нужна), а не explicit `ref T`; safe in-place мутация покрыта lvalue-синтаксисом + `mut @`.
-Конкретные оптимизации (авто-by-ref параметров; авто heap↔stack, в т.ч. нерекурсивный
-sum→стек) вынесены в **[Q-value-abi-auto-placement](#q-value-abi-auto-placement--единый-value-abi--авто-placement-by-ref--heapstack-2026-06-21)**.
-Перенести в `history/rejected.md` (отклонённая фича) при следующей чистке rejected-индекса.
+«ABI выводится, не хранится»). Конкретные оптимизации (авто-by-ref параметров; авто heap↔stack,
+в т.ч. нерекурсивный sum→стек) вынесены в **[Q-value-abi-auto-placement](#q-value-abi-auto-placement--единый-value-abi--авто-placement-by-ref--heapstack-2026-06-21)** / Plan 172.4.
+
+**⚠ 2026-06-26 (владелец) — ЧАСТИЧНО ПЕРЕОТКРЫТО: `ref` как РЕЖИМ ПАРАМЕТРА вводим
+([D326](decisions/02-types.md#d326) / Plan 172.5).** Снимается отвержение для **param-mode** формы
+`ro ref a T` / `mut ref a T` (модель Swift `inout` / C# `in`+`ref`: param-only, БЕЗ типа, БЕЗ
+лайфтаймов, узкая call-site эксклюзивность `E_REF_ALIAS_OVERLAP`; call-site маркер `inc(ref x)`).
+**Причина пересмотра:** обоснование 2026-06-21 «safe in-place мутация покрыта lvalue + `mut @`»
+имеет дыру — `mut @` мутирует только ресивер, НЕ покрывает out-параметры / мутацию не-ресивера /
+несколько mut-аргументов (`swap(mut ref a, mut ref b)`). Формализуются также `@` ≡ `mut/ro ref @`
+и `-> @` ≡ `ref @`. **`ref` как ТИП остаётся отвергнут** (D326 R1). Авто-`ro ref` + `@`/`-> @` +
+heap↔stack — это Plan 172.4. **НЕ переносить в `history/rejected.md`** — фича частично принята.
 
 **Update (Plan 138.5 → FINAL три оси Plan 147 D246, 2026-06-12; D245 flip-scan
 отклонён):** raw-pointer mut-модель **финализирована** как **три ортогональные
