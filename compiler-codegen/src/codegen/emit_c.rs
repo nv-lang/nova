@@ -22612,15 +22612,34 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if let Some((ok_c, err_c)) = self.novares_ok_err(&rt) {
                         self.register_novares_decl(&ok_c, &err_c);
                         let suffix = Self::novares_name(&ok_c, &err_c);
+                        // [M-181-anon-record-in-ctor-arg-codegen] (Plan 172.1 U.4.4 /
+                        // Plan 181 Ф.2a): the wrapped payload may be an ANONYMOUS
+                        // record literal `{ a, b }` (json `Ok({ tok, line, col })`).
+                        // A direct `return { .. }` coerces it via the D55
+                        // inferred-type context (`expected_record_type`, set around
+                        // the fn body); wrapped in `Ok(..)` that context is the
+                        // Result type, not the payload, so the anon-record arm
+                        // errors "without spread not supported". The payload struct
+                        // is KNOWN here from the resolved Result type (`ok_c`/`err_c`,
+                        // NOT guessed) — propagate it as `expected_record_type` while
+                        // emitting the arg so the D55 coercion fires. Byte-identical
+                        // for non-anon-record args: the field is only consulted by the
+                        // anon-record-without-spread branch and is saved/restored.
+                        let payload_c = if name == "Ok" { &ok_c } else { &err_c };
+                        let saved_expected = self.expected_record_type.clone();
+                        self.expected_record_type = Self::struct_name_from_c_type(payload_c);
                         if name == "Ok" && args.len() == 1 {
                             let arg_v = self.emit_expr(args[0].expr())?;
+                            self.expected_record_type = saved_expected;
                             return Ok(format!(
                                 "nova_make_NovaRes_{}_Ok({})", suffix, arg_v));
                         } else if name == "Err" && args.len() == 1 {
                             let arg_v = self.emit_expr(args[0].expr())?;
+                            self.expected_record_type = saved_expected;
                             return Ok(format!(
                                 "nova_make_NovaRes_{}_Err({})", suffix, arg_v));
                         }
+                        self.expected_record_type = saved_expected;
                     }
                 }
             }

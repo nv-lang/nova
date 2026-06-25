@@ -1,0 +1,94 @@
+// [M-181-anon-record-in-ctor-arg-codegen] regression guard (Plan 172.1 U.4.4 /
+// Plan 181 Ф.2a). An ANONYMOUS record literal `{ a, b }` wrapped in a Result
+// constructor — `Ok({ tok, line, col })` / `Err({ why })` (json `Lexer.@next_token`
+// / `Parser.new`) — used to CC-FAIL with "anonymous record literal without spread
+// not supported in codegen". A direct `return { .. }` coerces the literal via the
+// D55 inferred-type context (`expected_record_type`, set around the fn body); once
+// wrapped in `Ok(..)` that context is the Result type, not the Ok-payload, so the
+// anon-record arm had no target struct. Fix: `emit_call`'s contextual Ok/Err arm
+// propagates the resolved payload C-type (`ok_c`/`err_c` from `novares_ok_err`, NOT
+// guessed) as `expected_record_type` while emitting the arg, so the D55 coercion
+// fires for the wrapped literal too. Covers heap + value records, explicit-field +
+// field-punning, nested records, and the Err side. Folder-module peer of
+// `module detect172`.
+module detect172
+
+// heap record (mirrors json `TokenWithPos`).
+type U181bTok {
+    ro tok  int
+    ro line int
+    ro col  int
+}
+
+// value record (D226) — exercises the `NovaValue_` payload branch.
+type U181bSpan value {
+    ro s int
+    ro e int
+}
+
+// nested record field (mirrors json `Parser { lex, cur }`).
+type U181bParser {
+    ro inner U181bTok
+    ro n     int
+}
+
+// plain-record error type — exercises the Err-anon-record (err_c) path.
+type U181bErr {
+    ro why int
+}
+
+// explicit-field anon record in Ok arg.
+fn u181b_tok(line int, col int) -> Result[U181bTok, U181bErr] {
+    if line < 0 {
+        return Err({ why: 1 })
+    }
+    Ok({ tok: 9, line, col })
+}
+
+// field-punning anon record in Ok arg (json's exact form).
+fn u181b_tok_pun(tok int, line int, col int) -> Result[U181bTok, U181bErr] =>
+    Ok({ tok, line, col })
+
+// value-record payload via anon record in Ok arg.
+fn u181b_span(s int, e int) -> Result[U181bSpan, U181bErr] =>
+    Ok({ s, e })
+
+// nested anon record (a record field holds another record value).
+fn u181b_parser(inner U181bTok, n int) -> Result[U181bParser, U181bErr] =>
+    Ok({ inner, n })
+
+test "u181b: explicit-field anon record in Ok arg — Ok" {
+    match u181b_tok(3, 7) {
+        Ok(t)  => assert(t.tok == 9 && t.line == 3 && t.col == 7)
+        Err(_) => assert(false)
+    }
+}
+
+test "u181b: Err anon record in ctor arg" {
+    match u181b_tok(-1, 0) {
+        Ok(_)  => assert(false)
+        Err(e) => assert(e.why == 1)
+    }
+}
+
+test "u181b: field-punning anon record in Ok arg" {
+    match u181b_tok_pun(1, 2, 3) {
+        Ok(t)  => assert(t.tok == 1 && t.line == 2 && t.col == 3)
+        Err(_) => assert(false)
+    }
+}
+
+test "u181b: value-record payload anon record in Ok arg" {
+    match u181b_span(4, 11) {
+        Ok(sp) => assert(sp.s == 4 && sp.e == 11)
+        Err(_) => assert(false)
+    }
+}
+
+test "u181b: nested record anon literal in Ok arg" {
+    ro inner = U181bTok { tok: 5, line: 6, col: 8 }
+    match u181b_parser(inner, 2) {
+        Ok(p)  => assert(p.inner.tok == 5 && p.n == 2)
+        Err(_) => assert(false)
+    }
+}
