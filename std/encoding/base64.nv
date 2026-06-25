@@ -18,14 +18,14 @@
 //   - D73 From / Into: encode = Into[str], decode = From[str].
 //     Для []u8 → str (encode) и str → []u8 (decode) обе формы
 //     через D73.
-//   - D77 TryFrom для decode (может fail на невалидной строке).
+//   - D325 (Plan 181): decode → Result[[]u8, Base64Error] (Result-everywhere, не throw).
 //   - Buffer для O(N) аккумуляции выходных байт/символов.
 //
 // API:
 //   Base64.encode(data []u8) -> str
 //   Base64.encode_url(data []u8) -> str
-//   Base64.decode(s str) Fail[Base64Error] -> []u8
-//   Base64.decode_url(s str) Fail[Base64Error] -> []u8
+//   Base64.decode(s str) -> Result[[]u8, Base64Error]
+//   Base64.decode_url(s str) -> Result[[]u8, Base64Error]
 
 module encoding.base64
 
@@ -99,9 +99,9 @@ fn decode_char(c char) -> Option[u8] {
     } else if n >= 48 && n <= 57 {               // 0..9 → 52..61
         Some((n - 48 + 52) as u8)
     } else if c == '+' || c == '-' {             // оба варианта 62
-        Some(62)
+        Some(62 as u8)
     } else if c == '/' || c == '_' {             // оба варианта 63
-        Some(63)
+        Some(63 as u8)
     } else {
         None
     }
@@ -180,21 +180,21 @@ fn encode_with(data []u8, alphabet fn(u8) -> char, with_padding bool) -> str {
 
 /// Decode standard base64 (с обязательным `=` padding до multiple-of-4).
 #stable(since = "0.1")
-export fn Base64.decode(s str) Fail[Base64Error] -> []u8 =>
+export fn Base64.decode(s str) -> Result[[]u8, Base64Error] =>
     decode_with(s, true)
 
 /// Decode URL-safe base64 (padding опциональный).
 #stable(since = "0.1")
-export fn Base64.decode_url(s str) Fail[Base64Error] -> []u8 =>
+export fn Base64.decode_url(s str) -> Result[[]u8, Base64Error] =>
     decode_with(s, false)
 
-fn decode_with(s str, require_padding bool) Fail[Base64Error] -> []u8 {
+fn decode_with(s str, require_padding bool) -> Result[[]u8, Base64Error] {
     // Если требуется padding — длина обязательно кратна 4.
     if require_padding && s.byte_len() % 4 != 0 {
-        throw InvalidLength { actual: s.byte_len() }
+        return Err(InvalidLength { actual: s.byte_len() })
     }
     if s.byte_len() == 0 {
-        return []
+        return Ok([])
     }
 
     // Считаем сколько `=` в конце — это даёт длину выхода.
@@ -222,10 +222,10 @@ fn decode_with(s str, require_padding bool) Fail[Base64Error] -> []u8 {
 
     mut pos = 0
     for _ in 0..full_blocks {
-        ro c0 = decode_or_throw(s, pos)
-        ro c1 = decode_or_throw(s, pos + 1)
-        ro c2 = decode_or_throw(s, pos + 2)
-        ro c3 = decode_or_throw(s, pos + 3)
+        ro c0 = decode_at(s, pos)?
+        ro c1 = decode_at(s, pos + 1)?
+        ro c2 = decode_at(s, pos + 2)?
+        ro c3 = decode_at(s, pos + 3)?
         ro triple = ((c0 as u32) << 18)
             | ((c1 as u32) << 12)
             | ((c2 as u32) << 6)
@@ -238,32 +238,32 @@ fn decode_with(s str, require_padding bool) Fail[Base64Error] -> []u8 {
 
     // Хвост (для URL-safe без padding или после strip'нутого padding).
     if tail == 2 {
-        ro c0 = decode_or_throw(s, pos)
-        ro c1 = decode_or_throw(s, pos + 1)
+        ro c0 = decode_at(s, pos)?
+        ro c1 = decode_at(s, pos + 1)?
         ro triple = ((c0 as u32) << 18) | ((c1 as u32) << 12)
         out.push(((triple >> 16) & 0xFF) as u8)
     } else if tail == 3 {
-        ro c0 = decode_or_throw(s, pos)
-        ro c1 = decode_or_throw(s, pos + 1)
-        ro c2 = decode_or_throw(s, pos + 2)
+        ro c0 = decode_at(s, pos)?
+        ro c1 = decode_at(s, pos + 1)?
+        ro c2 = decode_at(s, pos + 2)?
         ro triple = ((c0 as u32) << 18) | ((c1 as u32) << 12) | ((c2 as u32) << 6)
         out.push(((triple >> 16) & 0xFF) as u8)
         out.push(((triple >> 8) & 0xFF) as u8)
     } else if tail == 1 {
         // Невалидно — 1 символ хвоста не несёт целого байта.
-        throw InvalidLength { actual: s.byte_len() }
+        return Err(InvalidLength { actual: s.byte_len() })
     }
 
-    out
+    Ok(out)
 }
 
-fn decode_or_throw(s str, pos int) Fail[Base64Error] -> u8 {
+fn decode_at(s str, pos int) -> Result[u8, Base64Error] {
     match s.as_chars().nth(pos) {
         Some(c) => match decode_char(c) {
-            Some(v) => v
-            None    => throw InvalidChar { position: pos, char: c }
+            Some(v) => Ok(v)
+            None    => Err(InvalidChar { position: pos, char: c })
         }
-        None => throw InvalidLength { actual: s.byte_len() }
+        None => Err(InvalidLength { actual: s.byte_len() })
     }
 }
 
@@ -295,13 +295,13 @@ test "encode: RFC 4648 test vectors" {
 }
 
 test "decode: RFC 4648 test vectors" {
-    assert(Base64.decode("") == [])
-    assert(Base64.decode("Zg==") == "f".to_bytes())
-    assert(Base64.decode("Zm8=") == "fo".to_bytes())
-    assert(Base64.decode("Zm9v") == "foo".to_bytes())
-    assert(Base64.decode("Zm9vYg==") == "foob".to_bytes())
-    assert(Base64.decode("Zm9vYmE=") == "fooba".to_bytes())
-    assert(Base64.decode("Zm9vYmFy") == "foobar".to_bytes())
+    assert(Base64.decode("")!! == [])
+    assert(Base64.decode("Zg==")!! == "f".to_bytes())
+    assert(Base64.decode("Zm8=")!! == "fo".to_bytes())
+    assert(Base64.decode("Zm9v")!! == "foo".to_bytes())
+    assert(Base64.decode("Zm9vYg==")!! == "foob".to_bytes())
+    assert(Base64.decode("Zm9vYmE=")!! == "fooba".to_bytes())
+    assert(Base64.decode("Zm9vYmFy")!! == "foobar".to_bytes())
 }
 
 test "round-trip: encode + decode == original" {
@@ -309,7 +309,7 @@ test "round-trip: encode + decode == original" {
     for s in cases {
         ro bytes = s.to_bytes()
         ro encoded = Base64.encode(bytes)
-        ro decoded = Base64.decode(encoded)
+        ro decoded = Base64.decode(encoded)!!
         assert(decoded == bytes)
     }
 }
@@ -332,29 +332,23 @@ test "URL-safe: + и / заменяются на - и _" {
 test "URL-safe round-trip" {
     ro data []u8 = [0xFB, 0xFF, 0xFF, 0x00, 0x42]
     ro encoded = Base64.encode_url(data)
-    ro decoded = Base64.decode_url(encoded)
+    ro decoded = Base64.decode_url(encoded)!!
     assert(decoded == data)
 }
 
 test "decode: ошибка — нечётная длина без padding в strict mode" {
-    ro r = with Fail[Base64Error] = |e| interrupt Some(e) {
-        ro _ = Base64.decode("abc")            // 3 символа — не кратно 4
-        None
-    }
+    ro r = Base64.decode("abc")                // 3 символа — не кратно 4
     assert(match r {
-        Some(InvalidLength { .. }) => true
-        _                           => false
+        Err(InvalidLength { .. }) => true
+        _                         => false
     })
 }
 
 test "decode: ошибка — невалидный символ" {
-    ro r = with Fail[Base64Error] = |e| interrupt Some(e) {
-        ro _ = Base64.decode("Zm$=")            // $ не в alphabet
-        None
-    }
+    ro r = Base64.decode("Zm$=")               // $ не в alphabet
     assert(match r {
-        Some(InvalidChar { .. }) => true
-        _                         => false
+        Err(InvalidChar { .. }) => true
+        _                       => false
     })
 }
 
@@ -367,6 +361,6 @@ test "Base64 → JWT-like usage" {
     assert(!encoded.contains("+"))
     assert(!encoded.contains("/"))
     // Round-trip
-    ro decoded = Base64.decode_url(encoded)
+    ro decoded = Base64.decode_url(encoded)!!
     assert(decoded == header.to_bytes())
 }

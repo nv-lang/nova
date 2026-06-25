@@ -362,11 +362,11 @@ string ops):
 |---|---|---|
 | Invariant violation (programmer bug), out-of-bounds | **panic** | `s.as_bytes()[i]` OOB; `s[a..b]` through codepoint boundary |
 | Expected absence (not found, empty, index past end) | **`Option`** | `s.find(needle) -> Option[int]`; `iter.next() -> Option[char]` |
-| Recoverable, external input error | **`Result`** | `str.try_parse_int() -> Result[int, ParseIntError]`; `str.from_utf16() -> Result[str, _]` |
+| Recoverable, external input error | **`Result`** | `str.parse_int() -> Result[int, ParseIntError]`; `str.from_utf16() -> Result[str, _]` |
 | Best-effort decode of untrusted bytes | **lossy U+FFFD** | `str.from_bytes_lossy`; `cps_to_str` (invalid cp → `\u{FFFD}`) |
 
-Rules (source: protocols.nv:126-128, D77, D25):
-- **`parse_int(s)`** (bare) — throws `ParseIntError`; for explicit handling use `try_parse_int` (Result) or `parse_int_opt` (Option).
+Rules (source: protocols.nv, D325/Plan 181, D25):
+- **`parse_int(s)` returns `Result[int, ParseIntError]`** — every fallible op is `Result` (D325). Throw at the call site with `!!`, get `Option` with `.ok()`. No bare-throws twin, no `_opt`.
 - **Never** return an empty string on failure — that is indistinguishable from an empty input. Use `Option`/`Result` instead.
 - `*_lossy` functions always return valid UTF-8; they substitute `U+FFFD` for every invalid byte sequence, never silently drop bytes.
 

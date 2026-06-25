@@ -89,7 +89,7 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
   (`NotFound`/`PermissionDenied`/`AlreadyExists`/…). `@to_str()` для сообщений (platform-stable строки на C-стороне,
   [net.c:45-55](../compiler-codegen/nova_rt/net.c#L45)).
 - Не плодить дублирующие error-типы для родственных доменов — переиспользовать/проецировать (напр. net `NetError` → проекция на `IoError`-kinds).
-- Конструкторы/parse **fallible**, без default-panicking (`try_`-конвенция, §5).
+- Конструкторы/parse **fallible**, без default-panicking. **Все fallible-операции → `Result[T, XError]`** (R1, D325); эффект `Fail` наружу не отдаём (throw = `!!`, Option = `.ok()`). Префикс `try_` — только для пары infallible/fallible. Канон — [nv-coding-style §4](nv-coding-style.md) (выжимка — §5).
 
 ## 4. Интеграция с C-библиотеками (граница `.nv` ↔ C)
 
@@ -149,7 +149,7 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
 ## 5. Нейминг (выжимка; полное — [nv-coding-style](nv-coding-style.md))
 
 - Конструктор — **`X.new(...)`** (как `Vec.new`/`Barrier.new`; `.of` зарезервирован за variadic у `Vec`). Валидирующий конструктор → `Result`.
-- Fallible-вариант — **`try_`-префикс**, возвращает `Result` (`try_from`/`try_parse`/`try_plus`); ошибки парсинга — **`Parse<X>Error`** (как `ParseIntError`).
+- Fallible-операции — **обычное имя + `Result`** (`parse_int`/`read_u32`/`open`; D325); префикс `try_` — **только** для пары infallible/fallible (`from`/`try_from`, `into`/`try_into`). Ошибки парсинга — **`Parse<X>Error`** (как `ParseIntError`); Option — через `.ok()`, без `_opt`.
 - Конверсии — `from`/`try_from`/`Into`/`TryInto` (D77). Чтения-в-новое на immutable-value — **bare-verb** (`@trim_ascii`/`@normalize`), не `-ed` (sorted/normalized — это для mut/non-mut-пар, которых в Nova нет; различие — через `mut`+тип-возврата).
 - Метод предпочтительнее свободной функции (фасад, [nv-coding-style §3](nv-coding-style.md)); эффект — явно у `export`, выводимо у private ([§11](nv-coding-style.md)).
 - **Числовые типы.** Индексы / длины / offset / счётчики — **`int`** (не `u64`/`usize`); `u8`/`u16` — для байт/UTF-16. Полное правило + анти-паттерны — [nv-coding-style §24](nv-coding-style.md).

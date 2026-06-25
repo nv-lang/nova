@@ -209,3 +209,34 @@ referenced from plan docs and simplifications.md.
       println("REACHED_AFTER_HANDLER")   // НЕ должно печататься после фикса
   }
   ```
+
+## Plan 181 — fallible Result-everywhere (D325): codegen-баги std-миграции
+
+Обнаружены при D325-миграции std (base64/complex/json) на `Result`-everywhere (Plan 181 Ф.2a).
+Все три — **компилятор/codegen** (checker пропускает чисто, падает codegen); чинит отдельный
+compiler-агент. Исходные `.nv`-миграции D325-корректны (`nova check` ✅). Детали — Plan 181 §6.
+Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
+
+- **[M-181-ifexpr-value-materialize-codegen]** Материализатор значения if/match-ветки в
+  expression-позиции захватывает C-указатель приёмника `mut @`-метода (`out.push(...)` →
+  `NovaArray*`) вместо `unit` (настоящего return-типа метода) → клэш с unit-веткой → каст
+  `unit → NovaArray_nova_byte*` = CC-FAIL (base64 `decode_with`, tail if-chain). **Корень
+  (owner-insight 2026-06-25):** `@` передаётся по ссылке (аналог `T&`); reference НЕ тип в Nova
+  (ABI-only), значение не типизируется как «ссылка на X» → ссылка протекает как raw-указатель.
+  Фикс: брать return-тип метода, не ссылку приёмника. Overlaps Plan 172.1 U.4.4 (if-expr value
+  materialization). Priority: P2.
+- **[M-181-result-over-named-tuple-codegen]** `Result[T,E]` (и `Vec`) над **named-tuple**-типом
+  (`type Complex(re f64, im f64)`) → сгенерённая wrapper-структура `NovaRes_NovaTuple_Complex_…`
+  ссылается на `NovaTuple_Complex` ДО его `typedef` (forward-reference) → `unknown type name
+  'NovaTuple_Complex'`. Нужна ранняя forward-декларация named-tuple типов, embedded в
+  generic-wrapper (родственно D123/D216 tuple-mono). Блокирует complex.nv (**РЕГРЕССИЯ** —
+  оригинал проходил `nova test`, поэтому миграция откачена, реклассифицирована Ф.2a→Ф.2b).
+  Priority: P2.
+- **[M-181-anon-record-in-ctor-arg-codegen]** Анонимный record-литерал в позиции аргумента
+  конструктора/обёртки — `Ok({ tok: .., line, col })` / `Ok({ lex, cur })` → `codegen error:
+  anonymous record literal without spread not supported`. При прямом `return { .. }` codegen знал
+  target-тип (`TokenWithPos`/`Parser`) из return-типа и коэрсил (D55); обёрнутый в `Ok(..)` анон-
+  литерал теряет target-контекст. Фикс: пробрасывать ожидаемый тип в анон-record-литерал в
+  аргумент-позиции. Блокирует json.nv (**НЕ регрессия** — оригинал уже падал `nova test` на
+  пре-существующем erasure-баге `as_array() -> Option[[]JsonValue]`, `[M-91.13]`). Source-workaround:
+  type-annotated binding до `Ok`. Priority: P2.

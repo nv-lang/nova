@@ -76,16 +76,18 @@
 - **panic = нарушение инварианта / баг, не recoverable.** Срез по не-границе cp `s[a..b]`
   паникует (ломать R-UTF8 — баг); non-panicking сосед — `s.get(a..b) -> Option[str]`.
   Несработавший `requires` → паника.
-- **Option = отсутствие это норма.** `@find -> Option[int]`, `@strip_prefix -> Option[str]`,
-  `CharsIter @nth -> Option[char]`, `@split_once -> Option[(str,str)]`, `@parse_int_opt`.
-- **Result = recoverable с payload для вызывающего.** `@try_parse_int -> Result[int,
-  ParseIntError]`, `str.from_utf16 -> Result[str, Utf16Error]`, `str.try_from_codepoint`.
-- **Дуальный API: bare(throw) + `try_`(Result).** Конвенция TryFrom (D77/D25,
-  protocols.nv:126-128): `from`/bare даёт значение или throw (требует эффекта `Fail[E]` в
-  сигнатуре); `try_*` возвращает Result; `try_from` — fallible-конвертер, `from` —
-  total/infallible направление. Option-вариант в TryFrom-механизме получают через
-  `Result.ok()` (D77), а `_opt`-метод (`@parse_int_opt -> Option[int]`,
-  `std/runtime/string/parse.nv:63`) — отдельная str-API-конвенция-обёртка.
+- **Option = genuine absence (отсутствие это норма).** `@find -> Option[int]`, `@strip_prefix -> Option[str]`,
+  `CharsIter @nth -> Option[char]`, `@split_once -> Option[(str,str)]`, `env`/`parent`. **`Result → Option` через `.ok()`** — никаких `_opt`-имён.
+- **Result = любая падающая операция (D325).** `str.parse_int -> Result[int, ParseIntError]`,
+  `str.from_utf16 -> Result[str, Utf16Error]`, `str.try_from_codepoint`. Один структурный `XError` на домен.
+- **🎯 Единый fallible-контракт std (D325, Plan 181) — Result-everywhere.** Любая падающая публичная операция → `Result`:
+  - **(R1)** → `Result[T, <Domain>Error]`. Нет bare-throws-близнецов, нет `try_`-дублей, нет `_opt`.
+  - **(R2)** Имя обычное, без префикса: `parse_int -> Result`, `read_u32 -> Result`, `open -> Result` (как Rust `str::parse`).
+  - **(R3)** Префикс `try_` — **только** чтобы отличить fallible-вариант одноимённого **infallible**: `from`/`try_from`, `into`/`try_into` (D77). В одиночных fallible-операциях (нет infallible-сиблинга) префикса НЕТ.
+  - **(R4)** `Option` — только genuine absence (`find`/`get`/`env`/`parent`), НЕ fallibility; `Result → Option` через `.ok()`.
+  - **(R5)** Эффект `Fail[E]` в публичной std-сигнатуре запрещён для **собственных** ошибок (→ `Result`), но разрешён для прозрачного **проброса** `Fail[E]` из closure-параметра (effect-polymorphic forwarding: `retry`/`parallel`/`in_transaction` над телом пользователя).
+  - Throw сохранён операторами (D85): `expr!!` (throw), `expr?` (проброс), `expr.ok()` (→Option), `match`. Эффект `Fail[E]` остаётся в языке (D25) — для пользовательского кода и внутренних хелперов; std им свои ошибки наружу не отдаёт. **Эталон:** `std/net` (Result-everywhere, 0 `Fail[`) — норма, не исключение.
+  - **Миграция SHIPPED-форм** (`@try_parse_int`→`@parse_int`, удаление bare `@parse_int`/`@parse_int_opt`, ~20 `read_X`/`try_read_X` пар) — Plan 181 Ф.2 (compiler-gated части — Ф.2b).
 - **lossy-FFFD (четвёртая категория) — ТОЛЬКО для функций, чьё имя это говорит** (`*_lossy`)
   или чей контракт best-effort (`cps_to_str`): подставляют U+FFFD. **Никогда не подставляйте
   пустую строку** как «успех» при невалидном входе — это потеря данных под видом успеха.
@@ -627,8 +629,8 @@ ro v = opt ?? panic("expected Some")   // краш ТОЛЬКО явно — for
 ```nv
 // 1) defer — безусловное освобождение, LIFO, любой exit-путь (D90):
 fn read_config(path str) Fs Fail -> Config {
-    ro file = Fs.open(path)
-    defer file.close()            // выполнится на любом выходе
+    consume file = Fs.open(path)  // File линейный (must-consume, D133) → consume; `ro` = E_CONSUME_KEYWORD_MISSING (D180 Rule 1)
+    defer file.close()            // consume @close — разряжает обязательство на любом выходе
     ro raw = file.read_all()
     Config.parse(raw)
 }
