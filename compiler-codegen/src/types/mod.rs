@@ -11926,6 +11926,21 @@ impl<'a> BoundCtx<'a> {
     /// синтаксической формы и текущего scope (let-bindings).
     fn infer_arg_ty(e: &Expr, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
         match &e.kind {
+            // Plan 172.1 U.1.3b step 1 (Gap A): self/@ receiver carries the enclosing
+            // method's receiver type, injected by `f1_check_fn` under the scope key "@"
+            // (D176, mirror of `infer_expr_type` SelfAccess arm :9225). Without this,
+            // `self.method()` / `@.method()` calls inside a method body returned None here →
+            // `check_instance_overload` bailed → no `resolved_callees` write → codegen
+            // re-derived the return type (the §10 "resolution computed but thrown away"
+            // anti-pattern; §1 "materialize the resolution"). Materializing the self-receiver
+            // lets the checker resolve self-method calls into the channel — byte-identical
+            // (codegen consumes only when `fn_ret_by_span` also has the callee, i.e. non-extern
+            // self-methods where channel == legacy; extern self-methods miss the index until
+            // U.1.3b step 2 / Gap B, so no flip here).
+            ExprKind::SelfAccess => scope.get("@").cloned(),
+            ExprKind::Ident(name) if name == "self" => {
+                scope.get("self").cloned().or_else(|| scope.get("@").cloned())
+            }
             ExprKind::Ident(name) => scope.get(name).cloned(),
             // Plan 97.1 hardening (D142): protocol-литерал имеет тип
             // именованного protocol'а — это позволяет let-binding

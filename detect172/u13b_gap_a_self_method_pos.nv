@@ -1,0 +1,34 @@
+// U.1.3b шаг 1 (Gap A) — регресс-гард: чекер резолвит self/@-receiver instance-вызовы
+// в канал resolved_callees (infer_arg_ty self/@-арм; conventions §1 «материализуй резолв,
+// не выбрасывай» / §10). Раньше `infer_arg_ty` давал `_=>None` для self/@ → check_instance_overload
+// бейлил → resolved_callees не писался → codegen re-derive. Для USER-типов byte-identical
+// (legacy уже резолвил self через codegen-контекст) → ценность АРХИТЕКТУРНАЯ (§0: резолв
+// self-method-вызова живёт в чекере). Инлайн-lib payoff (sync/net `self.<extern>()`) гейтнут
+// на Gap B + удаление load_builtins (typedef-redef), порядок §10.
+// Folder-module peer of `module detect172` (co-compile в entry basics).
+module detect172
+
+type GapASelfRecv { n int }
+
+fn GapASelfRecv @value() -> int => @n
+fn GapASelfRecv @is_positive() -> bool => @value() > 0
+fn GapASelfRecv @label() -> str {
+    if @is_positive() { "pos" } else { "nonpos" }
+}
+
+test "gapA: self-method вызов (int) через канал" {
+    ro c = GapASelfRecv { n: 7 }
+    assert(c.value() == 7)
+}
+
+test "gapA: self-method вызов (bool) в if-условии" {
+    ro c = GapASelfRecv { n: 3 }
+    assert(c.is_positive())
+    assert(c.label() == "pos")
+}
+
+test "gapA: self-method отрицательная ветвь" {
+    ro c = GapASelfRecv { n: 0 }
+    assert(c.is_positive() == false)
+    assert(c.label() == "nonpos")
+}
