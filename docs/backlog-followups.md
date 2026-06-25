@@ -217,14 +217,21 @@ referenced from plan docs and simplifications.md.
 compiler-агент. Исходные `.nv`-миграции D325-корректны (`nova check` ✅). Детали — Plan 181 §6.
 Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
 
-- **[M-181-ifexpr-value-materialize-codegen]** Материализатор значения if/match-ветки в
-  expression-позиции захватывает C-указатель приёмника `mut @`-метода (`out.push(...)` →
-  `NovaArray*`) вместо `unit` (настоящего return-типа метода) → клэш с unit-веткой → каст
-  `unit → NovaArray_nova_byte*` = CC-FAIL (base64 `decode_with`, tail if-chain). **Корень
-  (owner-insight 2026-06-25):** `@` передаётся по ссылке (аналог `T&`); reference НЕ тип в Nova
-  (ABI-only), значение не типизируется как «ссылка на X» → ссылка протекает как raw-указатель.
-  Фикс: брать return-тип метода, не ссылку приёмника. Overlaps Plan 172.1 U.4.4 (if-expr value
-  materialization). Priority: P2.
+- **[M-181-ifexpr-value-materialize-codegen]** ✅ **RESOLVED 2026-06-26** (Plan 172.1, commit
+  `836befcb`, ветка `plan-172-unified-type-engine`). `else if`-цепочка, где хвост ветки — fluent
+  `-> @`-метод (`out.push(...)`), а финальная ветка диверджит → каст `(NovaArray*)(nova_unit)` =
+  CC-FAIL (base64 `decode_with`, `base64.c:6426`). **Корень УТОЧНЁН эмпирически (НЕ «receiver-vs-
+  return» из первичного owner-insight — `push` fluent `-> @`, ЛЕГИТИМНО возвращает `Vec*`):**
+  рассинхрон emit/infer. `emit_if_expr` имеет fallback unit-доминирования
+  `[M-codegen-fluent-tail-if-unify]` (свернуть if в `nova_unit`, когда одна ветка fluent-value,
+  сиблинг unit, statement-позиция); `infer_If` (`emit_c.rs:38399`) его НЕ имел, хотя арм явно
+  требует «must match emit_if_expr's choice» (R3). Вложенный if эмитит unit, но `infer_If`
+  возвращал `Vec*` → внешний if типизирует result-temp как `Vec*`, присваивает unit → CC-FAIL.
+  **Фикс:** `infer_If` вычисляет `(else_diverges, else_ty)` симметрично и применяет тот же
+  fallback — точное зеркало `emit_if_expr` (§0 один резолвер, восстановление R3). НЕ U.4-канальный
+  флип (первичная привязка к U.4.4 была основана на неточном диагнозе). Гейт: base64+cgfix(chain)
+  CC-FAIL→PASS, §7.5 0 регрессий, §0 GOLD multiset-.c 5 диров IDENTICAL, regression-фикстура
+  `cgfix_fluent_tail_if` (chain). Priority: P2 → DONE.
 - **[M-181-result-over-named-tuple-codegen]** `Result[T,E]` (и `Vec`) над **named-tuple**-типом
   (`type Complex(re f64, im f64)`) → сгенерённая wrapper-структура `NovaRes_NovaTuple_Complex_…`
   ссылается на `NovaTuple_Complex` ДО его `typedef` (forward-reference) → `unknown type name
