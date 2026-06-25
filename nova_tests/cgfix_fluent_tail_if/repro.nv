@@ -48,6 +48,28 @@ fn fill_nested(a bool, b bool) -> Vec[int] {
     v
 }
 
+// ── POSITIVE (infer_If-as-else_ty, base64 decode_with shape):
+//    [M-181-ifexpr-value-materialize-codegen]. An `else if` CHAIN where each
+//    branch tail is a fluent `-> @` push and the FINAL branch DIVERGES
+//    (`return`). The middle if is the ELSE of the outer, so the outer types its
+//    result temp from infer_If(middle) — which BEFORE the fix returned the
+//    fluent pointer while emit_if_expr(middle) emits unit → `(Vec*)(unit)`
+//    CC-FAIL. Compiles only once infer_If mirrors emit's unit-domination
+//    fallback (R3 emit/infer symmetry). The chain shape `fill_nested`
+//    (nested-in-then) does NOT exercise this path.
+fn chain(n int) -> Vec[int] {
+    mut v = Vec[int].with_capacity(4)
+    if n == 2 {
+        v.push(1)               // tail = Nova_Vec____nova_int* (fluent -> @)
+    } else if n == 3 {
+        v.push(2)
+        v.push(3)               // tail = fluent; this middle if is ELSE of outer
+    } else if n == 1 {
+        return v                // DIVERGES; innermost if has no else → infer=unit
+    }
+    v
+}
+
 // ── CONTROL: value-typed if must STAY its value type (NOT coerced to unit). ──
 fn pick_int(c bool) -> int {
     ro x = if c { 1 } else { 2 }   // both branches int → if-expr stays int
@@ -100,6 +122,15 @@ test "nested if with fluent tails and unit sibling" {
     assert(ab.len() == 1 && ab[0] == 1)
     assert(anb.len() == 1 && anb[0] == 2)
     assert(nab.len() == 1 && nab[0] == 3)
+}
+
+test "else-if chain with fluent tails and diverging final (infer_If mirror)" {
+    ro a = chain(2)
+    ro b = chain(3)
+    ro c = chain(1)
+    assert(a.len() == 1 && a[0] == 1)
+    assert(b.len() == 2 && b[0] == 2 && b[1] == 3)
+    assert(c.len() == 0)
 }
 
 test "control: value-typed if stays int" {

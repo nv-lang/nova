@@ -38408,18 +38408,38 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let then_ty = then.trailing.as_ref()
                     .map(|e| self.infer_expr_c_type(e))
                     .unwrap_or_else(|| "nova_unit".into());
-                let chosen = if then_diverges {
-                    match else_ {
-                        Some(ElseBranch::Block(b)) => b.trailing.as_ref()
+                // 172.1 [M-181-ifexpr-value-materialize-codegen]: MIRROR emit_if_expr
+                // EXACTLY (R3 emit/infer symmetry, the invariant this arm already claims).
+                // Compute (else_diverges, else_ty) symmetrically and apply the SAME
+                // [M-codegen-fluent-tail-if-unify] unit-domination fallback (emit_if_expr
+                // lines ~28455-28492). Previously infer_If LACKED the fallback, so a nested
+                // if whose emit collapses to nova_unit (fluent `-> @` tail in one branch,
+                // unit in the sibling) was INFERRED here as the fluent pointer type; an
+                // OUTER if reading this as its else_ty then typed its result temp as `T*`
+                // while the nested if actually EMITS unit → `(T*)(nova_unit)` cast CC-FAIL
+                // (base64 decode_with: `_nv_if_710 = (NovaArray_nova_byte*)(_nv_if_713)`).
+                let (else_diverges, else_ty): (bool, String) = match else_ {
+                    Some(ElseBranch::Block(b)) => (
+                        self.block_trailing_diverges(b),
+                        b.trailing.as_ref()
                             .map(|e| self.infer_expr_c_type(e))
                             .unwrap_or_else(|| "nova_unit".into()),
-                        Some(ElseBranch::If(e)) => self.infer_expr_c_type(e),
-                        None => then_ty.clone(),
-                    }
-                } else {
-                    then_ty.clone()
+                    ),
+                    Some(ElseBranch::If(e)) => (
+                        self.expr_diverges_125(e),
+                        self.infer_expr_c_type(e),
+                    ),
+                    None => (false, "nova_unit".into()),
                 };
-                self.debug_if_infer_125("infer_If", then_diverges, &then_ty, "<else>", &chosen);
+                let chosen = if then_diverges { else_ty.clone() } else { then_ty.clone() };
+                let chosen = if chosen != "nova_unit" {
+                    let then_is_unit = !then_diverges && then_ty == "nova_unit";
+                    let else_is_unit = !else_diverges && else_ty == "nova_unit";
+                    if then_is_unit || else_is_unit { "nova_unit".into() } else { chosen }
+                } else {
+                    chosen
+                };
+                self.debug_if_infer_125("infer_If", then_diverges, &then_ty, &else_ty, &chosen);
                 chosen
             }
             ExprKind::Match { scrutinee, arms } => {
