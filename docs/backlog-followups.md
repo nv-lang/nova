@@ -232,13 +232,20 @@ Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
   флип (первичная привязка к U.4.4 была основана на неточном диагнозе). Гейт: base64+cgfix(chain)
   CC-FAIL→PASS, §7.5 0 регрессий, §0 GOLD multiset-.c 5 диров IDENTICAL, regression-фикстура
   `cgfix_fluent_tail_if` (chain). Priority: P2 → DONE.
-- **[M-181-result-over-named-tuple-codegen]** `Result[T,E]` (и `Vec`) над **named-tuple**-типом
-  (`type Complex(re f64, im f64)`) → сгенерённая wrapper-структура `NovaRes_NovaTuple_Complex_…`
-  ссылается на `NovaTuple_Complex` ДО его `typedef` (forward-reference) → `unknown type name
-  'NovaTuple_Complex'`. Нужна ранняя forward-декларация named-tuple типов, embedded в
-  generic-wrapper (родственно D123/D216 tuple-mono). Блокирует complex.nv (**РЕГРЕССИЯ** —
-  оригинал проходил `nova test`, поэтому миграция откачена, реклассифицирована Ф.2a→Ф.2b).
-  Priority: P2.
+- **[M-181-result-over-named-tuple-codegen]** ✅ **RESOLVED 2026-06-26** (`b022919a` фикс + `a2d01a67`
+  миграция, ветка `plan-172-unified-type-engine`). `Result[T,E]` (и `Vec`) над **named-tuple**-типом
+  (`type Complex(re f64, im f64)`) → wrapper `NovaRes_NovaTuple_Complex_…` встраивал `NovaTuple_Complex`
+  в Ok-payload **ПО ЗНАЧЕНИЮ**, но эмитился в РАННЕЙ `__NOVARES_TYPEDEFS__` ДО typedef'а named-tuple
+  → CC-FAIL `unknown type name 'NovaTuple_Complex'`. **Уточнение:** «ранняя forward-декларация» из
+  исходной формулировки НЕДОСТАТОЧНА (by-value член требует ПОЛНЫЙ тип, не forward-decl). **Фикс
+  (точное зеркало NovaOpt VR-routing [M-153.2], D215):** `register_novares_decl` для late-by-value
+  payload (named tuple / mono value-record) эмитит forward typedef рано + struct BODY/конструкторы в
+  новую late-секцию `__NOVARES_VR_TYPEDEFS__` (после struct-bodies). Предикат — `is_late_emitted_value_payload`
+  (§0 единый, переиспользован двумя NovaOpt-сайтами). Vec не ломался (element by-pointer). Verify:
+  repro+detect172/u181 CC-FAIL→PASS, §0 GOLD 6 диров IDENTICAL, neg-control, unit. Блокировал complex.nv
+  Ф.2a (РЕГРЕССИЯ) — миграция re-applied, complex `nova test` = PASS. **Cross-ref:** тактический unblock
+  фрагментированного value-ABI; единая унификация (named-tuple/value-record/tuple → ОДИН путь) = **Plan
+  172.4 Ф.3** — тогда этот late-routing станет кандидатом на удаление по построению.
 - **[M-181-anon-record-in-ctor-arg-codegen]** Анонимный record-литерал в позиции аргумента
   конструктора/обёртки — `Ok({ tok: .., line, col })` / `Ok({ lex, cur })` → `codegen error:
   anonymous record literal without spread not supported`. При прямом `return { .. }` codegen знал
