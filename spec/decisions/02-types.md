@@ -13273,3 +13273,59 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
   `Vec<ResolvedType>` (имя + module + type-args через lossless `Named`). Разблокирует typed-errors
   Plan 173 (`Fail[E]`-dispatch по `type_id`) + Plan 175 (`any`/`is`) — садятся на готовый носитель,
   не переделывая. Byte-identical конструкцией (effects write-only до consume).
+
+---
+
+## D326 — `ref` как режим передачи параметра (safe in-out / borrow); `@`/`-> @` формализация (Plan 172.5, 2026-06-26)
+
+**Source:** Plan 172.5 (in-out ref params), 2026-06-26 — owner переоткрыл Q29 в param-mode.
+**Status:** 📋 PROPOSED (sign-off владельца на дизайн получен 2026-06-26; реализация — Plan 172.5 поверх 172.4).
+**Amends:** Q29 (open-questions.md — снимает отвержение param-mode; `ref`-ТИП остаётся отвергнут), D132 (03-syntax.md — alias-гарантия `-> @` ↔ R7), D228 (value-record `@` escape-decay R8).
+**Adopt verbatim:** D181/D184 (режим возврата `@`). **Bounds:** D157 (05-memory.md) + D246-P10 (эксклюзивность УЗКАЯ, не Rust/Swift).
+**Cross-ref:** Plan 172.4 / Q-value-abi-auto-placement (авто-`ro ref` + heap↔stack — НЕ дублировать), D315 (ABI выводится), D246 (L3 pointee-cap / RETURN-оракул), D131/D133/D180 (consume — borrow≠move), D156 (consume-bound), Plan 177/178 (raw pointers / FFI).
+
+### Что
+
+`ref` — **режим передачи параметра** (borrow), НЕ тип. Даёт безопасную in-place мутацию caller-значения (`mut ref`) и zero-copy чтение больших стек-значений (`ro ref`, авто) без сырых указателей и без лайфтаймов. Модель = Swift `inout` / C# `in`+`ref`. `@`-ресивер — частный случай: `mut @` ≡ `mut ref @`, `ro @` ≡ `ro ref @`, `-> @` ≡ `ref @`.
+
+### Правило
+
+**(R1) `ref` — режим параметра, НЕ тип.** Запрещены: `ref T`-локалы/биндинги, ref-поля, ref в Vec/коллекции/sum/Option, ref-возвраты. Единственное исключение — ресивер `@` и его `-> @`. Лайфтаймов нет. Это **НЕ** реинтродукция отвергнутого Q29 `ref`-ТИПА — это param-mode, консистентный с обоснованием самого Q29.
+
+**(R2) Две формы.** `ro ref a T` — read-only borrow (авто). `mut ref a T` — mutable in-out borrow (единственный явный user-facing; callee пишет в caller-сторадж, видно после синхронного вызова).
+
+**(R3) `ro ref` — авто/невидимо (это Plan 172.4 / Q-value-abi-auto-placement, не дублируем).** Компилятор передаёт value-параметр скрытым ro-указателем вместо копии, когда `sizeof > ~2*sizeof(ptr)` (≈16B) и копия ненаблюдаема; семантически тождественно by-value для `ro`. Маркеров нет.
+
+**(R4) call-site маркер `ref`.** `mut ref`-аргумент на месте вызова помечается: `inc(ref x)` (короткий `ref`, не `mut ref`). Цель — читатель видит возможную мутацию `x`, не открывая сигнатуру (как C# `ref`, Swift `&`, Rust `&mut`; `&` занят `addr_of`, Plan 118.1). `ro ref` (авто) маркера НЕ имеет.
+
+**(R5) ABI ресивера.** `mut @` ≡ `mut ref @` — **всегда by-pointer** (любой размер; нужно для видимости мутации; даже 1-байтный `type Flag value {b bool}`). `ro @` ≡ `ro ref @` — size-discretionary (мелкий by-value, большой hidden-ptr; невидимо — ro content-immutable). Это две РАЗНЫЕ `ref`-нормы (auto-size для params vs always-by-ptr для mut-ресивера), не сливать.
+
+**(R6) `-> @` — режим = режим ресивера (D181 дословно, не расширяется).** `fn T @m() -> @` → `ro ref @`; `fn T mut @m() -> @` → `mut ref @`; `fn T consume @m() -> @` → parse-error `E_CONSUME_RECEIVER_RETURNS_AT`. В цепочке `x.a().b()` режим `@` от `a()` гейтит вызываемость `b()`: `ro ref @` → только `ro @`-методы; `mut @` на нём → `E_RECEIVER_BINDING_NOT_MUT` (`c.peek().bump()` = ошибка).
+
+**(R7) `-> @` при биндинге — НЕ новое decay-правило, а D246 RETURN-оракул для типа ресивера:**
+- **heap-record / consume / builder**-ресивер → биндинг (`ro y =` И `mut y =`, вкл. mid-chain `mut b = sb.append(); b.append()`) — **ВСЕГДА АЛИАС, не копия** (гарантия D131/D132, load-bearing для consume-чекера; копия раздвоила бы два хэндла на один буфер → потеря use-after-consume).
+- **value-record**-ресивер → биндинг = D246 `-> Value`-оракул = **копия** (те же ro/mut-знаки коэрсии, ORACLE D).
+
+**(R8) value-record `@` НЕ эскейпит указателем.** В пределах одного полного выражения (пока сторадж ресивера жив) `-> @` может оставаться ref; при биндинге/возврате/хранении — **decay by-value** (D246-оракул). Для rvalue-ресивера (`P{x:0}.inc()`) хвостовой `@` decay'ится в слот биндинга/возврата, НЕ указателем в `__tmp_recv` (умирает в конце выражения). D228-escape-walker `@` не покрывает (срабатывает на явный `&v`) → этот decay — замещающее escape-правило. `E_AT_RETURN_OUTSIDE_METHOD` (free-fn `-> @`) сохраняется.
+
+**(R9) Эксклюзивность `mut ref` — УЗКАЯ синтаксическая, НЕ Rust/Swift.** `E_REF_ALIAS_OVERLAP` срабатывает ⟺ два `mut ref`-аргумента в ОДНОМ вызове — проекции одного root-локала и один путь — префикс другого (после стирания индексов, не доказуемо-различных int-литералов). `f(mut ref x, mut ref x)` reject; `f(mut ref x.a, mut ref x.b)` OK; `f(mut ref x.a, mut ref x)` reject; `arr[1]` vs `arr[2]` OK; любой неконстантный `arr[i]` vs `arr[j]` → консервативно overlap (нет SMT/i≠j-прувера в V1, over-reject sound). **Явно оговорить в спеке:** это анти-footgun, НЕ гарантия — aliased-мутация остаётся sound-под-GC везде ещё (D157, D246-P10 «нет эксклюзивности (GC)»). Через указатели/heap-хэндлы/два `[]T`-слайса над одним буфером эксклюзивность НЕ заявляется (undecidable).
+
+**(R10) Эскейп `ref` запрещён** (кроме `@`, который сам decay'ится R8): не хранить в поле/heap, не захватывать closure/spawn/parallel/supervised/detach, не возвращать. Только синхронный lifetime вызова — это и делает no-lifetimes-модель звучной.
+
+**(R11) Слоинг / FFI.** `ref` = safe non-null non-escaping pointer (повседневный инструмент); `*T`/`*mut T` = сырые (FFI/unsafe, D246 L3). `mut ref` ≈ pointee-mut от `*mut T` но safe+non-escape; `ro ref` ≈ `*T`. На `extern`-границе — только сырой `*`/`*mut`, никогда `ref` (у ref нет стабильного ABI — это lowering-выбор).
+
+**(R12) Дженерики / consume.** `fn f[T](mut ref x T)` — ок (mode ортогонален type-param, не в type-arg-позиции → mono не затронут). `[T consume]`-bound (D156) несовместим с `ref` на том же месте (borrow ≠ move). `mut ref` НЕ консьюмит аргумент (D131/D133 без изменений). Overlap-отношение — НОВОЕ (per-pair prefix), строится РЯДОМ с consume place-анализом (делит только парсинг места Ident/Member/Index, не решётку MOVE/CONSUME) — НЕ «субсумировано D131».
+
+### Почему
+
+`mut @` + lvalue (как считал Q29 2026-06-21) НЕ покрывает: out-параметры, мутацию НЕ-ресивера, несколько mut-аргументов (`swap(mut ref a, mut ref b)`). Swift (`inout`) и C# (`in`/`ref`) оба имеют user-facing in-out РЯДОМ с авто-оптимизацией — не полагаются только на методы. Узкий `mut ref` закрывает дыру минимальной ценой (param-only, без лайфтаймов, локальная call-site-проверка). Формализация `@`/`-> @` делает reference явной сущностью лоуэринга. **Для одиночной мутации канон — `mut @`, НЕ `mut ref`** (`mut ref` — узкий инструмент для мульти-mut / control+мутация, не «способ менять любой параметр»).
+
+### Что отвергнуто
+
+- **`ref` как ТИП** (`ref T`, ref-локалы/поля/возвраты, ref в коллекциях) — Q29 (остаётся отвергнут); вернуло бы лайфтаймы.
+- **Rust/Swift-уровень exclusive-borrow soundness** — Nova сознательно разрешает aliased-mut под GC (D157/D246-P10); берём лишь узкий анти-footgun.
+- **codegen-субсумция `[M-181-ifexpr-value-materialize-codegen]`** — снята: тот баг = `infer_If`/`emit_if_expr` desync (R3-repair), закрыт отдельно (`836befcb`, 2026-06-26); ссылки его НЕ чинят. Его fixture (fluent `-> @`-хвост в if-цепочке) → лишь **acceptance-гейт** 172.5 (должна компилиться после ref-формализации).
+
+### Связь
+
+D181/D184 (режим `@`), D246 (L3 / RETURN-оракул / P10 no-exclusivity), D131/D132/D133/D180 (consume / alias-гарантия), D228 (escape), D315 (ABI выводится), D156 (consume-bound), D157 (multi-mut sound под GC), Q29 (amend), Plan 172.4 (авто-`ro ref`/`@`/heap↔stack — реализует часть), Plan 177/178 (raw pointers / FFI). **Новый код ошибки ровно один:** `E_REF_ALIAS_OVERLAP`; остальное переиспользует existing (`E_RECEIVER_BINDING_NOT_MUT`, `E_CONSUME_RECEIVER_RETURNS_AT`, `E_AT_RETURN_OUTSIDE_METHOD`).
