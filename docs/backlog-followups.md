@@ -246,11 +246,20 @@ Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
   Ф.2a (РЕГРЕССИЯ) — миграция re-applied, complex `nova test` = PASS. **Cross-ref:** тактический unblock
   фрагментированного value-ABI; единая унификация (named-tuple/value-record/tuple → ОДИН путь) = **Plan
   172.4 Ф.3** — тогда этот late-routing станет кандидатом на удаление по построению.
-- **[M-181-anon-record-in-ctor-arg-codegen]** Анонимный record-литерал в позиции аргумента
-  конструктора/обёртки — `Ok({ tok: .., line, col })` / `Ok({ lex, cur })` → `codegen error:
-  anonymous record literal without spread not supported`. При прямом `return { .. }` codegen знал
-  target-тип (`TokenWithPos`/`Parser`) из return-типа и коэрсил (D55); обёрнутый в `Ok(..)` анон-
-  литерал теряет target-контекст. Фикс: пробрасывать ожидаемый тип в анон-record-литерал в
-  аргумент-позиции. Блокирует json.nv (**НЕ регрессия** — оригинал уже падал `nova test` на
-  пре-существующем erasure-баге `as_array() -> Option[[]JsonValue]`, `[M-91.13]`). Source-workaround:
-  type-annotated binding до `Ok`. Priority: P2.
+- **[M-181-anon-record-in-ctor-arg-codegen]** ✅ **RESOLVED 2026-06-26** (`c724de7a`, ветка
+  `plan-172-unified-type-engine`). Анонимный record-литерал в позиции аргумента конструктора/обёртки —
+  `Ok({ tok, line, col })` / `Err({ why })` (json `Lexer.@next_token`/`Parser.new`) → `codegen error:
+  anonymous record literal without spread not supported`. При прямом `return { .. }` codegen коэрсил по D55
+  через `expected_record_type` (ставится вокруг тела fn, consumed анон-record-армом `emit_record_lit`);
+  обёрнутый в `Ok(..)`, контекст = тип Result `NovaRes_<n>*` (не payload) → target-struct не найден.
+  **Оказался ЛОКАЛЬНЫМ codegen target-propagation фиксом, НЕ полным RecordLit-резолвером** (U.4.5, 66%
+  дивергенция канал↔legacy — sum/generic/value-контекст): contextual Ok/Err-арм `emit_call` уже несёт
+  разрешённый payload-C-тип из канала (`novares_ok_err(&rt)`) → ставим
+  `expected_record_type = struct_name_from_c_type(payload_c)` вокруг emit аргумента (зеркало D55, тип из
+  канала, НЕ угадан). Byte-identical для не-анон-record аргументов (поле консультируется только
+  анон-record-веткой + save/restore). Verify: repro CODEGEN-FAIL→PASS; §7.5 baseline-DELTA 20 диров
+  FAIL-множества идентичны; §0 GOLD 45 .c / 8 диров sorted-line multiset-sha256 IDENTICAL; detect172
+  `u181b_anon_record_in_ctor_arg_pos` 5 тестов + neg-control RUN-FAIL; unit types:: 51/0 +
+  expected_record_type 1/0. Разблокировал json **ПАСТ** анон-record (упирается в downstream erasure-баг
+  `as_array() -> Option[[]JsonValue]`, `[M-91.13]` — **НЕ регрессия**, оригинал уже падал `nova test`).
+  Полный RecordLit-резолвер остаётся **Plan 172.1 U.4.5**.
