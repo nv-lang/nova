@@ -35658,20 +35658,30 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // CC-FAIL" hazard). U.4.5 will delete the legacy path once those side-effects are
         // relocated; for this incremental flip we keep it purely for the side-effects.
         let legacy = self.infer_expr_c_type_legacy(expr);
-        // Plan 172.1 U.4.3: callee-channel equivalence-assert (debug-only; measures the
-        // resolved-callee return-type channel == legacy until U.4.3's own return-flip).
-        #[cfg(debug_assertions)]
+        // Plan 172.1 U.4.5(a): Call-return FLIP (§0/§1). RETURN the resolved callee's return
+        // C-type from the channel AUTHORITATIVELY instead of the legacy overload re-derive —
+        // codegen consumes the callee the CHECKER chose (`resolved_callees[call.id]` → its
+        // `FnDecl.span`) and lowers that callee's own return (`fn_ret_by_span[span]`), no
+        // re-resolution. The equivalence-assert (kept as a debug cross-check) proved
+        // `fn_ret_by_span[span] == legacy` across the corpus in the U.4.3 a-d substrate stages
+        // (2687 + 55852 + 65296 assert executions, 0 divergence) → BYTE-IDENTICAL. `legacy` ran
+        // above for its typedef/mono-registration side-effects (must NOT be skipped — the U.4.3
+        // hazard); only the RETURNED string flips. Only Call exprs whose chosen callee is in the
+        // channel flip; un-resolved / builtin-static (ctor → `resolved_types` below) / 0-or-≥2
+        // ambiguous calls have no channel entry → fall through to the legacy return below.
         if expr.id.is_set() {
             if matches!(&expr.kind, ExprKind::Call { .. }) {
                 if let Some(span) = self.resolved_callees.get(&expr.id) {
                     if let Some(ch_ret) = self.fn_ret_by_span.get(span) {
+                        #[cfg(debug_assertions)]
                         debug_assert_eq!(
                             *ch_ret,
                             legacy,
-                            "[U.4.3] channel callee return-type != legacy at call id={:?} span={:?}",
+                            "[U.4.5a] channel callee return-type != legacy at call id={:?} span={:?}",
                             expr.id,
                             expr.span
                         );
+                        return ch_ret.clone();
                     }
                 }
             }
