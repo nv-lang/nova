@@ -9400,6 +9400,39 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // needs_caps всегда empty после retract; non-stdlib external fn
         // отвергаются type-checker'ом раньше.
         if f.is_external {
+            // Plan 172.1 U.1.3b Gap B: index an EXTERN method's return C-type by its
+            // declaration `Span` into `fn_ret_by_span` — but ONLY when that return is a
+            // context-independent PRIMITIVE (`is_primitive_lowerable`, the shared gate that
+            // the checker also consumes, §0/§3). extern fns get NO forward decl (the real
+            // impl is a C trampoline / `nova_rt` header), so they skip the MAIN span-index
+            // at the bottom of this fn (line ~9579); without THIS, an INLINED library body
+            // calling `self.<extern>()` — e.g. the Nova-body `Once.try_start()` calling
+            // `self.try_start_won() -> bool` — finds NO channel entry at the U.4.5(a) flip
+            // site and re-derives the return in legacy, which guesses `nova_int` (§0/§1
+            // re-derive bug → `if condition must be bool, got nova_int`). The PRIMITIVE gate
+            // is the safety: a primitive's C name is the SAME regardless of mono/tuple/Result
+            // context, so the bare span→C-name index is sound. tuple / `Result` / effect /
+            // record / generic returns (net `split→(R,W)`, `recv_from→Result[(str,Addr)]`)
+            // need codegen's mono/tuple-registration context the channel cannot reproduce
+            // (naive `return_type_c` registration → `_NovaTuple_2_8` CC-FAIL = the U.4.3
+            // tuple-mono hazard) → they are NOT indexed here and stay on the legacy path
+            // (full fix = U.4.3, typed IR). Gated to CONCRETE-receiver methods (`self`/`@`
+            // is what Gap A resolves into `resolved_callees`; a generic receiver takes the
+            // mono dispatch path, mirroring the concrete-callee invariant at line ~9579).
+            // For the gated set this is a §1 FIX, NOT byte-identical — see the relaxed
+            // U.4.5a-xcheck at the flip site.
+            if let Some(recv) = &f.receiver {
+                if recv.generics.is_empty() {
+                    if let Some(ret_tr) = &f.return_type {
+                        let rt = crate::types::ResolvedType::from_type_ref(ret_tr);
+                        if rt.is_primitive_lowerable() {
+                            if let Ok(ret_c) = self.type_ref_to_c(ret_tr) {
+                                self.fn_ret_by_span.insert(f.span, ret_c);
+                            }
+                        }
+                    }
+                }
+            }
             return Ok(());
         }
         if f.name == "main" {
@@ -35662,25 +35695,34 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // C-type from the channel AUTHORITATIVELY instead of the legacy overload re-derive —
         // codegen consumes the callee the CHECKER chose (`resolved_callees[call.id]` → its
         // `FnDecl.span`) and lowers that callee's own return (`fn_ret_by_span[span]`), no
-        // re-resolution. The equivalence-assert (kept as a debug cross-check) proved
-        // `fn_ret_by_span[span] == legacy` across the corpus in the U.4.3 a-d substrate stages
-        // (2687 + 55852 + 65296 assert executions, 0 divergence) → BYTE-IDENTICAL. `legacy` ran
-        // above for its typedef/mono-registration side-effects (must NOT be skipped — the U.4.3
-        // hazard); only the RETURNED string flips. Only Call exprs whose chosen callee is in the
-        // channel flip; un-resolved / builtin-static (ctor → `resolved_types` below) / 0-or-≥2
-        // ambiguous calls have no channel entry → fall through to the legacy return below.
+        // re-resolution. `legacy` ran above for its typedef/mono-registration side-effects
+        // (must NOT be skipped — the U.4.3 hazard); only the RETURNED string flips. Only Call
+        // exprs whose chosen callee is in the channel flip; un-resolved / builtin-static
+        // (ctor → `resolved_types` below) / 0-or-≥2 ambiguous calls have no channel entry →
+        // fall through to the legacy return below.
+        //
+        // U.4.5a-xcheck (U.1.3b Gap B): the equivalence-assert is RELAXED from a fatal
+        // `debug_assert_eq!` to a NON-FATAL, env-gated detect counter. For the U.4.3 a-d
+        // substrate stages the channel was byte-identical to legacy (2687 + 55852 + 65296
+        // assert executions, 0 divergence). Gap B now makes the channel INTENTIONALLY diverge
+        // for EXTERN methods whose primitive return legacy mis-guessed `nova_int` (e.g.
+        // `self.try_start_won() -> bool`): that divergence is the §0/§1 FIX (the channel carries
+        // the DECLARED primitive, authoritative), NOT a regression — so a fatal assert would be
+        // wrong. `NOVA_U45A_XCHECK=1` logs each divergence for blast-radius audit (the byte-
+        // identical claim for the non-Gap-B set is preserved by auditing that EVERY logged
+        // divergence is a legacy-`nova_int` → channel-primitive fix); silent without the var,
+        // zero cost in release (`#[cfg(debug_assertions)]`).
         if expr.id.is_set() {
             if matches!(&expr.kind, ExprKind::Call { .. }) {
                 if let Some(span) = self.resolved_callees.get(&expr.id) {
                     if let Some(ch_ret) = self.fn_ret_by_span.get(span) {
                         #[cfg(debug_assertions)]
-                        debug_assert_eq!(
-                            *ch_ret,
-                            legacy,
-                            "[U.4.5a] channel callee return-type != legacy at call id={:?} span={:?}",
-                            expr.id,
-                            expr.span
-                        );
+                        if *ch_ret != legacy && std::env::var("NOVA_U45A_XCHECK").is_ok() {
+                            eprintln!(
+                                "[U.4.5a-xcheck] ch={} legacy={} call id={:?} span={:?}",
+                                ch_ret, legacy, expr.id, expr.span
+                            );
+                        }
                         return ch_ret.clone();
                     }
                 }

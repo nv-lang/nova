@@ -302,6 +302,30 @@ impl ResolvedType {
         };
         !safe_widening
     }
+
+    /// Plan 172.1 U.4.4 / U.1.3b: the shared PRIMITIVE gate. A resolved type is
+    /// primitive-lowerable iff its C-type is ALWAYS a registered builtin
+    /// (`nova_int`/`nova_bool`/`uint32_t`/`nova_str`/`nova_char`/…) — its C name is
+    /// CONTEXT-INDEPENDENT, with no undeclared-identifier, mono-substitution, tuple
+    /// registration, or generic-inference hazard. Such a type can be materialized into
+    /// the checker channel (`resolved_types` / `resolved_callees` return) and lowered by
+    /// codegen authoritatively. Non-primitive (records / generics / `Vec` / pointers /
+    /// enums / tuples / `Result`) need codegen mono/typedef context the channel cannot
+    /// reproduce → they stay on the legacy path (U.4.3(d)/U.4.5 territory). View axes
+    /// (L2 `readonly`) are peeled — `readonly T` lowers identically to `T`. SINGLE source
+    /// consumed by BOTH the checker (`primitive_gate`) and codegen (Gap B `fn_ret_by_span`
+    /// extern-method indexing) — §0/§3 (one gate, no duplication).
+    pub fn is_primitive_lowerable(&self) -> bool {
+        match self.peel_view() {
+            ResolvedType::Scalar { .. }
+            | ResolvedType::Float { .. }
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Unit => true,
+            ResolvedType::Named { name, args, .. } => args.is_empty() && name.as_str() == "char",
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -334,6 +358,52 @@ mod resolved_type_tests {
         // `char` has no `Ty` primitive → `Named` (mirrors ty_of_ref).
         assert_eq!(r("char"), ResolvedType::Named { name: "char".to_string(), module: vec![], args: vec![] });
         assert_eq!(r("Foo"), ResolvedType::Named { name: "Foo".to_string(), module: vec![], args: vec![] });
+    }
+
+    #[test]
+    fn is_primitive_lowerable_gates_primitives_not_aggregates() {
+        // Plan 172.1 U.1.3b Gap B: the shared primitive gate. A return type passes iff
+        // its C name is CONTEXT-INDEPENDENT (no mono/tuple/typedef context needed) — only
+        // then is codegen's bare `fn_ret_by_span` span→C-name index for an EXTERN method
+        // sound. Aggregates (tuple/`Result`/`Vec`/record/pointer) FAIL the gate and stay on
+        // the legacy path (the U.4.3 tuple-mono hazard).
+        let sp = Span::dummy();
+        let named = |n: &str, gen: Vec<TypeRef>| TypeRef::Named {
+            path: vec![n.to_string()],
+            generics: gen,
+            span: sp,
+        };
+        let rt = |tr: &TypeRef| ResolvedType::from_type_ref(tr);
+        let prim = |n: &str| ResolvedType::from_type_ref(&prim_ref(n, sp));
+
+        // PRIMITIVES (context-independent C name) → gate TRUE.
+        for n in ["int", "i64", "i8", "u32", "uint", "u64", "f64", "f32", "str", "bool"] {
+            assert!(prim(n).is_primitive_lowerable(), "primitive `{n}` must gate true");
+        }
+        // `char` is the one `Named` that gates true (no `Ty` variant — `try_start_won`'s
+        // sibling class: a primitive whose C name `nova_char` is fixed).
+        assert!(prim("char").is_primitive_lowerable());
+        // `unit` → true.
+        assert!(rt(&TypeRef::Unit(sp)).is_primitive_lowerable());
+        // L2 `readonly` view is peeled → `readonly bool` gates like `bool`.
+        assert!(rt(&TypeRef::Readonly(Box::new(prim_ref("bool", sp)), sp)).is_primitive_lowerable());
+
+        // AGGREGATES / context-dependent C name → gate FALSE.
+        // tuple `(int, int)` — the net `split→(R,W)` class (`_NovaTuple_*` mono hazard).
+        assert!(!rt(&TypeRef::Tuple(vec![prim_ref("int", sp), prim_ref("int", sp)], sp))
+            .is_primitive_lowerable());
+        // `Result[int, str]` / `Option[int]` / `Vec[int]` — `Named` WITH args (erasure/mono).
+        assert!(!rt(&named("Result", vec![prim_ref("int", sp), prim_ref("str", sp)]))
+            .is_primitive_lowerable());
+        assert!(!rt(&named("Option", vec![prim_ref("int", sp)])).is_primitive_lowerable());
+        assert!(!rt(&named("Vec", vec![prim_ref("int", sp)])).is_primitive_lowerable());
+        // user record type `Foo` — `Named`, no args, not `char`.
+        assert!(!rt(&named("Foo", vec![])).is_primitive_lowerable());
+        // `never` (bottom) is NOT primitive-lowerable (excluded from the gate).
+        assert!(!prim("never").is_primitive_lowerable());
+        // array `[]int` and typed pointer `*int` → false.
+        assert!(!rt(&TypeRef::Array(Box::new(prim_ref("int", sp)), sp)).is_primitive_lowerable());
+        assert!(!rt(&TypeRef::Pointer(Box::new(prim_ref("int", sp)), sp)).is_primitive_lowerable());
     }
 
     #[test]
@@ -7264,15 +7334,9 @@ impl<'a> TypeCheckCtx<'a> {
     /// (U.4.3(d)/U.4.5 territory). View axes (L2 `readonly`) are peeled — `readonly T`
     /// lowers identically to `T`.
     fn primitive_gate(rt: &ResolvedType) -> bool {
-        match rt.peel_view() {
-            ResolvedType::Scalar { .. }
-            | ResolvedType::Float { .. }
-            | ResolvedType::Bool
-            | ResolvedType::Str
-            | ResolvedType::Unit => true,
-            ResolvedType::Named { name, args, .. } => args.is_empty() && name.as_str() == "char",
-            _ => false,
-        }
+        // U.1.3b: single source — delegates to `ResolvedType::is_primitive_lowerable`,
+        // the SAME gate codegen consumes for Gap B extern-method return indexing (§0/§3).
+        rt.is_primitive_lowerable()
     }
 
     /// Plan 172.1 U.4.4 (Match-arm half): the COMMON result type of a `match`
