@@ -951,6 +951,17 @@ pub struct CEmitter {
     /// per-(T,E) value-type структуры, аналог `novaopt_typedefs_buf`.
     /// Splice'ится в маркер `/*__NOVARES_TYPEDEFS__*/` после emit_module.
     novares_typedefs_buf: std::cell::RefCell<String>,
+    /// [M-181-result-over-named-tuple-codegen]: NovaRes typedefs where the Ok
+    /// (or Err) payload is a by-value LATE-emitted struct — a named tuple
+    /// (`NovaTuple_<Name>`) or mono'd value-record (`NovaValue_…____…`). The
+    /// `NovaRes_<n>` struct embeds that payload BY VALUE (`struct { <T> _0; } Ok`),
+    /// so a forward typedef is NOT enough — the complete struct body must precede
+    /// it. The forward typedef stays early in `/*__NOVARES_TYPEDEFS__*/` (pointer
+    /// use in fn prototypes is fine), while the struct BODY + `nova_make_*`
+    /// constructors are spliced at `/*__NOVARES_VR_TYPEDEFS__*/` (placed right
+    /// after `/*__NOVAOPT_VR_TYPEDEFS__*/`, i.e. after the named-tuple/value-record
+    /// struct bodies). Exact mirror of the NovaOpt VR-routing ([M-153.2], D215).
+    novares_vr_typedefs_buf: std::cell::RefCell<String>,
     /// Plan 59 Ф.7.5: dedup-set уже эмитированных `NovaRes_<ok>_<err>` имён.
     novares_decls_seen: std::cell::RefCell<std::collections::HashSet<String>>,
     /// Plan 59 Ф.7.5: mangled `<ok_s>_<err_s>` → (ok_c, err_c). Восстановление
@@ -1455,6 +1466,7 @@ impl CEmitter {
             mono_tuple_instances: std::cell::RefCell::new(std::collections::HashSet::new()),
             legacy_tuple_arities: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             novares_typedefs_buf: std::cell::RefCell::new(String::new()),
+            novares_vr_typedefs_buf: std::cell::RefCell::new(String::new()),
             novares_decls_seen: std::cell::RefCell::new(std::collections::HashSet::new()),
             novares_value_types: std::cell::RefCell::new(std::collections::HashMap::new()),
             defer_scopes: Vec::new(),
@@ -4056,6 +4068,12 @@ impl CEmitter {
         // field declaration. Pointer payloads (Nova_X*) only need a forward-typedef
         // and stay in __NOVAOPT_TYPEDEFS__ which is earlier in the file.
         self.line("/*__NOVAOPT_VR_TYPEDEFS__*/");
+        // [M-181-result-over-named-tuple-codegen]: NovaRes struct bodies whose Ok/Err
+        // payload is a by-value LATE-emitted type (named tuple / mono value-record)
+        // must come AFTER those struct bodies too — same reason as NovaOpt VR above.
+        // The forward `typedef struct NovaRes_<n> NovaRes_<n>;` stays in the early
+        // __NOVARES_TYPEDEFS__ marker (pointer use in fn prototypes is fine).
+        self.line("/*__NOVARES_VR_TYPEDEFS__*/");
 
         // 1b1-moved. Plan 152.4 (D199 ro-runtime side): module-level
         // `ro NAME = EXPR` — a lazy-static global. The strict const/ro partition
@@ -4417,6 +4435,25 @@ impl CEmitter {
                 vr_typedefs)
         };
         self.out = self.out.replace("/*__NOVAOPT_VR_TYPEDEFS__*/", &vr_replacement);
+        // [M-181-result-over-named-tuple-codegen]: splice NovaRes struct bodies +
+        // constructors for wrappers whose by-value payload is a late-emitted named
+        // tuple / value-record (placed AFTER __NOVAOPT_VR_TYPEDEFS__ so the payload
+        // struct body is complete). The forward typedef is already in the early
+        // __NOVARES_TYPEDEFS__ marker.
+        let novares_vr = self.novares_vr_typedefs_buf.borrow().clone();
+        if novares_vr.is_empty() {
+            // Unused → strip the marker AND its trailing newline so 0-impact .c
+            // files stay byte-identical to the clean binary (this marker line did
+            // not exist before this change; leaving a bare `\n` would add a blank
+            // line to EVERY file). Mirrors `self.line(...)` emitting `marker\n`.
+            self.out = self.out.replace("/*__NOVARES_VR_TYPEDEFS__*/\n", "");
+        } else {
+            let novares_vr_replacement = format!(
+                "/* [M-181-result-over-named-tuple-codegen]: NovaRes struct bodies + \
+                 ctors for by-value named-tuple/value-record payloads — after struct bodies */\n{}",
+                novares_vr);
+            self.out = self.out.replace("/*__NOVARES_VR_TYPEDEFS__*/", &novares_vr_replacement);
+        }
         // Plan 48: splice monomorphized fn forward declarations
         let mono_fwd = self.mono_fwd_decls.clone();
         self.out = self.out.replace("/*__MONO_FWD_DECLS__*/", &mono_fwd);
@@ -34441,8 +34478,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // [M-153.2-flat-map-inner-option]: value-record payloads — route to VR
         // buffer (same logic as register_novaopt_decl path above).
         // D215 amend: NovaTuple_ payloads need the same treatment.
-        if (c_ty.contains("____") && c_ty.starts_with("NovaValue_"))
-            || (c_ty.starts_with("NovaTuple_") && !c_ty.ends_with('*')) {
+        if Self::is_late_emitted_value_payload(c_ty) {
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
             let cmp_body_vr = "a.value == b.value".to_string(); // force_npo path
@@ -34547,8 +34583,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // compiles without "field has incomplete type".
         // D215 amend: same issue applies to NovaTuple_ (named tuple) payloads —
         // the struct body must be defined before its use in Option payload.
-        if (c_ty.contains("____") && c_ty.starts_with("NovaValue_"))
-            || (c_ty.starts_with("NovaTuple_") && !c_ty.ends_with('*')) {
+        if Self::is_late_emitted_value_payload(c_ty) {
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
             let cmp_body2 = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
@@ -34901,6 +34936,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         }
     }
 
+    /// [M-181-result-over-named-tuple-codegen] / [M-153.2] (D215): true when
+    /// `c_ty` is a by-value payload whose C struct body is emitted LATE (in the
+    /// main type pass / generic-type-defs, after the early wrapper sections) —
+    /// a named tuple (`NovaTuple_<Name>`, no leading underscore — positional
+    /// `_NovaTuple_…` are emitted EARLY and excluded) or a mono'd value-record
+    /// (`NovaValue_…____…`). Such a payload cannot sit in an EARLY wrapper typedef
+    /// by value: a C struct member of incomplete type is rejected even with a
+    /// forward typedef, so the wrapper struct body must be deferred past the
+    /// payload's definition. This is the exact predicate the NovaOpt VR-routing
+    /// uses ([M-153.2] at `register_novaopt_decl[_forced]`).
+    fn is_late_emitted_value_payload(c_ty: &str) -> bool {
+        (c_ty.contains("____") && c_ty.starts_with("NovaValue_"))
+            || (c_ty.starts_with("NovaTuple_") && !c_ty.ends_with('*'))
+    }
+
     /// Plan 59 Ф.7.5: lazy-регистрирует mono'd `NovaRes_<ok>_<err>` —
     /// per-(T,E) Result-тип, аналог `register_novaopt_decl`.
     ///
@@ -34941,26 +34991,47 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.register_novaopt_decl(&ok_s, ok_c);
         self.register_novaopt_decl(&err_s, err_c);
 
-        let mut buf = self.novares_typedefs_buf.borrow_mut();
+        // [M-181-result-over-named-tuple-codegen]: if the Ok/Err payload is a
+        // by-value LATE-emitted struct (named tuple / mono value-record), the
+        // `NovaRes_<n>` body embeds it by value → its definition must follow the
+        // payload's struct body. Emit only the forward typedef into the early
+        // `__NOVARES_TYPEDEFS__` marker (pointer use in fn prototypes is fine) and
+        // defer the struct BODY + constructors to `__NOVARES_VR_TYPEDEFS__` (after
+        // the named-tuple/value-record bodies). Mirror of NovaOpt VR-routing.
+        let payload_late = Self::is_late_emitted_value_payload(ok_c)
+            || Self::is_late_emitted_value_payload(err_c);
+
+        let mut body = String::new();
         // Plan 59 Ф.7.5 D3: схема A + typed-Err поля (`err_typed_payload`
         // / `err_typed_type_id`, Plan 61 fu#3) — без них `!!` с custom
         // Err теряет typed-throw на mono. Layout совпадает с legacy
         // `Nova_Result` для (nova_int, nova_str) → runtime headers могут
         // ссылаться на `NovaRes_nova_int_nova_str` вместо `Nova_Result`.
-        buf.push_str(&format!(
-            "typedef struct NovaRes_{n} {{ int tag; union {{ \
-             struct {{ {ok} _0; }} Ok; struct {{ {err} _0; }} Err; \
-             }} payload; void* err_typed_payload; NovaTypeId err_typed_type_id; \
-             }} NovaRes_{n};\n",
-            n = name, ok = ok_c, err = err_c));
-        buf.push_str(&format!(
+        if payload_late {
+            // Body-only `struct NovaRes_<n> { ... };` — completes the tag declared
+            // by the early forward typedef (`typedef struct NovaRes_<n> NovaRes_<n>;`).
+            body.push_str(&format!(
+                "struct NovaRes_{n} {{ int tag; union {{ \
+                 struct {{ {ok} _0; }} Ok; struct {{ {err} _0; }} Err; \
+                 }} payload; void* err_typed_payload; NovaTypeId err_typed_type_id; \
+                 }};\n",
+                n = name, ok = ok_c, err = err_c));
+        } else {
+            body.push_str(&format!(
+                "typedef struct NovaRes_{n} {{ int tag; union {{ \
+                 struct {{ {ok} _0; }} Ok; struct {{ {err} _0; }} Err; \
+                 }} payload; void* err_typed_payload; NovaTypeId err_typed_type_id; \
+                 }} NovaRes_{n};\n",
+                n = name, ok = ok_c, err = err_c));
+        }
+        body.push_str(&format!(
             "static inline NovaRes_{n}* nova_make_NovaRes_{n}_Ok({ok} v) {{ \
              NovaRes_{n}* r = (NovaRes_{n}*)nova_alloc(sizeof(NovaRes_{n})); \
              r->tag = NOVA_TAG_Result_Ok; r->payload.Ok._0 = v; \
              r->err_typed_payload = NULL; r->err_typed_type_id = NOVA_TID_NONE; \
              return r; }}\n",
             n = name, ok = ok_c));
-        buf.push_str(&format!(
+        body.push_str(&format!(
             "static inline NovaRes_{n}* nova_make_NovaRes_{n}_Err({err} v) {{ \
              NovaRes_{n}* r = (NovaRes_{n}*)nova_alloc(sizeof(NovaRes_{n})); \
              r->tag = NOVA_TAG_Result_Err; r->payload.Err._0 = v; \
@@ -34973,7 +35044,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // `err_typed_payload` + `err_typed_type_id`. Эмитится только для
         // `err_c == nova_str` (typed-Err требует string-slot для diag).
         if err_c == "nova_str" {
-            buf.push_str(&format!(
+            body.push_str(&format!(
                 "static inline NovaRes_{n}* nova_make_NovaRes_{n}_Err_typed(void* payload, NovaTypeId tid) {{ \
                  NovaRes_{n}* r = (NovaRes_{n}*)nova_alloc(sizeof(NovaRes_{n})); \
                  r->tag = NOVA_TAG_Result_Err; \
@@ -34981,6 +35052,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                  r->err_typed_payload = payload; r->err_typed_type_id = tid; \
                  return r; }}\n",
                 n = name));
+        }
+        // Route: late by-value payload → forward typedef early + body in the
+        // VR-late buffer; else everything in the early buffer (byte-identical).
+        if payload_late {
+            self.novares_typedefs_buf.borrow_mut()
+                .push_str(&format!("typedef struct NovaRes_{n} NovaRes_{n};\n", n = name));
+            self.novares_vr_typedefs_buf.borrow_mut().push_str(&body);
+        } else {
+            self.novares_typedefs_buf.borrow_mut().push_str(&body);
         }
         // Plan 95.bis Ф.2: lazy-emit `unwrap_or` / `ok` / `err` УБРАН —
         // перенесены на Nova-body в `std/prelude/core.nv`, mono'd через
@@ -39176,6 +39256,36 @@ mod mangle_tests {
         let got = CEmitter::mangle_free_fn(&[seg], "f");
         assert!(got.len() <= 240, "len = {}", got.len());
         assert!(got.contains("_h"));
+    }
+}
+
+#[cfg(test)]
+mod novares_late_payload_tests {
+    //! [M-181-result-over-named-tuple-codegen]: a generic wrapper (`NovaRes_<n>` /
+    //! `NovaOpt_<n>`) that embeds its payload BY VALUE needs the payload's complete
+    //! struct body to precede it. `is_late_emitted_value_payload` flags the payloads
+    //! whose body is emitted LATE (named tuple / mono value-record), so the wrapper
+    //! body is deferred past them; everything else stays in the early section.
+    use super::CEmitter;
+
+    #[test]
+    fn gates_named_tuple_and_mono_value_record_but_not_others() {
+        // Named tuple (value type, emitted in the main type pass → late) → defer.
+        assert!(CEmitter::is_late_emitted_value_payload("NovaTuple_Complex"));
+        assert!(CEmitter::is_late_emitted_value_payload("NovaTuple_Foo"));
+        // Mono'd value-record (emitted into generic_type_defs → late) → defer.
+        assert!(CEmitter::is_late_emitted_value_payload("NovaValue_Box____nova_int"));
+        // Positional mono tuple (`_NovaTuple_…`, leading underscore) is emitted
+        // EARLY in __MONO_TUPLE_TYPEDEFS__ → NOT late.
+        assert!(!CEmitter::is_late_emitted_value_payload("_NovaTuple_2_8_nova_int_8_nova_int"));
+        // Primitives / heap records / pointers → early or forward-decl suffices.
+        assert!(!CEmitter::is_late_emitted_value_payload("nova_int"));
+        assert!(!CEmitter::is_late_emitted_value_payload("nova_str"));
+        assert!(!CEmitter::is_late_emitted_value_payload("Nova_FooError*"));
+        // Pointer-to-named-tuple → forward decl is enough (not by value).
+        assert!(!CEmitter::is_late_emitted_value_payload("NovaTuple_Foo*"));
+        // Non-mono value-record (no `____`) is emitted early via value_record_defs_buf.
+        assert!(!CEmitter::is_late_emitted_value_payload("NovaValue_Plain"));
     }
 }
 

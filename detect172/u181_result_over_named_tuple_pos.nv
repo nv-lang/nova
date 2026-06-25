@@ -1,0 +1,56 @@
+// [M-181-result-over-named-tuple-codegen] regression guard (Plan 172.1 U.4.3 /
+// Plan 181 Ф.2a). Result[T,E] / Vec[T] over a NAMED-TUPLE value type
+// (`type U181Pt(re f64, im f64)`) generated a wrapper struct
+// `NovaRes_NovaTuple_U181Pt_...` that embeds `NovaTuple_U181Pt` BY VALUE in its
+// Ok payload — but the wrapper was emitted in the EARLY __NOVARES_TYPEDEFS__
+// section, BEFORE the named-tuple struct body (main type pass, late) → CC-FAIL
+// `unknown type name 'NovaTuple_U181Pt'`. Fix: register_novares_decl routes the
+// wrapper BODY + ctors to the VR-late buffer (after the named-tuple body), keeping
+// only a forward `typedef struct NovaRes_<n> NovaRes_<n>;` early (pointer use in
+// fn prototypes is fine). Mirror of the NovaOpt VR-routing ([M-153.2], D215).
+// Vec[U181Pt] embeds the element BY POINTER (`NovaTuple_U181Pt* data`) so it was
+// already sound; kept here as a co-probe. Folder-module peer of `module detect172`.
+module detect172
+
+// named-tuple = stack value type (D215) — мирроринг Complex(re, im).
+export type U181Pt(re f64, im f64)
+
+export type U181PtError
+    | Bad { why int }
+
+fn u181_make(x f64) -> Result[U181Pt, U181PtError] {
+    if x < 0.0 {
+        return Err(Bad { why: 1 })
+    }
+    Ok(U181Pt(re: x, im: x + 1.0))
+}
+
+fn u181_make_vec() -> Vec[U181Pt] {
+    mut v = Vec[U181Pt].new()
+    v.push(U181Pt(re: 1.0, im: 2.0))
+    v.push(U181Pt(re: 3.0, im: 4.0))
+    v
+}
+
+test "u181: Result над named-tuple — Ok" {
+    match u181_make(3.0) {
+        Ok(p)  => assert(p.re == 3.0 && p.im == 4.0)
+        Err(_) => assert(false)
+    }
+}
+
+test "u181: Result над named-tuple — Err" {
+    match u181_make(-1.0) {
+        Ok(_)  => assert(false)
+        Err(e) => match e {
+            Bad { why } => assert(why == 1)
+        }
+    }
+}
+
+test "u181: Vec над named-tuple" {
+    ro v = u181_make_vec()
+    assert(v.len() == 2)
+    assert(v[0].re == 1.0)
+    assert(v[1].im == 4.0)
+}
