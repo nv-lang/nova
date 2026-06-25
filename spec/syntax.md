@@ -317,9 +317,9 @@ if elapsed > 1.second() { ... }           // вызывает @compare
 | `\|` | `@or(o)` | | `<<` | `@shl(n)` |
 | `&` | `@and(o)` | | `>>` | `@shr(n)` |
 | `^` | `@xor(o)` | | | |
-| `a[i]` | `@get(i)` | | `a[i]=v` | `@set(i, v)` |
+| `a[i]` | `@index(i)` | | `a[i]=v` | `mut @index(i, v)` |
 
-`==`/`!=` — через `@equal` (протокол `Equal`, `!=` выводится отрицанием); `<`/`<=`/`>`/`>=` — через единый `@compare(o) -> int` (протокол `Compare`, memcmp-стиль: `< 0` / `0` / `> 0`). `&&`/`||` **не перегружаются** (short-circuit
+`==`/`!=` — через `@equal` (протокол `Equal`, `!=` выводится отрицанием); `<`/`<=`/`>`/`>=` — через единый `@compare(o) -> int` (протокол `Compare`, memcmp-стиль: `< 0` / `0` / `> 0`). Индексация `a[i]` / `a[i] = v` — `@index` / `mut @index` (протоколы `Index[K, V]` / `MutIndex[K, V]`, D240). `&&`/`||` **не перегружаются** (short-circuit
 семантика). Custom-операторы (`:+`, `<>`) не разрешены. Подробно —
 [D46](decisions/03-syntax.md#d46).
 
@@ -389,7 +389,7 @@ f64.try_parse(s str) -> Option[f64]
 
 **Зарезервированные имена методов** (operator overloading, [D46](decisions/03-syntax.md#d46)):
 `@plus`, `@minus`, `@times`, `@div`, `@rem`, `@neg`, `@or`, `@and`,
-`@xor`, `@shl`, `@shr`, `@equal`, `@compare`, `@not`, `@get`, `@set`.
+`@xor`, `@shl`, `@shr`, `@equal`, `@compare`, `@not`, `@index`.
 Не использовать для других целей.
 
 **Договорные конвенции:**
