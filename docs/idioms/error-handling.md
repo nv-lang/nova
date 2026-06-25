@@ -35,16 +35,20 @@ s.parse_int_opt() -> Option[int]    // caller only needs the value or nothing
 Use when failure has a cause the caller can inspect and handle.
 
 ```nova
-str.try_parse_int() -> Result[int, ParseIntError]   // Empty / InvalidDigit / Overflow
-str.from_utf16()    -> Result[str, Utf16Error]      // malformed surrogate pair
+str.parse_int()  -> Result[int, ParseIntError]   // Empty / InvalidDigit / Overflow
+str.from_utf16() -> Result[str, Utf16Error]       // malformed surrogate pair
 ```
 
-Convention (D77/D25):
-- **Bare name** (`parse_int`) = throws; add `Fail[E]` to the caller's effects when
-  you do not handle it.
-- **`try_*`** = `Result` — explicit error variant (recommended when you inspect the
-  cause).
-- **`_opt`** = `Option` — strips the error detail (use when you only care pass/fail).
+Convention (D325 / Plan 181 — Result-everywhere):
+- **Plain name** (`parse_int`, `open`, `read_u32`) returns `Result[T, XError]` — every
+  fallible public operation. No bare-throws twin, no `try_` duplicate, no `_opt`.
+- **`try_` prefix** = ONLY to distinguish the fallible variant of a same-named *infallible*
+  one (`from`/`try_from`, `into`/`try_into`, D77). Otherwise no prefix.
+- **`.ok()`** converts `Result → Option`; `Option` itself is for genuine absence
+  (`find`/`get`/`env`), not fallibility.
+- **`!!`** throws at the call site, **`?`** propagates, **`match`** branches (D85). The
+  `Fail[E]` effect stays in the language for your own code — std just doesn't expose its
+  own errors through it.
 
 ## Lossy U+FFFD — best-effort decode
 

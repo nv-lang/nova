@@ -95,3 +95,15 @@
   реестр+резолвер+лоуэринг), родственные конструкции (value-record/named-tuple/tuple) — один путь;
   параллельные пути под концептуально-одно = повторяющийся источник багов. Ничего не ослаблено —
   заострение §0/§3/§7 повторяющимися уроками сессии.
+- **2026-06-25 · nv-coding-style.md §4 + module-conventions.md §3/§5 + idioms/error-handling.md +
+  strings.md + std/prelude/protocols.nv + spec D325** — введён **единый fallible-контракт std
+  «Result-everywhere»** (Plan 181, D325; sign-off владельца 2026-06-25). Ретрактирован дуальный
+  `bare`(throw)/`try_`(Result)/`_opt`(Option)-нейминг из std. Правило **R1-R5**: всякая падающая
+  публичная операция → `Result[T, XError]`; префикс `try_` — только для пары infallible/fallible
+  (`from`/`try_from`, `into`/`try_into`); `Option` — genuine absence или `.ok()`; throw — `!!`.
+  Эффект `Fail[E]` остаётся в языке (D25) для пользовательского кода/внутр.хелперов. Снят
+  net-carve-out (§4) — `std/net` теперь просто норма (не «открытый вопрос / Plan 173»). **D77 amend**
+  (4-way→2-way, убрать bare auto-derive) и **D178 retract** записаны в D325; фактическая миграция
+  std-кода + компилятора — Plan 181 Ф.2a/Ф.2b (staged, отдельные подтверждения). **НЕ тронуто в этой
+  правке:** `nv-coding-style §20.4` (defer-пример `read_config` — delicate consume/defer-семантика,
+  отдельный заход) и in-place блоки D77/D178 в `08-runtime.md` (back-pointer добавится при Ф.2b).

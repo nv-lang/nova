@@ -6173,3 +6173,46 @@ OS-ошибки больше не сваливались в `IoError(str)`/`Brok
 `std/net/effect.nv` (per-handle префиксы `listener_*`/`stream_*`/`socket_*`/
 `read_half_*`/`write_half_*`); существующие имена НЕ переименованы (нулевой
 user-visible эффект, высокий churn) — только задокументированы.
+
+---
+
+## D325 — Единый fallible-контракт: публичный std возвращает `Result` (Plan 181, 2026-06-25)
+
+**Source:** Plan 181, 2026-06-25 (после развилки A→B1→Вариант 1 + adversarial-критика).
+**Status:** ✅ ACTIVE как нейминг-канон (sign-off владельца 2026-06-25); миграция std-кода + компилятора — Plan 181 Ф.2a/Ф.2b (staged).
+**Amends:** D77 (08-runtime.md) — 4-way auto-derive → **2-way** (убрать bare-throws Fail-форму).
+**Retracts:** D178 (08-runtime.md) — `str.parse_int` bare + `parse_int_opt`.
+**Связь:** [D25](#d25) (Fail остаётся в языке), [D85](#d85) (`?`/`!!`), [D86](#d86) (`??`), D73 (From/Into), D77 (TryFrom), D178.
+**Гигиена нумерации:** D316–D324 зарезервированы планами 179/179.1/180 (в spec ещё не внесены) → взят D325; gap отмечен в `spec/decisions/README.md`.
+
+### Что
+
+Любая падающая **публичная** операция std возвращает `Result[T, <Domain>Error]`. Дуальный `bare`(throw)/`try_`(Result)/`_opt`(Option)-нейминг ретрактируется из std. Эффект `Fail[E]` остаётся механизмом языка — для пользовательского кода и внутренних хелперов; std им свои ошибки наружу не отдаёт.
+
+### Правило
+
+- **(R1)** Любая падающая публичная операция std → `Result[T, <Domain>Error]`. Один структурный `XError` на домен. Нет bare-throws-близнецов, нет `try_`-дублей, нет `_opt`.
+- **(R2)** Имя обычное, без префикса: `parse_int -> Result`, `read_u32 -> Result`, `open -> Result` (как Rust `str::parse`).
+- **(R3)** Префикс `try_` — **только** чтобы отличить fallible-вариант одноимённого **infallible** (`from`/`try_from`, `into`/`try_into`). В одиночных fallible-операциях (нет infallible-сиблинга) префикса НЕТ.
+- **(R4)** `Option` — только genuine absence (`find`/`get`/`env`/`parent`), НЕ fallibility. `Result → Option` через `.ok()`. Никаких `_opt`-имён.
+- **(R5)** Эффект `Fail[E]` в публичной std-сигнатуре запрещён для **собственных** ошибок (→ `Result`), но разрешён для прозрачного **проброса** `Fail[E]` из closure-параметра (effect-polymorphic forwarding: `retry`/`parallel`/`in_transaction` над телом пользователя).
+
+Эргономика throw на call-site сохранена операторами (D85): `expr!!` (throw), `expr?` (проброс), `expr.ok()` (→Option), `match` (ветвление).
+
+### Почему
+
+1. `Result` безопасен в 100% операций; bare-throws — нет (для must-consume `close` глотает ошибку → потеря данных, см. Plan 180).
+2. Нет границы «I/O vs scalar» = нет вечного вопроса «а это куда?» (был первым же на snowflake).
+3. Ошибка-как-значение фундаментальнее, чем как-throw: кладётся в `Vec`, мапится, собирается, шлётся в канал; брошенный `Fail` — control-flow.
+4. Меньше имён на операцию (одно vs до трёх); меньше доков и путаницы «какой звать».
+5. `!!` уже даёт throw там, где он нужен — реальная потеря лишь 2 символа на проброс в glue-скриптах.
+
+### Что отвергнуто
+
+- **A** (bare=throws everywhere) — close-footgun на must-consume.
+- **B1** (две категории: I/O=`Result`, scalar=дуал + граница) — вечная граница + сложность для рядового разработчика. Концепция «двух категорий» удалена целиком.
+- Удаление эффекта `Fail` из языка — НЕ делаем.
+
+### Эталон
+
+`std/net` — Result-everywhere, 0 `Fail[`. Под-паттерны: per-element `DirIter.next -> Result[Item, E]`; absence → `Option`; инфаллибл-аксессор → значение.
