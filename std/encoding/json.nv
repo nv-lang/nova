@@ -39,7 +39,7 @@
 // API в стиле stdlib/duration.nv, complex.nv:
 //   - JsonValue.null() / JsonValue.bool(b) / etc.  доменные конструкторы
 //   - Json.parse(s str)                            явная функция парсинга
-//   - JsonValue.from(s str)                        D73 From[str] (alias parse)
+//   - JsonValue.try_from(s str)                    D77 TryFrom[str] → Result (alias parse)
 //   - v.@into() -> str                             D73 Into[str] (сериализация)
 
 //! Plan 45 Ф.35.3 — JSON parser/serializer по RFC 8259.
@@ -51,12 +51,12 @@
 //! single quotes, NaN/Infinity, unquoted keys — это JSON5/JSONC, отдельные
 //! форматы.
 //!
-//! Round-trip property: `JsonValue.from(v.into()) == v` для любого `v`.
+//! Round-trip property: `Json.parse(v.into())!! == v` для любого `v`.
 //!
 //! # Examples
 //!
 //! ```nova
-//! let v = Json.parse("{\"name\": \"alice\", \"age\": 30}")
+//! let v = Json.parse("{\"name\": \"alice\", \"age\": 30}")!!
 //! match v.as_object() {
 //!     Some(m) => assert(m.get("name") == Some(Str("alice")))
 //!     None    => assert(false)
@@ -173,8 +173,8 @@ export fn JsonValue @is_object() -> bool => match @ { Object(_) => true, _ => fa
 ///
 /// # Examples
 /// ```nova
-/// assert(Json.parse("true").as_bool() == Some(true))
-/// assert(Json.parse("42").as_bool() == None)
+/// assert(Json.parse("true")!!.as_bool() == Some(true))
+/// assert(Json.parse("42")!!.as_bool() == None)
 /// ```
 #stable(since = "0.1")
 export fn JsonValue @as_bool() -> Option[bool] =>
@@ -262,29 +262,27 @@ fn Lexer mut @skip_whitespace() -> () {
     }
 }
 
-// Прочитать следующий токен. Возвращает (TokenWithPos) или throws через
-// Fail[ParseJsonError] на лексической ошибке.
-fn Lexer mut @next_token() Fail[ParseJsonError] -> TokenWithPos {
+// Прочитать следующий токен. Возвращает Result[TokenWithPos, ParseJsonError]
+// (D325 — Result-everywhere). Lexer.@advance/@peek дают Option (не fallible).
+fn Lexer mut @next_token() -> Result[TokenWithPos, ParseJsonError] {
     @skip_whitespace()
     ro line = @line
     ro col = @col
 
     match @peek() {
-        None      => { tok: EofTok, line, col }
-        Some('{') => { @advance(); { tok: LBrace,   line, col } }
-        Some('}') => { @advance(); { tok: RBrace,   line, col } }
-        Some('[') => { @advance(); { tok: LBracket, line, col } }
-        Some(']') => { @advance(); { tok: RBracket, line, col } }
-        Some(',') => { @advance(); { tok: Comma,    line, col } }
-        Some(':') => { @advance(); { tok: Colon,    line, col } }
-        Some('"') => { tok: StrTok(@read_string()), line, col }
-        Some('t') => { @read_keyword("true",  TrueTok,  line, col) }
-        Some('f') => { @read_keyword("false", FalseTok, line, col) }
-        Some('n') => { @read_keyword("null",  NullTok,  line, col) }
-        Some(c) if is_num_start(c) => {
-            { tok: NumTok(@read_number()), line, col }
-        }
-        Some(c) => throw UnexpectedChar { line, col, found: c }
+        None      => Ok({ tok: EofTok, line, col })
+        Some('{') => { @advance(); Ok({ tok: LBrace,   line, col }) }
+        Some('}') => { @advance(); Ok({ tok: RBrace,   line, col }) }
+        Some('[') => { @advance(); Ok({ tok: LBracket, line, col }) }
+        Some(']') => { @advance(); Ok({ tok: RBracket, line, col }) }
+        Some(',') => { @advance(); Ok({ tok: Comma,    line, col }) }
+        Some(':') => { @advance(); Ok({ tok: Colon,    line, col }) }
+        Some('"') => Ok({ tok: StrTok(@read_string()?), line, col })
+        Some('t') => @read_keyword("true",  TrueTok,  line, col)
+        Some('f') => @read_keyword("false", FalseTok, line, col)
+        Some('n') => @read_keyword("null",  NullTok,  line, col)
+        Some(c) if is_num_start(c) => Ok({ tok: NumTok(@read_number()?), line, col })
+        Some(c) => Err(UnexpectedChar { line, col, found: c })
     }
 }
 
@@ -295,54 +293,54 @@ fn is_digit(c char) -> bool => c.is_ascii_digit()
 
 fn is_hex_digit(c char) -> bool => c.is_ascii_hexdigit()
 
-fn Lexer mut @read_keyword(kw str, t Token, line int, col int) Fail[ParseJsonError] -> TokenWithPos {
+fn Lexer mut @read_keyword(kw str, t Token, line int, col int) -> Result[TokenWithPos, ParseJsonError] {
     for i in 0..kw.byte_len() {
         ro expected = kw.as_chars().nth(i)
         ro actual = @peek()
         if Some(expected.unwrap_or(' ')) != actual {
-            throw UnexpectedChar { @line, @col, found: actual.unwrap_or(' ') }
+            return Err(UnexpectedChar { @line, @col, found: actual.unwrap_or(' ') })
         }
         @advance()
     }
-    { tok: t, line, col }
+    Ok({ tok: t, line, col })
 }
 
 // Чтение JSON-строки в кавычках. Возвращает декодированный str.
-fn Lexer mut @read_string() Fail[ParseJsonError] -> str {
+fn Lexer mut @read_string() -> Result[str, ParseJsonError] {
     @advance()    // открывающая "
     mut buf = ""
     mut done = false
     while !done {
         match @advance() {
-            None => throw UnexpectedEof { @line, @col }
+            None => return Err(UnexpectedEof { @line, @col })
             Some('"') => { done = true }
-            Some('\\') => { buf = buf + @read_escape() }
+            Some('\\') => { buf = buf + @read_escape()? }
             Some(c) => { buf = buf + str.from(c) }
         }
     }
-    buf
+    Ok(buf)
 }
 
 // Обработка escape sequences. После '\\' — следующий символ.
-fn Lexer mut @read_escape() Fail[ParseJsonError] -> str {
+fn Lexer mut @read_escape() -> Result[str, ParseJsonError] {
     match @advance() {
-        None       => throw UnexpectedEof { @line, @col }
-        Some('"')  => "\""
-        Some('\\') => "\\"
-        Some('/')  => "/"
-        Some('b')  => ""
-        Some('f')  => ""
-        Some('n')  => "\n"
-        Some('r')  => "\r"
-        Some('t')  => "\t"
+        None       => Err(UnexpectedEof { @line, @col })
+        Some('"')  => Ok("\"")
+        Some('\\') => Ok("\\")
+        Some('/')  => Ok("/")
+        Some('b')  => Ok("")
+        Some('f')  => Ok("")
+        Some('n')  => Ok("\n")
+        Some('r')  => Ok("\r")
+        Some('t')  => Ok("\t")
         Some('u')  => @read_unicode_escape()
-        Some(c)    => throw InvalidEscape { @line, @col, seq: "\\" + str.from(c) }
+        Some(c)    => Err(InvalidEscape { @line, @col, seq: "\\" + str.from(c) })
     }
 }
 
 // \uXXXX — 4 hex digits. Проверяем surrogate pair для чисел >= 0xD800.
-fn Lexer mut @read_unicode_escape() Fail[ParseJsonError] -> str {
-    ro hex = @read_hex_quad()
+fn Lexer mut @read_unicode_escape() -> Result[str, ParseJsonError] {
+    ro hex = @read_hex_quad()?
     ro code = parse_hex(hex)
     // Surrogate pair: high (D800-DBFF) + low (DC00-DFFF).
     if code >= 0xD800 && code <= 0xDBFF {
@@ -350,35 +348,35 @@ fn Lexer mut @read_unicode_escape() Fail[ParseJsonError] -> str {
         ro next = @advance()
         ro next2 = @advance()
         if next != Some('\\') || next2 != Some('u') {
-            throw InvalidUnicode { @line, @col, hex }
+            return Err(InvalidUnicode { @line, @col, hex })
         }
-        ro low_hex = @read_hex_quad()
+        ro low_hex = @read_hex_quad()?
         ro low = parse_hex(low_hex)
         if low < 0xDC00 || low > 0xDFFF {
-            throw InvalidUnicode { @line, @col, hex: low_hex }
+            return Err(InvalidUnicode { @line, @col, hex: low_hex })
         }
         ro codepoint = 0x10000 + ((code - 0xD800) * 0x400) + (low - 0xDC00)
-        str.from_codepoint(codepoint)
+        Ok(str.from_codepoint(codepoint))
     } else if code >= 0xDC00 && code <= 0xDFFF {
         // Lone low-surrogate — невалидно.
-        throw InvalidUnicode { @line, @col, hex }
+        Err(InvalidUnicode { @line, @col, hex })
     } else {
-        str.from_codepoint(code)
+        Ok(str.from_codepoint(code))
     }
 }
 
-fn Lexer mut @read_hex_quad() Fail[ParseJsonError] -> str {
+fn Lexer mut @read_hex_quad() -> Result[str, ParseJsonError] {
     mut hex = ""
     for i in 0..4 {
         match @advance() {
-            None => throw UnexpectedEof { @line, @col }
+            None => return Err(UnexpectedEof { @line, @col })
             Some(c) if is_hex_digit(c) => { hex = hex + str.from(c) }
-            Some(c) => throw InvalidUnicode {
+            Some(c) => return Err(InvalidUnicode {
                 @line, @col, hex: hex + str.from(c)
-            }
+            })
         }
     }
-    hex
+    Ok(hex)
 }
 
 fn parse_hex(s str) -> int {
@@ -398,7 +396,7 @@ fn parse_hex(s str) -> int {
 
 // Чтение числа: optional '-', integer part, optional '.fraction',
 // optional 'e[+-]exp'. Возвращает f64.
-fn Lexer mut @read_number() Fail[ParseJsonError] -> f64 {
+fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
     ro start = @pos
     ro start_line = @line
     ro start_col = @col
@@ -413,20 +411,20 @@ fn Lexer mut @read_number() Fail[ParseJsonError] -> f64 {
             @advance()
             while is_digit_opt(@peek()) { @advance() }
         }
-        _ => throw InvalidNumber {
+        _ => return Err(InvalidNumber {
             line: start_line, col: start_col,
             text: @input[start..@pos]
-        }
+        })
     }
 
     // Fraction: .[0-9]+
     if @peek() == Some('.') {
         @advance()
         if !is_digit_opt(@peek()) {
-            throw InvalidNumber {
+            return Err(InvalidNumber {
                 line: start_line, col: start_col,
                 text: @input[start..@pos]
-            }
+            })
         }
         while is_digit_opt(@peek()) { @advance() }
     }
@@ -440,10 +438,10 @@ fn Lexer mut @read_number() Fail[ParseJsonError] -> f64 {
                 _ => ()
             }
             if !is_digit_opt(@peek()) {
-                throw InvalidNumber {
+                return Err(InvalidNumber {
                     line: start_line, col: start_col,
                     text: @input[start..@pos]
-                }
+                })
             }
             while is_digit_opt(@peek()) { @advance() }
         }
@@ -452,10 +450,10 @@ fn Lexer mut @read_number() Fail[ParseJsonError] -> f64 {
 
     ro text = @input[start..@pos]
     match f64.try_parse(text) {
-        Some(n) => n
-        None    => throw InvalidNumber {
+        Some(n) => Ok(n)
+        None    => Err(InvalidNumber {
             line: start_line, col: start_col, text
-        }
+        })
     }
 }
 
@@ -472,33 +470,33 @@ type Parser {
     mut cur TokenWithPos
 }
 
-fn Parser.new(input str) Fail[ParseJsonError] -> Self {
+fn Parser.new(input str) -> Result[Parser, ParseJsonError] {
     mut lex = Lexer.new(input)
-    ro cur = lex.next_token()
-    { lex, cur }
+    ro cur = lex.next_token()?
+    Ok({ lex, cur })
 }
 
-fn Parser mut @advance() Fail[ParseJsonError] -> TokenWithPos {
+fn Parser mut @advance() -> Result[TokenWithPos, ParseJsonError] {
     ro prev = @cur
-    @cur = @lex.next_token()
-    prev
+    @cur = @lex.next_token()?
+    Ok(prev)
 }
 
-fn Parser mut @parse_value() Fail[ParseJsonError] -> JsonValue {
+fn Parser mut @parse_value() -> Result[JsonValue, ParseJsonError] {
     ro tp = @cur
     match tp.tok {
-        NullTok    => { @advance(); Null }
-        TrueTok    => { @advance(); Bool(true) }
-        FalseTok   => { @advance(); Bool(false) }
-        NumTok(n)  => { @advance(); Num(n) }
-        StrTok(s)  => { @advance(); Str(s) }
+        NullTok    => { @advance()?; Ok(Null) }
+        TrueTok    => { @advance()?; Ok(Bool(true)) }
+        FalseTok   => { @advance()?; Ok(Bool(false)) }
+        NumTok(n)  => { @advance()?; Ok(Num(n)) }
+        StrTok(s)  => { @advance()?; Ok(Str(s)) }
         LBracket   => @parse_array()
         LBrace     => @parse_object()
-        EofTok     => throw UnexpectedEof { line: tp.line, col: tp.col }
-        _          => throw UnexpectedChar {
+        EofTok     => Err(UnexpectedEof { line: tp.line, col: tp.col })
+        _          => Err(UnexpectedChar {
             line: tp.line, col: tp.col,
             found: tok_first_char(tp.tok)
-        }
+        })
     }
 }
 
@@ -514,99 +512,100 @@ fn tok_first_char(t Token) -> char => match t {
     _        => '?'
 }
 
-fn Parser mut @parse_array() Fail[ParseJsonError] -> JsonValue {
-    @advance()    // [
+fn Parser mut @parse_array() -> Result[JsonValue, ParseJsonError] {
+    @advance()?    // [
     mut items []JsonValue = []
 
     // Пустой массив
     if @cur.tok == RBracket {
-        @advance()
-        return Array(items)
+        @advance()?
+        return Ok(Array(items))
     }
 
-    items.push(@parse_value())
+    items.push(@parse_value()?)
     mut done = false
     while !done {
         match @cur.tok {
             Comma => {
-                @advance()
-                items.push(@parse_value())
+                @advance()?
+                items.push(@parse_value()?)
             }
             RBracket => {
-                @advance()
+                @advance()?
                 done = true
             }
-            _ => throw UnexpectedChar {
+            _ => return Err(UnexpectedChar {
                 line: @cur.line, col: @cur.col,
                 found: tok_first_char(@cur.tok)
-            }
+            })
         }
     }
-    Array(items)
+    Ok(Array(items))
 }
 
-fn Parser mut @parse_object() Fail[ParseJsonError] -> JsonValue {
-    @advance()    // {
+fn Parser mut @parse_object() -> Result[JsonValue, ParseJsonError] {
+    @advance()?    // {
     mut fields = HashMap[str, JsonValue].new()
 
     // Пустой объект
     if @cur.tok == RBrace {
-        @advance()
-        return Object(fields)
+        @advance()?
+        return Ok(Object(fields))
     }
 
-    @parse_member(fields)
+    @parse_member(fields)?
     mut done = false
     while !done {
         match @cur.tok {
             Comma => {
-                @advance()
-                @parse_member(fields)
+                @advance()?
+                @parse_member(fields)?
             }
             RBrace => {
-                @advance()
+                @advance()?
                 done = true
             }
-            _ => throw UnexpectedChar {
+            _ => return Err(UnexpectedChar {
                 line: @cur.line, col: @cur.col,
                 found: tok_first_char(@cur.tok)
-            }
+            })
         }
     }
-    Object(fields)
+    Ok(Object(fields))
 }
 
-fn Parser mut @parse_member(mut fields HashMap[str, JsonValue]) Fail[ParseJsonError] -> () {
+fn Parser mut @parse_member(mut fields HashMap[str, JsonValue]) -> Result[(), ParseJsonError] {
     // ключ — string token
     ro key_tp = @cur
     ro key = match key_tp.tok {
         StrTok(s) => s
-        _ => throw UnexpectedChar {
+        _ => return Err(UnexpectedChar {
             line: key_tp.line, col: key_tp.col,
             found: tok_first_char(key_tp.tok)
-        }
+        })
     }
-    @advance()
+    @advance()?
 
     // ':'
     match @cur.tok {
-        Colon => { @advance() }
-        _ => throw UnexpectedChar {
+        Colon => { @advance()? }
+        _ => return Err(UnexpectedChar {
             line: @cur.line, col: @cur.col,
             found: tok_first_char(@cur.tok)
-        }
+        })
     }
 
     // value
-    ro value = @parse_value()
+    ro value = @parse_value()?
 
     // RFC 8259: behavior on duplicate keys is implementation-defined.
     // Мы выбираем строгое поведение — DuplicateKey error. Это AI-friendly:
     // duplicate почти всегда ошибка.
     if fields.contains(key) {
-        throw DuplicateKey { line: key_tp.line, col: key_tp.col, key }
+        return Err(DuplicateKey { line: key_tp.line, col: key_tp.col, key })
     }
     fields.insert(key, value)
+    Ok(())
 }
 
 
@@ -616,34 +615,33 @@ fn Parser mut @parse_member(mut fields HashMap[str, JsonValue]) Fail[ParseJsonEr
 
 /// Parse JSON-документ из строки. Главная точка входа.
 ///
-/// Throws `Fail[ParseJsonError]` на любой ошибке (lexical/syntactic);
-/// caller handles через `with Fail[...] = ...` block или пропагирует
-/// дальше. D67 запрещает `?` поверх effect-throws — `throw` сам
-/// пробрасывается компилятором.
+/// Возвращает `Result[JsonValue, ParseJsonError]` (D325 — Result-everywhere).
+/// На call-site: `Json.parse(s)?` (проброс) / `Json.parse(s)!!` (throw) /
+/// `match` (ветвление по ошибке).
 ///
 /// # Examples
 /// ```nova
-/// let v = Json.parse("[1, 2, 3]")
+/// let v = Json.parse("[1, 2, 3]")!!
 /// assert(v.is_array())
 /// ```
 #stable(since = "0.1")
-export fn Json.parse(s str) Fail[ParseJsonError] -> JsonValue {
-    mut p = Parser.new(s)
-    ro v = p.parse_value()
+export fn Json.parse(s str) -> Result[JsonValue, ParseJsonError] {
+    mut p = Parser.new(s)?
+    ro v = p.parse_value()?
 
     // Trailing content (после value должен быть только EOF).
     match p.cur.tok {
-        EofTok => v
-        _ => throw TrailingContent { line: p.cur.line, col: p.cur.col }
+        EofTok => Ok(v)
+        _ => Err(TrailingContent { line: p.cur.line, col: p.cur.col })
     }
 }
 
-/// D73 `From[str]` — алиас [`Json.parse`].
+/// D77 `TryFrom[str]` — алиас [`Json.parse`] (D325 — fallible → Result).
 ///
-/// Позволяет `let v JsonValue = s.into()` через автоматический Into.
+/// Позволяет `str.try_into()` (Result) при известном целевом типе.
 /// Поведение идентично `Json.parse`.
 #stable(since = "0.1")
-export fn JsonValue.from(s str) Fail[ParseJsonError] -> Self =>
+export fn JsonValue.try_from(s str) -> Result[JsonValue, ParseJsonError] =>
     Json.parse(s)
 
 
@@ -813,29 +811,29 @@ fn indent(depth int) -> str {
 // ──────────────────────────────────────────────────────────────────────────
 
 test "parse: примитивы" {
-    assert(Json.parse("null").is_null())
-    assert(Json.parse("true").as_bool() == Some(true))
-    assert(Json.parse("false").as_bool() == Some(false))
-    assert(Json.parse("42").as_num() == Some(42.0))
-    assert(Json.parse("-3.14").as_num() == Some(-3.14))
-    assert(Json.parse("1e3").as_num() == Some(1000.0))
-    assert(Json.parse("\"hello\"").as_str() == Some("hello"))
+    assert(Json.parse("null")!!.is_null())
+    assert(Json.parse("true")!!.as_bool() == Some(true))
+    assert(Json.parse("false")!!.as_bool() == Some(false))
+    assert(Json.parse("42")!!.as_num() == Some(42.0))
+    assert(Json.parse("-3.14")!!.as_num() == Some(-3.14))
+    assert(Json.parse("1e3")!!.as_num() == Some(1000.0))
+    assert(Json.parse("\"hello\"")!!.as_str() == Some("hello"))
 }
 
 test "parse: пустые collections" {
-    ro arr = Json.parse("[]")
+    ro arr = Json.parse("[]")!!
     assert(arr.is_array())
     match arr.as_array() {
         Some(xs) => assert(xs.len() == 0)
         None     => assert(false)
     }
 
-    ro obj = Json.parse("{}")
+    ro obj = Json.parse("{}")!!
     assert(obj.is_object())
 }
 
 test "parse: array элементов" {
-    ro v = Json.parse("[1, 2, 3]")
+    ro v = Json.parse("[1, 2, 3]")!!
     match v.as_array() {
         Some(xs) => {
             assert(xs.len() == 3)
@@ -848,7 +846,7 @@ test "parse: array элементов" {
 }
 
 test "parse: object с полями" {
-    ro v = Json.parse("{\"name\": \"alice\", \"age\": 30}")
+    ro v = Json.parse("{\"name\": \"alice\", \"age\": 30}")!!
     match v.as_object() {
         Some(m) => {
             assert(m.get("name") == Some(Str("alice")))
@@ -860,7 +858,7 @@ test "parse: object с полями" {
 
 test "parse: nested structures" {
     ro s = "{\"users\": [{\"id\": 1}, {\"id\": 2}]}"
-    ro v = Json.parse(s)
+    ro v = Json.parse(s)!!
     match v.as_object() {
         Some(root) => match root.get("users") {
             Some(users_v) => match users_v.as_array() {
@@ -877,17 +875,17 @@ test "parse: nested structures" {
 }
 
 test "parse: escape sequences в string" {
-    ro v = Json.parse("\"line1\\nline2\\ttab\\\"quote\"")
+    ro v = Json.parse("\"line1\\nline2\\ttab\\\"quote\"")!!
     assert(v.as_str() == Some("line1\nline2\ttab\"quote"))
 }
 
 test "parse: unicode escape" {
-    ro v = Json.parse("\"\\u00E9\"")          // é
+    ro v = Json.parse("\"\\u00E9\"")!!          // é
     assert(v.as_str() == Some("é"))
 }
 
 test "parse: surrogate pair (emoji)" {
-    ro v = Json.parse("\"\\uD83D\\uDE00\"")   // 😀 (U+1F600)
+    ro v = Json.parse("\"\\uD83D\\uDE00\"")!!   // 😀 (U+1F600)
     match v.as_str() {
         Some(s) => assert(s.len() > 0)
         None    => assert(false)
@@ -895,56 +893,41 @@ test "parse: surrogate pair (emoji)" {
 }
 
 test "parse: ошибка — неизвестный токен" {
-    ro r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
-        ro _ = Json.parse("xyz")
-        None
-    }
+    ro r = Json.parse("xyz")
     assert(match r {
-        Some(UnexpectedChar { .. }) => true
-        _                            => false
-    })
-}
-
-test "parse: ошибка — незакрытая string" {
-    ro r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
-        ro _ = Json.parse("\"unclosed")
-        None
-    }
-    assert(match r {
-        Some(UnexpectedEof { .. }) => true
-        _                           => false
-    })
-}
-
-test "parse: ошибка — trailing content" {
-    ro r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
-        ro _ = Json.parse("42 garbage")
-        None
-    }
-    assert(match r {
-        Some(TrailingContent { .. }) => true
-        _                             => false
-    })
-}
-
-test "parse: ошибка — duplicate key" {
-    ro r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
-        ro _ = Json.parse("{\"a\": 1, \"a\": 2}")
-        None
-    }
-    assert(match r {
-        Some(DuplicateKey { .. }) => true
+        Err(UnexpectedChar { .. }) => true
         _                          => false
     })
 }
 
-test "parse: ошибка — bad number" {
-    ro r = with Fail[ParseJsonError] = |e| interrupt Some(e) {
-        ro _ = Json.parse("01")           // leading zero запрещён в JSON
-        None
-    }
+test "parse: ошибка — незакрытая string" {
+    ro r = Json.parse("\"unclosed")
     assert(match r {
-        Some(TrailingContent { .. }) | Some(InvalidNumber { .. }) => true
+        Err(UnexpectedEof { .. }) => true
+        _                         => false
+    })
+}
+
+test "parse: ошибка — trailing content" {
+    ro r = Json.parse("42 garbage")
+    assert(match r {
+        Err(TrailingContent { .. }) => true
+        _                           => false
+    })
+}
+
+test "parse: ошибка — duplicate key" {
+    ro r = Json.parse("{\"a\": 1, \"a\": 2}")
+    assert(match r {
+        Err(DuplicateKey { .. }) => true
+        _                        => false
+    })
+}
+
+test "parse: ошибка — bad number" {
+    ro r = Json.parse("01")               // leading zero запрещён в JSON
+    assert(match r {
+        Err(TrailingContent { .. }) | Err(InvalidNumber { .. }) => true
         _ => false
     })
 }
@@ -960,7 +943,7 @@ test "into: примитивы — round-trip" {
     ]
     for v in cases {
         ro s = v.into()
-        ro parsed = Json.parse(s)
+        ro parsed = Json.parse(s)!!
         assert(parsed == v)
     }
 }
@@ -968,7 +951,7 @@ test "into: примитивы — round-trip" {
 test "into: array round-trip" {
     ro v = Array([Num(1.0), Num(2.0), Str("three")])
     ro s = v.into()
-    ro parsed = Json.parse(s)
+    ro parsed = Json.parse(s)!!
     assert(parsed == v)
 }
 
@@ -978,23 +961,22 @@ test "into: nested object round-trip" {
     m.insert("score", Num(95.5))
     ro v = Object(m)
     ro s = v.into()
-    ro parsed = Json.parse(s)
+    ro parsed = Json.parse(s)!!
     assert(parsed == v)
 }
 
 test "into: escape в string" {
     ro v = Str("line1\nline2\ttab\"quote")
     ro s = v.into()
-    ro parsed = Json.parse(s)
+    ro parsed = Json.parse(s)!!
     assert(parsed == v)
 }
 
-test "D73: JsonValue.from(s) и s.into() работают парно" {
-    ro v JsonValue = JsonValue.from("[1, 2, 3]")
+test "D325: JsonValue.try_from(s) и Json.parse(s) работают" {
+    ro v JsonValue = JsonValue.try_from("[1, 2, 3]")!!
     assert(v.is_array())
 
-    // Через .into() (D73 авто-Into)
-    ro v2 JsonValue = "[1, 2, 3]".into()
+    ro v2 = Json.parse("[1, 2, 3]")!!
     assert(v == v2)
 }
 
@@ -1006,11 +988,11 @@ test "pretty: формат с отступами" {
     // Проверяем что есть newlines (формат multi-line)
     assert(p.contains("\n"))
     // Round-trip через парсер всё ещё работает
-    assert(Json.parse(p) == v)
+    assert(Json.parse(p)!! == v)
 }
 
 test "whitespace терпимость" {
-    ro v = Json.parse("  [  1  ,  2  ]  ")
+    ro v = Json.parse("  [  1  ,  2  ]  ")!!
     match v.as_array() {
         Some(xs) => assert(xs.len() == 2)
         None     => assert(false)
@@ -1018,9 +1000,9 @@ test "whitespace терпимость" {
 }
 
 test "числа: разные форматы" {
-    assert(Json.parse("0").as_num() == Some(0.0))
-    assert(Json.parse("-0").as_num() == Some(-0.0) || Json.parse("-0").as_num() == Some(0.0))
-    assert(Json.parse("1.5e2").as_num() == Some(150.0))
-    assert(Json.parse("2.5E-1").as_num() == Some(0.25))
-    assert(Json.parse("-1.5e+3").as_num() == Some(-1500.0))
+    assert(Json.parse("0")!!.as_num() == Some(0.0))
+    assert(Json.parse("-0")!!.as_num() == Some(-0.0) || Json.parse("-0")!!.as_num() == Some(0.0))
+    assert(Json.parse("1.5e2")!!.as_num() == Some(150.0))
+    assert(Json.parse("2.5E-1")!!.as_num() == Some(0.25))
+    assert(Json.parse("-1.5e+3")!!.as_num() == Some(-1500.0))
 }
