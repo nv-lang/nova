@@ -88,9 +88,8 @@ impl ExternalRegistry {
     // Plan 118.1 Ф.1: byte-level memory intrinsics для FFI / driver work.
     pub const RAW_MEM_SRC: &'static str =
         include_str!("../../../std/runtime/raw_mem.nv");
-    // Plan 118.1 Ф.4 closeout: CStr newtype для C-string FFI.
-    pub const FFI_CSTR_SRC: &'static str =
-        include_str!("../../../std/ffi/cstr.nv");
+    // Plan 172.1 U.1.3b срез 1: `FFI_CSTR_SRC` (include_str! `std/ffi/cstr.nv`) УДАЛЁН —
+    // cstr больше не pre-load'ится в codegen-реестр, приходит через `import` (inline).
 
     // Plan 83.12: std/net — async TCP/UDP socket stdlib.
     pub const NET_ADDR_SRC: &'static str =
@@ -114,9 +113,21 @@ impl ExternalRegistry {
         // (`import std.runtime.char`, минимальный-prelude §3) и регистрируются в
         // реестре из import-resolved модуля (`from_module`). char.nv безопасен
         // для переноса сейчас: у него нет `Item::Type` (только 2 extern), поэтому
-        // `by_key`-merge достаточно. Оставшиеся 9 файлов — БИБЛИОТЕЧНЫЕ (имеют
-        // type_decls / Nova-body тела); их полное удаление — U.1.3b, gated на U.4
-        // (codegen не должен сам выводить типы методов; [M-172.1-U1-lib-import-needs-U4]).
+        // `by_key`-merge достаточно.
+        //
+        // Plan 172.1 U.1.3b СРЕЗ 1 (cstr — наименьший, 2026-06-25): `ffi/cstr.nv` УБРАН
+        // из списка. cstr — листовая FFI-библиотека: 0 транзитивных зависимостей в
+        // prelude/core (grep std/ — CStr/as_cstr только в самом cstr.nv), 0 usage без
+        // `import` в корпусе (все 12 cstr-тестов уже `import std.ffi.cstr`), а её
+        // инлайн-путь ЗВУЧЕН (Nova-body `as_cstr` возвращает `CStr`, не self-extern-bool
+        // — не требует Gap A/B; recon PASS). Под `import` cstr приходит через
+        // import-resolved модуль (`from_module` merge :2157 несёт extern-сигнатуры +
+        // `CStr` type_decl, U.1.3a). Предусловие §10 (звучность инлайн-пути ПЕРЕД
+        // удалением снабжения) выполнено для cstr. Без import → чистая «undefined».
+        //
+        // Оставшиеся 8 файлов — БИБЛИОТЕЧНЫЕ; их удаление — продолжение U.1.3b
+        // (sync/net требуют Gap A ✅ + Gap B primitive/U.4.3 tuple ПЕРЕД удалением,
+        // [M-172.1-U1-lib-import-needs-U4]; net — ещё транзитивный net_last_error).
         for (name, src) in &[
             ("string_builder.nv", Self::STRING_BUILDER_SRC),
             ("write_buffer.nv",   Self::WRITE_BUFFER_SRC),
@@ -124,8 +135,6 @@ impl ExternalRegistry {
             ("sync.nv",           Self::SYNC_SRC),
             // Plan 118.1 Ф.1: RawMem intrinsics.
             ("raw_mem.nv",        Self::RAW_MEM_SRC),
-            // Plan 118.1 Ф.4 closeout: CStr.
-            ("ffi/cstr.nv",       Self::FFI_CSTR_SRC),
             // Plan 83.12: net stdlib.
             ("net/addr.nv",       Self::NET_ADDR_SRC),
             ("net/tcp.nv",        Self::NET_TCP_SRC),

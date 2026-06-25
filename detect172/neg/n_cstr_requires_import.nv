@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E7320
+// Plan 172.1 U.1.3b срез 1: после удаления `ffi/cstr.nv` из `load_builtins`,
+// `str.as_cstr` БЕЗ `import std.ffi.cstr` — чистая checker-ошибка [E7320] «no field
+// or method as_cstr on type str» (НЕ codegen-fallthrough). cstr теперь библиотека,
+// требующая ЯВНЫЙ import (§3-таксономия / §10-приёмка «без import → undefined»).
+// Регресс-гард: если cstr снова попадёт в load_builtins / станет доступен без import —
+// этот neg перестанет ловить. Per test-conventions.md: no `test`-block — trigger в fn.
+module neg.n_cstr_requires_import
+
+fn trigger() -> bool {
+    ro c = "hi".as_cstr()
+    true
+}
