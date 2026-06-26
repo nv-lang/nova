@@ -578,6 +578,15 @@ pub struct CEmitter {
     value_record_names: HashSet<String>,
     /// Maps sum type name → variant name → field types (positional)
     sum_schemas: HashMap<String, HashMap<String, Vec<String>>>,
+    /// [M-172.1-self-ref-slice-variant-erasure] sum types currently mid-emission
+    /// in `emit_sum_type`. A self-referential variant payload (`Node([]Self)`,
+    /// e.g. json `JsonValue.Array([]JsonValue)`) lowers its slice element via
+    /// `type_ref_to_c` BEFORE the type is registered in `sum_schemas`, so
+    /// `is_generic_stub_c` would mistake the concrete `Nova_<Self>*` element for an
+    /// unresolved generic-param stub and erase the Vec element to `nova_int` (→
+    /// `Nova_Vec____nova_int*` payload vs `Nova_Vec____Nova_Self_p*` signature →
+    /// CC-FAIL). A type being defined is concrete by construction; this guards it.
+    being_defined_sum_types: HashSet<String>,
     /// Maps effect name → method name → (param_types, return_type)
     effect_schemas: HashMap<String, HashMap<String, (Vec<String>, String)>>,
     /// Maps method name → (type_name, is_instance) for user-defined methods.
@@ -1353,6 +1362,7 @@ impl CEmitter {
             named_tuple_field_defaults: HashMap::new(),
             value_record_names: HashSet::new(),
             sum_schemas: HashMap::new(),
+            being_defined_sum_types: HashSet::new(),
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
             method_overloads: BTreeMap::new(),
@@ -10794,6 +10804,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         if !has_payload {
             self.line("char _dummy;");
         }
+        // [M-172.1-self-ref-slice-variant-erasure]: mark this type concrete WHILE its
+        // variant payload fields are lowered, so a self-referential `[]Self` slice
+        // element (`type T | Node([]T)`) resolves to `Nova_Vec____Nova_T_p*` instead
+        // of the erased `Nova_Vec____nova_int*` (`is_generic_stub_c` consults this).
+        self.being_defined_sum_types.insert(name.to_string());
         for v in variants {
             match &v.kind {
                 SumVariantKind::Unit => {
@@ -10840,6 +10855,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.indent -= 1;
         self.line("};");
         self.line("");
+        // [M-172.1-self-ref-slice-variant-erasure]: payload fields lowered — the type
+        // is about to be registered; drop the mid-emission concreteness guard.
+        self.being_defined_sum_types.remove(name);
 
         // Constructor functions: Nova_Shape* nova_make_Shape_Circle(nova_f64 _0) { ... }
         for v in variants {
@@ -35594,6 +35612,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             return !name.is_empty()
                 && !self.record_schemas.contains_key(name)
                 && !self.sum_schemas.contains_key(name)
+                // [M-172.1-self-ref-slice-variant-erasure]: a sum type mid-emission
+                // is concrete by construction — its `sum_schemas` entry is inserted
+                // only AFTER the variant payload fields are lowered, so a
+                // self-referential `[]Self` element would otherwise be misread as a
+                // generic-param stub and erased to `nova_int`.
+                && !self.being_defined_sum_types.contains(name)
                 && !self.generic_types.contains(name)
                 // Plan 100.5 (D163): opaque FFI consume types are concrete —
                 // `Nova_File*` must NOT be treated as a generic stub.

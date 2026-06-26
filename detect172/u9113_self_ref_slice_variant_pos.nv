@@ -1,0 +1,79 @@
+// [M-172.1-self-ref-slice-variant-erasure] regression guard (closes the json-blocking
+// half of [M-91.13]; Plan 181 Ф.2a). A SELF-REFERENTIAL sum type whose variant payload
+// is a slice of itself — `type Tree | Node([]Tree)` (json `JsonValue.Array([]JsonValue)`)
+// — used to CC-FAIL: the variant payload field is lowered by `emit_sum_type` via
+// `type_ref_to_c` BEFORE the type is registered in `sum_schemas`, so `is_generic_stub_c`
+// mistook the concrete `Nova_Tree*` slice element for an unresolved generic-param stub and
+// erased the Vec element to `nova_int` → struct field `Nova_Vec____nova_int* _0` vs
+// signature `NovaOpt_Nova_Vec____Nova_Tree_p_p` → C type mismatch. Fix: `emit_sum_type`
+// marks the type concrete-while-emitting (`being_defined_sum_types`), consulted by
+// `is_generic_stub_c`, so the self-referential slice element resolves to its real type.
+// Covers Tuple-variant + Record-variant payloads; a non-self-ref `[]Other` is the control
+// (it already worked — `Other` is registered before `Wrap`). Folder-module peer of
+// `module detect172`.
+module detect172
+
+type U9113Other { ro v int }
+
+// (A) self-referential Tuple-variant payload `[]Self`.
+type U9113Tree
+    | Leaf
+    | Node([]U9113Tree)
+
+// (B) self-referential Record-variant payload `[]Self`.
+type U9113Rec
+    | Tip
+    | Branch { kids []U9113Rec, label int }
+
+// (C) non-self-ref control: payload element is a SEPARATE user type.
+type U9113Wrap
+    | Empty
+    | Many([]U9113Other)
+
+fn U9113Tree @kids() -> Option[[]U9113Tree] =>
+    match @ { Node(xs) => Some(xs), _ => None }
+
+fn U9113Rec @children() -> Option[[]U9113Rec] =>
+    match @ { Branch { kids, label: _ } => Some(kids), _ => None }
+
+fn U9113Wrap @items() -> Option[[]U9113Other] =>
+    match @ { Many(xs) => Some(xs), _ => None }
+
+test "u9113: self-ref Tuple-variant []Self payload" {
+    mut ks []U9113Tree = []
+    ks.push(Leaf)
+    ks.push(Leaf)
+    ro t = Node(ks)
+    match t.kids() {
+        Some(xs) => assert(xs.len() == 2)
+        None     => assert(false)
+    }
+}
+
+test "u9113: self-ref Record-variant []Self payload" {
+    mut ks []U9113Rec = []
+    ks.push(Tip)
+    ro r = Branch { kids: ks, label: 5 }
+    match r.children() {
+        Some(xs) => assert(xs.len() == 1)
+        None     => assert(false)
+    }
+}
+
+test "u9113: non-self-ref []Other control" {
+    mut xs []U9113Other = []
+    xs.push(U9113Other { v: 7 })
+    ro w = Many(xs)
+    match w.items() {
+        Some(ys) => assert(ys.len() == 1 && ys[0].v == 7)
+        None     => assert(false)
+    }
+}
+
+test "u9113: Leaf variant yields None" {
+    ro t = Leaf
+    match t.kids() {
+        Some(_) => assert(false)
+        None    => assert(true)
+    }
+}
