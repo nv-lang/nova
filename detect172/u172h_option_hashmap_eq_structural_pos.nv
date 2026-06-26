@@ -1,0 +1,87 @@
+// [M-172.1-option-hashmap-eq-structural] (Plan 172.1; §0 единый источник per-type
+// операции). A mono'd `HashMap[K,V]` nested as an Option payload / a sum-variant
+// field compared POINTER IDENTITY (json `Object(m)==Object(m)` false-by-construction
+// for a reparsed map). Two parts: (1) a `HashMap[K,V] @equal` Nova-body
+// (hashmap.nv, order-independent — same len + ∀(k,v): `other.get(k)==Some(v)`);
+// (2) `emit_field_eq` routes a nested `Nova_HashMap____<k>__<v>*` through the MONO
+// `HashMap____<k>__<v>_method_equal` (same machinery as Vec — predicate + pending
+// drain + L2-exclusion). Closes json `into: nested object round-trip` + the per-type
+// container-eq consolidation. Folder-module peer of `module detect172`; bare ctors
+// are u172h-prefixed. HashMap needs an explicit import in a bare module.
+module detect172
+
+import std.collections.hashmap.{HashMap}
+
+type U172hBox
+    | U172hObj(HashMap[str, int])
+    | U172hNil
+
+// value is a sum (mirror json `Object(HashMap[str, JsonValue])`) — recurse into sum eq.
+type U172hVal
+    | U172hI(int)
+    | U172hS(str)
+
+fn u172h_mk(a int, b int) -> HashMap[str, int] {
+    mut m = HashMap[str, int].new()
+    m.insert("a", a)
+    m.insert("b", b)
+    m
+}
+
+test "u172h: direct HashMap eq — order-independent (was pointer-eq)" {
+    assert(u172h_mk(1, 2) == u172h_mk(1, 2))
+    assert(u172h_mk(1, 2) != u172h_mk(1, 9))
+    // insertion order must not matter.
+    mut m1 = HashMap[str, int].new()
+    m1.insert("x", 1)
+    m1.insert("y", 2)
+    mut m2 = HashMap[str, int].new()
+    m2.insert("y", 2)
+    m2.insert("x", 1)
+    assert(m1 == m2)
+    // different length.
+    mut m3 = HashMap[str, int].new()
+    m3.insert("x", 1)
+    assert(m1 != m3)
+}
+
+test "u172h: Option[HashMap] structural eq" {
+    ro a = Some(u172h_mk(1, 2))
+    assert(a == Some(u172h_mk(1, 2)))
+    assert(a != Some(u172h_mk(1, 9)))
+    assert(a != None)
+}
+
+test "u172h: sum holding a HashMap field — structural" {
+    assert(U172hObj(u172h_mk(1, 2)) == U172hObj(u172h_mk(1, 2)))
+    assert(U172hObj(u172h_mk(1, 2)) != U172hObj(u172h_mk(1, 9)))
+    assert(U172hNil == U172hNil)
+    assert(U172hObj(u172h_mk(1, 2)) != U172hNil)
+    // wrapped in Option too.
+    assert(Some(U172hObj(u172h_mk(5, 6))) == Some(U172hObj(u172h_mk(5, 6))))
+}
+
+test "u172h: HashMap[str, <sum>] — value recurse into sum eq (json Object shape)" {
+    mut m1 = HashMap[str, U172hVal].new()
+    m1.insert("n", U172hI(7))
+    m1.insert("s", U172hS("hi"))
+    mut m2 = HashMap[str, U172hVal].new()
+    m2.insert("s", U172hS("hi"))
+    m2.insert("n", U172hI(7))
+    assert(m1 == m2)
+    mut m3 = HashMap[str, U172hVal].new()
+    m3.insert("n", U172hI(8))
+    m3.insert("s", U172hS("hi"))
+    assert(m1 != m3)
+}
+
+test "u172h: HashMap[int, []int] — value is a nested container (Vec)" {
+    mut m1 = HashMap[int, []int].new()
+    m1.insert(1, [10, 20])
+    mut m2 = HashMap[int, []int].new()
+    m2.insert(1, [10, 20])
+    assert(m1 == m2)
+    mut m3 = HashMap[int, []int].new()
+    m3.insert(1, [10, 99])
+    assert(m1 != m3)
+}

@@ -302,6 +302,43 @@ export fn HashMap[K Clone, V Clone] @clone() -> HashMap[K, V] {
 }
 
 
+/// Order-independent структурное равенство — `true` iff обе мапы имеют одинаковую
+/// длину и каждая пара `(k, v)` из `self` присутствует в `other` с равным
+/// значением (`other.get(k) == Some(v)`). Это impl протокола `Equal` (D109/D237)
+/// для `HashMap[K, V]`, зеркало Rust `impl<K: Eq+Hash, V: Eq> PartialEq`.
+///
+/// [M-172.1-option-hashmap-eq-structural]: даёт element-wise eq, на которую
+/// маршрутизирует `emit_field_eq` для вложенного `HashMap` (Option/sum-поле),
+/// как для `Vec[T]`. Работает для любых `K`/`V` с определённым `==`; opaque-типы
+/// деградируют до identity. `K` уже несёт bound `Hash` от типа; `==` на `V`
+/// диспатчится структурно в codegen (явный `[V Equal]` не нужен — как у `Vec[T] @equal`).
+///
+/// # Examples
+///
+/// ```nova
+/// let a = HashMap[str, int].from([("x", 1), ("y", 2)])
+/// let b = HashMap[str, int].from([("y", 2), ("x", 1)])
+/// assert(a.equal(b))   // order-independent
+/// ```
+#stable(since = "0.1")
+export fn HashMap[K, V] @equal(other HashMap[K, V]) -> bool {
+    if @len() != other.len() {
+        return false
+    }
+    for (k, v) in @iter() {
+        match other.get(k) {
+            Some(ov) => {
+                if v != ov {
+                    return false
+                }
+            }
+            None => return false
+        }
+    }
+    true
+}
+
+
 /// Слить все пары из `other` в `self` (override semantics: existing keys перезаписываются).
 ///
 /// # Examples
