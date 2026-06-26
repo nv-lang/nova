@@ -297,12 +297,25 @@ Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
   detect172 `u172_option_sum_structural_eq_pos` 5 тестов + neg-control, unit types:: 51/0. **SCOPE = SUM-ONLY:**
   records/sums-с-record-полем — follow-up ниже.
 
-- **[M-172.1-option-eq-record-needs-proto-ordering]** 🔴 follow-up (P2; вскрыт `f53e32a9`). `Option[<record>] ==`
-  (и sum с record-ПОЛЕМ) тоже сравнивает указатели — но `emit_field_eq` для record зовёт `@equal` МЕТОД, чей
-  прототип эмитится ПОСЛЕ late-splice `__NOVAOPT_VR_TYPEDEFS__` → late `nova_opt_eq` делает implicit-decl →
-  CC-FAIL `conflicting types for Nova_<T>_method_equal`. **Фикс:** method-прототипы (вообще все static-fn proto)
-  forward-объявлять ДО late-eq splice (та же дисциплина «порядок эмиссии — одна» §0 фаза-корректность). Тогда
-  предикат `opt_payload_needs_structural_eq` расширяется на `record_schemas` (минус builtin-контейнеры).
+- **[M-172.1-option-eq-record-structural]** 🔴 follow-up (P2; разведан+прототипирован 2026-06-26, откатан).
+  `Option[<record>] ==` (и sum с record-ПОЛЕМ) сравнивает указатели. **ДВА слоя, оба нужны** (прототип показал —
+  один не закрывает):
+  - **Слой 1 — proto-ordering (необходим).** `emit_field_eq` для record зовёт `@equal` МЕТОД, чей прототип
+    эмитится ПОСЛЕ late-eq splice → late `nova_opt_eq` делает implicit-decl → CC-FAIL `conflicting types for
+    Nova_<T>_method_equal`. Фикс: structural opt_eq ФУНКЦИИ — в новый буфер, splice'нутый ПОСЛЕ всех fn-forward-decl
+    (typedef остаётся рано); прототип в `register_fn`-секции (§7.1: порядок секций — `__NOVAOPT_VR_TYPEDEFS__`(4080)
+    → fn-forward-decls(4133); циркулярность typedef↔proto разрывается отдельным eq-fn буфером). Прототип
+    подтвердил: `alias_tagged` CC-FAIL уходит, opt_eq компилируется. ЭТО ЖЕ «порядок эмиссии — одна дисциплина»
+    (§0 фаза-корректность).
+  - **Слой 2 — record-field structural recursion (тоже необходим).** Records **НЕ всегда** авто-деривят `@equal`
+    (прототип: `type Pt {x,y}`, сравниваемый только через `Option[Pt]==`, НЕ получил `Nova_Pt_method_equal` →
+    `emit_field_eq` упал в identity-fallback → eq вернул false для равных). `emit_field_eq` для record-без-@equal
+    должен РЕКУРСИРОВАТЬ по полям (`record_schemas`/`record_variant_field_order`) структурно — как делает для sum
+    — а не полагаться на наличие `@equal`. Это завершает единый диспетчер per-type-eq (§0).
+  - Доп.: при включении проверить, что register_novaopt_decl видит `record_schemas` (Pt не сработал в предикате —
+    возможно register для `Option[Pt]` из fn-сигнатуры идёт до заполнения схемы = ещё один use-before-ready).
+  **Почему откатан:** sum-часть (`f53e32a9`) звучна и регрессионно-чиста; record — многослойная переделка
+  eq-подсистемы (оба слоя + builtin-struct-исключения), лучше отдельным focused-заходом, не в конце длинной сессии.
 
 - **[M-172.1-option-container-eq-structural]** 🔴 follow-up (P2). `Option[Vec[T]]` / `Vec`/`HashMap` как
   sum-вариант-поле сравниваются по указателям (нужна element-wise структурная eq, mono'd `@equal`). Блокирует
