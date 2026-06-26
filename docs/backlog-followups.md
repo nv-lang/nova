@@ -263,3 +263,21 @@ Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
   expected_record_type 1/0. Разблокировал json **ПАСТ** анон-record (упирается в downstream erasure-баг
   `as_array() -> Option[[]JsonValue]`, `[M-91.13]` — **НЕ регрессия**, оригинал уже падал `nova test`).
   Полный RecordLit-резолвер остаётся **Plan 172.1 U.4.5**.
+
+- **[M-172.1-self-ref-slice-variant-erasure]** ✅ **RESOLVED 2026-06-26** (`98fa5c56`, ветка
+  `plan-172-unified-type-engine`; закрывает json-блокирующую часть `[M-91.13]`). Self-referential sum-тип с
+  payload-вариантом-срезом самого себя — `type Tree | Node([]Tree)` (json `JsonValue.Array([]JsonValue)`) →
+  CC-FAIL: struct-поле `Nova_Vec____nova_int* _0` vs сигнатура `NovaOpt_Nova_Vec____Nova_Tree_p_p`. **Корень:**
+  `emit_sum_type` лоуэрит payload-поля вариантов через `type_ref_to_c` ДО `sum_schemas.insert` → для self-ref
+  `[]Tree` функция `is_generic_stub_c("Nova_Tree*")` возвращает true (Tree ещё не в `sum_schemas`) → элемент Vec
+  эрейзится в `nova_int` (`resolved_array_to_c`). Non-self-ref `[]Other` и HashMap-вариант работали (Other
+  зарегистрирован раньше; `resolved_named_to_c` без stub-проверки). **Фикс (ЛОКАЛЬНЫЙ, не U.1/U.4.5):** поле
+  `being_defined_sum_types: HashSet` (set вокруг loop'а lowering'а payload-полей), консультируемое в
+  `is_generic_stub_c` → тип-в-процессе-эмиссии concrete по построению. Generic-sum-путь бага не имеет
+  (type-param payload → void*). Verify: repro CC-FAIL→PASS, §7.5 baseline-DELTA 18 sum-heavy диров FAIL-множества
+  идентичны кроме 2 интенд-импактных, §0 GOLD 46 .c sorted-line (1 differ = process-noise eq-clause order,
+  доказано same-binary), detect172 `u9113_self_ref_slice_variant_pos` 4 теста + neg-control, unit types:: 51/0.
+  **json теперь КОМПИЛИРУЕТСЯ** (erasure ушёл). ⚠ json НЕ полностью зелёный: всплыли **2 отдельных
+  пре-существующих RUN-FAIL** (`parse: object с полями` json.nv:852 + `parse: ошибка`) — object/HashMap-путь
+  (`@parse_member(mut fields)` мутация / `.get` / sum-eq), НЕ array-path этого фикса. Priority: P2 (отдельный
+  вопрос для full-green json Ф.2a).
