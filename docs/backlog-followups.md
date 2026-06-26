@@ -351,6 +351,13 @@ Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
   HashMap-heavy диров 0 регрессий (4=4); unit types:: 51/0. **json остаток = ТОЛЬКО `trailing-content`**
   (`[M-181-json-trailing-content]`, parser, отложен с sign-off владельца).
 
-- **[M-181-json-trailing-content]** 🔴 follow-up (P2). json `Json.parse("42 garbage")` не возвращает
-  `Err(TrailingContent)` (тест `parse: ошибка — trailing content` json.nv:913) — **parser-логика** (детект
-  trailing после value), НЕ eq/codegen. Отдельно от компиляторных фиксов.
+- **[M-181-json-trailing-content]** ✅ RESOLVED 2026-06-26 (`99077fbc`) — **json ПОЛНОСТЬЮ ЗЕЛЁНЫЙ**.
+  `Json.parse("42 garbage")` возвращал `Err(UnexpectedChar)` вместо `Err(TrailingContent)`: существующая
+  trailing-проверка (`Json.parse`: `cur==EofTok? Ok : TrailingContent`) не достигалась — value-завершающий
+  префетч (`@advance()?` после scalar / закрывающего `]`/`}`) лексил trailing-garbage, а `next_token` на
+  нераспознанном leading-char возвращал hard `Err(UnexpectedChar)` (пробрасывался `?` ДО проверки). **Fix**
+  (parser-логика, .nv-only): `next_token` → токен-сентинел `BadTok(char)` вместо `Err` → value-парс завершается,
+  top-level trailing-проверка классифицирует BadTok как TrailingContent (`_`-арм), а mid-structure BadTok →
+  UnexpectedChar через catch-all'ы (таксономия сохранена). Покрывает scalar+array+object. Token не экспортируется
+  → локально. **Verify:** std/encoding/json PASS:1 FAIL:0; plan91_13 (потребители) PASS:1; 0 регрессий. Завершает
+  Plan 181 Ф.2a json end-to-end (все eq-блокеры sum/record/Vec/HashMap + parser).
