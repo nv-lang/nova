@@ -660,6 +660,12 @@ pub struct CEmitter {
     record_variant_field_types: HashMap<String, String>,
     /// Maps "TypeName::VariantName" → ordered list of field names (insertion order).
     record_variant_field_order: HashMap<String, Vec<String>>,
+    /// [M-172.1-option-eq-record-structural]: maps plain-record type name →
+    /// ordered list of field names (declaration order). The `record_schemas`
+    /// value is a `HashMap` (unordered) — structural eq recursion needs a stable
+    /// field order for deterministic codegen. Analog of `record_variant_field_order`
+    /// for non-variant records.
+    record_field_order: HashMap<String, Vec<String>>,
     /// Return type of the currently-emitting function, used for match result type inference.
     current_fn_return_ty: Option<String>,
     /// Plan 72 P3-B return: when the currently-emitting function declares a
@@ -945,6 +951,16 @@ pub struct CEmitter {
     /// field decl). Spliced at /*__NOVAOPT_VR_TYPEDEFS__*/ which is placed AFTER
     /// /*__GENERIC_TYPE_DEFS__*/ so the struct body is always defined first.
     novaopt_vr_typedefs_buf: std::cell::RefCell<String>,
+    /// [M-172.1-option-eq-record-structural] (L1 proto-ordering): structural
+    /// `nova_opt_eq_<X>` FUNCTIONS (for heap user sum/record payloads) that may
+    /// call a record/field `@equal` METHOD. Spliced at /*__NOVAOPT_EQ_FNS__*/
+    /// which is placed AFTER both fn-forward-decls and /*__MONO_FWD_DECLS__*/, so
+    /// the method prototypes are visible (else a late opt_eq makes an implicit
+    /// decl → "conflicting types" CC-FAIL). Only the eq FN is late here; the
+    /// NovaOpt typedef stays early (pointer field needs only a forward typedef).
+    /// Unifies sum + record structural eq under one ordering discipline (§0 единый
+    /// источник + фаза-корректность).
+    novaopt_eq_fns_buf: std::cell::RefCell<String>,
     /// Set sanitized-имён NovaOpt_<X> которые уже эмитированы в
     /// `novaopt_typedefs_buf` (для dedup'а). Pre-populated в `new()`
     /// из `NOVA_ARRAY_DECL` списка в `nova_rt/array.h` — runtime их
@@ -1380,6 +1396,7 @@ impl CEmitter {
             tuple_element_types: HashMap::new(),
             record_variant_field_types: HashMap::new(),
             record_variant_field_order: HashMap::new(),
+            record_field_order: HashMap::new(),
             current_fn_return_ty: None,
             current_fn_returns_protocol: None,
             contracts_post_label: None,
@@ -1441,6 +1458,7 @@ impl CEmitter {
             novaopt_typedefs_buf: std::cell::RefCell::new(String::new()),
             novaopt_early_gen: std::cell::RefCell::new(false),
             novaopt_vr_typedefs_buf: std::cell::RefCell::new(String::new()),
+            novaopt_eq_fns_buf: std::cell::RefCell::new(String::new()),
             novaopt_decls_seen: {
                 let mut s = std::collections::HashSet::new();
                 s.insert("nova_int".to_string());
@@ -4141,6 +4159,14 @@ impl CEmitter {
         }
         // Plan 48: placeholder for mono function forward declarations (filled at end)
         self.line("/*__MONO_FWD_DECLS__*/");
+        // [M-172.1-option-eq-record-structural] (L1): placeholder for structural
+        // `nova_opt_eq_<X>` functions (heap user sum/record payloads). Placed AFTER
+        // both the regular fn-forward-decls and /*__MONO_FWD_DECLS__*/ so any
+        // record/field `@equal` method prototype the eq fn calls is already visible
+        // (else implicit decl → "conflicting types" CC-FAIL). Filled at end; the
+        // marker line is stripped (with its newline) when no structural eq fn exists
+        // so zero-impact files stay byte-identical.
+        self.line("/*__NOVAOPT_EQ_FNS__*/");
         // Forward declarations for test impl functions
         {
             let mut idx = 0usize;
@@ -4467,6 +4493,21 @@ impl CEmitter {
         // Plan 48: splice monomorphized fn forward declarations
         let mono_fwd = self.mono_fwd_decls.clone();
         self.out = self.out.replace("/*__MONO_FWD_DECLS__*/", &mono_fwd);
+        // [M-172.1-option-eq-record-structural] (L1): splice structural opt_eq fns
+        // AFTER all method forward-decls (regular + mono) so any record/field
+        // `@equal` call inside them resolves to a visible prototype. Strip the
+        // marker AND its trailing newline when empty so zero-impact files stay
+        // byte-identical to the clean binary (mirrors __NOVARES_VR_TYPEDEFS__).
+        let eq_fns = self.novaopt_eq_fns_buf.borrow().clone();
+        if eq_fns.is_empty() {
+            self.out = self.out.replace("/*__NOVAOPT_EQ_FNS__*/\n", "");
+        } else {
+            let eq_fns_replacement = format!(
+                "/* [M-172.1-option-eq-record-structural]: structural nova_opt_eq fns \
+                 for heap user sum/record payloads — after method fwd-decls */\n{}",
+                eq_fns);
+            self.out = self.out.replace("/*__NOVAOPT_EQ_FNS__*/", &eq_fns_replacement);
+        }
         // Plan 59: splice mono'd tuple struct typedefs.
         // Layout: typedef struct { T1 f0; T2 f1; ...; } _NovaTuple____<T1>__<T2>__...;
         // Topo sort: tuple A depends on tuple B если B's mangled name
@@ -10737,6 +10778,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.line("};");
         self.line("");
         self.record_schemas.insert(name.to_string(), schema);
+        // [M-172.1-option-eq-record-structural]: stable field order for the
+        // structural eq recursion (record_schemas is an unordered HashMap).
+        self.record_field_order.insert(
+            name.to_string(),
+            fields.iter().map(|f| f.name.clone()).collect(),
+        );
         Ok(())
     }
 
@@ -12943,16 +12990,23 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     r
                 );
             }
-            // (3) sum-type recursion over tag + payload via sum_schemas. Records
-            // without a tag never reach here in practice (they always get an
-            // auto-derived @equal), so this path is for tagged sum payloads.
+            // (3) sum-type recursion over tag + payload via sum_schemas, or (4)
+            // record-field recursion via record_schemas. Records are NOT auto-
+            // `@equal`'d, so a record compared only structurally (e.g. via
+            // `Option[Rec]==` or as a sum/Result field) reaches the record branch
+            // below ([M-172.1-option-eq-record-structural] L2).
             //
-            // Guard: when novaopt_early_gen is set we are inside ensure_opt_typedef,
-            // which emits code into novaopt_typedefs_buf — BEFORE sum type struct
-            // definitions. Accessing ->tag / ->payload here causes clang "incomplete
+            // Guard: when novaopt_early_gen is set we are inside the EARLY opt path
+            // (emits into novaopt_typedefs_buf — BEFORE sum/record struct bodies).
+            // Accessing ->tag / ->payload / ->field here causes clang "incomplete
             // type" errors. Fall back to pointer identity (the function calling us
-            // is in an opt_eq context where struct members are unavailable).
-            if *self.novaopt_early_gen.borrow() && self.sum_schemas.contains_key(&type_name) {
+            // is in an early opt_eq context where struct members are unavailable).
+            // The structural-late opt path (opt_payload_needs_structural_eq) does
+            // NOT set early_gen, so it reaches the real recursion below.
+            if *self.novaopt_early_gen.borrow()
+                && (self.sum_schemas.contains_key(&type_name)
+                    || self.record_schemas.contains_key(&type_name))
+            {
                 return format!("(({}) == ({}))", l, r);
             }
             if let Some(variants) = self.sum_schemas.get(&type_name).cloned() {
@@ -12999,6 +13053,42 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 } else {
                     format!("({} && {})", tag_eq, field_conds.join(" && "))
                 };
+            }
+            // [M-172.1-option-eq-record-structural] (L2): a heap user RECORD without
+            // an `@equal` (records are NOT auto-`@equal`'d) reaches here when compared
+            // structurally — `Option[Rec]==`, a sum/Result field, or a direct `Rec==Rec`.
+            // Recurse field-by-field over `record_schemas` — the SINGLE per-type eq
+            // dispatcher (§0 per-type операции), mirroring the sum recursion above —
+            // instead of degrading to pointer identity. Field order from
+            // `record_field_order` (the schema HashMap is unordered → non-deterministic
+            // codegen otherwise); a builtin record registered without an order list
+            // falls back to sorted keys. EMPTY-schema records (opaque builtin runtime
+            // structs like StringBuilder) are skipped → identity below (sound for
+            // opaque handles; matches the opt_payload_needs_structural_eq exclusion).
+            if let Some(schema) = self.record_schemas.get(&type_name) {
+                if !schema.is_empty() {
+                    let schema = schema.clone();
+                    let order: Vec<String> = self.record_field_order
+                        .get(&type_name).cloned()
+                        .unwrap_or_else(|| {
+                            let mut ks: Vec<String> = schema.keys().cloned().collect();
+                            ks.sort();
+                            ks
+                        });
+                    let conds: Vec<String> = order.iter().filter_map(|fname| {
+                        schema.get(fname).map(|fty| {
+                            let mfn = Self::mangle_field_name(fname);
+                            let li = format!("({})->{}", l, mfn);
+                            let ri = format!("({})->{}", r, mfn);
+                            self.emit_field_eq(fty, &li, &ri, depth + 1)
+                        })
+                    }).collect();
+                    if !conds.is_empty() {
+                        return format!("({})", conds.join(" && "));
+                    }
+                    // all fields filtered out (shouldn't happen for non-empty schema)
+                    // — fall through to identity below.
+                }
             }
             // Plan 153.3 fix: mono'd generic sum whose legacy `sum_schemas`
             // entry is absent under the mono'd key (generic sums register the
@@ -34654,15 +34744,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             vrbuf.push_str(&eq_fn2);
             return;
         }
-        // [M-172.1-option-eq-heap-aggregate-structural] (Plan 172.1; §0 фаза-корректность
-        // + единый источник per-type операций): a heap user-aggregate Option payload
-        // (`Nova_<X>*`, X a sum/record — e.g. json `Option[JsonValue]`) must compare
-        // STRUCTURALLY, not by pointer identity. The pointee struct is complete only AFTER
-        // the type section, so the eq fn goes to the LATE buffer (spliced at
-        // __NOVAOPT_VR_TYPEDEFS__) where `emit_field_eq` — the single comparison dispatcher
-        // — can dereference (no `novaopt_early_gen` bail). The NPO layout (single pointer,
-        // NULL=None) is UNCHANGED → eq-only, no ABI change. Without this the early path
-        // emitted `a.value == b.value` (addresses) → `Option[Sum]==` false for equal values.
+        // [M-172.1-option-eq-heap-aggregate-structural] + [M-172.1-option-eq-record-structural]
+        // (Plan 172.1; §0 фаза-корректность + единый источник per-type операций): a heap
+        // user-aggregate Option payload (`Nova_<X>*`, X a sum OR record — e.g. json
+        // `Option[JsonValue]`, `Option[Point]`) must compare STRUCTURALLY, not by pointer
+        // identity. The pointee struct is complete only AFTER the type section AND any
+        // record/field `@equal` method prototype only after the fn-forward-decls, so the eq
+        // FN goes to the LATE buffer spliced at /*__NOVAOPT_EQ_FNS__*/ (after struct bodies
+        // AND method protos) where `emit_field_eq` — the single comparison dispatcher — can
+        // dereference (no `novaopt_early_gen` bail) and call a record `@equal` without an
+        // implicit decl. The NPO layout (single pointer, NULL=None) is UNCHANGED → eq-only,
+        // no ABI change. Without this the early path emitted `a.value == b.value` (addresses)
+        // → `Option[Sum/Record]==` false for equal values.
         if self.opt_payload_needs_structural_eq(c_ty) {
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
@@ -34671,9 +34764,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.novaopt_typedefs_buf.borrow_mut().push_str(&format!(
                 "typedef struct NovaOpt_{sani} {{ {cty} value; }} NovaOpt_{sani};\n",
                 sani = sanitized, cty = c_ty));
-            // Structural eq, emitted LATE so the dereference compiles. NPO: None = NULL.
+            // Structural eq, emitted LATE (after struct bodies AND method fwd-decls) so the
+            // dereference compiles and any record/field `@equal` call has a visible proto.
+            // NPO: None = NULL.
             let structural = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
-            self.novaopt_vr_typedefs_buf.borrow_mut().push_str(&format!(
+            self.novaopt_eq_fns_buf.borrow_mut().push_str(&format!(
                 "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
                  \x20   if ((a.value == NULL) != (b.value == NULL)) return 0;\n\
                  \x20   if (a.value == NULL) return 1;\n\
@@ -35052,14 +35147,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // their eq is mono'd per element, not a single-dispatcher structural compare —
             // out of scope (emit_field_eq would call a conflicting generic `_method_equal`).
             if self.generic_types.contains(inner) { return false; }
-            // Heap user SUM → structural via `sum_schemas` recursion: INLINE tag/payload
-            // compare, no method call → safe to splice late. RECORDS are excluded for now:
-            // `emit_field_eq` compares a record via its `@equal` METHOD, whose prototype is
-            // emitted AFTER the __NOVAOPT_VR_TYPEDEFS__ splice point → a late opt_eq calling
-            // it makes an implicit decl → "conflicting types" CC-FAIL. Option[record]==
-            // (and sums holding a record field) need a method-prototype-ordering fix first
-            // — tracked as a follow-up ([M-172.1-option-eq-record-needs-proto-ordering]).
-            return self.sum_schemas.contains_key(inner);
+            // Heap user SUM → structural via `sum_schemas` recursion (inline tag/payload
+            // compare; a sum holding a record field recurses into the record below).
+            if self.sum_schemas.contains_key(inner) { return true; }
+            // Heap user RECORD → structural via `record_schemas` field recursion
+            // ([M-172.1-option-eq-record-structural] L2). The eq fn is spliced LATE
+            // (/*__NOVAOPT_EQ_FNS__*/, after method protos) so it may safely call a
+            // record/field `@equal` (L1 proto-ordering). EXCLUDE empty-schema records:
+            // opaque builtin runtime structs (StringBuilder/WriteBuffer/ReadBuffer/…)
+            // register an EMPTY schema (no Nova-visible fields) and must stay pointer
+            // identity — a structural "all fields equal" would make every handle compare
+            // equal. (An all-equal empty USER record `type Marker {}` is out of scope —
+            // identity is the conservative, non-regressing choice.)
+            if let Some(schema) = self.record_schemas.get(inner) {
+                return !schema.is_empty();
+            }
+            return false;
         }
         false
     }

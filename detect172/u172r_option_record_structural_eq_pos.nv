@@ -1,0 +1,77 @@
+// [M-172.1-option-eq-record-structural] (Plan 172.1; §0 фаза-корректность +
+// единый источник per-type операций). `Option[<record>] ==` (and a sum holding a
+// record FIELD) compared POINTER IDENTITY instead of structure — records are NOT
+// auto-`@equal`'d, so `emit_field_eq` degraded to `a == b` on the heap pointers
+// (`Some(Pt{1,2}) == Some(Pt{1,2})` was FALSE — two allocations). TWO layers:
+//   L1 — proto-ordering: structural opt_eq fns calling a record/field `@equal`
+//        METHOD must be spliced AFTER the method forward-decls (new
+//        `/*__NOVAOPT_EQ_FNS__*/` marker, after `/*__MONO_FWD_DECLS__*/`).
+//   L2 — record-field structural recursion: `emit_field_eq` recurses over
+//        `record_schemas` for a record WITHOUT `@equal`, the single per-type eq
+//        dispatcher (§0), mirroring the sum recursion.
+// Folder-module peer of `module detect172`; bare constructors are u172r-prefixed
+// (every variant ctor is global in a folder-module).
+module detect172
+
+// plain record, NO @equal — compared only structurally (L2).
+type U172rPt { x int, y int }
+
+// record with a str field — recurse into nova_str_eq.
+type U172rNamed { id int, label str }
+
+// record WITH an explicit @equal — exercises L1 method-proto-ordering when the
+// record is wrapped in Option (`@equal` deliberately ignores `tag`).
+type U172rKeyed { k int, tag int }
+export fn U172rKeyed @equal(other U172rKeyed) -> bool => @k == other.k
+
+// sum holding a RECORD field (tuple-style variant payload is a record).
+type U172rBox
+    | U172rSome(U172rPt)
+    | U172rEmpty
+
+// nested record (field is itself a record without @equal) — deep recursion.
+type U172rLine { a U172rPt, b U172rPt }
+
+fn u172r_pick(b bool) -> Option[U172rPt] =>
+    if b { Some(U172rPt { x: 1, y: 2 }) } else { None }
+
+test "u172r: Option[record] structural eq (was pointer-eq bug)" {
+    assert(u172r_pick(true) == Some(U172rPt { x: 1, y: 2 }))
+    assert(u172r_pick(true) != Some(U172rPt { x: 9, y: 2 }))
+    assert(u172r_pick(true) != Some(U172rPt { x: 1, y: 9 }))
+    assert(u172r_pick(false) == None)
+}
+
+test "u172r: direct record eq — no @equal, structural" {
+    assert(U172rPt { x: 3, y: 4 } == U172rPt { x: 3, y: 4 })
+    assert(U172rPt { x: 3, y: 4 } != U172rPt { x: 3, y: 5 })
+}
+
+test "u172r: record with str field — recurse into nova_str_eq" {
+    ro a = Some(U172rNamed { id: 1, label: "alice" })
+    assert(a == Some(U172rNamed { id: 1, label: "alice" }))
+    assert(a != Some(U172rNamed { id: 1, label: "bob" }))
+    assert(a != Some(U172rNamed { id: 2, label: "alice" }))
+}
+
+test "u172r: Option[record-with-@equal] — L1 method-proto-ordering" {
+    // U172rKeyed.@equal ignores `tag` — equality is k-only.
+    ro a = Some(U172rKeyed { k: 5, tag: 100 })
+    assert(a == Some(U172rKeyed { k: 5, tag: 999 }))   // @equal: tag ignored
+    assert(a != Some(U172rKeyed { k: 6, tag: 100 }))
+}
+
+test "u172r: sum holding a record FIELD — structural" {
+    assert(U172rSome(U172rPt { x: 1, y: 2 }) == U172rSome(U172rPt { x: 1, y: 2 }))
+    assert(U172rSome(U172rPt { x: 1, y: 2 }) != U172rSome(U172rPt { x: 1, y: 9 }))
+    assert(U172rEmpty == U172rEmpty)
+    assert(U172rSome(U172rPt { x: 1, y: 2 }) != U172rEmpty)
+    // wrapped in Option too.
+    assert(Some(U172rSome(U172rPt { x: 7, y: 8 })) == Some(U172rSome(U172rPt { x: 7, y: 8 })))
+}
+
+test "u172r: nested record (record field is a record) — deep structural" {
+    ro l = Some(U172rLine { a: U172rPt { x: 1, y: 2 }, b: U172rPt { x: 3, y: 4 } })
+    assert(l == Some(U172rLine { a: U172rPt { x: 1, y: 2 }, b: U172rPt { x: 3, y: 4 } }))
+    assert(l != Some(U172rLine { a: U172rPt { x: 1, y: 2 }, b: U172rPt { x: 3, y: 9 } }))
+}
