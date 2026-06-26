@@ -12961,12 +12961,27 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if field_types.is_empty() {
                         continue;
                     }
+                    // Record-style variant (`V { a, b }`) uses NAMED C fields, not
+                    // positional `._i`; tuple-style (`V(T,U)`) uses `._i`. Recover the
+                    // field names from `record_variant_field_order` (same index order as
+                    // `field_types`). Without this, a record-variant payload generated
+                    // `payload.V._0` → C "no member named '_0'" (e.g. ParseJsonError /
+                    // ReadBufferError in `Option[<sum>]==`).
+                    let rec_order = self.record_variant_field_order
+                        .get(&format!("{}::{}", type_name, var_name)).cloned();
                     let var_fields: Vec<String> = field_types
                         .iter()
                         .enumerate()
                         .map(|(i, fty)| {
-                            let li = format!("({})->payload.{}._{}", l, var_name, i);
-                            let ri = format!("({})->payload.{}._{}", r, var_name, i);
+                            let (li, ri) = match rec_order.as_ref().and_then(|o| o.get(i)) {
+                                Some(fname) => {
+                                    let mfn = Self::mangle_field_name(fname);
+                                    (format!("({})->payload.{}.{}", l, var_name, mfn),
+                                     format!("({})->payload.{}.{}", r, var_name, mfn))
+                                }
+                                None => (format!("({})->payload.{}._{}", l, var_name, i),
+                                         format!("({})->payload.{}._{}", r, var_name, i)),
+                            };
                             self.emit_field_eq(fty, &li, &ri, depth + 1)
                         })
                         .collect();
@@ -34639,6 +34654,34 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             vrbuf.push_str(&eq_fn2);
             return;
         }
+        // [M-172.1-option-eq-heap-aggregate-structural] (Plan 172.1; §0 фаза-корректность
+        // + единый источник per-type операций): a heap user-aggregate Option payload
+        // (`Nova_<X>*`, X a sum/record — e.g. json `Option[JsonValue]`) must compare
+        // STRUCTURALLY, not by pointer identity. The pointee struct is complete only AFTER
+        // the type section, so the eq fn goes to the LATE buffer (spliced at
+        // __NOVAOPT_VR_TYPEDEFS__) where `emit_field_eq` — the single comparison dispatcher
+        // — can dereference (no `novaopt_early_gen` bail). The NPO layout (single pointer,
+        // NULL=None) is UNCHANGED → eq-only, no ABI change. Without this the early path
+        // emitted `a.value == b.value` (addresses) → `Option[Sum]==` false for equal values.
+        if self.opt_payload_needs_structural_eq(c_ty) {
+            self.novaopt_value_types.borrow_mut()
+                .insert(sanitized.to_string(), c_ty.to_string());
+            // NPO typedef (single pointer, NULL=None) — early; the pointer field needs only
+            // the already-emitted forward-typedef of `Nova_<X>`.
+            self.novaopt_typedefs_buf.borrow_mut().push_str(&format!(
+                "typedef struct NovaOpt_{sani} {{ {cty} value; }} NovaOpt_{sani};\n",
+                sani = sanitized, cty = c_ty));
+            // Structural eq, emitted LATE so the dereference compiles. NPO: None = NULL.
+            let structural = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
+            self.novaopt_vr_typedefs_buf.borrow_mut().push_str(&format!(
+                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                 \x20   if ((a.value == NULL) != (b.value == NULL)) return 0;\n\
+                 \x20   if (a.value == NULL) return 1;\n\
+                 \x20   return {body};\n\
+                 }}\n",
+                sani = sanitized, body = structural));
+            return;
+        }
         // Plan 54 Ф.9: запомнить реальный c_ty для recovery в
         // pattern_bind_typed (sanitized id ≠ c_ty для pointer types).
         self.novaopt_value_types.borrow_mut()
@@ -34986,6 +35029,39 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn is_late_emitted_value_payload(c_ty: &str) -> bool {
         (c_ty.contains("____") && c_ty.starts_with("NovaValue_"))
             || (c_ty.starts_with("NovaTuple_") && !c_ty.ends_with('*'))
+    }
+
+    /// [M-172.1-option-eq-heap-aggregate-structural] Does this Option-payload C-type
+    /// name a HEAP user aggregate (`Nova_<X>*`, X a sum or record) whose `==` must be
+    /// STRUCTURAL (dereference + variant/field compare), not pointer identity? Such an
+    /// `nova_opt_eq` must be emitted LATE (after the struct body) so the dereference is
+    /// valid C — emitting it early forces the `is_pointer` identity bail (`a.value ==
+    /// b.value` → `Option[Sum]==` compares addresses, false for equal values). This is
+    /// the phase-correctness root (§0): don't compare before the pointee struct is ready.
+    /// Raw pointers (`*T`, `void*`, double-ptr `Nova_X**`, NPO newtypes) keep identity
+    /// eq; by-value aggregates (`NovaValue_`/`NovaTuple_`) → `is_late_emitted_value_payload`.
+    /// Container monos (`Nova_Vec____*`/`Nova_HashMap____*`) are out of scope here (their
+    /// element-wise eq isn't yet a single dispatcher) — tracked separately.
+    fn opt_payload_needs_structural_eq(&self, c_ty: &str) -> bool {
+        if let Some(inner) = c_ty.strip_prefix("Nova_").and_then(|s| s.strip_suffix('*')) {
+            // double-pointer (`Nova_X**`) = raw pointer to a handle → identity.
+            if inner.ends_with('*') { return false; }
+            // container/generic mono (Vec/HashMap/…) — out of scope (see doc).
+            if inner.contains("____") { return false; }
+            // generic template / builtin container (erased `Nova_Vec*`/`Nova_HashMap*`):
+            // their eq is mono'd per element, not a single-dispatcher structural compare —
+            // out of scope (emit_field_eq would call a conflicting generic `_method_equal`).
+            if self.generic_types.contains(inner) { return false; }
+            // Heap user SUM → structural via `sum_schemas` recursion: INLINE tag/payload
+            // compare, no method call → safe to splice late. RECORDS are excluded for now:
+            // `emit_field_eq` compares a record via its `@equal` METHOD, whose prototype is
+            // emitted AFTER the __NOVAOPT_VR_TYPEDEFS__ splice point → a late opt_eq calling
+            // it makes an implicit decl → "conflicting types" CC-FAIL. Option[record]==
+            // (and sums holding a record field) need a method-prototype-ordering fix first
+            // — tracked as a follow-up ([M-172.1-option-eq-record-needs-proto-ordering]).
+            return self.sum_schemas.contains_key(inner);
+        }
+        false
     }
 
     /// Plan 59 Ф.7.5: lazy-регистрирует mono'd `NovaRes_<ok>_<err>` —

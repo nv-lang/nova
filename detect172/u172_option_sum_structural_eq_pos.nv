@@ -1,0 +1,71 @@
+// [M-172.1-option-eq-heap-aggregate-structural] + emit_field_eq record-variant fix
+// (Plan 172.1; §0 фаза-корректность + единый источник per-type операций). `Option[<sum>] ==`
+// over a HEAP user sum compared POINTER IDENTITY (`a.value == b.value`) instead of structure
+// — `Some(JStr("a")) == Some(JStr("a"))` was FALSE (two different allocations). Root: the
+// `nova_opt_eq_<T>` for a `Nova_<X>*` payload was emitted EARLY (before the struct body),
+// forcing the `is_pointer` identity bail (phase-correctness §0). Fix: emit it LATE
+// (__NOVAOPT_VR_TYPEDEFS__, after struct bodies) where `emit_field_eq` — the single eq
+// dispatcher — dereferences and compares structurally; NPO layout (single pointer, NULL=None)
+// unchanged → eq-only. A second latent bug surfaced: `emit_field_eq`'s sum recursion accessed
+// RECORD-style variants (`V { a, b }`) via positional `._0` → C "no member named '_0'"; fixed
+// to use field names from `record_variant_field_order`. Sums holding a record FIELD / records
+// themselves still use the `@equal` method whose prototype is ordered after the late splice —
+// follow-up [M-172.1-option-eq-record-needs-proto-ordering]. Variant names are u172-prefixed —
+// in a folder-module every sum variant is a bare constructor and must be globally unique.
+// Folder-module peer of `module detect172`.
+module detect172
+
+// tuple-style variants (json `JStr(str)` / `JNum(f64)` shape).
+type U172JV
+    | U172Str(str)
+    | U172Num(f64)
+    | U172Nul
+
+// record-style variants (json `ParseJsonError` shape — exercises the field-name access fix).
+type U172Err
+    | U172Bad { code int, msg str }
+    | U172EofV { line int }
+
+// sum holding a sum field (nested structural recursion).
+type U172Wrap
+    | U172One(U172JV)
+    | U172Two(U172JV, U172JV)
+
+fn u172_pick(b bool) -> Option[U172JV] =>
+    if b { Some(U172Str("alice")) } else { None }
+
+test "u172: Option[sum] structural eq — Some equal (was pointer-eq bug)" {
+    assert(u172_pick(true) == Some(U172Str("alice")))
+    assert(u172_pick(true) != Some(U172Str("bob")))
+    assert(u172_pick(true) != Some(U172Num(1.0)))
+    assert(u172_pick(false) == None)
+}
+
+test "u172: direct sum eq — tuple variants" {
+    assert(U172Str("x") == U172Str("x"))
+    assert(U172Str("x") != U172Str("y"))
+    assert(U172Nul == U172Nul)
+    assert(U172Num(2.0) == U172Num(2.0))
+}
+
+test "u172: record-style variant eq (field-name access)" {
+    assert(U172Bad { code: 1, msg: "e" } == U172Bad { code: 1, msg: "e" })
+    assert(U172Bad { code: 1, msg: "e" } != U172Bad { code: 2, msg: "e" })
+    assert(U172EofV { line: 3 } != U172Bad { code: 1, msg: "e" })
+}
+
+test "u172: Option[record-variant sum] structural eq" {
+    ro a = Some(U172Bad { code: 7, msg: "boom" })
+    assert(a == Some(U172Bad { code: 7, msg: "boom" }))
+    assert(a != Some(U172Bad { code: 8, msg: "boom" }))
+    assert(a != Some(U172EofV { line: 1 }))
+}
+
+test "u172: nested sum-in-sum structural eq" {
+    assert(U172One(U172Str("a")) == U172One(U172Str("a")))
+    assert(U172One(U172Str("a")) != U172One(U172Str("b")))
+    assert(U172Two(U172Num(1.0), U172Nul) == U172Two(U172Num(1.0), U172Nul))
+    assert(U172Two(U172Num(1.0), U172Nul) != U172Two(U172Num(2.0), U172Nul))
+    // wrapped in Option too.
+    assert(Some(U172One(U172Str("z"))) == Some(U172One(U172Str("z"))))
+}
