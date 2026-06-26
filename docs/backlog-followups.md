@@ -280,4 +280,35 @@ Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
   **json теперь КОМПИЛИРУЕТСЯ** (erasure ушёл). ⚠ json НЕ полностью зелёный: всплыли **2 отдельных
   пре-существующих RUN-FAIL** (`parse: object с полями` json.nv:852 + `parse: ошибка`) — object/HashMap-путь
   (`@parse_member(mut fields)` мутация / `.get` / sum-eq), НЕ array-path этого фикса. Priority: P2 (отдельный
-  вопрос для full-green json Ф.2a).
+  вопрос для full-green json Ф.2a). **UPD 2026-06-26:** корень `parse: object с полями` оказался **sum-eq**
+  (НЕ мутация/get — те звучны) → закрыт `[M-172.1-option-eq-heap-aggregate-structural]` ниже; объект-тест
+  ЗЕЛЁНЫЙ. Остаток full-green json: `into: array round-trip` (container-eq) + `parse: ошибка trailing content`
+  (parser-логика) — см. follow-up'ы ниже.
+
+- **[M-172.1-option-eq-heap-aggregate-structural]** ✅ **RESOLVED 2026-06-26 (sum-часть)** (`f53e32a9`, ветка
+  `plan-172-unified-type-engine`). `Option[<heap sum>] ==` сравнивал УКАЗАТЕЛИ (`a.value == b.value`), не
+  структуру — `Some(Str("a")) == Some(Str("a"))` = false (две аллокации). Корень: `nova_opt_eq_<T>` для
+  `Nova_<X>*`-payload эмитился РАНО (до struct-body) → `is_pointer`-bail на идентичность = **use-before-ready**
+  (фаза-корректность §0). Фикс (установить порядок + единый диспетчер): heap user-SUM payload → `nova_opt_eq`
+  ПОЗДНО (`__NOVAOPT_VR_TYPEDEFS__`, после struct-bodies), где `emit_field_eq` дереференсит структурно;
+  NPO-layout не меняется (eq-only). Попутно: `emit_field_eq` sum-рекурсия чинена для **record-style вариантов**
+  (`V { a, b }` — позиционный `._0` → C error; теперь имена из `record_variant_field_order`; затрагивает и
+  прямой sum==). Verify: repro CC/RUN→PASS, json object-тест ЗЕЛЁНЫЙ, §7.5 baseline-DELTA 22 диров 0 регрессий,
+  detect172 `u172_option_sum_structural_eq_pos` 5 тестов + neg-control, unit types:: 51/0. **SCOPE = SUM-ONLY:**
+  records/sums-с-record-полем — follow-up ниже.
+
+- **[M-172.1-option-eq-record-needs-proto-ordering]** 🔴 follow-up (P2; вскрыт `f53e32a9`). `Option[<record>] ==`
+  (и sum с record-ПОЛЕМ) тоже сравнивает указатели — но `emit_field_eq` для record зовёт `@equal` МЕТОД, чей
+  прототип эмитится ПОСЛЕ late-splice `__NOVAOPT_VR_TYPEDEFS__` → late `nova_opt_eq` делает implicit-decl →
+  CC-FAIL `conflicting types for Nova_<T>_method_equal`. **Фикс:** method-прототипы (вообще все static-fn proto)
+  forward-объявлять ДО late-eq splice (та же дисциплина «порядок эмиссии — одна» §0 фаза-корректность). Тогда
+  предикат `opt_payload_needs_structural_eq` расширяется на `record_schemas` (минус builtin-контейнеры).
+
+- **[M-172.1-option-container-eq-structural]** 🔴 follow-up (P2). `Option[Vec[T]]` / `Vec`/`HashMap` как
+  sum-вариант-поле сравниваются по указателям (нужна element-wise структурная eq, mono'd `@equal`). Блокирует
+  json `into: array round-trip` (`Array([..]) == Array([..])`). emit_field_eq должен звать MONO container-eq
+  (`Nova_Vec____<elem>_method_equal`), не generic (конфликт). Часть единой per-type-eq консолидации (§0).
+
+- **[M-181-json-trailing-content]** 🔴 follow-up (P2). json `Json.parse("42 garbage")` не возвращает
+  `Err(TrailingContent)` (тест `parse: ошибка — trailing content` json.nv:913) — **parser-логика** (детект
+  trailing после value), НЕ eq/codegen. Отдельно от компиляторных фиксов.
