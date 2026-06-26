@@ -32,7 +32,7 @@ const SB_STERM int = 13
 const SB_CLOSE int = 14
 
 ro sb_flat Vec[u32] = parse_flat(SB_DATA)
-fn sbcat(cp int) -> int => range_lookup3(sb_flat, cp)
+fn sbcat(cp u32) -> int => range_lookup3(sb_flat, cp)
 
 // SB5 ignore-set: Extend | Format are "absorbed" into the preceding base.
 fn sb_ignorable(c int) -> bool => c == SB_EXTEND || c == SB_FORMAT

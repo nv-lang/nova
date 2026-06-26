@@ -13,15 +13,14 @@ fn parse_flat(data str) -> Vec[u32] {
     mut out = Vec[u32].with_capacity(1024)
     for entry in data.split(";") {
         for f in entry.split(",") {
-            ro v = hex(f)
-            if v >= 0 { out.push(v) }
+            match hex(f) { Some(v) => out.push(v), None => {} }
         }
     }
     out
 }
 
 // Binary search over sorted (lo,hi,cat) triples; returns cat or 0 (Other).
-fn range_lookup3(t Vec[u32], cp int) -> int {
+fn range_lookup3(t Vec[u32], cp u32) -> int {
     ro count = t.len() / 3
     mut lo = 0
     mut hi = count - 1
@@ -43,7 +42,7 @@ fn range_lookup3(t Vec[u32], cp int) -> int {
 }
 
 // Binary search over sorted (lo,hi) pairs; membership test.
-fn in_ranges2(t Vec[u32], cp int) -> bool {
+fn in_ranges2(t Vec[u32], cp u32) -> bool {
     ro count = t.len() / 2
     mut lo = 0
     mut hi = count - 1

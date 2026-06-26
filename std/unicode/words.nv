@@ -38,7 +38,7 @@ const WB_EXTENDNUMLET int = 17
 const WB_WSEGSPACE int = 18
 
 ro wb_flat Vec[u32] = parse_flat(WB_DATA)
-fn wbcat(cp int) -> int => range_lookup3(wb_flat, cp)
+fn wbcat(cp u32) -> int => range_lookup3(wb_flat, cp)
 
 fn wb_ignorable(c int) -> bool => c == WB_EXTEND || c == WB_FORMAT || c == WB_ZWJ
 fn wb_ahletter(c int) -> bool => c == WB_ALETTER || c == WB_HEBREW
@@ -149,7 +149,7 @@ fn wb_cats(cps Vec[u32]) -> Vec[int] {
 // ─── Parameterised break predicate (lazy iterator) ───
 // Like wb_is_break but takes explicit prev/eff-prev/prev-prev-eff/ncat instead of
 // indexing into arrays. WB3c needs the raw codepoint `cp` for is_ext_pict.
-fn wb_is_break_s(prev_imm int, prev_eff int, prev_prev_eff int, cat int, cp int, ncat int, ri_run int) -> bool {
+fn wb_is_break_s(prev_imm int, prev_eff int, prev_prev_eff int, cat int, cp u32, ncat int, ri_run int) -> bool {
     if prev_imm == WB_CR && cat == WB_LF {
         false                                                       // WB3
     } else if prev_imm == WB_NEWLINE || prev_imm == WB_CR || prev_imm == WB_LF {

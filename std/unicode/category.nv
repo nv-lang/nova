@@ -77,7 +77,7 @@ ro ws_flat Vec[u32] = parse_flat(WS_DATA)
 
 // Raw General_Category code (1..=30) of `cp`; 30 (`Cn`) when absent from GC_DATA
 // (range_lookup3 returns 0 for "not found", which we map to the Cn default).
-fn gc_code(cp int) -> int {
+fn gc_code(cp u32) -> int {
     ro c = range_lookup3(gc_flat, cp)
     if c == 0 { GC_CN } else { c }
 }
@@ -123,44 +123,44 @@ fn gc_from_code(code int) -> GeneralCategory {
 /// The UCD General_Category of code point `cp`. Returns `Cn` (not assigned) for
 /// any code point absent from `UnicodeData.txt` (unassigned/reserved/noncharacter)
 /// and for out-of-range values.
-export fn general_category(cp int) -> GeneralCategory => gc_from_code(gc_code(cp))
+export fn general_category(cp u32) -> GeneralCategory => gc_from_code(gc_code(cp))
 
 /// Alphabetic (UCD `Alphabetic` derived core property). Broader than `Lu|Ll|Lt`:
 /// includes `Lm|Lo|Nl` and Other_Alphabetic marks, exactly per DerivedCoreProperties.
-export fn is_alphabetic(cp int) -> bool => in_ranges2(alpha_flat, cp)
+export fn is_alphabetic(cp u32) -> bool => in_ranges2(alpha_flat, cp)
 
 /// White_Space (UCD `White_Space` binary property from PropList.txt).
-export fn is_whitespace(cp int) -> bool => in_ranges2(ws_flat, cp)
+export fn is_whitespace(cp u32) -> bool => in_ranges2(ws_flat, cp)
 
 /// Numeric: General_Category ∈ {Nd, Nl, No} (matches Rust `char::is_numeric` and
 /// the generator note — derived from GC, no separate table).
-export fn is_numeric(cp int) -> bool {
+export fn is_numeric(cp u32) -> bool {
     ro c = gc_code(cp)
     c == GC_ND || c == GC_NL || c == GC_NO
 }
 
 /// Uppercase letter: General_Category == Lu.
-export fn is_uppercase(cp int) -> bool => gc_code(cp) == GC_LU
+export fn is_uppercase(cp u32) -> bool => gc_code(cp) == GC_LU
 
 /// Lowercase letter: General_Category == Ll.
-export fn is_lowercase(cp int) -> bool => gc_code(cp) == GC_LL
+export fn is_lowercase(cp u32) -> bool => gc_code(cp) == GC_LL
 
 /// Control character: General_Category == Cc.
-export fn is_control(cp int) -> bool => gc_code(cp) == GC_CC
+export fn is_control(cp u32) -> bool => gc_code(cp) == GC_CC
 
 /// Alphanumeric: alphabetic OR numeric.
-export fn is_alphanumeric(cp int) -> bool => is_alphabetic(cp) || is_numeric(cp)
+export fn is_alphanumeric(cp u32) -> bool => is_alphabetic(cp) || is_numeric(cp)
 
 /// Full uppercase mapping of a single code point, as a str. Multi-code-point
 /// expansions apply (ß → "SS", ﬁ → "FI"); no locale tailoring. Reuses the
 /// case.nv `UPPER_DATA` table via `upper_one`.
-export fn char_to_uppercase(cp int) -> str => cps_to_str(upper_one(cp))
+export fn char_to_uppercase(cp u32) -> str => cps_to_str(upper_one(cp))
 
 /// Full lowercase mapping of a single code point, as a str. Final_Sigma is a
 /// string-level context rule, so a lone Σ (U+03A3) lowercases to σ (U+03C3, the
 /// non-final form) — the correct context-free answer. Reuses `LOWER_DATA` via
 /// `lower_one`.
-export fn char_to_lowercase(cp int) -> str => cps_to_str(lower_one(cp))
+export fn char_to_lowercase(cp u32) -> str => cps_to_str(lower_one(cp))
 
 // ─── char Unicode-aware methods (Plan 169.2.1 — moved back here) ───
 // Plan 162 Ф.4 hoisted these to std/prelude/core.nv (so they were available
@@ -179,39 +179,39 @@ export fn char_to_lowercase(cp int) -> str => cps_to_str(lower_one(cp))
 
 /// Unicode Alphabetic property (UCD `Alphabetic` derived core property).
 /// Broader than `Lu|Ll|Lt`: includes `Lm|Lo|Nl` and Other_Alphabetic marks.
-/// Equivalent to `std.unicode.is_alphabetic(@ as int)`.
-export fn char @is_alphabetic() -> bool => is_alphabetic(@ as int)
+/// Equivalent to `std.unicode.is_alphabetic(@ as u32)`.
+export fn char @is_alphabetic() -> bool => is_alphabetic(@ as u32)
 
 /// Numeric: General_Category ∈ {Nd, Nl, No}.
 /// Matches Rust `char::is_numeric` — derived from UCD GC, not ASCII-only.
-export fn char @is_numeric() -> bool => is_numeric(@ as int)
+export fn char @is_numeric() -> bool => is_numeric(@ as u32)
 
 /// Alphanumeric: alphabetic OR numeric.
-export fn char @is_alphanumeric() -> bool => is_alphanumeric(@ as int)
+export fn char @is_alphanumeric() -> bool => is_alphanumeric(@ as u32)
 
 /// White_Space (UCD `White_Space` binary property from PropList.txt).
-export fn char @is_whitespace() -> bool => is_whitespace(@ as int)
+export fn char @is_whitespace() -> bool => is_whitespace(@ as u32)
 
 /// Uppercase letter: General_Category == Lu.
-export fn char @is_uppercase() -> bool => is_uppercase(@ as int)
+export fn char @is_uppercase() -> bool => is_uppercase(@ as u32)
 
 /// Lowercase letter: General_Category == Ll.
-export fn char @is_lowercase() -> bool => is_lowercase(@ as int)
+export fn char @is_lowercase() -> bool => is_lowercase(@ as u32)
 
 /// Control character: General_Category == Cc.
-export fn char @is_control() -> bool => is_control(@ as int)
+export fn char @is_control() -> bool => is_control(@ as u32)
 
 /// UCD General_Category of this code point. Returns `Cn` (not assigned)
 /// for unassigned/reserved/noncharacter code points.
-export fn char @general_category() -> GeneralCategory => general_category(@ as int)
+export fn char @general_category() -> GeneralCategory => general_category(@ as u32)
 
 /// Full uppercase mapping of a single code point, as a str.
 /// Multi-code-point expansions apply (ß → "SS", ﬁ → "FI"); no locale tailoring.
-export fn char @to_uppercase() -> str => char_to_uppercase(@ as int)
+export fn char @to_uppercase() -> str => char_to_uppercase(@ as u32)
 
 /// Full lowercase mapping of a single code point, as a str.
 /// Final_Sigma is a string-level context rule; a lone Σ lowercases to σ.
-export fn char @to_lowercase() -> str => char_to_lowercase(@ as int)
+export fn char @to_lowercase() -> str => char_to_lowercase(@ as u32)
 
 // ─── Unicode trim / split (Plan 91.18 Ф.5) ───
 // Opt-in under `import std.unicode`; bare names (no _ascii_ suffix) shadow

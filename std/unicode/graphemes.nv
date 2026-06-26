@@ -37,15 +37,15 @@ const GCB_LVT int = 13
 ro gcb_flat Vec[u32] = parse_flat(GCB_DATA)
 ro extpict_flat Vec[u32] = parse_flat(EXTPICT_DATA)
 
-fn gcb(cp int) -> int => range_lookup3(gcb_flat, cp)
-fn is_ext_pict(cp int) -> bool => in_ranges2(extpict_flat, cp)
+fn gcb(cp u32) -> int => range_lookup3(gcb_flat, cp)
+fn is_ext_pict(cp u32) -> bool => in_ranges2(extpict_flat, cp)
 
 // GB9c (Indic Conjunct Break, Unicode 15.1+): Indic_Conjunct_Break property.
 const INCB_CONSONANT int = 1
 const INCB_EXTEND int = 2
 const INCB_LINKER int = 3
 ro incb_flat Vec[u32] = parse_flat(INCB_DATA)
-fn incb_of(cp int) -> int => range_lookup3(incb_flat, cp)
+fn incb_of(cp u32) -> int => range_lookup3(incb_flat, cp)
 
 // Is there a grapheme boundary BEFORE `cur` (between `prev` and `cur`)?
 // `gb11` = prev is a ZWJ closing an `ExtPict Extend*` run (GB11 eligibility);

@@ -745,8 +745,16 @@ fn use_it(src *u8, dst *mut u8, n int) -> () {
   всём stdlib: `Vec[T].@len()->int`, `str.@byte_len()->int`, `WriteBuffer.@len()/@capacity()->int`, `ReadBuffer.@position()/@remaining()->int`,
   `SeekFrom.Start(int)`. i64 покрывает любой реальный размер/offset (±8 EiB).
 - **`u8`/`u16`/`u32`/`u64` — только когда значение *само по себе* этой ширины:** байт-данные — `u8`/`[]u8`; UTF-16 code units —
-  `u16`/`[]u16`; типизированные атомики (`AtomicU64.@fetch_add(v u64) -> u64`); фиксированный bitmask по необходимости. Там ширина
-  семантична, а не «беззнаковость ради порядка».
+  `u16`/`[]u16`; **Unicode codepoint (scalar value) — `u32`** (см. ниже); типизированные атомики (`AtomicU64.@fetch_add(v u64) -> u64`);
+  фиксированный bitmask по необходимости. Там ширина семантична, а не «беззнаковость ради порядка».
+- **Codepoint = `u32`, НЕ `int`** · согласовано 2026-06-26. Кодпоинт — character-data интринсик-ширины 32 бит (применение правила выше,
+  ср. UTF-16 code units → u16), ОТДЕЛЬНО от правила «index/len/offset → int»: кодпоинт — *значение-идентификатор*, не мера. Хранилище
+  последовательностей — `Vec[u32]` (4 байта, как Rust `Vec<char>` / Go `[]rune`=`[]int32`); поток и арифметика внутри unicode-движков — `u32`.
+  `char` (= `u32`, [D128](../spec/decisions/02-types.md#d128)) — на границе `str` (`as_chars()`→`char`, `char.try_from(u32)`) и в char-методах
+  (`'a'.is_alphabetic()`). **Публичные cp-функции принимают `u32`** (`general_category(cp u32)`); целочисленные литералы адаптируются к
+  u32-контексту, поэтому `general_category(0x41)` остаётся валидным. **Fallible-функции, выдающие кодпоинт, → `Option[u32]`** ([D77](../spec/decisions/02-types.md), а не `-1`-сентинел).
+  **Bit-packing** нескольких кодпоинтов в один ключ (`(a<<21)|b`, > 32 бит) → явный `as int` (packed key — не кодпоинт). Обоснование:
+  [D327](../spec/decisions/02-types.md#d327).
 - **Анти-паттерн:** `u64`/`usize` для offset/len «чтобы было ≥0» + россыпь `as u64`-кастов (литералы Nova — `int`). Знак не кодируем
   типом — отрицательный индекс/offset → доменная ошибка (`InvalidInput` / контракт `requires i >= 0`), как `SeekFrom.Start(int)` (Start < 0 → ошибка).
 - **Почему signed, а не unsigned (обоснование/research):**

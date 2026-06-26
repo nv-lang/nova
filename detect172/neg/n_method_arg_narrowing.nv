@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+// Plan 172.2 [M-instance-method-arg-scalar-narrowing]: a non-literal `int` passed to
+// the `Vec[u32]` instance method `push(value u32)` narrows (int -> u32, signed ->
+// unsigned, would_narrow_into = true). This is the single-overload dispatch hole 172.2
+// closes: `push` exists + arity matches + C category lowered it silently — now the
+// CHECKER owns soundness on method args (§1), emitting [E_IMPLICIT_NARROWING] (D54).
+module neg.n_method_arg_narrowing
+test "t" {
+    mut v = Vec[u32].new()
+    ro x int = 5
+    v.push(x)
+    assert(v.len() == 1)
+}

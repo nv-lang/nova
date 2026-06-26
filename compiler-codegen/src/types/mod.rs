@@ -7513,11 +7513,23 @@ impl<'a> TypeCheckCtx<'a> {
         call_id: crate::ast::ExprId,
     ) {
         let Some(recv_ty) = BoundCtx::infer_arg_ty(obj, scope) else { return; };
-        let TypeRef::Named { path, .. } = &recv_ty else { return; };
-        if path.len() != 1 {
-            return;
+        // Plan 172.2: normalize the receiver to a single `type_name`, mapping
+        // `[]T`/`[N]T` → "Vec" (D239 slice alias) and peeling `ro`/`mut`, so method
+        // calls on a SLICE receiver (`out.push(x)` where `out: []u8`) resolve to Vec's
+        // overloads — std's pervasive spelling — not only the `Vec[T]`-named form.
+        let mut rt = &recv_ty;
+        loop {
+            match rt {
+                TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => rt = i,
+                _ => break,
+            }
         }
-        let type_name = path[0].as_str();
+        let type_name: String = match rt {
+            TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
+            TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => "Vec".to_string(),
+            _ => return,
+        };
+        let type_name = type_name.as_str();
         if is_primitive_recv_name(type_name) {
             return; // U.3.2 gate — external overloads not in the checker's table
         }
@@ -7569,6 +7581,66 @@ impl<'a> TypeCheckCtx<'a> {
                 ),
                 span,
             ));
+        }
+        // Plan 172.2 [M-instance-method-arg-scalar-narrowing]: IMPLICIT NARROWING on a
+        // method argument — the dispatch hole (single-overload scalar narrowing like
+        // `vec_u32.push(int_var)` passed checker existence/arity + codegen single-overload
+        // + C category, narrowing nobody). Run on the CHOSEN overload: substitute the
+        // receiver's concrete type-args into each param (`Vec[T].push(value T)` + receiver
+        // `Vec[u32]` → `u32`), then `assignable`; emit `[E_IMPLICIT_NARROWING]` only on
+        // `Narrowing` (mirror the free-fn loop in `f1_check_call`, same `is_int_narrowing`
+        // rule). Permissive on Bad/Unknown/unsubstituted-generic → 0 false positives (a Bad
+        // arg is already E_NO_MATCHING_OVERLOAD above; a still-generic param resolves to
+        // `Any` and skips). This makes the checker, not C, the soundness owner for method
+        // args (§1). The receiver type via the same `infer_arg_ty` already gated to
+        // non-primitive receivers (U.3.2) above; builtin `Vec`/user generics both covered.
+        if let Some(sp) = chosen_span {
+            if let Some(f) = overloads.iter().find(|o| o.span == sp) {
+                let subst = f.receiver.as_ref()
+                    .map(|r| build_recv_subst(r, &recv_ty))
+                    .unwrap_or_default();
+                let callee_gs: HashSet<String> =
+                    f.generics.iter().map(|g| g.name.clone()).collect();
+                if let Ok(bindings) = crate::argbind::bind_call_args(&f.params, args) {
+                    for (pi, binding) in bindings.iter().enumerate() {
+                        let ai = match binding {
+                            crate::argbind::ArgBinding::Positional(i)
+                            | crate::argbind::ArgBinding::Named(i) => *i,
+                            _ => continue,
+                        };
+                        let Some(param) = f.params.get(pi) else { continue };
+                        if param.is_variadic { continue; }
+                        let Some(arg) = args.get(ai) else { continue };
+                        // Plan 172.2: skip a compiler-synthesized arg with no real source
+                        // span (desugared `v[i] = x` index-writes, interpolation, etc.). Any
+                        // narrowing there belongs to the SOURCE construct, not a written
+                        // method arg; the dummy span misattributes the diagnostic (past-EOF)
+                        // and the desugar may not carry the user's intent. Conservative — the
+                        // user-visible `obj.method(arg)` form (real span) is what 172.2 targets.
+                        if arg.expr().span == crate::diag::Span::dummy() { continue; }
+                        let exp_ty = subst_typeref(&param.ty, &subst);
+                        if let Compat::Narrowing { from, to } =
+                            self.assignable(arg.expr(), &exp_ty, gs, &callee_gs, scope)
+                        {
+                            errors.push(
+                                Diagnostic::new(
+                                    format!(
+                                        "[E_IMPLICIT_NARROWING] cannot pass `{}` as argument \
+                                         `{}` of narrower type `{}` — implicit int narrowing \
+                                         loses range; use an explicit `{} as {}` cast (D54)",
+                                        from, param.name, to, "<value>", to,
+                                    ),
+                                    arg.expr().span,
+                                )
+                                .with_note_at(
+                                    format!("parameter `{}` declared here", param.name),
+                                    param.span,
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -9315,6 +9387,29 @@ impl<'a> TypeCheckCtx<'a> {
                 // explicitly-annotated ones. AST shape: Call{ func: Member{ obj:
                 // TurboFish{ base: Ident(Type), type_args }, name: ctor } }.
                 if let ExprKind::Member { obj, name: ctor } = &func.kind {
+                    // Plan 172.2: slice bare-ctor `[]T.new()/.with_capacity()/…` — the
+                    // dominant std spelling (`mut out = []u8.with_capacity(n)`). In expr
+                    // position `[]T` parses to `Path(["__array", <elem>])`; infer it to
+                    // `Array(<elem>)` so the binding records the concrete container type in
+                    // scope (mirror of the `Vec[T].ctor` TurboFish arm below). Without this
+                    // the receiver type is unknown → the method-arg narrowing check skips.
+                    if let ExprKind::Path(parts) = &obj.kind {
+                        if parts.len() == 2 && parts[0] == "__array"
+                            && matches!(
+                                ctor.as_str(),
+                                "new" | "with_capacity" | "from" | "default" | "filled"
+                            )
+                        {
+                            return Some(TypeRef::Array(
+                                Box::new(TypeRef::Named {
+                                    path: vec![parts[1].clone()],
+                                    generics: Vec::new(),
+                                    span: expr.span,
+                                }),
+                                expr.span,
+                            ));
+                        }
+                    }
                     if let ExprKind::TurboFish { base, type_args } = &obj.kind {
                         if let ExprKind::Ident(tyname) = &base.kind {
                             // Plan 172.1 U.4.3(d) [M-172.1-U4.3d-generic-recv-infer]:
@@ -14664,6 +14759,77 @@ fn generic_args(tr: &TypeRef) -> Option<(String, Vec<&TypeRef>)> {
         }
         _ => None,
     }
+}
+
+/// Plan 172.2: substitute generic type-params (`subst` keys) throughout a
+/// `TypeRef`. A bare `Named{T}` (single segment, no args) whose name is in
+/// `subst` is replaced by its concrete binding; everything else recurses
+/// structurally. Used to instantiate a generic method's param types from the
+/// receiver's concrete type-args (`Vec[T] @push(value T)` + receiver `Vec[u32]`
+/// → param `u32`) so the method-arg narrowing check has a CONCRETE expected type
+/// (a bare `T` would resolve to `ResolvedType::Any` and skip the check).
+fn subst_typeref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
+    match t {
+        TypeRef::Named { path, generics, span } => {
+            if path.len() == 1 && generics.is_empty() {
+                if let Some(rep) = subst.get(&path[0]) {
+                    return rep.clone();
+                }
+            }
+            TypeRef::Named {
+                path: path.clone(),
+                generics: generics.iter().map(|g| subst_typeref(g, subst)).collect(),
+                span: *span,
+            }
+        }
+        TypeRef::Array(inner, s) => TypeRef::Array(Box::new(subst_typeref(inner, subst)), *s),
+        TypeRef::FixedArray(n, inner, s) =>
+            TypeRef::FixedArray(*n, Box::new(subst_typeref(inner, subst)), *s),
+        TypeRef::Tuple(elems, s) =>
+            TypeRef::Tuple(elems.iter().map(|e| subst_typeref(e, subst)).collect(), *s),
+        TypeRef::Readonly(inner, s) => TypeRef::Readonly(Box::new(subst_typeref(inner, subst)), *s),
+        TypeRef::Mut(inner, s) => TypeRef::Mut(Box::new(subst_typeref(inner, subst)), *s),
+        TypeRef::Pointer(inner, s) => TypeRef::Pointer(Box::new(subst_typeref(inner, subst)), *s),
+        TypeRef::Unsafe(inner, s) => TypeRef::Unsafe(Box::new(subst_typeref(inner, subst)), *s),
+        // Func/Protocol/Unit — params/methods rarely reference the receiver's
+        // type-params in a way the narrowing check needs; clone as-is.
+        _ => t.clone(),
+    }
+}
+
+/// Plan 172.2: map a generic method's RECEIVER type-params to the concrete
+/// type-args of the call-site receiver. `recv` is the method's declared receiver
+/// (`Vec[T]` → `generics = [Named{T}]`); `recv_ty` is the inferred call-site type
+/// (`Vec[u32]` → `[u32]`; `[]u32` → element `u32`, the slice alias). Returns
+/// `{T: u32}`. Empty when arity mismatches / names aren't bare params (→ permissive:
+/// the param stays generic → `assignable` is `Any` → narrowing skipped, no false
+/// positive). Peels `ro`/`mut` wrappers on the receiver type (mirror `generic_args`).
+fn build_recv_subst(recv: &Receiver, recv_ty: &TypeRef) -> HashMap<String, TypeRef> {
+    let mut subst = HashMap::new();
+    // Declared receiver generic-param names — bare `Named{T}` (single seg, no args).
+    let names: Vec<String> = recv.generics.iter().filter_map(|g| match g {
+        TypeRef::Named { path, generics, .. } if path.len() == 1 && generics.is_empty() =>
+            Some(path[0].clone()),
+        _ => None,
+    }).collect();
+    if names.is_empty() { return subst; }
+    // Concrete args from the call-site receiver type (peel ro/mut; `[]T ≡ Vec[T]`).
+    let mut t = recv_ty;
+    loop {
+        match t {
+            TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => t = i,
+            _ => break,
+        }
+    }
+    let concrete: Vec<TypeRef> = match t {
+        TypeRef::Named { generics, .. } => generics.clone(),
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => vec![(**inner).clone()],
+        _ => Vec::new(),
+    };
+    for (name, conc) in names.iter().zip(concrete.iter()) {
+        subst.insert(name.clone(), conc.clone());
+    }
+    subst
 }
 
 // [M-generic-arg-type-mismatch-silent] U.5.3: `is_type_param_name` (→ `Any` in

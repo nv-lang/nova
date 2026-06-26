@@ -1,0 +1,27 @@
+// Plan 172.2 [M-instance-method-arg-scalar-narrowing] POS — the complement of the NEG
+// `neg/n_method_arg_narrowing` (int var -> `Vec[u32].push(u32)` narrows). A `Vec[u32]`
+// method arg accepts a matching `u32` var, an explicit `int as u32` cast, and an
+// in-range `int` literal (literals adapt via the D227 range-check, not narrowing). None
+// of these emit [E_IMPLICIT_NARROWING]. Folder-module peer of `module detect172`.
+// (Reads via `v[i]` index + mixed u32/int compare — avoids `Some(lit)` Option-eq, an
+// unrelated literal-adaptation gap not in 172.2 scope.)
+module detect172
+
+test "172.2: Vec[u32].push accepts a matching u32 var (no narrowing)" {
+    mut v = Vec[u32].new()
+    ro x u32 = 5
+    v.push(x)
+    assert(v.len() == 1)
+    assert(v[0] == 5)
+}
+test "172.2: explicit `int as u32` into Vec[u32].push is OK" {
+    mut v = Vec[u32].new()
+    ro c int = 30
+    v.push(c as u32)
+    assert(v[0] == 30)
+}
+test "172.2: in-range int literal adapts to Vec[u32].push (range-check, not narrowing)" {
+    mut v = Vec[u32].new()
+    v.push(65)
+    assert(v[0] == 65)
+}

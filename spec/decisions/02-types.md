@@ -13329,3 +13329,33 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
 ### Связь
 
 D181/D184 (режим `@`), D246 (L3 / RETURN-оракул / P10 no-exclusivity), D131/D132/D133/D180 (consume / alias-гарантия), D228 (escape), D315 (ABI выводится), D156 (consume-bound), D157 (multi-mut sound под GC), Q29 (amend), Plan 172.4 (авто-`ro ref`/`@`/heap↔stack — реализует часть), Plan 177/178 (raw pointers / FFI). **Новый код ошибки ровно один:** `E_REF_ALIAS_OVERLAP`; остальное переиспользует existing (`E_RECEIVER_BINDING_NOT_MUT`, `E_CONSUME_RECEIVER_RETURNS_AT`, `E_AT_RETURN_OUTSIDE_METHOD`).
+
+---
+
+## D327 — Codepoint = `u32` (а не `int`): тип кодпоинта в std.unicode (Plan 172.2, 2026-06-26)
+
+**Source:** Plan 172.2 (scalar narrowing через method-arg), 2026-06-26. Миграция std.unicode под narrowing-чек (D54) вскрыла int↔u32-импеданс: кодпоинты типизированы `int`, но хранятся `Vec[u32]` — каждый push был неявным сужением. Owner предложил хранить кодпоинт как `u32`; обсуждение выявило, что [D226 «Signed indexing convention»](#d226) к кодпоинтам неприменим.
+**Status:** ✅ ADOPTED (sign-off владельца 2026-06-26).
+**Amends:** [nv-coding-style.md](../../docs/nv-coding-style.md) §числовые-ширины (новый пункт «Codepoint = u32»). Снимает аномалию `is_alphabetic(cp int)` (был `int`-кодпоинт по инерции signed-правила).
+**Cross-ref:** [D128](#d128) (`char` = `nova_char` = `uint32_t`), [D226](#d226) (signed indexing — ОТДЕЛЬНАЯ категория), [D54](#d54) (implicit narrowing — мотивация), D77 (fallible → `Option`).
+
+### Что
+
+**Unicode codepoint (scalar value, 0..0x10FFFF) — `u32`, НЕ `int`.** Кодпоинт — character-data интринсик-ширины 32 бит, как UTF-16 code unit — `u16` (nv-coding-style: «`u32` — когда значение само по себе этой ширины»). Это категория **значение-идентификатор**, ОТЛИЧНАЯ от D226-категории **index/len/offset/счётчик** (мера, где underflow/`-1`-сентинел/mixed-arith мотивируют signed `int`). D226 к кодпоинтам не относится — кодпоинт не индексируют и не вычитают как длину.
+
+### Правило
+
+1. **Хранилище** последовательностей кодпоинтов — `Vec[u32]` (4 байта; ср. Rust `Vec<char>`, Go `[]rune`=`[]int32`). НЕ `Vec[int]` (вдвое память/кэш на горячих путях коллации/нормализации — §2 perf).
+2. **Поток и арифметика** внутри unicode-движков — `u32`. Это убирает int↔u32-границу by-construction (нет неявного narrowing, нет россыпи `as u32`).
+3. **`char`** (= `u32`, D128) — семантический тип кодпоинта на границе `str`: `s.as_chars()` → `char`, `char.try_from(u32)` → валидный скаляр, char-методы (`'a'.is_alphabetic()`).
+4. **Публичные cp-функции принимают `u32`** (`general_category(cp u32)`, `is_alphabetic(cp u32)`). Целочисленные литералы адаптируются к u32-контексту → `general_category(0x41)` остаётся валидным (контракт Plan 159 / plan152_3 сохранён). char-методы делегируют через `@ as u32`.
+5. **Fallible-функции, выдающие кодпоинт → `Option[u32]`** (D77), НЕ `-1`-сентинел. (`-1` в `int`-функции — идиоматичен для find/мер D226, но кодпоинт — не мера.)
+6. **Bit-packing** нескольких кодпоинтов в один ключ (`(a<<21)|b`, > 32 бит) → ключ `int`, явный `as int` на упаковке (packed key — не кодпоинт).
+
+### Почему не оставить `int` + `Vec[u32]`-хранилище
+
+Хранилище обязано быть 4-байтным (perf/идиома; 8-байтный `Vec[int]` кодпоинтов неидиоматичен). При `int`-потоке + `u32`-хранилище int↔u32-граница на каждом push неустранима — это и есть источник narrowing-боли 172.2. `u32`-поток её снимает.
+
+### Звучность / footgun
+
+`u32`-арифметика `cp - lo` молча заворачивается при `cp < lo` (D226 §«нет underflow-trap» — аргумент за signed). В unicode эти вычитания (hangul `cp - SBASE`) уже под range-guard'ами (`cp >= lo && cp <= hi`), underflow недостижим, footgun локализован и под охраной. Приемлемо для домена.

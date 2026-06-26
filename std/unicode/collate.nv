@@ -34,8 +34,8 @@ import std.collections.vec.{Vec}
 // parse_cp_keyed_table / hex live in cp_utils.nv peer; parse_flat in ranges.nv peer.
 // SINGLE_DATA and CONTRACTION_DATA both use the "cp:value;.." shape -> parse_cp_keyed_table.
 // IMPLICIT_DATA uses the nested ';'-of-',' flat shape -> parse_flat.
-ro collate_single_map HashMap[int, str] = parse_cp_keyed_table(SINGLE_DATA)
-ro collate_contraction_map HashMap[int, str] = parse_cp_keyed_table(CONTRACTION_DATA)
+ro collate_single_map HashMap[u32, str] = parse_cp_keyed_table(SINGLE_DATA)
+ro collate_contraction_map HashMap[u32, str] = parse_cp_keyed_table(CONTRACTION_DATA)
 ro implicit_flat Vec[u32] = parse_flat(IMPLICIT_DATA)
 
 // ── collation-element parsing ──
@@ -44,7 +44,7 @@ ro implicit_flat Vec[u32] = parse_flat(IMPLICIT_DATA)
 // so the whole CE stream is a flat Vec[int] of quadruples (avoids a struct/tuple
 // HashMap value — see [M-hashmap-tuple-key-mono]).
 fn push_one_ce(mut acc Vec[u32], ce str) -> int {
-    mut variable = 0
+    mut variable u32 = 0
     mut body = ce
     match ce.strip_prefix("*") {
         Some(rest) => {
@@ -55,14 +55,20 @@ fn push_one_ce(mut acc Vec[u32], ce str) -> int {
     }
     ro parts = body.split(".")
     if parts.len() == 3 {
-        ro p = hex(parts[0])
-        ro s = hex(parts[1])
-        ro t = hex(parts[2])
-        if p >= 0 && s >= 0 && t >= 0 {
-            acc.push(variable)
-            acc.push(p)
-            acc.push(s)
-            acc.push(t)
+        match hex(parts[0]) {
+            Some(p) => match hex(parts[1]) {
+                Some(s) => match hex(parts[2]) {
+                    Some(t) => {
+                        acc.push(variable)
+                        acc.push(p)
+                        acc.push(s)
+                        acc.push(t)
+                    }
+                    None => {}
+                }
+                None => {}
+            }
+            None => {}
         }
     }
     0
@@ -79,7 +85,10 @@ fn push_ce_list(mut acc Vec[u32], ces str) {
 // kind 0 (Han/default): AAAA = base + (cp >> 15), BBBB = (cp & 0x7fff) | 0x8000.
 // kind 1 (siniform):    AAAA = base,              BBBB = (cp - lo) | 0x8000.
 // Codepoints in no implicit range fall back to base 0xFBC0, kind 0.
-fn push_implicit(mut acc Vec[u32], cp int) {
+fn push_implicit(mut acc Vec[u32], cp u32) {
+    // The range test compares `cp` against the `u32` table bounds (kept `u32`); the
+    // weight arithmetic below is bit-packing / grid math → `int` (D327 §bit-packing).
+    ro c = cp as int
     mut base = 0xFBC0
     mut kind = 0
     mut lo = 0
@@ -101,17 +110,17 @@ fn push_implicit(mut acc Vec[u32], cp int) {
     mut bbbb = 0
     if kind == 1 {
         aaaa = base
-        bbbb = (cp - lo) | 0x8000
+        bbbb = (c - lo) | 0x8000
     } else {
-        aaaa = base + (cp >> 15)
-        bbbb = (cp & 0x7FFF) | 0x8000
+        aaaa = base + (c >> 15)
+        bbbb = (c & 0x7FFF) | 0x8000
     }
     acc.push(0)
-    acc.push(aaaa)
+    acc.push(aaaa as u32)
     acc.push(0x20)
     acc.push(0x02)
     acc.push(0)
-    acc.push(bbbb)
+    acc.push(bbbb as u32)
     acc.push(0)
     acc.push(0)
 }
@@ -149,7 +158,7 @@ fn cp_seq_is_prefix(pre Vec[u32], full Vec[u32]) -> bool {
 
 // Exact contraction match: does `first` have a variant whose tail == `tail`?
 // Returns its CE string. (No early break — iterate all variants, keep last hit.)
-fn contraction_lookup(first int, tail Vec[u32]) -> Option[str] {
+fn contraction_lookup(first u32, tail Vec[u32]) -> Option[str] {
     mut found Option[str] = None
     match collate_contraction_map.get(first) {
         Some(variants) => {
@@ -168,7 +177,7 @@ fn contraction_lookup(first int, tail Vec[u32]) -> Option[str] {
 }
 
 // Is `tail` a strict prefix of some longer variant tail of `first`? (keep extending)
-fn contraction_has_longer(first int, tail Vec[u32]) -> bool {
+fn contraction_has_longer(first u32, tail Vec[u32]) -> bool {
     match collate_contraction_map.get(first) {
         Some(variants) => {
             mut yes = false

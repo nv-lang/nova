@@ -35,21 +35,22 @@ const SCOUNT int = 11172  // LCOUNT * NCOUNT
 // hex / parse_cp_list / parse_cp_keyed_table / parse_cp_int_table /
 // parse_comp_table / str_to_cps / cps_to_str live in the std.unicode peer
 // cp_utils.nv (folder-module peers share declarations).
-ro nfd_map HashMap[int, str] = parse_cp_keyed_table(NFD_DATA)
-ro nfkd_map HashMap[int, str] = parse_cp_keyed_table(NFKD_DATA)
-ro ccc_map HashMap[int, int] = parse_cp_int_table(CCC_DATA)
-ro comp_map HashMap[int, int] = parse_comp_table(COMP_DATA)
+ro nfd_map HashMap[u32, str] = parse_cp_keyed_table(NFD_DATA)
+ro nfkd_map HashMap[u32, str] = parse_cp_keyed_table(NFKD_DATA)
+ro ccc_map HashMap[u32, int] = parse_cp_int_table(CCC_DATA)
+ro comp_map HashMap[int, u32] = parse_comp_table(COMP_DATA)
 
-fn ccc_of(cp int) -> int {
+fn ccc_of(cp u32) -> int {
     match ccc_map.get(cp) { Some(c) => c, None => 0 }
 }
 
-fn decomp_lookup(cp int, compat bool) -> Option[str] {
+fn decomp_lookup(cp u32, compat bool) -> Option[str] {
     if compat { nfkd_map.get(cp) } else { nfd_map.get(cp) }
 }
 
-fn is_hangul_syllable(cp int) -> bool {
-    cp >= SBASE && cp < SBASE + SCOUNT
+fn is_hangul_syllable(cp u32) -> bool {
+    ro c = cp as int  // Hangul grid math is index-arithmetic (int; D327 §bit-packing)
+    c >= SBASE && c < SBASE + SCOUNT
 }
 
 // ---- decomposition ----
@@ -57,11 +58,13 @@ fn decompose(cps Vec[u32], compat bool) -> Vec[u32] {
     mut out = Vec[u32].with_capacity(cps.len() * 2)
     for cp in cps {
         if is_hangul_syllable(cp) {
-            ro si = cp - SBASE
-            out.push(LBASE + si / NCOUNT)
-            out.push(VBASE + (si % NCOUNT) / TCOUNT)
+            // Hangul algorithmic decomposition — grid/index arithmetic in `int`
+            // (D327 §bit-packing); the resulting codepoints stored as `u32`.
+            ro si = (cp as int) - SBASE
+            out.push((LBASE + si / NCOUNT) as u32)
+            out.push((VBASE + (si % NCOUNT) / TCOUNT) as u32)
             ro t = si % TCOUNT
-            if t != 0 { out.push(TBASE + t) }
+            if t != 0 { out.push((TBASE + t) as u32) }
         } else {
             match decomp_lookup(cp, compat) {
                 Some(seq) => { for d in parse_cp_list(seq) { out.push(d) } }
@@ -97,18 +100,20 @@ fn canonical_order(arr Vec[u32]) -> Vec[u32] {
 }
 
 // ---- canonical composition ----
-// Primary composite of (a, b), or -1 if none. Hangul L+V and LV+T are handled
-// algorithmically; everything else via the inverted canonical-decomposition map.
-fn compose_pair(a int, b int) -> int {
+// Primary composite of (a, b), or `None` if none (D327 §fallible — no `-1`
+// sentinel). Hangul L+V and LV+T handled algorithmically; everything else via the
+// inverted canonical-decomposition map. `a`/`b` stay `int`: the body is grid /
+// bit-packing arithmetic (`(a<<21)|b` > 32 bits — D327 §bit-packing).
+fn compose_pair(a int, b int) -> Option[u32] {
     if a >= LBASE && a < LBASE + LCOUNT && b >= VBASE && b < VBASE + VCOUNT {
         ro li = a - LBASE
         ro vi = b - VBASE
-        SBASE + (li * VCOUNT + vi) * TCOUNT
+        Some((SBASE + (li * VCOUNT + vi) * TCOUNT) as u32)
     } else if a >= SBASE && a < SBASE + SCOUNT && ((a - SBASE) % TCOUNT) == 0
         && b > TBASE && b < TBASE + TCOUNT {
-        a + (b - TBASE)
+        Some((a + (b - TBASE)) as u32)
     } else {
-        match comp_map.get((a << 21) | b) { Some(cp) => cp, None => -1 }
+        comp_map.get((a << 21) | b)
     }
 }
 
@@ -131,14 +136,22 @@ fn compose(cps Vec[u32]) -> Vec[u32] {
         while i < n {
             ro ch = cps[i]
             ro cc = ccc_of(ch)
-            ro comp = compose_pair(starter_ch, ch)
-            if comp >= 0 && (last_ccc < cc || last_ccc == 0) {
-                out[starter_pos] = comp
-                starter_ch = comp
-                // last_ccc intentionally not updated here: UAX#15 blocking rule —
-                // the composed character inherits the starter's CCC (0), so the
-                // next combiner is still blocked by the same blocking condition.
-            } else {
+            // compose_pair → Option[u32] (D327, no `-1` sentinel): Some(comp) AND
+            // not blocked → fold into the starter; else emit `ch`.
+            mut composed = false
+            match compose_pair(starter_ch, ch) {
+                Some(comp) => {
+                    if last_ccc < cc || last_ccc == 0 {
+                        out[starter_pos] = comp
+                        starter_ch = comp
+                        // last_ccc intentionally not updated: UAX#15 blocking rule —
+                        // the composed char inherits the starter's CCC (0).
+                        composed = true
+                    }
+                }
+                None => {}
+            }
+            if !composed {
                 if cc == 0 {
                     starter_pos = out.len()
                     starter_ch = ch

@@ -34014,7 +34014,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // == uint32_t → nova_int_hash (widened). Без этой ветки `char.hash()`
             // не находил builtin и mis-dispatch'ился на user-метод `hash`
             // (segfault: nova_char передавался как receiver-pointer).
-            ("nova_int" | "nova_char",  "hash") => Some(PrimBuiltin::Fn("nova_int_hash")),
+            // Plan 172.2 (D327): тот же класс бага для ВСЕХ sized-int C-типов —
+            // `HashMap[u32, V]` (codepoint-keyed unicode-мапы, D327 «codepoint = u32»)
+            // генерил find_slot с `key.@hash()` на `uint32_t`, который не находил
+            // builtin и mis-dispatch'ился на чужой `@hash` (Nova_str_method_hash →
+            // undefined symbol при link). Все целочисленные ширины хешируются через
+            // nova_int_hash (C-промоушн к int64; детерминирован, lossless для u32).
+            // Ключевое сравнение HashMap идёт прямым `==` (operator-lowering), не
+            // `.eq()`, поэтому eq-арм расширять не нужно.
+            ("nova_int" | "nova_char" | "nova_byte"
+                | "uint8_t" | "uint16_t" | "uint32_t" | "uint64_t"
+                | "int8_t" | "int16_t" | "int32_t" | "int64_t",  "hash")
+                => Some(PrimBuiltin::Fn("nova_int_hash")),
             ("nova_bool", "hash") => Some(PrimBuiltin::Fn("nova_bool_hash")),
             ("nova_f64",  "hash") => Some(PrimBuiltin::Fn("nova_f64_hash")),
             // eq — inline оператор (все скаляры; char упорядочен по codepoint).
