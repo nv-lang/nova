@@ -218,6 +218,13 @@ type Token
     | NumTok(f64)
     | StrTok(str)
     | EofTok
+    // [M-181-json-trailing-content]: an unrecognized leading character is lexed
+    // into this sentinel token (carrying the char) instead of failing the lexer
+    // outright. This lets a value-completing prefetch SUCCEED so the top-level
+    // trailing-content check (`Json.parse`) can classify garbage AFTER a complete
+    // value as `TrailingContent` — while mid-structure consumers still convert it
+    // to `UnexpectedChar` via their catch-all arms (taxonomy preserved).
+    | BadTok(char)
 
 type TokenWithPos {
     ro tok Token
@@ -282,7 +289,12 @@ fn Lexer mut @next_token() -> Result[TokenWithPos, ParseJsonError] {
         Some('f') => @read_keyword("false", FalseTok, line, col)
         Some('n') => @read_keyword("null",  NullTok,  line, col)
         Some(c) if is_num_start(c) => Ok({ tok: NumTok(@read_number()?), line, col })
-        Some(c) => Err(UnexpectedChar { line, col, found: c })
+        // [M-181-json-trailing-content]: unrecognized leading char → BadTok sentinel
+        // (NOT a hard lex Err). A value-completing prefetch then SUCCEEDS, so trailing
+        // garbage after a complete top-level value is classified `TrailingContent`
+        // (Json.parse), while a BadTok reached mid-value/structure is turned into
+        // `UnexpectedChar` by the parser's catch-all arms (taxonomy unchanged).
+        Some(c) => { @advance(); Ok({ tok: BadTok(c), line, col }) }
     }
 }
 
@@ -509,6 +521,7 @@ fn tok_first_char(t Token) -> char => match t {
     RBracket => ']'
     Comma    => ','
     Colon    => ':'
+    BadTok(c) => c   // [M-181-json-trailing-content]: surface the actual bad char
     _        => '?'
 }
 
