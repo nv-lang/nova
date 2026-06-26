@@ -15,6 +15,33 @@ use std::fmt::Write as FmtWrite;
 /// источника = U.2.4, заблокирована mangling-фрагментацией, см. `[M-172.1-U2.4-mangling-fragmented]`.)
 pub type MethodSig = crate::sig_registry::CodegenView;
 
+/// Plan 172.1 (§0 single source): типы, ЗАранее определённые в C-runtime-хедерах
+/// (`nova_rt/*.h`: array.h, sync_primitives.h, effects.h) или как hand-written typedef
+/// (`nova_str`). Codegen НЕ эмитит для них ни struct-body, ни forward-decl `typedef
+/// struct Nova_X` — определение приходит из хедера (иначе typedef redefinition, напр.
+/// `struct Nova_MutexGuard` vs header `struct Nova_MutexGuard_s`). ЕДИНЫЙ список,
+/// потребляемый ОБОИМИ сайтами: `emit_type_decl` (skip struct-body) И type-fwd-decl
+/// loop в `emit_module` (skip forward typedef). Раньше дублировался (fn-local в
+/// emit_type_decl + неявно через BUILTIN_RUNTIME_TYPES external-loop), что пропускало
+/// fwd-decl для INLINED (через `import`) sync-типов → redefinition (Plan 172.1 U.1.3b).
+const RUNTIME_DEFINED_TYPES: &[&str] = &[
+    // core prelude (C structs/constructors в nova_rt/array.h)
+    "Option", "Result", "Error", "RuntimeError",
+    // effect vtables (nova_rt/effects.h)
+    "Fail", "Time", "Mem",
+    // sync (sync_primitives.h): MemOrdering + sized atomics + AtomicPtr
+    "MemOrdering",
+    "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
+    "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
+    "AtomicIsize", "AtomicUsize", "AtomicPtr",
+    // sync sum-types pre-declared (OnceState, WaitResult)
+    "OnceState", "WaitResult",
+    // consume guard types (sync_primitives.h `_s`-suffix structs)
+    "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
+    // lang-item str → hand-written typedef nova_str (nova_rt.h)
+    "str",
+];
+
 /// Plan 39 Issue A: classification of `with`-block trail type for
 /// choosing which NovaInterruptFrame slot to use.
 ///
@@ -2857,6 +2884,13 @@ impl CEmitter {
 
         for item in &module.items {
             if let Item::Type(t) = item {
+                // Plan 172.1 U.1.3b (§0 single source): типы, определённые в C-runtime-хедерах
+                // (RUNTIME_DEFINED_TYPES), НЕ получают codegen forward-typedef — header даёт их
+                // typedef; иначе redefinition с другим struct-тегом (`Nova_MutexGuard` vs header
+                // `Nova_MutexGuard_s`) при INLINE sync/atomics через `import`. Тот же список
+                // skip'ает struct-body в emit_type_decl (§0). До этого fwd-decl-loop его НЕ
+                // проверял → inline guard-типов давал typedef redefinition.
+                if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) { continue; }
                 match &t.kind {
                     TypeDeclKind::Record(_) => {
                         // Plan 139.1 (lang-item str): `str` — value-record, но
@@ -9952,95 +9986,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         //
         // Не путать с BUILTIN_TYPE_NAMES (forward-decl skip) — это
         // полный skip emit_type_decl на самом раннем этапе.
-        const RUNTIME_DEFINED_TYPES: &[&str] = &[
-            // Plan 62.A: core prelude types.
-            "Option", "Result", "Error",
-            // Plan 62.C: RuntimeError declared в std/prelude/errors.nv.
-            // Skip emission т.к. C struct + constructors уже живут в
-            // nova_rt/array.h (`Nova_RuntimeError` + `nova_make_RuntimeError_*`,
-            // lines ~565-610). Schema registration через registry's
-            // `init_prelude_decls_from_items` (sum_schema_registry.rs:526+)
-            // inherits variants/abi от HardcodedBaseline.
-            "RuntimeError",
-            // **ReadBufferError**: НЕ добавляется в skip-list — нет
-            // dedicated C struct в nova_rt/*.h. Codegen эмитит полную
-            // typedef + nova_make_ReadBufferError_UnexpectedEnd через
-            // обычный emit_sum_type path. Registry получит две entries:
-            // DeclaredFromUser (от emit_sum_type → register_user_sum) +
-            // DeclaredFromPrelude (от init_prelude_decls_from_items).
-            // Lookup precedence — Prelude > User > Hardcoded; both
-            // PointerErrorLike ABI, no semantic conflict.
-            //
-            // Plan 62.F: `Fail[E]` declared в std/prelude/effects.nv.
-            // Skip emission т.к. NovaVtable_Fail + Nova_Fail_fail()
-            // pre-registered в codegen (emit_c.rs:1057-1060) и runtime
-            // (nova_rt/effects.h). Type-checker / verify-pipeline матчит
-            // single-element path `["Fail"]` (см. types/mod.rs:2865,
-            // verify/pipeline.rs:505, codegen/emit_c.rs:3186) — declaration
-            // здесь даёт canonical API + AI/doc surface без duplicate emit.
-            // Также см. BUILTIN_VTABLE_NAMES (emit_c.rs:1221) — fwd-decl
-            // skip-list для тех же effects (Fail, Time).
-            "Fail",
-            // Plan 62.F.bis Ф.3 (2026-05-18): `Time` and `Mem` formally
-            // declared в std/prelude/effects.nv. Skip emission т.к.
-            // codegen effect_schemas pre-registers их (emit_c.rs:1077-1098),
-            // и `NovaVtable_Time` живёт в nova_rt/effects.h. Mem's vtable
-            // emitted on-demand via codegen helpers — skip type-decl
-            // (emit_effect_type would conflict с pre-existing schema).
-            // Declaration здесь — canonical API surface для `nova doc`
-            // + AI tooling без duplicate emit. BUILTIN_VTABLE_NAMES
-            // обновлён включить Mem (emit_c.rs:1231).
-            "Time", "Mem",
-            // Plan 62.D.bis (D126, 2026-05-18): opaque types declared
-            // through `external type` в std/prelude/collections.nv.
-            // Plan 109 (D179): StringBuilder removed — now a Nova-defined
-            // record type (type StringBuilder consume { mut buf []u8 }).
-            // Plan 91.12 (2026-06-01, D126 retract): WriteBuffer and ReadBuffer
-            // removed — now Nova-defined records over `[]u8` primitives
-            // (std/runtime/{write,read}_buffer.nv). emit_type_decl must emit
-            // the struct definitions for them.
-            // Plan 103.1 Ф.3: MemOrdering pre-declared in sync_primitives.h.
-            // C struct + 5 constructors live there; skip emit_sum_type.
-            // sum_schemas + sum_schema_registry populated below for pattern
-            // matching support (`match ord { MemOrdering.Relaxed => ... }`).
-            "MemOrdering",
-            // Plan 103.2: sized atomic types — C structs + methods pre-declared
-            // in sync_primitives.h. Skip emit_type_decl (no Nova body to emit).
-            // ExternalRegistry auto-registers methods from sync.nv declarations.
-            "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
-            "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
-            "AtomicIsize", "AtomicUsize",
-            "AtomicPtr",
-            // Plan 103.5: OnceState pre-declared in sync_primitives.h.
-            // C struct + 4 constructors (Fresh/Running/Done/Poisoned) live there.
-            // sum_schemas populated below for pattern matching support.
-            "OnceState",
-            // Plan 103.4: WaitResult pre-declared in sync_condvar.h.
-            // C struct + 2 constructors (Notified/TimedOut) live there.
-            // sum_schemas populated via 1a1b ExternalRegistry type_decls path.
-            "WaitResult",
-            // Plan 91.12 (V2): SocketAddr/TcpListener/TcpStream/UdpSocket
-            // are now Nova value-records `{ priv handle int }`.
-            // Emitter generates NovaValue_SocketAddr etc. as { nova_int handle; }.
-            // NOT in RUNTIME_DEFINED_TYPES — let codegen emit them normally.
-            // (Plan 83.12 pre-declared Nova_* here; renamed to NovaRt_* in V2.)
-            // Plan 103.9 (D174): consume guard types pre-declared in sync_primitives.h.
-            // struct Nova_MutexGuard_s / Nova_ReadGuard_s / Nova_WriteGuard_s /
-            // Nova_Permit_s / Nova_OnceGuard_s defined there (each has nova_int ptr field).
-            // Skip codegen emission — pre-definition + forward-decl in header avoids
-            // duplicate typedef errors. The Nova type declarations (type T consume { ptr int })
-            // serve only for type-checking and LinearityRegistry; C structs live in the header.
-            "MutexGuard", "ReadGuard", "WriteGuard", "Permit", "OnceGuard",
-            // Plan 139.1 (lang-item str): `str` declared as value-record
-            // `type str value priv { ptr *u8, len int }` в std/prelude/core.nv.
-            // Skip emission — C-тип str = hand-written typedef `nova_str`
-            // ({const uint8_t* ptr; int64_t len;}, nova_rt/nova_rt.h), ABI-
-            // identical. NOT NovaValue_str. Все ~354 рантайм-сайта + literal-
-            // lowering используют `nova_str` (type_ref_to_c "str" => "nova_str",
-            // emit_c.rs:4859). str — Record (не Sum), поэтому schema-branch
-            // ниже не срабатывает; просто return Ok. Closes [M-139-f0-lang-item-decl].
-            "str",
-        ];
+        // RUNTIME_DEFINED_TYPES — module-level const (§0 single source, top of file).
         if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
             // Plan 62.A: skip emission — C struct + constructors живут в
             // nova_rt/*.h. Но Plan 78 Ф.2 (2026-05-22): для runtime-
