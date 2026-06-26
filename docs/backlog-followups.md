@@ -335,14 +335,21 @@ Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
   (`Array→Vec____Nova_JsonValue_p_method_equal`); §7.5 baseline-DELTA 25 диров 0 регрессий; unit types:: 51/0.
   **HashMap-часть → отдельный follow-up ниже** (нет `@equal` Nova-body).
 
-- **[M-172.1-option-hashmap-eq-structural]** 🔴 follow-up (P2). `HashMap[K,V]` / `Set[T]` как Option-payload /
-  sum-вариант-поле (`Object(HashMap[str,JsonValue])`) сравниваются по указателям → json `into: nested object
-  round-trip` FAIL (`Object(m)==Object(m)` identity-by-construction, json.c JsonValue eq: `Object→(_0==_0)`).
-  Корень: HashMap **не имеет** `@equal` Nova-body (в отличие от Vec `vec/protocols.nv`) — нужно сначала написать
-  `HashMap[K,V] @equal` (order-independent: same size + ∀ key: `b.get(k)==Some(v)`; требует `[K Hash+Equal, V Equal]`),
-  затем `emit_field_eq` для `Nova_HashMap____*` маршрутизирует на mono `HashMap____<k>__<v>_method_equal` —
-  ТОЧНО как Vec в `f56cd7b7` (предикат + pending-drain + L2-исключение уже готовы, осталось снять `HashMap____`
-  из identity-ветки). Завершит json object round-trip + единую per-type-eq консолидацию (§0).
+- **[M-172.1-option-hashmap-eq-structural]** ✅ RESOLVED 2026-06-26 (`bd56022e`) — **завершает per-type-eq
+  консолидацию** (sum→record→Vec→HashMap). `HashMap[K,V]` / `Set[T]` как Option-payload / sum-вариант-поле
+  (`Object(HashMap[str,JsonValue])`) сравнивался по указателям → json `nested object round-trip` FAIL. Два слоя:
+  (1) **`HashMap[K,V] @equal` Nova-body** (`hashmap.nv`) — order-independent: same `@len()` + `∀(k,v): match
+  other.get(k) { Some(ov)=>v==ov; None=>false }`. Бонд НЕ нужен (K:Hash наследуется от типа, `==` на V
+  диспатчится структурно — как `Vec[T] @equal`; `[K Hash+Equal, V Equal]` из старой формулировки оказался не
+  обязателен). (2) **codegen routing:** `emit_field_eq` для `Nova_HashMap____*` → MONO
+  `HashMap____<k>__<v>_method_equal` (обобщил Vec-ветку на оба контейнера); предикат разрешает `HashMap____`;
+  drain зовёт **generalized `register_container_eq_mono`** (type-args из `generic_type_instance_info`, fn_decl из
+  `generic_type_methods[base]` — работает для любого generic-контейнера). `Set[T]`=`HashMap[T,()]` покрыт
+  автоматически. **Verify:** detect172 `u172h_option_hashmap_eq_structural_pos` PASS:1 (direct order-independent +
+  Option[HashMap] + sum-поле + HashMap[str,sum] + HashMap[int,[]int]); **json `nested object round-trip` FIXED**
+  (json.c: `Object→HashMap____nova_str__Nova_JsonValue_p_method_equal`, `Array→Vec mono`); §7.5 baseline-DELTA 25
+  HashMap-heavy диров 0 регрессий (4=4); unit types:: 51/0. **json остаток = ТОЛЬКО `trailing-content`**
+  (`[M-181-json-trailing-content]`, parser, отложен с sign-off владельца).
 
 - **[M-181-json-trailing-content]** 🔴 follow-up (P2). json `Json.parse("42 garbage")` не возвращает
   `Err(TrailingContent)` (тест `parse: ошибка — trailing content` json.nv:913) — **parser-логика** (детект
