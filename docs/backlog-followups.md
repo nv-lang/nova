@@ -321,10 +321,28 @@ Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
   ИДЕНТИЧНЫ (0 регрессий) + 2-й батч 20 диров без новых CC-FAIL; unit types:: 51/0. **Остаток json:** container-eq
   (ниже) + trailing-content (parser).
 
-- **[M-172.1-option-container-eq-structural]** 🔴 follow-up (P2). `Option[Vec[T]]` / `Vec`/`HashMap` как
-  sum-вариант-поле сравниваются по указателям (нужна element-wise структурная eq, mono'd `@equal`). Блокирует
-  json `into: array round-trip` (`Array([..]) == Array([..])`). emit_field_eq должен звать MONO container-eq
-  (`Nova_Vec____<elem>_method_equal`), не generic (конфликт). Часть единой per-type-eq консолидации (§0).
+- **[M-172.1-option-container-eq-structural]** ✅ RESOLVED 2026-06-26 (`f56cd7b7`) — **Vec/`[]T`-часть**.
+  `Option[Vec[T]]` / Vec как sum-вариант-поле сравнивался по указателям (после record-фикса — рекурс в opaque
+  `cap`/`data`/`len`, `data` по указателю) → `Some([1,2])==Some([1,2])` false. Fix: `emit_field_eq` для
+  `Nova_Vec____<elem>*` зовёт MONO `Vec____<elem>_method_equal` (Nova-body `vec/protocols.nv`, element-wise), не
+  erased generic (конфликт/SEGV) и не record-рекурс. **Граница &self/&mut:** mono-инстанциация — `&mut`, а
+  emit_field_eq/register_novaopt_decl — `&self` → emit_field_eq пишет запрос в `pending_container_eq_monos`
+  (RefCell, dedup `container_eq_requested`), `&mut` post-pass (в mono_worklist drain) инстанциирует через
+  `vec_method_call`; каскад (Vec[Vec]/Vec[record]) — монотонно → терминирует. Предикат расширен на `Vec____`
+  (late EQ_FNS splice → call резолвится); L2 record-branch исключает `Vec____`/`HashMap____` (контейнеры в
+  record_schemas только для field-access). **Verify:** detect172 `u172c_option_container_eq_structural_pos` PASS:1
+  (direct/Option[Vec]/sum-Vec-поле/Vec[str]/Vec[record]/nested [][]int); json `array round-trip` FIXED
+  (`Array→Vec____Nova_JsonValue_p_method_equal`); §7.5 baseline-DELTA 25 диров 0 регрессий; unit types:: 51/0.
+  **HashMap-часть → отдельный follow-up ниже** (нет `@equal` Nova-body).
+
+- **[M-172.1-option-hashmap-eq-structural]** 🔴 follow-up (P2). `HashMap[K,V]` / `Set[T]` как Option-payload /
+  sum-вариант-поле (`Object(HashMap[str,JsonValue])`) сравниваются по указателям → json `into: nested object
+  round-trip` FAIL (`Object(m)==Object(m)` identity-by-construction, json.c JsonValue eq: `Object→(_0==_0)`).
+  Корень: HashMap **не имеет** `@equal` Nova-body (в отличие от Vec `vec/protocols.nv`) — нужно сначала написать
+  `HashMap[K,V] @equal` (order-independent: same size + ∀ key: `b.get(k)==Some(v)`; требует `[K Hash+Equal, V Equal]`),
+  затем `emit_field_eq` для `Nova_HashMap____*` маршрутизирует на mono `HashMap____<k>__<v>_method_equal` —
+  ТОЧНО как Vec в `f56cd7b7` (предикат + pending-drain + L2-исключение уже готовы, осталось снять `HashMap____`
+  из identity-ветки). Завершит json object round-trip + единую per-type-eq консолидацию (§0).
 
 - **[M-181-json-trailing-content]** 🔴 follow-up (P2). json `Json.parse("42 garbage")` не возвращает
   `Err(TrailingContent)` (тест `parse: ошибка — trailing content` json.nv:913) — **parser-логика** (детект
