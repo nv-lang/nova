@@ -666,6 +666,16 @@ pub struct CEmitter {
     /// field order for deterministic codegen. Analog of `record_variant_field_order`
     /// for non-variant records.
     record_field_order: HashMap<String, Vec<String>>,
+    /// [M-172.1-option-container-eq-structural]: mono'd container C-types
+    /// (`Nova_Vec____<elem>`) whose `@equal` mono needs instantiating because a
+    /// NESTED comparison (Option[Vec]/sum-Vec-field) emits a call to it. Mono
+    /// instantiation is `&mut self`; `emit_field_eq`/`register_novaopt_decl` are
+    /// `&self`, so they record the request here (RefCell) and a `&mut` post-pass
+    /// (the mono_worklist drain) instantiates each. `container_eq_requested`
+    /// dedups (the drain is monotone → terminates). Vec-only for now: HashMap has
+    /// no `@equal` Nova-body yet.
+    pending_container_eq_monos: std::cell::RefCell<Vec<String>>,
+    container_eq_requested: std::cell::RefCell<HashSet<String>>,
     /// Return type of the currently-emitting function, used for match result type inference.
     current_fn_return_ty: Option<String>,
     /// Plan 72 P3-B return: when the currently-emitting function declares a
@@ -1397,6 +1407,8 @@ impl CEmitter {
             record_variant_field_types: HashMap::new(),
             record_variant_field_order: HashMap::new(),
             record_field_order: HashMap::new(),
+            pending_container_eq_monos: std::cell::RefCell::new(Vec::new()),
+            container_eq_requested: std::cell::RefCell::new(HashSet::new()),
             current_fn_return_ty: None,
             current_fn_returns_protocol: None,
             contracts_post_label: None,
@@ -4286,7 +4298,9 @@ impl CEmitter {
         {
             let limit = self.mono_depth_limit;
             let mut safety = 0usize;
-            while !self.mono_worklist.is_empty() {
+            while !self.mono_worklist.is_empty()
+                || !self.pending_container_eq_monos.borrow().is_empty()
+            {
                 safety += 1;
                 if safety > limit {
                     return Err(format!(
@@ -4295,6 +4309,19 @@ impl CEmitter {
                          or raise via --mono-depth=N CLI flag (or NOVA_MONO_DEPTH env var)",
                         limit
                     ));
+                }
+                // [M-172.1-option-container-eq-structural]: instantiate the `@equal`
+                // mono of every `Vec[T]` whose nested structural eq emitted a call to
+                // `Vec____<elem>_method_equal` (recorded `&self` in emit_field_eq; mono
+                // registration is `&mut`). This may enqueue further monos (the Vec body
+                // calls its element `==`) → drained on the next loop turn. The
+                // `container_eq_requested` guard keeps it monotone.
+                let pending: Vec<String> =
+                    std::mem::take(&mut *self.pending_container_eq_monos.borrow_mut());
+                for vec_c in pending {
+                    // dummy args — we only need the &mut registration side-effect.
+                    let _ = self.vec_method_call(&vec_c, "equal",
+                        &["a".to_string(), "b".to_string()]);
                 }
                 let batch: Vec<_> = std::mem::take(&mut self.mono_worklist);
                 for (fn_name, type_subst, mono_name) in batch {
@@ -12966,6 +12993,32 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 .unwrap_or("")
                 .trim_end_matches('*')
                 .to_string();
+            // [M-172.1-option-container-eq-structural]: a mono'd `Vec[T]`
+            // (`Nova_Vec____<elem>*`) nested as an Option payload / sum-variant /
+            // Result / tuple field needs ELEMENT-WISE structural eq via the MONO
+            // `Vec____<elem>_method_equal` Nova-body — NOT the erased generic
+            // `Nova_Vec_method_equal` (conflicting types / wrong erased element
+            // compare → SEGV), and NOT a struct-field recurse into the opaque
+            // `data`/`len`/`cap` header (the record branch below would compare the
+            // heap `data` POINTER by identity). `[]T` ≡ `Vec[T]`, so this also
+            // covers slice fields. The direct `Vec==Vec` operator is handled
+            // earlier (emit_binary, `&mut`); HERE we are `&self`, so we cannot
+            // trigger the `&mut` mono instantiation directly — record the request
+            // in `pending_container_eq_monos` (drained post-emission). Under
+            // `novaopt_early_gen` (early opt path, before the mono fn-fwd-decls)
+            // the mono proto isn't visible → bail to identity; the structural-LATE
+            // opt path (opt_payload_needs_structural_eq) reaches us with early_gen
+            // off and splices the eq fn AFTER the mono fwd-decls.
+            if type_name.starts_with("Vec____") {
+                if *self.novaopt_early_gen.borrow() {
+                    return format!("(({}) == ({}))", l, r);
+                }
+                let vec_c = cty.trim_end_matches('*').to_string(); // Nova_Vec____<elem>
+                if self.container_eq_requested.borrow_mut().insert(vec_c.clone()) {
+                    self.pending_container_eq_monos.borrow_mut().push(vec_c);
+                }
+                return format!("{}_method_equal({}, {})", type_name, l, r);
+            }
             // (1) user/derived @equal (D237 Equal.equal / Plan 126).
             for method_name in &["equal"] {
                 let key = (type_name.clone(), method_name.to_string());
@@ -13065,8 +13118,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // falls back to sorted keys. EMPTY-schema records (opaque builtin runtime
             // structs like StringBuilder) are skipped → identity below (sound for
             // opaque handles; matches the opt_payload_needs_structural_eq exclusion).
+            // CONTAINERS (`Vec____`/`HashMap____`) are in `record_schemas` only for
+            // field-access lowering, but carry an opaque heap `data`/buckets buffer
+            // where field-recursion would compare the POINTER by identity
+            // (`Some([1,2])==Some([1,2])` false). Vec is intercepted earlier (mono
+            // `@equal` element-wise); HashMap has no `@equal` Nova-body yet → skip here,
+            // falling to identity (HashMap-eq = separate follow-up). Mono user-generic
+            // value-records (`Box____<T>`) DO recurse correctly — only the two known
+            // container prefixes are excluded.
             if let Some(schema) = self.record_schemas.get(&type_name) {
-                if !schema.is_empty() {
+                let is_container = type_name.starts_with("Vec____")
+                    || type_name.starts_with("HashMap____");
+                if !schema.is_empty() && !is_container {
                     let schema = schema.clone();
                     let order: Vec<String> = self.record_field_order
                         .get(&type_name).cloned()
@@ -35141,7 +35204,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         if let Some(inner) = c_ty.strip_prefix("Nova_").and_then(|s| s.strip_suffix('*')) {
             // double-pointer (`Nova_X**`) = raw pointer to a handle → identity.
             if inner.ends_with('*') { return false; }
-            // container/generic mono (Vec/HashMap/…) — out of scope (see doc).
+            // [M-172.1-option-container-eq-structural]: mono'd `Vec[T]` → ELEMENT-WISE
+            // structural via its mono `Vec____<elem>_method_equal` (emit_field_eq routes
+            // there + enqueues the mono). The late EQ_FNS splice is after the mono
+            // fwd-decls, so the call resolves. `[]T` ≡ `Vec[T]`.
+            if inner.starts_with("Vec____") { return true; }
+            // other container/generic mono (HashMap/Set/user-generic) — out of scope:
+            // HashMap has no `@equal` Nova-body yet; a generic `_method_equal` would
+            // conflict. Identity.
             if inner.contains("____") { return false; }
             // generic template / builtin container (erased `Nova_Vec*`/`Nova_HashMap*`):
             // their eq is mono'd per element, not a single-dispatcher structural compare —

@@ -1,0 +1,66 @@
+// [M-172.1-option-container-eq-structural] (Plan 172.1; §0 единый источник
+// per-type операции). A mono'd `Vec[T]` (`[]T`) nested as an Option payload / a
+// sum-variant field compared POINTER IDENTITY instead of element-wise — the
+// structural eq fell into a struct-field recurse over the opaque `data`/`len`/`cap`
+// header (`Some([1,2])==Some([1,2])` was FALSE — two heap buffers). Fix: route a
+// nested `Nova_Vec____<elem>*` through the MONO `Vec____<elem>_method_equal`
+// Nova-body (element-wise, `vec/protocols.nv`), NOT the erased generic eq nor a
+// raw-field compare. The `&self` emit path records the mono request; a `&mut`
+// post-pass (mono_worklist drain) instantiates it. This unblocks json
+// `Array([..])==Array([..])` round-trip. HashMap-eq is a separate follow-up
+// (no `@equal` Nova-body yet) → stays identity. Folder-module peer of
+// `module detect172`; bare ctors are u172c-prefixed.
+module detect172
+
+type U172cBox
+    | U172cArr([]int)
+    | U172cEmpty
+
+// element is a record without @equal — Vec eq → element ==  → record recursion.
+type U172cPt { x int, y int }
+
+fn u172c_pick(b bool) -> Option[[]int] =>
+    if b { Some([1, 2, 3]) } else { None }
+
+test "u172c: direct []int eq (baseline — already worked)" {
+    assert([1, 2, 3] == [1, 2, 3])
+    assert([1, 2, 3] != [1, 2, 4])
+    assert([1, 2, 3] != [1, 2])
+}
+
+test "u172c: Option[[]int] structural eq (was pointer-eq bug)" {
+    assert(u172c_pick(true) == Some([1, 2, 3]))
+    assert(u172c_pick(true) != Some([1, 2, 4]))
+    assert(u172c_pick(true) != Some([1, 2]))
+    assert(u172c_pick(false) == None)
+}
+
+test "u172c: sum holding a []int field — structural" {
+    assert(U172cArr([1, 2]) == U172cArr([1, 2]))
+    assert(U172cArr([1, 2]) != U172cArr([1, 9]))
+    assert(U172cEmpty == U172cEmpty)
+    assert(U172cArr([1, 2]) != U172cEmpty)
+    // wrapped in Option too.
+    assert(Some(U172cArr([5, 6])) == Some(U172cArr([5, 6])))
+    assert(Some(U172cArr([5, 6])) != Some(U172cArr([5, 7])))
+}
+
+test "u172c: Option[[]str] — element recurse into nova_str_eq" {
+    ro a = Some(["alice", "bob"])
+    assert(a == Some(["alice", "bob"]))
+    assert(a != Some(["alice", "carol"]))
+    assert(a != Some(["alice"]))
+}
+
+test "u172c: Option[[]record] — element recurse into record fields" {
+    ro a = Some([U172cPt { x: 1, y: 2 }, U172cPt { x: 3, y: 4 }])
+    assert(a == Some([U172cPt { x: 1, y: 2 }, U172cPt { x: 3, y: 4 }]))
+    assert(a != Some([U172cPt { x: 1, y: 2 }, U172cPt { x: 3, y: 9 }]))
+}
+
+test "u172c: Option[[][]int] — nested Vec mono recursion" {
+    ro a = Some([[1, 2], [3, 4]])
+    assert(a == Some([[1, 2], [3, 4]]))
+    assert(a != Some([[1, 2], [3, 9]]))
+    assert(a != Some([[1, 2]]))
+}
