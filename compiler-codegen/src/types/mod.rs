@@ -8376,7 +8376,20 @@ impl<'a> TypeCheckCtx<'a> {
                         let field_ty =
                             self.subst_receiver_generics(&field.ty, &td.generics, recv_type_args);
                         let rt = ResolvedType::from_type_ref(&field_ty);
-                        if Self::primitive_gate(&rt) {
+                        // Plan 172.1 U.4.5 P2 (Member widening): annotate a CONCRETE field type.
+                        // Primitive (was U.4.4) OR a NON-generic declared value-type (record / sum /
+                        // newtype / named-tuple, no type-args) — its C-type is DETERMINISTIC
+                        // (`Nova_X*` / `NovaValue_X`) with no type-param / mono-instance hazard, so
+                        // codegen lowers it via `resolved_type_to_c` without needing
+                        // `current_type_subst`. A generic-arg'd type (`Pair[int]`) or a residual
+                        // type-param is STILL rejected → legacy (mono-hazard, gated on 172.1.2).
+                        let concrete_value_named = matches!(&rt,
+                            ResolvedType::Named { name, args, .. }
+                                if args.is_empty()
+                                    && self.types.get(name).map_or(false, |td| matches!(&td.kind,
+                                        TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
+                                        | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
+                        if Self::primitive_gate(&rt) || concrete_value_named {
                             self.resolved_types_buf.borrow_mut().insert(member_id, rt);
                         }
                     }
