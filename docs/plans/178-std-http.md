@@ -477,9 +477,17 @@ export fn HttpResponse consume @error_for_status() -> Result[HttpResponse, HttpE
 // std/http/lib.nv — глобальный shared-клиент (lazy Once). СКРИПТЫ/one-shot ТОЛЬКО.
 // §3.0 Q15: prod-код использует явный HttpClient (no hidden global state — критика requests.Session);
 // http.get() — осознанное удобство для скриптов, документировано как «не для prod».
-export fn http.get(url IntoUrl) Http -> Result[HttpResponse, HttpError]
-export fn http.post(url IntoUrl, body []u8) Http -> Result[HttpResponse, HttpError]
-export fn http.head(url IntoUrl) Http -> Result[HttpResponse, HttpError]
+export fn http.get(url IntoUrl)              Http -> Result[HttpResponse, HttpError]
+export fn http.head(url IntoUrl)             Http -> Result[HttpResponse, HttpError]
+export fn http.delete(url IntoUrl)           Http -> Result[HttpResponse, HttpError]
+export fn http.post(url IntoUrl, body []u8)  Http -> Result[HttpResponse, HttpError]
+export fn http.put(url IntoUrl, body []u8)   Http -> Result[HttpResponse, HttpError]
+export fn http.patch(url IntoUrl, body []u8) Http -> Result[HttpResponse, HttpError]
+// typed-JSON one-call (gate serde Plan 184). get_json = get? .error_for_status()? .json[T]().
+// DOC-FENCE (§13.4): зашитый error_for_status → не-2xx = Err (теряет error-body, инверсия Q4);
+// сырой не-2xx body → http.get(url)?.json[T](). post_json: B→тело (application/json), T←ответ.
+export fn http.get_json[T](url IntoUrl)             Http -> Result[T, HttpError]
+export fn http.post_json[T, B](url IntoUrl, body B) Http -> Result[T, HttpError]
 ```
 
 #### Транспорт-семантика (всё внутри `real_http()`, Nova-logic над байтами)
@@ -1113,3 +1121,26 @@ with Net = real_net() { … }   // ≡ with TcpNet=real_tcp_net(), UdpNet=real_u
 - **`@drain`/`@finish` — осмысленно ≠ `@close`:** `@drain` дочитывает тело → возвращает conn в пул (Go-идиома drain-for-keep-alive-reuse); у `@close` этого нет (может оборвать). `@finish` пишет chunked-terminator = «завершить запись», не «закрыть». Схлопывать в `@close` = потерять семантику.
 - **`@discard` убран:** Body.`@discard` («дренаж+release без материализации») ≡ `@drain` на смежном слое → синоним. → Body.`@drain`.
 - **Правка конвенции** → внесено в [nv-coding-style.md §20.4](../nv-coding-style.md) (`· согласовано 2026-06-27`).
+
+### 13.4. Упрощение common-path: default-install root `real_http` + verb/json one-shots (owner 2026-06-27)
+
+Цель — догнать `requests.get(url).json()` / `fetch(url)` по церемонии, **сохранив 4 инварианта** (mockability / explicit-effects / Result+must-consume / `forbid Http`). Источник: multi-agent ревью + adversarial-verify. Закрывает остаток **H2** (после §13.2 umbrella).
+
+**Цель-программа:** `http.get_json[User](url)` внутри `main` **без `with`** (6 строк) ≡ `requests.get().json()`; впереди reqwest по async (фибры — нет `#[tokio::main]`/`.await`/`suspend`).
+
+**Рычаги:**
+1. **default-install root `real_http`** — рантайм ставит `real_http()` **нижним кадром** effect-стека на входе процесса — **тот же механизм, что root-`Io` для `main() Io`** (`spec/decisions/04-effects.md`), НЕ новый конструкт. Скрипт не пишет `with`. **`Http` остаётся в сигнатуре** (НЕ как `Async`/D62): `Async` — runtime-mechanic, `Http` — resource-capability (его подменяют → testability-win) → из типа НЕ убираем.
+2. **verb + typed-json one-shots** (§3.5 — ✅ внесено): `get/head/delete/post/put/patch` + `get_json[T]`/`post_json[T,B]` — тонкие фасады над lazy-`Once`-клиентом.
+3. **effect-free addr + umbrella `real_net()`** — §13.2 (уже).
+
+**🔴 НОРМАТИВНОЕ условие (критично, не опционально):** root `real_http` инсталлируется **ТОЛЬКО в script-edition**; lib/app/**test**-edition — **пустой корень `Http`**. Иначе забытый `mock_http` в тесте тихо уйдёт в реальную сеть (регрессия против сегодняшнего compile-fail). Edition-гейт превращает размен в явность (образец — Go `context.Background()` именуется явно).
+
+**Инварианты целы (adversarial-verify):** mock через R1-шэдоуинг (`with Http = mock_http()` побеждает root-дефолт по inner-wins); `Http` в сигнатуре; must-consume body не трогается install'ом; **`forbid Http {}` непреодолим** (sentinel `FORBID(Http)` push'ится ВЫШЕ корневого дефолта + D63 смотрит на сигнатуры, не на стек — дефолт даже **усиливает** требование явности песочницы).
+
+**🔴 Открытые (Ф.0-verify / owner sign-off):**
+- **(Q-edition)** есть ли в компиляторе понятие **edition** (script vs lib/app/test) для conditional root-install? `main() Io` даёт *безусловный* root-Io — нужен hook «ставить Http-handler только в script». Если edition нет → **ввести** ИЛИ дефолт держать opt-in (явный `with Http = real_http()` остаётся как fallback).
+- **(Q-error_for_status)** `get_json` зашивает `error_for_status` (не-2xx → `Err`, теряет error-body — инверсия Q4-семантики `http.get`). **owner sign-off:** правильный ли это дефолт? + doc-fence (✅ §3.5) + escape-hatch `http.get(url)?.json[T]()`.
+- **`*_json` — gate serde (Plan 184)**, landing ТОЛЬКО вместе; до того — динамический `.json()->JsonValue`.
+- **must-consume через early-`?`** (consume-`HttpResponse` уносится в `Err`-возврат = корректный discharge) + **`forbid`×root-default** — **pos+neg-тесты §8.0** (иначе допущение, не доказанный инвариант).
+
+**Записать при реализации:** §8/§8.0 — MANDATORY mock-тест + pos+neg must-consume на `?`-discharge + serde-gate; **D327** — дополнить root-install-семантикой `Http` (= как root-`Io`).
