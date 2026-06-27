@@ -1025,3 +1025,32 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 - **zstd decompress**, **TLS session resumption** (зависит от 116 followup), **h2c-via-Upgrade** (НЕ реализуем — deprecated; только prior-knowledge), **multipart streaming upload** (large file, fs-gate), **proxy-auth digest**, **cookie-jar persistence** (disk), **non-UTF-8 charset decode** (Shift_JIS/GBK — Q21), **reflective JSON serde** (если станет prereq для `json()`).
 
 Имена/детали — финал при реализации (после Ф.0).
+
+---
+
+## 12. API-ревью (2026-06-27, multi-agent vs 7 языков)
+
+> Источник: 11-агентный workflow (gather → 7 языковых экспертов Rust/Go/TS/Kotlin/Java/Zig/Swift + self-consistency → synth). **Полный документ:** [docs/research/2026-06-27-http-net-api-review.md](../research/2026-06-27-http-net-api-review.md).
+
+**Вердикт:** http (Plan 178) — **самый удобный high-level стек среди 7 пиров** по сумме (must-consume body = compile-time no-leak, mock-триад, secure-by-default, Go-1.22-server+graceful, verb-builder reqwest 1:1). Структура корректна, имена в основном = смыслу+практике. Остаются **2 HIGH-долга** + пара naming-footgun'ов — закрыть, чтобы «без упрощений» (§8.0) держалось.
+
+**✅ ≥ пиров — НЕ трогать:** must-consume body (headline 7/7) · non-consuming `error_for_status` (лучше reqwest) · валидированные newtype'ы (`HeaderValue.from_bytes` reject CRLF/NUL) · mock-триад · secure-default клиент · `Http` инкапсулирует `Tls/TcpNet/DnsNet` (version-transparent) · `Result[HttpError]`+OPEN-kind+source-chain · first-class UDP + DNS-все-адреса.
+
+### 🔴 HIGH
+
+- **H1 — net byte-surface (`str`→`[]u8`).** Сокет = байты; net `@read->str` lossy на бинарных/gzip-телах; http байтовый и ТРЕБУЕТ `[]u8` от net. **СТАТУС: уже зафиксировано** (§3.10 / §3.0 Q5 / Ф.0.5 HARD-BLOCKER). Ревью **усиливает приоритет**: единогласно 7/7 + self-consistency-HIGH → приземлить `@read_bytes/@write_bytes/@write_all_bytes` (+ байтовый UDP) как **первичную** поверхность ПЕРЕД http; `str` → fallible-обёртка.
+- **H2 — церемония `with Effect = real_x()` на common-path (NEW, не было в плане).** Ни у кого нет ambient-capability-обёртки; даже чистый `SocketAddr.loopback(0)` тащит `AddrNet`, хотя I/O не делает. → **(a)** umbrella `real_net()` (AddrNet+TcpNet+UdpNet+DnsNet разом); **(b)** чистые `AddrNet`-аксессоры (`loopback/v4/@port/@ip/@to_str`) **effect-free** (нет I/O/parking); **(c)** default-installed `real_http` → `http.get(url)` в скрипте без видимого `with`. Seam оставить для app/test (compiler-enforced DI). Координация: std/net + effect-default-install (компилятор). → §3.0-Q + Ф.0.5-followup.
+
+### 🟡 MED — actionable (fold-now кандидаты **жирным**)
+
+- **`RequestBuilder @header` APPEND'ит, нет replace-варианта** → добавить **`@set_header(name, value)`** рядом (OkHttp/Swift `.header()`/`setValue` = replace; «set this header» сейчас → тихая дупликация). **fold-now.**
+- **discharge-глаголы — разнобой** (`@close`/`@discard`/`@drain`/`@finish` под один концепт «release linear resource») → единая таксономия: `@drain` = release-без-материализации на всех слоях (свернуть `Body.@discard`→`@drain`), `@close` только conn/reader-teardown, `@finish` только `ResponseWriter` (chunked-terminator). **Конвенция → owner sign-off.**
+- **`error_for_status()` non-consuming** ломает визуальный consume-паттерн сиблингов → сигнатура явно возвращает тот же `consume HttpResponse` + доки «guard, не освобождает Body» (семантику оставить — это win над reqwest). Опц. `error_for_status_drained()`.
+- **typed `.json[T]` / `multipart` гейтнуты** (serde Q20 / Plan 180) — главное место, где http ОТСТАЁТ от Ktor `body<T>`/Swift Codable/fetch `res.json()` → приоритизировать их landing; до того **динамический `.json()->JsonValue` сделать first-class one-call**.
+- **net-сторона (вместе с byte-surface-правкой H1):** EOF-as-Err — громко задокументировать дивергенцию + канонический цикл `match read { Ok(d)=>…, Err(Eof)=>break, Err(e)=>… }`; **no-op `#stable` socket-опции** (`set_nodelay/set_keepalive/set_reuse_address`) — доделать `setsockopt` ИЛИ снять `#stable` (тихая заглушка = correctness-trap); string-addr **`connect('host:port')`/`bind('host:port')`** (internal DNS, протокол `IntoSocketAddr`) + one-shot lookup без `supervised{spawn{}}`; stream-адаптеры `read_to_end/read_exact` + buffered line reader + accept-iterator + `impl io.Read/io.Write` на TcpStream/половинах.
+
+### 🟢 LOW
+
+free one-shot узки (bytes-only POST без content-type) → `http.put/delete/patch` / `post_json[T]`; `split()` для конкурентного R/W без `close_read/close_write` → доки + добавить; имя `Request` на двух ролях (client-built/server-received) → доки «rich-аксессоры server-only» или `OutgoingRequest`; `HttpServer.bind()` не байндит сокет (реальный listen в `serve()`) → доки/`config()`; `NetError.InvalidPort` пропущен в doc-comment `error.nv` (14 в enum, 13 в комменте).
+
+**Sequencing:** H1 — в Ф.0.5 (уже). **H2 + `@set_header` + discharge-таксономия** — fold в дизайн сейчас (дёшево, чинят naming-footgun'ы). typed-json — по landing serde (Plan 180). Остальное MED/LOW — followup/polish.
