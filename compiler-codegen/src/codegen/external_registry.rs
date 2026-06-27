@@ -12,9 +12,34 @@
 
 use crate::ast::{FnBody, FnDecl, Item, Module, Param, Receiver, ReceiverKind, SyncClass, TypeDecl, TypeDeclKind, TypeRef};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 // Re-export SyncClass so callers (emit_c.rs) can import from either place.
 pub use crate::ast::SyncClass as SyncClassAlias;
+
+/// Plan 172.1.1 (U.1): registry-only builtin `.nv` sources parsed into `'static` `Module`s ONCE.
+/// These concrete types (StringBuilder/WriteBuffer/ReadBuffer) are supplied to CODEGEN via
+/// `load_builtins` but are ABSENT from the CHECKER's module-built registry → the checker neither
+/// knows them as TYPES (`self.types`) nor has their method sigs (`method_table`), so it cannot
+/// resolve their call callees (Call-GAP, all `rc=false`, §0.7 — StringBuilder ~14k). MERGED into
+/// BOTH checker indexes (types + method sigs) so the checker resolves them → `resolved_callees` →
+/// Call-channel (§0/§3 «один реестр для чекера И codegen»). `'static` (OnceLock) → `&FnDecl`/
+/// `&TypeDecl` coerce into `SigRegistry<'a>`/`types<'a>` (`'static: 'a`). Parse-once (perf §2).
+/// NET excluded (transitive deps, §10 — separate slice). ADDITIVE checker knowledge, NOT
+/// `load_builtins` removal (§10 hazard is REMOVAL; adding resolution knowledge is the de-risk gate).
+static BUILTIN_SIG_MODULES: OnceLock<Vec<Module>> = OnceLock::new();
+pub fn builtin_sig_modules() -> &'static Vec<Module> {
+    BUILTIN_SIG_MODULES.get_or_init(|| {
+        [
+            ExternalRegistry::STRING_BUILDER_SRC,
+            ExternalRegistry::WRITE_BUFFER_SRC,
+            ExternalRegistry::READ_BUFFER_SRC,
+        ]
+        .iter()
+        .filter_map(|src| crate::parser::parse(src).ok())
+        .collect()
+    })
+}
 
 /// Декларация одной external-функции из builtins.nv.
 /// Содержит mangled C-name + информацию для emit_call.

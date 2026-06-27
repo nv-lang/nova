@@ -1411,7 +1411,7 @@ fn check_module_impl(
     // duplicated `fn_decls`/`method_table` build loops (§0 single source). BASE
     // ONLY: synthesized auto-derive methods are a TypeCheckCtx-private overlay (F2),
     // so this shared registry is byte-identical to what Bound/Cap built themselves.
-    let sig = crate::sig_registry::SigRegistry::build_base(module);
+    let mut sig = crate::sig_registry::SigRegistry::build_base(module);
 
     let bound_ctx = BoundCtx::build(module, &sig);
     bound_ctx.check_module(module, &mut errors);
@@ -1542,6 +1542,14 @@ fn check_module_impl(
     // (in the caller) so it outlives `TypeCheckCtx`, allowing synthesized
     // methods to be registered in `method_table` as `&'a FnDecl`.
     let synth_arena = FnDeclArena::new();
+    // Plan 172.1.1 (U.1): merge registry-only builtin method sigs (StringBuilder/WriteBuffer/
+    // ReadBuffer) into `sig` for the TypeCheckCtx pass — paired with the TYPE merge in
+    // TypeCheckCtx::build (so the checker knows them as types AND has their method sigs → resolves
+    // their call callees → Call-channel, §0.7). AFTER Bound/Cap/contract/map_lit (byte-identical
+    // base) so ONLY the type-check pass sees the extra sigs. ADDITIVE (no load_builtins removal, §10).
+    for ext_mod in crate::codegen::external_registry::builtin_sig_modules() {
+        sig.merge_module_fns(ext_mod);
+    }
     // Plan 162.1 Step 3: when a sig_table is available, use
     // build_with_sig_table so that is_known_type / is_known_fn
     // can consult cross-module signatures during type-checking.
@@ -3296,6 +3304,20 @@ impl<'a> TypeCheckCtx<'a> {
                     types.insert(td.name.clone(), td);
                 }
                 _ => {}
+            }
+        }
+        // Plan 172.1.1 (U.1): merge registry-only builtin TYPE decls (StringBuilder/WriteBuffer/
+        // ReadBuffer — supplied to codegen via `load_builtins`, ABSENT from `module.items`) into
+        // `types` so the checker KNOWS them as types → `infer_expr_type(StringBuilder.new())`
+        // resolves → `sb: StringBuilder` → `check_instance_overload` records the callee (paired
+        // with the method-sig merge in `check_module`). `or_insert` — a module-declared type WINS
+        // (no override). `&'static TypeDecl` coerce into `&'a` (`'static: 'a`). DETECT-mode gate:
+        // blast-radius measured via 0-new-FAIL before keeping (§7.2).
+        for ext_mod in crate::codegen::external_registry::builtin_sig_modules() {
+            for item in &ext_mod.items {
+                if let Item::Type(td) = item {
+                    types.entry(td.name.clone()).or_insert(td);
+                }
             }
         }
         // Все типы (пользовательские + merged-from-imports) — для подсчёта

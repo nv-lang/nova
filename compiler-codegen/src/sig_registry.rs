@@ -186,6 +186,37 @@ impl<'a> SigRegistry<'a> {
         reg
     }
 
+    /// Plan 172.1.1 (U.1): MERGE method signatures from an additional `'static` builtin module
+    /// (registry-only concrete types — StringBuilder/WriteBuffer/ReadBuffer) into the checker
+    /// indexes, so the checker RESOLVES their method callees (`resolved_callees` → Call-channel).
+    /// SKIP a type already known from `module.items`/prelude (snapshot before merge — no duplicate
+    /// overloads). METHODS ONLY. `&'static FnDecl` coerce into `Vec<&'a FnDecl>` (`'static: 'a`).
+    pub fn merge_module_fns(&mut self, module: &'a Module) {
+        let known_types: std::collections::HashSet<String> =
+            self.method_table.keys().cloned().collect();
+        for item in &module.items {
+            if let Item::Fn(f) = item {
+                let Some(recv) = f.receiver.as_ref().map(|r| r.type_name.clone()) else {
+                    continue; // methods only
+                };
+                if known_types.contains(&recv) {
+                    continue; // already from module.items / prelude — don't duplicate overloads
+                }
+                self.method_table
+                    .entry(recv.clone())
+                    .or_default()
+                    .entry(f.name.clone())
+                    .or_default()
+                    .push(f);
+                self.insert(
+                    Some(recv),
+                    f.name.clone(),
+                    SigEntry { fn_decl: f, codegen: CodegenView::default() },
+                );
+            }
+        }
+    }
+
     /// Populate every [`SigEntry::codegen`] in `by_key` (C-types + Plan 11 `c_name`)
     /// via the SHARED `ExternalRegistry` helpers (§0 «один type→C mapping» / Plan 11
     /// mangling — same source as `ExternalRegistry::decl_from_fn`, not a copy).
