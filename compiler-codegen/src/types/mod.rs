@@ -11061,6 +11061,9 @@ struct BoundCtx<'a> {
     /// Plan 162 Ф.3: TypeMethodMap - type_name -> method_name ->
     /// list of module_names that declared this method.
     type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>>,
+    /// Plan 172.3 (D310): type-set name → member type-refs. Used at instantiation
+    /// to check `T ∈ set` (E_TYPE_NOT_IN_SET). Built from module.items + peer_files.
+    type_sets: HashMap<String, Vec<TypeRef>>,
 }
 
 impl<'a> BoundCtx<'a> {
@@ -11072,6 +11075,23 @@ impl<'a> BoundCtx<'a> {
         let mut sum_variant_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         let mut effect_decls: HashMap<String, &TypeDecl> = HashMap::new();
+        // Plan 172.3 (D310): type-set name → member type-refs (membership at instantiation).
+        let mut type_sets: HashMap<String, Vec<TypeRef>> = HashMap::new();
+        // Scan local items + peer files (so cross-module/stdlib type-sets like
+        // SignedInt resolve when the generic fn lives in another file of the package).
+        let type_set_scan = |items: &[Item], type_sets: &mut HashMap<String, Vec<TypeRef>>| {
+            for item in items {
+                if let Item::Type(t) = item {
+                    if let TypeDeclKind::TypeSet(members) = &t.kind {
+                        type_sets.insert(t.name.clone(), members.clone());
+                    }
+                }
+            }
+        };
+        type_set_scan(&module.items, &mut type_sets);
+        for pf in &module.peer_files {
+            type_set_scan(&pf.items_here, &mut type_sets);
+        }
         for item in &module.items {
             match item {
                 Item::Type(t) => {
@@ -11175,7 +11195,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map }
+        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets }
     }
 
     /// Plan 162 Ф.3: returns true iff method_name on type type_name is inherent
@@ -12419,6 +12439,54 @@ impl<'a> BoundCtx<'a> {
                 span,
             ));
             return;
+        }
+        // Plan 172.3 (D310): type-set bound — check concrete T ∈ member set.
+        // MUST run BEFORE the primitive early-return below (primitives ARE the
+        // members we validate). Membership by type IDENTITY (last path segment).
+        if let Some(members) = self.type_sets.get(&bound_name) {
+            let member_name = |m: &TypeRef| -> Option<String> {
+                if let TypeRef::Named { path, .. } = m { path.last().cloned() } else { None }
+            };
+            let concrete_nm: Option<String> = match concrete {
+                TypeRef::Named { path, .. } => path.last().cloned(),
+                _ => None,
+            };
+            let is_member = concrete_nm
+                .as_ref()
+                .map(|cn| members.iter().any(|m| member_name(m).as_ref() == Some(cn)))
+                .unwrap_or(false);
+            if !is_member {
+                // Emit ONLY when the concrete is a KNOWN concrete type (primitive or
+                // declared) — a definitive non-member. If it is an unknown name (most
+                // likely a passthrough type-parameter) or a complex type, SKIP
+                // (best-effort, mirrors the protocol path) to avoid false positives.
+                let is_primitive = |n: &str| matches!(n,
+                    "int" | "i8" | "i16" | "i32" | "i64"
+                    | "u8" | "u16" | "u32" | "u64" | "uint"
+                    | "f32" | "f64" | "bool" | "char" | "str" | "any" | "never");
+                let known_concrete = concrete_nm
+                    .as_ref()
+                    .map(|cn| is_primitive(cn) || self.type_defining_modules.contains_key(cn))
+                    .unwrap_or(false);
+                if known_concrete {
+                    let member_list = members
+                        .iter()
+                        .filter_map(member_name)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let cn = concrete_nm.unwrap_or_else(|| "<complex type>".to_string());
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_TYPE_NOT_IN_SET] type `{}` is not a member of type-set \
+                             `{}` (bound `[{} {}]` on `{}`). Allowed members: {{{}}}. \
+                             Type-set bounds (D310) admit only the listed concrete types.",
+                            cn, bound_name, type_param_name, bound_name, fn_name, member_list
+                        ),
+                        span,
+                    ));
+                }
+            }
+            return; // type-set bound fully handled (no protocol-method satisfaction)
         }
         let concrete_name = match concrete {
             TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),

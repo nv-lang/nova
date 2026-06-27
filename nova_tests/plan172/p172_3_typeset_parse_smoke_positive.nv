@@ -19,7 +19,11 @@ fn paint(c Color) -> int {
     }
 }
 
+// Plan 172.3 Ф.2 — type-set used AS a generic bound; instantiated with a member
+// type (`int` ∈ SignedInt) → must pass membership (no E_TYPE_NOT_IN_SET).
+fn[T SignedInt] pick(x T) -> T => x
+
 fn main() -> int {
     // exercise the sum so it is not DCE'd; type-sets are bound-only (no value).
-    paint(Color.Red)
+    pick(paint(Color.Red))
 }

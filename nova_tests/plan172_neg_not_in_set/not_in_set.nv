@@ -1,0 +1,15 @@
+module plan172_neg_not_in_set.not_in_set
+
+// Plan 172.3 (D310) Ф.2 — NEGATIVE: instantiating a type-set-bounded generic
+// with a NON-member concrete type must error at the instantiation site.
+// EXPECT_COMPILE_ERROR E_TYPE_NOT_IN_SET
+
+type SignedInt set i8 | i16 | i32 | i64 | int
+
+fn[T SignedInt] pick(x T) -> T => x
+
+fn main() -> int {
+    // `str` is NOT a member of SignedInt → [E_TYPE_NOT_IN_SET] at this call.
+    ro s = pick("hello")
+    0
+}
