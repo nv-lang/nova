@@ -3962,6 +3962,16 @@ impl Parser {
                 let ty = self.parse_type()?;
                 TypeDeclKind::Alias(ty)
             }
+            // Plan 172.3 (D310): `type Name set A | B | C` — type-set bound.
+            // `set` — КОНТЕКСТНЫЙ kind-токен (не lexer-keyword), распознаётся только
+            // в этой позиции (после `type Name`), как `value` ниже. Диспетч по первому
+            // токену после имени (D52); ноль конфликта с sum (`type X | A` — Pipe сразу,
+            // без `set`). Члены — TypeRef через `|`.
+            TokenKind::Ident(ref s) if s == "set" => {
+                self.bump(); // consume `set`
+                let members = self.parse_type_set_members()?;
+                TypeDeclKind::TypeSet(members)
+            }
             TokenKind::LBrace => {
                 self.bump();
                 // Plan 124 (D220): pass type-level default visibility to field parser.
@@ -4598,6 +4608,22 @@ impl Parser {
             span,
             is_export,
         })
+    }
+
+    /// Plan 172.3 (D310): parse `Member1 | Member2 | …` after the `set` kind-token.
+    /// Члены — TypeRef'ы (конкретные типы по идентичности). Минимум один член.
+    /// Поддержка `set i8 | i16`, `set\n i8 | i16`, `set i8 |\n i16`; перевод строки
+    /// БЕЗ ведущего `|` завершает список (не захватывает следующий item).
+    fn parse_type_set_members(&mut self) -> Result<Vec<TypeRef>, Diagnostic> {
+        let mut members = Vec::new();
+        self.skip_newlines();
+        members.push(self.parse_type()?);
+        while matches!(self.peek().kind, TokenKind::Pipe) {
+            self.bump(); // |
+            self.skip_newlines();
+            members.push(self.parse_type()?);
+        }
+        Ok(members)
     }
 
     fn parse_sum_variants(&mut self) -> Result<Vec<SumVariant>, Diagnostic> {

@@ -353,6 +353,9 @@ fn collect_type_kinds(items: &[Item], out: &mut TypeKindRegistry) {
                 TypeDeclKind::Effect(_) => TypeKindEntry::Effect,
                 TypeDeclKind::Protocol { .. } => TypeKindEntry::Protocol,
                 TypeDeclKind::Opaque => TypeKindEntry::Opaque,
+                // Plan 172.3 (D310): type-set is a compile-time generic bound, never a
+                // field type — skip registry insertion (no runtime kind to classify).
+                TypeDeclKind::TypeSet(_) => continue,
             };
             out.insert(t.name.clone(), entry);
         }
@@ -2313,7 +2316,8 @@ fn register_items(items: &[Item], reg: &mut FieldRegistry, type_kinds: &TypeKind
                 | TypeDeclKind::Opaque
                 | TypeDeclKind::Alias(_)
                 | TypeDeclKind::Newtype(_)
-                | TypeDeclKind::Sum(_) => {
+                | TypeDeclKind::Sum(_)
+                | TypeDeclKind::TypeSet(_) => { // Plan 172.3: bound-only, no fields
                     reg.skip_types.insert(t.name.clone());
                 }
             }

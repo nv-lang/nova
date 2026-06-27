@@ -1290,7 +1290,8 @@ fn type_decl_size_or_align(
         TypeDeclKind::Alias(inner) => type_size_or_align_resolved_d(inner, is_align, type_decls, depth + 1),
         TypeDeclKind::Opaque
         | TypeDeclKind::Effect(_)
-        | TypeDeclKind::Protocol { .. } => None, // no concrete layout.
+        | TypeDeclKind::Protocol { .. }
+        | TypeDeclKind::TypeSet(_) => None, // no concrete layout (Plan 172.3: bound-only).
     }
 }
 

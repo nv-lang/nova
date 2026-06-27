@@ -278,6 +278,7 @@ pub fn type_decl_kind_name(td: &TypeDecl) -> &'static str {
         TypeDeclKind::Alias(_) => "alias",
         TypeDeclKind::NamedTuple(_) => "named tuple",
         TypeDeclKind::Opaque => "opaque",
+        TypeDeclKind::TypeSet(_) => "type set", // Plan 172.3 (D310)
     }
 }
 

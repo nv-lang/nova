@@ -1058,6 +1058,13 @@ pub enum TypeDeclKind {
     Newtype(TypeRef),
     /// `type Name alias OtherType` (D52)
     Alias(TypeRef),
+    /// Plan 172.3 (D310): `type Name set A | B | C` — type-set bound. Именованное
+    /// множество КОНКРЕТНЫХ типов, используемое как generic-bound (`fn[T Name] …`).
+    /// Члены — TypeRef по идентичности (примитивы / объявленные типы; без `~underlying`).
+    /// Диспетчеризация по контекстному kind-токену `set` после имени (D52 first-token rule,
+    /// как `alias`/`protocol`) — ноль конфликта с sum-`|` (у sum нет kind-токена).
+    /// Используется как bound (D72 amended); композиция с протоколами через `+` (D145).
+    TypeSet(Vec<TypeRef>),
     /// Plan 120 (D215): `type Name(field1 T1, field2 T2)` — named tuple.
     /// Stack-allocated value type identical to positional tuple (D123)
     /// but fields accessed by name (`.x`, `.y`) instead of position (`.0`).

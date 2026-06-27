@@ -1,0 +1,25 @@
+module plan172.p172_3_typeset_parse_smoke_positive
+
+// Plan 172.3 (D310) Ф.1 — parse smoke: type-set declaration parses + a sum-type
+// `type X | A | B` still parses as sum (no regression from the `set` kind-token).
+// EXPECT_RUN_OK
+
+// type-set declaration (contextual `set` kind-token)
+type SignedInt set i8 | i16 | i32 | i64 | int
+type UnsignedInt set u8 | u16 | u32 | u64 | uint
+
+// sum-type MUST still parse as sum (leading `|`, no `set` kind-token)
+type Color | Red | Green | Blue
+
+fn paint(c Color) -> int {
+    match c {
+        Color.Red => 0
+        Color.Green => 1
+        Color.Blue => 2
+    }
+}
+
+fn main() -> int {
+    // exercise the sum so it is not DCE'd; type-sets are bound-only (no value).
+    paint(Color.Red)
+}

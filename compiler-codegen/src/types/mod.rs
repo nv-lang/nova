@@ -5055,6 +5055,14 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             TypeDeclKind::Alias(tr) => self.walk_typeref(tr, &gs, errors),
+            // Plan 172.3 (D310): walk type-set member type-refs (validates each
+            // member is a known type; further member-concreteness/signedness checks
+            // are done in the type-set declaration pass).
+            TypeDeclKind::TypeSet(members) => {
+                for m in members {
+                    self.walk_typeref(m, &gs, errors);
+                }
+            }
             TypeDeclKind::Opaque => {}
         }
         // Plan 124.8 [M-124.8-zero-on-move] (2026-06-03): validation —
@@ -5076,6 +5084,7 @@ impl<'a> TypeCheckCtx<'a> {
                     TypeDeclKind::Opaque => "external opaque",
                     TypeDeclKind::NamedTuple(_) => "named tuple",
                     TypeDeclKind::Newtype(_) => "newtype",
+                    TypeDeclKind::TypeSet(_) => "type set", // Plan 172.3 (D310)
                 };
                 errors.push(Diagnostic::new(
                     format!(
@@ -10245,6 +10254,7 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                             TypeDeclKind::Protocol { .. }
                             | TypeDeclKind::Effect(_)
+                            | TypeDeclKind::TypeSet(_) // Plan 172.3 (D310): bound-only, no runtime category
                             | TypeDeclKind::Opaque => R::Any,
                         },
                         None => R::Any, // unknown name → permissive
@@ -10700,6 +10710,7 @@ fn check_protocol_embeds(
                 TypeDeclKind::Newtype(_) => "newtype",
                 TypeDeclKind::Opaque => "opaque",
                 TypeDeclKind::NamedTuple(_) => "named_tuple",
+                TypeDeclKind::TypeSet(_) => "type_set", // Plan 172.3 (D310)
             };
             type_kinds.insert(t.name.clone(), kind_name);
             if let TypeDeclKind::Protocol { methods, embeds } = &t.kind {
@@ -10925,6 +10936,7 @@ fn check_generic_bound_declarations(
                 TypeDeclKind::Newtype(_) => "newtype",
                 TypeDeclKind::Opaque => "opaque",
                 TypeDeclKind::NamedTuple(_) => "named_tuple",
+                TypeDeclKind::TypeSet(_) => "type_set", // Plan 172.3 (D310)
             };
             type_kinds.insert(t.name.clone(), kind_name);
         }
@@ -10952,6 +10964,10 @@ fn check_generic_bound_declarations(
         if primitives.contains(&name.as_str()) { return; }
         match type_kinds.get(name) {
             Some(&"protocol") => { /* OK */ }
+            // Plan 172.3 (D310): type-set is a valid generic bound (D72 amended).
+            // Membership (T ∈ set) is checked at INSTANTIATION (check_satisfaction),
+            // not here; this site only validates the bound NAME is a legal kind.
+            Some(&"type_set") => { /* OK */ }
             Some(&kind) => {
                 errors.push(Diagnostic::new(
                     format!(

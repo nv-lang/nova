@@ -957,6 +957,13 @@ pub(crate) fn collect_used_names(items: &[Item], out: &mut HashSet<String>) {
                     TypeDeclKind::Newtype(tr) | TypeDeclKind::Alias(tr) => {
                         collect_tr(tr, out)
                     }
+                    // Plan 172.3 (D310): collect type-set member type-refs so they
+                    // count as used (no false unused-import on a set's members).
+                    TypeDeclKind::TypeSet(members) => {
+                        for m in members {
+                            collect_tr(m, out);
+                        }
+                    }
                     TypeDeclKind::Opaque => {}
                 }
                 // Plan 159 Ф.2 (DCE soundness): record `invariant <expr>,

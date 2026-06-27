@@ -10420,6 +10420,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // undefined). Без vtable type_ref_to_c для protocol-методов
             // вообще не вызывается.
             TypeDeclKind::Protocol { .. } => {}
+            // Plan 172.3 (D310): type-set — compile-time-only generic bound
+            // (D72 amended). Нет runtime-типа/vtable — skip emission, как protocol.
+            TypeDeclKind::TypeSet(_) => {}
             // Plan 120 (D215): named tuple — value-type struct with named fields.
             TypeDeclKind::NamedTuple(fields) => {
                 self.emit_named_tuple_type(&t.name, fields)?;

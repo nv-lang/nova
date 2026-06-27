@@ -319,7 +319,8 @@ fn named_decl_lowers_to_single_pointer(
         // `NovaBox_*`); treat as a pointer so the NPO option stays 8 bytes.
         TypeDeclKind::Opaque
         | TypeDeclKind::Effect(_)
-        | TypeDeclKind::Protocol { .. } => true,
+        | TypeDeclKind::Protocol { .. }
+        | TypeDeclKind::TypeSet(_) => true, // Plan 172.3: bound-only, no value layout (unreachable as value)
     }
 }
 
@@ -656,7 +657,8 @@ fn classify_named_decl(
         // pointer slot, flag unresolved.
         TypeDeclKind::Opaque
         | TypeDeclKind::Effect(_)
-        | TypeDeclKind::Protocol { .. } => FieldClass {
+        | TypeDeclKind::Protocol { .. }
+        | TypeDeclKind::TypeSet(_) => FieldClass { // Plan 172.3: bound-only, no concrete layout
             size: PTR_SIZE,
             align: PTR_ALIGN,
             rel_pointer_offsets: vec![0],
@@ -766,7 +768,8 @@ fn layout_of_decl(
         // No concrete layout — report unresolved (consumer scans every word).
         TypeDeclKind::Opaque
         | TypeDeclKind::Effect(_)
-        | TypeDeclKind::Protocol { .. } => LayoutInfo::unresolved(),
+        | TypeDeclKind::Protocol { .. }
+        | TypeDeclKind::TypeSet(_) => LayoutInfo::unresolved(), // Plan 172.3: bound-only
     }
 }
 

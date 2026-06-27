@@ -591,6 +591,20 @@ fn collect_type(module_path: &[String], t: &TypeDecl) -> DocItem {
         // в doc tree для richer rendering ("Implementation: runtime —
         // nova_rt/<name>.h" line). Bootstrap — alias-style для simplicity.
         TypeDeclKind::Opaque => ItemKind::Type(TypeDefinition::Alias("opaque".to_string())),
+        // Plan 172.3 (D310): type-set bound — doc-render как alias со списком членов
+        // (`set i8 | i16 | …`). Dedicated TypeDefinition::TypeSet — future enhancement.
+        TypeDeclKind::TypeSet(members) => {
+            let names: Vec<String> = members
+                .iter()
+                .map(|m| match m {
+                    crate::ast::TypeRef::Named { path, .. } => {
+                        path.last().cloned().unwrap_or_default()
+                    }
+                    _ => "?".to_string(),
+                })
+                .collect();
+            ItemKind::Type(TypeDefinition::Alias(format!("set {}", names.join(" | "))))
+        }
     };
     // Plan 100.8 / D166: propagate consume marker from TypeDecl into Capabilities.
     // Plan 91.9 / D186: propagate impl_protocols list (renderers show
