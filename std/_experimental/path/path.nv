@@ -47,14 +47,14 @@ export fn Path.join(...parts []str) -> str {
     consume buf = StringBuilder.new()
     mut first = true
     for part in parts {
-        if part.len() == 0 { continue }
+        if part.byte_len() == 0 { continue }
         // Между непустыми частями всегда вставляем "/"; для не-первой части,
         // которая сама начинается с "/", strip лидирующий — иначе вышло бы "//".
         // (Случай "/usr/" + "..." с trailing "/" не возникает в join'е — каждая
         // часть передаётся отдельной строкой без своего trailing slash.)
         if !first { buf.append('/') }
         ro cleaned = if !first && part.starts_with("/") {
-            part[1..part.len()]
+            part[1..part.byte_len()]
         } else {
             part
         }
@@ -77,8 +77,8 @@ export fn Path.join(...parts []str) -> str {
 /// ```
 #stable(since = "0.1")
 export fn Path.parent(p str) -> Option[str] {
-    if p.len() == 0 || p == "/" { return None }
-    ro trimmed = if p.ends_with("/") { p[0..p.len() - 1] } else { p }
+    if p.byte_len() == 0 || p == "/" { return None }
+    ro trimmed = if p.ends_with("/") { p[0..p.byte_len() - 1] } else { p }
     match find_last_slash(trimmed) {
         None => None
         Some(0) => Some("/")          // "/foo" → "/"
@@ -99,14 +99,14 @@ export fn Path.parent(p str) -> Option[str] {
 /// ```
 #stable(since = "0.1")
 export fn Path.basename(p str) -> str {
-    ro trimmed = if p.ends_with("/") && p.len() > 1 {
-        p[0..p.len() - 1]
+    ro trimmed = if p.ends_with("/") && p.byte_len() > 1 {
+        p[0..p.byte_len() - 1]
     } else {
         p
     }
     match find_last_slash(trimmed) {
         None    => trimmed
-        Some(i) => trimmed[i + 1..trimmed.len()]
+        Some(i) => trimmed[i + 1..trimmed.byte_len()]
     }
 }
 
@@ -129,11 +129,11 @@ export fn Path.basename(p str) -> str {
 #stable(since = "0.1")
 export fn Path.extension(p str) -> Option[str] {
     ro base = Path.basename(p)
-    if base.len() == 0 || base == "." || base == ".." { return None }
+    if base.byte_len() == 0 || base == "." || base == ".." { return None }
     match find_last_dot(base) {
         None    => None
         Some(0) => None    // dotfile (".bashrc") — без extension
-        Some(i) => Some(base[i + 1..base.len()])
+        Some(i) => Some(base[i + 1..base.byte_len()])
     }
 }
 
@@ -171,7 +171,7 @@ export fn Path.normalize(p str) -> str {
     ro parts = p.split("/")
     mut stack []str = []
     for part in parts {
-        if part.len() == 0 || part == "." { continue }
+        if part.byte_len() == 0 || part == "." { continue }
         if part == ".." {
             if stack.len() > 0 {
                 // pop() возвращает Option[str]; результат не нужен — явно отбрасываем
@@ -194,13 +194,13 @@ export fn Path.normalize(p str) -> str {
         first = false
     }
     ro result = buf.into_str()
-    if result.len() == 0 { "." } else { result }
+    if result.byte_len() == 0 { "." } else { result }
 }
 
 
 // Helpers
 fn find_last_slash(s str) -> Option[int] {
-    mut i = s.len() - 1
+    mut i = s.byte_len() - 1
     while i >= 0 {
         if s.as_chars().nth(i) == Some('/') { return Some(i) }
         i -= 1
@@ -209,7 +209,7 @@ fn find_last_slash(s str) -> Option[int] {
 }
 
 fn find_last_dot(s str) -> Option[int] {
-    mut i = s.len() - 1
+    mut i = s.byte_len() - 1
     while i >= 0 {
         if s.as_chars().nth(i) == Some('.') { return Some(i) }
         i -= 1
