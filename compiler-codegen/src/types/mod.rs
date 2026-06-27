@@ -6494,10 +6494,27 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(right, gs, scope, errors);
                 self.f4_check_value(left, scope, errors);
                 self.f4_check_value(right, scope, errors);
+                // Plan 172.1.1 (U.4.5 — Binary arm): materialize the binary expr's resolved type
+                // into the channel (comparison/logic → bool; arithmetic/bitwise → the promoted
+                // operand type). Codegen READS the channel instead of re-deriving. infer_expr_type
+                // → None for unresolved operands → falls to legacy via the consumer's `Ok` guard.
+                if e.id.is_set() {
+                    if let Some(tr) = self.infer_expr_type(e, scope) {
+                        let rt = ResolvedType::from_type_ref(&tr);
+                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                    }
+                }
             }
             ExprKind::Unary { operand, .. } => {
                 self.f1_expr(operand, gs, scope, errors);
                 self.f4_check_value(operand, scope, errors);
+                // Plan 172.1.1 (U.4.5 — Unary arm): materialize the unary expr's resolved type.
+                if e.id.is_set() {
+                    if let Some(tr) = self.infer_expr_type(e, scope) {
+                        let rt = ResolvedType::from_type_ref(&tr);
+                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                    }
+                }
             }
             ExprKind::Try(inner) | ExprKind::Bang(inner) => {
                 self.f1_expr(inner, gs, scope, errors)
