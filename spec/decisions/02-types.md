@@ -13271,7 +13271,7 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
   `ResolvedType::Func.effects` был `Vec<String>` (только имя, `from_type_ref`→`path.last()`, дропал
   generics → `Fail[E]` терял `E`, нарушение «несёт ПОЛНУЮ семантическую личность»). Обогащён до
   `Vec<ResolvedType>` (имя + module + type-args через lossless `Named`). Разблокирует typed-errors
-  Plan 173 (`Fail[E]`-dispatch по `type_id`) + Plan 175 (`any`/`is`) — садятся на готовый носитель,
+  Plan 173 (`Fail[E]`-dispatch по `type_id`) + Plan 172.8 (`any`/`is`) — садятся на готовый носитель,
   не переделывая. Byte-identical конструкцией (effects write-only до consume).
 
 ---
@@ -13282,7 +13282,7 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
 **Status:** 📋 PROPOSED (sign-off владельца на дизайн получен 2026-06-26; реализация — Plan 172.5 поверх 172.4).
 **Amends:** Q29 (open-questions.md — снимает отвержение param-mode; `ref`-ТИП остаётся отвергнут), D132 (03-syntax.md — alias-гарантия `-> @` ↔ R7), D228 (value-record `@` escape-decay R8).
 **Adopt verbatim:** D181/D184 (режим возврата `@`). **Bounds:** D157 (05-memory.md) + D246-P10 (эксклюзивность УЗКАЯ, не Rust/Swift).
-**Cross-ref:** Plan 172.4 / Q-value-abi-auto-placement (авто-`ro ref` + heap↔stack — НЕ дублировать), D315 (ABI выводится), D246 (L3 pointee-cap / RETURN-оракул), D131/D133/D180 (consume — borrow≠move), D156 (consume-bound), Plan 177/178 (raw pointers / FFI).
+**Cross-ref:** Plan 172.4 / Q-value-abi-auto-placement (авто-`ro ref` + heap↔stack — НЕ дублировать), D315 (ABI выводится), D246 (L3 pointee-cap / RETURN-оракул), D131/D133/D180 (consume — borrow≠move), D156 (consume-bound), Plan 172.10/172.11 (raw pointers / FFI).
 
 ### Что
 
@@ -13328,4 +13328,4 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
 
 ### Связь
 
-D181/D184 (режим `@`), D246 (L3 / RETURN-оракул / P10 no-exclusivity), D131/D132/D133/D180 (consume / alias-гарантия), D228 (escape), D315 (ABI выводится), D156 (consume-bound), D157 (multi-mut sound под GC), Q29 (amend), Plan 172.4 (авто-`ro ref`/`@`/heap↔stack — реализует часть), Plan 177/178 (raw pointers / FFI). **Новый код ошибки ровно один:** `E_REF_ALIAS_OVERLAP`; остальное переиспользует existing (`E_RECEIVER_BINDING_NOT_MUT`, `E_CONSUME_RECEIVER_RETURNS_AT`, `E_AT_RETURN_OUTSIDE_METHOD`).
+D181/D184 (режим `@`), D246 (L3 / RETURN-оракул / P10 no-exclusivity), D131/D132/D133/D180 (consume / alias-гарантия), D228 (escape), D315 (ABI выводится), D156 (consume-bound), D157 (multi-mut sound под GC), Q29 (amend), Plan 172.4 (авто-`ro ref`/`@`/heap↔stack — реализует часть), Plan 172.10/172.11 (raw pointers / FFI). **Новый код ошибки ровно один:** `E_REF_ALIAS_OVERLAP`; остальное переиспользует existing (`E_RECEIVER_BINDING_NOT_MUT`, `E_CONSUME_RECEIVER_RETURNS_AT`, `E_AT_RETURN_OUTSIDE_METHOD`).

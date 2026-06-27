@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Plan 172 — Переработка компилятора: типовая система (umbrella)
+# Plan 172 — Переработка компилятора (umbrella)
 
 **Статус:** 📋 proposed 2026-06-19 (umbrella)
 **Home:** этот файл — индекс под-планов переработки типовой системы компилятора.
@@ -24,9 +24,15 @@
 | **172.2** | [Method-arg type-checking](172.2-method-arg-type-checking.md) | Типизация аргументов методов + `[E_IMPLICIT_NARROWING]` на scalar-narrowing через method-arg. **Первый конкретный шаг** 172.1 (узкий кейс U.1-U.3). | 📋 proposed |
 | **172.3** | [Type-set bounds](172.3-type-set-bounds.md) | Go-style generic-constraints (`fn[T IntNumber] …`) — набор конкретных типов как bound, не только протокол. Type-system фича, которую единый движок должен нести. | 📋 proposed |
 | **172.4** | [Value-ABI + auto-placement](172.4-value-abi-auto-placement.md) | Единый value-ABI (value-record / named-tuple / struct-tuple — один путь) + **авто** by-ref/heap↔stack (нет `ref T`, Q29). Acceptance: value-record fluent `mut @ -> @` + структурное `==`. **Behavior-changes ПОСЛЕ MVP-консолидации 172.1.** | 📋 proposed |
+| **172.5** | [In-out ref-params](172.5-inout-ref-params.md) | In-out `ref`-параметры (safe by-ref borrow) + формализация `@`/`-> @` (D326). `ref` = режим параметра (Swift `inout`), не тип. Поверх 172.4. | 📋 proposed |
+| **172.6** | [Primitive parse API](172.6-primitive-parse-api.md) | Один движок str→примитив, radix-only `parse`; per-type обёртки с range-check; фикс truncation-бага. Зависит 172.3 (type-set bounds схлопывает обёртки). | 📋 proposed |
+| **172.7** | [`?` return-only](172.7-question-mark-return-only.md) | `?` строго return-only (Rust-стиль), в Fail-fn запрещён (`!!`/`throw`); чистка stale `## D4`. Завершает 173. | 📋 PLANNED |
+| **172.8** | [`any` + downcast](172.8-any-type-and-is-downcast.md) | `any` top-type (fat-pointer) + `is T`/`try_as[T]` runtime-downcast по `type_id`. Разблокирует typed-errors 173 Ф.4. | 📋 PROPOSED (P1) |
+| **172.9** | [Effect-registry size](172.9-effect-registry-compile-time-size.md) | Compile-time размер effect-registry вместо хардкода 32 (>32 эффектов → silent-drop). | 📋 READY (P2) |
+| **172.10** | [Pointer-ops methods](172.10-pointer-ops-methods.md) | Операции указателей через методы (`.read`/`.write`/`.offset`/…) вместо операторов; `unsafe T`→`uninit T`; write-cap fix. | 📋 PROPOSED |
+| **172.11** | [C-FFI ABI types](172.11-ffi-abi-types.md) | C-ABI тип-лист (туплы/value-records/`Option[*T]` рекурсивно) + fn-ptr ABI-тег (`*extern "C" fn` vs `*fn`). | 📋 PROPOSED |
 
-**Не входят** (остаются top-level, другая тема): Plan 171 (primitive parse API — stdlib-поверхность,
-зависит от 172.3), Plan 170 (file-private visibility — видимость).
+**Не входят** (остаются top-level, другая тема): Plan 170 (file-private visibility — видимость).
 
 ## 3. Порядок работ
 
@@ -45,12 +51,12 @@
 - **172.2** — первый измеримый результат на узком кейсе (scalar-narrowing в method-arg);
   частично уже сделано вне методов (`E_IMPLICIT_NARROWING`, commit `f96016e6`).
 - **172.3** — независимая фича; после landing единого движка (172.1) выражается чище (схлопывает
-  ~13 per-type обёрток Plan 171 в ~2-3 generic).
+  ~13 per-type обёрток Plan 172.6 в ~2-3 generic).
 
-## 3.1. Forward-compat с системой ошибок (Plan 173/174/175) — чтобы 173 не переделывал 172
+## 3.1. Forward-compat с системой ошибок (Plan 173 + под-планы 172.7/172.8) — чтобы 173 не переделывал 172
 
 Анализ 2026-06-21 (по запросу владельца): [Plan 173](173-error-system-unify-harden.md) (error/cleanup),
-[174](174-question-mark-return-only.md) (`?`-return-only), [175](175-any-type-and-is-downcast.md)
+[172.7](172.7-question-mark-return-only.md) (`?`-return-only), [172.8](172.8-any-type-and-is-downcast.md)
 (`any`+`is`-downcast) садятся на типовой движок 172. Чтобы 173 строился ПОВЕРХ единого движка, а не
 переделывал его, **172.1 обязан учесть 4 точки** (в основном осознанность/lossless, не большие правки):
 
@@ -60,9 +66,9 @@
    typed-errors 173/175. Обогащён до **`Vec<ResolvedType>`** (имя + module + type-args). Теперь
    173 Ф.4 (типизированный `Fail[E]`/`ScopeOutcome.Failure(any)`) + 175 (`any`/`is`) садятся на
    готовый носитель, НЕ переделывая его. Byte-identical (effects write-only до consume).
-2. **`any` + `is`/downcast — согласовать с Plan 175.** 172-резолв `Any`/`is`-теста НЕ должен
-   форклоузить модель Plan 175 (`any`-тип + `is T`/downcast по `type_id`) — 175 строит typed-error
-   dispatch 173 поверх ЕДИНОГО движка. Координировать дизайн `Any`/`is` в U.4 с Plan 175.
+2. **`any` + `is`/downcast — согласовать с Plan 172.8.** 172-резолв `Any`/`is`-теста НЕ должен
+   форклоузить модель Plan 172.8 (`any`-тип + `is T`/downcast по `type_id`) — 175 строит typed-error
+   dispatch 173 поверх ЕДИНОГО движка. Координировать дизайн `Any`/`is` в U.4 с Plan 172.8.
 3. **`[M-parfor-record-result-miscompile]` чинится U.4 ПО ПОСТРОЕНИЮ.** Чекер типизирует
    `parallel for → []T` для ЛЮБОГО `T`, а array-mode codegen (`emit_c.rs:8154`) умеет лишь
    `T∈{int,bool,f64,str}` → молчаливый degrade в `unit` → утечка C-error. Это ровно §0
@@ -73,14 +79,14 @@
    172.1 U.1 (де-хардкод stdlib) обязан не спец-кейсить error-типы → 173 эволюционирует их
    (materialize `MultiError`, `Failure(any)`) без борьбы с 172-хардкодом.
 
-## 3.2. Forward-compat с pointer/FFI-моделью (Plan 177/178) — чтобы они не переделывали носитель
+## 3.2. Forward-compat с pointer/FFI-моделью (Plan 172.10/172.11) — чтобы они не переделывали носитель
 
-Анализ 2026-06-22 (по запросу владельца): [Plan 177](177-pointer-ops-methods.md) (pointer-ops→методы +
-`uninit T` + write-cap) и [Plan 178](178-ffi-abi-types.md) (C-FFI ABI тип-лист + `*extern "C" fn` ABI-тег) —
+Анализ 2026-06-22 (по запросу владельца): [Plan 172.10](172.10-pointer-ops-methods.md) (pointer-ops→методы +
+`uninit T` + write-cap) и [Plan 172.11](172.11-ffi-abi-types.md) (C-FFI ABI тип-лист + `*extern "C" fn` ABI-тег) —
 оба PROPOSED, оба явно координируются с «type-engine = 172» и амендят spec в зоне 172 (`02-types.md` /
-`08-runtime.md`). Направление: 177/178 **садятся на** единый носитель 172, 172 их **не блокирует**. Чтобы они
+`08-runtime.md`). Направление: 172.10/172.11 **садятся на** единый носитель 172, 172 их **не блокирует**. Чтобы они
 строились ПОВЕРХ носителя, а не переделывали его, **172 держит на радаре 3 точки** (осознанность/lossless,
-как §3.1; не новые задачи 172.1 до landing 177/178):
+как §3.1; не новые задачи 172.1 до landing 172.10/172.11):
 
 1. **fn-ptr ABI-тег (`*extern "C" fn` vs `*fn`) — носится в `ResolvedType` LOSSLESS** (178 §3). По
    [D315](../../spec/decisions/02-types.md#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21)
