@@ -6315,27 +6315,64 @@ impl<'a> TypeCheckCtx<'a> {
         // codegen state (`value_record_names`) — the SAME source legacy uses (:36478) — so the
         // lowering is byte-identical. Sum types (kind=Sum) and sum-VARIANTS (not present in
         // `self.types` as records) and `Self`-lit (not in `self.types`) are excluded → legacy.
-        if let ExprKind::RecordLit { type_name: Some(name), .. } = &e.kind {
+        if let ExprKind::RecordLit { type_name: Some(name), fields, .. } = &e.kind {
             if e.id.is_set() {
                 if let Some(last) = name.last() {
-                    if let Some(td) = self.types.get(last) {
-                        // Exclude RUNTIME_DEFINED_TYPES (str / Option / guards / …): those are
-                        // C-runtime-header-backed, NOT in codegen `record_schemas`, so the legacy
-                        // RecordLit arm falls to `void*` (:36484) — annotating their REAL type
-                        // (e.g. `str{…}` → `nova_str`) would DIVERGE (a §1 fix, but a separate
-                        // verified atom, not this byte-identical slice). Shared single-source
-                        // const (emit_c.rs, introduced 83ad5c46) — §0, no duplicate list.
-                        if td.generics.is_empty()
-                            && matches!(td.kind, TypeDeclKind::Record(_))
-                            && !crate::codegen::emit_c::RUNTIME_DEFINED_TYPES
-                                .contains(&last.as_str())
-                        {
-                            let rt = ResolvedType::from_type_ref(&TypeRef::Named {
-                                path: name.clone(),
-                                generics: Vec::new(),
-                                span: e.span,
-                            });
-                            self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                    // Exclude RUNTIME_DEFINED_TYPES (str / Option / guards / …): those are
+                    // C-runtime-header-backed, NOT in codegen `record_schemas`, so the legacy
+                    // RecordLit arm falls to `void*` (:36484) — annotating their REAL type
+                    // (e.g. `str{…}` → `nova_str`) would DIVERGE (a §1 fix, but a separate
+                    // verified atom, not this slice). Shared single-source const (emit_c.rs,
+                    // introduced 83ad5c46) — §0, no duplicate list.
+                    if !crate::codegen::emit_c::RUNTIME_DEFINED_TYPES.contains(&last.as_str()) {
+                        if let Some(td) = self.types.get(last) {
+                            if let TypeDeclKind::Record(field_decls) = &td.kind {
+                                // Generic args: MIRROR the legacy codegen derivation
+                                // (emit_c.rs:36444-36461) — for each generic param, the type-arg is
+                                // the inferred type of the literal field whose TEMPLATE type is
+                                // exactly that bare param; an unmatched param defaults to `int`
+                                // (legacy `nova_int`). A non-generic record → empty generics →
+                                // `Named{name}`. `resolved_type_to_c` (the SINGLE consumer lowering)
+                                // reproduces the mono name + value-vs-heap from codegen state — the
+                                // SAME sources legacy uses — so the lowering is byte-identical (U.4.8
+                                // identity). Sum-types / sum-variants / `Self`-lit are not `Record`
+                                // in `self.types` → not annotated → legacy.
+                                let gen_args: Vec<TypeRef> = td
+                                    .generics
+                                    .iter()
+                                    .map(|g| {
+                                        field_decls
+                                            .iter()
+                                            .find_map(|fd| {
+                                                if let TypeRef::Named { path, generics: fg, .. } =
+                                                    &fd.ty
+                                                {
+                                                    if fg.is_empty() && path.join("_") == g.name {
+                                                        return fields
+                                                            .iter()
+                                                            .find(|f| f.name == fd.name)
+                                                            .and_then(|f| f.value.as_ref())
+                                                            .and_then(|v| {
+                                                                self.infer_expr_type(v, scope)
+                                                            });
+                                                    }
+                                                }
+                                                None
+                                            })
+                                            .unwrap_or_else(|| TypeRef::Named {
+                                                path: vec!["int".to_string()],
+                                                generics: Vec::new(),
+                                                span: e.span,
+                                            })
+                                    })
+                                    .collect();
+                                let rt = ResolvedType::from_type_ref(&TypeRef::Named {
+                                    path: name.clone(),
+                                    generics: gen_args,
+                                    span: e.span,
+                                });
+                                self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                            }
                         }
                     }
                 }
