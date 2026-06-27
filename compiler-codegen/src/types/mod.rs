@@ -10955,6 +10955,53 @@ fn check_generic_bound_declarations(
         "u8", "u16", "u32", "u64", "uint",
         "f32", "f64", "bool", "char", "str", "any", "never",
     ];
+    // Plan 172.3 (D310): validate type-set DECLARATIONS — members must be concrete
+    // types (not protocol/effect/another type-set), and a single set must not mix
+    // signed/unsigned integers (u64.MAX ∉ i64; Q6). Membership/use-site checks live
+    // в BoundCtx.check_satisfaction; this is the declaration-time soundness lock (§5).
+    {
+        let signed_ints: &[&str] = &["i8", "i16", "i32", "i64", "int"];
+        let unsigned_ints: &[&str] = &["u8", "u16", "u32", "u64", "uint"];
+        for item in &module.items {
+            let Item::Type(t) = item else { continue; };
+            let TypeDeclKind::TypeSet(members) = &t.kind else { continue; };
+            let mut has_signed = false;
+            let mut has_unsigned = false;
+            for m in members {
+                let TypeRef::Named { path, span, .. } = m else { continue; };
+                let Some(mname) = path.last() else { continue; };
+                let mn = mname.as_str();
+                // Member-concreteness: reject protocol/effect/another type-set.
+                if let Some(&kind) = type_kinds.get(mname) {
+                    if matches!(kind, "protocol" | "effect" | "type_set") {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_TYPE_SET_MEMBER_NOT_CONCRETE] member `{}` of type-set `{}` \
+                                 is a {}, not a concrete type — type-set members must be concrete \
+                                 (primitives or declared record/newtype/named-tuple/sum types) (D310).",
+                                mn, t.name, kind
+                            ),
+                            *span,
+                        ));
+                    }
+                }
+                if signed_ints.contains(&mn) { has_signed = true; }
+                if unsigned_ints.contains(&mn) { has_unsigned = true; }
+            }
+            // Signedness uniformity (Q6).
+            if has_signed && has_unsigned {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_TYPE_SET_MIXED_SIGNEDNESS] type-set `{}` mixes signed and unsigned \
+                         integer members — a single body cannot be sound for both (u64.MAX = 2^64-1 \
+                         ∉ i64). Split into separate signed/unsigned sets (e.g. SignedInt / UnsignedInt) (D310, Q6).",
+                        t.name
+                    ),
+                    t.span,
+                ));
+            }
+        }
+    }
     let check_bound = |b: &TypeRef, errors: &mut Vec<Diagnostic>| {
         let TypeRef::Named { path, span, .. } = b else { return; };
         let Some(name) = path.last() else { return; };
@@ -11000,6 +11047,26 @@ fn check_generic_bound_declarations(
             }
         }
     };
+    // Plan 172.3 (D310): at most ONE type-set per bound-list (`[T A + B]` with two
+    // type-sets A,B is rejected — a single membership axis keeps semantics clear;
+    // protocol intersection stays unbounded).
+    let check_single_type_set = |g: &GenericParam, errors: &mut Vec<Diagnostic>| {
+        let n_sets = g.bounds.iter().filter(|b| {
+            matches!(b, TypeRef::Named { path, .. }
+                if path.last().map(|n| type_kinds.get(n) == Some(&"type_set")).unwrap_or(false))
+        }).count();
+        if n_sets > 1 {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_MULTIPLE_TYPE_SETS] generic parameter `{}` has {} type-set bounds — \
+                     at most one type-set is allowed per bound-list (protocol bounds may be \
+                     combined freely via `+`) (D310).",
+                    g.name, n_sets
+                ),
+                g.span,
+            ));
+        }
+    };
     for item in &module.items {
         match item {
             Item::Fn(f) => {
@@ -11007,6 +11074,7 @@ fn check_generic_bound_declarations(
                     for b in &g.bounds {
                         check_bound(b, errors);
                     }
+                    check_single_type_set(g, errors);
                 }
             }
             Item::Type(t) => {
@@ -11014,6 +11082,7 @@ fn check_generic_bound_declarations(
                     for b in &g.bounds {
                         check_bound(b, errors);
                     }
+                    check_single_type_set(g, errors);
                 }
             }
             _ => {}

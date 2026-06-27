@@ -1,0 +1,12 @@
+module plan172_neg_multiple_sets.multiple_sets
+
+// Plan 172.3 (D310) Ф.2 — NEGATIVE: at most one type-set per bound-list; two
+// type-sets in `[T A + B]` is rejected.
+// EXPECT_COMPILE_ERROR E_MULTIPLE_TYPE_SETS
+
+type Lo set i8 | i16
+type Hi set i32 | i64
+
+fn[T Lo + Hi] f(x T) -> T => x
+
+fn main() -> int { 0 }

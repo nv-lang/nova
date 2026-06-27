@@ -1,0 +1,11 @@
+module plan172_neg_member_not_concrete.member_not_concrete
+
+// Plan 172.3 (D310) Ф.2 — NEGATIVE: a type-set member must be a CONCRETE type;
+// a protocol member is rejected.
+// EXPECT_COMPILE_ERROR E_TYPE_SET_MEMBER_NOT_CONCRETE
+
+type Showable protocol { @show() -> str }
+
+type Bad set i8 | Showable
+
+fn main() -> int { 0 }

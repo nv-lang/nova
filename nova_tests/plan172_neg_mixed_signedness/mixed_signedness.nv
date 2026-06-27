@@ -1,0 +1,9 @@
+module plan172_neg_mixed_signedness.mixed_signedness
+
+// Plan 172.3 (D310) Ф.2 — NEGATIVE: a single type-set must not mix signed and
+// unsigned integers (u64.MAX ∉ i64; Q6).
+// EXPECT_COMPILE_ERROR E_TYPE_SET_MIXED_SIGNEDNESS
+
+type Mixed set i32 | u32
+
+fn main() -> int { 0 }
