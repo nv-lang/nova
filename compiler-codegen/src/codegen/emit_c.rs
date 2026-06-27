@@ -36213,10 +36213,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // → CC-FAIL). Channel для SelfAccess используется ТОЛЬКО когда `var_types["nova_self"]`
                     // ОТСУТСТВУЕТ (Cat-B13: closures/generic-fn-bodies без receiver-регистрации, где legacy
                     // ложно даёт nova_int) — там channel корректнее (§1-fix). Иначе — legacy var_types.
-                    if matches!(&expr.kind, ExprKind::SelfAccess)
-                        && self.var_types.contains_key("nova_self")
-                    {
-                        return legacy;
+                    match &expr.kind {
+                        ExprKind::SelfAccess if self.var_types.contains_key("nova_self") => {
+                            return legacy;
+                        }
+                        // Plan 172.1.1: Ident whose name is a tracked local (var_types) → legacy
+                        // (reliable per-local C-type, correct incl. mono generic-containers, not a
+                        // re-derive). Ident ABSENT from var_types (Cat-B13) → channel (§1-fix).
+                        ExprKind::Ident(n) if self.var_types.contains_key(n) => {
+                            return legacy;
+                        }
+                        _ => {}
                     }
                     return ir_c;
                 }

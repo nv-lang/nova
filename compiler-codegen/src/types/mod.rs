@@ -6290,16 +6290,15 @@ impl<'a> TypeCheckCtx<'a> {
             if e.id.is_set() {
                 if let Some(tr) = self.infer_expr_type(e, scope) {
                     let rt = ResolvedType::from_type_ref(&tr);
-                    // GATE to PRIMITIVE resolved types only (shared `primitive_gate`). Their C-type
-                    // is ALWAYS a registered builtin — no undeclared-identifier / generic-inference
-                    // hazard — and the ONLY divergence from legacy is the §1 `_=>nova_int` fallback
-                    // FIX (a `bool`/sized-int var legacy mis-typed `nova_int`). Non-primitive Idents
-                    // (records / generics / enums / Vec / pointers) stay on the legacy path: their
-                    // lowering needs codegen mono / typedef context the generic-level annotation
-                    // cannot reproduce — the full-corpus regress proved those break the flip.
-                    if Self::primitive_gate(&rt) {
-                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
-                    }
+                    // Plan 172.1.1: annotate ALL Idents (primitive + non-primitive). The consumer
+                    // (infer_expr_c_type) applies a var_types-gate: an Ident whose name IS in codegen
+                    // `var_types` (the reliable per-local C-type set at decl-emit) → legacy (var_types
+                    // — correct incl. mono generic-containers, NOT a re-derive); an Ident ABSENT from
+                    // var_types (Cat-B13: pre-decl / synthesized / generic-fn-body) → channel (§1-fix:
+                    // legacy `_=>nova_int` fallback). This gate avoids the earlier full-corpus break
+                    // (non-primitive mono lowering needs codegen typedef/subst context — now routed to
+                    // legacy via var_types, never the generic-level channel).
+                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                 }
             }
         }
