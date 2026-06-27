@@ -1,0 +1,5 @@
+module plan172_stdlib_use.stdlib_use
+// Plan 172.3 Ф.4 — use stdlib SignedInt (from prelude) WITHOUT local declaration.
+// EXPECT_RUN_OK
+fn[T SignedInt] pick(x T) -> T => x
+fn main() -> int { pick(5) }

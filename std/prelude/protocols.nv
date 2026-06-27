@@ -692,3 +692,14 @@ fn Result[T Debug, E Debug] @debug(mut w Write) -> () {
         }
     }
 }
+
+// Plan 172.3 (D310): stdlib type-set bounds over the primitive integer families.
+// A type-set is a named set of concrete types usable as a generic bound
+// (`fn[T SignedInt] …`), монорфизируется per member. Signed and unsigned are
+// SEPARATE sets — u64.MAX = 2^64-1 ∉ i64, so a single body cannot be sound for
+// both (E_TYPE_SET_MIXED_SIGNEDNESS guards user-declared mixed sets).
+//
+// Главный потребитель — Plan 174.1 (primitive parse API): один
+// `fn[T SignedInt] T.try_parse(...)` вместо ×N per-type обёрток.
+type SignedInt   set i8 | i16 | i32 | i64 | int
+type UnsignedInt set u8 | u16 | u32 | u64 | uint
