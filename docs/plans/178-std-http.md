@@ -483,9 +483,11 @@ export fn http.delete(url IntoUrl)           Http -> Result[HttpResponse, HttpEr
 export fn http.post(url IntoUrl, body []u8)  Http -> Result[HttpResponse, HttpError]
 export fn http.put(url IntoUrl, body []u8)   Http -> Result[HttpResponse, HttpError]
 export fn http.patch(url IntoUrl, body []u8) Http -> Result[HttpResponse, HttpError]
-// typed-JSON one-call (gate serde Plan 184). get_json = get? .error_for_status()? .json[T]().
+// САХАР (convenience-обёртка, НЕ примитив; тонкий .nv-фасад, ноль транспорт-логики; gate serde Plan 184):
+//   get_json[T](url)       ≡ get(url)? .error_for_status()? .json[T]()
+//   post_json[T,B](url, b) ≡ post(url, json_encode(b)?)? .error_for_status()? .json[T]()   (+ CT application/json; B→тело, T←ответ)
 // DOC-FENCE (§13.4): зашитый error_for_status → не-2xx = Err (теряет error-body, инверсия Q4);
-// сырой не-2xx body → http.get(url)?.json[T](). post_json: B→тело (application/json), T←ответ.
+// сырой не-2xx body → http.get(url)?.json[T]() (первичный путь, сахар вторичен).
 export fn http.get_json[T](url IntoUrl)             Http -> Result[T, HttpError]
 export fn http.post_json[T, B](url IntoUrl, body B) Http -> Result[T, HttpError]
 ```
@@ -1130,7 +1132,7 @@ with Net = real_net() { … }   // ≡ with TcpNet=real_tcp_net(), UdpNet=real_u
 
 **Рычаги:**
 1. **default-install root `real_http`** — рантайм ставит `real_http()` **нижним кадром** effect-стека на входе процесса — **тот же механизм, что root-`Io` для `main() Io`** (`spec/decisions/04-effects.md`), НЕ новый конструкт. Скрипт не пишет `with`. **`Http` остаётся в сигнатуре** (НЕ как `Async`/D62): `Async` — runtime-mechanic, `Http` — resource-capability (его подменяют → testability-win) → из типа НЕ убираем.
-2. **verb + typed-json one-shots** (§3.5 — ✅ внесено): `get/head/delete/post/put/patch` + `get_json[T]`/`post_json[T,B]` — тонкие фасады над lazy-`Once`-клиентом.
+2. **verb + typed-json one-shots** (§3.5 — ✅ внесено): `get/head/delete/post/put/patch` + `get_json[T]`/`post_json[T,B]` — тонкие фасады над lazy-`Once`-клиентом. **`get_json`/`post_json` — чистый САХАР** (`get_json[T] ≡ get? .error_for_status()? .json[T]()`), НЕ примитив: ноль транспорт-логики, проектировать нечего кроме «что зашить» (`error_for_status` + CT); сырой `http.get(url)?.json[T]()` первичен. **Структурный** рычаг эргономики — #1 (default-install), это лишь вишенка.
 3. **effect-free addr + umbrella `real_net()`** — §13.2 (уже).
 
 **🔴 НОРМАТИВНОЕ условие (критично, не опционально):** root `real_http` инсталлируется **ТОЛЬКО в script-edition**; lib/app/**test**-edition — **пустой корень `Http`**. Иначе забытый `mock_http` в тесте тихо уйдёт в реальную сеть (регрессия против сегодняшнего compile-fail). Edition-гейт превращает размен в явность (образец — Go `context.Background()` именуется явно).
