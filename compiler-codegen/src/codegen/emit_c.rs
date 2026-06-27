@@ -19870,6 +19870,28 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
 
             ExprKind::Ident(name) => {
+                // Plan 172.1 U.1.3b: explicit `self` keyword parses to `Ident("self")`
+                // (NOT `SelfAccess` — only `@` does, parser/mod.rs:7554/7563), but it IS
+                // the receiver. The checker resolves it as self (Gap A, `31ed22b7`); codegen
+                // must lower it to the C receiver param `nova_self`, mirroring the SelfAccess
+                // arm — else an inlined Nova-body method using `self.m()` (e.g. sync
+                // `Once.try_start` → `self.try_start_won()`, exposed by U.1.3b sync-inline)
+                // emits `Nova_..._method_m(self)` with an undeclared C identifier `self`.
+                // `self` is reserved (never a user variable), so this is unambiguous. The
+                // value-record-by-pointer deref mirrors the SelfAccess arm exactly.
+                if name == "self" {
+                    let self_by_ptr_value_record = self.var_types.get("nova_self")
+                        .map(|c| c.starts_with("NovaValue_") && c.ends_with('*'))
+                        .unwrap_or(false)
+                        || self.current_receiver_type.as_deref()
+                            .map(|t| t != "str" && self.value_record_names.contains(t))
+                            .unwrap_or(false);
+                    return Ok(if self_by_ptr_value_record {
+                        "(*nova_self)".into()
+                    } else {
+                        "nova_self".into()
+                    });
+                }
                 // Plan 61 Ф.3: typed Fail[E] handler-arm parameter — name
                 // resolves через fail-frame typed payload, не как обычная
                 // переменная. См. emit_handler_lit Plan 61 Ф.3 populator.
