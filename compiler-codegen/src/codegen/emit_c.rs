@@ -6083,6 +6083,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.current_receiver_type = Some(t_name.to_string());
             // Substitute `Self` → `t_name` для resolution в default body.
             self.current_type_subst.insert("Self".to_string(), t_c_ty.to_string());
+            // Plan 172.1.1 (U.4.5 substrate, mono-side gap #1): для default-body на КОНКРЕТНОМ
+            // generic-типе T (`Lru[str,int]`) populate generic-params в subst (`K→nova_str`,
+            // `V→nova_int`), а не только `Self` — иначе `resolved_type_to_c(K)`/`type_ref_to_c(K)`
+            // в теле резолвят K как stub (`Nova_K*`) вместо concrete (фаза-корректность §0; зеркало
+            // `emit_monomorphized_method`:15082). Источник concrete-args — `generic_type_instance_info`
+            // (mangled→(base,args)); имена параметров — `generic_type_templates[base].generics`.
+            {
+                let mangled = t_c_ty.trim_end_matches('*').trim().to_string();
+                let inst = self.generic_type_instance_info.borrow().get(&mangled).cloned();
+                if let Some((base, args)) = inst {
+                    let names: Vec<String> = self
+                        .generic_type_templates
+                        .get(&base)
+                        .map(|t| t.generics.iter().map(|g| g.name.clone()).collect())
+                        .unwrap_or_default();
+                    for (name, a) in names.into_iter().zip(args.into_iter()) {
+                        self.current_type_subst.entry(name).or_insert(a);
+                    }
+                }
+            }
 
             // Resolve return type / param types через type_ref_to_c
             // (Self уже резолвится через current_receiver_type per spec).
