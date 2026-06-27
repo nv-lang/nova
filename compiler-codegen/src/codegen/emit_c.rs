@@ -36175,18 +36175,51 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         )
                         && std::env::var("NOVA_U45_RLCHECK").is_ok()
                     {
+                        let k = if matches!(&expr.kind, ExprKind::TupleLit(_)) { "tuple" } else { "record" };
                         eprintln!(
                             "[U.4.5-rlcheck] ir={} legacy={} kind={} id={:?} span={:?}",
-                            ir_c,
-                            legacy,
-                            if matches!(&expr.kind, ExprKind::TupleLit(_)) { "tuple" } else { "record" },
-                            expr.id,
-                            expr.span
+                            ir_c, legacy, k, expr.id, expr.span
                         );
                     }
                     return ir_c;
                 }
             }
+        }
+        // Plan 172.1 U.4.5 (gap-measure): env-gated debug tally of exprs that FALL BACK to the
+        // legacy re-derive (= un-annotated surface = the blockers for deleting `infer_expr_c_type_legacy`).
+        // Logs the expr KIND + whether it had an annotation (resolved_type_to_c returned Err) vs none.
+        // `NOVA_U45_GAP=1`; zero cost in release.
+        #[cfg(debug_assertions)]
+        if expr.id.is_set() && std::env::var("NOVA_U45_GAP").is_ok() {
+            let kind = match &expr.kind {
+                ExprKind::Call { .. } => "Call",
+                ExprKind::Member { .. } => "Member",
+                ExprKind::Ident(_) => "Ident",
+                ExprKind::Path(_) => "Path",
+                ExprKind::Index { .. } => "Index",
+                ExprKind::Block(_) => "Block",
+                ExprKind::If { .. } => "If",
+                ExprKind::IfLet { .. } => "IfLet",
+                ExprKind::Match { .. } => "Match",
+                ExprKind::Binary { .. } => "Binary",
+                ExprKind::Unary { .. } => "Unary",
+                ExprKind::RecordLit { .. } => "RecordLit",
+                ExprKind::TupleLit(_) => "TupleLit",
+                ExprKind::ArrayLit(_) => "ArrayLit",
+                ExprKind::MapLit { .. } => "MapLit",
+                ExprKind::SelfAccess => "SelfAccess",
+                ExprKind::TurboFish { .. } => "TurboFish",
+                ExprKind::As(..) => "As",
+                ExprKind::Try(_) => "Try",
+                ExprKind::Bang(_) => "Bang",
+                ExprKind::Coalesce(..) => "Coalesce",
+                ExprKind::Range { .. } => "Range",
+                ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => "Closure",
+                ExprKind::InterpolatedStr { .. } => "InterpStr",
+                _ => "Other",
+            };
+            let annotated = self.resolved_types.contains_key(&expr.id);
+            eprintln!("[U45GAP] kind={} annotated={} legacy={}", kind, annotated, legacy);
         }
         legacy
     }
