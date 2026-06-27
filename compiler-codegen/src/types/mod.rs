@@ -6311,6 +6311,50 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 172.1.1 (U.4.5 — Index probe): annotate `obj[i]` with the checker's element type.
+        // The checker infers the element DIRECTLY (e.g. `@_order[i]` → `str` for a `Vec[str]`),
+        // авторитетно — whereas legacy re-derives it from codegen `array_element_types` and falls
+        // to `nova_int` when absent (§1 bug). Tests whether direct Index annotation sidesteps the
+        // SelfAccess-cascade gap #2 (bare `@` → erased schema → nova_int element).
+        if let ExprKind::Index { .. } = &e.kind {
+            if e.id.is_set() {
+                if let Some(tr) = self.infer_expr_type(e, scope) {
+                    let rt = ResolvedType::from_type_ref(&tr);
+                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                }
+            }
+        }
+        // Plan 172.1.1 (U.4.5 — Member probe): annotate `obj.field` with the checker's field type.
+        // Same authoritative-channel logic as Index. `infer_expr_type` returns Err/None for
+        // method-receiver / module-path / enum-path Members → those fall through to legacy via the
+        // consumer's `Ok(ir_c)` guard, so this only covers genuine field accesses.
+        if let ExprKind::Member { .. } = &e.kind {
+            if e.id.is_set() {
+                if let Some(tr) = self.infer_expr_type(e, scope) {
+                    let rt = ResolvedType::from_type_ref(&tr);
+                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                }
+            }
+        }
+        // Plan 172.1.1 (U.4.5 — control-flow probe): annotate Block/If/IfLet/Match/Path with the
+        // checker's value type (block tail / branch-join / variant). Each propagates an ALREADY-
+        // checked inner type — no new re-derive hazard. `infer_expr_type` returns None for
+        // unit/never/unresolved → those fall through to legacy via the consumer's `Ok` guard.
+        if matches!(
+            &e.kind,
+            ExprKind::Block(_)
+                | ExprKind::If { .. }
+                | ExprKind::IfLet { .. }
+                | ExprKind::Match { .. }
+                | ExprKind::Path(_)
+        ) {
+            if e.id.is_set() {
+                if let Some(tr) = self.infer_expr_type(e, scope) {
+                    let rt = ResolvedType::from_type_ref(&tr);
+                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                }
+            }
+        }
         // Plan 172.1 U.4.5 (RecordLit slice — NON-GENERIC records): materialize a typed
         // record literal's resolved type into the checker channel so codegen READS it via the
         // SINGLE `resolved_type_to_c` instead of the legacy `infer_expr_c_type` RecordLit
