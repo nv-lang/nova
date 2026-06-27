@@ -9572,9 +9572,34 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if recv.generics.is_empty() {
                     if let Some(ret_tr) = &f.return_type {
                         let rt = crate::types::ResolvedType::from_type_ref(ret_tr);
-                        if rt.is_primitive_lowerable() {
+                        // Index an extern method's return in the channel when its C-type is
+                        // CONTEXT-INDEPENDENT (same regardless of mono / call-site):
+                        //   (1) primitives (`is_primitive_lowerable`) — original Gap B gate.
+                        //   (2) a RUNTIME_DEFINED_TYPES Named type (args empty) — C-header-backed
+                        //       guard structs etc. lower to a context-independent `Nova_X*`
+                        //       (final guard below). Gating on RUNTIME_DEFINED_TYPES (NOT a
+                        //       structural value-record check — `value_record_names` is NOT yet
+                        //       populated at fn-forward-decl time) excludes user value-records
+                        //       like `SocketAddr` → no `type_ref_to_c` side-effect on them, so
+                        //       their structural `==` is untouched. Class (2) fixes the Option-
+                        //       erasure: `Some(self.<extern>())` where the extern returns e.g.
+                        //       `OnceGuard` (`Nova_OnceGuard*`) — without the channel the extern
+                        //       return erased to `nova_int` → `NovaOpt_nova_int` vs declared
+                        //       `NovaOpt_Nova_OnceGuard_p` (sync `Once.try_start`).
+                        let channel_safe = rt.is_primitive_lowerable() || matches!(
+                            rt.peel_view(),
+                            crate::types::ResolvedType::Named { name, args, .. }
+                                if args.is_empty()
+                                    && RUNTIME_DEFINED_TYPES.contains(&name.as_str())
+                        );
+                        if channel_safe {
                             if let Ok(ret_c) = self.type_ref_to_c(ret_tr) {
-                                self.fn_ret_by_span.insert(f.span, ret_c);
+                                if rt.is_primitive_lowerable()
+                                    || (ret_c.starts_with("Nova_") && ret_c.ends_with('*')
+                                        && !ret_c.contains("____"))
+                                {
+                                    self.fn_ret_by_span.insert(f.span, ret_c);
+                                }
                             }
                         }
                     }
