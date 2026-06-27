@@ -7906,20 +7906,23 @@ impl<'a> TypeCheckCtx<'a> {
                 match overloads {
                     Some([single]) => single,
                     Some(multi) => {
-                        // Plan 172.1 U.3.3: arity-aware overload resolution in the
-                        // CHECKER for non-primitive `Type.method(args)` calls —
-                        // same rule as U.3.1 (free-fn). Fire E_NO_MATCHING_OVERLOAD
-                        // only when ≥1 overload binds by arity but NONE is
-                        // category-compatible (previously leaked to codegen/C).
-                        // Final exact-C-type selection stays in codegen (U.3.4).
-                        // (primitive-receiver bailed above — U.3.2 closes that via
-                        // ExternalRegistry.) Method params exclude the receiver
-                        // (`f.receiver`), so they align 1:1 with call args exactly
-                        // like the single-overload path below.
-                        let applicable: Vec<bool> = multi.iter()
-                            .filter_map(|c| self.overload_applicability(c, args, gs, scope))
-                            .collect();
-                        if !applicable.is_empty() && !applicable.iter().any(|&ok| ok) {
+                        // Plan 172.1 U.3.3 + U.3.2 (172.1.1): arity-aware overload resolution in the
+                        // CHECKER for non-primitive `Type.method(args)`. Fire E_NO_MATCHING_OVERLOAD
+                        // when ≥1 overload binds by arity but NONE is category-compatible (unchanged).
+                        // 172.1.1 ADDITION: RECORD the callee when EXACTLY ONE overload is type-
+                        // compatible (the unambiguous choice → resolved_callees → Call-channel, §0/§1
+                        // «перегрузки резолвятся в чекере»); 0 or ≥2 compatible → codegen-resolved
+                        // (gap, not wrong). Final exact-C selection stays in codegen (U.3.4).
+                        let mut compat: Vec<&&FnDecl> = Vec::new();
+                        let mut any_arity = false;
+                        for c in multi.iter() {
+                            match self.overload_applicability(c, args, gs, scope) {
+                                Some(true) => { any_arity = true; compat.push(c); }
+                                Some(false) => any_arity = true,
+                                None => {}
+                            }
+                        }
+                        if any_arity && compat.is_empty() {
                             errors.push(Diagnostic::new(
                                 format!(
                                     "[E_NO_MATCHING_OVERLOAD] no overload of `{}.{}` \
@@ -7928,8 +7931,9 @@ impl<'a> TypeCheckCtx<'a> {
                                 ),
                                 base.span,
                             ));
+                            return;
                         }
-                        return;
+                        if compat.len() == 1 { compat[0] } else { return; }
                     }
                     None => return,
                 }
@@ -7967,8 +7971,21 @@ impl<'a> TypeCheckCtx<'a> {
                 match self.sig.fn_decls.get(name) {
                     Some(overloads) => match overloads.as_slice() {
                         [single] => single,
-                        // 0 (никогда) или overload — пропускаем arg-check.
-                        _ => return,
+                        // Plan 172.1.1 (U.3.2): multi-overload module/free-fn — record the UNIQUE
+                        // type-compatible overload (mirror the Type.method site above → Call-channel,
+                        // §0/§1); 0 or ≥2 compatible → codegen-resolved (gap, not wrong).
+                        many => {
+                            let mut compat: Vec<&&FnDecl> = Vec::new();
+                            for c in many.iter() {
+                                if matches!(
+                                    self.overload_applicability(c, args, gs, scope),
+                                    Some(true)
+                                ) {
+                                    compat.push(c);
+                                }
+                            }
+                            if compat.len() == 1 { compat[0] } else { return; }
+                        }
                     },
                     None => {
                         // Plan 162.2 Ф.3: cross-module fn known via sig_table —
