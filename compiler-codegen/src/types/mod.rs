@@ -7704,9 +7704,12 @@ impl<'a> TypeCheckCtx<'a> {
             _ => return,
         };
         let type_name = type_name.as_str();
-        if is_primitive_recv_name(type_name) {
-            return; // U.3.2 gate — external overloads not in the checker's table
-        }
+        // Plan 172.1.1 (U.3.2 probe): lift the primitive gate — `method_table.get` below returns
+        // None for receivers absent from the checker's table (graceful no-op), so this is SAFE; it
+        // RECORDS a callee only when the primitive's method sig IS present. Measures empirically
+        // whether primitive method sigs reach `self.sig` (vs the comment's assumption they're
+        // external-only). The consumer also requires `fn_ret_by_span` → un-channeled spans fall to
+        // legacy regardless. (was: `if is_primitive_recv_name(type_name) { return; }`)
         let Some(methods) = self.sig.method_table.get(type_name) else { return; };
         let Some(overloads) = methods.get(method_name) else { return; };
         // Plan 172.1 U.4.3 (c1/c2): record the chosen INSTANCE callee into the
