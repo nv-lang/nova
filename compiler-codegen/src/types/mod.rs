@@ -6303,14 +6303,15 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
-        // Plan 172.1 U.4.5 (SelfAccess slice — ПРОБА ОТКАЗАНА 2026-06-27): annotating `self`/`@`
-        // from scope["@"] is NOT byte-identical — measured 2327 divergences + 5 FAIL over a
-        // method-heavy corpus. Two classes: (1) GENERIC-ERASURE — in a generic-method body codegen
-        // emits the ERASED receiver `Nova_Deque*` while the checker's scope["@"] is the mono
-        // `Nova_Deque____Nova_T_p*`; (2) legacy Cat-B13 `nova_int` fallback (emit_c.rs:36729) vs the
-        // channel's real type. ⇒ SelfAccess (как Ident — 62% legacy-fallback surface вместе) blocked
-        // by the GENERIC-MONO erasure mismatch → требует generic-mono channel substrate
-        // [M-172.1-U4-typedir-substrate], а не наивную аннотацию. Оставлено на legacy.
+        // Plan 172.1.1 (substrate probe — gap#2 hunt).
+        if let ExprKind::SelfAccess = &e.kind {
+            if e.id.is_set() {
+                if let Some(tr) = self.infer_expr_type(e, scope) {
+                    let rt = ResolvedType::from_type_ref(&tr);
+                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                }
+            }
+        }
         // Plan 172.1 U.4.5 (RecordLit slice — NON-GENERIC records): materialize a typed
         // record literal's resolved type into the checker channel so codegen READS it via the
         // SINGLE `resolved_type_to_c` instead of the legacy `infer_expr_c_type` RecordLit

@@ -36191,15 +36191,32 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if ir_c != legacy
                         && matches!(
                             &expr.kind,
-                            ExprKind::RecordLit { .. } | ExprKind::TupleLit(_)
+                            ExprKind::RecordLit { .. } | ExprKind::TupleLit(_) | ExprKind::SelfAccess
                         )
                         && std::env::var("NOVA_U45_RLCHECK").is_ok()
                     {
-                        let k = if matches!(&expr.kind, ExprKind::TupleLit(_)) { "tuple" } else { "record" };
+                        let k = match &expr.kind {
+                            ExprKind::TupleLit(_) => "tuple",
+                            ExprKind::SelfAccess => "self",
+                            _ => "record",
+                        };
                         eprintln!(
                             "[U.4.5-rlcheck] ir={} legacy={} kind={} id={:?} span={:?}",
                             ir_c, legacy, k, expr.id, expr.span
                         );
+                    }
+                    // Plan 172.1.1 (U.4.5 substrate): SelfAccess берётся из НАДЁЖНОГО codegen-state
+                    // `var_types["nova_self"]` (выставлен на receiver-параметре при эмиссии сигнатуры) —
+                    // это НЕ re-derive под-выражения, и КОРРЕКТНО в т.ч. в mono-теле, где channel
+                    // `resolved_type_to_c(scope["@"])` зависит от `current_type_subst`, ненадёжного при
+                    // subst-timing (gap #2: bare Nova_Lru → @field через erased-схему → element nova_int
+                    // → CC-FAIL). Channel для SelfAccess используется ТОЛЬКО когда `var_types["nova_self"]`
+                    // ОТСУТСТВУЕТ (Cat-B13: closures/generic-fn-bodies без receiver-регистрации, где legacy
+                    // ложно даёт nova_int) — там channel корректнее (§1-fix). Иначе — legacy var_types.
+                    if matches!(&expr.kind, ExprKind::SelfAccess)
+                        && self.var_types.contains_key("nova_self")
+                    {
+                        return legacy;
                     }
                     return ir_c;
                 }
