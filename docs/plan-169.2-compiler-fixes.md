@@ -582,8 +582,14 @@ NovaArray_void_p* arr = _nv_tmp;                                    // ← а т
 вместо fn/void_p → type-confused контейнер (`Vec[int]` vs `NovaArray_void_p`). Малый N
 совпадает по layout; на масштабе (realloc) расходится → `f`==null → call-null → SEGV.
 
-**Статус:** ОТЛОЖЕН, гейт **Plan 172 U.4**. Это конкретный инстанс класса
-**[M-172-nova-int-fallback-audit]** (silent nova_int fallback на unknown element-type,
-main `3046f7e6`, ~78 sites), который Plan 172 U.4 убирает системно. Отдельно НЕ чиним
-(point-fix продублирует 172 U.4). Маркер `[M-169.2-vec-fn-empty-literal-nova-int]`
-(backlog-followups.md).
+**Статус:** ✅ **ПОЧИНЕН 2026-06-27** (Plan 172.1.1, soundness-гейт). Разбор показал, что корень —
+НЕ только nova_int-fallback, а **§0/D315 «два окна правды»**: `[]fn` лоуэрится ДВУМЯ путями —
+binding через `type_ref_to_c` → `NovaArray_void_p*`, literal `[]` через codegen element-derive →
+`Nova_Vec____nova_int*` (другой element И другой container-KIND Vec↔Array). `push_void_p` на
+физическом `Vec_int` → SEGV. **Фикс:** в `emit_array_lit` пропускаем typed-`Vec`-путь когда
+`current_array_elem_hint == void_p` (closure-array target, выставлен из `NovaArray_void_p*`-target в
+`emit_expr_with_target_type`) → пустой `[]fn` идёт в NovaArray-void_p-путь (`nova_array_new_void_p`),
+совпадая с binding. plan55 RUN-FAIL→PASS; 0-new-FAIL/25 дир (array/closure-heavy). Это **TACTICAL
+reconciliation** двух лоуэрингов через существующий hint; целевая форма = единый `resolved_type_to_c`
+для binding И literal (U.4.5 + U.6.1 ретайрят `type_ref_to_c`) — subsumes этот guard. Маркер
+`[M-169.2-vec-fn-empty-literal-nova-int]` (теперь tactical-unblock, не отложенный).

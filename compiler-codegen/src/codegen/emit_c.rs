@@ -31513,7 +31513,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_))
                 } else { false }
             });
-            if !any_closure {
+            // Plan 172.1.1 [M-169.2-vec-fn-empty-literal-nova-int] (bug #23, plan-169.2): a void_p
+            // hint means the TARGET is a closure / `void*`-storage array (`[]fn()->T` →
+            // `NovaArray_void_p*` via `type_ref_to_c`). An EMPTY `[]` has no closure element to trip
+            // `any_closure`, so without this it falls into the typed-`Vec` path → `Nova_Vec____nova_int*`
+            // (wrong element AND wrong container KIND) while the binding is `NovaArray_void_p*` →
+            // `push_void_p` on a `Vec_int` → SEGV at scale. Skip the Vec path when the hint demands
+            // void_p storage → fall through to the NovaArray void_p path below (`nova_array_new_void_p`),
+            // so literal and binding lower to the SAME container. TACTICAL reconciliation of the two
+            // lowerings via the existing hint; CLEAN target form = single `resolved_type_to_c` for BOTH
+            // binding and literal (U.4.5 + U.6.1 retire `type_ref_to_c`), which subsumes this guard.
+            let hint_void_p = self.current_array_elem_hint.as_deref() == Some("void_p");
+            if !any_closure && !hint_void_p {
                 if let Some(tmp) = self.try_emit_typed_vec_literal(elems)? {
                     return Ok(tmp);
                 }
