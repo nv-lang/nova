@@ -6520,17 +6520,33 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
                 self.f1_expr(inner, gs, scope, errors)
             }
-            ExprKind::Binary { left, right, .. } => {
+            ExprKind::Binary { left, right, op } => {
                 self.f1_expr(left, gs, scope, errors);
                 self.f1_expr(right, gs, scope, errors);
                 self.f4_check_value(left, scope, errors);
                 self.f4_check_value(right, scope, errors);
                 // Plan 172.1.1 (U.4.5 — Binary arm): materialize the binary expr's resolved type
-                // into the channel (comparison/logic → bool; arithmetic/bitwise → the promoted
-                // operand type). Codegen READS the channel instead of re-deriving. infer_expr_type
-                // → None for unresolved operands → falls to legacy via the consumer's `Ok` guard.
+                // into the channel so codegen READS it instead of re-deriving via legacy.
+                // `infer_expr_type` has NO Binary arm (→ None), so compute the result type INLINE
+                // here (keeps the change isolated to this annotation — does NOT alter
+                // infer_expr_type's other consumers):
+                //   - comparison/logical/implication → `bool` (byte-identical to legacy `nova_bool`);
+                //   - arithmetic/bitwise/shift → the operand type (left, else right). Preserves a
+                //     type-param `T` for generic bodies — `resolved_type_to_c` resolves it via
+                //     `current_type_subst` at codegen, so the annotation is mono-correct.
+                // Un-inferrable arithmetic operands → no annotation → falls to legacy (consumer).
                 if e.id.is_set() {
-                    if let Some(tr) = self.infer_expr_type(e, scope) {
+                    use crate::ast::BinOp;
+                    let res_tr: Option<TypeRef> = match op {
+                        BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+                        | BinOp::And | BinOp::Or | BinOp::Implies | BinOp::Iff => {
+                            Some(prim_ref("bool", e.span))
+                        }
+                        _ => self
+                            .infer_expr_type(left, scope)
+                            .or_else(|| self.infer_expr_type(right, scope)),
+                    };
+                    if let Some(tr) = res_tr {
                         let rt = ResolvedType::from_type_ref(&tr);
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     }
