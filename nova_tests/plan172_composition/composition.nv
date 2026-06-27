@@ -1,0 +1,5 @@
+module plan172_composition.composition
+// Plan 172.3 Ф.2 Q4 — composition: type-set ∧ protocol via D145 `+`.
+// EXPECT_RUN_OK
+fn[T SignedInt + Hash] both(x T) -> T => x
+fn main() -> int { both(5) }

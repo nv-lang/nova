@@ -50,7 +50,7 @@
 |---|---|---|---|
 | **172.1** | [Unified type engine](172.1-unified-type-engine.md) | Свести 4 движка к **одному** семантическому проходу → типизированный IR → codegen лоуэрит → C не ловит типы. Фазы U.1-U.7. Ядро рефактора. | 📋 proposed |
 | **172.2** | [Method-arg type-checking](172.2-method-arg-type-checking.md) | Типизация аргументов методов + `[E_IMPLICIT_NARROWING]` на scalar-narrowing через method-arg. **Первый конкретный шаг** 172.1 (узкий кейс U.1-U.3). | 📋 proposed |
-| **172.3** | [Type-set bounds](172.3-type-set-bounds.md) | Go-style generic-constraints (`fn[T IntNumber] …`) — набор конкретных типов как bound, не только протокол. Type-system фича, которую единый движок должен нести. | 📋 proposed |
+| **172.3** | [Type-set bounds](172.3-type-set-bounds.md) | Go-style generic-constraints (`fn[T IntNumber] …`) — набор конкретных типов как bound, не только протокол. Type-system фича, которую единый движок должен нести. | ✅ CLOSED 2026-06-28 |
 | **172.4** | [Value-ABI + auto-placement](172.4-value-abi-auto-placement.md) | Единый value-ABI (value-record / named-tuple / struct-tuple — один путь) + **авто** by-ref/heap↔stack (нет `ref T`, Q29). Acceptance: value-record fluent `mut @ -> @` + структурное `==`. **Behavior-changes ПОСЛЕ MVP-консолидации 172.1.** | 📋 proposed |
 | **172.5** | [In-out ref-params](172.5-inout-ref-params.md) | In-out `ref`-параметры (safe by-ref borrow) + формализация `@`/`-> @` (D326). `ref` = режим параметра (Swift `inout`), не тип. Поверх 172.4. | 📋 proposed |
 
