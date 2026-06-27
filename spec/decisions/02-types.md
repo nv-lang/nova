@@ -3364,7 +3364,7 @@ type-arg внутри **multi-param** адаптера (`MapIter[Self, T, U]`),
 Без bound — `[T]` — параметр без ограничений (структурное соответствие
 проверяется при использовании, как было до D72).
 
-Bound — это **protocol-тип** (D53). Тот же `Hash` стоит и в
+Bound — это **protocol-тип** (D53) **ИЛИ type-set** ([D310](#d310-type-set-bounds-plan-1723), Plan 172.3: именованное множество конкретных типов, `[T SignedInt]`). Тот же `Hash` стоит и в
 позиции типа значения (`fn f(x Hash)` — existential), и в позиции
 bound'а (`fn f[T Hash](x T)` — universal). Одна сущность —
 тип со структурным контрактом — в трёх позициях:
@@ -6239,10 +6239,14 @@ fn[K Hash, V] (K, V) @key_value() -> (K, V) => @
 fn[T From[K], K] T @construct_from(v K) -> T => T.from(v)   // parametric protocol
 ```
 
-**Bound = только protocol-тип** (D72). Concrete-type bounds (`fn[T int]`,
-`fn[T User]`) — **отдельный open question**
-[Q-representation-bound](../open-questions.md#q-representation-bound),
-Plan 102 (future).
+**Bound = protocol-тип (D72) ИЛИ type-set ([D310](#d310-type-set-bounds-plan-1723), Plan 172.3).** Type-set — именованное
+множество конкретных типов (`type SignedInt set i8 | i16 | …`), используемое как bound:
+`fn[T SignedInt] T.try_parse(...)`. Композиция type-set ∧ protocol — через тот же `+`
+(`[T SignedInt + Hash]`): T ∈ set И реализует protocol, проверки независимы per-member;
+не более одного type-set в одном bound-листе (`E_MULTIPLE_TYPE_SETS`). Произвольные
+**representation/underlying** bounds (`~int`, structural) — по-прежнему **open question**
+[Q-representation-bound](../open-questions.md#q-representation-bound), Plan 102 (future);
+D310 закрывает только explicit-member-set, не representation.
 
 #### Protocol composition (Plan 101.4 — закрывает D53 open question)
 
@@ -13359,3 +13363,40 @@ D181/D184 (режим `@`), D246 (L3 / RETURN-оракул / P10 no-exclusivity)
 ### Звучность / footgun
 
 `u32`-арифметика `cp - lo` молча заворачивается при `cp < lo` (D226 §«нет underflow-trap» — аргумент за signed). В unicode эти вычитания (hangul `cp - SBASE`) уже под range-guard'ами (`cp >= lo && cp <= hi`), underflow недостижим, footgun локализован и под охраной. Приемлемо для домена.
+
+## D310. Type-set bounds (Plan 172.3)
+
+**Статус:** дизайн закреплён 2026-06-28 (owner sign-off; Plan 172.3 Ф.0). Amends [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) + [D145](#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101): «bound = только protocol» → «protocol ИЛИ type-set».
+
+### Что
+Новая kind-форма объявления типа — **type-set** — задаёт **именованное множество конкретных типов**, используемое как generic-bound (`fn[T IntSet] …`). Это Go-style type-constraint: код, общий для семейства примитивов (`int.try_parse`/`u32.try_parse`/…), выражается одним generic вместо per-type обёрток. Частично закрывает [Q-representation-bound](../open-questions.md#q-representation-bound) — **только explicit-member-set**; `~underlying`/repr/structural — по-прежнему Plan 102.
+
+```nova
+type SignedInt   set i8 | i16 | i32 | i64 | int
+type UnsignedInt set u8 | u16 | u32 | u64 | uint
+
+fn[T UnsignedInt] T.try_parse(s str, radix int) -> Result[T, ParseUIntError] => ...
+```
+
+### Правило
+
+- **Синтаксис.** Очередная kind-форма под `type` ([D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)/D53): `type Name set Member1 | Member2 | …`. Диспетчеризация по **первому токену после имени** — контекстный kind-токен `set` отличает type-set от sum-type (`type X | A | B`, у которого kind-токена нет, ведущий `|` сразу). Backtracking нет (один токен lookahead). `set` — контекстное слово (только в позиции после `type Name`), НЕ глобально-зарезервированное. Члены — TypeRef через `|`.
+- **Члены — по ИДЕНТИЧНОСТИ.** Примитивы и любые объявленные конкретные типы (newtype / named-tuple / record), каждый перечислен ЯВНО. Newtype `type MyI8 i8` **не** член set'а `{i8}` — нужен явный листинг. `~underlying` НЕТ (в Nova нет implicit-coercion; D52/D215).
+- **Bound = membership-предикат.** В `[...]`-позиции type-set ведёт себя как protocol-bound (D72): `[T SignedInt]`. Композиция с протоколами через `+` (D145, conjunction): `[T SignedInt + Hash]` ⇒ T ∈ set И реализует Hash; проверки независимы, per-member. **Не более одного type-set** в bound-листе (`E_MULTIPLE_TYPE_SETS`); протоколов — сколько угодно.
+- **Семантика тела.** Мономорфизация per член (как обычный `fn[T]`, Plan 48 worklist). `T.MAX`/`T.MIN`/`T.new`/литералы резолвятся per-instance через `numeric_type_constant_mapping` по **Nova-имени** подставленного члена (нужен Nova-name subst-канал T→"i8" ПЕРЕД lookup, отдельный от C-name subst T→"int8_t"). Операторы в теле — **пересечение** легальных для ВСЕХ членов; чекер материализует resolved-тип каждого T-выражения в per-ExprId канал (codegen лоуэрит, не ре-резолвит). Без `nova_int`-fallback (§1): неразрешённый член = диагностика чекера, не угадывание.
+- **Знаковость.** Один set НЕ смешивает signed/unsigned целые (`u64.MAX = 2^64−1 ∉ i64` → несовместимые value-domains; единое тело несоундно для обеих групп). Чекер: `E_TYPE_SET_MIXED_SIGNEDNESS` на объявлении. Stdlib даёт два готовых: `SignedInt`, `UnsignedInt`. Без рантайм-ветки по `T.MIN==0` (§2: не платим рантаймом за статически известное).
+
+### Проверки / диагностика (чекер, §1/§6; новые коды в [09-tooling](09-tooling.md))
+- `E_TYPE_NOT_IN_SET` — конкретный T не член set'а (фиксируется на **инстанцировании**, не на use-site внутри тела; сообщение перечисляет членов + fix).
+- `E_TYPE_SET_MEMBER_NOT_CONCRETE` — член set'а не конкретный тип (protocol / effect / другой type-set).
+- `E_TYPE_SET_MIXED_SIGNEDNESS` — set смешивает знаковые/беззнаковые целые.
+- `E_MULTIPLE_TYPE_SETS` — >1 type-set в одном bound-листе.
+
+### Почему
+- **Reuse через семейства примитивов** — один `fn[T SignedInt] T.try_parse` вместо ×10 обёрток (разблокирует Plan 174.1, вариант B).
+- **Zero-ambiguity синтаксис** через существующий D52-диспетч (kind-токен, как `alias`/`protocol` под D53) — без нового top-level keyword, без backtracking, без конфликта с sum-`|`.
+- **Звучность в чекере, лоуэринг в codegen** (§0/§1): membership и легальность операторов — чекер; `T.MAX` — лоуэринг подставленного имени, без `nova_int`-fallback.
+- **Знаковость разрешена на уровне декларации** (§2/§5), не рантайм-веткой.
+
+### Связь
+[D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) (формы `type`, first-token dispatch) · D53 (kind-токен под `type`) · [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) (bound = тип в [...]-позиции, **amended**) · [D145](#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101) (`+` multi-bound conjunction, **amended**) · [D237](#d237) (capitalized naming) · [D315](#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21) (ResolvedType несёт ширину/знак). [Q-representation-bound](../open-questions.md#q-representation-bound) — частично (explicit-member-set); `~`/repr → Plan 102. Потребитель: Plan 174.1.
