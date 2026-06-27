@@ -36169,12 +36169,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // audit. Zero cost in release (`#[cfg(debug_assertions)]`).
                     #[cfg(debug_assertions)]
                     if ir_c != legacy
-                        && matches!(&expr.kind, ExprKind::RecordLit { .. })
+                        && matches!(
+                            &expr.kind,
+                            ExprKind::RecordLit { .. } | ExprKind::TupleLit(_)
+                        )
                         && std::env::var("NOVA_U45_RLCHECK").is_ok()
                     {
                         eprintln!(
-                            "[U.4.5-rlcheck] ir={} legacy={} id={:?} span={:?}",
-                            ir_c, legacy, expr.id, expr.span
+                            "[U.4.5-rlcheck] ir={} legacy={} kind={} id={:?} span={:?}",
+                            ir_c,
+                            legacy,
+                            if matches!(&expr.kind, ExprKind::TupleLit(_)) { "tuple" } else { "record" },
+                            expr.id,
+                            expr.span
                         );
                     }
                     return ir_c;

@@ -6378,6 +6378,36 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 172.1 U.4.5 (TupleLit slice — ALL-PRIMITIVE elements): materialize a tuple
+        // literal's resolved type into the checker channel (§0/§1). GATE: every element infers
+        // to a PRIMITIVE resolved type (shared `primitive_gate`). For an all-primitive tuple the
+        // legacy `infer_expr_c_type(TupleLit)` (:36273) builds the SAME mono `compute_mono_tuple_c_name`
+        // that `resolved_type_to_c(R::Tuple)` (:1982) builds — byte-identical (primitives lower
+        // context-free, no type-param `is_empty`-vs-`Nova_`-schema divergence — the §9 type-param
+        // gating point). A non-primitive / un-inferrable element → skip → legacy (sound).
+        if let ExprKind::TupleLit(elems) = &e.kind {
+            if e.id.is_set() && !elems.is_empty() {
+                let mut elem_rts: Vec<ResolvedType> = Vec::with_capacity(elems.len());
+                for el in elems {
+                    match self.infer_expr_type(el, scope) {
+                        Some(tr) => {
+                            let rt = ResolvedType::from_type_ref(&tr);
+                            if Self::primitive_gate(&rt) {
+                                elem_rts.push(rt);
+                            } else {
+                                break;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                if elem_rts.len() == elems.len() {
+                    self.resolved_types_buf
+                        .borrow_mut()
+                        .insert(e.id, ResolvedType::Tuple(elem_rts));
+                }
+            }
+        }
         match &e.kind {
             ExprKind::Call { func, args, trailing } => {
                 self.f1_expr(func, gs, scope, errors);
