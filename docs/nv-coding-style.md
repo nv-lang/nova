@@ -625,6 +625,15 @@ ro v = opt ?? panic("expected Some")   // краш ТОЛЬКО явно — for
   D188 — официальная замена errdefer; status active, Plan 110; тесты `nova_tests/plan110/`).
   Для error-only-отката без Consumable-ресурса — паттерн escape hatch:
   `mut done = false; defer { if !done { rollback } }; …; done = true`.
+- **Discharge-глаголы ресурса — единая таксономия · согласовано 2026-06-27.** Не плодить
+  синонимы для «освободить ресурс»: `@cleanup(o ScopeOutcome)` — **АВТО**-хук протокола
+  `Cleanup[E]` (зовёт компилятор в конце `consume X = e {}`, outcome-aware; после
+  [173](plans/173-error-system-unify-harden.md) sign-off — бывш. `Consumable.@on_exit`);
+  `@close()` — **РУЧНОЙ** no-arg teardown (net/channels/File/простой ресурс); `@drain()` —
+  дочитать остаток → release (reusable, напр. HTTP-conn в пул); `@finish()` — завершить
+  **ПИСАТЕЛЬ** (напр. chunked-terminator). `@cleanup` обычно делегирует в `@close()`. Глагол
+  `@discard` и прочие синонимы release — НЕ вводить (= `@close`/`@drain` по семантике).
+  Обоснование выбора — [Plan 178 §13.3](plans/178-std-http.md).
 
 ```nv
 // 1) defer — безусловное освобождение, LIFO, любой exit-путь (D90):
