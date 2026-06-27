@@ -36274,28 +36274,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 _ => "Other",
             };
             let annotated = self.resolved_types.contains_key(&expr.id);
-            // Plan 172.1.1 (U.1 DETECT): for un-channeled Call, classify by callee shape +
-            // receiver C-type so the Call-GAP can be scoped (free-fn vs instance-method vs
-            // module-fn vs primitive-receiver). `NOVA_U45_GAP=1`.
-            let call_cat: String = if let ExprKind::Call { func, .. } = &expr.kind {
-                // rc = checker recorded a callee for this Call (resolved_callees) — distinguishes a
-                // CHECKER gap (rc=false → checker couldn't resolve, e.g. registry-only StringBuilder
-                // not in method_table → U.1) from a CODEGEN gap (rc=true → recorded but no
-                // fn_ret_by_span, e.g. generic-mono method whose span isn't in the index).
-                let rc = self.resolved_callees.contains_key(&expr.id);
-                let f = func.unwrap_turbofish();
-                match &f.kind {
-                    ExprKind::Ident(_) => format!("free-fn rc={}", rc),
-                    ExprKind::Member { obj, .. } => {
-                        let recv = self.infer_expr_c_type(obj);
-                        format!("recv={} rc={}", recv, rc)
-                    }
-                    _ => format!("call-other rc={}", rc),
-                }
+            // Plan 172.1.1 (U.1 DETECT): for un-channeled Call, the `rc=` flag = whether the checker
+            // recorded a callee (resolved_callees) — CHECKER gap (rc=false) vs CODEGEN gap (rc=true,
+            // no fn_ret_by_span). NON-invasive only (no recursive infer — that inflated counts via
+            // chains, §0.11). `NOVA_U45_GAP=1`.
+            let rc = if matches!(&expr.kind, ExprKind::Call { .. }) {
+                if self.resolved_callees.contains_key(&expr.id) { " rc=true" } else { " rc=false" }
             } else {
-                String::new()
+                ""
             };
-            eprintln!("[U45GAP] kind={} annotated={} legacy={} {}", kind, annotated, legacy, call_cat);
+            eprintln!("[U45GAP] kind={} annotated={} legacy={}{}", kind, annotated, legacy, rc);
         }
         legacy
     }
