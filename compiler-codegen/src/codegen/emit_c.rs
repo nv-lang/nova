@@ -36283,7 +36283,29 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             } else {
                 ""
             };
-            eprintln!("[U45GAP] kind={} annotated={} legacy={}{}", kind, annotated, legacy, rc);
+            // P0 (172.1 U.4.5 keystone review): NON-invasive syntactic receiver-shape tag for Call —
+            // the go/no-go discriminator. method-on-chain/field/selffield = §0.9 deep receiver-inference
+            // class (hard, candidate precondition); free/path = bounded (checker records callee cheaply).
+            // Pure AST match, NO type inference (the §0.11 lesson — recursive infer inflated counts).
+            let recv = if let ExprKind::Call { func, .. } = &expr.kind {
+                match &func.kind {
+                    ExprKind::Ident(_) => " recv=free",
+                    ExprKind::Path(_) => " recv=path",
+                    ExprKind::TurboFish { .. } => " recv=turbofish",
+                    ExprKind::Member { obj, .. } => match &obj.kind {
+                        ExprKind::Call { .. } => " recv=method.chain",
+                        ExprKind::Member { .. } => " recv=method.field",
+                        ExprKind::SelfAccess => " recv=method.selffield",
+                        ExprKind::Ident(_) => " recv=method.var",
+                        ExprKind::Index { .. } => " recv=method.index",
+                        _ => " recv=method.other",
+                    },
+                    _ => " recv=other",
+                }
+            } else {
+                ""
+            };
+            eprintln!("[U45GAP] kind={} annotated={} legacy={}{}{}", kind, annotated, legacy, rc, recv);
         }
         legacy
     }
