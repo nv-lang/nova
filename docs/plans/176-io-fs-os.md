@@ -1,19 +1,19 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# Plan 180 — I/O + Filesystem + OS: `io`-core (Read/Write/Seek) + `Fs`-эффект + `Os` (env/args/cwd)
+# Plan 176 — I/O + Filesystem + OS: `io`-core (Read/Write/Seek) + `Fs`-эффект + `Os` (env/args/cwd)
 
 > **Top-level umbrella-план.** Создан 2026-06-22; production-hardened 2026-06-22 (cross-lang Go/Rust/TS/Kotlin/Java +
 > adversarial-критика, workflow `plan180-harden`). **Статус:** 📋 READY (все Q закрыты §3.0).
-> **Маркер:** `[M-180-io-fs-os]`. **Запуск:** «**выполни план 180**».
+> **Маркер:** `[M-176-io-fs-os]`. **Запуск:** «**выполни план 176**».
 > **Эталон:** **Go / Rust / TS / Kotlin / Java**. **Архитектура — по net-семейству** ([std/net/effect.nv](../../std/net/effect.nv)):
 > эффект = внутренний плумбинг (libuv-backed, async, park/wake как [net.c:1-24](../../compiler-codegen/nova_rt/net.c#L1)),
 > юзер — через type-методы; ошибки — `Result[T, IoError]`.
-> **D-блоки (NEW):** D322 (io-core), D323 (fs), D324 (os). ⚠ **D316–D321 (Plan 179/179.1) ещё НЕ в `spec/decisions/`** (committed
+> **D-блоки (NEW):** D322 (io-core), D323 (fs), D324 (os). ⚠ **D316–D321 (Plan 175/179.1) ещё НЕ в `spec/decisions/`** (committed
 > только до D315) → Ф.0 verify/merge/renumber до присвоения D322+.
 > **🔴 HARD-GATES:** (1) **Plan 80 must-consume** (Ф.3 consume-checker scope-exit) — **НЕ начат**; линейный `File`/`BufWriter`/`DirIter`
 > требуют его → **гейтит Ф.2** (fallback: affine `consume` + runtime-checked close, если 80 слипнется). (2) **`str.from_bytes`→`Result`**
 > отсутствует (91.18 deferred) → **Ф.0.5 prereq** для `read_to_string`. (3) **`uv_fs_*` C-wrappers** не написаны (net.c их не имеет) → новый `fs.c`.
-> **Координация:** Plan 179 `Timestamp` (READY), 83.3 `Blocking` D50 (только CPU-bound-обёртки, не дефолт fs-путь), 172.4 value-ABI (READY), 91.18 str.
-> **Закрывает** fs-часть `[M-91.10-fs-net-effects-formal]`. **Process → отдельный под-план 180.1** (Q5). **Фоновые агенты:** §10.
+> **Координация:** Plan 175 `Timestamp` (READY), 83.3 `Blocking` D50 (только CPU-bound-обёртки, не дефолт fs-путь), 172.4 value-ABI (READY), 91.18 str.
+> **Закрывает** fs-часть `[M-91.10-fs-net-effects-formal]`. **Process → отдельный под-план 176.1** (Q5). **Фоновые агенты:** §10.
 > **Сквозной критерий (обязательный):** «**без упрощений, как для прода**» (крит §8.0).
 
 ---
@@ -83,7 +83,7 @@ type SeekFrom | Start(int) | End(int) | Current(int)   // ВСЁ int (i64) — N
 | Q2 | File close | **must-consume линейный `File` (Plan 80)**: `@close(self) -> Result[(), IoError]` (финальный flush + ошибка) — единств. разрядка; незакрытый = **compile-error**; double-close невозможен (linearity). Сахар `with_file(path, opts) \|f\| { … }` — close-Result **сворачивается в Result блока** (не теряется). **HARD DEP Plan 80 Ф.3** (НЕ начат) → гейтит Ф.2; fallback affine `consume`+runtime-check. | главный differentiator; Go `defer Close` глотает (тихая потеря на ENOSPC), Rust Drop глотает, Kotlin/Java suppressed |
 | Q3 | IoError единый | **ОДИН `IoError {kind ErrorKind, raw_os int, op str, path Option[Path], source Option[*IoError]}`** для io+fs+os(+process). net: `NetError` → alias/projection на `ErrorKind` (или deprecate), **отдельным byte-baseline-guarded коммитом ПОСЛЕ io-core**. Сохранить `NetError.@to_str()`-строки или обновить фикстуры. | Rust один `io::Error` доказан; текущий `NetError` (flat sum, без kind/errno/path) слабее |
 | Q4 | async fs | **libuv `uv_fs_*` threadpool + fiber-park/wake** (точно net-паттерн); API blocking-looking `file.read(buf)->Result`. **Cancel — ЧЕСТНО best-effort:** queued → `uv_cancel` (чисто); in-flight syscall **не прерывается** (как Go/tokio/Java) → abandon-result + well-defined fd-state. `Blocking` (83.3) — только CPU-bound-обёртки. | консистентность с net (та же инфра); врать про mid-syscall-cancel — некорректно (все 5 peers честны) |
-| Q5 | process | **отдельный под-план 180.1**, гейт ПОСЛЕ 180 Ф.1-Ф.3. 180 = io-core+fs+os(env/args/cwd/exit). `os.cwd/env` остаются в 180 (fs зависит от cwd для relative-paths). | subprocess огромен и ортогонален (pipes/PATH/PATHEXT/signals/cwd-trojan/deadlock) — не блокировать fs/os |
+| Q5 | process | **отдельный под-план 176.1**, гейт ПОСЛЕ 180 Ф.1-Ф.3. 180 = io-core+fs+os(env/args/cwd/exit). `os.cwd/env` остаются в 180 (fs зависит от cwd для relative-paths). | subprocess огромен и ортогонален (pipes/PATH/PATHEXT/signals/cwd-trojan/deadlock) — не блокировать fs/os |
 | Q6 | byte Write vs `@display` sink | **byte `io.Write` — SIBLING, отдельный** от text-sink `Write` (`@display`); module-qualified `io.Write`. Мост — явный `write_str(s)->encode-utf8->write`. | слияние навязало бы text-семантику на байт-стримы (Java InputStream-vs-Writer путаница) |
 | Q7 | lines/CRLF | `lines()` — split `\n` + **strip trailing `\r`** (`\r\n`/`\n` → чистые), terminator не включён; `byte_lines()` — raw `[]u8`, без strip. Финальная строка без `\n` — yield. Embedded lone `\r` (old-Mac) — НЕ сепаратор. | Rust `BufRead::lines` (ожидаемо) / Go bufio; byte_lines верен для binary |
 | Q8 | permissions | портабельный `Permissions{readonly bool}` (`@readonly()/@set_readonly`) cross-platform; Unix-mode через **unix-qualified** `@mode()->int`/`from_mode(int)` (mode-биты в `int`/i64 как везде в Nova; Option/Unsupported на non-POSIX); `is_file/dir/symlink` — прямые предикаты (cheap, без extra stat); **нет portable ACL**. Windows: только readonly (0o200). | Rust Permissions + PermissionsExt::mode / Java Posix-vs-Dos-view; Unix-octal не универсален |
@@ -134,11 +134,11 @@ fn IoError @to_str() -> str
 - **Ф.5 — тесты + spec/docs.** §7 pos+neg; D322-324; новый `docs/io-fs.md` (модель + «Nova↔Go/Rust/…» + §1a). DEP: all.
 
 **Отдельные коммиты (byte-baseline-guarded, ПОСЛЕ io-core):** net `NetError`→`IoError` унификация (Q3); net `read`/`write` `str`→`[]u8` (Q6/gap-11, чтобы `io.Read`/`io.Write` единообразно покрывали File И TcpStream).
-**DEFERRABLE → под-план 180.1:** process (`Command`/`Child`/`Output`/`ExitStatus`/`Stdio`, `uv_spawn`, pipe-drain на отд. фиберах, PATH-resolve incl. Windows PATHEXT/`ErrDot`, env-inherit-by-default, cancel/kill/wait, Windows arg-quoting). **Followups:** flock, mmap, `walk_dir`-filters, glob-промоут, fs-watch (+ write_atomic Windows rename-replace caveat).
+**DEFERRABLE → под-план 176.1:** process (`Command`/`Child`/`Output`/`ExitStatus`/`Stdio`, `uv_spawn`, pipe-drain на отд. фиберах, PATH-resolve incl. Windows PATHEXT/`ErrDot`, env-inherit-by-default, cancel/kill/wait, Windows arg-quoting). **Followups:** flock, mmap, `walk_dir`-filters, glob-промоут, fs-watch (+ write_atomic Windows rename-replace caveat).
 
 ## 5. Spec / D / Q / docs
 
-- **Ф.0 prereq:** **смёржить/верифицировать D316–D321** (Plan 179/179.1) в `spec/decisions/` (сейчас только до D315) ИЛИ перенумеровать; затем D322+.
+- **Ф.0 prereq:** **смёржить/верифицировать D316–D321** (Plan 175/179.1) в `spec/decisions/` (сейчас только до D315) ИЛИ перенумеровать; затем D322+.
 - **NEW D322** — io-core: `io.Read`/`io.Write`/`io.Seek` (sibling text-sink), `SeekFrom`, EOF/partial/EINTR-контракт (Q9), буферизация (BufWriter must-consume Q10), `IoError`/`ErrorKind`, stdin/stdout/stderr через `Io`, `str.from_bytes`/`Utf8Error`.
 - **NEW D323** — fs: `Fs`-эффект (плумбинг libuv, best-effort-cancel Q4), `File` must-consume (Plan 80), byte-backed `Path` (Q1: WTF-8 Win), `Metadata`(→Timestamp), `write_atomic` 5-шаг + sync_all/sync_data, symlink/permissions (Q8), create_new/read_at/write_at.
 - **NEW D324** — os: `Os`-эффект (args/env/cwd/exit-flush, set_env/set_cwd race-контракт). Process-модель → 180.1 D.
@@ -198,5 +198,5 @@ fn IoError @to_str() -> str
 
 ## 11. Followup
 
-`[M-180-io-fs-os]`. **Process → под-план 180.1** (Command/Child/Stdio/uv_spawn; гейт после 180 Ф.1-3). Отдельные коммиты: net `NetError`→`IoError`, net `str`→`[]u8`.
+`[M-176-io-fs-os]`. **Process → под-план 176.1** (Command/Child/Stdio/uv_spawn; гейт после 180 Ф.1-3). Отдельные коммиты: net `NetError`→`IoError`, net `str`→`[]u8`.
 Followups: file-locking (advisory flock), mmap, `walk_dir`-filters, glob-промоут (`std/_experimental/path/glob.nv`), fs-watch (inotify/FSEvents), write_atomic Windows rename-replace-retry. Имена/детали — финал при реализации (после Ф.0).
