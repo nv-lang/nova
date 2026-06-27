@@ -20062,6 +20062,38 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if let Some((c_expr, _)) = Self::numeric_type_constant_mapping(parts) {
                     return Ok(c_expr.to_string());
                 }
+                // Plan 172.3 (D310): `T.MAX`/`T.MIN`/… inside a type-set-bounded generic
+                // body — `parts[0]` is a type-parameter. Substitute T → concrete member
+                // and retry. `current_type_subst` carries the C-name (`nova_int`/`int32_t`);
+                // numeric_type_constant_mapping is Nova-name-keyed, so reverse-map the C-name
+                // to its Nova primitive. MAX/MIN values are width-unambiguous (int64_t ≡ i64 ≡
+                // int → INT64_MAX), so the i64/int (and u64/uint) collapse is value-correct.
+                if parts.len() == 2 {
+                    if let Some(c_name) = self.current_type_subst.get(&parts[0]) {
+                        let nova_prim: Option<&str> = match c_name.trim_end_matches('*').trim() {
+                            "nova_int" => Some("int"),
+                            "int8_t" => Some("i8"),
+                            "int16_t" => Some("i16"),
+                            "int32_t" => Some("i32"),
+                            "int64_t" => Some("i64"),
+                            "nova_uint" | "uint64_t" => Some("uint"),
+                            "uint8_t" | "nova_byte" => Some("u8"),
+                            "uint16_t" => Some("u16"),
+                            "uint32_t" => Some("u32"),
+                            "nova_char" => Some("char"),
+                            "nova_bool" => Some("bool"),
+                            "f32" | "float" => Some("f32"),
+                            "f64" | "double" => Some("f64"),
+                            _ => None,
+                        };
+                        if let Some(np) = nova_prim {
+                            let subst_parts = [np.to_string(), parts[1].clone()];
+                            if let Some((c_expr, _)) = Self::numeric_type_constant_mapping(&subst_parts) {
+                                return Ok(c_expr.to_string());
+                            }
+                        }
+                    }
+                }
                 // Plan 127.1 Ф.1: local-var shadow of primitive-type token.
                 // Parser greedily consumes `<ident>.<field>` into Path when
                 // `<ident>` matches a primitive-type name (`int`, `str`, `ptr`,
@@ -35685,6 +35717,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             ("u16",  "MAX", "UINT16_MAX",            "uint16_t"),
             // Plan 70.4 Ф.4: u8 → nova_byte (C typedef uint8_t).
             ("u8",   "MAX", "((nova_byte)UINT8_MAX)", "nova_byte"),
+            // Plan 172.3 (D310): unsigned MIN rows (all = 0) — were missing; required by
+            // type-set-bounded generics over UnsignedInt using `T.MIN` (e.g. parse range-check).
+            ("u64",  "MIN", "((uint64_t)0)",          "uint64_t"),
+            ("uint", "MIN", "((nova_uint)0)",         "nova_uint"),
+            ("u32",  "MIN", "((uint32_t)0)",          "uint32_t"),
+            ("u16",  "MIN", "((uint16_t)0)",          "uint16_t"),
+            ("u8",   "MIN", "((nova_byte)0)",         "nova_byte"),
             // Char (codepoint)
             ("char", "MAX", "((nova_int)0x10FFFFLL)", "nova_int"),
             ("char", "MIN", "((nova_int)0LL)",        "nova_int"),

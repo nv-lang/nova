@@ -1,0 +1,34 @@
+module plan172_showcase.showcase
+
+// Plan 172.3 (D310) Ф.3 — SHOWCASE: a type-set-bounded generic body using per-member
+// numeric constants T.MAX / T.MIN, instantiated for SEVERAL members (signed + unsigned).
+// Verifies the Nova-name substitution of T.MAX/T.MIN под мономорфизацию.
+// EXPECT_RUN_OK
+
+type SignedInt   set i8 | i16 | i32 | i64 | int
+type UnsignedInt set u8 | u16 | u32 | u64 | uint
+
+// clamp x into [T.MIN, T.MAX] — uses BOTH per-member constants.
+fn[T SignedInt] clamp_s(x T) -> T =>
+    if x > T.MAX { T.MAX } else { if x < T.MIN { T.MIN } else { x } }
+
+// unsigned: lower bound is T.MIN (= 0), upper is T.MAX.
+fn[T UnsignedInt] clamp_u(x T) -> T =>
+    if x > T.MAX { T.MAX } else { if x < T.MIN { T.MIN } else { x } }
+
+fn main() -> int {
+    // signed members: i32, i8, int — each resolves its own INT*_MAX/MIN.
+    ro a i32 = 100
+    ro ra = clamp_s(a)
+    ro b i8 = 5
+    ro rb = clamp_s(b)
+    ro rc = clamp_s(42)          // T = int
+    // unsigned members: u32, u8, uint — MAX = UINT*_MAX, MIN = 0.
+    ro c u32 = 7
+    ro rcu = clamp_u(c)
+    ro d u8 = 3
+    ro rdu = clamp_u(d)
+    // touch results so nothing is DCE'd; return 0 on success.
+    ro sum = (ra as int) + (rb as int) + rc + (rcu as int) + (rdu as int)
+    if sum > 0 { 0 } else { 1 }
+}
