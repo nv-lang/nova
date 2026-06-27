@@ -9,7 +9,7 @@
 > **D-блок (NEW):** **D325** (`spec/decisions/04-effects.md`) — единое правило; **amends/retracts D77** (4-way auto-derive bare-формы) и **D178** (`parse_int` bare + `parse_int_opt`).
 > ⚠ **D316–D324** зарезервированы планами 179/179.1/180 → берём **D325**, gap фиксируем в индексе.
 > **Эталон (живой код):** [std/net](../../std/net/effect.nv) — уже Result-everywhere, 0 `Fail[`. Под Вариантом 1 это **просто норма**, а не «исключение».
-> **Координация:** **Plan 172.6** (primitive parse — выровнять под Result, §10), Plan 172.3 (type-set bounds — ортогонально), Plan 180 (io/fs/os — уже Result), Plan 173 (error-MACHINERY — нейминга не касается).
+> **Координация:** **Plan 174.1** (primitive parse — выровнять под Result, §10), Plan 172.3 (type-set bounds — ортогонально), Plan 180 (io/fs/os — уже Result), Plan 173 (error-MACHINERY — нейминга не касается).
 > **Решение принято осознанно** на этапе до-прода: «спроектировать правильно сейчас, переделать сделанное, если нужно» — причина объективная (см. §1), не sunk-cost.
 
 ---
@@ -163,7 +163,7 @@ expr.ok() (->Option), match (ветвление).
 | `std/runtime/string/parse.nv` (`try_parse_int`→`parse_int`) | `emit_c.rs:38081-38082` + `:34040-34041` хардкодят C-тип возврата метода `parse_int` = `NovaOpt_nova_int`. .nv-переименование без их правки → **silent mis-type** (Nova-body Result vs хардкод Option), не чистая ошибка. Удаления bare(:24) и `_opt`(:63) сами по себе .nv-only, но бессмысленны без rename. |
 | `std/runtime/read_buffer.nv` (`try_read_X`→`read_X`) | `emit_c.rs:37724-37753` хардкодит `read_X`→unboxed C-типы, `try_read_*`→Result. Переименование без правки → mis-type на каждом call-site. |
 | `std/prelude/protocols.nv` (ретракт bare auto-derive) | D77 4-way в `emit_c.rs` (`try_from_targets`/`from_targets`). Декларации `TryFrom`/`TryInto` **не трогаем**; текст-конвенцию — отдельно под governance. |
-| builtins `int.try_parse`/`f64.try_parse`(→Result), `char.try_from` | `emit_c.rs:27160/27224`. Цель Plan 172.6 (+ баг truncation `i8.try_from("999")→-25`). |
+| builtins `int.try_parse`/`f64.try_parse`(→Result), `char.try_from` | `emit_c.rs:27160/27224`. Цель Plan 174.1 (+ баг truncation `i8.try_from("999")→-25`). |
 | `std/_experimental/encoding/hex.nv` | механически .nv-only, но `_experimental` → отложить (§9 Q3). |
 
 ### ✅ Уже conformant (без изменений)
@@ -181,7 +181,7 @@ expr.ok() (->Option), match (ветвление).
 - **Ф.2a — `.nv`-only миграция (можно сейчас).** base64.nv → complex.nv → json.nv (§6 Ф.2a). Per-file loop (`nova check FILE` → fix). Каждый файл — отдельное подтверждение владельца.
 - **Ф.2b — compiler-gated (ОТЛОЖЕНО).** parse.nv + read_buffer.nv rename + `emit_c.rs` хардкоды (38081/34040, 37724) + builtins (int/f64.try_parse→Result, char.try_from) + D77 4-way ретракт. Делать, когда разрешены изменения компилятора.
 - **Ф.3 — Guard (§8).** Lint: «нет `Fail[` в публичной std-сигнатуре, кроме forwarded-из-closure (R5)».
-- **Ф.5 — Docs/log.** `project-creation.txt` + `discussion-log.md` (nova-private) + `simplifications.md`. Cross-ref из 172.6/173/180.
+- **Ф.5 — Docs/log.** `project-creation.txt` + `discussion-log.md` (nova-private) + `simplifications.md`. Cross-ref из 174.1/173/180.
 
 ---
 
@@ -199,13 +199,13 @@ expr.ok() (->Option), match (ветвление).
 - **Q1 — нейминг-правило §2 (R2/R3).** Подтвердить: обычное имя = Result-форма (`parse_int -> Result`); `try_` оставить **только** для пары infallible/fallible (`from`/`try_from`)? (Рек.: да — Rust-консистентно, минимум префиксов.)
 - **Q2 — governance.** Применять E1-E9 + D325 live сейчас, или staged до твоего ревью? (Ранее выбрано: **staged / сначала ревью**.)
 - **Q3 — `_experimental`.** Отложить с TODO (рек., ранее выбрано) или мигрировать `sql.nv` Db сейчас?
-- **Q4 — Plan 172.6.** 171 проектировал `from`/`try_from` + `try_parse`(Option). Под Вариантом 1: `try_parse`→`parse -> Result`, decimal через `try_from`(Result). **Выровнять 171 под §2** в рамках 181, или 181 задаёт правило, а 171 его применяет отдельным заходом? (Рек.: 181 задаёт D325, 171 реализует per-type — синхронизировать тексты.)
+- **Q4 — Plan 174.1.** 171 проектировал `from`/`try_from` + `try_parse`(Option). Под Вариантом 1: `try_parse`→`parse -> Result`, decimal через `try_from`(Result). **Выровнять 171 под §2** в рамках 181, или 181 задаёт правило, а 171 его применяет отдельным заходом? (Рек.: 181 задаёт D325, 171 реализует per-type — синхронизировать тексты.)
 
 ---
 
 ## 10. Координация
 
-- **Plan 172.6** (primitive parse) — §9 Q4. 181 = правило (D325); 171 = per-type реализация под Result.
+- **Plan 174.1** (primitive parse) — §9 Q4. 181 = правило (D325); 171 = per-type реализация под Result.
 - **Plan 172.3** (type-set bounds) — ортогонально (схлопывает per-type обёртки в generic; нейминг общий из D325).
 - **Plan 173** (error-machinery: defer-kernel/MultiError/structured-concurrency) — нейминга не касается; 181 лишь снимает stale net-pointer (E8). `Fail`-эффект, `!!`/`?` — общие, не трогаем.
 - **Plan 180** (io/fs/os) — уже Result; 181 фиксирует, что он conformant; снять формулировки «по net-семейству как исключение».

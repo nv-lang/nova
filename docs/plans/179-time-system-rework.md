@@ -7,7 +7,7 @@
 > **D-блоки (NEW):** D316 (typed Time-surface + единый источник), D317 (Duration/instant overflow-policy), D318
 > (Monotonic non-regression contract). Amend: D124, D237, prelude-`Time`-decl. (Свободные после D315=172.4; сверить при spec-шаге.)
 > **Координация:** record-через-границу = решено **узкий single-i64 scalar-bridge поверх value-migration** (НЕ блокируемся на
-> 172.4, см. §3.0-Q2); схема-из-`.nv` = коорд. Plan 172.1 (U.1/U.2); effect-vtable storage = Plan 172.9. **Разблокирует**
+> 172.4, см. §3.0-Q2); схема-из-`.nv` = коорд. Plan 172.1 (U.1/U.2); effect-vtable storage = Plan 174.4. **Разблокирует**
 > Plan 66 (`tick_every`). **Поглощает** `[M-time-now-schema-mismatch]`, `[M-monotonic-mock-support]`,
 > `[M-monotonic-migration-deferred]`; финализирует `[M-handler-duration-schema-mismatch]`, `[M-monotonic-per-os-isolated-tests]`.
 > **Фоновые агенты:** см. §10 (НЕ `git stash`; temp-worktree/commit-reset; идемпотентность под rate-limit).

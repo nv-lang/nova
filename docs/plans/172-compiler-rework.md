@@ -25,12 +25,8 @@
 | **172.3** | [Type-set bounds](172.3-type-set-bounds.md) | Go-style generic-constraints (`fn[T IntNumber] …`) — набор конкретных типов как bound, не только протокол. Type-system фича, которую единый движок должен нести. | 📋 proposed |
 | **172.4** | [Value-ABI + auto-placement](172.4-value-abi-auto-placement.md) | Единый value-ABI (value-record / named-tuple / struct-tuple — один путь) + **авто** by-ref/heap↔stack (нет `ref T`, Q29). Acceptance: value-record fluent `mut @ -> @` + структурное `==`. **Behavior-changes ПОСЛЕ MVP-консолидации 172.1.** | 📋 proposed |
 | **172.5** | [In-out ref-params](172.5-inout-ref-params.md) | In-out `ref`-параметры (safe by-ref borrow) + формализация `@`/`-> @` (D326). `ref` = режим параметра (Swift `inout`), не тип. Поверх 172.4. | 📋 proposed |
-| **172.6** | [Primitive parse API](172.6-primitive-parse-api.md) | Один движок str→примитив, radix-only `parse`; per-type обёртки с range-check; фикс truncation-бага. Зависит 172.3 (type-set bounds схлопывает обёртки). | 📋 proposed |
-| **172.7** | [`?` return-only](172.7-question-mark-return-only.md) | `?` строго return-only (Rust-стиль), в Fail-fn запрещён (`!!`/`throw`); чистка stale `## D4`. Завершает 173. | 📋 PLANNED |
-| **172.8** | [`any` + downcast](172.8-any-type-and-is-downcast.md) | `any` top-type (fat-pointer) + `is T`/`try_as[T]` runtime-downcast по `type_id`. Разблокирует typed-errors 173 Ф.4. | 📋 PROPOSED (P1) |
-| **172.9** | [Effect-registry size](172.9-effect-registry-compile-time-size.md) | Compile-time размер effect-registry вместо хардкода 32 (>32 эффектов → silent-drop). | 📋 READY (P2) |
-| **172.10** | [Pointer-ops methods](172.10-pointer-ops-methods.md) | Операции указателей через методы (`.read`/`.write`/`.offset`/…) вместо операторов; `unsafe T`→`uninit T`; write-cap fix. | 📋 PROPOSED |
-| **172.11** | [C-FFI ABI types](172.11-ffi-abi-types.md) | C-ABI тип-лист (туплы/value-records/`Option[*T]` рекурсивно) + fn-ptr ABI-тег (`*extern "C" fn` vs `*fn`). | 📋 PROPOSED |
+
+> **Бывшие 172.6-172.11 ВЫНЕСЕНЫ в отдельный зонт [Plan 174 — Language & FFI features](174-lang-ffi-features.md)** (2026-06-27, решение владельца). Это независимые фичи (primitive-parse / `?`-return-only / `any`+downcast / effect-registry-size / pointer-ops / C-FFI-ABI), которые **«садятся на» носитель 172.1**, но являются отдельными deliverable'ами → 174.1-174.6 (зависят от 172.1, не блокируют его). Зонт **172 = только 172.1-172.5** (ядро единого движка типов).
 
 **Не входят** (остаются top-level, другая тема): Plan 170 (file-private visibility — видимость).
 
@@ -51,12 +47,12 @@
 - **172.2** — первый измеримый результат на узком кейсе (scalar-narrowing в method-arg);
   частично уже сделано вне методов (`E_IMPLICIT_NARROWING`, commit `f96016e6`).
 - **172.3** — независимая фича; после landing единого движка (172.1) выражается чище (схлопывает
-  ~13 per-type обёрток Plan 172.6 в ~2-3 generic).
+  ~13 per-type обёрток Plan 174.1 в ~2-3 generic).
 
-## 3.1. Forward-compat с системой ошибок (Plan 173 + под-планы 172.7/172.8) — чтобы 173 не переделывал 172
+## 3.1. Forward-compat с системой ошибок (Plan 173 + под-планы 174.2/174.3) — чтобы 173 не переделывал 172
 
 Анализ 2026-06-21 (по запросу владельца): [Plan 173](173-error-system-unify-harden.md) (error/cleanup),
-[172.7](172.7-question-mark-return-only.md) (`?`-return-only), [172.8](172.8-any-type-and-is-downcast.md)
+[174.2](174.2-question-mark-return-only.md) (`?`-return-only), [174.3](174.3-any-type-and-is-downcast.md)
 (`any`+`is`-downcast) садятся на типовой движок 172. Чтобы 173 строился ПОВЕРХ единого движка, а не
 переделывал его, **172.1 обязан учесть 4 точки** (в основном осознанность/lossless, не большие правки):
 
@@ -66,9 +62,9 @@
    typed-errors 173/175. Обогащён до **`Vec<ResolvedType>`** (имя + module + type-args). Теперь
    173 Ф.4 (типизированный `Fail[E]`/`ScopeOutcome.Failure(any)`) + 175 (`any`/`is`) садятся на
    готовый носитель, НЕ переделывая его. Byte-identical (effects write-only до consume).
-2. **`any` + `is`/downcast — согласовать с Plan 172.8.** 172-резолв `Any`/`is`-теста НЕ должен
-   форклоузить модель Plan 172.8 (`any`-тип + `is T`/downcast по `type_id`) — 175 строит typed-error
-   dispatch 173 поверх ЕДИНОГО движка. Координировать дизайн `Any`/`is` в U.4 с Plan 172.8.
+2. **`any` + `is`/downcast — согласовать с Plan 174.3.** 172-резолв `Any`/`is`-теста НЕ должен
+   форклоузить модель Plan 174.3 (`any`-тип + `is T`/downcast по `type_id`) — 175 строит typed-error
+   dispatch 173 поверх ЕДИНОГО движка. Координировать дизайн `Any`/`is` в U.4 с Plan 174.3.
 3. **`[M-parfor-record-result-miscompile]` чинится U.4 ПО ПОСТРОЕНИЮ.** Чекер типизирует
    `parallel for → []T` для ЛЮБОГО `T`, а array-mode codegen (`emit_c.rs:8154`) умеет лишь
    `T∈{int,bool,f64,str}` → молчаливый degrade в `unit` → утечка C-error. Это ровно §0
@@ -79,14 +75,14 @@
    172.1 U.1 (де-хардкод stdlib) обязан не спец-кейсить error-типы → 173 эволюционирует их
    (materialize `MultiError`, `Failure(any)`) без борьбы с 172-хардкодом.
 
-## 3.2. Forward-compat с pointer/FFI-моделью (Plan 172.10/172.11) — чтобы они не переделывали носитель
+## 3.2. Forward-compat с pointer/FFI-моделью (Plan 174.5/174.6) — чтобы они не переделывали носитель
 
-Анализ 2026-06-22 (по запросу владельца): [Plan 172.10](172.10-pointer-ops-methods.md) (pointer-ops→методы +
-`uninit T` + write-cap) и [Plan 172.11](172.11-ffi-abi-types.md) (C-FFI ABI тип-лист + `*extern "C" fn` ABI-тег) —
+Анализ 2026-06-22 (по запросу владельца): [Plan 174.5](174.5-pointer-ops-methods.md) (pointer-ops→методы +
+`uninit T` + write-cap) и [Plan 174.6](174.6-ffi-abi-types.md) (C-FFI ABI тип-лист + `*extern "C" fn` ABI-тег) —
 оба PROPOSED, оба явно координируются с «type-engine = 172» и амендят spec в зоне 172 (`02-types.md` /
-`08-runtime.md`). Направление: 172.10/172.11 **садятся на** единый носитель 172, 172 их **не блокирует**. Чтобы они
+`08-runtime.md`). Направление: 174.5/174.6 **садятся на** единый носитель 172, 172 их **не блокирует**. Чтобы они
 строились ПОВЕРХ носителя, а не переделывали его, **172 держит на радаре 3 точки** (осознанность/lossless,
-как §3.1; не новые задачи 172.1 до landing 172.10/172.11):
+как §3.1; не новые задачи 172.1 до landing 174.5/174.6):
 
 1. **fn-ptr ABI-тег (`*extern "C" fn` vs `*fn`) — носится в `ResolvedType` LOSSLESS** (178 §3). По
    [D315](../../spec/decisions/02-types.md#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21)
