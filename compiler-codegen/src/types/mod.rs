@@ -6303,6 +6303,44 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 172.1 U.4.5 (RecordLit slice — NON-GENERIC records): materialize a typed
+        // record literal's resolved type into the checker channel so codegen READS it via the
+        // SINGLE `resolved_type_to_c` instead of the legacy `infer_expr_c_type` RecordLit
+        // re-derive (§0/§1, emit_c.rs:36426). GATE to NON-generic record types
+        // (`self.types[name]` a `Record` with no type-params): for those the bare `Named{name}`
+        // annotation is the COMPLETE type — there are NO generic-mono args to lose (the
+        // 66%-divergence source for generic records is exactly the missing `generics` in
+        // `infer_arg_ty` :12113 → generic records STAY on legacy until the generic-mono
+        // materialization slice). `resolved_type_to_c` reproduces the value-vs-heap choice from
+        // codegen state (`value_record_names`) — the SAME source legacy uses (:36478) — so the
+        // lowering is byte-identical. Sum types (kind=Sum) and sum-VARIANTS (not present in
+        // `self.types` as records) and `Self`-lit (not in `self.types`) are excluded → legacy.
+        if let ExprKind::RecordLit { type_name: Some(name), .. } = &e.kind {
+            if e.id.is_set() {
+                if let Some(last) = name.last() {
+                    if let Some(td) = self.types.get(last) {
+                        // Exclude RUNTIME_DEFINED_TYPES (str / Option / guards / …): those are
+                        // C-runtime-header-backed, NOT in codegen `record_schemas`, so the legacy
+                        // RecordLit arm falls to `void*` (:36484) — annotating their REAL type
+                        // (e.g. `str{…}` → `nova_str`) would DIVERGE (a §1 fix, but a separate
+                        // verified atom, not this byte-identical slice). Shared single-source
+                        // const (emit_c.rs, introduced 83ad5c46) — §0, no duplicate list.
+                        if td.generics.is_empty()
+                            && matches!(td.kind, TypeDeclKind::Record(_))
+                            && !crate::codegen::emit_c::RUNTIME_DEFINED_TYPES
+                                .contains(&last.as_str())
+                        {
+                            let rt = ResolvedType::from_type_ref(&TypeRef::Named {
+                                path: name.clone(),
+                                generics: Vec::new(),
+                                span: e.span,
+                            });
+                            self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                        }
+                    }
+                }
+            }
+        }
         match &e.kind {
             ExprKind::Call { func, args, trailing } => {
                 self.f1_expr(func, gs, scope, errors);

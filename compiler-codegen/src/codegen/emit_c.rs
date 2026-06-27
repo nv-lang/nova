@@ -24,7 +24,7 @@ pub type MethodSig = crate::sig_registry::CodegenView;
 /// loop в `emit_module` (skip forward typedef). Раньше дублировался (fn-local в
 /// emit_type_decl + неявно через BUILTIN_RUNTIME_TYPES external-loop), что пропускало
 /// fwd-decl для INLINED (через `import`) sync-типов → redefinition (Plan 172.1 U.1.3b).
-const RUNTIME_DEFINED_TYPES: &[&str] = &[
+pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     // core prelude (C structs/constructors в nova_rt/array.h)
     "Option", "Result", "Error", "RuntimeError",
     // effect vtables (nova_rt/effects.h)
@@ -36162,6 +36162,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         if expr.id.is_set() {
             if let Some(rt) = self.resolved_types.get(&expr.id) {
                 if let Ok(ir_c) = self.resolved_type_to_c(rt) {
+                    // Plan 172.1 U.4.5 (RecordLit slice xcheck): env-gated, debug-only divergence
+                    // log for the NON-generic RecordLit annotation (checker types/mod.rs U.4.5
+                    // slice). The gated set MUST be byte-identical to the legacy RecordLit re-derive
+                    // (:36426) — `NOVA_U45_RLCHECK=1` logs any divergence for the §7 equivalence
+                    // audit. Zero cost in release (`#[cfg(debug_assertions)]`).
+                    #[cfg(debug_assertions)]
+                    if ir_c != legacy
+                        && matches!(&expr.kind, ExprKind::RecordLit { .. })
+                        && std::env::var("NOVA_U45_RLCHECK").is_ok()
+                    {
+                        eprintln!(
+                            "[U.4.5-rlcheck] ir={} legacy={} id={:?} span={:?}",
+                            ir_c, legacy, expr.id, expr.span
+                        );
+                    }
                     return ir_c;
                 }
             }
