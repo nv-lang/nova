@@ -1,0 +1,29 @@
+// D32 — Parameter-passing semantics. Записи (managed heap, reference category) передаются
+// BY REFERENCE: `mut`-record-параметр → мутации полей внутри функции ВИДНЫ caller'у. Примитивы
+// (`int`, …) передаются BY VALUE в регистре: `mut`-primitive-параметр = локальная копия, её
+// reassignment НЕ виден caller'у. Spec: spec/decisions/02-types.md:2372 (D32).
+module spec_tests.conformance
+
+type D32Account { balance int }
+
+fn d32_deposit(mut acc D32Account, amount int) { acc.balance += amount }
+fn d32_bump(mut x int) { x = 999 }
+
+test "mut record param: caller видит мутацию поля (D32, by reference)" {
+    mut acc = D32Account { balance: 100 }
+    d32_deposit(acc, 50)
+    assert(acc.balance == 150)
+}
+test "mut primitive param: caller НЕ видит reassignment (D32, by value)" {
+    mut n = 5
+    d32_bump(n)
+    assert(n == 5)
+}
+test "оба режима различаются на одной последовательности (D32 contrast)" {
+    mut acc = D32Account { balance: 10 }
+    mut k = 10
+    d32_deposit(acc, 5)
+    d32_bump(k)
+    assert(acc.balance == 15)
+    assert(k == 10)
+}
