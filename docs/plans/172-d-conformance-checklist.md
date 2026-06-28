@@ -135,3 +135,12 @@ V-трек как DRIVER: нашёл 4 компилятор-gap (1 fixed: d52) +
    все PASS в изоляции на обоих бинарях). «флака≠регрессия» — верифицировать аномалии в изоляции.
 4. **Salvage-протокол:** staged drafts → инкрементально add в conformance → full folder-module compile →
    keep зелёный (FAIL:0, без error/CODEGEN/CC/RUN-FAIL) / reject битый. Clash-aware (реальный peer-модуль).
+
+## d55.1 sum-coercion — codegen-сайт скоуплен (2026-06-28, прецедент record-coercion)
+Record-coercion (D55.2) реализован через `self.expected_record_type = struct_name_from_c_type(ty_c)`
+ПЕРЕД `emit_expr(value)` (emit_c.rs:5331-5334) — анонимный record-литерал подхватывает тип из target.
+**Аналог для D55.1 sum-coercion:** на decl-value emission, если declared-target = single-unary-ctor sum
+И значение типа ctor-param → обернуть emitted-value в `nova_make_<sum>_<ctor>(value)` (или
+expected_sum_coercion-хинт по образцу expected_record_type). ПЛЮС checker `assignable`:9424 pre-check
+(после Any-check) + helper `single_unary_ctor_of(T)→(ctor,param_ty)` из sum-структуры (checker имеет
+только sum_variant_names:11329 — нужен fuller decl-доступ). Оба сайта скоуплены → careful base-фикс.
