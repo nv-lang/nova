@@ -21800,6 +21800,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // План 07 saturation helper.
                     return Ok(format!("nova_{}_to_{}({})", src, dst, v));
                 }
+                // D52: `sum as int` извлекает **discriminant** (tag), НЕ биты указателя.
+                // Spec 02-types.md:331 «Sum → int — безопасный, всегда работает» (`c as int` = disc).
+                // Pointer-sum (`Nova_X*`) → `(v)->tag` (как Is-cast `:21840`); value-sum (int64-typedef
+                // `Nova_X` без `*`) уже несёт disc как значение → падает в generic C-cast ниже (verbatim).
+                if let Some(sum_name) = inner_c_ty.strip_prefix("Nova_").and_then(|s| s.strip_suffix('*')) {
+                    if self.sum_schemas.contains_key(sum_name) && matches!(target_c.as_str(),
+                        "nova_int" | "int64_t" | "int32_t" | "int16_t" | "int8_t"
+                        | "nova_uint" | "uint64_t" | "uint32_t" | "uint16_t" | "nova_byte" | "uint8_t") {
+                        return Ok(format!("(({})(({})->tag))", target_c, v));
+                    }
+                }
                 // Все остальные cast'ы — прямой C-cast (план 05).
                 Ok(format!("(({})({}))", target_c, v))
             }
