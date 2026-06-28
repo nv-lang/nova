@@ -144,3 +144,13 @@ Record-coercion (D55.2) реализован через `self.expected_record_ty
 expected_sum_coercion-хинт по образцу expected_record_type). ПЛЮС checker `assignable`:9424 pre-check
 (после Any-check) + helper `single_unary_ctor_of(T)→(ctor,param_ty)` из sum-структуры (checker имеет
 только sum_variant_names:11329 — нужен fuller decl-доступ). Оба сайта скоуплены → careful base-фикс.
+
+## V-трек batch итог (2026-06-28): 56 D-блоков covered, 8 rejected триажированы
+**Salvaged+committed (e92a3a1a): 36 новых D** → suite 20→56. **8 rejected (isolated-триаж):**
+- DRAFT-BUGS (CC-FAIL в изоляции, invented/invalid синтаксис — discard/re-author): d42, d53, d222, d284.
+- ПОТЕНЦИАЛЬНЫЕ КОМПИЛЯТОР-GAPS (валидный parse, codegen/runtime не тянет — investigate per-draft):
+  • d232 vec_growable_array (CODEGEN-FAIL) • d282 blanket_protocol_receiver (CODEGEN-FAIL)
+  • d299 as_slice_append (CODEGEN-FAIL) • d281 module_priv_field (RUN-FAIL).
+  Next: прочитать draft + D-норму → correct-per-D? → фикс компилятора (driver) / draft-bug.
+**Остаток uncovered (75−56 в 02-types): ~D17/D110/D126/D133/D156(gap)/D163/D164/D181-186(refs/172.5)/
+D277/D326(Ф.3)** — refs-семейство = 172.5 (не реализовано); D156/D326 = известные gaps; остальные — next batch.
