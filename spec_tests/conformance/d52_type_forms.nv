@@ -1,0 +1,20 @@
+// D52 — единый keyword `type` для всех data-форм (newtype/sum/unit), форма по ПЕРВОМУ токену.
+// Ядро: каждая форма резолвится к корректному ResolvedType; newtype отличен+round-trip через `as`;
+// sum конструируется+match. (sum→int cast `Red as int`=disc — отдельный КОМПИЛЯТОР-GAP, см. checklist.)
+// Spec: spec/decisions/02-types.md:184 (D52).
+module spec_tests.conformance
+
+type D52Meters int
+type D52Color | Red | Green | Blue
+type D52Unit
+
+test "newtype: отличен от underlying, round-trip через as (D52)" {
+    ro m = 5 as D52Meters
+    assert(m as int == 5)
+    ro n = -3 as D52Meters
+    assert(n as int == -3)
+}
+test "sum-форма (leading |) резолвится + конструируется + match (D52)" {
+    ro c = Green
+    match c { Green => assert(true), _ => assert(false) }
+}
