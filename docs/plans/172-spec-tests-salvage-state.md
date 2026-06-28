@@ -43,3 +43,27 @@
 ## Regeneration draft'ов
 Workflow re-runnable: `Workflow({scriptPath: ".../spec-d-conformance-batch-wf_a2ca0678-be6.js"})`.
 Извлечённые .nv: scratchpad/vstage2 (session-local). Output JSON: tasks/w8w3huvrz.output (drafts[].nv_content, html-escaped).
+
+## ОБНОВЛЕНИЕ (2026-06-29, конец сессии) — harness FIXED + loop-результат
+Salvage-harness РАЗБЛОКИРОВАН: 2 §1-фикса truncation (test-runner detail 400→1500 `3834222f` + row-printer
+120→600 `aad39dfd`) → полная FAIL-диагностика видна (folder-module `import resolution: in entry-folder peer
+(<path>): <file>:<line>: <inner>` больше не прячет `<inner>`). Auto-salvage-loop (scratchpad/salvage_loop.sh):
+итеративно компилит folder-module, удаляет parse-падающие drafts до green.
+
+**Результат: 12 удалено = ВСЕ draft-дефекты (НЕ компилятор-gaps):**
+- parse-ошибки: d199 (`expected ], got identifier`), d27/d37/d38 (top-level/array syntax), d34 (pattern), d225 (priv-qualifier), d20 (`[()]` — корректно `[]()`)
+- компилятор-ENFORCED правила: d35/d88 (`redundant type prefix on record literal`), d45 (`=> record-literal body needs return type`)
+- retired API: d102/d108 (`str.byte_at()` retired D249)
+
+**4 green смержено** (`b0e82d55`: D19/D22/D23/D25). **Вывод: likely_gap-флаги агентов ≈ draft-дефекты, НЕ реальные gaps.**
+**d109-«поломка» в loop = misattributed cascade** (remaining draft с byte_at → ошибка folder-module смаплена на d109);
+clean conformance (68) = GREEN, d109 в порядке.
+
+**УРОК (durable):** batch-workflow draft-yield низкий (4 green / 52) — агенты выдумывают синтаксис / используют
+retired API вопреки инструкции. Будущие батчи: (а) давать агентам БОЛЬШЕ примеров (5+ реальных conformance +
+spec-секция D) + явный список retired-API (`byte_at`/`len`/`@slice`/raw-ptr-ops); (б) auto-salvage-loop теперь
+работает — гонять на каждый батч.
+
+**Реальные base-gaps для двусторонней конвергенции — НЕ из этого батча, а из V-трека** (adversarial-reviewed):
+d55.1 sum-coercion, d156 consume-checker generic-return subst, D53 anon-protocol-param, D277 generic-value-record
+mono, D55.4 field-range-check. См. 172-d-conformance-checklist.md.
