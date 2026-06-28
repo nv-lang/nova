@@ -9990,8 +9990,12 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         match peeled_out {
-            // ARM 3/4 (Array/FixedArray) + ARM 2 (Tuple) STILL bail — снимаются позже (gap #2).
-            TypeRef::Array(..) | TypeRef::FixedArray(..) | TypeRef::Tuple(..) => return None,
+            // ARM 3/4 (Array/FixedArray) STILL bail — снимаются последними (gap #2, emit_c.rs:12345).
+            // Plan 172.1 Session C ARM 2 (gap-recon): Tuple container-return КАНАЛИЗИРУЕТСЯ (bail снят).
+            // SAFE — R::Tuple-арм (emit_c.rs) имеет собственный all_concrete-guard → non-concrete элемент
+            // → register_legacy_tuple (graceful, тот же legacy fallback, БЕЗ wrong-mono); + build_recv_subst
+            // flatten-fix (15371) корректит nested receiver. Tuple падает в `_ => {}` → Some(out).
+            TypeRef::Array(..) | TypeRef::FixedArray(..) => return None,
             // Plan 172.1 Session C ARM 1 (RE-ATTEMPT после build_recv_subst flatten-fix): Named-with-
             // generics container-return КАНАЛИЗИРУЕТСЯ. Теперь SAFE — build_recv_subst (15371)
             // структурно унифицирует nested receiver (`Vec[Vec[T]]`→`T→str`, не `Vec[str]`), так что
