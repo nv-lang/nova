@@ -121,3 +121,17 @@ d123✅FIXED · d55.1(involved base) · d156(uncertain) · d326(=172.4 Ф.3).
 прецедентность) · d123✅FIXED(test-bug) · d55.1 КОМПИЛЯТОР-GAP(checker+codegen coercion, involved) ·
 d156 КОМПИЛЯТОР-GAP(consume-checker generic-return subst, confirmed) · d326=172.4 Ф.3.
 V-трек как DRIVER: нашёл 4 компилятор-gap (1 fixed: d52) + 2 test-bug (fixed) → база подхватывает d55.1/d156/d326.
+
+## Уроки V-трек workflow-автоматизации (2026-06-28) — критично для будущих прогонов
+1. **Workflow-агенты ПИШУТ файлы на диск**, даже когда промпт просит «верни контент». Batch-workflow
+   (51 D) написал 43 НЕВЕРИФИЦИРОВАННЫХ draft-файла прямо в spec_tests/conformance/ → folder-module
+   (один CU) сломался (duplicate-top-level + битый синтаксис). ВПРЕДЬ: явно «НЕ создавай файлы, только
+   верни nv_content» В ПРОМПТЕ, ИЛИ ожидать запись + чистить untracked после.
+2. **Проверять РЕАЛЬНЫЙ dir (tracked+untracked) перед author/merge.** COVERED-список нельзя
+   предполагать — derive из `git ls-files` + `git status`. Мой неполный список (19 vs реально больше)
+   → workflow дублировал D32/D15 → клэш. D32-инцидент: смержил без full-suite verify → revert.
+3. **НЕ запускать конкурентные nova.exe-heavy задачи** (полный регресс + salvage/workflow). Контеншн →
+   transient CODEGEN-timeout'ы = ФЛАКА (d52-регресс показал 3 ложные «регрессии» plan170/plan172_*,
+   все PASS в изоляции на обоих бинарях). «флака≠регрессия» — верифицировать аномалии в изоляции.
+4. **Salvage-протокол:** staged drafts → инкрементально add в conformance → full folder-module compile →
+   keep зелёный (FAIL:0, без error/CODEGEN/CC/RUN-FAIL) / reject битый. Clash-aware (реальный peer-модуль).
