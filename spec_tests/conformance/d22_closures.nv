@@ -1,0 +1,43 @@
+// D22 — Closure: light `|...|` и full `fn(...)`. Норма (spec/decisions/03-syntax.md §D22):
+// две формы closure. (1) closure-light `|params| body` — untyped, тело bare-expr
+// ИЛИ block, БЕЗ `=>`. (2) closure-full `fn(params T) -> Type body` — типизированная,
+// идентична named-fn без имени, тело `=> expr` или `{ block }`. Здесь POS-наблюдаемое
+// ядро D22: оба вида closure реально вызываются и дают конкретные значения; light
+// валиден из контекста параметра fn-call'а (sig выводится).
+// Один folder-module `spec_tests.conformance`; имена D22-prefixed.
+module spec_tests.conformance
+
+// Higher-order: принимает closure как параметр (sig задаёт контекст для light-формы).
+fn d22_apply(x int, f fn(int) -> int) -> int => f(x)
+fn d22_fold(xs []int, init int, f fn(int, int) -> int) -> int {
+    mut acc = init
+    for x in xs {
+        acc = f(acc, x)
+    }
+    acc
+}
+
+test "closure-light `|x| expr` выводит sig из контекста параметра, вызывается (D22)" {
+    assert(d22_apply(10, |x| x + 1) == 11)         // expr-body light
+}
+
+test "closure-light block-body `|x| { ... }` (D22)" {
+    ro r = d22_apply(4, |x| {
+        ro y = x * 2
+        y + 1
+    })
+    assert(r == 9)
+}
+
+test "closure-light multi-param в fold-контексте (D22)" {
+    ro sum = d22_fold([1, 2, 3, 4], 0, |acc, x| acc + x)
+    assert(sum == 10)
+}
+
+test "closure-full `fn(x int) -> int => ...` — типизированная форма (D22)" {
+    ro doubler fn(int) -> int = fn(x int) -> int => x * 2
+    assert(doubler(7) == 14)
+    // closure-full block-форма
+    ro adder fn(int, int) -> int = fn(a int, b int) -> int { ro s = a + b; s }
+    assert(adder(3, 5) == 8)
+}
