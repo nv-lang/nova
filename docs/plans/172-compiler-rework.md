@@ -102,6 +102,19 @@
 4. **Error-типы (`Result`/`MultiError`/`ScopeOutcome`) — generic mechanism (§3), не hardcode.**
    172.1 U.1 (де-хардкод stdlib) обязан не спец-кейсить error-типы → 173 эволюционирует их
    (materialize `MultiError`, `Failure(any)`) без борьбы с 172-хардкодом.
+5. **Знаковость примитивов — LOSSLESS в slot-lowering (`uint` ≠ `int`). Soundness-датапоинт
+   2026-06-28 (владелец, проверено эмпирически).** `receiver_c_type` эразит ВСЮ int-семью включая
+   беззнаковые `u8..u64`/`uint` → `nova_int` (Plan 70.5 «64-бит слот»), тогда как `primitive_name_to_c`
+   даёт `uint→nova_uint`. **ОДИН тип `uint` → ДВА разных C-типа по пути лоуэринга:** free-fn-параметр =
+   `nova_fn_cmp_lt(nova_uint a, nova_uint b)` → `(a < b)` беззнаковое (верно), а метод
+   `Nova_uint_method_compare(nova_int, nova_int)` → знаковое `<` → **soundness-баг для `uint` с
+   high-bit** (как signed int64 — отрицательное → неверный порядок `compare`/`<`/`>`/`/`/`%`/`>>`).
+   Это ровно §0 path↔path рассинхрон (как п.3 parfor). Унифицированный `ResolvedType`-lowering (U.5 —
+   width+sign lossless) ДОЛЖЕН нести знак в slot → `uint` всюду `nova_uint`, метод-арифметика
+   беззнаковая **ПО ПОСТРОЕНИЮ**. Фикс = схлопывание путей (НЕ 4-й спец-кейс в `receiver_c_type`).
+   Spec-тест на unsigned-`compare`/`<` — в `spec_tests/conformance/` ВМЕСТЕ с фиксом (только проходящие).
+   (Смежная мелочь: парсер отвергает int-литерал > `i64::MAX` даже в `uint`-контексте — `uint`-литералы
+   до `u64::MAX` отдельным мелким пунктом.)
 
 ## 3.2. Forward-compat с pointer/FFI-моделью (Plan 174.5/174.6) — чтобы они не переделывали носитель
 
