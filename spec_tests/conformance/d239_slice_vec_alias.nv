@@ -1,0 +1,39 @@
+// D239 — `[]T` is a SYNTACTIC ALIAS for `Vec[T]`. The compiler expands `[]T`→`Vec[T]`
+// at type-resolution; element storage is TYPED (real C-type, not int64-erasure); indexing
+// `v[i]` goes through the @index protocol (D238); the literal `[..]` builds a Vec; `[]T`
+// and `Vec[T]` are interchangeable as parameter types (Plan 138, spec/decisions/02-types.md:12027).
+// Confirmed direction (Plan 153.0): a `[]T`/inferred value flows into a `Vec[T]` parameter.
+// Part of the SINGLE `spec_tests.conformance` folder-module (minimal CU).
+module spec_tests.conformance
+
+// `[]int` parameter — indexing works through @index inside the body.
+fn d239_first_slice(xs []int) -> int => xs[0]
+
+// `Vec[int]` parameter — a `[]int`/inferred-literal value is accepted here (alias equivalence).
+fn d239_first_vec(xs Vec[int]) -> int => xs[0]
+
+test "[]T literal builds a Vec; @index reads typed elements (D239)" {
+    mut a []int = [1, 2, 3]
+    assert(a.len() == 3)
+    assert(a[0] == 1)       // @index(0) → 1
+    assert(a[2] == 3)       // @index(2) → 3
+}
+
+test "Vec[T] annotation accepts the same literal — interchangeable (D239)" {
+    mut b Vec[int] = [4, 5, 6]
+    assert(b.len() == 3)
+    assert(b[0] == 4)
+    assert(b[2] == 6)
+}
+
+test "[]T value flows into both []T- and Vec[T]-typed parameters (D239)" {
+    mut a []int = [7, 8, 9]
+    assert(d239_first_slice(a) == 7)   // []int → []int param
+    assert(d239_first_vec(a) == 7)     // []int value → Vec[int] param (alias)
+}
+
+test "typed storage round-trips str elements (no int64-erasure) (D239)" {
+    mut s []str = ["alpha", "beta"]
+    assert(s[0] == "alpha")
+    assert(s[1].len() == 4)
+}

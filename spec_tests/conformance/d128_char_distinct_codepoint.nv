@@ -1,0 +1,27 @@
+// D128 — `char` distinct from `int`: nova_char = uint32_t (D128 AMEND Plan 152.8).
+// A char value is a Unicode codepoint, NOT collapsed to nova_int. Char-literal → int
+// cast yields the codepoint; the int-literal → char cast is the D54-EXCEPTION for
+// compile-time-known literals (range-checked statically). Verifies distinct char type,
+// codepoint semantics, and the char↔int literal cast.
+// Spec: spec/decisions/02-types.md:4567 (D128).
+module spec_tests.conformance
+
+test "char literal carries its codepoint; char→int cast yields it (D128)" {
+    ro c char = 'A'
+    assert(c as int == 65)        // 'A' = U+0041 = 65
+    ro z char = 'Z'
+    assert(z as int == 90)        // 'Z' = U+005A = 90
+}
+
+test "int-literal → char (D54-exception) round-trips to top codepoint (D128)" {
+    ro n char = 0x10FFFF as char  // max valid Unicode codepoint
+    assert(n as int == 0x10FFFF)  // uint32_t holds full 21-bit codepoint range
+}
+
+test "char is a distinct value type — char equality is on codepoints (D128)" {
+    ro a char = 'a'
+    ro b char = 0x61 as char      // 'a' = U+0061 = 0x61
+    assert(a == b)                // same codepoint → equal
+    assert(a != 'b')              // distinct codepoint
+    assert(a as int == 0x61)
+}

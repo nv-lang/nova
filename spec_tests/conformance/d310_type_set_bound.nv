@@ -1,0 +1,44 @@
+// D310 — Type-set bounds (Plan 172.3). `type Name set M1 | M2 | …` declares a NAMED set of
+// concrete types (by identity) usable as a generic bound (`fn[T D310Ints] …`). Body is
+// monomorphized PER member; operators must be legal for ALL members (here `+`). `T.MAX`/`T.MIN`
+// resolve PER-instance via the Nova-name of the substituted member. POS conformance for the
+// happy path: one set, several distinct members, explicit type-args. (Mixed-signedness /
+// non-member / multiple-sets are NEG cases in separate diag-files.)
+// D-prefixed set name avoids clashing with prelude `SignedInt`/`UnsignedInt` in the shared module.
+module spec_tests.conformance
+
+// Type-set bound: named set of concrete signed-int members (no mixed signedness).
+type D310Ints set i32 | i64 | int
+
+// Body uses `+`, legal for every member; monomorphized once per instantiated member.
+fn[T D310Ints] d310_twice(x T) -> T => x + x
+
+// Body uses the per-instance constant `T.MAX`, resolved by the substituted member's Nova-name.
+fn[T D310Ints] d310_is_max(x T) -> bool => x == T.MAX
+
+test "type-set bound: distinct members each monomorphize, `+` legal for all (D310)" {
+    // T = int member
+    assert(d310_twice[int](21) == 42)
+    // T = i64 member — a DIFFERENT instantiation of the same generic
+    assert(d310_twice[i64](10) == 20)
+    // T = i32 member
+    assert(d310_twice[i32](3) == 6)
+}
+
+test "type-set bound: inference also picks a member; mono is per-member (D310)" {
+    ro a i64 = 50
+    assert(d310_twice(a) == 100)   // T inferred = i64
+    ro b i32 = 7
+    assert(d310_twice(b) == 14)    // T inferred = i32 — separate instantiation
+}
+
+test "type-set bound: T.MAX resolves per-instance by member Nova-name (D310)" {
+    // i32.MAX = 2_147_483_647 — resolved for the i32 instantiation
+    ro mi32 i32 = 2147483647
+    assert(d310_is_max[i32](mi32))
+    assert(!d310_is_max[i32](0))
+    // i64.MAX = 9_223_372_036_854_775_807 — a DIFFERENT per-member constant
+    ro mi64 i64 = 9223372036854775807
+    assert(d310_is_max[i64](mi64))
+    assert(!d310_is_max[i64](0))
+}

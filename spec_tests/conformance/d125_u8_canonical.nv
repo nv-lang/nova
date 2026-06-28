@@ -1,0 +1,32 @@
+// D125 — `byte` removed; `u8` is the SOLE canonical name for the 8-bit unsigned int,
+// and `[]u8` is a byte slice. The single type engine maps `u8` to its EXACT C type
+// (nova_byte = uint8_t), NOT collapsing it into nova_int — so `u8` is a valid primitive
+// that round-trips its value and compares as an unsigned 8-bit width.
+// Spec: spec/decisions/02-types.md (D125). Part of the SINGLE `spec_tests.conformance`
+// folder-module (one CU). D-prefixed receiver name avoids clashes across D-files.
+module spec_tests.conformance
+
+// Method-receiver on `u8` (mirrors d130's scalar-receiver pattern) — proves the engine
+// routes the `u8` receiver through its precise unsigned C-type, not a signed collapse.
+fn u8 @d125_is_max() -> bool { @ == 255 }
+
+test "u8 is a valid primitive and preserves its value (D125)" {
+    ro b u8 = 255
+    assert(b == 255)
+    ro z u8 = 0
+    assert(z == 0)
+    assert(b > z)           // 255 > 0
+}
+
+test "u8 receiver keeps unsigned 8-bit width (D125)" {
+    ro b u8 = 255
+    assert(b.d125_is_max())     // top byte value round-trips through the u8 receiver
+    ro z u8 = 0
+    assert(!(z.d125_is_max()))
+}
+
+test "[]u8 is the canonical byte slice (D125)" {
+    ro bytes []u8 = [0, 127, 255]
+    assert(bytes.len() == 3)
+    assert(bytes[2] == 255)     // max u8 element preserved, not truncated/sign-flipped
+}

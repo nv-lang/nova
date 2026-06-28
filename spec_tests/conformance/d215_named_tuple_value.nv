@@ -1,0 +1,24 @@
+// D215 — Named tuple = stack-allocated VALUE type with named field access (`.x`,`.y`,`.z`).
+// Constructed via named args `T(x:.., y:.., z:..)`; copy-on-pass; identical perf to positional
+// (D123 codegen → C named struct, no pointer in signature). `@`-method receiver reads fields
+// via `@x`. POS conformance for D215 spec/decisions/02-types.md §3988 (Plan 120/128).
+// Part of the SINGLE `spec_tests.conformance` folder-module; D-prefixed name avoids clashes.
+module spec_tests.conformance
+
+type D215Vec3(x f64, y f64, z f64)
+
+// `@`-method on a named tuple — reads receiver fields by name (`@x`, `@y`, `@z`).
+// `=>` single-expression body, ro receiver (copy semantics), identical to record methods.
+fn D215Vec3 @sum() -> f64 => @x + @y + @z
+
+test "named tuple: named-args construction + by-name field access (D215)" {
+    ro v = D215Vec3(x: 1.0, y: 2.0, z: 3.0)
+    assert(v.x == 1.0)
+    assert(v.y == 2.0)
+    assert(v.z == 3.0)
+}
+
+test "named tuple: @-method receiver reads fields (D215)" {
+    ro v = D215Vec3(x: 1.0, y: 2.0, z: 3.0)
+    assert(v.sum() == 6.0)
+}
