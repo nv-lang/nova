@@ -1,0 +1,44 @@
+// D123 — Tuple monomorphization. A concrete tuple `(T1..TN)` lowers to a struct with REAL
+// field types (NOT nova_int slot erasure), so heterogeneous element types (str + int) survive
+// and `.0`/`.1` are direct field accesses. Nested tuples mono recursively (length-prefixed
+// mangle) so `n.0.1` decodes the inner element type instead of collapsing to nova_int.
+// Tuple also rides inside a variant payload (`Option[(K, V)]`). Part of the SINGLE
+// `spec_tests.conformance` folder-module; helpers are D123-prefixed to avoid clashes.
+// Spec: spec/decisions/02-types.md §D123. Norm rule: `ro p = ("a", 1)`.
+module spec_tests.conformance
+
+// Tuple as a function PARAMETER — field access on the param must use real (str/int) types.
+fn d123_first(p (str, int)) -> str => p.0
+fn d123_second(p (str, int)) -> int => p.1
+
+// Tuple inside a variant payload (Option[(K, V)]) — Phase 6 heterogeneous str+int.
+fn d123_make_kv(k str, v int) -> Option[(str, int)] => Some((k, v))
+
+test "concrete typed tuple keeps REAL field types, direct .0/.1 (D123)" {
+    ro p = ("a", 1)
+    assert(p.0 == "a")   // str field survives — NOT int-slot erased
+    assert(p.1 == 1)     // int field, direct .f1 access
+}
+
+test "nested concrete tuple decodes inner element types, n.0.1 (D123)" {
+    ro n = ((10, 20), "z")
+    assert(n.0.0 == 10)  // inner tuple, first element
+    assert(n.0.1 == 20)  // inner tuple, SECOND element — must not collapse to .0
+    assert(n.1 == "z")   // outer str element after the nested tuple
+}
+
+test "concrete tuple flows through fn param / return, real types (D123)" {
+    assert(d123_first(("hello", 7)) == "hello")
+    assert(d123_second(("hello", 7)) == 7)
+}
+
+test "tuple in Option variant payload, heterogeneous str+int (D123)" {
+    ro kv = d123_make_kv("key", 42)
+    match kv {
+        Some((k, v)) => {
+            assert(k == "key")
+            assert(v == 42)
+        }
+        None => assert(false)
+    }
+}
