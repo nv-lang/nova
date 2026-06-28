@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR int as bool
+
+// D54 (spec/decisions/03-syntax.md#d54) — раздел «Запрещённые `as`-cast'ы для
+// char/u8/bool»: `int as bool` (truthy-int cast) ЗАПРЕЩЁН. Программист обязан
+// использовать explicit comparison (`n != 0`), а не C-стиль truthy-int.
+// Чекер (check_as_cast_allowed, banned-таблица src="int",tgt="bool") эмитит:
+//   `as`-cast `int as bool` запрещён: use explicit comparison (`n != 0` ...).
+// Берём ПЕРЕМЕННУЮ типа int (не литерал), чтобы тип источника был `int` →
+// гарантированно попасть в banned-таблицу. Прецедент маркера —
+// nova_tests/str/neg/neg_cast_str_as_int.nv (`EXPECT_COMPILE_ERROR str as int`).
+module neg.d54_int_as_bool_neg
+
+fn d54_neg_truthy_int(d54_n int) -> bool {
+    d54_n as bool
+}

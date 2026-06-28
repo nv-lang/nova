@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+// D36 (spec/decisions/02-types.md:2597, amend Plan 114 D184 + D175) — поле, объявленное
+// `ro`, never-mut: его НЕЛЬЗЯ присвоить ДАЖЕ через mutable binding. Spec-пример D36
+// (02-types.md:2639): `acc2.id = 999 // ОШИБКА: id объявлено ro`. Error code
+// `E_READONLY_FIELD` закреплён как stable API (D36 amend, D175). Здесь binding `mut`
+// (так что binding-level E_LOCAL_NOT_MUT исключён) — отвергается ИМЕННО из-за per-field
+// `ro`. NEG живёт отдельным neg-модулем (не в folder-module spec_tests.conformance).
+module neg.d36_ro_field_write
+
+// `ro id` — never-mut поле (invariant); `balance` — обычное поле (mutable у mut-binding).
+type D36NegAccount {
+    ro id u64
+    balance u64
+}
+
+test "ro field cannot be reassigned even through a mut binding (D36)" {
+    mut acc = D36NegAccount { id: 1, balance: 0 }
+    acc.balance = 100        // ок — обычное поле, binding mut
+    acc.id = 999             // E_READONLY_FIELD — id объявлено ro
+    assert(acc.id == 1)
+}

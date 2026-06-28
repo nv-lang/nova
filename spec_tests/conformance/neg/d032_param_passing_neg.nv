@@ -1,0 +1,35 @@
+// EXPECT_COMPILE_ERROR E_PARAM_NOT_MUT
+//
+// D32 (Семантика передачи параметров) — NEG.
+// Правило D32 «Иммутабельный binding»: параметр БЕЗ `mut` — immutable view;
+// функция не может мутировать объект, на который указывает такой параметр.
+// Records передаются by reference (managed heap), но дефолт параметра — read-only
+// (D176 amend, Plan 108.1): вызвать mut-метод через немутируемый параметр нельзя.
+// Спека дословно: `fn f(b []int) { b.push(1) } // ✗ E_PARAM_NOT_MUT — нет mut`
+// (spec/decisions/02-types.md:3024, §«Параметры функций»); сводка D32:
+// `o Order` → мутация снаружи не видна/запрещена, `mut o Order` → разрешена
+// (spec/decisions/02-types.md:2504-2515, 2537-2542).
+// Чекер отвергает вызов mut-метода через немутируемый (default = ro) параметр
+// → E_PARAM_NOT_MUT.
+
+module neg.d032_param_passing_neg
+
+type D32Account {
+    balance int
+}
+
+// `mut`-метод: мутирует поле объекта через mutable-self (D36 / D32).
+fn D32Account mut @deposit(amount int) {
+    @balance += amount
+}
+
+// `acc` без `mut` ⇒ immutable view (D32). Вызов mut-метода через него запрещён.
+fn d32_read_only(acc D32Account) -> int {
+    acc.deposit(50)            // ✗ E_PARAM_NOT_MUT — `acc` не помечен `mut`
+    acc.balance
+}
+
+test "D32: вызов mut-метода через немутируемый параметр отвергается" {
+    mut a = D32Account { balance: 100 }
+    ro _ = d32_read_only(a)
+}

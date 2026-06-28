@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+//
+// D175 ro field full freeze (amendment of D36): a ro-declared field forbids BOTH
+// reassignment AND content mutation. Per the table row `ro field T` -> reassign never:
+// writing to a ro field is rejected even through a mut binding - the field's own freeze
+// is independent of binding mutability. Here acc is mut (the binding alone would permit
+// reassign - cf. the plain name field, which a mut binding CAN write), yet the per-field
+// ro freeze on id still blocks acc.id = 999. This is the spec's own example verbatim:
+// acc.id = 999 // E_READONLY_FIELD.
+// Spec: spec/decisions/02-types.md:2843 (D175), table + transitivity example (line 2876).
+// Error code: E_READONLY_FIELD (stable since Plan 108; D175 Status, line 2850).
+// Neg lives in its own module neg.<name> (one TU); D-prefixed type names are unique.
+module neg.d175_ro_field_freeze_neg
+
+type D175NegAccount {
+    ro id int      // frozen: never reassignable, never content-mutable (D175)
+    name str       // plain field: reassignable through a mut binding (the contrast)
+}
+
+test "writing to a ro field is rejected even through a mut binding (D175)" {
+    mut acc = D175NegAccount { id: 1, name: "Alice" }
+    // The mut binding permits reassigning the plain field - proving the binding itself
+    // allows writes (so the rejection below is the per-field ro freeze, not the binding):
+    acc.name = "Bob"
+    // ...but the ro freeze on id blocks reassignment regardless of the mut binding:
+    acc.id = 999   // E_READONLY_FIELD - ro field cannot be reassigned even via mut binding
+}

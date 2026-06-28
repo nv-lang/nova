@@ -1,0 +1,11 @@
+// D227 Rule 3 (Numeric literal inference — hard range-check) NEG.
+// Целочисленный литерал 3_000_000_000 не помещается в i32 (> i32.MAX = 2147483647).
+// Per D227 §Правило п.3 это hard compile error (E_LIT_OUT_OF_RANGE), не silent truncation.
+// EXPECT_COMPILE_ERROR [E_LIT_OUT_OF_RANGE] 3000000000 > i32.MAX (2147483647)
+
+module neg.d227_numeric_literal_range_neg
+
+fn d227_overflow_i32() -> i32 {
+    ro a i32 = 3_000_000_000
+    a
+}

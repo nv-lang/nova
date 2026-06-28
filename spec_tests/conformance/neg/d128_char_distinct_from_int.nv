@@ -1,0 +1,21 @@
+// D128 (NEG) — `char` is a distinct type from `int`, NOT silently collapsed to
+// nova_int. The type-checker must reject passing a `char` value where an `int`
+// is expected (no implicit char->int). Pre-Plan-70.3 both mapped to nova_int and
+// this was accepted via C-level structural collapse; D128 closes that regression.
+// Spec: spec/decisions/02-types.md (D128 "`char` distinct from `int`").
+//
+// Path chosen: enforced param/arg type-check (E7301 at type-check stage). The
+// D128 Ф.4 criterion (reject `Option[int] = Some('a')`) is still UNIMPLEMENTED —
+// that path only fails later at the C-compiler (EXPECT_CC_ERROR incompatible
+// type), not with E7301 — so it is deliberately NOT used here.
+//
+// EXPECT_COMPILE_ERROR E7301
+
+module neg.d128_char_distinct_from_int
+
+fn d128_take_int(n int) -> int { n }
+
+fn d128_violation() -> int {
+    // `'a'` is a `char` (codepoint), distinct from `int` (D128) -> must be rejected.
+    d128_take_int('a')
+}

@@ -1,0 +1,15 @@
+// D55 (02-types.md:947) case (4) numeric literal coercion — NEG.
+// D55.4 (02-types.md:963-971) принимает int-литерал в numeric-позицию БЕЗ `as`,
+// ТОЛЬКО если значение влезает в диапазон целевого типа; выход за диапазон —
+// hard compile error E_LIT_OUT_OF_RANGE. Прямая let-позиция с аннотацией
+// (02-types.md:967 «let с аннотацией (ro a u8 = 42)») — канонический пример
+// этой нормы; спека явно называет `ro a u8 = 300 → 300 > u8.MAX (255)`
+// (02-types.md:970). Здесь литерал 300 коэрсится в u8, 300 > u8.MAX (255).
+// EXPECT_COMPILE_ERROR [E_LIT_OUT_OF_RANGE] 300 > u8.MAX (255)
+
+module neg.d55_lit_out_of_range_neg
+
+fn d55_out_of_range() -> u8 {
+    ro a u8 = 300
+    return a
+}

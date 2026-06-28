@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR избыточная форма поля
+module neg.d52_redundant_field_literal_neg
+
+// D52 §2 (field punning расширен и обязателен): когда имя поля record-литерала
+// совпадает с именем источника (переменной в scope), shorthand `{ id }`
+// ОБЯЗАТЕЛЕН — избыточная форма `{ id: id }` ЗАПРЕЩЕНА компилятором.
+// Spec: spec/decisions/02-types.md D52 §2 («Field punning — расширено и
+// обязательно», «Что запрещено»: «Избыточная форма `{ name: name }` —
+// обязателен shorthand `{ name }`»).
+// Enforced: compiler-codegen/src/types/mod.rs RecordLit walker (is_redundant_ident),
+// диагностика «избыточная форма поля `{name}: {name}` …», status ✅ enforced
+// (2026-05-17, commit 34666922c35).
+type D52NegUser { id u64, name str }
+
+test "redundant field literal { id: id } violates D52 §2 shorthand mandate" {
+    ro id = 7 as u64
+    // НЕВАЛИДНО: `id: id` избыточно — источник (переменная id) совпадает с
+    // именем поля → требуется shorthand `{ id, name: "alice" }`.
+    ro u D52NegUser = { id: id, name: "alice" }
+}

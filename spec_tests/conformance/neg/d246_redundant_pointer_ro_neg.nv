@@ -1,0 +1,23 @@
+// D246 NEG — постфикс `*ro T` на pointee-типе ИЗБЫТОЧЕН → hard error.
+//
+// Под FINAL-моделью D246 `*T ≡ *ro T` УНИВЕРСАЛЬНО: bare `*T` УЖЕ есть
+// ro-pointee канон (L3-дефолт pointee = ro). Поэтому явный постфикс `*ro T`
+// ИЗБЫТОЧЕН и отвергается как hard error E_REDUNDANT_POINTER_RO во ВСЕХ
+// позициях (param/return/field/local/generic/cast) — позиционно-независимо.
+// Fix-it: убери `ro` → `*T`.
+// (Канон синтаксиса D246, 02-types.md §«Канон синтаксиса» строка
+//  «Параметр `*T`: func(a *ro T) → E_REDUNDANT_POINTER_RO»; error-index
+//  09-tooling.md §104.5.3.)
+//
+// Нарушение здесь — параметр `p *ro D246Buf` в extern-декларации: pointee уже
+// ro по умолчанию, `*ro` избыточен → E_REDUNDANT_POINTER_RO (срабатывает на
+// этапе парсинга типа параметра, до чек-логики).
+//
+// EXPECT_COMPILE_ERROR E_REDUNDANT_POINTER_RO
+
+module neg.d246_redundant_pointer_ro_neg
+
+type D246Buf { ro id i64 }
+
+// `*ro D246Buf` — избыточный ro-pointee → E_REDUNDANT_POINTER_RO (fix-it: `*D246Buf`).
+extern "nova" fn d246_take(p *ro D246Buf) -> i64
