@@ -11825,8 +11825,23 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// primitives) are unaffected — they already have a single ABI form.
     fn receiver_c_type(&self, type_name: &str, recv_mutable: bool) -> String {
         match type_name {
-            // Plan 70.5: uint = alias u64; size — usize-like. Both map to nova_int slot.
-            "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "uint" | "size" => "nova_int".to_string(),
+            // Plan 172.1-K1 (int-de-collapse): a primitive receiver lowers through the SINGLE
+            // scalar source `primitive_name_to_c` — the SAME leaf `resolved_type_to_c` uses
+            // (§0: `resolved_type_to_c → int_name → primitive_name_to_c`), carrying width+sign.
+            // NO collapse to `nova_int` (§0/§10/D126/D130): `int`/`i64` stay `nova_int` (D129
+            // alias), but `uint`→nova_uint, `u8`→nova_byte, `u16`→uint16_t, `u32`→uint32_t,
+            // `u64`→uint64_t, `i8`→int8_t, `i16`→int16_t, `i32`→int32_t — now DISTINCT (fixes
+            // signed-compare-of-unsigned, e.g. `Nova_uint_method_compare`). `receiver_c_type`
+            // itself is retired into a receiver-aware `resolved_type_to_c` in the U.4.5/FIN
+            // endgame — this routes its scalar case to the single source NOW (behavioural fix,
+            // NOT a redone patch: the mapping is byte-identical to what the unified lowering emits).
+            "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "uint" =>
+                Self::primitive_name_to_c(type_name)
+                    .expect("int-family primitive always present in primitive_name_to_c")
+                    .to_string(),
+            // `size` (usize-like) has NO `primitive_name_to_c` entry — its width/sign model is
+            // unpinned (separate concern, not in the carrier). Preserved as `nova_int` pending that.
+            "size" => "nova_int".to_string(),
             "f32" => "nova_f32".to_string(),
             "f64" => "nova_f64".to_string(),
             "bool" => "nova_bool".to_string(),

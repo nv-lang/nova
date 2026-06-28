@@ -1,0 +1,15 @@
+// D130 — `uint` is UNSIGNED (≠ `int`). A method-RECEIVER on `uint` lowers to `nova_uint`
+// (NOT collapsed to `nova_int`), so `@`-comparisons inside `uint` methods are UNSIGNED
+// (Plan 172.1-K1: receiver_c_type scalar routed through the single `primitive_name_to_c`).
+// Regression guard for the `Nova_uint_method_compare(nova_int,nova_int)` soundness bug.
+module spec_tests.conformance
+
+fn uint @u_gt(other uint) -> bool { @ > other }
+fn uint @u_lt(other uint) -> bool { @ < other }
+
+test "uint method-receiver compares UNSIGNED, not signed (D130, K1)" {
+    ro big uint = 0x8000000000000000   // 2^63 — high bit set; as signed int64 this is NEGATIVE
+    ro one uint = 1
+    assert(big.u_gt(one))      // unsigned: 2^63 > 1 = true  (signed bug → false)
+    assert(!(big.u_lt(one)))   // unsigned: 2^63 < 1 = false (signed bug → true)
+}
