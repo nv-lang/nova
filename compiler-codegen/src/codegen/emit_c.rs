@@ -2621,6 +2621,22 @@ impl CEmitter {
                 for (key, decls) in user_reg.by_key {
                     self.external_registry.by_key.entry(key).or_default().extend(decls);
                 }
+                // Plan 172.1 REG-0 (ADDITIVE keystone, §10-предусловие): import-resolved модуль
+                // ТАКЖЕ несёт receiver_types + type_decls (`from_module` их строит, но merge ранее
+                // МОЛЧА выбрасывал — вливал только by_key). Вливаем dedup'нуто (паттерн
+                // `merge_from_module`) → codegen-реестр знает типы из import-resolved std ДО снятия
+                // `include_str!` (REG-5). Ничего НЕ удаляем: пока `load_builtins` снабжает — dedup
+                // отсекает дубли (byte-identical на корпусе), для не-снабжаемых модулей — добавляет.
+                for rt in user_reg.receiver_types {
+                    if !self.external_registry.receiver_types.contains(&rt) {
+                        self.external_registry.receiver_types.push(rt);
+                    }
+                }
+                for td in user_reg.type_decls {
+                    if !self.external_registry.type_decls.iter().any(|t| t.name == td.name) {
+                        self.external_registry.type_decls.push(td);
+                    }
+                }
             }
             Err(_) => {
                 // Type-checker emits a более user-friendly diagnostic для
