@@ -6513,6 +6513,27 @@ impl<'a> TypeCheckCtx<'a> {
                     func, args, trailing.is_some(), gs, scope, errors, e.id,
                 );
                 self.f5_check_tuple_construct(func, args, e.span, scope, errors);
+                // Plan 172.1.2 [M-172.1-U4-recv-infer]: materialize a method/free-call's
+                // inferred RETURN type into the checker channel (§0/§1 — receiver-inference).
+                // The consumer (`infer_expr_c_type`) prefers `resolved_callees`+`fn_ret_by_span`
+                // when BOTH are present (non-generic resolved callees → byte-identical), and
+                // falls to THIS `resolved_types` annotation otherwise — generic instance methods
+                // (callee span absent from codegen's `fn_ret_by_span`) and un-channeled chains
+                // `a.b().c()`. A present `fn_ret_by_span` short-circuits before this is read, so it
+                // can only ADD coverage, never diverge a flipped one. GATE on `gs`: do NOT channel
+                // a return mentioning an in-scope type-param — in an ERASED generic body
+                // `resolved_type_to_c` would need `current_type_subst` (gap #2 subst-timing
+                // divergence); a bare `-> T` (which the container guard does not catch, T being a
+                // bare `Named`) is left to legacy here. The deeper container/carrier guards live in
+                // `resolve_instance_method_return` so the INLINE inference is conservative too.
+                if e.id.is_set() {
+                    if let Some(tr) = self.infer_method_call_channel_type(e, scope) {
+                        if !typeref_mentions_any(&tr, gs) {
+                            let rt = ResolvedType::from_type_ref(&tr);
+                            self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                        }
+                    }
+                }
             }
             ExprKind::TurboFish { base, .. } => {
                 self.f1_expr(base, gs, scope, errors)
@@ -9693,6 +9714,13 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                         }
                     }
+                    // Plan 172.1.2: GENERAL instance method-call return inference is DECOUPLED
+                    // from `infer_expr_type` (it must NOT change the inline checks fed by this
+                    // function — a resolved method-chain receiver unblocks a false-positive
+                    // extension-policy check [self_nested], and an inline-rippled binding type
+                    // flips the global `[]T`/`Vec[T]` spelling, perturbing a GC-sensitive layout
+                    // [plan154]). The CHANNEL annotation uses `infer_method_call_channel_type`
+                    // instead; this arm stays return-type-free for method calls.
                 }
                 if let ExprKind::Ident(name) = &func.kind {
                     if let Some(td) = self.types.get(name) {
@@ -9866,6 +9894,144 @@ impl<'a> TypeCheckCtx<'a> {
             return None;
         }
         Some(out)
+    }
+
+    /// Plan 172.1.2 [M-172.1-U4-recv-infer]: resolve the DECLARED return type of an
+    /// INSTANCE method call `obj.method(...)` from the signature registry, given the
+    /// receiver's already-resolved type `recv_ty`. Substitutes the receiver's carrier
+    /// generics (`Vec[int]` → `T`=`int`) and `Self` → the concrete receiver. This is the
+    /// §0/§3 receiver-inference substrate: woven into `infer_expr_type`'s Call arm it makes
+    /// method-call types RECURSIVE, so a chain `a.b().c()` resolves and a
+    /// `let v = obj.method()` binds the real type into scope.
+    ///
+    /// PERMISSIVE (§7.3 — zero false positives on the positive corpus): returns `None` on
+    /// anything ambiguous — receiver not a single named/slice type, method absent from the
+    /// registry (intrinsic with no `.nv` decl), ≥2 overloads (multi-overload arg-dispatch
+    /// is step 2), a STATIC receiver, no declared return, or a substituted return still
+    /// mentioning an UNBOUND method-level generic (`fn V[T].map[U](f) -> Vec[U]` — `U` comes
+    /// from the arg, not the receiver). Mirror of `resolve_generic_static_return` for the
+    /// instance side.
+    fn resolve_instance_method_return(
+        &self,
+        recv_ty: &TypeRef,
+        method: &str,
+    ) -> Option<TypeRef> {
+        // Normalize receiver: peel ro/mut views; `[]T`/`[N]T` → "Vec" (D239 slice alias),
+        // so a slice receiver resolves Vec's methods (std's pervasive spelling). Mirror of
+        // `check_instance_overload`'s normalization.
+        let mut peeled = recv_ty;
+        loop {
+            match peeled {
+                TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => peeled = i,
+                _ => break,
+            }
+        }
+        let type_name: String = match peeled {
+            TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
+            TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => "Vec".to_string(),
+            _ => return None,
+        };
+        let overloads = self.method_overloads(&type_name, method)?;
+        // Single overload only — ≥2 is the multi-overload arg-dispatch slice (step 2).
+        let [f] = overloads.as_slice() else { return None; };
+        let recv = f.receiver.as_ref()?;
+        if !matches!(recv.kind, ReceiverKind::Instance) {
+            return None;
+        }
+        let ret = f.return_type.as_ref()?;
+        // Subst: receiver carrier generics (`Vec[int]` → T=int) + `Self` → concrete receiver.
+        let mut subst = build_recv_subst(recv, recv_ty);
+        subst.insert("Self".to_string(), peeled.clone());
+        let out = crate::const_fn_trampoline::subst_type_ref_pub(ret, &subst);
+        // Don't materialize a HALF-resolved type: an unbound method-level generic (`[U]`)
+        // left after substitution → permissive bail (its binding comes from the args, which
+        // arg-type-inference would resolve — step 2 territory).
+        // Plan 172.1.2 — FULLY-CONCRETE gate (alias_tagged/Pair6 + plan154 fixes): bail if the
+        // substituted return STILL mentions ANY receiver-carrier (`recv.generics`) or method-level
+        // (`f.generics`) generic. This catches BOTH (a) an UNBOUND generic — `build_recv_subst`
+        // had no concrete arg (a `Pair6{…}` RecordLit receiver inferred WITHOUT generics → `-> B`
+        // leaks as codegen `Nova_B*`, a §1 wrong-type CC-FAIL — str-equality routing skipped →
+        // "invalid operands"), AND (b) a VACUOUSLY-bound one — a generic-typed receiver binds
+        // `T`→`T`, so a `-> *mut T` return stays `*mut T` → codegen erased-stub `Nova_T**`
+        // (plan154's `into_raw` on a buffer whose element type the checker left as the carrier).
+        // Only a return with NO residual type-param is context-independent enough to channel
+        // (codegen lowers it without `current_type_subst`); the original guard checked merely the
+        // METHOD generics against `subst.keys()`, missing both carrier classes. Carrier names are
+        // extracted the SAME way `build_recv_subst` does (bare single-segment, no nested generics).
+        let mut generic_names: HashSet<String> =
+            f.generics.iter().map(|g| g.name.clone()).collect();
+        for g in &recv.generics {
+            if let TypeRef::Named { path, generics, .. } = g {
+                if path.len() == 1 && generics.is_empty() {
+                    generic_names.insert(path[0].clone());
+                }
+            }
+        }
+        if !generic_names.is_empty() && typeref_mentions_any(&out, &generic_names) {
+            return None;
+        }
+        // Plan 172.1.2 (plan154 / self_nested / flatten fix): bail when the return lowers to a
+        // mono-instantiated CONTAINER/slice/tuple (`Array` / `Named`-with-generics / `Tuple`).
+        // Resolving such a return (a) for the CHANNEL registers a FRESH monomorphization via
+        // `resolved_type_to_c` side-effects, perturbing the binary layout — and a latent
+        // conservative-GC root-finding bug is layout-sensitive (plan154's deterministic segfault
+        // in an aggregated sibling test), and (b) for INLINE use types a method-chain receiver
+        // (`v.iter()` → `VecIter[int]`) that then unblocks a FALSE-POSITIVE extension-method
+        // policy check in `f3_check_member` (self_nested). It also catches a mis-substituted
+        // NESTED receiver (`Vec[Vec[T]].flatten` flat-zips `T`→`Vec[str]` → wrong `Vec[Vec[str]]`,
+        // a `Named`-with-generics). KEEP only primitive / concrete NON-generic value-type returns
+        // (context-independent C-spelling, no `____`-mono) — the conservative §0/§1 receiver-
+        // inference win the plan targets; container returns wait for the typed-IR mono path.
+        let mut peeled_out = &out;
+        loop {
+            match peeled_out {
+                TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => peeled_out = i,
+                _ => break,
+            }
+        }
+        match peeled_out {
+            TypeRef::Array(..) | TypeRef::FixedArray(..) | TypeRef::Tuple(..) => return None,
+            TypeRef::Named { generics, .. } if !generics.is_empty() => return None,
+            _ => {}
+        }
+        Some(out)
+    }
+
+    /// Plan 172.1.2 [M-172.1-U4-recv-infer]: CHANNEL-only method-call return inference,
+    /// DECOUPLED from `infer_expr_type` (which feeds inline soundness checks — see the decouple
+    /// rationale at the reverted Call arm: a resolved method-chain receiver unblocks a
+    /// false-positive extension-policy check, and an inline-rippled binding type flips the global
+    /// `[]T`/`Vec[T]` spelling, perturbing a GC-sensitive layout). Resolves `obj.method(...)`'s
+    /// return type for the codegen `resolved_types` channel ONLY, recursing into itself for chain
+    /// receivers (`a.b().c()`) and falling back to `infer_expr_type` for a LEAF receiver
+    /// (Ident/SelfAccess/literal). Returns None for non-method-call exprs, ctor forms (handled by
+    /// `infer_expr_type`'s ctor arms), and anything `resolve_instance_method_return` bails on
+    /// (container/unbound-carrier/multi-overload/static).
+    fn infer_method_call_channel_type(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<TypeRef> {
+        let ExprKind::Call { func, .. } = &e.kind else { return None; };
+        let ExprKind::Member { obj, name } = &func.kind else { return None; };
+        if name.starts_with('@') {
+            return None;
+        }
+        // Exclude static-ctor forms (`Type[T].new()`, `[]T.new()`): their return is inferred by
+        // `infer_expr_type`'s ctor arms / `resolve_generic_static_return`, not the instance path.
+        if matches!(&obj.kind, ExprKind::TurboFish { .. }) {
+            return None;
+        }
+        if let ExprKind::Path(parts) = &obj.kind {
+            if parts.len() == 2 && parts[0] == "__array" {
+                return None;
+            }
+        }
+        // Receiver type: chain-aware (recurse for a Call receiver), else leaf via infer_expr_type.
+        let recv_ty = self
+            .infer_method_call_channel_type(obj, scope)
+            .or_else(|| self.infer_expr_type(obj, scope))?;
+        self.resolve_instance_method_return(&recv_ty, name)
     }
 
     /// Plan 172.1 U.4.4 generic-Member: substitute a record's declared generic params
