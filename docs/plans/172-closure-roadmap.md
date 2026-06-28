@@ -20,8 +20,11 @@ A и REG автономны (старт сразу); C(GC) — самый дор
 ## Session B — bounded legacy-channeling (‖ REG). Consumer-flip READY, работа в ЧЕКЕРЕ.
 - **172.1-P** (P1-P5/P4a): P1 generator-self-typing; P2 Member/Index→канал из checker SCHEMA (НЕ poisoned array_element_types); P3 Binary-result (остаток generic-operands); P4a bounded-Call→resolved_callees (~60% mechanical U.3); P5 Ident/SelfAccess consumer-lock. COUPLING: lossless-канал из A делает int-flip ЗВУЧНЫМ. Channel-filling DRIED UP (step1 −20) — НЕ гриндить, только bounded-победы.
 
-## REG — единый реестр (§0.6, ‖ B). U.2.4→U.1.5/1.6→U.3.2/net/generic-Index.
-- U.2.4 (codegen consume unified method_overloads, byte-identical INFEASIBLE→re-scope); U.1.5 (3 checker name-res через shared registry+import-scope); U.1.6 (remove `builtins:HashSet` types/mod.rs:11681 + `include_str!` external_registry.rs:110-132). Unblocks U.3.2/net-slice/generic-Index. Lib-names GATED на U.4(P67).
+## REG — единый реестр (§0.6, ‖ A, лёгкое касание). → [172.1-reg-execution.md](172.1-reg-execution.md)
+**Coupling с A: PARALLEL** — REG-4 ЯВНО оставляет int-примитивы в language_builtins (удаляет только stdlib-имена); REG-6 наследует A's int-de-collapse в type_ref_to_c БЕСПЛАТНО. REG-0/1/2 ‖ A; REG-4/6/7 sync с финальным int-каноном A.
+- **REG-0 (KEYSTONE/ENABLER, first-exec, ADDITIVE):** from_module-merge (`emit_c.rs:2619-2622`) расширить на `receiver_types`+`type_decls` (уже строятся, выбрасываются). §10-предусловие: снабжение несёт типы ДО удаления include_str!.
+- **REG-1** declared-intrinsic table (gc/bench/fibers/runtime из .nv extern-сигнатур); **REG-2** build_base индексирует Item::Type→is_known_type registry-aware; **REG-3** 3 name-res сайта→единый predicate + сузить PascalCase-permissive-hole (§3 soundness); **REG-4** remove stdlib-имена из builtins:HashSet (оставить language_builtins); **REG-5** remove include_str!+BUILTIN_SIG_MODULES (sync/net GATED U.4); **REG-6** method_overloads из единого SigRegistry (soundness-гейт, не byte-identical); **REG-7** unblocks U.3.2/net-slice/generic-Index.
+- §10 ordering — главный риск: REG-0 ПЕРВЫМ; REG-5 строго после REG-0+2+3+4; sync/net GATED U.4. Каждое removal — revertable-коммит + FULL regress.
 
 ## Session C — container/generic channeling блокер. **ВЕРДИКТ recon: путь B (codegen-mono-subst), НЕ Plan 144.** → [172.1-session-c-gc-recon.md](172.1-session-c-gc-recon.md)
 - Блокер СУЖЕН (recon `wf_ba30367c-daf`): `types/mod.rs:9992-9996` container-bail имеет ДВЕ причины — (a) mono-subst-timing-layout-crash [КАНАЛ], (b) f3_check_member false-positive [INLINE]. **DECOUPLE (`types/mod.rs:9717-9723`) УЖЕ изолировал (b) от канала** → channeling упирается ТОЛЬКО в (a).
