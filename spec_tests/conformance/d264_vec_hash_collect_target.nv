@@ -1,0 +1,77 @@
+// D264 — `Vec[T]` protocols: content-`Hash` + FromIterator / collect-target (Plan 153.6).
+// POS-наблюдаемая норма (spec/decisions/02-types.md:12473, D264):
+//   • content-`Hash`: `Vec[T Hash] @hash() -> u64` — order- и length-sensitive FNV-1a;
+//     consistency с `@equal` (контракт Hash+Equal): равные Vec (равная длина + element-wise
+//     `==`) → равный hash. Разный порядок / разная длина → (как правило) разный hash.
+//   • FromIterator / collect-target (структурный набор, не enforced-протокол):
+//       1. default collect-target → `Vec`: `it.collect()` материализует pipeline в Vec.
+//       2. `Set` collect-target: `it.collect_set()` — dedup, allocation-free над pipeline.
+//       3. прочие таргеты композицией над собранным Vec: `Set.from_iter(it.collect())`.
+//       4. FromIterator из произвольного Iter-источника: `Vec.new().extend(src)` (Range/Iter).
+// Зависит от D260 (lazy-слой / `.lazy()`), D58 (Iter/Next duck-typing), D239 (`[]T ≡ Vec[T]`),
+// D230 amend (conditional-bound протоколы коллекций).
+// Часть единого folder-модуля `spec_tests.conformance` (минимальный CU).
+module spec_tests.conformance
+
+// ── content-Hash (Hash+Equal contract) ──────────────────────────────────────
+
+test "content-`@hash()`: равные Vec → равный hash (контракт Hash+Equal, D264)" {
+    ro a = Vec[int].from([1, 2, 3])
+    ro b = Vec[int].from([1, 2, 3])
+    // равная длина + element-wise `==`  ⇒  равный content-hash
+    assert(a.equal(b))
+    assert(a.hash() == b.hash())
+}
+
+test "content-`@hash()` order-sensitive: разный порядок → разный hash (D264)" {
+    ro a = Vec[int].from([1, 2, 3])
+    ro b = Vec[int].from([3, 2, 1])
+    assert(!a.equal(b))
+    assert(a.hash() != b.hash())
+}
+
+test "content-`@hash()` length-sensitive: разная длина (префикс) → разный hash (D264)" {
+    ro a = Vec[int].from([1, 2])
+    ro b = Vec[int].from([1, 2, 3])
+    assert(!a.equal(b))
+    assert(a.hash() != b.hash())
+}
+
+// ── FromIterator / collect-target ────────────────────────────────────────────
+
+test "default collect-target → Vec: `it.collect()` материализует pipeline (D264 §1)" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    ro got = v.lazy().map(|x| x * 10).filter(|x| x > 25).collect()
+    // collect() даёт Vec[T] — терминатор ленивого слоя D260
+    assert(got.equal(Vec[int].of(30, 40, 50, 60)))
+}
+
+test "`Set` collect-target: `it.collect_set()` собирает + dedup (D264 §2)" {
+    ro v = Vec[int].from([1, 2, 2, 3, 3, 3])
+    ro s = v.lazy().collect_set()
+    assert(s.len() == 3)        // dedup: 1,2,3
+    assert(s.contains(2))
+    assert(!s.contains(9))
+}
+
+test "прочий таргет композицией: `Set.from_iter(it.collect())` (D264 §3)" {
+    ro v = Vec[int].from([1, 2, 3, 4])
+    // ленивый pipeline → собранный Vec → Set.from_iter (под D239 `[]T ≡ Vec[T]`)
+    ro collected = v.lazy().filter(|x| x > 1).collect()
+    ro s = Set[int].from_iter(collected)
+    assert(s.len() == 3)        // {2,3,4}
+    assert(s.contains(2))
+    assert(s.contains(4))
+    assert(!s.contains(1))
+}
+
+test "FromIterator из Iter-источника: `Vec.new().extend(src)` (D264 §4)" {
+    // `@extend[S Iter[T]]` мономорфизируется для любого Iter-источника `S`
+    // (`[]T`/VecIter/Range); прямой call-site, без ленивой стадии и без обёртки.
+    mut acc = Vec[int].new()
+    acc.extend([1, 2, 3])      // []T-источник (под D239 `[]T ≡ Vec[T]`) → instance @extend
+    assert(acc.len() == 3)
+    assert(acc.equal(Vec[int].of(1, 2, 3)))
+    acc.extend([4, 5])         // повторный extend дописывает (FromIterator-аккумуляция)
+    assert(acc.equal(Vec[int].of(1, 2, 3, 4, 5)))
+}

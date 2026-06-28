@@ -1,0 +1,58 @@
+// D292 — Net C FFI pattern: opaque handle wrapped in a public value-record (Plan 91.12).
+// The FULL pattern (private `extern "C" fn` FFI layer, `real_tcp_net()` effect handler,
+// `consume @close()`, TLS null-error) is FFI/effect/runtime machinery — NOT type-system
+// POS-assertable without a live C side. What IS POS-observable on the current compiler is
+// D292's *composite type-system claim* (Шаг 1 + Шаг 3 + §Инварианты factory): a public
+// `value`-record wraps an OPAQUE-HANDLE newtype `type CX(*())` (D214) in a field-level
+// `priv handle` (type-private per D220/D281: a field-level explicit `priv` stays
+// type-private — read only through own-type methods), is built by a package-private
+// `_from_raw(h CX)` factory, and the underlying raw `*()` pointer ROUND-TRIPS losslessly
+// back out through a method reading `@handle.0`. This composes the handle (D214 `*()`
+// newtype), the value-record container (D228 / value `==` D328), and the type-private
+// field accessed via methods (D222 §2) into the single shape D292 prescribes — a
+// composition no existing single test asserts. `*()` values come purely from integer casts
+// (D214), so this is self-contained (no extern fn, no effect handler, no consume/close).
+// Spec: spec/decisions/02-types.md:12977 (D292 — §Паттерн Шаг 1 opaque handle, Шаг 3
+//   public value-record; §Инварианты `_from_raw(h CX)` factory). Field-priv = type-private:
+//   02-types.md:9169 (D220 amend: «Field-level explicit `priv` остаётся type-private»).
+// One folder-module `spec_tests.conformance`; D-prefixed names are unique.
+module spec_tests.conformance
+
+// Шаг 1 — opaque handle: newtype over `*()` (void*); typed FFI boundary (D214).
+type D292CTcpListener(*())
+
+// Шаг 3 — public value-record wrapping the opaque handle; `handle` is a field-level
+// `priv` field → TYPE-private (D220/D281): only own-type methods may touch it.
+type D292TcpListener value {
+    priv handle D292CTcpListener
+}
+
+// §Инварианты — package-private `_from_raw(h CX)` factory: static-method scope INITs the
+// priv field (D222 §2 Init — recv = T → priv init OK).
+fn D292TcpListener._from_raw(h D292CTcpListener) -> D292TcpListener =>
+    { handle: h }
+
+// Own-type method recovers the raw `*()` out of the wrapped handle (D222 §2 Read — only a
+// method of D292TcpListener may read the type-private `@handle`). Proves the opaque pointer
+// survives newtype-wrap → value-record-wrap → method-unwrap losslessly.
+fn D292TcpListener @raw_ptr() -> *() =>
+    @handle.0
+
+test "value-record wraps an opaque handle; raw *() round-trips out via method (D292 Шаг 1+3)" {
+    ro raw *() = 0xBEEF as *()
+    ro h = D292CTcpListener(raw)                 // opaque handle over the raw pointer (D214)
+    ro listener = D292TcpListener._from_raw(h)   // _from_raw factory builds the value-record
+    // The underlying void* survives newtype-wrap → value-record-wrap → method-unwrap.
+    assert(listener.raw_ptr() == raw)
+    assert((listener.raw_ptr()) as int == 0xBEEF)
+}
+
+test "value-records over the SAME raw handle compare structurally equal (D292 Шаг 3 + D328)" {
+    ro raw *() = 0x1234 as *()
+    ro a = D292TcpListener._from_raw(D292CTcpListener(raw))
+    ro b = D292TcpListener._from_raw(D292CTcpListener(raw))
+    // value-record `==` is structural (D328): same wrapped opaque handle → equal.
+    assert(a == b)
+    ro other = D292TcpListener._from_raw(D292CTcpListener(0x9999 as *()))
+    assert(a != other)
+}

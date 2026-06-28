@@ -1,0 +1,48 @@
+// D145 — `fn[T]` prefix declares receiver-generics for receivers WITHOUT carrier-brackets
+// (bare `T`, slice `[]T`). Distinct from D119 (carrier `Box[T] @m`, T declared by the brackets)
+// and D216 (free `fn[T]` function, no receiver). Here the prefix is REQUIRED — `[]` and a bare
+// typevar are not bracket-declarations — and the method dispatches on the concrete receiver type
+// at the call site. The method may also carry its OWN method-level type-param `U` (D119 path),
+// independent of the prefix-declared receiver `T`. Spec: spec/decisions/02-types.md §D145
+// (Plan 101.1–101.4). Part of the SINGLE `spec_tests.conformance` folder-module; D-prefixed
+// names avoid clashes in the shared module.
+module spec_tests.conformance
+
+// Bare-typevar receiver: `fn[T] T @method` — prefix declares T, receiver IS the typevar.
+// `@` is the receiver value. Same generic dispatches on int and on str.
+fn[T] T @d145_self() -> T => @
+
+// Slice receiver: `fn[T] []T @method` — `[]` is not a bracket-decl, so `fn[T]` is required.
+// Reads through the @index protocol on the concrete element type (no int64-erasure).
+fn[T] []T @d145_first() -> T => @[0]
+
+// Slice receiver with a method-level `U` (D119) on top of the prefix-declared receiver `T`:
+// `U` is inferred from the closure return, independent of `T`. Cross-type T=int → U=str holds.
+fn[T] []T @d145_map[U](f fn(T) -> U) -> []U {
+    mut out []U = []U.with_capacity(@len())
+    for x in @ { out.push(f(x)) }
+    out
+}
+
+test "fn[T] prefix: bare-typevar receiver dispatches on concrete T (D145)" {
+    ro n = 42
+    assert(n.d145_self() == 42)        // T = int — prefix-declared receiver typevar
+    ro s = "nova"
+    assert(s.d145_self() == "nova")    // SAME generic, T = str — concrete dispatch
+}
+
+test "fn[T] prefix: slice `[]T` receiver, no carrier brackets (D145)" {
+    ro xs []int = [10, 20, 30]
+    assert(xs.d145_first() == 10)      // []int receiver, T = int via @index
+    ro ys []str = ["a", "bb", "ccc"]
+    assert(ys.d145_first() == "a")     // []str receiver, T = str — typed element
+    assert(ys.d145_first().len() == 1)
+}
+
+test "fn[T] receiver + method-level U: T=int → U=str, independent (D145)" {
+    ro v []int = [1, 2, 3]
+    ro strs = v.d145_map(|x| str.from(x))   // receiver T=int, method U=str (inferred)
+    assert(strs.len() == 3)
+    assert(strs[0] == "1")
+    assert(strs[2] == "3")
+}

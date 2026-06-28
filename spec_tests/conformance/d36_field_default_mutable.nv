@@ -1,0 +1,56 @@
+// D36 — поля типа: дефолт mutable у `mut` binding'а, без префиксов. D36 инвертировал
+// старый D32: «обычное поле — мутируется у mut-binding'а», префикс ставится ТОЛЬКО на
+// исключения (`ro` для never-mut, `mut` для C++-mutable). POS-наблюдаемое ядро:
+//   (1) поле БЕЗ префикса присваивается через mut-binding (`acc.f = ...`, `acc.f += ...`);
+//   (2) `fn Type mut @method` даёт mutable-self → мутация полей внутри метода видна снаружи.
+// Spec: spec/decisions/02-types.md:2597 (D36). Один folder-module; D-prefixed имена уникальны.
+module spec_tests.conformance
+
+// Аккумулятор — все поля mutable, никаких префиксов (D36 default).
+type D36RunAcc {
+    att_wins int
+    def_wins int
+    total_rounds int
+}
+
+// Запись с несколькими полями разных операций — все без префикса, все mutable.
+type D36Point {
+    x f64
+    y f64
+    z f64
+}
+
+// `fn Type mut @method` — mutable-binding self; мутация полей по правилам D36.
+fn D36RunAcc mut @record_att_win() {
+    @att_wins += 1
+    @total_rounds += 1
+}
+
+test "no-prefix field is mutable through a mut binding (D36 default)" {
+    mut acc = D36RunAcc { att_wins: 0, def_wins: 0, total_rounds: 0 }
+    acc.att_wins += 1          // ок — binding mut, поле без ro
+    acc.def_wins = 5           // прямое присваивание поля
+    acc.total_rounds += 2
+    assert(acc.att_wins == 1)
+    assert(acc.def_wins == 5)
+    assert(acc.total_rounds == 2)
+}
+
+test "no-prefix f64 fields are ordinary mutable fields (D36)" {
+    mut p = D36Point { x: 1.0, y: 2.0, z: 3.0 }
+    p.x = 10.0
+    p.y += 0.5
+    p.z = p.x + p.y
+    assert(p.x == 10.0)
+    assert(p.y == 2.5)
+    assert(p.z == 12.5)
+}
+
+test "mut @-method mutates fields; mutation visible after the call (D36)" {
+    mut acc = D36RunAcc { att_wins: 0, def_wins: 0, total_rounds: 0 }
+    acc.record_att_win()
+    acc.record_att_win()
+    assert(acc.att_wins == 2)
+    assert(acc.total_rounds == 2)
+    assert(acc.def_wins == 0)
+}

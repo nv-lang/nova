@@ -1,0 +1,50 @@
+// D260 — Ленивый итератор Vec[T] по boxed-fluent-модели (Plan 153.2). НОРМА (§Решение):
+//   • `v.lazy()` начинает цепочку BoxIter[T]; адаптеры (map/filter/...) ВОЗВРАЩАЮТ новый
+//     BoxIter и НИЧЕГО не выполняют — цепочку приводит в движение только ТЕРМИНАТОР.
+//   • Терминаторы драйвят/коротят: collect (default → Vec), fold, count, sum(zero T),
+//     any/all/find (short-circuit). Результат тождествен eager-семантике pipeline.
+//   • Лень НАБЛЮДАЕМА: `take(n)` тянет ровно n элементов из upstream — map-замыкание
+//     выполняется лишь для реально потянутых элементов (а не для всего источника).
+// vec_lazy — opt-in FILE-модуль (НЕ prelude vec/), вносится `import std.collections.vec_lazy`.
+// Spec: spec/decisions/02-types.md §D260. Один folder-module spec_tests.conformance;
+// D-prefixed имена уникальны во избежание duplicate-top-level-name клэша.
+module spec_tests.conformance
+
+import std.collections.vec_lazy
+
+test "lazy map→filter→collect == eager-семантика pipeline (D260 §Решение)" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5, 6])
+    // удвоить, оставить >4, собрать в Vec — терминатор collect драйвит цепочку.
+    ro got = v.lazy().map(|x| x * 2).filter(|x| x > 4).collect()
+    assert(got == [6, 8, 10, 12])
+}
+
+test "терминаторы драйвят цепочку: fold/count/sum (D260 §Терминаторы)" {
+    ro v = Vec[int].from([1, 2, 3, 4])
+    assert(v.lazy().fold(0, |acc, x| acc + x) == 10)   // 1+2+3+4
+    assert(v.lazy().count() == 4)                        // все элементы
+    assert(v.lazy().sum(0) == 10)                        // аддитивная идентичность 0
+    // map перед терминатором — тоже без промежуточного Vec.
+    assert(v.lazy().map(|x| x * x).sum(0) == 30)         // 1+4+9+16
+}
+
+test "short-circuit терминаторы any/all/find (D260 §Терминаторы)" {
+    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    assert(v.lazy().any(|x| x > 4))        // 5 > 4 → true
+    assert(!v.lazy().any(|x| x > 10))      // никто → false
+    assert(v.lazy().all(|x| x > 0))        // все положительны
+    assert(!v.lazy().all(|x| x < 5))       // 5 нарушает
+    assert(v.lazy().find(|x| x > 3) == Some(4))  // первый >3
+    assert(v.lazy().find(|x| x > 9) == None)
+}
+
+test "лень НАБЛЮДАЕМА: take(2) тянет ровно 2, map-замыкание не трогает весь источник (D260 §Решение)" {
+    ro v = Vec[int].from([10, 20, 30, 40, 50])
+    // Счётчик мутируется ВНУТРИ map-замыкания на КАЖДЫЙ потянутый элемент.
+    // take(2) ⇒ терминатор collect тянет ровно 2 ⇒ map выполняется ровно 2 раза.
+    // Будь pipeline eager, map прошёл бы по всем 5 ⇒ pulled == 5.
+    mut pulled = 0
+    ro got = v.lazy().map(|x| { pulled += 1; x + 1 }).take(2).collect()
+    assert(got == [11, 21])   // только первые 2 элемента, +1
+    assert(pulled == 2)       // НАБЛЮДАЕМАЯ лень: map потянут ровно 2 раза, не 5
+}

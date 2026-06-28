@@ -1,0 +1,102 @@
+// D220 — per-field visibility `priv` + type-level default flip. POS-observable
+// type-system behavior, asserted at runtime (the forbidden directions — read/write/
+// init/pattern of a priv field OUTSIDE own-type methods — are E_PRIV_FIELD_* negative
+// diagnostics, not POS-observable, so they are out of scope here):
+//   §3 instance method — reads (`@field`) AND writes (`mut @method`) its own priv field;
+//       the mutation is visible through the type's public accessor afterwards.
+//   §3 static method — factory inits priv fields via record literal `{ ... }` inside the
+//       method's own-type scope; the inited values are the genuine ones (read back via a
+//       getter method).
+//   §3 cross-instance — an own-type method reads a priv field of ANOTHER instance of the
+//       same type (`other.priv_field`); the scope matches (method belongs to the type).
+//   §2 type-level `type X priv { ... }` default flip — every field defaults to priv,
+//       explicit `pub` overrides one field back to public. The pub field is readable from
+//       anywhere; the priv-by-default fields are read back through own-type methods.
+// Spec: spec/decisions/02-types.md:9167 (D220 «Per-field visibility — priv keyword +
+//   type-level default flip»), §1 syntax / §2 effective visibility / §3 access rules.
+// One folder-module `spec_tests.conformance`; D-prefixed names are unique.
+module spec_tests.conformance
+
+// ── §1 field-level `priv` modifier: priv mut + priv (ro/mut/name ordering) ──────
+type D220Account {
+    priv mut money f64
+    ro name str
+    priv id u64
+}
+
+fn D220Account.new(n str, i u64) -> D220Account =>
+    { money: 0.0, name: n, id: i }
+
+// §3 instance method: writes its own priv field (`mut @method` → mutable self).
+fn D220Account mut @deposit(amount f64) {
+    @money = @money + amount
+}
+
+// §3 instance method: reads its own priv fields (`@field`).
+fn D220Account @balance() -> f64 => @money
+fn D220Account @ident() -> u64 => @id
+
+// ── §3 cross-instance: own-type method reads a priv field of ANOTHER instance ───
+type D220Point {
+    priv x int
+    priv y int
+}
+
+fn D220Point.new(x int, y int) -> D220Point => { x, y }
+
+// `other` is a parameter of the same type; method belongs to D220Point → priv scope
+// matches, so `other.x` / `other.y` are accessible.
+fn D220Point @equal(other D220Point) -> bool => @x == other.x && @y == other.y
+
+fn D220Point @dist_sq(other D220Point) -> int {
+    ro dx = @x - other.x
+    ro dy = @y - other.y
+    dx * dx + dy * dy
+}
+
+// ── §2 type-level `priv {}` default flip + explicit `pub` override ───────────────
+type D220Secret priv {
+    pub ro tag str      // explicit pub override → public
+    mut salt u64        // default = priv (inherits type-level flip)
+    key u64             // default = priv
+}
+
+fn D220Secret.new(t str, s u64, k u64) -> D220Secret =>
+    { tag: t, salt: s, key: k }
+
+// Own-type methods read the priv-by-default fields.
+fn D220Secret @salt_val() -> u64 => @salt
+fn D220Secret @key_val() -> u64 => @key
+
+test "§3 instance method reads+writes its own priv field; mutation visible (D220)" {
+    mut acc = D220Account.new("alice", 7)
+    assert(acc.balance() == 0.0)        // priv `money` read inside instance method
+    acc.deposit(100.0)                  // priv `money` written inside `mut @method`
+    acc.deposit(25.0)
+    assert(acc.balance() == 125.0)      // mutation visible through the accessor
+    assert(acc.name == "alice")         // public field readable directly
+}
+
+test "§3 static factory inits priv fields via record literal; values are genuine (D220)" {
+    ro acc = D220Account.new("bob", 42)
+    assert(acc.balance() == 0.0)        // priv `money` inited to 0.0 in static scope
+    assert(acc.ident() == 42)           // priv `id` inited to 42, read back via getter
+}
+
+test "§3 cross-instance: own-type method reads another instance's priv fields (D220)" {
+    ro a = D220Point.new(3, 4)
+    ro b = D220Point.new(3, 4)
+    ro c = D220Point.new(9, 9)
+    assert(a.equal(b))                  // @x/@y vs other.x/other.y — same priv scope
+    assert(!a.equal(c))
+    ro o = D220Point.new(0, 0)
+    ro p = D220Point.new(3, 4)
+    assert(o.dist_sq(p) == 25)          // 3*3 + 4*4, reading other's priv x/y
+}
+
+test "§2 type-level priv flip: pub override public, priv-default via methods (D220)" {
+    ro s = D220Secret.new("auth", 12345, 67890)
+    assert(s.tag == "auth")             // explicit `pub` override → readable anywhere
+    assert(s.salt_val() == 12345)       // priv-by-default `salt` read via own method
+    assert(s.key_val() == 67890)        // priv-by-default `key` read via own method
+}

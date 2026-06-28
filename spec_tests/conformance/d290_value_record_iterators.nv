@@ -1,0 +1,113 @@
+// D290 — Value-record iterator types (Plan 165). The iterator/cursor types
+// `Range`, `RangeIter`, `StepRangeIter`, `ReverseRangeIter` (range.nv) and
+// `VecIter[T]` (vec/iter.nv) are declared `value` — stack-allocated cursors,
+// not heap records. POS-observable type-system consequences, checked at runtime
+// by `assert(...)`:
+//
+//   (1) Cursor COPY-INDEPENDENCE (the load-bearing `value` consequence):
+//       a partially-advanced iterator BINDING is a value-record, so `mut b = a`
+//       copies the cursor STATE. Advancing the copy does NOT advance the
+//       original — they are independent stack values (D228/D277 value-copy on a
+//       `value` iterator). A heap-shared cursor would alias and fail this.
+//   (2) `RangeIter value` (rule a — int-only fields): `(start..end).iter()`
+//       yields each int in order, then a stable `None`.
+//   (3) `StepRangeIter value` / `ReverseRangeIter value`: `.step_by(k)` and
+//       `.reverse()` are value cursors producing the correct sequences.
+//   (4) `Range value`: `a..b` is a value-record with `.start`/`.end` int fields;
+//       copy-on-assign yields an independent value (D215 named-value contract).
+//   (5) `VecIter[T] value` (rule b — cursor over an existing GC buffer): a fresh
+//       `v.iter()` is an independent cursor; `for x in v` drives it correctly,
+//       and a second iteration restarts from the beginning (each `iter()` is a
+//       new stack cursor, not a shared/consumed heap one).
+//
+// Spec: spec/decisions/02-types.md (D290 — Value-record iterator types), §1 rule
+// (a)/(b), §2 the concrete value-typed iterators, §3 zero-malloc cursor chains.
+// Distinct facet from D228 (NON-iterator value-record copy contract) and D232
+// (Vec collection ops). Single `spec_tests.conformance` folder-module; D-prefixed
+// names are unique to avoid clashes in the shared compile unit.
+module spec_tests.conformance
+
+test "RangeIter value yields each int in order, then a stable None (D290 §2 rule-a)" {
+    ro r = 1..4                       // Range value, half-open [1,4)
+    mut it = r.iter()                 // RangeIter value — int-only stack cursor
+    assert(it.next() == Some(1))
+    assert(it.next() == Some(2))
+    assert(it.next() == Some(3))
+    assert(it.next() == None)
+    assert(it.next() == None)         // None is stable after exhaustion
+}
+
+test "iterator cursor is a VALUE: copying the binding copies cursor state, independently (D290)" {
+    ro r = 0..5
+    mut a = r.iter()                  // RangeIter value
+    assert(a.next() == Some(0))       // advance the original past 0
+    mut b = a                         // value-copy of the PARTIALLY-advanced cursor
+    // Advancing the copy must NOT advance the original — independent stack values.
+    assert(b.next() == Some(1))
+    assert(b.next() == Some(2))
+    // `a` is still positioned right after 0 — untouched by b's advances.
+    assert(a.next() == Some(1))
+    assert(a.next() == Some(2))
+}
+
+test "Range value: a..b has int .start/.end fields and copy-on-assign is independent (D290 §2/D215)" {
+    ro r = 2..7                       // Range value (16 bytes, int-only)
+    assert(r.start == 2)
+    assert(r.end == 7)
+    assert(r.len() == 5)
+    ro s = r                          // copy-on-assign of a value-record
+    assert(s.start == 2)
+    assert(s.end == 7)
+    assert(r.start == 2)              // original intact — no shared heap identity
+}
+
+test "StepRangeIter value: .step_by(k) is a stack cursor with the right stride (D290 §2)" {
+    mut it = (0..10).step_by(3)       // StepRangeIter value
+    assert(it.next() == Some(0))
+    assert(it.next() == Some(3))
+    assert(it.next() == Some(6))
+    assert(it.next() == Some(9))
+    assert(it.next() == None)
+}
+
+test "ReverseRangeIter value: .reverse() is a stack cursor yielding end-1..start (D290 §2)" {
+    mut it = (1..=4).reverse()        // ReverseRangeIter value, yields 4,3,2,1
+    assert(it.next() == Some(4))
+    assert(it.next() == Some(3))
+    assert(it.next() == Some(2))
+    assert(it.next() == Some(1))
+    assert(it.next() == None)
+}
+
+test "VecIter[T] value: each v.iter() is a fresh cursor; for-loop re-iterates from start (D290 §2 rule-b)" {
+    ro v = Vec[int].from([10, 20, 30])
+    // First iteration drives one fresh VecIter value cursor.
+    mut sum1 = 0
+    for x in v { sum1 += x }
+    assert(sum1 == 60)
+    // A SECOND for-loop creates a brand-new stack cursor and restarts from the
+    // beginning — the first iteration did not consume a shared/heap iterator.
+    mut count = 0
+    mut first = 0
+    for x in v {
+        if count == 0 { first = x }
+        count += 1
+    }
+    assert(count == 3)
+    assert(first == 10)               // restarted at the head, not continued
+}
+
+test "VecIter[T] value cursor copy-independence over a GC buffer (D290 §1 rule-b)" {
+    ro v = Vec[int].from([7, 8, 9])
+    mut a = v.iter()                  // VecIter[int] value — cursor over v's buffer
+    assert(a.next() == Some(7))       // advance original past 7
+    mut b = a                         // value-copy of the partially-advanced cursor
+    assert(b.next() == Some(8))
+    assert(b.next() == Some(9))
+    assert(b.next() == None)
+    // The copy's advances are invisible to `a` — independent stack cursors,
+    // even though both reference the same underlying GC buffer (cursor, not owner).
+    assert(a.next() == Some(8))
+    assert(a.next() == Some(9))
+    assert(a.next() == None)
+}

@@ -1,0 +1,45 @@
+// D180 — Canonical `.new()` constructors (convention). stdlib provides `.new()`
+// для типов с единственным очевидным default-значением, возвращая этот default:
+// int/u*/i* → 0, f32/f64 → 0.0, bool → false, str → "", []T → [] (empty).
+// Также []T.with_capacity(n) — empty с pre-allocated capacity; push после new работает.
+// Spec: spec/decisions/02-types.md §D180 (table line ~6526-6535). Декларации:
+// std/runtime/defaults.nv (numeric/bool), std/runtime/string/core.nv (str), builtin []T.
+module spec_tests.conformance
+
+test "primitive .new() возвращает canonical default 0 / false (D180)" {
+    ro i = int.new()
+    assert(i == 0)
+    ro u = u8.new()
+    assert(u == 0)
+    ro s8 = i32.new()
+    assert(s8 == 0)
+    ro f = f64.new()
+    assert(f == 0.0)
+    ro b = bool.new()
+    assert(b == false)
+}
+
+test "str.new() возвращает пустую строку \"\" (D180)" {
+    ro s = str.new()
+    assert(s == "")
+    assert(s.is_empty())
+    assert(s.byte_len() == 0)
+}
+
+test "[]T.new() возвращает empty array; push после new работает (D180)" {
+    mut a = []int.new()
+    assert(a.len() == 0)
+    a.push(1)
+    a.push(2)
+    assert(a.len() == 2)
+    assert(a[0] == 1)
+    assert(a[1] == 2)
+}
+
+test "[]T.with_capacity(n) — empty (len 0) с pre-allocated capacity (D180)" {
+    mut a = []int.with_capacity(8)
+    assert(a.len() == 0)
+    a.push(42)
+    assert(a.len() == 1)
+    assert(a[0] == 42)
+}

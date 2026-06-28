@@ -1,0 +1,67 @@
+// D307 — file-private visibility `priv(file) fn`/`type`/`const`. The visibility
+// lattice is `priv(file)` ⊂ (module-default) ⊂ `export` (§«Синтаксис»). The single
+// POS-observable, runtime-assertable side in ONE conformance file (which IS one file
+// of the `spec_tests.conformance` folder-module) is §5.2 + §5.5:
+//   §5.2 own-file positive — a `priv(file)` symbol (free fn / type / const) declared
+//        in THIS file is visible & usable in THIS file: it resolves normally and yields
+//        its genuine value/behavior (D307 §1 resolve: visible set = group-namespace ∪
+//        own file-private names; §5.2 acceptance «compiles and works»).
+//   §5.5 layering — a `priv(file)` symbol coexists with a module-default (no-modifier)
+//        symbol IN THE SAME file: the file-private helper may call the module-default
+//        fn and vice-versa, values flowing correctly — proving the narrow level sits
+//        BELOW module-default in the same lattice without breaking module-default reach.
+// The forbidden cross-file direction (peer references a `priv(file)` symbol →
+// E_FILE_PRIV_LEAK, §4) and the dedup-of-same-named-peer-file-privates (§2) are
+// NEG-only / multi-file diagnostics — not runtime-assertable in this single file.
+// Because the symbols below are file-private they are invisible to peer files of this
+// folder-module by construction, so they cannot leak or collide regardless of name.
+// Spec: spec/decisions/02-types.md:12816 (D307 «File-private visibility — priv(file)»),
+//   §«Синтаксис» (lattice priv(file) ⊂ module ⊂ export), §1 (resolve / own-file set),
+//   §5.2 (own-file positive), §5.5 (regression: module-default reach unchanged).
+// Один folder-module `spec_tests.conformance`; D-prefixed имена уникальны.
+module spec_tests.conformance
+
+// ── §1 syntax: file-private const / type / free fn (visible only in THIS file) ──────
+priv(file) const D307_K = 42            // file-local константа
+
+priv(file) type D307Acc {               // тип виден только в этом файле
+    mut total int
+}
+
+priv(file) fn d307_double(n int) -> int => n * 2   // free fn не виден peer-файлам
+
+// Methods on the file-private type — receiver-qualified (NOT file-private themselves,
+// per §«Применимость»: priv(file) не применим к методам), used here only to exercise
+// the file-private TYPE from its own file.
+fn D307Acc.new() -> D307Acc => { total: 0 }
+fn D307Acc @add(n int) -> () { @total = @total + n }
+fn D307Acc @get() -> int => @total
+
+// ── §5.5 layering: module-default (no-modifier) fn coexists with file-private ones ──
+// `d307_module_base` is module-default; `d307_file_combine` is file-private and CALLS
+// the module-default one — proving priv(file) sits BELOW module-default (it can reach
+// up), and that module-default reach is unchanged by introducing the narrow level.
+fn d307_module_base(n int) -> int => n + 1          // module-private (default level)
+
+priv(file) fn d307_file_combine(n int) -> int =>
+    d307_double(n) + d307_module_base(n)            // file-private calls module-default + file-private
+
+test "§5.2 file-private free fn visible & callable in its own file (D307)" {
+    assert(d307_double(21) == 42)       // own-file resolve → genuine doubled value
+    assert(d307_double(0) == 0)
+}
+
+test "§5.2 file-private const & type visible in own file (D307 §1 syntax)" {
+    assert(D307_K == 42)                // file-private const resolves in own file
+    mut a = D307Acc.new()               // file-private type constructed in own file
+    a.add(10)
+    a.add(D307_K)
+    assert(a.get() == 52)               // 10 + 42, file-private type+const used together
+}
+
+test "§5.5 file-private coexists with module-default in same file; reach intact (D307)" {
+    // d307_file_combine (priv(file)) calls BOTH a file-private fn and a module-default
+    // fn — both resolve from this file; the narrow level reaches the module level.
+    assert(d307_file_combine(5) == 16)  // double(5)=10 + base(5)=6 → 16
+    assert(d307_module_base(5) == 6)    // module-default fn still directly callable here
+}

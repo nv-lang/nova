@@ -1,0 +1,71 @@
+// D122 — Hybrid dispatch for bound-K methods, MONO PATH. For a concrete K on the call site,
+// the compiler instantiates the generic with substituted K and bound methods (`key.hash()`,
+// `key.eq()`) resolve to DIRECT calls to that concrete K's own methods — zero-cost, parity with
+// Rust `impl<T: Hash>`. Distinct from D72 (single-method bound resolves to protocol): here the
+// generic body uses SEVERAL bound methods of the same protocol, and is instantiated at SEVERAL
+// distinct concrete K — each mono-instance dispatches to ITS OWN implementation (Self in the
+// bound-method signature substitutes the runtime receiver type). Spec: spec/decisions/02-types.md
+// §D122 (Plan 56 Ф.1, mono path). Part of the SINGLE `spec_tests.conformance` folder-module;
+// D-prefixed names avoid duplicate-top-level-name clashes in the shared module.
+module spec_tests.conformance
+
+// Protocol used as the K-bound — TWO methods (hash + equal), like HashMap's K bound.
+type D122KeyLike protocol {
+    @key_hash() -> u64
+    @key_eq(other Self) -> bool
+}
+
+// Concrete implementor #1.
+type D122IntKey {
+    v int
+}
+
+fn D122IntKey @key_hash() -> u64 => @v as u64
+fn D122IntKey @key_eq(other D122IntKey) -> bool => @v == other.v
+
+// Concrete implementor #2 — a DIFFERENT concrete K, so the bound is not pinned to one type.
+// Its methods are implemented differently (string-length hash), proving each mono-instance
+// dispatches to its OWN method bodies, not a shared erased one.
+type D122StrKey {
+    s str
+}
+
+fn D122StrKey @key_hash() -> u64 => @s.len() as u64
+fn D122StrKey @key_eq(other D122StrKey) -> bool => @s == other.s
+
+// Generic body uses BOTH bound methods of the K-bound. Under the mono path each concrete K
+// substitutes its own `key_hash`/`key_eq` (direct calls — no vtable in bootstrap).
+fn d122_same_bucket[K D122KeyLike](a K, b K) -> bool =>
+    a.key_hash() == b.key_hash() && a.key_eq(b)
+
+test "mono path: bound methods dispatch to concrete K #1 (D122)" {
+    ro a = D122IntKey { v: 7 }
+    ro b = D122IntKey { v: 7 }
+    ro c = D122IntKey { v: 9 }
+    // equal keys: same hash AND eq
+    assert(d122_same_bucket(a, b))
+    // different keys: distinct hash (7 vs 9) and not eq
+    assert(!d122_same_bucket(a, c))
+}
+
+test "mono path: SECOND concrete K instantiates its OWN bound methods (D122)" {
+    ro a = D122StrKey { s: "ab" }   // key_hash = len = 2
+    ro b = D122StrKey { s: "cd" }   // key_hash = len = 2 — SAME hash, but NOT eq
+    ro c = D122StrKey { s: "ab" }   // equal to a
+    // a and b collide on the length-based hash yet are not eq → both bound methods exercised
+    assert(a.key_hash() == b.key_hash())
+    assert(!d122_same_bucket(a, b))
+    // a and c: same hash and eq
+    assert(d122_same_bucket(a, c))
+}
+
+test "mono path: two distinct K instantiations coexist, each its own dispatch (D122)" {
+    // The SAME generic `d122_same_bucket` is instantiated at both D122IntKey and D122StrKey
+    // in one program; each mono-instance is independent (zero-cost, parity Rust impl<T: Hash>).
+    ro i1 = D122IntKey { v: 1 }
+    ro i2 = D122IntKey { v: 1 }
+    ro s1 = D122StrKey { s: "x" }
+    ro s2 = D122StrKey { s: "x" }
+    assert(d122_same_bucket(i1, i2))
+    assert(d122_same_bucket(s1, s2))
+}

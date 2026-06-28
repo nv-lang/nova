@@ -1,0 +1,44 @@
+// D259 — `Vec[T]` constructor convention: `of` for a LITERAL element list,
+// `from` for CONVERTING an existing collection (Plan 153.1).
+//   • `Vec[T].of(a, b, c)` (variadic) — build a Vec from a literal list of elements.
+//   • `Vec[T].from(coll)`  — clone-like conversion of an existing `[]T`/collection.
+//   • `Vec[T].new()` / `Vec[T].of()` — empty vector.
+// Both `of` and `from` materialise the SAME element sequence; `from(coll)` is an
+// INDEPENDENT copy (mutating the source afterwards must not touch the result).
+// Spec: spec/decisions/02-types.md:12292 (D259). Depends on D232 (`Vec[T]`), D239 (`[]T ≡ Vec[T]`).
+// Part of the SINGLE `spec_tests.conformance` folder-module (minimal CU).
+module spec_tests.conformance
+
+test "of(a, b, c) builds a Vec from a literal element list (D259)" {
+    ro v = Vec[int].of(1, 2, 3)
+    assert(v.len() == 3)
+    assert(v[0] == 1)
+    assert(v[1] == 2)
+    assert(v[2] == 3)
+}
+
+test "of() and new() both yield an empty Vec (D259)" {
+    ro a = Vec[int].of()
+    ro b = Vec[int].new()
+    assert(a.len() == 0)
+    assert(b.len() == 0)
+}
+
+test "from(existing) converts a collection, matching of(...) element-for-element (D259)" {
+    ro src []int = [10, 20, 30]
+    ro converted = Vec[int].from(src)     // conversion path
+    ro literal = Vec[int].of(10, 20, 30)  // literal path
+    assert(converted.len() == literal.len())
+    assert(converted[0] == literal[0])
+    assert(converted[1] == literal[1])
+    assert(converted[2] == literal[2])
+}
+
+test "from(coll) is an independent copy — mutating the source leaves it unchanged (D259)" {
+    mut src []int = [7, 8, 9]
+    ro copied = Vec[int].from(src)   // clone-like conversion
+    src[0] = 99                      // mutate the ORIGINAL after the copy
+    assert(src[0] == 99)             // source observes its own mutation
+    assert(copied[0] == 7)           // the converted Vec is a separate buffer
+    assert(copied.len() == 3)
+}

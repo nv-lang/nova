@@ -1,0 +1,76 @@
+// D175 — `ro field` is a FULL freeze (amendment of D36): a `ro`-declared field forbids BOTH
+// reassignment AND content mutation, transitively. The forbidden directions are negative
+// diagnostics (`acc.id = 999` / `acc.tags = ...` / `acc.tags.items.push(...)` all → E_READONLY_FIELD)
+// and are therefore OUT OF SCOPE for a POS runtime test. What IS POS-observable and asserted here:
+//   (1) A `ro field` is initialized at construction and READS BACK the exact value (freeze blocks
+//       WRITES, never reads) — `acc.id` round-trips its constructed value across reads.
+//   (2) `ro field`s of several distinct types coexist on one record and all read correctly
+//       (scalar `int`, `str`, and a nested record).
+//   (3) Transitivity is a WRITE rule only: reading THROUGH a `ro` field into its nested (even
+//       `mut`-declared) data is fully permitted — `acc.tags.items.len()` / `acc.tags.items[i]`
+//       read fine, even though `acc.tags.items.push(...)` would be E_READONLY_FIELD (out of scope).
+// This mirrors the D176 POS test's stance: the `ro` family's POS core is "reads work"; the
+// forbidden writes are negative-only.
+// Spec: spec/decisions/02-types.md:2843 (D175 «`ro field` — полный freeze (амендмент D36)»),
+//   §«Что» table + §«Транзитивность» example.
+// One folder-module `spec_tests.conformance`; D-prefixed names are unique.
+module spec_tests.conformance
+
+// Nested data: `items` is a plain `mut`-able field — but it lives behind a `ro` field below,
+// so it is frozen for WRITES, yet remains READABLE (transitivity is a write rule).
+type D175Tags {
+    mut items []str
+}
+
+// Mirrors the spec's own §«Транзитивность» example: a scalar `ro id`, a `str ro` field, and a
+// `ro` nested record. All three are frozen against reassignment/mutation, all three read fine.
+type D175Account {
+    ro id int
+    ro label str
+    ro tags D175Tags
+}
+
+test "ro field is initialized at construction and reads back its exact value (D175)" {
+    ro acc = D175Account {
+        id: 999,
+        label: "frozen",
+        tags: D175Tags { items: ["x", "y"] },
+    }
+    // Freeze blocks writes, never reads: the constructed value round-trips.
+    assert(acc.id == 999)
+    assert(acc.label == "frozen")
+    assert(acc.label.len() == 6)
+}
+
+test "multiple ro fields of distinct types coexist and all read correctly (D175)" {
+    ro a = D175Account {
+        id: 1,
+        label: "one",
+        tags: D175Tags { items: ["p", "q", "r"] },
+    }
+    ro b = D175Account {
+        id: 2,
+        label: "two",
+        tags: D175Tags { items: ["only"] },
+    }
+    assert(a.id == 1)
+    assert(b.id == 2)
+    assert(a.label == "one")
+    assert(b.label == "two")
+    assert(a.tags.items.len() == 3)
+    assert(b.tags.items.len() == 1)
+}
+
+test "transitivity is a WRITE rule: reading through a ro field into nested data works (D175)" {
+    ro acc = D175Account {
+        id: 42,
+        label: "acc",
+        tags: D175Tags { items: ["alpha", "beta", "gamma"] },
+    }
+    // `acc.tags.items.push("z")` would be E_READONLY_FIELD (transitive freeze) — negative, out of
+    // scope. But READING through the ro field into the (mut-declared) nested slice is permitted.
+    assert(acc.tags.items.len() == 3)
+    assert(acc.tags.items[0] == "alpha")
+    assert(acc.tags.items[2] == "gamma")
+    assert(acc.tags.items[1].len() == 4)   // "beta"
+}

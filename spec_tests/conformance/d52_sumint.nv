@@ -1,0 +1,13 @@
+// D52 — `sum as int` извлекает auto-discriminant (0/1/2). Spec 02-types.md:331
+// «Sum → int — безопасный, всегда работает». ACCEPTANCE для sum→int codegen-фикса
+// (emit_c.rs As-cast: pointer-sum `Nova_X*` → `(v)->tag`, не `(nova_int)(pointer)`).
+// МЕРЖИТСЯ В conformance ТОЛЬКО ПОСЛЕ commit фикса d52 (на clean без фикса — fail).
+module spec_tests.conformance
+
+type D52IntCast | D52Red | D52Green | D52Blue
+
+test "sum→int извлекает auto-discriminant 0/1/2 (D52)" {
+    assert(D52Red as int == 0)
+    assert(D52Green as int == 1)
+    assert(D52Blue as int == 2)
+}

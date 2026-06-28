@@ -1,0 +1,69 @@
+// D228 — value-record allocation contract: `type X value { ... }` is a stack value with
+// COPY-ON-PASS semantics (D32 amend). POS-observable core, checked at runtime by `assert(...)`:
+//   (1) Copy-on-pass: a value-record passed to a FREE function (even as a `mut` param) is an
+//       independent copy — field-mutations inside the callee are NOT visible to the caller.
+//       This is the contrast to heap records (D32: by-reference, mutation visible).
+//   (2) `@`-mut METHOD receiver is a pointer to the caller's stack slot (D228 §«Method receiver»):
+//       mutation through `@field` IS visible to the caller after the call.
+//   (3) Plain binding copy (`mut b = a`) is an independent value: mutating `b` leaves `a` intact.
+// Spec: spec/decisions/02-types.md:11049 (D228 NEW — Value-record allocation contract), §«Pass»
+// (copy on parameter pass) and §«Method receiver `@`» (pointer to stack slot, mutations visible).
+// Distinct facet from d328 (structural `==`). Single `spec_tests.conformance` folder-module;
+// D-prefixed names are unique to avoid clashes in the shared compile unit.
+module spec_tests.conformance
+
+// Value-record: stack value, copy-on-pass. Fields are ordinary mutable fields (D36 default).
+type D228Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+
+fn D228Vec3.new(a f64, b f64, c f64) -> D228Vec3 =>
+    { x: a, y: b, z: c }
+
+// `@`-MUT method receiver — pointer to the caller's stack slot: writes are visible to the caller.
+fn D228Vec3 mut @scale_inplace(k f64) -> () {
+    @x = @x * k
+    @y = @y * k
+    @z = @z * k
+}
+
+// Free function taking a `mut` value-record param. Per D228 copy-on-pass, the param is an
+// INDEPENDENT copy — these field writes touch only the callee's local copy, not the caller's value.
+fn d228_clobber(mut v D228Vec3) {
+    v.x = 999.0
+    v.y = 999.0
+    v.z = 999.0
+}
+
+test "copy-on-pass: free-fn mut value-record param does NOT mutate the caller (D228)" {
+    mut v = D228Vec3.new(1.0, 2.0, 3.0)
+    d228_clobber(v)
+    // The callee mutated only its independent stack copy — caller's value is unchanged.
+    assert(v.x == 1.0)
+    assert(v.y == 2.0)
+    assert(v.z == 3.0)
+}
+
+test "@-mut method receiver IS a pointer to the caller's slot; mutation visible (D228)" {
+    mut v = D228Vec3.new(1.0, 2.0, 3.0)
+    v.scale_inplace(10.0)
+    // The mut @-receiver writes through a pointer to v's stack slot — the writes ARE visible.
+    assert(v.x == 10.0)
+    assert(v.y == 20.0)
+    assert(v.z == 30.0)
+}
+
+test "binding copy is an independent value: mutating the copy leaves the original (D228)" {
+    ro a = D228Vec3.new(1.0, 2.0, 3.0)
+    mut b = a            // copy-on-assign: b is an independent stack value
+    b.scale_inplace(5.0)
+    // b changed; a is untouched (value semantics, no shared heap identity).
+    assert(b.x == 5.0)
+    assert(b.y == 10.0)
+    assert(b.z == 15.0)
+    assert(a.x == 1.0)
+    assert(a.y == 2.0)
+    assert(a.z == 3.0)
+}

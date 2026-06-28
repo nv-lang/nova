@@ -1,0 +1,89 @@
+// D221 — pattern destructure + record-literal spread edge cases (Plan 124.2). POS-наблюдаемое
+// type-system ядро, проверяемое рантайм-`assert(...)`. D221 расширяет priv-coverage D220 на
+// дополнительные pattern-sites и spread; БОЛЬШИНСТВО его нормы — neg-диагностика
+// (E_PRIV_FIELD_PATTERN / E_PRIV_FIELD_INIT_SPREAD, out of scope для POS). Здесь проверяется
+// ПОЛОЖИТЕЛЬНАЯ сторона нормы — что разрешённые формы СВЯЗЫВАЮТ/КОПИРУЮТ значения корректно:
+//   §2 Pattern sites: record-pattern destructure ПУБЛИЧНЫХ полей на разных site'ах
+//       (`let PAT = EXPR`, `match EXPR { PAT => }`, `for PAT in EXPR`) связывает верные значения.
+//   §3 Rest `..` — non-binding: `{ field, .. }` связывает явно названное поле, остальное игнорит.
+//   §4 Nested Pattern::Record — recursive descent: суб-поле вложенного record-паттерна связывается.
+//   §5 Record literal spread `Type { ...other }` на типе БЕЗ priv-полей (нет encapsulation
+//       boundary) разрешён ВЕЗДЕ и копирует поля по значению; override явного поля поверх spread.
+// Spec: spec/decisions/02-types.md:9305 (D221), §2 «Pattern sites», §3 «Rest `..`», §4 «Nested»,
+//   §5 «Record literal spread» («type без priv fields → spread OK везде»).
+// Один folder-module `spec_tests.conformance`; D-prefixed имена уникальны.
+module spec_tests.conformance
+
+// Public-only record — нет priv → ВСЕ pattern/spread формы разрешены везде (§5 note).
+type D221XPoint {
+    ro x int
+    ro y int
+}
+
+// Запись с несколькими public-полями для rest-pattern (§3).
+type D221XAccount {
+    ro name str
+    ro balance int
+}
+
+// Вложенный тип для nested Pattern::Record (§4) — public-only.
+type D221XLine {
+    ro from D221XPoint
+    ro to D221XPoint
+}
+
+// §5 — spread на public-only типе ВНУТРИ функции outside any method scope: копирует поля,
+// явное поле override'ит скопированное.
+fn d221_shift_x(p D221XPoint, dx int) -> D221XPoint {
+    D221XPoint { ...p, x: p.x + dx }
+}
+
+// §2/§3 — record-pattern destructure с rest `..` на public-поле (let-site внутри fn).
+fn d221_name_of(a D221XAccount) -> str {
+    ro D221XAccount { name, .. } = a
+    name
+}
+
+// §2 — match-site: destructure public-полей record-паттерном.
+fn d221_manhattan(p D221XPoint) -> int {
+    match p {
+        D221XPoint { x, y } => x + y
+    }
+}
+
+// §4 — nested Pattern::Record: вложенный record-паттерн связывает суб-поля.
+fn d221_from_x(l D221XLine) -> int {
+    ro D221XLine { from: D221XPoint { x, y: _ }, to: _ } = l
+    x
+}
+
+test "§2 let-site + §3 rest `..`: public field связывается, остальное игнорится (D221)" {
+    ro acc = D221XAccount { name: "carol", balance: 100 }
+    assert(d221_name_of(acc) == "carol")
+}
+
+test "§2 match-site: record-pattern destructure public полей связывает значения (D221)" {
+    ro p = D221XPoint { x: 3, y: 4 }
+    assert(d221_manhattan(p) == 7)
+}
+
+test "§2 for-site: pattern в for-loop, public-field доступ — корректные значения (D221)" {
+    ro pts = [D221XPoint { x: 1, y: 10 }, D221XPoint { x: 2, y: 20 }]
+    mut total = 0
+    for p in pts {
+        total = total + p.x
+    }
+    assert(total == 3)
+}
+
+test "§4 nested Pattern::Record: вложенный record-паттерн связывает суб-поле (D221)" {
+    ro line = D221XLine { from: D221XPoint { x: 5, y: 6 }, to: D221XPoint { x: 7, y: 8 } }
+    assert(d221_from_x(line) == 5)
+}
+
+test "§5 record-literal spread на public-only типе: копирует поля + override явного (D221)" {
+    ro p = D221XPoint { x: 1, y: 2 }
+    ro q = d221_shift_x(p, 9)
+    assert(q.x == 10)   // 1 + 9, override поверх spread
+    assert(q.y == 2)    // скопировано из p через `...p`
+}

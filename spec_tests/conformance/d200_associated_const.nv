@@ -1,0 +1,29 @@
+// D200 — associated `const` field в `type X`: accessible через namespace `Type.CONST_NAME`,
+// НЕ часть instance layout (type конструируется из instance-полей без const'ов).
+// Spec: spec/decisions/02-types.md:7146 (D200). Норма §«Семантика» п.2-3.
+module spec_tests.conformance
+
+type D200Config {
+    const VERSION int = 2
+    const PROTOCOL str = "v2"
+    const MAX_PEERS int = 1024
+    name str
+    timeout int
+}
+
+test "namespace access: Type.CONST резолвится к const-значению (D200)" {
+    assert(D200Config.VERSION == 2)
+    assert(D200Config.MAX_PEERS == 1024)
+    assert(D200Config.PROTOCOL == "v2")
+}
+
+test "const-поля НЕ в instance layout: type instantiable без них (D200)" {
+    ro c = D200Config { name: "alice", timeout: 30 }
+    assert(c.name == "alice")
+    assert(c.timeout == 30)
+}
+
+test "assoc const участвует в constexpr-арифметике на namespace (D200)" {
+    ro doubled = D200Config.MAX_PEERS * 2
+    assert(doubled == 2048)
+}

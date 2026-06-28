@@ -1,0 +1,57 @@
+// D246 — три ОРТОГОНАЛЬНЫЕ оси мутабельности (L1 binding / L2 content-view / L3 pointee).
+// POS-наблюдаемое ядро, проверяемое рантайм-`assert(...)` на текущем компиляторе: ОРТОГОНАЛЬНОСТЬ
+// осей L1 (binding/reassignability) и L2 (content-view, `.field`-запись по owned-графу value-record),
+// т.е. R2-split / P6 — то, что разрешило `[M-138-binding-type-mut-conflict]`:
+//   • `mut r`            : reassign ✅ И `r.x = v` ✅ (L1 mut + L2 default-mut на value-record).
+//   • `mut r ro D246Point`: reassign ✅ (L1 mut), content frozen (L2 ro) — POS-часть = reassign виден.
+//   • `ro r mut D246Point`: reassign ❌ (L1 ro), но `r.x = v` ✅ (L2 mut из ТИПА) — split: имя
+//        фиксировано, owned-content пишется и запись НАБЛЮДАЕМА.
+// Это РОВНО норма D246 §«10 принципов» P1/P6 + §«Нормативный ORACLE» строка A (VALUE-record `Point`):
+//   `mut r`: r=X✅ r.x=5✅ · `mut r ro Point`: ✅/❌ · `ro r mut Point`: ❌/✅.
+// Чтение всегда ✅; знаки в оракуле = ЗАПИСЬ. Neg-стороны (E_LOCAL_NOT_MUT / E_READONLY_CONTENT) —
+// отдельная neg-диагностика, здесь НЕ покрывается (POS-only conformance).
+// (L3 pointee — указатели + `unsafe{}` + codegen-граница `[M-138-vec-pointer-element-mono]` — не здесь.)
+// Spec: spec/decisions/02-types.md (D246, §«Таблица мутабельности», P6/R2-split, ORACLE A).
+// Один folder-module `spec_tests.conformance`; D-prefixed имя `D246Point` уникально.
+module spec_tests.conformance
+
+// value-record (by-copy); поля явно `mut` — content-view (L2) дефолт-mutable при mut-binding/ro-mut-split.
+type D246Point value {
+    mut x int
+    mut y int
+}
+
+fn d246_mk(a int, b int) -> D246Point => { x: a, y: b }
+
+test "L1×L2 оба mut: mut binding переприсваивается И пишет owned-content, запись видна (D246 ORACLE A)" {
+    mut r = d246_mk(1, 2)
+    r = d246_mk(3, 4)              // L1 mut: reassign ✅
+    r.x = 5                        // L2 mut (value-record content): field-write ✅
+    assert(r.x == 5)              // запись НАБЛЮДАЕМА
+    assert(r.y == 4)              // переприсваивание донесло y=4
+}
+
+test "split mut-binding/ro-type: reassign ✅, content заморожен — POS: reassign виден (D246 P6/R2-split)" {
+    // `mut a ro D246Point`: L1 mut снимает binding-freeze, L2 `ro` морозит content.
+    // POS-часть split'а = переприсваивание разрешено и наблюдаемо (content-neg — отдельно).
+    mut a ro D246Point = d246_mk(7, 8)
+    a = d246_mk(9, 10)            // L1 mut: reassign ✅ несмотря на L2 ro
+    assert(a.x == 9)             // новый binding виден
+    assert(a.y == 10)
+}
+
+test "split ro-binding/mut-type: имя фиксировано, но owned-content пишется и видно (D246 P6/R2-split)" {
+    // `ro b mut D246Point`: L1 ro фиксирует ИМЯ (reassign ❌ — neg отдельно), но L2 `mut` из ТИПА
+    // разрешает запись по owned-графу. Ортогональность осей: ro-binding ≠ frozen-content.
+    ro b mut D246Point = d246_mk(11, 12)
+    b.x = 13                      // L2 mut (из типа): field-write ✅ под ro-binding
+    b.y = 14
+    assert(b.x == 13)            // запись НАБЛЮДАЕМА через ro-binding
+    assert(b.y == 14)
+}
+
+test "чтение всегда ✅ для bare ro-binding (D246: ro = write-ban пути, не freeze чтения)" {
+    ro c = d246_mk(14, 15)
+    assert(c.x == 14)
+    assert(c.y == 15)
+}

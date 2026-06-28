@@ -1,0 +1,36 @@
+// D248 — Запрет chained comparison + relational-операнды требуют ordered-категорию (Plan 150).
+// POS-наблюдаемая норма (Канон §"Канон"): chained-форма ОТКЛОНЕНА (neg-only), а КАНОНИЧЕСКАЯ замена
+// `a <= b && b < c` даёт РЕАЛЬНЫЙ (не вакуумный) bounds-предикат: true строго для in-range, false для
+// out-of-range. (Старая chained `0 <= i < n` парсилась как `(0<=i) < n` = `bool < n` → вакуумно-истинна.)
+// Spec: spec/decisions/02-types.md:12178 (D248). Relational требует ordered-категорию (int/str/char) — §2.
+module spec_tests.conformance
+
+// Канонический non-vacuous bounds-контракт `0 <= i && i < n` как обычное выражение.
+fn d248_in_bounds(i int, n int) -> bool {
+    0 <= i && i < n
+}
+
+test "split bounds `0 <= i && i < n` — РЕАЛЬНЫЙ предикат, true только in-range (D248 Канон)" {
+    // in-range: 0,1,2 при n=3 → все true
+    assert(d248_in_bounds(0, 3))
+    assert(d248_in_bounds(2, 3))
+    // out-of-range: НЕ вакуумно-истинно (старая chained-форма дала бы true)
+    assert(!d248_in_bounds(3, 3))   // i == n → false (верхняя граница исключена)
+    assert(!d248_in_bounds(-1, 3))  // i < 0 → false (нижняя граница)
+    assert(!d248_in_bounds(5, 3))   // далеко за границей → false
+}
+
+test "relational `<`/`<=`/`>`/`>=` на ordered int — корректный порядок (D248 §2)" {
+    assert(1 < 2)
+    assert(2 <= 2)
+    assert(3 > 2)
+    assert(3 >= 3)
+    assert(!(2 < 1))
+}
+
+test "relational на ordered str/char (ordered-категория, не bool) (D248 §2)" {
+    assert("abc" < "abd")     // лексикографический порядок str
+    assert(!("abd" < "abc"))
+    assert('a' < 'b')         // char упорядочен по codepoint
+    assert('z' >= 'a')
+}

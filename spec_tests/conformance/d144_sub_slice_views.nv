@@ -1,0 +1,68 @@
+// D144 — Sub-slice views for `[]T`: `arr[a..b]` returns a zero-copy VIEW over the
+// backing buffer (no data copy). The 5 Range forms are supported: exclusive `a..b`,
+// inclusive `a..=b`, open-end `a..`, open-start `..b`, and full `..`. A view shares the
+// parent's backing, so a write through a `mut`-view is visible to the parent. Because a
+// view has `cap == len`, a `push` reallocs and SILENTLY DETACHES from the parent, leaving
+// the parent untouched. An empty range `arr[a..a]` is a valid (length-0) view. See
+// spec/decisions/02-types.md:5980 (D144). Part of the SINGLE `spec_tests.conformance`
+// folder-module; D-prefixed names avoid clashes.
+module spec_tests.conformance
+
+test "exclusive range arr[a..b] is a [a,b) view with correct len/elements (D144)" {
+    mut d144a []int = [10, 20, 30, 40, 50]
+    ro view = d144a[1..4]              // [20, 30, 40)
+    assert(view.len() == 3)
+    assert(view[0] == 20)
+    assert(view[2] == 40)
+}
+
+test "all 5 Range forms yield the expected slice (D144)" {
+    mut d144b []int = [1, 2, 3, 4, 5]
+    ro excl = d144b[1..3]             // a..b   → [2, 3]
+    assert(excl.len() == 2)
+    assert(excl[0] == 2)
+    assert(excl[1] == 3)
+    ro incl = d144b[1..=3]            // a..=b  → [2, 3, 4]
+    assert(incl.len() == 3)
+    assert(incl[0] == 2)
+    assert(incl[2] == 4)
+    ro openEnd = d144b[2..]          // a..    → [3, 4, 5]
+    assert(openEnd.len() == 3)
+    assert(openEnd[0] == 3)
+    assert(openEnd[2] == 5)
+    ro openStart = d144b[..3]        // ..b    → [1, 2, 3]
+    assert(openStart.len() == 3)
+    assert(openStart[0] == 1)
+    assert(openStart[2] == 3)
+    ro full = d144b[..]              // ..     → whole array
+    assert(full.len() == 5)
+    assert(full[0] == 1)
+    assert(full[4] == 5)
+}
+
+test "empty range arr[a..a] is a valid length-0 view (D144)" {
+    mut d144e []int = [7, 8, 9]
+    ro empty = d144e[1..1]
+    assert(empty.len() == 0)
+}
+
+test "write through a mut-view shares the backing — parent sees it (D144)" {
+    mut d144p []int = [10, 20, 30, 40, 50]
+    mut view = d144p[1..3]           // shares parent backing; cap == len == 2
+    assert(view[0] == 20)
+    view[0] = 999                    // in-bounds write → goes to parent's buffer
+    assert(d144p[1] == 999)          // parent observes the write
+}
+
+test "push on a view silently detaches — parent stays unchanged (D144)" {
+    mut d144d []int = [10, 20, 30, 40, 50]
+    mut view = d144d[1..3]           // [20, 30], cap == len == 2
+    assert(view.len() == 2)
+    view.push(99)                    // exhausted cap → realloc → view detaches
+    assert(view.len() == 3)
+    assert(view[2] == 99)
+    // parent is NOT touched by the detached view's growth
+    assert(d144d.len() == 5)
+    assert(d144d[1] == 20)
+    assert(d144d[2] == 30)
+}

@@ -1,0 +1,96 @@
+// D66 — `Self` universal: keyword-ссылка на «тот тип, к которому принадлежит метод»,
+// валиден в любом type-контексте (static-метод, instance-метод, sum-вариант, generic-тип).
+// Норма: `Self` ≡ receiver-тип, подставляется в момент использования. Для concrete `T`
+// `Self` ≡ `T`; для generic `T[A,B]` `Self` ≡ `T[A,B]` (наследует ту же специализацию).
+// `Self` валиден в return-position (-> Self) И в expression-position (Self.method()).
+// (Bare-literal `{..}` под `-> Self` — каноничная форма; явный `Self {..}` ловит
+// redundant-type-prefix lint при return-pinned типе, поэтому return-pinned literals — bare.)
+// Spec: spec/decisions/02-types.md §D66. Часть единого folder-module spec_tests.conformance;
+// типы D66-prefixed уникальные во избежание duplicate-top-level-name клэша.
+module spec_tests.conformance
+
+// === 1. Self в static-методе concrete-record'а: -> Self ≡ D66Box ===
+
+type D66Box {
+    value int
+}
+
+fn D66Box.of(v int) -> Self =>
+    { value: v }
+
+fn D66Box.zero() -> Self =>
+    { value: 0 }
+
+test "Self в return-type static-метода ≡ receiver-тип; literal конструирует D66Box (D66)" {
+    ro b = D66Box.of(42)
+    assert(b.value == 42)
+    ro z = D66Box.zero()
+    assert(z.value == 0)
+}
+
+// === 2. Self в expression-position: Self.method() резолвится в D66Box.method() ===
+// default-конструктор делегирует к parameterized через Self.method (canonical pattern D66 §2).
+
+fn D66Box.def() -> Self =>
+    Self.of(7)
+
+test "Self.method() в expression-position резолвится в static того же типа (D66)" {
+    ro b = D66Box.def()
+    assert(b.value == 7)
+}
+
+// === 3. Self в instance-методе (builder): return -> Self ≡ receiver-тип ===
+
+fn D66Box @doubled() -> Self =>
+    { value: @value * 2 }
+
+test "Self в return-type instance-метода — builder возвращает тот же тип (D66)" {
+    ro b = D66Box { value: 5 }
+    ro d = b.doubled()
+    assert(d.value == 10)
+}
+
+// === 4. Self для generic-типа: Self ≡ D66Pair[A,B] — наследует ту же специализацию ===
+// Static-метод на D66Pair[A,B] возвращает -> Self; generic-параметры наследуются авто.
+
+type D66Pair[A, B] {
+    fst A
+    snd B
+}
+
+fn D66Pair[A, B].mk(a A, b B) -> Self =>
+    { fst: a, snd: b }
+
+fn D66Pair[A, B] @swapped() -> D66Pair[B, A] =>
+    D66Pair[B, A].mk(@snd, @fst)
+
+test "Self для generic ≡ D66Pair[A,B] — параметры наследуются на mono-инстансе (D66)" {
+    ro p = D66Pair[int, str].mk(1, "x")    // Self ≡ D66Pair[int, str]
+    assert(p.fst == 1)
+    assert(p.snd == "x")
+    ro q = p.swapped()                      // D66Pair[str, int]
+    assert(q.fst == "x")
+    assert(q.snd == 1)
+}
+
+// === 5. Self в sum-варианте: рекурсивный self-метод на том же типе ===
+
+type D66Tree
+    | D66Leaf
+    | D66Node(int, D66Tree, D66Tree)
+
+fn D66Tree @count() -> int => match @ {
+    D66Leaf          => 0
+    D66Node(_, l, r) => 1 + l.count() + r.count()
+}
+
+fn D66Tree @sum() -> int => match @ {
+    D66Leaf          => 0
+    D66Node(v, l, r) => v + l.sum() + r.sum()
+}
+
+test "Self-метод на sum-типе: рекурсия по тому же типу (D66)" {
+    ro t = D66Node(1, D66Node(2, D66Leaf, D66Leaf), D66Node(3, D66Leaf, D66Node(4, D66Leaf, D66Leaf)))
+    assert(t.count() == 4)
+    assert(t.sum() == 10)
+}
