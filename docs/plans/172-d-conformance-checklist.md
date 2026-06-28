@@ -154,3 +154,20 @@ expected_sum_coercion-хинт по образцу expected_record_type). ПЛЮ
   Next: прочитать draft + D-норму → correct-per-D? → фикс компилятора (driver) / draft-bug.
 **Остаток uncovered (75−56 в 02-types): ~D17/D110/D126/D133/D156(gap)/D163/D164/D181-186(refs/172.5)/
 D277/D326(Ф.3)** — refs-семейство = 172.5 (не реализовано); D156/D326 = известные gaps; остальные — next batch.
+
+## V-трек batch2 (2026-06-28) — 17 uncovered D → 10 usable → verify: 8 KEEP + 2 компилятор-gap
+**Workflow wvxibfvv6** (Write-запрещён → 0 pollution, .of-конвенция). Verify isolated на main:
+- ✅ **8 KEEP (готовы к merge в conformance после ARM 3+4 + folder-module clash-check):**
+  d17 (type-decls/record/punning/partial-match), d42 (structural protocol satisfaction),
+  d222 (priv record-protocol boundary), d232 (vec growable array), d281 (module priv field),
+  d282 (blanket protocol receiver), d284 (enumerate index invariant), d299 (as_slice append).
+- ❌ **2 КОМПИЛЯТОР-GAP (V-трек driver-находки → base-фиксы):**
+  • **D53** anon-protocol-тип в позиции параметра (`fn f(x protocol { @sig })`) — CC-FAIL в 2
+    независимых авторингах (batch1+batch2) → компилятор не поддерживает anon-protocol-param.
+    Spec §674-695 (симметрично []T/(A,B)/fn()->T). Фикс: codegen anon-protocol-param-типа.
+  • **D277** by-value mono generic value-records (Plan 153.2) — void*-return CC-FAIL (type-param
+    erasure, связан с bail-gap §0-долгом). Фикс: generic value-record mono codegen.
+
+**База compiler-fix backlog (V-трек-driven, двусторонняя конвергенция):** d55.1 (sum-coercion) ·
+d156 (consume generic-return) · d326 (=172.4 Ф.3) · **D53** (anon-protocol-param) · **D277** (generic
+value-record mono). Все — починить компилятор по конвенции (correct-per-D + CC-FAIL = gap, не draft-bug).
