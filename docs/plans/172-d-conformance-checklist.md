@@ -171,3 +171,17 @@ D277/D326(Ф.3)** — refs-семейство = 172.5 (не реализован
 **База compiler-fix backlog (V-трек-driven, двусторонняя конвергенция):** d55.1 (sum-coercion) ·
 d156 (consume generic-return) · d326 (=172.4 Ф.3) · **D53** (anon-protocol-param) · **D277** (generic
 value-record mono). Все — починить компилятор по конвенции (correct-per-D + CC-FAIL = gap, не draft-bug).
+
+## V-трек NEG-batch (2026-06-29) — 10 D → 9 vetted NEG-фикстур + новый компилятор-gap
+**Workflow wxbi7g3ya** (Write-запрещён; агенты ЭМПИРИЧЕСКИ тестили nova-codegen check/test-build →
+высокая надёжность). Staged (vneg/): D54 (int as bool ✗), D55 (lit out-of-range), D227 (i32 overflow),
+D32 (param-mut→method), D36, D175 (ro-freeze), D52, D128 (char/int), D246. Verify (--compile-error) + merge
+в neg/ folder-module после ARM 3+4.
+🔬 **NEG driver-находка — компилятор-gap D55.4-field-range:** range-check (E_LIT_OUT_OF_RANGE) НЕ
+распространён на record-field позиции. `ro a u8 = 300` ловится (прямой IntLit, assignable:9272), но
+`{ n: 300 }` в u8-поле — НЕТ (RecordLit→`_=>{}`:9390, field-walk с expected=None не сверяет поле против
+типа поля). §0/§1-долг (silent-accept неверного значения). Spec 02-types:1011 подтверждает field-coercion
+range-check gated. → base-фикс: распространить range-check на record-field/element позиции.
+
+**База compiler-fix backlog (V-трек-driven, расширен):** d55.1 · d156 · d326 · D53 (anon-protocol-param) ·
+D277 (generic-value-record mono) · **D55.4-field-range** (NEG-находка).
