@@ -42,3 +42,18 @@
 
 **Итог driver-роли:** V-трек нашёл 1 подтверждённый компилятор-gap (d326→Ф.3) + 2 кандидата (d54/d55) +
 2 test-bug (d123/d156) + 1 уточнить (d52). Компилятор-gaps → база (172.4 Ф.3 + saturation/coercion); test-bugs → фикс+merge.
+
+## Уточнённая классификация gaps (2026-06-28) — компилятор-gaps = base-задачи
+V-трек выявил, что несколько D НЕ полностью реализованы (compiler-gaps, не test-bugs) → база:
+- **d54 → КОМПИЛЯТОР-GAP:** `-1.0 as u16` не сатурирует в 0 (D130 neg→0 / Plan07 float→int saturation;
+  `300 as u8 == 44` wrapping работает). Реализовать saturation float→narrow-uint. Verify по D54/Plan07.
+- **d52 → КОМПИЛЯТОР-GAP:** `Red as int` не даёт discriminant 0 (D52 sum→int cast, 02-types:331-339).
+  Реализовать sum-variant→int cast = discriminant.
+- **d55 → КОМПИЛЯТОР-GAP (вероятно):** sum-coercion литерала `ro a D55Wrap = 25`→D55I(25) (D55) не работает
+  (E7301). Уточнить: D55 type-directed при 2 unary-ctor. Реализовать literal sum-coercion.
+- **d326 → 172.4 Ф.3** (value-record fluent, carrier-refactor) — F-фаза.
+- **d156:** generic [T consume] obligation через consume-method (D156) — gap или test-bug, careful analysis.
+- **d123:** ✅ FIXED (test-bug, tuple-annotation→inference) + merged.
+
+**Driver-итог:** V-трек = backlog base-фич (D54 saturation, D52 sum-cast, D55 coercion, D156 consume,
+D326/Ф.3). Каждая реализуется careful по §0/§5/§7 ВМЕСТЕ с merge своего D-теста в conformance.
