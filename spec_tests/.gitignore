@@ -1,0 +1,4 @@
+# Generated C-codegen artifacts (build output of `nova test`), not source.
+*.c
+*.exe
+*.obj

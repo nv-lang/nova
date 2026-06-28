@@ -142,6 +142,21 @@ fluent `mut @` + `==` проходит).
 Per [`compiler-conventions.md`](../compiler-conventions.md): этапами (не «большим взрывом»), каждый —
 с регрессом против чистого бинаря (§6), blast-radius до правки (§6), без молчаливой ломки std.
 
+### 5.1. Верификация через spec/D-conformance suite `spec_tests/` (соглашено владельцем 2026-06-28)
+
+**Принцип — в конвенции:** [`test-conventions.md` §«spec/D-conformance suite»](../test-conventions.md).
+Кратко: `nova_tests/` наполовину сломан → НЕ чистый гейт; **чистый soundness-сигнал = `spec_tests/`**
+(отдельный пакет, по одному файлу на D-блок в пир-модуле по теме), цель — заменить `nova_tests/`.
+
+**172-специфика:** **172 затрагивает МНОГО (возможно все) D-блоков типовой системы** (D310 type-set,
+D315 ResolvedType, D326/D327 value-ABI/codepoint, D328 value-record-eq, …) — их spec-покрытие
+**накапливается в `spec_tests/` по мере закрытия пунктов 172**, формируя durable conformance-набор
+типовой системы. КАЖДЫЙ landed-срез 172 (Ф/U-пункт) добавляет per-D файл(ы) в `spec_tests/<тема>/`
+ВМЕСТЕ со своей правкой (только проходящие). Все D-файлы — в ОДНОМ пир-модуле
+`spec_tests/conformance/` (один CU). Уже есть: `conformance/d328_value_record_eq.nv` (**D328** Ф.2
+value-record `==`). Gated-поведение (напр. **D326** fluent value-record — Ф.3) — файл добавляется
+когда срез залендж (полный регресс зелёный), не раньше.
+
 ## 6. Источник
 
 Сессия 2026-06-19 (generic-arg mismatch + scalar-narrowing → обсуждение фрагментации типового

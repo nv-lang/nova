@@ -16,4 +16,5 @@ members = [
     "std",
     "examples",
     "nova_tests",
+    "spec_tests",
 ]

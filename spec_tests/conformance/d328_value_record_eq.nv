@@ -1,0 +1,18 @@
+// D328 — value-record `==` is STRUCTURAL (Plan 172.4 Ф.2). Value (no heap identity) →
+// field-by-field, via the single `emit_field_eq` dispatcher (§0). Shares `Point`.
+module spec_tests.conformance
+
+test "value-record == is structural, not reference (D328)" {
+    ro a Point = { x: 1, y: 2 }
+    ro b Point = { x: 1, y: 2 }
+    ro c Point = { x: 3, y: 4 }
+    assert(a == b)
+    assert(!(a == c))
+}
+
+test "value-record != is the structural negation (D328)" {
+    ro a Point = { x: 5, y: 5 }
+    ro b Point = { x: 5, y: 6 }
+    assert(a != b)
+    assert(!(a == b))
+}

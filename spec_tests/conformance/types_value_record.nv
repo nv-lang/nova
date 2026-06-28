@@ -1,0 +1,6 @@
+// Shared types for value-record-ABI D-conformance (D226/D326/D328). Part of the SINGLE
+// `spec_tests.conformance` folder-module — ALL spec/D tests live in ONE compile unit
+// (minimal CU overhead). Domain-prefixed type names avoid clashes across D-files.
+module spec_tests.conformance
+
+type Point value { x int, y int }
