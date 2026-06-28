@@ -31,3 +31,14 @@
 **Покрыто (committed, passing):** D130 (d130_uint_method_compare + d130_uint_literal_width — K1/K4), D328 (d328_value_record_eq — Ф.2).
 **Gaps (careful authoring TODO):** все ⬜ выше. Идеи энумерированы (workflow wl7ffiqz3); реализация — вручную по одному, с проверкой компиляции.
 **Критерий приёмки V:** все 172-D ✅ + suite зелёный + legacy удалён (D/P67) → движок конформен спеке/D = зонт 172 закрыт.
+## Триаж gaps (2026-06-28, isolated) — driver-роль suite
+Падающие D-тесты классифицированы (test-bug vs компилятор-gap по конвенции владельца):
+- **d326** value-record fluent `mut @ -> @` → **КОМПИЛЯТОР-GAP = 172.4 Ф.3** (carrier-model refactor; D-тест ПОДТВЕРЖДАЕТ Ф.3-блокер → драйвит F-фазу).
+- **d54** `-1.0 as u16 == 0` (float→uint saturation, D54/D130 neg→0) → **вероятно компилятор-GAP** (saturation для u16 не работает; `300 as u8 == 44` wrapping работает) → база (реализовать saturation). Verify по D54/Plan07.
+- **d55** `ro a D55Wrap = 25` (sum-coercion литерала, D55) → E7301. D55Wrap = 2 unary-ctor (D55S/D55I) → уточнить: D55 требует type-directed coercion (int→D55I) = gap, ИЛИ single-ctor-only = test-bug.
+- **d52** `Red as int == 0` (sum auto-disc) → assert-fail. Уточнить: специфицирует ли D52 `variant as int` = discriminant (вероятно test-bug — niche cast).
+- **d123** refutable variant-pattern в `ro` → **TEST-BUG** (нужен `match`/`if let`). Фикс теста → merge.
+- **d156** consume-var `t2` не consumed → **TEST-BUG** (тест должен consume). Фикс теста → merge.
+
+**Итог driver-роли:** V-трек нашёл 1 подтверждённый компилятор-gap (d326→Ф.3) + 2 кандидата (d54/d55) +
+2 test-bug (d123/d156) + 1 уточнить (d52). Компилятор-gaps → база (172.4 Ф.3 + saturation/coercion); test-bugs → фикс+merge.
