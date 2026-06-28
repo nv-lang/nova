@@ -10,6 +10,9 @@
 **A(int-де-схлопывание) → B(bounded channeling) ‖ REG(registry) → C(GC-hardening) → D(P67 удаление legacy) → E(FIN endgame) → F(172.4 value-ABI) → G(172.5 mut-ref) → ЗОНТ ЗАКРЫТ.**
 A и REG автономны (старт сразу); C(GC) — самый дорогой РЕАЛЬНЫЙ блокер, разведку рано параллельно.
 
+## V — D-conformance acceptance suite (= **172.1 U.7** расширенный) — ПАРАЛЛЕЛЬНО ВСЕМ фазам, driver закрытия
+Независимая верификация: **каждый 172-релевантный D-блок (172.1-172.5 scope) → conformance-тест в `spec_tests/conformance/`** (один пир-модуль, минимум CU; против ТЕКУЩЕЙ spec-семантики с inline-амендментами; forward-compat D — carrier-level). **Проходящий = D конформен (часть 172 закрыта); падающий = gap (driver code-работы A-G).** Когда suite ПОЛОН и весь зелёный + legacy удалён (D) → движок конформен спеке/D = **критерий приёмки зонта**. Идёт ‖ всем code-фазам (не блокирует, не блокируется — это U.7 «C не ловит типы», broadened). Покрыто: D130 (uint K1/K4), D328 (==Ф.2); авторено (триаж): D52/D54/D55/D72/D119/D123/D125/D128/D129/D156/D215/D216/D226/D239/D310/D315/D326/D327. Методология: [test-conventions.md §spec/D-conformance suite].
+
 ## Session A — int-де-схлопывание (АВТОНОМНО, без гейтов). Опора: ResolvedType.Scalar{width,signed} + единый `primitive_name_to_c`/`resolved_type_to_c` (U.5/U.4.8 landed).
 **✅ Session A ЗАКРЫТ (2026-06-28): int-де-схлопывание — uint≠int, u8≠i8≠i16, точные C-типы во всех позициях, беззнаковые операции, uint-литералы до u64::MAX. 0 регрессий vs clean (PASS:490 FAIL:39 неизменно).**
 - **K1 ✅ COMMITTED cfc8e69e:** `receiver_c_type:11829` делегирует в единый `primitive_name_to_c` (int/i64→nova_int D129; uint→nova_uint; u8→nova_byte; u16/u32/u64→uintN_t; i8/i16/i32→intN_t). Acceptance `d130_uint_method_compare.nv` (flip-доказан).
