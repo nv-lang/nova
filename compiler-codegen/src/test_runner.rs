@@ -3708,7 +3708,7 @@ fn emit_event(format: OutputFormat, idx: usize, total: usize, name: &str, outcom
             if detail.is_empty() {
                 let _ = writeln!(out, "{:<14} {}", label, name);
             } else {
-                let trunc: String = detail.chars().take(120).collect();
+                let trunc: String = detail.chars().take(600).collect();
                 let _ = writeln!(out, "{:<14} {}  # {}", label, name, trunc);
             }
             // Б.3: verbose — dump captured output after Pass line.
@@ -4211,7 +4211,7 @@ pub fn print_summary(summary: &Summary, format: OutputFormat) {
                 let line = if detail.is_empty() {
                     format!("{:<14} {}", label, name)
                 } else {
-                    let trunc: String = detail.chars().take(120).collect();
+                    let trunc: String = detail.chars().take(600).collect();
                     format!("{:<14} {}  # {}", label, name, trunc)
                 };
                 let _ = writeln!(out, "{}", line);
