@@ -541,9 +541,18 @@ impl<'a> Lexer<'a> {
             Ok(Token::new(TokenKind::Float(v), span))
         } else {
             let cleaned: String = text.chars().filter(|c| *c != '_').collect();
-            let v: i64 = cleaned
-                .parse()
-                .map_err(|e| Diagnostic::new(format!("invalid int: {e}"), span))?;
+            // Plan 172.1-K4: u64-fallback СИММЕТРИЧНО lex_radix_int (hex/bin/oct). Десятичный
+            // литерал в (i64::MAX, u64::MAX] (значение `uint`/`u64`) парсится как u64 и кладётся
+            // в i64-носитель wrapping — биты тождественны (важно для bitwise/hash; D130
+            // uint-литералы). Контекст int↔uint не у лексера (TokenKind::Int(i64)); диапазон-чек
+            // — забота чекера.
+            let v: i64 = match cleaned.parse::<i64>() {
+                Ok(v) => v,
+                Err(_) => cleaned
+                    .parse::<u64>()
+                    .map_err(|e| Diagnostic::new(format!("invalid int: {e}"), span))?
+                    as i64,
+            };
             Ok(Token::new(TokenKind::Int(v), span))
         }
     }

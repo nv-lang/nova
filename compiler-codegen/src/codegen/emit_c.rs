@@ -5329,7 +5329,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // используем явное приведение через хеш-bit-pattern.
                 format!("(({}){}U)", ty_c, n as u32)
             }
-            "uint64_t" => {
+            // Plan 172.1-K4: nova_uint (= uintptr_t, D130) — то же беззнаковое 64-бит
+            // обращение, что uint64_t (bit-pattern u64 + ULL), иначе uint-литерал падал
+            // в знаковый default-arm.
+            "uint64_t" | "nova_uint" => {
                 // ULL-suffix; используем bit-pattern u64 чтобы корректно
                 // передать значения, не помещающиеся в i64 (FNV-64 и т.п.).
                 format!("(({})0x{:X}ULL)", ty_c, n as u64)
@@ -18729,8 +18732,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 ExprKind::Ident(n) => {
                                     let is_type = n.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
                                         || matches!(n.as_str(),
+                                            // Plan 172.1-K5: `uint`/`size` были ПРОПУЩЕНЫ →
+                                            // `uint.@method` мисхэндлился как переменная.
                                             "int" | "i8" | "i16" | "i32" | "i64"
-                                            | "u8" | "u16" | "u32" | "u64"
+                                            | "u8" | "u16" | "u32" | "u64" | "uint" | "size"
                                             | "f32" | "f64" | "bool" | "char" | "str");
                                     if is_type { (n.clone(), true) } else {
                                         let obj_ty = self.var_types.get(n).cloned().unwrap_or_default();
@@ -33928,22 +33933,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let body_name = format!("nova_mv_{}_body", id);
         let env_name = format!("nova_mv_{}_env", id);
 
-        // Determine receiver C-type. Для primitive — value; для record —
-        // pointer Nova_<T>*.
-        let recv_c_ty = match type_name.as_str() {
-            // Plan 133: int = nova_int (intptr_t), i64 = int64_t (fixed).
-            "int" => "nova_int".to_string(),
-            "i64" => "int64_t".to_string(),
-            // Plan 133: uint = nova_uint (uintptr_t), u64 = uint64_t (fixed).
-            "uint" => "nova_uint".to_string(),
-            "f64" => "nova_f64".to_string(),
-            "f32" => "nova_f32".to_string(),
-            "str" => "nova_str".to_string(),
-            "char" => "nova_char".to_string(),
-            "u8" => "nova_byte".to_string(),
-            "bool" => "nova_bool".to_string(),
-            // Plan 133: usize/isize removed — use int/uint.
-            _ => format!("Nova_{}*", type_name),
+        // Determine receiver C-type. Для primitive — value (через ЕДИНЫЙ
+        // primitive_name_to_c); для record/sum — pointer Nova_<T>*.
+        // Plan 172.1-K5: ручной match РАНЕЕ пропускал i8/i16/i32/u16/u32/u64 → они падали
+        // в `_ => Nova_X*` (record-pointer на примитив — невалидный C). Делегация в единый
+        // источник (§0/§10, как receiver_c_type K1) даёт точные типы: i8→int8_t, u16→uint16_t,
+        // u64→uint64_t, uint→nova_uint, char→nova_char (D128) и т.д. — width+sign сохранены.
+        let recv_c_ty = match Self::primitive_name_to_c(type_name.as_str()) {
+            Some(c) => c.to_string(),
+            None => format!("Nova_{}*", type_name),
         };
 
         // Param C-types and ret type.
@@ -35737,6 +35735,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             "nova_bool" => "bool".into(),
             "nova_str"  => "str".into(),
             "nova_byte" => "u8".into(),
+            // Plan 172.1-K5: nova_char/nova_uint БЫЛИ пропущены → падали в `other`-arm и
+            // возвращали "nova_char"/"nova_uint" (сырой C-typedef) как Nova-имя → неверный
+            // method-table key (мис-диспатч под `int` vs `char`/`uint`, D128/D130).
+            "nova_char" => "char".into(),
+            "nova_uint" => "uint".into(),
             "int8_t"    => "i8".into(),
             "int16_t"   => "i16".into(),
             "int32_t"   => "i32".into(),
@@ -35769,7 +35772,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // Plan 70.4 Ф.4: nova_byte = typedef uint8_t — treat as typed 8-bit unsigned.
             "nova_byte" |
             // Plan 152.8: nova_char = typedef uint32_t — treat as typed 32-bit unsigned.
-            "nova_char"
+            "nova_char" |
+            // Plan 172.1-K2: nova_uint = typedef uintptr_t (uint, D130) — a typed 64-bit
+            // unsigned. Без него `uint` терял распознавание как typed-integer → ошибочный
+            // promotion к знаковому nova_int в смешанной арифметике.
+            "nova_uint"
         )
     }
 
