@@ -12945,6 +12945,59 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 return format!("nova_opt_eq_{}({}, {})", inner_sani, l, r);
             }
         }
+        // Plan 172.4 Ф.2 (D-block: value-record `==` STRUCTURAL): a value-record
+        // `NovaValue_<Name>` is a BY-VALUE struct (not a `Nova_X*` heap pointer), so a raw
+        // C `==` on it is invalid (the §2 acceptance CC-FAIL). Route to STRUCTURAL field-by-
+        // field eq — the SAME §0 single dispatcher used for sum/heap-record/tuple, just with
+        // BY-VALUE access `(l).field` (not `(*l)->field`). Prefer a user/derived `@equal`
+        // (the c_name from the method registry), else recurse over `record_schemas` (the
+        // value-record carries the SAME field schema — only placement differs). A NovaValue_
+        // POINTER (`NovaValue_X*`, a `*T` over a value-record) is NOT this case → excluded by
+        // the `*`-suffix guard, falling to the pointer arms below. `NovaValue_` does not start
+        // with the `Nova_` prefix of the single-`Nova_X*` arm, so this is order-safe.
+        if let Some(type_name) = cty.strip_prefix("NovaValue_") {
+            if !cty.ends_with('*') {
+                // (1) user/derived @equal (D237 Equal.equal / Plan 126) — by c_name.
+                let key = (type_name.to_string(), "equal".to_string());
+                if let Some(sigs) = self.method_overloads.get(&key) {
+                    if let Some(sig) =
+                        sigs.iter().find(|s| s.is_instance && s.param_c_types.len() == 1)
+                    {
+                        return format!("{}({}, {})", sig.c_name, l, r);
+                    }
+                }
+                // (2) structural field-by-field over `record_schemas` (BY-VALUE access).
+                if let Some(schema) = self.record_schemas.get(type_name) {
+                    if !schema.is_empty() {
+                        let schema = schema.clone();
+                        let order: Vec<String> = self
+                            .record_field_order
+                            .get(type_name)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                let mut ks: Vec<String> = schema.keys().cloned().collect();
+                                ks.sort();
+                                ks
+                            });
+                        let conds: Vec<String> = order
+                            .iter()
+                            .filter_map(|fname| {
+                                schema.get(fname).map(|fty| {
+                                    let mfn = Self::mangle_field_name(fname);
+                                    let li = format!("({}).{}", l, mfn);
+                                    let ri = format!("({}).{}", r, mfn);
+                                    self.emit_field_eq(fty, &li, &ri, depth + 1)
+                                })
+                            })
+                            .collect();
+                        if !conds.is_empty() {
+                            return format!("({})", conds.join(" && "));
+                        }
+                    }
+                }
+                // No usable schema → fall through to the fallback identity below.
+            }
+        }
         // mono'd tuple — recurse field-by-field over parsed element C-types.
         if let Some(elems) = Self::parse_mono_tuple_elements(cty) {
             if elems.is_empty() {
@@ -20484,6 +20537,30 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             });
                         }
                     }
+                }
+                // Plan 172.4 Ф.2 (D-block: value-record `==` STRUCTURAL): a value-record
+                // `NovaValue_<Name>` is a BY-VALUE struct — C has no struct `==`, so the raw
+                // `(p == p2)` is the §2 acceptance CC-FAIL ("invalid operands"). Route `==`/`!=`
+                // to the SINGLE structural `emit_field_eq` dispatcher (its `NovaValue_` arm picks
+                // a user `@equal` if present, else recurses over the field schema). A
+                // `NovaValue_X*` pointer (a `*T` over a value-record) is excluded by the
+                // `*`-suffix guard → handled by the typed-pointer arms below. Arithmetic on
+                // value-records (`@plus`/…) is a separate value-ABI concern (Ф.3), not here.
+                if matches!(op, BinOp::Eq | BinOp::Neq)
+                    && ((lty.starts_with("NovaValue_") && !lty.ends_with('*'))
+                        || (rty.starts_with("NovaValue_") && !rty.ends_with('*')))
+                {
+                    let value_ty = if lty.starts_with("NovaValue_") && !lty.ends_with('*') {
+                        &lty
+                    } else {
+                        &rty
+                    };
+                    let eq = self.emit_field_eq(value_ty, &l, &r, 0);
+                    return Ok(match op {
+                        BinOp::Eq => format!("({})", eq),
+                        BinOp::Neq => format!("(!({}))", eq),
+                        _ => unreachable!(),
+                    });
                 }
                 // Plan 153.3: Result `NovaRes_<n>*` structural `==`/`!=`. Result
                 // is a special heap-pointer ABI (not a `Nova_X*` sum), so it

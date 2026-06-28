@@ -6812,6 +6812,18 @@ fn int @compare(other int) -> int =>
   (`reemit_result_variant_as`). General expected-type propagation для overload-резолва (`@into`)
   остаётся в `Q-overload-result-type`.
 - **Generic sort/min/max (D185, Plan 91.8c):** generic `fn[T Compare]` array methods — реализовано, см. [D185](#d185--generic-array-api-sortminmaxbinary_search--_by-variants-plan-918c-2026-06-17).
+- **D328 — Value-record `==` СТРУКТУРНОЕ (Plan 172.4 Ф.2, 2026-06-28):** value-record
+  (`type P value {…}` — C-репрезентация `NovaValue_<Name>` by-value, D228/D277/D290) сравнивается
+  **структурно** (field-by-field, как sum/heap-record), а **НЕ** сырым C-`==` на struct (была
+  acceptance-CC-FAIL «invalid operands to binary expression» — C не имеет struct-`==`). Обоснование:
+  value-record — **значение** (нет heap-идентичности); равенство = по значению полей. Маршрутизируется
+  через **ЕДИНЫЙ** `emit_field_eq`-диспетчер (§0 «один источник per-type операций»): добавлен
+  `NovaValue_`-арм (by-VALUE доступ `(l).field`, не `(*l)->field`) + top-level-`==`/`!=`-роутинг в тот же
+  диспетчер; user-`@equal` (если объявлен) приоритетен, иначе структурная рекурсия по `record_schemas`.
+  Вложенные value-record-поля рекурсируют тем же армом. **heap-record `==`** (`type P {…}`, `Nova_P*`)
+  — **ОТДЕЛЬНАЯ ось**: сейчас reference-eq; структурить ли — open (Plan 172.4 Ф.2 дизайн-вопрос, НЕ
+  решается этим блоком — value-records однозначно структурны, heap-records обсуждаемо). Арифметика на
+  value-record (`@plus`/…) — отдельный value-ABI концерн (Plan 172.4 Ф.3), не этот блок.
 
 ### Связь
 
