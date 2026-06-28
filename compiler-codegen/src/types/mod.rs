@@ -9990,8 +9990,16 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         match peeled_out {
+            // ARM 2/3/4 (Tuple/Array/FixedArray) STILL bail — Session C снимает их позже (Tuple
+            // после G1; Array/FixedArray последними, гейтнуто на mono-side gap #2).
             TypeRef::Array(..) | TypeRef::FixedArray(..) | TypeRef::Tuple(..) => return None,
-            TypeRef::Named { generics, .. } if !generics.is_empty() => return None,
+            // Plan 172.1 Session C ARM 1 (gap-recon wf_08608c3b-205): `Named`-with-generics
+            // container-return ТЕПЕРЬ КАНАЛИЗИРУЕТСЯ (bail снят). SAFE — это CHANNEL-only путь
+            // (DECOUPLED от inline-soundness, см. :10000+): args конкретны post fully-concrete-gate
+            // (9970) + gs-gate, а `resolved_named_to_c` ПРОПУСКАЕТ subst-short-circuit при non-empty
+            // args → лоуэрит каждый arg context-free (без empty-subst bare-stub). Option/Result
+            // is_concrete-collapse предотвращают bare-name leak. Разблокирует 172.1.2 P4b + 172.4 Ф.3
+            // для Named container-return класса. (Старый bail-коммент выше про Named — STALE.)
             _ => {}
         }
         Some(out)
