@@ -1628,7 +1628,11 @@ impl Outcome {
             Outcome::Skipped { reason, .. } => reason.description(),
             Outcome::Fail { stage, .. } => match stage {
                 Stage::Codegen { error } | Stage::Cc { error } | Stage::Run { error } => {
-                    error.chars().take(400).collect()
+                    // §1: не обрезать диагностику так агрессивно, чтобы скрыть суть — длинные
+                    // обёртки (folder-module 'import resolution: in entry-folder peer (<длинный path>):
+                    // <file>:<line>: <inner>') съедали 400 симв на path, пряча сам <inner>. 1500 даёт
+                    // path×2 + реальную ошибку.
+                    error.chars().take(1500).collect()
                 }
                 Stage::NoCFile => String::new(),
                 Stage::Expectation { mismatch } => mismatch.detail(),
