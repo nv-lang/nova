@@ -36414,13 +36414,33 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // ложно даёт nova_int) — там channel корректнее (§1-fix). Иначе — legacy var_types.
                     match &expr.kind {
                         ExprKind::SelfAccess if self.var_types.contains_key("nova_self") => {
-                            return legacy;
+                            // P67 ФАЗА 4B: inline var_types["nova_self"] (byte-identical к legacy
+                            // SelfAccess-arm :36986-37023 для gated-случая — var_types present, поэтому
+                            // .unwrap_or_else current_receiver/nova_int fallback недостижим). Снимает
+                            // зависимость SelfAccess type-source от legacy re-derive (§0 — к удалению legacy).
+                            let raw = self.var_types.get("nova_self").cloned().unwrap();
+                            return if raw.starts_with("NovaValue_") && raw.ends_with('*') {
+                                raw.trim_end_matches('*').trim().to_string()
+                            } else {
+                                raw
+                            };
                         }
                         // Plan 172.1.1: Ident whose name is a tracked local (var_types) → legacy
                         // (reliable per-local C-type, correct incl. mono generic-containers, not a
                         // re-derive). Ident ABSENT from var_types (Cat-B13) → channel (§1-fix).
                         ExprKind::Ident(n) if self.var_types.contains_key(n) => {
-                            return legacy;
+                            // P67 ФАЗА 4C: inline 3-уровневый local source (byte-identical к legacy
+                            // Ident-arm :36827-36844 для gated-случая — closure_param → pattern_binding →
+                            // var_types; var_types present, поэтому уровни 4-5 sum_registry/nova_int
+                            // недостижимы). ⚠️ НЕЛЬЗЯ упростить до var_types.get(n) — SEGV (stale leaked
+                            // var_types не-per-fn-scoped, :36728-36730). §0 — к удалению legacy.
+                            if let Some(ty) = self.closure_param_type_overrides.borrow().get(n) {
+                                return ty.clone();
+                            }
+                            if let Some(ty) = self.pattern_binding_overrides.borrow().get(n) {
+                                return ty.clone();
+                            }
+                            return self.var_types.get(n).cloned().unwrap();
                         }
                         _ => {}
                     }
