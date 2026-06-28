@@ -80,7 +80,7 @@ test "ReverseRangeIter value: .reverse() is a stack cursor yielding end-1..start
 }
 
 test "VecIter[T] value: each v.iter() is a fresh cursor; for-loop re-iterates from start (D290 §2 rule-b)" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     // First iteration drives one fresh VecIter value cursor.
     mut sum1 = 0
     for x in v { sum1 += x }
@@ -98,7 +98,7 @@ test "VecIter[T] value: each v.iter() is a fresh cursor; for-loop re-iterates fr
 }
 
 test "VecIter[T] value cursor copy-independence over a GC buffer (D290 §1 rule-b)" {
-    ro v = Vec[int].from([7, 8, 9])
+    ro v = Vec[int].of(7, 8, 9)
     mut a = v.iter()                  // VecIter[int] value — cursor over v's buffer
     assert(a.next() == Some(7))       // advance original past 7
     mut b = a                         // value-copy of the partially-advanced cursor

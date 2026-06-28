@@ -1,0 +1,82 @@
+// D222 — Protocol implementation boundary (Plan 124.4, §3). POS-наблюдаемое
+// type-system ядро, проверяемое рантайм-`assert(...)`.
+//
+// ВАЖНО про текущую норму: «Named tuple priv» часть D222 RETRACTED (Plan 124.8 Ф.1
+// amend — `priv`/`pub` на tuple-field теперь parser-error E_TUPLE_NO_PRIV, NEG-only,
+// out of scope). Сохранена и POS-наблюдаема ВТОРАЯ часть нормы — §3 «Protocol
+// implementation boundary» для RECORDS: protocol satisfaction через TYPE-METHOD impl
+// (receiver = T, `current_recv_type = Some(T)`) КАНОНИЧЕСКИ имеет доступ к priv-полям
+// (§3 п.1 «✅ Allowed», пример `fn Vec3 @to_string()`). Запрещённый путь — external
+// free-fn (`current_recv_type = None` → E_PRIV_FIELD_READ) — это NEG-диагностика, не
+// POS, поэтому здесь НЕ проверяется.
+//
+// Проверяется ПОЛОЖИТЕЛЬНАЯ сторона §3:
+//   • Record с priv-полями; protocol-метод реализован как TYPE-METHOD (`fn T @m(...)`),
+//     тело которого ЧИТАЕТ priv-поля (`@field`) — допустимо (receiver-scope матчит).
+//   • Этот type-method impl satisfies prelude-протокол `Equal` (per D237): `fn T @equal`
+//     напрямую драйвит ==/!= (D183/D184) — БЕЗ объявления пользовательского протокола,
+//     как в d237/d230. Тело решает равенство по priv-полям → observable end-to-end.
+//   • Дополнительные type-method'ы (`@magnitude_sq`/`@dot`) — §2-сторона: priv-read
+//     ВНУТРИ receiver-scope (`current_recv_type = Some(T)`). Возвращают значения,
+//     вычисленные из priv-полей. (Это обычные type-method'ы, не protocol-impl.)
+//   • Cross-instance: type-method читает priv-поле ДРУГОГО инстанса того же типа
+//     (`other.x`) — тот же receiver-type scope (D222 §3 mirror D220 §3).
+// Spec: spec/decisions/02-types.md:9480 (D222), §3 «Protocol implementation boundary»
+//   (п.1 type-method impl ✅ Allowed); §2 access rules (uniform with D220); §6 cross-ref
+//   D186 (protocol satisfaction: type-method primary).
+// Один folder-module `spec_tests.conformance`; D-prefixed имена уникальны.
+module spec_tests.conformance
+
+// Record с priv-полями. Encapsulation boundary активен → priv доступен ТОЛЬКО из
+// type-method scope (D222 §2/§3, mirror D220).
+type D222Vec3 {
+    priv x int
+    priv y int
+    priv z int
+}
+
+fn D222Vec3.new(x int, y int, z int) -> D222Vec3 => { x, y, z }
+
+// §3 п.1 — TYPE-METHOD impl prelude-протокола `Equal` (per D237). receiver = D222Vec3 →
+// `current_recv_type = Some("D222Vec3")` → priv access ✅ Allowed. Тело читает
+// СВОИ priv-поля (`@x/@y/@z`) И priv-поля другого инстанса того же типа
+// (`other.x/...`) — тот же receiver-type scope. `fn T @equal` satisfies prelude `Equal`
+// и напрямую драйвит ==/!= (БЕЗ пользовательского протокола, как d237/d230); тело
+// решает равенство по priv-полям.
+fn D222Vec3 @equal(other D222Vec3) -> bool =>
+    @x == other.x && @y == other.y && @z == other.z
+
+// §2 — обычный type-method, читающий СВОИ priv-поля внутри receiver-scope; возвращает
+// величину, вычисленную из priv-полей.
+fn D222Vec3 @magnitude_sq() -> int => @x * @x + @y * @y + @z * @z
+
+// §2/§3 — type-method, читающий priv-поля СВОЕГО и ДРУГОГО инстанса (cross-instance
+// dot-product); receiver-scope матчит для обоих.
+fn D222Vec3 @dot(other D222Vec3) -> int =>
+    @x * other.x + @y * other.y + @z * other.z
+
+test "§3 type-method impl satisfies Equal: priv-поля читаются, тело драйвит ==/!= (D222)" {
+    ro a = D222Vec3.new(1, 2, 3)
+    ro b = D222Vec3.new(1, 2, 3)
+    ro c = D222Vec3.new(1, 2, 9)
+    assert(a == b)        // @equal (type-method) читает priv x/y/z обоих инстансов → равны
+    assert(!(a == c))     // отличается z
+    assert(a != c)        // != = синтезированная негация @equal
+    assert(!(a != b))
+}
+
+test "§2 type-method читает СВОИ priv-поля; возвращает значение из них (D222)" {
+    ro v = D222Vec3.new(2, 3, 6)
+    assert(v.magnitude_sq() == 49)   // 4 + 9 + 36, всё из priv-полей через @field
+    ro zero = D222Vec3.new(0, 0, 0)
+    assert(zero.magnitude_sq() == 0)
+}
+
+test "§3 cross-instance: type-method читает priv-поля ДРУГОГО инстанса того же типа (D222)" {
+    ro a = D222Vec3.new(1, 2, 3)
+    ro b = D222Vec3.new(4, 5, 6)
+    assert(a.dot(b) == 32)           // 1*4 + 2*5 + 3*6, priv-поля обоих в одном receiver-scope
+    ro u = D222Vec3.new(1, 0, 0)
+    ro w = D222Vec3.new(0, 1, 0)
+    assert(u.dot(w) == 0)            // ортогональны
+}

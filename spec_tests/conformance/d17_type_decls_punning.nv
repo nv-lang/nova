@@ -1,0 +1,77 @@
+// D17 — объявление типов, record-форма + field punning + partial pattern matching.
+// D17 REVISED → D52 (старый `type X = Y` alias / `type X = A,B` sum синтаксис ЗАПРЕЩЁН, neg-only,
+// out of scope для POS). НО record-норма D17 — активна и унаследована/расширена D52: `type X { ... }`
+// record с именованными полями; field punning shorthand `{ x }` ≡ значение переменной `x` в scope;
+// partial pattern matching в двух ЭКВИВАЛЕНТНЫХ формах (явная с маркером `..` и неявная без).
+// ВАЖНО (D52 §2, enforced commit 34666922c35, compiler-codegen/src/types/mod.rs:14396): когда имя
+// источника СОВПАДАЕТ с именем поля — shorthand ОБЯЗАТЕЛЕН, а избыточная `{ key: key }` запрещена
+// (hard compile error). Поэтому «явная форма» легальна ТОЛЬКО при отличном имени источника
+// (`{ key: k }`), и именно так здесь демонстрируется эквивалентность punning ≡ явная форма.
+// Здесь проверяется ПОЛОЖИТЕЛЬНАЯ сторона нормы рантайм-assert на текущем компиляторе:
+//   §1 record construction (все обязательные поля) + field-доступ дают записанные значения.
+//   §2 field punning: `{ key, value }` (переменные в scope) связывает те же поля, что и легальная
+//       явная форма `{ key: k, value: val }` (источник ≠ имя поля); mixed-форма тоже работает.
+//   §3 partial pattern matching: явная форма `{ value, .. }` и неявная `{ value }` связывают ОДНО
+//       и то же поле и игнорируют остальные → эквивалентны.
+// Spec: spec/decisions/02-types.md:115 «Field punning», :129 «Partial pattern matching — две
+//   эквивалентные формы», :419-426 «Shorthand обязателен … избыточная форма ОШИБКА» (D52 §2),
+//   :1122 (D17). Один folder-module `spec_tests.conformance`; D-prefixed имена уникальны.
+module spec_tests.conformance
+
+// §1/§2 — record с именованными полями (D17 record-форма `type X { ... }`).
+type D17Entry {
+    ro key int
+    ro value int
+}
+
+// §3 — запись с несколькими полями для partial pattern matching.
+type D17Cell {
+    ro tag int
+    ro value int
+    ro extra int
+}
+
+// §3 — явная partial-форма: маркер `..`, связывает только `value`.
+fn d17_value_explicit(c D17Cell) -> int {
+    match c {
+        D17Cell { value, .. } => value
+    }
+}
+
+// §3 — неявная partial-форма: без маркера, остальные поля игнорятся, связывает `value`.
+fn d17_value_implicit(c D17Cell) -> int {
+    match c {
+        D17Cell { value } => value
+    }
+}
+
+test "§1 record construction (все поля) + field-доступ дают записанные значения (D17)" {
+    ro e = D17Entry { key: 7, value: 42 }
+    assert(e.key == 7)
+    assert(e.value == 42)
+}
+
+test "§2 field punning `{ key, value }` ≡ явная форма `{ key: k, value: val }` (D17/D52)" {
+    ro key = 3
+    ro value = 99
+    ro pun = D17Entry { key, value }              // shorthand (имя источника = имя поля → обязателен)
+    // Легальная явная форма: источник (k/val) ≠ имя поля, те же значения, что у key/value.
+    ro k = 3
+    ro val = 99
+    ro full = D17Entry { key: k, value: val }     // явная форма (D52 §2: источник ≠ имя поля)
+    assert(pun.key == full.key)
+    assert(pun.value == full.value)
+    assert(pun.key == 3)
+    assert(pun.value == 99)
+    // mixed: punning одного поля + явная форма другого (отличное имя источника) в одном литерале.
+    ro mixed = D17Entry { key, value: val }
+    assert(mixed.key == 3)
+    assert(mixed.value == 99)
+}
+
+test "§3 partial match: явная `{ value, .. }` ≡ неявная `{ value }` (D17)" {
+    ro c = D17Cell { tag: 1, value: 55, extra: 100 }
+    assert(d17_value_explicit(c) == 55)
+    assert(d17_value_implicit(c) == 55)
+    assert(d17_value_explicit(c) == d17_value_implicit(c))
+}

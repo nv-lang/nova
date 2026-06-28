@@ -1,0 +1,57 @@
+// D299 — `AsSlice[T]` protocol: contiguous-buffer abstraction (Plan 153.1).
+// `Vec[T] @append[S AsSlice[T]](other S)` accepts ANY contiguous source via the
+// `AsSlice[T]` protocol bound (methods `@as_ptr() -> *T`, `@len() -> int`), not just a
+// concrete `Vec[T]`. `Vec[T]` implements `AsSlice[T]`, so `@append` works for:
+//   • vec → vec (bulk-copy via RawMem.copy / memmove);
+//   • empty sources / empty targets (no-op when the source len is 0);
+//   • self-append (`a.append(a)` — after @reserve the regions [0,m) and [len,len+m)
+//     are disjoint, so memmove is correct and yields the doubled sequence);
+//   • slice-views (`v[a..b]` = `[]T` ≡ `Vec[T]` with an interior pointer) — the view's
+//     `@as_ptr()`/`@len()` describe the windowed contiguous region.
+// Spec: spec/decisions/02-types.md:13025 (D299). Depends on D239 (`[]T ≡ Vec[T]`),
+// D144 (sub-slice views), D72 (protocol bound). Part of the SINGLE
+// `spec_tests.conformance` folder-module; D-prefixed names avoid clashes.
+module spec_tests.conformance
+
+test "append a concrete Vec via the AsSlice bound — bulk-copies the elements (D299)" {
+    mut a = Vec[int].of(1, 2, 3)
+    ro b = Vec[int].of(4, 5)
+    a.append(b)
+    assert(a == [1, 2, 3, 4, 5])
+    assert(a.len() == 5)
+}
+
+test "append degenerate cases — empty source is a no-op, empty target absorbs (D299)" {
+    // empty source appended to non-empty target → unchanged
+    mut x = Vec[int].of(1, 2, 3)
+    ro emptySrc = Vec[int].of()
+    x.append(emptySrc)
+    assert(x == [1, 2, 3])
+    // non-empty source appended to empty target → becomes the source sequence
+    mut y = Vec[int].of()
+    ro src = Vec[int].of(7, 8, 9)
+    y.append(src)
+    assert(y == [7, 8, 9])
+    // both empty → still empty
+    mut z = Vec[int].of()
+    ro emptyB = Vec[int].of()
+    z.append(emptyB)
+    assert(z.len() == 0)
+}
+
+test "self-append via AsSlice — memmove keeps [0,m) and [len,len+m) disjoint (D299)" {
+    mut s = Vec[int].of(1, 2, 3)
+    s.append(s)
+    assert(s == [1, 2, 3, 1, 2, 3])
+    assert(s.len() == 6)
+}
+
+test "append a slice-view (`v[a..b]` is AsSlice over the windowed region) (D299)" {
+    mut dst = Vec[int].of(1, 2, 3)
+    ro src = Vec[int].of(0, 4, 5, 6, 99)
+    ro view = src[1..4]            // [4, 5, 6) — contiguous windowed view
+    assert(view.len() == 3)
+    dst.append(view)
+    assert(dst == [1, 2, 3, 4, 5, 6])
+    assert(dst.len() == 6)
+}

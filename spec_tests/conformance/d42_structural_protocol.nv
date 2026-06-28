@@ -1,0 +1,70 @@
+// D42 — `protocol` keyword для структурных интерфейсов: `type` = ДАННЫЕ (record),
+// `protocol` = ПОВЕДЕНИЕ (набор сигнатур как контракт). Норма (spec/decisions/02-types.md
+// §D42): структурные интерфейсы объявляются отдельным kind-токеном `protocol`; методы
+// внутри protocol-блока пишутся БЕЗ `fn`, с `@`-receiver; любой тип со структурно
+// совпадающими `@`-методами АВТОМАТИЧЕСКИ удовлетворяет protocol'у — без `impl`/`for`/
+// declared-relationship. Канонический пример самой нормы — type-safe equality с `Self`
+// в сигнатуре (`eq(other Self) -> bool`, см. §D42 «Раньше: protocol Hash { eq(other Self) }»).
+// POS-наблюдаемое ядро D42 здесь: ИМЕНОВАННЫЙ multi-method behavior-контракт (включая
+// `Self`-типизированный метод), удовлетворяемый структурно ДВУМЯ независимыми record-типами,
+// которые НИГДЕ не называют protocol; все методы контракта (в т.ч. `Self`-equality) реально
+// диспетчеризуются на конкретный тип. D-prefixed уникальные имена — общий folder-module.
+module spec_tests.conformance
+
+// Behavior-контракт через `protocol` (НЕ data): несколько сигнатур, методы без `fn`,
+// `@`-receiver. `@same(other Self)` — D42-канонический Self-в-сигнатуре (type-safe eq).
+type D42Ordered protocol {
+    @rank() -> int
+    @same(other Self) -> bool
+}
+
+// Реализатор #1 — голый `type` (ДАННЫЕ), нигде не называет D42Ordered; совместим структурно.
+type D42Coin {
+    weight int
+}
+
+fn D42Coin @rank() -> int => @weight
+fn D42Coin @same(other D42Coin) -> bool => @weight == other.weight
+
+// Реализатор #2 — другой независимый record, тоже совместим лишь по совпадению `@`-методов.
+type D42Tier {
+    level int
+    note int
+}
+
+fn D42Tier @rank() -> int => @level
+fn D42Tier @same(other D42Tier) -> bool => @level == other.level
+
+// Контракт требуется через protocol-bound; ВСЕ методы контракта (rank + Self-equality)
+// диспетчеризуются на конкретный T. Использует только rank/same — оба из protocol-блока.
+fn d42_outranks[T D42Ordered](a T, b T) -> bool =>
+    !a.same(b) && a.rank() > b.rank()
+
+test "именованный protocol-контракт удовлетворён структурно, без declared-relationship (D42)" {
+    ro hi = D42Coin { weight: 9 }
+    ro lo = D42Coin { weight: 4 }
+    // rank 9 > 4 и не same → outranks истинно. Диспетчеризация на D42Coin.@rank/@same.
+    assert(d42_outranks(hi, lo))
+    assert(!d42_outranks(lo, hi))
+}
+
+test "тот же protocol удовлетворяет ВТОРОЙ независимый тип — структурно, не номинально (D42)" {
+    ro top = D42Tier { level: 3, note: 100 }
+    ro mid = D42Tier { level: 2, note: 999 }
+    // note игнорируется методами — поведение решает @rank/@same. Диспетчеризация на D42Tier.
+    assert(d42_outranks(top, mid))
+    assert(!d42_outranks(mid, top))
+}
+
+test "Self-типизированный метод контракта (eq(other Self)) реально вызывается на конкретном типе (D42)" {
+    ro a = D42Coin { weight: 5 }
+    ro b = D42Coin { weight: 5 }
+    ro c = D42Coin { weight: 6 }
+    // @same — D42-канонический Self-в-сигнатуре: тело метода решает равенство.
+    assert(a.same(b))
+    assert(!a.same(c))
+    // equal-веса → outranks ложно (Self-equality короткозамыкает), distinct-веса → по rank.
+    assert(!d42_outranks(a, b))
+    assert(d42_outranks(c, a))
+    assert(a.rank() == 5)
+}
