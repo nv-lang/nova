@@ -1,0 +1,18 @@
+// D54 — `expr as T` числовые конверсии (spec/decisions/02-types.md, План 05/07).
+// Покрыто: int→int narrowing wraparound (truncate); float→int saturation (План 07: out-of-range→
+// границы, neg-uint→0); int→float widening. ВАЖНО: `as` биндит ТУЖЕ унарного минуса, поэтому
+// `(-1.0) as u16` — со скобками (без них `-1.0 as u16` = `-(1.0 as u16)`; прецедентность — см. checklist).
+module spec_tests.conformance
+
+test "int→u8 narrowing — wraparound (truncate младших битов): 300 → 44 (D54)" {
+    assert(300 as u8 == 44)
+}
+test "float→u16 saturation — neg → 0 (План 07): (-1.0) → 0 (D54)" {
+    assert((-1.0) as u16 == 0)
+}
+test "float→i16 saturation — > INT16_MAX → 32767 (План 07): 70000.5 → 32767 (D54)" {
+    assert(70000.5 as i16 == 32767)
+}
+test "int→f64 widening: 123 → 123.0 (D54)" {
+    assert(123 as f64 == 123.0)
+}
