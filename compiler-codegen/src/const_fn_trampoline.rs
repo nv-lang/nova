@@ -1071,7 +1071,9 @@ fn infer_generic_subst(
 /// Recursive unification. Если pattern (const_fn's TypeRef) — generic
 /// param name (single Named, no generics, в generic_names set) — match с
 /// concrete. Иначе recurse structurally. Mismatch — Err.
-fn unify_type(
+/// Plan 172.1 Session C: pub(crate) — переиспользуется `build_recv_subst` для
+/// структурной унификации nested-receiver (`Vec[Vec[T]]`) вместо shallow-zip.
+pub(crate) fn unify_type(
     pattern: &TypeRef,
     concrete: &TypeRef,
     generic_names: &HashSet<String>,

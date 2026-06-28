@@ -9990,8 +9990,12 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         match peeled_out {
+            // ARM 3/4 (Array/FixedArray) + ARM 2 (Tuple) STILL bail — снимаются позже (gap #2).
             TypeRef::Array(..) | TypeRef::FixedArray(..) | TypeRef::Tuple(..) => return None,
-            TypeRef::Named { generics, .. } if !generics.is_empty() => return None,
+            // Plan 172.1 Session C ARM 1 (RE-ATTEMPT после build_recv_subst flatten-fix): Named-with-
+            // generics container-return КАНАЛИЗИРУЕТСЯ. Теперь SAFE — build_recv_subst (15371)
+            // структурно унифицирует nested receiver (`Vec[Vec[T]]`→`T→str`, не `Vec[str]`), так что
+            // `out` корректен (flatten больше не даёт `Vec[Vec[str]]`). Разблокирует P4b/Ф.3 для Named.
             _ => {}
         }
         Some(out)
@@ -15383,6 +15387,21 @@ fn build_recv_subst(recv: &Receiver, recv_ty: &TypeRef) -> HashMap<String, TypeR
         match t {
             TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => t = i,
             _ => break,
+        }
+    }
+    // Plan 172.1 Session C (flatten nested-receiver fix, [M-153.5-flatten-nested-receiver]): если
+    // доступна ПОЛНАЯ структурная форма declared receiver (`receiver_ty`), СТРУКТУРНО унифицируем её
+    // с `t` (peeled recv_ty), связывая typevars на ЛЮБОЙ глубине. shallow-zip ниже мис-биндит
+    // вложенный receiver (`Vec[Vec[T]]` зипит `T→Vec[str]`, должно `str` → корень flatten-регрессии).
+    // `unify_type` для ФЛЭТ-receiver даёт ТО ЖЕ (`Vec[T]` vs `Vec[str]` → `T→str`) — byte-identical
+    // для flat, корректирует лишь nested. Fall-through на legacy при Err (spelling-mismatch) / no-bind.
+    if let Some(decl_ty) = &recv.receiver_ty {
+        let names_set: HashSet<String> = names.iter().cloned().collect();
+        let mut s = HashMap::new();
+        if crate::const_fn_trampoline::unify_type(decl_ty, t, &names_set, &mut s).is_ok()
+            && !s.is_empty()
+        {
+            return s;
         }
     }
     let concrete: Vec<TypeRef> = match t {
