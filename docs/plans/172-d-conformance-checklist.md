@@ -108,3 +108,16 @@ consuming через id-return. Нужен careful анализ consume-checker 
 
 **V-трек триаж ЗАВЕРШЁН (6 gaps):** d52✅FIXED(codegen) · d54✅FIXED(test-bug прецедентность) ·
 d123✅FIXED · d55.1(involved base) · d156(uncertain) · d326(=172.4 Ф.3).
+
+## d156 — ПОДТВЕРЖДЁН КОМПИЛЯТОР-GAP (2026-06-28, control-test)
+Контроль: `id_concrete(consume x D156Tx) -> D156Tx` (НЕ generic) + `consume t2 = id_concrete(t); t2.done()`
+→ **PASS**. Generic `d156_id[T consume](consume x T) -> T` + тот же паттерн → fail (D133 not-consumed на t2).
+**Механизм:** consume-checker НЕ подставляет generic-return `T`→concrete (D156Tx) при `consume t2 =
+<generic-call>` → t2 записан как тип `T` → `t2.done()` не резолвится (done() в `consume_methods["D156Tx"]`,
+не `["T"]`) → obligation не satisfied. ФИКС: consume-checker должен инферить concrete-return generic-вызова
+(подставить inferred type-args в return-тип) перед записью типа consume-binding. Careful base (checker).
+
+**V-трек триаж ОКОНЧАТЕЛЬНО (6/6 definitive):** d52✅FIXED(codegen sum→int) · d54✅FIXED(test-bug
+прецедентность) · d123✅FIXED(test-bug) · d55.1 КОМПИЛЯТОР-GAP(checker+codegen coercion, involved) ·
+d156 КОМПИЛЯТОР-GAP(consume-checker generic-return subst, confirmed) · d326=172.4 Ф.3.
+V-трек как DRIVER: нашёл 4 компилятор-gap (1 fixed: d52) + 2 test-bug (fixed) → база подхватывает d55.1/d156/d326.
