@@ -2246,6 +2246,26 @@ impl CEmitter {
                     return Ok(format!("{}*", mangled));
                 }
                 // User-defined concrete record/sum — pointer to struct.
+                // Plan 172.1 Session C (gap-recon): SAFE env-gated instrumentation — log a
+                // bare-stub return for a generic-TEMPLATE name (or bare type-param `T`/`K`) with
+                // EMPTY type-args and NO subst entry. That is exactly the mono-subst-population
+                // gap (container-receiver erased-body emits with empty current_type_subst →
+                // `Nova_Lru*` instead of `Nova_Lru____...*`). Behavior-UNCHANGED (only eprintln),
+                // zero cost in release (`#[cfg(debug_assertions)]`) — §7 «измерять до правки».
+                #[cfg(debug_assertions)]
+                if args.is_empty()
+                    && (self.generic_type_templates.contains_key(&full)
+                        || (full.len() <= 2
+                            && full.chars().next().map_or(false, |c| c.is_ascii_uppercase())))
+                    && std::env::var("NOVA_BAIL_GAPLOG").is_ok()
+                {
+                    eprintln!(
+                        "[bail-gap] bare-stub name={} subst_len={} overrides_len={}",
+                        full,
+                        self.current_type_subst.len(),
+                        self.type_subst_overrides.borrow().len()
+                    );
+                }
                 format!("Nova_{}*", full)
             }
         })
