@@ -2201,6 +2201,16 @@ impl CEmitter {
             },
             "CancelToken" => "NovaCancelToken*".to_string(),
             "Write" => "Nova_StringBuilder*".to_string(),
+            // D239 `[]T ≡ Vec[T]` (D315 §0/§3): the NOMINAL `Vec[T]` and the slice sugar
+            // `[]T` (both now `Named{Vec}`) lower through the SINGLE canonical Vec→C source
+            // `resolved_array_to_c` — closure-array (`NovaArray_void_p*`), unresolved-stub
+            // erasure, and the `Nova_Vec____<elem>*` mono worklist/instance-info side-effects
+            // all live in ONE place, not a divergent generic-path copy. `[]T` is byte-
+            // identical (its lowering was ALREADY `resolved_array_to_c`); `Vec[T]` now matches
+            // it (was the divergent generic path — D239 demands they be identical). Only the
+            // bare `Vec` (empty module) intercepts; a qualified `Vec` stays on the generic
+            // path below (unreachable for the prelude `Vec`).
+            "Vec" if args.len() == 1 => return self.resolved_array_to_c(&args[0]),
             _ => {
                 // Protocol (value-erased): non-generic → NovaBox_<proto> (the bare name,
                 // mirroring type_ref_to_c's `path.last()`); generic → void*.

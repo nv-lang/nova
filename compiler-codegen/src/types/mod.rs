@@ -77,6 +77,13 @@ pub enum ResolvedType {
     /// invisible to `cat_compatible_rt`/`distinct_mono` (both read `name`, not the struct).
     /// Full path for the future `resolved_type_to_c` lowering = `module ++ [name]`.
     Named { name: String, module: Vec<String>, args: Vec<ResolvedType> },
+    /// Plan 172.1: NO LONGER the `[]T` slice carrier — `[]T`/`Vec[T]` canonicalize to the
+    /// NOMINAL `Named{Vec}` (D239/D315 §0, ONE C-lowering window). `R::Array` now carries
+    /// ONLY (a) `[N]T` fixed-arrays from `from_type_ref` (the `N` is still dropped —
+    /// pre-existing, [M-172.1-fixedarray-N]) and (b) the INTERNAL category key from
+    /// `resolved_cat_of` (`Vec`/`[]`/`[N]` → `R::Array(elem)`, never lowered to C — used
+    /// only by `cat_compatible_rt`/`distinct_mono`). Folding the category side onto
+    /// `Named{Vec}` (then deleting this variant) is the orthogonal follow-up.
     Array(Box<ResolvedType>),
     Tuple(Vec<ResolvedType>),
     /// U.5.5(c) (D315 lossless): `effects` carries the FULL resolved effect TYPE, not a
@@ -155,9 +162,28 @@ impl ResolvedType {
                     None => R::Any,
                 }
             }
-            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
-                R::Array(Box::new(R::from_type_ref(inner)))
-            }
+            // D239 `[]T ≡ Vec[T]` — canonicalize the slice sugar to the NOMINAL `Vec[T]`
+            // carrier (D315 §0: ONE canonical `ResolvedType`; `[]T` and `Vec[T]` are the
+            // SAME type → MUST be structurally equal). Bare `Vec` ⇒ empty `module` (matches
+            // the bare-`Vec[T]` Named arm above). RECURSIVE by construction: `[][]T` →
+            // `Vec[Vec[T]]`, any nesting (the inner `from_type_ref` re-canonicalizes). The
+            // C-lowering single-source is `resolved_array_to_c` (closure-array / stub-erasure
+            // / Vec-mono worklist), reached for BOTH `[]T` and `Vec[T]` via the `"Vec"` arm
+            // in `resolved_named_to_c` → byte-identical for `[]T`, D239-correct for `Vec[T]`.
+            // (`resolved_cat_of` still yields `R::Array` for the category-compatibility key —
+            // an INTERNAL structural key never lowered to C, so the D315 "two C windows"
+            // concern is closed here; folding the category side onto `Named{Vec}` is the
+            // orthogonal follow-up.)
+            TypeRef::Array(inner, _) => R::Named {
+                name: "Vec".to_string(),
+                module: Vec::new(),
+                args: vec![R::from_type_ref(inner)],
+            },
+            // `[N]T` fixed-size array is a DISTINCT built-in (stack-allocated, carries `N`) —
+            // NOT growable `Vec`. It currently shares the `R::Array` carrier (the `N` is
+            // dropped — pre-existing lossiness, kept byte-identical to legacy); separating it
+            // into an `N`-carrying variant is the orthogonal follow-up [M-172.1-fixedarray-N].
+            TypeRef::FixedArray(_, inner, _) => R::Array(Box::new(R::from_type_ref(inner))),
             TypeRef::Tuple(elems, _) => R::Tuple(elems.iter().map(R::from_type_ref).collect()),
             TypeRef::Func { params, return_type, effects, .. } => R::Func {
                 params: params.iter().map(R::from_type_ref).collect(),
@@ -484,11 +510,31 @@ mod resolved_type_tests {
 
     #[test]
     fn array_element_lossless() {
+        // D239 `[]T ≡ Vec[T]` (D315 §0): the slice sugar canonicalizes to the NOMINAL
+        // `Vec[T]` carrier (`Named{Vec}` with bare/empty module), element lossless.
         let arr = TypeRef::Array(Box::new(prim_ref("u32", Span::dummy())), Span::dummy());
         assert_eq!(
             ResolvedType::from_type_ref(&arr),
-            ResolvedType::Array(Box::new(ResolvedType::Scalar { width: 32, signed: false, wide_default: false }))
+            ResolvedType::Named {
+                name: "Vec".to_string(),
+                module: Vec::new(),
+                args: vec![ResolvedType::Scalar { width: 32, signed: false, wide_default: false }],
+            }
         );
+    }
+
+    #[test]
+    fn nested_array_canonicalizes_recursively() {
+        // `[][]u8` → `Vec[Vec[u8]]` (recursive canonicalization, any nesting).
+        let inner = TypeRef::Array(Box::new(prim_ref("u8", Span::dummy())), Span::dummy());
+        let outer = TypeRef::Array(Box::new(inner), Span::dummy());
+        let u8_scalar = ResolvedType::Scalar { width: 8, signed: false, wide_default: false };
+        let vec = |a: ResolvedType| ResolvedType::Named {
+            name: "Vec".to_string(),
+            module: Vec::new(),
+            args: vec![a],
+        };
+        assert_eq!(ResolvedType::from_type_ref(&outer), vec(vec(u8_scalar)));
     }
 
     #[test]
@@ -6817,9 +6863,19 @@ impl<'a> TypeCheckCtx<'a> {
                         if let Some(tr) = self.infer_expr_type(x, scope) {
                             let rt = ResolvedType::from_type_ref(&tr);
                             if Self::primitive_gate(&rt) {
-                                self.resolved_types_buf
-                                    .borrow_mut()
-                                    .insert(e.id, ResolvedType::Array(Box::new(rt)));
+                                // D239/D315 §0: channel the canonical NOMINAL `Vec[T]`
+                                // carrier (not the retired `R::Array` slice form). Lowers
+                                // byte-identically — `resolved_type_to_c(Named{Vec})` routes
+                                // to `resolved_array_to_c` via the `"Vec"` arm, exactly as
+                                // `R::Array` did.
+                                self.resolved_types_buf.borrow_mut().insert(
+                                    e.id,
+                                    ResolvedType::Named {
+                                        name: "Vec".to_string(),
+                                        module: Vec::new(),
+                                        args: vec![rt],
+                                    },
+                                );
                             }
                         }
                     }
