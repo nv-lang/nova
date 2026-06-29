@@ -36390,13 +36390,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if ir_c != legacy
                         && matches!(
                             &expr.kind,
-                            ExprKind::RecordLit { .. } | ExprKind::TupleLit(_) | ExprKind::SelfAccess
+                            ExprKind::RecordLit { .. }
+                                | ExprKind::TupleLit(_)
+                                | ExprKind::SelfAccess
+                                | ExprKind::Path(_)
                         )
                         && std::env::var("NOVA_U45_RLCHECK").is_ok()
                     {
                         let k = match &expr.kind {
                             ExprKind::TupleLit(_) => "tuple",
                             ExprKind::SelfAccess => "self",
+                            ExprKind::Path(_) => "path",
                             _ => "record",
                         };
                         eprintln!(

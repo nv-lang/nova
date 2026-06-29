@@ -6386,6 +6386,43 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 172.1 P67 ФАЗА 2 STEP 1 — numeric-type-constant Path (`int.MAX` / `u8.MIN` /
+        // `f64.EPSILON` / `char.MAX`). The value `T.CONST` HAS type `T` — a fundamental fact
+        // (§0), NOT a duplicated codegen table: channel `T`'s ResolvedType DIRECTLY (DECOUPLED —
+        // no `infer_expr_type` extension, per the 172.1.2 perturbation lesson). Lowered via the
+        // single `resolved_type_to_c` this is byte-identical to the legacy
+        // `numeric_type_constant_mapping` c-type for EVERY row EXCEPT the two legacy collapses
+        // `i64.MAX→nova_int` (channel→`int64_t`) and `char.MAX→nova_int` (channel→`nova_char`):
+        // those two are the §0 / named-priority FIX (i64 ≠ int = intptr_t; char = codepoint, D327),
+        // not a regression. The constant's C *value* (e.g. `((nova_int)INT64_MAX)`) stays emitted
+        // by the legacy path (its side-effects always run); only the expression's *type* channels.
+        if let ExprKind::Path(parts) = &e.kind {
+            if e.id.is_set() && parts.len() == 2 {
+                let is_numeric_const = matches!(
+                    parts[1].as_str(),
+                    "MAX" | "MIN" | "MIN_POSITIVE" | "EPSILON" | "NAN"
+                        | "INFINITY" | "NEG_INFINITY" | "PI" | "E"
+                );
+                if is_numeric_const {
+                    let prim: Option<ResolvedType> =
+                        ResolvedType::scalar_from_int_name(&parts[0]).or_else(|| {
+                            match parts[0].as_str() {
+                                "f32" => Some(ResolvedType::Float { width: 32 }),
+                                "f64" => Some(ResolvedType::Float { width: 64 }),
+                                "char" => Some(ResolvedType::Named {
+                                    name: "char".to_string(),
+                                    module: Vec::new(),
+                                    args: Vec::new(),
+                                }),
+                                _ => None,
+                            }
+                        });
+                    if let Some(rt) = prim {
+                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                    }
+                }
+            }
+        }
         // Plan 172.1 U.4.5 (RecordLit slice — NON-GENERIC records): materialize a typed
         // record literal's resolved type into the checker channel so codegen READS it via the
         // SINGLE `resolved_type_to_c` instead of the legacy `infer_expr_c_type` RecordLit
