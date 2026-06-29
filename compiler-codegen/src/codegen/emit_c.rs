@@ -15631,7 +15631,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if let Some(trailing) = &block.trailing {
                     self.emit_source_annotation_for_expr(trailing);
                     let trailing_ty = self.infer_expr_c_type(trailing);
-                    let val = self.emit_expr(trailing)?;
+                    // Plan 172.1 [M-172.1-some-target-coerce]: a `NovaOpt_<X>` / typed-integer
+                    // return coerces the trailing TO the return type so a context-typed payload
+                    // literal lowers to X — `Some(<int-literal>) -> Option[uint]` builds
+                    // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (named-
+                    // priority int-collapse → CC-FAIL, surfaced by d86_coalesce_width). Gated on
+                    // the NovaOpt_/typed-int ret surface so the common path keeps `emit_expr`.
+                    let val = if ret_c.starts_with("NovaOpt_") || Self::is_typed_integer(&ret_c) {
+                        self.emit_expr_with_target_type(trailing, &ret_c)?
+                    } else {
+                        self.emit_expr(trailing)?
+                    };
                     self.leave_defer_scope(block_id);
                     if ret_c == "nova_unit" {
                         self.line(&format!("{};", val));
@@ -16523,7 +16533,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if let Some(trailing) = &block.trailing {
                     self.emit_source_annotation_for_expr(trailing);
                     let trailing_ty = self.infer_expr_c_type(trailing);
-                    let val = self.emit_expr(trailing)?;
+                    // Plan 172.1 [M-172.1-some-target-coerce]: a `NovaOpt_<X>` / typed-integer
+                    // return coerces the trailing TO the return type so a context-typed payload
+                    // literal lowers to X — `Some(<int-literal>) -> Option[uint]` builds
+                    // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (named-
+                    // priority int-collapse → CC-FAIL, surfaced by d86_coalesce_width). Gated on
+                    // the NovaOpt_/typed-int ret surface so the common path keeps `emit_expr`.
+                    let val = if ret_c.starts_with("NovaOpt_") || Self::is_typed_integer(&ret_c) {
+                        self.emit_expr_with_target_type(trailing, &ret_c)?
+                    } else {
+                        self.emit_expr(trailing)?
+                    };
                     self.leave_defer_scope(block_id);
                     if ret_c == "nova_unit" {
                         self.line(&format!("{};", val));
@@ -17293,7 +17313,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         match &f.body {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
-                let val = self.emit_expr(e)?;
+                // Plan 172.1 [M-172.1-some-target-coerce]: an arrow-body `=> expr` return
+                // coerces the expr TO the return type for the NovaOpt_<X>/typed-int surface,
+                // so `=> Some(<int-literal>)` in `-> Option[uint]` builds NovaOpt_nova_uint,
+                // not the literal-default NovaOpt_nova_int (named-priority int-collapse →
+                // CC-FAIL, surfaced by d86_coalesce_width). Common path keeps `emit_expr`.
+                let val = if ret.starts_with("NovaOpt_") || Self::is_typed_integer(&ret) {
+                    self.emit_expr_with_target_type(e, &ret)?
+                } else {
+                    self.emit_expr(e)?
+                };
                 // Plan 72 P3-B return: box the trailing value for a protocol return type.
                 let val = self.wrap_protocol_return(val, e);
                 if ret == "nova_unit" {
@@ -18323,7 +18352,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let post_label = self.contracts_post_label.clone();
         if let Some(trailing) = &block.trailing {
             self.emit_source_annotation_for_expr(trailing);
-            let val = self.emit_expr(trailing)?;
+            // Plan 172.1 [M-172.1-some-target-coerce]: NovaOpt_<X>/typed-int return coerces
+            // the trailing to the return type — `Some(<int-literal>) -> Option[uint]` builds
+            // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (int-collapse).
+            let val = if ret_ty.starts_with("NovaOpt_") || Self::is_typed_integer(ret_ty) {
+                self.emit_expr_with_target_type(trailing, ret_ty)?
+            } else {
+                self.emit_expr(trailing)?
+            };
             // Plan 72 P3-B return: box the trailing value for a protocol return type.
             let val = self.wrap_protocol_return(val, trailing);
             if let Some(label) = post_label {
@@ -19863,6 +19899,32 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // Plan 118 Ф.5: NPO-aware None constructor.
                     let sani = target_ty_c.strip_prefix("NovaOpt_").unwrap_or(target_ty_c);
                     return Ok(self.option_none_expr(sani));
+                }
+            }
+            // Plan 172.1 [M-172.1-some-target-coerce] (2026-06-30): `Some(arg)` in a
+            // `NovaOpt_<X>` target — emit the payload WITH target X so a context-typed
+            // numeric literal coerces to X (D55) instead of defaulting to `nova_int`.
+            // Without this, `Some(<int-literal>) -> Option[uint]` builds `NovaOpt_nova_int`
+            // ≠ the declared `NovaOpt_nova_uint` (named-priority int-collapse → CC-FAIL,
+            // surfaced by d86_coalesce_width). Parallel to the `None` arm above; reached
+            // ONLY in genuinely target-typed positions (return / annotated let / `??`
+            // fallback target), NOT bare sub-exprs (those keep the deliberate arg-type-
+            // priority of the `Some` emit, :22982). Gated on a TYPED-INTEGER inner (the
+            // int-collapse surface) so pointer/struct payloads keep the existing
+            // sanitize/register flow untouched.
+            if let ExprKind::Call { func, args, .. } = &expr.kind {
+                if let ExprKind::Ident(cn) = &func.kind {
+                    if cn == "Some" && args.len() == 1 {
+                        let inner = target_ty_c
+                            .strip_prefix("NovaOpt_")
+                            .unwrap_or(target_ty_c);
+                        if Self::is_typed_integer(inner) {
+                            let arg_v = self
+                                .emit_expr_with_target_type(args[0].expr(), inner)?;
+                            self.register_novaopt_decl(inner, inner);
+                            return Ok(self.option_some_expr(inner, &arg_v));
+                        }
+                    }
                 }
             }
         }
