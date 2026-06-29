@@ -4655,11 +4655,36 @@ distinct from `nova_int`.
 
 ## D129. `int` как alias `i64` в bootstrap Nova
 
+> ## ⚠️ AMEND (Plan 133) — ЧИТАЙ ПЕРВЫМ: `int` = `intptr_t`, **НЕ** `int64_t`
+>
+> ### **`int` = `nova_int` = `intptr_t` — ЗНАКОВОЕ ADDRESS-SIZED ЦЕЛОЕ (модель Go C-эры `intgo`), а НЕ `int64_t`.**
+>
+> - **`int`** → `nova_int` (`typedef intptr_t`) — ширина = ширине указателя платформы
+>   (64 бита на x86_64/ARM64, 32 бита на 32-bit/WASM). См.
+>   [`nova_rt.h`](../../compiler-codegen/nova_rt/nova_rt.h): `typedef intptr_t nova_int; /* int — signed address-sized (Go C-era intgo, Plan 133) */`.
+> - **`i64`** → `int64_t` — **ВСЕГДА ровно 64 бита**, независимо от платформы.
+> - На bootstrap-таргете (x86_64, 64-битный указатель) `int` и `i64` **СОВПАДАЮТ по ширине и
+>   значению** — отсюда историческое слово «alias» в заголовке/теле ниже — **НО это РАЗНЫЕ C-типы**:
+>   `primitive_name_to_c` даёт `int → nova_int` и `i64 → int64_t`, поэтому их **mangle-имена
+>   РАЗЛИЧАЮТСЯ** (`NovaOpt_nova_int` ≠ `NovaOpt_int64_t`; `Map[int,V]` ≠ `Map[i64,V]` по C-имени).
+> - **«int ≡ i64» — совпадение ШИРИНЫ на 64-бит, НЕ тождество типов.** Не считать `int` равным
+>   `i64`/`int64`: аналогия — **Go `int` ≠ `int64`**, **Rust `isize` ≠ `i64`** (platform-pointer-width).
+>   На 32-bit/WASM `int` станет 32-битным, `i64` останется 64-битным.
+> - **Следствие для §0/named-priority:** числовая константа/выражение типа `i64` НЕ должна
+>   схлопываться в `nova_int` (и наоборот) — это разные типы (см. Plan 172.1 P67 ФАЗА 2 STEP 1,
+>   де-коллапс `i64.MAX→int64_t`). То же `char` (codepoint, `nova_char`) ≠ `int`.
+>
+> Текст «**Решение / Мотивация / Codegen**» НИЖЕ — **ИСТОРИЧЕСКИЙ** (Plan 70.4, до Plan 133):
+> его утверждения «оба → `nova_int` (`typedef int64_t`)» и «mangle идентичен» **УСТАРЕЛИ** —
+> читать как «совпадают по ширине на 64-bit», а C-тип `nova_int` теперь `intptr_t`, не `int64_t`.
+
 **Решение.** Тип `int` в Nova bootstrap является **alias** для `i64`
-(64-bit signed integer). Оба маппируются в C-тип `nova_int`
-(`typedef int64_t`). Отсутствие distinction в codegen — **намеренно**:
-это не collapse-баг (как в Plan 70.3 `char/int`), а архитектурный
-bootstrap-invariant.
+(64-bit signed integer) **ПО ШИРИНЕ/ЗНАЧЕНИЮ на 64-bit таргете** (см. ⚠️ AMEND выше —
+C-типы РАЗНЫЕ: `int`→`nova_int`=`intptr_t`, `i64`→`int64_t`). ~~Оба маппируются в C-тип
+`nova_int` (`typedef int64_t`)~~ **[УСТАРЕЛО Plan 133]**. Отсутствие distinction в codegen
+~~намеренно~~ относится к bootstrap-x86_64 (где ширины совпадают), но `int` и `i64` —
+**различимые типы** (разный C-typedef, разный mangle): это не collapse-баг, а address-sized
+vs fixed-width архитектурное различие (Plan 133).
 
 **Мотивация.** Audit Plan 70.4 выявил, что `int` и `i64` используют
 один C-тип. Mangle для `Map[int, V]` и `Map[i64, V]` идентичен. В
