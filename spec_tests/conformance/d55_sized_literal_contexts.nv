@@ -1,0 +1,28 @@
+// D55 (sized-literal contexts) — a context-typed numeric LITERAL must coerce to the EXPECTED
+// sized/unsigned type, not default to signed `nova_int`. Each test uses an unsigned `2^63`
+// literal whose signed-collapse reads NEGATIVE, so `> 100` discriminates a width-preserving
+// lower from an int-collapse. LOCKS the record-field and call-argument positions (both already
+// coerce correctly). NOTE: the tuple-literal-element-in-typed-return position (`(0x80,0x80) ->
+// (uint,uint)`) is a KNOWN remaining int-collapse gap — its целевая form is the U.4 literal-
+// coercion channel (checker materializes the coerced element types; codegen consumes), NOT a
+// 4th per-position codegen patch (§0 «целевая форма vs per-case заплата»). Tracked in
+// 172.1-p67-phase2-map.md. Spec: spec/decisions/02-types.md (D55 literal coercion).
+module spec_tests.conformance
+
+// ── record-field: a field-position literal coerces to the field's declared type ──
+type D55WBox {
+    v uint
+}
+fn d55w_box() -> D55WBox => { v: 0x8000000000000000 }
+
+test "record-field literal coerces to uint field type (D55)" {
+    ro b = d55w_box()
+    assert(b.v > 100)        // field uint preserved
+}
+
+// ── call argument: an arg-position literal coerces to the parameter's declared type ──
+fn d55w_takes(x uint) -> bool => x > 100
+
+test "call-argument literal coerces to uint parameter (D55)" {
+    assert(d55w_takes(0x8000000000000000))   // 2^63 as uint arg → x > 100 unsigned
+}
