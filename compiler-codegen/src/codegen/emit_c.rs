@@ -28903,18 +28903,23 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             "nova_unit".into()
         } else {
             let then_diverges = self.block_trailing_diverges(then);
-            let then_ty = then.trailing.as_ref()
-                .map(|e| self.infer_expr_c_type(e))
-                .unwrap_or_else(|| "nova_unit".into());
+            // Plan 172.1 [M-codegen-if-branch-locals-overlay] (2026-06-29): infer the
+            // then-branch trailing type against the branch's OWN let-locals — pre-register
+            // them into var_types (overlay) first, exactly as `emit_block_expr` does
+            // (:29641-29673). Without this, a branch trailing that references a branch-local
+            // binding (`if c { ro b = f()?; Some(b) } else { … }`) infers that binding to a
+            // STALE same-named `var_types` entry leaked from a prior fn (var_types is not
+            // per-fn scoped) — e.g. d85 typed the `Option[int]` if-result as `Option[str]`
+            // (leaked str `b`) → CC-FAIL. The branch is not emitted yet here, so its locals
+            // are absent; the overlay supplies them transiently for the type probe.
+            let then_ty = self.branch_trailing_c_type_with_locals(then);
             // Compute the else-branch type + divergence symmetrically with the
             // then-branch, so the unit-domination fallback below can see EITHER
             // side being unit (the fluent-tail may be in then OR else).
             let (else_diverges, else_ty): (bool, String) = match else_ {
                 Some(ElseBranch::Block(b)) => (
                     self.block_trailing_diverges(b),
-                    b.trailing.as_ref()
-                        .map(|e| self.infer_expr_c_type(e))
-                        .unwrap_or_else(|| "nova_unit".into()),
+                    self.branch_trailing_c_type_with_locals(b),
                 ),
                 Some(ElseBranch::If(e)) => (
                     self.expr_diverges_125(e),
@@ -29678,6 +29683,38 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.indent -= 1;
         self.line("}");
         Ok(tmp)
+    }
+
+    /// Plan 172.1 [M-codegen-if-branch-locals-overlay] (2026-06-29): infer a branch
+    /// block's trailing C-type with the block's OWN `let`-locals transiently registered
+    /// in `var_types`, then restore. Mirrors the stale-var guard in `emit_block_expr`
+    /// (:29641-29673): `var_types` is NOT per-fn scoped, so a same-named binding leaked
+    /// from a prior fn would hijack the trailing-type probe (d85: an `Option[int]`
+    /// if-result mis-typed `Option[str]` from a leaked str `b`). The branch is not
+    /// emitted yet at the probe site (its locals absent), so the overlay supplies them
+    /// transiently. Trailing-less block → "nova_unit". Type-probe only — no emission.
+    fn branch_trailing_c_type_with_locals(&mut self, block: &Block) -> String {
+        let mut saved: Vec<(String, Option<String>)> = Vec::new();
+        for stmt in &block.stmts {
+            if let crate::ast::Stmt::Let(d) = stmt {
+                if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                    let ty = d.ty.as_ref()
+                        .and_then(|t| self.type_ref_to_c(t).ok())
+                        .unwrap_or_else(|| self.infer_expr_c_type(&d.value));
+                    saved.push((name.clone(), self.var_types.insert(name.clone(), ty)));
+                }
+            }
+        }
+        let ty = block.trailing.as_ref()
+            .map(|e| self.infer_expr_c_type(e))
+            .unwrap_or_else(|| "nova_unit".into());
+        for (name, old) in saved.into_iter().rev() {
+            match old {
+                Some(t) => { self.var_types.insert(name, t); }
+                None => { self.var_types.remove(&name); }
+            }
+        }
+        ty
     }
 
     // ---- for loop ----
