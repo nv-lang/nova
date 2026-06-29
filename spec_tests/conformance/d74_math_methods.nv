@@ -2,10 +2,11 @@
 // Math.fn / free fn). Behavioral: результаты различают корректную математику.
 // Spec: spec/decisions/08-runtime.md (D74). Один folder-module CU.
 //
-// FINDING (§1-баг, отмечено для базы): на INT методы `signum()` / `clamp(lo,hi)` (и вероятно
-// `pow`/`is_negative`/`is_positive`) дают CC-FAIL «member reference base nova_int» — чекер
-// принимает вызов, codegen эмитит `int.field` (int не структура). Эти int-методы СНЯТЫ из
-// теста до фикса базы; abs/min/max на int работают.
+// signum/is_negative/is_positive на int добавлены в std/runtime/defaults.nv (D74 мандатит
+// их для int — §2253-2256 спеки); раньше отсутствовали → CC-FAIL «member reference base
+// nova_int». clamp на int работает (Nova_int_method_clamp). Остаётся §1-finding: чекер
+// ПРИНИМАЕТ genuinely-undefined int-метод (напр. `pow` пока нет .nv-тела) → CC-FAIL leak
+// вместо чистой диагностики (анти-паттерн §0/§1 «категориальное несовпадение ловит C»).
 module spec_tests.conformance
 
 test "int math-методы — abs/min/max (D74)" {
@@ -14,6 +15,20 @@ test "int math-методы — abs/min/max (D74)" {
     assert((42).abs() == 42)
     assert((3).min(8) == 3)
     assert((3).max(8) == 8)
+}
+
+test "int sign-методы — signum/is_negative/is_positive/clamp (D74)" {
+    assert((-5).signum() == -1)
+    assert((0).signum() == 0)
+    assert((7).signum() == 1)
+    ro neg int = -5
+    assert(neg.is_negative())
+    assert(!(neg.is_positive()))
+    assert((7).is_positive())
+    assert(!((7).is_negative()))
+    assert((15).clamp(0, 10) == 10)      // выше hi → hi
+    assert((5).clamp(0, 10) == 5)        // в диапазоне → сам
+    assert((-3).clamp(0, 10) == 0)       // ниже lo → lo
 }
 
 test "f64 math-методы — sqrt/abs/floor/ceil/round/min/max (D74)" {
