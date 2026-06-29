@@ -166,19 +166,9 @@ impl Numberer {
     /// (codegen falls back). f64 wins; a typed-int (sized i8..u64 except `i64`, plus
     /// `char` — exactly `is_typed_integer`) beats `int`; else the LEFT type.
     fn promote_arith(&self, left: &Expr, right: &Expr) -> Option<crate::types::ResolvedType> {
-        use crate::types::ResolvedType as R;
         let l = self.lits.get(&left.id)?;
         let r = self.lits.get(&right.id)?;
-        if is_f64(l) || is_f64(r) {
-            return Some(R::Float { width: 64 });
-        }
-        if is_typed_int(l) && is_nova_int(r) {
-            return Some(l.clone());
-        }
-        if is_typed_int(r) && is_nova_int(l) {
-            return Some(r.clone());
-        }
-        Some(l.clone())
+        Some(promote_arith_rt(l, r))
     }
 
     fn item(&mut self, item: &mut Item) {
@@ -485,14 +475,46 @@ fn is_nova_int(rt: &crate::types::ResolvedType) -> bool {
 }
 
 /// Mirrors `infer_expr_c_type::is_typed_integer` EXACTLY in ResolvedType terms:
-/// the sized int C-typedefs {u8..u64, i8..i32} PLUS `char` — i.e. every sized
-/// scalar EXCEPT `i64` (whose C-type `int64_t` is absent from that set), and NEVER
-/// the wide `int`/`uint`.
+/// the sized int C-typedefs {u8..u64, i8..i32} PLUS `char` PLUS `uint` (`nova_uint`)
+/// — i.e. every sized scalar EXCEPT `i64` (whose C-type `int64_t` is absent from that
+/// set) and the wide signed `int` (`nova_int`). Plan 172.1 RANK 1: `uint` MUST be in
+/// the set so it beats the wide-default `int` in mixed arithmetic (`1 + uint_n` → uint,
+/// not int) — legacy `is_typed_integer` already lists `nova_uint` (Plan 172.1-K2); the
+/// former `wide_default:false`-only gate wrongly excluded it (only `int` is excluded).
 fn is_typed_int(rt: &crate::types::ResolvedType) -> bool {
     use crate::types::ResolvedType as R;
     match rt {
         R::Scalar { width, signed, wide_default: false } => !(*width == 64 && *signed),
+        // `uint` = Scalar{64, unsigned, wide_default:true} — typed 64-bit unsigned.
+        R::Scalar { width: 64, signed: false, wide_default: true } => true,
         R::Named { name, args, .. } if args.is_empty() && name.as_str() == "char" => true,
         _ => false,
     }
+}
+
+/// Plan 172.1.1 (RANK 1 — named-priority int-de-collapse): the SINGLE canonical
+/// primitive arith/bitwise/shift promotion on `ResolvedType`. Shared by the seed
+/// (`SeedPass::promote_arith`) and the checker Binary-arm (`f1_expr` in
+/// `types/mod.rs`) so BOTH produce the same result and neither re-derives a second
+/// rule (§0 — one source, no drift; the legacy consumer `infer_expr_c_type`'s Binary
+/// `_` arm mirrors this on C-strings and is the fallback). Rule: f64 wins; a
+/// typed/sized int (i8..u64 except i64, plus `char` — `is_typed_int`) beats wide
+/// `int`/`uint`; else the LEFT type. Caller guarantees both operands are
+/// numeric-promotable (non-numeric → caller declines so operator-overload `@plus`
+/// returns are not mis-annotated).
+pub(crate) fn promote_arith_rt(
+    l: &crate::types::ResolvedType,
+    r: &crate::types::ResolvedType,
+) -> crate::types::ResolvedType {
+    use crate::types::ResolvedType as R;
+    if is_f64(l) || is_f64(r) {
+        return R::Float { width: 64 };
+    }
+    if is_typed_int(l) && is_nova_int(r) {
+        return l.clone();
+    }
+    if is_typed_int(r) && is_nova_int(l) {
+        return r.clone();
+    }
+    l.clone()
 }

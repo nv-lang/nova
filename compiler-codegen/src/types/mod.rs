@@ -6552,23 +6552,47 @@ impl<'a> TypeCheckCtx<'a> {
                 // here (keeps the change isolated to this annotation — does NOT alter
                 // infer_expr_type's other consumers):
                 //   - comparison/logical/implication → `bool` (byte-identical to legacy `nova_bool`);
-                //   - arithmetic/bitwise/shift → the operand type (left, else right). Preserves a
-                //     type-param `T` for generic bodies — `resolved_type_to_c` resolves it via
-                //     `current_type_subst` at codegen, so the annotation is mono-correct.
-                // Un-inferrable arithmetic operands → no annotation → falls to legacy (consumer).
+                //   - arithmetic/bitwise/shift → the PRIMITIVE-PROMOTED operand type via the shared
+                //     `number_exprs::promote_arith_rt` (§0 — same rule as the seed + legacy): a
+                //     typed/narrow int (u8/i16/u32/uint…) or f64 beats wide `int` REGARDLESS of
+                //     operand position. Plan 172.1.1 RANK 1 fix: the former `infer(left).or_else(right)`
+                //     was positional luck — `2 * a` (a:u8) stamped `int` because the literal-LEFT
+                //     short-circuited, dropping the u8 width (uint≠int, u8≠int). Annotate ONLY when
+                //     BOTH operands infer; an un-inferrable operand → None → falls to legacy (which
+                //     has Member/Index arms). Non-numeric operands (operator-overload `@plus`, str,
+                //     generic `T`) keep the prior left-operand annotation (codegen resolves the
+                //     overload return / mono-substitutes `T` via `current_type_subst`).
                 if e.id.is_set() {
                     use crate::ast::BinOp;
-                    let res_tr: Option<TypeRef> = match op {
+                    let res_rt: Option<ResolvedType> = match op {
                         BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
                         | BinOp::And | BinOp::Or | BinOp::Implies | BinOp::Iff => {
-                            Some(prim_ref("bool", e.span))
+                            Some(ResolvedType::Bool)
                         }
-                        _ => self
-                            .infer_expr_type(left, scope)
-                            .or_else(|| self.infer_expr_type(right, scope)),
+                        _ => match (
+                            self.infer_expr_type(left, scope),
+                            self.infer_expr_type(right, scope),
+                        ) {
+                            (Some(l_tr), Some(r_tr)) => {
+                                let l = ResolvedType::from_type_ref(&l_tr);
+                                let r = ResolvedType::from_type_ref(&r_tr);
+                                let is_num = |rt: &ResolvedType| {
+                                    matches!(
+                                        rt,
+                                        ResolvedType::Scalar { .. } | ResolvedType::Float { .. }
+                                    ) || matches!(rt, ResolvedType::Named { name, args, .. }
+                                        if args.is_empty() && name.as_str() == "char")
+                                };
+                                if is_num(&l) && is_num(&r) {
+                                    Some(crate::number_exprs::promote_arith_rt(&l, &r))
+                                } else {
+                                    Some(l)
+                                }
+                            }
+                            _ => None,
+                        },
                     };
-                    if let Some(tr) = res_tr {
-                        let rt = ResolvedType::from_type_ref(&tr);
+                    if let Some(rt) = res_rt {
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     }
                 }
