@@ -8556,6 +8556,31 @@ impl<'a> TypeCheckCtx<'a> {
                     return;
                 }
                 if let Some(field) = fields.iter().find(|f| f.name == name) {
+                    // Plan 172.1 RANK 2 (named-priority de-collapse): the Record arm (above)
+                    // materializes a substituted concrete field type into the channel, but this
+                    // NamedTuple arm discarded it (§1 validation-discard) → a GENERIC NamedTuple
+                    // field (`Pair[u8].a`) fell to the codegen `nova_int` fallback, because the
+                    // legacy generic-template substitution path handles only `Record`, not
+                    // NamedTuple. Mirror the Record arm's U.4.4/U.4.5 block so the authoritative
+                    // consumer emits the correct narrow C type (u8→nova_byte) independent of that
+                    // legacy gap. Same primitive_gate/concrete_value_named gate → only DETERMINISTIC
+                    // C-types channeled (no mono/generic-inference hazard); a NON-generic NamedTuple
+                    // primitive field stays byte-identical (legacy already resolves it via the
+                    // self-describing `NovaTuple_X` schema), `int`/`uint` fields stay nova_int/nova_uint.
+                    if member_id.is_set() {
+                        let field_ty =
+                            self.subst_receiver_generics(&field.ty, &td.generics, recv_type_args);
+                        let rt = ResolvedType::from_type_ref(&field_ty);
+                        let concrete_value_named = matches!(&rt,
+                            ResolvedType::Named { name, args, .. }
+                                if args.is_empty()
+                                    && self.types.get(name).map_or(false, |td| matches!(&td.kind,
+                                        TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
+                                        | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
+                        if Self::primitive_gate(&rt) || concrete_value_named {
+                            self.resolved_types_buf.borrow_mut().insert(member_id, rt);
+                        }
+                    }
                     // Plan 124.4 (D222) + 124.6 (D225): priv field READ check
                     // для named tuple — uniform allowance с Record.
                     if field.priv_field
