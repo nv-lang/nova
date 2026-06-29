@@ -36452,6 +36452,50 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
             }
         }
+        // Plan 172.1 P67 ФАЗА 2 — Ident/SelfAccess consumer-side relocation (gap-measure driver #1:
+        // Ident = 43% of legacy fall-through). For an UN-ANNOTATED Ident/SelfAccess whose name is a
+        // tracked local (`var_types`), RETURN the reliable per-local C-type DIRECTLY — the SAME 3-level
+        // source the legacy Ident/SelfAccess arm uses for the var_types-present case (BYTE-IDENTICAL;
+        // legacy levels 4-5 sum_registry/nova_int are unreachable when var_types present), NOT a
+        // re-derive. This removes the legacy-RETURN dependency for the dominant local-Ident surface
+        // WITHOUT changing any type: no producer annotation → no mono/GC-layout perturbation (the
+        // 172.1.2 hazard was producer-side type CHANGE; this is consumer-side SAME-VALUE relocation,
+        // §0 «материализуй резолв» on the consumer side). Idents ABSENT from var_types (globals/consts
+        // → legacy levels 4-5) still fall through. `legacy` already ran above (its typedef/mono
+        // side-effects are preserved); only the RETURNED string moves off legacy. NOVA_U45_IDENTCHK
+        // audits byte-identity (expect 0 divergence).
+        if expr.id.is_set() {
+            match &expr.kind {
+                ExprKind::SelfAccess if self.var_types.contains_key("nova_self") => {
+                    let raw = self.var_types.get("nova_self").cloned().unwrap();
+                    let v = if raw.starts_with("NovaValue_") && raw.ends_with('*') {
+                        raw.trim_end_matches('*').trim().to_string()
+                    } else {
+                        raw
+                    };
+                    #[cfg(debug_assertions)]
+                    if v != legacy && std::env::var("NOVA_U45_IDENTCHK").is_ok() {
+                        eprintln!("[U45-identchk] v={} legacy={} kind=self id={:?}", v, legacy, expr.id);
+                    }
+                    return v;
+                }
+                ExprKind::Ident(n) if self.var_types.contains_key(n) => {
+                    let v = if let Some(ty) = self.closure_param_type_overrides.borrow().get(n) {
+                        ty.clone()
+                    } else if let Some(ty) = self.pattern_binding_overrides.borrow().get(n) {
+                        ty.clone()
+                    } else {
+                        self.var_types.get(n).cloned().unwrap()
+                    };
+                    #[cfg(debug_assertions)]
+                    if v != legacy && std::env::var("NOVA_U45_IDENTCHK").is_ok() {
+                        eprintln!("[U45-identchk] v={} legacy={} name={} id={:?}", v, legacy, n, expr.id);
+                    }
+                    return v;
+                }
+                _ => {}
+            }
+        }
         // Plan 172.1 U.4.5 (gap-measure): env-gated debug tally of exprs that FALL BACK to the
         // legacy re-derive (= un-annotated surface = the blockers for deleting `infer_expr_c_type_legacy`).
         // Logs the expr KIND + whether it had an annotation (resolved_type_to_c returned Err) vs none.
