@@ -101,7 +101,11 @@ Green==1, Blue==2` PASS (target_alt). Combined full-regress (с ARM2) → commit
 - Codegen decl-value: обернуть значение в `nova_make_<sum>_<ctor>(value)` когда target = single-ctor
   sum (прецедент record-coercion emit_c.rs:5328). Full-regress. (d55.2/.4 уже merged.)
 
-**d156 (uncertain — gap ИЛИ test-bug):** `consume t2 = d156_id(t); t2.done()` → D133 not-consumed на t2.
+**d156 (GAP — classified 2026-06-29: consume-checker generic-return-subst):** `consume_methods` keyed по
+КОНКРЕТНОМУ типу (mod.rs:16423); для `consume t2=generic_call()` checker держит t2 как generic T, return-type
+subst (T→концрет via `resolve_instance_method_return`) НЕ применён к типу consume-var → consume-method `done()`
+не в `consume_methods["T"]` → не трекается → D133. FIX: в consume-flow применить return-subst к типу consume-var
+ПЕРЕД linearity-проверкой. Involved (consume-checker sensitive → §7-verify). Исходный симптом: `consume t2 = d156_id(t); t2.done()` → D133 not-consumed на t2.
 Consume-checker видит t2 как generic T; consume-метод done() на конкретном D156Tx не трекается как
 consuming через id-return. Нужен careful анализ consume-checker (где трекаются obligations + распознаётся
 ли method-call-consume на generic-typed binding). НЕ классифицирован.
