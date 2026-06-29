@@ -39751,6 +39751,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let lhs_ty = self.infer_expr_c_type(lhs);
                 if lhs_ty.starts_with("NovaOpt_") {
                     lhs_ty.strip_prefix("NovaOpt_").unwrap_or("nova_int").to_string()
+                } else if Self::is_result_like(&lhs_ty) {
+                    // Plan 172.1 [M-172.1-coalesce-result-okty] (2026-06-30): `Result[T,E] ?? fb`
+                    // yields the Ok type `T`, NOT the fallback `rhs` type — mirror the `Try`/`Bang`
+                    // arm (:39788). Без этого `Result[uint,str] ?? 0` инферил тип ИЗ fallback-
+                    // литерала `0` (`nova_int`) → unannotated `ro got = … ?? 0` становился signed
+                    // int и uint-payload `2^63` читался НЕГАТИВОМ (named-priority int-collapse →
+                    // RUN-FAIL, surfaced by d85_result_payload_width). Fallback на rhs-тип при
+                    // неразрешимом Ok (паритет с прежним поведением).
+                    self.novares_ok_err(&lhs_ty)
+                        .or_else(|| self.infer_result_type_params(lhs))
+                        .map(|(ok, _)| ok)
+                        .unwrap_or_else(|| self.infer_expr_c_type(rhs))
                 } else {
                     self.infer_expr_c_type(rhs)
                 }
