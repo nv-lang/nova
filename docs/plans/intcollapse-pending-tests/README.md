@@ -13,8 +13,8 @@ int-collapse **ПОВСЕМЕСТЕН**, не «почти обработан».
 
 | D | поверхность | исход | КОРЕНЬ |
 |---|---|---|---|
-| **D401** | `match`-как-значение | RUN-FAIL ✓эмпирически | bare int-литерал в арме → `int` (types/mod.rs:9765 + emit_c.rs:36794); match-result-тип = `int`; UNANNOTATED `got` наследует `int`; 2^63 → i64::MIN негатив. НЕТ Match-арма в `emit_expr_with_target_type` (:19978) → target не доходит до арм. |
-| **D413** | `if`-как-значение | RUN-FAIL | ТОТ ЖЕ корень что D401 (нет If-арма в emit_expr_with_target_type; if-result = `int`). |
+| **D401** | `match`-как-значение | RUN-FAIL ✓ | **МИС-ФРЕЙМ агента + ИСТИННЫЙ корень (spec-уточнено):** тест-литерал `0x8000000000000000` БЕЗ uint-контекста = `int` сверх i64.MAX → по спеке (02-types.md:969 + 03-syntax.md:9396) ДОЛЖЕН быть **`E_LIT_OUT_OF_RANGE`** compile error, НЕ «preserve uint». Текущее молчаливое заворачивание в i64::MIN = §1/§4-баг (нарушает спеку). **Фикс = checker-диагностика** на wide-default int-литерал > i64.MAX (range-check сейчас fires только при sized_int_name=Some). ШИРОКИЙ blast-radius → ПОЛНЫЙ регресс (§7). Тест переделать в NEG (EXPECT_COMPILE_ERROR) ЛИБО дать uint-контекст. ОТДЕЛЬНО: match/if-value-С-контекстом coercion (Some/tuple-класс) — не покрыто этим тестом. |
+| **D413** | `if`-как-значение | RUN-FAIL | ТОТ ЖЕ (мис-фрейм + overflow-not-caught). Фикс = тот же checker range-check на wide-default int > i64.MAX. |
 | ~~D410~~ | ~~tuple-destructure~~ | ✅ **ЗАКРЫТО** | ~~аннотация `(uint,uint)` отброшена~~ → ФИКС [M-172.1-tuple-destructure-annot]: `emit_tuple_destructure` принимает `decl.ty`, эмитит элементы через `emit_expr_with_target_type` (коэрсия литерала к declared-элементу, НЕ fallback). Lock в conformance. |
 | ~~D412~~ | ~~default-arg + const~~ | ✅ **ЗАКРЫТО** (4 кейса) | ФИКС [M-172.1-default-arg-typed]: callnorm desugar default-arg → `let_stmt_typed(param.ty)` (Let-путь коэрсит через target-type) + [M-172.1-const-binary-typed]: `emit_const_expr_typed` Binary-арм пропагирует target в арифм. операнды. Lock в conformance. |
 | **D405** | mixed-width compare | RUN-FAIL ✓ (скомпилён+прогнан) | Binary lt-wins (emit_c.rs:36883 «оба typed — берём lt») усекает к ЛЕВОМУ операнду → `u8+u16`≠`u16+u8` (СЛОМАНА КОММУТАТИВНОСТЬ). Корень = arith-result-width берёт left, не wider. |
@@ -31,10 +31,20 @@ tuple-destructure, default-arg, const-binary). Это **literal-coercion кан�
 
 D405 (width-pick lt→wider) и D408 (chain-receiver inference) — ОТДЕЛЬНЫЕ корни, но тоже в legacy-infer.
 
-**Открытый SPEC-вопрос (D401/D413, no-context):** `0x8000000000000000` БЕЗ uint-контекста — это
-genuinely `int`-литерал, переполняющий i64 (→ i64::MIN). Целевая: чекер ДОЛЖЕН либо (a) `[E_*]` на
-out-of-range int-литерал (Rust-прецедент), либо (b) дефолтить в наименьший вмещающий unsigned. Это
-§1/§4 (молчаливое неверное значение). Решается по spec D44/D130 — НЕ угадывать, свериться со спекой.
+**SPEC-вопрос РЕШЁН (D401/D413, no-context):** свериться со спекой дало ответ — `0x8000000000000000`
+БЕЗ uint-контекста = `int`-литерал сверх i64.MAX → **`E_LIT_OUT_OF_RANGE` compile error**
+(02-types.md:969 «Выход за диапазон — compile error E_LIT_OUT_OF_RANGE»; 03-syntax.md:9396-9398
+примеры). Текущее молчаливое заворачивание (i64::MIN) НАРУШАЕТ спеку (§1/§4). Фикс = checker range-check
+на wide-default int-литерал > i64.MAX (сейчас :9594 fires только при sized_int_name=Some). ШИРОКИЙ
+blast-radius → §7 полный регресс; не marathon-end. Эти 2 теста переделать в NEG или дать uint-контекст.
+
+## Прогресс закрытия (2026-06-30)
+Из 7 багов: **2 ЗАКРЫТО** — D410 (tuple-destructure, 4bfa4ce8), D412 (default-arg+const, da934613).
+**ОСТАЛОСЬ 5:** D401/D413 (overflow-not-caught — checker range-check, §7-широкий), D405 (mixed-width
+lt-wins — checker promote_arith_rt pick-wider), D402 (light-closure defaults), D408 (option-chain
+receiver inference). + ранее (вне 13): Some-literal (a0a2a2dd), Coalesce-Result (62c0f57f). Итого
+**4 int-collapse фикса** эту сессию + 6 локов. Остаток = checker-изменения (регрессо-опасны, §7) +
+complex (closure/chain) → fresh-focus.
 
 ## Off-topic находки (НЕ int-collapse, отдельно)
 - **C-keyword-as-identifier**: `ro inline = …` → codegen эмитит `nova_uint inline = …` = невалидный C
