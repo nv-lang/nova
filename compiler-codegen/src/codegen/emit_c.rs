@@ -38540,16 +38540,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             // Fail-form read_*: возвращает unboxed T (через
                             // Fail-throw на error). Тип зависит от method.
                             "read_byte" | "read_u8" => "nova_byte".into(),
-                            "read_i8" => "nova_int".into(),
+                            // Plan 172.1 RANK 3: read_i8 declares `-> i8` → int8_t, not nova_int.
+                            "read_i8" => "int8_t".into(),
                             "read_bytes" => "NovaArray_nova_byte*".into(),
                             // Plan 13 Ф.9.4: codepoint-уровневые reads.
                             "read_char" => "nova_int".into(),  // char хранится как nova_int
                             "read_str"  => "nova_str".into(),
-                            "read_u16_le" | "read_u16_be"
-                            | "read_u32_le" | "read_u32_be"
-                            | "read_u64_le" | "read_u64_be"
-                            | "read_i16_le" | "read_i16_be"
-                            | "read_i32_le" | "read_i32_be"
+                            // Plan 172.1 RANK 3 (named-priority): each sized read_* declares a
+                            // narrow return (std/runtime/read_buffer.nv) — emit its width-exact C
+                            // type, not a collapsed nova_int (u16 != u32 != i16 != int). Mirrors the
+                            // always-linked primitive_name_to_c table. 64-bit reads stay nova_int
+                            // (the u64/i64-sign distinction is a separate decision; int64↔nova_int
+                            // are width-equal). The deeper §1 fix routes these through the resolved-
+                            // callees channel (fn_ret_by_span already holds the correct width).
+                            "read_u16_le" | "read_u16_be" => "uint16_t".into(),
+                            "read_u32_le" | "read_u32_be" => "uint32_t".into(),
+                            "read_i16_le" | "read_i16_be" => "int16_t".into(),
+                            "read_i32_le" | "read_i32_be" => "int32_t".into(),
+                            "read_u64_le" | "read_u64_be"
                             | "read_i64_le" | "read_i64_be" => "nova_int".into(),
                             "read_f32_le" | "read_f32_be"
                             | "read_f64_le" | "read_f64_be" => "nova_f64".into(),
