@@ -21863,6 +21863,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     let sani = left_ty.strip_prefix("NovaOpt_").unwrap_or(&left_ty);
                     let some_check = self.option_is_some_check(&opt_tmp, sani);
                     Ok(format!("({} ? {}.value : {})", some_check, opt_tmp, r))
+                } else if Self::is_result_like(&left_ty) {
+                    // D86: `Result ?? fb` — `Ok(v)` → `v`, `Err(_)` → `fb` (ошибка отброшена).
+                    // Зеркалит Result-layout из `!!`/`?` (NovaRes_* указатель: явный tag
+                    // `->tag == NOVA_TAG_Result_Ok`, Ok-payload `->payload.Ok._0`; у Result
+                    // НЕТ NPO, в отличие от Option). Раньше Result-ветка была
+                    // `/*?? unsupported */` (silent gap, всегда возвращала fallback вопреки
+                    // D86) — это её §3/§0/§4-закрытие (spec-conformance).
+                    let res_tmp = self.fresh_tmp();
+                    self.line(&format!("{} {} = {};", left_ty, res_tmp, l));
+                    Ok(format!(
+                        "({tmp}->tag == NOVA_TAG_Result_Ok ? {tmp}->payload.Ok._0 : {r})",
+                        tmp = res_tmp,
+                        r = r
+                    ))
                 } else {
                     Ok(format!("({} /*?? unsupported */ , {})", l, r))
                 }

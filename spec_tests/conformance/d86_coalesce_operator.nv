@@ -12,6 +12,9 @@ fn d86_lookup(k int) -> Option[int] {
     None
 }
 
+fn d86_parse_ok() -> Result[int, str] => Ok(42)
+fn d86_parse_err() -> Result[int, str] => Err("bad input")
+
 test "?? on Option — Some разворачивается, None → fallback (D86)" {
     ro hit = d86_lookup(1) ?? 0
     assert(hit == 10)             // Some(10) → 10  (fallback не взят)
@@ -19,9 +22,12 @@ test "?? on Option — Some разворачивается, None → fallback (D
     assert(miss == 7)             // None → fallback 7
 }
 
-// NOTE: `?? on Result` (Ok разворачивается / Err → fallback) НЕ покрыт здесь — на текущем
-// компиляторе `Ok(42) ?? -1` не вернул 42 (вероятный gap D86-на-Result: десугар `??` не
-// обрабатывает Ok/Err, только Some/None). Отдельным заходом после проверки/фикса базы.
+test "?? on Result — Ok разворачивается, Err → fallback, ошибка отброшена (D86)" {
+    ro ok = d86_parse_ok() ?? -1
+    assert(ok == 42)              // Ok(42) → 42  (gap-fix: было /*unsupported*/ → всегда fallback)
+    ro err = d86_parse_err() ?? -1
+    assert(err == -1)             // Err("bad input") → fallback -1 (str-ошибка отброшена)
+}
 
 test "?? fallback — произвольное выражение внутреннего типа (D86)" {
     ro base = 100
