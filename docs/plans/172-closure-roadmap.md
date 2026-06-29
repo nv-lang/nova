@@ -7,8 +7,9 @@
 > (detect→blast→migrate→verify-vs-CLEAN+ПОЛНЫЙ регресс, НЕ сэмпл — урок Ф.3) + spec_tests/conformance per-D.
 
 ## Критический путь
-**A(int-де-схлопывание) → B(bounded channeling) ‖ REG(registry) → C(GC-hardening) → D(P67 удаление legacy) → E(FIN endgame) → F(172.4 value-ABI) → G(172.5 mut-ref) → ЗОНТ ЗАКРЫТ.**
-A и REG автономны (старт сразу); C(GC) — самый дорогой РЕАЛЬНЫЙ блокер, разведку рано параллельно.
+**A(int-де-схлопывание)✅ → B(bounded channeling)🟡 ‖ REG(registry: REG-0✅) → C(container/generic channeling)✅ → D(P67 удаление legacy)📋 → E(FIN endgame)📋 → F(172.4 value-ABI)📋 → G(172.5 mut-ref)📋 → ЗОНТ ЗАКРЫТ.**
+
+> **СТАТУС-ПОПРАВКА 2026-06-29 (свериться по git/README, не по этому doc):** A✅, REG-0✅, **C✅ (Session C ARM 1-4 — GC-блокер СНЯТ, путь B codegen-mono-subst viable БЕЗ Plan 144 GC-hardening: bail-removal НЕ segfault'ит, см. f971a3ab)**, 172.2 первый-шаг, 172.3✅, + RANK 1/2/3 residual-collapse✅ (см. Session B ниже). **Plan 144 (precise GC) НЕ нужен для 172 — он P3 long-horizon, «не блокирует».** Остаток = D(P67)/E(FIN)/F(172.4)/G(172.5). Этот doc ниже частично описывает C(GC) как pending — УСТАРЕЛО.
 
 ## V — D-conformance acceptance suite (= **172.1 U.7** расширенный) — ПАРАЛЛЕЛЬНО ВСЕМ фазам, driver закрытия
 Независимая верификация: **каждый 172-релевантный D-блок (172.1-172.5 scope) → conformance-тест в `spec_tests/conformance/`** (один пир-модуль, минимум CU; против ТЕКУЩЕЙ spec-семантики с inline-амендментами; forward-compat D — carrier-level). **Проходящий = D конформен (часть 172 закрыта); падающий = gap (driver code-работы A-G).** Когда suite ПОЛОН и весь зелёный + legacy удалён (D) → движок конформен спеке/D = **критерий приёмки зонта**. Идёт ‖ всем code-фазам (не блокирует, не блокируется — это U.7 «C не ловит типы», broadened). Покрыто: D130 (uint K1/K4), D328 (==Ф.2); авторено (триаж): D52/D54/D55/D72/D119/D123/D125/D128/D129/D156/D215/D216/D226/D239/D310/D315/D326/D327. Методология: [test-conventions.md §spec/D-conformance suite].
@@ -34,7 +35,8 @@ A и REG автономны (старт сразу); C(GC) — самый дор
 - **REG-1** declared-intrinsic table (gc/bench/fibers/runtime из .nv extern-сигнатур); **REG-2** build_base индексирует Item::Type→is_known_type registry-aware; **REG-3** 3 name-res сайта→единый predicate + сузить PascalCase-permissive-hole (§3 soundness); **REG-4** remove stdlib-имена из builtins:HashSet (оставить language_builtins); **REG-5** remove include_str!+BUILTIN_SIG_MODULES (sync/net GATED U.4); **REG-6** method_overloads из единого SigRegistry (soundness-гейт, не byte-identical); **REG-7** unblocks U.3.2/net-slice/generic-Index.
 - §10 ordering — главный риск: REG-0 ПЕРВЫМ; REG-5 строго после REG-0+2+3+4; sync/net GATED U.4. Каждое removal — revertable-коммит + FULL regress.
 
-## Session C — container/generic channeling блокер. **ВЕРДИКТ recon: путь B (codegen-mono-subst), НЕ Plan 144.** → [172.1-session-c-gc-recon.md](172.1-session-c-gc-recon.md)
+## Session C — container/generic channeling. **✅ ЗАКРЫТО (ARM 1-4, GC-блокер СНЯТ).** → [172.1-session-c-gc-recon.md](172.1-session-c-gc-recon.md)
+> **✅ 2026-06-28: Session C сделана.** ARM 1 (Named, `0a1c586e`) · ARM 2 (Tuple, `5c321823`) · ARM 3+4 (Array/FixedArray, `2ded2bdf`) — container-return bail СНЯТ, 0 регрессий vs baseline. **Прорыв `f971a3ab`: bail-removal НЕ segfault'ит → GC-блокер СНЯТ, путь B viable БЕЗ Plan 144 GC-hardening.** Остаточный §0-долг `[M-172.1-typeparam-infer-erasure]` (bare type-param erasure в inference/non-mono, recv=None) — латентен, часть channel-completeness к P67. Текст ниже = историческая разведка (до закрытия).
 - Блокер СУЖЕН (recon `wf_ba30367c-daf`): `types/mod.rs:9992-9996` container-bail имеет ДВЕ причины — (a) mono-subst-timing-layout-crash [КАНАЛ], (b) f3_check_member false-positive [INLINE]. **DECOUPLE (`types/mod.rs:9717-9723`) УЖЕ изолировал (b) от канала** → channeling упирается ТОЛЬКО в (a).
 - **B (codegen-time mono-subst annotation)** — §0-выровнен (тот же канал + единый `resolved_type_to_c` с subst-резолвом `emit_c.rs:2120-2127`), §7-измерим. A (Plan 144 GC-hardening: Boehm conservative `slot_size`-зависимый root-range → layout-Heisenbug→SEGV) = 6-12 мес, parallel GC-носитель, Plan 144 ЯВНО «не блокирует» + NOT STARTED (144.2/144.3/144.0.1 🔴). Ф.3-урок (robust EMIT-based, not infer) подтверждает B.
 - **План B:** (1) container-возврат → ResolvedType в канал, лоуэрить в mono-эмиссии (subst populated); снять bail ПОЭТАПНО по арму. (2) энумерировать mono-side subst-population gaps (env-log в `resolved_named_to_c`; proba D: gaps = МНОЖЕСТВО, сломала modules/lru). (3) закрыть gaps + restore modules/lru. (4) verify plan154 no-segfault + полный регресс.
@@ -58,5 +60,5 @@ A и REG автономны (старт сразу); C(GC) — самый дор
 3. §0/§10: каждый фикс СТРОИТ к единому источнику (resolved_type_to_c/primitive_name_to_c), НЕ патчит расходящийся путь. Band-aid «receiver uint→nova_uint» ОТВЕРГНУТ в пользу делегации.
 4. §1: no silent nova_int — resolve-failure = `[E_*]`, НЕ угаданный тип.
 5. Spec-first §5: неунормированное поведение → D ПЕРЕД кодом; acceptance = spec_tests/conformance/ per-D, ТОЛЬКО проходящие.
-6. Container/generic channeling (P4b/Ф.3) НЕ форсить до GC-hardening — РЕАЛЬНЫЙ блокер. Channel-filling-grind НЕ метрика прогресса.
+6. ~~Container/generic channeling НЕ форсить до GC-hardening — РЕАЛЬНЫЙ блокер.~~ **СНЯТО 2026-06-28:** Session C ARM 1-4 закрыты, bail-removal НЕ segfault'ит → путь B viable БЕЗ Plan 144 (GC-блокер был МНИМЫМ для channeling). Channel-filling-grind НЕ метрика прогресса (остаётся).
 7. git add конкретных файлов; `git diff --cached --stat` до commit; БЕЗ Co-Authored-By Claude; commit на задачу.
