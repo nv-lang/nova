@@ -22,6 +22,11 @@ A и REG автономны (старт сразу); C(GC) — самый дор
 
 ## Session B — bounded legacy-channeling (‖ REG). Consumer-flip READY, работа в ЧЕКЕРЕ.
 - **172.1-P** (P1-P5/P4a): P1 generator-self-typing; P2 Member/Index→канал из checker SCHEMA (НЕ poisoned array_element_types); P3 Binary-result (остаток generic-operands); P4a bounded-Call→resolved_callees (~60% mechanical U.3); P5 Ident/SelfAccess consumer-lock. COUPLING: lossless-канал из A делает int-flip ЗВУЧНЫМ. Channel-filling DRIED UP (step1 −20) — НЕ гриндить, только bounded-победы.
+- **✅ Numeric residual-collapse audit (2026-06-29, wf_358871b5):** 5 подтверждённых collapse-багов (26 проверено, 21 spec-correct отсеян). Закрыто 3 рангами:
+  - **RANK 1 `ba1aac55`** — checker Binary-арм: позиционный `infer_expr_type(left).or_else(right)` схлопывал `литерал<op>narrowvar` (`2*a`u8, `1+n`u32/uint, `0xFF&b`, сдвиги) в int. Фикс §0: общий `number_exprs::promote_arith_rt` (seed+checker одно правило) + uint в `is_typed_int` (зеркалит legacy). Закрывает 2 бага (A1+A3) + CRC-shift hazard.
+  - **RANK 2 `6912055e`** — `f3_check_member` NamedTuple-арм материализует substituted field-тип в канал (как Record-арм); generic `Pair[u8].a`→nova_byte (был nova_int). Закрывает bug B.
+  - **RANK 3 `d2752b84`** — ReadBuffer sized `read_*` (read_i8/u16/i16/u32/i32) width-exact C-тип вместо хардкод-nova_int. Закрывает bug E. [Layer B: routing через resolved-callees + delete блока — followup.]
+  - **RANK 4 (bug D, DEFERRED — §7-careful session):** `infer_expr_type` (mod.rs:9818) без Binary/Member/Index-армов → `would_narrow_into` (D54) не доходит → `ro c u8 = a+b` молча truncate'ит (НЕ collapse — отсутствие narrowing-диагностики; pre-existing debt `[M-scalar-nonliteral-narrowing-not-enforced]`). HIGHEST-risk (shared inference engine + GC-layout perturbation plan154); нужен detect-mode blast-radius + zero-false-positive калибровка. Каждый ранг: detect172 pos+neg(14/0) + conformance + регресс — зелёные.
 
 ## REG — единый реестр (§0.6, ‖ A, лёгкое касание). → [172.1-reg-execution.md](172.1-reg-execution.md)
 **Coupling с A: PARALLEL** — REG-4 ЯВНО оставляет int-примитивы в language_builtins (удаляет только stdlib-имена); REG-6 наследует A's int-de-collapse в type_ref_to_c БЕСПЛАТНО. REG-0/1/2 ‖ A; REG-4/6/7 sync с финальным int-каноном A.
