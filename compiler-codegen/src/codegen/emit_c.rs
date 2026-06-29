@@ -36404,6 +36404,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // `Self`-without-receiver), fall back to `legacy`.
         if expr.id.is_set() {
             if let Some(rt) = self.resolved_types.get(&expr.id) {
+                // Plan 172.1 U.4.3 (genchk AUDIT — instrument-only, ZERO behavior change):
+                // snapshot the mono registries AFTER `legacy` ran (~:36348, for its side-effects)
+                // and BEFORE lowering the channel annotation, so the audit can report whether
+                // lowering registered a FRESH mono legacy did not (`freshmono`) — the plan154
+                // layout-sensitivity discriminator. Release: compiled out (`NOVA_U43_GENCHK`-gated).
+                #[cfg(debug_assertions)]
+                let u43_wl_before = self.generic_type_worklist.borrow().len();
+                #[cfg(debug_assertions)]
+                let u43_tup_before = self.mono_tuple_instances.borrow().len();
                 if let Ok(ir_c) = self.resolved_type_to_c(rt) {
                     // Plan 172.1 U.4.5 (RecordLit slice xcheck): env-gated, debug-only divergence
                     // log for the NON-generic RecordLit annotation (checker types/mod.rs U.4.5
@@ -36471,6 +36480,23 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             return self.var_types.get(n).cloned().unwrap();
                         }
                         _ => {}
+                    }
+                    // Plan 172.1 U.4.3 genchk AUDIT (instrument-only): characterize the existing
+                    // generic-instance return channeling. For a Call whose channel annotation differs
+                    // from `legacy`, log ch/legacy + whether lowering registered a FRESH mono
+                    // (`freshmono` — the plan154 layout discriminator). NO behavior change — `ir_c` is
+                    // still returned authoritatively. `NOVA_U43_GENCHK=1`; release: compiled out.
+                    #[cfg(debug_assertions)]
+                    if matches!(&expr.kind, ExprKind::Call { .. })
+                        && ir_c != legacy
+                        && std::env::var("NOVA_U43_GENCHK").is_ok()
+                    {
+                        let fresh = self.generic_type_worklist.borrow().len() > u43_wl_before
+                            || self.mono_tuple_instances.borrow().len() > u43_tup_before;
+                        eprintln!(
+                            "[U43-genchk] ch={} legacy={} freshmono={} id={:?}",
+                            ir_c, legacy, fresh, expr.id
+                        );
                     }
                     return ir_c;
                 }
