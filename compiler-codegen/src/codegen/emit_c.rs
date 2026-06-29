@@ -18428,7 +18428,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
                 // Special case: tuple destructure  `let (a, b, c) = expr`
                 if let Pattern::Tuple(pats, _) = &decl.pattern {
-                    return self.emit_tuple_destructure(pats, &decl.value);
+                    return self.emit_tuple_destructure(pats, &decl.value, decl.ty.as_ref());
                 }
                 // Plan 53: record destructure  `let { tx, rx } = expr` /
                 // `let Pair { tx, rx } = expr`. Делегирует биндинг
@@ -31623,7 +31623,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
     // ---- tuple destructure ----
 
-    fn emit_tuple_destructure(&mut self, pats: &[Pattern], value: &Expr) -> Result<(), String> {
+    fn emit_tuple_destructure(&mut self, pats: &[Pattern], value: &Expr, decl_ty: Option<&TypeRef>) -> Result<(), String> {
         // D91 (Plan 21): special-case for `let (tx, rx) = Channel.new(cap)`.
         // Channel.new returns Nova_ChannelPair {tx: Nova_ChanWriter*, rx: Nova_ChanReader*},
         // not a _NovaTuple2. Must be handled before the general case.
@@ -31668,7 +31668,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         match &value.kind {
             ExprKind::TupleLit(elems) => {
                 // Direct pairing: let (a, b) = (x, y) — emit each binding separately
-                for (pat, elem) in pats.iter().zip(elems.iter()) {
+                for (i, (pat, elem)) in pats.iter().zip(elems.iter()).enumerate() {
                     match pat {
                         Pattern::Wildcard(_) => {
                             // Side-effects: emit expr, discard
@@ -31676,8 +31676,27 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             self.line(&format!("(void)({});", v));
                         }
                         Pattern::Ident { name, .. } => {
-                            let ty_c = self.infer_expr_c_type(elem);
-                            let val = self.emit_expr(elem)?;
+                            // Plan 172.1 [M-172.1-tuple-destructure-annot] (2026-06-30): honor the
+                            // declared tuple-element type (`ro (a,b) (uint,uint) = (lit,lit)`) so a
+                            // context-typed literal coerces to the element type instead of defaulting
+                            // to signed `nova_int` (int-collapse, D410). The `(uint,uint)` annotation
+                            // was dropped at the emit_stmt routing site; thread it here and emit each
+                            // element WITH its declared target type. Absent/arity-mismatched annotation
+                            // → byte-identical legacy infer+emit.
+                            let target = decl_ty.and_then(|t| match t {
+                                TypeRef::Tuple(elem_tys, _) if elem_tys.len() == elems.len() => {
+                                    self.type_ref_to_c(&elem_tys[i]).ok()
+                                }
+                                _ => None,
+                            });
+                            let (ty_c, val) = if let Some(tc) = target {
+                                let v = self.emit_expr_with_target_type(elem, &tc)?;
+                                (tc, v)
+                            } else {
+                                let ty_c = self.infer_expr_c_type(elem);
+                                let val = self.emit_expr(elem)?;
+                                (ty_c, val)
+                            };
                             self.var_types.insert(name.clone(), ty_c.clone());
                             self.line(&format!("{} {} = {};", ty_c, name, val));
                         }

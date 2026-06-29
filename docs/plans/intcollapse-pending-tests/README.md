@@ -15,7 +15,7 @@ int-collapse **ПОВСЕМЕСТЕН**, не «почти обработан».
 |---|---|---|---|
 | **D401** | `match`-как-значение | RUN-FAIL ✓эмпирически | bare int-литерал в арме → `int` (types/mod.rs:9765 + emit_c.rs:36794); match-result-тип = `int`; UNANNOTATED `got` наследует `int`; 2^63 → i64::MIN негатив. НЕТ Match-арма в `emit_expr_with_target_type` (:19978) → target не доходит до арм. |
 | **D413** | `if`-как-значение | RUN-FAIL | ТОТ ЖЕ корень что D401 (нет If-арма в emit_expr_with_target_type; if-result = `int`). |
-| **D410** | tuple-destructure | RUN-FAIL ✓ | tuple-pattern `let` аннотация `(uint,uint)` ОТБРАСЫВАЕТСЯ (emit_stmt:18430 игнорит `decl.ty`); элементы типизируются `infer(IntLit)=nova_int`. annotation-drop. |
+| ~~D410~~ | ~~tuple-destructure~~ | ✅ **ЗАКРЫТО** | ~~аннотация `(uint,uint)` отброшена~~ → ФИКС [M-172.1-tuple-destructure-annot]: `emit_tuple_destructure` принимает `decl.ty`, эмитит элементы через `emit_expr_with_target_type` (коэрсия литерала к declared-элементу, НЕ fallback). Lock в conformance. |
 | **D412** | default-arg + const | RUN-FAIL ✓ (4 кейса) | default-arg десугарится в UNANNOTATED `let` → IntLit=nova_int; const binary-op (`>>`/`/`) инициализатор → `emit_const_expr` (не typed) → signed shift/divide вместо unsigned. |
 | **D405** | mixed-width compare | RUN-FAIL ✓ (скомпилён+прогнан) | Binary lt-wins (emit_c.rs:36883 «оба typed — берём lt») усекает к ЛЕВОМУ операнду → `u8+u16`≠`u16+u8` (СЛОМАНА КОММУТАТИВНОСТЬ). Корень = arith-result-width берёт left, не wider. |
 | **D402** | closure-return | MIXED | light-closure (без аннотации) param/ret дефолтят `nova_int` (fn_param_sigs default `["nova_int"]`, :18935). |
