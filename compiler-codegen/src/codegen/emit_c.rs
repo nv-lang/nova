@@ -5417,6 +5417,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let inner = self.emit_const_expr_typed(operand, target_ty_c)?;
                 Ok(format!("(-({}))", inner))
             }
+            // Plan 172.1 [M-172.1-const-binary-typed]: propagate the const's DECLARED target type
+            // to both operands of an ARITH/bitwise binary so `const C uint = 0x80 >> 1` keeps
+            // UNSIGNED operands (logical shift / unsigned divide) instead of collapsing to signed
+            // nova_int (int-collapse, D412). Only arith/bitwise ops propagate (comparison/logic
+            // operands are NOT the const's type); those + absent target → byte-identical legacy.
+            ExprKind::Binary { op, left, right } if target_ty_c.is_some() => {
+                use crate::ast::BinOp;
+                let op_str = match op {
+                    BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*",
+                    BinOp::Div => "/", BinOp::Mod => "%",
+                    BinOp::BitAnd => "&", BinOp::BitOr => "|", BinOp::BitXor => "^",
+                    BinOp::Shl => "<<", BinOp::Shr => ">>",
+                    // comparison / logic / contract ops: operands are not the const's type —
+                    // delegate to the untyped const-binary path (byte-identical).
+                    _ => return self.emit_const_expr(expr),
+                };
+                let l = self.emit_const_expr_typed(left, target_ty_c)?;
+                let r = self.emit_const_expr_typed(right, target_ty_c)?;
+                Ok(format!("(({}) {} ({}))", l, op_str, r))
+            }
             _ => self.emit_const_expr(expr),
         }
     }
