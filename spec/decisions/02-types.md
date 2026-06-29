@@ -13381,7 +13381,7 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
 
 - **`ref` как ТИП** (`ref T`, ref-локалы/поля/возвраты, ref в коллекциях) — Q29 (остаётся отвергнут); вернуло бы лайфтаймы.
 - **Rust/Swift-уровень exclusive-borrow soundness** — Nova сознательно разрешает aliased-mut под GC (D157/D246-P10); берём лишь узкий анти-footgun.
-- **codegen-субсумция `[M-181-ifexpr-value-materialize-codegen]`** — снята: тот баг = `infer_If`/`emit_if_expr` desync (R3-repair), закрыт отдельно (`836befcb`, 2026-06-26); ссылки его НЕ чинят. Его fixture (fluent `-> @`-хвост в if-цепочке) → лишь **acceptance-гейт** 172.5 (должна компилиться после ref-формализации).
+- **codegen-субсумция `[M-177-ifexpr-value-materialize-codegen]`** — снята: тот баг = `infer_If`/`emit_if_expr` desync (R3-repair), закрыт отдельно (`836befcb`, 2026-06-26); ссылки его НЕ чинят. Его fixture (fluent `-> @`-хвост в if-цепочке) → лишь **acceptance-гейт** 172.5 (должна компилиться после ref-формализации).
 
 ### Связь
 

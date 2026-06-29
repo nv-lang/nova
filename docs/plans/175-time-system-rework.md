@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# Plan 179 — Переработка системы времени: типизированный `Time`-эффект (retire int-wire) + overflow-safe Duration + Monotonic из builtin в `.nv` + единый источник схемы
+# Plan 175 — Переработка системы времени: типизированный `Time`-эффект (retire int-wire) + overflow-safe Duration + Monotonic из builtin в `.nv` + единый источник схемы
 
 > **Top-level план.** Создан 2026-06-22; production-hardened 2026-06-22 (cross-lang аудит Go/Rust/TS/Kotlin/Java +
 > adversarial-критика, workflow `plan179-harden`). **Статус:** 📋 READY (все Q закрыты, см. §3.0).
-> **Маркер:** `[M-179-time-system-rework]`. **Запуск:** «**выполни план 179**» (план самодостаточен — вся информация ниже).
+> **Маркер:** `[M-175-time-system-rework]`. **Запуск:** «**выполни план 175**» (план самодостаточен — вся информация ниже).
 > **D-блоки (NEW):** D316 (typed Time-surface + единый источник), D317 (Duration/instant overflow-policy), D318
 > (Monotonic non-regression contract). Amend: D124, D237, prelude-`Time`-decl. (Свободные после D315=172.4; сверить при spec-шаге.)
 > **Координация:** record-через-границу = решено **узкий single-i64 scalar-bridge поверх value-migration** (НЕ блокируемся на
@@ -47,7 +47,7 @@ JS/tokio, см. §1a). Но есть **7 дефектов поверхности
    полностью отсутствовало** → добавлено фазой Ф.1c + D317. Без этого критерий «без упрощений» недостижим.
 
 Гражданское время (Date/DateTime/TimeZone/Period, ISO-8601 format/parse) — **вне scope**, под-план
-[179.1](179.1-civil-time.md).
+[175.1](175.1-civil-time.md).
 
 ## 1a. Где Nova УЖЕ лучше peers (зафиксировать в доке как differentiators)
 
@@ -367,6 +367,6 @@ effect-схему — не править в одиночку (зона 172). **
 
 ## 11. Followup
 
-`[M-179-time-system-rework]`. Поглощает `[M-time-now-schema-mismatch]` (Ф.2), `[M-monotonic-mock-support]` (Ф.3),
-`[M-monotonic-migration-deferred]` (Ф.5). Гражданское время → [179.1](179.1-civil-time.md). `tick_every` + re-arm
+`[M-175-time-system-rework]`. Поглощает `[M-time-now-schema-mismatch]` (Ф.2), `[M-monotonic-mock-support]` (Ф.3),
+`[M-monotonic-migration-deferred]` (Ф.5). Гражданское время → [175.1](175.1-civil-time.md). `tick_every` + re-arm
 deadline-timer → **Plan 66**. auto-idle-advance virtual clock → followup (если Ф.5 даёт только explicit `advance`).
