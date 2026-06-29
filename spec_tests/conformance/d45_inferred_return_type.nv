@@ -1,0 +1,23 @@
+// D45 — inferred return type для expression-body (=> expr); block-form требует -> T явно
+// Spec: spec/decisions/03-syntax.md:45 (D45).
+module spec_tests.conformance
+
+fn d45_double(x int) => x * 2
+
+fn d45_classify(x int) -> str {
+    if x < 0 { return "neg" }
+    if x == 0 { return "zero" }
+    "pos"
+}
+
+test "expression-body infers return type from expr (D45)" {
+    assert(d45_double(5) == 10)
+    ro result = d45_double(-3)
+    assert(result == -6)
+}
+
+test "block-body requires explicit -> T for non-unit (D45)" {
+    assert(d45_classify(-1) == "neg")
+    assert(d45_classify(0) == "zero")
+    assert(d45_classify(7) == "pos")
+}

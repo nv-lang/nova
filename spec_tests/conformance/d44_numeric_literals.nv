@@ -1,0 +1,30 @@
+// D44 — числовые литералы: десятичные, hex, binary, octal, дробные; default int/f64; NO type-suffixes
+// Spec: spec/decisions/03-syntax.md:44 (D44).
+module spec_tests.conformance
+
+test "decimal integer literals default to int (D44)" {
+    ro x = 42
+    assert(x == 42)
+    ro y = 1_000_000_000
+    assert(y == 1_000_000_000)
+}
+
+test "hex/binary/octal literals (D44)" {
+    ro h = 0xFF
+    assert(h == 255)
+    ro b = 0b1010
+    assert(b == 10)
+    ro o = 0o12
+    assert(o == 10)
+}
+
+test "float literals default to f64 (D44)" {
+    ro pi = 3.14159
+    ro large = 1.0e10
+    assert(large > 1_000_000_000.0)
+}
+
+test "type cast after literal via as (D44)" {
+    ro n = 42 as u8
+    assert(n == 42)
+}
