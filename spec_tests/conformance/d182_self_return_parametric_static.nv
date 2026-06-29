@@ -1,0 +1,80 @@
+// D182 — `Self` в return-type static-методов на ПАРАМЕТРИЗОВАННЫХ типах — каноничная
+// (required) форма вместо explicit `-> Box[T]`. Runtime-observable: `Self` резолвится
+// в receiver-тип С ЕГО мономорфизацией, т.е. `Box[int].make(7)` возвращает `Box[int]`
+// (а не fixed/un-parametrized тип), значение типа `T` корректно round-trip'ится.
+// Распознающий характер: разные инстансы (`Box[int]` vs `Box[str]`) дают разные
+// специализации Self; multi-param `Pair[A,B]` наследует обе; `Opt[T].nothing()`
+// (как `Option[T].new() -> Self => None`) — None правильного параметрического типа.
+// Канон-литерал под `-> Self` — bare `{ field: v }` (return-pinned, без type-prefix).
+// Spec: spec/decisions/02-types.md §D182. Часть folder-module spec_tests.conformance;
+// все top-level имена D182-prefixed во избежание duplicate-top-level-name клэша.
+module spec_tests.conformance
+
+// === 1. Self в static-методе parametric record'а: Self ≡ Box[T] с его моно-инстансом ===
+
+type D182Box[T] {
+    value T
+}
+
+fn D182Box[T].make(v T) -> Self =>
+    { value: v }
+
+test "Self в return static-метода резолвится в parametric receiver Box[int] (D182)" {
+    ro b = D182Box[int].make(7)        // Self ≡ D182Box[int]
+    assert(b.value == 7)
+}
+
+// === 2. Разные type-args ⇒ разные специализации Self (не fixed single type) ===
+// Если бы Self коллапсировал в один фиксированный тип, str-поле не сохранилось бы.
+
+test "Self следует за type-arg: Box[str] хранит str, Box[int] хранит int (D182)" {
+    ro bi = D182Box[int].make(99)      // Self ≡ D182Box[int]
+    ro bs = D182Box[str].make("hi")    // Self ≡ D182Box[str]
+    assert(bi.value == 99)
+    assert(bs.value == "hi")
+    // round-trip разных моно-инстансов из одного static-метода через Self:
+    assert(bi.value + 1 == 100)
+    assert(bs.value.byte_len() == 2)
+}
+
+// === 3. Multi-param: Self ≡ Pair[A,B] — наследует ОБА параметра-специализации ===
+
+type D182Pair[A, B] {
+    fst A
+    snd B
+}
+
+fn D182Pair[A, B].of(a A, b B) -> Self =>
+    { fst: a, snd: b }
+
+test "Self для multi-param static ≡ Pair[A,B]; оба параметра round-trip (D182)" {
+    ro p = D182Pair[int, str].of(5, "x")   // Self ≡ D182Pair[int, str]
+    assert(p.fst == 5)
+    assert(p.snd == "x")
+}
+
+// === 4. Option-shaped sum: Opt[T].nothing() -> Self => None правильного типа (D182) ===
+// Прямой аналог spec-примера `Option[T].new() -> Self => None`: None-вариант резолвится
+// в Opt[T] с нужной специализацией; match извлекает корректно-типизированное значение.
+
+type D182Opt[T]
+    | D182None
+    | D182Some(T)
+
+fn D182Opt[T].nothing() -> Self => D182None
+fn D182Opt[T].just(v T) -> Self => D182Some(v)
+
+fn D182Opt[T] @or_default(d T) -> T => match @ {
+    D182None    => d
+    D182Some(v) => v
+}
+
+test "Self в static sum-конструкторе: nothing()=None / just(v)=Some правильного Opt[T] (D182)" {
+    ro none = D182Opt[int].nothing()   // Self ≡ D182Opt[int], вариант D182None
+    ro some = D182Opt[int].just(42)    // Self ≡ D182Opt[int], вариант D182Some(42)
+    assert(none.or_default(0) == 0)    // None ⇒ default
+    assert(some.or_default(0) == 42)   // Some(42) ⇒ 42
+    // другой моно-инстанс того же static-метода:
+    ro snone = D182Opt[str].nothing()
+    assert(snone.or_default("def") == "def")
+}

@@ -1,0 +1,49 @@
+// D181 — Array methods: `-> @` fluent mut chain + non-mut `Option[T]` return.
+// Runtime-observable rule (spec/decisions/02-types.md §D181, line ~6584):
+//   • Every MUTATING `[]T` method returns `@` (the receiver pointer) so calls
+//     chain in one expression — `a.push(1).push(2).push(3)` mutates the SAME
+//     array (each `@`-return feeds the next call). The table lists push / reserve
+//     / truncate / fill / copy_from / extend_from / sort / ... all as `-> @`.
+//   • NON-mut methods (`@get(i)`, `@pop()`) instead return `Option[T]`:
+//     in-range → Some(elem), out-of-range / empty → None (unchanged).
+// The chain-accumulation is the load-bearing distinction: if push returned a
+// COPY (or unit) instead of `@`, the depth-3 chain would NOT land all three
+// elements on `a`, so the len()/index/get() asserts below would FAIL. The
+// non-mut get asserts pin the `Option[T]` contrast the D-block draws against
+// the `-> @` mut-method return.
+// Statement-form chain over a local `mut []int` root is the supported shape
+// (D131 fluent `-> @`, chain-norm hoisting); binding-form `[]int` chains hit a
+// separate codegen follow-up and are intentionally avoided.
+// Part of the SINGLE `spec_tests.conformance` folder-module (one CU); all
+// top-level names would be D181-prefixed — this file declares none, so there is
+// nothing to clash with sibling files.
+module spec_tests.conformance
+
+test "fluent mut chain push(1).push(2).push(3) accumulates on ONE array (D181)" {
+    mut a = []int.new()
+    a.push(1).push(2).push(3)        // depth-3 chain — each push returns @ (same a)
+    assert(a.len() == 3)             // all three landed on the SAME array, not copies
+    assert(a[0] == 1)
+    assert(a[1] == 2)
+    assert(a[2] == 3)                // order preserved across the chain
+}
+
+test "non-mut @get returns Option[T]: in-range Some, out-of-range None (D181)" {
+    mut a = []int.new()
+    a.push(10).push(20).push(30)     // build via the fluent mut chain
+    // get is a NON-mut method → Option[T] (the contrast D181 draws vs `-> @`):
+    assert(a.get(2) == Some(30))     // last chained element, bounds-checked → Some
+    assert(a.get(0) == Some(10))
+    assert(a.get(3) == None)         // index == len → out of range → None
+    assert(a.get(99) == None)        // far out of range → None
+}
+
+test "chain on a non-empty literal root keeps appending in order (D181)" {
+    mut a = [10, 20, 30]
+    a.push(40).push(50).push(60)     // chain extends the existing 3 elements
+    assert(a.len() == 6)             // 3 original + 3 chained, all on one array
+    assert(a[2] == 30)               // originals untouched
+    assert(a[3] == 40)               // chained elements appended in chain order
+    assert(a[5] == 60)
+    assert(a.get(6) == None)         // nothing past the live length
+}
