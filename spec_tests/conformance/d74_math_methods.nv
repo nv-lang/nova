@@ -1,0 +1,36 @@
+// D74 — математические операции = INSTANCE-методы через `@` на числовых типах (НЕ static
+// Math.fn / free fn). Behavioral: результаты различают корректную математику.
+// Spec: spec/decisions/08-runtime.md (D74). Один folder-module CU.
+//
+// FINDING (§1-баг, отмечено для базы): на INT методы `signum()` / `clamp(lo,hi)` (и вероятно
+// `pow`/`is_negative`/`is_positive`) дают CC-FAIL «member reference base nova_int» — чекер
+// принимает вызов, codegen эмитит `int.field` (int не структура). Эти int-методы СНЯТЫ из
+// теста до фикса базы; abs/min/max на int работают.
+module spec_tests.conformance
+
+test "int math-методы — abs/min/max (D74)" {
+    ro a int = -5
+    assert(a.abs() == 5)
+    assert((42).abs() == 42)
+    assert((3).min(8) == 3)
+    assert((3).max(8) == 8)
+}
+
+test "f64 math-методы — sqrt/abs/floor/ceil/round/min/max (D74)" {
+    assert((9.0).sqrt() == 3.0)
+    assert((-2.5).abs() == 2.5)
+    assert((3.7).floor() == 3.0)
+    assert((3.2).ceil() == 4.0)
+    assert((3.7).round() == 4.0)
+    assert((3.2).round() == 3.0)
+    assert((2.5).min(1.5) == 1.5)
+    assert((2.5).max(1.5) == 2.5)
+}
+
+test "f64 предикаты — is_finite/is_nan (D74)" {
+    assert((1.5).is_finite())
+    assert((f64.NAN).is_nan())
+    assert(!((1.5).is_nan()))
+    assert(!((f64.NAN).is_finite()))
+    assert(!((f64.INFINITY).is_finite()))
+}
