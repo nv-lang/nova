@@ -82,10 +82,15 @@ keystone (→ U.4.3 → legacy-deletion) ∨ spec-решения (D405) ∨ lexe
   legacy → clash'а нет. Clash возникает ТОЛЬКО когда канал ФЛИПАЕТ method-returns (U.4.3-relax). ⇒
   by-value-mono нельзя фиксить в изоляции (НЕТ RED-теста) — должен co-land'иться с comprehensive U.4.3
   type-flow флипом (method-returns + binding + variable вместе). Это и есть «6 провалов contained-фиксов».
-- **Coalesce-tuple (`f() ?? (0,0)` с tuple-Ok) RED (CC-FAIL), но BLOCKED.** Попытка channel-фикса
-  (materialize fallback + annotate coalesce result-type против Ok-payload) **ИНЕРТНА**: чекерский
-  `infer_expr_type(arrow-body-call)` возвращает None для `d86b_res()` → `coalesce_payload_type` не
-  срабатывает. Codegen Coalesce-infer (tactical 62c0f57f) держит scalar-Ok, НЕ tuple-Ok. Откатано (§2.10/§4).
+- **Coalesce-tuple (`f() ?? (0,0)` с tuple-Ok): RESULT ЗАКРЫТ codegen-путём (2481c36f), Option BLOCKED.**
+  Checker-channel попытка инертна (`infer_expr_type(arrow-call)`=None). НО **codegen** имеет тип call'а
+  через `resolved_callees`→`fn_ret_by_span` — НЕ блокирован. ФИКС [2481c36f]: (1) `emit_expr_with_target_type`
+  получил TupleLit-арм — tuple-литерал против mono-tuple target декодит элемент-типы (`parse_mono_tuple_elements`)
+  и строит tuple с коэрснутыми элементами (general, не только `??`); (2) Coalesce-emit эмитит fallback `r`
+  с Ok-payload-типом (`novares_ok_err`). **Result RED→GREEN (lock d86b), 0 регресс** (std/detect172/plan153_2/5/162/
+  map_literals/generics IDENTICAL vs clean). **Option-вариант BLOCKED глубже**: `infer_expr_c_type(d86b_opt())`
+  НЕ резолвит в `NovaOpt_<tuple>` (got=nova_int) — Option-call-return-резолюция, отдельно. De-sanitize-попытка
+  (novaopt_value_types) ИНЕРТНА (lhs не NovaOpt_) → откатана (§2.10).
 - **D402 (closure-return) RED, но deep multi-mechanism.** Целевая форма §0 = чекер-инференс closure-типа
   (infer_expr_type closure — НЕТ в bootstrap). Codegen-фикс = pre-pass look-ahead (first-use в block) +
   context_param_tys в emit_lambda (33724) + fn_param_sigs — три механизма; flow-sensitive. §0.119-tactical.
