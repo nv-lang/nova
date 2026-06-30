@@ -1,0 +1,24 @@
+// Plan 172.1 — second peer of the by-value-mono BoxIter width reproduction folder-module.
+// `.map(|x| (x, x))` builds a `BoxIter<(uint, uint)>`; if the value-record mono erases the
+// tuple element to `nova_int` (`_NovaTuple2`), the unsigned high-bit element reads SIGNED.
+// Control: an `int` element round-trips even when erased (int IS nova_int), proving the test
+// discriminates width, not just "tuples work".
+module nova_tests.plan172_boxiter_width
+
+import std.collections.vec_lazy
+
+test "lazy map to (uint,uint) tuple preserves unsigned width" {
+    ro v = Vec[uint].of(0x8000000000000000)        // 2^63
+    ro got = v.lazy().map(|x| (x, x)).collect()     // [(2^63, 2^63)]
+    ro pair = got[0]
+    assert(pair.0 > 100)                            // uint positive; signed collapse → FAIL
+    assert(pair.1 > 100)
+}
+
+test "control: int element round-trips through map-to-tuple (erased nova_int is correct for int)" {
+    ro v = Vec[int].of(-5)
+    ro got = v.lazy().map(|x| (x, x)).collect()
+    ro pair = got[0]
+    assert(pair.0 == -5)
+    assert(pair.1 == -5)
+}

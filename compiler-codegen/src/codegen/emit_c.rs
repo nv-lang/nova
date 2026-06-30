@@ -2201,6 +2201,16 @@ impl CEmitter {
             },
             "CancelToken" => "NovaCancelToken*".to_string(),
             "Write" => "Nova_StringBuilder*".to_string(),
+            // D239 `[]T ≡ Vec[T]` (D315 §0/§3): the NOMINAL `Vec[T]` and the slice sugar
+            // `[]T` (both now `Named{Vec}`) lower through the SINGLE canonical Vec→C source
+            // `resolved_array_to_c` — closure-array (`NovaArray_void_p*`), unresolved-stub
+            // erasure, and the `Nova_Vec____<elem>*` mono worklist/instance-info side-effects
+            // all live in ONE place, not a divergent generic-path copy. `[]T` is byte-
+            // identical (its lowering was ALREADY `resolved_array_to_c`); `Vec[T]` now matches
+            // it (was the divergent generic path — D239 demands they be identical). Only the
+            // bare `Vec` (empty module) intercepts; a qualified `Vec` stays on the generic
+            // path below (unreachable for the prelude `Vec`).
+            "Vec" if args.len() == 1 => return self.resolved_array_to_c(&args[0]),
             _ => {
                 // Protocol (value-erased): non-generic → NovaBox_<proto> (the bare name,
                 // mirroring type_ref_to_c's `path.last()`); generic → void*.
@@ -5222,7 +5232,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
     fn emit_const_decl(&mut self, c: &ConstDecl) -> Result<(), String> {
         let ty_c = if let Some(ty) = &c.ty {
-            self.type_ref_to_c(ty)?
+            self.type_ref_to_c(ty)? // [M-const-decl-ty] declared type comes from AST TypeRef; checker doesn't write ConstDecl type to resolved_types channel yet
         } else {
             self.infer_expr_c_type(&c.value)
         };
@@ -5406,6 +5416,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
                 let inner = self.emit_const_expr_typed(operand, target_ty_c)?;
                 Ok(format!("(-({}))", inner))
+            }
+            // Plan 172.1 [M-172.1-const-binary-typed]: propagate the const's DECLARED target type
+            // to both operands of an ARITH/bitwise binary so `const C uint = 0x80 >> 1` keeps
+            // UNSIGNED operands (logical shift / unsigned divide) instead of collapsing to signed
+            // nova_int (int-collapse, D412). Only arith/bitwise ops propagate (comparison/logic
+            // operands are NOT the const's type); those + absent target → byte-identical legacy.
+            ExprKind::Binary { op, left, right } if target_ty_c.is_some() => {
+                use crate::ast::BinOp;
+                let op_str = match op {
+                    BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*",
+                    BinOp::Div => "/", BinOp::Mod => "%",
+                    BinOp::BitAnd => "&", BinOp::BitOr => "|", BinOp::BitXor => "^",
+                    BinOp::Shl => "<<", BinOp::Shr => ">>",
+                    // comparison / logic / contract ops: operands are not the const's type —
+                    // delegate to the untyped const-binary path (byte-identical).
+                    _ => return self.emit_const_expr(expr),
+                };
+                let l = self.emit_const_expr_typed(left, target_ty_c)?;
+                let r = self.emit_const_expr_typed(right, target_ty_c)?;
+                Ok(format!("(({}) {} ({}))", l, op_str, r))
             }
             _ => self.emit_const_expr(expr),
         }
@@ -15621,7 +15651,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if let Some(trailing) = &block.trailing {
                     self.emit_source_annotation_for_expr(trailing);
                     let trailing_ty = self.infer_expr_c_type(trailing);
-                    let val = self.emit_expr(trailing)?;
+                    // Plan 172.1 [M-172.1-some-target-coerce]: a `NovaOpt_<X>` / typed-integer
+                    // return coerces the trailing TO the return type so a context-typed payload
+                    // literal lowers to X — `Some(<int-literal>) -> Option[uint]` builds
+                    // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (named-
+                    // priority int-collapse → CC-FAIL, surfaced by d86_coalesce_width). Gated on
+                    // the NovaOpt_/typed-int ret surface so the common path keeps `emit_expr`.
+                    let val = if ret_c.starts_with("NovaOpt_") || Self::is_typed_integer(&ret_c) {
+                        self.emit_expr_with_target_type(trailing, &ret_c)?
+                    } else {
+                        self.emit_expr(trailing)?
+                    };
                     self.leave_defer_scope(block_id);
                     if ret_c == "nova_unit" {
                         self.line(&format!("{};", val));
@@ -16513,7 +16553,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if let Some(trailing) = &block.trailing {
                     self.emit_source_annotation_for_expr(trailing);
                     let trailing_ty = self.infer_expr_c_type(trailing);
-                    let val = self.emit_expr(trailing)?;
+                    // Plan 172.1 [M-172.1-some-target-coerce]: a `NovaOpt_<X>` / typed-integer
+                    // return coerces the trailing TO the return type so a context-typed payload
+                    // literal lowers to X — `Some(<int-literal>) -> Option[uint]` builds
+                    // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (named-
+                    // priority int-collapse → CC-FAIL, surfaced by d86_coalesce_width). Gated on
+                    // the NovaOpt_/typed-int ret surface so the common path keeps `emit_expr`.
+                    let val = if ret_c.starts_with("NovaOpt_") || Self::is_typed_integer(&ret_c) {
+                        self.emit_expr_with_target_type(trailing, &ret_c)?
+                    } else {
+                        self.emit_expr(trailing)?
+                    };
                     self.leave_defer_scope(block_id);
                     if ret_c == "nova_unit" {
                         self.line(&format!("{};", val));
@@ -17283,7 +17333,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         match &f.body {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
-                let val = self.emit_expr(e)?;
+                // Plan 172.1 [M-172.1-some-target-coerce]: an arrow-body `=> expr` return
+                // coerces the expr TO the return type for the NovaOpt_<X>/typed-int surface,
+                // so `=> Some(<int-literal>)` in `-> Option[uint]` builds NovaOpt_nova_uint,
+                // not the literal-default NovaOpt_nova_int (named-priority int-collapse →
+                // CC-FAIL, surfaced by d86_coalesce_width). Common path keeps `emit_expr`.
+                let val = if ret.starts_with("NovaOpt_") || Self::is_typed_integer(&ret) {
+                    self.emit_expr_with_target_type(e, &ret)?
+                } else {
+                    self.emit_expr(e)?
+                };
                 // Plan 72 P3-B return: box the trailing value for a protocol return type.
                 let val = self.wrap_protocol_return(val, e);
                 if ret == "nova_unit" {
@@ -18313,7 +18372,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let post_label = self.contracts_post_label.clone();
         if let Some(trailing) = &block.trailing {
             self.emit_source_annotation_for_expr(trailing);
-            let val = self.emit_expr(trailing)?;
+            // Plan 172.1 [M-172.1-some-target-coerce]: NovaOpt_<X>/typed-int return coerces
+            // the trailing to the return type — `Some(<int-literal>) -> Option[uint]` builds
+            // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (int-collapse).
+            let val = if ret_ty.starts_with("NovaOpt_") || Self::is_typed_integer(ret_ty) {
+                self.emit_expr_with_target_type(trailing, ret_ty)?
+            } else {
+                self.emit_expr(trailing)?
+            };
             // Plan 72 P3-B return: box the trailing value for a protocol return type.
             let val = self.wrap_protocol_return(val, trailing);
             if let Some(label) = post_label {
@@ -18382,7 +18448,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
                 // Special case: tuple destructure  `let (a, b, c) = expr`
                 if let Pattern::Tuple(pats, _) = &decl.pattern {
-                    return self.emit_tuple_destructure(pats, &decl.value);
+                    return self.emit_tuple_destructure(pats, &decl.value, decl.ty.as_ref());
                 }
                 // Plan 53: record destructure  `let { tx, rx } = expr` /
                 // `let Pair { tx, rx } = expr`. Делегирует биндинг
@@ -19855,6 +19921,32 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     return Ok(self.option_none_expr(sani));
                 }
             }
+            // Plan 172.1 [M-172.1-some-target-coerce] (2026-06-30): `Some(arg)` in a
+            // `NovaOpt_<X>` target — emit the payload WITH target X so a context-typed
+            // numeric literal coerces to X (D55) instead of defaulting to `nova_int`.
+            // Without this, `Some(<int-literal>) -> Option[uint]` builds `NovaOpt_nova_int`
+            // ≠ the declared `NovaOpt_nova_uint` (named-priority int-collapse → CC-FAIL,
+            // surfaced by d86_coalesce_width). Parallel to the `None` arm above; reached
+            // ONLY in genuinely target-typed positions (return / annotated let / `??`
+            // fallback target), NOT bare sub-exprs (those keep the deliberate arg-type-
+            // priority of the `Some` emit, :22982). Gated on a TYPED-INTEGER inner (the
+            // int-collapse surface) so pointer/struct payloads keep the existing
+            // sanitize/register flow untouched.
+            if let ExprKind::Call { func, args, .. } = &expr.kind {
+                if let ExprKind::Ident(cn) = &func.kind {
+                    if cn == "Some" && args.len() == 1 {
+                        let inner = target_ty_c
+                            .strip_prefix("NovaOpt_")
+                            .unwrap_or(target_ty_c);
+                        if Self::is_typed_integer(inner) {
+                            let arg_v = self
+                                .emit_expr_with_target_type(args[0].expr(), inner)?;
+                            self.register_novaopt_decl(inner, inner);
+                            return Ok(self.option_some_expr(inner, &arg_v));
+                        }
+                    }
+                }
+            }
         }
         // Bare unit-variant `Empty` whose name collides across sum-types
         // (Node.Empty vs Slot.Empty in the same folder-module): the default
@@ -19896,6 +19988,29 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let result = self.emit_expr(expr);
                 self.current_array_elem_hint = prev;
                 return result;
+            }
+        }
+        // Plan 172.1 [literal-coercion channel]: a TUPLE literal against a mono-tuple
+        // target coerces each element to the target's element type (decoded from the
+        // mangled `_NovaTuple_<arity>_<L>_<T>…` name) so `?? (0,0)` against `(uint,uint)`
+        // builds `_NovaTuple_2_…uint…uint` to MATCH the Ok/Some side, not the collapsed
+        // `(int,int)` (CC-FAIL incompatible-operand clash). Mirrors the mono-tuple
+        // construction in `emit_expr`'s TupleLit arm (:21550) but drives element types
+        // from the TARGET (decoded), recursing each element through this coercion.
+        if let ExprKind::TupleLit(elems) = &expr.kind {
+            if let Some(elem_tys) = Self::parse_mono_tuple_elements(target_ty_c) {
+                if elem_tys.len() == elems.len() {
+                    let mangled = self.register_mono_tuple(&elem_tys);
+                    let tmp = self.fresh_tmp();
+                    self.line(&format!("{} {};", mangled, tmp));
+                    for (i, (e, ety)) in elems.iter().zip(elem_tys.iter()).enumerate() {
+                        let v = self.emit_expr_with_target_type(e, ety)?;
+                        self.line(&format!("{}.f{} = {};", tmp, i, v));
+                    }
+                    self.var_types.insert(tmp.clone(), mangled.clone());
+                    self.tuple_element_types.insert(tmp.clone(), elem_tys);
+                    return Ok(tmp);
+                }
             }
         }
         // Только typed-integer target пропагируем — для nova_int/struct/etc.
@@ -19988,7 +20103,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
-            ExprKind::IntLit(n)   => Ok(format!("((nova_int){}LL)", n)),
+            // Plan 172.1 [literal-coercion channel] (§0/§1): if the checker materialized a
+            // sized-integer coercion for THIS literal (D55), emit it WITH that type so a
+            // context-typed literal does not collapse to `nova_int` (named-priority:
+            // uint≠int, u8≠i16). `channel_int_c_type` returns `None` for un-annotated /
+            // `nova_int`-seeded literals → byte-identical legacy `((nova_int)NLL)`.
+            ExprKind::IntLit(n) => Ok(self
+                .channel_int_c_type(expr.id)
+                .map(|ty_c| Self::emit_typed_int_literal(*n, &ty_c))
+                .unwrap_or_else(|| format!("((nova_int){}LL)", n))),
             // Plan 70.3/152.8: char literal cast к distinct `nova_char` typedef (uint32_t).
             ExprKind::CharLit(cp) => Ok(format!("((nova_char){}U)", cp)),
             ExprKind::FloatLit(f) => {
@@ -21855,15 +21978,39 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             ExprKind::Coalesce(left, right) => {
                 let left_ty = self.infer_expr_c_type(left);
                 let l = self.emit_expr(left)?;
-                let r = self.emit_expr(right)?;
                 if left_ty.starts_with("NovaOpt_") {
                     let opt_tmp = self.fresh_tmp();
                     self.line(&format!("{} {} = {};", left_ty, opt_tmp, l));
                     // Plan 118 Ф.5: NPO-aware is-some check.
                     let sani = left_ty.strip_prefix("NovaOpt_").unwrap_or(&left_ty);
                     let some_check = self.option_is_some_check(&opt_tmp, sani);
+                    // Plan 172.1 [literal-coercion]: fallback coerces to the Some-payload
+                    // type (`?? (0,0)` against `Option[(uint,uint)]` builds a matching tuple).
+                    let r = self.emit_expr_with_target_type(right, sani)?;
                     Ok(format!("({} ? {}.value : {})", some_check, opt_tmp, r))
+                } else if Self::is_result_like(&left_ty) {
+                    // D86: `Result ?? fb` — `Ok(v)` → `v`, `Err(_)` → `fb` (ошибка отброшена).
+                    // Зеркалит Result-layout из `!!`/`?` (NovaRes_* указатель: явный tag
+                    // `->tag == NOVA_TAG_Result_Ok`, Ok-payload `->payload.Ok._0`; у Result
+                    // НЕТ NPO, в отличие от Option). Раньше Result-ветка была
+                    // `/*?? unsupported */` (silent gap, всегда возвращала fallback вопреки
+                    // D86) — это её §3/§0/§4-закрытие (spec-conformance).
+                    let res_tmp = self.fresh_tmp();
+                    self.line(&format!("{} {} = {};", left_ty, res_tmp, l));
+                    // Plan 172.1 [literal-coercion]: fallback coerces to the Ok-payload type
+                    // (`?? (0,0)` against `Result[(uint,uint),_]` builds a matching tuple,
+                    // not the collapsed `(int,int)` → no CC-FAIL operand-type clash).
+                    let r = match self.novares_ok_err(&left_ty) {
+                        Some((ok_c, _)) => self.emit_expr_with_target_type(right, &ok_c)?,
+                        None => self.emit_expr(right)?,
+                    };
+                    Ok(format!(
+                        "({tmp}->tag == NOVA_TAG_Result_Ok ? {tmp}->payload.Ok._0 : {r})",
+                        tmp = res_tmp,
+                        r = r
+                    ))
                 } else {
+                    let r = self.emit_expr(right)?;
                     Ok(format!("({} /*?? unsupported */ , {})", l, r))
                 }
             }
@@ -28879,18 +29026,23 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             "nova_unit".into()
         } else {
             let then_diverges = self.block_trailing_diverges(then);
-            let then_ty = then.trailing.as_ref()
-                .map(|e| self.infer_expr_c_type(e))
-                .unwrap_or_else(|| "nova_unit".into());
+            // Plan 172.1 [M-codegen-if-branch-locals-overlay] (2026-06-29): infer the
+            // then-branch trailing type against the branch's OWN let-locals — pre-register
+            // them into var_types (overlay) first, exactly as `emit_block_expr` does
+            // (:29641-29673). Without this, a branch trailing that references a branch-local
+            // binding (`if c { ro b = f()?; Some(b) } else { … }`) infers that binding to a
+            // STALE same-named `var_types` entry leaked from a prior fn (var_types is not
+            // per-fn scoped) — e.g. d85 typed the `Option[int]` if-result as `Option[str]`
+            // (leaked str `b`) → CC-FAIL. The branch is not emitted yet here, so its locals
+            // are absent; the overlay supplies them transiently for the type probe.
+            let then_ty = self.branch_trailing_c_type_with_locals(then);
             // Compute the else-branch type + divergence symmetrically with the
             // then-branch, so the unit-domination fallback below can see EITHER
             // side being unit (the fluent-tail may be in then OR else).
             let (else_diverges, else_ty): (bool, String) = match else_ {
                 Some(ElseBranch::Block(b)) => (
                     self.block_trailing_diverges(b),
-                    b.trailing.as_ref()
-                        .map(|e| self.infer_expr_c_type(e))
-                        .unwrap_or_else(|| "nova_unit".into()),
+                    self.branch_trailing_c_type_with_locals(b),
                 ),
                 Some(ElseBranch::If(e)) => (
                     self.expr_diverges_125(e),
@@ -29654,6 +29806,38 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.indent -= 1;
         self.line("}");
         Ok(tmp)
+    }
+
+    /// Plan 172.1 [M-codegen-if-branch-locals-overlay] (2026-06-29): infer a branch
+    /// block's trailing C-type with the block's OWN `let`-locals transiently registered
+    /// in `var_types`, then restore. Mirrors the stale-var guard in `emit_block_expr`
+    /// (:29641-29673): `var_types` is NOT per-fn scoped, so a same-named binding leaked
+    /// from a prior fn would hijack the trailing-type probe (d85: an `Option[int]`
+    /// if-result mis-typed `Option[str]` from a leaked str `b`). The branch is not
+    /// emitted yet at the probe site (its locals absent), so the overlay supplies them
+    /// transiently. Trailing-less block → "nova_unit". Type-probe only — no emission.
+    fn branch_trailing_c_type_with_locals(&mut self, block: &Block) -> String {
+        let mut saved: Vec<(String, Option<String>)> = Vec::new();
+        for stmt in &block.stmts {
+            if let crate::ast::Stmt::Let(d) = stmt {
+                if let crate::ast::Pattern::Ident { name, .. } = &d.pattern {
+                    let ty = d.ty.as_ref()
+                        .and_then(|t| self.type_ref_to_c(t).ok())
+                        .unwrap_or_else(|| self.infer_expr_c_type(&d.value));
+                    saved.push((name.clone(), self.var_types.insert(name.clone(), ty)));
+                }
+            }
+        }
+        let ty = block.trailing.as_ref()
+            .map(|e| self.infer_expr_c_type(e))
+            .unwrap_or_else(|| "nova_unit".into());
+        for (name, old) in saved.into_iter().rev() {
+            match old {
+                Some(t) => { self.var_types.insert(name, t); }
+                None => { self.var_types.remove(&name); }
+            }
+        }
+        ty
     }
 
     // ---- for loop ----
@@ -31500,7 +31684,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
     // ---- tuple destructure ----
 
-    fn emit_tuple_destructure(&mut self, pats: &[Pattern], value: &Expr) -> Result<(), String> {
+    fn emit_tuple_destructure(&mut self, pats: &[Pattern], value: &Expr, decl_ty: Option<&TypeRef>) -> Result<(), String> {
         // D91 (Plan 21): special-case for `let (tx, rx) = Channel.new(cap)`.
         // Channel.new returns Nova_ChannelPair {tx: Nova_ChanWriter*, rx: Nova_ChanReader*},
         // not a _NovaTuple2. Must be handled before the general case.
@@ -31545,7 +31729,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         match &value.kind {
             ExprKind::TupleLit(elems) => {
                 // Direct pairing: let (a, b) = (x, y) — emit each binding separately
-                for (pat, elem) in pats.iter().zip(elems.iter()) {
+                for (i, (pat, elem)) in pats.iter().zip(elems.iter()).enumerate() {
                     match pat {
                         Pattern::Wildcard(_) => {
                             // Side-effects: emit expr, discard
@@ -31553,8 +31737,27 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             self.line(&format!("(void)({});", v));
                         }
                         Pattern::Ident { name, .. } => {
-                            let ty_c = self.infer_expr_c_type(elem);
-                            let val = self.emit_expr(elem)?;
+                            // Plan 172.1 [M-172.1-tuple-destructure-annot] (2026-06-30): honor the
+                            // declared tuple-element type (`ro (a,b) (uint,uint) = (lit,lit)`) so a
+                            // context-typed literal coerces to the element type instead of defaulting
+                            // to signed `nova_int` (int-collapse, D410). The `(uint,uint)` annotation
+                            // was dropped at the emit_stmt routing site; thread it here and emit each
+                            // element WITH its declared target type. Absent/arity-mismatched annotation
+                            // → byte-identical legacy infer+emit.
+                            let target = decl_ty.and_then(|t| match t {
+                                TypeRef::Tuple(elem_tys, _) if elem_tys.len() == elems.len() => {
+                                    self.type_ref_to_c(&elem_tys[i]).ok()
+                                }
+                                _ => None,
+                            });
+                            let (ty_c, val) = if let Some(tc) = target {
+                                let v = self.emit_expr_with_target_type(elem, &tc)?;
+                                (tc, v)
+                            } else {
+                                let ty_c = self.infer_expr_c_type(elem);
+                                let val = self.emit_expr(elem)?;
+                                (ty_c, val)
+                            };
                             self.var_types.insert(name.clone(), ty_c.clone());
                             self.line(&format!("{} {} = {};", ty_c, name, val));
                         }
@@ -35827,6 +36030,29 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         )
     }
 
+    /// Plan 172.1 [literal-coercion channel] (§0/§1, 2026-06-30): the C-type a numeric
+    /// literal should carry IF the checker materialized a SIZED-integer coercion for it
+    /// (D55 — `assignable` against a sized `expected` wrote `resolved_types[lit.id]`).
+    /// Returns `Some(ty_c)` ONLY for a TYPED integer (`is_typed_integer`: sized i8..u64 /
+    /// `uint` / `nova_byte` / `nova_char` — NEVER `nova_int`), so an un-annotated literal
+    /// AND the `nova_int` `number_exprs` seed both yield `None` → the consumer keeps the
+    /// legacy `((nova_int)NLL)` emission (byte-identical until the producer feeds a sized
+    /// type). VALUE-side mirror of the TYPE-side channel read `infer_expr_c_type` already
+    /// does (:36544): the literal SELF-types from the channel in EVERY position
+    /// (match/if-value, tuple-element, bare expr) with no target-passing — the target form
+    /// that subsumes the per-position `emit_expr_with_target_type` coercions
+    /// ([M-172.1-some-target-coerce] / -tuple-destructure-annot / -default-arg-typed).
+    /// `resolved_type_to_c(Scalar)` is pure (no mono side-effects) so calling it on `&self`
+    /// from the value-emitter is safe.
+    fn channel_int_c_type(&self, id: crate::ast::ExprId) -> Option<String> {
+        if !id.is_set() {
+            return None;
+        }
+        let rt = self.resolved_types.get(&id)?.clone();
+        let ty_c = self.resolved_type_to_c(&rt).ok()?;
+        Self::is_typed_integer(&ty_c).then_some(ty_c)
+    }
+
     /// Plan 38: numeric type constants — `int.MAX` / `f64.NAN` / etc.
     /// Returns `Some((c_expression, c_type))` если path = primitive
     /// type constant, иначе `None`. C-expression готов к emit'у напрямую.
@@ -36380,6 +36606,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // `Self`-without-receiver), fall back to `legacy`.
         if expr.id.is_set() {
             if let Some(rt) = self.resolved_types.get(&expr.id) {
+                // Plan 172.1 U.4.3 (genchk AUDIT — instrument-only, ZERO behavior change):
+                // snapshot the mono registries AFTER `legacy` ran (~:36348, for its side-effects)
+                // and BEFORE lowering the channel annotation, so the audit can report whether
+                // lowering registered a FRESH mono legacy did not (`freshmono`) — the plan154
+                // layout-sensitivity discriminator. Release: compiled out (`NOVA_U43_GENCHK`-gated).
+                #[cfg(debug_assertions)]
+                let u43_wl_before = self.generic_type_worklist.borrow().len();
+                #[cfg(debug_assertions)]
+                let u43_tup_before = self.mono_tuple_instances.borrow().len();
                 if let Ok(ir_c) = self.resolved_type_to_c(rt) {
                     // Plan 172.1 U.4.5 (RecordLit slice xcheck): env-gated, debug-only divergence
                     // log for the NON-generic RecordLit annotation (checker types/mod.rs U.4.5
@@ -36447,6 +36682,23 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             return self.var_types.get(n).cloned().unwrap();
                         }
                         _ => {}
+                    }
+                    // Plan 172.1 U.4.3 genchk AUDIT (instrument-only): characterize the existing
+                    // generic-instance return channeling. For a Call whose channel annotation differs
+                    // from `legacy`, log ch/legacy + whether lowering registered a FRESH mono
+                    // (`freshmono` — the plan154 layout discriminator). NO behavior change — `ir_c` is
+                    // still returned authoritatively. `NOVA_U43_GENCHK=1`; release: compiled out.
+                    #[cfg(debug_assertions)]
+                    if matches!(&expr.kind, ExprKind::Call { .. })
+                        && ir_c != legacy
+                        && std::env::var("NOVA_U43_GENCHK").is_ok()
+                    {
+                        let fresh = self.generic_type_worklist.borrow().len() > u43_wl_before
+                            || self.mono_tuple_instances.borrow().len() > u43_tup_before;
+                        eprintln!(
+                            "[U43-genchk] ch={} legacy={} freshmono={} id={:?}",
+                            ir_c, legacy, fresh, expr.id
+                        );
                     }
                     return ir_c;
                 }
@@ -39602,6 +39854,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let lhs_ty = self.infer_expr_c_type(lhs);
                 if lhs_ty.starts_with("NovaOpt_") {
                     lhs_ty.strip_prefix("NovaOpt_").unwrap_or("nova_int").to_string()
+                } else if Self::is_result_like(&lhs_ty) {
+                    // Plan 172.1 [M-172.1-coalesce-result-okty] (2026-06-30): `Result[T,E] ?? fb`
+                    // yields the Ok type `T`, NOT the fallback `rhs` type — mirror the `Try`/`Bang`
+                    // arm (:39788). Без этого `Result[uint,str] ?? 0` инферил тип ИЗ fallback-
+                    // литерала `0` (`nova_int`) → unannotated `ro got = … ?? 0` становился signed
+                    // int и uint-payload `2^63` читался НЕГАТИВОМ (named-priority int-collapse →
+                    // RUN-FAIL, surfaced by d85_result_payload_width). Fallback на rhs-тип при
+                    // неразрешимом Ok (паритет с прежним поведением).
+                    self.novares_ok_err(&lhs_ty)
+                        .or_else(|| self.infer_result_type_params(lhs))
+                        .map(|(ok, _)| ok)
+                        .unwrap_or_else(|| self.infer_expr_c_type(rhs))
                 } else {
                     self.infer_expr_c_type(rhs)
                 }

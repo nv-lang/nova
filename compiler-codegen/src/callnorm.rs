@@ -484,7 +484,11 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
             ArgBinding::Default => {
                 let def = param.default.clone()
                     .expect("Default binding requires param.default");
-                stmts.push(let_stmt(&param.name, def, sp));
+                // Plan 172.1 [M-172.1-default-arg-typed]: thread the param's DECLARED type into
+                // the desugared `let` so a context-typed default literal/expr coerces to the
+                // param type instead of defaulting to signed `nova_int` — `fn f(x uint = 0x80 >> 1)`
+                // keeps an UNSIGNED operand (logical shift), not a signed collapse (int-collapse, D412).
+                stmts.push(let_stmt_typed(&param.name, def, Some(param.ty.clone()), sp));
                 call_args.push(CallArg::Item(ident_expr(&param.name, sp)));
             }
             ArgBinding::Variadic(indices) => {
@@ -522,6 +526,19 @@ fn let_stmt(name: &str, value: Expr, span: Span) -> Stmt {
         mutable: false,
         pattern: Pattern::Ident { name: name.to_string(), span, is_mut: false },
         ty: None,
+        value,
+        span,
+        is_ghost: false,
+        consume: false,
+    })
+}
+
+/// `let <name> <ty> = <value>` statement — typed variant (Plan 172.1 default-arg coercion).
+fn let_stmt_typed(name: &str, value: Expr, ty: Option<crate::ast::TypeRef>, span: Span) -> Stmt {
+    Stmt::Let(LetDecl {
+        mutable: false,
+        pattern: Pattern::Ident { name: name.to_string(), span, is_mut: false },
+        ty,
         value,
         span,
         is_ghost: false,

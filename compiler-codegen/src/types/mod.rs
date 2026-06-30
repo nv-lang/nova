@@ -77,6 +77,13 @@ pub enum ResolvedType {
     /// invisible to `cat_compatible_rt`/`distinct_mono` (both read `name`, not the struct).
     /// Full path for the future `resolved_type_to_c` lowering = `module ++ [name]`.
     Named { name: String, module: Vec<String>, args: Vec<ResolvedType> },
+    /// Plan 172.1: NO LONGER the `[]T` slice carrier — `[]T`/`Vec[T]` canonicalize to the
+    /// NOMINAL `Named{Vec}` (D239/D315 §0, ONE C-lowering window). `R::Array` now carries
+    /// ONLY (a) `[N]T` fixed-arrays from `from_type_ref` (the `N` is still dropped —
+    /// pre-existing, [M-172.1-fixedarray-N]) and (b) the INTERNAL category key from
+    /// `resolved_cat_of` (`Vec`/`[]`/`[N]` → `R::Array(elem)`, never lowered to C — used
+    /// only by `cat_compatible_rt`/`distinct_mono`). Folding the category side onto
+    /// `Named{Vec}` (then deleting this variant) is the orthogonal follow-up.
     Array(Box<ResolvedType>),
     Tuple(Vec<ResolvedType>),
     /// U.5.5(c) (D315 lossless): `effects` carries the FULL resolved effect TYPE, not a
@@ -155,9 +162,28 @@ impl ResolvedType {
                     None => R::Any,
                 }
             }
-            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
-                R::Array(Box::new(R::from_type_ref(inner)))
-            }
+            // D239 `[]T ≡ Vec[T]` — canonicalize the slice sugar to the NOMINAL `Vec[T]`
+            // carrier (D315 §0: ONE canonical `ResolvedType`; `[]T` and `Vec[T]` are the
+            // SAME type → MUST be structurally equal). Bare `Vec` ⇒ empty `module` (matches
+            // the bare-`Vec[T]` Named arm above). RECURSIVE by construction: `[][]T` →
+            // `Vec[Vec[T]]`, any nesting (the inner `from_type_ref` re-canonicalizes). The
+            // C-lowering single-source is `resolved_array_to_c` (closure-array / stub-erasure
+            // / Vec-mono worklist), reached for BOTH `[]T` and `Vec[T]` via the `"Vec"` arm
+            // in `resolved_named_to_c` → byte-identical for `[]T`, D239-correct for `Vec[T]`.
+            // (`resolved_cat_of` still yields `R::Array` for the category-compatibility key —
+            // an INTERNAL structural key never lowered to C, so the D315 "two C windows"
+            // concern is closed here; folding the category side onto `Named{Vec}` is the
+            // orthogonal follow-up.)
+            TypeRef::Array(inner, _) => R::Named {
+                name: "Vec".to_string(),
+                module: Vec::new(),
+                args: vec![R::from_type_ref(inner)],
+            },
+            // `[N]T` fixed-size array is a DISTINCT built-in (stack-allocated, carries `N`) —
+            // NOT growable `Vec`. It currently shares the `R::Array` carrier (the `N` is
+            // dropped — pre-existing lossiness, kept byte-identical to legacy); separating it
+            // into an `N`-carrying variant is the orthogonal follow-up [M-172.1-fixedarray-N].
+            TypeRef::FixedArray(_, inner, _) => R::Array(Box::new(R::from_type_ref(inner))),
             TypeRef::Tuple(elems, _) => R::Tuple(elems.iter().map(R::from_type_ref).collect()),
             TypeRef::Func { params, return_type, effects, .. } => R::Func {
                 params: params.iter().map(R::from_type_ref).collect(),
@@ -484,11 +510,31 @@ mod resolved_type_tests {
 
     #[test]
     fn array_element_lossless() {
+        // D239 `[]T ≡ Vec[T]` (D315 §0): the slice sugar canonicalizes to the NOMINAL
+        // `Vec[T]` carrier (`Named{Vec}` with bare/empty module), element lossless.
         let arr = TypeRef::Array(Box::new(prim_ref("u32", Span::dummy())), Span::dummy());
         assert_eq!(
             ResolvedType::from_type_ref(&arr),
-            ResolvedType::Array(Box::new(ResolvedType::Scalar { width: 32, signed: false, wide_default: false }))
+            ResolvedType::Named {
+                name: "Vec".to_string(),
+                module: Vec::new(),
+                args: vec![ResolvedType::Scalar { width: 32, signed: false, wide_default: false }],
+            }
         );
+    }
+
+    #[test]
+    fn nested_array_canonicalizes_recursively() {
+        // `[][]u8` → `Vec[Vec[u8]]` (recursive canonicalization, any nesting).
+        let inner = TypeRef::Array(Box::new(prim_ref("u8", Span::dummy())), Span::dummy());
+        let outer = TypeRef::Array(Box::new(inner), Span::dummy());
+        let u8_scalar = ResolvedType::Scalar { width: 8, signed: false, wide_default: false };
+        let vec = |a: ResolvedType| ResolvedType::Named {
+            name: "Vec".to_string(),
+            module: Vec::new(),
+            args: vec![a],
+        };
+        assert_eq!(ResolvedType::from_type_ref(&outer), vec(vec(u8_scalar)));
     }
 
     #[test]
@@ -6061,8 +6107,29 @@ impl<'a> TypeCheckCtx<'a> {
             FnBody::Expr(e) => {
                 self.f1_expr(e, &gs, &mut scope, errors);
                 self.f4_check_value(e, &scope, errors);
+                // Plan 172.1 [literal-coercion channel] (§0/§1): the arrow-body `=> <expr>`
+                // value coerces to the DECLARED return type — DEFINITE site. Fixes the
+                // tuple-return gap (`=> (0x80, 5) -> (uint, uint)` built `NovaTuple..int..`
+                // ≠ the declared `..uint..` → CC-FAIL) and subsumes the Some/Ok return
+                // coercions (the tactical codegen target-passing). No `assignable` runs here
+                // (return-type compat is checked elsewhere) — pure channel materialization.
+                if let Some(ret) = &fd.return_type {
+                    self.materialize_literal_coercion(e, ret);
+                    // a block-arrow body `=> { …; return X }` can hold explicit returns.
+                    self.materialize_returns_in_expr(e, ret);
+                }
             }
-            FnBody::Block(b) => self.f1_block(b, &gs, &mut scope, errors),
+            FnBody::Block(b) => {
+                self.f1_block(b, &gs, &mut scope, errors);
+                if let Some(ret) = &fd.return_type {
+                    // implicit tail return (block trailing) coerces to the return type …
+                    if let Some(trailing) = &b.trailing {
+                        self.materialize_literal_coercion(trailing, ret);
+                    }
+                    // … and every explicit `return <expr>` anywhere in the body.
+                    self.materialize_returns_in_block(b, ret);
+                }
+            }
             FnBody::External => {}
         }
         // Restore ro_binding_names to the state before this fn's params were
@@ -6569,6 +6636,28 @@ impl<'a> TypeCheckCtx<'a> {
                             let rt = ResolvedType::from_type_ref(&tr);
                             self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                         }
+                    } else if let ExprKind::Ident(fname) = &func.kind {
+                        // P67 ФАЗА 2 (variant ctor `Some(x)` — int-collapse-relevant, gap driver):
+                        // channel `Option[type-of-x]` so the ctor expr's type PRESERVES payload
+                        // width (`Some(uint_var)` → `Option[uint]`, not legacy `Option[nova_int]`).
+                        // Bounded to `Some` (Result needs BOTH Ok+Err → contextual). Payload from
+                        // the SIZED arg type via `infer_expr_type` (concrete scope); gs-gated; not
+                        // when `Some` is shadowed by a local. The Option WRAPPER type is concrete
+                        // (no context coercion of the payload — Nova has no implicit int-widening,
+                        // so `type-of-x` is the sound payload). §1 «материализуй резолв».
+                        if fname == "Some" && args.len() == 1 && !scope.contains_key(fname) {
+                            if let Some(payload_tr) = self.infer_expr_type(args[0].expr(), scope) {
+                                let opt = TypeRef::Named {
+                                    path: vec!["Option".to_string()],
+                                    generics: vec![payload_tr],
+                                    span: e.span,
+                                };
+                                if !typeref_mentions_any(&opt, gs) {
+                                    let rt = ResolvedType::from_type_ref(&opt);
+                                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -6606,28 +6695,53 @@ impl<'a> TypeCheckCtx<'a> {
                         | BinOp::And | BinOp::Or | BinOp::Implies | BinOp::Iff => {
                             Some(ResolvedType::Bool)
                         }
-                        _ => match (
-                            self.infer_expr_type(left, scope),
-                            self.infer_expr_type(right, scope),
-                        ) {
-                            (Some(l_tr), Some(r_tr)) => {
-                                let l = ResolvedType::from_type_ref(&l_tr);
-                                let r = ResolvedType::from_type_ref(&r_tr);
-                                let is_num = |rt: &ResolvedType| {
-                                    matches!(
-                                        rt,
-                                        ResolvedType::Scalar { .. } | ResolvedType::Float { .. }
-                                    ) || matches!(rt, ResolvedType::Named { name, args, .. }
-                                        if args.is_empty() && name.as_str() == "char")
-                                };
-                                if is_num(&l) && is_num(&r) {
+                        _ => {
+                            let is_num = |rt: &ResolvedType| {
+                                matches!(
+                                    rt,
+                                    ResolvedType::Scalar { .. } | ResolvedType::Float { .. }
+                                ) || matches!(rt, ResolvedType::Named { name, args, .. }
+                                    if args.is_empty() && name.as_str() == "char")
+                            };
+                            // P67 ФАЗА 2 (Binary residual — gap driver #3, 12% of fall-through):
+                            // recover an operand RT from the CHANNEL when `infer_expr_type` can't
+                            // reach it (Member-field / Index-elem / Call operands — its arm-set has
+                            // no such arms). The children were annotated BEFORE this parent in
+                            // `f1_expr`, so `resolved_types_buf[operand.id]` is already populated.
+                            // RESTRICTED to NUMERIC operands → the result is a safe promoted
+                            // primitive (no generic/mono → no §0.95 subst-timing / GC-layout
+                            // perturbation); a non-numeric channel operand stays on legacy. This
+                            // ALSO fixes int-collapse for sized-field arith (`rec.u8field * 2` →
+                            // u8-promoted, not the legacy `_=>nova_int`). §1 «материализуй резолв».
+                            let operand_rt = |e: &Expr| -> Option<ResolvedType> {
+                                self.infer_expr_type(e, scope)
+                                    .map(|t| ResolvedType::from_type_ref(&t))
+                                    .or_else(|| self.resolved_types_buf.borrow().get(&e.id).cloned())
+                            };
+                            let numeric = match (operand_rt(left), operand_rt(right)) {
+                                (Some(l), Some(r)) if is_num(&l) && is_num(&r) => {
                                     Some(crate::number_exprs::promote_arith_rt(&l, &r))
-                                } else {
-                                    Some(l)
                                 }
-                            }
-                            _ => None,
-                        },
+                                _ => None,
+                            };
+                            // ORIGINAL path preserved BYTE-IDENTICAL (both operands infer via
+                            // infer_expr_type): both-numeric → promote; non-numeric → Some(left).
+                            numeric.or_else(|| match (
+                                self.infer_expr_type(left, scope),
+                                self.infer_expr_type(right, scope),
+                            ) {
+                                (Some(l_tr), Some(r_tr)) => {
+                                    let l = ResolvedType::from_type_ref(&l_tr);
+                                    let r = ResolvedType::from_type_ref(&r_tr);
+                                    if is_num(&l) && is_num(&r) {
+                                        Some(crate::number_exprs::promote_arith_rt(&l, &r))
+                                    } else {
+                                        Some(l)
+                                    }
+                                }
+                                _ => None,
+                            })
+                        }
                     };
                     if let Some(rt) = res_rt {
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
@@ -6817,9 +6931,19 @@ impl<'a> TypeCheckCtx<'a> {
                         if let Some(tr) = self.infer_expr_type(x, scope) {
                             let rt = ResolvedType::from_type_ref(&tr);
                             if Self::primitive_gate(&rt) {
-                                self.resolved_types_buf
-                                    .borrow_mut()
-                                    .insert(e.id, ResolvedType::Array(Box::new(rt)));
+                                // D239/D315 §0: channel the canonical NOMINAL `Vec[T]`
+                                // carrier (not the retired `R::Array` slice form). Lowers
+                                // byte-identically — `resolved_type_to_c(Named{Vec})` routes
+                                // to `resolved_array_to_c` via the `"Vec"` arm, exactly as
+                                // `R::Array` did.
+                                self.resolved_types_buf.borrow_mut().insert(
+                                    e.id,
+                                    ResolvedType::Named {
+                                        name: "Vec".to_string(),
+                                        module: Vec::new(),
+                                        args: vec![rt],
+                                    },
+                                );
                             }
                         }
                     }
@@ -7057,6 +7181,11 @@ impl<'a> TypeCheckCtx<'a> {
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
+        // Plan 172.1 [literal-coercion channel] (§0/§1): materialize the sized coercion of
+        // a context-typed literal into the channel (`ro x uint = 0x80` → the literal carries
+        // `uint`, not the collapsed `nova_int`). DEFINITE site — this binding commits to
+        // `ann` regardless of the `assignable` verdict below (an error aborts codegen).
+        self.materialize_literal_coercion(value, ann);
         match self.assignable(value, ann, gs, gs, scope) {
             Compat::Bad { found } => {
                 errors.push(
@@ -7925,6 +8054,11 @@ impl<'a> TypeCheckCtx<'a> {
                         // user-visible `obj.method(arg)` form (real span) is what 172.2 targets.
                         if arg.expr().span == crate::diag::Span::dummy() { continue; }
                         let exp_ty = subst_typeref(&param.ty, &subst);
+                        // Plan 172.1 [literal-coercion channel] (§0/§1): DEFINITE site —
+                        // CHOSEN overload with the receiver's concrete type-args substituted
+                        // in (`Vec[u32].push(0x80)` → `exp_ty = u32`), so the literal arg
+                        // carries the sized element type instead of collapsing to `nova_int`.
+                        self.materialize_literal_coercion(arg.expr(), &exp_ty);
                         if let Compat::Narrowing { from, to } =
                             self.assignable(arg.expr(), &exp_ty, gs, &callee_gs, scope)
                         {
@@ -8167,6 +8301,10 @@ impl<'a> TypeCheckCtx<'a> {
                 continue;
             }
             let Some(arg) = args.get(ai) else { continue; };
+            // Plan 172.1 [literal-coercion channel] (§0/§1): DEFINITE site — the call
+            // resolved to THIS callee (`resolved_callees`), so a context-typed literal arg
+            // (`f(0x80)` with `f(x uint)`) carries `uint`, not the collapsed `nova_int`.
+            self.materialize_literal_coercion(arg.expr(), &param.ty);
             match self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope)
             {
                 Compat::Bad { found } => {
@@ -9501,6 +9639,183 @@ impl<'a> TypeCheckCtx<'a> {
         );
     }
 
+    /// Plan 172.1 [literal-coercion channel] (§0/§1, 2026-06-30): materialize the
+    /// CONTEXT-COERCED type of an integer literal (D55) into the `resolved_types_buf`
+    /// channel so codegen emits it with the sized C-type (`((uint)NU)`) instead of
+    /// collapsing to `nova_int`. The checker ALREADY computes this coercion in
+    /// `assignable` (the IntLit-vs-sized-`expected` arm) and DISCARDS it after the
+    /// range-check — this is the §1 «материализуй резолв, не выбрасывай» fix: the
+    /// resolved type is WRITTEN to the channel for the consumer (`emit_expr` IntLit via
+    /// `channel_int_c_type`), not re-derived in codegen.
+    ///
+    /// Recurses through the literal-bearing constructor wrappers so a literal NESTED in
+    /// `Some(_)` / `Ok(_)` / `Err(_)` / a tuple / an array reaches its sized element
+    /// type — the single target form that subsumes the per-position codegen coercions
+    /// (`[M-172.1-some-target-coerce]` / `-tuple-destructure-annot` / `-default-arg-typed`).
+    /// Call ONLY at DEFINITE coercion sites (annotated `let`, the CHOSEN call's args,
+    /// `return`) — NEVER on a SPECULATIVE overload probe (`overload_applicability`), which
+    /// would annotate a literal against a rejected overload's param.
+    ///
+    /// Conservative by construction: only a literal whose `expected` lowers to a SIZED
+    /// `Scalar` (NOT the wide-default `int` — a no-op vs the seed; NOT a generic param →
+    /// `Named` — left to mono) is annotated; everything else keeps the `number_exprs`
+    /// seed (sound fallback). The consumer's `is_typed_integer` gate is the final filter.
+    fn materialize_literal_coercion(&self, value: &Expr, expected: &TypeRef) {
+        // Strip compile-time-only type modifiers — they do not change the C width.
+        match expected {
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _) => {
+                self.materialize_literal_coercion(value, inner);
+                return;
+            }
+            _ => {}
+        }
+        match &value.kind {
+            ExprKind::IntLit(_) => {
+                if value.id.is_set() {
+                    let rt = ResolvedType::from_type_ref(expected);
+                    // Only a SIZED scalar — never the wide-default `int` (no-op vs the
+                    // seed) and never a non-scalar (generic param / struct, which is not
+                    // an integer literal's width).
+                    if matches!(rt, ResolvedType::Scalar { .. })
+                        && !matches!(
+                            rt,
+                            ResolvedType::Scalar {
+                                width: 64,
+                                signed: true,
+                                wide_default: true
+                            }
+                        )
+                    {
+                        self.resolved_types_buf.borrow_mut().insert(value.id, rt);
+                    }
+                }
+            }
+            // `Some(inner)` / `Ok(inner)` / `Err(inner)` against `Option[T]` / `Result[T,E]`.
+            ExprKind::Call { func, args, .. } if args.len() == 1 => {
+                if let ExprKind::Ident(ctor) = &func.kind {
+                    if let Some(elem) = ctor_payload_expected(ctor, expected) {
+                        self.materialize_literal_coercion(args[0].expr(), elem);
+                    }
+                }
+            }
+            // `(a, b, …)` against `(Ta, Tb, …)` → coerce element-wise.
+            ExprKind::TupleLit(elems) => {
+                if let TypeRef::Tuple(tys, _) = expected {
+                    if tys.len() == elems.len() {
+                        for (el, ty) in elems.iter().zip(tys) {
+                            self.materialize_literal_coercion(el, ty);
+                        }
+                    }
+                }
+            }
+            // `[a, b, …]` against `[]T` / `Vec[T]` → coerce each element to `T`.
+            ExprKind::ArrayLit(items) => {
+                if let Some(elem) = array_elem_type(expected) {
+                    for it in items {
+                        if let ArrayElem::Item(x) = it {
+                            self.materialize_literal_coercion(x, elem);
+                        }
+                    }
+                }
+            }
+            // Value-position control flow: each branch's TAIL value is in the SAME
+            // expected-typed position (an `if`/`match`/block as a value coerces its
+            // result, so each branch result coerces). `=> if c { 0x80 } else { 5 }` and
+            // `{ …; match k { _ => 0x80 } }` reach their literal leaves this way.
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                self.materialize_block_tail(then, expected);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.materialize_block_tail(b, expected),
+                        ElseBranch::If(e) => self.materialize_literal_coercion(e, expected),
+                    }
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(e) => self.materialize_literal_coercion(e, expected),
+                        MatchArmBody::Block(b) => self.materialize_block_tail(b, expected),
+                    }
+                }
+            }
+            ExprKind::Block(b) => self.materialize_block_tail(b, expected),
+            _ => {}
+        }
+    }
+
+    /// [literal-coercion channel]: coerce a block's TRAILING (tail value) expression to
+    /// `expected` — the block's value position. (Statements are not tail values; explicit
+    /// `return`s inside the block are handled by `materialize_returns_in_block`.)
+    fn materialize_block_tail(&self, b: &Block, expected: &TypeRef) {
+        if let Some(t) = &b.trailing {
+            self.materialize_literal_coercion(t, expected);
+        }
+    }
+
+    /// [literal-coercion channel]: materialize every explicit `return <expr>` in a function
+    /// body against the declared return type, recursing through nested control flow (the
+    /// implicit tail return is handled separately at the `FnBody` site). DEFINITE — every
+    /// `return` in this body commits to `ret`. Covers the common block-bearing constructs;
+    /// exotic bodies (spawn/select/handler) simply are not walked (sound fallback).
+    fn materialize_returns_in_block(&self, b: &Block, ret: &TypeRef) {
+        for s in &b.stmts {
+            self.materialize_returns_in_stmt(s, ret);
+        }
+        if let Some(t) = &b.trailing {
+            self.materialize_returns_in_expr(t, ret);
+        }
+    }
+
+    fn materialize_returns_in_stmt(&self, s: &Stmt, ret: &TypeRef) {
+        match s {
+            Stmt::Return { value: Some(e), .. } => self.materialize_literal_coercion(e, ret),
+            Stmt::Expr(e) => self.materialize_returns_in_expr(e, ret),
+            Stmt::Let(d) => self.materialize_returns_in_expr(&d.value, ret),
+            Stmt::Const(d) => self.materialize_returns_in_expr(&d.value, ret),
+            Stmt::Defer { body, .. }
+            | Stmt::ErrDefer { body, .. }
+            | Stmt::OkDefer { body, .. }
+            | Stmt::DeferWithResult { body, .. } => self.materialize_returns_in_expr(body, ret),
+            Stmt::ConsumeScope { body, .. } => self.materialize_returns_in_block(body, ret),
+            _ => {}
+        }
+    }
+
+    fn materialize_returns_in_expr(&self, e: &Expr, ret: &TypeRef) {
+        match &e.kind {
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                self.materialize_returns_in_block(then, ret);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.materialize_returns_in_block(b, ret),
+                        ElseBranch::If(x) => self.materialize_returns_in_expr(x, ret),
+                    }
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(x) => self.materialize_returns_in_expr(x, ret),
+                        MatchArmBody::Block(b) => self.materialize_returns_in_block(b, ret),
+                    }
+                }
+            }
+            // Same-fn control flow only — a `return` here IS the enclosing fn's return.
+            // Deliberately NOT recursing into `detach`/`parallel for`/`spawn`/closures:
+            // a `return` there belongs to a DIFFERENT execution context, so coercing it
+            // to THIS fn's return type would be wrong (sound fallback: leave it seeded).
+            ExprKind::While { body, .. }
+            | ExprKind::WhileLet { body, .. }
+            | ExprKind::Loop { body, .. }
+            | ExprKind::For { body, .. } => self.materialize_returns_in_block(body, ret),
+            ExprKind::Block(b) => self.materialize_returns_in_block(b, ret),
+            _ => {}
+        }
+    }
+
     /// Ф.1: совместимо ли `expr` с типом `expected`?
     ///
     /// `expr_gs` — generic-scope места, где написан `expr`; `exp_gs` —
@@ -10627,6 +10942,38 @@ fn lit_range_check(val: i128, name: &str) -> Option<String> {
         Some(format!("{val} < {name}.MIN ({min})"))
     } else {
         None
+    }
+}
+
+/// Plan 172.1 [literal-coercion channel]: the expected payload type for a builtin
+/// sum constructor `Some(_)` / `Ok(_)` / `Err(_)` against a concrete `Option[T]` /
+/// `Result[T,E]` expected type — the type a literal payload coerces to. `None` for any
+/// other constructor / non-matching expected (the literal then keeps its seed). Matched
+/// by the LAST path segment so `std.Option`-qualified forms resolve identically (§3 —
+/// no name-key special-casing of one builtin; this is the standard sum-ctor shape).
+fn ctor_payload_expected<'a>(ctor: &str, expected: &'a TypeRef) -> Option<&'a TypeRef> {
+    let TypeRef::Named { path, generics, .. } = expected else {
+        return None;
+    };
+    match (ctor, path.last().map(String::as_str)) {
+        ("Some", Some("Option")) | ("Ok", Some("Result")) => generics.first(),
+        ("Err", Some("Result")) => generics.get(1),
+        _ => None,
+    }
+}
+
+/// Plan 172.1 [literal-coercion channel]: the element type of an array/slice/Vec
+/// expected type (`[]T` / `[N]T` / `Vec[T]`) — what each array-literal element coerces
+/// to. `None` for any non-sequence expected.
+fn array_elem_type(expected: &TypeRef) -> Option<&TypeRef> {
+    match expected {
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => Some(inner),
+        TypeRef::Named { path, generics, .. }
+            if generics.len() == 1 && path.last().map(String::as_str) == Some("Vec") =>
+        {
+            generics.first()
+        }
+        _ => None,
     }
 }
 

@@ -405,14 +405,14 @@ enum Cmd {
     /// Run Nova tests from directories or files.
     ///
     /// Each positional path is a file or directory (recursive walk).
-    /// Default (no paths): `<repo>/nova_tests/`.
+    /// At least one path is required.
     /// Examples:
-    ///   nova test                        # nova_tests/ only
+    ///   nova test nova_tests             # nova_tests/ only
     ///   nova test std                    # std/ only
     ///   nova test std nova_tests         # both
     ///   nova test std/collections/hashmap.nv  # single file
     Test {
-        /// Paths to test (files or directories). Default: `<repo>/nova_tests/`.
+        /// Paths to test (files or directories). Required.
         #[arg(num_args = 0..)]
         paths: Vec<PathBuf>,
         /// Filter by display-name substring.
@@ -4399,7 +4399,7 @@ fn cmd_test(
 
     // [36.D.1] Resolve input paths; validate each exists.
     let resolved_inputs: Vec<PathBuf> = if input_paths.is_empty() {
-        vec![paths.tests_dir.clone()]
+        return Err(usage_err("nova test requires at least one path\n  example: nova test spec_tests/conformance"));
     } else {
         let mut out = Vec::with_capacity(input_paths.len());
         for p in input_paths {

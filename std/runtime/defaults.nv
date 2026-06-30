@@ -181,3 +181,12 @@ export fn int @clamp(lo int, hi int) -> int =>
     if @ < lo { lo } else if @ > hi { hi } else { @ }
 export fn f64 @clamp(lo f64, hi f64) -> f64 =>
     if @ < lo { lo } else if @ > hi { hi } else { @ }
+
+// D74 sign/predicate methods on `int` (where mathematically meaningful).
+// signum: -1 / 0 / +1 by sign. is_negative / is_positive: strict sign tests.
+// Pure if-expressions (same shape as @clamp) — resolved + lowered like any
+// `.nv`-declared int method, no Rust hardcode (§3).
+export fn int @signum() -> int =>
+    if @ < 0 { -1 } else if @ > 0 { 1 } else { 0 }
+export fn int @is_negative() -> bool => @ < 0
+export fn int @is_positive() -> bool => @ > 0
