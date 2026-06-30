@@ -10148,6 +10148,34 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Plan 172.1 §0a: Unary op (-, !, ~) — result type = operand type.
             ExprKind::Unary { operand, .. } => self.infer_expr_type(operand, scope),
+            // Plan 172.1 §0a: Binary expr type inference.
+            // Comparison/logical ops → bool (always safe).
+            // Arithmetic/bitwise: infer from left ONLY if left is NOT an IntLit/FloatLit/CharLit
+            // (bare literals default to int/f64/char which may mismatch the declared context, §5).
+            // Non-literal left (Ident, Member, Call, As, etc.) → its inferred type is reliable.
+            ExprKind::Binary { op, left, .. } => {
+                use crate::ast::BinOp;
+                match op {
+                    BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le
+                    | BinOp::Gt | BinOp::Ge | BinOp::And | BinOp::Or
+                    | BinOp::Implies | BinOp::Iff => {
+                        Some(prim_ref("bool", expr.span))
+                    }
+                    _ => {
+                        // Skip if left is a bare literal (→ int/f64 default, context-unaware).
+                        let left_is_lit = matches!(
+                            &left.kind,
+                            ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::CharLit(_)
+                                | ExprKind::Unary { .. }  // -N is also a literal pattern
+                        );
+                        if left_is_lit {
+                            None
+                        } else {
+                            self.infer_expr_type(left, scope)
+                        }
+                    }
+                }
+            }
             ExprKind::IntLit(_) => Some(prim_ref("int", expr.span)),
             ExprKind::FloatLit(_) => Some(prim_ref("f64", expr.span)),
             ExprKind::BoolLit(_) => Some(prim_ref("bool", expr.span)),
