@@ -10148,6 +10148,30 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Plan 172.1 §0a: Unary op (-, !, ~) — result type = operand type.
             ExprKind::Unary { operand, .. } => self.infer_expr_type(operand, scope),
+            // Plan 172.1 §0a: Member `obj.field` — type = field type in the record declaration.
+            // Gate: obj must infer to a Named type; record must be non-generic (no type_params).
+            // Generic records are excluded — field types may reference type params that the
+            // bare Named{name} annotation cannot reproduce without generic mono args.
+            ExprKind::Member { obj, name } => {
+                let obj_tr = self.infer_expr_type(obj, scope)?;
+                if let TypeRef::Named { path, generics, .. } = &obj_tr {
+                    if generics.is_empty() {
+                        if let Some(type_name) = path.last() {
+                            if let Some(td) = self.types.get(type_name) {
+                                if let TypeDeclKind::Record(fields) = &td.kind {
+                                    if td.generics.is_empty() {
+                                        return fields
+                                            .iter()
+                                            .find(|f| &f.name == name)
+                                            .map(|f| f.ty.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            }
             // Plan 172.1 §0a: Binary expr type inference.
             // Comparison/logical ops → bool (always safe).
             // Arithmetic/bitwise: infer from left ONLY if left is NOT an IntLit/FloatLit/CharLit
