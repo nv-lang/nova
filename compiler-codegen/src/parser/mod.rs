@@ -4612,16 +4612,34 @@ impl Parser {
 
     /// Plan 172.3 (D310): parse `Member1 | Member2 | …` after the `set` kind-token.
     /// Члены — TypeRef'ы (конкретные типы по идентичности). Минимум один член.
-    /// Поддержка `set i8 | i16`, `set\n i8 | i16`, `set i8 |\n i16`; перевод строки
-    /// БЕЗ ведущего `|` завершает список (не захватывает следующий item).
+    ///
+    /// Inline:       `set i8 | i16 | i32`  — первый член без `|`
+    /// Многострочный: `set\n    | i8 | i16` — `|` обязателен у каждого члена
+    ///                 включая первый (D310, аналогично D406 `enum`).
     fn parse_type_set_members(&mut self) -> Result<Vec<TypeRef>, Diagnostic> {
-        let mut members = Vec::new();
+        let multiline = matches!(self.peek().kind, TokenKind::Newline | TokenKind::Semicolon);
         self.skip_newlines();
-        members.push(self.parse_type()?);
-        while matches!(self.peek().kind, TokenKind::Pipe) {
-            self.bump(); // |
-            self.skip_newlines();
+        let mut members = Vec::new();
+        if multiline {
+            // Многострочный: | обязателен у каждого члена включая первый.
+            while matches!(self.peek().kind, TokenKind::Pipe) {
+                self.bump(); // |
+                self.skip_newlines();
+                members.push(self.parse_type()?);
+                self.skip_newlines();
+            }
+            if members.is_empty() {
+                let sp = self.peek().span;
+                return Err(Diagnostic::new("expected `|` before first type-set member in multiline form", sp));
+            }
+        } else {
+            // Inline: первый член без `|`.
             members.push(self.parse_type()?);
+            while matches!(self.peek().kind, TokenKind::Pipe) {
+                self.bump(); // |
+                self.skip_newlines();
+                members.push(self.parse_type()?);
+            }
         }
         Ok(members)
     }
