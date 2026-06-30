@@ -3962,6 +3962,14 @@ impl Parser {
                 let ty = self.parse_type()?;
                 TypeDeclKind::Alias(ty)
             }
+            // D406: `type Name enum A | B` — sum-type с явным enum маркером.
+            // `enum` — контекстный ident (не lexer-keyword) в позиции после `type Name`.
+            // Inline: первый вариант без `|`. Многострочный: `|` обязателен у каждого.
+            TokenKind::Ident(ref s) if s == "enum" => {
+                self.bump(); // consume `enum`
+                let variants = self.parse_sum_variants_after_enum()?;
+                TypeDeclKind::Sum(variants)
+            }
             // Plan 172.3 (D310): `type Name set A | B | C` — type-set bound.
             // `set` — КОНТЕКСТНЫЙ kind-токен (не lexer-keyword), распознаётся только
             // в этой позиции (после `type Name`), как `value` ниже. Диспетч по первому
@@ -4644,63 +4652,102 @@ impl Parser {
         Ok(members)
     }
 
-    fn parse_sum_variants(&mut self) -> Result<Vec<SumVariant>, Diagnostic> {
-        let mut variants = Vec::new();
+    /// D406: parse sum variants after `enum` kind-token.
+    /// Inline:        `enum A | B(T)` — первый вариант без `|`
+    /// Многострочный: `enum\n    | A\n    | B(T)` — `|` обязателен у каждого включая первый.
+    fn parse_sum_variants_after_enum(&mut self) -> Result<Vec<SumVariant>, Diagnostic> {
+        let multiline = matches!(self.peek().kind, TokenKind::Newline | TokenKind::Semicolon);
         self.skip_newlines();
+        if multiline {
+            // Многострочный: делегируем в parse_sum_variants (уже требует | у каждого).
+            let variants = self.parse_sum_variants_list()?;
+            if variants.is_empty() {
+                let sp = self.peek().span;
+                return Err(Diagnostic::new("expected `|` before first variant in multiline enum form", sp));
+            }
+            Ok(variants)
+        } else {
+            // Inline: первый вариант без `|`.
+            let mut variants = Vec::new();
+            variants.push(self.parse_one_sum_variant()?);
+            self.skip_newlines();
+            while matches!(self.peek().kind, TokenKind::Pipe) {
+                self.bump(); // |
+                self.skip_newlines();
+                variants.push(self.parse_one_sum_variant()?);
+                self.skip_newlines();
+            }
+            Ok(variants)
+        }
+    }
+
+    /// Старый синтаксис `type X | A | B` — только `| варианты` (Pipe-led).
+    fn parse_sum_variants(&mut self) -> Result<Vec<SumVariant>, Diagnostic> {
+        self.skip_newlines();
+        self.parse_sum_variants_list()
+    }
+
+    /// Pipe-led список вариантов: `| A | B(T) | C { x int }`.
+    /// Используется и в старом синтаксисе и в D406 многострочном.
+    fn parse_sum_variants_list(&mut self) -> Result<Vec<SumVariant>, Diagnostic> {
+        let mut variants = Vec::new();
         while matches!(self.peek().kind, TokenKind::Pipe) {
             self.bump(); // |
-            let (name, name_span) = self.parse_ident()?;
-            let kind = match self.peek().kind {
-                TokenKind::LParen => {
-                    self.bump();
-                    let mut tys = Vec::new();
-                    while !matches!(self.peek().kind, TokenKind::RParen) {
-                        tys.push(self.parse_type()?);
-                        if self.eat(&TokenKind::Comma).is_none() {
-                            break;
-                        }
-                        self.skip_newlines();
-                    }
-                    self.expect(&TokenKind::RParen)?;
-                    SumVariantKind::Tuple(tys)
-                }
-                TokenKind::LBrace => {
-                    self.bump();
-                    // Plan 114.4.1 Ф.2 followup: per-variant assoc const
-                    // НЕ поддерживается V1 ([M-114.4.1-per-variant-const]).
-                    // Здесь записываем фактические assoc consts найденные
-                    // парсером — но Ф.2 sum-type assoc на sum-level
-                    // обрабатывается отдельно. Пока для variant — ignored.
-                    let (fields, _variant_acs) = self.parse_record_fields()?;
-                    self.expect(&TokenKind::RBrace)?;
-                    SumVariantKind::Record(fields)
-                }
-                _ => SumVariantKind::Unit,
-            };
-            // Discriminant `= N`
-            let discriminant = if self.eat(&TokenKind::Eq).is_some() {
-                if let TokenKind::Int(n) = self.peek().kind {
-                    self.bump();
-                    Some(n)
-                } else {
-                    return Err(Diagnostic::new(
-                        "expected integer discriminant",
-                        self.peek().span,
-                    ));
-                }
-            } else {
-                None
-            };
-            let end = self.tokens[self.pos.saturating_sub(1)].span;
-            variants.push(SumVariant {
-                name,
-                kind,
-                discriminant,
-                span: name_span.merge(end),
-            });
+            self.skip_newlines();
+            variants.push(self.parse_one_sum_variant()?);
             self.skip_newlines();
         }
         Ok(variants)
+    }
+
+    /// Парсит один вариант sum-type: `Name` / `Name(T)` / `Name { fields }` / `Name = N`.
+    fn parse_one_sum_variant(&mut self) -> Result<SumVariant, Diagnostic> {
+        let (name, name_span) = self.parse_ident()?;
+        let kind = match self.peek().kind {
+            TokenKind::LParen => {
+                self.bump();
+                let mut tys = Vec::new();
+                while !matches!(self.peek().kind, TokenKind::RParen) {
+                    tys.push(self.parse_type()?);
+                    if self.eat(&TokenKind::Comma).is_none() {
+                        break;
+                    }
+                    self.skip_newlines();
+                }
+                self.expect(&TokenKind::RParen)?;
+                SumVariantKind::Tuple(tys)
+            }
+            TokenKind::LBrace => {
+                self.bump();
+                // Plan 114.4.1 Ф.2 followup: per-variant assoc const
+                // НЕ поддерживается V1 ([M-114.4.1-per-variant-const]).
+                let (fields, _variant_acs) = self.parse_record_fields()?;
+                self.expect(&TokenKind::RBrace)?;
+                SumVariantKind::Record(fields)
+            }
+            _ => SumVariantKind::Unit,
+        };
+        // Discriminant `= N`
+        let discriminant = if self.eat(&TokenKind::Eq).is_some() {
+            if let TokenKind::Int(n) = self.peek().kind {
+                self.bump();
+                Some(n)
+            } else {
+                return Err(Diagnostic::new(
+                    "expected integer discriminant",
+                    self.peek().span,
+                ));
+            }
+        } else {
+            None
+        };
+        let end = self.tokens[self.pos.saturating_sub(1)].span;
+        Ok(SumVariant {
+            name,
+            kind,
+            discriminant,
+            span: name_span.merge(end),
+        })
     }
 
     /// Plan 108.4 Ф.1 (D175 amend): parse method signatures from effect or
