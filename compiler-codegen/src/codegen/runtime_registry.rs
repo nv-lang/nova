@@ -434,6 +434,21 @@ fn char_runtime() -> Vec<RuntimeFn> {
             doc: "Unchecked UTF-8 encode codepoint в 1-4 байта. Caller гарантирует cp ∈ [0, 0x10FFFF]. Invalid codepoint → empty str (silent — predictable degradation). Используется JSON unicode escape parser-ами + другими decoders.",
         nova_body: None,
     },
+        // D54/D77: char.try_from(cp int) -> Result[char, str]
+        // Nova-implemented: range-check + unsafe { cp as char } (D54 amended).
+        // char.from(cp) Fail[str] is auto-derived via try_from(cp)!!.
+        RuntimeFn {
+            module: "std.runtime.char",
+            receiver: Some("char"),
+            is_static: true, is_mut: false, is_consume: false,
+            name: "try_from",
+            params: &[("cp", "int")],
+            return_ty: "Result[char, str]",
+            effects: &[],
+            c_name: "",
+            doc: "D54/D77: validates unicode scalar value [0, 0x10FFFF] excluding surrogates. Returns Err on invalid codepoint.",
+            nova_body: Some("{\n    if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {\n        Err(\"char.try_from: invalid codepoint\")\n    } else {\n        Ok(unsafe { cp as char })\n    }\n}"),
+        },
     ]
 }
 
@@ -939,7 +954,7 @@ pub fn render_nv(module: &str, fns: &[&RuntimeFn]) -> String {
         if f.nova_body.is_some() {
             out.push_str("export fn ");
         } else {
-            out.push_str("export external fn ");
+            out.push_str("export extern \"nova\" fn ");
         }
         if let Some(recv) = f.receiver {
             out.push_str(recv);

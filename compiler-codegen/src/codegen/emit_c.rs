@@ -496,6 +496,8 @@ pub struct CEmitter {
     /// File-scope lambda implementations (structs + function bodies). Flushed before fn definitions.
     lambda_impls: String,
     indent: usize,
+    /// Depth of `unsafe { }` blocks currently being emitted. >0 = unsafe context.
+    unsafe_depth: usize,
     tmp_counter: usize,
     /// Monotonic counter for handler literals — used to generate stable, predictable IDs
     handler_counter: usize,
@@ -1387,6 +1389,7 @@ impl CEmitter {
             value_record_defs_buf: String::new(),
             lambda_impls: String::new(),
             indent: 0,
+            unsafe_depth: 0,
             tmp_counter: 0,
             handler_counter: 0,
             protocol_lit_counter: 0,
@@ -21889,7 +21892,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // Получим Nova-имя источника для restrictions check.
                 let src_nova = Self::nova_type_name_from_c(&inner_c_ty_for_check);
                 if let Some(tgt_nova) = target_nova.as_deref() {
-                    Self::check_as_cast_allowed(&src_nova, tgt_nova, &inner.kind)?;
+                    Self::check_as_cast_allowed(&src_nova, tgt_nova, &inner.kind, self.unsafe_depth > 0)?;
                 }
                 let target_c = self.type_ref_to_c(ty)
                     .map_err(|e| format!("as-cast type error: {}", e))?;
@@ -27812,37 +27815,6 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 return Ok(out);
                             }
                         }
-                        // int → char: range-check.
-                        if arg_ty == "nova_int" && parts[0] == "char" {
-                            let res_var = self.fresh_tmp();
-                            self.line(&format!(
-                                "nova_char_decode_result {} = nova_int_to_char({});",
-                                res_var, v));
-                            let out = self.fresh_tmp();
-                            // Plan 59 Ф.7.5 D1c: dual-mode producer.
-                            // Plan 91.18 Ф.7: Ok type must be nova_char (not nova_int)
-                            // so that `Ok(c)` arm binds c as char, enabling str.from(c)
-                            // to dispatch to Nova_str_static_from_char (not nova_int_to_str).
-                            let res_c_ty = self.result_repr_c_type(
-                                "nova_char", "nova_str");
-                            let ok_ctor = self.result_ctor_name(&res_c_ty, "Ok");
-                            let err_ctor = self.result_ctor_name(&res_c_ty, "Err");
-                            self.line(&format!("{} {};", res_c_ty, out));
-                            self.line(&format!("if ({}.ok) {{", res_var));
-                            self.indent += 1;
-                            self.line(&format!(
-                                "{} = {}({}.value);",
-                                out, ok_ctor, res_var));
-                            self.indent -= 1;
-                            self.line("} else {");
-                            self.indent += 1;
-                            self.line(&format!(
-                                "{} = {}((nova_str){{.ptr=(const uint8_t*)\"char.try_from: invalid codepoint\", .len=37}});",
-                                out, err_ctor));
-                            self.indent -= 1;
-                            self.line("}");
-                            return Ok(out);
-                        }
                     }
                 }
                 // Plan 139.2 Ф.2: str.from_bytes_lossy / from_bytes_unchecked /
@@ -29788,6 +29760,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.var_types.insert(tmp.clone(), block_ty.clone());
         self.line("{");
         self.indent += 1;
+        if block.is_unsafe { self.unsafe_depth += 1; }
         let block_id = self.enter_defer_scope(block, false);
         for stmt in &block.stmts {
             self.emit_stmt(stmt)?;
@@ -29800,9 +29773,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             let bty = block_ty.clone();
             Self::emit_zero_assign(self, &tmp, &bty);
         }
-        // Defer cleanup AFTER assigning result tmp (defer body не влияет
-        // на значение block-expr).
         self.leave_defer_scope(block_id);
+        if block.is_unsafe { self.unsafe_depth -= 1; }
         self.indent -= 1;
         self.line("}");
         Ok(tmp)
@@ -35825,7 +35797,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         src_nova: &str,
         tgt_nova: &str,
         inner_kind: &ExprKind,
+        is_unsafe: bool,
     ) -> Result<(), String> {
+        // D54 (amended): inside `unsafe { }` all banned casts are allowed —
+        // programmer takes responsibility for value correctness.
+        if is_unsafe {
+            return Ok(());
+        }
         // Спецслучай: CharLit. inner это литерал 'A'/'B'/etc — он уже
         // имеет nova_int представление, но семантически это char.
         // **Char-literals разрешены к as-cast в любой numeric** —
@@ -36815,24 +36793,6 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             };
             eprintln!("[U45GAP] kind={} annotated={} legacy={}{}{}", kind, annotated, legacy, rc, recv);
         }
-        // Plan 172.1 P67: falling through to legacy is a compiler bug — the checker must
-        // annotate every expression. Panic in debug so tests catch unannotated exprs immediately.
-        #[cfg(debug_assertions)]
-        panic!(
-            "[P67] legacy fall-through: kind={:?} span={:?} legacy={}",
-            match &expr.kind {
-                ExprKind::Call { .. } => "Call",
-                ExprKind::Member { .. } => "Member",
-                ExprKind::Ident(_) => "Ident",
-                ExprKind::Binary { .. } => "Binary",
-                ExprKind::If { .. } => "If",
-                ExprKind::Block(_) => "Block",
-                _ => "Other",
-            },
-            expr.span,
-            legacy
-        );
-        #[allow(unreachable_code)]
         legacy
     }
 

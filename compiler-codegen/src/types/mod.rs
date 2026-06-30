@@ -8229,7 +8229,35 @@ impl<'a> TypeCheckCtx<'a> {
                     | "u8" | "u16" | "u32" | "u64" | "uint"
                     | "i8" | "i16" | "i32" | "i64"
                 );
+                // For primitive receivers: skip arg-check (false-positives from
+                // external overloads unknown to checker), but still annotate
+                // resolved_types_buf for the Call when we have an unambiguous
+                // callee with a known return type (P67 anti-panic).
                 if is_primitive_recv {
+                    if call_id.is_set() {
+                        let callee = match overloads {
+                            Some([single]) => Some(*single),
+                            Some(multi) => {
+                                let compat: Vec<_> = multi.iter().filter(|c| {
+                                    matches!(self.overload_applicability(c, args, gs, scope), Some(true))
+                                }).collect();
+                                if compat.len() == 1 { Some(*compat[0]) } else { None }
+                            }
+                            None => None,
+                        };
+                        if let Some(callee) = callee {
+                            self.resolved_callees.borrow_mut().insert(call_id, callee.span);
+                            if let Some(ret_ty) = &callee.return_type {
+                                let callee_gs = fn_generic_scope(callee);
+                                if !typeref_mentions_any(ret_ty, &callee_gs)
+                                    && !typeref_mentions_any(ret_ty, gs)
+                                {
+                                    self.resolved_types_buf.borrow_mut()
+                                        .insert(call_id, ResolvedType::from_type_ref(ret_ty));
+                                }
+                            }
+                        }
+                    }
                     return;
                 }
                 match overloads {

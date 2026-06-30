@@ -3108,7 +3108,7 @@ ro code = NotFound as int    // 404
 
 #### Запрещённые `as`-cast'ы для char/u8/bool
 
-Рrune `as`-cast'ов где seemingly-numeric mappingвыражает unsafe
+Prune `as`-cast'ов где seemingly-numeric mapping выражает unsafe
 семантику. Программист должен использовать `try_from` (с
 range-check'ом) или explicit comparison:
 
@@ -3132,6 +3132,22 @@ runtime `Fail` не нужен. Off-range литерал — compile error с у
 конкретного codepoint (не generic suggestion). Для **переменных** типа
 `int` правило прежнее — нужен `char.try_from(n)?`. Введено в Plan 14
 Ф.7 (2026-05-09).
+
+**Исключение для `unsafe { }` блоков:** внутри `unsafe { }` запрещённые
+`as`-cast'ы для переменных разрешены без range-check. Программист берёт
+ответственность за корректность значения. Основное применение — реализация
+`char.try_from` и аналогичных stdlib-функций где range-check уже выполнен
+явно перед cast'ом:
+
+```nova
+export fn char.try_from(cp int) -> Result[char, str] {
+    if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+        Err("char.try_from: invalid codepoint")
+    } else {
+        Ok(unsafe { cp as char })
+    }
+}
+```
 
 **Прецеденты.** Rust требует `char::from_u32(n)` (Result), не `n as
 char`. Swift `Character.init(extendedGraphemeClusterLiteral)` — нет
