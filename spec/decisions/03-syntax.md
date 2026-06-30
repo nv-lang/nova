@@ -993,7 +993,7 @@ to module», и leading-underscore tied к unused-suppression cleanly
 живут в namespace своего типа:
 
 ```nova
-type ParseComplexError | InvalidFormat | NotANumber
+type ParseComplexError enum InvalidFormat | NotANumber
 
 throw InvalidFormat                          // имя варианта без префикса
 throw ParseComplexError.InvalidFormat        // полная форма (если ambiguous)
@@ -3093,7 +3093,7 @@ ro n u64 = u as u64           // UserId → u64
 **Sum → int** (для sum'ов с числовыми discriminants, [D52](02-types.md#d52)):
 
 ```nova
-type ErrorCode | NotFound = 404 | InternalError = 500
+type ErrorCode enum NotFound = 404 | InternalError = 500
 ro code = NotFound as int    // 404
 ```
 
@@ -3234,7 +3234,7 @@ fn process(x any) -> str =>
 варианту:
 
 ```nova
-type Shape | Circle { radius f64 } | Square { side f64 } | Origin
+type Shape enum Circle { radius f64 } | Square { side f64 } | Origin
 
 ro s Shape = Circle { radius: 1.0 }
 
@@ -3771,7 +3771,7 @@ match list {
     Cons(h, ..) => "head: ${h}"                  // bind первого, остальное ..
 }
 
-type Event | Click(int, int) | Move(int, int, int) | Idle
+type Event enum Click(int, int) | Move(int, int, int) | Idle
 
 match event {
     Idle             => "idle"
@@ -8587,7 +8587,7 @@ canonical Python `__exit__` pattern. Routing через `if err is T` (D85).
 ### Отдельный `Cancelled` variant
 
 ```nova
-type ScopeOutcome | Success | Failure(any) | Cancelled(any) | Panic(str)
+type ScopeOutcome enum Success | Failure(any) | Cancelled(any) | Panic(str)
 ```
 
 **Отвергнуто**: ни один из benchmark-языков (Java/Kotlin/Swift/C++/Rust)

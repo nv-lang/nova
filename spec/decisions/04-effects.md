@@ -665,7 +665,7 @@ Runtime-структура `EffectSet`, тип `DynFn` для случаев, к
 ```nova
 // data — голый type (см. D52)
 type User { id u64, name str }
-type Color | Red | Green | Blue
+type Color enum Red | Green | Blue
 type UserId u64
 
 // эффекты (with-substitution + continuation-capture) — kind-токен effect
@@ -848,7 +848,7 @@ catch-all). Convention: для public API использовать `Fail[E]` с
 #### Базовое использование
 
 ```nova
-type DepositError | Closed | NotPositive | OverLimit
+type DepositError enum Closed | NotPositive | OverLimit
 
 fn deposit(mut acc Account, amount money) Fail[DepositError] -> () =>
     if acc.closed   { throw Closed }
@@ -1048,7 +1048,7 @@ fn try_deposit(acc Account, amount money) Log -> bool {
 делает sum-type:
 
 ```nova
-type TransferError | InsufficientFunds | InvalidAccount | AccountClosed
+type TransferError enum InsufficientFunds | InvalidAccount | AccountClosed
 
 fn transfer(from Account, to Account, amount money) Fail[TransferError] Db -> Receipt => ...
 ```
@@ -3253,7 +3253,7 @@ Lookup идёт **сверху вниз стека** (свежие handler'ы п
 один на тип** + match внутри:
 
 ```nova
-type RuntimeError | DivByZero | Overflow | IndexOutOfBounds
+type RuntimeError enum DivByZero | Overflow | IndexOutOfBounds
 
 fn risky() Fail[RuntimeError] -> int {
     throw RuntimeError.DivByZero          // тип значения: RuntimeError
@@ -3380,7 +3380,7 @@ fn validate(x int) Fail[Error] -> () {
 Альтернатива — типизированный sum для domain-логики:
 
 ```nova
-type ValidationError | NegativeNotAllowed | TooLarge(int)
+type ValidationError enum NegativeNotAllowed | TooLarge(int)
 
 fn validate(x int) Fail[ValidationError] -> () {
     if x < 0 { throw ValidationError.NegativeNotAllowed }

@@ -93,7 +93,7 @@ module prelude.core
 /// для cross-file resolve; pre-populated `sum_schemas[Option]`
 /// (emit_c.rs:960-964) — runtime schema source-of-truth.
 #stable(since = "0.1")
-export type Option[T] | Some(T) | None
+export type Option[T] enum Some(T) | None
 
 /// Result of fallible computation. `Ok(v)` — success, `Err(e)` —
 /// failure with typed error payload `e: E`. См. D26 spec.
@@ -104,7 +104,7 @@ export type Option[T] | Some(T) | None
 /// декларация — canonical type-name; pre-populated `sum_schemas[Result]`
 /// (emit_c.rs:966-969) — runtime schema source-of-truth.
 #stable(since = "0.1")
-export type Result[T, E] | Ok(T) | Err(E)
+export type Result[T, E] enum Ok(T) | Err(E)
 
 // Plan 91.8a (D183): `Ordering` sum-type удалён. Compare.compare
 // теперь возвращает int (memcmp-style: < 0 / 0 / > 0). Тривиальное
@@ -144,7 +144,7 @@ export type Result[T, E] | Ok(T) | Err(E)
 /// }
 /// ```
 #stable(since = "0.1")
-export type ScopeOutcome | Success | Failure(str) | Panic(str)
+export type ScopeOutcome enum Success | Failure(str) | Panic(str)
 
 
 // ──────────────────────────────────────────────────────────────────────────

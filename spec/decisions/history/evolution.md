@@ -411,11 +411,11 @@ record-обёртку (`type UserId { value u64 }`). Discriminants на sum-
 **Что стало:** [D52](../02-types.md#d52) переписал систему целиком:
 
 ```nova
-type UserId u64                          // newtype (Go-style, без =)
-type StringMap[V] alias HashMap[str, V]  // alias через keyword
-type Color | Red | Green | Blue          // sum через leading |
-type ErrorCode | NotFound = 404 | InternalError = 500   // sum + discriminants
-type User { id u64, name str }           // record без = (как было)
+type UserId u64                                        // newtype (Go-style, без =)
+type StringMap[V] alias HashMap[str, V]               // alias через keyword
+type Color enum Red | Green | Blue                    // sum с enum маркером (D406)
+type ErrorCode enum NotFound = 404 | InternalError = 500  // sum + discriminants
+type User { id u64, name str }                        // record без =
 ```
 
 **Почему пересмотрели:**

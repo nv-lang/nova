@@ -9,7 +9,8 @@
 | # | Решение | Status |
 |---|---|---|
 | [D17](#d17-объявление-типов-единый-синтаксис-без-) | Объявление типов: единый синтаксис без `\|` | revised → D52 |
-| [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) | Объявление типов revised: newtype, `alias`, sum через leading `\|` | active |
+| [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) | Объявление типов revised: newtype, `alias`, sum через leading `\|` | revised → D406 |
+| [D406](#d406-sum-type-синтаксис-через-enum-маркер-2026-07-01) | Sum-type синтаксис: `enum` маркер вместо leading `\|`; inline enum в type-позиции | active |
 | [D53](#d53-унификация-protocol-под-type-protocol-как-kind-токен) | Унификация: `protocol` под `type`, `protocol` как kind-токен | active |
 | [D55](#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы) | Literal coercion в позиции с явным типом: sum-конструкторы и record-литералы | active |
 | [D42](#d42-protocol-keyword-для-структурных-интерфейсов) | `protocol` keyword для структурных интерфейсов | revised → D53 |
@@ -183,6 +184,8 @@ Construction всегда требует все обязательные пол�
 
 ## D52. Объявление типов revised: newtype, `alias`, sum через leading `|`
 
+> ⚠️ **REVISED.** Синтаксис sum-type заменён [D406](#d406-sum-type-синтаксис-через-enum-маркер-2026-07-01): `enum Variant | ...` вместо leading `| Variant | ...`. Остальные формы (newtype, alias, record, tuple, unit) без изменений.
+
 ### Что
 Полная пересборка [D17](#d17-объявление-типов-единый-синтаксис-без-).
 **Один keyword `type` для всех data-форм**, никаких `=` в декларациях,
@@ -194,7 +197,7 @@ Construction всегда требует все обязательные пол�
 - **tuple** — `type X(типы)` — **stack-allocated** value type (позиционные поля `.0`/`.1`)
 - **named tuple** — `type X(name1 T1, name2 T2)` — **stack-allocated** value type (именованные поля `.name`) (D215, Plan 120)
 - **unit** — `type X` (ничего после имени)
-- **sum** — `type X | A | B | C` (leading `|` обязателен)
+- **sum** — `type X enum A | B | C` (`enum` маркер обязателен; D406)
 
 > **Allocation contract (D215, Plan 120):** скобки кодируют семантику
 > размещения: `()` = **stack-allocated** value type, copy-семантика при
@@ -241,16 +244,16 @@ type Generic[T](value T, count int)
 type Empty
 type Sentinel
 
-// 6. Sum — type X | A | B (leading | обязателен)
-type Color | Red | Green | Blue
-type Direction | North | East | South | West
+// 6. Sum — type X enum A | B (enum маркер обязателен; D406)
+type Color enum Red | Green | Blue
+type Direction enum North | East | South | West
 
-// Sum многострочный
-type Result[T, E]
+// Sum многострочный — если варианты на новых строках, | обязателен у каждого
+type Result[T, E] enum
     | Ok(T)
     | Err(E)
 
-type Shape
+type Shape enum
     | Circle { radius f64 }
     | Square { side f64 }
     | Triangle { a f64, b f64, c f64 }
@@ -260,12 +263,12 @@ type Shape
 
 | После `type X` (или `type X[params]`) идёт | Форма |
 |---|---|
-| `\|` | sum |
+| `enum` | sum (D406) |
 | `(` + ident + bare-type | named tuple (D215) — `(name1 T1, name2 T2)` |
 | `(` + bare-type | positional tuple — `(T1, T2)` |
 | `{` | record |
 | `alias` | alias |
-| `<base-type>` `\|` | sum с явным базовым типом для discriminants |
+| `<base-type>` `enum` | sum с явным базовым типом для discriminants |
 | идентификатор/тип, конец строки | newtype |
 | конец строки сразу | unit |
 
@@ -277,38 +280,37 @@ type Shape
 
 ```nova
 // Auto-increment без явных значений (от 0)
-type ExitStatus | Ok | Failure | Critical                  // 0, 1, 2
+type ExitStatus enum Ok | Failure | Critical                  // 0, 1, 2
 
 // Auto-increment от заданного
-type FileMode | Read = 1 | Write | Execute                 // 1, 2, 3
+type FileMode enum Read = 1 | Write | Execute                 // 1, 2, 3
 
 // Все явные
-type ErrorCode
+type ErrorCode enum
     | NotFound       = 404
     | Unauthorized   = 401
     | InternalError  = 500
 
 // С отрицательными
-type Sign | Negative = -1 | Zero = 0 | Positive = 1
+type Sign enum Negative = -1 | Zero = 0 | Positive = 1
 
 // Decreasing/non-monotonic — разрешено
-type Code | A = 10 | B = 5 | C                             // A=10, B=5, C=6
+type Code enum A = 10 | B = 5 | C                            // A=10, B=5, C=6
 
 // Явный базовый тип
-type Bit u8 | Off = 0 | On = 1
-type HttpCode i32 | Ok = 200 | NotFound = 404
+type Bit u8 enum Off = 0 | On = 1
+type HttpCode i32 enum Ok = 200 | NotFound = 404
 ```
 
 > ⚠ **Явный базовый тип пока не реализован** (parser drift, 2026-05-27).
-> Формы с `u8`/`i32`/etc. между именем и `|` парсер отвергает с
-> `expected fn / type / let / const / test, got '|'`. Работает только
-> дефолтная форма (без базового типа, implicit `int`). См.
+> Формы с `u8`/`i32`/etc. между именем и `enum` парсер отвергает.
+> Работает только дефолтная форма (без базового типа, implicit `int`). См.
 > [Plan 105](../../docs/plans/105-sum-type-explicit-base.md).
 
 **Правила discriminants:**
 
-1. **Базовый тип** — дефолт `int`. Опционально явный (`type X i32 |`,
-   `type X u8 |`).
+1. **Базовый тип** — дефолт `int`. Опционально явный (`type X i32 enum`,
+   `type X u8 enum`).
 2. **Auto-increment** от первого варианта:
    - Первый без значения → 0.
    - Каждый следующий без значения → предыдущий + 1.
@@ -319,7 +321,7 @@ type HttpCode i32 | Ok = 200 | NotFound = 404
 6. **Mixed** (некоторые с полями, некоторые без, у всех discriminants) —
    разрешено:
    ```nova
-   type Event
+   type Event enum
        | Click(x int, y int)              = 1
        | KeyPress(key str)                 = 2
        | Idle                              = 3
@@ -368,9 +370,9 @@ fn Color.from_int(n int) Fail[InvalidVariant] -> Color =>
 #### Параметризованные sum
 
 ```nova
-type Option[T] | Some(T) | None
-type Result[T, E] | Ok(T) | Err(E)
-type Tree[T]
+type Option[T] enum Some(T) | None
+type Result[T, E] enum Ok(T) | Err(E)
+type Tree[T] enum
     | Leaf
     | Node { value T, left Tree[T], right Tree[T] }
 ```
@@ -482,12 +484,12 @@ match @buckets[idx] {
 
 - **`type X = Y`** для alias — старый D17 синтаксис, заменён на
   `type X alias Y`.
-- **`type X = A, B`** для sum — заменён на `type X | A | B`.
+- **`type X = A, B`** для sum — заменён на `type X enum A | B`.
 - **`type X = { ... }`** для record — синтаксис никогда не был активным
   (D17 уже отвергал), `=` в этой позиции запрещён.
-- **`,` для разделения вариантов sum** — заменено на leading `|`.
-- **Sum без leading `|` у первого варианта** — обязателен (`type X
-  Red | Green` ✗, `type X | Red | Green` ✓).
+- **`,` для разделения вариантов sum** — заменено на `|`.
+- **Sum без `enum` маркера** — запрещён (`type X Red | Green` ✗,
+  `type X enum Red | Green` ✓). См. D406.
 - **Single-variant sum** — запрещён (как в D17), используйте record.
 - **Конфликт discriminants** — запрещён.
 - **Избыточная форма `{ name: name }`** — обязателен shorthand
@@ -531,8 +533,8 @@ match @buckets[idx] {
 
 - **Сохранить `type X = Y` для alias.** Создаёт асимметрию: alias и
   sum с `=`, record/tuple/newtype без — нет единого правила.
-- **Kind-токен `enum` для sum** (`type X enum { A, B }`). Длиннее,
-  чем leading `|`, не даёт дополнительной информации.
+- **Kind-токен `enum` с фигурными скобками** (`type X enum { A, B }`). Заменено
+  на `type X enum A | B` без скобок (D406).
 - **Литералы как sum-варианты** (`type State | "open" | "closed"`,
   TS-style literal types). Полезно, но это **отдельная фича**
   (subtyping, runtime representation), отложена на следующую
@@ -603,6 +605,127 @@ match @buckets[idx] {
 
 D52 решает все три, ценой breaking change по syntax-site всех
 type-объявлений. Подробно — [history/evolution.md](history/evolution.md).
+
+---
+
+## D406. Sum-type синтаксис: `enum` маркер (2026-07-01)
+
+> Revises [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) §«Sum».
+> Остальные формы D52 (newtype, alias, record, tuple, unit) без изменений.
+
+### Что
+
+Sum-type теперь объявляется с обязательным ключевым словом `enum` вместо
+leading `|`. Keyword `enum` — маркер в **грамматике типов**, поэтому он
+работает везде где допустим тип: в named-type declaration, в позиции
+параметра, возврата, поля, binding'а.
+
+### Правило
+
+#### Синтаксис
+
+```nova
+// Named sum inline — без | перед первым вариантом
+type Color enum Red | Green | Blue
+type Direction enum North | East | South | West
+type Option[T] enum Some(T) | None
+
+// Многострочный — | обязателен у каждого варианта (включая первый)
+type Result[T, E] enum
+    | Ok(T)
+    | Err(E)
+
+type Shape enum
+    | Circle { radius f64 }
+    | Square { side f64 }
+    | Triangle { a f64, b f64, c f64 }
+
+// С discriminants
+type ExitCode enum Ok = 0 | Failure = 1 | Critical = 2
+
+// С явным базовым типом (пока не реализован, Plan 105)
+type Bit u8 enum Off = 0 | On = 1
+```
+
+#### Inline enum в type-позиции
+
+`enum Variant1 | Variant2` — это **тип-выражение**, валидное в любой
+позиции где допустим тип:
+
+```nova
+// Параметр функции
+fn job(a enum A | B) { ... }
+
+// Возвратный тип
+fn parse() -> enum Ok(int) | Err(str) { ... }
+
+// Поле записи
+type Response {
+    status enum Ok | NotFound | InternalError
+}
+
+// Let-binding
+ro x: enum Some(int) | None = Some(42)
+```
+
+`type Foo enum A | B` — это объявление **имени** для типа-выражения
+`enum A | B`. Named и inline — одна грамматика.
+
+#### `|` в inline и многострочной формах
+
+- **Inline** — `|` разделяет варианты, перед первым не нужен:
+  `type Color enum Red | Green | Blue`
+- **Многострочный** — если варианты на новых строках, `|` **обязателен**
+  у каждого варианта (включая первый), аналогично type-set bounds:
+
+```nova
+type Color enum Red | Green | Blue       // inline — без | перед первым
+
+type Result[T, E] enum                   // многострочный — | обязателен
+    | Ok(T)
+    | Err(E)
+```
+
+#### Парсер
+
+| После `type X` (или `type X[params]`) | Форма |
+|---|---|
+| `enum` | sum |
+| `<base-type>` `enum` | sum с явным базовым типом (Plan 105) |
+
+В type-expression position `enum` — prefix, парсер строит `EnumTypeExpr`.
+
+### Почему
+
+1. **Симметрия с `alias`.** `type X alias Y` и `type X enum A | B` —
+   одна структура: keyword даёт форму, далее описание. Единый паттерн.
+2. **Явный grep-маркер.** `enum` в любой type-позиции мгновенно
+   идентифицирует sum-type — в IDE, grep, LLM-prompt.
+3. **Устраняет неоднозначность `|`.** В D52 leading `|` конфликтовало
+   с оператором `@or` и вызывало удивление. `enum` — незвуковой маркер
+   без операторных коннотаций.
+4. **Inline enum.** Анонимные sum-типы в позициях параметра/возврата/поля
+   становятся возможными — естественный extension грамматики.
+5. **Named = `type` + inline.** `type Foo enum A | B` тавтологично
+   читается: «тип Foo это enum A или B». Интуитивно.
+
+### Что отвергнуто
+
+- **Сохранить leading `|`** (D52). Конфликт с оператором; не grep-абелен;
+  inline-позиция невозможна.
+- **`enum { A, B }` со скобками** (Go/C стиль). Нарушает Nova-правило
+  «`{` → record»; `,` как разделитель заменено на `|` ещё в D52.
+- **`sum A | B`** (другой keyword). `enum` общепринятый термин в PL;
+  `sum` слишком математичен, непривычен программистам.
+- **`type X = enum A | B`** с `=`. Убрано ещё в D52; D406 следует тому
+  же принципу «никаких `=` в type-declaration».
+
+### Связь
+
+- [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) — заменяемый синтаксис
+- [D55](#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы) — literal coercion в позиции sum-type (inline `enum` тоже)
+- [03-syntax.md → D46](03-syntax.md#d46) — `|` как `@or` оператор — разрешается по контексту (keyword `enum` или expr-контекст)
+- [Plan 105](../../docs/plans/105-sum-type-explicit-base.md) — явный базовый тип discriminants
 
 ---
 
@@ -974,7 +1097,7 @@ Plan 15 D53 strict-mode (Plan 15 Ф.5) ввёл различие protocol/effect
 
 ```nova
 // Sum-coercion
-type StrOrInt | S(str) | I(int)
+type StrOrInt enum S(str) | I(int)
 
 ro a StrOrInt = "test"          // компилятор: a = S("test")
 ro b StrOrInt = 25               // компилятор: b = I(25)
@@ -1072,7 +1195,7 @@ ro opt Option[str] = "alice"                // Some("alice")
 **Коллекции:**
 
 ```nova
-type SqlValue | I(i64) | F(f64) | S(str) | B(bool) | Bytes([]u8) | Null
+type SqlValue enum I(i64) | F(f64) | S(str) | B(bool) | Bytes([]u8) | Null
 
 ro args []SqlValue = [42, "alice", true]    // [I(42), S("alice"), B(true)]
 
@@ -1083,7 +1206,7 @@ ro q = sql`SELECT * FROM users WHERE id = ${42}`   // args = [I(42)]
 **Генерики:**
 
 ```nova
-type Wrapper[T] | W(T) | Empty
+type Wrapper[T] enum W(T) | Empty
 
 ro w Wrapper[int] = 42                      // W(42)
 ro w Wrapper[str] = "test"                   // W("test")
@@ -1162,7 +1285,7 @@ save_all([{ id: 1, name: "a" }, { id: 2, name: "b" }])
 программист пишет конструктор:
 
 ```nova
-type Shape | Circle { radius f64 } | Square { side f64 }
+type Shape enum Circle { radius f64 } | Square { side f64 }
 
 ro s Shape = Circle { radius: 5.0 }   // явный конструктор обязателен
 ro s Shape = { radius: 5.0 }           // ОШИБКА: по полям невозможно
@@ -1260,7 +1383,7 @@ record-coercion матчила бы `{ debug: ... }` против **полей s
 **Ambiguity — несколько конструкторов с тем же типом** (sum-coercion):
 
 ```nova
-type Ambiguous | A(int) | B(int)
+type Ambiguous enum A(int) | B(int)
 
 ro x Ambiguous = 42         // ОШИБКА: ambiguous, A(42) или B(42)?
 ro x = A(42)                 // явный конструктор — ok
@@ -1269,7 +1392,7 @@ ro x = A(42)                 // явный конструктор — ok
 **Несоответствие — ни один конструктор не принимает тип значения:**
 
 ```nova
-type Color | Red | Green | Blue
+type Color enum Red | Green | Blue
 
 ro c Color = "red"           // ОШИБКА: ни один конструктор не принимает str
 ro c = Red                    // unit-конструктор
@@ -1278,7 +1401,7 @@ ro c = Red                    // unit-конструктор
 **Без аннотации — coercion отключён:**
 
 ```nova
-type StrOrInt | S(str) | I(int)
+type StrOrInt enum S(str) | I(int)
 
 ro a = "test"                // a : str (не StrOrInt, аннотации нет)
 ro b StrOrInt = "test"        // b : StrOrInt = S("test") (аннотация есть)
@@ -1291,7 +1414,7 @@ ro u User = { id: 2, name: "Bob" }   // u : User (через record-coercion)
 
 ```nova
 type UserId u64
-type Wrapper | W(UserId) | N(int)
+type Wrapper enum W(UserId) | N(int)
 
 ro w Wrapper = 42            // 42 : int → N(42) (тип значения int)
 ro w Wrapper = 42 as UserId  // → W(42 as UserId) — явный as, потом coercion
@@ -1316,7 +1439,7 @@ exact-type значения.
 **Multi-parameter конструкторы — coercion не применяется в MVP:**
 
 ```nova
-type Event | Click(int, int) | KeyPress(str)
+type Event enum Click(int, int) | KeyPress(str)
 
 ro e Event = "enter"         // ok — KeyPress("enter"), unary с str
 ro e Event = (5, 10)          // ОШИБКА в MVP: tuple-coercion не вводится
@@ -1333,7 +1456,7 @@ Unit-варианты не принимают значение, coercion не н
 пишет конструктор напрямую:
 
 ```nova
-type State | Open | Closed
+type State enum Open | Closed
 ro s State = Open              // unit, coercion не применяется
 ```
 
@@ -1516,7 +1639,7 @@ fn compute() -> Money =>
     else       { { amount: a + b, currency: c } }
 
 // 4. ambiguous unary-конструкторы (compile-error без явного имени)
-type Mixed | A(int) | B(int)
+type Mixed enum A(int) | B(int)
 ro x Mixed = 42                  ❌ ambiguous — обязателен A(42) / B(42)
 ```
 
@@ -3123,7 +3246,7 @@ type Db effect {
 }
 
 // sum-type method
-type Tree | Leaf | Node(int, Tree, Tree)
+type Tree enum Leaf | Node(int, Tree, Tree)
 fn Tree @clone() -> Self => match @ {
     Leaf          => Leaf
     Node(v, l, r) => Node(v, l.clone(), r.clone())

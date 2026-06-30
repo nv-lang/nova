@@ -484,7 +484,7 @@ fn critical(...) -> Result =>
 ```nova
 type Option[T] | Some(T) | None
 type Result[T, E] | Ok(T) | Err(E)
-type Ordering | Less | Equal | Greater
+type Ordering enum Less | Equal | Greater
 // `never` — bottom-тип (uninhabited): строчный встроенный примитив,
 // НЕ объявляется (как `int`/`bool`). См. «`never` — bottom-тип» ниже.
 type any protocol { }                            // top-type через пустой protocol (D53)
@@ -2402,20 +2402,20 @@ type TryInto[T, E] protocol {
 Программист пишет **только `TryFrom`-сторону**:
 
 ```nova
-fn char.try_from(cp int) -> Result[Self, str] {
+fn char.try_from(cp int) -> Result[Self, CharTryFromError] {
     if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
-        Err("invalid codepoint")
+        Err(CharTryFromError)
     } else {
         Ok(unsafe { cp as char })
     }
 }
 
 // Compiler синтезирует:
-//   fn int @try_into() -> Result[char, str] => char.try_from(@)
+//   fn int @try_into() -> Result[char, CharTryFromError] => char.try_from(@)
 
 // Формы вызова:
-ro c = char.try_from(65)?          // static-форма с ?
-ro c: Result[char, str] = 65.try_into()  // instance-форма
+ro c = char.try_from(65)?                           // static-форма с ?
+ro c Result[char, CharTryFromError] = 65.try_into() // instance-форма
 ```
 
 Симметрично: если написан `@try_into()` — компилятор синтезирует
@@ -2430,6 +2430,18 @@ fn Fahrenheit.from(c Celsius) -> Self => ...        // инфаллибельн�
 fn Fahrenheit.try_from(s str) -> Result[Self, ParseError] => ...  // фаллибельный (D77)
 ```
 
+#### Error-типы для char-конверсий
+
+Стандартные error-типы для `char`-конверсий (по модели Rust, unit-types):
+
+```nova
+type CharTryFromError   // int → char: codepoint вне [0, 0x10FFFF] или суррогат
+type TryFromCharError   // char → u8: codepoint > 0xFF (не Latin-1)
+```
+
+Оба — unit-type без полей: ошибка одна возможная (диапазон).
+`match` не нужен — достаточно `?` или `.ok()`.
+
 #### Когда использовать TryFrom
 
 `TryFrom` — для любой конверсии которая **может провалиться**:
@@ -2443,8 +2455,11 @@ fn u64.try_from(s str) -> Result[Self, ParseIntError] =>
         Ok(parsed_value)
     }
 
-// Range-check:
-fn char.try_from(cp int) -> Result[Self, str] => ...
+// Range-check int → char:
+fn char.try_from(cp int) -> Result[Self, CharTryFromError] => ...
+
+// Range-check char → u8 (только Latin-1 [0..255]):
+fn u8.try_from(c char) -> Result[Self, TryFromCharError] => ...
 
 // Validation:
 fn Port.try_from(n u16) -> Result[Self, str] =>
