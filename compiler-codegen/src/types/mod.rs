@@ -6636,6 +6636,28 @@ impl<'a> TypeCheckCtx<'a> {
                             let rt = ResolvedType::from_type_ref(&tr);
                             self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                         }
+                    } else if let ExprKind::Ident(fname) = &func.kind {
+                        // P67 ФАЗА 2 (variant ctor `Some(x)` — int-collapse-relevant, gap driver):
+                        // channel `Option[type-of-x]` so the ctor expr's type PRESERVES payload
+                        // width (`Some(uint_var)` → `Option[uint]`, not legacy `Option[nova_int]`).
+                        // Bounded to `Some` (Result needs BOTH Ok+Err → contextual). Payload from
+                        // the SIZED arg type via `infer_expr_type` (concrete scope); gs-gated; not
+                        // when `Some` is shadowed by a local. The Option WRAPPER type is concrete
+                        // (no context coercion of the payload — Nova has no implicit int-widening,
+                        // so `type-of-x` is the sound payload). §1 «материализуй резолв».
+                        if fname == "Some" && args.len() == 1 && !scope.contains_key(fname) {
+                            if let Some(payload_tr) = self.infer_expr_type(args[0].expr(), scope) {
+                                let opt = TypeRef::Named {
+                                    path: vec!["Option".to_string()],
+                                    generics: vec![payload_tr],
+                                    span: e.span,
+                                };
+                                if !typeref_mentions_any(&opt, gs) {
+                                    let rt = ResolvedType::from_type_ref(&opt);
+                                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                }
+                            }
+                        }
                     }
                 }
             }
