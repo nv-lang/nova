@@ -5399,11 +5399,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn emit_const_expr_typed(&mut self, expr: &Expr, target_ty_c: Option<&str>) -> Result<String, String> {
         match &expr.kind {
             ExprKind::IntLit(n) => {
-                let ty_c = target_ty_c.unwrap_or("nova_int");
+                let ty_c = target_ty_c.unwrap_or_else(|| panic!("[P67] IntLit without target type context — checker must annotate"));
                 Ok(Self::emit_typed_int_literal(*n, ty_c))
             }
             ExprKind::CharLit(cp) => {
-                let ty_c = target_ty_c.unwrap_or("nova_int");
+                let ty_c = target_ty_c.unwrap_or_else(|| panic!("[P67] CharLit without target type context — checker must annotate"));
                 Ok(Self::emit_typed_int_literal(*cp as i64, ty_c))
             }
             ExprKind::Unary { op: UnOp::Neg, operand } => {
@@ -5411,7 +5411,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // негативный литерал в const'е концептуально некорректен (заворот),
                 // оставляем как есть (программист сам отвечает).
                 if let ExprKind::IntLit(n) = &operand.kind {
-                    let ty_c = target_ty_c.unwrap_or("nova_int");
+                    let ty_c = target_ty_c.unwrap_or_else(|| panic!("[P67] Unary-IntLit without target type context — checker must annotate"));
                     return Ok(Self::emit_typed_int_literal(-*n, ty_c));
                 }
                 let inner = self.emit_const_expr_typed(operand, target_ty_c)?;
@@ -19073,7 +19073,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 .unwrap_or_else(|| Self::desanitize_c_from_ident(
                                     arr_obj_ty
                                         .strip_prefix("Nova_Vec____")
-                                        .unwrap_or("nova_int")
+                                        .unwrap_or_else(|| panic!("[P67] nova_int collapse"))
                                         .trim()
                                 ));
                             // Plan 140.2 B.4 / [M-140.2-elision-writeback]: элидировать
@@ -20601,7 +20601,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // Nova's `==` on arrays means element-wise; emit a runtime call if available,
                 // otherwise fall back to pointer eq (correct for test cases comparing same array).
                 if lty.starts_with("NovaArray_") || rty.starts_with("NovaArray_") {
-                    let elem_ty = lty.strip_prefix("NovaArray_").unwrap_or("nova_int")
+                    let elem_ty = lty.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse"))
                         .trim_end_matches('*');
                     return match op {
                         BinOp::Eq  => Ok(format!("(nova_array_eq_{}({}, {}))", elem_ty, l, r)),
@@ -20630,7 +20630,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     } else {
                         (rty.clone(), false)
                     };
-                    let elem_ty = canonical_opt_ty.strip_prefix("NovaOpt_").unwrap_or("nova_int").to_string();
+                    let elem_ty = canonical_opt_ty.strip_prefix("NovaOpt_").unwrap_or_else(|| panic!("[P67] nova_int collapse")).to_string();
                     // Re-cast bare None-literal to canonical opt_ty if it slipped through.
                     // Pattern: "((NovaOpt_nova_int){.tag = NOVA_TAG_Option_None})" —
                     // NovaOpt_nova_int never NPO (nova_int is не pointer), pattern
@@ -22296,7 +22296,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         let vec_ty = obj_ty.trim_end_matches('*').trim();
                         let elem_ty = obj_ty
                             .strip_prefix("Nova_Vec____")
-                            .unwrap_or("nova_int")
+                            .unwrap_or_else(|| panic!("[P67] nova_int collapse"))
                             .trim_end_matches('*')
                             .trim();
                         // [M-153.4-vec-value-record-slice-typedef] `elem_ty` here is the
@@ -22448,7 +22448,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         .get(&mangled).and_then(|(_, a)| a.first().cloned())
                         .unwrap_or_else(|| obj_ty
                             .strip_prefix("Nova_Vec____")
-                            .unwrap_or("nova_int")
+                            .unwrap_or_else(|| panic!("[P67] nova_int collapse"))
                             .trim_end_matches('*')
                             .trim()
                             .to_string());
@@ -24236,7 +24236,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // plan'а 62.A.bis.
                     if obj_ty.starts_with("NovaOpt_") {
                         let elem_ty = obj_ty.strip_prefix("NovaOpt_")
-                            .unwrap_or("nova_int")
+                            .unwrap_or_else(|| panic!("[P67] nova_int collapse"))
                             .trim_end_matches('*')
                             .trim()
                             .to_string();
@@ -25451,7 +25451,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if obj_ty.starts_with("Nova_Vec____") {
                     let vec_elem_ty = obj_ty
                         .strip_prefix("Nova_Vec____")
-                        .unwrap_or("nova_int")
+                        .unwrap_or_else(|| panic!("[P67] nova_int collapse"))
                         .trim_end_matches('*')
                         .trim()
                         .to_string();
@@ -25477,7 +25477,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     }
                 }
                 if obj_ty.starts_with("NovaArray_") {
-                    let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or("nova_int")
+                    let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse"))
                         .trim_end_matches('*').trim();
                     match method.as_str() {
                         // Plan 60 / D117: size-accessor methods на []T —
@@ -29333,7 +29333,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if !matches!(e.kind, ExprKind::CharLit(_)) {
                         let sum_result: Option<String> = if arg_ty.starts_with("NovaOpt_") {
                             let elem_ty = arg_ty.strip_prefix("NovaOpt_")
-                                .unwrap_or("nova_int")
+                                .unwrap_or_else(|| panic!("[P67] nova_int collapse"))
                                 .trim_end_matches('*')
                                 .trim()
                                 .to_string();
@@ -29928,7 +29928,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 self.array_element_types.get(arr_expr.as_str()).cloned()
             };
             let elem_ty = real_elem_ty.unwrap_or_else(|| {
-                arr_ty.strip_prefix("NovaArray_").unwrap_or("nova_int")
+                arr_ty.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse"))
                     .trim_end_matches('*').trim().to_string()
             });
 
@@ -31959,7 +31959,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             "uint32_t"  => "uint32_t",
             "uint16_t"  => "uint16_t",
             "uint64_t"  => "uint64_t",
-            _ => match self.current_array_elem_hint.as_deref().unwrap_or("nova_int") {
+            _ => match self.current_array_elem_hint.as_deref().unwrap_or_else(|| panic!("[P67] nova_int collapse")) {
                 "nova_str"  => "nova_str",
                 "nova_bool" => "nova_bool",
                 "nova_f64"  => "nova_f64",
@@ -36815,6 +36815,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             };
             eprintln!("[U45GAP] kind={} annotated={} legacy={}{}{}", kind, annotated, legacy, rc, recv);
         }
+        // Plan 172.1 P67: falling through to legacy is a compiler bug — the checker must
+        // annotate every expression. Panic in debug so tests catch unannotated exprs immediately.
+        #[cfg(debug_assertions)]
+        panic!(
+            "[P67] legacy fall-through: kind={:?} span={:?} legacy={}",
+            match &expr.kind {
+                ExprKind::Call { .. } => "Call",
+                ExprKind::Member { .. } => "Member",
+                ExprKind::Ident(_) => "Ident",
+                ExprKind::Binary { .. } => "Binary",
+                ExprKind::If { .. } => "If",
+                ExprKind::Block(_) => "Block",
+                _ => "Other",
+            },
+            expr.span,
+            legacy
+        );
+        #[allow(unreachable_code)]
         legacy
     }
 

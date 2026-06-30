@@ -10137,11 +10137,25 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(tr) = scope.get(name).cloned() {
                     return Some(tr);
                 }
-                // Ident not in scope (enum variant None/Ok/Err, module-level const, etc.) —
-                // fall back to resolved_types_buf when already annotated by the checker.
+                // Ident not in scope: try resolved_types_buf first.
                 if expr.id.is_set() {
                     if let Some(rt) = self.resolved_types_buf.borrow().get(&expr.id) {
                         return Self::resolved_to_typeref(rt, expr.span);
+                    }
+                }
+                // Last resort: if name = a unit-variant of a known sum type, infer as that type.
+                // Covers bare enum variants (`D52Red`, `None`) used in expression position.
+                for (type_name, td) in &self.types {
+                    if let TypeDeclKind::Sum(variants) = &td.kind {
+                        if td.generics.is_empty() {
+                            if variants.iter().any(|v| &v.name == name) {
+                                return Some(TypeRef::Named {
+                                    path: vec![type_name.clone()],
+                                    generics: Vec::new(),
+                                    span: expr.span,
+                                });
+                            }
+                        }
                     }
                 }
                 None
@@ -10170,6 +10184,8 @@ impl<'a> TypeCheckCtx<'a> {
                 // Unknown container (user type, generic T) → return inner type unchanged.
                 Some(inner_tr)
             }
+            // `x as T` — result type is always T (the declared target).
+            ExprKind::As(_, target_ty) => Some(target_ty.clone()),
             // Plan 172.1 §0a: Coalesce (`a ?? b`) — type is the unwrapped inner T from `a:
             // Option[T]`. The fallback `b` must be compatible but DOES NOT determine the result
             // type (a literal `0` is `int` but `v.first() ?? 0` on `Vec[uint]` must be `uint`).
