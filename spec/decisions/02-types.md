@@ -289,14 +289,20 @@ type Shape enum
 | Модификатор | Семантика | D-block |
 |---|---|---|
 | `export` | виден снаружи модуля | D47 |
-| `priv(file)` | виден только в этом файле (применим к `type`, `fn`, `const`) | D307 |
 | `value` | stack-allocated (по значению, не в GC-куче) | D228/D290 |
 | `priv` | поля module-private по умолчанию | D281 |
 | `priv(type)` | поля type-private по умолчанию | D281 |
+| `priv(file)` | символ виден только в этом файле | D307 |
 | `consume` | must-be-consumed affine type | D133 |
 
-Грамматика type-declaration: `[export|priv(file)] type Name[T] [value] [priv|priv(type)] [consume] { … }`
-(`priv(file)` также применим к `fn` и `const` — см. D307.)
+`priv(file)` — двойная позиция: prefix перед `type` (`priv(file) type X { … }`)
+**или** modifier после имени (`type X priv(file) { … }`). Обе формы эквивалентны.
+Для `fn` и `const` только prefix-форма: `priv(file) fn f()`, `priv(file) const K`.
+
+Грамматика type-declaration:
+`[export] type Name[T] [value] [priv|priv(type)|priv(file)] [consume] { … }`
+эквивалентно:
+`[export|priv(file)] type Name[T] [value] [priv|priv(type)] [consume] { … }`
 
 Модификаторы **комбинируются**: `export type Job value priv consume { … }`.
 
@@ -13010,12 +13016,16 @@ folder-module = один compile unit из co-equal peer-файлов (D29/D78):
 ### Синтаксис
 
 ```nova
-priv(file) type Acc { … }       // тип виден только в этом файле
+priv(file) type Acc { … }       // тип виден только в этом файле (prefix-форма)
+type Job priv(file) { … }       // эквивалент — priv(file) как type-modifier после имени
 priv(file) fn helper() -> int   // free fn не виден peer-файлам модуля
 priv(file) const K = 42         // file-local константа
 // (без модификатора)           // module-private (как сейчас, D281)
 export     fn api() …           // публичный (как сейчас)
 ```
+
+Для `type`: `priv(file)` допустим **и как prefix** (`priv(file) type X`), **и как modifier после имени** (`type X priv(file) { … }`) — обе формы эквивалентны, выбор стилевой.
+Для `fn` и `const`: только prefix-форма.
 
 Лесенка видимости top-level символов: **`priv(file)` ⊂ (module-default) ⊂ `export`**.
 
