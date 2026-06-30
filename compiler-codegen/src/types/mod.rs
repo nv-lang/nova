@@ -6673,28 +6673,53 @@ impl<'a> TypeCheckCtx<'a> {
                         | BinOp::And | BinOp::Or | BinOp::Implies | BinOp::Iff => {
                             Some(ResolvedType::Bool)
                         }
-                        _ => match (
-                            self.infer_expr_type(left, scope),
-                            self.infer_expr_type(right, scope),
-                        ) {
-                            (Some(l_tr), Some(r_tr)) => {
-                                let l = ResolvedType::from_type_ref(&l_tr);
-                                let r = ResolvedType::from_type_ref(&r_tr);
-                                let is_num = |rt: &ResolvedType| {
-                                    matches!(
-                                        rt,
-                                        ResolvedType::Scalar { .. } | ResolvedType::Float { .. }
-                                    ) || matches!(rt, ResolvedType::Named { name, args, .. }
-                                        if args.is_empty() && name.as_str() == "char")
-                                };
-                                if is_num(&l) && is_num(&r) {
+                        _ => {
+                            let is_num = |rt: &ResolvedType| {
+                                matches!(
+                                    rt,
+                                    ResolvedType::Scalar { .. } | ResolvedType::Float { .. }
+                                ) || matches!(rt, ResolvedType::Named { name, args, .. }
+                                    if args.is_empty() && name.as_str() == "char")
+                            };
+                            // P67 ФАЗА 2 (Binary residual — gap driver #3, 12% of fall-through):
+                            // recover an operand RT from the CHANNEL when `infer_expr_type` can't
+                            // reach it (Member-field / Index-elem / Call operands — its arm-set has
+                            // no such arms). The children were annotated BEFORE this parent in
+                            // `f1_expr`, so `resolved_types_buf[operand.id]` is already populated.
+                            // RESTRICTED to NUMERIC operands → the result is a safe promoted
+                            // primitive (no generic/mono → no §0.95 subst-timing / GC-layout
+                            // perturbation); a non-numeric channel operand stays on legacy. This
+                            // ALSO fixes int-collapse for sized-field arith (`rec.u8field * 2` →
+                            // u8-promoted, not the legacy `_=>nova_int`). §1 «материализуй резолв».
+                            let operand_rt = |e: &Expr| -> Option<ResolvedType> {
+                                self.infer_expr_type(e, scope)
+                                    .map(|t| ResolvedType::from_type_ref(&t))
+                                    .or_else(|| self.resolved_types_buf.borrow().get(&e.id).cloned())
+                            };
+                            let numeric = match (operand_rt(left), operand_rt(right)) {
+                                (Some(l), Some(r)) if is_num(&l) && is_num(&r) => {
                                     Some(crate::number_exprs::promote_arith_rt(&l, &r))
-                                } else {
-                                    Some(l)
                                 }
-                            }
-                            _ => None,
-                        },
+                                _ => None,
+                            };
+                            // ORIGINAL path preserved BYTE-IDENTICAL (both operands infer via
+                            // infer_expr_type): both-numeric → promote; non-numeric → Some(left).
+                            numeric.or_else(|| match (
+                                self.infer_expr_type(left, scope),
+                                self.infer_expr_type(right, scope),
+                            ) {
+                                (Some(l_tr), Some(r_tr)) => {
+                                    let l = ResolvedType::from_type_ref(&l_tr);
+                                    let r = ResolvedType::from_type_ref(&r_tr);
+                                    if is_num(&l) && is_num(&r) {
+                                        Some(crate::number_exprs::promote_arith_rt(&l, &r))
+                                    } else {
+                                        Some(l)
+                                    }
+                                }
+                                _ => None,
+                            })
+                        }
                     };
                     if let Some(rt) = res_rt {
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
