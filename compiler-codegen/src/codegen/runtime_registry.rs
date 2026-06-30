@@ -434,20 +434,33 @@ fn char_runtime() -> Vec<RuntimeFn> {
             doc: "Unchecked UTF-8 encode codepoint в 1-4 байта. Caller гарантирует cp ∈ [0, 0x10FFFF]. Invalid codepoint → empty str (silent — predictable degradation). Используется JSON unicode escape parser-ами + другими decoders.",
         nova_body: None,
     },
-        // D54/D77: char.try_from(cp int) -> Result[char, str]
+        // D54/D77: char.try_from(cp int) -> Result[char, CharTryFromError]
         // Nova-implemented: range-check + unsafe { cp as char } (D54 amended).
-        // char.from(cp) Fail[str] is auto-derived via try_from(cp)!!.
         RuntimeFn {
             module: "std.runtime.char",
             receiver: Some("char"),
             is_static: true, is_mut: false, is_consume: false,
             name: "try_from",
             params: &[("cp", "int")],
-            return_ty: "Result[char, str]",
+            return_ty: "Result[char, CharTryFromError]",
             effects: &[],
             c_name: "",
-            doc: "D54/D77: validates unicode scalar value [0, 0x10FFFF] excluding surrogates. Returns Err on invalid codepoint.",
-            nova_body: Some("{\n    if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {\n        Err(\"char.try_from: invalid codepoint\")\n    } else {\n        Ok(unsafe { cp as char })\n    }\n}"),
+            doc: "D54/D77: int → char, validates unicode scalar value [0, 0x10FFFF] excluding surrogates.",
+            nova_body: Some("{\n    if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {\n        Err(CharTryFromError)\n    } else {\n        Ok(unsafe { cp as char })\n    }\n}"),
+        },
+        // D54/D77: u8.try_from(c char) -> Result[u8, TryFromCharError]
+        // Nova-implemented: codepoint > 0xFF check + unsafe cast (Latin-1 subset safe).
+        RuntimeFn {
+            module: "std.runtime.char",
+            receiver: Some("u8"),
+            is_static: true, is_mut: false, is_consume: false,
+            name: "try_from",
+            params: &[("c", "char")],
+            return_ty: "Result[u8, TryFromCharError]",
+            effects: &[],
+            c_name: "",
+            doc: "D54/D77: char → u8, fails if codepoint > 0xFF (non-Latin-1).",
+            nova_body: Some("{\n    if c as int > 0xFF {\n        Err(TryFromCharError)\n    } else {\n        Ok(unsafe { c as int as u8 })\n    }\n}"),
         },
     ]
 }

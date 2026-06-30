@@ -37507,19 +37507,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     }
                 }
                 // Plan 91.18 Ф.7: `char.try_from(int_expr)` — static call whose
-                // emit-side producer (line ~27180) was fixed to emit a
-                // `NovaRes_nova_char_nova_str*` result.  Without this mirror in
-                // `infer_expr_c_type` the scrutinee variable of
-                //   `match char.try_from(cp) { Ok(c) => c, … }`
-                // would still be typed `NovaRes_nova_int_nova_str*`, binding `c`
-                // as `nova_int` and dispatching `str.from(c)` to `nova_int_to_str`
-                // instead of `Nova_str_static_from_char`.
+                // result type must be `NovaRes_nova_char_Nova_CharTryFromError_p*`
+                // so that `match char.try_from(cp) { Ok(c) => c, … }` binds `c`
+                // as `nova_char` and routes `str.from(c)` → `Nova_str_static_from_char`.
+                // Error type changed str → CharTryFromError (D77, typed error).
                 if let ExprKind::Path(parts) = &func.kind {
                     if parts.len() == 2 && parts[0] == "char" && parts[1] == "try_from" {
                         if let Some(first_arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(first_arg.expr());
                             if arg_ty == "nova_int" {
-                                return self.result_repr_c_type("nova_char", "nova_str");
+                                return self.result_repr_c_type("nova_char", "Nova_CharTryFromError*");
                             }
                         }
                     }

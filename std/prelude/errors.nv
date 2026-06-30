@@ -318,3 +318,41 @@ export type CleanupTimeoutError {
 export type MultiErrorTruncated {
     ro depth int
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Char conversion errors (D54/D77)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Ошибка конверсии `int` → `char`. Выбрасывается `char.try_from(cp int)`
+/// когда codepoint вне диапазона [0, 0x10FFFF] или является surrogate
+/// [0xD800, 0xDFFF].
+///
+/// Unit-тип — сам факт «невалидный codepoint», payload не нужен.
+///
+/// # Examples
+///
+/// ```nova
+/// match char.try_from(-1) {
+///     Ok(c) => ...
+///     Err(CharTryFromError) => // codepoint out of range
+/// }
+/// ```
+#stable(since = "0.1")
+export type CharTryFromError
+
+/// Ошибка конверсии `char` → `u8`. Выбрасывается `u8.try_from(c char)`
+/// когда codepoint > 0xFF (символ не является Latin-1).
+///
+/// Unit-тип — сам факт «символ не вмещается в u8».
+///
+/// # Examples
+///
+/// ```nova
+/// match u8.try_from('é') {
+///     Ok(b) => ...
+///     Err(TryFromCharError) => // codepoint > 0xFF
+/// }
+/// ```
+#stable(since = "0.1")
+export type TryFromCharError

@@ -17,12 +17,23 @@ export extern "nova" fn str.from_codepoint(cp int) -> str
 
 // ─── char ───
 
-// D54/D77: validates unicode scalar value [0, 0x10FFFF] excluding surrogates. Returns Err on invalid codepoint.
-export fn char.try_from(cp int) -> Result[char, str] {
+// D54/D77: int → char, validates unicode scalar value [0, 0x10FFFF] excluding surrogates.
+export fn char.try_from(cp int) -> Result[char, CharTryFromError] {
     if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
-        Err("char.try_from: invalid codepoint")
+        Err(CharTryFromError)
     } else {
         Ok(unsafe { cp as char })
+    }
+}
+
+// ─── u8 ───
+
+// D54/D77: char → u8, fails if codepoint > 0xFF (non-Latin-1).
+export fn u8.try_from(c char) -> Result[u8, TryFromCharError] {
+    if c as int > 0xFF {
+        Err(TryFromCharError)
+    } else {
+        Ok(unsafe { c as int as u8 })
     }
 }
 
