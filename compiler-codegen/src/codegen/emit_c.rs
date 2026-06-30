@@ -19990,6 +19990,29 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 return result;
             }
         }
+        // Plan 172.1 [literal-coercion channel]: a TUPLE literal against a mono-tuple
+        // target coerces each element to the target's element type (decoded from the
+        // mangled `_NovaTuple_<arity>_<L>_<T>…` name) so `?? (0,0)` against `(uint,uint)`
+        // builds `_NovaTuple_2_…uint…uint` to MATCH the Ok/Some side, not the collapsed
+        // `(int,int)` (CC-FAIL incompatible-operand clash). Mirrors the mono-tuple
+        // construction in `emit_expr`'s TupleLit arm (:21550) but drives element types
+        // from the TARGET (decoded), recursing each element through this coercion.
+        if let ExprKind::TupleLit(elems) = &expr.kind {
+            if let Some(elem_tys) = Self::parse_mono_tuple_elements(target_ty_c) {
+                if elem_tys.len() == elems.len() {
+                    let mangled = self.register_mono_tuple(&elem_tys);
+                    let tmp = self.fresh_tmp();
+                    self.line(&format!("{} {};", mangled, tmp));
+                    for (i, (e, ety)) in elems.iter().zip(elem_tys.iter()).enumerate() {
+                        let v = self.emit_expr_with_target_type(e, ety)?;
+                        self.line(&format!("{}.f{} = {};", tmp, i, v));
+                    }
+                    self.var_types.insert(tmp.clone(), mangled.clone());
+                    self.tuple_element_types.insert(tmp.clone(), elem_tys);
+                    return Ok(tmp);
+                }
+            }
+        }
         // Только typed-integer target пропагируем — для nova_int/struct/etc.
         // обычный emit_expr уже корректен.
         if !Self::is_typed_integer(target_ty_c) {
@@ -21955,13 +21978,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             ExprKind::Coalesce(left, right) => {
                 let left_ty = self.infer_expr_c_type(left);
                 let l = self.emit_expr(left)?;
-                let r = self.emit_expr(right)?;
                 if left_ty.starts_with("NovaOpt_") {
                     let opt_tmp = self.fresh_tmp();
                     self.line(&format!("{} {} = {};", left_ty, opt_tmp, l));
                     // Plan 118 Ф.5: NPO-aware is-some check.
                     let sani = left_ty.strip_prefix("NovaOpt_").unwrap_or(&left_ty);
                     let some_check = self.option_is_some_check(&opt_tmp, sani);
+                    // Plan 172.1 [literal-coercion]: fallback coerces to the Some-payload
+                    // type (`?? (0,0)` against `Option[(uint,uint)]` builds a matching tuple).
+                    let r = self.emit_expr_with_target_type(right, sani)?;
                     Ok(format!("({} ? {}.value : {})", some_check, opt_tmp, r))
                 } else if Self::is_result_like(&left_ty) {
                     // D86: `Result ?? fb` — `Ok(v)` → `v`, `Err(_)` → `fb` (ошибка отброшена).
@@ -21972,12 +21997,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // D86) — это её §3/§0/§4-закрытие (spec-conformance).
                     let res_tmp = self.fresh_tmp();
                     self.line(&format!("{} {} = {};", left_ty, res_tmp, l));
+                    // Plan 172.1 [literal-coercion]: fallback coerces to the Ok-payload type
+                    // (`?? (0,0)` against `Result[(uint,uint),_]` builds a matching tuple,
+                    // not the collapsed `(int,int)` → no CC-FAIL operand-type clash).
+                    let r = match self.novares_ok_err(&left_ty) {
+                        Some((ok_c, _)) => self.emit_expr_with_target_type(right, &ok_c)?,
+                        None => self.emit_expr(right)?,
+                    };
                     Ok(format!(
                         "({tmp}->tag == NOVA_TAG_Result_Ok ? {tmp}->payload.Ok._0 : {r})",
                         tmp = res_tmp,
                         r = r
                     ))
                 } else {
+                    let r = self.emit_expr(right)?;
                     Ok(format!("({} /*?? unsupported */ , {})", l, r))
                 }
             }
