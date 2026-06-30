@@ -1,12 +1,17 @@
 // D55 (sized-literal contexts) — a context-typed numeric LITERAL must coerce to the EXPECTED
 // sized/unsigned type, not default to signed `nova_int`. Each test uses an unsigned `2^63`
 // literal whose signed-collapse reads NEGATIVE, so `> 100` discriminates a width-preserving
-// lower from an int-collapse. LOCKS the record-field and call-argument positions (both already
-// coerce correctly). NOTE: the tuple-literal-element-in-typed-return position (`(0x80,0x80) ->
-// (uint,uint)`) is a KNOWN remaining int-collapse gap — its целевая form is the U.4 literal-
-// coercion channel (checker materializes the coerced element types; codegen consumes), NOT a
-// 4th per-position codegen patch (§0 «целевая форма vs per-case заплата»). Tracked in
-// 172.1-p67-phase2-map.md. Spec: spec/decisions/02-types.md (D55 literal coercion).
+// lower from an int-collapse. Spec: spec/decisions/02-types.md (D55 literal coercion).
+//
+// CLOSURE (2026-06-30, [literal-coercion channel]): the formerly-open tuple-literal-element-in-
+// typed-return position (`(0x80,0x80) -> (uint,uint)` built `NovaTuple..nova_int..` ≠ the
+// declared `..nova_uint..` → CC-FAIL) is now FIXED by the U.4 literal-coercion channel — the
+// целевая form (§0), NOT a per-position codegen patch: the checker materializes each coerced
+// literal's sized type into `resolved_types[lit.id]` at the DEFINITE coercion sites (annotated
+// `let`, the chosen call's args, and the arrow-body return), recursing through Some/Ok/tuple/
+// array; codegen's `emit_expr` IntLit reads the channel and self-types the literal. This
+// subsumes the tactical Some-return / tuple-destructure / default-arg codegen coercions.
+// Roadmap: 172.1-p67-phase2-map.md.
 module spec_tests.conformance
 
 // ── record-field: a field-position literal coerces to the field's declared type ──
@@ -25,4 +30,30 @@ fn d55w_takes(x uint) -> bool => x > 100
 
 test "call-argument literal coerces to uint parameter (D55)" {
     assert(d55w_takes(0x8000000000000000))   // 2^63 as uint arg → x > 100 unsigned
+}
+
+// ── tuple-element in typed RETURN (channel-closed gap): each element coerces to its
+//    declared tuple-element type, so the built tuple struct matches the return type ──
+fn d55w_ret_tuple() -> (uint, uint) => (0x8000000000000000, 5)
+
+test "tuple-element literal coerces to typed-return element (D55, channel)" {
+    ro t = d55w_ret_tuple()
+    assert(t.0 > 100)        // 2^63 as uint tuple-element → unsigned compare
+}
+
+// ── Some-payload in typed RETURN, consumed UNANNOTATED via `??` (the inferred binding
+//    inherits the channel-coerced uint, not a collapsed int) ──
+fn d55w_ret_some() -> Option[uint] => Some(0x8000000000000000)
+
+test "Some-payload literal coerces to typed-return Option element (D55, channel)" {
+    ro s = d55w_ret_some() ?? 0
+    assert(s > 100)
+}
+
+// ── array-element in typed RETURN: each element coerces to the slice element type ──
+fn d55w_ret_arr() -> []uint => [0x8000000000000000, 7]
+
+test "array-element literal coerces to typed-return slice element (D55, channel)" {
+    ro a = d55w_ret_arr()
+    assert(a[0] > 100)
 }

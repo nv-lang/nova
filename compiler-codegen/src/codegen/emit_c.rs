@@ -20080,7 +20080,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
-            ExprKind::IntLit(n)   => Ok(format!("((nova_int){}LL)", n)),
+            // Plan 172.1 [literal-coercion channel] (§0/§1): if the checker materialized a
+            // sized-integer coercion for THIS literal (D55), emit it WITH that type so a
+            // context-typed literal does not collapse to `nova_int` (named-priority:
+            // uint≠int, u8≠i16). `channel_int_c_type` returns `None` for un-annotated /
+            // `nova_int`-seeded literals → byte-identical legacy `((nova_int)NLL)`.
+            ExprKind::IntLit(n) => Ok(self
+                .channel_int_c_type(expr.id)
+                .map(|ty_c| Self::emit_typed_int_literal(*n, &ty_c))
+                .unwrap_or_else(|| format!("((nova_int){}LL)", n))),
             // Plan 70.3/152.8: char literal cast к distinct `nova_char` typedef (uint32_t).
             ExprKind::CharLit(cp) => Ok(format!("((nova_char){}U)", cp)),
             ExprKind::FloatLit(f) => {
@@ -35987,6 +35995,29 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // promotion к знаковому nova_int в смешанной арифметике.
             "nova_uint"
         )
+    }
+
+    /// Plan 172.1 [literal-coercion channel] (§0/§1, 2026-06-30): the C-type a numeric
+    /// literal should carry IF the checker materialized a SIZED-integer coercion for it
+    /// (D55 — `assignable` against a sized `expected` wrote `resolved_types[lit.id]`).
+    /// Returns `Some(ty_c)` ONLY for a TYPED integer (`is_typed_integer`: sized i8..u64 /
+    /// `uint` / `nova_byte` / `nova_char` — NEVER `nova_int`), so an un-annotated literal
+    /// AND the `nova_int` `number_exprs` seed both yield `None` → the consumer keeps the
+    /// legacy `((nova_int)NLL)` emission (byte-identical until the producer feeds a sized
+    /// type). VALUE-side mirror of the TYPE-side channel read `infer_expr_c_type` already
+    /// does (:36544): the literal SELF-types from the channel in EVERY position
+    /// (match/if-value, tuple-element, bare expr) with no target-passing — the target form
+    /// that subsumes the per-position `emit_expr_with_target_type` coercions
+    /// ([M-172.1-some-target-coerce] / -tuple-destructure-annot / -default-arg-typed).
+    /// `resolved_type_to_c(Scalar)` is pure (no mono side-effects) so calling it on `&self`
+    /// from the value-emitter is safe.
+    fn channel_int_c_type(&self, id: crate::ast::ExprId) -> Option<String> {
+        if !id.is_set() {
+            return None;
+        }
+        let rt = self.resolved_types.get(&id)?.clone();
+        let ty_c = self.resolved_type_to_c(&rt).ok()?;
+        Self::is_typed_integer(&ty_c).then_some(ty_c)
     }
 
     /// Plan 38: numeric type constants — `int.MAX` / `f64.NAN` / etc.
