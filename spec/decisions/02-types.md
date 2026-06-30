@@ -39,6 +39,7 @@
 | [D290](#d290--value-record-iterator-types-plan-165-2026-06-16) | Iterator value-records: `VecIter[T] value` (GC-pointer fields covered by fiber arena) + `Range`/`RangeIter`/`StepRangeIter`/`ReverseRangeIter value` (int-only, pure stack) — zero malloc in adapter chain (Plan 165) | active |
 | [D307](#d307-file-private-visibility--privfile-plan-170) | File-private visibility `priv(file) fn`/`type`/`const` — лесенка `priv(file)` ⊂ module ⊂ export; `E_FILE_PRIV_LEAK`; file-discriminated codegen; dedup одноимённых в peer-файлах (Plan 170) | active |
 | [D315](#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21) | `ResolvedType` — единый канонический носитель типа; проверки/совместимость/конверсии/перевод-в-C выводятся из него; `type_ref_to_c` ретайрится; сахар нормализуется; ABI выводится, не хранится (Plan 172.1, D315) | active |
+| [D310](#d310-type-set-bounds-plan-1723) | Type-set bounds: `type Name set T1 \| T2 \| …` — именованное множество конкретных типов как generic-bound; `SignedInt`/`UnsignedInt`; Go-style type-constraint (Plan 172.3) | active |
 
 ---
 
@@ -266,6 +267,7 @@ type Shape enum
 | `enum` | sum (D406) |
 | `protocol` | protocol-тип (D53) |
 | `effect` | effect-тип (D53) |
+| `set` | type-set bound (D310) |
 | `(` + ident + bare-type | named tuple (D215) — `(name1 T1, name2 T2)` |
 | `(` + bare-type | positional tuple — `(T1, T2)` |
 | `{` | record |
@@ -725,8 +727,10 @@ type Result[T, E] enum                   // многострочный — | о�
 ### Связь
 
 - [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) — заменяемый синтаксис
+- [D53](#d53-унификация-protocol-под-type-protocol-как-kind-токен) — `protocol`/`effect` kind-токены в той же системе
+- [D310](#d310-type-set-bounds-plan-1723) — `set` kind-токен в той же системе; `|` в type-set тоже разделитель, не оператор
 - [D55](#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы) — literal coercion в позиции sum-type (inline `enum` тоже)
-- [03-syntax.md → D46](03-syntax.md#d46) — `|` как `@or` оператор — разрешается по контексту (keyword `enum` или expr-контекст)
+- [03-syntax.md → D46](03-syntax.md#d46) — `|` как `@or` оператор — разрешается по контексту (keyword `enum`/`set` или expr-контекст)
 - [Plan 105](../../docs/plans/105-sum-type-explicit-base.md) — явный базовый тип discriminants
 
 ---
@@ -787,6 +791,7 @@ type Db effect {
 | `protocol` | protocol-тип |
 | `effect` | effect-тип |
 | `enum` | sum (D406) |
+| `set` | type-set bound (D310) |
 | `(` | tuple |
 | `{` | record |
 | `alias` | alias |
@@ -794,7 +799,7 @@ type Db effect {
 | идентификатор/тип, конец строки | newtype |
 | конец строки сразу | unit |
 
-`protocol`, `effect`, `enum`, `alias` — всё встаёт в один ряд: kind-токены
+`protocol`, `effect`, `enum`, `set`, `alias` — всё встаёт в один ряд: kind-токены
 после имени. Парсер однозначен по первому токену после имени (или
 generic-параметров).
 
@@ -13560,7 +13565,7 @@ fn[T UnsignedInt] T.try_parse(s str, radix int) -> Result[T, ParseUIntError] => 
 
 ### Правило
 
-- **Синтаксис.** Очередная kind-форма под `type` ([D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)/D53): `type Name set Member1 | Member2 | …`. Диспетчеризация по **первому токену после имени** — контекстный kind-токен `set` отличает type-set от sum-type (`type X | A | B`, у которого kind-токена нет, ведущий `|` сразу). Backtracking нет (один токен lookahead). `set` — контекстное слово (только в позиции после `type Name`), НЕ глобально-зарезервированное. Члены — TypeRef через `|`.
+- **Синтаксис.** Очередная kind-форма под `type` ([D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)/D53/D406): `type Name set Member1 | Member2 | …`. Диспетчеризация по **первому токену после имени** — контекстный kind-токен `set` однозначно отличает type-set от sum-type (`type X enum A | B`, D406) и остальных форм. Backtracking нет (один токен lookahead). `set` — контекстное слово (только в позиции после `type Name`), НЕ глобально-зарезервированное. Члены — TypeRef через `|`.
 - **Члены — по ИДЕНТИЧНОСТИ.** Примитивы и любые объявленные конкретные типы (newtype / named-tuple / record), каждый перечислен ЯВНО. Newtype `type MyI8 i8` **не** член set'а `{i8}` — нужен явный листинг. `~underlying` НЕТ (в Nova нет implicit-coercion; D52/D215).
 - **Bound = membership-предикат.** В `[...]`-позиции type-set ведёт себя как protocol-bound (D72): `[T SignedInt]`. Композиция с протоколами через `+` (D145, conjunction): `[T SignedInt + Hash]` ⇒ T ∈ set И реализует Hash; проверки независимы, per-member. **Не более одного type-set** в bound-листе (`E_MULTIPLE_TYPE_SETS`); протоколов — сколько угодно.
 - **Семантика тела.** Мономорфизация per член (как обычный `fn[T]`, Plan 48 worklist). `T.MAX`/`T.MIN`/`T.new`/литералы резолвятся per-instance через `numeric_type_constant_mapping` по **Nova-имени** подставленного члена (нужен Nova-name subst-канал T→"i8" ПЕРЕД lookup, отдельный от C-name subst T→"int8_t"). Операторы в теле — **пересечение** легальных для ВСЕХ членов; чекер материализует resolved-тип каждого T-выражения в per-ExprId канал (codegen лоуэрит, не ре-резолвит). Без `nova_int`-fallback (§1): неразрешённый член = диагностика чекера, не угадывание.
