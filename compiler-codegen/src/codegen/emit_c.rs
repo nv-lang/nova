@@ -38907,7 +38907,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // D26 prelude: NovaOpt_T method type inference.
                     if obj_ty.starts_with("NovaOpt_") {
                         let elem_ty = obj_ty.strip_prefix("NovaOpt_")
-                            .unwrap_or("nova_int")
+                            .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
                             .trim_end_matches('*')
                             .trim()
                             .to_string();
@@ -39056,7 +39056,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if obj_ty.starts_with("Nova_Vec____") {
                         let vec_elem_ty = obj_ty
                             .strip_prefix("Nova_Vec____")
-                            .unwrap_or("nova_int")
+                            .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
                             .trim_end_matches('*')
                             .trim();
                         match method.as_str() {
@@ -39071,7 +39071,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     }
                     // Array method calls
                     if obj_ty.starts_with("NovaArray_") {
-                        let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or("nova_int")
+                        let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
                             .trim_end_matches('*').trim();
                         match method.as_str() {
                             // [M-91.1-composite-array-storage] Plan 91 Ф.1: when
@@ -39871,7 +39871,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             ExprKind::Coalesce(lhs, rhs) => {
                 let lhs_ty = self.infer_expr_c_type(lhs);
                 if lhs_ty.starts_with("NovaOpt_") {
-                    lhs_ty.strip_prefix("NovaOpt_").unwrap_or("nova_int").to_string()
+                    lhs_ty.strip_prefix("NovaOpt_").unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy")).to_string()
                 } else if Self::is_result_like(&lhs_ty) {
                     // Plan 172.1 [M-172.1-coalesce-result-okty] (2026-06-30): `Result[T,E] ?? fb`
                     // yields the Ok type `T`, NOT the fallback `rhs` type — mirror the `Try`/`Bang`
@@ -39915,7 +39915,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if inner_ty.starts_with("NovaOpt_") {
                     // Option? / Option!! → inner T
                     inner_ty.strip_prefix("NovaOpt_")
-                        .unwrap_or("nova_int")
+                        .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
                         .trim_end_matches('*')
                         .to_string()
                 } else if Self::is_result_like(&inner_ty) {
