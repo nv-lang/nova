@@ -6115,14 +6115,19 @@ impl<'a> TypeCheckCtx<'a> {
                 // (return-type compat is checked elsewhere) — pure channel materialization.
                 if let Some(ret) = &fd.return_type {
                     self.materialize_literal_coercion(e, ret);
+                    // a block-arrow body `=> { …; return X }` can hold explicit returns.
+                    self.materialize_returns_in_expr(e, ret);
                 }
             }
             FnBody::Block(b) => {
                 self.f1_block(b, &gs, &mut scope, errors);
-                // [literal-coercion channel]: the block trailing (implicit return) coerces
-                // to the declared return type.
-                if let (Some(ret), Some(trailing)) = (&fd.return_type, &b.trailing) {
-                    self.materialize_literal_coercion(trailing, ret);
+                if let Some(ret) = &fd.return_type {
+                    // implicit tail return (block trailing) coerces to the return type …
+                    if let Some(trailing) = &b.trailing {
+                        self.materialize_literal_coercion(trailing, ret);
+                    }
+                    // … and every explicit `return <expr>` anywhere in the body.
+                    self.materialize_returns_in_block(b, ret);
                 }
             }
             FnBody::External => {}
@@ -9668,6 +9673,98 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
+            // Value-position control flow: each branch's TAIL value is in the SAME
+            // expected-typed position (an `if`/`match`/block as a value coerces its
+            // result, so each branch result coerces). `=> if c { 0x80 } else { 5 }` and
+            // `{ …; match k { _ => 0x80 } }` reach their literal leaves this way.
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                self.materialize_block_tail(then, expected);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.materialize_block_tail(b, expected),
+                        ElseBranch::If(e) => self.materialize_literal_coercion(e, expected),
+                    }
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(e) => self.materialize_literal_coercion(e, expected),
+                        MatchArmBody::Block(b) => self.materialize_block_tail(b, expected),
+                    }
+                }
+            }
+            ExprKind::Block(b) => self.materialize_block_tail(b, expected),
+            _ => {}
+        }
+    }
+
+    /// [literal-coercion channel]: coerce a block's TRAILING (tail value) expression to
+    /// `expected` — the block's value position. (Statements are not tail values; explicit
+    /// `return`s inside the block are handled by `materialize_returns_in_block`.)
+    fn materialize_block_tail(&self, b: &Block, expected: &TypeRef) {
+        if let Some(t) = &b.trailing {
+            self.materialize_literal_coercion(t, expected);
+        }
+    }
+
+    /// [literal-coercion channel]: materialize every explicit `return <expr>` in a function
+    /// body against the declared return type, recursing through nested control flow (the
+    /// implicit tail return is handled separately at the `FnBody` site). DEFINITE — every
+    /// `return` in this body commits to `ret`. Covers the common block-bearing constructs;
+    /// exotic bodies (spawn/select/handler) simply are not walked (sound fallback).
+    fn materialize_returns_in_block(&self, b: &Block, ret: &TypeRef) {
+        for s in &b.stmts {
+            self.materialize_returns_in_stmt(s, ret);
+        }
+        if let Some(t) = &b.trailing {
+            self.materialize_returns_in_expr(t, ret);
+        }
+    }
+
+    fn materialize_returns_in_stmt(&self, s: &Stmt, ret: &TypeRef) {
+        match s {
+            Stmt::Return { value: Some(e), .. } => self.materialize_literal_coercion(e, ret),
+            Stmt::Expr(e) => self.materialize_returns_in_expr(e, ret),
+            Stmt::Let(d) => self.materialize_returns_in_expr(&d.value, ret),
+            Stmt::Const(d) => self.materialize_returns_in_expr(&d.value, ret),
+            Stmt::Defer { body, .. }
+            | Stmt::ErrDefer { body, .. }
+            | Stmt::OkDefer { body, .. }
+            | Stmt::DeferWithResult { body, .. } => self.materialize_returns_in_expr(body, ret),
+            Stmt::ConsumeScope { body, .. } => self.materialize_returns_in_block(body, ret),
+            _ => {}
+        }
+    }
+
+    fn materialize_returns_in_expr(&self, e: &Expr, ret: &TypeRef) {
+        match &e.kind {
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                self.materialize_returns_in_block(then, ret);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.materialize_returns_in_block(b, ret),
+                        ElseBranch::If(x) => self.materialize_returns_in_expr(x, ret),
+                    }
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(x) => self.materialize_returns_in_expr(x, ret),
+                        MatchArmBody::Block(b) => self.materialize_returns_in_block(b, ret),
+                    }
+                }
+            }
+            // Same-fn control flow only — a `return` here IS the enclosing fn's return.
+            // Deliberately NOT recursing into `detach`/`parallel for`/`spawn`/closures:
+            // a `return` there belongs to a DIFFERENT execution context, so coercing it
+            // to THIS fn's return type would be wrong (sound fallback: leave it seeded).
+            ExprKind::While { body, .. }
+            | ExprKind::WhileLet { body, .. }
+            | ExprKind::Loop { body, .. }
+            | ExprKind::For { body, .. } => self.materialize_returns_in_block(body, ret),
+            ExprKind::Block(b) => self.materialize_returns_in_block(b, ret),
             _ => {}
         }
     }
