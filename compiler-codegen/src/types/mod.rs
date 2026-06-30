@@ -10077,6 +10077,55 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// Plan 172.1 §0a helper: convert a ResolvedType back to a TypeRef for use as the
+    /// return value of `infer_expr_type`. This is a best-effort conversion — Ptr / Any /
+    /// TypedPtr / Func → None (uncommon in field / return-type positions; not needed for
+    /// the Coalesce/Binary/If consumer chain). Scalar and Named → concrete TypeRef.
+    fn resolved_to_typeref(rt: &ResolvedType, span: Span) -> Option<TypeRef> {
+        use ResolvedType as R;
+        Some(match rt {
+            R::Scalar { width, signed, wide_default } => {
+                let name = match (width, signed, wide_default) {
+                    (8,  true,  _)     => "i8",
+                    (16, true,  _)     => "i16",
+                    (32, true,  _)     => "i32",
+                    (64, true,  true)  => "int",
+                    (64, true,  false) => "i64",
+                    (8,  false, _)     => "u8",
+                    (16, false, _)     => "u16",
+                    (32, false, _)     => "u32",
+                    (64, false, true)  => "uint",
+                    (64, false, false) => "u64",
+                    _ => return None,
+                };
+                prim_ref(name, span)
+            }
+            R::Float { width: 32 } => prim_ref("f32", span),
+            R::Float { width: 64 } => prim_ref("f64", span),
+            R::Float { .. } => return None,
+            R::Bool => prim_ref("bool", span),
+            R::Str => prim_ref("str", span),
+            R::Never => prim_ref("never", span),
+            R::Named { name, module, args } => {
+                let mut path = module.clone();
+                path.push(name.clone());
+                TypeRef::Named {
+                    path,
+                    generics: args.iter().filter_map(|a| Self::resolved_to_typeref(a, span)).collect(),
+                    span,
+                }
+            }
+            R::Array(elem) => {
+                TypeRef::Array(
+                    Box::new(Self::resolved_to_typeref(elem, span)?),
+                    span,
+                )
+            }
+            R::Unit | R::Readonly(_) | R::Tuple(_)
+            | R::Any | R::Ptr | R::TypedPtr { .. } | R::Func { .. } => return None,
+        })
+    }
+
     /// Ф.1: best-effort вывод типа выражения (для не-литералов).
     fn infer_expr_type(
         &self,
@@ -10391,6 +10440,18 @@ impl<'a> TypeCheckCtx<'a> {
                                 return Some(rt.clone());
                             }
                         }
+                    }
+                }
+                // Plan 172.1 §0a: Call return type — if f1_check_call already resolved this
+                // call's return type into resolved_types_buf (single-overload path), read it
+                // back so Coalesce/Try/Bang/Binary wrapping this Call can propagate the type.
+                // Safe: resolved_types_buf is written BEFORE this f1_expr recursive descent
+                // for the outer expression (the walker visits inner exprs first). Only lookup,
+                // no write; borrow() does not conflict with outer borrow_mut() since the outer
+                // insert is for a DIFFERENT ExprId (the outer expr, not this Call expr).
+                if expr.id.is_set() {
+                    if let Some(rt) = self.resolved_types_buf.borrow().get(&expr.id) {
+                        return Self::resolved_to_typeref(rt, expr.span);
                     }
                 }
                 None
