@@ -52,7 +52,7 @@ nova build app.nv -o app         # скомпилировать в native binary
 ./app                            # затем выполнить его
 nova add mathlib --path ../mathlib   # добавить зависимость, обновить nova.lock
 nova info mathlib                # effect-surface зависимости
-nova test                        # компиляция + запуск всех nova_tests/
+nova test nova_tests             # компиляция + запуск всех nova_tests/
 nova test nova_tests/plan118     # один поддиректорий
 nova test std nova_tests         # несколько путей: std/ + nova_tests/
 nova test --filter basics        # подмножество по подстроке
@@ -462,7 +462,7 @@ nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
-| `PATH...` | `<root>/nova_tests/` | Файлы и/или директории с тестами (0 или более) |
+| `PATH...` | — (обязательный) | Файлы и/или директории с тестами (минимум один) |
 | `--filter SUBSTR` | — | Фильтр по display-name (substring) |
 | `--jobs N` | `0` (= num_cpus) | Параллельные воркеры |
 | `--format` | `text` | `text`, `json`, `tap`, `junit` |
@@ -498,9 +498,10 @@ nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 поэтому негативные тесты находятся даже вне `neg/`.
 
 **Multi-path** (Plan 36.D.1): передавать любое количество путей — директорий и/или файлов.
-Без аргументов — `nova_tests/` (если существует). Чтобы добавить `std/`:
+Минимум один путь обязателен (Plan 172.6). Чтобы добавить `std/`:
 
 ```bash
+nova test nova_tests             # только nova_tests/
 nova test std nova_tests         # std/ + nova_tests/ одновременно
 nova test nova_tests/plan118     # конкретная поддиректория
 ```
