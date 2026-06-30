@@ -13453,3 +13453,41 @@ fn[T UnsignedInt] T.try_parse(s str, radix int) -> Result[T, ParseUIntError] => 
 
 ### Связь
 [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) (формы `type`, first-token dispatch) · D53 (kind-токен под `type`) · [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) (bound = тип в [...]-позиции, **amended**) · [D145](#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101) (`+` multi-bound conjunction, **amended**) · [D237](#d237) (capitalized naming) · [D315](#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21) (ResolvedType несёт ширину/знак). [Q-representation-bound](../open-questions.md#q-representation-bound) — частично (explicit-member-set); `~`/repr → Plan 102. Потребитель: Plan 174.1.
+
+---
+
+## D405 — Арифметика смешанных целых ширин: требовать явный cast (2026-06-30)
+
+**Статус:** закреплён 2026-06-30 (owner sign-off).
+
+### Что
+
+Выражение `u8_val + u16_val` (или любые два целых операнда разных ширин/знаковостей) — **ошибка компиляции** `E_MIXED_WIDTH_ARITH`. Компилятор не делает implicit widening. Программист обязан явно указать целевой тип через `as`-cast:
+
+```nova
+ro a u8 = 200
+ro b u16 = 300
+// ro result = a + b      // E_MIXED_WIDTH_ARITH: u8 + u16 — implicit widening запрещён
+ro result = a as u16 + b  // ok: a явно расширен до u16
+```
+
+### Правило
+
+- **`E_MIXED_WIDTH_ARITH`** — оба операнда бинарного арифметического оператора (`+`, `-`, `*`, `/`, `%`, `>>`, `<<`, `&`, `|`, `^`) должны иметь **одинаковый** конкретный целочисленный тип. Разные ширины (`u8`+`u16`) или разные знаки (`i8`+`u8`) — compile error.
+- Исключения: `int`-литералы без явной ширины инференсируются к типу другого операнда (D55 literal coercion). Только когда OBA операнда именованные — error.
+- **Widening явен** — через `as`-cast (D54). Выбор ширины — на программисте. Нет автоматического «бери больший».
+
+### Почему Rust/Go/Zig-стиль, не Java/Kotlin
+
+| Язык | Поведение | Проблема |
+|------|-----------|---------|
+| Java/Kotlin | `byte + short → int` (implicit, always signed) | Результат signed даже для unsigned операндов; теряется знаковость |
+| C | `u8 + u16 → uint` (integer promotion, C-зависимо) | Платформо-зависимо; signed promotion удивляет |
+| **Rust/Go/Zig/Swift** | compile error → явный cast | Никаких сюрпризов; программист контролирует |
+| Nova (D405) | compile error → явный `as` cast | Согласуется с «no implicit conversions» (D54) |
+
+Nova не имеет implicit numeric coercion нигде (D54 — `as` для всех width-changes). D405 последовательно расширяет это на бинарные операторы: нет молчаливого widen или truncate.
+
+### Связь
+
+[D54](#d54-as-cast) (`as` явный cast) · [D55](#d55) (literal coercion — исключение для нетипизированных литералов) · [D315](#d315) (ResolvedType несёт ширину/знак — необходим для этой проверки) · [D310](#d310-type-set-bounds-plan-1723) (`SignedInt`/`UnsignedInt` type-sets — generic-альтернатива per-width обёрткам).
