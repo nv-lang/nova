@@ -8160,10 +8160,16 @@ impl<'a> TypeCheckCtx<'a> {
                         // arity error is reported by BoundCtx, not here. If ≥1
                         // overload is type-compatible, defer FINAL selection to
                         // codegen's exact-C-type match (that move is U.3.4).
-                        let applicable: Vec<bool> = multi.iter()
-                            .filter_map(|c| self.overload_applicability(c, args, gs, scope))
-                            .collect();
-                        if !applicable.is_empty() && !applicable.iter().any(|&ok| ok) {
+                        let mut compat: Vec<&&FnDecl> = Vec::new();
+                        let mut any_arity = false;
+                        for c in multi.iter() {
+                            match self.overload_applicability(c, args, gs, scope) {
+                                Some(true) => { any_arity = true; compat.push(c); }
+                                Some(false) => any_arity = true,
+                                None => {}
+                            }
+                        }
+                        if any_arity && compat.is_empty() {
                             errors.push(Diagnostic::new(
                                 format!(
                                     "[E_NO_MATCHING_OVERLOAD] no overload of `{}` \
@@ -8172,6 +8178,27 @@ impl<'a> TypeCheckCtx<'a> {
                                 ),
                                 base.span,
                             ));
+                        }
+                        // Plan 172.1 U.3.1 §0 extension: record UNIQUE arity+type-compat
+                        // overload in resolved_callees + resolved_types_buf. Mirrors the
+                        // U.3.2 multi-overload Path site and U.4.3 instance-method site.
+                        // Enables Call-channel for multi-overload free fns like
+                        // assert(bool)/assert(bool,str).
+                        // [M-172.1-free-fn-multi-overload-ambiguous]: 0 or ≥2 compat → codegen.
+                        if compat.len() == 1 {
+                            let chosen = compat[0];
+                            self.resolved_callees.borrow_mut().insert(call_id, chosen.span);
+                            if call_id.is_set() {
+                                if let Some(ret_ty) = &chosen.return_type {
+                                    let callee_gs_inner = fn_generic_scope(chosen);
+                                    if !typeref_mentions_any(ret_ty, &callee_gs_inner)
+                                        && !typeref_mentions_any(ret_ty, gs)
+                                    {
+                                        let rt = ResolvedType::from_type_ref(ret_ty);
+                                        self.resolved_types_buf.borrow_mut().insert(call_id, rt);
+                                    }
+                                }
+                            }
                         }
                         return;
                     }
@@ -8323,6 +8350,21 @@ impl<'a> TypeCheckCtx<'a> {
         // stay codegen-resolved for now (gap, not wrong). ADDITIVE: written, not yet read →
         // byte-identical.
         self.resolved_callees.borrow_mut().insert(call_id, callee.span);
+        // Plan 172.1 §0 (call-return type channel): annotate the CALL expr's type from
+        // the callee's declared return type — mirrors the check_instance_overload channel
+        // (§3a/U.4.3). Guard with typeref_mentions_any to skip generic returns (they'd
+        // need type-subst, not available here). Unit/never are also legal annotations.
+        if call_id.is_set() {
+            if let Some(ret_ty) = &callee.return_type {
+                let callee_gs_inner = fn_generic_scope(callee);
+                if !typeref_mentions_any(ret_ty, &callee_gs_inner)
+                    && !typeref_mentions_any(ret_ty, gs)
+                {
+                    let rt = ResolvedType::from_type_ref(ret_ty);
+                    self.resolved_types_buf.borrow_mut().insert(call_id, rt);
+                }
+            }
+        }
         let Ok(bindings) =
             crate::argbind::bind_call_args(&callee.params, args)
         else {
