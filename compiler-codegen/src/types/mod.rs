@@ -6665,7 +6665,20 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(base, gs, scope, errors)
             }
             ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
-                self.f1_expr(inner, gs, scope, errors)
+                self.f1_expr(inner, gs, scope, errors);
+                // Plan 172.1 §0a (As/Is): materialize the cast target type into the channel.
+                // `infer_expr_type` already returns the `ty` for `As` — wire it into
+                // `resolved_types_buf` so codegen reads the CAST TYPE, not a re-derive.
+                // gs-gated: a `T as U` where U mentions a type-param stays on legacy
+                // (U in generic body → resolved_type_to_c needs current_type_subst).
+                if e.id.is_set() {
+                    if let Some(tr) = self.infer_expr_type(e, scope) {
+                        if !typeref_mentions_any(&tr, gs) {
+                            let rt = ResolvedType::from_type_ref(&tr);
+                            self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                        }
+                    }
+                }
             }
             ExprKind::Binary { left, right, op } => {
                 self.f1_expr(left, gs, scope, errors);
@@ -6760,11 +6773,33 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::Try(inner) | ExprKind::Bang(inner) => {
-                self.f1_expr(inner, gs, scope, errors)
+                self.f1_expr(inner, gs, scope, errors);
+                // Plan 172.1 §0a (Try/Bang): materialize the unwrapped type into the channel.
+                // `infer_expr_type` now has Try/Bang arms: Result[T,E]→T, Option[T]→T.
+                // gs-gated: a `T` inside a generic body stays on legacy.
+                if e.id.is_set() {
+                    if let Some(tr) = self.infer_expr_type(e, scope) {
+                        if !typeref_mentions_any(&tr, gs) {
+                            let rt = ResolvedType::from_type_ref(&tr);
+                            self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                        }
+                    }
+                }
             }
             ExprKind::Coalesce(a, b) => {
                 self.f1_expr(a, gs, scope, errors);
                 self.f1_expr(b, gs, scope, errors);
+                // Plan 172.1 §0a (Coalesce): type = unwrapped inner of `a` ≡ type of `b`.
+                // `infer_expr_type` delegates to `b` as the canonical source.
+                // gs-gated: generic fallback stays on legacy.
+                if e.id.is_set() {
+                    if let Some(tr) = self.infer_expr_type(e, scope) {
+                        if !typeref_mentions_any(&tr, gs) {
+                            let rt = ResolvedType::from_type_ref(&tr);
+                            self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                        }
+                    }
+                }
             }
             ExprKind::Member { obj, name } => {
                 self.f1_expr(obj, gs, scope, errors);
@@ -10010,6 +10045,39 @@ impl<'a> TypeCheckCtx<'a> {
                 })
             }
             ExprKind::As(_, ty) => Some(ty.clone()),
+            // Plan 172.1 §0a: Try (`expr?`) unwraps Result[T,E]→T or Option[T]→T.
+            // Bang (`expr!!`) unwraps Option[T]→T or Result[T,E]→T.
+            // Conservative: only when the inner type resolves and is a known container.
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+                let inner_tr = self.infer_expr_type(inner, scope)?;
+                if let TypeRef::Named { path, generics, .. } = &inner_tr {
+                    let base = path.last().map(String::as_str);
+                    if (base == Some("Result") || base == Some("Option"))
+                        && !generics.is_empty()
+                    {
+                        return Some(generics[0].clone());
+                    }
+                }
+                // Unknown container (user type, generic T) → return inner type unchanged.
+                Some(inner_tr)
+            }
+            // Plan 172.1 §0a: Coalesce (`a ?? b`) — type is the unwrapped inner T from `a:
+            // Option[T]`. The fallback `b` must be compatible but DOES NOT determine the result
+            // type (a literal `0` is `int` but `v.first() ?? 0` on `Vec[uint]` must be `uint`).
+            // Unwrap by the same logic as Try/Bang: inner[0] of Option[T]/Result[T,E].
+            ExprKind::Coalesce(a, _) => {
+                let a_tr = self.infer_expr_type(a, scope)?;
+                if let TypeRef::Named { path, generics, .. } = &a_tr {
+                    let base = path.last().map(String::as_str);
+                    if (base == Some("Option") || base == Some("Result"))
+                        && !generics.is_empty()
+                    {
+                        return Some(generics[0].clone());
+                    }
+                }
+                // Unknown: return the outer type of `a` unchanged.
+                Some(a_tr)
+            }
             // A block expression's value is its trailing expr. Conservative:
             // only infer when the block has NO statements, so the trailing
             // cannot reference inner let-bindings (which are absent from the
