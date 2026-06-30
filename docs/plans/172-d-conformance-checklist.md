@@ -1,3 +1,7 @@
+> ❄️ **УСТАРЕВШИЙ РАБОЧИЙ ДОКУМЕНТ (2026-06-30)** — заменён D-track планом.
+> Актуальный план: [172.1-p67-execution-plan.md](172.1-p67-execution-plan.md) §D-TRACK (таблица D-статусов).
+> Конвенция реализации: [compiler-conventions.md](../compiler-conventions.md).
+
 # Plan 172 — D-conformance closure-checklist (V-трек = U.7 расширенный)
 
 > spec_tests/conformance тесты на 172.1-172.5-релевантные D-блоки. Проходящий = D конформен (часть 172 закрыта);
