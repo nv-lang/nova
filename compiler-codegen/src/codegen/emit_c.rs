@@ -5232,7 +5232,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
     fn emit_const_decl(&mut self, c: &ConstDecl) -> Result<(), String> {
         let ty_c = if let Some(ty) = &c.ty {
-            self.type_ref_to_c(ty)?
+            self.type_ref_to_c(ty)? // [M-const-decl-ty] declared type comes from AST TypeRef; checker doesn't write ConstDecl type to resolved_types channel yet
         } else {
             self.infer_expr_c_type(&c.value)
         };
