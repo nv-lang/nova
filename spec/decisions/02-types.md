@@ -289,13 +289,14 @@ type Shape enum
 | Модификатор | Семантика | D-block |
 |---|---|---|
 | `export` | виден снаружи модуля | D47 |
-| `priv(file)` | виден только в этом файле | D307 |
+| `priv(file)` | виден только в этом файле (применим к `type`, `fn`, `const`) | D307 |
 | `value` | stack-allocated (по значению, не в GC-куче) | D228/D290 |
 | `priv` | поля module-private по умолчанию | D281 |
 | `priv(type)` | поля type-private по умолчанию | D281 |
 | `consume` | must-be-consumed affine type | D133 |
 
-Грамматика: `[export|priv(file)] type Name[T] [value] [priv|priv(type)] [consume] { … }`
+Грамматика type-declaration: `[export|priv(file)] type Name[T] [value] [priv|priv(type)] [consume] { … }`
+(`priv(file)` также применим к `fn` и `const` — см. D307.)
 
 Модификаторы **комбинируются**: `export type Job value priv consume { … }`.
 
