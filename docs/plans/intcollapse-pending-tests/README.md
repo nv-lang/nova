@@ -73,6 +73,32 @@ wrapper-тип ДЕРИВИРУЕТСЯ из элементов → канал �
 **Вывод:** чистая literal-coercion поверхность ИСЧЕРПАНА каналом. Остаток гейтнут на by-value-mono
 keystone (→ U.4.3 → legacy-deletion) ∨ spec-решения (D405) ∨ lexer-change (D401/413). Fresh-focus.
 
+## 🔬 ОБЩИЙ КОРЕНЬ остатка подтверждён эмпирически (2026-06-30, 2-й заход)
+
+Проверил каждый остаточный таргет — ВСЕ entangled/blocked, и у них ОДИН корень:
+
+- **Keystone (by-value-mono) ЛАТЕНТЕН — НЕ активный баг.** plan153_2/153_5/162 (BoxIter-over-tuple
+  adapters/flatten/enumerate) **PASS 10/0** на channel-бинаре. Эрейзура `_NovaTuple2` КОНСИСТЕНТНА в
+  legacy → clash'а нет. Clash возникает ТОЛЬКО когда канал ФЛИПАЕТ method-returns (U.4.3-relax). ⇒
+  by-value-mono нельзя фиксить в изоляции (НЕТ RED-теста) — должен co-land'иться с comprehensive U.4.3
+  type-flow флипом (method-returns + binding + variable вместе). Это и есть «6 провалов contained-фиксов».
+- **Coalesce-tuple (`f() ?? (0,0)` с tuple-Ok) RED (CC-FAIL), но BLOCKED.** Попытка channel-фикса
+  (materialize fallback + annotate coalesce result-type против Ok-payload) **ИНЕРТНА**: чекерский
+  `infer_expr_type(arrow-body-call)` возвращает None для `d86b_res()` → `coalesce_payload_type` не
+  срабатывает. Codegen Coalesce-infer (tactical 62c0f57f) держит scalar-Ok, НЕ tuple-Ok. Откатано (§2.10/§4).
+- **D402 (closure-return) RED, но deep multi-mechanism.** Целевая форма §0 = чекер-инференс closure-типа
+  (infer_expr_type closure — НЕТ в bootstrap). Codegen-фикс = pre-pass look-ahead (first-use в block) +
+  context_param_tys в emit_lambda (33724) + fn_param_sigs — три механизма; flow-sensitive. §0.119-tactical.
+
+**МЕТА-КОРЕНЬ (data-backed):** остаток int-collapse (D402/coalesce-tuple/D408) гейтнут на том, что
+bootstrap-чекер `infer_expr_type` НЕ резолвит **call-return / closure / method-chain** типы → channel-
+подход (сработавший для ЛИТЕРАЛОВ) для них ИНЕРТЕН. Закрытие хвоста = **U.4 channel-completion**
+(чекер резолвит call/closure/method-возвраты в `resolved_types`/`resolved_callees`, DECOUPLED — НЕ
+extend `infer_expr_type` напрямую, урок 172.1.2 = 4 регрессии). Literal-срез СДЕЛАН (4772ba8a+ed30280a);
+call/closure/method-срезы = глубокий U.4-headline, регрессо-опасный, multi-session. by-value-mono
+co-land'ится с U.4.3-method-срезом. D405 = spec-D-block (владелец); D401/413 = lexer overflow-flag.
+Forcing inert/insufficient codegen-патчи на этот хвост = нарушение §0/§2.10/§4 — НЕ делать.
+
 ## Off-topic находки (НЕ int-collapse, отдельно)
 - **C-keyword-as-identifier**: `ro inline = …` → codegen эмитит `nova_uint inline = …` = невалидный C
   (`inline` — C-keyword). Codegen НЕ экранирует C-keywords в идентификаторах. (Обойдено в D407: `inl`.)
