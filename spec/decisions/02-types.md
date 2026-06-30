@@ -13602,15 +13602,21 @@ D181/D184 (режим `@`), D246 (L3 / RETURN-оракул / P10 no-exclusivity)
 Новая kind-форма объявления типа — **type-set** — задаёт **именованное множество конкретных типов**, используемое как generic-bound (`fn[T IntSet] …`). Это Go-style type-constraint: код, общий для семейства примитивов (`int.try_parse`/`u32.try_parse`/…), выражается одним generic вместо per-type обёрток. Частично закрывает [Q-representation-bound](../open-questions.md#q-representation-bound) — **только explicit-member-set**; `~underlying`/repr/structural — по-прежнему Plan 102.
 
 ```nova
+// inline
 type SignedInt   set i8 | i16 | i32 | i64 | int
 type UnsignedInt set u8 | u16 | u32 | u64 | uint
+
+// многострочный — | обязателен у каждого члена включая первый
+type AnyNumber set
+    | i8 | i16 | i32 | i64 | int
+    | u8 | u16 | u32 | u64 | uint
 
 fn[T UnsignedInt] T.try_parse(s str, radix int) -> Result[T, ParseUIntError] => ...
 ```
 
 ### Правило
 
-- **Синтаксис.** Очередная kind-форма под `type` ([D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)/D53/D406): `type Name set Member1 | Member2 | …`. Диспетчеризация по **первому токену после имени** — контекстный kind-токен `set` однозначно отличает type-set от sum-type (`type X enum A | B`, D406) и остальных форм. Backtracking нет (один токен lookahead). `set` — контекстное слово (только в позиции после `type Name`), НЕ глобально-зарезервированное. Члены — TypeRef через `|`.
+- **Синтаксис.** Очередная kind-форма под `type` ([D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-)/D53/D406): `type Name set Member1 | Member2 | …`. Диспетчеризация по **первому токену после имени** — контекстный kind-токен `set` однозначно отличает type-set от sum-type (`type X enum A | B`, D406) и остальных форм. Backtracking нет (один токен lookahead). `set` — контекстное слово (только в позиции после `type Name`), НЕ глобально-зарезервированное. Члены — TypeRef через `|`. **Многострочная форма:** если первый член на новой строке — `|` обязателен у каждого члена включая первый (аналогично D406 `enum` и D310 `set`); несколько членов в одной строке допускаются.
 - **Члены — по ИДЕНТИЧНОСТИ.** Примитивы и любые объявленные конкретные типы (newtype / named-tuple / record), каждый перечислен ЯВНО. Newtype `type MyI8 i8` **не** член set'а `{i8}` — нужен явный листинг. `~underlying` НЕТ (в Nova нет implicit-coercion; D52/D215).
 - **Bound = membership-предикат.** В `[...]`-позиции type-set ведёт себя как protocol-bound (D72): `[T SignedInt]`. Композиция с протоколами через `+` (D145, conjunction): `[T SignedInt + Hash]` ⇒ T ∈ set И реализует Hash; проверки независимы, per-member. **Не более одного type-set** в bound-листе (`E_MULTIPLE_TYPE_SETS`); протоколов — сколько угодно.
 - **Семантика тела.** Мономорфизация per член (как обычный `fn[T]`, Plan 48 worklist). `T.MAX`/`T.MIN`/`T.new`/литералы резолвятся per-instance через `numeric_type_constant_mapping` по **Nova-имени** подставленного члена (нужен Nova-name subst-канал T→"i8" ПЕРЕД lookup, отдельный от C-name subst T→"int8_t"). Операторы в теле — **пересечение** легальных для ВСЕХ членов; чекер материализует resolved-тип каждого T-выражения в per-ExprId канал (codegen лоуэрит, не ре-резолвит). Без `nova_int`-fallback (§1): неразрешённый член = диагностика чекера, не угадывание.
