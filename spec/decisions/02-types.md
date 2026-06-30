@@ -264,6 +264,8 @@ type Shape enum
 | После `type X` (или `type X[params]`) идёт | Форма |
 |---|---|
 | `enum` | sum (D406) |
+| `protocol` | protocol-тип (D53) |
+| `effect` | effect-тип (D53) |
 | `(` + ident + bare-type | named tuple (D215) — `(name1 T1, name2 T2)` |
 | `(` + bare-type | positional tuple — `(T1, T2)` |
 | `{` | record |
@@ -783,16 +785,18 @@ type Db effect {
 | После `type X` (или `type X[params]`) идёт | Форма |
 |---|---|
 | `protocol` | protocol-тип |
-| `\|` | sum |
+| `effect` | effect-тип |
+| `enum` | sum (D406) |
 | `(` | tuple |
 | `{` | record |
 | `alias` | alias |
-| `<base-type>` `\|` | sum с явным базовым типом |
+| `<base-type>` `enum` | sum с явным базовым типом (Plan 105) |
 | идентификатор/тип, конец строки | newtype |
 | конец строки сразу | unit |
 
-`protocol` встаёт в один ряд с `alias`. Парсер однозначен по первому
-токену после имени (или generic-параметров).
+`protocol`, `effect`, `enum`, `alias` — всё встаёт в один ряд: kind-токены
+после имени. Парсер однозначен по первому токену после имени (или
+generic-параметров).
 
 #### Анонимный protocol-тип в позиции параметра
 
