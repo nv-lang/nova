@@ -284,21 +284,20 @@ type Shape enum
 #### Модификаторы type-declaration
 
 Помимо kind-токена, type-declaration может нести **модификаторы** — они не
-меняют «форму» типа, а добавляют квалификаторы. Модификаторы применяются
-поверх любой record-формы (`{…}`, `value {…}`):
+меняют «форму» типа, а добавляют квалификаторы:
 
-| Позиция | Модификатор | Семантика | D-block |
-|---|---|---|---|
-| перед `type` | `export` | публичный символ | D47 |
-| перед `type` | `priv(file)` | file-private символ | D307 |
-| после имени, перед `{` | `value` | stack-allocated (по значению) | D228/D290 |
-| после имени, перед `{` | `priv` | поля module-private по умолчанию | D281 |
-| после имени, перед `{` | `priv(type)` | поля type-private по умолчанию | D281 |
-| после имени, перед `{` | `consume` | must-be-consumed affine type | D133 |
+| Модификатор | Семантика | D-block |
+|---|---|---|
+| `export` | виден снаружи модуля | D47 |
+| `priv(file)` | виден только в этом файле | D307 |
+| `value` | stack-allocated (по значению, не в GC-куче) | D228/D290 |
+| `priv` | поля module-private по умолчанию | D281 |
+| `priv(type)` | поля type-private по умолчанию | D281 |
+| `consume` | must-be-consumed affine type | D133 |
+
+Грамматика: `[export|priv(file)] type Name[T] [value] [priv|priv(type)] [consume] { … }`
 
 Модификаторы **комбинируются**: `export type Job value priv consume { … }`.
-Порядок: сначала allocation (`value`), затем privacy (`priv`/`priv(type)`),
-затем affine (`consume`) — все перед `{`.
 
 Поля внутри `{…}` могут иметь **field-level** модификаторы:
 `ro` (D175), `mut` (D36), `priv` / `priv(type)` (D281).
