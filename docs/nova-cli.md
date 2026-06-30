@@ -53,7 +53,7 @@ nova build app.nv -o app         # compile to a native binary (the way to run co
 ./app                            # then execute it
 nova add mathlib --path ../mathlib   # add a dependency, update nova.lock
 nova info mathlib                # a dependency's effect-surface
-nova test                        # compile + run all nova_tests/
+nova test nova_tests             # compile + run all nova_tests/
 nova test nova_tests/plan118     # a single subdirectory
 nova test std nova_tests         # multiple paths: std/ + nova_tests/
 nova test --filter basics        # substring subset
@@ -462,7 +462,7 @@ nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 
 | Flag | Default | Description |
 |---|---|---|
-| `PATH...` | `<root>/nova_tests/` | Files and/or directories to test (0 or more) |
+| `PATH...` | — (required) | Files and/or directories to test (at least one required) |
 | `--filter SUBSTR` | — | Filter by display-name substring |
 | `--jobs N` | `0` (= num_cpus) | Parallel workers |
 | `--format` | `text` | `text`, `json`, `tap`, `junit` |
@@ -498,9 +498,10 @@ header (first 30 lines), not from the folder — so negative tests are found eve
 outside `neg/`.
 
 **Multi-path** (Plan 36.D.1): pass any number of paths — directories and/or files.
-With no arguments, defaults to `nova_tests/` (if it exists). To also test `std/`:
+At least one path is required (Plan 172.6). To also test `std/`:
 
 ```bash
+nova test nova_tests             # nova_tests/ only
 nova test std nova_tests         # std/ + nova_tests/ together
 nova test nova_tests/plan118     # specific subdirectory
 ```
