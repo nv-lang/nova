@@ -7994,6 +7994,10 @@ impl<'a> TypeCheckCtx<'a> {
         let type_name: String = match rt {
             TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
             TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => "Vec".to_string(),
+            // [M-172.1-instance-complex-recv]: multi-segment path / generic / pointer receiver —
+            // type_name extraction not implemented; overload/callee check skipped for these.
+            // Covers: `a.b.method()` (path recv), `Vec[T]`-receiver in generic body (unnamed),
+            // `*mut T`-receiver. A future pass can extract the base name for Vec[T]/Option[T].
             _ => return,
         };
         let type_name = type_name.as_str();
@@ -8282,6 +8286,8 @@ impl<'a> TypeCheckCtx<'a> {
                                     compat.push(c);
                                 }
                             }
+                            // [M-172.1-free-fn-multi-overload-ambiguous]: 0 or ≥2 compatible
+                            // overloads — checker cannot resolve unambiguously; codegen resolves.
                             if compat.len() == 1 { compat[0] } else { return; }
                         }
                     },
