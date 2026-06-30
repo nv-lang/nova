@@ -268,9 +268,10 @@ type Shape enum
 | `protocol` | protocol-тип (D53) |
 | `effect` | effect-тип (D53) |
 | `set` | type-set bound (D310) |
+| `value` `{` | value-record — stack-allocated (D228/D277/D290) |
 | `(` + ident + bare-type | named tuple (D215) — `(name1 T1, name2 T2)` |
 | `(` + bare-type | positional tuple — `(T1, T2)` |
-| `{` | record |
+| `{` | record — heap-allocated (GC-managed) |
 | `alias` | alias |
 | `<base-type>` `enum` | sum с явным базовым типом для discriminants |
 | идентификатор/тип, конец строки | newtype |
@@ -792,14 +793,15 @@ type Db effect {
 | `effect` | effect-тип |
 | `enum` | sum (D406) |
 | `set` | type-set bound (D310) |
+| `value` `{` | value-record — stack-allocated (D228/D277/D290) |
 | `(` | tuple |
-| `{` | record |
+| `{` | record — heap-allocated |
 | `alias` | alias |
 | `<base-type>` `enum` | sum с явным базовым типом (Plan 105) |
 | идентификатор/тип, конец строки | newtype |
 | конец строки сразу | unit |
 
-`protocol`, `effect`, `enum`, `set`, `alias` — всё встаёт в один ряд: kind-токены
+`protocol`, `effect`, `enum`, `set`, `alias`, `value` — kind-токены
 после имени. Парсер однозначен по первому токену после имени (или
 generic-параметров).
 
