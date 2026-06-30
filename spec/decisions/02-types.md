@@ -307,7 +307,7 @@ type Shape enum
 Модификаторы **комбинируются**: `export type Job value priv consume { … }`.
 
 Поля внутри `{…}` могут иметь **field-level** модификаторы:
-`ro` (D175), `mut` (D36), `priv` / `priv(type)` (D281).
+`ro` (D175), `mut` (D36), `priv` / `priv(type)` / `priv(file)` (D281/D307).
 
 #### Sum-варианты с числовыми discriminants
 
@@ -12916,35 +12916,42 @@ D220 дал `priv` (field-level, только own-type) и `type X priv {...}` (
 ### Синтаксис
 
 ```nova
-// type-level modifier         → meaning
+// type-level modifier         → meaning (задаёт дефолт для полей без явного modifier'а)
 // (bare)                      → fields default public      (D47, unchanged)
 // priv                        → fields default module-private
 // priv(type)                  → fields default type-private (only own methods)
+// priv(file)                  → fields default file-private (only methods in same file)
 
-export type Job value priv {   // module-private by default
-    mut id   int               // module-private
-    kind     int               // module-private
-    priv(type) secret int      // type-private (stronger: only Job methods)
+export type Job value priv {      // module-private by default
+    mut id   int                  // module-private (наследует type-level default)
+    kind     int                  // module-private
+    priv(type) secret int         // type-private (stronger: only Job methods)
+    priv(file) internal int       // file-private (только методы в этом файле)
 }
 ```
 
 `priv` без квалификатора = **module-private** — на уровне типа (задаёт дефолт полей) и на уровне поля (задаёт видимость явно).  
 `priv(type)` = **type-private** — аналогично: на уровне типа (дефолт) и на уровне поля (явно).  
-Правило симметрично: `priv` ведёт себя **одинаково** на type-уровне и field-уровне.  
+`priv(file)` = **file-private** — аналогично: на уровне типа (дефолт) и на уровне поля (явно). Поле доступно только из методов, определённых в том же файле.  
+Правило симметрично: все `priv`-квалификаторы ведут себя **одинаково** на type-уровне и field-уровне.  
 `priv(module)` — **ОШИБКА** (`E_PRIV_QUALIFIER`); используй `priv` без квалификатора.
 
 ### Правило
 
-#### §1 Effective visibility (три уровня)
+#### §1 Effective visibility (четыре уровня)
 
 | Контекст | Effective visibility |
 |---|---|
 | Explicit `pub` field | public |
 | Explicit `priv` field | **module-private** |
 | Explicit `priv(type)` field | type-private |
+| Explicit `priv(file)` field | **file-private** |
+| Type-level `priv(file)` default, no explicit field modifier | **file-private** |
 | Type-level `priv(type)` default, no explicit field modifier | type-private |
 | Type-level `priv` default, no explicit field modifier | **module-private** |
 | (ничего — D47 default) | public |
+
+Лесенка строгости: public ⊃ module-private ⊃ **file-private** ⊃ type-private.
 
 #### §2 Module identity
 
@@ -13029,11 +13036,15 @@ export     fn api() …           // публичный (как сейчас)
 
 Лесенка видимости top-level символов: **`priv(file)` ⊂ (module-default) ⊂ `export`**.
 
+`priv(file)` применим на **двух уровнях**:
+- **Top-level символ** (`priv(file) type X`, `priv(file) fn f`, `priv(file) const K`) — символ не виден peer-файлам модуля.
+- **Поле типа** (`priv(file) secret int`) — поле доступно только из методов, определённых в том же файле. Симметрично `priv` (module) и `priv(type)` (D281).
+
 `priv(file)` — это **visibility-hint, НЕ смена module-резолва**: модуль остаётся один (D29 не нарушается), символ лишь помечен «не виден peer-файлам». `file` — НЕ ключевое слово (распознаётся как `Ident("file")` внутри `priv(...)`), что исключает коллизию с идентификаторами.
 
 **Нейминг-обоснование** (`priv(file)`, не `local`): единая ось видимости под `priv` + scope-квалификатор — симметрично `priv(type)` (D281). `local` двусмысленно (вложенные функции — тоже «локальные») и потребовало бы нового KW с риском коллизии идентификаторов.
 
-**Применимость.** Только к top-level `fn` / `type` / `const`. Не применим к `test`/`bench`/`lemma`/`let`/`ro` (не имеют file-private видимости) и к методам (`fn T @m` — receiver-qualified, вне scope file-private). Scope-local `const` внутри тела fn — уже block-scoped, `priv(file)` не нужен.
+**Применимость top-level.** `fn` / `type` / `const`. Не применим к `test`/`bench`/`lemma`/`let`/`ro` и к методам (`fn T @m` — receiver-qualified, вне scope file-private). Scope-local `const` внутри тела fn — уже block-scoped, `priv(file)` не нужен.
 
 ### Правило
 
