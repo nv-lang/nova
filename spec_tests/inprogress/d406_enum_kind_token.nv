@@ -1,0 +1,63 @@
+// D406 — `enum` маркер в type-declaration. Spec: spec/decisions/02-types.md (D406).
+// Inline: первый вариант без `|`. Многострочный: `|` обязателен у каждого включая первый.
+// Unit / tuple / record варианты; один вариант; discriminants.
+module inprogress.d406_enum_kind_token
+
+// ── Объявления ────────────────────────────────────────────────────────────────
+
+type D406Color enum Red | Green | Blue
+
+type D406Option[T] enum Some(T) | None
+
+type D406Shape enum
+    | Circle { r f64 }
+    | Square { side f64 }
+
+type D406Singleton enum Only
+
+type D406ExitCode enum Ok = 0 | Failure = 1 | Critical = 2
+
+// ── Тесты ────────────────────────────────────────────────────────────────────
+
+test "D406 unit-варианты конструируются и match (inline)" {
+    ro c = D406Color.Green
+    match c {
+        D406Color.Red   => assert(false)
+        D406Color.Green => assert(true)
+        D406Color.Blue  => assert(false)
+    }
+}
+
+test "D406 tuple-вариант Some(T) / None" {
+    ro x = D406Option.Some(42)
+    ro y = D406Option[int].None
+    match x {
+        D406Option.Some(v) => assert(v == 42)
+        D406Option.None    => assert(false)
+    }
+    match y {
+        D406Option.Some(_) => assert(false)
+        D406Option.None    => assert(true)
+    }
+}
+
+test "D406 record-варианты (многострочный enum)" {
+    ro s = D406Shape.Circle { r: 1.0 }
+    match s {
+        D406Shape.Circle { r } => assert(r == 1.0)
+        D406Shape.Square { .. } => assert(false)
+    }
+}
+
+test "D406 один вариант (Singleton)" {
+    ro v = D406Singleton.Only
+    match v {
+        D406Singleton.Only => assert(true)
+    }
+}
+
+test "D406 discriminants: Ok=0, Failure=1, Critical=2" {
+    assert(D406ExitCode.Ok       as int == 0)
+    assert(D406ExitCode.Failure  as int == 1)
+    assert(D406ExitCode.Critical as int == 2)
+}

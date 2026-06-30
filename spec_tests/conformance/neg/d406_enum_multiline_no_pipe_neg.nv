@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR
+//
+// D406 (NEG) — многострочный enum без `|` у первого варианта — запрещено.
+// Spec: spec/decisions/02-types.md (D406): «многострочный — | обязателен у каждого
+// варианта включая первый».
+
+module neg.d406_enum_multiline_no_pipe
+
+type D406Bad enum
+    Red | Green

@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR
+//
+// D406 (NEG) — inline enum с `|` перед первым вариантом — запрещено.
+// Spec: spec/decisions/02-types.md (D406): «inline — без | перед первым вариантом».
+// `enum | Red | Green` — парсер ожидает имя варианта, видит `|` → ошибка.
+
+module neg.d406_enum_inline_leading_pipe
+
+type D406Bad enum | Red | Green
