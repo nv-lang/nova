@@ -2,7 +2,7 @@
 // Покрыто: (2) record-coercion (анонимный {field:val} получает тип T), (4) numeric literal coercion
 // (int-литерал принят без `as` если влезает в диапазон). (1) sum-coercion (D55.1) — КОМПИЛЯТОР-GAP
 // (не реализован даже для single-ctor sum, E7301), см. checklist → отдельный gap-тест с фиксом.
-module spec_tests.conformance
+module inprogress.d55_literal_coercion
 
 type D55Rec { n int }
 

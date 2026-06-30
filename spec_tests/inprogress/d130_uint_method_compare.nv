@@ -2,7 +2,7 @@
 // (NOT collapsed to `nova_int`), so `@`-comparisons inside `uint` methods are UNSIGNED
 // (Plan 172.1-K1: receiver_c_type scalar routed through the single `primitive_name_to_c`).
 // Regression guard for the `Nova_uint_method_compare(nova_int,nova_int)` soundness bug.
-module spec_tests.conformance
+module inprogress.d130_uint_method_compare
 
 fn uint @u_gt(other uint) -> bool { @ > other }
 fn uint @u_lt(other uint) -> bool { @ < other }

@@ -1,7 +1,7 @@
 // D189 — `defer { ... }` выполняется при выходе из scope; несколько defer — в LIFO-порядке.
 // Behavioral: эффект defer наблюдаем ПОСЛЕ scope (не внутри); порядок нескольких defer —
 // обратный регистрации. Spec: spec/decisions/03-syntax.md (D189). Один folder-module CU.
-module spec_tests.conformance
+module inprogress.d189_defer_scope_exit
 
 test "defer выполняется при выходе из scope, не раньше (D189)" {
     mut x = 0

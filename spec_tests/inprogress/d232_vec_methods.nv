@@ -2,7 +2,7 @@
 // is_empty/clear/first/last. Behavioral: длины/элементы/Option-края различают корректную
 // операцию. Spec: spec/decisions/02-types.md (D232). Один folder-module CU; D232-companion
 // к d232_vec_growable.nv (несколько файлов на один D допустимо).
-module spec_tests.conformance
+module inprogress.d232_vec_methods
 
 test "Vec pop — снимает с конца, пусто → None (D232)" {
     mut v = Vec[int].of(1, 2, 3)

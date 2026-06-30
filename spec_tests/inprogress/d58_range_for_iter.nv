@@ -1,6 +1,6 @@
 // D58 — Range literals (a..b, a..=b), Iter[T] protocol, for-in desugars to iter()
 // Spec: spec/decisions/03-syntax.md:58 (D58).
-module spec_tests.conformance
+module inprogress.d58_range_for_iter
 
 test "range half-open literal (D58)" {
     ro r = 1..4

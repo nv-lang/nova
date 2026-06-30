@@ -2,7 +2,7 @@
 // Ядро: `fn f() -> T => expr` ИЛИ `fn f() -> T { ... }`, НЕ комбинируются.
 // match-arm исключение: `pattern => expr` или `pattern => { block }`.
 // Spec: spec/decisions/03-syntax.md:1977 (D40).
-module spec_tests.conformance
+module inprogress.d40_function_body_arrow_vs_brace
 
 fn d40_expr_body(x int) -> int => x * 2
 

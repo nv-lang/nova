@@ -2,7 +2,7 @@
 // Покрыто: int→int narrowing wraparound (truncate); float→int saturation (План 07: out-of-range→
 // границы, neg-uint→0); int→float widening. ВАЖНО: `as` биндит ТУЖЕ унарного минуса, поэтому
 // `(-1.0) as u16` — со скобками (без них `-1.0 as u16` = `-(1.0 as u16)`; прецедентность — см. checklist).
-module spec_tests.conformance
+module inprogress.d54_as_cast_conversions
 
 test "int→u8 narrowing — wraparound (truncate младших битов): 300 → 44 (D54)" {
     assert(300 as u8 == 44)

@@ -1,6 +1,6 @@
 // D45 — inferred return type для expression-body (=> expr); block-form требует -> T явно
 // Spec: spec/decisions/03-syntax.md:45 (D45).
-module spec_tests.conformance
+module inprogress.d45_inferred_return_type
 
 fn d45_double(x int) => x * 2
 
