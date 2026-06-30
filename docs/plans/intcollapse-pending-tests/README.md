@@ -39,12 +39,39 @@ D405 (width-pick lt→wider) и D408 (chain-receiver inference) — ОТДЕЛЬ
 blast-radius → §7 полный регресс; не marathon-end. Эти 2 теста переделать в NEG или дать uint-контекст.
 
 ## Прогресс закрытия (2026-06-30)
-Из 7 багов: **2 ЗАКРЫТО** — D410 (tuple-destructure, 4bfa4ce8), D412 (default-arg+const, da934613).
-**ОСТАЛОСЬ 5:** D401/D413 (overflow-not-caught — checker range-check, §7-широкий), D405 (mixed-width
-lt-wins — checker promote_arith_rt pick-wider), D402 (light-closure defaults), D408 (option-chain
-receiver inference). + ранее (вне 13): Some-literal (a0a2a2dd), Coalesce-Result (62c0f57f). Итого
-**4 int-collapse фикса** эту сессию + 6 локов. Остаток = checker-изменения (регрессо-опасны, §7) +
-complex (closure/chain) → fresh-focus.
+Из 7 багов: **2 ЗАКРЫТО tactical** — D410 (tuple-destructure, 4bfa4ce8), D412 (default-arg+const,
+da934613). + ранее (вне 13): Some-literal (a0a2a2dd), Coalesce-Result (62c0f57f).
+
+### ✅ U.4 LITERAL-COERCION КАНАЛ LANDED (4772ba8a+ed30280a, целевая форма §0/§1)
+Целевая форма (НЕ piecemeal): чекер `materialize_literal_coercion` пишет COERCED sized-RT в
+`resolved_types[lit.id]` на DEFINITE-сайтах (annotated let / chosen call-args / arrow+block-trailing
++ explicit `return` / if-match-value branches, рекурсия Some/Ok/Err/tuple/array/control-flow);
+codegen `emit_expr` IntLit self-типизируется из канала. **Закрыло систематически**: tuple-/explicit-
+return/if-match-value sized-context collapse (RED→GREEN, залочено в d55). §7: conformance whole-CU
+GREEN + std/detect172 + nova_tests sample IDENTICAL fail-set vs clean (0 регресс). Детали:
+172.1-p67-phase2-map.md «U.4 LITERAL-COERCION КАНАЛ — LANDED».
+
+**КОРРЕКЦИЯ subsumption:** tactical-фиксы Some/Coalesce **НЕ избыточны** с каналом — они делают
+WRAPPER-тип (NovaOpt_uint typedef registration), канал делает LITERAL-значение. Для tuple/array
+wrapper-тип ДЕРИВИРУЕТСЯ из элементов → канал субсумирует; для Option/Result wrapper explicit →
+комплементарны (коэкзистят, 0 регресс). Снимать tactical только при unify эмиссионных путей (ФАЗА6).
+
+### ОСТАЛОСЬ 5 — все HARD keystone/spec-fork (не bounded):
+- **D401/D413** (no-context overflow): `0x8000000000000000` БЕЗ sized-контекста = `int`-литерал >
+  i64.MAX → ДОЛЖЕН E_LIT_OUT_OF_RANGE (спека). Лексер wrap'ит в i64::MIN и хранит как i64 → чекер НЕ
+  отличит от легит i64::MIN. Фикс = **lexer/AST флаг «overflowed i64»** + checker range-check на
+  wide-default. Широкий blast-radius → §7 полный регресс. (Тесты переделать в NEG ЛИБО дать uint-ctx.)
+- **D405** (mixed-width compare): `u8+u16`≠`u16+u8` (promote_arith_rt :519 берёт LEFT). **SPEC-РАЗВИЛКА**
+  (§5 spec-first): widen-to-wider (C-like, коммутативно) ИЛИ error-require-cast (Rust-like, D54-философия
+  «нет implicit narrowing»)? Требует D-block решения владельца — НЕ угадывать.
+- **D402** (closure-return): let-bound light-closure `|v| v` дефолтит nova_int param/ret
+  (fn_param_sigs :18935). Фикс = flow-sensitive closure-param inference из call-site (сложно).
+- **D408** (option-chain): MethodCall-receiver НЕ в resolved_types-канале → degraded infer collapse.
+  = **U.4.3 method-chain keystone** (phase2-map: «неделимо-комплексна», 6 провалов, гейтнут на
+  by-value-mono element-резолюцию BoxIter<Tuple>). НЕ наскоком.
+
+**Вывод:** чистая literal-coercion поверхность ИСЧЕРПАНА каналом. Остаток гейтнут на by-value-mono
+keystone (→ U.4.3 → legacy-deletion) ∨ spec-решения (D405) ∨ lexer-change (D401/413). Fresh-focus.
 
 ## Off-topic находки (НЕ int-collapse, отдельно)
 - **C-keyword-as-identifier**: `ro inline = …` → codegen эмитит `nova_uint inline = …` = невалидный C
