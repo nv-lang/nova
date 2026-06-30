@@ -10137,6 +10137,17 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Block(b) if b.stmts.is_empty() => {
                 b.trailing.as_ref().and_then(|t| self.infer_expr_type(t, scope))
             }
+            // Plan 172.1 §0a: `if cond { then } else { … }` expression type = type of
+            // then-branch trailing expr (branches must be type-compatible per checker).
+            // Gate: else_ must exist (otherwise If = unit, no value type).
+            // Conservative: use outer `scope` for trailing infer — if the trailing expr
+            // references a let-binding introduced inside the block, infer_expr_type returns
+            // None → no annotation → safe legacy fallback. No false annotations possible.
+            ExprKind::If { then, else_: Some(_), .. } => {
+                then.trailing.as_ref().and_then(|t| self.infer_expr_type(t, scope))
+            }
+            // Plan 172.1 §0a: Unary op (-, !, ~) — result type = operand type.
+            ExprKind::Unary { operand, .. } => self.infer_expr_type(operand, scope),
             ExprKind::IntLit(_) => Some(prim_ref("int", expr.span)),
             ExprKind::FloatLit(_) => Some(prim_ref("f64", expr.span)),
             ExprKind::BoolLit(_) => Some(prim_ref("bool", expr.span)),
