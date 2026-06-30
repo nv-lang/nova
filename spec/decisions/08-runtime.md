@@ -1657,44 +1657,42 @@ fn main() {
 
 ---
 
-## D73. `From` / `Into` protocol-пара с авто-выводом
+## D73. `From` / `Into` protocol-пара — инфаллибельные конверсии
 
-> **Уточнение (2026-05-07):** `from`/`into` могут декларировать
-> `Fail[E]` если конверсия fallible. Это **унифицирует** infallible и
-> fallible конверсии под одной формой `from`/`into` — нет нужды в
-> отдельном `try_from`/`try_into` (D77 теперь convenience-sugar,
-> см. там).
+> **Ревизия (2026-07-01):** D73 и D77 — **два отдельных иерархии**
+> по модели Rust. `From`/`Into` строго инфаллибельны (возвращают T).
+> `TryFrom`/`TryInto` строго фаллибельны (возвращают Result[T, E]).
+> Кросс-вывод `From ↔ TryFrom` **запрещён** — семантики различны.
+> Ранее описанное «unified 4-way auto-derive» и `Fail[E]` в
+> `from`/`into` отозваны.
 
 ### Что
-Универсальный механизм нетривиальной конверсии значения между типами:
+Механизм **инфаллибельной** (guaranteed-success) конверсии значения
+между типами:
 
 1. **`From[T]`** — protocol со static-методом `from(v T) -> Self`.
-   «Целевой тип знает, как сделать себя из источника».
+   «Целевой тип знает, как сделать себя из источника. Всегда успешно.»
 2. **`Into[T]`** — protocol с instance-методом `@into() -> T`.
-   «Источник знает, как превратиться в целевой».
-3. **Авто-вывод одного из другого** — компилятор знает про симметрию.
-   Если задан только `From[X]` для типа `T`, компилятор автоматически
-   удовлетворяет `Into[T]` для `X` (и наоборот). Программист пишет
-   **одну** реализацию из пары.
-4. **Fallible конверсии** объявляются эффектом `Fail[E]` в сигнатуре —
-   та же `from`/`into` форма; effect-aware auto-derive переносит
-   эффект на парную форму.
+   «Источник знает, как превратиться в целевой. Всегда успешно.»
+3. **Blanket-вывод `From → Into`** — компилятор знает: если тип `X`
+   имеет `T.from(v X)`, то `X` автоматически удовлетворяет `Into[T]`.
+   Программист пишет **только `From`** — `Into` выводится.
 
-Программисту доступны **две формы вызова** из одной реализации:
+**`From` и `Into` не могут бросать** — они не объявляют `Fail[E]`
+и не возвращают `Result`. Если конверсия может провалиться,
+используй `TryFrom` / `TryInto` (D77) — отдельная иерархия.
+
+Программисту доступны **две формы вызова** из одной `From`-реализации:
 
 ```nova
 T.from(v X)             // static, на целевом типе
 v.into()               // instance, на источнике (тип цели — из контекста)
 ```
 
-Для fallible (с `Fail[E]`) семантика та же; ошибка распространяется
-через стандартный effect-механизм — `with Fail = handler { ... }` /
-`?` оператор / propagation наружу.
-
 В отличие от `as` (D54) — compile-time numeric/newtype/sum cast без
 runtime-кода, — `From`/`Into` для **семантически нетривиальных**
-конверсий (парсинг, единицы измерения, формат-обмен, представление
-в строку — последнее заменяет old D70 `ToStr`).
+инфаллибельных конверсий (единицы измерения, формат-обмен,
+представление в строку — последнее заменяет old D70 `ToStr`).
 
 ### Правило
 
@@ -1757,154 +1755,76 @@ ro n int = parse_typed("42")     // если int реализует From[str]
 Bound `[U From[X]]` в generic-сигнатуре требует чтобы конкретный
 тип `U` реализовывал `From[X]` — структурно, через D72 bound check.
 
-#### Fallible конверсии через `Fail[E]`
+#### Fallible конверсии — использовать TryFrom (D77)
 
 Если конверсия может **не получиться** (валидация, парсинг, проверка
-диапазона), `from`/`into` декларируют `Fail[E]` в сигнатуре:
+диапазона) — НЕ используй `From`. Вместо этого используй `TryFrom`
+(D77), который возвращает `Result[Self, E]`. Пример ниже — НЕВЕРНО
+через `From`, ВЕРНО через `TryFrom`:
 
 ```nova
-type Utf8Error | InvalidByte | UnexpectedEnd
+// НЕВЕРНО: From не может бросать
+// fn str.from(b []u8) Fail[Utf8Error] -> Self { ... }
 
-fn str.from(b []u8) Fail[Utf8Error] -> Self {
+// ВЕРНО: используй TryFrom для fallible-конверсий
+fn str.try_from(b []u8) -> Result[Self, Utf8Error] {
     if !is_valid_utf8(b) {
-        throw Utf8Error.InvalidByte
+        Err(Utf8Error.InvalidByte)
+    } else {
+        Ok(/* ... */)
     }
-    // ...
-}
-
-// Caller-side — три варианта:
-
-// (1) Propagate via Fail в сигнатуре caller'а:
-fn parse_message(b []u8) Fail[Utf8Error] -> Message {
-    ro s = str.from(b)              // ошибка пробрасывается
-    parse_inner(s)
-}
-
-// (2) Catch handler'ом — Result-стиль через with-handler:
-ro r Result[str, Utf8Error] =
-    with Fail[Utf8Error] = |e| interrupt Err(e) {
-        Ok(str.from(b))
-    }
-
-// (3) Default-fallback через with-handler:
-ro s str = with Fail[Utf8Error] = |_| interrupt "[invalid utf-8]" {
-    str.from(b)
 }
 ```
 
-**Effect-aware auto-derive:** если `T.from(v V) Fail[E] -> Self`,
-компилятор авто-синтезирует `v.into() Fail[E] -> T`. Эффект
-наследуется, видим в сигнатуре auto-derived формы.
+**`From`/`Into` строго инфаллибельны.** Compiler error если `from`
+декларирует `Fail[E]` — используй `try_from` (D77).
 
-#### Auto-derive 4-way (D73 + D77 unified)
+#### Blanket-вывод: From → Into
 
-**Программист пишет ОДНУ форму** из четырёх; компилятор синтезирует
-остальные. Это объединяет D73 (`from`/`into`) и D77 (`try_from`/`try_into`)
-в один механизм.
-
-**Разделение «реализовать» vs «использовать»:**
-
-| Природа конверсии | Программисту реализовать | Программисту использовать |
-|---|---|---|
-| **Fallible** | `T.try_from(v) -> Result[T, E]` | `T.from(v)` или `v.into()` (короче, throws Fail) |
-| **Infallible** | `T.from(v) -> T` | `T.from(v)` или `v.into()` |
-
-То есть **писать богатую форму** (`try_from` для fallible — Result-стиль
-явный, error type first-class), а **использовать в обычном коде**
-короткую (`from` / `into`).
-
-**Compiler синтезирует все 4 формы из одной:**
-
-| Программист написал | Compiler даёт |
-|---|---|
-| `try_from(v) -> Result[T, E]` (fallible) | `from() Fail[E]`, `into() Fail[E]`, `try_into() -> Result[T, E]` |
-| `from(v) -> T` (infallible) | `into() -> T`. (try-формы НЕ синтезируются — не имеют смысла без error type.) |
-
-**Почему `try_from` — самое богатое для имплементации:**
-1. **Result в типе явный.** `Result[T, E]` показывает error type как
-   first-class signature element — IDE / AI читают это сразу. Через
-   `Fail[E]` нужен ещё шаг effect-rezolution.
-2. **Compiler легко синтезирует throwing-форму** из Result — простое
-   `match { Ok(v) => v, Err(e) => throw e }`. Обратное (Result из
-   throwing) требует with-handler инфраструктуры.
-3. **Boilerplate Ok(...) — это feature имплементации.** `Ok(value)`
-   явно говорит «вот success-path», `Err(...)` — «вот failure-path».
-   Программист читает контракт без неявных throw'ов в теле функции.
-
-**Почему `from`/`into` — для использования в коде:**
-1. **Короче** — `T.from(v)` против `T.try_from(v)?` или
-   `T.try_from(v).unwrap()`.
-2. **Идиоматичнее** — `v.into()` через context-driven dispatch
-   читается как «преобразовать v к ожидаемому типу».
-3. **Throws пропагируются естественно** — caller или handle через
-   `with Fail`, или эффект уходит наружу. Программист не пишет
-   `?`-цепочки руками.
-
-**Когда использовать `try_from`/`try_into` в коде:**
-- Когда нужен **explicit branching** на error type через `match`.
-- Когда нужно **map error** в другой тип (`r.map_err(|e| MyError::Wrap(e))`).
-- Когда нужен **default fallback** через `unwrap_or` без handler-блока.
-
-В остальных случаях — `from`/`into` через эффекты.
-
-**Прецедент Rust:** `TryFrom` каноническая форма для fallible
-конверсий; сообщество выработало этот стиль.
-
-**Алгоритм синтеза (программист пишет `try_from`):**
+**D73 blanket:** если тип `T` имеет `T.from(v X) -> Self`,
+компилятор автоматически синтезирует `X.@into() -> T`.
+Программист пишет **только `From`-сторону**:
 
 ```nova
-// Программист написал:
-fn u64.try_from(s str) -> Result[Self, ParseIntError] => ...
+type Celsius f64
+type Fahrenheit f64
 
-// Компилятор синтезирует автоматически:
-// (1) throwing-from через D73:
-fn u64.from(s str) Fail[ParseIntError] -> Self =>
-    match try_from(s) { Ok(n) => n, Err(e) => throw e }
+fn Fahrenheit.from(c Celsius) -> Self =>
+    Self((c as f64) * 9.0 / 5.0 + 32.0)
 
-// (2) instance try_into через D77:
-fn str @try_into() -> Result[u64, ParseIntError] =>
-    u64.try_from(@)
+// Compiler синтезирует автоматически:
+//   fn Celsius @into() -> Fahrenheit => Fahrenheit.from(@)
 
-// (3) instance into через D73:
-fn str @into() Fail[ParseIntError] -> u64 =>
-    u64.from(@)
-
-// Программист может вызвать любую из 4-х форм:
-ro n = u64.try_from(s)?           // → Result, propagate с ?
-ro n = u64.from(s)                // → throws Fail (caller handles)
-ro n: u64 = s.try_into()?         // → instance Result
-ro n: u64 = s.into()              // → instance throws
-ro n = u64.try_from(s).unwrap_or(0)  // → fallback default
+ro f1 = Fahrenheit.from(Celsius(100.0))    // from-форма
+ro f2 = Celsius(100.0).into()              // синтезированная into-форма
 ```
 
-**Когда писать `from` вместо `try_from`:**
-- Конверсия математически не может failure'ить: numeric upcast
+Симметрично: если написан `@into()` — компилятор синтезирует `from`.
+
+**`From` НЕ синтезирует и не кросс-выводится из `TryFrom` (D77).**
+Это разные иерархии с разной семантикой: `From` гарантирует успех,
+`TryFrom` — нет. Смешение нарушило бы инварианты инфаллибельности.
+
+**Когда использовать `From`:**
+- Конверсия математически не может провалиться: numeric upcast
   (`f64.from(int)`), unit ↔ unit (`Fahrenheit.from(Celsius)`),
-  newtype unwrap (`int.from(UserId)`).
-- Программист может сам убедиться что параметр валиден prerequisite'ом
-  (например `from(s str)` где `s` уже валидирован выше) — но это
-  опасно, лучше fallible форма.
+  newtype unwrap (`int.from(UserId)`), форматирование в строку.
+- Конверсия по design всегда успешна (инвариант типа гарантирует).
+
+**Когда использовать `TryFrom` (D77) вместо `From`:**
+- Парсинг (`str → int`, `str → UserId`).
+- Валидация диапазона (`int → char`, проверка UTF-8).
+- Любой случай где входные данные могут быть невалидными.
 
 **Тонкости:**
-1. **Если программист пишет ОБЕ формы** (`from` без Fail и `try_from`
-   с `Result[T, !]`) — compile-error: ambiguity, какая основная.
-   Программист выбирает одну.
-2. **Compiler не синтезирует try-формы из infallible `from()`** —
-   нет error-type для Result. Если нужно (например, generic-bound
-   требует `TryFrom`), программист пишет explicit
-   `T.try_from(v) -> Result[T, never]` (never = uninhabited error).
-3. **`Result[T, never]`** automatically converts to `T` через unwrap
-   — never-type не имеет значений, `Err` ветка unreachable.
-
-**Когда писать `Fail`, когда нет:**
-- `Fahrenheit.from(c Celsius)` — без Fail (всегда успех).
-- `int.from(s str) Fail[ParseIntError]` — с Fail (может не парситься).
-- `Buffer.into() Fail[Utf8Error] -> str` — с Fail (валидация UTF-8).
-
-Это **унифицирует** API: одна форма `from`/`into` для всех конверсий.
-Не нужно решать «infallible или try_»; effect-аннотация в сигнатуре
-сама описывает контракт. Согласовано с D2/D10/D25/D62/D65 («всё —
-эффект», throw — операция Fail).
+1. **`From` и `TryFrom` независимы** — один тип может иметь ОБА:
+   `Fahrenheit.from(c Celsius)` (инфаллибельный unit-conv) и
+   `Fahrenheit.try_from(s str) -> Result[Self, E]` (парсинг). Нет
+   ambiguity — разные receiver/параметры.
+2. **`From` НЕ синтезируется из `TryFrom`** — нарушило бы
+   инфаллибельность `From`. Если нужен blanket `TryFrom` через
+   инфаллибельный `From` — пишем вручную:
+   `fn T.try_from(v V) -> Result[Self, Never] => Ok(T.from(v))`.
 
 #### Соотношение с `as` (D54)
 
@@ -1925,7 +1845,8 @@ ro m = Money.from(("USD", 100))    // конструирование с вали
 ```
 
 Граница чёткая: если конверсия выражается одним bit-level/tag-уровнем —
-`as`. Если требует логики или может бросить — `from`.
+`as`. Если требует нетривиальной логики, но всегда успешна — `from`.
+Если может провалиться — `try_from` (D77).
 
 #### Соотношение с D55 record-coercion
 
@@ -1944,8 +1865,8 @@ D55 срабатывает раньше на синтаксическом уро
 ```nova
 ro f Fahrenheit = Celsius(100.0)        // ОШИБКА: D55 не работает —
                                           // Fahrenheit не sum с unary Celsius
-ro f = Fahrenheit.from(Celsius(100.0))  // ok: D73
-ro f = into[Fahrenheit](Celsius(100.0)) // ok: через free function
+ro f = Fahrenheit.from(Celsius(100.0))  // ok: D73 (from-форма)
+ro f2 = Celsius(100.0).into()           // ok: D73 (into-форма с context)
 ```
 
 #### `Into[T]` protocol и автоматический вывод
@@ -1980,8 +1901,6 @@ fn Fahrenheit.from(c Celsius) -> Self =>
 
 ro f1 = Fahrenheit.from(Celsius(100.0))    // явная from-форма
 ro f2 = Celsius(100.0).into()              // авто-выведенная into-форма
-ro f3 = into[Fahrenheit](Celsius(100.0))   // free function
-ro f4 Fahrenheit = into(Celsius(100.0))    // через context (D55)
 ```
 
 Симметрично, если программист пишет `@into`, компилятор синтезирует
@@ -2049,30 +1968,28 @@ Free function `into[T, U From[T]](v T) -> U` **не вводится** —
 (нарушение D9 «один очевидный путь»). Static `T.from` уже
 покрывает explicit-type case, instance `.into()` — context-driven.
 
-#### Throwing-варианты
+#### Разграничение с `as` и `TryFrom`
 
-`From.from` может throw'ить через `Fail[E]`:
-
-```nova
-type ParseError | InvalidFormat | OutOfRange
-
-fn UserId.from(s str) Fail[ParseError] -> Self =>
-    match s.parse_int_opt() {       // Plan 91.18: parse_int → Fail; parse_int_opt → Option
-        Some(n) if n >= 0 => Self(n as u64)
-        Some(_)            => throw OutOfRange
-        None               => throw InvalidFormat
-    }
-
-ro id UserId = UserId.from("42")        // throws Fail[ParseError]
+```
+as           — compile-time numeric/newtype/sum cast, без runtime-кода (D54)
+From/Into    — инфаллибельная конверсия с runtime-логикой (D73, этот раздел)
+TryFrom/TryInto — фаллибельная конверсия, возвращает Result (D77)
 ```
 
-Это обычная сигнатура с эффектом, никаких специальных правил.
-`?` после такого вызова — нарушение D67 (`from` возвращает T через
-Fail, не Result/Option):
+Примеры:
 
 ```nova
-ro id = UserId.from(s)?       // ОШИБКА D67
-ro id = UserId.from(s)         // ok, throw сам пробрасывается
+// as — тривиальный cast:
+ro n = 100 as u32
+ro u = 42 as UserId
+
+// From — нетривиальная инфаллибельная конверсия:
+ro f = Fahrenheit.from(Celsius(100.0))   // арифметика, но всегда успешна
+ro s = str.from(42)                       // форматирование, всегда работает
+
+// TryFrom — фаллибельная конверсия:
+ro n = int.try_from("42")?               // парсинг — может провалиться
+ro c = char.try_from(cp)?               // range-check — может провалиться
 ```
 
 ### Почему
@@ -2166,8 +2083,8 @@ ro id = UserId.from(s)         // ok, throw сам пробрасывается
   cast'ов; D73 покрывает остальное.
 - [02-types.md → D55](02-types.md#d55) — record/sum coercion;
   D73 для остальных типов.
-- [04-effects.md → D67](04-effects.md#d67) — `from` с throw через
-  `Fail` следует общим правилам `?`.
+- [08-runtime.md → D77](#d77-tryfrom--tryinto--фаллибельные-конверсии)
+  — TryFrom/TryInto — отдельная иерархия для fallible конверсий.
 - [08-runtime.md → D70](#d70-tostr-protocol--replaced--d73)
   — REPLACED → D73; конверсия в `str` это частный случай D73.
 - [D26](#d26-базовая-stdlib-и-prelude) — `From`, `Into` в prelude.
@@ -2178,9 +2095,6 @@ ro id = UserId.from(s)         // ok, throw сам пробрасывается
   `str.from(bool)`, `str.from(f64)` (D70-replacement). Должны ли
   `int.from(bool)`, `f64.from(int)` etc. — сейчас open вопрос
   Q-from-builtins.
-- **`TryFrom`** — отдельный protocol для **fallible** конверсий
-  с явным `Result`/`Fail` в сигнатуре? Сейчас обычный `from` с
-  `Fail[E]` достаточен. Q-tryfrom.
 - **Auto-derive `From`** — для newtype можно автоматически (`type
   UserId u64` ⇒ `UserId.from(n u64) -> Self`)? Сейчас программист
   пишет вручную. Q-auto-from.
@@ -2201,7 +2115,7 @@ written → `X.into() -> T` synthesized (и наоборот). Три эквив
 формы вызова из одной реализации: `into[T](v)`, `v.into()`,
 `T.from(v)`.
 
-**v3 (текущая, 2026-05-06):** убрана free function `into[T, U](v)`.
+**v3 (2026-05-06):** убрана free function `into[T, U](v)`.
 Три формы — это нарушение D9. Остались две: `T.from(v)` (static,
 explicit-type) и `v.into()` (instance, context-driven). Также:
 
@@ -2213,6 +2127,16 @@ explicit-type) и `v.into()` (instance, context-driven). Также:
 **Что было невозможно до этого:** D73 как механизм требует bound'ы
 (D72). До D72 (Q-bounds открыт) `From`/`Into` пара была заблокирована.
 С D72 разблокирована.
+
+**v4 (текущая, 2026-07-01):** ревизия по Rust-модели. `From`/`Into` —
+строго инфаллибельная иерархия. Упразднены:
+
+- `from` с `Fail[E]` — было расширение, нарушало инвариант «`From` всегда
+  успешен». Для fallible конверсий — только D77 `TryFrom`.
+- Unified 4-way синтез (`try_from` → auto `from` + обе `into`-формы) —
+  нарушал инвариант инфаллибельности `From`.
+- `From` и `TryFrom` теперь **две независимые иерархии**, без кросс-вывода.
+  Один тип может реализовать обе явно — нет ambiguity.
 
 ---
 
@@ -2406,46 +2330,49 @@ D-решением D74.
 
 ---
 
-## D77. `TryFrom` / `TryInto` — protocol-пара, расширение D73 для fallible-конверсий
+## D77. `TryFrom` / `TryInto` — фаллибельные конверсии (отдельная иерархия от D73)
 
-> **Уточнение (2026-05-07):** D73 теперь сам поддерживает fallible
-> через `Fail[E]` в сигнатуре `from`/`into` — единый механизм.
-> Программист пишет **одну** из 4-х форм (`from` / `into` / `try_from` /
-> `try_into`), компилятор синтезирует остальные. **Рекомендуется
-> писать `try_from`** для fallible (Result-стиль явный, error type
-> first-class в signature) и `from` для infallible (без boilerplate
-> `Ok(...)`). Подробности в D73 «Auto-derive 4-way».
->
-> Этот документ (D77) описывает Result-форму (`try_from` / `try_into`)
-> как **рекомендуемую implementation form** для fallible конверсий
-> (вопреки названию «convenience sugar» в раннем описании).
+> **Ревизия (2026-07-01):** D77 — **отдельная иерархия** от D73
+> (`From`/`Into`). `TryFrom`/`TryInto` строго фаллибельны, возвращают
+> `Result[T, E]`. Кросс-вывод `From ↔ TryFrom` запрещён — разные
+> семантики. Ранее описанное «unified 4-way» и синтез `from` из
+> `try_from` отозваны.
 
 ### Что
-Парный механизм к [D73](#d73-from--into-protocol-пара-с-авто-выводом)
-для **fallible-конверсий**: когда конверсия может не получиться,
-программист может выбрать одну из двух эквивалентных форм:
+Механизм **фаллибельной** конверсии — когда конверсия может не
+получиться (парсинг, валидация диапазона, format-check):
 
-1. **Throwing-форма** через `Fail[E]` — `T.from(v) Fail[E] -> Self`
-   (D73, основная форма).
-2. **Result-форма** — `T.try_from(v) -> Result[Self, E]` (D77,
-   convenience sugar).
+1. **`TryFrom[T, E]`** — protocol со static-методом
+   `try_from(v T) -> Result[Self, E]`. «Попытка создать Self из T;
+   возможна ошибка типа E».
+2. **`TryInto[T, E]`** — protocol с instance-методом
+   `@try_into() -> Result[T, E]`. «Попытка превратить себя в T».
+3. **Blanket-вывод `TryFrom → TryInto`** — если `T.try_from(v X)`
+   определён, компилятор синтезирует `X.@try_into() -> Result[T, E]`.
+   Программист пишет **только `TryFrom`-сторону**.
 
-Семантически **эквивалентны** (одна задача — конверсия с возможной
-ошибкой), различаются **формой возврата ошибки**. D73 forma — Nova-
-канонический путь («всё — эффект», D2/D10), D77 — для error-aware
-веток с explicit Result.
+**`TryFrom` и `TryInto` не могут быть инфаллибельными** — они всегда
+возвращают `Result`. Если конверсия гарантированно успешна,
+используй `From`/`Into` (D73) — отдельная иерархия.
 
-**Компилятор синтезирует одну из другой.** Программист пишет одну
-сторону, другая выводится — точно так же как `From` ↔ `Into` в D73.
+**`From` НЕ синтезируется из `TryFrom`** — нарушило бы инвариант
+инфаллибельности `From`. Программист сам решает какие иерархии
+реализовывать на типе.
 
 ```nova
-// Программист пишет — одну форму:
+// Программист пишет TryFrom:
 fn u64.try_from(s str) -> Result[Self, ParseIntError] => ...
 
-// Компилятор автоматически даёт обе формы вызова:
-ro n = u64.from("42")             // throws Fail[ParseIntError]
-ro r = u64.try_from("42")          // Result[u64, ParseIntError]
-ro opt = u64.try_from("42").ok()   // Option[u64] через Result.ok()
+// Compiler синтезирует только TryInto:
+//   fn str @try_into() -> Result[u64, ParseIntError] => u64.try_from(@)
+
+// НЕ синтезируется:
+//   fn u64.from(s str) — нельзя, нарушало бы инфаллибельность From
+
+// Доступные формы вызова:
+ro r = u64.try_from("42")?          // Result с ?-propagation
+ro r: Result[u64, _] = "42".try_into()  // instance-форма
+ro opt = u64.try_from("42").ok()    // Option через Result.ok()
 ```
 
 `Option`-вариант **не** требует отдельного метода — `Result.ok()`
@@ -2468,118 +2395,79 @@ type TryInto[T, E] protocol {
 `Self` (D66) — реализующий тип. `try_from` — static-метод (как
 обычный `from`), `try_into` — instance-метод.
 
-#### Авто-синтез четырёхугольника
+#### Blanket-вывод: TryFrom → TryInto
 
-Если программист пишет любую **одну** форму из четырёх, компилятор
-выводит остальные три:
+**D77 blanket:** если тип `T` имеет `T.try_from(v X) -> Result[Self, E]`,
+компилятор автоматически синтезирует `X.@try_into() -> Result[T, E]`.
+Программист пишет **только `TryFrom`-сторону**:
 
 ```nova
-       T.from(v X)              ← throws Fail[E]
-       T.try_from(v X)          ← Result[Self, E]
-       v.into() -> T            ← throws Fail[E]
-       v.try_into() -> T        ← Result[T, E]
+fn char.try_from(cp int) -> Result[Self, str] {
+    if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+        Err("invalid codepoint")
+    } else {
+        Ok(unsafe { cp as char })
+    }
+}
+
+// Compiler синтезирует:
+//   fn int @try_into() -> Result[char, str] => char.try_from(@)
+
+// Формы вызова:
+ro c = char.try_from(65)?          // static-форма с ?
+ro c: Result[char, str] = 65.try_into()  // instance-форма
 ```
 
-**Правила синтеза:**
+Симметрично: если написан `@try_into()` — компилятор синтезирует
+`try_from`.
 
-1. **`from` → `try_from`:** оборачивает throw в Result.
-   ```nova
-   // Если написано:
-   fn u64.from(s str) Fail[ParseIntError] -> Self => ...
-   // Синтезируется:
-   fn u64.try_from(s str) -> Result[Self, ParseIntError] =>
-       with Fail[ParseIntError] = |e| interrupt Err(e) {
-           Ok(Self.from(s))
-       }
-   ```
-
-2. **`try_from` → `from`:** разворачивает Result в throw.
-   ```nova
-   // Если написано:
-   fn u64.try_from(s str) -> Result[Self, ParseIntError] => ...
-   // Синтезируется:
-   fn u64.from(s str) Fail[ParseIntError] -> Self =>
-       match Self.try_from(s) {
-           Ok(v)  => v
-           Err(e) => throw e
-       }
-   ```
-
-3. **`from` ↔ `into` / `try_from` ↔ `try_into`:** через D73-механизм
-   на каждой из форм отдельно. То есть если написано `u64.from(s)`,
-   синтезируются:
-   - `u64.try_from(s)` (D77)
-   - `s.into()` для типа `u64` (D73)
-   - `s.try_into()` для типа `u64` (D77)
-
-**Если написаны обе** (например, `from` и `try_from` обе вручную) —
-обе используются как написаны, авто-синтез не применяется. Как в D73,
-программист отвечает за consistency.
-
-#### Какую форму писать?
-
-Рекомендация — **писать `try_from`**, для парсинга / валидации:
+**`TryFrom` и `From` — независимые иерархии.** Один тип может иметь
+оба (разные параметры), или только один. Нет обязательной связи:
 
 ```nova
+// Celsius: оба — разные параметры конверсии
+fn Fahrenheit.from(c Celsius) -> Self => ...        // инфаллибельный (D73)
+fn Fahrenheit.try_from(s str) -> Result[Self, ParseError] => ...  // фаллибельный (D77)
+```
+
+#### Когда использовать TryFrom
+
+`TryFrom` — для любой конверсии которая **может провалиться**:
+
+```nova
+// Парсинг из str:
 fn u64.try_from(s str) -> Result[Self, ParseIntError] =>
     if !is_all_digits(s) {
         Err(InvalidDigit { position: 0 })
     } else {
-        // ... основная логика
         Ok(parsed_value)
     }
+
+// Range-check:
+fn char.try_from(cp int) -> Result[Self, str] => ...
+
+// Validation:
+fn Port.try_from(n u16) -> Result[Self, str] =>
+    if n == 0 { Err("port 0 reserved") } else { Ok(Port(n)) }
 ```
 
-Причины:
-- **Result-возврат явный** — программисту не нужно держать в голове
-  активный handler `Fail[E]`.
-- **Тип ошибки виден в сигнатуре** (`Result[Self, ParseIntError]`),
-  а не пробрасывается через эффект-row (где может теряться).
-- **Pattern matching** на Result удобен внутри парсера для composition.
-
-`from` остаётся для случаев когда программист **уверен** в успехе и
-не хочет писать `match`:
-
-```nova
-fn UserId.from(n u64) -> Self => Self(n)         // infallible
-fn Greeting.from(name str) -> Self =>
-    Self("Hello, ${name}!")                       // тоже infallible
-```
-
-Если конверсия **infallible** — `from` достаточно, `try_from` не
-синтезируется (нет `E`).
-
-#### Семантика равенства
-
-`from(s)` и `try_from(s).unwrap()` — поведенческое равенство (с
-учётом разной формы ошибки). Компилятор гарантирует:
-- `try_from(v) == Ok(x)` ⇒ `from(v) == x`
-- `try_from(v) == Err(e)` ⇒ `from(v)` бросает `throw e`
+Если конверсия **инфаллибельна** — используй `From` (D73), не `TryFrom`.
 
 #### `D67` ?-оператор
 
-- `let v = u64.try_from(s)?` — **валидно**, Result оборачивается
-  через [D67](04-effects.md#d67) `?` на Result.
-- `let v = u64.from(s)?` — **ошибка** (D67), `from` возвращает T
-  через `Fail`, не Result. Throw сам пробрасывается без `?`.
+`try_from` возвращает `Result[T, E]` → `?` применим:
 
 ```nova
-// Функция возвращает Fail[ParseIntError]:
-fn parse_pair(s str) Fail[ParseIntError] -> (u64, u64) {
-    ro parts = s.split(",")
-    ro a = u64.from(parts[0])              // throws через Fail (без ?)
-    ro b = u64.from(parts[1])              // throws через Fail (без ?)
-    (a, b)
-}
-
 // Функция возвращает Result, использует try_from + ?:
-fn parse_pair_r(s str) -> Result[(u64, u64), ParseIntError] {
+fn parse_pair(s str) -> Result[(u64, u64), ParseIntError] {
     ro parts = s.split(",")
-    ro a = u64.try_from(parts[0])?         // ? на Result ([D85](04-effects.md#d85))
+    ro a = u64.try_from(parts[0])?         // ? на Result (D67/D85)
     ro b = u64.try_from(parts[1])?
     Ok((a, b))
 }
 ```
+
+`From.from` возвращает T (не Result) → `?` неприменим и не нужен.
 
 #### Option через `Result.ok()`
 
@@ -2605,82 +2493,68 @@ match u64.try_from(s).ok() {
 
 ### Почему
 
-1. **Согласовано с D73.** Тот же auto-pair-механизм. Программист
-   видит ровно один паттерн «пишу одну сторону — компилятор даёт
-   все формы вызова». Не нужно помнить «for fallible — другая система».
+1. **Параллельная структура с D73.** `TryFrom → TryInto` blanket
+   зеркалит `From → Into` (D73). Программист видит один и тот же
+   паттерн для обоих иерархий. Разница только в signature: `T` vs
+   `Result[T, E]`.
 
-2. **Закрывает три формы вызова через одну реализацию.** Парсинг —
-   частый use case. Без D77 программисту нужно либо:
-   - Писать `try_X` отдельно (Kotlin-style `toIntOrNull`, размножение
-     имён), или
-   - Всегда `match { Some => ... None => throw }` обёртку.
+2. **Две отдельные иерархии — чёткая семантика.** `From` = «всегда
+   работает», `TryFrom` = «может не работать». Кросс-вывод стёр бы
+   эту границу: если `From` можно получить из `TryFrom`, то `From`
+   уже не гарантирует успех (ведь `TryFrom` может вернуть `Err`).
 
-3. **Стандартизованное имя `try_from`.** До D77 разные библиотеки
-   могли использовать `try_parse`, `parse_or_err`, `validate`, и
-   т.д. — каждая со своим именем. С D77 — единое имя как `from`
-   стандартно для конверсии.
+3. **Стандартизованное имя `try_from`.** Без D77 разные библиотеки
+   использовали `try_parse`, `parse_or_err`, `validate` и т.д.
+   С D77 — единое имя, как `from` стандартно для инфаллибельных.
 
-4. **Прецедент Rust:** `From` / `TryFrom` — стандарт `std`. Auto-blanket
-   реализация (`Into ↔ From`) делается компилятором. Nova повторяет
-   паттерн.
+4. **Прецедент Rust:** `From`/`Into` и `TryFrom`/`TryInto` — два
+   **отдельных** trait иерархии в `std`. `From` не выводится из
+   `TryFrom`. Nova повторяет эту модель.
 
 5. **Option получается бесплатно** через `Result.ok()`. Не нужны
-   `_or_null`-suffix имена (Kotlin), `init?` (Swift), `*OrNull`
-   (Java fluent helpers). Один Result — три формы (`from`, `try_from`,
-   `try_from(...).ok()`).
+   `_or_null`-suffix имена (Kotlin), `init?` (Swift). Один
+   `try_from` — доступны `?`, `ok()`, `unwrap_or()`.
 
-6. **AI-friendly.** LLM пишет `Version.from(s)` и работает; пишет
-   `Version.try_from(s)?` для propagation через Result — тоже
-   работает. Не нужно помнить какая форма реализована — всегда обе
-   доступны.
+6. **AI-friendly.** LLM знает Rust-модель — `try_from` для
+   фаллибельного, `from` для инфаллибельного. Прямое соответствие.
 
 ### Что отвергнуто
 
-- **`u64.try_parse(s) -> Option[u64]`** — отдельный Option-вариант
-  как метод. Конфликтует с принципом «один способ» (D9): `try_parse`
-  vs `try_from(...).ok()` делают одно и то же. Result.ok() универсальнее.
-- **`u64.parse(s)`** — отдельное имя для парсинга. Парсинг — это
-  частный случай конверсии (`str → u64`), общий механизм через
-  `from`/`try_from` лучше.
-- **`OrNull`-suffix имена** (Kotlin): `toIntOrNull`. Размножение
-  имён, не масштабируется (`fromOrNull`, `intoOrNull`, `parseOrNull`).
-- **Java-style overloading throwing/non-throwing с одинаковым именем**
-  (`int.parse(s) -> int` vs `int.parse(s) -> int` через флаг).
-  Тип-ambiguity, нечитаемо.
-- **Failable initializer как в Swift** (`init?`). Специальный
-  синтаксис конструктора — лишняя категория. У Nova `from`/`try_from`
-  обычные функции.
+- **`u64.try_parse(s) -> Option[u64]`** — отдельный Option-вариант.
+  `try_from(...).ok()` универсальнее; два имени нарушают D9.
+- **`u64.parse(s)`** — отдельное имя для парсинга. Парсинг —
+  частный случай `try_from(str)`.
+- **`OrNull`-suffix** (Kotlin): `toIntOrNull`. Не масштабируется.
+- **Unified 4-way синтез** (предыдущая редакция D73/D77): `try_from`
+  → автоматический `from Fail[E]`. Отвергнуто — нарушало инвариант
+  инфаллибельности `From`. Если написан `try_from`, `from` может
+  провалиться → `From` уже не гарантирует успех.
+- **`From` с `Fail[E]`** — отвергнуто той же причиной. `From.from`
+  строго инфаллибелен.
 
 ### Цена
 
-1. **Расширение compiler-логики.** D73 уже синтезирует пару From/Into,
-   D77 удваивает: from/try_from + into/try_into = 4 формы из одной
-   написанной. Компилятор должен:
-   - Распознать одну из четырёх форм
-   - Сгенерировать остальные три
-   - Применять одни и те же правила structural-conformance.
-   Цена — реализация в type-checker'е, не run-time.
+1. **Две иерархии вместо одной.** Программист выбирает явно:
+   fallible (`TryFrom`) или infallible (`From`). Нет «умного» синтеза.
+   Это цена чёткости — зато семантика каждой иерархии однозначна.
 
-2. **Semantic equivalence требует доверия.** Компилятор гарантирует
-   что `from(v)` и `try_from(v).unwrap()` поведенчески одинаковы.
-   Если программист пишет **обе вручную** и они расходятся —
-   ответственность программиста (как в D73).
+2. **`From` для типа с `TryFrom` — явно.** Если тип хочет оба:
+   `char.from(b byte) -> Self` (infallible, `byte` всегда < 128 ASCII)
+   И `char.try_from(cp int) -> Result[Self, str]` (fallible, range-check)
+   — пишет оба явно. Нет magic.
 
-3. **Ambiguity при нескольких `try_from`.** Если у `u64` есть
-   `try_from(str)` и `try_from(f64)` (через overloading
-   [D84](10-overloading.md#d84)) — `u64.try_from(x)` резолвится по
-   типу аргумента. Стандартный overloading.
+3. **Overloading по параметру работает как обычно.** Если у `u64`
+   есть `try_from(str)` и `try_from(f64)` — резолвится по типу
+   аргумента [D84](10-overloading.md#d84).
 
-4. **`Self` в Result.** `Result[Self, E]` корректно по D66 (Self
-   валиден в method-контексте). Generic-параметр `E` свободен —
-   не привязан к Self.
+4. **`Self` в Result корректен** по D66 в method-контексте.
 
 ### Связь
 
-- [D73](#d73-from--into-protocol-пара-с-авто-выводом) — базовая
-  пара From/Into, D77 расширяет на fallible-форму.
-- [D67](04-effects.md#d67) — `?`-оператор; работает на Result
-  (`try_from(s)?`), не работает на throwing `from`.
+- [D73](#d73-from--into-protocol-пара-с-авто-выводом) — инфаллибельная
+  пара From/Into, отдельная иерархия. D77 — независимая, не расширение.
+- [D67](04-effects.md#d67) — `?`-оператор; применим к `Result`
+  (`try_from(s)?`); `From` не возвращает Result, `?` к нему не применяется.
 - [D72](02-types.md#d72) — bounds: `[U TryFrom[T, E]]` для
   generic-функций fallible-конверсии.
 - [D26](#d26-базовая-stdlib-и-prelude) — `TryFrom`, `TryInto`,
@@ -2724,12 +2598,23 @@ match u64.try_from(s).ok() {
 3. **Прецедент Rust** — `TryFrom` парный к `From` решает ту же
    задачу унифицированно.
 
-D77 формализует: **одно имя `try_from`** для Result-варианта, авто-
-синтез четырёх форм вызова из одной реализации. Option получается
-через `Result.ok()`. `try_parse` отвергается как избыточное.
+D77 формализует: **одно имя `try_from`** для Result-варианта, бланкет
+`TryFrom → TryInto` (компилятор синтезирует `try_into` из написанного
+`try_from`). Option получается через `Result.ok()`. `try_parse`
+отвергается как избыточное.
 
 Backward-compat: `try_parse` в существующих файлах (semver.nv) —
 переименовывается на `try_from`. Общая семантика не меняется.
+
+**v2 (текущая, 2026-07-01):** ревизия по Rust-модели. Упразднены:
+
+- Unified 4-way синтез (`try_from` → auto `from` + все `into`-формы) —
+  нарушал инвариант инфаллибельности `From`.
+- «Семантическое равенство `from`/`try_from`» — теперь это разные
+  иерархии. `from` ≠ `try_from.unwrap()` по семантике; это разные
+  контракты.
+- `TryFrom` теперь **самостоятельная иерархия**, не расширение D73.
+  Blanket только `TryFrom → TryInto`, без кросс-синтеза с From/Into.
 
 ---
 
