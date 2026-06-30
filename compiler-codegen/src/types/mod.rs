@@ -10133,7 +10133,19 @@ impl<'a> TypeCheckCtx<'a> {
         scope: &HashMap<String, TypeRef>,
     ) -> Option<TypeRef> {
         match &expr.kind {
-            ExprKind::Ident(name) => scope.get(name).cloned(),
+            ExprKind::Ident(name) => {
+                if let Some(tr) = scope.get(name).cloned() {
+                    return Some(tr);
+                }
+                // Ident not in scope (enum variant None/Ok/Err, module-level const, etc.) —
+                // fall back to resolved_types_buf when already annotated by the checker.
+                if expr.id.is_set() {
+                    if let Some(rt) = self.resolved_types_buf.borrow().get(&expr.id) {
+                        return Self::resolved_to_typeref(rt, expr.span);
+                    }
+                }
+                None
+            }
             ExprKind::RecordLit { type_name: Some(name), .. } => {
                 Some(TypeRef::Named {
                     path: name.clone(),
@@ -10186,6 +10198,8 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Block(b) if b.stmts.is_empty() => {
                 b.trailing.as_ref().and_then(|t| self.infer_expr_type(t, scope))
             }
+            // Block with statements and no trailing expr → unit. Trailing is inferred above.
+            ExprKind::Block(b) if b.trailing.is_none() => Some(TypeRef::Unit(expr.span)),
             // Plan 172.1 §0a: `if cond { then } else { … }` expression type = type of
             // then-branch trailing expr (branches must be type-compatible per checker).
             // Gate: else_ must exist (otherwise If = unit, no value type).
@@ -10195,6 +10209,8 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::If { then, else_: Some(_), .. } => {
                 then.trailing.as_ref().and_then(|t| self.infer_expr_type(t, scope))
             }
+            // If without else — always unit (condition may fail, no value produced).
+            ExprKind::If { else_: None, .. } => Some(TypeRef::Unit(expr.span)),
             // Plan 172.1 §0a: Unary op (-, !, ~) — result type = operand type.
             ExprKind::Unary { operand, .. } => self.infer_expr_type(operand, scope),
             // Plan 172.1 §0a: Member `obj.field` — type = field type in the record declaration.
