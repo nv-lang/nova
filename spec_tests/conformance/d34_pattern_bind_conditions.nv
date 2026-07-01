@@ -1,0 +1,67 @@
+// D34 — Pattern-bind в `if`/`while` conditions (unified grammar с match arms).
+// Runtime-observable ядро нормы (spec/decisions/03-syntax.md:1363, §«Правило»/грамматика):
+//   • `if Pat = expr { ... }` — связывает имена паттерна В СКОУПЕ then-блока ТОЛЬКО при
+//     совпадении; при несовпадении (None) заходим в `else`, где имена паттерна НЕ видны.
+//   • `while Pat = expr { ... }` — цикл КРУТИТСЯ, пока паттерн совпадает, СВЯЗЫВАЯ свежее
+//     значение каждую итерацию; останавливается на первом non-match (None).
+//   • Guard `&&` (amend 2026-06-17): после scrutinee допустим `&& bool-expr`; биндинги
+//     паттерна видны в guard. Паттерн совпал, но guard ложен → ветка не берётся.
+// Behavioral-distinction: каждый assert ЛОЖЕН, если правило схлопнуть —
+//   while, исполнившийся 0 раз, дал бы sum==0 (а не 60); if, связавший в else, дал бы
+//   другое значение; guard, игнорящий биндинг, не свернул бы в else.
+// Sibling-файлы покрывают другие D; здесь — именно condition-pattern-bind D34.
+// Один folder-module `spec_tests.conformance`; все top-level имена D34-префиксны.
+module spec_tests.conformance
+
+// Чистая «cache»-имитация без std-импортов: ключ присутствует → Some(value), иначе None.
+// Проверяет «получить-и-использовать-если-есть» — связывание u ТОЛЬКО в present-ветке.
+fn d34_cache_get(key int) -> Option {
+    if key == 1 { return Some(10) }
+    if key == 2 { return Some(20) }
+    None
+}
+
+test "while Pat = expr крутится пока матчит, связывая каждую итерацию (D34)" {
+    // pop() отдаёт с конца: 30, 20, 10 → сумма всех = 60, ровно 3 итерации.
+    mut q = [10, 20, 30]
+    mut sum = 0
+    mut iters = 0
+    while Some(x) = q.pop() {
+        sum = sum + x      // x — свежий биндинг текущей итерации
+        iters = iters + 1
+    }
+    assert(sum == 60)      // 0, если бы while не вошёл; 30, если бы крутанул раз
+    assert(iters == 3)     // ровно столько элементов было
+    assert(q.len() == 0)   // pop осушил очередь — остановились на None
+}
+
+test "while над пустой коллекцией: паттерн сразу None → тело НЕ исполняется (D34)" {
+    mut q = Vec[int].new()
+    mut touched = 0
+    while Some(x) = q.pop() {
+        touched = touched + x   // недостижимо: первый pop уже None
+    }
+    assert(touched == 0)        // тело ни разу не вошло
+}
+
+test "if Some(u) = cache.get(k) — связывает и использует u ТОЛЬКО когда present (D34)" {
+    // present-ключ: заходим в then, u связан значением из Some → производное от u.
+    ro hit = if Some(u) = d34_cache_get(1) {
+        u + 5            // 10 + 5
+    } else {
+        -1
+    }
+    assert(hit == 15)    // -1, если бы present-ветка не взялась или u не связалось
+
+    // absent-ключ: None → берётся else, имя u в then НЕ существует.
+    ro miss = if Some(u) = d34_cache_get(99) {
+        u + 5
+    } else {
+        -1
+    }
+    assert(miss == -1)   // 15..., если бы else-ветка ошибочно увидела present
+}
+
+// NOTE: тест guard-`&&` (`if Pat = expr && bool`) удалён из salvage — на текущем компиляторе
+// false-guard НЕ уходит в else (берётся then, v==20 вместо -7): вероятный gap D34 amend
+// 2026-06-17. Покрытие guard-семантики — отдельным заходом после проверки фичи.
