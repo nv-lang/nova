@@ -10125,7 +10125,19 @@ impl<'a> TypeCheckCtx<'a> {
                     span,
                 )
             }
-            R::Unit | R::Readonly(_) | R::Tuple(_)
+            // Plan 172.1 D86b: tuple Ok-payload in Result[(T1,T2),E] must survive the
+            // resolved_to_typeref round-trip so Coalesce infer_expr_type can extract
+            // generics[0] = (T1,T2) instead of the shifted Err type E.
+            R::Tuple(elems) => {
+                let converted: Vec<TypeRef> = elems.iter()
+                    .filter_map(|e| Self::resolved_to_typeref(e, span))
+                    .collect();
+                if converted.len() != elems.len() {
+                    return None;
+                }
+                TypeRef::Tuple(converted, span)
+            }
+            R::Unit | R::Readonly(_)
             | R::Any | R::Ptr | R::TypedPtr { .. } | R::Func { .. } => return None,
         })
     }
