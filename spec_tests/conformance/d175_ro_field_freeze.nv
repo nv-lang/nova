@@ -39,7 +39,7 @@ test "ro field is initialized at construction and reads back its exact value (D1
     // Freeze blocks writes, never reads: the constructed value round-trips.
     assert(acc.id == 999)
     assert(acc.label == "frozen")
-    assert(acc.label.len() == 6)
+    assert(acc.label.byte_len() == 6)
 }
 
 test "multiple ro fields of distinct types coexist and all read correctly (D175)" {

@@ -20,7 +20,7 @@
 // Spec: spec/decisions/02-types.md (named-priority; uint≠int, u8≠i8≠i16; sized width preserved).
 // Single `spec_tests.conformance` folder-module; all top-level names d405w_-prefixed to avoid
 // duplicate-top-level-name collisions with sibling files in the CU.
-module spec_tests.conformance
+module inprogress.d405_mixed_width_compare
 
 // Plain pass-throughs so each operand is a genuine sized runtime value (not const-folded to int).
 fn d405w_u8(v u8) -> u8 => v
