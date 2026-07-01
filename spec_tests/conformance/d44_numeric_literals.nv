@@ -1,0 +1,98 @@
+// D44 — числовые литералы: decimal, hex, binary, octal, float; разделитель `_`;
+// default int/f64; NO type-suffixes — тип через annotation или `as`-cast.
+// Spec: spec/decisions/03-syntax.md D44. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+test "decimal integer literals default to int (D44)" {
+    ro x = 42
+    assert(x == 42)
+    ro y = 1_000_000_000
+    assert(y == 1_000_000_000)
+    ro z = 0
+    assert(z == 0)
+}
+
+test "negative integer literals via unary minus (D44)" {
+    ro neg = -100
+    assert(neg == -100)
+    ro neg_big = -1_000_000
+    assert(neg_big == -1_000_000)
+}
+
+test "hex literals 0xFF (D44)" {
+    ro h = 0xFF
+    assert(h == 255)
+    ro h2 = 0xFF_FF
+    assert(h2 == 65535)
+    ro h3 = 0x0A
+    assert(h3 == 10)
+}
+
+test "binary literals 0b... (D44)" {
+    ro b = 0b1010
+    assert(b == 10)
+    ro b2 = 0b1111_0000
+    assert(b2 == 240)
+    ro b3 = 0b0000_0001
+    assert(b3 == 1)
+}
+
+test "octal literals 0o... (D44)" {
+    ro o = 0o12
+    assert(o == 10)
+    ro o2 = 0o755
+    assert(o2 == 493)
+    ro o3 = 0o10
+    assert(o3 == 8)
+}
+
+test "float literals default to f64 (D44)" {
+    ro pi = 3.14159
+    assert(pi > 3.14)
+    assert(pi < 3.15)
+    ro one = 1.0
+    assert(one == 1.0)
+    ro large = 1.0e10
+    assert(large > 9.9e9)
+}
+
+test "float literals with exponent (D44)" {
+    ro small = 1.5e-3
+    assert(small > 0.001)
+    assert(small < 0.002)
+    ro big = 1e6
+    assert(big == 1_000_000.0)
+}
+
+test "float with digit separator (D44)" {
+    ro f = 1_234.5
+    assert(f > 1234.0)
+    assert(f < 1235.0)
+}
+
+test "type via annotation: u8 context (D44)" {
+    ro n u8 = 200
+    assert(n == 200)
+    ro m u8 = 0xFF
+    assert(m == 255)
+}
+
+test "type via as-cast: int → u8 (D44)" {
+    ro n = 42 as u8
+    assert(n == 42)
+    ro h = 0xFF as u8
+    assert(h == 255)
+}
+
+test "type via annotation: f32 array context (D44)" {
+    ro arr []f32 = [1.0, 2.0, 3.0]
+    assert(arr.len() == 3)
+    assert(arr[0] == 1.0)
+    assert(arr[2] == 3.0)
+}
+
+test "literal used in arithmetic stays correct (D44)" {
+    assert(0xFF - 0b1111_0000 == 15)
+    assert(0o10 + 0b10 == 10)
+    assert(1_000 * 1_000 == 1_000_000)
+}
