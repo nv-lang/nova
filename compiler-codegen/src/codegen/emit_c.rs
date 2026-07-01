@@ -33248,33 +33248,80 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
             }
             Pattern::Array { elems, .. } => {
-                // Bind array pattern elements: [x, ..] binds x = arr->data[0]
-                let mut item_idx = 0usize;
+                // Items before rest: data[0..n_before].
+                // Items after rest: data[len - n_after + offset] (indexed from end).
+                let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
+                let elem_ty = if scr_ty.starts_with("Nova_Vec____") {
+                    let mangled = scr_ty.trim_end_matches('*').trim().to_string();
+                    self.generic_type_instance_info.borrow()
+                        .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                        .unwrap_or_else(|| {
+                            scr_ty.strip_prefix("Nova_Vec____").unwrap_or("nova_int")
+                                .trim_end_matches('*').trim().to_string()
+                        })
+                } else {
+                    "nova_int".to_string()
+                };
+                // Count items that appear after the rest/rest-bind element.
+                let rest_pos = elems.iter().position(|e| {
+                    matches!(e, ArrayPatternElem::Rest | ArrayPatternElem::RestBind(_))
+                });
+                let n_after = rest_pos.map(|pos| {
+                    elems[pos + 1..].iter()
+                        .filter(|e| matches!(e, ArrayPatternElem::Item(_)))
+                        .count()
+                }).unwrap_or(0);
+                let mut before_idx = 0usize;
+                let mut after_offset = 0usize;
+                let mut past_rest = false;
                 for elem in elems {
                     match elem {
                         ArrayPatternElem::Item(p) => {
-                            let field = format!("{}->data[{}]", scr, item_idx);
-                            if let Pattern::Ident { name, .. } = p {
-                                self.var_types.insert(name.clone(), "nova_int".to_string());
-                                self.line(&format!("nova_int {} = {};", name, field));
+                            let field = if past_rest {
+                                // `data[len - n_after + after_offset]`
+                                let idx = if after_offset == 0 {
+                                    format!("({}->len - {})", scr, n_after)
+                                } else {
+                                    format!("({}->len - {} + {})", scr, n_after, after_offset)
+                                };
+                                after_offset += 1;
+                                format!("{}->data[{}]", scr, idx)
                             } else {
+                                let f = format!("{}->data[{}]", scr, before_idx);
+                                before_idx += 1;
+                                f
+                            };
+                            if let Pattern::Ident { name, .. } = p {
+                                self.var_types.insert(name.clone(), elem_ty.clone());
+                                self.line(&format!("{} {} = {};", elem_ty, name, field));
+                            } else {
+                                self.var_types.insert(field.clone(), elem_ty.clone());
                                 self.pattern_bind_typed(p, &field)?;
                             }
-                            item_idx += 1;
                         }
                         ArrayPatternElem::RestBind(name) => {
-                            // Bind the rest of the array from item_idx onwards as a new sub-array
+                            // Slice from before_idx to len - n_after.
                             let rest_tmp = self.fresh_tmp();
+                            let rest_len = if n_after == 0 {
+                                format!("{}->len - {}", scr, before_idx)
+                            } else {
+                                format!("{}->len - {} - {}", scr, before_idx, n_after)
+                            };
                             self.line(&format!(
-                                "NovaArray_nova_int* {} = nova_array_new_nova_int({}->len - {});",
-                                rest_tmp, scr, item_idx));
+                                "NovaArray_{et}* {rt} = nova_array_new_{et}({rl});",
+                                et = elem_ty, rt = rest_tmp, rl = rest_len));
                             self.line(&format!(
-                                "for (int64_t _ri = {}; _ri < {}->len; _ri++) {{ nova_array_push_nova_int({}, {}->data[_ri]); }}",
-                                item_idx, scr, rest_tmp, scr));
-                            self.var_types.insert(name.clone(), "NovaArray_nova_int*".to_string());
-                            self.line(&format!("NovaArray_nova_int* {} = {};", name, rest_tmp));
+                                "for (nova_int _ri = {from}; _ri < (nova_int)({}->len{suf}); _ri++) {{ nova_array_push_{et}({rt}, {s}->data[_ri]); }}",
+                                scr, from = before_idx,
+                                suf = if n_after > 0 { format!(" - {}", n_after) } else { String::new() },
+                                et = elem_ty, rt = rest_tmp, s = scr));
+                            self.var_types.insert(name.clone(), format!("NovaArray_{}*", elem_ty));
+                            self.line(&format!("NovaArray_{et}* {n} = {rt};", et = elem_ty, n = name, rt = rest_tmp));
+                            past_rest = true;
                         }
-                        ArrayPatternElem::Rest => {}
+                        ArrayPatternElem::Rest => {
+                            past_rest = true;
+                        }
                     }
                 }
             }
