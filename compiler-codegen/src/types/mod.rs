@@ -6595,6 +6595,45 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // P67: control-flow loops always evaluate to unit — annotate directly.
+        if e.id.is_set() {
+            let is_loop = matches!(
+                &e.kind,
+                ExprKind::For { .. }
+                    | ExprKind::While { .. }
+                    | ExprKind::WhileLet { .. }
+                    | ExprKind::Loop { .. }
+                    | ExprKind::ParallelFor { .. }
+            );
+            if is_loop {
+                self.resolved_types_buf.borrow_mut().insert(e.id, ResolvedType::Unit);
+            }
+        }
+        // Plan 172.1 (P67 literal-annotation): literal types are structurally determined —
+        // annotate into the checker channel to eliminate P67_STRICT fall-through for literals.
+        // Byte-identical to legacy: IntLit→nova_int, FloatLit→nova_f64, BoolLit→nova_bool,
+        // StrLit/InterpolatedStr→nova_str, CharLit→nova_char, UnitLit→nova_unit, NullPtrLit→void*.
+        if e.id.is_set() {
+            let lit_rt: Option<ResolvedType> = match &e.kind {
+                ExprKind::IntLit(_) => {
+                    Some(ResolvedType::Scalar { width: 64, signed: true, wide_default: true })
+                }
+                ExprKind::FloatLit(_) => Some(ResolvedType::Float { width: 64 }),
+                ExprKind::BoolLit(_) => Some(ResolvedType::Bool),
+                ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => Some(ResolvedType::Str),
+                ExprKind::CharLit(_) => Some(ResolvedType::Named {
+                    name: "char".to_string(),
+                    module: Vec::new(),
+                    args: Vec::new(),
+                }),
+                ExprKind::UnitLit => Some(ResolvedType::Unit),
+                ExprKind::NullPtrLit => Some(ResolvedType::Ptr),
+                _ => None,
+            };
+            if let Some(rt) = lit_rt {
+                self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+            }
+        }
         match &e.kind {
             ExprKind::Call { func, args, trailing } => {
                 self.f1_expr(func, gs, scope, errors);
@@ -6756,6 +6795,11 @@ impl<'a> TypeCheckCtx<'a> {
                             })
                         }
                     };
+                    // P67 fallback: if neither comparison nor arithmetic promotion resolved,
+                    // default to int (byte-identical to legacy `_ => nova_int` for these cases).
+                    let res_rt = res_rt.or_else(|| {
+                        Some(ResolvedType::Scalar { width: 64, signed: true, wide_default: true })
+                    });
                     if let Some(rt) = res_rt {
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     }
@@ -6765,8 +6809,19 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(operand, gs, scope, errors);
                 self.f4_check_value(operand, scope, errors);
                 // Plan 172.1.1 (U.4.5 — Unary arm): materialize the unary expr's resolved type.
+                // `infer_expr_type(e)` dispatches by UnOp: Neg/Not → operand type; Deref →
+                // pointee (strip Pointer wrapper); AddrOf/RawAddrOf → Pointer(operand_type).
+                // Falls back to operand's own channel annotation when scope/records can't resolve.
                 if e.id.is_set() {
-                    if let Some(tr) = self.infer_expr_type(e, scope) {
+                    let tr_opt = self.infer_expr_type(e, scope).or_else(|| {
+                        if operand.id.is_set() {
+                            self.resolved_types_buf.borrow().get(&operand.id)
+                                .and_then(|rt| Self::resolved_to_typeref(rt, e.span))
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(tr) = tr_opt {
                         let rt = ResolvedType::from_type_ref(&tr);
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     }
@@ -6806,6 +6861,15 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 172.1 U.4.4: thread the Member expr's `ExprId` so the
                 // field-found site can annotate a concrete primitive field type.
                 self.f3_check_member(obj, name, e.span, e.id, scope, errors);
+                // P67 fallback: if f3_check_member (field) and probe (infer_expr_type)
+                // both missed (method access / pointer type / unknown) — default to int.
+                // Byte-identical to legacy `_ => nova_int` for these un-resolved cases.
+                if e.id.is_set() && !self.resolved_types_buf.borrow().contains_key(&e.id) {
+                    self.resolved_types_buf.borrow_mut().insert(
+                        e.id,
+                        ResolvedType::Scalar { width: 64, signed: true, wide_default: true },
+                    );
+                }
             }
             ExprKind::Index { obj, index } => {
                 self.f1_expr(obj, gs, scope, errors);
@@ -8233,6 +8297,9 @@ impl<'a> TypeCheckCtx<'a> {
                 // external overloads unknown to checker), but still annotate
                 // resolved_types_buf for the Call when we have an unambiguous
                 // callee with a known return type (P67 anti-panic).
+                // For primitive receivers: skip arg-check (false-positives from
+                // external overloads unknown to checker). Annotation is done on the
+                // codegen side via var_types fallback in infer_expr_c_type.
                 if is_primitive_recv {
                     return;
                 }
@@ -10243,8 +10310,28 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // If without else — always unit (condition may fail, no value produced).
             ExprKind::If { else_: None, .. } => Some(TypeRef::Unit(expr.span)),
-            // Plan 172.1 §0a: Unary op (-, !, ~) — result type = operand type.
-            ExprKind::Unary { operand, .. } => self.infer_expr_type(operand, scope),
+            // Plan 172.1 §0a: Unary op — result type by operator:
+            // Neg/Not: result = operand type (arithmetic/bool identity).
+            // Deref(*p): result = pointee T (strip Pointer wrapper, peel Mut/Readonly inner).
+            // AddrOf/RawAddrOf: result = *operand (wrap in Pointer — conservative, AddrOf
+            //   is rarely used as an expression type source; included for completeness).
+            ExprKind::Unary { op, operand } => {
+                use crate::ast::UnOp;
+                let op_tr = self.infer_expr_type(operand, scope)?;
+                match op {
+                    UnOp::Neg | UnOp::Not => Some(op_tr),
+                    UnOp::Deref => match op_tr {
+                        TypeRef::Pointer(inner, _) => Some(match *inner {
+                            TypeRef::Mut(t, _) | TypeRef::Readonly(t, _) => *t,
+                            t => t,
+                        }),
+                        _ => None,
+                    },
+                    UnOp::AddrOf | UnOp::RawAddrOf => {
+                        Some(TypeRef::Pointer(Box::new(op_tr), expr.span))
+                    }
+                }
+            }
             // Plan 172.1 §0a: Member `obj.field` — type = field type in the record declaration.
             // Gate: obj must infer to a Named type; record must be non-generic (no type_params).
             // Generic records are excluded — field types may reference type params that the

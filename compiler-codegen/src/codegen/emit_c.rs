@@ -36844,127 +36844,42 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// codegen to read the annotation authoritatively. In release the check compiles
     /// out → byte-identical to legacy.
     fn infer_expr_c_type(&self, expr: &Expr) -> String {
-        // Compute legacy FIRST and ALWAYS — its emission side-effects (typedef / mono
-        // registration) must run even when we return the annotation, so flipping only the
-        // RETURN value never drops a typedef (the U.4.3 "skip side-effects → missing typedef →
-        // CC-FAIL" hazard). U.4.5 will delete the legacy path once those side-effects are
-        // relocated; for this incremental flip we keep it purely for the side-effects.
-        let legacy = self.infer_expr_c_type_legacy(expr);
-        // Plan 172.1 U.4.5(a): Call-return FLIP (§0/§1). RETURN the resolved callee's return
-        // C-type from the channel AUTHORITATIVELY instead of the legacy overload re-derive —
-        // codegen consumes the callee the CHECKER chose (`resolved_callees[call.id]` → its
-        // `FnDecl.span`) and lowers that callee's own return (`fn_ret_by_span[span]`), no
-        // re-resolution. `legacy` ran above for its typedef/mono-registration side-effects
-        // (must NOT be skipped — the U.4.3 hazard); only the RETURNED string flips. Only Call
-        // exprs whose chosen callee is in the channel flip; un-resolved / builtin-static
-        // (ctor → `resolved_types` below) / 0-or-≥2 ambiguous calls have no channel entry →
-        // fall through to the legacy return below.
-        //
-        // U.4.5a-xcheck (U.1.3b Gap B): the equivalence-assert is RELAXED from a fatal
-        // `debug_assert_eq!` to a NON-FATAL, env-gated detect counter. For the U.4.3 a-d
-        // substrate stages the channel was byte-identical to legacy (2687 + 55852 + 65296
-        // assert executions, 0 divergence). Gap B now makes the channel INTENTIONALLY diverge
-        // for EXTERN methods whose primitive return legacy mis-guessed `nova_int` (e.g.
-        // `self.try_start_won() -> bool`): that divergence is the §0/§1 FIX (the channel carries
-        // the DECLARED primitive, authoritative), NOT a regression — so a fatal assert would be
-        // wrong. `NOVA_U45A_XCHECK=1` logs each divergence for blast-radius audit (the byte-
-        // identical claim for the non-Gap-B set is preserved by auditing that EVERY logged
-        // divergence is a legacy-`nova_int` → channel-primitive fix); silent without the var,
-        // zero cost in release (`#[cfg(debug_assertions)]`).
+        // Plan 172.1 §0/§1: channels FIRST, legacy LAZY (only when channel cannot cover).
+        // Side-effects (typedef/mono registration) that were previously in legacy are a §1
+        // violation — they belong in dedicated emit-passes, not in type-inference. We accept
+        // CC-FAIL when a side-effect is missing: that CC-FAIL identifies what needs a proper
+        // emit-pass. infer_expr_c_type_legacy panics unconditionally on entry — reaching it
+        // means the checker failed to annotate this expr (compiler-conventions.md §0).
+
+        // Channel 1: resolved_callees → fn_ret_by_span (Call return type from checker-chosen callee)
         if expr.id.is_set() {
             if matches!(&expr.kind, ExprKind::Call { .. }) {
                 if let Some(span) = self.resolved_callees.get(&expr.id) {
                     if let Some(ch_ret) = self.fn_ret_by_span.get(span) {
-                        #[cfg(debug_assertions)]
-                        if *ch_ret != legacy && std::env::var("NOVA_U45A_XCHECK").is_ok() {
-                            eprintln!(
-                                "[U.4.5a-xcheck] ch={} legacy={} call id={:?} span={:?}",
-                                ch_ret, legacy, expr.id, expr.span
-                            );
-                        }
                         return ch_ret.clone();
                     }
                 }
             }
         }
-        // Plan 172.1 U.4.5 (incremental flip, U.4.4b): RETURN the semantic-pass annotation
-        // AUTHORITATIVELY when present, lowered via the SINGLE `resolved_type_to_c` (§0/§1) —
-        // codegen reads the resolved type instead of re-deriving. The `number_exprs` arms
-        // (literals/bool-ops/arith/As/ctor) are byte-identical to legacy (proven U.4.1/U.4.2),
-        // so their flip is a no-op; the checker `Ident` arm (U.4.4b) is the BEHAVIOR-CHANGE that
-        // FIXES legacy `_=>nova_int` fallback bugs (e.g. a `bool` var legacy mis-typed `nova_int`).
-        // Legacy side-effects already ran above; only the returned STRING changes. Un-annotated
-        // exprs, and non-lowerable `Err` annotations (removed `usize`/`isize`/`ptr`,
-        // `Self`-without-receiver), fall back to `legacy`.
+        // Channel 2: resolved_types → resolved_type_to_c (checker-annotated type for any expr)
         if expr.id.is_set() {
             if let Some(rt) = self.resolved_types.get(&expr.id) {
-                // Plan 172.1 U.4.3 (genchk AUDIT — instrument-only, ZERO behavior change):
-                // snapshot the mono registries AFTER `legacy` ran (~:36348, for its side-effects)
-                // and BEFORE lowering the channel annotation, so the audit can report whether
-                // lowering registered a FRESH mono legacy did not (`freshmono`) — the plan154
-                // layout-sensitivity discriminator. Release: compiled out (`NOVA_U43_GENCHK`-gated).
-                #[cfg(debug_assertions)]
-                let u43_wl_before = self.generic_type_worklist.borrow().len();
-                #[cfg(debug_assertions)]
-                let u43_tup_before = self.mono_tuple_instances.borrow().len();
                 if let Ok(ir_c) = self.resolved_type_to_c(rt) {
-                    // Plan 172.1 U.4.5 (RecordLit slice xcheck): env-gated, debug-only divergence
-                    // log for the NON-generic RecordLit annotation (checker types/mod.rs U.4.5
-                    // slice). The gated set MUST be byte-identical to the legacy RecordLit re-derive
-                    // (:36426) — `NOVA_U45_RLCHECK=1` logs any divergence for the §7 equivalence
-                    // audit. Zero cost in release (`#[cfg(debug_assertions)]`).
-                    #[cfg(debug_assertions)]
-                    if ir_c != legacy
-                        && matches!(
-                            &expr.kind,
-                            ExprKind::RecordLit { .. }
-                                | ExprKind::TupleLit(_)
-                                | ExprKind::SelfAccess
-                                | ExprKind::Path(_)
-                        )
-                        && std::env::var("NOVA_U45_RLCHECK").is_ok()
+                    // SelfAccess: prefer var_types["nova_self"] when available (reliable per-scope
+                    // codegen state; channel depends on current_type_subst timing — gap #2).
+                    if matches!(&expr.kind, ExprKind::SelfAccess)
+                        && self.var_types.contains_key("nova_self")
                     {
-                        let k = match &expr.kind {
-                            ExprKind::TupleLit(_) => "tuple",
-                            ExprKind::SelfAccess => "self",
-                            ExprKind::Path(_) => "path",
-                            _ => "record",
+                        let raw = self.var_types.get("nova_self").cloned().unwrap();
+                        return if raw.starts_with("NovaValue_") && raw.ends_with('*') {
+                            raw.trim_end_matches('*').trim().to_string()
+                        } else {
+                            raw
                         };
-                        eprintln!(
-                            "[U.4.5-rlcheck] ir={} legacy={} kind={} id={:?} span={:?}",
-                            ir_c, legacy, k, expr.id, expr.span
-                        );
                     }
-                    // Plan 172.1.1 (U.4.5 substrate): SelfAccess берётся из НАДЁЖНОГО codegen-state
-                    // `var_types["nova_self"]` (выставлен на receiver-параметре при эмиссии сигнатуры) —
-                    // это НЕ re-derive под-выражения, и КОРРЕКТНО в т.ч. в mono-теле, где channel
-                    // `resolved_type_to_c(scope["@"])` зависит от `current_type_subst`, ненадёжного при
-                    // subst-timing (gap #2: bare Nova_Lru → @field через erased-схему → element nova_int
-                    // → CC-FAIL). Channel для SelfAccess используется ТОЛЬКО когда `var_types["nova_self"]`
-                    // ОТСУТСТВУЕТ (Cat-B13: closures/generic-fn-bodies без receiver-регистрации, где legacy
-                    // ложно даёт nova_int) — там channel корректнее (§1-fix). Иначе — legacy var_types.
-                    match &expr.kind {
-                        ExprKind::SelfAccess if self.var_types.contains_key("nova_self") => {
-                            // P67 ФАЗА 4B: inline var_types["nova_self"] (byte-identical к legacy
-                            // SelfAccess-arm :36986-37023 для gated-случая — var_types present, поэтому
-                            // .unwrap_or_else current_receiver/nova_int fallback недостижим). Снимает
-                            // зависимость SelfAccess type-source от legacy re-derive (§0 — к удалению legacy).
-                            let raw = self.var_types.get("nova_self").cloned().unwrap();
-                            return if raw.starts_with("NovaValue_") && raw.ends_with('*') {
-                                raw.trim_end_matches('*').trim().to_string()
-                            } else {
-                                raw
-                            };
-                        }
-                        // Plan 172.1.1: Ident whose name is a tracked local (var_types) → legacy
-                        // (reliable per-local C-type, correct incl. mono generic-containers, not a
-                        // re-derive). Ident ABSENT from var_types (Cat-B13) → channel (§1-fix).
-                        ExprKind::Ident(n) if self.var_types.contains_key(n) => {
-                            // P67 ФАЗА 4C: inline 3-уровневый local source (byte-identical к legacy
-                            // Ident-arm :36827-36844 для gated-случая — closure_param → pattern_binding →
-                            // var_types; var_types present, поэтому уровни 4-5 sum_registry/nova_int
-                            // недостижимы). ⚠️ НЕЛЬЗЯ упростить до var_types.get(n) — SEGV (stale leaked
-                            // var_types не-per-fn-scoped, :36728-36730). §0 — к удалению legacy.
+                    // Ident in var_types: prefer reliable per-local codegen state over channel.
+                    if let ExprKind::Ident(n) = &expr.kind {
+                        if self.var_types.contains_key(n) {
                             if let Some(ty) = self.closure_param_type_overrides.borrow().get(n) {
                                 return ty.clone();
                             }
@@ -36973,155 +36888,92 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                             return self.var_types.get(n).cloned().unwrap();
                         }
-                        _ => {}
-                    }
-                    // Plan 172.1 U.4.3 genchk AUDIT (instrument-only): characterize the existing
-                    // generic-instance return channeling. For a Call whose channel annotation differs
-                    // from `legacy`, log ch/legacy + whether lowering registered a FRESH mono
-                    // (`freshmono` — the plan154 layout discriminator). NO behavior change — `ir_c` is
-                    // still returned authoritatively. `NOVA_U43_GENCHK=1`; release: compiled out.
-                    #[cfg(debug_assertions)]
-                    if matches!(&expr.kind, ExprKind::Call { .. })
-                        && ir_c != legacy
-                        && std::env::var("NOVA_U43_GENCHK").is_ok()
-                    {
-                        let fresh = self.generic_type_worklist.borrow().len() > u43_wl_before
-                            || self.mono_tuple_instances.borrow().len() > u43_tup_before;
-                        eprintln!(
-                            "[U43-genchk] ch={} legacy={} freshmono={} id={:?}",
-                            ir_c, legacy, fresh, expr.id
-                        );
                     }
                     return ir_c;
                 }
             }
         }
-        // Plan 172.1 P67 ФАЗА 2 — Ident/SelfAccess consumer-side relocation (gap-measure driver #1:
-        // Ident = 43% of legacy fall-through). For an UN-ANNOTATED Ident/SelfAccess whose name is a
-        // tracked local (`var_types`), RETURN the reliable per-local C-type DIRECTLY — the SAME 3-level
-        // source the legacy Ident/SelfAccess arm uses for the var_types-present case (BYTE-IDENTICAL;
-        // legacy levels 4-5 sum_registry/nova_int are unreachable when var_types present), NOT a
-        // re-derive. This removes the legacy-RETURN dependency for the dominant local-Ident surface
-        // WITHOUT changing any type: no producer annotation → no mono/GC-layout perturbation (the
-        // 172.1.2 hazard was producer-side type CHANGE; this is consumer-side SAME-VALUE relocation,
-        // §0 «материализуй резолв» on the consumer side). Idents ABSENT from var_types (globals/consts
-        // → legacy levels 4-5) still fall through. `legacy` already ran above (its typedef/mono
-        // side-effects are preserved); only the RETURNED string moves off legacy. NOVA_U45_IDENTCHK
-        // audits byte-identity (expect 0 divergence).
+        // Channel 3: var_types for Ident/SelfAccess (reliable per-local codegen state).
         if expr.id.is_set() {
             match &expr.kind {
                 ExprKind::SelfAccess if self.var_types.contains_key("nova_self") => {
                     let raw = self.var_types.get("nova_self").cloned().unwrap();
-                    let v = if raw.starts_with("NovaValue_") && raw.ends_with('*') {
+                    return if raw.starts_with("NovaValue_") && raw.ends_with('*') {
                         raw.trim_end_matches('*').trim().to_string()
                     } else {
                         raw
                     };
-                    #[cfg(debug_assertions)]
-                    if v != legacy && std::env::var("NOVA_U45_IDENTCHK").is_ok() {
-                        eprintln!("[U45-identchk] v={} legacy={} kind=self id={:?}", v, legacy, expr.id);
-                    }
-                    return v;
                 }
                 ExprKind::Ident(n) if self.var_types.contains_key(n) => {
-                    let v = if let Some(ty) = self.closure_param_type_overrides.borrow().get(n) {
-                        ty.clone()
-                    } else if let Some(ty) = self.pattern_binding_overrides.borrow().get(n) {
-                        ty.clone()
-                    } else {
-                        self.var_types.get(n).cloned().unwrap()
-                    };
-                    #[cfg(debug_assertions)]
-                    if v != legacy && std::env::var("NOVA_U45_IDENTCHK").is_ok() {
-                        eprintln!("[U45-identchk] v={} legacy={} name={} id={:?}", v, legacy, n, expr.id);
+                    if let Some(ty) = self.closure_param_type_overrides.borrow().get(n) {
+                        return ty.clone();
                     }
-                    return v;
+                    if let Some(ty) = self.pattern_binding_overrides.borrow().get(n) {
+                        return ty.clone();
+                    }
+                    return self.var_types.get(n).cloned().unwrap();
                 }
                 _ => {}
             }
         }
-        // Plan 172.1 U.4.5 (gap-measure): env-gated debug tally of exprs that FALL BACK to the
-        // legacy re-derive (= un-annotated surface = the blockers for deleting `infer_expr_c_type_legacy`).
-        // Logs the expr KIND + whether it had an annotation (resolved_type_to_c returned Err) vs none.
-        // `NOVA_U45_GAP=1`; zero cost in release.
-        #[cfg(debug_assertions)]
-        if expr.id.is_set() && std::env::var("NOVA_U45_GAP").is_ok() {
-            let kind = match &expr.kind {
+        // Channel 4: var_types for Path call T.method(args) — primitive-receiver static methods
+        // (char.try_from, str.from, f32.from_bits …) are in method_table with C-types, not in
+        // fn_decls, so the checker cannot channel them via resolved_callees. var_types holds the
+        // correct C return type from forward-decl registration (fn_ret_{recv}_{name}).
+        if expr.id.is_set() {
+            if let ExprKind::Call { func, .. } = &expr.kind {
+                if let ExprKind::Path(parts) = &func.kind {
+                    if parts.len() == 2 {
+                        let tq = format!("fn_ret_{}_{}", parts[0], parts[1]);
+                        if let Some(ret) = self.var_types.get(&tq) {
+                            return ret.clone();
+                        }
+                        let nq = format!("fn_ret_{}", parts[1]);
+                        if let Some(ret) = self.var_types.get(&nq) {
+                            return ret.clone();
+                        }
+                    }
+                }
+            }
+        }
+        // TurboFish: type args don't change the base C-type; delegate to base expr channels.
+        if let ExprKind::TurboFish { base, .. } = &expr.kind {
+            return self.infer_expr_c_type(base);
+        }
+        // All channels failed → legacy (panics on entry — checker gap, see compiler-conventions.md §0).
+        self.infer_expr_c_type_legacy(expr)
+    }
+
+    fn infer_expr_c_type_legacy(&self, expr: &Expr) -> String {
+        // [P67-LEGACY] Этот путь должен быть удалён. Достижение = checker не аннотировал expr.
+        // Нарушение docs/compiler-conventions.md §0. Паника идентифицирует пробел в checker'е.
+        panic!("[P67-LEGACY] infer_expr_c_type_legacy called — checker must annotate this expr \
+            (compiler-conventions.md §0); kind={} span={:?}",
+            match &expr.kind {
                 ExprKind::Call { .. } => "Call",
                 ExprKind::Member { .. } => "Member",
                 ExprKind::Ident(_) => "Ident",
                 ExprKind::Path(_) => "Path",
                 ExprKind::Index { .. } => "Index",
-                ExprKind::Block(_) => "Block",
-                ExprKind::If { .. } => "If",
-                ExprKind::IfLet { .. } => "IfLet",
-                ExprKind::Match { .. } => "Match",
                 ExprKind::Binary { .. } => "Binary",
                 ExprKind::Unary { .. } => "Unary",
+                ExprKind::If { .. } => "If",
+                ExprKind::Match { .. } => "Match",
+                ExprKind::Block(_) => "Block",
+                ExprKind::SelfAccess => "SelfAccess",
+                ExprKind::TurboFish { .. } => "TurboFish",
                 ExprKind::RecordLit { .. } => "RecordLit",
                 ExprKind::TupleLit(_) => "TupleLit",
                 ExprKind::ArrayLit(_) => "ArrayLit",
-                ExprKind::MapLit { .. } => "MapLit",
-                ExprKind::SelfAccess => "SelfAccess",
-                ExprKind::TurboFish { .. } => "TurboFish",
-                ExprKind::As(..) => "As",
-                ExprKind::Try(_) => "Try",
-                ExprKind::Bang(_) => "Bang",
-                ExprKind::Coalesce(..) => "Coalesce",
-                ExprKind::Range { .. } => "Range",
-                ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => "Closure",
-                ExprKind::InterpolatedStr { .. } => "InterpStr",
+                ExprKind::IntLit(_) => "IntLit",
+                ExprKind::BoolLit(_) => "BoolLit",
+                ExprKind::StrLit(_) => "StrLit",
+                ExprKind::CharLit(_) => "CharLit",
+                ExprKind::FloatLit(_) => "FloatLit",
                 _ => "Other",
-            };
-            let annotated = self.resolved_types.contains_key(&expr.id);
-            // Plan 172.1.1 (U.1 DETECT): for un-channeled Call, the `rc=` flag = whether the checker
-            // recorded a callee (resolved_callees) — CHECKER gap (rc=false) vs CODEGEN gap (rc=true,
-            // no fn_ret_by_span). NON-invasive only (no recursive infer — that inflated counts via
-            // chains, §0.11). `NOVA_U45_GAP=1`.
-            let rc = if matches!(&expr.kind, ExprKind::Call { .. }) {
-                if self.resolved_callees.contains_key(&expr.id) { " rc=true" } else { " rc=false" }
-            } else {
-                ""
-            };
-            // P0 (172.1 U.4.5 keystone review): NON-invasive syntactic receiver-shape tag for Call —
-            // the go/no-go discriminator. method-on-chain/field/selffield = §0.9 deep receiver-inference
-            // class (hard, candidate precondition); free/path = bounded (checker records callee cheaply).
-            // Pure AST match, NO type inference (the §0.11 lesson — recursive infer inflated counts).
-            let recv = if let ExprKind::Call { func, .. } = &expr.kind {
-                match &func.kind {
-                    ExprKind::Ident(_) => " recv=free",
-                    ExprKind::Path(_) => " recv=path",
-                    ExprKind::TurboFish { .. } => " recv=turbofish",
-                    ExprKind::Member { obj, .. } => match &obj.kind {
-                        ExprKind::Call { .. } => " recv=method.chain",
-                        ExprKind::Member { .. } => " recv=method.field",
-                        ExprKind::SelfAccess => " recv=method.selffield",
-                        ExprKind::Ident(_) => " recv=method.var",
-                        ExprKind::Index { .. } => " recv=method.index",
-                        _ => " recv=method.other",
-                    },
-                    _ => " recv=other",
-                }
-            } else {
-                ""
-            };
-            eprintln!("[U45GAP] kind={} annotated={} legacy={}{}{}", kind, annotated, legacy, rc, recv);
-        }
-        legacy
-    }
-
-    fn infer_expr_c_type_legacy(&self, expr: &Expr) -> String {
-        // [P67-LEGACY] Этот путь должен быть удалён (ФАЗА 6). Вызов = checker не аннотировал
-        // выражение → нарушение docs/compiler-conventions.md §0. Паника сигналит о пробеле.
-        #[cfg(debug_assertions)]
-        if expr.id.is_set() && std::env::var("NOVA_P67_STRICT").is_ok() {
-            panic!("[P67-LEGACY] infer_expr_c_type_legacy reached for kind={:?} id={:?} — checker must annotate this expr (compiler-conventions.md §0)",
-                std::mem::discriminant(&expr.kind), expr.id);
-        }
-        // D38 turbofish: type_args не меняют c-тип; делегируем в base.
-        if let ExprKind::TurboFish { base, .. } = &expr.kind {
-            return self.infer_expr_c_type(base);
-        }
+            },
+            expr.span
+        );
         // Plan 38: numeric type constants — `int.MAX` etc.
         if let ExprKind::Path(parts) = &expr.kind {
             if let Some((_, c_ty)) = Self::numeric_type_constant_mapping(parts) {
@@ -39697,7 +39549,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                         }
                     }
-                    panic!("[P67-LEGACY] method call `.{}` return type unknown — checker must annotate (compiler-conventions.md §0)", method)
+                    panic!("[P67-LEGACY] method call `.{}` return type unknown — checker must annotate (compiler-conventions.md §0); expr span={:?}", method, expr.span)
                 } else if let ExprKind::Path(parts) = &func.kind {
                     // Plan 11 Ф.4.5: Self.method(...) → <current>.method(...).
                     let parts_resolved: Vec<String>;
