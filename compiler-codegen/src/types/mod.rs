@@ -10504,6 +10504,40 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 None
             }
+            // D238: `obj[i]` on user type with `@index` method → return type of @index.
+            // Also handles Array/FixedArray element type for the infer_expr_type path
+            // (f1_expr handles primitives via resolved_types_buf; this covers non-primitive
+            // and user-defined @index which f1_expr does not annotate).
+            ExprKind::Index { obj, index } => {
+                let obj_tr = self.infer_expr_type(obj, scope)?;
+                // Range index: slice result = same type as obj.
+                if matches!(index.kind, ExprKind::Range { .. }) {
+                    return Some(obj_tr);
+                }
+                match &obj_tr {
+                    TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                        return Some(inner.as_ref().clone());
+                    }
+                    TypeRef::Readonly(inner, _) => match inner.as_ref() {
+                        TypeRef::Array(e2, _) | TypeRef::FixedArray(_, e2, _) => {
+                            return Some(e2.as_ref().clone());
+                        }
+                        _ => {}
+                    },
+                    TypeRef::Named { path, .. } => {
+                        // User-defined @index(key K) -> V: look up @index method on type.
+                        if let Some(type_name) = path.last() {
+                            if let Some(fd) = self.find_method_decl(type_name, "index") {
+                                if let Some(ret) = &fd.return_type {
+                                    return Some(ret.clone());
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                None
+            }
             _ => None,
         }
     }

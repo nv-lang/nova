@@ -1,0 +1,19 @@
+// D239 nested — `[][]T` ≡ `Vec[Vec[T]]`: double-index on Vec-of-Vec.
+// `v[i][j]` on `[][]int` should generate `nova_idx_chk(nova_idx_chk(v, i), j)` → int.
+// Currently broken: inner nova_idx_chk returns struct value, outer casts (void*)(struct) → CC-FAIL.
+//
+// Spec: spec/decisions/03-syntax.md D239. Sing-file module (inprogress).
+module inprogress.d239_nested_vec_index
+
+fn d239_inner0_slice(xss [][]int) -> int => xss[0][0]
+fn d239_inner0_vec(xss Vec[Vec[int]]) -> int => xss[0][0]
+
+test "nested [][]T ≡ Vec[Vec[T]] — recursive alias interchangeable (D239, Plan 172.1)" {
+    mut grid [][]int = [[1, 2], [3, 4]]
+    assert(grid.len() == 2)
+    assert(grid[0].len() == 2)
+    assert(grid[1][0] == 3)
+    assert(grid[1][1] == 4)
+    assert(d239_inner0_slice(grid) == 1)
+    assert(d239_inner0_vec(grid) == 1)
+}

@@ -22668,6 +22668,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // Fallback `(o)[i]` — не NovaArray, нет ->len поля; bounds-check
                     // невозможен generically. Оставлен un-checked (исторический путь).
                     Ok(format!("({})[{}]", o, i))
+                } else if obj_ty.starts_with("Nova_") && obj_ty.ends_with('*') && !obj_ty.ends_with("**") {
+                    // D238: user-defined @index protocol — dispatch to @index method if registered.
+                    let tname = obj_ty.trim_start_matches("Nova_").trim_end_matches('*').trim().to_string();
+                    let key = (tname, "index".to_string());
+                    // Clone c_name before any mutable borrow (emit_expr needs &mut self).
+                    let index_c_name = self.method_overloads.get(&key)
+                        .and_then(|sigs| sigs.iter().find(|s| s.is_instance && s.param_c_types.len() == 1))
+                        .map(|sig| sig.c_name.clone());
+                    if let Some(c_name) = index_c_name {
+                        let o = self.emit_expr(obj)?;
+                        return Ok(format!("{}({}, {})", c_name, o, i));
+                    }
+                    let o = self.emit_expr(obj)?;
+                    // Nova_ pointer without @index: raw C pointer index (e.g. typed raw pointer).
+                    Ok(format!("({})[{}]", o, i))
                 } else {
                     let o = self.emit_expr(obj)?;
                     // Fallback `(o)[i]` — см. выше.
