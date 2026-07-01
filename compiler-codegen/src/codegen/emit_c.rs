@@ -2975,11 +2975,16 @@ impl CEmitter {
                         }
                     }
                     TypeDeclKind::Sum(variants) => {
-                        // Plan 72 P1-B: an empty sum (0 variants) is emitted by
-                        // `emit_sum_type` as `typedef int64_t Nova_X`, not a
-                        // struct — a `typedef struct` forward decl would clash
-                        // (typedef redefinition with different types).
-                        if !variants.is_empty() {
+                        if variants.is_empty() {
+                            // Plan 72 P1-B: empty sum → `typedef int64_t Nova_X` (no struct).
+                            // Emit the typedef here (into user_type_fwd_decls, which precedes
+                            // /*__NOVAOPT_TYPEDEFS__*/) so that NovaOpt_Nova_X_p references to
+                            // `Nova_X*` compile without "unknown type name Nova_X".
+                            if !RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
+                                self.user_type_fwd_decls.push_str(&format!(
+                                    "typedef int64_t Nova_{};\n", t.name));
+                            }
+                        } else {
                             self.user_type_fwd_decls.push_str(&format!(
                                 "typedef struct Nova_{0} Nova_{0};\n", t.name));
                         }
@@ -13196,6 +13201,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 return format!("(({}) == ({}))", l, r);
             }
             if let Some(variants) = self.sum_schemas.get(&type_name).cloned() {
+                // Empty-sum (0 variants, unit-type like CharTryFromError): emitted as
+                // `typedef int64_t Nova_X` — no struct tag/payload. All instances are
+                // vacuously equal (uninhabited / single-value unit); dereference as scalar.
+                if variants.is_empty() {
+                    return format!("((void)({}), (void)({}), 1)", l, r);
+                }
                 let mut field_conds: Vec<String> = Vec::new();
                 for (var_name, field_types) in &variants {
                     if field_types.is_empty() {
@@ -20218,6 +20229,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         return Ok(format!("nova_make_{}_{}()", type_name, name));
                     }
                 }
+                // Empty-sum (0 variants, unit-type like CharTryFromError): the type itself
+                // is used as a value expression (e.g. `Err(CharTryFromError)`). Emitted as
+                // `typedef int64_t Nova_X`, so the single possible value is 0 (int64_t zero).
+                if self.sum_schemas.get(name.as_str()).map_or(false, |m| m.is_empty()) {
+                    return Ok(format!("((Nova_{})0)", name));
+                }
                 // Heap-promoted mut-capture: dereference the box pointer.
                 // Avoids #define which corrupts struct field access (foo->name).
                 if let Some(box_var) = self.var_boxed.get(name) {
@@ -21219,6 +21236,31 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                          (Plan 60 / D117); {}",
                         name, hint_form
                     ));
+                }
+                // D406 qualified sum-variant access: `TypeName.Variant` and
+                // `TypeName.Variant { fields }` — obj is the sum-type name (an Ident),
+                // name is the variant. Intercept before emit_expr(obj) which would
+                // otherwise lower the type-name as a value → wrong C type (nova_int/void*).
+                if let ExprKind::Ident(type_name) = &obj.kind {
+                    let have_schema = self.sum_schemas.contains_key(type_name.as_str())
+                        || self.sum_schema_registry.lookup_sum_schema(type_name).is_some();
+                    if have_schema {
+                        // Unit variant: `TypeName.Variant` → `nova_make_TypeName_Variant()`
+                        let schema = self.sum_schemas.get(type_name.as_str()).cloned();
+                        if let Some(fields) = schema.as_ref().and_then(|s| s.get(name.as_str())) {
+                            if fields.is_empty() {
+                                return Ok(format!("nova_make_{}_{}()", type_name, name));
+                            }
+                            // Non-unit variant with no inline args (e.g. TypeName.Variant used
+                            // as a constructor fn-value) — fall through to method-call path below.
+                        } else if let Some(entry) = self.sum_schema_registry.lookup_sum_schema(type_name) {
+                            if let Some(v) = entry.variants.iter().find(|v| v.variant_name == *name) {
+                                if v.field_c_types.is_empty() {
+                                    return Ok(format!("nova_make_{}_{}()", type_name, name));
+                                }
+                            }
+                        }
+                    }
                 }
                 let o = self.emit_expr(obj)?;
                 // Tuple field access: t.0 → t.f0, t.1 → t.f1, etc.
@@ -31276,7 +31318,23 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // Plan 72 P3-A: if struct_name is already in record_schemas (plain record), skip the
             // sum_schema_registry lookup — prevents prelude-shadow collision (e.g. `Range { start: 0 }`
             // where "Range" is both a known record and potentially matches a sum-variant name).
-            let variant_lookup = if self.record_schemas.contains_key(&struct_name) {
+            //
+            // D406: qualified `TypeName.Variant { fields }` — path has 2 parts ["TypeName", "Variant"].
+            // join("_") yields "TypeName_Variant" which is not registered; split and look up directly.
+            let variant_lookup = if name.len() == 2 && !self.record_schemas.contains_key(&struct_name) {
+                let (sum_part, var_part) = (&name[0], &name[1]);
+                if self.sum_schemas.contains_key(sum_part.as_str())
+                    || self.sum_schema_registry.lookup_sum_schema(sum_part).is_some()
+                {
+                    let fields_c = self.sum_schema_registry.lookup_sum_schema(sum_part)
+                        .and_then(|e| e.variants.iter().find(|v| v.variant_name == *var_part))
+                        .map(|v| v.field_c_types.clone())
+                        .unwrap_or_default();
+                    Some((sum_part.clone(), fields_c))
+                } else {
+                    None
+                }
+            } else if self.record_schemas.contains_key(&struct_name) {
                 None
             } else {
                 // Context-first disambiguation: if the current function's return type
@@ -31290,6 +31348,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     Some((base.to_string(), v.field_c_types.clone()))
                 });
                 ctx_lookup.or_else(|| self.sum_schema_registry.find_variant_compat(&struct_name))
+            };
+            // D406: for qualified path ["TypeName", "Variant"], use short variant name in constructor.
+            let struct_name = if name.len() == 2 && variant_lookup.is_some() {
+                name[1].clone()
+            } else {
+                struct_name
             };
             if let Some((sum_type_name, _)) = variant_lookup {
                 // Emit as sum-type record variant constructor: nova_make_T_Variant(field_vals...)
@@ -36806,6 +36870,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             if let Some((_, c_ty)) = Self::numeric_type_constant_mapping(parts) {
                 return c_ty.to_string();
             }
+            // D406: qualified sum-variant access `TypeName.Variant` parsed by the
+            // parser as `Path(["TypeName", "Variant"])` when the sum-type name is
+            // not a local variable. The whole expression has type `Nova_TypeName*`
+            // (a heap-allocated sum-type pointer). Without this the Path falls to
+            // `_ => "nova_int"` in the main match, making `ro v = TypeName.Variant`
+            // declare `v` as `nova_int`, which then breaks `v->tag` in match arms.
+            if parts.len() == 2 {
+                let (type_part, _variant_part) = (&parts[0], &parts[1]);
+                if self.sum_schemas.contains_key(type_part.as_str())
+                    || self.sum_schema_registry.lookup_sum_schema(type_part).is_some()
+                {
+                    return format!("Nova_{}*", type_part);
+                }
+            }
             // Plan 127.1 Ф.1: mirror emit_expr Path branch — when parser
             // greedily consumed a `<local>.field` chain into Path because
             // `<local>` shadows a primitive-type token (`ptr`, `int`, …),
@@ -37055,6 +37133,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let struct_name = if raw_name == "Self" {
                     self.current_receiver_type.clone().unwrap_or(raw_name)
                 } else { raw_name };
+                // D406: qualified `TypeName.Variant { fields }` — path ["TypeName", "Variant"].
+                // join("_") gives "TypeName_Variant" which find_variant_compat won't find.
+                // Detect and look up the sum type directly.
+                if name.len() == 2 {
+                    let (sum_part, _var_part) = (&name[0], &name[1]);
+                    if self.sum_schemas.contains_key(sum_part.as_str())
+                        || self.sum_schema_registry.lookup_sum_schema(sum_part).is_some()
+                    {
+                        return format!("Nova_{}*", sum_part);
+                    }
+                }
                 // Check if this is a sum-type record variant.
                 // Plan 62.A.bis Ф.2.2: registry-driven sum variant lookup.
                 if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
@@ -38665,6 +38754,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         if n == "CancelToken" && method == "new" {
                             return "NovaCancelToken*".into();
                         }
+                        // D406: qualified sum-variant access `TypeName.Variant` —
+                        // `n` is the sum-type name, `method` is the variant name.
+                        // Returns `Nova_TypeName*` (same ABI as any heap sum-type pointer).
+                        if self.sum_schemas.contains_key(n.as_str())
+                            || self.sum_schema_registry.lookup_sum_schema(n).is_some()
+                        {
+                            return format!("Nova_{}*", n);
+                        }
                     }
                     // D75: instance methods on NovaCancelToken*.
                     // Plan 49 Ф.1 + Ф.6 P0 fix: reason() возвращает Option[T]
@@ -39610,6 +39707,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // Plan 11 Ф.4: method value `@`-prefix → closure (void*).
                 if name.starts_with('@') {
                     return "void*".into();
+                }
+                // D406: qualified sum-variant access `TypeName.Variant` used as a
+                // *value* expression (not a call). obj = Ident("TypeName"), name =
+                // "VariantName". The whole expression has type `Nova_TypeName*` (a
+                // heap-allocated sum-type pointer), exactly as a regular variant
+                // constructor call does. Without this check obj_ty falls to "nova_int"
+                // (Ident lookup finds no local variable named "TypeName") and the
+                // binding `ro v = TypeName.Variant` gets declared as `nova_int v`,
+                // which then breaks `v->tag` dereference in the match arm.
+                if let ExprKind::Ident(n) = &obj.kind {
+                    if self.sum_schemas.contains_key(n.as_str())
+                        || self.sum_schema_registry.lookup_sum_schema(n).is_some()
+                    {
+                        return format!("Nova_{}*", n);
+                    }
                 }
                 let obj_ty = self.infer_expr_c_type(obj);
                 // Plan 60 / D117: size-accessor field-style — больше не
