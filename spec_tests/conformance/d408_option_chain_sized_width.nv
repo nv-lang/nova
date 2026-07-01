@@ -8,18 +8,12 @@
 // from the LEGACY degraded path `infer_method_level_return_for_sum` (emit_c.rs:34917-34942), which
 // re-infers the closure body `|x| x` WITHOUT binding `x` in var_types → unbound Ident `x` falls to
 // `nova_int` (emit_c.rs:37082) → method-level `U` binds `nova_int` → `.map` infers `NovaOpt_nova_int`.
-// The inner `.map` is EMITTED correctly as `Nova_Option_method_map_nova_uint(..)` (the &mut
-// `resolve_method_level_subst` DOES bind var_types, emit_c.rs:14628-14649), so the value carries the
-// real `NovaOpt_nova_uint`; but the OUTER `.unwrap_or` is emitted against the collapsed `elem_ty =
-// nova_int` → trampoline `Nova_Option_method_unwrap_or_nova_int` expects a `NovaOpt_nova_int`
-// struct yet is handed a `NovaOpt_nova_uint` (distinct C struct) → C-incompatible-type (CC-FAIL);
-// were the structs layout-pun-compatible the signed `-> nova_int` return reads the 2^63 high-bit
-// NEGATIVE → `got > 100` false (RUN-FAIL). Either way the chain DIVERGES from the no-adapter control.
-// DISCRIMINATING: result bindings are UNANNOTATED (`ro got = <chain>`) so they inherit the call's
-// inferred (possibly collapsed) type; each assert separates collapse from correctness.
+// Fix (Plan 172.1 D408): bind closure param names from `receiver_subst`-resolved types BEFORE
+// body inference in `infer_method_level_return_for_sum`. This makes `|x| x` with T=nova_uint
+// correctly derive U=nova_uint and propagate `NovaOpt_nova_uint` through the chain.
 // Spec: spec/decisions/02-types.md (D126 named-priority: uint≠int, u8≠i8≠int). Single
 // `spec_tests.conformance` folder-module; all top-level names D408w-prefixed to avoid CU clashes.
-module inprogress.d408_option_chain_sized_width
+module spec_tests.conformance
 
 // CONTROL — no adapter: `Some(uint).unwrap_or(_)`. The receiver is the literal `Some(..)` call,
 // whose `obj_ty` infers `NovaOpt_nova_uint` directly (emit_c.rs:38178-38183), so `.unwrap_or`
@@ -44,9 +38,12 @@ test "map(|x| x) identity adapter must preserve uint width before unwrap_or (D40
 // `.or(Some(_))` fallback adapter then `.unwrap_or`. `.or` returns `Option[T]`; its MethodCall
 // receiver of the final `.unwrap_or` again misses the annotation channel → same collapse surface,
 // independent of a closure (isolates the MethodCall-receiver inference gap from closure inference).
+// NOTE: the `or` fallback arg must be `Some(uint)` (not `Some(1)` which infers `NovaOpt_nova_int`)
+// because Nova Option structs are distinct C structs per element type.
 test "or(Some(_)) fallback adapter must preserve uint width before unwrap_or (D408)" {
     ro big uint = 0x8000000000000000
-    ro got = Some(big).or(Some(1)).unwrap_or(0)  // Some wins; value must stay unsigned 2^63
+    ro one uint = 1                              // explicitly typed uint so Some(one) → NovaOpt_nova_uint
+    ro got = Some(big).or(Some(one)).unwrap_or(0)  // Some wins; value must stay unsigned 2^63
     assert(got > 100)                            // collapse → signed negative / mismatch → FAIL
 }
 
@@ -60,4 +57,3 @@ test "map(|x| x) preserves u8 identity through the adapter, not collapsed (D408)
     assert(got == 200)
     assert(got > 100)
 }
-

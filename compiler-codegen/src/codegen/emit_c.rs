@@ -35094,27 +35094,43 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_slots);
             }
         }
-        // Step 2: closure args — degraded inference (без var_types binding).
-        // Body inferится с пустым context'ом; для common-case (`|x|
-        // str.from(x)` где return-type определяется только функцией) —
-        // работает; для cases где x-type meaningful — fallback default.
+        // Step 2: closure args — bind param types from current subst BEFORE body inference.
+        // Plan 172.1 D408: the previous "degraded" path left closure params unbound, so
+        // `|x| x` inferred body `x` as nova_int (not in var_types). Now we derive each
+        // closure param's concrete C type by applying `subst_slots` to its declared TypeRef
+        // (e.g. `fn(T)->U` with T=nova_uint → bind x→nova_uint), then infer the body.
+        // This fixes receiver-type collapse for chains like `Some(uint).map(|x| x).unwrap_or(0)`.
         for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
-            let (_fp, ret_ty_ref_closure) =
+            let (fp, ret_ty_ref_closure) =
                 if let crate::ast::TypeRef::Func { params: fp, return_type: Some(rt), .. } = &param.ty {
                     (fp.clone(), rt.clone())
                 } else { continue };
-            let body_expr = match &arg.expr().kind {
-                ExprKind::ClosureLight { body, .. } => {
-                    match body {
+            let (clos_param_names, body_expr) = match &arg.expr().kind {
+                ExprKind::ClosureLight { params, body } => {
+                    let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+                    let body = match body {
                         crate::ast::ClosureBody::Expr(e) => (**e).clone(),
                         crate::ast::ClosureBody::Block(b) => Expr::new(
                             ExprKind::Block(b.clone()), b.span,
                         ),
-                    }
+                    };
+                    (names, body)
                 }
                 _ => continue,
             };
+            // Bind each closure param name → C type from substituted declared param type.
+            for (pname, ptype_ref) in clos_param_names.iter().zip(fp.iter()) {
+                if let Some(c_ty) = Self::apply_type_subst_to_ref(ptype_ref, &subst_slots) {
+                    if !c_ty.is_empty() && c_ty != "void*" {
+                        self.closure_param_type_overrides.borrow_mut()
+                            .insert(pname.clone(), c_ty);
+                    }
+                }
+            }
             let closure_ret_c = self.infer_expr_c_type(&body_expr);
+            for pname in &clos_param_names {
+                self.closure_param_type_overrides.borrow_mut().remove(pname);
+            }
             if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
                 self.infer_type_param_binding(
                     &ret_ty_ref_closure, &closure_ret_c, &mut subst_slots);
