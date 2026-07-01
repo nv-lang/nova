@@ -1,4 +1,4 @@
-﻿// D282 — Blanket protocol-receiver methods: `fn[I Proto[T]] I @name(...) -> R`.
+// D282 — Blanket protocol-receiver methods: `fn[I Proto[T]] I @name(...) -> R`.
 // Norm (spec/decisions/02-types.md §D282, Plan 161): a blanket declaration takes a
 // TYPEVAR receiver `I` bounded by a parametric protocol `Proto[T]`; the bound's type
 // args (`T`) are INFERRED from the protocol, not declared explicitly (§1). At a call

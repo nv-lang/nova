@@ -1,4 +1,4 @@
-﻿// D408 — sized/unsigned width preservation through Option ADAPTER CHAINS (`.map`/`.or`/
+// D408 — sized/unsigned width preservation through Option ADAPTER CHAINS (`.map`/`.or`/
 // `.unwrap_or`). `Some(uint)` lowers to `NovaOpt_nova_uint` (sanitize_for_novaopt(nova_uint),
 // emit_c.rs:38181), and the per-T DeclaredBody trampolines (`Nova_Option_method_<m>_<elem_ty>`)
 // are keyed on `elem_ty` derived from the RECEIVER's inferred `obj_ty`. The discriminating defect:

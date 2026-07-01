@@ -1,4 +1,4 @@
-﻿// D264 — `Vec[T]` protocols: content-`Hash` + FromIterator / collect-target (Plan 153.6).
+// D264 — `Vec[T]` protocols: content-`Hash` + FromIterator / collect-target (Plan 153.6).
 // POS-наблюдаемая норма (spec/decisions/02-types.md:12473, D264):
 //   • content-`Hash`: `Vec[T Hash] @hash() -> u64` — order- и length-sensitive FNV-1a;
 //     consistency с `@equal` (контракт Hash+Equal): равные Vec (равная длина + element-wise

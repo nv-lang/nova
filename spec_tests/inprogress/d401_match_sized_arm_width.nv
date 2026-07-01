@@ -1,4 +1,4 @@
-﻿// D401 — a `match`-EXPRESSION used as a VALUE must preserve the unsigned/sized width of its
+// D401 — a `match`-EXPRESSION used as a VALUE must preserve the unsigned/sized width of its
 // arm results; it must NOT silently collapse to signed `nova_int`. Direct parallel of the
 // If-expr surface (d413_if_expr_sized_branch_width.nv) and the `??` surface (d86_coalesce_width.nv):
 // `ro got = match c { … => <expr> … }` with an UNANNOTATED binding inherits the match-expr's

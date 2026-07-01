@@ -1,4 +1,4 @@
-﻿// D413 — an `if`-EXPRESSION used as a VALUE must preserve the unsigned/sized width of its
+// D413 — an `if`-EXPRESSION used as a VALUE must preserve the unsigned/sized width of its
 // branches; it must NOT silently collapse to signed `nova_int`. Surface: `ro got = if c { … }
 // else { … }` (UNANNOTATED binding). The result binding inherits the if-expr's INFERRED type.
 //

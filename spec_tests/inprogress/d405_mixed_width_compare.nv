@@ -1,4 +1,4 @@
-﻿// D405 — MIXED-WIDTH unsigned arithmetic feeding a COMPARISON must NOT silently collapse to the
+// D405 — MIXED-WIDTH unsigned arithmetic feeding a COMPARISON must NOT silently collapse to the
 // LEFT operand's narrower width. An UNANNOTATED `ro got = a + b` binding inherits the call/expr's
 // INFERRED type; for two sized-but-DIFFERENT-width unsigned operands codegen's arithmetic-result
 // inference returns `lt` — the LEFT operand's C type (compiler-codegen/src/codegen/emit_c.rs:36883,

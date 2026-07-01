@@ -1,4 +1,4 @@
-﻿// D145 — `fn[T]` prefix declares receiver-generics for receivers WITHOUT carrier-brackets
+// D145 — `fn[T]` prefix declares receiver-generics for receivers WITHOUT carrier-brackets
 // (bare `T`, slice `[]T`). Distinct from D119 (carrier `Box[T] @m`, T declared by the brackets)
 // and D216 (free `fn[T]` function, no receiver). Here the prefix is REQUIRED — `[]` and a bare
 // typevar are not bracket-declarations — and the method dispatches on the concrete receiver type

@@ -1,4 +1,4 @@
-﻿// D86b — the `??` fallback coerces to the Ok PAYLOAD type ([literal-coercion channel]).
+// D86b — the `??` fallback coerces to the Ok PAYLOAD type ([literal-coercion channel]).
 // `result ?? (0,0)` with `Result[(uint,uint),_]` must build the fallback tuple as
 // `(uint,uint)` (matching the Ok side via the decoded mono-tuple element types), not
 // collapse to `(int,int)` — a struct mismatch (CC-FAIL incompatible-operand clash).
