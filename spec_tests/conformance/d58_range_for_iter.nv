@@ -1,0 +1,30 @@
+// D58 — Range literals (a..b, a..=b), Iter[T] protocol, for-in desugars to iter()
+// Spec: spec/decisions/03-syntax.md:58 (D58).
+module spec_tests.conformance
+
+test "range half-open literal (D58)" {
+    ro r = 1..4
+    assert(r.start == 1)
+    assert(r.end == 4)
+}
+
+test "range inclusive literal normalized to half-open (D58)" {
+    ro r = 1..=4
+    // ..= normalizes to half-open [a, b+1), so ..=4 → end=5
+    assert(r.end == 5)
+}
+
+test "for-in loop iteration via iter() (D58)" {
+    mut sum = 0
+    for x in 1..4 {
+        sum = sum + x
+    }
+    assert(sum == 6)   // 1 + 2 + 3
+}
+
+test "range in array literal (D58)" {
+    ro ranges []Range = [0..2, 3..5]
+    assert(ranges.len() == 2)
+    assert(ranges[0].start == 0)
+    assert(ranges[1].start == 3)
+}
