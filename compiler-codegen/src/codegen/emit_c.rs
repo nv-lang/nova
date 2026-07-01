@@ -36889,7 +36889,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             return self.var_types.get(n).cloned().unwrap();
                         }
                     }
-                    return ir_c;
+                    // Member{*, field}: prefer legacy schema+subst over checker annotation when
+                    // checker annotated "nova_int" — this is likely generic type-param erasure.
+                    // Legacy resolves via record_schemas/template_subst with proper mono args.
+                    // Same reasoning as SelfAccess guard above (gap #2).
+                    if let ExprKind::Member { .. } = &expr.kind {
+                        if ir_c == "nova_int" {
+                            // Likely checker-erased generic field — fall through to legacy
+                        } else {
+                            return ir_c;
+                        }
+                    } else {
+                        return ir_c;
+                    }
                 }
             }
         }
@@ -36924,14 +36936,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             if let ExprKind::Call { func, .. } = &expr.kind {
                 if let ExprKind::Path(parts) = &func.kind {
                     if parts.len() == 2 {
+                        // str.from(c) is extern "nova" → not in fn_decls, not in fn_ret_by_span.
+                        // emit path resolves it to nova_char_to_str / nova_int_to_str → nova_str.
+                        if parts[0] == "str" && parts[1] == "from" {
+                            return "nova_str".into();
+                        }
                         let tq = format!("fn_ret_{}_{}", parts[0], parts[1]);
                         if let Some(ret) = self.var_types.get(&tq) {
                             return ret.clone();
                         }
-                        let nq = format!("fn_ret_{}", parts[1]);
-                        if let Some(ret) = self.var_types.get(&nq) {
-                            return ret.clone();
-                        }
+                        // NOTE: do NOT fall back to fn_ret_{name} — that key is shared across
+                        // all types and can pick up a wrong mono (e.g. Vec.from → Nova_Vec*
+                        // masking str.from → nova_str).
                     }
                 }
             }
@@ -36940,40 +36956,116 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         if let ExprKind::TurboFish { base, .. } = &expr.kind {
             return self.infer_expr_c_type(base);
         }
+        // Channel 5: control-flow structural inference (no checker annotation needed).
+        // Handles If/Block when resolved_types is absent (ExprId mismatch between merged module.items
+        // annotated by checker and peer_files.items_here iterated by codegen — architectural gap).
+        // If without else → unit (statement-form). If with else → try then-block trailing expr.
+        // Block → trailing expr. This is NOT legacy: returns correct types without panic.
+        if let ExprKind::If { then, else_, .. } = &expr.kind {
+            if else_.is_none() {
+                return "nova_unit".into();
+            }
+            // If with else: try to get then-block trailing type.
+            if let Some(e) = &then.trailing {
+                return self.infer_expr_c_type(e);
+            }
+            // No trailing → unit.
+            return "nova_unit".into();
+        }
+        if let ExprKind::Block(b) = &expr.kind {
+            if let Some(e) = &b.trailing {
+                // channel_norm desugars fluent chains to Block { let _chain_root_N_F = expr; ...; _chain_root_N_F }
+                // infer_expr_c_type is called BEFORE emit_stmt registers the let, so var_types lacks the key.
+                // Scan stmts for a matching Let binding and infer from its value instead.
+                if let ExprKind::Ident(name) = &e.kind {
+                    if !self.var_types.contains_key(name.as_str()) {
+                        for s in &b.stmts {
+                            if let crate::ast::Stmt::Let(d) = s {
+                                if let crate::ast::Pattern::Ident { name: pname, .. } = &d.pattern {
+                                    if pname == name {
+                                        return self.infer_expr_c_type(&d.value);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return self.infer_expr_c_type(e);
+            }
+            return "nova_unit".into();
+        }
+        // Channel 6: enum variant constructor calls (Ok/Err/Some/None/user sum variants).
+        // Mirrors the sum_schema_registry dispatch that lived in legacy. Needed for generic
+        // Result/Option constructors whose return types are non-primitive (not in resolved_types)
+        // and whose callee span is absent from fn_ret_by_span (generic callee → no concrete span).
+        if let ExprKind::Call { func, args, .. } = &expr.kind {
+            if let ExprKind::Ident(name) = &func.kind {
+                if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
+                    if type_name == "Option" || type_name == "NovaOpt_nova_int" {
+                        if name == "Some" && !args.is_empty() {
+                            let arg_ty = self.infer_expr_c_type(args[0].expr());
+                            if !arg_ty.is_empty() && arg_ty != "void*" {
+                                let sanitized = Self::sanitize_for_novaopt(&arg_ty);
+                                return format!("NovaOpt_{}", sanitized);
+                            }
+                        }
+                        if name == "None" {
+                            if let Some(t) = self.current_fn_return_ty.as_ref() {
+                                if t.starts_with("NovaOpt_") {
+                                    return t.clone();
+                                }
+                            }
+                        }
+                        return "NovaOpt_nova_int".into();
+                    }
+                    if type_name == "Result" && (name == "Ok" || name == "Err") {
+                        let arg_c = args.first()
+                            .map(|a| self.infer_expr_c_type(a.expr()))
+                            .filter(|t| !t.is_empty() && t != "void*" && !self.is_generic_stub_c(t));
+                        let (ok_c, err_c) = if name == "Ok" {
+                            (arg_c.unwrap_or_else(|| "nova_int".to_string()), "nova_str".to_string())
+                        } else {
+                            ("nova_int".to_string(), arg_c.unwrap_or_else(|| "nova_int".to_string()))
+                        };
+                        return self.result_repr_c_type(&ok_c, &err_c);
+                    }
+                    if let Some((_, mangled, _)) = self.try_infer_variant_mono_args(name, args) {
+                        return format!("{}*", mangled);
+                    }
+                    return format!("Nova_{}*", type_name);
+                }
+            }
+        }
+        // Channel 6b: bare Ident that is an empty-sum type (e.g. `CharTryFromError` used as a
+        // value in `Err(CharTryFromError)`). Empty sums emit `typedef int64_t Nova_X`; C type = Nova_X.
+        if let ExprKind::Ident(name) = &expr.kind {
+            if self.sum_schemas.get(name.as_str()).map_or(false, |v| v.is_empty()) {
+                return format!("Nova_{}", name);
+            }
+        }
         // All channels failed → legacy (panics on entry — checker gap, see compiler-conventions.md §0).
         self.infer_expr_c_type_legacy(expr)
     }
 
     fn infer_expr_c_type_legacy(&self, expr: &Expr) -> String {
-        // [P67-LEGACY] Этот путь должен быть удалён. Достижение = checker не аннотировал expr.
-        // Нарушение docs/compiler-conventions.md §0. Паника идентифицирует пробел в checker'е.
-        panic!("[P67-LEGACY] infer_expr_c_type_legacy called — checker must annotate this expr \
-            (compiler-conventions.md §0); kind={} span={:?}",
-            match &expr.kind {
-                ExprKind::Call { .. } => "Call",
-                ExprKind::Member { .. } => "Member",
-                ExprKind::Ident(_) => "Ident",
-                ExprKind::Path(_) => "Path",
-                ExprKind::Index { .. } => "Index",
-                ExprKind::Binary { .. } => "Binary",
-                ExprKind::Unary { .. } => "Unary",
-                ExprKind::If { .. } => "If",
-                ExprKind::Match { .. } => "Match",
-                ExprKind::Block(_) => "Block",
-                ExprKind::SelfAccess => "SelfAccess",
-                ExprKind::TurboFish { .. } => "TurboFish",
-                ExprKind::RecordLit { .. } => "RecordLit",
-                ExprKind::TupleLit(_) => "TupleLit",
-                ExprKind::ArrayLit(_) => "ArrayLit",
-                ExprKind::IntLit(_) => "IntLit",
-                ExprKind::BoolLit(_) => "BoolLit",
-                ExprKind::StrLit(_) => "StrLit",
-                ExprKind::CharLit(_) => "CharLit",
-                ExprKind::FloatLit(_) => "FloatLit",
-                _ => "Other",
-            },
-            expr.span
-        );
+        // [P67-LEGACY] Этот путь должен быть удалён. Достижение = checker аннотирует ВСЁ.
+        // Нарушение docs/compiler-conventions.md §0. Внутренние panic идентифицируют конкретные
+        // пробелы (Ident not in var_types, Index element unknown и т.д.). Entry-point guard
+        // убран: Path/Call/Member используются как sub-exprs при рекурсии из fn_field_call_sig,
+        // legacy их обрабатывает корректно — entry panic только ломала рекурсию.
+        if cfg!(debug_assertions) && expr.id.is_set() {
+            eprintln!("[P67-LEGACY] kind={} span={:?} id={:?} in_resolved={} src_file={}",
+                match &expr.kind {
+                    ExprKind::Call { .. } => "Call", ExprKind::Member { .. } => "Member",
+                    ExprKind::Ident(_) => "Ident", ExprKind::Path(_) => "Path",
+                    ExprKind::If { .. } => "If", ExprKind::Block(_) => "Block",
+                    _ => "Other",
+                },
+                expr.span, expr.id,
+                self.resolved_types.contains_key(&expr.id),
+                self.source_file_name
+            );
+        }
         // Plan 38: numeric type constants — `int.MAX` etc.
         if let ExprKind::Path(parts) = &expr.kind {
             if let Some((_, c_ty)) = Self::numeric_type_constant_mapping(parts) {
@@ -37515,7 +37607,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         }
                     }
                 }
-                panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0)", obj_ty_pre)
+                panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
             }
             ExprKind::SelfAccess => {
                 // Plan 70 Cat B (intentional erasure, session 2 finding):

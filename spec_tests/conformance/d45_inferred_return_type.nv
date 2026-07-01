@@ -1,0 +1,99 @@
+// D45 — Inferred return type для expression-body (=> expr); block-body требует -> T явно.
+// Inference локальный: литерал → его тип; @field → тип поля; вызов → тип возврата.
+// Spec: spec/decisions/03-syntax.md D45. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+// --- expression-body: -> T выводится из выражения ---
+
+fn d45_double(x int) => x * 2
+
+fn d45_negate(x int) => -x
+
+fn d45_greet() => "hello"
+
+fn d45_is_positive(x int) => x > 0
+
+// --- block-body: -> T обязателен ---
+
+fn d45_classify(x int) -> str {
+    if x < 0 { return "neg" }
+    if x == 0 { return "zero" }
+    "pos"
+}
+
+fn d45_abs(x int) -> int {
+    if x < 0 { return -x }
+    x
+}
+
+// --- @field getter / bool predicate через => ---
+
+type D45Point { x int, y int }
+
+fn D45Point @get_x() => @x
+
+fn D45Point @get_y() => @y
+
+fn D45Point @is_origin() => @x == 0 && @y == 0
+
+fn D45Point @sum() => @x + @y
+
+// --- unit body: -> () можно опускать ---
+
+fn d45_unit_body() {
+    mut _x = 1
+    _x = 2
+}
+
+// --- тесты ---
+
+test "expression-body infers int return from arithmetic (D45)" {
+    assert(d45_double(5) == 10)
+    assert(d45_double(-3) == -6)
+    assert(d45_double(0) == 0)
+}
+
+test "expression-body infers int return from unary neg (D45)" {
+    assert(d45_negate(7) == -7)
+    assert(d45_negate(0) == 0)
+}
+
+test "expression-body infers str return from literal (D45)" {
+    assert(d45_greet() == "hello")
+}
+
+test "expression-body infers bool return from comparison (D45)" {
+    assert(d45_is_positive(1))
+    assert(!d45_is_positive(0))
+    assert(!d45_is_positive(-5))
+}
+
+test "block-body with explicit -> str (D45)" {
+    assert(d45_classify(-1) == "neg")
+    assert(d45_classify(0) == "zero")
+    assert(d45_classify(7) == "pos")
+}
+
+test "block-body with explicit -> int (D45)" {
+    assert(d45_abs(-4) == 4)
+    assert(d45_abs(4) == 4)
+    assert(d45_abs(0) == 0)
+}
+
+test "@field getter infers return type from field (D45)" {
+    ro p = D45Point { x: 3, y: 7 }
+    assert(p.get_x() == 3)
+    assert(p.get_y() == 7)
+}
+
+test "@field bool predicate infers bool return (D45)" {
+    ro origin = D45Point { x: 0, y: 0 }
+    ro other  = D45Point { x: 1, y: 0 }
+    assert(origin.is_origin())
+    assert(!other.is_origin())
+}
+
+test "expression-body method infers int return from @field arith (D45)" {
+    ro p = D45Point { x: 4, y: 6 }
+    assert(p.sum() == 10)
+}
